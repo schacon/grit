@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   118 |
-| In progress |     1 |
+| Completed   |   119 |
+| In progress |     0 |
 | Remaining   |   648 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4067-diff-partial-clone` — upstream 9/9 tests pass (`diff` now correctly reclassifies revision arguments in bare repositories without requiring `--`, triggers lazy prefetch batching for patch/stat/rename/break-rewrite paths, emits expected packet-trace `want`/`fetch> done` lines exactly once per negotiation, skips gitlink OIDs during prefetch, and `checkout` now lazily hydrates missing blobs in partial clones; gitlink staging now resolves submodule HEAD through `.git` gitfile indirection). Local mirror `./scripts/run-tests.sh` remains 0/9 due known simplified `tests/test-lib.sh` incompatibility invoking `git config -C` in subcommand position.
 - `t4120-apply-popt` — upstream 12/12 tests pass (`git apply -p<n>` now validates malformed/non-numeric/negative strip values with git-compatible diagnostics, path trimming now reports `removing <n> leading pathname component(s)` for over-stripped regular and escaped paths, and escaped non-ASCII patch paths are now rendered with C-octal escapes in diff headers so setup fixtures match upstream `grep "[\\]"` expectations). Local mirror remains partial (9/12) due simplified `tests/test-lib.sh` helper differences (`test_chmod` lacks upstream `chmod` + `update-index --add` behavior, so mode-only follow-up assertions run against an untracked renamed path).
 - `t4058-diff-duplicates` — upstream 15/16 and local mirror 15/16 (non-TODO assertions fully passing). Implemented: `diff-tree --no-abbrev` parsing, duplicate-path self-rename suppression in rename detection, duplicate-path filtering when cache-tree checks are disabled in reset/index materialization, duplicate-aware index-vs-worktree diffing (single effective stage-0 entry per path), and git-compatible corruption messaging. Test 14 remains marked upstream TODO-known-breakage and still fails as expected.
 - `t4213-log-tabexpand` — upstream 9/9 tests pass (`show` now accepts `--pretty` without explicit value (defaults to medium) and supports `--expand-tabs[=<N>]` / `--no-expand-tabs`; pretty message rendering now applies tab expansion with git-compatible defaults across formats (8-space default for most formats, raw/email preserve tabs, and short defaults to 4-space expansion), matching expected title/body tab indentation behavior in `log/show --expand-tabs` coverage)
@@ -105,4 +106,4 @@
 
 ## What Remains
 
-1 test file is currently marked in progress and 648 remain pending. See `plan.md` for the full prioritized list.
+0 test files are currently marked in progress and 648 remain pending. See `plan.md` for the full prioritized list.

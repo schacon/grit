@@ -40,6 +40,14 @@ pub struct Args {
     /// Strict mode: reject packs with duplicate objects.
     #[arg(long)]
     pub strict: bool,
+
+    /// Keep the uploaded pack (compatibility flag; accepted and ignored).
+    #[arg(long = "keep", value_name = "MSG", num_args = 0..=1, default_missing_value = "")]
+    pub keep: Option<String>,
+
+    /// Verify pack connectivity while indexing (compatibility flag; ignored).
+    #[arg(long = "check-self-contained-and-connected")]
+    pub check_self_contained_and_connected: bool,
 }
 
 /// A resolved pack object.
@@ -52,6 +60,8 @@ struct ResolvedObject {
 
 /// Run `grit index-pack`.
 pub fn run(args: Args) -> Result<()> {
+    let _ = &args.keep;
+    let _ = args.check_self_contained_and_connected;
     if let Some(fmt) = &args.object_format {
         if fmt != "sha1" {
             bail!("unsupported object format: {fmt}");

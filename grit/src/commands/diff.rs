@@ -12,6 +12,7 @@
 //! Exit codes: `--exit-code` / `--quiet` return exit code 1 if there are
 //! differences.
 
+use crate::commands::partial_clone;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
@@ -731,7 +732,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let has_separator = raw_args.iter().any(|a| a == "--");
-    let (mut revs, paths) = parse_rev_and_paths(&args.args, has_separator);
+    let (mut revs, mut paths) = parse_rev_and_paths(&args.args, has_separator);
 
     let repo = match Repository::discover(None) {
         Ok(repo) => repo,
@@ -746,6 +747,8 @@ pub fn run(mut args: Args) -> Result<()> {
     if should_use_implicit_no_index(&args, &revs, &paths, repo.work_tree.as_deref()) {
         return run_no_index(&args);
     }
+
+    reclassify_bare_revision_paths(&repo, has_separator, &mut revs, &mut paths);
 
     // Resolve diff prefixes from config and command-line options
     let (src_prefix, dst_prefix) = resolve_diff_prefixes(&args, &repo);
@@ -1013,16 +1016,22 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         (false, 0) => {
             // No flags: unstaged changes (index vs worktree)
-            let wt = work_tree
-                .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-            diff_index_to_worktree(&repo.odb, &index, wt)?
+            if let Some(wt) = work_tree {
+                diff_index_to_worktree(&repo.odb, &index, wt)?
+            } else {
+                // Bare repository: default to comparing HEAD tree to index.
+                diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?
+            }
         }
         (false, 1) => {
             // One revision: tree vs worktree
             let tree_oid = commit_or_tree_oid(&repo, &revs[0])?;
-            let wt = work_tree
-                .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-            diff_tree_to_worktree(&repo.odb, Some(&tree_oid), wt, &index)?
+            if let Some(wt) = work_tree {
+                diff_tree_to_worktree(&repo.odb, Some(&tree_oid), wt, &index)?
+            } else {
+                // Bare repository: compare the requested tree to HEAD/index tree.
+                diff_trees(&repo.odb, Some(&tree_oid), head_tree.as_ref(), "")?
+            }
         }
         (_, 2) => {
             if let Some(blob_entries) = diff_blob_specs(&repo, &revs[0], &revs[1])? {
@@ -1031,7 +1040,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 // Two revisions: tree-to-tree diff
                 let tree1 = commit_or_tree_oid(&repo, &revs[0])?;
                 let tree2 = commit_or_tree_oid(&repo, &revs[1])?;
-                diff_trees(&repo.odb, Some(&tree1), Some(&tree2), "")?
+                let tree_entries = diff_trees(&repo.odb, Some(&tree1), Some(&tree2), "")?;
+                maybe_prefetch_for_tree_entries(&repo, &tree_entries, &args)?;
+                tree_entries
             }
         }
         _ => {
@@ -1591,6 +1602,85 @@ fn resolve_combined_tree_set(
         .map(|rev| commit_or_tree_oid(repo, rev))
         .collect::<Result<Vec<_>>>()?;
     Ok((base_tree, parent_trees))
+}
+
+/// Fetch missing blob objects that the current diff invocation is likely to need.
+fn maybe_prefetch_for_tree_entries(
+    repo: &Repository,
+    entries: &[DiffEntry],
+    args: &Args,
+) -> Result<()> {
+    let mut needed = BTreeSet::new();
+
+    // Patch/stat/numstat/check/word-diff paths need object content.
+    let needs_content_output =
+        !args.raw && !args.name_only && !args.name_status && !args.summary && !args.shortstat;
+    if needs_content_output
+        || args.stat.is_some()
+        || args.numstat
+        || args.check
+        || args.word_diff.is_some()
+        || args.color_words
+    {
+        for entry in entries {
+            if entry.old_mode != "160000" && entry.old_oid != zero_oid() {
+                needed.insert(entry.old_oid);
+            }
+            if entry.new_mode != "160000" && entry.new_oid != zero_oid() {
+                needed.insert(entry.new_oid);
+            }
+        }
+    }
+
+    // Rename/copy detection needs blob content only for non-exact pairs.
+    let rename_or_copy = args.find_renames.is_some() || !args.find_copies.is_empty();
+    if rename_or_copy {
+        let deleted: Vec<&DiffEntry> = entries
+            .iter()
+            .filter(|e| e.status == DiffStatus::Deleted && e.old_mode != "160000")
+            .collect();
+        let added: Vec<&DiffEntry> = entries
+            .iter()
+            .filter(|e| e.status == DiffStatus::Added && e.new_mode != "160000")
+            .collect();
+
+        let has_non_exact_pair = deleted
+            .iter()
+            .any(|d| added.iter().any(|a| d.old_oid != a.new_oid));
+        if has_non_exact_pair {
+            for entry in deleted {
+                if entry.old_oid != zero_oid() {
+                    needed.insert(entry.old_oid);
+                }
+            }
+            for entry in added {
+                if entry.new_oid != zero_oid() {
+                    needed.insert(entry.new_oid);
+                }
+            }
+        }
+    }
+
+    // Break-rewrite detection requires old/new blob content for modified entries.
+    if args.break_rewrites {
+        for entry in entries {
+            if entry.status == DiffStatus::Modified
+                && entry.old_mode != "160000"
+                && entry.new_mode != "160000"
+                && entry.old_oid != entry.new_oid
+            {
+                if entry.old_oid != zero_oid() {
+                    needed.insert(entry.old_oid);
+                }
+                if entry.new_oid != zero_oid() {
+                    needed.insert(entry.new_oid);
+                }
+            }
+        }
+    }
+
+    let wanted: Vec<ObjectId> = needed.into_iter().collect();
+    partial_clone::maybe_fetch_missing_objects(repo, &wanted)
 }
 
 /// Split args on `--` to separate revisions from paths.
@@ -2285,6 +2375,65 @@ fn parse_rev_and_paths(args: &[String], has_separator: bool) -> (Vec<String>, Ve
 
         (revs, paths)
     }
+}
+
+/// In bare repositories, path existence checks from `parse_rev_and_paths`
+/// are unreliable for distinguishing revisions from pathspecs because there is
+/// no work tree. Reclassify argv segments to prefer revision-like tokens.
+fn reclassify_bare_revision_paths(
+    repo: &Repository,
+    has_separator: bool,
+    revs: &mut Vec<String>,
+    paths: &mut Vec<String>,
+) {
+    if has_separator || repo.work_tree.is_some() || paths.is_empty() {
+        return;
+    }
+
+    let mut promoted_revs = Vec::new();
+    let mut retained_paths = Vec::new();
+    for arg in paths.drain(..) {
+        if arg == "--" {
+            continue;
+        }
+        if looks_like_revision_token(repo, &arg) {
+            promoted_revs.push(arg);
+        } else {
+            retained_paths.push(arg);
+        }
+    }
+
+    if !promoted_revs.is_empty() {
+        revs.extend(promoted_revs);
+        *paths = retained_paths;
+    }
+}
+
+fn looks_like_revision_token(repo: &Repository, token: &str) -> bool {
+    if token.starts_with('-') {
+        return false;
+    }
+    if token.starts_with('/') || token.starts_with("./") || token.starts_with("../") {
+        return false;
+    }
+    if token.contains("..")
+        || token.contains("...")
+        || token.contains('^')
+        || token.contains('~')
+        || token.starts_with("HEAD")
+    {
+        return true;
+    }
+
+    if token.len() >= 7 && token.chars().all(|c| c.is_ascii_hexdigit()) {
+        return true;
+    }
+
+    if token.contains(':') {
+        return true;
+    }
+
+    resolve_revision(repo, token).is_ok()
 }
 
 /// Decide whether `git diff` should implicitly switch to `--no-index`.

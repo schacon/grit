@@ -5,10 +5,12 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use flate2::read::ZlibDecoder;
 use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::{init_repository, Repository};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit clone`.
@@ -261,21 +263,29 @@ pub fn run(args: Args) -> Result<()> {
     let dest = init_repository(&target_path, args.bare, initial_branch, None)
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?;
 
+    let partial_clone_filter = args
+        .filter
+        .as_deref()
+        .and_then(normalize_partial_clone_filter);
+    let omit_blobs = partial_clone_filter.is_some();
+
     // Copy or share objects from source to destination
     if args.shared {
         // Write alternates file instead of copying objects
         write_alternates(&source.git_dir, &dest.git_dir, &args.reference)
             .context("setting up alternates")?;
     } else {
-        copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
+        copy_objects(&source.git_dir, &dest.git_dir, omit_blobs).context("copying objects")?;
         // For local clones, also write alternates pointing to source
         // (like git clone --local)
-        let alt_dir = dest.git_dir.join("objects/info");
-        let _ = fs::create_dir_all(&alt_dir);
-        let source_objects = source.git_dir.join("objects");
-        if let Ok(abs) = source_objects.canonicalize() {
-            let alt_path = alt_dir.join("alternates");
-            let _ = fs::write(&alt_path, format!("{}\n", abs.display()));
+        if !omit_blobs {
+            let alt_dir = dest.git_dir.join("objects/info");
+            let _ = fs::create_dir_all(&alt_dir);
+            let source_objects = source.git_dir.join("objects");
+            if let Ok(abs) = source_objects.canonicalize() {
+                let alt_path = alt_dir.join("alternates");
+                let _ = fs::write(&alt_path, format!("{}\n", abs.display()));
+            }
         }
     }
 
@@ -288,6 +298,10 @@ pub fn run(args: Args) -> Result<()> {
         // Set up remote config (URL only, no fetch refspec for bare)
         setup_origin_remote_bare(&dest.git_dir, &source_path, remote_name)
             .context("setting up origin remote")?;
+        if let Some(ref filter_spec) = partial_clone_filter {
+            configure_partial_clone(&dest.git_dir, remote_name, filter_spec)
+                .context("configuring partial clone")?;
+        }
 
         // Set HEAD to match source
         if let Some(ref branch) = head_branch {
@@ -310,6 +324,10 @@ pub fn run(args: Args) -> Result<()> {
         };
         setup_origin_remote(&dest.git_dir, &source_path, remote_name, &refspec)
             .context("setting up origin remote")?;
+        if let Some(ref filter_spec) = partial_clone_filter {
+            configure_partial_clone(&dest.git_dir, remote_name, filter_spec)
+                .context("configuring partial clone")?;
+        }
 
         // Set refs/remotes/origin/HEAD to point to the source's default branch
         if let Some(ref branch) = source_head_branch {
@@ -388,6 +406,14 @@ pub fn run(args: Args) -> Result<()> {
             .with_context(|| format!("cannot resolve --revision '{}'", revision))?;
         // Set HEAD to the resolved OID directly (detached)
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
+    }
+
+    // For blob-filtered partial clones, hydrate the initial checkout tree so
+    // clone succeeds while keeping historical blobs lazy.
+    if omit_blobs && !args.bare && !args.no_checkout {
+        if let Some(branch) = head_branch.as_deref() {
+            hydrate_checkout_blobs(&source, &dest, branch).context("hydrating checkout blobs")?;
+        }
     }
 
     // Checkout working tree unless --bare or --no-checkout
@@ -700,19 +726,19 @@ fn write_shallow_boundary(repo: &Repository, depth: usize) -> Result<()> {
 }
 
 /// Copy all objects (loose + packs) from source to destination.
-fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
+fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, omit_blobs: bool) -> Result<()> {
     let src_objects = src_git_dir.join("objects");
     let dst_objects = dst_git_dir.join("objects");
 
     // Copy loose objects
     if src_objects.is_dir() {
-        copy_dir_contents(&src_objects, &dst_objects, &["info", "pack"])?;
+        copy_dir_contents(&src_objects, &dst_objects, &["info", "pack"], omit_blobs)?;
     }
 
     // Copy pack files
     let src_pack = src_objects.join("pack");
     let dst_pack = dst_objects.join("pack");
-    if src_pack.is_dir() {
+    if src_pack.is_dir() && !omit_blobs {
         fs::create_dir_all(&dst_pack)?;
         for entry in fs::read_dir(&src_pack)? {
             let entry = entry?;
@@ -744,8 +770,48 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Copy blob objects needed for the initial checkout of `branch`.
+fn hydrate_checkout_blobs(source: &Repository, dest: &Repository, branch: &str) -> Result<()> {
+    let oid = grit_lib::refs::resolve_ref(&source.git_dir, &format!("refs/heads/{branch}"))
+        .with_context(|| format!("resolving branch '{branch}' in source"))?;
+    let commit = source.odb.read(&oid).context("reading source commit")?;
+    let commit_data = parse_commit(&commit.data).context("parsing source commit")?;
+
+    let mut blobs = std::collections::BTreeSet::new();
+    collect_blob_oids_from_tree(&source.odb, &commit_data.tree, &mut blobs)?;
+    for blob_oid in blobs {
+        let blob = source
+            .odb
+            .read(&blob_oid)
+            .with_context(|| format!("reading source blob {blob_oid}"))?;
+        if blob.kind == grit_lib::objects::ObjectKind::Blob {
+            let _ = dest.odb.write(blob.kind, &blob.data)?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_blob_oids_from_tree(
+    odb: &grit_lib::odb::Odb,
+    tree_oid: &ObjectId,
+    out: &mut std::collections::BTreeSet<ObjectId>,
+) -> Result<()> {
+    let tree = odb.read(tree_oid).context("reading source tree")?;
+    let entries = grit_lib::objects::parse_tree(&tree.data).context("parsing source tree")?;
+    for entry in entries {
+        match entry.mode {
+            0o040000 => collect_blob_oids_from_tree(odb, &entry.oid, out)?,
+            0o160000 => {}
+            _ => {
+                out.insert(entry.oid);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Copy directory contents recursively, skipping named subdirectories.
-fn copy_dir_contents(src: &Path, dst: &Path, skip_dirs: &[&str]) -> Result<()> {
+fn copy_dir_contents(src: &Path, dst: &Path, skip_dirs: &[&str], omit_blobs: bool) -> Result<()> {
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -761,6 +827,9 @@ fn copy_dir_contents(src: &Path, dst: &Path, skip_dirs: &[&str]) -> Result<()> {
             for inner in fs::read_dir(entry.path())? {
                 let inner = inner?;
                 if inner.file_type()?.is_file() {
+                    if omit_blobs && loose_object_kind(inner.path().as_path()) == Some("blob") {
+                        continue;
+                    }
                     let dst_file = dst_dir.join(inner.file_name());
                     // Try hardlink, fall back to copy
                     if fs::hard_link(inner.path(), &dst_file).is_err() {
@@ -950,6 +1019,48 @@ fn setup_origin_remote_bare(git_dir: &Path, source_path: &Path, remote_name: &st
     config.write().context("writing config")?;
 
     Ok(())
+}
+
+fn normalize_partial_clone_filter(filter: &str) -> Option<String> {
+    if filter == "blob:limit=0" {
+        return Some(filter.to_owned());
+    }
+    None
+}
+
+fn configure_partial_clone(git_dir: &Path, remote_name: &str, filter_spec: &str) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+
+    config.set(&format!("remote.{remote_name}.promisor"), "true")?;
+    config.set(
+        &format!("remote.{remote_name}.partialclonefilter"),
+        filter_spec,
+    )?;
+    config.set("extensions.partialclone", remote_name)?;
+    config.write().context("writing config")?;
+
+    Ok(())
+}
+
+fn loose_object_kind(path: &Path) -> Option<&'static str> {
+    let file = fs::File::open(path).ok()?;
+    let mut decoder = ZlibDecoder::new(file);
+    let mut raw = Vec::new();
+    decoder.read_to_end(&mut raw).ok()?;
+    let nul = raw.iter().position(|&b| b == 0)?;
+    let header = std::str::from_utf8(&raw[..nul]).ok()?;
+    let kind = header.split_once(' ')?.0;
+    match kind {
+        "blob" => Some("blob"),
+        "tree" => Some("tree"),
+        "commit" => Some("commit"),
+        "tag" => Some("tag"),
+        _ => None,
+    }
 }
 
 /// Apply -c config key=value pairs to the cloned repository.

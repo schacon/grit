@@ -7,6 +7,7 @@
 //! - `checkout [<tree-ish>] -- <paths>` — restore specific files.
 //! - `-f` / `--force` — discard local changes when switching.
 
+use crate::commands::partial_clone;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
@@ -2090,6 +2091,7 @@ fn write_blob_to_worktree(
     oid: &ObjectId,
     mode: u32,
 ) -> Result<()> {
+    partial_clone::maybe_fetch_missing_objects(repo, &[*oid])?;
     let obj = repo.odb.read(oid).context("reading object for checkout")?;
     if obj.kind != ObjectKind::Blob {
         bail!("cannot checkout non-blob at '{rel_path}'");

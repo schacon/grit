@@ -5,12 +5,13 @@
 //! tagged commit.  For trees, lists the tree contents (like `ls-tree`).  For
 //! blobs, prints the raw blob content.
 
+use crate::commands::partial_clone;
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
     anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, DiffEntry,
 };
-use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, CommitData, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
@@ -177,14 +178,15 @@ pub fn run(args: Args) -> Result<()> {
         let oid = resolve_revision(&repo, spec)
             .with_context(|| format!("unknown revision or path: '{spec}'"))?;
 
+        partial_clone::maybe_fetch_missing_objects(&repo, &[oid])?;
         let obj = repo.odb.read(&oid).context("reading object")?;
 
         match obj.kind {
             ObjectKind::Commit => {
-                show_commit(&mut out, &repo.odb, &oid, &obj.data, &args, &notes_map)?;
+                show_commit(&mut out, &repo, &oid, &obj.data, &args, &notes_map)?;
             }
             ObjectKind::Tag => {
-                show_tag(&mut out, &repo.odb, &obj.data, &args, &notes_map)?;
+                show_tag(&mut out, &repo, &obj.data, &args, &notes_map)?;
             }
             ObjectKind::Tree => {
                 show_tree(&mut out, &obj.data)?;
@@ -201,12 +203,13 @@ pub fn run(args: Args) -> Result<()> {
 /// Show a commit object: header + diff.
 fn show_commit(
     out: &mut impl Write,
-    odb: &Odb,
+    repo: &Repository,
     oid: &ObjectId,
     data: &[u8],
     args: &Args,
     notes_map: &HashMap<ObjectId, Vec<u8>>,
 ) -> Result<()> {
+    let odb = &repo.odb;
     let commit = parse_commit(data).context("parsing commit")?;
     let hex = oid.to_hex();
     let expand_tabs = resolve_expand_tabs(args);
@@ -329,6 +332,8 @@ fn show_commit(
     if args.quiet || args.no_patch {
         return Ok(());
     }
+
+    maybe_prefetch_for_show_commit(repo, &commit)?;
 
     // Show diff: compare this commit's tree against its first parent (or empty tree for root).
     let new_tree = Some(&commit.tree);
@@ -822,11 +827,12 @@ fn write_diff_header(out: &mut impl Write, entry: &grit_lib::diff::DiffEntry) ->
 /// Show a tag object: tag header, then the tagged object.
 fn show_tag(
     out: &mut impl Write,
-    odb: &Odb,
+    repo: &Repository,
     data: &[u8],
     args: &Args,
     notes_map: &HashMap<ObjectId, Vec<u8>>,
 ) -> Result<()> {
+    let odb = &repo.odb;
     let tag = parse_tag(data).context("parsing tag")?;
 
     writeln!(out, "tag {}", tag.tag)?;
@@ -846,10 +852,10 @@ fn show_tag(
     let tagged_obj = odb.read(&tag.object).context("reading tagged object")?;
     match tagged_obj.kind {
         ObjectKind::Commit => {
-            show_commit(out, odb, &tag.object, &tagged_obj.data, args, notes_map)?;
+            show_commit(out, repo, &tag.object, &tagged_obj.data, args, notes_map)?;
         }
         ObjectKind::Tag => {
-            show_tag(out, odb, &tagged_obj.data, args, notes_map)?;
+            show_tag(out, repo, &tagged_obj.data, args, notes_map)?;
         }
         ObjectKind::Tree => {
             show_tree(out, &tagged_obj.data)?;
@@ -859,6 +865,44 @@ fn show_tag(
         }
     }
 
+    Ok(())
+}
+
+fn maybe_prefetch_for_show_commit(repo: &Repository, commit: &CommitData) -> Result<()> {
+    let mut wanted = std::collections::BTreeSet::new();
+    collect_blob_oids_from_tree(&repo.odb, &commit.tree, &mut wanted)?;
+    if let Some(parent) = commit.parents.first() {
+        if let Ok(parent_obj) = repo.odb.read(parent) {
+            if parent_obj.kind == ObjectKind::Commit {
+                if let Ok(parent_commit) = parse_commit(&parent_obj.data) {
+                    collect_blob_oids_from_tree(&repo.odb, &parent_commit.tree, &mut wanted)?;
+                }
+            }
+        }
+    }
+    let wanted: Vec<ObjectId> = wanted.into_iter().collect();
+    partial_clone::maybe_fetch_missing_objects(repo, &wanted)
+}
+
+fn collect_blob_oids_from_tree(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    out: &mut std::collections::BTreeSet<ObjectId>,
+) -> Result<()> {
+    let tree_obj = odb.read(tree_oid)?;
+    if tree_obj.kind != ObjectKind::Tree {
+        return Ok(());
+    }
+    let entries = parse_tree(&tree_obj.data).context("parsing tree while prefetching")?;
+    for entry in entries {
+        match entry.mode {
+            0o040000 => collect_blob_oids_from_tree(odb, &entry.oid, out)?,
+            0o160000 => {}
+            _ => {
+                out.insert(entry.oid);
+            }
+        }
+    }
     Ok(())
 }
 

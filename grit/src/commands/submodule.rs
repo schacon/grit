@@ -554,6 +554,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                     .arg(&modules_dir)
                     .arg(&clone_url)
                     .arg(&sub_path)
+                    .env_remove("GIT_EXEC_PATH")
                     .status()
                     .context("failed to clone submodule")?;
 
@@ -706,6 +707,7 @@ fn run_add(args: &AddArgs) -> Result<()> {
             .arg(&modules_dir)
             .arg(&args.url)
             .arg(&sub_path)
+            .env_remove("GIT_EXEC_PATH")
             .env_remove("GIT_WORK_TREE")
             .env_remove("GIT_DIR")
             .status()

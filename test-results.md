@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-07
 
+- `cargo build --release`: passes (rebuild after `t4067` partial-clone lazy-fetch updates in `diff`, `checkout`, and gitlink staging helpers).
+- `bash scripts/run-upstream-tests.sh t4067-diff-partial-clone`: 9/9 passing in isolated upstream harness.
+- Direct upstream-workdir confirmation: `cd /tmp/grit-upstream-workdir/t && GIT_BUILD_DIR=/tmp/grit-upstream-workdir TEST_NO_MALLOC_CHECK=1 TAR=tar bash ./t4067-diff-partial-clone.sh -v -x -i`: 9/9 passing with packet-trace assertions validated for `show`, `diff`, rename detection, and break-rewrite flows.
+- `./scripts/run-tests.sh t4067-diff-partial-clone.sh`: 0/9 in local mirror (known local `tests/test-lib.sh` incompatibility invoking `git config -C` in subcommand position; upstream harness remains authoritative and fully passing).
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes outside scoped files reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after `apply -p<n>` validation and diff-path escaping updates).
 - `./scripts/run-tests.sh t4120-apply-popt.sh`: 9/12 passing in local mirror (`data/file-results.tsv` refreshed; remaining local failures come from simplified `tests/test-lib.sh` helper behavior around `test_chmod` after a renamed path).
 - `bash scripts/run-upstream-tests.sh t4120-apply-popt`: 12/12 passing in isolated upstream harness.

@@ -752,15 +752,18 @@ fn stage_gitlink(
     abs_path: &Path,
     args: &Args,
 ) -> Result<()> {
+    let embedded_git_dir = resolve_embedded_git_dir(abs_path)
+        .with_context(|| format!("cannot read HEAD of embedded repo '{}'", rel_path))?;
+
     // Read the embedded repo's HEAD to get the commit OID
-    let embedded_head_path = abs_path.join(".git/HEAD");
+    let embedded_head_path = embedded_git_dir.join("HEAD");
     let head_content = fs::read_to_string(&embedded_head_path)
         .with_context(|| format!("cannot read HEAD of embedded repo '{}'", rel_path))?;
     let head_trimmed = head_content.trim();
 
     // Resolve the HEAD
     let oid_hex = if let Some(refname) = head_trimmed.strip_prefix("ref: ") {
-        let ref_path = abs_path.join(".git").join(refname);
+        let ref_path = embedded_git_dir.join(refname);
         fs::read_to_string(&ref_path)
             .with_context(|| {
                 format!(
@@ -830,6 +833,26 @@ fn stage_gitlink(
     }
 
     Ok(())
+}
+
+/// Resolve the git directory used by an embedded repository.
+fn resolve_embedded_git_dir(repo_path: &Path) -> Result<PathBuf> {
+    let dot_git = repo_path.join(".git");
+    if dot_git.is_dir() {
+        return Ok(dot_git);
+    }
+
+    let gitfile = fs::read_to_string(&dot_git).context("reading .git gitfile")?;
+    let rel = gitfile
+        .trim()
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| anyhow::anyhow!("invalid .git gitfile format"))?;
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute() {
+        Ok(rel_path.to_path_buf())
+    } else {
+        Ok(repo_path.join(rel_path))
+    }
 }
 
 /// Stage a single file into the index.
