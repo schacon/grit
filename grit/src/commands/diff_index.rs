@@ -886,6 +886,8 @@ fn write_patch_entry(
 ) -> Result<()> {
     use grit_lib::diff::unified_diff;
 
+    validate_patch_entry_oids(entry)?;
+
     let old_path = entry
         .old_path
         .as_deref()
@@ -1046,6 +1048,16 @@ fn read_blob_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
     } else {
         odb.read(oid).map(|o| o.data).unwrap_or_default()
     }
+}
+
+fn validate_patch_entry_oids(entry: &DiffEntry) -> Result<()> {
+    let zero = zero_oid();
+    let old_bogus = entry.old_oid == zero && entry.old_mode != "000000";
+    let new_bogus = entry.new_oid == zero && entry.new_mode != "000000";
+    if old_bogus || new_bogus {
+        bail!("bogus object {}", zero.to_hex());
+    }
+    Ok(())
 }
 
 /// Write --stat output for diff-index.

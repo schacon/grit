@@ -447,7 +447,7 @@ commit → check it off → move on.
 - [x] `t4122-apply-symlink-inside` ████████████████████ 7/7 (0 left) — apply to deeper directory without getting fooled with symlink (`format-patch --stdout` now honors long options before revision arguments, including `--binary`; `apply --index` now compares symlink targets (not dereferenced file contents) against index entries when validating worktree/index parity; `apply` path precheck now allows sequential same-path rewrite sections while still blocking writes through symlinked prefixes and nested descendants)
 - [x] `t4253-am-keep-cr-dos` ████████████████████ 7/7 (0 left) — git-am mbox with dos line ending (`am` now supports `--keep-cr` / `--no-keep-cr` with persisted resume-state overrides; mbox parsing preserves CRLF payload bytes when requested and strips CR in default/no-keep-cr modes; patch parsing and hunk application normalize CR-aware headers/body matching; 3-way fallback now validates index preimage OIDs and normalizes line-ending comparison according to keep-cr semantics)
 
-- [ ] `t4054-diff-bogus-tree` ██████████░░░░░░░░░░ 7/14 (7 left) — test diff with a bogus tree containing the null sha1
+- [x] `t4054-diff-bogus-tree` ████████████████████ 14/14 (0 left) — test diff with a bogus tree containing the null sha1 (`diff-tree` now honors `-R/--reverse` by swapping tree sides and inverting diff statuses; patch output now reports `error: bogus object <zero-oid>` and exits non-zero when zero/null blob OIDs are encountered in entries that require real blob content)
 - [ ] `t4114-apply-typechange` ████████░░░░░░░░░░░░ 5/12 (7 left) — git apply should not get confused with type changes.
 
 - [ ] `t4022-diff-rewrite` ███████░░░░░░░░░░░░░ 4/11 (7 left) — rewrite diff

@@ -109,6 +109,8 @@ struct Options {
     exit_code: bool,
     /// Suppress all output, implies exit_code.
     quiet: bool,
+    /// Reverse the diff direction (`-R` / `--reverse`).
+    reverse: bool,
 }
 
 impl Default for Options {
@@ -144,6 +146,7 @@ impl Default for Options {
             ignore_space_change: false,
             exit_code: false,
             quiet: false,
+            reverse: false,
         }
     }
 }
@@ -195,6 +198,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     opts.quiet = true;
                     opts.exit_code = true;
                 }
+                "-R" | "--reverse" => opts.reverse = true,
                 "--full-index" => opts.full_index = true,
                 _ if arg.starts_with("--max-depth=") => {
                     let val = &arg["--max-depth=".len()..];
@@ -302,7 +306,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     || arg.starts_with("--pickaxe-all")
                     || arg.starts_with("--pickaxe-regex")
                     || arg.starts_with("-O")
-                    || arg.starts_with("-R")
                     || arg.starts_with("--relative") =>
                 {
                     // ignored
@@ -385,8 +388,11 @@ pub fn run(args: Args) -> Result<()> {
 fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
-    let maybe_oid1 = normalize_empty_tree_oid(&oid1)?;
-    let maybe_oid2 = normalize_empty_tree_oid(&oid2)?;
+    let mut maybe_oid1 = normalize_empty_tree_oid(&oid1)?;
+    let mut maybe_oid2 = normalize_empty_tree_oid(&oid2)?;
+    if opts.reverse {
+        std::mem::swap(&mut maybe_oid1, &mut maybe_oid2);
+    }
     let entries = diff_with_opts(&repo.odb, maybe_oid1.as_ref(), maybe_oid2.as_ref(), opts)?;
     let filtered = filter_entries(entries, opts, &repo.odb);
     let find_object = resolve_find_object(repo, opts)?;
@@ -486,13 +492,19 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
             let commit = parse_commit(&obj.data).context("parsing commit")?;
             if commit.parents.is_empty() {
                 if opts.root {
-                    let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
+                    let mut old_tree = None;
+                    let mut new_tree = Some(commit.tree);
+                    if opts.reverse {
+                        std::mem::swap(&mut old_tree, &mut new_tree);
+                    }
+                    let entries =
+                        diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
                     let filtered = filter_entries(entries, opts, &repo.odb);
                     let filtered = filter_entries_by_object(filtered, find_object.as_ref());
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
-                        print_diff(out, &repo.odb, &filtered, opts, None)?;
+                        print_diff(out, &repo.odb, &filtered, opts, old_tree.as_ref())?;
                     }
                 }
             } else {
@@ -513,14 +525,19 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 }
 
                 let parent_tree = commit_tree(&repo.odb, &commit.parents[0])?;
+                let mut old_tree = Some(parent_tree);
+                let mut new_tree = Some(commit.tree);
+                if opts.reverse {
+                    std::mem::swap(&mut old_tree, &mut new_tree);
+                }
                 let entries =
-                    diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
+                    diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
                 let filtered = filter_entries(entries, opts, &repo.odb);
                 let filtered = filter_entries_by_object(filtered, find_object.as_ref());
                 has_diff = !filtered.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
-                    print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
+                    print_diff(out, &repo.odb, &filtered, opts, old_tree.as_ref())?;
                 }
             }
         }
@@ -632,20 +649,30 @@ fn process_stdin_commit(
 
     let has_diff = if parent_oids.is_empty() {
         if opts.root {
-            let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
+            let mut old_tree = None;
+            let mut new_tree = Some(commit.tree);
+            if opts.reverse {
+                std::mem::swap(&mut old_tree, &mut new_tree);
+            }
+            let entries = diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
             let filtered = filter_entries(entries, opts, &repo.odb);
             let hd = !filtered.is_empty();
-            print_diff(out, &repo.odb, &filtered, opts, None)?;
+            print_diff(out, &repo.odb, &filtered, opts, old_tree.as_ref())?;
             hd
         } else {
             false
         }
     } else {
         let parent_tree = commit_tree(&repo.odb, &parent_oids[0])?;
-        let entries = diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
+        let mut old_tree = Some(parent_tree);
+        let mut new_tree = Some(commit.tree);
+        if opts.reverse {
+            std::mem::swap(&mut old_tree, &mut new_tree);
+        }
+        let entries = diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
         let filtered = filter_entries(entries, opts, &repo.odb);
         let hd = !filtered.is_empty();
-        print_diff(out, &repo.odb, &filtered, opts, None)?;
+        print_diff(out, &repo.odb, &filtered, opts, old_tree.as_ref())?;
         hd
     };
 
@@ -671,8 +698,11 @@ fn process_stdin_two_trees(
     // Print both tree OIDs.
     writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
 
-    let maybe_oid1 = normalize_empty_tree_oid(oid1)?;
-    let maybe_oid2 = normalize_empty_tree_oid(&oid2)?;
+    let mut maybe_oid1 = normalize_empty_tree_oid(oid1)?;
+    let mut maybe_oid2 = normalize_empty_tree_oid(&oid2)?;
+    if opts.reverse {
+        std::mem::swap(&mut maybe_oid1, &mut maybe_oid2);
+    }
     let entries = diff_with_opts(&repo.odb, maybe_oid1.as_ref(), maybe_oid2.as_ref(), opts)?;
     let filtered = filter_entries(entries, opts, &repo.odb);
     print_diff(out, &repo.odb, &filtered, opts, maybe_oid1.as_ref())
@@ -1242,6 +1272,8 @@ fn write_patch_entry(
     abbrev: Option<usize>,
     full_index: bool,
 ) -> Result<bool> {
+    validate_patch_entry_oids(entry)?;
+
     let old_path = entry
         .old_path
         .as_deref()
@@ -1613,6 +1645,16 @@ fn read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
     };
 
     Ok((old_content, new_content))
+}
+
+fn validate_patch_entry_oids(entry: &DiffEntry) -> Result<()> {
+    let zero = grit_lib::diff::zero_oid();
+    let old_bogus = entry.old_oid == zero && entry.old_mode != "000000";
+    let new_bogus = entry.new_oid == zero && entry.new_mode != "000000";
+    if old_bogus || new_bogus {
+        bail!("bogus object {}", zero.to_hex());
+    }
+    Ok(())
 }
 
 /// Apply all post-diff filters.

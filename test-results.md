@@ -2,6 +2,17 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `t4054` bogus-tree handling updates in `diff-tree`/`diff-index`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4054-diff-bogus-tree.sh` (from `tests/`): 14/14 passing.
+- `./scripts/run-tests.sh t4054-diff-bogus-tree.sh`: 14/14 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4054-diff-bogus-tree`: 14/14 passing in isolated upstream harness.
+- Regression checks:
+  - `./scripts/run-tests.sh t4253-am-keep-cr-dos.sh`: 7/7 passing.
+  - `bash scripts/run-upstream-tests.sh t4253-am-keep-cr-dos`: 7/7 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in files outside scope reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after `am` keep-cr CRLF handling updates across option parsing, mbox decoding, patch parsing, hunk matching, and 3-way fallback validation).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4253-am-keep-cr-dos.sh` (from `tests/`): 7/7 passing.
 - `./scripts/run-tests.sh t4253-am-keep-cr-dos.sh`: 7/7 passing; `data/file-results.tsv` refreshed.
