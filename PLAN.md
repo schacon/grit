@@ -14,7 +14,7 @@ commit → check it off → move on.
 
 ## 1. Basic/Setup (37 files)
 
-- [ ] `t0050-filesystem` ██████████████████░░ 12/13 (1 left) — Various filesystem issues
+- [x] `t0050-filesystem` ████████████████████ 13/13 (0 left) — Various filesystem issues
 - [ ] `t0062-revision-walking` ██████████░░░░░░░░░░ 1/2 (1 left) — Test revision walking api
 - [ ] `t0071-sort` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — verify sort functions
 - [ ] `t0080-unit-test-output` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Test the output of the unit test framework
