@@ -7,8 +7,8 @@
 | Status      | Count |
 |-------------|-------|
 | Completed   |    99 |
-| In progress |     0 |
-| Remaining   |   668 |
+| In progress |     1 |
+| Remaining   |   667 |
 | **Total**   |   767 |
 
 ## Recently completed
