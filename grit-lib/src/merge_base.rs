@@ -8,8 +8,12 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
+use crate::reflog::read_reflog;
 use crate::repo::Repository;
-use crate::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
+use crate::rev_parse::{
+    peel_to_commit_for_merge_base, resolve_revision, resolve_upstream_symbolic_name,
+    upstream_suffix_info,
+};
 
 /// Resolve commit-ish command arguments to commit object IDs.
 ///
@@ -96,6 +100,120 @@ pub fn is_ancestor(repo: &Repository, ancestor: ObjectId, descendant: ObjectId) 
         return Ok(true);
     }
     Ok(cache.ancestor_closure(descendant)?.contains(&ancestor))
+}
+
+/// Returns the ref path under `logs/` used for fork-point reflog scanning for `merge-base --fork-point`
+/// and `rebase --fork-point`, matching Git's resolution order.
+///
+/// # Parameters
+///
+/// - `spec` - upstream argument as given on the command line (`main`, `refs/heads/main`, `HEAD`, …).
+pub fn resolve_fork_point_reflog_ref(repo: &Repository, spec: &str) -> String {
+    if spec == "HEAD" || spec.starts_with("refs/") {
+        return spec.to_string();
+    }
+
+    let logs_dir = repo.git_dir.join("logs");
+    let candidates = [
+        spec.to_string(),
+        format!("refs/heads/{spec}"),
+        format!("refs/remotes/{spec}"),
+    ];
+
+    for candidate in candidates {
+        if logs_dir.join(&candidate).is_file() {
+            return candidate;
+        }
+    }
+
+    format!("refs/heads/{spec}")
+}
+
+/// Picks the fork-point candidate that is not strictly dominated by another candidate in the list.
+fn select_best_fork_point(repo: &Repository, candidates: &[ObjectId]) -> Result<Option<ObjectId>> {
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    let mut best = HashSet::new();
+    for &candidate in candidates {
+        let mut dominated = false;
+        for &other in candidates {
+            if candidate == other {
+                continue;
+            }
+            if is_ancestor(repo, candidate, other)? {
+                dominated = true;
+                break;
+            }
+        }
+        if !dominated {
+            best.insert(candidate);
+        }
+    }
+
+    Ok(candidates.iter().copied().find(|oid| best.contains(oid)))
+}
+
+/// Computes the fork-point commit between `upstream_tip` and `head`, using the upstream ref's reflog.
+///
+/// This matches `git merge-base --fork-point` / the merge base `git rebase --fork-point` uses for
+/// selecting commits to replay.
+///
+/// # Parameters
+///
+/// - `upstream_spec` - upstream revision string (used to locate the reflog; e.g. `main`,
+///   `refs/heads/main`, or `topic@{{upstream}}`).
+/// - `upstream_tip` - resolved commit of the upstream branch tip.
+/// - `head` - commit to rebase (usually `HEAD`).
+///
+/// # Errors
+///
+/// Propagates object read, reflog, and graph walk errors.
+pub fn fork_point(
+    repo: &Repository,
+    upstream_spec: &str,
+    upstream_tip: ObjectId,
+    head: ObjectId,
+) -> Result<ObjectId> {
+    let reflog_ref = if upstream_suffix_info(upstream_spec).is_some() {
+        resolve_upstream_symbolic_name(repo, upstream_spec)?
+    } else {
+        resolve_fork_point_reflog_ref(repo, upstream_spec)
+    };
+
+    let entries = read_reflog(&repo.git_dir, &reflog_ref)
+        .map_err(|e| Error::Message(format!("failed to read reflog for '{reflog_ref}': {e}")))?;
+
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    for entry in entries.iter().rev() {
+        let oid = if entry.message.starts_with("checkout:") {
+            entry.old_oid
+        } else {
+            entry.new_oid
+        };
+        if !seen.insert(oid) {
+            continue;
+        }
+        if is_ancestor(repo, oid, head)? {
+            candidates.push(oid);
+        }
+    }
+
+    if let Some(fp) = select_best_fork_point(repo, &candidates)? {
+        return Ok(fp);
+    }
+
+    let mut bases = merge_bases_first_vs_rest(repo, upstream_tip, &[head])?;
+    if bases.is_empty() {
+        return Err(Error::Message(
+            "no merge base found between upstream and HEAD".to_owned(),
+        ));
+    }
+    bases.sort();
+    Ok(bases[0])
 }
 
 /// Returns every commit reachable from `tip` by walking parent links (including `tip`).

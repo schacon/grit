@@ -2,13 +2,12 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::error::Error as GritError;
 use grit_lib::merge_base::{
-    independent_commits, is_ancestor, merge_bases_first_vs_rest, merge_bases_octopus,
+    fork_point, independent_commits, is_ancestor, merge_bases_first_vs_rest, merge_bases_octopus,
     resolve_commit_specs,
 };
-use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
-use std::collections::HashSet;
 
 /// Arguments for `grit merge-base`.
 #[derive(Debug, ClapArgs)]
@@ -139,87 +138,20 @@ fn run_fork_point(repo: &Repository, show_all: bool, revisions: Vec<String>) -> 
     let upstream_oid = commits[0];
     let commit_oid = commits[1];
 
-    let reflog_ref = resolve_fork_point_reflog_ref(repo, &upstream_spec);
-    let entries = read_reflog(&repo.git_dir, &reflog_ref)
-        .map_err(|e| anyhow::anyhow!("failed to read reflog for '{upstream_spec}': {e}"))?;
-    let mut candidates = Vec::new();
-    let mut seen = HashSet::new();
-
-    for entry in entries.iter().rev() {
-        let oid = if entry.message.starts_with("checkout:") {
-            entry.old_oid
-        } else {
-            entry.new_oid
-        };
-        if !seen.insert(oid) {
-            continue;
+    match fork_point(repo, &upstream_spec, upstream_oid, commit_oid) {
+        Ok(oid) => {
+            println!("{oid}");
+            Ok(())
         }
-        if is_ancestor(repo, oid, commit_oid)? {
-            candidates.push(oid);
-        }
-    }
-
-    if let Some(fork_point) = select_best_fork_point(repo, &candidates)? {
-        println!("{fork_point}");
-        return Ok(());
-    }
-
-    let mut bases = merge_bases_first_vs_rest(repo, upstream_oid, &[commit_oid])?;
-    if bases.is_empty() {
-        std::process::exit(1);
-    }
-    bases.sort();
-    println!("{}", bases[0]);
-    Ok(())
-}
-
-fn resolve_fork_point_reflog_ref(repo: &Repository, spec: &str) -> String {
-    if spec == "HEAD" || spec.starts_with("refs/") {
-        return spec.to_string();
-    }
-
-    let logs_dir = repo.git_dir.join("logs");
-    let candidates = [
-        spec.to_string(),
-        format!("refs/heads/{spec}"),
-        format!("refs/remotes/{spec}"),
-    ];
-
-    for candidate in candidates {
-        if logs_dir.join(&candidate).is_file() {
-            return candidate;
-        }
-    }
-
-    format!("refs/heads/{spec}")
-}
-
-fn select_best_fork_point(
-    repo: &Repository,
-    candidates: &[grit_lib::objects::ObjectId],
-) -> Result<Option<grit_lib::objects::ObjectId>> {
-    if candidates.is_empty() {
-        return Ok(None);
-    }
-
-    let mut best = HashSet::new();
-    for &candidate in candidates {
-        let mut dominated = false;
-        for &other in candidates {
-            if candidate == other {
-                continue;
+        Err(e) => {
+            if let GritError::Message(msg) = &e {
+                if msg.contains("no merge base") {
+                    std::process::exit(1);
+                }
             }
-            if is_ancestor(repo, candidate, other)? {
-                dominated = true;
-                break;
-            }
-        }
-        if !dominated {
-            best.insert(candidate);
+            Err(e.into())
         }
     }
-
-    Ok(candidates.iter().copied().find(|oid| best.contains(oid)))
 }
 
 fn print_result(mut oids: Vec<grit_lib::objects::ObjectId>, show_all: bool) {
