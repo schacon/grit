@@ -8,7 +8,6 @@ use clap::Args as ClapArgs;
 use grit_lib::attributes::{parse_gitattributes_file_content, validate_rules_for_add};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
-use grit_lib::diff::stat_matches;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
 #[allow(unused_imports)]
@@ -1136,14 +1135,8 @@ fn stage_file(
         mode
     };
 
-    // Skip if index already has this file with matching stat data and no chmod override
-    if args.chmod.is_none() {
-        if let Some(existing) = index.get(rel_path.as_bytes(), 0) {
-            if stat_matches(existing, &meta) && existing.mode == final_mode {
-                return Ok(());
-            }
-        }
-    }
+    // Do not skip based on stat alone: two different blobs can share size/mtime (e.g. "0\n" vs
+    // "1\n"), which breaks `git add -u` after small single-digit edits (t3415-rebase-autosquash).
 
     // Read file content and hash it
     let data = if is_symlink {

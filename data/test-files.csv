@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -601,7 +601,7 @@ t3408-rebase-multi-line	t3	yes	2	2	0	true	ok	0
 t3409-rebase-environ	t3	yes	3	3	0	true	ok	0
 t3412-rebase-root	t3	yes	25	25	0	true	ok	0
 t3413-rebase-hook	t3	yes	15	12	3	false	ok	0
-t3415-rebase-autosquash	t3	yes	28	2	26	false	ok	0
+t3415-rebase-autosquash	t3	yes	28	25	3	false	ok	0
 t3416-rebase-onto-threedots	t3	yes	18	12	6	false	ok	0
 t3417-rebase-whitespace-fix	t3	yes	4	0	4	false	ok	0
 t3418-rebase-continue	t3	yes	30	7	23	false	ok	0
