@@ -34,7 +34,7 @@ commit → check it off → move on.
 - [x] `t0017-env-helper` ████████████████████ 5/5 (0 left) — test test-tool env-helper
 - [x] `t0002-gitfile` ████████████████████ 14/14 (0 left) — .git file
 
-- [ ] `t0091-bugreport` ███████░░░░░░░░░░░░░ 5/13 (8 left) — git bugreport
+- [x] `t0091-bugreport` ████████████████████ 13/13 (0 left) — git bugreport
 - [ ] `t0066-dir-iterator` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — Test the dir-iterator functionality
 - [ ] `t0067-parse_pathspec_file` ░░░░░░░░░░░░░░░░░░░░ 0/8 (8 left) — Test parse_pathspec_file()
 - [ ] `t0070-fundamental` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — check that the most basic functions work

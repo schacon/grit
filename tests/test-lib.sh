@@ -156,6 +156,9 @@ test_debug () {
 DIFF="${DIFF:-diff}"
 EDITOR=:
 export EDITOR
+LANG=C
+LC_ALL=C
+export LANG LC_ALL
 
 # Allow tests to use $HOME — isolate from real user config
 HOME="$TRASH_DIRECTORY"
