@@ -3,6 +3,13 @@
 **Updated:** 2026-04-06
 
 - `./scripts/run-tests.sh t4042-diff-textconv-caching.sh`: 1/8 passing (baseline for newly claimed in-progress Diff target `t4042`).
+- `cargo build --release`: passes (rebuild after `diff` textconv cache + `core.attributesFile` support updates).
+- `bash scripts/run-upstream-tests.sh t4042-diff-textconv-caching`: 8/8 passing (authoritative upstream harness).
+- Direct upstream-workdir confirmation: `cd /tmp/grit-upstream-workdir/t && GIT_BUILD_DIR=/tmp/grit-upstream-workdir TEST_NO_MALLOC_CHECK=1 TAR=tar bash ./t4042-diff-textconv-caching.sh -v`: 8/8 passing with expected notes-cache traversal (`refs/notes/textconv/magic`) and no helper reruns on cached textconv.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (introduced autofixes in unrelated files were reverted; only task files retained).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+- `./scripts/run-tests.sh t4042-diff-textconv-caching.sh`: 7/8 in local mirror; remaining failure is known local `tests/test-lib.sh` `nongit` cwd behavior mismatch (`diff --no-index one two` resolves from repo root instead of temporary non-repo directory), while upstream harness passes the same case.
 
 - `cargo build --release`: passes (rebuild after native `diff-pairs` implementation plus `diff-tree -z` raw-output support and `config --unset-all` legacy-arg parsing compatibility update needed by upstream cleanup).
 - `./scripts/run-tests.sh t4070-diff-pairs.sh`: 3/7 in this local mirror (known harness divergence: simplified `tests/test-lib.sh` does not preserve cwd between tests, so later blocks run outside `main/` and fail `base` tag resolution).

@@ -399,7 +399,7 @@ t4038-diff-combined	yes	26	6	20	ok	5	25	1
 t4039-diff-assume-unchanged	yes	4	4	0	ok	4	4	0
 t4040-whitespace-status	yes	11	11	0	ok	11	11	0
 t4041-diff-submodule-option	yes	46	4	42	ok	4	46	0
-t4042-diff-textconv-caching	yes	8	1	7	ok	1	8	0
+t4042-diff-textconv-caching	yes	8	7	1	ok	7	8	0
 t4043-diff-rename-binary	yes	3	3	0	ok	3	3	0
 t4044-diff-index-unique-abbrev	yes	2	0	2	ok	0	2	0
 t4045-diff-relative	yes	39	20	19	ok	19	38	1

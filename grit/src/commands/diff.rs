@@ -21,13 +21,18 @@ use grit_lib::diff::{
 };
 use grit_lib::error::Error;
 use grit_lib::index::Index;
-use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{
+    parse_commit, parse_tree, serialize_commit, serialize_tree, tree_entry_cmp, CommitData,
+    ObjectId, ObjectKind, TreeEntry,
+};
 use grit_lib::odb::Odb;
+use grit_lib::refs::{resolve_ref, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use std::collections::BTreeSet;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
+use time::OffsetDateTime;
 use unicode_width::UnicodeWidthStr;
 
 /// ANSI color codes for diff output.
@@ -342,11 +347,38 @@ fn load_diff_attr_rules(
         return Ok(Some(rules));
     }
 
-    if let Some(wt) = work_tree {
-        return Ok(Some(grit_lib::crlf::load_gitattributes(wt)));
-    }
+    let mut rules = if let Some(wt) = work_tree {
+        grit_lib::crlf::load_gitattributes(wt)
+    } else {
+        Vec::new()
+    };
 
-    Ok(None)
+    append_core_attributes_rules(config, &mut rules);
+
+    if rules.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(rules))
+    }
+}
+
+/// Append rules from `core.attributesFile` when configured.
+fn append_core_attributes_rules(
+    config: Option<&grit_lib::config::ConfigSet>,
+    rules: &mut Vec<grit_lib::crlf::AttrRule>,
+) {
+    let Some(config) = config else {
+        return;
+    };
+    let Some(path) = config.get("core.attributesfile") else {
+        return;
+    };
+    if path.is_empty() {
+        return;
+    }
+    if let Ok(content) = std::fs::read_to_string(Path::new(&path)) {
+        rules.extend(grit_lib::crlf::parse_gitattributes_content(&content));
+    }
 }
 
 /// Arguments for `grit diff`.
@@ -1408,6 +1440,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.irreversible_delete,
                 &src_prefix,
                 &dst_prefix,
+                args.no_textconv,
                 cli_algorithm_choice,
             )?;
         }
@@ -1548,19 +1581,41 @@ fn run_no_index(args: &Args) -> Result<()> {
     let cli_no_index_algorithm = cli_diff_algorithm_choice(&raw_args, args);
     let mut no_index_algorithm = cli_no_index_algorithm.unwrap_or(DiffAlgorithmChoice::Myers);
     let mut no_index_funcname_matcher = None;
-    if let Ok(repo) = Repository::discover(None) {
-        let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
-        let rules = match load_diff_attr_rules(&repo, config.as_ref(), repo.work_tree.as_deref()) {
-            Ok(rules) => rules,
+    let discovered_repo = Repository::discover(None).ok();
+    let no_index_work_tree = discovered_repo
+        .as_ref()
+        .and_then(|repo| repo.work_tree.as_deref());
+    let no_index_config = if let Some(repo) = discovered_repo.as_ref() {
+        grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok()
+    } else {
+        grit_lib::config::ConfigSet::load(None, true).ok()
+    };
+    let mut no_index_rules = if let Some(repo) = discovered_repo.as_ref() {
+        match load_diff_attr_rules(repo, no_index_config.as_ref(), no_index_work_tree) {
+            Ok(rules) => rules.unwrap_or_default(),
             Err(err) => {
                 eprintln!("error: {err}");
                 std::process::exit(128);
             }
-        };
+        }
+    } else {
+        Vec::new()
+    };
+    if discovered_repo.is_none() {
+        append_core_attributes_rules(no_index_config.as_ref(), &mut no_index_rules);
+    }
+    let no_index_rules_opt = if no_index_rules.is_empty() {
+        None
+    } else {
+        Some(no_index_rules.as_slice())
+    };
 
-        if let (Some(config), Some(rules), Some(work_tree)) =
-            (&config, &rules, repo.work_tree.as_deref())
-        {
+    if let (Some(config), Some(rules), Some(work_tree)) = (
+        no_index_config.as_ref(),
+        no_index_rules_opt,
+        no_index_work_tree,
+    ) {
+        if discovered_repo.is_some() {
             if let Some(err) = validate_funcname_patterns_for_no_index_paths_with_rules(
                 config, rules, work_tree, paths[0], paths[1],
             ) {
@@ -1576,24 +1631,24 @@ fn run_no_index(args: &Args) -> Result<()> {
                 }
             }
         }
+    }
 
-        if cli_no_index_algorithm.is_none() {
+    if cli_no_index_algorithm.is_none() {
+        no_index_algorithm = resolve_diff_algorithm_for_path(
+            None,
+            no_index_config.as_ref(),
+            no_index_rules_opt,
+            no_index_work_tree,
+            paths[0],
+        );
+        if no_index_algorithm == DiffAlgorithmChoice::Myers {
             no_index_algorithm = resolve_diff_algorithm_for_path(
                 None,
-                config.as_ref(),
-                rules.as_deref(),
-                repo.work_tree.as_deref(),
-                paths[0],
+                no_index_config.as_ref(),
+                no_index_rules_opt,
+                no_index_work_tree,
+                paths[1],
             );
-            if no_index_algorithm == DiffAlgorithmChoice::Myers {
-                no_index_algorithm = resolve_diff_algorithm_for_path(
-                    None,
-                    config.as_ref(),
-                    rules.as_deref(),
-                    repo.work_tree.as_deref(),
-                    paths[1],
-                );
-            }
         }
     }
 
@@ -1628,8 +1683,26 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
 
+    let mut patch_data_a = data_a.clone();
+    let mut patch_data_b = data_b.clone();
+    if !args.no_textconv && !args.binary {
+        if let (Some(config), Some(rules)) = (no_index_config.as_ref(), no_index_rules_opt) {
+            if let Some(spec) = textconv_spec_for_path(config, rules, no_index_work_tree, paths[0])
+            {
+                let old_converted = apply_textconv(&spec.program, &data_a);
+                let new_converted = apply_textconv(&spec.program, &data_b);
+                if let (Some(old_conv), Some(new_conv)) = (old_converted, new_converted) {
+                    patch_data_a = old_conv;
+                    patch_data_b = new_conv;
+                }
+            }
+        }
+    }
+
     let text_a = String::from_utf8_lossy(&data_a);
     let text_b = String::from_utf8_lossy(&data_b);
+    let patch_text_a = String::from_utf8_lossy(&patch_data_a).into_owned();
+    let patch_text_b = String::from_utf8_lossy(&patch_data_b).into_owned();
     let context_lines = args.unified.unwrap_or(3);
 
     let stdout = io::stdout();
@@ -1707,8 +1780,8 @@ fn run_no_index(args: &Args) -> Result<()> {
 
     let diff_output = if ws_mode.any() {
         no_index_unified_diff_with_ws_mode(
-            &text_a,
-            &text_b,
+            &patch_text_a,
+            &patch_text_b,
             paths[0],
             paths[1],
             context_lines,
@@ -1716,8 +1789,8 @@ fn run_no_index(args: &Args) -> Result<()> {
         )
     } else if use_anchored {
         anchored_unified_diff(
-            &text_a,
-            &text_b,
+            &patch_text_a,
+            &patch_text_b,
             paths[0],
             paths[1],
             context_lines,
@@ -1725,8 +1798,8 @@ fn run_no_index(args: &Args) -> Result<()> {
         )
     } else {
         grit_lib::diff::unified_diff_with_prefix_and_funcname_and_algorithm(
-            &text_a,
-            &text_b,
+            &patch_text_a,
+            &patch_text_b,
             paths[0],
             paths[1],
             context_lines,
@@ -2460,18 +2533,34 @@ fn compute_rewrite_dissimilarity_from_content(old_data: &[u8], new_data: &[u8]) 
     Some(100u32.saturating_sub(similarity))
 }
 
-/// Resolve textconv program for a path from `.gitattributes` + `diff.<driver>.textconv`.
-fn textconv_program_for_path(
-    repo: &Repository,
+/// Textconv settings resolved for a specific path.
+#[derive(Debug, Clone)]
+struct TextconvSpec {
+    driver: String,
+    program: String,
+    cache_enabled: bool,
+}
+
+/// Resolve textconv settings for a path from `.gitattributes` + config.
+fn textconv_spec_for_path(
+    config: &grit_lib::config::ConfigSet,
+    rules: &[grit_lib::crlf::AttrRule],
     work_tree: Option<&Path>,
     path: &str,
-) -> Option<String> {
-    let wt = work_tree?;
-    let rules = grit_lib::crlf::load_gitattributes(wt);
-    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok()?;
-    let attrs = grit_lib::crlf::get_file_attrs(&rules, path, &config);
+) -> Option<TextconvSpec> {
+    let attrs_path = path_for_attr_lookup_opt(path, work_tree);
+    let attrs = grit_lib::crlf::get_file_attrs(rules, &attrs_path, config);
     let driver = attrs.diff_driver?;
-    config.get(&format!("diff.{driver}.textconv"))
+    let program = config.get(&format!("diff.{driver}.textconv"))?;
+    let cache_enabled = config
+        .get_bool(&format!("diff.{driver}.cachetextconv"))
+        .and_then(Result::ok)
+        .unwrap_or(false);
+    Some(TextconvSpec {
+        driver,
+        program,
+        cache_enabled,
+    })
 }
 
 /// Resolve whether a path is forced binary by `diff.<driver>.binary=true`.
@@ -2499,6 +2588,129 @@ fn mode_is_symlink(mode: &str) -> bool {
     u32::from_str_radix(mode, 8).ok() == Some(0o120000)
 }
 
+/// Build the notes ref used for textconv cache entries.
+fn textconv_notes_ref(driver: &str) -> String {
+    format!("refs/notes/textconv/{driver}")
+}
+
+/// Build note payload stored under textconv cache notes.
+fn textconv_cache_note_payload(program: &str, converted: &[u8]) -> Vec<u8> {
+    let mut payload = format!("program {program}\n\n").into_bytes();
+    payload.extend_from_slice(converted);
+    payload
+}
+
+/// Parse cached note payload if it matches the currently configured program.
+fn parse_textconv_cache_note_payload(program: &str, note_payload: &[u8]) -> Option<Vec<u8>> {
+    let header = format!("program {program}\n\n");
+    note_payload
+        .strip_prefix(header.as_bytes())
+        .map(std::borrow::ToOwned::to_owned)
+}
+
+/// Read tree entries and parent commit for a notes ref.
+fn read_notes_tree_entries(
+    repo: &Repository,
+    notes_ref: &str,
+) -> Option<(Option<ObjectId>, Vec<TreeEntry>)> {
+    let parent = resolve_ref(&repo.git_dir, notes_ref).ok();
+    let Some(parent_oid) = parent else {
+        return Some((None, Vec::new()));
+    };
+    let commit_obj = repo.odb.read(&parent_oid).ok()?;
+    if commit_obj.kind != ObjectKind::Commit {
+        return None;
+    }
+    let commit = parse_commit(&commit_obj.data).ok()?;
+    let tree_obj = repo.odb.read(&commit.tree).ok()?;
+    if tree_obj.kind != ObjectKind::Tree {
+        return None;
+    }
+    let entries = parse_tree(&tree_obj.data).ok()?;
+    Some((Some(parent_oid), entries))
+}
+
+/// Read cached textconv output for an object and program from notes.
+fn read_textconv_cache(
+    repo: &Repository,
+    notes_ref: &str,
+    object_oid: &ObjectId,
+    program: &str,
+) -> Option<Vec<u8>> {
+    if *object_oid == zero_oid() {
+        return Some(Vec::new());
+    }
+    let (_, entries) = read_notes_tree_entries(repo, notes_ref)?;
+    let target_name = object_oid.to_hex();
+    let note_entry = entries
+        .iter()
+        .find(|entry| entry.name == target_name.as_bytes())?;
+    let note_blob = repo.odb.read(&note_entry.oid).ok()?;
+    if note_blob.kind != ObjectKind::Blob {
+        return None;
+    }
+    parse_textconv_cache_note_payload(program, &note_blob.data)
+}
+
+/// Build an ident string for writing textconv cache notes commits.
+fn textconv_cache_ident(config: &grit_lib::config::ConfigSet) -> String {
+    let name = config.get("user.name").unwrap_or_else(|| "Grit".to_owned());
+    let email = config
+        .get("user.email")
+        .unwrap_or_else(|| "grit@example.com".to_owned());
+    let now = OffsetDateTime::now_utc();
+    let epoch = now.unix_timestamp();
+    format!("{name} <{email}> {epoch} +0000")
+}
+
+/// Update textconv cache notes for an object.
+fn write_textconv_cache(
+    repo: &Repository,
+    config: &grit_lib::config::ConfigSet,
+    notes_ref: &str,
+    object_oid: &ObjectId,
+    payload: &[u8],
+) -> Option<()> {
+    if *object_oid == zero_oid() {
+        return Some(());
+    }
+
+    let (parent, mut entries) = read_notes_tree_entries(repo, notes_ref)?;
+    let note_blob_oid = repo.odb.write(ObjectKind::Blob, payload).ok()?;
+    let target_name = object_oid.to_hex().into_bytes();
+
+    if let Some(existing) = entries.iter_mut().find(|entry| entry.name == target_name) {
+        existing.mode = 0o100644;
+        existing.oid = note_blob_oid;
+    } else {
+        entries.push(TreeEntry {
+            mode: 0o100644,
+            name: target_name,
+            oid: note_blob_oid,
+        });
+    }
+
+    entries
+        .sort_by(|a, b| tree_entry_cmp(&a.name, a.mode == 0o040000, &b.name, b.mode == 0o040000));
+
+    let tree_data = serialize_tree(&entries);
+    let tree_oid = repo.odb.write(ObjectKind::Tree, &tree_data).ok()?;
+    let ident = textconv_cache_ident(config);
+    let commit = CommitData {
+        tree: tree_oid,
+        parents: parent.into_iter().collect(),
+        author: ident.clone(),
+        committer: ident,
+        encoding: None,
+        message: "update textconv cache\n".to_owned(),
+        raw_message: None,
+    };
+    let commit_data = serialize_commit(&commit);
+    let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_data).ok()?;
+    write_ref(&repo.git_dir, notes_ref, &commit_oid).ok()?;
+    Some(())
+}
+
 /// Run configured textconv command against bytes and return converted output.
 fn apply_textconv(program: &str, content: &[u8]) -> Option<Vec<u8>> {
     let unique = std::time::SystemTime::now()
@@ -2521,6 +2733,33 @@ fn apply_textconv(program: &str, content: &[u8]) -> Option<Vec<u8>> {
     } else {
         None
     }
+}
+
+/// Apply textconv using notes-backed cache when enabled.
+fn apply_textconv_with_cache(
+    repo: &Repository,
+    config: &grit_lib::config::ConfigSet,
+    spec: &TextconvSpec,
+    object_oid: &ObjectId,
+    content: &[u8],
+) -> Option<Vec<u8>> {
+    if *object_oid == zero_oid() {
+        return Some(Vec::new());
+    }
+
+    let notes_ref = textconv_notes_ref(&spec.driver);
+    if spec.cache_enabled {
+        if let Some(cached) = read_textconv_cache(repo, &notes_ref, object_oid, &spec.program) {
+            return Some(cached);
+        }
+    }
+
+    let converted = apply_textconv(&spec.program, content)?;
+    if spec.cache_enabled {
+        let payload = textconv_cache_note_payload(&spec.program, &converted);
+        let _ = write_textconv_cache(repo, config, &notes_ref, object_oid, &payload);
+    }
+    Some(converted)
 }
 
 /// Return true for escaped-octal payloads like `\00\01\02...`.
@@ -2835,10 +3074,12 @@ fn write_patch_with_prefix(
     irreversible_delete: bool,
     src_prefix: &str,
     dst_prefix: &str,
+    no_textconv: bool,
     cli_algorithm_choice: Option<DiffAlgorithmChoice>,
 ) -> Result<()> {
     let patch_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
-    let patch_rules = load_diff_attr_rules(repo, patch_config.as_ref(), work_tree)?;
+    let attrs_work_tree = repo.work_tree.as_deref().or(work_tree);
+    let patch_rules = load_diff_attr_rules(repo, patch_config.as_ref(), attrs_work_tree)?;
 
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
@@ -2865,7 +3106,7 @@ fn write_patch_with_prefix(
             cli_algorithm_choice,
             patch_config.as_ref(),
             patch_rules.as_deref(),
-            work_tree,
+            attrs_work_tree,
             entry.path(),
         );
 
@@ -2901,54 +3142,76 @@ fn write_patch_with_prefix(
                 .as_ref()
                 .zip(patch_rules.as_deref())
                 .is_some_and(|(config, rules)| {
-                    binary_driver_for_path(config, rules, work_tree, old_path)
+                    binary_driver_for_path(config, rules, attrs_work_tree, old_path)
                 });
         let treat_new_as_binary_by_driver = !mode_is_symlink(&entry.new_mode)
             && patch_config
                 .as_ref()
                 .zip(patch_rules.as_deref())
                 .is_some_and(|(config, rules)| {
-                    binary_driver_for_path(config, rules, work_tree, new_path)
+                    binary_driver_for_path(config, rules, attrs_work_tree, new_path)
                 });
+
+        let textconv_spec = if no_textconv || show_binary {
+            None
+        } else {
+            patch_config
+                .as_ref()
+                .zip(patch_rules.as_deref())
+                .and_then(|(config, rules)| {
+                    textconv_spec_for_path(config, rules, attrs_work_tree, entry.path())
+                })
+        };
+        if let Some(spec) = textconv_spec {
+            if let Some(config) = patch_config.as_ref() {
+                let old_converted = apply_textconv_with_cache(
+                    repo,
+                    config,
+                    &spec,
+                    &entry.old_oid,
+                    &old_content_raw,
+                );
+                let new_converted = apply_textconv_with_cache(
+                    repo,
+                    config,
+                    &spec,
+                    &entry.new_oid,
+                    &new_content_raw,
+                );
+                if let (Some(old_conv), Some(new_conv)) = (old_converted, new_converted) {
+                    let old_text = String::from_utf8_lossy(&old_conv).into_owned();
+                    let new_text = String::from_utf8_lossy(&new_conv).into_owned();
+                    let patch = grit_lib::diff::unified_diff_with_prefix_and_funcname_and_algorithm(
+                        &old_text,
+                        &new_text,
+                        display_old,
+                        display_new,
+                        context_lines,
+                        src_prefix,
+                        dst_prefix,
+                        funcname_matcher.as_ref(),
+                        algorithm.to_similar(),
+                    );
+                    let patch = if suppress_blank_empty {
+                        strip_blank_context_trailing_space(&patch)
+                    } else {
+                        patch
+                    };
+                    if use_color {
+                        write_colored_patch(out, &patch)?;
+                    } else {
+                        write!(out, "{patch}")?;
+                    }
+                    continue;
+                }
+            }
+        }
 
         if treat_old_as_binary_by_driver
             || treat_new_as_binary_by_driver
             || is_binary(&old_content_raw)
             || is_binary(&new_content_raw)
         {
-            if !show_binary {
-                if let Some(program) = textconv_program_for_path(repo, work_tree, entry.path()) {
-                    let old_converted = apply_textconv(&program, &old_content_raw);
-                    let new_converted = apply_textconv(&program, &new_content_raw);
-                    if let (Some(old_conv), Some(new_conv)) = (old_converted, new_converted) {
-                        let old_text = String::from_utf8_lossy(&old_conv).into_owned();
-                        let new_text = String::from_utf8_lossy(&new_conv).into_owned();
-                        let patch =
-                            grit_lib::diff::unified_diff_with_prefix_and_funcname_and_algorithm(
-                                &old_text,
-                                &new_text,
-                                display_old,
-                                display_new,
-                                context_lines,
-                                src_prefix,
-                                dst_prefix,
-                                funcname_matcher.as_ref(),
-                                algorithm.to_similar(),
-                            );
-                        let patch = if suppress_blank_empty {
-                            strip_blank_context_trailing_space(&patch)
-                        } else {
-                            patch
-                        };
-                        if use_color {
-                            write_colored_patch(out, &patch)?;
-                        } else {
-                            write!(out, "{patch}")?;
-                        }
-                        continue;
-                    }
-                }
-            }
             if show_binary {
                 // --binary: output a "GIT binary patch" block
                 write_git_binary_patch(
@@ -3056,6 +3319,7 @@ pub(crate) fn write_patch_from_pairs(
         false,
         "a/",
         "b/",
+        false,
         None,
     )
 }
