@@ -2,6 +2,9 @@
 
 **Updated:** 2026-04-07
 
+- `./scripts/run-tests.sh t4212-log-corrupt.sh`: 3/13 passing (baseline for newly claimed in-progress Diff target `t4212`).
+- `bash scripts/run-upstream-tests.sh t4212-log-corrupt`: 3/13 passing in isolated upstream harness.
+
 - `cargo build --release`: passes (rebuild after `t4208` magic pathspec/revision disambiguation updates in `log`, `rev_parse`, and shared pathspec matching).
 - `bash scripts/run-upstream-tests.sh t4208-log-magic-pathspec`: 21/21 passing in isolated upstream harness.
 - `./scripts/run-tests.sh t4208-log-magic-pathspec.sh`: 21/21 passing; `data/file-results.tsv` refreshed.
