@@ -10,6 +10,9 @@
 - `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes outside scoped files reverted).
 - `cargo test -p grit-lib --lib`: passes (96/96).
 
+- `./scripts/run-tests.sh t4067-diff-partial-clone.sh`: 0/9 passing (baseline for newly claimed in-progress Diff target `t4067`).
+- `bash scripts/run-upstream-tests.sh t4067-diff-partial-clone`: 2/9 passing in isolated upstream harness (current failures cluster around partial-clone blob prefetch batching and trace packet expectations).
+
 - `./scripts/run-tests.sh t4120-apply-popt.sh`: 3/12 passing (baseline for newly claimed in-progress Diff target `t4120`).
 - `bash scripts/run-upstream-tests.sh t4120-apply-popt`: 5/12 passing.
 

@@ -470,7 +470,7 @@ commit → check it off → move on.
 - [x] `t4008-diff-break-rewrite` ████████████████████ 14/14 (0 left) — Break and then rename (`diff-index` now supports `-B/--break-rewrites` parsing, typechange raw status `T`, and break-rewrite aware rename/copy synthesis so `-B`, `-B -M`, and `-B -C` flows match upstream expectations across rewrite, swap, typechange, and rename-edit scenarios)
 
 - [x] `t4120-apply-popt` ████████████████████ 12/12 (0 left) — git apply `-p<n>` handling (`apply` now validates non-negative numeric `-p` values with git-compatible diagnostics, validates over-stripped paths with `removing <n> leading pathname component(s)` errors across regular and escaped paths, and correctly applies mode-only and rename patches after strip-prefix rewriting in authoritative upstream harness; local mirror still reports 8/12 due simplified `tests/test-lib.sh` helper behavior)
-- [ ] `t4067-diff-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/9 (9 left) — behavior of diff when reading objects in a partial clone
+- [~] `t4067-diff-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/9 (9 left) — behavior of diff when reading objects in a partial clone
 - [ ] `t4208-log-magic-pathspec` ██████████░░░░░░░░░░ 11/21 (10 left) — magic pathspec tests using git-log
 - [ ] `t4212-log-corrupt` ████░░░░░░░░░░░░░░░░ 3/13 (10 left) — git log with invalid commit headers
 - [ ] `t4128-apply-root` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — apply same filename
