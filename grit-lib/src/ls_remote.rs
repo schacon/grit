@@ -93,6 +93,15 @@ pub fn ls_remote(git_dir: &Path, odb: &Odb, opts: &Options) -> Result<Vec<RefEnt
     }
 
     for (name, oid) in &all_refs {
+        // Branch names should not themselves begin with "refs/".
+        // If such refs exist due to malformed local state, hide them to
+        // match upload-pack style advertised refs.
+        if let Some(branch_tail) = name.strip_prefix("refs/heads/") {
+            if branch_tail.starts_with("refs/") {
+                continue;
+            }
+        }
+
         if opts.heads && !name.starts_with("refs/heads/") {
             continue;
         }

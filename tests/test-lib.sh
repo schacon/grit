@@ -123,8 +123,8 @@ PATH="$TEST_DIRECTORY:$PATH"
 setup_trash
 
 # Persist test_tick across subshell boundaries via a state file.
-# Store inside .git/ so the file is never tracked by git.
-_TICK_FILE="$TRASH_DIRECTORY/.git/.test_tick"
+# Use the trash root so tests can temporarily replace .git with a gitfile.
+_TICK_FILE="$TRASH_DIRECTORY/.test_tick"
 
 test_tick () {
 	if test -z "${test_tick+set}"

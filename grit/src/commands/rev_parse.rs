@@ -6,6 +6,7 @@ use grit_lib::rev_parse::{
     abbreviate_object_id, abbreviate_ref_name, discover_optional, is_inside_git_dir,
     is_inside_work_tree, resolve_revision, show_prefix, symbolic_full_name,
 };
+use grit_lib::repo::Repository;
 use std::env;
 
 /// Arguments for `grit rev-parse`.
@@ -277,6 +278,9 @@ pub fn run(args: Args) -> Result<()> {
     // Check if we have any actions at all
     let has_output_actions = actions.iter().any(|a| !matches!(a, Action::PathSeparator));
     if !has_output_actions {
+        // Match git behavior: plain `git rev-parse` still requires repository
+        // setup and should fail for invalid/missing gitdir state.
+        let _ = Repository::discover(None)?;
         return Ok(());
     }
 

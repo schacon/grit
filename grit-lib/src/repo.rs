@@ -361,11 +361,14 @@ fn parse_gitfile(content: &str, base: &Path) -> Result<PathBuf> {
             } else {
                 base.join(rel)
             };
+            if !path.exists() {
+                return Err(Error::NotARepository(path.display().to_string()));
+            }
             return Ok(path);
         }
     }
     Err(Error::NotARepository(
-        "invalid gitfile format: missing 'gitdir:' line".to_owned(),
+        "invalid gitfile format".to_owned(),
     ))
 }
 

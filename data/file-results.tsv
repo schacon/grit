@@ -1,7 +1,7 @@
 file	ported	total_tests	passing	failing	status	real_pass	real_total	expect_failure
 t0000-basic	yes	92	26	66	ok	18	84	8
 t0001-init	yes	102	54	48	ok	54	102	0
-t0002-gitfile	yes	14	8	6	ok	8	14	0
+t0002-gitfile	yes	14	14	0	ok	14	14	0
 t0003-attributes	yes	55	15	40	ok	15	55	0
 t0004-unwritable	yes	9	9	0	ok	9	9	0
 t0005-signals	yes	5	5	0	ok	5	5	0
