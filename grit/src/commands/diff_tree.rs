@@ -215,6 +215,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     opts.format = OutputFormat::Patch;
                     opts.patch_with_raw = true;
                 }
+                "--binary" => {
+                    opts.format = OutputFormat::Patch;
+                }
                 "--pretty" | "--pretty=medium" => opts.pretty = Some("medium".to_string()),
                 _ if arg.starts_with("--pretty=") => {
                     let val = &arg["--pretty=".len()..];

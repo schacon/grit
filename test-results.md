@@ -13,6 +13,14 @@
 - `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in files outside scope reverted).
 - `cargo test -p grit-lib --lib`: passes (96/96).
 
+- `cargo build --release`: passes (rebuild after `t4114` typechange updates in `apply` and option parsing in `diff-tree`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4114-apply-typechange.sh` (from `tests/`): 12/12 passing.
+- `./scripts/run-tests.sh t4114-apply-typechange.sh`: 12/12 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4114-apply-typechange`: 12/12 passing in isolated upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in files outside scope reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after `am` keep-cr CRLF handling updates across option parsing, mbox decoding, patch parsing, hunk matching, and 3-way fallback validation).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4253-am-keep-cr-dos.sh` (from `tests/`): 7/7 passing.
 - `./scripts/run-tests.sh t4253-am-keep-cr-dos.sh`: 7/7 passing; `data/file-results.tsv` refreshed.

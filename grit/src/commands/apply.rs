@@ -849,10 +849,10 @@ fn adjust_path(path: &str, strip: usize, directory: Option<&str>) -> String {
     }
 }
 
-fn path_has_symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Result<()> {
+fn symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Option<String> {
     let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
     if components.len() <= 1 {
-        return Ok(());
+        return None;
     }
 
     let mut prefix = PathBuf::new();
@@ -868,26 +868,47 @@ fn path_has_symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) 
                     .unwrap_or(false)
             });
         if is_symlink {
-            bail!("{path}: beyond a symbolic link");
+            return Some(prefix_str);
         }
     }
-    Ok(())
+    None
 }
 
 fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> Result<()> {
     let mut symlink_overlay: HashMap<String, bool> = HashMap::new();
+    let mut replaced_directories_with_symlink: HashMap<String, bool> = HashMap::new();
 
     for fp in patches {
         if let Some(source) = fp.source_path() {
             let source_adjusted = adjust_path(source, args.strip, args.directory.as_deref());
             if !source_adjusted.is_empty() {
-                path_has_symlink_prefix(&source_adjusted, &symlink_overlay)?;
+                if let Some(prefix) = symlink_prefix(&source_adjusted, &symlink_overlay) {
+                    let allow_delete_under_replaced_dir = fp.is_deleted
+                        && source_adjusted.starts_with(&format!("{prefix}/"))
+                        && replaced_directories_with_symlink
+                            .get(&prefix)
+                            .copied()
+                            .unwrap_or(false);
+                    if !allow_delete_under_replaced_dir {
+                        bail!("{source_adjusted}: beyond a symbolic link");
+                    }
+                }
             }
         }
         if let Some(target) = fp.target_path() {
             let target_adjusted = adjust_path(target, args.strip, args.directory.as_deref());
             if !target_adjusted.is_empty() {
-                path_has_symlink_prefix(&target_adjusted, &symlink_overlay)?;
+                if let Some(prefix) = symlink_prefix(&target_adjusted, &symlink_overlay) {
+                    let allow_delete_under_replaced_dir = fp.is_deleted
+                        && target_adjusted.starts_with(&format!("{prefix}/"))
+                        && replaced_directories_with_symlink
+                            .get(&prefix)
+                            .copied()
+                            .unwrap_or(false);
+                    if !allow_delete_under_replaced_dir {
+                        bail!("{target_adjusted}: beyond a symbolic link");
+                    }
+                }
             }
         }
 
@@ -899,6 +920,8 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
             .target_path()
             .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
             .unwrap_or_default();
+        let target_is_existing_dir =
+            !target_adjusted.is_empty() && Path::new(&target_adjusted).is_dir();
 
         if fp.is_deleted {
             if !source_adjusted.is_empty() {
@@ -913,6 +936,9 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
 
         if !target_adjusted.is_empty() {
             if fp.new_mode.as_deref() == Some("120000") {
+                if target_is_existing_dir {
+                    replaced_directories_with_symlink.insert(target_adjusted.clone(), true);
+                }
                 symlink_overlay.insert(target_adjusted, true);
             } else if fp.new_mode.is_some() || fp.is_new {
                 symlink_overlay.insert(target_adjusted, false);
@@ -1865,21 +1891,36 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
     Ok(())
 }
 
+fn read_symlink_target_bytes(path: &Path) -> Result<Vec<u8>> {
+    let target = fs::read_link(path)
+        .with_context(|| format!("failed to read symlink target {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(target.as_os_str().as_bytes().to_vec())
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(target.to_string_lossy().into_owned().into_bytes())
+    }
+}
+
 fn read_worktree_content_for_index(path: &Path, mode: u32) -> Result<Vec<u8>> {
     if mode == grit_lib::index::MODE_SYMLINK {
-        let target = fs::read_link(path)
-            .with_context(|| format!("failed to read symlink target {}", path.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::ffi::OsStrExt;
-            return Ok(target.as_os_str().as_bytes().to_vec());
-        }
-        #[cfg(not(unix))]
-        {
-            return Ok(target.to_string_lossy().into_owned().into_bytes());
-        }
+        return read_symlink_target_bytes(path);
     }
     fs::read(path).with_context(|| format!("failed to read {}", path.display()))
+}
+
+fn read_worktree_blob_as_text(path: &Path) -> io::Result<String> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        let target =
+            read_symlink_target_bytes(path).map_err(|err| io::Error::other(err.to_string()))?;
+        return Ok(String::from_utf8_lossy(&target).into_owned());
+    }
+    let bytes = fs::read(path)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Remove empty directories upward from path.
@@ -1894,6 +1935,86 @@ fn remove_empty_dirs_up(dir: &Path) {
             None => break,
         }
     }
+}
+
+fn remove_path_for_replacement(path: &Path) -> Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(());
+        }
+        Err(err) => return Err(err).with_context(|| format!("failed to stat {}", path.display())),
+    };
+    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(path)
+            .with_context(|| format!("failed to remove directory {}", path.display()))?;
+    } else {
+        fs::remove_file(path).with_context(|| format!("failed to remove {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn target_is_inside_source(target: &Path, source: &Path) -> bool {
+    target
+        .strip_prefix(source)
+        .map(|suffix| !suffix.as_os_str().is_empty())
+        .unwrap_or(false)
+}
+
+fn write_worktree_path(
+    path: &Path,
+    content: &str,
+    mode: Option<&str>,
+    source_exec_bit: Option<bool>,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    if mode == Some("120000") {
+        remove_path_for_replacement(path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink(content, path)
+                .with_context(|| format!("failed to create symlink {}", path.display()))?;
+            return Ok(());
+        }
+        #[cfg(not(unix))]
+        {
+            fs::write(path, content.as_bytes())
+                .with_context(|| format!("failed to write {}", path.display()))?;
+            return Ok(());
+        }
+    }
+
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+            .with_context(|| format!("failed to remove directory {}", path.display()))?;
+    }
+    fs::write(path, content.as_bytes())
+        .with_context(|| format!("failed to write {}", path.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(mode) = mode {
+            let perm = if mode == "100755" { 0o755 } else { 0o644 };
+            fs::set_permissions(path, fs::Permissions::from_mode(perm))?;
+        } else if let Some(executable) = source_exec_bit {
+            let perm = if executable { 0o755 } else { 0o644 };
+            fs::set_permissions(path, fs::Permissions::from_mode(perm))?;
+        }
+    }
+
+    Ok(())
 }
 
 fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<()> {
@@ -1978,6 +2099,9 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
 
         if fp.is_deleted {
             if !source_exists_now {
+                if source_existed_initially {
+                    continue;
+                }
                 bail!(
                     "failed to read {}: No such file or directory (os error 2)",
                     source_adjusted
@@ -1996,7 +2120,11 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
                 .copied()
                 .unwrap_or_else(|| Path::new(&target_adjusted).exists());
             if target_exists_now {
-                bail!("{target_adjusted}: already exists");
+                if Path::new(&target_adjusted).is_dir() {
+                    set_path_and_descendants_state(&mut current_exists, &target_adjusted, false);
+                } else {
+                    bail!("{target_adjusted}: already exists");
+                }
             }
             current_exists.insert(target_adjusted.clone(), true);
             continue;
@@ -2061,7 +2189,7 @@ fn apply_to_worktree(
         if source_adjusted == target_adjusted || source_snapshots.contains_key(&source_adjusted) {
             continue;
         }
-        if let Ok(content) = fs::read_to_string(&source_adjusted) {
+        if let Ok(content) = read_worktree_blob_as_text(Path::new(&source_adjusted)) {
             source_snapshots.insert(source_adjusted, content);
         }
     }
@@ -2096,25 +2224,10 @@ fn apply_to_worktree(
                 fs::create_dir_all(&path)?;
                 continue;
             }
-            // Create new file
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() && !parent.exists() {
-                    fs::create_dir_all(parent)?;
-                }
-            }
             let content = apply_hunks("", &fp.hunks, ws_mode).with_context(|| {
                 format!("failed to apply hunks for new file {}", path.display())
             })?;
-            fs::write(&path, content.as_bytes())
-                .with_context(|| format!("failed to write {}", path.display()))?;
-
-            // Set executable if mode is 100755
-            #[cfg(unix)]
-            if fp.new_mode.as_deref() == Some("100755") {
-                use std::os::unix::fs::PermissionsExt;
-                let perms = fs::Permissions::from_mode(0o755);
-                fs::set_permissions(&path, perms)?;
-            }
+            write_worktree_path(&path, &content, fp.new_mode.as_deref(), None)?;
             continue;
         }
 
@@ -2125,8 +2238,10 @@ fn apply_to_worktree(
             .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
             .unwrap_or_else(|| path_adjusted.clone());
         let read_path = PathBuf::from(&source_adjusted);
+        let source_contains_target =
+            fp.is_rename && read_path != path && target_is_inside_source(&path, &read_path);
         let load_old_content_from_disk = || -> Result<String> {
-            match fs::read_to_string(&read_path) {
+            match read_worktree_blob_as_text(&read_path) {
                 Ok(content) => Ok(content),
                 Err(err)
                     if err.kind() == std::io::ErrorKind::NotFound
@@ -2168,6 +2283,9 @@ fn apply_to_worktree(
                 bail!("cannot apply binary patch without --binary");
             }
             let new_bytes = inflate_binary_payload(&binary_patch.forward_compressed)?;
+            if source_contains_target {
+                remove_path_for_replacement(&read_path)?;
+            }
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() && !parent.exists() {
                     fs::create_dir_all(parent)?;
@@ -2188,11 +2306,8 @@ fn apply_to_worktree(
                 }
             }
 
-            if fp.is_rename && read_path != path {
-                if read_path.exists() {
-                    fs::remove_file(&read_path)
-                        .with_context(|| format!("failed to remove {}", read_path.display()))?;
-                }
+            if fp.is_rename && read_path != path && !source_contains_target {
+                remove_path_for_replacement(&read_path)?;
                 if let Some(parent) = read_path.parent() {
                     remove_empty_dirs_up(parent);
                 }
@@ -2201,7 +2316,20 @@ fn apply_to_worktree(
         }
 
         if fp.hunks.is_empty() {
-            // Mode-only change
+            if source_adjusted != path_adjusted {
+                if source_contains_target {
+                    remove_path_for_replacement(&read_path)?;
+                }
+                write_worktree_path(&path, &old_content, fp.new_mode.as_deref(), source_exec_bit)?;
+                if fp.is_rename && read_path != path && !source_contains_target {
+                    remove_path_for_replacement(&read_path)?;
+                    if let Some(parent) = read_path.parent() {
+                        remove_empty_dirs_up(parent);
+                    }
+                }
+                continue;
+            }
+
             #[cfg(unix)]
             if let Some(mode) = fp.new_mode.as_deref() {
                 use std::os::unix::fs::PermissionsExt;
@@ -2219,25 +2347,10 @@ fn apply_to_worktree(
                 .with_context(|| format!("failed to apply patch to {}", path.display()))?;
             (content, Vec::new())
         };
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                fs::create_dir_all(parent)?;
-            }
+        if source_contains_target {
+            remove_path_for_replacement(&read_path)?;
         }
-        fs::write(&path, new_content.as_bytes())
-            .with_context(|| format!("failed to write {}", path.display()))?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Some(mode) = fp.new_mode.as_deref() {
-                let perm = if mode == "100755" { 0o755 } else { 0o644 };
-                fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
-            } else if let Some(executable) = source_exec_bit {
-                let perm = if executable { 0o755 } else { 0o644 };
-                fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
-            }
-        }
+        write_worktree_path(&path, &new_content, fp.new_mode.as_deref(), source_exec_bit)?;
 
         if !rejected_hunks.is_empty() {
             had_rejects = true;
@@ -2245,11 +2358,8 @@ fn apply_to_worktree(
             write_reject_file(&reject_path, fp, &rejected_hunks)?;
         }
 
-        if fp.is_rename && read_path != path {
-            if read_path.exists() {
-                fs::remove_file(&read_path)
-                    .with_context(|| format!("failed to remove {}", read_path.display()))?;
-            }
+        if fp.is_rename && read_path != path && !source_contains_target {
+            remove_path_for_replacement(&read_path)?;
             if let Some(parent) = read_path.parent() {
                 remove_empty_dirs_up(parent);
             }
