@@ -7,7 +7,7 @@
 | Status      | Count |
 |-------------|-------|
 | Completed   |   107 |
-| In progress |     0 |
+| In progress |     1 |
 | Remaining   |   660 |
 | **Total**   |   767 |
 

@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after unmerged-entry handling updates in `diff-files` and staged-tree conflict propagation in `grit-lib` for `t4046`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/tests/grit" bash t4046-diff-unmerged.sh` (from `tests/`): 8/8 passing.
+- `./scripts/run-tests.sh t4046-diff-unmerged.sh`: 8/8 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4046-diff-unmerged`: 8/8 passing in isolated upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in files outside scope reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after symlink-focused `diff`/`diff-index` fixes for `t4011`).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/tests/grit" bash t4011-diff-symlink.sh` (from `tests/`): 8/8 passing.
 - `./scripts/run-tests.sh t4011-diff-symlink.sh`: 8/8 passing; `data/file-results.tsv` refreshed.

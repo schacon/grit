@@ -149,6 +149,8 @@ struct Options {
     pathspecs: Vec<String>,
     /// Merge stage to diff against (0 = normal, 1–3 = unmerged stage).
     stage: u8,
+    /// Whether merge stage was explicitly set via -0/-1/-2/-3.
+    stage_explicit: bool,
     /// Suppress all output; exit 1 if any difference.
     quiet: bool,
     /// Exit 1 if differences, regardless of output format.
@@ -199,6 +201,7 @@ struct Change {
 fn parse_options(argv: &[String]) -> Result<Options> {
     let mut pathspecs = Vec::new();
     let mut stage: u8 = 0;
+    let mut stage_explicit = false;
     let mut quiet = false;
     let mut exit_code = false;
     let mut c_count = 0u32;
@@ -284,10 +287,22 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     format = OutputFormat::Patch;
                     suppress_diff = false;
                 } // TODO: also show stat
-                "-0" => stage = 0,
-                "-1" => stage = 1,
-                "-2" => stage = 2,
-                "-3" => stage = 3,
+                "-0" => {
+                    stage = 0;
+                    stage_explicit = true;
+                }
+                "-1" => {
+                    stage = 1;
+                    stage_explicit = true;
+                }
+                "-2" => {
+                    stage = 2;
+                    stage_explicit = true;
+                }
+                "-3" => {
+                    stage = 3;
+                    stage_explicit = true;
+                }
                 "-b" | "--ignore-space-change" => {
                     ignore_space_change = true;
                 }
@@ -329,6 +344,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     Ok(Options {
         pathspecs,
         stage,
+        stage_explicit,
         quiet,
         exit_code,
         abbrev,
@@ -355,6 +371,12 @@ fn collect_changes(
     work_tree: &Path,
     options: &Options,
 ) -> Result<Vec<Change>> {
+    let selected_unmerged_stage = if options.stage == 0 && !options.stage_explicit {
+        2
+    } else {
+        options.stage
+    };
+
     // Collect index entries, grouped by path.  For stage==0 we use merged
     // entries (stage 0).  For stage 1–3 we use that specific unmerged stage.
     // Paths that only have higher-stage entries and no stage-0 entry are
@@ -362,6 +384,7 @@ fn collect_changes(
     let mut stage0: BTreeMap<String, (u32, ObjectId, &IndexEntry)> = BTreeMap::new();
     let mut unmerged_paths: BTreeSet<String> = BTreeSet::new();
     let mut staged: BTreeMap<String, (u32, ObjectId)> = BTreeMap::new();
+    let mut unmerged_modes: BTreeMap<String, (u8, u32)> = BTreeMap::new();
 
     for entry in &index.entries {
         if entry.assume_unchanged() {
@@ -378,13 +401,26 @@ fn collect_changes(
             stage0.insert(path, (entry.mode, entry.oid, entry));
         } else {
             unmerged_paths.insert(path.clone());
-            if s == options.stage {
-                staged.insert(path, (entry.mode, entry.oid));
+            let rank = match s {
+                2 => 0u8,
+                3 => 1u8,
+                1 => 2u8,
+                _ => 3u8,
+            };
+            let mode = canonicalize_mode(entry.mode);
+            match unmerged_modes.get(&path) {
+                Some((existing_rank, _)) if *existing_rank <= rank => {}
+                _ => {
+                    unmerged_modes.insert(path.clone(), (rank, mode));
+                }
+            }
+            if s == selected_unmerged_stage {
+                staged.insert(path.clone(), (entry.mode, entry.oid));
             }
         }
     }
 
-    let mut changes: BTreeMap<String, Change> = BTreeMap::new();
+    let mut changes: Vec<Change> = Vec::new();
 
     if options.stage == 0 {
         // Normal mode: compare stage-0 entries against worktree.
@@ -397,30 +433,24 @@ fn collect_changes(
                     let idx_canonical = canonicalize_mode(*idx_mode);
                     if wt_oid != *idx_oid || wt_mode != idx_canonical || is_stat_smudged(idx_entry)
                     {
-                        changes.insert(
-                            path.clone(),
-                            Change {
-                                path: path.clone(),
-                                status: 'M',
-                                old_mode: idx_canonical,
-                                new_mode: wt_mode,
-                                old_oid: *idx_oid,
-                            },
-                        );
+                        changes.push(Change {
+                            path: path.clone(),
+                            status: 'M',
+                            old_mode: idx_canonical,
+                            new_mode: wt_mode,
+                            old_oid: *idx_oid,
+                        });
                     }
                 }
                 WorktreeStatus::Missing => {
                     // File missing from working tree.
-                    changes.insert(
-                        path.clone(),
-                        Change {
-                            path: path.clone(),
-                            status: 'D',
-                            old_mode: canonicalize_mode(*idx_mode),
-                            new_mode: 0,
-                            old_oid: *idx_oid,
-                        },
-                    );
+                    changes.push(Change {
+                        path: path.clone(),
+                        status: 'D',
+                        old_mode: canonicalize_mode(*idx_mode),
+                        new_mode: 0,
+                        old_oid: *idx_oid,
+                    });
                 }
             }
         }
@@ -433,51 +463,87 @@ fn collect_changes(
             if !matches_pathspec(path, &options.pathspecs) {
                 continue;
             }
-            changes.insert(
-                path.clone(),
-                Change {
-                    path: path.clone(),
-                    status: 'U',
-                    old_mode: 0,
-                    new_mode: 0,
-                    old_oid: zero_oid(),
-                },
-            );
+            let mode = unmerged_modes.get(path).map_or(0, |(_, mode)| *mode);
+            changes.push(Change {
+                path: path.clone(),
+                status: 'U',
+                old_mode: 0,
+                new_mode: mode,
+                old_oid: zero_oid(),
+            });
+
+            if !options.stage_explicit {
+                if let Some((idx_mode, idx_oid)) = staged.get(path) {
+                    let abs = work_tree.join(path);
+                    match read_worktree_info(repo, &abs)? {
+                        Some((wt_mode, _wt_oid)) => {
+                            changes.push(Change {
+                                path: path.clone(),
+                                status: 'M',
+                                old_mode: canonicalize_mode(*idx_mode),
+                                new_mode: wt_mode,
+                                old_oid: *idx_oid,
+                            });
+                        }
+                        None => {
+                            changes.push(Change {
+                                path: path.clone(),
+                                status: 'D',
+                                old_mode: canonicalize_mode(*idx_mode),
+                                new_mode: 0,
+                                old_oid: *idx_oid,
+                            });
+                        }
+                    }
+                }
+            }
         }
     } else {
-        // Stage-specific mode: compare requested stage entries against worktree.
-        for (path, (idx_mode, idx_oid)) in &staged {
-            let abs = work_tree.join(path);
-            match read_worktree_info(repo, &abs)? {
-                Some((wt_mode, _wt_oid)) => {
-                    changes.insert(
-                        path.clone(),
-                        Change {
+        // Stage-specific mode: emit unmerged entries plus a stage-vs-worktree
+        // comparison for paths that carry the requested stage.
+        for path in &unmerged_paths {
+            if stage0.contains_key(path) {
+                continue;
+            }
+            if !matches_pathspec(path, &options.pathspecs) {
+                continue;
+            }
+            let mode = unmerged_modes.get(path).map_or(0, |(_, mode)| *mode);
+            changes.push(Change {
+                path: path.clone(),
+                status: 'U',
+                old_mode: 0,
+                new_mode: mode,
+                old_oid: zero_oid(),
+            });
+
+            if let Some((idx_mode, idx_oid)) = staged.get(path) {
+                let abs = work_tree.join(path);
+                match read_worktree_info(repo, &abs)? {
+                    Some((wt_mode, _wt_oid)) => {
+                        changes.push(Change {
                             path: path.clone(),
                             status: 'M',
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: wt_mode,
                             old_oid: *idx_oid,
-                        },
-                    );
-                }
-                None => {
-                    changes.insert(
-                        path.clone(),
-                        Change {
+                        });
+                    }
+                    None => {
+                        changes.push(Change {
                             path: path.clone(),
                             status: 'D',
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: 0,
                             old_oid: *idx_oid,
-                        },
-                    );
+                        });
+                    }
                 }
             }
         }
     }
 
-    Ok(changes.into_values().collect())
+    Ok(changes)
 }
 
 /// Convert internal `Change` records to library `DiffEntry` records.
@@ -518,7 +584,7 @@ fn changes_to_diff_entries(changes: &[Change], reverse: bool) -> Vec<DiffEntry> 
                         old_path: Some(path.clone()),
                         new_path: Some(path),
                         old_mode: zero_mode.clone(),
-                        new_mode: zero_mode,
+                        new_mode,
                         old_oid: zero,
                         new_oid: zero,
                         score: None,
@@ -561,7 +627,7 @@ fn changes_to_diff_entries(changes: &[Change], reverse: bool) -> Vec<DiffEntry> 
                         old_path: Some(path.clone()),
                         new_path: Some(path),
                         old_mode: zero_mode.clone(),
-                        new_mode: zero_mode,
+                        new_mode,
                         old_oid: zero,
                         new_oid: zero,
                         score: None,

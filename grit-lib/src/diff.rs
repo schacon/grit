@@ -437,14 +437,29 @@ pub fn diff_index_to_tree(
     }
 
     let mut result = Vec::new();
+    let mut stage0_paths = std::collections::BTreeSet::new();
+    let mut unmerged_modes: std::collections::BTreeMap<String, (u8, u32)> =
+        std::collections::BTreeMap::new();
 
     // Check index entries against tree
     for ie in &index.entries {
-        // Only look at stage 0 (merged) entries
+        let path = String::from_utf8_lossy(&ie.path).to_string();
         if ie.stage() != 0 {
+            let rank = match ie.stage() {
+                2 => 0u8,
+                3 => 1u8,
+                1 => 2u8,
+                _ => 3u8,
+            };
+            match unmerged_modes.get(&path) {
+                Some((existing_rank, _)) if *existing_rank <= rank => {}
+                _ => {
+                    unmerged_modes.insert(path, (rank, ie.mode));
+                }
+            }
             continue;
         }
-        let path = String::from_utf8_lossy(&ie.path).to_string();
+        stage0_paths.insert(path.clone());
         match tree_map.remove(path.as_str()) {
             Some(te) => {
                 // Present in both — check for differences
@@ -475,6 +490,23 @@ pub fn diff_index_to_tree(
                 });
             }
         }
+    }
+
+    for (path, (_, mode)) in &unmerged_modes {
+        if stage0_paths.contains(path) {
+            continue;
+        }
+        tree_map.remove(path.as_str());
+        result.push(DiffEntry {
+            status: DiffStatus::Unmerged,
+            old_path: Some(path.clone()),
+            new_path: Some(path.clone()),
+            old_mode: "000000".to_owned(),
+            new_mode: format_mode(*mode),
+            old_oid: zero_oid(),
+            new_oid: zero_oid(),
+            score: None,
+        });
     }
 
     // Remaining tree entries not in index → deleted
