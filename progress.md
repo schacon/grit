@@ -7,8 +7,8 @@
 | Status      | Count |
 |-------------|-------|
 | Completed   |   115 |
-| In progress |     0 |
-| Remaining   |   652 |
+| In progress |     1 |
+| Remaining   |   651 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -104,4 +104,4 @@
 
 ## What Remains
 
-1 test file is currently marked in progress and 652 remain pending. See `plan.md` for the full prioritized list.
+1 test file is currently marked in progress and 651 remain pending. See `plan.md` for the full prioritized list.

@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-06
 
+- `./scripts/run-tests.sh t4008-diff-break-rewrite.sh`: 5/14 passing (baseline for newly claimed in-progress Diff target `t4008`).
+- `bash scripts/run-upstream-tests.sh t4008-diff-break-rewrite`: 5/14 passing.
+- `cargo build --release`: passes (rebuild after `diff-index` break-rewrite support and rewrite+rename/copy pairing logic updates).
+- `bash scripts/run-upstream-tests.sh t4008-diff-break-rewrite`: 14/14 passing in isolated upstream harness.
+- `./scripts/run-tests.sh t4008-diff-break-rewrite.sh`: 14/14 passing; `data/file-results.tsv` refreshed.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes outside scoped files reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `./scripts/run-tests.sh t4058-diff-duplicates.sh`: 8/16 passing (baseline for newly claimed in-progress Diff target `t4058`).
 - `bash scripts/run-upstream-tests.sh t4058-diff-duplicates`: 6/16 passing.
 - `cargo build --release`: passes (rebuild after `t4058` duplicate-tree hardening across `diff-tree`, tree flattening for diff/read-tree/reset, branch-switch handling in `checkout`, cache-tree corruption surfacing in `diff`/`status`, and global error text normalization for cache-tree corruption output).

@@ -12,7 +12,7 @@ use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
@@ -60,25 +60,36 @@ pub fn run(args: Args) -> Result<()> {
     // Convert to DiffEntry for rename detection and output.
     let diff_entries: Vec<DiffEntry> = changes.iter().map(raw_change_to_diff_entry).collect();
 
-    let diff_entries = if options.find_copies {
-        let threshold = options.find_renames.unwrap_or(50);
-        // Build source tree entries for copy detection.
-        let source_tree_entries: Vec<(String, String, ObjectId)> = tree_map
-            .iter()
-            .map(|(path, snap)| (path.clone(), format!("{:06o}", snap.mode), snap.oid))
-            .collect();
-        detect_copies(
-            &repo.odb,
-            diff_entries,
-            threshold,
-            options.find_copies_harder,
-            &source_tree_entries,
-        )
-    } else if let Some(threshold) = options.find_renames {
-        detect_renames(&repo.odb, diff_entries, threshold)
-    } else {
-        diff_entries
-    };
+    let source_tree_entries: Vec<(String, String, ObjectId)> = tree_map
+        .iter()
+        .map(|(path, snap)| (path.clone(), format!("{:06o}", snap.mode), snap.oid))
+        .collect();
+
+    let diff_entries =
+        if options.break_rewrites && (options.find_renames.is_some() || options.find_copies) {
+            let threshold = options.find_renames.unwrap_or(50);
+            apply_break_rewrites_with_detection(
+                &repo.odb,
+                diff_entries,
+                threshold,
+                options.find_copies,
+                options.find_copies_harder,
+                &source_tree_entries,
+            )
+        } else if options.find_copies {
+            let threshold = options.find_renames.unwrap_or(50);
+            detect_copies(
+                &repo.odb,
+                diff_entries,
+                threshold,
+                options.find_copies_harder,
+                &source_tree_entries,
+            )
+        } else if let Some(threshold) = options.find_renames {
+            detect_renames(&repo.odb, diff_entries, threshold)
+        } else {
+            diff_entries
+        };
 
     let diff_entries = if options.ignore_all_space {
         filter_entries_ignore_all_space(&repo, diff_entries)
@@ -329,6 +340,7 @@ struct Options {
     exit_code: bool,
     abbrev: Option<usize>,
     find_renames: Option<u32>,
+    break_rewrites: bool,
     find_copies: bool,
     find_copies_harder: bool,
     patch: bool,
@@ -376,6 +388,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut pathspecs = Vec::new();
     let mut end_of_options = false;
     let mut find_renames: Option<u32> = None;
+    let mut break_rewrites = false;
     let mut find_copies = false;
     let mut find_copies_harder = false;
     let mut c_count = 0u32;
@@ -424,6 +437,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-M" | "--find-renames" => {
                     find_renames = Some(50);
                 }
+                "-B" | "--break-rewrites" => {
+                    break_rewrites = true;
+                }
                 "--no-renames" => {
                     find_renames = None;
                 }
@@ -444,6 +460,12 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         val.parse::<u32>().unwrap_or(50)
                     };
                     find_renames = Some(pct);
+                }
+                _ if arg.starts_with("-B") => {
+                    break_rewrites = true;
+                }
+                _ if arg.starts_with("--break-rewrites=") => {
+                    break_rewrites = true;
                 }
                 _ if arg.starts_with("-l") && arg[2..].parse::<usize>().is_ok() => {
                     // rename limit - accept and ignore for now
@@ -534,6 +556,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         exit_code,
         abbrev,
         find_renames,
+        break_rewrites,
         find_copies,
         find_copies_harder,
         patch,
@@ -644,12 +667,19 @@ fn diff_tree_vs_index(
         let new = index_map.get(&path).copied();
         match (old, new) {
             (Some(old), Some(new)) if old == new => {}
-            (Some(old), Some(new)) => changes.push(RawChange {
-                path,
-                status: 'M',
-                old: Some(old),
-                new: Some(new),
-            }),
+            (Some(old), Some(new)) => {
+                let status = if mode_kind(old.mode) != mode_kind(new.mode) {
+                    'T'
+                } else {
+                    'M'
+                };
+                changes.push(RawChange {
+                    path,
+                    status,
+                    old: Some(old),
+                    new: Some(new),
+                })
+            }
             (Some(old), None) => changes.push(RawChange {
                 path,
                 status: 'D',
@@ -735,11 +765,17 @@ fn diff_tree_vs_worktree(
                         mode: worktree_snapshot.mode,
                         oid: zero_oid(),
                     };
+                    let status =
+                        if mode_kind(index_snapshot.mode) != mode_kind(worktree_snapshot.mode) {
+                            'T'
+                        } else {
+                            'M'
+                        };
                     merged.insert(
                         path.clone(),
                         RawChange {
                             path: path.clone(),
-                            status: 'M',
+                            status,
                             old,
                             new: Some(wt_placeholder),
                         },
@@ -792,6 +828,165 @@ fn canonicalize_mode(raw_mode: u32) -> u32 {
         }
         _ => MODE_REGULAR,
     }
+}
+
+fn mode_kind(mode: u32) -> u32 {
+    mode & 0o170000
+}
+
+fn synthetic_deleted_signature(entry: &DiffEntry) -> String {
+    format!(
+        "D|{}|{}|{}",
+        entry.old_path.as_deref().unwrap_or_default(),
+        entry.old_mode,
+        entry.old_oid
+    )
+}
+
+fn synthetic_added_signature(entry: &DiffEntry) -> String {
+    format!(
+        "A|{}|{}|{}",
+        entry.new_path.as_deref().unwrap_or_default(),
+        entry.new_mode,
+        entry.new_oid
+    )
+}
+
+fn build_synthetic_deleted_signature(path: &str, mode: &str, oid: &ObjectId) -> String {
+    format!("D|{path}|{mode}|{oid}")
+}
+
+fn build_synthetic_added_signature(path: &str, mode: &str, oid: &ObjectId) -> String {
+    format!("A|{path}|{mode}|{oid}")
+}
+
+fn apply_break_rewrites_with_detection(
+    odb: &Odb,
+    entries: Vec<DiffEntry>,
+    threshold: u32,
+    detect_copy: bool,
+    find_copies_harder: bool,
+    source_tree_entries: &[(String, String, ObjectId)],
+) -> Vec<DiffEntry> {
+    let mut detection_entries = Vec::new();
+    let mut synthetic_deleted = HashSet::new();
+    let mut synthetic_added = HashSet::new();
+    let mut rewritten_modified_paths = HashSet::new();
+    let mut synthetic_counterpart_add: HashMap<String, String> = HashMap::new();
+    let mut real_deleted_paths = HashSet::new();
+    let mut preserved_typechanges = Vec::new();
+
+    for entry in &entries {
+        if entry.status == DiffStatus::Deleted {
+            if let Some(path) = entry.old_path.as_deref() {
+                real_deleted_paths.insert(path.to_owned());
+            }
+        }
+    }
+
+    for entry in entries {
+        match entry.status {
+            DiffStatus::Modified | DiffStatus::TypeChanged => {
+                let old_path = entry.old_path.clone().unwrap_or_default();
+                let new_path = entry.new_path.clone().unwrap_or_default();
+                let synthetic_del = DiffEntry {
+                    status: DiffStatus::Deleted,
+                    old_path: Some(old_path.clone()),
+                    new_path: None,
+                    old_mode: entry.old_mode.clone(),
+                    new_mode: "000000".to_owned(),
+                    old_oid: entry.old_oid,
+                    new_oid: zero_oid(),
+                    score: None,
+                };
+                let synthetic_add = DiffEntry {
+                    status: DiffStatus::Added,
+                    old_path: None,
+                    new_path: Some(new_path.clone()),
+                    old_mode: "000000".to_owned(),
+                    new_mode: entry.new_mode.clone(),
+                    old_oid: zero_oid(),
+                    new_oid: entry.new_oid,
+                    score: None,
+                };
+                synthetic_deleted.insert(synthetic_deleted_signature(&synthetic_del));
+                let add_sig = synthetic_added_signature(&synthetic_add);
+                synthetic_added.insert(add_sig.clone());
+                synthetic_counterpart_add.insert(old_path.clone(), add_sig);
+                detection_entries.push(synthetic_del);
+                detection_entries.push(synthetic_add);
+                match entry.status {
+                    DiffStatus::Modified => {
+                        rewritten_modified_paths.insert(entry.path().to_owned());
+                    }
+                    DiffStatus::TypeChanged => preserved_typechanges.push(entry),
+                    _ => {}
+                }
+            }
+            _ => detection_entries.push(entry),
+        }
+    }
+
+    let detected = if detect_copy {
+        detect_copies(
+            odb,
+            detection_entries,
+            threshold,
+            find_copies_harder,
+            source_tree_entries,
+        )
+    } else {
+        detect_renames(odb, detection_entries, threshold)
+    };
+
+    let mut consumed_synthetic_added = HashSet::new();
+    for entry in &detected {
+        if matches!(entry.status, DiffStatus::Renamed | DiffStatus::Copied) {
+            let sig = build_synthetic_added_signature(
+                entry.new_path.as_deref().unwrap_or_default(),
+                &entry.new_mode,
+                &entry.new_oid,
+            );
+            if synthetic_added.contains(&sig) {
+                consumed_synthetic_added.insert(sig);
+            }
+        }
+    }
+
+    let mut final_entries = Vec::new();
+    for mut entry in detected {
+        if entry.status == DiffStatus::Deleted
+            && synthetic_deleted.contains(&synthetic_deleted_signature(&entry))
+        {
+            continue;
+        }
+        if entry.status == DiffStatus::Added
+            && synthetic_added.contains(&synthetic_added_signature(&entry))
+        {
+            continue;
+        }
+        if entry.status == DiffStatus::Modified && rewritten_modified_paths.contains(entry.path()) {
+            continue;
+        }
+        if entry.status == DiffStatus::Renamed {
+            let old_path = entry.old_path.as_deref().unwrap_or_default();
+            let old_sig =
+                build_synthetic_deleted_signature(old_path, &entry.old_mode, &entry.old_oid);
+            if synthetic_deleted.contains(&old_sig) && !real_deleted_paths.contains(old_path) {
+                let source_add_consumed = synthetic_counterpart_add
+                    .get(old_path)
+                    .is_some_and(|sig| consumed_synthetic_added.contains(sig));
+                if !source_add_consumed {
+                    entry.status = DiffStatus::Copied;
+                }
+            }
+        }
+        final_entries.push(entry);
+    }
+
+    final_entries.extend(preserved_typechanges);
+    final_entries.sort_by(|a, b| a.path().cmp(b.path()));
+    final_entries
 }
 
 fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {

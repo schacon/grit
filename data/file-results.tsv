@@ -367,7 +367,7 @@ t4004-diff-rename-symlink	yes	4	4	0	ok	4	4	0
 t4005-diff-rename-2	yes	4	4	0	ok	4	4	0
 t4006-diff-mode	yes	7	7	0	ok	7	7	0
 t4007-rename-3	yes	13	13	0	ok	13	13	0
-t4008-diff-break-rewrite	yes	14	5	9	ok	5	14	0
+t4008-diff-break-rewrite	yes	14	14	0	ok	14	14	0
 t4010-diff-pathspec	yes	17	17	0	ok	17	17	0
 t4011-diff-symlink	yes	8	8	0	ok	8	8	0
 t4012-diff-binary	yes	13	2	11	ok	2	13	0
