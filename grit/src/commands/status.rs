@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{parse_bool, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{detect_renames, diff_index_to_tree, diff_index_to_worktree, DiffStatus};
 use grit_lib::error::Error;
 use grit_lib::ignore::IgnoreMatcher;
@@ -504,9 +504,13 @@ fn format_long(
     let cp = comment_prefix;
 
     // Determine if hints should be shown
-    let show_hints = match config.get("advice.statusHints") {
-        Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
-        _ => true,
+    let show_hints = if let Ok(v) = std::env::var("GIT_ADVICE") {
+        parse_bool(&v).unwrap_or(true)
+    } else {
+        match config.get("advice.statusHints") {
+            Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
+            _ => true,
+        }
     };
 
     // Branch info
@@ -722,11 +726,15 @@ fn format_long(
         if hide_untracked {
             // When hiding untracked, don't say "working tree clean"
         } else if !ignored_files.is_empty() {
-            cpw(
-                out,
-                cp,
-                "nothing to commit but untracked files present (use \"git add\" to track)",
-            )?;
+            if show_hints {
+                cpw(
+                    out,
+                    cp,
+                    "nothing to commit but untracked files present (use \"git add\" to track)",
+                )?;
+            } else {
+                cpw(out, cp, "nothing to commit but untracked files present")?;
+            }
         } else {
             cpw(out, cp, "nothing to commit, working tree clean")?;
         }
@@ -739,11 +747,15 @@ fn format_long(
             "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
         )?;
     } else if staged.is_empty() && unstaged.is_empty() && !untracked.is_empty() {
-        cpw(
-            out,
-            cp,
-            "nothing added to commit but untracked files present (use \"git add\" to track)",
-        )?;
+        if show_hints {
+            cpw(
+                out,
+                cp,
+                "nothing added to commit but untracked files present (use \"git add\" to track)",
+            )?;
+        } else {
+            cpw(out, cp, "nothing added to commit but untracked files present")?;
+        }
     } else if staged.is_empty() {
         cpw(
             out,

@@ -552,6 +552,7 @@ struct GlobalOpts {
     change_dir: Option<PathBuf>,
     config_overrides: Vec<String>,
     bare: bool,
+    no_advice: bool,
 }
 
 /// Extract global options and return (globals, subcommand_name, remaining_args).
@@ -643,6 +644,11 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             i += 1;
             continue;
         }
+        if arg == "--no-advice" {
+            opts.no_advice = true;
+            i += 1;
+            continue;
+        }
 
         // --version / -v / -V / --help / -h  → treat as pseudo-subcommands
         if arg == "--version" || arg == "-v" || arg == "-V" {
@@ -691,6 +697,9 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
             .collect::<Vec<_>>()
             .join(" ");
         std::env::set_var("GIT_CONFIG_PARAMETERS", params);
+    }
+    if opts.no_advice {
+        std::env::set_var("GIT_ADVICE", "false");
     }
     Ok(())
 }

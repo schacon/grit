@@ -154,6 +154,29 @@ case "$1" in
     echo one
     kill -TERM "$$"
     ;;
+  advise)
+    shift
+    msg="$*"
+    adv="${GIT_ADVICE:-}"
+    if [ -n "$adv" ]; then
+      case "$(printf '%s' "$adv" | tr '[:upper:]' '[:lower:]')" in
+        false|no|off|0) exit 0 ;;
+      esac
+    fi
+    val="$(git config --get advice.nestedTag 2>/dev/null || true)"
+    case "$(printf '%s' "$val" | tr '[:upper:]' '[:lower:]')" in
+      false|no|off|0)
+        exit 0
+        ;;
+      "")
+        printf 'hint: %s\n' "$msg" >&2
+        printf 'hint: Disable this message with "git config set advice.nestedTag false"\n' >&2
+        ;;
+      *)
+        printf 'hint: %s\n' "$msg" >&2
+        ;;
+    esac
+    ;;
   example-tap)
     # Emit the canonical TAP sample output expected by t0080.
     # Keep this sourced from the test file itself so the fixture

@@ -30,7 +30,7 @@ commit → check it off → move on.
 
 - [x] `t0005-signals` ████████████████████ 5/5 (0 left) — signals work as we expect
 - [x] `t0068-for-each-repo` ████████████████████ 5/5 (0 left) — git for-each-repo builtin
-- [ ] `t0018-advice` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — Test advise_if_enabled functionality
+- [x] `t0018-advice` ████████████████████ 6/6 (0 left) — Test advise_if_enabled functionality
 - [ ] `t0017-env-helper` ░░░░░░░░░░░░░░░░░░░░ 0/5 (5 left) — test test-tool env-helper
 - [ ] `t0002-gitfile` ███████████░░░░░░░░░ 8/14 (6 left) — .git file
 
