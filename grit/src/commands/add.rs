@@ -861,7 +861,7 @@ fn stage_file(
         } else {
             0o100644 // When core.filemode=false, default to regular
         };
-        let entry = IndexEntry {
+        let mut entry = IndexEntry {
             ctime_sec: meta.ctime() as u32,
             ctime_nsec: meta.ctime_nsec() as u32,
             mtime_sec: meta.mtime() as u32,
@@ -877,6 +877,7 @@ fn stage_file(
             flags_extended: None,
             path: rel_path.as_bytes().to_vec(),
         };
+        entry.set_intent_to_add(true);
         index.add_or_replace(entry);
         if args.verbose {
             println!("add '{rel_path}'");

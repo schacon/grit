@@ -381,12 +381,11 @@ impl Index {
         // Determine which version to write.
         // Version 4 requires path compression, which we do not implement yet.
         // Downgrade to the newest format we can serialize correctly.
-        let write_version = if self.version >= 3 {
-            if self.entries.iter().any(|e| e.flags_extended.is_some()) {
-                3
-            } else {
-                2
-            }
+        let has_extended_flags = self.entries.iter().any(|e| e.flags_extended.is_some());
+        let write_version = if has_extended_flags {
+            3
+        } else if self.version >= 3 {
+            2
         } else {
             self.version
         };

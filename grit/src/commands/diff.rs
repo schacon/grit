@@ -16,8 +16,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, detect_renames, diff_index_to_tree,
-    diff_index_to_worktree, diff_tree_to_worktree, diff_trees, unified_diff, zero_oid, DiffEntry,
-    DiffStatus,
+    diff_index_to_worktree, diff_tree_to_worktree, diff_trees, empty_blob_oid, unified_diff,
+    zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::error::Error;
 use grit_lib::index::Index;
@@ -2119,14 +2119,25 @@ fn write_diff_header_with_prefix(
         hex[..len].to_owned()
     };
 
+    let effective_old_oid = if entry.status == DiffStatus::Deleted && entry.old_oid == zero_oid() {
+        empty_blob_oid()
+    } else {
+        entry.old_oid
+    };
+    let effective_new_oid = if entry.status == DiffStatus::Added && entry.new_oid == zero_oid() {
+        empty_blob_oid()
+    } else {
+        entry.new_oid
+    };
+
     match entry.status {
         DiffStatus::Added => {
             writeln!(out, "{b}new file mode {}{r}", entry.new_mode)?;
             writeln!(
                 out,
                 "{b}index {}..{}{r}",
-                abbr(&entry.old_oid),
-                abbr(&entry.new_oid)
+                abbr(&effective_old_oid),
+                abbr(&effective_new_oid)
             )?;
         }
         DiffStatus::Deleted => {
@@ -2134,8 +2145,8 @@ fn write_diff_header_with_prefix(
             writeln!(
                 out,
                 "{b}index {}..{}{r}",
-                abbr(&entry.old_oid),
-                abbr(&entry.new_oid)
+                abbr(&effective_old_oid),
+                abbr(&effective_new_oid)
             )?;
         }
         DiffStatus::Modified => {

@@ -2,6 +2,21 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after intent-to-add plumbing updates across `add`, `diff`, `apply`, and index serialization for `t4140`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4140-apply-ita.sh` (from `tests/`): 7/7 passing with explicit behavior confirmation:
+  - setup now emits git-compatible i-t-a creation/deletion patches (`new file mode`/`deleted file mode`, `/dev/null` headers, and `index 0000000..` / `index e69de29..0000000`).
+  - `git apply --cached creation-patch` now succeeds against i-t-a entries and stages full blob content.
+  - `git apply --index creation-patch` now correctly fails when the i-t-a path is missing from the worktree (`does not match index`).
+  - `git apply -N creation-patch` and `git apply -N complex-patch` now keep created paths as intent-to-add index entries.
+- `./scripts/run-tests.sh t4140-apply-ita.sh`: 7/7 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4140-apply-ita`: 7/7 passing in isolated upstream harness.
+- Regression checks:
+  - `./scripts/run-tests.sh t4116-apply-reverse.sh`: 7/7 passing.
+  - `./scripts/run-tests.sh t4126-apply-empty.sh`: 8/8 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after `apply` binary-patch reverse support and archive tree-ish revision compatibility updates for `t4116` setup).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4116-apply-reverse.sh` (from `tests/`): 7/7 passing.
 - `./scripts/run-tests.sh t4116-apply-reverse.sh`: 7/7 passing; `data/file-results.tsv` refreshed.

@@ -55,6 +55,10 @@ pub struct Args {
     #[arg(long)]
     pub index: bool,
 
+    /// Mark new files as intent-to-add when applying to the working tree.
+    #[arg(short = 'N', long = "intent-to-add")]
+    pub intent_to_add: bool,
+
     /// Apply the patch in reverse.
     #[arg(short = 'R', long = "reverse")]
     pub reverse: bool,
@@ -1563,6 +1567,9 @@ pub fn run(args: Args) -> Result<()> {
             apply_to_index(&patches, &args, ws_mode)?;
         } else {
             apply_to_worktree(&patches, &args, ws_mode)?;
+            if args.intent_to_add {
+                apply_intent_to_add_entries(&patches, &args)?;
+            }
         }
     }
 
@@ -1645,6 +1652,21 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
 
     for fp in patches {
         if fp.is_new {
+            if let Some(target) = fp.target_path() {
+                let adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+                if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
+                    let path = PathBuf::from(&adjusted);
+                    if !path.exists() {
+                        bail!("{adjusted}: does not match index");
+                    }
+                    let wt_content = fs::read(&path)?;
+                    let wt_oid =
+                        grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
+                    if wt_oid != entry.oid {
+                        bail!("{adjusted}: does not match index");
+                    }
+                }
+            }
             continue;
         }
         // Skip submodule entries
@@ -2225,6 +2247,82 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
         if fp.is_rename && source_adjusted != target_adjusted {
             index.remove(source_adjusted.as_bytes());
         }
+        index.add_or_replace(entry);
+    }
+
+    index.write(&repo.index_path())?;
+    Ok(())
+}
+
+/// Mark patch-created paths as intent-to-add entries in the index.
+///
+/// This implements `git apply -N/--intent-to-add` for worktree applies.
+/// The option is ignored outside a repository and when `--index`/`--cached`
+/// modes are active.
+fn apply_intent_to_add_entries(patches: &[FilePatch], args: &Args) -> Result<()> {
+    if args.cached || args.index {
+        return Ok(());
+    }
+
+    let repo = match Repository::discover(None) {
+        Ok(repo) => repo,
+        Err(_) => return Ok(()),
+    };
+    let mut index = match Index::load(&repo.index_path()) {
+        Ok(idx) => idx,
+        Err(_) => Index::new(),
+    };
+
+    let cwd_prefix = if let Some(ref wt) = repo.work_tree {
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Ok(rel) = cwd.strip_prefix(wt) {
+                let s = rel.to_string_lossy().to_string();
+                if s.is_empty() {
+                    String::new()
+                } else {
+                    format!("{s}/")
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    for fp in patches {
+        if !fp.is_new {
+            continue;
+        }
+        let Some(target_path) = fp.target_path() else {
+            continue;
+        };
+        let target_raw = adjust_path(target_path, args.strip, args.directory.as_deref());
+        let target_adjusted = format!("{cwd_prefix}{target_raw}");
+        if target_adjusted.is_empty() {
+            continue;
+        }
+
+        let mode = fp.new_mode.as_deref().map(parse_mode).unwrap_or(0o100644);
+        let mut entry = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: grit_lib::diff::empty_blob_oid(),
+            flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+            flags_extended: None,
+            path: target_adjusted.into_bytes(),
+        };
+        entry.set_intent_to_add(true);
         index.add_or_replace(entry);
     }
 

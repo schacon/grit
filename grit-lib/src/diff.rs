@@ -107,6 +107,15 @@ pub fn zero_oid() -> ObjectId {
     })
 }
 
+/// Return the ObjectId for the empty blob object.
+#[must_use]
+pub fn empty_blob_oid() -> ObjectId {
+    ObjectId::from_hex("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391").unwrap_or_else(|_| {
+        // This should never fail since the object ID literal is valid.
+        panic!("internal error: failed to create empty blob OID");
+    })
+}
+
 // ── Tree-to-tree diff ───────────────────────────────────────────────
 
 /// Compare two trees and return the list of changed entries.
@@ -517,6 +526,7 @@ pub fn diff_index_to_worktree(
         // Use str slice directly to avoid allocation for path joining;
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
+        let is_intent_to_add = ie.intent_to_add();
 
         // Gitlink entries (submodules) are directories — compare HEAD commit.
         if ie.mode == 0o160000 {
@@ -540,6 +550,50 @@ pub fn diff_index_to_worktree(
         }
 
         let file_path = work_tree.join(path_str_ref);
+
+        if is_intent_to_add {
+            match fs::symlink_metadata(&file_path) {
+                Ok(meta) => {
+                    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
+                    let worktree_oid = hash_worktree_file(
+                        odb,
+                        &file_path,
+                        &meta,
+                        &conv,
+                        &file_attrs,
+                        path_str_ref,
+                    )?;
+                    let worktree_mode = mode_from_metadata(&meta);
+                    result.push(DiffEntry {
+                        status: DiffStatus::Added,
+                        old_path: None,
+                        new_path: Some(path_str_ref.to_owned()),
+                        old_mode: "000000".to_owned(),
+                        new_mode: format_mode(worktree_mode),
+                        old_oid: zero_oid(),
+                        new_oid: worktree_oid,
+                        score: None,
+                    });
+                }
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::NotFound
+                        || e.raw_os_error() == Some(20) /* ENOTDIR */ =>
+                {
+                    result.push(DiffEntry {
+                        status: DiffStatus::Deleted,
+                        old_path: Some(path_str_ref.to_owned()),
+                        new_path: None,
+                        old_mode: format_mode(ie.mode),
+                        new_mode: "000000".to_owned(),
+                        old_oid: empty_blob_oid(),
+                        new_oid: zero_oid(),
+                        score: None,
+                    });
+                }
+                Err(e) => return Err(Error::Io(e)),
+            }
+            continue;
+        }
 
         // If any parent component of the path is a symlink, the file is effectively
         // deleted from the working tree (a symlink replaced a directory).
