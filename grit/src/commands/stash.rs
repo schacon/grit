@@ -1164,7 +1164,7 @@ fn do_stash_patch_push(
 }
 
 /// Build unified hunk text (`@@` …) for a slice of Myers line-diff ops (HEAD vs current worktree).
-fn partial_unified_for_op_range(
+pub(crate) fn partial_unified_for_op_range(
     path: &str,
     head_bytes: &[u8],
     work_bytes: &[u8],
@@ -1235,7 +1235,7 @@ fn partial_unified_for_op_range(
 
 /// Split after the first change block, at the following line-equality (`Equal`) ops, when more
 /// changes exist after that context (same idea as Git `add -p` / stash `s`).
-fn split_hunk_at_first_gap(
+pub(crate) fn split_hunk_at_first_gap(
     ranges: &mut Vec<(usize, usize)>,
     hunk_cursor: usize,
     ops: &[similar::DiffOp],

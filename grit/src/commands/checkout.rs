@@ -3004,22 +3004,8 @@ pub(crate) fn checkout_patch(
 
                 let path_str = String::from_utf8_lossy(&ie.path).to_string();
 
-                // Apply path filter if specified
-                if !filter_paths.is_empty() {
-                    let matches = filter_paths.iter().any(|fp| {
-                        if is_glob_pattern(fp) {
-                            glob_matches(fp, &path_str)
-                        } else if fp.is_empty() || fp == "." {
-                            true
-                        } else if fp.ends_with('/') {
-                            path_str.starts_with(fp.as_str())
-                        } else {
-                            path_str == *fp || path_str.starts_with(&format!("{fp}/"))
-                        }
-                    });
-                    if !matches {
-                        continue;
-                    }
+                if !patch_path_filter_matches(&path_str, &filter_paths) {
+                    continue;
                 }
 
                 let abs_path = work_tree.join(&path_str);
@@ -3056,19 +3042,8 @@ pub(crate) fn checkout_patch(
                 }
                 let path_str = String::from_utf8_lossy(&flat_entry.path).to_string();
 
-                if !filter_paths.is_empty() {
-                    let matches = filter_paths.iter().any(|fp| {
-                        if is_glob_pattern(fp) {
-                            glob_matches(fp, &path_str)
-                        } else if fp.is_empty() || fp == "." {
-                            true
-                        } else {
-                            path_str == *fp || path_str.starts_with(&format!("{fp}/"))
-                        }
-                    });
-                    if !matches {
-                        continue;
-                    }
+                if !patch_path_filter_matches(&path_str, &filter_paths) {
+                    continue;
                 }
 
                 let abs_path = work_tree.join(&path_str);
@@ -4360,8 +4335,26 @@ fn glob_matches_inner(pattern: &[u8], path: &[u8]) -> bool {
     pi == pattern.len()
 }
 
-/// Resolve a pathspec to a repository-relative path.
-fn resolve_pathspec(spec: &str, work_tree: &Path, cwd: &Path) -> String {
+/// True when `path_str` matches any of the `filter_paths` from interactive patch commands.
+pub(crate) fn patch_path_filter_matches(path_str: &str, filter_paths: &[String]) -> bool {
+    if filter_paths.is_empty() {
+        return true;
+    }
+    filter_paths.iter().any(|fp| {
+        if is_glob_pattern(fp) {
+            glob_matches(fp, path_str)
+        } else if fp.is_empty() || fp == "." {
+            true
+        } else if fp.ends_with('/') {
+            path_str.starts_with(fp.as_str())
+        } else {
+            path_str == *fp || path_str.starts_with(&format!("{fp}/"))
+        }
+    })
+}
+
+/// Resolve a pathspec to a repository-relative path (used by `checkout -p` / `reset -p`).
+pub(crate) fn resolve_pathspec(spec: &str, work_tree: &Path, cwd: &Path) -> String {
     // Handle :/ prefix (repo root)
     if spec == ":/" || spec.starts_with(":/") {
         let rest = &spec[2..];
