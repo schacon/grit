@@ -2,8 +2,13 @@
 
 **Updated:** 2026-04-07
 
-- `./scripts/run-tests.sh t4212-log-corrupt.sh`: 3/13 passing (baseline for newly claimed in-progress Diff target `t4212`).
-- `bash scripts/run-upstream-tests.sh t4212-log-corrupt`: 3/13 passing in isolated upstream harness.
+- `cargo build --release`: passes (rebuild after `t4212` invalid-commit metadata compatibility updates in `fsck`, `log`, and `rev-list`).
+- `./scripts/run-tests.sh t4212-log-corrupt.sh`: 13/13 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4212-log-corrupt`: 13/13 passing in isolated upstream harness.
+- Direct upstream-workdir confirmation: `cd /tmp/grit-upstream-workdir/t && GIT_BUILD_DIR=/tmp/grit-upstream-workdir TEST_NO_MALLOC_CHECK=1 TAR=tar bash ./t4212-log-corrupt.sh -v -i` now reaches test 3 with expected payload and confirms the prior mismatch was an extra separator newline in default `git log` medium format output.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in `grit-lib/src/state.rs`, `grit/src/commands/blame.rs`, `grit/src/commands/config.rs`, and `grit/src/commands/update_index.rs` were reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
 
 - `cargo build --release`: passes (rebuild after `t4208` magic pathspec/revision disambiguation updates in `log`, `rev_parse`, and shared pathspec matching).
 - `bash scripts/run-upstream-tests.sh t4208-log-magic-pathspec`: 21/21 passing in isolated upstream harness.

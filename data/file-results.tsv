@@ -488,7 +488,7 @@ t4208-log-magic-pathspec	yes	21	21	0	ok	21	21	0
 t4209-log-pickaxe	yes	48	15	33	ok	15	48	0
 t4210-log-i18n	yes	0	0	0	ok	0	0	0
 t4211-line-log	yes	53	7	46	ok	7	53	0
-t4212-log-corrupt	yes	13	3	10	ok	3	13	0
+t4212-log-corrupt	yes	13	13	0	ok	13	13	0
 t4213-log-tabexpand	yes	9	9	0	ok	9	9	0
 t4214-log-graph-octopus	yes	17	1	16	ok	1	17	0
 t4215-log-skewed-merges	yes	10	0	10	ok	0	10	0

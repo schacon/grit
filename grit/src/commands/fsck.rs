@@ -362,15 +362,31 @@ fn validate_object(odb: &Odb, oid: &ObjectId, issues: &mut Vec<Issue>) {
 /// Validate the parsed content of an object.
 fn validate_object_data(oid: &ObjectId, kind: &ObjectKind, data: &[u8], issues: &mut Vec<Issue>) {
     match kind {
-        ObjectKind::Commit => {
-            if let Err(e) = parse_commit(data) {
+        ObjectKind::Commit => match parse_commit(data) {
+            Err(e) => {
                 issues.push(Issue::BadObject {
                     oid: *oid,
                     kind: *kind,
                     reason: format!("invalid commit: {e}"),
                 });
             }
-        }
+            Ok(commit) => {
+                if !is_valid_commit_ident(&commit.author) {
+                    issues.push(Issue::BadObject {
+                        oid: *oid,
+                        kind: *kind,
+                        reason: "invalid.author".to_owned(),
+                    });
+                }
+                if !is_valid_commit_ident(&commit.committer) {
+                    issues.push(Issue::BadObject {
+                        oid: *oid,
+                        kind: *kind,
+                        reason: "invalid.committer".to_owned(),
+                    });
+                }
+            }
+        },
         ObjectKind::Tree => {
             if let Err(e) = parse_tree(data) {
                 issues.push(Issue::BadObject {
@@ -393,6 +409,39 @@ fn validate_object_data(oid: &ObjectId, kind: &ObjectKind, data: &[u8], issues: 
             // Blobs are arbitrary data — no structural validation needed.
         }
     }
+}
+
+fn is_valid_commit_ident(ident: &str) -> bool {
+    let Some(start) = ident.find('<') else {
+        return false;
+    };
+    let Some(end_rel) = ident[start + 1..].find('>') else {
+        return false;
+    };
+    let end = start + 1 + end_rel;
+    let email = &ident[start + 1..end];
+    if email.is_empty() || !email.contains('@') {
+        return false;
+    }
+
+    let trailer = ident[end + 1..].trim_start();
+    let mut parts = trailer.split_whitespace();
+    let Some(ts) = parts.next() else {
+        return false;
+    };
+    let Some(tz) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+    if ts.parse::<i64>().is_err() {
+        return false;
+    }
+    if tz.len() != 5 || !matches!(tz.as_bytes()[0], b'+' | b'-') {
+        return false;
+    }
+    tz[1..].chars().all(|ch| ch.is_ascii_digit())
 }
 
 /// Read the kind of an object (for display purposes).

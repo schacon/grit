@@ -791,6 +791,15 @@ pub fn run(mut args: Args) -> Result<()> {
             &repo.odb,
         )?;
 
+        if !show_diff
+            && !args.null_terminator
+            && i + 1 < commits.len()
+            && !is_format_separator
+            && should_add_pretty_commit_separator(args.format.as_deref())
+        {
+            writeln!(out)?;
+        }
+
         if show_diff {
             if follow_name_status_mode {
                 if args
@@ -827,6 +836,15 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn should_add_pretty_commit_separator(format: Option<&str>) -> bool {
+    match format {
+        None => false,
+        Some("short") | Some("medium") | Some("full") | Some("fuller") => false,
+        Some(fmt) if fmt.starts_with("format:") || fmt.starts_with("tformat:") => false,
+        Some(_) => true,
+    }
 }
 
 fn invocation_has_double_dash_for_log() -> bool {
@@ -1366,7 +1384,7 @@ fn format_ident_for_header(ident: &str) -> String {
 
 /// Format date from ident for header display.
 fn format_date_for_header(ident: &str) -> String {
-    format_date_with_mode(ident, None)
+    format_date_with_mode_for_header(ident, None)
 }
 
 /// Parsed commit with its OID.
@@ -1576,12 +1594,17 @@ fn read_commit_timestamp(repo: &Repository, oid: &ObjectId) -> i64 {
 }
 
 fn extract_timestamp(ident: &str) -> i64 {
-    // Format: "Name <email> timestamp offset"
-    let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
-    if parts.len() >= 2 {
-        parts[1].parse().unwrap_or(0)
-    } else {
-        0
+    match parse_ident_date(ident) {
+        ParsedIdentDate::Valid { timestamp, .. } => timestamp,
+        ParsedIdentDate::OverflowNumeric | ParsedIdentDate::Invalid => 0,
+    }
+}
+
+fn format_timestamp_placeholder(ident: &str) -> String {
+    match parse_ident_date(ident) {
+        ParsedIdentDate::Valid { timestamp, .. } => timestamp.to_string(),
+        ParsedIdentDate::OverflowNumeric => "0".to_owned(),
+        ParsedIdentDate::Invalid => String::new(),
     }
 }
 
@@ -1780,7 +1803,6 @@ fn format_commit(
             for line in info.message.lines().take(1) {
                 writeln!(out, "    {line}")?;
             }
-            writeln!(out)?;
         }
         Some("medium") | None => {
             let dec = if use_color {
@@ -1816,14 +1838,13 @@ fn format_commit(
             writeln!(
                 out,
                 "Date:   {}",
-                format_date_with_mode(&info.author, date_format)
+                format_date_with_mode_for_header(&info.author, date_format)
             )?;
             writeln!(out)?;
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
             write_notes(out, oid, notes_map, odb)?;
-            writeln!(out)?;
         }
         Some("full") => {
             let dec = if use_color {
@@ -1854,7 +1875,6 @@ fn format_commit(
                 writeln!(out, "    {line}")?;
             }
             write_notes(out, oid, notes_map, odb)?;
-            writeln!(out)?;
         }
         Some("fuller") => {
             let dec = if use_color {
@@ -1882,20 +1902,19 @@ fn format_commit(
             writeln!(
                 out,
                 "AuthorDate: {}",
-                format_date_with_mode(&info.author, date_format)
+                format_date_with_mode_for_header(&info.author, date_format)
             )?;
             writeln!(out, "Commit:     {}", format_ident_display(&info.committer))?;
             writeln!(
                 out,
                 "CommitDate: {}",
-                format_date_with_mode(&info.committer, date_format)
+                format_date_with_mode_for_header(&info.committer, date_format)
             )?;
             writeln!(out)?;
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
             write_notes(out, oid, notes_map, odb)?;
-            writeln!(out)?;
         }
         Some(other) => {
             // Try as a format string directly
@@ -2184,7 +2203,7 @@ fn apply_format_string(
                         }
                         Some('t') => {
                             chars.next();
-                            result.push_str(&format!("{}", extract_timestamp(&info.author)));
+                            result.push_str(&format_timestamp_placeholder(&info.author));
                         }
                         Some('s') => {
                             chars.next();
@@ -2239,7 +2258,7 @@ fn apply_format_string(
                         }
                         Some('t') => {
                             chars.next();
-                            result.push_str(&format!("{}", extract_timestamp(&info.committer)));
+                            result.push_str(&format_timestamp_placeholder(&info.committer));
                         }
                         Some('s') => {
                             chars.next();
@@ -2646,33 +2665,53 @@ fn format_ident_display(ident: &str) -> String {
     format!("{name} <{email}>")
 }
 
-/// Format the date from an ident string for display, with optional date mode.
-fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
-    // Git ident: "Name <email> timestamp offset"
+enum ParsedIdentDate {
+    Valid {
+        timestamp: i64,
+        offset_text: String,
+        offset_secs: i64,
+    },
+    OverflowNumeric,
+    Invalid,
+}
+
+fn parse_ident_date(ident: &str) -> ParsedIdentDate {
     let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
     if parts.len() < 2 {
-        return ident.to_owned();
+        return ParsedIdentDate::Invalid;
     }
-    let ts_str = parts[1];
-    let offset_str = parts[0];
-    let ts = match ts_str.parse::<i64>() {
-        Ok(v) => v,
-        Err(_) => return format!("{ts_str} {offset_str}"),
-    };
+    let ts_str = parts[1].trim();
+    let offset_str = parts[0].trim();
+    if ts_str.is_empty() || offset_str.is_empty() {
+        return ParsedIdentDate::Invalid;
+    }
 
-    let tz_offset_secs = parse_tz_offset(offset_str);
+    match ts_str.parse::<i64>() {
+        Ok(timestamp) => ParsedIdentDate::Valid {
+            timestamp,
+            offset_text: offset_str.to_owned(),
+            offset_secs: parse_tz_offset(offset_str),
+        },
+        Err(_) if ts_str.chars().all(|ch| ch.is_ascii_digit()) => ParsedIdentDate::OverflowNumeric,
+        Err(_) => ParsedIdentDate::Invalid,
+    }
+}
 
+fn format_date_from_parts(
+    ts: i64,
+    offset_text: &str,
+    offset_secs: i64,
+    date_mode: Option<&str>,
+) -> String {
     match date_mode {
         Some("short") => {
-            // YYYY-MM-DD in the author's timezone
-            let adjusted = ts + tz_offset_secs;
+            let adjusted = ts + offset_secs;
             let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
             format!("{:04}-{:02}-{:02}", dt.year(), dt.month() as u8, dt.day())
         }
         Some("iso") | Some("iso8601") => {
-            // ISO format: 2005-04-07 15:13:13 +0200
-            let adjusted = ts + tz_offset_secs;
+            let adjusted = ts + offset_secs;
             let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
             format!(
@@ -2683,15 +2722,15 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
                 dt.hour(),
                 dt.minute(),
                 dt.second(),
-                offset_str
+                offset_text
             )
         }
         Some("iso-strict") | Some("iso8601-strict") => {
-            let adjusted = ts + tz_offset_secs;
+            let adjusted = ts + offset_secs;
             let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-            let sign = if tz_offset_secs >= 0 { '+' } else { '-' };
-            let abs_offset = tz_offset_secs.unsigned_abs();
+            let sign = if offset_secs >= 0 { '+' } else { '-' };
+            let abs_offset = offset_secs.unsigned_abs();
             let h = abs_offset / 3600;
             let m = (abs_offset % 3600) / 60;
             format!(
@@ -2707,11 +2746,8 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
                 m
             )
         }
-        Some("raw") => {
-            format!("{ts} {offset_str}")
-        }
+        Some("raw") => format!("{ts} {offset_text}"),
         Some("relative") => {
-            // Show relative time like "2 hours ago", "3 days ago"
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -2759,8 +2795,7 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
             }
         }
         Some("rfc") | Some("rfc2822") => {
-            // RFC 2822: Thu, 07 Apr 2005 22:13:13 +0200
-            let adjusted = ts + tz_offset_secs;
+            let adjusted = ts + offset_secs;
             let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
             let weekday = match dt.weekday() {
@@ -2795,16 +2830,12 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
                 dt.hour(),
                 dt.minute(),
                 dt.second(),
-                offset_str
+                offset_text
             )
         }
-        Some("unix") => {
-            format!("{ts}")
-        }
+        Some("unix") => format!("{ts}"),
         _ => {
-            // Default Git date format: "Thu Apr  7 15:13:13 2005 -0700"
-            // Note: day is right-justified in a 2-char field (space-padded)
-            let adjusted = ts + tz_offset_secs;
+            let adjusted = ts + offset_secs;
             let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
             let weekday = match dt.weekday() {
@@ -2831,7 +2862,7 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
                 time::Month::December => "Dec",
             };
             format!(
-                "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
+                "{} {} {} {:02}:{:02}:{:02} {} {}",
                 weekday,
                 month,
                 dt.day(),
@@ -2839,8 +2870,35 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
                 dt.minute(),
                 dt.second(),
                 dt.year(),
-                offset_str
+                offset_text
             )
+        }
+    }
+}
+
+/// Format the date from an ident string for placeholder expansion.
+fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
+    match parse_ident_date(ident) {
+        ParsedIdentDate::Valid {
+            timestamp,
+            offset_text,
+            offset_secs,
+        } => format_date_from_parts(timestamp, &offset_text, offset_secs, date_mode),
+        ParsedIdentDate::OverflowNumeric => format_date_from_parts(0, "+0000", 0, date_mode),
+        ParsedIdentDate::Invalid => String::new(),
+    }
+}
+
+/// Format the date from an ident string for header display.
+fn format_date_with_mode_for_header(ident: &str, date_mode: Option<&str>) -> String {
+    match parse_ident_date(ident) {
+        ParsedIdentDate::Valid {
+            timestamp,
+            offset_text,
+            offset_secs,
+        } => format_date_from_parts(timestamp, &offset_text, offset_secs, date_mode),
+        ParsedIdentDate::OverflowNumeric | ParsedIdentDate::Invalid => {
+            format_date_from_parts(0, "+0000", 0, date_mode)
         }
     }
 }

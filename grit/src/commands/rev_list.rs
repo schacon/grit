@@ -31,6 +31,8 @@ pub fn run(args: Args) -> Result<()> {
     let mut default_rev: Option<String> = None;
     let mut no_commit_header = false;
     let mut use_color = false;
+    let mut until_epoch: Option<i64> = None;
+    let mut since_epoch: Option<i64> = None;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -294,6 +296,34 @@ pub fn run(args: Args) -> Result<()> {
                         }
                     }
                 }
+                _ if arg.starts_with("--until=") || arg.starts_with("--before=") => {
+                    let value = arg
+                        .strip_prefix("--until=")
+                        .or_else(|| arg.strip_prefix("--before="))
+                        .unwrap_or_default();
+                    until_epoch = parse_rev_list_date(value, true);
+                }
+                "--until" | "--before" => {
+                    i += 1;
+                    let Some(value) = args.args.get(i) else {
+                        bail!("--until/--before requires an argument");
+                    };
+                    until_epoch = parse_rev_list_date(value, true);
+                }
+                _ if arg.starts_with("--since=") || arg.starts_with("--after=") => {
+                    let value = arg
+                        .strip_prefix("--since=")
+                        .or_else(|| arg.strip_prefix("--after="))
+                        .unwrap_or_default();
+                    since_epoch = parse_rev_list_date(value, false);
+                }
+                "--since" | "--after" => {
+                    i += 1;
+                    let Some(value) = args.args.get(i) else {
+                        bail!("--since/--after requires an argument");
+                    };
+                    since_epoch = parse_rev_list_date(value, false);
+                }
                 _ => bail!("unsupported option: {arg}"),
             }
             i += 1;
@@ -376,8 +406,25 @@ pub fn run(args: Args) -> Result<()> {
         options.symmetric_right = Some(rhs_oid);
     }
 
-    let result =
+    let mut result =
         rev_list(&repo, &positive_specs, &negative_specs, &options).context("rev-list failed")?;
+
+    if since_epoch.is_some() || until_epoch.is_some() {
+        result.commits.retain(|oid| {
+            let commit_epoch = read_committer_epoch(&repo, *oid).unwrap_or(0);
+            if let Some(since) = since_epoch {
+                if commit_epoch < since {
+                    return false;
+                }
+            }
+            if let Some(until) = until_epoch {
+                if commit_epoch > until {
+                    return false;
+                }
+            }
+            true
+        });
+    }
 
     if options.count {
         if options.left_right {
@@ -517,4 +564,44 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
         return Ok(usize::MAX);
     }
     Ok(value as usize)
+}
+
+fn parse_rev_list_date(raw: &str, end_of_day: bool) -> Option<i64> {
+    let s = raw.trim();
+    if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
+        let parts: Vec<&str> = s[..10].split('-').collect();
+        if parts.len() == 3 {
+            if let (Ok(year), Ok(month), Ok(day)) = (
+                parts[0].parse::<i32>(),
+                parts[1].parse::<u8>(),
+                parts[2].parse::<u8>(),
+            ) {
+                if let Ok(month) = time::Month::try_from(month) {
+                    if let Ok(date) = time::Date::from_calendar_date(year, month, day) {
+                        let dt = if end_of_day {
+                            date.with_hms(23, 59, 59).ok()?
+                        } else {
+                            date.with_hms(0, 0, 0).ok()?
+                        };
+                        return Some(dt.assume_utc().unix_timestamp());
+                    }
+                }
+            }
+        }
+    }
+    s.parse::<i64>().ok()
+}
+
+fn read_committer_epoch(repo: &Repository, oid: grit_lib::objects::ObjectId) -> Option<i64> {
+    let obj = repo.odb.read(&oid).ok()?;
+    let commit = grit_lib::objects::parse_commit(&obj.data).ok()?;
+    Some(extract_ident_epoch(&commit.committer))
+}
+
+fn extract_ident_epoch(ident: &str) -> i64 {
+    let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
+    if parts.len() < 2 {
+        return 0;
+    }
+    parts[1].trim().parse::<i64>().unwrap_or(0)
 }
