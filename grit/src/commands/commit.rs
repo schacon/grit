@@ -2537,7 +2537,7 @@ fn parse_force_author_parameter(author: &str) -> Result<(String, String)> {
 }
 
 /// Split a stored author line (`name <email> <epoch> <tz>`) into name, email, and optional date tail.
-fn split_stored_author_line(author: &str) -> Result<(String, String, Option<String>)> {
+pub(crate) fn split_stored_author_line(author: &str) -> Result<(String, String, Option<String>)> {
     let Some(lt) = author.find('<') else {
         bail!("malformed author line");
     };

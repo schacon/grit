@@ -37,8 +37,16 @@ use grit_lib::whitespace_rule::{fix_blob_bytes, parse_whitespace_rule, WS_DEFAUL
 use grit_lib::write_tree::write_tree_from_index;
 
 use super::checkout::check_dirty_worktree;
+use super::commit::split_stored_author_line;
 use super::stash;
 use crate::ident::{resolve_email, resolve_name, IdentRole};
+
+#[derive(Clone, Copy, Debug)]
+struct RebaseReplayCommitOpts {
+    ignore_space_change: bool,
+    committer_date_is_author_date: bool,
+    ignore_date: bool,
+}
 
 #[derive(Clone, Copy)]
 enum RebaseBackend {
@@ -50,6 +58,7 @@ enum RebaseBackend {
 struct RebaseConflictContext<'a> {
     backend: RebaseBackend,
     picked_subject: &'a str,
+    ignore_space_change: bool,
 }
 
 impl<'a> RebaseConflictContext<'a> {
@@ -231,12 +240,28 @@ pub struct Args {
     /// Keep commits that do not change any file (empty patch).
     #[arg(short = 'k', long = "keep-empty")]
     pub keep_empty: bool,
+
+    /// Ignore whitespace when applying patches (merge backend: `ignore-space-change`).
+    #[arg(long = "ignore-whitespace")]
+    pub ignore_whitespace: bool,
+
+    /// Set committer date to the author date of the replayed commit.
+    #[arg(long = "committer-date-is-author-date")]
+    pub committer_date_is_author_date: bool,
+
+    /// Ignore author dates from replayed commits; use current time at +0000 (alias: `--ignore-date`).
+    #[arg(long = "reset-author-date", alias = "ignore-date")]
+    pub reset_author_date: bool,
 }
 
 /// Expand combined short flags (`-ki`, `-ik`) before clap parsing.
 pub fn preprocess_rebase_argv(rest: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for arg in rest {
+        if arg == "-r" {
+            out.push("--rebase-merges".to_string());
+            continue;
+        }
         // Clap does not accept glued `-C<n>`; Git's rebase passes this through to the apply backend.
         if arg.len() > 2 && arg.starts_with("-C") && !arg.starts_with("--") {
             let suffix = &arg[2..];
@@ -257,6 +282,7 @@ pub fn preprocess_rebase_argv(rest: &[String]) -> Vec<String> {
                 match ch {
                     'i' => expanded.push("-i".to_string()),
                     'k' => expanded.push("-k".to_string()),
+                    'r' => expanded.push("--rebase-merges".to_string()),
                     _ => expanded.push(format!("-{ch}")),
                 }
             }
@@ -278,9 +304,6 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         if args.fork_point {
             bail!("options '--root' and '--fork-point' cannot be used together");
-        }
-        if args.onto.is_none() {
-            bail!("a base commit must be provided with --onto when using --root");
         }
         if args.upstream.is_some() && args.branch.is_some() {
             bail!("git rebase: too many arguments");
@@ -816,6 +839,8 @@ enum RebaseReplayStep {
     },
     Exec(String),
     Edit(ObjectId),
+    /// Interactive-only: pause before the next command (`break` / `b`).
+    Break,
     MergeReuseMessage {
         merge_oid: ObjectId,
         merge_args: String,
@@ -839,6 +864,7 @@ fn parse_rebase_replay_step(
                 }
                 ParsedRebaseTodoLine::Exec(s) => RebaseReplayStep::Exec(s),
                 ParsedRebaseTodoLine::Edit(oid) => RebaseReplayStep::Edit(oid),
+                ParsedRebaseTodoLine::Break => RebaseReplayStep::Break,
                 ParsedRebaseTodoLine::MergeReuseMessage {
                     merge_oid,
                     merge_args,
@@ -862,6 +888,8 @@ enum ParsedRebaseTodoLine {
     Exec(String),
     /// `edit` / `e` with an object id.
     Edit(ObjectId),
+    /// `break` / `b` — stop for `rebase --continue`.
+    Break,
     /// `merge -C <ref> ...` — replay merge commit message from `merge_oid`, merge heads from the rest.
     MergeReuseMessage {
         merge_oid: ObjectId,
@@ -885,6 +913,9 @@ fn parse_interactive_rebase_todo_line(
     if cmd_lower == "exec" || cmd_lower == "x" {
         let rest = t[cmd_word.len()..].trim_start();
         return Ok(Some(ParsedRebaseTodoLine::Exec(rest.to_owned())));
+    }
+    if cmd_lower == "break" || cmd_lower == "b" {
+        return Ok(Some(ParsedRebaseTodoLine::Break));
     }
     if cmd_lower == "edit" || cmd_lower == "e" {
         let Some(hex) = parts.next() else {
@@ -967,6 +998,7 @@ fn peek_next_rebase_flush_hint(
                 RebaseReplayStep::PickLike { cmd, .. } => cmd,
                 RebaseReplayStep::Exec(_)
                 | RebaseReplayStep::Edit(_)
+                | RebaseReplayStep::Break
                 | RebaseReplayStep::MergeReuseMessage { .. } => RebaseTodoCmd::Pick,
             });
         }
@@ -1017,6 +1049,50 @@ fn run_rebase_merge_subprocess(
     Ok(status)
 }
 
+fn rewrite_merge_head_for_replay_opts(
+    repo: &Repository,
+    git_dir: &Path,
+    rb_dir: &Path,
+    template_merge_oid: &ObjectId,
+) -> Result<()> {
+    let opts = load_rebase_replay_commit_opts(rb_dir);
+    if !opts.committer_date_is_author_date && !opts.ignore_date {
+        return Ok(());
+    }
+    let head_oid = resolve_head(git_dir)?
+        .oid()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("HEAD has no OID after merge"))?;
+    let head_obj = repo.odb.read(&head_oid)?;
+    let head_commit = parse_commit(&head_obj.data)?;
+    if head_commit.parents.len() < 2 {
+        return Ok(());
+    }
+    let template_obj = repo.odb.read(template_merge_oid)?;
+    let template = parse_commit(&template_obj.data)?;
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let now = time::OffsetDateTime::now_utc();
+    let author = rebase_replayed_author_line(&template.author, opts, now)?;
+    let committer = rebase_replayed_committer_line(&config, &template.author, opts, now)?;
+    let (message, encoding, raw_message) =
+        finalize_message_for_commit_encoding(head_commit.message.clone(), &config);
+    let commit_data = CommitData {
+        tree: head_commit.tree,
+        parents: head_commit.parents.clone(),
+        author,
+        committer,
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
+        encoding,
+        message,
+        raw_message,
+    };
+    let bytes = serialize_commit(&commit_data);
+    let new_oid = repo.odb.write(ObjectKind::Commit, &bytes)?;
+    fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+    Ok(())
+}
+
 fn rebase_merge_reuse_message(
     repo: &Repository,
     git_dir: &Path,
@@ -1037,6 +1113,7 @@ fn rebase_merge_reuse_message(
         }
         return Ok(RebaseMergeReuseOutcome::Blocked);
     }
+    rewrite_merge_head_for_replay_opts(repo, git_dir, rb_dir, merge_oid)?;
     let _ = fs::remove_file(rb_dir.join("rebase-merge-source"));
     let _ = fs::remove_file(rb_dir.join("rebase-merge-args"));
     record_rebase_in_rewritten_pending(git_dir, rb_dir, merge_oid, next_after_line)?;
@@ -1073,6 +1150,7 @@ fn next_non_fixup_index(
                 }
                 RebaseReplayStep::Exec(_)
                 | RebaseReplayStep::Edit(_)
+                | RebaseReplayStep::Break
                 | RebaseReplayStep::MergeReuseMessage { .. } => return Some(j),
             }
         }
@@ -1385,20 +1463,26 @@ fn commit_from_merged_index(
     merged_index: &Index,
     config: &ConfigSet,
     parents: Vec<ObjectId>,
-    author: &str,
+    source_author_line: &str,
     message: String,
+    replay_opts: RebaseReplayCommitOpts,
+    now: time::OffsetDateTime,
+    identity_template: Option<&CommitData>,
 ) -> Result<ObjectId> {
     let tree_oid = write_tree_from_index(&repo.odb, merged_index, "")?;
-    let now = time::OffsetDateTime::now_utc();
-    let committer = resolve_identity(config, "COMMITTER")?;
+    let author = rebase_replayed_author_line(source_author_line, replay_opts, now)?;
+    let committer = rebase_replayed_committer_line(config, source_author_line, replay_opts, now)?;
     let (message, encoding, raw_message) = finalize_message_for_commit_encoding(message, config);
+    let (author_raw, committer_raw) = identity_template
+        .map(|c| rebase_identity_raw_fields_preserved(c, replay_opts))
+        .unwrap_or_default();
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
-        author: author.to_string(),
-        committer: format_ident(&committer, now),
-        author_raw: Vec::new(),
-        committer_raw: Vec::new(),
+        author,
+        committer,
+        author_raw,
+        committer_raw,
         encoding,
         message,
         raw_message,
@@ -1487,6 +1571,132 @@ fn choose_rebase_backend(args: &Args) -> RebaseBackend {
         // `git rebase --merge` and `git rebase --interactive` both use `.git/rebase-merge/`.
         RebaseBackend::Merge
     }
+}
+
+/// Git creates an ephemeral empty-tree root when `rebase --root` is used without `--onto`.
+fn create_squash_onto_root_commit(
+    repo: &Repository,
+    git_dir: &Path,
+    reset_author_date: bool,
+    committer_date_is_author_date: bool,
+) -> Result<ObjectId> {
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let now = time::OffsetDateTime::now_utc();
+    let author_ident = resolve_identity(&config, "AUTHOR")?;
+    let committer_ident = resolve_identity(&config, "COMMITTER")?;
+    let epoch = now.unix_timestamp();
+    let (aname, aemail) = &author_ident;
+    let (cname, cemail) = &committer_ident;
+    let (author, committer) = if reset_author_date {
+        let a = format!("{aname} <{aemail}> {epoch} +0000");
+        let c = if committer_date_is_author_date {
+            a.clone()
+        } else {
+            format!("{cname} <{cemail}> {epoch} +0000")
+        };
+        (a, c)
+    } else {
+        (
+            format_ident(&author_ident, now),
+            format_ident(&committer_ident, now),
+        )
+    };
+    let empty_tree = repo.odb.write(ObjectKind::Tree, &[])?;
+    let commit_data = CommitData {
+        tree: empty_tree,
+        parents: vec![],
+        author,
+        committer,
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
+        encoding: None,
+        message: "squash-onto\n".to_string(),
+        raw_message: None,
+    };
+    let bytes = serialize_commit(&commit_data);
+    Ok(repo.odb.write(ObjectKind::Commit, &bytes)?)
+}
+
+fn load_rebase_ignore_whitespace(rb_dir: &Path) -> bool {
+    rb_dir.join("ignore-whitespace").exists()
+}
+
+fn load_rebase_replay_commit_opts(rb_dir: &Path) -> RebaseReplayCommitOpts {
+    RebaseReplayCommitOpts {
+        ignore_space_change: load_rebase_ignore_whitespace(rb_dir),
+        committer_date_is_author_date: rb_dir.join("cdate_is_adate").exists(),
+        ignore_date: rb_dir.join("ignore_date").exists(),
+    }
+}
+
+fn rebase_identity_raw_fields_preserved(
+    commit: &CommitData,
+    opts: RebaseReplayCommitOpts,
+) -> (Vec<u8>, Vec<u8>) {
+    if opts.committer_date_is_author_date || opts.ignore_date {
+        (Vec::new(), Vec::new())
+    } else {
+        (commit.author_raw.clone(), commit.committer_raw.clone())
+    }
+}
+
+fn rebase_replayed_author_line(
+    raw_author: &str,
+    opts: RebaseReplayCommitOpts,
+    now: time::OffsetDateTime,
+) -> Result<String> {
+    if opts.committer_date_is_author_date && !opts.ignore_date {
+        let (name, email, date_tail) = split_stored_author_line(raw_author)
+            .map_err(|_| anyhow::anyhow!("invalid author identity in replayed commit"))?;
+        let tail = date_tail
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("corrupt author: missing date information"))?;
+        let timestamp =
+            super::commit::parse_date_to_git_timestamp(tail).unwrap_or_else(|| tail.to_string());
+        return Ok(format!("{name} <{email}> {timestamp}"));
+    }
+    if !opts.ignore_date {
+        return Ok(raw_author.to_string());
+    }
+    let (name, email, _) = split_stored_author_line(raw_author)
+        .map_err(|_| anyhow::anyhow!("invalid author identity in replayed commit"))?;
+    // Match `git am --ignore-date`: author timestamp is wall-clock seconds, timezone +0000.
+    let epoch = now.unix_timestamp();
+    Ok(format!("{name} <{email}> {epoch} +0000"))
+}
+
+fn rebase_replayed_committer_line(
+    config: &ConfigSet,
+    raw_author: &str,
+    opts: RebaseReplayCommitOpts,
+    now: time::OffsetDateTime,
+) -> Result<String> {
+    let committer = resolve_identity(config, "COMMITTER")?;
+    if opts.committer_date_is_author_date {
+        if opts.ignore_date {
+            // With `--reset-author-date`, author is wall-clock epoch at +0000; committer must match
+            // `%ci` to `%ai` (t3436 test_ctime_is_atime), not `GIT_COMMITTER_DATE`.
+            let epoch = now.unix_timestamp();
+            let (cname, cemail) = &committer;
+            return Ok(format!("{cname} <{cemail}> {epoch} +0000"));
+        }
+        let (_, _, date_tail) = split_stored_author_line(raw_author)
+            .map_err(|_| anyhow::anyhow!("invalid author identity in replayed commit"))?;
+        let tail = date_tail
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("corrupt author: missing date information"))?;
+        // Match `git am`: pass the author date through `parse_date` / ident formatting, not
+        // `@epoch` (which would drop non-UTC zones and break t3436).
+        let timestamp =
+            super::commit::parse_date_to_git_timestamp(tail).unwrap_or_else(|| tail.to_string());
+        let (cname, cemail) = &committer;
+        return Ok(format!("{cname} <{cemail}> {timestamp}"));
+    }
+    Ok(format_ident(&committer, now))
 }
 
 fn load_ws_fix_rule_from_rebase_state(git_dir: &Path) -> Option<u32> {
@@ -1906,6 +2116,17 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
 
     validate_apply_merge_backend_combo(&args, &config, want_autosquash)?;
 
+    let rebase_merges_cli = if args.no_rebase_merges {
+        Some(false)
+    } else if args.rebase_merges {
+        Some(true)
+    } else {
+        None
+    };
+    let config_rebase_merges = config.get_bool("rebase.rebaseMerges").and_then(|r| r.ok());
+    let effective_rebase_merges =
+        rebase_merges_cli.unwrap_or(config_rebase_merges.unwrap_or(false));
+
     let mut autostash_oid: Option<ObjectId> = None;
     let mut had_rebase_autostash = false;
 
@@ -1961,13 +2182,22 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         .to_owned();
 
     let (upstream_spec, upstream_oid, onto_oid, onto_name_for_state) = if args.root {
-        let onto_spec = args
-            .onto
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("internal: --root without --onto"))?;
-        let onto = resolve_revision(&repo, onto_spec)
-            .with_context(|| format!("bad revision '{onto_spec}'"))?;
-        ("--root".to_owned(), onto, onto, onto_spec.to_owned())
+        // Without `--onto`, Git creates an ephemeral empty-tree root commit as the squash base
+        // (`rebase --root` with no upstream).
+        let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
+            let oid = resolve_revision(&repo, onto_spec)
+                .with_context(|| format!("bad revision '{onto_spec}'"))?;
+            (oid, onto_spec.clone())
+        } else {
+            let oid = create_squash_onto_root_commit(
+                &repo,
+                git_dir,
+                args.reset_author_date,
+                args.committer_date_is_author_date,
+            )?;
+            (oid, oid.to_hex())
+        };
+        ("--root".to_owned(), onto, onto, onto_label)
     } else {
         let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD").to_owned();
         let up_oid = resolve_revision(&repo, &upstream_spec)
@@ -2002,8 +2232,15 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         .whitespace
         .as_deref()
         .is_some_and(|w| w.eq_ignore_ascii_case("fix") || w.eq_ignore_ascii_case("strip"));
-    let allow_preemptive_ff =
-        !args.interactive && args.exec.is_none() && !whitespace_forces_replay && !args.autosquash;
+    // Git sets `REBASE_FORCE` for these options so a preemptive fast-forward cannot skip replay
+    // (tree-identical commits still need committer/author timestamp rewriting).
+    let date_options_force_replay = args.committer_date_is_author_date || args.reset_author_date;
+    let allow_preemptive_ff = !args.interactive
+        && !effective_rebase_merges
+        && args.exec.is_none()
+        && !whitespace_forces_replay
+        && !args.autosquash
+        && !date_options_force_replay;
 
     if allow_preemptive_ff && rebase_can_preemptive_ff(&repo, onto_oid, upstream_oid, head_oid)? {
         if !args.no_ff {
@@ -2041,14 +2278,18 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     } else {
         args.keep_base
     };
-    let filter_cherry_equivalents = !reapply_cherry_picks && !args.interactive;
+    // Interactive rebases use the same default commit set as non-interactive (cherry-skip
+    // patch-identical commits) — only `--reapply-cherry-picks` / `--keep-base` changes this.
+    let filter_cherry_equivalents = !reapply_cherry_picks;
     let mut commits = if args.root {
         collect_commits_for_root_rebase(&repo, head_oid, onto_oid)?
     } else {
         collect_rebase_todo_commits(&repo, head_oid, upstream_oid, filter_cherry_equivalents)?
     };
 
-    if !args.keep_empty && !args.interactive {
+    // `--reset-author-date` / `--ignore-date` must still replay empty commits so author timestamps
+    // are rewritten (t3436).
+    if !args.keep_empty && !args.interactive && !args.reset_author_date {
         commits.retain(|oid| !is_commit_tree_unchanged(&repo, oid).unwrap_or(false));
     }
 
@@ -2067,13 +2308,8 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     }
 
     let (rebase_todo_lines, rebase_interactive) = if args.interactive {
-        if commits.is_empty() {
-            print_branch_up_to_date(&head);
-            if let Some(ref oid) = autostash_oid {
-                apply_autostash_after_ff(&repo, oid)?;
-            }
-            return Ok(());
-        }
+        // Even when the computed pick list is empty (`git rebase -i A A`), Git still runs the
+        // sequence editor so the user can add `merge`/`exec` lines (t3436).
         let pre_editor_len = commits.len();
         let (edited_lines, _) = run_interactive_rebase(
             &repo,
@@ -2201,6 +2437,16 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         if ws.eq_ignore_ascii_case("fix") || ws.eq_ignore_ascii_case("strip") {
             fs::write(rb_dir.join("whitespace-action"), format!("{ws}\n"))?;
         }
+    }
+
+    if args.ignore_whitespace {
+        fs::write(rb_dir.join("ignore-whitespace"), "")?;
+    }
+    if args.committer_date_is_author_date {
+        fs::write(rb_dir.join("cdate_is_adate"), "")?;
+    }
+    if args.reset_author_date {
+        fs::write(rb_dir.join("ignore_date"), "")?;
     }
 
     if let Some(ref exec_cmd) = args.exec {
@@ -2714,6 +2960,17 @@ fn replay_remaining(
         fs::write(rb_dir.join("next"), (i + 1).to_string())?;
 
         match step {
+            RebaseReplayStep::Break => {
+                let _ = fs::remove_file(rb_dir.join("current"));
+                let _ = fs::remove_file(rb_dir.join("current-cmd"));
+                let _ = fs::remove_file(rb_dir.join("current-final-fixup"));
+                // Drop this `break` line from the saved todo so `--continue` proceeds to the next command.
+                let remaining: Vec<&str> = todo[i + 1..].to_vec();
+                fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
+                fs::write(rb_dir.join("msgnum"), "1")?;
+                fs::write(rb_dir.join("end"), remaining.len().to_string())?;
+                std::process::exit(0);
+            }
             RebaseReplayStep::Exec(exec_cmd) => {
                 let _ = fs::remove_file(rb_dir.join("current"));
                 let _ = fs::remove_file(rb_dir.join("current-cmd"));
@@ -3062,6 +3319,8 @@ fn cherry_pick_for_rebase(
 ) -> Result<()> {
     let git_dir = &repo.git_dir;
     let keep_empty = rebase_keep_empty(rb_dir);
+    let replay_opts = load_rebase_replay_commit_opts(rb_dir);
+    let now = time::OffsetDateTime::now_utc();
 
     let commit_obj = repo.odb.read(commit_oid)?;
     let commit = parse_commit(&commit_obj.data)?;
@@ -3077,16 +3336,16 @@ fn cherry_pick_for_rebase(
     {
         let head_obj = repo.odb.read(&head_oid)?;
         let head_commit = parse_commit(&head_obj.data)?;
-        let now = time::OffsetDateTime::now_utc();
-        let committer = resolve_identity(&config, "COMMITTER")?;
         let (message, encoding, raw_message) = transcoded_replayed_message(&commit, &config);
+        let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
+        let committer = rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
         let commit_data = CommitData {
             tree: head_commit.tree,
             parents: vec![head_oid],
-            author: commit.author.clone(),
-            committer: format_ident(&committer, now),
-            author_raw: commit.author_raw.clone(),
-            committer_raw: commit.committer_raw.clone(),
+            author,
+            committer,
+            author_raw: Vec::new(),
+            committer_raw: Vec::new(),
             encoding,
             message,
             raw_message,
@@ -3140,8 +3399,6 @@ fn cherry_pick_for_rebase(
                 }
                 if ws_fix_rule.is_some() {
                     let tree_oid = write_tree_from_index(&repo.odb, &idx, "")?;
-                    let now = time::OffsetDateTime::now_utc();
-                    let committer = resolve_identity(&config, "COMMITTER")?;
                     let (message, encoding, raw_message) = if root_rebase {
                         let msg = message_for_root_replayed_commit(repo, &commit, true);
                         (msg, commit.encoding.clone(), None)
@@ -3152,13 +3409,45 @@ fn cherry_pick_for_rebase(
                         commit_message_after_prepare_hook(repo, git_dir, &message, "message")?;
                     let message =
                         apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+                    let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
+                    let committer =
+                        rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
                     let commit_data = CommitData {
                         tree: tree_oid,
                         parents: vec![head_oid],
-                        author: commit.author.clone(),
-                        committer: format_ident(&committer, now),
-                        author_raw: commit.author_raw.clone(),
-                        committer_raw: commit.committer_raw.clone(),
+                        author,
+                        committer,
+                        author_raw: Vec::new(),
+                        committer_raw: Vec::new(),
+                        encoding,
+                        message,
+                        raw_message,
+                    };
+                    let commit_bytes = serialize_commit(&commit_data);
+                    let new_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
+                    fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+                    append_rebase_rewrite_line(rb_dir, commit_oid, &new_oid)?;
+                } else if replay_opts.committer_date_is_author_date || replay_opts.ignore_date {
+                    let (message, encoding, raw_message) = if root_rebase {
+                        let msg = message_for_root_replayed_commit(repo, &commit, true);
+                        (msg, commit.encoding.clone(), None)
+                    } else {
+                        transcoded_replayed_message(&commit, &config)
+                    };
+                    let raw_msg =
+                        commit_message_after_prepare_hook(repo, git_dir, &message, "message")?;
+                    let message =
+                        apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+                    let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
+                    let committer =
+                        rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
+                    let commit_data = CommitData {
+                        tree: commit_tree_oid,
+                        parents: vec![head_oid],
+                        author,
+                        committer,
+                        author_raw: Vec::new(),
+                        committer_raw: Vec::new(),
                         encoding,
                         message,
                         raw_message,
@@ -3196,15 +3485,18 @@ fn cherry_pick_for_rebase(
                     apply_commit_msg_cleanup(&after_editor, rebase_commit_msg_cleanup(&config));
                 let (message, encoding, raw_message) =
                     finalize_message_for_commit_encoding(cleaned, &config);
-                let now = time::OffsetDateTime::now_utc();
-                let committer = resolve_identity(&config, "COMMITTER")?;
+                let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
+                let committer =
+                    rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
+                let (author_raw, committer_raw) =
+                    rebase_identity_raw_fields_preserved(&commit, replay_opts);
                 let commit_data = CommitData {
                     tree: commit_tree_oid,
                     parents: vec![head_oid],
-                    author: commit.author.clone(),
-                    committer: format_ident(&committer, now),
-                    author_raw: commit.author_raw.clone(),
-                    committer_raw: commit.committer_raw.clone(),
+                    author,
+                    committer,
+                    author_raw,
+                    committer_raw,
                     encoding,
                     message,
                     raw_message,
@@ -3238,6 +3530,7 @@ fn cherry_pick_for_rebase(
     let conflict_ctx = RebaseConflictContext {
         backend,
         picked_subject: commit.message.lines().next().unwrap_or("replayed commit"),
+        ignore_space_change: replay_opts.ignore_space_change,
     };
     let merge_result = three_way_merge_with_content(
         repo,
@@ -3299,6 +3592,9 @@ fn cherry_pick_for_rebase(
                 vec![amend_parent],
                 &hc.author,
                 msg,
+                replay_opts,
+                now,
+                Some(&hc),
             )?;
             fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
             record_rebase_in_rewritten_pending(git_dir, rb_dir, commit_oid, next_after_line)?;
@@ -3316,6 +3612,9 @@ fn cherry_pick_for_rebase(
                 vec![amend_parent],
                 &hc.author,
                 cleaned,
+                replay_opts,
+                now,
+                Some(&hc),
             )?;
             fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
             if record_rewrite {
@@ -3343,6 +3642,9 @@ fn cherry_pick_for_rebase(
                 vec![amend_parent],
                 &hc.author,
                 cleaned,
+                replay_opts,
+                now,
+                Some(&hc),
             )?;
             fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
             clear_squash_ctx(&rb_dir);
@@ -3370,6 +3672,9 @@ fn cherry_pick_for_rebase(
             vec![amend_parent],
             &hc.author,
             cleaned,
+            replay_opts,
+            now,
+            Some(&hc),
         )?;
         fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
         clear_squash_ctx(&rb_dir);
@@ -3381,9 +3686,6 @@ fn cherry_pick_for_rebase(
 
     // Create the rebased commit, preserving the original author (normal pick / reword)
     let tree_oid = write_tree_from_index(&repo.odb, &merged_index, "")?;
-
-    let now = time::OffsetDateTime::now_utc();
-    let committer = resolve_identity(&config, "COMMITTER")?;
 
     let (message, encoding, raw_message) = if todo_cmd == RebaseTodoCmd::Reword {
         let template = if root_rebase {
@@ -3407,13 +3709,16 @@ fn cherry_pick_for_rebase(
         finalize_message_for_commit_encoding(message, &config)
     };
 
+    let author = rebase_replayed_author_line(&commit.author, replay_opts, now)?;
+    let committer = rebase_replayed_committer_line(&config, &commit.author, replay_opts, now)?;
+    let (author_raw, committer_raw) = rebase_identity_raw_fields_preserved(&commit, replay_opts);
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid],
-        author: commit.author.clone(), // preserve original author
-        committer: format_ident(&committer, now),
-        author_raw: commit.author_raw.clone(),
-        committer_raw: commit.committer_raw.clone(),
+        author,
+        committer,
+        author_raw,
+        committer_raw,
         encoding,
         message,
         raw_message,
@@ -3504,6 +3809,9 @@ fn finish_rebase(
 
     flush_rebase_rewritten_pending(git_dir, rb_dir)?;
     run_post_rewrite_after_rebase(repo, rb_dir);
+
+    // Leave the index matching the new tip (matches Git; avoids spurious "dirty index" on the next command).
+    let _ = reset_index_to_head(repo, git_dir);
 
     match backend {
         RebaseBackend::Merge => {
@@ -3617,6 +3925,8 @@ fn do_continue() -> Result<()> {
     let backend_continue = load_rebase_backend(&rb_dir);
 
     let interactive_continue = rb_dir.join("interactive").exists();
+    let replay_opts_continue = load_rebase_replay_commit_opts(&rb_dir);
+    let now_continue = time::OffsetDateTime::now_utc();
 
     if rb_dir.join("rebase-merge-source").exists()
         && rb_dir.join("rebase-merge-args").exists()
@@ -3632,6 +3942,7 @@ fn do_continue() -> Result<()> {
             peek_next_rebase_flush_hint(&repo, &todo_lines_retry, 1, interactive_continue);
         let st = run_rebase_merge_subprocess(&repo, git_dir, &merge_src_oid, merge_args)?;
         if st.success() {
+            rewrite_merge_head_for_replay_opts(&repo, git_dir, &rb_dir, &merge_src_oid)?;
             let _ = fs::remove_file(rb_dir.join("rebase-merge-source"));
             let _ = fs::remove_file(rb_dir.join("rebase-merge-args"));
             record_rebase_in_rewritten_pending(git_dir, &rb_dir, &merge_src_oid, next_after_retry)?;
@@ -3670,6 +3981,7 @@ fn do_continue() -> Result<()> {
         if !st.success() {
             bail!("merge --continue failed");
         }
+        rewrite_merge_head_for_replay_opts(&repo, git_dir, &rb_dir, &merge_src_oid)?;
         let _ = fs::remove_file(rb_dir.join("rebase-merge-source"));
         let _ = fs::remove_file(rb_dir.join("rebase-merge-args"));
         pop_first_nonempty_todo_line(&rb_dir)?;
@@ -3694,6 +4006,17 @@ fn do_continue() -> Result<()> {
         .filter(|l| !l.is_empty())
         .collect();
 
+    // After `break` in an interactive rebase, there is no `current` commit yet — resume the todo.
+    if interactive_continue && !rb_dir.join("current").exists() && !todo_lines_continue.is_empty() {
+        return replay_remaining(
+            &repo,
+            &rb_dir,
+            autostash_continue,
+            backend_continue,
+            had_autostash_continue,
+        );
+    }
+
     if rb_dir.join("rebase-amend-continue").exists() {
         let index = load_index(&repo)?;
         if index.entries.iter().any(|e| e.stage() != 0) {
@@ -3711,6 +4034,22 @@ fn do_continue() -> Result<()> {
         let head_obj = repo.odb.read(&head_oid)?;
         let hc = parse_commit(&head_obj.data)?;
         let amend_parent = hc.parents.first().copied().unwrap_or(head_oid);
+        let amend_stopped_hex = fs::read_to_string(rb_dir.join("stopped-sha")).unwrap_or_default();
+        let amend_stopped_hex = amend_stopped_hex.trim();
+        let amend_old_oid = if amend_stopped_hex.len() == 40 {
+            ObjectId::from_hex(amend_stopped_hex)?
+        } else {
+            head_oid
+        };
+        let amend_src_commit = repo
+            .odb
+            .read(&amend_old_oid)
+            .ok()
+            .and_then(|o| parse_commit(&o.data).ok());
+        let source_author_amend = amend_src_commit
+            .as_ref()
+            .map(|c| c.author.clone())
+            .unwrap_or_else(|| hc.author.clone());
         let msg_src = if git_dir.join("COMMIT_EDITMSG").exists() {
             fs::read_to_string(git_dir.join("COMMIT_EDITMSG"))?
         } else {
@@ -3724,17 +4063,13 @@ fn do_continue() -> Result<()> {
             &index,
             &config,
             vec![amend_parent],
-            &hc.author,
+            &source_author_amend,
             message,
+            replay_opts_continue,
+            now_continue,
+            amend_src_commit.as_ref().or(Some(&hc)),
         )?;
         fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
-        let amend_stopped_hex = fs::read_to_string(rb_dir.join("stopped-sha")).unwrap_or_default();
-        let amend_stopped_hex = amend_stopped_hex.trim();
-        let amend_old_oid = if amend_stopped_hex.len() == 40 {
-            ObjectId::from_hex(amend_stopped_hex)?
-        } else {
-            head_oid
-        };
         let next_peek_amend =
             peek_next_rebase_flush_hint(&repo, &todo_lines_continue, 0, interactive_continue);
         record_rebase_in_rewritten_pending(git_dir, &rb_dir, &amend_old_oid, next_peek_amend)?;
@@ -3763,16 +4098,16 @@ fn do_continue() -> Result<()> {
             !t.is_empty() && !t.starts_with('#')
         });
         if let Some(line) = first_line {
-            if let Ok(Some(RebaseReplayStep::Exec(_))) =
-                parse_rebase_replay_step(&repo, line, interactive_continue)
-            {
-                return replay_remaining(
-                    &repo,
-                    &rb_dir,
-                    autostash_continue,
-                    backend_continue,
-                    had_autostash_continue,
-                );
+            if let Ok(Some(step)) = parse_rebase_replay_step(&repo, line, interactive_continue) {
+                if matches!(step, RebaseReplayStep::Exec(_) | RebaseReplayStep::Break) {
+                    return replay_remaining(
+                        &repo,
+                        &rb_dir,
+                        autostash_continue,
+                        backend_continue,
+                        had_autostash_continue,
+                    );
+                }
             }
         }
     }
@@ -3846,8 +4181,11 @@ fn do_continue() -> Result<()> {
                 &index,
                 &config,
                 vec![amend_parent],
-                &hc.author,
+                &original_commit.author,
                 msg,
+                replay_opts_continue,
+                now_continue,
+                Some(&original_commit),
             )?
         } else if todo_cmd == RebaseTodoCmd::Squash && !final_fixup {
             let tmpl = fs::read_to_string(rb_dir.join("message-squash"))?;
@@ -3859,8 +4197,11 @@ fn do_continue() -> Result<()> {
                 &index,
                 &config,
                 vec![amend_parent],
-                &hc.author,
+                &original_commit.author,
                 cleaned,
+                replay_opts_continue,
+                now_continue,
+                Some(&original_commit),
             )?
         } else if todo_cmd == RebaseTodoCmd::Fixup {
             let fixup_path = rb_dir.join("message-fixup");
@@ -3879,8 +4220,11 @@ fn do_continue() -> Result<()> {
                 &index,
                 &config,
                 vec![amend_parent],
-                &hc.author,
+                &original_commit.author,
                 cleaned,
+                replay_opts_continue,
+                now_continue,
+                Some(&original_commit),
             )?;
             clear_squash_ctx(&rb_dir);
             oid
@@ -3900,8 +4244,11 @@ fn do_continue() -> Result<()> {
                 &index,
                 &config,
                 vec![amend_parent],
-                &hc.author,
+                &original_commit.author,
                 cleaned,
+                replay_opts_continue,
+                now_continue,
+                Some(&original_commit),
             )?;
             clear_squash_ctx(&rb_dir);
             oid
@@ -3921,15 +4268,26 @@ fn do_continue() -> Result<()> {
         let (message, encoding, raw_message) =
             finalize_message_for_commit_encoding(cleaned, &config);
         let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
-        let now = time::OffsetDateTime::now_utc();
-        let committer = resolve_identity(&config, "COMMITTER")?;
+        let author = rebase_replayed_author_line(
+            &original_commit.author,
+            replay_opts_continue,
+            now_continue,
+        )?;
+        let committer = rebase_replayed_committer_line(
+            &config,
+            &original_commit.author,
+            replay_opts_continue,
+            now_continue,
+        )?;
+        let (author_raw, committer_raw) =
+            rebase_identity_raw_fields_preserved(&original_commit, replay_opts_continue);
         let commit_data = CommitData {
             tree: tree_oid,
             parents: vec![head_oid],
-            author: original_commit.author.clone(),
-            committer: format_ident(&committer, now),
-            author_raw: original_commit.author_raw.clone(),
-            committer_raw: original_commit.committer_raw.clone(),
+            author,
+            committer,
+            author_raw,
+            committer_raw,
             encoding,
             message,
             raw_message,
@@ -3940,17 +4298,28 @@ fn do_continue() -> Result<()> {
         let (message, encoding, raw_message) =
             read_rebase_continue_message(git_dir, &original_commit, &config)?;
         let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
-        let now = time::OffsetDateTime::now_utc();
-        let committer = resolve_identity(&config, "COMMITTER")?;
         let raw_msg = commit_message_after_prepare_hook(&repo, git_dir, &message, "message")?;
         let message = apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
+        let author = rebase_replayed_author_line(
+            &original_commit.author,
+            replay_opts_continue,
+            now_continue,
+        )?;
+        let committer = rebase_replayed_committer_line(
+            &config,
+            &original_commit.author,
+            replay_opts_continue,
+            now_continue,
+        )?;
+        let (author_raw, committer_raw) =
+            rebase_identity_raw_fields_preserved(&original_commit, replay_opts_continue);
         let commit_data = CommitData {
             tree: tree_oid,
             parents: vec![head_oid],
-            author: original_commit.author.clone(),
-            committer: format_ident(&committer, now),
-            author_raw: original_commit.author_raw.clone(),
-            committer_raw: original_commit.committer_raw.clone(),
+            author,
+            committer,
+            author_raw,
+            committer_raw,
             encoding,
             message,
             raw_message,
@@ -4534,7 +4903,7 @@ fn content_merge_or_conflict(
         marker_size: 7,
         diff_algorithm: None,
         ignore_all_space: false,
-        ignore_space_change: false,
+        ignore_space_change: ctx.ignore_space_change,
         ignore_space_at_eol: false,
         ignore_cr_at_eol: false,
     };

@@ -335,7 +335,7 @@ commit → check it off → move on.
 - [x] `t3310-notes-merge-manual-resolve` — Test notes merging with manual conflict resolution
 - [ ] `t3207-branch-submodule` ██░░░░░░░░░░░░░░░░░░ 2/20 (18 left) — git branch submodule tests
 - [ ] `t3705-add-sparse-checkout` ██░░░░░░░░░░░░░░░░░░ 2/20 (18 left) — git add in sparse checked out working trees
-- [ ] `t3436-rebase-more-options` █░░░░░░░░░░░░░░░░░░░ 1/19 (18 left) — tests to ensure compatibility between am and interactive backends
+- [x] `t3436-rebase-more-options` — tests to ensure compatibility between am and interactive backends (19/19)
 - [ ] `t3905-stash-include-untracked` ███████░░░░░░░░░░░░░ 12/34 (22 left) — Test git stash --include-untracked
 - [x] `t3511-cherry-pick-x` ████████████████████ 22/22 (0 left) — Test cherry-pick -x and -s
 - [ ] `t3202-show-branch` ██░░░░░░░░░░░░░░░░░░ 4/27 (23 left) — test show-branch

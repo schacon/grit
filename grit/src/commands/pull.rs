@@ -590,6 +590,9 @@ fn do_merge_or_rebase_after_fetch(
             autosquash: false,
             no_autosquash: false,
             keep_empty: false,
+            ignore_whitespace: false,
+            committer_date_is_author_date: false,
+            reset_author_date: false,
         };
         return super::rebase::run(rebase_args);
     }
