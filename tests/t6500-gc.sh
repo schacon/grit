@@ -12,7 +12,9 @@ test_expect_success 'setup' '
 	# default
 	git config gc.bigPackThreshold 2g &&
 	git config set --global maintenance.strategy gc &&
-	test_oid_init
+	test_detect_hash &&
+	cat "$GIT_SOURCE_DIR/t/oid-info/hash-info" "$GIT_SOURCE_DIR/t/oid-info/oid" |
+		test_oid_cache
 '
 
 test_expect_success 'gc empty repository' '
