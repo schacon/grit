@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   315 |
+| Completed   |   316 |
 | In progress |     5 |
-| Remaining   |   450 |
+| Remaining   |   449 |
 | **Total**   |   770 |
 
-Task lines in `PLAN.md`: 315 completed (`[x]`), 5 in progress (`[~]`), 450 remaining (`[ ]`).
+Task lines in `PLAN.md`: 316 completed (`[x]`), 5 in progress (`[~]`), 449 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t5322-pack-objects-sparse` — 11/11 tests pass (`pack-objects --revs`: `--sparse` / `--no-sparse`, `GIT_TEST_PACK_SPARSE` + `pack.useSparse`, Git-style sparse edge marking with blobs + single-tip ancestor exclusion; harness CSV/dashboards refreshed)
 - `t5609-clone-branch` — 7/7 tests pass (`clone --branch`: `read_raw_ref` for ref existence so `refs/remotes/origin/HEAD` is set when default branch is packed; reject `--branch` when `refs/heads/<name>` missing on source, including empty repos)
 - `t5802-connect-helper` — 8/8 tests pass (`ext::` sh -c upload-pack argv extraction; `git daemon --inetd` minimal path; streaming unpack zero-byte trees + duplicate `want` dedup; fetch NAK round + tag-following for ext/HTTP; rev-parse `tag^1` peels tags; harness CSV/dashboards refreshed)
 - `t7421-submodule-summary-add` — 5/5 tests pass (`submodule summary`: index↔commit gitlink diff, pathspecs + renamed paths, `rev-parse` first line for abbrev; `submodule update --remote`: local URL fast path updates `refs/remotes/origin/*` + copies objects, stages gitlink in super index)

@@ -11,19 +11,18 @@ use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as LibError;
 use grit_lib::rev_list::{rev_list, MissingAction, RevListOptions};
 use sha1::{Digest, Sha1};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::thread;
 use std::time::Duration;
 
 use crate::grit_exe;
 use grit_lib::delta_encode::{encode_lcp_delta, encode_prefix_extension_delta};
-use grit_lib::objects::{parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
-use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -187,8 +186,12 @@ pub struct Args {
     pub max_pack_size: Option<String>,
 
     /// Sparse reachability traversal (accepted for compat).
-    #[arg(long = "sparse")]
+    #[arg(long = "sparse", action = clap::ArgAction::SetTrue)]
     pub sparse: bool,
+
+    /// Dense reachability traversal (disables sparse; matches Git `--no-sparse`).
+    #[arg(long = "no-sparse", action = clap::ArgAction::SetTrue)]
+    pub no_sparse: bool,
 
     /// Progress output (accepted for compat).
     #[arg(long = "progress")]
@@ -251,6 +254,10 @@ pub fn run(args: Args) -> Result<()> {
         if fmt != "sha1" {
             bail!("unsupported object format: {fmt}");
         }
+    }
+
+    if args.sparse && args.no_sparse {
+        bail!("cannot combine --sparse and --no-sparse");
     }
 
     if !args.stdout && args.base_name.is_none() {
@@ -731,7 +738,8 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         // revs (client haves). Lines may be 40-char hex or ref names. With `--thin`,
         // objects reachable from the haves are omitted from the pack.
         let stdin = io::stdin();
-        let mut exclude = BTreeSet::new();
+        let mut positive_tips: Vec<ObjectId> = Vec::new();
+        let mut exclude_roots: Vec<ObjectId> = Vec::new();
         let mut post_not = false;
         let mut have_roots: BTreeSet<ObjectId> = BTreeSet::new();
         for line in stdin.lock().lines() {
@@ -761,7 +769,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
                     resolve_revision(repo, neg_ref)
                         .with_context(|| format!("cannot resolve ref '{neg_ref}'"))?
                 };
-                walk_reachable(repo, &oid, &mut exclude)?;
+                exclude_roots.push(oid);
             } else {
                 let oid = if let Ok(oid) = ObjectId::from_hex(trimmed) {
                     oid
@@ -769,12 +777,33 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
                     resolve_revision(repo, trimmed)
                         .with_context(|| format!("cannot resolve ref '{trimmed}'"))?
                 };
-                walk_reachable(repo, &oid, &mut oids)?;
+                positive_tips.push(oid);
             }
         }
-        for oid in &exclude {
-            oids.remove(oid);
+
+        let use_sparse = pack_objects_sparse_mode(repo, args)?;
+        let mut oids: BTreeSet<ObjectId> = if use_sparse {
+            collect_revs_pack_objects_sparse(repo, &positive_tips, &exclude_roots)?
+        } else {
+            let mut oids = BTreeSet::new();
+            for tip in &positive_tips {
+                walk_reachable(repo, tip, &mut oids)?;
+            }
+            oids
+        };
+
+        let skip_full_exclude_subtract =
+            use_sparse && sparse_skip_full_exclude_subtract(repo, &positive_tips, &exclude_roots)?;
+        if !skip_full_exclude_subtract {
+            let mut exclude = BTreeSet::new();
+            for root in &exclude_roots {
+                walk_reachable(repo, root, &mut exclude)?;
+            }
+            for oid in &exclude {
+                oids.remove(oid);
+            }
         }
+
         if args.thin && !have_roots.is_empty() {
             let mut have_closure = BTreeSet::new();
             for root in &have_roots {
@@ -1036,6 +1065,285 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
         ObjectKind::Blob => {} // leaf
     }
     Ok(())
+}
+
+/// Matches `git_parse_maybe_bool` + integer fallback used by Git's `git_env_bool` for
+/// `GIT_TEST_PACK_SPARSE`.
+fn parse_git_test_pack_sparse_env() -> Option<bool> {
+    let v = std::env::var_os("GIT_TEST_PACK_SPARSE")?;
+    let t = v.to_string_lossy();
+    let s = t.trim();
+    if s.eq_ignore_ascii_case("true")
+        || s == "1"
+        || s.eq_ignore_ascii_case("yes")
+        || s.eq_ignore_ascii_case("on")
+    {
+        return Some(true);
+    }
+    if s.eq_ignore_ascii_case("false")
+        || s == "0"
+        || s.eq_ignore_ascii_case("no")
+        || s.eq_ignore_ascii_case("off")
+    {
+        return Some(false);
+    }
+    if let Ok(i) = s.parse::<i64>() {
+        return Some(i != 0);
+    }
+    None
+}
+
+/// Whether `pack-objects` should use Git's sparse reachability algorithm for `--revs`.
+///
+/// Precedence: `--no-sparse` / `--sparse`, then `GIT_TEST_PACK_SPARSE`, then `pack.useSparse`
+/// (default true), matching Git's `pack-objects.c`.
+/// When sparse packing uses a single `^ancestor` exclusion, Git keeps objects that a full
+/// reachable-subtract would remove (t5322). Multi-tip ranges like `topic1 ^topic2 ^topic3` still
+/// need the subtract (test 3).
+fn sparse_skip_full_exclude_subtract(
+    repo: &Repository,
+    positive_tips: &[ObjectId],
+    exclude_roots: &[ObjectId],
+) -> Result<bool> {
+    if positive_tips.len() != 1 || exclude_roots.len() != 1 {
+        return Ok(false);
+    }
+    let tip = positive_tips[0];
+    let excl = exclude_roots[0];
+    let mut seen = HashSet::<ObjectId>::new();
+    let mut queue = VecDeque::from([tip]);
+    while let Some(cid) = queue.pop_front() {
+        if cid == excl {
+            return Ok(true);
+        }
+        if !seen.insert(cid) {
+            continue;
+        }
+        let obj = read_object_from_repo(repo, &cid)?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let c = parse_commit(&obj.data)?;
+        for p in c.parents {
+            queue.push_back(p);
+        }
+    }
+    Ok(false)
+}
+
+fn pack_objects_sparse_mode(repo: &Repository, args: &Args) -> Result<bool> {
+    if args.no_sparse {
+        return Ok(false);
+    }
+    if args.sparse {
+        return Ok(true);
+    }
+    if let Some(b) = parse_git_test_pack_sparse_env() {
+        return Ok(b);
+    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    for key in ["pack.useSparse", "pack.usesparse"] {
+        if let Some(Ok(b)) = config.get_bool(key) {
+            return Ok(b);
+        }
+    }
+    Ok(true)
+}
+
+fn add_children_by_path_for_sparse(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    uninteresting: &mut HashSet<ObjectId>,
+    map: &mut HashMap<Vec<u8>, HashSet<ObjectId>>,
+) -> Result<()> {
+    let obj = read_object_from_repo(repo, tree_oid)?;
+    if obj.kind != ObjectKind::Tree {
+        return Ok(());
+    }
+    let entries = parse_tree(&obj.data)?;
+    let parent_uninteresting = uninteresting.contains(tree_oid);
+    for e in entries {
+        if e.mode == 0o040000 {
+            map.entry(e.name.clone()).or_default().insert(e.oid);
+            if parent_uninteresting {
+                uninteresting.insert(e.oid);
+            }
+        } else if e.mode != 0o160000 && parent_uninteresting {
+            uninteresting.insert(e.oid);
+        }
+    }
+    Ok(())
+}
+
+/// Port of Git's `mark_trees_uninteresting_sparse` (`revision.c`): when both interesting and
+/// uninteresting root trees are present at the same walk depth, prune uninteresting paths that
+/// match by entry name across those trees.
+fn mark_trees_uninteresting_sparse(
+    repo: &Repository,
+    trees: &HashSet<ObjectId>,
+    uninteresting: &mut HashSet<ObjectId>,
+) -> Result<()> {
+    let mut has_interesting = false;
+    let mut has_uninteresting = false;
+    for oid in trees {
+        if uninteresting.contains(oid) {
+            has_uninteresting = true;
+        } else {
+            has_interesting = true;
+        }
+    }
+    if !has_uninteresting || !has_interesting {
+        return Ok(());
+    }
+    let mut map: HashMap<Vec<u8>, HashSet<ObjectId>> = HashMap::new();
+    for oid in trees {
+        add_children_by_path_for_sparse(repo, oid, uninteresting, &mut map)?;
+    }
+    for child_set in map.into_values() {
+        mark_trees_uninteresting_sparse(repo, &child_set, uninteresting)?;
+    }
+    Ok(())
+}
+
+fn walk_tree_respecting_uninteresting(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    uninteresting: &HashSet<ObjectId>,
+    oids: &mut BTreeSet<ObjectId>,
+) -> Result<()> {
+    if uninteresting.contains(tree_oid) {
+        return Ok(());
+    }
+    if !oids.insert(*tree_oid) {
+        return Ok(());
+    }
+    let obj = read_object_from_repo(repo, tree_oid)?;
+    let entries = parse_tree(&obj.data)?;
+    for e in entries {
+        if e.mode == 0o040000 {
+            walk_tree_respecting_uninteresting(repo, &e.oid, uninteresting, oids)?;
+        } else if e.mode != 0o160000 && !uninteresting.contains(&e.oid) {
+            oids.insert(e.oid);
+        }
+    }
+    Ok(())
+}
+
+fn walk_reachable_commits_first(
+    repo: &Repository,
+    root: ObjectId,
+    oids: &mut BTreeSet<ObjectId>,
+    commit_seen: &mut HashSet<ObjectId>,
+    commit_uninteresting: &HashSet<ObjectId>,
+    uninteresting: &HashSet<ObjectId>,
+) -> Result<()> {
+    let mut queue = VecDeque::new();
+    queue.push_back(root);
+    while let Some(cid) = queue.pop_front() {
+        if !commit_seen.insert(cid) {
+            continue;
+        }
+        let obj = read_object_from_repo(repo, &cid)?;
+        if obj.kind != ObjectKind::Commit {
+            walk_reachable(repo, &cid, oids)?;
+            continue;
+        }
+        let c = parse_commit(&obj.data)?;
+        if commit_uninteresting.contains(&cid) {
+            for p in c.parents {
+                queue.push_back(p);
+            }
+            continue;
+        }
+        oids.insert(cid);
+        walk_tree_respecting_uninteresting(repo, &c.tree, uninteresting, oids)?;
+        for p in c.parents {
+            queue.push_back(p);
+        }
+    }
+    Ok(())
+}
+
+fn collect_revs_pack_objects_sparse(
+    repo: &Repository,
+    positive_tips: &[ObjectId],
+    exclude_roots: &[ObjectId],
+) -> Result<BTreeSet<ObjectId>> {
+    let mut commit_uninteresting: HashSet<ObjectId> = HashSet::new();
+    let mut queue: VecDeque<ObjectId> = VecDeque::new();
+    let mut commit_seen_exclude: HashSet<ObjectId> = HashSet::new();
+
+    for root in exclude_roots {
+        queue.push_back(*root);
+    }
+    while let Some(cid) = queue.pop_front() {
+        if !commit_seen_exclude.insert(cid) {
+            continue;
+        }
+        commit_uninteresting.insert(cid);
+        let obj = read_object_from_repo(repo, &cid)?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let c = parse_commit(&obj.data)?;
+        for p in c.parents {
+            queue.push_back(p);
+        }
+    }
+
+    let mut edge_trees: HashSet<ObjectId> = HashSet::new();
+    let mut uninteresting: HashSet<ObjectId> = HashSet::new();
+
+    // Match Git's `mark_edges_uninteresting`: every starting commit (included and `^` excluded)
+    // contributes its root tree and its parents' root trees to the edge set.
+    let mut edge_commits: Vec<ObjectId> = Vec::new();
+    edge_commits.extend_from_slice(positive_tips);
+    edge_commits.extend_from_slice(exclude_roots);
+
+    for tip in edge_commits {
+        let obj = read_object_from_repo(repo, &tip)?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let c = parse_commit(&obj.data)?;
+        edge_trees.insert(c.tree);
+        if commit_uninteresting.contains(&tip) {
+            uninteresting.insert(c.tree);
+        }
+        for p in &c.parents {
+            let pobj = read_object_from_repo(repo, p)?;
+            if pobj.kind != ObjectKind::Commit {
+                continue;
+            }
+            let pc = parse_commit(&pobj.data)?;
+            edge_trees.insert(pc.tree);
+            if commit_uninteresting.contains(p) {
+                uninteresting.insert(pc.tree);
+            }
+        }
+    }
+
+    mark_trees_uninteresting_sparse(repo, &edge_trees, &mut uninteresting)?;
+
+    let mut oids = BTreeSet::new();
+    let mut commit_seen_walk: HashSet<ObjectId> = HashSet::new();
+    for tip in positive_tips {
+        let obj = read_object_from_repo(repo, tip)?;
+        match obj.kind {
+            ObjectKind::Commit => {
+                walk_reachable_commits_first(
+                    repo,
+                    *tip,
+                    &mut oids,
+                    &mut commit_seen_walk,
+                    &commit_uninteresting,
+                    &uninteresting,
+                )?;
+            }
+            _ => walk_reachable(repo, tip, &mut oids)?,
+        }
+    }
+    Ok(oids)
 }
 
 /// Read an object from loose store or pack files.

@@ -1,5 +1,10 @@
 # Test results
 
+**2026-04-09 (t5322 / pack-objects sparse)**
+
+- `cargo test -p grit-lib --lib`: 155 passed
+- `./scripts/run-tests.sh t5322-pack-objects-sparse.sh`: 11/11 passed
+
 **2026-04-09 (t5609 / clone --branch)**
 
 - `cargo test -p grit-lib --lib`: 152 passed
