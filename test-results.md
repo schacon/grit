@@ -2,6 +2,9 @@
 
 **Updated:** 2026-04-06
 
+- `./scripts/run-tests.sh t4035-diff-quiet.sh`: 16/23 passing (baseline for newly claimed in-progress Diff target `t4035`).
+- `bash scripts/run-upstream-tests.sh t4035-diff-quiet`: 16/23 passing.
+
 - `./scripts/run-tests.sh t4017-diff-retval.sh`: 30/38 passing (baseline for newly claimed in-progress Diff target `t4017`).
 - `bash scripts/run-upstream-tests.sh t4017-diff-retval`: 30/38 passing.
 - `cargo build --release`: passes (rebuild after `t4017` exit-code and `--check` behavior fixes in `diff`, pickaxe-aware `--exit-code` handling in `diff-tree`, and global `--no-pager` parsing in the CLI dispatcher).
