@@ -393,7 +393,7 @@ t4031-diff-rewrite-binary	yes	8	8	0	ok	8	8	0
 t4032-diff-inter-hunk-context	yes	37	16	21	ok	16	37	0
 t4033-diff-patience	yes	11	11	0	ok	11	11	0
 t4034-diff-words	yes	66	7	59	ok	7	66	0
-t4035-diff-quiet	yes	23	16	7	ok	16	23	0
+t4035-diff-quiet	yes	23	23	0	ok	23	23	0
 t4036-format-patch-signer-mime	yes	5	5	0	ok	5	5	0
 t4038-diff-combined	yes	26	6	20	ok	5	25	1
 t4039-diff-assume-unchanged	yes	4	4	0	ok	4	4	0

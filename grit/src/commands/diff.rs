@@ -31,7 +31,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use std::collections::BTreeSet;
 use std::io::{self, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 use unicode_width::UnicodeWidthStr;
 
@@ -733,7 +733,19 @@ pub fn run(mut args: Args) -> Result<()> {
     let has_separator = raw_args.iter().any(|a| a == "--");
     let (mut revs, paths) = parse_rev_and_paths(&args.args, has_separator);
 
-    let repo = Repository::discover(None).context("not a git repository")?;
+    let repo = match Repository::discover(None) {
+        Ok(repo) => repo,
+        Err(err) => {
+            if should_use_implicit_no_index(&args, &revs, &paths, None) {
+                return run_no_index(&args);
+            }
+            return Err(err).context("not a git repository");
+        }
+    };
+
+    if should_use_implicit_no_index(&args, &revs, &paths, repo.work_tree.as_deref()) {
+        return run_no_index(&args);
+    }
 
     // Resolve diff prefixes from config and command-line options
     let (src_prefix, dst_prefix) = resolve_diff_prefixes(&args, &repo);
@@ -2273,6 +2285,52 @@ fn parse_rev_and_paths(args: &[String], has_separator: bool) -> (Vec<String>, Ve
 
         (revs, paths)
     }
+}
+
+/// Decide whether `git diff` should implicitly switch to `--no-index`.
+///
+/// Git treats two explicit path operands as a no-index comparison when at
+/// least one path is outside the current repository work tree, or when there
+/// is no repository at all.
+fn should_use_implicit_no_index(
+    args: &Args,
+    revs: &[String],
+    paths: &[String],
+    work_tree: Option<&Path>,
+) -> bool {
+    if args.no_index || args.cached || !revs.is_empty() || paths.len() != 2 {
+        return false;
+    }
+
+    let Some(work_tree) = work_tree else {
+        return true;
+    };
+
+    paths
+        .iter()
+        .any(|path| is_path_outside_work_tree(path, work_tree))
+}
+
+/// Return true when `path` is outside of `work_tree`.
+fn is_path_outside_work_tree(path: &str, work_tree: &Path) -> bool {
+    let work_tree_abs = normalize_path_for_membership(work_tree);
+    let path_abs = normalize_path_for_membership(Path::new(path));
+    !path_abs.starts_with(work_tree_abs)
+}
+
+/// Convert a potentially relative path to an absolute, normalized path.
+///
+/// We canonicalize when possible and otherwise fall back to a best-effort
+/// absolute path rooted at the current directory.
+fn normalize_path_for_membership(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    };
+    std::fs::canonicalize(&absolute).unwrap_or(absolute)
 }
 
 /// Get HEAD's tree OID, or `None` if the repository is unborn.

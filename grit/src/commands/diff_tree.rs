@@ -714,7 +714,9 @@ fn process_stdin_commit(
             let filtered =
                 apply_pickaxe_filters(filter_entries(entries, opts, &repo.odb), opts, &repo.odb)?;
             let hd = !filtered.is_empty();
-            print_diff(out, repo, &filtered, opts, old_tree.as_ref())?;
+            if !opts.quiet {
+                print_diff(out, repo, &filtered, opts, old_tree.as_ref())?;
+            }
             hd
         } else {
             false
@@ -730,7 +732,9 @@ fn process_stdin_commit(
         let filtered =
             apply_pickaxe_filters(filter_entries(entries, opts, &repo.odb), opts, &repo.odb)?;
         let hd = !filtered.is_empty();
-        print_diff(out, repo, &filtered, opts, old_tree.as_ref())?;
+        if !opts.quiet {
+            print_diff(out, repo, &filtered, opts, old_tree.as_ref())?;
+        }
         hd
     };
 
@@ -764,7 +768,11 @@ fn process_stdin_two_trees(
     let entries = diff_with_opts(&repo.odb, maybe_oid1.as_ref(), maybe_oid2.as_ref(), opts)?;
     let filtered =
         apply_pickaxe_filters(filter_entries(entries, opts, &repo.odb), opts, &repo.odb)?;
-    print_diff(out, repo, &filtered, opts, maybe_oid1.as_ref())
+    let has_diff = !filtered.is_empty();
+    if !opts.quiet {
+        print_diff(out, repo, &filtered, opts, maybe_oid1.as_ref())?;
+    }
+    Ok(has_diff)
 }
 
 // ── Diff helpers ─────────────────────────────────────────────────────

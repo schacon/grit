@@ -4,6 +4,12 @@
 
 - `./scripts/run-tests.sh t4035-diff-quiet.sh`: 16/23 passing (baseline for newly claimed in-progress Diff target `t4035`).
 - `bash scripts/run-upstream-tests.sh t4035-diff-quiet`: 16/23 passing.
+- `cargo build --release`: passes (rebuild after `t4035` quiet/no-index behavior fixes in `diff` and `diff-tree`).
+- `./scripts/run-tests.sh t4035-diff-quiet.sh`: 23/23 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4035-diff-quiet`: 23/23 passing in isolated upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes outside scoped files reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
 
 - `./scripts/run-tests.sh t4017-diff-retval.sh`: 30/38 passing (baseline for newly claimed in-progress Diff target `t4017`).
 - `bash scripts/run-upstream-tests.sh t4017-diff-retval`: 30/38 passing.
