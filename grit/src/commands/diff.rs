@@ -24,7 +24,7 @@ use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use std::collections::BTreeSet;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
@@ -1015,6 +1015,7 @@ pub fn run(mut args: Args) -> Result<()> {
             write_patch_with_prefix(
                 &mut out,
                 &entries,
+                &repo,
                 &repo.odb,
                 context_lines,
                 use_color,
@@ -2003,7 +2004,7 @@ fn write_diff_header_with_abbrev(
     use_color: bool,
     abbrev_len: usize,
 ) -> Result<()> {
-    write_diff_header_with_prefix(out, entry, use_color, abbrev_len, "a/", "b/")
+    write_diff_header_with_prefix(out, entry, use_color, abbrev_len, "a/", "b/", None)
 }
 
 fn write_diff_header_with_prefix(
@@ -2013,6 +2014,7 @@ fn write_diff_header_with_prefix(
     abbrev_len: usize,
     src_prefix: &str,
     dst_prefix: &str,
+    repo: Option<&Repository>,
 ) -> Result<()> {
     let old_path = entry
         .old_path
@@ -2030,6 +2032,11 @@ fn write_diff_header_with_prefix(
     )?;
 
     let abbr = |oid: &ObjectId| -> String {
+        if let Some(repo) = repo {
+            if let Ok(unique) = abbreviate_object_id(repo, *oid, abbrev_len) {
+                return unique;
+            }
+        }
         let hex = oid.to_hex();
         let len = abbrev_len.min(hex.len());
         hex[..len].to_owned()
@@ -2117,6 +2124,7 @@ fn write_diff_header_with_prefix(
 fn write_patch_with_prefix(
     out: &mut impl Write,
     entries: &[DiffEntry],
+    repo: &Repository,
     odb: &Odb,
     context_lines: usize,
     use_color: bool,
@@ -2133,7 +2141,15 @@ fn write_patch_with_prefix(
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
 
-        write_diff_header_with_prefix(out, entry, use_color, abbrev_len, src_prefix, dst_prefix)?;
+        write_diff_header_with_prefix(
+            out,
+            entry,
+            use_color,
+            abbrev_len,
+            src_prefix,
+            dst_prefix,
+            Some(repo),
+        )?;
 
         // Check for binary content
         let old_content_raw = read_content_raw(odb, &entry.old_oid);

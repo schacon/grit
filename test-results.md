@@ -2,6 +2,11 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after unique patch-header index abbreviation updates in `diff` for `t4044`).
+- `bash scripts/run-upstream-tests.sh t4044-diff-index-unique-abbrev`: 2/2 passing in isolated upstream harness.
+- `./scripts/run-tests.sh t4044-diff-index-unique-abbrev.sh`: 0/2 in local mirror due pre-existing local harness incompatibilities (`test_oid` helper returns `unknown-oid` placeholders and setup fails before exercising the index-abbrev assertion); upstream confirms command behavior is fixed.
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4044-diff-index-unique-abbrev.sh` (from `tests/`): 0/2 with same local-helper mismatch.
+
 - `cargo build --release`: passes (rebuild after `t4064` object-finder compatibility updates in `rev-parse`, `log`, `merge`, and `diff-tree`).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4064-diff-oidfind.sh` (from `tests/`): 10/10 passing.
 - `./scripts/run-tests.sh t4064-diff-oidfind.sh`: 10/10 passing; `data/file-results.tsv` refreshed.
