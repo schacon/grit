@@ -43,7 +43,7 @@ commit → check it off → move on.
 - [x] `t0035-safe-bare-repository` ████████████████████ 12/12 (0 left) — verify safe.bareRepository checks
 - [x] `t0033-safe-directory` ████████████████████ 22/22 (0 left) — verify safe.directory checks
 - [x] `t0019-json-writer` ████████████████████ 16/16 (0 left) — test json-writer JSON generation
-- [ ] `t0020-crlf` ██████████░░░░░░░░░░ 19/36 (17 left) — CRLF conversion
+- [x] `t0020-crlf` ████████████████████ 36/36 (0 left) — CRLF conversion
 - [ ] `t0014-alias` ░░░░░░░░░░░░░░░░░░░░ 1/21 (20 left) — git command aliasing
 - [ ] `t0061-run-command` ██░░░░░░░░░░░░░░░░░░ 3/24 (21 left) — Test run command
 - [ ] `t0090-cache-tree` ░░░░░░░░░░░░░░░░░░░░ 0/22 (22 left) — Test whether cache-tree is properly updated

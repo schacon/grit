@@ -6,6 +6,8 @@ use std::io::{self, BufRead};
 use std::path::Component;
 use std::path::{Path, PathBuf};
 
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
@@ -121,6 +123,9 @@ pub fn run(args: Args) -> Result<()> {
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot update-index in bare repository"))?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = crlf::load_gitattributes(work_tree);
     let cwd = std::env::current_dir().context("resolving current directory")?;
 
     if args.show_index_version {
@@ -358,8 +363,13 @@ pub fn run(args: Args) -> Result<()> {
             let target = std::fs::read_link(&abs_path)?;
             target.to_string_lossy().into_owned().into_bytes()
         } else {
-            std::fs::read(&abs_path)
-                .with_context(|| format!("cannot read '{}'", abs_path.display()))?
+            let raw = std::fs::read(&abs_path)
+                .with_context(|| format!("cannot read '{}'", abs_path.display()))?;
+            let rel_path = rel_path.to_string_lossy();
+            let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &config);
+            let mut conv_for_hash = conv.clone();
+            conv_for_hash.safecrlf = crlf::SafeCrlf::False;
+            crlf::convert_to_git(&raw, &rel_path, &conv_for_hash, &file_attrs).unwrap_or(raw)
         };
 
         let oid = match repo.odb.write(grit_lib::objects::ObjectKind::Blob, &data) {

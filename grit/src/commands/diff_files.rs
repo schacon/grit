@@ -5,6 +5,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::diff::{count_changes, format_stat_line, stat_matches, unified_diff, zero_oid};
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -397,7 +399,14 @@ fn read_worktree_info_fast(
         Err(e) => return Err(e.into()),
     };
 
-    let _ = repo;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = repo
+        .work_tree
+        .as_deref()
+        .map(crlf::load_gitattributes)
+        .unwrap_or_default();
+    let rel_path = index_entry_path(index_entry);
 
     // Fast path: if stat info matches the index, file is unchanged.
     // But also check if the index mode differs from the worktree mode
@@ -428,7 +437,11 @@ fn read_worktree_info_fast(
         } else {
             MODE_REGULAR
         };
-        let data = fs::read(abs_path)?;
+        let raw = fs::read(abs_path)?;
+        let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &config);
+        let mut conv_for_hash = conv.clone();
+        conv_for_hash.safecrlf = crlf::SafeCrlf::False;
+        let data = crlf::convert_to_git(&raw, &rel_path, &conv_for_hash, &file_attrs).unwrap_or(raw);
         let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
         return Ok(WorktreeStatus::Modified(mode, oid));
     }
@@ -447,7 +460,13 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
         Err(e) => return Err(e.into()),
     };
 
-    let _ = repo;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = repo
+        .work_tree
+        .as_deref()
+        .map(crlf::load_gitattributes)
+        .unwrap_or_default();
 
     if meta.file_type().is_symlink() {
         let target = fs::read_link(abs_path)?;
@@ -461,7 +480,17 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
         } else {
             MODE_REGULAR
         };
-        let data = fs::read(abs_path)?;
+        let raw = fs::read(abs_path)?;
+        let rel_path = repo
+            .work_tree
+            .as_deref()
+            .and_then(|wt| abs_path.strip_prefix(wt).ok())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &config);
+        let mut conv_for_hash = conv.clone();
+        conv_for_hash.safecrlf = crlf::SafeCrlf::False;
+        let data = crlf::convert_to_git(&raw, &rel_path, &conv_for_hash, &file_attrs).unwrap_or(raw);
         let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
         return Ok(Some((mode, oid)));
     }
@@ -670,4 +699,8 @@ fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
         return Ok(cwd.join(path));
     }
     Ok(repo.index_path())
+}
+
+fn index_entry_path(entry: &IndexEntry) -> String {
+    String::from_utf8_lossy(&entry.path).into_owned()
 }

@@ -16,7 +16,7 @@ t0014-alias	yes	21	1	20	ok	1	21	0
 t0017-env-helper	yes	5	5	0	ok	5	5	0
 t0018-advice	yes	6	6	0	ok	6	6	0
 t0019-json-writer	yes	16	16	0	ok	16	16	0
-t0020-crlf	yes	36	19	17	ok	19	36	0
+t0020-crlf	yes	36	36	0	ok	36	36	0
 t0021-conversion	yes	42	18	24	ok	18	42	0
 t0022-crlf-rename	yes	2	2	0	ok	2	2	0
 t0023-crlf-am	yes	2	2	0	ok	2	2	0

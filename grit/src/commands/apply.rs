@@ -14,6 +14,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::index::Index;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
@@ -949,6 +951,13 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
         Ok(idx) => idx,
         Err(_) => return Ok(()),
     };
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = repo
+        .work_tree
+        .as_deref()
+        .map(crlf::load_gitattributes)
+        .unwrap_or_default();
 
     for fp in patches {
         if fp.is_new {
@@ -968,12 +977,25 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
             continue;
         }
 
-        // Read working tree content and compute hash
-        let wt_content = fs::read(&path)?;
-        let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
-
         // Get index entry
         if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
+            // Read working tree content and compute hash like indexing does
+            let wt_oid = if entry.mode == grit_lib::index::MODE_SYMLINK {
+                let target = fs::read_link(&path)?;
+                grit_lib::odb::Odb::hash_object_data(
+                    ObjectKind::Blob,
+                    target.to_string_lossy().as_bytes(),
+                )
+            } else {
+                let wt_content = fs::read(&path)?;
+                let file_attrs = crlf::get_file_attrs(&attrs, &adjusted, &config);
+                let mut conv_for_hash = conv.clone();
+                conv_for_hash.safecrlf = crlf::SafeCrlf::False;
+                let normalized =
+                    crlf::convert_to_git(&wt_content, &adjusted, &conv_for_hash, &file_attrs)
+                        .unwrap_or(wt_content);
+                grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &normalized)
+            };
             if wt_oid != entry.oid {
                 bail!("{adjusted}: does not match index");
             }

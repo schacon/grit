@@ -217,11 +217,7 @@ fn checkout_entry(
 
     if let Some(parent) = abs_path.parent() {
         if !parent.exists() {
-            if args.mkdir || args.force || args.all {
-                std::fs::create_dir_all(parent)?;
-            } else {
-                bail!("'{rel_path}': leading directories do not exist");
-            }
+            std::fs::create_dir_all(parent)?;
         }
     }
 
@@ -240,7 +236,12 @@ fn checkout_entry(
         let data = {
             let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
             let conv = crlf::ConversionConfig::from_config(&config);
-            let attrs = crlf::load_gitattributes(work_tree);
+            let mut attrs = crlf::load_gitattributes(work_tree);
+            if attrs.is_empty() {
+                if let Ok(idx) = Index::load(&repo.index_path()) {
+                    attrs = crlf::load_gitattributes_from_index(&idx, &repo.odb);
+                }
+            }
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
             let oid_hex = format!("{}", entry.oid);
             crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex))
