@@ -12,8 +12,9 @@ use crate::explicit_exit::ExplicitExit;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
 use grit_lib::error::Error as LibError;
+use grit_lib::fsck_standalone::{fsck_object, fsck_tag_mktag_trailer};
 use grit_lib::ident::fsck_commit_idents;
-use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tree, tag_object_line_oid, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pack::read_local_pack_indexes;
 use grit_lib::promisor::{
@@ -69,6 +70,73 @@ pub struct Args {
     /// Optional list of objects to check (currently ignored, for compat).
     #[arg(value_name = "OBJECT")]
     pub objects: Vec<String>,
+
+    /// Enable stricter checking (Git compatibility; accepted for scripts like t3800).
+    #[arg(long)]
+    pub strict: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ExtraHeaderPolicy {
+    Error,
+    Warn,
+    Ignore,
+}
+
+fn parse_extra_header_policy(cfg: &ConfigSet) -> ExtraHeaderPolicy {
+    cfg.get("fsck.extraheaderentry")
+        .map(|v| match v.to_lowercase().as_str() {
+            "error" => ExtraHeaderPolicy::Error,
+            "ignore" => ExtraHeaderPolicy::Ignore,
+            _ => ExtraHeaderPolicy::Warn,
+        })
+        .unwrap_or(ExtraHeaderPolicy::Warn)
+}
+
+fn check_tag_trailer_fsck(
+    oid: &ObjectId,
+    data: &[u8],
+    policy: ExtraHeaderPolicy,
+    strict: bool,
+    is_reachable: bool,
+    issues: &mut Vec<Issue>,
+) {
+    match fsck_tag_mktag_trailer(data) {
+        Ok(()) => {}
+        Err(e) if e.id == "extraHeaderEntry" => match policy {
+            ExtraHeaderPolicy::Ignore => {}
+            ExtraHeaderPolicy::Warn => {
+                if strict && is_reachable {
+                    issues.push(Issue::BadObject {
+                        oid: *oid,
+                        kind: ObjectKind::Tag,
+                        reason: format!("{}: {}", e.id, e.detail),
+                    });
+                } else {
+                    issues.push(Issue::Warning(format!(
+                        "in tag {}: {}: {}",
+                        oid.to_hex(),
+                        e.id,
+                        e.detail
+                    )));
+                }
+            }
+            ExtraHeaderPolicy::Error => {
+                issues.push(Issue::BadObject {
+                    oid: *oid,
+                    kind: ObjectKind::Tag,
+                    reason: format!("{}: {}", e.id, e.detail),
+                });
+            }
+        },
+        Err(e) => {
+            issues.push(Issue::BadObject {
+                oid: *oid,
+                kind: ObjectKind::Tag,
+                reason: format!("{}: {}", e.id, e.detail),
+            });
+        }
+    }
 }
 
 /// A problem found during fsck.
@@ -96,6 +164,8 @@ enum Issue {
     HashPathMismatch { real_oid_hex: String, path: String },
     /// Raw `error:` lines matching Git's `fsck` / `read_loose_object` diagnostics.
     FsckMessage(String),
+    /// Non-fatal `warning:` line (e.g. `fsck.extraHeaderEntry=warn` on tag objects).
+    Warning(String),
 }
 
 /// Run `grit fsck`.
@@ -119,6 +189,7 @@ pub fn run(args: Args) -> Result<()> {
     // 1. Collect all reachable OIDs by walking from refs, HEAD, reflogs.
     //    Also track missing objects and (optionally) bad objects.
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let extra_header_policy = parse_extra_header_policy(&config);
     let promisor_active = repo_treats_promisor_packs(&repo.git_dir, &config);
     // Objects listed in promisor pack indexes — traversal stops here (Git does not recurse
     // past promisor-pack objects).
@@ -141,6 +212,8 @@ pub fn run(args: Args) -> Result<()> {
         promisor_active,
         &promisor_pack_oids,
         &promisor_expanded,
+        extra_header_policy,
+        args.strict,
         &mut issues,
     )?;
 
@@ -200,7 +273,15 @@ pub fn run(args: Args) -> Result<()> {
             if walked_kinds.contains(oid) {
                 continue;
             }
-            validate_loose_object_file(git_dir, path, oid, &mut issues);
+            validate_loose_object_file(
+                git_dir,
+                path,
+                oid,
+                extra_header_policy,
+                args.strict,
+                reachable.contains(oid),
+                &mut issues,
+            );
         }
         for oid in &all_objects {
             if loose_oids.contains(oid) {
@@ -209,7 +290,14 @@ pub fn run(args: Args) -> Result<()> {
             if walked_kinds.contains(oid) {
                 continue;
             }
-            validate_object(&odb, oid, &mut issues);
+            validate_object(
+                &odb,
+                oid,
+                extra_header_policy,
+                args.strict,
+                reachable.contains(oid),
+                &mut issues,
+            );
         }
     }
 
@@ -261,7 +349,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                println!(
+                eprintln!(
                     "missing {} {}{} (referenced by {})",
                     kind,
                     oid.to_hex(),
@@ -279,14 +367,36 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                println!(
-                    "error in {} {}{}: {}",
-                    kind.as_str(),
-                    oid.to_hex(),
-                    name_suffix,
-                    reason
-                );
-                has_errors = true;
+                // Git: on tag objects, `badTagName` / `missingTaggerEntry` are reported as
+                // `warning in tag` and do not fail fsck. `badEmail` still prints `error in tag`
+                // but dangling/unreachable tags with bad email still yield exit 0 (t3800).
+                let tag_soft = *kind == ObjectKind::Tag
+                    && (reason.starts_with("badTagName:")
+                        || reason.starts_with("missingTaggerEntry:")
+                        || reason.starts_with("badEmail:"));
+                if tag_soft {
+                    let prefix = if reason.starts_with("badEmail:") {
+                        "error"
+                    } else {
+                        "warning"
+                    };
+                    eprintln!(
+                        "{prefix} in {} {}{}: {}",
+                        kind.as_str(),
+                        oid.to_hex(),
+                        name_suffix,
+                        reason
+                    );
+                } else {
+                    eprintln!(
+                        "error in {} {}{}: {}",
+                        kind.as_str(),
+                        oid.to_hex(),
+                        name_suffix,
+                        reason
+                    );
+                    has_errors = true;
+                }
             }
             Issue::Dangling { oid, kind } => {
                 let name_suffix = if name_objects {
@@ -297,7 +407,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                println!("dangling {} {}{}", kind.as_str(), oid.to_hex(), name_suffix);
+                eprintln!("dangling {} {}{}", kind.as_str(), oid.to_hex(), name_suffix);
             }
             Issue::Unreachable { oid, kind } => {
                 let name_suffix = if name_objects {
@@ -308,7 +418,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                println!(
+                eprintln!(
                     "unreachable {} {}{}",
                     kind.as_str(),
                     oid.to_hex(),
@@ -316,16 +426,19 @@ pub fn run(args: Args) -> Result<()> {
                 );
             }
             Issue::InvalidReflog { refname, oid } => {
-                println!("error: {}: invalid reflog entry {}", refname, oid.to_hex());
+                eprintln!("error: {}: invalid reflog entry {}", refname, oid.to_hex());
                 has_errors = true;
             }
             Issue::HashPathMismatch { real_oid_hex, path } => {
-                println!("error: {real_oid_hex}: hash-path mismatch, found at: {path}");
+                eprintln!("error: {real_oid_hex}: hash-path mismatch, found at: {path}");
                 has_errors = true;
             }
             Issue::FsckMessage(msg) => {
-                println!("error: {msg}");
+                eprintln!("error: {msg}");
                 has_errors = true;
+            }
+            Issue::Warning(msg) => {
+                eprintln!("warning {msg}");
             }
         }
     }
@@ -368,6 +481,8 @@ fn walk_reachable(
     promisor_active: bool,
     promisor_pack_oids: &HashSet<ObjectId>,
     promisor_expanded: &HashSet<ObjectId>,
+    extra_header_policy: ExtraHeaderPolicy,
+    strict: bool,
     issues: &mut Vec<Issue>,
 ) -> Result<(HashSet<ObjectId>, HashSet<ObjectId>)> {
     let _ = objects_dir;
@@ -434,7 +549,15 @@ fn walk_reachable(
         // Validate object content if not connectivity-only.
         if !connectivity_only {
             validated.insert(oid);
-            validate_object_data(&oid, &obj.kind, &obj.data, issues);
+            validate_object_data(
+                &oid,
+                &obj.kind,
+                &obj.data,
+                extra_header_policy,
+                strict,
+                true,
+                issues,
+            );
         }
 
         // Objects stored in promisor packs stop traversal (do not walk into parents/trees).
@@ -459,8 +582,8 @@ fn walk_reachable(
                 }
             }
             ObjectKind::Tag => {
-                if let Ok(tag) = parse_tag(&obj.data) {
-                    queue.push_back((tag.object, Some(oid)));
+                if let Some(target) = tag_object_line_oid(&obj.data) {
+                    queue.push_back((target, Some(oid)));
                 }
             }
             ObjectKind::Blob => {}
@@ -591,11 +714,22 @@ fn validate_loose_object_file(
     git_dir: &Path,
     path: &Path,
     oid: &ObjectId,
+    extra_header_policy: ExtraHeaderPolicy,
+    strict: bool,
+    is_reachable: bool,
     issues: &mut Vec<Issue>,
 ) {
     let display_path = loose_path_display_for_fsck(git_dir, path);
     match Odb::read_loose_verify_oid(path, oid) {
-        Ok(obj) => validate_object_data(oid, &obj.kind, &obj.data, issues),
+        Ok(obj) => validate_object_data(
+            oid,
+            &obj.kind,
+            &obj.data,
+            extra_header_policy,
+            strict,
+            is_reachable,
+            issues,
+        ),
         Err(LibError::LooseHashMismatch { path: _, real_oid }) => {
             issues.push(Issue::HashPathMismatch {
                 real_oid_hex: real_oid,
@@ -620,16 +754,39 @@ fn validate_loose_object_file(
 }
 
 /// Validate an object's content can be parsed correctly.
-fn validate_object(odb: &Odb, oid: &ObjectId, issues: &mut Vec<Issue>) {
+fn validate_object(
+    odb: &Odb,
+    oid: &ObjectId,
+    extra_header_policy: ExtraHeaderPolicy,
+    strict: bool,
+    is_reachable: bool,
+    issues: &mut Vec<Issue>,
+) {
     let obj = match odb.read(oid) {
         Ok(o) => o,
         Err(_) => return, // can't read loose — might be packed only
     };
-    validate_object_data(oid, &obj.kind, &obj.data, issues);
+    validate_object_data(
+        oid,
+        &obj.kind,
+        &obj.data,
+        extra_header_policy,
+        strict,
+        is_reachable,
+        issues,
+    );
 }
 
 /// Validate the parsed content of an object.
-fn validate_object_data(oid: &ObjectId, kind: &ObjectKind, data: &[u8], issues: &mut Vec<Issue>) {
+fn validate_object_data(
+    oid: &ObjectId,
+    kind: &ObjectKind,
+    data: &[u8],
+    extra_header_policy: ExtraHeaderPolicy,
+    strict: bool,
+    is_reachable: bool,
+    issues: &mut Vec<Issue>,
+) {
     match kind {
         ObjectKind::Commit => {
             if let Err(msg) = fsck_commit_idents(data) {
@@ -650,12 +807,27 @@ fn validate_object_data(oid: &ObjectId, kind: &ObjectKind, data: &[u8], issues: 
             }
         }
         ObjectKind::Tag => {
-            if let Err(e) = parse_tag(data) {
+            if let Err(e) = fsck_object(ObjectKind::Tag, data) {
+                let mut reason = e.report_line();
+                if e.id == "badType" && e.detail == "invalid 'type' value" {
+                    if let Some(typ) = grit_lib::objects::tag_header_field(data, b"type ") {
+                        reason = format!("unknown tag type '{typ}'");
+                    }
+                }
                 issues.push(Issue::BadObject {
                     oid: *oid,
                     kind: *kind,
-                    reason: format!("invalid tag: {e}"),
+                    reason,
                 });
+            } else {
+                check_tag_trailer_fsck(
+                    oid,
+                    data,
+                    extra_header_policy,
+                    strict,
+                    is_reachable,
+                    issues,
+                );
             }
         }
         ObjectKind::Blob => {
@@ -697,8 +869,8 @@ fn find_referenced_set(odb: &Odb, oids: &BTreeSet<ObjectId>) -> HashSet<ObjectId
                 }
             }
             ObjectKind::Tag => {
-                if let Ok(tag) = parse_tag(&obj.data) {
-                    referenced.insert(tag.object);
+                if let Some(target) = tag_object_line_oid(&obj.data) {
+                    referenced.insert(target);
                 }
             }
             ObjectKind::Blob => {}

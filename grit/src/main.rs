@@ -733,50 +733,77 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
 }
 
 fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
-    if rest.len() < 5 {
-        bail!("usage: test-tool ref-store <backend> update-ref <msg> <ref> <new> <old> [flags...]");
+    if rest.len() < 4 {
+        bail!("usage: test-tool ref-store <backend> <subcommand> ...");
     }
-    let backend = &rest[1];
-    let sub = &rest[2];
-    if backend != "main" || sub != "update-ref" {
-        bail!("test-tool ref-store: unsupported invocation");
+    let backend = rest[1].as_str();
+    let sub = rest[2].as_str();
+    if backend != "main" {
+        bail!("test-tool ref-store: unsupported backend (only 'main' is implemented)");
     }
 
-    let msg = &rest[3];
-    let refname = &rest[4];
-    let new_oid = rest
-        .get(5)
-        .ok_or_else(|| anyhow::anyhow!("missing new oid"))?;
-    let old_oid = rest
-        .get(6)
-        .ok_or_else(|| anyhow::anyhow!("missing old oid"))?;
-    let flags = if rest.len() > 7 { &rest[7..] } else { &[] };
-    let skip_oid_verification = flags.iter().any(|f| f == "REF_SKIP_OID_VERIFICATION");
+    let repo = grit_lib::repo::Repository::discover(None)?;
+    let git_dir = repo.git_dir.clone();
 
-    // Build equivalent `update-ref` invocation.
-    // REF_SKIP_OID_VERIFICATION is approximated by allowing arbitrary new object ids
-    // for tests that intentionally create dangling refs.
-    let mut args = vec![
-        "update-ref".to_owned(),
-        "-m".to_owned(),
-        msg.clone(),
-        refname.clone(),
-        new_oid.clone(),
-    ];
-    if old_oid != "0000000000000000000000000000000000000000" {
-        args.push(old_oid.clone());
-    }
-    if skip_oid_verification {
-        // Create the loose ref directly to avoid object existence checks.
-        let git_dir = std::path::PathBuf::from(".git");
-        let ref_path = git_dir.join(refname);
-        if let Some(parent) = ref_path.parent() {
-            std::fs::create_dir_all(parent)?;
+    match sub {
+        "delete-refs" => {
+            // delete-refs <flags> <msg> <refname>...
+            let mut i = 3usize;
+            if i >= rest.len() {
+                bail!("usage: test-tool ref-store main delete-refs <flags> <msg> <ref>...");
+            }
+            let _flags = &rest[i];
+            i += 1;
+            if i >= rest.len() {
+                bail!("usage: test-tool ref-store main delete-refs <flags> <msg> <ref>...");
+            }
+            let _msg = &rest[i];
+            i += 1;
+            while i < rest.len() {
+                let refname = &rest[i];
+                let ref_path = git_dir.join(refname);
+                let _ = std::fs::remove_file(&ref_path);
+                let log_path = git_dir.join("logs").join(refname);
+                let _ = std::fs::remove_file(&log_path);
+                i += 1;
+            }
+            Ok(())
         }
-        std::fs::write(ref_path, format!("{new_oid}\n"))?;
-        return Ok(());
+        "update-ref" => {
+            if rest.len() < 8 {
+                bail!(
+                    "usage: test-tool ref-store main update-ref <msg> <ref> <new> <old> [flags...]"
+                );
+            }
+            let msg = &rest[3];
+            let refname = &rest[4];
+            let new_oid = &rest[5];
+            let old_oid = &rest[6];
+            let flags = if rest.len() > 7 { &rest[7..] } else { &[] };
+            let skip_oid_verification = flags.iter().any(|f| f == "REF_SKIP_OID_VERIFICATION");
+
+            let mut args = vec![
+                "update-ref".to_owned(),
+                "-m".to_owned(),
+                msg.clone(),
+                refname.clone(),
+                new_oid.clone(),
+            ];
+            if old_oid != "0000000000000000000000000000000000000000" {
+                args.push(old_oid.clone());
+            }
+            if skip_oid_verification {
+                let ref_path = git_dir.join(refname);
+                if let Some(parent) = ref_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(ref_path, format!("{new_oid}\n"))?;
+                return Ok(());
+            }
+            dispatch("update-ref", &args, &GlobalOpts::default())
+        }
+        other => bail!("test-tool ref-store: unsupported subcommand '{other}'"),
     }
-    dispatch("update-ref", &args, &GlobalOpts::default())
 }
 
 fn dir_iterator_error_name(kind: std::io::ErrorKind) -> &'static str {

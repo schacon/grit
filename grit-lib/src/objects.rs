@@ -148,6 +148,39 @@ impl ObjectKind {
         }
     }
 
+    /// Parse the `type` field on an annotated tag object (Git `type_from_string_gently` rules).
+    ///
+    /// The tag header line is `type <typename>\n` where `typename` must match a known object type
+    /// keyword **exactly** (no extra characters, no strict prefix of a longer keyword).
+    #[must_use]
+    pub fn from_tag_type_field(line: &[u8]) -> Option<Self> {
+        fn keyword_matches(canonical: &[u8], field: &[u8]) -> bool {
+            if field.is_empty() {
+                return false;
+            }
+            for (i, &bc) in field.iter().enumerate() {
+                let sc = canonical.get(i).copied().unwrap_or(0);
+                if sc != bc {
+                    return false;
+                }
+            }
+            canonical.get(field.len()).copied().unwrap_or(0) == 0
+        }
+
+        const NAMES: &[(ObjectKind, &[u8])] = &[
+            (ObjectKind::Blob, b"blob"),
+            (ObjectKind::Tree, b"tree"),
+            (ObjectKind::Commit, b"commit"),
+            (ObjectKind::Tag, b"tag"),
+        ];
+        for &(kind, name) in NAMES {
+            if keyword_matches(name, line) {
+                return Some(kind);
+            }
+        }
+        None
+    }
+
     /// The ASCII keyword for this kind (used in object headers).
     #[must_use]
     pub fn as_str(&self) -> &'static str {
@@ -491,6 +524,36 @@ pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
     ))
 }
 
+/// Value after `prefix` on the first header line that starts with `prefix`, scanning until a blank
+/// line (Git tag headers). Returns `None` if no such line exists before the body.
+#[must_use]
+pub fn tag_header_field(data: &[u8], prefix: &[u8]) -> Option<String> {
+    let mut pos = 0usize;
+    while pos < data.len() {
+        let rest = &data[pos..];
+        let nl = rest.iter().position(|&b| b == b'\n');
+        let line = if let Some(i) = nl { &rest[..i] } else { rest };
+        if line.is_empty() {
+            break;
+        }
+        if let Some(after) = line.strip_prefix(prefix) {
+            return Some(String::from_utf8_lossy(after).trim().to_owned());
+        }
+        pos += line.len().saturating_add(nl.map(|_| 1).unwrap_or(0));
+        if nl.is_none() {
+            break;
+        }
+    }
+    None
+}
+
+/// OID from the first `object <hex>` line in the tag header block, if hex parses.
+#[must_use]
+pub fn tag_object_line_oid(data: &[u8]) -> Option<ObjectId> {
+    let s = tag_header_field(data, b"object ")?;
+    s.parse().ok()
+}
+
 /// Parsed representation of an annotated tag object.
 #[derive(Debug, Clone)]
 pub struct TagData {
@@ -535,7 +598,13 @@ pub fn parse_tag(data: &[u8]) -> Result<TagData> {
         if let Some(rest) = line.strip_prefix("object ") {
             object = Some(rest.trim().parse::<ObjectId>()?);
         } else if let Some(rest) = line.strip_prefix("type ") {
-            object_type = Some(rest.trim().to_owned());
+            let typ = rest.trim();
+            if ObjectKind::from_tag_type_field(typ.as_bytes()).is_none() {
+                return Err(Error::CorruptObject(format!(
+                    "invalid 'type' value in tag: {typ}"
+                )));
+            }
+            object_type = Some(typ.to_owned());
         } else if let Some(rest) = line.strip_prefix("tag ") {
             tag_name = Some(rest.trim().to_owned());
         } else if let Some(rest) = line.strip_prefix("tagger ") {

@@ -10,7 +10,7 @@
 //! object <sha1>
 //! type <typename>
 //! tag <tagname>
-//! tagger <name> <email> <timestamp> <timezone>
+//! tagger <name> <email> <unix-timestamp> <timezone>
 //!
 //! [optional message]
 //! ```
@@ -21,6 +21,7 @@ use std::io::Read;
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
+use grit_lib::fsck_standalone::{fsck_tag_mktag_trailer_from, parse_tag_for_mktag, FsckError};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 
@@ -34,6 +35,10 @@ pub struct Args {
     /// Enable strict checking (default).
     #[arg(long = "strict", overrides_with = "no_strict")]
     pub strict: bool,
+
+    /// Stop option parsing (Git compatibility; `mktag` reads only from stdin).
+    #[arg(long = "end-of-options", hide = true)]
+    pub end_of_options: bool,
 }
 
 /// Policy for the `fsck.extraHeaderEntry` config option.
@@ -69,7 +74,7 @@ pub fn run(args: Args) -> Result<()> {
         .read_to_end(&mut data)
         .context("could not read from stdin")?;
 
-    let (tagged_oid, tagged_kind) = validate_tag_format(&data, strict, extra_header_policy)?;
+    let (tagged_oid, tagged_kind) = validate_mktag_input(&data, strict, extra_header_policy)?;
 
     verify_tagged_object(&repo, &tagged_oid, tagged_kind)?;
 
@@ -97,280 +102,61 @@ fn verify_tagged_object(
     oid: &ObjectId,
     expected_kind: ObjectKind,
 ) -> Result<()> {
+    // Match `git mktag` / `odb_read_object(..., OBJECT_INFO_LOOKUP_REPLACE)`: load the tagged
+    // object with replace refs applied, then ensure the resulting object's kind matches the tag's
+    // `type` header.
     let obj = repo
-        .odb
-        .read(oid)
-        .map_err(|_| anyhow::anyhow!("could not read tagged object '{oid}'"))?;
+        .read_replaced(oid)
+        .map_err(|_| anyhow::anyhow!("fatal: could not read tagged object '{oid}'"))?;
 
     if obj.kind != expected_kind {
         bail!(
-            "object '{oid}' tagged as '{expected_kind}', but is a '{}' type",
+            "fatal: object '{oid}' tagged as '{expected_kind}', but is a '{}' type",
             obj.kind
         );
     }
     Ok(())
 }
 
-/// Read the next line from `data` starting at `*pos`.
-///
-/// Returns `(line_bytes_without_newline, had_newline)`, or `None` at end of data.
-fn next_line<'a>(data: &'a [u8], pos: &mut usize) -> Option<(&'a [u8], bool)> {
-    if *pos >= data.len() {
-        return None;
-    }
-    let start = *pos;
-    match data[start..].iter().position(|&b| b == b'\n') {
-        Some(nl) => {
-            *pos = start + nl + 1;
-            Some((&data[start..start + nl], true))
-        }
-        None => {
-            *pos = data.len();
-            Some((&data[start..], false))
-        }
-    }
-}
-
-/// Build an fsck error value (always fatal).
-fn fsck_err(code: &str, msg: &str) -> anyhow::Error {
-    eprintln!("error: tag input does not pass fsck: {code}: {msg}");
+fn mktag_fsck_error(e: &FsckError) -> anyhow::Error {
+    eprintln!(
+        "error: tag input does not pass fsck: {}: {}",
+        e.id, e.detail
+    );
     anyhow::anyhow!("tag on stdin did not pass our strict fsck check")
 }
 
-/// Emit an fsck diagnostic.
-///
-/// `is_warning` determines whether the message is a warn-level issue (only
-/// fatal in strict mode) or an error-level issue (always fatal).
-fn fsck_diag(code: &str, msg: &str, is_warning: bool, strict: bool) -> Result<()> {
-    if !is_warning || strict {
-        eprintln!("error: tag input does not pass fsck: {code}: {msg}");
-        bail!("tag on stdin did not pass our strict fsck check");
-    }
-    eprintln!("warning: tag input does not pass fsck: {code}: {msg}");
-    Ok(())
-}
-
-/// Parse a 40-hex-character object ID.
-fn parse_object_id(hex: &[u8]) -> Result<ObjectId> {
-    let s = std::str::from_utf8(hex).map_err(|_| anyhow::anyhow!("invalid OID encoding"))?;
-    s.parse::<ObjectId>()
-        .map_err(|_| anyhow::anyhow!("invalid OID: {s}"))
-}
-
-/// Validate the tagger identity value (everything after `"tagger "`).
-///
-/// Expected format: `<name> <email> <unix-timestamp> <[+-]HHMM>`
-fn validate_tagger_ident(value: &[u8], strict: bool) -> Result<()> {
-    // Locate the opening '<' for the email field.
-    let lt = match value.iter().position(|&b| b == b'<') {
-        Some(p) => p,
-        None => return fsck_diag("badEmail", "missing '<' in tagger email", true, strict),
-    };
-
-    // Locate the closing '>' on the same (already-stripped) line.
-    let gt = match value[lt..].iter().position(|&b| b == b'>') {
-        Some(p) => lt + p,
-        None => return fsck_diag("badEmail", "missing '>' in tagger email", true, strict),
-    };
-
-    // After '>' must come a space then the timestamp.
-    let after = &value[gt + 1..];
-    if after.is_empty() || after[0] != b' ' {
-        return Err(fsck_err("badDate", "missing space after email in tagger"));
-    }
-
-    let rest = match std::str::from_utf8(&after[1..]) {
-        Ok(s) => s,
-        Err(_) => return Err(fsck_err("badDate", "invalid encoding after tagger email")),
-    };
-
-    let mut parts = rest.split_whitespace();
-
-    // Timestamp must be a decimal integer.
-    let timestamp = match parts.next() {
-        Some(t) => t,
-        None => return Err(fsck_err("badDate", "missing timestamp in tagger")),
-    };
-    if timestamp.is_empty() || !timestamp.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(fsck_err("badDate", "invalid timestamp in tagger"));
-    }
-
-    // Timezone must be exactly `[+-][0-9]{4}`.
-    let timezone = match parts.next() {
-        Some(tz) => tz,
-        None => return Err(fsck_err("badDate", "missing timezone in tagger")),
-    };
-    let tz = timezone.as_bytes();
-    if tz.len() != 5
-        || (tz[0] != b'+' && tz[0] != b'-')
-        || !tz[1..].iter().all(|b| b.is_ascii_digit())
-    {
-        return Err(fsck_err("badTimezone", "invalid timezone in tagger"));
-    }
-
-    Ok(())
-}
-
-/// Check whether an extra header entry should fail or warn.
-fn check_extra_header(strict: bool, policy: ExtraHeaderPolicy) -> Result<()> {
-    match policy {
-        ExtraHeaderPolicy::Ignore => Ok(()),
-        ExtraHeaderPolicy::Warn => fsck_diag(
-            "extraHeaderEntry",
-            "extra header entry in tag",
-            true,
-            strict,
-        ),
-        ExtraHeaderPolicy::Error => Err(fsck_err(
-            "extraHeaderEntry",
-            "extra header entry not allowed",
-        )),
-    }
-}
-
-/// Validate the raw bytes of a tag object and return `(tagged_oid, tagged_kind)`.
-fn validate_tag_format(
+fn validate_mktag_input(
     data: &[u8],
     strict: bool,
     extra_header_policy: ExtraHeaderPolicy,
 ) -> Result<(ObjectId, ObjectKind)> {
-    let mut pos = 0usize;
+    let mut warn = |e: &FsckError| {
+        eprintln!(
+            "warning: tag input does not pass fsck: {}: {}",
+            e.id, e.detail
+        );
+    };
+    let (tagged_oid, tagged_kind, after_tagger, check_trailer) =
+        parse_tag_for_mktag(data, strict, &mut warn).map_err(|e| mktag_fsck_error(&e))?;
 
-    // ── 1. "object <sha1>" ───────────────────────────────────────────────────
-    let (line, has_nl) = match next_line(data, &mut pos) {
-        Some(l) => l,
-        None => return Err(fsck_err("missingObject", "tag is missing 'object' header")),
-    };
-    if !has_nl {
-        return Err(fsck_err(
-            "unterminatedHeader",
-            "tag header has no terminating newline",
-        ));
-    }
-    let sha1_hex = match line.strip_prefix(b"object ") {
-        Some(rest) => rest,
-        None => return Err(fsck_err("missingObject", "tag is missing 'object' header")),
-    };
-    let tagged_oid = parse_object_id(sha1_hex)
-        .map_err(|_| fsck_err("badObjectSha1", "invalid 'object' SHA-1"))?;
-
-    // ── 2. "type <typename>" ─────────────────────────────────────────────────
-    let (line, has_nl) = match next_line(data, &mut pos) {
-        Some(l) => l,
-        None => return Err(fsck_err("missingTypeEntry", "tag is missing 'type' header")),
-    };
-    if !has_nl {
-        return Err(fsck_err(
-            "unterminatedHeader",
-            "tag header has no terminating newline",
-        ));
-    }
-    let type_str = match line.strip_prefix(b"type ") {
-        Some(rest) => rest,
-        None => return Err(fsck_err("missingTypeEntry", "tag is missing 'type' header")),
-    };
-    let tagged_kind = ObjectKind::from_bytes(type_str)
-        .map_err(|_| fsck_err("badType", "invalid 'type' value in tag"))?;
-
-    // ── 3. "tag <name>" ──────────────────────────────────────────────────────
-    let (line, has_nl) = match next_line(data, &mut pos) {
-        Some(l) => l,
-        None => return Err(fsck_err("missingTagEntry", "tag is missing 'tag' header")),
-    };
-    if !has_nl {
-        return Err(fsck_err(
-            "unterminatedHeader",
-            "tag header has no terminating newline",
-        ));
-    }
-    let tag_name = match line.strip_prefix(b"tag ") {
-        Some(rest) if !rest.is_empty() => rest,
-        _ => return Err(fsck_err("missingTagEntry", "tag is missing 'tag' header")),
-    };
-    if tag_name.contains(&b'\t') {
-        fsck_diag(
-            "badTagName",
-            "tag name contains control characters",
-            true,
-            strict,
-        )?;
-    }
-
-    // ── 4. "tagger <ident>" ──────────────────────────────────────────────────
-    match next_line(data, &mut pos) {
-        None => {
-            // EOF right after tag name — no tagger, no body.
-            fsck_diag(
-                "missingTaggerEntry",
-                "tag is missing 'tagger' entry",
-                true,
-                strict,
-            )?;
-            return Ok((tagged_oid, tagged_kind));
-        }
-        Some(([], _)) => {
-            // Blank separator with no tagger line.
-            fsck_diag(
-                "missingTaggerEntry",
-                "tag is missing 'tagger' entry",
-                true,
-                strict,
-            )?;
-            return Ok((tagged_oid, tagged_kind));
-        }
-        Some((line, has_nl)) => {
-            if !has_nl {
-                return Err(fsck_err(
-                    "unterminatedHeader",
-                    "tag header has no terminating newline",
-                ));
-            }
-            if let Some(tagger_value) = line.strip_prefix(b"tagger ") {
-                if tagger_value.is_empty() {
-                    fsck_diag(
-                        "missingTaggerEntry",
-                        "tag is missing 'tagger' entry",
-                        true,
-                        strict,
-                    )?;
-                } else {
-                    validate_tagger_ident(tagger_value, strict)?;
+    if check_trailer {
+        match fsck_tag_mktag_trailer_from(data, after_tagger) {
+            Ok(()) => {}
+            Err(e) if e.id == "extraHeaderEntry" => match extra_header_policy {
+                ExtraHeaderPolicy::Ignore => {}
+                ExtraHeaderPolicy::Warn => {
+                    if strict {
+                        return Err(mktag_fsck_error(&e));
+                    }
+                    eprintln!(
+                        "warning: tag input does not pass fsck: {}: {}",
+                        e.id, e.detail
+                    );
                 }
-            } else if line == b"tagger" {
-                // "tagger" with no space+value.
-                fsck_diag(
-                    "missingTaggerEntry",
-                    "tag is missing 'tagger' entry",
-                    true,
-                    strict,
-                )?;
-            } else {
-                // Unrecognised line where tagger was expected.
-                fsck_diag(
-                    "missingTaggerEntry",
-                    "tag is missing 'tagger' entry",
-                    true,
-                    strict,
-                )?;
-                check_extra_header(strict, extra_header_policy)?;
-            }
-        }
-    }
-
-    // ── 5. Extra header lines before the blank separator ─────────────────────
-    loop {
-        match next_line(data, &mut pos) {
-            None => break,
-            Some(([], _)) => break,
-            Some((_, has_nl)) => {
-                if !has_nl {
-                    return Err(fsck_err(
-                        "unterminatedHeader",
-                        "tag header has no terminating newline",
-                    ));
-                }
-                check_extra_header(strict, extra_header_policy)?;
-            }
+                ExtraHeaderPolicy::Error => return Err(mktag_fsck_error(&e)),
+            },
+            Err(e) => return Err(mktag_fsck_error(&e)),
         }
     }
 
