@@ -213,6 +213,122 @@ case "$1" in
         exit 129
         ;;
     esac ;;
+  parse-pathspec-file)
+    shift
+    pathspec_from_file=""
+    pathspec_file_nul=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --pathspec-from-file=*)
+          pathspec_from_file="${1#--pathspec-from-file=}"
+          shift
+          ;;
+        --pathspec-from-file)
+          shift
+          [ $# -gt 0 ] || {
+            echo "test-tool parse-pathspec-file: --pathspec-from-file requires an argument" >&2
+            exit 129
+          }
+          pathspec_from_file="$1"
+          shift
+          ;;
+        --pathspec-file-nul)
+          pathspec_file_nul=1
+          shift
+          ;;
+        --)
+          shift
+          ;;
+        *)
+          echo "test-tool parse-pathspec-file: unknown option '$1'" >&2
+          exit 129
+          ;;
+      esac
+    done
+
+    if [ -z "$pathspec_from_file" ]; then
+      echo "test-tool parse-pathspec-file: missing --pathspec-from-file" >&2
+      exit 129
+    fi
+
+    if [ "$pathspec_from_file" = "-" ]; then
+      input_path="/dev/stdin"
+    else
+      input_path="$pathspec_from_file"
+    fi
+
+    perl -e '
+      use strict;
+      use warnings;
+      my ($path, $nul_mode) = @ARGV;
+      local $/;
+      open my $fh, "<:raw", $path or die "cannot open $path: $!";
+      my $data = <$fh>;
+      $data = "" unless defined $data;
+
+      sub unquote_c_style {
+        my ($s) = @_;
+        return $s unless $s =~ /^"(.*)"$/s;
+        my $body = $1;
+        my $out = "";
+        my $i = 0;
+        while ($i < length($body)) {
+          my $ch = substr($body, $i, 1);
+          if ($ch ne "\\") {
+            $out .= $ch;
+            $i++;
+            next;
+          }
+          $i++;
+          last if $i >= length($body);
+          my $esc = substr($body, $i, 1);
+          if ($esc =~ /[0-7]/) {
+            my $oct = $esc;
+            $i++;
+            for (1..2) {
+              last if $i >= length($body);
+              my $n = substr($body, $i, 1);
+              last unless $n =~ /[0-7]/;
+              $oct .= $n;
+              $i++;
+            }
+            $out .= chr(oct($oct));
+            next;
+          }
+          my %map = (
+            "a" => "\a", "b" => "\b", "f" => "\f",
+            "n" => "\n", "r" => "\r", "t" => "\t",
+            "v" => chr(11), "\\" => "\\", "\"" => "\""
+          );
+          if (exists $map{$esc}) {
+            $out .= $map{$esc};
+          } else {
+            $out .= $esc;
+          }
+          $i++;
+        }
+        return $out;
+      }
+
+      my @items;
+      if ($nul_mode) {
+        @items = split(/\0/, $data, -1);
+        pop @items if @items && $items[-1] eq "";
+      } else {
+        @items = split(/\n/, $data, -1);
+        pop @items if @items && $items[-1] eq "";
+        @items = map {
+          my $v = $_;
+          $v =~ s/\r$//;
+          unquote_c_style($v);
+        } @items;
+      }
+
+      for my $it (@items) {
+        print $it, "\n";
+      }
+    ' "$input_path" "$pathspec_file_nul"
+    ;;
   dir-iterator)
     shift
     pedantic=0
