@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   112 |
-| In progress |     1 |
+| Completed   |   113 |
+| In progress |     0 |
 | Remaining   |   654 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4017-diff-retval` — upstream 38/38 tests pass (`diff-tree -S/--exit-code` now evaluates diff presence after pickaxe filtering so non-matching searches return exit 0; `diff --check` now returns git-compatible exit codes (2 for check-only errors, 3 with `--exit-code` + check errors, 1 for clean diffs under `--check --exit-code`), detects conflict markers (including attr-driven `conflict-marker-size=<N>`), and `git --no-pager diff --check` is accepted via global `--no-pager`; trailing unknown diff flags now produce usage-leading stderr and exit 129 instead of revision lookup errors)
 - `t4252-am-options` — upstream 8/8 tests pass (`am` now parses and persists `--whitespace=fix`, `-C<n>`, `-p<n>`, `--directory=<dir>`, and `--reject` in rebase-apply state, reuses shared `apply` command semantics through in-memory patch invocation so interrupted/skip flows keep patch application options across patches, and writes `.git/rebase-apply/apply-opt` with `--reject` for reject-mode sessions)
 - `t4115-apply-symlink` — upstream 8/8 tests pass (`apply` now skips metadata-only rename/copy headers, parses file mode from `index <old>..<new> <mode>` lines, tracks symlink path existence correctly during precheck sequencing, emits Git-compatible symlink-escape diagnostics (`affected file '…' is beyond a symbolic link` and `<path>: No such file or directory`), and reports `Rejected hunk` for `--reject`; additionally `clean -dfx` now preserves tracked symlink paths by recursing into symlinked directories when tracked entries exist beneath those prefixes)
 - `t4059-diff-submodule-not-initialized` — upstream 8/8 tests pass (`submodule add` now handles pre-created empty target directories and writes canonical gitfiles for separate module gitdirs; `submodule update --checkout` now reattaches missing worktrees from `.git/modules/*`; `commit -a` preserves gitlink entries when submodule worktrees are absent; `mv` now allows tracked-empty-directory renames backed by index entries; `diff-tree -p --submodule=log` now emits gitlink summary lines with commit-encoding-aware subject decoding, suppresses `.gitmodules` patch hunks in log mode, and coalesces pure gitlink rename pairs to avoid duplicate delete/add submodule summary rows)
@@ -101,4 +102,4 @@
 
 ## What Remains
 
-1 test file is currently marked in progress and 654 remain pending. See `plan.md` for the full prioritized list.
+No test file is currently marked in progress and 654 remain pending. See `plan.md` for the full prioritized list.

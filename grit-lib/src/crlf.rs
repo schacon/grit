@@ -71,6 +71,8 @@ pub struct FileAttrs {
     pub eol: EolAttr,
     /// Diff driver name from `diff=<driver>` attribute.
     pub diff_driver: Option<String>,
+    /// Conflict marker size from `conflict-marker-size=<N>` attribute.
+    pub conflict_marker_size: Option<usize>,
     pub filter_clean: Option<String>,
     pub filter_smudge: Option<String>,
     pub ident: bool,
@@ -84,6 +86,7 @@ impl Default for FileAttrs {
             text: TextAttr::Unspecified,
             eol: EolAttr::Unspecified,
             diff_driver: None,
+            conflict_marker_size: None,
             filter_clean: None,
             filter_smudge: None,
             ident: false,
@@ -267,6 +270,15 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                             fa.diff_driver = None;
                         } else if !value.is_empty() && value != "set" {
                             fa.diff_driver = Some(value.clone());
+                        }
+                    }
+                    "conflict-marker-size" => {
+                        if value == "unset" {
+                            fa.conflict_marker_size = None;
+                        } else if let Ok(size) = value.parse::<usize>() {
+                            if size > 0 {
+                                fa.conflict_marker_size = Some(size);
+                            }
                         }
                     }
                     "ident" => {

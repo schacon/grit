@@ -935,9 +935,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     // Accepted for compatibility
                 }
                 _ => {
-                    extra_revs.push(r.clone());
-                    rev_idx += 1;
-                    continue;
+                    eprintln!("usage: git diff [<options>] [<commit>] [--] [<path>...]");
+                    std::process::exit(129);
                 }
             }
         } else {
@@ -1367,9 +1366,31 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // --check: check for whitespace errors
     if args.check {
-        let has_errors = check_whitespace_errors(&mut out, &entries, &repo.odb, wt_for_content)?;
+        let check_config =
+            grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let mut check_attr_rules = if let Some(wt) = wt_for_content {
+            grit_lib::crlf::load_gitattributes(wt)
+        } else {
+            Vec::new()
+        };
+        append_core_attributes_rules(Some(&check_config), &mut check_attr_rules);
+
+        let has_errors = check_whitespace_errors(
+            &mut out,
+            &entries,
+            &repo.odb,
+            wt_for_content,
+            &check_config,
+            &check_attr_rules,
+        )?;
         if has_errors {
+            if args.exit_code || args.quiet {
+                std::process::exit(3);
+            }
             std::process::exit(2);
+        }
+        if (args.exit_code || args.quiet) && has_diff {
+            std::process::exit(1);
         }
         return Ok(());
     }
@@ -4132,6 +4153,8 @@ fn check_whitespace_errors(
     entries: &[DiffEntry],
     odb: &Odb,
     work_tree: Option<&Path>,
+    config: &grit_lib::config::ConfigSet,
+    attr_rules: &[grit_lib::crlf::AttrRule],
 ) -> Result<bool> {
     use grit_lib::diff::zero_oid;
     let mut has_errors = false;
@@ -4141,6 +4164,9 @@ fn check_whitespace_errors(
             continue;
         }
         let path = entry.path();
+        let marker_size = grit_lib::crlf::get_file_attrs(attr_rules, path, config)
+            .conflict_marker_size
+            .unwrap_or(7);
 
         // Read old and new content
         let old_content = if entry.old_oid == zero_oid() {
@@ -4188,6 +4214,14 @@ fn check_whitespace_errors(
                         }
                         has_errors = true;
                     }
+                    if is_conflict_marker_line(trimmed, marker_size) {
+                        writeln!(out, "{}:{}: leftover conflict marker", path, line_no)?;
+                        write!(out, "+{}", line)?;
+                        if !line.ends_with('\n') {
+                            writeln!(out)?;
+                        }
+                        has_errors = true;
+                    }
                 }
                 ChangeTag::Equal => {
                     line_no += 1;
@@ -4197,6 +4231,36 @@ fn check_whitespace_errors(
         }
     }
     Ok(has_errors)
+}
+
+fn is_conflict_marker_line(line: &str, marker_size: usize) -> bool {
+    if marker_size == 0 {
+        return false;
+    }
+    let bytes = line.as_bytes();
+    is_named_conflict_marker(bytes, b'<', marker_size, true)
+        || is_named_conflict_marker(bytes, b'>', marker_size, true)
+        || is_named_conflict_marker(bytes, b'|', marker_size, true)
+        || is_named_conflict_marker(bytes, b'=', marker_size, false)
+}
+
+fn is_named_conflict_marker(
+    bytes: &[u8],
+    marker: u8,
+    marker_size: usize,
+    require_suffix_space: bool,
+) -> bool {
+    if bytes.len() < marker_size || !bytes[..marker_size].iter().all(|&c| c == marker) {
+        return false;
+    }
+    let rest = &bytes[marker_size..];
+    if rest.is_empty() {
+        return !require_suffix_space;
+    }
+    if require_suffix_space {
+        return rest[0] == b' ' || rest[0] == b'\t';
+    }
+    false
 }
 
 /// Resolve the source and destination prefixes for diff output, considering

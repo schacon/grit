@@ -919,6 +919,7 @@ struct GlobalOpts {
     attr_source: Option<String>,
     bare: bool,
     no_advice: bool,
+    no_pager: bool,
 }
 
 /// Extract global options and return (globals, subcommand_name, remaining_args).
@@ -1011,6 +1012,18 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // --no-pager / --paginate (accepted global pager toggles).
+        if arg == "--no-pager" {
+            opts.no_pager = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--paginate" {
+            opts.no_pager = false;
+            i += 1;
+            continue;
+        }
+
         // --no-advice
         if arg == "--no-advice" {
             opts.no_advice = true;
@@ -1073,6 +1086,9 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     }
     if opts.no_advice {
         std::env::set_var("GIT_ADVICE", "false");
+    }
+    if opts.no_pager {
+        std::env::set_var("GIT_PAGER", "cat");
     }
     if let Some(attr_source) = &opts.attr_source {
         std::env::set_var("GIT_ATTR_SOURCE", attr_source);

@@ -4,6 +4,12 @@
 
 - `./scripts/run-tests.sh t4017-diff-retval.sh`: 30/38 passing (baseline for newly claimed in-progress Diff target `t4017`).
 - `bash scripts/run-upstream-tests.sh t4017-diff-retval`: 30/38 passing.
+- `cargo build --release`: passes (rebuild after `t4017` exit-code and `--check` behavior fixes in `diff`, pickaxe-aware `--exit-code` handling in `diff-tree`, and global `--no-pager` parsing in the CLI dispatcher).
+- `./scripts/run-tests.sh t4017-diff-retval.sh`: 38/38 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4017-diff-retval`: 38/38 passing in isolated upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes outside scoped files reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
 
 - `cargo build --release`: passes (rebuild after `t4252` am-option persistence and shared-apply integration updates in `am` and reusable patch-input entrypoint in `apply`).
 - `./scripts/run-tests.sh t4252-am-options.sh`: 8/8 passing; `data/file-results.tsv` refreshed.

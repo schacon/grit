@@ -110,6 +110,12 @@ struct Options {
     max_depth: Option<i32>,
     /// Ignore changes in amount of whitespace (`-b`).
     ignore_space_change: bool,
+    /// Pickaxe string for `-S`.
+    pickaxe_string: Option<String>,
+    /// Pickaxe regex for `-G`.
+    pickaxe_grep: Option<String>,
+    /// Treat `-S` argument as regex.
+    pickaxe_regex: bool,
     /// Exit with 1 if there are differences.
     exit_code: bool,
     /// Suppress all output, implies exit_code.
@@ -153,6 +159,9 @@ impl Default for Options {
             stat_too: false,
             max_depth: None,
             ignore_space_change: false,
+            pickaxe_string: None,
+            pickaxe_grep: None,
+            pickaxe_regex: false,
             exit_code: false,
             quiet: false,
             reverse: false,
@@ -319,12 +328,36 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 // Silently accept common diff options that we do not implement.
                 "--no-rename-empty" | "--always" | "--diff-merges=off" | "--check" => {}
+                s if s.starts_with("-S") => {
+                    if s.len() > 2 {
+                        opts.pickaxe_string = Some(s[2..].to_owned());
+                    } else {
+                        i += 1;
+                        let next = argv
+                            .get(i)
+                            .ok_or_else(|| anyhow::anyhow!("-S requires an argument"))?;
+                        opts.pickaxe_string = Some(next.to_string());
+                    }
+                }
+                s if s.starts_with("-G") => {
+                    if s.len() > 2 {
+                        opts.pickaxe_grep = Some(s[2..].to_owned());
+                    } else {
+                        i += 1;
+                        let next = argv
+                            .get(i)
+                            .ok_or_else(|| anyhow::anyhow!("-G requires an argument"))?;
+                        opts.pickaxe_grep = Some(next.to_string());
+                    }
+                }
+                "--pickaxe-regex" => {
+                    opts.pickaxe_regex = true;
+                }
+                "--pickaxe-all" => {
+                    // Accepted for compatibility.
+                }
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
-                    || arg.starts_with("-S")
-                    || arg.starts_with("-G")
-                    || arg.starts_with("--pickaxe-all")
-                    || arg.starts_with("--pickaxe-regex")
                     || arg.starts_with("-O")
                     || arg.starts_with("--relative") =>
                 {
@@ -417,6 +450,7 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
     let filtered = filter_entries(entries, opts, &repo.odb);
     let find_object = resolve_find_object(repo, opts)?;
     let filtered = filter_entries_by_object(filtered, find_object.as_ref());
+    let filtered = apply_pickaxe_filters(filtered, opts, &repo.odb)?;
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
         print_diff(out, repo, &filtered, opts, maybe_oid1.as_ref())?;
@@ -521,6 +555,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                         diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
                     let filtered = filter_entries(entries, opts, &repo.odb);
                     let filtered = filter_entries_by_object(filtered, find_object.as_ref());
+                    let filtered = apply_pickaxe_filters(filtered, opts, &repo.odb)?;
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
@@ -554,6 +589,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
                 let filtered = filter_entries(entries, opts, &repo.odb);
                 let filtered = filter_entries_by_object(filtered, find_object.as_ref());
+                let filtered = apply_pickaxe_filters(filtered, opts, &repo.odb)?;
                 has_diff = !filtered.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
@@ -675,7 +711,8 @@ fn process_stdin_commit(
                 std::mem::swap(&mut old_tree, &mut new_tree);
             }
             let entries = diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
-            let filtered = filter_entries(entries, opts, &repo.odb);
+            let filtered =
+                apply_pickaxe_filters(filter_entries(entries, opts, &repo.odb), opts, &repo.odb)?;
             let hd = !filtered.is_empty();
             print_diff(out, repo, &filtered, opts, old_tree.as_ref())?;
             hd
@@ -690,7 +727,8 @@ fn process_stdin_commit(
             std::mem::swap(&mut old_tree, &mut new_tree);
         }
         let entries = diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
-        let filtered = filter_entries(entries, opts, &repo.odb);
+        let filtered =
+            apply_pickaxe_filters(filter_entries(entries, opts, &repo.odb), opts, &repo.odb)?;
         let hd = !filtered.is_empty();
         print_diff(out, repo, &filtered, opts, old_tree.as_ref())?;
         hd
@@ -724,7 +762,8 @@ fn process_stdin_two_trees(
         std::mem::swap(&mut maybe_oid1, &mut maybe_oid2);
     }
     let entries = diff_with_opts(&repo.odb, maybe_oid1.as_ref(), maybe_oid2.as_ref(), opts)?;
-    let filtered = filter_entries(entries, opts, &repo.odb);
+    let filtered =
+        apply_pickaxe_filters(filter_entries(entries, opts, &repo.odb), opts, &repo.odb)?;
     print_diff(out, repo, &filtered, opts, maybe_oid1.as_ref())
 }
 
@@ -1983,6 +2022,55 @@ fn filter_entries(entries: Vec<DiffEntry>, opts: &Options, odb: &Odb) -> Vec<Dif
     } else {
         filtered
     }
+}
+
+fn apply_pickaxe_filters(
+    entries: Vec<DiffEntry>,
+    opts: &Options,
+    odb: &Odb,
+) -> Result<Vec<DiffEntry>> {
+    if let Some(pattern) = opts.pickaxe_grep.as_deref() {
+        let re = regex::Regex::new(pattern)
+            .with_context(|| format!("invalid pickaxe regex: {pattern}"))?;
+        let filtered = entries
+            .into_iter()
+            .filter(|entry| {
+                let old_content = read_blob_content(odb, &entry.old_oid);
+                let new_content = read_blob_content(odb, &entry.new_oid);
+                old_content.lines().any(|line| re.is_match(line))
+                    || new_content.lines().any(|line| re.is_match(line))
+            })
+            .collect();
+        return Ok(filtered);
+    }
+
+    if let Some(needle) = opts.pickaxe_string.as_deref() {
+        if opts.pickaxe_regex {
+            let re = regex::Regex::new(needle)
+                .with_context(|| format!("invalid pickaxe regex: {needle}"))?;
+            let filtered = entries
+                .into_iter()
+                .filter(|entry| {
+                    let old_content = read_blob_content(odb, &entry.old_oid);
+                    let new_content = read_blob_content(odb, &entry.new_oid);
+                    re.find_iter(&old_content).count() != re.find_iter(&new_content).count()
+                })
+                .collect();
+            return Ok(filtered);
+        }
+
+        let filtered = entries
+            .into_iter()
+            .filter(|entry| {
+                let old_content = read_blob_content(odb, &entry.old_oid);
+                let new_content = read_blob_content(odb, &entry.new_oid);
+                old_content.matches(needle).count() != new_content.matches(needle).count()
+            })
+            .collect();
+        return Ok(filtered);
+    }
+
+    Ok(entries)
 }
 
 fn filter_ignore_space_change(entries: Vec<DiffEntry>, odb: &Odb) -> Vec<DiffEntry> {
