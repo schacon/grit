@@ -6074,13 +6074,23 @@ fn try_bounded_commit_filter_limit_list(
 
     let mut matched_seen = 0usize;
     let mut ordered = Vec::with_capacity(max_count.min(64));
+    let since = options.since_cutoff;
+    let until = options.until_cutoff;
     while let Some(item) = heap.pop() {
         let oid = item.oid;
         if excluded.contains(&oid) {
             continue;
         }
 
-        if filter.matches(repo, oid)? {
+        let mut consider = true;
+        if since.is_some() || until.is_some() {
+            let ts = graph.committer_time(oid);
+            if until.is_some_and(|u| ts > u) || since.is_some_and(|s| ts < s) {
+                consider = false;
+            }
+        }
+
+        if consider && filter.matches(repo, oid)? {
             matched_seen += 1;
             if matched_seen > options.skip && ordered.len() < max_count {
                 ordered.push(oid);

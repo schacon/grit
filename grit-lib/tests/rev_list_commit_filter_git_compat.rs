@@ -60,6 +60,8 @@ struct ParsedRevListCli {
     max_count: Option<usize>,
     min_parents: Option<usize>,
     max_parents: Option<usize>,
+    since_cutoff: Option<i64>,
+    until_cutoff: Option<i64>,
     count: bool,
     rev_args: Vec<String>,
     paths: Vec<String>,
@@ -70,6 +72,8 @@ fn parse_rev_list_cli(args: &[&str]) -> ParsedRevListCli {
     let mut max_count = None;
     let mut min_parents = None;
     let mut max_parents = None;
+    let mut since_cutoff = None;
+    let mut until_cutoff = None;
     let mut count = false;
     let mut rev_args = Vec::new();
     let mut paths = Vec::new();
@@ -170,6 +174,36 @@ fn parse_rev_list_cli(args: &[&str]) -> ParsedRevListCli {
             i += 1;
             continue;
         }
+        if arg == "--since" || arg == "--after" {
+            let ts = grit_lib::revwalk::queries::committer_cutoff_from_date(args[i + 1], 0)
+                .expect("since");
+            since_cutoff = Some(ts);
+            i += 2;
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix("--since=") {
+            let date = rest.strip_prefix('@').unwrap_or(rest);
+            since_cutoff = Some(
+                grit_lib::revwalk::queries::committer_cutoff_from_date(date, 0).expect("since"),
+            );
+            i += 1;
+            continue;
+        }
+        if arg == "--until" || arg == "--before" {
+            let ts = grit_lib::revwalk::queries::committer_cutoff_from_date(args[i + 1], 0)
+                .expect("until");
+            until_cutoff = Some(ts);
+            i += 2;
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix("--until=") {
+            let date = rest.strip_prefix('@').unwrap_or(rest);
+            until_cutoff = Some(
+                grit_lib::revwalk::queries::committer_cutoff_from_date(date, 0).expect("until"),
+            );
+            i += 1;
+            continue;
+        }
         rev_args.push(arg.to_owned());
         i += 1;
     }
@@ -180,6 +214,8 @@ fn parse_rev_list_cli(args: &[&str]) -> ParsedRevListCli {
         max_count,
         min_parents,
         max_parents,
+        since_cutoff,
+        until_cutoff,
         count,
         rev_args,
         paths,
@@ -210,6 +246,8 @@ fn assert_rev_list_filter_matches_git(worktree: &Path, repo: &Repository, args: 
         min_parents: parsed.min_parents,
         max_parents: parsed.max_parents,
         count: parsed.count,
+        since_cutoff: parsed.since_cutoff,
+        until_cutoff: parsed.until_cutoff,
         commit_filter: parsed.filter,
         paths,
         paths_resolved_from_argv: !parsed.paths.is_empty(),
@@ -573,6 +611,136 @@ fn filter_with_paths_matches_git() {
         &repo,
         &["--author=Refs Harness", "main", "--", "path.txt"],
     );
+}
+
+#[test]
+fn bounded_filter_since_until_matches_git() {
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    let c0 = commit_tree_with_identities(
+        wt,
+        "c0",
+        &[],
+        ("Alice", "a@x.com"),
+        ("Alice", "a@x.com"),
+        "m0",
+    );
+    let mut prev = c0;
+    for (i, ts) in [(1, 1000_i64), (2, 2000), (3, 3000), (4, 4000)] {
+        prev = {
+            let tree = git(wt, &["mktree"]).trim().to_string();
+            let mut cmd = Command::new("git");
+            cmd.current_dir(wt)
+                .args(["commit-tree", &tree, "-p", &prev.to_hex(), "-m", "m"])
+                .env("GIT_AUTHOR_NAME", "Alice")
+                .env("GIT_AUTHOR_EMAIL", "a@x.com")
+                .env("GIT_COMMITTER_NAME", "Alice")
+                .env("GIT_COMMITTER_EMAIL", "a@x.com")
+                .env("GIT_AUTHOR_DATE", format!("@{ts} +0000"))
+                .env("GIT_COMMITTER_DATE", format!("@{ts} +0000"))
+                .env("GIT_CONFIG_GLOBAL", support::null_device_for_tests())
+                .env("GIT_CONFIG_SYSTEM", support::null_device_for_tests());
+            let out = cmd.output().expect("commit-tree");
+            assert!(out.status.success());
+            String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .parse()
+                .expect("oid")
+        };
+        git(
+            wt,
+            &["update-ref", &format!("refs/history/c{i}"), &prev.to_hex()],
+        );
+    }
+    git(wt, &["update-ref", "refs/heads/main", &prev.to_hex()]);
+    let repo = open_grit_repo(wt);
+    assert_rev_list_filter_matches_git(
+        wt,
+        &repo,
+        &[
+            "-n",
+            "2",
+            "--author=Alice",
+            "--since=1970-01-01 00:41:40 +0000",
+            "main",
+        ],
+    );
+    assert_rev_list_filter_matches_git(
+        wt,
+        &repo,
+        &[
+            "--count",
+            "--author=Alice",
+            "--since=1970-01-01 00:41:40 +0000",
+            "main",
+        ],
+    );
+}
+
+#[test]
+fn left_right_count_with_author_filter_matches_git() {
+    use grit_lib::revwalk::RevWalkListOptions;
+
+    let hist = HistoryRepo::init();
+    let wt = hist.worktree();
+    let base = commit_tree_with_identities(
+        wt,
+        "base",
+        &[],
+        ("Alice", "a@x.com"),
+        ("Alice", "a@x.com"),
+        "base",
+    );
+    let left = commit_tree_with_identities(
+        wt,
+        "left",
+        &[base],
+        ("Alice", "a@x.com"),
+        ("Alice", "a@x.com"),
+        "left",
+    );
+    let right = commit_tree_with_identities(
+        wt,
+        "right",
+        &[base],
+        ("Bob", "b@x.com"),
+        ("Bob", "b@x.com"),
+        "right",
+    );
+    git(wt, &["update-ref", "refs/heads/left", &left.to_hex()]);
+    git(wt, &["update-ref", "refs/heads/right", &right.to_hex()]);
+    let filter = Arc::new(
+        CommitFilterBuilder::new()
+            .author("Alice")
+            .build()
+            .expect("filter"),
+    );
+    let repo = open_grit_repo(wt);
+    let git_out = git(
+        wt,
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            "--author=Alice",
+            "left...right",
+        ],
+    );
+    let mut parts = git_out.split_whitespace();
+    let git_left: usize = parts.next().unwrap().parse().unwrap();
+    let git_right: usize = parts.next().unwrap().parse().unwrap();
+    let grit = repo
+        .rev_walk()
+        .left_right_counts(
+            &["left...right"],
+            &RevWalkListOptions {
+                commit_filter: Some(filter),
+                ..RevWalkListOptions::default()
+            },
+        )
+        .expect("counts");
+    assert_eq!(grit.left, git_left);
+    assert_eq!(grit.right, git_right);
 }
 
 #[test]

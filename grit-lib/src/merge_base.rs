@@ -1657,8 +1657,7 @@ impl<'r> CommitGraphCache<'r> {
             return;
         }
         let objects_dir = self.repo.git_dir().join("objects");
-        if let Ok(Some(reader)) = crate::pack::SingleLocalPackReader::open_allow_loose(&objects_dir)
-        {
+        if let Ok(Some(reader)) = crate::pack::SingleLocalPackReader::open(&objects_dir) {
             self.single_pack = Some(reader);
         }
     }

@@ -58,7 +58,7 @@ fn clone_deep_worktree(git: &Path, bare: &Path) -> Result<PathBuf> {
 /// Rev-list count and merge-base scenarios vs system git.
 pub fn run_revwalk_suite(
     hyperfine: &Path,
-    _bench_exe: &Path,
+    bench_exe: &Path,
     git: &Path,
     grit: &Path,
     cfg: &RunConfig,
@@ -73,7 +73,7 @@ pub fn run_revwalk_suite(
     };
     let bare = ensure_fixture(git, profile, NetworkFixtureKind::DeepHistory)?;
     let worktree = clone_deep_worktree(git, &bare)?;
-    let bench_exe = std::env::current_exe().context("grit-bench exe")?;
+    let bench_exe_path = std::env::current_exe().context("grit-bench exe")?;
     let mut scenarios = Vec::new();
     // Committer timestamps are `1 + commit_index` (see `write_deep_history_fast_import`).
     // Use a cutoff that leaves ~20 commits at the tip so `-n 20` matches grit's Unix `--since`.
@@ -103,7 +103,7 @@ pub fn run_revwalk_suite(
         }
         scenarios.push(run_odb_scenario(
             hyperfine,
-            &bench_exe,
+            &bench_exe_path,
             git,
             &odb_cfg,
             &Scenario {
@@ -129,7 +129,7 @@ pub fn run_revwalk_suite(
         )?);
         scenarios.push(run_odb_scenario(
             hyperfine,
-            &bench_exe,
+            &bench_exe_path,
             git,
             &odb_cfg,
             &Scenario {
@@ -182,7 +182,7 @@ pub fn run_revwalk_suite(
     scenarios.push(run_scenario(
         hyperfine,
         git,
-        &bench_exe,
+        bench_exe,
         cfg,
         &Scenario {
             id: "revs-count-since-no-graph".into(),
@@ -219,7 +219,7 @@ pub fn run_revwalk_suite(
     scenarios.push(run_scenario(
         hyperfine,
         git,
-        &bench_exe,
+        bench_exe,
         cfg,
         &Scenario {
             id: "revs-left-right-count-no-graph".into(),
