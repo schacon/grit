@@ -16,8 +16,9 @@ use crate::rev_list::{
 };
 use crate::rev_list_error::RevListError;
 use crate::rev_parse::{
-    peel_to_commit_for_merge_base, resolve_revision, resolve_revision_for_range_end,
-    split_triple_dot_range, try_peel_to_commit_for_merge_base,
+    is_top_level_range, peel_to_commit_for_merge_base, resolve_revision,
+    resolve_revision_for_range_end, split_top_level_triple_dot_range,
+    try_peel_to_commit_for_merge_base,
 };
 use crate::revwalk::filter::CommitFilter;
 
@@ -58,6 +59,12 @@ pub struct LeftRightCounts {
 }
 
 /// Options for listing or counting commits through [`RevWalk`].
+///
+/// This is the high-level, token-based API: pass these to [`RevWalk::commits`],
+/// [`RevWalk::rev_list_result`], or [`RevWalk::count`] together with revision tokens
+/// (`main`, `^v1.0`, `A..B`, `A...B`). Ref selections ([`Self::refs`]) and path limits
+/// ([`Self::paths`]) live here rather than in the tokens. The low-level engine options are
+/// [`RevListOptions`], used by [`rev_list`] and [`RevWalk::walk`] (one spec string).
 #[derive(Debug, Clone, Default)]
 pub struct RevWalkListOptions {
     /// Maximum number of commits to return (matches `rev-list --max-count` / `-n`).
@@ -90,6 +97,10 @@ pub struct RevWalkListOptions {
 }
 
 /// Positive and negative revision specs produced by [`parse_rev_walk_tokens`].
+///
+/// Feed `positive` / `negative` to [`rev_list`] and copy `symmetric_left` / `symmetric_right`
+/// into the matching [`RevListOptions`] fields. [`RevWalk::commits`] and [`RevWalk::walk`] do
+/// this for you.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RevWalkParsedSpecs {
     /// Tips and ranges to include.
@@ -104,7 +115,10 @@ pub struct RevWalkParsedSpecs {
 
 /// Parse user revision tokens into positive/negative specs for [`rev_list`].
 ///
-/// Supports plain tips, `A..B`, `A...B`, and `^X` exclusions across multiple tokens.
+/// Supports plain tips, `A..B`, `A...B`, and `^X` exclusions across multiple tokens. An empty
+/// side of a range defaults to `HEAD`. `A...B` expands to both tips as positive specs and their
+/// merge bases as negative specs. Dots inside `{…}` selectors or after a `:` are literal, so
+/// `:/fix...up`, `main^{/fix...up}` and `HEAD:a...b` stay single revisions, as in Git.
 ///
 /// # Errors
 ///
@@ -115,7 +129,12 @@ pub fn parse_rev_walk_tokens(repo: &Repository, tokens: &[&str]) -> Result<RevWa
     let mut symmetric_left = None;
     let mut symmetric_right = None;
     for token in tokens {
-        if let Some((left, right)) = split_triple_dot_range(token) {
+        if !is_top_level_range(token) {
+            match token.strip_prefix('^') {
+                Some(excluded) => negative.push(excluded.to_owned()),
+                None => positive.push((*token).to_owned()),
+            }
+        } else if let Some((left, right)) = split_top_level_triple_dot_range(token) {
             let left_spec = if left.is_empty() { "HEAD" } else { left };
             let right_spec = if right.is_empty() { "HEAD" } else { right };
             let (pos, neg, left_oid, right_oid) =
@@ -365,6 +384,11 @@ fn try_single_positive_bounded_page(
 
 impl<'repo> RevWalk<'repo> {
     /// List commit object ids reachable from `tokens` in default `rev-list` order.
+    ///
+    /// Each token is a plain tip, `^tip`, `A..B`, or `A...B` (see [`parse_rev_walk_tokens`]);
+    /// put ref selections in [`RevWalkListOptions::refs`] and path limits in
+    /// [`RevWalkListOptions::paths`]. For a single spec with the full engine options, see
+    /// [`RevWalk::walk`].
     ///
     /// # Errors
     ///

@@ -999,6 +999,36 @@ pub(crate) fn is_top_level_range(spec: &str) -> bool {
     false
 }
 
+/// Split `spec` at a top-level `...` symmetric-difference operator.
+///
+/// Like [`split_triple_dot_range`], but dots inside `{…}` selectors or after a `:` are literal
+/// text (`main^{/fix...up}`, `:/fix...up`, `HEAD:a...b`), the same rule as
+/// [`is_top_level_range`]. Either side of the result may be empty.
+#[must_use]
+pub(crate) fn split_top_level_triple_dot_range(spec: &str) -> Option<(&str, &str)> {
+    let bytes = spec.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            b':' if depth == 0 => return None,
+            b'.' if depth == 0 => {
+                let run = bytes[i..].iter().take_while(|&&b| b == b'.').count();
+                if run == 3 {
+                    return Some((&spec[..i], &spec[i + 3..]));
+                }
+                i += run;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Like [`resolve_revision`], but does not treat a bare filename as an index path
 /// (matches `git rev-parse` / plumbing, where `file.txt` stays ambiguous).
 pub fn resolve_revision_without_index_dwim(repo: &Repository, spec: &str) -> Result<ObjectId> {
@@ -1313,9 +1343,7 @@ fn resolve_revision_impl(
 
     // Handle A...B (symmetric difference / merge-base)
     // Also handles A... (implies A...HEAD)
-    if let Some(idx) = spec.find("...") {
-        let left_raw = &spec[..idx];
-        let right_raw = &spec[idx + 3..];
+    if let Some((left_raw, right_raw)) = split_top_level_triple_dot_range(spec) {
         if !left_raw.is_empty() || !right_raw.is_empty() {
             let left_oid = peel_to_commit_for_merge_base(
                 repo,
@@ -4092,6 +4120,38 @@ mod line_coverage_tests {
         assert!(find_parent_shorthand("main^!").is_some());
         assert!(reflog_date_selector_timestamp_at("1.day.ago", 1_700_000_000).is_some());
         assert!(next_reflog_at_open("main@{1}@{0}", 0).is_some());
+    }
+
+    #[test]
+    fn top_level_triple_dot_skips_selectors_and_paths() {
+        assert_eq!(
+            split_top_level_triple_dot_range("main...side"),
+            Some(("main", "side"))
+        );
+        assert_eq!(
+            split_top_level_triple_dot_range("main..."),
+            Some(("main", ""))
+        );
+        assert_eq!(
+            split_top_level_triple_dot_range("...side"),
+            Some(("", "side"))
+        );
+        assert_eq!(split_top_level_triple_dot_range("..."), Some(("", "")));
+        assert_eq!(
+            split_top_level_triple_dot_range("main^{/a...b}...side"),
+            Some(("main^{/a...b}", "side"))
+        );
+        for single in [
+            ":/fix...up",
+            "main^{/fix...up}",
+            "HEAD:dir/a...b",
+            "main@{1...}",
+            "a....b",
+            "a..b",
+            "main",
+        ] {
+            assert_eq!(split_top_level_triple_dot_range(single), None, "{single}");
+        }
     }
 
     #[test]
