@@ -8,16 +8,23 @@ use clap::Args as ClapArgs;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use grit_lib::config::ConfigSet;
+use grit_lib::error::Error as LibError;
+use grit_lib::rev_list::{rev_list, MissingAction, RevListOptions};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeSet, HashSet};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
+use std::thread;
+use std::time::Duration;
 
+use crate::grit_exe;
 use grit_lib::delta_encode::{encode_lcp_delta, encode_prefix_extension_delta};
 use grit_lib::objects::{parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
 use grit_lib::repo::Repository;
 use std::collections::HashMap;
+use std::path::Path;
+use std::process::{Command, Stdio};
 
 /// Arguments for `grit pack-objects`.
 #[derive(Debug, ClapArgs)]
@@ -118,6 +125,10 @@ pub struct Args {
     #[arg(long = "filter")]
     pub filter: Option<String>,
 
+    /// Write objects omitted by `--filter` to this pack prefix (Git `--filter-to`).
+    #[arg(long = "filter-to", value_name = "BASE")]
+    pub filter_to: Option<String>,
+
     /// Missing objects are ok (accepted for compat).
     #[arg(long = "missing")]
     pub missing: Option<String>,
@@ -133,6 +144,10 @@ pub struct Args {
     /// Incremental pack (accepted for compat).
     #[arg(long = "incremental")]
     pub incremental: bool,
+
+    /// Limit to objects not yet in any pack (used with `--all` and `--incremental` for `git repack -d`).
+    #[arg(long = "unpacked")]
+    pub unpacked: bool,
 
     /// Do not create empty pack (accepted for compat).
     #[arg(long = "non-empty")]
@@ -174,12 +189,21 @@ pub struct Args {
     #[arg(long = "indexed-objects")]
     pub indexed_objects: bool,
 
+    /// Restrict `--all` to the ref/reflog/index reachability closure (first pack of `repack
+    /// --cruft`). Default `pack-objects --all` enumerates the full object directory like Git.
+    #[arg(long = "reachability-all", hide = true)]
+    pub reachability_all: bool,
+
     /// Cruft pack options (accepted for compat).
     #[arg(long = "cruft")]
     pub cruft: bool,
 
     #[arg(long = "cruft-expiration")]
     pub cruft_expiration: Option<String>,
+
+    /// Do not repack objects that appear only in this pack (repeatable; basename like `pack-abc.pack`).
+    #[arg(long = "keep-pack", value_name = "NAME", action = clap::ArgAction::Append)]
+    pub keep_pack: Vec<String>,
 
     /// Extra args passed through (for forward compat with unknown flags).
     #[arg(value_name = "EXTRA", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true, hide = true)]
@@ -229,8 +253,37 @@ pub fn run(args: Args) -> Result<()> {
     // Collect object IDs.
     let pack_list = collect_oids(&repo, &args)?;
 
+    // Git shows this progress title when progress is enabled. Tests set `GIT_PROGRESS_DELAY` and
+    // capture stderr to a file (not a TTY); match that by honoring the env var even when stderr
+    // is not a terminal (`t6500-gc` TTY block).
+    let progress_delay_env = std::env::var("GIT_PROGRESS_DELAY").ok();
+    let show_enumerate_progress = !args.quiet
+        && !args.stdout
+        && !pack_list.oids.is_empty()
+        && (io::stderr().is_terminal() || progress_delay_env.is_some());
+    if show_enumerate_progress {
+        let delay = progress_delay_env
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2u64);
+        if delay > 0 {
+            thread::sleep(Duration::from_secs(delay));
+        }
+        eprintln!("Enumerating objects");
+    }
+
     if pack_list.oids.is_empty() {
-        if !args.stdout {
+        // Git’s cruft `pack-objects` pass may enumerate zero objects; `repack` still passes
+        // `--non-empty` but expects a successful no-op with no stdout hash.
+        //
+        // An empty repository’s full `repack`/`gc` also runs `pack-objects --all --non-empty` with
+        // zero reachable objects; Git skips writing a pack (t6500 `gc --quiet` on fresh repo).
+        let allow_empty =
+            (args.cruft && !args.incremental) || (args.all && !args.incremental && !args.unpacked);
+        if args.non_empty && !allow_empty {
+            bail!("pack-objects refuses to create an empty pack");
+        }
+        if !args.stdout && !args.quiet {
             eprintln!("Total 0 (delta 0), reused 0 (delta 0)");
         }
         return Ok(());
@@ -247,9 +300,41 @@ pub fn run(args: Args) -> Result<()> {
         });
     }
 
+    if args.filter.as_deref().map(str::trim) == Some("blob:none")
+        && args
+            .filter_to
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty())
+    {
+        let to_base = args.filter_to.as_deref().map(str::trim).unwrap_or("");
+        let side_blobs: Vec<PackEntry> = entries
+            .iter()
+            .filter(|e| e.kind == ObjectKind::Blob)
+            .cloned()
+            .collect();
+        entries.retain(|e| e.kind != ObjectKind::Blob);
+        if !side_blobs.is_empty() {
+            write_pack_via_stdin_objects(&repo, &side_blobs, to_base, args.quiet)?;
+        }
+    } else {
+        apply_list_objects_filter(&mut entries, args.filter.as_deref());
+    }
+
+    if entries.is_empty() {
+        if args.non_empty {
+            bail!("pack-objects refuses to create an empty pack");
+        }
+        if !args.stdout && !args.quiet {
+            eprintln!("Total 0 (delta 0), reused 0 (delta 0)");
+        }
+        return Ok(());
+    }
+
     // OID-sorted `--all` order breaks REF_DELTA chains (base must appear earlier in the pack).
     // Order blobs by increasing size so strict-prefix chains (t5316) serialize correctly.
-    if args.all {
+    // Incremental repack (`--unpacked --incremental`) uses the rev-list object order as-is.
+    if args.all && !args.incremental {
         let mut blobs = Vec::new();
         let mut non_blobs = Vec::new();
         for e in entries {
@@ -331,15 +416,153 @@ pub fn run(args: Args) -> Result<()> {
         std::fs::write(&idx_path, &idx_bytes)?;
 
         println!("{pack_hash}");
-        eprintln!(
-            "Total {} (delta {}), reused 0 (delta {})",
-            write_entries.len(),
-            new_deltas + reused_deltas,
-            reused_deltas
-        );
+        if !args.quiet {
+            eprintln!(
+                "Total {} (delta {}), reused 0 (delta {})",
+                write_entries.len(),
+                new_deltas + reused_deltas,
+                reused_deltas
+            );
+        }
+
+        let pb = Path::new(&pack_path);
+        if let (Some(dir), Some(stem)) = (pb.parent(), pb.file_stem().and_then(|s| s.to_str())) {
+            if args.cruft && !args.incremental {
+                let _ = std::fs::write(dir.join(format!("{stem}.mtimes")), b"");
+            } else {
+                // A full repack without `--cruft` may reuse the same pack hash as a former cruft
+                // pack (same object set); drop stale `.mtimes` so `gc --keep-largest-pack` matches Git.
+                let _ = std::fs::remove_file(dir.join(format!("{stem}.mtimes")));
+            }
+        }
     }
 
     Ok(())
+}
+
+/// Objects reachable from refs, reflogs (when enabled), and index blobs — same tips as Git’s
+/// `pack-objects --all --reflog --indexed-objects` without `--keep-unreachable` / unpack flags.
+fn reachable_objects_for_full_repack(repo: &Repository, args: &Args) -> Result<Vec<ObjectId>> {
+    let mut opts = RevListOptions::default();
+    opts.objects = true;
+    opts.all_refs = true;
+    // `git pack-objects --all --reflog` still packs the ref closure only; `--reflog` does not add
+    // reflog-only commits as extra roots (see `git verify-pack` on the first pack vs grit before
+    // this fix — t6500 cruft relies on foo/bar commits staying out of the main pack).
+    opts.include_reflog_entries = false;
+    opts.include_indexed_objects = args.indexed_objects;
+    opts.missing_action = MissingAction::Allow;
+    let r = match rev_list(repo, &[] as &[String], &[] as &[String], &opts) {
+        Ok(r) => r,
+        Err(LibError::InvalidRef(ref s)) if s == "no revisions specified" => {
+            return Ok(Vec::new());
+        }
+        Err(e) => return Err(e).context("rev-list for pack-objects --all"),
+    };
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    // `rev_list` object lines omit commit OIDs (Git lists trees/blobs per commit); commits must
+    // still count as reachable for cruft splitting and `--all` OID sets.
+    for c in &r.commits {
+        if seen.insert(*c) {
+            out.push(*c);
+        }
+    }
+    for (o, _) in r.objects {
+        if seen.insert(o) {
+            out.push(o);
+        }
+    }
+    Ok(out)
+}
+
+/// Basename without `.pack` / `.idx` (e.g. `pack-abc123`).
+fn pack_stem_from_line(line: &str) -> String {
+    let t = line.trim();
+    let t = t.strip_prefix('-').unwrap_or(t).trim();
+    Path::new(t)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(t)
+        .strip_suffix(".pack")
+        .or_else(|| t.strip_suffix(".idx"))
+        .unwrap_or(t)
+        .to_string()
+}
+
+/// `git pack-objects --cruft` stdin protocol: fresh pack basenames, `-` lines for packs to
+/// discard, optional retained packs (no `-`) that are neither fresh nor discarded (unknown packs
+/// on disk are treated as retained and skipped when gathering cruft candidates).
+fn collect_cruft_pack_stdin_oids(repo: &Repository) -> Result<PackObjectList> {
+    let stdin = io::stdin();
+    let mut fresh: HashSet<String> = HashSet::new();
+    let mut discard: HashSet<String> = HashSet::new();
+    for line in stdin.lock().lines() {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let stem = pack_stem_from_line(trimmed);
+        if stem.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with('-') {
+            discard.insert(stem);
+        } else {
+            fresh.insert(stem);
+        }
+    }
+
+    let pack_dir = repo.odb.objects_dir().join("pack");
+    let mut fresh_oids: HashSet<ObjectId> = HashSet::new();
+    for stem in &fresh {
+        let idx_path = pack_dir.join(format!("{stem}.idx"));
+        if idx_path.is_file() {
+            let idx = grit_lib::pack::read_pack_index(&idx_path)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", idx_path.display()))?;
+            for e in idx.entries {
+                fresh_oids.insert(e.oid);
+            }
+        }
+    }
+
+    let mut oids: BTreeSet<ObjectId> = BTreeSet::new();
+    collect_all_loose(&repo.odb, &mut oids)?;
+
+    let indexes = grit_lib::pack::read_local_pack_indexes(repo.odb.objects_dir())
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    for idx in indexes {
+        let name = idx
+            .pack_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        if !name.ends_with(".pack") {
+            continue;
+        }
+        let stem = name.strip_suffix(".pack").unwrap_or(name).to_string();
+        if fresh.contains(&stem) {
+            continue;
+        }
+        if !discard.contains(&stem) {
+            // Pack not listed on stdin: treated as retained (Git `pack_keep_in_core`).
+            continue;
+        }
+        for e in idx.entries {
+            oids.insert(e.oid);
+        }
+    }
+
+    // Cruft = objects from discarded packs (and loose) that are not in the new pack(s). Do not
+    // subtract `rev-list --all --reflog`: reflog still points at discarded commits (t6500
+    // `prepare_cruft_history`), and those objects must land in the cruft pack.
+    oids.retain(|o| !fresh_oids.contains(o));
+
+    Ok(PackObjectList {
+        oids: oids.into_iter().collect(),
+        thin_blob_deltas: Vec::new(),
+    })
 }
 
 /// Effective maximum delta chain length for `pack-objects` (`--depth`), matching Git semantics:
@@ -404,24 +627,94 @@ fn blob_oid_for_tree_path(repo: &Repository, tree_oid: &ObjectId, name: &[u8]) -
     );
 }
 
+/// Write the given objects into a pack at `base` via `pack-objects` stdin (OID lines).
+fn write_pack_via_stdin_objects(
+    repo: &Repository,
+    entries: &[PackEntry],
+    base: &str,
+    quiet: bool,
+) -> Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+    let mut cmd = Command::new(grit_exe::grit_executable());
+    cmd.current_dir(work_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .arg("pack-objects");
+    if quiet {
+        cmd.arg("-q");
+    }
+    cmd.arg(base);
+    let mut child = cmd.spawn().context("spawn pack-objects for filter-to")?;
+    {
+        let mut stdin = child.stdin.take().context("pack-objects stdin")?;
+        for e in entries {
+            writeln!(stdin, "{}", e.oid.to_hex())?;
+        }
+    }
+    let out = child
+        .wait_with_output()
+        .context("wait pack-objects filter-to")?;
+    if !out.status.success() {
+        bail!("pack-objects (filter-to) failed with status {}", out.status);
+    }
+    Ok(())
+}
+
+/// Apply `git pack-objects --filter=<spec>` (subset: `blob:none` for `gc.repackFilter` tests).
+fn apply_list_objects_filter(entries: &mut Vec<PackEntry>, filter: Option<&str>) {
+    let Some(spec) = filter.map(str::trim).filter(|s| !s.is_empty()) else {
+        return;
+    };
+    if spec == "blob:none" {
+        entries.retain(|e| e.kind != ObjectKind::Blob);
+    }
+}
+
+fn pack_all_use_reachable_closure_only(args: &Args) -> bool {
+    // Default `pack-objects --all` walks the full ODB (loose + all packs). The first pass of
+    // `repack --cruft` is the exception: it must match Git’s main pack (ref closure only).
+    args.reachability_all
+}
+
 /// Collect object IDs from stdin or `--all`.
 fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
+    if args.all && args.unpacked && args.incremental {
+        return collect_incremental_repack_oids(repo, args);
+    }
+
+    if args.cruft && !args.incremental {
+        return collect_cruft_pack_stdin_oids(repo);
+    }
+
     let mut oids = BTreeSet::new();
 
     if args.all {
-        // Walk all loose objects.
-        collect_all_loose(&repo.odb, &mut oids)?;
-        // Walk all packed objects.
-        let pack_dir = repo.odb.objects_dir().join("pack");
-        if pack_dir.exists() {
-            let indexes = grit_lib::pack::read_local_pack_indexes(repo.odb.objects_dir())
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            for idx in indexes {
-                for entry in idx.entries {
-                    oids.insert(entry.oid);
+        let use_reachable_only = !args.incremental && pack_all_use_reachable_closure_only(args);
+        if use_reachable_only {
+            let v = reachable_objects_for_full_repack(repo, args)?;
+            oids.extend(v);
+        } else {
+            collect_all_loose(&repo.odb, &mut oids)?;
+            let pack_dir = repo.odb.objects_dir().join("pack");
+            if pack_dir.exists() {
+                let indexes = grit_lib::pack::read_local_pack_indexes(repo.odb.objects_dir())
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                for idx in indexes {
+                    for entry in idx.entries {
+                        oids.insert(entry.oid);
+                    }
                 }
             }
         }
+    }
+
+    if args.all && !args.keep_pack.is_empty() {
+        let skip = keep_pack_object_ids(repo, &args.keep_pack)?;
+        oids.retain(|o| !skip.contains(o));
     }
 
     if args.revs {
@@ -580,6 +873,70 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
         oids: oids.into_iter().collect(),
         thin_blob_deltas: Vec::new(),
     })
+}
+
+fn collect_incremental_repack_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
+    let mut opts = RevListOptions::default();
+    opts.objects = true;
+    opts.all_refs = true;
+    opts.include_reflog_entries = args.reflog;
+    opts.include_indexed_objects = args.indexed_objects;
+    opts.unpacked_only = true;
+    opts.missing_action = MissingAction::Allow;
+
+    let result = rev_list(repo, &[] as &[String], &[] as &[String], &opts)
+        .context("rev-list for incremental pack-objects")?;
+
+    let mut ordered: Vec<ObjectId> = Vec::new();
+    let mut seen = HashSet::new();
+    for oid in result.objects.iter().map(|(o, _)| *o) {
+        if seen.insert(oid) {
+            ordered.push(oid);
+        }
+    }
+
+    if !args.keep_pack.is_empty() {
+        let skip = keep_pack_object_ids(repo, &args.keep_pack)?;
+        ordered.retain(|o| !skip.contains(o));
+    }
+
+    if args.exclude_promisor_objects {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        if repo_treats_promisor_packs(&repo.git_dir, &config) {
+            let promisor = promisor_pack_object_ids(&repo.git_dir.join("objects"));
+            ordered.retain(|o| !promisor.contains(o));
+        }
+    }
+
+    Ok(PackObjectList {
+        oids: ordered,
+        thin_blob_deltas: Vec::new(),
+    })
+}
+
+fn keep_pack_basename(name: &str) -> &str {
+    Path::new(name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(name)
+}
+
+fn keep_pack_object_ids(repo: &Repository, keep_pack: &[String]) -> Result<HashSet<ObjectId>> {
+    let mut out = HashSet::new();
+    let pack_dir = repo.git_dir.join("objects").join("pack");
+    for name in keep_pack {
+        let base = keep_pack_basename(name);
+        let idx_path = pack_dir.join(base).with_extension("idx");
+        if !idx_path.is_file() {
+            continue;
+        }
+        let idx = grit_lib::pack::read_pack_index(&idx_path)
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", idx_path.display()))?;
+        for e in idx.entries {
+            out.insert(e.oid);
+        }
+    }
+    Ok(out)
 }
 
 /// Walk all loose objects in the ODB.

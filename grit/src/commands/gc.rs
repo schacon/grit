@@ -10,6 +10,7 @@ use crate::commands::pack_refs;
 use crate::commands::repack;
 use crate::commands::update_server_info;
 use crate::grit_exe;
+use crate::{trace2_emit_git_subcommand_argv, trace_run_command_git_invocation};
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
@@ -54,6 +55,10 @@ pub struct Args {
     #[arg(long)]
     pub no_prune: bool,
 
+    /// Prune loose objects after repack (Git default expiry from `gc.pruneExpire`).
+    #[arg(long = "prune", value_name = "DATE", num_args = 0..=1)]
+    pub prune: Option<Option<String>>,
+
     /// Detach to background (accepted; always runs in foreground in grit).
     #[arg(long)]
     pub detach: bool,
@@ -68,6 +73,12 @@ pub struct Args {
     #[arg(long = "no-cruft")]
     pub no_cruft: bool,
 
+    #[arg(long = "max-cruft-size", value_name = "SIZE")]
+    pub max_cruft_size: Option<String>,
+
+    #[arg(long = "expire-to", value_name = "DIR")]
+    pub expire_to: Option<String>,
+
     #[arg(long = "keep-largest-pack")]
     pub keep_largest_pack: bool,
 }
@@ -78,14 +89,19 @@ pub fn run(args: Args) -> Result<()> {
     let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
 
     let quiet = args.quiet && !args.no_quiet;
+    // Auto-gc should not spam stderr with repack/pack-objects summaries (matches `git gc --auto`).
+    let quiet_effective = quiet || args.auto;
 
     if args.auto {
         if !need_to_gc(&repo, &cfg) {
             return Ok(());
         }
-        match run_hook(&repo, "pre-auto-gc", &[], None) {
-            HookResult::Failed(_) => return Ok(()),
-            HookResult::Success | HookResult::NotFound => {}
+        let hook_ok = matches!(
+            run_hook(&repo, "pre-auto-gc", &[], None),
+            HookResult::Success | HookResult::NotFound
+        );
+        if !hook_ok {
+            return Ok(());
         }
         if !quiet {
             eprintln!("Auto packing the repository for optimum performance.");
@@ -99,22 +115,54 @@ pub fn run(args: Args) -> Result<()> {
     if !args.no_prune {
         let opts = PrunePackedOptions {
             dry_run: false,
-            quiet,
+            quiet: quiet_effective,
         };
         prune_packed_objects(&objects_dir, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
     }
 
+    trace_run_command_git_invocation(&["pack-refs", "--all", "--prune"]);
     pack_refs::run(pack_refs::Args {
         all: true,
         prune: true,
         no_prune: false,
     })?;
 
-    run_repack_for_gc(&repo, quiet, &args)?;
+    run_repack_for_gc(&repo, &cfg, quiet_effective, &args)?;
+
+    let run_prune = args.prune.is_some() || !args.auto;
+    if run_prune {
+        let expire = match &args.prune {
+            Some(Some(s)) => s.clone(),
+            Some(None) => cfg
+                .get("gc.pruneexpire")
+                .unwrap_or_else(|| "2.weeks.ago".to_string()),
+            None => cfg
+                .get("gc.pruneexpire")
+                .unwrap_or_else(|| "2.weeks.ago".to_string()),
+        };
+        let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+        let exp = expire.as_str();
+        if quiet_effective {
+            trace_run_command_git_invocation(&["prune", "--expire", exp, "--no-progress"]);
+        } else {
+            trace_run_command_git_invocation(&["prune", "--expire", exp]);
+        }
+        let mut cmd = Command::new(grit_exe::grit_executable());
+        cmd.current_dir(work_dir)
+            .args(["prune", "--expire"])
+            .arg(&expire);
+        if quiet_effective {
+            cmd.arg("--no-progress");
+        }
+        let status = cmd.status().context("failed to run grit prune for gc")?;
+        if !status.success() {
+            eprintln!("warning: prune returned non-zero status");
+        }
+    }
 
     run_reflog_expire_for_gc(&repo, &cfg)?;
     run_reflog_expire_unreachable_for_gc(&repo, &cfg)?;
-    run_commit_graph_for_gc(&repo, &cfg, quiet)?;
+    run_commit_graph_for_gc(&repo, &cfg, quiet, args.no_quiet)?;
 
     Ok(())
 }
@@ -192,12 +240,86 @@ fn check_or_clear_stale_gc_pid(pid_path: &Path) -> Result<()> {
     }
 }
 
-/// Pack loose and packed objects into a new pack, then drop redundant packs (`-d`), same as
-/// `maintenance`’s loose-objects task (`-l`).
-fn run_repack_for_gc(repo: &Repository, quiet: bool, gc_args: &Args) -> Result<()> {
-    let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+fn too_many_packs_for_gc(repo: &Repository, cfg: &ConfigSet) -> bool {
+    let pack_limit = cfg
+        .get("gc.autopacklimit")
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(50);
+    if pack_limit <= 0 {
+        return false;
+    }
+    let pack_dir = repo.git_dir.join("objects").join("pack");
+    count_local_pack_files(&pack_dir) > pack_limit as usize
+}
+
+/// Packs to keep when auto-gc does a full repack due to `gc.autoPackLimit` (Git `need_to_gc`).
+fn auto_gc_keep_packs(repo: &Repository, cfg: &ConfigSet) -> Result<Vec<String>> {
+    let pack_limit = cfg
+        .get("gc.autopacklimit")
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(50);
+    if pack_limit <= 0 {
+        return Ok(Vec::new());
+    }
+
+    if let Some(limit_s) = cfg.get("gc.bigpackthreshold") {
+        let limit: u64 = limit_s.parse().unwrap_or(0);
+        if limit > 0 {
+            let mut keep = find_base_packs(&repo.git_dir, limit)?;
+            if keep.len() as i32 >= pack_limit {
+                keep = find_base_packs(&repo.git_dir, 0)?;
+            }
+            return Ok(keep);
+        }
+    }
+
+    find_base_packs(&repo.git_dir, 0)
+}
+
+fn gc_cruft_packs_enabled(cfg: &ConfigSet, gc_args: &Args) -> bool {
+    if gc_args.no_cruft {
+        return false;
+    }
+    if gc_args.cruft {
+        return true;
+    }
+    !cfg.get("gc.cruftpacks")
+        .map(|s| {
+            let t = s.trim().to_lowercase();
+            t == "false" || t == "0" || t == "off" || t == "no"
+        })
+        .unwrap_or(false)
+}
+
+/// Parse `1M`, `2G`, `1048576` into bytes for `gc.maxCruftSize` / `--max-cruft-size`.
+fn parse_byte_size_with_suffix(raw: &str) -> Option<u64> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let upper = s.to_ascii_uppercase();
+    let (digits, mult) = if upper.ends_with("K") {
+        (&s[..s.len() - 1], 1024u64)
+    } else if upper.ends_with("M") {
+        (&s[..s.len() - 1], 1024u64 * 1024)
+    } else if upper.ends_with("G") {
+        (&s[..s.len() - 1], 1024u64 * 1024 * 1024)
+    } else {
+        (s, 1u64)
+    };
+    let n: u64 = digits.trim().parse().ok()?;
+    Some(n.saturating_mul(mult))
+}
+
+/// Repack for `git gc`: matches `git/builtin/gc.c` `add_repack_all_option` + `need_to_gc` repack args.
+fn run_repack_for_gc(
+    repo: &Repository,
+    cfg: &ConfigSet,
+    quiet: bool,
+    gc_args: &Args,
+) -> Result<()> {
     let objects_dir = repo.git_dir.join("objects");
-    if repo_treats_promisor_packs(&repo.git_dir, &cfg) {
+    if repo_treats_promisor_packs(&repo.git_dir, cfg) {
         let mut promisor_ids: Vec<ObjectId> =
             promisor_pack_object_ids(&objects_dir).into_iter().collect();
         promisor_ids.sort_by_key(|o| o.to_hex());
@@ -208,23 +330,123 @@ fn run_repack_for_gc(repo: &Repository, quiet: bool, gc_args: &Args) -> Result<(
     }
 
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+    let mut repack_trace: Vec<String> = vec!["repack".into(), "-d".into(), "-l".into()];
     let mut cmd = Command::new(grit_exe::grit_executable());
     cmd.current_dir(work_dir).args(["repack", "-d", "-l"]);
+
+    if gc_args.auto && !too_many_packs_for_gc(repo, cfg) {
+        repack_trace.push("--no-write-bitmap-index".into());
+        cmd.arg("--no-write-bitmap-index");
+    } else {
+        let cfg_prune = cfg.get("gc.pruneexpire");
+        let prune_expire: std::borrow::Cow<'_, str> = match &gc_args.prune {
+            Some(Some(s)) => std::borrow::Cow::Borrowed(s.as_str()),
+            Some(None) => std::borrow::Cow::Owned(
+                cfg_prune
+                    .clone()
+                    .unwrap_or_else(|| "2.weeks.ago".to_string()),
+            ),
+            None => std::borrow::Cow::Owned(
+                cfg_prune
+                    .clone()
+                    .unwrap_or_else(|| "2.weeks.ago".to_string()),
+            ),
+        };
+        let prune_expire = prune_expire.as_ref();
+        let cruft_on = gc_cruft_packs_enabled(cfg, gc_args);
+        let expire_to = gc_args
+            .expire_to
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let max_cruft_cli = gc_args
+            .max_cruft_size
+            .as_deref()
+            .and_then(parse_byte_size_with_suffix);
+        let max_cruft_cfg = cfg
+            .get("gc.maxcruftsize")
+            .as_deref()
+            .and_then(parse_byte_size_with_suffix);
+        let max_cruft = max_cruft_cli.or(max_cruft_cfg);
+
+        if prune_expire == "now" && !(cruft_on && expire_to.is_some()) {
+            repack_trace.push("-a".into());
+            cmd.arg("-a");
+        } else if cruft_on {
+            repack_trace.push("--cruft".into());
+            cmd.arg("--cruft");
+            let exp_arg = format!("--cruft-expiration={prune_expire}");
+            repack_trace.push(exp_arg.clone());
+            cmd.arg(exp_arg);
+            if let Some(n) = max_cruft {
+                let m = format!("--max-cruft-size={n}");
+                repack_trace.push(m.clone());
+                cmd.arg(m);
+            }
+            if let Some(ref et) = expire_to {
+                let e = format!("--expire-to={et}");
+                repack_trace.push(e.clone());
+                cmd.arg(e);
+            }
+        } else {
+            // Git `add_repack_all_option`: `--expire-to` is only forwarded with `--cruft`, not with
+            // `-A` (t6500 `gc --no-cruft --expire-to` expects repack argv without `--expire-to`).
+            repack_trace.push("-A".into());
+            let uu = format!("--unpack-unreachable={prune_expire}");
+            repack_trace.push(uu.clone());
+            cmd.arg("-A").arg(uu);
+        }
+
+        let keep = if gc_args.auto {
+            auto_gc_keep_packs(repo, cfg)?
+        } else if gc_args.keep_largest_pack {
+            find_base_packs(&repo.git_dir, 0)?
+        } else if let Some(limit_s) = cfg.get("gc.bigpackthreshold") {
+            let limit: u64 = limit_s.parse().unwrap_or(0);
+            if limit > 0 {
+                find_base_packs(&repo.git_dir, limit)?
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        for name in keep {
+            repack_trace.push("--keep-pack".into());
+            repack_trace.push(name.clone());
+            cmd.arg("--keep-pack").arg(name);
+        }
+    }
+
+    if let Some(ref f) = cfg.get("gc.repackfilter") {
+        if !f.is_empty() {
+            let opt = format!("--filter={f}");
+            repack_trace.push(opt.clone());
+            cmd.arg(opt);
+        }
+    }
+    if let Some(ref to) = cfg.get("gc.repackfilterto") {
+        if !to.is_empty() {
+            repack_trace.push("--filter-to".into());
+            repack_trace.push(to.clone());
+            cmd.arg("--filter-to").arg(to);
+        }
+    }
+
     if quiet {
+        repack_trace.push("-q".into());
         cmd.arg("-q");
     }
     if gc_args.aggressive {
+        repack_trace.push("--aggressive".into());
         cmd.arg("--aggressive");
     }
-    if gc_args.cruft {
-        cmd.arg("--cruft");
-    }
-    if gc_args.no_cruft {
-        cmd.arg("--no-cruft");
-    }
-    if gc_args.keep_largest_pack {
-        cmd.arg("--keep-largest-pack");
-    }
+    let trace_refs: Vec<&str> = repack_trace.iter().map(|s| s.as_str()).collect();
+    trace_run_command_git_invocation(&trace_refs);
+    let mut trace2_argv = vec!["git".to_string()];
+    trace2_argv.extend(repack_trace.iter().cloned());
+    trace2_emit_git_subcommand_argv(&trace2_argv);
     let status = cmd.status().context("failed to run grit repack for gc")?;
     if !status.success() {
         eprintln!("warning: repack returned non-zero status");
@@ -260,9 +482,62 @@ fn apply_gc_pack_objects_args(cmd: &mut Command, quiet: bool, gc_args: &Args) {
     if gc_args.no_cruft {
         cmd.arg("--no-cruft");
     }
-    if gc_args.keep_largest_pack {
-        cmd.arg("--keep-largest-pack");
+}
+
+fn is_cruft_pack(pack_dir: &Path, stem: &str) -> bool {
+    pack_dir.join(format!("{stem}.mtimes")).exists()
+}
+
+/// Packs to retain during `git gc` repack: all packs at least `limit` bytes, or the single largest
+/// when `limit == 0` (Git `find_base_packs`).
+fn find_base_packs(git_dir: &Path, limit: u64) -> Result<Vec<String>> {
+    let pack_dir = git_dir.join("objects").join("pack");
+    let rd = match fs::read_dir(&pack_dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+
+    let mut large = Vec::new();
+    let mut largest: Option<(u64, String)> = None;
+
+    for entry in rd {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".pack") {
+            continue;
+        }
+        let stem = name
+            .strip_suffix(".pack")
+            .unwrap_or(name.as_str())
+            .to_string();
+        if is_cruft_pack(&pack_dir, &stem) {
+            continue;
+        }
+        let meta = match fs::metadata(entry.path()) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let sz = meta.len();
+        if limit > 0 && sz >= limit {
+            large.push(name.clone());
+        }
+        match &mut largest {
+            None => largest = Some((sz, name)),
+            Some((best_sz, best_name)) if sz > *best_sz => {
+                *best_sz = sz;
+                *best_name = name;
+            }
+            _ => {}
+        }
     }
+
+    if limit > 0 {
+        large.sort();
+        return Ok(large);
+    }
+
+    Ok(largest.into_iter().map(|(_, n)| n).collect())
 }
 
 /// Merge all promisor-pack objects into one promisor pack, then repack non-promisor objects.
@@ -348,6 +623,7 @@ fn run_reflog_expire_for_gc(repo: &Repository, cfg: &ConfigSet) -> Result<()> {
     if raw == "never" || raw == "false" {
         return Ok(());
     }
+    trace_run_command_git_invocation(&["reflog", "expire", "--all"]);
     let days: u64 = raw.parse().unwrap_or(90);
 
     let now = std::time::SystemTime::now()
@@ -372,6 +648,7 @@ fn run_reflog_expire_unreachable_for_gc(repo: &Repository, cfg: &ConfigSet) -> R
     if raw == "never" || raw == "false" {
         return Ok(());
     }
+    trace_run_command_git_invocation(&["reflog", "expire", "--all"]);
     let days: u64 = raw.parse().unwrap_or(30);
 
     let now = std::time::SystemTime::now()
@@ -389,7 +666,12 @@ fn run_reflog_expire_unreachable_for_gc(repo: &Repository, cfg: &ConfigSet) -> R
 }
 
 /// Run `grit commit-graph write` when `gc.writeCommitGraph` is true (Git default: on).
-fn run_commit_graph_for_gc(repo: &Repository, cfg: &ConfigSet, quiet: bool) -> Result<()> {
+fn run_commit_graph_for_gc(
+    repo: &Repository,
+    cfg: &ConfigSet,
+    quiet: bool,
+    no_quiet: bool,
+) -> Result<()> {
     let write_graph = cfg
         .get_bool("gc.writecommitgraph")
         .and_then(|r| r.ok())
@@ -399,11 +681,37 @@ fn run_commit_graph_for_gc(repo: &Repository, cfg: &ConfigSet, quiet: bool) -> R
     }
 
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+    if quiet && !no_quiet {
+        trace_run_command_git_invocation(&[
+            "commit-graph",
+            "write",
+            "--reachable",
+            "--changed-paths",
+            "--no-progress",
+        ]);
+    } else if no_quiet {
+        trace_run_command_git_invocation(&[
+            "commit-graph",
+            "write",
+            "--reachable",
+            "--changed-paths",
+            "--progress",
+        ]);
+    } else {
+        trace_run_command_git_invocation(&[
+            "commit-graph",
+            "write",
+            "--reachable",
+            "--changed-paths",
+        ]);
+    }
     let mut cmd = Command::new(grit_exe::grit_executable());
     cmd.current_dir(work_dir)
         .args(["commit-graph", "write", "--reachable", "--changed-paths"]);
-    if quiet {
+    if quiet && !no_quiet {
         cmd.arg("--no-progress");
+    } else if no_quiet {
+        cmd.arg("--progress");
     }
     let status = cmd
         .status()
@@ -422,28 +730,20 @@ fn gc_auto_threshold(gc_auto: i32) -> usize {
     ((gc_auto as usize).saturating_add(255) / 256) * 256
 }
 
-fn count_loose_object_files(objects_dir: &Path) -> usize {
-    let Ok(rd) = fs::read_dir(objects_dir) else {
+/// Git’s `ODB_COUNT_OBJECTS_APPROXIMATE`: count loose objects under `objects/17/` and multiply by 256.
+fn approximate_loose_object_count(objects_dir: &Path) -> usize {
+    let shard = objects_dir.join("17");
+    let Ok(rd) = fs::read_dir(&shard) else {
         return 0;
     };
     let mut n = 0usize;
     for entry in rd.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.len() != 2 || !name.chars().all(|c| c.is_ascii_hexdigit()) || !entry.path().is_dir()
-        {
-            continue;
-        }
-        let Ok(sub) = fs::read_dir(entry.path()) else {
-            continue;
-        };
-        for f in sub.flatten() {
-            let fname = f.file_name().to_string_lossy().to_string();
-            if fname.len() == 38 && fname.chars().all(|c| c.is_ascii_hexdigit()) {
-                n += 1;
-            }
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if fname.len() == 38 && fname.chars().all(|c| c.is_ascii_hexdigit()) {
+            n += 1;
         }
     }
-    n
+    n.saturating_mul(256)
 }
 
 fn count_local_pack_files(pack_dir: &Path) -> usize {
@@ -469,21 +769,11 @@ fn need_to_gc(repo: &Repository, cfg: &ConfigSet) -> bool {
         return false;
     }
 
-    let threshold = gc_auto_threshold(gc_auto);
-    let loose = count_loose_object_files(&repo.git_dir.join("objects"));
-    if loose > threshold {
+    if too_many_packs_for_gc(repo, cfg) {
         return true;
     }
 
-    let pack_limit = cfg
-        .get("gc.autopacklimit")
-        .and_then(|s| s.parse::<i32>().ok())
-        .unwrap_or(50);
-    if pack_limit <= 0 {
-        return false;
-    }
-
-    let pack_dir = repo.git_dir.join("objects").join("pack");
-    let npacks = count_local_pack_files(&pack_dir);
-    npacks > pack_limit as usize
+    let threshold = gc_auto_threshold(gc_auto);
+    let loose = approximate_loose_object_count(&repo.git_dir.join("objects"));
+    loose > threshold
 }

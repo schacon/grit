@@ -1139,7 +1139,7 @@ t6436-merge-overwrite	t6	yes	18	10	8	false	ok	0
 t6437-submodule-merge	t6	yes	20	8	12	false	ok	2
 t6438-submodule-directory-file-conflicts	t6	yes	56	12	44	false	ok	0
 t6439-merge-co-error-msgs	t6	yes	6	6	0	true	ok	0
-t6500-gc	t6	yes	0	0	0	false	timeout	0
+t6500-gc	t6	yes	35	35	0	true	ok	0
 t6501-freshen-objects	t6	yes	42	33	9	false	ok	0
 t6600-test-reach	t6	yes	47	12	35	false	ok	0
 t6601-path-walk	t6	yes	15	1	14	false	ok	0

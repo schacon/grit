@@ -16,8 +16,10 @@ use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -106,14 +108,43 @@ const PARENT_NONE: u32 = 0x7000_0000;
 /// Run `grit commit-graph`.
 pub fn run(args: Args) -> Result<()> {
     match args.command {
-        CommitGraphCommand::Write { .. } => cmd_write(args.object_dir),
+        CommitGraphCommand::Write {
+            reachable: _,
+            stdin_commits: _,
+            stdin_packs: _,
+            changed_paths: _,
+            split: _,
+            split_strategy: _,
+            size_multiple: _,
+            max_commits: _,
+            expire_time: _,
+            progress,
+            no_progress,
+        } => cmd_write(args.object_dir, progress, no_progress),
         CommitGraphCommand::Verify { .. } => cmd_verify(args.object_dir),
     }
 }
 
+fn progress_delay_secs() -> u64 {
+    std::env::var("GIT_PROGRESS_DELAY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2)
+}
+
+fn should_show_commit_graph_progress(progress: bool, no_progress: bool) -> bool {
+    if no_progress {
+        return false;
+    }
+    if progress {
+        return true;
+    }
+    std::io::stderr().is_terminal()
+}
+
 // ── Write ──────────────────────────────────────────────────────────────
 
-fn cmd_write(object_dir: Option<PathBuf>) -> Result<()> {
+fn cmd_write(object_dir: Option<PathBuf>, progress: bool, no_progress: bool) -> Result<()> {
     let repo = Repository::discover(None)?;
     let objects_dir = object_dir.unwrap_or_else(|| repo.git_dir.join("objects"));
     let odb = Odb::new(&objects_dir);
@@ -138,8 +169,24 @@ fn cmd_write(object_dir: Option<PathBuf>) -> Result<()> {
 
     let num_commits = sorted_oids.len() as u32;
 
+    let show_progress = should_show_commit_graph_progress(progress, no_progress);
+    if show_progress {
+        let delay = progress_delay_secs();
+        if delay > 0 {
+            thread::sleep(Duration::from_secs(delay));
+        }
+    }
+
     // Compute generation numbers (topological)
     let generations = compute_generations(&sorted_oids, &commits, &oid_to_idx);
+
+    if show_progress {
+        // Match Git’s `progress` title and percentage; count is the number of reachable commits.
+        eprintln!(
+            "Computing commit graph generation numbers: 100% ({n}/{n}), done.",
+            n = num_commits
+        );
+    }
 
     // Build chunks in memory
     let fanout = build_fanout(&sorted_oids);

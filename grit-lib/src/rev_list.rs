@@ -10,11 +10,14 @@ use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
+use crate::diff::zero_oid;
 use crate::error::{Error, Result};
 use crate::ignore::{parse_sparse_patterns_from_blob, path_matches_sparse_pattern_list};
+use crate::index::Index;
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::pack;
 use crate::patch_ids::compute_patch_id;
+use crate::reflog::{list_reflog_refs, read_reflog};
 use crate::refs;
 use crate::repo::Repository;
 use crate::rev_parse::{resolve_revision_for_range_end, resolve_treeish_path, split_treeish_spec};
@@ -392,6 +395,10 @@ pub struct RevListOptions {
     /// With `--use-bitmap-index`, emit OID-only object lines (no paths / trailing space) for filters
     /// that match Git's bitmap object formatting.
     pub bitmap_oid_only_objects: bool,
+    /// Include OIDs from all reflogs as extra commit tips (`git pack-objects --reflog`).
+    pub include_reflog_entries: bool,
+    /// Include blob OIDs from the index as object roots (`git pack-objects --indexed-objects`).
+    pub include_indexed_objects: bool,
 }
 
 impl Default for RevListOptions {
@@ -433,6 +440,8 @@ impl Default for RevListOptions {
             use_bitmap_index: false,
             unpacked_only: false,
             bitmap_oid_only_objects: false,
+            include_reflog_entries: false,
+            include_indexed_objects: false,
         }
     }
 }
@@ -503,15 +512,49 @@ pub fn rev_list(
         include.extend(all_ref_tips(repo)?);
     }
 
-    let object_walk_tip_commits: Vec<ObjectId> = if options.objects {
-        include.clone()
+    if options.objects && options.include_reflog_entries {
+        include.extend(reflog_commit_tips(repo)?);
+    }
+
+    let mut index_blob_roots: Vec<RootObject> = Vec::new();
+    if options.objects && options.include_indexed_objects {
+        if repo.work_tree.is_some() {
+            let index_path = repo.git_dir.join("index");
+            if index_path.is_file() {
+                let idx = Index::load(&index_path)?;
+                for e in &idx.entries {
+                    if e.stage() != 0 {
+                        continue;
+                    }
+                    let path_str = String::from_utf8_lossy(&e.path).into_owned();
+                    index_blob_roots.push(RootObject {
+                        oid: e.oid,
+                        input: format!(":{path_str}"),
+                        expected_kind: Some(ExpectedObjectKind::Blob),
+                        root_path: Some(path_str),
+                    });
+                }
+            }
+        }
+    }
+
+    let object_roots = if index_blob_roots.is_empty() {
+        object_roots
     } else {
-        Vec::new()
+        let mut merged = object_roots;
+        merged.extend(index_blob_roots);
+        merged
     };
 
     if include.is_empty() && object_roots.is_empty() {
         return Err(Error::InvalidRef("no revisions specified".to_owned()));
     }
+
+    let object_walk_tip_commits: Vec<ObjectId> = if options.objects {
+        include.clone()
+    } else {
+        Vec::new()
+    };
 
     let (mut included, _discovery_order) = if include.is_empty() {
         (HashSet::new(), Vec::new())
@@ -2028,6 +2071,28 @@ fn peel_to_commit(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
             }
         }
     }
+}
+
+fn reflog_commit_tips(repo: &Repository) -> Result<Vec<ObjectId>> {
+    let z = zero_oid();
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for refname in list_reflog_refs(&repo.git_dir)? {
+        let entries = read_reflog(&repo.git_dir, &refname)?;
+        for e in entries {
+            for oid in [e.old_oid, e.new_oid] {
+                if oid == z {
+                    continue;
+                }
+                match peel_to_commit(repo, oid) {
+                    Ok(c) if seen.insert(c) => out.push(c),
+                    Err(_) => {}
+                    _ => {}
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn all_ref_tips(repo: &Repository) -> Result<Vec<ObjectId>> {
