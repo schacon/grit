@@ -45,7 +45,7 @@ commit → check it off → move on.
 - [x] `t0019-json-writer` ████████████████████ 16/16 (0 left) — test json-writer JSON generation
 - [x] `t0020-crlf` ████████████████████ 36/36 (0 left) — CRLF conversion
 - [x] `t0014-alias` ████████████████████ 21/21 (0 left) — git command aliasing
-- [ ] `t0061-run-command` ██░░░░░░░░░░░░░░░░░░ 3/24 (21 left) — Test run command
+- [x] `t0061-run-command` ████████████████████ 24/24 (0 left) — Test run command
 - [ ] `t0090-cache-tree` ░░░░░░░░░░░░░░░░░░░░ 0/22 (22 left) — Test whether cache-tree is properly updated
 
 - [ ] `t0021-conversion` ████████░░░░░░░░░░░░ 18/42 (24 left) — blob conversion via gitattributes

@@ -1162,6 +1162,9 @@ PY
   mergesort)
     shift
     exec "$GUST_BIN" test-tool mergesort "$@" ;;
+  run-command)
+    shift
+    exec "$GUST_BIN" test-tool run-command "$@" ;;
   sigchain)
     # Mimic t/helper/test-sigchain.c: print handlers in reverse push order
     # then terminate by SIGTERM.

@@ -39,7 +39,7 @@ t0052-simple-ipc	yes	0	0	0	ok	0	0	0
 t0055-beyond-symlinks	yes	3	3	0	ok	3	3	0
 t0056-git-C	yes	11	11	0	ok	11	11	0
 t0060-path-utils	yes	219	18	201	ok	18	219	0
-t0061-run-command	yes	24	3	21	ok	3	24	0
+t0061-run-command	yes	24	24	0	ok	24	24	0
 t0062-revision-walking	yes	2	2	0	ok	2	2	0
 t0066-dir-iterator	yes	10	10	0	ok	10	10	0
 t0067-parse_pathspec_file	yes	8	8	0	ok	8	8	0

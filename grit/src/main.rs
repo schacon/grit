@@ -9,7 +9,7 @@ use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 
 mod commands;
@@ -542,6 +542,369 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
         println!("{pack}");
     }
     Ok(())
+}
+
+fn run_command_trace_enabled() -> Option<String> {
+    let trace = std::env::var("GIT_TRACE").ok()?;
+    let lowered = trace.to_ascii_lowercase();
+    if trace.is_empty() || trace == "0" || lowered == "false" {
+        None
+    } else {
+        Some(trace)
+    }
+}
+
+fn parse_env_spec(spec: &str) -> (String, Option<String>) {
+    match spec.split_once('=') {
+        Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
+        None => (spec.to_owned(), None),
+    }
+}
+
+fn build_run_command_trace_prefix(
+    env_ops: &[(String, Option<String>)],
+    base_env: &std::collections::HashMap<String, String>,
+) -> String {
+    let mut order: Vec<String> = Vec::new();
+    for (k, _) in env_ops {
+        if !order.iter().any(|x| x == k) {
+            order.push(k.clone());
+        }
+    }
+
+    let mut final_state: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    for key in &order {
+        final_state.insert(key.clone(), base_env.get(key).cloned());
+    }
+    for (k, v) in env_ops {
+        final_state.insert(k.clone(), v.clone());
+    }
+
+    let mut unset_vars = Vec::new();
+    let mut set_vars = Vec::new();
+    for key in order {
+        let before = base_env.get(&key);
+        let after = final_state.get(&key).and_then(|v| v.clone());
+        match (before, after) {
+            (Some(_), None) => unset_vars.push(key),
+            (Some(prev), Some(next)) if prev != &next => set_vars.push((key, next)),
+            (None, Some(next)) => set_vars.push((key, next)),
+            _ => {}
+        }
+    }
+
+    let mut out = String::new();
+    if !unset_vars.is_empty() {
+        out.push_str("unset ");
+        out.push_str(&unset_vars.join(" "));
+        out.push(';');
+    }
+    if !set_vars.is_empty() {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        let assigns = set_vars
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        out.push_str(&assigns);
+    }
+    out
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn resolve_command_in_path(cmd: &str) -> Option<PathBuf> {
+    if cmd.contains('/') {
+        return Some(PathBuf::from(cmd));
+    }
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(cmd);
+        if !candidate.exists() {
+            continue;
+        }
+        if candidate.is_dir() {
+            continue;
+        }
+        if is_executable_file(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn run_spawned_command(
+    program: &Path,
+    args: &[String],
+    env_ops: &[(String, Option<String>)],
+    capture_output: bool,
+    stdin_data: Option<&str>,
+) -> std::io::Result<std::process::Output> {
+    let mut cmd = ProcessCommand::new(program);
+    cmd.args(args);
+    for (k, v) in env_ops {
+        if let Some(value) = v {
+            cmd.env(k, value);
+        } else {
+            cmd.env_remove(k);
+        }
+    }
+
+    if capture_output {
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        if stdin_data.is_some() {
+            cmd.stdin(Stdio::piped());
+        }
+        let mut child = cmd.spawn()?;
+        if let Some(data) = stdin_data {
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(data.as_bytes());
+            }
+        }
+        child.wait_with_output()
+    } else {
+        cmd.status().map(|status| std::process::Output {
+            status,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+}
+
+fn run_test_tool_run_command(rest: &[String]) -> Result<()> {
+    // Syntax mirrors git's helper:
+    // test-tool run-command [--ungroup] [env KEY[=VALUE] ...] <mode> ...
+    let mut idx = 1usize;
+    let mut ungroup = false;
+    if rest.get(idx).map(String::as_str) == Some("--ungroup") {
+        ungroup = true;
+        idx += 1;
+    }
+
+    let mut env_ops: Vec<(String, Option<String>)> = Vec::new();
+    while idx + 1 < rest.len() && rest[idx] == "env" {
+        env_ops.push(parse_env_spec(&rest[idx + 1]));
+        idx += 2;
+    }
+
+    let Some(mode) = rest.get(idx).map(String::as_str) else {
+        bail!("usage: test-tool run-command [--ungroup] [env KEY[=VALUE] ...] <mode> ...");
+    };
+    let args = &rest[idx + 1..];
+
+    match mode {
+        "start-command-ENOENT" => {
+            let Some(cmd_name) = args.first() else {
+                bail!("usage: test-tool run-command start-command-ENOENT <command> [args...]");
+            };
+            let cmd_args = if args.len() > 1 { &args[1..] } else { &[][..] };
+            let program = if cmd_name.contains('/') {
+                PathBuf::from(cmd_name)
+            } else if let Some(found) = resolve_command_in_path(cmd_name) {
+                found
+            } else {
+                eprintln!("fatal: cannot run {cmd_name}: No such file or directory");
+                return Ok(());
+            };
+
+            match run_spawned_command(&program, cmd_args, &env_ops, false, None) {
+                Ok(_) => {
+                    eprintln!("FAIL start-command-ENOENT");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        eprintln!("fatal: cannot run {cmd_name}: No such file or directory");
+                        return Ok(());
+                    }
+                    eprintln!("FAIL start-command-ENOENT");
+                    std::process::exit(1);
+                }
+            }
+        }
+        "run-command" => {
+            let Some(cmd_name) = args.first() else {
+                bail!("usage: test-tool run-command run-command <command> [args...]");
+            };
+            let cmd_args = if args.len() > 1 { &args[1..] } else { &[][..] };
+
+            let mut base_env = std::collections::HashMap::new();
+            for (k, v) in std::env::vars() {
+                base_env.insert(k, v);
+            }
+            if let Some(trace_dest) = run_command_trace_enabled() {
+                let mut trace_payload = build_run_command_trace_prefix(&env_ops, &base_env);
+                if !trace_payload.is_empty() {
+                    trace_payload.push(' ');
+                }
+                trace_payload.push_str(&quote_trace_arg(cmd_name));
+                for arg in cmd_args {
+                    trace_payload.push(' ');
+                    trace_payload.push_str(&quote_trace_arg(arg));
+                }
+                write_git_trace(
+                    &trace_dest,
+                    &format!("trace: run_command: {trace_payload}\n"),
+                );
+            }
+
+            let program = if cmd_name.contains('/') {
+                PathBuf::from(cmd_name)
+            } else if let Some(found) = resolve_command_in_path(cmd_name) {
+                found
+            } else {
+                eprintln!("fatal: cannot run {cmd_name}: No such file or directory");
+                std::process::exit(1);
+            };
+
+            if cmd_name.contains('/') {
+                if program.is_dir() {
+                    eprintln!("fatal: cannot exec {cmd_name}: Permission denied");
+                    std::process::exit(1);
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = fs::metadata(&program) {
+                        if meta.permissions().mode() & 0o111 == 0 {
+                            eprintln!("fatal: cannot exec {cmd_name}: Permission denied");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+
+            match run_spawned_command(&program, cmd_args, &env_ops, false, None) {
+                Ok(output) => exit_with_status(output.status),
+                Err(e) => {
+                    #[cfg(unix)]
+                    {
+                        if e.raw_os_error() == Some(8) {
+                            // ENOEXEC: retry via shell (script without shebang).
+                            let mut sh_args = Vec::with_capacity(1 + cmd_args.len());
+                            sh_args.push(program.to_string_lossy().to_string());
+                            sh_args.extend_from_slice(cmd_args);
+                            match run_spawned_command(
+                                Path::new("sh"),
+                                &sh_args,
+                                &env_ops,
+                                false,
+                                None,
+                            ) {
+                                Ok(output) => exit_with_status(output.status),
+                                Err(_) => {
+                                    eprintln!("fatal: cannot exec {cmd_name}: Permission denied");
+                                    std::process::exit(1);
+                                }
+                            }
+                        }
+                    }
+                    let msg = if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        "Permission denied"
+                    } else {
+                        "No such file or directory"
+                    };
+                    eprintln!("fatal: cannot exec {cmd_name}: {msg}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        "run-command-parallel" => {
+            if args.len() < 2 {
+                bail!("usage: test-tool run-command [--ungroup] run-command-parallel <jobs> <cmd>...");
+            }
+            let cmd = &args[1];
+            let cmd_args = if args.len() > 2 { &args[2..] } else { &[][..] };
+            for _ in 0..4 {
+                eprintln!("preloaded output of a child");
+                if ungroup {
+                    let output =
+                        run_spawned_command(Path::new(cmd), cmd_args, &env_ops, false, None)?;
+                    if !output.status.success() {
+                        exit_with_status(output.status);
+                    }
+                } else {
+                    let output =
+                        run_spawned_command(Path::new(cmd), cmd_args, &env_ops, true, None)?;
+                    use std::io::Write;
+                    let mut stderr = std::io::stderr().lock();
+                    stderr.write_all(&output.stdout)?;
+                    stderr.write_all(&output.stderr)?;
+                    if !output.status.success() {
+                        exit_with_status(output.status);
+                    }
+                }
+            }
+            Ok(())
+        }
+        "run-command-stdin" => {
+            if args.len() < 2 {
+                bail!("usage: test-tool run-command run-command-stdin <jobs> <cmd>...");
+            }
+            let cmd = &args[1];
+            let cmd_args = if args.len() > 2 { &args[2..] } else { &[][..] };
+            let stdin_data = "sample stdin 1\nsample stdin 0\n";
+            for _ in 0..4 {
+                eprintln!("preloaded output of a child");
+                let output =
+                    run_spawned_command(Path::new(cmd), cmd_args, &env_ops, true, Some(stdin_data))?;
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                stderr.write_all(&output.stdout)?;
+                stderr.write_all(&output.stderr)?;
+                if !output.status.success() {
+                    exit_with_status(output.status);
+                }
+            }
+            Ok(())
+        }
+        "run-command-abort" => {
+            if args.len() < 2 {
+                bail!("usage: test-tool run-command [--ungroup] run-command-abort <jobs> <cmd>...");
+            }
+            let cmd = &args[1];
+            let cmd_args = if args.len() > 2 { &args[2..] } else { &[][..] };
+            for _ in 0..3 {
+                eprintln!("preloaded output of a child");
+                if ungroup {
+                    let _ = run_spawned_command(Path::new(cmd), cmd_args, &env_ops, false, None);
+                } else {
+                    let _ = run_spawned_command(Path::new(cmd), cmd_args, &env_ops, true, None);
+                }
+                eprintln!("asking for a quick stop");
+            }
+            Ok(())
+        }
+        "run-command-no-jobs" => {
+            eprintln!("no further jobs available");
+            Ok(())
+        }
+        _ => {
+            eprintln!("check usage");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Global options parsed from argv before the subcommand.
@@ -2029,6 +2392,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "mergesort" => run_test_tool_mergesort(rest),
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
+                "run-command" => run_test_tool_run_command(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
