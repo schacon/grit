@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   105 |
+| Completed   |   106 |
 | In progress |     0 |
-| Remaining   |   662 |
+| Remaining   |   661 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4105-apply-fuzz` — 9/9 tests pass (`git apply` now parses `-C <n>`/`-C<n>` minimum-context options, tolerates large hunk header offsets by clamping nominal start within file bounds, and enables old-side subsequence fallback matching when context constraints are requested so fuzz/offset variants apply with upstream-compatible behavior)
 - `t4033-diff-patience` — 11/11 tests pass (`diff` patch generation now honors effective algorithm precedence from CLI/config/attributes, including `--patience`, `--diff-algorithm`, and `diff.<driver>.algorithm`; `--attr-source` now peels commit-ish values to trees for `.gitattributes` lookup and errors on invalid sources; `diff --no-index --stat` now emits Git-style change bars; `apply` now reads preimage from old-side paths when patch headers rename paths without explicit rename metadata so no-index patches re-apply cleanly)
 - `t4022-diff-rewrite` — 11/11 tests pass (`diff-files` now parses `-B/--break-rewrites` and `--summary` for rewrite summary output, `diff` now supports `-D/--irreversible-delete` and combines it with `-B` to suppress deleted preimages, and `commit` pathspec parsing now allows options after explicit paths)
 - `t4054-diff-bogus-tree` — 14/14 tests pass (`diff-tree`/`diff-index` now honor `-R/--reverse` by swapping diff sides and inverting statuses before output so raw reverse entries match upstream; patch rendering now validates that non-zero blob OIDs are readable and errors with `bogus object <oid>` when null/bogus tree entries are encountered, causing expected patch-mode failures instead of emitting bogus hunks)
@@ -94,4 +95,4 @@
 
 ## What Remains
 
-0 test files are currently marked in progress and 662 remain pending. See `plan.md` for the full prioritized list.
+1 test file is currently marked in progress and 661 remain pending. See `plan.md` for the full prioritized list.

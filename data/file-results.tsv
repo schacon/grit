@@ -436,7 +436,7 @@ t4101-apply-nonl	yes	12	12	0	ok	12	12	0
 t4102-apply-rename	yes	5	5	0	ok	5	5	0
 t4103-apply-binary	yes	24	7	17	ok	7	24	0
 t4104-apply-boundary	yes	24	24	0	ok	24	24	0
-t4105-apply-fuzz	yes	9	2	7	ok	2	9	0
+t4105-apply-fuzz	yes	9	9	0	ok	9	9	0
 t4106-apply-stdin	yes	3	3	0	ok	3	3	0
 t4107-apply-ignore-whitespace	yes	11	11	0	ok	11	11	0
 t4108-apply-threeway	yes	18	4	14	ok	4	18	0

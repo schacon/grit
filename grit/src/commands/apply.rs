@@ -79,6 +79,10 @@ pub struct Args {
     #[arg(long = "build-fake-ancestor", value_name = "FILE")]
     pub build_fake_ancestor: Option<PathBuf>,
 
+    /// Ensure at least `<n>` lines of surrounding context match (git apply `-C<n>`).
+    #[arg(short = 'C', value_name = "N")]
+    pub context: Option<usize>,
+
     /// Recount hunk line counts (for corrupted patches).
     #[arg(long = "recount")]
     pub recount: bool,
@@ -166,6 +170,7 @@ struct ApplyWhitespaceMode {
     ignore_space_change: bool,
     inaccurate_eof: bool,
     tab_width: usize,
+    context: Option<usize>,
 }
 
 fn config_ignore_space_change() -> bool {
@@ -240,6 +245,7 @@ fn resolve_apply_whitespace_mode(args: &Args) -> ApplyWhitespaceMode {
         ignore_space_change,
         inaccurate_eof: args.inaccurate_eof,
         tab_width: config_tab_width(),
+        context: args.context,
     }
 }
 
@@ -1050,50 +1056,57 @@ fn find_hunk_start(
     ws_mode: ApplyWhitespaceMode,
     allow_unidiff_zero_fallback: bool,
 ) -> usize {
+    let adjusted_nominal = if hunk.old_count > 0 {
+        let required_context = ws_mode.context.unwrap_or(0).min(hunk.old_count);
+        nominal.saturating_sub(hunk.old_count - required_context)
+    } else {
+        nominal
+    };
+
     if hunk.old_count == 0 {
-        return nominal.min(old_lines.len());
+        return adjusted_nominal.min(old_lines.len());
     }
 
     // Check if the nominal position matches first.
     if match_hunk_old_side_at(
         old_lines,
         hunk,
-        nominal,
+        adjusted_nominal,
         ws_mode,
         allow_unidiff_zero_fallback,
     ) {
-        return nominal;
+        return adjusted_nominal;
     }
 
     // Scan outward from nominal.
     let max_scan = old_lines.len();
     for delta in 1..=max_scan {
-        if nominal >= delta
+        if adjusted_nominal >= delta
             && match_hunk_old_side_at(
                 old_lines,
                 hunk,
-                nominal - delta,
+                adjusted_nominal - delta,
                 ws_mode,
                 allow_unidiff_zero_fallback,
             )
         {
-            return nominal - delta;
+            return adjusted_nominal - delta;
         }
-        if nominal + delta <= old_lines.len()
+        if adjusted_nominal + delta <= old_lines.len()
             && match_hunk_old_side_at(
                 old_lines,
                 hunk,
-                nominal + delta,
+                adjusted_nominal + delta,
                 ws_mode,
                 allow_unidiff_zero_fallback,
             )
         {
-            return nominal + delta;
+            return adjusted_nominal + delta;
         }
     }
 
     // No match found — return nominal and let the hunk application fail.
-    nominal.min(old_lines.len())
+    adjusted_nominal.min(old_lines.len())
 }
 
 fn nominal_hunk_start(hunk: &Hunk, old_len: usize) -> Result<usize> {
@@ -1113,10 +1126,7 @@ fn nominal_hunk_start(hunk: &Hunk, old_len: usize) -> Result<usize> {
         bail!("patch does not apply");
     }
     let start = hunk.old_start - 1;
-    if start > old_len {
-        bail!("patch does not apply");
-    }
-    Ok(start)
+    Ok(start.min(old_len))
 }
 
 /// Check whether hunk old-side lines match at the given candidate start.
@@ -1138,6 +1148,25 @@ fn match_hunk_old_side_at(
 
     if old_side.is_empty() {
         return start <= old_lines.len();
+    }
+
+    if let Some(required) = ws_mode.context {
+        let required = required.min(old_side.len());
+        let max_leading_fuzz = old_side.len().saturating_sub(required);
+        for leading_fuzz in 0..=max_leading_fuzz {
+            let expected = &old_side[leading_fuzz..];
+            let candidate_start = start + leading_fuzz;
+            if candidate_start + expected.len() > old_lines.len() {
+                continue;
+            }
+            if expected
+                .iter()
+                .zip(&old_lines[candidate_start..candidate_start + expected.len()])
+                .all(|(expected, actual)| lines_equal(expected, actual, ws_mode))
+            {
+                return true;
+            }
+        }
     }
 
     if start + old_side.len() <= old_lines.len()
@@ -1286,11 +1315,28 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
     let mut offset: isize = 0; // accumulated offset from previous hunks
 
     for hunk in hunks {
+        let required_context = ws_mode
+            .context
+            .unwrap_or(hunk.old_count)
+            .min(hunk.old_count);
+        let mut leading_context_fuzz_remaining = if ws_mode.context.is_some() {
+            hunk.old_count.saturating_sub(required_context)
+        } else {
+            0
+        };
+        let mut matched_old_side = false;
+
         let nominal_start = nominal_hunk_start(hunk, old_lines.len())? as isize;
         let hunk_start = (nominal_start + offset).max(0) as usize;
 
         // If context at hunk_start doesn't match, scan nearby to find it
-        let actual_start = find_hunk_start(&old_lines, hunk, hunk_start, ws_mode, false);
+        let actual_start = find_hunk_start(
+            &old_lines,
+            hunk,
+            hunk_start,
+            ws_mode,
+            ws_mode.context.is_some(),
+        );
 
         // Copy lines before this hunk
         while old_idx < actual_start && old_idx < old_lines.len() {
@@ -1319,6 +1365,15 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
                     let actual_line = old_lines[old_idx];
                     // Verify context matches
                     if !lines_equal(s, actual_line, ws_mode) {
+                        if ws_mode.context.is_some()
+                            && !matched_old_side
+                            && leading_context_fuzz_remaining > 0
+                        {
+                            result.push(actual_line.to_string());
+                            old_idx += 1;
+                            leading_context_fuzz_remaining -= 1;
+                            continue;
+                        }
                         bail!(
                             "context mismatch at line {}: expected {:?}, got {:?}",
                             old_idx + 1,
@@ -1328,6 +1383,7 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
                     }
                     old_idx += 1;
                     result.push(actual_line.to_string());
+                    matched_old_side = true;
                 }
                 HunkLine::Remove(s) => {
                     if old_idx >= old_lines.len() {
@@ -1347,6 +1403,7 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
                     }
                     old_idx += 1;
                     remove_no_newline = false;
+                    matched_old_side = true;
                 }
                 HunkLine::Add(s) => {
                     if ws_mode.whitespace_fix {
@@ -1355,6 +1412,7 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
                         result.push(s.clone());
                     }
                     add_no_newline = false;
+                    matched_old_side = true;
                 }
                 HunkLine::NoNewline => {
                     // This applies to whichever side the previous line was on.
@@ -1451,7 +1509,7 @@ fn apply_hunks_with_reject(
             hunk,
             hunk_start.min(old_lines.len()),
             ws_mode,
-            false,
+            ws_mode.context.is_some(),
         );
 
         let mut idx = actual_start;
