@@ -49,6 +49,10 @@ pub struct Args {
     #[arg(long = "root")]
     pub root: bool,
 
+    /// Show tree entries (accepted for compatibility with git-log).
+    #[arg(short = 't', hide = true)]
+    pub show_trees: bool,
+
     /// Show a graph of the commit history.
     #[arg(long = "graph")]
     pub graph: bool,
@@ -3769,6 +3773,33 @@ fn commit_has_object(odb: &Odb, info: &CommitInfo, target: &ObjectId) -> Result<
     let entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
     for entry in &entries {
         if entry.old_oid == *target || entry.new_oid == *target {
+            return Ok(true);
+        }
+    }
+
+    let old_contains = match parent_tree {
+        Some(tree) => tree_contains_object(odb, &tree, target)?,
+        None => false,
+    };
+    let new_contains = tree_contains_object(odb, &info.tree, target)?;
+    if old_contains != new_contains {
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn tree_contains_object(odb: &Odb, tree_oid: &ObjectId, target: &ObjectId) -> Result<bool> {
+    if tree_oid == target {
+        return Ok(true);
+    }
+    let tree_obj = odb.read(tree_oid)?;
+    let entries = parse_tree(&tree_obj.data)?;
+    for entry in entries {
+        if entry.oid == *target {
+            return Ok(true);
+        }
+        if entry.mode == 0o040000 && tree_contains_object(odb, &entry.oid, target)? {
             return Ok(true);
         }
     }

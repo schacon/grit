@@ -2,6 +2,19 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `t4064` object-finder compatibility updates in `rev-parse`, `log`, `merge`, and `diff-tree`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4064-diff-oidfind.sh` (from `tests/`): 10/10 passing.
+- `./scripts/run-tests.sh t4064-diff-oidfind.sh`: 10/10 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4064-diff-oidfind`: 10/10 passing in isolated upstream harness.
+- Regression checks:
+  - `./scripts/run-tests.sh t4055-diff-context.sh`: 10/10 passing.
+  - `bash scripts/run-upstream-tests.sh t4055-diff-context`: 10/10 passing.
+  - `./scripts/run-tests.sh t4207-log-decoration-colors.sh`: 1/4 in local mirror (known `test_decode_color` combined-ANSI limitation).
+  - `bash scripts/run-upstream-tests.sh t4207-log-decoration-colors`: 4/4 passing in upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `diff.context` handling fixes in `diff` and `log`).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4055-diff-context.sh` (from `tests/`): 10/10 passing.
 - `./scripts/run-tests.sh t4055-diff-context.sh`: 10/10 passing; `data/file-results.tsv` refreshed.

@@ -420,7 +420,7 @@ t4060-diff-submodule-option-diff-format	yes	50	6	44	ok	6	50	0
 t4061-diff-indent	yes	33	2	31	ok	2	33	0
 t4062-diff-pickaxe	yes	3	3	0	ok	3	3	0
 t4063-diff-blobs	yes	18	2	16	ok	2	18	0
-t4064-diff-oidfind	yes	10	5	5	ok	5	10	0
+t4064-diff-oidfind	yes	10	10	0	ok	10	10	0
 t4065-diff-anchored	yes	7	7	0	ok	7	7	0
 t4066-diff-emit-delay	yes	2	2	0	ok	2	2	0
 t4067-diff-partial-clone	yes	9	0	9	ok	0	9	0

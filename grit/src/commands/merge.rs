@@ -2751,6 +2751,12 @@ fn checkout_entries(repo: &Repository, work_tree: &Path, index: &Index) -> Resul
             fs::create_dir_all(parent)?;
         }
 
+        // Submodule entries (gitlinks) point to commits in a different object
+        // store; they should not be checked out as blobs.
+        if entry.mode == 0o160000 {
+            continue;
+        }
+
         let obj = repo.odb.read(&entry.oid)?;
         if obj.kind != ObjectKind::Blob {
             continue;

@@ -66,6 +66,8 @@ struct Options {
     suppress_diff: bool,
     /// Show diffs for merge commits in stdin mode (`-m`).
     show_merges: bool,
+    /// Show combined diff information for merge commits (`-c` / `--cc`).
+    combined_diff: bool,
     /// Output format.
     format: OutputFormat,
     /// Number of unified context lines for patch output.
@@ -92,6 +94,8 @@ struct Options {
     summary: bool,
     /// Pretty-print commit header (--pretty). None = off, Some("oneline"), Some("medium"), etc.
     pretty: Option<String>,
+    /// Resolve a target object and keep only changes that touch it.
+    find_object: Option<String>,
     /// Show combined stat+summary after diff.
     stat_too: bool,
     /// Limit recursion depth for --name-only etc.
@@ -117,6 +121,7 @@ impl Default for Options {
             verbose: false,
             suppress_diff: false,
             show_merges: false,
+            combined_diff: false,
             format: OutputFormat::Raw,
             context_lines: 3,
             abbrev: None,
@@ -130,6 +135,7 @@ impl Default for Options {
             patch_with_stat: false,
             summary: false,
             pretty: None,
+            find_object: None,
             stat_too: false,
             max_depth: None,
             ignore_space_change: false,
@@ -167,6 +173,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-v" => opts.verbose = true,
                 "-s" => opts.suppress_diff = true,
                 "-m" => opts.show_merges = true,
+                "-c" | "--cc" => {
+                    opts.combined_diff = true;
+                    opts.show_merges = true;
+                }
                 "--raw" => opts.format = OutputFormat::Raw,
                 "-p" | "-u" | "--patch" => opts.format = OutputFormat::Patch,
                 "--stat" => {
@@ -202,6 +212,17 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 _ if arg.starts_with("--pretty=") => {
                     let val = &arg["--pretty=".len()..];
                     opts.pretty = Some(val.to_string());
+                }
+                "--find-object" => {
+                    i += 1;
+                    let next = argv
+                        .get(i)
+                        .ok_or_else(|| anyhow::anyhow!("--find-object requires an argument"))?;
+                    opts.find_object = Some(next.to_string());
+                }
+                _ if arg.starts_with("--find-object=") => {
+                    let val = &arg["--find-object=".len()..];
+                    opts.find_object = Some(val.to_string());
                 }
                 "--abbrev" => opts.abbrev = Some(7),
                 _ if arg.starts_with("--abbrev=") => {
@@ -270,11 +291,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     }
                 }
                 // Silently accept common diff options that we do not implement.
-                "--no-rename-empty" | "--always" | "--diff-merges=off" | "-c" | "--cc"
-                | "--check" => {}
+                "--no-rename-empty" | "--always" | "--diff-merges=off" | "--check" => {}
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
-                    || arg.starts_with("--format=")
                     || arg.starts_with("-S")
                     || arg.starts_with("-G")
                     || arg.starts_with("--pickaxe-all")
@@ -284,6 +303,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     || arg.starts_with("--relative") =>
                 {
                     // ignored
+                }
+                _ if arg.starts_with("--format=") => {
+                    let val = &arg["--format=".len()..];
+                    opts.pretty = Some(format!("format:{val}"));
                 }
                 _ => bail!("unknown option: {arg}"),
             }
@@ -364,6 +387,8 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
     let entries = diff_with_opts(&repo.odb, Some(&oid1), Some(&oid2), opts)?;
     let filtered = filter_entries(entries, opts, &repo.odb);
+    let find_object = resolve_find_object(repo, opts)?;
+    let filtered = filter_entries_by_object(filtered, find_object.as_ref());
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
         print_diff(out, &repo.odb, &filtered, opts, Some(&oid1))?;
@@ -373,11 +398,85 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
 
 // ── Single-commit mode ───────────────────────────────────────────────
 
+fn resolve_find_object(repo: &Repository, opts: &Options) -> Result<Option<ObjectId>> {
+    match opts.find_object.as_deref() {
+        Some(spec) => {
+            let oid = resolve_revision(repo, spec)
+                .with_context(|| format!("unknown revision: '{spec}'"))?;
+            Ok(Some(oid))
+        }
+        None => Ok(None),
+    }
+}
+
+fn filter_entries_by_object(entries: Vec<DiffEntry>, target: Option<&ObjectId>) -> Vec<DiffEntry> {
+    match target {
+        Some(oid) => entries
+            .into_iter()
+            .filter(|entry| entry.old_oid == *oid || entry.new_oid == *oid)
+            .collect(),
+        None => entries,
+    }
+}
+
+fn combined_name_status_rows(
+    repo: &Repository,
+    commit: &grit_lib::objects::CommitData,
+    opts: &Options,
+    target: Option<&ObjectId>,
+) -> Result<Vec<(String, String)>> {
+    let mut per_parent_maps: Vec<std::collections::HashMap<String, DiffEntry>> = Vec::new();
+
+    for parent_oid in &commit.parents {
+        let parent_tree = commit_tree(&repo.odb, parent_oid)?;
+        let entries = diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
+        let filtered = filter_entries(entries, opts, &repo.odb);
+        let mut map = std::collections::HashMap::new();
+        for entry in filtered {
+            map.insert(entry.path().to_owned(), entry);
+        }
+        per_parent_maps.push(map);
+    }
+
+    let mut all_paths = std::collections::BTreeSet::new();
+    for map in &per_parent_maps {
+        all_paths.extend(map.keys().cloned());
+    }
+
+    let mut rows = Vec::new();
+    for path in all_paths {
+        if let Some(target_oid) = target {
+            let Some(first_parent_entry) = per_parent_maps.first().and_then(|map| map.get(&path))
+            else {
+                continue;
+            };
+            if first_parent_entry.old_oid != *target_oid
+                && first_parent_entry.new_oid != *target_oid
+            {
+                continue;
+            }
+        }
+
+        let mut status = String::with_capacity(per_parent_maps.len());
+        for map in &per_parent_maps {
+            if let Some(entry) = map.get(&path) {
+                status.push(entry.status.letter());
+            } else {
+                status.push('.');
+            }
+        }
+        rows.push((status, path));
+    }
+
+    Ok(rows)
+}
+
 fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let spec = &opts.objects[0];
     let oid =
         resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
     let obj = repo.odb.read(&oid).context("reading object")?;
+    let find_object = resolve_find_object(repo, opts)?;
 
     let mut has_diff = false;
     match obj.kind {
@@ -387,6 +486,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 if opts.root {
                     let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
                     let filtered = filter_entries(entries, opts, &repo.odb);
+                    let filtered = filter_entries_by_object(filtered, find_object.as_ref());
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
@@ -394,10 +494,27 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     }
                 }
             } else {
+                if opts.combined_diff
+                    && commit.parents.len() > 1
+                    && opts.format == OutputFormat::NameStatus
+                {
+                    let rows =
+                        combined_name_status_rows(repo, &commit, opts, find_object.as_ref())?;
+                    has_diff = !rows.is_empty();
+                    if !opts.quiet && (has_diff || opts.pretty.is_some()) {
+                        write_commit_header(out, &oid, &obj.data, opts)?;
+                        for (status, path) in rows {
+                            writeln!(out, "{status}\t{path}")?;
+                        }
+                    }
+                    return Ok(has_diff);
+                }
+
                 let parent_tree = commit_tree(&repo.odb, &commit.parents[0])?;
                 let entries =
                     diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
                 let filtered = filter_entries(entries, opts, &repo.odb);
+                let filtered = filter_entries_by_object(filtered, find_object.as_ref());
                 has_diff = !filtered.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
@@ -1289,6 +1406,22 @@ fn write_commit_header(
 ) -> Result<bool> {
     if let Some(ref pretty_fmt) = opts.pretty {
         let commit = parse_commit(commit_data).context("parsing commit for pretty")?;
+        if let Some(template) = pretty_fmt.strip_prefix("format:") {
+            match template {
+                "%s" => {
+                    let subject = commit.message.lines().next().unwrap_or("");
+                    writeln!(out, "{subject}")?;
+                }
+                _ => {
+                    // Fallback: best-effort subject output for unsupported
+                    // templates in this compatibility path.
+                    let subject = commit.message.lines().next().unwrap_or("");
+                    writeln!(out, "{subject}")?;
+                }
+            }
+            writeln!(out)?;
+            return Ok(false);
+        }
         if pretty_fmt == "oneline" {
             let first_line = commit.message.lines().next().unwrap_or("");
             writeln!(out, "{oid} {first_line}")?;
