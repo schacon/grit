@@ -709,7 +709,12 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
 /// Each subcommand's Args struct derives `clap::Args`, not `clap::Parser`.
 /// This wrapper lets us parse it standalone from a slice of arguments.
 #[derive(Debug, Parser)]
-#[command(name = "grit", disable_help_subcommand = true)]
+#[command(
+    name = "grit",
+    disable_help_subcommand = true,
+    about = None,
+    long_about = None
+)]
 struct ArgsWrapper<T: Args> {
     #[command(flatten)]
     inner: T,
@@ -726,9 +731,21 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
         Ok(wrapper) => wrapper.inner,
         Err(e) => {
             let rendered = e.to_string().replace("Usage:", "usage:");
-            eprint!("{rendered}");
+            let is_help_or_version = matches!(
+                e.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            );
+            if is_help_or_version {
+                print!("{rendered}");
+            } else {
+                eprint!("{rendered}");
+            }
             if !rendered.ends_with('\n') {
-                eprintln!();
+                if is_help_or_version {
+                    println!();
+                } else {
+                    eprintln!();
+                }
             }
             match e.kind() {
                 clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
@@ -1284,11 +1301,80 @@ fn discover_git_dir() -> Option<std::path::PathBuf> {
         })
 }
 
-fn get_alias_definition(alias: &str) -> Option<String> {
-    let key = format!("alias.{alias}");
+#[derive(Debug, Clone)]
+struct AliasDefinition {
+    value: String,
+}
+
+fn quote_trace_arg(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_owned();
+    }
+    let safe = arg
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'));
+    if safe {
+        return arg.to_owned();
+    }
+    let mut out = String::with_capacity(arg.len() + 2);
+    out.push('\'');
+    for ch in arg.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+fn get_alias_definition(alias: &str) -> Result<Option<AliasDefinition>> {
     let git_dir = discover_git_dir();
-    let config = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).ok()?;
-    config.get(&key)
+    let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) else {
+        return Ok(None);
+    };
+
+    let simple_key = grit_lib::config::canonical_key(&format!("alias.{alias}")).ok();
+    let subsection_key = format!("alias.{alias}.command");
+    let empty_subsection_simple_key = (!alias.starts_with('.')).then(|| format!("alias..{alias}"));
+
+    let mut simple_match: Option<(String, Option<String>)> = None;
+    let mut subsection_match: Option<(String, Option<String>)> = None;
+
+    for entry in config.entries().iter().rev() {
+        if simple_match.is_none() {
+            let is_simple = simple_key.as_ref().is_some_and(|k| entry.key == *k)
+                || empty_subsection_simple_key
+                    .as_ref()
+                    .is_some_and(|k| entry.key == *k);
+            if is_simple {
+                simple_match = Some((entry.key.clone(), entry.value.clone()));
+            }
+        }
+        if subsection_match.is_none() && entry.key == subsection_key {
+            subsection_match = Some((entry.key.clone(), entry.value.clone()));
+        }
+        if simple_match.is_some() && subsection_match.is_some() {
+            break;
+        }
+    }
+
+    if let Some((key, value)) = simple_match {
+        if let Some(v) = value {
+            return Ok(Some(AliasDefinition { value: v }));
+        }
+        bail!("fatal: bad alias: '{key}' has no value");
+    }
+
+    if let Some((key, value)) = subsection_match {
+        if let Some(v) = value {
+            return Ok(Some(AliasDefinition { value: v }));
+        }
+        bail!("fatal: bad alias: '{key}' has no value");
+    }
+
+    Ok(None)
 }
 
 fn list_alias_names() -> Vec<String> {
@@ -1300,7 +1386,25 @@ fn list_alias_names() -> Vec<String> {
     let mut names = Vec::new();
     let mut seen = HashSet::new();
     for entry in config.entries() {
-        if let Some(name) = entry.key.strip_prefix("alias.") {
+        let Some(rest) = entry.key.strip_prefix("alias.") else {
+            continue;
+        };
+
+        let candidate = if let Some(name) = rest.strip_suffix(".command") {
+            Some(name)
+        } else if let Some(name) = rest.strip_prefix('.') {
+            if rest.contains('.') {
+                Some(name)
+            } else {
+                None
+            }
+        } else if rest.contains('.') {
+            None
+        } else {
+            Some(rest)
+        };
+
+        if let Some(name) = candidate {
             if !name.is_empty() && seen.insert(name.to_owned()) {
                 names.push(name.to_owned());
             }
@@ -1317,21 +1421,62 @@ fn split_alias_words(input: &str) -> Vec<String> {
 }
 
 fn run_alias(alias: &str, value: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
-    let depth = std::env::var("GRIT_ALIAS_DEPTH")
+    let mut stack: Vec<String> = std::env::var("GRIT_ALIAS_STACK")
         .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0);
-    if depth >= 10 {
-        bail!("fatal: alias loop detected for '{alias}'");
+        .unwrap_or_default()
+        .split('\n')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_owned())
+        .collect();
+    if stack.iter().any(|item| item == alias) {
+        eprintln!("'{}' is aliased to '{}'", alias, value);
+        if let Some(prev) = stack.last() {
+            eprintln!("'{}' is aliased to '{}'", prev, alias);
+        }
+        eprintln!(
+            "fatal: alias loop detected: expansion of '{}' does not terminate:",
+            stack.first().cloned().unwrap_or_else(|| alias.to_owned())
+        );
+        if let Some(first) = stack.first() {
+            eprintln!("  {} <==", first);
+        }
+        eprintln!(
+            "  {} ==>",
+            stack.last().cloned().unwrap_or_else(|| alias.to_owned())
+        );
+        std::process::exit(128);
     }
+    stack.push(alias.to_owned());
+    let stack_env = stack.join("\n");
+
+    if value.trim().is_empty() {
+        bail!("fatal: bad config line 1 in file .git/config");
+    }
+
     // Shell aliases ("!cmd ...") are not handled internally; run via sh -c.
     if let Some(shell) = value.strip_prefix('!') {
-        let mut cmd = ProcessCommand::new("sh");
-        cmd.arg("-c").arg(shell);
-        if !rest.is_empty() {
-            cmd.arg(alias);
-            cmd.args(rest);
+        let shell_with_args = format!(r#"{shell} "$@""#);
+        if let Ok(trace_val) = std::env::var("GIT_TRACE") {
+            if !trace_val.is_empty() && trace_val != "0" && trace_val.to_lowercase() != "false" {
+                let mut trace =
+                    format!("trace: start_command: sh -c {}", quote_trace_arg(&shell_with_args));
+                trace.push(' ');
+                trace.push_str(&quote_trace_arg(shell));
+                if !rest.is_empty() {
+                    for arg in rest {
+                        trace.push(' ');
+                        trace.push_str(&quote_trace_arg(arg));
+                    }
+                }
+                trace.push('\n');
+                write_git_trace(&trace_val, &trace);
+            }
         }
+        let mut cmd = ProcessCommand::new("sh");
+        cmd.arg("-c").arg(&shell_with_args);
+        cmd.arg(shell);
+        cmd.args(rest);
+        cmd.env("GRIT_ALIAS_STACK", &stack_env);
         let status = cmd
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -1348,13 +1493,9 @@ fn run_alias(alias: &str, value: &str, rest: &[String], opts: &GlobalOpts) -> Re
     let mut new_rest = expanded;
     new_rest.extend(rest.iter().cloned());
 
-    std::env::set_var("GRIT_ALIAS_DEPTH", (depth + 1).to_string());
+    std::env::set_var("GRIT_ALIAS_STACK", &stack_env);
     let result = dispatch(&new_subcmd, &new_rest, opts);
-    if depth == 0 {
-        std::env::remove_var("GRIT_ALIAS_DEPTH");
-    } else {
-        std::env::set_var("GRIT_ALIAS_DEPTH", depth.to_string());
-    }
+    std::env::remove_var("GRIT_ALIAS_STACK");
     result
 }
 
@@ -1406,6 +1547,10 @@ fn run_external_git_command(subcmd: &str, rest: &[String]) -> Result<()> {
         .stderr(Stdio::inherit())
         .status()?;
     exit_with_status(status);
+}
+
+fn is_deprecated_builtin(subcmd: &str) -> bool {
+    matches!(subcmd, "whatchanged" | "pack-redundant")
 }
 
 fn strsim_distance_with_transpose(a: &str, b: &str) -> usize {
@@ -1586,6 +1731,19 @@ const KNOWN_COMMANDS: &[&str] = &[
 ///
 /// Each arm only constructs the clap parser for that specific command.
 fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+    if is_deprecated_builtin(subcmd) {
+        match get_alias_definition(subcmd) {
+            Ok(Some(alias_def)) => {
+                return run_alias(subcmd, &alias_def.value, rest, opts);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(128);
+            }
+        }
+    }
+
     match subcmd {
         "add" => commands::add::run(parse_cmd_args(subcmd, rest)),
         "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
@@ -1640,6 +1798,10 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "gc" => commands::gc::run(parse_cmd_args(subcmd, rest)),
         "get-tar-commit-id" => commands::get_tar_commit_id::run(parse_cmd_args(subcmd, rest)),
         "grep" => {
+            // `git grep -h` (with no pattern) should show usage, not "no pattern given".
+            if rest.len() == 1 && rest[0] == "-h" {
+                return commands::grep::run(parse_cmd_args(subcmd, rest));
+            }
             // Git grep uses -h for --no-filename, conflicting with clap's -h for help.
             // Also implement last-flag-wins for -G/-E/-F/-P pattern type flags.
             // Rewrite -h to --no-filename. Handle both standalone "-h" and
@@ -1876,12 +2038,32 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             Ok(())
         }
         _ => {
-            if let Some(alias_value) = get_alias_definition(subcmd) {
-                return run_alias(subcmd, &alias_value, rest, opts);
+            match get_alias_definition(subcmd) {
+                Ok(Some(alias_def)) => {
+                    return run_alias(subcmd, &alias_def.value, rest, opts);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(128);
+                }
             }
             let external_commands = list_external_git_commands();
             if external_commands.iter().any(|cmd| cmd == subcmd) {
                 return run_external_git_command(subcmd, rest);
+            }
+
+            if let Ok(trace_val) = std::env::var("GIT_TRACE") {
+                if !trace_val.is_empty() && trace_val != "0" && trace_val.to_lowercase() != "false"
+                {
+                    let mut trace = format!("trace: run_command: git-{subcmd}");
+                    for arg in rest {
+                        trace.push(' ');
+                        trace.push_str(&quote_trace_arg(arg));
+                    }
+                    trace.push('\n');
+                    write_git_trace(&trace_val, &trace);
+                }
             }
 
             let alias_names = list_alias_names();
