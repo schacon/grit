@@ -2,6 +2,9 @@
 
 **Updated:** 2026-04-06
 
+- `./scripts/run-tests.sh t4058-diff-duplicates.sh`: 8/16 passing (baseline for newly claimed in-progress Diff target `t4058`).
+- `bash scripts/run-upstream-tests.sh t4058-diff-duplicates`: 6/16 passing.
+
 - `./scripts/run-tests.sh t4213-log-tabexpand.sh`: 1/9 passing (baseline for newly claimed in-progress Diff target `t4213`).
 - `bash scripts/run-upstream-tests.sh t4213-log-tabexpand`: 1/9 passing.
 - `cargo build --release`: passes (rebuild after `show` pretty-format tab expansion option support and formatting updates).
