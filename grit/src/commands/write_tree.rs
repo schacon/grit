@@ -26,11 +26,38 @@ pub fn run(args: Args) -> Result<()> {
     let index = Index::load(&repo.index_path()).context("loading index")?;
 
     let prefix = args.prefix.as_deref().unwrap_or("");
-    let oid = write_tree_from_index(&repo.odb, &index, prefix, args.missing_ok)
-        .context("building tree from index")?;
+    let oid = match write_tree_from_index(&repo.odb, &index, prefix, args.missing_ok)
+        .context("building tree from index")
+    {
+        Ok(oid) => oid,
+        Err(err) if is_permission_denied_error(&err) => {
+            eprintln!("error: insufficient permission for adding an object to repository database .git/objects");
+            eprintln!("fatal: git-write-tree: error building trees");
+            std::process::exit(1);
+        }
+        Err(err) => return Err(err),
+    };
 
     println!("{oid}");
     Ok(())
+}
+
+fn is_permission_denied_error(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if let Some(ioe) = cause.downcast_ref::<std::io::Error>() {
+            if ioe.kind() == std::io::ErrorKind::PermissionDenied {
+                return true;
+            }
+        }
+        if let Some(grit_err) = cause.downcast_ref::<grit_lib::error::Error>() {
+            if let grit_lib::error::Error::Io(ioe) = grit_err {
+                if ioe.kind() == std::io::ErrorKind::PermissionDenied {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Build and write tree objects from the index, return the root tree OID.

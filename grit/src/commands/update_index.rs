@@ -362,10 +362,23 @@ pub fn run(args: Args) -> Result<()> {
                 .with_context(|| format!("cannot read '{}'", abs_path.display()))?
         };
 
-        let oid = repo
-            .odb
-            .write(grit_lib::objects::ObjectKind::Blob, &data)
-            .context("writing blob")?;
+        let oid = match repo.odb.write(grit_lib::objects::ObjectKind::Blob, &data) {
+            Ok(oid) => oid,
+            Err(err) => {
+                if is_unwritable_odb_error(&err) {
+                    eprintln!(
+                        "error: insufficient permission for adding an object to repository database .git/objects"
+                    );
+                    eprintln!(
+                        "error: {}: failed to insert into database",
+                        rel_path.display()
+                    );
+                    eprintln!("fatal: Unable to process path {}", rel_path.display());
+                    std::process::exit(1);
+                }
+                return Err(err.into());
+            }
+        };
 
         let entry = entry_from_stat(&abs_path, &rel_bytes, oid, mode)
             .with_context(|| format!("stat failed for '{}'", abs_path.display()))?;
@@ -612,4 +625,11 @@ fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {
     } else {
         Ok(dot_git.parent().unwrap_or(Path::new(".")).join(target_path))
     }
+}
+
+fn is_unwritable_odb_error(err: &grit_lib::error::Error) -> bool {
+    matches!(
+        err,
+        grit_lib::error::Error::Io(io_err) if io_err.kind() == std::io::ErrorKind::PermissionDenied
+    )
 }

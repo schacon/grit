@@ -279,7 +279,15 @@ pub fn run(mut args: Args) -> Result<()> {
                             eprintln!("warning: {e}");
                             had_errors = true;
                         } else {
-                            // Write index even on error if we've done partial work
+                            if is_unwritable_odb_error(&e) {
+                                eprintln!(
+                                    "error: insufficient permission for adding an object to repository database .git/objects"
+                                );
+                                eprintln!("error: {}: failed to insert into database", resolved);
+                                eprintln!("error: unable to index file '{}'", resolved);
+                                eprintln!("fatal: updating files failed");
+                                std::process::exit(1);
+                            }
                             return Err(e);
                         }
                     }
@@ -944,7 +952,7 @@ fn stage_file(
         }
     };
 
-    let oid = odb.write(ObjectKind::Blob, &data)?;
+    let oid = odb.write(ObjectKind::Blob, &data).map_err(anyhow::Error::from)?;
     let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
                              // Use stage_file which also clears conflict stages (1, 2, 3) for the same
@@ -956,6 +964,24 @@ fn stage_file(
     }
 
     Ok(())
+}
+
+fn is_unwritable_odb_error(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+            if io_err.kind() == std::io::ErrorKind::PermissionDenied {
+                return true;
+            }
+        }
+        if let Some(grit_err) = cause.downcast_ref::<grit_lib::error::Error>() {
+            if let grit_lib::error::Error::Io(io_err) = grit_err {
+                if io_err.kind() == std::io::ErrorKind::PermissionDenied {
+                    return true;
+                }
+            }
+        }
+    }
+    err.to_string().contains("Permission denied")
 }
 
 /// Recursively walk a directory, collecting relative paths (skipping .git and ignored files).
