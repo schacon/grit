@@ -109,13 +109,12 @@ impl Repository {
             if work_tree.is_some() {
                 return Self::open(&git_dir, work_tree.as_deref());
             }
-            // When GIT_DIR is set without GIT_WORK_TREE, infer the work tree
-            // from the parent of the git directory (standard layout).
+            // When GIT_DIR is set without GIT_WORK_TREE, Git treats the
+            // current directory as the work tree for non-bare repositories.
             let mut repo = Self::open(&git_dir, None)?;
             if repo.work_tree.is_none() {
-                let canonical = git_dir.canonicalize().unwrap_or_else(|_| git_dir.clone());
                 // Check core.bare config
-                let config_path = canonical.join("config");
+                let config_path = repo.git_dir.join("config");
                 let is_bare = if config_path.exists() {
                     fs::read_to_string(&config_path)
                         .ok()
@@ -132,7 +131,8 @@ impl Repository {
                     false
                 };
                 if !is_bare {
-                    repo.work_tree = canonical.parent().map(|p| p.to_path_buf());
+                    let cwd = env::current_dir()?;
+                    repo.work_tree = Some(cwd.canonicalize().unwrap_or(cwd));
                 }
             }
             return Ok(repo);

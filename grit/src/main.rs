@@ -408,6 +408,65 @@ fn run_test_tool_hexdump(_rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+const BUILTIN_USERDIFF_DRIVERS: &[&str] = &[
+    "ada", "bash", "bibtex", "cpp", "csharp", "css", "dts", "elixir", "fortran", "fountain",
+    "golang", "html", "ini", "java", "kotlin", "markdown", "matlab", "objc", "pascal", "perl",
+    "php", "python", "r", "ruby", "rust", "scheme", "tex",
+];
+
+fn collect_custom_userdiff_drivers(config: &grit_lib::config::ConfigSet) -> Vec<String> {
+    let mut custom = std::collections::BTreeSet::new();
+
+    for entry in config.entries() {
+        let Some(rest) = entry.key.strip_prefix("diff.") else {
+            continue;
+        };
+        let Some(driver) = rest
+            .strip_suffix(".funcname")
+            .or_else(|| rest.strip_suffix(".xfuncname"))
+        else {
+            continue;
+        };
+        if driver.is_empty() || BUILTIN_USERDIFF_DRIVERS.contains(&driver) {
+            continue;
+        }
+        custom.insert(driver.to_owned());
+    }
+
+    custom.into_iter().collect()
+}
+
+fn run_test_tool_userdiff(rest: &[String]) -> Result<()> {
+    if rest.len() != 2 {
+        bail!("usage: test-tool userdiff <list-drivers|list-builtin-drivers|list-custom-drivers>");
+    }
+
+    let (want_builtin, want_custom) = match rest[1].as_str() {
+        "list-drivers" => (true, true),
+        "list-builtin-drivers" => (true, false),
+        "list-custom-drivers" => (false, true),
+        other => bail!("test-tool userdiff: unknown argument '{other}'"),
+    };
+
+    if want_builtin {
+        for driver in BUILTIN_USERDIFF_DRIVERS {
+            println!("{driver}");
+        }
+    }
+
+    if want_custom {
+        let repo = grit_lib::repo::Repository::discover(None)?;
+        let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+            .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
+
+        for driver in collect_custom_userdiff_drivers(&config) {
+            println!("{driver}");
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_find_pack_count_arg(value: &str) -> Result<usize> {
     value
         .parse::<usize>()
@@ -857,6 +916,7 @@ struct GlobalOpts {
     work_tree: Option<PathBuf>,
     change_dir: Option<PathBuf>,
     config_overrides: Vec<String>,
+    attr_source: Option<String>,
     bare: bool,
     no_advice: bool,
 }
@@ -924,6 +984,21 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             i += 1;
             if i < items.len() {
                 opts.config_overrides.push(items[i].clone());
+            }
+            i += 1;
+            continue;
+        }
+
+        // --attr-source=<tree-ish> or --attr-source <tree-ish>
+        if let Some(val) = arg.strip_prefix("--attr-source=") {
+            opts.attr_source = Some(val.to_owned());
+            i += 1;
+            continue;
+        }
+        if arg == "--attr-source" {
+            i += 1;
+            if i < items.len() {
+                opts.attr_source = Some(items[i].clone());
             }
             i += 1;
             continue;
@@ -998,6 +1073,9 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     }
     if opts.no_advice {
         std::env::set_var("GIT_ADVICE", "false");
+    }
+    if let Some(attr_source) = &opts.attr_source {
+        std::env::set_var("GIT_ATTR_SOURCE", attr_source);
     }
     Ok(())
 }
@@ -1533,20 +1611,35 @@ fn print_list_cmds(categories: &str) {
 /// clap does not swallow it into the trailing var-arg positional.
 fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
-    let mut iter = rest.iter();
-    while let Some(arg) = iter.next() {
+    let mut i = 0usize;
+    let word_diff_modes = ["plain", "color", "porcelain", "none"];
+    while i < rest.len() {
+        let arg = &rest[i];
         if arg == "-U" {
             // `-U <N>` with a space — merge into `--unified=<N>`
-            if let Some(val) = iter.next() {
-                result.push(format!("--unified={val}"));
+            if i + 1 < rest.len() {
+                result.push(format!("--unified={}", rest[i + 1]));
+                i += 2;
             } else {
                 result.push(arg.clone());
+                i += 1;
+            }
+        } else if arg == "--word-diff" {
+            if i + 1 < rest.len() && word_diff_modes.contains(&rest[i + 1].as_str()) {
+                result.push(format!("--word-diff={}", rest[i + 1]));
+                i += 2;
+            } else {
+                // Prevent clap from consuming the first path argument as MODE.
+                result.push("--word-diff=plain".to_owned());
+                i += 1;
             }
         } else if let Some(n) = arg.strip_prefix("-U") {
             // `-U<N>` without a space
             result.push(format!("--unified={n}"));
+            i += 1;
         } else {
             result.push(arg.clone());
+            i += 1;
         }
     }
     result
@@ -2075,6 +2168,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
                 "hexdump" => run_test_tool_hexdump(rest),
+                "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }

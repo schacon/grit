@@ -27,6 +27,7 @@ use crate::error::{Error, Result};
 use crate::index::{Index, IndexEntry};
 use crate::objects::{parse_tree, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
+use crate::userdiff::FuncnameMatcher;
 
 /// The kind of change between two sides of a diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1569,6 +1570,30 @@ pub fn unified_diff_with_prefix(
     src_prefix: &str,
     dst_prefix: &str,
 ) -> String {
+    unified_diff_with_prefix_and_funcname(
+        old_content,
+        new_content,
+        old_path,
+        new_path,
+        context_lines,
+        src_prefix,
+        dst_prefix,
+        None,
+    )
+}
+
+/// Same as [`unified_diff_with_prefix`] with optional custom hunk-header
+/// function-name matching.
+pub fn unified_diff_with_prefix_and_funcname(
+    old_content: &str,
+    new_content: &str,
+    old_path: &str,
+    new_path: &str,
+    context_lines: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+    funcname_matcher: Option<&FuncnameMatcher>,
+) -> String {
     use similar::TextDiff;
 
     let diff = TextDiff::from_lines(old_content, new_content);
@@ -1601,7 +1626,9 @@ pub fn unified_diff_with_prefix(
             let rest = &hunk_str[first_newline..];
 
             // Parse the old start line from the @@ header
-            if let Some(func_ctx) = extract_function_context(header_line, &old_lines) {
+            if let Some(func_ctx) =
+                extract_function_context(header_line, &old_lines, funcname_matcher)
+            {
                 output.push_str(header_line);
                 output.push(' ');
                 output.push_str(&func_ctx);
@@ -1891,8 +1918,11 @@ pub fn anchored_unified_diff(
 /// Given a hunk header like `@@ -8,7 +8,7 @@`, find the last line
 /// before line 8 in the old content that looks like a function header
 /// (starts with a non-whitespace character, like Git's default).
-
-fn extract_function_context(header: &str, old_lines: &[&str]) -> Option<String> {
+fn extract_function_context(
+    header: &str,
+    old_lines: &[&str],
+    funcname_matcher: Option<&FuncnameMatcher>,
+) -> Option<String> {
     // Parse the old start line number from "@@ -<start>,<count> ..."
     let at_pos = header.find("-")?;
     let rest = &header[at_pos + 1..];
@@ -1909,27 +1939,33 @@ fn extract_function_context(header: &str, old_lines: &[&str]) -> Option<String> 
     // start_line is 1-indexed, so the hunk starts at old_lines[start_line-1].
     // We want to look at lines before that: old_lines[0..start_line-1].
     let search_end = (start_line - 1).min(old_lines.len());
+    let truncate = |text: &str| {
+        if text.len() > 80 {
+            let mut end = 80;
+            while end > 0 && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text[..end].to_owned()
+        } else {
+            text.to_owned()
+        }
+    };
+
     for i in (0..search_end).rev() {
         let line = old_lines[i];
-        if !line.is_empty() {
-            let first = line.as_bytes()[0];
-            // Git's default: line must start with a letter, digit, '_', '$',
-            // or certain other non-whitespace chars. We use a simpler heuristic:
-            // any line that doesn't start with whitespace.
-            if first != b' ' && first != b'\t' {
-                // Truncate to 80 bytes like Git does, respecting
-                // character boundaries.
-                let truncated = if line.len() > 80 {
-                    let mut end = 80;
-                    while end > 0 && !line.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    &line[..end]
-                } else {
-                    line
-                };
-                return Some(truncated.to_owned());
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(matcher) = funcname_matcher {
+            if let Some(matched) = matcher.match_line(line) {
+                return Some(truncate(&matched));
             }
+            continue;
+        }
+
+        let first = line.as_bytes()[0];
+        if first.is_ascii_alphabetic() || first == b'_' || first == b'$' {
+            return Some(truncate(line.trim_end_matches(char::is_whitespace)));
         }
     }
     None

@@ -254,6 +254,7 @@ version = "0.1.1"
 dependencies = [
  "flate2",
  "hex",
+ "libc",
  "regex",
  "sha1",
  "similar",

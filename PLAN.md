@@ -412,7 +412,7 @@ commit → check it off → move on.
 
 - [x] `t4016-diff-quote` ████████████████████ 5/5 (0 left) — Quoting paths in diff output.
 
-- [ ] `t4018-diff-funcname` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — Test custom diff function name patterns
+- [x] `t4018-diff-funcname` ████████████████████ 287/287 (0 left) — Test custom diff function name patterns (`test-tool userdiff` plus funcname-regex/hunk-header behavior now matches upstream; local and upstream harnesses pass)
 - [x] `t4039-diff-assume-unchanged` ████████████████████ 4/4 (0 left) — diff with assume-unchanged entries
 - [x] `t4049-diff-stat-count` ████████████████████ 4/4 (0 left) — diff --stat-count (upstream behavior complete; local mirror mismatch is simplified `test_chmod` helper only toggling one path)
 - [x] `t4133-apply-filenames` ████████████████████ 4/4 (0 left) — git apply filename consistency check

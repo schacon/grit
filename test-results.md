@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `userdiff` integration and `t4018` fixes across `diff`, repo/worktree discovery, checkout `-B` unborn behavior, and `test-tool` plumbing).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4018-diff-funcname.sh` (from `tests/`): 287/287 passing.
+- `./scripts/run-tests.sh t4018-diff-funcname.sh`: 287/287 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4018-diff-funcname`: 287/287 passing in isolated upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted outside scoped files).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `am` resume-override option handling and `format-patch -1 <rev>` commit-selection fixes for `t4153`).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4153-am-resume-override-opts.sh` (from `tests/`): 6/6 passing.
 - `./scripts/run-tests.sh t4153-am-resume-override-opts.sh`: 6/6 passing; `data/file-results.tsv` refreshed.
@@ -274,8 +282,6 @@
   - `./scripts/run-tests.sh t4007-rename-3.sh`: 13/13 passing.
   - `./scripts/run-tests.sh t4006-diff-mode.sh`: 7/7 passing.
   - `./scripts/run-tests.sh t4044-diff-index-unique-abbrev.sh`: 0/2 passing (known harness blocker unchanged).
-- `./scripts/run-tests.sh t4018-diff-funcname.sh`: 1/9 passing (baseline for next in-progress Diff target).
-- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4018-diff-funcname.sh`: fails due missing `test-tool userdiff` support and downstream hunk-header expectations (8 failing tests).
 - `./scripts/run-tests.sh t4049-diff-stat-count.sh`: 1/4 passing (baseline for current in-progress Diff target).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4049-diff-stat-count.sh`: still fails in stat summary counting and missing binary fixture path in simplified harness.
 

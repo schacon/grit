@@ -16,8 +16,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, detect_renames, diff_index_to_tree,
-    diff_index_to_worktree, diff_tree_to_worktree, diff_trees, empty_blob_oid, unified_diff,
-    zero_oid, DiffEntry, DiffStatus,
+    diff_index_to_worktree, diff_tree_to_worktree, diff_trees, empty_blob_oid, zero_oid, DiffEntry,
+    DiffStatus,
 };
 use grit_lib::error::Error;
 use grit_lib::index::Index;
@@ -667,10 +667,14 @@ pub fn run(mut args: Args) -> Result<()> {
             diff_tree_to_worktree(&repo.odb, Some(&tree_oid), wt, &index)?
         }
         (_, 2) => {
-            // Two revisions: tree-to-tree diff
-            let tree1 = commit_or_tree_oid(&repo, &revs[0])?;
-            let tree2 = commit_or_tree_oid(&repo, &revs[1])?;
-            diff_trees(&repo.odb, Some(&tree1), Some(&tree2), "")?
+            if let Some(blob_entries) = diff_blob_specs(&repo, &revs[0], &revs[1])? {
+                blob_entries
+            } else {
+                // Two revisions: tree-to-tree diff
+                let tree1 = commit_or_tree_oid(&repo, &revs[0])?;
+                let tree2 = commit_or_tree_oid(&repo, &revs[1])?;
+                diff_trees(&repo.odb, Some(&tree1), Some(&tree2), "")?
+            }
         }
         _ => {
             bail!("too many revisions");
@@ -1174,6 +1178,28 @@ fn run_no_index(args: &Args) -> Result<()> {
     let path_a = Path::new(paths[0].as_str());
     let path_b = Path::new(paths[1].as_str());
 
+    let mut no_index_funcname_matcher = None;
+    if let Ok(repo) = Repository::discover(None) {
+        if let Some(work_tree) = repo.work_tree.as_deref() {
+            if let Some(err) = validate_funcname_patterns_for_no_index_paths(
+                &repo.git_dir,
+                work_tree,
+                paths[0],
+                paths[1],
+            ) {
+                eprintln!("error: {err}");
+                std::process::exit(128);
+            }
+            match resolve_funcname_matcher_for_raw_path(&repo.git_dir, work_tree, paths[0]) {
+                Ok(matcher) => no_index_funcname_matcher = matcher,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    std::process::exit(128);
+                }
+            }
+        }
+    }
+
     // If both paths are directories, diff all files recursively
     if path_a.is_dir() && path_b.is_dir() {
         return run_no_index_dirs(args, path_a, path_b);
@@ -1300,7 +1326,16 @@ fn run_no_index(args: &Args) -> Result<()> {
             &args.anchored,
         )
     } else {
-        unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines)
+        grit_lib::diff::unified_diff_with_prefix_and_funcname(
+            &text_a,
+            &text_b,
+            paths[0],
+            paths[1],
+            context_lines,
+            "a/",
+            "b/",
+            no_index_funcname_matcher.as_ref(),
+        )
     };
 
     // Determine color mode
@@ -1389,6 +1424,12 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let context_lines = args.unified.unwrap_or(3);
+    let no_index_dir_context = Repository::discover(None).ok().and_then(|repo| {
+        let work_tree = repo.work_tree?;
+        let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok()?;
+        let rules = grit_lib::crlf::load_gitattributes(&work_tree);
+        Some((work_tree, config, rules))
+    });
 
     for rel in &all_files {
         let fa = dir_a.join(rel);
@@ -1452,8 +1493,29 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
         } else if data_b.is_none() {
             writeln!(out, "deleted file mode 100644")?;
         }
-        let patch =
-            grit_lib::diff::unified_diff(&text_a, &text_b, &old_label, &new_label, context_lines);
+        let no_index_dir_matcher = if let Some((work_tree, config, rules)) = &no_index_dir_context {
+            let attrs_rel_path =
+                path_for_attr_lookup(&format!("{}/{}", dir_a.display(), rel), work_tree);
+            match resolve_funcname_matcher_for_path(config, rules, &attrs_rel_path) {
+                Ok(matcher) => matcher,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    std::process::exit(128);
+                }
+            }
+        } else {
+            None
+        };
+        let patch = grit_lib::diff::unified_diff_with_prefix_and_funcname(
+            &text_a,
+            &text_b,
+            &old_label,
+            &new_label,
+            context_lines,
+            "a/",
+            "b/",
+            no_index_dir_matcher.as_ref(),
+        );
         write!(out, "{}", patch)?;
     }
 
@@ -1795,6 +1857,124 @@ fn commit_or_tree_oid(repo: &Repository, spec: &str) -> Result<ObjectId> {
             _ => bail!("object '{}' does not name a tree or commit", oid),
         }
     }
+}
+
+/// Try to resolve two rev specs as blob objects (e.g. `HEAD:path` vs `HEAD:path`).
+fn diff_blob_specs(repo: &Repository, left: &str, right: &str) -> Result<Option<Vec<DiffEntry>>> {
+    let Some((left_oid, left_label)) = resolve_blob_spec(repo, left)? else {
+        return Ok(None);
+    };
+    let Some((right_oid, right_label)) = resolve_blob_spec(repo, right)? else {
+        return Ok(None);
+    };
+
+    if left_oid == right_oid {
+        return Ok(Some(Vec::new()));
+    }
+
+    Ok(Some(vec![DiffEntry {
+        status: DiffStatus::Modified,
+        old_path: Some(left_label),
+        new_path: Some(right_label),
+        old_mode: "100644".to_owned(),
+        new_mode: "100644".to_owned(),
+        old_oid: left_oid,
+        new_oid: right_oid,
+        score: None,
+    }]))
+}
+
+/// Resolve a revision spec to a blob object and a display label.
+fn resolve_blob_spec(repo: &Repository, spec: &str) -> Result<Option<(ObjectId, String)>> {
+    if !spec.contains(':') {
+        return Ok(None);
+    }
+    let oid = resolve_revision(repo, spec)?;
+    let obj = repo.odb.read(&oid)?;
+    if obj.kind != ObjectKind::Blob {
+        return Ok(None);
+    }
+
+    let label = spec
+        .split_once(':')
+        .map(|(_, path)| path)
+        .filter(|path| !path.is_empty())
+        .unwrap_or(spec)
+        .to_owned();
+    Ok(Some((oid, label)))
+}
+
+/// Validate configured funcname patterns for the two `--no-index` paths.
+fn validate_funcname_patterns_for_no_index_paths(
+    git_dir: &Path,
+    work_tree: &Path,
+    path_a: &str,
+    path_b: &str,
+) -> Option<String> {
+    let config = grit_lib::config::ConfigSet::load(Some(git_dir), true).ok()?;
+    let rules = grit_lib::crlf::load_gitattributes(work_tree);
+
+    for raw_path in [path_a, path_b] {
+        let attrs_path = path_for_attr_lookup(raw_path, work_tree);
+        let attrs = grit_lib::crlf::get_file_attrs(&rules, &attrs_path, &config);
+        let Some(driver) = attrs.diff_driver else {
+            continue;
+        };
+        if let Some(err) = invalid_funcname_pattern_for_driver(&config, &driver) {
+            return Some(err);
+        }
+    }
+    None
+}
+
+/// Convert a path to the form used for `.gitattributes` lookups.
+fn path_for_attr_lookup(path: &str, work_tree: &Path) -> String {
+    let path_obj = Path::new(path);
+    if let Ok(relative) = path_obj.strip_prefix(work_tree) {
+        return relative.to_string_lossy().into_owned();
+    }
+    path.to_owned()
+}
+
+/// Check for the specific git error: last funcname expression cannot be negated.
+fn invalid_funcname_pattern_for_driver(
+    config: &grit_lib::config::ConfigSet,
+    driver: &str,
+) -> Option<String> {
+    let pattern = config
+        .get(&format!("diff.{driver}.xfuncname"))
+        .or_else(|| config.get(&format!("diff.{driver}.funcname")))?;
+
+    let last = pattern
+        .lines()
+        .map(str::trim_end)
+        .rfind(|line| !line.is_empty())?;
+    if last.starts_with('!') {
+        return Some(format!(
+            "diff.{driver}.funcname: Last expression must not be negated: {last}"
+        ));
+    }
+    None
+}
+
+fn resolve_funcname_matcher_for_path(
+    config: &grit_lib::config::ConfigSet,
+    rules: &[grit_lib::crlf::AttrRule],
+    rel_path: &str,
+) -> std::result::Result<Option<grit_lib::userdiff::FuncnameMatcher>, String> {
+    grit_lib::userdiff::matcher_for_path(config, rules, rel_path)
+}
+
+fn resolve_funcname_matcher_for_raw_path(
+    git_dir: &Path,
+    work_tree: &Path,
+    raw_path: &str,
+) -> std::result::Result<Option<grit_lib::userdiff::FuncnameMatcher>, String> {
+    let config = grit_lib::config::ConfigSet::load(Some(git_dir), true)
+        .map_err(|e| format!("failed to read config: {e}"))?;
+    let rules = grit_lib::crlf::load_gitattributes(work_tree);
+    let attrs_path = path_for_attr_lookup(raw_path, work_tree);
+    resolve_funcname_matcher_for_path(&config, &rules, &attrs_path)
 }
 
 /// Filter diff entries to only those matching the given pathspecs.
@@ -2226,6 +2406,12 @@ fn write_patch_with_prefix(
     src_prefix: &str,
     dst_prefix: &str,
 ) -> Result<()> {
+    let funcname_context = work_tree.and_then(|wt| {
+        let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok()?;
+        let rules = grit_lib::crlf::load_gitattributes(wt);
+        Some((config, rules))
+    });
+
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
@@ -2238,6 +2424,14 @@ fn write_patch_with_prefix(
             "/dev/null"
         } else {
             new_path
+        };
+        let funcname_matcher = if let Some((config, rules)) = &funcname_context {
+            match resolve_funcname_matcher_for_path(config, rules, entry.path()) {
+                Ok(matcher) => matcher,
+                Err(err) => bail!("{err}"),
+            }
+        } else {
+            None
         };
 
         write_diff_header_with_prefix(
@@ -2271,7 +2465,7 @@ fn write_patch_with_prefix(
                     if let (Some(old_conv), Some(new_conv)) = (old_converted, new_converted) {
                         let old_text = String::from_utf8_lossy(&old_conv).into_owned();
                         let new_text = String::from_utf8_lossy(&new_conv).into_owned();
-                        let patch = grit_lib::diff::unified_diff_with_prefix(
+                        let patch = grit_lib::diff::unified_diff_with_prefix_and_funcname(
                             &old_text,
                             &new_text,
                             display_old,
@@ -2279,6 +2473,7 @@ fn write_patch_with_prefix(
                             context_lines,
                             src_prefix,
                             dst_prefix,
+                            funcname_matcher.as_ref(),
                         );
                         let patch = if suppress_blank_empty {
                             strip_blank_context_trailing_space(&patch)
@@ -2335,7 +2530,7 @@ fn write_patch_with_prefix(
                 write!(out, "{patch}")?;
             }
         } else {
-            let patch = grit_lib::diff::unified_diff_with_prefix(
+            let patch = grit_lib::diff::unified_diff_with_prefix_and_funcname(
                 &old_content,
                 &new_content,
                 display_old,
@@ -2343,6 +2538,7 @@ fn write_patch_with_prefix(
                 context_lines,
                 src_prefix,
                 dst_prefix,
+                funcname_matcher.as_ref(),
             );
             let patch = if suppress_blank_empty {
                 strip_blank_context_trailing_space(&patch)
