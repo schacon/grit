@@ -286,11 +286,12 @@ fn is_worktree_dirty(repo: &Repository) -> bool {
         },
         None => None,
     };
-    let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref()).unwrap_or_default();
+    let staged =
+        diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false).unwrap_or_default();
     if !staged.is_empty() {
         return true;
     }
-    diff_index_to_worktree(&repo.odb, &index, workdir)
+    diff_index_to_worktree(&repo.odb, &index, workdir, false)
         .map(|u| !u.is_empty())
         .unwrap_or(true)
 }

@@ -2901,7 +2901,7 @@ fn run_summary(args: &SummaryArgs, _quiet: bool) -> Result<()> {
         out.sort_by(|a, b| a.path().cmp(b.path()));
         out
     } else {
-        let mut entries = diff_index_to_tree(&repo.odb, &index, base_tree_oid.as_ref())?;
+        let mut entries = diff_index_to_tree(&repo.odb, &index, base_tree_oid.as_ref(), false)?;
         // Git `submodule summary` uses `diff-index --ignore-submodules=dirty`: when the index
         // gitlink matches `HEAD^{tree}` but the submodule worktree HEAD differs (e.g. after
         // `pull` before `submodule update`), still report the range (`t7418`).

@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{self, count_changes, diff_index_to_tree, DiffEntry};
 use grit_lib::hooks::{run_hook, HookResult};
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::merge_base::{ancestor_closure, is_ancestor, merge_bases_first_vs_rest};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeInput};
 use grit_lib::objects::{
@@ -1780,8 +1780,8 @@ fn worktree_matches_head(repo: &Repository, git_dir: &Path) -> Result<bool> {
         let obj = repo.odb.read(oid).ok()?;
         parse_commit(&obj.data).ok().map(|c| c.tree)
     });
-    let staged = grit_lib::diff::diff_index_to_tree(&repo.odb, &idx, head_tree.as_ref())?;
-    let unstaged = grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, wt)?;
+    let staged = grit_lib::diff::diff_index_to_tree(&repo.odb, &idx, head_tree.as_ref(), true)?;
+    let unstaged = grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, wt, true)?;
     Ok(staged.is_empty() && unstaged.is_empty())
 }
 
@@ -1920,8 +1920,8 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
             let obj = repo.odb.read(oid).ok()?;
             parse_commit(&obj.data).ok().map(|c| c.tree)
         });
-        let staged = grit_lib::diff::diff_index_to_tree(&repo.odb, &idx, head_tree.as_ref())?;
-        let unstaged = grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, work_tree)?;
+        let staged = grit_lib::diff::diff_index_to_tree(&repo.odb, &idx, head_tree.as_ref(), true)?;
+        let unstaged = grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, work_tree, true)?;
         let dirty = !staged.is_empty() || !unstaged.is_empty();
         if dirty {
             if !want_autostash {
@@ -3276,6 +3276,7 @@ fn cherry_pick_for_rebase(
         } else {
             fs::write(git_dir.join("MERGE_MSG"), &commit.message)?;
         }
+        eprint_submodule_merge_conflict_advice(repo, &merged_index);
         bail!("conflicts during cherry-pick of {}", commit_oid.to_hex());
     }
 
@@ -3796,7 +3797,7 @@ fn do_continue() -> Result<()> {
             if first_pick != current_oid {
                 if let Ok(pick_obj) = repo.odb.read(&first_pick) {
                     if let Ok(pick_commit) = parse_commit(&pick_obj.data) {
-                        if diff_index_to_tree(&repo.odb, &index, Some(&pick_commit.tree))
+                        if diff_index_to_tree(&repo.odb, &index, Some(&pick_commit.tree), false)
                             .map(|d| d.is_empty())
                             .unwrap_or(false)
                         {
@@ -4574,6 +4575,64 @@ fn write_rebase_conflict_files(
     Ok(())
 }
 
+/// Print Git's `merge-ort` submodule conflict advice when the index has a 3-way gitlink conflict.
+///
+/// Matches the message shape from upstream `submodule_merge_conflict_advice` (t7402 greps a line
+/// containing `go to submodule (<name>), and either merge commit <abbrev>`).
+fn eprint_submodule_merge_conflict_advice(repo: &Repository, index: &Index) {
+    use std::collections::BTreeMap;
+
+    let mut by_path: BTreeMap<&[u8], [Option<&IndexEntry>; 4]> = BTreeMap::new();
+    for e in &index.entries {
+        let st = e.stage() as usize;
+        if st == 0 || st > 3 {
+            continue;
+        }
+        by_path.entry(e.path.as_slice()).or_default()[st] = Some(e);
+    }
+
+    let mut subs: Vec<(String, String)> = Vec::new();
+    for (path_bytes, stages) in by_path {
+        let Some(s1) = stages[1] else { continue };
+        let Some(s2) = stages[2] else { continue };
+        let Some(s3) = stages[3] else { continue };
+        if s1.mode != MODE_GITLINK || s2.mode != MODE_GITLINK || s3.mode != MODE_GITLINK {
+            continue;
+        }
+        let name = String::from_utf8_lossy(path_bytes).into_owned();
+        let abbrev = abbreviate_object_id(repo, s3.oid, 7)
+            .unwrap_or_else(|_| s3.oid.to_hex()[..7].to_string());
+        subs.push((name, abbrev));
+    }
+
+    if subs.is_empty() {
+        return;
+    }
+
+    let names_joined: String = subs
+        .iter()
+        .map(|(n, _)| n.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut steps = String::new();
+    for (name, abbrev) in &subs {
+        steps.push_str(&format!(
+            " - go to submodule ({name}), and either merge commit {abbrev}\n   or update to an existing commit which has merged those changes\n"
+        ));
+    }
+    eprintln!(
+        "Recursive merging with submodules currently only supports trivial cases.\n\
+Please manually handle the merging of each conflicted submodule.\n\
+This can be accomplished with the following steps:\n\
+{steps}\
+ - come back to superproject and run:\n\n\
+      git add {names_joined}\n\n\
+   to record the above merge or update\n\
+ - resolve any other conflicts in the superproject\n\
+ - commit the resulting index in the superproject\n"
+    );
+}
+
 fn checkout_merged_index(
     repo: &Repository,
     work_tree: &Path,
@@ -4628,6 +4687,12 @@ fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
     }
 }
 
+/// True when `path` looks like a checked-out Git submodule (nested repo), not an empty placeholder.
+fn worktree_dir_is_populated_submodule(path: &Path) -> bool {
+    let git_meta = path.join(".git");
+    git_meta.is_file() || git_meta.is_dir()
+}
+
 fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntry) -> Result<()> {
     if let Some(parent) = abs_path.parent() {
         fs::create_dir_all(parent)?;
@@ -4636,13 +4701,20 @@ fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntr
     // Gitlink (submodule) entries: ensure the directory exists but don't
     // try to check out content — the OID references a commit in the
     // submodule's own object store.
-    if entry.mode == 0o160000 {
+    if entry.mode == MODE_GITLINK {
         if abs_path.is_file() || abs_path.is_symlink() {
             let _ = fs::remove_file(abs_path);
         } else if abs_path.is_dir() {
-            let _ = fs::remove_dir_all(abs_path);
+            // Replacing a populated submodule directory would delete its `.git` and corrupt the
+            // nested repository (t7402). Git keeps the working tree and only records the gitlink
+            // OID in the index.
+            if !worktree_dir_is_populated_submodule(abs_path) {
+                let _ = fs::remove_dir_all(abs_path);
+            }
         }
-        fs::create_dir_all(abs_path)?;
+        if !abs_path.exists() {
+            fs::create_dir_all(abs_path)?;
+        }
         return Ok(());
     }
 

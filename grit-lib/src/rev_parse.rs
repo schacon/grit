@@ -975,9 +975,41 @@ pub fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
 }
 
 /// Navigate a tree to find an object at a given path.
+///
+/// Returns the OID of the leaf entry (blob, tree, symlink target blob, or gitlink commit), matching
+/// Git's `rev-parse treeish:path` for non-blob plumbing (e.g. `HEAD:submodule` for a submodule).
 fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
-    let (oid, _) = walk_tree_to_blob_entry(repo, tree_oid, path)?;
-    Ok(oid)
+    walk_tree_to_leaf_oid(repo, tree_oid, path)
+}
+
+/// Walk `tree_oid` to the object named by `path` and return its OID (any leaf mode).
+fn walk_tree_to_leaf_oid(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
+    let obj = repo.odb.read(tree_oid)?;
+    let entries = crate::objects::parse_tree(&obj.data)?;
+    let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
+    if components.is_empty() {
+        return Err(Error::InvalidRef(format!(
+            "path '{path}' does not name an object in tree {tree_oid}"
+        )));
+    }
+
+    let first = components[0];
+    let rest: Vec<&str> = components[1..].to_vec();
+    for entry in entries {
+        let name = String::from_utf8_lossy(&entry.name);
+        if name == first {
+            if rest.is_empty() {
+                return Ok(entry.oid);
+            }
+            if entry.mode != crate::index::MODE_TREE {
+                return Err(Error::ObjectNotFound(path.to_owned()));
+            }
+            return walk_tree_to_leaf_oid(repo, &entry.oid, &rest.join("/"));
+        }
+    }
+    Err(Error::ObjectNotFound(format!(
+        "path '{path}' not found in tree {tree_oid}"
+    )))
 }
 
 /// Resolved blob (non-tree) at `treeish:path` for diff plumbing.

@@ -1541,18 +1541,18 @@ pub fn run(mut args: Args) -> Result<()> {
         match (args.cached, revs.len()) {
             (true, 0) => {
                 // --cached with no revision: index vs HEAD
-                diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?
+                diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false)?
             }
             (true, 1) => {
                 // --cached with one revision: index vs that commit's tree
                 let tree_oid = commit_or_tree_oid(&repo, &revs[0])?;
-                diff_index_to_tree(&repo.odb, &index, Some(&tree_oid))?
+                diff_index_to_tree(&repo.odb, &index, Some(&tree_oid), false)?
             }
             (false, 0) => {
                 // No flags: unstaged changes (index vs worktree)
                 let wt = work_tree
                     .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-                diff_index_to_worktree(&repo.odb, &index, wt)?
+                diff_index_to_worktree(&repo.odb, &index, wt, false)?
             }
             (false, 1) => {
                 // One revision: tree vs worktree

@@ -22,7 +22,8 @@ use grit_lib::ident::parse_signature_times;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{
-    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -1091,7 +1092,7 @@ fn error_if_cherry_pick_would_clobber_worktree(
     }
 
     let index = repo.load_index()?;
-    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree, false)?;
     let unstaged_paths: BTreeSet<String> = unstaged.iter().map(|e| e.path().to_string()).collect();
     let overlap_u: BTreeSet<String> = unstaged_paths.intersection(&touched).cloned().collect();
     if !overlap_u.is_empty() {

@@ -655,9 +655,9 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
-    let mut staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
+    let mut staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false)?;
     let unstaged_raw = if let Some(wt) = work_tree {
-        diff_index_to_worktree(&repo.odb, &index, wt)?
+        diff_index_to_worktree(&repo.odb, &index, wt, false)?
     } else {
         Vec::new()
     };
@@ -2280,7 +2280,7 @@ fn commit_template_status_append(
         }
         None => None,
     };
-    let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
+    let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref(), false)?;
     for e in &staged {
         let label = status_label_staged(e.status);
         buf.push_str(&format!("#\t{label}:   {}\n", e.display_path()));
