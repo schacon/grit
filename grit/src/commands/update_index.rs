@@ -129,7 +129,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if args.index_info {
-        return run_index_info(&mut index, &index_path, &repo.odb);
+        return run_index_info(&mut index, &index_path, &repo.odb, args.null_terminated);
     }
 
     if args.unresolve {
@@ -394,85 +394,114 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Process `--index-info` stdin: lines of `"<mode> <oid>\t<path>"`.
-fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -> Result<()> {
-    let stdin = io::stdin();
-    for line in stdin.lock().lines() {
-        let line = line?;
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
+/// Process `--index-info` stdin.
+///
+/// Accepted record formats:
+/// - LF-terminated records (default)
+/// - NUL-terminated records when `--stdin -z` is used
+///
+/// Record syntax:
+/// - `<mode> <oid>\t<path>`
+/// - `<mode> <oid> <stage>\t<path>`
+/// - `<mode> <type> <oid>\t<path>` (legacy extended form)
+fn run_index_info(
+    index: &mut Index,
+    index_path: &std::path::Path,
+    _odb: &Odb,
+    null_terminated: bool,
+) -> Result<()> {
+    if null_terminated {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        io::stdin().read_to_end(&mut buf)?;
+        for rec in buf.split(|&b| b == 0).filter(|r| !r.is_empty()) {
+            parse_index_info_record(index, rec)?;
         }
-
-        // Format: "<mode> SP <oid> TAB <path>"
-        // or: "<mode> SP <type> SP <oid> TAB <path>" (extended)
-        let tab = line
-            .find('\t')
-            .ok_or_else(|| anyhow::anyhow!("bad --index-info line: no tab: '{line}'"))?;
-        let meta = &line[..tab];
-        let path = line.as_bytes()[tab + 1..].to_vec();
-
-        let parts: Vec<&str> = meta.split(' ').collect();
-
-        // Supported formats:
-        //   2-part: "<mode> <sha1>"              → stage 0
-        //   3-part: "<mode> <sha1> <stage>"      → stage 0-3 (git standard)
-        //   3-part: "<mode> <type> <sha1>"       → stage 0 (extended, legacy)
-        //
-        // Disambiguate the 3-part case: if parts[2] is a single decimal digit
-        // (0-3) it is a stage number; otherwise treat parts[1] as a type token
-        // and parts[2] as the sha1.
-        let (mode_str, oid_str, stage) = match parts.len() {
-            2 => (parts[0], parts[1], 0u8),
-            3 => {
-                let third = parts[2];
-                if third.len() == 1 && matches!(third, "0" | "1" | "2" | "3") {
-                    let s: u8 = third.parse().unwrap_or(0);
-                    (parts[0], parts[1], s)
-                } else {
-                    // Legacy: "<mode> <type> <sha1>"
-                    (parts[0], parts[2], 0u8)
-                }
+    } else {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            let line = line?;
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
             }
-            _ => bail!("bad --index-info line: '{line}'"),
-        };
-
-        if mode_str == "0" {
-            // Delete entry
-            index.remove(&path);
-            continue;
+            parse_index_info_record(index, line.as_bytes())?;
         }
-
-        let mode = u32::from_str_radix(mode_str, 8)
-            .with_context(|| format!("invalid mode '{mode_str}'"))?;
-        let oid: ObjectId = oid_str
-            .parse()
-            .with_context(|| format!("invalid oid '{oid_str}'"))?;
-
-        // Encode stage in the upper 2 bits of flags (bits 13-12).
-        let base_flags = path.len().min(0xFFF) as u16;
-        let flags = base_flags | ((stage as u16) << 12);
-
-        let entry = IndexEntry {
-            ctime_sec: 0,
-            ctime_nsec: 0,
-            mtime_sec: 0,
-            mtime_nsec: 0,
-            dev: 0,
-            ino: 0,
-            mode,
-            uid: 0,
-            gid: 0,
-            size: 0,
-            oid,
-            flags,
-            flags_extended: None,
-            path,
-        };
-        index.add_or_replace(entry);
     }
 
     index.write(index_path).context("writing index")?;
+    Ok(())
+}
+
+fn parse_index_info_record(index: &mut Index, rec: &[u8]) -> Result<()> {
+    // Format: "<mode> SP <oid> TAB <path>"
+    // or: "<mode> SP <type> SP <oid> TAB <path>" (extended)
+    let tab = rec
+        .iter()
+        .position(|b| *b == b'\t')
+        .ok_or_else(|| anyhow::anyhow!("bad --index-info record: no tab"))?;
+    let meta = std::str::from_utf8(&rec[..tab])
+        .map_err(|_| anyhow::anyhow!("bad --index-info record: non-UTF-8 metadata"))?;
+    let path = rec[tab + 1..].to_vec();
+
+    let parts: Vec<&str> = meta.split(' ').collect();
+
+    // Supported formats:
+    //   2-part: "<mode> <sha1>"              → stage 0
+    //   3-part: "<mode> <sha1> <stage>"      → stage 0-3 (git standard)
+    //   3-part: "<mode> <type> <sha1>"       → stage 0 (extended, legacy)
+    //
+    // Disambiguate the 3-part case: if parts[2] is a single decimal digit
+    // (0-3) it is a stage number; otherwise treat parts[1] as a type token
+    // and parts[2] as the sha1.
+    let (mode_str, oid_str, stage) = match parts.len() {
+        2 => (parts[0], parts[1], 0u8),
+        3 => {
+            let third = parts[2];
+            if third.len() == 1 && matches!(third, "0" | "1" | "2" | "3") {
+                let s: u8 = third.parse().unwrap_or(0);
+                (parts[0], parts[1], s)
+            } else {
+                // Legacy: "<mode> <type> <sha1>"
+                (parts[0], parts[2], 0u8)
+            }
+        }
+        _ => bail!("bad --index-info record"),
+    };
+
+    if mode_str == "0" {
+        // Delete entry
+        index.remove(&path);
+        return Ok(());
+    }
+
+    let mode = u32::from_str_radix(mode_str, 8)
+        .with_context(|| format!("invalid mode '{mode_str}'"))?;
+    let oid: ObjectId = oid_str
+        .parse()
+        .with_context(|| format!("invalid oid '{oid_str}'"))?;
+
+    // Encode stage in the upper 2 bits of flags (bits 13-12).
+    let base_flags = path.len().min(0xFFF) as u16;
+    let flags = base_flags | ((stage as u16) << 12);
+
+    let entry = IndexEntry {
+        ctime_sec: 0,
+        ctime_nsec: 0,
+        mtime_sec: 0,
+        mtime_nsec: 0,
+        dev: 0,
+        ino: 0,
+        mode,
+        uid: 0,
+        gid: 0,
+        size: 0,
+        oid,
+        flags,
+        flags_extended: None,
+        path,
+    };
+    index.add_or_replace(entry);
     Ok(())
 }
 

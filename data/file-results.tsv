@@ -957,7 +957,7 @@ t9303-fast-import-compression	yes	16	16	0	ok	16	16	0
 t9304-fast-import-marks	yes	8	8	0	ok	8	8	0
 t9305-fast-import-signatures	yes	21	21	0	ok	21	21	0
 t9306-fast-import-signed-tags	yes	10	10	0	ok	10	10	0
-t9350-fast-export	yes	73	53	20	ok	52	72	1
+t9350-fast-export	yes	73	73	0	ok	72	72	1
 t9351-fast-export-anonymize	yes	17	17	0	ok	17	17	0
 t9400-git-cvsserver-server	yes	0	0	0	ok	0	0	1
 t9401-git-cvsserver-crlf	yes	0	0	0	ok	0	0	0

@@ -71,14 +71,23 @@ struct ParsedUnsignedCommit {
 
 /// Run `grit fast-import`.
 pub fn run(args: Args) -> Result<()> {
-    let (signed_commit_mode, signed_tag_mode, mut passthrough_args) =
+    let (mut signed_commit_mode, signed_tag_mode, mut passthrough_args) =
         extract_signature_modes(&args.args)?;
-    if signed_commit_mode.is_none() && signed_tag_mode.is_none() {
-        return crate::commands::git_passthrough::run("fast-import", &passthrough_args);
-    }
 
     let mut input = Vec::new();
     io::stdin().read_to_end(&mut input)?;
+
+    if signed_commit_mode.is_none() && signed_tag_mode.is_none() {
+        if stream_contains_commit_signature_commands(&input) {
+            // Older system Git builds reject `gpgsig` commands in fast-import.
+            // Emulate upstream behavior by defaulting to verbatim preservation
+            // when signature commands are present.
+            signed_commit_mode = Some(SignedCommitsMode::Verbatim);
+        } else {
+            run_system_fast_import(&passthrough_args, &input)?;
+            return Ok(());
+        }
+    }
 
     if let Some(tag_mode) = &signed_tag_mode {
         input = process_tag_signatures(&input, tag_mode)?;
@@ -702,6 +711,12 @@ fn read_line<'a>(input: &'a [u8], pos: &mut usize) -> Option<&'a [u8]> {
 fn parse_data_len(line: &[u8]) -> Option<usize> {
     let text = std::str::from_utf8(line).ok()?.trim_end();
     text.strip_prefix("data ")?.parse::<usize>().ok()
+}
+
+fn stream_contains_commit_signature_commands(input: &[u8]) -> bool {
+    input
+        .split(|b| *b == b'\n')
+        .any(|line| line.starts_with(b"gpgsig "))
 }
 
 fn read_exact<'a>(input: &'a [u8], pos: &mut usize, len: usize) -> Result<&'a [u8]> {

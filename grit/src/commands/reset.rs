@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::refs::{append_reflog, write_ref};
@@ -891,6 +891,30 @@ fn checkout_index_to_worktree(
 
         if let Some(parent) = abs_path.parent() {
             std::fs::create_dir_all(parent)?;
+        }
+
+        if entry.mode == MODE_GITLINK {
+            // Submodules are represented as gitlinks: their OIDs are commit
+            // objects in the submodule's object store, not blobs in ours.
+            // Materialize only the directory path in the superproject.
+            if abs_path.is_file() || abs_path.is_symlink() {
+                std::fs::remove_file(&abs_path)?;
+            }
+            std::fs::create_dir_all(&abs_path)?;
+
+            if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
+                use std::os::unix::fs::MetadataExt;
+                entry.ctime_sec = meta.ctime() as u32;
+                entry.ctime_nsec = meta.ctime_nsec() as u32;
+                entry.mtime_sec = meta.mtime() as u32;
+                entry.mtime_nsec = meta.mtime_nsec() as u32;
+                entry.dev = meta.dev() as u32;
+                entry.ino = meta.ino() as u32;
+                entry.uid = meta.uid();
+                entry.gid = meta.gid();
+                entry.size = meta.len() as u32;
+            }
+            continue;
         }
 
         let obj = repo

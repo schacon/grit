@@ -432,6 +432,12 @@ _x40="$_x35$_x05"
 OID_REGEX="$_x40"
 EMPTY_TREE=4b825dc642cb6eb9a060e54bf899d69f7c6948d4
 EMPTY_BLOB=e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+
+# Upstream tests key off GIT_DEFAULT_HASH in a few places. Our harness is
+# SHA-1 only today, so provide a stable default when the environment does not.
+: "${GIT_DEFAULT_HASH:=sha1}"
+export GIT_DEFAULT_HASH
+
 export OID_REGEX _x05 _x35 _x40 ZERO_OID EMPTY_TREE EMPTY_BLOB
 
 # test_oid helpers — support SHA-1 only for now
@@ -608,6 +614,18 @@ test_have_prereq () {
 	FAKENC)    perl -MIO::Socket::INET -e 'exit 0' 2>/dev/null && return 0 ; return 1 ;;
 	CGIPASSAUTH) return 1 ;; # Not supported by test-httpd
 	*)
+			# Run lazily-declared prerequisite checks on first use.
+			local _lazy_var="test_prereq_lazily_${_p}"
+			eval "local _lazy_script=\${${_lazy_var}:-}"
+			if test -n "$_lazy_script"
+			then
+				if test_run_lazy_prereq_ "$_p" "$_lazy_script"
+				then
+					test_set_prereq "$_p"
+				fi
+				# Consume the lazy script so we only probe once.
+				eval "${_lazy_var}=''"
+			fi
 		# Check dynamic prereqs set by test_set_prereq
 		local _var="_prereq_${_p}"
 		eval "test \"\${${_var}:-}\" = set"
@@ -681,11 +699,28 @@ test_env () {
 }
 
 # test_lazy_prereq NAME SCRIPT — define a prereq checked lazily
+#
+# Many upstream prereq probes expect stdin to be closed and to run from an
+# isolated scratch directory. Mirror that behavior to avoid hangs (e.g.
+# commands waiting on stdin) and side effects in the active test repo.
+test_run_lazy_prereq_ () {
+	local _name="$1"
+	local _script="$2"
+	local _dir="$TRASH_DIRECTORY/prereq-test-dir-$_name"
+	mkdir -p "$_dir" || return 1
+	(
+		cd "$_dir" &&
+		eval "$_script"
+	) </dev/null >/dev/null 2>&1
+	local _ret=$?
+	rm -rf "$_dir"
+	return $_ret
+}
+
 test_lazy_prereq () {
-	if eval "$2" >/dev/null 2>&1
-	then
-		test_set_prereq "$1"
-	fi
+	local _name="$1"
+	local _script="$2"
+	eval "test_prereq_lazily_${_name}=\$_script"
 }
 
 # write_script FILE [INTERPRETER] — write a script from stdin

@@ -14,7 +14,7 @@ use std::path::Path;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
@@ -414,31 +414,29 @@ fn switch_branch(
         bail!("fatal: invalid HEAD - your HEAD file may be corrupt");
     }
 
+    let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
+        .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
+    let target_tree = commit_to_tree(repo, &target_oid)?;
+
     // Check if already on this branch
     if let HeadState::Branch { ref refname, .. } = head {
         if refname == branch_ref {
             checkout_eprintln!("Already on '{}'", branch_name);
-            if force {
-                // Force mode: reset working tree to match the branch
-                let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
-                    .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
-                let target_tree = commit_to_tree(repo, &target_oid)?;
+            if force || needs_checkout_refresh(repo, &target_tree)? {
+                // Refresh worktree/index to branch tree when forced, or when
+                // this checkout is being used to materialize imported history
+                // (e.g. empty index after fast-import into a fresh repo).
                 return force_reset_to_tree(repo, &target_tree);
             }
             return Ok(());
         }
     }
 
-    let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
-        .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
-
     // If target commit is the same as current HEAD, just re-attach
     // without touching the working tree or index (preserves dirty state).
     // But with -f, always rebuild.
     let already_at_target = head.oid() == Some(&target_oid);
     if !already_at_target || force {
-        let target_tree = commit_to_tree(repo, &target_oid)?;
-
         // Update working tree and index
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
@@ -461,6 +459,22 @@ fn switch_branch(
 
     checkout_eprintln!("Switched to branch '{}'", branch_name);
     Ok(())
+}
+
+fn needs_checkout_refresh(repo: &Repository, target_tree: &ObjectId) -> Result<bool> {
+    let index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+    let tracked_entries: Vec<&IndexEntry> = index.entries.iter().filter(|e| e.stage() == 0).collect();
+
+    // Freshly initialized repositories that receive commits via fast-import can
+    // end up with HEAD pointing at a populated tree while the index/worktree
+    // are still empty. In that case, `checkout <current-branch>` should
+    // materialize files instead of returning early.
+    if tracked_entries.is_empty() {
+        let target_entries = tree_to_flat_entries(repo, target_tree, "")?;
+        return Ok(!target_entries.is_empty());
+    }
+
+    Ok(false)
 }
 
 /// Create a new branch and switch to it.
@@ -624,6 +638,11 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
         if entry.stage() != 0 {
             continue;
         }
+        if entry.mode == MODE_GITLINK {
+            let sm_dir = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+            let _ = std::fs::create_dir_all(&sm_dir);
+            continue;
+        }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         write_blob_to_worktree(repo, &work_tree, &path_str, &entry.oid, entry.mode)?;
     }
@@ -656,6 +675,11 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
     // Write every entry to the worktree (force overwrite)
     for entry in &new_index.entries {
         if entry.stage() != 0 {
+            continue;
+        }
+        if entry.mode == MODE_GITLINK {
+            let sm_dir = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+            let _ = std::fs::create_dir_all(&sm_dir);
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
@@ -832,6 +856,11 @@ fn check_dirty_worktree(
         if old_entry.stage() != 0 {
             continue;
         }
+        if old_entry.mode == MODE_GITLINK {
+            // Submodule entries are represented as gitlinks and should not be
+            // treated as regular files for dirty-worktree safety checks.
+            continue;
+        }
 
         let path_bytes = &old_entry.path;
         let rel_path = String::from_utf8_lossy(path_bytes);
@@ -895,6 +924,9 @@ fn check_dirty_worktree(
             let mut staged_conflicts = Vec::new();
             for old_entry in &old_index.entries {
                 if old_entry.stage() != 0 {
+                    continue;
+                }
+                if old_entry.mode == MODE_GITLINK {
                     continue;
                 }
                 let path_bytes = &old_entry.path;
@@ -2027,7 +2059,7 @@ fn checkout_index_to_worktree(
 
         // Skip gitlink (submodule) entries — their OIDs reference commits
         // in the submodule's object store, not blobs in ours.
-        if entry.mode == 0o160000 {
+        if entry.mode == MODE_GITLINK {
             // Ensure the submodule directory exists so that scripts can
             // `cd` into it, but don't try to check out any content.
             let sm_dir = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());

@@ -8,6 +8,7 @@ use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::objects::ObjectId;
+use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::ffi::OsString;
 use std::io::{self, Write};
@@ -31,6 +32,12 @@ enum SignedCommitsMode {
     Abort,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignedTagsMode {
+    Strip,
+    WarnStrip,
+}
+
 #[derive(Debug, Clone)]
 struct ExportSignature {
     algo: String,
@@ -41,6 +48,8 @@ struct ExportSignature {
 /// Run `grit fast-export`.
 pub fn run(args: Args) -> Result<()> {
     let (signed_mode, mut remaining_args) = extract_signed_commits_mode(&args.args)?;
+    let signed_tags_mode = extract_signed_tags_mode(&mut remaining_args);
+    remaining_args = rewrite_end_of_options_args(remaining_args);
 
     // Normalize newer option names for compatibility with older system Git.
     for arg in &mut remaining_args {
@@ -49,14 +58,13 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // No commit-signature mode requested: pure passthrough.
-    if signed_mode.is_none() {
+    // No transformation requested: pure passthrough.
+    if signed_mode.is_none() && signed_tags_mode.is_none() {
         return git_passthrough::run("fast-export", &remaining_args);
     }
 
-    let signed_mode = signed_mode.unwrap_or(SignedCommitsMode::Strip);
     let user_requested_original_ids = remaining_args.iter().any(|a| a == "--show-original-ids");
-    if !user_requested_original_ids {
+    if signed_mode.is_some() && !user_requested_original_ids {
         remaining_args.push("--show-original-ids".to_owned());
     }
 
@@ -77,13 +85,17 @@ pub fn run(args: Args) -> Result<()> {
         std::process::exit(output.status.code().unwrap_or(1));
     }
 
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let transformed = transform_export_stream(
-        &output.stdout,
-        &repo,
-        signed_mode,
-        user_requested_original_ids,
-    )?;
+    let mut transformed = output.stdout;
+
+    if let Some(mode) = signed_tags_mode {
+        transformed = transform_tag_signatures(&transformed, mode)?;
+    }
+
+    if let Some(mode) = signed_mode {
+        let repo = Repository::discover(None).context("not a git repository")?;
+        transformed = transform_export_stream(&transformed, &repo, mode, user_requested_original_ids)?;
+    }
+
     io::stdout().write_all(&transformed)?;
     Ok(())
 }
@@ -120,6 +132,158 @@ fn extract_signed_commits_mode(args: &[String]) -> Result<(Option<SignedCommitsM
         }
     }
     Ok((mode, rest))
+}
+
+fn extract_signed_tags_mode(args: &mut [String]) -> Option<SignedTagsMode> {
+    let mut mode = None;
+    for arg in args {
+        if let Some(raw) = arg.strip_prefix("--signed-tags=") {
+            match raw {
+                "strip" => {
+                    mode = Some(SignedTagsMode::Strip);
+                    *arg = "--signed-tags=verbatim".to_string();
+                }
+                "warn-strip" => {
+                    mode = Some(SignedTagsMode::WarnStrip);
+                    *arg = "--signed-tags=verbatim".to_string();
+                }
+                _ => {}
+            }
+        }
+    }
+    mode
+}
+
+fn rewrite_end_of_options_args(args: Vec<String>) -> Vec<String> {
+    let repo = Repository::discover(None).ok();
+    let mut seen_end = false;
+    let mut out = Vec::with_capacity(args.len());
+
+    for arg in args {
+        if arg == "--end-of-options" {
+            seen_end = true;
+            continue;
+        }
+        if seen_end && arg.starts_with('-') {
+            if let Some(repo) = &repo {
+                if let Some(rewritten) = disambiguate_leading_dash_revision(repo, &arg) {
+                    out.push(rewritten);
+                    continue;
+                }
+            }
+        }
+        out.push(arg);
+    }
+    out
+}
+
+fn disambiguate_leading_dash_revision(repo: &Repository, arg: &str) -> Option<String> {
+    let candidates = [
+        arg.to_string(),
+        format!("refs/heads/{arg}"),
+        format!("refs/tags/{arg}"),
+        format!("refs/remotes/{arg}"),
+    ];
+    for candidate in candidates {
+        if refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn transform_tag_signatures(input: &[u8], mode: SignedTagsMode) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(input.len());
+    let mut pos = 0usize;
+
+    while let Some(line) = read_line(input, &mut pos) {
+        if line.starts_with(b"tag ") {
+            out.extend_from_slice(line);
+            while let Some(tag_line) = read_line(input, &mut pos) {
+                out.extend_from_slice(tag_line);
+                if let Some(data_len) = parse_data_len(tag_line) {
+                    let payload = read_exact(input, &mut pos, data_len)?;
+                    let payload_text = String::from_utf8_lossy(payload).to_string();
+                    let (stripped, had_signature) = strip_tag_signature_blocks(&payload_text);
+                    if had_signature {
+                        if matches!(mode, SignedTagsMode::WarnStrip) {
+                            eprintln!("warning: stripping signed tag payload");
+                        }
+                        out.truncate(out.len().saturating_sub(tag_line.len()));
+                        out.extend_from_slice(format!("data {}\n", stripped.len()).as_bytes());
+                        out.extend_from_slice(stripped.as_bytes());
+                    } else {
+                        out.extend_from_slice(payload);
+                    }
+                    if pos < input.len() && input[pos] == b'\n' {
+                        out.push(b'\n');
+                        pos += 1;
+                    }
+                    continue;
+                }
+                if tag_line == b"\n" {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        out.extend_from_slice(line);
+        if let Some(data_len) = parse_data_len(line) {
+            let payload = read_exact(input, &mut pos, data_len)?;
+            out.extend_from_slice(payload);
+            if pos < input.len() && input[pos] == b'\n' {
+                out.push(b'\n');
+                pos += 1;
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+fn strip_tag_signature_blocks(payload: &str) -> (String, bool) {
+    let mut out = Vec::new();
+    let mut in_block = false;
+    let mut had_signature = false;
+    let had_trailing_nl = payload.ends_with('\n');
+
+    for line in payload.lines() {
+        if !in_block
+            && line.starts_with("-----BEGIN ")
+            && (line.contains("SIGNATURE") || line.contains("SIGNED MESSAGE"))
+        {
+            in_block = true;
+            had_signature = true;
+            continue;
+        }
+        if in_block {
+            if line.starts_with("-----END ")
+                && (line.contains("SIGNATURE") || line.contains("SIGNED MESSAGE"))
+            {
+                in_block = false;
+            }
+            continue;
+        }
+        out.push(line);
+    }
+
+    let mut compact = Vec::new();
+    let mut prev_blank = false;
+    for line in out {
+        let blank = line.trim().is_empty();
+        if blank && prev_blank {
+            continue;
+        }
+        compact.push(line);
+        prev_blank = blank;
+    }
+
+    let mut result = compact.join("\n");
+    if had_trailing_nl {
+        result.push('\n');
+    }
+    (result, had_signature)
 }
 
 fn transform_export_stream(
