@@ -444,7 +444,7 @@ commit → check it off → move on.
 - [x] `t4001-diff-rename` ████████████████████ 23/23 (0 left) — Test rename detection in diff engine (`status` now renders rename pairs as `old -> new` in short/long formats and honors `diff.renames`; `diff` now uses shared compact rename-path formatting, supports repeated `-C` parsing with copy-harder intent, handles `-l` trailing args without treating `--cached` as a revision, and preserves Git-style copy-limit warning behavior while still detecting copies from modified sources)
 - [x] `t4010-diff-pathspec` ████████████████████ 17/17 (0 left) — Pathspec restrictions (`diff-index` now treats trailing-slash pathspecs as directory-only and does not match plain files like `file0/`; `diff-tree` pathspec filtering now supports wildcard matching against tree-level entries for non-recursive output, wildcard descendant matching for recursive output, and canonical empty-tree constants from upstream test-lib)
 
-- [ ] `t4122-apply-symlink-inside` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — apply to deeper directory without getting fooled with symlink
+- [~] `t4122-apply-symlink-inside` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — apply to deeper directory without getting fooled with symlink
 - [ ] `t4253-am-keep-cr-dos` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — git-am mbox with dos line ending.
 
 - [ ] `t4054-diff-bogus-tree` ██████████░░░░░░░░░░ 7/14 (7 left) — test diff with a bogus tree containing the null sha1
