@@ -2,6 +2,9 @@
 
 **Updated:** 2026-04-07
 
+- `./scripts/run-tests.sh t4129-apply-samemode.sh`: 7/23 passing (baseline for newly claimed in-progress Diff target `t4129`).
+- `bash scripts/run-upstream-tests.sh t4129-apply-samemode`: 7/23 passing in isolated upstream harness baseline.
+
 - `cargo build --release`: passes (rebuild after `t4119` apply whitespace/config compatibility updates in `apply`/`crlf`).
 - `bash scripts/run-upstream-tests.sh t4119-apply-config`: 11/11 passing in isolated upstream harness.
 - `./scripts/run-tests.sh t4119-apply-config.sh`: 11/11 passing; `data/file-results.tsv` refreshed.

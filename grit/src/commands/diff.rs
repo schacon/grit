@@ -1422,14 +1422,15 @@ pub fn run(mut args: Args) -> Result<()> {
     let cli_algorithm_choice = cli_diff_algorithm_choice(&raw_args, &args);
 
     if !args.quiet {
-        if args.shortstat {
-            write_shortstat(&mut out, &entries, &repo.odb, wt_for_content)?;
-        } else if stat_enabled
+        let explicit_patch_requested = args.patch;
+        let stat_requested = stat_enabled
             || args.stat_count.is_some()
             || args.stat_width.is_some()
             || args.stat_graph_width.is_some()
-            || args.stat_name_width.is_some()
-        {
+            || args.stat_name_width.is_some();
+        if args.shortstat {
+            write_shortstat(&mut out, &entries, &repo.odb, wt_for_content)?;
+        } else if stat_requested {
             write_stat(
                 &mut out,
                 &entries,
@@ -1441,6 +1442,35 @@ pub fn run(mut args: Args) -> Result<()> {
             )?;
             if args.summary {
                 write_diff_summary(&mut out, &entries, &repo.odb, args.break_rewrites)?;
+            }
+            if explicit_patch_requested {
+                let patch_abbrev = if args.full_index {
+                    40
+                } else if let Some(n) = args.abbrev {
+                    n.max(4).min(40)
+                } else {
+                    7
+                };
+                write_patch_with_prefix(
+                    &mut out,
+                    &entries,
+                    &repo,
+                    &repo.odb,
+                    context_lines,
+                    use_color,
+                    word_diff,
+                    wt_for_content,
+                    suppress_blank_empty,
+                    patch_abbrev,
+                    args.inter_hunk_context,
+                    args.binary,
+                    args.break_rewrites,
+                    args.irreversible_delete,
+                    &src_prefix,
+                    &dst_prefix,
+                    args.no_textconv,
+                    cli_algorithm_choice,
+                )?;
             }
         } else if args.raw {
             let oid_len = if args.full_index || args.no_abbrev {
@@ -1847,6 +1877,7 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
 
+    let explicit_patch_requested = args.patch;
     if args.stat.is_some() || args.shortstat {
         let (adds, dels) = count_changes(&text_a, &text_b);
         if args.stat.is_some() {
@@ -1875,7 +1906,9 @@ fn run_no_index(args: &Args) -> Result<()> {
             ));
         }
         writeln!(out, "{summary}")?;
-        std::process::exit(1);
+        if !explicit_patch_requested {
+            std::process::exit(1);
+        }
     }
 
     write_no_index_headers(

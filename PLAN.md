@@ -477,8 +477,8 @@ commit → check it off → move on.
 - [x] `t4139-apply-escape` ████████████████████ 12/12 (0 left) — paths written by git-apply cannot escape the working tree (`apply` now accepts `--unsafe-paths` and enforces worktree-escape rejection by default in repository mode for `..`/absolute paths across worktree, `--index`, `--cached`, and `--check` flows; `--unsafe-paths` is allowed only for non-index/non-cached worktree applies to match upstream safety semantics)
 - [x] `t4119-apply-config` ████████████████████ 11/11 (0 left) — git apply --whitespace=strip and configuration file (`apply` now treats `--whitespace=strip` as fix-mode, handles traditional `---/+++` headers with timestamp suffixes and subdir-safe `-p1` fallback for single-component paths, applies cwd-relative context for subdir invocation, and honors `.gitattributes` `whitespace=-blank-at-eol` during both worktree and index/check application)
 
-- [~] `t4215-log-skewed-merges` ░░░░░░░░░░░░░░░░░░░░ 0/10 (10 left) — git log --graph of skewed merges
-- [ ] `t4129-apply-samemode` ██████████░░░░░░░░░░ 12/23 (11 left) — applying patch with mode bits
+- [ ] `t4215-log-skewed-merges` ░░░░░░░░░░░░░░░░░░░░ 0/10 (10 left) — git log --graph of skewed merges
+- [~] `t4129-apply-samemode` ██████████░░░░░░░░░░ 12/23 (11 left) — applying patch with mode bits
 - [ ] `t4048-diff-combined-binary` ████░░░░░░░░░░░░░░░░ 3/14 (11 left) — combined and merge diff handle binary files and textconv
 - [ ] `t4012-diff-binary` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — Binary diff and apply
 

@@ -305,12 +305,16 @@ struct FilePatch {
     old_oid: Option<String>,
     /// New blob OID from the index header (abbreviated).
     new_oid: Option<String>,
+    /// Optional mode parsed from `index <old>..<new> <mode>`.
+    index_mode: Option<String>,
     /// Parsed binary patch payload (`GIT binary patch`) if present.
     binary_patch: Option<BinaryPatchPayload>,
     /// Hunks to apply.
     hunks: Vec<Hunk>,
     /// For traditional unified diffs without `diff --git`, prefer old path as target.
     prefer_old_path: bool,
+    /// True when mode came only from `index ... <mode>` header.
+    mode_from_index_only: bool,
 }
 
 /// Binary patch payload as compressed base85 chunks for forward/reverse apply.
@@ -449,9 +453,11 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 dissimilarity_index: None,
                 old_oid: None,
                 new_oid: None,
+                index_mode: None,
                 binary_patch: None,
                 hunks: Vec::new(),
                 prefer_old_path: false,
+                mode_from_index_only: false,
             };
 
             // Parse "diff --git a/foo b/foo"
@@ -472,15 +478,15 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             {
                 let line = lines[i];
                 if let Some(val) = line.strip_prefix("old mode ") {
-                    fp.old_mode = Some(val.to_string());
+                    fp.old_mode = Some(parse_patch_mode_string(val)?);
                 } else if let Some(val) = line.strip_prefix("new mode ") {
-                    fp.new_mode = Some(val.to_string());
+                    fp.new_mode = Some(parse_patch_mode_string(val)?);
                 } else if let Some(val) = line.strip_prefix("new file mode ") {
                     fp.is_new = true;
-                    fp.new_mode = Some(val.to_string());
+                    fp.new_mode = Some(parse_patch_mode_string(val)?);
                 } else if let Some(val) = line.strip_prefix("deleted file mode ") {
                     fp.is_deleted = true;
-                    fp.old_mode = Some(val.to_string());
+                    fp.old_mode = Some(parse_patch_mode_string(val)?);
                 } else if let Some(val) = line.strip_prefix("rename from ") {
                     fp.is_rename = true;
                     fp.old_path = Some(val.to_string());
@@ -506,14 +512,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                         fp.new_oid = Some(new.to_string());
                     }
                     if let Some(mode) = parts.next() {
-                        if fp.old_mode.is_none()
-                            && fp.new_mode.is_none()
-                            && !fp.is_new
-                            && !fp.is_deleted
-                        {
-                            fp.old_mode = Some(mode.to_string());
-                            fp.new_mode = Some(mode.to_string());
-                        }
+                        fp.index_mode = Some(parse_patch_mode_string(mode)?);
                     }
                 } else if line == "GIT binary patch" {
                     let (binary_patch, next_i) = parse_binary_patch(&lines, i + 1)?;
@@ -570,9 +569,11 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 dissimilarity_index: None,
                 old_oid: None,
                 new_oid: None,
+                index_mode: None,
                 binary_patch: None,
                 hunks: Vec::new(),
                 prefer_old_path: true,
+                mode_from_index_only: false,
             };
 
             let old_p = &lines[i]["--- ".len()..];
@@ -2169,13 +2170,6 @@ pub fn run_with_patch_input(args: Args, input: String) -> Result<()> {
     let repo_for_context = Repository::discover(None).ok();
     let worktree_prefix = worktree_context_prefix(repo_for_context.as_ref());
     let attr_context = load_apply_whitespace_attr_context(repo_for_context.as_ref());
-    if let Ok(cwd) = std::env::current_dir() {
-        eprintln!(
-            "DEBUG apply cwd={} worktree_prefix='{}'",
-            cwd.display(),
-            worktree_prefix
-        );
-    }
 
     if args.reverse {
         reverse_patches(&mut patches);
@@ -2499,6 +2493,21 @@ fn write_worktree_path(
         fs::remove_dir_all(path)
             .with_context(|| format!("failed to remove directory {}", path.display()))?;
     }
+
+    #[cfg(unix)]
+    let existing_exec_bit = {
+        use std::os::unix::fs::PermissionsExt;
+        fs::symlink_metadata(path)
+            .ok()
+            .and_then(|meta| {
+                if meta.file_type().is_symlink() {
+                    None
+                } else {
+                    Some((meta.permissions().mode() & 0o111) != 0)
+                }
+            })
+    };
+
     fs::write(path, content.as_bytes())
         .with_context(|| format!("failed to write {}", path.display()))?;
 
@@ -2507,6 +2516,9 @@ fn write_worktree_path(
         use std::os::unix::fs::PermissionsExt;
         if let Some(mode) = mode {
             let perm = if mode == "100755" { 0o755 } else { 0o644 };
+            fs::set_permissions(path, fs::Permissions::from_mode(perm))?;
+        } else if let Some(executable) = existing_exec_bit {
+            let perm = if executable { 0o755 } else { 0o644 };
             fs::set_permissions(path, fs::Permissions::from_mode(perm))?;
         } else if let Some(executable) = source_exec_bit {
             let perm = if executable { 0o755 } else { 0o644 };
@@ -2918,7 +2930,24 @@ fn apply_to_worktree(
         if source_contains_target {
             remove_path_for_replacement(&read_path)?;
         }
+        #[cfg(unix)]
+        let old_exec = {
+            use std::os::unix::fs::PermissionsExt;
+            fs::metadata(&path)
+                .ok()
+                .map(|meta| !meta.file_type().is_symlink() && (meta.permissions().mode() & 0o111) != 0)
+        };
+        #[cfg(not(unix))]
+        let old_exec: Option<bool> = None;
         write_worktree_path(&path, &new_content, fp.new_mode.as_deref(), source_exec_bit)?;
+        #[cfg(unix)]
+        if fp.new_mode.is_none() {
+            if let Some(exec) = old_exec {
+                use std::os::unix::fs::PermissionsExt;
+                let perm = if exec { 0o755 } else { 0o644 };
+                fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+            }
+        }
 
         if !rejected_hunks.is_empty() {
             had_rejects = true;
@@ -3312,5 +3341,38 @@ fn check_patches(
 
 /// Parse an octal mode string like "100644" to u32.
 fn parse_mode(s: &str) -> u32 {
-    u32::from_str_radix(s, 8).unwrap_or(0o100644)
+    canonicalize_mode_bits(
+        u32::from_str_radix(s, 8).unwrap_or(0o100644),
+    )
+}
+
+fn canonicalize_mode_bits(mode: u32) -> u32 {
+    let kind = mode & 0o170000;
+    let perms = mode & 0o777;
+    match kind {
+        0o100000 => {
+            let exec = (perms & 0o111) != 0;
+            if exec { 0o100755 } else { 0o100644 }
+        }
+        0o120000 => 0o120000,
+        0o160000 => 0o160000,
+        0 => {
+            let exec = (perms & 0o111) != 0;
+            if exec { 0o100755 } else { 0o100644 }
+        }
+        _ => mode,
+    }
+}
+
+fn parse_mode_for_apply(s: &str) -> Result<u32> {
+    if s.is_empty() || !s.chars().all(|c| ('0'..='7').contains(&c)) {
+        bail!("invalid mode");
+    }
+    let parsed = u32::from_str_radix(s, 8).context("invalid mode")?;
+    Ok(canonicalize_mode_bits(parsed))
+}
+
+fn parse_patch_mode_string(s: &str) -> Result<String> {
+    let mode = parse_mode_for_apply(s.trim())?;
+    Ok(format!("{mode:06o}"))
 }
