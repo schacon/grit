@@ -2,6 +2,23 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `apply-empty` and `diff -R` compatibility updates in `apply`/`diff`).
+- `TEST_VERBOSE=1 EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4126-apply-empty.sh` (from `tests/`): 8/8 passing with explicit behavior confirmation:
+  - `git apply empty.patch` and `git apply - </dev/null` now fail by default with empty/no-valid patch input.
+  - `git apply --allow-empty empty.patch` and `git apply --allow-empty - </dev/null` now succeed.
+  - `git apply patch1` and `git apply --index patch1` now create `missing` from zero-preimage hunks when source path is absent.
+  - `git diff -R HEAD -- "funny /"` now works, and the `--stat --check --apply` funny-path roundtrip passes.
+- `./scripts/run-tests.sh t4126-apply-empty.sh`: 8/8 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4126-apply-empty`: 8/8 passing in isolated upstream harness.
+- Regression checks after this change:
+  - `./scripts/run-tests.sh t4031-diff-rewrite-binary.sh`: 8/8 passing.
+  - `bash scripts/run-upstream-tests.sh t4031-diff-rewrite-binary`: 8/8 passing.
+  - `./scripts/run-tests.sh t4117-apply-reject.sh`: 8/8 passing.
+  - `./scripts/run-tests.sh t4102-apply-rename.sh`: 5/5 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `t4031` rewrite-binary + textconv + test-tool helper updates).
 - `./scripts/run-tests.sh t4031-diff-rewrite-binary.sh`: 8/8 passing; `data/file-results.tsv` refreshed.
 - `bash scripts/run-upstream-tests.sh t4031-diff-rewrite-binary`: 8/8 passing in isolated upstream harness.

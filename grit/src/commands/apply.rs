@@ -59,6 +59,10 @@ pub struct Args {
     #[arg(short = 'R', long = "reverse")]
     pub reverse: bool,
 
+    /// Allow empty patches (or patch input with no diff hunks).
+    #[arg(long = "allow-empty")]
+    pub allow_empty: bool,
+
     /// Strip N leading path components from diff paths (default: 1).
     #[arg(short = 'p', default_value = "1")]
     pub strip: usize,
@@ -1343,6 +1347,9 @@ pub fn run(args: Args) -> Result<()> {
     if args.reverse {
         reverse_patches(&mut patches);
     }
+    if patches.is_empty() && !args.allow_empty {
+        bail!("No valid patches in input");
+    }
 
     // Info-only modes unless explicitly overridden by --apply.
     let info_only = (args.stat || args.numstat || args.summary) && !args.apply;
@@ -1369,14 +1376,21 @@ pub fn run(args: Args) -> Result<()> {
     // For working tree apply, we may or may not be in a repo.
     if args.cached {
         apply_to_index(&patches, &args, ws_mode)?;
-    } else if args.check {
-        check_patches(&patches, &args, ws_mode)?;
-    } else if args.index {
-        verify_worktree_matches_index(&patches, &args)?;
-        apply_to_worktree(&patches, &args, ws_mode)?;
-        apply_to_index(&patches, &args, ws_mode)?;
     } else {
-        apply_to_worktree(&patches, &args, ws_mode)?;
+        if args.check {
+            check_patches(&patches, &args, ws_mode)?;
+            if !args.apply {
+                return Ok(());
+            }
+        }
+
+        if args.index {
+            verify_worktree_matches_index(&patches, &args)?;
+            apply_to_worktree(&patches, &args, ws_mode)?;
+            apply_to_index(&patches, &args, ws_mode)?;
+        } else {
+            apply_to_worktree(&patches, &args, ws_mode)?;
+        }
     }
 
     Ok(())
@@ -1523,6 +1537,25 @@ fn record_path_existence(
     initial.insert(path.to_string(), exists);
 }
 
+/// Return true when a patch can apply to a missing preimage as empty content.
+///
+/// This matches hunks whose old side starts from line 0 with count 0 and
+/// contains only additions.
+fn can_apply_with_empty_preimage(fp: &FilePatch) -> bool {
+    if fp.hunks.is_empty() {
+        return false;
+    }
+
+    fp.hunks.iter().all(|hunk| {
+        hunk.old_start == 0
+            && hunk.old_count == 0
+            && hunk
+                .lines
+                .iter()
+                .all(|line| matches!(line, HunkLine::Add(_) | HunkLine::NoNewline))
+    })
+}
+
 /// Preflight worktree patch ordering/path availability before writing.
 ///
 /// This catches invalid sequences (e.g. later patches reading a path that was
@@ -1592,7 +1625,7 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
             let can_use_initial_snapshot = source_adjusted != target_adjusted
                 && (fp.is_copy || fp.is_rename)
                 && source_existed_initially;
-            if !can_use_initial_snapshot {
+            if !can_use_initial_snapshot && !can_apply_with_empty_preimage(fp) {
                 bail!(
                     "failed to read {}: No such file or directory (os error 2)",
                     source_adjusted
@@ -1694,16 +1727,27 @@ fn apply_to_worktree(
             .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
             .unwrap_or_else(|| path_adjusted.clone());
         let read_path = PathBuf::from(&source_adjusted);
+        let load_old_content_from_disk = || -> Result<String> {
+            match fs::read_to_string(&read_path) {
+                Ok(content) => Ok(content),
+                Err(err)
+                    if err.kind() == std::io::ErrorKind::NotFound
+                        && can_apply_with_empty_preimage(fp) =>
+                {
+                    Ok(String::new())
+                }
+                Err(err) => Err(err)
+                    .with_context(|| format!("failed to read {}", read_path.display())),
+            }
+        };
         let old_content = if source_adjusted != path_adjusted {
             if let Some(snapshot) = source_snapshots.get(&source_adjusted) {
                 snapshot.clone()
             } else {
-                fs::read_to_string(&read_path)
-                    .with_context(|| format!("failed to read {}", read_path.display()))?
+                load_old_content_from_disk()?
             }
         } else {
-            fs::read_to_string(&read_path)
-                .with_context(|| format!("failed to read {}", read_path.display()))?
+            load_old_content_from_disk()?
         };
         #[cfg(unix)]
         let source_exec_bit = if source_adjusted != path_adjusted {
@@ -1871,11 +1915,14 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
             } else {
                 &index
             };
-            let entry = source_index
-                .get(source_adjusted.as_bytes(), 0)
-                .ok_or_else(|| anyhow::anyhow!("{source_adjusted} not found in index"))?;
-            let obj = repo.odb.read(&entry.oid)?;
-            String::from_utf8_lossy(&obj.data).into_owned()
+            if let Some(entry) = source_index.get(source_adjusted.as_bytes(), 0) {
+                let obj = repo.odb.read(&entry.oid)?;
+                String::from_utf8_lossy(&obj.data).into_owned()
+            } else if can_apply_with_empty_preimage(fp) {
+                String::new()
+            } else {
+                bail!("{source_adjusted} not found in index");
+            }
         };
 
         let new_content = if fp.hunks.is_empty() {
@@ -1964,8 +2011,18 @@ fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMod
             .source_path()
             .map(|p| PathBuf::from(adjust_path(p, args.strip, args.directory.as_deref())))
             .unwrap_or_else(|| path.clone());
-        let old_content = fs::read_to_string(&read_path)
-            .with_context(|| format!("failed to read {}", read_path.display()))?;
+        let old_content = match fs::read_to_string(&read_path) {
+            Ok(content) => content,
+            Err(err)
+                if err.kind() == std::io::ErrorKind::NotFound
+                    && can_apply_with_empty_preimage(fp) =>
+            {
+                String::new()
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("failed to read {}", read_path.display()))
+            }
+        };
         apply_hunks(&old_content, &fp.hunks, ws_mode)
             .with_context(|| format!("patch does not apply cleanly to {}", path.display()))?;
     }

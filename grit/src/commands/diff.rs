@@ -198,6 +198,10 @@ pub struct Args {
     #[arg(long = "binary")]
     pub binary: bool,
 
+    /// Swap two inputs; show data from destination as deletion and source as addition.
+    #[arg(short = 'R', long = "reverse")]
+    pub reverse: bool,
+
     /// Show a condensed summary of extended header info (renames, mode changes).
     #[arg(long = "summary")]
     pub summary: bool,
@@ -440,6 +444,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 "--shortstat" => args.shortstat = true,
                 "--summary" => args.summary = true,
                 "--quiet" | "-q" => args.quiet = true,
+                "--reverse" | "-R" => args.reverse = true,
                 s if s.starts_with("--stat-width=") => {
                     if let Some(val) = s.strip_prefix("--stat-width=") {
                         args.stat_width = val.parse().ok();
@@ -670,6 +675,12 @@ pub fn run(mut args: Args) -> Result<()> {
         _ => {
             bail!("too many revisions");
         }
+    };
+
+    let entries = if args.reverse {
+        reverse_entries(entries)
+    } else {
+        entries
     };
 
     // Filter by pathspecs
@@ -1326,6 +1337,24 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
     std::process::exit(1);
+}
+
+/// Reverse diff entries for `-R/--reverse`.
+fn reverse_entries(entries: Vec<DiffEntry>) -> Vec<DiffEntry> {
+    entries
+        .into_iter()
+        .map(|mut entry| {
+            std::mem::swap(&mut entry.old_path, &mut entry.new_path);
+            std::mem::swap(&mut entry.old_mode, &mut entry.new_mode);
+            std::mem::swap(&mut entry.old_oid, &mut entry.new_oid);
+            entry.status = match entry.status {
+                DiffStatus::Added => DiffStatus::Deleted,
+                DiffStatus::Deleted => DiffStatus::Added,
+                other => other,
+            };
+            entry
+        })
+        .collect()
 }
 
 /// Diff two directories recursively with --no-index.

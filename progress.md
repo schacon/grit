@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    89 |
+| Completed   |    90 |
 | In progress |     0 |
-| Remaining   |   678 |
+| Remaining   |   677 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4126-apply-empty` — 8/8 tests pass (`git apply` now supports `--allow-empty` for empty/no-op patch input, zero-preimage hunks can apply against missing source paths as empty content for both worktree and index modes, and `--check --apply` now performs check-then-apply semantics; additionally `git diff -R` is now parsed/applied so reverse patch generation in apply-empty setup works)
 - `t4031-diff-rewrite-binary` — 8/8 tests pass (`git diff -B` now emits rewrite dissimilarity metadata and summary rows for modified rewrites, `--numstat --summary` reports binary rewrites as `-\t-\t` plus rewrite summary, binary `--stat` rows include `Bin` sizing while totals remain 0/0 line counts, and `.gitattributes diff=<driver>` + `diff.<driver>.textconv` conversion is now applied for binary rewrite patch output; also added `test-tool hexdump` subcommand support required by upstream textconv fixtures)
 - `t4064-diff-oidfind` — 10/10 tests pass (`log --find-object` now supports `^{blob}` peeling and detects tree-object presence transitions, `log -t` is accepted for compatibility, `merge --no-commit` now skips gitlink blob checkout, and `diff-tree -c --find-object --format=%s --name-status` now emits combined per-parent status rows)
 - `t4055-diff-context` — 10/10 tests pass (`diff.context` is now honored by both `git diff` and `git log -p`; `log -U<n>` now overrides config as expected; invalid (`no`) and negative values now fail with git-compatible `bad numeric config value` / `bad config variable` errors)
