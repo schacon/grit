@@ -891,6 +891,10 @@ test_expect_success () {
 		echo >&2 "BUG: test_expect_success requires 2 or 3 arguments, got $#"
 		return 1
 	fi
+	if test "$commands" = "-"
+	then
+		commands=$(cat)
+	fi
 	test_count=$(($test_count + 1))
 
 	# Check prerequisites (comma-separated)
@@ -979,6 +983,10 @@ test_expect_failure () {
 	else
 		echo >&2 "BUG: test_expect_failure requires 2 or 3 arguments, got $#"
 		return 1
+	fi
+	if test "$commands" = "-"
+	then
+		commands=$(cat)
 	fi
 	test_count=$(($test_count + 1))
 

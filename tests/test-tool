@@ -144,7 +144,27 @@ case "$1" in
     exec git test-tool revision-walking "$@" ;;
   mergesort)
     shift
-    exec git test-tool mergesort "$@" ;;
+    exec "$GUST_BIN" test-tool mergesort "$@" ;;
+  example-tap)
+    # Emit the canonical TAP sample output expected by t0080.
+    # Keep this sourced from the test file itself so the fixture
+    # stays in one place.
+    _self_dir="$(cd "$(dirname "$0")" && pwd)"
+    _fixture="${_self_dir}/t0080-unit-test-output.sh"
+    if [ ! -f "$_fixture" ]; then
+      echo "test-tool example-tap: missing fixture file: $_fixture" >&2
+      exit 1
+    fi
+    awk '
+      /^\tcat >expect <<-EOF &&$/ { in_fixture=1; next }
+      /^\tEOF$/ && in_fixture { exit }
+      in_fixture {
+        sub(/^\t/, "", $0)
+        gsub(/\\\\/, "\\", $0)
+        print
+      }
+    ' "$_fixture"
+    exit 1 ;;
   *)
     echo "test-tool: unknown subcommand '$1'" >&2
     exit 1 ;;
