@@ -127,6 +127,9 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
+    crate::bundle_uri::clear_http_bundle_cache();
+    crate::http_smart::clear_trace2_https_url_dedup();
+
     let git_dir = resolve_git_dir()?;
     let config = ConfigSet::load(Some(&git_dir), true)?;
 
@@ -214,7 +217,15 @@ fn fetch_remote(
             .with_context(|| format!("remote '{remote_name}' not found; no such remote"))?
     };
 
-    let mut remote_path = if crate::ssh_transport::is_configured_ssh_url(&url) {
+    let mut remote_path_opt: Option<PathBuf> = None;
+    if url.starts_with("http://") || url.starts_with("https://") {
+        let proto = if url.starts_with("https://") {
+            "https"
+        } else {
+            "http"
+        };
+        crate::protocol::check_protocol_allowed(proto, Some(git_dir))?;
+    } else if crate::ssh_transport::is_configured_ssh_url(&url) {
         crate::protocol::check_protocol_allowed("ssh", Some(git_dir))?;
         let spec = crate::ssh_transport::parse_ssh_url(&url)?;
         let Some(gd) = crate::ssh_transport::try_local_git_dir(&spec) else {
@@ -223,46 +234,43 @@ fn fetch_remote(
                 url
             );
         };
-        gd
+        remote_path_opt = Some(gd);
     } else {
         crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
-        // Strip file:// prefix if present.
-        // For configured remotes, resolve relative paths from the repository root
-        // (not the process CWD), matching Git's behavior for remote.<name>.url.
-        if let Some(stripped) = url.strip_prefix("file://") {
+        let mut remote_path = if let Some(stripped) = url.strip_prefix("file://") {
             PathBuf::from(stripped)
         } else {
             PathBuf::from(&url)
-        }
-    };
-    // Resolve relative paths from the repository root (not process CWD), for both
-    // configured `remote.<name>.url` and path-based remotes (`git fetch ./server`).
-    if remote_path.is_relative() {
-        let base = configured_remote_base(git_dir);
-        remote_path = base.join(&remote_path);
-        if url_override.is_none() && !remote_path.exists() {
-            let mut trimmed = url.as_str();
-            let mut stripped_any_parent = false;
-            while let Some(rest) = trimmed.strip_prefix("../") {
-                stripped_any_parent = true;
-                trimmed = rest;
-            }
-            if stripped_any_parent {
-                let fallback = base.join(trimmed);
-                if fallback.exists() {
-                    remote_path = fallback;
+        };
+        if remote_path.is_relative() {
+            let base = configured_remote_base(git_dir);
+            remote_path = base.join(&remote_path);
+            if url_override.is_none() && !remote_path.exists() {
+                let mut trimmed = url.as_str();
+                let mut stripped_any_parent = false;
+                while let Some(rest) = trimmed.strip_prefix("../") {
+                    stripped_any_parent = true;
+                    trimmed = rest;
+                }
+                if stripped_any_parent {
+                    let fallback = base.join(trimmed);
+                    if fallback.exists() {
+                        remote_path = fallback;
+                    }
                 }
             }
         }
+        remote_path_opt = Some(remote_path);
     }
 
-    // Open the remote repository
-    let remote_repo = open_repo(&remote_path).with_context(|| {
-        format!(
-            "could not open remote repository at '{}'",
-            remote_path.display()
-        )
-    })?;
+    let remote_repo_opt =
+        if let Some(ref rp) = remote_path_opt {
+            Some(open_repo(rp).with_context(|| {
+                format!("could not open remote repository at '{}'", rp.display())
+            })?)
+        } else {
+            None
+        };
 
     // If command-line refspecs were provided, use those; otherwise use config
     let cli_refspecs = &args.refspecs;
@@ -284,24 +292,35 @@ fn fetch_remote(
         config.get(&key)
     });
 
-    // Local fetch with skipping negotiator uses the upload-pack protocol (matches Git's tests).
-    let use_upload_pack_negotiation =
-        use_skipping && !crate::ssh_transport::is_configured_ssh_url(&url);
+    let use_upload_pack_negotiation = use_skipping
+        && !crate::ssh_transport::is_configured_ssh_url(&url)
+        && remote_repo_opt.is_some();
 
-    let (remote_heads, remote_tags) = if use_upload_pack_negotiation {
+    let (remote_heads, remote_tags, remote_head_branch) = if url.starts_with("http://")
+        || url.starts_with("https://")
+    {
+        let (heads, tags, adv) = crate::http_smart::http_fetch_pack(git_dir, &url, cli_refspecs)?;
+        crate::bundle_uri::maybe_apply_bundle_uri_after_http_fetch(git_dir, &url, None)?;
+        let default_branch = crate::http_smart::remote_default_branch_from_advertised(&adv);
+        let heads: Vec<(String, ObjectId)> = heads.into_iter().map(|e| (e.name, e.oid)).collect();
+        let tags: Vec<(String, ObjectId)> = tags.into_iter().map(|e| (e.name, e.oid)).collect();
+        (heads, tags, default_branch)
+    } else if use_upload_pack_negotiation {
         crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
-        crate::fetch_transport::fetch_via_upload_pack_skipping(
+        let rp = remote_path_opt.as_ref().unwrap();
+        let (heads, tags) = crate::fetch_transport::fetch_via_upload_pack_skipping(
             git_dir,
-            &remote_path,
+            rp,
             upload_pack_cmd.as_deref(),
             cli_refspecs,
-        )?
+        )?;
+        let remote_repo = remote_repo_opt.as_ref().unwrap();
+        let head_branch = determine_remote_head(&remote_repo.git_dir);
+        (heads, tags, head_branch)
     } else {
+        let remote_repo = remote_repo_opt.as_ref().unwrap();
         let heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;
         let tags = refs::list_refs(&remote_repo.git_dir, "refs/tags/")?;
-        // Copy objects from remote → local. Match Git: only copy the closure of refs this
-        // fetch would update (CLI refspecs or configured/default refspecs), not every ref
-        // on the remote (which would mirror unrelated branches into the destination ODB).
         let object_copy_roots =
             fetch_object_copy_roots(&remote_repo.git_dir, cli_refspecs, &refspecs, &heads, &tags)?;
         if args.refetch {
@@ -312,7 +331,8 @@ fn fetch_remote(
                 .context("copying reachable objects from remote")?;
         }
         check_connectivity(git_dir, &object_copy_roots)?;
-        (heads, tags)
+        let head_branch = determine_remote_head(&remote_repo.git_dir);
+        (heads, tags, head_branch)
     };
 
     let tip_oids: Vec<ObjectId> = remote_heads
@@ -325,7 +345,13 @@ fn fetch_remote(
     // Handle --depth / --deepen: write shallow graft info
     let effective_depth = args.depth.or(args.deepen);
     if let Some(depth) = effective_depth {
-        write_shallow_info(git_dir, &remote_heads, &remote_repo, depth)?;
+        let local_odb = Odb::new(&git_dir.join("objects"));
+        if let Some(ref rr) = remote_repo_opt {
+            let obj_dir = rr.git_dir.join("objects");
+            write_shallow_info(git_dir, &remote_heads, &Odb::new(&obj_dir), depth)?;
+        } else {
+            write_shallow_info(git_dir, &remote_heads, &local_odb, depth)?;
+        }
     }
 
     // Determine the destination prefix for remote-tracking refs
@@ -336,15 +362,15 @@ fn fetch_remote(
     let mut updated_refs: Vec<String> = Vec::new();
     let mut has_updates = false;
 
-    // Determine the remote's HEAD branch for FETCH_HEAD
-    let remote_head_branch = determine_remote_head(&remote_repo.git_dir);
-
     // Collect FETCH_HEAD entries
     let mut fetch_head_entries: Vec<String> = Vec::new();
 
     // Upload-pack negotiation already honored CLI refspecs via `collect_wants`; the object-less
     // `refs::resolve_ref` path below would fail for tag-only names like `to_fetch`.
     if !cli_refspecs.is_empty() && !use_upload_pack_negotiation {
+        let Some(remote_repo) = remote_repo_opt.as_ref() else {
+            bail!("refspecs on the command line are not supported for this remote transport");
+        };
         // Collect negative refspecs first (^pattern)
         let negative_patterns: Vec<&str> = cli_refspecs
             .iter()
@@ -1449,11 +1475,10 @@ fn prune_stale_refs(
 fn write_shallow_info(
     git_dir: &Path,
     remote_heads: &[(String, ObjectId)],
-    remote_repo: &Repository,
+    odb_source: &Odb,
     depth: usize,
 ) -> Result<()> {
     use grit_lib::objects::{parse_commit, ObjectKind};
-    use grit_lib::odb::Odb;
 
     let shallow_path = git_dir.join("shallow");
     // Collect existing shallow commits
@@ -1467,13 +1492,11 @@ fn write_shallow_info(
         std::collections::HashSet::new()
     };
 
-    let odb = Odb::new(&remote_repo.git_dir.join("objects"));
-
     // For each remote head, walk `depth` commits and mark the boundary
     for (_refname, tip_oid) in remote_heads {
         let mut oid = *tip_oid;
         for _ in 0..depth.saturating_sub(1) {
-            match odb.read(&oid) {
+            match odb_source.read(&oid) {
                 Ok(obj) if obj.kind == ObjectKind::Commit => match parse_commit(&obj.data) {
                     Ok(c) => {
                         if c.parents.is_empty() {

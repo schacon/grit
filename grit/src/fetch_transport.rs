@@ -41,14 +41,21 @@ fn trace_packet_fetch(direction: char, payload: &str) {
     if dest.is_empty() || dest == "0" || dest.eq_ignore_ascii_case("false") {
         return;
     }
+    if crate::trace_packet::negotiation_packet_label() == "clone"
+        && direction == '>'
+        && payload.starts_with("want ")
+    {
+        return;
+    }
     let path = if dest == "1" {
         "/dev/stderr".to_string()
     } else {
         dest
     };
+    let label = crate::trace_packet::negotiation_packet_label();
     let line = format!(
         "packet: {:>12}{} {}\n",
-        "fetch",
+        label,
         direction,
         payload.replace('\n', "")
     );
@@ -246,7 +253,7 @@ fn parse_ack(line: &str) -> Option<(ObjectId, AckKind)> {
     Some((oid, kind))
 }
 
-fn read_pkt_payload_raw(r: &mut impl Read) -> std::io::Result<Option<Vec<u8>>> {
+pub(crate) fn read_pkt_payload_raw(r: &mut impl Read) -> std::io::Result<Option<Vec<u8>>> {
     let mut len_buf = [0u8; 4];
     match r.read_exact(&mut len_buf) {
         Ok(()) => {}
@@ -433,12 +440,23 @@ fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
     stdin.flush()?;
 
     let mut negotiator = SkippingNegotiator::new(local_repo);
-    for (_, oid) in advertised {
-        if want_set.contains(oid) {
-            continue;
+
+    if let Ok(entries) = refs::list_refs(local_git_dir, "refs/bundles/") {
+        for (name, oid) in entries {
+            let t = if let Ok(resolved) = resolve_revision(negotiator.repo(), &name) {
+                resolved
+            } else {
+                oid
+            };
+            if negotiator.repo().odb.read(&t).is_ok() {
+                negotiator.add_tip(t)?;
+            }
         }
-        if negotiator.repo().odb.read(oid).is_ok() {
-            negotiator.known_common(*oid)?;
+    }
+
+    for w in wants {
+        if negotiator.repo().odb.read(w).is_ok() {
+            negotiator.add_tip(*w)?;
         }
     }
 
@@ -472,6 +490,15 @@ fn fetch_upload_pack_negotiate_pack_bytes_with_streams(
             continue;
         }
         negotiator.add_tip(t)?;
+    }
+
+    for (_, oid) in advertised {
+        if want_set.contains(oid) {
+            continue;
+        }
+        if negotiator.repo().odb.read(oid).is_ok() {
+            negotiator.known_common(*oid)?;
+        }
     }
 
     let mut count: usize = 0;

@@ -1,7 +1,27 @@
 //! Append-only helpers for `GIT_TRACE_PACKET` (compat with upstream Git tests).
 
+use std::cell::Cell;
 use std::fs::OpenOptions;
 use std::io::Write;
+
+thread_local! {
+    static PACKET_TRACE_LABEL: Cell<&'static str> = const { Cell::new("fetch") };
+}
+
+/// Label used in `packet: …` negotiation lines (`fetch>` vs `clone>`).
+#[must_use]
+pub fn negotiation_packet_label() -> &'static str {
+    PACKET_TRACE_LABEL.get()
+}
+
+/// Run `f` with negotiation traces labeled `label` (restores previous afterward).
+pub fn with_packet_trace_label<T>(label: &'static str, f: impl FnOnce() -> T) -> T {
+    let prev = PACKET_TRACE_LABEL.get();
+    PACKET_TRACE_LABEL.set(label);
+    let out = f();
+    PACKET_TRACE_LABEL.set(prev);
+    out
+}
 
 /// Open the trace destination from `GIT_TRACE_PACKET`, if enabled.
 ///
@@ -46,10 +66,11 @@ pub fn trace_fetch_tip_availability(
     let odb = Odb::new(objects_dir);
     for tip in tips {
         let hex = tip.to_hex();
+        let label = negotiation_packet_label();
         if odb.exists(tip) {
-            trace_packet_line(format!("fetch> have {hex}").as_bytes());
+            trace_packet_line(format!("{label}> have {hex}").as_bytes());
         } else {
-            trace_packet_line(format!("fetch> fetch {hex}").as_bytes());
+            trace_packet_line(format!("{label}> fetch {hex}").as_bytes());
         }
     }
 }

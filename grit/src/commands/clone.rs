@@ -375,6 +375,7 @@ pub fn run(mut args: Args) -> Result<()> {
             "http"
         };
         crate::protocol::check_protocol_allowed(proto, None)?;
+        return run_http_clone(args);
     }
 
     // Detect bundle file
@@ -517,15 +518,22 @@ pub fn run(mut args: Args) -> Result<()> {
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
     };
 
+    if let Some(ref bu) = args.bundle_uri {
+        crate::bundle_uri::apply_bundle_uri(&dest.git_dir, bu, &target_name, true)?;
+    }
+
     // Copy or share objects from source to destination
     if args.no_local && !args.shared {
         let upload_cmd = args.upload_pack.as_deref().filter(|s| !s.trim().is_empty());
-        if let Err(e) = crate::fetch_transport::fetch_via_upload_pack_skipping(
-            &dest.git_dir,
-            &source.git_dir,
-            upload_cmd,
-            &[],
-        ) {
+        let fetch_res = crate::trace_packet::with_packet_trace_label("clone", || {
+            crate::fetch_transport::fetch_via_upload_pack_skipping(
+                &dest.git_dir,
+                &source.git_dir,
+                upload_cmd,
+                &[],
+            )
+        });
+        if let Err(e) = fetch_res {
             let _ = fs::remove_dir_all(&target_path);
             return Err(e).context("clone via upload-pack (--no-local) failed");
         }
@@ -765,6 +773,399 @@ pub fn run(mut args: Args) -> Result<()> {
     Ok(())
 }
 
+fn http_url_basename(url: &str) -> String {
+    let u = url.trim_end_matches('/');
+    u.rsplit('/').next().unwrap_or("repo").to_string()
+}
+
+fn run_http_clone(args: Args) -> Result<()> {
+    crate::bundle_uri::clear_http_bundle_cache();
+    crate::http_smart::clear_trace2_https_url_dedup();
+
+    let remote_name = resolve_remote_name(&args)?;
+    let repo_url = args.repository.clone();
+    let target_name = args
+        .directory
+        .clone()
+        .unwrap_or_else(|| http_url_basename(&repo_url));
+    validate_clone_target_name(&target_name)?;
+    let target_path = PathBuf::from(&target_name);
+    if target_path.exists() {
+        bail!(
+            "destination path '{}' already exists and is not an empty directory",
+            target_path.display()
+        );
+    }
+
+    if !args.quiet {
+        if args.bare {
+            eprintln!("Cloning into bare repository '{target_name}'...");
+        } else {
+            eprintln!("Cloning into '{target_name}'...");
+        }
+    }
+
+    let initial_fallback = default_head_branch_fallback();
+    let initial_branch = args
+        .branch
+        .as_deref()
+        .unwrap_or(initial_fallback.as_str())
+        .to_string();
+
+    fs::create_dir_all(&target_path)
+        .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
+    let template_dir = args.template.as_ref().map(PathBuf::from);
+
+    if args.separate_git_dir.is_some() {
+        bail!("--separate-git-dir is not supported for HTTP clones");
+    }
+    if args.shared {
+        bail!("--shared is not supported for HTTP clones");
+    }
+    if !args.reference.is_empty() {
+        bail!("--reference is not supported for HTTP clones");
+    }
+    if args.revision.is_some() {
+        bail!("--revision is not supported for HTTP clones");
+    }
+
+    let dest = if args.bare && args.template.as_ref().is_some_and(|s| s.is_empty()) {
+        init_bare_clone_minimal(&target_path, &initial_branch).with_context(|| {
+            format!(
+                "failed to initialize bare clone '{}'",
+                target_path.display()
+            )
+        })?;
+        Repository::open(&target_path, None)
+            .with_context(|| format!("failed to open repository '{}'", target_path.display()))?
+    } else {
+        init_repository(
+            &target_path,
+            args.bare,
+            &initial_branch,
+            template_dir.as_deref(),
+        )
+        .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
+    };
+
+    if let Some(ref bu) = args.bundle_uri {
+        crate::bundle_uri::apply_bundle_uri(&dest.git_dir, bu, &target_name, false)?;
+        if bu.starts_with("http://") || bu.starts_with("https://") {
+            let config_path = dest.git_dir.join("config");
+            let mut cfg = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+                Some(c) => c,
+                None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+            };
+            cfg.set("log.excludeDecoration", "refs/bundle/")?;
+            cfg.write().context("writing log.excludeDecoration")?;
+        }
+    }
+
+    let refspec_for_fetch: Vec<String> = if args.single_branch {
+        if let Some(ref b) = args.branch {
+            vec![format!("refs/heads/{b}")]
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    let (remote_heads, remote_tags, adv) =
+        crate::http_smart::http_fetch_pack(&dest.git_dir, &repo_url, &refspec_for_fetch)?;
+
+    if args.bare {
+        for e in &remote_heads {
+            let dst_ref = dest.git_dir.join(&e.name);
+            if let Some(parent) = dst_ref.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&dst_ref, format!("{}\n", e.oid.to_hex()))?;
+        }
+        if !args.no_tags {
+            for e in &remote_tags {
+                let dst_ref = dest.git_dir.join(&e.name);
+                if let Some(parent) = dst_ref.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&dst_ref, format!("{}\n", e.oid.to_hex()))?;
+            }
+        }
+        setup_origin_remote_bare_url(&dest.git_dir, &repo_url, &remote_name)?;
+        let default_branch = args
+            .branch
+            .clone()
+            .or_else(|| crate::http_smart::remote_default_branch_from_advertised(&adv));
+        if let Some(branch) = default_branch {
+            fs::write(
+                dest.git_dir.join("HEAD"),
+                format!("ref: refs/heads/{branch}\n"),
+            )?;
+        }
+    } else {
+        for e in &remote_heads {
+            let branch = e.name.strip_prefix("refs/heads/").unwrap_or(&e.name);
+            let dst_ref = dest
+                .git_dir
+                .join("refs/remotes")
+                .join(&remote_name)
+                .join(branch);
+            if let Some(parent) = dst_ref.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&dst_ref, format!("{}\n", e.oid.to_hex()))?;
+        }
+        if !args.no_tags {
+            for e in &remote_tags {
+                let dst_ref = dest.git_dir.join(&e.name);
+                if let Some(parent) = dst_ref.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&dst_ref, format!("{}\n", e.oid.to_hex()))?;
+            }
+        }
+
+        let refspec = if args.single_branch {
+            let branch = args.branch.as_deref().unwrap_or(initial_fallback.as_str());
+            format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
+        } else {
+            format!("+refs/heads/*:refs/remotes/{remote_name}/*")
+        };
+        setup_origin_remote_url(&dest.git_dir, &repo_url, &remote_name, &refspec)?;
+
+        let default_branch = args
+            .branch
+            .clone()
+            .or_else(|| crate::http_smart::remote_default_branch_from_advertised(&adv));
+        if let Some(ref branch) = default_branch {
+            let origin_head = dest
+                .git_dir
+                .join("refs/remotes")
+                .join(&remote_name)
+                .join("HEAD");
+            if let Some(parent) = origin_head.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(
+                &origin_head,
+                format!("ref: refs/remotes/{remote_name}/{branch}\n"),
+            )?;
+        }
+
+        let head_branch = if args.branch.is_some() {
+            Some(initial_branch.clone())
+        } else {
+            default_branch.clone()
+        };
+
+        if let Some(branch) = resolve_remote_tracked_branch_name(
+            &dest.git_dir,
+            &remote_name,
+            head_branch.as_deref().unwrap_or(initial_fallback.as_str()),
+        ) {
+            let remote_ref = dest
+                .git_dir
+                .join("refs/remotes")
+                .join(&remote_name)
+                .join(&branch);
+            let oid_str = fs::read_to_string(&remote_ref).context("reading remote ref")?;
+            let oid = oid_str.trim().to_string();
+
+            let local_ref_path = dest.git_dir.join("refs/heads").join(&branch);
+            if let Some(parent) = local_ref_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&local_ref_path, format!("{oid}\n"))?;
+
+            fs::write(
+                dest.git_dir.join("HEAD"),
+                format!("ref: refs/heads/{branch}\n"),
+            )?;
+
+            setup_branch_tracking(&dest.git_dir, &branch, &remote_name)
+                .context("setting up branch tracking")?;
+        }
+    }
+
+    if !args.config.is_empty() {
+        apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
+    }
+
+    apply_sticky_recursive_clone(&dest.git_dir, args.recurse_submodules)?;
+
+    if args.no_tags {
+        let config_path = dest.git_dir.join("config");
+        let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+            Some(c) => c,
+            None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+        };
+        config.set(&format!("remote.{remote_name}.tagOpt"), "--no-tags")?;
+        config.write().context("writing config")?;
+    }
+
+    let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"));
+    if partial_blob_none {
+        materialize_blob_none_partial_layout(&dest)
+            .context("materializing partial-clone object layout")?;
+        initialize_partial_clone_state_http(&dest, &remote_name, "blob:none")?;
+    }
+
+    if partial_blob_none && !args.bare && !args.no_checkout {
+        if grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD").is_err() {
+            crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&dest)
+                .context("trimming promisor marker")?;
+        } else {
+            let dest_config = ConfigSet::load(Some(&dest.git_dir), true)?;
+            let promisor = crate::commands::promisor_hydrate::find_promisor_source(
+                &dest_config,
+                &dest.git_dir,
+            )?;
+            if let Some(ref p) = promisor {
+                if args.sparse {
+                    let patterns = vec!["/*".to_string(), "!/*/".to_string()];
+                    crate::commands::promisor_hydrate::hydrate_sparse_tip_blobs_from_promisor(
+                        &dest, p, &patterns, true,
+                    )
+                    .context("hydrating sparse-checkout tip blobs")?;
+                    let head_oid = grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD")?;
+                    let obj = dest.odb.read(&head_oid).context("reading HEAD for index")?;
+                    let commit = parse_commit(&obj.data).context("parsing HEAD for index")?;
+                    write_index_from_tree(&dest, &commit.tree)
+                        .context("writing index for sparse clone")?;
+                } else {
+                    crate::commands::promisor_hydrate::hydrate_head_tree_blobs_from_promisor(
+                        &dest, p,
+                    )
+                    .context("hydrating HEAD tree blobs")?;
+                }
+            }
+            crate::commands::promisor_hydrate::trim_promisor_marker_to_missing_local(&dest)
+                .context("trimming promisor marker")?;
+        }
+    }
+
+    if let Some(depth) = args.depth {
+        if depth > 0 {
+            write_shallow_boundary(&dest, depth)?;
+        }
+    }
+
+    maybe_print_local_clone_progress(args.progress);
+
+    let sparse_partial_skip = partial_blob_none && args.sparse;
+
+    if !args.bare && !args.no_checkout && !sparse_partial_skip {
+        if head_points_to_missing_ref(&dest) {
+            checkout_head_allow_unborn(&dest).context("checking out HEAD")?;
+        } else {
+            checkout_head(&dest).context("checking out HEAD")?;
+        }
+    }
+
+    if args.sparse && !args.bare {
+        crate::commands::sparse_checkout::init_clone_sparse_checkout(&dest, !args.no_checkout)
+            .context("initializing sparse-checkout")?;
+    }
+
+    if !args.bare && !args.no_checkout {
+        run_post_checkout_after_clone(&dest)?;
+    }
+
+    if args.sparse && !args.bare {
+        crate::commands::sparse_checkout::finalize_sparse_clone(&dest, !args.no_checkout)?;
+    }
+
+    if !args.quiet {
+        eprintln!("done.");
+    }
+
+    if args.recurse_submodules && !args.bare {
+        if let Some(ref wt) = dest.work_tree {
+            clone_submodules(wt, &dest, args.quiet).context("cloning submodules")?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_clone_target_name(name: &str) -> Result<()> {
+    if name.contains('\n') || name.contains('\r') {
+        bail!("bundle-uri: filename is malformed: {name}");
+    }
+    Ok(())
+}
+
+fn initialize_partial_clone_state_http(
+    dest: &Repository,
+    remote_name: &str,
+    filter_spec: &str,
+) -> Result<()> {
+    let mut missing: Vec<String> = Vec::new();
+    if let Ok(head) = grit_lib::refs::resolve_ref(&dest.git_dir, "HEAD") {
+        let mut queue = VecDeque::new();
+        let mut seen_commits = HashSet::new();
+        let mut seen_trees = HashSet::new();
+        queue.push_back(head);
+        while let Some(oid) = queue.pop_front() {
+            let obj = match dest.odb.read(&oid) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            match obj.kind {
+                ObjectKind::Commit => {
+                    if !seen_commits.insert(oid) {
+                        continue;
+                    }
+                    let commit = parse_commit(&obj.data)?;
+                    for p in &commit.parents {
+                        queue.push_back(*p);
+                    }
+                    queue.push_back(commit.tree);
+                }
+                ObjectKind::Tree => {
+                    if !seen_trees.insert(oid) {
+                        continue;
+                    }
+                    let entries = parse_tree(&obj.data)?;
+                    for e in entries {
+                        let is_tree = (e.mode & 0o170000) == 0o040000;
+                        if is_tree {
+                            queue.push_back(e.oid);
+                        } else if e.mode == 0o100644 || e.mode == 0o100755 || e.mode == 0o120000 {
+                            if dest.odb.read(&e.oid).is_err() {
+                                missing.push(e.oid.to_hex());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    missing.sort();
+    missing.dedup();
+    let marker = dest.git_dir.join("grit-promisor-missing");
+    let marker_content = if missing.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", missing.join("\n"))
+    };
+    fs::write(&marker, marker_content)?;
+
+    let config_path = dest.git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config.set(&format!("remote.{remote_name}.promisor"), "true")?;
+    config.set(
+        &format!("remote.{remote_name}.partialclonefilter"),
+        filter_spec,
+    )?;
+    config.write().context("writing config")?;
+    Ok(())
+}
+
 /// Check whether a URL looks like an SSH-style `host:/path` address.
 ///
 /// Returns `false` for local paths, `file://` URLs, or URLs containing `://`.
@@ -893,6 +1294,10 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         )
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
     };
+
+    if let Some(ref bu) = args.bundle_uri {
+        crate::bundle_uri::apply_bundle_uri(&dest.git_dir, bu, &target_name, true)?;
+    }
 
     if args.shared {
         write_alternates(&source.git_dir, &dest.git_dir, &args.reference)

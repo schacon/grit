@@ -13,6 +13,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod alias;
+mod bundle_uri;
 mod commands;
 mod dotfile;
 mod explicit_exit;
@@ -21,6 +22,7 @@ mod git_commit_encoding;
 mod git_path;
 mod grit_exe;
 mod http_bundle_uri;
+mod http_smart;
 mod ident;
 mod pack_objects_upload;
 pub mod pathspec;
@@ -328,6 +330,11 @@ fn chrono_now() -> String {
     let mins = (secs_in_day % 3600) / 60;
     let secs = secs_in_day % 60;
     format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros)
+}
+
+/// Timestamp string for JSON trace2 events (`GIT_TRACE2_EVENT`) emitted outside `main`.
+pub(crate) fn trace2_json_now() -> String {
+    chrono_now()
 }
 
 pub(crate) fn exit_with_status(status: std::process::ExitStatus) -> ! {

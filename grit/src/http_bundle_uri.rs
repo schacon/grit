@@ -10,7 +10,7 @@ const SERVICE: &str = "git-upload-pack";
 /// Skip the v0 smart-HTTP `# service=git-upload-pack` advertisement (pkt-lines until flush).
 /// Protocol v2 responses start with `version 2` and must be returned in full (no leading
 /// service block).
-fn strip_v0_service_advertisement_if_present(body: &[u8]) -> Result<&[u8]> {
+pub(crate) fn strip_v0_service_advertisement_if_present(body: &[u8]) -> Result<&[u8]> {
     let mut cur = Cursor::new(body);
     let first = match pkt_line::read_packet(&mut cur).context("read first smart-http pkt-line")? {
         None => return Ok(body),

@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
+use grit_lib::rev_list::{rev_list, split_revision_token, RevListOptions};
 
 /// Arguments for `grit bundle`.
 #[derive(Debug, ClapArgs)]
@@ -81,16 +82,26 @@ pub fn run(args: Args) -> Result<()> {
 fn run_create(args: CreateArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    // Collect refs to include.
     let refs = collect_refs_for_bundle(&repo, &args.rev_list_args)?;
     if refs.is_empty() {
         bail!("refusing to create empty bundle");
     }
 
-    // Collect all reachable objects from those refs.
+    let (positive, negative) = parse_bundle_rev_list_args(&repo, &args.rev_list_args)?;
+    let opts = RevListOptions {
+        objects: true,
+        boundary: !negative.is_empty(),
+        ..Default::default()
+    };
+    let listed =
+        rev_list(&repo, &positive, &negative, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let prerequisites = listed.boundary_commits;
     let mut oids = std::collections::BTreeSet::new();
-    for oid in refs.values() {
-        walk_reachable(&repo, oid, &mut oids)?;
+    for c in &listed.commits {
+        oids.insert(*c);
+    }
+    for (oid, _) in &listed.objects {
+        oids.insert(*oid);
     }
 
     // Read all objects.
@@ -110,6 +121,9 @@ fn run_create(args: CreateArgs) -> Result<()> {
     // Bundle v2 header.
     out.write_all(b"# v2 git bundle\n")?;
 
+    for oid in &prerequisites {
+        writeln!(out, "-{}", oid.to_hex())?;
+    }
     // Write refs.
     for (refname, oid) in &refs {
         writeln!(out, "{} {}", oid.to_hex(), refname)?;
@@ -133,39 +147,103 @@ fn collect_refs_for_bundle(
     let include_all = rev_args.iter().any(|a| a == "--all");
 
     if include_all {
-        // Include all refs.
         collect_all_refs(repo, &mut refs)?;
-    } else if rev_args.is_empty() {
-        // Default: include HEAD if it exists.
+        return Ok(refs);
+    }
+    if rev_args.is_empty() {
         if let Ok(oid) = resolve_ref(repo, "HEAD") {
             refs.insert("HEAD".to_string(), oid);
         }
-    } else {
-        for arg in rev_args {
-            if arg.starts_with('-') {
-                continue; // skip flags
+        return Ok(refs);
+    }
+
+    let mut i = 0usize;
+    while i < rev_args.len() {
+        let arg = &rev_args[i];
+        if arg == "--not" {
+            i += 1;
+            while i < rev_args.len() && rev_args[i] != "--not" {
+                i += 1;
             }
-            let oid = resolve_ref(repo, arg).with_context(|| format!("cannot resolve '{arg}'"))?;
-            // Use full ref name if the short name maps to a known ref
-            let full_name = if arg.starts_with("refs/") || arg == "HEAD" {
-                arg.clone()
-            } else {
-                // Try refs/heads/<arg>, refs/tags/<arg>
-                let heads = repo.git_dir.join("refs/heads").join(arg);
-                let tags = repo.git_dir.join("refs/tags").join(arg);
-                if heads.exists() {
-                    format!("refs/heads/{arg}")
-                } else if tags.exists() {
-                    format!("refs/tags/{arg}")
-                } else {
-                    arg.clone()
-                }
-            };
-            refs.insert(full_name, oid);
+            continue;
         }
+        if arg == "--all" || (arg.starts_with('-') && arg != "--not") {
+            i += 1;
+            continue;
+        }
+        let (pos_specs, _neg) = split_revision_token(arg);
+        let tip_spec = pos_specs.last().map(String::as_str).unwrap_or(arg.as_str());
+        let oid = resolve_ref(repo, tip_spec)
+            .with_context(|| format!("cannot resolve '{tip_spec}' (from '{arg}')"))?;
+        let full_name = if tip_spec.starts_with("refs/") || tip_spec == "HEAD" {
+            tip_spec.to_string()
+        } else {
+            let heads = repo.git_dir.join("refs/heads").join(tip_spec);
+            let tags = repo.git_dir.join("refs/tags").join(tip_spec);
+            if heads.exists() {
+                format!("refs/heads/{tip_spec}")
+            } else if tags.exists() {
+                format!("refs/tags/{tip_spec}")
+            } else {
+                tip_spec.to_string()
+            }
+        };
+        refs.insert(full_name, oid);
+        i += 1;
     }
 
     Ok(refs)
+}
+
+fn parse_bundle_rev_list_args(
+    repo: &Repository,
+    rev_args: &[String],
+) -> Result<(Vec<String>, Vec<String>)> {
+    let mut positive: Vec<String> = Vec::new();
+    let mut negative: Vec<String> = Vec::new();
+    let include_all = rev_args.iter().any(|a| a == "--all");
+
+    let mut i = 0usize;
+    while i < rev_args.len() {
+        let arg = &rev_args[i];
+        if arg == "--not" {
+            i += 1;
+            while i < rev_args.len() && rev_args[i] != "--not" {
+                let tok = &rev_args[i];
+                if tok == "--all" || (tok.starts_with('-') && tok != "--not") {
+                    i += 1;
+                    continue;
+                }
+                let (p, n) = split_revision_token(tok);
+                negative.extend(p);
+                negative.extend(n);
+                i += 1;
+            }
+            continue;
+        }
+        if arg == "--all" || (arg.starts_with('-') && arg != "--not") {
+            i += 1;
+            continue;
+        }
+        let (p, n) = split_revision_token(arg);
+        positive.extend(p);
+        negative.extend(n);
+        i += 1;
+    }
+
+    if include_all && positive.is_empty() {
+        let mut refs = BTreeMap::new();
+        collect_all_refs(repo, &mut refs)?;
+        positive.extend(refs.keys().cloned());
+    }
+
+    if positive.is_empty() && !include_all {
+        if let Ok(_) = resolve_ref(repo, "HEAD") {
+            positive.push("HEAD".to_string());
+        }
+    }
+
+    Ok((positive, negative))
 }
 
 fn collect_all_refs(repo: &Repository, refs: &mut BTreeMap<String, ObjectId>) -> Result<()> {
