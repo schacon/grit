@@ -30,7 +30,7 @@ pub struct Args {
     pub oneline: bool,
 
     /// Pretty-print format.
-    #[arg(long = "format", alias = "pretty")]
+    #[arg(long = "format", alias = "pretty", num_args = 0..=1, default_missing_value = "medium")]
     pub format: Option<String>,
 
     /// Suppress diff output (show only the commit header).
@@ -40,6 +40,14 @@ pub struct Args {
     /// Suppress diff output (alias for --quiet / -q).
     #[arg(short = 's', long = "no-patch")]
     pub no_patch: bool,
+
+    /// Expand tabs in commit message output (default width 8 when enabled).
+    #[arg(long = "expand-tabs", value_name = "N", default_missing_value = "8", num_args = 0..=1, require_equals = true)]
+    pub expand_tabs: Option<usize>,
+
+    /// Disable tab expansion in commit message output.
+    #[arg(long = "no-expand-tabs")]
+    pub no_expand_tabs: bool,
 
     /// Number of unified context lines for diff output.
     #[arg(short = 'U', long = "unified", value_name = "N")]
@@ -201,7 +209,7 @@ fn show_commit(
 ) -> Result<()> {
     let commit = parse_commit(data).context("parsing commit")?;
     let hex = oid.to_hex();
-
+    let expand_tabs = resolve_expand_tabs(args);
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = commit.message.lines().next().unwrap_or("");
         writeln!(out, "{} {}", &hex[..7], first_line)?;
@@ -229,7 +237,10 @@ fn show_commit(
             let author_name = extract_name(&commit.author);
             writeln!(out, "Author: {author_name}")?;
             writeln!(out)?;
-            for line in commit.message.lines().take(1) {
+            for line in format_pretty_message(&commit.message, expand_tabs, false)
+                .lines()
+                .take(1)
+            {
                 writeln!(out, "    {line}")?;
             }
             writeln!(out)?;
@@ -239,7 +250,7 @@ fn show_commit(
             writeln!(out, "Author: {}", format_ident_display(&commit.author))?;
             writeln!(out, "Commit: {}", format_ident_display(&commit.committer))?;
             writeln!(out)?;
-            for line in commit.message.lines() {
+            for line in format_pretty_message(&commit.message, expand_tabs, false).lines() {
                 writeln!(out, "    {line}")?;
             }
             writeln!(out)?;
@@ -255,7 +266,7 @@ fn show_commit(
             )?;
             writeln!(out, "CommitDate: {}", format_date(&commit.committer))?;
             writeln!(out)?;
-            for line in commit.message.lines() {
+            for line in format_pretty_message(&commit.message, expand_tabs, false).lines() {
                 writeln!(out, "    {line}")?;
             }
             writeln!(out)?;
@@ -266,7 +277,7 @@ fn show_commit(
             writeln!(out, "Author: {}", format_ident_display(&commit.author))?;
             writeln!(out, "Date:   {}", format_date(&commit.author))?;
             writeln!(out)?;
-            for line in commit.message.lines() {
+            for line in format_pretty_message(&commit.message, expand_tabs, false).lines() {
                 writeln!(out, "    {line}")?;
             }
             if let Some(note_data) = notes_map.get(oid) {
@@ -287,7 +298,7 @@ fn show_commit(
             let subject = commit.message.lines().next().unwrap_or("");
             writeln!(out, "Subject: [PATCH] {}", subject)?;
             writeln!(out)?;
-            for line in commit.message.lines() {
+            for line in format_pretty_message(&commit.message, expand_tabs, false).lines() {
                 writeln!(out, "{line}")?;
             }
             writeln!(out)?;
@@ -301,7 +312,7 @@ fn show_commit(
             writeln!(out, "author {}", commit.author)?;
             writeln!(out, "committer {}", commit.committer)?;
             writeln!(out)?;
-            for line in commit.message.lines() {
+            for line in format_pretty_message(&commit.message, expand_tabs, false).lines() {
                 writeln!(out, "    {line}")?;
             }
             writeln!(out)?;
@@ -499,6 +510,86 @@ fn show_commit(
     }
 
     Ok(())
+}
+
+/// Resolve effective tab expansion width for pretty-formatted message output.
+///
+/// `git show` defaults to expanding leading tabs in message lines to 8 spaces
+/// for most pretty formats, while keeping tabs for `raw` and `email`.
+fn resolve_expand_tabs(args: &Args) -> Option<usize> {
+    if args.no_expand_tabs {
+        return None;
+    }
+    if let Some(width) = args.expand_tabs {
+        return if width == 0 { None } else { Some(width) };
+    }
+
+    match args.format.as_deref() {
+        Some("raw") | Some("email") | Some("short") => None,
+        _ => Some(8),
+    }
+}
+
+/// Apply pretty-message tab expansion to commit message text.
+///
+/// When `indent_lines` is true, each line is prefixed with four spaces before
+/// optional tab expansion to match pretty formats such as `medium`/`full`.
+fn format_pretty_message(message: &str, expand_tabs: Option<usize>, indent_lines: bool) -> String {
+    let mut rendered_lines = Vec::new();
+
+    for line in message.lines() {
+        let mut rendered = String::new();
+        if indent_lines {
+            rendered.push_str("    ");
+        }
+        rendered.push_str(line);
+
+        if let Some(width) = expand_tabs {
+            rendered = expand_tabs_after_indent(&rendered, width);
+        }
+
+        rendered_lines.push(rendered);
+    }
+
+    rendered_lines.join("\n")
+}
+
+/// Expand horizontal tabs in the content part of a pretty message line.
+///
+/// The first four characters are treated as fixed pretty-indent and are not
+/// counted toward tab-stop calculations.
+fn expand_tabs_after_indent(line: &str, tab_width: usize) -> String {
+    if tab_width == 0 {
+        return line.to_owned();
+    }
+    let Some(content) = line.strip_prefix("    ") else {
+        return expand_tabs_preserving_columns(line, tab_width, 0);
+    };
+
+    let mut expanded = String::from("    ");
+    expanded.push_str(&expand_tabs_preserving_columns(content, tab_width, 0));
+    expanded
+}
+
+/// Expand tabs with classic fixed tab stops, preserving visual columns.
+fn expand_tabs_preserving_columns(input: &str, tab_width: usize, start_column: usize) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut column = start_column;
+
+    for ch in input.chars() {
+        if ch == '\t' {
+            let spaces = tab_width - (column % tab_width);
+            for _ in 0..spaces {
+                output.push(' ');
+            }
+            column += spaces;
+        } else {
+            output.push(ch);
+            column += 1;
+        }
+    }
+
+    output
 }
 
 /// Write a diffstat summary for the given diff entries.

@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-06
 
+- `./scripts/run-tests.sh t4213-log-tabexpand.sh`: 1/9 passing (baseline for newly claimed in-progress Diff target `t4213`).
+- `bash scripts/run-upstream-tests.sh t4213-log-tabexpand`: 1/9 passing.
+- `cargo build --release`: passes (rebuild after `show` pretty-format tab expansion option support and formatting updates).
+- `bash scripts/run-upstream-tests.sh t4213-log-tabexpand`: 9/9 passing in isolated upstream harness.
+- `./scripts/run-tests.sh t4213-log-tabexpand.sh`: 9/9 passing; `data/file-results.tsv` refreshed.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes outside scoped files reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `./scripts/run-tests.sh t4035-diff-quiet.sh`: 16/23 passing (baseline for newly claimed in-progress Diff target `t4035`).
 - `bash scripts/run-upstream-tests.sh t4035-diff-quiet`: 16/23 passing.
 - `cargo build --release`: passes (rebuild after `t4035` quiet/no-index behavior fixes in `diff` and `diff-tree`).
