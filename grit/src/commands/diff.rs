@@ -194,6 +194,10 @@ pub struct Args {
     #[arg(short = 'B', long = "break-rewrites")]
     pub break_rewrites: bool,
 
+    /// Omit preimage for deletes.
+    #[arg(short = 'D', long = "irreversible-delete")]
+    pub irreversible_delete: bool,
+
     /// Output a binary diff that can be applied with git-apply.
     #[arg(long = "binary")]
     pub binary: bool,
@@ -501,6 +505,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 "--summary" => args.summary = true,
                 "--quiet" | "-q" => args.quiet = true,
                 "--reverse" | "-R" => args.reverse = true,
+                "--irreversible-delete" | "-D" => args.irreversible_delete = true,
                 "--cached" | "--staged" => args.cached = true,
                 s if s.starts_with("--stat-width=") => {
                     if let Some(val) = s.strip_prefix("--stat-width=") {
@@ -552,6 +557,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 "--no-abbrev" => args.no_abbrev = true,
                 "--full-index" => args.full_index = true,
                 "--binary" => args.binary = true,
+                "--break-rewrites" | "-B" => args.break_rewrites = true,
                 s if s.starts_with("--abbrev=") => {
                     if let Some(val) = s.strip_prefix("--abbrev=") {
                         args.abbrev = val.parse().ok();
@@ -1158,6 +1164,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.inter_hunk_context,
                 args.binary,
                 args.break_rewrites,
+                args.irreversible_delete,
                 &src_prefix,
                 &dst_prefix,
             )?;
@@ -2520,6 +2527,7 @@ fn write_patch_with_prefix(
     _inter_hunk_context: Option<usize>,
     show_binary: bool,
     break_rewrites: bool,
+    irreversible_delete: bool,
     src_prefix: &str,
     dst_prefix: &str,
 ) -> Result<()> {
@@ -2560,6 +2568,10 @@ fn write_patch_with_prefix(
             dst_prefix,
             Some(repo),
         )?;
+
+        if irreversible_delete && entry.status == DiffStatus::Deleted {
+            continue;
+        }
 
         // Check for binary content
         let old_content_raw = read_content_raw(odb, &entry.old_oid);
@@ -2625,7 +2637,14 @@ fn write_patch_with_prefix(
             continue;
         }
 
-        let old_content = String::from_utf8_lossy(&old_content_raw).into_owned();
+        let patch_old_content_raw =
+            if irreversible_delete && break_rewrites && entry.status == DiffStatus::Modified {
+                Vec::new()
+            } else {
+                old_content_raw.clone()
+            };
+
+        let old_content = String::from_utf8_lossy(&patch_old_content_raw).into_owned();
         let new_content = String::from_utf8_lossy(&new_content_raw).into_owned();
 
         if word_diff {

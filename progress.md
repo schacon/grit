@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   103 |
-| In progress |     1 |
+| Completed   |   104 |
+| In progress |     0 |
 | Remaining   |   663 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4022-diff-rewrite` — 11/11 tests pass (`diff-files` now parses `-B/--break-rewrites` and `--summary` for rewrite summary output, `diff` now supports `-D/--irreversible-delete` and combines it with `-B` to suppress deleted preimages, and `commit` pathspec parsing now allows options after explicit paths)
 - `t4054-diff-bogus-tree` — 14/14 tests pass (`diff-tree`/`diff-index` now honor `-R/--reverse` by swapping diff sides and inverting statuses before output so raw reverse entries match upstream; patch rendering now validates that non-zero blob OIDs are readable and errors with `bogus object <oid>` when null/bogus tree entries are encountered, causing expected patch-mode failures instead of emitting bogus hunks)
 - `t4253-am-keep-cr-dos` — 7/7 tests pass (`am` now parses `--keep-cr` / `--no-keep-cr`, resolves `am.keepcr` with full git-boolean semantics, persists `keep-cr` across am session state, preserves CR bytes through mbox parsing when requested, strips CR in default/no-keep-cr paths, and normalizes CR-aware preimage/hunk matching in both direct apply and 3-way fallback including preimage OID validation)
 - `t4122-apply-symlink-inside` — 7/7 tests pass (`format-patch` now accepts and ignores `--binary` for compatibility with upstream setup invocations; `apply --index` now validates symlink preimages using symlink target bytes instead of file reads so symlink-to-directory paths no longer fail with `EISDIR`; hunk parsing now stops at format-patch signature separator `-- ` so trailer lines are not misinterpreted as removals; apply precheck now propagates path-existence updates to descendants and blocks patch paths that traverse beyond symbolic links, including symlinks introduced earlier within the same patch stream)
@@ -92,4 +93,4 @@
 
 ## What Remains
 
-1 test file is currently marked in progress and 663 remain pending. See `plan.md` for the full prioritized list.
+0 test files are currently marked in progress and 663 remain pending. See `plan.md` for the full prioritized list.

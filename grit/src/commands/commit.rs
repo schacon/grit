@@ -172,7 +172,7 @@ pub struct Args {
     pub reset_author: bool,
 
     /// Pathspec — files to include in the commit (stages them first).
-    #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
+    #[arg(allow_hyphen_values = false)]
     pub pathspec: Vec<String>,
 }
 

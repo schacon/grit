@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `t4022` rewrite/diff option handling fixes across `diff-files`, `diff`, and `commit` pathspec parsing).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4022-diff-rewrite.sh` (from `tests/`): 11/11 passing.
+- `./scripts/run-tests.sh t4022-diff-rewrite.sh`: 11/11 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4022-diff-rewrite`: 11/11 passing in isolated upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in files outside scope reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after `t4054` bogus-tree handling updates in `diff-tree`/`diff-index`).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4054-diff-bogus-tree.sh` (from `tests/`): 14/14 passing.
 - `./scripts/run-tests.sh t4054-diff-bogus-tree.sh`: 14/14 passing; `data/file-results.tsv` refreshed.

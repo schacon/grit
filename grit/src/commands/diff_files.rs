@@ -69,8 +69,10 @@ pub fn run(args: Args) -> Result<()> {
     if !options.quiet && !options.suppress_diff {
         match options.format {
             OutputFormat::Raw => {
-                for entry in &diff_entries {
-                    println!("{}", render_raw_entry(entry, &repo, options.abbrev)?);
+                if !options.summary {
+                    for entry in &diff_entries {
+                        println!("{}", render_raw_entry(entry, &repo, options.abbrev)?);
+                    }
                 }
             }
             OutputFormat::NameOnly => {
@@ -109,6 +111,9 @@ pub fn run(args: Args) -> Result<()> {
             OutputFormat::NumStat => {
                 print_numstat(&changes, &repo, &work_tree)?;
             }
+        }
+        if options.summary {
+            print_summary(&changes, &repo, &work_tree, options.break_rewrites)?;
         }
     }
 
@@ -168,6 +173,10 @@ struct Options {
     ignore_space_at_eol: bool,
     /// Ignore changes whose lines are all blank.
     ignore_blank_lines: bool,
+    /// Break complete rewrite into delete + add pair.
+    break_rewrites: bool,
+    /// Show condensed summary output.
+    summary: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -200,6 +209,8 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut ignore_all_space = false;
     let mut ignore_space_at_eol = false;
     let mut ignore_blank_lines = false;
+    let mut break_rewrites = false;
+    let mut summary = false;
     let mut abbrev: Option<usize> = None;
     let mut format = OutputFormat::Raw;
     let mut suppress_diff = false;
@@ -242,7 +253,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "--exit-code" => exit_code = true,
                 "-q" | "--quiet" => quiet = true,
                 "-R" => reverse = true,
+                "-B" | "--break-rewrites" => break_rewrites = true,
                 "-s" | "--no-patch" => suppress_diff = true,
+                "--summary" => summary = true,
                 "-C" | "--find-copies" => {
                     c_count += 1;
                     find_copies = true;
@@ -328,6 +341,8 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         ignore_all_space,
         ignore_space_at_eol,
         ignore_blank_lines,
+        break_rewrites,
+        summary,
     })
 }
 
@@ -903,6 +918,42 @@ fn print_numstat(changes: &[Change], repo: &Repository, work_tree: &Path) -> Res
         println!("{}\t{}\t{}", ins, del, change.path);
     }
     Ok(())
+}
+
+/// Print `--summary` output for `diff-files`.
+fn print_summary(
+    changes: &[Change],
+    repo: &Repository,
+    work_tree: &Path,
+    break_rewrites: bool,
+) -> Result<()> {
+    for change in changes {
+        match change.status {
+            'D' => {
+                println!(" delete mode {:06o} {}", change.old_mode, change.path);
+            }
+            'M' if break_rewrites => {
+                let old_bytes = load_old_bytes(change, repo)?;
+                let new_bytes = load_new_bytes(change, work_tree)?;
+                if let Some(dissimilarity) =
+                    compute_rewrite_dissimilarity_from_content(&old_bytes, &new_bytes)
+                {
+                    println!(" rewrite {} ({dissimilarity}%)", change.path);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Compute rewrite dissimilarity for `-B` metadata (`100 - similarity`).
+fn compute_rewrite_dissimilarity_from_content(old_data: &[u8], new_data: &[u8]) -> Option<u32> {
+    if old_data.is_empty() && new_data.is_empty() {
+        return None;
+    }
+    let similarity = grit_lib::diff::rename_similarity_score(old_data, new_data).min(100);
+    Some(100u32.saturating_sub(similarity))
 }
 
 /// Load old (index) and new (worktree) content for a change as UTF-8 strings.
