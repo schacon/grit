@@ -475,7 +475,7 @@ t2012-checkout-last	t2	yes	22	22	0	true	ok	0
 t2013-checkout-submodule	t2	yes	68	19	49	false	ok	0
 t2014-checkout-switch	t2	yes	4	4	0	true	ok	0
 t2015-checkout-unborn	t2	yes	6	4	2	false	ok	0
-t2016-checkout-patch	t2	yes	19	7	12	false	ok	0
+t2016-checkout-patch	t2	yes	19	19	0	true	ok	0
 t2017-checkout-orphan	t2	yes	13	12	1	false	ok	0
 t2018-checkout-branch	t2	yes	25	25	0	true	ok	0
 t2019-checkout-ambiguous-ref	t2	yes	9	9	0	true	ok	0
