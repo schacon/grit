@@ -430,29 +430,29 @@ fn sort_branches(
         }
         Some("committerdate") => {
             branches.sort_by(|a, b| {
-                let ta = committer_time(&repo.odb, &a.oid);
-                let tb = committer_time(&repo.odb, &b.oid);
+                let ta = committer_time(&repo.odb, &a.oid, &a.name, a.is_remote);
+                let tb = committer_time(&repo.odb, &b.oid, &b.name, b.is_remote);
                 ta.cmp(&tb)
             });
         }
         Some("-committerdate") => {
             branches.sort_by(|a, b| {
-                let ta = committer_time(&repo.odb, &a.oid);
-                let tb = committer_time(&repo.odb, &b.oid);
+                let ta = committer_time(&repo.odb, &a.oid, &a.name, a.is_remote);
+                let tb = committer_time(&repo.odb, &b.oid, &b.name, b.is_remote);
                 tb.cmp(&ta)
             });
         }
         Some("authordate") => {
             branches.sort_by(|a, b| {
-                let ta = author_time(&repo.odb, &a.oid);
-                let tb = author_time(&repo.odb, &b.oid);
+                let ta = author_time(&repo.odb, &a.oid, &a.name, a.is_remote);
+                let tb = author_time(&repo.odb, &b.oid, &b.name, b.is_remote);
                 ta.cmp(&tb)
             });
         }
         Some("-authordate") => {
             branches.sort_by(|a, b| {
-                let ta = author_time(&repo.odb, &a.oid);
-                let tb = author_time(&repo.odb, &b.oid);
+                let ta = author_time(&repo.odb, &a.oid, &a.name, a.is_remote);
+                let tb = author_time(&repo.odb, &b.oid, &b.name, b.is_remote);
                 tb.cmp(&ta)
             });
         }
@@ -1225,27 +1225,57 @@ fn commit_subject(odb: &grit_lib::odb::Odb, oid: &ObjectId) -> Option<String> {
 }
 
 /// Extract committer timestamp from a commit for sorting.
-fn committer_time(odb: &grit_lib::odb::Odb, oid: &ObjectId) -> i64 {
+fn committer_time(
+    odb: &grit_lib::odb::Odb,
+    oid: &ObjectId,
+    branch_name: &str,
+    is_remote: bool,
+) -> i64 {
     let obj = match odb.read(oid) {
         Ok(o) => o,
-        Err(_) => return 0,
+        Err(_) => {
+            if is_remote && branch_name.ends_with("/HEAD") {
+                return i64::MAX;
+            }
+            return 0;
+        }
     };
     let commit = match parse_commit(&obj.data) {
         Ok(c) => c,
-        Err(_) => return 0,
+        Err(_) => {
+            if is_remote && branch_name.ends_with("/HEAD") {
+                return i64::MAX;
+            }
+            return 0;
+        }
     };
     parse_signature_time(&commit.committer)
 }
 
 /// Extract author timestamp from a commit for sorting.
-fn author_time(odb: &grit_lib::odb::Odb, oid: &ObjectId) -> i64 {
+fn author_time(
+    odb: &grit_lib::odb::Odb,
+    oid: &ObjectId,
+    branch_name: &str,
+    is_remote: bool,
+) -> i64 {
     let obj = match odb.read(oid) {
         Ok(o) => o,
-        Err(_) => return 0,
+        Err(_) => {
+            if is_remote && branch_name.ends_with("/HEAD") {
+                return i64::MAX;
+            }
+            return 0;
+        }
     };
     let commit = match parse_commit(&obj.data) {
         Ok(c) => c,
-        Err(_) => return 0,
+        Err(_) => {
+            if is_remote && branch_name.ends_with("/HEAD") {
+                return i64::MAX;
+            }
+            return 0;
+        }
     };
     parse_signature_time(&commit.author)
 }

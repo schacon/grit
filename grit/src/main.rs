@@ -680,7 +680,11 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
     match ArgsWrapper::<T>::try_parse_from(&argv) {
         Ok(wrapper) => wrapper.inner,
         Err(e) => {
-            let _ = e.print();
+            let rendered = e.to_string().replace("Usage:", "usage:");
+            eprint!("{rendered}");
+            if !rendered.ends_with('\n') {
+                eprintln!();
+            }
             match e.kind() {
                 clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
                     std::process::exit(129)

@@ -63,6 +63,10 @@ pub struct Args {
     #[arg(long = "contains")]
     pub contains: Option<String>,
 
+    /// List only tags that do not contain the specified commit.
+    #[arg(long = "no-contains")]
+    pub no_contains: Option<String>,
+
     /// Verify a tag (GPG signature check).
     #[arg(short = 'v', long = "verify")]
     pub verify: bool,
@@ -123,6 +127,7 @@ pub fn run(args: Args) -> Result<()> {
             args.sort.as_deref(),
             args.ignore_case,
             args.contains.as_deref(),
+            args.no_contains.as_deref(),
             args.points_at.as_deref(),
         );
     }
@@ -310,6 +315,7 @@ fn list_tags(
     sort: Option<&str>,
     ignore_case: bool,
     contains: Option<&str>,
+    no_contains: Option<&str>,
     points_at: Option<&str>,
 ) -> Result<()> {
     let mut tags: Vec<(String, ObjectId)> = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
@@ -333,6 +339,13 @@ fn list_tags(
         let target =
             resolve_revision(repo, rev).with_context(|| format!("not a valid commit: '{rev}'"))?;
         tags.retain(|(_, tag_oid)| tag_contains(repo, tag_oid, &target));
+    }
+
+    // Filter by --no-contains
+    if let Some(rev) = no_contains {
+        let target =
+            resolve_revision(repo, rev).with_context(|| format!("not a valid commit: '{rev}'"))?;
+        tags.retain(|(_, tag_oid)| !tag_contains(repo, tag_oid, &target));
     }
 
     // Filter by --points-at

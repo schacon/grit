@@ -24,7 +24,7 @@ commit → check it off → move on.
 
 - [x] `t0081-find-pack` ████████████████████ 4/4 (0 left) — test `test-tool find-pack`
 - [x] `t0030-stripspace` ████████████████████ 30/30 (0 left) — git stripspace
-- [ ] `t0041-usage` ███████████████░░░░░ 12/16 (4 left) — Test commands behavior when given invalid argument value
+- [x] `t0041-usage` ████████████████████ 16/16 (0 left) — Test commands behavior when given invalid argument value
 - [ ] `t0004-unwritable` ███████████░░░░░░░░░ 5/9 (4 left) — detect unwritable repository and fail correctly
 - [ ] `t0031-lockfile-pid` ████████░░░░░░░░░░░░ 3/7 (4 left) — lock file PID info tests
 
