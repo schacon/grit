@@ -1,6 +1,7 @@
 #!/bin/sh
 # Minimal test-tool stub for grit tests
 # Implements the most-used subcommands from git's test-tool
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 case "$1" in
   chmtime)
     shift
@@ -165,6 +166,9 @@ case "$1" in
       }
     ' "$_fixture"
     exit 1 ;;
+  find-pack)
+    shift
+    exec "$SCRIPT_DIR/../target/release/grit" test-tool find-pack "$@" ;;
   *)
     echo "test-tool: unknown subcommand '$1'" >&2
     exit 1 ;;

@@ -22,7 +22,7 @@ commit → check it off → move on.
 - [x] `t0007-git-var` ████████████████████ 27/27 (0 left) — basic sanity checks for git var
 - [x] `t0009-git-dir-validation` ████████████████████ 6/6 (0 left) — setup: validation of .git file/directory types
 
-- [ ] `t0081-find-pack` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — test `test-tool find-pack`
+- [x] `t0081-find-pack` ████████████████████ 4/4 (0 left) — test `test-tool find-pack`
 - [ ] `t0030-stripspace` █████████████████░░░ 26/30 (4 left) — git stripspace
 - [ ] `t0041-usage` ███████████████░░░░░ 12/16 (4 left) — Test commands behavior when given invalid argument value
 - [ ] `t0004-unwritable` ███████████░░░░░░░░░ 5/9 (4 left) — detect unwritable repository and fail correctly

@@ -47,7 +47,7 @@ t0068-for-each-repo	yes	5	1	4	ok	1	5	0
 t0070-fundamental	yes	11	1	10	ok	1	11	0
 t0071-sort	yes	1	1	0	ok	1	1	0
 t0080-unit-test-output	yes	1	1	0	ok	1	1	0
-t0081-find-pack	yes	4	1	3	ok	1	4	0
+t0081-find-pack	yes	4	4	0	ok	4	4	0
 t0090-cache-tree	yes	22	0	22	ok	0	22	0
 t0091-bugreport	yes	13	5	8	ok	5	13	0
 t0092-diagnose	yes	4	4	0	ok	4	4	0

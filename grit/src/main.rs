@@ -420,6 +420,94 @@ fn run_test_tool_revision_walking(rest: &[String]) -> Result<()> {
     }
 }
 
+fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
+    fn usage() -> anyhow::Error {
+        anyhow::anyhow!("usage: test-tool find-pack [--check-count <n>] <object>")
+    }
+
+    let mut check_count: Option<usize> = None;
+    let mut object_spec: Option<&str> = None;
+    let mut i = 1usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if arg == "-c" || arg == "--check-count" {
+            i += 1;
+            let value = rest.get(i).ok_or_else(usage)?;
+            check_count = Some(value.parse::<usize>().map_err(|_| usage())?);
+        } else if let Some(value) = arg.strip_prefix("--check-count=") {
+            check_count = Some(value.parse::<usize>().map_err(|_| usage())?);
+        } else if arg.starts_with('-') {
+            return Err(usage());
+        } else if object_spec.is_none() {
+            object_spec = Some(arg);
+        } else {
+            return Err(usage());
+        }
+        i += 1;
+    }
+
+    let object_spec = object_spec.ok_or_else(usage)?;
+    let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| "/usr/bin/git".into());
+
+    let rev_parse = ProcessCommand::new(&git_bin)
+        .arg("rev-parse")
+        .arg("--verify")
+        .arg(object_spec)
+        .output()?;
+    if !rev_parse.status.success() {
+        std::process::exit(1);
+    }
+    let oid = String::from_utf8_lossy(&rev_parse.stdout).trim().to_owned();
+    if oid.is_empty() {
+        std::process::exit(1);
+    }
+
+    let pack_dir = std::path::Path::new(".git").join("objects").join("pack");
+    let mut packs: Vec<String> = Vec::new();
+    if pack_dir.is_dir() {
+        let mut entries = fs::read_dir(&pack_dir)?
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("idx"))
+            .collect::<Vec<_>>();
+        entries.sort();
+
+        for idx_path in entries {
+            let file = std::fs::File::open(&idx_path)?;
+            let output = ProcessCommand::new(&git_bin)
+                .arg("show-index")
+                .stdin(Stdio::from(file))
+                .output()?;
+            if !output.status.success() {
+                continue;
+            }
+
+            let text = String::from_utf8_lossy(&output.stdout);
+            let found = text.lines().any(|line| {
+                let mut parts = line.split_whitespace();
+                let _offset = parts.next();
+                parts.next() == Some(oid.as_str())
+            });
+            if found {
+                let pack_path = idx_path.with_extension("pack");
+                packs.push(pack_path.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    if let Some(expected) = check_count {
+        if packs.len() == expected {
+            return Ok(());
+        }
+        std::process::exit(1);
+    }
+
+    for pack in packs {
+        println!("{pack}");
+    }
+    Ok(())
+}
+
 /// Global options parsed from argv before the subcommand.
 #[derive(Default)]
 struct GlobalOpts {
@@ -1729,6 +1817,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "crontab" => run_test_tool_crontab(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
                 "revision-walking" => run_test_tool_revision_walking(rest),
+                "find-pack" => run_test_tool_find_pack(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
