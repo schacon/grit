@@ -333,6 +333,13 @@ impl FilePatch {
                 .as_deref()
                 .filter(|p| *p != "/dev/null")
                 .or(self.effective_path())
+        } else if let (Some(old), Some(new)) = (self.old_path.as_deref(), self.new_path.as_deref())
+        {
+            if old != "/dev/null" && new != "/dev/null" && old != new {
+                Some(old)
+            } else {
+                self.effective_path()
+            }
         } else {
             self.effective_path()
         }

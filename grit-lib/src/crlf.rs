@@ -163,6 +163,17 @@ pub fn load_gitattributes(work_tree: &Path) -> Vec<AttrRule> {
     rules
 }
 
+/// Parse gitattributes content into attribute rules.
+///
+/// This is useful when attributes are sourced from non-worktree inputs
+/// (for example, tree objects selected by `--attr-source`).
+#[must_use]
+pub fn parse_gitattributes_content(content: &str) -> Vec<AttrRule> {
+    let mut rules = Vec::new();
+    parse_gitattributes(content, &mut rules);
+    rules
+}
+
 /// Load .gitattributes from the index (for use during checkout when
 /// the worktree file may not yet exist).
 pub fn load_gitattributes_from_index(

@@ -1614,9 +1614,37 @@ pub fn unified_diff_with_prefix_and_funcname(
     dst_prefix: &str,
     funcname_matcher: Option<&FuncnameMatcher>,
 ) -> String {
+    unified_diff_with_prefix_and_funcname_and_algorithm(
+        old_content,
+        new_content,
+        old_path,
+        new_path,
+        context_lines,
+        src_prefix,
+        dst_prefix,
+        funcname_matcher,
+        similar::Algorithm::Myers,
+    )
+}
+
+/// Same as [`unified_diff_with_prefix_and_funcname`] but allows callers to
+/// choose the line diff algorithm used for hunk generation.
+pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
+    old_content: &str,
+    new_content: &str,
+    old_path: &str,
+    new_path: &str,
+    context_lines: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+    funcname_matcher: Option<&FuncnameMatcher>,
+    algorithm: similar::Algorithm,
+) -> String {
     use similar::TextDiff;
 
-    let diff = TextDiff::from_lines(old_content, new_content);
+    let diff = TextDiff::configure()
+        .algorithm(algorithm)
+        .diff_lines(old_content, new_content);
 
     let mut output = String::new();
     if old_path == "/dev/null" {

@@ -21,7 +21,7 @@ use grit_lib::diff::{
 };
 use grit_lib::error::Error;
 use grit_lib::index::Index;
-use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
@@ -107,6 +107,246 @@ impl WhitespaceMode {
 
         s
     }
+}
+
+/// Effective line diff algorithm selection used for patch generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiffAlgorithmChoice {
+    Myers,
+    Patience,
+}
+
+impl DiffAlgorithmChoice {
+    /// Convert to the `similar` crate's algorithm enum.
+    fn to_similar(self) -> similar::Algorithm {
+        match self {
+            DiffAlgorithmChoice::Myers => similar::Algorithm::Myers,
+            DiffAlgorithmChoice::Patience => similar::Algorithm::Patience,
+        }
+    }
+}
+
+/// Parse a git diff algorithm name.
+///
+/// Git supports `myers`, `minimal`, `patience`, and `histogram`.
+/// This implementation maps `minimal` to Myers and `histogram` to Patience.
+fn parse_diff_algorithm_choice(name: &str) -> Option<DiffAlgorithmChoice> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "myers" | "default" | "minimal" => Some(DiffAlgorithmChoice::Myers),
+        "patience" | "histogram" => Some(DiffAlgorithmChoice::Patience),
+        _ => None,
+    }
+}
+
+/// Determine the last CLI-selected non-anchored diff algorithm.
+///
+/// We scan raw argv so ordering semantics match git (last option wins),
+/// including the `--diff-algorithm=<name>` and `--diff-algorithm <name>` forms.
+fn cli_diff_algorithm_choice(raw_args: &[String], args: &Args) -> Option<DiffAlgorithmChoice> {
+    let mut last: Option<(usize, DiffAlgorithmChoice)> = None;
+    let mut i = 1usize;
+
+    while i < raw_args.len() {
+        let arg = &raw_args[i];
+        let update = |pos: usize,
+                      value: DiffAlgorithmChoice,
+                      slot: &mut Option<(usize, DiffAlgorithmChoice)>| {
+            match slot {
+                Some((prev_pos, _)) if *prev_pos > pos => {}
+                _ => *slot = Some((pos, value)),
+            }
+        };
+
+        if arg == "--patience" {
+            update(i, DiffAlgorithmChoice::Patience, &mut last);
+        } else if arg == "--histogram" {
+            update(i, DiffAlgorithmChoice::Patience, &mut last);
+        } else if arg == "--minimal" {
+            update(i, DiffAlgorithmChoice::Myers, &mut last);
+        } else if let Some(value) = arg.strip_prefix("--diff-algorithm=") {
+            if let Some(choice) = parse_diff_algorithm_choice(value) {
+                update(i, choice, &mut last);
+            }
+        } else if arg == "--diff-algorithm" {
+            if let Some(value) = raw_args.get(i + 1) {
+                if let Some(choice) = parse_diff_algorithm_choice(value) {
+                    update(i + 1, choice, &mut last);
+                }
+                i += 1;
+            }
+        }
+
+        i += 1;
+    }
+
+    if let Some((_, choice)) = last {
+        return Some(choice);
+    }
+
+    if let Some(ref name) = args.diff_algorithm {
+        return parse_diff_algorithm_choice(name);
+    }
+    if args.patience || args.histogram {
+        return Some(DiffAlgorithmChoice::Patience);
+    }
+    if args.minimal {
+        return Some(DiffAlgorithmChoice::Myers);
+    }
+    None
+}
+
+/// Resolve the effective algorithm for a specific path.
+///
+/// Precedence:
+/// 1. Explicit CLI algorithm options.
+/// 2. `diff.<driver>.algorithm` from attributes + config.
+/// 3. `diff.algorithm` from config.
+/// 4. Myers default.
+fn resolve_diff_algorithm_for_path(
+    cli_choice: Option<DiffAlgorithmChoice>,
+    config: Option<&grit_lib::config::ConfigSet>,
+    rules: Option<&[grit_lib::crlf::AttrRule]>,
+    work_tree: Option<&Path>,
+    path: &str,
+) -> DiffAlgorithmChoice {
+    if let Some(choice) = cli_choice {
+        return choice;
+    }
+
+    let Some(config) = config else {
+        return DiffAlgorithmChoice::Myers;
+    };
+
+    if let Some(rules) = rules {
+        let attrs_path = path_for_attr_lookup_opt(path, work_tree);
+        let attrs = grit_lib::crlf::get_file_attrs(rules, &attrs_path, config);
+        if let Some(driver) = attrs.diff_driver {
+            if let Some(value) = config.get(&format!("diff.{driver}.algorithm")) {
+                if let Some(choice) = parse_diff_algorithm_choice(&value) {
+                    return choice;
+                }
+            }
+        }
+    }
+
+    if let Some(value) = config.get("diff.algorithm") {
+        if let Some(choice) = parse_diff_algorithm_choice(&value) {
+            return choice;
+        }
+    }
+
+    DiffAlgorithmChoice::Myers
+}
+
+/// Resolve an optional tree object to use as the source for gitattributes.
+///
+/// Precedence matches git's attribute-source behavior:
+/// `GIT_ATTR_SOURCE` (set by `--attr-source`) first, then `attr.tree`.
+fn resolve_attr_source_tree(
+    repo: &Repository,
+    config: Option<&grit_lib::config::ConfigSet>,
+) -> Result<Option<ObjectId>> {
+    if let Ok(raw) = std::env::var("GIT_ATTR_SOURCE") {
+        if raw.trim().is_empty() {
+            bail!("no attribute source given for --attr-source");
+        }
+        let oid =
+            resolve_revision(repo, raw.trim()).context("bad --attr-source or GIT_ATTR_SOURCE")?;
+        let obj = repo
+            .odb
+            .read(&oid)
+            .context("bad --attr-source or GIT_ATTR_SOURCE")?;
+        return match obj.kind {
+            ObjectKind::Tree => Ok(Some(oid)),
+            ObjectKind::Commit => parse_commit(&obj.data)
+                .map(|commit| Some(commit.tree))
+                .map_err(Into::into),
+            _ => bail!("bad --attr-source or GIT_ATTR_SOURCE"),
+        };
+    }
+
+    if let Some(cfg) = config {
+        if let Some(raw) = cfg.get("attr.tree") {
+            if raw.trim().is_empty() {
+                return Ok(None);
+            }
+            let oid = resolve_revision(repo, raw.trim()).context("bad attr.tree")?;
+            let obj = repo.odb.read(&oid).context("bad attr.tree")?;
+            return match obj.kind {
+                ObjectKind::Tree => Ok(Some(oid)),
+                ObjectKind::Commit => parse_commit(&obj.data)
+                    .map(|commit| Some(commit.tree))
+                    .map_err(Into::into),
+                _ => bail!("bad attr.tree"),
+            };
+        }
+    }
+
+    Ok(None)
+}
+
+/// Read a blob from a specific tree by relative path.
+fn read_blob_from_tree_path(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    rel_path: &str,
+) -> Result<Option<Vec<u8>>> {
+    let mut current_tree = *tree_oid;
+    let mut components = rel_path.split('/').filter(|c| !c.is_empty()).peekable();
+    if components.peek().is_none() {
+        return Ok(None);
+    }
+
+    while let Some(component) = components.next() {
+        let tree_obj = repo.odb.read(&current_tree)?;
+        if tree_obj.kind != ObjectKind::Tree {
+            return Ok(None);
+        }
+        let entries = parse_tree(&tree_obj.data)?;
+        let Some(entry) = entries
+            .into_iter()
+            .find(|entry| entry.name.as_slice() == component.as_bytes())
+        else {
+            return Ok(None);
+        };
+
+        if components.peek().is_some() {
+            if entry.mode != 0o040000 {
+                return Ok(None);
+            }
+            current_tree = entry.oid;
+            continue;
+        }
+
+        let obj = repo.odb.read(&entry.oid)?;
+        if obj.kind != ObjectKind::Blob {
+            return Ok(None);
+        }
+        return Ok(Some(obj.data));
+    }
+
+    Ok(None)
+}
+
+/// Load diff attribute rules from attr-source tree or worktree.
+fn load_diff_attr_rules(
+    repo: &Repository,
+    config: Option<&grit_lib::config::ConfigSet>,
+    work_tree: Option<&Path>,
+) -> Result<Option<Vec<grit_lib::crlf::AttrRule>>> {
+    if let Some(attr_tree) = resolve_attr_source_tree(repo, config)? {
+        let content = read_blob_from_tree_path(repo, &attr_tree, ".gitattributes")?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default();
+        let rules = grit_lib::crlf::parse_gitattributes_content(&content);
+        return Ok(Some(rules));
+    }
+
+    if let Some(wt) = work_tree {
+        return Ok(Some(grit_lib::crlf::load_gitattributes(wt)));
+    }
+
+    Ok(None)
 }
 
 /// Arguments for `grit diff`.
@@ -1103,6 +1343,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let context_lines = resolve_patch_context_lines(&repo, args.unified)?;
+    let cli_algorithm_choice = cli_diff_algorithm_choice(&raw_args, &args);
 
     if !args.quiet {
         if args.shortstat {
@@ -1167,6 +1408,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.irreversible_delete,
                 &src_prefix,
                 &dst_prefix,
+                cli_algorithm_choice,
             )?;
         }
     }
@@ -1302,24 +1544,55 @@ fn run_no_index(args: &Args) -> Result<()> {
     let path_a = Path::new(paths[0].as_str());
     let path_b = Path::new(paths[1].as_str());
 
+    let raw_args: Vec<String> = std::env::args().collect();
+    let cli_no_index_algorithm = cli_diff_algorithm_choice(&raw_args, args);
+    let mut no_index_algorithm = cli_no_index_algorithm.unwrap_or(DiffAlgorithmChoice::Myers);
     let mut no_index_funcname_matcher = None;
     if let Ok(repo) = Repository::discover(None) {
-        if let Some(work_tree) = repo.work_tree.as_deref() {
-            if let Some(err) = validate_funcname_patterns_for_no_index_paths(
-                &repo.git_dir,
-                work_tree,
-                paths[0],
-                paths[1],
+        let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+        let rules = match load_diff_attr_rules(&repo, config.as_ref(), repo.work_tree.as_deref()) {
+            Ok(rules) => rules,
+            Err(err) => {
+                eprintln!("error: {err}");
+                std::process::exit(128);
+            }
+        };
+
+        if let (Some(config), Some(rules), Some(work_tree)) =
+            (&config, &rules, repo.work_tree.as_deref())
+        {
+            if let Some(err) = validate_funcname_patterns_for_no_index_paths_with_rules(
+                config, rules, work_tree, paths[0], paths[1],
             ) {
                 eprintln!("error: {err}");
                 std::process::exit(128);
             }
-            match resolve_funcname_matcher_for_raw_path(&repo.git_dir, work_tree, paths[0]) {
+            let attrs_path = path_for_attr_lookup_opt(paths[0], Some(work_tree));
+            match resolve_funcname_matcher_for_path(config, rules, &attrs_path) {
                 Ok(matcher) => no_index_funcname_matcher = matcher,
                 Err(err) => {
                     eprintln!("error: {err}");
                     std::process::exit(128);
                 }
+            }
+        }
+
+        if cli_no_index_algorithm.is_none() {
+            no_index_algorithm = resolve_diff_algorithm_for_path(
+                None,
+                config.as_ref(),
+                rules.as_deref(),
+                repo.work_tree.as_deref(),
+                paths[0],
+            );
+            if no_index_algorithm == DiffAlgorithmChoice::Myers {
+                no_index_algorithm = resolve_diff_algorithm_for_path(
+                    None,
+                    config.as_ref(),
+                    rules.as_deref(),
+                    repo.work_tree.as_deref(),
+                    paths[1],
+                );
             }
         }
     }
@@ -1387,7 +1660,8 @@ fn run_no_index(args: &Args) -> Result<()> {
                 paths[0].to_string()
             };
             let total = adds + dels;
-            writeln!(out, " {} | {}", display, total)?;
+            let bar = format!("{}{}", "+".repeat(adds), "-".repeat(dels));
+            writeln!(out, " {} | {} {}", display, total, bar)?;
         }
         let mut summary = " 1 file changed".to_string();
         if adds > 0 {
@@ -1412,10 +1686,9 @@ fn run_no_index(args: &Args) -> Result<()> {
         &mut out, paths[0], paths[1], path_a, path_b, &data_a, &data_b,
     )?;
 
-    // Determine the effective diff algorithm: last-specified algorithm flag wins.
+    // Determine whether anchored mode is in effect.
     let use_anchored = if !args.anchored.is_empty() {
-        // Check if a non-anchored algorithm flag appears after --anchored in args
-        let raw_args: Vec<String> = std::env::args().collect();
+        // Check if a non-anchored algorithm flag appears after --anchored in args.
         let last_anchored_pos = raw_args.iter().rposition(|a| a.starts_with("--anchored"));
         let last_other_algo_pos = raw_args.iter().rposition(|a| {
             a == "--patience"
@@ -1431,6 +1704,7 @@ fn run_no_index(args: &Args) -> Result<()> {
     } else {
         false
     };
+
     let diff_output = if ws_mode.any() {
         no_index_unified_diff_with_ws_mode(
             &text_a,
@@ -1450,7 +1724,7 @@ fn run_no_index(args: &Args) -> Result<()> {
             &args.anchored,
         )
     } else {
-        grit_lib::diff::unified_diff_with_prefix_and_funcname(
+        grit_lib::diff::unified_diff_with_prefix_and_funcname_and_algorithm(
             &text_a,
             &text_b,
             paths[0],
@@ -1459,6 +1733,7 @@ fn run_no_index(args: &Args) -> Result<()> {
             "a/",
             "b/",
             no_index_funcname_matcher.as_ref(),
+            no_index_algorithm.to_similar(),
         )
     };
 
@@ -2029,22 +2304,20 @@ fn resolve_blob_spec(repo: &Repository, spec: &str) -> Result<Option<(ObjectId, 
 }
 
 /// Validate configured funcname patterns for the two `--no-index` paths.
-fn validate_funcname_patterns_for_no_index_paths(
-    git_dir: &Path,
+fn validate_funcname_patterns_for_no_index_paths_with_rules(
+    config: &grit_lib::config::ConfigSet,
+    rules: &[grit_lib::crlf::AttrRule],
     work_tree: &Path,
     path_a: &str,
     path_b: &str,
 ) -> Option<String> {
-    let config = grit_lib::config::ConfigSet::load(Some(git_dir), true).ok()?;
-    let rules = grit_lib::crlf::load_gitattributes(work_tree);
-
     for raw_path in [path_a, path_b] {
-        let attrs_path = path_for_attr_lookup(raw_path, work_tree);
-        let attrs = grit_lib::crlf::get_file_attrs(&rules, &attrs_path, &config);
+        let attrs_path = path_for_attr_lookup_opt(raw_path, Some(work_tree));
+        let attrs = grit_lib::crlf::get_file_attrs(rules, &attrs_path, config);
         let Some(driver) = attrs.diff_driver else {
             continue;
         };
-        if let Some(err) = invalid_funcname_pattern_for_driver(&config, &driver) {
+        if let Some(err) = invalid_funcname_pattern_for_driver(config, &driver) {
             return Some(err);
         }
     }
@@ -2058,6 +2331,16 @@ fn path_for_attr_lookup(path: &str, work_tree: &Path) -> String {
         return relative.to_string_lossy().into_owned();
     }
     path.to_owned()
+}
+
+/// Convert a path to the form used for `.gitattributes` lookups, optionally
+/// relative to a work tree.
+fn path_for_attr_lookup_opt(path: &str, work_tree: Option<&Path>) -> String {
+    if let Some(work_tree) = work_tree {
+        path_for_attr_lookup(path, work_tree)
+    } else {
+        path.to_owned()
+    }
 }
 
 /// Check for the specific git error: last funcname expression cannot be negated.
@@ -2087,18 +2370,6 @@ fn resolve_funcname_matcher_for_path(
     rel_path: &str,
 ) -> std::result::Result<Option<grit_lib::userdiff::FuncnameMatcher>, String> {
     grit_lib::userdiff::matcher_for_path(config, rules, rel_path)
-}
-
-fn resolve_funcname_matcher_for_raw_path(
-    git_dir: &Path,
-    work_tree: &Path,
-    raw_path: &str,
-) -> std::result::Result<Option<grit_lib::userdiff::FuncnameMatcher>, String> {
-    let config = grit_lib::config::ConfigSet::load(Some(git_dir), true)
-        .map_err(|e| format!("failed to read config: {e}"))?;
-    let rules = grit_lib::crlf::load_gitattributes(work_tree);
-    let attrs_path = path_for_attr_lookup(raw_path, work_tree);
-    resolve_funcname_matcher_for_path(&config, &rules, &attrs_path)
 }
 
 /// Filter diff entries to only those matching the given pathspecs.
@@ -2530,12 +2801,10 @@ fn write_patch_with_prefix(
     irreversible_delete: bool,
     src_prefix: &str,
     dst_prefix: &str,
+    cli_algorithm_choice: Option<DiffAlgorithmChoice>,
 ) -> Result<()> {
-    let funcname_context = work_tree.and_then(|wt| {
-        let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok()?;
-        let rules = grit_lib::crlf::load_gitattributes(wt);
-        Some((config, rules))
-    });
+    let patch_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let patch_rules = load_diff_attr_rules(repo, patch_config.as_ref(), work_tree)?;
 
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
@@ -2550,7 +2819,7 @@ fn write_patch_with_prefix(
         } else {
             new_path
         };
-        let funcname_matcher = if let Some((config, rules)) = &funcname_context {
+        let funcname_matcher = if let (Some(config), Some(rules)) = (&patch_config, &patch_rules) {
             match resolve_funcname_matcher_for_path(config, rules, entry.path()) {
                 Ok(matcher) => matcher,
                 Err(err) => bail!("{err}"),
@@ -2558,6 +2827,13 @@ fn write_patch_with_prefix(
         } else {
             None
         };
+        let algorithm = resolve_diff_algorithm_for_path(
+            cli_algorithm_choice,
+            patch_config.as_ref(),
+            patch_rules.as_deref(),
+            work_tree,
+            entry.path(),
+        );
 
         write_diff_header_with_prefix(
             out,
@@ -2594,16 +2870,18 @@ fn write_patch_with_prefix(
                     if let (Some(old_conv), Some(new_conv)) = (old_converted, new_converted) {
                         let old_text = String::from_utf8_lossy(&old_conv).into_owned();
                         let new_text = String::from_utf8_lossy(&new_conv).into_owned();
-                        let patch = grit_lib::diff::unified_diff_with_prefix_and_funcname(
-                            &old_text,
-                            &new_text,
-                            display_old,
-                            display_new,
-                            context_lines,
-                            src_prefix,
-                            dst_prefix,
-                            funcname_matcher.as_ref(),
-                        );
+                        let patch =
+                            grit_lib::diff::unified_diff_with_prefix_and_funcname_and_algorithm(
+                                &old_text,
+                                &new_text,
+                                display_old,
+                                display_new,
+                                context_lines,
+                                src_prefix,
+                                dst_prefix,
+                                funcname_matcher.as_ref(),
+                                algorithm.to_similar(),
+                            );
                         let patch = if suppress_blank_empty {
                             strip_blank_context_trailing_space(&patch)
                         } else {
@@ -2666,7 +2944,7 @@ fn write_patch_with_prefix(
                 write!(out, "{patch}")?;
             }
         } else {
-            let patch = grit_lib::diff::unified_diff_with_prefix_and_funcname(
+            let patch = grit_lib::diff::unified_diff_with_prefix_and_funcname_and_algorithm(
                 &old_content,
                 &new_content,
                 display_old,
@@ -2675,6 +2953,7 @@ fn write_patch_with_prefix(
                 src_prefix,
                 dst_prefix,
                 funcname_matcher.as_ref(),
+                algorithm.to_similar(),
             );
             let patch = if suppress_blank_empty {
                 strip_blank_context_trailing_space(&patch)

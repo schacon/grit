@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `t4033` patience/attr-source/apply-preimage fixes in `diff`, `apply`, and diff helper APIs).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4033-diff-patience.sh` (from `tests/`): 11/11 passing.
+- `./scripts/run-tests.sh t4033-diff-patience.sh`: 11/11 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4033-diff-patience`: 11/11 passing in isolated upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in files outside scope reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after `t4022` rewrite/diff option handling fixes across `diff-files`, `diff`, and `commit` pathspec parsing).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4022-diff-rewrite.sh` (from `tests/`): 11/11 passing.
 - `./scripts/run-tests.sh t4022-diff-rewrite.sh`: 11/11 passing; `data/file-results.tsv` refreshed.
