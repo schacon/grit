@@ -213,16 +213,7 @@ impl Repository {
         let ceiling_dirs = parse_ceiling_directories();
 
         let mut current = start.as_path();
-        let mut first = true;
         loop {
-            // On the first iteration we always check the starting directory.
-            // On subsequent iterations, check whether this parent directory is
-            // blocked by a ceiling entry before probing for .git.
-            if !first && is_ceiling_blocked(current, &ceiling_dirs) {
-                break;
-            }
-            first = false;
-
             if let Some(DiscoveredAt { mut repo, gitfile }) = try_open_at(current)? {
                 if let Some(ref wt) = env_work_tree {
                     repo.work_tree = Some(wt.canonicalize().unwrap_or_else(|_| wt.clone()));
@@ -254,6 +245,13 @@ impl Repository {
                     )?;
                 }
                 return Ok(repo);
+            }
+            // Match Git: `GIT_CEILING_DIRECTORIES` marks directories above which we do not
+            // walk, but the ceiling directory itself is still probed. Stopping *before*
+            // trying the ceiling (our previous behaviour) skipped nested repos under a
+            // ceiling path (e.g. trash at `tests/trash.t*` with ceiling `tests/`).
+            if discovery_hit_ceiling(current, &ceiling_dirs) {
+                break;
             }
             match current.parent() {
                 Some(p) => current = p,
@@ -1933,32 +1931,16 @@ fn parse_ceiling_directories() -> Vec<PathBuf> {
         .collect()
 }
 
-/// Check whether `dir` is blocked by any ceiling directory.
+/// True when upward discovery must stop after probing `dir` (no repo found there).
 ///
-/// A ceiling directory `C` prevents looking at `C` itself and any of its
-/// ancestors during the upward walk.  Directories strictly below `C` are
-/// not blocked — i.e. if `dir` is a child of `C`, the walk may still look
-/// there.
-///
-/// In path terms: `dir` is blocked when the ceiling IS `dir` or IS a
-/// descendant of `dir` (meaning `ceil.starts_with(dir)`).
-fn is_ceiling_blocked(dir: &Path, ceilings: &[PathBuf]) -> bool {
+/// Git stops the walk once the current directory is one of the ceiling paths:
+/// that directory was already checked; parents are not visited.
+fn discovery_hit_ceiling(dir: &Path, ceilings: &[PathBuf]) -> bool {
     if ceilings.is_empty() {
         return false;
     }
-    // Canonicalize `dir` for reliable comparison; if it fails (e.g. the path
-    // doesn't exist) fall back to the raw path.
     let canon = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-    for ceil in ceilings {
-        // Block when the walk has reached exactly the ceiling directory.
-        // Git's semantics: the ceiling prevents looking at the ceiling
-        // itself and anything above it.  Since we walk upward, once we hit
-        // the ceiling we stop.
-        if canon == *ceil {
-            return true;
-        }
-    }
-    false
+    ceilings.contains(&canon)
 }
 
 /// Validate the repository format version from config text.

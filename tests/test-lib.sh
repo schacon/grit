@@ -94,6 +94,9 @@ BIN_DIRECTORY="${TEST_DIRECTORY}/bin.${_test_basename}"
 TEST_RESULTS_DIR="${TEST_DIRECTORY}/test-results"
 
 . "$TEST_DIRECTORY"/test-lib-harness.sh
+# Upstream git/t/test-lib.sh sources test-lib-functions.sh for helpers such as
+# `test_set_magic_mtime` / `test_is_magic_mtime` (t2108, t7508, …).
+. "$TEST_DIRECTORY"/test-lib-functions.sh
 init_test_harness_options "$@"
 TEST_NAME="$_test_basename"
 TEST_NUMBER="${TEST_NAME%%-*}"
