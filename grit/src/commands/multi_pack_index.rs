@@ -45,6 +45,12 @@ pub struct WriteArgs {
     /// Write placeholder bitmap sidecar (compat with Git `--bitmap`).
     #[arg(long)]
     pub bitmap: bool,
+    /// Preferred pack basename (`pack-<hash>.idx` or `.pack`); RIDX position 0 in the MIDX.
+    #[arg(long = "preferred-pack", value_name = "FILE")]
+    pub preferred_pack: Option<String>,
+    /// Read `pack-*.idx` basenames from stdin (one per line) to include in order.
+    #[arg(long = "stdin-packs")]
+    pub stdin_packs: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -102,18 +108,36 @@ pub fn run_from_argv(argv: &[String]) -> Result<()> {
         "write" => {
             let mut incremental = false;
             let mut bitmap = false;
-            for a in rest.iter().skip(1) {
-                match a.as_str() {
+            let mut preferred_pack = None;
+            let mut stdin_packs = false;
+            let mut i = 1usize;
+            while i < rest.len() {
+                let a = rest[i].as_str();
+                match a {
                     "--incremental" => incremental = true,
                     "--bitmap" => bitmap = true,
+                    "--stdin-packs" => stdin_packs = true,
+                    _ if a.starts_with("--preferred-pack=") => {
+                        preferred_pack = Some(a["--preferred-pack=".len()..].to_string());
+                    }
+                    "--preferred-pack" => {
+                        let Some(v) = rest.get(i + 1) else {
+                            bail!("--preferred-pack requires a value");
+                        };
+                        preferred_pack = Some(v.clone());
+                        i += 1;
+                    }
                     other => bail!("unsupported multi-pack-index write option: {other}"),
                 }
+                i += 1;
             }
             cmd_write(
                 &repo,
                 &WriteArgs {
                     incremental,
                     bitmap,
+                    preferred_pack,
+                    stdin_packs,
                 },
             )
         }
@@ -154,10 +178,27 @@ fn pack_dir(repo: &Repository) -> PathBuf {
 
 fn cmd_write(repo: &Repository, args: &WriteArgs) -> Result<()> {
     let write_rev = std::env::var("GIT_TEST_MIDX_WRITE_REV").ok().as_deref() == Some("1");
+    let pack_names_subset_ordered = if args.stdin_packs {
+        use std::io::BufRead;
+        let stdin = std::io::stdin();
+        let mut lines = Vec::new();
+        for line in stdin.lock().lines() {
+            let line = line.context("read stdin for multi-pack-index --stdin-packs")?;
+            let t = line.trim();
+            if !t.is_empty() {
+                lines.push(t.to_string());
+            }
+        }
+        Some(lines)
+    } else {
+        None
+    };
     write_multi_pack_index_with_options(
         &pack_dir(repo),
         &WriteMultiPackIndexOptions {
             preferred_pack_idx: None,
+            preferred_pack_name: args.preferred_pack.clone(),
+            pack_names_subset_ordered,
             write_bitmap_placeholders: args.bitmap,
             incremental: args.incremental,
             write_rev_placeholder: write_rev,

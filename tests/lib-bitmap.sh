@@ -3,8 +3,8 @@
 
 . "$TEST_DIRECTORY"/lib-midx.sh
 
-# Upstream-style `test_commit_bulk` (fast-import); overrides test-lib.sh stub.
-. "$TEST_DIRECTORY"/test-lib-commit-bulk.sh
+# `test_commit_bulk` in test-lib.sh ends with `git repack -a -d` so bulk-created
+# objects are packed (matches Git fast-import keeping a pack when over unpacklimit).
 
 objdir=.git/objects
 midx=$objdir/pack/multi-pack-index

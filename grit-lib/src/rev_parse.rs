@@ -731,6 +731,15 @@ fn resolve_revision_impl(
             .map_err(|_| Error::InvalidRef("AUTO_MERGE: invalid object id".to_owned()));
     }
 
+    // `refs/...` spelled in full (e.g. `refs/tags/other`): resolve as a ref before any
+    // treeish / DWIM path logic so a worktree path named `other` cannot shadow `refs/tags/other`
+    // (`git rev-parse refs/tags/other`, t5332).
+    if spec.starts_with("refs/") && !spec.contains(':') {
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, spec) {
+            return Ok(oid);
+        }
+    }
+
     // Handle A...B (symmetric difference / merge-base)
     // Also handles A... (implies A...HEAD)
     if let Some(idx) = spec.find("...") {
@@ -1628,6 +1637,28 @@ fn resolve_base(
         (Some(h), _) => return Ok(h),
         (None, Some(t)) => return Ok(t),
         (None, None) => {}
+    }
+
+    // `rev-parse` / `pack-objects --revs`: when `spec` is a single path component and a ref of
+    // that basename exists (`refs/tags/A` vs worktree file `A.t`), prefer the ref over index
+    // DWIM (matches Git; t5332).
+    if !spec.contains('/')
+        && !spec.contains(':')
+        && !spec.starts_with('.')
+        && spec != "HEAD"
+        && spec.len() <= 255
+    {
+        let mut ref_match: Option<ObjectId> = None;
+        for prefix in ["refs/heads/", "refs/tags/", "refs/remotes/", "refs/notes/"] {
+            let full = format!("{prefix}{spec}");
+            if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &full) {
+                ref_match = Some(oid);
+                break;
+            }
+        }
+        if let Some(oid) = ref_match {
+            return Ok(oid);
+        }
     }
     for candidate in &[format!("refs/remotes/{spec}"), format!("refs/notes/{spec}")] {
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, candidate) {

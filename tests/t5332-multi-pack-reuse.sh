@@ -17,6 +17,22 @@ export GIT_TEST_PACK_PATH_WALK
 objdir=.git/objects
 packdir=$objdir/pack
 
+# Portable `test_export` for dash/Linux (no BSD `sed -i`); keeps `base`/`delta` for later cases.
+t5332_export_vars () {
+	_ef="$TRASH_DIRECTORY/.test-exports"
+	for _var in "$@"; do
+		_val=
+		eval "_val=\"\$$_var\""
+		if test -f "$_ef"; then
+			_tmp="$_ef.tmp.$$"
+			grep -v "^${_var}=" "$_ef" >"$_tmp" 2>/dev/null || : >"$_tmp"
+			mv "$_tmp" "$_ef"
+		fi
+		_escaped=$(printf '%s' "$_val" | sed "s/'/'\\\\''/g")
+		printf "%s='%s'\n" "$_var" "$_escaped" >>"$_ef"
+	done
+}
+
 test_pack_reused () {
 	test_trace2_data pack-objects pack-reused "$1"
 }
@@ -99,12 +115,8 @@ test_expect_success 'reuse all objects from subset of bitmapped packs' '
 
 	git multi-pack-index write --bitmap &&
 
-	cat >in <<-EOF &&
-	$(git rev-parse C)
-	^$(git rev-parse A)
-	EOF
-
-	test_pack_objects_reused 6 2 <in
+	{ git rev-parse refs/tags/C && printf "^" && git rev-parse refs/tags/A && printf "\n"; } >t5332.in &&
+	test_pack_objects_reused 6 2 <t5332.in
 '
 
 test_expect_success 'reuse all objects from all packs' '
@@ -120,11 +132,13 @@ test_expect_success 'reuse objects from first pack with middle gap' '
 	# Set "pack.window" to zero to ensure that we do not create any
 	# deltas, which could alter the amount of pack reuse we perform
 	# (if, for e.g., we are not sending one or more bases).
-	D="$(git -c pack.window=0 pack-objects --all --unpacked $packdir/pack)" &&
+	# Use a distinct variable name: `D` is also the tag for commit D; overwriting it breaks
+	# `git rev-parse D` in the heredoc below.
+	INC_PACK="$(git -c pack.window=0 pack-objects --all --unpacked $packdir/pack)" &&
 
-	d_pos="$(pack_position $(git rev-parse D) <$packdir/pack-$D.idx)" &&
-	e_pos="$(pack_position $(git rev-parse E) <$packdir/pack-$D.idx)" &&
-	f_pos="$(pack_position $(git rev-parse F) <$packdir/pack-$D.idx)" &&
+	d_pos="$(pack_position $(git rev-parse refs/tags/D) <$packdir/pack-$INC_PACK.idx)" &&
+	e_pos="$(pack_position $(git rev-parse refs/tags/E) <$packdir/pack-$INC_PACK.idx)" &&
+	f_pos="$(pack_position $(git rev-parse refs/tags/F) <$packdir/pack-$INC_PACK.idx)" &&
 
 	# commits F, E, and D, should appear in that order at the
 	# beginning of the pack
@@ -134,14 +148,10 @@ test_expect_success 'reuse objects from first pack with middle gap' '
 	# Ensure that the pack we are constructing sorts ahead of any
 	# other packs in lexical/bitmap order by choosing it as the
 	# preferred pack.
-	git multi-pack-index write --bitmap --preferred-pack="pack-$D.idx" &&
+	git multi-pack-index write --bitmap --preferred-pack="pack-$INC_PACK.idx" &&
 
-	cat >in <<-EOF &&
-	$(git rev-parse E)
-	^$(git rev-parse D)
-	EOF
-
-	test_pack_objects_reused 3 1 <in
+	{ git rev-parse refs/tags/E && printf "^" && git rev-parse refs/tags/D && printf "\n"; } >t5332.in &&
+	test_pack_objects_reused 3 1 <t5332.in
 '
 
 test_expect_success 'reuse objects from middle pack with middle gap' '
@@ -150,14 +160,12 @@ test_expect_success 'reuse objects from middle pack with middle gap' '
 	# Ensure that the pack we are constructing sort into any
 	# position *but* the first one, by choosing a different pack as
 	# the preferred one.
-	git multi-pack-index write --bitmap --preferred-pack="pack-$A.idx" &&
+	oldest_pack_idx=$(ls -t $packdir/pack-*.idx | tail -n1) &&
+	git multi-pack-index write --bitmap \
+		--preferred-pack="$(basename "$oldest_pack_idx")" &&
 
-	cat >in <<-EOF &&
-	$(git rev-parse E)
-	^$(git rev-parse D)
-	EOF
-
-	test_pack_objects_reused 3 1 <in
+	{ git rev-parse refs/tags/E && printf "^" && git rev-parse refs/tags/D && printf "\n"; } >t5332.in &&
+	test_pack_objects_reused 3 1 <t5332.in
 '
 
 test_expect_success 'omit delta with uninteresting base (same pack)' '
@@ -182,11 +190,6 @@ test_expect_success 'omit delta with uninteresting base (same pack)' '
 
 	git multi-pack-index write --bitmap &&
 
-	cat >in <<-EOF &&
-	$(git rev-parse other)
-	^$base
-	EOF
-
 	# We can only reuse the 3 objects corresponding to "other" from
 	# the latest pack.
 	#
@@ -198,16 +201,15 @@ test_expect_success 'omit delta with uninteresting base (same pack)' '
 	# The remaining objects from the other pack are similarly not
 	# reused because their objects are on the uninteresting side of
 	# the query.
-	test_pack_objects_reused 3 1 <in
+	{ git rev-parse refs/tags/other && printf "^" && printf '%s' "$base" && printf "\n"; } >t5332.in &&
+	test_pack_objects_reused 3 1 <t5332.in &&
+	t5332_export_vars base delta
 '
 
 test_expect_success 'omit delta from uninteresting base (cross pack)' '
-	cat >in <<-EOF &&
-	$(git rev-parse $base)
-	^$(git rev-parse $delta)
-	EOF
+	{ printf "%s" "$base" && printf "^" && printf "%s" "$delta" && printf "\n"; } >t5332.in &&
 
-	P="$(git pack-objects --revs $packdir/pack <in)" &&
+	P="$(git pack-objects --revs $packdir/pack <t5332.in)" &&
 
 	git multi-pack-index write --bitmap --preferred-pack="pack-$P.idx" &&
 
@@ -220,23 +222,15 @@ test_expect_success 'omit delta from uninteresting base (cross pack)' '
 test_expect_success 'non-omitted delta in MIDX preferred pack' '
 	test_config pack.allowPackReuse single &&
 
-	cat >p1.objects <<-EOF &&
-	$(git rev-parse $base)
-	^$(git rev-parse $delta^)
-	EOF
-	cat >p2.objects <<-EOF &&
-	$(git rev-parse F)
-	EOF
+	{ printf "%s" "$base" && printf "^" && git rev-parse "$delta^" && printf "\n"; } >p1.objects &&
+	{ git rev-parse refs/tags/F && printf "\n"; } >p2.objects &&
 
 	p1="$(git pack-objects --revs $packdir/pack <p1.objects)" &&
 	p2="$(git pack-objects --revs $packdir/pack <p2.objects)" &&
 
-	cat >in <<-EOF &&
-	pack-$p1.idx
-	pack-$p2.idx
-	EOF
+	printf "pack-%s.idx\npack-%s.idx\n" "$p1" "$p2" >t5332.in &&
 	git multi-pack-index write --bitmap --stdin-packs \
-		--preferred-pack=pack-$p1.pack <in &&
+		--preferred-pack=pack-$p1.pack <t5332.in &&
 
 	git show-index <$packdir/pack-$p1.idx >expect &&
 
@@ -267,6 +261,8 @@ test_expect_success 'duplicate objects' '
 '
 
 test_expect_success 'duplicate objects with verbatim reuse' '
+	chmod -R u+w duplicate-objects-verbatim 2>/dev/null || true &&
+	rm -rf duplicate-objects-verbatim &&
 	git init duplicate-objects-verbatim &&
 	(
 		cd duplicate-objects-verbatim &&
@@ -275,8 +271,18 @@ test_expect_success 'duplicate objects with verbatim reuse' '
 
 		test_commit_bulk 64 &&
 
-		# take the first object from the main pack...
-		git show-index <$(ls $packdir/pack-*.idx) >obj.raw &&
+		# take the first object from the main pack (dash-safe; unquoted glob is literal when empty).
+		main_idx=
+		for f in $packdir/pack-*.idx
+		do
+			if test -f "$f"
+			then
+				main_idx=$f
+				break
+			fi
+		done &&
+		test -n "$main_idx" &&
+		git show-index <"$main_idx" >obj.raw &&
 		sort -nk1 <obj.raw | head -n1 | cut -d" " -f2 >in &&
 
 		# ...and create a separate pack containing just that object

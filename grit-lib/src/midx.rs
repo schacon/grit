@@ -30,6 +30,7 @@ const MIDX_CHUNKID_OIDFANOUT: u32 = 0x4f49_4446;
 const MIDX_CHUNKID_OIDLOOKUP: u32 = 0x4f49_444c;
 const MIDX_CHUNKID_OBJECTOFFSETS: u32 = 0x4f4f_4646;
 const MIDX_CHUNKID_REVINDEX: u32 = 0x5249_4458;
+const MIDX_CHUNKID_BITMAPPED_PACKS: u32 = 0x4254_4d50;
 
 // `git midx.h` (MIDX_LARGE_OFFSET_NEEDED).
 const MIDX_LARGE_OFFSET_NEEDED: u32 = 0x8000_0000;
@@ -46,6 +47,11 @@ pub struct WriteMultiPackIndexOptions {
     /// When set, objects also present in other packs are taken from this pack
     /// (`pack_names` index in the sorted name list).
     pub preferred_pack_idx: Option<u32>,
+    /// Basename of the preferred pack (e.g. `pack-abc.idx` or `pack-abc.pack`); resolved against
+    /// the working pack name list after optional subset filtering.
+    pub preferred_pack_name: Option<String>,
+    /// If set, only these `pack-*.idx` basenames are included, in this order (Git `--stdin-packs`).
+    pub pack_names_subset_ordered: Option<Vec<String>>,
     /// When true, append RIDX + empty BTMP chunks so `test-tool read-midx --bitmap` succeeds.
     pub write_bitmap_placeholders: bool,
     /// When true, write a new layer in `multi-pack-index.d/` and extend the chain file
@@ -54,6 +60,22 @@ pub struct WriteMultiPackIndexOptions {
     /// When true with [`Self::write_bitmap_placeholders`], also create an empty `.rev`
     /// sidecar (Git `GIT_TEST_MIDX_WRITE_REV` compatibility).
     pub write_rev_placeholder: bool,
+}
+
+fn normalize_pack_idx_basename(raw: &str) -> Result<String> {
+    let t = raw.trim();
+    let t = std::path::Path::new(t)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(t);
+    let t = t.strip_prefix("./").unwrap_or(t);
+    if t.ends_with(".idx") {
+        Ok(t.to_string())
+    } else if t.ends_with(".pack") {
+        Ok(format!("{}.idx", t.strip_suffix(".pack").unwrap_or(t)))
+    } else {
+        Ok(format!("{t}.idx"))
+    }
 }
 
 struct MidxFileHeader {
@@ -394,12 +416,18 @@ fn build_midx_bytes(
         chunk_ridx.extend_from_slice(&oid_idx.to_be_bytes());
     }
 
-    const MIDX_CHUNKID_BITMAPPEDPACKS: u32 = 0x4254_4d50;
+    // BTMP: per-pack (bitmap_pos, bitmap_nr) in the pseudo-bitmap namespace, matching Git's
+    // `write_midx_bitmapped_packs` (cumulative start + object count per pack).
     let chunk_btmp: Vec<u8> = if write_bitmap_placeholders {
         let mut v = Vec::new();
-        for _ in 0..num_packs {
-            v.extend_from_slice(&0u32.to_be_bytes());
-            v.extend_from_slice(&0u32.to_be_bytes());
+        let mut cumulative = 0u32;
+        for idx in indexes {
+            let n = u32::try_from(idx.entries.len()).map_err(|_| {
+                Error::CorruptObject("too many objects in pack for MIDX BTMP".to_owned())
+            })?;
+            v.extend_from_slice(&cumulative.to_be_bytes());
+            v.extend_from_slice(&n.to_be_bytes());
+            cumulative = cumulative.saturating_add(n);
         }
         while v.len() % 4 != 0 {
             v.push(0);
@@ -419,7 +447,7 @@ fn build_midx_bytes(
         chunks.push((MIDX_CHUNKID_REVINDEX, chunk_ridx));
     }
     if write_bitmap_placeholders {
-        chunks.push((MIDX_CHUNKID_BITMAPPEDPACKS, chunk_btmp));
+        chunks.push((MIDX_CHUNKID_BITMAPPED_PACKS, chunk_btmp));
     }
 
     let num_chunks: u8 = chunks
@@ -578,6 +606,214 @@ pub fn format_midx_dump(objects_dir: &Path) -> Result<String> {
     Ok(out)
 }
 
+/// OID rows from the active multi-pack-index, plus reverse-index order for pack-reuse bitmap bits.
+///
+/// Git assigns each object a **global bitmap bit** equal to its position in the MIDX reverse index
+/// (`RIDX` chunk) traversal order — not its position in the pack `.idx` file. Helpers on this struct
+/// map [`ObjectId`] → global bit the same way as `midx-write.c` (`midx_pack_order`).
+#[derive(Debug, Clone)]
+pub struct MidxReuseTables {
+    /// OIDs in MIDX lexicographic order (same order as the OID lookup chunk).
+    pub oids: Vec<ObjectId>,
+    /// `(pack_int_id, in-pack offset)` parallel to `oids`.
+    pub pack_and_offset: Vec<(u32, u64)>,
+    /// `rid_order[rank]` is the OID-table index of the object at global bitmap rank `rank`.
+    pub rid_order: Vec<u32>,
+    /// Inverse map: global bitmap rank for each OID-table index.
+    pub oid_idx_to_rank: Vec<u32>,
+}
+
+/// Load OID / object-offset / reverse-index tables from the tip MIDX (root or chain tip).
+///
+/// Returns [`None`] when there is no MIDX or no `RIDX` chunk (no pseudo-bitmap ordering).
+pub fn load_midx_reuse_tables(objects_dir: &Path) -> Result<Option<MidxReuseTables>> {
+    let pack_dir = objects_dir.join("pack");
+    let Some(path) = resolve_tip_midx_path(&pack_dir) else {
+        return Ok(None);
+    };
+    let data = fs::read(&path).map_err(Error::Io)?;
+    let (_, hdr_end) = parse_midx_header(&data)?;
+    let (oidl_off, oid_l_len) = find_chunk(&data, hdr_end, MIDX_CHUNKID_OIDLOOKUP)?;
+    let (ooff_off, ooff_len) = find_chunk(&data, hdr_end, MIDX_CHUNKID_OBJECTOFFSETS)?;
+    let Ok((ridx_off, ridx_len)) = find_chunk(&data, hdr_end, MIDX_CHUNKID_REVINDEX) else {
+        return Ok(None);
+    };
+    if oid_l_len % 20 != 0 || ooff_len != oid_l_len / 20 * 8 {
+        return Err(Error::CorruptObject(
+            "MIDX OID / offset chunk size mismatch".to_owned(),
+        ));
+    }
+    let num_objects = oid_l_len / 20;
+    if ridx_len != num_objects.saturating_mul(4) {
+        return Err(Error::CorruptObject(
+            "MIDX reverse index length does not match object count".to_owned(),
+        ));
+    }
+    if num_objects == 0 {
+        return Ok(None);
+    }
+
+    let mut oids = Vec::with_capacity(num_objects);
+    for i in 0..num_objects {
+        let base = oidl_off + i * 20;
+        oids.push(ObjectId::from_bytes(&data[base..base + 20])?);
+    }
+
+    let mut pack_and_offset = Vec::with_capacity(num_objects);
+    for i in 0..num_objects {
+        let ob = ooff_off + i * 8;
+        let pack_id = u32::from_be_bytes(data[ob..ob + 4].try_into().unwrap());
+        let off32 = u32::from_be_bytes(data[ob + 4..ob + 8].try_into().unwrap());
+        pack_and_offset.push((pack_id, u64::from(off32)));
+    }
+
+    let mut rid_order = Vec::with_capacity(num_objects);
+    for i in 0..num_objects {
+        let base = ridx_off + i * 4;
+        rid_order.push(u32::from_be_bytes(data[base..base + 4].try_into().unwrap()));
+    }
+
+    let mut oid_idx_to_rank = vec![0u32; num_objects];
+    for (rank, &oid_idx) in rid_order.iter().enumerate() {
+        let idx = usize::try_from(oid_idx)
+            .map_err(|_| Error::CorruptObject("bad MIDX reverse index entry".to_owned()))?;
+        if idx >= num_objects {
+            return Err(Error::CorruptObject(
+                "MIDX reverse index out of range".to_owned(),
+            ));
+        }
+        oid_idx_to_rank[idx] = u32::try_from(rank)
+            .map_err(|_| Error::CorruptObject("too many MIDX objects".to_owned()))?;
+    }
+
+    Ok(Some(MidxReuseTables {
+        oids,
+        pack_and_offset,
+        rid_order,
+        oid_idx_to_rank,
+    }))
+}
+
+impl MidxReuseTables {
+    /// Global pseudo-bitmap index for `oid`, or [`None`] if the object is not in this MIDX.
+    #[must_use]
+    pub fn global_bitmap_bit(&self, oid: &ObjectId) -> Option<u32> {
+        let oid_idx = self.oids.binary_search(oid).ok()?;
+        Some(self.oid_idx_to_rank[oid_idx])
+    }
+}
+
+/// One pack's slice of the MIDX pseudo-bitmap namespace (`BTMP` chunk).
+#[derive(Debug, Clone, Copy)]
+pub struct MidxBtmpPackRange {
+    /// Pack index in the MIDX pack-names list.
+    pub pack_id: u32,
+    /// First bit index assigned to this pack (cumulative object order).
+    pub bitmap_pos: u32,
+    /// Number of objects in this pack (same as `.idx` entry count).
+    pub bitmap_nr: u32,
+}
+
+/// Read per-pack `(bitmap_pos, bitmap_nr)` from the active MIDX `BTMP` chunk.
+///
+/// Returns an empty vector when the MIDX has no bitmapped-packs chunk.
+pub fn read_midx_btmp_ranges(objects_dir: &Path) -> Result<Vec<MidxBtmpPackRange>> {
+    let pack_dir = objects_dir.join("pack");
+    let Some(path) = resolve_tip_midx_path(&pack_dir) else {
+        return Ok(Vec::new());
+    };
+    let data = fs::read(&path).map_err(Error::Io)?;
+    let (_, hdr_end) = parse_midx_header(&data)?;
+    let Ok((btmp_off, btmp_len)) = find_chunk(&data, hdr_end, MIDX_CHUNKID_BITMAPPED_PACKS) else {
+        return Ok(Vec::new());
+    };
+    if btmp_len == 0 || btmp_len % 8 != 0 {
+        return Err(Error::CorruptObject(
+            "invalid MIDX BTMP chunk length".to_owned(),
+        ));
+    }
+    let num_packs = u32::from_be_bytes(data[8..12].try_into().unwrap());
+    let n_entries = btmp_len / 8;
+    if u32::try_from(n_entries).ok() != Some(num_packs) {
+        return Err(Error::CorruptObject(
+            "MIDX BTMP entry count does not match num_packs".to_owned(),
+        ));
+    }
+    let mut out = Vec::with_capacity(n_entries);
+    for i in 0..n_entries {
+        let base = btmp_off + i * 8;
+        let bitmap_pos = u32::from_be_bytes(data[base..base + 4].try_into().unwrap());
+        let bitmap_nr = u32::from_be_bytes(data[base + 4..base + 8].try_into().unwrap());
+        out.push(MidxBtmpPackRange {
+            pack_id: u32::try_from(i)
+                .map_err(|_| Error::CorruptObject("too many packs in MIDX BTMP".to_owned()))?,
+            bitmap_pos,
+            bitmap_nr,
+        });
+    }
+    Ok(out)
+}
+
+/// Look up which pack and in-pack offset holds `oid` according to the active MIDX.
+pub fn midx_lookup_pack_and_offset(objects_dir: &Path, oid: &ObjectId) -> Result<(u32, u64)> {
+    let pack_dir = objects_dir.join("pack");
+    let path = resolve_tip_midx_path(&pack_dir)
+        .ok_or_else(|| Error::CorruptObject("no multi-pack-index found".to_owned()))?;
+    let data = fs::read(&path).map_err(Error::Io)?;
+    let (_, hdr_end) = parse_midx_header(&data)?;
+    let (fanout_off, fanout_len) = find_chunk(&data, hdr_end, MIDX_CHUNKID_OIDFANOUT)?;
+    let (oidl_off, oid_l_len) = find_chunk(&data, hdr_end, MIDX_CHUNKID_OIDLOOKUP)?;
+    let (ooff_off, ooff_len) = find_chunk(&data, hdr_end, MIDX_CHUNKID_OBJECTOFFSETS)?;
+    if fanout_len != 256 * 4 || oid_l_len % 20 != 0 || ooff_len != oid_l_len / 20 * 8 {
+        return Err(Error::CorruptObject("truncated MIDX OID chunks".to_owned()));
+    }
+    let num_objects = oid_l_len / 20;
+    let first = oid.as_bytes()[0] as usize;
+    let j0 = if first == 0 {
+        0usize
+    } else {
+        u32::from_be_bytes(
+            data[fanout_off + (first - 1) * 4..fanout_off + first * 4]
+                .try_into()
+                .unwrap(),
+        ) as usize
+    };
+    let j1 = u32::from_be_bytes(
+        data[fanout_off + first * 4..fanout_off + (first + 1) * 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let mut lo = j0;
+    let mut hi = j1;
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let base = oidl_off + mid * 20;
+        let cmp = data[base..base + 20].cmp(oid.as_bytes());
+        if cmp == std::cmp::Ordering::Less {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if lo >= num_objects {
+        return Err(Error::CorruptObject(format!(
+            "object {} not in multi-pack-index",
+            oid.to_hex()
+        )));
+    }
+    let base = oidl_off + lo * 20;
+    if data[base..base + 20] != *oid.as_bytes() {
+        return Err(Error::CorruptObject(format!(
+            "object {} not in multi-pack-index",
+            oid.to_hex()
+        )));
+    }
+    let ob = ooff_off + lo * 8;
+    let pack_id = u32::from_be_bytes(data[ob..ob + 4].try_into().unwrap());
+    let off32 = u32::from_be_bytes(data[ob + 4..ob + 8].try_into().unwrap());
+    Ok((pack_id, u64::from(off32)))
+}
+
 pub fn read_midx_preferred_idx_name(objects_dir: &Path) -> Result<String> {
     let pack_dir = objects_dir.join("pack");
     let path = resolve_tip_midx_path(&pack_dir)
@@ -654,6 +890,31 @@ pub fn write_multi_pack_index_with_options(
         ));
     }
 
+    let idx_names: Vec<String> = if let Some(sub) = &opts.pack_names_subset_ordered {
+        let mut out = Vec::new();
+        for line in sub {
+            let want = normalize_pack_idx_basename(line)?;
+            let found = idx_names
+                .iter()
+                .find(|n| **n == want)
+                .cloned()
+                .ok_or_else(|| {
+                    Error::CorruptObject(format!("pack index not in repository: {want}"))
+                })?;
+            if !out.contains(&found) {
+                out.push(found);
+            }
+        }
+        if out.is_empty() {
+            return Err(Error::CorruptObject(
+                "stdin-packs list produced empty pack set".to_owned(),
+            ));
+        }
+        out
+    } else {
+        idx_names
+    };
+
     let (base_oids, base_pack_names) = if opts.incremental {
         collect_incremental_base(pack_dir)?
     } else {
@@ -685,6 +946,17 @@ pub fn write_multi_pack_index_with_options(
     };
 
     let mut preferred_idx = opts.preferred_pack_idx.map(|p| p as usize);
+    if preferred_idx.is_none() {
+        if let Some(ref raw) = opts.preferred_pack_name {
+            let want = normalize_pack_idx_basename(raw)?;
+            preferred_idx = work_names.iter().position(|n| *n == want);
+            if preferred_idx.is_none() {
+                return Err(Error::CorruptObject(format!(
+                    "preferred pack not in MIDX pack list: {want}"
+                )));
+            }
+        }
+    }
     if preferred_idx.is_none() && opts.write_bitmap_placeholders && !work_names.is_empty() {
         preferred_idx = preferred_pack_index_by_mtime(pack_dir, work_names)?;
     }

@@ -207,6 +207,18 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         abs_path.join(".git")
     };
 
+    // Leftover `.git` from a failed/partial init (no HEAD): remove so `git init` matches Git
+    // (t5332 `git init` into a directory that had an incomplete `.git`).
+    if !bare && real_git_dir.exists() && !real_git_dir.join("HEAD").exists() {
+        if real_git_dir.is_dir() {
+            fs::remove_dir_all(&real_git_dir)
+                .with_context(|| format!("cannot remove incomplete {}", real_git_dir.display()))?;
+        } else {
+            fs::remove_file(&real_git_dir)
+                .with_context(|| format!("cannot remove {}", real_git_dir.display()))?;
+        }
+    }
+
     // Check if this is a reinit
     let is_reinit = real_git_dir.join("HEAD").exists();
 

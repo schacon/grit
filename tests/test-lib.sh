@@ -1196,27 +1196,44 @@ test_commit () {
 	if test -z "$notick"; then
 		test_tick
 	fi
-	(
-		test -n "$indir" && cd "$indir"
-		if test -n "$append"
-		then
-			$echo "$contents" >>"$file"
-		else
-			$echo "$contents" >"$file"
-		fi &&
-		git add "$file" &&
-		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
+	_target="$file"
+	test -n "$indir" && _target="$indir/$file"
+	if test -n "$append"
+	then
+		$echo "$contents" >>"$_target" || return 1
+	else
+		$echo "$contents" >"$_target" || return 1
+	fi
+	if test -n "$indir"
+	then
+		git -C "$indir" add "$file" || return 1
+		git -C "$indir" commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" ||
+			return 1
 		case "$tag" in
 		none) ;;
-		light) git tag "${1:-$message}" ;;
+		light) git -C "$indir" tag "${1:-$message}" || return 1 ;;
 		annotate)
 			if test -z "$notick"; then
 				test_tick
-			fi &&
-			git tag -a -m "$message" "${1:-$message}"
+			fi
+			git -C "$indir" tag -a -m "$message" "${1:-$message}" || return 1
 			;;
 		esac
-	)
+	else
+		git add "$file" || return 1
+		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" ||
+			return 1
+		case "$tag" in
+		none) ;;
+		light) git tag "${1:-$message}" || return 1 ;;
+		annotate)
+			if test -z "$notick"; then
+				test_tick
+			fi
+			git tag -a -m "$message" "${1:-$message}" || return 1
+			;;
+		esac
+	fi
 }
 
 test_merge () {
@@ -1247,7 +1264,10 @@ test_commit_bulk () {
 			git add "bulk-$i.t" &&
 			git commit -m "$message" || return 1
 			i=$((i + 1))
-		done
+		done &&
+		# Match `git fast-import` with unpacklimit=0: objects land in a pack. Grit stores loose
+		# objects from fast-import-style bulk paths unless we repack (t5332 verbatim reuse).
+		git repack -a -d -q
 	)
 }
 
@@ -1337,6 +1357,11 @@ test_atexit_handler () {
 test_eval_inner_ () {
 	local _eval_inner_ret
 	cd "$TRASH_DIRECTORY" || exit 1
+	if test -f "$TRASH_DIRECTORY/.test-exports"
+	then
+		# shellcheck source=/dev/null
+		. "$TRASH_DIRECTORY/.test-exports"
+	fi
 	eval "$1"
 	_eval_inner_ret=$?
 	cd "$TRASH_DIRECTORY" || exit 1

@@ -900,7 +900,7 @@ t5328-commit-graph-64bit-time	t5	yes	0	0	0	false	ok	0
 t5329-pack-objects-cruft	t5	yes	25	1	24	false	ok	0
 t5330-no-lazy-fetch-with-commit-graph	t5	yes	4	3	1	false	ok	0
 t5331-pack-objects-stdin	t5	yes	16	1	15	false	ok	0
-t5332-multi-pack-reuse	t5	yes	14	1	13	false	ok	0
+t5332-multi-pack-reuse	t5	yes	14	10	4	false	ok	0
 t5333-pseudo-merge-bitmaps	t5	skip	18	3	15	false	ok	0
 t5334-incremental-multi-pack-index	t5	yes	16	16	0	true	ok	0
 t5335-compact-multi-pack-index	t5	yes	10	0	10	false	ok	0
@@ -1193,7 +1193,7 @@ t7111-reset-table	t7	yes	42	34	8	false	ok	0
 t7112-reset-submodule	t7	yes	76	24	52	false	ok	0
 t7113-post-index-change-hook	t7	yes	4	1	3	false	ok	0
 t7201-co	t7	yes	46	17	29	false	ok	0
-t7300-clean	t7	yes	53	52	1	false	ok	2
+t7300-clean	t7	yes	53	52	1	false	ok	0
 t7301-clean-interactive	t7	yes	23	8	15	false	ok	0
 t7400-submodule-basic	t7	yes	124	51	73	false	ok	0
 t7401-submodule-summary	t7	yes	25	6	19	false	ok	0

@@ -833,9 +833,12 @@ pub fn rev_list(
         ordered.retain(|oid| !kept_set.contains(oid));
     }
 
-    if options.unpacked_only {
-        let packed = packed_object_set(repo);
-        ordered.retain(|oid| !packed.contains(oid));
+    // Match Git `get_commit_action` with `revs->unpacked`: commits whose commit object is already in
+    // a pack are ignored for listing (`revision.c`). Parent links are still walked from commits
+    // that *do* appear, so omitting a packed commit does not stop discovery of later loose commits.
+    if options.objects && options.unpacked_only {
+        let packed_commits = packed_object_set(repo);
+        ordered.retain(|oid| !packed_commits.contains(oid));
     }
 
     let commit_tips_set: HashSet<ObjectId> = object_walk_tip_commits.iter().copied().collect();
@@ -863,10 +866,21 @@ pub fn rev_list(
         None
     };
 
+    let excluded_tree_blobs = if options.objects && !excluded.is_empty() {
+        Some(collect_tree_blob_closure_for_commits(repo, &excluded)?)
+    } else {
+        None
+    };
+    let skip_excluded_objects = excluded_tree_blobs.as_ref();
+
     // Collect reachable objects if --objects
     let (objects, omitted_objects, missing_objects, per_commit_object_counts, object_segments) =
         if options.objects {
             let filter_provided = options.filter_provided_objects;
+            // Object list diffing applies whenever the user passed any negative revision (`^rev`,
+            // `--not`), even if that tip does not expand to commits in the graph the same way as
+            // `excluded` (pack-objects stdin uses raw OIDs; t5332 `E ^D`).
+            let subtract_parent_closure = !negative_specs.is_empty();
             let (mut objs, omit, miss, counts, segments) = if options.in_commit_order {
                 let (o, om, mi, c) = collect_reachable_objects_in_commit_order(
                     repo,
@@ -880,6 +894,8 @@ pub fn rev_list(
                     skip_trees,
                     omit_object_paths,
                     packed_set.as_ref(),
+                    skip_excluded_objects,
+                    subtract_parent_closure,
                 )?;
                 (o, om, mi, c, Vec::new())
             } else {
@@ -895,6 +911,8 @@ pub fn rev_list(
                     skip_trees,
                     omit_object_paths,
                     packed_set.as_ref(),
+                    skip_excluded_objects,
+                    subtract_parent_closure,
                 )?;
                 (o, om, mi, Vec::new(), seg)
             };
@@ -2203,6 +2221,50 @@ fn walk_closure_ordered(
     Ok((seen, order))
 }
 
+/// Every tree and blob OID reachable from any commit in `excluded_commits` (full trees).
+///
+/// Used for `rev-list --objects` with negative revisions: objects already present on the
+/// uninteresting side must not be listed again for interesting commits (`C ^A`, t5332).
+fn collect_tree_blob_closure_for_commits(
+    repo: &Repository,
+    excluded_commits: &HashSet<ObjectId>,
+) -> Result<HashSet<ObjectId>> {
+    let mut out = HashSet::new();
+    let mut visited_trees = HashSet::new();
+    for &commit_oid in excluded_commits {
+        let commit = match load_commit(repo, commit_oid) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let mut tree_stack = vec![commit.tree];
+        while let Some(t) = tree_stack.pop() {
+            if !visited_trees.insert(t) {
+                continue;
+            }
+            out.insert(t);
+            let object = match repo.odb.read(&t) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            if object.kind != ObjectKind::Tree {
+                continue;
+            }
+            let entries = parse_tree(&object.data)?;
+            for entry in entries {
+                if entry.mode == 0o160000 {
+                    continue;
+                }
+                if entry.mode == 0o040000 {
+                    tree_stack.push(entry.oid);
+                } else {
+                    out.insert(entry.oid);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Git-style default ordering: among commits ready to print, pick the one with the
 /// greatest committer timestamp; a parent becomes ready only after all of its
 /// children that remain in the walk have been emitted.
@@ -2907,6 +2969,7 @@ fn collect_reachable_objects(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            None,
         )?;
     }
 
@@ -2927,6 +2990,7 @@ fn collect_reachable_objects(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            None,
         )?;
     }
 
@@ -2940,7 +3004,7 @@ fn collect_reachable_objects(
 /// the next commit, with global de-duplication of emitted object OIDs across the full walk.
 fn collect_reachable_objects_segmented(
     repo: &Repository,
-    _graph: &mut CommitGraph<'_>,
+    graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
@@ -2950,6 +3014,8 @@ fn collect_reachable_objects_segmented(
     skip_trees_for_type_filter: bool,
     omit_object_paths: bool,
     packed_set: Option<&HashSet<ObjectId>>,
+    skip_tree_blobs: Option<&HashSet<ObjectId>>,
+    subtract_parent_closure: bool,
 ) -> Result<(
     Vec<(ObjectId, String)>,
     Vec<ObjectId>,
@@ -2976,16 +3042,29 @@ fn collect_reachable_objects_segmented(
             }
             Err(err) => return Err(err),
         };
+        let parent_union_opt = if subtract_parent_closure {
+            let parents = graph.parents_of(commit_oid)?;
+            Some(union_parent_reachable_objects(
+                repo,
+                &parents,
+                missing_action,
+                &mut missing,
+                &mut missing_seen,
+            )?)
+        } else {
+            None
+        };
         let mut tree_state = TreeWalkState::new(filter);
-        // Same as `collect_reachable_objects_in_commit_order`: Git lists objects in walk order with
-        // global OID de-duplication only (`emitted`), not parent-closure subtraction.
+        // With negative revisions, match Git: omit trees/blobs already in parent closures (`C ^A`,
+        // t5332). Without exclusions, keep full per-commit walks so default `--objects` order matches
+        // t6100.
         collect_tree_objects_filtered(
             repo,
             commit.tree,
             "",
             0,
             false,
-            None,
+            parent_union_opt.as_ref(),
             &mut tree_state,
             &mut emitted,
             &mut result,
@@ -2999,6 +3078,7 @@ fn collect_reachable_objects_segmented(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            skip_tree_blobs,
         )?;
         segments.push(result[start..].to_vec());
     }
@@ -3022,6 +3102,7 @@ fn collect_reachable_objects_segmented(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            skip_tree_blobs,
         )?;
     }
     segments.push(result[roots_start..].to_vec());
@@ -3045,6 +3126,7 @@ fn collect_root_object(
     skip_trees_for_type_filter: bool,
     omit_object_paths: bool,
     packed_set: Option<&HashSet<ObjectId>>,
+    skip_tree_blobs: Option<&HashSet<ObjectId>>,
 ) -> Result<()> {
     let object = match repo.odb.read(&root.oid) {
         Ok(object) => object,
@@ -3097,6 +3179,7 @@ fn collect_root_object(
                 skip_trees_for_type_filter,
                 omit_object_paths,
                 packed_set,
+                skip_tree_blobs,
             )?;
         }
         ObjectKind::Tree => {
@@ -3120,6 +3203,7 @@ fn collect_root_object(
                 skip_trees_for_type_filter,
                 omit_object_paths,
                 packed_set,
+                skip_tree_blobs,
             )?;
         }
         ObjectKind::Blob => {
@@ -3143,6 +3227,9 @@ fn collect_root_object(
                 return Ok(());
             }
             if packed_set.is_some_and(|p| p.contains(&root.oid)) {
+                return Ok(());
+            }
+            if skip_tree_blobs.is_some_and(|s| s.contains(&root.oid)) {
                 return Ok(());
             }
             if !emitted.insert(root.oid) {
@@ -3186,6 +3273,7 @@ fn collect_root_object(
                 skip_trees_for_type_filter,
                 omit_object_paths,
                 packed_set,
+                skip_tree_blobs,
             )?;
         }
     }
@@ -3214,8 +3302,12 @@ fn collect_tree_objects_filtered(
     skip_trees_for_type_filter: bool,
     omit_object_paths: bool,
     packed_set: Option<&HashSet<ObjectId>>,
+    skip_tree_blobs: Option<&HashSet<ObjectId>>,
 ) -> Result<()> {
     if tree_state.should_skip_tree(tree_oid, depth) {
+        return Ok(());
+    }
+    if skip_tree_blobs.is_some_and(|s| s.contains(&tree_oid)) {
         return Ok(());
     }
     if !explicit_root {
@@ -3298,6 +3390,9 @@ fn collect_tree_objects_filtered(
                     entry.oid
                 )));
             }
+            if skip_tree_blobs.is_some_and(|s| s.contains(&entry.oid)) {
+                continue;
+            }
             if let Some(pu) = parent_union {
                 if pu.contains(&entry.oid) {
                     continue;
@@ -3324,12 +3419,16 @@ fn collect_tree_objects_filtered(
                 skip_trees_for_type_filter,
                 omit_object_paths,
                 packed_set,
+                skip_tree_blobs,
             )?;
         } else {
             if let Some(pu) = parent_union {
                 if pu.contains(&entry.oid) {
                     continue;
                 }
+            }
+            if skip_tree_blobs.is_some_and(|s| s.contains(&entry.oid)) {
+                continue;
             }
             if child_obj.kind == ObjectKind::Blob {
                 let blob_included = match filter {
@@ -3384,7 +3483,7 @@ fn collect_tree_objects_filtered(
 /// Returns (objects, omitted, per_commit_counts).
 fn collect_reachable_objects_in_commit_order(
     repo: &Repository,
-    _graph: &mut CommitGraph<'_>,
+    graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
@@ -3394,6 +3493,8 @@ fn collect_reachable_objects_in_commit_order(
     skip_trees_for_type_filter: bool,
     omit_object_paths: bool,
     packed_set: Option<&HashSet<ObjectId>>,
+    skip_tree_blobs: Option<&HashSet<ObjectId>>,
+    subtract_parent_closure: bool,
 ) -> Result<(
     Vec<(ObjectId, String)>,
     Vec<ObjectId>,
@@ -3420,16 +3521,25 @@ fn collect_reachable_objects_in_commit_order(
             Err(err) => return Err(err),
         };
         let before = result.len();
-        // Match Git `rev-list --objects`: walk each commit's tree in full traversal order and rely
-        // on `emitted` for OID de-duplication. Do not subtract parent reachability here — that would
-        // skip blobs that still belong after this commit's tree line (t6100-rev-list-in-order).
+        let parent_union_opt = if subtract_parent_closure {
+            let parents = graph.parents_of(commit_oid)?;
+            Some(union_parent_reachable_objects(
+                repo,
+                &parents,
+                missing_action,
+                &mut missing,
+                &mut missing_seen,
+            )?)
+        } else {
+            None
+        };
         collect_tree_objects_filtered(
             repo,
             commit.tree,
             "",
             0,
             false,
-            None,
+            parent_union_opt.as_ref(),
             &mut tree_state,
             &mut emitted,
             &mut result,
@@ -3443,6 +3553,7 @@ fn collect_reachable_objects_in_commit_order(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            skip_tree_blobs,
         )?;
         counts.push(result.len() - before);
     }
@@ -3464,6 +3575,7 @@ fn collect_reachable_objects_in_commit_order(
             skip_trees_for_type_filter,
             omit_object_paths,
             packed_set,
+            skip_tree_blobs,
         )?;
     }
 

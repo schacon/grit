@@ -1516,10 +1516,30 @@ fn format_default_value(args: &Args, val: &str) -> Result<String> {
 /// When `--int` is used, the value is validated and written as a plain integer.
 /// When `--bool-or-int` is used, booleans are stored as "true"/"false" and
 /// integers as plain numbers.
+fn is_pack_allow_pack_reuse_key(config_key: &str) -> bool {
+    grit_lib::config::canonical_key(config_key).ok().as_deref() == Some("pack.allowpackreuse")
+}
+
 fn canonicalize_value_for_set(args: &Args, config_key: &str, val: &str) -> Result<String> {
     let type_name = args.type_name.as_deref();
 
-    if args.type_bool || type_name == Some("bool") {
+    if is_pack_allow_pack_reuse_key(config_key) {
+        let t = val.trim();
+        let lower = t.to_ascii_lowercase();
+        if lower == "single" || lower == "multi" {
+            return Ok(lower);
+        }
+        match parse_bool(t) {
+            Ok(b) => return Ok(if b { "true".into() } else { "false".into() }),
+            Err(_) => {
+                return Err(fatal_config_parse(format!(
+                    "fatal: invalid pack.allowPackReuse value: '{val}' for '{config_key}'"
+                )));
+            }
+        }
+    }
+
+    if !is_pack_allow_pack_reuse_key(config_key) && (args.type_bool || type_name == Some("bool")) {
         match parse_bool(val) {
             Ok(b) => return Ok(if b { "true" } else { "false" }.to_owned()),
             Err(_) => {
@@ -1579,6 +1599,12 @@ fn is_optional_missing_path(args: &Args, val: &str) -> bool {
 
 fn format_typed_value(args: &Args, config_key: Option<&str>, val: &str) -> Result<String> {
     let type_name = args.type_name.as_deref();
+
+    if let Some(key) = config_key {
+        if is_pack_allow_pack_reuse_key(key) {
+            return Ok(val.trim().to_string());
+        }
+    }
 
     if args.type_bool || type_name == Some("bool") {
         match parse_bool(val) {

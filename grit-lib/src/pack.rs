@@ -945,6 +945,44 @@ fn parse_pack_object_header(bytes: &[u8], pos: &mut usize) -> Result<(PackedType
     Ok((packed_type, size))
 }
 
+/// Dependency of a packed delta object at `object_offset` within `pack_bytes`.
+#[derive(Debug, Clone, Copy)]
+pub enum PackedDeltaDependency {
+    /// OFS_DELTA: base object offset within the same pack.
+    OfsBase {
+        /// Pack offset of the base object.
+        base_offset: u64,
+    },
+    /// REF_DELTA: base object id (may live in another pack).
+    RefBase {
+        /// OID of the delta base.
+        base_oid: ObjectId,
+    },
+}
+
+/// If the object at `object_offset` is a delta, return how it refers to its base.
+pub fn read_packed_delta_dependency(
+    pack_bytes: &[u8],
+    object_offset: u64,
+) -> Result<Option<PackedDeltaDependency>> {
+    let mut pos = object_offset as usize;
+    let (ty, _) = parse_pack_object_header(pack_bytes, &mut pos)?;
+    match ty {
+        PackedType::OfsDelta => {
+            let base = parse_ofs_delta_base(pack_bytes, &mut pos, object_offset)?;
+            Ok(Some(PackedDeltaDependency::OfsBase { base_offset: base }))
+        }
+        PackedType::RefDelta => {
+            if pos + 20 > pack_bytes.len() {
+                return Err(Error::CorruptObject("truncated ref-delta base oid".into()));
+            }
+            let base_oid = ObjectId::from_bytes(&pack_bytes[pos..pos + 20])?;
+            Ok(Some(PackedDeltaDependency::RefBase { base_oid }))
+        }
+        _ => Ok(None),
+    }
+}
+
 fn parse_ofs_delta_base(bytes: &[u8], pos: &mut usize, this_offset: u64) -> Result<u64> {
     let mut c = *bytes
         .get(*pos)
@@ -967,6 +1005,15 @@ fn parse_ofs_delta_base(bytes: &[u8], pos: &mut usize, this_offset: u64) -> Resu
 ///
 /// `object_start_offset` is the byte offset of this object within the pack file
 /// (used for `OFS_DELTA` base resolution).
+/// Raw bytes of one packed object (header + zlib payload) starting at `object_start_offset`.
+#[must_use]
+pub fn slice_one_pack_object(bytes: &[u8], object_start_offset: u64) -> Result<&[u8]> {
+    let start = object_start_offset as usize;
+    let mut pos = start;
+    skip_one_pack_object(bytes, &mut pos, object_start_offset)?;
+    Ok(&bytes[start..pos])
+}
+
 pub fn skip_one_pack_object(bytes: &[u8], pos: &mut usize, object_start_offset: u64) -> Result<()> {
     let (packed_type, size) = parse_pack_object_header(bytes, pos)?;
     match packed_type {
