@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::index::{Index, IndexEntry};
-use crate::objects::{parse_tree, ObjectId, ObjectKind, TreeEntry};
+use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 use crate::userdiff::FuncnameMatcher;
 
@@ -915,7 +915,7 @@ fn has_symlink_in_path(work_tree: &Path, rel_path: &str) -> bool {
     false
 }
 
-pub(crate) fn hash_worktree_file(
+pub fn hash_worktree_file(
     _odb: &Odb,
     path: &Path,
     meta: &fs::Metadata,
@@ -937,7 +937,7 @@ pub(crate) fn hash_worktree_file(
 }
 
 /// Derive a Git file mode from filesystem metadata.
-fn mode_from_metadata(meta: &fs::Metadata) -> u32 {
+pub fn mode_from_metadata(meta: &fs::Metadata) -> u32 {
     if meta.file_type().is_symlink() {
         0o120000
     } else if meta.mode() & 0o111 != 0 {
@@ -2538,6 +2538,21 @@ fn flatten_tree(odb: &Odb, tree_oid: &ObjectId, prefix: &str) -> Result<Vec<Flat
     Ok(result)
 }
 
+/// Paths present in `HEAD`'s tree with mode and blob/commit OID (for status porcelain v2).
+pub fn head_path_states(
+    odb: &Odb,
+    head_tree: Option<&ObjectId>,
+) -> Result<std::collections::BTreeMap<String, (u32, ObjectId)>> {
+    let mut m = std::collections::BTreeMap::new();
+    let Some(t) = head_tree else {
+        return Ok(m);
+    };
+    for fe in flatten_tree(odb, t, "")? {
+        m.insert(fe.path, (fe.mode, fe.oid));
+    }
+    Ok(m)
+}
+
 /// Whether a mode represents a tree (directory).
 fn is_tree_mode(mode: u32) -> bool {
     mode == 0o040000
@@ -2553,7 +2568,7 @@ fn format_path(prefix: &str, name: &str) -> String {
 }
 
 /// Format a numeric mode as a zero-padded octal string.
-fn format_mode(mode: u32) -> String {
+pub fn format_mode(mode: u32) -> String {
     format!("{mode:06o}")
 }
 
@@ -2580,7 +2595,8 @@ fn read_submodule_head(sub_dir: &Path) -> Option<ObjectId> {
 }
 
 /// Resolve the embedded git directory for a submodule work tree (`sub_dir/.git`).
-fn submodule_embedded_git_dir(sub_dir: &Path) -> Option<PathBuf> {
+#[must_use]
+pub fn submodule_embedded_git_dir(sub_dir: &Path) -> Option<PathBuf> {
     let gitfile = sub_dir.join(".git");
     if gitfile.is_file() {
         let content = fs::read_to_string(&gitfile).ok()?;
@@ -2660,4 +2676,125 @@ pub fn read_submodule_head_oid(sub_dir: &Path) -> Option<ObjectId> {
         // Detached HEAD — direct OID
         ObjectId::from_hex(head_content).ok()
     }
+}
+
+/// Submodule dirty bits aligned with Git's `DIRTY_SUBMODULE_*` / porcelain v2 `S???` token.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SubmodulePorcelainFlags {
+    /// Submodule checkout HEAD differs from the gitlink OID recorded in the parent index.
+    pub new_commits: bool,
+    /// The submodule has its own staged or unstaged changes (`DIRTY_SUBMODULE_MODIFIED`).
+    pub modified: bool,
+    /// The submodule work tree contains paths not in its index (`DIRTY_SUBMODULE_UNTRACKED`).
+    pub untracked: bool,
+}
+
+/// Inspect a checked-out submodule at `rel_path` (relative to `super_worktree`) and return
+/// flags used for `git status --porcelain=v2` submodule tokens.
+///
+/// `recorded_oid` is the gitlink OID stored in the **parent** index (stage 0). When the
+/// submodule is not checked out or cannot be opened, returns [`Default::default()`].
+pub fn submodule_porcelain_flags(
+    super_worktree: &Path,
+    rel_path: &str,
+    recorded_oid: ObjectId,
+) -> SubmodulePorcelainFlags {
+    let sub_dir = super_worktree.join(rel_path);
+    let Some(sub_git_dir) = submodule_embedded_git_dir(&sub_dir) else {
+        return SubmodulePorcelainFlags::default();
+    };
+    let Some(sub_head) = read_submodule_head_oid(&sub_dir) else {
+        return SubmodulePorcelainFlags::default();
+    };
+
+    let new_commits = sub_head != recorded_oid;
+
+    let index_path = sub_git_dir.join("index");
+    let sub_index = match crate::index::Index::load(&index_path) {
+        Ok(ix) => ix,
+        Err(_) => {
+            return SubmodulePorcelainFlags {
+                new_commits,
+                ..Default::default()
+            }
+        }
+    };
+
+    let tracked: std::collections::BTreeSet<String> = sub_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+        .collect();
+    let untracked = submodule_dir_has_untracked_inner(&sub_dir, &sub_dir, &tracked);
+
+    let objects_dir = sub_git_dir.join("objects");
+    let odb = Odb::new(&objects_dir);
+
+    let sub_head_tree = (|| -> Option<ObjectId> {
+        let h = fs::read_to_string(sub_git_dir.join("HEAD")).ok()?;
+        let h_str = h.trim();
+        let commit_oid = if let Some(r) = h_str.strip_prefix("ref: ") {
+            let oid_hex = fs::read_to_string(sub_git_dir.join(r)).ok()?;
+            ObjectId::from_hex(oid_hex.trim()).ok()?
+        } else {
+            ObjectId::from_hex(h_str).ok()?
+        };
+        let obj = odb.read(&commit_oid).ok()?;
+        let commit = parse_commit(&obj.data).ok()?;
+        Some(commit.tree)
+    })();
+
+    let staged_dirty = sub_head_tree
+        .as_ref()
+        .map(|t| diff_index_to_tree(&odb, &sub_index, Some(t)).map(|v| !v.is_empty()))
+        .unwrap_or(Ok(false));
+    let staged_dirty = staged_dirty.unwrap_or(false);
+
+    let unstaged_dirty = diff_index_to_worktree(&odb, &sub_index, &sub_dir)
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+
+    let modified = staged_dirty || unstaged_dirty;
+
+    SubmodulePorcelainFlags {
+        new_commits,
+        modified,
+        untracked,
+    }
+}
+
+fn submodule_dir_has_untracked_inner(
+    dir: &Path,
+    root: &Path,
+    tracked: &std::collections::BTreeSet<String>,
+) -> bool {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+    sorted.sort_by_key(|e| e.file_name());
+
+    for entry in sorted {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(root)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| name.clone());
+
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        if is_dir {
+            if submodule_dir_has_untracked_inner(&path, root, tracked) {
+                return true;
+            }
+        } else if !tracked.contains(&rel) {
+            return true;
+        }
+    }
+    false
 }

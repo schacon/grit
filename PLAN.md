@@ -880,7 +880,7 @@ commit → check it off → move on.
 - [ ] `t7700-repack` █████████░░░░░░░░░░░ 22/47 (25 left) — git repack works correctly
 - [ ] `t7061-wtstatus-ignore` ░░░░░░░░░░░░░░░░░░░░ 0/25 (25 left) — git-status ignored files
 - [ ] `t7507-commit-verbose` ████████░░░░░░░░░░░░ 19/45 (26 left) — verbose commit template
-- [ ] `t7064-wtstatus-pv2` ░░░░░░░░░░░░░░░░░░░░ 1/28 (27 left) — git status --porcelain=v2
+- [x] `t7064-wtstatus-pv2` — git status --porcelain=v2 (28/28)
 
 - [ ] `t7450-bad-git-dotfiles` ████████░░░░░░░░░░░░ 22/50 (28 left) — check broken or malicious patterns in .git* files
 

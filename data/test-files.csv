@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1167,7 +1167,7 @@ t7061-wtstatus-ignore	t7	yes	25	0	25	false	ok	0
 t7062-status-worktree	t7	yes	26	26	0	true	ok	0
 t7062-wtstatus-ignorecase	t7	yes	1	1	0	true	ok	0
 t7063-status-untracked-cache	t7	yes	58	6	52	false	ok	0
-t7064-wtstatus-pv2	t7	yes	28	1	27	false	ok	0
+t7064-wtstatus-pv2	t7	yes	28	28	0	true	ok	0
 t7065-status-rename	t7	yes	28	25	3	false	ok	0
 t7066-status-ignored	t7	yes	32	30	2	false	ok	0
 t7067-status-untracked-dir	t7	yes	33	33	0	true	ok	0
