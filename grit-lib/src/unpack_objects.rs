@@ -763,6 +763,60 @@ impl<'a> StreamingPackReader<'a> {
     /// zlib stream (`total_in()`). Lookahead past the zlib end (including the 20-byte pack
     /// trailer) must never be fed to the pack checksum.
     fn decompress(&mut self, expected_size: usize) -> Result<Vec<u8>> {
+        // `Read::read_exact` into an empty buffer returns `Ok` immediately without touching the
+        // decoder, so a 0-byte packed object would leave the zlib header in `pending` and desync
+        // the pack stream (bundle / clone unpack). Always run the zlib decoder once.
+        if expected_size == 0 {
+            const CHUNK: usize = 64 * 1024;
+            let mut scratch = [0u8; CHUNK];
+            loop {
+                let mut cursor = std::io::Cursor::new(self.pending.as_slice());
+                let mut z = ZlibDecoder::new(&mut cursor);
+                let mut sink = [0u8; 1];
+                match z.read(&mut sink) {
+                    Ok(0) => {
+                        let consumed = z.total_in() as usize;
+                        if consumed > self.pending.len() {
+                            return Err(Error::CorruptObject(
+                                "zlib total_in exceeds pending buffer".to_owned(),
+                            ));
+                        }
+                        if consumed == 0 {
+                            let n = self.inner.read(&mut scratch).map_err(Error::Io)?;
+                            if n == 0 {
+                                return Err(Error::CorruptObject(format!(
+                                    "pack stream truncated (zlib) at offset {}",
+                                    self.stream_pos
+                                )));
+                            }
+                            self.pending.extend_from_slice(&scratch[..n]);
+                            continue;
+                        }
+                        self.pack_hasher.update(&self.pending[..consumed]);
+                        self.stream_pos += consumed;
+                        self.pending.drain(..consumed);
+                        return Ok(Vec::new());
+                    }
+                    Ok(_) => {
+                        return Err(Error::CorruptObject(
+                            "0-byte packed object inflated to non-empty output".to_owned(),
+                        ));
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                        let n = self.inner.read(&mut scratch).map_err(Error::Io)?;
+                        if n == 0 {
+                            return Err(Error::CorruptObject(format!(
+                                "pack stream truncated (zlib) at offset {}",
+                                self.stream_pos
+                            )));
+                        }
+                        self.pending.extend_from_slice(&scratch[..n]);
+                    }
+                    Err(e) => return Err(Error::Zlib(e.to_string())),
+                }
+            }
+        }
+
         const CHUNK: usize = 64 * 1024;
         let mut scratch = [0u8; CHUNK];
         let mut out = vec![0u8; expected_size];

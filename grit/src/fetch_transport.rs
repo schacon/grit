@@ -211,6 +211,39 @@ pub(crate) fn collect_wants_cli(
     collect_wants(advertised, cli_refspecs)
 }
 
+/// Split leading `KEY=value` tokens (shell-style env assignments) from an upload-pack command
+/// string. The remainder is the executable / command tail.
+///
+/// Used when tests pass `--upload-pack="GIT_TEST_ASSUME_DIFFERENT_OWNER=true git-upload-pack"`;
+/// Git runs that via `sh -c`, but grit substitutes its own `upload-pack` binary and must still
+/// apply the prefix environment (`t5605`, `t0411`).
+fn upload_pack_leading_env_assignments(cmd_template: &str) -> (Vec<(String, String)>, &str) {
+    fn next_token(s: &str) -> Option<(&str, &str)> {
+        let s = s.trim_start();
+        if s.is_empty() {
+            return None;
+        }
+        let end = s.find(char::is_whitespace).unwrap_or(s.len());
+        Some((&s[..end], &s[end..]))
+    }
+
+    let mut pairs = Vec::new();
+    let mut rest = cmd_template;
+    while let Some((token, tail)) = next_token(rest) {
+        if token.contains('=') && !token.starts_with('-') {
+            if let Some((k, v)) = token.split_once('=') {
+                if !k.is_empty() {
+                    pairs.push((k.to_string(), v.to_string()));
+                    rest = tail;
+                    continue;
+                }
+            }
+        }
+        return (pairs, rest.trim_start());
+    }
+    (pairs, "")
+}
+
 /// Tests invoke `git-upload-pack`; use grit to serve grit-created object stores.
 ///
 /// `client_proto` is passed to [`protocol_wire::merge_git_protocol_env_for_child`] (use `0` when
@@ -249,7 +282,11 @@ pub(crate) fn spawn_upload_pack_with_proto(
     };
 
     if cmd_template.contains("git-upload-pack") {
+        let (env_assignments, _) = upload_pack_leading_env_assignments(cmd_template);
         let mut c = Command::new(grit_executable());
+        for (k, v) in env_assignments {
+            c.env(k, v);
+        }
         c.arg("upload-pack")
             .arg(rp.as_ref())
             .env_remove("GIT_TRACE_PACKET")
