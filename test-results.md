@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-07
 
+- `./scripts/run-tests.sh t4128-apply-root.sh`: 2/12 passing (baseline for newly claimed in-progress Diff target `t4128`).
+- `bash scripts/run-upstream-tests.sh t4128-apply-root`: 2/12 passing in isolated upstream harness baseline.
+- `cargo build --release`: passes (rebuild after `t4128` `git apply --directory` path normalization + quoted path decoding updates).
+- `bash scripts/run-upstream-tests.sh t4128-apply-root`: 12/12 passing in isolated upstream harness.
+- `./scripts/run-tests.sh t4128-apply-root.sh`: 12/12 passing; `data/file-results.tsv` refreshed.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in `grit-lib/src/state.rs`, `grit/src/commands/blame.rs`, `grit/src/commands/config.rs`, and `grit/src/commands/update_index.rs` were reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after `t4212` invalid-commit metadata compatibility updates in `fsck`, `log`, and `rev-list`).
 - `./scripts/run-tests.sh t4212-log-corrupt.sh`: 13/13 passing; `data/file-results.tsv` refreshed.
 - `bash scripts/run-upstream-tests.sh t4212-log-corrupt`: 13/13 passing in isolated upstream harness.

@@ -498,12 +498,12 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             // Parse ---/+++ headers if present
             if i < lines.len() && lines[i].starts_with("--- ") {
                 let old_p = &lines[i]["--- ".len()..];
-                fp.old_path = Some(old_p.to_string());
+                fp.old_path = Some(decode_git_quoted_path(old_p));
                 fp.saw_old_header = true;
                 i += 1;
                 if i < lines.len() && lines[i].starts_with("+++ ") {
                     let new_p = &lines[i]["+++ ".len()..];
-                    fp.new_path = Some(new_p.to_string());
+                    fp.new_path = Some(decode_git_quoted_path(new_p));
                     fp.saw_new_header = true;
                     i += 1;
                 }
@@ -544,11 +544,11 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             };
 
             let old_p = &lines[i]["--- ".len()..];
-            fp.old_path = Some(old_p.to_string());
+            fp.old_path = Some(decode_git_quoted_path(old_p));
             fp.saw_old_header = true;
             i += 1;
             let new_p = &lines[i]["+++ ".len()..];
-            fp.new_path = Some(new_p.to_string());
+            fp.new_path = Some(decode_git_quoted_path(new_p));
             fp.saw_new_header = true;
             i += 1;
 
@@ -723,19 +723,67 @@ fn split_diff_git_paths(s: &str) -> Option<(String, String)> {
     if let Some(pos) = s.find(" b/") {
         let a = &s[..pos];
         let b = &s[pos + 1..];
-        return Some((a.to_string(), b.to_string()));
+        return Some((decode_git_quoted_path(a), decode_git_quoted_path(b)));
     }
     // Also handle /dev/null cases
     if s.starts_with("a/") {
         if let Some(pos) = s.find(" /dev/null") {
             let a = &s[..pos];
-            return Some((a.to_string(), "/dev/null".to_string()));
+            return Some((decode_git_quoted_path(a), "/dev/null".to_string()));
         }
     }
     if let Some(b) = s.strip_prefix("/dev/null ") {
-        return Some(("/dev/null".to_string(), b.to_string()));
+        return Some(("/dev/null".to_string(), decode_git_quoted_path(b)));
     }
     None
+}
+
+fn decode_git_quoted_path(path: &str) -> String {
+    if path.len() >= 2 && path.starts_with('"') && path.ends_with('"') {
+        decode_c_style_quoted_path(&path[1..path.len() - 1])
+    } else {
+        path.to_owned()
+    }
+}
+
+fn decode_c_style_quoted_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i += 1;
+            if i >= bytes.len() {
+                break;
+            }
+            match bytes[i] {
+                b'\\' => out.push(b'\\'),
+                b'"' => out.push(b'"'),
+                b'n' => out.push(b'\n'),
+                b't' => out.push(b'\t'),
+                b'r' => out.push(b'\r'),
+                b'0'..=b'7' => {
+                    let mut val = (bytes[i] - b'0') as u16;
+                    let mut consumed = 1usize;
+                    while consumed < 3 && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+                        let next = bytes[i + 1];
+                        if !(b'0'..=b'7').contains(&next) {
+                            break;
+                        }
+                        i += 1;
+                        consumed += 1;
+                        val = (val << 3) + (next - b'0') as u16;
+                    }
+                    out.push(val as u8);
+                }
+                other => out.push(other),
+            }
+        } else {
+            out.push(bytes[i]);
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Parse a single hunk starting at line `i` (which should be an `@@` line).
@@ -890,7 +938,13 @@ fn adjust_path(path: &str, strip: usize, directory: Option<&str>) -> String {
     }
     let stripped = strip_components(path, strip);
     if let Some(dir) = directory {
-        format!("{dir}/{stripped}")
+        let normalized_dir =
+            normalize_directory_prefix(dir).unwrap_or_else(|| dir.trim_matches('/').to_string());
+        if normalized_dir.is_empty() {
+            stripped
+        } else {
+            format!("{normalized_dir}/{stripped}")
+        }
     } else {
         stripped
     }
@@ -915,6 +969,10 @@ fn validate_strip_components(
     strip: usize,
     directory: Option<&str>,
 ) -> Result<()> {
+    if let Some(dir) = directory {
+        normalize_directory_prefix(dir)
+            .ok_or_else(|| anyhow::anyhow!("unable to normalize directory '{}'", dir))?;
+    }
     for fp in patches {
         if let Some(path) = fp.diff_old_path.as_deref() {
             let _ = adjust_path_with_notice(path, strip, directory)?;
@@ -928,6 +986,21 @@ fn validate_strip_components(
         }
     }
     Ok(())
+}
+
+fn normalize_directory_prefix(dir: &str) -> Option<String> {
+    let mut stack: Vec<&str> = Vec::new();
+    for part in dir.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            stack.pop()?;
+            continue;
+        }
+        stack.push(part);
+    }
+    Some(stack.join("/"))
 }
 
 fn path_exists_or_symlink(path: &str) -> bool {
