@@ -1400,6 +1400,8 @@ pub(crate) fn stage_file(
 
     // Do not skip based on stat cache alone: mtime/ctime can match across different contents
     // (common in tests and on fast filesystems), which would leave the index stale (t7601).
+    // Also do not skip based on stat alone: two different blobs can share size/mtime (e.g. "0\n"
+    // vs "1\n"), which breaks `git add -u` after small single-digit edits (t3415-rebase-autosquash).
 
     // Read file content and hash it
     let data = if is_symlink {

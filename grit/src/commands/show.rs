@@ -1262,6 +1262,16 @@ struct CommitInfo<'a> {
 }
 
 /// Apply a format string with placeholders like %H, %h, %s, %an, %ae, etc.
+///
+/// Used by `rebase` todo generation to honor `rebase.instructionFormat`.
+pub(crate) fn format_commit_placeholder(
+    template: &str,
+    oid: &ObjectId,
+    commit: &grit_lib::objects::CommitData,
+) -> String {
+    apply_format_string(template, oid, commit)
+}
+
 fn apply_format_string(
     template: &str,
     oid: &ObjectId,

@@ -3810,7 +3810,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "push" => commands::push::run(parse_cmd_args(subcmd, rest)),
         "range-diff" => commands::range_diff::run_with_rest(rest),
         "read-tree" => commands::read_tree::run(parse_cmd_args(subcmd, rest)),
-        "rebase" => commands::rebase::run(parse_cmd_args(subcmd, rest)),
+        "rebase" => commands::rebase::run(parse_cmd_args(
+            subcmd,
+            &commands::rebase::preprocess_rebase_argv(rest),
+        )),
         "receive-pack" => commands::receive_pack::run(parse_cmd_args(subcmd, rest)),
         "reflog" => {
             let rest = preprocess_log_args(rest);

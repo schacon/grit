@@ -15,7 +15,6 @@ use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{self, count_changes, DiffEntry};
@@ -27,10 +26,10 @@ use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
 use grit_lib::patch_ids::compute_patch_id;
-use grit_lib::refs::{append_reflog, list_refs, resolve_ref};
+use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, split_revision_token, OrderingMode, RevListOptions};
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::whitespace_rule::{fix_blob_bytes, parse_whitespace_rule, WS_DEFAULT_RULE};
 use grit_lib::write_tree::write_tree_from_index;
@@ -39,48 +38,10 @@ use super::checkout::check_dirty_worktree;
 use super::stash;
 use crate::ident::{resolve_email, resolve_name, IdentRole};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum RebaseBackend {
     Merge,
     Apply,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RebaseTodoCmd {
-    Pick,
-    Edit,
-}
-
-enum ReplayExit {
-    Complete,
-    StoppedForEdit,
-}
-
-fn parse_rebase_todo_replay_line(line: &str) -> Option<(RebaseTodoCmd, ObjectId)> {
-    let t = line.trim();
-    if t.is_empty() || t.starts_with('#') {
-        return None;
-    }
-    let (cmd, rest) = if let Some(r) = t.strip_prefix("pick ") {
-        (RebaseTodoCmd::Pick, r)
-    } else if let Some(r) = t.strip_prefix("p ") {
-        (RebaseTodoCmd::Pick, r)
-    } else if let Some(r) = t.strip_prefix("edit ") {
-        (RebaseTodoCmd::Edit, r)
-    } else if let Some(r) = t.strip_prefix("e ") {
-        (RebaseTodoCmd::Edit, r)
-    } else if t.len() == 40 && t.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return ObjectId::from_hex(t)
-            .ok()
-            .map(|oid| (RebaseTodoCmd::Pick, oid));
-    } else {
-        return None;
-    };
-    let hex = rest.split_whitespace().next()?;
-    if hex.len() != 40 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    Some((cmd, ObjectId::from_hex(hex).ok()?))
 }
 
 #[derive(Clone, Copy)]
@@ -133,10 +94,6 @@ pub struct Args {
     /// Rebase all commits reachable from the branch tip, not just those after the merge-base with upstream.
     #[arg(long)]
     pub root: bool,
-
-    /// Keep commits that become empty (matches `git rebase --keep-empty`; hidden like upstream).
-    #[arg(long = "keep-empty", hide = true)]
-    pub keep_empty: bool,
 
     /// Interactive rebase (write todo list only).
     #[arg(short = 'i', long = "interactive")]
@@ -237,30 +194,48 @@ pub struct Args {
     #[arg(long = "quit")]
     pub quit: bool,
 
-    /// Add a Signed-off-by trailer to each replayed commit (matches `git rebase --signoff`).
-    #[arg(short = 's', long = "signoff")]
-    pub signoff: bool,
+    /// Move fixup!/squash! commits next to their targets (also implied by `rebase.autosquash` with `-i`).
+    #[arg(long = "autosquash")]
+    pub autosquash: bool,
 
-    /// Do not add a Signed-off-by trailer (overrides `--signoff`, including from aliases).
-    #[arg(long = "no-signoff")]
-    pub no_signoff: bool,
+    /// Disable autosquash even when `rebase.autosquash` is true.
+    #[arg(long = "no-autosquash")]
+    pub no_autosquash: bool,
 
-    /// Edit the todo list of an in-progress interactive rebase.
-    #[arg(long = "edit-todo")]
-    pub edit_todo: bool,
+    /// Keep commits that do not change any file (empty patch).
+    #[arg(short = 'k', long = "keep-empty")]
+    pub keep_empty: bool,
+}
 
-    /// Show the patch being applied (accepted for compatibility).
-    #[arg(long = "show-current-patch")]
-    pub show_current_patch: bool,
+/// Expand combined short flags (`-ki`, `-ik`) before clap parsing.
+pub fn preprocess_rebase_argv(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for arg in rest {
+        if arg.len() > 2
+            && arg.starts_with('-')
+            && !arg.starts_with("--")
+            && arg.chars().nth(1) != Some('-')
+        {
+            let flags: String = arg.chars().skip(1).collect();
+            let mut expanded = Vec::new();
+            for ch in flags.chars() {
+                match ch {
+                    'i' => expanded.push("-i".to_string()),
+                    'k' => expanded.push("-k".to_string()),
+                    _ => expanded.push(format!("-{ch}")),
+                }
+            }
+            out.extend(expanded);
+        } else {
+            out.push(arg.clone());
+        }
+    }
+    out
 }
 
 /// Run the `rebase` command.
 pub fn run(mut args: Args) -> Result<()> {
     validate_compat_options(&args)?;
-
-    if args.no_signoff {
-        args.signoff = false;
-    }
 
     if args.rebase_merges {
         args.merge = true;
@@ -272,6 +247,9 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         if args.fork_point {
             bail!("options '--root' and '--fork-point' cannot be used together");
+        }
+        if args.onto.is_none() {
+            bail!("a base commit must be provided with --onto when using --root");
         }
         if args.upstream.is_some() && args.branch.is_some() {
             bail!("git rebase: too many arguments");
@@ -292,12 +270,6 @@ pub fn run(mut args: Args) -> Result<()> {
     }
     if args.quit {
         return do_quit();
-    }
-    if args.edit_todo {
-        return do_edit_todo();
-    }
-    if args.show_current_patch {
-        return Ok(());
     }
 
     let pre_rebase_hook_second = args.branch.clone();
@@ -404,6 +376,651 @@ fn validate_compat_options(args: &Args) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RebaseTodoCmd {
+    Pick,
+    Fixup,
+    Squash,
+}
+
+impl RebaseTodoCmd {
+    fn as_str(self) -> &'static str {
+        match self {
+            RebaseTodoCmd::Pick => "pick",
+            RebaseTodoCmd::Fixup => "fixup",
+            RebaseTodoCmd::Squash => "squash",
+        }
+    }
+
+    fn parse_word(word: &str) -> Option<Self> {
+        match word {
+            "pick" | "p" => Some(RebaseTodoCmd::Pick),
+            "fixup" | "f" => Some(RebaseTodoCmd::Fixup),
+            "squash" | "s" => Some(RebaseTodoCmd::Squash),
+            _ => None,
+        }
+    }
+}
+
+/// First line of a commit message with continuation lines folded like `git format_subject(..., " ")`.
+fn commit_subject_single_line(message: &str) -> String {
+    let mut lines = message.lines();
+    let Some(first) = lines.next() else {
+        return String::new();
+    };
+    let mut out = first.trim_end().to_string();
+    for line in lines {
+        let t = line.trim_end();
+        if t.is_empty() {
+            break;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(t.trim_start());
+    }
+    out
+}
+
+fn skip_fixupish_prefix(subject: &str) -> Option<&str> {
+    let s = subject.trim_start();
+    if let Some(rest) = s.strip_prefix("fixup!") {
+        return Some(rest.trim_start());
+    }
+    if let Some(rest) = s.strip_prefix("amend!") {
+        return Some(rest.trim_start());
+    }
+    if let Some(rest) = s.strip_prefix("squash!") {
+        return Some(rest.trim_start());
+    }
+    None
+}
+
+fn strip_fixupish_chain(mut p: &str) -> &str {
+    while let Some(rest) = skip_fixupish_prefix(p) {
+        p = rest;
+        p = p.trim_start();
+    }
+    p
+}
+
+fn format_autosquash_subject_for_match(message: &str) -> String {
+    commit_subject_single_line(message)
+}
+
+fn is_commit_tree_unchanged(repo: &Repository, oid: &ObjectId) -> Result<bool> {
+    const GIT_EMPTY_TREE_HEX: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    let obj = repo.odb.read(oid)?;
+    let commit = parse_commit(&obj.data)?;
+    let parent_tree = if let Some(p) = commit.parents.first() {
+        let pobj = repo.odb.read(p)?;
+        let pc = parse_commit(&pobj.data)?;
+        pc.tree
+    } else {
+        ObjectId::from_hex(GIT_EMPTY_TREE_HEX).map_err(|e| anyhow::anyhow!("{e}"))?
+    };
+    Ok(commit.tree == parent_tree)
+}
+
+/// Validates `rebase.instructionFormat` similarly to Git's `get_commit_format` for todo generation.
+fn validate_rebase_instruction_format(config: &ConfigSet) -> Result<()> {
+    let Some(fmt) = config.get("rebase.instructionFormat") else {
+        return Ok(());
+    };
+    if fmt.trim().is_empty() {
+        return Ok(());
+    }
+    if !fmt.contains('%') {
+        bail!("invalid --pretty format: {fmt}");
+    }
+    let mut chars = fmt.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            continue;
+        }
+        let Some(spec) = chars.next() else {
+            bail!("invalid --pretty format: {fmt}");
+        };
+        match spec {
+            'n' | '%' => {}
+            'H' | 'h' | 'T' | 't' | 's' | 'e' | 'b' | 'B' | 'N' => {}
+            'P' | 'p' => {}
+            'w' | 'W' => {}
+            'a' | 'c' => {
+                let Some(second) = chars.peek().copied() else {
+                    bail!("invalid --pretty format: {fmt}");
+                };
+                match second {
+                    'n' | 'e' | 'd' | 'i' => {
+                        chars.next();
+                    }
+                    'r' if spec == 'a' || spec == 'c' => {
+                        chars.next();
+                    }
+                    _ => bail!("invalid --pretty format: {fmt}"),
+                }
+            }
+            '(' => {
+                while let Some(c) = chars.next() {
+                    if c == ')' {
+                        break;
+                    }
+                }
+            }
+            _ => bail!("invalid --pretty format: {fmt}"),
+        }
+    }
+    Ok(())
+}
+
+fn format_rebase_todo_line(
+    repo: &Repository,
+    oid: &ObjectId,
+    cmd: RebaseTodoCmd,
+    config: &ConfigSet,
+    short_oid_field: bool,
+) -> Result<String> {
+    let obj = repo.odb.read(oid)?;
+    let commit = parse_commit(&obj.data)?;
+    let subj = commit.message.lines().next().unwrap_or("");
+    let empty = is_commit_tree_unchanged(repo, oid).unwrap_or(false);
+    let oid_field = if short_oid_field {
+        abbreviate_object_id(repo, *oid, 7)?
+    } else {
+        oid.to_hex()
+    };
+    let mut line = match config.get("rebase.instructionFormat") {
+        None => format!("{} {} # {}", cmd.as_str(), oid_field, subj),
+        Some(raw) if raw.trim().is_empty() => {
+            format!("{} {} # {}", cmd.as_str(), oid_field, subj)
+        }
+        Some(tmpl) => {
+            let mut t = tmpl.clone();
+            if !t.starts_with('#') {
+                t = format!("# {t}");
+            }
+            let rest = crate::commands::show::format_commit_placeholder(&t, oid, &commit);
+            format!("{} {} {}", cmd.as_str(), oid_field, rest)
+        }
+    };
+    if empty {
+        line.push_str(" # empty");
+    }
+    Ok(line)
+}
+
+fn rearrange_autosquash(
+    repo: &Repository,
+    oids: Vec<ObjectId>,
+) -> Result<Vec<(ObjectId, RebaseTodoCmd)>> {
+    let n = oids.len();
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut subjects: Vec<Option<String>> = vec![None; n];
+    let mut cmds: Vec<RebaseTodoCmd> = vec![RebaseTodoCmd::Pick; n];
+    let mut next: Vec<isize> = vec![-1; n];
+    let mut tail: Vec<isize> = vec![-1; n];
+
+    let mut subject_to_index: HashMap<String, usize> = HashMap::new();
+    let mut oid_to_index: HashMap<ObjectId, usize> = HashMap::new();
+    let mut rearranged = false;
+
+    for i in 0..n {
+        let obj = repo.odb.read(&oids[i])?;
+        let commit = parse_commit(&obj.data)?;
+        let subj = format_autosquash_subject_for_match(&commit.message);
+        subjects[i] = Some(subj.clone());
+
+        let mut target_idx: Option<usize> = None;
+        if let Some(rest) = skip_fixupish_prefix(&subj) {
+            let key = strip_fixupish_chain(rest).trim();
+            if subject_to_index.contains_key(key) {
+                target_idx = subject_to_index.get(key).copied();
+            } else if !key.contains(' ') {
+                if let Ok(oid) = resolve_revision(repo, key) {
+                    // A branch can point at the fixup commit itself (e.g. `fixup! self-cycle` on
+                    // branch `self-cycle`); Git does not treat that as a valid autosquash target.
+                    if oid != oids[i] {
+                        if let Some(&idx) = oid_to_index.get(&oid) {
+                            target_idx = Some(idx);
+                        }
+                    }
+                }
+            }
+            if target_idx.is_none() {
+                for j in 0..i {
+                    if let Some(ref sj) = subjects[j] {
+                        if sj.starts_with(key) {
+                            target_idx = Some(j);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(i2) = target_idx {
+            rearranged = true;
+            let t = subj.trim_start();
+            cmds[i] = if t.starts_with("fixup!") || t.starts_with("amend!") {
+                RebaseTodoCmd::Fixup
+            } else {
+                RebaseTodoCmd::Squash
+            };
+            if tail[i2] < 0 {
+                next[i] = next[i2];
+                next[i2] = i as isize;
+            } else {
+                let t = tail[i2] as usize;
+                next[i] = next[t];
+                next[t] = i as isize;
+            }
+            tail[i2] = i as isize;
+        }
+
+        if target_idx.is_none() && !subject_to_index.contains_key(&subj) {
+            subject_to_index.insert(subj.clone(), i);
+            oid_to_index.insert(oids[i], i);
+        }
+    }
+
+    if !rearranged {
+        return Ok(oids.into_iter().map(|o| (o, RebaseTodoCmd::Pick)).collect());
+    }
+
+    let mut ordered: Vec<(ObjectId, RebaseTodoCmd)> = Vec::with_capacity(n);
+    for i in 0..n {
+        if matches!(cmds[i], RebaseTodoCmd::Fixup | RebaseTodoCmd::Squash) {
+            continue;
+        }
+        let mut cur = Some(i);
+        while let Some(ci) = cur {
+            ordered.push((oids[ci], cmds[ci]));
+            let nxt = next[ci];
+            cur = if nxt >= 0 { Some(nxt as usize) } else { None };
+        }
+    }
+    debug_assert_eq!(ordered.len(), n);
+    Ok(ordered)
+}
+
+fn parse_todo_line_with_repo(
+    repo: Option<&Repository>,
+    line: &str,
+) -> Result<Option<(ObjectId, RebaseTodoCmd)>> {
+    let t = line.trim();
+    if t.is_empty() || t.starts_with('#') {
+        return Ok(None);
+    }
+    let mut parts = t.split_whitespace();
+    let Some(cmd_word) = parts.next() else {
+        return Ok(None);
+    };
+    let Some(cmd) = RebaseTodoCmd::parse_word(cmd_word) else {
+        return Ok(None);
+    };
+    let Some(hex) = parts.next() else {
+        return Ok(None);
+    };
+    if hex.len() < 4 || hex.len() > 40 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Ok(None);
+    }
+    let oid = if hex.len() == 40 {
+        ObjectId::from_hex(hex)?
+    } else {
+        let Some(r) = repo else {
+            return Ok(None);
+        };
+        resolve_revision(r, hex).with_context(|| format!("todo: bad revision '{hex}'"))?
+    };
+    Ok(Some((oid, cmd)))
+}
+
+fn rebase_state_todo_lines(
+    repo: &Repository,
+    config: &ConfigSet,
+    entries: &[(ObjectId, RebaseTodoCmd)],
+) -> Result<Vec<String>> {
+    entries
+        .iter()
+        .map(|(oid, cmd)| format_rebase_todo_line(repo, oid, *cmd, config, false))
+        .collect()
+}
+
+fn next_non_fixup_index(repo: &Repository, todo_lines: &[&str], from: usize) -> Option<usize> {
+    let mut j = from + 1;
+    while j < todo_lines.len() {
+        if let Ok(Some((_, cmd))) = parse_todo_line_with_repo(Some(repo), todo_lines[j]) {
+            if matches!(cmd, RebaseTodoCmd::Fixup | RebaseTodoCmd::Squash) {
+                j += 1;
+                continue;
+            }
+            return Some(j);
+        }
+        j += 1;
+    }
+    None
+}
+
+fn is_final_fixup_in_todo(repo: &Repository, todo_lines: &[&str], idx: usize) -> bool {
+    let Ok(Some((_, cmd))) = parse_todo_line_with_repo(Some(repo), todo_lines[idx]) else {
+        return false;
+    };
+    if !matches!(cmd, RebaseTodoCmd::Fixup | RebaseTodoCmd::Squash) {
+        return false;
+    }
+    next_non_fixup_index(repo, todo_lines, idx).is_none()
+}
+
+#[derive(Clone, Copy, Default)]
+struct SquashChainCtx {
+    count: usize,
+    seen_squash: bool,
+}
+
+fn squash_ctx_path(rb_dir: &Path) -> PathBuf {
+    rb_dir.join("squash-chain-ctx")
+}
+
+fn read_squash_ctx(rb_dir: &Path) -> SquashChainCtx {
+    let Ok(s) = fs::read_to_string(squash_ctx_path(rb_dir)) else {
+        return SquashChainCtx::default();
+    };
+    let mut count = 0usize;
+    let mut seen = false;
+    for line in s.lines() {
+        if let Some(v) = line.strip_prefix("count=") {
+            count = v.parse().unwrap_or(0);
+        }
+        if line.trim() == "seen_squash=1" {
+            seen = true;
+        }
+    }
+    SquashChainCtx {
+        count,
+        seen_squash: seen,
+    }
+}
+
+fn write_squash_ctx(rb_dir: &Path, ctx: SquashChainCtx) -> Result<()> {
+    fs::write(
+        squash_ctx_path(rb_dir),
+        format!(
+            "count={}\nseen_squash={}\n",
+            ctx.count,
+            if ctx.seen_squash { 1 } else { 0 }
+        ),
+    )?;
+    Ok(())
+}
+
+fn clear_squash_ctx(rb_dir: &Path) {
+    let _ = fs::remove_file(squash_ctx_path(rb_dir));
+    let _ = fs::remove_file(rb_dir.join("message-squash"));
+    let _ = fs::remove_file(rb_dir.join("message-fixup"));
+}
+
+fn message_body_after_subject(message: &str) -> &str {
+    match message.find('\n') {
+        Some(i) => &message[i + 1..],
+        None => "",
+    }
+}
+
+fn first_line_len(body: &str) -> usize {
+    match body.find('\n') {
+        Some(i) => i,
+        None => body.len(),
+    }
+}
+
+fn squash_comment_subject_prefix(body: &str, cmd: RebaseTodoCmd, seen_squash: bool) -> usize {
+    let t = body.trim_start();
+    if t.starts_with("amend! ") {
+        return first_line_len(body);
+    }
+    if (cmd == RebaseTodoCmd::Squash || seen_squash)
+        && (t.starts_with("squash! ") || t.starts_with("fixup! "))
+    {
+        return first_line_len(body);
+    }
+    0
+}
+
+fn append_commented(buf: &mut String, text: &str) {
+    for line in text.lines() {
+        buf.push_str("# ");
+        buf.push_str(line);
+        buf.push('\n');
+    }
+}
+
+fn append_nth_squash_message(
+    buf: &mut String,
+    body: &str,
+    cmd: RebaseTodoCmd,
+    seen_squash: bool,
+    n: usize,
+) {
+    buf.push_str("\n# This is the commit message #");
+    buf.push_str(&n.to_string());
+    buf.push_str(":\n\n");
+    let pre = squash_comment_subject_prefix(body, cmd, seen_squash).min(body.len());
+    if pre > 0 {
+        append_commented(buf, &body[..pre]);
+    }
+    buf.push_str(&body[pre..]);
+}
+
+fn run_prepare_commit_msg_hook(repo: &Repository, path: &Path, source: &str) -> Result<()> {
+    let p = path.to_string_lossy();
+    if let HookResult::Failed(code) =
+        run_hook(repo, "prepare-commit-msg", &[p.as_ref(), source], None)
+    {
+        bail!("prepare-commit-msg hook exited with status {code}");
+    }
+    Ok(())
+}
+
+/// Writes `text` to `COMMIT_EDITMSG`, runs `prepare-commit-msg` with `source`, returns the file
+/// contents afterward (matches Git's sequencer `try_to_commit` hook path).
+fn commit_message_after_prepare_hook(
+    repo: &Repository,
+    git_dir: &Path,
+    text: &str,
+    source: &str,
+) -> Result<String> {
+    let editmsg = git_dir.join("COMMIT_EDITMSG");
+    fs::write(&editmsg, text)?;
+    run_prepare_commit_msg_hook(repo, &editmsg, source)?;
+    fs::read_to_string(&editmsg).context("read COMMIT_EDITMSG after prepare-commit-msg hook")
+}
+
+fn strip_comment_lines_template(msg: &str) -> String {
+    let mut out = String::new();
+    for line in msg.lines() {
+        let t = line.trim_start();
+        if t.starts_with('#') {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+fn default_commit_msg_cleanup(config: &ConfigSet) -> &'static str {
+    match config
+        .get("commit.cleanup")
+        .map(|s| s.to_lowercase())
+        .as_deref()
+    {
+        Some("strip") => "strip",
+        Some("verbatim") => "verbatim",
+        Some("whitespace") => "whitespace",
+        Some("scissors") => "scissors",
+        _ => "default",
+    }
+}
+
+/// Message cleanup for rebase replay after `prepare-commit-msg`, matching Git's sequencer
+/// `try_to_commit`: when `commit.cleanup` is unset, `default_msg_cleanup` is `COMMIT_MSG_CLEANUP_NONE`
+/// and `strbuf_stripspace` does not strip `#` lines (unlike `git commit`'s default).
+fn rebase_commit_msg_cleanup(config: &ConfigSet) -> &'static str {
+    match config
+        .get("commit.cleanup")
+        .map(|s| s.to_lowercase())
+        .as_deref()
+    {
+        Some("strip") => "strip",
+        Some("verbatim") => "verbatim",
+        Some("whitespace") => "whitespace",
+        Some("scissors") => "scissors",
+        _ => "verbatim",
+    }
+}
+
+fn apply_commit_msg_cleanup(msg: &str, mode: &str) -> String {
+    match mode {
+        "verbatim" => msg.to_string(),
+        "whitespace" => {
+            let s = msg.replace("\r\n", "\n");
+            let lines: Vec<&str> = s.lines().collect();
+            let mut start = 0usize;
+            while start < lines.len() && lines[start].trim().is_empty() {
+                start += 1;
+            }
+            let mut end = lines.len();
+            while end > start && lines[end - 1].trim().is_empty() {
+                end -= 1;
+            }
+            lines[start..end].join("\n") + "\n"
+        }
+        "strip" | "default" | "scissors" => {
+            let mut s = msg.replace("\r\n", "\n");
+            let cut = if mode == "scissors" {
+                s.find("\n------------------------ >8 ------------------------\n")
+            } else {
+                None
+            };
+            if let Some(i) = cut {
+                s.truncate(i);
+            }
+            let lines: Vec<&str> = s.lines().collect();
+            let mut out: Vec<&str> = Vec::new();
+            for line in lines {
+                let t = line.trim_start();
+                if t.starts_with('#') {
+                    continue;
+                }
+                out.push(line);
+            }
+            let mut start = 0usize;
+            while start < out.len() && out[start].trim().is_empty() {
+                start += 1;
+            }
+            let mut end = out.len();
+            while end > start && out[end - 1].trim().is_empty() {
+                end -= 1;
+            }
+            out[start..end].join("\n") + "\n"
+        }
+        _ => strip_comment_lines_template(msg),
+    }
+}
+
+fn update_squash_message_file(
+    repo: &Repository,
+    rb_dir: &Path,
+    git_dir: &Path,
+    cmd: RebaseTodoCmd,
+    picked: &CommitData,
+    ctx: &mut SquashChainCtx,
+) -> Result<()> {
+    let squash_path = rb_dir.join("message-squash");
+    let fixup_path = rb_dir.join("message-fixup");
+    let body = message_body_after_subject(&picked.message);
+
+    if ctx.count == 0 {
+        let head_oid = resolve_head(git_dir)?
+            .oid()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("HEAD is unborn during squash"))?;
+        let hobj = repo.odb.read(&head_oid)?;
+        let head_commit = parse_commit(&hobj.data)?;
+        let hsubj = head_commit.message.lines().next().unwrap_or("");
+        let hbody = message_body_after_subject(&head_commit.message);
+        let mut buf = String::new();
+        buf.push_str("# This is a combination of 2 commits.\n");
+        buf.push_str("# The first commit's message is:\n\n");
+        if cmd == RebaseTodoCmd::Fixup {
+            fs::write(&fixup_path, format!("{hsubj}\n{hbody}"))?;
+            append_commented(&mut buf, hsubj);
+            if !hbody.is_empty() {
+                append_commented(&mut buf, hbody.trim_end_matches('\n'));
+            }
+        } else {
+            buf.push_str(hsubj);
+            buf.push('\n');
+            buf.push_str(hbody);
+            if !hbody.is_empty() && !hbody.ends_with('\n') {
+                buf.push('\n');
+            }
+        }
+        append_nth_squash_message(&mut buf, body, cmd, ctx.seen_squash, 2);
+        fs::write(&squash_path, buf)?;
+    } else {
+        let mut buf = fs::read_to_string(&squash_path)?;
+        let n = ctx.count + 2;
+        if let Some(pos) = buf.find('\n') {
+            if buf.starts_with("# This is a combination of") {
+                buf.replace_range(
+                    ..pos + 1,
+                    &format!("# This is a combination of {n} commits.\n"),
+                );
+            }
+        }
+        append_nth_squash_message(&mut buf, body, cmd, ctx.seen_squash, ctx.count + 2);
+        fs::write(&squash_path, buf)?;
+    }
+
+    if cmd == RebaseTodoCmd::Squash {
+        ctx.seen_squash = true;
+    }
+    ctx.count += 1;
+    write_squash_ctx(rb_dir, *ctx)?;
+    Ok(())
+}
+
+fn commit_from_merged_index(
+    repo: &Repository,
+    _git_dir: &Path,
+    merged_index: &Index,
+    config: &ConfigSet,
+    parents: Vec<ObjectId>,
+    author: &str,
+    message: String,
+) -> Result<ObjectId> {
+    let tree_oid = write_tree_from_index(&repo.odb, merged_index, "")?;
+    let now = time::OffsetDateTime::now_utc();
+    let committer = resolve_identity(config, "COMMITTER")?;
+    let (message, encoding, raw_message) = finalize_message_for_commit_encoding(message, config);
+    let commit_data = CommitData {
+        tree: tree_oid,
+        parents,
+        author: author.to_string(),
+        committer: format_ident(&committer, now),
+        author_raw: Vec::new(),
+        committer_raw: Vec::new(),
+        encoding,
+        message,
+        raw_message,
+    };
+    let bytes = serialize_commit(&commit_data);
+    Ok(repo.odb.write(ObjectKind::Commit, &bytes)?)
+}
+
 fn rebase_reflog_action() -> String {
     std::env::var("GIT_REFLOG_ACTION").unwrap_or_else(|_| "rebase".to_owned())
 }
@@ -443,56 +1060,6 @@ fn rebase_apply_dir(git_dir: &Path) -> std::path::PathBuf {
 
 fn rebase_merge_dir(git_dir: &Path) -> std::path::PathBuf {
     git_dir.join("rebase-merge")
-}
-
-/// Basename of the interactive rebase todo file inside `rebase-merge/` (matches Git).
-fn rebase_todo_basename() -> &'static str {
-    "git-rebase-todo"
-}
-
-fn default_rebase_todo_path(rb_dir: &Path) -> PathBuf {
-    rb_dir.join(rebase_todo_basename())
-}
-
-/// Resolved path for the rebase todo file, honoring `GIT_REBASE_TODO` like Git.
-fn resolve_rebase_todo_path(repo: &Repository, rb_dir: &Path) -> PathBuf {
-    let Ok(raw) = std::env::var("GIT_REBASE_TODO") else {
-        return default_rebase_todo_path(rb_dir);
-    };
-    let s = raw.trim();
-    if s.is_empty() {
-        return default_rebase_todo_path(rb_dir);
-    }
-    let p = Path::new(s);
-    if p.is_absolute() {
-        return p.to_path_buf();
-    }
-    let s = s.replace('\\', "/");
-    if let Some(rest) = s.strip_prefix(".git/") {
-        return repo.git_dir.join(rest);
-    }
-    if let Some(wt) = repo.work_tree.as_deref() {
-        wt.join(p)
-    } else {
-        repo.git_dir.join(p)
-    }
-}
-
-fn read_rebase_todo_file(path: &Path) -> Result<Vec<String>> {
-    let content = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    Ok(content.lines().map(|s| s.to_string()).collect())
-}
-
-fn write_rebase_todo_file(path: &Path, lines: &[String]) -> Result<()> {
-    let mut out = lines.join("\n");
-    if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, out).with_context(|| format!("write {}", path.display()))?;
-    Ok(())
 }
 
 fn rebase_dir(git_dir: &Path) -> std::path::PathBuf {
@@ -562,126 +1129,6 @@ fn load_rebase_backend(rb_dir: &Path) -> RebaseBackend {
     }
 }
 
-/// Canonical SHA-1 of Git's empty tree (used for root rebases and parent-less commits).
-const GIT_EMPTY_TREE_HEX: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-
-fn git_empty_tree_oid() -> Result<ObjectId> {
-    ObjectId::from_hex(GIT_EMPTY_TREE_HEX)
-        .map_err(|e| anyhow::anyhow!("invalid empty tree oid: {e}"))
-}
-
-/// Create a root commit with an empty tree and empty message (matches Git's `squash_onto` for `rebase --root` without `--onto`).
-fn write_synthetic_root_commit(repo: &Repository) -> Result<ObjectId> {
-    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let now = time::OffsetDateTime::now_utc();
-    let committer = resolve_identity(&config, "COMMITTER")?;
-    let ident = format_ident(&committer, now);
-    let commit_data = CommitData {
-        tree: git_empty_tree_oid()?,
-        parents: Vec::new(),
-        author: ident.clone(),
-        committer: ident,
-        author_raw: Vec::new(),
-        committer_raw: Vec::new(),
-        encoding: None,
-        message: String::new(),
-        raw_message: None,
-    };
-    let bytes = serialize_commit(&commit_data);
-    repo.odb
-        .write(ObjectKind::Commit, &bytes)
-        .map_err(|e| anyhow::anyhow!("{e}"))
-}
-
-/// Whether `commit_oid` would replay as an empty patch during `rebase --root` onto `onto` (tree unchanged vs its parent base).
-fn is_root_rebase_empty_commit(
-    repo: &Repository,
-    commit_oid: &ObjectId,
-    onto: ObjectId,
-) -> Result<bool> {
-    let empty_tree = git_empty_tree_oid()?;
-    let obj = repo.odb.read(commit_oid)?;
-    let commit = parse_commit(&obj.data)?;
-    let parent_tree = if let Some(p) = commit.parents.first() {
-        let pobj = repo.odb.read(p)?;
-        let parent_commit = parse_commit(&pobj.data)?;
-        parent_commit.tree
-    } else {
-        empty_tree
-    };
-    Ok(commit.tree == parent_tree && commit.tree == onto)
-}
-
-/// True when this rebase was started with `--signoff` (Git stores `.git/rebase-*/signoff`).
-fn rebase_signoff_enabled(rb_dir: &Path) -> bool {
-    rb_dir.join("signoff").exists()
-}
-
-/// Update `HEAD` after a successful pick. When the rebase was started on a branch (`head-name` is
-/// a ref under `refs/`), advance that ref and keep `HEAD` symbolic; otherwise stay detached.
-fn replay_tip_path(git_dir: &Path) -> PathBuf {
-    git_dir.join("GRIT_REPLAY_HEAD")
-}
-
-fn write_rebase_head_after_pick(git_dir: &Path, rb_dir: &Path, new_oid: &ObjectId) -> Result<()> {
-    let stored = fs::read_to_string(rb_dir.join("head-name")).unwrap_or_default();
-    let head_name = stored.trim();
-    if head_name.is_empty() || head_name == "detached HEAD" {
-        // `--apply` stores `head-name` = `detached HEAD` but `orig-branch` names the branch being
-        // rebased; advance it each pick so `HEAD` and the branch stay aligned (matches Git).
-        if let Ok(ob) = fs::read_to_string(rb_dir.join("orig-branch")) {
-            let r = ob.trim();
-            if !r.is_empty() {
-                let ref_path = git_dir.join(r);
-                if let Some(parent) = ref_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&ref_path, format!("{}\n", new_oid.to_hex()))?;
-                fs::write(git_dir.join("HEAD"), format!("ref: {r}\n"))?;
-                let tip_line = format!("{}\n", new_oid.to_hex());
-                let _ = fs::write(rb_dir.join("replay-head"), &tip_line);
-                let _ = fs::write(replay_tip_path(git_dir), &tip_line);
-                return Ok(());
-            }
-        }
-        fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
-        let tip_line = format!("{}\n", new_oid.to_hex());
-        let _ = fs::write(rb_dir.join("replay-head"), &tip_line);
-        let _ = fs::write(replay_tip_path(git_dir), &tip_line);
-        return Ok(());
-    }
-    let ref_path = git_dir.join(head_name);
-    if let Some(parent) = ref_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&ref_path, format!("{}\n", new_oid.to_hex()))?;
-    fs::write(git_dir.join("HEAD"), format!("ref: {head_name}\n"))?;
-    let tip_line = format!("{}\n", new_oid.to_hex());
-    let _ = fs::write(rb_dir.join("replay-head"), &tip_line);
-    let _ = fs::write(replay_tip_path(git_dir), &tip_line);
-    Ok(())
-}
-
-/// Local branch refs (`refs/heads/*`) whose tip equals `oid`.
-/// Append `Signed-off-by` using committer identity when rebase `--signoff` is active.
-fn append_rebase_signoff_to_unicode(msg: &str, git_dir: &Path) -> Result<String> {
-    let config = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
-    let name = std::env::var("GIT_COMMITTER_NAME")
-        .ok()
-        .or_else(|| config.get("user.name"))
-        .unwrap_or_else(|| "Unknown".to_owned());
-    let email = std::env::var("GIT_COMMITTER_EMAIL")
-        .ok()
-        .or_else(|| config.get("user.email"))
-        .unwrap_or_default();
-    let trailer = format!("Signed-off-by: {name} <{email}>");
-    if msg.contains(&trailer) {
-        return Ok(msg.to_owned());
-    }
-    let trimmed = msg.trim_end();
-    Ok(format!("{trimmed}\n\n{trailer}\n"))
-}
-
 fn load_rebase_reflog_action(rb_dir: &Path) -> String {
     fs::read_to_string(rb_dir.join("reflog-action"))
         .ok()
@@ -744,16 +1191,81 @@ fn reset_index_to_head(repo: &Repository, git_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn is_terminal_dumb() -> bool {
+    match std::env::var("TERM") {
+        Ok(t) => t == "dumb",
+        Err(_) => true,
+    }
+}
+
+/// Matches Git's `git_editor()`: `GIT_EDITOR`, `core.editor`, `VISUAL` (non-dumb only), `EDITOR`,
+/// then `vi`.
+fn git_editor_cmd(config: &ConfigSet) -> Result<String> {
+    if let Ok(e) = std::env::var("GIT_EDITOR") {
+        let s = e.trim();
+        if !s.is_empty() {
+            return Ok(e);
+        }
+    }
+    if let Some(e) = config.get("core.editor") {
+        let s = e.trim();
+        if !s.is_empty() {
+            return Ok(e);
+        }
+    }
+    if !is_terminal_dumb() {
+        if let Ok(v) = std::env::var("VISUAL") {
+            let s = v.trim();
+            if !s.is_empty() {
+                return Ok(v);
+            }
+        }
+    }
+    if let Ok(e) = std::env::var("EDITOR") {
+        let s = e.trim();
+        if !s.is_empty() {
+            return Ok(e);
+        }
+    }
+    if is_terminal_dumb() {
+        bail!("Terminal is dumb, but EDITOR unset");
+    }
+    Ok("vi".to_string())
+}
+
+/// Resolves the program to run for `rebase -i` / autosquash todo editing (`git_sequence_editor`).
+///
+/// `GIT_SEQUENCE_EDITOR` and `sequence.editor` take precedence; otherwise falls back to
+/// [`git_editor_cmd`].
 fn sequence_editor_cmd(config: &ConfigSet) -> Result<String> {
-    std::env::var("GIT_SEQUENCE_EDITOR")
-        .ok()
-        .or_else(|| config.get("sequence.editor"))
-        .or_else(|| std::env::var("GIT_EDITOR").ok())
-        .or_else(|| config.get("core.editor"))
-        .or_else(|| std::env::var("VISUAL").ok())
-        .or_else(|| std::env::var("EDITOR").ok())
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("Terminal is dumb, but EDITOR unset"))
+    if let Ok(seq) = std::env::var("GIT_SEQUENCE_EDITOR") {
+        let s = seq.trim();
+        if !s.is_empty() {
+            return Ok(seq);
+        }
+    }
+    if let Some(seq) = config.get("sequence.editor") {
+        let s = seq.trim();
+        if !s.is_empty() {
+            return Ok(seq);
+        }
+    }
+    git_editor_cmd(config)
+}
+
+fn run_shell_editor(editor: &str, path: &Path) -> Result<std::process::ExitStatus> {
+    let status = if editor.trim() == ":" {
+        std::process::Command::new("true").status()
+    } else {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{} \"$@\"", editor))
+            .arg(editor)
+            .arg(path)
+            .status()
+    }
+    .context("failed to run editor")?;
+    Ok(status)
 }
 
 fn worktree_matches_head(repo: &Repository, git_dir: &Path) -> Result<bool> {
@@ -776,28 +1288,36 @@ fn run_interactive_rebase(
     commits: &[ObjectId],
     config: &ConfigSet,
     autostash_oid: Option<&ObjectId>,
+    autosquash: bool,
 ) -> Result<Vec<(ObjectId, RebaseTodoCmd)>> {
-    use std::io::Write;
-    let mut todo = String::new();
-    for oid in commits {
-        let obj = repo.odb.read(oid)?;
-        let commit = parse_commit(&obj.data)?;
-        let subject = commit.message.lines().next().unwrap_or("");
-        todo.push_str(&format!("pick {} {}\n", oid.to_hex(), subject));
+    if autosquash {
+        validate_rebase_instruction_format(config)?;
     }
-    let tmp = tempfile::NamedTempFile::new().context("create temp file for rebase todo")?;
-    tmp.as_file().write_all(todo.as_bytes())?;
-    let path = tmp.path().to_owned();
+    let entries = if autosquash {
+        rearrange_autosquash(repo, commits.to_vec())?
+    } else {
+        commits
+            .iter()
+            .cloned()
+            .map(|o| (o, RebaseTodoCmd::Pick))
+            .collect()
+    };
+    let mut todo = String::new();
+    for (oid, cmd) in &entries {
+        todo.push_str(&format_rebase_todo_line(repo, oid, *cmd, config, true)?);
+        todo.push('\n');
+    }
+    let rb_merge = rebase_merge_dir(git_dir);
+    let _ = fs::remove_dir_all(&rb_merge);
+    fs::create_dir_all(&rb_merge)?;
+    fs::write(rb_merge.join("interactive"), "")?;
+    let todo_path = rb_merge.join("git-rebase-todo");
+    fs::write(&todo_path, todo.as_bytes())?;
     let editor = sequence_editor_cmd(config)?;
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!("{} \"$1\"", editor))
-        .arg("sh")
-        .arg(&path)
-        .status()
-        .context("failed to run sequence editor")?;
+    let status = run_shell_editor(&editor, &todo_path)?;
+    let edited = fs::read_to_string(&todo_path)?;
+    let _ = fs::remove_dir_all(&rb_merge);
     if !status.success() {
-        // If the editor failed without touching the tree, restore the autostash (matches Git).
         if worktree_matches_head(repo, git_dir)? {
             if let Some(oid) = autostash_oid {
                 let _ = stash::pop_autostash_if_top(repo, oid);
@@ -805,27 +1325,14 @@ fn run_interactive_rebase(
         }
         bail!("there was a problem with the editor");
     }
-    let edited = fs::read_to_string(&path)?;
-    let mut out = Vec::new();
+    let mut out: Vec<(ObjectId, RebaseTodoCmd)> = Vec::new();
     for line in edited.lines() {
         let t = line.trim();
         if t.is_empty() || t.starts_with('#') {
             continue;
         }
-        let (cmd, rest) = if let Some(r) = t.strip_prefix("pick ") {
-            (RebaseTodoCmd::Pick, r)
-        } else if let Some(r) = t.strip_prefix("p ") {
-            (RebaseTodoCmd::Pick, r)
-        } else if let Some(r) = t.strip_prefix("edit ") {
-            (RebaseTodoCmd::Edit, r)
-        } else if let Some(r) = t.strip_prefix("e ") {
-            (RebaseTodoCmd::Edit, r)
-        } else {
-            continue;
-        };
-        let hex: String = rest.split_whitespace().next().unwrap_or("").to_string();
-        if hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-            out.push((ObjectId::from_hex(&hex)?, cmd));
+        if let Some(pair) = parse_todo_line_with_repo(Some(repo), t)? {
+            out.push(pair);
         }
     }
     Ok(out)
@@ -883,6 +1390,12 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         .and_then(|r| r.ok())
         .unwrap_or(false);
     let want_autostash = (args.autostash || config_autostash) && !args.no_autostash;
+    let config_autosquash = config
+        .get_bool("rebase.autosquash")
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
+    let want_autosquash =
+        (args.autosquash || (config_autosquash && args.interactive)) && !args.no_autosquash;
 
     let mut autostash_oid: Option<ObjectId> = None;
     let mut had_rebase_autostash = false;
@@ -939,15 +1452,13 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         .to_owned();
 
     let (upstream_spec, upstream_oid, onto_oid, onto_name_for_state) = if args.root {
-        let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
-            let oid = resolve_revision(&repo, onto_spec)
-                .with_context(|| format!("bad revision '{onto_spec}'"))?;
-            (oid, onto_spec.clone())
-        } else {
-            let oid = write_synthetic_root_commit(&repo)?;
-            (oid, oid.to_hex())
-        };
-        ("--root".to_owned(), onto, onto, onto_label)
+        let onto_spec = args
+            .onto
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("internal: --root without --onto"))?;
+        let onto = resolve_revision(&repo, onto_spec)
+            .with_context(|| format!("bad revision '{onto_spec}'"))?;
+        ("--root".to_owned(), onto, onto, onto_spec.to_owned())
     } else {
         let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD").to_owned();
         let up_oid = resolve_revision(&repo, &upstream_spec)
@@ -982,10 +1493,8 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         .whitespace
         .as_deref()
         .is_some_and(|w| w.eq_ignore_ascii_case("fix") || w.eq_ignore_ascii_case("strip"));
-    // Git sets `REBASE_FORCE` when `--signoff` is given so `can_fast_forward` does not exit early:
-    // commits must be replayed to add/remove trailers (t3428-rebase-signoff).
     let allow_preemptive_ff =
-        !args.interactive && args.exec.is_none() && !whitespace_forces_replay && !args.signoff;
+        !args.interactive && args.exec.is_none() && !whitespace_forces_replay && !args.autosquash;
 
     if allow_preemptive_ff && rebase_can_preemptive_ff(&repo, onto_oid, upstream_oid, head_oid)? {
         if !args.no_ff {
@@ -1018,28 +1527,16 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
 
     let reapply_cherry_picks =
         args.reapply_cherry_picks || (args.keep_base && !args.no_reapply_cherry_picks);
-    let commit_oids = if args.root {
-        let apply_patch_dedup = args.onto.is_some();
-        let list = collect_commits_for_root_rebase(&repo, head_oid, onto_oid, apply_patch_dedup)?;
-        if args.keep_empty {
-            list
-        } else {
-            let mut kept = Vec::new();
-            for oid in list {
-                if !is_root_rebase_empty_commit(&repo, &oid, onto_oid)? {
-                    kept.push(oid);
-                }
-            }
-            kept
-        }
+    let filter_cherry_equivalents = !reapply_cherry_picks && !args.interactive;
+    let mut commits = if args.root {
+        collect_commits_for_root_rebase(&repo, head_oid, onto_oid)?
     } else {
-        collect_rebase_todo_commits(&repo, head_oid, upstream_oid, !reapply_cherry_picks)?
+        collect_rebase_todo_commits(&repo, head_oid, upstream_oid, filter_cherry_equivalents)?
     };
 
-    let mut todo_items: Vec<(ObjectId, RebaseTodoCmd)> = commit_oids
-        .into_iter()
-        .map(|oid| (oid, RebaseTodoCmd::Pick))
-        .collect();
+    if !args.keep_empty && !args.interactive {
+        commits.retain(|oid| !is_commit_tree_unchanged(&repo, oid).unwrap_or(false));
+    }
 
     let hook_arg1: &str = if args.root {
         "--root"
@@ -1055,19 +1552,24 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         bail!("The pre-rebase hook refused to rebase.");
     }
 
-    if args.interactive {
-        if todo_items.is_empty() {
+    let todo_entries: Vec<(ObjectId, RebaseTodoCmd)> = if args.interactive {
+        if commits.is_empty() {
             print_branch_up_to_date(&head);
             if let Some(ref oid) = autostash_oid {
                 apply_autostash_after_ff(&repo, oid)?;
             }
             return Ok(());
         }
-        let pre_editor_len = todo_items.len();
-        let oids_only: Vec<ObjectId> = todo_items.iter().map(|(o, _)| *o).collect();
-        todo_items =
-            run_interactive_rebase(&repo, git_dir, &oids_only, &config, autostash_oid.as_ref())?;
-        if todo_items.is_empty() {
+        let pre_editor_len = commits.len();
+        let edited = run_interactive_rebase(
+            &repo,
+            git_dir,
+            &commits,
+            &config,
+            autostash_oid.as_ref(),
+            want_autosquash,
+        )?;
+        if edited.is_empty() {
             if pre_editor_len > 0 {
                 if worktree_matches_head(&repo, git_dir)? {
                     if let Some(ref oid) = autostash_oid {
@@ -1082,11 +1584,18 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
             }
             return Ok(());
         }
-        // Git runs the sequence editor then proceeds with the replay; upstream tests expect
-        // `rebase -i` to apply the edited todo.
-    }
+        edited
+    } else if want_autosquash {
+        validate_rebase_instruction_format(&config)?;
+        rearrange_autosquash(&repo, commits)?
+    } else {
+        commits
+            .into_iter()
+            .map(|o| (o, RebaseTodoCmd::Pick))
+            .collect()
+    };
 
-    if !args.no_ff && todo_items.is_empty() {
+    if !args.no_ff && todo_entries.is_empty() {
         if head_oid == onto_oid {
             print_branch_up_to_date(&head);
             if let Some(ref oid) = autostash_oid {
@@ -1114,7 +1623,7 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         }
     }
 
-    if todo_items.is_empty() {
+    if todo_entries.is_empty() {
         if let HeadState::Branch { refname, .. } = &head {
             let ident = reflog_identity(&repo);
             let msg = format!("rebase (no-ff): checkout {}", onto_oid.to_hex());
@@ -1134,24 +1643,11 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     let rb_dir = rebase_state_dir_for_backend(git_dir, backend);
     fs::create_dir_all(&rb_dir)?;
 
-    // Git's `--apply` backend records `head-name` as `detached HEAD` even when the branch being
-    // rebased is checked out; the branch ref is advanced only in `(finish)` using `orig-head`.
-    let head_name = match (&head, backend) {
-        (HeadState::Branch { refname, .. }, RebaseBackend::Merge) => refname.clone(),
+    let head_name = match &head {
+        HeadState::Branch { refname, .. } => refname.clone(),
         _ => "detached HEAD".to_string(),
     };
     fs::write(rb_dir.join("head-name"), &head_name)?;
-    if let HeadState::Branch { refname, .. } = &head {
-        fs::write(rb_dir.join("orig-branch"), format!("{refname}\n"))?;
-    } else if let Ok(raw) = fs::read_to_string(git_dir.join("HEAD")) {
-        let t = raw.trim();
-        if let Some(r) = t.strip_prefix("ref: ") {
-            let r = r.trim();
-            if r.starts_with("refs/heads/") {
-                let _ = fs::write(rb_dir.join("orig-branch"), format!("{r}\n"));
-            }
-        }
-    }
     fs::write(rb_dir.join("orig-head"), head_oid.to_hex())?;
     fs::write(rb_dir.join("onto"), onto_oid.to_hex())?;
     fs::write(rb_dir.join("onto-name"), format!("{onto_name_for_state}\n"))?;
@@ -1170,19 +1666,13 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     if args.root {
         fs::write(rb_dir.join("root"), "")?;
     }
+    if args.keep_empty {
+        fs::write(rb_dir.join("keep-empty"), "")?;
+    }
 
-    let todo_lines: Vec<String> = todo_items
-        .iter()
-        .map(|(oid, cmd)| {
-            let verb = match cmd {
-                RebaseTodoCmd::Pick => "pick",
-                RebaseTodoCmd::Edit => "edit",
-            };
-            format!("{verb} {}", oid.to_hex())
-        })
-        .collect();
-    let total = todo_lines.len();
-    fs::write(rb_dir.join("todo"), todo_lines.join("\n") + "\n")?;
+    let todo: Vec<String> = rebase_state_todo_lines(&repo, &config, &todo_entries)?;
+    let total = todo.len();
+    fs::write(rb_dir.join("todo"), todo.join("\n") + "\n")?;
     fs::write(rb_dir.join("end"), total.to_string())?;
     fs::write(rb_dir.join("msgnum"), "1")?;
     fs::write(rb_dir.join("last"), total.to_string())?;
@@ -1200,10 +1690,6 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
 
     if let Some(ref oid) = autostash_oid {
         fs::write(rb_dir.join("autostash"), format!("{}\n", oid.to_hex()))?;
-    }
-
-    if args.signoff {
-        fs::write(rb_dir.join("signoff"), "--signoff\n")?;
     }
 
     let ident = reflog_identity(&repo);
@@ -1254,7 +1740,7 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         &onto_oid.to_hex()[..7]
     );
 
-    let _ = replay_remaining(&repo, &rb_dir, autostash_oid, backend, had_rebase_autostash)?;
+    replay_remaining(&repo, &rb_dir, autostash_oid, backend, had_rebase_autostash)?;
 
     Ok(())
 }
@@ -1423,14 +1909,10 @@ fn collect_commits_to_replay(
 /// Commits to replay for `rebase --root --onto <onto>`: same set as `git rev-list <onto>..<head>`.
 ///
 /// Order matches `git rev-list` default output reversed (oldest first), including merge topology.
-///
-/// When `apply_patch_dedup` is false (Git's implicit squash root for `rebase --root` without `--onto`),
-/// skip patch-id deduplication: the synthetic root matches empty commits on the branch (t3428).
 fn collect_commits_for_root_rebase(
     repo: &Repository,
     head: ObjectId,
     onto: ObjectId,
-    apply_patch_dedup: bool,
 ) -> Result<Vec<ObjectId>> {
     let range = format!("{}..{}", onto.to_hex(), head.to_hex());
     let (positive, negative) = split_revision_token(&range);
@@ -1439,11 +1921,7 @@ fn collect_commits_for_root_rebase(
     opts.ordering = OrderingMode::Default;
     opts.reverse = true;
     let listed = rev_list(repo, &positive, &negative, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
-    if apply_patch_dedup {
-        filter_redundant_patch_commits(repo, onto, &listed.commits)
-    } else {
-        Ok(listed.commits)
-    }
+    filter_redundant_patch_commits(repo, onto, &listed.commits)
 }
 
 /// Drop commits whose patch-id already exists on `onto` or earlier in the replay list.
@@ -1688,32 +2166,35 @@ fn replay_remaining(
     autostash_oid: Option<ObjectId>,
     backend: RebaseBackend,
     had_rebase_autostash: bool,
-) -> Result<ReplayExit> {
+) -> Result<()> {
     let git_dir = &repo.git_dir;
     let ra = load_rebase_reflog_action(rb_dir);
     let ident = reflog_identity(repo);
 
     let todo_content = fs::read_to_string(rb_dir.join("todo"))?;
-    let todo_lines: Vec<&str> = todo_content.lines().filter(|l| !l.is_empty()).collect();
-    let parsed: Vec<(RebaseTodoCmd, ObjectId)> = todo_lines
-        .iter()
-        .filter_map(|l| parse_rebase_todo_replay_line(l))
-        .collect();
+    let todo: Vec<&str> = todo_content.lines().filter(|l| !l.is_empty()).collect();
     let _total: usize = fs::read_to_string(rb_dir.join("end"))?.trim().parse()?;
     let msgnum: usize = fs::read_to_string(rb_dir.join("msgnum"))?.trim().parse()?;
 
     let rewind_marker = rb_dir.join("rewind-notice");
-    if !rewind_marker.exists() && !parsed.is_empty() {
+    if !rewind_marker.exists() && !todo.is_empty() {
         println!("First, rewinding head to replay your work on top of it...");
         let _ = fs::write(&rewind_marker, "");
     }
 
-    for i in (msgnum - 1)..parsed.len() {
-        let (cmd, commit_oid) = parsed[i];
+    for i in (msgnum - 1)..todo.len() {
+        let line = todo[i];
+        let (commit_oid, todo_cmd) = parse_todo_line_with_repo(Some(repo), line)?
+            .ok_or_else(|| anyhow::anyhow!("malformed rebase todo line: {line}"))?;
         let commit_hex = commit_oid.to_hex();
 
         // Update state
         fs::write(rb_dir.join("current"), &commit_hex)?;
+        fs::write(
+            rb_dir.join("current-cmd"),
+            format!("{}\n", todo_cmd.as_str()),
+        )?;
+        let _ = fs::remove_file(rb_dir.join("current-final-fixup"));
         fs::write(rb_dir.join("msgnum"), (i + 1).to_string())?;
         fs::write(rb_dir.join("next"), (i + 1).to_string())?;
 
@@ -1724,7 +2205,8 @@ fn replay_remaining(
             .unwrap_or_else(diff::zero_oid);
 
         let pick_backend = load_rebase_backend(rb_dir);
-        match cherry_pick_for_rebase(repo, rb_dir, &commit_oid, pick_backend) {
+        let final_fixup = is_final_fixup_in_todo(repo, &todo, i);
+        match cherry_pick_for_rebase(repo, &commit_oid, pick_backend, todo_cmd, final_fixup) {
             Ok(()) => {
                 let head = resolve_head(git_dir)?;
                 let new_oid = *head
@@ -1738,25 +2220,6 @@ fn replay_remaining(
                 eprintln!("Applying: {}", subject);
                 let msg = format!("{ra} (pick): {subject}");
                 let _ = append_reflog(git_dir, "HEAD", &old_head, &new_oid, &ident, &msg, false);
-
-                if cmd == RebaseTodoCmd::Edit {
-                    let remaining: Vec<String> = todo_lines[i + 1..]
-                        .iter()
-                        .map(|s| (*s).to_string())
-                        .collect();
-                    fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
-                    fs::write(rb_dir.join("msgnum"), "1")?;
-                    fs::write(rb_dir.join("end"), remaining.len().to_string())?;
-                    let _ = fs::write(rb_dir.join("awaiting_amend"), "1\n");
-                    eprintln!(
-                        "Stopped at {commit_hex}...  {subject}\n\
-                         You can amend the commit now, with\n\n\
-                           git commit --amend '-S'\n\n\
-                         Once you are satisfied with your changes, run\n\n\
-                           git rebase --continue"
-                    );
-                    return Ok(ReplayExit::StoppedForEdit);
-                }
 
                 // Run --exec command if present
                 if let Ok(exec_cmd) = fs::read_to_string(rb_dir.join("exec")) {
@@ -1780,10 +2243,7 @@ fn replay_remaining(
                                 exec_cmd
                             );
                             // Save remaining todo for --continue
-                            let remaining: Vec<String> = todo_lines[i + 1..]
-                                .iter()
-                                .map(|s| (*s).to_string())
-                                .collect();
+                            let remaining: Vec<&str> = todo[i + 1..].to_vec();
                             fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
                             fs::write(rb_dir.join("msgnum"), "1")?;
                             fs::write(rb_dir.join("end"), remaining.len().to_string())?;
@@ -1793,12 +2253,16 @@ fn replay_remaining(
                 }
             }
             Err(_e) => {
-                // Conflicts — leave state for --continue (current commit stays first in todo)
-                let remaining: Vec<String> =
-                    todo_lines[i..].iter().map(|s| (*s).to_string()).collect();
+                // Conflicts — leave state for --continue
+                let remaining: Vec<&str> = todo[i + 1..].to_vec();
                 fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
                 fs::write(rb_dir.join("msgnum"), "1")?;
                 fs::write(rb_dir.join("end"), remaining.len().to_string())?;
+                let ff = is_final_fixup_in_todo(repo, &todo, i);
+                fs::write(
+                    rb_dir.join("current-final-fixup"),
+                    if ff { "1\n" } else { "0\n" },
+                )?;
 
                 let obj = repo.odb.read(&commit_oid)?;
                 let commit = parse_commit(&obj.data)?;
@@ -1820,69 +2284,83 @@ fn replay_remaining(
         }
     }
 
-    // Align `refs/heads/<orig-branch>` with the current replay tip (`HEAD`) before `(finish)`.
-    if let Ok(ob) = fs::read_to_string(rb_dir.join("orig-branch")) {
-        let r = ob.trim();
-        if !r.is_empty() {
-            if let Some(tip) = resolve_head(git_dir)?.oid().cloned() {
-                let ref_path = git_dir.join(r);
-                if let Some(parent) = ref_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&ref_path, format!("{}\n", tip.to_hex()))?;
-                fs::write(git_dir.join("HEAD"), format!("ref: {r}\n"))?;
-            }
-        }
-    }
-
     // Rebase complete — restore branch ref
     finish_rebase(repo, rb_dir, autostash_oid, backend, had_rebase_autostash)?;
-    Ok(ReplayExit::Complete)
+    Ok(())
 }
 
 /// Cherry-pick a single commit onto current HEAD for rebase purposes.
+fn rebase_keep_empty(rb_dir: &Path) -> bool {
+    rb_dir.join("keep-empty").exists()
+}
+
 fn cherry_pick_for_rebase(
     repo: &Repository,
-    rb_dir: &Path,
     commit_oid: &ObjectId,
     backend: RebaseBackend,
+    todo_cmd: RebaseTodoCmd,
+    final_fixup: bool,
 ) -> Result<()> {
     let git_dir = &repo.git_dir;
+    let rb_dir = rebase_dir(git_dir);
+    let keep_empty = rebase_keep_empty(&rb_dir);
 
     let commit_obj = repo.odb.read(commit_oid)?;
     let commit = parse_commit(&commit_obj.data)?;
     let config = ConfigSet::load(Some(git_dir), true)?;
 
+    let head = resolve_head(git_dir)?;
+    let head_oid = head
+        .oid()
+        .ok_or_else(|| anyhow::anyhow!("HEAD is unborn during rebase"))?
+        .to_owned();
+
+    if keep_empty && todo_cmd == RebaseTodoCmd::Pick && is_commit_tree_unchanged(repo, commit_oid)?
+    {
+        let head_obj = repo.odb.read(&head_oid)?;
+        let head_commit = parse_commit(&head_obj.data)?;
+        let now = time::OffsetDateTime::now_utc();
+        let committer = resolve_identity(&config, "COMMITTER")?;
+        let (message, encoding, raw_message) = transcoded_replayed_message(&commit, &config);
+        let commit_data = CommitData {
+            tree: head_commit.tree,
+            parents: vec![head_oid],
+            author: commit.author.clone(),
+            committer: format_ident(&committer, now),
+            author_raw: commit.author_raw.clone(),
+            committer_raw: commit.committer_raw.clone(),
+            encoding,
+            message,
+            raw_message,
+        };
+        let bytes = serialize_commit(&commit_data);
+        let new_oid = repo.odb.write(ObjectKind::Commit, &bytes)?;
+        fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+        return Ok(());
+    }
+
     // Parent tree (base for the cherry-pick). Root commits use Git's empty tree as base.
+    const GIT_EMPTY_TREE_HEX: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
     let parent_tree_oid = if let Some(parent_oid) = commit.parents.first() {
         let parent_obj = repo.odb.read(parent_oid)?;
         let parent_commit = parse_commit(&parent_obj.data)?;
         parent_commit.tree
     } else {
-        git_empty_tree_oid()?
+        ObjectId::from_hex(GIT_EMPTY_TREE_HEX)
+            .map_err(|e| anyhow::anyhow!("invalid empty tree oid: {e}"))?
     };
 
     // Commit's tree (theirs — the changes we want)
     let commit_tree_oid = commit.tree;
 
     // HEAD tree (ours — the current state)
-    let head = resolve_head(git_dir)?;
-    let head_oid = head
-        .oid()
-        .ok_or_else(|| anyhow::anyhow!("HEAD is unborn during rebase"))?
-        .to_owned();
     let head_obj = repo.odb.read(&head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree_oid = head_commit.tree;
 
-    // Already at the picked commit's parent tip — tree matches without a merge, but still record a
-    // new commit whose parent is the *current* replay tip (not the original parent OID). Using the
-    // original `commit_oid` here would rewind `HEAD` off the rebased history (breaks t3428).
-    //
-    // The merge backend (`rebase -m`) must not take this path: Git always runs the merge machinery
-    // so conflicts are reported (t3428). The apply backend may fast-path when HEAD still matches
-    // the patch's parent OID in the object database.
-    if backend == RebaseBackend::Apply {
+    // Already at the picked commit's parent tip — nothing to replay (matches Git's noop pick).
+    // Fixup/squash must still run merge + message folding even when parent == HEAD.
+    if todo_cmd == RebaseTodoCmd::Pick {
         if let Some(p) = commit.parents.first() {
             if head_oid == *p {
                 let old_index = load_index(repo)?;
@@ -1893,40 +2371,15 @@ fn cherry_pick_for_rebase(
                 if let Some(wt) = &repo.work_tree {
                     checkout_merged_index(repo, wt, &old_index, &idx)?;
                 }
-                let root_rebase = rb_dir.join("root").exists();
-                let now = time::OffsetDateTime::now_utc();
-                let committer = resolve_identity(&config, "COMMITTER")?;
-                let (message, encoding, raw_message) = if root_rebase {
-                    let msg = message_for_root_replayed_commit(repo, &commit, true);
-                    (msg, commit.encoding.clone(), None)
-                } else {
-                    transcoded_replayed_message(&commit, &config)
-                };
-                let (message, encoding, raw_message) = apply_rebase_signoff_to_commit_message(
-                    git_dir,
-                    &rb_dir,
-                    &config,
-                    message,
-                    encoding,
-                    raw_message,
-                )?;
-                let commit_data = CommitData {
-                    tree: commit_tree_oid,
-                    parents: vec![head_oid],
-                    author: commit.author.clone(),
-                    committer: format_ident(&committer, now),
-                    author_raw: commit.author_raw.clone(),
-                    committer_raw: commit.committer_raw.clone(),
-                    encoding,
-                    message,
-                    raw_message,
-                };
-                let commit_bytes = serialize_commit(&commit_data);
-                let new_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
-                write_rebase_head_after_pick(git_dir, rb_dir, &new_oid)?;
+                fs::write(git_dir.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
                 return Ok(());
             }
         }
+    }
+
+    if matches!(todo_cmd, RebaseTodoCmd::Fixup | RebaseTodoCmd::Squash) {
+        let mut ctx = read_squash_ctx(&rb_dir);
+        update_squash_message_file(repo, &rb_dir, git_dir, todo_cmd, &commit, &mut ctx)?;
     }
 
     // Three-way merge: base=parent_tree, ours=HEAD_tree, theirs=commit_tree
@@ -1970,22 +2423,106 @@ fn cherry_pick_for_rebase(
         }
     }
 
+    let rb_dir = rebase_dir(git_dir);
     let root_rebase = rb_dir.join("root").exists();
 
     if has_conflicts {
         let _ = grit_lib::rerere::repo_rerere(repo, grit_lib::rerere::RerereAutoupdate::FromConfig);
-        write_rebase_conflict_message(git_dir, &commit, &config)?;
-        if backend == RebaseBackend::Merge {
-            append_conflicts_hint_to_merge_msg(git_dir, &merged_index)?;
-            let _ = fs::write(
-                git_dir.join("CHERRY_PICK_HEAD"),
-                format!("{}\n", commit_oid.to_hex()),
-            );
-        }
+        fs::write(git_dir.join("MERGE_MSG"), &commit.message)?;
         bail!("conflicts during cherry-pick of {}", commit_oid.to_hex());
     }
 
-    // Create the rebased commit, preserving the original author
+    if matches!(todo_cmd, RebaseTodoCmd::Fixup | RebaseTodoCmd::Squash) {
+        let head_obj = repo.odb.read(&head_oid)?;
+        let hc = parse_commit(&head_obj.data)?;
+        let amend_parent = hc.parents.first().copied().unwrap_or(head_oid);
+
+        if todo_cmd == RebaseTodoCmd::Fixup && !final_fixup {
+            let fixup_path = rb_dir.join("message-fixup");
+            let msg = if fixup_path.exists() {
+                fs::read_to_string(&fixup_path)?
+            } else {
+                hc.message.clone()
+            };
+            let new_oid = commit_from_merged_index(
+                repo,
+                git_dir,
+                &merged_index,
+                &config,
+                vec![amend_parent],
+                &hc.author,
+                msg,
+            )?;
+            fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+            return Ok(());
+        }
+        if todo_cmd == RebaseTodoCmd::Squash && !final_fixup {
+            let tmpl = fs::read_to_string(rb_dir.join("message-squash"))?;
+            let raw = commit_message_after_prepare_hook(repo, git_dir, &tmpl, "message")?;
+            let cleaned = apply_commit_msg_cleanup(&raw, default_commit_msg_cleanup(&config));
+            let new_oid = commit_from_merged_index(
+                repo,
+                git_dir,
+                &merged_index,
+                &config,
+                vec![amend_parent],
+                &hc.author,
+                cleaned,
+            )?;
+            fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+            return Ok(());
+        }
+
+        if todo_cmd == RebaseTodoCmd::Fixup {
+            let fixup_path = rb_dir.join("message-fixup");
+            let template = if fixup_path.exists() {
+                fs::read_to_string(&fixup_path)?
+            } else {
+                let subj = hc.message.lines().next().unwrap_or("");
+                let body = message_body_after_subject(&hc.message);
+                format!("{subj}\n{body}")
+            };
+            let raw = commit_message_after_prepare_hook(repo, git_dir, &template, "squash")?;
+            let cleaned = apply_commit_msg_cleanup(&raw, rebase_commit_msg_cleanup(&config));
+            let new_oid = commit_from_merged_index(
+                repo,
+                git_dir,
+                &merged_index,
+                &config,
+                vec![amend_parent],
+                &hc.author,
+                cleaned,
+            )?;
+            fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+            clear_squash_ctx(&rb_dir);
+            return Ok(());
+        }
+
+        let squash_path = rb_dir.join("message-squash");
+        let fixup_path = rb_dir.join("message-fixup");
+        let tmpl = if fixup_path.exists() {
+            fs::read_to_string(&fixup_path)?
+        } else {
+            fs::read_to_string(&squash_path)?
+        };
+        let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+        let raw = commit_message_after_prepare_hook(repo, git_dir, &tmpl, "squash")?;
+        let cleaned = apply_commit_msg_cleanup(&raw, rebase_commit_msg_cleanup(&config));
+        let new_oid = commit_from_merged_index(
+            repo,
+            git_dir,
+            &merged_index,
+            &config,
+            vec![amend_parent],
+            &hc.author,
+            cleaned,
+        )?;
+        fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
+        clear_squash_ctx(&rb_dir);
+        return Ok(());
+    }
+
+    // Create the rebased commit, preserving the original author (normal pick)
     let tree_oid = write_tree_from_index(&repo.odb, &merged_index, "")?;
 
     let now = time::OffsetDateTime::now_utc();
@@ -1997,14 +2534,8 @@ fn cherry_pick_for_rebase(
     } else {
         transcoded_replayed_message(&commit, &config)
     };
-    let (message, encoding, raw_message) = apply_rebase_signoff_to_commit_message(
-        git_dir,
-        &rb_dir,
-        &config,
-        message,
-        encoding,
-        raw_message,
-    )?;
+    let raw_msg = commit_message_after_prepare_hook(repo, git_dir, &message, "message")?;
+    let message = apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
     let commit_data = CommitData {
         tree: tree_oid,
         parents: vec![head_oid],
@@ -2020,7 +2551,8 @@ fn cherry_pick_for_rebase(
     let commit_bytes = serialize_commit(&commit_data);
     let new_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
-    write_rebase_head_after_pick(git_dir, rb_dir, &new_oid)?;
+    // Update HEAD (detached)
+    fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
 
     Ok(())
 }
@@ -2030,11 +2562,10 @@ fn finish_rebase(
     repo: &Repository,
     rb_dir: &Path,
     autostash_oid: Option<ObjectId>,
-    _backend_arg: RebaseBackend,
+    backend: RebaseBackend,
     had_rebase_autostash: bool,
 ) -> Result<()> {
     let git_dir = &repo.git_dir;
-    let backend = load_rebase_backend(rb_dir);
 
     let head_name = fs::read_to_string(rb_dir.join("head-name"))?;
     let head_name = head_name.trim();
@@ -2043,71 +2574,30 @@ fn finish_rebase(
     let onto_hex = onto_hex.trim();
     let onto_oid = ObjectId::from_hex(onto_hex)?;
 
-    let orig_head_hex = fs::read_to_string(rb_dir.join("orig-head"))?;
-    let orig_head_oid = ObjectId::from_hex(orig_head_hex.trim())?;
-
     let ra = load_rebase_reflog_action(rb_dir);
     let ident = reflog_identity(repo);
 
-    let orig_branch_hint = fs::read_to_string(rb_dir.join("orig-branch"))
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-
     let head = resolve_head(git_dir)?;
-    let head_oid_from_head = head
+    let new_tip = head
         .oid()
         .ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?
         .to_owned();
 
-    let mut new_tip = head_oid_from_head;
-    for p in [replay_tip_path(git_dir), rb_dir.join("replay-head")] {
-        if let Ok(rh) = fs::read_to_string(&p) {
-            if let Ok(t) = ObjectId::from_hex(rh.trim()) {
-                new_tip = t;
-                break;
-            }
-        }
-    }
-    if new_tip == head_oid_from_head {
-        if let Some(ref r) = orig_branch_hint {
-            if let Ok(t) = resolve_ref(git_dir, r) {
-                new_tip = t;
-            }
-        }
-    }
-
     let autostash_oid_finish = autostash_oid.or_else(|| read_autostash_oid(rb_dir).ok().flatten());
     let had_autostash_finish = had_rebase_autostash || autostash_oid_finish.is_some();
 
-    let finish_branch_ref: Option<String> = if let Some(r) = orig_branch_hint
-        .clone()
-        .filter(|x| resolve_ref(git_dir, x).is_ok())
-    {
-        fs::write(git_dir.join("HEAD"), format!("ref: {r}\n"))?;
-        Some(r)
-    } else if head_name != "detached HEAD" {
-        Some(head_name.to_string())
-    } else if let HeadState::Branch { refname, .. } = &head {
-        Some(refname.clone())
-    } else {
-        None
-    };
-
-    let success_target = finish_branch_ref.as_deref().unwrap_or("HEAD");
-
-    if let Some(ref branch_ref) = finish_branch_ref {
-        let ref_path = git_dir.join(branch_ref);
+    if head_name != "detached HEAD" {
+        let ref_path = git_dir.join(head_name);
         let old_branch_oid = fs::read_to_string(&ref_path)
             .ok()
             .and_then(|s| ObjectId::from_hex(s.trim()).ok())
             .unwrap_or(new_tip);
 
-        let finish_branch = format!("{ra} (finish): {branch_ref} onto {}", onto_oid.to_hex());
-        let finish_head = format!("{ra} (finish): returning to {branch_ref}");
+        let finish_branch = format!("{ra} (finish): {head_name} onto {}", onto_oid.to_hex());
+        let finish_head = format!("{ra} (finish): returning to {head_name}");
         let _ = append_reflog(
             git_dir,
-            branch_ref,
+            head_name,
             &old_branch_oid,
             &new_tip,
             &ident,
@@ -2128,72 +2618,14 @@ fn finish_rebase(
             fs::create_dir_all(parent)?;
         }
         fs::write(&ref_path, format!("{}\n", new_tip.to_hex()))?;
-        fs::write(git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
-    } else {
-        let mut stale = Vec::new();
-        for (name, tip) in list_refs(git_dir, "refs/heads/")? {
-            if tip == orig_head_oid {
-                stale.push(name);
-            }
-        }
-        if let Ok(ob) = fs::read_to_string(rb_dir.join("orig-branch")) {
-            let r = ob.trim();
-            if !r.is_empty() {
-                let ref_path = git_dir.join(r);
-                if let Ok(s) = fs::read_to_string(&ref_path) {
-                    if let Ok(oid) = ObjectId::from_hex(s.trim()) {
-                        if oid == orig_head_oid && !stale.iter().any(|x| x == r) {
-                            stale.push(r.to_string());
-                        }
-                    }
-                }
-            }
-        }
-        if stale.is_empty() {
-            if let Ok(ob) = fs::read_to_string(rb_dir.join("orig-branch")) {
-                let r = ob.trim();
-                if !r.is_empty() && git_dir.join(r).exists() && !stale.iter().any(|x| x == r) {
-                    stale.push(r.to_string());
-                }
-            }
-        }
-        stale.sort();
-        for refname in &stale {
-            let ref_path = git_dir.join(refname);
-            let old_branch_oid = fs::read_to_string(&ref_path)
-                .ok()
-                .and_then(|s| ObjectId::from_hex(s.trim()).ok())
-                .unwrap_or(new_tip);
-            let finish_branch = format!("{ra} (finish): {refname} onto {}", onto_oid.to_hex());
-            let _ = append_reflog(
-                git_dir,
-                refname,
-                &old_branch_oid,
-                &new_tip,
-                &ident,
-                &finish_branch,
-                false,
-            );
-            if let Some(parent) = ref_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&ref_path, format!("{}\n", new_tip.to_hex()))?;
-        }
-        if stale.len() == 1 {
-            let refname = stale[0].as_str();
-            let finish_head = format!("{ra} (finish): returning to {refname}");
-            let _ = append_reflog(
-                git_dir,
-                "HEAD",
-                &new_tip,
-                &new_tip,
-                &ident,
-                &finish_head,
-                false,
-            );
-            fs::write(git_dir.join("HEAD"), format!("ref: {refname}\n"))?;
-        }
+        fs::write(git_dir.join("HEAD"), format!("ref: {head_name}\n"))?;
     }
+
+    let success_target = if head_name == "detached HEAD" {
+        "HEAD"
+    } else {
+        head_name
+    };
 
     match backend {
         RebaseBackend::Merge => {
@@ -2221,6 +2653,23 @@ fn finish_rebase(
 
 // ── --continue ──────────────────────────────────────────────────────
 
+fn read_current_rebase_todo_cmd(rb_dir: &Path) -> RebaseTodoCmd {
+    let Ok(s) = fs::read_to_string(rb_dir.join("current-cmd")) else {
+        return RebaseTodoCmd::Pick;
+    };
+    match s.trim() {
+        "fixup" => RebaseTodoCmd::Fixup,
+        "squash" => RebaseTodoCmd::Squash,
+        _ => RebaseTodoCmd::Pick,
+    }
+}
+
+fn read_current_final_fixup(rb_dir: &Path) -> bool {
+    fs::read_to_string(rb_dir.join("current-final-fixup"))
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false)
+}
+
 fn do_continue() -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
@@ -2244,18 +2693,6 @@ fn do_continue() -> Result<()> {
         );
     }
 
-    if rb_dir.join("awaiting_amend").exists() {
-        let _ = fs::remove_file(rb_dir.join("awaiting_amend"));
-        let _ = replay_remaining(
-            &repo,
-            &rb_dir,
-            autostash_continue,
-            backend_continue,
-            had_autostash_continue,
-        )?;
-        return Ok(());
-    }
-
     // Commit the current cherry-pick
     let current_hex = fs::read_to_string(rb_dir.join("current"))?;
     let current_hex = current_hex.trim();
@@ -2264,46 +2701,107 @@ fn do_continue() -> Result<()> {
     let commit_obj = repo.odb.read(&current_oid)?;
     let original_commit = parse_commit(&commit_obj.data)?;
 
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let todo_cmd = read_current_rebase_todo_cmd(&rb_dir);
+    let final_fixup = read_current_final_fixup(&rb_dir);
+
     let head = resolve_head(git_dir)?;
     let head_oid = head
         .oid()
         .ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?
         .to_owned();
 
-    let new_oid = if backend_continue == RebaseBackend::Merge {
-        let exe = std::env::current_exe().context("cannot determine grit executable")?;
-        let status = Command::new(&exe)
-            .arg("commit")
-            .arg("--cleanup=strip")
-            .status()
-            .context("failed to run grit commit for rebase --continue")?;
-        if !status.success() {
-            std::process::exit(status.code().unwrap_or(1));
+    let new_oid = if matches!(todo_cmd, RebaseTodoCmd::Fixup | RebaseTodoCmd::Squash) {
+        let head_obj = repo.odb.read(&head_oid)?;
+        let hc = parse_commit(&head_obj.data)?;
+        let amend_parent = hc.parents.first().copied().unwrap_or(head_oid);
+
+        if todo_cmd == RebaseTodoCmd::Fixup && !final_fixup {
+            let fixup_path = rb_dir.join("message-fixup");
+            let msg = if git_dir.join("MERGE_MSG").exists() {
+                fs::read_to_string(git_dir.join("MERGE_MSG"))?
+            } else if fixup_path.exists() {
+                fs::read_to_string(&fixup_path)?
+            } else {
+                hc.message.clone()
+            };
+            commit_from_merged_index(
+                &repo,
+                git_dir,
+                &index,
+                &config,
+                vec![amend_parent],
+                &hc.author,
+                msg,
+            )?
+        } else if todo_cmd == RebaseTodoCmd::Squash && !final_fixup {
+            let tmpl = fs::read_to_string(rb_dir.join("message-squash"))?;
+            let raw = commit_message_after_prepare_hook(&repo, git_dir, &tmpl, "message")?;
+            let cleaned = apply_commit_msg_cleanup(&raw, default_commit_msg_cleanup(&config));
+            commit_from_merged_index(
+                &repo,
+                git_dir,
+                &index,
+                &config,
+                vec![amend_parent],
+                &hc.author,
+                cleaned,
+            )?
+        } else if todo_cmd == RebaseTodoCmd::Fixup {
+            let fixup_path = rb_dir.join("message-fixup");
+            let template = if fixup_path.exists() {
+                fs::read_to_string(&fixup_path)?
+            } else {
+                let subj = hc.message.lines().next().unwrap_or("");
+                let body = message_body_after_subject(&hc.message);
+                format!("{subj}\n{body}")
+            };
+            let raw = commit_message_after_prepare_hook(&repo, git_dir, &template, "squash")?;
+            let cleaned = apply_commit_msg_cleanup(&raw, rebase_commit_msg_cleanup(&config));
+            let oid = commit_from_merged_index(
+                &repo,
+                git_dir,
+                &index,
+                &config,
+                vec![amend_parent],
+                &hc.author,
+                cleaned,
+            )?;
+            clear_squash_ctx(&rb_dir);
+            oid
+        } else {
+            let squash_path = rb_dir.join("message-squash");
+            let fixup_path = rb_dir.join("message-fixup");
+            let tmpl = if fixup_path.exists() {
+                fs::read_to_string(&fixup_path)?
+            } else {
+                fs::read_to_string(&squash_path)?
+            };
+            let raw = commit_message_after_prepare_hook(&repo, git_dir, &tmpl, "squash")?;
+            let cleaned = apply_commit_msg_cleanup(&raw, rebase_commit_msg_cleanup(&config));
+            let oid = commit_from_merged_index(
+                &repo,
+                git_dir,
+                &index,
+                &config,
+                vec![amend_parent],
+                &hc.author,
+                cleaned,
+            )?;
+            clear_squash_ctx(&rb_dir);
+            oid
         }
-        resolve_head(git_dir)?
-            .oid()
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("HEAD has no OID after commit"))?
     } else {
-        let config = ConfigSet::load(Some(git_dir), true)?;
         let (message, encoding, raw_message) =
             read_rebase_continue_message(git_dir, &original_commit, &config)?;
-        let (message, encoding, raw_message) = apply_rebase_signoff_to_commit_message(
-            git_dir,
-            &rb_dir,
-            &config,
-            message,
-            encoding,
-            raw_message,
-        )?;
-
         let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
         let now = time::OffsetDateTime::now_utc();
         let committer = resolve_identity(&config, "COMMITTER")?;
-
+        let raw_msg = commit_message_after_prepare_hook(&repo, git_dir, &message, "message")?;
+        let message = apply_commit_msg_cleanup(&raw_msg, rebase_commit_msg_cleanup(&config));
         let commit_data = CommitData {
             tree: tree_oid,
-            parents: vec![head_oid.clone()],
+            parents: vec![head_oid],
             author: original_commit.author.clone(),
             committer: format_ident(&committer, now),
             author_raw: original_commit.author_raw.clone(),
@@ -2312,14 +2810,15 @@ fn do_continue() -> Result<()> {
             message,
             raw_message,
         };
-
         let commit_bytes = serialize_commit(&commit_data);
         repo.odb.write(ObjectKind::Commit, &commit_bytes)?
     };
 
-    write_rebase_head_after_pick(git_dir, &rb_dir, &new_oid)?;
+    // Update HEAD (detached)
+    fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
     let _ = fs::remove_file(rb_dir.join("message"));
+    let _ = fs::remove_file(rb_dir.join("current-final-fixup"));
 
     let subject = original_commit.message.lines().next().unwrap_or("");
     eprintln!("Applying: {}", subject);
@@ -2334,18 +2833,8 @@ fn do_continue() -> Result<()> {
     let msg = format!("{ra} ({verb}): {subject}");
     let _ = append_reflog(git_dir, "HEAD", &head_oid, &new_oid, &ident, &msg, false);
 
-    // The resolved commit was the first line of `todo`; drop it before replaying the rest.
-    let todo_path = rb_dir.join("todo");
-    let todo_raw = fs::read_to_string(&todo_path)?;
-    let mut rest_lines: Vec<&str> = todo_raw.lines().filter(|l| !l.is_empty()).collect();
-    if !rest_lines.is_empty() {
-        rest_lines.remove(0);
-    }
-    fs::write(&todo_path, rest_lines.join("\n") + "\n")?;
-    fs::write(rb_dir.join("msgnum"), "1")?;
-    fs::write(rb_dir.join("end"), rest_lines.len().to_string())?;
-
-    let _ = replay_remaining(
+    // Continue with remaining
+    replay_remaining(
         &repo,
         &rb_dir,
         autostash_continue,
@@ -2394,7 +2883,7 @@ fn do_skip() -> Result<()> {
     // Advance past the current commit in the todo list
     // (replay_remaining reads todo and msgnum, so just advance msgnum or trim todo)
     // The todo was already trimmed when conflicts happened, so just continue
-    let _ = replay_remaining(
+    replay_remaining(
         &repo,
         &rb_dir,
         autostash_skip,
@@ -2402,30 +2891,6 @@ fn do_skip() -> Result<()> {
         had_autostash_skip,
     )?;
 
-    Ok(())
-}
-
-fn do_edit_todo() -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let git_dir = &repo.git_dir;
-    if !is_rebase_in_progress(git_dir) {
-        bail!("no rebase in progress");
-    }
-    let rb_dir = active_rebase_dir(git_dir)
-        .ok_or_else(|| anyhow::anyhow!("internal: no rebase state directory"))?;
-    let todo_path = resolve_rebase_todo_path(&repo, &rb_dir);
-    let config = ConfigSet::load(Some(git_dir), true).unwrap_or_else(|_| ConfigSet::new());
-    let editor = sequence_editor_cmd(&config)?;
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!("{} \"$1\"", editor))
-        .arg("sh")
-        .arg(&todo_path)
-        .status()
-        .context("failed to run sequence editor")?;
-    if !status.success() {
-        bail!("there was a problem with the editor");
-    }
     Ok(())
 }
 
@@ -2536,9 +3001,7 @@ fn cleanup_rebase_state(git_dir: &Path) {
     let _ = fs::remove_dir_all(rebase_apply_dir(git_dir));
     let _ = fs::remove_dir_all(rebase_merge_dir(git_dir));
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
-    let _ = fs::remove_file(replay_tip_path(git_dir));
-    let _ = fs::remove_file(rebase_apply_dir(git_dir).join("awaiting_amend"));
-    let _ = fs::remove_file(rebase_merge_dir(git_dir).join("awaiting_amend"));
+    let _ = fs::remove_file(git_dir.join("SQUASH_MSG"));
 }
 
 fn commit_message_unicode(commit: &CommitData) -> String {
@@ -2578,60 +3041,12 @@ fn transcoded_replayed_message(
     finalize_message_for_commit_encoding(commit_message_unicode(commit), config)
 }
 
-/// Append Git-style `# Conflicts:` lines for unmerged index paths (sequencer `append_conflicts_hint`).
-fn append_conflicts_hint_to_merge_msg(git_dir: &Path, index: &Index) -> Result<()> {
-    let merge_msg = git_dir.join("MERGE_MSG");
-    let mut out = if merge_msg.exists() {
-        fs::read_to_string(&merge_msg)?
-    } else {
-        String::new()
-    };
-    if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push('\n');
-    out.push_str("# Conflicts:\n");
-    let mut seen_paths: BTreeSet<Vec<u8>> = BTreeSet::new();
-    for e in &index.entries {
-        if e.stage() == 0 {
-            continue;
-        }
-        if !seen_paths.insert(e.path.clone()) {
-            continue;
-        }
-        let p = String::from_utf8_lossy(trim_trailing_index_path_slash(&e.path));
-        out.push_str("#\t");
-        out.push_str(&p);
-        out.push('\n');
-    }
-    let out_bytes = out.into_bytes();
-    fs::write(&merge_msg, &out_bytes)?;
-    if rebase_merge_dir(git_dir).exists() {
-        fs::write(rebase_merge_dir(git_dir).join("message"), &out_bytes)?;
-    }
-    Ok(())
-}
-
-fn trim_trailing_index_path_slash(path: &[u8]) -> &[u8] {
-    if path.last() == Some(&b'/') {
-        &path[..path.len() - 1]
-    } else {
-        path
-    }
-}
-
 fn write_rebase_conflict_message(
     git_dir: &Path,
     commit: &CommitData,
     config: &ConfigSet,
 ) -> Result<()> {
     let (unicode, _enc, raw_opt) = transcoded_replayed_message(commit, config);
-    let rb_dir = rebase_dir(git_dir);
-    let unicode = if rebase_signoff_enabled(&rb_dir) {
-        append_rebase_signoff_to_unicode(&unicode, git_dir)?
-    } else {
-        unicode
-    };
     let merge_msg = git_dir.join("MERGE_MSG");
     let bytes = raw_opt.unwrap_or_else(|| unicode.into_bytes());
     fs::write(&merge_msg, &bytes)?;
@@ -2639,27 +3054,6 @@ fn write_rebase_conflict_message(
         fs::write(rebase_merge_dir(git_dir).join("message"), bytes)?;
     }
     Ok(())
-}
-
-/// Apply `--signoff` to a replayed commit message, preserving non-UTF-8 encoding when configured.
-fn apply_rebase_signoff_to_commit_message(
-    git_dir: &Path,
-    rb_dir: &Path,
-    config: &ConfigSet,
-    message: String,
-    encoding: Option<String>,
-    raw_message: Option<Vec<u8>>,
-) -> Result<(String, Option<String>, Option<Vec<u8>>)> {
-    if !rebase_signoff_enabled(rb_dir) {
-        return Ok((message, encoding, raw_message));
-    }
-    let unicode = if let Some(raw) = &raw_message {
-        crate::git_commit_encoding::decode_bytes(encoding.as_deref(), raw)
-    } else {
-        message.clone()
-    };
-    let appended = append_rebase_signoff_to_unicode(&unicode, git_dir)?;
-    Ok(finalize_message_for_commit_encoding(appended, config))
 }
 
 fn read_rebase_continue_message(

@@ -1121,6 +1121,16 @@ fn resolve_decoration_display(args: &Args, format_requires_decorations: bool) ->
         show = false;
         full = false;
     }
+    let oneline_like = args.oneline || args.format.as_deref() == Some("oneline");
+    if oneline_like && !args.no_decorate && !show {
+        // Git only auto-decorates oneline output for terminal (or pager) consumers.
+        let auto = std::io::IsTerminal::is_terminal(&std::io::stdout())
+            || std::env::var_os("GIT_PAGER_IN_USE").is_some();
+        if auto {
+            show = true;
+            full = false;
+        }
+    }
     (show, full)
 }
 
