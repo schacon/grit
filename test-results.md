@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-07
 
+- `./scripts/run-tests.sh t4139-apply-escape.sh`: 8/12 passing (baseline for newly claimed in-progress Diff target `t4139`).
+- `bash scripts/run-upstream-tests.sh t4139-apply-escape`: 6/12 passing in isolated upstream harness baseline.
+- `cargo build --release`: passes (rebuild after `t4139` apply path-escape safety + `--unsafe-paths` option parsing fix).
+- `bash scripts/run-upstream-tests.sh t4139-apply-escape`: 12/12 passing in isolated upstream harness.
+- `./scripts/run-tests.sh t4139-apply-escape.sh`: 12/12 passing; `data/file-results.tsv` refreshed.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in `grit-lib/src/state.rs`, `grit/src/commands/blame.rs`, `grit/src/commands/config.rs`, and `grit/src/commands/update_index.rs` were reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `./scripts/run-tests.sh t4128-apply-root.sh`: 2/12 passing (baseline for newly claimed in-progress Diff target `t4128`).
 - `bash scripts/run-upstream-tests.sh t4128-apply-root`: 2/12 passing in isolated upstream harness baseline.
 - `cargo build --release`: passes (rebuild after `t4128` `git apply --directory` path normalization + quoted path decoding updates).

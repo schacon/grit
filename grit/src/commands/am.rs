@@ -1181,6 +1181,7 @@ fn apply_patch_to_worktree(
             allow_binary_replacement: false,
             verbose: false,
             reject: opts.reject,
+            unsafe_paths: false,
             whitespace: if opts.whitespace_fix {
                 "fix".to_string()
             } else {

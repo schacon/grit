@@ -21,7 +21,7 @@ use grit_lib::rev_parse::resolve_revision;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Arguments for `grit apply`.
 #[derive(Debug, ClapArgs)]
@@ -107,6 +107,10 @@ pub struct Args {
     /// Leave rejected hunks in corresponding *.rej files.
     #[arg(long = "reject")]
     pub reject: bool,
+
+    /// Allow patch paths to escape the working tree.
+    #[arg(long = "unsafe-paths")]
+    pub unsafe_paths: bool,
 
     /// How to handle whitespace errors.
     #[arg(long = "whitespace", value_name = "ACTION", default_value = "warn")]
@@ -1123,6 +1127,63 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
     Ok(())
 }
 
+fn path_escapes_worktree(path: &str) -> bool {
+    let mut depth = 0isize;
+    for component in Path::new(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(_) => depth += 1,
+            Component::ParentDir => {
+                if depth == 0 {
+                    return true;
+                }
+                depth -= 1;
+            }
+            Component::RootDir | Component::Prefix(_) => return true,
+        }
+    }
+    false
+}
+
+fn validate_patch_paths_with_safety(patches: &[FilePatch], args: &Args) -> Result<()> {
+    let allow_unsafe = args.unsafe_paths && !args.index && !args.cached;
+    eprintln!(
+        "DEBUG validate_patch_paths_with_safety: unsafe_paths={} index={} cached={} allow_unsafe={}",
+        args.unsafe_paths, args.index, args.cached, allow_unsafe
+    );
+    if allow_unsafe {
+        return Ok(());
+    }
+
+    for fp in patches {
+        if let Some(source) = fp.source_path() {
+            let adjusted = adjust_path(source, args.strip, args.directory.as_deref());
+            eprintln!(
+                "DEBUG source path raw={} adjusted={} escapes={}",
+                source,
+                adjusted,
+                path_escapes_worktree(&adjusted)
+            );
+            if adjusted != "/dev/null" && path_escapes_worktree(&adjusted) {
+                bail!("invalid path '{adjusted}'");
+            }
+        }
+        if let Some(target) = fp.target_path() {
+            let adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+            eprintln!(
+                "DEBUG target path raw={} adjusted={} escapes={}",
+                target,
+                adjusted,
+                path_escapes_worktree(&adjusted)
+            );
+            if adjusted != "/dev/null" && path_escapes_worktree(&adjusted) {
+                bail!("invalid path '{adjusted}'");
+            }
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Reverse
 // ---------------------------------------------------------------------------
@@ -1974,6 +2035,7 @@ pub fn run_with_patch_input(args: Args, input: String) -> Result<()> {
         build_fake_ancestor_file(&patches, &args, path)?;
         return Ok(());
     }
+    validate_patch_paths_with_safety(&patches, &args)?;
     verify_patch_paths_not_beyond_symlink(&patches, &args)?;
     let ws_mode = resolve_apply_whitespace_mode(&args);
 
