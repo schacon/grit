@@ -110,8 +110,12 @@ pub struct Args {
     pub walk_reflogs: bool,
 
     /// Show unified diff (patch) after each commit.
-    #[arg(short = 'p', long = "patch", alias = "unified")]
+    #[arg(short = 'p', long = "patch")]
     pub patch: bool,
+
+    /// Show patch with <N> lines of context (implies --patch).
+    #[arg(short = 'U', long = "unified", value_name = "N")]
+    pub unified: Option<usize>,
 
     /// Alias for --patch.
     #[arg(short = 'u', hide = true)]
@@ -381,6 +385,9 @@ fn parse_date_to_epoch(s: &str, end_of_day: bool) -> Option<i64> {
 /// Run the `log` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    if args.unified.is_some() {
+        args.patch = true;
+    }
 
     // Determine color mode
     let use_color = if args.no_color {
@@ -697,6 +704,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let show_diff = args.patch
         || args.patch_u
+        || args.unified.is_some()
         || args.stat
         || args.name_only
         || args.name_status
@@ -714,6 +722,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let mut follow_tracked_path = pathspecs.first().cloned();
 
     let notes_map = load_notes_map(&repo);
+    let patch_context_lines = resolve_patch_context_lines(&repo, args.unified)?;
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 && !show_diff {
@@ -777,7 +786,7 @@ pub fn run(mut args: Args) -> Result<()> {
             {
                 writeln!(out)?;
             }
-            write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
+            write_commit_diff(&mut out, &repo.odb, commit_data, &args, patch_context_lines)?;
         }
     }
 
@@ -848,11 +857,14 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
 
     let show_diff = args.patch
         || args.patch_u
+        || args.unified.is_some()
         || args.stat
         || args.name_only
         || args.name_status
         || args.raw
         || args.cc;
+
+    let patch_context_lines = resolve_patch_context_lines(repo, args.unified)?;
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
@@ -883,7 +895,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             {
                 writeln!(out)?;
             }
-            write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
+            write_commit_diff(&mut out, &repo.odb, commit_data, args, patch_context_lines)?;
         }
     }
 
@@ -3357,6 +3369,7 @@ fn write_commit_diff(
     odb: &Odb,
     info: &CommitInfo,
     args: &Args,
+    patch_context_lines: usize,
 ) -> Result<()> {
     let is_merge = info.parents.len() > 1;
     let mut entries = compute_commit_diff(odb, info)?;
@@ -3378,7 +3391,7 @@ fn write_commit_diff(
     };
 
     // Determine if patch content will be shown (for --- separator logic)
-    let has_patch = (args.patch || args.patch_u || args.cc) && {
+    let has_patch = (args.patch || args.patch_u || args.cc || args.unified.is_some()) && {
         let show_entries = if args.cc && is_merge {
             &combined_entries
         } else {
@@ -3433,18 +3446,44 @@ fn write_commit_diff(
         writeln!(out)?;
     }
 
-    if args.patch || args.patch_u || args.cc {
+    if args.patch || args.patch_u || args.cc || args.unified.is_some() {
         let show_entries = if args.cc && is_merge {
             &combined_entries
         } else {
             &entries
         };
         for entry in show_entries {
-            log_write_patch_entry(out, odb, entry, 3)?;
+            log_write_patch_entry(out, odb, entry, patch_context_lines)?;
         }
     }
 
     Ok(())
+}
+
+/// Resolve effective patch context lines for `log -p`.
+fn resolve_patch_context_lines(repo: &Repository, cli_unified: Option<usize>) -> Result<usize> {
+    if let Some(value) = cli_unified {
+        return Ok(value);
+    }
+
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if let Some(value) = config.get("diff.context") {
+        return parse_diff_context_config_value(&value);
+    }
+
+    Ok(3)
+}
+
+/// Parse `diff.context` config value with git-compatible failure classes.
+fn parse_diff_context_config_value(value: &str) -> Result<usize> {
+    match value.parse::<i64>() {
+        Ok(parsed) if parsed >= 0 => Ok(parsed as usize),
+        Ok(_) => anyhow::bail!("fatal: bad config variable 'diff.context'"),
+        Err(_) => anyhow::bail!(
+            "fatal: bad numeric config value '{}' for 'diff.context': invalid unit",
+            value
+        ),
+    }
 }
 
 /// Write a unified-diff block for one entry.

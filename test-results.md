@@ -2,6 +2,17 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `diff.context` handling fixes in `diff` and `log`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4055-diff-context.sh` (from `tests/`): 10/10 passing.
+- `./scripts/run-tests.sh t4055-diff-context.sh`: 10/10 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4055-diff-context`: 10/10 passing in isolated upstream harness.
+- Regression checks:
+  - `./scripts/run-tests.sh t4207-log-decoration-colors.sh`: 1/4 in local mirror (known `test_decode_color` combined-ANSI limitation).
+  - `bash scripts/run-upstream-tests.sh t4207-log-decoration-colors`: 4/4 passing in upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `log --decorate --color` decoration color/style ordering updates plus replace-ref/stash-date handling fixes).
 - `./scripts/run-tests.sh t4207-log-decoration-colors.sh`: 1/4 passing in local mirror; `data/file-results.tsv` refreshed.
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4207-log-decoration-colors.sh` (from `tests/`): 1/4 passing in local mirror; remaining mismatches are all in color decoding for combined ANSI sequences (`\x1b[1;7;33m`) because simplified `test_decode_color` only maps split single-code escapes.

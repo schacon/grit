@@ -964,8 +964,9 @@ pub fn run(mut args: Args) -> Result<()> {
         return Ok(());
     }
 
+    let context_lines = resolve_patch_context_lines(&repo, args.unified)?;
+
     if !args.quiet {
-        let context_lines = args.unified.unwrap_or(3);
         if args.shortstat {
             write_shortstat(&mut out, &entries, &repo.odb, wt_for_content)?;
         } else if stat_enabled
@@ -1034,6 +1035,32 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolve effective patch context lines for `diff`.
+fn resolve_patch_context_lines(repo: &Repository, cli_unified: Option<usize>) -> Result<usize> {
+    if let Some(value) = cli_unified {
+        return Ok(value);
+    }
+
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if let Some(value) = config.get("diff.context") {
+        return parse_diff_context_config_value(&value);
+    }
+
+    Ok(3)
+}
+
+/// Parse `diff.context` config value with git-compatible failure classes.
+fn parse_diff_context_config_value(value: &str) -> Result<usize> {
+    match value.parse::<i64>() {
+        Ok(parsed) if parsed >= 0 => Ok(parsed as usize),
+        Ok(_) => anyhow::bail!("fatal: bad config variable 'diff.context'"),
+        Err(_) => anyhow::bail!(
+            "fatal: bad numeric config value '{}' for 'diff.context': invalid unit",
+            value
+        ),
+    }
 }
 
 /// Build synthetic entries for combined-diff path listing (`-c`/`--cc`).

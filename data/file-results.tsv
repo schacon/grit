@@ -411,7 +411,7 @@ t4051-diff-function-context	yes	42	12	30	ok	12	42	0
 t4052-stat-output	yes	89	17	72	ok	17	89	0
 t4053-diff-no-index	yes	0	0	0	timeout	0	0	0
 t4054-diff-bogus-tree	yes	14	7	7	ok	7	14	0
-t4055-diff-context	yes	10	5	5	ok	5	10	0
+t4055-diff-context	yes	10	10	0	ok	10	10	0
 t4056-diff-order	yes	23	10	13	ok	10	23	0
 t4057-diff-combined-paths	yes	4	4	0	ok	4	4	0
 t4058-diff-duplicates	yes	16	7	9	ok	5	14	2

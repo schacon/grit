@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    86 |
+| Completed   |    87 |
 | In progress |     0 |
-| Remaining   |   681 |
+| Remaining   |   680 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4055-diff-context` — 10/10 tests pass (`diff.context` is now honored by both `git diff` and `git log -p`; `log -U<n>` now overrides config as expected; invalid (`no`) and negative values now fail with git-compatible `bad numeric config value` / `bad config variable` errors)
 - `t4207-log-decoration-colors` — 4/4 tests pass in upstream harness (`git log --decorate --color` now honors `color.decorate.*` style mappings including multi-attribute tag color specs, preserves replace/graft decoration coloring, and supports `GIT_REPLACE_REF_BASE`; this local mirror still reports 1/4 because simplified `test_decode_color` strips combined ANSI sequences such as `\x1b[1;7;33m`)
 - `t4074-diff-shifted-matched-group` — 4/4 tests pass (`git diff --no-index --histogram` now includes full no-index headers and preserves whitespace-ignore behavior during hunk grouping/re-diff output)
 - `t4057-diff-combined-paths` — 4/4 tests pass (`git diff -c/--cc --name-only` now uses merge-combined path filtering and supports explicit merge-parent revision sets)
@@ -79,4 +80,4 @@
 
 ## What Remains
 
-No test files are currently marked in progress and 681 remain pending. See `plan.md` for the full prioritized list.
+No test files are currently marked in progress and 680 remain pending. See `plan.md` for the full prioritized list.
