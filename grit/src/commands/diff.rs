@@ -1602,8 +1602,8 @@ fn run_no_index(args: &Args) -> Result<()> {
         return run_no_index_dirs(args, path_a, path_b);
     }
 
-    let data_a = std::fs::read(path_a).with_context(|| format!("could not read '{}'", paths[0]))?;
-    let data_b = std::fs::read(path_b).with_context(|| format!("could not read '{}'", paths[1]))?;
+    let data_a = read_path_raw(path_a).with_context(|| format!("could not read '{}'", paths[0]))?;
+    let data_b = read_path_raw(path_b).with_context(|| format!("could not read '{}'", paths[1]))?;
     let ws_mode = WhitespaceMode {
         ignore_all_space: args.ignore_all_space,
         ignore_space_change: args.ignore_space_change,
@@ -2424,12 +2424,21 @@ fn read_content_raw_or_worktree(
     // Fall back to reading from working tree
     if let Some(wt) = work_tree {
         if path != "/dev/null" {
-            if let Ok(data) = std::fs::read(wt.join(path)) {
+            if let Ok(data) = read_path_raw(&wt.join(path)) {
                 return data;
             }
         }
     }
     Vec::new()
+}
+
+fn read_path_raw(path: &Path) -> std::io::Result<Vec<u8>> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return std::fs::read_link(path)
+            .map(|target| target.as_os_str().as_encoded_bytes().to_vec());
+    }
+    std::fs::read(path)
 }
 
 /// Check if content appears to be binary (contains NUL bytes in first 8KB).
@@ -2463,6 +2472,31 @@ fn textconv_program_for_path(
     let attrs = grit_lib::crlf::get_file_attrs(&rules, path, &config);
     let driver = attrs.diff_driver?;
     config.get(&format!("diff.{driver}.textconv"))
+}
+
+/// Resolve whether a path is forced binary by `diff.<driver>.binary=true`.
+fn binary_driver_for_path(
+    config: &grit_lib::config::ConfigSet,
+    rules: &[grit_lib::crlf::AttrRule],
+    work_tree: Option<&Path>,
+    path: &str,
+) -> bool {
+    if path == "/dev/null" {
+        return false;
+    }
+    let attrs_path = path_for_attr_lookup_opt(path, work_tree);
+    let attrs = grit_lib::crlf::get_file_attrs(rules, &attrs_path, config);
+    let Some(driver) = attrs.diff_driver else {
+        return false;
+    };
+    config
+        .get_bool(&format!("diff.{driver}.binary"))
+        .and_then(Result::ok)
+        .unwrap_or(false)
+}
+
+fn mode_is_symlink(mode: &str) -> bool {
+    u32::from_str_radix(mode, 8).ok() == Some(0o120000)
 }
 
 /// Run configured textconv command against bytes and return converted output.
@@ -2862,7 +2896,26 @@ fn write_patch_with_prefix(
             }
         }
 
-        if is_binary(&old_content_raw) || is_binary(&new_content_raw) {
+        let treat_old_as_binary_by_driver = !mode_is_symlink(&entry.old_mode)
+            && patch_config
+                .as_ref()
+                .zip(patch_rules.as_deref())
+                .is_some_and(|(config, rules)| {
+                    binary_driver_for_path(config, rules, work_tree, old_path)
+                });
+        let treat_new_as_binary_by_driver = !mode_is_symlink(&entry.new_mode)
+            && patch_config
+                .as_ref()
+                .zip(patch_rules.as_deref())
+                .is_some_and(|(config, rules)| {
+                    binary_driver_for_path(config, rules, work_tree, new_path)
+                });
+
+        if treat_old_as_binary_by_driver
+            || treat_new_as_binary_by_driver
+            || is_binary(&old_content_raw)
+            || is_binary(&new_content_raw)
+        {
             if !show_binary {
                 if let Some(program) = textconv_program_for_path(repo, work_tree, entry.path()) {
                     let old_converted = apply_textconv(&program, &old_content_raw);
@@ -2906,10 +2959,19 @@ fn write_patch_with_prefix(
                     new_path,
                 )?;
             } else {
+                let binary_old_display = if display_old == "/dev/null" {
+                    "/dev/null".to_owned()
+                } else {
+                    format!("{src_prefix}{old_path}")
+                };
+                let binary_new_display = if display_new == "/dev/null" {
+                    "/dev/null".to_owned()
+                } else {
+                    format!("{dst_prefix}{new_path}")
+                };
                 writeln!(
                     out,
-                    "Binary files {}{} and {}{} differ",
-                    src_prefix, old_path, dst_prefix, new_path
+                    "Binary files {binary_old_display} and {binary_new_display} differ"
                 )?;
             }
             continue;

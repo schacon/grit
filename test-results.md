@@ -2,6 +2,17 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after symlink-focused `diff`/`diff-index` fixes for `t4011`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/tests/grit" bash t4011-diff-symlink.sh` (from `tests/`): 8/8 passing.
+- `./scripts/run-tests.sh t4011-diff-symlink.sh`: 8/8 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4011-diff-symlink`: 8/8 passing in isolated upstream harness.
+- Focused runtime validation:
+  - `grit diff --no-index` now reads symlink targets as content and matches git output for non-existing target links.
+  - `grit diff file.bin link.bin` with `*.bin diff=bin` + `diff.bin.binary=true` now renders binary output only for regular file path while symlink path still diffs symlink target text.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after `t4105` apply fuzz/offset matching updates in `apply`).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4105-apply-fuzz.sh` (from `tests/`): 9/9 passing.
 - `./scripts/run-tests.sh t4105-apply-fuzz.sh`: 9/9 passing; `data/file-results.tsv` refreshed.

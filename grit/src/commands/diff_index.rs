@@ -80,7 +80,9 @@ pub fn run(args: Args) -> Result<()> {
         diff_entries
     };
 
-    let diff_entries = if options.ignore_space_change {
+    let diff_entries = if options.ignore_all_space {
+        filter_entries_ignore_all_space(&repo, diff_entries)
+    } else if options.ignore_space_change {
         filter_entries_ignore_space_change(&repo, diff_entries)
     } else {
         diff_entries
@@ -144,7 +146,7 @@ pub fn run(args: Args) -> Result<()> {
             let mut out = stdout.lock();
             let wt = repo.work_tree.as_deref();
             for entry in &diff_entries {
-                write_patch_entry(&mut out, &repo.odb, entry, options.context_lines, wt)?;
+                write_patch_entry(&mut out, &repo, &repo.odb, entry, options.context_lines, wt)?;
             }
         } else if options.name_status {
             for entry in &diff_entries {
@@ -217,12 +219,36 @@ fn filter_entries_ignore_space_change(
         .collect()
 }
 
+fn filter_entries_ignore_all_space(repo: &Repository, entries: Vec<DiffEntry>) -> Vec<DiffEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| {
+            if entry.status == DiffStatus::Added
+                || entry.status == DiffStatus::Deleted
+                || entry.old_mode != entry.new_mode
+            {
+                return true;
+            }
+            let (old_raw, new_raw) = read_entry_raw_contents(repo, entry);
+            if is_binary_content(&old_raw) || is_binary_content(&new_raw) {
+                return true;
+            }
+            let old = String::from_utf8_lossy(&old_raw).into_owned();
+            let new = String::from_utf8_lossy(&new_raw).into_owned();
+            normalize_ignore_all_space(&old) != normalize_ignore_all_space(&new)
+        })
+        .collect()
+}
+
 fn read_entry_raw_contents(repo: &Repository, entry: &DiffEntry) -> (Vec<u8>, Vec<u8>) {
     let old_raw = read_blob_raw(&repo.odb, &entry.old_oid);
-    let new_raw = if entry.new_oid == zero_oid() && entry.status != DiffStatus::Deleted {
+    let new_raw = if entry.new_oid == zero_oid()
+        && entry.status != DiffStatus::Deleted
+        && worktree_side_is_placeholder(repo, entry)
+    {
         if let Some(wt) = repo.work_tree.as_ref() {
             let path = entry.new_path.as_deref().unwrap_or(entry.path());
-            fs::read(wt.join(path)).unwrap_or_default()
+            read_worktree_path_raw(&wt.join(path))
         } else {
             Vec::new()
         }
@@ -230,6 +256,25 @@ fn read_entry_raw_contents(repo: &Repository, entry: &DiffEntry) -> (Vec<u8>, Ve
         read_blob_raw(&repo.odb, &entry.new_oid)
     };
     (old_raw, new_raw)
+}
+
+fn worktree_side_is_placeholder(repo: &Repository, entry: &DiffEntry) -> bool {
+    if !matches!(entry.status, DiffStatus::Modified | DiffStatus::TypeChanged) {
+        return false;
+    }
+
+    let Some(wt) = repo.work_tree.as_ref() else {
+        return false;
+    };
+    let path = entry.new_path.as_deref().unwrap_or(entry.path());
+    let abs = wt.join(path);
+    match fs::symlink_metadata(&abs) {
+        Ok(meta) => {
+            let mode = canonicalize_mode(meta.permissions().mode());
+            mode == u32::from_str_radix(&entry.new_mode, 8).unwrap_or(MODE_REGULAR)
+        }
+        Err(_) => false,
+    }
 }
 
 fn is_binary_content(data: &[u8]) -> bool {
@@ -241,6 +286,18 @@ fn normalize_ignore_space_change(content: &str) -> String {
     content
         .lines()
         .map(normalize_ignore_space_change_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn normalize_ignore_all_space(content: &str) -> String {
+    content
+        .lines()
+        .map(|line| {
+            line.chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -281,6 +338,7 @@ struct Options {
     numstat: bool,
     context_lines: usize,
     ignore_space_change: bool,
+    ignore_all_space: bool,
     nul_terminated: bool,
     relative: bool,
 }
@@ -328,6 +386,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut numstat = false;
     let mut context_lines: usize = diff_context_from_env().unwrap_or(3);
     let mut ignore_space_change = false;
+    let mut ignore_all_space = false;
     let mut nul_terminated = false;
     let mut relative = false;
 
@@ -407,6 +466,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-b" | "--ignore-space-change" => {
                     ignore_space_change = true;
                 }
+                "-w" | "--ignore-all-space" => {
+                    ignore_all_space = true;
+                }
                 _ if arg.starts_with("--unified=") => {
                     context_lines = arg["--unified=".len()..].parse::<usize>().unwrap_or(3);
                 }
@@ -481,6 +543,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         numstat,
         context_lines,
         ignore_space_change,
+        ignore_all_space,
         nul_terminated,
         relative,
     })
@@ -879,6 +942,7 @@ fn render_raw_diff_entry(
 /// Write a unified-diff block for one entry (diff-index -p).
 fn write_patch_entry(
     out: &mut impl std::io::Write,
+    repo: &Repository,
     odb: &Odb,
     entry: &DiffEntry,
     context_lines: usize,
@@ -978,11 +1042,14 @@ fn write_patch_entry(
 
     // Read raw bytes for binary detection
     let old_raw = read_blob_raw(odb, &entry.old_oid);
-    let new_raw = if entry.new_oid == zero_oid() && entry.status != DiffStatus::Deleted {
+    let new_raw = if entry.new_oid == zero_oid()
+        && entry.status != DiffStatus::Deleted
+        && worktree_side_is_placeholder(repo, entry)
+    {
         // Zero OID for non-deleted entries means worktree content
         if let Some(wt) = work_tree {
             let path = entry.new_path.as_deref().unwrap_or(new_path);
-            fs::read(wt.join(path)).unwrap_or_default()
+            read_worktree_path_raw(&wt.join(path))
         } else {
             Vec::new()
         }
@@ -991,7 +1058,11 @@ fn write_patch_entry(
     };
 
     // Check for binary content
-    if is_binary(&old_raw) || is_binary(&new_raw) {
+    let treat_as_binary_by_driver = !mode_is_symlink(&entry.old_mode)
+        && !mode_is_symlink(&entry.new_mode)
+        && (is_binary_driver_path(repo, work_tree, old_path)
+            || is_binary_driver_path(repo, work_tree, new_path));
+    if treat_as_binary_by_driver || is_binary(&old_raw) || is_binary(&new_raw) {
         let display_old = if entry.status == DiffStatus::Added {
             "/dev/null"
         } else {
@@ -1041,6 +1112,24 @@ fn is_binary(data: &[u8]) -> bool {
     data[..check_len].contains(&0)
 }
 
+fn is_binary_driver_path(repo: &Repository, work_tree: Option<&Path>, path: &str) -> bool {
+    let Some(wt) = work_tree else {
+        return false;
+    };
+    let rules = grit_lib::crlf::load_gitattributes(wt);
+    let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) else {
+        return false;
+    };
+    let attrs = grit_lib::crlf::get_file_attrs(&rules, path, &config);
+    let Some(driver) = attrs.diff_driver else {
+        return false;
+    };
+    config
+        .get_bool(&format!("diff.{driver}.binary"))
+        .and_then(Result::ok)
+        .unwrap_or(false)
+}
+
 /// Read raw blob bytes, returning empty vec for zero OID.
 fn read_blob_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
     if *oid == zero_oid() {
@@ -1050,10 +1139,28 @@ fn read_blob_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
     }
 }
 
+fn read_worktree_path_raw(path: &Path) -> Vec<u8> {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return Vec::new();
+    };
+    if meta.file_type().is_symlink() {
+        return fs::read_link(path)
+            .map(|target| target.as_os_str().as_bytes().to_vec())
+            .unwrap_or_default();
+    }
+    fs::read(path).unwrap_or_default()
+}
+
+fn mode_is_symlink(mode: &str) -> bool {
+    u32::from_str_radix(mode, 8).ok() == Some(MODE_SYMLINK)
+}
+
 fn validate_patch_entry_oids(entry: &DiffEntry) -> Result<()> {
     let zero = zero_oid();
     let old_bogus = entry.old_oid == zero && entry.old_mode != "000000";
-    let new_bogus = entry.new_oid == zero && entry.new_mode != "000000";
+    let new_bogus = entry.new_oid == zero
+        && entry.new_mode != "000000"
+        && !matches!(entry.status, DiffStatus::Modified | DiffStatus::TypeChanged);
     if old_bogus || new_bogus {
         bail!("bogus object {}", zero.to_hex());
     }
