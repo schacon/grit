@@ -451,7 +451,7 @@ commit → check it off → move on.
 - [x] `t4114-apply-typechange` ████████████████████ 12/12 (0 left) — git apply should not get confused with type changes (`apply` now reads symlink targets as blob content during worktree/index preimage validation and hunk matching, handles file↔directory↔symlink replacement ordering without stale path conflicts, and allows safe deletion of descendants when a directory is replaced by a symlink in the same patch stream; `diff-tree` now accepts `--binary` for patch generation compatibility)
 
 - [x] `t4022-diff-rewrite` ████████████████████ 11/11 (0 left) — rewrite diff (`diff-files` now accepts `-B/--break-rewrites` and `--summary`, emitting rewrite dissimilarity summary lines for index↔worktree rewrites; `diff` now supports `-D/--irreversible-delete` to suppress deleted preimages and combine correctly with `-B`; `commit` pathspec parsing now accepts options after explicit paths so `commit <path> -m <msg>` works in rewrite fixtures)
-- [ ] `t4033-diff-patience` ███████░░░░░░░░░░░░░ 4/11 (7 left) — patience diff algorithm
+- [~] `t4033-diff-patience` █████░░░░░░░░░░░░░░░ 3/11 (8 left) — patience diff algorithm
 - [ ] `t4105-apply-fuzz` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — apply with fuzz and offset
 - [ ] `t4011-diff-symlink` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — Test diff of symlinks.
 

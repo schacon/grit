@@ -391,7 +391,7 @@ t4029-diff-trailing-space	yes	1	1	0	ok	1	1	0
 t4030-diff-textconv	yes	19	2	17	ok	2	19	0
 t4031-diff-rewrite-binary	yes	8	8	0	ok	8	8	0
 t4032-diff-inter-hunk-context	yes	37	16	21	ok	16	37	0
-t4033-diff-patience	yes	11	4	7	ok	4	11	0
+t4033-diff-patience	yes	11	3	8	ok	3	11	0
 t4034-diff-words	yes	66	7	59	ok	7	66	0
 t4035-diff-quiet	yes	23	15	8	ok	15	23	0
 t4036-format-patch-signer-mime	yes	5	5	0	ok	5	5	0
