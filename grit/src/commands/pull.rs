@@ -309,6 +309,9 @@ fn do_merge_or_rebase(
             whitespace: None,
             autostash: false,
             no_autostash: false,
+            signoff: false,
+            no_signoff: false,
+            keep_empty: false,
         };
         super::rebase::run(rebase_args)
     } else {

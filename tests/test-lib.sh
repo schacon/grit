@@ -1181,6 +1181,35 @@ test_cmp () {
 	diff -u "$1" "$2"
 }
 
+# Assert `git show` body matches a file or stdin (upstream test-lib-functions.sh).
+# Usage: test_commit_message <rev> [-m <msg> | <file>]
+test_commit_message () {
+	msg_file=expect.msg
+	case $# in
+	3)
+		if test "$2" = "-m"
+		then
+			printf '%s\n' "$3" >"$msg_file"
+		else
+			echo >&2 "test_commit_message: expected -m as second argument"
+			exit 99
+		fi
+		;;
+	2)
+		msg_file="$2"
+		;;
+	1)
+		cat >"$msg_file"
+		;;
+	*)
+		echo >&2 "test_commit_message: bad usage"
+		exit 99
+		;;
+	esac
+	git show --no-patch --pretty=format:%B "$1" -- >actual.msg &&
+	test_cmp "$msg_file" actual.msg
+}
+
 # Persist shell variables across test subshells.  Writes name=value pairs
 # to a file that later subshells source on startup.  Usage:
 #   test_export newf oldf f5id

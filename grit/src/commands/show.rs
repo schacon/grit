@@ -374,6 +374,17 @@ fn maybe_warn_deprecated_grafts(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
+/// Write `git show --pretty=format:...` output without doubling a trailing newline when the
+/// template already ends with one (e.g. `%B` includes a final `\n`).
+fn write_formatted_line(out: &mut impl Write, formatted: &str) -> Result<()> {
+    if formatted.ends_with('\n') {
+        write!(out, "{formatted}")?;
+    } else {
+        writeln!(out, "{formatted}")?;
+    }
+    Ok(())
+}
+
 /// Show a commit object: header + diff.
 fn show_commit(
     out: &mut impl Write,
@@ -451,7 +462,7 @@ fn show_commit(
                 &fmt[8..]
             };
             let formatted = apply_format_string(template, oid, &commit);
-            writeln!(out, "{formatted}")?;
+            write_formatted_line(out, &formatted)?;
         }
         Some("short") => {
             writeln!(out, "commit {hex}")?;
@@ -540,7 +551,7 @@ fn show_commit(
         }
         Some(other) => {
             let formatted = apply_format_string(other, oid, &commit);
-            writeln!(out, "{formatted}")?;
+            write_formatted_line(out, &formatted)?;
         }
     }
 
@@ -1328,6 +1339,15 @@ fn apply_format_string(
                 Some('s') => {
                     chars.next();
                     result.push_str(info.message.lines().next().unwrap_or(""));
+                }
+                Some('B') => {
+                    chars.next();
+                    if !info.message.is_empty() {
+                        result.push_str(info.message);
+                        if !info.message.ends_with('\n') {
+                            result.push('\n');
+                        }
+                    }
                 }
                 Some('b') => {
                     chars.next();
