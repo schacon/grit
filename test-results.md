@@ -2,6 +2,19 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `t4001` rename/copy behavior fixes in `diff`, `status`, and shared diff entry formatting).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4001-diff-rename.sh` (from `tests/`): 23/23 passing.
+- `./scripts/run-tests.sh t4001-diff-rename.sh`: 23/23 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4001-diff-rename`: 23/23 passing in isolated upstream harness.
+- Regression checks:
+  - `./scripts/run-tests.sh t4104-apply-boundary.sh`: 24/24 passing.
+  - `./scripts/run-tests.sh t4018-diff-funcname.sh`: 287/287 passing.
+  - `./scripts/run-tests.sh t4039-diff-assume-unchanged.sh`: 4/4 passing.
+  - `./scripts/run-tests.sh t4007-rename-3.sh`: 13/13 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `apply` boundary matching and preimage OID validation updates for `t4104`).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4104-apply-boundary.sh` (from `tests/`): 24/24 passing.
 - `./scripts/run-tests.sh t4104-apply-boundary.sh`: 24/24 passing; `data/file-results.tsv` refreshed.

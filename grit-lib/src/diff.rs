@@ -94,6 +94,26 @@ impl DiffEntry {
             .or(self.old_path.as_deref())
             .unwrap_or("")
     }
+
+    /// Return a human-oriented path display for this entry.
+    ///
+    /// For renames and copies this returns `old -> new`; for all other entry
+    /// kinds this returns the primary path.
+    #[must_use]
+    pub fn display_path(&self) -> String {
+        match self.status {
+            DiffStatus::Renamed | DiffStatus::Copied => {
+                let old = self.old_path.as_deref().unwrap_or("");
+                let new = self.new_path.as_deref().unwrap_or("");
+                if old.is_empty() || new.is_empty() {
+                    self.path().to_owned()
+                } else {
+                    format!("{old} -> {new}")
+                }
+            }
+            _ => self.path().to_owned(),
+        }
+    }
 }
 
 /// The zero (null) object ID used for "no object" in diff output.

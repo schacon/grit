@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    96 |
+| Completed   |    97 |
 | In progress |     0 |
-| Remaining   |   671 |
+| Remaining   |   670 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4001-diff-rename` — 23/23 tests pass (`status` now reports staged renames as `old -> new` and honors `diff.renames`; diff rename/copy output now uses shared compact rename-path formatting; repeated `-C` parsing, trailing `-l` option recovery, and copy-limit warning fallback now match upstream behavior for rename/copy-heavy scenarios)
 - `t4104-apply-boundary` — 24/24 tests pass (`git apply` now computes 0-context insertion positions with git-compatible semantics, `--check`/worktree/index apply paths verify `index <old>..<new>` preimage object IDs so add-only hunks reject wrong preimages, and boundary-focused hunks now apply/fail exactly as expected)
 - `t4018-diff-funcname` — 287/287 tests pass (`test-tool userdiff` support is now present and custom/builtin funcname matching behavior is wired through diff hunk-header extraction; local harness and isolated upstream harness both pass fully)
 - `t4153-am-resume-override-opts` — 6/6 tests pass (`git am` now supports `--retry` and per-resume override flags for saved session options: `--3way/--no-3way`, `--quiet/--no-quiet`, `--signoff/--no-signoff`, and `--reject/--no-reject`; saved am-state options now persist reject mode; `format-patch --stdout -1 <rev>` now emits the named commit itself, restoring expected patch sequencing for am-resume flows; three-way retry now uses patch preimage blob IDs plus rename-aware path fallback for renamed targets)
@@ -88,4 +89,4 @@
 
 ## What Remains
 
-No test files are currently marked in progress and 671 remain pending. See `plan.md` for the full prioritized list.
+No test files are currently marked in progress and 670 remain pending. See `plan.md` for the full prioritized list.
