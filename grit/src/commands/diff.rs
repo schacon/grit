@@ -985,7 +985,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.stat_name_width,
             )?;
             if args.summary {
-                write_diff_summary(&mut out, &entries)?;
+                write_diff_summary(&mut out, &entries, &repo.odb, args.break_rewrites)?;
             }
         } else if args.raw {
             let oid_len = if args.full_index || args.no_abbrev {
@@ -997,13 +997,13 @@ pub fn run(mut args: Args) -> Result<()> {
             };
             write_raw(&mut out, &entries, oid_len)?;
         } else if args.numstat {
-            write_numstat(&mut out, &entries, &repo.odb, wt_for_content)?;
+            write_numstat(&mut out, &entries, &repo, &repo.odb, wt_for_content, &args)?;
         } else if args.name_only {
             write_name_only(&mut out, &entries)?;
         } else if args.name_status {
             write_name_status(&mut out, &entries)?;
         } else if args.summary && !stat_enabled {
-            write_diff_summary(&mut out, &entries)?;
+            write_diff_summary(&mut out, &entries, &repo.odb, args.break_rewrites)?;
         } else {
             let patch_abbrev = if args.full_index {
                 40
@@ -1025,6 +1025,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 patch_abbrev,
                 args.inter_hunk_context,
                 args.binary,
+                args.break_rewrites,
                 &src_prefix,
                 &dst_prefix,
             )?;
@@ -1837,6 +1838,53 @@ fn is_binary(data: &[u8]) -> bool {
     looks_like_escaped_octal_binary(data)
 }
 
+/// Compute rewrite dissimilarity for `-B` metadata (`100 - similarity`).
+fn compute_rewrite_dissimilarity_from_content(old_data: &[u8], new_data: &[u8]) -> Option<u32> {
+    if old_data.is_empty() && new_data.is_empty() {
+        return None;
+    }
+    let similarity = grit_lib::diff::rename_similarity_score(old_data, new_data).min(100);
+    Some(100u32.saturating_sub(similarity))
+}
+
+/// Resolve textconv program for a path from `.gitattributes` + `diff.<driver>.textconv`.
+fn textconv_program_for_path(
+    repo: &Repository,
+    work_tree: Option<&Path>,
+    path: &str,
+) -> Option<String> {
+    let wt = work_tree?;
+    let rules = grit_lib::crlf::load_gitattributes(wt);
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok()?;
+    let attrs = grit_lib::crlf::get_file_attrs(&rules, path, &config);
+    let driver = attrs.diff_driver?;
+    config.get(&format!("diff.{driver}.textconv"))
+}
+
+/// Run configured textconv command against bytes and return converted output.
+fn apply_textconv(program: &str, content: &[u8]) -> Option<Vec<u8>> {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    let tmp_path =
+        std::env::temp_dir().join(format!("grit-textconv-{}-{unique}", std::process::id()));
+    std::fs::write(&tmp_path, content).ok()?;
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{program} \"$1\""))
+        .arg("grit-textconv")
+        .arg(&tmp_path)
+        .output()
+        .ok()?;
+    let _ = std::fs::remove_file(&tmp_path);
+    if output.status.success() {
+        Some(output.stdout)
+    } else {
+        None
+    }
+}
+
 /// Return true for escaped-octal payloads like `\00\01\02...`.
 ///
 /// Our lightweight shell test harness may materialize `printf` binary fixtures
@@ -2134,12 +2182,23 @@ fn write_patch_with_prefix(
     abbrev_len: usize,
     _inter_hunk_context: Option<usize>,
     show_binary: bool,
+    break_rewrites: bool,
     src_prefix: &str,
     dst_prefix: &str,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
+        let display_old = if entry.status == DiffStatus::Added {
+            "/dev/null"
+        } else {
+            old_path
+        };
+        let display_new = if entry.status == DiffStatus::Deleted {
+            "/dev/null"
+        } else {
+            new_path
+        };
 
         write_diff_header_with_prefix(
             out,
@@ -2156,7 +2215,45 @@ fn write_patch_with_prefix(
         let new_content_raw =
             read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, new_path);
 
+        if break_rewrites && entry.status == DiffStatus::Modified {
+            if let Some(dissimilarity) =
+                compute_rewrite_dissimilarity_from_content(&old_content_raw, &new_content_raw)
+            {
+                writeln!(out, "dissimilarity index {dissimilarity}%")?;
+            }
+        }
+
         if is_binary(&old_content_raw) || is_binary(&new_content_raw) {
+            if !show_binary {
+                if let Some(program) = textconv_program_for_path(repo, work_tree, entry.path()) {
+                    let old_converted = apply_textconv(&program, &old_content_raw);
+                    let new_converted = apply_textconv(&program, &new_content_raw);
+                    if let (Some(old_conv), Some(new_conv)) = (old_converted, new_converted) {
+                        let old_text = String::from_utf8_lossy(&old_conv).into_owned();
+                        let new_text = String::from_utf8_lossy(&new_conv).into_owned();
+                        let patch = grit_lib::diff::unified_diff_with_prefix(
+                            &old_text,
+                            &new_text,
+                            display_old,
+                            display_new,
+                            context_lines,
+                            src_prefix,
+                            dst_prefix,
+                        );
+                        let patch = if suppress_blank_empty {
+                            strip_blank_context_trailing_space(&patch)
+                        } else {
+                            patch
+                        };
+                        if use_color {
+                            write_colored_patch(out, &patch)?;
+                        } else {
+                            write!(out, "{patch}")?;
+                        }
+                        continue;
+                    }
+                }
+            }
             if show_binary {
                 // --binary: output a "GIT binary patch" block
                 write_git_binary_patch(
@@ -2178,18 +2275,6 @@ fn write_patch_with_prefix(
 
         let old_content = String::from_utf8_lossy(&old_content_raw).into_owned();
         let new_content = String::from_utf8_lossy(&new_content_raw).into_owned();
-
-        // For Added files, show --- /dev/null; for Deleted files, show +++ /dev/null
-        let display_old = if entry.status == DiffStatus::Added {
-            "/dev/null"
-        } else {
-            old_path
-        };
-        let display_new = if entry.status == DiffStatus::Deleted {
-            "/dev/null"
-        } else {
-            new_path
-        };
 
         if word_diff {
             let patch = word_diff_output(
@@ -2602,14 +2687,26 @@ fn format_stat_line_git(
 ///
 /// Git shows `Bin` in the count column for binary files and does not show a
 /// histogram bar.
-fn format_stat_line_binary(path: &str, max_path_len: usize, count_width: usize) -> String {
+fn format_stat_line_binary(
+    path: &str,
+    max_path_len: usize,
+    count_width: usize,
+    old_size: usize,
+    new_size: usize,
+) -> String {
     let path_display_width = UnicodeWidthStr::width(path);
     let padding = max_path_len.saturating_sub(path_display_width);
+    let size_suffix = if old_size == 0 && new_size == 0 {
+        String::new()
+    } else {
+        format!(" {old_size} -> {new_size} bytes")
+    };
     format!(
-        " {}{} | {:>cw$}",
+        " {}{} | {:>cw$}{}",
         path,
         " ".repeat(padding),
         "Bin",
+        size_suffix,
         cw = count_width,
     )
 }
@@ -2661,18 +2758,20 @@ fn write_stat(
 
     // Collect per-file stats first so we can compute the count column width.
     // Track whether each path should be rendered as a binary stat line (`Bin`).
-    let mut file_stats: Vec<(&str, usize, usize, bool, bool)> = Vec::new();
+    let mut file_stats: Vec<(&str, usize, usize, bool, bool, usize, usize)> = Vec::new();
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
     let mut changed_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for (i, entry) in entries.iter().enumerate() {
         if entry.status == DiffStatus::Unmerged {
-            file_stats.push((&display_paths[i], 0, 0, false, true));
+            file_stats.push((&display_paths[i], 0, 0, false, true, 0, 0));
             continue;
         }
         let old_raw = read_content_raw(odb, &entry.old_oid);
         let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
+        let old_size = old_raw.len();
+        let new_size = new_raw.len();
         let is_binary = is_binary(&old_raw) || is_binary(&new_raw);
         let (ins, del) = if is_binary {
             (0, 0)
@@ -2681,7 +2780,15 @@ fn write_stat(
             let new_content = String::from_utf8_lossy(&new_raw);
             count_changes(&old_content, &new_content)
         };
-        file_stats.push((&display_paths[i], ins, del, is_binary, false));
+        file_stats.push((
+            &display_paths[i],
+            ins,
+            del,
+            is_binary,
+            false,
+            old_size,
+            new_size,
+        ));
         total_ins += ins;
         total_del += del;
         changed_paths.insert(entry.path().to_owned());
@@ -2693,17 +2800,21 @@ fn write_stat(
     } else {
         file_stats.len()
     };
-    let display_stats: &[(&str, usize, usize, bool, bool)] = &file_stats[..display_len];
+    let display_stats: &[(&str, usize, usize, bool, bool, usize, usize)] =
+        &file_stats[..display_len];
 
     // Compute the width for the count column from only the rows that will
     // actually be rendered (important when --stat-count hides binary/unmerged rows).
     let max_count = display_stats
         .iter()
-        .map(|(_, ins, del, _, _)| ins + del)
+        .map(|(_, ins, del, _, _, _, _)| ins + del)
         .max()
         .unwrap_or(0);
     let mut count_width = format!("{}", max_count).len();
-    if display_stats.iter().any(|(_, _, _, binary, _)| *binary) {
+    if display_stats
+        .iter()
+        .any(|(_, _, _, binary, _, _, _)| *binary)
+    {
         count_width = count_width.max(3); // width of "Bin"
     }
     // Compute layout widths from total width, like git.
@@ -2727,7 +2838,7 @@ fn write_stat(
 
     let max_bar = line_budget.saturating_sub(max_path_len).max(10);
 
-    for (path, ins, del, binary, unmerged) in display_stats {
+    for (path, ins, del, binary, unmerged, old_size, new_size) in display_stats {
         // Truncate path if its display width exceeds max_path_len
         let path_width = UnicodeWidthStr::width(*path);
         let display_path: std::borrow::Cow<str> = if path_width > max_path_len {
@@ -2752,7 +2863,13 @@ fn write_stat(
         let line = if *unmerged {
             format_stat_line_unmerged(&display_path, max_path_len, count_width)
         } else if *binary {
-            format_stat_line_binary(&display_path, max_path_len, count_width)
+            format_stat_line_binary(
+                &display_path,
+                max_path_len,
+                count_width,
+                *old_size,
+                *new_size,
+            )
         } else {
             format_stat_line_git(
                 &display_path,
@@ -2840,33 +2957,65 @@ fn format_rename_display(old: &str, new: &str) -> String {
 fn write_numstat(
     out: &mut impl Write,
     entries: &[DiffEntry],
+    _repo: &Repository,
     odb: &Odb,
     work_tree: Option<&Path>,
+    args: &Args,
 ) -> Result<()> {
     for entry in entries {
-        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
-        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
-        let (ins, del) = count_changes(&old_content, &new_content);
+        let old_raw = read_content_raw(odb, &entry.old_oid);
+        let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
+        let is_binary_pair = is_binary(&old_raw) || is_binary(&new_raw);
+        let (ins, del) = if is_binary_pair {
+            (usize::MAX, usize::MAX)
+        } else {
+            let old_content = String::from_utf8_lossy(&old_raw);
+            let new_content = String::from_utf8_lossy(&new_raw);
+            count_changes(&old_content, &new_content)
+        };
         match entry.status {
             DiffStatus::Renamed | DiffStatus::Copied => {
                 let old = entry.old_path.as_deref().unwrap_or("");
                 let new = entry.new_path.as_deref().unwrap_or("");
                 let display = format_rename_display(old, new);
-                writeln!(out, "{ins}\t{del}\t{display}")?;
+                if ins == usize::MAX {
+                    writeln!(out, "-\t-\t{display}")?;
+                } else {
+                    writeln!(out, "{ins}\t{del}\t{display}")?;
+                }
             }
             _ => {
-                writeln!(out, "{ins}\t{del}\t{}", entry.path())?;
+                if ins == usize::MAX {
+                    writeln!(out, "-\t-\t{}", entry.path())?;
+                } else {
+                    writeln!(out, "{ins}\t{del}\t{}", entry.path())?;
+                }
             }
         }
+    }
+    if args.summary {
+        write_diff_summary(out, entries, odb, args.break_rewrites)?;
     }
     Ok(())
 }
 
 /// Write only the names of changed files.
 /// Write `--summary` output for rename/copy/mode-change entries.
-fn write_diff_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
+fn write_diff_summary(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    odb: &Odb,
+    break_rewrites: bool,
+) -> Result<()> {
     for entry in entries {
         match entry.status {
+            DiffStatus::Modified if break_rewrites => {
+                let old_raw = read_content_raw(odb, &entry.old_oid);
+                let new_raw = read_content_raw(odb, &entry.new_oid);
+                let dissim =
+                    compute_rewrite_dissimilarity_from_content(&old_raw, &new_raw).unwrap_or(100);
+                writeln!(out, " rewrite {} ({dissim}%)", quote_c_style(entry.path()))?;
+            }
             DiffStatus::Renamed => {
                 let old = entry.old_path.as_deref().unwrap_or("");
                 let new = entry.new_path.as_deref().unwrap_or("");

@@ -43,3 +43,31 @@
 3. Emit `rewrite ... (<N>%)` summary lines under `--summary`.
 4. Emit `-\t-\t<path>` for binary rewrite under `--numstat`.
 5. Add textconv application for patch output so rewrite hunks can show converted lines.
+
+### Implementation completed
+- Implemented `test-tool hexdump` in `grit/src/main.rs` and wired it through the
+  `test-tool` dispatcher.
+- Extended `.gitattributes` parsing in `grit-lib/src/crlf.rs`:
+  - `FileAttrs` now captures `diff_driver` from `diff=<driver>` attributes.
+- Exported `rename_similarity_score` from `grit-lib/src/diff.rs` to reuse rename
+  scoring logic for rewrite dissimilarity metadata.
+- Updated `grit/src/commands/diff.rs`:
+  - Added rewrite dissimilarity computation for `-B`.
+  - Added textconv resolution/application pipeline for binary paths using
+    `.gitattributes` + `diff.<driver>.textconv`.
+  - Patch output now emits `dissimilarity index` and textconv hunks for binary rewrites.
+  - `--numstat` now prints `-\t-\t` for binary changes and appends rewrite summary
+    when `--summary` is also requested.
+  - `--stat` binary rows retain `Bin` and include size transition suffix while summary
+    totals remain `0 insertions(+), 0 deletions(-)` for binary rewrites.
+  - Summary output now emits `rewrite <path> (<N>%)` for modified entries when `-B` is set.
+
+### Validation
+- `cargo build --release` — pass
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4031-diff-rewrite-binary.sh` (from `tests/`) — `8/8` pass
+- `./scripts/run-tests.sh t4031-diff-rewrite-binary.sh` — `8/8` pass; `data/file-results.tsv` updated
+- `bash scripts/run-upstream-tests.sh t4031-diff-rewrite-binary` — `8/8` pass
+- Quality gates:
+  - `cargo fmt` — pass
+  - `cargo clippy --fix --allow-dirty` — pass (reverted unrelated autofixes outside task scope)
+  - `cargo test -p grit-lib --lib` — pass (96 tests)

@@ -381,6 +381,33 @@ fn run_test_tool_mergesort(rest: &[String]) -> Result<()> {
     }
 }
 
+fn run_test_tool_hexdump(_rest: &[String]) -> Result<()> {
+    use std::io::{Read, Write};
+
+    let mut stdin = std::io::stdin().lock();
+    let mut stdout = std::io::stdout().lock();
+    let mut buf = [0u8; 1024];
+    let mut have_data = false;
+
+    loop {
+        let len = stdin.read(&mut buf)?;
+        if len == 0 {
+            break;
+        }
+
+        have_data = true;
+        for byte in &buf[..len] {
+            write!(stdout, "{:02x} ", *byte)?;
+        }
+    }
+
+    if have_data {
+        writeln!(stdout)?;
+    }
+
+    Ok(())
+}
+
 fn parse_find_pack_count_arg(value: &str) -> Result<usize> {
     value
         .parse::<usize>()
@@ -2047,6 +2074,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "parse-pathspec-file" => run_test_tool_parse_pathspec_file(rest),
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
+                "hexdump" => run_test_tool_hexdump(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }

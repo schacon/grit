@@ -69,6 +69,8 @@ pub enum EolAttr {
 pub struct FileAttrs {
     pub text: TextAttr,
     pub eol: EolAttr,
+    /// Diff driver name from `diff=<driver>` attribute.
+    pub diff_driver: Option<String>,
     pub filter_clean: Option<String>,
     pub filter_smudge: Option<String>,
     pub ident: bool,
@@ -81,6 +83,7 @@ impl Default for FileAttrs {
         FileAttrs {
             text: TextAttr::Unspecified,
             eol: EolAttr::Unspecified,
+            diff_driver: None,
             filter_clean: None,
             filter_smudge: None,
             ident: false,
@@ -246,6 +249,13 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                             let smudge_key = format!("filter.{value}.smudge");
                             fa.filter_clean = config.get(&clean_key);
                             fa.filter_smudge = config.get(&smudge_key);
+                        }
+                    }
+                    "diff" => {
+                        if value == "unset" {
+                            fa.diff_driver = None;
+                        } else if !value.is_empty() && value != "set" {
+                            fa.diff_driver = Some(value.clone());
                         }
                     }
                     "ident" => {

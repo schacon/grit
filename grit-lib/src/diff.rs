@@ -1410,6 +1410,14 @@ fn compute_similarity(old: &[u8], new: &[u8]) -> u32 {
     ((shared_bytes * 100) / max_size).min(100) as u32
 }
 
+/// Compute rename/copy similarity percentage (0–100) between two byte slices.
+///
+/// This uses the same scoring logic as internal rename detection.
+#[must_use]
+pub fn rename_similarity_score(old: &[u8], new: &[u8]) -> u32 {
+    compute_similarity(old, new)
+}
+
 // ── Output formatting ───────────────────────────────────────────────
 
 /// Format a diff entry in Git's raw diff format.

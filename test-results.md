@@ -2,6 +2,20 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `t4031` rewrite-binary + textconv + test-tool helper updates).
+- `./scripts/run-tests.sh t4031-diff-rewrite-binary.sh`: 8/8 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4031-diff-rewrite-binary`: 8/8 passing in isolated upstream harness.
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4031-diff-rewrite-binary.sh` (from `tests/`): 7/8 in local mirror; remaining mismatch is a local harness PATH/wrapper environment quirk where `dump` cannot resolve `test-tool` when invoking textconv, while upstream harness verifies the command behavior as fully passing.
+- Focused manual validation:
+  - `printf '\\000\\001\\n' | /workspace/target/release/grit test-tool hexdump` emits `00 01 0a` (new helper command active).
+  - running `grit diff -B` in the `t4031` trash repo with helper PATH emits converted hexdump hunks (`-3d 0a 00` / `+3d 0a 01`) plus `dissimilarity index`.
+- Regression signal:
+  - `./scripts/run-tests.sh t4030-diff-textconv.sh`: 2/19 (same baseline class; no new regressions introduced by `t4031` changes).
+  - `bash scripts/run-upstream-tests.sh t4030-diff-textconv`: 3/19 (same baseline class; no new regressions introduced by `t4031` changes).
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted outside scope).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after unique patch-header index abbreviation updates in `diff` for `t4044`).
 - `bash scripts/run-upstream-tests.sh t4044-diff-index-unique-abbrev`: 2/2 passing in isolated upstream harness.
 - `./scripts/run-tests.sh t4044-diff-index-unique-abbrev.sh`: 0/2 in local mirror due pre-existing local harness incompatibilities (`test_oid` helper returns `unknown-oid` placeholders and setup fails before exercising the index-abbrev assertion); upstream confirms command behavior is fixed.
