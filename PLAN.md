@@ -450,7 +450,7 @@ commit → check it off → move on.
 - [x] `t4054-diff-bogus-tree` ████████████████████ 14/14 (0 left) — test diff with a bogus tree containing the null sha1 (`diff-tree` now honors `-R/--reverse` by swapping tree sides and inverting diff statuses; patch output now reports `error: bogus object <zero-oid>` and exits non-zero when zero/null blob OIDs are encountered in entries that require real blob content)
 - [x] `t4114-apply-typechange` ████████████████████ 12/12 (0 left) — git apply should not get confused with type changes (`apply` now reads symlink targets as blob content during worktree/index preimage validation and hunk matching, handles file↔directory↔symlink replacement ordering without stale path conflicts, and allows safe deletion of descendants when a directory is replaced by a symlink in the same patch stream; `diff-tree` now accepts `--binary` for patch generation compatibility)
 
-- [ ] `t4022-diff-rewrite` ███████░░░░░░░░░░░░░ 4/11 (7 left) — rewrite diff
+- [~] `t4022-diff-rewrite` ████████████░░░░░░░░ 7/11 (4 left) — rewrite diff
 - [ ] `t4033-diff-patience` ███████░░░░░░░░░░░░░ 4/11 (7 left) — patience diff algorithm
 - [ ] `t4105-apply-fuzz` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — apply with fuzz and offset
 - [ ] `t4011-diff-symlink` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — Test diff of symlinks.
