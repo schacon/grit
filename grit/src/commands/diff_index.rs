@@ -740,7 +740,7 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
             // Glob pattern
             glob_match_pathspec(spec, path)
         } else if let Some(prefix) = spec.strip_suffix('/') {
-            path == prefix || path.starts_with(&format!("{prefix}/"))
+            path.starts_with(&format!("{prefix}/"))
         } else {
             path == spec || path.starts_with(&format!("{spec}/"))
         }

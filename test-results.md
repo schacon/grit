@@ -2,6 +2,17 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `t4010` pathspec fixes in `diff-index`/`diff-tree` path matching and empty-tree handling).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4010-diff-pathspec.sh` (from `tests/`): 17/17 passing.
+- `./scripts/run-tests.sh t4010-diff-pathspec.sh`: 17/17 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4010-diff-pathspec`: 17/17 passing in isolated upstream harness.
+- Regression checks:
+  - `./scripts/run-tests.sh t4001-diff-rename.sh`: 23/23 passing.
+  - `./scripts/run-tests.sh t4072-diff-max-depth.sh`: 76/76 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in files outside scope reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after `t4001` rename/copy behavior fixes in `diff`, `status`, and shared diff entry formatting).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4001-diff-rename.sh` (from `tests/`): 23/23 passing.
 - `./scripts/run-tests.sh t4001-diff-rename.sh`: 23/23 passing; `data/file-results.tsv` refreshed.

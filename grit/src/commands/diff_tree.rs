@@ -18,6 +18,9 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::io::{self, BufRead, Write};
 
+const EMPTY_TREE_OID_HEX: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const EMPTY_TREE_OID_HEX_LEGACY: &str = "4b825dc642cb6eb9a060e54bf899d69f7c6948d4";
+
 /// Arguments for `grit diff-tree`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Compare the content and mode of blobs found via two tree objects")]
@@ -323,12 +326,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         i += 1;
     }
 
-    // Patch, stat, summary, name-only, name-status all imply recursion.
+    // Patch and stat imply recursion.
     match opts.format {
-        OutputFormat::Patch
-        | OutputFormat::Stat
-        | OutputFormat::NameOnly
-        | OutputFormat::NameStatus => {
+        OutputFormat::Patch | OutputFormat::Stat => {
             opts.recursive = true;
         }
         _ => {}
@@ -385,13 +385,15 @@ pub fn run(args: Args) -> Result<()> {
 fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
-    let entries = diff_with_opts(&repo.odb, Some(&oid1), Some(&oid2), opts)?;
+    let maybe_oid1 = normalize_empty_tree_oid(&oid1)?;
+    let maybe_oid2 = normalize_empty_tree_oid(&oid2)?;
+    let entries = diff_with_opts(&repo.odb, maybe_oid1.as_ref(), maybe_oid2.as_ref(), opts)?;
     let filtered = filter_entries(entries, opts, &repo.odb);
     let find_object = resolve_find_object(repo, opts)?;
     let filtered = filter_entries_by_object(filtered, find_object.as_ref());
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
-        print_diff(out, &repo.odb, &filtered, opts, Some(&oid1))?;
+        print_diff(out, &repo.odb, &filtered, opts, maybe_oid1.as_ref())?;
     }
     Ok(has_diff)
 }
@@ -669,9 +671,11 @@ fn process_stdin_two_trees(
     // Print both tree OIDs.
     writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
 
-    let entries = diff_with_opts(&repo.odb, Some(oid1), Some(&oid2), opts)?;
+    let maybe_oid1 = normalize_empty_tree_oid(oid1)?;
+    let maybe_oid2 = normalize_empty_tree_oid(&oid2)?;
+    let entries = diff_with_opts(&repo.odb, maybe_oid1.as_ref(), maybe_oid2.as_ref(), opts)?;
     let filtered = filter_entries(entries, opts, &repo.odb);
-    print_diff(out, &repo.odb, &filtered, opts, None)
+    print_diff(out, &repo.odb, &filtered, opts, maybe_oid1.as_ref())
 }
 
 // ── Diff helpers ─────────────────────────────────────────────────────
@@ -1380,6 +1384,9 @@ fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) ->
 
 /// Resolve a tree-ish (commit or tree) to a tree OID.
 fn resolve_to_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    if is_empty_tree_hex(spec) {
+        return ObjectId::from_hex(EMPTY_TREE_OID_HEX).context("parsing empty tree OID");
+    }
     let mut oid =
         resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
     loop {
@@ -1393,6 +1400,20 @@ fn resolve_to_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
             _ => bail!("'{spec}' does not name a tree or commit"),
         }
     }
+}
+
+fn normalize_empty_tree_oid(oid: &ObjectId) -> Result<Option<ObjectId>> {
+    if is_empty_tree_hex(&oid.to_hex()) {
+        return Ok(None);
+    }
+    if oid.is_zero() {
+        return Ok(None);
+    }
+    Ok(Some(*oid))
+}
+
+fn is_empty_tree_hex(hex: &str) -> bool {
+    hex == EMPTY_TREE_OID_HEX || hex == EMPTY_TREE_OID_HEX_LEGACY
 }
 
 /// Retrieve the tree OID from a commit OID.
@@ -1668,17 +1689,91 @@ fn filter_pathspecs(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEn
     }
     entries
         .into_iter()
-        .filter(|e| {
-            let path = e.path();
-            pathspecs.iter().any(|spec| {
-                if let Some(prefix) = spec.strip_suffix('/') {
-                    path == prefix || path.starts_with(&format!("{prefix}/"))
-                } else {
-                    path == spec || path.starts_with(&format!("{spec}/"))
-                }
-            })
+        .filter(|entry| {
+            pathspecs
+                .iter()
+                .any(|spec| matches_pathspec_entry(entry, spec))
         })
         .collect()
+}
+
+fn matches_pathspec_entry(entry: &DiffEntry, spec: &str) -> bool {
+    let path = entry.path();
+    if spec.contains('*') || spec.contains('?') || spec.contains('[') {
+        if glob_match_pathspec(spec, path) {
+            return true;
+        }
+        return is_tree_like_entry(entry) && wildcard_can_match_descendant(spec, path);
+    }
+    if let Some(prefix) = spec.strip_suffix('/') {
+        if path.starts_with(&format!("{prefix}/")) {
+            return true;
+        }
+        return path == prefix && is_tree_like_entry(entry);
+    }
+    if path == spec || path.starts_with(&format!("{spec}/")) {
+        return true;
+    }
+    is_tree_like_entry(entry) && spec.starts_with(&format!("{path}/"))
+}
+
+fn wildcard_can_match_descendant(spec: &str, path: &str) -> bool {
+    if spec.starts_with(&format!("{path}/")) {
+        return true;
+    }
+
+    let mut literal_prefix = spec;
+    for (idx, ch) in spec.char_indices() {
+        if matches!(ch, '*' | '?' | '[') {
+            literal_prefix = &spec[..idx];
+            break;
+        }
+    }
+
+    !literal_prefix.is_empty() && literal_prefix.starts_with(path)
+}
+
+fn is_tree_like_entry(entry: &DiffEntry) -> bool {
+    is_tree_like_mode(&entry.old_mode) || is_tree_like_mode(&entry.new_mode)
+}
+
+fn is_tree_like_mode(mode: &str) -> bool {
+    mode.starts_with("040") || mode.starts_with("160")
+}
+
+/// Simple glob matching for pathspecs.
+fn glob_match_pathspec(pattern: &str, text: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let txt = text.as_bytes();
+    let mut pi = 0;
+    let mut ti = 0;
+    let mut star_pi = usize::MAX;
+    let mut star_ti = 0;
+
+    while ti < txt.len() {
+        if pi < pat.len() && pat[pi] == b'?' && txt[ti] != b'/' {
+            pi += 1;
+            ti += 1;
+        } else if pi < pat.len() && pat[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if pi < pat.len() && pat[pi] == txt[ti] {
+            pi += 1;
+            ti += 1;
+        } else if star_pi != usize::MAX {
+            star_ti += 1;
+            ti = star_ti;
+            pi = star_pi + 1;
+        } else {
+            return false;
+        }
+    }
+
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
 }
 
 /// Parse a whitespace-separated list of OID strings.
