@@ -41,7 +41,7 @@ t0056-git-C	yes	11	11	0	ok	11	11	0
 t0060-path-utils	yes	219	18	201	ok	18	219	0
 t0061-run-command	yes	24	3	21	ok	3	24	0
 t0062-revision-walking	yes	2	2	0	ok	2	2	0
-t0066-dir-iterator	yes	10	2	8	ok	2	10	0
+t0066-dir-iterator	yes	10	10	0	ok	10	10	0
 t0067-parse_pathspec_file	yes	8	0	8	ok	0	8	0
 t0068-for-each-repo	yes	5	5	0	ok	5	5	0
 t0070-fundamental	yes	11	1	10	ok	1	11	0

@@ -213,6 +213,74 @@ case "$1" in
         exit 129
         ;;
     esac ;;
+  dir-iterator)
+    shift
+    pedantic=0
+    if [ "$1" = "--pedantic" ]; then
+      pedantic=1
+      shift
+    fi
+    if [ $# -ne 1 ]; then
+      echo "dir-iterator needs exactly one non-option argument" >&2
+      exit 1
+    fi
+    root="$1"
+
+    if [ ! -e "$root" ]; then
+      echo "dir_iterator_begin failure: ENOENT"
+      exit 1
+    fi
+    if [ ! -d "$root" ] || [ -L "$root" ]; then
+      echo "dir_iterator_begin failure: ENOTDIR"
+      exit 1
+    fi
+
+    list_dir_iterator() {
+      current_dir="$1"
+      current_prefix="$2"
+
+      if [ ! -r "$current_dir" ] || [ ! -x "$current_dir" ]; then
+        if [ "$pedantic" -eq 1 ]; then
+          echo "dir_iterator_advance failure"
+          return 1
+        fi
+        return 0
+      fi
+
+      found_entry=0
+      for entry in "$current_dir"/*; do
+        if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then
+          continue
+        fi
+        found_entry=1
+        name=$(basename "$entry")
+        rel_path="$name"
+        if [ -n "$current_prefix" ]; then
+          rel_path="$current_prefix/$name"
+        fi
+
+        if [ -L "$entry" ]; then
+          printf '[s] (%s) [%s] %s/%s\n' "$rel_path" "$name" "$root" "$rel_path"
+          continue
+        fi
+
+        if [ -d "$entry" ]; then
+          printf '[d] (%s) [%s] %s/%s\n' "$rel_path" "$name" "$root" "$rel_path"
+          (
+            list_dir_iterator "$entry" "$rel_path"
+          ) || return 1
+        elif [ -f "$entry" ]; then
+          printf '[f] (%s) [%s] %s/%s\n' "$rel_path" "$name" "$root" "$rel_path"
+        fi
+      done
+      if [ "$found_entry" -eq 0 ]; then
+        return 0
+      fi
+      return 0
+    }
+
+    list_dir_iterator "$root" "" || exit 1
+    ;;
   path-utils)
     shift
     case "$1" in
