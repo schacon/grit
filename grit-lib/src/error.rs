@@ -18,6 +18,11 @@ pub enum Error {
     #[error("cannot use bare repository '{0}' (safe.bareRepository is 'explicit')")]
     ForbiddenBareRepository(String),
 
+    /// Repository ownership is considered unsafe and no matching safe.directory
+    /// entry was found.
+    #[error("detected dubious ownership in repository at '{0}'")]
+    DubiousOwnership(String),
+
     /// A supplied object ID string was not valid hex or the wrong length.
     #[error("invalid object id '{0}'")]
     InvalidObjectId(String),

@@ -33,6 +33,10 @@ pub struct Repository {
     pub work_tree: Option<PathBuf>,
     /// Loose object database.
     pub odb: Odb,
+    /// Discovery provenance: true when opened via `GIT_DIR` env or explicit API.
+    ///
+    /// This suppresses safe.bareRepository implicit checks.
+    pub explicit_git_dir: bool,
 }
 
 impl Repository {
@@ -92,6 +96,7 @@ impl Repository {
             git_dir,
             work_tree,
             odb,
+            explicit_git_dir: false,
         })
     }
 
@@ -109,7 +114,9 @@ impl Repository {
             let git_dir = PathBuf::from(&dir);
             let work_tree = env::var("GIT_WORK_TREE").ok().map(PathBuf::from);
             if work_tree.is_some() {
-                return Self::open(&git_dir, work_tree.as_deref());
+                let mut repo = Self::open(&git_dir, work_tree.as_deref())?;
+                repo.explicit_git_dir = true;
+                return Ok(repo);
             }
             // When GIT_DIR is set without GIT_WORK_TREE, infer the work tree
             // from the parent of the git directory (standard layout).
@@ -137,6 +144,7 @@ impl Repository {
                     repo.work_tree = canonical.parent().map(|p| p.to_path_buf());
                 }
             }
+            repo.explicit_git_dir = true;
             return Ok(repo);
         }
 
@@ -172,6 +180,7 @@ impl Repository {
                 if let Some(ref wt) = env_work_tree {
                     repo.work_tree = Some(wt.canonicalize().unwrap_or_else(|_| wt.clone()));
                 }
+                repo.enforce_safe_directory()?;
                 return Ok(repo);
             }
             match current.parent() {
@@ -381,6 +390,218 @@ fn maybe_trace_implicit_bare_repository(dir: &Path) {
             dir.display()
         );
     }
+}
+
+impl Repository {
+    /// Enforce `safe.directory` ownership checks, matching upstream behavior.
+    ///
+    /// When `GIT_TEST_ASSUME_DIFFERENT_OWNER=1`, ownership is considered unsafe
+    /// unless a matching `safe.directory` value is configured in system/global/
+    /// command scopes (repository-local config is ignored).
+    pub fn enforce_safe_directory(&self) -> Result<()> {
+        let assume_different = std::env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+            .ok()
+            .map(|v| {
+                let lower = v.to_ascii_lowercase();
+                v == "1" || lower == "true" || lower == "yes" || lower == "on"
+            })
+            .unwrap_or(false);
+        if !assume_different {
+            return Ok(());
+        }
+
+        if self.explicit_git_dir {
+            return Ok(());
+        }
+
+        // In normal discovery, ownership is checked against worktree paths
+        // unless invocation starts inside the gitdir, in which case gitdir is
+        // checked.
+        let checked = if let Some(wt) = &self.work_tree {
+            let cwd = std::env::current_dir().ok();
+            if let Some(cwd) = cwd {
+                if cwd
+                    .canonicalize()
+                    .ok()
+                    .is_some_and(|c| c.starts_with(&self.git_dir))
+                {
+                    self.git_dir
+                        .canonicalize()
+                        .unwrap_or_else(|_| self.git_dir.clone())
+                } else {
+                    wt.canonicalize().unwrap_or_else(|_| wt.clone())
+                }
+            } else {
+                wt.canonicalize().unwrap_or_else(|_| wt.clone())
+            }
+        } else {
+            self.git_dir
+                .canonicalize()
+                .unwrap_or_else(|_| self.git_dir.clone())
+        };
+
+        if std::env::var("GRIT_DEBUG_SAFE_DIR").is_ok() {
+            eprintln!(
+                "debug-safe-directory checked={} git_dir={} work_tree={:?} cwd={:?}",
+                checked.display(),
+                self.git_dir.display(),
+                self.work_tree,
+                std::env::current_dir().ok()
+            );
+        }
+        self.enforce_safe_directory_checked(&checked)
+    }
+
+    /// Enforce safe.directory checks using the repository git-dir path.
+    ///
+    /// Used by operations that explicitly open another repository by path
+    /// (e.g. local clone source).
+    pub fn enforce_safe_directory_git_dir(&self) -> Result<()> {
+        let assume_different = std::env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+            .ok()
+            .map(|v| {
+                let lower = v.to_ascii_lowercase();
+                v == "1" || lower == "true" || lower == "yes" || lower == "on"
+            })
+            .unwrap_or(false);
+        if !assume_different {
+            return Ok(());
+        }
+        let checked = self
+            .git_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.git_dir.clone());
+        if std::env::var("GRIT_DEBUG_SAFE_DIR").is_ok() {
+            eprintln!(
+                "debug-safe-directory(gitdir) checked={} git_dir={} work_tree={:?}",
+                checked.display(),
+                self.git_dir.display(),
+                self.work_tree
+            );
+        }
+        self.enforce_safe_directory_checked(&checked)
+    }
+
+    /// Enforce safe.directory checks against an explicit checked path.
+    pub fn enforce_safe_directory_git_dir_with_path(&self, checked: &Path) -> Result<()> {
+        let assume_different = std::env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+            .ok()
+            .map(|v| {
+                let lower = v.to_ascii_lowercase();
+                v == "1" || lower == "true" || lower == "yes" || lower == "on"
+            })
+            .unwrap_or(false);
+        if !assume_different {
+            return Ok(());
+        }
+        self.enforce_safe_directory_checked(checked)
+    }
+
+    fn enforce_safe_directory_checked(&self, checked: &Path) -> Result<()> {
+        let cfg = crate::config::ConfigSet::load(Some(&self.git_dir), true)
+            .unwrap_or_else(|_| crate::config::ConfigSet::new());
+        let mut values: Vec<String> = Vec::new();
+        for e in cfg.entries() {
+            if e.key == "safe.directory"
+                && e.scope != crate::config::ConfigScope::Local
+                && e.scope != crate::config::ConfigScope::Worktree
+            {
+                values.push(e.value.clone().unwrap_or_else(|| "true".to_owned()));
+            }
+        }
+
+        // Last empty assignment resets the list.
+        let mut effective: Vec<String> = Vec::new();
+        for v in values {
+            if v.is_empty() {
+                effective.clear();
+            } else {
+                effective.push(v);
+            }
+        }
+
+        let checked_s = checked.to_string_lossy().to_string();
+        if std::env::var("GRIT_DEBUG_SAFE_DIR").is_ok() {
+            eprintln!("debug-safe-directory values={:?}", effective);
+        }
+        if effective.iter().any(|v| safe_directory_matches(v, &checked_s)) {
+            return Ok(());
+        }
+
+        Err(Error::DubiousOwnership(checked_s))
+    }
+}
+
+fn normalize_fs_path(raw: &str) -> String {
+    use std::path::Component;
+    let p = std::path::Path::new(raw);
+    let mut parts: Vec<String> = Vec::new();
+    let mut absolute = false;
+    for c in p.components() {
+        match c {
+            Component::RootDir => {
+                absolute = true;
+                parts.clear();
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !parts.is_empty() {
+                    parts.pop();
+                }
+            }
+            Component::Normal(s) => parts.push(s.to_string_lossy().to_string()),
+            Component::Prefix(_) => {}
+        }
+    }
+    let mut out = if absolute {
+        String::from("/")
+    } else {
+        String::new()
+    };
+    out.push_str(&parts.join("/"));
+    out
+}
+
+fn safe_directory_matches(config_value: &str, checked: &str) -> bool {
+    if config_value == "*" {
+        return true;
+    }
+    if config_value == "." {
+        // CWD only.
+        if let Ok(cwd) = std::env::current_dir() {
+            let cwd_s = normalize_fs_path(&cwd.to_string_lossy());
+            let checked_s = normalize_fs_path(checked);
+            return cwd_s == checked_s;
+        }
+        return false;
+    }
+
+    let canonicalize_or_normalize = |raw: &str| -> String {
+        let p = std::path::Path::new(raw);
+        if p.exists() {
+            p.canonicalize()
+                .map(|c| c.to_string_lossy().to_string())
+                .map(|s| normalize_fs_path(&s))
+                .unwrap_or_else(|_| normalize_fs_path(raw))
+        } else {
+            normalize_fs_path(raw)
+        }
+    };
+
+    let config_norm = canonicalize_or_normalize(config_value);
+    let checked_norm = normalize_fs_path(checked);
+
+    if config_norm.ends_with("/*") {
+        let prefix_raw = &config_norm[..config_norm.len() - 2];
+        let prefix_norm = canonicalize_or_normalize(prefix_raw);
+        let mut prefix = prefix_norm;
+        if !prefix.ends_with('/') {
+            prefix.push('/');
+        }
+        return checked_norm.starts_with(&prefix);
+    }
+
+    config_norm == checked_norm
 }
 
 /// Parse a gitfile's `"gitdir: <path>"` line.

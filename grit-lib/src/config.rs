@@ -1699,28 +1699,76 @@ pub fn parse_path_optional(s: &str) -> Option<String> {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/// Parse `GIT_CONFIG_PARAMETERS` — single-quoted `'key=value'` entries
-/// separated by whitespace.
+/// Parse `GIT_CONFIG_PARAMETERS` payloads.
+///
+/// We support the common formats seen in tests and wrappers:
+/// - single-quoted entries: `'key=value'`
+/// - double-quoted entries: `"key=value"`
+/// - unquoted `key=value` tokens separated by whitespace
+///
+/// Backslash escapes are interpreted minimally inside double quotes.
 fn parse_config_parameters(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    let mut iter = raw.chars().peekable();
-    while let Some(&c) = iter.peek() {
-        if c == '\'' {
-            iter.next();
-            let mut s = String::new();
-            loop {
-                match iter.next() {
-                    Some('\'') | None => break,
-                    Some(x) => s.push(x),
-                }
+    let mut buf = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            } else {
+                buf.push(ch);
             }
-            if !s.is_empty() {
-                out.push(s);
-            }
-        } else {
-            iter.next();
+            continue;
         }
+        if in_double {
+            if ch == '"' {
+                in_double = false;
+                continue;
+            }
+            if ch == '\\' {
+                if let Some(next) = chars.next() {
+                    let mapped = match next {
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        '"' => '"',
+                        '\\' => '\\',
+                        other => other,
+                    };
+                    buf.push(mapped);
+                }
+                continue;
+            }
+            buf.push(ch);
+            continue;
+        }
+
+        if ch == '\'' {
+            in_single = true;
+            continue;
+        }
+        if ch == '"' {
+            in_double = true;
+            continue;
+        }
+
+        if ch.is_whitespace() {
+            if !buf.is_empty() {
+                out.push(std::mem::take(&mut buf));
+            }
+            continue;
+        }
+
+        buf.push(ch);
     }
+
+    if !buf.is_empty() {
+        out.push(buf);
+    }
+
     out
 }
 
