@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::diff::{detect_renames, diff_trees, DiffStatus};
 use crate::index::{Index, IndexEntry};
-use crate::merge_file::{merge, MergeFavor, MergeInput};
+use crate::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use crate::objects::{parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
 use crate::repo::Repository;
@@ -42,7 +42,9 @@ pub struct WhitespaceMergeOptions {
 /// - `ours_tree` — current branch tree (HEAD during pick/revert).
 /// - `theirs_tree` — tree being applied (picked commit for cherry-pick, parent of reverted commit for revert).
 /// - `favor` / `ws` — merge strategy favour and whitespace options for textual merges.
-/// - `label_base` — label for the merge conflict "base" side in markers.
+/// - `label_base` — label for the merge conflict "base" side in diff3 markers.
+/// - `label_theirs` — label for the `>>>>>>>` side (Git uses commit summaries, not paths).
+/// - `conflict_style` — `merge` vs `diff3` conflict markers.
 ///
 /// # Errors
 ///
@@ -55,6 +57,8 @@ pub fn merge_trees_three_way(
     favor: MergeFavor,
     ws: WhitespaceMergeOptions,
     label_base: &str,
+    label_theirs: &str,
+    conflict_style: ConflictStyle,
 ) -> crate::error::Result<TreeMergeOutput> {
     let odb = &repo.odb;
     let base = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
@@ -105,6 +109,8 @@ pub fn merge_trees_three_way(
         favor,
         ws,
         label_base,
+        label_theirs,
+        conflict_style,
     )
 }
 
@@ -142,6 +148,8 @@ fn three_way_on_aligned_paths(
     favor: MergeFavor,
     ws: WhitespaceMergeOptions,
     label_base: &str,
+    label_theirs: &str,
+    conflict_style: ConflictStyle,
 ) -> crate::error::Result<TreeMergeOutput> {
     let mut out = Index::new();
     let mut conflict_content = BTreeMap::new();
@@ -188,6 +196,8 @@ fn three_way_on_aligned_paths(
             favor,
             ws,
             label_base,
+            label_theirs,
+            conflict_style,
         )?;
     }
 
@@ -216,6 +226,8 @@ fn three_way_on_aligned_paths(
             favor,
             ws,
             label_base,
+            label_theirs,
+            conflict_style,
         )?;
     }
 
@@ -237,6 +249,8 @@ fn three_way_on_aligned_paths(
             favor,
             ws,
             label_base,
+            label_theirs,
+            conflict_style,
         )?;
     }
 
@@ -264,6 +278,8 @@ fn merge_one_path(
     favor: MergeFavor,
     ws: WhitespaceMergeOptions,
     label_base: &str,
+    label_theirs: &str,
+    conflict_style: ConflictStyle,
 ) -> crate::error::Result<()> {
     match (b, o, t) {
         (_, Some(oe), Some(te)) if same_blob(oe, te) => {
@@ -320,6 +336,8 @@ fn merge_one_path(
                 favor,
                 ws,
                 label_base,
+                label_theirs,
+                conflict_style,
             )?;
         }
         (None, Some(oe), None) => {
@@ -386,6 +404,8 @@ fn content_merge_or_conflict(
     favor: MergeFavor,
     ws: WhitespaceMergeOptions,
     label_base: &str,
+    label_theirs: &str,
+    conflict_style: ConflictStyle,
 ) -> crate::error::Result<()> {
     if base.mode == 0o160000 || ours.mode == 0o160000 || theirs.mode == 0o160000 {
         stage_entry(index, path, base, 1);
@@ -427,15 +447,20 @@ fn content_merge_or_conflict(
     }
 
     let path_label = String::from_utf8_lossy(path);
+    let theirs_label = if label_theirs.is_empty() {
+        path_label.as_ref()
+    } else {
+        label_theirs
+    };
     let input = MergeInput {
         base: &base_obj.data,
         ours: &ours_obj.data,
         theirs: &theirs_obj.data,
         label_ours: "HEAD",
         label_base,
-        label_theirs: path_label.as_ref(),
+        label_theirs: theirs_label,
         favor,
-        style: Default::default(),
+        style: conflict_style,
         marker_size: 7,
         diff_algorithm: None,
         ignore_all_space: ws.ignore_all_space,

@@ -17,8 +17,9 @@ use grit_lib::commit_trailers::{
     format_signoff_line,
 };
 use grit_lib::config::ConfigSet;
+use grit_lib::diff::diff_index_to_worktree;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
-use grit_lib::merge_file::{merge, MergeFavor, MergeInput};
+use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{merge_trees_three_way, WhitespaceMergeOptions};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -162,9 +163,14 @@ fn verify_pick_flags_not_with_operation(args: &Args, operation: &str) {
     }
 }
 
+use super::merge::{
+    bail_if_resolve_index_not_clean_vs_head, cleanup_message, merge_touched_paths,
+    staged_dirty_paths_vs_head,
+};
 use super::sequencer::{
-    rollback_is_safe, sequencer_is_pick_sequence, sequencer_is_revert_sequence,
-    strip_first_sequencer_todo_line, write_abort_safety_file,
+    append_merge_msg_conflict_footer, rollback_is_safe, sequencer_is_pick_sequence,
+    sequencer_is_revert_sequence, strip_first_sequencer_todo_line, unmerged_paths,
+    write_abort_safety_file,
 };
 
 /// Result of a three-way merge: the index plus any conflict content for working tree.
@@ -268,6 +274,10 @@ pub struct Args {
     /// Unsupported on cherry-pick (revert-only); accepted to print upstream usage.
     #[arg(long = "reference", hide = true)]
     pub reference: bool,
+
+    /// Message cleanup mode (matches `git cherry-pick --cleanup`; used for conflict `MERGE_MSG`).
+    #[arg(long = "cleanup", value_name = "MODE", hide = true)]
+    pub cleanup: Option<String>,
 }
 
 /// Run the `cherry-pick` command.
@@ -466,7 +476,14 @@ fn run_commit_sequence(
             }
             Err(e) => {
                 let err_msg = format!("{e}");
+                if err_msg.contains("CHERRY_PICK_DIRTY_GENERIC") {
+                    eprintln!("fatal: cherry-pick failed");
+                    std::process::exit(128);
+                }
                 if err_msg.contains("CONFLICT_EXIT") {
+                    if std::env::var_os("GIT_CHERRY_PICK_HELP").is_some() {
+                        std::process::exit(1);
+                    }
                     if oids.len() > 1 {
                         save_sequencer_state(git_dir, &orig_head_oid, remaining, args)?;
                         write_abort_safety_file(git_dir)?;
@@ -761,6 +778,31 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
         head_tree_oid
     };
 
+    let config = ConfigSet::load(Some(git_dir), true)?;
+
+    if let (Some(head_oid), Some(wt)) = (head_oid_opt.as_ref(), repo.work_tree.as_deref()) {
+        error_if_cherry_pick_would_clobber_worktree(
+            repo,
+            git_dir,
+            *head_oid,
+            parent_tree_oid,
+            ours_tree_oid,
+            commit_tree_oid,
+            wt,
+        )?;
+    }
+
+    if let Some(head_oid) = head_oid_opt.as_ref() {
+        if !args.no_commit
+            && args
+                .strategy
+                .as_deref()
+                .is_some_and(|s| s.eq_ignore_ascii_case("resolve"))
+        {
+            bail_if_resolve_index_not_clean_vs_head(repo, *head_oid, false)?;
+        }
+    }
+
     let (favor, ws_opts) = parse_strategy_options(&args.strategy_option);
     let ws_merge = WhitespaceMergeOptions {
         ignore_all_space: ws_opts.ignore_all_space,
@@ -768,6 +810,16 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
         ignore_space_at_eol: ws_opts.ignore_space_at_eol,
         ignore_cr_at_eol: ws_opts.ignore_cr_at_eol,
     };
+    let short_oid = &commit_oid.to_hex()[..7];
+    let subject = commit.message.lines().next().unwrap_or("");
+    let label_theirs = format!("{short_oid} ({subject})");
+    let label_base = format!("parent of {short_oid} ({subject})");
+
+    let conflict_style = match config.get("merge.conflictstyle").as_deref() {
+        Some("diff3") | Some("zdiff3") => ConflictStyle::Diff3,
+        _ => ConflictStyle::Merge,
+    };
+
     let merged = merge_trees_three_way(
         repo,
         parent_tree_oid,
@@ -775,7 +827,9 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
         commit_tree_oid,
         favor,
         ws_merge,
-        "parent of picked commit",
+        label_base.as_str(),
+        label_theirs.as_str(),
+        conflict_style,
     )?;
     let mut merge_result = MergeResult {
         index: merged.index,
@@ -843,7 +897,6 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     )?;
 
     // Build the cherry-pick message (Git: `sequencer.c` + `commit.cleanup` when `-x`).
-    let config = ConfigSet::load(Some(git_dir), true)?;
     let (cname, cemail) = committer_name_email(&config);
     let mut msg = finalize_cherry_pick_message(
         &cherry_pick_source_message(&commit),
@@ -860,21 +913,52 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     // the opts from the sequencer), not by a manual commit that the user makes
     // without explicitly requesting signoff.
     if has_conflicts {
+        let cherry_pick_help = std::env::var("GIT_CHERRY_PICK_HELP").ok();
+        let short_oid = &commit_oid.to_hex()[..7];
+        let subject = commit.message.lines().next().unwrap_or("");
+
+        if let Some(ref help) = cherry_pick_help {
+            eprintln!("error: could not apply {short_oid}... {subject}");
+            eprintln!("hint: {help}");
+            bail!("CONFLICT_EXIT");
+        }
+
         fs::write(
             git_dir.join("CHERRY_PICK_HEAD"),
             format!("{}\n", commit_oid.to_hex()),
         )?;
-        // Write MERGE_MSG without signoff: signoff is only added by
-        // `cherry-pick --continue` (which re-reads sequencer opts),
-        // not by a bare `git commit` that the user makes manually.
-        fs::write(git_dir.join("MERGE_MSG"), &msg)?;
+
+        let commit_cleanup = config.get("commit.cleanup");
+        let cleanup_mode = args
+            .cleanup
+            .as_deref()
+            .or(commit_cleanup.as_deref())
+            .unwrap_or("default");
+        let scissors_body = cleanup_message(&msg, cleanup_mode);
+        let mut merge_msg = scissors_body;
+        if cleanup_mode.eq_ignore_ascii_case("scissors") {
+            let paths = unmerged_paths(&merge_result.index);
+            append_merge_msg_conflict_footer(&mut merge_msg, &paths);
+        }
+        if args.signoff {
+            let sob = format_signoff_line(&cname, &cemail);
+            let already_has_committer_sob = merge_msg.lines().any(|l| {
+                l.trim_start()
+                    .strip_prefix("Signed-off-by:")
+                    .is_some_and(|rest| rest.trim() == format!("{cname} <{cemail}>"))
+            });
+            if !already_has_committer_sob {
+                append_signoff_trailer(&mut merge_msg, &sob, &config);
+            }
+        }
+        fs::write(git_dir.join("MERGE_MSG"), &merge_msg)?;
 
         let head_oid_conflict = head
             .oid()
             .copied()
             .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
         let now = time::OffsetDateTime::now_utc();
-        let ident = resolve_committer_ident(&ConfigSet::load(Some(git_dir), true)?, now)?;
+        let ident = resolve_committer_ident(&config, now)?;
         let cp_reflog = format!(
             "cherry-pick: {}",
             commit.message.lines().next().unwrap_or("")
@@ -900,14 +984,25 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
             );
         }
 
-        let short_oid = &commit_oid.to_hex()[..7];
-        let subject = commit.message.lines().next().unwrap_or("");
-        eprintln!(
-            "error: could not apply {short_oid}... {subject}\n\
-             hint: after resolving the conflicts, mark the corrected paths\n\
-             hint: with 'git add <paths>' or 'git rm <paths>'\n\
-             hint: and commit the result with 'git cherry-pick --continue'"
-        );
+        eprintln!("error: could not apply {short_oid}... {subject}");
+        if merge_conflict_advice_enabled(git_dir) {
+            if args.no_commit {
+                eprintln!("hint: after resolving the conflicts, mark the corrected paths");
+                eprintln!("hint: with 'git add <paths>' or 'git rm <paths>'");
+            } else {
+                eprintln!("hint: After resolving the conflicts, mark them with");
+                eprintln!("hint: \"git add/rm <pathspec>\", then run");
+                eprintln!("hint: \"git cherry-pick --continue\".");
+                eprintln!(
+                    "hint: You can instead skip this commit with \"git cherry-pick --skip\"."
+                );
+                eprintln!("hint: To abort and get back to the state before \"git cherry-pick\",");
+                eprintln!("hint: run \"git cherry-pick --abort\".");
+            }
+            eprintln!(
+                "hint: Disable this message with \"git config set advice.mergeConflict false\""
+            );
+        }
         bail!("CONFLICT_EXIT");
     }
 
@@ -943,6 +1038,61 @@ fn branch_name(head: &HeadState) -> &str {
         HeadState::Detached { .. } => "HEAD detached",
         HeadState::Invalid => "unknown",
     }
+}
+
+fn merge_conflict_advice_enabled(git_dir: &Path) -> bool {
+    let Ok(config) = ConfigSet::load(Some(git_dir), true) else {
+        return true;
+    };
+    config.get_bool("advice.mergeConflict") != Some(Ok(false))
+}
+
+/// Refuse cherry-pick when local changes overlap the merge, matching Git's messages.
+fn error_if_cherry_pick_would_clobber_worktree(
+    repo: &Repository,
+    _git_dir: &Path,
+    head_oid: ObjectId,
+    parent_tree: ObjectId,
+    head_tree: ObjectId,
+    picked_tree: ObjectId,
+    work_tree: &Path,
+) -> Result<()> {
+    let touched = merge_touched_paths(repo, parent_tree, head_tree, picked_tree)?;
+    let staged_dirty = staged_dirty_paths_vs_head(repo, head_oid)?;
+
+    if !staged_dirty.is_empty() {
+        let overlap: BTreeSet<String> = staged_dirty.intersection(&touched).cloned().collect();
+        if !overlap.is_empty() {
+            let mut msg = String::from(
+                "Your local changes to the following files would be overwritten by merge:\n",
+            );
+            for path in overlap {
+                msg.push_str(&format!("\t{path}\n"));
+            }
+            msg.push_str("Please commit your changes or stash them before you merge.\nAborting");
+            bail!("{msg}");
+        }
+        eprintln!("error: your local changes would be overwritten by cherry-pick.");
+        eprintln!("hint: commit your changes or stash them to proceed.");
+        bail!("CHERRY_PICK_DIRTY_GENERIC");
+    }
+
+    let index = repo.load_index()?;
+    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+    let unstaged_paths: BTreeSet<String> = unstaged.iter().map(|e| e.path().to_string()).collect();
+    let overlap_u: BTreeSet<String> = unstaged_paths.intersection(&touched).cloned().collect();
+    if !overlap_u.is_empty() {
+        let mut msg = String::from(
+            "Your local changes to the following files would be overwritten by merge:\n",
+        );
+        for path in overlap_u {
+            msg.push_str(&format!("\t{path}\n"));
+        }
+        msg.push_str("Please commit your changes or stash them before you merge.\nAborting");
+        bail!("{msg}");
+    }
+
+    Ok(())
 }
 
 // ── --continue ──────────────────────────────────────────────────────
@@ -1071,6 +1221,62 @@ fn do_continue(mut args: Args) -> Result<()> {
         cleanup_sequencer_state(git_dir);
     }
 
+    Ok(())
+}
+
+/// After a manual `git commit` finished the current pick, resume any remaining `sequencer/todo`
+/// picks (matches Git: conflict resolution via plain commit, not only `cherry-pick --continue`).
+pub(crate) fn try_resume_pick_sequence_after_commit(repo: &Repository) -> Result<()> {
+    let git_dir = &repo.git_dir;
+    if !git_dir.join("sequencer").join("todo").exists() {
+        return Ok(());
+    }
+    if sequencer_is_revert_sequence(git_dir) {
+        return Ok(());
+    }
+    if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        return Ok(());
+    }
+
+    let mut args = Args {
+        commits: vec![],
+        append_source: false,
+        no_commit: false,
+        signoff: false,
+        mainline: None,
+        r#continue: true,
+        abort: false,
+        skip: false,
+        quit: false,
+        ff: false,
+        allow_empty: false,
+        allow_empty_message: false,
+        keep_redundant_commits: false,
+        strategy: None,
+        strategy_option: vec![],
+        empty: None,
+        edit: false,
+        reference: false,
+        cleanup: None,
+    };
+    merge_sequencer_opts(git_dir, &mut args);
+    if args.keep_redundant_commits || matches!(args.empty.as_deref(), Some("keep")) {
+        args.allow_empty = true;
+    }
+    validate_sequencer_todo_pick_only(git_dir)?;
+
+    let head_file = git_dir.join("sequencer").join("head");
+    let stored_orig = if let Ok(s) = fs::read_to_string(&head_file) {
+        ObjectId::from_hex(s.trim()).ok()
+    } else {
+        None
+    };
+    let remaining = load_sequencer_todo(git_dir);
+    if !remaining.is_empty() {
+        run_commit_sequence(repo, &remaining, &args, stored_orig)?;
+    } else {
+        cleanup_sequencer_state(git_dir);
+    }
     Ok(())
 }
 
@@ -1287,6 +1493,9 @@ fn write_sequencer_opts(git_dir: &Path, args: &Args) -> Result<()> {
     if let Some(ref empty) = args.empty {
         opts.push_str(&format!("\tempty = {empty}\n"));
     }
+    if let Some(ref c) = args.cleanup {
+        opts.push_str(&format!("\tcleanup = {c}\n"));
+    }
     fs::write(seq_dir.join("opts"), &opts)?;
     Ok(())
 }
@@ -1353,6 +1562,7 @@ fn merge_sequencer_opts(git_dir: &Path, args: &mut Args) {
                 "strategy" => args.strategy = Some(val.to_string()),
                 "strategy-option" => args.strategy_option.push(val.to_string()),
                 "empty" => args.empty = Some(val.to_string()),
+                "cleanup" => args.cleanup = Some(val.to_string()),
                 _ => {}
             }
         }

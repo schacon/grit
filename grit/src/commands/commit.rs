@@ -18,6 +18,9 @@ use grit_lib::refs::{append_reflog, list_refs};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
+
+use crate::commands::cherry_pick::try_resume_pick_sequence_after_commit;
+use crate::commands::revert::try_resume_revert_sequence_after_commit;
 use grit_lib::write_tree::{
     write_tree_from_index, write_tree_from_index_subset, write_tree_partial_from_index,
 };
@@ -26,7 +29,7 @@ use crate::ident::{resolve_email, resolve_name, IdentRole};
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use time::format_description::well_known::Rfc3339;
@@ -425,6 +428,12 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let repo = Repository::discover(None).context("not a git repository")?;
 
+    let had_cp_head = repo.git_dir.join("CHERRY_PICK_HEAD").exists();
+    let had_rv_head = repo.git_dir.join("REVERT_HEAD").exists();
+    let seq_todo_path = repo.git_dir.join("sequencer").join("todo");
+    let resume_pick_after_cp = had_cp_head && seq_todo_path.exists();
+    let resume_revert_after_rv = had_rv_head && seq_todo_path.exists();
+
     let reset_author_allowed = args.amend
         || args.reuse_message.is_some()
         || args.reedit_message.is_some()
@@ -480,6 +489,14 @@ pub fn run(mut args: Args) -> Result<()> {
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
     };
+
+    if index.entries.iter().any(|e| e.stage() != 0) {
+        eprintln!("error: Committing is not possible because you have unmerged files.");
+        eprintln!("hint: Fix them up in the work tree, and then use 'git add/rm <file>'");
+        eprintln!("hint: as appropriate to mark resolution and make a commit.");
+        eprintln!("fatal: Exiting because of an unresolved conflict.");
+        std::process::exit(128);
+    }
 
     if args.dry_run && !args.pathspec.is_empty() {
         let Some(wt) = work_tree else {
@@ -553,6 +570,24 @@ pub fn run(mut args: Args) -> Result<()> {
     };
     let mut parents = Vec::new();
     let old_head_oid = head.oid().cloned();
+
+    if had_cp_head && args.amend {
+        eprintln!("fatal: You are in the middle of a cherry-pick -- cannot amend.");
+        std::process::exit(128);
+    }
+    if had_rv_head && args.amend {
+        eprintln!("fatal: You are in the middle of a revert -- cannot amend.");
+        std::process::exit(128);
+    }
+
+    if had_cp_head && !args.pathspec.is_empty() {
+        eprintln!("fatal: cannot do a partial commit during a cherry-pick.");
+        std::process::exit(128);
+    }
+    if had_rv_head && !args.pathspec.is_empty() {
+        eprintln!("fatal: cannot do a partial commit during a revert.");
+        std::process::exit(128);
+    }
 
     if args.amend {
         // Amend: use the parent(s) of the current HEAD commit
@@ -799,23 +834,95 @@ pub fn run(mut args: Args) -> Result<()> {
         } else {
             format!("Signed-off-by: {committer}")
         };
-        if !message.contains(&trailer) {
-            let trimmed = message.trim_end();
-            message = format!("{trimmed}\n\n{trailer}\n");
-            // Also update raw_message if present
-            if let Some(ref raw) = raw_message {
-                let trimmed_raw = {
-                    let mut end = raw.len();
-                    while end > 0
-                        && (raw[end - 1] == b'\n' || raw[end - 1] == b' ' || raw[end - 1] == b'\r')
-                    {
-                        end -= 1;
+        let name_email = if let Some(angle_end) = committer.find('>') {
+            committer[..=angle_end].to_string()
+        } else {
+            committer.clone()
+        };
+        let already_has_sob = message.lines().any(|l| {
+            l.trim_start()
+                .strip_prefix("Signed-off-by:")
+                .is_some_and(|rest| rest.trim() == name_email)
+        });
+        if !already_has_sob && !message.contains(&trailer) {
+            const SCISSORS: &str = "# ------------------------ >8 ------------------------";
+            fn unsigned_conflicts_start(msg: &str) -> Option<usize> {
+                if let Some(i) = msg.find("\nConflicts:") {
+                    return Some(i + 1);
+                }
+                if msg.starts_with("Conflicts:") {
+                    return Some(0);
+                }
+                None
+            }
+            fn insert_trailer_before(msg: &str, pos: usize, trailer: &str) -> String {
+                let before = msg[..pos].trim_end_matches(['\n', '\r', ' ', '\t']);
+                let after = &msg[pos..];
+                format!("{before}\n\n{trailer}\n{after}")
+            }
+
+            if (had_cp_head || had_rv_head) && message.contains(SCISSORS) {
+                if let Some(pos) = message.find(SCISSORS) {
+                    message = insert_trailer_before(&message, pos, &trailer);
+                    if let Some(ref raw) = raw_message {
+                        if let Ok(s) = std::str::from_utf8(raw) {
+                            if let Some(p) = s.find(SCISSORS) {
+                                raw_message =
+                                    Some(insert_trailer_before(s, p, &trailer).into_bytes());
+                            }
+                        }
                     }
-                    &raw[..end]
-                };
-                let mut new_raw = trimmed_raw.to_vec();
-                new_raw.extend_from_slice(format!("\n\n{trailer}\n").as_bytes());
-                raw_message = Some(new_raw);
+                }
+            } else if args.amend {
+                if let Some(pos) = unsigned_conflicts_start(&message) {
+                    message = insert_trailer_before(&message, pos, &trailer);
+                    if let Some(ref raw) = raw_message {
+                        if let Ok(s) = std::str::from_utf8(raw) {
+                            if let Some(p) = unsigned_conflicts_start(s) {
+                                raw_message =
+                                    Some(insert_trailer_before(s, p, &trailer).into_bytes());
+                            }
+                        }
+                    }
+                } else {
+                    let trimmed = message.trim_end();
+                    message = format!("{trimmed}\n\n{trailer}\n");
+                    if let Some(ref raw) = raw_message {
+                        let trimmed_raw = {
+                            let mut end = raw.len();
+                            while end > 0
+                                && (raw[end - 1] == b'\n'
+                                    || raw[end - 1] == b' '
+                                    || raw[end - 1] == b'\r')
+                            {
+                                end -= 1;
+                            }
+                            &raw[..end]
+                        };
+                        let mut new_raw = trimmed_raw.to_vec();
+                        new_raw.extend_from_slice(format!("\n\n{trailer}\n").as_bytes());
+                        raw_message = Some(new_raw);
+                    }
+                }
+            } else {
+                let trimmed = message.trim_end();
+                message = format!("{trimmed}\n\n{trailer}\n");
+                if let Some(ref raw) = raw_message {
+                    let trimmed_raw = {
+                        let mut end = raw.len();
+                        while end > 0
+                            && (raw[end - 1] == b'\n'
+                                || raw[end - 1] == b' '
+                                || raw[end - 1] == b'\r')
+                        {
+                            end -= 1;
+                        }
+                        &raw[..end]
+                    };
+                    let mut new_raw = trimmed_raw.to_vec();
+                    new_raw.extend_from_slice(format!("\n\n{trailer}\n").as_bytes());
+                    raw_message = Some(new_raw);
+                }
             }
         }
     }
@@ -991,6 +1098,12 @@ pub fn run(mut args: Args) -> Result<()> {
     let _ = grit_lib::rerere::rerere_post_commit(&repo);
     let _ = crate::commands::maintenance::run_auto_after_commit(&repo, args.quiet);
     cleanup_merge_state(&repo.git_dir);
+    if resume_pick_after_cp {
+        try_resume_pick_sequence_after_commit(&repo)?;
+    }
+    if resume_revert_after_rv {
+        try_resume_revert_sequence_after_commit(&repo)?;
+    }
 
     // Refresh the index file Git used for this commit (including `GIT_INDEX_FILE`).
     let mut index_refresh = match repo.load_index_at(&index_path) {
@@ -1499,6 +1612,8 @@ struct MessageResult {
     message: String,
     /// Raw bytes when the message is not valid UTF-8.
     raw_bytes: Option<Vec<u8>>,
+    /// Message came from `.git/MERGE_MSG` (cherry-pick / revert conflict template).
+    from_merge_msg: bool,
 }
 
 fn resolved_index_path(repo: &Repository) -> PathBuf {
@@ -1717,6 +1832,7 @@ fn raw_to_message_result(raw: Vec<u8>) -> Result<MessageResult> {
         Ok(s) => Ok(MessageResult {
             message: ensure_trailing_newline(&s),
             raw_bytes: None,
+            from_merge_msg: false,
         }),
         Err(_) => {
             let lossy = String::from_utf8_lossy(&raw).to_string();
@@ -1727,6 +1843,7 @@ fn raw_to_message_result(raw: Vec<u8>) -> Result<MessageResult> {
             Ok(MessageResult {
                 message: ensure_trailing_newline(&lossy),
                 raw_bytes: Some(raw_nl),
+                from_merge_msg: false,
             })
         }
     }
@@ -1864,6 +1981,10 @@ fn resolve_commit_editor(repo: &Repository) -> String {
     // Harness sets `EDITOR=:` / `VISUAL=:` as non-interactive placeholders; never launch `vi`
     // in that case (would hang). Fall back to `true` like a no-op editor.
     if visual_present || editor_present {
+        "true".to_owned()
+    } else if !std::io::stdin().is_terminal() {
+        // Non-interactive runs (CI / agents) may inherit `GIT_EDITOR=vim` from the parent
+        // environment; launching vi would hang when stdin is not a tty.
         "true".to_owned()
     } else {
         "vi".to_owned()
@@ -2146,6 +2267,7 @@ fn prepare_commit_message(
                 return Ok(MessageResult {
                     message: ensure_trailing_newline(&cleaned),
                     raw_bytes: None,
+                    from_merge_msg: false,
                 });
             }
             if rev == sq {
@@ -2171,12 +2293,14 @@ fn prepare_commit_message(
             return Ok(MessageResult {
                 message: ensure_trailing_newline(&cleaned),
                 raw_bytes: None,
+                from_merge_msg: false,
             });
         }
         let combined = format!("{prefix}{body}");
         return Ok(MessageResult {
             message: ensure_trailing_newline(&combined),
             raw_bytes: None,
+            from_merge_msg: false,
         });
     }
 
@@ -2186,6 +2310,7 @@ fn prepare_commit_message(
         return Ok(MessageResult {
             message: ensure_trailing_newline(&cleaned),
             raw_bytes: None,
+            from_merge_msg: false,
         });
     }
 
@@ -2211,11 +2336,13 @@ fn prepare_commit_message(
             return Ok(MessageResult {
                 message: ensure_trailing_newline(&cleaned),
                 raw_bytes: None,
+                from_merge_msg: false,
             });
         }
         return Ok(MessageResult {
             message: commit.message,
             raw_bytes: None,
+            from_merge_msg: false,
         });
     }
 
@@ -2231,6 +2358,7 @@ fn prepare_commit_message(
         return Ok(MessageResult {
             message: String::new(),
             raw_bytes: None,
+            from_merge_msg: false,
         });
     }
 
@@ -2238,6 +2366,7 @@ fn prepare_commit_message(
         return Ok(MessageResult {
             message: ensure_trailing_newline(&initial),
             raw_bytes: None,
+            from_merge_msg: false,
         });
     }
 
@@ -2254,6 +2383,7 @@ fn prepare_commit_message(
         return Ok(MessageResult {
             message: ensure_trailing_newline(&cleaned),
             raw_bytes: None,
+            from_merge_msg: false,
         });
     }
 
@@ -2270,6 +2400,7 @@ fn prepare_commit_message(
         return Ok(MessageResult {
             message: ensure_trailing_newline(&msg),
             raw_bytes: None,
+            from_merge_msg: true,
         });
     }
 
@@ -2279,6 +2410,7 @@ fn prepare_commit_message(
             return Ok(MessageResult {
                 message: ensure_trailing_newline(&msg),
                 raw_bytes: None,
+                from_merge_msg: false,
             });
         }
     }
@@ -2289,6 +2421,7 @@ fn prepare_commit_message(
         return Ok(MessageResult {
             message: ensure_trailing_newline(&content),
             raw_bytes: None,
+            from_merge_msg: false,
         });
     }
 
@@ -2300,6 +2433,7 @@ fn prepare_commit_message(
             return Ok(MessageResult {
                 message: commit.message,
                 raw_bytes: None,
+                from_merge_msg: false,
             });
         }
     }
@@ -2308,6 +2442,7 @@ fn prepare_commit_message(
         return Ok(MessageResult {
             message: String::new(),
             raw_bytes: None,
+            from_merge_msg: false,
         });
     }
 

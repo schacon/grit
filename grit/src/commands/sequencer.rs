@@ -1,8 +1,11 @@
 //! Shared helpers for Git-compatible cherry-pick / revert sequencer state under
 //! `.git/sequencer/`.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
+
+use grit_lib::index::Index;
 
 use grit_lib::objects::ObjectId;
 use grit_lib::state::resolve_head;
@@ -88,10 +91,40 @@ pub fn rollback_is_safe(git_dir: &Path) -> bool {
     actual == expected
 }
 
+/// Append Git's scissors + `# Conflicts:` trailer to `MERGE_MSG` during sequencer conflicts.
+pub(crate) fn append_merge_msg_conflict_footer(msg: &mut String, conflicted_paths: &[Vec<u8>]) {
+    msg.push('\n');
+    msg.push_str("# ------------------------ >8 ------------------------\n");
+    msg.push_str("# Do not modify or remove the line above.\n");
+    msg.push_str("# Everything below it will be ignored.\n");
+    msg.push_str("#\n");
+    msg.push_str("# Conflicts:\n");
+    for p in conflicted_paths {
+        msg.push_str("#\t");
+        msg.push_str(&String::from_utf8_lossy(p));
+        msg.push('\n');
+    }
+}
+
+/// Collect paths with unmerged index entries (sorted, unique).
+pub(crate) fn unmerged_paths(index: &Index) -> Vec<Vec<u8>> {
+    let mut paths: BTreeSet<Vec<u8>> = BTreeSet::new();
+    for e in &index.entries {
+        if e.stage() != 0 {
+            paths.insert(e.path.clone());
+        }
+    }
+    paths.into_iter().collect()
+}
+
 /// Remove the first non-empty, non-comment line from `sequencer/todo`.
 pub fn strip_first_sequencer_todo_line(git_dir: &Path) -> std::io::Result<()> {
     let path = git_dir.join("sequencer").join("todo");
-    let content = fs::read_to_string(&path)?;
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
     let mut removed = false;
     let mut out = Vec::new();
     for line in content.lines() {
