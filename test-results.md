@@ -2,6 +2,9 @@
 
 **Updated:** 2026-04-07
 
+- `./scripts/run-tests.sh t4119-apply-config.sh`: 1/11 passing (baseline for newly claimed in-progress Diff target `t4119`).
+- `bash scripts/run-upstream-tests.sh t4119-apply-config`: 1/11 passing in isolated upstream harness baseline.
+
 - `./scripts/run-tests.sh t4139-apply-escape.sh`: 8/12 passing (baseline for newly claimed in-progress Diff target `t4139`).
 - `bash scripts/run-upstream-tests.sh t4139-apply-escape`: 6/12 passing in isolated upstream harness baseline.
 - `cargo build --release`: passes (rebuild after `t4139` apply path-escape safety + `--unsafe-paths` option parsing fix).
