@@ -270,9 +270,24 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
             let ft = meta.file_type();
             if ft.is_fifo() || ft.is_socket() || ft.is_block_device() || ft.is_char_device() {
                 return Err(Error::NotARepository(format!(
-                    ".git exists but is not a valid file or directory: {}",
+                    "invalid gitfile format: {} is not a regular file",
                     dot_git.display()
                 )));
+            }
+            if ft.is_symlink() {
+                if let Ok(target_meta) = fs::metadata(&dot_git) {
+                    let tft = target_meta.file_type();
+                    if tft.is_fifo()
+                        || tft.is_socket()
+                        || tft.is_block_device()
+                        || tft.is_char_device()
+                    {
+                        return Err(Error::NotARepository(format!(
+                            "invalid gitfile format: {} is not a regular file",
+                            dot_git.display()
+                        )));
+                    }
+                }
             }
         }
     }
@@ -350,7 +365,7 @@ fn parse_gitfile(content: &str, base: &Path) -> Result<PathBuf> {
         }
     }
     Err(Error::NotARepository(
-        "gitfile does not contain 'gitdir:' line".to_owned(),
+        "invalid gitfile format: missing 'gitdir:' line".to_owned(),
     ))
 }
 

@@ -26,9 +26,17 @@ use crate::repo::Repository;
 /// Returns errors other than "not a repository" (for example I/O and path
 /// canonicalization failures).
 pub fn discover_optional(start: Option<&Path>) -> Result<Option<Repository>> {
+    let cwd = std::env::current_dir()?;
+    let probe_start = start.unwrap_or(&cwd);
+    let probe_start = if probe_start.is_absolute() {
+        probe_start.to_path_buf()
+    } else {
+        cwd.join(probe_start)
+    };
+
     match Repository::discover(start) {
         Ok(repo) => Ok(Some(repo)),
-        Err(Error::NotARepository(_)) => Ok(None),
+        Err(Error::NotARepository(msg)) if msg == probe_start.display().to_string() => Ok(None),
         Err(err) => Err(err),
     }
 }
