@@ -1156,6 +1156,30 @@ test_line_count () {
 	fi
 }
 
+# test_stdout_line_count OP N CMD [ARGS...]
+# Run command, capture stdout, and assert line count.
+test_stdout_line_count () {
+	if test "$#" -le 3
+	then
+		echo >&2 "test_stdout_line_count: expected at least 4 arguments"
+		return 1
+	fi
+
+	local op="$1"
+	local count="$2"
+	shift 2
+
+	local trashdir
+	trashdir="$(git rev-parse --git-dir)/trash" || {
+		echo >&2 "test_stdout_line_count: expected to run in a repository"
+		return 1
+	}
+	mkdir -p "$trashdir" || return 1
+
+	"$@" >"$trashdir/output" &&
+	test_line_count "$op" "$count" "$trashdir/output"
+}
+
 test_file_size () {
 	if test "$#" -ne 1
 	then

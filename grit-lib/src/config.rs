@@ -1362,7 +1362,7 @@ impl ConfigSet {
         if let Ok(params) = std::env::var("GIT_CONFIG_PARAMETERS") {
             for entry in parse_config_parameters(&params) {
                 if let Some((key, val)) = entry.split_once('=') {
-                    let _ = set.add_command_override(key.trim(), val.trim());
+                    let _ = set.add_command_override(key.trim(), val);
                 } else {
                     // Bare key (boolean true)
                     let _ = set.add_command_override(entry.trim(), "true");

@@ -4,7 +4,7 @@
 //! prefixing, and writes the result to stdout.  No git repository is
 //! required for the default mode.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Args as ClapArgs;
 use grit_lib::stripspace::{self, Mode};
 use std::io::{self, Read, Write};
@@ -34,7 +34,7 @@ pub struct Args {
 ///
 /// Returns an error if reading stdin or writing stdout fails.
 pub fn run(args: Args) -> Result<()> {
-    let comment_char = resolve_comment_char();
+    let comment_char = resolve_comment_char()?;
 
     let mut input = Vec::new();
     io::stdin().read_to_end(&mut input)?;
@@ -57,7 +57,7 @@ pub fn run(args: Args) -> Result<()> {
 ///
 /// Tries to discover a repository and read `core.commentchar`.  Falls back
 /// to `"#"` when outside a repository or when the key is unset.
-fn resolve_comment_char() -> String {
+fn resolve_comment_char() -> Result<String> {
     let git_dir = grit_lib::repo::Repository::discover(None)
         .ok()
         .map(|r| r.git_dir);
@@ -65,10 +65,21 @@ fn resolve_comment_char() -> String {
     if let Some(ref dir) = git_dir {
         if let Ok(config) = grit_lib::config::ConfigSet::load(Some(dir.as_path()), false) {
             if let Some(val) = config.get("core.commentchar") {
-                return val;
+                validate_comment_char(&val)?;
+                return Ok(val);
             }
         }
     }
 
-    "#".to_owned()
+    Ok("#".to_owned())
+}
+
+fn validate_comment_char(comment_char: &str) -> Result<()> {
+    if comment_char.is_empty() {
+        bail!("core.commentchar must have at least one character");
+    }
+    if comment_char.contains('\n') {
+        bail!("core.commentchar cannot contain newline");
+    }
+    Ok(())
 }
