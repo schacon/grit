@@ -24,6 +24,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use grit_lib::state::{resolve_head, HeadState};
 
+const CORRUPTED_CACHE_TREE_MSG: &str = "corrupted cache-tree has entries not present in index";
 /// The zero OID for reflog entries when there is no previous value.
 fn zero_oid() -> ObjectId {
     ObjectId::from_hex("0000000000000000000000000000000000000000").expect("zero oid is valid")
@@ -299,11 +300,9 @@ fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
             .entries
             .iter()
             .any(|e| e.path == *path && e.stage() == 0)
-        {
-            if !staged_paths.contains(path) {
+            && !staged_paths.contains(path) {
                 staged_paths.push(path.clone());
             }
-        }
     }
 
     if staged_paths.is_empty() {
@@ -809,6 +808,8 @@ fn tree_to_flat_entries(
     }
     let entries = parse_tree(&obj.data)?;
     let mut result = Vec::new();
+    let mut seen_paths = HashSet::new();
+    let check_cache_tree = should_check_cache_tree();
 
     for te in entries {
         let name = String::from_utf8_lossy(&te.name).into_owned();
@@ -819,9 +820,19 @@ fn tree_to_flat_entries(
         };
 
         if te.mode == 0o040000 {
-            result.extend(tree_to_flat_entries(repo, &te.oid, &path)?);
+            for sub_entry in tree_to_flat_entries(repo, &te.oid, &path)? {
+                if check_cache_tree && !seen_paths.insert(sub_entry.path.clone()) {
+                    eprintln!("error: {CORRUPTED_CACHE_TREE_MSG}");
+                    std::process::exit(1);
+                }
+                result.push(sub_entry);
+            }
         } else {
             let path_bytes = path.into_bytes();
+            if check_cache_tree && !seen_paths.insert(path_bytes.clone()) {
+                eprintln!("error: {CORRUPTED_CACHE_TREE_MSG}");
+                std::process::exit(1);
+            }
             result.push(IndexEntry {
                 ctime_sec: 0,
                 ctime_nsec: 0,
@@ -841,6 +852,13 @@ fn tree_to_flat_entries(
         }
     }
     Ok(result)
+}
+
+fn should_check_cache_tree() -> bool {
+    match std::env::var("GIT_TEST_CHECK_CACHE_TREE") {
+        Ok(v) => !matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no"),
+        Err(_) => true,
+    }
 }
 
 /// Update the working tree to match the new index (used for `--hard`/`--keep` reset).

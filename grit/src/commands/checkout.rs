@@ -446,14 +446,12 @@ fn switch_branch(
     let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
         .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
 
-    // If target commit is the same as current HEAD, just re-attach
-    // without touching the working tree or index (preserves dirty state).
-    // But with -f, always rebuild.
-    let already_at_target = head.oid() == Some(&target_oid);
-    if !already_at_target || force {
-        let target_tree = commit_to_tree(repo, &target_oid)?;
-
-        // Update working tree and index
+    // Preserve local state when the source and target branch trees are
+    // identical; this matches git's behavior of reattaching refs without
+    // forcing a worktree/index rewrite for equivalent trees.
+    let target_tree = commit_to_tree(repo, &target_oid)?;
+    let current_tree = head.oid().and_then(|oid| commit_to_tree(repo, oid).ok());
+    if force || current_tree != Some(target_tree) {
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
 

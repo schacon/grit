@@ -4,6 +4,12 @@
 
 - `./scripts/run-tests.sh t4058-diff-duplicates.sh`: 8/16 passing (baseline for newly claimed in-progress Diff target `t4058`).
 - `bash scripts/run-upstream-tests.sh t4058-diff-duplicates`: 6/16 passing.
+- `cargo build --release`: passes (rebuild after `t4058` duplicate-tree hardening across `diff-tree`, tree flattening for diff/read-tree/reset, branch-switch handling in `checkout`, cache-tree corruption surfacing in `diff`/`status`, and global error text normalization for cache-tree corruption output).
+- `bash scripts/run-upstream-tests.sh t4058-diff-duplicates`: 13/16 passing in isolated upstream harness (all non-TODO checks now pass except residual status cleanliness case 15; TODO cases 11/14 remain expected failures per upstream file).
+- `./scripts/run-tests.sh t4058-diff-duplicates.sh`: 14/16 passing in local mirror (matches upstream TODO profile plus residual case 15).
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes outside scoped files reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
 
 - `./scripts/run-tests.sh t4213-log-tabexpand.sh`: 1/9 passing (baseline for newly claimed in-progress Diff target `t4213`).
 - `bash scripts/run-upstream-tests.sh t4213-log-tabexpand`: 1/9 passing.

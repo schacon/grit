@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
-use grit_lib::error::Error as GustError;
+use grit_lib::error::Error as GritError;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
@@ -234,12 +234,23 @@ fn tree_to_index_entries(
     prefix: &str,
     prot: PathProtection,
 ) -> Result<Vec<IndexEntry>> {
+    tree_to_index_entries_checked(repo, oid, prefix, prot, true)
+}
+
+fn tree_to_index_entries_checked(
+    repo: &Repository,
+    oid: &ObjectId,
+    prefix: &str,
+    prot: PathProtection,
+    check_duplicates: bool,
+) -> Result<Vec<IndexEntry>> {
     let obj = repo.odb.read(oid)?;
     if obj.kind != ObjectKind::Tree {
         bail!("expected tree, got {}", obj.kind);
     }
     let entries = parse_tree(&obj.data)?;
     let mut result = Vec::new();
+    let mut seen_paths = HashSet::new();
     let allow_null = std::env::var("GIT_ALLOW_NULL_SHA1").as_deref() == Ok("1");
 
     for te in entries {
@@ -258,10 +269,22 @@ fn tree_to_index_entries(
 
         if te.mode == 0o040000 {
             // Sub-tree: recurse
-            let sub = tree_to_index_entries(repo, &te.oid, &path, prot)?;
-            result.extend(sub);
+            let sub = tree_to_index_entries_checked(repo, &te.oid, &path, prot, check_duplicates)?;
+            for sub_entry in sub {
+                if check_duplicates && !seen_paths.insert(sub_entry.path.clone()) {
+                    return Err(anyhow::anyhow!(
+                        "error: corrupted cache-tree has entries not present in index"
+                    ));
+                }
+                result.push(sub_entry);
+            }
         } else {
             let path_bytes = path.into_bytes();
+            if check_duplicates && !seen_paths.insert(path_bytes.clone()) {
+                return Err(anyhow::anyhow!(
+                    "error: corrupted cache-tree has entries not present in index"
+                ));
+            }
             result.push(IndexEntry {
                 ctime_sec: 0,
                 ctime_nsec: 0,
@@ -756,7 +779,7 @@ fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
 fn load_index_for_read_tree(path: &Path) -> Result<Index> {
     match Index::load(path) {
         Ok(index) => Ok(index),
-        Err(GustError::IndexError(msg)) if msg == "file too short" => Ok(Index::new()),
+        Err(GritError::IndexError(msg)) if msg == "file too short" => Ok(Index::new()),
         Err(err) => Err(err.into()),
     }
 }

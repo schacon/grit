@@ -261,6 +261,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     opts.find_object = Some(val.to_string());
                 }
                 "--abbrev" => opts.abbrev = Some(7),
+                "--no-abbrev" => opts.abbrev = None,
                 _ if arg.starts_with("--abbrev=") => {
                     let val = &arg["--abbrev=".len()..];
                     opts.abbrev = Some(

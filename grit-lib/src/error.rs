@@ -46,6 +46,10 @@ pub enum Error {
     #[error("index error: {0}")]
     IndexError(String),
 
+    /// Internal consistency error in cache-tree/index relationships.
+    #[error("corrupted cache-tree has entries not present in index")]
+    CorruptedCacheTree,
+
     /// A reference name or value is invalid.
     #[error("invalid ref: {0}")]
     InvalidRef(String),

@@ -7,6 +7,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use grit_lib::error::Error as GritError;
 use std::path::{Path, PathBuf};
 
 mod commands;
@@ -70,7 +71,25 @@ fn main() {
                 // Match shell signal convention for SIGPIPE.
                 exit_code = 128 + 13;
             } else {
-                eprintln!("error: {e:#}");
+                let message = format!("{e:#}");
+                if message.contains(
+                    "corrupt object: corrupted cache-tree has entries not present in index",
+                ) {
+                    eprintln!("error: corrupted cache-tree has entries not present in index");
+                } else if let Some(grit_err) = e.downcast_ref::<GritError>() {
+                    match grit_err {
+                        GritError::CorruptObject(msg)
+                            if msg == "corrupted cache-tree has entries not present in index" =>
+                        {
+                            eprintln!(
+                                "error: corrupted cache-tree has entries not present in index"
+                            );
+                        }
+                        _ => eprintln!("error: {e:#}"),
+                    }
+                } else {
+                    eprintln!("error: {e:#}");
+                }
                 exit_code = 1;
             }
         }

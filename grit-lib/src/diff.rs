@@ -19,6 +19,7 @@
 //! Output formats: unified patch, raw (`:old-mode new-mode ...`), stat,
 //! numstat.
 
+use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -1079,6 +1080,16 @@ pub fn detect_renames(odb: &Odb, entries: Vec<DiffEntry>, threshold: u32) -> Vec
 
     for (di, del) in deleted.iter().enumerate() {
         for (ai, add) in added.iter().enumerate() {
+            if del.old_path == add.new_path {
+                // For malformed trees with duplicate entries, Git's rename pass
+                // consumes exact same-path/same-object add+delete pairs (they
+                // disappear from `-M` output), but does not synthesize path->path
+                // renames when content differs.
+                if del.old_oid == add.new_oid && del.old_mode == add.new_mode {
+                    scores.push((100, di, ai));
+                }
+                continue;
+            }
             // Exact OID match → 100%
             if del.old_oid == add.new_oid {
                 scores.push((100, di, ai));
@@ -1117,6 +1128,12 @@ pub fn detect_renames(odb: &Odb, entries: Vec<DiffEntry>, threshold: u32) -> Vec
 
         let del = &deleted[*di];
         let add = &added[*ai];
+        if del.old_path == add.new_path
+            && del.old_oid == add.new_oid
+            && del.old_mode == add.new_mode
+        {
+            continue;
+        }
 
         renames.push(DiffEntry {
             status: DiffStatus::Renamed,
@@ -2132,14 +2149,27 @@ struct FlatEntry {
 fn flatten_tree(odb: &Odb, tree_oid: &ObjectId, prefix: &str) -> Result<Vec<FlatEntry>> {
     let entries = read_tree(odb, tree_oid)?;
     let mut result = Vec::new();
+    let mut seen_paths = HashSet::new();
 
     for entry in entries {
         let name_str = String::from_utf8_lossy(&entry.name);
         let path = format_path(prefix, &name_str);
         if is_tree_mode(entry.mode) {
             let nested = flatten_tree(odb, &entry.oid, &path)?;
-            result.extend(nested);
+            for sub_entry in nested {
+                if !seen_paths.insert(sub_entry.path.clone()) {
+                    return Err(Error::CorruptObject(
+                        "corrupted cache-tree has entries not present in index".to_owned(),
+                    ));
+                }
+                result.push(sub_entry);
+            }
         } else {
+            if !seen_paths.insert(path.clone()) {
+                return Err(Error::CorruptObject(
+                    "corrupted cache-tree has entries not present in index".to_owned(),
+                ));
+            }
             result.push(FlatEntry {
                 path,
                 mode: entry.mode,
