@@ -2270,11 +2270,22 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let (show_decorations, decorate_full) =
         resolve_decoration_display(&args, format_requires_decorations);
-    let decorations = if !show_decorations {
-        None
-    } else {
+    // `--simplify-by-decoration` needs ref→OID mapping even when decorations are not shown
+    // (`--oneline` does not imply `--decorate`). Use a separate map for display so we do not
+    // print `(refs)` unless `--decorate` / `%d` requests it; OID keys match for full vs short maps.
+    let decoration_map_for_display = if show_decorations {
         Some(collect_decorations(&repo, decorate_full)?)
+    } else {
+        None
     };
+    let decoration_map_for_simplify_only = if args.simplify_by_decoration && !show_decorations {
+        Some(collect_decorations(&repo, false)?)
+    } else {
+        None
+    };
+    let decoration_map_for_simplify = decoration_map_for_simplify_only
+        .as_ref()
+        .or(decoration_map_for_display.as_ref());
 
     // Walk commits
     let mut combined_pathspecs = args.pathspecs.clone();
@@ -2347,7 +2358,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 &args,
                 diff_filter_str,
                 find_oid,
-                decorations.as_ref(),
+                decoration_map_for_simplify,
                 since_threshold,
                 until_threshold,
             )? {
@@ -2375,7 +2386,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 &oid,
                 &commit_data,
                 &args,
-                decorations.as_ref(),
+                decoration_map_for_display.as_ref(),
                 use_color,
                 &mut notes_cache,
                 &repo.odb,
@@ -2465,7 +2476,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
         // Apply --simplify-by-decoration: only show commits with decorations
         let commits = if args.simplify_by_decoration {
-            match &decorations {
+            match decoration_map_for_simplify {
                 Some(dec_map) => commits
                     .into_iter()
                     .filter(|(oid, _)| dec_map.contains_key(&oid.to_hex()))
@@ -2538,7 +2549,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 oid,
                 commit_data,
                 &args,
-                decorations.as_ref(),
+                decoration_map_for_display.as_ref(),
                 use_color,
                 &mut notes_cache,
                 &repo.odb,
