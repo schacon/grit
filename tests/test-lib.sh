@@ -116,8 +116,6 @@ PATH="$TEST_DIRECTORY:$PATH"
 	then
 		"$GUST_BIN" init >/dev/null 2>&1 ||
 			echo "warning: could not git init trash directory" >&2
-		"$GUST_BIN" config user.name "Test User" 2>/dev/null
-		"$GUST_BIN" config user.email "test@example.com" 2>/dev/null
 
 	fi
 }
@@ -156,6 +154,8 @@ test_debug () {
 
 # Default diff program
 DIFF="${DIFF:-diff}"
+EDITOR=:
+export EDITOR
 
 # Allow tests to use $HOME — isolate from real user config
 HOME="$TRASH_DIRECTORY"
@@ -206,6 +206,7 @@ fi
 test_path_is_file () { test -f "$1"; }
 test_path_is_dir  () { test -d "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
+test_path_is_executable () { test -x "$1"; }
 
 test_grep () {
 	local negate=""

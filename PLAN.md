@@ -19,7 +19,7 @@ commit → check it off → move on.
 - [x] `t0071-sort` ████████████████████ 1/1 (0 left) — verify sort functions
 - [x] `t0080-unit-test-output` ████████████████████ 1/1 (0 left) — Test the output of the unit test framework
 - [x] `t0056-git-C` ████████████████████ 11/11 (0 left) — 
-- [ ] `t0007-git-var` █████████████████░░░ 24/27 (3 left) — basic sanity checks for git var
+- [x] `t0007-git-var` ████████████████████ 27/27 (0 left) — basic sanity checks for git var
 - [ ] `t0009-git-dir-validation` ██████████░░░░░░░░░░ 3/6 (3 left) — setup: validation of .git file/directory types
 
 - [ ] `t0081-find-pack` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — test `test-tool find-pack`
