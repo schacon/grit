@@ -42,7 +42,7 @@ commit → check it off → move on.
 - [x] `t0095-bloom` ████████████████████ 11/11 (0 left) — Testing the various Bloom filter computations in bloom.c
 - [x] `t0035-safe-bare-repository` ████████████████████ 12/12 (0 left) — verify safe.bareRepository checks
 - [ ] `t0033-safe-directory` █████████░░░░░░░░░░░ 10/22 (12 left) — verify safe.directory checks
-- [ ] `t0019-json-writer` █░░░░░░░░░░░░░░░░░░░ 1/16 (15 left) — test json-writer JSON generation
+- [x] `t0019-json-writer` ████████████████████ 16/16 (0 left) — test json-writer JSON generation
 - [ ] `t0020-crlf` ██████████░░░░░░░░░░ 19/36 (17 left) — CRLF conversion
 - [ ] `t0014-alias` ░░░░░░░░░░░░░░░░░░░░ 1/21 (20 left) — git command aliasing
 - [ ] `t0061-run-command` ██░░░░░░░░░░░░░░░░░░ 3/24 (21 left) — Test run command

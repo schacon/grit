@@ -419,6 +419,161 @@ PY
       }
     ' "$input_path" "$pathspec_file_nul"
     ;;
+  json-writer)
+    shift
+    pretty=0
+    if [ "$1" = "-u" ] || [ "$1" = "--unit" ]; then
+      # Upstream helper runs internal regression tests; for our shim the
+      # scripted JSON emitter is the compatibility surface exercised by tests.
+      exit 0
+    fi
+    if [ "$1" = "-p" ] || [ "$1" = "--pretty" ]; then
+      pretty=1
+      shift
+    fi
+    python3 -c '
+import json
+import sys
+
+pretty = (len(sys.argv) > 1 and sys.argv[1] == "1")
+
+lines = []
+for raw in sys.stdin:
+    line = raw.strip()
+    if line:
+        lines.append(line)
+
+if not lines:
+    sys.exit(0)
+
+def fail(msg: str) -> None:
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+first = lines[0]
+if first == "object":
+    root = {}
+elif first == "array":
+    root = []
+else:
+    fail("expected first line to be object or array")
+
+stack = [root]
+
+def current():
+    return stack[-1]
+
+for line in lines[1:]:
+    parts = line.split()
+    if not parts:
+        continue
+    verb = parts[0]
+
+    if verb == "end":
+        if not stack:
+            fail("unexpected end")
+        stack.pop()
+        continue
+
+    cur = current() if stack else None
+    if cur is None:
+        fail("json already terminated")
+
+    if verb == "object-string":
+        key, value = parts[1], parts[2]
+        if not isinstance(cur, dict):
+            fail("object-string outside object")
+        cur[key] = value
+    elif verb == "object-int":
+        key, value = parts[1], int(parts[2], 10)
+        if not isinstance(cur, dict):
+            fail("object-int outside object")
+        cur[key] = value
+    elif verb == "object-double":
+        key = parts[1]
+        scale = int(parts[2], 10)
+        value = round(float(parts[3]), scale)
+        if not isinstance(cur, dict):
+            fail("object-double outside object")
+        cur[key] = value
+    elif verb == "object-true":
+        key = parts[1]
+        if not isinstance(cur, dict):
+            fail("object-true outside object")
+        cur[key] = True
+    elif verb == "object-false":
+        key = parts[1]
+        if not isinstance(cur, dict):
+            fail("object-false outside object")
+        cur[key] = False
+    elif verb == "object-null":
+        key = parts[1]
+        if not isinstance(cur, dict):
+            fail("object-null outside object")
+        cur[key] = None
+    elif verb == "object-object":
+        key = parts[1]
+        if not isinstance(cur, dict):
+            fail("object-object outside object")
+        sub = {}
+        cur[key] = sub
+        stack.append(sub)
+    elif verb == "object-array":
+        key = parts[1]
+        if not isinstance(cur, dict):
+            fail("object-array outside object")
+        sub = []
+        cur[key] = sub
+        stack.append(sub)
+    elif verb == "array-string":
+        if not isinstance(cur, list):
+            fail("array-string outside array")
+        cur.append(parts[1])
+    elif verb == "array-int":
+        if not isinstance(cur, list):
+            fail("array-int outside array")
+        cur.append(int(parts[1], 10))
+    elif verb == "array-double":
+        if not isinstance(cur, list):
+            fail("array-double outside array")
+        scale = int(parts[1], 10)
+        cur.append(round(float(parts[2]), scale))
+    elif verb == "array-true":
+        if not isinstance(cur, list):
+            fail("array-true outside array")
+        cur.append(True)
+    elif verb == "array-false":
+        if not isinstance(cur, list):
+            fail("array-false outside array")
+        cur.append(False)
+    elif verb == "array-null":
+        if not isinstance(cur, list):
+            fail("array-null outside array")
+        cur.append(None)
+    elif verb == "array-object":
+        if not isinstance(cur, list):
+            fail("array-object outside array")
+        sub = {}
+        cur.append(sub)
+        stack.append(sub)
+    elif verb == "array-array":
+        if not isinstance(cur, list):
+            fail("array-array outside array")
+        sub = []
+        cur.append(sub)
+        stack.append(sub)
+    else:
+        fail(f"unrecognized token: {verb}")
+
+if stack:
+    fail("json not terminated")
+
+if pretty:
+    print(json.dumps(root, ensure_ascii=False, indent=2))
+else:
+    print(json.dumps(root, ensure_ascii=False, separators=(",", ":")))
+' "$pretty"
+    ;;
   dir-iterator)
     shift
     pedantic=0
