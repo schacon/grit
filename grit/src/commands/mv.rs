@@ -184,6 +184,17 @@ pub fn run(args: Args) -> Result<()> {
         // Validate source.
         if src_abs.exists() {
             if src_abs.is_dir() {
+                // A submodule path is represented as a gitlink entry (mode
+                // 160000) at the directory root. Treat it like a regular
+                // path move instead of expanding tracked files beneath it.
+                if index.get(src_rel.as_bytes(), 0).is_some() {
+                    ops.push(MoveOp {
+                        src: src_rel.clone(),
+                        dst: dst_rel.clone(),
+                        index_only: false,
+                    });
+                    continue;
+                }
                 // Expand directory to individual index entries.
                 let expanded = expand_dir_sources(&src_rel, &dst_rel, &index);
                 if expanded.is_empty() {

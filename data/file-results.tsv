@@ -415,7 +415,7 @@ t4055-diff-context	yes	10	10	0	ok	10	10	0
 t4056-diff-order	yes	23	10	13	ok	10	23	0
 t4057-diff-combined-paths	yes	4	4	0	ok	4	4	0
 t4058-diff-duplicates	yes	16	7	9	ok	5	14	2
-t4059-diff-submodule-not-initialized	yes	8	1	7	ok	1	8	0
+t4059-diff-submodule-not-initialized	yes	8	8	0	ok	8	8	0
 t4060-diff-submodule-option-diff-format	yes	50	6	44	ok	6	50	0
 t4061-diff-indent	yes	33	2	31	ok	2	33	0
 t4062-diff-pickaxe	yes	3	3	0	ok	3	3	0

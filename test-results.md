@@ -4,6 +4,13 @@
 
 - `./scripts/run-tests.sh t4059-diff-submodule-not-initialized.sh`: 1/8 passing (baseline for newly claimed in-progress Diff target `t4059`).
 - `bash scripts/run-upstream-tests.sh t4059-diff-submodule-not-initialized`: 1/8 passing.
+- `cargo build --release`: passes (rebuild after `t4059` submodule add/update, gitlink-preserving `commit -a`, tracked-empty-directory `mv`, and `diff-tree --submodule=log` fixes).
+- `bash scripts/run-upstream-tests.sh t4059-diff-submodule-not-initialized`: 8/8 passing (authoritative upstream harness).
+- Direct upstream-workdir confirmation: `cd /tmp/grit-upstream-workdir/t && GIT_BUILD_DIR=/tmp/grit-upstream-workdir TEST_NO_MALLOC_CHECK=1 TAR=tar bash ./t4059-diff-submodule-not-initialized.sh -v`: 8/8 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (autofixes in unrelated files were reverted; task-relevant changes retained).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+- `./scripts/run-tests.sh t4059-diff-submodule-not-initialized.sh`: 8/8 passing in local mirror.
 
 - `./scripts/run-tests.sh t4042-diff-textconv-caching.sh`: 1/8 passing (baseline for newly claimed in-progress Diff target `t4042`).
 - `cargo build --release`: passes (rebuild after `diff` textconv cache + `core.attributesFile` support updates).

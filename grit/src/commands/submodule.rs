@@ -80,6 +80,10 @@ pub struct UpdateArgs {
     #[arg(long)]
     pub init: bool,
 
+    /// Checkout the recorded commit (accepted for compatibility).
+    #[arg(long)]
+    pub checkout: bool,
+
     /// Use the status of the submodule's remote-tracking branch.
     #[arg(long)]
     pub remote: bool,
@@ -507,52 +511,56 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             true
         };
 
-        if needs_clone && !modules_dir.join("HEAD").exists() {
-            // Clone the submodule into .git/modules/<name> then checkout.
-            // Ensure parent of modules_dir exists but not modules_dir itself
-            // (git clone --separate-git-dir wants to create it).
-            if let Some(parent) = modules_dir.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            // Remove modules_dir if it exists but is empty.
-            if modules_dir.exists() {
-                let _ = fs::remove_dir(&modules_dir);
-            }
-
-            // Read URL from local config for cloning.
-            let clone_url = {
-                let config_path2 = repo.git_dir.join("config");
-                let content2 = fs::read_to_string(&config_path2)?;
-                let cfg2 = ConfigFile::parse(&config_path2, &content2, ConfigScope::Local)?;
-                let url_key2 = format!("submodule.{}.url", m.name);
-                cfg2.entries
-                    .iter()
-                    .find(|e| e.key == url_key2)
-                    .and_then(|e| e.value.clone())
-                    .unwrap_or_else(|| m.url.clone())
-            };
-
-            // If sub_path is an empty directory, remove it first (clone wants to create it).
-            if sub_path.exists() && sub_path.is_dir() {
-                let is_empty = fs::read_dir(&sub_path)?.next().is_none();
-                if is_empty {
-                    fs::remove_dir(&sub_path)?;
+        if needs_clone {
+            if modules_dir.join("HEAD").exists() {
+                attach_existing_submodule_worktree(&git_bin, &modules_dir, &sub_path)?;
+            } else {
+                // Clone the submodule into .git/modules/<name> then checkout.
+                // Ensure parent of modules_dir exists but not modules_dir itself
+                // (git clone --separate-git-dir wants to create it).
+                if let Some(parent) = modules_dir.parent() {
+                    fs::create_dir_all(parent)?;
                 }
-            }
+                // Remove modules_dir if it exists but is empty.
+                if modules_dir.exists() {
+                    let _ = fs::remove_dir(&modules_dir);
+                }
 
-            let status = Command::new(&git_bin)
-                .arg("clone")
-                .arg("--no-checkout")
-                .arg("--separate-git-dir")
-                .arg(&modules_dir)
-                .arg(&clone_url)
-                .arg(&sub_path)
-                .status()
-                .context("failed to clone submodule")?;
+                // Read URL from local config for cloning.
+                let clone_url = {
+                    let config_path2 = repo.git_dir.join("config");
+                    let content2 = fs::read_to_string(&config_path2)?;
+                    let cfg2 = ConfigFile::parse(&config_path2, &content2, ConfigScope::Local)?;
+                    let url_key2 = format!("submodule.{}.url", m.name);
+                    cfg2.entries
+                        .iter()
+                        .find(|e| e.key == url_key2)
+                        .and_then(|e| e.value.clone())
+                        .unwrap_or_else(|| m.url.clone())
+                };
 
-            if !status.success() {
-                eprintln!("error: failed to clone submodule from '{}'", clone_url);
-                bail!("failed to clone submodule '{}'", m.name);
+                // If sub_path is an empty directory, remove it first (clone wants to create it).
+                if sub_path.exists() && sub_path.is_dir() {
+                    let is_empty = fs::read_dir(&sub_path)?.next().is_none();
+                    if is_empty {
+                        fs::remove_dir(&sub_path)?;
+                    }
+                }
+
+                let status = Command::new(&git_bin)
+                    .arg("clone")
+                    .arg("--no-checkout")
+                    .arg("--separate-git-dir")
+                    .arg(&modules_dir)
+                    .arg(&clone_url)
+                    .arg(&sub_path)
+                    .status()
+                    .context("failed to clone submodule")?;
+
+                if !status.success() {
+                    eprintln!("error: failed to clone submodule from '{}'", clone_url);
+                    bail!("failed to clone submodule '{}'", m.name);
+                }
             }
         }
 
@@ -601,6 +609,10 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             recorded_oid.to_string()
         };
 
+        if !sub_path.exists() {
+            bail!("failed to checkout submodule commit: No such file or directory (os error 2)");
+        }
+
         // Checkout the target commit.
         let status = Command::new(&git_bin)
             .arg("checkout")
@@ -625,6 +637,26 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+fn attach_existing_submodule_worktree(
+    git_bin: &str,
+    modules_dir: &Path,
+    sub_path: &Path,
+) -> Result<()> {
+    if !sub_path.exists() {
+        fs::create_dir_all(sub_path)?;
+    }
+    let gitfile = sub_path.join(".git");
+    fs::write(&gitfile, format!("gitdir: {}\n", modules_dir.display()))?;
+    let _ = Command::new(git_bin)
+        .arg("--git-dir")
+        .arg(modules_dir)
+        .arg("config")
+        .arg("core.worktree")
+        .arg(sub_path)
+        .status();
     Ok(())
 }
 

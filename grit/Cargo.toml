@@ -30,3 +30,4 @@ sha1.workspace = true
 hex.workspace = true
 flate2.workspace = true
 unicode-width.workspace = true
+encoding_rs = "0.8.35"
