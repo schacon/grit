@@ -487,6 +487,245 @@ PY
 
     list_dir_iterator "$root" "" || exit 1
     ;;
+  bloom)
+    shift
+    subcmd="$1"
+    shift || true
+    python3 - "$subcmd" "$@" <<'PY'
+import subprocess
+import sys
+
+HASH_VERSION = 1
+NUM_HASHES = 7
+BITS_PER_ENTRY = 10
+MAX_CHANGED_PATHS = 512
+SEED0 = 0x293AE76F
+SEED1 = 0x7E646E2C
+
+def u32(v: int) -> int:
+    return v & 0xFFFFFFFF
+
+def rotl32(value: int, count: int) -> int:
+    count &= 31
+    return u32((value << count) | (value >> ((-count) & 31)))
+
+def cchar_to_u32(byte: int) -> int:
+    # Match C signed-char to uint32_t cast used by bloom v1.
+    signed = byte if byte < 128 else byte - 256
+    return u32(signed)
+
+def murmur3_seeded_v2(seed: int, data: bytes) -> int:
+    c1 = 0xCC9E2D51
+    c2 = 0x1B873593
+    r1 = 15
+    r2 = 13
+    m = 5
+    n = 0xE6546B64
+
+    seed = u32(seed)
+    len4 = len(data) // 4
+    for i in range(len4):
+        b1 = data[4 * i]
+        b2 = data[4 * i + 1] << 8
+        b3 = data[4 * i + 2] << 16
+        b4 = data[4 * i + 3] << 24
+        k = u32(b1 | b2 | b3 | b4)
+        k = u32(k * c1)
+        k = rotl32(k, r1)
+        k = u32(k * c2)
+        seed ^= k
+        seed = u32(rotl32(seed, r2) * m + n)
+
+    tail = data[len4 * 4 :]
+    k1 = 0
+    rem = len(data) & 3
+    if rem == 3:
+        k1 ^= tail[2] << 16
+    if rem >= 2:
+        k1 ^= tail[1] << 8
+    if rem >= 1:
+        k1 ^= tail[0]
+        k1 = u32(k1 * c1)
+        k1 = rotl32(k1, r1)
+        k1 = u32(k1 * c2)
+        seed ^= k1
+
+    seed ^= len(data)
+    seed ^= (seed >> 16)
+    seed = u32(seed * 0x85EBCA6B)
+    seed ^= (seed >> 13)
+    seed = u32(seed * 0xC2B2AE35)
+    seed ^= (seed >> 16)
+    return u32(seed)
+
+def murmur3_seeded_v1(seed: int, data: bytes) -> int:
+    c1 = 0xCC9E2D51
+    c2 = 0x1B873593
+    r1 = 15
+    r2 = 13
+    m = 5
+    n = 0xE6546B64
+
+    seed = u32(seed)
+    len4 = len(data) // 4
+    for i in range(len4):
+        b1 = cchar_to_u32(data[4 * i])
+        b2 = u32(cchar_to_u32(data[4 * i + 1]) << 8)
+        b3 = u32(cchar_to_u32(data[4 * i + 2]) << 16)
+        b4 = u32(cchar_to_u32(data[4 * i + 3]) << 24)
+        k = u32(b1 | b2 | b3 | b4)
+        k = u32(k * c1)
+        k = rotl32(k, r1)
+        k = u32(k * c2)
+        seed ^= k
+        seed = u32(rotl32(seed, r2) * m + n)
+
+    tail = data[len4 * 4 :]
+    k1 = 0
+    rem = len(data) & 3
+    if rem == 3:
+        k1 ^= u32(cchar_to_u32(tail[2]) << 16)
+    if rem >= 2:
+        k1 ^= u32(cchar_to_u32(tail[1]) << 8)
+    if rem >= 1:
+        k1 ^= cchar_to_u32(tail[0])
+        k1 = u32(k1 * c1)
+        k1 = rotl32(k1, r1)
+        k1 = u32(k1 * c2)
+        seed ^= k1
+
+    seed ^= len(data)
+    seed ^= (seed >> 16)
+    seed = u32(seed * 0x85EBCA6B)
+    seed ^= (seed >> 13)
+    seed = u32(seed * 0xC2B2AE35)
+    seed ^= (seed >> 16)
+    return u32(seed)
+
+def bloom_hashes_for_string(text: str, version: int) -> list[int]:
+    raw = text.encode("utf-8", "surrogatepass")
+    if version == 2:
+        h0 = murmur3_seeded_v2(SEED0, raw)
+        h1 = murmur3_seeded_v2(SEED1, raw)
+    else:
+        h0 = murmur3_seeded_v1(SEED0, raw)
+        h1 = murmur3_seeded_v1(SEED1, raw)
+    return [u32(h0 + i * h1) for i in range(NUM_HASHES)]
+
+def add_hashes_to_filter(hashes: list[int], data: bytearray) -> None:
+    mod = len(data) * 8
+    for hv in hashes:
+        pos = hv % mod
+        block = pos // 8
+        data[block] |= (1 << (pos & 7))
+
+def print_filter(data: bytearray) -> None:
+    print(f"Filter_Length:{len(data)}")
+    print("Filter_Data:" + "".join(f"{b:02x}|" for b in data))
+
+def cmd_get_murmur3(args: list[str]) -> int:
+    if len(args) != 1:
+        return 129
+    hv = murmur3_seeded_v2(0, args[0].encode("utf-8", "surrogatepass"))
+    print(f"Murmur3 Hash with seed=0:0x{hv:08x}")
+    return 0
+
+def cmd_get_murmur3_seven_highbit(args: list[str]) -> int:
+    if args:
+        return 129
+    raw = bytes([0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])
+    hv = murmur3_seeded_v2(0, raw)
+    print(f"Murmur3 Hash with seed=0:0x{hv:08x}")
+    return 0
+
+def cmd_generate_filter(args: list[str]) -> int:
+    if not args:
+        return 129
+    flen = (BITS_PER_ENTRY + 7) // 8
+    filt = bytearray(flen)
+    for item in args:
+        hashes = bloom_hashes_for_string(item, HASH_VERSION)
+        print("Hashes:" + "".join(f"0x{h:08x}|" for h in hashes))
+        add_hashes_to_filter(hashes, filt)
+    print_filter(filt)
+    return 0
+
+def add_path_and_parents(path: str, out: set[str]) -> None:
+    p = path
+    while p:
+        out.add(p)
+        if "/" not in p:
+            break
+        p = p.rsplit("/", 1)[0]
+
+def cmd_get_filter_for_commit(args: list[str]) -> int:
+    if len(args) != 1:
+        return 129
+    oid = args[0]
+    parents_line = subprocess.run(
+        ["git", "rev-list", "--parents", "-n", "1", oid],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+    parts = parents_line.split()
+    parents = parts[1:]
+    if parents:
+        changed_out = subprocess.run(
+            ["git", "diff-tree", "-r", "--name-only", "--no-commit-id", parents[0], oid],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout
+    else:
+        changed_out = subprocess.run(
+            ["git", "diff-tree", "-r", "--name-only", "--root", "--no-commit-id", oid],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout
+
+    changed_paths = [line for line in changed_out.splitlines() if line]
+    pathset: set[str] = set()
+    for p in changed_paths:
+        add_path_and_parents(p, pathset)
+
+    if len(pathset) > MAX_CHANGED_PATHS:
+        filt = bytearray([0xFF])
+        print_filter(filt)
+        return 0
+
+    flen = (len(pathset) * BITS_PER_ENTRY + 7) // 8
+    if flen == 0:
+        flen = 1
+    filt = bytearray(flen)
+    for p in pathset:
+        hashes = bloom_hashes_for_string(p, HASH_VERSION)
+        add_hashes_to_filter(hashes, filt)
+    print_filter(filt)
+    return 0
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        return 129
+    subcmd = sys.argv[1]
+    args = sys.argv[2:]
+    if subcmd == "get_murmur3":
+        return cmd_get_murmur3(args)
+    if subcmd == "get_murmur3_seven_highbit":
+        return cmd_get_murmur3_seven_highbit(args)
+    if subcmd == "generate_filter":
+        return cmd_generate_filter(args)
+    if subcmd == "get_filter_for_commit":
+        return cmd_get_filter_for_commit(args)
+    return 129
+
+sys.exit(main())
+PY
+    ;;
   path-utils)
     shift
     case "$1" in

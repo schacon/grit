@@ -51,7 +51,7 @@ t0081-find-pack	yes	4	4	0	ok	4	4	0
 t0090-cache-tree	yes	22	0	22	ok	0	22	0
 t0091-bugreport	yes	13	13	0	ok	13	13	0
 t0092-diagnose	yes	4	4	0	ok	4	4	0
-t0095-bloom	yes	11	1	10	ok	1	11	0
+t0095-bloom	yes	11	11	0	ok	11	11	0
 t0100-previous	yes	6	0	6	ok	0	6	0
 t0101-at-syntax	yes	8	8	0	ok	8	8	0
 t0200-gettext-basic	yes	0	0	0	ok	0	0	0
