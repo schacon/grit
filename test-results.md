@@ -2,6 +2,9 @@
 
 **Updated:** 2026-04-06
 
+- `./scripts/run-tests.sh t4115-apply-symlink.sh`: 2/8 passing (baseline for newly claimed in-progress Diff target `t4115`).
+- `bash scripts/run-upstream-tests.sh t4115-apply-symlink`: 2/8 passing.
+
 - `./scripts/run-tests.sh t4059-diff-submodule-not-initialized.sh`: 1/8 passing (baseline for newly claimed in-progress Diff target `t4059`).
 - `bash scripts/run-upstream-tests.sh t4059-diff-submodule-not-initialized`: 1/8 passing.
 - `cargo build --release`: passes (rebuild after `t4059` submodule add/update, gitlink-preserving `commit -a`, tracked-empty-directory `mv`, and `diff-tree --submodule=log` fixes).
