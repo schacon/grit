@@ -17,6 +17,8 @@
 
 use std::env;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
@@ -332,15 +334,26 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
         }
     }
 
+    // Linked-worktree gitdir/admin directories contain HEAD and commondir,
+    // and can be opened as repositories even without a local objects/ dir.
+    if dir.join("HEAD").is_file() && dir.join("commondir").is_file() {
+        maybe_trace_implicit_bare_repository(dir);
+        let repo = Repository::open(dir, None)?;
+        return Ok(Some(repo));
+    }
+
     // Check if `dir` itself is a bare repo (has objects/ and HEAD directly)
     if dir.join("objects").is_dir() && dir.join("HEAD").is_file() {
+        maybe_trace_implicit_bare_repository(dir);
         // Check safe.bareRepository policy before opening bare repos.
         // When set to "explicit", implicit bare repo discovery is forbidden
         // unless GIT_DIR was set (handled earlier in discover()).
-        if let Ok(cfg) = crate::config::ConfigSet::load(None, true) {
-            if let Some(val) = cfg.get("safe.bareRepository") {
-                if val == "explicit" {
-                    return Err(Error::ForbiddenBareRepository(dir.display().to_string()));
+        if !is_inside_dot_git(dir) {
+            if let Ok(cfg) = crate::config::ConfigSet::load(None, true) {
+                if let Some(val) = cfg.get("safe.bareRepository") {
+                    if val.eq_ignore_ascii_case("explicit") {
+                        return Err(Error::ForbiddenBareRepository(dir.display().to_string()));
+                    }
                 }
             }
         }
@@ -349,6 +362,25 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
     }
 
     Ok(None)
+}
+
+fn is_inside_dot_git(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str() == ".git")
+}
+
+fn maybe_trace_implicit_bare_repository(dir: &Path) {
+    let path = match std::env::var("GIT_TRACE2_PERF") {
+        Ok(p) if !p.is_empty() => p,
+        _ => return,
+    };
+
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(
+            file,
+            "setup: implicit-bare-repository:{}",
+            dir.display()
+        );
+    }
 }
 
 /// Parse a gitfile's `"gitdir: <path>"` line.

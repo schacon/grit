@@ -30,7 +30,7 @@ t0030-stripspace	yes	30	30	0	ok	30	30	0
 t0031-lockfile-pid	yes	7	7	0	ok	7	7	0
 t0033-safe-directory	yes	22	10	12	ok	10	22	0
 t0034-root-safe-directory	yes	0	0	0	ok	0	0	0
-t0035-safe-bare-repository	yes	12	1	11	ok	1	12	0
+t0035-safe-bare-repository	yes	12	12	0	ok	12	12	0
 t0040-parse-options	yes	94	0	94	ok	0	94	0
 t0041-usage	yes	16	16	0	ok	16	16	0
 t0050-filesystem	yes	13	13	0	ok	11	11	2
