@@ -738,7 +738,7 @@ t4053-diff-no-index	t4	skip	41	0	0	false	ok	0
 t4054-diff-bogus-tree	t4	yes	14	14	0	true	ok	0
 t4055-diff-context	t4	yes	10	8	2	false	ok	0
 t4056-diff-order	t4	yes	23	23	0	true	ok	0
-t4057-diff-combined-paths	t4	yes	4	0	4	false	ok	0
+t4057-diff-combined-paths	t4	yes	4	4	0	true	ok	0
 t4058-diff-duplicates	t4	yes	16	8	8	false	ok	0
 t4059-diff-submodule-not-initialized	t4	yes	8	8	0	true	ok	0
 t4060-diff-submodule-option-diff-format	t4	yes	51	29	22	false	ok	0
