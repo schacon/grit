@@ -1406,24 +1406,32 @@ pub fn rev_list(
         ordered.retain(|oid| !cherry_equivalent.contains(oid));
     }
 
-    if options.until_cutoff.is_some() || options.since_cutoff.is_some() {
-        let until = options.until_cutoff;
-        let since = options.since_cutoff;
-        ordered.retain(|oid| {
-            let ts = graph.committer_time(*oid);
-            if let Some(u) = until {
-                if ts > u {
-                    return false;
+    let omitted_by_date_filter: HashSet<ObjectId> =
+        if options.until_cutoff.is_some() || options.since_cutoff.is_some() {
+            let before_date: HashSet<ObjectId> = ordered.iter().copied().collect();
+            let until = options.until_cutoff;
+            let since = options.since_cutoff;
+            ordered.retain(|oid| {
+                let ts = graph.committer_time(*oid);
+                if let Some(u) = until {
+                    if ts > u {
+                        return false;
+                    }
                 }
-            }
-            if let Some(s) = since {
-                if ts < s {
-                    return false;
+                if let Some(s) = since {
+                    if ts < s {
+                        return false;
+                    }
                 }
-            }
-            true
-        });
-    }
+                true
+            });
+            before_date
+                .into_iter()
+                .filter(|oid| !ordered.contains(oid))
+                .collect()
+        } else {
+            HashSet::new()
+        };
 
     // `--simplify-by-decoration` with a caller-supplied decorated set: run proper
     // history simplification with parent rewriting (Git's `simplify_commit`). A commit is
@@ -1459,12 +1467,18 @@ pub fn rev_list(
     }
 
     // Collect boundary commits: parents of emitted commits omitted from output because they
-    // lie in the excluded set (^tips) or were truncated by --skip/--max-count after selection.
+    // lie in the excluded set (^tips), were dropped by `--since`/`--until`, or were truncated
+    // by `--skip`/`--max-count` after selection.
     let boundary_commits = if options.boundary {
         let output_set: HashSet<ObjectId> = ordered.iter().copied().collect();
         let mut boundary = Vec::new();
         let mut boundary_seen = HashSet::new();
         let use_path_parent_rewrite = options.wants_parent_rewrite() && !options.paths.is_empty();
+        let omitted_but_selected = |parent: ObjectId| {
+            excluded.contains(&parent)
+                || selected_before_limit.contains(&parent)
+                || omitted_by_date_filter.contains(&parent)
+        };
         for &oid in &ordered {
             let parents = if use_path_parent_rewrite {
                 path_limited_rewrite_parents_for_boundary(
@@ -1474,6 +1488,7 @@ pub fn rev_list(
                     &selected_before_limit,
                     &excluded,
                     options.first_parent,
+                    &omitted_by_date_filter,
                 )?
             } else if options.first_parent {
                 load_commit(repo, oid).map(|c| c.parents)?
@@ -1487,10 +1502,12 @@ pub fn rev_list(
             };
             for parent in parent_iter {
                 let is_boundary = if use_path_parent_rewrite {
+                    !output_set.contains(&parent) && omitted_but_selected(parent)
+                } else if options.first_parent {
+                    // Git `--first-parent --boundary` keeps non-emitted direct parents as boundaries.
                     !output_set.contains(&parent)
-                        && (excluded.contains(&parent) || selected_before_limit.contains(&parent))
                 } else {
-                    !output_set.contains(&parent)
+                    !output_set.contains(&parent) && omitted_but_selected(parent)
                 };
                 if is_boundary && boundary_seen.insert(parent) {
                     boundary.push(parent);
@@ -4342,8 +4359,8 @@ fn collect_visible_parent_for_graph_lib(
 
 /// Parents used for `--boundary` with path-limited `--parents` rewriting.
 ///
-/// Walks from each raw parent until hitting an emitted commit, a commit dropped only by
-/// `--skip`/`--max-count`, or an excluded boundary commit.
+/// Walks from each raw parent until hitting an emitted commit, a commit dropped by
+/// `--since`/`--until`, `--skip`/`--max-count`, or an excluded boundary commit.
 fn path_limited_rewrite_parents_for_boundary(
     repo: &Repository,
     oid: ObjectId,
@@ -4351,6 +4368,7 @@ fn path_limited_rewrite_parents_for_boundary(
     selected_set: &HashSet<ObjectId>,
     excluded: &HashSet<ObjectId>,
     first_parent_only: bool,
+    omitted_by_date_filter: &HashSet<ObjectId>,
 ) -> Result<Vec<ObjectId>> {
     let grafts = crate::rev_parse::load_graft_parents(&repo.git_dir);
     let mut raw = load_navigation_parents_lib(repo, oid, &grafts)?;
@@ -4365,7 +4383,7 @@ fn path_limited_rewrite_parents_for_boundary(
             if output_set.contains(&cur) {
                 break;
             }
-            if selected_set.contains(&cur) {
+            if selected_set.contains(&cur) || omitted_by_date_filter.contains(&cur) {
                 if seen.insert(cur) {
                     out.push(cur);
                 }

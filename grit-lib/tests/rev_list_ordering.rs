@@ -2,7 +2,7 @@
 
 mod support;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -12,7 +12,8 @@ use grit_lib::rev_list::{
 };
 use support::{
     assert_rev_list_commits_match_git, build_commit_dag, commit_file, commit_labeled_with_dates,
-    expand_token_for_rev_list, git, git_commit_graph_write, git_rev_list_lines, git_rev_parse,
+    expand_token_for_rev_list, git, git_commit_graph_write, git_rev_list, git_rev_list_lines,
+    git_rev_parse,
     grit_rev_list_commits_in_repo, open_grit_repo, HistoryRepo,
 };
 
@@ -727,6 +728,119 @@ fn t4217_log_limit_since_until_match_git() {
         opts,
         "t4217 since/until",
     );
+}
+
+/// Linear 2001 → 2002 → 2003 commits: `--boundary` must retain parents dropped only by date cutoffs.
+#[test]
+fn t4217_boundary_since_until_match_git() {
+    const CUTOFF: i64 = 1_022_803_200; // 2002-06-01 00:00:00 UTC
+
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    let y2001 = commit_labeled_with_dates(wt, "y2001", &[], "@978307200 +0000", "@978307200 +0000");
+    let y2002 = commit_labeled_with_dates(
+        wt,
+        "y2002",
+        &[y2001],
+        "@1009843200 +0000",
+        "@1009843200 +0000",
+    );
+    let y2003 = commit_labeled_with_dates(
+        wt,
+        "y2003",
+        &[y2002],
+        "@1041379200 +0000",
+        "@1041379200 +0000",
+    );
+    git(wt, &["update-ref", "refs/heads/main", &y2003.to_hex()]);
+    let grit = open_grit_repo(wt);
+
+    let since_git = format!("--since={CUTOFF}");
+    let git_since_boundary = git_rev_list(wt, &["--boundary", since_git.as_str(), "main"]);
+    let since_opts = RevListOptions {
+        boundary: true,
+        since_cutoff: Some(CUTOFF),
+        ..RevListOptions::default()
+    };
+    for use_graph in [false, true] {
+        if use_graph {
+            git_commit_graph_write(wt);
+        }
+        let mut opts = since_opts.clone();
+        opts.use_commit_graph = use_graph;
+        let result = grit_lib::rev_list::rev_list(&grit, &[String::from("main")], &[], &opts)
+            .expect("since boundary rev_list");
+        let mut grit_seq = result.commits;
+        grit_seq.extend(result.boundary_commits);
+        assert_eq!(
+            grit_seq, git_since_boundary,
+            "t4217 --boundary --since (use_commit_graph={use_graph})"
+        );
+    }
+
+    let until_git = format!("--until={CUTOFF}");
+    let git_until_boundary = git_rev_list(wt, &["--boundary", until_git.as_str(), "main"]);
+    let until_opts = RevListOptions {
+        boundary: true,
+        until_cutoff: Some(CUTOFF),
+        ..RevListOptions::default()
+    };
+    for use_graph in [false, true] {
+        if use_graph {
+            git_commit_graph_write(wt);
+        }
+        let mut opts = until_opts.clone();
+        opts.use_commit_graph = use_graph;
+        let result = grit_lib::rev_list::rev_list(&grit, &[String::from("main")], &[], &opts)
+            .expect("until boundary rev_list");
+        let mut grit_seq = result.commits;
+        grit_seq.extend(result.boundary_commits);
+        assert_eq!(
+            grit_seq, git_until_boundary,
+            "t4217 --boundary --until (use_commit_graph={use_graph})"
+        );
+    }
+}
+
+/// Root and tip decorated refs: `--simplify-by-decoration` drops the middle; `--boundary` must not resurrect it.
+#[test]
+fn simplify_by_decoration_boundary_match_git() {
+    let repo = HistoryRepo::init();
+    let wt = repo.worktree();
+    commit_file(wt, "f", "root\n", "root");
+    git(wt, &["tag", "root"]);
+    commit_file(wt, "f", "mid\n", "middle");
+    commit_file(wt, "f", "tip\n", "tip");
+    let grit = open_grit_repo(wt);
+    let root = git_rev_parse(wt, "root").expect("root tag");
+    let tip = git_rev_parse(wt, "main").expect("main tip");
+
+    let git_boundary = git_rev_list(wt, &["--boundary", "--simplify-by-decoration", "main"]);
+    let mut decorated = HashSet::new();
+    decorated.insert(root);
+    decorated.insert(tip);
+    let opts = RevListOptions {
+        boundary: true,
+        simplify_by_decoration: true,
+        simplify_by_decoration_oids: decorated,
+        ..RevListOptions::default()
+    };
+
+    for use_graph in [false, true] {
+        if use_graph {
+            git_commit_graph_write(wt);
+        }
+        let mut walk_opts = opts.clone();
+        walk_opts.use_commit_graph = use_graph;
+        let result = grit_lib::rev_list::rev_list(&grit, &[String::from("main")], &[], &walk_opts)
+            .expect("simplify-by-decoration boundary rev_list");
+        let mut grit_seq = result.commits;
+        grit_seq.extend(result.boundary_commits);
+        assert_eq!(
+            grit_seq, git_boundary,
+            "simplify-by-decoration --boundary (use_commit_graph={use_graph})"
+        );
+    }
 }
 
 #[test]
