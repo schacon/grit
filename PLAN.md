@@ -457,7 +457,7 @@ commit → check it off → move on.
 
 - [x] `t4042-diff-textconv-caching` ████████████████████ 8/8 (0 left) — textconv now applies for patch output based on attr/config context, caches per-driver output in `refs/notes/textconv/<driver>` with invalidation on command changes, and honors `core.attributesFile` in `--no-index` (local mirror still reports 7/8 due simplified `nongit` cwd behavior in `tests/test-lib.sh`)
 - [x] `t4046-diff-unmerged` ████████████████████ 8/8 (0 left) — diff with unmerged index entries (`diff-files` now preserves unresolved stage metadata and emits stage-appropriate `U` plus stage-specific `M/D` lines for `-0/-1/-2/-3`; default `diff-files` now falls back to stage 2 behavior when unmerged paths exist and no explicit stage is provided; staged diff (`diff --cached`) now surfaces unmerged index entries with mode `100644` and `--stat`/`--quiet` correctly report pending unmerged changes)
-- [ ] `t4059-diff-submodule-not-initialized` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — Test for submodule diff on non-checked out submodule
+- [~] `t4059-diff-submodule-not-initialized` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — Test for submodule diff on non-checked out submodule
 
 - [ ] `t4115-apply-symlink` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — git apply symlinks and partial files
 

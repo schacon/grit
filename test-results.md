@@ -2,6 +2,9 @@
 
 **Updated:** 2026-04-06
 
+- `./scripts/run-tests.sh t4059-diff-submodule-not-initialized.sh`: 1/8 passing (baseline for newly claimed in-progress Diff target `t4059`).
+- `bash scripts/run-upstream-tests.sh t4059-diff-submodule-not-initialized`: 1/8 passing.
+
 - `./scripts/run-tests.sh t4042-diff-textconv-caching.sh`: 1/8 passing (baseline for newly claimed in-progress Diff target `t4042`).
 - `cargo build --release`: passes (rebuild after `diff` textconv cache + `core.attributesFile` support updates).
 - `bash scripts/run-upstream-tests.sh t4042-diff-textconv-caching`: 8/8 passing (authoritative upstream harness).
