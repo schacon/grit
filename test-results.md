@@ -2,6 +2,13 @@
 
 **Updated:** 2026-04-07
 
+- `cargo build --release`: passes (rebuild after `t4119` apply whitespace/config compatibility updates in `apply`/`crlf`).
+- `bash scripts/run-upstream-tests.sh t4119-apply-config`: 11/11 passing in isolated upstream harness.
+- `./scripts/run-tests.sh t4119-apply-config.sh`: 11/11 passing; `data/file-results.tsv` refreshed.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in `grit-lib/src/state.rs`, `grit/src/commands/blame.rs`, `grit/src/commands/config.rs`, and `grit/src/commands/update_index.rs` were reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `./scripts/run-tests.sh t4119-apply-config.sh`: 1/11 passing (baseline for newly claimed in-progress Diff target `t4119`).
 - `bash scripts/run-upstream-tests.sh t4119-apply-config`: 1/11 passing in isolated upstream harness baseline.
 

@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   123 |
-| In progress |     1 |
+| Completed   |   124 |
+| In progress |     0 |
 | Remaining   |   643 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4119-apply-config` — upstream/local 11/11 tests pass (`apply` now treats `--whitespace=strip` as whitespace-fix semantics and honors `apply.whitespace=strip` from config; worktree-relative patch application from subdirectories is now context-aware so `a/sub/file` patch paths correctly resolve to `file` when running inside `sub/`; traditional non-`diff --git` patch header parsing now strips trailing timestamp fields and trailing `+` markers to derive proper pathnames; whitespace fixing now honors per-path `.gitattributes` `whitespace=-blank-at-eol` by disabling blank-at-EOL stripping for matched paths in both worktree and index apply paths, matching Git behavior for subdir traditional patches)
 - `t4139-apply-escape` — upstream/local 12/12 tests pass (`apply` now parses `--unsafe-paths` from CLI and preserves Git safety defaults in repository mode: pathnames escaping via `..` or absolute components are rejected unless explicitly allowed, while `--index`/`--cached` always reject escapes even when `--unsafe-paths` is present; `--check` now also fails unsafe path patches under the same rules)
 - `t4212-log-corrupt` — upstream/local 13/13 tests pass (`fsck` now validates commit identity headers and reports malformed/invalid author identities with git-compatible `invalid.author` diagnostics; `log` now parses ident timestamps with strict validity classes (valid, numeric-overflow sentinel, invalid) so broken/overflow dates render as epoch sentinels in headers while `%ad`/`%at` preserve blank output for non-numeric malformed or whitespace-only dates as expected; `rev-list` now supports `--until=<DATE>` and `--until <DATE>` filtering with ident-date parsing that treats malformed/whitespace dates as sentinel epoch and numeric overflow as epoch sentinel, matching corrupt-header traversal expectations)
 - `t4208-log-magic-pathspec` — upstream/local 21/21 tests pass (`log` now handles magic pathspec/revision ambiguity with git-compatible fatal errors for tokens like `:/a` and `:`, supports `--merge` option parsing compatibility, and preserves explicit `--` behavior; `rev_parse` now rejects empty `:/` revision search so pathspec mode can consume top-level `:/` correctly; shared pathspec matching now treats `:/` as repo-root top pathspec so `git log HEAD -- :/` from subdirectories matches expected history output)

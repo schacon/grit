@@ -78,6 +78,10 @@ pub struct FileAttrs {
     pub ident: bool,
     /// Working tree encoding (e.g. "utf-16") — content is converted to UTF-8 on add.
     pub working_tree_encoding: Option<String>,
+    /// Whether `blank-at-eol` whitespace errors are enabled for this path.
+    ///
+    /// `None` means no explicit `whitespace=` rule selected this knob.
+    pub whitespace_blank_at_eol: Option<bool>,
 }
 
 impl Default for FileAttrs {
@@ -91,6 +95,7 @@ impl Default for FileAttrs {
             filter_smudge: None,
             ident: false,
             working_tree_encoding: None,
+            whitespace_blank_at_eol: None,
         }
     }
 }
@@ -287,6 +292,19 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                     "working-tree-encoding" => {
                         if value != "unset" && !value.is_empty() {
                             fa.working_tree_encoding = Some(value.clone());
+                        }
+                    }
+                    "whitespace" => {
+                        if value == "unset" {
+                            fa.whitespace_blank_at_eol = None;
+                        } else {
+                            for token in value.split(',').map(str::trim) {
+                                match token {
+                                    "blank-at-eol" => fa.whitespace_blank_at_eol = Some(true),
+                                    "-blank-at-eol" => fa.whitespace_blank_at_eol = Some(false),
+                                    _ => {}
+                                }
+                            }
                         }
                     }
                     _ => {}

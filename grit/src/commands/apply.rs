@@ -14,6 +14,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
@@ -236,7 +237,7 @@ fn config_whitespace_fix() -> bool {
     let Some(value) = config.get("apply.whitespace") else {
         return false;
     };
-    value.eq_ignore_ascii_case("fix")
+    value.eq_ignore_ascii_case("fix") || value.eq_ignore_ascii_case("strip")
 }
 
 fn whitespace_option_was_explicitly_set() -> bool {
@@ -245,11 +246,11 @@ fn whitespace_option_was_explicitly_set() -> bool {
 
 fn resolve_apply_whitespace_mode(args: &Args) -> ApplyWhitespaceMode {
     let whitespace_fix = if whitespace_option_was_explicitly_set() {
-        args.whitespace.eq_ignore_ascii_case("fix")
+        args.whitespace.eq_ignore_ascii_case("fix") || args.whitespace.eq_ignore_ascii_case("strip")
     } else if args.whitespace.eq_ignore_ascii_case("warn") {
         config_whitespace_fix()
     } else {
-        args.whitespace.eq_ignore_ascii_case("fix")
+        args.whitespace.eq_ignore_ascii_case("fix") || args.whitespace.eq_ignore_ascii_case("strip")
     };
     let ignore_space_change = if args.no_ignore_whitespace {
         false
@@ -270,6 +271,8 @@ fn resolve_apply_whitespace_mode(args: &Args) -> ApplyWhitespaceMode {
 /// Represents one file in a unified diff.
 #[derive(Debug, Clone)]
 struct FilePatch {
+    /// Whether this file patch came from a `diff --git` header.
+    has_diff_header: bool,
     /// Path from `diff --git` old side (`a/...`) when present.
     diff_old_path: Option<String>,
     /// Path from `diff --git` new side (`b/...`) when present.
@@ -306,6 +309,8 @@ struct FilePatch {
     binary_patch: Option<BinaryPatchPayload>,
     /// Hunks to apply.
     hunks: Vec<Hunk>,
+    /// For traditional unified diffs without `diff --git`, prefer old path as target.
+    prefer_old_path: bool,
 }
 
 /// Binary patch payload as compressed base85 chunks for forward/reverse apply.
@@ -340,6 +345,20 @@ impl FilePatch {
                 .as_deref()
                 .filter(|p| *p != "/dev/null")
                 .or(self.old_path.as_deref().filter(|p| *p != "/dev/null"));
+        }
+        if !self.has_diff_header {
+            return self
+                .old_path
+                .as_deref()
+                .filter(|p| *p != "/dev/null")
+                .or(self.new_path.as_deref().filter(|p| *p != "/dev/null"));
+        }
+        if self.prefer_old_path {
+            return self
+                .old_path
+                .as_deref()
+                .filter(|p| *p != "/dev/null")
+                .or(self.new_path.as_deref().filter(|p| *p != "/dev/null"));
         }
         self.new_path
             .as_deref()
@@ -379,6 +398,11 @@ impl FilePatch {
                 .as_deref()
                 .filter(|p| *p != "/dev/null")
                 .or(self.effective_path())
+        } else if self.diff_old_path.is_none() && self.diff_new_path.is_none() {
+            self.old_path
+                .as_deref()
+                .filter(|p| *p != "/dev/null")
+                .or(self.effective_path())
         } else {
             self.effective_path()
         }
@@ -408,6 +432,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
         // Look for "diff --git" header or a bare ---/+++ pair.
         if lines[i].starts_with("diff --git ") {
             let mut fp = FilePatch {
+                has_diff_header: true,
                 diff_old_path: None,
                 diff_new_path: None,
                 old_path: None,
@@ -426,6 +451,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 new_oid: None,
                 binary_patch: None,
                 hunks: Vec::new(),
+                prefer_old_path: false,
             };
 
             // Parse "diff --git a/foo b/foo"
@@ -527,6 +553,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
         {
             // Bare unified diff without "diff --git" header
             let mut fp = FilePatch {
+                has_diff_header: false,
                 diff_old_path: None,
                 diff_new_path: None,
                 old_path: None,
@@ -545,14 +572,15 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 new_oid: None,
                 binary_patch: None,
                 hunks: Vec::new(),
+                prefer_old_path: true,
             };
 
             let old_p = &lines[i]["--- ".len()..];
-            fp.old_path = Some(decode_git_quoted_path(old_p));
+            fp.old_path = Some(parse_traditional_patch_header_path(old_p));
             fp.saw_old_header = true;
             i += 1;
             let new_p = &lines[i]["+++ ".len()..];
-            fp.new_path = Some(decode_git_quoted_path(new_p));
+            fp.new_path = Some(parse_traditional_patch_header_path(new_p));
             fp.saw_new_header = true;
             i += 1;
 
@@ -578,6 +606,131 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
     }
 
     Ok(patches)
+}
+
+fn worktree_context_prefix(repo: Option<&Repository>) -> String {
+    let Some(repo) = repo else {
+        return String::new();
+    };
+    let Some(work_tree) = repo.work_tree.as_ref() else {
+        return String::new();
+    };
+    let Ok(cwd) = std::env::current_dir() else {
+        return String::new();
+    };
+    let Ok(rel) = cwd.strip_prefix(work_tree) else {
+        return String::new();
+    };
+    let rel_str = rel.to_string_lossy();
+    if rel_str.is_empty() {
+        String::new()
+    } else {
+        format!("{rel_str}/")
+    }
+}
+
+fn adjust_path_in_context(
+    path: &str,
+    strip: usize,
+    directory: Option<&str>,
+    prefix: &str,
+) -> String {
+    let adjusted = adjust_path(path, strip, directory);
+    if adjusted == "/dev/null" || prefix.is_empty() {
+        adjusted
+    } else if let Some(stripped) = adjusted.strip_prefix(prefix) {
+        stripped.to_string()
+    } else {
+        adjusted
+    }
+}
+
+#[derive(Clone)]
+struct ApplyWhitespaceAttrContext {
+    rules: grit_lib::crlf::GitAttributes,
+    config: ConfigSet,
+}
+
+fn load_apply_whitespace_attr_context(
+    repo: Option<&Repository>,
+) -> Option<ApplyWhitespaceAttrContext> {
+    let repo = repo?;
+    let work_tree = repo.work_tree.as_ref()?;
+    let rules = grit_lib::crlf::load_gitattributes(work_tree);
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    Some(ApplyWhitespaceAttrContext { rules, config })
+}
+
+fn repo_relative_attr_path(path: &str, worktree_prefix: &str) -> String {
+    if path.is_empty() || path == "/dev/null" {
+        return path.to_string();
+    }
+    if worktree_prefix.is_empty() || path.starts_with(worktree_prefix) {
+        path.to_string()
+    } else {
+        format!("{worktree_prefix}{path}")
+    }
+}
+
+fn ws_mode_for_patch_path(
+    base_mode: ApplyWhitespaceMode,
+    attr_context: Option<&ApplyWhitespaceAttrContext>,
+    path: &str,
+    worktree_prefix: &str,
+) -> ApplyWhitespaceMode {
+    if !base_mode.whitespace_fix || path.is_empty() || path == "/dev/null" {
+        return base_mode;
+    }
+    let Some(ctx) = attr_context else {
+        return base_mode;
+    };
+    let attr_path = repo_relative_attr_path(path, worktree_prefix);
+    let attrs = grit_lib::crlf::get_file_attrs(&ctx.rules, &attr_path, &ctx.config);
+    if attrs.whitespace_blank_at_eol == Some(false) {
+        let mut mode = base_mode;
+        mode.whitespace_fix = false;
+        mode
+    } else {
+        base_mode
+    }
+}
+
+fn parse_traditional_patch_header_path(raw: &str) -> String {
+    let trimmed = raw.trim_start();
+    if trimmed.starts_with("/dev/null") {
+        return "/dev/null".to_string();
+    }
+
+    if let Some(stripped) = trimmed.strip_prefix('"') {
+        let mut escaped = false;
+        let mut end = None;
+        for (idx, ch) in stripped.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == '"' {
+                end = Some(idx + 2); // include opening+closing quote
+                break;
+            }
+        }
+        if let Some(end_idx) = end {
+            return decode_git_quoted_path(&trimmed[..end_idx]);
+        }
+    }
+
+    let token = trimmed
+        .split('\t')
+        .next()
+        .unwrap_or(trimmed)
+        .split_whitespace()
+        .next()
+        .unwrap_or(trimmed);
+    decode_git_quoted_path(token)
 }
 
 /// Parse a `GIT binary patch` payload.
@@ -960,6 +1113,9 @@ fn adjust_path_with_notice(path: &str, strip: usize, directory: Option<&str>) ->
     }
     let components = path.split('/').count();
     if strip >= components {
+        if !path.contains('/') {
+            return Ok(adjust_path(path, strip, directory));
+        }
         bail!(
             "removing {strip} leading pathname component{suffix} from \"{path}\"",
             suffix = if strip == 1 { "" } else { "s" }
@@ -1037,13 +1193,22 @@ fn symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Option
     None
 }
 
-fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> Result<()> {
+fn verify_patch_paths_not_beyond_symlink(
+    patches: &[FilePatch],
+    args: &Args,
+    worktree_prefix: &str,
+) -> Result<()> {
     let mut symlink_overlay: HashMap<String, bool> = HashMap::new();
     let mut replaced_directories_with_symlink: HashMap<String, bool> = HashMap::new();
 
     for fp in patches {
         if let Some(source) = fp.source_path() {
-            let source_adjusted = adjust_path(source, args.strip, args.directory.as_deref());
+            let source_adjusted = adjust_path_in_context(
+                source,
+                args.strip,
+                args.directory.as_deref(),
+                worktree_prefix,
+            );
             if !source_adjusted.is_empty() {
                 if let Some((prefix, _prefix_exists)) =
                     symlink_prefix(&source_adjusted, &symlink_overlay)
@@ -1061,7 +1226,12 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
             }
         }
         if let Some(target) = fp.target_path() {
-            let target_adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+            let target_adjusted = adjust_path_in_context(
+                target,
+                args.strip,
+                args.directory.as_deref(),
+                worktree_prefix,
+            );
             if !target_adjusted.is_empty() {
                 if let Some((prefix, _prefix_exists)) =
                     symlink_prefix(&target_adjusted, &symlink_overlay)
@@ -1081,11 +1251,15 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
 
         let source_adjusted = fp
             .source_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| {
+                adjust_path_in_context(p, args.strip, args.directory.as_deref(), worktree_prefix)
+            })
             .unwrap_or_default();
         let target_adjusted = fp
             .target_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| {
+                adjust_path_in_context(p, args.strip, args.directory.as_deref(), worktree_prefix)
+            })
             .unwrap_or_default();
         let source_is_symlink = !source_adjusted.is_empty()
             && symlink_overlay
@@ -1147,10 +1321,6 @@ fn path_escapes_worktree(path: &str) -> bool {
 
 fn validate_patch_paths_with_safety(patches: &[FilePatch], args: &Args) -> Result<()> {
     let allow_unsafe = args.unsafe_paths && !args.index && !args.cached;
-    eprintln!(
-        "DEBUG validate_patch_paths_with_safety: unsafe_paths={} index={} cached={} allow_unsafe={}",
-        args.unsafe_paths, args.index, args.cached, allow_unsafe
-    );
     if allow_unsafe {
         return Ok(());
     }
@@ -1158,24 +1328,12 @@ fn validate_patch_paths_with_safety(patches: &[FilePatch], args: &Args) -> Resul
     for fp in patches {
         if let Some(source) = fp.source_path() {
             let adjusted = adjust_path(source, args.strip, args.directory.as_deref());
-            eprintln!(
-                "DEBUG source path raw={} adjusted={} escapes={}",
-                source,
-                adjusted,
-                path_escapes_worktree(&adjusted)
-            );
             if adjusted != "/dev/null" && path_escapes_worktree(&adjusted) {
                 bail!("invalid path '{adjusted}'");
             }
         }
         if let Some(target) = fp.target_path() {
             let adjusted = adjust_path(target, args.strip, args.directory.as_deref());
-            eprintln!(
-                "DEBUG target path raw={} adjusted={} escapes={}",
-                target,
-                adjusted,
-                path_escapes_worktree(&adjusted)
-            );
             if adjusted != "/dev/null" && path_escapes_worktree(&adjusted) {
                 bail!("invalid path '{adjusted}'");
             }
@@ -2008,6 +2166,16 @@ pub fn run_with_patch_input(args: Args, input: String) -> Result<()> {
     let mut patches = parse_patch(&input)?;
     validate_strip_components(&patches, args.strip, args.directory.as_deref())?;
     validate_patch_headers(&patches)?;
+    let repo_for_context = Repository::discover(None).ok();
+    let worktree_prefix = worktree_context_prefix(repo_for_context.as_ref());
+    let attr_context = load_apply_whitespace_attr_context(repo_for_context.as_ref());
+    if let Ok(cwd) = std::env::current_dir() {
+        eprintln!(
+            "DEBUG apply cwd={} worktree_prefix='{}'",
+            cwd.display(),
+            worktree_prefix
+        );
+    }
 
     if args.reverse {
         reverse_patches(&mut patches);
@@ -2036,16 +2204,28 @@ pub fn run_with_patch_input(args: Args, input: String) -> Result<()> {
         return Ok(());
     }
     validate_patch_paths_with_safety(&patches, &args)?;
-    verify_patch_paths_not_beyond_symlink(&patches, &args)?;
+    verify_patch_paths_not_beyond_symlink(&patches, &args, &worktree_prefix)?;
     let ws_mode = resolve_apply_whitespace_mode(&args);
 
     // For --cached, we need a repository and index.
     // For working tree apply, we may or may not be in a repo.
     if args.cached {
-        apply_to_index(&patches, &args, ws_mode)?;
+        apply_to_index_with_attrs(
+            &patches,
+            &args,
+            ws_mode,
+            attr_context.as_ref(),
+            &worktree_prefix,
+        )?;
     } else {
         if args.check {
-            check_patches(&patches, &args, ws_mode)?;
+            check_patches(
+                &patches,
+                &args,
+                ws_mode,
+                &worktree_prefix,
+                attr_context.as_ref(),
+            )?;
             if !args.apply {
                 return Ok(());
             }
@@ -2053,10 +2233,28 @@ pub fn run_with_patch_input(args: Args, input: String) -> Result<()> {
 
         if args.index {
             verify_worktree_matches_index(&patches, &args)?;
-            apply_to_worktree(&patches, &args, ws_mode)?;
-            apply_to_index(&patches, &args, ws_mode)?;
+            apply_to_worktree(
+                &patches,
+                &args,
+                ws_mode,
+                &worktree_prefix,
+                attr_context.as_ref(),
+            )?;
+            apply_to_index_with_attrs(
+                &patches,
+                &args,
+                ws_mode,
+                attr_context.as_ref(),
+                &worktree_prefix,
+            )?;
         } else {
-            apply_to_worktree(&patches, &args, ws_mode)?;
+            apply_to_worktree(
+                &patches,
+                &args,
+                ws_mode,
+                &worktree_prefix,
+                attr_context.as_ref(),
+            )?;
             if args.intent_to_add {
                 apply_intent_to_add_entries(&patches, &args)?;
             }
@@ -2365,17 +2563,31 @@ fn can_apply_with_empty_preimage(fp: &FilePatch) -> bool {
 /// This catches invalid sequences (e.g. later patches reading a path that was
 /// moved away by an earlier rename) and prevents partially-applied worktree
 /// state when such sequences are detected.
-fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Result<()> {
+fn precheck_worktree_patch_sequence(
+    patches: &[FilePatch],
+    args: &Args,
+    worktree_prefix: &str,
+) -> Result<()> {
     let mut current_exists: HashMap<String, bool> = HashMap::new();
     let mut initial_exists: HashMap<String, bool> = HashMap::new();
 
     for fp in patches {
         if let Some(source) = fp.source_path() {
-            let adjusted = adjust_path(source, args.strip, args.directory.as_deref());
+            let adjusted = adjust_path_in_context(
+                source,
+                args.strip,
+                args.directory.as_deref(),
+                worktree_prefix,
+            );
             record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
         }
         if let Some(target) = fp.target_path() {
-            let adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+            let adjusted = adjust_path_in_context(
+                target,
+                args.strip,
+                args.directory.as_deref(),
+                worktree_prefix,
+            );
             record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
         }
     }
@@ -2383,11 +2595,15 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
     for fp in patches {
         let source_adjusted = fp
             .source_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| {
+                adjust_path_in_context(p, args.strip, args.directory.as_deref(), worktree_prefix)
+            })
             .unwrap_or_default();
         let target_adjusted = fp
             .target_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| {
+                adjust_path_in_context(p, args.strip, args.directory.as_deref(), worktree_prefix)
+            })
             .unwrap_or_default();
 
         let source_exists_now = current_exists
@@ -2468,6 +2684,8 @@ fn apply_to_worktree(
     patches: &[FilePatch],
     args: &Args,
     ws_mode: ApplyWhitespaceMode,
+    worktree_prefix: &str,
+    attr_context: Option<&ApplyWhitespaceAttrContext>,
 ) -> Result<()> {
     let mut had_rejects = false;
     // Snapshot source-side file contents used by cross-path rename/copy patches
@@ -2480,8 +2698,18 @@ fn apply_to_worktree(
         let Some(target) = fp.target_path() else {
             continue;
         };
-        let source_adjusted = adjust_path(source, args.strip, args.directory.as_deref());
-        let target_adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+        let source_adjusted = adjust_path_in_context(
+            source,
+            args.strip,
+            args.directory.as_deref(),
+            worktree_prefix,
+        );
+        let target_adjusted = adjust_path_in_context(
+            target,
+            args.strip,
+            args.directory.as_deref(),
+            worktree_prefix,
+        );
         if source_adjusted == target_adjusted || source_snapshots.contains_key(&source_adjusted) {
             continue;
         }
@@ -2489,13 +2717,20 @@ fn apply_to_worktree(
             source_snapshots.insert(source_adjusted, content);
         }
     }
-    precheck_worktree_patch_sequence(patches, args)?;
+    precheck_worktree_patch_sequence(patches, args, worktree_prefix)?;
 
     for fp in patches {
         let path_str = fp
             .target_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let path_adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let path_adjusted = adjust_path_in_context(
+            path_str,
+            args.strip,
+            args.directory.as_deref(),
+            worktree_prefix,
+        );
+        let patch_ws_mode =
+            ws_mode_for_patch_path(ws_mode, attr_context, &path_adjusted, worktree_prefix);
         let path = PathBuf::from(&path_adjusted);
 
         if fp.is_deleted {
@@ -2520,7 +2755,7 @@ fn apply_to_worktree(
                 fs::create_dir_all(&path)?;
                 continue;
             }
-            let content = apply_hunks("", &fp.hunks, ws_mode).with_context(|| {
+            let content = apply_hunks("", &fp.hunks, patch_ws_mode).with_context(|| {
                 format!("failed to apply hunks for new file {}", path.display())
             })?;
             write_worktree_path(&path, &content, fp.new_mode.as_deref(), None)?;
@@ -2529,7 +2764,9 @@ fn apply_to_worktree(
 
         let source_adjusted = fp
             .source_path()
-            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|p| {
+                adjust_path_in_context(p, args.strip, args.directory.as_deref(), worktree_prefix)
+            })
             .unwrap_or_else(|| path_adjusted.clone());
         let read_path = PathBuf::from(&source_adjusted);
         let source_contains_target =
@@ -2671,10 +2908,10 @@ fn apply_to_worktree(
         }
 
         let (new_content, rejected_hunks) = if args.reject {
-            apply_hunks_with_reject(&old_content, &fp.hunks, ws_mode)
+            apply_hunks_with_reject(&old_content, &fp.hunks, patch_ws_mode)
                 .with_context(|| format!("failed to apply patch to {}", path.display()))?
         } else {
-            let content = apply_hunks(&old_content, &fp.hunks, ws_mode)
+            let content = apply_hunks(&old_content, &fp.hunks, patch_ws_mode)
                 .with_context(|| format!("failed to apply patch to {}", path.display()))?;
             (content, Vec::new())
         };
@@ -2705,7 +2942,13 @@ fn apply_to_worktree(
 }
 
 /// Apply patches to the index only (--cached).
-fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMode) -> Result<()> {
+fn apply_to_index_with_attrs(
+    patches: &[FilePatch],
+    args: &Args,
+    ws_mode: ApplyWhitespaceMode,
+    attr_context: Option<&ApplyWhitespaceAttrContext>,
+    worktree_prefix: &str,
+) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let mut index = match Index::load(&repo.index_path()) {
         Ok(idx) => idx,
@@ -2855,10 +3098,12 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
             }
         }
 
+        let patch_ws_mode =
+            ws_mode_for_patch_path(ws_mode, attr_context, &target_adjusted, worktree_prefix);
         let new_content = if fp.hunks.is_empty() {
             old_content.clone()
         } else {
-            apply_hunks(&old_content, &fp.hunks, ws_mode)
+            apply_hunks(&old_content, &fp.hunks, patch_ws_mode)
                 .with_context(|| format!("failed to apply patch to {target_adjusted}"))?
         };
 
@@ -2985,12 +3230,23 @@ fn apply_intent_to_add_entries(patches: &[FilePatch], args: &Args) -> Result<()>
 }
 
 /// Check if patches apply cleanly without modifying anything.
-fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMode) -> Result<()> {
+fn check_patches(
+    patches: &[FilePatch],
+    args: &Args,
+    ws_mode: ApplyWhitespaceMode,
+    worktree_prefix: &str,
+    attr_context: Option<&ApplyWhitespaceAttrContext>,
+) -> Result<()> {
     for fp in patches {
         let path_str = fp
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let path = PathBuf::from(adjust_path(path_str, args.strip, args.directory.as_deref()));
+        let path = PathBuf::from(adjust_path_in_context(
+            path_str,
+            args.strip,
+            args.directory.as_deref(),
+            worktree_prefix,
+        ));
 
         if fp.is_deleted {
             if !path.exists() {
@@ -2999,12 +3255,19 @@ fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMod
             continue;
         }
 
+        let patch_ws_mode = ws_mode_for_patch_path(
+            ws_mode,
+            attr_context,
+            path.to_string_lossy().as_ref(),
+            worktree_prefix,
+        );
+
         if fp.is_new {
             if path.exists() {
                 bail!("{}: already exists", path.display());
             }
             // Verify hunks apply to empty content
-            apply_hunks("", &fp.hunks, ws_mode).with_context(|| {
+            apply_hunks("", &fp.hunks, patch_ws_mode).with_context(|| {
                 format!(
                     "patch does not apply cleanly to new file {}",
                     path.display()
@@ -3015,7 +3278,14 @@ fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMod
 
         let read_path = fp
             .source_path()
-            .map(|p| PathBuf::from(adjust_path(p, args.strip, args.directory.as_deref())))
+            .map(|p| {
+                PathBuf::from(adjust_path_in_context(
+                    p,
+                    args.strip,
+                    args.directory.as_deref(),
+                    worktree_prefix,
+                ))
+            })
             .unwrap_or_else(|| path.clone());
         let old_content = match fs::read_to_string(&read_path) {
             Ok(content) => content,
@@ -3033,7 +3303,7 @@ fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMod
         if let Some(expected_oid) = fp.old_oid.as_deref() {
             verify_old_oid_matches_content(expected_oid, &old_content)?;
         }
-        apply_hunks(&old_content, &fp.hunks, ws_mode)
+        apply_hunks(&old_content, &fp.hunks, patch_ws_mode)
             .with_context(|| format!("patch does not apply cleanly to {}", path.display()))?;
     }
 
