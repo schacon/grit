@@ -617,7 +617,7 @@ pub fn diff_index_to_worktree(
         if is_intent_to_add {
             match fs::symlink_metadata(&file_path) {
                 Ok(meta) => {
-                    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
+                    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, false, &config);
                     let worktree_oid = hash_worktree_file(
                         odb,
                         &file_path,
@@ -710,7 +710,7 @@ pub fn diff_index_to_worktree(
                 // Hash the worktree blob. We cannot skip hashing when stat matches: two different
                 // contents can share the same size (e.g. `foo` vs `bar`), and rapid edits can
                 // leave timestamps looking "unchanged" relative to the index (t4015-diff-whitespace).
-                let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
+                let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, false, &config);
                 let worktree_oid = hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
 
                 // If clean conversion disagrees with the index but raw bytes match the
@@ -787,7 +787,7 @@ pub fn diff_index_to_worktree(
         });
 
         if let Some(meta) = wt_meta {
-            let file_attrs = crlf::get_file_attrs(&attrs, &path, &config);
+            let file_attrs = crlf::get_file_attrs(&attrs, &path, false, &config);
             let wt_oid = hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, &path)?;
             let wt_mode = mode_from_metadata(&meta);
             if wt_oid != base_entry.oid || wt_mode != base_entry.mode {
@@ -853,7 +853,7 @@ pub fn worktree_differs_from_index_entry(
     let config = ConfigSet::load(Some(&git_dir), true).unwrap_or_else(|_| ConfigSet::new());
     let conv = crlf::ConversionConfig::from_config(&config);
     let attrs = crlf::load_gitattributes(work_tree);
-    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
+    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, false, &config);
     let worktree_oid =
         hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
 
@@ -1053,7 +1053,7 @@ pub fn diff_tree_to_worktree(
                 }
 
                 // Stat or content differs — hash the file
-                let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
+                let file_attrs = crlf::get_file_attrs(&attrs, path, false, &config);
                 let wt_oid = hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
                 let wt_mode = mode_from_metadata(meta);
                 if wt_oid != te.oid || wt_mode != te.mode {
@@ -1084,7 +1084,7 @@ pub fn diff_tree_to_worktree(
             }
             (None, Some(ref meta)) => {
                 // In index but not in tree, and exists in worktree
-                let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
+                let file_attrs = crlf::get_file_attrs(&attrs, path, false, &config);
                 let wt_oid = hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
                 let wt_mode = mode_from_metadata(meta);
                 result.push(DiffEntry {

@@ -83,7 +83,7 @@ pub fn run(args: Args) -> Result<()> {
                 std::fs::create_dir_all(parent)?;
             }
             let output = if let Some(ref cfg) = config {
-                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, cfg);
+                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, false, cfg);
                 let conv = grit_lib::crlf::ConversionConfig::from_config(cfg);
                 grit_lib::crlf::convert_to_worktree(content, path, &conv, &file_attrs, None, None)
                     .map_err(|e| anyhow::anyhow!("{e}"))?
@@ -323,7 +323,8 @@ fn checkout_entries(
             std::os::unix::fs::symlink(target, &abs)?;
         } else {
             let data = if let (Some(config), Some(conv)) = (&config, &conv) {
-                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, config);
+                let file_attrs =
+                    grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, false, config);
                 let oid_hex = entry.oid.to_string();
                 let smudge_meta =
                     grit_lib::filter_process::smudge_meta_for_checkout(repo, &oid_hex);

@@ -515,7 +515,7 @@ fn read_blob_content_for_blame(
         return Ok(String::from_utf8_lossy(&obj.data).into_owned());
     };
 
-    let attrs = get_file_attrs(&ctx.attrs, path, &ctx.config);
+    let attrs = get_file_attrs(&ctx.attrs, path, false, &ctx.config);
     let oid_hex = oid.to_string();
     let worktree_data = grit_lib::crlf::convert_to_worktree(
         &obj.data,
@@ -2604,7 +2604,7 @@ fn read_worktree_content_for_blame(
 
     // Normalize worktree content to git-internal form first (CRLF/text attrs).
     let normalized = if let Some(ctx) = textconv_ctx {
-        let attrs = get_file_attrs(&ctx.attrs, rel_path, &ctx.config);
+        let attrs = get_file_attrs(&ctx.attrs, rel_path, false, &ctx.config);
         convert_to_git(&bytes, rel_path, &ctx.conversion, &attrs)
             .map_err(|e| anyhow::anyhow!("failed to normalize worktree content: {e}"))?
     } else {

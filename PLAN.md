@@ -572,7 +572,7 @@ commit → check it off → move on.
 - [ ] `t5549-fetch-push-http` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — fetch/push functionality using the HTTP protocol
 - [x] `t5704-protocol-violations` ████████████████████ 3/3 — Test responses to violations of the network protocol. In most
 
-- [ ] `t5002-archive-attr-pattern` ███████████████░░░░░ 15/19 (4 left) — git archive attribute pattern tests
+- [x] `t5002-archive-attr-pattern` — git archive attribute pattern tests (19/19)
 - [ ] `t5004-archive-corner-cases` ██████████████░░░░░░ 10/14 (4 left) — test corner cases of git-archive
 - [ ] `t5351-unpack-large-objects` ████████░░░░░░░░░░░░ 3/7 (4 left) — git unpack-objects with large objects
 - [ ] `t5404-tracking-branches` ████████░░░░░░░░░░░░ 3/7 (4 left) — tracking branch update checks for git push

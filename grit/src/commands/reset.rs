@@ -1145,7 +1145,7 @@ fn checkout_merge_reset_worktree(
                 .as_ref()
                 .map(grit_lib::crlf::ConversionConfig::from_config);
             let data = if let (Some(ref cfg), Some(ref cv)) = (&config, &conv) {
-                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, cfg);
+                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, false, cfg);
                 let oid_hex = format!("{}", entry.oid);
                 grit_lib::crlf::convert_to_worktree(
                     &obj.data,
@@ -1348,7 +1348,7 @@ fn checkout_index_to_worktree(
         } else {
             // Apply CRLF conversion if configured
             let data = if let (Some(ref cfg), Some(ref cv)) = (&config, &conv) {
-                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, cfg);
+                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, false, cfg);
                 let oid_hex = format!("{}", entry.oid);
                 let smudge_meta = match smudge {
                     None => grit_lib::filter_process::smudge_meta_for_checkout(repo, &oid_hex),

@@ -987,7 +987,7 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
             // Apply CRLF / smudge conversion (per-path rules: root + nested .gitattributes)
             let attrs =
                 crlf::load_gitattributes_for_checkout(&work_tree, &path_str, new_index, &repo.odb);
-            let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
+            let file_attrs = crlf::get_file_attrs(&attrs, &path_str, false, &config);
             let oid_hex = format!("{}", entry.oid);
             let smudge_meta = grit_lib::filter_process::smudge_meta_for_checkout(repo, &oid_hex);
             let data = crlf::convert_to_worktree(

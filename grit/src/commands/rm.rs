@@ -489,7 +489,7 @@ fn worktree_differs_from_index(
             .as_deref()
             .map(crlf::load_gitattributes)
             .unwrap_or_default();
-        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, false, &config);
 
         // Keep raw bytes for legacy CRLF blobs committed before autocrlf.
         let expected_has_crlf = odb

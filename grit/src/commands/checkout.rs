@@ -2111,7 +2111,7 @@ fn is_worktree_dirty(
         let conv = crlf::ConversionConfig::from_config(&config);
         let rules =
             crlf::load_gitattributes_for_checkout(work_tree, rel.as_ref(), index, &repo.odb);
-        let file_attrs = crlf::get_file_attrs(&rules, rel.as_ref(), &config);
+        let file_attrs = crlf::get_file_attrs(&rules, rel.as_ref(), false, &config);
         let oid = match crlf::convert_to_git(&raw, rel.as_ref(), &conv, &file_attrs) {
             Ok(cleaned) => grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &cleaned),
             Err(_) => grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &raw),
@@ -3538,7 +3538,7 @@ fn write_blob_to_worktree(
         let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
         let conv = crlf::ConversionConfig::from_config(&config);
         let attrs = crlf::load_gitattributes_for_checkout(work_tree, rel_path, index, &repo.odb);
-        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, false, &config);
         if file_attrs.working_tree_encoding.is_none() {
             let abs_path = work_tree.join(rel_path);
             if let Ok(wt_raw) = std::fs::read(&abs_path) {
@@ -3556,7 +3556,7 @@ fn write_blob_to_worktree(
         let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
         let conv = crlf::ConversionConfig::from_config(&config);
         let attrs = crlf::load_gitattributes_for_checkout(work_tree, rel_path, index, &repo.odb);
-        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, false, &config);
         let oid_hex = format!("{oid}");
         let smudge_meta = if full_smudge_meta {
             filter_process::smudge_meta_for_checkout(repo, &oid_hex)
@@ -3644,7 +3644,7 @@ fn checkout_conflicted_path_with_merge(
 
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let attrs = crlf::load_gitattributes(work_tree);
-    let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+    let file_attrs = crlf::get_file_attrs(&attrs, rel_path, false, &config);
     let marker_size = if let Some(raw) = &file_attrs.conflict_marker_size {
         match raw.parse::<usize>() {
             Ok(size) => size,

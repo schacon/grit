@@ -232,7 +232,7 @@ pub fn matcher_for_path(
     rules: &[AttrRule],
     rel_path: &str,
 ) -> Result<Option<FuncnameMatcher>, String> {
-    let attrs = get_file_attrs(rules, rel_path, config);
+    let attrs = get_file_attrs(rules, rel_path, false, config);
     let DiffAttr::Driver(ref driver) = attrs.diff_attr else {
         return Ok(None);
     };

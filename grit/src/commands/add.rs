@@ -503,7 +503,7 @@ fn run_renormalize(
 
     for (path, oid, _mode) in entries {
         let rel_path = String::from_utf8_lossy(&path).to_string();
-        let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &add_cfg.config);
+        let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, false, &add_cfg.config);
 
         // Read current blob content
         let obj = odb.read(&oid).context("reading blob for renormalize")?;
@@ -1152,7 +1152,7 @@ fn stage_file(
     } else {
         let raw = fs::read(abs_path)?;
         // Apply CRLF / clean-filter conversion
-        let file_attrs = crlf::get_file_attrs(&add_cfg.attrs, rel_path, &add_cfg.config);
+        let file_attrs = crlf::get_file_attrs(&add_cfg.attrs, rel_path, false, &add_cfg.config);
         // Apply working-tree-encoding conversion (e.g. UTF-16 → UTF-8)
         let raw = if let Some(ref encoding) = file_attrs.working_tree_encoding {
             convert_from_working_tree_encoding(&raw, encoding).with_context(|| {

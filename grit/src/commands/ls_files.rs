@@ -346,7 +346,7 @@ pub fn run(args: Args) -> Result<()> {
             let attr_str = {
                 use grit_lib::crlf;
                 let attrs = crlf::load_gitattributes(work_tree);
-                let file_attrs = crlf::get_file_attrs(&attrs, path_str, &config);
+                let file_attrs = crlf::get_file_attrs(&attrs, path_str, false, &config);
                 match file_attrs.text {
                     crlf::TextAttr::Set => match file_attrs.eol {
                         crlf::EolAttr::Lf => "text=auto eol=lf".to_string(),

@@ -51,7 +51,7 @@ fn attrs_for_repo_path(git_dir: &Path, path: &str) -> FileAttrs {
     let work_tree = git_dir.parent().unwrap_or(git_dir);
     let rules = load_gitattributes(work_tree);
     let config = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
-    get_file_attrs(&rules, path, &config)
+    get_file_attrs(&rules, path, false, &config)
 }
 
 /// True if diff should treat this path as binary (NUL in blob or `-diff` / `diff=unset`).
@@ -130,7 +130,7 @@ pub fn convert_blob_to_worktree_for_path(
         Some(idx) => crate::crlf::load_gitattributes_for_checkout(work_tree, path, idx, odb),
         None => crate::crlf::load_gitattributes(work_tree),
     };
-    let file_attrs = crate::crlf::get_file_attrs(&rules, path, &config);
+    let file_attrs = crate::crlf::get_file_attrs(&rules, path, false, &config);
     crate::crlf::convert_to_worktree(blob, path, &conv, &file_attrs, oid_hex, None)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
 }

@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -855,7 +855,7 @@ t4301-merge-tree-write-tree	t4	yes	0	0	0	false	timeout	0
 t5000-tar-tree	t5	yes	0	0	0	false	timeout	0
 t5000-write-tree	t5	yes	5	5	0	true	ok	0
 t5001-archive-attr	t5	yes	44	27	17	false	ok	0
-t5002-archive-attr-pattern	t5	yes	19	5	14	false	ok	0
+t5002-archive-attr-pattern	t5	yes	19	19	0	true	ok	0
 t5003-archive-zip	t5	yes	82	78	4	false	ok	0
 t5004-archive-corner-cases	t5	yes	14	9	5	false	ok	0
 t5100-count-objects	t5	yes	26	24	2	false	ok	0
