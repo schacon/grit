@@ -372,6 +372,45 @@ fn run_test_tool_crontab(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn run_test_tool_revision_walk_once() -> Result<()> {
+    let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| "/usr/bin/git".into());
+    let output = ProcessCommand::new(&git_bin)
+        .arg("log")
+        .arg("--all")
+        .arg("--pretty=format: %m %s")
+        .stderr(Stdio::inherit())
+        .output()?;
+
+    if !output.status.success() {
+        exit_with_status(output.status);
+    }
+
+    if output.stdout.is_empty() {
+        std::process::exit(1);
+    }
+
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(&output.stdout)?;
+    if !output.stdout.ends_with(b"\n") {
+        stdout.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
+fn run_test_tool_revision_walking(rest: &[String]) -> Result<()> {
+    match rest.get(1).map(String::as_str).unwrap_or("") {
+        "run-twice" => {
+            println!("1st");
+            run_test_tool_revision_walk_once()?;
+            println!("2nd");
+            run_test_tool_revision_walk_once()?;
+            Ok(())
+        }
+        other => bail!("test-tool revision-walking: unknown subcommand '{other}'"),
+    }
+}
+
 /// Global options parsed from argv before the subcommand.
 #[derive(Default)]
 struct GlobalOpts {
@@ -1679,6 +1718,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "trace2" => run_test_tool_trace2(rest),
                 "genzeros" => run_test_tool_genzeros(rest),
                 "crontab" => run_test_tool_crontab(rest),
+                "revision-walking" => run_test_tool_revision_walking(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

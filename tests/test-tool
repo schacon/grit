@@ -139,6 +139,9 @@ case "$1" in
   wildmatch)
     shift
     exec git test-tool wildmatch "$@" ;;
+  revision-walking)
+    shift
+    exec git test-tool revision-walking "$@" ;;
   *)
     echo "test-tool: unknown subcommand '$1'" >&2
     exit 1 ;;
