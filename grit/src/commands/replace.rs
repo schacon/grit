@@ -13,6 +13,22 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::io::{self, Write};
 
+fn replace_ref_base() -> String {
+    let base = std::env::var("GIT_REPLACE_REF_BASE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "refs/replace/".to_owned());
+    if base.ends_with('/') {
+        base
+    } else {
+        format!("{base}/")
+    }
+}
+
+fn replace_refname_for_oid(oid: &ObjectId) -> String {
+    format!("{}{}", replace_ref_base(), oid.to_hex())
+}
+
 /// Arguments for `grit replace`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Create, list, delete refs to replace objects")]
@@ -139,7 +155,7 @@ fn create_replace_ref(
         .read(&replacement_oid)
         .with_context(|| format!("object {} not found", replacement_oid.to_hex()))?;
 
-    let refname = format!("refs/replace/{}", object_oid.to_hex());
+    let refname = replace_refname_for_oid(&object_oid);
 
     // Check if replace ref already exists
     if !force && resolve_ref(&repo.git_dir, &refname).is_ok() {
@@ -156,14 +172,15 @@ fn create_replace_ref(
 
 /// List replace refs, optionally filtered by a glob pattern.
 fn list_replace_refs(repo: &Repository, pattern: Option<&str>, format: &ListFormat) -> Result<()> {
-    let refs = list_refs(&repo.git_dir, "refs/replace/")?;
+    let replace_base = replace_ref_base();
+    let refs = list_refs(&repo.git_dir, &replace_base)?;
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
     for (refname, replacement_oid) in &refs {
         // Extract the original SHA from the ref name
-        let original_hex = refname.strip_prefix("refs/replace/").unwrap_or(refname);
+        let original_hex = refname.strip_prefix(&replace_base).unwrap_or(refname);
 
         // Apply glob pattern filter if given
         if let Some(pat) = pattern {
@@ -265,7 +282,7 @@ fn create_graft(
         );
     }
 
-    let refname = format!("refs/replace/{}", commit_oid.to_hex());
+    let refname = replace_refname_for_oid(&commit_oid);
     if !force && resolve_ref(&repo.git_dir, &refname).is_ok() {
         bail!(
             "replace ref '{}' already exists; use -f to force",
@@ -326,7 +343,7 @@ fn edit_and_replace(repo: &Repository, object_str: &str, force: bool) -> Result<
         return Ok(());
     }
 
-    let refname = format!("refs/replace/{}", oid.to_hex());
+    let refname = replace_refname_for_oid(&oid);
     if !force && resolve_ref(&repo.git_dir, &refname).is_ok() {
         bail!(
             "replace ref '{}' already exists; use -f to force",
@@ -357,7 +374,7 @@ fn delete_replace_refs(repo: &Repository, args: &Args) -> Result<()> {
     for obj_str in objects {
         let oid = resolve_revision(repo, obj_str)
             .with_context(|| format!("Failed to resolve '{obj_str}'"))?;
-        let refname = format!("refs/replace/{}", oid.to_hex());
+        let refname = replace_refname_for_oid(&oid);
 
         if resolve_ref(&repo.git_dir, &refname).is_err() {
             bail!("replace ref for '{}' not found", oid.to_hex());

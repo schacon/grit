@@ -239,7 +239,18 @@ impl Repository {
         if std::env::var_os("GIT_NO_REPLACE_OBJECTS").is_some() {
             return self.odb.read(oid);
         }
-        let replace_ref = self.git_dir.join(format!("refs/replace/{}", oid.to_hex()));
+        let replace_base = std::env::var("GIT_REPLACE_REF_BASE")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "refs/replace/".to_owned());
+        let replace_base = if replace_base.ends_with('/') {
+            replace_base
+        } else {
+            format!("{replace_base}/")
+        };
+        let replace_ref = self
+            .git_dir
+            .join(format!("{}{}", replace_base, oid.to_hex()));
         if replace_ref.is_file() {
             if let Ok(content) = std::fs::read_to_string(&replace_ref) {
                 let hex = content.trim();

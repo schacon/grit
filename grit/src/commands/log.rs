@@ -580,12 +580,16 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         Some(collect_decorations(&repo, decorate_full)?)
     };
+    let decoration_colors = if use_color {
+        Some(load_decoration_colors(&repo))
+    } else {
+        None
+    };
 
     // Walk commits
     let effective_pathspecs = if args.follow { &[][..] } else { &pathspecs[..] };
     let commits = walk_commits(
-        &repo.odb,
-        &repo.git_dir,
+        &repo,
         &start_oids,
         if args.follow { None } else { args.max_count }, // follow needs full walk for rename tracking
         args.skip,
@@ -737,6 +741,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &args,
             decorations.as_ref(),
             use_color,
+            decoration_colors.as_ref(),
             &notes_map,
             &repo.odb,
         )?;
@@ -865,6 +870,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             args,
             decorations.as_ref(),
             false,
+            None,
             &notes_map,
             &repo.odb,
         )?;
@@ -1295,8 +1301,7 @@ fn collect_reachable(odb: &Odb, starts: &[ObjectId]) -> Result<HashSet<ObjectId>
 }
 
 fn walk_commits(
-    odb: &Odb,
-    git_dir: &Path,
+    repo: &Repository,
     start: &[ObjectId],
     max_count: Option<usize>,
     skip: Option<usize>,
@@ -1314,27 +1319,30 @@ fn walk_commits(
         return Ok(Vec::new());
     }
 
-    let shallow_boundaries = load_shallow_boundaries(git_dir);
+    let shallow_boundaries = load_shallow_boundaries(&repo.git_dir);
 
     let mut visited: HashSet<ObjectId> = excluded.clone();
     // Use a priority queue sorted by commit date (descending) for correct traversal order.
-    // Each entry is (timestamp, oid) so BinaryHeap gives us highest timestamp first.
-    let mut queue: std::collections::BinaryHeap<(i64, ObjectId)> =
+    // Each entry is (timestamp, insertion-order, oid) so BinaryHeap gives us highest
+    // timestamp first while preserving a deterministic order for timestamp ties.
+    let mut queue: std::collections::BinaryHeap<(i64, std::cmp::Reverse<usize>, ObjectId)> =
         std::collections::BinaryHeap::new();
+    let mut seq = 0usize;
     for oid in start {
-        let ts = read_commit_timestamp(odb, oid);
-        queue.push((ts, *oid));
+        let ts = read_commit_timestamp(repo, oid);
+        queue.push((ts, std::cmp::Reverse(seq), *oid));
+        seq += 1;
     }
     let mut result = Vec::new();
     let mut skipped = 0;
     let skip_n = skip.unwrap_or(0);
 
-    while let Some((_ts, oid)) = queue.pop() {
+    while let Some((_ts, _ord, oid)) = queue.pop() {
         if !visited.insert(oid) {
             continue;
         }
 
-        let obj = odb.read(&oid)?;
+        let obj = repo.read_replaced(&oid)?;
         let commit = parse_commit(&obj.data)?;
 
         let info = CommitInfo {
@@ -1350,14 +1358,16 @@ fn walk_commits(
         if !shallow_boundaries.contains(&oid) {
             if first_parent {
                 if let Some(parent) = commit.parents.first() {
-                    let ts = read_commit_timestamp(odb, parent);
-                    queue.push((ts, *parent));
+                    let ts = read_commit_timestamp(repo, parent);
+                    queue.push((ts, std::cmp::Reverse(seq), *parent));
+                    seq += 1;
                 }
             } else {
                 for parent in &commit.parents {
                     if !visited.contains(parent) {
-                        let ts = read_commit_timestamp(odb, parent);
-                        queue.push((ts, *parent));
+                        let ts = read_commit_timestamp(repo, parent);
+                        queue.push((ts, std::cmp::Reverse(seq), *parent));
+                        seq += 1;
                     }
                 }
             }
@@ -1386,7 +1396,7 @@ fn walk_commits(
                 continue;
             }
         }
-        if !pathspecs.is_empty() && !commit_touches_paths(odb, &info, pathspecs)? {
+        if !pathspecs.is_empty() && !commit_touches_paths(&repo.odb, &info, pathspecs)? {
             continue;
         }
 
@@ -1455,8 +1465,8 @@ fn path_matches(path: &str, pathspec: &str) -> bool {
 
 /// Extract unix timestamp from an author/committer line.
 /// Read the committer timestamp from a commit object for priority queue ordering.
-fn read_commit_timestamp(odb: &Odb, oid: &ObjectId) -> i64 {
-    match odb.read(oid) {
+fn read_commit_timestamp(repo: &Repository, oid: &ObjectId) -> i64 {
+    match repo.read_replaced(oid) {
         Ok(obj) => match parse_commit(&obj.data) {
             Ok(commit) => extract_timestamp(&commit.committer),
             Err(_) => 0,
@@ -1574,24 +1584,40 @@ fn format_commit(
     oid: &ObjectId,
     info: &CommitInfo,
     args: &Args,
-    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
     use_color: bool,
+    decoration_colors: Option<&DecorationColorSettings>,
     notes_map: &std::collections::HashMap<ObjectId, Vec<u8>>,
     odb: &Odb,
 ) -> Result<()> {
     let hex = oid.to_hex();
-    let abbrev_len = parse_abbrev(&args.abbrev);
+    let abbrev_len = if args.no_abbrev {
+        40
+    } else {
+        parse_abbrev(&args.abbrev)
+    };
 
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = info.message.lines().next().unwrap_or("");
-        let dec = format_decoration(&hex, decorations);
-        writeln!(
-            out,
-            "{}{} {}",
-            &hex[..abbrev_len.min(hex.len())],
-            dec,
-            first_line
-        )?;
+        let mut line = String::new();
+        let short_hex = &hex[..abbrev_len.min(hex.len())];
+        if use_color {
+            if let Some(colors) = decoration_colors {
+                line.push_str(&colors.commit);
+                line.push_str(short_hex);
+                line.push_str("\x1b[m");
+                line.push_str(&format_decoration_colored(&hex, decorations, colors));
+            } else {
+                line.push_str(short_hex);
+                line.push_str(&format_decoration(&hex, decorations));
+            }
+        } else {
+            line.push_str(short_hex);
+            line.push_str(&format_decoration(&hex, decorations));
+        }
+        line.push(' ');
+        line.push_str(first_line);
+        writeln!(out, "{line}")?;
         return Ok(());
     }
 
@@ -1614,6 +1640,7 @@ fn format_commit(
                 date_format,
                 abbrev_len,
                 use_color,
+                decoration_colors,
             );
             if is_tformat {
                 if args.null_terminator {
@@ -1626,7 +1653,15 @@ fn format_commit(
             }
         }
         Some("short") => {
-            let dec = format_decoration(&hex, decorations);
+            let dec = if use_color {
+                if let Some(colors) = decoration_colors {
+                    format_decoration_colored(&hex, decorations, colors)
+                } else {
+                    format_decoration(&hex, decorations)
+                }
+            } else {
+                format_decoration(&hex, decorations)
+            };
             writeln!(out, "commit {hex}{dec}")?;
             if info.parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = info
@@ -1648,9 +1683,21 @@ fn format_commit(
             writeln!(out)?;
         }
         Some("medium") | None => {
-            let dec = format_decoration(&hex, decorations);
+            let dec = if use_color {
+                if let Some(colors) = decoration_colors {
+                    format_decoration_colored(&hex, decorations, colors)
+                } else {
+                    format_decoration(&hex, decorations)
+                }
+            } else {
+                format_decoration(&hex, decorations)
+            };
             if use_color {
-                writeln!(out, "\x1b[33mcommit {hex}\x1b[m{dec}")?;
+                if let Some(colors) = decoration_colors {
+                    writeln!(out, "{}commit {hex}\x1b[m{dec}", colors.commit)?;
+                } else {
+                    writeln!(out, "\x1b[33mcommit {hex}\x1b[m{dec}")?;
+                }
             } else {
                 writeln!(out, "commit {hex}{dec}")?;
             }
@@ -1679,7 +1726,15 @@ fn format_commit(
             writeln!(out)?;
         }
         Some("full") => {
-            let dec = format_decoration(&hex, decorations);
+            let dec = if use_color {
+                if let Some(colors) = decoration_colors {
+                    format_decoration_colored(&hex, decorations, colors)
+                } else {
+                    format_decoration(&hex, decorations)
+                }
+            } else {
+                format_decoration(&hex, decorations)
+            };
             writeln!(out, "commit {hex}{dec}")?;
             if info.parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = info
@@ -1702,7 +1757,15 @@ fn format_commit(
             writeln!(out)?;
         }
         Some("fuller") => {
-            let dec = format_decoration(&hex, decorations);
+            let dec = if use_color {
+                if let Some(colors) = decoration_colors {
+                    format_decoration_colored(&hex, decorations, colors)
+                } else {
+                    format_decoration(&hex, decorations)
+                }
+            } else {
+                format_decoration(&hex, decorations)
+            };
             writeln!(out, "commit {hex}{dec}")?;
             if info.parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = info
@@ -1744,6 +1807,7 @@ fn format_commit(
                 date_format,
                 abbrev_len,
                 use_color,
+                decoration_colors,
             );
             writeln!(out, "{formatted}")?;
         }
@@ -1757,10 +1821,11 @@ fn apply_format_string(
     template: &str,
     oid: &ObjectId,
     info: &CommitInfo,
-    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
     date_format: Option<&str>,
     abbrev_len: usize,
     use_color: bool,
+    decoration_colors: Option<&DecorationColorSettings>,
 ) -> String {
     let hex = oid.to_hex();
 
@@ -2119,13 +2184,29 @@ fn apply_format_string(
                 Some('d') => {
                     chars.next();
                     // Decorations
-                    let dec = format_decoration(&hex, decorations);
+                    let dec = if use_color {
+                        if let Some(colors) = decoration_colors {
+                            format_decoration_colored(&hex, decorations, colors)
+                        } else {
+                            format_decoration(&hex, decorations)
+                        }
+                    } else {
+                        format_decoration(&hex, decorations)
+                    };
                     result.push_str(&dec);
                 }
                 Some('D') => {
                     chars.next();
                     // Decorations without parens
-                    let dec = format_decoration_no_parens(&hex, decorations);
+                    let dec = if use_color {
+                        if let Some(colors) = decoration_colors {
+                            format_decoration_no_parens_colored(&hex, decorations, colors)
+                        } else {
+                            format_decoration_no_parens(&hex, decorations)
+                        }
+                    } else {
+                        format_decoration_no_parens(&hex, decorations)
+                    };
                     result.push_str(&dec);
                 }
                 Some('n') => {
@@ -2350,35 +2431,97 @@ fn format_ansi_color_spec(spec: &str) -> String {
             _ => None,
         }
     }
-    let mut codes = Vec::new();
-    let mut fg_set = false;
+    let mut bold = false;
+    let mut dim = false;
+    let mut italic = false;
+    let mut underline = false;
+    let mut blink = false;
+    let mut reverse = false;
+    let mut strike = false;
+    let mut nobold_dim = false;
+    let mut noitalic = false;
+    let mut nounderline = false;
+    let mut noblink = false;
+    let mut noreverse = false;
+    let mut nostrike = false;
+    let mut fg: Option<u8> = None;
+    let mut bg: Option<u8> = None;
+
     for part in spec.split_whitespace() {
         match part {
-            "bold" => codes.push("1".to_owned()),
-            "dim" => codes.push("2".to_owned()),
-            "italic" => codes.push("3".to_owned()),
-            "ul" | "underline" => codes.push("4".to_owned()),
-            "blink" => codes.push("5".to_owned()),
-            "reverse" => codes.push("7".to_owned()),
-            "strike" => codes.push("9".to_owned()),
-            "nobold" | "nodim" => codes.push("22".to_owned()),
-            "noitalic" => codes.push("23".to_owned()),
-            "noul" | "nounderline" => codes.push("24".to_owned()),
-            "noblink" => codes.push("25".to_owned()),
-            "noreverse" => codes.push("27".to_owned()),
-            "nostrike" => codes.push("29".to_owned()),
+            "normal" => return "\x1b[m".to_owned(),
+            "bold" => bold = true,
+            "dim" => dim = true,
+            "italic" => italic = true,
+            "ul" | "underline" => underline = true,
+            "blink" => blink = true,
+            "reverse" => reverse = true,
+            "strike" => strike = true,
+            "nobold" | "nodim" => nobold_dim = true,
+            "noitalic" => noitalic = true,
+            "noul" | "nounderline" => nounderline = true,
+            "noblink" => noblink = true,
+            "noreverse" => noreverse = true,
+            "nostrike" => nostrike = true,
             _ => {
                 if let Some(c) = color_code(part) {
-                    if !fg_set {
-                        codes.push(format!("{}", 30 + c));
-                        fg_set = true;
+                    if fg.is_none() {
+                        fg = Some(c);
                     } else {
-                        codes.push(format!("{}", 40 + c));
+                        bg = Some(c);
                     }
                 }
             }
         }
     }
+
+    let mut codes = Vec::new();
+    if bold {
+        codes.push("1".to_owned());
+    }
+    if dim {
+        codes.push("2".to_owned());
+    }
+    if italic {
+        codes.push("3".to_owned());
+    }
+    if underline {
+        codes.push("4".to_owned());
+    }
+    if blink {
+        codes.push("5".to_owned());
+    }
+    if reverse {
+        codes.push("7".to_owned());
+    }
+    if strike {
+        codes.push("9".to_owned());
+    }
+    if nobold_dim {
+        codes.push("22".to_owned());
+    }
+    if noitalic {
+        codes.push("23".to_owned());
+    }
+    if nounderline {
+        codes.push("24".to_owned());
+    }
+    if noblink {
+        codes.push("25".to_owned());
+    }
+    if noreverse {
+        codes.push("27".to_owned());
+    }
+    if nostrike {
+        codes.push("29".to_owned());
+    }
+    if let Some(fg_color) = fg {
+        codes.push(format!("{}", 30 + fg_color));
+    }
+    if let Some(bg_color) = bg {
+        codes.push(format!("{}", 40 + bg_color));
+    }
+
     if codes.is_empty() {
         String::new()
     } else {
@@ -2627,78 +2770,185 @@ fn resolve_commitish_revision(repo: &Repository, rev: &str) -> Result<ObjectId> 
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+enum DecorationKind {
+    Head,
+    Branch,
+    RemoteBranch,
+    Tag,
+    Stash,
+    Grafted,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct DecorationRef {
+    label: String,
+    kind: DecorationKind,
+}
+
+#[derive(Clone, Debug)]
+struct DecorationColorSettings {
+    commit: String,
+    branch: String,
+    remote_branch: String,
+    tag: String,
+    stash: String,
+    head: String,
+    grafted: String,
+}
+
+fn load_decoration_colors(repo: &Repository) -> DecorationColorSettings {
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let pick = |key: &str, default: &str| {
+        let spec = config.get(key).unwrap_or_else(|| default.to_owned());
+        format_ansi_color_spec(&spec)
+    };
+    DecorationColorSettings {
+        commit: pick("color.diff.commit", "yellow"),
+        branch: pick("color.decorate.branch", "green"),
+        remote_branch: pick("color.decorate.remoteBranch", "red"),
+        tag: pick("color.decorate.tag", "yellow"),
+        stash: pick("color.decorate.stash", "magenta"),
+        head: pick("color.decorate.HEAD", "cyan"),
+        grafted: pick("color.decorate.grafted", "blue"),
+    }
+}
+
 /// Collect ref name → OID decorations from the repository.
 fn collect_decorations(
     repo: &Repository,
     full: bool,
-) -> Result<std::collections::HashMap<String, Vec<String>>> {
-    let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    let mut head_target: Option<(String, String)> = None;
+) -> Result<std::collections::HashMap<String, Vec<DecorationRef>>> {
+    let mut map: std::collections::HashMap<String, Vec<DecorationRef>> =
+        std::collections::HashMap::new();
+    let mut head_target: Option<(String, DecorationRef)> = None;
 
-    // HEAD
     let head = resolve_head(&repo.git_dir)?;
     if let Some(oid) = head.oid() {
         let hex = oid.to_hex();
-        let label = match &head {
+        let head_ref = match &head {
             HeadState::Branch { short_name, .. } => {
                 let branch_label = if full {
                     format!("refs/heads/{short_name}")
                 } else {
                     short_name.to_owned()
                 };
-                head_target = Some((hex.clone(), branch_label));
-                if full {
+                head_target = Some((
+                    hex.clone(),
+                    DecorationRef {
+                        label: branch_label.clone(),
+                        kind: DecorationKind::Branch,
+                    },
+                ));
+                let head_label = if full {
                     format!("HEAD -> refs/heads/{short_name}")
                 } else {
                     format!("HEAD -> {short_name}")
+                };
+                DecorationRef {
+                    label: head_label,
+                    kind: DecorationKind::Head,
                 }
             }
-            _ => "HEAD".to_owned(),
+            _ => DecorationRef {
+                label: "HEAD".to_owned(),
+                kind: DecorationKind::Head,
+            },
         };
-        map.entry(hex).or_default().push(label);
+        map.entry(hex).or_default().push(head_ref);
     }
 
     if full {
         collect_refs_from_dir(
+            &repo.git_dir,
             &repo.odb,
             &repo.git_dir.join("refs/heads"),
             "refs/heads/",
             "refs/heads/",
+            DecorationKind::Branch,
+            false,
             &mut map,
         )?;
         collect_refs_from_dir(
+            &repo.git_dir,
             &repo.odb,
             &repo.git_dir.join("refs/tags"),
             "refs/tags/",
             "tag: refs/tags/",
+            DecorationKind::Tag,
+            true,
+            &mut map,
+        )?;
+        collect_refs_from_dir(
+            &repo.git_dir,
+            &repo.odb,
+            &repo.git_dir.join("refs/remotes"),
+            "refs/remotes/",
+            "refs/remotes/",
+            DecorationKind::RemoteBranch,
+            false,
             &mut map,
         )?;
     } else {
         collect_refs_from_dir(
+            &repo.git_dir,
             &repo.odb,
             &repo.git_dir.join("refs/heads"),
             "refs/heads/",
             "",
+            DecorationKind::Branch,
+            false,
             &mut map,
         )?;
         collect_refs_from_dir(
+            &repo.git_dir,
             &repo.odb,
             &repo.git_dir.join("refs/tags"),
             "refs/tags/",
             "tag: ",
+            DecorationKind::Tag,
+            true,
+            &mut map,
+        )?;
+        collect_refs_from_dir(
+            &repo.git_dir,
+            &repo.odb,
+            &repo.git_dir.join("refs/remotes"),
+            "refs/remotes/",
+            "",
+            DecorationKind::RemoteBranch,
+            false,
             &mut map,
         )?;
     }
 
-    // Avoid duplicate current branch decoration when we already show
-    // "HEAD -> <branch>" for the same commit.
-    if let Some((head_hex, branch_label)) = head_target {
-        if let Some(refs) = map.get_mut(&head_hex) {
-            refs.retain(|r| r != &branch_label || r.starts_with("HEAD -> "));
+    let stash_ref = repo.git_dir.join("refs/stash");
+    if let Ok(content) = std::fs::read_to_string(stash_ref) {
+        let raw = content.trim();
+        let oid = if let Some(target) = raw.strip_prefix("ref: ") {
+            grit_lib::refs::resolve_ref(&repo.git_dir, target)
+                .ok()
+                .map(|value| value.to_hex())
+        } else {
+            Some(raw.to_owned())
+        };
+        if let Some(hex) = oid {
+            map.entry(hex).or_default().push(DecorationRef {
+                label: "refs/stash".to_owned(),
+                kind: DecorationKind::Stash,
+            });
         }
     }
 
-    // De-duplicate while preserving order.
+    synthesize_remote_head_decorations(&mut map, full);
+    collect_replace_decorations(repo, &mut map)?;
+
+    if let Some((head_hex, branch_ref)) = head_target {
+        if let Some(refs) = map.get_mut(&head_hex) {
+            refs.retain(|r| r != &branch_ref || r.label.starts_with("HEAD -> "));
+        }
+    }
+
     for refs in map.values_mut() {
         let mut seen = std::collections::HashSet::new();
         refs.retain(|r| seen.insert(r.clone()));
@@ -2707,13 +2957,74 @@ fn collect_decorations(
     Ok(map)
 }
 
+fn synthesize_remote_head_decorations(
+    map: &mut std::collections::HashMap<String, Vec<DecorationRef>>,
+    full: bool,
+) {
+    let mut remote_targets: std::collections::HashMap<String, Vec<(String, String)>> =
+        std::collections::HashMap::new();
+    let mut existing_heads = std::collections::HashSet::new();
+
+    for (oid, refs) in map.iter() {
+        for reference in refs {
+            if reference.kind != DecorationKind::RemoteBranch {
+                continue;
+            }
+            let trimmed = if full {
+                if let Some(rest) = reference.label.strip_prefix("refs/remotes/") {
+                    rest
+                } else {
+                    continue;
+                }
+            } else {
+                reference.label.as_str()
+            };
+            if let Some((remote, branch)) = trimmed.split_once('/') {
+                if branch == "HEAD" {
+                    existing_heads.insert(remote.to_owned());
+                } else {
+                    remote_targets
+                        .entry(remote.to_owned())
+                        .or_default()
+                        .push((branch.to_owned(), oid.clone()));
+                }
+            }
+        }
+    }
+
+    for (remote, targets) in remote_targets {
+        if existing_heads.contains(&remote) || targets.is_empty() {
+            continue;
+        }
+        let chosen = targets
+            .iter()
+            .find(|(branch, _)| branch == "main")
+            .or_else(|| targets.iter().find(|(branch, _)| branch == "master"))
+            .unwrap_or(&targets[0]);
+        let label = if full {
+            format!("refs/remotes/{remote}/HEAD")
+        } else {
+            format!("{remote}/HEAD")
+        };
+        map.entry(chosen.1.clone())
+            .or_default()
+            .push(DecorationRef {
+                label,
+                kind: DecorationKind::RemoteBranch,
+            });
+    }
+}
+
 /// Recursively collect refs from a directory.
 fn collect_refs_from_dir(
+    git_dir: &Path,
     odb: &Odb,
     dir: &std::path::Path,
     strip_prefix: &str,
     display_prefix: &str,
-    map: &mut std::collections::HashMap<String, Vec<String>>,
+    kind: DecorationKind,
+    peel_tag_target: bool,
+    map: &mut std::collections::HashMap<String, Vec<DecorationRef>>,
 ) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -2724,24 +3035,90 @@ fn collect_refs_from_dir(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_refs_from_dir(odb, &path, strip_prefix, display_prefix, map)?;
+            collect_refs_from_dir(
+                git_dir,
+                odb,
+                &path,
+                strip_prefix,
+                display_prefix,
+                kind,
+                peel_tag_target,
+                map,
+            )?;
         } else if let Ok(content) = std::fs::read_to_string(&path) {
-            let hex = content.trim();
+            let raw = content.trim();
+            let hex = if let Some(target) = raw.strip_prefix("ref: ") {
+                grit_lib::refs::resolve_ref(git_dir, target)
+                    .ok()
+                    .map(|oid| oid.to_hex())
+            } else {
+                Some(raw.to_owned())
+            };
             let full_ref = path.to_string_lossy();
-            if let Some(idx) = full_ref.find(strip_prefix) {
+            if let (Some(hex), Some(idx)) = (hex, full_ref.find(strip_prefix)) {
                 let name = &full_ref[idx + strip_prefix.len()..];
                 let label = format!("{display_prefix}{name}");
-                // Dereference annotated tags to the commit they point at
-                let resolved_hex = if display_prefix.contains("tag") {
-                    peel_to_commit_hex(odb, hex).unwrap_or_else(|| hex.to_owned())
+                let resolved_hex = if peel_tag_target {
+                    peel_to_commit_hex(odb, &hex).unwrap_or(hex)
                 } else {
-                    hex.to_owned()
+                    hex
                 };
-                map.entry(resolved_hex).or_default().push(label);
+                map.entry(resolved_hex)
+                    .or_default()
+                    .push(DecorationRef { label, kind });
             }
         }
     }
 
+    Ok(())
+}
+
+fn collect_replace_decorations(
+    repo: &Repository,
+    map: &mut std::collections::HashMap<String, Vec<DecorationRef>>,
+) -> Result<()> {
+    let replace_base = std::env::var("GIT_REPLACE_REF_BASE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "refs/replace/".to_owned());
+    let replace_base = if replace_base.ends_with('/') {
+        replace_base
+    } else {
+        format!("{replace_base}/")
+    };
+    let replace_dir = repo.git_dir.join(replace_base.trim_end_matches('/'));
+    collect_replace_ref_dir(&replace_dir, &replace_dir, map)
+}
+
+fn collect_replace_ref_dir(
+    root: &Path,
+    dir: &Path,
+    map: &mut std::collections::HashMap<String, Vec<DecorationRef>>,
+) -> Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_replace_ref_dir(root, &path, map)?;
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        if let Ok(relative) = path.strip_prefix(root) {
+            let name = relative.to_string_lossy().replace('/', "");
+            if name.parse::<ObjectId>().is_ok() {
+                map.entry(name).or_default().push(DecorationRef {
+                    label: "replaced".to_owned(),
+                    kind: DecorationKind::Grafted,
+                });
+            }
+        }
+    }
     Ok(())
 }
 
@@ -2769,12 +3146,18 @@ fn peel_to_commit_hex(odb: &Odb, hex: &str) -> Option<String> {
 /// Format decoration string for a commit (with parentheses).
 fn format_decoration(
     hex: &str,
-    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
 ) -> String {
     match decorations {
         Some(map) => {
             if let Some(refs) = map.get(hex) {
-                format!(" ({})", refs.join(", "))
+                format!(
+                    " ({})",
+                    refs.iter()
+                        .map(|entry| entry.label.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             } else {
                 String::new()
             }
@@ -2786,12 +3169,15 @@ fn format_decoration(
 /// Format decoration string without parentheses (for %D).
 fn format_decoration_no_parens(
     hex: &str,
-    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
 ) -> String {
     match decorations {
         Some(map) => {
             if let Some(refs) = map.get(hex) {
-                refs.join(", ")
+                refs.iter()
+                    .map(|entry| entry.label.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             } else {
                 String::new()
             }
@@ -2800,7 +3186,120 @@ fn format_decoration_no_parens(
     }
 }
 
-// ── Diff output for log ──────────────────────────────────────────────
+fn format_decoration_colored(
+    hex: &str,
+    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
+    colors: &DecorationColorSettings,
+) -> String {
+    match decorations {
+        Some(map) => {
+            if let Some(refs) = map.get(hex) {
+                let mut output = String::new();
+                output.push_str(&colors.commit);
+                output.push_str(" (");
+                output.push_str("\x1b[m");
+                for (index, entry) in refs.iter().enumerate() {
+                    if index > 0 {
+                        output.push_str(&colors.commit);
+                        output.push_str(", ");
+                        output.push_str("\x1b[m");
+                    }
+                    output.push_str(&format_single_decoration_colored(entry, colors));
+                }
+                output.push_str(&colors.commit);
+                output.push(')');
+                output.push_str("\x1b[m");
+                output
+            } else {
+                String::new()
+            }
+        }
+        None => String::new(),
+    }
+}
+
+fn format_decoration_no_parens_colored(
+    hex: &str,
+    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
+    colors: &DecorationColorSettings,
+) -> String {
+    match decorations {
+        Some(map) => {
+            if let Some(refs) = map.get(hex) {
+                let mut output = String::new();
+                for (index, entry) in refs.iter().enumerate() {
+                    if index > 0 {
+                        output.push_str(&colors.commit);
+                        output.push_str(", ");
+                        output.push_str("\x1b[m");
+                    }
+                    output.push_str(&colors.commit);
+                    output.push_str(&format_single_decoration_colored(entry, colors));
+                    output.push_str("\x1b[m");
+                }
+                output
+            } else {
+                String::new()
+            }
+        }
+        None => String::new(),
+    }
+}
+
+fn format_single_decoration_colored(
+    decoration: &DecorationRef,
+    colors: &DecorationColorSettings,
+) -> String {
+    if let Some(target) = decoration.label.strip_prefix("HEAD -> ") {
+        let mut output = String::new();
+        output.push_str(&colors.head);
+        output.push_str("HEAD");
+        output.push_str("\x1b[m");
+        output.push_str(&colors.commit);
+        output.push_str(" -> ");
+        output.push_str("\x1b[m");
+        output.push_str(&colors.branch);
+        output.push_str(target);
+        output.push_str("\x1b[m");
+        return output;
+    }
+
+    if let Some(target) = decoration
+        .label
+        .strip_prefix("tag: refs/tags/")
+        .or_else(|| decoration.label.strip_prefix("tag: "))
+    {
+        let mut output = String::new();
+        output.push_str(&colors.tag);
+        output.push_str("tag: ");
+        output.push_str("\x1b[m");
+        output.push_str(&colors.tag);
+        output.push_str(target);
+        output.push_str("\x1b[m");
+        return output;
+    }
+
+    let style = match decoration.kind {
+        DecorationKind::Head => &colors.head,
+        DecorationKind::Branch => &colors.branch,
+        DecorationKind::RemoteBranch => &colors.remote_branch,
+        DecorationKind::Tag => &colors.tag,
+        DecorationKind::Stash => &colors.stash,
+        DecorationKind::Grafted => &colors.grafted,
+    };
+    if style.is_empty() {
+        let mut output = String::new();
+        output.push_str(decoration.label.as_str());
+        output.push_str("\x1b[m");
+        output
+    } else {
+        let mut output = String::new();
+        output.push_str(style);
+        output.push_str(decoration.label.as_str());
+        output.push_str("\x1b[m");
+        output
+    }
+}
 
 /// Compute combined diff entries: only files that differ from ALL parents.
 fn compute_combined_diff_entries(odb: &Odb, info: &CommitInfo) -> Result<Vec<DiffEntry>> {
@@ -3171,8 +3670,9 @@ fn collect_oids_from_dir(
         Ok(e) => e,
         Err(_) => return Ok(()),
     };
+    let mut entries: Vec<std::fs::DirEntry> = entries.collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
-        let entry = entry?;
         let ft = entry.file_type()?;
         if ft.is_dir() {
             collect_oids_from_dir(git_dir, &entry.path(), oids, seen)?;

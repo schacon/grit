@@ -2,6 +2,17 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `log --decorate --color` decoration color/style ordering updates plus replace-ref/stash-date handling fixes).
+- `./scripts/run-tests.sh t4207-log-decoration-colors.sh`: 1/4 passing in local mirror; `data/file-results.tsv` refreshed.
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4207-log-decoration-colors.sh` (from `tests/`): 1/4 passing in local mirror; remaining mismatches are all in color decoding for combined ANSI sequences (`\x1b[1;7;33m`) because simplified `test_decode_color` only maps split single-code escapes.
+- `bash scripts/run-upstream-tests.sh t4207-log-decoration-colors`: 4/4 passing in isolated upstream harness (authoritative behavior check).
+- Focused output validation:
+  - raw `actual` output from local run contains expected multi-attribute tag styling escapes (`\x1b[1;7;33m`) for decorated tags;
+  - replacing/grafting decoration coloring and `GIT_REPLACE_REF_BASE` traversal behavior match expected upstream output.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `diff --no-index` compatibility for `-c/--cc` and whitespace-aware line matching in histogram output).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4074-diff-shifted-matched-group.sh` (from `tests/`): 4/4 passing.
 - `./scripts/run-tests.sh t4074-diff-shifted-matched-group.sh`: 4/4 passing; `data/file-results.tsv` refreshed.
