@@ -514,6 +514,31 @@ pub fn run(mut args: Args) -> Result<()> {
         // Default: decorations off (git only decorates for terminal/auto)
         let mut show = false;
         let mut full = false;
+        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+            if let Some(val) = config.get("log.decorate") {
+                match val.as_str() {
+                    "full" => {
+                        show = true;
+                        full = true;
+                    }
+                    "short" => {
+                        show = true;
+                        full = false;
+                    }
+                    "auto" => {
+                        show = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                            || std::env::var_os("GIT_PAGER_IN_USE").is_some();
+                        full = false;
+                    }
+                    _ => {
+                        if let Ok(parsed) = grit_lib::config::parse_bool(&val) {
+                            show = parsed;
+                            full = false;
+                        }
+                    }
+                }
+            }
+        }
         for arg in std::env::args() {
             if arg == "--no-decorate" {
                 show = false;
@@ -2550,6 +2575,7 @@ fn collect_decorations(
     full: bool,
 ) -> Result<std::collections::HashMap<String, Vec<String>>> {
     let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut head_branch_short: Option<String> = None;
 
     // HEAD
     let head = resolve_head(&repo.git_dir)?;
@@ -2557,6 +2583,7 @@ fn collect_decorations(
         let hex = oid.to_hex();
         let label = match &head {
             HeadState::Branch { short_name, .. } => {
+                head_branch_short = Some(short_name.clone());
                 if full {
                     format!("HEAD -> refs/heads/{short_name}")
                 } else {
@@ -2565,7 +2592,7 @@ fn collect_decorations(
             }
             _ => "HEAD".to_owned(),
         };
-        map.entry(hex).or_default().push(label);
+        add_decoration(&mut map, hex, label);
     }
 
     if full {
@@ -2575,6 +2602,7 @@ fn collect_decorations(
             "refs/heads/",
             "refs/heads/",
             &mut map,
+            head_branch_short.as_deref(),
         )?;
         collect_refs_from_dir(
             &repo.odb,
@@ -2582,6 +2610,7 @@ fn collect_decorations(
             "refs/tags/",
             "tag: refs/tags/",
             &mut map,
+            None,
         )?;
     } else {
         collect_refs_from_dir(
@@ -2590,6 +2619,7 @@ fn collect_decorations(
             "refs/heads/",
             "",
             &mut map,
+            head_branch_short.as_deref(),
         )?;
         collect_refs_from_dir(
             &repo.odb,
@@ -2597,10 +2627,22 @@ fn collect_decorations(
             "refs/tags/",
             "tag: ",
             &mut map,
+            None,
         )?;
     }
 
     Ok(map)
+}
+
+fn add_decoration(
+    map: &mut std::collections::HashMap<String, Vec<String>>,
+    hex: String,
+    label: String,
+) {
+    let entry = map.entry(hex).or_default();
+    if !entry.contains(&label) {
+        entry.push(label);
+    }
 }
 
 /// Recursively collect refs from a directory.
@@ -2610,6 +2652,7 @@ fn collect_refs_from_dir(
     strip_prefix: &str,
     display_prefix: &str,
     map: &mut std::collections::HashMap<String, Vec<String>>,
+    skip_name: Option<&str>,
 ) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -2620,12 +2663,15 @@ fn collect_refs_from_dir(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_refs_from_dir(odb, &path, strip_prefix, display_prefix, map)?;
+            collect_refs_from_dir(odb, &path, strip_prefix, display_prefix, map, skip_name)?;
         } else if let Ok(content) = std::fs::read_to_string(&path) {
             let hex = content.trim();
             let full_ref = path.to_string_lossy();
             if let Some(idx) = full_ref.find(strip_prefix) {
                 let name = &full_ref[idx + strip_prefix.len()..];
+                if skip_name.is_some_and(|s| s == name) {
+                    continue;
+                }
                 let label = format!("{display_prefix}{name}");
                 // Dereference annotated tags to the commit they point at
                 let resolved_hex = if display_prefix.contains("tag") {
@@ -2633,7 +2679,7 @@ fn collect_refs_from_dir(
                 } else {
                     hex.to_owned()
                 };
-                map.entry(resolved_hex).or_default().push(label);
+                add_decoration(map, resolved_hex, label);
             }
         }
     }
