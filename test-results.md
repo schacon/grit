@@ -2,6 +2,13 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `t4115` symlink-apply fixes in `apply`, symlink-aware patch rendering in `diff-files`, and tracked-symlink preservation in `clean -dfx` recursion).
+- `./scripts/run-tests.sh t4115-apply-symlink.sh`: 8/8 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4115-apply-symlink`: 8/8 passing in isolated upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes outside scoped files reverted; task-focused changes retained).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `./scripts/run-tests.sh t4115-apply-symlink.sh`: 2/8 passing (baseline for newly claimed in-progress Diff target `t4115`).
 - `bash scripts/run-upstream-tests.sh t4115-apply-symlink`: 2/8 passing.
 

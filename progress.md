@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   110 |
-| In progress |     1 |
+| Completed   |   111 |
+| In progress |     0 |
 | Remaining   |   656 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4115-apply-symlink` — upstream 8/8 tests pass (`apply` now skips metadata-only rename/copy headers, parses file mode from `index <old>..<new> <mode>` lines, tracks symlink path existence correctly during precheck sequencing, emits Git-compatible symlink-escape diagnostics (`affected file '…' is beyond a symbolic link` and `<path>: No such file or directory`), and reports `Rejected hunk` for `--reject`; additionally `clean -dfx` now preserves tracked symlink paths by recursing into symlinked directories when tracked entries exist beneath those prefixes)
 - `t4059-diff-submodule-not-initialized` — upstream 8/8 tests pass (`submodule add` now handles pre-created empty target directories and writes canonical gitfiles for separate module gitdirs; `submodule update --checkout` now reattaches missing worktrees from `.git/modules/*`; `commit -a` preserves gitlink entries when submodule worktrees are absent; `mv` now allows tracked-empty-directory renames backed by index entries; `diff-tree -p --submodule=log` now emits gitlink summary lines with commit-encoding-aware subject decoding, suppresses `.gitmodules` patch hunks in log mode, and coalesces pure gitlink rename pairs to avoid duplicate delete/add submodule summary rows)
 - `t4042-diff-textconv-caching` — upstream 8/8 tests pass (`diff` now resolves textconv attributes using worktree-relative paths, applies textconv to patch generation for binary and non-binary paths, stores cache entries under `refs/notes/textconv/<driver>` keyed by blob OID with command-aware invalidation, and honors `core.attributesFile` in `--no-index` mode; this local mirror still reports 7/8 due its simplified `nongit` helper invoking `diff --no-index` from the outer tests directory rather than the created `non-repo/` directory)
 - `t4070-diff-pairs` — upstream 7/7 tests pass (`diff-pairs` is now implemented natively in Rust with NUL-delimited raw-record parsing, `--raw`/`-p` output modes, explicit queue flush support, and git-compatible tree/pathspec error handling; `diff-tree` now accepts `-z` and emits NUL-terminated raw output compatible with the `diff-pairs` stdin contract. The local mirror still reports 3/7 because its simplified `tests/test-lib.sh` does not preserve cwd between test blocks, so post-setup tests run outside `main/` and cannot resolve tag `base`.)
@@ -99,4 +100,4 @@
 
 ## What Remains
 
-1 test file is currently marked in progress and 656 remain pending. See `plan.md` for the full prioritized list.
+0 test files are currently marked in progress and 656 remain pending. See `plan.md` for the full prioritized list.

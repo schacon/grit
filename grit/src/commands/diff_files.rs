@@ -194,6 +194,8 @@ struct Change {
     new_mode: u32,
     /// Index-side OID.
     old_oid: ObjectId,
+    /// Working-tree-side OID (zero when absent).
+    new_oid: ObjectId,
 }
 
 // ── Option parsing ───────────────────────────────────────────────────
@@ -439,6 +441,7 @@ fn collect_changes(
                             old_mode: idx_canonical,
                             new_mode: wt_mode,
                             old_oid: *idx_oid,
+                            new_oid: wt_oid,
                         });
                     }
                 }
@@ -450,6 +453,7 @@ fn collect_changes(
                         old_mode: canonicalize_mode(*idx_mode),
                         new_mode: 0,
                         old_oid: *idx_oid,
+                        new_oid: zero_oid(),
                     });
                 }
             }
@@ -470,19 +474,21 @@ fn collect_changes(
                 old_mode: 0,
                 new_mode: mode,
                 old_oid: zero_oid(),
+                new_oid: zero_oid(),
             });
 
             if !options.stage_explicit {
                 if let Some((idx_mode, idx_oid)) = staged.get(path) {
                     let abs = work_tree.join(path);
                     match read_worktree_info(repo, &abs)? {
-                        Some((wt_mode, _wt_oid)) => {
+                        Some((wt_mode, wt_oid)) => {
                             changes.push(Change {
                                 path: path.clone(),
                                 status: 'M',
                                 old_mode: canonicalize_mode(*idx_mode),
                                 new_mode: wt_mode,
                                 old_oid: *idx_oid,
+                                new_oid: wt_oid,
                             });
                         }
                         None => {
@@ -492,6 +498,7 @@ fn collect_changes(
                                 old_mode: canonicalize_mode(*idx_mode),
                                 new_mode: 0,
                                 old_oid: *idx_oid,
+                                new_oid: zero_oid(),
                             });
                         }
                     }
@@ -515,18 +522,20 @@ fn collect_changes(
                 old_mode: 0,
                 new_mode: mode,
                 old_oid: zero_oid(),
+                new_oid: zero_oid(),
             });
 
             if let Some((idx_mode, idx_oid)) = staged.get(path) {
                 let abs = work_tree.join(path);
                 match read_worktree_info(repo, &abs)? {
-                    Some((wt_mode, _wt_oid)) => {
+                    Some((wt_mode, wt_oid)) => {
                         changes.push(Change {
                             path: path.clone(),
                             status: 'M',
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: wt_mode,
                             old_oid: *idx_oid,
+                            new_oid: wt_oid,
                         });
                     }
                     None => {
@@ -536,6 +545,7 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: 0,
                             old_oid: *idx_oid,
+                            new_oid: zero_oid(),
                         });
                     }
                 }
@@ -857,6 +867,14 @@ fn print_patch(change: &Change, repo: &Repository, work_tree: &Path) -> Result<(
             change.old_mode, change.new_mode
         ));
     }
+    if change.old_mode == change.new_mode && change.old_mode != 0 {
+        let old_abbrev = &change.old_oid.to_hex()[..7];
+        let new_abbrev = &change.new_oid.to_hex()[..7];
+        header.push_str(&format!(
+            "\nindex {old_abbrev}..{new_abbrev} {:06o}",
+            change.old_mode
+        ));
+    }
 
     if old_content == new_content && change.old_mode != change.new_mode {
         // Mode-only change, no content diff needed
@@ -947,11 +965,21 @@ fn load_new_bytes(change: &Change, work_tree: &Path) -> Result<Vec<u8>> {
         return Ok(Vec::new());
     }
     let abs = work_tree.join(&change.path);
-    match fs::read(abs) {
+    match read_worktree_blob_bytes(&abs) {
         Ok(data) => Ok(data),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(e.into()),
     }
+}
+
+/// Read blob bytes from worktree path, preserving symlink target bytes.
+fn read_worktree_blob_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(path)?;
+        return Ok(target.as_os_str().as_bytes().to_vec());
+    }
+    fs::read(path)
 }
 
 /// Heuristic: escaped-octal fixture payload (`\00\01...`) should count binary.
@@ -1044,8 +1072,8 @@ fn load_patch_contents(
         String::new()
     } else {
         let abs = work_tree.join(&change.path);
-        match fs::read(&abs) {
-            Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+        match read_worktree_blob_bytes(&abs) {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(e.into()),
         }
@@ -1157,8 +1185,8 @@ fn read_diff_entry_contents(
             String::new()
         } else {
             let path = entry.new_path.as_deref().unwrap_or(entry.path());
-            match fs::read(work_tree.join(path)) {
-                Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+            match read_worktree_blob_bytes(&work_tree.join(path)) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
                 Err(e) => return Err(e.into()),
             }

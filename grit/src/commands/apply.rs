@@ -365,6 +365,15 @@ impl FilePatch {
             self.effective_path()
         }
     }
+
+    /// Whether this patch only carries rename/copy metadata with no content.
+    fn is_metadata_only_rename_or_copy(&self) -> bool {
+        (self.is_rename || self.is_copy)
+            && self.hunks.is_empty()
+            && self.binary_patch.is_none()
+            && self.old_mode.is_none()
+            && self.new_mode.is_none()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -446,10 +455,21 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                     fp.dissimilarity_index = val.trim_end_matches('%').parse().ok();
                 } else if let Some(val) = line.strip_prefix("index ") {
                     // Parse "index abc123..def456 100644" or "index abc123..def456"
-                    let hash_part = val.split_whitespace().next().unwrap_or("");
+                    let mut parts = val.split_whitespace();
+                    let hash_part = parts.next().unwrap_or("");
                     if let Some((old, new)) = hash_part.split_once("..") {
                         fp.old_oid = Some(old.to_string());
                         fp.new_oid = Some(new.to_string());
+                    }
+                    if let Some(mode) = parts.next() {
+                        if fp.old_mode.is_none()
+                            && fp.new_mode.is_none()
+                            && !fp.is_new
+                            && !fp.is_deleted
+                        {
+                            fp.old_mode = Some(mode.to_string());
+                            fp.new_mode = Some(mode.to_string());
+                        }
                     }
                 } else if line == "GIT binary patch" {
                     let (binary_patch, next_i) = parse_binary_patch(&lines, i + 1)?;
@@ -862,7 +882,11 @@ fn adjust_path(path: &str, strip: usize, directory: Option<&str>) -> String {
     }
 }
 
-fn symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Option<String> {
+fn path_exists_or_symlink(path: &str) -> bool {
+    fs::symlink_metadata(path).is_ok()
+}
+
+fn symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Option<(String, bool)> {
     let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
     if components.len() <= 1 {
         return None;
@@ -872,16 +896,17 @@ fn symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Option
     for component in &components[..components.len() - 1] {
         prefix.push(component);
         let prefix_str = prefix.to_string_lossy().into_owned();
-        let is_symlink = symlink_overlay
-            .get(&prefix_str)
-            .copied()
-            .unwrap_or_else(|| {
-                fs::symlink_metadata(&prefix)
-                    .map(|meta| meta.file_type().is_symlink())
-                    .unwrap_or(false)
-            });
-        if is_symlink {
-            return Some(prefix_str);
+        if let Some(is_symlink) = symlink_overlay.get(&prefix_str).copied() {
+            if is_symlink {
+                return Some((prefix_str, false));
+            }
+            continue;
+        }
+        let is_filesystem_symlink = fs::symlink_metadata(&prefix)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false);
+        if is_filesystem_symlink {
+            return Some((prefix_str, true));
         }
     }
     None
@@ -895,15 +920,17 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
         if let Some(source) = fp.source_path() {
             let source_adjusted = adjust_path(source, args.strip, args.directory.as_deref());
             if !source_adjusted.is_empty() {
-                if let Some(prefix) = symlink_prefix(&source_adjusted, &symlink_overlay) {
+                if let Some((prefix, _prefix_exists)) =
+                    symlink_prefix(&source_adjusted, &symlink_overlay)
+                {
                     let allow_delete_under_replaced_dir = fp.is_deleted
                         && source_adjusted.starts_with(&format!("{prefix}/"))
                         && replaced_directories_with_symlink
                             .get(&prefix)
                             .copied()
                             .unwrap_or(false);
-                    if !allow_delete_under_replaced_dir {
-                        bail!("{source_adjusted}: beyond a symbolic link");
+                    if !allow_delete_under_replaced_dir && fp.is_new {
+                        bail!("affected file '{source_adjusted}' is beyond a symbolic link");
                     }
                 }
             }
@@ -911,15 +938,17 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
         if let Some(target) = fp.target_path() {
             let target_adjusted = adjust_path(target, args.strip, args.directory.as_deref());
             if !target_adjusted.is_empty() {
-                if let Some(prefix) = symlink_prefix(&target_adjusted, &symlink_overlay) {
+                if let Some((prefix, _prefix_exists)) =
+                    symlink_prefix(&target_adjusted, &symlink_overlay)
+                {
                     let allow_delete_under_replaced_dir = fp.is_deleted
                         && target_adjusted.starts_with(&format!("{prefix}/"))
                         && replaced_directories_with_symlink
                             .get(&prefix)
                             .copied()
                             .unwrap_or(false);
-                    if !allow_delete_under_replaced_dir {
-                        bail!("{target_adjusted}: beyond a symbolic link");
+                    if !allow_delete_under_replaced_dir && fp.is_new {
+                        bail!("affected file '{target_adjusted}' is beyond a symbolic link");
                     }
                 }
             }
@@ -933,6 +962,15 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
             .target_path()
             .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
             .unwrap_or_default();
+        let source_is_symlink = !source_adjusted.is_empty()
+            && symlink_overlay
+                .get(&source_adjusted)
+                .copied()
+                .unwrap_or_else(|| {
+                    fs::symlink_metadata(&source_adjusted)
+                        .map(|meta| meta.file_type().is_symlink())
+                        .unwrap_or(false)
+                });
         let target_is_existing_dir =
             !target_adjusted.is_empty() && Path::new(&target_adjusted).is_dir();
 
@@ -948,6 +986,9 @@ fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> 
         }
 
         if !target_adjusted.is_empty() {
+            if (fp.is_rename || fp.is_copy) && fp.new_mode.is_none() {
+                symlink_overlay.insert(target_adjusted.clone(), source_is_symlink);
+            }
             if fp.new_mode.as_deref() == Some("120000") {
                 if target_is_existing_dir {
                     replaced_directories_with_symlink.insert(target_adjusted.clone(), true);
@@ -1580,6 +1621,13 @@ fn write_reject_file(path: &Path, patch: &FilePatch, rejected_hunks: &[Hunk]) ->
         return Ok(());
     }
 
+    if fs::symlink_metadata(path)
+        .ok()
+        .is_some_and(|meta| meta.file_type().is_symlink())
+    {
+        fs::remove_file(path)?;
+    }
+
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
             fs::create_dir_all(parent)?;
@@ -2099,7 +2147,7 @@ fn record_path_existence(
     if current.contains_key(path) {
         return;
     }
-    let exists = Path::new(path).exists();
+    let exists = path_exists_or_symlink(path);
     current.insert(path.to_string(), exists);
     initial.insert(path.to_string(), exists);
 }
@@ -2156,7 +2204,7 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
         let source_exists_now = current_exists
             .get(&source_adjusted)
             .copied()
-            .unwrap_or_else(|| Path::new(&source_adjusted).exists());
+            .unwrap_or_else(|| path_exists_or_symlink(&source_adjusted));
         let source_existed_initially = initial_exists
             .get(&source_adjusted)
             .copied()
@@ -2167,10 +2215,7 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
                 if source_existed_initially {
                     continue;
                 }
-                bail!(
-                    "failed to read {}: No such file or directory (os error 2)",
-                    source_adjusted
-                );
+                bail!("{source_adjusted}: No such file or directory");
             }
             set_path_and_descendants_state(&mut current_exists, &source_adjusted, false);
             if source_adjusted != target_adjusted {
@@ -2183,7 +2228,7 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
             let target_exists_now = current_exists
                 .get(&target_adjusted)
                 .copied()
-                .unwrap_or_else(|| Path::new(&target_adjusted).exists());
+                .unwrap_or_else(|| path_exists_or_symlink(&target_adjusted));
             if target_exists_now {
                 if Path::new(&target_adjusted).is_dir() {
                     set_path_and_descendants_state(&mut current_exists, &target_adjusted, false);
@@ -2200,10 +2245,7 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
                 && (fp.is_copy || fp.is_rename)
                 && source_existed_initially;
             if !can_use_initial_snapshot && !can_apply_with_empty_preimage(fp) {
-                bail!(
-                    "failed to read {}: No such file or directory (os error 2)",
-                    source_adjusted
-                );
+                bail!("{source_adjusted}: No such file or directory");
             }
         }
 
@@ -2296,6 +2338,10 @@ fn apply_to_worktree(
             continue;
         }
 
+        if fp.is_metadata_only_rename_or_copy() {
+            continue;
+        }
+
         // Modify existing file — read preimage from source side (important
         // for rename/copy patches where target may not exist yet).
         let source_adjusted = fp
@@ -2309,10 +2355,21 @@ fn apply_to_worktree(
             match read_worktree_blob_as_text(&read_path) {
                 Ok(content) => Ok(content),
                 Err(err)
-                    if err.kind() == std::io::ErrorKind::NotFound
-                        && can_apply_with_empty_preimage(fp) =>
+                    if matches!(
+                        err.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) && can_apply_with_empty_preimage(fp)
+                        && fp.old_oid.is_none() =>
                 {
                     Ok(String::new())
+                }
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    bail!("{}: No such file or directory", read_path.display())
                 }
                 Err(err) => {
                     Err(err).with_context(|| format!("failed to read {}", read_path.display()))
@@ -2432,7 +2489,7 @@ fn apply_to_worktree(
     }
 
     if had_rejects {
-        bail!("patch failed");
+        bail!("Rejected hunk");
     }
 
     Ok(())
@@ -2577,7 +2634,7 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
             if let Some(entry) = source_index.get(source_adjusted.as_bytes(), 0) {
                 let obj = repo.odb.read(&entry.oid)?;
                 String::from_utf8_lossy(&obj.data).into_owned()
-            } else if can_apply_with_empty_preimage(fp) {
+            } else if can_apply_with_empty_preimage(fp) && fp.old_oid.is_none() {
                 String::new()
             } else {
                 bail!("{source_adjusted} not found in index");
@@ -2755,7 +2812,8 @@ fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMod
             Ok(content) => content,
             Err(err)
                 if err.kind() == std::io::ErrorKind::NotFound
-                    && can_apply_with_empty_preimage(fp) =>
+                    && can_apply_with_empty_preimage(fp)
+                    && fp.old_oid.is_none() =>
             {
                 String::new()
             }

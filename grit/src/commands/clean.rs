@@ -222,7 +222,11 @@ fn collect_untracked(
             continue;
         }
 
-        let is_dir = path.is_dir();
+        if tracked.contains(&rel) {
+            continue;
+        }
+
+        let is_dir = path_is_dir_without_following_symlinks(&path);
 
         if is_dir {
             // Check if any tracked file is inside this directory.
@@ -327,11 +331,6 @@ fn collect_untracked(
             }
             // Without -d (and not -X), skip untracked directories entirely.
         } else {
-            // File: check if tracked.
-            if tracked.contains(&rel) {
-                continue;
-            }
-
             let should_include = should_include_path(matcher, repo, index, &rel, false, args)?;
             if should_include {
                 out.push((rel, false));
@@ -340,6 +339,12 @@ fn collect_untracked(
     }
 
     Ok(())
+}
+
+fn path_is_dir_without_following_symlinks(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_dir())
+        .unwrap_or(false)
 }
 
 /// Determine whether a path should be included in the clean list based on
@@ -421,7 +426,7 @@ fn dir_has_any_ignored(
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or(name);
 
-        let is_dir = path.is_dir();
+        let is_dir = path_is_dir_without_following_symlinks(&path);
         let (ignored, _) = matcher
             .check_path(repo, index, &rel, is_dir)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -465,7 +470,7 @@ fn dir_all_ignored(
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or(name);
 
-        let is_dir = path.is_dir();
+        let is_dir = path_is_dir_without_following_symlinks(&path);
         let (ignored, _) = matcher
             .check_path(repo, index, &rel, is_dir)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
