@@ -1818,6 +1818,11 @@ pub fn run(args: Args) -> Result<()> {
         buf
     };
 
+    run_with_patch_input(args, input)
+}
+
+/// Run `grit apply` with an already-loaded patch input payload.
+pub fn run_with_patch_input(args: Args, input: String) -> Result<()> {
     let mut patches = parse_patch(&input)?;
     validate_patch_headers(&patches)?;
 

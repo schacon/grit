@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   111 |
-| In progress |     1 |
+| Completed   |   112 |
+| In progress |     0 |
 | Remaining   |   655 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4252-am-options` — upstream 8/8 tests pass (`am` now parses and persists `--whitespace=fix`, `-C<n>`, `-p<n>`, `--directory=<dir>`, and `--reject` in rebase-apply state, reuses shared `apply` command semantics through in-memory patch invocation so interrupted/skip flows keep patch application options across patches, and writes `.git/rebase-apply/apply-opt` with `--reject` for reject-mode sessions)
 - `t4115-apply-symlink` — upstream 8/8 tests pass (`apply` now skips metadata-only rename/copy headers, parses file mode from `index <old>..<new> <mode>` lines, tracks symlink path existence correctly during precheck sequencing, emits Git-compatible symlink-escape diagnostics (`affected file '…' is beyond a symbolic link` and `<path>: No such file or directory`), and reports `Rejected hunk` for `--reject`; additionally `clean -dfx` now preserves tracked symlink paths by recursing into symlinked directories when tracked entries exist beneath those prefixes)
 - `t4059-diff-submodule-not-initialized` — upstream 8/8 tests pass (`submodule add` now handles pre-created empty target directories and writes canonical gitfiles for separate module gitdirs; `submodule update --checkout` now reattaches missing worktrees from `.git/modules/*`; `commit -a` preserves gitlink entries when submodule worktrees are absent; `mv` now allows tracked-empty-directory renames backed by index entries; `diff-tree -p --submodule=log` now emits gitlink summary lines with commit-encoding-aware subject decoding, suppresses `.gitmodules` patch hunks in log mode, and coalesces pure gitlink rename pairs to avoid duplicate delete/add submodule summary rows)
 - `t4042-diff-textconv-caching` — upstream 8/8 tests pass (`diff` now resolves textconv attributes using worktree-relative paths, applies textconv to patch generation for binary and non-binary paths, stores cache entries under `refs/notes/textconv/<driver>` keyed by blob OID with command-aware invalidation, and honors `core.attributesFile` in `--no-index` mode; this local mirror still reports 7/8 due its simplified `nongit` helper invoking `diff --no-index` from the outer tests directory rather than the created `non-repo/` directory)
@@ -100,4 +101,4 @@
 
 ## What Remains
 
-1 test files are currently marked in progress and 655 remain pending. See `plan.md` for the full prioritized list.
+0 test files are currently marked in progress and 655 remain pending. See `plan.md` for the full prioritized list.

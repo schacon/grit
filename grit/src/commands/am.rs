@@ -15,6 +15,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
+use crate::commands::apply as apply_command;
 use grit_lib::config::{parse_bool, ConfigSet};
 use grit_lib::error::Error as GritError;
 use grit_lib::index::Index;
@@ -151,6 +152,22 @@ pub struct Args {
     /// How to handle quoted CRLF in patch payloads.
     #[arg(long = "quoted-cr", value_name = "ACTION")]
     pub quoted_cr: Option<String>,
+
+    /// How to treat whitespace changes in patch application.
+    #[arg(long = "whitespace", value_name = "ACTION")]
+    pub whitespace: Option<String>,
+
+    /// Ensure at least N lines of context match while applying.
+    #[arg(short = 'C', value_name = "N")]
+    pub context: Option<usize>,
+
+    /// Strip N leading path components from patch paths.
+    #[arg(short = 'p', value_name = "N")]
+    pub strip: Option<usize>,
+
+    /// Prepend directory to all paths when applying patches.
+    #[arg(long = "directory", value_name = "DIR")]
+    pub directory: Option<String>,
 }
 
 /// A parsed patch from an mbox message.
@@ -183,6 +200,10 @@ struct AmOptions {
     message_id: bool,
     empty: String,
     allow_empty: bool,
+    whitespace_fix: bool,
+    context: Option<usize>,
+    strip: usize,
+    directory: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -337,6 +358,11 @@ fn build_am_options(args: &Args, config: &ConfigSet) -> AmOptions {
     };
     let message_id = args.message_id || config_bool(config, "am.messageid").unwrap_or(false);
     let keep_cr = resolve_keep_cr(args, config);
+    let whitespace_fix = args
+        .whitespace
+        .as_deref()
+        .map(|value| value.eq_ignore_ascii_case("fix"))
+        .unwrap_or(false);
     AmOptions {
         quiet: if args.no_quiet { false } else { args.quiet },
         three_way,
@@ -349,6 +375,10 @@ fn build_am_options(args: &Args, config: &ConfigSet) -> AmOptions {
         message_id,
         empty: args.empty.clone().unwrap_or_else(|| "stop".to_string()),
         allow_empty: args.allow_empty,
+        whitespace_fix,
+        context: args.context,
+        strip: args.strip.unwrap_or(1),
+        directory: args.directory.clone(),
     }
 }
 
@@ -768,7 +798,7 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
     }
 
     // Try to apply the diff to the working tree
-    let apply_result = apply_patch_to_worktree(work_tree, &patch.diff, opts.keep_cr);
+    let apply_result = apply_patch_to_worktree(work_tree, &patch.diff, opts.keep_cr, opts);
 
     match apply_result {
         Ok(affected_paths) => {
@@ -780,9 +810,6 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
                 // Attempt 3-way merge
                 apply_three_way(repo, patch)?;
             } else {
-                if opts.reject {
-                    let _ = write_reject_files_for_patch(work_tree, &patch.diff);
-                }
                 // Save message for --continue
                 fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
                 return Err(e);
@@ -989,24 +1016,6 @@ fn find_tree_path_matching_content(
     Ok(None)
 }
 
-fn write_reject_files_for_patch(work_tree: &Path, diff: &str) -> Result<()> {
-    let file_patches = parse_patch(diff)?;
-    for fp in &file_patches {
-        let Some(path_str) = fp.effective_path() else {
-            continue;
-        };
-        let rel_path = strip_components(path_str, 1);
-        let reject_path = work_tree.join(format!("{rel_path}.rej"));
-        if let Some(parent) = reject_path.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                fs::create_dir_all(parent)?;
-            }
-        }
-        fs::write(&reject_path, diff.as_bytes())?;
-    }
-    Ok(())
-}
-
 /// Build a pre-image by reversing the hunk operations on the current content.
 fn build_preimage_from_hunks(current: &str, hunks: &[Hunk]) -> Result<String> {
     // The pre-image is what the file looked like before the patch.
@@ -1139,125 +1148,112 @@ fn get_blob_from_tree(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Res
     bail!("path not found in tree: {}", path);
 }
 
-fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<()> {
-    let actual_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, content.as_bytes());
-    let actual_hex = actual_oid.to_hex();
-    if !actual_hex.starts_with(expected_oid) {
-        bail!("patch does not apply");
-    }
-    Ok(())
-}
-
 /// Apply a unified diff to the working tree files.
 /// Returns the list of affected relative paths.
-fn apply_patch_to_worktree(work_tree: &Path, diff: &str, keep_cr: bool) -> Result<Vec<String>> {
-    // Parse the diff into file patches using the same logic as `grit apply`
+fn apply_patch_to_worktree(
+    work_tree: &Path,
+    diff: &str,
+    keep_cr: bool,
+    opts: &AmOptions,
+) -> Result<Vec<String>> {
+    let cwd = std::env::current_dir().context("failed to read current directory")?;
+    std::env::set_current_dir(work_tree)
+        .with_context(|| format!("failed to enter work tree {}", work_tree.display()))?;
+
+    let run_result = {
+        let args = apply_command::Args {
+            cached: false,
+            stat: false,
+            numstat: false,
+            summary: false,
+            apply: false,
+            check: false,
+            index: false,
+            intent_to_add: false,
+            reverse: false,
+            allow_empty: false,
+            strip: opts.strip,
+            directory: opts.directory.clone(),
+            build_fake_ancestor: None,
+            context: opts.context,
+            recount: false,
+            unidiff_zero: false,
+            allow_binary_replacement: false,
+            verbose: false,
+            reject: opts.reject,
+            whitespace: if opts.whitespace_fix {
+                "fix".to_string()
+            } else {
+                "warn".to_string()
+            },
+            ignore_whitespace: false,
+            ignore_space_change: false,
+            no_ignore_whitespace: false,
+            include: None,
+            exclude: None,
+            inaccurate_eof: false,
+            patches: Vec::new(),
+        };
+        let patch_input = if keep_cr {
+            diff.to_string()
+        } else {
+            diff.replace("\r\n", "\n")
+        };
+        apply_command::run_with_patch_input(args, patch_input)
+    };
+
+    let restore_result = std::env::set_current_dir(&cwd)
+        .with_context(|| format!("failed to restore current directory to {}", cwd.display()));
+    restore_result?;
+    run_result?;
+
+    collect_affected_paths(diff, opts)
+}
+
+fn am_adjust_path(path: &str, strip: usize, directory: Option<&str>) -> String {
+    if path == "/dev/null" {
+        return path.to_string();
+    }
+    let path = path
+        .strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .unwrap_or(path);
+    let stripped = strip_components(path, strip);
+    if let Some(dir) = directory {
+        format!("{dir}/{stripped}")
+    } else {
+        stripped
+    }
+}
+
+fn collect_affected_paths(diff: &str, opts: &AmOptions) -> Result<Vec<String>> {
     let file_patches = parse_patch(diff)?;
+    let mut seen = std::collections::BTreeSet::new();
     let mut affected = Vec::new();
 
     for fp in &file_patches {
-        let path_str = fp
-            .effective_path()
-            .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let rel_path = strip_components(path_str, 1);
-        let path = work_tree.join(&rel_path);
-
         if fp.is_rename {
-            // Handle rename: old path is removed, new path is added
-            if let Some(old) = &fp.old_path {
-                let old_rel = strip_components(old, 0);
-                let old_abs = work_tree.join(&old_rel);
-                if old_abs.exists() {
-                    // Read old content, apply hunks if any, write to new path
-                    let new_rel = fp
-                        .new_path
-                        .as_deref()
-                        .map(|p| strip_components(p, 0))
-                        .unwrap_or_else(|| rel_path.clone());
-                    let new_abs = work_tree.join(&new_rel);
-                    if let Some(parent) = new_abs.parent() {
-                        if !parent.as_os_str().is_empty() && !parent.exists() {
-                            fs::create_dir_all(parent)?;
-                        }
-                    }
-                    let old_content = fs::read_to_string(&old_abs)
-                        .with_context(|| format!("cannot read {}", old_abs.display()))?;
-                    if let Some(expected_oid) = fp.old_oid.as_deref() {
-                        verify_old_oid_matches_content(expected_oid, &old_content)?;
-                    }
-                    let new_content = if fp.hunks.is_empty() {
-                        old_content
-                    } else {
-                        apply_hunks(&old_content, &fp.hunks).with_context(|| {
-                            format!("failed to apply patch to {}", old_abs.display())
-                        })?
-                    };
-                    fs::write(&new_abs, new_content.as_bytes())?;
-                    fs::remove_file(&old_abs)?;
-                    affected.push(old_rel);
-                    affected.push(new_rel);
+            if let Some(old) = fp.old_path.as_deref().filter(|p| *p != "/dev/null") {
+                let adjusted = am_adjust_path(old, opts.strip, opts.directory.as_deref());
+                if !adjusted.is_empty() && seen.insert(adjusted.clone()) {
+                    affected.push(adjusted);
+                }
+            }
+            if let Some(new) = fp.new_path.as_deref().filter(|p| *p != "/dev/null") {
+                let adjusted = am_adjust_path(new, opts.strip, opts.directory.as_deref());
+                if !adjusted.is_empty() && seen.insert(adjusted.clone()) {
+                    affected.push(adjusted);
                 }
             }
             continue;
         }
 
-        affected.push(rel_path.clone());
-
-        if fp.is_deleted {
-            if path.exists() {
-                if keep_cr {
-                    if let Some(expected_oid) = fp.old_oid.as_deref() {
-                        let old_content = fs::read_to_string(&path)
-                            .with_context(|| format!("cannot read {}", path.display()))?;
-                        verify_old_oid_matches_content(expected_oid, &old_content)?;
-                    }
-                }
-                fs::remove_file(&path)?;
-            }
-            continue;
-        }
-
-        if fp.is_new {
-            if path.exists() || path.is_symlink() {
-                bail!("{rel_path}: already exists in index");
-            }
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() && !parent.exists() {
-                    fs::create_dir_all(parent)?;
-                }
-            }
-            let content = apply_hunks("", &fp.hunks)?;
-            fs::write(&path, content.as_bytes())?;
-            #[cfg(unix)]
-            if fp.new_mode.as_deref() == Some("100755") {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
-            }
-            continue;
-        }
-
-        // Modify existing file
-        let old_content =
-            fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
-        if keep_cr {
-            if let Some(expected_oid) = fp.old_oid.as_deref() {
-                verify_old_oid_matches_content(expected_oid, &old_content)?;
+        if let Some(path) = fp.effective_path() {
+            let adjusted = am_adjust_path(path, opts.strip, opts.directory.as_deref());
+            if !adjusted.is_empty() && seen.insert(adjusted.clone()) {
+                affected.push(adjusted);
             }
         }
-
-        if fp.hunks.is_empty() {
-            #[cfg(unix)]
-            if let Some(mode) = fp.new_mode.as_deref() {
-                use std::os::unix::fs::PermissionsExt;
-                let perm = if mode == "100755" { 0o755 } else { 0o644 };
-                fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
-            }
-            continue;
-        }
-
-        let new_content = apply_hunks(&old_content, &fp.hunks)
-            .with_context(|| format!("failed to apply patch to {}", path.display()))?;
-        fs::write(&path, new_content.as_bytes())?;
     }
 
     Ok(affected)
@@ -1265,6 +1261,10 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str, keep_cr: bool) -> Resul
 
 /// Stage only the files affected by the patch into the index.
 fn stage_affected_files(repo: &Repository, affected_paths: &[String]) -> Result<()> {
+    if affected_paths.is_empty() {
+        return Ok(());
+    }
+
     let work_tree = repo
         .work_tree
         .as_deref()
@@ -1712,8 +1712,42 @@ fn save_am_options(state_dir: &Path, opts: &AmOptions) -> Result<()> {
     if opts.ignore_date {
         out.push_str("ignore-date\n");
     }
+    if opts.whitespace_fix {
+        out.push_str("whitespace-fix\n");
+    }
+    if let Some(context) = opts.context {
+        out.push_str(&format!("context={context}\n"));
+    }
+    if opts.strip != 1 {
+        out.push_str(&format!("strip={}\n", opts.strip));
+    }
+    if let Some(directory) = opts.directory.as_deref() {
+        out.push_str(&format!("directory={directory}\n"));
+    }
     out.push_str(&format!("empty={}\n", opts.empty));
     fs::write(state_dir.join("options"), out)?;
+    save_apply_opt(state_dir, opts)?;
+    Ok(())
+}
+
+fn save_apply_opt(state_dir: &Path, opts: &AmOptions) -> Result<()> {
+    let mut out = String::new();
+    if opts.whitespace_fix {
+        out.push_str("--whitespace=fix\n");
+    }
+    if let Some(context) = opts.context {
+        out.push_str(&format!("-C{context}\n"));
+    }
+    if opts.strip != 1 {
+        out.push_str(&format!("-p{}\n", opts.strip));
+    }
+    if let Some(directory) = opts.directory.as_deref() {
+        out.push_str(&format!("--directory={directory}\n"));
+    }
+    if opts.reject {
+        out.push_str("--reject\n");
+    }
+    fs::write(state_dir.join("apply-opt"), out)?;
     Ok(())
 }
 
@@ -1731,6 +1765,10 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
         message_id: false,
         empty: "stop".to_string(),
         allow_empty: false,
+        whitespace_fix: false,
+        context: None,
+        strip: 1,
+        directory: None,
     };
     for line in content.lines() {
         match line.trim() {
@@ -1743,7 +1781,11 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
             "message-id" => opts.message_id = true,
             "allow-empty" => opts.allow_empty = true,
             "ignore-date" => opts.ignore_date = true,
+            "whitespace-fix" => opts.whitespace_fix = true,
             l if l.starts_with("empty=") => opts.empty = l[6..].to_string(),
+            l if l.starts_with("context=") => opts.context = l[8..].parse().ok(),
+            l if l.starts_with("strip=") => opts.strip = l[6..].parse().unwrap_or(1),
+            l if l.starts_with("directory=") => opts.directory = Some(l[10..].to_string()),
             _ => {}
         }
     }
