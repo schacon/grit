@@ -15,7 +15,7 @@ use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
@@ -28,7 +28,7 @@ use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
 use grit_lib::patch_ids::compute_patch_id;
-use grit_lib::refs::append_reflog;
+use grit_lib::refs::{append_reflog, list_refs, resolve_ref, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, split_revision_token, OrderingMode, RevListOptions};
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
@@ -308,6 +308,11 @@ pub fn run(mut args: Args) -> Result<()> {
     // If a branch argument is given, checkout that branch first.
     // Resolve `upstream` before checkout: `git rebase <upstream> <branch>` uses the pre-checkout
     // meaning of `HEAD` and other relative specs.
+    let upstream_spec_before_hex: Option<String> = if args.branch.is_some() {
+        Some(args.upstream.clone().unwrap_or_else(|| "HEAD".to_owned()))
+    } else {
+        None
+    };
     if args.branch.is_some() {
         let repo = Repository::discover(None).context("not a git repository")?;
         let uspec = args.upstream.as_deref().unwrap_or("HEAD");
@@ -378,7 +383,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
-    do_rebase(args, pre_rebase_hook_second)
+    do_rebase(args, pre_rebase_hook_second, upstream_spec_before_hex)
 }
 
 // ── Rebase state directory layout ───────────────────────────────────
@@ -1845,10 +1850,15 @@ fn run_interactive_rebase(
     Ok((lines, pick_like))
 }
 
+fn flush_rebase_stdout() {
+    let _ = io::stdout().flush();
+}
+
 fn apply_pending_autostash(repo: &Repository, rb_dir: &Path) -> Result<()> {
     let Some(oid) = read_autostash_oid(rb_dir)? else {
         return Ok(());
     };
+    flush_rebase_stdout();
     reset_index_to_head(repo, &repo.git_dir)?;
     let had_conflict = stash::apply_autostash_for_rebase(repo, &oid)?;
     if had_conflict {
@@ -1864,6 +1874,7 @@ fn apply_pending_autostash(repo: &Repository, rb_dir: &Path) -> Result<()> {
 }
 
 fn apply_autostash_after_ff(repo: &Repository, autostash_oid: &ObjectId) -> Result<()> {
+    flush_rebase_stdout();
     reset_index_to_head(repo, &repo.git_dir)?;
     let had_conflict = stash::apply_autostash_for_rebase(repo, autostash_oid)?;
     if had_conflict {
@@ -1879,7 +1890,11 @@ fn apply_autostash_after_ff(repo: &Repository, autostash_oid: &ObjectId) -> Resu
 
 // ── Main rebase flow ────────────────────────────────────────────────
 
-fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
+fn do_rebase(
+    args: Args,
+    pre_rebase_hook_second: Option<String>,
+    upstream_spec_before_branch_checkout: Option<String>,
+) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
@@ -1969,7 +1984,8 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
             .with_context(|| format!("bad revision '{onto_spec}'"))?;
         ("--root".to_owned(), onto, onto, onto_spec.to_owned())
     } else {
-        let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD").to_owned();
+        let upstream_spec = upstream_spec_before_branch_checkout
+            .unwrap_or_else(|| args.upstream.as_deref().unwrap_or("HEAD").to_owned());
         let up_oid = resolve_revision(&repo, &upstream_spec)
             .with_context(|| format!("bad revision '{upstream_spec}'"))?;
         let (onto, onto_label) = if let Some(ref onto_spec) = args.onto {
@@ -2211,6 +2227,26 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         fs::write(rb_dir.join("autostash"), format!("{}\n", oid.to_hex()))?;
     }
 
+    // Branches that pointed at the onto tip before rebase must keep that label after finish when
+    // the rebased branch ends at the same OID (t3420 `never change active branch` after submodule
+    // flows that pack refs and can leave unrelated labels tracking the wrong tip).
+    if head_name != "detached HEAD" {
+        let mut refs_at_onto: Vec<String> = Vec::new();
+        if let Ok(all) = list_refs(git_dir, "refs/heads/") {
+            for (refname, oid) in all {
+                if oid == onto_oid && refname != head_name {
+                    refs_at_onto.push(refname);
+                }
+            }
+        }
+        if !refs_at_onto.is_empty() {
+            fs::write(
+                rb_dir.join("preserve-onto-refs"),
+                refs_at_onto.join("\n") + "\n",
+            )?;
+        }
+    }
+
     let ident = reflog_identity(&repo);
     let ra = rebase_reflog_action();
     let start_msg = format!("{ra} (start): checkout {onto_name_for_state}");
@@ -2252,12 +2288,6 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         let _ = fs::remove_dir_all(&rb_dir);
         return Err(e);
     }
-
-    eprintln!(
-        "rebasing {} commits onto {}",
-        total,
-        &onto_oid.to_hex()[..7]
-    );
 
     replay_remaining(&repo, &rb_dir, autostash_oid, backend, had_rebase_autostash)?;
 
@@ -2699,9 +2729,13 @@ fn replay_remaining(
     let _total: usize = fs::read_to_string(rb_dir.join("end"))?.trim().parse()?;
     let msgnum: usize = fs::read_to_string(rb_dir.join("msgnum"))?.trim().parse()?;
 
+    let print_am_style_progress = matches!(backend, RebaseBackend::Apply);
     let rewind_marker = rb_dir.join("rewind-notice");
-    if !rewind_marker.exists() && !todo.is_empty() {
+    if print_am_style_progress && !rewind_marker.exists() && !todo.is_empty() {
         println!("First, rewinding head to replay your work on top of it...");
+        flush_rebase_stdout();
+        let _ = fs::write(&rewind_marker, "");
+    } else if !print_am_style_progress && !rewind_marker.exists() && !todo.is_empty() {
         let _ = fs::write(&rewind_marker, "");
     }
 
@@ -2769,7 +2803,10 @@ fn replay_remaining(
                         let merge_obj = repo.odb.read(&merge_oid)?;
                         let mc = parse_commit(&merge_obj.data)?;
                         let subject = mc.message.lines().next().unwrap_or("");
-                        eprintln!("Applying: {}", subject);
+                        if print_am_style_progress {
+                            println!("Applying: {}", subject);
+                            flush_rebase_stdout();
+                        }
                         let msg = format!("{ra} (pick): {subject}");
                         let _ = append_reflog(
                             git_dir, "HEAD", &old_head, &new_oid, &ident, &msg, false,
@@ -2868,7 +2905,10 @@ fn replay_remaining(
                         let msg_for_log =
                             message_for_root_replayed_commit(repo, &commit, root_rebase);
                         let subject = msg_for_log.lines().next().unwrap_or("");
-                        eprintln!("Applying: {}", subject);
+                        if print_am_style_progress {
+                            println!("Applying: {}", subject);
+                            flush_rebase_stdout();
+                        }
                         let msg = format!("{ra} (pick): {subject}");
                         let _ = append_reflog(
                             git_dir, "HEAD", &old_head, &new_oid, &ident, &msg, false,
@@ -2962,7 +3002,10 @@ fn replay_remaining(
                         let msg_for_log =
                             message_for_root_replayed_commit(repo, &commit, root_rebase);
                         let subject = msg_for_log.lines().next().unwrap_or("");
-                        eprintln!("Applying: {}", subject);
+                        if print_am_style_progress {
+                            println!("Applying: {}", subject);
+                            flush_rebase_stdout();
+                        }
                         let msg = format!("{ra} (pick): {subject}");
                         let _ = append_reflog(
                             git_dir, "HEAD", &old_head, &new_oid, &ident, &msg, false,
@@ -3496,6 +3539,23 @@ fn finish_rebase(
         fs::write(git_dir.join("HEAD"), format!("ref: {head_name}\n"))?;
     }
 
+    let preserve_path = rb_dir.join("preserve-onto-refs");
+    if preserve_path.exists() {
+        if let Ok(s) = fs::read_to_string(&preserve_path) {
+            for line in s.lines() {
+                let r = line.trim();
+                if r.is_empty() || r == head_name {
+                    continue;
+                }
+                if let Ok(cur) = resolve_ref(git_dir, r) {
+                    if cur == new_tip && new_tip != onto_oid {
+                        let _ = write_ref(git_dir, r, &onto_oid);
+                    }
+                }
+            }
+        }
+    }
+
     let success_target = if head_name == "detached HEAD" {
         "HEAD"
     } else {
@@ -3511,6 +3571,7 @@ fn finish_rebase(
                 apply_pending_autostash(repo, rb_dir)?;
             }
             cleanup_rebase_state(git_dir);
+            flush_rebase_stdout();
             eprintln!("Successfully rebased and updated {success_target}.");
         }
         RebaseBackend::Apply => {
@@ -3521,7 +3582,7 @@ fn finish_rebase(
             // With `--apply`, Git omits the "Successfully rebased" line on stdout when autostash
             // was used (see t3420 `create_expected_success_apply`).
             if !had_autostash_finish {
-                eprintln!("Successfully rebased and updated {success_target}.");
+                println!("Successfully rebased and updated {success_target}.");
             }
         }
     }
@@ -3979,7 +4040,10 @@ fn do_continue() -> Result<()> {
     record_rebase_in_rewritten_pending(git_dir, &rb_dir, oid_for_rewrite, next_after_continue)?;
 
     let subject = original_commit.message.lines().next().unwrap_or("");
-    eprintln!("Applying: {}", subject);
+    if matches!(backend_continue, RebaseBackend::Apply) {
+        println!("Applying: {}", subject);
+        flush_rebase_stdout();
+    }
 
     let pick_backend = load_rebase_backend(&rb_dir);
     let ra = load_rebase_reflog_action(&rb_dir);
@@ -4077,11 +4141,13 @@ fn do_quit() -> Result<()> {
     if !is_rebase_in_progress(git_dir) {
         bail!("no rebase in progress");
     }
-    let _rb_dir = active_rebase_dir(git_dir)
+    let rb_dir = active_rebase_dir(git_dir)
         .ok_or_else(|| anyhow::anyhow!("internal: no rebase state directory"))?;
+    if let Some(oid) = read_autostash_oid(&rb_dir)? {
+        stash::save_autostash_for_rebase_quit(&repo, &oid)?;
+        let _ = fs::remove_file(rb_dir.join("autostash"));
+    }
     cleanup_rebase_state(git_dir);
-    // Like Git: `--quit` clears rebase state without popping the autostash; the WIP stays on
-    // `refs/stash` for `stash pop`/`drop`.
     Ok(())
 }
 

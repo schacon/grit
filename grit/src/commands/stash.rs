@@ -351,7 +351,14 @@ pub fn run(args: Args) -> Result<()> {
         Some(StashCommand::List { args: list_args }) => do_list(list_args),
         Some(StashCommand::Show { args: show_args }) => {
             let parsed = parse_stash_show_args(&show_args)?;
-            do_show(parsed.stash_ref, parsed.mode, parsed.patience)
+            // `git -p stash show` passes `-p` at the top level (clap `global = true`); default
+            // `stash show` is `--stat`, so honor global patch like upstream Git.
+            let mode = if args.patch && matches!(parsed.mode, ShowMode::Stat) {
+                ShowMode::Patch
+            } else {
+                parsed.mode
+            };
+            do_show(parsed.stash_ref, mode, parsed.patience)
         }
         Some(StashCommand::Pop {
             index,
@@ -1902,7 +1909,7 @@ fn show_stash_name_status(
 ) -> Result<()> {
     let obj = repo.odb.read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
-    let old_tree = stash_index_tree_oid(repo, &stash_commit)?;
+    let old_tree = stash_head_tree_oid(repo, &stash_commit)?;
     let old_entries = flatten_tree_full(&repo.odb, &old_tree, "")?;
     let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
 
@@ -1943,22 +1950,23 @@ fn show_stash_name_status(
     Ok(())
 }
 
-/// Tree for the "old" side of `git stash show`: the index snapshot (`stash^2`), not `stash^1`.
-fn stash_index_tree_oid(repo: &Repository, stash_commit: &CommitData) -> Result<ObjectId> {
-    let idx_parent = stash_commit
+/// Tree for the "old" side of `git stash show` and related diff helpers: `HEAD` at stash time
+/// (`stash^1`), matching Git's `git stash show` output (including t3420 `git diff` vs `stash show -p`).
+fn stash_head_tree_oid(repo: &Repository, stash_commit: &CommitData) -> Result<ObjectId> {
+    let head_parent = stash_commit
         .parents
-        .get(1)
-        .ok_or_else(|| anyhow::anyhow!("corrupt stash commit: expected index parent"))?;
-    let idx_obj = repo.odb.read(idx_parent)?;
-    let idx_commit = parse_commit(&idx_obj.data)?;
-    Ok(idx_commit.tree)
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("corrupt stash commit: expected HEAD parent"))?;
+    let head_obj = repo.odb.read(head_parent)?;
+    let head_commit = parse_commit(&head_obj.data)?;
+    Ok(head_commit.tree)
 }
 
 fn show_stash_diff(repo: &Repository, stash_oid: &ObjectId, _with_hunks: bool) -> Result<()> {
     let obj = repo.odb.read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
 
-    let old_tree = stash_index_tree_oid(repo, &stash_commit)?;
+    let old_tree = stash_head_tree_oid(repo, &stash_commit)?;
     let old_entries = flatten_tree_full(&repo.odb, &old_tree, "")?;
     let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
 
@@ -1971,7 +1979,7 @@ fn show_stash_stat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
     let obj = repo.odb.read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
 
-    let old_tree = stash_index_tree_oid(repo, &stash_commit)?;
+    let old_tree = stash_head_tree_oid(repo, &stash_commit)?;
     let old_entries = flatten_tree_full(&repo.odb, &old_tree, "")?;
     let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
 
@@ -2131,7 +2139,7 @@ fn blob_is_binary(data: &[u8]) -> bool {
 fn show_stash_numstat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
     let obj = repo.odb.read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
-    let old_tree = stash_index_tree_oid(repo, &stash_commit)?;
+    let old_tree = stash_head_tree_oid(repo, &stash_commit)?;
     let old_entries = flatten_tree_full(&repo.odb, &old_tree, "")?;
     let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
 
@@ -2713,6 +2721,7 @@ pub fn autostash_for_rebase(repo: &Repository) -> Result<Option<ObjectId>> {
     reset_to_head(repo, &head_oid, work_tree)?;
 
     println!("Created autostash: {}", stash_oid.to_hex());
+    let _ = io::stdout().flush();
     Ok(Some(stash_oid))
 }
 
@@ -2747,6 +2756,18 @@ pub fn apply_autostash_for_rebase(repo: &Repository, stash_oid: &ObjectId) -> Re
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot apply autostash in a bare repository"))?;
     apply_stash_impl(repo, work_tree, stash_oid, false, true)
+}
+
+/// Record the pending rebase autostash on `refs/stash` without applying it (`git rebase --quit`).
+///
+/// Matches Git's `save_autostash`: the autostash commit is stored as a new stash entry and the
+/// user sees the same stderr guidance as when apply conflicts.
+pub fn save_autostash_for_rebase_quit(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
+    update_stash_ref(repo, stash_oid, "autostash")?;
+    eprintln!("Autostash exists; creating a new stash entry.");
+    eprintln!("Your changes are safe in the stash.");
+    eprintln!("You can run \"git stash pop\" or \"git stash drop\" at any time.");
+    Ok(())
 }
 
 /// Helper to add a staged entry at a specific stage to the index.
@@ -3316,11 +3337,18 @@ fn show_tree_diff(odb: &Odb, old: &[FlatTreeEntry], new: &[FlatTreeEntry]) -> Re
                     if o.mode != n.mode {
                         println!("old mode {}", format_mode(o.mode));
                         println!("new mode {}", format_mode(n.mode));
+                        println!("index {}..{}", &o.oid.to_hex()[..7], &n.oid.to_hex()[..7]);
+                    } else {
+                        println!(
+                            "index {}..{} {}",
+                            &o.oid.to_hex()[..7],
+                            &n.oid.to_hex()[..7],
+                            format_mode(o.mode)
+                        );
                     }
-                    println!("index {}..{}", &o.oid.to_hex()[..7], &n.oid.to_hex()[..7]);
                     println!("--- a/{path}");
                     println!("+++ b/{path}");
-                    show_blob_diff(odb, &o.oid, &n.oid)?;
+                    show_blob_diff(odb, &o.oid, &n.oid, path)?;
                 }
             }
             (None, Some(n)) => {
@@ -3352,22 +3380,19 @@ fn show_tree_diff(odb: &Odb, old: &[FlatTreeEntry], new: &[FlatTreeEntry]) -> Re
     Ok(())
 }
 
-/// Show a simple line diff between two blobs.
-fn show_blob_diff(odb: &Odb, old_oid: &ObjectId, new_oid: &ObjectId) -> Result<()> {
+/// Unified hunks between two blobs (Git-style `@@` headers), without repeating `---`/`+++` lines.
+fn show_blob_diff(odb: &Odb, old_oid: &ObjectId, new_oid: &ObjectId, path: &str) -> Result<()> {
     let old_blob = odb.read(old_oid)?;
     let new_blob = odb.read(new_oid)?;
     let old_text = String::from_utf8_lossy(&old_blob.data);
     let new_text = String::from_utf8_lossy(&new_blob.data);
 
-    use similar::TextDiff;
-    let diff = TextDiff::from_lines(&old_text as &str, &new_text as &str);
-    for change in diff.iter_all_changes() {
-        let sign = match change.tag() {
-            similar::ChangeTag::Delete => "-",
-            similar::ChangeTag::Insert => "+",
-            similar::ChangeTag::Equal => " ",
-        };
-        print!("{sign}{change}");
+    let u = unified_diff(&old_text, &new_text, path, path, 3);
+    let mut lines = u.lines();
+    let _ = lines.next();
+    let _ = lines.next();
+    for line in lines {
+        println!("{line}");
     }
 
     Ok(())
@@ -3791,6 +3816,14 @@ fn reset_worktree_to_index(repo: &Repository, index: &Index, work_tree: &Path) -
 
 /// Reset index and working tree to HEAD.
 fn reset_to_head(repo: &Repository, head_oid: &ObjectId, work_tree: &Path) -> Result<()> {
+    let old_index = repo.load_index().or_else(|e| {
+        if matches!(e, Error::Io(ref io) if io.kind() == std::io::ErrorKind::NotFound) {
+            Ok(Index::new())
+        } else {
+            Err(e)
+        }
+    })?;
+
     let head_obj = repo.odb.read(head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
 
@@ -3800,6 +3833,30 @@ fn reset_to_head(repo: &Repository, head_oid: &ObjectId, work_tree: &Path) -> Re
     // First pass: remove worktree files that are not in HEAD tree
     // (handles type changes like file→directory)
     let head_paths: BTreeSet<String> = tree_entries.iter().map(|e| e.path.clone()).collect();
+
+    // Drop paths that were tracked before reset but are absent from HEAD (matches `git reset
+    // --hard` after stash; needed so `rebase --autostash` can check out onto when a stashed path
+    // would otherwise block checkout — t3420 conflicting stash with `--apply`).
+    for entry in &old_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+        if head_paths.contains(&path_str) {
+            continue;
+        }
+        let abs = work_tree.join(&path_str);
+        if abs.symlink_metadata().is_err() {
+            continue;
+        }
+        if abs.is_dir() {
+            let _ = fs::remove_dir_all(&abs);
+        } else {
+            let _ = fs::remove_file(&abs);
+        }
+        remove_empty_dirs(abs.parent().unwrap_or(work_tree), work_tree);
+    }
+
     remove_worktree_extras(work_tree, work_tree, &head_paths)?;
 
     for entry in &tree_entries {
