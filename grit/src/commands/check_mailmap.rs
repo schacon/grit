@@ -9,9 +9,12 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::repo::Repository;
 use std::fs;
 use std::io::{self, BufRead, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// Arguments for `grit check-mailmap`.
 #[derive(Debug, ClapArgs)]
@@ -23,6 +26,14 @@ pub struct Args {
     /// Read contacts from stdin, one per line.
     #[arg(long = "stdin")]
     pub stdin: bool,
+
+    /// Read additional mappings from a specific mailmap file.
+    #[arg(long = "mailmap-file")]
+    pub mailmap_file: Option<String>,
+
+    /// Read additional mappings from a blob object.
+    #[arg(long = "mailmap-blob")]
+    pub mailmap_blob: Option<String>,
 
     /// Contact strings to look up (format: "Name <email>" or "<email>").
     pub contacts: Vec<String>,
@@ -171,7 +182,12 @@ fn parse_contact(contact: &str) -> (Option<String>, Option<String>) {
             );
         }
     }
-    // No angle brackets — treat whole thing as name.
+    // No angle brackets. If this looks like an email address, treat it as one.
+    if contact.contains('@') && !contact.chars().any(char::is_whitespace) {
+        return (None, Some(contact.to_string()));
+    }
+
+    // Otherwise treat as name only.
     (Some(contact.to_string()), None)
 }
 
@@ -207,27 +223,113 @@ fn map_contact(
     (orig_name.to_string(), orig_email.to_string())
 }
 
+fn render_contact(name: &str, email: &str) -> String {
+    if email.is_empty() {
+        return name.to_string();
+    }
+    if name.is_empty() {
+        return format!("<{email}>");
+    }
+    format!("{name} <{email}>")
+}
+
+fn resolve_mailmap_path(base: &Path, value: &str) -> PathBuf {
+    let candidate = Path::new(value);
+    if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        base.join(candidate)
+    }
+}
+
+fn read_optional_mailmap_file(path: &Path) -> Result<String> {
+    if path.exists() {
+        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
+    } else {
+        Ok(String::new())
+    }
+}
+
+fn read_mailmap_blob(spec: &str) -> Result<String> {
+    let git = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("git"));
+    let out = Command::new(git)
+        .arg("cat-file")
+        .arg("blob")
+        .arg(spec)
+        .output()
+        .with_context(|| format!("reading mailmap blob '{spec}'"))?;
+    if !out.status.success() {
+        bail!("unable to read mailmap blob '{}'", spec);
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 /// Run the `check-mailmap` command.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None)?;
+    let mut mailmap_content = String::new();
 
-    // Load .mailmap from worktree root.
-    let mailmap_content = if let Some(ref wt) = repo.work_tree {
-        let mailmap_path = wt.join(".mailmap");
-        if mailmap_path.exists() {
-            fs::read_to_string(&mailmap_path)
-                .with_context(|| format!("reading {}", mailmap_path.display()))?
-        } else {
-            String::new()
+    // 1) Default .mailmap in worktree root.
+    if let Some(ref wt) = repo.work_tree {
+        mailmap_content.push_str(&read_optional_mailmap_file(&wt.join(".mailmap"))?);
+        if !mailmap_content.ends_with('\n') && !mailmap_content.is_empty() {
+            mailmap_content.push('\n');
         }
-    } else {
-        String::new()
-    };
+    }
+
+    // 2) Configured mailmap.file / mailmap.blob.
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let base_dir = repo
+        .work_tree
+        .as_deref()
+        .unwrap_or(repo.git_dir.as_path())
+        .to_path_buf();
+
+    if let Some(file) = config.get("mailmap.file") {
+        mailmap_content.push_str(&read_optional_mailmap_file(&resolve_mailmap_path(
+            &base_dir, &file,
+        ))?);
+        if !mailmap_content.ends_with('\n') && !mailmap_content.is_empty() {
+            mailmap_content.push('\n');
+        }
+    }
+    if let Some(blob) = config.get("mailmap.blob") {
+        mailmap_content.push_str(&read_mailmap_blob(&blob)?);
+        if !mailmap_content.ends_with('\n') && !mailmap_content.is_empty() {
+            mailmap_content.push('\n');
+        }
+    }
+
+    // 3) CLI overrides take precedence (append last).
+    if let Some(ref file) = args.mailmap_file {
+        mailmap_content.push_str(&read_optional_mailmap_file(&resolve_mailmap_path(
+            &base_dir, file,
+        ))?);
+        if !mailmap_content.ends_with('\n') && !mailmap_content.is_empty() {
+            mailmap_content.push('\n');
+        }
+    }
+    if let Some(ref blob) = args.mailmap_blob {
+        mailmap_content.push_str(&read_mailmap_blob(blob)?);
+        if !mailmap_content.ends_with('\n') && !mailmap_content.is_empty() {
+            mailmap_content.push('\n');
+        }
+    }
 
     let mailmap = parse_mailmap(&mailmap_content);
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
+
+    if !args.stdin && args.contacts.is_empty() {
+        bail!("usage: grit check-mailmap [--stdin] <contact>...");
+    }
+
+    for contact in &args.contacts {
+        let (name, email) = parse_contact(contact);
+        let (cn, ce) = map_contact(name.as_deref(), email.as_deref(), &mailmap);
+        writeln!(out, "{}", render_contact(&cn, &ce))?;
+    }
 
     if args.stdin {
         let stdin = io::stdin();
@@ -239,16 +341,7 @@ pub fn run(args: Args) -> Result<()> {
             }
             let (name, email) = parse_contact(line);
             let (cn, ce) = map_contact(name.as_deref(), email.as_deref(), &mailmap);
-            writeln!(out, "{cn} <{ce}>")?;
-        }
-    } else {
-        if args.contacts.is_empty() {
-            bail!("usage: grit check-mailmap [--stdin] <contact>...");
-        }
-        for contact in &args.contacts {
-            let (name, email) = parse_contact(contact);
-            let (cn, ce) = map_contact(name.as_deref(), email.as_deref(), &mailmap);
-            writeln!(out, "{cn} <{ce}>")?;
+            writeln!(out, "{}", render_contact(&cn, &ce))?;
         }
     }
 

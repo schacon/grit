@@ -939,7 +939,7 @@ commit → check it off → move on.
 - [x] `t9303-fast-import-compression` ████████████████████ 16/16 (0 left) — compression setting of fast-import utility
 - [x] `t9350-fast-export` ████████████████████ 73/73 (0 left) — git fast-export
 - [x] `t9903-bash-prompt` ████████████████████ 67/67 (0 left) — test git-specific bash prompt functions
-- [ ] `t9001-send-email` ██████░░░░░░░░░░░░░░ 68/216 (148 left) — git send-email
+- [x] `t9001-send-email` ████████████████████ 216/216 (0 left) — git send-email
 - [x] `t9902-completion` ████████████████████ 263/263 (0 left) — test bash completion
 
 **Total: 765 tracked files**

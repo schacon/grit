@@ -875,7 +875,7 @@ t8013-blame-ignore-revs	yes	19	3	16	ok	3	19	0
 t8014-blame-ignore-fuzzy	yes	16	4	12	ok	4	16	0
 t8015-blame-diff-algorithm	yes	7	2	5	ok	2	7	0
 t8020-last-modified	yes	28	1	27	ok	1	28	0
-t9001-send-email	yes	216	68	148	ok	67	215	1
+t9001-send-email	yes	216	216	0	ok	215	215	1
 t9002-column	yes	16	16	0	ok	16	16	0
 t9003-help-autocorrect	yes	10	10	0	ok	10	10	0
 t9100-git-svn-basic	yes	0	0	0	ok	0	0	0

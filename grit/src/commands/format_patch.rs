@@ -256,7 +256,16 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let total = commits.len();
-    let prefix = args.subject_prefix.as_deref().unwrap_or("PATCH");
+    let base_prefix = args.subject_prefix.as_deref().unwrap_or("PATCH");
+    let reroll_tag = args.reroll_count.as_deref().map(normalize_reroll_tag);
+    let prefix = if let Some(ref reroll) = reroll_tag {
+        format!("{base_prefix} {reroll}")
+    } else {
+        base_prefix.to_owned()
+    };
+    let filename_reroll_prefix = reroll_tag
+        .as_deref()
+        .map_or(String::new(), |reroll| format!("{reroll}-"));
 
     // Determine whether to number patches.
     let config_numbered_val = config.get("format.numbered").map(|v| v.to_string());
@@ -358,7 +367,7 @@ pub fn run(args: Args) -> Result<()> {
             let mut out = stdout_handle.lock();
             write!(out, "{cover}")?;
         } else {
-            let filename = "0000-cover-letter.patch".to_string();
+            let filename = format!("{filename_reroll_prefix}0000-cover-letter.patch");
             let path = out_dir.join(&filename);
             std::fs::write(&path, &cover)
                 .with_context(|| format!("cannot write cover letter '{}'", path.display()))?;
@@ -395,7 +404,7 @@ pub fn run(args: Args) -> Result<()> {
             }
         } else {
             let filename = format!(
-                "{:04}-{}.patch",
+                "{filename_reroll_prefix}{:04}-{}.patch",
                 patch_num,
                 sanitize_subject_with_limit(subject_line, args.filename_max_length)
             );
@@ -427,6 +436,19 @@ fn run_completion_helper_passthrough() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn normalize_reroll_tag(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "v1".to_owned();
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with('v') {
+        lower
+    } else {
+        format!("v{trimmed}")
+    }
 }
 
 fn real_git_binary() -> PathBuf {

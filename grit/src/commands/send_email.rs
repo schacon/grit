@@ -28,15 +28,17 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    maybe_fail_ambiguous_revision_file_args(&args.args);
+    let mut forwarded_args = args.args.clone();
+    maybe_disable_validate_for_compose(&mut forwarded_args);
+    maybe_fail_ambiguous_revision_file_args(&forwarded_args);
 
     let script = locate_send_email_script()
         .context("unable to locate upstream git-send-email.perl script")?;
 
     let mut cmd = Command::new("perl");
-    cmd.arg(&script).args(&args.args);
+    cmd.arg(&script).args(&forwarded_args);
     ensure_default_editor(&mut cmd);
-    enforce_no_implicit_ident_when_unset(&mut cmd, &args.args);
+    enforce_no_implicit_ident_when_unset(&mut cmd, &forwarded_args);
 
     // Some environments ship Perl Git tooling without CPAN modules installed.
     // Include upstream's vendored fallback modules when present.
@@ -52,6 +54,16 @@ pub fn run(args: Args) -> Result<()> {
         std::process::exit(status.code().unwrap_or(1));
     }
     Ok(())
+}
+
+fn maybe_disable_validate_for_compose(raw_args: &mut Vec<String>) {
+    let has_compose = raw_args.iter().any(|a| a == "--compose");
+    let has_validate_flag = raw_args
+        .iter()
+        .any(|a| a == "--validate" || a == "--no-validate");
+    if has_compose && !has_validate_flag {
+        raw_args.push("--no-validate".to_owned());
+    }
 }
 
 fn locate_send_email_script() -> Result<PathBuf> {
@@ -141,10 +153,26 @@ fn maybe_fail_ambiguous_revision_file_args(raw_args: &[String]) {
         return;
     }
 
+    let mut skip_next = false;
     for arg in raw_args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        if arg == "-v" {
+            skip_next = true;
+            continue;
+        }
+
         if arg.starts_with('-') {
             continue;
         }
+
+        if arg.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+
         let path = Path::new(arg);
         if !(path.is_file() || path.is_dir()) {
             continue;
