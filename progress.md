@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    93 |
+| Completed   |    94 |
 | In progress |     0 |
-| Remaining   |   674 |
+| Remaining   |   673 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4153-am-resume-override-opts` — 6/6 tests pass (`git am` now supports `--retry` and per-resume override flags for saved session options: `--3way/--no-3way`, `--quiet/--no-quiet`, `--signoff/--no-signoff`, and `--reject/--no-reject`; saved am-state options now persist reject mode; `format-patch --stdout -1 <rev>` now emits the named commit itself, restoring expected patch sequencing for am-resume flows; three-way retry now uses patch preimage blob IDs plus rename-aware path fallback for renamed targets)
 - `t4140-apply-ita` — 7/7 tests pass (`add -N` now persists intent-to-add extended flags by writing index v3 when extended bits are present; `diff` now renders i-t-a entries with git-compatible add/delete headers and empty-blob index sides; `apply --index` now rejects creation patches when the target index entry does not match the worktree; `apply -N/--intent-to-add` now records newly-created patch targets as intent-to-add entries in the index)
 - `t4116-apply-reverse` — 7/7 tests pass (`git apply` now parses/applies `GIT binary patch` literal payloads for worktree and index targets, accepts `--binary` as alias of `--allow-binary-replacement`, and `-R` now swaps both text hunks and binary forward/reverse payloads while preserving rename/path behavior)
 - `t4126-apply-empty` — 8/8 tests pass (`git apply` now supports `--allow-empty` for empty/no-op patch input, zero-preimage hunks can apply against missing source paths as empty content for both worktree and index modes, and `--check --apply` now performs check-then-apply semantics; additionally `git diff -R` is now parsed/applied so reverse patch generation in apply-empty setup works)

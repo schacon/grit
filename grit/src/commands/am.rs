@@ -20,6 +20,7 @@ use grit_lib::error::Error as GritError;
 use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 
@@ -34,6 +35,10 @@ pub struct Args {
     /// Continue applying patches after resolving a conflict.
     #[arg(long = "continue", alias = "resolved")]
     pub r#continue: bool,
+
+    /// Retry the current patch in an existing am session.
+    #[arg(long = "retry")]
+    pub retry: bool,
 
     /// Abort the current am session.
     #[arg(long = "abort")]
@@ -51,6 +56,10 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Disable quiet mode for resumed patch application.
+    #[arg(long = "no-quiet")]
+    pub no_quiet: bool,
+
     /// Do not apply the patch, just show what would be applied.
     #[arg(long = "dry-run")]
     pub dry_run: bool,
@@ -66,6 +75,10 @@ pub struct Args {
     /// Add Signed-off-by trailer.
     #[arg(short = 's', long = "signoff")]
     pub signoff: bool,
+
+    /// Disable Signed-off-by trailer for resumed patch application.
+    #[arg(long = "no-signoff")]
+    pub no_signoff: bool,
 
     /// Keep the [PATCH] prefix in the subject.
     #[arg(short = 'k', long = "keep")]
@@ -94,6 +107,14 @@ pub struct Args {
     /// Skip hook execution.
     #[arg(long = "no-verify")]
     pub no_verify: bool,
+
+    /// Leave rejected hunks in *.rej files.
+    #[arg(long = "reject")]
+    pub reject: bool,
+
+    /// Disable reject file generation.
+    #[arg(long = "no-reject")]
+    pub no_reject: bool,
 
     /// Add Message-Id trailer to commit messages.
     #[arg(long = "message-id")]
@@ -141,16 +162,26 @@ struct MboxPatch {
 
 /// Run the `am` command.
 /// Options threaded through the apply loop.
+#[derive(Debug, Clone)]
 struct AmOptions {
     quiet: bool,
     three_way: bool,
     no_verify: bool,
     signoff: bool,
+    reject: bool,
     committer_date_is_author_date: bool,
     ignore_date: bool,
     message_id: bool,
     empty: String,
     allow_empty: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AmOptionOverrides {
+    quiet: Option<bool>,
+    three_way: Option<bool>,
+    signoff: Option<bool>,
+    reject: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -170,8 +201,13 @@ pub fn run(args: Args) -> Result<()> {
     if args.skip {
         return do_skip();
     }
+    let overrides = option_overrides_from_args(&args);
+
     if args.r#continue {
-        return do_continue(args.quiet, args.interactive);
+        return do_continue(args.interactive, &overrides);
+    }
+    if args.retry {
+        return do_retry(&overrides);
     }
 
     if args.mbox.is_empty() && !args.stdin {
@@ -243,6 +279,110 @@ fn select_patches_interactively(patches: Vec<MboxPatch>) -> Result<Vec<MboxPatch
         }
     }
     Ok(selected)
+}
+
+fn merge_option_overrides(base: &mut AmOptions, overrides: AmOptionOverrides) {
+    if let Some(value) = overrides.quiet {
+        base.quiet = value;
+    }
+    if let Some(value) = overrides.three_way {
+        base.three_way = value;
+    }
+    if let Some(value) = overrides.signoff {
+        base.signoff = value;
+    }
+    if let Some(value) = overrides.reject {
+        base.reject = value;
+    }
+}
+
+fn build_am_options(args: &Args, config: &ConfigSet) -> AmOptions {
+    let three_way = if args.no_three_way {
+        false
+    } else if args.three_way {
+        true
+    } else {
+        config
+            .get("am.threeWay")
+            .or_else(|| config.get("am.threeway"))
+            .map(|v| v == "true")
+            .unwrap_or(false)
+    };
+    let message_id = args.message_id
+        || config
+            .get("am.messageid")
+            .map(|v| v == "true")
+            .unwrap_or(false);
+    AmOptions {
+        quiet: if args.no_quiet { false } else { args.quiet },
+        three_way,
+        no_verify: args.no_verify,
+        signoff: if args.no_signoff { false } else { args.signoff },
+        reject: if args.no_reject { false } else { args.reject },
+        committer_date_is_author_date: args.committer_date_is_author_date,
+        ignore_date: args.ignore_date,
+        message_id,
+        empty: args.empty.clone().unwrap_or_else(|| "stop".to_string()),
+        allow_empty: args.allow_empty,
+    }
+}
+
+fn continue_overrides_from_args(args: &Args) -> AmOptionOverrides {
+    let quiet = if args.no_quiet {
+        Some(false)
+    } else if args.quiet {
+        Some(true)
+    } else {
+        None
+    };
+    let three_way = if args.no_three_way {
+        Some(false)
+    } else if args.three_way {
+        Some(true)
+    } else {
+        None
+    };
+    let signoff = if args.no_signoff {
+        Some(false)
+    } else if args.signoff {
+        Some(true)
+    } else {
+        None
+    };
+    let reject = if args.no_reject {
+        Some(false)
+    } else if args.reject {
+        Some(true)
+    } else {
+        None
+    };
+    AmOptionOverrides {
+        quiet,
+        three_way,
+        signoff,
+        reject,
+    }
+}
+
+fn option_overrides_from_args(args: &Args) -> AmOptionOverrides {
+    continue_overrides_from_args(args)
+}
+
+fn merge_options(base: &AmOptions, overrides: &AmOptionOverrides) -> AmOptions {
+    let mut merged = base.clone();
+    merge_option_overrides(&mut merged, *overrides);
+    merged
+}
+
+fn do_retry(overrides: &AmOptionOverrides) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+    if !is_am_in_progress(git_dir) {
+        bail!("operation not in progress");
+    }
+    let state_dir = am_dir(git_dir);
+    let opts = load_am_options(&state_dir);
+    apply_remaining(&repo, &opts, Some(overrides))
 }
 
 // ── Main flow ───────────────────────────────────────────────────────
@@ -332,36 +472,10 @@ fn do_am(args: Args) -> Result<()> {
     }
 
     // Apply patches
-    let three_way = if args.no_three_way {
-        false
-    } else if args.three_way {
-        true
-    } else {
-        config
-            .get("am.threeWay")
-            .or_else(|| config.get("am.threeway"))
-            .map(|v| v == "true")
-            .unwrap_or(false)
-    };
-    let message_id = args.message_id
-        || config
-            .get("am.messageid")
-            .map(|v| v == "true")
-            .unwrap_or(false);
-    let opts = AmOptions {
-        quiet: args.quiet,
-        three_way,
-        no_verify: args.no_verify,
-        signoff: args.signoff,
-        committer_date_is_author_date: args.committer_date_is_author_date,
-        ignore_date: args.ignore_date,
-        message_id,
-        empty: args.empty.unwrap_or_else(|| "stop".to_string()),
-        allow_empty: args.allow_empty,
-    };
+    let opts = build_am_options(&args, &config);
     // Save options to state dir for --continue
     save_am_options(&state_dir, &opts)?;
-    apply_remaining(&repo, &opts)?;
+    apply_remaining(&repo, &opts, None)?;
 
     Ok(())
 }
@@ -433,45 +547,24 @@ fn do_am_stdin(args: Args) -> Result<()> {
         fs::write(&patch_file, serialized)?;
     }
 
-    let three_way = if args.no_three_way {
-        false
-    } else if args.three_way {
-        true
-    } else {
-        config
-            .get("am.threeWay")
-            .or_else(|| config.get("am.threeway"))
-            .map(|v| v == "true")
-            .unwrap_or(false)
-    };
-    let message_id = args.message_id
-        || config
-            .get("am.messageid")
-            .map(|v| v == "true")
-            .unwrap_or(false);
-    let opts = AmOptions {
-        quiet: args.quiet,
-        three_way,
-        no_verify: args.no_verify,
-        signoff: args.signoff,
-        committer_date_is_author_date: args.committer_date_is_author_date,
-        ignore_date: args.ignore_date,
-        message_id,
-        empty: args.empty.unwrap_or_else(|| "stop".to_string()),
-        allow_empty: args.allow_empty,
-    };
+    let opts = build_am_options(&args, &config);
     save_am_options(&state_dir, &opts)?;
-    apply_remaining(&repo, &opts)?;
+    apply_remaining(&repo, &opts, None)?;
     Ok(())
 }
 
 /// Apply all remaining patches.
-fn apply_remaining(repo: &Repository, opts: &AmOptions) -> Result<()> {
+fn apply_remaining(
+    repo: &Repository,
+    opts: &AmOptions,
+    first_patch_overrides: Option<&AmOptionOverrides>,
+) -> Result<()> {
     let git_dir = &repo.git_dir;
     let state_dir = am_dir(git_dir);
 
     let last: usize = fs::read_to_string(state_dir.join("last"))?.trim().parse()?;
     let mut next: usize = fs::read_to_string(state_dir.join("next"))?.trim().parse()?;
+    let first_next = next;
 
     while next <= last {
         let patch_file = state_dir.join("patches").join(next.to_string());
@@ -514,11 +607,19 @@ fn apply_remaining(repo: &Repository, opts: &AmOptions) -> Result<()> {
             }
         }
 
-        match apply_one_patch(repo, &patch, opts) {
+        let effective_opts = if next == first_next {
+            first_patch_overrides
+                .map(|overrides| merge_options(opts, overrides))
+                .unwrap_or_else(|| opts.clone())
+        } else {
+            opts.clone()
+        };
+
+        match apply_one_patch(repo, &patch, &effective_opts) {
             Ok(()) => {
                 let subject = patch.message.lines().next().unwrap_or("");
-                if !opts.quiet {
-                    eprintln!("Applying: {}", subject);
+                if !effective_opts.quiet {
+                    println!("Applying: {}", subject);
                 }
                 next += 1;
                 fs::write(state_dir.join("next"), next.to_string())?;
@@ -642,6 +743,9 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
                 // Attempt 3-way merge
                 apply_three_way(repo, patch)?;
             } else {
+                if opts.reject {
+                    let _ = write_reject_files_for_patch(work_tree, &patch.diff);
+                }
                 // Save message for --continue
                 fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
                 return Err(e);
@@ -721,8 +825,22 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
         let rel_path = strip_components(path_str, 1);
-        let abs_path = work_tree.join(&rel_path);
-        affected_paths.push(rel_path.clone());
+        let mut effective_rel_path = rel_path.clone();
+        let mut abs_path = work_tree.join(&effective_rel_path);
+
+        if !abs_path.exists() {
+            let preimage = preimage_from_hunks(&fp.hunks);
+            if !preimage.is_empty() {
+                if let Some(matched_path) =
+                    find_tree_path_matching_content(repo, &head_commit.tree, &preimage)?
+                {
+                    effective_rel_path = matched_path;
+                    abs_path = work_tree.join(&effective_rel_path);
+                }
+            }
+        }
+
+        affected_paths.push(effective_rel_path.clone());
 
         if fp.is_new {
             // New file - just apply directly
@@ -748,20 +866,34 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
             fs::read_to_string(&abs_path).unwrap_or_default()
         } else {
             // Try from HEAD tree
-            get_blob_from_tree(repo, &head_commit.tree, &rel_path).unwrap_or_default()
+            get_blob_from_tree(repo, &head_commit.tree, &effective_rel_path).unwrap_or_default()
         };
 
-        // Try to find the base blob from the index line in the diff
-        // The patch's context lines tell us what the pre-image looks like
-        // Build the pre-image from hunks
-        let base = build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone());
+        // Prefer patch index preimage blob when available.
+        let base = if let Some(old_oid_str) = fp.old_oid.as_deref() {
+            if let Ok(old_oid) = resolve_revision(repo, old_oid_str) {
+                if let Ok(obj) = repo.odb.read(&old_oid) {
+                    String::from_utf8_lossy(&obj.data).into_owned()
+                } else {
+                    build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone())
+                }
+            } else {
+                build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone())
+            }
+        } else {
+            // Fall back to deriving preimage from hunks.
+            build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone())
+        };
 
         // Apply the patch to the base to get "theirs"
         let theirs = match apply_hunks(&base, &fp.hunks) {
             Ok(t) => t,
             Err(_) => {
                 // If we can't even apply to base, that's a real failure
-                bail!("Failed to apply patch to {} even in 3-way mode", rel_path);
+                bail!(
+                    "Failed to apply patch to {} even in 3-way mode",
+                    effective_rel_path
+                );
             }
         };
 
@@ -780,6 +912,61 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
         bail!("3-way merge has conflicts");
     }
 
+    Ok(())
+}
+
+fn preimage_from_hunks(hunks: &[Hunk]) -> String {
+    let mut out = String::new();
+    for hunk in hunks {
+        for line in &hunk.lines {
+            match line {
+                HunkLine::Context(s) | HunkLine::Remove(s) => {
+                    out.push_str(s);
+                    out.push('\n');
+                }
+                HunkLine::Add(_) | HunkLine::NoNewline => {}
+            }
+        }
+    }
+    out
+}
+
+fn find_tree_path_matching_content(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    content: &str,
+) -> Result<Option<String>> {
+    let entries = tree_to_index_entries(repo, tree_oid, "")?;
+    for entry in entries {
+        let obj = repo.odb.read(&entry.oid)?;
+        if obj.kind != ObjectKind::Blob {
+            continue;
+        }
+        if obj.data == content.as_bytes() {
+            let path = String::from_utf8_lossy(&entry.path).to_string();
+            if !path.is_empty() {
+                return Ok(Some(path));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn write_reject_files_for_patch(work_tree: &Path, diff: &str) -> Result<()> {
+    let file_patches = parse_patch(diff)?;
+    for fp in &file_patches {
+        let Some(path_str) = fp.effective_path() else {
+            continue;
+        };
+        let rel_path = strip_components(path_str, 1);
+        let reject_path = work_tree.join(format!("{rel_path}.rej"));
+        if let Some(parent) = reject_path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+        fs::write(&reject_path, diff.as_bytes())?;
+    }
     Ok(())
 }
 
@@ -1288,12 +1475,12 @@ fn do_skip() -> Result<()> {
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
 
     let opts = load_am_options(&state_dir);
-    apply_remaining(&repo, &opts)?;
+    apply_remaining(&repo, &opts, None)?;
 
     Ok(())
 }
 
-fn do_continue(quiet: bool, interactive: bool) -> Result<()> {
+fn do_continue(interactive: bool, overrides: &AmOptionOverrides) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
@@ -1342,27 +1529,24 @@ fn do_continue(quiet: bool, interactive: bool) -> Result<()> {
     let patched = MboxPatch { message, ..patch };
     let subject = patched.message.lines().next().unwrap_or("");
 
+    let base_opts = load_am_options(&state_dir);
+    let effective_opts = merge_options(&base_opts, overrides);
+
     if interactive && !prompt_yes_no(&format!("Apply patch '{}'? [y/N] ", subject))? {
-        let mut opts = load_am_options(&state_dir);
-        opts.quiet = quiet;
         let next: usize = fs::read_to_string(state_dir.join("next"))?.trim().parse()?;
         fs::write(state_dir.join("next"), (next + 1).to_string())?;
         let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
-        apply_remaining(&repo, &opts)?;
+        apply_remaining(&repo, &base_opts, Some(overrides))?;
         return Ok(());
     }
-
-    // Load saved options
-    let mut opts = load_am_options(&state_dir);
-    opts.quiet = quiet;
 
     // Record rerere postimage before committing
     let _ = crate::commands::rerere::record_postimage(&repo);
 
-    create_am_commit(&repo, &index, &patched, &opts)?;
+    create_am_commit(&repo, &index, &patched, &effective_opts)?;
 
-    if !quiet {
-        eprintln!("Applying: {}", subject);
+    if !effective_opts.quiet {
+        println!("Applying: {}", subject);
     }
 
     // Advance next
@@ -1371,7 +1555,7 @@ fn do_continue(quiet: bool, interactive: bool) -> Result<()> {
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
 
     // Continue with remaining
-    apply_remaining(&repo, &opts)?;
+    apply_remaining(&repo, &base_opts, None)?;
 
     Ok(())
 }
@@ -1449,6 +1633,9 @@ fn save_am_options(state_dir: &Path, opts: &AmOptions) -> Result<()> {
     if opts.signoff {
         out.push_str("signoff\n");
     }
+    if opts.reject {
+        out.push_str("reject\n");
+    }
     if opts.quiet {
         out.push_str("quiet\n");
     }
@@ -1473,6 +1660,7 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
         three_way: false,
         no_verify: false,
         signoff: false,
+        reject: false,
         committer_date_is_author_date: false,
         ignore_date: false,
         message_id: false,
@@ -1484,6 +1672,7 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
             "threeway" => opts.three_way = true,
             "no-verify" => opts.no_verify = true,
             "signoff" => opts.signoff = true,
+            "reject" => opts.reject = true,
             "quiet" => opts.quiet = true,
             "message-id" => opts.message_id = true,
             "allow-empty" => opts.allow_empty = true,
@@ -2541,6 +2730,7 @@ struct FilePatch {
     new_path: Option<String>,
     old_mode: Option<String>,
     new_mode: Option<String>,
+    old_oid: Option<String>,
     is_new: bool,
     is_deleted: bool,
     is_rename: bool,
@@ -2606,6 +2796,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 new_path: None,
                 old_mode: None,
                 new_mode: None,
+                old_oid: None,
                 is_new: false,
                 is_deleted: false,
                 is_rename: false,
@@ -2641,6 +2832,10 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 } else if let Some(val) = line.strip_prefix("rename to ") {
                     fp.is_rename = true;
                     fp.new_path = Some(val.to_string());
+                } else if let Some(val) = line.strip_prefix("index ") {
+                    if let Some((old, _rest)) = val.split_once("..") {
+                        fp.old_oid = Some(old.trim().to_string());
+                    }
                 }
                 i += 1;
             }

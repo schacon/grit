@@ -2,6 +2,19 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `am` resume-override option handling and `format-patch -1 <rev>` commit-selection fixes for `t4153`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4153-am-resume-override-opts.sh` (from `tests/`): 6/6 passing.
+- `./scripts/run-tests.sh t4153-am-resume-override-opts.sh`: 6/6 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4153-am-resume-override-opts`: 6/6 passing in isolated upstream harness.
+- Regression checks:
+  - `./scripts/run-tests.sh t4140-apply-ita.sh`: 7/7 passing.
+  - `./scripts/run-tests.sh t4116-apply-reverse.sh`: 7/7 passing.
+  - `./scripts/run-tests.sh t4126-apply-empty.sh`: 8/8 passing.
+  - `./scripts/run-tests.sh t8860-add-intent-to-add.sh`: 29/30 (known pre-existing non-task baseline still pending).
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after intent-to-add plumbing updates across `add`, `diff`, `apply`, and index serialization for `t4140`).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4140-apply-ita.sh` (from `tests/`): 7/7 passing with explicit behavior confirmation:
   - setup now emits git-compatible i-t-a creation/deletion patches (`new file mode`/`deleted file mode`, `/dev/null` headers, and `index 0000000..` / `index e69de29..0000000`).
