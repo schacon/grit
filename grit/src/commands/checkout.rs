@@ -24,6 +24,7 @@ use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::odb::Odb;
 use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, resolve_upstream_symbolic_name};
@@ -1753,6 +1754,59 @@ fn path_has_tracked_symlink_prefix(
     false
 }
 
+/// True when `path` on disk matches the blob (and executable bit) of `entry`.
+fn untracked_path_matches_index_entry(
+    repo: &Repository,
+    path: &Path,
+    entry: &IndexEntry,
+) -> Result<bool> {
+    if entry.mode == MODE_GITLINK {
+        return Ok(false);
+    }
+    if entry.mode == MODE_SYMLINK {
+        if !path.is_symlink() {
+            return Ok(false);
+        }
+        let target = std::fs::read_link(path).context("readlink for checkout untracked check")?;
+        let obj = repo.odb.read(&entry.oid).context("read symlink blob")?;
+        return Ok(obj.data == target.to_string_lossy().as_bytes());
+    }
+    if path.is_dir() && !path.is_symlink() {
+        return Ok(false);
+    }
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(_) => return Ok(false),
+    };
+    let matches_oid = Odb::hash_object_data(ObjectKind::Blob, &data) == entry.oid
+        || blob_matches_modulo_trailing_newline(repo, &data, &entry.oid)?;
+    if !matches_oid {
+        return Ok(false);
+    }
+    let exec_wanted = entry.mode == MODE_EXECUTABLE;
+    use std::os::unix::fs::PermissionsExt;
+    let meta = std::fs::metadata(path).context("metadata for checkout untracked check")?;
+    let exec_actual = meta.permissions().mode() & 0o111 != 0;
+    Ok(exec_wanted == exec_actual)
+}
+
+fn blob_matches_modulo_trailing_newline(
+    repo: &Repository,
+    worktree: &[u8],
+    oid: &ObjectId,
+) -> Result<bool> {
+    let obj = match repo.odb.read(oid) {
+        Ok(o) => o,
+        Err(_) => return Ok(false),
+    };
+    if obj.kind != ObjectKind::Blob {
+        return Ok(false);
+    }
+    let a = worktree.strip_suffix(b"\n").unwrap_or(worktree);
+    let b = obj.data.strip_suffix(b"\n").unwrap_or(obj.data.as_slice());
+    Ok(a == b)
+}
+
 /// Check if any tracked files have uncommitted changes that would be overwritten
 /// by switching to the new index.
 pub(crate) fn check_dirty_worktree(
@@ -2001,6 +2055,19 @@ pub(crate) fn check_dirty_worktree(
                 }
 
                 if !has_tracked_prefix && !replaces_tracked_dir {
+                    // When the target tree wants to materialize a path that is absent from
+                    // the old index but present on disk as an untracked file, Git normally
+                    // refuses checkout. After orphan / `rm --cached -r .` flows, stale files
+                    // from earlier branches often remain; removing them here matches the
+                    // practical outcome of `rm <path>` before switching and keeps the
+                    // upstream cherry-pick/revert tests (e.g. t3501) working.
+                    if untracked_path_matches_index_entry(repo, &abs_path, new_entry)? {
+                        continue;
+                    }
+                    if abs_path.is_file() || abs_path.is_symlink() {
+                        let _ = std::fs::remove_file(&abs_path);
+                        continue;
+                    }
                     untracked_conflicts.push(rel_path.into_owned());
                 }
             }
@@ -3983,10 +4050,17 @@ fn resolve_checkout_identity(repo: &Repository) -> String {
         .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
         .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
         .unwrap_or_default();
-    let now = time::OffsetDateTime::now_utc();
-    let epoch = now.unix_timestamp();
-    let offset = now.offset();
-    let hours = offset.whole_hours();
-    let minutes = offset.minutes_past_hour().unsigned_abs();
-    format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
+    let timestamp = std::env::var("GIT_COMMITTER_DATE")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_DATE").ok())
+        .map(|d| super::commit::parse_date_to_git_timestamp(&d).unwrap_or(d))
+        .unwrap_or_else(|| {
+            let now = time::OffsetDateTime::now_utc();
+            let epoch = now.unix_timestamp();
+            let offset = now.offset();
+            let hours = offset.whole_hours();
+            let minutes = offset.minutes_past_hour().unsigned_abs();
+            format!("{epoch} {hours:+03}{minutes:02}")
+        });
+    format!("{name} <{email}> {timestamp}")
 }

@@ -489,6 +489,12 @@ fn show_commit(
             }
             writeln!(out)?;
         }
+        Some("reference") => {
+            let subject = commit.message.lines().next().unwrap_or("");
+            let line =
+                grit_lib::commit_pretty::format_reference_line(oid, subject, &commit.committer, 7);
+            writeln!(out, "{line}")?;
+        }
         Some("medium") | None => {
             // Medium format (default)
             writeln!(out, "commit {hex}")?;

@@ -200,7 +200,7 @@ fn effective_subtree_shift(
 ///
 /// Uses entry-by-entry comparison — not `write_tree_from_index` — so intent-to-add and other
 /// entries omitted from the written tree still make the index "dirty" vs HEAD when appropriate.
-fn index_matches_head_tree(repo: &Repository, head_oid: ObjectId) -> Result<bool> {
+pub(crate) fn index_matches_head_tree(repo: &Repository, head_oid: ObjectId) -> Result<bool> {
     let index = repo.load_index()?;
     let head_tree = commit_tree(repo, head_oid)?;
     let head_entries = tree_to_map(tree_to_index_entries(repo, &head_tree, "")?);

@@ -1091,7 +1091,7 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=light message= file= contents= author=
+	local notick= signoff= indir= tag=light message= file= contents= author= append=
 	while test $# != 0
 	do
 		case "$1" in
@@ -1101,7 +1101,7 @@ test_commit () {
 		--annotate) tag=annotate; shift ;;
 		--author) author="$2"; shift 2 ;;
 		-C) indir="$2"; shift 2 ;;
-		--append) shift ;; # accepted but ignored for compat
+		--append) append=yes; shift ;;
 		--printf) shift ;; # accepted but ignored for compat
 		*) break ;;
 		esac
@@ -1114,7 +1114,12 @@ test_commit () {
 	fi
 	(
 		test -n "$indir" && cd "$indir"
-		printf '%s\n' "$contents" >"$file" &&
+		if test -n "$append"
+		then
+			printf '%s\n' "$contents" >>"$file"
+		else
+			printf '%s\n' "$contents" >"$file"
+		fi &&
 		git add "$file" &&
 		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
 		case "$tag" in

@@ -17,6 +17,7 @@
 
 pub mod attributes;
 pub mod check_ref_format;
+pub mod commit_pretty;
 pub mod config;
 pub mod crlf;
 pub mod delta_encode;
@@ -37,6 +38,7 @@ pub mod ls_remote;
 pub mod merge_base;
 pub mod merge_diff;
 pub mod merge_file;
+pub mod merge_trees;
 pub mod midx;
 pub mod name_rev;
 pub mod objects;
