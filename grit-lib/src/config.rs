@@ -1311,14 +1311,14 @@ impl ConfigSet {
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::path::PathBuf::from("/etc/gitconfig"));
             if let Ok(Some(f)) = ConfigFile::from_path(&system_path, ConfigScope::System) {
-                Self::merge_with_includes(&mut set, &f, true)?;
+                Self::merge_with_includes(&mut set, &f, true, 0)?;
             }
         }
 
         // Global config
         for path in global_config_paths() {
             if let Ok(Some(f)) = ConfigFile::from_path(&path, ConfigScope::Global) {
-                Self::merge_with_includes(&mut set, &f, true)?;
+                Self::merge_with_includes(&mut set, &f, true, 0)?;
                 break; // Only use the first found
             }
         }
@@ -1327,13 +1327,13 @@ impl ConfigSet {
         if let Some(gd) = git_dir {
             let local_path = gd.join("config");
             if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
-                Self::merge_with_includes(&mut set, &f, true)?;
+                Self::merge_with_includes(&mut set, &f, true, 0)?;
             }
 
             // Worktree config
             let wt_path = gd.join("config.worktree");
             if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
-                Self::merge_with_includes(&mut set, &f, true)?;
+                Self::merge_with_includes(&mut set, &f, true, 0)?;
             }
         }
 
@@ -1378,7 +1378,14 @@ impl ConfigSet {
         set: &mut Self,
         file: &ConfigFile,
         process_includes: bool,
+        depth: usize,
     ) -> Result<()> {
+        const MAX_INCLUDE_DEPTH: usize = 10;
+        if depth > MAX_INCLUDE_DEPTH {
+            return Err(Error::ConfigError(format!(
+                "exceeded maximum include depth ({MAX_INCLUDE_DEPTH})"
+            )));
+        }
         // First pass: find include paths
         let mut includes: Vec<(String, Option<String>)> = Vec::new();
 
@@ -1410,7 +1417,7 @@ impl ConfigSet {
 
                 let resolved = resolve_include_path(&inc_path, file.path.parent());
                 if let Ok(Some(inc_file)) = ConfigFile::from_path(&resolved, file.scope) {
-                    Self::merge_with_includes(set, &inc_file, true)?;
+                    Self::merge_with_includes(set, &inc_file, true, depth + 1)?;
                 }
             }
         }
