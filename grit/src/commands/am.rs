@@ -15,7 +15,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{parse_bool, ConfigSet};
 use grit_lib::error::Error as GritError;
 use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
@@ -83,6 +83,14 @@ pub struct Args {
     /// Keep the [PATCH] prefix in the subject.
     #[arg(short = 'k', long = "keep")]
     pub keep: bool,
+
+    /// Keep CR at end of lines.
+    #[arg(long = "keep-cr")]
+    pub keep_cr: bool,
+
+    /// Remove CR at end of lines.
+    #[arg(long = "no-keep-cr")]
+    pub no_keep_cr: bool,
 
     /// Keep non-patch bracket content in the subject.
     #[arg(long = "keep-non-patch")]
@@ -166,6 +174,7 @@ struct MboxPatch {
 struct AmOptions {
     quiet: bool,
     three_way: bool,
+    keep_cr: bool,
     no_verify: bool,
     signoff: bool,
     reject: bool,
@@ -180,6 +189,7 @@ struct AmOptions {
 struct AmOptionOverrides {
     quiet: Option<bool>,
     three_way: Option<bool>,
+    keep_cr: Option<bool>,
     signoff: Option<bool>,
     reject: Option<bool>,
 }
@@ -288,6 +298,9 @@ fn merge_option_overrides(base: &mut AmOptions, overrides: AmOptionOverrides) {
     if let Some(value) = overrides.three_way {
         base.three_way = value;
     }
+    if let Some(value) = overrides.keep_cr {
+        base.keep_cr = value;
+    }
     if let Some(value) = overrides.signoff {
         base.signoff = value;
     }
@@ -296,26 +309,38 @@ fn merge_option_overrides(base: &mut AmOptions, overrides: AmOptionOverrides) {
     }
 }
 
+fn config_bool(config: &ConfigSet, key: &str) -> Option<bool> {
+    config
+        .get(key)
+        .and_then(|value| parse_bool(value.trim()).ok())
+}
+
+fn resolve_keep_cr(args: &Args, config: &ConfigSet) -> bool {
+    if args.no_keep_cr {
+        return false;
+    }
+    if args.keep_cr {
+        return true;
+    }
+    config_bool(config, "am.keepcr").unwrap_or(false)
+}
+
 fn build_am_options(args: &Args, config: &ConfigSet) -> AmOptions {
     let three_way = if args.no_three_way {
         false
     } else if args.three_way {
         true
     } else {
-        config
-            .get("am.threeWay")
-            .or_else(|| config.get("am.threeway"))
-            .map(|v| v == "true")
+        config_bool(config, "am.threeWay")
+            .or_else(|| config_bool(config, "am.threeway"))
             .unwrap_or(false)
     };
-    let message_id = args.message_id
-        || config
-            .get("am.messageid")
-            .map(|v| v == "true")
-            .unwrap_or(false);
+    let message_id = args.message_id || config_bool(config, "am.messageid").unwrap_or(false);
+    let keep_cr = resolve_keep_cr(args, config);
     AmOptions {
         quiet: if args.no_quiet { false } else { args.quiet },
         three_way,
+        keep_cr,
         no_verify: args.no_verify,
         signoff: if args.no_signoff { false } else { args.signoff },
         reject: if args.no_reject { false } else { args.reject },
@@ -342,6 +367,13 @@ fn continue_overrides_from_args(args: &Args) -> AmOptionOverrides {
     } else {
         None
     };
+    let keep_cr = if args.no_keep_cr {
+        Some(false)
+    } else if args.keep_cr {
+        Some(true)
+    } else {
+        None
+    };
     let signoff = if args.no_signoff {
         Some(false)
     } else if args.signoff {
@@ -359,6 +391,7 @@ fn continue_overrides_from_args(args: &Args) -> AmOptionOverrides {
     AmOptionOverrides {
         quiet,
         three_way,
+        keep_cr,
         signoff,
         reject,
     }
@@ -405,6 +438,7 @@ fn do_am(args: Args) -> Result<()> {
     let no_scissors = args.no_scissors;
     let config = ConfigSet::load(Some(git_dir), true)?;
     let quoted_cr_action = resolve_quoted_cr_action(args.quoted_cr.as_deref(), &config);
+    let keep_cr = resolve_keep_cr(&args, &config);
 
     // Read and parse all mbox/patch files
     let mut all_patches = Vec::new();
@@ -424,6 +458,7 @@ fn do_am(args: Args) -> Result<()> {
                 keep_non_patch,
                 scissors,
                 no_scissors,
+                keep_cr,
                 quoted_cr_action,
             )?;
             all_patches.append(&mut patches);
@@ -499,6 +534,7 @@ fn do_am_stdin(args: Args) -> Result<()> {
 
     let config = ConfigSet::load(Some(git_dir), true)?;
     let quoted_cr_action = resolve_quoted_cr_action(args.quoted_cr.as_deref(), &config);
+    let keep_cr = resolve_keep_cr(&args, &config);
 
     let mut all_patches = parse_patches(
         &input,
@@ -507,6 +543,7 @@ fn do_am_stdin(args: Args) -> Result<()> {
         args.keep_non_patch,
         args.scissors,
         args.no_scissors,
+        keep_cr,
         quoted_cr_action,
     )?;
     if all_patches.is_empty() {
@@ -731,7 +768,7 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
     }
 
     // Try to apply the diff to the working tree
-    let apply_result = apply_patch_to_worktree(work_tree, &patch.diff);
+    let apply_result = apply_patch_to_worktree(work_tree, &patch.diff, opts.keep_cr);
 
     match apply_result {
         Ok(affected_paths) => {
@@ -1102,9 +1139,18 @@ fn get_blob_from_tree(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Res
     bail!("path not found in tree: {}", path);
 }
 
+fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<()> {
+    let actual_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, content.as_bytes());
+    let actual_hex = actual_oid.to_hex();
+    if !actual_hex.starts_with(expected_oid) {
+        bail!("patch does not apply");
+    }
+    Ok(())
+}
+
 /// Apply a unified diff to the working tree files.
 /// Returns the list of affected relative paths.
-fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> {
+fn apply_patch_to_worktree(work_tree: &Path, diff: &str, keep_cr: bool) -> Result<Vec<String>> {
     // Parse the diff into file patches using the same logic as `grit apply`
     let file_patches = parse_patch(diff)?;
     let mut affected = Vec::new();
@@ -1136,6 +1182,9 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> 
                     }
                     let old_content = fs::read_to_string(&old_abs)
                         .with_context(|| format!("cannot read {}", old_abs.display()))?;
+                    if let Some(expected_oid) = fp.old_oid.as_deref() {
+                        verify_old_oid_matches_content(expected_oid, &old_content)?;
+                    }
                     let new_content = if fp.hunks.is_empty() {
                         old_content
                     } else {
@@ -1156,6 +1205,13 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> 
 
         if fp.is_deleted {
             if path.exists() {
+                if keep_cr {
+                    if let Some(expected_oid) = fp.old_oid.as_deref() {
+                        let old_content = fs::read_to_string(&path)
+                            .with_context(|| format!("cannot read {}", path.display()))?;
+                        verify_old_oid_matches_content(expected_oid, &old_content)?;
+                    }
+                }
                 fs::remove_file(&path)?;
             }
             continue;
@@ -1183,6 +1239,11 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> 
         // Modify existing file
         let old_content =
             fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
+        if keep_cr {
+            if let Some(expected_oid) = fp.old_oid.as_deref() {
+                verify_old_oid_matches_content(expected_oid, &old_content)?;
+            }
+        }
 
         if fp.hunks.is_empty() {
             #[cfg(unix)]
@@ -1627,6 +1688,9 @@ fn save_am_options(state_dir: &Path, opts: &AmOptions) -> Result<()> {
     if opts.three_way {
         out.push_str("threeway\n");
     }
+    if opts.keep_cr {
+        out.push_str("keep-cr\n");
+    }
     if opts.no_verify {
         out.push_str("no-verify\n");
     }
@@ -1658,6 +1722,7 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
     let mut opts = AmOptions {
         quiet: false,
         three_way: false,
+        keep_cr: false,
         no_verify: false,
         signoff: false,
         reject: false,
@@ -1670,6 +1735,7 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
     for line in content.lines() {
         match line.trim() {
             "threeway" => opts.three_way = true,
+            "keep-cr" => opts.keep_cr = true,
             "no-verify" => opts.no_verify = true,
             "signoff" => opts.signoff = true,
             "reject" => opts.reject = true,
@@ -2004,6 +2070,7 @@ fn parse_patches(
     keep_non_patch: bool,
     scissors: bool,
     no_scissors: bool,
+    keep_cr: bool,
     quoted_cr_action: QuotedCrAction,
 ) -> Result<Vec<MboxPatch>> {
     let fmt = format.unwrap_or_else(|| detect_patch_format(input));
@@ -2016,6 +2083,7 @@ fn parse_patches(
             keep_non_patch,
             scissors,
             no_scissors,
+            keep_cr,
             quoted_cr_action,
         ),
     }
@@ -2058,12 +2126,24 @@ fn unflow_format_flowed(lines: &[&str]) -> Vec<String> {
     result
 }
 
+fn split_lines_preserve_cr(input: &str) -> Vec<&str> {
+    if input.is_empty() {
+        return Vec::new();
+    }
+    let mut lines: Vec<&str> = input.split('\n').collect();
+    if input.ends_with('\n') {
+        lines.pop();
+    }
+    lines
+}
+
 fn unquote_mboxrd(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut in_body = false;
 
-    for line in input.lines() {
-        if line.starts_with("From ") && line.len() > 5 {
+    for line in split_lines_preserve_cr(input) {
+        let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
+        if line_no_cr.starts_with("From ") && line_no_cr.len() > 5 {
             // mbox separator - reset state
             in_body = false;
             result.push_str(line);
@@ -2072,7 +2152,7 @@ fn unquote_mboxrd(input: &str) -> String {
         }
 
         if !in_body {
-            if line.is_empty() {
+            if line_no_cr.is_empty() {
                 in_body = true;
             }
             result.push_str(line);
@@ -2081,7 +2161,9 @@ fn unquote_mboxrd(input: &str) -> String {
         }
 
         // In body: unquote >From lines
-        if line.starts_with(">From ") || line.starts_with(">>") && line.contains("From ") {
+        if line_no_cr.starts_with(">From ")
+            || (line_no_cr.starts_with(">>") && line_no_cr.contains("From "))
+        {
             // Strip one leading > if the line matches >+From pattern
             let stripped = line.strip_prefix(">").unwrap_or(line);
             result.push_str(stripped);
@@ -2131,15 +2213,19 @@ fn base64_decode(input: &str) -> Result<Vec<u8>> {
 fn decode_transfer_payload(
     payload: &str,
     transfer_encoding: &str,
+    keep_cr: bool,
     quoted_cr_action: QuotedCrAction,
 ) -> Result<String> {
     if transfer_encoding != "base64" {
-        return Ok(payload.to_string());
+        if keep_cr {
+            return Ok(payload.to_string());
+        }
+        return Ok(payload.replace('\r', ""));
     }
 
     let decoded = base64_decode(payload)?;
     let mut text = String::from_utf8_lossy(&decoded).into_owned();
-    if text.contains('\r') {
+    if !keep_cr && text.contains('\r') {
         match quoted_cr_action {
             QuotedCrAction::Strip => {
                 text = text.replace('\r', "");
@@ -2202,12 +2288,14 @@ fn parse_mbox_with_opts(
     keep_non_patch: bool,
     scissors: bool,
     no_scissors: bool,
+    keep_cr: bool,
     quoted_cr_action: QuotedCrAction,
 ) -> Result<Vec<MboxPatch>> {
     // Handle mboxrd: unquote >From lines
     let input = unquote_mboxrd(input);
     let mut patches = Vec::new();
-    let mut lines = input.lines().peekable();
+    let line_storage = split_lines_preserve_cr(&input);
+    let mut lines = line_storage.iter().copied().peekable();
 
     while lines.peek().is_some() {
         // Skip to next "From " line (mbox separator)
@@ -2222,19 +2310,20 @@ fn parse_mbox_with_opts(
 
         // Look for "From " separator line
         while let Some(&line) = lines.peek() {
-            if line.starts_with("From ") && line.len() > 5 {
+            let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
+            if line_no_cr.starts_with("From ") && line_no_cr.len() > 5 {
                 found_from = true;
                 lines.next(); // consume "From " line
                 break;
             }
             // If we haven't found any "From " line yet and we see headers, treat as raw patch
             if !found_from
-                && (line.starts_with("From:")
-                    || line.starts_with("Subject:")
-                    || line.starts_with("Date:")
-                    || line.starts_with("Message-ID:")
-                    || line.starts_with("Message-Id:")
-                    || line.starts_with("X-"))
+                && (line_no_cr.starts_with("From:")
+                    || line_no_cr.starts_with("Subject:")
+                    || line_no_cr.starts_with("Date:")
+                    || line_no_cr.starts_with("Message-ID:")
+                    || line_no_cr.starts_with("Message-Id:")
+                    || line_no_cr.starts_with("X-"))
             {
                 found_from = true;
                 break;
@@ -2257,28 +2346,31 @@ fn parse_mbox_with_opts(
         let mut content_transfer_encoding = String::new();
 
         while let Some(&line) = lines.peek() {
-            if line.is_empty() {
+            let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
+            if line_no_cr.is_empty() {
                 lines.next();
                 _in_headers = false;
                 break;
             }
             // Continuation line (starts with whitespace)
-            if (line.starts_with(' ') || line.starts_with('\t')) && !last_header.is_empty() {
+            if (line_no_cr.starts_with(' ') || line_no_cr.starts_with('\t'))
+                && !last_header.is_empty()
+            {
                 if last_header == "subject" {
                     subject.push(' ');
-                    subject.push_str(line.trim());
+                    subject.push_str(line_no_cr.trim());
                 }
                 lines.next();
                 continue;
             }
 
-            if let Some(value) = line.strip_prefix("From: ") {
+            if let Some(value) = line_no_cr.strip_prefix("From: ") {
                 author = value.trim().to_string();
                 last_header = "from".to_string();
-            } else if let Some(value) = line.strip_prefix("Date: ") {
+            } else if let Some(value) = line_no_cr.strip_prefix("Date: ") {
                 date = value.trim().to_string();
                 last_header = "date".to_string();
-            } else if let Some(value) = line.strip_prefix("Subject: ") {
+            } else if let Some(value) = line_no_cr.strip_prefix("Subject: ") {
                 // Strip [PATCH ...] prefix unless --keep
                 let subj = if keep {
                     value.trim().to_string()
@@ -2289,24 +2381,24 @@ fn parse_mbox_with_opts(
                 };
                 subject = subj;
                 last_header = "subject".to_string();
-            } else if let Some(value) = line
+            } else if let Some(value) = line_no_cr
                 .strip_prefix("Message-ID: ")
-                .or_else(|| line.strip_prefix("Message-Id: "))
-                .or_else(|| line.strip_prefix("Message-id: "))
+                .or_else(|| line_no_cr.strip_prefix("Message-Id: "))
+                .or_else(|| line_no_cr.strip_prefix("Message-id: "))
             {
                 message_id = value.trim().to_string();
                 last_header = "message-id".to_string();
-            } else if let Some(value) = line
+            } else if let Some(value) = line_no_cr
                 .strip_prefix("Content-Type: ")
-                .or_else(|| line.strip_prefix("Content-type: "))
+                .or_else(|| line_no_cr.strip_prefix("Content-type: "))
             {
                 if value.to_lowercase().contains("format=flowed") {
                     is_format_flowed = true;
                 }
                 last_header = "content-type".to_string();
-            } else if let Some(value) = line
+            } else if let Some(value) = line_no_cr
                 .strip_prefix("Content-Transfer-Encoding: ")
-                .or_else(|| line.strip_prefix("Content-transfer-encoding: "))
+                .or_else(|| line_no_cr.strip_prefix("Content-transfer-encoding: "))
             {
                 content_transfer_encoding = value.trim().to_ascii_lowercase();
                 last_header = "content-transfer-encoding".to_string();
@@ -2318,7 +2410,8 @@ fn parse_mbox_with_opts(
 
         let mut raw_payload_lines = Vec::new();
         while let Some(&line) = lines.peek() {
-            if line.starts_with("From ") && line.len() > 5 {
+            let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
+            if line_no_cr.starts_with("From ") && line_no_cr.len() > 5 {
                 break;
             }
             raw_payload_lines.push(line.to_string());
@@ -2326,10 +2419,22 @@ fn parse_mbox_with_opts(
         }
 
         let raw_payload = raw_payload_lines.join("\n");
-        let decoded_payload =
-            decode_transfer_payload(&raw_payload, &content_transfer_encoding, quoted_cr_action)?;
-        let mut payload_lines: Vec<String> =
-            decoded_payload.split('\n').map(|l| l.to_string()).collect();
+        let decoded_payload = decode_transfer_payload(
+            &raw_payload,
+            &content_transfer_encoding,
+            keep_cr,
+            quoted_cr_action,
+        )?;
+        let mut payload_lines: Vec<String> = decoded_payload
+            .split('\n')
+            .map(|l| {
+                if keep_cr {
+                    l.to_string()
+                } else {
+                    l.strip_suffix('\r').unwrap_or(l).to_string()
+                }
+            })
+            .collect();
         if payload_lines.last().is_some_and(String::is_empty) {
             payload_lines.pop();
         }
@@ -2790,7 +2895,8 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
     let mut i = 0;
 
     while i < lines.len() {
-        if lines[i].starts_with("diff --git ") {
+        let line_no_cr = lines[i].strip_suffix('\r').unwrap_or(lines[i]);
+        if let Some(rest) = line_no_cr.strip_prefix("diff --git ") {
             let mut fp = FilePatch {
                 old_path: None,
                 new_path: None,
@@ -2803,7 +2909,6 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 hunks: Vec::new(),
             };
 
-            let rest = &lines[i]["diff --git ".len()..];
             if let Some((a, b)) = split_diff_git_paths(rest) {
                 fp.old_path = Some(a);
                 fp.new_path = Some(b);
@@ -2811,11 +2916,20 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             i += 1;
 
             while i < lines.len()
-                && !lines[i].starts_with("--- ")
-                && !lines[i].starts_with("diff --git ")
-                && !lines[i].starts_with("@@ ")
+                && !lines[i]
+                    .strip_suffix('\r')
+                    .unwrap_or(lines[i])
+                    .starts_with("--- ")
+                && !lines[i]
+                    .strip_suffix('\r')
+                    .unwrap_or(lines[i])
+                    .starts_with("diff --git ")
+                && !lines[i]
+                    .strip_suffix('\r')
+                    .unwrap_or(lines[i])
+                    .starts_with("@@ ")
             {
-                let line = lines[i];
+                let line = lines[i].strip_suffix('\r').unwrap_or(lines[i]);
                 if let Some(val) = line.strip_prefix("old mode ") {
                     fp.old_mode = Some(val.to_string());
                 } else if let Some(val) = line.strip_prefix("new mode ") {
@@ -2840,18 +2954,35 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 i += 1;
             }
 
-            if i < lines.len() && lines[i].starts_with("--- ") {
-                let old_p = &lines[i]["--- ".len()..];
+            if i < lines.len()
+                && lines[i]
+                    .strip_suffix('\r')
+                    .unwrap_or(lines[i])
+                    .starts_with("--- ")
+            {
+                let old_line = lines[i].strip_suffix('\r').unwrap_or(lines[i]);
+                let old_p = &old_line["--- ".len()..];
                 fp.old_path = Some(old_p.to_string());
                 i += 1;
-                if i < lines.len() && lines[i].starts_with("+++ ") {
-                    let new_p = &lines[i]["+++ ".len()..];
+                if i < lines.len()
+                    && lines[i]
+                        .strip_suffix('\r')
+                        .unwrap_or(lines[i])
+                        .starts_with("+++ ")
+                {
+                    let new_line = lines[i].strip_suffix('\r').unwrap_or(lines[i]);
+                    let new_p = &new_line["+++ ".len()..];
                     fp.new_path = Some(new_p.to_string());
                     i += 1;
                 }
             }
 
-            while i < lines.len() && lines[i].starts_with("@@ ") {
+            while i < lines.len()
+                && lines[i]
+                    .strip_suffix('\r')
+                    .unwrap_or(lines[i])
+                    .starts_with("@@ ")
+            {
                 let (hunk, next_i) = parse_hunk(&lines, i)?;
                 fp.hunks.push(hunk);
                 i = next_i;
@@ -2901,7 +3032,7 @@ fn strip_components(path: &str, n: usize) -> String {
 }
 
 fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
-    let header = lines[start];
+    let header = lines[start].strip_suffix('\r').unwrap_or(lines[start]);
     let (old_start, old_count, new_start, new_count) =
         parse_hunk_header(header).with_context(|| format!("invalid hunk header: {header}"))?;
 
@@ -2968,7 +3099,11 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
     let old_lines: Vec<&str> = if old_content.is_empty() {
         Vec::new()
     } else {
-        old_content.lines().collect()
+        let mut lines: Vec<&str> = old_content.split('\n').collect();
+        if lines.last().is_some_and(|line| line.is_empty()) {
+            lines.pop();
+        }
+        lines
     };
 
     let mut result: Vec<String> = Vec::new();

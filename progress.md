@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    99 |
-| In progress |     1 |
+| Completed   |   100 |
+| In progress |     0 |
 | Remaining   |   667 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4253-am-keep-cr-dos` — 7/7 tests pass (`am` now parses `--keep-cr` / `--no-keep-cr`, resolves `am.keepcr` with full git-boolean semantics, persists `keep-cr` across am session state, preserves CR bytes through mbox parsing when requested, strips CR in default/no-keep-cr paths, and normalizes CR-aware preimage/hunk matching in both direct apply and 3-way fallback including preimage OID validation)
 - `t4122-apply-symlink-inside` — 7/7 tests pass (`format-patch` now accepts and ignores `--binary` for compatibility with upstream setup invocations; `apply --index` now validates symlink preimages using symlink target bytes instead of file reads so symlink-to-directory paths no longer fail with `EISDIR`; hunk parsing now stops at format-patch signature separator `-- ` so trailer lines are not misinterpreted as removals; apply precheck now propagates path-existence updates to descendants and blocks patch paths that traverse beyond symbolic links, including symlinks introduced earlier within the same patch stream)
 - `t4001-diff-rename` — 23/23 tests pass (`status` now reports staged renames as `old -> new` and honors `diff.renames`; diff rename/copy output now uses shared compact rename-path formatting; repeated `-C` parsing, trailing `-l` option recovery, and copy-limit warning fallback now match upstream behavior for rename/copy-heavy scenarios)
 - `t4104-apply-boundary` — 24/24 tests pass (`git apply` now computes 0-context insertion positions with git-compatible semantics, `--check`/worktree/index apply paths verify `index <old>..<new>` preimage object IDs so add-only hunks reject wrong preimages, and boundary-focused hunks now apply/fail exactly as expected)
