@@ -37,7 +37,7 @@ commit → check it off → move on.
 - [x] `t0091-bugreport` ████████████████████ 13/13 (0 left) — git bugreport
 - [x] `t0066-dir-iterator` ████████████████████ 10/10 (0 left) — Test the dir-iterator functionality
 - [x] `t0067-parse_pathspec_file` ████████████████████ 8/8 (0 left) — Test parse_pathspec_file()
-- [ ] `t0070-fundamental` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — check that the most basic functions work
+- [x] `t0070-fundamental` ████████████████████ 11/11 (0 left) — check that the most basic functions work
 
 - [ ] `t0095-bloom` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — Testing the various Bloom filter computations in bloom.c
 - [ ] `t0035-safe-bare-repository` █░░░░░░░░░░░░░░░░░░░ 1/12 (11 left) — verify safe.bareRepository checks

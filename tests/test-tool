@@ -46,6 +46,96 @@ case "$1" in
   genzeros)
     count="${2:-0}"
     dd if=/dev/zero bs=1 count="$count" 2>/dev/null ;;
+  mktemp)
+    shift
+    if [ $# -ne 1 ]; then
+      echo "test-tool mktemp: expected one template argument" >&2
+      exit 1
+    fi
+    template="$1"
+    tmp_path="$(mktemp "$template" 2>/dev/null)" || {
+      echo "mktemp: failed to create temporary file from '$template'" >&2
+      exit 1
+    }
+    rm -f "$tmp_path"
+    ;;
+  regex)
+    shift
+    if [ "$1" = "--bug" ]; then
+      [ $# -eq 1 ] || {
+        echo "test-tool regex: --bug takes no additional arguments" >&2
+        exit 1
+      }
+      exit 0
+    fi
+
+    silent=0
+    if [ "$1" = "--silent" ]; then
+      silent=1
+      shift
+    fi
+
+    if [ $# -lt 1 ]; then
+      echo "test-tool regex: missing pattern" >&2
+      exit 1
+    fi
+
+    pattern="$1"
+    shift
+    subject=""
+    has_subject=0
+    if [ $# -gt 0 ]; then
+      subject="$1"
+      has_subject=1
+      shift
+    fi
+
+    regex_flags=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        ICASE)
+          regex_flags="${regex_flags}i"
+          ;;
+        NEWLINE)
+          regex_flags="${regex_flags}m"
+          ;;
+        EXTENDED|NOTBOL|NOTEOL|STARTEND)
+          ;;
+        *)
+          echo "test-tool regex: do not recognize flag $1" >&2
+          exit 1
+          ;;
+      esac
+      shift
+    done
+
+    python3 - "$pattern" "$subject" "$has_subject" "$silent" "$regex_flags" <<'PY'
+import re
+import sys
+
+pattern, subject, has_subject, silent, flag_str = sys.argv[1:]
+flags = 0
+if "i" in flag_str:
+    flags |= re.IGNORECASE
+if "m" in flag_str:
+    flags |= re.MULTILINE
+
+try:
+    rx = re.compile(pattern, flags)
+except re.error as exc:
+    if silent != "1":
+        print(f"failed regcomp() for pattern '{pattern}' ({exc})", file=sys.stderr)
+    sys.exit(1)
+
+if has_subject != "1":
+    sys.exit(0)
+
+if rx.search(subject) is None:
+    sys.exit(1)
+
+sys.exit(0)
+PY
+    ;;
   read-cache)
     exit 0 ;;
   dump-cache-tree)
@@ -471,6 +561,188 @@ case "$1" in
           my $len = length($data) + 4;
           printf "%04x%s", $len, $data;
         ' ;;
+      send-split-sideband)
+        python3 - <<'PY'
+import sys
+
+def pkt(payload: bytes) -> None:
+    sys.stdout.buffer.write(f"{len(payload)+4:04x}".encode("ascii"))
+    sys.stdout.buffer.write(payload)
+
+def sideband(band: int, text: str) -> None:
+    pkt(bytes([band]) + text.encode("utf-8"))
+
+sideband(2, "Foo.\n")
+sideband(2, "Bar.\n")
+sideband(2, "Hello,")
+pkt(b"\x01primary: regular output\n")
+sideband(2, " world!\n")
+sys.stdout.buffer.write(b"0002")
+sys.stdout.buffer.write(b"0000")
+PY
+        ;;
+      receive-sideband)
+        perl -e '
+          use strict;
+          use warnings;
+          binmode STDIN;
+          binmode STDOUT;
+          binmode STDERR;
+
+          local $/;
+          my $data = <STDIN>;
+          $data = "" unless defined $data;
+          my $idx = 0;
+          my $progress = "";
+
+          sub bad_disconnect {
+            print STDERR "unexpected disconnect while reading sideband packet\n";
+          }
+
+          sub flush_progress_lines {
+            while ($progress =~ s/^(.*?\n)//s) {
+              print STDERR $1;
+            }
+          }
+
+          while (1) {
+            if ($idx + 4 > length($data)) {
+              bad_disconnect() if $idx != length($data);
+              last;
+            }
+            my $hdr = substr($data, $idx, 4);
+            $idx += 4;
+            if ($hdr !~ /^[0-9a-fA-F]{4}$/) {
+              bad_disconnect();
+              last;
+            }
+            my $len = hex($hdr);
+            last if $len == 0;
+            next if $len == 1 || $len == 2;
+
+            my $payload_len = $len - 4;
+            if ($payload_len < 0 || $idx + $payload_len > length($data)) {
+              bad_disconnect();
+              last;
+            }
+            my $payload = substr($data, $idx, $payload_len);
+            $idx += $payload_len;
+            if ($payload eq "") {
+              print STDERR "missing sideband designator\n";
+              next;
+            }
+
+            my $band = ord(substr($payload, 0, 1));
+            my $body = substr($payload, 1);
+            if ($band == 1) {
+              print STDOUT $body;
+            } elsif ($band == 2) {
+              $progress .= $body;
+              flush_progress_lines();
+            }
+          }
+
+          print STDERR $progress if $progress ne "";
+        '
+        ;;
+      unpack-sideband)
+        shift
+        chomp_newline=1
+        reader_use_sideband=0
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --reader-use-sideband)
+              reader_use_sideband=1
+              ;;
+            --chomp-newline)
+              chomp_newline=1
+              ;;
+            --no-chomp-newline)
+              chomp_newline=0
+              ;;
+            *)
+              echo "test-tool pkt-line unpack-sideband: unknown option '$1'" >&2
+              exit 1
+              ;;
+          esac
+          shift
+        done
+        perl -e '
+          use strict;
+          use warnings;
+          binmode STDIN;
+          binmode STDOUT;
+          binmode STDERR;
+
+          my $chomp_newline = shift @ARGV;
+          my $reader_use_sideband = shift @ARGV;
+
+          local $/;
+          my $data = <STDIN>;
+          $data = "" unless defined $data;
+          my $idx = 0;
+          my $progress = "";
+
+          sub write_primary {
+            my ($body) = @_;
+            if ($chomp_newline && $body =~ /\n\z/) {
+              $body =~ s/\n\z//;
+            }
+            print STDOUT $body;
+          }
+
+          sub flush_progress {
+            my ($final) = @_;
+            while ($progress =~ s/^(.*?)\n//s) {
+              my $line = $1;
+              if ($reader_use_sideband) {
+                print STDERR "remote: ${line}        \n";
+              } else {
+                if ($chomp_newline) {
+                  print STDERR $line;
+                } else {
+                  print STDERR "${line}\n";
+                }
+              }
+            }
+            if ($final && $progress ne "") {
+              if ($reader_use_sideband) {
+                print STDERR "remote: ${progress}        \n";
+              } else {
+                print STDERR $progress;
+              }
+              $progress = "";
+            }
+          }
+
+          while (1) {
+            last if $idx + 4 > length($data);
+            my $hdr = substr($data, $idx, 4);
+            $idx += 4;
+            last unless $hdr =~ /^[0-9a-fA-F]{4}$/;
+            my $len = hex($hdr);
+            last if $len == 0;
+            next if $len == 1 || $len == 2;
+
+            my $payload_len = $len - 4;
+            last if $payload_len < 0 || $idx + $payload_len > length($data);
+            my $payload = substr($data, $idx, $payload_len);
+            $idx += $payload_len;
+            next if $payload eq "";
+
+            my $band = ord(substr($payload, 0, 1));
+            my $body = substr($payload, 1);
+            if ($band == 1) {
+              write_primary($body);
+            } elsif ($band == 2) {
+              $progress .= $body;
+              flush_progress(0);
+            }
+          }
+
+          flush_progress(1);
+        ' "$chomp_newline" "$reader_use_sideband"
+        ;;
       *)
         echo "test-tool pkt-line: unknown subcommand '$1'" >&2
         exit 1 ;;
