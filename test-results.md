@@ -9,6 +9,9 @@
 - `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in `grit-lib/src/state.rs`, `grit/src/commands/blame.rs`, `grit/src/commands/config.rs`, and `grit/src/commands/update_index.rs` were reverted).
 - `cargo test -p grit-lib --lib`: passes (96/96).
 
+- `./scripts/run-tests.sh t4215-log-skewed-merges.sh`: 0/10 passing (baseline for newly claimed in-progress Diff target `t4215`).
+- `bash scripts/run-upstream-tests.sh t4215-log-skewed-merges`: 0/10 passing in isolated upstream harness baseline.
+
 - `./scripts/run-tests.sh t4119-apply-config.sh`: 1/11 passing (baseline for newly claimed in-progress Diff target `t4119`).
 - `bash scripts/run-upstream-tests.sh t4119-apply-config`: 1/11 passing in isolated upstream harness baseline.
 
