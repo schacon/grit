@@ -109,7 +109,7 @@ commit → check it off → move on.
 - [ ] `t1014-read-tree-confusing` ███████████████████░ 27/28 (1 left) — check that read-tree rejects confusing paths
 - [x] `t1417-reflog-updateref` ████████████████████ 21/21 (0 left) — git reflog --updateref
 - [x] `t1414-reflog-walk` ████████████████████ 12/12 (0 left) — various tests of reflog walk (log -g) behavior
-- [ ] `t1421-reflog-write` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — Manually write reflog entries
+- [x] `t1421-reflog-write` ████████████████████ 10/10 (0 left) — Manually write reflog entries
 - [ ] `t1403-show-ref` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — show-ref
 - [ ] `t1306-xdg-files` █████████░░░░░░░░░░░ 10/21 (11 left) — Compatibility with $XDG_CONFIG_HOME/git/ files
 - [ ] `t1004-read-tree-m-u-wf` ███████░░░░░░░░░░░░░ 6/17 (11 left) — read-tree -m -u checks working tree files
@@ -943,4 +943,4 @@ commit → check it off → move on.
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
 **Total: 765 tracked files**
-**8,781/24,806 tests passing, 16,025 failures remaining**
+**8,790/24,806 tests passing, 16,016 failures remaining**

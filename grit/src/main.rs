@@ -2030,6 +2030,9 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
             if matches!(subcmd, "tag" | "branch" | "bugreport") {
                 eprintln!("usage: git {subcmd}");
             }
+            if subcmd == "reflog" && rest.first().map(String::as_str) == Some("write") {
+                eprintln!("usage: git reflog write <refname> <old-oid> <new-oid> <message>");
+            }
             match e.kind() {
                 clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
                     std::process::exit(129)
@@ -3035,17 +3038,25 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
         "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
         "test-tool" => {
-            let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
+            let mut tool_args = rest;
+            while tool_args.len() >= 2 && tool_args.first().map(String::as_str) == Some("-C") {
+                let dir = &tool_args[1];
+                std::env::set_current_dir(dir)?;
+                tool_args = &tool_args[2..];
+            }
+            refresh_git_prefix_env();
+
+            let sub = tool_args.first().map(|s| s.as_str()).unwrap_or("");
             match sub {
-                "" => run_test_tool_default_hash(rest),
+                "" => run_test_tool_default_hash(tool_args),
                 "wildmatch" => {
                     // test-tool wildmatch <mode> <text> <pattern>
-                    if rest.len() < 4 {
+                    if tool_args.len() < 4 {
                         bail!("usage: test-tool wildmatch <mode> <text> <pattern>");
                     }
-                    let mode = &rest[1];
-                    let mut text = rest[2].clone();
-                    let pattern = rest[3].clone();
+                    let mode = &tool_args[1];
+                    let mut text = tool_args[2].clone();
+                    let pattern = tool_args[3].clone();
 
                     // Handle XXX/ prefix (substitute for leading /)
                     let text_bytes = if text.starts_with("XXX/") {
@@ -3077,24 +3088,24 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                         std::process::exit(1);
                     }
                 }
-                "trace2" => run_test_tool_trace2(rest),
-                "example-tap" => run_test_tool_example_tap(rest),
-                "advise" => run_test_tool_advise(rest),
-                "env-helper" => run_test_tool_env_helper(rest),
-                "dir-iterator" => run_test_tool_dir_iterator(rest),
-                "parse-pathspec-file" => run_test_tool_parse_pathspec_file(rest),
-                "revision-walking" => run_test_tool_revision_walking(rest),
-                "mergesort" => run_test_tool_mergesort(rest),
-                "find-pack" => run_test_tool_find_pack(rest),
-                "online-cpus" => run_test_tool_online_cpus(rest),
-                "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),
-                "mktemp" => run_test_tool_mktemp(rest),
-                "regex" => run_test_tool_regex(rest),
-                "config" => run_test_tool_config(rest),
-                "hexdump" => run_test_tool_hexdump(rest),
-                "zlib" => run_test_tool_zlib(rest),
-                "ref-store" => run_test_tool_ref_store(rest),
-                "pkt-line" => run_test_tool_pkt_line(rest),
+                "trace2" => run_test_tool_trace2(tool_args),
+                "example-tap" => run_test_tool_example_tap(tool_args),
+                "advise" => run_test_tool_advise(tool_args),
+                "env-helper" => run_test_tool_env_helper(tool_args),
+                "dir-iterator" => run_test_tool_dir_iterator(tool_args),
+                "parse-pathspec-file" => run_test_tool_parse_pathspec_file(tool_args),
+                "revision-walking" => run_test_tool_revision_walking(tool_args),
+                "mergesort" => run_test_tool_mergesort(tool_args),
+                "find-pack" => run_test_tool_find_pack(tool_args),
+                "online-cpus" => run_test_tool_online_cpus(tool_args),
+                "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(tool_args),
+                "mktemp" => run_test_tool_mktemp(tool_args),
+                "regex" => run_test_tool_regex(tool_args),
+                "config" => run_test_tool_config(tool_args),
+                "hexdump" => run_test_tool_hexdump(tool_args),
+                "zlib" => run_test_tool_zlib(tool_args),
+                "ref-store" => run_test_tool_ref_store(tool_args),
+                "pkt-line" => run_test_tool_pkt_line(tool_args),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

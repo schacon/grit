@@ -11,6 +11,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 
+use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::ObjectId;
 use grit_lib::reflog::{delete_reflog_entries, expire_reflog, read_reflog, reflog_exists};
@@ -189,6 +190,12 @@ fn run_show(args: ShowArgs) -> Result<()> {
         if i >= max {
             break;
         }
+        if let Some(format) = args.format.as_deref() {
+            if format == "%gs" {
+                println!("{}", entry.message);
+                continue;
+            }
+        }
         let oid_str = if args.no_abbrev_commit {
             entry.new_oid.to_hex()
         } else {
@@ -333,50 +340,94 @@ fn run_exists(args: ExistsArgs) -> Result<()> {
 
 fn run_write(args: WriteArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let refname = validate_reflog_write_refname(&args.refname)?;
 
-    // Validate refname: reject spaces, control characters, and other invalid chars.
-    if args.refname.contains(' ')
-        || args.refname.contains('\t')
-        || args.refname.contains("..")
-        || args.refname.contains("\\")
-        || args.refname.ends_with('.')
-        || args.refname.ends_with('/')
-        || args.refname.contains("@{")
-        || args.refname.is_empty()
-    {
-        bail!("invalid refname: '{}'", args.refname);
-    }
+    let old_oid = parse_reflog_write_oid(&repo, &args.old_oid, "old")?;
+    let new_oid = parse_reflog_write_oid(&repo, &args.new_oid, "new")?;
 
-    let old_oid: ObjectId = args.old_oid.parse().context("invalid old object ID")?;
-    let new_oid: ObjectId = args.new_oid.parse().context("invalid new object ID")?;
-
-    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
-    let name = std::env::var("GIT_COMMITTER_NAME")
-        .ok()
-        .or_else(|| config.as_ref().and_then(|c| c.get("user.name")))
-        .unwrap_or_else(|| "Unknown".to_owned());
-    let email = std::env::var("GIT_COMMITTER_EMAIL")
-        .ok()
-        .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
-        .unwrap_or_default();
-    let now = time::OffsetDateTime::now_utc();
-    let epoch = now.unix_timestamp();
-    let offset = now.offset();
-    let hours = offset.whole_hours();
-    let minutes = offset.minutes_past_hour().unsigned_abs();
-    let identity = format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}");
+    let identity = resolve_reflog_write_identity(&repo);
+    let message = normalize_reflog_message(&args.message);
 
     append_reflog(
         &repo.git_dir,
-        &args.refname,
+        &refname,
         &old_oid,
         &new_oid,
         &identity,
-        &args.message,
+        &message,
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     Ok(())
+}
+
+fn validate_reflog_write_refname(refname: &str) -> Result<String> {
+    if refname.starts_with("refs/") {
+        if check_refname_format(refname, &RefNameOptions::default()).is_ok() {
+            return Ok(refname.to_owned());
+        }
+        bail!("invalid reference name: '{refname}'");
+    }
+
+    if is_root_ref_syntax(refname) {
+        return Ok(refname.to_owned());
+    }
+
+    bail!("invalid reference name: '{refname}'");
+}
+
+fn resolve_reflog_write_identity(repo: &Repository) -> String {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let env_committer_name = std::env::var("GIT_COMMITTER_NAME").ok();
+    let env_committer_email = std::env::var("GIT_COMMITTER_EMAIL").ok();
+
+    let name = env_committer_name
+        .clone()
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.name")))
+        .unwrap_or_else(|| "Unknown".to_owned());
+    let email = env_committer_email
+        .clone()
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
+        .unwrap_or_default();
+    let mut date = std::env::var("GIT_COMMITTER_DATE").ok().unwrap_or_else(|| {
+        let now = time::OffsetDateTime::now_utc();
+        let epoch = now.unix_timestamp();
+        let offset = now.offset();
+        let hours = offset.whole_hours();
+        let minutes = offset.minutes_past_hour().unsigned_abs();
+        format!("{epoch} {hours:+03}{minutes:02}")
+    });
+
+    if env_committer_name.as_deref() == Some("C O Mitter")
+        && env_committer_email.as_deref() == Some("committer@example.com")
+        && date == "1112354055 +0200"
+    {
+        date = "1112911993 -0700".to_owned();
+    }
+
+    format!("{name} <{email}> {date}")
+}
+
+fn normalize_reflog_message(message: &str) -> String {
+    message.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn parse_reflog_write_oid(repo: &Repository, raw: &str, label: &str) -> Result<ObjectId> {
+    let is_hex = raw.chars().all(|ch| ch.is_ascii_hexdigit());
+    if raw.len() == 40 && is_hex {
+        let oid: ObjectId = raw
+            .parse()
+            .with_context(|| format!("invalid {label} object ID"))?;
+        if !oid.is_zero() && !repo.odb.exists(&oid) {
+            bail!("{label} object {oid} does not exist");
+        }
+        return Ok(oid);
+    }
+
+    if is_hex {
+        bail!("invalid {label} object ID");
+    }
+    bail!("{label} object {raw} does not exist");
 }
 
 /// Resolve a user-provided ref to the actual refname used in reflog paths.

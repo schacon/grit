@@ -137,7 +137,7 @@ t1417-reflog-updateref	yes	21	21	0	ok	21	21	0
 t1418-reflog-exists	yes	6	6	0	ok	6	6	0
 t1419-exclude-refs	yes	13	1	12	ok	1	13	0
 t1420-lost-found	yes	2	2	0	ok	2	2	0
-t1421-reflog-write	yes	10	1	9	ok	1	10	0
+t1421-reflog-write	yes	10	10	0	ok	10	10	0
 t1423-ref-backend	yes	36	4	32	ok	4	36	0
 t1430-bad-ref-name	yes	42	11	31	ok	9	40	2
 t1450-fsck	yes	96	22	74	ok	22	96	0

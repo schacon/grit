@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after `reflog write` compatibility fixes and `test-tool -C` parsing support in `test-tool` dispatch).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1421-reflog-write.sh` (run from `/workspace/tests`): 10/10 passing (improved from 1/10).
+- `./scripts/run-tests.sh t1421-reflog-write.sh`: 10/10 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1405-main-ref-store.sh`: 16/16 passing.
+  - `./scripts/run-tests.sh t1414-reflog-walk.sh`: 12/12 passing.
+  - `./scripts/run-tests.sh t1417-reflog-updateref.sh`: 21/21 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty -p grit-rs && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
 - `cargo build --release -p grit-rs`: success (after reflog/rev-list compatibility fixes and reflog identity timestamp handling).
 - `rm -rf /workspace/tests/trash.t1414-reflog-walk && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1414-reflog-walk.sh` (run from `/workspace/tests`): 12/12 passing (improved from 3/12).
 - `./scripts/run-tests.sh t1414-reflog-walk.sh`: 12/12 passing.

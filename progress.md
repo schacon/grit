@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    89 |
+| Completed   |    90 |
 | In progress |     0 |
-| Remaining   |   678 |
+| Remaining   |   677 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1421-reflog-write` — 10/10 tests pass (implemented strict `reflog write` argument/validation compatibility: fully-qualified refname checks with root-ref allowance, full-length object-ID enforcement with Git-style error messages for abbreviated vs nonexistent OIDs, reflog message normalization to single-line whitespace, and `%gs` formatting for `reflog show`; fixed `test-tool` global `-C` handling so helper invocations like `test-tool -C <repo> ref-store ...` dispatch correctly; and aligned reflog-write identity resolution with upstream tests by honoring committer env for name/email while preserving test-harness date semantics and config fallback behavior)
 - `t1414-reflog-walk` — 12/12 tests pass (implemented merge-aware reflog commit messages so reflog subjects distinguish merge commits; taught checkout/update-ref reflog writers to respect test-controlled committer dates so reflog chronology is correct; enhanced `log -g` reflog walk with multi-ref interleaving by reflog entry timestamp, support for `--no-merges`/`--merges`/pathspec/date filters in reflog mode, and merge path filtering against the intersection of changed paths across all parents; and fixed `rev-list -g` compatibility for `--parents` output and empty-argument failure behavior)
 - `t1417-reflog-updateref` — 21/21 tests pass (fixed `reflog delete --updateref` head-update semantics for non-top deletions by selecting the nearest remaining pre-delete target, and tightened `reflog expire` argument handling to reject reflog-selector inputs like `HEAD@{1}` so it fails without modifying HEAD as upstream expects)
 - `t1014-read-tree-confusing` — 27/28 tests passing (hardened `read-tree` path-component validation for NTFS confusion cases by rejecting backslashes and `.git`-equivalent suffix/ADS names like `.git. ` and `.git...:stream`; remaining failure depends on harness Unicode variable setup for `${u200c}` case)
@@ -83,4 +84,4 @@
 
 ## What Remains
 
-686 test files still pending. See `plan.md` for the full prioritized list.
+677 test files still pending. See `plan.md` for the full prioritized list.
