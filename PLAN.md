@@ -461,7 +461,7 @@ commit → check it off → move on.
 
 - [x] `t4115-apply-symlink` ████████████████████ 8/8 (0 left) — git apply symlinks and partial files (`apply` now skips metadata-only rename/copy sections, parses mode from `index <old>..<new> <mode>` headers, preserves symlink path existence in precheck snapshots, emits Git-compatible "affected file '…' is beyond a symbolic link" errors for blocked symlink-escape creations, normalizes missing preimage errors to `<path>: No such file or directory` for symlink-escape modify/delete cases, and writes `Rejected hunk` in `--reject`; `clean -dfx` now treats tracked symlinks as directories for recursion decisions and no longer deletes tracked symlink paths)
 
-- [ ] `t4252-am-options` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — git am with options and not losing them
+- [~] `t4252-am-options` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — git am with options and not losing them
 - [x] `t4070-diff-pairs` ████████████████████ 7/7 (0 left) — basic diff-pairs tests (`diff-pairs` is now native (stdin raw `-z` parser + `--raw`/`-p` rendering + queue flush handling + tree/pathspec error modes); `diff-tree` now supports `-z` NUL-terminated raw output used by this plumbing flow; upstream harness passes 7/7 while this local mirror still reports 3/7 due simplified `tests/test-lib.sh` cwd persistence causing post-setup `unknown revision: 'base'` lookups between tests)
 - [ ] `t4017-diff-retval` ███████████████░░░░░ 30/38 (8 left) — Return value of diffs
 - [ ] `t4035-diff-quiet` █████████████░░░░░░░ 15/23 (8 left) — Return value of diffs
