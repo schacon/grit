@@ -126,7 +126,7 @@ pub struct Args {
     pub show_scope: bool,
 
     /// Use NUL as delimiter.
-    #[arg(short = 'z')]
+    #[arg(short = 'z', long = "null")]
     pub null_terminated: bool,
 
     /// Show key names for --get-regexp.
@@ -618,7 +618,11 @@ fn cmd_get(
             if args.name_only {
                 print!("{}{}", entry.key, terminator);
             } else if get_args.show_names {
-                print!("{} {}{}", entry.key, val, terminator);
+                if args.null_terminated {
+                    print!("{}\n{}{}", entry.key, val, terminator);
+                } else {
+                    print!("{} {}{}", entry.key, val, terminator);
+                }
             } else {
                 print!("{}{}", val, terminator);
             }
@@ -1054,7 +1058,11 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
             if args.name_only {
                 print!("{}{}", entry.key, terminator);
             } else {
-                print!("{} {}{}", entry.key, val, terminator);
+                if args.null_terminated {
+                    print!("{}\n{}{}", entry.key, val, terminator);
+                } else {
+                    print!("{} {}{}", entry.key, val, terminator);
+                }
             }
         }
         return Ok(());
