@@ -3550,6 +3550,11 @@ fn preprocess_log_pickaxe_args(rest: Vec<String>) -> Vec<String> {
     out
 }
 
+/// Preprocess `git log` argv fragments (before clap) for spawning a child `grit log` process.
+pub(crate) fn preprocess_log_argv_for_spawn(rest: &[String]) -> Vec<String> {
+    preprocess_log_pickaxe_args(preprocess_log_args(rest))
+}
+
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
     let mut saw_graph = false;
@@ -4094,7 +4099,11 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "apply" => commands::apply::run(parse_cmd_args(subcmd, rest)),
         "archive" => commands::archive::run_from_argv(rest),
         "backfill" => commands::backfill::run(parse_cmd_args(subcmd, rest)),
-        "bisect" => commands::bisect::run(parse_cmd_args(subcmd, rest)),
+        // Bisect is parsed manually: upstream tests pass unknown `--bisect-*` flags that must
+        // reach `bisect::run` as Git-style "unknown option" errors, not clap parse failures.
+        "bisect" => commands::bisect::run(commands::bisect::Args {
+            args: rest.to_vec(),
+        }),
         "blame" => commands::blame::run(parse_cmd_args(subcmd, rest)),
         "branch" => commands::branch::run(parse_cmd_args(subcmd, rest)),
         "bugreport" => commands::bugreport::run(parse_cmd_args(subcmd, rest)),

@@ -25,6 +25,7 @@ hungarian = "1.1.1"
 ureq = "2.12"
 icu_normalizer = "2.0.0"
 shell-words = "1.1"
+nix = { version = "0.29", default-features = false, features = ["fs"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
