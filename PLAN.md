@@ -18,7 +18,7 @@ commit → check it off → move on.
 - [x] `t0062-revision-walking` ████████████████████ 2/2 (0 left) — Test revision walking api
 - [x] `t0071-sort` ████████████████████ 1/1 (0 left) — verify sort functions
 - [x] `t0080-unit-test-output` ████████████████████ 1/1 (0 left) — Test the output of the unit test framework
-- [ ] `t0056-git-C` ████████████████░░░░ 9/11 (2 left) — 
+- [x] `t0056-git-C` ████████████████████ 11/11 (0 left) — 
 - [ ] `t0007-git-var` █████████████████░░░ 24/27 (3 left) — basic sanity checks for git var
 - [ ] `t0009-git-dir-validation` ██████████░░░░░░░░░░ 3/6 (3 left) — setup: validation of .git file/directory types
 
