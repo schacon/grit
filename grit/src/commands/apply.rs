@@ -927,11 +927,96 @@ fn validate_patch_headers(patches: &[FilePatch]) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Apply hunks to file content (a list of lines). Returns new content.
-/// Find the best starting position for a hunk by scanning around the
-/// nominal position. Returns the 0-based line index where the hunk's
-/// leading context/remove lines match the old file.
-fn find_hunk_start(old_lines: &[&str], hunk: &Hunk, nominal: usize) -> usize {
-    // Collect the leading context + remove lines (the old-side lines)
+///
+/// Find the best starting position for a hunk by scanning around the nominal
+/// position. When `allow_unidiff_zero_fallback` is true, a `--unidiff-zero`
+/// style fallback is used where all old-side lines (context/remove) may match
+/// as an ordered subsequence (not necessarily contiguous) at a candidate
+/// location.
+fn find_hunk_start(
+    old_lines: &[&str],
+    hunk: &Hunk,
+    nominal: usize,
+    ws_mode: ApplyWhitespaceMode,
+    allow_unidiff_zero_fallback: bool,
+) -> usize {
+    if hunk.old_count == 0 {
+        return nominal.min(old_lines.len());
+    }
+
+    // Check if the nominal position matches first.
+    if match_hunk_old_side_at(
+        old_lines,
+        hunk,
+        nominal,
+        ws_mode,
+        allow_unidiff_zero_fallback,
+    ) {
+        return nominal;
+    }
+
+    // Scan outward from nominal.
+    let max_scan = old_lines.len();
+    for delta in 1..=max_scan {
+        if nominal >= delta
+            && match_hunk_old_side_at(
+                old_lines,
+                hunk,
+                nominal - delta,
+                ws_mode,
+                allow_unidiff_zero_fallback,
+            )
+        {
+            return nominal - delta;
+        }
+        if nominal + delta <= old_lines.len()
+            && match_hunk_old_side_at(
+                old_lines,
+                hunk,
+                nominal + delta,
+                ws_mode,
+                allow_unidiff_zero_fallback,
+            )
+        {
+            return nominal + delta;
+        }
+    }
+
+    // No match found — return nominal and let the hunk application fail.
+    nominal.min(old_lines.len())
+}
+
+fn nominal_hunk_start(hunk: &Hunk, old_len: usize) -> Result<usize> {
+    if hunk.old_count == 0 {
+        let start = if hunk.old_start == 0 {
+            0
+        } else {
+            hunk.old_start
+        };
+        if start > old_len {
+            bail!("patch does not apply");
+        }
+        return Ok(start);
+    }
+
+    if hunk.old_start == 0 {
+        bail!("patch does not apply");
+    }
+    let start = hunk.old_start - 1;
+    if start > old_len {
+        bail!("patch does not apply");
+    }
+    Ok(start)
+}
+
+/// Check whether hunk old-side lines match at the given candidate start.
+fn match_hunk_old_side_at(
+    old_lines: &[&str],
+    hunk: &Hunk,
+    start: usize,
+    ws_mode: ApplyWhitespaceMode,
+    allow_unidiff_zero_fallback: bool,
+) -> bool {
     let old_side: Vec<&str> = hunk
         .lines
         .iter()
@@ -942,38 +1027,41 @@ fn find_hunk_start(old_lines: &[&str], hunk: &Hunk, nominal: usize) -> usize {
         .collect();
 
     if old_side.is_empty() {
-        return nominal.min(old_lines.len());
+        return start <= old_lines.len();
     }
 
-    // Check if the nominal position matches
-    if matches_at(old_lines, &old_side, nominal) {
-        return nominal;
+    if start + old_side.len() <= old_lines.len()
+        && old_side
+            .iter()
+            .zip(&old_lines[start..start + old_side.len()])
+            .all(|(expected, actual)| lines_equal(expected, actual, ws_mode))
+    {
+        return true;
     }
 
-    // Scan outward from nominal
-    let max_scan = old_lines.len();
-    for delta in 1..=max_scan {
-        if nominal >= delta && matches_at(old_lines, &old_side, nominal - delta) {
-            return nominal - delta;
-        }
-        if nominal + delta <= old_lines.len() && matches_at(old_lines, &old_side, nominal + delta) {
-            return nominal + delta;
-        }
-    }
-
-    // No match found — return nominal and let the hunk application fail
-    nominal
+    allow_unidiff_zero_fallback
+        && is_subsequence_match(&old_lines[start.min(old_lines.len())..], &old_side, ws_mode)
 }
 
-/// Check if old_side lines match old_lines starting at `start`.
-fn matches_at(old_lines: &[&str], old_side: &[&str], start: usize) -> bool {
-    if start + old_side.len() > old_lines.len() {
-        return false;
+/// Returns true if `needle` appears in `haystack` in order (not necessarily
+/// contiguously), using whitespace-aware line comparison.
+fn is_subsequence_match(haystack: &[&str], needle: &[&str], ws_mode: ApplyWhitespaceMode) -> bool {
+    if needle.is_empty() {
+        return true;
     }
-    old_side
-        .iter()
-        .zip(&old_lines[start..start + old_side.len()])
-        .all(|(a, b)| *a == *b)
+
+    let mut pos = 0usize;
+    for expected in needle {
+        while pos < haystack.len() && !lines_equal(expected, haystack[pos], ws_mode) {
+            pos += 1;
+        }
+        if pos == haystack.len() {
+            return false;
+        }
+        pos += 1;
+    }
+
+    true
 }
 
 fn canonicalize_ws_line(line: &str) -> String {
@@ -1088,15 +1176,11 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
     let mut offset: isize = 0; // accumulated offset from previous hunks
 
     for hunk in hunks {
-        let nominal_start = if hunk.old_start == 0 {
-            0isize
-        } else {
-            hunk.old_start as isize - 1
-        };
+        let nominal_start = nominal_hunk_start(hunk, old_lines.len())? as isize;
         let hunk_start = (nominal_start + offset).max(0) as usize;
 
         // If context at hunk_start doesn't match, scan nearby to find it
-        let actual_start = find_hunk_start(&old_lines, hunk, hunk_start);
+        let actual_start = find_hunk_start(&old_lines, hunk, hunk_start, ws_mode, false);
 
         // Copy lines before this hunk
         while old_idx < actual_start && old_idx < old_lines.len() {
@@ -1115,35 +1199,43 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
         for hl in &hunk.lines {
             match hl {
                 HunkLine::Context(s) => {
-                    if old_idx < old_lines.len() {
-                        let actual_line = old_lines[old_idx];
-                        // Verify context matches
-                        if !lines_equal(s, actual_line, ws_mode) {
-                            bail!(
-                                "context mismatch at line {}: expected {:?}, got {:?}",
-                                old_idx + 1,
-                                s,
-                                actual_line
-                            );
-                        }
-                        old_idx += 1;
-                        result.push(actual_line.to_string());
-                    } else {
-                        result.push(s.to_string());
+                    if old_idx >= old_lines.len() {
+                        bail!(
+                            "context mismatch at line {}: expected {:?}, got EOF",
+                            old_idx + 1,
+                            s
+                        );
                     }
+                    let actual_line = old_lines[old_idx];
+                    // Verify context matches
+                    if !lines_equal(s, actual_line, ws_mode) {
+                        bail!(
+                            "context mismatch at line {}: expected {:?}, got {:?}",
+                            old_idx + 1,
+                            s,
+                            actual_line
+                        );
+                    }
+                    old_idx += 1;
+                    result.push(actual_line.to_string());
                 }
                 HunkLine::Remove(s) => {
-                    if old_idx < old_lines.len() {
-                        if !lines_equal(s, old_lines[old_idx], ws_mode) {
-                            bail!(
-                                "remove mismatch at line {}: expected {:?}, got {:?}",
-                                old_idx + 1,
-                                s,
-                                old_lines[old_idx]
-                            );
-                        }
-                        old_idx += 1;
+                    if old_idx >= old_lines.len() {
+                        bail!(
+                            "remove mismatch at line {}: expected {:?}, got EOF",
+                            old_idx + 1,
+                            s
+                        );
                     }
+                    if !lines_equal(s, old_lines[old_idx], ws_mode) {
+                        bail!(
+                            "remove mismatch at line {}: expected {:?}, got {:?}",
+                            old_idx + 1,
+                            s,
+                            old_lines[old_idx]
+                        );
+                    }
+                    old_idx += 1;
                     remove_no_newline = false;
                 }
                 HunkLine::Add(s) => {
@@ -1163,22 +1255,6 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
             }
         }
         let _ = (remove_no_newline, add_no_newline);
-    }
-
-    // Verify: if the last hunk ends with an added line (no trailing context),
-    // and there are remaining old lines, reject the patch.
-    if old_idx < old_lines.len() {
-        if let Some(last_hunk) = hunks.last() {
-            let last_line = last_hunk.lines.iter().rev().find(|hl| {
-                matches!(
-                    hl,
-                    HunkLine::Context(_) | HunkLine::Remove(_) | HunkLine::Add(_)
-                )
-            });
-            if matches!(last_line, Some(HunkLine::Add(_))) {
-                bail!("patch does not apply");
-            }
-        }
     }
 
     // Copy remaining lines after the last hunk
@@ -1250,15 +1326,23 @@ fn apply_hunks_with_reject(
     let mut rejected: Vec<Hunk> = Vec::new();
 
     for hunk in hunks {
-        let nominal_start = if hunk.old_start == 0 {
-            0isize
-        } else {
-            hunk.old_start as isize - 1
+        let nominal_start = match nominal_hunk_start(hunk, lines.len()) {
+            Ok(start) => start as isize,
+            Err(_) => {
+                rejected.push(hunk.clone());
+                continue;
+            }
         };
         let hunk_start = (nominal_start + offset).max(0) as usize;
 
         let old_lines: Vec<&str> = lines.iter().map(String::as_str).collect();
-        let actual_start = find_hunk_start(&old_lines, hunk, hunk_start.min(old_lines.len()));
+        let actual_start = find_hunk_start(
+            &old_lines,
+            hunk,
+            hunk_start.min(old_lines.len()),
+            ws_mode,
+            false,
+        );
 
         let mut idx = actual_start;
         let mut replacement: Vec<String> = Vec::new();
@@ -1719,6 +1803,15 @@ fn remove_empty_dirs_up(dir: &Path) {
     }
 }
 
+fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<()> {
+    let actual_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, content.as_bytes());
+    let actual_hex = actual_oid.to_hex();
+    if !actual_hex.starts_with(expected_oid) {
+        bail!("patch does not apply");
+    }
+    Ok(())
+}
+
 fn record_path_existence(
     path: &str,
     current: &mut HashMap<String, bool>,
@@ -1945,6 +2038,11 @@ fn apply_to_worktree(
         } else {
             load_old_content_from_disk()?
         };
+        if !args.reject {
+            if let Some(expected_oid) = fp.old_oid.as_deref() {
+                verify_old_oid_matches_content(expected_oid, &old_content)?;
+            }
+        }
         #[cfg(unix)]
         let source_exec_bit = if source_adjusted != path_adjusted {
             use std::os::unix::fs::PermissionsExt;
@@ -2200,6 +2298,11 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
                 bail!("{source_adjusted} not found in index");
             }
         };
+        if !fp.is_new {
+            if let Some(expected_oid) = fp.old_oid.as_deref() {
+                verify_old_oid_matches_content(expected_oid, &old_content)?;
+            }
+        }
 
         let new_content = if fp.hunks.is_empty() {
             old_content.clone()
@@ -2375,6 +2478,9 @@ fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMod
                 return Err(err).with_context(|| format!("failed to read {}", read_path.display()))
             }
         };
+        if let Some(expected_oid) = fp.old_oid.as_deref() {
+            verify_old_oid_matches_content(expected_oid, &old_content)?;
+        }
         apply_hunks(&old_content, &fp.hunks, ws_mode)
             .with_context(|| format!("patch does not apply cleanly to {}", path.display()))?;
     }

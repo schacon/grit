@@ -2,6 +2,18 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `apply` boundary matching and preimage OID validation updates for `t4104`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4104-apply-boundary.sh` (from `tests/`): 24/24 passing.
+- `./scripts/run-tests.sh t4104-apply-boundary.sh`: 24/24 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4104-apply-boundary`: 24/24 passing in isolated upstream harness.
+- Regression checks:
+  - `./scripts/run-tests.sh t4117-apply-reject.sh`: 8/8 passing.
+  - `./scripts/run-tests.sh t4126-apply-empty.sh`: 8/8 passing.
+  - `./scripts/run-tests.sh t4140-apply-ita.sh`: 7/7 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `userdiff` integration and `t4018` fixes across `diff`, repo/worktree discovery, checkout `-B` unborn behavior, and `test-tool` plumbing).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4018-diff-funcname.sh` (from `tests/`): 287/287 passing.
 - `./scripts/run-tests.sh t4018-diff-funcname.sh`: 287/287 passing; `data/file-results.tsv` refreshed.
