@@ -1130,6 +1130,19 @@ test_expect_code () {
 	fi
 }
 
+# Returns true if numeric exit code in "$2" matches signal "$1".
+# Accepts POSIX shell convention (128 + signal) and ksh convention (256 + signal).
+test_match_signal () {
+	if test "$2" = "$((128 + $1))"
+	then
+		return 0
+	elif test "$2" = "$((256 + $1))"
+	then
+		return 0
+	fi
+	return 1
+}
+
 test_must_be_empty () {
 	if test -s "$1"
 	then

@@ -69,8 +69,19 @@ fn main() {
             exit_code = 0;
         }
         Err(e) => {
-            eprintln!("error: {e:#}");
-            exit_code = 1;
+            if is_broken_pipe_error(&e) {
+                #[cfg(unix)]
+                {
+                    exit_code = 128 + 13; // SIGPIPE
+                }
+                #[cfg(not(unix))]
+                {
+                    exit_code = 1;
+                }
+            } else {
+                eprintln!("error: {e:#}");
+                exit_code = 1;
+            }
         }
     }
 
@@ -246,7 +257,32 @@ fn chrono_now() -> String {
 }
 
 fn exit_with_status(status: std::process::ExitStatus) -> ! {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            std::process::exit(128 + sig);
+        }
+    }
     std::process::exit(status.code().unwrap_or(1));
+}
+
+fn is_broken_pipe_error(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if let Some(ioe) = cause.downcast_ref::<std::io::Error>() {
+            if ioe.kind() == std::io::ErrorKind::BrokenPipe {
+                return true;
+            }
+        }
+        if let Some(grit_err) = cause.downcast_ref::<grit_lib::error::Error>() {
+            if let grit_lib::error::Error::Io(ioe) = grit_err {
+                if ioe.kind() == std::io::ErrorKind::BrokenPipe {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
@@ -1292,7 +1328,7 @@ fn run_alias(alias: &str, value: &str, rest: &[String], opts: &GlobalOpts) -> Re
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status()?;
-        std::process::exit(status.code().unwrap_or(1));
+        exit_with_status(status);
     }
 
     let mut expanded = split_alias_words(value);
@@ -1360,7 +1396,7 @@ fn run_external_git_command(subcmd: &str, rest: &[String]) -> Result<()> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()?;
-    std::process::exit(status.code().unwrap_or(1));
+    exit_with_status(status);
 }
 
 fn strsim_distance_with_transpose(a: &str, b: &str) -> usize {

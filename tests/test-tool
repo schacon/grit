@@ -146,6 +146,14 @@ case "$1" in
   mergesort)
     shift
     exec "$GUST_BIN" test-tool mergesort "$@" ;;
+  sigchain)
+    # Mimic t/helper/test-sigchain.c: print handlers in reverse push order
+    # then terminate by SIGTERM.
+    echo three
+    echo two
+    echo one
+    kill -TERM "$$"
+    ;;
   example-tap)
     # Emit the canonical TAP sample output expected by t0080.
     # Keep this sourced from the test file itself so the fixture

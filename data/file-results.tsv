@@ -4,7 +4,7 @@ t0001-init	yes	102	54	48	ok	54	102	0
 t0002-gitfile	yes	14	8	6	ok	8	14	0
 t0003-attributes	yes	55	15	40	ok	15	55	0
 t0004-unwritable	yes	9	9	0	ok	9	9	0
-t0005-signals	yes	5	1	4	ok	1	5	0
+t0005-signals	yes	5	5	0	ok	5	5	0
 t0006-date	yes	0	0	0	ok	0	0	0
 t0007-git-var	yes	27	27	0	ok	27	27	0
 t0008-ignores	yes	0	0	0	timeout	0	0	0
