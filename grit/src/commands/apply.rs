@@ -711,6 +711,10 @@ fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
         if line.starts_with("@@ ") || line.starts_with("diff --git ") {
             break;
         }
+        if line == "-- " {
+            // format-patch signature separator; not part of hunk body
+            break;
+        }
         if let Some(rest) = line.strip_prefix('+') {
             hunk.lines.push(HunkLine::Add(rest.to_string()));
         } else if let Some(rest) = line.strip_prefix('-') {
@@ -843,6 +847,79 @@ fn adjust_path(path: &str, strip: usize, directory: Option<&str>) -> String {
     } else {
         stripped
     }
+}
+
+fn path_has_symlink_prefix(path: &str, symlink_overlay: &HashMap<String, bool>) -> Result<()> {
+    let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
+    if components.len() <= 1 {
+        return Ok(());
+    }
+
+    let mut prefix = PathBuf::new();
+    for component in &components[..components.len() - 1] {
+        prefix.push(component);
+        let prefix_str = prefix.to_string_lossy().into_owned();
+        let is_symlink = symlink_overlay
+            .get(&prefix_str)
+            .copied()
+            .unwrap_or_else(|| {
+                fs::symlink_metadata(&prefix)
+                    .map(|meta| meta.file_type().is_symlink())
+                    .unwrap_or(false)
+            });
+        if is_symlink {
+            bail!("{path}: beyond a symbolic link");
+        }
+    }
+    Ok(())
+}
+
+fn verify_patch_paths_not_beyond_symlink(patches: &[FilePatch], args: &Args) -> Result<()> {
+    let mut symlink_overlay: HashMap<String, bool> = HashMap::new();
+
+    for fp in patches {
+        if let Some(source) = fp.source_path() {
+            let source_adjusted = adjust_path(source, args.strip, args.directory.as_deref());
+            if !source_adjusted.is_empty() {
+                path_has_symlink_prefix(&source_adjusted, &symlink_overlay)?;
+            }
+        }
+        if let Some(target) = fp.target_path() {
+            let target_adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+            if !target_adjusted.is_empty() {
+                path_has_symlink_prefix(&target_adjusted, &symlink_overlay)?;
+            }
+        }
+
+        let source_adjusted = fp
+            .source_path()
+            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .unwrap_or_default();
+        let target_adjusted = fp
+            .target_path()
+            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .unwrap_or_default();
+
+        if fp.is_deleted {
+            if !source_adjusted.is_empty() {
+                symlink_overlay.insert(source_adjusted, false);
+            }
+            continue;
+        }
+
+        if fp.is_rename && source_adjusted != target_adjusted && !source_adjusted.is_empty() {
+            symlink_overlay.insert(source_adjusted, false);
+        }
+
+        if !target_adjusted.is_empty() {
+            if fp.new_mode.as_deref() == Some("120000") {
+                symlink_overlay.insert(target_adjusted, true);
+            } else if fp.new_mode.is_some() || fp.is_new {
+                symlink_overlay.insert(target_adjusted, false);
+            }
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1631,6 +1708,7 @@ pub fn run(args: Args) -> Result<()> {
         build_fake_ancestor_file(&patches, &args, path)?;
         return Ok(());
     }
+    verify_patch_paths_not_beyond_symlink(&patches, &args)?;
     let ws_mode = resolve_apply_whitespace_mode(&args);
 
     // For --cached, we need a repository and index.
@@ -1743,7 +1821,7 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
                     if !path.exists() {
                         bail!("{adjusted}: does not match index");
                     }
-                    let wt_content = fs::read(&path)?;
+                    let wt_content = read_worktree_content_for_index(&path, entry.mode)?;
                     let wt_oid =
                         grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
                     if wt_oid != entry.oid {
@@ -1767,12 +1845,10 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
             continue;
         }
 
-        // Read working tree content and compute hash
-        let wt_content = fs::read(&path)?;
-        let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
-
         // Get index entry
         if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
+            let wt_content = read_worktree_content_for_index(&path, entry.mode)?;
+            let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
             if wt_oid != entry.oid {
                 bail!("{adjusted}: does not match index");
             }
@@ -1787,6 +1863,23 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
     }
 
     Ok(())
+}
+
+fn read_worktree_content_for_index(path: &Path, mode: u32) -> Result<Vec<u8>> {
+    if mode == grit_lib::index::MODE_SYMLINK {
+        let target = fs::read_link(path)
+            .with_context(|| format!("failed to read symlink target {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            return Ok(target.as_os_str().as_bytes().to_vec());
+        }
+        #[cfg(not(unix))]
+        {
+            return Ok(target.to_string_lossy().into_owned().into_bytes());
+        }
+    }
+    fs::read(path).with_context(|| format!("failed to read {}", path.display()))
 }
 
 /// Remove empty directories upward from path.
@@ -1890,9 +1983,9 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
                     source_adjusted
                 );
             }
-            current_exists.insert(source_adjusted.clone(), false);
+            set_path_and_descendants_state(&mut current_exists, &source_adjusted, false);
             if source_adjusted != target_adjusted {
-                current_exists.insert(target_adjusted.clone(), false);
+                set_path_and_descendants_state(&mut current_exists, &target_adjusted, false);
             }
             continue;
         }
@@ -1922,12 +2015,29 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
         }
 
         if fp.is_rename && source_adjusted != target_adjusted {
-            current_exists.insert(source_adjusted, false);
+            set_path_and_descendants_state(&mut current_exists, &source_adjusted, false);
         }
         current_exists.insert(target_adjusted, true);
     }
 
     Ok(())
+}
+
+fn set_path_and_descendants_state(
+    current_exists: &mut HashMap<String, bool>,
+    path: &str,
+    exists: bool,
+) {
+    current_exists.insert(path.to_string(), exists);
+    let prefix = format!("{path}/");
+    let affected: Vec<String> = current_exists
+        .keys()
+        .filter(|key| key.starts_with(&prefix))
+        .cloned()
+        .collect();
+    for key in affected {
+        current_exists.insert(key, exists);
+    }
 }
 
 fn apply_to_worktree(

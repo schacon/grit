@@ -105,6 +105,10 @@ pub struct Args {
     #[arg(short = 'U', value_name = "N")]
     pub context_lines: Option<usize>,
 
+    /// Include binary diffs (accepted for compatibility).
+    #[arg(long = "binary")]
+    pub binary: bool,
+
     /// Do not use a/b/ prefix in diff output.
     #[arg(long = "no-prefix")]
     pub no_prefix: bool,

@@ -2,6 +2,17 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `t4122` fixes in `format-patch` and `apply`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4122-apply-symlink-inside.sh` (from `tests/`): 7/7 passing.
+- `./scripts/run-tests.sh t4122-apply-symlink-inside.sh`: 7/7 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4122-apply-symlink-inside`: 7/7 passing in isolated upstream harness.
+- Regression checks:
+  - `./scripts/run-tests.sh t4010-diff-pathspec.sh`: 17/17 passing.
+  - `./scripts/run-tests.sh t4153-am-resume-override-opts.sh`: 6/6 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in files outside scope reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after `t4010` pathspec fixes in `diff-index`/`diff-tree` path matching and empty-tree handling).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4010-diff-pathspec.sh` (from `tests/`): 17/17 passing.
 - `./scripts/run-tests.sh t4010-diff-pathspec.sh`: 17/17 passing; `data/file-results.tsv` refreshed.
