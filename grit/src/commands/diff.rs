@@ -3028,11 +3028,13 @@ fn write_diff_header_with_prefix(
         .new_path
         .as_deref()
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
+    let old_path_display = escape_non_ascii_path(old_path);
+    let new_path_display = escape_non_ascii_path(new_path);
 
     let (b, r) = if use_color { (BOLD, RESET) } else { ("", "") };
     writeln!(
         out,
-        "{b}diff --git {src_prefix}{old_path} {dst_prefix}{new_path}{r}"
+        "{b}diff --git {src_prefix}{old_path_display} {dst_prefix}{new_path_display}{r}"
     )?;
 
     let abbr = |oid: &ObjectId| -> String {
@@ -3101,8 +3103,8 @@ fn write_diff_header_with_prefix(
         DiffStatus::Renamed => {
             let sim = entry.score.unwrap_or(100);
             writeln!(out, "{b}similarity index {sim}%{r}")?;
-            writeln!(out, "{b}rename from {old_path}{r}")?;
-            writeln!(out, "{b}rename to {new_path}{r}")?;
+            writeln!(out, "{b}rename from {old_path_display}{r}")?;
+            writeln!(out, "{b}rename to {new_path_display}{r}")?;
             if entry.old_oid != entry.new_oid {
                 writeln!(
                     out,
@@ -3115,8 +3117,8 @@ fn write_diff_header_with_prefix(
         DiffStatus::Copied => {
             let sim = entry.score.unwrap_or(100);
             writeln!(out, "{b}similarity index {sim}%{r}")?;
-            writeln!(out, "{b}copy from {old_path}{r}")?;
-            writeln!(out, "{b}copy to {new_path}{r}")?;
+            writeln!(out, "{b}copy from {old_path_display}{r}")?;
+            writeln!(out, "{b}copy to {new_path_display}{r}")?;
             if entry.old_oid != entry.new_oid {
                 writeln!(
                     out,
@@ -3164,14 +3166,14 @@ fn write_patch_with_prefix(
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
         let display_old = if entry.status == DiffStatus::Added {
-            "/dev/null"
+            "/dev/null".to_owned()
         } else {
-            old_path
+            escape_non_ascii_path(old_path)
         };
         let display_new = if entry.status == DiffStatus::Deleted {
-            "/dev/null"
+            "/dev/null".to_owned()
         } else {
-            new_path
+            escape_non_ascii_path(new_path)
         };
         let funcname_matcher = if let (Some(config), Some(rules)) = (&patch_config, &patch_rules) {
             match resolve_funcname_matcher_for_path(config, rules, entry.path()) {
@@ -3263,8 +3265,8 @@ fn write_patch_with_prefix(
                     let patch = grit_lib::diff::unified_diff_with_prefix_and_funcname_and_algorithm(
                         &old_text,
                         &new_text,
-                        display_old,
-                        display_new,
+                        &display_old,
+                        &display_new,
                         context_lines,
                         src_prefix,
                         dst_prefix,
@@ -3304,12 +3306,12 @@ fn write_patch_with_prefix(
                 let binary_old_display = if display_old == "/dev/null" {
                     "/dev/null".to_owned()
                 } else {
-                    format!("{src_prefix}{old_path}")
+                    format!("{src_prefix}{display_old}")
                 };
                 let binary_new_display = if display_new == "/dev/null" {
                     "/dev/null".to_owned()
                 } else {
-                    format!("{dst_prefix}{new_path}")
+                    format!("{dst_prefix}{display_new}")
                 };
                 writeln!(
                     out,
@@ -3333,8 +3335,8 @@ fn write_patch_with_prefix(
             let patch = word_diff_output(
                 &old_content,
                 &new_content,
-                display_old,
-                display_new,
+                &display_old,
+                &display_new,
                 context_lines,
             );
             let patch = if suppress_blank_empty {
@@ -3351,8 +3353,8 @@ fn write_patch_with_prefix(
             let patch = grit_lib::diff::unified_diff_with_prefix_and_funcname_and_algorithm(
                 &old_content,
                 &new_content,
-                display_old,
-                display_new,
+                &display_old,
+                &display_new,
                 context_lines,
                 src_prefix,
                 dst_prefix,
@@ -4026,6 +4028,18 @@ fn quote_c_style(name: &str) -> String {
     } else {
         out
     }
+}
+
+fn escape_non_ascii_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for &byte in path.as_bytes() {
+        if byte.is_ascii() {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("\\{byte:03o}"));
+        }
+    }
+    out
 }
 
 /// Format a rename/copy path for numstat: `{old_quoted}\t{new_quoted}` or

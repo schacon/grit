@@ -1,18 +1,19 @@
 # Progress — Grit Test Coverage
 
-**Updated:** 2026-04-06
+**Updated:** 2026-04-07
 
 ## Counts (derived from plan.md)
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   115 |
-| In progress |     1 |
-| Remaining   |   651 |
+| Completed   |   118 |
+| In progress |     0 |
+| Remaining   |   649 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4120-apply-popt` — upstream 12/12 tests pass (`git apply -p<n>` now validates malformed/non-numeric/negative strip values with git-compatible diagnostics, path trimming now reports `removing <n> leading pathname component(s)` for over-stripped regular and escaped paths, and escaped non-ASCII patch paths are now rendered with C-octal escapes in diff headers so setup fixtures match upstream `grep "[\\]"` expectations). Local mirror remains partial (9/12) due simplified `tests/test-lib.sh` helper differences (`test_chmod` lacks upstream `chmod` + `update-index --add` behavior, so mode-only follow-up assertions run against an untracked renamed path).
 - `t4058-diff-duplicates` — upstream 15/16 and local mirror 15/16 (non-TODO assertions fully passing). Implemented: `diff-tree --no-abbrev` parsing, duplicate-path self-rename suppression in rename detection, duplicate-path filtering when cache-tree checks are disabled in reset/index materialization, duplicate-aware index-vs-worktree diffing (single effective stage-0 entry per path), and git-compatible corruption messaging. Test 14 remains marked upstream TODO-known-breakage and still fails as expected.
 - `t4213-log-tabexpand` — upstream 9/9 tests pass (`show` now accepts `--pretty` without explicit value (defaults to medium) and supports `--expand-tabs[=<N>]` / `--no-expand-tabs`; pretty message rendering now applies tab expansion with git-compatible defaults across formats (8-space default for most formats, raw/email preserve tabs, and short defaults to 4-space expansion), matching expected title/body tab indentation behavior in `log/show --expand-tabs` coverage)
 - `t4017-diff-retval` — upstream 38/38 tests pass (`diff-tree -S/--exit-code` now evaluates diff presence after pickaxe filtering so non-matching searches return exit 0; `diff --check` now returns git-compatible exit codes (2 for check-only errors, 3 with `--exit-code` + check errors, 1 for clean diffs under `--check --exit-code`), detects conflict markers (including attr-driven `conflict-marker-size=<N>`), and `git --no-pager diff --check` is accepted via global `--no-pager`; trailing unknown diff flags now produce usage-leading stderr and exit 129 instead of revision lookup errors)
@@ -104,4 +105,4 @@
 
 ## What Remains
 
-1 test file is currently marked in progress and 651 remain pending. See `plan.md` for the full prioritized list.
+0 test files are currently marked in progress and 649 remain pending. See `plan.md` for the full prioritized list.

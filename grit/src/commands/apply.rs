@@ -68,7 +68,12 @@ pub struct Args {
     pub allow_empty: bool,
 
     /// Strip N leading path components from diff paths (default: 1).
-    #[arg(short = 'p', default_value = "1")]
+    #[arg(
+        short = 'p',
+        default_value = "1",
+        value_parser = parse_non_negative_strip,
+        allow_hyphen_values = true
+    )]
     pub strip: usize,
 
     /// Prepend directory to all file paths in the patch.
@@ -134,6 +139,15 @@ pub struct Args {
     /// Patch file(s). Reads from stdin if none given.
     #[arg(value_name = "PATCH")]
     pub patches: Vec<PathBuf>,
+}
+
+fn parse_non_negative_strip(value: &str) -> std::result::Result<usize, String> {
+    if value.is_empty() || !value.chars().all(|c| c.is_ascii_digit()) {
+        return Err("option -p expects a non-negative integer".to_string());
+    }
+    value
+        .parse::<usize>()
+        .map_err(|_| "option -p expects a non-negative integer".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -880,6 +894,40 @@ fn adjust_path(path: &str, strip: usize, directory: Option<&str>) -> String {
     } else {
         stripped
     }
+}
+
+fn adjust_path_with_notice(path: &str, strip: usize, directory: Option<&str>) -> Result<String> {
+    if path == "/dev/null" {
+        return Ok(path.to_string());
+    }
+    let components = path.split('/').count();
+    if strip >= components {
+        bail!(
+            "removing {strip} leading pathname component{suffix} from \"{path}\"",
+            suffix = if strip == 1 { "" } else { "s" }
+        );
+    }
+    Ok(adjust_path(path, strip, directory))
+}
+
+fn validate_strip_components(
+    patches: &[FilePatch],
+    strip: usize,
+    directory: Option<&str>,
+) -> Result<()> {
+    for fp in patches {
+        if let Some(path) = fp.diff_old_path.as_deref() {
+            let _ = adjust_path_with_notice(path, strip, directory)?;
+        } else if let Some(path) = fp.old_path.as_deref() {
+            let _ = adjust_path_with_notice(path, strip, directory)?;
+        }
+        if let Some(path) = fp.diff_new_path.as_deref() {
+            let _ = adjust_path_with_notice(path, strip, directory)?;
+        } else if let Some(path) = fp.new_path.as_deref() {
+            let _ = adjust_path_with_notice(path, strip, directory)?;
+        }
+    }
+    Ok(())
 }
 
 fn path_exists_or_symlink(path: &str) -> bool {
@@ -1824,6 +1872,7 @@ pub fn run(args: Args) -> Result<()> {
 /// Run `grit apply` with an already-loaded patch input payload.
 pub fn run_with_patch_input(args: Args, input: String) -> Result<()> {
     let mut patches = parse_patch(&input)?;
+    validate_strip_components(&patches, args.strip, args.directory.as_deref())?;
     validate_patch_headers(&patches)?;
 
     if args.reverse {
@@ -2343,12 +2392,6 @@ fn apply_to_worktree(
             continue;
         }
 
-        if fp.is_metadata_only_rename_or_copy() {
-            continue;
-        }
-
-        // Modify existing file — read preimage from source side (important
-        // for rename/copy patches where target may not exist yet).
         let source_adjusted = fp
             .source_path()
             .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
@@ -2356,6 +2399,32 @@ fn apply_to_worktree(
         let read_path = PathBuf::from(&source_adjusted);
         let source_contains_target =
             fp.is_rename && read_path != path && target_is_inside_source(&path, &read_path);
+
+        if fp.is_metadata_only_rename_or_copy() {
+            let old_content = read_worktree_blob_as_text(&read_path)
+                .with_context(|| format!("failed to read {}", read_path.display()))?;
+            #[cfg(unix)]
+            let source_exec_bit = {
+                use std::os::unix::fs::PermissionsExt;
+                fs::metadata(&read_path)
+                    .ok()
+                    .map(|meta| meta.permissions().mode() & 0o111 != 0)
+            };
+            if source_contains_target {
+                remove_path_for_replacement(&read_path)?;
+            }
+            write_worktree_path(&path, &old_content, fp.new_mode.as_deref(), source_exec_bit)?;
+            if fp.is_rename && read_path != path && !source_contains_target {
+                remove_path_for_replacement(&read_path)?;
+                if let Some(parent) = read_path.parent() {
+                    remove_empty_dirs_up(parent);
+                }
+            }
+            continue;
+        }
+
+        // Modify existing file — read preimage from source side (important
+        // for rename/copy patches where target may not exist yet).
         let load_old_content_from_disk = || -> Result<String> {
             match read_worktree_blob_as_text(&read_path) {
                 Ok(content) => Ok(content),

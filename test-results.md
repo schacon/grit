@@ -1,6 +1,17 @@
 # Test Results
 
-**Updated:** 2026-04-06
+**Updated:** 2026-04-07
+
+- `cargo build --release`: passes (rebuild after `apply -p<n>` validation and diff-path escaping updates).
+- `./scripts/run-tests.sh t4120-apply-popt.sh`: 9/12 passing in local mirror (`data/file-results.tsv` refreshed; remaining local failures come from simplified `tests/test-lib.sh` helper behavior around `test_chmod` after a renamed path).
+- `bash scripts/run-upstream-tests.sh t4120-apply-popt`: 12/12 passing in isolated upstream harness.
+- Direct upstream-workdir confirmation: `cd /tmp/grit-upstream-workdir/t && GIT_BUILD_DIR=/tmp/grit-upstream-workdir TEST_NO_MALLOC_CHECK=1 TAR=tar timeout 60 bash ./t4120-apply-popt.sh`: 12/12 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes outside scoped files reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
+- `./scripts/run-tests.sh t4120-apply-popt.sh`: 3/12 passing (baseline for newly claimed in-progress Diff target `t4120`).
+- `bash scripts/run-upstream-tests.sh t4120-apply-popt`: 5/12 passing.
 
 - `./scripts/run-tests.sh t4008-diff-break-rewrite.sh`: 5/14 passing (baseline for newly claimed in-progress Diff target `t4008`).
 - `bash scripts/run-upstream-tests.sh t4008-diff-break-rewrite`: 5/14 passing.

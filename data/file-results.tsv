@@ -451,7 +451,7 @@ t4116-apply-reverse	yes	7	7	0	ok	7	7	0
 t4117-apply-reject	yes	8	8	0	ok	8	8	0
 t4118-apply-empty-context	yes	3	3	0	ok	3	3	0
 t4119-apply-config	yes	11	1	10	ok	1	11	0
-t4120-apply-popt	yes	12	3	9	ok	3	12	0
+t4120-apply-popt	yes	12	9	3	ok	9	12	0
 t4121-apply-diffs	yes	2	2	0	ok	2	2	0
 t4122-apply-symlink-inside	yes	7	7	0	ok	7	7	0
 t4123-apply-shrink	yes	2	2	0	ok	2	2	0
