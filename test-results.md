@@ -2,6 +2,8 @@
 
 **Updated:** 2026-04-06
 
+- `./scripts/run-tests.sh t4042-diff-textconv-caching.sh`: 1/8 passing (baseline for newly claimed in-progress Diff target `t4042`).
+
 - `cargo build --release`: passes (rebuild after native `diff-pairs` implementation plus `diff-tree -z` raw-output support and `config --unset-all` legacy-arg parsing compatibility update needed by upstream cleanup).
 - `./scripts/run-tests.sh t4070-diff-pairs.sh`: 3/7 in this local mirror (known harness divergence: simplified `tests/test-lib.sh` does not preserve cwd between tests, so later blocks run outside `main/` and fail `base` tag resolution).
 - `bash scripts/run-upstream-tests.sh t4070-diff-pairs`: 7/7 passing in isolated upstream harness (authoritative).
