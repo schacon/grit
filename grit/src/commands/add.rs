@@ -3,7 +3,7 @@
 //! Stages files from the working tree into the index so they will be
 //! included in the next commit.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
@@ -189,7 +189,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // --chmod with no pathspecs: do nothing (don't error, just return)
     if args.chmod.is_some() && args.pathspec.is_empty() {
         if !args.dry_run {
-            index.write(&repo.index_path())?;
+            write_index_or_lock_err(&index, &repo.index_path())?;
         }
         return Ok(());
     }
@@ -305,20 +305,20 @@ pub fn run(mut args: Args) -> Result<()> {
 
         if had_ignored {
             if !args.dry_run {
-                index.write(&repo.index_path())?;
+                write_index_or_lock_err(&index, &repo.index_path())?;
             }
             bail!("some ignored files could not be added");
         }
         if had_errors && !add_cfg.ignore_errors {
             if !args.dry_run {
-                index.write(&repo.index_path())?;
+                write_index_or_lock_err(&index, &repo.index_path())?;
             }
             bail!("adding files failed");
         }
     }
 
     if !args.dry_run {
-        index.write(&repo.index_path())?;
+        write_index_or_lock_err(&index, &repo.index_path())?;
     }
 
     Ok(())
@@ -406,7 +406,7 @@ fn run_refresh(
     }
 
     if !args.dry_run {
-        index.write(&repo.index_path())?;
+        write_index_or_lock_err(index, &repo.index_path())?;
     }
 
     Ok(())
@@ -472,7 +472,8 @@ fn run_renormalize(
     }
 
     if !args.dry_run {
-        index.write(&work_tree.join(".git/index"))?;
+        let index_path = work_tree.join(".git/index");
+        write_index_or_lock_err(index, &index_path)?;
     }
 
     Ok(())
@@ -982,6 +983,73 @@ fn is_unwritable_odb_error(err: &anyhow::Error) -> bool {
         }
     }
     err.to_string().contains("Permission denied")
+}
+
+fn is_unwritable_lock_error(err: &grit_lib::error::Error) -> bool {
+    matches!(
+        err,
+        grit_lib::error::Error::Io(io_err) if io_err.kind() == std::io::ErrorKind::AlreadyExists
+    )
+}
+
+fn write_index_or_lock_err(index: &Index, index_path: &Path) -> Result<()> {
+    index.write(index_path).map_err(|e| {
+        if is_unwritable_lock_error(&e) {
+            let mut msg = format!(
+                "Unable to create '{}': File exists.",
+                index_path.with_extension("lock").display()
+            );
+
+            if let Some(pid_msg) = lockfile_pid_diagnostic(index_path) {
+                msg.push_str("\n\n");
+                msg.push_str(&pid_msg);
+            } else {
+                msg.push_str("\n\n");
+                msg.push_str(
+                    "Another git process seems to be running in this repository, or the lock file may be stale",
+                );
+            }
+
+            anyhow!(msg)
+        } else {
+            anyhow!(e)
+        }
+    })
+}
+
+fn lockfile_pid_diagnostic(index_path: &Path) -> Option<String> {
+    let pid_path = index_path.with_file_name("index~pid.lock");
+    let pid_text = fs::read_to_string(&pid_path).ok()?;
+    let pid = parse_pid_file(&pid_text)?;
+
+    if is_pid_running(pid) {
+        Some(format!(
+            "Lock may be held by process {pid}; if no git process is running, the lock file may be stale (PIDs can be reused)"
+        ))
+    } else {
+        Some(format!(
+            "Lock was held by process {pid}, which is no longer running; the lock file appears to be stale"
+        ))
+    }
+}
+
+fn parse_pid_file(text: &str) -> Option<u32> {
+    let trimmed = text.trim();
+    let pid_str = trimmed.strip_prefix("pid ")?;
+    pid_str.trim().parse::<u32>().ok()
+}
+
+fn is_pid_running(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let proc_path = Path::new("/proc").join(pid.to_string());
+        proc_path.exists()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
 }
 
 /// Recursively walk a directory, collecting relative paths (skipping .git and ignored files).

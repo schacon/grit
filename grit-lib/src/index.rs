@@ -320,7 +320,10 @@ impl Index {
 
         let tmp_path = path.with_extension("lock");
         {
-            let mut f = fs::File::create(&tmp_path)?;
+            let mut f = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp_path)?;
             f.write_all(&body)?;
             f.write_all(&checksum)?;
         }
