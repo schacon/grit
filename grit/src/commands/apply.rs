@@ -84,7 +84,7 @@ pub struct Args {
     pub unidiff_zero: bool,
 
     /// Allow binary patches.
-    #[arg(long = "allow-binary-replacement")]
+    #[arg(long = "allow-binary-replacement", alias = "binary")]
     pub allow_binary_replacement: bool,
 
     /// Verbose output.
@@ -274,8 +274,23 @@ struct FilePatch {
     old_oid: Option<String>,
     /// New blob OID from the index header (abbreviated).
     new_oid: Option<String>,
+    /// Parsed binary patch payload (`GIT binary patch`) if present.
+    binary_patch: Option<BinaryPatchPayload>,
     /// Hunks to apply.
     hunks: Vec<Hunk>,
+}
+
+/// Binary patch payload as compressed base85 chunks for forward/reverse apply.
+#[derive(Debug, Clone)]
+struct BinaryPatchPayload {
+    #[allow(dead_code)]
+    forward_compressed: Vec<u8>,
+    #[allow(dead_code)]
+    forward_declared_size: usize,
+    #[allow(dead_code)]
+    reverse_compressed: Vec<u8>,
+    #[allow(dead_code)]
+    reverse_declared_size: usize,
 }
 
 impl FilePatch {
@@ -365,6 +380,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 dissimilarity_index: None,
                 old_oid: None,
                 new_oid: None,
+                binary_patch: None,
                 hunks: Vec::new(),
             };
 
@@ -418,6 +434,11 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                         fp.old_oid = Some(old.to_string());
                         fp.new_oid = Some(new.to_string());
                     }
+                } else if line == "GIT binary patch" {
+                    let (binary_patch, next_i) = parse_binary_patch(&lines, i + 1)?;
+                    fp.binary_patch = Some(binary_patch);
+                    i = next_i;
+                    break;
                 }
                 // skip other extended headers
                 i += 1;
@@ -467,6 +488,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 dissimilarity_index: None,
                 old_oid: None,
                 new_oid: None,
+                binary_patch: None,
                 hunks: Vec::new(),
             };
 
@@ -501,6 +523,146 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
     }
 
     Ok(patches)
+}
+
+/// Parse a `GIT binary patch` payload.
+fn parse_binary_patch(lines: &[&str], mut i: usize) -> Result<(BinaryPatchPayload, usize)> {
+    let (forward_compressed, forward_declared_size) = parse_binary_literal(lines, &mut i)?;
+    let (reverse_compressed, reverse_declared_size) =
+        if i < lines.len() && lines[i].starts_with("literal ") {
+            parse_binary_literal(lines, &mut i)?
+        } else {
+            (Vec::new(), 0)
+        };
+
+    Ok((
+        BinaryPatchPayload {
+            forward_compressed,
+            forward_declared_size,
+            reverse_compressed,
+            reverse_declared_size,
+        },
+        i,
+    ))
+}
+
+/// Parse one `literal <size>` block from a binary patch.
+fn parse_binary_literal(lines: &[&str], i: &mut usize) -> Result<(Vec<u8>, usize)> {
+    let header = lines.get(*i).copied().unwrap_or_default();
+    let Some(size_str) = header.strip_prefix("literal ") else {
+        bail!("unsupported binary patch section: '{header}'");
+    };
+    let declared_size: usize = size_str
+        .trim()
+        .parse()
+        .context("invalid binary patch literal size")?;
+    *i += 1;
+
+    let mut compressed = Vec::new();
+    while *i < lines.len() {
+        let line = lines[*i];
+        if line.is_empty() {
+            *i += 1;
+            break;
+        }
+        decode_binary_patch_line(line, &mut compressed)?;
+        *i += 1;
+    }
+
+    Ok((compressed, declared_size))
+}
+
+/// Decode one binary patch payload line into compressed bytes.
+fn decode_binary_patch_line(line: &str, out: &mut Vec<u8>) -> Result<()> {
+    let mut chars = line.chars();
+    let Some(len_ch) = chars.next() else {
+        bail!("empty binary patch payload line");
+    };
+    let expected_len = decode_binary_line_len(len_ch)?;
+    let encoded = chars.as_str();
+    let mut decoded = decode_base85_payload(encoded)?;
+    let decode_len = expected_len.min(decoded.len());
+    if decode_len == 0 {
+        bail!(
+            "binary patch payload decode short read: expected {expected_len}, got {}",
+            decoded.len()
+        );
+    }
+    decoded.truncate(decode_len);
+    out.extend_from_slice(&decoded);
+    Ok(())
+}
+
+fn decode_binary_line_len(ch: char) -> Result<usize> {
+    if ch.is_ascii_uppercase() {
+        return Ok((ch as u8 - b'A' + 1) as usize);
+    }
+    if ch.is_ascii_lowercase() {
+        return Ok((ch as u8 - b'a' + 27) as usize);
+    }
+    bail!("invalid binary patch line length marker: '{ch}'")
+}
+
+fn decode_base85_payload(encoded: &str) -> Result<Vec<u8>> {
+    const CHARS: &[u8] =
+        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
+    let mut table = [255u8; 256];
+    for (idx, &c) in CHARS.iter().enumerate() {
+        table[c as usize] = idx as u8;
+    }
+
+    let bytes = encoded.as_bytes();
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        let group_end = (pos + 5).min(bytes.len());
+        let group = &bytes[pos..group_end];
+        let group_len = group.len();
+        if group_len < 2 {
+            bail!("invalid base85 payload length");
+        }
+
+        let mut acc: u32 = 0;
+        for &b in group {
+            let v = table[b as usize];
+            if v == 255 {
+                bail!("invalid base85 digit in binary patch");
+            }
+            acc = acc
+                .checked_mul(85)
+                .and_then(|n| n.checked_add(v as u32))
+                .ok_or_else(|| anyhow::anyhow!("base85 overflow"))?;
+        }
+        for _ in group_len..5 {
+            acc = acc
+                .checked_mul(85)
+                .and_then(|n| n.checked_add(84))
+                .ok_or_else(|| anyhow::anyhow!("base85 overflow"))?;
+        }
+
+        let raw = acc.to_be_bytes();
+        let produced = if group_len == 5 { 4 } else { group_len - 1 };
+        out.extend_from_slice(&raw[..produced]);
+        pos += group_len;
+    }
+
+    Ok(out)
+}
+
+/// Inflate zlib-compressed binary payload.
+fn inflate_binary_payload(compressed: &[u8]) -> Result<Vec<u8>> {
+    use flate2::read::ZlibDecoder;
+    use std::io::Read;
+
+    let mut decoder = ZlibDecoder::new(compressed);
+    let mut out = Vec::new();
+    decoder
+        .read_to_end(&mut out)
+        .context("failed to inflate binary patch payload")?;
+    if !out.is_empty() && !out.ends_with(b"\n") {
+        out.push(b'\n');
+    }
+    Ok(out)
 }
 
 /// Split "a/path b/path" from `diff --git` line. Handles spaces in paths
@@ -688,7 +850,18 @@ fn reverse_patches(patches: &mut [FilePatch]) {
     for fp in patches.iter_mut() {
         std::mem::swap(&mut fp.old_path, &mut fp.new_path);
         std::mem::swap(&mut fp.old_mode, &mut fp.new_mode);
+        std::mem::swap(&mut fp.old_oid, &mut fp.new_oid);
         std::mem::swap(&mut fp.is_new, &mut fp.is_deleted);
+        if let Some(binary) = fp.binary_patch.as_mut() {
+            std::mem::swap(
+                &mut binary.forward_compressed,
+                &mut binary.reverse_compressed,
+            );
+            std::mem::swap(
+                &mut binary.forward_declared_size,
+                &mut binary.reverse_declared_size,
+            );
+        }
 
         for hunk in &mut fp.hunks {
             std::mem::swap(&mut hunk.old_start, &mut hunk.new_start);
@@ -1736,8 +1909,9 @@ fn apply_to_worktree(
                 {
                     Ok(String::new())
                 }
-                Err(err) => Err(err)
-                    .with_context(|| format!("failed to read {}", read_path.display())),
+                Err(err) => {
+                    Err(err).with_context(|| format!("failed to read {}", read_path.display()))
+                }
             }
         };
         let old_content = if source_adjusted != path_adjusted {
@@ -1758,6 +1932,43 @@ fn apply_to_worktree(
         } else {
             None
         };
+
+        if let Some(binary_patch) = fp.binary_patch.as_ref() {
+            if !args.allow_binary_replacement {
+                bail!("cannot apply binary patch without --binary");
+            }
+            let new_bytes = inflate_binary_payload(&binary_patch.forward_compressed)?;
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() && !parent.exists() {
+                    fs::create_dir_all(parent)?;
+                }
+            }
+            fs::write(&path, &new_bytes)
+                .with_context(|| format!("failed to write {}", path.display()))?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Some(mode) = fp.new_mode.as_deref() {
+                    let perm = if mode == "100755" { 0o755 } else { 0o644 };
+                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                } else if let Some(executable) = source_exec_bit {
+                    let perm = if executable { 0o755 } else { 0o644 };
+                    fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+                }
+            }
+
+            if fp.is_rename && read_path != path {
+                if read_path.exists() {
+                    fs::remove_file(&read_path)
+                        .with_context(|| format!("failed to remove {}", read_path.display()))?;
+                }
+                if let Some(parent) = read_path.parent() {
+                    remove_empty_dirs_up(parent);
+                }
+            }
+            continue;
+        }
 
         if fp.hunks.is_empty() {
             // Mode-only change
@@ -1864,6 +2075,49 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
 
         if fp.is_deleted {
             index.remove(source_adjusted.as_bytes());
+            continue;
+        }
+
+        if let Some(binary_patch) = fp.binary_patch.as_ref() {
+            if !args.allow_binary_replacement {
+                bail!("cannot apply binary patch without --binary");
+            }
+            let new_bytes = inflate_binary_payload(&binary_patch.forward_compressed)?;
+            let new_oid = repo.odb.write(ObjectKind::Blob, &new_bytes)?;
+
+            let mode = if let Some(m) = fp.new_mode.as_deref() {
+                parse_mode(m)
+            } else if source_adjusted != target_adjusted {
+                original_index
+                    .get(source_adjusted.as_bytes(), 0)
+                    .map(|entry| entry.mode)
+                    .unwrap_or(0o100644)
+            } else if let Some(entry) = index.get(source_adjusted.as_bytes(), 0) {
+                entry.mode
+            } else {
+                0o100644
+            };
+
+            let entry = grit_lib::index::IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode,
+                uid: 0,
+                gid: 0,
+                size: new_bytes.len() as u32,
+                oid: new_oid,
+                flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+                flags_extended: None,
+                path: target_adjusted.clone().into_bytes(),
+            };
+            if fp.is_rename && source_adjusted != target_adjusted {
+                index.remove(source_adjusted.as_bytes());
+            }
+            index.add_or_replace(entry);
             continue;
         }
 

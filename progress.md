@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    90 |
+| Completed   |    92 |
 | In progress |     0 |
-| Remaining   |   677 |
+| Remaining   |   675 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4116-apply-reverse` — 7/7 tests pass (`git apply` now parses/applies `GIT binary patch` literal payloads for worktree and index targets, accepts `--binary` as alias of `--allow-binary-replacement`, and `-R` now swaps both text hunks and binary forward/reverse payloads while preserving rename/path behavior)
 - `t4126-apply-empty` — 8/8 tests pass (`git apply` now supports `--allow-empty` for empty/no-op patch input, zero-preimage hunks can apply against missing source paths as empty content for both worktree and index modes, and `--check --apply` now performs check-then-apply semantics; additionally `git diff -R` is now parsed/applied so reverse patch generation in apply-empty setup works)
 - `t4031-diff-rewrite-binary` — 8/8 tests pass (`git diff -B` now emits rewrite dissimilarity metadata and summary rows for modified rewrites, `--numstat --summary` reports binary rewrites as `-\t-\t` plus rewrite summary, binary `--stat` rows include `Bin` sizing while totals remain 0/0 line counts, and `.gitattributes diff=<driver>` + `diff.<driver>.textconv` conversion is now applied for binary rewrite patch output; also added `test-tool hexdump` subcommand support required by upstream textconv fixtures)
 - `t4064-diff-oidfind` — 10/10 tests pass (`log --find-object` now supports `^{blob}` peeling and detects tree-object presence transitions, `log -t` is accepted for compatibility, `merge --no-commit` now skips gitlink blob checkout, and `diff-tree -c --find-object --format=%s --name-status` now emits combined per-parent status rows)
@@ -83,4 +84,4 @@
 
 ## What Remains
 
-No test files are currently marked in progress and 679 remain pending. See `plan.md` for the full prioritized list.
+No test files are currently marked in progress and 675 remain pending. See `plan.md` for the full prioritized list.
