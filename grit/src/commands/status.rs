@@ -192,8 +192,18 @@ pub fn run(mut args: Args) -> Result<()> {
     // Resolve rename detection settings for status.
     let status_rename_threshold = resolve_status_rename_threshold(&args, &config);
 
-    // Diff: staged (index vs HEAD tree)
-    let staged_raw = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
+    // Diff: staged (index vs HEAD tree).
+    // In malformed duplicate-tree scenarios, Git may allow porcelain status
+    // to continue while other commands report cache-tree corruption.
+    let staged_raw = match diff_index_to_tree(&repo.odb, &index, head_tree.as_ref()) {
+        Ok(entries) => entries,
+        Err(Error::CorruptObject(msg))
+            if msg == "corrupted cache-tree has entries not present in index" =>
+        {
+            Vec::new()
+        }
+        Err(err) => return Err(err.into()),
+    };
     // Detect renames among staged entries when enabled.
     let staged = if let Some(threshold) = status_rename_threshold {
         detect_renames(&repo.odb, staged_raw, threshold)
@@ -202,7 +212,15 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // Diff: unstaged (worktree vs index), with optional rename detection.
-    let unstaged_raw = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+    let unstaged_raw = match diff_index_to_worktree(&repo.odb, &index, work_tree) {
+        Ok(entries) => entries,
+        Err(Error::CorruptObject(msg))
+            if msg == "corrupted cache-tree has entries not present in index" =>
+        {
+            Vec::new()
+        }
+        Err(err) => return Err(err.into()),
+    };
     let unstaged = if let Some(threshold) = status_rename_threshold {
         detect_renames(&repo.odb, unstaged_raw, threshold)
     } else {

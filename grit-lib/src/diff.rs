@@ -559,6 +559,8 @@ pub fn diff_index_to_worktree(
     let mut result = Vec::new();
     let mut unmerged_base: std::collections::BTreeMap<String, (u8, &IndexEntry)> =
         std::collections::BTreeMap::new();
+    let mut stage0_by_path: std::collections::BTreeMap<Vec<u8>, &IndexEntry> =
+        std::collections::BTreeMap::new();
 
     for ie in &index.entries {
         if ie.stage() != 0 {
@@ -577,6 +579,13 @@ pub fn diff_index_to_worktree(
             }
             continue;
         }
+        // Keep only the last stage-0 entry for duplicate paths.
+        // Malformed trees can yield duplicate index entries for the same path,
+        // while the worktree can only materialize one file.
+        stage0_by_path.insert(ie.path.clone(), ie);
+    }
+
+    for ie in stage0_by_path.into_values() {
         // Use str slice directly to avoid allocation for path joining;
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");

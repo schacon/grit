@@ -300,9 +300,10 @@ fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
             .entries
             .iter()
             .any(|e| e.path == *path && e.stage() == 0)
-            && !staged_paths.contains(path) {
-                staged_paths.push(path.clone());
-            }
+            && !staged_paths.contains(path)
+        {
+            staged_paths.push(path.clone());
+        }
     }
 
     if staged_paths.is_empty() {
@@ -821,17 +822,23 @@ fn tree_to_flat_entries(
 
         if te.mode == 0o040000 {
             for sub_entry in tree_to_flat_entries(repo, &te.oid, &path)? {
-                if check_cache_tree && !seen_paths.insert(sub_entry.path.clone()) {
-                    eprintln!("error: {CORRUPTED_CACHE_TREE_MSG}");
-                    std::process::exit(1);
+                if !seen_paths.insert(sub_entry.path.clone()) {
+                    if check_cache_tree {
+                        eprintln!("error: {CORRUPTED_CACHE_TREE_MSG}");
+                        std::process::exit(1);
+                    }
+                    continue;
                 }
                 result.push(sub_entry);
             }
         } else {
             let path_bytes = path.into_bytes();
-            if check_cache_tree && !seen_paths.insert(path_bytes.clone()) {
-                eprintln!("error: {CORRUPTED_CACHE_TREE_MSG}");
-                std::process::exit(1);
+            if !seen_paths.insert(path_bytes.clone()) {
+                if check_cache_tree {
+                    eprintln!("error: {CORRUPTED_CACHE_TREE_MSG}");
+                    std::process::exit(1);
+                }
+                continue;
             }
             result.push(IndexEntry {
                 ctime_sec: 0,

@@ -6,14 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   114 |
-| In progress |     1 |
+| Completed   |   115 |
+| In progress |     0 |
 | Remaining   |   652 |
 | **Total**   |   767 |
 
 ## Recently completed
 
-- `t4058-diff-duplicates` — partial progress (upstream 13/16 pass; local mirror 14/16 pass). Implemented: `diff-tree --no-abbrev` parsing, duplicate-path self-rename suppression in rename detection, duplicate-tree corruption detection in `read-tree`/`reset --hard` with git-compatible message, and branch switch now refreshes index/worktree even when target branch points at same commit. Remaining failures in upstream are known-breakage-adjacent (`11`, `14`) plus `15` (status after duplicate-state cleanup), with current behavior at 1 unexpected failure among non-known-breakage tests.
+- `t4058-diff-duplicates` — upstream 15/16 and local mirror 15/16 (non-TODO assertions fully passing). Implemented: `diff-tree --no-abbrev` parsing, duplicate-path self-rename suppression in rename detection, duplicate-path filtering when cache-tree checks are disabled in reset/index materialization, duplicate-aware index-vs-worktree diffing (single effective stage-0 entry per path), and git-compatible corruption messaging. Test 14 remains marked upstream TODO-known-breakage and still fails as expected.
 - `t4213-log-tabexpand` — upstream 9/9 tests pass (`show` now accepts `--pretty` without explicit value (defaults to medium) and supports `--expand-tabs[=<N>]` / `--no-expand-tabs`; pretty message rendering now applies tab expansion with git-compatible defaults across formats (8-space default for most formats, raw/email preserve tabs, and short defaults to 4-space expansion), matching expected title/body tab indentation behavior in `log/show --expand-tabs` coverage)
 - `t4017-diff-retval` — upstream 38/38 tests pass (`diff-tree -S/--exit-code` now evaluates diff presence after pickaxe filtering so non-matching searches return exit 0; `diff --check` now returns git-compatible exit codes (2 for check-only errors, 3 with `--exit-code` + check errors, 1 for clean diffs under `--check --exit-code`), detects conflict markers (including attr-driven `conflict-marker-size=<N>`), and `git --no-pager diff --check` is accepted via global `--no-pager`; trailing unknown diff flags now produce usage-leading stderr and exit 129 instead of revision lookup errors)
 - `t4252-am-options` — upstream 8/8 tests pass (`am` now parses and persists `--whitespace=fix`, `-C<n>`, `-p<n>`, `--directory=<dir>`, and `--reject` in rebase-apply state, reuses shared `apply` command semantics through in-memory patch invocation so interrupted/skip flows keep patch application options across patches, and writes `.git/rebase-apply/apply-opt` with `--reject` for reject-mode sessions)

@@ -5,8 +5,14 @@
 - `./scripts/run-tests.sh t4058-diff-duplicates.sh`: 8/16 passing (baseline for newly claimed in-progress Diff target `t4058`).
 - `bash scripts/run-upstream-tests.sh t4058-diff-duplicates`: 6/16 passing.
 - `cargo build --release`: passes (rebuild after `t4058` duplicate-tree hardening across `diff-tree`, tree flattening for diff/read-tree/reset, branch-switch handling in `checkout`, cache-tree corruption surfacing in `diff`/`status`, and global error text normalization for cache-tree corruption output).
-- `bash scripts/run-upstream-tests.sh t4058-diff-duplicates`: 13/16 passing in isolated upstream harness (all non-TODO checks now pass except residual status cleanliness case 15; TODO cases 11/14 remain expected failures per upstream file).
-- `./scripts/run-tests.sh t4058-diff-duplicates.sh`: 14/16 passing in local mirror (matches upstream TODO profile plus residual case 15).
+- `bash scripts/run-upstream-tests.sh t4058-diff-duplicates`: 13/16 passing in isolated upstream harness after first pass of fixes.
+- `./scripts/run-tests.sh t4058-diff-duplicates.sh`: 14/16 passing in local mirror after first pass of fixes.
+- `cargo build --release`: passes (rebuild after duplicate-path normalization in `reset --hard` tree flattening and duplicate-aware index-to-worktree comparison).
+- `bash scripts/run-upstream-tests.sh t4058-diff-duplicates`: 15/16 passing in isolated upstream harness (tests 11 and 16 TODO-known-breakage now vanish; test 15 now passes; only test 14 remains TODO-known-breakage).
+- `./scripts/run-tests.sh t4058-diff-duplicates.sh`: 15/16 passing in local mirror (same remaining TODO-known-breakage profile as upstream).
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes outside scoped files reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
 - `cargo fmt`: passes.
 - `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes outside scoped files reverted).
 - `cargo test -p grit-lib --lib`: passes (96/96).
