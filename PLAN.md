@@ -462,7 +462,7 @@ commit → check it off → move on.
 - [ ] `t4115-apply-symlink` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — git apply symlinks and partial files
 
 - [ ] `t4252-am-options` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — git am with options and not losing them
-- [ ] `t4070-diff-pairs` ░░░░░░░░░░░░░░░░░░░░ 0/7 (7 left) — basic diff-pairs tests
+- [~] `t4070-diff-pairs` ███░░░░░░░░░░░░░░░░░ 1/7 (6 left) — basic diff-pairs tests
 - [ ] `t4017-diff-retval` ███████████████░░░░░ 30/38 (8 left) — Return value of diffs
 - [ ] `t4035-diff-quiet` █████████████░░░░░░░ 15/23 (8 left) — Return value of diffs
 - [ ] `t4213-log-tabexpand` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — log/show --expand-tabs

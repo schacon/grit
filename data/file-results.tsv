@@ -426,7 +426,7 @@ t4066-diff-emit-delay	yes	2	2	0	ok	2	2	0
 t4067-diff-partial-clone	yes	9	0	9	ok	0	9	0
 t4068-diff-symmetric-merge-base	yes	36	1	35	ok	1	36	0
 t4069-remerge-diff	yes	16	1	15	ok	1	16	0
-t4070-diff-pairs	yes	7	0	7	ok	0	7	0
+t4070-diff-pairs	yes	7	1	6	ok	1	7	0
 t4071-diff-minimal	yes	1	1	0	ok	1	1	0
 t4072-diff-max-depth	yes	76	76	0	ok	76	76	0
 t4073-diff-stat-name-width	yes	6	6	0	ok	6	6	0
