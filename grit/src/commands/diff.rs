@@ -3033,6 +3033,33 @@ fn write_patch_with_prefix(
     Ok(())
 }
 
+/// Render patch output for `diff-pairs` entries using git-compatible defaults.
+pub(crate) fn write_patch_from_pairs(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    repo: &Repository,
+) -> Result<()> {
+    write_patch_with_prefix(
+        out,
+        entries,
+        repo,
+        &repo.odb,
+        3,
+        false,
+        false,
+        repo.work_tree.as_deref(),
+        false,
+        7,
+        None,
+        false,
+        false,
+        false,
+        "a/",
+        "b/",
+        None,
+    )
+}
+
 /// Strip trailing space from blank context lines in unified diff output.
 ///
 /// When `diff.suppressBlankEmpty` is true, context lines that consist of

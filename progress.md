@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   107 |
-| In progress |     1 |
+| Completed   |   108 |
+| In progress |     0 |
 | Remaining   |   659 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4070-diff-pairs` — upstream 7/7 tests pass (`diff-pairs` is now implemented natively in Rust with NUL-delimited raw-record parsing, `--raw`/`-p` output modes, explicit queue flush support, and git-compatible tree/pathspec error handling; `diff-tree` now accepts `-z` and emits NUL-terminated raw output compatible with the `diff-pairs` stdin contract. The local mirror still reports 3/7 because its simplified `tests/test-lib.sh` does not preserve cwd between test blocks, so post-setup tests run outside `main/` and cannot resolve tag `base`.)
 - `t4105-apply-fuzz` — 9/9 tests pass (`git apply` now parses `-C <n>`/`-C<n>` minimum-context options, tolerates large hunk header offsets by clamping nominal start within file bounds, and enables old-side subsequence fallback matching when context constraints are requested so fuzz/offset variants apply with upstream-compatible behavior)
 - `t4011-diff-symlink` — 8/8 tests pass (`diff-index` now supports `-w/--ignore-all-space` filtering, preserves symlink target content when reading worktree entries and `--no-index` symlink paths, and applies `diff.<driver>.binary` only to non-symlink paths in both `diff` and `diff-index` so symlink patches remain textual while regular-file binary attributes still render `Binary files … differ`)
 - `t4033-diff-patience` — 11/11 tests pass (`diff` patch generation now honors effective algorithm precedence from CLI/config/attributes, including `--patience`, `--diff-algorithm`, and `diff.<driver>.algorithm`; `--attr-source` now peels commit-ish values to trees for `.gitattributes` lookup and errors on invalid sources; `diff --no-index --stat` now emits Git-style change bars; `apply` now reads preimage from old-side paths when patch headers rename paths without explicit rename metadata so no-index patches re-apply cleanly)
@@ -96,4 +97,4 @@
 
 ## What Remains
 
-0 test files are currently marked in progress and 660 remain pending. See `plan.md` for the full prioritized list.
+0 test files are currently marked in progress and 659 remain pending. See `plan.md` for the full prioritized list.

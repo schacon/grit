@@ -2,6 +2,17 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after native `diff-pairs` implementation plus `diff-tree -z` raw-output support and `config --unset-all` legacy-arg parsing compatibility update needed by upstream cleanup).
+- `./scripts/run-tests.sh t4070-diff-pairs.sh`: 3/7 in this local mirror (known harness divergence: simplified `tests/test-lib.sh` does not preserve cwd between tests, so later blocks run outside `main/` and fail `base` tag resolution).
+- `bash scripts/run-upstream-tests.sh t4070-diff-pairs`: 7/7 passing in isolated upstream harness (authoritative).
+- Direct upstream-workdir confirmation: `cd /tmp/grit-upstream-workdir/t && GIT_BUILD_DIR=/tmp/grit-upstream-workdir TEST_NO_MALLOC_CHECK=1 TAR=tar bash ./t4070-diff-pairs.sh`: 7/7 passing.
+- Focused runtime validation in isolated repo fixture (`/tmp/t4070-manual/main`):
+  - `git diff-tree -r -M -C -C -z base new | grit diff-pairs --raw -z` reproduces byte-identical raw stream (`RAW_OK`).
+  - `grit diff-tree -r -M -C -C -z base new | grit diff-pairs -p -z` matches `grit diff-tree -p -M -C -C base new` (`PATCH_PIPELINE_OK`).
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated clippy edits outside task scope reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after unmerged-entry handling updates in `diff-files` and staged-tree conflict propagation in `grit-lib` for `t4046`).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/tests/grit" bash t4046-diff-unmerged.sh` (from `tests/`): 8/8 passing.
 - `./scripts/run-tests.sh t4046-diff-unmerged.sh`: 8/8 passing; `data/file-results.tsv` refreshed.

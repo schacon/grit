@@ -111,6 +111,8 @@ struct Options {
     quiet: bool,
     /// Reverse the diff direction (`-R` / `--reverse`).
     reverse: bool,
+    /// Use NUL terminators for raw/name output (`-z`).
+    nul_terminated: bool,
 }
 
 impl Default for Options {
@@ -147,6 +149,7 @@ impl Default for Options {
             exit_code: false,
             quiet: false,
             reverse: false,
+            nul_terminated: false,
         }
     }
 }
@@ -199,6 +202,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     opts.exit_code = true;
                 }
                 "-R" | "--reverse" => opts.reverse = true,
+                "-z" => opts.nul_terminated = true,
                 "--full-index" => opts.full_index = true,
                 _ if arg.starts_with("--max-depth=") => {
                     let val = &arg["--max-depth=".len()..];
@@ -1075,11 +1079,7 @@ fn print_diff(
             let suppress_raw = opts.pretty.is_some() && opts.summary;
             if !suppress_raw {
                 for entry in entries {
-                    if let Some(abbrev_len) = opts.abbrev {
-                        writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
-                    } else {
-                        writeln!(out, "{}", format_raw(entry))?;
-                    }
+                    write_raw_entry(out, entry, opts.abbrev, opts.nul_terminated)?;
                 }
             }
             if opts.summary {
@@ -1095,11 +1095,7 @@ fn print_diff(
             // --patch-with-raw: show raw before patch
             if opts.patch_with_raw {
                 for entry in entries {
-                    if let Some(abbrev_len) = opts.abbrev {
-                        writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
-                    } else {
-                        writeln!(out, "{}", format_raw(entry))?;
-                    }
+                    write_raw_entry(out, entry, opts.abbrev, opts.nul_terminated)?;
                 }
                 writeln!(out)?;
             }
@@ -1158,6 +1154,64 @@ fn print_diff(
         }
     }
     Ok(false)
+}
+
+fn raw_status(entry: &DiffEntry) -> String {
+    match (entry.status, entry.score) {
+        (DiffStatus::Renamed, Some(score)) => format!("R{score:03}"),
+        (DiffStatus::Copied, Some(score)) => format!("C{score:03}"),
+        _ => entry.status.letter().to_string(),
+    }
+}
+
+fn abbreviated_oid(oid: &ObjectId, abbrev_len: Option<usize>) -> String {
+    match abbrev_len {
+        Some(len) => {
+            let hex = oid.to_hex();
+            let capped = len.min(hex.len());
+            hex[..capped].to_string()
+        }
+        None => oid.to_hex(),
+    }
+}
+
+fn write_raw_entry(
+    out: &mut impl Write,
+    entry: &DiffEntry,
+    abbrev_len: Option<usize>,
+    nul_terminated: bool,
+) -> Result<()> {
+    if !nul_terminated {
+        if let Some(abbrev_len) = abbrev_len {
+            writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
+        } else {
+            writeln!(out, "{}", format_raw(entry))?;
+        }
+        return Ok(());
+    }
+
+    let old_oid = abbreviated_oid(&entry.old_oid, abbrev_len);
+    let new_oid = abbreviated_oid(&entry.new_oid, abbrev_len);
+    let status = raw_status(entry);
+    write!(
+        out,
+        ":{} {} {} {} {}\0",
+        entry.old_mode, entry.new_mode, old_oid, new_oid, status
+    )?;
+    match entry.status {
+        DiffStatus::Renamed | DiffStatus::Copied => {
+            write!(
+                out,
+                "{}\0{}\0",
+                entry.old_path.as_deref().unwrap_or_default(),
+                entry.new_path.as_deref().unwrap_or_default()
+            )?;
+        }
+        _ => {
+            write!(out, "{}\0", entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn apply_break_rewrites(entries: Vec<DiffEntry>) -> Vec<DiffEntry> {

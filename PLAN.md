@@ -462,7 +462,7 @@ commit → check it off → move on.
 - [ ] `t4115-apply-symlink` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — git apply symlinks and partial files
 
 - [ ] `t4252-am-options` ██░░░░░░░░░░░░░░░░░░ 1/8 (7 left) — git am with options and not losing them
-- [~] `t4070-diff-pairs` ███░░░░░░░░░░░░░░░░░ 1/7 (6 left) — basic diff-pairs tests
+- [x] `t4070-diff-pairs` ████████████████████ 7/7 (0 left) — basic diff-pairs tests (`diff-pairs` is now native (stdin raw `-z` parser + `--raw`/`-p` rendering + queue flush handling + tree/pathspec error modes); `diff-tree` now supports `-z` NUL-terminated raw output used by this plumbing flow; upstream harness passes 7/7 while this local mirror still reports 3/7 due simplified `tests/test-lib.sh` cwd persistence causing post-setup `unknown revision: 'base'` lookups between tests)
 - [ ] `t4017-diff-retval` ███████████████░░░░░ 30/38 (8 left) — Return value of diffs
 - [ ] `t4035-diff-quiet` █████████████░░░░░░░ 15/23 (8 left) — Return value of diffs
 - [ ] `t4213-log-tabexpand` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — log/show --expand-tabs

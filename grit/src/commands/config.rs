@@ -60,11 +60,11 @@ pub struct Args {
     pub get_regexp: Option<String>,
 
     /// Remove a key (legacy).
-    #[arg(long = "unset", value_name = "KEY")]
+    #[arg(long = "unset", value_name = "KEY", num_args = 0..=1, default_missing_value = "")]
     pub unset_key: Option<String>,
 
     /// Remove all occurrences of a key (legacy).
-    #[arg(long = "unset-all", value_name = "KEY")]
+    #[arg(long = "unset-all", value_name = "KEY", num_args = 0..=1, default_missing_value = "")]
     pub unset_all_key: Option<String>,
 
     /// List all config entries (legacy).
@@ -438,21 +438,33 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    if let Some(ref key) = args.unset_key {
-        let unset_args = UnsetArgs {
-            key: key.clone(),
-            all: false,
+    if let Some(ref key_raw) = args.unset_key {
+        let (key, value_pattern) = if key_raw.is_empty() {
+            let key = args.positional.first().cloned().unwrap_or_default();
+            let value_pattern = args.positional.get(1).map(|s| s.as_str());
+            (key, value_pattern)
+        } else {
+            (key_raw.clone(), args.positional.first().map(|s| s.as_str()))
         };
-        let value_pattern = args.positional.first().map(|s| s.as_str());
+        if key.is_empty() {
+            bail!("usage: git config --unset <key>");
+        }
+        let unset_args = UnsetArgs { key, all: false };
         return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern);
     }
 
-    if let Some(ref key) = args.unset_all_key {
-        let unset_args = UnsetArgs {
-            key: key.clone(),
-            all: true,
+    if let Some(ref key_raw) = args.unset_all_key {
+        let (key, value_pattern) = if key_raw.is_empty() {
+            let key = args.positional.first().cloned().unwrap_or_default();
+            let value_pattern = args.positional.get(1).map(|s| s.as_str());
+            (key, value_pattern)
+        } else {
+            (key_raw.clone(), args.positional.first().map(|s| s.as_str()))
         };
-        let value_pattern = args.positional.first().map(|s| s.as_str());
+        if key.is_empty() {
+            bail!("usage: git config --unset-all <key>");
+        }
+        let unset_args = UnsetArgs { key, all: true };
         return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern);
     }
 
@@ -1329,11 +1341,10 @@ fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
 /// Returns true if the value should be skipped.
 fn is_optional_missing_path(args: &Args, val: &str) -> bool {
     let type_name = args.type_name.as_deref();
-    if args.type_path || type_name == Some("path") {
-        if val.starts_with(":(optional)") {
+    if (args.type_path || type_name == Some("path"))
+        && val.starts_with(":(optional)") {
             return grit_lib::config::parse_path_optional(val).is_none();
         }
-    }
     false
 }
 
