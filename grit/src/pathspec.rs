@@ -99,6 +99,9 @@ fn match_char_class(pattern: &[u8], ch: u8) -> Option<(bool, usize)> {
 
 /// Check whether a path matches a pathspec (which may be literal or glob).
 pub fn pathspec_matches(spec: &str, path: &str) -> bool {
+    if spec == ":/" {
+        return true;
+    }
     if has_glob_chars(spec) {
         glob_match(spec, path)
     } else if let Some(prefix) = spec.strip_suffix('/') {

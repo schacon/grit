@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   119 |
+| Completed   |   120 |
 | In progress |     0 |
-| Remaining   |   648 |
+| Remaining   |   647 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4208-log-magic-pathspec` — upstream/local 21/21 tests pass (`log` now handles magic pathspec/revision ambiguity with git-compatible fatal errors for tokens like `:/a` and `:`, supports `--merge` option parsing compatibility, and preserves explicit `--` behavior; `rev_parse` now rejects empty `:/` revision search so pathspec mode can consume top-level `:/` correctly; shared pathspec matching now treats `:/` as repo-root top pathspec so `git log HEAD -- :/` from subdirectories matches expected history output)
 - `t4067-diff-partial-clone` — upstream 9/9 tests pass (`diff` now correctly reclassifies revision arguments in bare repositories without requiring `--`, triggers lazy prefetch batching for patch/stat/rename/break-rewrite paths, emits expected packet-trace `want`/`fetch> done` lines exactly once per negotiation, skips gitlink OIDs during prefetch, and `checkout` now lazily hydrates missing blobs in partial clones; gitlink staging now resolves submodule HEAD through `.git` gitfile indirection). Local mirror `./scripts/run-tests.sh` remains 0/9 due known simplified `tests/test-lib.sh` incompatibility invoking `git config -C` in subcommand position.
 - `t4120-apply-popt` — upstream 12/12 tests pass (`git apply -p<n>` now validates malformed/non-numeric/negative strip values with git-compatible diagnostics, path trimming now reports `removing <n> leading pathname component(s)` for over-stripped regular and escaped paths, and escaped non-ASCII patch paths are now rendered with C-octal escapes in diff headers so setup fixtures match upstream `grep "[\\]"` expectations). Local mirror remains partial (9/12) due simplified `tests/test-lib.sh` helper differences (`test_chmod` lacks upstream `chmod` + `update-index --add` behavior, so mode-only follow-up assertions run against an untracked renamed path).
 - `t4058-diff-duplicates` — upstream 15/16 and local mirror 15/16 (non-TODO assertions fully passing). Implemented: `diff-tree --no-abbrev` parsing, duplicate-path self-rename suppression in rename detection, duplicate-path filtering when cache-tree checks are disabled in reset/index materialization, duplicate-aware index-vs-worktree diffing (single effective stage-0 entry per path), and git-compatible corruption messaging. Test 14 remains marked upstream TODO-known-breakage and still fails as expected.
@@ -106,4 +107,4 @@
 
 ## What Remains
 
-0 test files are currently marked in progress and 648 remain pending. See `plan.md` for the full prioritized list.
+0 test files are currently marked in progress and 647 remain pending. See `plan.md` for the full prioritized list.

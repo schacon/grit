@@ -258,9 +258,12 @@ pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
     // Handle `:/message` early — it can contain any characters so must
     // not be confused with peel/nav syntax.
     if let Some(pattern) = spec.strip_prefix(":/") {
-        if !pattern.is_empty() {
-            return resolve_commit_message_search(repo, pattern);
-        }
+        return resolve_commit_message_search(repo, pattern);
+    }
+
+    if spec == ":/" {
+        let head_oid = resolve_revision(repo, "HEAD")?;
+        return peel_to_tree(repo, head_oid);
     }
 
     // Handle A...B (symmetric difference / merge-base)
@@ -547,9 +550,7 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
 
     // Handle `:/pattern` — search commit messages from HEAD
     if let Some(pattern) = spec.strip_prefix(":/") {
-        if !pattern.is_empty() {
-            return resolve_commit_message_search(repo, pattern);
-        }
+        return resolve_commit_message_search(repo, pattern);
     }
 
     // Handle `:N:path` — look up path in the index at stage N

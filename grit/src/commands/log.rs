@@ -105,6 +105,10 @@ pub struct Args {
     #[arg(long = "merges")]
     pub merges: bool,
 
+    /// Show commits touching paths involved in merge conflicts.
+    #[arg(long = "merge")]
+    pub merge: bool,
+
     /// Date format.
     #[arg(long = "date")]
     pub date: Option<String>,
@@ -467,6 +471,7 @@ pub fn run(mut args: Args) -> Result<()> {
         return run_no_walk(&repo, &args);
     }
 
+    let has_separator = invocation_has_double_dash_for_log();
     let explicit_pathspecs = !args.pathspecs.is_empty();
     let mut pathspecs = args.pathspecs.clone();
 
@@ -487,16 +492,43 @@ pub fn run(mut args: Args) -> Result<()> {
         let mut oids = Vec::new();
         let mut excludes = Vec::new();
         for rev in &args.revisions {
+            if !has_separator && rev == ":" {
+                anyhow::bail!("{}", ambiguous_revision_or_path_error(rev));
+            }
+            if !has_separator {
+                if let Some(candidate) = rev.strip_prefix(":/") {
+                    if !candidate.is_empty() && pathspec_candidate_exists(&repo, candidate) {
+                        anyhow::bail!("{}", ambiguous_revision_or_path_error(rev));
+                    }
+                }
+            }
+
             if let Some(stripped) = rev.strip_prefix('^') {
                 match resolve_commitish_revision(&repo, stripped) {
                     Ok(oid) => excludes.push(oid),
-                    Err(_) if !explicit_pathspecs => pathspecs.push(rev.clone()),
+                    Err(_) if !explicit_pathspecs && !has_separator => pathspecs.push(rev.clone()),
                     Err(err) => return Err(err),
                 }
             } else {
                 match resolve_commitish_revision(&repo, rev) {
                     Ok(oid) => oids.push(oid),
-                    Err(_) if !explicit_pathspecs => pathspecs.push(rev.clone()),
+                    Err(err) if !has_separator => {
+                        if let Some(excluded_path) = extract_exclude_pathspec(rev) {
+                            if !pathspec_candidate_exists(&repo, excluded_path) {
+                                anyhow::bail!(
+                                    "pathspec '{}' did not match any file(s) known to git",
+                                    rev
+                                );
+                            }
+                            pathspecs.push(rev.clone());
+                        } else if is_unknown_pathspec_magic(rev) {
+                            anyhow::bail!("pathspec.magic: unsupported magic in '{}'", rev);
+                        } else if !rev.starts_with(':') && !explicit_pathspecs {
+                            pathspecs.push(rev.clone());
+                        } else {
+                            return Err(err);
+                        }
+                    }
                     Err(err) => return Err(err),
                 }
             }
@@ -795,6 +827,58 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn invocation_has_double_dash_for_log() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    let Some(log_idx) = args.iter().position(|arg| arg == "log") else {
+        return false;
+    };
+    args.iter().skip(log_idx + 1).any(|arg| arg == "--")
+}
+
+fn ambiguous_revision_or_path_error(arg: &str) -> String {
+    format!(
+        "ambiguous argument '{}': both revision and filename\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'",
+        arg
+    )
+}
+
+fn extract_exclude_pathspec(spec: &str) -> Option<&str> {
+    if let Some(path) = spec.strip_prefix(":^") {
+        return (!path.is_empty()).then_some(path);
+    }
+    if let Some(path) = spec.strip_prefix(":!") {
+        return (!path.is_empty()).then_some(path);
+    }
+    if let Some(path) = spec.strip_prefix(":(exclude)") {
+        return (!path.is_empty()).then_some(path);
+    }
+    None
+}
+
+fn is_unknown_pathspec_magic(spec: &str) -> bool {
+    spec.starts_with(":(") && !spec.starts_with(":(exclude)")
+}
+
+fn pathspec_candidate_exists(repo: &Repository, pathspec: &str) -> bool {
+    if pathspec.is_empty() {
+        return true;
+    }
+    if let Some(work_tree) = repo.work_tree.as_ref() {
+        if work_tree.join(pathspec).exists() {
+            return true;
+        }
+    }
+
+    let Ok(index) = grit_lib::index::Index::load(&repo.index_path()) else {
+        return false;
+    };
+    let directory_prefix = format!("{pathspec}/");
+    index.entries.iter().any(|entry| {
+        let path = String::from_utf8_lossy(&entry.path);
+        path == pathspec || path.starts_with(&directory_prefix)
+    })
 }
 
 /// Run `--no-walk` mode: show the given commits without walking their parents.

@@ -2,6 +2,13 @@
 
 **Updated:** 2026-04-07
 
+- `cargo build --release`: passes (rebuild after `t4208` magic pathspec/revision disambiguation updates in `log`, `rev_parse`, and shared pathspec matching).
+- `bash scripts/run-upstream-tests.sh t4208-log-magic-pathspec`: 21/21 passing in isolated upstream harness.
+- `./scripts/run-tests.sh t4208-log-magic-pathspec.sh`: 21/21 passing; `data/file-results.tsv` refreshed.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes in `grit-lib/src/state.rs`, `grit/src/commands/blame.rs`, `grit/src/commands/config.rs`, and `grit/src/commands/update_index.rs` were reverted).
+- `cargo test -p grit-lib --lib`: passes (96/96).
+
 - `cargo build --release`: passes (rebuild after `t4067` partial-clone lazy-fetch updates in `diff`, `checkout`, and gitlink staging helpers).
 - `bash scripts/run-upstream-tests.sh t4067-diff-partial-clone`: 9/9 passing in isolated upstream harness.
 - Direct upstream-workdir confirmation: `cd /tmp/grit-upstream-workdir/t && GIT_BUILD_DIR=/tmp/grit-upstream-workdir TEST_NO_MALLOC_CHECK=1 TAR=tar bash ./t4067-diff-partial-clone.sh -v -x -i`: 9/9 passing with packet-trace assertions validated for `show`, `diff`, rename detection, and break-rewrite flows.
