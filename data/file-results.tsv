@@ -45,7 +45,7 @@ t0066-dir-iterator	yes	10	2	8	ok	2	10	0
 t0067-parse_pathspec_file	yes	8	0	8	ok	0	8	0
 t0068-for-each-repo	yes	5	1	4	ok	1	5	0
 t0070-fundamental	yes	11	1	10	ok	1	11	0
-t0071-sort	yes	1	0	1	ok	0	1	0
+t0071-sort	yes	1	1	0	ok	1	1	0
 t0080-unit-test-output	yes	1	0	1	ok	0	1	0
 t0081-find-pack	yes	4	1	3	ok	1	4	0
 t0090-cache-tree	yes	22	0	22	ok	0	22	0

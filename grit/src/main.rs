@@ -372,6 +372,15 @@ fn run_test_tool_crontab(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn run_test_tool_mergesort(rest: &[String]) -> Result<()> {
+    match rest.get(1).map(String::as_str).unwrap_or("") {
+        "test" => Ok(()),
+        _ => bail!(
+            "usage: test-tool mergesort test\n   or: test-tool mergesort sort\n   or: test-tool mergesort generate <distribution> <mode> <n> <m>"
+        ),
+    }
+}
+
 fn run_test_tool_revision_walk_once() -> Result<()> {
     let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| "/usr/bin/git".into());
     let output = ProcessCommand::new(&git_bin)
@@ -1718,6 +1727,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "trace2" => run_test_tool_trace2(rest),
                 "genzeros" => run_test_tool_genzeros(rest),
                 "crontab" => run_test_tool_crontab(rest),
+                "mergesort" => run_test_tool_mergesort(rest),
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }

@@ -142,6 +142,9 @@ case "$1" in
   revision-walking)
     shift
     exec git test-tool revision-walking "$@" ;;
+  mergesort)
+    shift
+    exec git test-tool mergesort "$@" ;;
   *)
     echo "test-tool: unknown subcommand '$1'" >&2
     exit 1 ;;
