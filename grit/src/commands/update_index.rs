@@ -16,6 +16,34 @@ use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 
+/// Match Git: when `--chmod` changes the index entry, update the working tree file mode so a
+/// subsequent `git add` of the same path keeps the executable bit.
+fn mirror_index_executable_to_worktree(abs_path: &Path, executable: bool) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let Ok(meta) = std::fs::symlink_metadata(abs_path) else {
+            return;
+        };
+        if !meta.is_file() {
+            return;
+        }
+        let Ok(mut perms) = std::fs::metadata(abs_path).map(|m| m.permissions()) else {
+            return;
+        };
+        let mode = perms.mode();
+        let new_mode = if executable {
+            mode | 0o111
+        } else {
+            mode & !0o111
+        };
+        perms.set_mode(new_mode);
+        let _ = std::fs::set_permissions(abs_path, perms);
+    }
+    #[cfg(not(unix))]
+    let _ = (abs_path, executable);
+}
+
 /// Arguments for `grit update-index`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -413,16 +441,28 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     {
         let raw: Vec<String> = std::env::args().collect();
         let mut pending_chmod: Option<String> = None;
-        for tok in &raw {
+        let mut i = 0usize;
+        while i < raw.len() {
+            let tok = &raw[i];
             if let Some(val) = tok.strip_prefix("--chmod=") {
                 pending_chmod = Some(val.to_owned());
+                i += 1;
             } else if tok == "--chmod" {
-                // next token is the value — handled by checking if pending is set
+                if let Some(next) = raw.get(i + 1) {
+                    if !next.starts_with('-') || next == "-" {
+                        pending_chmod = Some(next.clone());
+                        i += 2;
+                        continue;
+                    }
+                }
+                i += 1;
             } else if !tok.starts_with('-') {
                 if let Some(ref c) = pending_chmod {
                     per_file_chmod.insert(PathBuf::from(tok), c.clone());
-                    // Don't reset — it may apply to multiple files if not overridden
                 }
+                i += 1;
+            } else {
+                i += 1;
             }
         }
     }
@@ -553,6 +593,9 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
                     e.mode = new_mode;
                 } else {
                     bail!("'{}' is not in the index", input_path.display());
+                }
+                if !args.info_only {
+                    mirror_index_executable_to_worktree(&abs_path, chmod_val.as_str() == "+x");
                 }
                 if args.verbose {
                     println!("add '{}'", rel_path.display());
@@ -714,6 +757,9 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             };
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.mode = new_mode;
+            }
+            if !args.info_only {
+                mirror_index_executable_to_worktree(&abs_path, chmod_val.as_str() == "+x");
             }
             if args.verbose {
                 println!("chmod {} '{}'", chmod_val, rel_path.display());

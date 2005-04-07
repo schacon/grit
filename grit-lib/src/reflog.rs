@@ -8,17 +8,19 @@
 //! <old-sha> <new-sha> <name> <<email>> <timestamp> <timezone>\t<message>
 //! ```
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::config::ConfigSet;
 use crate::diff::zero_oid;
 use crate::error::{Error, Result};
 use crate::merge_base;
-use crate::objects::ObjectId;
+use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use crate::refs;
 use crate::repo::Repository;
+use crate::wildmatch::{wildmatch, WM_PATHNAME};
 
 /// A single reflog entry.
 #[derive(Debug, Clone)]
@@ -283,6 +285,25 @@ fn parse_timestamp_from_identity(identity: &str) -> Option<i64> {
     }
 }
 
+/// Copy `logs/<branch_refname>` to `logs/HEAD` when keeping symbolic-HEAD reflogs aligned with
+/// the checked-out branch (matches Git).
+pub fn mirror_branch_reflog_to_head(git_dir: &Path, branch_refname: &str) -> Result<()> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return Ok(());
+    }
+    let src = reflog_path(git_dir, branch_refname);
+    if !src.is_file() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&src).map_err(Error::Io)?;
+    let dst = reflog_path(git_dir, "HEAD");
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).map_err(Error::Io)?;
+    }
+    fs::write(&dst, content).map_err(Error::Io)?;
+    Ok(())
+}
+
 /// List all refs that have reflogs.
 pub fn list_reflog_refs(git_dir: &Path) -> Result<Vec<String>> {
     let logs_dir = git_dir.join("logs");
@@ -321,4 +342,443 @@ fn collect_reflog_refs(dir: &Path, prefix: &str, out: &mut Vec<String>) -> Resul
         }
     }
     Ok(())
+}
+
+// --- `git reflog expire` -----------------------------------------------------
+
+/// Options for [`expire_reflog_git`].
+#[derive(Debug, Clone)]
+pub struct ReflogExpireParams {
+    /// Prune entries whose commits fail a completeness walk (missing objects).
+    pub stale_fix: bool,
+    pub dry_run: bool,
+    pub verbose: bool,
+}
+
+/// Per-ref `gc.<pattern>.reflogExpire*` rule from config.
+#[derive(Debug, Clone)]
+pub struct GcReflogPattern {
+    pattern: String,
+    expire_total: i64,
+    expire_unreachable: i64,
+}
+
+fn collect_gc_reflog_patterns(config: &ConfigSet, now: i64) -> Vec<GcReflogPattern> {
+    let mut by_pattern: HashMap<String, GcReflogPattern> = HashMap::new();
+    for e in config.entries() {
+        let key = e.key.as_str();
+        let Some(rest) = key.strip_prefix("gc.") else {
+            continue;
+        };
+        // Per-ref: `gc.<wildmatch-pattern>.reflogExpire` (pattern may contain dots).
+        // Global `gc.reflogExpire` has no pattern segment — see [`global_gc_reflog_expiry`].
+        let Some((pat, suffix)) = rest.rsplit_once('.') else {
+            continue;
+        };
+        if !suffix.eq_ignore_ascii_case("reflogexpire")
+            && !suffix.eq_ignore_ascii_case("reflogexpireunreachable")
+        {
+            continue;
+        }
+        let Some(val) = e.value.as_deref() else {
+            continue;
+        };
+        let Ok(ts) = parse_gc_reflog_expiry(val, now) else {
+            continue;
+        };
+        let ent = by_pattern
+            .entry(pat.to_string())
+            .or_insert(GcReflogPattern {
+                pattern: pat.to_string(),
+                expire_total: i64::MAX,
+                expire_unreachable: i64::MAX,
+            });
+        if suffix.eq_ignore_ascii_case("reflogexpire") {
+            ent.expire_total = ts;
+        } else {
+            ent.expire_unreachable = ts;
+        }
+    }
+    by_pattern.into_values().collect()
+}
+
+fn global_gc_reflog_expiry(config: &ConfigSet, now: i64) -> (Option<i64>, Option<i64>) {
+    let total = config
+        .get("gc.reflogExpire")
+        .and_then(|v| parse_gc_reflog_expiry(&v, now).ok());
+    let unreach = config
+        .get("gc.reflogExpireUnreachable")
+        .and_then(|v| parse_gc_reflog_expiry(&v, now).ok());
+    (total, unreach)
+}
+
+/// Parse `gc.reflogExpire` values: `never` / `false` → keep forever (`0`), else days or epoch.
+fn parse_gc_reflog_expiry(raw: &str, now: i64) -> Result<i64> {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("false") {
+        return Ok(0);
+    }
+    if let Ok(days) = s.parse::<u64>() {
+        if days == 0 {
+            return Ok(0);
+        }
+        return Ok(now - (days as i64 * 86400));
+    }
+    s.parse::<i64>()
+        .map_err(|_| Error::Message(format!("invalid reflog expiry: {raw:?}")))
+}
+
+fn default_expire_total(now: i64) -> i64 {
+    now - 30 * 86400
+}
+
+fn default_expire_unreachable(now: i64) -> i64 {
+    now - 90 * 86400
+}
+
+fn resolve_expire_for_ref(
+    refname: &str,
+    explicit_total: Option<i64>,
+    explicit_unreachable: Option<i64>,
+    patterns: &[GcReflogPattern],
+    default_total: i64,
+    default_unreachable: i64,
+) -> (i64, i64) {
+    let mut expire_total = explicit_total.unwrap_or(default_total);
+    let mut expire_unreachable = explicit_unreachable.unwrap_or(default_unreachable);
+    if explicit_total.is_some() && explicit_unreachable.is_some() {
+        return (expire_total, expire_unreachable);
+    }
+    for ent in patterns {
+        if wildmatch(ent.pattern.as_bytes(), refname.as_bytes(), WM_PATHNAME) {
+            // Partial per-pattern config only sets one key; the other stays `i64::MAX` as sentinel.
+            if explicit_total.is_none() && ent.expire_total != i64::MAX {
+                expire_total = ent.expire_total;
+            }
+            if explicit_unreachable.is_none() && ent.expire_unreachable != i64::MAX {
+                expire_unreachable = ent.expire_unreachable;
+            }
+            return (expire_total, expire_unreachable);
+        }
+    }
+    if refname == "refs/stash" {
+        if explicit_total.is_none() {
+            expire_total = 0;
+        }
+        if explicit_unreachable.is_none() {
+            expire_unreachable = 0;
+        }
+    }
+    (expire_total, expire_unreachable)
+}
+
+fn tree_fully_complete(repo: &Repository, oid: ObjectId, depth: usize) -> bool {
+    if depth > 65536 {
+        return false;
+    }
+    let Ok(obj) = repo.odb.read(&oid) else {
+        return false;
+    };
+    match obj.kind {
+        ObjectKind::Blob => true,
+        ObjectKind::Tree => {
+            let Ok(entries) = parse_tree(&obj.data) else {
+                return false;
+            };
+            for e in entries {
+                if !tree_fully_complete(repo, e.oid, depth + 1) {
+                    return false;
+                }
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn commit_chain_complete(repo: &Repository, oid: ObjectId, depth: usize) -> bool {
+    if oid.is_zero() {
+        return true;
+    }
+    if depth > 65536 {
+        return false;
+    }
+    let Ok(obj) = repo.odb.read(&oid) else {
+        return false;
+    };
+    if obj.kind != ObjectKind::Commit {
+        return false;
+    }
+    let Ok(c) = parse_commit(&obj.data) else {
+        return false;
+    };
+    if !tree_fully_complete(repo, c.tree, depth + 1) {
+        return false;
+    }
+    for p in &c.parents {
+        if !commit_chain_complete(repo, *p, depth + 1) {
+            return false;
+        }
+    }
+    true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnreachableKind {
+    Always,
+    Normal,
+    Head,
+}
+
+fn is_head_ref(refname: &str) -> bool {
+    refname == "HEAD" || refname.ends_with("/HEAD")
+}
+
+fn tip_commits_for_reflog(repo: &Repository, git_dir: &Path, refname: &str) -> Vec<ObjectId> {
+    let mut tips = Vec::new();
+    if is_head_ref(refname) {
+        if let Ok(oid) = refs::resolve_ref(git_dir, "HEAD") {
+            tips.push(oid);
+        }
+        if let Ok(refs) = refs::list_refs(git_dir, "refs/") {
+            for (_, oid) in refs {
+                tips.push(oid);
+            }
+        }
+    } else if let Ok(oid) = refs::resolve_ref(git_dir, refname) {
+        tips.push(oid);
+    }
+    tips.sort();
+    tips.dedup();
+    tips.retain(|o| commit_chain_complete(repo, *o, 0));
+    tips
+}
+
+fn reachable_commit_set(repo: &Repository, tips: &[ObjectId]) -> HashSet<ObjectId> {
+    let mut acc = HashSet::new();
+    for t in tips {
+        if let Ok(cl) = merge_base::ancestor_closure(repo, *t) {
+            acc.extend(cl);
+        }
+    }
+    acc
+}
+
+fn is_unreachable_oid(
+    repo: &Repository,
+    reachable: &HashSet<ObjectId>,
+    kind: UnreachableKind,
+    oid: ObjectId,
+) -> bool {
+    if oid.is_zero() {
+        return false;
+    }
+    if reachable.contains(&oid) {
+        return false;
+    }
+    if kind == UnreachableKind::Always {
+        return true;
+    }
+    let Ok(obj) = repo.odb.read(&oid) else {
+        return true;
+    };
+    obj.kind == ObjectKind::Commit
+}
+
+fn should_drop_reflog_entry(
+    repo: &Repository,
+    entry: &ReflogEntry,
+    expire_total: i64,
+    expire_unreachable: i64,
+    unreachable_kind: UnreachableKind,
+    reachable: &HashSet<ObjectId>,
+    stale_fix: bool,
+) -> bool {
+    let ts = parse_timestamp_from_identity(&entry.identity).unwrap_or(i64::MAX);
+    if expire_total > 0 && ts < expire_total {
+        return true;
+    }
+    if stale_fix
+        && (!commit_chain_complete(repo, entry.old_oid, 0)
+            || !commit_chain_complete(repo, entry.new_oid, 0))
+    {
+        return true;
+    }
+    if expire_unreachable > 0 && ts < expire_unreachable {
+        match unreachable_kind {
+            UnreachableKind::Always => return true,
+            UnreachableKind::Normal | UnreachableKind::Head => {
+                if is_unreachable_oid(repo, reachable, unreachable_kind, entry.old_oid)
+                    || is_unreachable_oid(repo, reachable, unreachable_kind, entry.new_oid)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Git-compatible reflog expiry for one ref.
+pub fn expire_reflog_git(
+    repo: &Repository,
+    git_dir: &Path,
+    refname: &str,
+    params: &ReflogExpireParams,
+    explicit_total: Option<i64>,
+    explicit_unreachable: Option<i64>,
+    gc_patterns: &[GcReflogPattern],
+    gc_global_total: Option<i64>,
+    gc_global_unreachable: Option<i64>,
+    now: i64,
+) -> Result<usize> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return Ok(0);
+    }
+    let base_total = gc_global_total.unwrap_or_else(|| default_expire_total(now));
+    let base_unreachable = gc_global_unreachable.unwrap_or_else(|| default_expire_unreachable(now));
+    let (expire_total, expire_unreachable) = resolve_expire_for_ref(
+        refname,
+        explicit_total,
+        explicit_unreachable,
+        gc_patterns,
+        base_total,
+        base_unreachable,
+    );
+
+    let unreachable_kind = if expire_unreachable <= expire_total {
+        UnreachableKind::Always
+    } else if expire_unreachable == 0 || is_head_ref(refname) {
+        UnreachableKind::Head
+    } else {
+        match refs::resolve_ref(git_dir, refname) {
+            Ok(t) if commit_chain_complete(repo, t, 0) => UnreachableKind::Normal,
+            _ => UnreachableKind::Always,
+        }
+    };
+
+    let tips = tip_commits_for_reflog(repo, git_dir, refname);
+    let reachable = if matches!(unreachable_kind, UnreachableKind::Always) {
+        HashSet::new()
+    } else {
+        reachable_commit_set(repo, &tips)
+    };
+
+    let entries = read_reflog(git_dir, refname)?;
+    if entries.is_empty() {
+        return Ok(0);
+    }
+    let path = reflog_path(git_dir, refname);
+    let mut kept = Vec::new();
+    let mut pruned = 0usize;
+
+    for entry in &entries {
+        let drop = should_drop_reflog_entry(
+            repo,
+            entry,
+            expire_total,
+            expire_unreachable,
+            unreachable_kind,
+            &reachable,
+            params.stale_fix,
+        );
+        if drop {
+            pruned += 1;
+            if params.verbose {
+                if params.dry_run {
+                    println!("would prune {}", entry.message);
+                } else {
+                    println!("prune {}", entry.message);
+                }
+            }
+        } else {
+            if params.verbose {
+                println!("keep {}", entry.message);
+            }
+            kept.push(format_reflog_entry(entry));
+        }
+    }
+
+    if !params.dry_run && pruned > 0 {
+        fs::write(&path, kept.join(""))?;
+    }
+    Ok(pruned)
+}
+
+/// Per-ref `gc.<pattern>.reflogExpire*` rules plus global `gc.reflogExpire` / `gc.reflogExpireUnreachable`.
+#[derive(Debug, Clone)]
+pub struct GcReflogExpireConfig {
+    pub patterns: Vec<GcReflogPattern>,
+    pub global_total: Option<i64>,
+    pub global_unreachable: Option<i64>,
+}
+
+/// Load gc reflog expiry rules from merged config (same layering as Git `reflog_expire_config`).
+#[must_use]
+pub fn load_gc_reflog_expire_config(config: &ConfigSet, now: i64) -> GcReflogExpireConfig {
+    let (global_total, global_unreachable) = global_gc_reflog_expiry(config, now);
+    GcReflogExpireConfig {
+        patterns: collect_gc_reflog_patterns(config, now),
+        global_total,
+        global_unreachable,
+    }
+}
+
+/// Best-effort object set for `--stale-fix` (refs + reflog mentions).
+pub fn mark_stalefix_reachable(repo: &Repository, git_dir: &Path) -> Result<HashSet<ObjectId>> {
+    let mut seeds: Vec<ObjectId> = Vec::new();
+    if let Ok(oid) = refs::resolve_ref(git_dir, "HEAD") {
+        seeds.push(oid);
+    }
+    if let Ok(refs) = refs::list_refs(git_dir, "refs/") {
+        for (_, oid) in refs {
+            seeds.push(oid);
+        }
+    }
+    if let Ok(names) = list_reflog_refs(git_dir) {
+        for r in names {
+            if let Ok(ent) = read_reflog(git_dir, &r) {
+                for e in ent {
+                    if !e.old_oid.is_zero() {
+                        seeds.push(e.old_oid);
+                    }
+                    if !e.new_oid.is_zero() {
+                        seeds.push(e.new_oid);
+                    }
+                }
+            }
+        }
+    }
+    seeds.sort();
+    seeds.dedup();
+
+    let mut seen = HashSet::new();
+    let mut queue: std::collections::VecDeque<ObjectId> = seeds.into_iter().collect();
+    while let Some(oid) = queue.pop_front() {
+        if oid.is_zero() || !seen.insert(oid) {
+            continue;
+        }
+        let Ok(obj) = repo.odb.read(&oid) else {
+            continue;
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                if let Ok(c) = parse_commit(&obj.data) {
+                    queue.push_back(c.tree);
+                    for p in c.parents {
+                        queue.push_back(p);
+                    }
+                }
+            }
+            ObjectKind::Tree => {
+                if let Ok(entries) = parse_tree(&obj.data) {
+                    for te in entries {
+                        queue.push_back(te.oid);
+                    }
+                }
+            }
+            ObjectKind::Tag | ObjectKind::Blob => {}
+        }
+    }
+    Ok(seen)
 }

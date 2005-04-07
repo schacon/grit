@@ -7,6 +7,8 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+
+use crate::explicit_exit::ExplicitExit;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
 use grit_lib::error::Error as LibError;
@@ -16,6 +18,7 @@ use grit_lib::pack::read_local_pack_indexes;
 use grit_lib::promisor::{
     promisor_expanded_object_ids, promisor_pack_object_ids, repo_treats_promisor_packs,
 };
+use grit_lib::reflog::{list_reflog_refs, read_reflog};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -41,6 +44,10 @@ pub struct Args {
     /// Only check connectivity, skip object content validation.
     #[arg(long = "connectivity-only")]
     pub connectivity_only: bool,
+
+    /// Full object database check (accepted for Git compatibility; grit verifies reachable and loose objects by default).
+    #[arg(long = "full")]
+    pub full: bool,
 
     /// Write dangling objects into .git/lost-found/{commit,other}/.
     #[arg(long = "lost-found")]
@@ -248,7 +255,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                eprintln!(
+                println!(
                     "missing {} {}{} (referenced by {})",
                     kind,
                     oid.to_hex(),
@@ -266,7 +273,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                eprintln!(
+                println!(
                     "error in {} {}{}: {}",
                     kind.as_str(),
                     oid.to_hex(),
@@ -284,7 +291,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                eprintln!("dangling {} {}{}", kind.as_str(), oid.to_hex(), name_suffix);
+                println!("dangling {} {}{}", kind.as_str(), oid.to_hex(), name_suffix);
             }
             Issue::Unreachable { oid, kind } => {
                 let name_suffix = if name_objects {
@@ -295,7 +302,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     String::new()
                 };
-                eprintln!(
+                println!(
                     "unreachable {} {}{}",
                     kind.as_str(),
                     oid.to_hex(),
@@ -303,25 +310,45 @@ pub fn run(args: Args) -> Result<()> {
                 );
             }
             Issue::InvalidReflog { refname, oid } => {
-                eprintln!("error: {}: invalid reflog entry {}", refname, oid.to_hex());
+                println!("error: {}: invalid reflog entry {}", refname, oid.to_hex());
                 has_errors = true;
             }
             Issue::HashPathMismatch { real_oid_hex, path } => {
-                eprintln!("error: {real_oid_hex}: hash-path mismatch, found at: {path}");
+                println!("error: {real_oid_hex}: hash-path mismatch, found at: {path}");
                 has_errors = true;
             }
             Issue::FsckMessage(msg) => {
-                eprintln!("error: {msg}");
+                println!("error: {msg}");
                 has_errors = true;
             }
         }
     }
 
     if has_errors {
-        std::process::exit(1);
+        // Match Git: repository problems yield exit code 2 (not 1). Use `ExplicitExit` so POSIX
+        // shells running `git fsck` under `set -e` do not treat exit 2 as a hard failure mid-pipeline.
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 2,
+            message: String::new(),
+        }));
     }
 
     Ok(())
+}
+
+/// Label for `missing <kind>` diagnostics (Git uses `blob` when the parent is a tree).
+fn missing_object_kind_for_referrer(odb: &Odb, referrer: Option<ObjectId>) -> &'static str {
+    let Some(ref_oid) = referrer else {
+        return "object";
+    };
+    let Ok(obj) = odb.read(&ref_oid) else {
+        return "object";
+    };
+    match obj.kind {
+        ObjectKind::Tree => "blob",
+        ObjectKind::Commit => "tree",
+        ObjectKind::Tag | ObjectKind::Blob => "object",
+    }
 }
 
 /// Walk all reachable objects from refs and HEAD.
@@ -354,9 +381,23 @@ fn walk_reachable(
         }
     }
 
-    // NOTE: We do NOT seed from reflogs for the main reachable walk.
-    // Objects only reachable through reflogs are still considered dangling.
-    // Reflog OIDs are checked separately.
+    // Seed commit OIDs mentioned in reflogs so we walk trees/blobs reachable only via history
+    // (matches `git fsck`: missing blobs in reflog-only commits are reported as `missing blob`).
+    let z = zero_oid();
+    if let Ok(refnames) = list_reflog_refs(&repo.git_dir) {
+        for refname in refnames {
+            if let Ok(entries) = read_reflog(&repo.git_dir, &refname) {
+                for e in entries {
+                    if e.old_oid != z {
+                        queue.push_back((e.old_oid, None));
+                    }
+                    if e.new_oid != z {
+                        queue.push_back((e.new_oid, None));
+                    }
+                }
+            }
+        }
+    }
 
     // BFS walk.
     while let Some((oid, referrer)) = queue.pop_front() {
@@ -374,9 +415,10 @@ fn walk_reachable(
                     continue;
                 }
                 let ref_oid = referrer.unwrap_or(oid);
+                let kind = missing_object_kind_for_referrer(odb, referrer);
                 issues.push(Issue::Missing {
                     oid,
-                    kind: "object",
+                    kind,
                     referenced_by: ref_oid,
                 });
                 continue;
@@ -804,12 +846,15 @@ fn validate_alternate_paths_exist(objects_dir: &Path) -> Result<()> {
         }
         let path = PathBuf::from(line);
         if !path.exists() {
-            eprintln!("error: unable to normalize alternate object path: {}", line);
+            println!("error: unable to normalize alternate object path: {}", line);
             bad = true;
         }
     }
     if bad {
-        std::process::exit(2);
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 2,
+            message: String::new(),
+        }));
     }
     Ok(())
 }

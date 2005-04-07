@@ -463,10 +463,11 @@ pub fn effective_log_refs_config(git_dir: &Path) -> LogRefsConfig {
     }
 }
 
-/// Whether a new reflog file may be auto-created for `refname` (Git `should_autocreate_reflog`).
+/// Whether a new reflog file may be auto-created for `refname` given an already-resolved
+/// `core.logAllRefUpdates` mode (including command-line config).
 #[must_use]
-pub fn should_autocreate_reflog(git_dir: &Path, refname: &str) -> bool {
-    match effective_log_refs_config(git_dir) {
+pub fn should_autocreate_reflog_for_mode(refname: &str, mode: LogRefsConfig) -> bool {
+    match mode {
         LogRefsConfig::Always => true,
         LogRefsConfig::Normal => {
             refname == "HEAD"
@@ -476,6 +477,12 @@ pub fn should_autocreate_reflog(git_dir: &Path, refname: &str) -> bool {
         }
         LogRefsConfig::None | LogRefsConfig::Unset => false,
     }
+}
+
+/// Whether a new reflog file may be auto-created for `refname` (Git `should_autocreate_reflog`).
+#[must_use]
+pub fn should_autocreate_reflog(git_dir: &Path, refname: &str) -> bool {
+    should_autocreate_reflog_for_mode(refname, effective_log_refs_config(git_dir))
 }
 
 /// Write a reflog entry.

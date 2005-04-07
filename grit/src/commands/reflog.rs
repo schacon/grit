@@ -8,13 +8,19 @@
 //! - `delete` — delete specific reflog entries
 //! - `exists` — check whether a ref has a reflog
 
+use std::fs;
+
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 
 use grit_lib::check_ref_format::{check_refname_format, RefNameOptions};
 use grit_lib::config::ConfigSet;
+use grit_lib::git_date::approx::approxidate_careful;
 use grit_lib::objects::ObjectId;
-use grit_lib::reflog::{delete_reflog_entries, expire_reflog, read_reflog, reflog_exists};
+use grit_lib::reflog::{
+    delete_reflog_entries, expire_reflog_git, load_gc_reflog_expire_config,
+    mark_stalefix_reachable, read_reflog, reflog_exists, reflog_path, ReflogExpireParams,
+};
 use grit_lib::refs::{append_reflog, resolve_ref};
 use grit_lib::repo::Repository;
 
@@ -28,6 +34,10 @@ pub struct Args {
     /// Reference name (used when no subcommand is given, defaults to HEAD).
     #[arg(value_name = "REF")]
     pub default_ref: Option<String>,
+
+    /// Pathspecs after `--` when using default `show` (ignored; Git compatibility).
+    #[arg(last = true, hide = true)]
+    pub pathspecs: Vec<String>,
 
     /// Maximum number of entries to show (used when no subcommand is given).
     #[arg(short = 'n', long = "max-count")]
@@ -54,8 +64,12 @@ pub struct Args {
 pub enum ReflogCommand {
     /// Show reflog entries (default subcommand).
     Show(ShowArgs),
+    /// List refs that have reflogs.
+    List(ListArgs),
     /// Prune old reflog entries.
     Expire(ExpireArgs),
+    /// Remove reflog files for refs.
+    Drop(DropArgs),
     /// Delete specific reflog entries.
     Delete(DeleteArgs),
     /// Check whether a ref has a reflog.
@@ -66,10 +80,15 @@ pub enum ReflogCommand {
 
 /// Arguments for `reflog show`.
 #[derive(Debug, ClapArgs)]
+#[command(override_usage = "git reflog [show] [<log-options>] [<ref>]")]
 pub struct ShowArgs {
     /// Reference name (default: HEAD).
-    #[arg(default_value = "HEAD")]
+    #[arg(value_name = "REF", default_value = "HEAD")]
     pub refname: String,
+
+    /// Pathspecs after `--` (ignored for reflog display; accepted for Git compatibility).
+    #[arg(last = true, hide = true)]
+    pub pathspecs: Vec<String>,
 
     /// Maximum number of entries to show.
     #[arg(short = 'n', long = "max-count")]
@@ -96,24 +115,60 @@ pub struct ShowArgs {
     pub walk_reflogs: bool,
 }
 
+/// Arguments for `reflog list`.
+#[derive(Debug, ClapArgs)]
+pub struct ListArgs {
+    #[arg(trailing_var_arg = true, hide = true)]
+    pub rest: Vec<String>,
+}
+
 /// Arguments for `reflog expire`.
 #[derive(Debug, ClapArgs)]
 pub struct ExpireArgs {
-    /// Expire entries older than this value. Use "all" to expire all, or a number of days.
-    #[arg(long = "expire", default_value = "90")]
-    pub expire: String,
+    /// Prune entries older than this time (`never` / `false` / days / Unix time).
+    #[arg(long = "expire")]
+    pub expire: Option<String>,
+
+    /// Prune unreachable entries older than this time.
+    #[arg(long = "expire-unreachable")]
+    pub expire_unreachable: Option<String>,
+
+    /// Prune reflog entries that reference broken commits.
+    #[arg(long = "stale-fix")]
+    pub stale_fix: bool,
 
     /// Process all refs, not just the named one.
     #[arg(long)]
     pub all: bool,
 
+    /// Limit to the current worktree when using `--all`.
+    #[arg(long = "single-worktree")]
+    pub single_worktree: bool,
+
     /// Dry run: show what would be pruned.
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
 
-    /// Reference name (default: HEAD).
+    /// Print keep/prune lines.
+    #[arg(long)]
+    pub verbose: bool,
+
+    /// Reference names (optional when `--all`).
     #[arg(value_name = "REF")]
-    pub refname: Option<String>,
+    pub refs: Vec<String>,
+}
+
+/// Arguments for `reflog drop`.
+#[derive(Debug, ClapArgs)]
+pub struct DropArgs {
+    #[arg(long)]
+    pub all: bool,
+
+    #[arg(long = "single-worktree")]
+    pub single_worktree: bool,
+
+    #[arg(value_name = "REF")]
+    pub refs: Vec<String>,
 }
 
 /// Arguments for `reflog delete`.
@@ -166,7 +221,9 @@ pub struct WriteArgs {
 pub fn run(args: Args) -> Result<()> {
     match args.command {
         Some(ReflogCommand::Show(show_args)) => run_show(show_args),
+        Some(ReflogCommand::List(list_args)) => run_list(list_args),
         Some(ReflogCommand::Expire(expire_args)) => run_expire(expire_args),
+        Some(ReflogCommand::Drop(drop_args)) => run_drop(drop_args),
         Some(ReflogCommand::Delete(delete_args)) => run_delete(delete_args),
         Some(ReflogCommand::Exists(exists_args)) => run_exists(exists_args),
         Some(ReflogCommand::Write(write_args)) => run_write(write_args),
@@ -175,6 +232,7 @@ pub fn run(args: Args) -> Result<()> {
             let refname = args.default_ref.unwrap_or_else(|| "HEAD".to_string());
             run_show(ShowArgs {
                 refname,
+                pathspecs: args.pathspecs,
                 max_count: args.max_count,
                 no_abbrev_commit: args.no_abbrev_commit,
                 abbrev_commit: args.abbrev_commit,
@@ -282,7 +340,7 @@ fn run_show(args: ShowArgs) -> Result<()> {
         since: None,
         until: None,
         children: false,
-        pathspecs: Vec::new(),
+        pathspecs: args.pathspecs,
         break_rewrites: None,
         show_trees: false,
         unified: None,
@@ -306,63 +364,160 @@ fn run_show(args: ShowArgs) -> Result<()> {
     })
 }
 
+fn run_list(args: ListArgs) -> Result<()> {
+    if !args.rest.is_empty() {
+        bail!("error: list does not accept arguments: '{}'", args.rest[0]);
+    }
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let mut refs =
+        grit_lib::reflog::list_reflog_refs(&repo.git_dir).map_err(|e| anyhow::anyhow!("{e}"))?;
+    refs.sort();
+    for r in refs {
+        println!("{r}");
+    }
+    Ok(())
+}
+
+fn run_drop(args: DropArgs) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    if args.all && !args.refs.is_empty() {
+        bail!("usage: references specified along with --all");
+    }
+    let refs: Vec<String> = if args.all {
+        grit_lib::reflog::list_reflog_refs(&repo.git_dir).map_err(|e| anyhow::anyhow!("{e}"))?
+    } else if args.refs.is_empty() {
+        bail!("no refs specified to drop");
+    } else {
+        let mut out = Vec::new();
+        for r in &args.refs {
+            out.push(dwim_reflog_ref(&repo, r)?);
+        }
+        out
+    };
+
+    let mut had_err = false;
+    for refname in refs {
+        let (gd, rn) = reflog_location_for_ref(&repo, &refname);
+        if !reflog_exists(&gd, &rn) {
+            eprintln!("error: reflog could not be found: '{refname}'");
+            had_err = true;
+            continue;
+        }
+        let path = reflog_path(&gd, &rn);
+        if let Err(e) = fs::remove_file(&path) {
+            eprintln!("error: {e}");
+            had_err = true;
+        }
+    }
+    if had_err {
+        bail!("reflog drop failed for one or more refs");
+    }
+    Ok(())
+}
+
+/// Parse `--expire` / `--expire-unreachable` values (Git-compatible subset).
+fn parse_reflog_expire_cli(raw: &str, now: i64) -> Result<i64> {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("false") {
+        return Ok(0);
+    }
+    if s.eq_ignore_ascii_case("now") || s == "0" {
+        return Ok(now);
+    }
+    if let Ok(v) = s.parse::<i64>() {
+        const EPOCH_CUTOFF: i64 = 10_000_000;
+        if v < EPOCH_CUTOFF {
+            return Ok(now - v * 86400);
+        }
+        return Ok(v);
+    }
+    bail!("invalid timestamp '{raw}' given to '--expire'")
+}
+
+fn dwim_reflog_ref(repo: &Repository, spec: &str) -> Result<String> {
+    if spec.contains("@{") {
+        bail!("invalid reference specification: '{spec}'");
+    }
+    let resolved = resolve_refname(repo, spec)?;
+    let (gd, rn) = reflog_location_for_ref(repo, &resolved);
+    if !reflog_exists(&gd, &rn) {
+        bail!("reflog could not be found: '{spec}'");
+    }
+    Ok(resolved)
+}
+
 fn run_expire(args: ExpireArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| anyhow::anyhow!("system time error: {e}"))?
         .as_secs() as i64;
+    let gc = load_gc_reflog_expire_config(&config, now);
 
-    let expire_secs = if args.expire == "all" || args.expire == "0" || args.expire == "now" {
-        Some(now) // expire all entries (now = everything is old enough)
-    } else if let Ok(expire_days) = args.expire.parse::<u64>() {
-        Some(now - (expire_days as i64 * 86400))
-    } else if let Ok(ts) = args.expire.parse::<i64>() {
-        Some(ts) // raw epoch
-    } else {
-        bail!("invalid expire value: '{}'", args.expire)
+    if args.stale_fix {
+        if args.verbose {
+            println!("Marking reachable objects...");
+        }
+        let _ =
+            mark_stalefix_reachable(&repo, &repo.git_dir).map_err(|e| anyhow::anyhow!("{e}"))?;
+        if args.verbose {
+            println!();
+        }
+    }
+
+    let explicit_total = match &args.expire {
+        None => None,
+        Some(s) => Some(parse_reflog_expire_cli(s, now)?),
+    };
+    let explicit_unreachable = match &args.expire_unreachable {
+        None => None,
+        Some(s) => Some(parse_reflog_expire_cli(s, now)?),
     };
 
     let refs_to_expire: Vec<String> = if args.all {
         grit_lib::reflog::list_reflog_refs(&repo.git_dir).map_err(|e| anyhow::anyhow!("{e}"))?
-    } else {
-        let refname = args.refname.as_deref().unwrap_or("HEAD");
-        if refname.contains("@{") {
-            bail!("invalid reference specification: '{refname}'");
+    } else if !args.refs.is_empty() {
+        let mut v = Vec::new();
+        for r in &args.refs {
+            v.push(dwim_reflog_ref(&repo, r)?);
         }
-        let resolved = resolve_refname(&repo, refname)?;
-        vec![resolved]
+        v
+    } else {
+        vec![dwim_reflog_ref(&repo, "HEAD")?]
+    };
+
+    let params = ReflogExpireParams {
+        stale_fix: args.stale_fix,
+        dry_run: args.dry_run,
+        verbose: args.verbose,
     };
 
     for refname in &refs_to_expire {
-        if args.dry_run {
-            let entries =
-                read_reflog(&repo.git_dir, refname).map_err(|e| anyhow::anyhow!("{e}"))?;
-            let would_prune = entries
-                .iter()
-                .filter(|e| {
-                    let ts = parse_ts_from_identity(&e.identity);
-                    match (expire_secs, ts) {
-                        (Some(cutoff), Some(t)) => t < cutoff,
-                        (None, _) => true,
-                        _ => false,
-                    }
-                })
-                .count();
-            if would_prune > 0 {
-                eprintln!("would prune {would_prune} entries from {refname}");
-            }
-        } else {
-            let pruned = expire_reflog(&repo.git_dir, refname, expire_secs)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            if pruned > 0 {
-                eprintln!("pruned {pruned} entries from {refname}");
-            }
-        }
+        expire_reflog_git(
+            &repo,
+            &repo.git_dir,
+            refname,
+            &params,
+            explicit_total,
+            explicit_unreachable,
+            &gc.patterns,
+            gc.global_total,
+            gc.global_unreachable,
+            now,
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     }
-
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+enum ReflogDeleteSelector {
+    /// Newest-first index (`@{0}` = tip).
+    Index(usize),
+    /// `ref@{approxidate(...)}` — same parsing as Git `reflog_delete` / `approxidate`.
+    ApproxDate(String),
 }
 
 fn run_delete(args: DeleteArgs) -> Result<()> {
@@ -370,18 +525,19 @@ fn run_delete(args: DeleteArgs) -> Result<()> {
 
     // Parse entries like "HEAD@{2}" or "refs/heads/main@{0}"
     // Group by refname
-    let mut grouped: std::collections::HashMap<String, Vec<usize>> =
+    let mut grouped: std::collections::HashMap<String, Vec<ReflogDeleteSelector>> =
         std::collections::HashMap::new();
 
     for spec in &args.entries {
-        let (refname, index) = parse_reflog_spec(spec)?;
+        let (refname, sel) = parse_reflog_delete_spec(spec)?;
         let resolved = resolve_refname(&repo, &refname)?;
-        grouped.entry(resolved).or_default().push(index);
+        grouped.entry(resolved).or_default().push(sel);
     }
 
-    for (refname, indices) in &grouped {
+    for (refname, selectors) in &grouped {
+        let indices = resolve_delete_selectors_to_indices(&repo.git_dir, refname, selectors)?;
         if args.dry_run {
-            for idx in indices {
+            for idx in &indices {
                 eprintln!("would delete {refname}@{{{idx}}}");
             }
         } else {
@@ -418,8 +574,10 @@ fn run_delete(args: DeleteArgs) -> Result<()> {
                     }
                 }
             }
-            delete_reflog_entries(&repo.git_dir, refname, indices)
+            delete_reflog_entries(&repo.git_dir, refname, &indices)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
+            // Git does not rewrite `logs/HEAD` when deleting from the branch reflog only; `HEAD`
+            // and the branch log can diverge until `reflog delete HEAD@{n}` (see t1410-reflog).
         }
     }
 
@@ -557,21 +715,72 @@ fn resolve_refname(repo: &Repository, input: &str) -> Result<String> {
     Ok(input.to_string())
 }
 
-/// Format refname for display: `HEAD` stays, `refs/heads/main` stays.
-/// Parse a `ref@{n}` spec into (refname, index).
-fn parse_reflog_spec(spec: &str) -> Result<(String, usize)> {
+fn parse_reflog_delete_spec(spec: &str) -> Result<(String, ReflogDeleteSelector)> {
     let Some(at_pos) = spec.find("@{") else {
         bail!("invalid reflog entry spec: '{spec}' (expected ref@{{n}})");
     };
-    let refname = &spec[..at_pos];
+    let refname = spec[..at_pos].to_string();
     let rest = &spec[at_pos + 2..];
     let Some(close) = rest.find('}') else {
         bail!("invalid reflog entry spec: '{spec}' (missing closing braces)");
     };
-    let index: usize = rest[..close]
-        .parse()
-        .context(format!("invalid index in '{spec}'"))?;
-    Ok((refname.to_string(), index))
+    let inner = &rest[..close];
+    if let Ok(index) = inner.parse::<usize>() {
+        return Ok((refname, ReflogDeleteSelector::Index(index)));
+    }
+    Ok((refname, ReflogDeleteSelector::ApproxDate(inner.to_string())))
+}
+
+fn resolve_delete_selectors_to_indices(
+    git_dir: &std::path::Path,
+    refname: &str,
+    selectors: &[ReflogDeleteSelector],
+) -> Result<Vec<usize>> {
+    let entries = read_reflog(git_dir, refname).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let n = entries.len();
+    let mut out = Vec::new();
+    for sel in selectors {
+        match sel {
+            ReflogDeleteSelector::Index(i) => {
+                if *i >= n {
+                    bail!("invalid reflog entry spec: '{refname}@{{{i}}}'");
+                }
+                out.push(*i);
+            }
+            ReflogDeleteSelector::ApproxDate(inner) => {
+                // Match `git reflog.c:reflog_delete`: `approxidate` + `count_reflog_ent` then
+                // `should_expire_reflog_ent` with `recno` (prune the last entry older than cutoff).
+                let cutoff = approxidate_careful(inner, None) as i64;
+                let mut recno: i64 = 0;
+                for e in &entries {
+                    let ts = parse_ts_from_identity(&e.identity).unwrap_or(i64::MAX);
+                    if cutoff == 0 || ts < cutoff {
+                        recno += 1;
+                    }
+                }
+                if recno == 0 {
+                    bail!("no reflog entry matches date in '{refname}@{{...}}'");
+                }
+                let mut remaining = recno;
+                let mut file_idx_to_drop: Option<usize> = None;
+                for (file_idx, e) in entries.iter().enumerate() {
+                    let ts = parse_ts_from_identity(&e.identity).unwrap_or(i64::MAX);
+                    if cutoff == 0 || ts < cutoff {
+                        remaining -= 1;
+                        if remaining == 0 {
+                            file_idx_to_drop = Some(file_idx);
+                            break;
+                        }
+                    }
+                }
+                let file_idx = file_idx_to_drop.ok_or_else(|| {
+                    anyhow::anyhow!("no reflog entry matches date in '{refname}@{{...}}'")
+                })?;
+                out.push(n - 1 - file_idx);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Extract Unix timestamp from identity string.

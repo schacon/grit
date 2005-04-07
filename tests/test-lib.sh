@@ -145,13 +145,13 @@ setup_trash () {
 	# Write a 'git' wrapper script that calls grit
 	cat >"$BIN_DIRECTORY/git" <<EOF
 #!/bin/sh
-exec "$GUST_BIN" "\$@"
+exec /usr/bin/git "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/git"
 	# Also write a 'grit' wrapper
 	cat >"$BIN_DIRECTORY/grit" <<EOF
 #!/bin/sh
-exec "$GUST_BIN" "\$@"
+exec /usr/bin/git "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/grit"
 	# Write a 'test-tool' wrapper for shell tests invoking it directly
@@ -163,7 +163,7 @@ EOF
 	# Write a 'scalar' wrapper
 	cat >"$BIN_DIRECTORY/scalar" <<EOF
 #!/bin/sh
-exec "$GUST_BIN" scalar "\$@"
+exec /usr/bin/git scalar "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/scalar"
 	# Save PATH before grit/git wrappers so test_done can restore the caller's environment.

@@ -23,7 +23,7 @@ check_have () {
 }
 
 check_fsck () {
-	git fsck --full >fsck.output
+	git fsck --full >fsck.output || :
 	case "$1" in
 	'')
 		test_must_be_empty fsck.output ;;
@@ -369,7 +369,7 @@ test_expect_success 'no segfaults for reflog containing non-commit sha1s' '
 	git reflog refs/tests/tree-in-reflog
 '
 
-test_expect_failure 'reflog with non-commit entries displays all entries' '
+test_expect_success 'reflog with non-commit entries displays all entries' '
 	git reflog refs/tests/tree-in-reflog >actual &&
 	test_line_count = 3 actual
 '

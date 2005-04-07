@@ -7,6 +7,7 @@
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::diff::zero_oid;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pack::read_local_pack_indexes;
@@ -127,13 +128,8 @@ fn repository_has_precious_objects(repo: &Repository) -> Result<bool> {
 fn parse_expire_time(expire: Option<&str>) -> Result<Option<SystemTime>> {
     match expire {
         None => {
-            // Default: 2 weeks ago.
-            let two_weeks = Duration::from_secs(14 * 24 * 60 * 60);
-            Ok(Some(
-                SystemTime::now()
-                    .checked_sub(two_weeks)
-                    .unwrap_or(SystemTime::UNIX_EPOCH),
-            ))
+            // Match Git: default is to prune all unreachable loose objects (no mtime gate).
+            Ok(None)
         }
         Some("now") => {
             // Prune everything: no age filter.
@@ -257,27 +253,39 @@ fn collect_reachable(
     Ok(reachable)
 }
 
+/// Parse `old_oid` and `new_oid` from one reflog line.
+///
+/// Lines are `<old-hex> <new-hex> <identity>\t<message>`; the identity contains spaces, so we
+/// must not split the line on spaces alone (matches `grit_lib::reflog::parse_reflog_line`).
+fn parse_reflog_line_oids(line: &str) -> Option<(ObjectId, ObjectId)> {
+    let before_tab = line.split('\t').next()?;
+    if before_tab.len() < 83 {
+        return None;
+    }
+    let old_hex = &before_tab[..40];
+    let new_hex = &before_tab[41..81];
+    let old_oid = old_hex.parse().ok()?;
+    let new_oid = new_hex.parse().ok()?;
+    Some((old_oid, new_oid))
+}
+
 /// Scan reflog files for object IDs and add them to the queue.
 fn collect_reflog_oids(git_dir: &Path, queue: &mut VecDeque<ObjectId>) {
     let logs_dir = git_dir.join("logs");
+    let zero = zero_oid();
     if let Ok(entries) = walk_files(&logs_dir) {
         for path in entries {
             if let Ok(content) = fs::read_to_string(&path) {
                 for line in content.lines() {
-                    // Reflog format: "<old-oid> <new-oid> <identity> <timestamp> <message>"
-                    let parts: Vec<&str> = line.splitn(3, ' ').collect();
-                    #[allow(clippy::unwrap_used)]
-                    let zero = ObjectId::from_bytes(&[0; 20]).unwrap();
-                    if parts.len() >= 2 {
-                        if let Ok(oid) = parts[0].parse::<ObjectId>() {
-                            if oid != zero {
-                                queue.push_back(oid);
-                            }
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Some((old_oid, new_oid)) = parse_reflog_line_oids(line) {
+                        if old_oid != zero {
+                            queue.push_back(old_oid);
                         }
-                        if let Ok(oid) = parts[1].parse::<ObjectId>() {
-                            if oid != zero {
-                                queue.push_back(oid);
-                            }
+                        if new_oid != zero {
+                            queue.push_back(new_oid);
                         }
                     }
                 }

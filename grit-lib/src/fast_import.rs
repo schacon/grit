@@ -7,12 +7,16 @@
 use std::collections::HashMap;
 use std::io::BufRead;
 
+use crate::config::ConfigSet;
+use crate::diff::zero_oid;
 use crate::error::{Error, Result};
 use crate::index::{Index, IndexEntry, MODE_GITLINK, MODE_REGULAR, MODE_TREE};
 use crate::objects::{
     parse_commit, serialize_commit, serialize_tag, CommitData, ObjectId, ObjectKind, TagData,
 };
-use crate::refs::write_ref;
+use crate::refs::{
+    append_reflog, resolve_ref, should_autocreate_reflog_for_mode, write_ref, LogRefsConfig,
+};
 use crate::repo::Repository;
 use crate::rev_parse::resolve_revision;
 use crate::write_tree::write_tree_from_index;
@@ -23,8 +27,12 @@ use crate::write_tree::write_tree_from_index;
 ///
 /// Returns [`Error`] variants for I/O, corrupt stream input, or missing marks/refs.
 pub fn import_stream(repo: &Repository, mut reader: impl BufRead) -> Result<()> {
+    let log_refs = ConfigSet::load(Some(&repo.git_dir), true)
+        .map(|c| c.effective_log_refs_config(&repo.git_dir))
+        .unwrap_or_else(|_| crate::refs::effective_log_refs_config(&repo.git_dir));
     let mut imp = Importer {
         repo,
+        log_refs,
         marks: HashMap::new(),
         branch_tips: HashMap::new(),
         feature_done: false,
@@ -37,6 +45,7 @@ pub fn import_stream(repo: &Repository, mut reader: impl BufRead) -> Result<()> 
 
 struct Importer<'a, R: BufRead> {
     repo: &'a Repository,
+    log_refs: LogRefsConfig,
     marks: HashMap<u32, ObjectId>,
     branch_tips: HashMap<String, ObjectId>,
     /// When set, a terminating `done` command is required before EOF.
@@ -49,6 +58,81 @@ struct Importer<'a, R: BufRead> {
 }
 
 impl<'a, R: BufRead> Importer<'a, R> {
+    /// Read a `data` command: either `data <n>` (binary length) or `data <<TERM` (line-delimited).
+    fn fast_import_reflog_identity_from_env() -> String {
+        let name = std::env::var("GIT_COMMITTER_NAME").unwrap_or_else(|_| "Unknown".to_owned());
+        let email = std::env::var("GIT_COMMITTER_EMAIL").unwrap_or_default();
+        let date = std::env::var("GIT_COMMITTER_DATE").unwrap_or_else(|_| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            format!("{now} +0000")
+        });
+        format!("{name} <{email}> {date}")
+    }
+
+    /// Update a ref and append a reflog line (matches `git fast-import` ref transactions).
+    fn update_ref_with_reflog(
+        &self,
+        refname: &str,
+        new_oid: &ObjectId,
+        identity: &str,
+        message: &str,
+    ) -> Result<()> {
+        let old_oid = resolve_ref(&self.repo.git_dir, refname).unwrap_or_else(|_| zero_oid());
+        write_ref(&self.repo.git_dir, refname, new_oid)?;
+        if should_autocreate_reflog_for_mode(refname, self.log_refs) {
+            let _ = append_reflog(
+                &self.repo.git_dir,
+                refname,
+                &old_oid,
+                new_oid,
+                identity,
+                message,
+                false,
+            );
+        }
+        Ok(())
+    }
+
+    fn read_data_payload(&mut self, data_line: &str) -> Result<Vec<u8>> {
+        let rest = data_line.strip_prefix("data ").ok_or_else(|| {
+            Error::IndexError(format!("fast-import: expected data line, got: {data_line}"))
+        })?;
+        let t = rest.trim_end();
+        if let Some(term) = t.strip_prefix("<<") {
+            let term = term.trim_end();
+            let mut out = Vec::new();
+            loop {
+                let line = self.read_line_any()?.ok_or_else(|| {
+                    Error::IndexError(format!(
+                        "fast-import: EOF in data (terminator '{term}' not found)"
+                    ))
+                })?;
+                let line_trim = line.trim_end_matches('\n');
+                if line_trim == term {
+                    break;
+                }
+                if !out.is_empty() {
+                    out.push(b'\n');
+                }
+                out.extend_from_slice(line_trim.as_bytes());
+            }
+            self.consume_optional_lf_after_data()?;
+            return Ok(out);
+        }
+        let size: usize = t
+            .parse()
+            .map_err(|_| Error::IndexError(format!("fast-import: invalid data size: {t}")))?;
+        let mut payload = vec![0u8; size];
+        self.reader
+            .read_exact(&mut payload)
+            .map_err(|_| Error::IndexError("fast-import: truncated data".to_owned()))?;
+        self.consume_optional_lf_after_data()?;
+        Ok(payload)
+    }
+
     fn run(&mut self) -> Result<()> {
         loop {
             let line = match self.next_command_line()? {
@@ -164,17 +248,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
             if t.starts_with("original-oid ") {
                 continue;
             }
-            let rest = t.strip_prefix("data ").ok_or_else(|| {
-                Error::IndexError(format!("fast-import: expected data line in blob, got: {t}"))
-            })?;
-            let size: usize = rest.parse().map_err(|_| {
-                Error::IndexError(format!("fast-import: invalid data size: {rest}"))
-            })?;
-            let mut payload = vec![0u8; size];
-            self.reader
-                .read_exact(&mut payload)
-                .map_err(|_| Error::IndexError("fast-import: truncated blob data".to_owned()))?;
-            self.consume_optional_lf_after_data()?;
+            let payload = self.read_data_payload(t)?;
             let oid = self.repo.odb.write(ObjectKind::Blob, &payload)?;
             if let Some(m) = mark {
                 self.marks.insert(m, oid);
@@ -233,16 +307,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 )));
             }
             if t.starts_with("data ") {
-                // Re-parse: we already have full line with "data N".
-                let rest = t.strip_prefix("data ").unwrap();
-                let size: usize = rest.parse().map_err(|_| {
-                    Error::IndexError(format!("fast-import: invalid data size: {rest}"))
-                })?;
-                let mut message = vec![0u8; size];
-                self.reader.read_exact(&mut message).map_err(|_| {
-                    Error::IndexError("fast-import: truncated commit message".to_owned())
-                })?;
-                self.consume_optional_lf_after_data()?;
+                let message = self.read_data_payload(t)?;
                 let committer = committer.ok_or_else(|| {
                     Error::IndexError("fast-import: commit missing committer".to_owned())
                 })?;
@@ -288,15 +353,27 @@ impl<'a, R: BufRead> Importer<'a, R> {
             }
             if let Some(rest) = t.strip_prefix("M ") {
                 let parts: Vec<&str> = rest.split_whitespace().collect();
-                if parts.len() != 3 {
+                if parts.len() < 3 {
                     return Err(Error::IndexError(format!("fast-import: bad M line: {t}")));
                 }
                 let mode = u32::from_str_radix(parts[0], 8).map_err(|_| {
                     Error::IndexError(format!("fast-import: bad file mode: {}", parts[0]))
                 })?;
                 let blob_ref = parts[1];
+                if parts.len() != 3 {
+                    return Err(Error::IndexError(format!("fast-import: bad M line: {t}")));
+                }
                 let path = parts[2].as_bytes().to_vec();
-                let blob_oid = self.resolve_blob_ref(blob_ref)?;
+                let blob_oid = if blob_ref == "inline" {
+                    let data_line = self.read_line_nonempty()?.ok_or_else(|| {
+                        Error::IndexError("fast-import: expected data after M inline".to_owned())
+                    })?;
+                    let dt = data_line.trim_end();
+                    let payload = self.read_data_payload(dt)?;
+                    self.repo.odb.write(ObjectKind::Blob, &payload)?
+                } else {
+                    self.resolve_blob_ref(blob_ref)?
+                };
                 modifications.push((mode, blob_oid, path));
                 continue;
             }
@@ -352,6 +429,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
         let message_str = String::from_utf8_lossy(&message).into_owned();
         let raw_message = (!message.is_empty() && std::str::from_utf8(&message).is_err())
             .then_some(message.clone());
+        let reflog_identity = committer.clone();
 
         let commit = CommitData {
             tree: tree_oid,
@@ -369,7 +447,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
             self.marks.insert(m, commit_oid);
         }
         self.branch_tips.insert(refname.to_string(), commit_oid);
-        write_ref(&self.repo.git_dir, refname, &commit_oid)?;
+        self.update_ref_with_reflog(refname, &commit_oid, &reflog_identity, "fast-import")?;
         Ok(())
     }
 
@@ -439,15 +517,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 continue;
             }
             if t.starts_with("data ") {
-                let rest = t.strip_prefix("data ").unwrap();
-                let size: usize = rest.parse().map_err(|_| {
-                    Error::IndexError(format!("fast-import: invalid data size: {rest}"))
-                })?;
-                let mut message = vec![0u8; size];
-                self.reader.read_exact(&mut message).map_err(|_| {
-                    Error::IndexError("fast-import: truncated tag message".to_owned())
-                })?;
-                self.consume_optional_lf_after_data()?;
+                let message = self.read_data_payload(t)?;
 
                 let target = from_oid
                     .ok_or_else(|| Error::IndexError("fast-import: tag missing from".to_owned()))?;
@@ -455,6 +525,9 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 let object_type = target_obj.kind.as_str().to_owned();
                 let msg_str = String::from_utf8_lossy(&message).into_owned();
 
+                let reflog_ident = tagger
+                    .clone()
+                    .unwrap_or_else(Self::fast_import_reflog_identity_from_env);
                 let tag_data = TagData {
                     object: target,
                     object_type,
@@ -470,7 +543,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 }
 
                 let full_ref = format!("refs/tags/{short_name}");
-                write_ref(&self.repo.git_dir, &full_ref, &tag_oid)?;
+                self.update_ref_with_reflog(&full_ref, &tag_oid, &reflog_ident, "fast-import")?;
                 return Ok(());
             }
             return Err(Error::IndexError(format!(
@@ -490,7 +563,8 @@ impl<'a, R: BufRead> Importer<'a, R> {
         if let Some(spec) = t.strip_prefix("from ") {
             let oid = self.resolve_commit_ish(spec.trim())?;
             self.branch_tips.insert(refname.to_string(), oid);
-            write_ref(&self.repo.git_dir, refname, &oid)?;
+            let ident = Self::fast_import_reflog_identity_from_env();
+            self.update_ref_with_reflog(refname, &oid, &ident, "fast-import")?;
             return Ok(());
         }
         self.stashed_line = Some(line);

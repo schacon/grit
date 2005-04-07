@@ -292,28 +292,38 @@ fn write_reset_reflog(
     let identity = resolve_reflog_identity(repo);
     let message = format!("reset: moving to {commit_spec}");
 
-    // Write reflog for HEAD.
-    let _ = append_reflog(
-        &repo.git_dir,
-        "HEAD",
-        old_oid,
-        new_oid,
-        &identity,
-        &message,
-        false,
-    );
-
-    // Write reflog for the branch ref if on a branch.
-    if let HeadState::Branch { refname, .. } = head {
-        let _ = append_reflog(
-            &repo.git_dir,
-            refname,
-            old_oid,
-            new_oid,
-            &identity,
-            &message,
-            false,
-        );
+    match head {
+        HeadState::Branch { refname, .. } => {
+            let _ = append_reflog(
+                &repo.git_dir,
+                refname,
+                old_oid,
+                new_oid,
+                &identity,
+                &message,
+                false,
+            );
+            let _ = append_reflog(
+                &repo.git_dir,
+                "HEAD",
+                old_oid,
+                new_oid,
+                &identity,
+                &message,
+                false,
+            );
+        }
+        _ => {
+            let _ = append_reflog(
+                &repo.git_dir,
+                "HEAD",
+                old_oid,
+                new_oid,
+                &identity,
+                &message,
+                false,
+            );
+        }
     }
 }
 
