@@ -1,0 +1,7 @@
+[section]
+key = updated-value
+number = 99
+flag = false
+newkey = added
+[other]
+name = new-name
