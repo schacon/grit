@@ -93,7 +93,7 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
             continue;
         };
 
-        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &m.path);
+        let modules_dir = submodule_separate_git_dir(&repo, work_tree, &m.name, &m.path)?;
 
         // When `--recursive` is set, do not skip submodules that are already at the recorded
         // commit: nested `.gitmodules` paths may still need `submodule update` (t5531 nested clone).

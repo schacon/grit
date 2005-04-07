@@ -1488,8 +1488,9 @@ fn push_to_url(
     // Copy objects to remote, tracking what was added for rollback
     let mut copied_objects: Vec<PathBuf> = Vec::new();
     if !args.dry_run {
-        copied_objects = copy_objects_tracked(&repo.git_dir, &remote_repo.git_dir)
-            .context("copying objects to remote")?;
+        copied_objects =
+            copy_objects_recursive_with_submodules(&repo.git_dir, &remote_repo.git_dir)
+                .context("copying objects to remote")?;
         if push_show_object_progress(args) && !copied_objects.is_empty() {
             maybe_print_push_object_progress(true);
         }
@@ -2056,6 +2057,88 @@ fn read_receive_deny_delete_current(cfg: &ConfigSet) -> ReceiveDenyAction {
     }
 }
 
+/// `git diff-files` / `git diff-index` cleanliness checks for `receive.denyCurrentBranch=updateInstead`.
+fn worktree_clean_for_update_instead(remote_repo: &Repository) -> std::result::Result<(), String> {
+    let wt = remote_repo
+        .work_tree
+        .as_ref()
+        .ok_or_else(|| "denyCurrentBranch = updateInstead needs a worktree".to_owned())?;
+    let grit_bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"));
+    let mut df = Command::new(&grit_bin);
+    df.current_dir(wt)
+        .args(["diff-files", "--quiet", "--ignore-submodules"])
+        .env("GIT_DIR", &remote_repo.git_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if !df.status().map_err(|e| e.to_string())?.success() {
+        return Err("Working directory has unstaged changes".to_owned());
+    }
+    let head_tree = match resolve_head(&remote_repo.git_dir) {
+        Ok(HeadState::Branch { .. }) => "HEAD",
+        Ok(HeadState::Detached { .. }) => "HEAD",
+        _ => "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+    };
+    let mut di = Command::new(&grit_bin);
+    di.current_dir(wt)
+        .args([
+            "diff-index",
+            "--quiet",
+            "--cached",
+            "--ignore-submodules",
+            head_tree,
+            "--",
+        ])
+        .env("GIT_DIR", &remote_repo.git_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if !di.status().map_err(|e| e.to_string())?.success() {
+        return Err("Working directory has staged changes".to_owned());
+    }
+    Ok(())
+}
+
+fn update_worktree_after_push_update_instead(
+    remote_repo: &Repository,
+    new_oid: ObjectId,
+) -> std::result::Result<(), String> {
+    let wt = remote_repo
+        .work_tree
+        .as_ref()
+        .ok_or_else(|| "denyCurrentBranch = updateInstead needs a worktree".to_owned())?;
+    // Submodule gitlink commits live under `.git/modules/<name>/objects/`; `read-tree` on the
+    // superproject resolves them via the primary ODB — mirror loose/pack objects up like Git.
+    let modules_root = remote_repo.git_dir.join("modules");
+    if modules_root.is_dir() {
+        if let Ok(entries) = fs::read_dir(&modules_root) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if !p.is_dir() {
+                    continue;
+                }
+                // `copy_objects_tracked` takes git dirs (it appends `objects/` itself).
+                if p.join("objects").is_dir() {
+                    let _ = copy_objects_tracked(&p, &remote_repo.git_dir);
+                }
+            }
+        }
+    }
+    let grit_bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"));
+    let hex = new_oid.to_hex();
+    // Git's receive-pack uses `read-tree -u -m`; grit's read-tree is stricter around gitlinks.
+    // `checkout --force` matches the pushed commit in the non-bare remote work tree (t7425).
+    let mut cmd = Command::new(&grit_bin);
+    cmd.current_dir(wt)
+        .args(["checkout", "--force", "--quiet", &hex])
+        .env("GIT_DIR", &remote_repo.git_dir)
+        .stdin(Stdio::null());
+    if !cmd.status().map_err(|e| e.to_string())?.success() {
+        return Err("Could not update working tree to new HEAD".to_owned());
+    }
+    Ok(())
+}
+
 /// Enforce receive-pack rules for the non-bare remote (checked-out branch updates/deletes).
 ///
 /// Returns `Err(short_reason)` when the ref must be rejected (matches Git's parenthetical in
@@ -2120,7 +2203,7 @@ fn check_receive_pack_policy(
                 return Err("branch is currently checked out".to_owned());
             }
             ReceiveDenyAction::UpdateInstead => {
-                return Err("denyCurrentBranch = updateInstead is not supported".to_owned());
+                worktree_clean_for_update_instead(remote_repo)?;
             }
         }
     } else {
@@ -2248,6 +2331,19 @@ fn apply_ref_update(
         return Ok(ApplyRefResult::RemoteRejected(reason));
     }
 
+    let update_instead_after_ref = if !remote_repo.is_bare() {
+        let head = resolve_head(&remote_repo.git_dir).ok();
+        let head_ref = head.as_ref().and_then(|h| match h {
+            HeadState::Branch { refname, .. } => Some(refname.as_str()),
+            _ => None,
+        });
+        update.new_oid.is_some()
+            && head_ref.is_some_and(|hr| hr == update.remote_ref.as_str())
+            && read_receive_deny_current(remote_config) == ReceiveDenyAction::UpdateInstead
+    } else {
+        false
+    };
+
     let zero_oid = "0".repeat(40);
 
     match (&update.new_oid, &update.old_oid) {
@@ -2255,6 +2351,13 @@ fn apply_ref_update(
             if !args.dry_run {
                 refs::write_ref(&remote_repo.git_dir, &update.remote_ref, new_oid)
                     .with_context(|| format!("updating remote ref {}", update.remote_ref))?;
+                if update_instead_after_ref {
+                    if let Err(msg) =
+                        update_worktree_after_push_update_instead(remote_repo, *new_oid)
+                    {
+                        return Ok(ApplyRefResult::RemoteRejected(msg));
+                    }
+                }
                 update_remote_tracking_ref(repo, remote_name, &update.remote_ref, Some(*new_oid))?;
             }
 
@@ -2724,6 +2827,49 @@ fn maybe_print_push_object_progress(show: bool) {
         return;
     }
     let _ = writeln!(io::stderr(), "Writing objects: 100% (1/1), done.");
+}
+
+/// Copy loose objects and packs from `src_git_dir` and every nested `modules/*` git directory
+/// into the matching path under `dst_git_root` (so submodule ODBs are pushed for local transport).
+fn copy_objects_recursive_with_submodules(
+    src_git_root: &Path,
+    dst_git_root: &Path,
+) -> Result<Vec<PathBuf>> {
+    let src_root = fs::canonicalize(src_git_root).unwrap_or_else(|_| src_git_root.to_path_buf());
+    let dst_root = fs::canonicalize(dst_git_root).unwrap_or_else(|_| dst_git_root.to_path_buf());
+
+    fn walk(
+        src_base: &Path,
+        dst_base: &Path,
+        current_src: &Path,
+        out: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        let rel = current_src
+            .strip_prefix(src_base)
+            .unwrap_or_else(|_| Path::new(""));
+        let current_dst = if rel.as_os_str().is_empty() {
+            dst_base.to_path_buf()
+        } else {
+            dst_base.join(rel)
+        };
+        fs::create_dir_all(&current_dst)?;
+        out.extend(copy_objects_tracked(current_src, &current_dst)?);
+
+        let modules = current_src.join("modules");
+        if modules.is_dir() {
+            for e in fs::read_dir(&modules)? {
+                let p = e?.path();
+                if p.is_dir() {
+                    walk(src_base, dst_base, &p, out)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    let mut copied = Vec::new();
+    walk(&src_root, &dst_root, &src_root, &mut copied)?;
+    Ok(copied)
 }
 
 /// Copy all objects (loose + packs) from src to dst, skipping existing.

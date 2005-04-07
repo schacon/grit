@@ -31,6 +31,9 @@ pub fn submodule_modules_git_dir(super_git_dir: &Path, submodule_worktree_rel: &
 }
 
 /// Returns whether `extensions.submodulePathConfig` is enabled in `git_dir/config`.
+///
+/// `git_dir` should be the repository directory that holds `config` (the common git directory when
+/// using linked worktrees).
 pub fn submodule_path_config_enabled(git_dir: &Path) -> bool {
     let config_path = git_dir.join("config");
     let Ok(content) = fs::read_to_string(&config_path) else {
@@ -517,6 +520,43 @@ pub fn path_inside_registered_submodule(work_tree: &Path, new_path: &str) -> boo
     let new_norm = new_path.replace('\\', "/");
     for p in paths {
         if new_norm == p || new_norm.starts_with(&format!("{p}/")) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True when `new_path` is the same as or nested under a `.gitmodules` submodule **name** (the
+/// `submodule.<name>.*` section name), which may contain `/`.
+///
+/// Git rejects such paths when `submodulePathConfig` is off (`die_path_inside_submodule` on
+/// logical names). When the extension is enabled, encoded gitdirs lift this restriction.
+pub fn path_inside_registered_submodule_name(work_tree: &Path, new_path: &str) -> bool {
+    let gitmodules = work_tree.join(".gitmodules");
+    let Ok(content) = fs::read_to_string(&gitmodules) else {
+        return false;
+    };
+    let Ok(mf) = ConfigFile::parse(&gitmodules, &content, ConfigScope::Local) else {
+        return false;
+    };
+    let mut names: Vec<String> = Vec::new();
+    for e in &mf.entries {
+        if !e.key.starts_with("submodule.") {
+            continue;
+        }
+        let rest = &e.key["submodule.".len()..];
+        if let Some(last_dot) = rest.rfind('.') {
+            let name = rest[..last_dot].replace('\\', "/");
+            if !name.is_empty() {
+                names.push(name);
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    let new_norm = new_path.replace('\\', "/");
+    for n in names {
+        if new_norm == n || new_norm.starts_with(&format!("{n}/")) {
             return true;
         }
     }

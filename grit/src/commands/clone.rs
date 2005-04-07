@@ -27,7 +27,10 @@ use std::process::Command;
 use crate::commands::checkout::{
     checkout_parallel_worker_spawns, trace2_emit_checkout_parallel_workers,
 };
-use crate::commands::submodule::set_submodule_core_worktree_after_separate_clone;
+use crate::commands::submodule::{
+    set_submodule_core_worktree_after_separate_clone, submodule_separate_git_dir,
+};
+use grit_lib::submodule_gitdir::{ensure_submodule_gitdir_config, submodule_path_config_enabled};
 
 /// Arguments for `grit clone`.
 #[derive(Debug, ClapArgs)]
@@ -114,6 +117,10 @@ pub struct Args {
     /// Recurse into submodules after cloning.
     #[arg(long = "recurse-submodules", alias = "recursive")]
     pub recurse_submodules: bool,
+
+    /// Parallel jobs hint for submodule cloning (forwarded to `submodule update`).
+    #[arg(short = 'j', long = "jobs", value_name = "N")]
+    pub jobs: Option<usize>,
 
     /// Use remote-tracking branch for submodules.
     #[arg(long = "remote-submodules")]
@@ -1093,7 +1100,8 @@ pub fn run(mut args: Args) -> Result<()> {
         crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
     }
 
-    // Apply -c config values
+    apply_default_submodule_path_config_from_global(&dest.git_dir)?;
+    // Apply -c config values (overrides global defaults such as submodulePathConfig).
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
     }
@@ -1456,6 +1464,7 @@ fn run_git_clone(args: Args) -> Result<()> {
         crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
     }
 
+    apply_default_submodule_path_config_from_global(&dest.git_dir)?;
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
     }
@@ -1718,6 +1727,7 @@ fn run_ext_clone(args: Args) -> Result<()> {
         crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
     }
 
+    apply_default_submodule_path_config_from_global(&dest.git_dir)?;
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
     }
@@ -2008,6 +2018,7 @@ fn run_http_clone(args: Args) -> Result<()> {
         }
     }
 
+    apply_default_submodule_path_config_from_global(&dest.git_dir)?;
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
     }
@@ -2685,6 +2696,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
         crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
     }
 
+    apply_default_submodule_path_config_from_global(&dest.git_dir)?;
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
     }
@@ -2990,15 +3002,13 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, clone_args: &Args) -> R
     let modules =
         crate::commands::submodule::parse_gitmodules_for_clone(work_tree).unwrap_or_default();
 
-    // Relative submodule URLs resolve against the default remote's repository root (Git parity),
-    // not the current work tree — so a clone into `dst/` still finds `../upstream` next to `.`.
-    let origin_repo_root = {
-        let config_path = repo.git_dir.join("config");
-        let config_content = fs::read_to_string(&config_path).unwrap_or_default();
-        extract_remote_url(&config_content, "origin").map(PathBuf::from)
-    };
-
     let grit_bin = crate::grit_exe::grit_executable();
+    let store = refs::common_dir(&repo.git_dir).unwrap_or_else(|| repo.git_dir.clone());
+    let mut super_cfg = {
+        let config_path = repo.git_dir.join("config");
+        let content = fs::read_to_string(&config_path).unwrap_or_default();
+        ConfigFile::parse(&config_path, &content, ConfigScope::Local)?
+    };
 
     // Only clone paths that are submodules at the checked-out commit. `.gitmodules` can list paths
     // that are plain files on this branch (e.g. `f` as submodule on B1 but `f/f` as file on B2);
@@ -3012,23 +3022,21 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, clone_args: &Args) -> R
 
         let sub_dest = work_tree.join(&sm.path);
 
-        let resolved_url = if sm.url.starts_with("./") || sm.url.starts_with("../") {
-            let base = origin_repo_root
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| work_tree.to_path_buf());
-            let joined = base.join(&sm.url);
-            fs::canonicalize(&joined)
-                .unwrap_or(joined)
-                .to_string_lossy()
-                .to_string()
-        } else {
-            sm.url.clone()
-        };
+        let resolved_url = crate::commands::submodule::resolve_submodule_super_url(
+            work_tree,
+            &repo.git_dir,
+            &sm.url,
+        )?;
 
         let extra_refs = collect_superproject_submodule_references(&repo.git_dir, &sm.path)?;
 
-        let modules_dir = repo.git_dir.join("modules").join(&sm.path);
+        if submodule_path_config_enabled(&store) {
+            ensure_submodule_gitdir_config(work_tree, &store, &mut super_cfg, &sm.name)
+                .context("submodule gitdir config during clone")?;
+        }
+
+        let modules_dir = submodule_separate_git_dir(repo, work_tree, &sm.name, &sm.path)
+            .context("resolve submodule separate git dir during clone")?;
         if let Some(parent) = modules_dir.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -3082,6 +3090,9 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, clone_args: &Args) -> R
     crate::grit_exe::strip_trace2_env(&mut upd);
     upd.args(["submodule", "update", "--init", "--recursive"])
         .current_dir(work_tree);
+    if let Some(n) = clone_args.jobs {
+        upd.arg("--jobs").arg(n.to_string());
+    }
     if clone_args.shallow_submodules {
         upd.env(
             crate::commands::submodule::CLONE_SHALLOW_SUBMODULES_ENV,
@@ -3969,6 +3980,42 @@ fn apply_sticky_recursive_clone(git_dir: &Path, recurse_submodules: bool) -> Res
     };
     config.set("submodule.recurse", "true")?;
     config.write().context("writing config")?;
+    Ok(())
+}
+
+/// When `init.defaultSubmodulePathConfig` is true in the merged config (global/system), enable
+/// `extensions.submodulePathConfig` in the new repository (matches Git's clone/init parity).
+fn apply_default_submodule_path_config_from_global(git_dir: &Path) -> Result<()> {
+    let set = ConfigSet::load(None, true).unwrap_or_else(|_| ConfigSet::new());
+    if !set
+        .get("init.defaultSubmodulePathConfig")
+        .as_deref()
+        .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"))
+    {
+        return Ok(());
+    }
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    let mut repo_version = 0u32;
+    if let Some(v) = config
+        .entries
+        .iter()
+        .find(|e| e.key == "core.repositoryformatversion")
+    {
+        if let Some(s) = v.value.as_deref() {
+            repo_version = s.parse().unwrap_or(0);
+        }
+    }
+    if repo_version == 0 {
+        config.set("core.repositoryformatversion", "1")?;
+    }
+    config.set("extensions.submodulePathConfig", "true")?;
+    config
+        .write()
+        .context("writing submodulePathConfig from global init default")?;
     Ok(())
 }
 

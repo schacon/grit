@@ -17,6 +17,7 @@ use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use grit_lib::state::resolve_head;
 use grit_lib::unicode_normalization::{precompose_utf8_path, precompose_utf8_segment};
 use grit_lib::wildmatch::wildmatch;
 use std::collections::HashSet;
@@ -1206,30 +1207,45 @@ fn stage_gitlink(
         .with_context(|| format!("cannot read HEAD of embedded repo '{}'", rel_path))?;
     let head_trimmed = head_content.trim();
 
-    // Resolve HEAD: prefer `refs::resolve_ref` (packed-refs, worktrees). If `HEAD` is a stale
-    // symref to `refs/heads/master` while only `main` exists (common with
-    // `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME`), fall back like Git's `resolve_gitlink_ref`.
-    let oid = if head_trimmed.starts_with("ref: ") {
-        match refs::resolve_ref(&git_dir, "HEAD") {
-            Ok(o) => o,
-            Err(_) => {
-                let mut found = None;
-                for branch in ["main", "master"] {
-                    let p = git_dir.join("refs/heads").join(branch);
-                    if let Ok(s) = fs::read_to_string(&p) {
-                        if let Ok(o) = ObjectId::from_hex(s.trim()) {
-                            found = Some(o);
-                            break;
+    // Prefer resolving `HEAD` with the submodule work tree bound (like `git -C <sub> rev-parse
+    // HEAD`): `Repository::open(git_dir, Some(worktree))` matches separate-git-dir layout.
+    let oid_from_opened_repo = || -> Result<ObjectId> {
+        let sub = Repository::open(&git_dir, Some(abs_path))
+            .with_context(|| format!("open embedded repo '{}'", rel_path))?;
+        let head = resolve_head(&sub.git_dir)
+            .with_context(|| format!("resolve HEAD in embedded repo '{}'", rel_path))?;
+        head.oid()
+            .copied()
+            .ok_or_else(|| anyhow!("unborn or invalid HEAD in embedded repo '{}'", rel_path))
+    };
+
+    let oid = match oid_from_opened_repo() {
+        Ok(o) => o,
+        Err(_) => {
+            if head_trimmed.starts_with("ref: ") {
+                match refs::resolve_ref(&git_dir, "HEAD") {
+                    Ok(o) => o,
+                    Err(_) => {
+                        let mut found = None;
+                        for branch in ["main", "master"] {
+                            let p = git_dir.join("refs/heads").join(branch);
+                            if let Ok(s) = fs::read_to_string(&p) {
+                                if let Ok(o) = ObjectId::from_hex(s.trim()) {
+                                    found = Some(o);
+                                    break;
+                                }
+                            }
                         }
+                        found.ok_or_else(|| {
+                            anyhow!("cannot resolve HEAD in embedded repo '{}'", rel_path)
+                        })?
                     }
                 }
-                found
-                    .ok_or_else(|| anyhow!("cannot resolve HEAD in embedded repo '{}'", rel_path))?
+            } else {
+                ObjectId::from_hex(head_trimmed)
+                    .with_context(|| format!("invalid HEAD OID in embedded repo '{}'", rel_path))?
             }
         }
-    } else {
-        ObjectId::from_hex(head_trimmed)
-            .with_context(|| format!("invalid HEAD OID in embedded repo '{}'", rel_path))?
     };
 
     // Check whether this entry is already tracked as a gitlink in the index

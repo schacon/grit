@@ -1216,7 +1216,7 @@ t7421-submodule-summary-add	t7	yes	5	5	0	true	ok	0
 t7422-submodule-output	t7	yes	18	8	10	false	ok	0
 t7423-submodule-symlinks	t7	yes	6	4	2	false	ok	0
 t7424-submodule-mixed-ref-formats	t7	skip	14	3	11	false	ok	0
-t7425-submodule-gitdir-path-extension	t7	yes	23	9	14	false	ok	0
+t7425-submodule-gitdir-path-extension	t7	yes	23	23	0	true	ok	0
 t7426-submodule-get-default-remote	t7	yes	15	13	2	false	ok	0
 t7450-bad-git-dotfiles	t7	yes	50	25	25	false	ok	0
 t7500-commit-template-squash-signoff	t7	yes	57	55	2	false	ok	0
