@@ -2,6 +2,7 @@
 //!
 //! See `git/Documentation/git-remote-ext.adoc` and `git/builtin/remote-ext.c`.
 
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -162,26 +163,86 @@ fn argv0_basename(argv0: &str) -> Option<&str> {
     Path::new(argv0).file_name()?.to_str()
 }
 
-/// When the URL is `sh -c 'git-upload-pack <args…>'` (t5802), run `grit upload-pack <args…>` as the
-/// child process instead of nesting shells. This matches a direct `upload-pack` spawn and avoids
-/// pipe/pack corruption seen with `sh -c` wrapping.
+/// When the URL is `sh -c '…git-upload-pack <args…>…'` (t5802), run `grit upload-pack <args…>` as
+/// the child process instead of nesting shells. The inner script may prefix the command (e.g.
+/// `echo … && git-upload-pack …`); match the upload-pack argv segment anywhere in the string.
 fn resolve_ext_child_argv(parsed: &RemoteExtSpec) -> (PathBuf, Vec<String>) {
     if parsed.argv.len() == 3
         && argv0_basename(&parsed.argv[0]).is_some_and(|b| b == "sh" || b == "dash")
         && parsed.argv[1] == "-c"
     {
         let inner = parsed.argv[2].trim();
-        if let Some(rest) = inner.strip_prefix("git-upload-pack") {
-            let rest = rest.trim();
-            if !rest.is_empty() {
-                let grit = grit_executable();
-                let mut args = vec!["upload-pack".to_owned()];
-                args.extend(rest.split_whitespace().map(|s| s.to_owned()));
-                return (grit, args);
-            }
+        if let Some(rest) = extract_git_upload_pack_args(inner) {
+            let grit = grit_executable();
+            let mut args = vec!["upload-pack".to_owned()];
+            args.extend(rest.split_whitespace().map(|s| s.to_owned()));
+            return (grit, args);
         }
     }
     (PathBuf::from(&parsed.argv[0]), parsed.argv[1..].to_vec())
+}
+
+/// Returns upload-pack arguments (after the service name) when `script` contains
+/// `git-upload-pack` or `git upload-pack` as a command word.
+fn extract_git_upload_pack_args(script: &str) -> Option<&str> {
+    let bytes = script.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let is_word_start = i == 0 || bytes[i - 1].is_ascii_whitespace();
+        if !is_word_start {
+            i += 1;
+            continue;
+        }
+        let rest = &script[i..];
+        let rest = if let Some(r) = rest.strip_prefix("git-upload-pack") {
+            r
+        } else if let Some(r) = rest.strip_prefix("git upload-pack") {
+            r
+        } else {
+            i += 1;
+            continue;
+        };
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            return None;
+        }
+        let first = rest.as_bytes()[0];
+        if first == b'&' || first == b'|' || first == b';' || first == b'>' || first == b'<' {
+            i += 1;
+            continue;
+        }
+        return Some(rest.trim());
+    }
+    None
+}
+
+/// When an `ext::` URL runs `grit upload-pack <dir>` (or equivalent), return the resolved on-disk
+/// git directory so fetch can compute tag-following `want` lines against the real remote ODB.
+pub fn try_resolve_ext_upload_pack_git_dir(ext_url: &str) -> Option<PathBuf> {
+    let spec = parse_remote_ext_url(ext_url).ok()?;
+    let (prog, child_args) = resolve_ext_child_argv(&spec);
+    let grit = grit_executable();
+    if prog != grit || child_args.len() != 2 || child_args[0] != "upload-pack" {
+        return None;
+    }
+    let mut repo = PathBuf::from(&child_args[1]);
+    if repo.as_os_str() == "." {
+        repo = std::env::current_dir()
+            .and_then(|p| p.canonicalize())
+            .unwrap_or(repo);
+    } else if repo.is_relative() {
+        if let Ok(cwd) = std::env::current_dir() {
+            repo = cwd.join(&repo);
+        }
+    }
+    let git_dir = if repo.file_name().is_some_and(|n| n == ".git") {
+        repo.clone()
+    } else if repo.join(".git").is_dir() {
+        repo.join(".git")
+    } else {
+        repo.clone()
+    };
+    fs::canonicalize(&git_dir).ok()
 }
 
 fn write_git_daemon_request(
@@ -214,6 +275,7 @@ pub fn fetch_via_ext_skipping(
     ext_url: &str,
     service: &str,
     refspecs: &[String],
+    compute_wants: impl FnOnce(&[(String, ObjectId)]) -> anyhow::Result<Vec<ObjectId>>,
 ) -> Result<(
     Vec<(String, ObjectId)>,
     Vec<(String, ObjectId)>,
@@ -267,7 +329,7 @@ pub fn fetch_via_ext_skipping(
     }
 
     let (advertised, head_symref) = fetch_transport::read_advertisement(&mut stdout)?;
-    let wants = fetch_transport::collect_wants(&advertised, refspecs)?;
+    let wants = compute_wants(&advertised)?;
     if wants.is_empty() {
         if refspecs.is_empty() && advertised.is_empty() {
             drop(stdin);

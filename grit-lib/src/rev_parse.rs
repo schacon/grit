@@ -16,7 +16,7 @@ use std::collections::HashSet;
 
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
-use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::pack;
 use crate::reflog::read_reflog;
 use crate::refs;
@@ -1054,14 +1054,29 @@ fn parse_nav_steps(spec: &str) -> (&str, Vec<NavStep>) {
     (remaining, steps)
 }
 
+/// Follow annotated tag objects to their peeled target (Git: `^` / `~` peel tags first).
+fn peel_annotated_tag_chain(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
+    loop {
+        let obj = repo.odb.read(&oid)?;
+        if obj.kind != ObjectKind::Tag {
+            return Ok(oid);
+        }
+        let tag = parse_tag(&obj.data)?;
+        oid = tag.object;
+    }
+}
+
 /// Apply a single navigation step to an OID, resolving parent/ancestor links.
 fn apply_nav_step(repo: &Repository, oid: ObjectId, step: NavStep) -> Result<ObjectId> {
     match step {
         NavStep::ParentN(0) => Ok(oid),
         NavStep::ParentN(n) => {
+            let oid = peel_annotated_tag_chain(repo, oid)?;
             let obj = repo.odb.read(&oid)?;
             if obj.kind != ObjectKind::Commit {
-                return Err(Error::InvalidRef(format!("{oid} is not a commit")));
+                return Err(Error::InvalidRef(format!(
+                    "invalid ref: {oid} is not a commit"
+                )));
             }
             let commit = parse_commit(&obj.data)?;
             commit
@@ -1071,7 +1086,7 @@ fn apply_nav_step(repo: &Repository, oid: ObjectId, step: NavStep) -> Result<Obj
                 .ok_or_else(|| Error::ObjectNotFound(format!("{oid}^{n}")))
         }
         NavStep::AncestorN(n) => {
-            let mut current = oid;
+            let mut current = peel_annotated_tag_chain(repo, oid)?;
             for _ in 0..n {
                 current = apply_nav_step(repo, current, NavStep::ParentN(1))?;
             }

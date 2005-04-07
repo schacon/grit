@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::repo::Repository;
-use crate::rev_parse::resolve_revision;
+use crate::rev_parse::{peel_to_commit_for_merge_base, resolve_revision};
 
 /// Resolve commit-ish command arguments to commit object IDs.
 ///
@@ -232,10 +232,14 @@ impl<'r> CommitGraphCache<'r> {
         if let Some(parents) = self.parents.get(&oid) {
             return Ok(parents.clone());
         }
-        let object = self.repo.odb.read(&oid)?;
+        let commit_oid = peel_to_commit_for_merge_base(self.repo, oid).map_err(|e| match e {
+            Error::InvalidRef(msg) => Error::CorruptObject(msg),
+            other => other,
+        })?;
+        let object = self.repo.odb.read(&commit_oid)?;
         if object.kind != ObjectKind::Commit {
             return Err(Error::CorruptObject(format!(
-                "object {oid} is not a commit"
+                "object {commit_oid} is not a commit"
             )));
         }
         let commit = parse_commit(&object.data)?;

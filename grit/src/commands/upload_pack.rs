@@ -103,7 +103,17 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    let want_set: HashSet<ObjectId> = wants.iter().copied().collect();
+    // Fetch clients may send the same `want` OID twice (e.g. duplicate pkt-lines). `pack-objects
+    // --revs` treats each positive rev line as a separate walk root; duplicates corrupt the pack.
+    let mut want_unique: Vec<ObjectId> = Vec::new();
+    let mut want_seen: HashSet<ObjectId> = HashSet::new();
+    for w in wants {
+        if want_seen.insert(w) {
+            want_unique.push(w);
+        }
+    }
+
+    let want_set: HashSet<ObjectId> = want_unique.iter().copied().collect();
 
     let mut got_common = false;
     let mut got_other = false;
@@ -176,7 +186,7 @@ pub fn run(args: Args) -> Result<()> {
         let mut pin = child.stdin.take().context("pack-objects stdin")?;
         crate::pack_objects_upload::write_pack_objects_revs_stdin(
             &mut pin,
-            &wants,
+            &want_unique,
             &client_have_commits,
         )?;
     }

@@ -1427,7 +1427,13 @@ fn run_ext_clone(args: Args) -> Result<()> {
     };
 
     let fetch_res = crate::fetch_transport::with_packet_trace_identity("clone", || {
-        crate::ext_transport::fetch_via_ext_skipping(&dest.git_dir, &url, "git-upload-pack", &[])
+        crate::ext_transport::fetch_via_ext_skipping(
+            &dest.git_dir,
+            &url,
+            "git-upload-pack",
+            &[],
+            |adv| crate::fetch_transport::collect_wants(adv, &[]),
+        )
     });
 
     let (source_head_symref, _source_head_oid, head_branch) = match fetch_res {
