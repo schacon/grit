@@ -219,7 +219,7 @@ fn run_with_top_opts(top: SubmoduleTopOpts, args: Args) -> Result<()> {
 use grit_lib::config::{canonical_key, ConfigFile, ConfigScope};
 use grit_lib::diff::{diff_index_to_tree, DiffEntry, DiffStatus};
 use grit_lib::error::Error as LibError;
-use grit_lib::index::MODE_GITLINK;
+use grit_lib::index::{Index, MODE_GITLINK};
 use grit_lib::merge_diff::blob_oid_at_path;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::pathspec::matches_pathspec;
@@ -1178,16 +1178,7 @@ fn filter_submodules<'a>(modules: &'a [SubmoduleInfo], paths: &[String]) -> Vec<
 /// Prefer the **index** when it contains a stage-0 gitlink at `submodule_path`, so
 /// `git submodule update` works after `git apply --index` / partial index updates while `HEAD`
 /// still points at an older commit. Fall back to `HEAD`'s tree when the path is not in the index.
-fn read_submodule_commit(repo: &Repository, submodule_path: &str) -> Result<Option<String>> {
-    let index_path = repo.index_path();
-    if let Ok(index) = repo.load_index_at(&index_path) {
-        if let Some(entry) = index.get(submodule_path.as_bytes(), 0) {
-            if entry.mode == MODE_GITLINK {
-                return Ok(Some(entry.oid.to_hex()));
-            }
-        }
-    }
-
+fn read_gitlink_oid_head_tree(repo: &Repository, submodule_path: &str) -> Result<Option<String>> {
     let head = resolve_head(&repo.git_dir)?;
     let commit_oid = match head.oid() {
         Some(o) => *o,
@@ -1232,50 +1223,38 @@ fn read_submodule_commit(repo: &Repository, submodule_path: &str) -> Result<Opti
     Ok(None)
 }
 
-/// Gitlink OID for `submodule_path` in `HEAD`'s tree only (ignores the index).
-fn read_gitlink_from_head_tree(repo: &Repository, submodule_path: &str) -> Result<Option<String>> {
-    let head = resolve_head(&repo.git_dir)?;
-    let commit_oid = match head.oid() {
-        Some(o) => *o,
-        None => return Ok(None),
-    };
-    let obj = repo.odb.read(&commit_oid).context("read HEAD commit")?;
-    let commit = parse_commit(&obj.data)?;
-    let mut current_tree = commit.tree;
-
-    let components: Vec<&str> = submodule_path
-        .split('/')
-        .filter(|c| !c.is_empty())
-        .collect();
-    if components.is_empty() {
-        return Ok(None);
+fn read_submodule_commit(repo: &Repository, submodule_path: &str) -> Result<Option<String>> {
+    if let Ok(index) = repo.load_index() {
+        if let Some(o) = gitlink_oid_stage0(&index, submodule_path) {
+            return Ok(Some(o));
+        }
     }
+    read_gitlink_oid_head_tree(repo, submodule_path)
+}
 
-    for (i, name) in components.iter().enumerate() {
-        let tree_obj = repo.odb.read(&current_tree).context("read tree")?;
-        if tree_obj.kind != ObjectKind::Tree {
-            return Ok(None);
-        }
-        let entries = parse_tree(&tree_obj.data)?;
-        let entry = entries
-            .iter()
-            .find(|e| e.name.as_slice() == name.as_bytes());
-        let Some(entry) = entry else {
-            return Ok(None);
-        };
-        let is_last = i + 1 == components.len();
-        if is_last {
-            if entry.mode == 0o160000 {
-                return Ok(Some(entry.oid.to_hex()));
-            }
-            return Ok(None);
-        }
-        if entry.mode != 0o040000 {
-            return Ok(None);
-        }
-        current_tree = entry.oid;
+/// Recorded gitlink for `submodule_path`: index first (using a preloaded snapshot), then `HEAD` tree.
+fn read_submodule_commit_for_status(
+    repo: &Repository,
+    index: &Index,
+    submodule_path: &str,
+) -> Result<Option<String>> {
+    if let Some(o) = gitlink_oid_stage0(index, submodule_path) {
+        return Ok(Some(o));
     }
-    Ok(None)
+    read_gitlink_oid_head_tree(repo, submodule_path)
+}
+
+fn gitlink_oid_stage0(index: &Index, submodule_path: &str) -> Option<String> {
+    let needle = submodule_path.as_bytes();
+    for entry in &index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        if entry.path.as_slice() == needle && entry.mode == MODE_GITLINK {
+            return Some(entry.oid.to_hex());
+        }
+    }
+    None
 }
 
 /// Gitlink OID for `submodule_path` in the current index (stage 0), if present.
@@ -1286,16 +1265,7 @@ fn read_gitlink_oid_from_index(repo: &Repository, submodule_path: &str) -> Resul
     let index = repo
         .load_index()
         .context("load index for submodule gitlink")?;
-    let needle = submodule_path.as_bytes();
-    for entry in &index.entries {
-        if entry.stage() != 0 {
-            continue;
-        }
-        if entry.path.as_slice() == needle && entry.mode == MODE_GITLINK {
-            return Ok(Some(entry.oid.to_hex()));
-        }
-    }
-    Ok(None)
+    Ok(gitlink_oid_stage0(&index, submodule_path))
 }
 
 /// Check out `oid` in the submodule at `path` (separate git dir under `.git/modules/` or in-tree `.git`).
@@ -1392,6 +1362,7 @@ fn submodule_describe_rev_name(sub_worktree: &Path, oid_hex: &str) -> Option<Str
 
 fn emit_submodule_status_lines(
     super_repo: &Repository,
+    super_index: &Index,
     super_work_tree: &Path,
     _super_git_dir: &Path,
     top_work_tree: &Path,
@@ -1419,7 +1390,7 @@ fn emit_submodule_status_lines(
         // Paths in the immediate superproject's index / HEAD tree use `m.path` (not the
         // top-level composite path).
         let gitlink_path = m.path.as_str();
-        let recorded = read_submodule_commit(super_repo, gitlink_path)?;
+        let recorded = read_submodule_commit_for_status(super_repo, super_index, gitlink_path)?;
         let has_checkout = sub_path.join(".git").exists();
 
         if !args.paths.is_empty() {
@@ -1438,7 +1409,7 @@ fn emit_submodule_status_lines(
                 .unwrap_or("0000000000000000000000000000000000000000");
             ("-", oid.to_owned(), String::new())
         } else {
-            let index_oid = read_gitlink_oid_from_index(super_repo, gitlink_path)?
+            let index_oid = gitlink_oid_stage0(super_index, gitlink_path)
                 .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_owned());
 
             let head_file = sub_path.join(".git");
@@ -1456,8 +1427,11 @@ fn emit_submodule_status_lines(
             };
             let head_oid = sub_head.unwrap_or_default();
 
-            // Match `git submodule--helper status`: `diff-files` marks the submodule dirty when
-            // the checked-out commit differs from the index gitlink.
+            // Match `git submodule--helper status` / `diff-files --ignore-submodules=dirty`: the
+            // superproject gitlink is "dirty" when the submodule's resolved HEAD commit differs
+            // from the index gitlink. Inner working tree dirtiness does not matter.
+            // With `--cached`, a dirty submodule still prints `+` but uses the **index** OID (and
+            // its describe); without `--cached`, it prints the submodule HEAD OID — see t7422.
             let dirty = !head_oid.is_empty() && head_oid != index_oid;
 
             let (p, oid_for_line, oid_for_describe) = if !dirty {
@@ -1479,6 +1453,7 @@ fn emit_submodule_status_lines(
                 .replace('\\', "/");
 
         writeln!(out, "{prefix}{display_oid} {display_path}{suffix}")?;
+        out.flush()?;
 
         if args.recursive && has_checkout && sub_path.join(".git").exists() {
             let Ok(sub_repo) = Repository::discover(Some(&sub_path)) else {
@@ -1489,8 +1464,12 @@ fn emit_submodule_status_lines(
             };
             let nested = parse_gitmodules_with_repo(sub_wt, Some(&sub_repo)).unwrap_or_default();
             if !nested.is_empty() {
+                let sub_index = sub_repo
+                    .load_index()
+                    .context("load submodule index for recursive status")?;
                 emit_submodule_status_lines(
                     &sub_repo,
+                    &sub_index,
                     sub_wt,
                     &sub_repo.git_dir,
                     top_work_tree,
@@ -1511,13 +1490,19 @@ fn run_status(args: &StatusArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
     let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
+    let index = repo
+        .load_index()
+        .context("load index for submodule status")?;
 
     let cwd = std::env::current_dir().context("failed to read current directory")?;
 
+    // Flush after each line so `... | grep -q` closes the read end early and the next write
+    // returns `EPIPE` → exit 141 (t7422-submodule-output).
     let stdout = io::stdout();
     let mut out = stdout.lock();
     emit_submodule_status_lines(
         &repo,
+        &index,
         work_tree,
         &repo.git_dir,
         work_tree,
