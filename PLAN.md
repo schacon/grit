@@ -834,7 +834,7 @@ commit → check it off → move on.
 
 - [x] `t7517-per-repo-email` — per-repo forced setting of email address (16/16)
 - [ ] `t7525-status-rename` █████████░░░░░░░░░░░ 7/15 (8 left) — git status rename detection options
-- [ ] `t7412-submodule-absorbgitdirs` ██████░░░░░░░░░░░░░░ 4/12 (8 left) — Test submodule absorbgitdirs
+- [x] `t7412-submodule-absorbgitdirs` — Test submodule absorbgitdirs (12/12)
 
 - [ ] `t7413-submodule-is-active` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — Test with test-tool submodule is-active
 

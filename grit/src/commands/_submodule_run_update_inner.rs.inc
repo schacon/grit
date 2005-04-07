@@ -93,7 +93,7 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
             continue;
         };
 
-        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &m.path);
+        let modules_dir = submodule_modules_git_dir(&repo.git_dir, &m.name);
 
         // When `--recursive` is set, do not skip submodules that are already at the recorded
         // commit: nested `.gitmodules` paths may still need `submodule update` (t5531 nested clone).
@@ -333,6 +333,28 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
 
             let checkout_force = args.force || needs_clone;
 
+            if !args.remote
+                && !needs_clone
+                && read_submodule_head(&sub_path).as_deref() == Some(recorded_oid)
+            {
+                refresh_gitlink_index_stat(&repo, &m.path)?;
+                if let Ok(sub_repo) = Repository::open(&modules_dir, Some(&sub_path)) {
+                    let _ = reapply_sparse_checkout_if_configured(&sub_repo);
+                } else if let Ok(sub_repo) = Repository::discover(Some(&sub_path)) {
+                    let _ = reapply_sparse_checkout_if_configured(&sub_repo);
+                }
+                if sub_path.join(".git").is_dir() && modules_dir.join("HEAD").exists() {
+                    fs::remove_dir_all(sub_path.join(".git")).with_context(|| {
+                        format!(
+                            "failed to normalize submodule .git after checkout for {}",
+                            sub_path.display()
+                        )
+                    })?;
+                    attach_existing_submodule_worktree(&grit_bin, &modules_dir, &sub_path)?;
+                }
+                continue;
+            }
+
             match effective.as_str() {
                 "rebase" => {
                     let mut pull_cmd = grit_subprocess(&grit_bin);
@@ -414,7 +436,7 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
             }
 
             if matches!(effective.as_str(), "" | "checkout") || args.remote {
-                println!(
+                eprintln!(
                     "Submodule path '{}': checked out '{}'",
                     msg_path, checkout_oid
                 );
@@ -442,7 +464,8 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
         std::process::exit(1);
     }
 
-    if args.recursive {
+    let recurse_nested = args.recursive || args.implicit_recursive;
+    if recurse_nested {
         for m in &selected {
             let sub_path = work_tree.join(&m.path);
             if !sub_path.join(".git").exists() {
@@ -463,7 +486,8 @@ fn run_update_inner(args: &UpdateArgs, discover_base: Option<PathBuf>) -> Result
                 depth: args.depth,
                 jobs: args.jobs,
                 filter: args.filter.clone(),
-                recursive: args.recursive,
+                recursive: recurse_nested,
+                implicit_recursive: args.implicit_recursive,
                 reference: args.reference.clone(),
                 no_recommend_shallow: args.no_recommend_shallow,
             };
