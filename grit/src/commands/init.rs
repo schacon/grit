@@ -230,7 +230,7 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
     // 1. --initial-branch / -b flag (only on fresh init)
     // 2. GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME env (test support)
     // 3. init.defaultBranch config
-    // 4. "master" as fallback
+    // 4. "main" as fallback (matches modern Git default; see `git init` builtin)
     let initial_branch = if !is_reinit {
         if let Some(ref b) = args.initial_branch {
             b.clone()
@@ -240,12 +240,12 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
             } else {
                 config
                     .get("init.defaultBranch")
-                    .unwrap_or_else(|| "master".to_owned())
+                    .unwrap_or_else(|| "main".to_owned())
             }
         } else if let Some(b) = config.get("init.defaultBranch") {
             b
         } else {
-            "master".to_owned()
+            "main".to_owned()
         }
     } else {
         // On reinit, don't change HEAD
