@@ -881,7 +881,10 @@ fn compute_blame(
                 let par_lines = content_lines(&par_content);
 
                 // Build mapping: cur_line_idx → Option<parent_line_idx>
-                let line_map = build_line_map(&par_lines, &cur_lines, diff_algorithm);
+                let mut line_map = build_line_map(&par_lines, &cur_lines, diff_algorithm);
+                if is_ignored {
+                    line_map = build_fuzzy_line_map(&par_lines, &cur_lines, &line_map);
+                }
                 let mut inserted_copy_source: Option<(
                     String,
                     HashMap<String, Vec<BlameLine>>,
@@ -949,10 +952,13 @@ fn compute_blame(
                             });
                         } else if is_ignored {
                             // Best-effort pass-through through ignored revisions:
-                            // if parent has a same-slot line, keep walking with
-                            // an ignored marker; otherwise keep blame on the
+                            // only keep walking when the same-slot parent line
+                            // is text-identical; otherwise keep blame on the
                             // ignored commit and mark as unblamable.
-                            if t.current_idx < par_lines.len() {
+                            let cur_line = cur_lines.get(t.current_idx).copied();
+                            if t.current_idx < par_lines.len()
+                                && cur_line.is_some_and(|line| line == par_lines[t.current_idx])
+                            {
                                 still_pending.push(TrackedLine {
                                     final_lineno: t.final_lineno,
                                     current_idx: t.current_idx,
@@ -1238,6 +1244,157 @@ fn build_line_map(
     }
 
     result
+}
+
+fn build_fuzzy_line_map(
+    old: &[&str],
+    new: &[&str],
+    exact_map: &[Option<usize>],
+) -> Vec<Option<usize>> {
+    let mut fuzzy_map = exact_map.to_vec();
+
+    let mut anchors: Vec<(usize, usize)> = exact_map
+        .iter()
+        .enumerate()
+        .filter_map(|(new_idx, old_idx)| old_idx.map(|old| (new_idx, old)))
+        .collect();
+    anchors.sort_unstable();
+
+    let mut prev_new = usize::MAX;
+    let mut prev_old = usize::MAX;
+    for (next_new, next_old) in anchors
+        .iter()
+        .copied()
+        .chain(std::iter::once((new.len(), old.len())))
+    {
+        let new_start = if prev_new == usize::MAX { 0 } else { prev_new + 1 };
+        let new_end = next_new;
+        let old_start = if prev_old == usize::MAX { 0 } else { prev_old + 1 };
+        let old_end = next_old;
+
+        if new_start < new_end && old_start < old_end {
+            let segment_matches =
+                fuzzy_match_segment(old, old_start, old_end, new, new_start, new_end);
+            for (new_idx, old_idx) in segment_matches {
+                if fuzzy_map[new_idx].is_none() {
+                    fuzzy_map[new_idx] = Some(old_idx);
+                }
+            }
+        }
+
+        prev_new = next_new;
+        prev_old = next_old;
+    }
+
+    fuzzy_map
+}
+
+fn fuzzy_match_segment(
+    old: &[&str],
+    old_start: usize,
+    old_end: usize,
+    new: &[&str],
+    new_start: usize,
+    new_end: usize,
+) -> Vec<(usize, usize)> {
+    let m = old_end.saturating_sub(old_start);
+    let n = new_end.saturating_sub(new_start);
+    if m == 0 || n == 0 {
+        return Vec::new();
+    }
+
+    let stride = n + 1;
+    let mut dp = vec![0.0f64; (m + 1) * (n + 1)];
+    let mut choice = vec![0u8; (m + 1) * (n + 1)]; // 1=up,2=left,3=diag
+
+    for i in 1..=m {
+        for j in 1..=n {
+            let idx = i * stride + j;
+            let up = dp[(i - 1) * stride + j];
+            let left = dp[i * stride + (j - 1)];
+            let mut best = up;
+            let mut pick = 1u8;
+            if left > best {
+                best = left;
+                pick = 2;
+            }
+
+            let old_line = old[old_start + i - 1];
+            let new_line = new[new_start + j - 1];
+            let sim = line_similarity(old_line, new_line);
+            if sim >= 0.45 {
+                let diag = dp[(i - 1) * stride + (j - 1)] + sim;
+                if diag > best {
+                    best = diag;
+                    pick = 3;
+                }
+            }
+
+            dp[idx] = best;
+            choice[idx] = pick;
+        }
+    }
+
+    let mut matches = Vec::new();
+    let mut i = m;
+    let mut j = n;
+    while i > 0 && j > 0 {
+        let pick = choice[i * stride + j];
+        if pick == 3 {
+            let old_idx = old_start + i - 1;
+            let new_idx = new_start + j - 1;
+            let sim = line_similarity(old[old_idx], new[new_idx]);
+            if sim >= 0.45 {
+                matches.push((new_idx, old_idx));
+            }
+            i -= 1;
+            j -= 1;
+        } else if pick == 1 {
+            i -= 1;
+        } else {
+            j -= 1;
+        }
+    }
+
+    matches.reverse();
+    matches
+}
+
+fn line_similarity(a: &str, b: &str) -> f64 {
+    let a = a.trim();
+    let b = b.trim();
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    if a == b {
+        return 1.0;
+    }
+
+    let a = a.to_ascii_lowercase();
+    let b = b.to_ascii_lowercase();
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let n = b_chars.len();
+    if a_chars.is_empty() || b_chars.is_empty() {
+        return 0.0;
+    }
+
+    let mut prev = vec![0usize; n + 1];
+    let mut curr = vec![0usize; n + 1];
+    for i in 1..=a_chars.len() {
+        for j in 1..=n {
+            curr[j] = if a_chars[i - 1] == b_chars[j - 1] {
+                prev[j - 1] + 1
+            } else {
+                prev[j].max(curr[j - 1])
+            };
+        }
+        std::mem::swap(&mut prev, &mut curr);
+        curr.fill(0);
+    }
+
+    let lcs = prev[n] as f64;
+    (2.0 * lcs) / (a_chars.len() as f64 + b_chars.len() as f64)
 }
 
 // ── CLI entry point ──────────────────────────────────────────────────
