@@ -3,14 +3,24 @@
 //! Low-level plumbing command that sends pack data to a remote repository
 //! and updates remote refs.  Only **local** transports are supported.
 
+use crate::explicit_exit::ExplicitExit;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use std::collections::HashSet;
 use std::fs;
+use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
+
+/// Upstream `git send-pack` usage synopsis (exit 129 when options are incompatible).
+const SEND_PACK_USAGE: &str = "usage: git send-pack [--mirror] [--dry-run] [--force]\n\
+              [--receive-pack=<git-receive-pack>]\n\
+              [--verbose] [--thin] [--atomic]\n\
+              [--[no-]signed | --signed=(true|false|if-asked)]\n\
+              [<host>:]<directory> (--all | <ref>...)";
 
 /// Arguments for `grit send-pack`.
 #[derive(Debug, ClapArgs)]
@@ -19,6 +29,14 @@ pub struct Args {
     /// Path to the remote repository (bare or non-bare).
     #[arg(value_name = "REMOTE")]
     pub remote: String,
+
+    /// Read additional refspec lines from stdin (after command-line refspecs).
+    #[arg(long = "stdin")]
+    pub stdin: bool,
+
+    /// Mirror all refs (incompatible with explicit refspecs; not implemented for local transport).
+    #[arg(long = "mirror")]
+    pub mirror: bool,
 
     /// Refspec(s) to push (e.g. "main:main", "refs/heads/main:refs/heads/main").
     /// Format: <src>:<dst> or just <ref> (implies same name on both sides).
@@ -52,14 +70,43 @@ pub fn run(args: Args) -> Result<()> {
         )
     })?;
 
-    // Build list of ref updates from refspecs
-    let mut updates = Vec::new();
+    let mut refspecs = args.refs.clone();
+    if args.stdin {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            let line = line.context("reading refspecs from stdin")?;
+            let line = line.trim_end_matches(['\r', '\n']);
+            if line.is_empty() {
+                continue;
+            }
+            refspecs.push(line.to_owned());
+        }
+    }
 
-    if args.refs.is_empty() {
+    if !refspecs.is_empty() && args.mirror {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 129,
+            message: SEND_PACK_USAGE.to_string(),
+        }));
+    }
+
+    if refspecs.is_empty() {
         bail!("no refs specified; nothing to push");
     }
 
-    for spec in &args.refs {
+    let mut seen_remote: HashSet<String> = HashSet::new();
+    for spec in &refspecs {
+        let (_, dst) = parse_refspec(spec);
+        let remote_ref = normalize_ref(&dst);
+        if !seen_remote.insert(remote_ref.clone()) {
+            bail!("multiple updates for ref '{remote_ref}' not allowed");
+        }
+    }
+
+    // Build list of ref updates from refspecs
+    let mut updates = Vec::new();
+
+    for spec in &refspecs {
         let (src, dst) = parse_refspec(spec);
         let local_ref = normalize_ref(&src);
         let remote_ref = normalize_ref(&dst);
