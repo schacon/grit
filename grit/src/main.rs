@@ -3550,6 +3550,27 @@ fn preprocess_log_pickaxe_args(rest: Vec<String>) -> Vec<String> {
     out
 }
 
+/// Normalize `--expand-tabs` without `=` to `--expand-tabs=8` (Git revision.c).
+fn preprocess_expand_tabs_for_rev_cmd(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len());
+    let mut i = 0usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if arg == "--" {
+            out.extend_from_slice(&rest[i..]);
+            break;
+        }
+        if arg == "--expand-tabs" {
+            out.push("--expand-tabs=8".to_string());
+            i += 1;
+            continue;
+        }
+        out.push(arg.clone());
+        i += 1;
+    }
+    out
+}
+
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
     let mut saw_graph = false;
@@ -4230,7 +4251,9 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "interpret-trailers" => commands::interpret_trailers::run_from_argv(rest),
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
         "log" => {
-            let rest = preprocess_log_pickaxe_args(preprocess_log_args(rest));
+            let rest = preprocess_expand_tabs_for_rev_cmd(&preprocess_log_pickaxe_args(
+                preprocess_log_args(rest),
+            ));
             commands::log::run(parse_cmd_args(subcmd, &rest))
         }
         "ls-files" => commands::ls_files::run(parse_cmd_args(subcmd, rest)),
@@ -4323,7 +4346,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "sh-setup" => commands::sh_setup::run(parse_cmd_args(subcmd, rest)),
         "shell" => commands::shell::run(parse_cmd_args(subcmd, rest)),
         "shortlog" => commands::shortlog::run(parse_cmd_args(subcmd, rest)),
-        "show" => commands::show::run(parse_cmd_args(subcmd, rest)),
+        "show" => commands::show::run(parse_cmd_args(
+            subcmd,
+            &preprocess_expand_tabs_for_rev_cmd(rest),
+        )),
         "show-branch" => commands::show_branch::run(parse_cmd_args(subcmd, rest)),
         "show-index" => commands::show_index::run(parse_cmd_args(subcmd, rest)),
         "show-ref" => commands::show_ref::run(parse_cmd_args(subcmd, rest)),

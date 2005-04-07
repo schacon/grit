@@ -62,9 +62,23 @@ pub struct Args {
     #[arg(long = "oneline")]
     pub oneline: bool,
 
-    /// Pretty-print format.
-    #[arg(long = "format", alias = "pretty")]
+    /// Pretty-print format (`--pretty` alone defaults to `medium`, like Git).
+    #[arg(
+        long = "format",
+        alias = "pretty",
+        value_name = "FORMAT",
+        num_args = 0..=1,
+        default_missing_value = "medium"
+    )]
     pub format: Option<String>,
+
+    /// Expand tabs in commit log message to spaces (`--expand-tabs` is `--expand-tabs=8`).
+    #[arg(long = "expand-tabs", value_name = "N", require_equals = true)]
+    pub expand_tabs: Option<String>,
+
+    /// Do not expand tabs in commit log output (same as `--expand-tabs=0`).
+    #[arg(long = "no-expand-tabs")]
+    pub no_expand_tabs: bool,
 
     /// Suppress diff output (show only the commit header).
     #[arg(short = 'q', long = "quiet")]
@@ -717,8 +731,27 @@ fn show_commit(
     let commit = parse_commit(data).context("parsing commit")?;
     let hex = oid.to_hex();
 
+    let expand_tabs_parsed = match &args.expand_tabs {
+        None => None,
+        Some(s) => Some(
+            s.parse::<usize>()
+                .map_err(|_| anyhow::anyhow!("'{s}': not a non-negative integer"))?,
+        ),
+    };
+    let expand_tabs_in_log = grit_lib::tab_expand::resolve_expand_tabs_in_log(
+        args.no_expand_tabs,
+        expand_tabs_parsed,
+        args.format.as_deref(),
+        args.oneline,
+    );
+
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = commit.message.lines().next().unwrap_or("");
+        let first_line = if expand_tabs_in_log > 0 {
+            grit_lib::tab_expand::expand_tabs_in_line(first_line, expand_tabs_in_log)
+        } else {
+            first_line.to_owned()
+        };
         if args.remerge_diff && !(args.quiet || args.no_patch) && commit.parents.len() == 2 {
             use crate::commands::remerge_diff::{write_remerge_diff, RemergeDiffOptions};
             let mut remerge_buf = Vec::new();
@@ -778,7 +811,7 @@ fn show_commit(
             } else {
                 &fmt[8..]
             };
-            let formatted = apply_format_string(template, oid, &commit);
+            let formatted = apply_format_string(template, oid, &commit, expand_tabs_in_log);
             write_formatted_line(out, &formatted)?;
         }
         Some("short") => {
@@ -787,7 +820,11 @@ fn show_commit(
             writeln!(out, "Author: {author_name}")?;
             writeln!(out)?;
             for line in commit.message.lines().take(1) {
-                writeln!(out, "    {line}")?;
+                writeln!(
+                    out,
+                    "{}",
+                    grit_lib::tab_expand::indent_and_expand_tabs(line, 4, expand_tabs_in_log)
+                )?;
             }
             writeln!(out)?;
         }
@@ -797,7 +834,11 @@ fn show_commit(
             writeln!(out, "Commit: {}", format_ident_display(&commit.committer))?;
             writeln!(out)?;
             for line in commit.message.lines() {
-                writeln!(out, "    {line}")?;
+                writeln!(
+                    out,
+                    "{}",
+                    grit_lib::tab_expand::indent_and_expand_tabs(line, 4, expand_tabs_in_log)
+                )?;
             }
             writeln!(out)?;
         }
@@ -813,14 +854,23 @@ fn show_commit(
             writeln!(out, "CommitDate: {}", format_date(&commit.committer))?;
             writeln!(out)?;
             for line in commit.message.lines() {
-                writeln!(out, "    {line}")?;
+                writeln!(
+                    out,
+                    "{}",
+                    grit_lib::tab_expand::indent_and_expand_tabs(line, 4, expand_tabs_in_log)
+                )?;
             }
             writeln!(out)?;
         }
         Some("reference") => {
             let subject = commit.message.lines().next().unwrap_or("");
+            let subject = if expand_tabs_in_log > 0 {
+                grit_lib::tab_expand::expand_tabs_in_line(subject, expand_tabs_in_log)
+            } else {
+                subject.to_owned()
+            };
             let line =
-                grit_lib::commit_pretty::format_reference_line(oid, subject, &commit.committer, 7);
+                grit_lib::commit_pretty::format_reference_line(oid, &subject, &commit.committer, 7);
             writeln!(out, "{line}")?;
         }
         Some("medium") | None => {
@@ -830,14 +880,22 @@ fn show_commit(
             writeln!(out, "Date:   {}", format_date(&commit.author))?;
             writeln!(out)?;
             for line in commit.message.lines() {
-                writeln!(out, "    {line}")?;
+                writeln!(
+                    out,
+                    "{}",
+                    grit_lib::tab_expand::indent_and_expand_tabs(line, 4, expand_tabs_in_log)
+                )?;
             }
             if let Some(note_data) = notes_map.get(oid) {
                 let note_text = String::from_utf8_lossy(note_data);
                 writeln!(out)?;
                 writeln!(out, "Notes:")?;
                 for line in note_text.lines() {
-                    writeln!(out, "    {line}")?;
+                    writeln!(
+                        out,
+                        "{}",
+                        grit_lib::tab_expand::indent_and_expand_tabs(line, 4, expand_tabs_in_log)
+                    )?;
                 }
             } else {
                 writeln!(out)?;
@@ -848,10 +906,20 @@ fn show_commit(
             writeln!(out, "From: {}", format_ident_display(&commit.author))?;
             writeln!(out, "Date: {}", format_date(&commit.author))?;
             let subject = commit.message.lines().next().unwrap_or("");
+            let subject = if expand_tabs_in_log > 0 {
+                grit_lib::tab_expand::expand_tabs_in_line(subject, expand_tabs_in_log)
+            } else {
+                subject.to_owned()
+            };
             writeln!(out, "Subject: [PATCH] {}", subject)?;
             writeln!(out)?;
             for line in commit.message.lines() {
-                writeln!(out, "{line}")?;
+                let line_out = if expand_tabs_in_log > 0 {
+                    grit_lib::tab_expand::expand_tabs_in_line(line, expand_tabs_in_log)
+                } else {
+                    line.to_owned()
+                };
+                writeln!(out, "{line_out}")?;
             }
             writeln!(out)?;
         }
@@ -865,7 +933,11 @@ fn show_commit(
             writeln!(out, "committer {}", commit.committer)?;
             writeln!(out)?;
             for line in commit.message.lines() {
-                writeln!(out, "    {line}")?;
+                writeln!(
+                    out,
+                    "{}",
+                    grit_lib::tab_expand::indent_and_expand_tabs(line, 4, expand_tabs_in_log)
+                )?;
             }
             writeln!(out)?;
         }
@@ -873,7 +945,7 @@ fn show_commit(
             // Already handled above — unreachable
         }
         Some(other) => {
-            let formatted = apply_format_string(other, oid, &commit);
+            let formatted = apply_format_string(other, oid, &commit, expand_tabs_in_log);
             write_formatted_line(out, &formatted)?;
         }
     }
@@ -1569,13 +1641,14 @@ pub(crate) fn format_commit_placeholder(
     oid: &ObjectId,
     commit: &grit_lib::objects::CommitData,
 ) -> String {
-    apply_format_string(template, oid, commit)
+    apply_format_string(template, oid, commit, 0)
 }
 
 fn apply_format_string(
     template: &str,
     oid: &ObjectId,
     commit: &grit_lib::objects::CommitData,
+    expand_tabs_in_log: usize,
 ) -> String {
     let info = CommitInfo {
         tree: commit.tree,
@@ -1675,13 +1748,29 @@ fn apply_format_string(
                 }
                 Some('s') => {
                     chars.next();
-                    result.push_str(info.message.lines().next().unwrap_or(""));
+                    let subj = info.message.lines().next().unwrap_or("");
+                    if expand_tabs_in_log > 0 {
+                        result.push_str(&grit_lib::tab_expand::expand_tabs_in_line(
+                            subj,
+                            expand_tabs_in_log,
+                        ));
+                    } else {
+                        result.push_str(subj);
+                    }
                 }
                 Some('B') => {
                     chars.next();
                     if !info.message.is_empty() {
-                        result.push_str(info.message);
-                        if !info.message.ends_with('\n') {
+                        let msg = if expand_tabs_in_log > 0 {
+                            grit_lib::tab_expand::expand_tabs_in_multiline_message(
+                                info.message,
+                                expand_tabs_in_log,
+                            )
+                        } else {
+                            info.message.to_owned()
+                        };
+                        result.push_str(&msg);
+                        if !msg.ends_with('\n') {
                             result.push('\n');
                         }
                     }
@@ -1689,7 +1778,14 @@ fn apply_format_string(
                 Some('b') => {
                     chars.next();
                     let body: String = info.message.lines().skip(2).collect::<Vec<_>>().join("\n");
-                    result.push_str(&body);
+                    if expand_tabs_in_log > 0 {
+                        result.push_str(&grit_lib::tab_expand::expand_tabs_in_multiline_message(
+                            &body,
+                            expand_tabs_in_log,
+                        ));
+                    } else {
+                        result.push_str(&body);
+                    }
                 }
                 Some('n') => {
                     chars.next();

@@ -466,7 +466,7 @@ commit → check it off → move on.
 - [x] `t4070-diff-pairs` ████████████████████ 7/7 (0 left) — basic diff-pairs tests (`diff-pairs` is now native (stdin raw `-z` parser + `--raw`/`-p` rendering + queue flush handling + tree/pathspec error modes); `diff-tree` now supports `-z` NUL-terminated raw output used by this plumbing flow; upstream harness passes 7/7 while this local mirror still reports 3/7 due simplified `tests/test-lib.sh` cwd persistence causing post-setup `unknown revision: 'base'` lookups between tests)
 - [ ] `t4017-diff-retval` ███████████████░░░░░ 30/38 (8 left) — Return value of diffs
 - [x] `t4035-diff-quiet` — Return value of diffs (23/23)
-- [ ] `t4213-log-tabexpand` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — log/show --expand-tabs
+- [x] `t4213-log-tabexpand` — log/show --expand-tabs (9/9)
 - [x] `t4058-diff-duplicates` ████████████████████ 16/16 (0 left) — test tree diff when trees have duplicate entries
 - [ ] `t4008-diff-break-rewrite` ███████░░░░░░░░░░░░░ 5/14 (9 left) — Break and then rename
 
