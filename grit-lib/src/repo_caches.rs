@@ -8,6 +8,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+fn canonical_config_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
 /// Read repository-local `config` from disk (no caching; standalone [`ConfigSet::load`] paths use this).
 pub(crate) fn read_local_config_file(path: &Path) -> Result<String> {
     std::fs::read_to_string(path).map_err(Error::Io)
@@ -46,6 +50,8 @@ pub struct RepoCaches {
     local_repo_format: Mutex<Option<crate::repo::RepositoryFormat>>,
     /// Raw bytes of repository-local `config` for helpers that would otherwise re-open the file.
     local_config_text: Mutex<Option<String>>,
+    /// Canonical path paired with [`Self::local_config_text`] (MIDX and ref backend share one read).
+    local_config_source_path: Mutex<Option<PathBuf>>,
     attr_stack: Mutex<HashMap<(PathBuf, PathBuf), AttrStackCacheEntry>>,
     attr_bare: Mutex<HashMap<PathBuf, AttrStackCacheEntry>>,
     attr_tree: Mutex<HashMap<ObjectId, Arc<ParsedGitAttributes>>>,
@@ -85,6 +91,7 @@ impl RepoCaches {
             session_config: Mutex::new(None),
             local_repo_format: Mutex::new(None),
             local_config_text: Mutex::new(None),
+            local_config_source_path: Mutex::new(None),
             attr_stack: Mutex::new(HashMap::new()),
             attr_bare: Mutex::new(HashMap::new()),
             attr_tree: Mutex::new(HashMap::new()),
@@ -253,14 +260,23 @@ impl RepoCaches {
         if let Ok(mut slot) = self.local_config_text.lock() {
             *slot = None;
         }
+        if let Ok(mut slot) = self.local_config_source_path.lock() {
+            *slot = None;
+        }
     }
 
-    /// Drop all memoized configuration cascades for this repository handle.
-    pub fn invalidate_config_cache(&self) {
-        if let Ok(mut cache) = self.config_cache.lock() {
-            cache.clear();
+    /// Cached local `config` body when `config_path` matches the path loaded by [`Self::local_config_text`].
+    pub(crate) fn cached_local_config_text_for_path(&self, config_path: &Path) -> Option<String> {
+        let key = canonical_config_path(config_path);
+        let stored_path = self.local_config_source_path.lock().ok()?.clone()?;
+        if canonical_config_path(&stored_path) != key {
+            return None;
         }
-        self.clear_session_config();
+        self.local_config_text.lock().ok()?.clone()
+    }
+
+    /// Drop derived state that depends on repository-local config text or cascade stamps.
+    pub(crate) fn invalidate_config_file_derived(&self) {
         self.clear_local_config_derived();
         if let Ok(mut guard) = self.ref_stores.lock() {
             guard.clear();
@@ -268,6 +284,15 @@ impl RepoCaches {
         if let Ok(mut guard) = self.ref_storage_format.lock() {
             guard.clear();
         }
+        if let Ok(mut cache) = self.config_cache.lock() {
+            cache.clear();
+        }
+    }
+
+    /// Drop all memoized configuration cascades for this repository handle.
+    pub fn invalidate_config_cache(&self) {
+        self.clear_session_config();
+        self.invalidate_config_file_derived();
     }
 
     /// Repository-local `config` body (linked worktree common dir when needed), read at most once per handle until invalidation.
@@ -278,8 +303,12 @@ impl RepoCaches {
             }
         }
         let text = read_local_config_file(config_path)?;
+        let source = canonical_config_path(config_path);
         if let Ok(mut guard) = self.local_config_text.lock() {
             *guard = Some(text.clone());
+        }
+        if let Ok(mut guard) = self.local_config_source_path.lock() {
+            *guard = Some(source);
         }
         Ok(text)
     }
@@ -301,15 +330,6 @@ impl RepoCaches {
             *guard = Some(parsed.clone());
         }
         Ok(parsed)
-    }
-
-    /// Return the repository session config snapshot when installed.
-    #[must_use]
-    pub(crate) fn session_config(&self) -> Option<Arc<ConfigSet>> {
-        self.session_config
-            .lock()
-            .ok()
-            .and_then(|g| g.as_ref().map(|(_, cfg)| Arc::clone(cfg)))
     }
 
     /// Install or replace the session config snapshot (see [`crate::repo::Repository`] rustdoc).
@@ -352,6 +372,9 @@ impl RepoCaches {
             });
         }
         if let Ok(mut slot) = self.local_config_text.lock() {
+            *slot = None;
+        }
+        if let Ok(mut slot) = self.local_config_source_path.lock() {
             *slot = None;
         }
     }

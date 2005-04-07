@@ -617,9 +617,23 @@ impl Repository {
     }
 
     fn refresh_config_session(&self) -> Result<()> {
-        self.caches.clear_session_config();
-        self.caches.clear_local_config_derived();
         let opts = self.config_load_options(true);
+        if let Ok(guard) = self.config_session.lock() {
+            if let Some(session) = guard.as_ref() {
+                if session
+                    .validation
+                    .still_valid(self.environment.as_ref(), &self.git_dir, &opts)
+                {
+                    return Ok(());
+                }
+                let env = self.environment.as_ref();
+                let base_stamps = config_file_stamps(env, Some(&self.git_dir), &opts);
+                if session.validation.base_stamps.as_slice() != base_stamps.as_slice() {
+                    self.caches.invalidate_config_file_derived();
+                }
+            }
+        }
+        self.caches.clear_session_config();
         let env = self.environment.as_ref();
         let cfg = self
             .caches

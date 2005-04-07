@@ -1035,8 +1035,22 @@ fn sniff_objectformat_hash_version(config_path: &Path) -> u8 {
 
 /// Uncached `[extensions] objectformat` scan of one config file.
 fn sniff_objectformat_hash_version_uncached(config_path: &Path) -> u8 {
-    let Ok(text) = crate::repo_caches::read_local_config_file(config_path) else {
-        return HASH_VERSION_SHA1;
+    let text = if let Some(caches) =
+        crate::pack_store::PackStore::repo_caches_for_config_path(config_path)
+    {
+        if let Some(text) = caches.cached_local_config_text_for_path(config_path) {
+            text
+        } else {
+            let Ok(text) = crate::repo_caches::read_local_config_file(config_path) else {
+                return HASH_VERSION_SHA1;
+            };
+            text
+        }
+    } else {
+        let Ok(text) = crate::repo_caches::read_local_config_file(config_path) else {
+            return HASH_VERSION_SHA1;
+        };
+        text
     };
     // Minimal scan for `[extensions]` ... `objectformat = sha256`. Section and key
     // names are case-insensitive in git config; values are case-sensitive but git
