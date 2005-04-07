@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -880,7 +880,7 @@ t5310-pack-bitmaps	t5	yes	236	23	213	false	ok	0
 t5311-pack-bitmaps-shallow	t5	yes	6	6	0	true	ok	0
 t5312-prune-corruption	t5	yes	11	5	6	false	ok	0
 t5313-pack-bounds-checks	t5	yes	9	2	7	false	ok	0
-t5314-pack-cycle-detection	t5	yes	2	1	1	false	ok	0
+t5314-pack-cycle-detection	t5	yes	2	2	0	true	ok	0
 t5315-pack-objects-compression	t5	yes	9	5	4	false	ok	0
 t5316-pack-delta-depth	t5	yes	5	3	2	false	ok	0
 t5317-pack-objects-filter-objects	t5	yes	33	9	24	false	ok	0

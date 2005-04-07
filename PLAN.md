@@ -549,7 +549,7 @@ commit → check it off → move on.
 - [ ] `t5330-no-lazy-fetch-with-commit-graph` ███████████████░░░░░ 3/4 (1 left) — test for no lazy fetch with the commit-graph
 - [ ] `t5522-pull-symlink` ███████████████░░░░░ 3/4 (1 left) — pulling from symlinked subdir
 - [ ] `t5406-remote-rejects` █████████████░░░░░░░ 2/3 (1 left) — remote push rejects are reported by client
-- [ ] `t5314-pack-cycle-detection` ██████████░░░░░░░░░░ 1/2 (1 left) — test handling of inter-pack delta cycles during repack
+- [x] `t5314-pack-cycle-detection` — test handling of inter-pack delta cycles during repack
 
 - [ ] `t5581-http-curl-verbose` ██████████░░░░░░░░░░ 1/2 (1 left) — test GIT_CURL_VERBOSE
 - [ ] `t5554-noop-fetch-negotiator` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — test noop fetch negotiator
