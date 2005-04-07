@@ -22,7 +22,8 @@ use grit_lib::ident::parse_signature_times;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::merge_trees::{
-    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation, WhitespaceMergeOptions,
+    merge_trees_three_way, TheirsConflictLabel, TreeMergeConflictPresentation,
+    WhitespaceMergeOptions,
 };
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -965,37 +966,6 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
             }
         }
         fs::write(git_dir.join("MERGE_MSG"), &merge_msg)?;
-
-        let head_oid_conflict = head
-            .oid()
-            .copied()
-            .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
-        let now = time::OffsetDateTime::now_utc();
-        let ident = resolve_committer_ident(&config, now)?;
-        let cp_reflog = format!(
-            "cherry-pick: {}",
-            commit.message.lines().next().unwrap_or("")
-        );
-        let _ = append_reflog(
-            git_dir,
-            "HEAD",
-            &head_oid_conflict,
-            &head_oid_conflict,
-            &ident,
-            &cp_reflog,
-            false,
-        );
-        if let HeadState::Branch { refname, .. } = &head {
-            let _ = append_reflog(
-                git_dir,
-                refname,
-                &head_oid_conflict,
-                &head_oid_conflict,
-                &ident,
-                &cp_reflog,
-                false,
-            );
-        }
 
         eprintln!("error: could not apply {short_oid}... {subject}");
         if merge_conflict_advice_enabled(git_dir) {
