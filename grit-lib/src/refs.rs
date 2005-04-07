@@ -258,6 +258,25 @@ fn packed_ref_name_exists(git_dir: &Path, refname: &str) -> Result<bool> {
     Ok(false)
 }
 
+/// Returns true if `packed-refs` in the ref storage directory for `refname` contains that name.
+///
+/// Used to mirror Git's `is_packed_transaction_needed` behaviour: deleting a ref may open a nested
+/// packed-refs transaction whose abort runs the `reference-transaction` hook in the `aborted`
+/// state between `preparing` and `prepared` on the main transaction.
+///
+/// Returns `false` for reftable repositories and for `HEAD` (packed-refs does not store `HEAD`).
+///
+/// # Errors
+///
+/// Propagates I/O errors reading `packed-refs`.
+pub fn packed_refs_entry_exists(git_dir: &Path, refname: &str) -> Result<bool> {
+    if crate::reftable::is_reftable_repo(git_dir) || refname == "HEAD" {
+        return Ok(false);
+    }
+    let storage_dir = ref_storage_dir(git_dir, refname);
+    packed_ref_name_exists(&storage_dir, refname)
+}
+
 fn read_raw_ref_reftable(git_dir: &Path, refname: &str) -> Result<RawRefLookup> {
     if refname == "HEAD" {
         let head_path = git_dir.join("HEAD");
