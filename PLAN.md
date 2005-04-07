@@ -514,7 +514,7 @@ commit → check it off → move on.
 - [ ] `t4061-diff-indent` █░░░░░░░░░░░░░░░░░░░ 2/33 (31 left) — Test diff indent heuristic.
 
 - [ ] `t4301-merge-tree-write-tree` ░░░░░░░░░░░░░░░░░░░░ 1/33 (32 left) — git merge-tree --write-tree
-- [ ] `t4209-log-pickaxe` ██████░░░░░░░░░░░░░░ 15/48 (33 left) — log --grep/--author/--regexp-ignore-case/-S/-G
+- [x] `t4209-log-pickaxe` — log --grep/--author/--regexp-ignore-case/-S/-G (48/48)
 - [ ] `t4068-diff-symmetric-merge-base` ░░░░░░░░░░░░░░░░░░░░ 1/36 (35 left) — behavior of diff with symmetric-diff setups and --merge-base
 - [ ] `t4047-diff-dirstat` █░░░░░░░░░░░░░░░░░░░ 4/41 (37 left) — diff --dirstat tests
 - [ ] `t4041-diff-submodule-option` █░░░░░░░░░░░░░░░░░░░ 4/46 (42 left) — Support for verbose submodule differences in git diff
