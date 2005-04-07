@@ -264,6 +264,8 @@ fn run_show(args: ShowArgs) -> Result<()> {
         no_decorate: false,
         no_walk: None,
         source: false,
+        alternate_refs: false,
+        internal_remotes_pattern: None,
         ancestry_path: false,
         simplify_by_decoration: false,
         skip: None,

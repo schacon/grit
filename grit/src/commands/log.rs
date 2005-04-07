@@ -30,6 +30,7 @@ use grit_lib::merge_diff::{blob_text_for_diff, is_binary_for_diff};
 use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
+use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, rev_list,
@@ -40,6 +41,7 @@ use grit_lib::rev_parse::{
 };
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{self, IsTerminal, Write};
@@ -96,6 +98,14 @@ pub struct Args {
     /// Show which ref led to each commit (with --all).
     #[arg(long = "source")]
     pub source: bool,
+
+    /// Treat refs in alternate object stores as revision tips (`rev-list --alternate-refs`).
+    #[arg(long = "alternate-refs")]
+    pub alternate_refs: bool,
+
+    /// Expanded from `git log --remotes[=pattern]` by the CLI preprocessor (hidden).
+    #[arg(long = "grit-internal-remotes", hide = true)]
+    pub internal_remotes_pattern: Option<String>,
 
     /// Only show commits on the ancestry path between endpoints.
     #[arg(long = "ancestry-path")]
@@ -1066,6 +1076,7 @@ fn run_line_log(repo: &Repository, args: Args, _patch_context: usize) -> Result<
             &repo.odb,
             parent_override.as_deref(),
             true,
+            None,
             None,
             None,
         )?;
@@ -2737,6 +2748,24 @@ pub fn run(mut args: Args) -> Result<()> {
     // ancestors" — standard git revision range syntax.
     let (start_oids, exclude_oids) = if args.all {
         (collect_all_ref_oids(&repo.git_dir)?, Vec::new())
+    } else if args.alternate_refs {
+        (
+            grit_lib::refs::collect_alternate_ref_oids(&repo.git_dir)
+                .context("failed to collect alternate refs")?,
+            Vec::new(),
+        )
+    } else if let Some(pat) = args.internal_remotes_pattern.as_deref() {
+        let glob_pat = if pat.is_empty() {
+            Cow::Borrowed("refs/remotes/*")
+        } else {
+            Cow::Owned(format!("refs/remotes/{pat}"))
+        };
+        let tips: Vec<ObjectId> = refs::list_refs_glob(&repo.git_dir, glob_pat.as_ref())
+            .context("failed to list remote-tracking refs")?
+            .into_iter()
+            .map(|(_, oid)| oid)
+            .collect();
+        (tips, Vec::new())
     } else if args.revisions.is_empty() {
         if args.branches {
             let mut pairs: Vec<(ObjectId, i64)> = Vec::new();
@@ -2820,8 +2849,26 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // Build source map for --source
-    let source_map: std::collections::HashMap<ObjectId, String> = if args.source && args.all {
-        build_source_map(&repo.odb, &repo.git_dir, args.first_parent)?
+    let source_map: std::collections::HashMap<ObjectId, String> = if args.source {
+        if args.alternate_refs {
+            build_alternate_source_map(&repo)?
+        } else if let Some(pat) = args.internal_remotes_pattern.as_deref() {
+            let glob_pat = if pat.is_empty() {
+                Cow::Borrowed("refs/remotes/*")
+            } else {
+                Cow::Owned(format!("refs/remotes/{pat}"))
+            };
+            build_remote_tracking_source_map(
+                &repo.odb,
+                &repo.git_dir,
+                glob_pat.as_ref(),
+                args.first_parent,
+            )?
+        } else if args.all {
+            build_source_map(&repo.odb, &repo.git_dir, args.first_parent)?
+        } else {
+            std::collections::HashMap::new()
+        }
     } else {
         std::collections::HashMap::new()
     };
@@ -2995,16 +3042,19 @@ pub fn run(mut args: Args) -> Result<()> {
                     writeln!(out)?;
                 }
             }
-            if args.source {
+            let oneline_fmt = args.oneline || args.format.as_deref() == Some("oneline");
+            if args.source && !oneline_fmt {
                 if let Some(src) = source_map.get(&oid) {
-                    let short_src = src
-                        .strip_prefix("refs/heads/")
-                        .or_else(|| src.strip_prefix("refs/tags/"))
-                        .or_else(|| src.strip_prefix("refs/remotes/"))
-                        .unwrap_or(src);
-                    write!(out, "{}\t", short_src)?;
+                    write!(out, "{}\t", short_ref_for_source_display(src))?;
                 }
             }
+            let source_for_oneline = if args.source && oneline_fmt {
+                source_map
+                    .get(&oid)
+                    .map(|full| short_ref_for_source_display(full))
+            } else {
+                None
+            };
             format_commit(
                 &mut out,
                 &oid,
@@ -3018,6 +3068,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 false,
                 None,
                 None,
+                source_for_oneline,
             )?;
 
             if show_diff {
@@ -3179,17 +3230,19 @@ pub fn run(mut args: Args) -> Result<()> {
                     writeln!(out)?;
                 }
             }
-            // Show --source annotation if available
-            if args.source {
+            let oneline_fmt = args.oneline || args.format.as_deref() == Some("oneline");
+            if args.source && !oneline_fmt {
                 if let Some(src) = source_map.get(oid) {
-                    let short_src = src
-                        .strip_prefix("refs/heads/")
-                        .or_else(|| src.strip_prefix("refs/tags/"))
-                        .or_else(|| src.strip_prefix("refs/remotes/"))
-                        .unwrap_or(src);
-                    write!(out, "{}\t", short_src)?;
+                    write!(out, "{}\t", short_ref_for_source_display(src))?;
                 }
             }
+            let source_for_oneline = if args.source && oneline_fmt {
+                source_map
+                    .get(oid)
+                    .map(|full| short_ref_for_source_display(full))
+            } else {
+                None
+            };
             format_commit(
                 &mut out,
                 oid,
@@ -3203,6 +3256,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 false,
                 None,
                 None,
+                source_for_oneline,
             )?;
 
             if show_diff {
@@ -3466,6 +3520,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args, patch_context: usize) -> Resu
             &repo.odb,
             None,
             false,
+            None,
             None,
             None,
         )?;
@@ -5270,6 +5325,7 @@ fn run_symmetric_log(repo: &Repository, args: &Args, _patch_context: usize) -> R
             false,
             log_marker,
             None,
+            None,
         )?;
     }
 
@@ -5293,6 +5349,7 @@ fn format_commit(
     _line_log: bool,
     log_marker: Option<char>,
     merge_from_parent: Option<&ObjectId>,
+    source_for_oneline: Option<&str>,
 ) -> Result<()> {
     let hex = oid.to_hex();
     let abbrev_len = if args.no_abbrev {
@@ -5310,14 +5367,13 @@ fn format_commit(
 
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = info.message.lines().next().unwrap_or("");
-        let dec = format_decoration(&hex, decorations);
-        writeln!(
-            out,
-            "{}{} {}",
-            &hex[..abbrev_len.min(hex.len())],
-            dec,
-            first_line
-        )?;
+        let abbrev = &hex[..abbrev_len.min(hex.len())];
+        if let Some(src) = source_for_oneline {
+            writeln!(out, "{abbrev}\t{src} {first_line}")?;
+        } else {
+            let dec = format_decoration(&hex, decorations);
+            writeln!(out, "{abbrev}{dec} {first_line}")?;
+        }
         return Ok(());
     }
 
@@ -6707,6 +6763,7 @@ fn write_commit_diff(
                     false,
                     None,
                     Some(parent_oid),
+                    None,
                 )?;
             }
             write_commit_diff_body(
@@ -7494,6 +7551,91 @@ fn build_source_map(
         }
     }
 
+    Ok(source_map)
+}
+
+fn short_ref_for_source_display(src: &str) -> &str {
+    if src == ".alternate" {
+        return src;
+    }
+    src.strip_prefix("refs/heads/")
+        .or_else(|| src.strip_prefix("refs/tags/"))
+        .or_else(|| src.strip_prefix("refs/remotes/"))
+        .unwrap_or(src)
+}
+
+/// Like [`build_source_map`] but walks alternate ref tips only, labeling every
+/// reached commit with `.alternate` (Git `rev-list --alternate-refs` /
+/// `log --source --alternate-refs`).
+fn build_remote_tracking_source_map(
+    odb: &Odb,
+    git_dir: &std::path::Path,
+    glob_pat: &str,
+    first_parent: bool,
+) -> Result<std::collections::HashMap<ObjectId, String>> {
+    let mut source_map: std::collections::HashMap<ObjectId, String> =
+        std::collections::HashMap::new();
+    let refs = refs::list_refs_glob(git_dir, glob_pat)?;
+    for (ref_name, oid) in refs {
+        let mut queue = vec![oid];
+        let mut visited = HashSet::new();
+        while let Some(commit_oid) = queue.pop() {
+            if !visited.insert(commit_oid) {
+                continue;
+            }
+            source_map
+                .entry(commit_oid)
+                .or_insert_with(|| ref_name.clone());
+            if let Ok(obj) = odb.read(&commit_oid) {
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    if first_parent {
+                        if let Some(p) = commit.parents.first() {
+                            if !visited.contains(p) {
+                                queue.push(*p);
+                            }
+                        }
+                    } else {
+                        for p in &commit.parents {
+                            if !visited.contains(p) {
+                                queue.push(*p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(source_map)
+}
+
+fn build_alternate_source_map(
+    repo: &Repository,
+) -> Result<std::collections::HashMap<ObjectId, String>> {
+    let mut source_map: std::collections::HashMap<ObjectId, String> =
+        std::collections::HashMap::new();
+    let tips = refs::collect_alternate_ref_oids(&repo.git_dir)?;
+    let label = ".alternate".to_string();
+    for tip in tips {
+        let mut queue = vec![tip];
+        let mut visited = HashSet::new();
+        while let Some(commit_oid) = queue.pop() {
+            if !visited.insert(commit_oid) {
+                continue;
+            }
+            source_map
+                .entry(commit_oid)
+                .or_insert_with(|| label.clone());
+            if let Ok(obj) = repo.odb.read(&commit_oid) {
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    for p in &commit.parents {
+                        if !visited.contains(p) {
+                            queue.push(*p);
+                        }
+                    }
+                }
+            }
+        }
+    }
     Ok(source_map)
 }
 

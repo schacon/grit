@@ -334,10 +334,8 @@ fn collect_alternate_have_oids(repo: &Repository, config: &ConfigSet) -> Result<
                 }
             }
         } else {
-            for line in run_for_each_ref_lines(recv_git_dir, alt, None)? {
-                if let Ok(oid) = ObjectId::from_hex(line.trim()) {
-                    out.insert(oid);
-                }
+            for (_, oid) in refs::list_refs(alt, "refs/")? {
+                out.insert(oid);
             }
         }
     }
