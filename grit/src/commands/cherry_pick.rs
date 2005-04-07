@@ -455,7 +455,7 @@ fn walk_first_parent_filtered(
     while let Some(c) = current {
         let obj = repo.odb.read(&c)?;
         let commit = parse_commit(&obj.data)?;
-        let author_ok = author_sub.map_or(true, |sub| commit.author.contains(sub));
+        let author_ok = author_sub.is_none_or(|sub| commit.author.contains(sub));
         if author_ok {
             matches.push(c);
             if let Some(limit) = max_count {
@@ -931,12 +931,12 @@ pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
 
 fn reset_to_head_tree(repo: &Repository, git_dir: &Path) -> Result<()> {
     let head = resolve_head(git_dir)?;
-    let old_index = load_index(&repo)?;
+    let old_index = load_index(repo)?;
     let mut new_index = Index::new();
     if let Some(head_oid) = head.oid() {
         let obj = repo.odb.read(head_oid)?;
         let commit = parse_commit(&obj.data)?;
-        new_index.entries = tree_to_index_entries(&repo, &commit.tree, "")?;
+        new_index.entries = tree_to_index_entries(repo, &commit.tree, "")?;
     }
     new_index.sort();
     repo.write_index(&mut new_index)?;
@@ -1206,14 +1206,23 @@ fn create_cherry_pick_commit(
     let author = original_commit.author.clone();
     let committer = resolve_committer_ident(&config, now)?;
 
+    let commit_enc = config
+        .get("i18n.commitEncoding")
+        .or_else(|| config.get("i18n.commitencoding"));
+    let (stored_msg, encoding, raw_message) =
+        crate::git_commit_encoding::finalize_stored_commit_message(
+            message.to_owned(),
+            commit_enc.as_deref(),
+        );
+
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
         author,
         committer,
-        encoding: None,
-        message: message.to_owned(),
-        raw_message: None,
+        encoding,
+        message: stored_msg,
+        raw_message,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -1226,8 +1235,7 @@ fn create_cherry_pick_commit(
 }
 
 fn resolve_committer_ident(config: &ConfigSet, now: time::OffsetDateTime) -> Result<String> {
-    let name = std::env::var("GIT_COMMITTER_NAME")
-        .ok()
+    let name = crate::ident::read_git_identity_name_from_env("GIT_COMMITTER_NAME")
         .or_else(|| config.get("user.name"))
         .unwrap_or_else(|| "Unknown".to_owned());
     let email = std::env::var("GIT_COMMITTER_EMAIL")
@@ -1249,8 +1257,7 @@ fn resolve_committer_ident(config: &ConfigSet, now: time::OffsetDateTime) -> Res
 
 fn append_signoff(msg: &str, git_dir: &Path) -> Result<String> {
     let config = ConfigSet::load(Some(git_dir), true)?;
-    let name = std::env::var("GIT_COMMITTER_NAME")
-        .ok()
+    let name = crate::ident::read_git_identity_name_from_env("GIT_COMMITTER_NAME")
         .or_else(|| config.get("user.name"))
         .unwrap_or_else(|| "Unknown".to_owned());
     let email = std::env::var("GIT_COMMITTER_EMAIL")

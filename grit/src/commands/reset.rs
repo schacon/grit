@@ -19,7 +19,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
-use grit_lib::refs::{append_reflog, write_ref};
+use grit_lib::refs::{append_reflog, resolve_ref, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision_as_commit};
 use grit_lib::state::{resolve_head, HeadState};
@@ -227,12 +227,11 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
     }
 
     let first = &rest[0];
-    // Attempt to resolve first arg as a commit-ish.
-    // Must actually resolve to a commit (not just any object like a blob).
-    let first_is_commit = resolve_revision_as_commit(repo, first).is_ok();
+    // Resolve first arg as a commit-ish. If a worktree file shadows `main` etc.,
+    // still prefer `refs/heads/<name>` when that branch exists (matches Git).
+    let commit_spec = resolve_reset_first_arg_as_commit(repo, first);
 
-    if first_is_commit {
-        // First arg is the commit; remaining args are paths (may be empty).
+    if let Some(spec) = commit_spec {
         let paths: Vec<String> = rest[1..]
             .iter()
             .filter(|a| {
@@ -253,11 +252,26 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
             })
             .cloned()
             .collect();
-        (first.clone(), paths)
+        (spec, paths)
     } else {
-        // First arg is not a commit: treat all args as paths against HEAD.
         ("HEAD".to_owned(), rest.to_vec())
     }
+}
+
+/// If `first` names a commit for `git reset`, return the spec to pass to rev-parse.
+fn resolve_reset_first_arg_as_commit(repo: &Repository, first: &str) -> Option<String> {
+    if resolve_revision_as_commit(repo, first).is_ok() {
+        return Some(first.to_owned());
+    }
+    if first.contains('/') || first.starts_with('.') || first == "HEAD" {
+        return None;
+    }
+    let full = format!("refs/heads/{first}");
+    if resolve_ref(&repo.git_dir, &full).is_ok() && resolve_revision_as_commit(repo, &full).is_ok()
+    {
+        return Some(full);
+    }
+    None
 }
 
 /// Resolve the committer identity for reflog entries.

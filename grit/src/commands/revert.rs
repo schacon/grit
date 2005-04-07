@@ -868,14 +868,23 @@ fn create_revert_commit(
     let author = resolve_identity(&config, "AUTHOR")?;
     let committer = resolve_identity(&config, "COMMITTER")?;
 
+    let commit_enc = config
+        .get("i18n.commitEncoding")
+        .or_else(|| config.get("i18n.commitencoding"));
+    let (stored_msg, encoding, raw_message) =
+        crate::git_commit_encoding::finalize_stored_commit_message(
+            message.to_owned(),
+            commit_enc.as_deref(),
+        );
+
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
         author: format_ident(&author, now),
         committer: format_ident(&committer, now),
-        encoding: None,
-        message: message.to_owned(),
-        raw_message: None,
+        encoding,
+        message: stored_msg,
+        raw_message,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -894,8 +903,7 @@ fn resolve_identity(config: &ConfigSet, kind: &str) -> Result<(String, String)> 
     let name_var = format!("GIT_{kind}_NAME");
     let email_var = format!("GIT_{kind}_EMAIL");
 
-    let name = std::env::var(&name_var)
-        .ok()
+    let name = crate::ident::read_git_identity_name_from_env(&name_var)
         .or_else(|| config.get("user.name"))
         .unwrap_or_else(|| "Unknown".to_owned());
     let email = std::env::var(&email_var)
