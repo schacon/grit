@@ -311,7 +311,7 @@ commit → check it off → move on.
 - [ ] `t3402-rebase-merge` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — git rebase --merge test
 - [ ] `t3602-rm-sparse-checkout` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — git rm in sparse checked out working trees
 - [ ] `t3013-ls-files-format` ████████░░░░░░░░░░░░ 8/20 (12 left) — git ls-files --format test
-- [ ] `t3425-rebase-topology-merges` █░░░░░░░░░░░░░░░░░░░ 1/13 (12 left) — rebase topology tests with merges
+- [x] `t3425-rebase-topology-merges` — rebase topology tests with merges (13/13)
 - [ ] `t3412-rebase-root` █████████░░░░░░░░░░░ 12/25 (13 left) — git rebase --root
 
 - [ ] `t3300-funny-names` ███████░░░░░░░░░░░░░ 8/21 (13 left) — Pathnames with funny characters.

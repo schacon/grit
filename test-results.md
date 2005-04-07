@@ -2,6 +2,8 @@
 
 **Updated:** 2026-04-08
 
+- `./scripts/run-tests.sh t3425-rebase-topology-merges.sh`: 13/13 passing (topo-order tie-break, `log A..B` exclusions, `format-patch` for `rebase --apply`, merge todo omission, merge replay; harness CSV/dashboards refreshed).
+- `cargo test -p grit-lib --lib`: 121/121 passing.
 - `./scripts/run-tests.sh t13180-log-patch-stat.sh`: 35/35 passing (`grit log` oneline/graph/decorate/skip/max-count/reverse/format; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t10560-switch-create-detach.sh`: 28/28 passing (`switch -- <branch>` disambiguation; invalid `-c`/`-C`/`--orphan` branch names rejected like Git; harness CSV/dashboards refreshed).
 - `cargo test -p grit-lib --lib`: 110/110 passing.
