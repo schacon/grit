@@ -88,7 +88,7 @@ fn spawn_upload_pack_readonly(
 }
 
 /// Read pkt-lines from `r`, appending raw wire bytes to `out`, until a flush packet (`0000`).
-fn read_pkt_lines_until_flush(
+pub(crate) fn read_pkt_lines_until_flush(
     r: &mut impl Read,
     out: &mut Vec<u8>,
     max_total: usize,
@@ -130,7 +130,7 @@ fn read_pkt_lines_until_flush(
     }
 }
 
-fn read_v2_capability_block(stdout: &mut impl Read) -> Result<Vec<String>> {
+pub(crate) fn read_v2_capability_block(stdout: &mut impl Read) -> Result<Vec<String>> {
     let mut caps = Vec::new();
     loop {
         let pkt = pkt_line::read_packet(stdout).context("read v2 capability pkt-line")?;
@@ -258,7 +258,7 @@ fn collect_want_oids_from_ls_refs(buf: &[u8]) -> Result<Vec<ObjectId>> {
     Ok(wants)
 }
 
-fn write_v2_fetch_request(
+pub(crate) fn write_v2_fetch_request(
     stdin: &mut impl Write,
     object_format: &str,
     wants: &[ObjectId],
@@ -300,7 +300,7 @@ fn write_v2_fetch_request(
     Ok(())
 }
 
-fn skip_v2_section_until_boundary(stdout: &mut impl Read) -> Result<()> {
+pub(crate) fn skip_v2_section_until_boundary(stdout: &mut impl Read) -> Result<()> {
     loop {
         match pkt_line::read_packet(stdout)? {
             None => return Ok(()),

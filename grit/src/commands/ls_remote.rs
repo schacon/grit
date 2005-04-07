@@ -346,7 +346,7 @@ pub(crate) fn parse_v2_ls_refs_output(data: &[u8], args: &Args) -> Result<Vec<Re
 }
 
 /// Parse one `ls-refs` v2 data line: `<oid> <ref> [peeled:<hex>] [symref-target:<path>]`.
-fn parse_ls_refs_v2_line(
+pub(crate) fn parse_ls_refs_v2_line(
     line: &str,
 ) -> Result<(String, ObjectId, Option<ObjectId>, Option<String>)> {
     const PEEL: &str = " peeled:";
