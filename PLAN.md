@@ -685,7 +685,7 @@ commit → check it off → move on.
 - [ ] `t5516-fetch-push` █░░░░░░░░░░░░░░░░░░░ 7/124 (117 left) — Basic fetch/push functionality.
 
 - [ ] `t5411-proc-receive-hook` ██████████░░░░░░░░░░ 193/354 (161 left) — Test proc-receive hook
-- [ ] `t5310-pack-bitmaps` ██░░░░░░░░░░░░░░░░░░ 30/236 (206 left) — exercise basic bitmap functionality
+- [~] `t5310-pack-bitmaps` ███████████░░░░░░░░░ 127/236 (109 left) — exercise basic bitmap functionality (fast-import bulk + name-hash; pack bitmap I/O still missing)
 - [ ] `t5327-multi-pack-bitmaps-rev` ░░░░░░░░░░░░░░░░░░░░ 14/314 (300 left) — exercise basic multi-pack bitmap functionality (.rev files)
 - [ ] `t5326-multi-pack-bitmaps` █░░░░░░░░░░░░░░░░░░░ 29/357 (328 left) — exercise basic multi-pack bitmap functionality
 - [ ] `t5500-fetch-pack` █░░░░░░░░░░░░░░░░░░░ 29/378 (349 left) — Testing multi_ack pack fetching

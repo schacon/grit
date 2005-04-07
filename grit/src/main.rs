@@ -3243,6 +3243,22 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
                     }
                     Ok(())
                 }
+                "name-hash" => {
+                    use grit_lib::pack_name_hash::{pack_name_hash, pack_name_hash_v2};
+                    use std::io::{BufRead, Write};
+                    let stdin = std::io::stdin();
+                    let mut stdout = std::io::stdout();
+                    for line in stdin.lock().lines() {
+                        let line = line?;
+                        if line.is_empty() {
+                            continue;
+                        }
+                        let h1 = pack_name_hash(&line);
+                        let h2 = pack_name_hash_v2(line.as_bytes());
+                        writeln!(stdout, "{h1:10} {h2:10} {line}")?;
+                    }
+                    Ok(())
+                }
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

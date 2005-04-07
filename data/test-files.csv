@@ -876,7 +876,7 @@ t5306-pack-nobase	t5	yes	4	4	0	true	ok	0
 t5307-pack-missing-commit	t5	yes	5	5	0	true	ok	0
 t5308-pack-detect-duplicates	t5	yes	6	2	4	false	ok	0
 t5309-pack-delta-cycles	t5	yes	7	2	5	false	ok	0
-t5310-pack-bitmaps	t5	yes	236	25	211	false	ok	0
+t5310-pack-bitmaps	t5	yes	236	127	109	false	ok	0
 t5311-pack-bitmaps-shallow	t5	yes	6	6	0	true	ok	0
 t5312-prune-corruption	t5	yes	11	5	6	false	ok	0
 t5313-pack-bounds-checks	t5	yes	9	2	7	false	ok	0
