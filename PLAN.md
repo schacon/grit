@@ -914,7 +914,7 @@ commit → check it off → move on.
 
 ## 9. Misc (12 files)
 
-- [ ] `t8008-blame-formats` ████████████████░░░░ 4/5 (1 left) — blame output in various formats on a simple case
+- [x] `t8008-blame-formats` ████████████████████ 5/5 — blame output in various formats on a simple case
 - [ ] `t8004-blame-with-conflicts` █████████████░░░░░░░ 2/3 (1 left) — git blame on conflicted files
 - [ ] `t8009-blame-vs-topicbranches` ██████████░░░░░░░░░░ 1/2 (1 left) — blaming through history with topic branches
 - [x] `t8010-cat-file-filters` ████████████████████ 9/9 — git cat-file filters support

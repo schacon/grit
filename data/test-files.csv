@@ -1289,7 +1289,7 @@ t8004-blame-with-conflicts	t8	yes	3	3	0	true	ok	0
 t8005-blame-i18n	t8	yes	5	0	5	false	ok	0
 t8006-blame-textconv	t8	yes	16	7	9	false	ok	0
 t8007-cat-file-textconv	t8	yes	15	10	5	false	ok	0
-t8008-blame-formats	t8	yes	5	4	1	false	ok	0
+t8008-blame-formats	t8	yes	5	5	0	true	ok	0
 t8009-blame-vs-topicbranches	t8	yes	2	2	0	true	ok	0
 t8010-cat-file-batch	t8	yes	26	26	0	true	ok	0
 t8010-cat-file-filters	t8	yes	9	9	0	true	ok	0
