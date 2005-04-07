@@ -119,6 +119,13 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.paths = resolved;
             }
         }
+        for p in &mut args.paths {
+            if p == "." || p == "./" {
+                p.clear();
+            } else if let Some(stripped) = p.strip_prefix("./") {
+                *p = stripped.to_string();
+            }
+        }
     }
 
     let oid = resolve_tree_ish(&repo, &args.tree_ish)?;
@@ -243,6 +250,9 @@ fn list_tree(
             let matches = args.paths.iter().any(|p| {
                 let has_trailing_slash = p.ends_with('/');
                 let ps = p.strip_suffix('/').unwrap_or(p.as_str());
+                if ps.is_empty() {
+                    return true;
+                }
                 // Trailing-slash pathspec only matches trees, not blobs
                 if has_trailing_slash && !is_tree && full_name == ps {
                     return false;

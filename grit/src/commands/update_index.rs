@@ -97,6 +97,14 @@ pub struct Args {
     #[arg(long = "replace")]
     pub replace: bool,
 
+    /// Enable split index mode.
+    #[arg(long = "split-index")]
+    pub split_index: bool,
+
+    /// Disable split index mode.
+    #[arg(long = "no-split-index")]
+    pub no_split_index: bool,
+
     /// Do not complain about unmerged entries.
     #[arg(long = "unmerged")]
     pub unmerged: bool,

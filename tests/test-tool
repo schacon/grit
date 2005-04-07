@@ -139,7 +139,14 @@ PY
   read-cache)
     exit 0 ;;
   dump-cache-tree)
-    exit 0 ;;
+    shift
+    exec "$GUST_BIN" test-tool dump-cache-tree "$@" ;;
+  scrap-cache-tree)
+    shift
+    exec "$GUST_BIN" test-tool scrap-cache-tree "$@" ;;
+  dump-split-index)
+    shift
+    exec "$GUST_BIN" test-tool dump-split-index "$@" ;;
   date)
     shift
     case "$1" in

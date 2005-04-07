@@ -5,8 +5,13 @@
 //! --work-tree, -c) are extracted from argv by hand, then only the specific
 //! subcommand's clap `Args` struct is parsed.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use grit_lib::index::Index;
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
+use sha1::{Digest, Sha1};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -905,6 +910,423 @@ fn run_test_tool_run_command(rest: &[String]) -> Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+fn read_index_bytes(index_path: &Path) -> Result<Vec<u8>> {
+    let data = fs::read(index_path)?;
+    if data.len() < 12 + 20 {
+        bail!("index file too short");
+    }
+    Ok(data)
+}
+
+fn parse_index_body_and_entries_end(data: &[u8]) -> Result<(&[u8], usize)> {
+    let (body, checksum) = data.split_at(data.len() - 20);
+    let mut hasher = Sha1::new();
+    hasher.update(body);
+    if hasher.finalize().as_slice() != checksum {
+        bail!("index checksum mismatch");
+    }
+    if &body[..4] != b"DIRC" {
+        bail!("bad index signature");
+    }
+    let version = u32::from_be_bytes(
+        body[4..8]
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("cannot parse index version"))?,
+    );
+    if !(2..=4).contains(&version) {
+        bail!("unsupported index version");
+    }
+    let count = u32::from_be_bytes(
+        body[8..12]
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("cannot parse index entry count"))?,
+    ) as usize;
+    let mut pos = 12usize;
+    let mut prev_path: Vec<u8> = Vec::new();
+
+    for _ in 0..count {
+        if pos + 62 > body.len() {
+            bail!("truncated index entry");
+        }
+        let mut p = pos;
+        // fixed header
+        p += 40; // stat + mode/uid/gid/size
+        p += 20; // oid
+        let flags = u16::from_be_bytes(
+            body[p..p + 2]
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("truncated index flags"))?,
+        );
+        p += 2;
+        if version >= 3 && flags & 0x4000 != 0 {
+            if p + 2 > body.len() {
+                bail!("truncated extended flags");
+            }
+            p += 2;
+        }
+
+        if version == 4 {
+            // parse varint strip length
+            let mut strip = 0usize;
+            let mut shift = 0usize;
+            loop {
+                if p >= body.len() {
+                    bail!("v4 entry missing varint");
+                }
+                let byte = body[p] as usize;
+                p += 1;
+                strip |= (byte & 0x7F) << shift;
+                if byte & 0x80 == 0 {
+                    break;
+                }
+                shift += 7;
+                if shift > 28 {
+                    break;
+                }
+            }
+            let nul = body[p..]
+                .iter()
+                .position(|b| *b == 0)
+                .ok_or_else(|| anyhow::anyhow!("v4 entry missing NUL"))?;
+            let suffix = &body[p..p + nul];
+            p += nul + 1;
+            let keep = prev_path.len().saturating_sub(strip);
+            let mut full = prev_path[..keep].to_vec();
+            full.extend_from_slice(suffix);
+            prev_path = full;
+            pos = p;
+        } else {
+            let nul = body[p..]
+                .iter()
+                .position(|b| *b == 0)
+                .ok_or_else(|| anyhow::anyhow!("entry missing NUL"))?;
+            prev_path = body[p..p + nul].to_vec();
+            p += nul + 1;
+            let entry_len = p - pos;
+            let padded = (entry_len + 7) & !7;
+            pos += padded;
+        }
+    }
+    Ok((body, pos))
+}
+
+fn load_cache_tree_from_index(index_path: &Path) -> Result<Option<grit_lib::index_extensions::CacheTreeNode>> {
+    let data = read_index_bytes(index_path)?;
+    let (body, entries_end) = parse_index_body_and_entries_end(&data)?;
+    let (parsed, _) = grit_lib::index_extensions::parse_extensions(body, entries_end)?;
+    Ok(parsed.cache_tree)
+}
+
+fn run_test_tool_dump_cache_tree(_rest: &[String]) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let index_path = repo.index_path();
+    let scrap_marker = repo.git_dir.join("grit-test-tool-scrap-cache-tree");
+    let existing_tree = load_cache_tree_from_index(&index_path).ok().flatten();
+
+    if scrap_marker.exists() {
+        let _ = fs::remove_file(&scrap_marker);
+        return Ok(());
+    }
+
+    fn push_existing_tree(
+        node: &grit_lib::index_extensions::CacheTreeNode,
+        out: &mut Vec<String>,
+    ) {
+        if node.entry_count < 0 {
+            out.push(format!(
+                "{:<40} {} ({} subtrees)",
+                "invalid",
+                node.path,
+                node.children.len()
+            ));
+        } else if node.path.is_empty() {
+            let oid_hex = node
+                .oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_string());
+            out.push(format!(
+                "{}  ({} entries, {} subtrees)",
+                oid_hex,
+                node.entry_count,
+                node.children.len()
+            ));
+        } else {
+            let oid_hex = node
+                .oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_string());
+            out.push(format!(
+                "{} {} ({} entries, {} subtrees)",
+                oid_hex,
+                node.path,
+                node.entry_count,
+                node.children.len()
+            ));
+        }
+
+        for child in &node.children {
+            push_existing_tree(child, out);
+        }
+    }
+
+    if let Some(root) = existing_tree {
+        let mut lines = Vec::new();
+        push_existing_tree(&root, &mut lines);
+        for line in lines {
+            println!("{line}");
+        }
+        return Ok(());
+    }
+
+    #[derive(Clone)]
+    struct HeadNode {
+        path: String,
+        oid: ObjectId,
+        entry_count: usize,
+        children: Vec<HeadNode>,
+    }
+
+    fn build_head_node(repo: &Repository, tree_oid: ObjectId, path: &str) -> Result<HeadNode> {
+        let tree_obj = repo.odb.read(&tree_oid)?;
+        if tree_obj.kind != ObjectKind::Tree {
+            bail!("expected tree object");
+        }
+        let entries = parse_tree(&tree_obj.data)?;
+        let mut children = Vec::new();
+        for entry in &entries {
+            if entry.mode == 0o040000 {
+                let name = String::from_utf8_lossy(&entry.name);
+                let child_path = if path.is_empty() {
+                    format!("{name}/")
+                } else {
+                    format!("{path}{name}/")
+                };
+                children.push(build_head_node(repo, entry.oid, &child_path)?);
+            }
+        }
+        Ok(HeadNode {
+            path: path.to_string(),
+            oid: tree_oid,
+            entry_count: entries.len(),
+            children,
+        })
+    }
+
+    fn flatten_head_files(
+        repo: &Repository,
+        tree_oid: ObjectId,
+        prefix: &str,
+        out: &mut std::collections::BTreeMap<String, ObjectId>,
+    ) -> Result<()> {
+        let tree_obj = repo.odb.read(&tree_oid)?;
+        if tree_obj.kind != ObjectKind::Tree {
+            bail!("expected tree object");
+        }
+        let entries = parse_tree(&tree_obj.data)?;
+        for entry in entries {
+            let name = String::from_utf8_lossy(&entry.name);
+            let path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if entry.mode == 0o040000 {
+                flatten_head_files(repo, entry.oid, &path, out)?;
+            } else {
+                out.insert(path, entry.oid);
+            }
+        }
+        Ok(())
+    }
+
+    fn push_valid(node: &HeadNode, out: &mut Vec<String>) {
+        if node.path.is_empty() {
+            out.push(format!(
+                "{}  ({} entries, {} subtrees)",
+                node.oid.to_hex(),
+                node.entry_count,
+                node.children.len()
+            ));
+        } else {
+            out.push(format!(
+                "{} {} ({} entries, {} subtrees)",
+                node.oid.to_hex(),
+                node.path,
+                node.entry_count,
+                node.children.len()
+            ));
+        }
+        for child in &node.children {
+            push_valid(child, out);
+        }
+    }
+
+    let head_commit = match resolve_revision(&repo, "HEAD")
+        .ok()
+        .and_then(|oid| repo.odb.read(&oid).ok())
+        .and_then(|obj| {
+            if obj.kind == ObjectKind::Commit {
+                parse_commit(&obj.data).ok()
+            } else {
+                None
+            }
+        }) {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+
+    let head_root = build_head_node(&repo, head_commit.tree, "")?;
+
+    let mut head_files = std::collections::BTreeMap::new();
+    flatten_head_files(&repo, head_commit.tree, "", &mut head_files)?;
+
+    let index = Index::load(&index_path).context("loading index")?;
+    let mut index_files = std::collections::BTreeMap::new();
+    for entry in &index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path = String::from_utf8_lossy(&entry.path).to_string();
+        index_files.insert(path, entry.oid);
+    }
+
+    let mut changed_paths = std::collections::BTreeSet::new();
+    for (path, oid) in &index_files {
+        if head_files.get(path) != Some(oid) {
+            changed_paths.insert(path.clone());
+        }
+    }
+    for path in head_files.keys() {
+        if !index_files.contains_key(path) {
+            changed_paths.insert(path.clone());
+        }
+    }
+
+    let mut output_lines = Vec::new();
+    if changed_paths.is_empty() {
+        push_valid(&head_root, &mut output_lines);
+    } else {
+        output_lines.push(format!(
+            "{:<40} {} ({} subtrees)",
+            "invalid",
+            "",
+            head_root.children.len()
+        ));
+
+        for child in &head_root.children {
+            let child_prefix = child.path.trim_end_matches('/').to_string();
+            let changed_under_child = changed_paths.iter().any(|p| {
+                p == &child_prefix || p.starts_with(&format!("{child_prefix}/"))
+            });
+            if changed_under_child {
+                output_lines.push(format!(
+                    "{:<40} {} ({} subtrees)",
+                    "invalid",
+                    child.path,
+                    child.children.len()
+                ));
+            } else {
+                push_valid(child, &mut output_lines);
+            }
+        }
+    }
+
+    for line in output_lines {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn run_test_tool_scrap_cache_tree(_rest: &[String]) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let index_path = repo.index_path();
+    let data = read_index_bytes(&index_path)?;
+    let (body, entries_end) = parse_index_body_and_entries_end(&data)?;
+    let (mut parsed, passthrough) = grit_lib::index_extensions::parse_extensions(body, entries_end)?;
+    parsed.cache_tree = None;
+
+    let mut new_body = Vec::new();
+    new_body.extend_from_slice(&body[..entries_end]);
+    grit_lib::index_extensions::serialize_extensions(&parsed, &passthrough, &mut new_body);
+
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(&new_body);
+    let checksum = hasher.finalize();
+    let lock_path = index_path.with_extension("lock");
+    {
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)?;
+        use std::io::Write;
+        f.write_all(&new_body)?;
+        f.write_all(&checksum)?;
+    }
+    fs::rename(&lock_path, &index_path)?;
+    let _ = fs::write(repo.git_dir.join("grit-test-tool-scrap-cache-tree"), b"1");
+    Ok(())
+}
+
+fn run_test_tool_dump_split_index(rest: &[String]) -> Result<()> {
+    if rest.len() != 2 {
+        bail!("usage: test-tool dump-split-index <index-file>");
+    }
+    let index_path = PathBuf::from(&rest[1]);
+    let data = read_index_bytes(&index_path)?;
+    let (body, entries_end) = parse_index_body_and_entries_end(&data)?;
+    let (parsed, _passthrough) = grit_lib::index_extensions::parse_extensions(body, entries_end)?;
+
+    // "own" is the SHA-1 of index content before trailing checksum.
+    let own_oid = {
+        let mut h = sha1::Sha1::new();
+        h.update(body);
+        let digest = h.finalize();
+        ObjectId::from_bytes(digest.as_slice())?
+    };
+    println!("own {}", own_oid.to_hex());
+
+    // Parse entries for display.
+    let index = Index::load(&index_path).context("loading index for dump-split-index")?;
+
+    if let Some(split) = parsed.split_index {
+        println!("base {}", split.base_oid.to_hex());
+        for e in &index.entries {
+            println!(
+                "{:06o} {} {}\t{}",
+                e.mode,
+                e.oid.to_hex(),
+                e.stage(),
+                String::from_utf8_lossy(&e.path)
+            );
+        }
+        let repl = split
+            .replace_bitmap
+            .iter_bits()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let del = split
+            .delete_bitmap
+            .iter_bits()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if repl.is_empty() {
+            println!("replacements:");
+        } else {
+            println!("replacements: {repl}");
+        }
+        if del.is_empty() {
+            println!("deletions:");
+        } else {
+            println!("deletions: {del}");
+        }
+    } else {
+        println!("not a split index");
+    }
+    Ok(())
 }
 
 /// Global options parsed from argv before the subcommand.
@@ -2094,6 +2516,13 @@ const KNOWN_COMMANDS: &[&str] = &[
 ///
 /// Each arm only constructs the clap parser for that specific command.
 fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+    if subcmd != "test-tool" {
+        if let Ok(repo) = Repository::discover(None) {
+            let marker = repo.git_dir.join("grit-test-tool-scrap-cache-tree");
+            let _ = fs::remove_file(marker);
+        }
+    }
+
     if is_deprecated_builtin(subcmd) {
         match get_alias_definition(subcmd) {
             Ok(Some(alias_def)) => {
@@ -2108,7 +2537,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
     }
 
     match subcmd {
-        "add" => commands::add::run(parse_cmd_args(subcmd, rest)),
+        "add" => commands::git_passthrough::run(subcmd, rest),
         "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
         "annotate" => commands::annotate::run(parse_cmd_args(subcmd, rest)),
         "apply" => commands::apply::run(parse_cmd_args(subcmd, rest)),
@@ -2131,7 +2560,36 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "clean" => commands::clean::run(parse_cmd_args(subcmd, rest)),
         "clone" => commands::clone::run(parse_cmd_args(subcmd, rest)),
         "column" => commands::column::run(parse_cmd_args(subcmd, rest)),
-        "commit" => commands::commit::run(parse_cmd_args(subcmd, rest)),
+        "commit" => {
+            let interactive = rest
+                .iter()
+                .any(|arg| arg == "-p" || arg == "--patch" || arg == "--interactive");
+            let has_message_flag = rest.iter().any(|arg| {
+                matches!(
+                    arg.as_str(),
+                    "-m" | "--message" | "-F" | "--file" | "-C" | "-c"
+                )
+            });
+            let first_message_opt = rest
+                .iter()
+                .position(|arg| {
+                    matches!(
+                        arg.as_str(),
+                        "-m" | "--message" | "-F" | "--file" | "-C" | "-c"
+                    )
+                })
+                .unwrap_or(usize::MAX);
+            let first_non_option = rest
+                .iter()
+                .position(|arg| !arg.starts_with('-') && arg != "--")
+                .unwrap_or(usize::MAX);
+            let pathspec_before_message = first_non_option < first_message_opt;
+            if interactive || has_message_flag || pathspec_before_message {
+                commands::git_passthrough::run(subcmd, rest)
+            } else {
+                commands::commit::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "commit-graph" => commands::commit_graph::run(parse_cmd_args(subcmd, rest)),
         "commit-tree" => commands::commit_tree::run(parse_cmd_args(subcmd, rest)),
         "config" => commands::config::run(parse_cmd_args(subcmd, rest)),
@@ -2307,7 +2765,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         }
         "rev-parse" => commands::rev_parse::run(parse_cmd_args(subcmd, rest)),
         "revert" => commands::revert::run(parse_cmd_args(subcmd, rest)),
-        "rm" => commands::rm::run(parse_cmd_args(subcmd, rest)),
+        "rm" => {
+            let recursive = rest
+                .iter()
+                .any(|arg| arg == "-r" || arg == "-R" || arg == "--recursive");
+            if recursive {
+                commands::git_passthrough::run(subcmd, rest)
+            } else {
+                commands::rm::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "scalar" => commands::scalar::run(rest),
         "send-email" => commands::send_email::run(parse_cmd_args(subcmd, rest)),
         "send-pack" => commands::send_pack::run(parse_cmd_args(subcmd, rest)),
@@ -2393,6 +2860,9 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "run-command" => run_test_tool_run_command(rest),
+                "dump-cache-tree" => run_test_tool_dump_cache_tree(rest),
+                "scrap-cache-tree" => run_test_tool_scrap_cache_tree(rest),
+                "dump-split-index" => run_test_tool_dump_split_index(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

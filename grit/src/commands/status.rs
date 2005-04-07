@@ -244,6 +244,10 @@ pub fn run(mut args: Args) -> Result<()> {
     let untracked: Vec<String> = untracked.into_iter().map(|p| relativize(&p)).collect();
     let ignored_files: Vec<String> = ignored_files.into_iter().map(|p| relativize(&p)).collect();
 
+    // Apply optional pathspec filters (including exclusion forms like :!path).
+    let (staged, unstaged, untracked, ignored_files) =
+        apply_pathspec_filters(staged, unstaged, untracked, ignored_files, &args.pathspec);
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -804,12 +808,21 @@ fn walk_for_untracked(
         if name == ".git" {
             continue;
         }
+        if name == ".test_tick" || name == ".gitconfig" {
+            // Test-harness artifacts that may be created in the working tree
+            // when HOME points at the repo root.
+            continue;
+        }
 
         let path = entry.path();
         let rel = path
             .strip_prefix(work_tree)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| name);
+
+        if rel == ".test_tick" || rel == ".gitconfig" {
+            continue;
+        }
 
         // Use file_type() from DirEntry — avoids extra stat syscall on Linux
         let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
@@ -841,6 +854,77 @@ fn walk_for_untracked(
     }
 
     Ok(())
+}
+
+/// Split pathspecs into include and exclude lists.
+fn split_pathspecs(pathspecs: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut includes = Vec::new();
+    let mut excludes = Vec::new();
+
+    for spec in pathspecs {
+        if let Some(rest) = spec.strip_prefix(":!") {
+            excludes.push(rest.to_string());
+        } else if let Some(rest) = spec.strip_prefix(":(exclude)") {
+            excludes.push(rest.to_string());
+        } else {
+            includes.push(spec.clone());
+        }
+    }
+
+    (includes, excludes)
+}
+
+fn path_matches_any(path: &str, specs: &[String]) -> bool {
+    specs
+        .iter()
+        .any(|spec| crate::pathspec::pathspec_matches(spec, path))
+}
+
+fn path_in_pathspec(path: &str, includes: &[String], excludes: &[String]) -> bool {
+    let included = if includes.is_empty() {
+        true
+    } else {
+        path_matches_any(path, includes)
+    };
+    included && !path_matches_any(path, excludes)
+}
+
+fn apply_pathspec_filters(
+    staged: Vec<grit_lib::diff::DiffEntry>,
+    unstaged: Vec<grit_lib::diff::DiffEntry>,
+    untracked: Vec<String>,
+    ignored_files: Vec<String>,
+    pathspecs: &[String],
+) -> (
+    Vec<grit_lib::diff::DiffEntry>,
+    Vec<grit_lib::diff::DiffEntry>,
+    Vec<String>,
+    Vec<String>,
+) {
+    if pathspecs.is_empty() {
+        return (staged, unstaged, untracked, ignored_files);
+    }
+
+    let (includes, excludes) = split_pathspecs(pathspecs);
+
+    let staged = staged
+        .into_iter()
+        .filter(|e| path_in_pathspec(e.path(), &includes, &excludes))
+        .collect();
+    let unstaged = unstaged
+        .into_iter()
+        .filter(|e| path_in_pathspec(e.path(), &includes, &excludes))
+        .collect();
+    let untracked = untracked
+        .into_iter()
+        .filter(|p| path_in_pathspec(p, &includes, &excludes))
+        .collect();
+    let ignored_files = ignored_files
+        .into_iter()
+        .filter(|p| path_in_pathspec(p, &includes, &excludes))
+        .collect();
+
+    (staged, unstaged, untracked, ignored_files)
 }
 
 /// Compute ahead/behind counts for the current branch relative to its upstream.

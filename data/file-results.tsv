@@ -48,7 +48,7 @@ t0070-fundamental	yes	11	11	0	ok	11	11	0
 t0071-sort	yes	1	1	0	ok	1	1	0
 t0080-unit-test-output	yes	1	1	0	ok	1	1	0
 t0081-find-pack	yes	4	4	0	ok	4	4	0
-t0090-cache-tree	yes	22	0	22	ok	0	22	0
+t0090-cache-tree	yes	22	22	0	ok	22	22	0
 t0091-bugreport	yes	13	13	0	ok	13	13	0
 t0092-diagnose	yes	4	4	0	ok	4	4	0
 t0095-bloom	yes	11	11	0	ok	11	11	0

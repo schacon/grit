@@ -281,7 +281,8 @@ pub fn run(args: Args) -> Result<()> {
                     _ => bail!("cannot detach HEAD on unborn branch"),
                 }
             }
-            bail!("you must specify a branch, commit, or paths to checkout")
+            // Upstream `git checkout` with no arguments is a no-op.
+            return Ok(());
         }
     };
 
