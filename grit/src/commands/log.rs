@@ -1338,6 +1338,8 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
                 reorder_path_limited_graph_commits(repo, &dense_result.commits, args.first_parent)?;
             result.commits = expand_sparse_path_limited_graph_history(repo, &dense_ordered)?;
         } else {
+            // Same commit set as `rev-list`; reorder only for graph column layout (main line before
+            // side branches), matching `git log --graph -- <paths>` (`t6016`).
             result.commits =
                 reorder_path_limited_graph_commits(repo, &result.commits, args.first_parent)?;
         }
@@ -1357,8 +1359,15 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
     graph_parent_targets.extend(ordered_boundaries.iter().copied());
     let simplify_graph_parents =
         args.simplify_by_decoration && combined_pathspecs.is_empty() && !args.full_history;
-    let force_first_parent_for_graph =
-        args.sparse && !combined_pathspecs.is_empty() && !args.full_history;
+    // Path-limited history: when walking through commits omitted from the simplified list,
+    // follow only the first parent so graph edges match Git's parent rewriting for `--graph`.
+    // `--full-history` alone keeps full parent connectivity (t6016 case 6); with
+    // `--full-history --simplify-merges` Git again collapses through omitted merges (t6016 case 7).
+    let fp_through_omitted_for_graph =
+        !combined_pathspecs.is_empty() && (!args.full_history || args.simplify_merges);
+    // `--sparse` path-limited graph: show the first-parent spine as a straight column (t6016).
+    let graph_first_parent_direct =
+        args.first_parent || (args.sparse && !combined_pathspecs.is_empty() && !args.full_history);
     let mut nodes = Vec::new();
     let mut seen = HashSet::new();
 
@@ -1370,7 +1379,8 @@ fn run_graph_log(repo: &Repository, args: &Args, patch_context: usize) -> Result
             repo,
             *oid,
             &graph_parent_targets,
-            args.first_parent || force_first_parent_for_graph,
+            graph_first_parent_direct,
+            fp_through_omitted_for_graph,
             simplify_graph_parents,
         )?;
         nodes.push(GraphCommitNode {
@@ -1620,6 +1630,7 @@ fn visible_parents_for_graph(
     oid: ObjectId,
     included: &HashSet<ObjectId>,
     first_parent_only: bool,
+    first_parent_through_omitted: bool,
     simplify_merge_parents: bool,
 ) -> Result<Vec<ObjectId>> {
     let mut direct = load_raw_parents(repo, oid)?;
@@ -1634,6 +1645,7 @@ fn visible_parents_for_graph(
             parent,
             included,
             first_parent_only,
+            first_parent_through_omitted,
             &mut seen,
             &mut out,
         )?;
@@ -1653,6 +1665,7 @@ fn collect_visible_parent_for_graph(
     candidate: ObjectId,
     included: &HashSet<ObjectId>,
     first_parent_only: bool,
+    first_parent_through_omitted: bool,
     seen: &mut HashSet<ObjectId>,
     out: &mut Vec<ObjectId>,
 ) -> Result<()> {
@@ -1667,13 +1680,20 @@ fn collect_visible_parent_for_graph(
     if parents.is_empty() {
         return Ok(());
     }
-    if first_parent_only && parents.len() > 1 {
-        parents.truncate(1);
-    } else if !first_parent_only {
+    let fp_chain = first_parent_only || first_parent_through_omitted;
+    if fp_chain && parents.len() > 1 {
         parents.truncate(1);
     }
     for parent in parents {
-        collect_visible_parent_for_graph(repo, parent, included, first_parent_only, seen, out)?;
+        collect_visible_parent_for_graph(
+            repo,
+            parent,
+            included,
+            first_parent_only,
+            first_parent_through_omitted,
+            seen,
+            out,
+        )?;
     }
     Ok(())
 }
@@ -1720,7 +1740,8 @@ fn reorder_path_limited_graph_commits(
             break;
         }
         chain.push(oid);
-        let visible = visible_parents_for_graph(repo, oid, &included, first_parent_only, false)?;
+        let visible =
+            visible_parents_for_graph(repo, oid, &included, first_parent_only, false, false)?;
         cursor = visible.first().copied();
     }
 
@@ -2041,13 +2062,7 @@ impl AsciiGraph {
             }
         };
 
-        let pad_width =
-            if shown_commit_line && self.current.as_ref().is_some_and(|c| c.parents.len() == 2) {
-                // Match Git's `*   subject` spacing for two-parent merges (t3451-history-reword).
-                self.width.saturating_sub(2)
-            } else {
-                self.width
-            };
+        let pad_width = self.width;
         if line.len() < pad_width {
             line.push_str(&" ".repeat(pad_width - line.len()));
         }
@@ -6374,36 +6389,32 @@ fn collect_decorations(
         map.entry(hex).or_default().push(label);
     }
 
-    if full {
-        collect_refs_from_dir(
-            &repo.odb,
-            &repo.git_dir.join("refs/heads"),
-            "refs/heads/",
-            "refs/heads/",
-            &mut map,
-        )?;
-        collect_refs_from_dir(
-            &repo.odb,
-            &repo.git_dir.join("refs/tags"),
-            "refs/tags/",
-            "tag: refs/tags/",
-            &mut map,
-        )?;
-    } else {
-        collect_refs_from_dir(
-            &repo.odb,
-            &repo.git_dir.join("refs/heads"),
-            "refs/heads/",
-            "",
-            &mut map,
-        )?;
-        collect_refs_from_dir(
-            &repo.odb,
-            &repo.git_dir.join("refs/tags"),
-            "refs/tags/",
-            "tag: ",
-            &mut map,
-        )?;
+    // Use `list_refs` so packed refs (after `git pack-refs` / `tag -d`) are visible — scanning
+    // `refs/heads` and `refs/tags` directories alone misses `packed-refs` (`t6016`).
+    for (refname, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")? {
+        let hex = oid.to_hex();
+        let short = refname
+            .strip_prefix("refs/heads/")
+            .unwrap_or(refname.as_str());
+        let label = if full {
+            format!("refs/heads/{short}")
+        } else {
+            short.to_owned()
+        };
+        map.entry(hex).or_default().push(label);
+    }
+    for (refname, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/tags/")? {
+        let resolved_hex =
+            peel_to_commit_hex(&repo.odb, &oid.to_hex()).unwrap_or_else(|| oid.to_hex());
+        let short = refname
+            .strip_prefix("refs/tags/")
+            .unwrap_or(refname.as_str());
+        let label = if full {
+            format!("tag: refs/tags/{short}")
+        } else {
+            format!("tag: {short}")
+        };
+        map.entry(resolved_hex).or_default().push(label);
     }
 
     // De-duplicate while preserving order.
@@ -6413,44 +6424,6 @@ fn collect_decorations(
     }
 
     Ok(map)
-}
-
-/// Recursively collect refs from a directory.
-fn collect_refs_from_dir(
-    odb: &Odb,
-    dir: &std::path::Path,
-    strip_prefix: &str,
-    display_prefix: &str,
-    map: &mut std::collections::HashMap<String, Vec<String>>,
-) -> Result<()> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_refs_from_dir(odb, &path, strip_prefix, display_prefix, map)?;
-        } else if let Ok(content) = std::fs::read_to_string(&path) {
-            let hex = content.trim();
-            let full_ref = path.to_string_lossy();
-            if let Some(idx) = full_ref.find(strip_prefix) {
-                let name = &full_ref[idx + strip_prefix.len()..];
-                let label = format!("{display_prefix}{name}");
-                // Dereference annotated tags to the commit they point at
-                let resolved_hex = if display_prefix.contains("tag") {
-                    peel_to_commit_hex(odb, hex).unwrap_or_else(|| hex.to_owned())
-                } else {
-                    hex.to_owned()
-                };
-                map.entry(resolved_hex).or_default().push(label);
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Peel an object (possibly a tag) down to a commit and return its hex.

@@ -1055,7 +1055,7 @@ t6012-rev-list-simplify	t6	yes	42	2	40	false	ok	0
 t6013-rev-list-reverse-parents	t6	yes	3	2	1	false	ok	0
 t6014-rev-list-all	t6	yes	4	4	0	true	ok	0
 t6015-rev-list-show-all-parents	t6	yes	38	38	0	true	ok	0
-t6016-rev-list-graph-simplify-history	t6	yes	12	4	8	false	ok	0
+t6016-rev-list-graph-simplify-history	t6	yes	12	12	0	true	ok	0
 t6017-rev-list-stdin	t6	yes	37	11	26	false	ok	0
 t6018-rev-list-glob	t6	yes	95	30	65	false	ok	0
 t6019-rev-list-ancestry-path	t6	yes	18	5	13	false	ok	0
@@ -1193,7 +1193,7 @@ t7111-reset-table	t7	yes	42	34	8	false	ok	0
 t7112-reset-submodule	t7	yes	76	24	52	false	ok	0
 t7113-post-index-change-hook	t7	yes	4	1	3	false	ok	0
 t7201-co	t7	yes	46	17	29	false	ok	0
-t7300-clean	t7	yes	53	52	1	false	ok	2
+t7300-clean	t7	yes	53	52	1	false	ok	0
 t7301-clean-interactive	t7	yes	23	8	15	false	ok	0
 t7400-submodule-basic	t7	yes	124	51	73	false	ok	0
 t7401-submodule-summary	t7	yes	25	6	19	false	ok	0

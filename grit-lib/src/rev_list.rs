@@ -5,7 +5,7 @@
 //! limits, ordering (`--topo-order`, `--date-order`, `--reverse`), and basic
 //! output shaping (`--count`, `--parents`, `--format`).
 
-use std::cmp::{Ordering, Reverse};
+use std::cmp::Ordering;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
@@ -587,11 +587,6 @@ pub fn rev_list(
     };
     included.retain(|oid| !excluded.contains(oid));
 
-    if options.simplify_by_decoration {
-        let decorated = all_ref_tips(repo)?;
-        included.retain(|oid| decorated.contains(oid));
-    }
-
     if options.ancestry_path {
         let mut bottoms = options.ancestry_path_bottoms.clone();
         if bottoms.is_empty() {
@@ -624,7 +619,8 @@ pub fn rev_list(
                 .collect();
             date_order_walk(&mut graph, &tips, &included)?
         }
-        OrderingMode::Topo | OrderingMode::Date => topo_sort(&mut graph, &included)?,
+        OrderingMode::Topo => topo_sort_graph_order(&mut graph, &included)?,
+        OrderingMode::Date => topo_sort_date_order(&mut graph, &included)?,
     };
 
     // Path filtering: keep only commits that modify given paths
@@ -2263,7 +2259,18 @@ fn date_order_walk(
     Ok(out)
 }
 
-fn topo_sort(graph: &mut CommitGraph<'_>, selected: &HashSet<ObjectId>) -> Result<Vec<ObjectId>> {
+/// Git's default `--topo-order` (`REV_SORT_IN_GRAPH_ORDER`): same Kahn walk as
+/// `sort_in_topological_order` with `REV_SORT_IN_GRAPH_ORDER` — a LIFO stack implemented by
+/// Git's `prio_queue` without `compare` (`put` appends, `get` pops the end) after
+/// `prio_queue_reverse` on the initial tip batch (`commit.c`).
+///
+/// Tips are enqueued **oldest first** so the first `get` returns the **newest** tip; each time a
+/// commit is emitted, parents that become ready are `put` in **first-parent order**, so the
+/// **last** parent in that order is popped before the earlier ones (LIFO).
+fn topo_sort_graph_order(
+    graph: &mut CommitGraph<'_>,
+    selected: &HashSet<ObjectId>,
+) -> Result<Vec<ObjectId>> {
     let mut child_count: HashMap<ObjectId, usize> = selected.iter().map(|&oid| (oid, 0)).collect();
 
     for &oid in selected {
@@ -2277,21 +2284,72 @@ fn topo_sort(graph: &mut CommitGraph<'_>, selected: &HashSet<ObjectId>) -> Resul
         }
     }
 
-    // Git's `--topo-order`: among commits whose children have all been emitted, take the one
-    // with the smallest committer date first (Kahn + min-heap). A max-heap on `CommitDateKey`
-    // inverts this and breaks `rev-list --reverse --topo-order` vs upstream (t3425).
-    let mut ready: BinaryHeap<Reverse<CommitDateKey>> = BinaryHeap::new();
+    let mut tips: Vec<ObjectId> = selected
+        .iter()
+        .copied()
+        .filter(|oid| child_count[oid] == 0)
+        .collect();
+    tips.sort_by(|a, b| {
+        let da = graph.committer_time(*a);
+        let db = graph.committer_time(*b);
+        da.cmp(&db).then_with(|| a.cmp(b))
+    });
+
+    let mut ready: VecDeque<ObjectId> = VecDeque::new();
+    for oid in tips {
+        ready.push_back(oid);
+    }
+
+    let mut out = Vec::with_capacity(selected.len());
+    while let Some(oid) = ready.pop_back() {
+        out.push(oid);
+        for parent in graph.parents_of(oid)? {
+            if !selected.contains(&parent) {
+                continue;
+            }
+            if let Some(count) = child_count.get_mut(&parent) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    ready.push_back(parent);
+                }
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+/// Git's `--date-order`: topological walk where among ready commits the **newest** committer
+/// date is chosen next (`compare_commits_by_commit_date` + priority queue).
+fn topo_sort_date_order(
+    graph: &mut CommitGraph<'_>,
+    selected: &HashSet<ObjectId>,
+) -> Result<Vec<ObjectId>> {
+    let mut child_count: HashMap<ObjectId, usize> = selected.iter().map(|&oid| (oid, 0)).collect();
+
+    for &oid in selected {
+        for parent in graph.parents_of(oid)? {
+            if !selected.contains(&parent) {
+                continue;
+            }
+            if let Some(count) = child_count.get_mut(&parent) {
+                *count += 1;
+            }
+        }
+    }
+
+    let mut ready: BinaryHeap<CommitDateKey> = BinaryHeap::new();
     for (&oid, &count) in &child_count {
         if count == 0 {
-            ready.push(Reverse(CommitDateKey {
+            ready.push(CommitDateKey {
                 oid,
                 date: graph.committer_time(oid),
-            }));
+            });
         }
     }
 
     let mut out = Vec::with_capacity(selected.len());
-    while let Some(Reverse(item)) = ready.pop() {
+    while let Some(item) = ready.pop() {
         let oid = item.oid;
         out.push(oid);
         for parent in graph.parents_of(oid)? {
@@ -2301,10 +2359,10 @@ fn topo_sort(graph: &mut CommitGraph<'_>, selected: &HashSet<ObjectId>) -> Resul
             if let Some(count) = child_count.get_mut(&parent) {
                 *count = count.saturating_sub(1);
                 if *count == 0 {
-                    ready.push(Reverse(CommitDateKey {
+                    ready.push(CommitDateKey {
                         oid: parent,
                         date: graph.committer_time(parent),
-                    }));
+                    });
                 }
             }
         }
