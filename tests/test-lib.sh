@@ -834,13 +834,19 @@ write_script () {
 	chmod +x "$1"
 }
 
-# test_hook [--setup] HOOKNAME — write a hook script from stdin
+# test_hook [--setup] [--clobber] HOOKNAME — write a hook script from stdin
+# --clobber replaces an existing hook (matches upstream test-lib; implies --setup).
 test_hook () {
-	local setup= indir=
+	local setup= clobber= indir=
 	while test $# != 0
 	do
 		case "$1" in
 		--setup)
+			setup=t
+			shift
+			;;
+		--clobber)
+			clobber=t
 			setup=t
 			shift
 			;;
@@ -866,6 +872,10 @@ test_hook () {
 	else
 		hook_dir=".git/hooks"
 	fi
+	if test -z "$clobber"
+	then
+		test_path_is_missing "$hook_dir/$1"
+	fi &&
 	mkdir -p "$hook_dir" &&
 	write_script "$hook_dir/$1"
 }
