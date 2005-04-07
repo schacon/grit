@@ -2,13 +2,14 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::objects::parse_commit;
+use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
     render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, ObjectFilter,
     OrderingMode, OutputMode, RevListOptions,
 };
-use std::io::Write;
 
 /// Arguments for `grit rev-list`.
 #[derive(Debug, ClapArgs)]
@@ -31,6 +32,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut default_rev: Option<String> = None;
     let mut no_commit_header = false;
     let mut use_color = false;
+    let mut walk_reflogs = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -261,27 +263,7 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 "--abbrev-commit" | "--no-abbrev-commit" => { /* silently accept */ }
                 "--abbrev" => abbrev_len = 7,
-                "--reflog" | "--walk-reflogs" | "-g" => {
-                    // Walk reflog: output all OIDs in the reflog
-                    let refname = if revision_specs.is_empty() {
-                        "HEAD".to_string()
-                    } else {
-                        let r = &revision_specs[0];
-                        if r == "HEAD" || r.starts_with("refs/") {
-                            r.clone()
-                        } else {
-                            format!("refs/heads/{r}")
-                        }
-                    };
-                    let entries = grit_lib::reflog::read_reflog(&repo.git_dir, &refname)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    let stdout = std::io::stdout();
-                    let mut out = stdout.lock();
-                    for entry in entries.iter().rev() {
-                        writeln!(out, "{}", entry.new_oid.to_hex())?;
-                    }
-                    return Ok(());
-                }
+                "--reflog" | "--walk-reflogs" | "-g" => walk_reflogs = true,
                 _ if arg.starts_with("--filter=") => {
                     let spec = arg.trim_start_matches("--filter=");
                     let filter = ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -338,6 +320,12 @@ pub fn run(args: Args) -> Result<()> {
         if let Some(def) = default_rev {
             revision_specs.push(def);
         }
+    }
+    if walk_reflogs {
+        if revision_specs.is_empty() {
+            bail!("--walk-reflogs requires at least one revision");
+        }
+        return run_reflog_walk(&repo, &options, &revision_specs);
     }
 
     // Handle symmetric diff (A...B) tokens
@@ -533,4 +521,66 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
         return Ok(usize::MAX);
     }
     Ok(value as usize)
+}
+
+fn run_reflog_walk(
+    repo: &Repository,
+    options: &RevListOptions,
+    revision_specs: &[String],
+) -> Result<()> {
+    let r = &revision_specs[0];
+    let refname = if let Some(full) = grit_lib::rev_parse::symbolic_full_name(repo, r) {
+        full
+    } else if r == "HEAD" || r.starts_with("refs/") {
+        r.clone()
+    } else {
+        let candidate = format!("refs/heads/{r}");
+        if grit_lib::refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
+            candidate
+        } else {
+            r.clone()
+        }
+    };
+
+    let entries = read_reflog(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut emitted = 0usize;
+    let mut skipped = 0usize;
+
+    for entry in entries.iter().rev() {
+        if skipped < options.skip {
+            skipped += 1;
+            continue;
+        }
+        if let Some(max) = options.max_count {
+            if emitted >= max {
+                break;
+            }
+        }
+
+        if !options.quiet {
+            match options.output_mode {
+                OutputMode::Parents => {
+                    if let Ok(obj) = repo.odb.read(&entry.new_oid) {
+                        if let Ok(commit) = parse_commit(&obj.data) {
+                            let mut line = entry.new_oid.to_hex();
+                            for parent in commit.parents {
+                                line.push(' ');
+                                line.push_str(&parent.to_hex());
+                            }
+                            println!("{line}");
+                        } else {
+                            println!("{}", entry.new_oid.to_hex());
+                        }
+                    } else {
+                        println!("{}", entry.new_oid.to_hex());
+                    }
+                }
+                _ => println!("{}", entry.new_oid.to_hex()),
+            }
+        }
+
+        emitted += 1;
+    }
+
+    Ok(())
 }

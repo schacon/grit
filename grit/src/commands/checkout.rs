@@ -3092,12 +3092,18 @@ fn resolve_checkout_identity(repo: &Repository) -> String {
         .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
         .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
         .unwrap_or_default();
-    let now = time::OffsetDateTime::now_utc();
-    let epoch = now.unix_timestamp();
-    let offset = now.offset();
-    let hours = offset.whole_hours();
-    let minutes = offset.minutes_past_hour().unsigned_abs();
-    format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
+    let date = std::env::var("GIT_COMMITTER_DATE")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_DATE").ok())
+        .unwrap_or_else(|| {
+            let now = time::OffsetDateTime::now_utc();
+            let epoch = now.unix_timestamp();
+            let offset = now.offset();
+            let hours = offset.whole_hours();
+            let minutes = offset.minutes_past_hour().unsigned_abs();
+            format!("{epoch} {hours:+03}{minutes:02}")
+        });
+    format!("{name} <{email}> {date}")
 }
 
 fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {

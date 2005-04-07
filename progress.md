@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    88 |
+| Completed   |    89 |
 | In progress |     0 |
-| Remaining   |   679 |
+| Remaining   |   678 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1414-reflog-walk` — 12/12 tests pass (implemented merge-aware reflog commit messages so reflog subjects distinguish merge commits; taught checkout/update-ref reflog writers to respect test-controlled committer dates so reflog chronology is correct; enhanced `log -g` reflog walk with multi-ref interleaving by reflog entry timestamp, support for `--no-merges`/`--merges`/pathspec/date filters in reflog mode, and merge path filtering against the intersection of changed paths across all parents; and fixed `rev-list -g` compatibility for `--parents` output and empty-argument failure behavior)
 - `t1417-reflog-updateref` — 21/21 tests pass (fixed `reflog delete --updateref` head-update semantics for non-top deletions by selecting the nearest remaining pre-delete target, and tightened `reflog expire` argument handling to reject reflog-selector inputs like `HEAD@{1}` so it fails without modifying HEAD as upstream expects)
 - `t1014-read-tree-confusing` — 27/28 tests passing (hardened `read-tree` path-component validation for NTFS confusion cases by rejecting backslashes and `.git`-equivalent suffix/ADS names like `.git. ` and `.git...:stream`; remaining failure depends on harness Unicode variable setup for `${u200c}` case)
 - `t0614-reftable-fsck` — 7/7 tests pass (implemented reftable-aware `refs verify` checks covering main/worktree stacks with Git-compatible corruption diagnostics, ensured `init` honors default ref-format environment/config precedence used by upstream tests, and initialized per-worktree reftable stacks during `worktree add` so verification works immediately across linked worktrees)

@@ -2,6 +2,16 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after reflog/rev-list compatibility fixes and reflog identity timestamp handling).
+- `rm -rf /workspace/tests/trash.t1414-reflog-walk && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1414-reflog-walk.sh` (run from `/workspace/tests`): 12/12 passing (improved from 3/12).
+- `./scripts/run-tests.sh t1414-reflog-walk.sh`: 12/12 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 9/10 passing.
+  - `./scripts/run-tests.sh t1014-read-tree-confusing.sh`: 27/28 passing.
+  - `./scripts/run-tests.sh t1417-reflog-updateref.sh`: 21/21 passing.
+  - `./scripts/run-tests.sh t1412-reflog-loop.sh`: 3/3 passing.
+  - `./scripts/run-tests.sh t1400-update-ref.sh`: 0/0 (timeout in harness, existing behavior).
+- `cargo fmt && cargo clippy --fix --allow-dirty -p grit-rs && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
 - `cargo build --release -p grit-rs`: success (after aligning reflog `--updateref` semantics and refspec validation in `reflog delete`/`reflog expire` paths).
 - `rm -rf /workspace/tests/trash.t1417-reflog-updateref && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1417-reflog-updateref.sh` (run from `/workspace/tests`): 21/21 passing (improved from 15/21).
 - `./scripts/run-tests.sh t1417-reflog-updateref.sh`: 21/21 passing.

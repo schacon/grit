@@ -437,6 +437,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // Write reflog entries
     {
+        let is_merge_commit = commit_data.parents.len() > 1;
         let msg = if head.is_unborn() {
             format!(
                 "commit (initial): {}",
@@ -445,6 +446,11 @@ pub fn run(args: Args) -> Result<()> {
         } else if args.amend {
             format!(
                 "commit (amend): {}",
+                commit_data.message.lines().next().unwrap_or("")
+            )
+        } else if is_merge_commit {
+            format!(
+                "commit (merge): {}",
                 commit_data.message.lines().next().unwrap_or("")
             )
         } else {

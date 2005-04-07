@@ -130,7 +130,7 @@ t1410-reflog	yes	41	4	37	ok	3	40	1
 t1411-reflog-show	yes	17	6	11	ok	6	17	0
 t1412-reflog-loop	yes	3	3	0	ok	3	3	0
 t1413-reflog-detach	yes	7	7	0	ok	7	7	0
-t1414-reflog-walk	yes	12	3	9	ok	3	12	0
+t1414-reflog-walk	yes	12	12	0	ok	12	12	0
 t1415-worktree-refs	yes	10	10	0	ok	10	10	0
 t1416-ref-transaction-hooks	yes	10	9	1	ok	9	10	0
 t1417-reflog-updateref	yes	21	21	0	ok	21	21	0

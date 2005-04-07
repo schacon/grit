@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::fs;
 use std::io::{self, Read};
+use time::OffsetDateTime;
 
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::ObjectId;
@@ -124,13 +125,13 @@ pub fn run(args: Args) -> Result<()> {
     // Reflog — write when -m is given or when --create-reflog is set
     let msg = args.log_message.as_deref().unwrap_or("");
     if !msg.is_empty() || args.create_reflog {
-        let identity = "grit <grit> 0 +0000";
+        let identity = resolve_reflog_identity(&repo);
         let _ = append_reflog(
             &repo.git_dir,
             &target_refname,
             &old_oid_for_reflog,
             &new_oid,
-            identity,
+            &identity,
             msg,
         );
     }
@@ -427,7 +428,7 @@ fn apply_batch_op(repo: &Repository, args: &Args, op: BatchOp) -> Result<()> {
                     &target_refname,
                     &old_oid,
                     &new_oid,
-                    "grit <grit> 0 +0000",
+                    &resolve_reflog_identity(repo),
                     msg,
                 );
             }
@@ -681,6 +682,35 @@ fn run_ref_transaction_state(repo: &Repository, state: &str, updates: &[HookUpda
         &[state],
         Some(stdin_data.as_bytes()),
     )
+}
+
+fn resolve_reflog_identity(repo: &Repository) -> String {
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let name = std::env::var("GIT_COMMITTER_NAME")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_NAME").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.name")))
+        .unwrap_or_else(|| "Unknown".to_owned());
+    let email = std::env::var("GIT_COMMITTER_EMAIL")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
+        .unwrap_or_default();
+
+    let date_str = std::env::var("GIT_COMMITTER_DATE")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_DATE").ok());
+
+    if let Some(date) = date_str {
+        return format!("{name} <{email}> {date}");
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let epoch = now.unix_timestamp();
+    let offset = now.offset();
+    let hours = offset.whole_hours();
+    let minutes = offset.minutes_past_hour().unsigned_abs();
+    format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
 }
 
 fn read_symbolic_ref_no_deref(repo: &Repository, refname: &str) -> Result<Option<String>> {
