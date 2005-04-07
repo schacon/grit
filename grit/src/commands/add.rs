@@ -8,7 +8,6 @@ use clap::Args as ClapArgs;
 use grit_lib::attributes::{parse_gitattributes_file_content, validate_rules_for_add};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
-use grit_lib::diff::stat_matches;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
 #[allow(unused_imports)]
@@ -1136,15 +1135,6 @@ fn stage_file(
         mode
     };
 
-    // Skip if index already has this file with matching stat data and no chmod override
-    if args.chmod.is_none() {
-        if let Some(existing) = index.get(rel_path.as_bytes(), 0) {
-            if stat_matches(existing, &meta) && existing.mode == final_mode {
-                return Ok(());
-            }
-        }
-    }
-
     // Read file content and hash it
     let data = if is_symlink {
         let target = fs::read_link(abs_path)?;
@@ -1175,8 +1165,10 @@ fn stage_file(
         .map_err(anyhow::Error::from)?;
     let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
-                             // Use stage_file which also clears conflict stages (1, 2, 3) for the same
-                             // path — this is how `git add` resolves merge/cherry-pick conflicts.
+    entry.set_assume_unchanged(false);
+    entry.set_skip_worktree(false);
+    // Use stage_file which also clears conflict stages (1, 2, 3) for the same
+    // path — this is how `git add` resolves merge/cherry-pick conflicts.
     index.stage_file(entry);
 
     if args.verbose {

@@ -1,11 +1,11 @@
 //! `grit fast-import` — import from a fast-export stream.
 //!
-//! Delegates to [`grit_lib::fast_import::import_stream`] for the supported
-//! command subset (blobs, commits, reset, done).
+//! Delegates to [`grit_lib::fast_import::import_stream_with_options`] for the
+//! supported command subset (blobs, commits, reset, done, merge parents).
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::fast_import;
+use grit_lib::fast_import::{self, FastImportOptions};
 use grit_lib::repo::Repository;
 use std::io;
 
@@ -19,9 +19,11 @@ pub struct Args {
 }
 
 /// Run `grit fast-import`.
-pub fn run(_args: Args) -> Result<()> {
+pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let force = args.args.iter().any(|a| a == "--force");
     let stdin = io::stdin();
     let reader = stdin.lock();
-    fast_import::import_stream(&repo, reader).map_err(|e| anyhow::anyhow!("{e}"))
+    fast_import::import_stream_with_options(&repo, reader, FastImportOptions { force })
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
