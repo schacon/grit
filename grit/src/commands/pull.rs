@@ -207,6 +207,7 @@ fn do_merge_or_rebase(
             upstream: Some(ref_name.to_owned()),
             branch: None,
             onto: None,
+            root: false,
             interactive: false,
             r#continue: false,
             abort: false,
