@@ -45,9 +45,17 @@ pub struct Args {
     #[arg(long = "abort")]
     pub abort: bool,
 
+    /// End the am session without changing HEAD (like `git am --quit`).
+    #[arg(long = "quit")]
+    pub quit: bool,
+
     /// Skip the current patch.
     #[arg(long = "skip")]
     pub skip: bool,
+
+    /// Strip leading path components from filenames in the patch (`git am -p`).
+    #[arg(short = 'p', long = "strip", default_value_t = 1)]
+    pub strip: usize,
 
     /// Attempt three-way merge if patch doesn't apply cleanly.
     #[arg(short = '3', long = "3way")]
@@ -109,9 +117,15 @@ pub struct Args {
     #[arg(long = "committer-date-is-author-date")]
     pub committer_date_is_author_date: bool,
 
-    /// Show the current patch.
-    #[arg(long = "show-current-patch", value_name = "MODE", num_args = 0..=1, default_missing_value = "raw")]
-    pub show_current_patch: Option<String>,
+    /// Show the current patch (repeatable; incompatible modes error like Git, t4150-am).
+    #[arg(
+        long = "show-current-patch",
+        value_name = "MODE",
+        num_args = 0..=1,
+        default_missing_value = "raw",
+        action = clap::ArgAction::Append
+    )]
+    pub show_current_patch: Vec<String>,
 
     /// Skip hook execution.
     #[arg(long = "no-verify")]
@@ -130,6 +144,9 @@ pub struct Args {
     pub message_id: bool,
 
     /// What to do with empty patches (stop/drop/keep).
+    ///
+    /// Without `=`, the next argv word is taken as the action (`git am --empty drop`).
+    /// A mistaken `git am --empty empty-commit.patch` is rejected like Git (t4150-am).
     #[arg(long = "empty", value_name = "ACTION")]
     pub empty: Option<String>,
 
@@ -159,7 +176,7 @@ pub struct Args {
 }
 
 /// A parsed patch from an mbox message.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct MboxPatch {
     /// Author name + email (e.g. "Name <email>").
     author: String,
@@ -181,6 +198,8 @@ struct MboxPatch {
 struct AmOptions {
     quiet: bool,
     three_way: bool,
+    /// Path strip count for unified diff paths (`-p`, default 1).
+    strip: usize,
     keep_cr: bool,
     no_verify: bool,
     signoff: bool,
@@ -201,6 +220,7 @@ struct AmOptionOverrides {
     keep_cr: Option<bool>,
     signoff: Option<bool>,
     reject: Option<bool>,
+    allow_empty: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -211,8 +231,15 @@ enum QuotedCrAction {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    if let Some(ref mode) = args.show_current_patch {
-        return do_show_current_patch(mode);
+    let repo_for_state = Repository::discover(None).ok();
+    let git_dir_for_state = repo_for_state.as_ref().map(|r| r.git_dir.clone());
+
+    if !args.show_current_patch.is_empty() {
+        let mode = resolve_show_current_patch_mode(&args.show_current_patch)?;
+        return do_show_current_patch(&mode);
+    }
+    if args.quit {
+        return do_quit();
     }
     if args.abort {
         return do_abort();
@@ -221,6 +248,17 @@ pub fn run(args: Args) -> Result<()> {
         return do_skip();
     }
     let overrides = option_overrides_from_args(&args);
+
+    // `git am --allow-empty` with no inputs continues an in-progress session (t4150-am).
+    if args.allow_empty
+        && args.mbox.is_empty()
+        && !args.stdin
+        && git_dir_for_state
+            .as_ref()
+            .is_some_and(|gd| is_am_in_progress(gd))
+    {
+        return do_continue(args.interactive, &overrides);
+    }
 
     if args.r#continue {
         return do_continue(args.interactive, &overrides);
@@ -251,6 +289,27 @@ pub fn run(args: Args) -> Result<()> {
 
 fn am_dir(git_dir: &Path) -> std::path::PathBuf {
     git_dir.join("rebase-apply")
+}
+
+/// Writes `0001` and `patch` under `rebase-apply/` for `git am --show-current-patch` (t4150-am).
+fn write_rebase_apply_patch_files(git_dir: &Path, serialized_patch: &str, raw_diff: &str) {
+    let sd = am_dir(git_dir);
+    let _ = fs::write(sd.join("0001"), serialized_patch);
+    let _ = fs::write(sd.join("patch"), raw_diff);
+}
+
+/// Pine and similar mailers embed folder metadata messages; skip them when applying a concatenated mbox.
+fn is_skippable_mail_folder_message(patch: &MboxPatch) -> bool {
+    let subj = patch
+        .message
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if subj.contains("folder internal data") || subj.contains("don't delete this message") {
+        return true;
+    }
+    patch.author.to_ascii_lowercase().contains("mailer-daemon")
 }
 
 fn write_am_abort_safety(git_dir: &Path) -> Result<()> {
@@ -371,6 +430,18 @@ fn merge_option_overrides(base: &mut AmOptions, overrides: AmOptionOverrides) {
     if let Some(value) = overrides.reject {
         base.reject = value;
     }
+    if let Some(value) = overrides.allow_empty {
+        base.allow_empty = value;
+    }
+}
+
+/// Whether to cut the message at a scissors line (`git am --scissors` or `mailinfo.scissors`).
+/// `--no-scissors` disables cutting even when the config is set (t4150-am).
+fn resolve_mailinfo_scissors(args: &Args, config: &ConfigSet) -> (bool, bool) {
+    let config_scissors = config_bool(config, "mailinfo.scissors").unwrap_or(false);
+    let no_scissors = args.no_scissors;
+    let scissors = !no_scissors && (args.scissors || config_scissors);
+    (scissors, no_scissors)
 }
 
 fn config_bool(config: &ConfigSet, key: &str) -> Option<bool> {
@@ -389,6 +460,17 @@ fn resolve_keep_cr(args: &Args, config: &ConfigSet) -> bool {
     config_bool(config, "am.keepcr").unwrap_or(false)
 }
 
+fn validate_empty_option(args: &Args) -> Result<()> {
+    let Some(ref e) = args.empty else {
+        return Ok(());
+    };
+    if matches!(e.as_str(), "stop" | "drop" | "keep") {
+        return Ok(());
+    }
+    eprintln!("error: invalid value for '--empty': '{e}'");
+    std::process::exit(128);
+}
+
 fn build_am_options(args: &Args, config: &ConfigSet) -> AmOptions {
     let three_way = if args.no_three_way {
         false
@@ -404,6 +486,7 @@ fn build_am_options(args: &Args, config: &ConfigSet) -> AmOptions {
     AmOptions {
         quiet: if args.no_quiet { false } else { args.quiet },
         three_way,
+        strip: args.strip,
         keep_cr,
         no_verify: args.no_verify,
         signoff: if args.no_signoff { false } else { args.signoff },
@@ -453,12 +536,14 @@ fn continue_overrides_from_args(args: &Args) -> AmOptionOverrides {
     } else {
         None
     };
+    let allow_empty = if args.allow_empty { Some(true) } else { None };
     AmOptionOverrides {
         quiet,
         three_way,
         keep_cr,
         signoff,
         reject,
+        allow_empty,
     }
 }
 
@@ -499,9 +584,9 @@ fn do_am(args: Args) -> Result<()> {
 
     let keep = args.keep;
     let keep_non_patch = args.keep_non_patch;
-    let scissors = args.scissors;
-    let no_scissors = args.no_scissors;
     let config = ConfigSet::load(Some(git_dir), true)?;
+    validate_empty_option(&args)?;
+    let (scissors, no_scissors) = resolve_mailinfo_scissors(&args, &config);
     let quoted_cr_action = resolve_quoted_cr_action(args.quoted_cr.as_deref(), &config);
     let keep_cr = resolve_keep_cr(&args, &config);
 
@@ -529,6 +614,8 @@ fn do_am(args: Args) -> Result<()> {
             all_patches.append(&mut patches);
         }
     }
+
+    all_patches.retain(|p| !(is_skippable_mail_folder_message(p) && p.diff.trim().is_empty()));
 
     if all_patches.is_empty() {
         eprintln!("Patch format detection failed.");
@@ -601,19 +688,23 @@ fn do_am_stdin(args: Args) -> Result<()> {
     }
 
     let config = ConfigSet::load(Some(git_dir), true)?;
+    validate_empty_option(&args)?;
     let quoted_cr_action = resolve_quoted_cr_action(args.quoted_cr.as_deref(), &config);
     let keep_cr = resolve_keep_cr(&args, &config);
 
+    let (scissors, no_scissors) = resolve_mailinfo_scissors(&args, &config);
     let mut all_patches = parse_patches(
         &input,
         args.patch_format.as_deref(),
         args.keep,
         args.keep_non_patch,
-        args.scissors,
-        args.no_scissors,
+        scissors,
+        no_scissors,
         keep_cr,
         quoted_cr_action,
     )?;
+    all_patches.retain(|p| !(is_skippable_mail_folder_message(p) && p.diff.trim().is_empty()));
+
     if all_patches.is_empty() {
         eprintln!("Patch format detection failed.");
         std::process::exit(128);
@@ -706,9 +797,10 @@ fn apply_remaining(
         if is_empty_patch {
             match opts.empty.as_str() {
                 "drop" => {
+                    let serialized = serialize_mbox_patch(&patch);
+                    write_rebase_apply_patch_files(git_dir, &serialized, &patch.diff);
                     if !opts.quiet {
-                        let subject = patch.message.lines().next().unwrap_or("");
-                        eprintln!("Skipping: {}", subject);
+                        println!("Skipping: empty commit");
                     }
                     next += 1;
                     fs::write(state_dir.join("next"), next.to_string())?;
@@ -718,16 +810,13 @@ fn apply_remaining(
                     // Will be handled in apply_one_patch as empty commit
                 }
                 _ => {
-                    // "stop" is the default - error on empty patch
-                    let subject = patch.message.lines().next().unwrap_or("");
+                    let serialized = serialize_mbox_patch(&patch);
+                    write_rebase_apply_patch_files(git_dir, &serialized, &patch.diff);
+                    println!("Patch is empty.");
                     eprintln!(
-                        "error: patch failed: patch does not contain a valid diff\n\
-                         Applying: {}\n\
-                         hint: Fix the patch and run \"grit am --continue\".\n\
-                         hint: To abort, run \"grit am --abort\".",
-                        subject
+                        "To record the empty patch as an empty commit, run \"git am --allow-empty\".\n\
+                         When you have resolved this problem, run \"git am --continue\"."
                     );
-                    // Save message for --continue
                     fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
                     std::process::exit(1);
                 }
@@ -746,6 +835,9 @@ fn apply_remaining(
         if !effective_opts.quiet {
             println!("Applying: {}", subject);
         }
+
+        let serialized = serialize_mbox_patch(&patch);
+        write_rebase_apply_patch_files(git_dir, &serialized, &patch.diff);
 
         match apply_one_patch(repo, &patch, &effective_opts) {
             Ok(()) => {
@@ -810,10 +902,15 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
     // Handle empty patches
     if is_empty_patch {
         if opts.empty == "keep" || opts.allow_empty {
+            let mut patch_for_commit = patch.clone();
+            let subject_line = patch_for_commit.message.lines().next().unwrap_or("").trim();
+            if opts.empty == "keep" && !opts.quiet {
+                println!("Creating an empty commit: {subject_line}");
+            }
             // Run applypatch-msg hook
             if !opts.no_verify {
                 let msg_path = git_dir.join("MERGE_MSG");
-                fs::write(&msg_path, &patch.message)?;
+                fs::write(&msg_path, &patch_for_commit.message)?;
                 if !run_hook(
                     git_dir,
                     "applypatch-msg",
@@ -822,6 +919,8 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
                     let _ = fs::remove_file(&msg_path);
                     bail!("applypatch-msg hook rejected the patch");
                 }
+                patch_for_commit.message =
+                    read_merge_msg_after_hook(git_dir, &patch_for_commit.message);
             }
 
             // Run pre-applypatch hook
@@ -831,7 +930,11 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
 
             // Create empty commit
             let index = load_index(repo)?;
-            create_am_commit(repo, &index, patch, opts)?;
+            create_am_commit(repo, &index, &patch_for_commit, opts)?;
+
+            if opts.allow_empty {
+                println!("No changes - recorded it as an empty commit.");
+            }
 
             // Run post-applypatch hook
             if !opts.no_verify {
@@ -841,14 +944,15 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
             let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
             return Ok(());
         } else {
-            bail!("patch does not contain a valid diff");
+            bail!("Patch is empty.");
         }
     }
 
+    let mut patch_for_commit = patch.clone();
     // Run applypatch-msg hook
     if !opts.no_verify {
         let msg_path = git_dir.join("MERGE_MSG");
-        fs::write(&msg_path, &patch.message)?;
+        fs::write(&msg_path, &patch_for_commit.message)?;
         if !run_hook(
             git_dir,
             "applypatch-msg",
@@ -857,13 +961,19 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
             let _ = fs::remove_file(&msg_path);
             bail!("applypatch-msg hook rejected the patch");
         }
+        patch_for_commit.message = read_merge_msg_after_hook(git_dir, &patch_for_commit.message);
     }
 
     // Try to apply the diff to the working tree. With `--3way`, Git verifies patch index
     // preimages against the work tree even when a fuzzy apply could succeed; mismatch must
     // fall through to the 3-way path (t4151 `changes.mbox`).
-    let apply_result =
-        apply_patch_to_worktree(work_tree, &patch.diff, opts.keep_cr, opts.three_way);
+    let apply_result = apply_patch_to_worktree(
+        work_tree,
+        &patch.diff,
+        opts.keep_cr,
+        opts.three_way,
+        opts.strip,
+    );
 
     match apply_result {
         Ok(affected_paths) => {
@@ -873,13 +983,13 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
         Err(e) => {
             if opts.three_way {
                 // Attempt 3-way merge
-                apply_three_way(repo, patch)?;
+                apply_three_way(repo, patch, opts.strip)?;
             } else {
                 if opts.reject {
-                    let _ = write_reject_files_for_patch(work_tree, &patch.diff);
+                    let _ = write_reject_files_for_patch(work_tree, &patch.diff, opts.strip);
                 }
                 // Save message for --continue
-                fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
+                fs::write(git_dir.join("MERGE_MSG"), &patch_for_commit.message)?;
                 return Err(e);
             }
         }
@@ -890,7 +1000,7 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
 
     // Check for conflicts
     if index.entries.iter().any(|e| e.stage() != 0) {
-        fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
+        fs::write(git_dir.join("MERGE_MSG"), &patch_for_commit.message)?;
         bail!("patch has conflicts");
     }
 
@@ -912,7 +1022,7 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
         bail!("pre-applypatch hook rejected the patch");
     }
 
-    create_am_commit(repo, &index, patch, opts)?;
+    create_am_commit(repo, &index, &patch_for_commit, opts)?;
 
     // Run post-applypatch hook (failure doesn't abort)
     if !opts.no_verify {
@@ -977,7 +1087,7 @@ fn merge_three_way_text_am(
 }
 
 /// Attempt a 3-way merge when a patch doesn't apply cleanly.
-fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
+fn apply_three_way(repo: &Repository, patch: &MboxPatch, strip: usize) -> Result<()> {
     let git_dir = &repo.git_dir;
     let work_tree = repo
         .work_tree
@@ -1013,7 +1123,7 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
         let path_str = fp
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let rel_path = strip_components(path_str, 1);
+        let rel_path = strip_components(path_str, strip);
         let mut effective_rel_path = rel_path.clone();
         let mut abs_path = work_tree.join(&effective_rel_path);
 
@@ -1313,13 +1423,13 @@ fn find_tree_path_matching_content(
     Ok(None)
 }
 
-fn write_reject_files_for_patch(work_tree: &Path, diff: &str) -> Result<()> {
+fn write_reject_files_for_patch(work_tree: &Path, diff: &str, strip: usize) -> Result<()> {
     let file_patches = parse_patch(diff)?;
     for fp in &file_patches {
         let Some(path_str) = fp.effective_path() else {
             continue;
         };
-        let rel_path = strip_components(path_str, 1);
+        let rel_path = strip_components(path_str, strip);
         let reject_path = work_tree.join(format!("{rel_path}.rej"));
         if let Some(parent) = reject_path.parent() {
             if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -1433,6 +1543,7 @@ fn apply_patch_to_worktree(
     diff: &str,
     keep_cr: bool,
     strict_preimage: bool,
+    strip: usize,
 ) -> Result<Vec<String>> {
     // Parse the diff into file patches using the same logic as `grit apply`
     let file_patches = parse_patch(diff)?;
@@ -1442,20 +1553,20 @@ fn apply_patch_to_worktree(
         let path_str = fp
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let rel_path = strip_components(path_str, 1);
+        let rel_path = strip_components(path_str, strip);
         let path = work_tree.join(&rel_path);
 
         if fp.is_rename {
             // Handle rename: old path is removed, new path is added
             if let Some(old) = &fp.old_path {
-                let old_rel = strip_components(old, 0);
+                let old_rel = strip_components(old, strip);
                 let old_abs = work_tree.join(&old_rel);
                 if old_abs.exists() {
                     // Read old content, apply hunks if any, write to new path
                     let new_rel = fp
                         .new_path
                         .as_deref()
-                        .map(|p| strip_components(p, 0))
+                        .map(|p| strip_components(p, strip))
                         .unwrap_or_else(|| rel_path.clone());
                     let new_abs = work_tree.join(&new_rel);
                     if let Some(parent) = new_abs.parent() {
@@ -1781,6 +1892,32 @@ fn add_signoff(message: &str, sob_line: &str) -> String {
     }
 }
 
+/// Resolves `--show-current-patch` when given multiple times (Git rejects mixed modes).
+fn resolve_show_current_patch_mode(modes: &[String]) -> Result<String> {
+    let mut effective: Option<String> = None;
+    for raw in modes {
+        let mode = if raw.is_empty() {
+            "raw".to_string()
+        } else {
+            raw.clone()
+        };
+        let normalized = match mode.as_str() {
+            "raw" | "diff" => mode,
+            _ => {
+                bail!("invalid value for --show-current-patch: {}", mode);
+            }
+        };
+        match effective {
+            None => effective = Some(normalized),
+            Some(ref prev) if prev == &normalized => {}
+            Some(_) => {
+                bail!("options incompatible: --show-current-patch=raw --show-current-patch=diff");
+            }
+        }
+    }
+    Ok(effective.unwrap_or_else(|| "raw".to_string()))
+}
+
 /// Show current patch during an am session.
 fn do_show_current_patch(mode: &str) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -1863,15 +2000,22 @@ fn do_continue(interactive: bool, overrides: &AmOptionOverrides) -> Result<()> {
     // The user should have already staged their resolution via 'git add'
     let index = load_index(&repo)?;
     if index.entries.iter().any(|e| e.stage() != 0) {
-        bail!(
-            "error: you still have unmerged files\n\
-             hint: resolve conflicts, stage with 'grit add', then 'grit am --continue'"
-        );
+        bail!("error: you still have unmerged paths.");
     }
 
     let state_dir = am_dir(git_dir);
 
-    // Check that the index has actually changed compared to HEAD
+    let current: usize = fs::read_to_string(state_dir.join("current"))?
+        .trim()
+        .parse()?;
+    let patch_file = state_dir.join("patches").join(current.to_string());
+    let serialized = fs::read_to_string(&patch_file)?;
+    let patch = deserialize_mbox_patch(&serialized)?;
+
+    let base_opts = load_am_options(&state_dir);
+    let effective_opts = merge_options(&base_opts, overrides);
+
+    // Check that the index has actually changed compared to HEAD (unless recording an empty patch).
     let head = resolve_head(git_dir)?;
     if let Some(head_oid) = head.oid() {
         let head_tree = {
@@ -1880,17 +2024,11 @@ fn do_continue(interactive: bool, overrides: &AmOptionOverrides) -> Result<()> {
             commit.tree
         };
         let index_tree = write_tree_from_index(&repo.odb, &index, "")?;
-        if head_tree == index_tree {
+        let patch_is_empty = patch.diff.trim().is_empty();
+        if head_tree == index_tree && !(effective_opts.allow_empty && patch_is_empty) {
             bail!("error: no changes - did you forget to use 'git add'?");
         }
     }
-
-    let current: usize = fs::read_to_string(state_dir.join("current"))?
-        .trim()
-        .parse()?;
-    let patch_file = state_dir.join("patches").join(current.to_string());
-    let serialized = fs::read_to_string(&patch_file)?;
-    let patch = deserialize_mbox_patch(&serialized)?;
 
     // Read message (might have been edited)
     let message = match fs::read_to_string(git_dir.join("MERGE_MSG")) {
@@ -1900,9 +2038,7 @@ fn do_continue(interactive: bool, overrides: &AmOptionOverrides) -> Result<()> {
 
     let patched = MboxPatch { message, ..patch };
     let subject = patched.message.lines().next().unwrap_or("");
-
-    let base_opts = load_am_options(&state_dir);
-    let effective_opts = merge_options(&base_opts, overrides);
+    let patch_is_empty = patched.diff.trim().is_empty();
 
     if interactive && !prompt_yes_no(&format!("Apply patch '{}'? [y/N] ", subject))? {
         let next: usize = fs::read_to_string(state_dir.join("next"))?.trim().parse()?;
@@ -1915,11 +2051,15 @@ fn do_continue(interactive: bool, overrides: &AmOptionOverrides) -> Result<()> {
     // Record rerere postimage before committing
     let _ = crate::commands::rerere::record_postimage(&repo);
 
-    if !effective_opts.quiet {
+    if !effective_opts.quiet && !(effective_opts.allow_empty && patch_is_empty) {
         println!("Applying: {}", subject);
     }
 
     create_am_commit(&repo, &index, &patched, &effective_opts)?;
+
+    if effective_opts.allow_empty && patch_is_empty {
+        println!("No changes - recorded it as an empty commit.");
+    }
 
     write_am_abort_safety(git_dir)?;
 
@@ -1931,6 +2071,19 @@ fn do_continue(interactive: bool, overrides: &AmOptionOverrides) -> Result<()> {
     // Continue with remaining
     apply_remaining(&repo, &base_opts, None)?;
 
+    Ok(())
+}
+
+/// `git am --quit` — remove `rebase-apply` without moving HEAD or touching the index.
+fn do_quit() -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+    let state_dir = am_dir(git_dir);
+    if !state_dir.exists() {
+        bail!("error: no am session in progress");
+    }
+    let _ = fs::remove_dir_all(&state_dir);
+    let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
     Ok(())
 }
 
@@ -2040,6 +2193,7 @@ fn save_am_options(state_dir: &Path, opts: &AmOptions) -> Result<()> {
     if !opts.mail_utf8 {
         out.push_str("no-mail-utf8\n");
     }
+    out.push_str(&format!("strip={}\n", opts.strip));
     out.push_str(&format!("empty={}\n", opts.empty));
     fs::write(state_dir.join("options"), out)?;
     Ok(())
@@ -2050,6 +2204,7 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
     let mut opts = AmOptions {
         quiet: false,
         three_way: false,
+        strip: 1,
         keep_cr: false,
         no_verify: false,
         signoff: false,
@@ -2074,6 +2229,11 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
             "ignore-date" => opts.ignore_date = true,
             "no-mail-utf8" => opts.mail_utf8 = false,
             l if l.starts_with("empty=") => opts.empty = l[6..].to_string(),
+            l if l.starts_with("strip=") => {
+                if let Ok(n) = l[6..].parse::<usize>() {
+                    opts.strip = n;
+                }
+            }
             _ => {}
         }
     }
@@ -2081,6 +2241,12 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
 }
 
 // ── Hooks ───────────────────────────────────────────────────────────
+
+/// Reads `.git/MERGE_MSG` after `applypatch-msg` (the hook may rewrite the file).
+fn read_merge_msg_after_hook(git_dir: &Path, fallback: &str) -> String {
+    let path = git_dir.join("MERGE_MSG");
+    fs::read_to_string(&path).unwrap_or_else(|_| fallback.to_string())
+}
 
 fn run_hook(git_dir: &Path, hook_name: &str, args: &[&str]) -> Result<bool> {
     let hook_path = git_dir.join("hooks").join(hook_name);
@@ -2193,7 +2359,6 @@ fn parse_stgit_patch(input: &str) -> Result<Vec<MboxPatch>> {
     let mut body_lines = Vec::new();
     let mut diff_lines = Vec::new();
     let mut in_diff = false;
-    let mut in_headers;
     let mut past_separator = false;
 
     // First non-blank line is the subject
@@ -2204,28 +2369,34 @@ fn parse_stgit_patch(input: &str) -> Result<Vec<MboxPatch>> {
         }
     }
 
-    // Next lines are headers (From:, Date:) until blank line
-    in_headers = true;
+    // StGit places `From:` / `Date:` after a blank line following the subject (not RFC822
+    // headers). Parse them into author/date and do not include them in the commit message.
+    let mut saw_from_or_date = false;
     for line in lines.by_ref() {
-        if in_headers {
-            if line.trim().is_empty() {
-                in_headers = false;
-                continue;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if saw_from_or_date {
+                break;
             }
-            if let Some(val) = line.strip_prefix("From:") {
-                author = val.trim().to_string();
-                continue;
-            }
-            if let Some(val) = line.strip_prefix("Date:") {
-                date = val.trim().to_string();
-                continue;
-            }
-            // Not a header — must be body
-            in_headers = false;
-            body_lines.push(line);
             continue;
         }
+        if let Some(val) = trimmed.strip_prefix("From:") {
+            author = val.trim().to_string();
+            saw_from_or_date = true;
+            continue;
+        }
+        if let Some(val) = trimmed.strip_prefix("Date:") {
+            date = val.trim().to_string();
+            saw_from_or_date = true;
+            continue;
+        }
+        // First non-empty line that is not From/Date starts the body — put it back by
+        // processing in the main loop; we cannot peek, so push and break.
+        body_lines.push(line);
+        break;
+    }
 
+    for line in lines.by_ref() {
         if !in_diff {
             if line == "---" {
                 past_separator = true;
@@ -2255,7 +2426,7 @@ fn parse_stgit_patch(input: &str) -> Result<Vec<MboxPatch>> {
     }
 
     let author_ident = parse_author_ident(&author, &date);
-    let body = body_lines.join("\n").trim().to_string();
+    let body = body_lines.join("\n").trim_end().to_string();
     let message = if body.is_empty() {
         format!("{}\n", subject)
     } else {
@@ -2366,7 +2537,7 @@ fn parse_hg_patch(input: &str) -> Result<Vec<MboxPatch>> {
     }
 
     let author_ident = parse_author_ident(&author, &date);
-    let body = body_lines.join("\n").trim().to_string();
+    let body = body_lines.join("\n").trim_end().to_string();
     // For HG patches, the first line of the body is the subject
     let (subject, rest) = if let Some(idx) = body.find('\n') {
         (body[..idx].to_string(), body[idx + 1..].trim().to_string())
@@ -2581,6 +2752,9 @@ fn split_message_body_and_diff(payload_lines: &[String]) -> (Vec<String>, Vec<St
         let line = payload_lines[i].as_str();
         let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
         if !in_diff {
+            // Match `mailinfo`: only a line that is exactly `---` (no surrounding
+            // whitespace) starts the patch; indented `---` in the prose (e.g. markdown)
+            // must stay in the commit message (t4150-am).
             if line_no_cr == "---" {
                 i += 1;
                 while i < payload_lines.len() {
@@ -2793,33 +2967,19 @@ fn parse_mbox_with_opts(
         //
         // `Subject:` continuation lines are captured in `body_lines` by this
         // parser, so normalize here before constructing the final message.
-        let mut effective_body_lines: Vec<String> = if is_format_flowed {
+        let effective_body_lines: Vec<String> = if is_format_flowed {
             let body_refs: Vec<&str> = body_lines.iter().map(String::as_str).collect();
             unflow_format_flowed(&body_refs)
         } else {
             body_lines.clone()
         };
-        let mut body_str = effective_body_lines.join("\n").trim().to_string();
-        if !body_str.is_empty() && !subject.is_empty() {
-            let mut consumed = 0usize;
-            let mut continuation = Vec::new();
-            for line in &effective_body_lines {
-                if line.trim().is_empty() {
-                    break;
-                }
-                continuation.push(line.trim().to_string());
-                consumed += 1;
-            }
-            if !continuation.is_empty() {
-                if keep {
-                    subject = format!("{subject}\n{}", continuation.join("\n"));
-                } else {
-                    subject = format!("{subject} {}", continuation.join(" "));
-                }
-                effective_body_lines.drain(0..consumed);
-                body_str = effective_body_lines.join("\n").trim().to_string();
-            }
-        }
+        // Do not fold the first body paragraph into `Subject:` — that is only for RFC822
+        // header continuation (handled in the header parser), not mailbox body lines.
+        // Folding here broke `t4150-am` (subject swallowed the opening paragraph and tabs
+        // were stripped via `.trim()`).
+        // Preserve leading whitespace on body lines (e.g. scissors line with a leading space);
+        // only trim trailing whitespace (`git am` / mailinfo behavior, t4150-am).
+        let mut body_str = effective_body_lines.join("\n").trim_end().to_string();
 
         // Handle --scissors: trim at scissors line, potentially replace subject
         if scissors && !no_scissors {
@@ -2882,20 +3042,40 @@ fn strip_patch_prefix(subject: &str) -> String {
 }
 
 /// Strip only PATCH-related bracket content, keep non-patch brackets.
+///
+/// Matches `mailinfo` / `git am --keep-non-patch`: remove leading `Re:` layers and each
+/// leading `[...]` block that mentions PATCH, but keep other bracket tags (t4150-am `patch4`).
 fn strip_patch_prefix_keep_non_patch(subject: &str) -> String {
-    if subject.starts_with('[') {
-        if let Some(end) = subject.find(']') {
-            let bracket_content = &subject[1..end];
-            // If it looks like a PATCH prefix, strip it
-            if bracket_content.contains("PATCH") {
-                let rest = subject[end + 1..].trim();
-                if !rest.is_empty() {
-                    return rest.to_string();
-                }
-            }
+    let mut s = subject.trim().to_string();
+    loop {
+        let t = s.trim_start().to_string();
+        let lower = t.to_ascii_lowercase();
+        if lower.starts_with("re:") {
+            s = t[3..].trim_start().to_string();
+            continue;
         }
+        break;
     }
-    subject.to_string()
+    loop {
+        let t = s.trim_start();
+        if !t.starts_with('[') {
+            break;
+        }
+        let Some(end) = t.find(']') else {
+            break;
+        };
+        let bracket_content = &t[1..end];
+        if bracket_content.to_ascii_uppercase().contains("PATCH") {
+            s = t[end + 1..].trim_start().to_string();
+            continue;
+        }
+        break;
+    }
+    if s.is_empty() {
+        subject.trim().to_string()
+    } else {
+        s
+    }
 }
 
 /// Apply scissors to the full message (subject + body), replacing subject if needed.
@@ -2943,7 +3123,7 @@ fn apply_scissors_to_message(subject: &str, body: &str) -> (String, String) {
             new_subject = subject.to_string();
         }
 
-        let new_body = new_body_lines.join("\n").trim().to_string();
+        let new_body = new_body_lines.join("\n").trim_end().to_string();
         (new_subject, new_body)
     } else {
         (subject.to_string(), body.to_string())
