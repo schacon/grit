@@ -1958,7 +1958,6 @@ hint: Did you mean ':0:{candidate}' aka ':0:./{path}'?"
 }
 
 /// Look up a path in the index (stage 0) and return its OID.
-
 fn resolve_index_path(repo: &Repository, path: &str) -> Result<ObjectId> {
     resolve_index_path_at_stage(repo, path, 0)
 }

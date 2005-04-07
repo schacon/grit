@@ -700,7 +700,21 @@ fn update_tracked(
     for (raw_path, path_str) in &tracked {
         let abs_path = work_tree.join(path_str);
         if abs_path.exists() {
-            if args.dry_run {
+            // A tracked blob replaced by a plain directory: `git add -u` only drops the index entry
+            // so a later `git add` can record the directory (matches git). Embedded repos still stage
+            // as gitlinks via `stage_file`.
+            let is_plain_directory = fs::symlink_metadata(&abs_path)
+                .map(|m| m.is_dir() && !m.file_type().is_symlink())
+                .unwrap_or(false);
+            let is_embedded_repo = abs_path.join(".git").exists();
+            if is_plain_directory && !is_embedded_repo {
+                if args.verbose || args.dry_run {
+                    println!("remove '{path_str}'");
+                }
+                if !args.dry_run {
+                    index.remove(raw_path);
+                }
+            } else if args.dry_run {
                 // For dry-run, hash without writing to ODB
                 if let Ok(data) = std::fs::read(&abs_path) {
                     let oid = grit_lib::odb::Odb::hash_object_data(
