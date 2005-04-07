@@ -252,6 +252,11 @@ pub fn read_local_pack_indexes(objects_dir: &Path) -> Result<Vec<PackIndex>> {
             continue;
         }
         if let Ok(idx) = read_pack_index(&path) {
+            // Ignore orphan `.idx` files (no `.pack`). They must not make `fsck` think objects
+            // exist (`t7700-repack`); repack also skips them so a stray index does not block work.
+            if !idx.pack_path.is_file() {
+                continue;
+            }
             out.push(idx);
         }
     }

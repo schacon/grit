@@ -18,7 +18,7 @@ use crate::diff::zero_oid;
 use crate::error::{Error, Result};
 use crate::merge_base;
 use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
-use crate::refs;
+use crate::refs::{self, reflog_file_path};
 use crate::repo::Repository;
 use crate::wildmatch::{wildmatch, WM_PATHNAME};
 
@@ -37,7 +37,7 @@ pub struct ReflogEntry {
 
 /// Return the filesystem path for a ref's reflog.
 pub fn reflog_path(git_dir: &Path, refname: &str) -> PathBuf {
-    git_dir.join("logs").join(refname)
+    reflog_file_path(git_dir, refname)
 }
 
 /// Check whether a reflog exists for the given ref.
@@ -306,24 +306,40 @@ pub fn mirror_branch_reflog_to_head(git_dir: &Path, branch_refname: &str) -> Res
 
 /// List all refs that have reflogs.
 pub fn list_reflog_refs(git_dir: &Path) -> Result<Vec<String>> {
-    let logs_dir = git_dir.join("logs");
     let mut refs = Vec::new();
+    let mut seen = HashSet::new();
 
-    // Check HEAD
-    if logs_dir.join("HEAD").is_file() {
-        refs.push("HEAD".to_string());
+    fn collect_from_logs_root(
+        logs_dir: &Path,
+        out: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) -> Result<()> {
+        if logs_dir.join("HEAD").is_file() && seen.insert("HEAD".to_string()) {
+            out.push("HEAD".to_string());
+        }
+        let refs_logs = logs_dir.join("refs");
+        if refs_logs.is_dir() {
+            collect_reflog_refs(&refs_logs, "refs", out, seen)?;
+        }
+        Ok(())
     }
 
-    // Walk logs/refs/
-    let refs_logs = logs_dir.join("refs");
-    if refs_logs.is_dir() {
-        collect_reflog_refs(&refs_logs, "refs", &mut refs)?;
+    collect_from_logs_root(&git_dir.join("logs"), &mut refs, &mut seen)?;
+    if let Some(common) = refs::common_dir(git_dir) {
+        if common != git_dir {
+            collect_from_logs_root(&common.join("logs"), &mut refs, &mut seen)?;
+        }
     }
 
     Ok(refs)
 }
 
-fn collect_reflog_refs(dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<()> {
+fn collect_reflog_refs(
+    dir: &Path,
+    prefix: &str,
+    out: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) -> Result<()> {
     let read_dir = match fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -336,8 +352,8 @@ fn collect_reflog_refs(dir: &Path, prefix: &str, out: &mut Vec<String>) -> Resul
         let full_name = format!("{prefix}/{name}");
         let ft = entry.file_type().map_err(Error::Io)?;
         if ft.is_dir() {
-            collect_reflog_refs(&entry.path(), &full_name, out)?;
-        } else if ft.is_file() {
+            collect_reflog_refs(&entry.path(), &full_name, out, seen)?;
+        } else if ft.is_file() && seen.insert(full_name.clone()) {
             out.push(full_name);
         }
     }

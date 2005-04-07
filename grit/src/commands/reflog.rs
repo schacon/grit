@@ -433,6 +433,9 @@ fn run_drop(args: DropArgs) -> Result<()> {
 /// Parse `--expire` / `--expire-unreachable` values (Git-compatible subset).
 fn parse_reflog_expire_cli(raw: &str, now: i64) -> Result<i64> {
     let s = raw.trim();
+    if s.eq_ignore_ascii_case("all") {
+        return Ok(i64::MAX);
+    }
     if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("false") {
         return Ok(0);
     }

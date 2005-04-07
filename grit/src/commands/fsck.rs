@@ -15,7 +15,7 @@ use grit_lib::error::Error as LibError;
 use grit_lib::ident::fsck_commit_idents;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
-use grit_lib::pack::read_local_pack_indexes;
+use grit_lib::pack::{read_local_pack_indexes, read_pack_index};
 use grit_lib::promisor::{
     promisor_expanded_object_ids, promisor_pack_object_ids, repo_treats_promisor_packs,
 };
@@ -115,6 +115,8 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut issues: Vec<Issue> = Vec::new();
     let mut has_errors = false;
+
+    report_orphan_pack_indexes(&objects_dir, &mut issues)?;
 
     // 1. Collect all reachable OIDs by walking from refs, HEAD, reflogs.
     //    Also track missing objects and (optionally) bad objects.
@@ -880,4 +882,34 @@ fn collect_packed_ids(objects_dir: &Path) -> Result<HashSet<ObjectId>> {
         }
     }
     Ok(ids)
+}
+
+/// `.idx` without a sibling `.pack` is a repository error (Git reports `bad object`; `t7700-repack`).
+fn report_orphan_pack_indexes(objects_dir: &Path, issues: &mut Vec<Issue>) -> Result<()> {
+    let pack_dir = objects_dir.join("pack");
+    let rd = match fs::read_dir(&pack_dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    for ent in rd {
+        let ent = ent.map_err(|e| anyhow::anyhow!(e))?;
+        let path = ent.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("idx") {
+            continue;
+        }
+        if read_pack_index(&path).is_err() {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let pack_path = pack_dir.join(format!("{stem}.pack"));
+        if !pack_path.is_file() {
+            issues.push(Issue::FsckMessage(format!(
+                "bad object pack {stem}.pack (missing)"
+            )));
+        }
+    }
+    Ok(())
 }

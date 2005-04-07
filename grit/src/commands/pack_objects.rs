@@ -18,13 +18,14 @@ use std::time::Duration;
 
 use crate::grit_exe;
 use grit_lib::delta_encode::{encode_lcp_delta, encode_prefix_extension_delta};
-use grit_lib::objects::{parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::promisor::{promisor_pack_object_ids, repo_treats_promisor_packs};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::collections::HashMap;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Arguments for `grit pack-objects`.
@@ -125,6 +126,10 @@ pub struct Args {
     /// Write bitmap index (accepted for compat).
     #[arg(long = "write-bitmap-index")]
     pub write_bitmap_index: bool,
+
+    /// Git default bare-repo bitmap path: create `.bitmap` without full bitmap data (`t7700-repack`).
+    #[arg(long = "write-bitmap-index-quiet", hide = true)]
+    pub write_bitmap_index_quiet: bool,
 
     /// Do not write bitmap index (accepted for compat).
     #[arg(long = "no-write-bitmap-index")]
@@ -287,8 +292,9 @@ pub fn run(args: Args) -> Result<()> {
         //
         // An empty repository’s full `repack`/`gc` also runs `pack-objects --all --non-empty` with
         // zero reachable objects; Git skips writing a pack (t6500 `gc --quiet` on fresh repo).
-        let allow_empty =
-            (args.cruft && !args.incremental) || (args.all && !args.incremental && !args.unpacked);
+        let allow_empty = (args.cruft && !args.incremental)
+            || (args.all && !args.incremental && !args.unpacked)
+            || (args.all && args.unpacked && args.incremental);
         if args.non_empty && !allow_empty {
             bail!("pack-objects refuses to create an empty pack");
         }
@@ -309,22 +315,33 @@ pub fn run(args: Args) -> Result<()> {
         });
     }
 
-    if args.filter.as_deref().map(str::trim) == Some("blob:none")
-        && args
+    if args.filter.as_deref().map(str::trim) == Some("blob:none") {
+        let to_base = args
             .filter_to
             .as_deref()
             .map(str::trim)
-            .is_some_and(|s| !s.is_empty())
-    {
-        let to_base = args.filter_to.as_deref().map(str::trim).unwrap_or("");
-        let side_blobs: Vec<PackEntry> = entries
-            .iter()
-            .filter(|e| e.kind == ObjectKind::Blob)
-            .cloned()
-            .collect();
-        entries.retain(|e| e.kind != ObjectKind::Blob);
-        if !side_blobs.is_empty() {
-            write_pack_via_stdin_objects(&repo, &side_blobs, to_base, args.quiet)?;
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                // `repack --filter=blob:none` omits `--filter-to`; Git writes omitted blobs to the
+                // same pack prefix as the main pack (`t7700-repack`).
+                args.base_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or("");
+        if !to_base.is_empty() {
+            let side_blobs: Vec<PackEntry> = entries
+                .iter()
+                .filter(|e| e.kind == ObjectKind::Blob)
+                .cloned()
+                .collect();
+            entries.retain(|e| e.kind != ObjectKind::Blob);
+            if !side_blobs.is_empty() {
+                write_pack_via_stdin_objects(&repo, &side_blobs, to_base, args.quiet)?;
+            }
+        } else {
+            apply_list_objects_filter(&mut entries, args.filter.as_deref());
         }
     } else {
         apply_list_objects_filter(&mut entries, args.filter.as_deref());
@@ -434,6 +451,18 @@ pub fn run(args: Args) -> Result<()> {
             );
         }
 
+        if args.unpack_unreachable.is_some() {
+            let packed: HashSet<ObjectId> = write_entries
+                .iter()
+                .map(|e| match e {
+                    PackWriteEntry::Full(p) => p.oid,
+                    PackWriteEntry::RefDelta { oid, .. } => *oid,
+                })
+                .collect();
+            loosen_unused_packed_objects(&repo, &packed, &pack_hash, args.honor_pack_keep)?;
+            prune_stale_loose_after_unpack_unreachable(&repo, &packed, &pack_list.oids)?;
+        }
+
         let pb = Path::new(&pack_path);
         if let (Some(dir), Some(stem)) = (pb.parent(), pb.file_stem().and_then(|s| s.to_str())) {
             if args.cruft && !args.incremental {
@@ -443,10 +472,48 @@ pub fn run(args: Args) -> Result<()> {
                 // pack (same object set); drop stale `.mtimes` so `gc --keep-largest-pack` matches Git.
                 let _ = std::fs::remove_file(dir.join(format!("{stem}.mtimes")));
             }
+            if !args.no_write_bitmap_index
+                && (args.write_bitmap_index || args.write_bitmap_index_quiet)
+            {
+                let _ = std::fs::write(dir.join(format!("{stem}.bitmap")), []);
+            } else {
+                // Same pack hash as a prior bitmap repack leaves a stale sidecar if we skip bitmaps
+                // (`git -c repack.writeBitmaps=false repack -ad`; `t7700-repack`).
+                let _ = std::fs::remove_file(dir.join(format!("{stem}.bitmap")));
+            }
         }
     }
 
     Ok(())
+}
+
+/// Objects for default `pack-objects --all`: closure from all refs plus optional reflog tips and
+/// index blobs — same as Git’s `get_object_list` for `--all`.
+///
+/// Unreachable loose objects are **not** included (`t7700-repack`); only the reachability walk
+/// discovers objects (including those stored only in alternate ODBs).
+fn pack_objects_all_enumeration(repo: &Repository, args: &Args) -> Result<Vec<ObjectId>> {
+    let mut opts = RevListOptions::default();
+    opts.objects = true;
+    opts.all_refs = true;
+    opts.include_reflog_entries = args.reflog;
+    opts.include_indexed_objects = args.indexed_objects;
+    opts.missing_action = MissingAction::Allow;
+    let r = match rev_list(repo, &[] as &[String], &[] as &[String], &opts) {
+        Ok(r) => r,
+        Err(LibError::InvalidRef(ref s)) if s == "no revisions specified" => {
+            return Ok(Vec::new());
+        }
+        Err(e) => return Err(e).context("rev-list for pack-objects --all"),
+    };
+    let mut oids = BTreeSet::new();
+    for c in &r.commits {
+        oids.insert(*c);
+    }
+    for (o, _) in r.objects {
+        oids.insert(o);
+    }
+    Ok(oids.into_iter().collect())
 }
 
 /// Objects reachable from refs, reflogs (when enabled), and index blobs — same tips as Git’s
@@ -568,6 +635,21 @@ fn collect_cruft_pack_stdin_oids(repo: &Repository) -> Result<PackObjectList> {
     // `prepare_cruft_history`), and those objects must land in the cruft pack.
     oids.retain(|o| !fresh_oids.contains(o));
 
+    // Loose commits whose parent is already in the fresh (main + `--keep-pack`) packs are one
+    // step off the repacked graph — Git does not treat them as cruft (`t7700-repack` keep-pack).
+    oids.retain(|o| {
+        let Ok(obj) = read_object_from_repo(repo, o) else {
+            return true;
+        };
+        if obj.kind != ObjectKind::Commit {
+            return true;
+        }
+        let Ok(c) = parse_commit(&obj.data) else {
+            return true;
+        };
+        !c.parents.iter().any(|p| fresh_oids.contains(p))
+    });
+
     Ok(PackObjectList {
         oids: oids.into_iter().collect(),
         thin_blob_deltas: Vec::new(),
@@ -670,10 +752,57 @@ fn write_pack_via_stdin_objects(
     if !out.status.success() {
         bail!("pack-objects (filter-to) failed with status {}", out.status);
     }
+    let hash = out
+        .stdout
+        .split(|b| *b == b'\n')
+        .next()
+        .and_then(|line| std::str::from_utf8(line).ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(h) = hash {
+        record_extra_pack_for_repack(&repo.git_dir, &format!("pack-{h}.pack"))?;
+    }
+    Ok(())
+}
+
+fn record_extra_pack_for_repack(git_dir: &Path, pack_name: &str) -> Result<()> {
+    let info = git_dir.join("objects").join("info");
+    fs::create_dir_all(&info).map_err(|e| anyhow::anyhow!(e))?;
+    let path = info.join("grit-extra-packs");
+    use std::io::Write;
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    writeln!(f, "{pack_name}").map_err(|e| anyhow::anyhow!(e))?;
     Ok(())
 }
 
 /// Apply `git pack-objects --filter=<spec>` (subset: `blob:none` for `gc.repackFilter` tests).
+fn pack_index_path_for_stdin_pack_spec(pack_dir: &Path, spec: &str) -> Result<PathBuf> {
+    let idx_path = if spec.contains('/') || spec.contains('\\') {
+        let p = PathBuf::from(spec);
+        if p.extension().is_some_and(|e| e == "pack") {
+            p.with_extension("idx")
+        } else {
+            p
+        }
+    } else {
+        let stem = spec.strip_suffix(".pack").unwrap_or(spec);
+        pack_dir.join(format!("{stem}.idx"))
+    };
+    let idx_path = if idx_path.extension().is_some_and(|e| e == "pack") {
+        idx_path.with_extension("idx")
+    } else {
+        idx_path
+    };
+    if !idx_path.exists() {
+        bail!("pack index not found: {}", idx_path.display());
+    }
+    Ok(idx_path)
+}
+
 fn apply_list_objects_filter(entries: &mut Vec<PackEntry>, filter: Option<&str>) {
     let Some(spec) = filter.map(str::trim).filter(|s| !s.is_empty()) else {
         return;
@@ -684,8 +813,10 @@ fn apply_list_objects_filter(entries: &mut Vec<PackEntry>, filter: Option<&str>)
 }
 
 fn pack_all_use_reachable_closure_only(args: &Args) -> bool {
-    // Default `pack-objects --all` walks the full ODB (loose + all packs). The first pass of
-    // `repack --cruft` is the exception: it must match Git’s main pack (ref closure only).
+    // Only `repack --cruft`’s first `pack-objects` pass uses `--reachability-all`: ref closure
+    // without reflog roots (see `reachable_objects_for_full_repack`). Default `--all` uses
+    // reflog/indexed flags plus **primary** loose objects — not a raw scan of every pack index
+    // (which would pull unreachable objects out of alternate ODBs; `t7700-repack`).
     args.reachability_all
 }
 
@@ -707,22 +838,23 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
             let v = reachable_objects_for_full_repack(repo, args)?;
             oids.extend(v);
         } else {
-            collect_all_loose(&repo.odb, &mut oids)?;
-            let pack_dir = repo.odb.objects_dir().join("pack");
-            if pack_dir.exists() {
-                let indexes = grit_lib::pack::read_local_pack_indexes(repo.odb.objects_dir())
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-                for idx in indexes {
-                    for entry in idx.entries {
-                        oids.insert(entry.oid);
-                    }
-                }
+            let mut v = pack_objects_all_enumeration(repo, args)?;
+            if args.local {
+                // `git pack-objects --local`: omit objects that exist only in alternate ODBs
+                // (reachable from refs but stored as loose/packed under `info/alternates`).
+                v.retain(|oid| !repo.odb.exists(oid) || repo.odb.exists_local(oid));
             }
+            oids.extend(v);
         }
     }
 
     if args.all && !args.keep_pack.is_empty() {
         let skip = keep_pack_object_ids(repo, &args.keep_pack)?;
+        oids.retain(|o| !skip.contains(o));
+    }
+
+    if args.all && args.honor_pack_keep {
+        let skip = kept_pack_object_ids(repo)?;
         oids.retain(|o| !skip.contains(o));
     }
 
@@ -787,35 +919,35 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<PackObjectList> {
             thin_blob_deltas: Vec::new(),
         });
     } else if args.stdin_packs {
-        // Read pack filenames from stdin and include all objects in those packs.
+        // Read pack filenames from stdin: `^pack-…` builds an exclusion set; other lines add
+        // objects from those packs minus exclusions (order-independent; `git repack --filter`).
         let stdin = io::stdin();
         let pack_dir = repo.odb.objects_dir().join("pack");
-        for line in stdin.lock().lines() {
-            let line = line?;
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
+        let lines: Vec<String> = stdin.lock().lines().collect::<Result<Vec<_>, _>>()?;
+        let mut exclude: HashSet<ObjectId> = HashSet::new();
+        for trimmed in lines.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            if !trimmed.starts_with('^') {
                 continue;
             }
-            // The input can be a bare name like "pack-<hash>" or full path.
-            let idx_path = if trimmed.contains('/') || trimmed.contains('\\') {
-                std::path::PathBuf::from(trimmed)
-            } else {
-                pack_dir.join(format!("{}.idx", trimmed))
-            };
-            // If given a .pack, convert to .idx
-            let idx_path = if idx_path.extension().is_some_and(|e| e == "pack") {
-                idx_path.with_extension("idx")
-            } else {
-                idx_path
-            };
-            if idx_path.exists() {
-                let idx = grit_lib::pack::read_pack_index(&idx_path)
-                    .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", idx_path.display()))?;
-                for entry in idx.entries {
+            let spec = trimmed[1..].trim();
+            let idx_path = pack_index_path_for_stdin_pack_spec(&pack_dir, spec)?;
+            let idx = grit_lib::pack::read_pack_index(&idx_path)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", idx_path.display()))?;
+            for entry in idx.entries {
+                exclude.insert(entry.oid);
+            }
+        }
+        for trimmed in lines.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            if trimmed.starts_with('^') {
+                continue;
+            }
+            let idx_path = pack_index_path_for_stdin_pack_spec(&pack_dir, trimmed)?;
+            let idx = grit_lib::pack::read_pack_index(&idx_path)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", idx_path.display()))?;
+            for entry in idx.entries {
+                if !exclude.contains(&entry.oid) {
                     oids.insert(entry.oid);
                 }
-            } else {
-                bail!("pack index not found: {}", idx_path.display());
             }
         }
         return Ok(PackObjectList {
@@ -912,6 +1044,11 @@ fn collect_incremental_repack_oids(repo: &Repository, args: &Args) -> Result<Pac
         ordered.retain(|o| !skip.contains(o));
     }
 
+    if args.honor_pack_keep {
+        let skip = kept_pack_object_ids(repo)?;
+        ordered.retain(|o| !skip.contains(o));
+    }
+
     if args.exclude_promisor_objects {
         let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
         if repo_treats_promisor_packs(&repo.git_dir, &config) {
@@ -949,6 +1086,99 @@ fn keep_pack_object_ids(repo: &Repository, keep_pack: &[String]) -> Result<HashS
         }
     }
     Ok(out)
+}
+
+/// Object IDs residing in local packs that have a sibling `pack-….keep` file on disk.
+///
+/// Matches Git’s `--honor-pack-keep` / `ignore_packed_keep_on_disk` behaviour for `pack-objects`.
+fn kept_pack_object_ids(repo: &Repository) -> Result<HashSet<ObjectId>> {
+    let mut out = HashSet::new();
+    let indexes = grit_lib::pack::read_local_pack_indexes(repo.odb.objects_dir())
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    for idx in indexes {
+        let keep_path = idx.pack_path.with_extension("keep");
+        if !keep_path.is_file() {
+            continue;
+        }
+        for e in idx.entries {
+            out.insert(e.oid);
+        }
+    }
+    Ok(out)
+}
+
+/// Git `loosen_unused_packed_objects`: write loose copies of objects that remain only in other
+/// local packs after this run (`pack-objects --unpack-unreachable`, `repack -A`).
+/// After `--unpack-unreachable`, drop loose files for objects that are neither in the new pack nor
+/// in the ref/reflog closure we just packed (matches Git pruning unreachable loose copies;
+/// `t7700-repack`).
+fn prune_stale_loose_after_unpack_unreachable(
+    repo: &Repository,
+    packed: &HashSet<ObjectId>,
+    enumeration: &[ObjectId],
+) -> Result<()> {
+    let keep: HashSet<ObjectId> = enumeration.iter().copied().collect();
+    let mut loose = BTreeSet::new();
+    collect_all_loose(&repo.odb, &mut loose)?;
+    for oid in loose {
+        if packed.contains(&oid) || keep.contains(&oid) {
+            continue;
+        }
+        let path = repo.odb.object_path(&oid);
+        if path.is_file() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    Ok(())
+}
+
+fn loosen_unused_packed_objects(
+    repo: &Repository,
+    packed: &HashSet<ObjectId>,
+    new_pack_hash: &str,
+    honor_pack_keep: bool,
+) -> Result<()> {
+    let objects_dir = repo.git_dir.join("objects");
+    let pack_dir = objects_dir.join("pack");
+    let new_stem = format!("pack-{new_pack_hash}");
+    let kept_oids = if honor_pack_keep {
+        kept_pack_object_ids(repo)?
+    } else {
+        HashSet::new()
+    };
+    let indexes = grit_lib::pack::read_local_pack_indexes(&objects_dir)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    for idx in indexes {
+        let name = idx
+            .pack_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        if !name.ends_with(".pack") {
+            continue;
+        }
+        let stem = name.strip_suffix(".pack").unwrap_or(name);
+        if stem == new_stem {
+            continue;
+        }
+        if honor_pack_keep && pack_dir.join(format!("{stem}.keep")).is_file() {
+            continue;
+        }
+        for e in &idx.entries {
+            if packed.contains(&e.oid) {
+                continue;
+            }
+            if honor_pack_keep && kept_oids.contains(&e.oid) {
+                continue;
+            }
+            if repo.odb.exists(&e.oid) {
+                continue;
+            }
+            let obj = read_object_from_repo(repo, &e.oid)?;
+            repo.odb.write(obj.kind, &obj.data)?;
+        }
+    }
+    Ok(())
 }
 
 /// Walk all loose objects in the ODB.

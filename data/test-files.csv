@@ -1193,7 +1193,7 @@ t7111-reset-table	t7	yes	42	34	8	false	ok	0
 t7112-reset-submodule	t7	yes	76	24	52	false	ok	0
 t7113-post-index-change-hook	t7	yes	4	1	3	false	ok	0
 t7201-co	t7	yes	46	17	29	false	ok	0
-t7300-clean	t7	yes	53	52	1	false	ok	2
+t7300-clean	t7	yes	53	52	1	false	ok	0
 t7301-clean-interactive	t7	yes	23	8	15	false	ok	0
 t7400-submodule-basic	t7	yes	124	51	73	false	ok	0
 t7401-submodule-summary	t7	yes	25	6	19	false	ok	0
@@ -1265,7 +1265,7 @@ t7611-merge-abort	t7	yes	19	17	2	false	ok	0
 t7612-merge-verify-signatures	t7	skip	16	0	0	false	ok	0
 t7614-merge-signoff	t7	yes	4	4	0	true	ok	0
 t7615-diff-algo-with-mergy-operations	t7	yes	7	5	2	false	ok	0
-t7700-repack	t7	yes	47	8	39	false	ok	0
+t7700-repack	t7	yes	47	28	19	false	ok	0
 t7701-repack-unpack-unreachable	t7	yes	9	1	8	false	ok	0
 t7702-repack-cyclic-alternate	t7	yes	2	2	0	true	ok	0
 t7703-repack-geometric	t7	yes	18	3	15	false	ok	0
