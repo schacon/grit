@@ -814,8 +814,8 @@ fn resolve_pathspec(
     // Handle magic pathspec ":/<pattern>" — match from the root of the work tree.
     if let Some(rest) = pathspec_str.strip_prefix(":/") {
         if rest.is_empty() || rest == "*" {
-            // Match everything from root
-            return Ok(Pathspec::Literal(Vec::new()));
+            // `:/` or `:/*` — match all paths under the work tree root (git pathspec magic).
+            return Ok(Pathspec::Glob("*".to_string()));
         }
         if has_glob_chars(rest) {
             return Ok(Pathspec::Glob(rest.to_string()));

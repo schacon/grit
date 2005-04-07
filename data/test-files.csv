@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -1600,6 +1600,6 @@ t9890-init-object-format	t9	yes	31	31	0	true	ok	0
 t9900-branch-verbose-all	t9	yes	33	33	0	true	ok	0
 t9901-git-web--browse	t9	yes	5	0	5	false	ok	0
 t9902-completion	t9	yes	259	259	0	true	ok	3
-t9903-bash-prompt	t9	yes	67	53	14	false	ok	0
+t9903-bash-prompt	t9	yes	67	67	0	true	ok	0
 t9910-tag-pattern-glob	t9	yes	32	32	0	true	ok	0
 t9920-commit-tree-author-env	t9	yes	26	26	0	true	ok	0

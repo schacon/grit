@@ -1321,10 +1321,11 @@ fn resolve_base(
         Ok(None) => {}
     }
 
+    // Short hex-like token that is also a branch name (e.g. `b1`, `dead`): prefer the branch
+    // tip over abbreviated object-id resolution so `git rebase b1 b2` uses the branch (t9903).
     if is_hex_prefix(spec) && spec.len() < 40 {
         let branch_ref = format!("refs/heads/{spec}");
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &branch_ref) {
-            eprintln!("warning: refname '{spec}' is ambiguous.");
             return Ok(oid);
         }
     }
