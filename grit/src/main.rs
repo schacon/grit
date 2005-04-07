@@ -2016,6 +2016,61 @@ fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str) -> ! {
     std::process::exit(129);
 }
 
+fn stash_explicit_subcommand(rest: &[String]) -> bool {
+    const KNOWN: &[&str] = &[
+        "push", "save", "list", "show", "pop", "apply", "drop", "clear", "branch", "create",
+        "store", "export", "import",
+    ];
+    rest.first()
+        .map(|a| KNOWN.contains(&a.as_str()))
+        .unwrap_or(false)
+}
+
+/// After a failed parse, print upstream `or: git stash …` lines (t3903).
+fn print_stash_invalid_option_usage_header() {
+    let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin("stash") else {
+        return;
+    };
+    let variants = synopsis_variants_from_adoc(syn);
+    let pad = " ".repeat("git stash ".len());
+    for (i, var) in variants.iter().enumerate() {
+        if i == 0 {
+            continue;
+        }
+        let Some(first) = var.first() else {
+            continue;
+        };
+        println!("   or: {first}");
+        for cont in var.iter().skip(1) {
+            println!("{pad}{cont}");
+        }
+    }
+}
+
+/// `git stash push -h` / `--help` — match t3903 expectation (`usage: git stash [push`).
+fn print_stash_push_help_upstream() -> ! {
+    println!("Save changes and clean the working tree\n");
+    let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin("stash") else {
+        std::process::exit(129);
+    };
+    let variants = synopsis_variants_from_adoc(syn);
+    let pad = " ".repeat("git stash ".len());
+    let push_var = variants.iter().find(|v| {
+        v.first()
+            .is_some_and(|line| line.contains("[push") || line.contains("stash [push"))
+    });
+    if let Some(var) = push_var {
+        if let Some(first) = var.first() {
+            println!("usage: {first}");
+            for cont in var.iter().skip(1) {
+                println!("{pad}{cont}");
+            }
+        }
+    }
+    println!();
+    std::process::exit(129);
+}
+
 /// Parse a command's clap Args from the remaining arguments.
 ///
 /// When `-h` is passed, clap prints usage and the process exits with code 129
@@ -2082,6 +2137,13 @@ fn preprocess_status_argv(rest: &[String]) -> Vec<String> {
 }
 
 fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
+    if subcmd == "stash"
+        && rest.len() >= 2
+        && rest[0] == "push"
+        && (rest[1] == "-h" || rest[1] == "--help")
+    {
+        print_stash_push_help_upstream();
+    }
     if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
         if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
             print_upstream_synopsis_and_exit(subcmd, syn);
@@ -2105,6 +2167,9 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
                 print!("{msg}");
             } else {
                 let _ = e.print();
+                if subcmd == "stash" && !stash_explicit_subcommand(rest) {
+                    print_stash_invalid_option_usage_header();
+                }
             }
             match e.kind() {
                 clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {

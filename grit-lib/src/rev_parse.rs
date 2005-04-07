@@ -958,6 +958,12 @@ fn resolve_base(repo: &Repository, spec: &str, index_dwim: bool) -> Result<Objec
     if let Ok(oid) = refs::resolve_ref(&repo.git_dir, spec) {
         return Ok(oid);
     }
+    // DWIM: bare `stash` refers to `refs/stash` (like upstream Git), not `.git/stash`.
+    if spec == "stash" {
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, "refs/stash") {
+            return Ok(oid);
+        }
+    }
     for candidate in &[
         format!("refs/heads/{spec}"),
         format!("refs/tags/{spec}"),
