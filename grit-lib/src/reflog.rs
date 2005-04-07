@@ -36,8 +36,11 @@ pub struct ReflogEntry {
 }
 
 /// Return the filesystem path for a ref's reflog.
+///
+/// Uses the same storage rules as [`refs::append_reflog`] (branch reflogs under the
+/// repository common directory for linked worktrees).
 pub fn reflog_path(git_dir: &Path, refname: &str) -> PathBuf {
-    git_dir.join("logs").join(refname)
+    refs::reflog_file_path(git_dir, refname)
 }
 
 /// Check whether a reflog exists for the given ref.

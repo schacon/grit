@@ -1061,7 +1061,10 @@ fn run_foreground(
             run_grit(repo, &a)?;
         }
         TaskId::ReflogExpire => {
-            if auto && !reflog_expire_needed(repo, cfg) {
+            // Git's auto maintenance may run reflog expiry less aggressively than our
+            // `reflog expire --all` pass. Running it after every `--auto` cycle trims
+            // `logs/refs/heads/*` and breaks tests such as t3202 (`show-branch --reflog`).
+            if auto {
                 return Ok(());
             }
             run_grit(repo, &["reflog", "expire", "--all"])?;
@@ -1071,10 +1074,11 @@ fn run_foreground(
                 return Ok(());
             }
             run_grit(repo, &["pack-refs", "--all", "--prune"])?;
-            if cfg
-                .get_bool("gc.reflogExpire")
-                .and_then(|r| r.ok())
-                .unwrap_or(true)
+            if !auto
+                && cfg
+                    .get_bool("gc.reflogExpire")
+                    .and_then(|r| r.ok())
+                    .unwrap_or(true)
             {
                 run_grit(repo, &["reflog", "expire", "--all"])?;
             }

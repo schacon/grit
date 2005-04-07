@@ -820,14 +820,18 @@ fn edit_branch_description(
             oid: None,
             ..
         } if branch_arg.is_none() => {
-            eprintln!("fatal: no commit on branch '{short_name}' yet");
+            eprintln!("error: no commit on branch '{short_name}' yet");
             std::process::exit(1);
         }
         _ => {}
     }
 
     if branch_arg.is_some() && !ref_exists {
-        eprintln!("fatal: no branch named '{branch_name}'");
+        if branch_ref_is_unborn_across_worktrees(repo, &branch_ref)? {
+            eprintln!("error: no commit on branch '{branch_name}' yet");
+            std::process::exit(1);
+        }
+        eprintln!("error: no branch named '{branch_name}'");
         std::process::exit(1);
     }
 
@@ -955,6 +959,16 @@ fn set_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
             .ok_or_else(|| anyhow::anyhow!("no current branch; specify branch name"))?
             .to_owned(),
     };
+
+    let branch_ref = format!("refs/heads/{branch_name}");
+    if grit_lib::refs::resolve_ref(&repo.git_dir, &branch_ref).is_err() {
+        if branch_ref_is_unborn_across_worktrees(repo, &branch_ref)? {
+            eprintln!("fatal: no commit on branch '{branch_name}' yet");
+            std::process::exit(128);
+        }
+        eprintln!("fatal: branch '{branch_name}' does not exist");
+        std::process::exit(128);
+    }
 
     // Parse upstream as remote/branch
     let (remote, upstream_branch) = parse_upstream(repo, &upstream)?;
@@ -1211,7 +1225,7 @@ fn create_branch(
     // Create reflog when explicitly requested or when core.logAllRefUpdates
     // enables branch reflogs for this repository.
     if args.create_reflog || should_log_ref_updates(repo) {
-        let reflog_path = repo.git_dir.join("logs").join(&refname);
+        let reflog_path = grit_lib::refs::reflog_file_path(&repo.git_dir, &refname);
         if let Some(parent) = reflog_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -1519,8 +1533,12 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         fs::write(head_path, head_content)?;
         rename_branch_config(repo, old_name, new_name)?;
         return Ok(());
+    } else if branch_ref_is_unborn_across_worktrees(repo, &old_ref)? {
+        eprintln!("fatal: no commit on branch '{old_name}' yet");
+        std::process::exit(128);
     } else {
-        return Err(anyhow::anyhow!("branch '{old_name}' not found."));
+        eprintln!("fatal: no branch named '{old_name}'");
+        std::process::exit(128);
     };
 
     // Check if new name already exists (unless force; -M or -m -f)
@@ -1705,6 +1723,36 @@ fn rename_branch_config(repo: &Repository, old_name: &str, new_name: &str) -> Re
     Ok(())
 }
 
+/// True when `branch_ref` (e.g. `refs/heads/x`) is checked out as an unborn branch in the main
+/// repo or any linked worktree (orphan / no tip commit yet).
+fn branch_ref_is_unborn_across_worktrees(repo: &Repository, branch_ref: &str) -> Result<bool> {
+    let common = grit_lib::refs::common_dir(&repo.git_dir).unwrap_or_else(|| repo.git_dir.clone());
+    let mut admin_dirs = vec![common.clone()];
+    if let Ok(rd) = fs::read_dir(common.join("worktrees")) {
+        for e in rd.flatten() {
+            admin_dirs.push(e.path());
+        }
+    }
+    for admin in admin_dirs {
+        let hp = admin.join("HEAD");
+        let Ok(content) = fs::read_to_string(&hp) else {
+            continue;
+        };
+        let t = content.trim();
+        let Some(sym) = t.strip_prefix("ref: ") else {
+            continue;
+        };
+        if sym != branch_ref {
+            continue;
+        }
+        let st = resolve_head(&admin)?;
+        if matches!(st, HeadState::Branch { oid: None, .. }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn copy_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
     let (src_name_owned, dst_name_owned);
     let (src_name, dst_name): (&str, &str);
@@ -1735,8 +1783,15 @@ fn copy_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
     let src_ref = format!("refs/heads/{src_name}");
     let dst_ref = format!("refs/heads/{dst_name}");
 
-    let src_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &src_ref)
-        .map_err(|_| anyhow::anyhow!("branch '{src_name}' not found."))?;
+    let src_oid = if let Ok(oid) = grit_lib::refs::resolve_ref(&repo.git_dir, &src_ref) {
+        oid
+    } else if branch_ref_is_unborn_across_worktrees(repo, &src_ref)? {
+        eprintln!("fatal: no commit on branch '{src_name}' yet");
+        std::process::exit(128);
+    } else {
+        eprintln!("fatal: no branch named '{src_name}'");
+        std::process::exit(128);
+    };
 
     // Copying a branch to itself is a no-op (Git: `branch -c m2 m2`).
     if src_name == dst_name {

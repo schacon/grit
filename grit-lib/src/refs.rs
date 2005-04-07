@@ -673,8 +673,7 @@ pub fn append_reflog(
             force_create,
         );
     }
-    let storage_dir = ref_storage_dir(git_dir, refname);
-    let log_path = storage_dir.join("logs").join(refname);
+    let log_path = reflog_file_path(git_dir, refname);
     let may_write =
         force_create || should_autocreate_reflog(git_dir, refname) || !message.is_empty();
     if !may_write && !log_path.exists() {
@@ -695,6 +694,15 @@ pub fn append_reflog(
     use io::Write;
     file.write_all(line.as_bytes())?;
     Ok(())
+}
+
+/// Filesystem path to `logs/<refname>` for this ref (same layout as [`append_reflog`]).
+///
+/// Branch and tag reflogs live under the repository common directory when using linked
+/// worktrees; `HEAD` stays under `git_dir`.
+#[must_use]
+pub fn reflog_file_path(git_dir: &Path, refname: &str) -> PathBuf {
+    ref_storage_dir(git_dir, refname).join("logs").join(refname)
 }
 
 fn ref_storage_dir(git_dir: &Path, refname: &str) -> PathBuf {

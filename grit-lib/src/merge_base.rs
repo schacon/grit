@@ -85,6 +85,15 @@ pub fn merge_bases_octopus(repo: &Repository, commits: &[ObjectId]) -> Result<Ve
     reduce_to_best(common, &mut cache)
 }
 
+/// All merge bases common to every supplied commit (intersection of ancestor sets,
+/// reduced to minimal bases). Matches `git merge-base` with two or more tips.
+///
+/// This is the same intersection-and-reduction as [`merge_bases_octopus`]; the name
+/// documents the `git merge-base A B C ...` calling convention.
+pub fn merge_bases_all(repo: &Repository, commits: &[ObjectId]) -> Result<Vec<ObjectId>> {
+    merge_bases_octopus(repo, commits)
+}
+
 /// Check whether `ancestor` is reachable from `descendant`.
 ///
 /// # Errors

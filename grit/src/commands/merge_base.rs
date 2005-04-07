@@ -81,7 +81,11 @@ fn run_default(repo: &Repository, show_all: bool, revisions: Vec<String>) -> Res
         bail!("usage: grit merge-base [-a | --all] <commit> <commit>...");
     }
     let commits = resolve_commit_specs(repo, &revisions)?;
-    let bases = merge_bases_first_vs_rest(repo, commits[0], &commits[1..])?;
+    let bases = if commits.len() == 2 {
+        merge_bases_first_vs_rest(repo, commits[0], &commits[1..])?
+    } else {
+        merge_bases_octopus(repo, &commits)?
+    };
     print_result(bases, show_all);
     Ok(())
 }

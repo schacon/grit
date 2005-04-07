@@ -169,7 +169,10 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    if !args.skip_foreground_tasks {
+    if !args.skip_foreground_tasks && !args.auto {
+        // `gc --auto` must not aggressively expire reflogs using wall-clock "now": harness
+        // commits often use fixed `GIT_COMMITTER_DATE` / `test_tick` timestamps far in the past,
+        // and expiring against real time would erase `logs/refs/heads/*` (breaks t3202, etc.).
         run_reflog_expire_for_gc(&repo, &cfg)?;
         run_reflog_expire_unreachable_for_gc(&repo, &cfg)?;
     }
