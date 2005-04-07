@@ -245,6 +245,7 @@ fn checkout_entry(
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
             let oid_hex = format!("{}", entry.oid);
             crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex))
+                .map_err(|e| anyhow::anyhow!("{e}"))?
         };
         std::fs::write(&abs_path, &data)?;
 

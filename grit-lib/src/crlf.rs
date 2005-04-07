@@ -71,6 +71,7 @@ pub struct FileAttrs {
     pub eol: EolAttr,
     pub filter_clean: Option<String>,
     pub filter_smudge: Option<String>,
+    pub filter_required: bool,
     pub ident: bool,
     /// Working tree encoding (e.g. "utf-16") — content is converted to UTF-8 on add.
     pub working_tree_encoding: Option<String>,
@@ -83,6 +84,7 @@ impl Default for FileAttrs {
             eol: EolAttr::Unspecified,
             filter_clean: None,
             filter_smudge: None,
+            filter_required: false,
             ident: false,
             working_tree_encoding: None,
         }
@@ -241,11 +243,17 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                         if value == "unset" {
                             fa.filter_clean = None;
                             fa.filter_smudge = None;
+                            fa.filter_required = false;
                         } else {
                             let clean_key = format!("filter.{value}.clean");
                             let smudge_key = format!("filter.{value}.smudge");
+                            let required_key = format!("filter.{value}.required");
                             fa.filter_clean = config.get(&clean_key);
                             fa.filter_smudge = config.get(&smudge_key);
+                            fa.filter_required = config
+                                .get_bool(&required_key)
+                                .and_then(|res| res.ok())
+                                .unwrap_or(false);
                         }
                     }
                     "ident" => {
@@ -532,7 +540,7 @@ pub fn convert_to_worktree(
     conv: &ConversionConfig,
     file_attrs: &FileAttrs,
     oid_hex: Option<&str>,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, String> {
     let mut buf = data.to_vec();
 
     // 1. Ident expansion
@@ -552,12 +560,19 @@ pub fn convert_to_worktree(
 
     // 3. Run smudge filter if configured
     if let Some(ref smudge_cmd) = file_attrs.filter_smudge {
-        if let Ok(filtered) = run_filter(smudge_cmd, &buf, rel_path) {
-            buf = filtered;
+        match run_filter(smudge_cmd, &buf, rel_path) {
+            Ok(filtered) => {
+                buf = filtered;
+            }
+            Err(e) => {
+                if file_attrs.filter_required {
+                    return Err(format!("smudge filter failed: {e}"));
+                }
+            }
         }
     }
 
-    buf
+    Ok(buf)
 }
 
 /// Decide whether to convert LF→CRLF on output.
@@ -626,10 +641,23 @@ fn expand_ident(data: &[u8], oid: &str) -> Vec<u8> {
             out.extend_from_slice(replacement.as_bytes());
             i += needle.len();
         } else if i + 4 <= data.len() && &data[i..i + 4] == b"$Id:" {
-            // Already expanded — replace existing expansion
-            if let Some(end) = data[i + 4..].iter().position(|&b| b == b'$') {
+            // Already expanded — replace existing expansion, but only if we
+            // find the terminating '$' before end-of-line.
+            let mut j = i + 4;
+            let mut found = None;
+            while j < data.len() {
+                match data[j] {
+                    b'$' => {
+                        found = Some(j);
+                        break;
+                    }
+                    b'\n' | b'\r' => break,
+                    _ => j += 1,
+                }
+            }
+            if let Some(end) = found {
                 out.extend_from_slice(replacement.as_bytes());
-                i += 4 + end + 1;
+                i = end + 1;
             } else {
                 out.push(data[i]);
                 i += 1;
@@ -648,9 +676,21 @@ pub fn collapse_ident(data: &[u8]) -> Vec<u8> {
     let mut i = 0;
     while i < data.len() {
         if i + 4 <= data.len() && &data[i..i + 4] == b"$Id:" {
-            if let Some(end) = data[i + 4..].iter().position(|&b| b == b'$') {
+            let mut j = i + 4;
+            let mut found = None;
+            while j < data.len() {
+                match data[j] {
+                    b'$' => {
+                        found = Some(j);
+                        break;
+                    }
+                    b'\n' | b'\r' => break,
+                    _ => j += 1,
+                }
+            }
+            if let Some(end) = found {
                 out.extend_from_slice(b"$Id$");
-                i += 4 + end + 1;
+                i = end + 1;
                 continue;
             }
         }
@@ -661,10 +701,28 @@ pub fn collapse_ident(data: &[u8]) -> Vec<u8> {
 }
 
 /// Run a filter command, piping data through stdin→stdout.
-fn run_filter(cmd: &str, data: &[u8], _rel_path: &str) -> Result<Vec<u8>, std::io::Error> {
+fn shell_quote_single(path: &str) -> String {
+    if path.is_empty() {
+        return "''".to_owned();
+    }
+    let mut out = String::from("'");
+    for ch in path.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+fn run_filter(cmd: &str, data: &[u8], rel_path: &str) -> Result<Vec<u8>, std::io::Error> {
+    let quoted_path = shell_quote_single(rel_path);
+    let cmd = cmd.replace("%f", &quoted_path);
     let mut child = Command::new("sh")
         .arg("-c")
-        .arg(cmd)
+        .arg(&cmd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

@@ -41,8 +41,42 @@ case "$1" in
   sha256)
     sha256sum | cut -d' ' -f1 ;;
   genrandom)
-    seed="$2"; count="${3:-0}"
-    dd if=/dev/urandom bs=1 count="$count" 2>/dev/null ;;
+    seed="$2"; count="$3"
+    if [ -n "$count" ]; then
+      python3 - "$seed" "$count" <<'PY'
+import random
+import sys
+
+seed = sys.argv[1]
+count = int(sys.argv[2])
+rng = random.Random(seed)
+
+remaining = count
+out = sys.stdout.buffer
+chunk = 8192
+while remaining > 0:
+    n = min(chunk, remaining)
+    out.write(bytes(rng.randrange(0, 256) for _ in range(n)))
+    remaining -= n
+PY
+    else
+      python3 - "$seed" <<'PY'
+import random
+import sys
+
+seed = sys.argv[1]
+rng = random.Random(seed)
+out = sys.stdout.buffer
+chunk = 8192
+
+try:
+    while True:
+        out.write(bytes(rng.randrange(0, 256) for _ in range(chunk)))
+        out.flush()
+except BrokenPipeError:
+    pass
+PY
+    fi ;;
   genzeros)
     count="${2:-0}"
     dd if=/dev/zero bs=1 count="$count" 2>/dev/null ;;
@@ -1172,6 +1206,9 @@ PY
   run-command)
     shift
     exec "$GUST_BIN" test-tool run-command "$@" ;;
+  rot13-filter)
+    shift
+    exec "$GUST_BIN" test-tool rot13-filter "$@" ;;
   sigchain)
     # Mimic t/helper/test-sigchain.c: print handlers in reverse push order
     # then terminate by SIGTERM.

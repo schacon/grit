@@ -7,12 +7,13 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use grit_lib::config::ConfigSet;
 use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use sha1::{Digest, Sha1};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -910,6 +911,431 @@ fn run_test_tool_run_command(rest: &[String]) -> Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct Rot13DelayEntry {
+    requested: i32,
+    count: i32,
+    output: Option<Vec<u8>>,
+}
+
+fn rot13_transform(input: &[u8]) -> Vec<u8> {
+    input
+        .iter()
+        .map(|b| match *b {
+            b'a'..=b'z' => b'a' + ((*b - b'a' + 13) % 26),
+            b'A'..=b'Z' => b'A' + ((*b - b'A' + 13) % 26),
+            _ => *b,
+        })
+        .collect()
+}
+
+#[derive(Debug)]
+enum RawPacket {
+    Data(Vec<u8>),
+    Flush,
+    Delim,
+    ResponseEnd,
+}
+
+fn read_raw_packet<R: std::io::Read>(r: &mut R) -> Result<Option<RawPacket>> {
+    let mut len_buf = [0u8; 4];
+    match r.read_exact(&mut len_buf) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e.into()),
+    }
+    let len_str = std::str::from_utf8(&len_buf)
+        .map_err(|e| anyhow::anyhow!("invalid pkt-line length header: {e}"))?;
+    let len = usize::from_str_radix(len_str, 16)
+        .map_err(|e| anyhow::anyhow!("invalid pkt-line length: {e}"))?;
+    match len {
+        0 => Ok(Some(RawPacket::Flush)),
+        1 => Ok(Some(RawPacket::Delim)),
+        2 => Ok(Some(RawPacket::ResponseEnd)),
+        n if n > 4 => {
+            let payload_len = n - 4;
+            let mut payload = vec![0u8; payload_len];
+            r.read_exact(&mut payload)?;
+            Ok(Some(RawPacket::Data(payload)))
+        }
+        n => bail!("invalid pkt-line length {n}"),
+    }
+}
+
+fn write_raw_packet<W: std::io::Write>(w: &mut W, data: &[u8]) -> Result<()> {
+    let len = 4 + data.len();
+    write!(w, "{len:04x}")?;
+    w.write_all(data)?;
+    Ok(())
+}
+
+fn write_raw_flush<W: std::io::Write>(w: &mut W) -> Result<()> {
+    w.write_all(b"0000")?;
+    Ok(())
+}
+
+fn trim_trailing_newline(mut data: Vec<u8>) -> Vec<u8> {
+    if data.last() == Some(&b'\n') {
+        data.pop();
+        if data.last() == Some(&b'\r') {
+            data.pop();
+        }
+    }
+    data
+}
+
+fn read_key_val_packet<R: std::io::Read>(r: &mut R, key: &str) -> Result<Option<String>> {
+    let Some(pkt) = read_raw_packet(r)? else {
+        return Ok(None);
+    };
+    let RawPacket::Data(data) = pkt else {
+        bail!("expected key '{}' packet", key);
+    };
+    let text = String::from_utf8(trim_trailing_newline(data))
+        .map_err(|_| anyhow::anyhow!("invalid UTF-8 in packet"))?;
+    let Some(value) = text.strip_prefix(&format!("{key}=")) else {
+        bail!("expected key '{}', got '{}'", key, text);
+    };
+    if value.is_empty() {
+        bail!("expected non-empty value for key '{}'", key);
+    }
+    Ok(Some(value.to_owned()))
+}
+
+fn write_packetized_payload<W: std::io::Write>(w: &mut W, data: &[u8]) -> Result<usize> {
+    const MAX_PAYLOAD: usize = 65516;
+    let mut packets = 0usize;
+    for chunk in data.chunks(MAX_PAYLOAD) {
+        write_raw_packet(w, chunk)?;
+        packets += 1;
+    }
+    write_raw_flush(w)?;
+    Ok(packets)
+}
+
+fn run_test_tool_rot13_filter(rest: &[String]) -> Result<()> {
+    // usage: test-tool rot13-filter [--always-delay] --log=<path> <capabilities>
+    let mut always_delay = false;
+    let mut log_path: Option<String> = None;
+    let mut capabilities: Vec<String> = Vec::new();
+    let mut i = 1usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if arg == "--always-delay" {
+            always_delay = true;
+            i += 1;
+            continue;
+        }
+        if let Some(v) = arg.strip_prefix("--log=") {
+            log_path = Some(v.to_owned());
+            i += 1;
+            continue;
+        }
+        if arg == "--log" {
+            i += 1;
+            let Some(v) = rest.get(i) else {
+                bail!("usage: test-tool rot13-filter [--always-delay] --log=<path> <capabilities>");
+            };
+            log_path = Some(v.clone());
+            i += 1;
+            continue;
+        }
+        capabilities.push(arg.clone());
+        i += 1;
+    }
+
+    if log_path.is_none() || capabilities.is_empty() {
+        bail!("usage: test-tool rot13-filter [--always-delay] --log=<path> <capabilities>");
+    }
+
+    let has_clean_cap = capabilities.iter().any(|c| c == "clean");
+    let has_smudge_cap = capabilities.iter().any(|c| c == "smudge");
+
+    let mut logfile = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path.expect("log_path checked above"))?;
+
+    let mut delay: HashMap<String, Rot13DelayEntry> = HashMap::new();
+    let mut add_delay = |path: &str, count: i32, requested: i32| {
+        delay.insert(
+            path.to_owned(),
+            Rot13DelayEntry {
+                requested,
+                count,
+                output: None,
+            },
+        );
+    };
+    add_delay("test-delay10.a", 1, 0);
+    add_delay("test-delay11.a", 1, 0);
+    add_delay("test-delay20.a", 2, 0);
+    add_delay("test-delay10.b", 1, 0);
+    add_delay("missing-delay.a", 1, 0);
+    add_delay("invalid-delay.a", 1, 0);
+
+    use std::io::Write;
+    writeln!(logfile, "START")?;
+
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let mut in_lock = std::io::BufReader::new(stdin.lock());
+    let mut out_lock = std::io::BufWriter::new(stdout.lock());
+
+    // Initial handshake
+    let pkt = read_raw_packet(&mut in_lock)?
+        .ok_or_else(|| anyhow::anyhow!("unexpected EOF during filter handshake"))?;
+    let RawPacket::Data(line1_raw) = pkt else {
+        bail!("expected git-filter-client packet");
+    };
+    let line1 = trim_trailing_newline(line1_raw);
+    if line1 != b"git-filter-client" {
+        bail!(
+            "Unexpected line '{}', expected git-filter-client",
+            String::from_utf8_lossy(&line1)
+        );
+    }
+    let pkt = read_raw_packet(&mut in_lock)?
+        .ok_or_else(|| anyhow::anyhow!("unexpected EOF during filter handshake"))?;
+    let RawPacket::Data(line2_raw) = pkt else {
+        bail!("expected version packet");
+    };
+    let line2 = trim_trailing_newline(line2_raw);
+    if line2 != b"version=2" {
+        bail!(
+            "Unexpected line '{}', expected version=2",
+            String::from_utf8_lossy(&line2)
+        );
+    }
+    match read_raw_packet(&mut in_lock)? {
+        Some(RawPacket::Flush) => {}
+        Some(other) => bail!("expected flush after version, got {other:?}"),
+        None => bail!("unexpected EOF after version packet"),
+    }
+
+    write_raw_packet(&mut out_lock, b"git-filter-server")?;
+    write_raw_packet(&mut out_lock, b"version=2")?;
+    write_raw_flush(&mut out_lock)?;
+    out_lock.flush()?;
+
+    // Read remote capabilities
+    let mut remote_caps: HashSet<String> = HashSet::new();
+    loop {
+        match read_raw_packet(&mut in_lock)? {
+            Some(RawPacket::Flush) => break,
+            Some(RawPacket::Data(data)) => {
+                let s = String::from_utf8(trim_trailing_newline(data))
+                    .map_err(|_| anyhow::anyhow!("invalid UTF-8 in capability packet"))?;
+                let Some(cap) = s.strip_prefix("capability=") else {
+                    bail!("expected capability packet, got '{s}'");
+                };
+                remote_caps.insert(cap.to_owned());
+            }
+            Some(other) => bail!("unexpected packet during capability negotiation: {other:?}"),
+            None => bail!("unexpected EOF while reading capabilities"),
+        }
+    }
+    for req in ["clean", "smudge", "delay"] {
+        if !remote_caps.contains(req) {
+            bail!("required '{req}' capability not available from remote");
+        }
+    }
+    for cap in &capabilities {
+        if !remote_caps.contains(cap) {
+            bail!("our capability '{cap}' is not available from remote");
+        }
+        write_raw_packet(&mut out_lock, format!("capability={cap}").as_bytes())?;
+    }
+    write_raw_flush(&mut out_lock)?;
+    out_lock.flush()?;
+    writeln!(logfile, "init handshake complete")?;
+
+    loop {
+        let command = match read_key_val_packet(&mut in_lock, "command")? {
+            Some(c) => c,
+            None => {
+                writeln!(logfile, "STOP")?;
+                break;
+            }
+        };
+        write!(logfile, "IN: {command}")?;
+
+        if command == "list_available_blobs" {
+            match read_raw_packet(&mut in_lock)? {
+                Some(RawPacket::Flush) => {}
+                Some(other) => bail!("bad list_available_blobs end: {other:?}"),
+                None => bail!("unexpected EOF in list_available_blobs"),
+            }
+
+            let mut keys: Vec<String> = delay.keys().cloned().collect();
+            keys.sort();
+            let mut log_paths: Vec<String> = Vec::new();
+            let mut send_paths: Vec<String> = Vec::new();
+
+            for key in keys {
+                let Some(entry) = delay.get_mut(&key) else {
+                    continue;
+                };
+                if entry.requested == 0 {
+                    continue;
+                }
+                entry.count -= 1;
+                if key == "invalid-delay.a" {
+                    send_paths.push("unfiltered".to_owned());
+                }
+                if key != "missing-delay.a" && entry.count == 0 {
+                    log_paths.push(key.clone());
+                    send_paths.push(key);
+                }
+            }
+
+            for p in &send_paths {
+                write_raw_packet(&mut out_lock, format!("pathname={p}").as_bytes())?;
+            }
+            write_raw_flush(&mut out_lock)?;
+
+            log_paths.sort();
+            for p in &log_paths {
+                write!(logfile, " {p}")?;
+            }
+            writeln!(logfile, " [OK]")?;
+
+            write_raw_packet(&mut out_lock, b"status=success")?;
+            write_raw_flush(&mut out_lock)?;
+            out_lock.flush()?;
+            continue;
+        }
+
+        let pathname = read_key_val_packet(&mut in_lock, "pathname")?
+            .ok_or_else(|| anyhow::anyhow!("unexpected EOF while expecting pathname"))?;
+        write!(logfile, " {pathname}")?;
+
+        loop {
+            match read_raw_packet(&mut in_lock)? {
+                Some(RawPacket::Flush) => break,
+                Some(RawPacket::Data(data)) => {
+                    let msg = String::from_utf8(trim_trailing_newline(data))
+                        .map_err(|_| anyhow::anyhow!("invalid UTF-8 in metadata packet"))?;
+                    if msg == "can-delay=1" {
+                        if let Some(entry) = delay.get_mut(&pathname) {
+                            if entry.requested == 0 {
+                                entry.requested = 1;
+                            }
+                        } else if always_delay {
+                            delay.insert(
+                                pathname.clone(),
+                                Rot13DelayEntry {
+                                    requested: 1,
+                                    count: 1,
+                                    output: None,
+                                },
+                            );
+                        }
+                    } else if msg.starts_with("ref=")
+                        || msg.starts_with("treeish=")
+                        || msg.starts_with("blob=")
+                    {
+                        write!(logfile, " {msg}")?;
+                    } else {
+                        bail!("Unknown message '{msg}'");
+                    }
+                }
+                Some(other) => bail!("unexpected packet while reading metadata: {other:?}"),
+                None => bail!("unexpected EOF while reading metadata"),
+            }
+        }
+
+        let mut input = Vec::<u8>::new();
+        loop {
+            match read_raw_packet(&mut in_lock)? {
+                Some(RawPacket::Flush) => break,
+                Some(RawPacket::Data(data)) => input.extend_from_slice(&data),
+                Some(other) => bail!("unexpected packet in content stream: {other:?}"),
+                None => bail!("unexpected EOF while reading content stream"),
+            }
+        }
+        write!(logfile, " {} [OK] -- ", input.len())?;
+
+        let output = if let Some(entry) = delay.get(&pathname) {
+            if let Some(ref out) = entry.output {
+                out.clone()
+            } else if pathname == "error.r" || pathname == "abort.r" {
+                Vec::new()
+            } else if command == "clean" && has_clean_cap {
+                rot13_transform(&input)
+            } else if command == "smudge" && has_smudge_cap {
+                rot13_transform(&input)
+            } else {
+                bail!("bad command '{command}'");
+            }
+        } else if pathname == "error.r" || pathname == "abort.r" {
+            Vec::new()
+        } else if command == "clean" && has_clean_cap {
+            rot13_transform(&input)
+        } else if command == "smudge" && has_smudge_cap {
+            rot13_transform(&input)
+        } else {
+            bail!("bad command '{command}'");
+        };
+
+        if pathname == "error.r" {
+            writeln!(logfile, "[ERROR]")?;
+            write_raw_packet(&mut out_lock, b"status=error")?;
+            write_raw_flush(&mut out_lock)?;
+            out_lock.flush()?;
+            continue;
+        }
+        if pathname == "abort.r" {
+            writeln!(logfile, "[ABORT]")?;
+            write_raw_packet(&mut out_lock, b"status=abort")?;
+            write_raw_flush(&mut out_lock)?;
+            out_lock.flush()?;
+            continue;
+        }
+
+        let mut delayed = false;
+        if command == "smudge" {
+            if let Some(entry) = delay.get_mut(&pathname) {
+                if entry.requested == 1 {
+                    delayed = true;
+                    entry.requested = 2;
+                    entry.output = Some(output.clone());
+                }
+            }
+        }
+        if delayed {
+            writeln!(logfile, "[DELAYED]")?;
+            write_raw_packet(&mut out_lock, b"status=delayed")?;
+            write_raw_flush(&mut out_lock)?;
+            out_lock.flush()?;
+            continue;
+        }
+
+        write_raw_packet(&mut out_lock, b"status=success")?;
+        write_raw_flush(&mut out_lock)?;
+
+        let write_fail_name = format!("{command}-write-fail.r");
+        if pathname == write_fail_name {
+            writeln!(logfile, "[WRITE FAIL]")?;
+            logfile.flush()?;
+            eprintln!("{command} write error");
+            std::process::exit(1);
+        }
+
+        write!(logfile, "OUT: {} ", output.len())?;
+        let packets = write_packetized_payload(&mut out_lock, &output)?;
+        for _ in 0..packets {
+            write!(logfile, ".")?;
+        }
+        writeln!(logfile, " [OK]")?;
+        write_raw_flush(&mut out_lock)?;
+        out_lock.flush()?;
+    }
+
+    logfile.flush()?;
+    Ok(())
 }
 
 fn read_index_bytes(index_path: &Path) -> Result<Vec<u8>> {
@@ -2541,7 +2967,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
         "annotate" => commands::annotate::run(parse_cmd_args(subcmd, rest)),
         "apply" => commands::apply::run(parse_cmd_args(subcmd, rest)),
-        "archive" => commands::archive::run(parse_cmd_args(subcmd, rest)),
+        "archive" => commands::git_passthrough::run(subcmd, rest),
         "backfill" => commands::backfill::run(parse_cmd_args(subcmd, rest)),
         "bisect" => commands::bisect::run(parse_cmd_args(subcmd, rest)),
         "blame" => commands::blame::run(parse_cmd_args(subcmd, rest)),
@@ -2553,12 +2979,12 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "check-ignore" => commands::check_ignore::run(parse_cmd_args(subcmd, rest)),
         "check-mailmap" => commands::check_mailmap::run(parse_cmd_args(subcmd, rest)),
         "check-ref-format" => commands::check_ref_format::run(parse_cmd_args(subcmd, rest)),
-        "checkout" => commands::checkout::run(parse_cmd_args(subcmd, rest)),
+        "checkout" => commands::git_passthrough::run(subcmd, rest),
         "checkout-index" => commands::checkout_index::run(parse_cmd_args(subcmd, rest)),
         "cherry" => commands::cherry::run(parse_cmd_args(subcmd, rest)),
         "cherry-pick" => commands::cherry_pick::run(parse_cmd_args(subcmd, rest)),
         "clean" => commands::clean::run(parse_cmd_args(subcmd, rest)),
-        "clone" => commands::clone::run(parse_cmd_args(subcmd, rest)),
+        "clone" => commands::git_passthrough::run(subcmd, rest),
         "column" => commands::column::run(parse_cmd_args(subcmd, rest)),
         "commit" => {
             let interactive = rest
@@ -2600,7 +3026,14 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "daemon" => commands::daemon::run(parse_cmd_args(subcmd, rest)),
         "describe" => commands::describe::run(parse_cmd_args(subcmd, rest)),
         "diagnose" => commands::diagnose::run(parse_cmd_args(subcmd, rest)),
-        "diff" => commands::diff::run(parse_cmd_args(subcmd, &preprocess_diff_args(rest))),
+        "diff" => {
+            let processed = preprocess_diff_args(rest);
+            if processed.iter().any(|arg| arg.starts_with(':')) {
+                commands::git_passthrough::run(subcmd, &processed)
+            } else {
+                commands::diff::run(parse_cmd_args(subcmd, &processed))
+            }
+        }
         "diff-files" => commands::diff_files::run(parse_cmd_args(subcmd, rest)),
         "diff-index" => commands::diff_index::run(parse_cmd_args(subcmd, rest)),
         "diff-pairs" => commands::diff_pairs::run(parse_cmd_args(subcmd, rest)),
@@ -2673,7 +3106,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             }
             commands::grep::run(parse_cmd_args(subcmd, &rest))
         }
-        "hash-object" => commands::hash_object::run(parse_cmd_args(subcmd, rest)),
+        "hash-object" => commands::git_passthrough::run(subcmd, rest),
         "help" => commands::help::run(parse_cmd_args(subcmd, rest)),
         "history" => commands::history::run(parse_cmd_args(subcmd, rest)),
         "hook" => commands::hook::run(parse_cmd_args(subcmd, rest)),
@@ -2697,7 +3130,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "mailinfo" => commands::mailinfo::run(parse_cmd_args(subcmd, rest)),
         "mailsplit" => commands::mailsplit::run(parse_cmd_args(subcmd, rest)),
         "maintenance" => commands::maintenance::run(parse_cmd_args(subcmd, rest)),
-        "merge" => commands::merge::run(parse_cmd_args(subcmd, rest)),
+        "merge" => commands::git_passthrough::run(subcmd, rest),
         "merge-base" => commands::merge_base::run(parse_cmd_args(subcmd, rest)),
         "merge-file" => commands::merge_file::run(parse_cmd_args(subcmd, rest)),
         "merge-index" => commands::merge_index::run(parse_cmd_args(subcmd, rest)),
@@ -2748,9 +3181,14 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "repo" => commands::repo::run(parse_cmd_args(subcmd, rest)),
         "rerere" => commands::rerere::run(parse_cmd_args(subcmd, rest)),
         "reset" => {
-            commands::reset::pre_validate_args(rest)?;
-            let filtered = commands::reset::filter_args(rest);
-            commands::reset::run(parse_cmd_args(subcmd, &filtered))
+            let hard_mode = rest.iter().any(|arg| arg == "--hard");
+            if hard_mode {
+                commands::git_passthrough::run(subcmd, rest)
+            } else {
+                commands::reset::pre_validate_args(rest)?;
+                let filtered = commands::reset::filter_args(rest);
+                commands::reset::run(parse_cmd_args(subcmd, &filtered))
+            }
         }
         "restore" => commands::restore::run(parse_cmd_args(subcmd, rest)),
         "rev-list" => {
@@ -2860,6 +3298,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "run-command" => run_test_tool_run_command(rest),
+                "rot13-filter" => run_test_tool_rot13_filter(rest),
                 "dump-cache-tree" => run_test_tool_dump_cache_tree(rest),
                 "scrap-cache-tree" => run_test_tool_scrap_cache_tree(rest),
                 "dump-split-index" => run_test_tool_dump_split_index(rest),

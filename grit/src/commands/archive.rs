@@ -188,8 +188,14 @@ fn collect_entries(
             // Apply working-tree conversion (CRLF, ident, filters)
             let file_attrs = get_file_attrs(attrs, &full_path, config);
             let oid_hex = entry.oid.to_hex();
-            let converted =
-                convert_to_worktree(&blob.data, &full_path, conv, &file_attrs, Some(&oid_hex));
+            let converted = convert_to_worktree(
+                &blob.data,
+                &full_path,
+                conv,
+                &file_attrs,
+                Some(&oid_hex),
+            )
+            .map_err(anyhow::Error::msg)?;
             entries.push(ArchiveEntry {
                 path: full_path,
                 mode: entry.mode,
