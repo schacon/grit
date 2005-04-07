@@ -555,6 +555,7 @@ fn do_merge_or_rebase_after_fetch(
             .next()
             .context("FETCH_HEAD merge oid")?;
         let rebase_args = super::rebase::Args {
+            upstream_explicit: true,
             upstream: Some(upstream),
             onto: None,
             root: false,
@@ -568,7 +569,7 @@ fn do_merge_or_rebase_after_fetch(
             rebase_merges: false,
             no_rebase_merges: false,
             no_ff: false,
-            keep_base: false,
+            keep_base: 0,
             fork_point: false,
             no_fork_point: false,
             reapply_cherry_picks: false,

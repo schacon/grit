@@ -22,7 +22,9 @@ use grit_lib::config::ConfigSet;
 use grit_lib::diff::{self, count_changes, diff_index_to_tree, DiffEntry};
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
-use grit_lib::merge_base::{ancestor_closure, is_ancestor, merge_bases_first_vs_rest};
+use grit_lib::merge_base::{
+    ancestor_closure, is_ancestor, merge_base_fork_point, merge_bases_first_vs_rest,
+};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeInput};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -85,6 +87,10 @@ impl<'a> RebaseConflictContext<'a> {
 #[derive(Debug, Clone, ClapArgs)]
 #[command(about = "Reapply commits on top of another base tip")]
 pub struct Args {
+    /// Set when the user supplied an upstream argument (not defaulted from @{upstream}).
+    #[arg(skip)]
+    pub upstream_explicit: bool,
+
     /// Upstream branch to rebase onto (default: upstream tracking branch).
     #[arg(value_name = "UPSTREAM")]
     pub upstream: Option<String>,
@@ -142,8 +148,9 @@ pub struct Args {
     pub no_ff: bool,
 
     /// Keep the base of the branch (rebase onto the merge-base of upstream and branch).
-    #[arg(long = "keep-base", action = clap::ArgAction::SetTrue)]
-    pub keep_base: bool,
+    /// May be passed multiple times for Git compatibility (`--keep-base --keep-base`).
+    #[arg(long = "keep-base", action = clap::ArgAction::Count)]
+    pub keep_base: u8,
 
     /// Use the fork-point algorithm to find the merge base.
     #[arg(long = "fork-point", overrides_with = "no_fork_point")]
@@ -272,8 +279,17 @@ pub fn preprocess_rebase_argv(rest: &[String]) -> Vec<String> {
 pub fn run(mut args: Args) -> Result<()> {
     validate_compat_syntax(&args)?;
 
+    if let Ok(s) = std::env::var(INTERNAL_REBASE_PICK_ENV) {
+        let line_idx: usize = s
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid {INTERNAL_REBASE_PICK_ENV}"))?;
+        return run_internal_rebase_pick_line(line_idx);
+    }
+
+    let mut upstream_explicit = args.upstream.is_some();
+
     if args.root {
-        if args.keep_base {
+        if args.keep_base > 0 {
             bail!("options '--keep-base' and '--root' cannot be used together");
         }
         if args.fork_point {
@@ -368,6 +384,7 @@ pub fn run(mut args: Args) -> Result<()> {
         match resolve_revision(&repo, &format!("{}@{{upstream}}", branch_name)) {
             Ok(_) => {
                 args.upstream = Some(format!("{}@{{upstream}}", branch_name));
+                upstream_explicit = false;
             }
             Err(_) => {
                 bail!(
@@ -378,7 +395,94 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     }
 
+    args.upstream_explicit = upstream_explicit;
     do_rebase(args, pre_rebase_hook_second)
+}
+
+const INTERNAL_REBASE_PICK_ENV: &str = "GRIT_INTERNAL_REBASE_PICK_LINE";
+const INTERNAL_REBASE_FORCE_FF_ENV: &str = "GRIT_INTERNAL_REBASE_FORCE_REWRITE";
+
+fn run_internal_rebase_pick_line(line_index: usize) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+    let rb_dir =
+        active_rebase_dir(git_dir).ok_or_else(|| anyhow::anyhow!("no rebase in progress"))?;
+    let force_rewrite = std::env::var(INTERNAL_REBASE_FORCE_FF_ENV).ok().as_deref() == Some("1")
+        || rb_dir.join("force-rewrite").exists();
+    let rebase_interactive = rb_dir.join("interactive").exists();
+    let todo_content = fs::read_to_string(rb_dir.join("todo"))?;
+    let todo: Vec<&str> = todo_content.lines().filter(|l| !l.is_empty()).collect();
+    let i = line_index;
+    if i >= todo.len() {
+        bail!("internal rebase pick: line index out of range");
+    }
+    let line = todo[i];
+    let step = parse_rebase_replay_step(&repo, line, rebase_interactive)?
+        .ok_or_else(|| anyhow::anyhow!("malformed rebase todo line: {line}"))?;
+    match step {
+        RebaseReplayStep::PickLike {
+            oid: commit_oid,
+            cmd: todo_cmd,
+        } => {
+            let final_fixup = is_final_fixup_in_todo(&repo, &todo, i, rebase_interactive);
+            let next_after = peek_next_rebase_flush_hint(&repo, &todo, i + 1, rebase_interactive);
+            cherry_pick_for_rebase(
+                &repo,
+                &rb_dir,
+                &commit_oid,
+                load_rebase_backend(&rb_dir),
+                todo_cmd,
+                final_fixup,
+                next_after,
+                true,
+                force_rewrite,
+                i as u64,
+            )
+        }
+        RebaseReplayStep::Edit(commit_oid) => {
+            let todo_cmd = RebaseTodoCmd::Pick;
+            let final_fixup = is_final_fixup_in_todo(&repo, &todo, i, rebase_interactive);
+            let next_after = peek_next_rebase_flush_hint(&repo, &todo, i + 1, rebase_interactive);
+            cherry_pick_for_rebase(
+                &repo,
+                &rb_dir,
+                &commit_oid,
+                load_rebase_backend(&rb_dir),
+                todo_cmd,
+                final_fixup,
+                next_after,
+                false,
+                force_rewrite,
+                i as u64,
+            )
+        }
+        _ => bail!("internal rebase pick: unsupported step at line {i}"),
+    }
+}
+
+fn run_rebase_pick_in_clean_child_process(
+    repo: &Repository,
+    line_index: usize,
+    force_rewrite_commits: bool,
+) -> Result<()> {
+    let self_exe = std::env::current_exe().context("cannot determine grit binary path")?;
+    let wt = repo.work_tree.as_deref().unwrap_or_else(|| Path::new("."));
+    let mut cmd = std::process::Command::new(&self_exe);
+    cmd.arg("rebase")
+        .env(INTERNAL_REBASE_PICK_ENV, line_index.to_string())
+        .env(
+            INTERNAL_REBASE_FORCE_FF_ENV,
+            if force_rewrite_commits { "1" } else { "0" },
+        )
+        .current_dir(wt);
+    let st = cmd.status().context("spawn internal rebase pick")?;
+    if !st.success() {
+        bail!(
+            "internal rebase pick failed with status {}",
+            st.code().unwrap_or(-1)
+        );
+    }
+    Ok(())
 }
 
 // ── Rebase state directory layout ───────────────────────────────────
@@ -430,7 +534,7 @@ fn merge_backend_requested_by_flags(args: &Args, want_autosquash: bool) -> bool 
         return true;
     }
     let reapply_explicit = args.reapply_cherry_picks || args.no_reapply_cherry_picks;
-    if reapply_explicit && !args.keep_base {
+    if reapply_explicit && args.keep_base == 0 {
         return true;
     }
     if args.root && args.onto.is_none() {
@@ -1387,6 +1491,7 @@ fn commit_from_merged_index(
     parents: Vec<ObjectId>,
     author: &str,
     message: String,
+    pick_offset: u64,
 ) -> Result<ObjectId> {
     let tree_oid = write_tree_from_index(&repo.odb, merged_index, "")?;
     let now = time::OffsetDateTime::now_utc();
@@ -1396,7 +1501,7 @@ fn commit_from_merged_index(
         tree: tree_oid,
         parents,
         author: author.to_string(),
-        committer: format_ident(&committer, now),
+        committer: format_committer_ident_now(&committer, now, pick_offset),
         author_raw: Vec::new(),
         committer_raw: Vec::new(),
         encoding,
@@ -1976,7 +2081,7 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
             let oid = resolve_revision(&repo, onto_spec)
                 .with_context(|| format!("bad revision '{onto_spec}'"))?;
             (oid, onto_spec.clone())
-        } else if args.keep_base {
+        } else if args.keep_base > 0 {
             let oid = find_merge_base(&repo, up_oid, head_oid_early).unwrap_or(up_oid);
             (oid, upstream_spec.clone())
         } else {
@@ -1984,6 +2089,33 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         };
         (upstream_spec, up_oid, onto, onto_label)
     };
+
+    let mut replay_upstream_oid = upstream_oid;
+    if !args.root {
+        let use_fork_point = if args.no_fork_point {
+            false
+        } else if args.fork_point {
+            true
+        } else {
+            let from_cfg = config
+                .get_bool("rebase.forkPoint")
+                .or_else(|| config.get_bool("rebase.forkpoint"))
+                .and_then(|r| r.ok())
+                .unwrap_or(true);
+            if args.upstream_explicit || args.onto.is_some() || args.keep_base > 0 {
+                from_cfg
+            } else {
+                true
+            }
+        };
+        if use_fork_point {
+            if let Some(fp) =
+                merge_base_fork_point(&repo, git_dir, upstream_spec.as_str(), head_oid_early)?
+            {
+                replay_upstream_oid = fp;
+            }
+        }
+    }
 
     let head = head_state;
     let head_oid = head_oid_early;
@@ -2005,7 +2137,9 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     let allow_preemptive_ff =
         !args.interactive && args.exec.is_none() && !whitespace_forces_replay && !args.autosquash;
 
-    if allow_preemptive_ff && rebase_can_preemptive_ff(&repo, onto_oid, upstream_oid, head_oid)? {
+    if allow_preemptive_ff
+        && rebase_can_preemptive_ff(&repo, onto_oid, replay_upstream_oid, head_oid)?
+    {
         if !args.no_ff {
             print_branch_up_to_date(&head);
             if let Some(ref oid) = autostash_oid {
@@ -2039,13 +2173,18 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     } else if args.no_reapply_cherry_picks {
         false
     } else {
-        args.keep_base
+        args.keep_base > 0
     };
     let filter_cherry_equivalents = !reapply_cherry_picks && !args.interactive;
     let mut commits = if args.root {
         collect_commits_for_root_rebase(&repo, head_oid, onto_oid)?
     } else {
-        collect_rebase_todo_commits(&repo, head_oid, upstream_oid, filter_cherry_equivalents)?
+        collect_rebase_todo_commits(
+            &repo,
+            head_oid,
+            replay_upstream_oid,
+            filter_cherry_equivalents,
+        )?
     };
 
     if !args.keep_empty && !args.interactive {
@@ -2166,6 +2305,9 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     fs::write(rb_dir.join("head-name"), &head_name)?;
     fs::write(rb_dir.join("orig-head"), head_oid.to_hex())?;
     fs::write(rb_dir.join("onto"), onto_oid.to_hex())?;
+    if !args.root {
+        fs::write(rb_dir.join("upstream"), upstream_oid.to_hex())?;
+    }
     fs::write(rb_dir.join("onto-name"), format!("{onto_name_for_state}\n"))?;
     fs::write(
         rb_dir.join("reflog-action"),
@@ -2181,6 +2323,9 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
     fs::write(rb_dir.join("rebasing"), "")?;
     if args.root {
         fs::write(rb_dir.join("root"), "")?;
+    }
+    if args.no_ff {
+        fs::write(rb_dir.join("force-rewrite"), "")?;
     }
     if args.keep_empty {
         fs::write(rb_dir.join("keep-empty"), "")?;
@@ -2259,7 +2404,14 @@ fn do_rebase(args: Args, pre_rebase_hook_second: Option<String>) -> Result<()> {
         &onto_oid.to_hex()[..7]
     );
 
-    replay_remaining(&repo, &rb_dir, autostash_oid, backend, had_rebase_autostash)?;
+    replay_remaining(
+        &repo,
+        &rb_dir,
+        autostash_oid,
+        backend,
+        had_rebase_autostash,
+        args.no_ff,
+    )?;
 
     Ok(())
 }
@@ -2685,6 +2837,7 @@ fn replay_remaining(
     autostash_oid: Option<ObjectId>,
     backend: RebaseBackend,
     had_rebase_autostash: bool,
+    force_rewrite_commits: bool,
 ) -> Result<()> {
     let git_dir = &repo.git_dir;
     let ra = load_rebase_reflog_action(rb_dir);
@@ -2784,6 +2937,7 @@ fn replay_remaining(
                             autostash_oid,
                             backend,
                             had_rebase_autostash,
+                            force_rewrite_commits,
                         );
                     }
                     Ok(RebaseMergeReuseOutcome::Conflict) => {
@@ -2843,20 +2997,7 @@ fn replay_remaining(
                     .cloned()
                     .unwrap_or_else(diff::zero_oid);
 
-                let pick_backend = load_rebase_backend(rb_dir);
-                let final_fixup = is_final_fixup_in_todo(repo, &todo, i, rebase_interactive);
-                let next_after_this =
-                    peek_next_rebase_flush_hint(repo, &todo, i + 1, rebase_interactive);
-                match cherry_pick_for_rebase(
-                    repo,
-                    rb_dir,
-                    &commit_oid,
-                    pick_backend,
-                    todo_cmd,
-                    final_fixup,
-                    next_after_this,
-                    false,
-                ) {
+                match run_rebase_pick_in_clean_child_process(repo, i, force_rewrite_commits) {
                     Ok(()) => {
                         let head = resolve_head(git_dir)?;
                         let new_oid = *head
@@ -2937,20 +3078,7 @@ fn replay_remaining(
                     .cloned()
                     .unwrap_or_else(diff::zero_oid);
 
-                let pick_backend = load_rebase_backend(rb_dir);
-                let final_fixup = is_final_fixup_in_todo(repo, &todo, i, rebase_interactive);
-                let next_after_this =
-                    peek_next_rebase_flush_hint(repo, &todo, i + 1, rebase_interactive);
-                match cherry_pick_for_rebase(
-                    repo,
-                    rb_dir,
-                    &commit_oid,
-                    pick_backend,
-                    todo_cmd,
-                    final_fixup,
-                    next_after_this,
-                    true,
-                ) {
+                match run_rebase_pick_in_clean_child_process(repo, i, force_rewrite_commits) {
                     Ok(()) => {
                         let head = resolve_head(git_dir)?;
                         let new_oid = *head
@@ -3046,6 +3174,35 @@ fn rebase_keep_empty(rb_dir: &Path) -> bool {
     rb_dir.join("keep-empty").exists()
 }
 
+/// 0-based index of the pick line currently being replayed (`msgnum` in state is 1-based).
+fn rebase_current_pick_index(rb_dir: &Path) -> u64 {
+    fs::read_to_string(rb_dir.join("msgnum"))
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .map(|n| n.saturating_sub(1) as u64)
+        .unwrap_or(0)
+}
+
+fn rebase_orig_head_oid(rb_dir: &Path) -> Option<ObjectId> {
+    let s = fs::read_to_string(rb_dir.join("orig-head")).ok()?;
+    ObjectId::from_hex(s.trim()).ok()
+}
+
+fn rebase_initial_todo_count(rb_dir: &Path) -> Option<usize> {
+    let s = fs::read_to_string(rb_dir.join("end")).ok()?;
+    s.trim().parse().ok()
+}
+
+fn rebase_upstream_oid(rb_dir: &Path) -> Option<ObjectId> {
+    let s = fs::read_to_string(rb_dir.join("upstream")).ok()?;
+    ObjectId::from_hex(s.trim()).ok()
+}
+
+fn rebase_onto_oid_from_state(rb_dir: &Path) -> Option<ObjectId> {
+    let s = fs::read_to_string(rb_dir.join("onto")).ok()?;
+    ObjectId::from_hex(s.trim()).ok()
+}
+
 /// Cherry-pick a single commit onto current HEAD for rebase purposes.
 ///
 /// `rb_dir` is the active state directory (`rebase-apply` or `rebase-merge`), not `rebase_dir()`
@@ -3059,6 +3216,8 @@ fn cherry_pick_for_rebase(
     final_fixup: bool,
     next_after_line: Option<RebaseTodoCmd>,
     record_rewrite: bool,
+    force_rewrite_commits: bool,
+    pick_epoch_offset: u64,
 ) -> Result<()> {
     let git_dir = &repo.git_dir;
     let keep_empty = rebase_keep_empty(rb_dir);
@@ -3084,9 +3243,9 @@ fn cherry_pick_for_rebase(
             tree: head_commit.tree,
             parents: vec![head_oid],
             author: commit.author.clone(),
-            committer: format_ident(&committer, now),
+            committer: format_committer_ident_now(&committer, now, pick_epoch_offset),
             author_raw: commit.author_raw.clone(),
-            committer_raw: commit.committer_raw.clone(),
+            committer_raw: Vec::new(),
             encoding,
             message,
             raw_message,
@@ -3138,8 +3297,25 @@ fn cherry_pick_for_rebase(
                 if let Some(wt) = &repo.work_tree {
                     checkout_merged_index(repo, wt, &old_index, &idx)?;
                 }
-                if ws_fix_rule.is_some() {
-                    let tree_oid = write_tree_from_index(&repo.odb, &idx, "")?;
+                let upstream_matches_onto = match (
+                    rebase_upstream_oid(rb_dir),
+                    rebase_onto_oid_from_state(rb_dir),
+                ) {
+                    (Some(u), Some(o)) => u == o,
+                    _ => false,
+                };
+                let single_noop_same_tip = force_rewrite_commits
+                    && ws_fix_rule.is_none()
+                    && upstream_matches_onto
+                    && rebase_initial_todo_count(rb_dir) == Some(1)
+                    && rebase_orig_head_oid(rb_dir).as_ref() == Some(commit_oid);
+
+                if ws_fix_rule.is_some() || (force_rewrite_commits && !single_noop_same_tip) {
+                    let tree_oid = if ws_fix_rule.is_some() {
+                        write_tree_from_index(&repo.odb, &idx, "")?
+                    } else {
+                        commit_tree_oid
+                    };
                     let now = time::OffsetDateTime::now_utc();
                     let committer = resolve_identity(&config, "COMMITTER")?;
                     let (message, encoding, raw_message) = if root_rebase {
@@ -3156,9 +3332,9 @@ fn cherry_pick_for_rebase(
                         tree: tree_oid,
                         parents: vec![head_oid],
                         author: commit.author.clone(),
-                        committer: format_ident(&committer, now),
+                        committer: format_committer_ident_now(&committer, now, pick_epoch_offset),
                         author_raw: commit.author_raw.clone(),
-                        committer_raw: commit.committer_raw.clone(),
+                        committer_raw: Vec::new(),
                         encoding,
                         message,
                         raw_message,
@@ -3166,7 +3342,16 @@ fn cherry_pick_for_rebase(
                     let commit_bytes = serialize_commit(&commit_data);
                     let new_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
                     fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
-                    append_rebase_rewrite_line(rb_dir, commit_oid, &new_oid)?;
+                    if record_rewrite {
+                        record_rebase_in_rewritten_pending(
+                            git_dir,
+                            rb_dir,
+                            commit_oid,
+                            next_after_line,
+                        )?;
+                    } else {
+                        append_rebase_rewrite_line(rb_dir, commit_oid, &new_oid)?;
+                    }
                 } else {
                     fs::write(git_dir.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
                 }
@@ -3202,9 +3387,9 @@ fn cherry_pick_for_rebase(
                     tree: commit_tree_oid,
                     parents: vec![head_oid],
                     author: commit.author.clone(),
-                    committer: format_ident(&committer, now),
+                    committer: format_committer_ident_now(&committer, now, pick_epoch_offset),
                     author_raw: commit.author_raw.clone(),
-                    committer_raw: commit.committer_raw.clone(),
+                    committer_raw: Vec::new(),
                     encoding,
                     message,
                     raw_message,
@@ -3299,6 +3484,7 @@ fn cherry_pick_for_rebase(
                 vec![amend_parent],
                 &hc.author,
                 msg,
+                pick_epoch_offset,
             )?;
             fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
             record_rebase_in_rewritten_pending(git_dir, rb_dir, commit_oid, next_after_line)?;
@@ -3316,6 +3502,7 @@ fn cherry_pick_for_rebase(
                 vec![amend_parent],
                 &hc.author,
                 cleaned,
+                pick_epoch_offset,
             )?;
             fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
             if record_rewrite {
@@ -3343,6 +3530,7 @@ fn cherry_pick_for_rebase(
                 vec![amend_parent],
                 &hc.author,
                 cleaned,
+                pick_epoch_offset,
             )?;
             fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
             clear_squash_ctx(&rb_dir);
@@ -3370,6 +3558,7 @@ fn cherry_pick_for_rebase(
             vec![amend_parent],
             &hc.author,
             cleaned,
+            pick_epoch_offset,
         )?;
         fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
         clear_squash_ctx(&rb_dir);
@@ -3411,9 +3600,9 @@ fn cherry_pick_for_rebase(
         tree: tree_oid,
         parents: vec![head_oid],
         author: commit.author.clone(), // preserve original author
-        committer: format_ident(&committer, now),
+        committer: format_committer_ident_now(&committer, now, pick_epoch_offset),
         author_raw: commit.author_raw.clone(),
-        committer_raw: commit.committer_raw.clone(),
+        committer_raw: Vec::new(),
         encoding,
         message,
         raw_message,
@@ -3615,6 +3804,7 @@ fn do_continue() -> Result<()> {
     let autostash_continue = read_autostash_oid(&rb_dir)?;
     let had_autostash_continue = autostash_continue.is_some();
     let backend_continue = load_rebase_backend(&rb_dir);
+    let force_rewrite_continue = rb_dir.join("force-rewrite").exists();
 
     let interactive_continue = rb_dir.join("interactive").exists();
 
@@ -3643,6 +3833,7 @@ fn do_continue() -> Result<()> {
                 autostash_continue,
                 backend_continue,
                 had_autostash_continue,
+                force_rewrite_continue,
             );
         }
         if git_dir.join("MERGE_HEAD").exists() {
@@ -3685,6 +3876,7 @@ fn do_continue() -> Result<()> {
             autostash_continue,
             backend_continue,
             had_autostash_continue,
+            force_rewrite_continue,
         );
     }
 
@@ -3693,6 +3885,7 @@ fn do_continue() -> Result<()> {
         .lines()
         .filter(|l| !l.is_empty())
         .collect();
+    let pick_epoch_offset = rebase_current_pick_index(&rb_dir);
 
     if rb_dir.join("rebase-amend-continue").exists() {
         let index = load_index(&repo)?;
@@ -3726,6 +3919,7 @@ fn do_continue() -> Result<()> {
             vec![amend_parent],
             &hc.author,
             message,
+            pick_epoch_offset,
         )?;
         fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
         let amend_stopped_hex = fs::read_to_string(rb_dir.join("stopped-sha")).unwrap_or_default();
@@ -3747,6 +3941,7 @@ fn do_continue() -> Result<()> {
             autostash_continue,
             backend_continue,
             had_autostash_continue,
+            force_rewrite_continue,
         );
     }
 
@@ -3772,6 +3967,7 @@ fn do_continue() -> Result<()> {
                     autostash_continue,
                     backend_continue,
                     had_autostash_continue,
+                    force_rewrite_continue,
                 );
             }
         }
@@ -3848,6 +4044,7 @@ fn do_continue() -> Result<()> {
                 vec![amend_parent],
                 &hc.author,
                 msg,
+                pick_epoch_offset,
             )?
         } else if todo_cmd == RebaseTodoCmd::Squash && !final_fixup {
             let tmpl = fs::read_to_string(rb_dir.join("message-squash"))?;
@@ -3861,6 +4058,7 @@ fn do_continue() -> Result<()> {
                 vec![amend_parent],
                 &hc.author,
                 cleaned,
+                pick_epoch_offset,
             )?
         } else if todo_cmd == RebaseTodoCmd::Fixup {
             let fixup_path = rb_dir.join("message-fixup");
@@ -3881,6 +4079,7 @@ fn do_continue() -> Result<()> {
                 vec![amend_parent],
                 &hc.author,
                 cleaned,
+                pick_epoch_offset,
             )?;
             clear_squash_ctx(&rb_dir);
             oid
@@ -3902,6 +4101,7 @@ fn do_continue() -> Result<()> {
                 vec![amend_parent],
                 &hc.author,
                 cleaned,
+                pick_epoch_offset,
             )?;
             clear_squash_ctx(&rb_dir);
             oid
@@ -3927,9 +4127,9 @@ fn do_continue() -> Result<()> {
             tree: tree_oid,
             parents: vec![head_oid],
             author: original_commit.author.clone(),
-            committer: format_ident(&committer, now),
+            committer: format_committer_ident_now(&committer, now, pick_epoch_offset),
             author_raw: original_commit.author_raw.clone(),
-            committer_raw: original_commit.committer_raw.clone(),
+            committer_raw: Vec::new(),
             encoding,
             message,
             raw_message,
@@ -3948,9 +4148,9 @@ fn do_continue() -> Result<()> {
             tree: tree_oid,
             parents: vec![head_oid],
             author: original_commit.author.clone(),
-            committer: format_ident(&committer, now),
+            committer: format_committer_ident_now(&committer, now, pick_epoch_offset),
             author_raw: original_commit.author_raw.clone(),
-            committer_raw: original_commit.committer_raw.clone(),
+            committer_raw: Vec::new(),
             encoding,
             message,
             raw_message,
@@ -3998,6 +4198,7 @@ fn do_continue() -> Result<()> {
         autostash_continue,
         backend_continue,
         had_autostash_continue,
+        force_rewrite_continue,
     )?;
 
     Ok(())
@@ -4018,6 +4219,7 @@ fn do_skip() -> Result<()> {
     let autostash_skip = read_autostash_oid(&rb_dir)?;
     let had_autostash_skip = autostash_skip.is_some();
     let backend_skip = load_rebase_backend(&rb_dir);
+    let force_rewrite_skip = rb_dir.join("force-rewrite").exists();
 
     let todo_content_skip = fs::read_to_string(rb_dir.join("todo"))?;
     let todo_lines_skip: Vec<&str> = todo_content_skip
@@ -4064,6 +4266,7 @@ fn do_skip() -> Result<()> {
         autostash_skip,
         backend_skip,
         had_autostash_skip,
+        force_rewrite_skip,
     )?;
 
     Ok(())
@@ -4288,6 +4491,27 @@ fn format_ident(ident: &(String, String), now: time::OffsetDateTime) -> String {
         .map(|d| super::commit::parse_date_to_git_timestamp(&d).unwrap_or(d))
         .unwrap_or_else(|| format!("{epoch} {hours:+03}{minutes:02}"));
     format!("{name} <{email}> {timestamp}")
+}
+
+/// Committer line for objects created during rebase replay.
+///
+/// Unlike [`format_ident`], this ignores `GIT_COMMITTER_DATE` so each replayed commit gets a
+/// distinct committer timestamp. Matching Git matters for `--no-ff` / forced replays: otherwise
+/// the serialized bytes can match an existing object and the ODB returns the old OID unchanged.
+///
+/// `pick_seq` offsets the Unix epoch so multiple picks in the same wall-clock second still produce
+/// distinct serialized commits (tests pin time via `GIT_COMMITTER_DATE` / `test_tick`).
+fn format_committer_ident_now(
+    ident: &(String, String),
+    now: time::OffsetDateTime,
+    pick_seq: u64,
+) -> String {
+    let (name, email) = ident;
+    let epoch = now.unix_timestamp().saturating_add(pick_seq as i64);
+    let offset = now.offset();
+    let hours = offset.whole_hours();
+    let minutes = offset.minutes_past_hour().unsigned_abs();
+    format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
 }
 
 fn tree_to_index_entries(

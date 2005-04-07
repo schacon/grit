@@ -361,7 +361,7 @@ commit → check it off → move on.
 
 - [ ] `t3430-rebase-merges` ░░░░░░░░░░░░░░░░░░░░ 1/34 (33 left) — git rebase -i --rebase-merges
 
-- [ ] `t3432-rebase-fast-forward` ████████████████░░░░ 189/225 (36 left) — ensure rebase fast-forwards commits when possible
+- [ ] `t3432-rebase-fast-forward` █████████████████░░░ 219/225 (6 `test_expect_failure` fork-point edge cases) — ensure rebase fast-forwards commits when possible
 - [ ] `t3206-range-diff` ██░░░░░░░░░░░░░░░░░░ 5/48 (43 left) — range-diff tests
 - [ ] `t3105-ls-tree-output` ████░░░░░░░░░░░░░░░░ 13/60 (47 left) — ls-tree output
 - [~] `t3420-rebase-autostash` ███████████████░░░░░ 41/54 (13 left) — git rebase --autostash tests
