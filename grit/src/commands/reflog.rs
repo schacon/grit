@@ -436,6 +436,10 @@ fn parse_reflog_expire_cli(raw: &str, now: i64) -> Result<i64> {
     if s.eq_ignore_ascii_case("never") || s.eq_ignore_ascii_case("false") {
         return Ok(0);
     }
+    // Git: `--expire=all` removes every reflog entry by age (matches t1411 empty reflog).
+    if s.eq_ignore_ascii_case("all") {
+        return Ok(i64::MAX);
+    }
     if s.eq_ignore_ascii_case("now") || s == "0" {
         return Ok(now);
     }

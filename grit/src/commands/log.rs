@@ -3572,24 +3572,56 @@ fn reflog_entry_tz(entry: &grit_lib::reflog::ReflogEntry) -> &str {
 fn format_reflog_selector_date(
     display_name: &str,
     entry: &grit_lib::reflog::ReflogEntry,
+    date_mode: Option<&str>,
 ) -> String {
     if let Some(ts) = reflog_entry_unix_ts(entry) {
         let tz = reflog_entry_tz(entry);
         // `format_date_with_mode` parses Git signature tails via `parse_signature_tail`, which
         // requires the `Name <email>` prefix before `<unix> <tz>` (see grit-lib `ident.rs`).
         let pseudo = format!("x <x@x> {ts} {tz}");
-        let date = format_date_with_mode(&pseudo, None);
+        let date = format_date_with_mode(&pseudo, date_mode);
         format!("{display_name}@{{{date}}}")
     } else {
         format!("{display_name}@{{0}}")
     }
 }
 
+#[derive(Clone, Copy)]
+enum ReflogWalkSuffixKind {
+    Index,
+    Date,
+}
+
+/// `%gd` for `log -g`: indexed `@{n}` wins over `--date` when the user gave `@{n}`; date-based
+/// suffixes and explicit `--date` use the reflog entry timestamp (t1411).
+fn reflog_walk_percent_gd(
+    display_name: &str,
+    entry: &grit_lib::reflog::ReflogEntry,
+    nr: usize,
+    j: usize,
+    had_reflog_suffix: bool,
+    last_suffix: ReflogWalkSuffixKind,
+    cli_date: Option<&str>,
+) -> String {
+    if had_reflog_suffix && matches!(last_suffix, ReflogWalkSuffixKind::Index) {
+        let idx_from_tip = nr - 1 - j;
+        return format!("{display_name}@{{{idx_from_tip}}}");
+    }
+    if had_reflog_suffix && matches!(last_suffix, ReflogWalkSuffixKind::Date) {
+        return format_reflog_selector_date(display_name, entry, cli_date);
+    }
+    if let Some(dm) = cli_date {
+        return format_reflog_selector_date(display_name, entry, Some(dm));
+    }
+    let idx_from_tip = nr - 1 - j;
+    format!("{display_name}@{{{idx_from_tip}}}")
+}
+
 /// Run the reflog walk mode (`log -g` / `log --walk-reflogs`).
 fn run_reflog_walk(
     repo: &Repository,
     args: &Args,
-    _patch_context: usize,
+    patch_context: usize,
     author_res: &[Regex],
     committer_res: &[Regex],
     grep_res: &[Regex],
@@ -3640,13 +3672,23 @@ fn run_reflog_walk(
         .cloned()
         .unwrap_or_else(|| "HEAD".to_string());
     let orig_r = orig_r_owned.as_str();
-    let display_name = if orig_r.starts_with("refs/") {
-        orig_r
+    // User-facing reflog selector name: `HEAD@{now}` must stay `HEAD`, not the resolved
+    // branch (`main@{...}`), matching Git (t1411).
+    let display_name: std::borrow::Cow<'_, str> = if let Some(pos) = orig_r.find("@{") {
+        let p = orig_r[..pos].trim();
+        if p.is_empty() {
+            std::borrow::Cow::Borrowed("HEAD")
+        } else {
+            std::borrow::Cow::Borrowed(p)
+        }
+    } else if orig_r.starts_with("refs/") {
+        std::borrow::Cow::Borrowed(orig_r)
     } else if refname.starts_with("refs/heads/") {
-        refname.strip_prefix("refs/heads/").unwrap_or(&refname)
+        std::borrow::Cow::Borrowed(refname.strip_prefix("refs/heads/").unwrap_or(&refname))
     } else {
-        &refname
+        std::borrow::Cow::Borrowed(&refname)
     };
+    let display_name = display_name.as_ref();
 
     let entries = read_reflog(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -3663,7 +3705,8 @@ fn run_reflog_walk(
 
     let nr = entries.len();
     let mut start_j: Option<usize> = None;
-    let mut use_date_selector = false;
+    let mut had_reflog_suffix = false;
+    let mut last_reflog_suffix = ReflogWalkSuffixKind::Index;
 
     let mut pos = 0usize;
     while let Some(at) = next_reflog_at_open_for_suffix(orig_r, pos) {
@@ -3677,10 +3720,11 @@ fn run_reflog_walk(
             pos = close + 1;
             continue;
         }
+        had_reflog_suffix = true;
         if let Ok(n) = inner.parse::<usize>() {
             let idx = nr.checked_sub(1 + n);
             start_j = Some(idx.unwrap_or(0));
-            use_date_selector = false;
+            last_reflog_suffix = ReflogWalkSuffixKind::Index;
         } else if let Some(target_ts) = grit_lib::rev_parse::reflog_date_selector_timestamp(inner) {
             let mut picked = 0usize;
             for (j, e) in entries.iter().enumerate() {
@@ -3691,21 +3735,29 @@ fn run_reflog_walk(
                 }
             }
             start_j = Some(picked);
-            use_date_selector = true;
+            last_reflog_suffix = ReflogWalkSuffixKind::Date;
         } else {
             start_j = Some(nr.saturating_sub(1));
-            use_date_selector = false;
+            last_reflog_suffix = ReflogWalkSuffixKind::Index;
         }
         pos = close + 1;
     }
 
     let start_j = start_j.unwrap_or(nr.saturating_sub(1));
 
+    let cli_date_for_reflog = args.date.as_deref().filter(|s| !s.is_empty());
+    // Git: `log.date` does not affect reflog selector display; only an explicit `--date` on the
+    // command line does (when no numeric `@{n}` suffix). Date-based suffixes like `@{now}` always
+    // use the reflog entry timestamp in the selector (t1411).
+    let use_reflog_timestamp_in_selector = (cli_date_for_reflog.is_some() && !had_reflog_suffix)
+        || (had_reflog_suffix && matches!(last_reflog_suffix, ReflogWalkSuffixKind::Date));
+
     let max = args.max_count.unwrap_or(usize::MAX);
     let skip = args.skip.unwrap_or(0);
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
+    let mut notes_cache = NotesMapCache::new(repo);
 
     // Detect format
     let is_format_separator = args
@@ -3778,12 +3830,22 @@ fn run_reflog_walk(
             continue;
         }
 
-        let selector = if use_date_selector {
-            format_reflog_selector_date(display_name, entry)
+        let selector = if use_reflog_timestamp_in_selector {
+            format_reflog_selector_date(display_name, entry, cli_date_for_reflog)
         } else {
             let idx_from_tip = nr - 1 - j;
             format!("{display_name}@{{{idx_from_tip}}}")
         };
+
+        let percent_gd = reflog_walk_percent_gd(
+            display_name,
+            entry,
+            nr,
+            j,
+            had_reflog_suffix,
+            last_reflog_suffix,
+            cli_date_for_reflog,
+        );
 
         // NUL separator between entries for multi-line formats
         let is_oneline_fmt = args.format.as_deref() == Some("oneline") || args.oneline;
@@ -3803,14 +3865,26 @@ fn run_reflog_walk(
                     }
                 }
                 "short" => {
-                    writeln!(out, "commit {}", entry.new_oid.to_hex())?;
-                    let author_name = extract_name(&commit_data.author);
-                    writeln!(out, "Author: {author_name}")?;
+                    let abbrev_len = parse_abbrev(&args.abbrev);
+                    let full_hex = entry.new_oid.to_hex();
+                    let abbrev = &full_hex[..abbrev_len.min(full_hex.len())];
+                    writeln!(out, "commit {}", abbrev)?;
+                    let ident_display = if let Some(email_end) = entry.identity.rfind('>') {
+                        &entry.identity[..email_end + 1]
+                    } else {
+                        &entry.identity
+                    };
+                    writeln!(out, "Reflog: {} ({})", selector, ident_display)?;
+                    writeln!(out, "Reflog message: {}", entry.message)?;
+                    writeln!(
+                        out,
+                        "Author: {}",
+                        format_ident_for_header(&commit_data.author)
+                    )?;
                     writeln!(out)?;
                     for line in commit_data.message.lines().take(1) {
                         writeln!(out, "    {line}")?;
                     }
-                    writeln!(out)?;
                 }
                 "medium" => {
                     writeln!(out, "commit {}", entry.new_oid.to_hex())?;
@@ -3921,7 +3995,7 @@ fn run_reflog_walk(
                         fmt_str,
                         &entry.new_oid,
                         &commit_data,
-                        &selector,
+                        &percent_gd,
                         &entry.message,
                         &entry.identity,
                     );
@@ -3965,6 +4039,44 @@ fn run_reflog_walk(
                 writeln!(out, "    {}", line)?;
             }
         }
+
+        let info = CommitInfo {
+            tree: commit_data.tree,
+            parents: commit_data.parents.clone(),
+            author: commit_data.author.clone(),
+            committer: commit_data.committer.clone(),
+            message: commit_data.message.clone(),
+        };
+        let show_diff = args.patch
+            || args.patch_u
+            || !args.stat.is_empty()
+            || args.name_only
+            || args.name_status
+            || args.raw
+            || args.cc
+            || args.merge_diff_c
+            || args.remerge_diff
+            || args.patch_with_stat;
+        if show_diff {
+            write_commit_diff(
+                &mut out,
+                repo,
+                &entry.new_oid,
+                &info,
+                args,
+                &args.pathspecs,
+                None,
+                None,
+                false,
+                &mut notes_cache,
+                patch_context,
+            )?;
+            // Match `git log -p`: blank line after each patch before the next entry (t1411).
+            if j > 0 {
+                writeln!(out)?;
+            }
+        }
+
         shown += 1;
     }
 
@@ -3977,7 +4089,7 @@ fn apply_reflog_format_string(
     fmt: &str,
     oid: &ObjectId,
     commit: &grit_lib::objects::CommitData,
-    selector: &str,
+    percent_gd: &str,
     reflog_msg: &str,
     reflog_identity: &str,
 ) -> String {
@@ -4030,7 +4142,7 @@ fn apply_reflog_format_string(
                     match chars.peek() {
                         Some('d') => {
                             chars.next();
-                            result.push_str(selector);
+                            result.push_str(percent_gd);
                         }
                         Some('s') => {
                             chars.next();
