@@ -974,6 +974,9 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         // Remove existing directory/file at target path
         if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
             if meta.is_dir() {
+                if worktree_has_untracked_under_path(&work_tree, old_index, &path_str)? {
+                    bail!("Updating '{path_str}' would lose untracked files in it");
+                }
                 std::fs::remove_dir_all(&abs_path)?;
             } else {
                 std::fs::remove_file(&abs_path)?;
@@ -1233,7 +1236,101 @@ fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
     bail!("not a valid tree-ish: '{s}'")
 }
 
-fn peel_to_tree(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
+/// Canonical empty tree object id (matches `git hash-object -t tree --stdin </dev/null>`).
+const EMPTY_TREE_OID_HEX: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// Reset index and work tree after `git am --skip` / `--abort`-style cleanup.
+///
+/// Mirrors Git's `clean_index` in `builtin/am.c`: fast-forward the index to `HEAD`'s tree
+/// (dropping unmerged entries), then two-way merge toward `orig_head`'s tree while preserving
+/// index stat information for paths that were not modified between those trees.
+///
+/// # Parameters
+///
+/// - `head_commit` — `None` when `HEAD` is unborn (empty tree is used).
+/// - `orig_commit` — `None` when `ORIG_HEAD` is missing (empty tree is used).
+///
+/// # Errors
+///
+/// Returns an error on tree resolution failure, merge conflicts, or I/O errors.
+pub fn am_clean_index(
+    repo: &Repository,
+    head_commit: Option<ObjectId>,
+    orig_commit: Option<ObjectId>,
+) -> Result<()> {
+    let index_path = effective_index_path(repo)?;
+    let prot = PathProtection::load(&repo.git_dir);
+    let old_before = repo
+        .load_index_at(&index_path)
+        .context("loading index for am clean_index")?;
+
+    let empty_tree: ObjectId = EMPTY_TREE_OID_HEX.parse()?;
+    let head_tree_oid = match head_commit {
+        Some(oid) => peel_to_tree(repo, oid)?,
+        None => empty_tree,
+    };
+    let orig_tree_oid = match orig_commit {
+        Some(oid) => peel_to_tree(repo, oid)?,
+        None => empty_tree,
+    };
+
+    let phase1 = index_reset_to_tree_preserving_stats(repo, &old_before, &head_tree_oid, prot)?;
+
+    if repo.work_tree.is_some() {
+        // Drop conflict-marker / partial-apply content so `two_way_merge`'s
+        // `require_uptodate` checks see a work tree consistent with `phase1` (HEAD).
+        checkout_index_entries(repo, &old_before, &phase1)?;
+    }
+
+    let head_map = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "", prot)?);
+    let orig_map = tree_to_map(tree_to_index_entries(repo, &orig_tree_oid, "", prot)?);
+    let mut phase2 = two_way_merge(repo, &phase1, &head_map, &orig_map)?;
+
+    apply_sparse_checkout(&repo.git_dir, &mut phase2)?;
+
+    if repo.work_tree.is_some() {
+        checkout_index_entries(repo, &phase1, &phase2)?;
+    }
+
+    repo.write_index_at(&index_path, &mut phase2)
+        .context("writing index after am clean_index")?;
+    Ok(())
+}
+
+/// Replace stage-0 index entries with `tree_oid`, copying stat fields from `old` when the
+/// blob/mode matches (Git `unpack_trees` / `clean_index` stat preservation).
+fn index_reset_to_tree_preserving_stats(
+    repo: &Repository,
+    old: &Index,
+    tree_oid: &ObjectId,
+    prot: PathProtection,
+) -> Result<Index> {
+    let fresh = tree_to_index_entries(repo, tree_oid, "", prot)?;
+    let old_stage0 = stage0_index_map(old);
+    let mut out = Index::new();
+    for mut e in fresh {
+        if let Some(prev) = old_stage0.get(&e.path) {
+            if prev.oid == e.oid && prev.mode == e.mode {
+                e.ctime_sec = prev.ctime_sec;
+                e.ctime_nsec = prev.ctime_nsec;
+                e.mtime_sec = prev.mtime_sec;
+                e.mtime_nsec = prev.mtime_nsec;
+                e.dev = prev.dev;
+                e.ino = prev.ino;
+                e.uid = prev.uid;
+                e.gid = prev.gid;
+                e.size = prev.size;
+                e.flags = prev.flags;
+                e.flags_extended = prev.flags_extended;
+            }
+        }
+        out.entries.push(e);
+    }
+    out.sort();
+    Ok(out)
+}
+
+pub(crate) fn peel_to_tree(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
     loop {
         let obj = repo.odb.read(&oid)?;
         match obj.kind {

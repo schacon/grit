@@ -496,7 +496,7 @@ commit → check it off → move on.
 - [ ] `t4300-merge-tree` ████░░░░░░░░░░░░░░░░ 5/22 (17 left) — git merge-tree
 - [ ] `t4135-apply-weird-filenames` ███░░░░░░░░░░░░░░░░░ 3/20 (17 left) — git apply with weird postimage filenames
 - [ ] `t4030-diff-textconv` ██░░░░░░░░░░░░░░░░░░ 2/19 (17 left) — diff.*.textconv tests
-- [ ] `t4151-am-abort` ██░░░░░░░░░░░░░░░░░░ 2/20 (18 left) — am --abort
+- [x] `t4151-am-abort` ████████████████████ 20/20 (0 left) — am --abort (state: abort-safety, ORIG_HEAD, dirty index; clean_index via read-tree; --3way preimage + conflicts + unborn modify/delete; checkout untracked-in-dir guard; abort exit 128 on clean failure)
 - [ ] `t4002-diff-basic` █████████████░░░░░░░ 44/63 (19 left) — Test diff raw-output.
 
 - [ ] `t4045-diff-relative` ██████████░░░░░░░░░░ 20/39 (19 left) — diff --relative tests

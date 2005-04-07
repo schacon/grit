@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -812,7 +812,7 @@ t4139-apply-escape	t4	yes	12	7	5	false	ok	0
 t4140-apply-ita	t4	yes	7	7	0	true	ok	0
 t4141-apply-too-large	t4	yes	1	1	0	true	ok	0
 t4150-am	t4	yes	87	27	60	false	ok	0
-t4151-am-abort	t4	yes	20	5	15	false	ok	0
+t4151-am-abort	t4	yes	20	20	0	true	ok	0
 t4152-am-subjects	t4	yes	13	13	0	true	ok	0
 t4153-am-resume-override-opts	t4	yes	6	6	0	true	ok	0
 t4200-rerere	t4	yes	36	19	17	false	ok	0

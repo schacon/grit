@@ -16,10 +16,12 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 
 use grit_lib::config::{parse_bool, ConfigSet};
-use grit_lib::index::Index;
+use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
+use grit_lib::refs::{delete_ref, write_ref};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rerere::rerere_clear;
+use grit_lib::rev_parse::resolve_revision_for_patch_old_blob;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 
@@ -241,6 +243,61 @@ pub fn run(args: Args) -> Result<()> {
 
 fn am_dir(git_dir: &Path) -> std::path::PathBuf {
     git_dir.join("rebase-apply")
+}
+
+fn write_am_abort_safety(git_dir: &Path) -> Result<()> {
+    let state_dir = am_dir(git_dir);
+    match resolve_head(git_dir)?.oid() {
+        Some(oid) => fs::write(
+            state_dir.join("abort-safety"),
+            format!("{}\n", oid.to_hex()),
+        ),
+        None => fs::write(state_dir.join("abort-safety"), b""),
+    }
+    .map_err(|e| anyhow::anyhow!(e))
+}
+
+fn sync_am_orig_head(git_dir: &Path) -> Result<()> {
+    match resolve_head(git_dir)?.oid() {
+        Some(oid) => write_ref(git_dir, "ORIG_HEAD", oid).map_err(|e| e.into()),
+        None => {
+            let _ = delete_ref(git_dir, "ORIG_HEAD");
+            Ok(())
+        }
+    }
+}
+
+fn index_differs_from_head(repo: &Repository, git_dir: &Path) -> Result<bool> {
+    let index = load_index(repo)?;
+    if index.entries.iter().any(|e| e.stage() != 0) {
+        return Ok(true);
+    }
+    let head = resolve_head(git_dir)?;
+    let Some(head_oid) = head.oid() else {
+        return Ok(!index.entries.is_empty());
+    };
+    let head_tree = {
+        let obj = repo.odb.read(head_oid)?;
+        let commit = parse_commit(&obj.data)?;
+        commit.tree
+    };
+    let index_tree = write_tree_from_index(&repo.odb, &index, "")?;
+    Ok(head_tree != index_tree)
+}
+
+fn am_safe_to_abort(git_dir: &Path) -> Result<bool> {
+    if am_dir(git_dir).join("dirtyindex").exists() {
+        return Ok(false);
+    }
+    let state_dir = am_dir(git_dir);
+    let safety = fs::read_to_string(state_dir.join("abort-safety")).unwrap_or_default();
+    let safety_trim = safety.trim();
+    let head = resolve_head(git_dir)?;
+    match (head.oid(), safety_trim.is_empty()) {
+        (None, true) => Ok(true),
+        (Some(oid), false) if safety_trim == oid.to_hex() => Ok(true),
+        _ => Ok(false),
+    }
 }
 
 fn is_am_in_progress(git_dir: &Path) -> bool {
@@ -498,6 +555,9 @@ fn do_am(args: Args) -> Result<()> {
     fs::write(state_dir.join("last"), all_patches.len().to_string())?;
     fs::write(state_dir.join("next"), "1")?;
 
+    write_am_abort_safety(git_dir)?;
+    sync_am_orig_head(git_dir)?;
+
     // Write individual patches
     for (i, patch) in all_patches.iter().enumerate() {
         let patch_file = state_dir.join("patches").join((i + 1).to_string());
@@ -577,6 +637,9 @@ fn do_am_stdin(args: Args) -> Result<()> {
     fs::write(state_dir.join("last"), all_patches.len().to_string())?;
     fs::write(state_dir.join("next"), "1")?;
 
+    write_am_abort_safety(git_dir)?;
+    sync_am_orig_head(git_dir)?;
+
     for (i, patch) in all_patches.iter().enumerate() {
         let patch_file = state_dir.join("patches").join((i + 1).to_string());
         let serialized = serialize_mbox_patch(patch);
@@ -597,6 +660,25 @@ fn apply_remaining(
 ) -> Result<()> {
     let git_dir = &repo.git_dir;
     let state_dir = am_dir(git_dir);
+
+    let _ = fs::remove_file(state_dir.join("dirtyindex"));
+    if index_differs_from_head(repo, git_dir)? {
+        fs::write(state_dir.join("dirtyindex"), "")?;
+        let mut sb = String::new();
+        let index = load_index(repo)?;
+        for e in index.entries.iter().filter(|e| e.stage() == 0) {
+            let p = String::from_utf8_lossy(&e.path);
+            if !sb.is_empty() {
+                sb.push(' ');
+            }
+            sb.push_str(&p);
+        }
+        eprintln!(
+            "error: Dirty index: cannot apply patches (dirty: {sb})\n\
+             hint: commit or reset your changes before running \"grit am\" again."
+        );
+        std::process::exit(128);
+    }
 
     let last: usize = fs::read_to_string(state_dir.join("last"))?.trim().parse()?;
     let mut next: usize = fs::read_to_string(state_dir.join("next"))?.trim().parse()?;
@@ -651,17 +733,19 @@ fn apply_remaining(
             opts.clone()
         };
 
+        let subject = patch.message.lines().next().unwrap_or("");
+        if !effective_opts.quiet {
+            println!("Applying: {}", subject);
+        }
+
         match apply_one_patch(repo, &patch, &effective_opts) {
             Ok(()) => {
-                let subject = patch.message.lines().next().unwrap_or("");
-                if !effective_opts.quiet {
-                    println!("Applying: {}", subject);
-                }
+                write_am_abort_safety(git_dir)?;
                 next += 1;
                 fs::write(state_dir.join("next"), next.to_string())?;
             }
             Err(e) => {
-                let subject = patch.message.lines().next().unwrap_or("");
+                let _ = write_am_abort_safety(git_dir);
                 // Invoke rerere to record preimage or replay resolution
                 let _ = crate::commands::rerere::auto_rerere_worktree(repo);
                 eprintln!(
@@ -766,8 +850,11 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
         }
     }
 
-    // Try to apply the diff to the working tree
-    let apply_result = apply_patch_to_worktree(work_tree, &patch.diff, opts.keep_cr);
+    // Try to apply the diff to the working tree. With `--3way`, Git verifies patch index
+    // preimages against the work tree even when a fuzzy apply could succeed; mismatch must
+    // fall through to the 3-way path (t4151 `changes.mbox`).
+    let apply_result =
+        apply_patch_to_worktree(work_tree, &patch.diff, opts.keep_cr, opts.three_way);
 
     match apply_result {
         Ok(affected_paths) => {
@@ -828,6 +915,58 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
     Ok(())
 }
 
+/// Result of whole-file 3-way text merge for `git am --3way` (matches Git’s coarse
+/// “one side matches base” rules; see `builtin/am.c` / `ll_merge` outcomes).
+enum AmThreeWayMerge {
+    /// Merged cleanly to a single tree blob (empty string means the path should be absent).
+    Clean(String),
+    /// Conflict: working tree file contains conflict markers; index should hold stages 1–3.
+    Conflict(String),
+    /// `HEAD` had no blob (unborn branch or deleted path) but the patch modifies the base — Git
+    /// records stages **1** and **3** only (`modify/delete`); work tree keeps **theirs**.
+    ModifyDelete(String),
+}
+
+/// Merge `base`, `ours` (HEAD), and `theirs` (patch result) using Git’s text rules:
+/// - identical `ours`/`theirs` → `ours`
+/// - `ours` == `base` → `theirs`
+/// - `theirs` == `base` → `ours`
+/// - else conflict markers (`patch_label` becomes the `>>>>>>>` label).
+fn merge_three_way_text_am(
+    base: &str,
+    ours: &str,
+    theirs: &str,
+    patch_label: &str,
+) -> AmThreeWayMerge {
+    if ours == theirs {
+        return AmThreeWayMerge::Clean(ours.to_string());
+    }
+    if ours == base {
+        return AmThreeWayMerge::Clean(theirs.to_string());
+    }
+    if theirs == base {
+        return AmThreeWayMerge::Clean(ours.to_string());
+    }
+
+    if ours.is_empty() && !base.is_empty() && theirs != base {
+        return AmThreeWayMerge::ModifyDelete(theirs.to_string());
+    }
+
+    let mut out = String::new();
+    out.push_str("<<<<<<< HEAD\n");
+    out.push_str(ours);
+    if !ours.is_empty() && !ours.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("=======\n");
+    out.push_str(theirs);
+    if !theirs.is_empty() && !theirs.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&format!(">>>>>>> {patch_label}\n"));
+    AmThreeWayMerge::Conflict(out)
+}
+
 /// Attempt a 3-way merge when a patch doesn't apply cleanly.
 fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
     let git_dir = &repo.git_dir;
@@ -838,12 +977,16 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
 
     // Parse the patch to extract index lines with blob SHAs
     let file_patches = parse_patch(&patch.diff)?;
-    let head = resolve_head(git_dir)?;
-    let head_oid = head
-        .oid()
-        .ok_or_else(|| anyhow::anyhow!("no HEAD for 3-way merge"))?;
-    let head_obj = repo.odb.read(head_oid)?;
-    let head_commit = parse_commit(&head_obj.data)?;
+    let head_tree_oid = match resolve_head(git_dir)?.oid() {
+        Some(head_oid) => {
+            let head_obj = repo.odb.read(head_oid)?;
+            let head_commit = parse_commit(&head_obj.data)?;
+            head_commit.tree
+        }
+        None => "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            .parse::<ObjectId>()
+            .map_err(|e| anyhow::anyhow!(e))?,
+    };
 
     // Build the "base" tree by finding the common ancestor blobs from index lines
     // Then apply the patch to the base, and merge base->patched with HEAD
@@ -855,6 +998,7 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
 
     let mut any_conflict = false;
     let mut affected_paths = Vec::new();
+    let mut conflict_stages: Vec<AmConflictStages> = Vec::new();
 
     for fp in &file_patches {
         let path_str = fp
@@ -868,7 +1012,7 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
             let preimage = preimage_from_hunks(&fp.hunks);
             if !preimage.is_empty() {
                 if let Some(matched_path) =
-                    find_tree_path_matching_content(repo, &head_commit.tree, &preimage)?
+                    find_tree_path_matching_content(repo, &head_tree_oid, &preimage)?
                 {
                     effective_rel_path = matched_path;
                     abs_path = work_tree.join(&effective_rel_path);
@@ -897,17 +1041,14 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
             continue;
         }
 
-        // Get "ours" from working tree / HEAD
-        let ours = if abs_path.exists() {
-            fs::read_to_string(&abs_path).unwrap_or_default()
-        } else {
-            // Try from HEAD tree
-            get_blob_from_tree(repo, &head_commit.tree, &effective_rel_path).unwrap_or_default()
-        };
+        // "Ours" must match `HEAD` (the tree being patched), not whatever is left on disk after a
+        // failed `apply_patch` attempt — using the work tree here can hide real conflicts (t4151).
+        let ours =
+            get_blob_from_tree(repo, &head_tree_oid, &effective_rel_path).unwrap_or_default();
 
         // Prefer patch index preimage blob when available.
         let base = if let Some(old_oid_str) = fp.old_oid.as_deref() {
-            if let Ok(old_oid) = resolve_revision(repo, old_oid_str) {
+            if let Ok(old_oid) = resolve_revision_for_patch_old_blob(repo, old_oid_str) {
                 if let Ok(obj) = repo.odb.read(&old_oid) {
                     String::from_utf8_lossy(&obj.data).into_owned()
                 } else {
@@ -933,21 +1074,196 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
             }
         };
 
-        // Now do a 3-way merge: base, ours, theirs
-        let merged = three_way_merge(&base, &ours, &theirs);
-        if merged.has_conflicts {
-            any_conflict = true;
+        let patch_subject = patch.message.lines().next().unwrap_or("patch").trim();
+        let merged = merge_three_way_text_am(&base, &ours, &theirs, patch_subject);
+
+        let base_oid = if let Some(old_oid_str) = fp.old_oid.as_deref() {
+            if let Ok(old_oid) = resolve_revision_for_patch_old_blob(repo, old_oid_str) {
+                if repo.odb.read(&old_oid).is_ok() {
+                    old_oid
+                } else {
+                    repo.odb.write(ObjectKind::Blob, base.as_bytes())?
+                }
+            } else {
+                repo.odb.write(ObjectKind::Blob, base.as_bytes())?
+            }
+        } else {
+            repo.odb.write(ObjectKind::Blob, base.as_bytes())?
+        };
+        let ours_oid = repo.odb.write(ObjectKind::Blob, ours.as_bytes())?;
+        let theirs_oid = repo.odb.write(ObjectKind::Blob, theirs.as_bytes())?;
+        let mode =
+            tree_blob_mode(repo, &head_tree_oid, &effective_rel_path).unwrap_or(MODE_REGULAR);
+
+        match merged {
+            AmThreeWayMerge::Clean(content) => {
+                if content.is_empty() {
+                    let _ = fs::remove_file(&abs_path);
+                } else {
+                    fs::write(&abs_path, content.as_bytes())?;
+                }
+            }
+            AmThreeWayMerge::Conflict(content) => {
+                any_conflict = true;
+                fs::write(&abs_path, content.as_bytes())?;
+                conflict_stages.push(AmConflictStages::ThreeWay {
+                    path: effective_rel_path.clone(),
+                    base_oid,
+                    ours_oid,
+                    theirs_oid,
+                    mode,
+                });
+            }
+            AmThreeWayMerge::ModifyDelete(content) => {
+                any_conflict = true;
+                if let Some(parent) = abs_path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                fs::write(&abs_path, content.as_bytes())?;
+                conflict_stages.push(AmConflictStages::ModifyDelete {
+                    path: effective_rel_path.clone(),
+                    base_oid,
+                    theirs_oid,
+                    mode,
+                });
+            }
         }
-        fs::write(&abs_path, &merged.content)?;
     }
 
-    // Stage affected files
-    stage_affected_files(repo, &affected_paths)?;
-
     if any_conflict {
+        stage_unmerged_am_conflicts(repo, &conflict_stages)?;
+        // Stage non-conflict files from the patch (e.g. new files applied cleanly).
+        let conflict_set: std::collections::HashSet<String> = conflict_stages
+            .iter()
+            .map(|c| match c {
+                AmConflictStages::ThreeWay { path, .. }
+                | AmConflictStages::ModifyDelete { path, .. } => path.clone(),
+            })
+            .collect();
+        let rest: Vec<String> = affected_paths
+            .into_iter()
+            .filter(|p| !conflict_set.contains(p))
+            .collect();
+        if !rest.is_empty() {
+            stage_affected_files(repo, &rest)?;
+        }
         bail!("3-way merge has conflicts");
     }
 
+    stage_affected_files(repo, &affected_paths)?;
+    Ok(())
+}
+
+fn tree_blob_mode(repo: &Repository, tree_oid: &ObjectId, rel_path: &str) -> Option<u32> {
+    let entries = tree_to_index_entries(repo, tree_oid, "").ok()?;
+    let path_bytes = rel_path.as_bytes();
+    entries
+        .iter()
+        .find(|e| e.path == path_bytes)
+        .map(|e| e.mode)
+}
+
+enum AmConflictStages {
+    ThreeWay {
+        path: String,
+        base_oid: ObjectId,
+        ours_oid: ObjectId,
+        theirs_oid: ObjectId,
+        mode: u32,
+    },
+    ModifyDelete {
+        path: String,
+        base_oid: ObjectId,
+        theirs_oid: ObjectId,
+        mode: u32,
+    },
+}
+
+fn stage_unmerged_am_conflicts(repo: &Repository, conflicts: &[AmConflictStages]) -> Result<()> {
+    let mut index = load_index(repo)?;
+    for conflict in conflicts {
+        match conflict {
+            AmConflictStages::ThreeWay {
+                path: rel,
+                base_oid,
+                ours_oid,
+                theirs_oid,
+                mode,
+            } => {
+                let path_bytes = rel.as_bytes().to_vec();
+                index.entries.retain(|e| e.path != path_bytes);
+
+                let base_obj = repo.odb.read(base_oid)?;
+                let ours_obj = repo.odb.read(ours_oid)?;
+                let theirs_obj = repo.odb.read(theirs_oid)?;
+
+                for (stage, oid, size) in [
+                    (1u8, *base_oid, base_obj.data.len() as u32),
+                    (2u8, *ours_oid, ours_obj.data.len() as u32),
+                    (3u8, *theirs_oid, theirs_obj.data.len() as u32),
+                ] {
+                    let name_len = path_bytes.len().min(0xFFF) as u16;
+                    let flags = name_len | ((stage as u16) << 12);
+                    index.entries.push(IndexEntry {
+                        ctime_sec: 0,
+                        ctime_nsec: 0,
+                        mtime_sec: 0,
+                        mtime_nsec: 0,
+                        dev: 0,
+                        ino: 0,
+                        mode: *mode,
+                        uid: 0,
+                        gid: 0,
+                        size,
+                        oid,
+                        flags,
+                        flags_extended: None,
+                        path: path_bytes.clone(),
+                    });
+                }
+            }
+            AmConflictStages::ModifyDelete {
+                path: rel,
+                base_oid,
+                theirs_oid,
+                mode,
+            } => {
+                let path_bytes = rel.as_bytes().to_vec();
+                index.entries.retain(|e| e.path != path_bytes);
+
+                let base_obj = repo.odb.read(base_oid)?;
+                let theirs_obj = repo.odb.read(theirs_oid)?;
+
+                for (stage, oid, size) in [
+                    (1u8, *base_oid, base_obj.data.len() as u32),
+                    (3u8, *theirs_oid, theirs_obj.data.len() as u32),
+                ] {
+                    let name_len = path_bytes.len().min(0xFFF) as u16;
+                    let flags = name_len | ((stage as u16) << 12);
+                    index.entries.push(IndexEntry {
+                        ctime_sec: 0,
+                        ctime_nsec: 0,
+                        mtime_sec: 0,
+                        mtime_nsec: 0,
+                        dev: 0,
+                        ino: 0,
+                        mode: *mode,
+                        uid: 0,
+                        gid: 0,
+                        size,
+                        oid,
+                        flags,
+                        flags_extended: None,
+                        path: path_bytes.clone(),
+                    });
+                }
+            }
+        }
+    }
+    index.sort();
+    repo.write_index(&mut index)?;
     Ok(())
 }
 
@@ -1058,60 +1374,6 @@ fn build_preimage_from_hunks(current: &str, hunks: &[Hunk]) -> Result<String> {
     Ok(out)
 }
 
-struct MergeResult {
-    content: String,
-    has_conflicts: bool,
-}
-
-/// Simple line-based 3-way merge.
-fn three_way_merge(base: &str, ours: &str, theirs: &str) -> MergeResult {
-    let base_lines: Vec<&str> = base.lines().collect();
-    let ours_lines: Vec<&str> = ours.lines().collect();
-    let theirs_lines: Vec<&str> = theirs.lines().collect();
-
-    let mut result = Vec::new();
-    let mut has_conflicts = false;
-    let max_len = base_lines
-        .len()
-        .max(ours_lines.len())
-        .max(theirs_lines.len());
-
-    for i in 0..max_len {
-        let b = base_lines.get(i).copied().unwrap_or("");
-        let o = ours_lines.get(i).copied().unwrap_or("");
-        let t = theirs_lines.get(i).copied().unwrap_or("");
-
-        if o == t {
-            result.push(o.to_string());
-        } else if b == o {
-            // Only theirs changed
-            result.push(t.to_string());
-        } else if b == t {
-            // Only ours changed
-            result.push(o.to_string());
-        } else {
-            // Both changed differently - conflict
-            has_conflicts = true;
-            result.push("<<<<<<< HEAD".to_string());
-            result.push(o.to_string());
-            result.push("=======".to_string());
-            result.push(t.to_string());
-            result.push(">>>>>>> patch".to_string());
-        }
-    }
-
-    // Handle length differences
-    let mut content = result.join("\n");
-    if !content.is_empty() {
-        content.push('\n');
-    }
-
-    MergeResult {
-        content,
-        has_conflicts,
-    }
-}
-
 /// Get a blob from a tree by path.
 fn get_blob_from_tree(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<String> {
     use grit_lib::objects::parse_tree;
@@ -1138,6 +1400,11 @@ fn get_blob_from_tree(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Res
     bail!("path not found in tree: {}", path);
 }
 
+fn is_all_zero_oid_hex(s: &str) -> bool {
+    let t = s.trim();
+    !t.is_empty() && t.chars().all(|c| c == '0')
+}
+
 fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<()> {
     let actual_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, content.as_bytes());
     let actual_hex = actual_oid.to_hex();
@@ -1149,7 +1416,15 @@ fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<(
 
 /// Apply a unified diff to the working tree files.
 /// Returns the list of affected relative paths.
-fn apply_patch_to_worktree(work_tree: &Path, diff: &str, keep_cr: bool) -> Result<Vec<String>> {
+///
+/// When `strict_preimage` is true, every non-zero `index` preimage in the patch must match the
+/// current work tree file (Git `git apply` with 3-way fallback semantics).
+fn apply_patch_to_worktree(
+    work_tree: &Path,
+    diff: &str,
+    keep_cr: bool,
+    strict_preimage: bool,
+) -> Result<Vec<String>> {
     // Parse the diff into file patches using the same logic as `grit apply`
     let file_patches = parse_patch(diff)?;
     let mut affected = Vec::new();
@@ -1204,8 +1479,8 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str, keep_cr: bool) -> Resul
 
         if fp.is_deleted {
             if path.exists() {
-                if keep_cr {
-                    if let Some(expected_oid) = fp.old_oid.as_deref() {
+                if let Some(expected_oid) = fp.old_oid.as_deref() {
+                    if strict_preimage || keep_cr {
                         let old_content = fs::read_to_string(&path)
                             .with_context(|| format!("cannot read {}", path.display()))?;
                         verify_old_oid_matches_content(expected_oid, &old_content)?;
@@ -1238,8 +1513,8 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str, keep_cr: bool) -> Resul
         // Modify existing file
         let old_content =
             fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
-        if keep_cr {
-            if let Some(expected_oid) = fp.old_oid.as_deref() {
+        if let Some(expected_oid) = fp.old_oid.as_deref() {
+            if (strict_preimage || keep_cr) && !is_all_zero_oid_hex(expected_oid) {
                 verify_old_oid_matches_content(expected_oid, &old_content)?;
             }
         }
@@ -1514,21 +1789,13 @@ fn do_skip() -> Result<()> {
         return Ok(());
     }
 
-    // Reset working tree to HEAD state (undo partial apply)
-    let head = resolve_head(git_dir)?;
-    if let Some(head_oid) = head.oid() {
-        let obj = repo.odb.read(head_oid)?;
-        let commit = parse_commit(&obj.data)?;
-        let entries = tree_to_index_entries(&repo, &commit.tree, "")?;
-        let mut index = Index::new();
-        index.entries = entries;
-        index.sort();
-        repo.write_index(&mut index)?;
+    rerere_clear(git_dir).map_err(|e| anyhow::anyhow!(e))?;
 
-        if let Some(wt) = &repo.work_tree {
-            checkout_index_to_worktree(&repo, wt, &index)?;
-        }
-    }
+    // Match Git `am_skip`: `clean_index(&HEAD, &HEAD)` — reset index/worktree to `HEAD` while
+    // preserving stat info; `ORIG_HEAD` is only used by `--abort`.
+    let head_commit = resolve_head(git_dir)?.oid().copied();
+    crate::commands::read_tree::am_clean_index(&repo, head_commit, head_commit)
+        .context("failed to clean index")?;
 
     // Advance past the skipped patch
     fs::write(state_dir.join("next"), (next + 1).to_string())?;
@@ -1603,11 +1870,13 @@ fn do_continue(interactive: bool, overrides: &AmOptionOverrides) -> Result<()> {
     // Record rerere postimage before committing
     let _ = crate::commands::rerere::record_postimage(&repo);
 
-    create_am_commit(&repo, &index, &patched, &effective_opts)?;
-
     if !effective_opts.quiet {
         println!("Applying: {}", subject);
     }
+
+    create_am_commit(&repo, &index, &patched, &effective_opts)?;
+
+    write_am_abort_safety(git_dir)?;
 
     // Advance next
     let next: usize = fs::read_to_string(state_dir.join("next"))?.trim().parse()?;
@@ -1637,44 +1906,56 @@ fn do_abort() -> Result<()> {
         return Ok(());
     }
 
-    let state_dir = am_dir(git_dir);
-    let orig_head_hex = fs::read_to_string(state_dir.join("orig-head"))?;
-    let orig_head_hex = orig_head_hex.trim();
+    if !am_safe_to_abort(git_dir)? {
+        eprintln!(
+            "warning: You seem to have moved HEAD since the last 'am' failure.\n\
+             Not rewinding to ORIG_HEAD"
+        );
+        cleanup_am_state(git_dir);
+        return Ok(());
+    }
 
-    if !orig_head_hex.is_empty() {
-        let orig_oid = ObjectId::from_hex(orig_head_hex)?;
+    rerere_clear(git_dir).map_err(|e| anyhow::anyhow!(e))?;
 
-        // Restore to original HEAD
-        let obj = repo.odb.read(&orig_oid)?;
-        let commit = parse_commit(&obj.data)?;
-        let entries = tree_to_index_entries(&repo, &commit.tree, "")?;
-        let mut index = Index::new();
-        index.entries = entries;
-        index.sort();
-        repo.write_index(&mut index)?;
+    let head_commit = resolve_head(git_dir)?.oid().copied();
+    let orig_commit = grit_lib::refs::resolve_ref(git_dir, "ORIG_HEAD")
+        .ok()
+        .or_else(|| {
+            let hex = fs::read_to_string(state_dir.join("orig-head")).ok()?;
+            let t = hex.trim();
+            if t.is_empty() {
+                None
+            } else {
+                ObjectId::from_hex(t).ok()
+            }
+        });
 
-        if let Some(wt) = &repo.work_tree {
-            checkout_index_to_worktree(&repo, wt, &index)?;
-        }
+    if let Err(e) = crate::commands::read_tree::am_clean_index(&repo, head_commit, orig_commit) {
+        eprintln!("fatal: failed to clean index\n{e}");
+        // Git leaves the am session in place and exits 128 (t4151-am-abort).
+        std::process::exit(128);
+    }
 
-        // Restore HEAD — use saved head-name to restore branch state
-        let head_name = fs::read_to_string(state_dir.join("head-name")).unwrap_or_default();
-        let head_name = head_name.trim();
+    let head_name = fs::read_to_string(state_dir.join("head-name")).unwrap_or_default();
+    let head_name = head_name.trim();
+
+    if let Some(orig) = orig_commit {
         if let Some(refname) = head_name.strip_prefix("ref: ") {
-            // Was on a branch — restore the ref
-            fs::write(git_dir.join("HEAD"), format!("{}\n", head_name))?;
+            fs::write(git_dir.join("HEAD"), format!("{head_name}\n"))?;
             let ref_path = git_dir.join(refname);
             if let Some(parent) = ref_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(&ref_path, format!("{}\n", orig_oid.to_hex()))?;
+            fs::write(&ref_path, format!("{}\n", orig.to_hex()))?;
         } else {
-            // Was detached
-            fs::write(git_dir.join("HEAD"), format!("{}\n", orig_oid.to_hex()))?;
+            fs::write(git_dir.join("HEAD"), format!("{}\n", orig.to_hex()))?;
         }
+    } else if let Some(refname) = head_name.strip_prefix("ref: ") {
+        let _ = delete_ref(git_dir, refname);
     }
 
     cleanup_am_state(git_dir);
+    let _ = delete_ref(git_dir, "ORIG_HEAD");
     eprintln!("am session aborted.");
 
     Ok(())
@@ -3123,31 +3404,41 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
         for hl in &hunk.lines {
             match hl {
                 HunkLine::Context(s) => {
-                    if old_idx < old_lines.len() {
-                        if old_lines[old_idx] != s.as_str() {
-                            bail!(
-                                "context mismatch at line {}: expected {:?}, got {:?}",
-                                old_idx + 1,
-                                s,
-                                old_lines[old_idx]
-                            );
-                        }
-                        old_idx += 1;
+                    if old_idx >= old_lines.len() {
+                        bail!(
+                            "context mismatch at line {}: expected {:?}, got EOF",
+                            old_idx + 1,
+                            s
+                        );
                     }
+                    if old_lines[old_idx] != s.as_str() {
+                        bail!(
+                            "context mismatch at line {}: expected {:?}, got {:?}",
+                            old_idx + 1,
+                            s,
+                            old_lines[old_idx]
+                        );
+                    }
+                    old_idx += 1;
                     result.push(s.clone());
                 }
                 HunkLine::Remove(s) => {
-                    if old_idx < old_lines.len() {
-                        if old_lines[old_idx] != s.as_str() {
-                            bail!(
-                                "remove mismatch at line {}: expected {:?}, got {:?}",
-                                old_idx + 1,
-                                s,
-                                old_lines[old_idx]
-                            );
-                        }
-                        old_idx += 1;
+                    if old_idx >= old_lines.len() {
+                        bail!(
+                            "remove mismatch at line {}: expected {:?}, got EOF",
+                            old_idx + 1,
+                            s
+                        );
                     }
+                    if old_lines[old_idx] != s.as_str() {
+                        bail!(
+                            "remove mismatch at line {}: expected {:?}, got {:?}",
+                            old_idx + 1,
+                            s,
+                            old_lines[old_idx]
+                        );
+                    }
+                    old_idx += 1;
                 }
                 HunkLine::Add(s) => {
                     result.push(s.clone());
