@@ -1543,6 +1543,38 @@ fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     result
 }
 
+/// Preprocess blame/annotate arguments:
+/// - expand `-C<N>` and `-M<N>` to `-C <N>` / `-M <N>`
+/// - expand `-L<spec>` to `-L <spec>`
+fn preprocess_blame_args(rest: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    for arg in rest {
+        if let Some(v) = arg.strip_prefix("-C") {
+            if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()) {
+                result.push("-C".to_string());
+                result.push(v.to_string());
+                continue;
+            }
+        }
+        if let Some(v) = arg.strip_prefix("-M") {
+            if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()) {
+                result.push("-M".to_string());
+                result.push(v.to_string());
+                continue;
+            }
+        }
+        if let Some(v) = arg.strip_prefix("-L") {
+            if !v.is_empty() {
+                result.push("-L".to_string());
+                result.push(v.to_string());
+                continue;
+            }
+        }
+        result.push(arg.clone());
+    }
+    result
+}
+
 /// Levenshtein edit distance between two strings.
 /// Read the `help.autocorrect` config setting.
 /// Returns None if not set, or Some(value) where value is the config string.
@@ -1792,12 +1824,18 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
     match subcmd {
         "add" => commands::add::run(parse_cmd_args(subcmd, rest)),
         "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
-        "annotate" => commands::annotate::run(parse_cmd_args(subcmd, rest)),
+        "annotate" => {
+            let rest = preprocess_blame_args(rest);
+            commands::annotate::run(parse_cmd_args(subcmd, &rest))
+        }
         "apply" => commands::apply::run(parse_cmd_args(subcmd, rest)),
         "archive" => commands::archive::run(parse_cmd_args(subcmd, rest)),
         "backfill" => commands::backfill::run(parse_cmd_args(subcmd, rest)),
         "bisect" => commands::bisect::run(parse_cmd_args(subcmd, rest)),
-        "blame" => commands::blame::run(parse_cmd_args(subcmd, rest)),
+        "blame" => {
+            let rest = preprocess_blame_args(rest);
+            commands::blame::run(parse_cmd_args(subcmd, &rest))
+        }
         "branch" => commands::branch::run(parse_cmd_args(subcmd, rest)),
         "bugreport" => commands::bugreport::run(parse_cmd_args(subcmd, rest)),
         "bundle" => commands::bundle::run(parse_cmd_args(subcmd, rest)),

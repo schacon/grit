@@ -3,14 +3,26 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf::{
+    convert_to_git,
+    get_file_attrs, load_gitattributes, load_gitattributes_from_index,
+    ConversionConfig, GitAttributes,
+};
+use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::resolve_head;
+use grit_lib::wildmatch::wildmatch;
 use similar::{Algorithm as SimilarAlgorithm, ChangeTag, TextDiff};
+use std::fs::OpenOptions;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
+use time::OffsetDateTime;
 
 /// Arguments for `grit blame`.
 #[derive(Debug, ClapArgs)]
@@ -60,6 +72,7 @@ pub struct Args {
     /// May be repeated (`-C -C -C`) for deeper copy search.
     #[arg(
         short = 'C',
+        long = "find-copies",
         value_name = "score",
         num_args = 0..=1,
         default_missing_value = "",
@@ -70,6 +83,7 @@ pub struct Args {
     /// Detect moved lines within a file (`-M[<score>]`).
     #[arg(
         short = 'M',
+        long = "find-renames",
         value_name = "score",
         num_args = 0..=1,
         default_missing_value = "",
@@ -170,42 +184,31 @@ fn parse_author_field(raw: &str) -> AuthorInfo {
 }
 
 fn format_time(timestamp: i64, tz: &str) -> String {
-    let tz_sign: i64 = if tz.starts_with('-') { -1 } else { 1 };
-    let tz_digits = tz.trim_start_matches(['+', '-']);
-    let tz_hours: i64 = tz_digits.get(..2).and_then(|s| s.parse().ok()).unwrap_or(0);
-    let tz_mins: i64 = tz_digits
-        .get(2..4)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let tz_offset = tz_sign * (tz_hours * 3600 + tz_mins * 60);
-
-    let adjusted = timestamp + tz_offset;
-    let days = adjusted.div_euclid(86400);
-    let day_secs = adjusted.rem_euclid(86400);
-    let hours = day_secs / 3600;
-    let mins = (day_secs % 3600) / 60;
-    let secs = day_secs % 60;
-    let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02} {hours:02}:{mins:02}:{secs:02} {tz}")
+    let offset_secs = parse_tz_offset_seconds(tz);
+    let dt = OffsetDateTime::from_unix_timestamp(timestamp + offset_secs as i64)
+        .unwrap_or(OffsetDateTime::UNIX_EPOCH);
+    let fmt = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+        .expect("valid blame timestamp format");
+    let rendered = dt.format(&fmt).unwrap_or_else(|_| "1970-01-01 00:00:00".to_owned());
+    format!("{rendered} {tz}")
 }
 
-/// Howard Hinnant's algorithm: days since epoch → (year, month, day).
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
+fn parse_tz_offset_seconds(tz: &str) -> i32 {
+    if tz.len() < 5 {
+        return 0;
+    }
+    let sign = if tz.starts_with('-') { -1 } else { 1 };
+    let hours: i32 = tz[1..3].parse().unwrap_or(0);
+    let minutes: i32 = tz[3..5].parse().unwrap_or(0);
+    sign * (hours * 3600 + minutes * 60)
 }
 
-/// Resolve a file path through nested trees to get the blob OID.
-fn resolve_path_in_tree(odb: &Odb, tree_oid: &ObjectId, path: &str) -> Result<Option<ObjectId>> {
+/// Resolve a file path through nested trees to get the blob OID + mode.
+fn resolve_path_in_tree_entry(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    path: &str,
+) -> Result<Option<(ObjectId, u32)>> {
     let parts: Vec<&str> = path.split('/').collect();
     let mut current = *tree_oid;
 
@@ -216,20 +219,18 @@ fn resolve_path_in_tree(odb: &Odb, tree_oid: &ObjectId, path: &str) -> Result<Op
             .iter()
             .find(|e| String::from_utf8_lossy(&e.name) == *part)
         {
-            Some(e) if i == parts.len() - 1 => return Ok(Some(e.oid)),
-            Some(e) => current = e.oid,
+            Some(e) if i == parts.len() - 1 => {
+                if e.mode == 0o040000 {
+                    return Ok(None);
+                }
+                return Ok(Some((e.oid, e.mode)));
+            }
+            Some(e) if e.mode == 0o040000 => current = e.oid,
+            Some(_) => return Ok(None),
             None => return Ok(None),
         }
     }
     Ok(None)
-}
-
-fn read_blob_string(odb: &Odb, oid: &ObjectId) -> Result<String> {
-    let obj = odb.read(oid)?;
-    if obj.kind != ObjectKind::Blob {
-        bail!("expected blob object");
-    }
-    Ok(String::from_utf8_lossy(&obj.data).into_owned())
 }
 
 /// Split content into lines, handling trailing newline consistently.
@@ -250,6 +251,7 @@ struct TrackedLine {
     final_lineno: usize,
     current_idx: usize,
     ignored: bool,
+    source_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +286,230 @@ fn parse_diff_algorithm_name(name: &str) -> Option<BlameDiffAlgorithm> {
     }
 }
 
+#[derive(Debug, Clone)]
+struct BlameTextconvContext {
+    config: ConfigSet,
+    conversion: ConversionConfig,
+    attrs: GitAttributes,
+    diff_attrs: Vec<DiffAttrRule>,
+}
+
+impl BlameTextconvContext {
+    fn new(repo: &Repository) -> Self {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let conversion = ConversionConfig::from_config(&config);
+        let attrs = load_attr_rules(repo);
+        let diff_attrs = load_diff_attr_rules(repo);
+        Self {
+            config,
+            conversion,
+            attrs,
+            diff_attrs,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DiffAttrRule {
+    pattern: String,
+    value: DiffAttrValue,
+}
+
+#[derive(Debug, Clone)]
+enum DiffAttrValue {
+    Unset,
+    Set,
+    Driver(String),
+}
+
+fn load_attr_rules(repo: &Repository) -> GitAttributes {
+    if let Some(work_tree) = repo.work_tree.as_deref() {
+        let rules = load_gitattributes(work_tree);
+        if !rules.is_empty() {
+            return rules;
+        }
+    }
+
+    if let Ok(index) = Index::load(&repo.index_path()) {
+        return load_gitattributes_from_index(&index, &repo.odb);
+    }
+
+    Vec::new()
+}
+
+fn load_diff_attr_rules(repo: &Repository) -> Vec<DiffAttrRule> {
+    let mut rules = Vec::new();
+
+    if let Some(work_tree) = repo.work_tree.as_deref() {
+        parse_diff_attr_file(&work_tree.join(".gitattributes"), &mut rules);
+        parse_diff_attr_file(&work_tree.join(".git/info/attributes"), &mut rules);
+    }
+
+    if rules.is_empty() {
+        if let Ok(index) = Index::load(&repo.index_path()) {
+            if let Some(entry) = index.get(b".gitattributes", 0) {
+                if let Ok(obj) = repo.odb.read(&entry.oid) {
+                    if let Ok(content) = String::from_utf8(obj.data) {
+                        parse_diff_attr_content(&content, &mut rules);
+                    }
+                }
+            }
+        }
+        parse_diff_attr_file(&repo.git_dir.join("info/attributes"), &mut rules);
+    }
+
+    rules
+}
+
+fn parse_diff_attr_file(path: &Path, rules: &mut Vec<DiffAttrRule>) {
+    if let Ok(content) = std::fs::read_to_string(path) {
+        parse_diff_attr_content(&content, rules);
+    }
+}
+
+fn parse_diff_attr_content(content: &str, rules: &mut Vec<DiffAttrRule>) {
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let mut parts = line.split_whitespace();
+        let Some(pattern) = parts.next() else {
+            continue;
+        };
+
+        let mut value: Option<DiffAttrValue> = None;
+        for token in parts {
+            if token == "binary" || token == "-diff" {
+                value = Some(DiffAttrValue::Unset);
+            } else if token == "diff" {
+                value = Some(DiffAttrValue::Set);
+            } else if let Some(driver) = token.strip_prefix("diff=") {
+                value = Some(DiffAttrValue::Driver(driver.to_owned()));
+            }
+        }
+
+        if let Some(value) = value {
+            rules.push(DiffAttrRule {
+                pattern: pattern.to_owned(),
+                value,
+            });
+        }
+    }
+}
+
+fn resolve_textconv_command(ctx: &BlameTextconvContext, path: &str) -> Option<String> {
+    let mut selected: Option<DiffAttrValue> = None;
+    for rule in &ctx.diff_attrs {
+        if diff_attr_pattern_matches(&rule.pattern, path) {
+            selected = Some(rule.value.clone());
+        }
+    }
+
+    match selected {
+        Some(DiffAttrValue::Driver(driver)) => ctx.config.get(&format!("diff.{driver}.textconv")),
+        _ => None,
+    }
+}
+
+fn diff_attr_pattern_matches(pattern: &str, path: &str) -> bool {
+    if pattern.contains('/') {
+        return wildmatch(pattern.as_bytes(), path.as_bytes(), 0);
+    }
+    let basename = path.rsplit('/').next().unwrap_or(path);
+    wildmatch(pattern.as_bytes(), basename.as_bytes(), 0)
+}
+
+fn is_regular_mode(mode: u32) -> bool {
+    mode & 0o170000 == 0o100000
+}
+
+fn run_textconv_command(command: &str, input_data: &[u8]) -> Result<Vec<u8>> {
+    let temp_path = create_temp_textconv_file(input_data)?;
+    let quoted = shell_quote(temp_path.to_string_lossy().as_ref());
+    let shell_command = format!("{command} {quoted}");
+
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(&shell_command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .output()
+        .with_context(|| format!("running textconv command '{command}'"))?;
+
+    let _ = std::fs::remove_file(&temp_path);
+
+    if !output.status.success() {
+        bail!("textconv command exited with status {}", output.status);
+    }
+
+    Ok(output.stdout)
+}
+
+fn create_temp_textconv_file(data: &[u8]) -> Result<std::path::PathBuf> {
+    let pid = std::process::id();
+    for attempt in 0..32u32 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("grit-blame-textconv-{pid}-{now}-{attempt}"));
+        match OpenOptions::new().create_new(true).write(true).open(&path) {
+            Ok(mut file) => {
+                file.write_all(data)?;
+                return Ok(path);
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err.into()),
+        }
+    }
+    bail!("failed to create temporary textconv input file")
+}
+
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+fn read_blob_content_for_blame(
+    odb: &Odb,
+    oid: &ObjectId,
+    path: &str,
+    mode: u32,
+    textconv_ctx: Option<&BlameTextconvContext>,
+    use_textconv: bool,
+) -> Result<String> {
+    let obj = odb.read(oid)?;
+    if obj.kind != ObjectKind::Blob {
+        bail!("expected blob object");
+    }
+
+    if !use_textconv || !is_regular_mode(mode) {
+        return Ok(String::from_utf8_lossy(&obj.data).into_owned());
+    }
+
+    let Some(ctx) = textconv_ctx else {
+        return Ok(String::from_utf8_lossy(&obj.data).into_owned());
+    };
+    let Some(command) = resolve_textconv_command(ctx, path) else {
+        return Ok(String::from_utf8_lossy(&obj.data).into_owned());
+    };
+
+    let attrs = get_file_attrs(&ctx.attrs, path, &ctx.config);
+    let oid_hex = oid.to_string();
+    let worktree_data = grit_lib::crlf::convert_to_worktree(
+        &obj.data,
+        path,
+        &ctx.conversion,
+        &attrs,
+        Some(&oid_hex),
+    );
+    let converted = run_textconv_command(&command, &worktree_data)
+        .or_else(|_| run_textconv_command(&command, &obj.data))?;
+    Ok(String::from_utf8_lossy(&converted).into_owned())
+}
+
 /// Core blame: walk first-parent history, diff blobs, attribute lines.
 fn compute_blame(
     odb: &Odb,
@@ -291,15 +517,25 @@ fn compute_blame(
     file_path: &str,
     ignore_revs: &HashSet<ObjectId>,
     diff_algorithm: BlameDiffAlgorithm,
+    textconv_ctx: Option<&BlameTextconvContext>,
+    use_textconv: bool,
+    copy_depth: usize,
 ) -> Result<Vec<BlameLine>> {
     let start_commit = {
         let obj = odb.read(&start_oid)?;
         parse_commit(&obj.data)?
     };
 
-    let blob_oid = resolve_path_in_tree(odb, &start_commit.tree, file_path)?
+    let (blob_oid, blob_mode) = resolve_path_in_tree_entry(odb, &start_commit.tree, file_path)?
         .with_context(|| format!("file '{file_path}' not found in revision"))?;
-    let content = read_blob_string(odb, &blob_oid)?;
+    let content = read_blob_content_for_blame(
+        odb,
+        &blob_oid,
+        file_path,
+        blob_mode,
+        textconv_ctx,
+        use_textconv,
+    )?;
     let lines = content_lines(&content);
     let num_lines = lines.len();
 
@@ -313,6 +549,7 @@ fn compute_blame(
             final_lineno: i + 1,
             current_idx: i,
             ignored: false,
+            source_path: None,
         })
         .collect();
 
@@ -322,6 +559,8 @@ fn compute_blame(
 
     let mut current_oid = start_oid;
     let mut current_blob_oid = blob_oid;
+    let mut current_blob_mode = blob_mode;
+    let mut current_path = file_path.to_string();
     let mut commit_cache: HashMap<ObjectId, CommitData> = HashMap::new();
     commit_cache.insert(start_oid, start_commit);
 
@@ -337,21 +576,45 @@ fn compute_blame(
         // If an ignored merge commit is encountered, try to continue blame
         // through the parent that actually contributed each line.
         if is_ignored && commit.parents.len() > 1 {
-            let cur_content = read_blob_string(odb, &current_blob_oid)?;
+            let cur_content = read_blob_content_for_blame(
+                odb,
+                &current_blob_oid,
+                &current_path,
+                current_blob_mode,
+                textconv_ctx,
+                use_textconv,
+            )?;
             let cur_lines = content_lines(&cur_content);
 
             let mut parent_lines: Vec<Option<Vec<String>>> = Vec::new();
             let mut parent_blames: Vec<Option<Vec<BlameLine>>> = Vec::new();
             for parent_oid in &commit.parents {
                 let parent_commit = get_commit(odb, *parent_oid, &mut commit_cache)?;
-                if let Some(p_blob_oid) = resolve_path_in_tree(odb, &parent_commit.tree, file_path)? {
-                    let p_content = read_blob_string(odb, &p_blob_oid)?;
+                if let Some((p_blob_oid, p_blob_mode)) =
+                    resolve_path_in_tree_entry(odb, &parent_commit.tree, &current_path)?
+                {
+                    let p_content = read_blob_content_for_blame(
+                        odb,
+                        &p_blob_oid,
+                        &current_path,
+                        p_blob_mode,
+                        textconv_ctx,
+                        use_textconv,
+                    )?;
                     let p_lines = content_lines(&p_content)
                         .iter()
                         .map(|s| s.to_string())
                         .collect::<Vec<_>>();
-                    let p_blame =
-                        compute_blame(odb, *parent_oid, file_path, ignore_revs, diff_algorithm)?;
+                    let p_blame = compute_blame(
+                        odb,
+                        *parent_oid,
+                        &current_path,
+                        ignore_revs,
+                        diff_algorithm,
+                        textconv_ctx,
+                        use_textconv,
+                        copy_depth,
+                    )?;
                     parent_lines.push(Some(p_lines));
                     parent_blames.push(Some(p_blame));
                 } else {
@@ -435,11 +698,132 @@ fn compute_blame(
 
         let parent_oid = commit.parents[0];
         let parent_commit = get_commit(odb, parent_oid, &mut commit_cache)?;
-        let parent_blob_oid = resolve_path_in_tree(odb, &parent_commit.tree, file_path)?;
+        let parent_blob_entry =
+            resolve_path_in_tree_entry(odb, &parent_commit.tree, &current_path)?;
+        let can_follow_rename = true;
 
-        match parent_blob_oid {
+        match parent_blob_entry {
             None if !is_ignored => {
-                // File doesn't exist in parent — attribute all remaining
+                // File doesn't exist at this path in parent.
+                // First, try to follow a pure rename by matching blob OID.
+                if can_follow_rename {
+                    if let Some((renamed_path, renamed_mode)) = find_path_by_oid_in_tree(
+                        odb,
+                        &parent_commit.tree,
+                        &commit.tree,
+                        &current_blob_oid,
+                        &current_path,
+                    )? {
+                        current_path = renamed_path;
+                        current_oid = parent_oid;
+                        current_blob_mode = renamed_mode;
+                        continue;
+                    }
+                }
+
+                // If copy detection is enabled, try to track lines to source
+                // files in the parent tree.
+                if copy_depth >= 1 {
+                    let cur_content = read_blob_content_for_blame(
+                        odb,
+                        &current_blob_oid,
+                        &current_path,
+                        current_blob_mode,
+                        textconv_ctx,
+                        use_textconv,
+                    )?;
+                    let cur_lines = content_lines(&cur_content);
+                    let mut entries = Vec::new();
+                    collect_tree_file_entries(odb, &parent_commit.tree, "", &mut entries)?;
+                    let mut by_content: HashMap<String, Vec<(String, BlameLine)>> = HashMap::new();
+                    for (path, oid, mode) in entries {
+                        if path == current_path || !is_regular_mode(mode) {
+                            continue;
+                        }
+                        // Single -C only searches for files that disappeared
+                        // in the current commit. Deeper -C levels may search
+                        // broader history.
+                        if copy_depth == 1
+                            && resolve_path_in_tree_entry(odb, &commit.tree, &path)?.is_some()
+                        {
+                            continue;
+                        }
+
+                        let source_content = read_blob_content_for_blame(
+                            odb,
+                            &oid,
+                            &path,
+                            mode,
+                            textconv_ctx,
+                            use_textconv,
+                        )?;
+                        let source_lines = content_lines(&source_content);
+                        let overlap = cur_lines
+                            .iter()
+                            .filter(|line| source_lines.iter().any(|src| src == *line))
+                            .count();
+                        if overlap == 0 {
+                            continue;
+                        }
+
+                        let source_blame = compute_blame(
+                            odb,
+                            parent_oid,
+                            &path,
+                            ignore_revs,
+                            diff_algorithm,
+                            textconv_ctx,
+                            use_textconv,
+                            copy_depth.saturating_sub(1),
+                        )?;
+                        for line in source_blame {
+                            by_content
+                                .entry(line.content.clone())
+                                .or_default()
+                                .push((path.clone(), line));
+                        }
+                    }
+
+                    if !by_content.is_empty() {
+                        let mut used: HashMap<String, usize> = HashMap::new();
+                        for t in pending.drain(..) {
+                            let line_text = cur_lines.get(t.current_idx).copied().unwrap_or("");
+                            let used_key = line_text.to_owned();
+                            let used_count = used.get(&used_key).copied().unwrap_or(0);
+                            if let Some((source_path, pb)) = by_content
+                                .get(line_text)
+                                .and_then(|candidates| candidates.get(used_count))
+                            {
+                                used.insert(used_key, used_count + 1);
+                                result.push(BlameLine {
+                                    oid: pb.oid,
+                                    final_lineno: t.final_lineno,
+                                    orig_lineno: pb.orig_lineno,
+                                    content: final_lines[t.final_lineno - 1].clone(),
+                                    source_file: pb
+                                        .source_file
+                                        .clone()
+                                        .or_else(|| Some(source_path.clone())),
+                                    ignored: pb.ignored || t.ignored,
+                                    unblamable: pb.unblamable,
+                                });
+                            } else {
+                                result.push(BlameLine {
+                                    oid: current_oid,
+                                    final_lineno: t.final_lineno,
+                                    orig_lineno: t.current_idx + 1,
+                                    content: final_lines[t.final_lineno - 1].clone(),
+                                    source_file: None,
+                                    ignored: t.ignored,
+                                    unblamable: false,
+                                });
+                            }
+                        }
+                        break;
+                    }
+                }
+
+                // No rename/copy source found — attribute to current commit.
                 for t in pending.drain(..) {
                     result.push(BlameLine {
                         oid: current_oid,
@@ -469,20 +853,62 @@ fn compute_blame(
                 }
                 break;
             }
-            Some(p_blob_oid) if p_blob_oid == current_blob_oid => {
+            Some((p_blob_oid, p_blob_mode)) if p_blob_oid == current_blob_oid => {
                 // Identical blob — skip to parent
                 current_oid = parent_oid;
+                current_blob_mode = p_blob_mode;
                 continue;
             }
-            Some(p_blob_oid) => {
+            Some((p_blob_oid, p_blob_mode)) => {
                 // Diff current vs parent
-                let cur_content = read_blob_string(odb, &current_blob_oid)?;
-                let par_content = read_blob_string(odb, &p_blob_oid)?;
+                let cur_content = read_blob_content_for_blame(
+                    odb,
+                    &current_blob_oid,
+                    &current_path,
+                    current_blob_mode,
+                    textconv_ctx,
+                    use_textconv,
+                )?;
+                let par_content = read_blob_content_for_blame(
+                    odb,
+                    &p_blob_oid,
+                    &current_path,
+                    p_blob_mode,
+                    textconv_ctx,
+                    use_textconv,
+                )?;
                 let cur_lines = content_lines(&cur_content);
                 let par_lines = content_lines(&par_content);
 
                 // Build mapping: cur_line_idx → Option<parent_line_idx>
                 let line_map = build_line_map(&par_lines, &cur_lines, diff_algorithm);
+                let mut inserted_copy_source: Option<(
+                    String,
+                    HashMap<String, Vec<BlameLine>>,
+                    HashMap<String, usize>,
+                )> = None;
+                if copy_depth >= 3 {
+                    if let Some((source_path, source_blame)) = find_copy_source_blame(
+                        odb,
+                        parent_oid,
+                        &parent_commit.tree,
+                        &current_path,
+                        &cur_lines,
+                        ignore_revs,
+                        diff_algorithm,
+                        textconv_ctx,
+                        use_textconv,
+                        copy_depth - 1,
+                        false,
+                    )? {
+                        let mut by_content: HashMap<String, Vec<BlameLine>> = HashMap::new();
+                        for line in source_blame {
+                            by_content.entry(line.content.clone()).or_default().push(line);
+                        }
+                        inserted_copy_source =
+                            Some((source_path, by_content, HashMap::new()));
+                    }
+                }
 
                 let mut still_pending = Vec::new();
                 for t in pending.drain(..) {
@@ -499,6 +925,7 @@ fn compute_blame(
                                         final_lineno: t.final_lineno,
                                         current_idx: t.current_idx,
                                         ignored: true,
+                                        source_path: t.source_path.clone(),
                                     });
                                 } else {
                                     result.push(BlameLine {
@@ -518,6 +945,7 @@ fn compute_blame(
                                 final_lineno: t.final_lineno,
                                 current_idx: parent_idx,
                                 ignored: t.ignored,
+                                source_path: t.source_path.clone(),
                             });
                         } else if is_ignored {
                             // Best-effort pass-through through ignored revisions:
@@ -529,6 +957,7 @@ fn compute_blame(
                                     final_lineno: t.final_lineno,
                                     current_idx: t.current_idx,
                                     ignored: true,
+                                    source_path: t.source_path.clone(),
                                 });
                             } else {
                                 result.push(BlameLine {
@@ -542,6 +971,32 @@ fn compute_blame(
                                 });
                             }
                         } else {
+                            if let Some((source_path, by_content, used)) =
+                                inserted_copy_source.as_mut()
+                            {
+                                let line_text = cur_lines.get(t.current_idx).copied().unwrap_or("");
+                                let used_key = line_text.to_owned();
+                                let used_count = used.get(&used_key).copied().unwrap_or(0);
+                                if let Some(pb) = by_content
+                                    .get(line_text)
+                                    .and_then(|candidates| candidates.get(used_count))
+                                {
+                                    used.insert(used_key, used_count + 1);
+                                    result.push(BlameLine {
+                                        oid: pb.oid,
+                                        final_lineno: t.final_lineno,
+                                        orig_lineno: pb.orig_lineno,
+                                        content: final_lines[t.final_lineno - 1].clone(),
+                                        source_file: pb
+                                            .source_file
+                                            .clone()
+                                            .or_else(|| Some(source_path.clone())),
+                                        ignored: pb.ignored || t.ignored,
+                                        unblamable: pb.unblamable,
+                                    });
+                                    continue;
+                                }
+                            }
                             // Line was introduced in current commit
                             result.push(BlameLine {
                                 oid: current_oid,
@@ -580,6 +1035,7 @@ fn compute_blame(
                 pending = still_pending;
                 current_oid = parent_oid;
                 current_blob_oid = p_blob_oid;
+                current_blob_mode = p_blob_mode;
             }
         }
     }
@@ -609,6 +1065,107 @@ fn should_drop_tail_match_for_myers(
     // are the cases where xdiff/myers tie-breaking differs from `similar`.
     let tail = parent_lines[parent_idx];
     parent_lines.iter().filter(|line| **line == tail).count() >= 2
+}
+
+fn find_path_by_oid_in_tree(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    current_tree_oid: &ObjectId,
+    needle_oid: &ObjectId,
+    exclude_path: &str,
+) -> Result<Option<(String, u32)>> {
+    let mut entries = Vec::new();
+    collect_tree_file_entries(odb, tree_oid, "", &mut entries)?;
+    for (path, oid, mode) in entries {
+        if path != exclude_path
+            && &oid == needle_oid
+            && resolve_path_in_tree_entry(odb, current_tree_oid, &path)?.is_none()
+        {
+            return Ok(Some((path, mode)));
+        }
+    }
+    Ok(None)
+}
+
+fn find_copy_source_blame(
+    odb: &Odb,
+    parent_oid: ObjectId,
+    parent_tree_oid: &ObjectId,
+    exclude_path: &str,
+    current_lines: &[&str],
+    ignore_revs: &HashSet<ObjectId>,
+    diff_algorithm: BlameDiffAlgorithm,
+    textconv_ctx: Option<&BlameTextconvContext>,
+    use_textconv: bool,
+    copy_depth: usize,
+    include_current_path: bool,
+) -> Result<Option<(String, Vec<BlameLine>)>> {
+    let mut entries = Vec::new();
+    collect_tree_file_entries(odb, parent_tree_oid, "", &mut entries)?;
+
+    let mut best_path: Option<String> = None;
+    let mut best_score = 0usize;
+    for (path, oid, mode) in &entries {
+        if (!include_current_path && path == exclude_path) || !is_regular_mode(*mode) {
+            continue;
+        }
+        let content = read_blob_content_for_blame(odb, oid, path, *mode, textconv_ctx, use_textconv)?;
+        let lines = content_lines(&content);
+        let score = current_lines
+            .iter()
+            .filter(|line| lines.iter().any(|src| src == *line))
+            .count();
+        if score > best_score {
+            best_score = score;
+            best_path = Some(path.clone());
+        }
+    }
+
+    let Some(source_path) = best_path else {
+        return Ok(None);
+    };
+    if best_score == 0 {
+        return Ok(None);
+    }
+
+    let source_blame = compute_blame(
+        odb,
+        parent_oid,
+        &source_path,
+        ignore_revs,
+        diff_algorithm,
+        textconv_ctx,
+        use_textconv,
+        copy_depth,
+    )?;
+    Ok(Some((source_path, source_blame)))
+}
+
+fn collect_tree_file_entries(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    prefix: &str,
+    out: &mut Vec<(String, ObjectId, u32)>,
+) -> Result<()> {
+    let obj = odb.read(tree_oid)?;
+    if obj.kind != ObjectKind::Tree {
+        bail!("expected tree");
+    }
+    let entries = parse_tree(&obj.data)?;
+    for entry in entries {
+        let name = String::from_utf8_lossy(&entry.name);
+        let path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if entry.mode == 0o040000 {
+            collect_tree_file_entries(odb, &entry.oid, &path, out)?;
+        } else {
+            out.push((path, entry.oid, entry.mode));
+        }
+    }
+    Ok(())
 }
 
 fn get_commit(
@@ -703,10 +1260,18 @@ pub fn run(args: Args) -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("invalid --diff-algorithm: {name}"))?;
     }
 
-    let (rev, file_path) = parse_blame_args(&args.args)?;
+    let mut normalized_positional = Vec::new();
+    normalize_detection_args(&args.copy_detection, &mut normalized_positional);
+    normalize_detection_args(&args.move_detection, &mut normalized_positional);
+    normalized_positional.extend(args.args.iter().cloned());
+
+    let (rev, file_path) = parse_blame_args(&normalized_positional)?;
+    let use_textconv = !args.no_textconv;
+    let copy_depth = args.copy_detection.len();
+    let textconv_ctx = Some(BlameTextconvContext::new(&repo));
 
     let start_oid = match &rev {
-        Some(r) => resolve_revision(&repo, r)?,
+        Some(r) => resolve_blame_start_oid(&repo, r)?,
         None => {
             let head = resolve_head(&repo.git_dir)?;
             match head.oid() {
@@ -758,44 +1323,80 @@ pub fn run(args: Args) -> Result<()> {
     let mark_unblamable = config_bool(&config, "blame.markUnblamableLines");
     let mark_ignored = config_bool(&config, "blame.markIgnoredLines");
 
-    let mut blame_lines =
-        match compute_blame(&odb, start_oid, &file_path, &ignore_revs, diff_algorithm) {
-        Ok(lines) => lines,
-        Err(e) if rev.is_none() => {
-            // When no explicit revision is given and the file is not in HEAD's
-            // tree (e.g. during a conflicted merge), fall back to reading the
-            // working tree file and attributing all lines to the zero OID.
-            // Try working tree first, then fall back to index conflict stages
-            let content = if let Some(work_tree) = repo.work_tree.as_deref() {
-                let abs_path = work_tree.join(&file_path);
-                if abs_path.exists() {
-                    std::fs::read_to_string(&abs_path)
-                        .with_context(|| format!("file '{file_path}' not found"))?
+    let mut blame_lines = if args.reverse {
+        let rev_spec = rev
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--reverse requires a <rev1>..<rev2> range"))?;
+        let (range_start, range_end) = parse_reverse_range_oids(&repo, rev_spec)?;
+        compute_reverse_blame(
+            &odb,
+            range_start,
+            range_end,
+            &file_path,
+            diff_algorithm,
+            textconv_ctx.as_ref(),
+            use_textconv,
+            args.first_parent,
+        )?
+    } else {
+        match compute_blame(
+            &odb,
+            start_oid,
+            &file_path,
+            &ignore_revs,
+            diff_algorithm,
+            textconv_ctx.as_ref(),
+            use_textconv,
+            copy_depth,
+        ) {
+            Ok(lines) => lines,
+            Err(e) if rev.is_none() => {
+                // When no explicit revision is given and the file is not in HEAD's
+                // tree (e.g. during a conflicted merge), fall back to reading the
+                // working tree (or index conflict stage) file and best-effort
+                // attribute against HEAD history.
+                let content = if let Some(work_tree) = repo.work_tree.as_deref() {
+                    let abs_path = work_tree.join(&file_path);
+                    if abs_path.exists() {
+                        std::fs::read_to_string(&abs_path)
+                            .with_context(|| format!("file '{file_path}' not found"))?
+                    } else {
+                        // File not in worktree; try reading from highest conflict stage in index
+                        read_from_index_conflict(&repo, &odb, &file_path)
+                            .with_context(|| format!("file '{file_path}' not found in revision"))?
+                    }
                 } else {
-                    // File not in worktree; try reading from highest conflict stage in index
-                    read_from_index_conflict(&repo, &odb, &file_path)
-                        .with_context(|| format!("file '{file_path}' not found in revision"))?
-                }
-            } else {
-                return Err(e);
-            };
-            let zero = grit_lib::diff::zero_oid();
-            content_lines(&content)
-                .iter()
-                .enumerate()
-                .map(|(i, line)| BlameLine {
-                    oid: zero,
-                    final_lineno: i + 1,
-                    orig_lineno: i + 1,
-                    content: line.to_string(),
-                    source_file: None,
-                    ignored: false,
-                    unblamable: false,
-                })
-                .collect()
+                    return Err(e);
+                };
+                build_uncommitted_blame(
+                    &odb,
+                    start_oid,
+                    &file_path,
+                    &content,
+                    &ignore_revs,
+                    diff_algorithm,
+                    textconv_ctx.as_ref(),
+                    use_textconv,
+                    copy_depth,
+                )?
+            }
+            Err(e) => return Err(e),
         }
-        Err(e) => return Err(e),
     };
+
+    if !args.reverse && rev.is_none() {
+        if let Some(overlaid) = apply_worktree_overlay(
+            &repo,
+            &odb,
+            start_oid,
+            &file_path,
+            &blame_lines,
+            textconv_ctx.as_ref(),
+            use_textconv,
+        )? {
+            blame_lines = overlaid;
+        }
+    }
 
     // Apply line range filters (`-L` can be repeated).
     if !args.line_range.is_empty() {
@@ -883,6 +1484,98 @@ fn read_from_index_conflict(repo: &Repository, odb: &Odb, file_path: &str) -> Re
     String::from_utf8(obj.data).context("blob is not valid UTF-8")
 }
 
+fn build_uncommitted_blame(
+    odb: &Odb,
+    start_oid: ObjectId,
+    file_path: &str,
+    content: &str,
+    ignore_revs: &HashSet<ObjectId>,
+    diff_algorithm: BlameDiffAlgorithm,
+    textconv_ctx: Option<&BlameTextconvContext>,
+    use_textconv: bool,
+    copy_depth: usize,
+) -> Result<Vec<BlameLine>> {
+    let zero = grit_lib::diff::zero_oid();
+    let final_lines = content_lines(content);
+
+    let mut by_content_source: Option<(String, HashMap<String, Vec<BlameLine>>, HashMap<String, usize>)> =
+        None;
+    if copy_depth >= 2 {
+        let head_obj = odb.read(&start_oid)?;
+        let head_commit = parse_commit(&head_obj.data)?;
+        if let Some((source_path, source_blame)) = find_copy_source_blame(
+            odb,
+            start_oid,
+            &head_commit.tree,
+            file_path,
+            &final_lines,
+            ignore_revs,
+            diff_algorithm,
+            textconv_ctx,
+            use_textconv,
+            copy_depth,
+            true,
+        )? {
+            let mut by_content: HashMap<String, Vec<BlameLine>> = HashMap::new();
+            for line in source_blame {
+                by_content.entry(line.content.clone()).or_default().push(line);
+            }
+            by_content_source = Some((source_path, by_content, HashMap::new()));
+        }
+    }
+
+    let mut result = Vec::with_capacity(final_lines.len());
+    for (idx, line) in final_lines.iter().enumerate() {
+        if let Some((source_path, by_content, used)) = by_content_source.as_mut() {
+            let used_key = (*line).to_owned();
+            let used_count = used.get(&used_key).copied().unwrap_or(0);
+            if let Some(pb) = by_content
+                .get(*line)
+                .and_then(|candidates| candidates.get(used_count))
+            {
+                used.insert(used_key, used_count + 1);
+                result.push(BlameLine {
+                    oid: pb.oid,
+                    final_lineno: idx + 1,
+                    orig_lineno: pb.orig_lineno,
+                    content: (*line).to_string(),
+                    source_file: pb
+                        .source_file
+                        .clone()
+                        .or_else(|| Some(source_path.clone())),
+                    ignored: pb.ignored,
+                    unblamable: pb.unblamable,
+                });
+                continue;
+            }
+        }
+
+        result.push(BlameLine {
+            oid: zero,
+            final_lineno: idx + 1,
+            orig_lineno: idx + 1,
+            content: (*line).to_string(),
+            source_file: None,
+            ignored: false,
+            unblamable: false,
+        });
+    }
+
+    Ok(result)
+}
+
+fn normalize_detection_args(values: &[String], positional: &mut Vec<String>) {
+    for value in values {
+        if value.is_empty() {
+            continue;
+        }
+        if value.parse::<usize>().ok().is_some_and(|n| n > 0) {
+            continue;
+        }
+        positional.push(value.clone());
+    }
+}
+
 fn parse_blame_args(args: &[String]) -> Result<(Option<String>, String)> {
     match args.len() {
         0 => bail!("usage: grit blame [<rev>] [--] <file>"),
@@ -892,6 +1585,303 @@ fn parse_blame_args(args: &[String]) -> Result<(Option<String>, String)> {
         3 if args[1] == "--" => Ok((Some(args[0].clone()), args[2].clone())),
         _ => bail!("usage: grit blame [<rev>] [--] <file>"),
     }
+}
+
+fn resolve_blame_start_oid(repo: &Repository, rev_spec: &str) -> Result<ObjectId> {
+    if let Some((lhs, rhs)) = rev_spec.split_once("..") {
+        if rhs.is_empty() {
+            return resolve_revision(repo, "HEAD").map_err(Into::into);
+        }
+
+        if lhs.is_empty() {
+            return resolve_revision(repo, rhs).map_err(Into::into);
+        }
+
+        // Accept two-dot ranges by resolving the right side (or merge base
+        // from the rev parser in cases where that is appropriate).
+        return resolve_revision(repo, rhs).map_err(Into::into);
+    }
+    if let Some((_, rhs)) = rev_spec.split_once("..") {
+        let target = if rhs.is_empty() { "HEAD" } else { rhs };
+        return resolve_revision(repo, target).map_err(Into::into);
+    }
+    resolve_revision(repo, rev_spec).map_err(Into::into)
+}
+
+fn parse_reverse_range_oids(repo: &Repository, rev_spec: &str) -> Result<(ObjectId, ObjectId)> {
+    let (lhs, rhs) = rev_spec
+        .split_once("..")
+        .ok_or_else(|| anyhow::anyhow!("--reverse requires a <rev1>..<rev2> range"))?;
+    if lhs.is_empty() || rhs.is_empty() {
+        bail!("--reverse requires a <rev1>..<rev2> range");
+    }
+    let start = resolve_revision(repo, lhs)?;
+    let end = resolve_revision(repo, rhs)?;
+    Ok((start, end))
+}
+
+fn read_commit_lines_for_blame(
+    odb: &Odb,
+    commit: &CommitData,
+    file_path: &str,
+    textconv_ctx: Option<&BlameTextconvContext>,
+    use_textconv: bool,
+) -> Result<Vec<String>> {
+    let Some((blob_oid, blob_mode)) = resolve_path_in_tree_entry(odb, &commit.tree, file_path)? else {
+        return Ok(Vec::new());
+    };
+    let content = read_blob_content_for_blame(
+        odb,
+        &blob_oid,
+        file_path,
+        blob_mode,
+        textconv_ctx,
+        use_textconv,
+    )?;
+    Ok(content_lines(&content)
+        .iter()
+        .map(|line| (*line).to_string())
+        .collect())
+}
+
+fn compute_reverse_blame(
+    odb: &Odb,
+    range_start: ObjectId,
+    range_end: ObjectId,
+    file_path: &str,
+    diff_algorithm: BlameDiffAlgorithm,
+    textconv_ctx: Option<&BlameTextconvContext>,
+    use_textconv: bool,
+    first_parent_only: bool,
+) -> Result<Vec<BlameLine>> {
+    let mut commit_cache: HashMap<ObjectId, CommitData> = HashMap::new();
+    let mut chain_rev = vec![range_end];
+    let mut cur = range_end;
+    while cur != range_start {
+        let commit = get_commit(odb, cur, &mut commit_cache)?;
+        let next_parent = if first_parent_only {
+            commit.parents.first().copied()
+        } else {
+            commit.parents.first().copied()
+        };
+        let Some(parent) = next_parent else {
+            bail!("--reverse range end is not reachable from start");
+        };
+        cur = parent;
+        chain_rev.push(cur);
+    }
+    chain_rev.reverse();
+
+    let start_commit = get_commit(odb, range_start, &mut commit_cache)?;
+    let mut prev_lines = read_commit_lines_for_blame(
+        odb,
+        &start_commit,
+        file_path,
+        textconv_ctx,
+        use_textconv,
+    )?;
+
+    if prev_lines.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut active: Vec<(usize, usize, ObjectId, String)> = prev_lines
+        .iter()
+        .enumerate()
+        .map(|(idx, line)| (idx + 1, idx, range_start, line.clone()))
+        .collect();
+    let mut result = Vec::with_capacity(active.len());
+
+    for oid in chain_rev.iter().skip(1) {
+        let commit = get_commit(odb, *oid, &mut commit_cache)?;
+        let cur_lines = read_commit_lines_for_blame(
+            odb,
+            &commit,
+            file_path,
+            textconv_ctx,
+            use_textconv,
+        )?;
+
+        let old_refs: Vec<&str> = prev_lines.iter().map(|s| s.as_str()).collect();
+        let new_refs: Vec<&str> = cur_lines.iter().map(|s| s.as_str()).collect();
+        let new_to_old = build_line_map(&old_refs, &new_refs, diff_algorithm);
+        let mut old_to_new = vec![None; prev_lines.len()];
+        for (new_idx, old_idx_opt) in new_to_old.iter().enumerate() {
+            if let Some(old_idx) = *old_idx_opt {
+                if old_idx < old_to_new.len() && old_to_new[old_idx].is_none() {
+                    old_to_new[old_idx] = Some(new_idx);
+                }
+            }
+        }
+
+        let mut next_active = Vec::new();
+        for (final_lineno, prev_idx, last_oid, content) in active.drain(..) {
+            if let Some(next_idx) = old_to_new.get(prev_idx).and_then(|idx| *idx) {
+                next_active.push((final_lineno, next_idx, *oid, content));
+            } else {
+                result.push(BlameLine {
+                    oid: last_oid,
+                    final_lineno,
+                    orig_lineno: final_lineno,
+                    content,
+                    source_file: None,
+                    ignored: false,
+                    unblamable: false,
+                });
+            }
+        }
+
+        active = next_active;
+        prev_lines = cur_lines;
+        if active.is_empty() {
+            break;
+        }
+    }
+
+    for (final_lineno, _idx, last_oid, content) in active {
+        result.push(BlameLine {
+            oid: last_oid,
+            final_lineno,
+            orig_lineno: final_lineno,
+            content,
+            source_file: None,
+            ignored: false,
+            unblamable: false,
+        });
+    }
+
+    result.sort_by_key(|line| line.final_lineno);
+    Ok(result)
+}
+
+fn apply_worktree_overlay(
+    repo: &Repository,
+    odb: &Odb,
+    start_oid: ObjectId,
+    file_path: &str,
+    base_blame: &[BlameLine],
+    textconv_ctx: Option<&BlameTextconvContext>,
+    use_textconv: bool,
+) -> Result<Option<Vec<BlameLine>>> {
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        return Ok(None);
+    };
+    let abs_path = work_tree.join(file_path);
+    if !abs_path.exists() {
+        return Ok(None);
+    }
+    let raw_worktree = std::fs::read(&abs_path)?;
+    let raw_worktree_text = String::from_utf8_lossy(&raw_worktree).into_owned();
+
+    let head_commit_obj = odb.read(&start_oid)?;
+    let head_commit = parse_commit(&head_commit_obj.data)?;
+    let Some((head_blob_oid, head_mode)) =
+        resolve_path_in_tree_entry(odb, &head_commit.tree, file_path)?
+    else {
+        return Ok(None);
+    };
+    if !is_regular_mode(head_mode) {
+        return Ok(None);
+    }
+
+    let head_content = read_blob_content_for_blame(
+        odb,
+        &head_blob_oid,
+        file_path,
+        head_mode,
+        textconv_ctx,
+        use_textconv,
+    )?;
+    let worktree_content = read_worktree_content_for_blame(
+        &abs_path,
+        file_path,
+        textconv_ctx,
+        use_textconv,
+    )?;
+    let has_textconv = use_textconv
+        && textconv_ctx
+            .and_then(|ctx| resolve_textconv_command(ctx, file_path))
+            .is_some();
+
+    if head_content == worktree_content {
+        return Ok(None);
+    }
+    if !has_textconv && head_content == raw_worktree_text {
+        return Ok(None);
+    }
+
+    let head_lines = content_lines(&head_content);
+    let wt_lines = content_lines(&worktree_content);
+    let map = build_line_map(&head_lines, &wt_lines, BlameDiffAlgorithm::Myers);
+    let zero = grit_lib::diff::zero_oid();
+
+    let mut by_head_line: HashMap<usize, &BlameLine> = HashMap::new();
+    for line in base_blame {
+        by_head_line.insert(line.final_lineno, line);
+    }
+
+    let mut overlaid = Vec::with_capacity(wt_lines.len());
+    for (new_idx, content) in wt_lines.iter().enumerate() {
+        if let Some(old_idx) = map.get(new_idx).copied().flatten() {
+            if let Some(existing) = by_head_line.get(&(old_idx + 1)) {
+                overlaid.push(BlameLine {
+                    oid: existing.oid,
+                    final_lineno: new_idx + 1,
+                    orig_lineno: existing.orig_lineno,
+                    content: (*content).to_string(),
+                    source_file: existing.source_file.clone(),
+                    ignored: existing.ignored,
+                    unblamable: existing.unblamable,
+                });
+                continue;
+            }
+        }
+
+        overlaid.push(BlameLine {
+            oid: zero,
+            final_lineno: new_idx + 1,
+            orig_lineno: new_idx + 1,
+            content: (*content).to_string(),
+            source_file: None,
+            ignored: false,
+            unblamable: false,
+        });
+    }
+
+    Ok(Some(overlaid))
+}
+
+fn read_worktree_content_for_blame(
+    abs_path: &Path,
+    rel_path: &str,
+    textconv_ctx: Option<&BlameTextconvContext>,
+    use_textconv: bool,
+) -> Result<String> {
+    let bytes = std::fs::read(abs_path)?;
+
+    // Normalize worktree content to git-internal form first (CRLF/text attrs).
+    let normalized = if let Some(ctx) = textconv_ctx {
+        let attrs = get_file_attrs(&ctx.attrs, rel_path, &ctx.config);
+        convert_to_git(&bytes, rel_path, &ctx.conversion, &attrs)
+            .map_err(|e| anyhow::anyhow!("failed to normalize worktree content: {e}"))?
+    } else {
+        bytes.clone()
+    };
+
+    if !use_textconv {
+        return Ok(String::from_utf8_lossy(&normalized).into_owned());
+    }
+
+    let Some(ctx) = textconv_ctx else {
+        return Ok(String::from_utf8_lossy(&normalized).into_owned());
+    };
+    let Some(command) = resolve_textconv_command(ctx, rel_path) else {
+        return Ok(String::from_utf8_lossy(&normalized).into_owned());
+    };
+
+    let converted =
+        run_textconv_command(&command, &normalized).or_else(|_| run_textconv_command(&command, &bytes))?;
+    Ok(String::from_utf8_lossy(&converted).into_owned())
 }
 
 fn parse_line_range(
@@ -1005,7 +1995,12 @@ fn write_porcelain(
 
     for (idx, bl) in lines.iter().enumerate() {
         let hex = bl.oid.to_hex();
-        let first = seen.insert(bl.oid);
+        let source_name = bl
+            .source_file
+            .as_deref()
+            .unwrap_or(filename)
+            .to_string();
+        let first = seen.insert((bl.oid, source_name.clone()));
 
         // Header line: hash orig_lineno final_lineno [group_count]
         if let Some(count) = group_counts[idx] {
@@ -1037,13 +2032,13 @@ fn write_porcelain(
             // Previous commit (parent) if not a root commit
             if !commit.parents.is_empty() {
                 let parent_hex = commit.parents[0].to_hex();
-                writeln!(out, "previous {parent_hex} {filename}")?;
+                writeln!(out, "previous {parent_hex} {source_name}")?;
             }
             // Boundary: root commit has no parents
             if commit.parents.is_empty() {
                 writeln!(out, "boundary")?;
             }
-            writeln!(out, "filename {filename}")?;
+            writeln!(out, "filename {source_name}")?;
         }
 
         if mark_ignored && bl.ignored {

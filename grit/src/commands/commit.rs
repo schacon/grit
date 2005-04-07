@@ -1109,6 +1109,17 @@ pub fn parse_date_to_git_timestamp(date_str: &str) -> Option<String> {
         }
     }
 
+    // Try parsing "YYYY-MM-DD HH:MM:SS" (no timezone) as UTC.
+    {
+        let fmt = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+            .ok()?;
+        if let Ok(naive) = time::PrimitiveDateTime::parse(trimmed, &fmt) {
+            let dt = naive.assume_utc();
+            let epoch = dt.unix_timestamp();
+            return Some(format!("{epoch} +0000"));
+        }
+    }
+
     // Try "@<epoch>" format (git uses this for testing)
     if let Some(epoch_str) = trimmed.strip_prefix('@') {
         // @<epoch> <tz>
