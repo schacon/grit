@@ -20,6 +20,7 @@ use crate::index::Index;
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::pack;
 use crate::patch_ids::compute_patch_id;
+use crate::ref_exclusions::{git_namespace_prefix, strip_git_namespace, RefExclusions};
 use crate::reflog::{list_reflog_refs, read_reflog};
 use crate::refs;
 use crate::repo::Repository;
@@ -325,8 +326,10 @@ pub enum OrderingMode {
 /// Parsed and normalized options for rev-list traversal.
 #[derive(Debug, Clone)]
 pub struct RevListOptions {
-    /// Include all refs (`--all`) as positive tips.
+    /// Include all refs (`--all`) as positive tips (legacy single-pass; see [`Self::all_refs_passes`]).
     pub all_refs: bool,
+    /// Each `--all` in argv order: `(negated, exclusions snapshot)` — negated tips join the exclude set.
+    pub all_refs_passes: Vec<(bool, RefExclusions)>,
     /// Follow only first parent when walking merges.
     pub first_parent: bool,
     /// Enable ancestry-path filtering.
@@ -414,12 +417,15 @@ pub struct RevListOptions {
     pub commit_graph_changed_paths_version: i32,
     /// Optional trace counters for `GIT_TRACE2_PERF` Bloom statistics.
     pub bloom_stats: Option<BloomWalkStatsHandle>,
+    /// `--exclude` / `--exclude-hidden` ref filtering for `--all` and similar tips.
+    pub ref_exclusions: RefExclusions,
 }
 
 impl Default for RevListOptions {
     fn default() -> Self {
         Self {
             all_refs: false,
+            all_refs_passes: Vec::new(),
             first_parent: false,
             ancestry_path: false,
             ancestry_path_bottoms: Vec::new(),
@@ -463,6 +469,7 @@ impl Default for RevListOptions {
             commit_graph_read_changed_paths: true,
             commit_graph_changed_paths_version: -1,
             bloom_stats: None,
+            ref_exclusions: RefExclusions::default(),
         }
     }
 }
@@ -501,6 +508,26 @@ pub struct RevListResult {
     pub bitmap_object_format: bool,
 }
 
+fn empty_rev_list_result(options: &RevListOptions) -> RevListResult {
+    let bitmap_object_format = options.objects
+        && options.use_bitmap_index
+        && (options.bitmap_oid_only_objects || options.unpacked_only);
+    RevListResult {
+        commits: Vec::new(),
+        objects: Vec::new(),
+        omitted_objects: Vec::new(),
+        missing_objects: Vec::new(),
+        boundary_commits: Vec::new(),
+        left_right_map: HashMap::new(),
+        cherry_equivalent: HashSet::new(),
+        per_commit_object_counts: Vec::new(),
+        object_walk_tips: Vec::new(),
+        objects_print_commit: Vec::new(),
+        object_segments: Vec::new(),
+        bitmap_object_format,
+    }
+}
+
 /// Resolve and walk revisions for the requested options.
 ///
 /// # Parameters
@@ -527,10 +554,19 @@ pub fn rev_list(
     } else {
         (resolve_specs(repo, positive_specs)?, Vec::new())
     };
-    let exclude = resolve_specs(repo, negative_specs)?;
+    let mut exclude = resolve_specs(repo, negative_specs)?;
 
-    if options.all_refs {
-        include.extend(all_ref_tips(repo)?);
+    if !options.all_refs_passes.is_empty() {
+        for (negated, snap) in &options.all_refs_passes {
+            let tips = all_ref_tips(repo, snap)?;
+            if *negated {
+                exclude.extend(tips);
+            } else {
+                include.extend(tips);
+            }
+        }
+    } else if options.all_refs {
+        include.extend(all_ref_tips(repo, &options.ref_exclusions)?);
     }
 
     if options.objects && options.include_reflog_entries {
@@ -565,7 +601,10 @@ pub fn rev_list(
         merged
     };
 
-    if include.is_empty() && object_roots.is_empty() {
+    if include.is_empty() && object_roots.is_empty() && exclude.is_empty() {
+        if !options.all_refs_passes.is_empty() {
+            return Ok(empty_rev_list_result(options));
+        }
         return Err(Error::InvalidRef("no revisions specified".to_owned()));
     }
 
@@ -588,7 +627,7 @@ pub fn rev_list(
     included.retain(|oid| !excluded.contains(oid));
 
     if options.simplify_by_decoration {
-        let decorated = all_ref_tips(repo)?;
+        let decorated = all_ref_tips(repo, &RefExclusions::default())?;
         included.retain(|oid| decorated.contains(oid));
     }
 
@@ -2151,28 +2190,52 @@ fn reflog_commit_tips(repo: &Repository) -> Result<Vec<ObjectId>> {
     Ok(out)
 }
 
-fn all_ref_tips(repo: &Repository) -> Result<Vec<ObjectId>> {
+fn commit_tips_from_ref_pairs(
+    repo: &Repository,
+    pairs: &[(String, ObjectId)],
+    exclusions: &RefExclusions,
+) -> Result<Vec<ObjectId>> {
+    let namespace_prefix = git_namespace_prefix();
     let mut raw = Vec::new();
-    if let Ok(head) = refs::resolve_ref(&repo.git_dir, "HEAD") {
-        raw.push(head);
+    for (refname, oid) in pairs {
+        if exclusions.ref_excluded(strip_git_namespace(refname, &namespace_prefix), refname) {
+            continue;
+        }
+        raw.push(*oid);
     }
-    raw.extend(
-        refs::list_refs(&repo.git_dir, "refs/")?
-            .into_iter()
-            .map(|(_, oid)| oid),
-    );
-    // Peel tags to commits; skip non-commit objects (e.g. tags of blobs/trees)
+    peel_ref_oids_to_unique_commits(repo, raw)
+}
+
+fn peel_ref_oids_to_unique_commits(repo: &Repository, raw: Vec<ObjectId>) -> Result<Vec<ObjectId>> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for oid in raw {
         match peel_to_commit(repo, oid) {
             Ok(commit_oid) if seen.insert(commit_oid) => out.push(commit_oid),
-            Err(_) => {} // skip non-commit refs
+            Err(_) => {}
             _ => {}
         }
     }
     out.sort();
     Ok(out)
+}
+
+fn all_ref_tips(repo: &Repository, exclusions: &RefExclusions) -> Result<Vec<ObjectId>> {
+    let mut pairs = Vec::new();
+    if let Ok(head) = refs::resolve_ref(&repo.git_dir, "HEAD") {
+        pairs.push(("HEAD".to_owned(), head));
+    }
+    pairs.extend(refs::list_refs(&repo.git_dir, "refs/")?);
+    commit_tips_from_ref_pairs(repo, &pairs, exclusions)
+}
+
+/// Expand named refs to peeled unique commit tips, applying `--exclude` / `--exclude-hidden` rules.
+pub fn commit_tips_from_named_refs(
+    repo: &Repository,
+    pairs: &[(String, ObjectId)],
+    exclusions: &RefExclusions,
+) -> Result<Vec<ObjectId>> {
+    commit_tips_from_ref_pairs(repo, pairs, exclusions)
 }
 
 fn walk_closure(graph: &mut CommitGraph<'_>, starts: &[ObjectId]) -> Result<HashSet<ObjectId>> {
