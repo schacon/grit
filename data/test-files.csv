@@ -447,7 +447,7 @@ t1508-at-combinations	t1	yes	35	22	13	false	ok	0
 t1509-root-work-tree	t1	yes	0	0	0	false	ok	0
 t1510-repo-setup	t1	yes	109	105	4	false	ok	0
 t1511-rev-parse-caret	t1	yes	17	11	6	false	ok	0
-t1512-rev-parse-disambiguation	t1	yes	38	34	4	false	ok	0
+t1512-rev-parse-disambiguation	t1	yes	38	38	0	true	ok	0
 t1513-rev-parse-prefix	t1	yes	11	9	2	false	ok	0
 t1514-rev-parse-push	t1	yes	9	8	1	false	ok	0
 t1515-rev-parse-outside-repo	t1	yes	4	4	0	true	ok	0

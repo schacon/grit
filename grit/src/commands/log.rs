@@ -36,7 +36,8 @@ use grit_lib::rev_list::{
     split_symmetric_diff, OrderingMode, RevListOptions,
 };
 use grit_lib::rev_parse::{
-    reflog_walk_refname, resolve_revision_as_commit, try_parse_double_dot_log_range,
+    peel_to_commit_for_merge_base, reflog_walk_refname, resolve_revision_as_commit,
+    resolve_revision_for_range_end, try_parse_double_dot_log_range,
 };
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
@@ -5208,15 +5209,22 @@ fn run_symmetric_log(repo: &Repository, args: &Args, _patch_context: usize) -> R
         _ => anyhow::bail!("symmetric revision required"),
     };
 
-    let lhs_oid = grit_lib::rev_parse::resolve_revision(repo, &lhs)
-        .with_context(|| format!("bad revision '{lhs}'"))?;
-    let rhs_oid = grit_lib::rev_parse::resolve_revision(repo, &rhs)
-        .with_context(|| format!("bad revision '{rhs}'"))?;
+    // Symmetric ranges use the same commit-ish disambiguation as two-dot ranges
+    // (`resolve_revision_for_range_end`), not plain `rev-parse` object resolution.
+    let lhs_spec = if lhs.is_empty() { "HEAD" } else { lhs.as_str() };
+    let rhs_spec = if rhs.is_empty() { "HEAD" } else { rhs.as_str() };
+    let lhs_tip = resolve_revision_for_range_end(repo, lhs_spec)
+        .with_context(|| format!("bad revision '{lhs_spec}'"))?;
+    let rhs_tip = resolve_revision_for_range_end(repo, rhs_spec)
+        .with_context(|| format!("bad revision '{rhs_spec}'"))?;
+    let lhs_oid = peel_to_commit_for_merge_base(repo, lhs_tip)?;
+    let rhs_oid = peel_to_commit_for_merge_base(repo, rhs_tip)?;
     let bases = merge_bases(repo, lhs_oid, rhs_oid, args.first_parent)
         .context("failed to compute merge bases for symmetric range")?;
     let negative: Vec<String> = bases.iter().map(|b| b.to_hex()).collect();
 
-    let positive = vec![lhs, rhs];
+    // `rev-list` resolves each positive spec; empty sides mean HEAD (same as parsing above).
+    let positive = vec![lhs_spec.to_owned(), rhs_spec.to_owned()];
     let options = RevListOptions {
         left_right: true,
         left_only: args.left_only,

@@ -20,7 +20,7 @@ use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectKind;
 use grit_lib::quote_path::quote_c_style;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::resolve_revision_for_patch_old_blob;
 use grit_lib::ws::{self, WhitespaceGitAttr, WS_BLANK_AT_EOF, WS_DEFAULT_RULE, WS_INCOMPLETE_LINE};
 use regex::Regex;
 use std::borrow::Cow;
@@ -3845,7 +3845,7 @@ fn build_fake_ancestor_file(patches: &[FilePatch], args: &Args, out_path: &Path)
         }
 
         let resolved = if let Some(old_oid) = fp.old_oid.as_deref() {
-            let oid = resolve_revision(&repo, old_oid)
+            let oid = resolve_revision_for_patch_old_blob(&repo, old_oid)
                 .with_context(|| format!("resolving old blob id `{old_oid}` for `{adjusted}`"))?;
             let mode = fp.old_mode.as_deref().map(parse_mode).unwrap_or(0o100644);
             Some((mode, oid))

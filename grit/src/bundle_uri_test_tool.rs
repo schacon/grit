@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{BufRead, Write};
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use crate::git_path;
 

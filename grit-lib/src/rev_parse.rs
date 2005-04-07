@@ -12,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 
 use regex::Regex;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
@@ -1327,6 +1327,42 @@ fn read_core_disambiguate(repo: &Repository) -> Option<&'static str> {
     }
 }
 
+/// When `spec` resolved as an abbreviated object id, warn if `refs/heads/<spec>` exists and
+/// points at a different object (Git: `rev-parse` warns "refname ... is ambiguous").
+fn warn_if_branch_refname_collides_with_abbrev_hex(
+    repo: &Repository,
+    spec: &str,
+    object_oid: ObjectId,
+) {
+    if spec.len() >= 40 {
+        return;
+    }
+    let branch_ref = format!("refs/heads/{spec}");
+    let Ok(ref_oid) = refs::resolve_ref(&repo.git_dir, &branch_ref) else {
+        return;
+    };
+    if ref_oid != object_oid {
+        eprintln!("warning: refname '{spec}' is ambiguous.");
+    }
+}
+
+/// When a hex-like `spec` resolved as a ref under `refs/heads/` or `refs/tags/`, warn if that name
+/// also matches object(s) in the ODB (Git: `warning: refname 'abc' is ambiguous.`).
+fn warn_if_hex_ref_collides_with_objects(repo: &Repository, spec: &str, ref_oid: ObjectId) {
+    if spec.len() >= 40 || !is_hex_prefix(spec) {
+        return;
+    }
+    let Ok(matches) = find_abbrev_matches(repo, spec) else {
+        return;
+    };
+    if matches.is_empty() {
+        return;
+    }
+    if matches.len() > 1 || matches[0] != ref_oid {
+        eprintln!("warning: refname '{spec}' is ambiguous.");
+    }
+}
+
 fn disambiguate_hex_by_peel(
     repo: &Repository,
     spec: &str,
@@ -1359,6 +1395,23 @@ fn disambiguate_hex_by_peel(
         let mut sorted = filtered;
         sorted.sort_by_key(|o| o.to_hex());
         return Ok(sorted[0]);
+    }
+    // `^{commit}`: multiple objects may peel to the same commit (e.g. HEAD, tag, peeled tree-ish).
+    // If exactly one distinct commit is produced, pick a deterministic representative (t1512).
+    if peel == "commit" {
+        let mut by_peeled: HashMap<ObjectId, Vec<ObjectId>> = HashMap::new();
+        for oid in &filtered {
+            if let Ok(c) = apply_peel(repo, *oid, Some("commit")) {
+                by_peeled.entry(c).or_default().push(*oid);
+            }
+        }
+        if by_peeled.len() == 1 {
+            let mut reps: Vec<ObjectId> = by_peeled.into_values().next().unwrap_or_default();
+            reps.sort_by_key(|o| o.to_hex());
+            if let Some(oid) = reps.first().copied() {
+                return Ok(oid);
+            }
+        }
     }
     Err(Error::InvalidRef(format!(
         "short object ID {spec} is ambiguous"
@@ -1632,29 +1685,44 @@ fn resolve_base(
     if is_hex_prefix(spec) && spec.len() < 40 {
         let tag_ref = format!("refs/tags/{spec}");
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &tag_ref) {
+            warn_if_hex_ref_collides_with_objects(repo, spec, oid);
             return Ok(oid);
         }
         let branch_ref = format!("refs/heads/{spec}");
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &branch_ref) {
+            warn_if_hex_ref_collides_with_objects(repo, spec, oid);
             return Ok(oid);
         }
     }
 
     if is_hex_prefix(spec) {
         let matches = find_abbrev_matches(repo, spec)?;
-        if matches.len() == 1 {
-            return Ok(matches[0]);
-        }
-        if matches.len() > 1 {
+        if matches.is_empty() {
+            // Git treats 4+ hex digits as an abbreviated object id lookup first. When nothing
+            // matches, fail as unknown revision — do not fall through to index DWIM (which would
+            // incorrectly report "ambiguous argument" for paths like `000000000`).
+            if (4..40).contains(&spec.len()) {
+                return Err(Error::ObjectNotFound(spec.to_owned()));
+            }
+        } else if matches.len() == 1 {
+            let oid = matches[0];
+            warn_if_branch_refname_collides_with_abbrev_hex(repo, spec, oid);
+            return Ok(oid);
+        } else if matches.len() > 1 {
             if commit_only_hex {
-                return disambiguate_hex_by_peel(repo, spec, &matches, "commit");
+                let oid = disambiguate_hex_by_peel(repo, spec, &matches, "commit")?;
+                warn_if_branch_refname_collides_with_abbrev_hex(repo, spec, oid);
+                return Ok(oid);
             }
             if let Some(p) = peel_for_disambig {
-                return disambiguate_hex_by_peel(repo, spec, &matches, p);
+                let oid = disambiguate_hex_by_peel(repo, spec, &matches, p)?;
+                warn_if_branch_refname_collides_with_abbrev_hex(repo, spec, oid);
+                return Ok(oid);
             }
             if use_disambiguate_config {
                 if let Some(pref) = read_core_disambiguate(repo) {
                     if let Ok(oid) = disambiguate_hex_by_peel(repo, spec, &matches, pref) {
+                        warn_if_branch_refname_collides_with_abbrev_hex(repo, spec, oid);
                         return Ok(oid);
                     }
                 }
