@@ -227,7 +227,14 @@ fn run_show(args: ShowArgs) -> Result<()> {
         follow: false,
         diff_filter: None,
         find_object: None,
-        pickaxe: None,
+        pickaxe_grep: None,
+        pickaxe_string: None,
+        pickaxe_regex: false,
+        text: false,
+        textconv: false,
+        no_textconv: false,
+        pickaxe_all: false,
+        no_pickaxe_regex: false,
         abbrev: if args.no_abbrev_commit {
             Some("40".to_owned())
         } else if args.abbrev_commit {

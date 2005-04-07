@@ -2852,6 +2852,55 @@ fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
 }
 
 /// Preprocess log arguments: convert `-<N>` shorthand to `-n <N>`, and make bare `-L` visible to clap.
+/// Map `git log` pickaxe `-G` / `-S` (including glued forms) to hidden long options so `-G` stays
+/// free for `--basic-regexp` on `--grep`.
+fn preprocess_log_pickaxe_args(rest: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len() + 4);
+    let mut i = 0usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if arg == "--" {
+            out.extend_from_slice(&rest[i..]);
+            break;
+        }
+        if let Some(pat) = arg.strip_prefix("-G") {
+            out.push("--pickaxe-grep".to_string());
+            if pat.is_empty() {
+                let next = rest.get(i + 1);
+                if next.is_none() || next.is_some_and(|n| n.starts_with('-')) {
+                    out.push("\u{7f}__GRIT_MISSING_PICKAXE_G__".to_string());
+                } else {
+                    i += 1;
+                    out.push(rest[i].clone());
+                }
+            } else {
+                out.push(pat.to_string());
+            }
+            i += 1;
+            continue;
+        }
+        if let Some(needle) = arg.strip_prefix("-S") {
+            out.push("--pickaxe-string".to_string());
+            if needle.is_empty() {
+                let next = rest.get(i + 1);
+                if next.is_none() || next.is_some_and(|n| n.starts_with('-')) {
+                    out.push("\u{7f}__GRIT_MISSING_PICKAXE_S__".to_string());
+                } else {
+                    i += 1;
+                    out.push(rest[i].clone());
+                }
+            } else {
+                out.push(needle.to_string());
+            }
+            i += 1;
+            continue;
+        }
+        out.push(arg.clone());
+        i += 1;
+    }
+    out
+}
+
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
     let mut i = 0usize;
@@ -3225,7 +3274,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "interpret-trailers" => commands::interpret_trailers::run(parse_cmd_args(subcmd, rest)),
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
         "log" => {
-            let rest = preprocess_log_args(rest);
+            let rest = preprocess_log_pickaxe_args(preprocess_log_args(rest));
             commands::log::run(parse_cmd_args(subcmd, &rest))
         }
         "ls-files" => commands::ls_files::run(parse_cmd_args(subcmd, rest)),

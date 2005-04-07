@@ -3,14 +3,18 @@
 //! Displays the commit history starting from HEAD (or specified revisions),
 //! with configurable formatting and filtering.
 
+use crate::explicit_exit::ExplicitExit;
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf::{get_file_attrs, load_gitattributes, DiffAttr};
 use grit_lib::diff::{
-    count_changes, diff_trees, format_raw, format_stat_line, DiffEntry, DiffStatus,
+    count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
 use grit_lib::line_log::{
     format_line_log_diff, line_log_filter_commits, parse_line_log_ranges, rewritten_first_parent,
 };
+use grit_lib::merge_diff::{blob_text_for_diff, is_binary_for_diff};
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
@@ -177,9 +181,37 @@ pub struct Args {
     #[arg(long = "find-object")]
     pub find_object: Option<String>,
 
-    /// Pickaxe: only show commits whose remerge diff touches this string (with `--remerge-diff`).
-    #[arg(short = 'S', value_name = "STRING", allow_hyphen_values = true)]
-    pub pickaxe: Option<String>,
+    /// Pickaxe extended-regex pattern (log `-G`; set via argv preprocessing).
+    #[arg(long = "pickaxe-grep", value_name = "REGEX", hide = true)]
+    pub pickaxe_grep: Option<String>,
+
+    /// Pickaxe string (log `-S`; set via argv preprocessing).
+    #[arg(long = "pickaxe-string", value_name = "STRING", hide = true)]
+    pub pickaxe_string: Option<String>,
+
+    /// Treat `-S` needle as an extended regex (`--pickaxe-regex`).
+    #[arg(long = "pickaxe-regex", hide = true)]
+    pub pickaxe_regex: bool,
+
+    /// Force text semantics for pickaxe / binary handling (`-a` / `--text`).
+    #[arg(short = 'a', long = "text")]
+    pub text: bool,
+
+    /// Run textconv when comparing blobs (default on for log pickaxe).
+    #[arg(long = "textconv", hide = true)]
+    pub textconv: bool,
+
+    /// Disable textconv for pickaxe / diff.
+    #[arg(long = "no-textconv", hide = true)]
+    pub no_textconv: bool,
+
+    /// Show full changeset when pickaxe matches (Git `--pickaxe-all`).
+    #[arg(long = "pickaxe-all", hide = true)]
+    pub pickaxe_all: bool,
+
+    /// Rejected by Git (compatibility error).
+    #[arg(long = "no-pickaxe-regex", hide = true)]
+    pub no_pickaxe_regex: bool,
 
     /// Abbreviate commit hashes to N characters.
     #[arg(long = "abbrev", value_name = "N", default_missing_value = "7", num_args = 0..=1, require_equals = true)]
@@ -295,8 +327,8 @@ pub struct Args {
     #[arg(long = "all-match")]
     pub all_match: bool,
 
-    /// Use basic regexp for --grep.
-    #[arg(short = 'G', long = "basic-regexp")]
+    /// Use basic regexp for --grep / --author / --committer (not pickaxe `-G`).
+    #[arg(long = "basic-regexp")]
     pub basic_regexp: bool,
 
     /// Use extended regexp for --grep.
@@ -511,6 +543,7 @@ fn run_line_log(repo: &Repository, args: Args) -> Result<()> {
         args.merges,
         &[][..],
         &excluded_set,
+        None,
     )?;
     let order: Vec<ObjectId> = walk.iter().map(|(o, _)| *o).collect();
 
@@ -1976,6 +2009,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
+    validate_log_pickaxe_options(&repo, &args)?;
     if !args.line_range.is_empty() {
         return run_line_log(&repo, args);
     }
@@ -2122,13 +2156,21 @@ pub fn run(mut args: Args) -> Result<()> {
     let author_re = args
         .author
         .as_ref()
-        .map(|p| RegexBuilder::new(p).case_insensitive(true).build())
+        .map(|p| {
+            RegexBuilder::new(p)
+                .case_insensitive(args.regexp_ignore_case)
+                .build()
+        })
         .transpose()
         .context("invalid --author regex")?;
     let committer_re = args
         .committer_filter
         .as_ref()
-        .map(|p| RegexBuilder::new(p).case_insensitive(true).build())
+        .map(|p| {
+            RegexBuilder::new(p)
+                .case_insensitive(args.regexp_ignore_case)
+                .build()
+        })
         .transpose()
         .context("invalid --committer regex")?;
     let grep_re = args
@@ -2184,6 +2226,13 @@ pub fn run(mut args: Args) -> Result<()> {
     let until_threshold = args.until.as_ref().and_then(|s| parse_date_to_epoch(s));
     let diff_filter_str = args.diff_filter.as_deref();
 
+    let pickaxe_filter: Option<&Args> =
+        if !args.remerge_diff && (args.pickaxe_grep.is_some() || args.pickaxe_string.is_some()) {
+            Some(&args)
+        } else {
+            None
+        };
+
     let use_streaming_log = !args.reverse && !(args.follow && !combined_pathspecs.is_empty());
 
     let stdout = io::stdout();
@@ -2223,6 +2272,7 @@ pub fn run(mut args: Args) -> Result<()> {
             args.merges,
             effective_pathspecs,
             &excluded_set,
+            pickaxe_filter,
         );
         let mut shown = 0usize;
         while let Some((oid, commit_data)) = iter.next_commit()? {
@@ -2293,6 +2343,7 @@ pub fn run(mut args: Args) -> Result<()> {
             args.merges,
             effective_pathspecs,
             &excluded_set,
+            pickaxe_filter,
         )?;
 
         // Apply --follow: filter commits and track renames
@@ -3123,6 +3174,8 @@ struct CommitInfo {
 /// the full history in a `Vec` first.
 struct WalkCommitsIter<'a> {
     odb: &'a Odb,
+    git_dir: &'a Path,
+    pickaxe_args: Option<&'a Args>,
     shallow_boundaries: HashSet<ObjectId>,
     visited: HashSet<ObjectId>,
     queue: std::collections::BinaryHeap<(i64, ObjectId)>,
@@ -3142,7 +3195,7 @@ struct WalkCommitsIter<'a> {
 impl<'a> WalkCommitsIter<'a> {
     fn new(
         odb: &'a Odb,
-        git_dir: &Path,
+        git_dir: &'a Path,
         start: &[ObjectId],
         max_count: Option<usize>,
         skip: Option<usize>,
@@ -3154,6 +3207,7 @@ impl<'a> WalkCommitsIter<'a> {
         merges_only: bool,
         pathspecs: &'a [String],
         excluded: &HashSet<ObjectId>,
+        pickaxe_args: Option<&'a Args>,
     ) -> Self {
         let shallow_boundaries = load_shallow_boundaries(git_dir);
         let visited: HashSet<ObjectId> = excluded.clone();
@@ -3165,6 +3219,8 @@ impl<'a> WalkCommitsIter<'a> {
         }
         Self {
             odb,
+            git_dir,
+            pickaxe_args,
             shallow_boundaries,
             visited,
             queue,
@@ -3250,6 +3306,12 @@ impl<'a> WalkCommitsIter<'a> {
                 continue;
             }
 
+            if let Some(pa) = self.pickaxe_args {
+                if !commit_pickaxe_matches(self.git_dir, self.odb, &info, pa)? {
+                    continue;
+                }
+            }
+
             if self.skipped < self.skip_n {
                 self.skipped += 1;
             } else {
@@ -3297,6 +3359,7 @@ fn walk_commits(
     merges_only: bool,
     pathspecs: &[String],
     excluded: &HashSet<ObjectId>,
+    pickaxe_args: Option<&Args>,
 ) -> Result<Vec<(ObjectId, CommitInfo)>> {
     if max_count == Some(0) {
         return Ok(Vec::new());
@@ -3315,6 +3378,7 @@ fn walk_commits(
         merges_only,
         pathspecs,
         excluded,
+        pickaxe_args,
     );
     let mut result = Vec::new();
     while let Some(c) = iter.next_commit()? {
@@ -3538,6 +3602,289 @@ fn write_notes(
     Ok(())
 }
 
+fn validate_log_pickaxe_options(repo: &Repository, args: &Args) -> Result<()> {
+    if args.no_pickaxe_regex {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: "fatal: unrecognized argument: --no-pickaxe-regex".to_string(),
+        }));
+    }
+    if let Some(s) = args.pickaxe_string.as_deref() {
+        if s == "\u{7f}__GRIT_MISSING_PICKAXE_S__" {
+            return Err(anyhow::Error::new(ExplicitExit {
+                code: 129,
+                message: "error: switch `S' requires a value".to_string(),
+            }));
+        }
+        if s.is_empty() {
+            return Err(anyhow::Error::new(ExplicitExit {
+                code: 129,
+                message: "error: -S requires a non-empty argument".to_string(),
+            }));
+        }
+    }
+    if let Some(s) = args.pickaxe_grep.as_deref() {
+        if s == "\u{7f}__GRIT_MISSING_PICKAXE_G__" {
+            return Err(anyhow::Error::new(ExplicitExit {
+                code: 129,
+                message: "error: switch `G' requires a value".to_string(),
+            }));
+        }
+        if s.is_empty() {
+            return Err(anyhow::Error::new(ExplicitExit {
+                code: 129,
+                message: "error: -G requires a non-empty argument".to_string(),
+            }));
+        }
+    }
+    if args.pickaxe_grep.is_some() && args.pickaxe_regex {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: "fatal: options '-G' and '--pickaxe-regex' cannot be used together, use '--pickaxe-regex' with '-S'".to_string(),
+        }));
+    }
+
+    let mut pickaxe_kinds = 0usize;
+    if args.pickaxe_grep.is_some() {
+        pickaxe_kinds += 1;
+    }
+    if args.pickaxe_string.is_some() {
+        pickaxe_kinds += 1;
+    }
+    if args.find_object.is_some() {
+        pickaxe_kinds += 1;
+    }
+    if args.pickaxe_all && args.find_object.is_some() {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: "fatal: options '--pickaxe-all' and '--find-object' cannot be used together, use '--pickaxe-all' with '-G' and '-S'".to_string(),
+        }));
+    }
+    if pickaxe_kinds > 1 {
+        return Err(anyhow::Error::new(ExplicitExit {
+            code: 128,
+            message: "fatal: options '-G', '-S', and '--find-object' cannot be used together"
+                .to_string(),
+        }));
+    }
+
+    if (args.pickaxe_grep.is_some() || args.pickaxe_string.is_some()) && !args.no_textconv {
+        validate_pickaxe_textconv_drivers(repo.git_dir.as_path(), repo.work_tree.as_deref())?;
+    }
+    Ok(())
+}
+
+fn path_has_textconv_driver(git_dir: &Path, config: &ConfigSet, path: &str) -> bool {
+    let work_tree = git_dir.parent().unwrap_or(git_dir);
+    let rules = load_gitattributes(work_tree);
+    let fa = get_file_attrs(&rules, path, config);
+    if let DiffAttr::Driver(ref driver) = fa.diff_attr {
+        return config.get(&format!("diff.{driver}.textconv")).is_some();
+    }
+    false
+}
+
+fn validate_pickaxe_textconv_drivers(git_dir: &Path, work_tree: Option<&Path>) -> Result<()> {
+    let Some(wt) = work_tree else {
+        return Ok(());
+    };
+    let rules = load_gitattributes(wt);
+    let config = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let mut drivers: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for rule in &rules {
+        for d in rule.diff_drivers() {
+            drivers.insert(d.to_owned());
+        }
+    }
+    for driver in drivers {
+        let Some(cmd_line) = config.get(&format!("diff.{driver}.textconv")) else {
+            continue;
+        };
+        let mut cmd_line = cmd_line.trim_end().to_string();
+        if cmd_line.ends_with('<') {
+            cmd_line = cmd_line.trim_end_matches('<').trim_end().to_string();
+        }
+        let Some(first_word) = cmd_line.split_whitespace().next() else {
+            continue;
+        };
+        if first_word.starts_with('/') || first_word.contains('/') {
+            if !Path::new(first_word).is_file() {
+                return Err(anyhow::Error::new(ExplicitExit {
+                    code: 128,
+                    message: format!(
+                        "error: cannot run {}: No such file or directory\nfatal: unable to read files to diff",
+                        first_word
+                    ),
+                }));
+            }
+            continue;
+        }
+        let exists = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("command -v {first_word} >/dev/null 2>&1"))
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !exists {
+            return Err(anyhow::Error::new(ExplicitExit {
+                code: 128,
+                message: format!(
+                    "error: cannot run {first_word}: No such file or directory\nfatal: unable to read files to diff"
+                ),
+            }));
+        }
+    }
+    Ok(())
+}
+
+fn commit_pickaxe_matches(
+    git_dir: &Path,
+    odb: &Odb,
+    info: &CommitInfo,
+    args: &Args,
+) -> Result<bool> {
+    let entries = compute_commit_diff(odb, info)?;
+    let use_textconv = !args.no_textconv;
+    let config = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+
+    let grep_re = if let Some(ref pat) = args.pickaxe_grep {
+        Some(
+            RegexBuilder::new(pat)
+                .case_insensitive(args.regexp_ignore_case)
+                .build()
+                .with_context(|| format!("invalid pickaxe regex: {pat}"))?,
+        )
+    } else {
+        None
+    };
+
+    let s_pickaxe_re = if args.pickaxe_regex {
+        let needle = args
+            .pickaxe_string
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("internal: --pickaxe-regex without -S"))?;
+        Some(
+            RegexBuilder::new(needle)
+                .case_insensitive(args.regexp_ignore_case)
+                .build()
+                .with_context(|| format!("invalid pickaxe regex: {needle}"))?,
+        )
+    } else {
+        None
+    };
+
+    for entry in &entries {
+        let path = entry.path();
+        let old_raw = read_blob_bytes(odb, &entry.old_oid);
+        let new_raw = read_blob_bytes(odb, &entry.new_oid);
+
+        if grep_re.is_some() && !args.text {
+            let has_textconv_driver =
+                use_textconv && path_has_textconv_driver(git_dir, &config, path);
+            let old_bin = is_binary_for_diff(git_dir, path, &old_raw);
+            let new_bin = is_binary_for_diff(git_dir, path, &new_raw);
+            // Match Git diffcore_pickaxe: skip -G unless `-a` or a textconv applies to a binary side.
+            if (!has_textconv_driver && old_bin) || (!has_textconv_driver && new_bin) {
+                continue;
+            }
+        }
+
+        let old_text = blob_text_for_diff(git_dir, &config, path, &old_raw, use_textconv);
+        let new_text = blob_text_for_diff(git_dir, &config, path, &new_raw, use_textconv);
+
+        if let Some(ref re) = grep_re {
+            let patch = unified_diff(
+                old_text.as_str(),
+                new_text.as_str(),
+                entry.old_path.as_deref().unwrap_or(path),
+                entry.new_path.as_deref().unwrap_or(path),
+                3,
+            );
+            if pickaxe_g_matches_diff_lines(re, &patch) {
+                return Ok(true);
+            }
+            continue;
+        }
+
+        if let Some(ref needle) = args.pickaxe_string {
+            if args.pickaxe_regex {
+                let re = s_pickaxe_re.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("internal: --pickaxe-regex without compiled regex")
+                })?;
+                let old_c = re.find_iter(old_text.as_str()).count();
+                let new_c = re.find_iter(new_text.as_str()).count();
+                if old_c != new_c {
+                    return Ok(true);
+                }
+            } else if args.regexp_ignore_case && needle.is_ascii() {
+                let old_c = count_ascii_case_insensitive(&old_text, needle);
+                let new_c = count_ascii_case_insensitive(&new_text, needle);
+                if old_c != new_c {
+                    return Ok(true);
+                }
+            } else {
+                let old_c = old_text.matches(needle.as_str()).count();
+                let new_c = new_text.matches(needle.as_str()).count();
+                if old_c != new_c {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn read_blob_bytes(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
+    if oid.is_zero() {
+        return Vec::new();
+    }
+    odb.read(oid).map(|o| o.data).unwrap_or_default()
+}
+
+/// Match Git's `diffgrep_consume`: run the regex on each added/removed line's **body** (the byte
+/// sequence after the single `+` / `-` hunk prefix), not on diff headers or `++` / `--` lines.
+fn pickaxe_g_matches_diff_lines(re: &Regex, patch: &str) -> bool {
+    for line in patch.lines() {
+        let b = line.as_bytes();
+        let body_start = match b.first().copied() {
+            Some(b'+') if b.get(1).copied() != Some(b'+') => 1,
+            Some(b'-') if b.get(1).copied() != Some(b'-') => 1,
+            _ => continue,
+        };
+        let body = line.get(body_start..).unwrap_or("");
+        if re.is_match(body) {
+            return true;
+        }
+    }
+    false
+}
+
+fn count_ascii_case_insensitive(haystack: &str, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let hay = haystack.as_bytes();
+    let nd = needle.as_bytes();
+    let mut count = 0usize;
+    let mut i = 0usize;
+    while i + nd.len() <= hay.len() {
+        let mut matched = true;
+        for j in 0..nd.len() {
+            if !hay[i + j].eq_ignore_ascii_case(&nd[j]) {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            count += 1;
+            i += nd.len();
+        } else {
+            i += 1;
+        }
+    }
+    count
+}
+
 /// Post-walk filters applied after [`walk_commits`] (diff-filter, find-object, decoration, dates).
 fn commit_passes_post_walk_filters(
     repo: &Repository,
@@ -3587,8 +3934,8 @@ fn commit_passes_post_walk_filters(
             return Ok(false);
         }
     }
-    if let Some(ref p) = args.pickaxe {
-        if args.remerge_diff {
+    if args.remerge_diff {
+        if let Some(ref p) = args.pickaxe_string {
             if info.parents.len() != 2 {
                 return Ok(false);
             }
