@@ -34,6 +34,7 @@ pub mod pathspec;
 pub mod pkt_line;
 pub mod protocol;
 mod protocol_wire;
+mod ref_transaction_hooks;
 mod ssh_transport;
 mod trace_packet;
 mod transport_passthrough;

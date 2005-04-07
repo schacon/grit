@@ -417,7 +417,7 @@ t1412-reflog-loop	t1	yes	3	3	0	true	ok	0
 t1413-reflog-detach	t1	yes	7	7	0	true	ok	0
 t1414-reflog-walk	t1	yes	12	3	9	false	ok	0
 t1415-worktree-refs	t1	skip	10	4	6	false	ok	0
-t1416-ref-transaction-hooks	t1	yes	10	9	1	false	ok	0
+t1416-ref-transaction-hooks	t1	yes	10	10	0	true	ok	0
 t1417-reflog-updateref	t1	yes	21	21	0	true	ok	0
 t1418-reflog-exists	t1	yes	6	6	0	true	ok	0
 t1419-exclude-refs	t1	skip	13	1	12	false	ok	0
@@ -1193,7 +1193,7 @@ t7111-reset-table	t7	yes	42	34	8	false	ok	0
 t7112-reset-submodule	t7	yes	76	24	52	false	ok	0
 t7113-post-index-change-hook	t7	yes	4	1	3	false	ok	0
 t7201-co	t7	yes	46	17	29	false	ok	0
-t7300-clean	t7	yes	53	52	1	false	ok	2
+t7300-clean	t7	yes	53	52	1	false	ok	0
 t7301-clean-interactive	t7	yes	23	8	15	false	ok	0
 t7400-submodule-basic	t7	yes	124	51	73	false	ok	0
 t7401-submodule-summary	t7	yes	25	6	19	false	ok	0

@@ -2,10 +2,13 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::ObjectId;
-use grit_lib::refs::{append_reflog, read_ref_file, Ref};
+use grit_lib::refs::{append_reflog, delete_ref, read_ref_file, Ref};
 use grit_lib::repo::Repository;
+
+use crate::ref_transaction_hooks::{
+    run_ref_transaction_committed, run_ref_transaction_prepare, HookUpdate,
+};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -69,6 +72,7 @@ pub fn run(args: Args) -> Result<()> {
             old_value: format!("ref:{old_target}"),
             new_value: zero_oid_hex().to_owned(),
             refname: name.to_owned(),
+            deletes_ref: true,
         };
         run_ref_transaction_prepare(&repo, &[hook_update.clone()])?;
         delete_loose_ref(&repo.git_dir, name)?;
@@ -113,6 +117,7 @@ pub fn run(args: Args) -> Result<()> {
                 old_value,
                 new_value: format!("ref:{target}"),
                 refname: name.to_owned(),
+                deletes_ref: false,
             };
             run_ref_transaction_prepare(&repo, &[hook_update.clone()])?;
             write_symbolic_ref(&repo.git_dir, name, target)?;
@@ -261,12 +266,7 @@ fn delete_loose_ref(git_dir: &Path, name: &str) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         return Ok(());
     }
-    let path = git_dir.join(name);
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err.into()),
-    }
+    delete_ref(git_dir, name).map_err(Into::into)
 }
 
 fn write_symref_reflog(
@@ -300,50 +300,6 @@ fn zero_oid() -> ObjectId {
         Ok(oid) => oid,
         Err(_) => unreachable!("20-byte zero OID is always valid"),
     }
-}
-
-#[derive(Clone)]
-struct HookUpdate {
-    old_value: String,
-    new_value: String,
-    refname: String,
-}
-
-fn run_ref_transaction_prepare(repo: &Repository, updates: &[HookUpdate]) -> Result<()> {
-    match run_ref_transaction_state(repo, "preparing", updates) {
-        HookResult::NotFound => return Ok(()),
-        HookResult::Success => {}
-        HookResult::Failed(_) => {
-            bail!("in 'preparing' phase, update aborted by the reference-transaction hook");
-        }
-    }
-
-    match run_ref_transaction_state(repo, "prepared", updates) {
-        HookResult::NotFound | HookResult::Success => Ok(()),
-        HookResult::Failed(_) => {
-            bail!("in 'prepared' phase, update aborted by the reference-transaction hook");
-        }
-    }
-}
-
-fn run_ref_transaction_committed(repo: &Repository, updates: &[HookUpdate]) {
-    let _ = run_ref_transaction_state(repo, "committed", updates);
-}
-
-fn run_ref_transaction_state(repo: &Repository, state: &str, updates: &[HookUpdate]) -> HookResult {
-    let mut stdin_data = String::new();
-    for update in updates {
-        stdin_data.push_str(&format!(
-            "{} {} {}\n",
-            update.old_value, update.new_value, update.refname
-        ));
-    }
-    run_hook(
-        repo,
-        "reference-transaction",
-        &[state],
-        Some(stdin_data.as_bytes()),
-    )
 }
 
 fn zero_oid_hex() -> &'static str {
