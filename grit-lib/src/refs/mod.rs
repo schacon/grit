@@ -2186,6 +2186,17 @@ pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>
     }
 }
 
+/// Like [`read_symbolic_ref`] but uses an open [`crate::repo::Repository`] ref store (no format re-detection).
+pub fn read_symbolic_ref_for_repository(
+    repo: &crate::repo::Repository,
+    refname: &str,
+) -> Result<Option<String>> {
+    match repo.refs().read_raw(refname)? {
+        Some(StoreRawRef::Symbolic(target)) => Ok(Some(target)),
+        Some(StoreRawRef::Direct(_)) | None => Ok(None),
+    }
+}
+
 /// Core `logAllRefUpdates` modes (after config lookup), matching Git's `log_refs_config`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogRefsConfig {

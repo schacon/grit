@@ -1173,7 +1173,7 @@ fn resolve_ref_dwim_for_rev_parse(repo: &Repository, spec: &str) -> (usize, Opti
     let refname_opts = RefNameOptions::default();
     for rule in RULES {
         let candidate = rule.replace("{0}", spec);
-        if let Ok(Some(target)) = refs::read_symbolic_ref(repo.git_dir(), &candidate) {
+        if let Ok(Some(target)) = refs::read_symbolic_ref_for_repository(repo, &candidate) {
             if check_refname_format(&target, &refname_opts).is_err()
                 || repo.resolve_ref_name(&target).is_err()
             {
@@ -1217,7 +1217,7 @@ fn resolve_revision_impl(
     if let Some(pattern) = spec.strip_prefix(":/") {
         if pattern.is_empty() {
             // `:/` with an empty pattern resolves to the youngest reachable commit (HEAD tip).
-            let head = crate::state::resolve_head(repo.git_dir())
+            let head = crate::state::resolve_head_for_repository(repo)
                 .map_err(|_| Error::ObjectNotFound(":/".to_owned()))?;
             return head
                 .oid()
