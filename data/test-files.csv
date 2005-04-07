@@ -827,7 +827,7 @@ t4205-log-pretty-formats	t4	yes	123	66	57	false	ok	2
 t4206-log-follow	t4	yes	26	26	0	true	ok	0
 t4206-log-follow-harder-copies	t4	yes	7	3	4	false	ok	0
 t4207-log-decoration	t4	yes	23	13	10	false	ok	0
-t4207-log-decoration-colors	t4	yes	4	1	3	false	ok	0
+t4207-log-decoration-colors	t4	yes	4	4	0	true	ok	0
 t4208-diff-pathspec-magic	t4	yes	22	21	1	false	ok	0
 t4208-log-magic-pathspec	t4	yes	21	12	9	false	ok	0
 t4209-log-pickaxe	t4	yes	48	15	33	false	ok	0
