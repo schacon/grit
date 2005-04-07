@@ -944,10 +944,20 @@ fn compute_blame(
                                 continue;
                             }
                             // Line came from parent — keep tracking
+                            let carried_ignored = if is_ignored {
+                                let unchanged = parent_idx == t.current_idx
+                                    && par_lines
+                                        .get(parent_idx)
+                                        .zip(cur_lines.get(t.current_idx))
+                                        .is_some_and(|(p, c)| p == c);
+                                if unchanged { t.ignored } else { true }
+                            } else {
+                                t.ignored
+                            };
                             still_pending.push(TrackedLine {
                                 final_lineno: t.final_lineno,
                                 current_idx: parent_idx,
-                                ignored: t.ignored,
+                                ignored: carried_ignored,
                                 source_path: t.source_path.clone(),
                             });
                         } else if is_ignored {
@@ -962,7 +972,7 @@ fn compute_blame(
                                 still_pending.push(TrackedLine {
                                     final_lineno: t.final_lineno,
                                     current_idx: t.current_idx,
-                                    ignored: true,
+                                    ignored: t.ignored,
                                     source_path: t.source_path.clone(),
                                 });
                             } else {
