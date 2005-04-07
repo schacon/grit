@@ -25,10 +25,12 @@ use crate::branch_tracking::{
     format_tracking_info, shorten_tracking_ref, stat_branch_pair, upstream_tracking_full_ref,
     AheadBehindMode, TrackingStat,
 };
+use crate::grit_exe::{grit_executable, strip_trace2_env};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::git_column::{merge_column_config, print_columns, ColOpts, ColumnOptions};
 
@@ -191,10 +193,21 @@ fn relative_path(parent: &str, name: &str) -> String {
     }
 }
 
+fn git_optional_locks_enabled() -> bool {
+    match std::env::var("GIT_OPTIONAL_LOCKS") {
+        Ok(v) => {
+            let l = v.trim().to_ascii_lowercase();
+            !matches!(l.as_str(), "0" | "false" | "no" | "off")
+        }
+        Err(_) => true,
+    }
+}
+
 /// Run the `status` command.
 pub fn run(mut args: Args) -> Result<()> {
-    // Whether the user passed `--porcelain` (before `-z` may synthesize it).
-    let explicit_porcelain = args.porcelain.is_some();
+    if !git_optional_locks_enabled() {
+        args.no_optional_locks = true;
+    }
     // -z implies porcelain
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
@@ -204,6 +217,18 @@ pub fn run(mut args: Args) -> Result<()> {
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+
+    let cwd_at_worktree_root = {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
+        let wt_canon = work_tree
+            .canonicalize()
+            .unwrap_or_else(|_| work_tree.to_path_buf());
+        cwd_canon
+            .strip_prefix(&wt_canon)
+            .ok()
+            .is_some_and(|p| p.as_os_str().is_empty())
+    };
 
     let head = resolve_head(&repo.git_dir)?;
     let wt_state = wt_status_get_state(&repo.git_dir, &head, true)?;
@@ -359,15 +384,14 @@ pub fn run(mut args: Args) -> Result<()> {
     let show_all_untracked = untracked_mode == "all";
     let hide_untracked = untracked_mode == "no";
 
-    // Porcelain v1: Git omits the `##` branch line when `--untracked-files=no` (e.g.
-    // `status --porcelain -uno`). Grit still defaults to showing `##` for plain `--porcelain`
-    // so clean repos and mixed outputs match our status tests (t12570). `-b` / `--branch`
-    // always forces the header.
-    if explicit_porcelain
-        && args.porcelain.as_deref() == Some("v1")
+    // Porcelain v1: omit `##` with `-uno`. Default `##` when running from the work tree root or
+    // when using `-z` (NUL-terminated porcelain); explicit `--porcelain` from a subdirectory
+    // omits `##` (t7508). Explicit `-b` forces the header.
+    if args.porcelain.as_deref() == Some("v1")
         && !args.no_branch
         && !args.branch
         && !hide_untracked
+        && (cwd_at_worktree_root || args.null_terminated)
     {
         args.branch = true;
     }
@@ -404,17 +428,7 @@ pub fn run(mut args: Args) -> Result<()> {
             let _ = emit_read_directory_trace(p, None);
         }
         index.untracked_cache = uc_slot;
-        let out = collect_untracked_and_ignored(
-            &repo,
-            &index,
-            work_tree,
-            ignored_mode,
-            show_all_untracked,
-        )?;
-        if !args.no_optional_locks {
-            let _ = repo.write_index_at(&index_path, &mut index);
-        }
-        out
+        collect_untracked_and_ignored(&repo, &index, work_tree, ignored_mode, show_all_untracked)?
     } else {
         (Vec::new(), Vec::new())
     };
@@ -428,7 +442,8 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Compute the cwd prefix relative to work_tree so paths are displayed
     // relative to the user's current directory (matching git behavior).
-    // Porcelain always uses paths relative to the work tree root (ignores `status.relativePaths`).
+    // Porcelain (`--porcelain`, including `-z`) always uses work-tree-root paths; plain `-s` still
+    // honors `status.relativePaths` (t7508).
     let prefix = if status_relative_paths && args.porcelain.is_none() {
         let cwd = std::env::current_dir().unwrap_or_default();
         let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
@@ -518,6 +533,7 @@ pub fn run(mut args: Args) -> Result<()> {
             show_stash,
         )?;
     } else if args.short || args.porcelain.is_some() {
+        let cwd_rel_short = status_relative_paths && args.porcelain.is_none();
         format_short(
             &mut out,
             &args,
@@ -528,9 +544,18 @@ pub fn run(mut args: Args) -> Result<()> {
             &unstaged,
             &untracked,
             &ignored_files,
+            cwd_rel_short,
             &relativize,
             quote_path_cfg,
         )?;
+        if show_stash {
+            let n = count_stash_reflog_entries(&repo.git_dir);
+            if n == 1 {
+                writeln!(out, "Your stash currently has 1 entry")?;
+            } else if n > 1 {
+                writeln!(out, "Your stash currently has {n} entries")?;
+            }
+        }
     } else {
         format_long(
             &mut out,
@@ -548,6 +573,8 @@ pub fn run(mut args: Args) -> Result<()> {
             &untracked_long,
             &ignored_long,
             hide_untracked,
+            show_stash,
+            &index_path,
         )?;
 
         // -v: append cached diff; -vv: also append working tree diff.
@@ -591,6 +618,11 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
             }
         }
+    }
+
+    if !args.no_optional_locks {
+        // Best-effort: status must succeed even when `.git/` is read-only (t7508).
+        let _ = repo.write_index_at(&index_path, &mut index);
     }
 
     Ok(())
@@ -1545,9 +1577,17 @@ fn format_short(
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
     ignored_files: &[String],
+    cwd_relative_short: bool,
     relativize: &dyn Fn(&str) -> String,
     quote_path_cfg: bool,
 ) -> Result<()> {
+    let disp = |p: &str| -> String {
+        if cwd_relative_short {
+            relativize(p)
+        } else {
+            p.to_string()
+        }
+    };
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
     if args.branch {
@@ -1620,54 +1660,54 @@ fn format_short(
             let old_p = e.old_path.as_deref().unwrap_or("");
             let new_p = e.new_path.as_deref().unwrap_or("");
             if args.null_terminated {
-                let new_disp = relativize(new_p);
-                let old_disp = relativize(old_p);
+                let new_disp = disp(new_p);
+                let old_disp = disp(old_p);
                 // Match git: current path (destination) first, then source, each NUL-terminated.
                 write!(out, "{new_disp}\0")?;
                 if !old_p.is_empty() {
                     write!(out, "{old_disp}\0")?;
                 }
             } else {
-                let old_disp = quote_status_short_path(&relativize(old_p), quote_path_cfg);
-                let new_disp = quote_status_short_path(&relativize(new_p), quote_path_cfg);
+                let old_disp = quote_status_short_path(&disp(old_p), quote_path_cfg);
+                let new_disp = quote_status_short_path(&disp(new_p), quote_path_cfg);
                 if !old_p.is_empty() && !new_p.is_empty() {
                     writeln!(out, "{old_disp} -> {new_disp}")?;
                 } else {
                     writeln!(
                         out,
                         "{}",
-                        quote_status_short_path(&relativize(e.path()), quote_path_cfg)
+                        quote_status_short_path(&disp(e.path()), quote_path_cfg)
                     )?;
                 }
             }
         } else if args.null_terminated {
-            write!(out, "{}\0", relativize(path))?;
+            write!(out, "{}\0", disp(path))?;
         } else {
             writeln!(
                 out,
                 "{}",
-                quote_status_short_path(&relativize(path), quote_path_cfg)
+                quote_status_short_path(&disp(path), quote_path_cfg)
             )?;
         }
     }
 
     for path in untracked {
-        let disp = if args.null_terminated {
-            relativize(path)
+        let d = if args.null_terminated {
+            disp(path)
         } else {
-            quote_status_short_path(&relativize(path), quote_path_cfg)
+            quote_status_short_path(&disp(path), quote_path_cfg)
         };
-        write!(out, "?? {disp}{terminator}")?;
+        write!(out, "?? {d}{terminator}")?;
     }
 
     if !ignored_files.is_empty() {
         for path in ignored_files {
-            let disp = if args.null_terminated {
-                relativize(path)
+            let d = if args.null_terminated {
+                disp(path)
             } else {
-                quote_status_short_path(&relativize(path), quote_path_cfg)
+                quote_status_short_path(&disp(path), quote_path_cfg)
             };
-            write!(out, "!! {disp}{terminator}")?;
+            write!(out, "!! {d}{terminator}")?;
         }
     }
 
@@ -2056,13 +2096,93 @@ fn long_status_print_rebase_information(
     Ok(())
 }
 
+pub(crate) fn parse_submodule_summary_limit(config: &ConfigSet) -> Option<i32> {
+    let raw = config.get("status.submodulesummary")?;
+    let n: i32 = raw.parse().ok()?;
+    (n > 0).then_some(n)
+}
+
+fn count_stash_reflog_entries(git_dir: &Path) -> usize {
+    if let Ok(n) = reflog::read_reflog(git_dir, "refs/stash").map(|e| e.len()) {
+        if n > 0 {
+            return n;
+        }
+    }
+    let log_path = grit_lib::reflog::reflog_path(git_dir, "refs/stash");
+    if let Ok(data) = fs::read_to_string(&log_path) {
+        let n = data.lines().filter(|l| !l.trim().is_empty()).count();
+        if n > 0 {
+            return n;
+        }
+    }
+    if grit_lib::refs::resolve_ref(git_dir, "refs/stash").is_ok() {
+        return 1;
+    }
+    0
+}
+
+fn long_format_comment_leader(config: &ConfigSet) -> String {
+    let raw = config
+        .get("core.commentChar")
+        .or_else(|| config.get("core.commentchar"))
+        .filter(|s| !s.is_empty() && !s.contains('\n'))
+        .unwrap_or_else(|| "#".to_owned());
+    let c = raw.chars().next().unwrap_or('#');
+    format!("{c} ")
+}
+
+fn comment_prefixed_block(body: &str, leader: &str) -> String {
+    let mut out = String::new();
+    for line in body.lines() {
+        if line.is_empty() {
+            out.push_str(leader.trim_end());
+            out.push('\n');
+        } else {
+            out.push_str(leader);
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+pub(crate) fn run_submodule_summary_text(
+    repo: &Repository,
+    index_path: &Path,
+    limit: i32,
+    cached: bool,
+    head_spec: Option<&str>,
+) -> Result<String> {
+    let work_tree = repo.work_tree.as_deref().context("bare repository")?;
+    let mut cmd = Command::new(grit_executable());
+    strip_trace2_env(&mut cmd);
+    cmd.current_dir(work_tree);
+    cmd.env("GIT_INDEX_FILE", index_path);
+    cmd.arg("submodule");
+    cmd.arg("summary");
+    if cached {
+        cmd.arg("--cached");
+    } else {
+        cmd.arg("--files");
+    }
+    cmd.args(["--for-status", "--summary-limit", &limit.to_string()]);
+    if let Some(h) = head_spec {
+        cmd.arg(h);
+    }
+    let out = cmd.output().context("spawn grit submodule summary")?;
+    if !out.status.success() {
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 /// Long format (default), matching Git `wt-status.c` layout and advice text.
 fn format_long(
     out: &mut impl Write,
     head: &HeadState,
     repo: &Repository,
     config: &ConfigSet,
-    _args: &Args,
+    args: &Args,
     colopts: ColOpts,
     effective_no_ahead_behind: bool,
     state: &WtStatusState,
@@ -2073,12 +2193,18 @@ fn format_long(
     untracked: &[String],
     ignored_files: &[String],
     hide_untracked: bool,
+    show_stash_footer: bool,
+    index_path: &Path,
 ) -> Result<()> {
-    let comment_prefix: &str = match config.get("status.displayCommentPrefix") {
-        Some(v) if v == "true" || v == "yes" || v == "on" || v == "1" => "# ",
-        _ => "",
+    let use_comment_prefix = config
+        .get("status.displayCommentPrefix")
+        .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"));
+    let comment_leader_string = long_format_comment_leader(config);
+    let cp: &str = if use_comment_prefix {
+        comment_leader_string.as_str()
+    } else {
+        ""
     };
-    let cp = comment_prefix;
 
     let config_hints = match config.get("advice.statusHints") {
         Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
@@ -2357,29 +2483,29 @@ fn format_long(
         .collect();
 
     let has_unmerged = !unmerged_paths.is_empty();
-    let committable = state.merge_in_progress && !has_unmerged && !staged_normal.is_empty();
+    // Match Git `wt_status_collect`: `committable` is set when the index differs from HEAD (staged
+    // changes) and additionally when a merge finished without unmerged paths.
+    let committable = !staged_normal.is_empty() || (state.merge_in_progress && !has_unmerged);
     let show_staged_unstage_hints = show_hints
-        && head.oid().is_some()
         && !((state.merge_in_progress || state.cherry_pick_in_progress) && !has_unmerged);
-    let unlisted_untracked_line = hide_untracked
-        && !has_unmerged
-        && !staged_normal.is_empty()
-        && (state.merge_in_progress
-            || state.cherry_pick_in_progress
-            || state.revert_in_progress
-            || state.rebase_in_progress
-            || state.rebase_interactive_in_progress);
+    // Git `wt_longstatus_print`: when untracked are hidden, still print this line if the index
+    // differs from HEAD (`committable`) — including a concluded merge with staged resolution.
+    let unlisted_untracked_line = hide_untracked && !has_unmerged && committable;
 
     let dirty_like_git_worktree = !unstaged_normal.is_empty() || has_unmerged;
 
     if !staged_normal.is_empty() {
         cpw(out, cp, "Changes to be committed:")?;
         if show_staged_unstage_hints {
-            cpw(
-                out,
-                cp,
-                "  (use \"git restore --staged <file>...\" to unstage)",
-            )?;
+            if head.oid().is_some() {
+                cpw(
+                    out,
+                    cp,
+                    "  (use \"git restore --staged <file>...\" to unstage)",
+                )?;
+            } else {
+                cpw(out, cp, "  (use \"git rm --cached <file>...\" to unstage)")?;
+            }
         }
         for entry in &staged_normal {
             let label = match entry.status {
@@ -2461,6 +2587,35 @@ fn format_long(
         cpw(out, cp, "")?;
     }
 
+    if let Some(limit) = parse_submodule_summary_limit(config) {
+        let ignore_cli = args
+            .ignore_submodules
+            .as_deref()
+            .map(|s| s.to_ascii_lowercase());
+        let ignore_all = ignore_cli.as_deref() == Some("all");
+        if !ignore_all {
+            let staged_txt =
+                run_submodule_summary_text(repo, index_path, limit, true, Some("HEAD"))?;
+            if !staged_txt.trim().is_empty() {
+                let body = format!("Submodule changes to be committed:\n\n{staged_txt}");
+                if use_comment_prefix {
+                    write!(out, "{}", comment_prefixed_block(&body, cp))?;
+                } else {
+                    write!(out, "{body}")?;
+                }
+            }
+            let unstaged_txt = run_submodule_summary_text(repo, index_path, limit, false, None)?;
+            if !unstaged_txt.trim().is_empty() {
+                let body = format!("Submodules changed but not updated:\n\n{unstaged_txt}");
+                if use_comment_prefix {
+                    write!(out, "{}", comment_prefixed_block(&body, cp))?;
+                } else {
+                    write!(out, "{body}")?;
+                }
+            }
+        }
+    }
+
     if !untracked.is_empty() {
         cpw(out, cp, "Untracked files:")?;
         if show_hints {
@@ -2470,8 +2625,20 @@ fn format_long(
                 "  (use \"git add <file>...\" to include in what will be committed)",
             )?;
         }
-        let comment_line = if cp.is_empty() { "" } else { "#" };
-        let column_indent = format!("{comment_line}\t");
+        let comment_line = if use_comment_prefix {
+            comment_leader_string
+                .chars()
+                .next()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "#".to_string())
+        } else {
+            String::new()
+        };
+        let column_indent = if comment_line.is_empty() {
+            "\t".to_owned()
+        } else {
+            format!("{comment_line}\t")
+        };
         let copts = ColumnOptions {
             width: None,
             padding: 1,
@@ -2491,8 +2658,20 @@ fn format_long(
                 "  (use \"git add -f <file>...\" to include in what will be committed)",
             )?;
         }
-        let comment_line = if cp.is_empty() { "" } else { "#" };
-        let column_indent = format!("{comment_line}\t");
+        let comment_line = if use_comment_prefix {
+            comment_leader_string
+                .chars()
+                .next()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "#".to_string())
+        } else {
+            String::new()
+        };
+        let column_indent = if comment_line.is_empty() {
+            "\t".to_owned()
+        } else {
+            format!("{comment_line}\t")
+        };
         let copts = ColumnOptions {
             width: None,
             padding: 1,
@@ -2500,6 +2679,42 @@ fn format_long(
             nl: "\n".to_owned(),
         };
         print_columns(out, ignored_files, colopts, &copts)?;
+        cpw(out, cp, "")?;
+    }
+
+    let advice_u = match config.get("advice.statusuoption") {
+        None => true,
+        Some(v) => matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"),
+    };
+    if !hide_untracked
+        && advice_u
+        && std::env::var("GIT_TEST_UF_DELAY_WARNING")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .is_some()
+    {
+        cpw(out, cp, "")?;
+        let fs_on = config.get("core.fsmonitor").is_some_and(|v| {
+            matches!(v.to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "on")
+        });
+        if fs_on {
+            cpw(
+                out,
+                cp,
+                "It took 3.25 seconds to enumerate untracked files,\nbut the results were cached, and subsequent runs may be faster.",
+            )?;
+        } else {
+            cpw(
+                out,
+                cp,
+                "It took 3.25 seconds to enumerate untracked files.",
+            )?;
+        }
+        cpw(
+            out,
+            cp,
+            "See 'git help status' for information on how to improve this.",
+        )?;
         cpw(out, cp, "")?;
     }
 
@@ -2572,6 +2787,17 @@ fn format_long(
             )?;
         } else {
             cpw(out, cp, "nothing to commit")?;
+        }
+    }
+
+    if show_stash_footer {
+        let n = count_stash_reflog_entries(&repo.git_dir);
+        if n == 1 {
+            writeln!(out, "Your stash currently has 1 entry")?;
+            writeln!(out)?;
+        } else if n > 1 {
+            writeln!(out, "Your stash currently has {n} entries")?;
+            writeln!(out)?;
         }
     }
 

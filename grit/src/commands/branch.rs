@@ -976,7 +976,12 @@ fn set_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
     config.write()?;
 
     if !args.quiet {
-        eprintln!("branch '{branch_name}' set up to track '{remote}/{upstream_branch}'.");
+        let track_label = if remote == "." {
+            upstream_branch.clone()
+        } else {
+            format!("{remote}/{upstream_branch}")
+        };
+        eprintln!("branch '{branch_name}' set up to track '{track_label}'.");
     }
 
     Ok(())
