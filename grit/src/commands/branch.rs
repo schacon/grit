@@ -4,10 +4,11 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::merge_base::is_ancestor;
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{resolve_revision, resolve_upstream_symbolic_name, symbolic_full_name};
 use grit_lib::state::{resolve_head, HeadState};
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -72,13 +73,23 @@ pub struct Args {
     #[arg(long = "no-contains", action = clap::ArgAction::Append)]
     pub no_contains: Vec<String>,
 
-    /// Show branches merged into this commit (default: HEAD).
-    #[arg(long = "merged", num_args = 0..=1, default_missing_value = "")]
-    pub merged: Option<String>,
+    /// Show branches merged into this commit (default: HEAD). Repeat for intersection.
+    #[arg(
+        long = "merged",
+        action = clap::ArgAction::Append,
+        num_args = 0..=1,
+        default_missing_value = ""
+    )]
+    pub merged: Vec<String>,
 
-    /// Show branches not merged into this commit (default: HEAD).
-    #[arg(long = "no-merged", num_args = 0..=1, default_missing_value = "")]
-    pub no_merged: Option<String>,
+    /// Show branches not merged into this commit (default: HEAD). Repeat for intersection.
+    #[arg(
+        long = "no-merged",
+        action = clap::ArgAction::Append,
+        num_args = 0..=1,
+        default_missing_value = ""
+    )]
+    pub no_merged: Vec<String>,
 
     /// Force creation (overwrite existing branch).
     #[arg(short = 'f', long = "force")]
@@ -204,6 +215,26 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    let filter_active = !args.contains.is_empty()
+        || !args.no_contains.is_empty()
+        || !args.merged.is_empty()
+        || !args.no_merged.is_empty();
+    let implicit_list = filter_active && !args.list;
+    if implicit_list
+        && (args.delete
+            || args.force_delete
+            || args.rename
+            || args.force_rename
+            || args.copy
+            || args.force_copy)
+    {
+        eprintln!(
+            "fatal: options such as --contains, --no-contains, --merged, and --no-merged\n\
+             require branch listing; incompatible with branch modification"
+        );
+        std::process::exit(129);
+    }
+
     if args.show_current {
         if let Some(name) = head.branch_name() {
             println!("{name}");
@@ -236,8 +267,8 @@ pub fn run(args: Args) -> Result<()> {
         if !args.list
             && args.contains.is_empty()
             && args.no_contains.is_empty()
-            && args.merged.is_none()
-            && args.no_merged.is_none()
+            && args.merged.is_empty()
+            && args.no_merged.is_empty()
         {
             // Reject invalid branch names
             if name == "HEAD" || name.starts_with('-') {
@@ -323,39 +354,55 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         }
     }
 
-    // Apply --merged filter
-    if let Some(ref merged_val) = args.merged {
-        let target_oid = if merged_val.is_empty() {
-            *head
-                .oid()
-                .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
-        } else {
-            resolve_revision(repo, merged_val)?
-        };
-        branches.retain(|b| is_ancestor(repo, b.oid, target_oid).unwrap_or(false));
+    // Apply --merged filter: with multiple `--merged`, Git unions (OR) the results.
+    if !args.merged.is_empty() {
+        let mut keep = HashSet::new();
+        for merged_val in &args.merged {
+            let target_oid = if merged_val.is_empty() {
+                *head
+                    .oid()
+                    .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
+            } else {
+                resolve_revision_must_be_commit(repo, merged_val)?
+            };
+            for b in &branches {
+                if is_ancestor(repo, b.oid, target_oid).unwrap_or(false) {
+                    keep.insert(b.name.clone());
+                }
+            }
+        }
+        branches.retain(|b| keep.contains(&b.name));
     }
 
-    // Apply --no-merged filter
-    if let Some(ref no_merged_val) = args.no_merged {
+    // Apply --no-merged filters: repeated `--no-merged` intersects (AND), unlike `--merged`.
+    for no_merged_val in &args.no_merged {
         let target_oid = if no_merged_val.is_empty() {
             *head
                 .oid()
                 .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
         } else {
-            resolve_revision(repo, no_merged_val)?
+            resolve_revision_must_be_commit(repo, no_merged_val)?
         };
         branches.retain(|b| !is_ancestor(repo, b.oid, target_oid).unwrap_or(true));
     }
 
-    // Apply --contains filter (all must match)
-    for contains_rev in &args.contains {
-        let contains_oid = resolve_revision(repo, contains_rev)?;
-        branches.retain(|b| is_ancestor(repo, contains_oid, b.oid).unwrap_or(false));
+    // Apply --contains filter: with multiple `--contains`, Git unions (OR) the results.
+    if !args.contains.is_empty() {
+        let contain_oids: Vec<ObjectId> = args
+            .contains
+            .iter()
+            .map(|r| resolve_revision_must_be_commit(repo, r))
+            .collect::<Result<_>>()?;
+        branches.retain(|b| {
+            contain_oids
+                .iter()
+                .any(|&c| is_ancestor(repo, c, b.oid).unwrap_or(false))
+        });
     }
 
     // Apply --no-contains filter
     for no_contains_rev in &args.no_contains {
-        let no_contains_oid = resolve_revision(repo, no_contains_rev)?;
+        let no_contains_oid = resolve_revision_must_be_commit(repo, no_contains_rev)?;
         branches.retain(|b| !is_ancestor(repo, no_contains_oid, b.oid).unwrap_or(true));
     }
 
@@ -438,20 +485,23 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
             let subject = commit_subject(&repo.odb, &b.oid).unwrap_or_default();
             let padded_name = format!("{:<width$}", b.name, width = max_name_len);
 
-            if args.verbose >= 2 && !b.is_remote {
-                // -vv: show tracking info
-                let tracking = get_tracking_info(repo, &b.name)?;
-                if let Some(ref track_str) = tracking {
-                    writeln!(
-                        out,
-                        "{prefix}{color}{padded_name}{reset} {short_oid} [{track_str}] {subject}"
-                    )?;
-                } else {
-                    writeln!(
-                        out,
-                        "{prefix}{color}{padded_name}{reset} {short_oid} {subject}"
-                    )?;
+            if !b.is_remote {
+                let track = resolve_branch_tracking(repo, &b.name)?;
+                let v1 = track.as_ref().and_then(|t| t.verbose1_inner.as_deref());
+                let v2 = track.as_ref().and_then(|t| t.verbose2_inner.as_deref());
+                write!(out, "{prefix}{color}{padded_name}{reset} {short_oid}")?;
+                if args.verbose >= 2 {
+                    if let Some(i2) = v2 {
+                        write!(out, " [{i2}]")?;
+                    } else if let Some(i1) = v1 {
+                        write!(out, " [{i1}]")?;
+                    }
+                } else if args.verbose == 1 {
+                    if let Some(i1) = v1 {
+                        write!(out, " [{i1}]")?;
+                    }
                 }
+                writeln!(out, " {subject}")?;
             } else {
                 writeln!(
                     out,
@@ -464,6 +514,24 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     }
 
     Ok(())
+}
+
+/// Resolve a revision and require the peeled object to be a commit (Git `branch --contains` rules).
+///
+/// On failure, prints Git-compatible messages to stderr and exits with code 129.
+fn resolve_revision_must_be_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    let oid = resolve_revision(repo, spec)?;
+    let object = repo.odb.read(&oid)?;
+    let hex = oid.to_hex();
+    let kind_msg = match object.kind {
+        ObjectKind::Commit => return Ok(oid),
+        ObjectKind::Tree => "tree",
+        ObjectKind::Blob => "blob",
+        ObjectKind::Tag => "tag",
+    };
+    eprintln!("error: object {hex} is a {kind_msg}, not a commit");
+    eprintln!("error: no such commit {hex}");
+    std::process::exit(129);
 }
 
 /// Sort branches by the given key.
@@ -519,8 +587,20 @@ fn sort_branches(
     Ok(())
 }
 
-/// Get the tracking info string for a local branch, e.g. "origin/main: ahead 1, behind 2".
-fn get_tracking_info(repo: &Repository, branch_name: &str) -> Result<Option<String>> {
+/// Parsed upstream / ahead-behind display for a local branch (`git branch -v` / `-vv`).
+struct BranchTracking {
+    /// Inner text for `-v` brackets, e.g. `ahead 1` or `origin/main: ahead 1`.
+    verbose1_inner: Option<String>,
+    /// Inner text for `-vv` brackets (includes remote ref prefix when Git does).
+    verbose2_inner: Option<String>,
+    /// Short upstream name for `%(upstream:short)` (e.g. `main` or `origin/main`).
+    upstream_short: String,
+    /// Full ref for `%(upstream)` (`refs/heads/...` or `refs/remotes/...`).
+    upstream_ref_full: String,
+}
+
+/// Resolve configured upstream and ahead/behind for a local branch.
+fn resolve_branch_tracking(repo: &Repository, branch_name: &str) -> Result<Option<BranchTracking>> {
     let config_path = repo.git_dir.join("config");
     let config_file = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
         Some(c) => c,
@@ -540,43 +620,99 @@ fn get_tracking_info(repo: &Repository, branch_name: &str) -> Result<Option<Stri
         .get(&remote_key)
         .unwrap_or_else(|| "origin".to_string());
 
-    // Strip refs/heads/ prefix from merge to get the upstream branch name
-    let upstream_branch = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
+    let upstream_branch = merge
+        .strip_prefix("refs/heads/")
+        .unwrap_or(&merge)
+        .to_string();
+    let track_local = remote == ".";
 
-    let upstream_display = format!("{remote}/{upstream_branch}");
+    let local_ref_path = repo.git_dir.join("refs/heads").join(branch_name);
+    let local_oid = match fs::read_to_string(&local_ref_path) {
+        Ok(c) => ObjectId::from_hex(c.trim()).ok(),
+        Err(_) => None,
+    };
+    let Some(local_oid) = local_oid else {
+        return Ok(None);
+    };
 
-    // Try to compute ahead/behind
-    let upstream_ref_path = repo
-        .git_dir
-        .join("refs/remotes")
-        .join(&remote)
-        .join(upstream_branch);
+    let short_label = if track_local {
+        upstream_branch.clone()
+    } else {
+        format!("{remote}/{upstream_branch}")
+    };
+    let upstream_ref_full = if track_local {
+        format!("refs/heads/{upstream_branch}")
+    } else {
+        format!("refs/remotes/{remote}/{upstream_branch}")
+    };
 
-    if let Ok(content) = fs::read_to_string(&upstream_ref_path) {
-        if let Ok(upstream_oid) = ObjectId::from_hex(content.trim()) {
-            // Read local branch OID
-            let local_ref_path = repo.git_dir.join("refs/heads").join(branch_name);
-            if let Ok(local_content) = fs::read_to_string(&local_ref_path) {
-                if let Ok(local_oid) = ObjectId::from_hex(local_content.trim()) {
-                    let (ahead, behind) = count_ahead_behind(repo, local_oid, upstream_oid)?;
-                    if ahead == 0 && behind == 0 {
-                        return Ok(Some(upstream_display));
-                    }
-                    let mut parts = Vec::new();
-                    if ahead > 0 {
-                        parts.push(format!("ahead {ahead}"));
-                    }
-                    if behind > 0 {
-                        parts.push(format!("behind {behind}"));
-                    }
-                    return Ok(Some(format!("{upstream_display}: {}", parts.join(", "))));
-                }
-            }
+    let upstream_oid = if track_local {
+        let p = repo.git_dir.join("refs/heads").join(&upstream_branch);
+        match fs::read_to_string(&p) {
+            Ok(c) => ObjectId::from_hex(c.trim()).ok(),
+            Err(_) => None,
         }
+    } else {
+        let upstream_ref_path = repo
+            .git_dir
+            .join("refs/remotes")
+            .join(&remote)
+            .join(&upstream_branch);
+        match fs::read_to_string(&upstream_ref_path) {
+            Ok(c) => ObjectId::from_hex(c.trim()).ok(),
+            Err(_) => None,
+        }
+    };
+
+    let Some(upstream_oid) = upstream_oid else {
+        return Ok(Some(BranchTracking {
+            verbose1_inner: Some("gone".to_string()),
+            verbose2_inner: Some(format!("{short_label}: gone")),
+            upstream_short: short_label.clone(),
+            upstream_ref_full,
+        }));
+    };
+
+    let (ahead, behind) = count_ahead_behind(repo, local_oid, upstream_oid)?;
+    if ahead == 0 && behind == 0 {
+        return Ok(Some(BranchTracking {
+            verbose1_inner: None,
+            verbose2_inner: None,
+            upstream_short: short_label,
+            upstream_ref_full,
+        }));
     }
 
-    // Upstream ref doesn't exist locally — just show the name with "gone"
-    Ok(Some(format!("{upstream_display}: gone")))
+    let mut parts = Vec::new();
+    if ahead > 0 {
+        parts.push(format!("ahead {ahead}"));
+    }
+    if behind > 0 {
+        parts.push(format!("behind {behind}"));
+    }
+    let detail = parts.join(", ");
+
+    let (verbose1_inner, verbose2_inner) = if track_local {
+        (
+            Some(detail.clone()),
+            Some(format!("{}: {detail}", upstream_branch)),
+        )
+    } else if ahead > 0 && behind == 0 {
+        let s = format!("{short_label}: {detail}");
+        (Some(s.clone()), Some(s))
+    } else {
+        (
+            Some(detail.clone()),
+            Some(format!("{short_label}: {detail}")),
+        )
+    };
+
+    Ok(Some(BranchTracking {
+        verbose1_inner,
+        verbose2_inner,
+        upstream_short: short_label,
+        upstream_ref_full,
+    }))
 }
 
 /// Count how many commits local is ahead of and behind upstream.
@@ -777,21 +913,17 @@ fn format_branch(
 
     // %(upstream:short) before %(upstream)
     if result.contains("%(upstream") {
-        let tracking = get_tracking_info(repo, &branch.name)?;
-        let upstream_name = if let Some(ref t) = tracking {
-            t.split(':').next().unwrap_or(t).trim().to_string()
-        } else {
-            String::new()
-        };
-        result = result.replace("%(upstream:short)", &upstream_name);
-        result = result.replace(
-            "%(upstream)",
-            &if upstream_name.is_empty() {
-                String::new()
-            } else {
-                format!("refs/remotes/{upstream_name}")
-            },
-        );
+        let track = resolve_branch_tracking(repo, &branch.name)?;
+        let upstream_name = track
+            .as_ref()
+            .map(|t| t.upstream_short.as_str())
+            .unwrap_or("");
+        let upstream_full = track
+            .as_ref()
+            .map(|t| t.upstream_ref_full.as_str())
+            .unwrap_or("");
+        result = result.replace("%(upstream:short)", upstream_name);
+        result = result.replace("%(upstream)", upstream_full);
     }
 
     // %(subject) — commit message first line
@@ -904,21 +1036,19 @@ fn create_branch(
         let _ = fs::write(&reflog_path, entry);
     }
 
-    // Set up tracking if --track was used or start_point is a remote tracking branch
-    if args.track.is_some() || (!args.no_track && start_point.is_some()) {
-        if let Some(sp) = start_point {
-            // Try to parse as remote tracking branch: origin/branch or refs/remotes/origin/branch
-            let remote_ref = if sp.starts_with("refs/remotes/") {
-                Some(sp.to_string())
-            } else if grit_lib::refs::resolve_ref(&repo.git_dir, &format!("refs/remotes/{sp}"))
-                .is_ok()
-            {
-                Some(format!("refs/remotes/{sp}"))
-            } else {
-                None
-            };
+    // Set up tracking for `--track`, or when the start point is a remote-tracking ref (Git default).
+    if let Some(sp) = start_point {
+        let remote_ref = if sp.starts_with("refs/remotes/") {
+            Some(sp.to_string())
+        } else if grit_lib::refs::resolve_ref(&repo.git_dir, &format!("refs/remotes/{sp}")).is_ok()
+        {
+            Some(format!("refs/remotes/{sp}"))
+        } else {
+            None
+        };
+        let want_tracking = args.track.is_some() || (!args.no_track && remote_ref.is_some());
+        if want_tracking {
             if let Some(rref) = remote_ref {
-                // Parse remote/branch from refs/remotes/remote/branch
                 let stripped = rref.strip_prefix("refs/remotes/").unwrap_or(&rref);
                 if let Some(slash) = stripped.find('/') {
                     let remote = &stripped[..slash];
@@ -930,22 +1060,33 @@ fn create_branch(
                     cfg.push_str(&format!("\n\tmerge = refs/heads/{}\n", branch));
                     std::fs::write(&config_path, cfg)?;
                 }
-            } else if let Ok(full) = resolve_upstream_symbolic_name(repo, sp) {
-                let config_path = repo.git_dir.join("config");
-                let mut cfg = std::fs::read_to_string(&config_path).unwrap_or_default();
-                cfg.push_str(&format!("\n[branch \"{}\"]", name));
-                if let Some(rest) = full.strip_prefix("refs/remotes/") {
-                    if let Some(slash) = rest.find('/') {
-                        let remote = &rest[..slash];
-                        let branch = &rest[slash + 1..];
-                        cfg.push_str(&format!("\n\tremote = {}", remote));
-                        cfg.push_str(&format!("\n\tmerge = refs/heads/{}\n", branch));
+            } else if args.track.is_some() {
+                if let Ok(full) = resolve_upstream_symbolic_name(repo, sp) {
+                    let config_path = repo.git_dir.join("config");
+                    let mut cfg = std::fs::read_to_string(&config_path).unwrap_or_default();
+                    cfg.push_str(&format!("\n[branch \"{}\"]", name));
+                    if let Some(rest) = full.strip_prefix("refs/remotes/") {
+                        if let Some(slash) = rest.find('/') {
+                            let remote = &rest[..slash];
+                            let branch = &rest[slash + 1..];
+                            cfg.push_str(&format!("\n\tremote = {}", remote));
+                            cfg.push_str(&format!("\n\tmerge = refs/heads/{}\n", branch));
+                        }
+                    } else if full.starts_with("refs/heads/") {
+                        cfg.push_str("\n\tremote = .");
+                        cfg.push_str(&format!("\n\tmerge = {}\n", full));
                     }
-                } else if full.starts_with("refs/heads/") {
+                    std::fs::write(&config_path, cfg)?;
+                } else if let Some(full) =
+                    symbolic_full_name(repo, sp).filter(|f| f.starts_with("refs/heads/"))
+                {
+                    let config_path = repo.git_dir.join("config");
+                    let mut cfg = std::fs::read_to_string(&config_path).unwrap_or_default();
+                    cfg.push_str(&format!("\n[branch \"{}\"]", name));
                     cfg.push_str("\n\tremote = .");
-                    cfg.push_str(&format!("\n\tmerge = {}\n", full));
+                    cfg.push_str(&format!("\n\tmerge = {full}\n"));
+                    std::fs::write(&config_path, cfg)?;
                 }
-                std::fs::write(&config_path, cfg)?;
             }
         }
     }
