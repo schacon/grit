@@ -6578,12 +6578,21 @@ fn tree_to_map(entries: Vec<IndexEntry>) -> HashMap<Vec<u8>, IndexEntry> {
 
 /// Resolve a merge target (branch name or commit-ish).
 fn resolve_merge_target(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    use grit_lib::refs::resolve_ref;
     use grit_lib::rev_parse::resolve_revision;
+
     if let Some(oid) = grit_lib::rev_parse::resolve_at_minus_to_oid(repo, spec)? {
-        Ok(oid)
-    } else {
-        resolve_revision(repo, spec).map_err(|e| anyhow::anyhow!("{e}"))
+        return Ok(oid);
     }
+    // Prefer an unambiguous local branch when the name matches both a ref and a path (t7007:
+    // `merge main3` must merge the `main3` branch tip, not treat `main3` as a pathspec).
+    if !spec.contains('/') && !spec.starts_with('.') {
+        let branch_ref = format!("refs/heads/{spec}");
+        if let Ok(oid) = resolve_ref(&repo.git_dir, &branch_ref) {
+            return Ok(oid);
+        }
+    }
+    resolve_revision(repo, spec).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 pub(crate) fn read_fetch_head_merge_oids(repo: &Repository) -> Result<Vec<String>> {

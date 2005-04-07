@@ -429,15 +429,19 @@ pub fn run(mut args: Args) -> Result<()> {
     // After peeling `-f` / `--force` from `rest` (e.g. `switch --discard-changes` → `-f`).
     let switch_force = args.force || args.merge;
 
-    // `git checkout <branch> -q` places `-q` in trailing positionals; peel it so it is not
-    // mistaken for a pathspec.
-    while matches!(
-        args.rest.last().map(|s| s.as_str()),
-        Some("-q") | Some("--quiet")
-    ) {
-        args.quiet = true;
-        QUIET.with(|q| q.set(true));
-        args.rest.pop();
+    // `git switch -C branch -q` / `checkout -b x -q` pass `-q` as a trailing (or middle) positional.
+    // Remove every `-q` / `--quiet` from `rest` so they are never parsed as a start-point or path.
+    {
+        let mut filtered: Vec<String> = Vec::with_capacity(args.rest.len());
+        for s in std::mem::take(&mut args.rest) {
+            if s == "-q" || s == "--quiet" {
+                args.quiet = true;
+                QUIET.with(|q| q.set(true));
+                continue;
+            }
+            filtered.push(s);
+        }
+        args.rest = filtered;
     }
 
     // Detect if `--` was used in the original command line. Clap strips a
@@ -1334,16 +1338,10 @@ fn force_create_and_switch_branch(
     {
         let common = refs::common_dir(&repo.git_dir).unwrap_or_else(|| repo.git_dir.clone());
         let worktrees_dir = common.join("worktrees");
-        // Check main worktree HEAD (skip if we ARE the main worktree)
-        let main_path = common.parent().unwrap_or(&common).to_path_buf();
-        let we_are_main = repo
-            .work_tree
-            .as_ref()
-            .map(|wt| {
-                wt.canonicalize().unwrap_or(wt.clone())
-                    == main_path.canonicalize().unwrap_or(main_path.clone())
-            })
-            .unwrap_or(false);
+        // Main repository git dir (shared across worktrees). Linked worktrees use a different
+        // `repo.git_dir` but the same `common` directory.
+        let we_are_main = repo.git_dir == common;
+        let main_wt_path = common.parent().unwrap_or(&common).to_path_buf();
         if !we_are_main {
             if let Ok(main_head) = grit_lib::state::resolve_head(&common) {
                 if let grit_lib::state::HeadState::Branch { ref refname, .. } = main_head {
@@ -1351,7 +1349,7 @@ fn force_create_and_switch_branch(
                         bail!(
                             "fatal: '{}' is already used by worktree at '{}'",
                             name,
-                            main_path.display()
+                            main_wt_path.display()
                         );
                     }
                 }
@@ -1418,8 +1416,16 @@ fn force_create_and_switch_branch(
     let old_head_commit = head.oid().copied();
     let target_tree = commit_to_tree(repo, &start_oid)?;
 
-    // Update working tree if start point differs from current HEAD, or if force
-    if head.oid() != Some(&start_oid) || force {
+    // Match `create_and_switch_branch`: after `clone --no-checkout` or an empty index, HEAD may
+    // already match `start_oid` but the worktree/index still need materializing from the tree.
+    let worktree_is_empty = if repo.work_tree.is_some() {
+        repo.load_index().unwrap_or_default().entries.is_empty()
+    } else {
+        false
+    };
+
+    // Update working tree if start point differs from current HEAD, if forced, or if index is empty.
+    if head.oid() != Some(&start_oid) || force || worktree_is_empty {
         switch_to_tree(
             repo,
             &head,
@@ -1460,7 +1466,7 @@ fn force_create_and_switch_branch(
     // Update HEAD to point to the new branch
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
 
-    if head.oid() != Some(&start_oid) || force {
+    if head.oid() != Some(&start_oid) || force || worktree_is_empty {
         run_post_checkout_hook(repo, old_head_commit.as_ref(), &start_oid, true)?;
     }
 

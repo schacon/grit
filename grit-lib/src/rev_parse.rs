@@ -950,8 +950,12 @@ pub fn peel_to_commit_for_merge_base(repo: &Repository, mut oid: ObjectId) -> Re
     }
 }
 
-/// Peel an object to a tree (commit → tree, tree → tree).
-fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
+/// Peel `oid` to the tree it represents (commits → root tree, tags → recursively, tree → identity).
+///
+/// # Errors
+///
+/// Returns [`Error::ObjectNotFound`] when the object cannot be peeled to a tree (e.g. a blob).
+pub fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
     let obj = repo.odb.read(&oid)?;
     match obj.kind {
         crate::objects::ObjectKind::Tree => Ok(oid),

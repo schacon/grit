@@ -2715,7 +2715,14 @@ fn preprocess_commit_argv(rest: &[String]) -> Vec<String> {
 }
 
 /// Strip leading `-C <dir>` pairs from `rest` and `chdir` for each (Git allows `-C` after the subcommand).
-fn strip_subcommand_leading_change_dir(rest: &mut Vec<String>) -> Result<()> {
+///
+/// `switch` / `checkout` use `-C` for `--force-create` / `-B` style branch creation, not as a
+/// directory change — do not consume those tokens here (otherwise `git switch -C topic` tries to
+/// `chdir` into `topic` and fails with `ENOENT`).
+fn strip_subcommand_leading_change_dir(subcmd: &str, rest: &mut Vec<String>) -> Result<()> {
+    if matches!(subcmd, "switch" | "checkout") {
+        return Ok(());
+    }
     while rest.len() >= 2 && rest[0] == "-C" {
         let new_dir = PathBuf::from(&rest[1]);
         if !new_dir.as_os_str().is_empty() {
@@ -2830,7 +2837,7 @@ fn run() -> Result<()> {
     // Git allows `-C <dir>` after the subcommand (e.g. `git config -C repo key val`).
     // Apply those directory changes after global `-C` but before running the subcommand.
     let mut rest = rest;
-    strip_subcommand_leading_change_dir(&mut rest)?;
+    strip_subcommand_leading_change_dir(&subcmd, &mut rest)?;
 
     // GIT_TRACE: write built-in trace line (after global options are processed)
     if let Ok(trace_val) = std::env::var("GIT_TRACE") {

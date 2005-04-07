@@ -209,11 +209,7 @@ pub fn run(args: Args) -> Result<()> {
     let annotated = args.annotate || args.sign || !args.message.is_empty() || args.file.is_some();
 
     let tag_refname = format!("refs/tags/{name}");
-    let tag_exists = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
-        grit_lib::refs::resolve_ref(&repo.git_dir, &tag_refname).is_ok()
-    } else {
-        repo.git_dir.join(&tag_refname).exists()
-    };
+    let tag_exists = grit_lib::refs::resolve_ref(&repo.git_dir, &tag_refname).is_ok();
 
     if tag_exists && !args.force {
         bail!("tag '{name}' already exists");
