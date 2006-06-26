@@ -151,8 +151,10 @@ fn emit_combined_path(
     }
 }
 
-fn should_recurse_dir(_path: &str, opt: &CombinedTreeDiffOptions) -> bool {
-    opt.recursive
+fn should_recurse_dir(_path: &str, _opt: &CombinedTreeDiffOptions) -> bool {
+    // Git's `diff_tree_paths` / combined merge diff always recurses into subtrees
+    // (see `diff_tree_combined`: `diffopts.flags.recursive = 1`).
+    true
 }
 
 fn ll_diff_tree_paths(

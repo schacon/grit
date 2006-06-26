@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use similar::{ChangeTag, TextDiff};
 use tempfile::NamedTempFile;
 
 use crate::config::ConfigSet;
@@ -653,30 +654,57 @@ fn conflict_combined_body(wt: &str) -> String {
     body
 }
 
+/// For each line of `result`, whether that line is absent from `parent` per a line-oriented diff.
+fn result_line_differs_from_parent(parent: &str, result: &str) -> Vec<bool> {
+    let lr: Vec<&str> = result.lines().collect();
+    let mut out = vec![false; lr.len()];
+    let diff = TextDiff::configure().diff_lines(parent, result);
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Equal => {}
+            ChangeTag::Delete => {}
+            ChangeTag::Insert => {
+                let range = change.value().lines().count();
+                let Some(start) = change.new_index() else {
+                    continue;
+                };
+                for i in 0..range {
+                    if let Some(slot) = out.get_mut(start + i) {
+                        *slot = true;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Combined hunk body for two parents (Git `dump_sline` / `diff --cc` line prefixes).
 fn combined_hunk_two_parents(a: &str, b: &str, result: &str) -> String {
     let la: Vec<&str> = a.lines().collect();
     let lb: Vec<&str> = b.lines().collect();
     let lr: Vec<&str> = result.lines().collect();
-    let n = lr.len().max(la.len()).max(lb.len()).max(1);
+
+    let d0 = result_line_differs_from_parent(a, result);
+    let d1 = result_line_differs_from_parent(b, result);
 
     let old_a = la.len().max(1) as u32;
     let old_b = lb.len().max(1) as u32;
     let new_c = lr.len().max(1) as u32;
 
     let mut body = String::new();
-    for idx in 0..n {
-        let ra = la.get(idx).copied().unwrap_or("");
-        let rb = lb.get(idx).copied().unwrap_or("");
-        let rr = lr.get(idx).copied().unwrap_or("");
-        if ra != rr {
-            body.push_str(&format!("- {ra}\n"));
-        }
-        if rb != rr {
-            body.push_str(&format!(" -{rb}\n"));
-        }
-        if ra != rr || rb != rr {
-            body.push_str(&format!("++{rr}\n"));
-        }
+    for (i, line) in lr.iter().enumerate() {
+        let c0 = if d0.get(i).copied().unwrap_or(true) {
+            '+'
+        } else {
+            ' '
+        };
+        let c1 = if d1.get(i).copied().unwrap_or(true) {
+            '+'
+        } else {
+            ' '
+        };
+        body.push_str(&format!("{c0}{c1}{line}\n"));
     }
 
     format!("@@@ -1,{old_a} -1,{old_b} +1,{new_c} @@@\n{body}")

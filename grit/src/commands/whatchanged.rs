@@ -17,6 +17,10 @@ use std::io::{self, Write};
 #[derive(Debug, ClapArgs)]
 #[command(about = "Show logs with raw diff output (no merges)")]
 pub struct Args {
+    /// Opt-in for the deprecated `whatchanged` command (matches upstream Git).
+    #[arg(long = "i-still-use-this", hide = true)]
+    pub i_still_use_this: bool,
+
     /// Revisions to start from (defaults to HEAD).
     #[arg()]
     pub revisions: Vec<String>,
@@ -28,6 +32,29 @@ pub struct Args {
 
 /// Run the `whatchanged` command.
 pub fn run(args: Args) -> Result<()> {
+    if !args.i_still_use_this {
+        eprintln!("'git whatchanged' is nominated for removal.");
+        eprintln!();
+        eprintln!(
+            "hint: You can replace 'git whatchanged <opts>' with:\n\
+             hint:\tgit log <opts> --raw --no-merges\n\
+             hint: Or make an alias:\n\
+             hint:\tgit config set --global alias.whatchanged 'log --raw --no-merges'\n"
+        );
+        eprintln!();
+        eprintln!("If you still use this command, here's what you can do:");
+        eprintln!();
+        eprintln!("- read https://git-scm.com/docs/BreakingChanges.html");
+        eprintln!("- check if anyone has discussed this on the mailing");
+        eprintln!("  list and if they came up with something that can");
+        eprintln!("  help you: https://lore.kernel.org/git/?q=git%20whatchanged");
+        eprintln!("- send an email to <git@vger.kernel.org> to let us");
+        eprintln!("  know that you still use this command and were unable to");
+        eprintln!("  determine a suitable replacement");
+        eprintln!();
+        anyhow::bail!("refusing to run without --i-still-use-this");
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
 
     let start_oids = if args.revisions.is_empty() {
