@@ -505,6 +505,11 @@ fn create_git_dir(
             }
         }
 
+        if !is_reinit && !initial_branch.is_empty() {
+            config_content.push_str("[init]\n");
+            config_content.push_str(&format!("\tdefaultBranch = {initial_branch}\n"));
+        }
+
         // Write shared repository config in [core] section
         if let Some(perm) = shared {
             let shared_value = normalize_shared(perm);
