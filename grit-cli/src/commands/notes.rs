@@ -364,26 +364,20 @@ fn remove_notes(
     }
     let write_opts = notes_write_options(repo, "remove", now)?;
     if dry_run {
-        let mut removed = Vec::new();
-        let mut notes_ref_old = None;
-        let mut notes_ref_new = None;
-        for object in &objects {
-            let plan = repo
-                .notes()
-                .plan_remove(notes_ref, object, &write_opts)
-                .map_err(map_notes_error)?;
-            if plan.had_note {
-                removed.push(object.to_hex());
-                notes_ref_old = plan.notes_ref_tip_before.map(|o| o.to_hex());
-                notes_ref_new = plan.notes_ref_tip_after.map(|o| o.to_hex());
-            }
-        }
+        let plan = repo
+            .notes()
+            .plan_remove_many(notes_ref, &objects, &write_opts)
+            .map_err(map_notes_error)?;
+        let changes = !plan.removed.is_empty();
         return Ok(NotesOutcome::Remove {
             notes_ref: notes_ref.to_string(),
-            objects: removed,
+            objects: plan.removed.iter().map(ObjectId::to_hex).collect(),
             dry_run: Some(true),
-            notes_ref_old,
-            notes_ref_new,
+            notes_ref_old: plan
+                .notes_ref_tip_before
+                .filter(|_| changes)
+                .map(|o| o.to_hex()),
+            notes_ref_new: plan.notes_ref_tip_after.map(|o| o.to_hex()),
         });
     }
     let removed = repo

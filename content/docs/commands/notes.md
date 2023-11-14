@@ -72,9 +72,9 @@ Pass `--json` for stable output. The top-level `action` field is `list`, `show`,
 | `replaced` | boolean | For `add`: whether a note was overwritten. |
 | `dry_run` | boolean | For `add` / `remove`: `true` when nothing was written. |
 | `notes_ref_old` | string or null | For `add` / `remove` dry-run: notes ref tip before the operation. |
-| `notes_ref_new` | string or null | For `add` / `remove` dry-run: predicted notes ref tip after the operation. |
+| `notes_ref_new` | string or null | For `add` / `remove` dry-run: predicted notes ref tip after the operation. For `remove` with several revisions, this is the single notes commit the real run writes; `null` when no listed revision has a note. |
 | `note_blob` | string or null | For `add` dry-run: blob id that would store the note bytes. |
-| `objects` | array | For `remove`: ids whose notes were removed. |
+| `objects` | array | For `remove`: ids whose notes were removed (or would be, with `--dry-run`), in argument order. Revisions without a note and repeats are left out. |
 
 Listing:
 

@@ -24738,6 +24738,25 @@ impl core::marker::Unpin for grit_lib::repo_handles::NoteListing
 impl core::marker::UnsafeUnpin for grit_lib::repo_handles::NoteListing
 impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::NoteListing
 impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::NoteListing
+pub struct grit_lib::repo_handles::NoteRemoveManyPlan
+pub grit_lib::repo_handles::NoteRemoveManyPlan::notes_ref_tip_after: core::option::Option<grit_lib::objects::ObjectId>
+pub grit_lib::repo_handles::NoteRemoveManyPlan::notes_ref_tip_before: core::option::Option<grit_lib::objects::ObjectId>
+pub grit_lib::repo_handles::NoteRemoveManyPlan::removed: alloc::vec::Vec<grit_lib::objects::ObjectId>
+impl core::clone::Clone for grit_lib::repo_handles::NoteRemoveManyPlan
+pub fn grit_lib::repo_handles::NoteRemoveManyPlan::clone(&self) -> Self
+impl core::cmp::Eq for grit_lib::repo_handles::NoteRemoveManyPlan
+impl core::cmp::PartialEq for grit_lib::repo_handles::NoteRemoveManyPlan
+pub fn grit_lib::repo_handles::NoteRemoveManyPlan::eq(&self, &Self) -> bool
+impl core::fmt::Debug for grit_lib::repo_handles::NoteRemoveManyPlan
+pub fn grit_lib::repo_handles::NoteRemoveManyPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for grit_lib::repo_handles::NoteRemoveManyPlan
+impl core::marker::Freeze for grit_lib::repo_handles::NoteRemoveManyPlan
+impl core::marker::Send for grit_lib::repo_handles::NoteRemoveManyPlan
+impl core::marker::Sync for grit_lib::repo_handles::NoteRemoveManyPlan
+impl core::marker::Unpin for grit_lib::repo_handles::NoteRemoveManyPlan
+impl core::marker::UnsafeUnpin for grit_lib::repo_handles::NoteRemoveManyPlan
+impl core::panic::unwind_safe::RefUnwindSafe for grit_lib::repo_handles::NoteRemoveManyPlan
+impl core::panic::unwind_safe::UnwindSafe for grit_lib::repo_handles::NoteRemoveManyPlan
 pub struct grit_lib::repo_handles::NoteRemovePlan
 pub grit_lib::repo_handles::NoteRemovePlan::had_note: bool
 pub grit_lib::repo_handles::NoteRemovePlan::notes_ref_tip_after: core::option::Option<grit_lib::objects::ObjectId>
@@ -25015,6 +25034,7 @@ pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::list(&self, &grit_lib::no
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::list_with_bodies(&self, &grit_lib::notes::NotesRef, core::option::Option<usize>) -> grit_lib::error::Result<grit_lib::list_limit::Limited<grit_lib::repo_handles::Note>>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::plan_add(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId, &[u8], &grit_lib::repo_handles::NotesWriteOptions, bool) -> grit_lib::error::Result<grit_lib::repo_handles::NoteAddPlan>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::plan_remove(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId, &grit_lib::repo_handles::NotesWriteOptions) -> grit_lib::error::Result<grit_lib::repo_handles::NoteRemovePlan>
+pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::plan_remove_many(&self, &grit_lib::notes::NotesRef, &[grit_lib::objects::ObjectId], &grit_lib::repo_handles::NotesWriteOptions) -> grit_lib::error::Result<grit_lib::repo_handles::NoteRemoveManyPlan>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::read(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId) -> grit_lib::error::Result<core::option::Option<alloc::vec::Vec<u8>>>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::remove(&self, &grit_lib::notes::NotesRef, &grit_lib::objects::ObjectId, &grit_lib::repo_handles::NotesWriteOptions) -> grit_lib::error::Result<()>
 pub fn grit_lib::repo_handles::RepositoryNotes<'repo>::remove_many(&self, &grit_lib::notes::NotesRef, &[grit_lib::objects::ObjectId], &grit_lib::repo_handles::NotesWriteOptions) -> grit_lib::error::Result<alloc::vec::Vec<grit_lib::objects::ObjectId>>

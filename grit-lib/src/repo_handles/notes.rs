@@ -83,6 +83,28 @@ pub struct NoteRemovePlan {
     pub notes_ref_tip_after: Option<ObjectId>,
 }
 
+/// Preview of [`RepositoryNotes::remove_many`] without writing objects, refs, or reflogs.
+///
+/// The removals compose: [`Self::notes_ref_tip_after`] is the single notes commit that
+/// `remove_many` would write for the same objects and [`NotesWriteOptions`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteRemoveManyPlan {
+    /// Objects whose notes would be removed, in request order. Objects without a note and
+    /// repeated objects are left out, matching the return value of `remove_many`.
+    pub removed: Vec<ObjectId>,
+    /// Notes ref tip before the operation (`None` when the ref did not exist).
+    pub notes_ref_tip_before: Option<ObjectId>,
+    /// Predicted notes ref tip after removal (`None` when no note would be removed).
+    pub notes_ref_tip_after: Option<ObjectId>,
+}
+
+/// Notes tree with removals applied in memory, shared by planning and writing.
+struct StagedRemoval {
+    tip: Option<ObjectId>,
+    entries: Vec<NotesTreeEntry>,
+    removed: Vec<ObjectId>,
+}
+
 /// What [`RepositoryNotes::add`] did to the annotated object's note.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoteAddOutcome {
@@ -214,30 +236,12 @@ impl<'repo> RepositoryNotes<'repo> {
         options: &NotesWriteOptions,
         force: bool,
     ) -> Result<NoteAddPlan> {
-        let hex = object.to_hex();
-        let NotesSnapshot { tip, mut entries } =
-            read_notes_snapshot(self.repo, notes_ref.as_str())?;
-        let exists = entries
-            .iter()
-            .any(|e| note_object_name(&e.path).as_deref() == Some(hex.as_str()));
-        if exists && !force {
-            return Err(crate::error::Error::NoteAlreadyExists { object: *object });
-        }
-        let outcome = if exists {
-            NoteAddOutcome::Replaced
-        } else {
-            NoteAddOutcome::Added
-        };
+        let (NotesSnapshot { tip, mut entries }, outcome) =
+            self.read_for_add(notes_ref, object, force)?;
         let _overlay = MemOverlayGuard::enter(self.repo.odb());
         let blob = self.repo.odb().write(ObjectKind::Blob, content)?;
-        upsert_note_entry(&mut entries, &hex, blob);
-        let (author, committer) = options.header_lines()?;
-        let commit = NotesCommit {
-            message: &options.message,
-            author: &author,
-            committer: &committer,
-        };
-        let notes_ref_tip_after = preview_notes_commit(self.repo, tip, &entries, &commit)?;
+        upsert_note_entry(&mut entries, &object.to_hex(), blob);
+        let notes_ref_tip_after = self.preview_commit(tip, &entries, options)?;
         Ok(NoteAddPlan {
             object: *object,
             outcome,
@@ -251,37 +255,52 @@ impl<'repo> RepositoryNotes<'repo> {
     ///
     /// # Errors
     ///
-    /// Propagates notes tree read failures.
+    /// Same as [`Self::plan_remove_many`].
     pub fn plan_remove(
         &self,
         notes_ref: &NotesRef,
         object: &ObjectId,
         options: &NotesWriteOptions,
     ) -> Result<NoteRemovePlan> {
-        let NotesSnapshot { tip, mut entries } =
-            read_notes_snapshot(self.repo, notes_ref.as_str())?;
-        let had_note = remove_note_entry(&mut entries, &object.to_hex());
-        if !had_note {
-            return Ok(NoteRemovePlan {
-                object: *object,
-                had_note: false,
-                notes_ref_tip_before: tip,
-                notes_ref_tip_after: None,
-            });
-        }
-        let _overlay = MemOverlayGuard::enter(self.repo.odb());
-        let (author, committer) = options.header_lines()?;
-        let commit = NotesCommit {
-            message: &options.message,
-            author: &author,
-            committer: &committer,
-        };
-        let notes_ref_tip_after = preview_notes_commit(self.repo, tip, &entries, &commit)?;
+        let plan = self.plan_remove_many(notes_ref, std::slice::from_ref(object), options)?;
         Ok(NoteRemovePlan {
             object: *object,
-            had_note: true,
+            had_note: !plan.removed.is_empty(),
+            notes_ref_tip_before: plan.notes_ref_tip_before,
+            notes_ref_tip_after: plan.notes_ref_tip_after,
+        })
+    }
+
+    /// Preview [`Self::remove_many`] without persisting trees, commits, or refs.
+    ///
+    /// All removals are applied to one notes tree, so the predicted tip is the single notes
+    /// commit `remove_many` would write. Object writes are confined to the ODB in-memory
+    /// overlay and discarded before return.
+    ///
+    /// # Errors
+    ///
+    /// Propagates notes tree read failures and invalid identities in `options`.
+    pub fn plan_remove_many(
+        &self,
+        notes_ref: &NotesRef,
+        objects: &[ObjectId],
+        options: &NotesWriteOptions,
+    ) -> Result<NoteRemoveManyPlan> {
+        let StagedRemoval {
+            tip,
+            entries,
+            removed,
+        } = self.stage_removals(notes_ref, objects)?;
+        let notes_ref_tip_after = if removed.is_empty() {
+            None
+        } else {
+            let _overlay = MemOverlayGuard::enter(self.repo.odb());
+            Some(self.preview_commit(tip, &entries, options)?)
+        };
+        Ok(NoteRemoveManyPlan {
+            removed,
             notes_ref_tip_before: tip,
-            notes_ref_tip_after: Some(notes_ref_tip_after),
+            notes_ref_tip_after,
         })
     }
 
@@ -329,32 +348,12 @@ impl<'repo> RepositoryNotes<'repo> {
         options: &NotesWriteOptions,
         force: bool,
     ) -> Result<NoteAddOutcome> {
-        let hex = object.to_hex();
-        let NotesSnapshot { tip, mut entries } =
-            read_notes_snapshot(self.repo, notes_ref.as_str())?;
-        let exists = entries
-            .iter()
-            .any(|e| note_object_name(&e.path).as_deref() == Some(hex.as_str()));
-        if exists && !force {
-            return Err(crate::error::Error::NoteAlreadyExists { object: *object });
-        }
+        let (NotesSnapshot { tip, mut entries }, outcome) =
+            self.read_for_add(notes_ref, object, force)?;
         let blob = self.repo.odb().write(ObjectKind::Blob, content)?;
-        upsert_note_entry(&mut entries, &hex, blob);
-        let (author, committer) = options.header_lines()?;
-        write_notes_commit_idents(
-            self.repo,
-            notes_ref.as_str(),
-            tip,
-            &entries,
-            &options.message,
-            &author,
-            &committer,
-        )?;
-        Ok(if exists {
-            NoteAddOutcome::Replaced
-        } else {
-            NoteAddOutcome::Added
-        })
+        upsert_note_entry(&mut entries, &object.to_hex(), blob);
+        self.write_commit(notes_ref, tip, &entries, options)?;
+        Ok(outcome)
     }
 
     /// Remove the note on `object` when present.
@@ -386,27 +385,91 @@ impl<'repo> RepositoryNotes<'repo> {
         objects: &[ObjectId],
         options: &NotesWriteOptions,
     ) -> Result<Vec<ObjectId>> {
+        let StagedRemoval {
+            tip,
+            entries,
+            removed,
+        } = self.stage_removals(notes_ref, objects)?;
+        if !removed.is_empty() {
+            self.write_commit(notes_ref, tip, &entries, options)?;
+        }
+        Ok(removed)
+    }
+
+    /// Read `notes_ref` and classify an add on `object`, refusing to replace without `force`.
+    fn read_for_add(
+        &self,
+        notes_ref: &NotesRef,
+        object: &ObjectId,
+        force: bool,
+    ) -> Result<(NotesSnapshot, NoteAddOutcome)> {
+        let snapshot = read_notes_snapshot(self.repo, notes_ref.as_str())?;
+        let hex = object.to_hex();
+        let exists = snapshot
+            .entries
+            .iter()
+            .any(|e| note_object_name(&e.path).as_deref() == Some(hex.as_str()));
+        if exists && !force {
+            return Err(crate::error::Error::NoteAlreadyExists { object: *object });
+        }
+        let outcome = if exists {
+            NoteAddOutcome::Replaced
+        } else {
+            NoteAddOutcome::Added
+        };
+        Ok((snapshot, outcome))
+    }
+
+    /// Read `notes_ref` and drop the note of each object in `objects` from the in-memory tree.
+    fn stage_removals(&self, notes_ref: &NotesRef, objects: &[ObjectId]) -> Result<StagedRemoval> {
         let NotesSnapshot { tip, mut entries } =
             read_notes_snapshot(self.repo, notes_ref.as_str())?;
-        let mut removed = Vec::new();
-        for object in objects {
-            if remove_note_entry(&mut entries, &object.to_hex()) {
-                removed.push(*object);
-            }
-        }
-        if removed.is_empty() {
-            return Ok(removed);
-        }
+        let removed = objects
+            .iter()
+            .filter(|object| remove_note_entry(&mut entries, &object.to_hex()))
+            .copied()
+            .collect();
+        Ok(StagedRemoval {
+            tip,
+            entries,
+            removed,
+        })
+    }
+
+    /// Object id of the notes commit [`Self::write_commit`] would create; callers confine the
+    /// object writes with a [`MemOverlayGuard`].
+    fn preview_commit(
+        &self,
+        tip: Option<ObjectId>,
+        entries: &[NotesTreeEntry],
+        options: &NotesWriteOptions,
+    ) -> Result<ObjectId> {
+        let (author, committer) = options.header_lines()?;
+        let commit = NotesCommit {
+            message: &options.message,
+            author: &author,
+            committer: &committer,
+        };
+        preview_notes_commit(self.repo, tip, entries, &commit)
+    }
+
+    /// Write `entries` as a notes commit on `tip` and move `notes_ref` from `tip` to it.
+    fn write_commit(
+        &self,
+        notes_ref: &NotesRef,
+        tip: Option<ObjectId>,
+        entries: &[NotesTreeEntry],
+        options: &NotesWriteOptions,
+    ) -> Result<()> {
         let (author, committer) = options.header_lines()?;
         write_notes_commit_idents(
             self.repo,
             notes_ref.as_str(),
             tip,
-            &entries,
+            entries,
             &options.message,
             &author,
             &committer,
-        )?;
-        Ok(removed)
+        )
     }
 }

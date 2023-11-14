@@ -49,6 +49,45 @@ fn notes_add_dry_run_then_real() -> TestResult {
 }
 
 #[test]
+fn notes_remove_dry_run_predicts_batch_tip() -> TestResult {
+    let fixture = CliFixture::empty();
+    std::fs::write(fixture.path().join("f.txt"), "x\n")?;
+    fixture.run_ok(&["commit", "-m", "one"]);
+    std::fs::write(fixture.path().join("g.txt"), "y\n")?;
+    fixture.run_ok(&["commit", "-m", "two"]);
+    fixture.run_ok(&["notes", "add", "HEAD~1", "-m", "first"]);
+    fixture.run_ok(&["notes", "add", "HEAD", "-m", "second"]);
+    let parent = git(fixture.path(), &["rev-parse", "HEAD~1"])
+        .trim()
+        .to_string();
+    let head = git(fixture.path(), &["rev-parse", "HEAD"])
+        .trim()
+        .to_string();
+    let tip_before = git(fixture.path(), &["rev-parse", "refs/notes/commits"])
+        .trim()
+        .to_string();
+
+    let git_dir = fixture.path().join(".git");
+    let before = git_dir_state_digest(&git_dir);
+    let dry = fixture.run(&["--json", "notes", "remove", "HEAD~1", "HEAD", "--dry-run"]);
+    assert_eq!(dry.status, Some(0), "{}", dry.dump("dry-run"));
+    assert_eq!(before, git_dir_state_digest(&git_dir));
+    let v = parse_json(&dry.stdout)?;
+    assert_eq!(v["objects"], serde_json::json!([parent, head]));
+    assert_eq!(v["notes_ref_old"].as_str(), Some(tip_before.as_str()));
+
+    fixture.run_ok(&["notes", "remove", "HEAD~1", "HEAD"]);
+    let tip_after = git(fixture.path(), &["rev-parse", "refs/notes/commits"])
+        .trim()
+        .to_string();
+    assert_eq!(v["notes_ref_new"].as_str(), Some(tip_after.as_str()));
+    assert_eq!(git(fixture.path(), &["notes", "list"]).trim(), "");
+    let fsck = git_fsck(fixture.path(), true);
+    assert!(fsck.ok, "fsck: {:?}", fsck.msg_ids);
+    Ok(())
+}
+
+#[test]
 fn notes_remove_dry_run_missing_note() -> TestResult {
     let fixture = CliFixture::empty();
     std::fs::write(fixture.path().join("f.txt"), "x\n")?;
