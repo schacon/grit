@@ -176,19 +176,34 @@ impl MarkdownRender for NotesOutcome {
                 notes_ref,
                 object,
                 replaced,
+                dry_run,
                 ..
             } => {
                 let short = object.get(..7).unwrap_or(object.as_str());
-                let verb = if *replaced { "Replaced" } else { "Added" };
+                let verb = match (dry_run == &Some(true), *replaced) {
+                    (true, true) => "Would replace",
+                    (true, false) => "Would add",
+                    (false, true) => "Replaced",
+                    (false, false) => "Added",
+                };
                 outln!(w, "{verb} note for `{short}` on `{notes_ref}`.");
             }
             NotesOutcome::Remove {
-                notes_ref, objects, ..
+                notes_ref,
+                objects,
+                dry_run,
+                ..
             } => {
+                let dry_run = dry_run == &Some(true);
                 if objects.is_empty() {
-                    outln!(w, "No notes removed on `{notes_ref}`.");
+                    if dry_run {
+                        outln!(w, "Would remove no notes on `{notes_ref}`.");
+                    } else {
+                        outln!(w, "No notes removed on `{notes_ref}`.");
+                    }
                 } else {
-                    outln!(w, "Removed notes on `{notes_ref}`:");
+                    let verb = if dry_run { "Would remove" } else { "Removed" };
+                    outln!(w, "{verb} notes on `{notes_ref}`:");
                     for object in objects {
                         let short = object.get(..7).unwrap_or(object.as_str());
                         outln!(w, "- `{short}`");

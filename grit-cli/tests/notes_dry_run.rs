@@ -88,6 +88,45 @@ fn notes_remove_dry_run_predicts_batch_tip() -> TestResult {
 }
 
 #[test]
+fn notes_dry_run_markdown_says_would() -> TestResult {
+    let fixture = CliFixture::empty();
+    std::fs::write(fixture.path().join("f.txt"), "x\n")?;
+    fixture.run_ok(&["commit", "-m", "init"]);
+
+    let add = fixture.run_ok(&["--markdown", "notes", "add", "HEAD", "-m", "n", "--dry-run"]);
+    assert!(
+        add.stdout.starts_with("Would add note for `"),
+        "{}",
+        add.stdout
+    );
+    fixture.run_ok(&["notes", "add", "HEAD", "-m", "n"]);
+    let replace = fixture.run_ok(&[
+        "--markdown",
+        "notes",
+        "add",
+        "HEAD",
+        "-m",
+        "m",
+        "--force",
+        "--dry-run",
+    ]);
+    assert!(
+        replace.stdout.starts_with("Would replace note for `"),
+        "{}",
+        replace.stdout
+    );
+    let remove = fixture.run_ok(&["--markdown", "notes", "remove", "HEAD", "--dry-run"]);
+    assert!(
+        remove
+            .stdout
+            .starts_with("Would remove notes on `refs/notes/commits`:"),
+        "{}",
+        remove.stdout
+    );
+    Ok(())
+}
+
+#[test]
 fn notes_remove_dry_run_missing_note() -> TestResult {
     let fixture = CliFixture::empty();
     std::fs::write(fixture.path().join("f.txt"), "x\n")?;
