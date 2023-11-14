@@ -770,12 +770,6 @@ enum ContractRule {
 /// Known violations tracked until a follow-up plan step lands.
 const EXCEPTIONS: &[(&str, ContractRule, &str, &str)] = &[
     (
-        "reflog",
-        ContractRule::Limit,
-        "inspection-extras",
-        "reflog list uses `--limit` without `-n` today",
-    ),
-    (
         "shortlog",
         ContractRule::Limit,
         "inspection-extras",
