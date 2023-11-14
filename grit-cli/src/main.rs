@@ -211,6 +211,25 @@ enum HistoryAction {
         #[command(flatten)]
         shared: commands::history::HistoryRewriteArgs,
     },
+    /// Replay commits not in `upstream` onto `onto` (stateless rebase).
+    Rebase {
+        /// Branch to rebase (defaults to the current branch).
+        branch: Option<String>,
+        /// New base for the replayed commits.
+        #[arg(long = "onto", value_name = "REV")]
+        onto: String,
+        /// Exclude commits reachable from this revision (defaults to upstream tracking, else `--onto`).
+        #[arg(long = "upstream", value_name = "REV")]
+        upstream: Option<String>,
+        /// Replay commits even when the same patch already exists on `onto`.
+        #[arg(long = "keep-applied")]
+        keep_applied: bool,
+        /// How to handle commits that become empty during replay.
+        #[arg(long = "empty", value_enum, default_value_t = commands::history::EmptyPolicyArg::Drop)]
+        empty: commands::history::EmptyPolicyArg,
+        #[command(flatten)]
+        shared: commands::history::HistoryRewriteArgs,
+    },
 }
 
 /// Subcommands of `grit notes`.
@@ -1300,6 +1319,25 @@ fn dispatch(cli: Cli, opts: &OutputOptions, ctx: &RenderContext) -> Result<()> {
                 shared,
             } => emit(
                 &commands::history::run_reword(&commit, message, message_file, &shared)?,
+                opts,
+                ctx,
+            ),
+            HistoryAction::Rebase {
+                branch,
+                onto,
+                upstream,
+                keep_applied,
+                empty,
+                shared,
+            } => emit(
+                &commands::history::run_rebase(
+                    branch,
+                    onto,
+                    upstream,
+                    keep_applied,
+                    empty,
+                    &shared,
+                )?,
                 opts,
                 ctx,
             ),

@@ -32,6 +32,7 @@
 //!     scope: RefScope::Branches,
 //!     empty: EmptyPolicy::Drop,
 //!     committer: "Rewriter <r@example.com> 1 +0000".into(),
+//!     preserve_committer: false,
 //! };
 //! let _plan = plan_rewrite(repo, &edits, &opts)?;
 //! # Ok(())
@@ -42,6 +43,7 @@ mod apply;
 mod drop;
 mod error;
 mod plan;
+mod rebase;
 mod reword;
 mod types;
 
@@ -51,6 +53,7 @@ pub use error::HistoryError;
 pub use plan::plan_rewrite;
 #[cfg(any(test, feature = "unstable-bench-helpers"))]
 pub use plan::{test_merge_tree_call_count, test_reset_merge_tree_call_count};
+pub use rebase::{rebase_onto, RebaseOntoOptions};
 pub use reword::{normalize_rewrite_message, reword};
 pub use types::{
     AppliedRewrite, ApplyOptions, CommitEdit, EmptyPolicy, HeadEffect, HistoryEdits, NewCommit,

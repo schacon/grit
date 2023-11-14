@@ -133,6 +133,7 @@ fn bench_history_rewrite(c: &mut Criterion) {
                     scope: RefScope::Branches,
                     empty: EmptyPolicy::Drop,
                     committer: "Bench <b@grit.test> 9 +0000".into(),
+                    preserve_committer: false,
                 },
             )
             .expect("plan");

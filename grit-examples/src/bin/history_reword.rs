@@ -40,6 +40,7 @@ fn main() -> Result<(), grit_lib::error::Error> {
             scope: RefScope::Head,
             empty: EmptyPolicy::Drop,
             committer: "History Guide <guide@grit.test> 1 +0000".into(),
+            preserve_committer: false,
         },
     )
     .map_err(grit_lib::error::Error::History)?;

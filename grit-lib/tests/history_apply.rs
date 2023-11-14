@@ -114,6 +114,7 @@ fn plan_reword(
             scope: RefScope::Branches,
             empty: EmptyPolicy::Drop,
             committer: committer(1),
+            preserve_committer: false,
         },
     )
     .expect("plan")
@@ -148,6 +149,7 @@ fn plan_reword_with_tree(
             scope: RefScope::Branches,
             empty: EmptyPolicy::Drop,
             committer: committer(1),
+            preserve_committer: false,
         },
     )
     .expect("plan")
@@ -241,6 +243,7 @@ fn apply_rewrite_refuses_when_head_moved_since_plan() {
                 scope: RefScope::Head,
                 empty: EmptyPolicy::Drop,
                 committer: committer(1),
+                preserve_committer: false,
             },
         )
         .expect("plan")
@@ -367,6 +370,7 @@ fn apply_rewrite_bare_repository() {
             scope: RefScope::Head,
             empty: EmptyPolicy::Drop,
             committer: committer(2),
+            preserve_committer: false,
         },
     )
     .expect("plan");

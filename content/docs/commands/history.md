@@ -12,6 +12,10 @@ grit history drop <commit> [--dry-run] [--update-refs=(branches|head)]
 grit history reword <commit> -m <message>
 grit history reword <commit> --message-file <path|->
 grit history reword <commit> [--dry-run] [--update-refs=(branches|head)]
+
+grit history rebase [<branch>] --onto <rev> [--upstream <rev>]
+grit history rebase [<branch>] --onto <rev> [--keep-applied] [--empty=(drop|keep|abort)]
+grit history rebase [<branch>] --onto <rev> [--dry-run] [--update-refs=(branches|head)]
 ```
 
 ## Description
@@ -38,6 +42,18 @@ Provide exactly one of `-m` / `--message` or `--message-file` (use `-` to read f
 
 If any descendant commit is a **merge**, planning refuses with an error (merge replay is not supported yet). Use a linear range or wait for later `grit history` subcommands that handle merges.
 
+### `rebase`
+
+Replay commits reachable from `<branch>` (or the current branch) but not from `--upstream`, onto `--onto`. This is a **stateless** rebase: there is no `.git/rebase-merge` directory and no step-by-step resume. Grit plans the full replay, writes new commit objects, then moves refs in one batch (including stacked local branches when `--update-refs=branches`, similar to Git’s `--update-refs`).
+
+Commits whose patch already appears on `--onto` are **skipped** by default (Git-style cherry detection using stable patch-ids). Pass `--keep-applied` to force replay anyway.
+
+`--upstream` defaults to the branch’s configured upstream tracking ref (`branch.*.remote` / `branch.*.merge`), or to `--onto` when no upstream is configured.
+
+Unlike [`grit pull`](pull.md), which fetches and integrates a remote tracking branch into your current branch (fast-forward or merge), `grit history rebase` only rewrites **local** history already in your repository onto a new base you name. It does not contact remotes.
+
+Merge commits in the replay range are refused. Conflicts abort before any ref moves.
+
 ## Options
 
 | Option | Description |
@@ -55,6 +71,18 @@ If any descendant commit is a **merge**, planning refuses with an error (merge r
 | `<commit>` | Commit to reword (revision spec). |
 | `-m`, `--message` | New commit message (conflicts with `--message-file`). |
 | `--message-file` | Read the new message from a file, or `-` for stdin. |
+
+### `rebase` options
+
+| Option | Description |
+| --- | --- |
+| `[<branch>]` | Branch to rebase (defaults to the current branch). |
+| `--onto` | New base for replayed commits (revision spec). |
+| `--upstream` | Exclude commits reachable from this revision (defaults to upstream tracking, else `--onto`). |
+| `--keep-applied` | Replay commits even when the patch is already on `--onto`. |
+| `--empty` | `drop` (default), `keep`, or `abort` when a replay would become empty. |
+| `--dry-run` | List ref updates without moving refs. |
+| `--update-refs` | `branches` (default) or `head`. |
 ## Examples
 
 Drop the parent of `HEAD` on a linear branch:
@@ -84,17 +112,28 @@ Dry run — refs would change:
   refs/heads/main f6a7b89 → c0ffee0
 ```
 
+Rebase `feature` onto `main` while skipping patches already on `main`:
+
+```console
+$ grit history rebase feature --onto main
+Rewrote 2 commit(s)
+  commit a1b2c3d → d4e5f60
+  refs/heads/feature f6a7b89 → c0ffee0
+```
+
 ## JSON output
 
 Drop schema: [v1](/schemas/history.drop/v1.json) — pass `--json` on `grit history drop`.
 
 Reword schema: [v1](/schemas/history.reword/v1.json) — pass `--json` on `grit history reword`.
 
-Both subcommands emit the same object shape:
+Rebase schema: [v1](/schemas/history.rebase/v1.json) — pass `--json` on `grit history rebase`.
+
+All subcommands emit the same object shape. Pass `--json` on `grit history drop`, `grit history reword`, or `grit history rebase`:
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `operation` | string | `"drop"` or `"reword"`. |
+| `operation` | string | `"drop"`, `"reword"`, or `"rebase"`. |
 | `rewritten` | array | `{old,new}` full hex OIDs for each replayed commit (`drop` omits the removed commit). |
 | `refs` | array | `{name,old,new}` for each ref that would move or moved. |
 | `head` | object or null | `{old,new}` when `HEAD`'s commit OID changes; `null` when unchanged. |
@@ -136,4 +175,4 @@ Pass [`--markdown`](../global-options/) for a `History drop` or `History reword`
 
 ## See also
 
-[Library guide: History rewrite](../library/history.md), [`grit log`](log.md), [`grit pick`](pick.md)
+[Library guide: History rewrite](../library/history.md), [`grit pull`](pull.md), [`grit log`](log.md), [`grit pick`](pick.md)

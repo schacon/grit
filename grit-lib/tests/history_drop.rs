@@ -36,6 +36,7 @@ fn opts(seq: i64) -> RewriteOptions {
         scope: RefScope::Branches,
         empty: EmptyPolicy::Drop,
         committer: committer(seq),
+        preserve_committer: false,
     }
 }
 
@@ -261,6 +262,7 @@ fn history_drop_matches_git_rebase_drop() {
             scope: RefScope::Head,
             empty: EmptyPolicy::Drop,
             committer: replay_committer,
+            preserve_committer: false,
         },
     )
     .expect("plan");
@@ -330,6 +332,7 @@ fn history_drop_matches_git_history_when_available() {
             scope: RefScope::Head,
             empty: EmptyPolicy::Drop,
             committer: committer(8),
+            preserve_committer: false,
         },
     )
     .expect("plan");

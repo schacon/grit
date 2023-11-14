@@ -631,6 +631,7 @@ mod inject_and_apply_tests {
                 scope: RefScope::Head,
                 empty: EmptyPolicy::Drop,
                 committer: "T <t@t> 1 +0000".into(),
+                preserve_committer: false,
             },
         )
         .expect("plan");
@@ -750,6 +751,7 @@ mod inject_and_apply_tests {
                 scope: RefScope::Head,
                 empty: EmptyPolicy::Drop,
                 committer: "T <t@t> 1 +0000".into(),
+                preserve_committer: false,
             },
         )
         .expect("plan");
@@ -889,6 +891,7 @@ mod inject_and_apply_tests {
                 scope: RefScope::Head,
                 empty: EmptyPolicy::Drop,
                 committer: "T <t@t> 1 +0000".into(),
+                preserve_committer: false,
             },
         )
         .expect("plan");

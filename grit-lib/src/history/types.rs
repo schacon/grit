@@ -33,6 +33,13 @@ pub enum CommitEdit {
     Drop,
     /// Insert `commit` before the mapped original, which becomes the insert's child.
     InsertBefore(NewCommit),
+    /// Replay this commit onto `parent` instead of its mapped first parent (rebase range root).
+    Reparent {
+        /// Replacement first parent for the replay.
+        parent: ObjectId,
+    },
+    /// Map to an existing commit without writing a new object (patch already applied upstream).
+    Reuse(ObjectId),
 }
 
 /// Map from original commit OID to the edit applied at that commit.
@@ -69,6 +76,8 @@ pub struct RewriteOptions {
     pub empty: EmptyPolicy,
     /// Committer ident for every newly written commit (must include explicit time; no hidden clock).
     pub committer: String,
+    /// When `true`, replayed commits keep the source committer line instead of [`Self::committer`].
+    pub preserve_committer: bool,
 }
 
 /// One original commit and its replacement (if any).

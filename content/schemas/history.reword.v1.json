@@ -62,7 +62,7 @@
       "type": "object"
     }
   },
-  "description": "Result of `grit history reword`, `grit history drop`, and related rewrite subcommands.",
+  "description": "Result of `grit history reword`, `grit history drop`, `grit history rebase`, and related rewrite subcommands.",
   "properties": {
     "dry_run": {
       "description": "Whether refs were left unchanged (`true` for `--dry-run`).",

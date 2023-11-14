@@ -10,7 +10,9 @@ The [`history`](rustdoc:grit_lib::revwalk::history) module supports stateless hi
 1. **Plan** — [`plan_rewrite`](rustdoc:grit_lib::revwalk::history::plan_rewrite) walks affected commits, writes replacement objects into the ODB, and records ref movements in a [`RewritePlan`](rustdoc:grit_lib::revwalk::history::RewritePlan). Refs, the index, and the worktree are untouched during planning.
 2. **Apply** — [`apply_rewrite`](rustdoc:grit_lib::revwalk::history::apply_rewrite) runs a compare-and-swap ref batch, then (in non-bare repos) checks out from the old `HEAD` tree to the new one while preserving unrelated staged and unstaged changes.
 
-[`CommitEdit`](rustdoc:grit_lib::revwalk::history::CommitEdit) describes per-commit rewrites, drops, and insert-before commits. [`RewriteOptions`](rustdoc:grit_lib::revwalk::history::RewriteOptions) controls scope, empty-commit policy, and the committer ident used for new objects.
+[`CommitEdit`](rustdoc:grit_lib::revwalk::history::CommitEdit) describes per-commit rewrites, drops, insert-before commits, reparenting, and patch-id reuse. [`RewriteOptions`](rustdoc:grit_lib::revwalk::history::RewriteOptions) controls scope, empty-commit policy, and the committer ident used for new objects.
+
+[`rebase_onto`](rustdoc:grit_lib::revwalk::history::rebase_onto) replays `upstream..tip` onto a new base in topological order, skipping commits whose stable patch-id already appears on `onto` (unless [`RebaseOntoOptions::skip_applied`](rustdoc:grit_lib::revwalk::history::RebaseOntoOptions::skip_applied) is `false`). Merge commits in the range are refused.
 
 For a single message change, [`reword`](rustdoc:grit_lib::revwalk::history::reword) builds the [`CommitEdit`](rustdoc:grit_lib::revwalk::history::CommitEdit) and runs [`plan_rewrite`](rustdoc:grit_lib::revwalk::history::plan_rewrite) after [`normalize_rewrite_message`](rustdoc:grit_lib::revwalk::history::normalize_rewrite_message) (stripspace, trailing newline, reject empty).
 

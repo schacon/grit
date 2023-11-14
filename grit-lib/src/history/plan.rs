@@ -143,6 +143,15 @@ pub fn plan_rewrite(
             return Err(HistoryError::InsertBeforeOnMerge { commit: old_oid });
         }
 
+        if let Some(CommitEdit::Reuse(existing)) = edit {
+            mapping.insert(old_oid, *existing);
+            rewritten.push(RewrittenCommit {
+                old: old_oid,
+                new: Some(*existing),
+            });
+            continue;
+        }
+
         if matches!(edit, Some(CommitEdit::Drop)) {
             if old.parents.is_empty() {
                 return Err(HistoryError::RootCommit { commit: old_oid });
@@ -182,6 +191,20 @@ pub fn plan_rewrite(
             }
             Some(CommitEdit::InsertBefore(_)) => {
                 let oid = replay_descendant(repo, &mapping, &old, old_oid, insert_parent, opts)?;
+                (oid, Some(oid))
+            }
+            Some(CommitEdit::Reparent { parent }) => {
+                let parent_list = vec![*parent];
+                let oid = replay_edited_commit(
+                    repo,
+                    &old,
+                    old_oid,
+                    &parent_list,
+                    &old.author,
+                    &opts.committer,
+                    &old.message,
+                    opts,
+                )?;
                 (oid, Some(oid))
             }
             Some(CommitEdit::Rewrite {
@@ -230,7 +253,7 @@ pub fn plan_rewrite(
                 };
                 (oid, Some(oid))
             }
-            Some(CommitEdit::Drop) => unreachable!("handled above"),
+            Some(CommitEdit::Drop) | Some(CommitEdit::Reuse(_)) => unreachable!("handled above"),
         };
 
         mapping.insert(old_oid, new_oid);
@@ -421,6 +444,11 @@ fn replay_edited_commit(
     message: &str,
     opts: &RewriteOptions,
 ) -> Result<ObjectId, HistoryError> {
+    let committer = if opts.preserve_committer {
+        old.committer.as_str()
+    } else {
+        committer
+    };
     let empty = empty_tree_oid(repo)?;
     let old_parent = old.parents.first().copied().unwrap_or(empty);
     let new_parent = parent_list.first().copied().unwrap_or(empty);
@@ -732,6 +760,7 @@ mod merge_call_tests {
                 scope: RefScope::Branches,
                 empty: EmptyPolicy::Drop,
                 committer: ident(2),
+                preserve_committer: false,
             },
         )
         .expect("plan");

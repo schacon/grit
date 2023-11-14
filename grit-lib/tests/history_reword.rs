@@ -38,6 +38,7 @@ fn reword_changes_only_message_and_replays_descendants() {
             scope: RefScope::Branches,
             empty: EmptyPolicy::Drop,
             committer: committer(1),
+            preserve_committer: false,
         },
     )
     .expect("reword");
@@ -82,6 +83,7 @@ fn reword_rejects_empty_message() {
             scope: RefScope::Head,
             empty: EmptyPolicy::Drop,
             committer: committer(1),
+            preserve_committer: false,
         },
     )
     .unwrap_err();
@@ -129,6 +131,7 @@ fn reword_in_bare_repository() {
             scope: RefScope::Head,
             empty: EmptyPolicy::Drop,
             committer: committer(2),
+            preserve_committer: false,
         },
     )
     .expect("reword bare");

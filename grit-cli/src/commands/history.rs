@@ -7,9 +7,10 @@ use clap::ValueEnum;
 use grit_lib::config::ident_resolve::IdentRole;
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::ObjectId;
+use grit_lib::refs;
 use grit_lib::revwalk::history::{
-    apply_rewrite, drop as history_drop, reword, verify_rewrite_plan, ApplyOptions, EmptyPolicy,
-    HistoryError, RefScope, RewriteOptions, RewritePlan,
+    apply_rewrite, drop as history_drop, rebase_onto, reword, verify_rewrite_plan, ApplyOptions,
+    EmptyPolicy, HistoryError, RebaseOntoOptions, RefScope, RewriteOptions, RewritePlan,
 };
 use grit_lib::revwalk::rev_parse::resolve_revision_as_commit;
 use grit_lib::state::{resolve_head, HeadState};
@@ -40,6 +41,28 @@ impl From<UpdateRefs> for RefScope {
     }
 }
 
+/// How to treat commits that become empty during replay.
+#[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq)]
+pub enum EmptyPolicyArg {
+    /// Skip empty replays (map to the new parent).
+    #[default]
+    Drop,
+    /// Keep an empty commit.
+    Keep,
+    /// Abort when a replay would become empty.
+    Abort,
+}
+
+impl From<EmptyPolicyArg> for EmptyPolicy {
+    fn from(value: EmptyPolicyArg) -> Self {
+        match value {
+            EmptyPolicyArg::Drop => EmptyPolicy::Drop,
+            EmptyPolicyArg::Keep => EmptyPolicy::Keep,
+            EmptyPolicyArg::Abort => EmptyPolicy::Abort,
+        }
+    }
+}
+
 /// Shared flags for history rewrite subcommands.
 #[derive(Debug, clap::Args)]
 pub struct HistoryRewriteArgs {
@@ -51,7 +74,7 @@ pub struct HistoryRewriteArgs {
     pub update_refs: UpdateRefs,
 }
 
-/// Result of `grit history reword`, `grit history drop`, and related rewrite subcommands.
+/// Result of `grit history reword`, `grit history drop`, `grit history rebase`, and related rewrite subcommands.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct HistoryRewriteOutcome {
     /// Operation name (for example `reword` or `drop`).
@@ -158,6 +181,7 @@ pub fn run_reword(
             scope: shared.update_refs.into(),
             empty: EmptyPolicy::Drop,
             committer,
+            preserve_committer: false,
         },
     )
     .map_err(|e| map_history_error(e, "reword", None))?;
@@ -202,6 +226,7 @@ pub fn run_drop(commit: &str, shared: &HistoryRewriteArgs) -> Result<HistoryRewr
             scope: shared.update_refs.into(),
             empty: EmptyPolicy::Drop,
             committer,
+            preserve_committer: false,
         },
     )
     .map_err(|e| map_history_error(e, "drop", Some(commit_oid)))?;
@@ -223,6 +248,126 @@ pub fn run_drop(commit: &str, shared: &HistoryRewriteArgs) -> Result<HistoryRewr
     }
     outcome.dry_run = shared.dry_run;
     Ok(outcome)
+}
+
+/// Replay `upstream..branch` onto `onto` and move descendant refs.
+pub fn run_rebase(
+    branch: Option<String>,
+    onto: String,
+    upstream: Option<String>,
+    keep_applied: bool,
+    empty: EmptyPolicyArg,
+    shared: &HistoryRewriteArgs,
+) -> Result<HistoryRewriteOutcome> {
+    let repo = context::discover()?;
+    let onto_oid = resolve_revision_as_commit(&repo, &onto)
+        .with_context(|| format!("could not resolve onto '{onto}'"))?;
+    let env = repo.environment();
+    let config =
+        ConfigSet::load(env, Some(repo.git_dir()), true).context("could not load config")?;
+    let committer = context::identity(
+        env,
+        &config,
+        IdentRole::Committer,
+        "GIT_COMMITTER_DATE",
+        context::wall_clock_now(env),
+    )?;
+    let tip_oid = resolve_rebase_tip(&repo, branch.as_deref())?;
+    let upstream_oid = match upstream {
+        Some(spec) => resolve_revision_as_commit(&repo, &spec)
+            .with_context(|| format!("could not resolve upstream '{spec}'"))?,
+        None => default_rebase_upstream(&repo, &config, branch.as_deref(), onto_oid)?,
+    };
+    let plan = rebase_onto(
+        &repo,
+        upstream_oid,
+        onto_oid,
+        &[tip_oid],
+        &RebaseOntoOptions {
+            rewrite: RewriteOptions {
+                scope: shared.update_refs.into(),
+                empty: empty.into(),
+                committer,
+                preserve_committer: false,
+            },
+            skip_applied: !keep_applied,
+        },
+    )
+    .map_err(|e| map_history_error(e, "rebase", None))?;
+    verify_rewrite_plan(&repo, &plan).map_err(|e| map_history_error(e, "rebase", None))?;
+    let mut outcome = outcome_from_plan(&repo, &plan, "rebase", shared.dry_run)?;
+    if !shared.dry_run {
+        let identity = context::committer_reflog_identity(env, &config)?;
+        apply_rewrite(
+            &repo,
+            &plan,
+            &ApplyOptions {
+                identity,
+                reflog_message: "history rebase".into(),
+            },
+        )
+        .map_err(|e| map_history_error(e, "rebase", None))?;
+    }
+    outcome.dry_run = shared.dry_run;
+    Ok(outcome)
+}
+
+fn resolve_rebase_tip(repo: &grit_lib::repo::Repository, branch: Option<&str>) -> Result<ObjectId> {
+    match branch {
+        Some(name) => {
+            let full = if name.starts_with("refs/") {
+                name.to_owned()
+            } else {
+                format!("refs/heads/{name}")
+            };
+            refs::resolve_ref(repo.git_dir(), &full)
+                .with_context(|| format!("could not resolve branch '{name}'"))
+        }
+        None => head_commit_oid(repo),
+    }
+}
+
+fn default_rebase_upstream(
+    repo: &grit_lib::repo::Repository,
+    config: &ConfigSet,
+    branch: Option<&str>,
+    onto: ObjectId,
+) -> Result<ObjectId> {
+    let short = match branch {
+        Some(name) => name.to_owned(),
+        None => match head_branch_short(repo) {
+            Ok(name) => name,
+            Err(_) => return Ok(onto),
+        },
+    };
+    let short = short.as_str();
+    let remote = config
+        .get(&format!("branch.{short}.remote"))
+        .filter(|r| !r.trim().is_empty());
+    let merge = config.get(&format!("branch.{short}.merge"));
+    if let (Some(remote), Some(merge)) = (remote, merge) {
+        let tracking = if remote == "." {
+            merge
+                .strip_prefix("refs/heads/")
+                .map(|b| format!("refs/heads/{b}"))
+                .unwrap_or_else(|| merge.clone())
+        } else {
+            let mb = merge.strip_prefix("refs/heads/").unwrap_or(merge.as_str());
+            format!("refs/remotes/{remote}/{mb}")
+        };
+        if let Ok(oid) = refs::resolve_ref(repo.git_dir(), &tracking) {
+            return Ok(oid);
+        }
+    }
+    Ok(onto)
+}
+
+fn head_branch_short(repo: &grit_lib::repo::Repository) -> Result<String> {
+    match resolve_head(repo.git_dir())? {
+        HeadState::Branch { short_name, .. } => Ok(short_name),
+        HeadState::Detached { .. } => bail!("HEAD is detached; pass a branch name or set upstream"),
+        HeadState::Invalid => bail!("HEAD is in an unknown state"),
+    }
 }
 
 fn read_message(message: Option<String>, message_file: Option<String>) -> Result<String> {
