@@ -1010,7 +1010,7 @@ fn log_json_includes_author_and_rfc3339_date() -> TestResult {
     let v = gs_json(&repo, &["log"]);
     let commit = &v["commits"][0];
     assert_eq!(commit["subject"], "hello");
-    assert_eq!(commit["author"], "test");
+    assert_eq!(commit["author"], "Test User");
     assert!(commit["author_date"]
         .as_str()
         .is_some_and(|d| d.contains('T')));

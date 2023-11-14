@@ -13,7 +13,7 @@ grit log [--before <commit>]
 
 ## Description
 
-Lists the commits reachable from the current commit, newest first, ten at a time. Each line shows the short commit id, the author, when the commit was made and its subject (the first line of its message). The author is shown by the part of their email address before the `@`, or by name when there's no email.
+Lists the commits reachable from the current commit, newest first, ten at a time. Each line shows the short commit id, the author, when the commit was made and its subject (the first line of its message). The author is the commit's author name when present, otherwise the part of their email address before the `@`.
 
 When there's more history, the last line shows the command for the next page.
 
@@ -29,10 +29,10 @@ Show recent history:
 
 ```console
 $ grit log
-  b52cca6  ada  2 minutes ago  Handle empty input
-  5fbefea  ada  1 hour ago     Add a greeting test
+  b52cca6  Ada Lovelace  2 minutes ago  Handle empty input
+  5fbefea  Ada Lovelace  1 hour ago     Add a greeting test
   ...
-  2efcc2d  ada  3 days ago     Start the project
+  2efcc2d  Ada Lovelace  3 days ago     Start the project
 
 → more: grit log --before=a7e3a5e
 ```
@@ -66,14 +66,14 @@ Example:
     {
       "oid": "92501f188ae0815af09a0cef6e121eddda4113cf",
       "subject": "second",
-      "author": "ada",
+      "author": "Ada Lovelace",
       "author_date": "2026-10-07T14:54:02Z",
       "relative_date": "2 days ago"
     },
     {
       "oid": "919c45f33de5e5c0bd05f8ffb089f697f4644976",
       "subject": "initial",
-      "author": "ada",
+      "author": "Ada Lovelace",
       "author_date": "2026-10-05T09:12:00Z",
       "relative_date": "4 days ago"
     }
@@ -87,8 +87,8 @@ Example:
 Pass [`--markdown`](../global-options/) for a bullet list of commits (short oid, subject, author, relative date):
 
 ```text
-- `b52cca6` Handle empty input (ada, 2 minutes ago)
-- `5fbefea` Add a greeting test (ada, 1 hour ago)
+- `b52cca6` Handle empty input (Ada Lovelace, 2 minutes ago)
+- `5fbefea` Add a greeting test (Ada Lovelace, 1 hour ago)
 
 More history: run `grit log --before=a7e3a5e`
 ```

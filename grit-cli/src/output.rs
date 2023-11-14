@@ -216,7 +216,7 @@ fn markdown_scalar(value: &serde_json::Value) -> String {
 pub struct CommitJson {
     pub oid: String,
     pub subject: String,
-    /// Author display name (email local-part when present, matching human log).
+    /// Author display name (identity name when present, matching human log).
     pub author: String,
     /// Author timestamp in RFC 3339.
     pub author_date: String,
