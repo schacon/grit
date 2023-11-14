@@ -8,7 +8,7 @@ order: 2
 ## Synopsis
 
 ```text
-grit reflog [REF] [--limit N]
+grit reflog [REF] [-n N] [--since DATE] [--until DATE] [--grep PAT]
 grit reflog delete <REF@{N}>...
 grit reflog expire [--all] [--expire <DATE>] [--expire-unreachable <DATE>]
 ```
@@ -17,6 +17,8 @@ grit reflog expire [--all] [--expire <DATE>] [--expire-unreachable <DATE>]
 
 Inspect and maintain reference logs. With no subcommand, lists entries for `REF` (default `HEAD`) in newest-first order. Each line shows the selector (`REF@{n}`), the `new_oid` after the update, a relative date, and the log message.
 
+Filters apply to the reflog entry identity timestamp (not the commit date). Scanning stops once `-n` matches are collected, so large logs are not fully materialized.
+
 `delete` removes explicit entries without rewriting the branch tip. `expire` applies Git-compatible `gc.reflogExpire*` rules (same layering as `grit gc`), using explicit `--expire` / `--expire-unreachable` values when given and merged config otherwise.
 
 ## Options
@@ -24,7 +26,10 @@ Inspect and maintain reference logs. With no subcommand, lists entries for `REF`
 | Option | Description |
 | --- | --- |
 | `REF` | Ref to list (default `HEAD`). Branch short names are accepted (`main` → `refs/heads/main`). |
-| `--limit` | Show at most `N` entries (newest first). |
+| `-n`, `--max-count` | Show at most `N` matching entries (newest first). Alias: `--limit`. |
+| `--since`, `--after` | Exclude entries older than this date (Git `--since`). |
+| `--until`, `--before` | Exclude entries newer than this date (Git `--until`). |
+| `--grep` | Keep entries whose message contains this substring (case-sensitive). |
 | `delete` | Remove one or more `ref@{n}` selectors. |
 | `expire` | Drop old reflog entries using gc expiry rules. |
 | `--all` | On `expire`, walk every ref under `refs/`, not only refs that already have log files. |
@@ -36,9 +41,15 @@ Inspect and maintain reference logs. With no subcommand, lists entries for `REF`
 Show the last three `HEAD` reflog entries:
 
 ```console
-$ grit reflog HEAD --limit 3
+$ grit reflog HEAD -n 3
 HEAD@{0} b5ea30de417ac84c09b8cfc0acf5f2c39efc611f 2 minutes ago commit: second
 HEAD@{1} 72934dedd47ecaf7e340fd6c5ef46620187fb317 1 hour ago commit: first
+```
+
+Entries since yesterday whose message mentions `checkout`:
+
+```console
+$ grit reflog --since=yesterday --grep=checkout -n 20 --json
 ```
 
 Delete one entry:
@@ -64,8 +75,9 @@ List (`grit reflog [REF]`):
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `ref` | string | Ref that was listed. |
+| `truncated` | boolean | `true` when listing stopped before the oldest entry (typically because of `-n`). |
 | `entries` | array | Newest-first entries. |
-| `entries[].index` | integer | Newest-first index (`0` is latest). |
+| `entries[].index` | integer | Newest-first index in the full reflog (`0` is latest). |
 | `entries[].oid` | string | Hex object id stored as `new_oid` for that entry (v1 alias of `new_oid`). |
 | `entries[].old_oid` | string | Previous object id before the update. |
 | `entries[].new_oid` | string | Object id after the update (same as `oid`). |
@@ -73,10 +85,12 @@ List (`grit reflog [REF]`):
 | `entries[].relative_date` | string | Human-relative time from the entry identity. |
 | `entries[].committer` | object | `name`, `email`, and `date` (same shape as `log` / `blame`). |
 | `entries[].message` | string | Reflog message (may be empty). |
+| `entries[].action` | string (optional) | Best-effort prefix before the first `": "` in the message. |
 
 ```json
 {
   "ref": "HEAD",
+  "truncated": false,
   "entries": [
     {
       "index": 0,
@@ -90,7 +104,8 @@ List (`grit reflog [REF]`):
         "email": "user@example.com",
         "date": "2026-10-23T18:15:00Z"
       },
-      "message": "commit: second"
+      "message": "commit: second",
+      "action": "commit"
     }
   ]
 }

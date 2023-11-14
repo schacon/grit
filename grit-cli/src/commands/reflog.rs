@@ -8,7 +8,7 @@ use grit_lib::ident::Signature;
 use grit_lib::refs::reflog::reflog_identity_timestamp;
 use grit_lib::refs::store::RefName;
 use grit_lib::repo::Repository;
-use grit_lib::repo_handles::{ExpireOptions, IndexedReflogEntry};
+use grit_lib::repo_handles::{ExpireOptions, IndexedReflogEntry, MessageMatcher, ReflogQuery};
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -20,6 +20,8 @@ use crate::output::{outln, HumanRender, MarkdownRender, Person, RenderContext};
 pub struct ReflogListOutcome {
     pub r#ref: String,
     pub entries: Vec<ReflogListEntry>,
+    /// `true` when the query stopped before the oldest reflog entry (typically due to `-n`).
+    pub truncated: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -36,6 +38,10 @@ pub struct ReflogListEntry {
     #[schemars(skip_serializing_if = "Option::is_none")]
     pub committer: Option<Person>,
     pub message: String,
+    /// Best-effort action prefix from the message (before the first `": "`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
     /// Abbreviated `new_oid` for human/markdown lines (not in JSON).
     #[serde(skip)]
     pub abbreviated_oid: String,
@@ -139,26 +145,69 @@ impl MarkdownRender for ReflogExpireOutcome {
     }
 }
 
-pub fn run_show(r#ref: Option<String>, limit: Option<usize>) -> Result<ReflogListOutcome> {
+/// List options for `grit reflog` (shared between clap and the command handler).
+#[derive(Debug, Clone, Default)]
+pub struct ReflogListOptions {
+    pub max_count: Option<usize>,
+    pub since: Option<String>,
+    pub after: Option<String>,
+    pub until: Option<String>,
+    pub before: Option<String>,
+    pub grep: Option<String>,
+}
+
+pub fn run_show(r#ref: Option<String>, options: ReflogListOptions) -> Result<ReflogListOutcome> {
     let repo = context::discover()?;
     let env = repo.environment();
     let now = context::wall_clock_now(env).unix_timestamp();
     let spec = r#ref.as_deref().unwrap_or("HEAD");
     let ref_name = reflog_ref_name(spec)?;
-    let mut entries: Vec<ReflogListEntry> = repo
+    let since = parse_since(options.since.as_deref().or(options.after.as_deref()), now)?;
+    let until = parse_until(options.until.as_deref().or(options.before.as_deref()), now)?;
+    let grep = options.grep.as_deref().map(MessageMatcher::new);
+    let page = repo
         .reflogs()
-        .entries(&ref_name)
-        .map_err(map_reflog_error)?
+        .query(
+            &ref_name,
+            &ReflogQuery {
+                limit: options.max_count,
+                since,
+                until,
+                grep,
+                now,
+            },
+        )
+        .map_err(map_reflog_error)?;
+    let entries = page
+        .entries
         .into_iter()
         .map(|e| indexed_to_json(&repo, &e, now))
         .collect();
-    if let Some(n) = limit {
-        entries.truncate(n);
-    }
     Ok(ReflogListOutcome {
         r#ref: spec.to_owned(),
         entries,
+        truncated: page.truncated,
     })
+}
+
+fn parse_since(raw: Option<&str>, now: i64) -> Result<Option<i64>> {
+    match raw {
+        Some(s) => Ok(Some(
+            grit_lib::revwalk::committer_cutoff_from_date(s, now)
+                .map_err(|_| anyhow::anyhow!("invalid --since/--after date"))?,
+        )),
+        None => Ok(None),
+    }
+}
+
+fn parse_until(raw: Option<&str>, now: i64) -> Result<Option<i64>> {
+    match raw {
+        Some(s) => Ok(Some(
+            grit_lib::revwalk::committer_cutoff_from_date(s, now)
+                .map_err(|_| anyhow::anyhow!("invalid --until/--before date"))?,
+        )),
+        None => Ok(None),
+    }
 }
 
 pub fn run_delete(specs: Vec<String>) -> Result<ReflogDeleteOutcome> {
@@ -218,6 +267,7 @@ fn indexed_to_json(repo: &Repository, entry: &IndexedReflogEntry, now: i64) -> R
         relative_date: context::relative_date_from(ts, now),
         committer,
         message: entry.entry.message.clone(),
+        action: entry.entry.action().map(str::to_owned),
         abbreviated_oid,
     }
 }
