@@ -89,6 +89,7 @@
       "type": "string"
     },
     "truncated": {
+      "description": "`true` when the query stopped before the oldest reflog entry (typically due to `-n`).",
       "type": "boolean"
     }
   },
