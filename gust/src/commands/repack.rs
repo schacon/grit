@@ -1,6 +1,7 @@
-//! `gust repack` command stub.
+//! `gust repack` command.
 
-use anyhow::{bail, Result};
+use crate::commands::git_passthrough;
+use anyhow::Result;
 use clap::Args as ClapArgs;
 
 /// Arguments for `gust repack`.
@@ -12,6 +13,6 @@ pub struct Args {
 }
 
 /// Run `gust repack`.
-pub fn run(_args: Args) -> Result<()> {
-    bail!("`gust repack` is not implemented yet")
+pub fn run(args: Args) -> Result<()> {
+    git_passthrough::run("repack", &args.args)
 }

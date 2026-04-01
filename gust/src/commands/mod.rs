@@ -10,6 +10,7 @@ pub mod count_objects;
 pub mod diff_index;
 pub mod for_each_ref;
 pub mod gc;
+pub mod git_passthrough;
 pub mod hash_object;
 pub mod init;
 pub mod ls_files;

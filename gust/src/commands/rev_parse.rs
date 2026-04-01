@@ -28,8 +28,11 @@ pub fn run(args: Args) -> Result<()> {
     let mut show_toplevel = false;
     let mut show_prefix_flag = false;
     let mut show_git_dir = false;
+    let mut prefix: Option<String> = None;
     let mut default_rev: Option<String> = None;
     let mut revisions = Vec::new();
+    let mut forced_paths = Vec::new();
+    let mut saw_path_separator = false;
     let mut end_of_options = false;
 
     let mut i = 0usize;
@@ -37,6 +40,7 @@ pub fn run(args: Args) -> Result<()> {
         let arg = &args.args[i];
         if !end_of_options && arg == "--" {
             end_of_options = true;
+            saw_path_separator = true;
             i += 1;
             continue;
         }
@@ -57,6 +61,15 @@ pub fn run(args: Args) -> Result<()> {
                 show_prefix_flag = true;
             } else if arg == "--git-dir" {
                 show_git_dir = true;
+            } else if arg == "--prefix" {
+                i += 1;
+                let value = args
+                    .args
+                    .get(i)
+                    .ok_or_else(|| anyhow::anyhow!("--prefix requires an argument"))?;
+                prefix = Some(value.clone());
+            } else if let Some(value) = arg.strip_prefix("--prefix=") {
+                prefix = Some(value.to_owned());
             } else if let Some(value) = arg.strip_prefix("--short=") {
                 verify = true;
                 short_len = Some(parse_short_len(value)?);
@@ -80,7 +93,11 @@ pub fn run(args: Args) -> Result<()> {
             i += 1;
             continue;
         }
-        revisions.push(arg.clone());
+        if saw_path_separator {
+            forced_paths.push(arg.clone());
+        } else {
+            revisions.push(arg.clone());
+        }
         i += 1;
     }
 
@@ -129,7 +146,7 @@ pub fn run(args: Args) -> Result<()> {
         println!("{}", to_relative_path(&current.git_dir, &cwd));
     }
 
-    if !verify && revisions.is_empty() {
+    if !verify && revisions.is_empty() && forced_paths.is_empty() {
         return Ok(());
     }
 
@@ -162,9 +179,29 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     for rev in revisions {
-        let oid =
-            resolve_revision(current, &rev).map_err(|_| anyhow::anyhow!("bad revision '{rev}'"))?;
-        println!("{oid}");
+        let rewritten = rewrite_tree_path_spec(&rev, prefix.as_deref());
+        if let Ok(oid) = resolve_revision(current, &rewritten) {
+            println!("{oid}");
+            continue;
+        }
+        if let Some(path_prefix) = prefix.as_deref() {
+            println!("{}", apply_prefix_for_forced_path(path_prefix, &rev));
+            continue;
+        }
+        return Err(anyhow::anyhow!("bad revision '{rev}'"));
+    }
+
+    if saw_path_separator && !forced_paths.is_empty() {
+        println!("--");
+    }
+    if let Some(path_prefix) = prefix.as_deref() {
+        for path in forced_paths {
+            println!("{}", apply_prefix_for_forced_path(path_prefix, &path));
+        }
+    } else {
+        for path in forced_paths {
+            println!("{path}");
+        }
     }
     Ok(())
 }
@@ -181,4 +218,45 @@ fn fail_verify(quiet: bool) -> Result<()> {
         std::process::exit(1);
     }
     bail!("Needed a single revision")
+}
+
+fn apply_prefix_for_forced_path(prefix: &str, path: &str) -> String {
+    if prefix.is_empty() {
+        return path.to_owned();
+    }
+    format!("{prefix}{path}")
+}
+
+fn rewrite_tree_path_spec(spec: &str, prefix: Option<&str>) -> String {
+    let Some((treeish, raw_path)) = spec.split_once(':') else {
+        return spec.to_owned();
+    };
+    if treeish.is_empty() || raw_path.is_empty() {
+        return spec.to_owned();
+    }
+    if !raw_path.starts_with("./") && !raw_path.starts_with("../") {
+        return spec.to_owned();
+    }
+
+    let mut joined = String::new();
+    if let Some(prefix) = prefix {
+        joined.push_str(prefix);
+    }
+    joined.push_str(raw_path);
+    let normalized = normalize_slash_path(&joined);
+    format!("{treeish}:{normalized}")
+}
+
+fn normalize_slash_path(path: &str) -> String {
+    let mut parts = Vec::new();
+    for component in path.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.join("/")
 }

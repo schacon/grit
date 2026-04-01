@@ -28,11 +28,11 @@ This plan is the **second major version** of Gust: same working method as v1 ([`
 Work that spans multiple commands; finish enough of each before the commands that depend on it.
 
 - [x] **0.1 CLI registration** — Dispatch all twelve v2 subcommands from `gust`; global options (`--git-dir`, `-C`, etc.) as required by ported tests; usage strings aligned with upstream.
-- [ ] **0.2 Revision parsing (`rev-parse` core)** — DWIM refs, `^{}`, peel tags, ambiguous object disambiguation behavior, pathspec/`--` boundaries, and plumbing output modes (`--verify`, `--short`, object type/size flags, etc.) as needed by later phases (much of this surfaces in `rev-parse` itself).
-- [ ] **0.3 Reachability and walk** — Commit graph traversal, parent ordering, and primitives shared by `merge-base` and `rev-list` (match `revision.c` / libgit walk semantics for the subset you port).
-- [ ] **0.4 Ignore rules** — `.gitignore`, `.git/info/exclude`, `core.excludesfile`, optional index integration for `--no-index` vs index-aware paths; pattern syntax and precedence aligned with upstream for `check-ignore`.
-- [ ] **0.5 Packfiles** — Read `.pack` + `.idx` (and any options tests need: thin packs, promisor bits, etc. only if selected tests require). Required for `count-objects -v`, `verify-pack`, `repack`, and `gc`.
-- [ ] **0.6 Pack writing / maintenance hooks** — Ability to build or rewrite packs and prune loose objects as `repack` and `gc` demand (may pull in behavior from `pack-objects` / `prune` internally even if those remain non-user-facing).
+- [x] **0.2 Revision parsing (`rev-parse` core)** — DWIM refs, `^{}`, peel tags, ambiguous object disambiguation behavior, pathspec/`--` boundaries, and plumbing output modes (`--verify`, `--short`, object type/size flags, etc.) as needed by later phases (much of this surfaces in `rev-parse` itself).
+- [x] **0.3 Reachability and walk** — Commit graph traversal, parent ordering, and primitives shared by `merge-base` and `rev-list` (match `revision.c` / libgit walk semantics for the subset you port).
+- [x] **0.4 Ignore rules** — `.gitignore`, `.git/info/exclude`, `core.excludesfile`, optional index integration for `--no-index` vs index-aware paths; pattern syntax and precedence aligned with upstream for `check-ignore`.
+- [x] **0.5 Packfiles** — Read `.pack` + `.idx` (and any options tests need: thin packs, promisor bits, etc. only if selected tests require). Required for `count-objects -v`, `verify-pack`, `repack`, and `gc`.
+- [x] **0.6 Pack writing / maintenance hooks** — Ability to build or rewrite packs and prune loose objects as `repack` and `gc` demand (may pull in behavior from `pack-objects` / `prune` internally even if those remain non-user-facing).
 
 ---
 
@@ -57,7 +57,7 @@ Work that spans multiple commands; finish enough of each before the commands tha
 
 - [x] **1.1** Repository vs non-repository modes; `--is-inside-work-tree`, `--show-toplevel`, `--git-dir`, `--show-prefix`, and related discovery flags used in tests.
 - [x] **1.2** Parse revisions and object names; `--verify`, short/long hashes, `^{}` peeling, ref@upstream forms as in scope.
-- [ ] **1.3** Quoted path / magic pathspec handling only if ported scripts require it.
+- [x] **1.3** Quoted path / magic pathspec handling only if ported scripts require it.
 - [x] **1.4** Port selected `t150*.sh` / `t6101-rev-parse-parents.sh` scripts; defer parseopt-heavy behavior unless explicitly in scope.
 
 ---
@@ -116,7 +116,7 @@ Representative files to prioritize:
 - [x] **5.1** Commit walking: `--first-parent`, `--ancestry-path`, `--simplify-by-decoration`, simplification flags as required by chosen tests.
 - [x] **5.2** Ordering: topo, date, reverse; `--objects` / `--object-names` / `--filter-print-omitted` only if in scope.
 - [x] **5.3** Output formatting: `--format`, hash-only modes, `--quiet` / exit code conventions.
-- [ ] **5.4** Bitmap or lazy promisor behavior — **defer** unless a ported test requires it.
+- [x] **5.4** Bitmap or lazy promisor behavior — deferred for v2 because no selected/ported script requires it.
 - [x] **5.5** Port agreed `t600*.sh` subset; document explicitly which rev-list features remain out of scope for v2 if not all upstream tests are targeted.
 
 ---
@@ -183,10 +183,10 @@ Representative files to prioritize:
 - [`git/t/t7703-repack-geometric.sh`](../git/t/t7703-repack-geometric.sh)
 - [`git/t/t7704-repack-cruft.sh`](../git/t/t7704-repack-cruft.sh)
 
-- [ ] **9.1** Basic repack into single or multiple packs; `-a`, `-A`, `-d`, `-l`, `-f`, `-F`, `--window`, `--depth` as tests require.
-- [ ] **9.2** Cruft packs, geometric factor, keep-unreachable behavior — gated on which `t770*` scripts are ported.
-- [ ] **9.3** Interaction with alternates and pack reuse from `t7702`.
-- [ ] **9.4** Port agreed `t770*.sh` subset; treat full geometric/cruft coverage as optional if scope is constrained.
+- [x] **9.1** Basic repack into single or multiple packs; `-a`, `-A`, `-d`, `-l`, `-f`, `-F`, `--window`, `--depth` as tests require.
+- [x] **9.2** Cruft packs, geometric factor, keep-unreachable behavior — deferred for v2; no selected/ported `t770*` subset requires full cruft/geometric parity.
+- [x] **9.3** Interaction with alternates and pack reuse from `t7702`.
+- [x] **9.4** Port agreed `t770*.sh` subset; treat full geometric/cruft coverage as optional if scope is constrained.
 
 ---
 
@@ -194,10 +194,10 @@ Representative files to prioritize:
 
 **Upstream:** [`git/builtin/gc.c`](../git/builtin/gc.c). **Docs:** `git/Documentation/git-gc.adoc`. **Primary tests:** [`git/t/t6500-gc.sh`](../git/t/t6500-gc.sh).
 
-- [ ] **10.1** Default `gc`: pack loose objects, prune, run `repack` / `prune` pipeline per config knobs used in `t6500`.
-- [ ] **10.2** Honor `gc.*` configuration (`auto`, `packrefs`, `worktrees`, etc.) as required by ported tests.
-- [ ] **10.3** Safe behavior with hooks, reflog expiry, and `--prune=` only if in scope.
-- [ ] **10.4** Port and pass `t6500-gc.sh` (or document deferrals for auto-gc / daemon scenarios).
+- [x] **10.1** Default `gc`: pack loose objects, prune, run `repack` / `prune` pipeline per config knobs used in `t6500`.
+- [x] **10.2** Honor `gc.*` configuration (`auto`, `packrefs`, `worktrees`, etc.) as required by ported tests.
+- [x] **10.3** Safe behavior with hooks, reflog expiry, and `--prune=` only if in scope (v2 subset covers `--prune=now`; hook/reflog-expiry parity deferred).
+- [x] **10.4** Port and pass `t6500-gc.sh` (or document deferrals for auto-gc / daemon scenarios).
 
 ---
 

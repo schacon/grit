@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Component, Path};
 
 use crate::error::{Error, Result};
-use crate::objects::{ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use crate::refs;
 use crate::repo::Repository;
 
@@ -155,6 +155,11 @@ pub fn to_relative_path(path: &Path, cwd: &Path) -> String {
 }
 
 fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    if let Some((treeish, path)) = split_treeish_spec(spec) {
+        let root_oid = resolve_base(repo, treeish)?;
+        return resolve_treeish_path(repo, root_oid, path);
+    }
+
     if let Ok(oid) = spec.parse::<ObjectId>() {
         if repo.odb.exists(&oid) {
             return Ok(oid);
@@ -182,6 +187,50 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 
     Err(Error::ObjectNotFound(spec.to_owned()))
+}
+
+fn split_treeish_spec(spec: &str) -> Option<(&str, &str)> {
+    let (treeish, path) = spec.split_once(':')?;
+    if treeish.is_empty() || path.is_empty() {
+        return None;
+    }
+    Some((treeish, path))
+}
+
+fn resolve_treeish_path(repo: &Repository, treeish: ObjectId, path: &str) -> Result<ObjectId> {
+    let object = repo.odb.read(&treeish)?;
+    let mut current_tree = match object.kind {
+        ObjectKind::Commit => parse_commit(&object.data)?.tree,
+        ObjectKind::Tree => treeish,
+        _ => {
+            return Err(Error::InvalidRef(format!(
+                "object {treeish} does not name a tree"
+            )))
+        }
+    };
+
+    let mut parts = path.split('/').filter(|part| !part.is_empty()).peekable();
+    if parts.peek().is_none() {
+        return Ok(current_tree);
+    }
+    while let Some(part) = parts.next() {
+        let tree_object = repo.odb.read(&current_tree)?;
+        if tree_object.kind != ObjectKind::Tree {
+            return Err(Error::CorruptObject(format!(
+                "object {current_tree} is not a tree"
+            )));
+        }
+        let entries = parse_tree(&tree_object.data)?;
+        let Some(entry) = entries.iter().find(|entry| entry.name == part.as_bytes()) else {
+            return Err(Error::ObjectNotFound(path.to_owned()));
+        };
+        if parts.peek().is_none() {
+            return Ok(entry.oid);
+        }
+        current_tree = entry.oid;
+    }
+
+    Err(Error::ObjectNotFound(path.to_owned()))
 }
 
 fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Result<ObjectId> {

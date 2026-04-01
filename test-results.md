@@ -1,6 +1,35 @@
 # Test results (latest run)
 
-Last update: 2026-03-31 (Phase 5.1/5.2/5.3/5.5).
+Last update: 2026-03-31 (v2 completion wave: rev-parse prefix + repack + gc).
+
+## Final v2 completion validation (2026-03-31)
+
+### Required validation commands
+
+- `cargo fmt` -> PASS
+- `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+- `cargo test --workspace` -> PASS (5 tests, 0 failures)
+- `./tests/harness/run.sh` -> PASS
+
+### Newly added scripts in this wave
+
+- `tests/t1513-rev-parse-prefix.sh` -> PASS (`11/11`)
+- `tests/t7700-repack.sh` -> PASS (`4/4`)
+- `tests/t6500-gc.sh` -> PASS (`4/4`)
+
+### Full harness totals (selected scripts)
+
+- Scripts run: **51**
+- Individual shell tests: **282**
+- Pass: **282**
+- Fail: **0**
+- Skip: **0**
+
+### Overall totals (Rust + shell)
+
+- Rust tests (`cargo test --workspace`): **5/5 PASS**
+- Shell tests (`./tests/harness/run.sh`): **282/282 PASS**
+- Combined individual tests: **287 PASS**, **0 FAIL**
 
 ## Phase 5 rev-list validation (2026-03-31)
 

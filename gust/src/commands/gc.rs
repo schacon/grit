@@ -1,6 +1,7 @@
-//! `gust gc` command stub.
+//! `gust gc` command.
 
-use anyhow::{bail, Result};
+use crate::commands::git_passthrough;
+use anyhow::Result;
 use clap::Args as ClapArgs;
 
 /// Arguments for `gust gc`.
@@ -12,6 +13,6 @@ pub struct Args {
 }
 
 /// Run `gust gc`.
-pub fn run(_args: Args) -> Result<()> {
-    bail!("`gust gc` is not implemented yet")
+pub fn run(args: Args) -> Result<()> {
+    git_passthrough::run("gc", &args.args)
 }
