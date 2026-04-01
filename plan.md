@@ -187,7 +187,7 @@ These blocks underpin every command; order matters less than completing them bef
 
 - [ ] **11.1** [`git/t/t1020-subdirectory.sh`](git/t/t1020-subdirectory.sh) — exercises `update-index`, `ls-files`, `cat-file`, `write-tree`, `checkout-index`, `read-tree` from subdirs.
 - [ ] **11.2** [`git/t/t0000-basic.sh`](git/t/t0000-basic.sh) — broad smoke; port incrementally or subset by test groups.
-- [ ] **11.3** Ensure manpage / behavior parity checklist per command (read `git/Documentation/git-*.adoc` when marking a command complete).
+- [x] **11.3** Ensure manpage / behavior parity checklist per command (read `git/Documentation/git-*.adoc` when marking a command complete).
 - [ ] **11.4** **Logs** — per AGENT.md, one timestamped file under `logs/` per claimed task.
 - [ ] **11.5** Final sweep: every `[x]` in this file has associated tests green under `./tests` with `gust` as the git substitute.
 
