@@ -8,7 +8,26 @@ cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup repository' '
-	git init repo
+	git init repo &&
+	cd repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@test.com"
+'
+
+test_expect_success 'Test of git add' '
+	cd repo &&
+	touch foo && git add foo
+'
+
+test_expect_success 'Post-check that foo is in the index' '
+	cd repo &&
+	git ls-files foo >actual &&
+	grep foo actual
+'
+
+test_expect_success 'Test that "git add -- -q" works' '
+	cd repo &&
+	touch -- -q && git add -- -q
 '
 
 test_expect_success 'add a single file' '
@@ -103,7 +122,216 @@ test_expect_success 'add -n dry run does not modify index' '
 
 test_expect_success 'add nonexistent file fails' '
 	cd repo &&
-	! git add nonexistent.txt 2>/dev/null
+	test_must_fail git add nonexistent.txt
+'
+
+test_expect_success '"add non-existent" should fail' '
+	cd repo &&
+	test_must_fail git add non-existent &&
+	git ls-files >actual &&
+	! grep "non-existent" actual
+'
+
+test_expect_success 'check correct prefix detection' '
+	cd repo &&
+	mkdir -p 1/2 1/3 &&
+	echo a >1/2/a &&
+	echo b >1/3/b &&
+	echo c >1/2/c &&
+	git add 1/2/a 1/3/b 1/2/c &&
+	git ls-files --error-unmatch 1/2/a 1/3/b 1/2/c
+'
+
+test_expect_success 'git add -A on empty repo does not error out' '
+	rm -fr empty &&
+	git init empty &&
+	(
+		cd empty &&
+		git add -A . &&
+		git add -A
+	)
+'
+
+test_expect_success '"git add ." in empty repo' '
+	cd repo &&
+	rm -fr empty &&
+	git init empty &&
+	(
+		cd empty &&
+		git add .
+	)
+'
+
+test_expect_success 'git add --dry-run of existing changed file' '
+	cd repo &&
+	git add foo &&
+	git commit -m "commit for dry-run test" &&
+	echo new >>foo &&
+	git add --dry-run foo >actual 2>&1 &&
+	grep "add" actual &&
+	grep "foo" actual
+'
+
+test_expect_success 'git add --dry-run of non-existing file' '
+	cd repo &&
+	test_must_fail git add --dry-run non-existent-file 2>err &&
+	grep "non-existent-file" err
+'
+
+test_expect_success 'add symlink' '
+	cd repo &&
+	echo target >target_file &&
+	ln -s target_file test_symlink &&
+	git add test_symlink &&
+	git ls-files -s test_symlink >actual &&
+	grep "^120000 " actual
+'
+
+test_expect_success 'add intent-to-add file' '
+	cd repo &&
+	echo ita_content >ita_file &&
+	git add -N ita_file &&
+	git ls-files ita_file >actual &&
+	grep "ita_file" actual &&
+	git ls-files --stage ita_file >actual &&
+	grep "0000000000000000000000000000000000000000" actual
+'
+
+test_expect_success 'add -A after intent-to-add stages full content' '
+	cd repo &&
+	git add -A &&
+	git ls-files --stage ita_file >actual &&
+	! grep "0000000000000000000000000000000000000000" actual
+'
+
+test_expect_success 'add files with spaces in name' '
+	cd repo &&
+	echo content >"space file.txt" &&
+	git add "space file.txt" &&
+	git ls-files --error-unmatch "space file.txt"
+'
+
+test_expect_success 'add deeply nested directory structure' '
+	cd repo &&
+	mkdir -p a/b/c/d/e &&
+	echo deep >a/b/c/d/e/file.txt &&
+	git add a/b/c/d/e/file.txt &&
+	git ls-files --error-unmatch a/b/c/d/e/file.txt
+'
+
+test_expect_success 'add -A removes multiple deleted files' '
+	cd repo &&
+	echo del1 >del1.txt &&
+	echo del2 >del2.txt &&
+	echo del3 >del3.txt &&
+	git add del1.txt del2.txt del3.txt &&
+	git commit -m "files to delete" &&
+	rm del1.txt del2.txt del3.txt &&
+	git add -A &&
+	git ls-files >actual &&
+	! grep "del1.txt" actual &&
+	! grep "del2.txt" actual &&
+	! grep "del3.txt" actual
+'
+
+test_expect_success 'add -u does not add untracked files' '
+	cd repo &&
+	echo brand_new >brand_new_file.txt &&
+	git add -u &&
+	git ls-files >actual &&
+	! grep "brand_new_file.txt" actual
+'
+
+test_expect_success 'add -u updates modifications of tracked files' '
+	cd repo &&
+	echo original >tracked_mod.txt &&
+	git add tracked_mod.txt &&
+	git commit -m "add tracked_mod" &&
+	git ls-files --stage tracked_mod.txt >before &&
+	echo modified >tracked_mod.txt &&
+	git add -u &&
+	git ls-files --stage tracked_mod.txt >after &&
+	! test_cmp before after
+'
+
+test_expect_success 'add . picks up new files and modifications' '
+	cd repo &&
+	echo new_via_dot >new_via_dot.txt &&
+	echo modified_again >tracked_mod.txt &&
+	git add . &&
+	git ls-files --error-unmatch new_via_dot.txt &&
+	git ls-files --error-unmatch tracked_mod.txt
+'
+
+test_expect_success 'add with -f forces adding' '
+	cd repo &&
+	echo force_content >force_file.txt &&
+	git add -f force_file.txt &&
+	git ls-files --error-unmatch force_file.txt
+'
+
+test_expect_success 'add multiple directories at once' '
+	cd repo &&
+	mkdir -p dirA dirB dirC &&
+	echo a >dirA/file.txt &&
+	echo b >dirB/file.txt &&
+	echo c >dirC/file.txt &&
+	git add dirA dirB dirC &&
+	git ls-files --error-unmatch dirA/file.txt &&
+	git ls-files --error-unmatch dirB/file.txt &&
+	git ls-files --error-unmatch dirC/file.txt
+'
+
+test_expect_success 'add already tracked file is idempotent' '
+	cd repo &&
+	echo same >idempotent.txt &&
+	git add idempotent.txt &&
+	git ls-files --stage idempotent.txt >before &&
+	git add idempotent.txt &&
+	git ls-files --stage idempotent.txt >after &&
+	test_cmp before after
+'
+
+test_expect_success 'add -v shows all added files' '
+	cd repo &&
+	echo v1 >verbose1.txt &&
+	echo v2 >verbose2.txt &&
+	git add -v verbose1.txt verbose2.txt 2>stderr &&
+	grep "verbose1.txt" stderr &&
+	grep "verbose2.txt" stderr
+'
+
+test_expect_success 'add -n shows what would be added without staging' '
+	cd repo &&
+	echo drynew >drynew.txt &&
+	git ls-files --stage >before &&
+	git add -n drynew.txt 2>/dev/null &&
+	git ls-files --stage >after &&
+	test_cmp before after
+'
+
+test_expect_success 'add . from subdirectory adds relative paths' '
+	cd repo &&
+	mkdir -p subwork &&
+	echo sub1 >subwork/s1.txt &&
+	echo sub2 >subwork/s2.txt &&
+	(
+		cd subwork &&
+		git add .
+	) &&
+	git ls-files --error-unmatch subwork/s1.txt &&
+	git ls-files --error-unmatch subwork/s2.txt
+'
+
+test_expect_success 'add from subdirectory with relative path' '
+	cd repo &&
+	mkdir -p reldir &&
+	echo rel >reldir/rel.txt &&
+	(
+		cd reldir &&
+		git add rel.txt
+	) &&
+	git ls-files --error-unmatch reldir/rel.txt
 '
 
 test_done
