@@ -53,6 +53,7 @@ t5613-info-alternate.sh
 t7700-repack.sh
 t6500-gc.sh
 t4202-log.sh
+t7007-show.sh
 t7501-commit-basic.sh
 t7508-status.sh
 t7004-tag.sh

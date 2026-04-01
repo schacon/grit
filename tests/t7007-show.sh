@@ -61,14 +61,14 @@ test_expect_success 'show --quiet suppresses diff' '
 
 test_expect_success 'show shows blob contents' '
 	cd repo &&
-	BLOB=$(git ls-tree HEAD -- file.txt | awk "{print \$3}") &&
+	BLOB=$(git rev-parse HEAD:file.txt) &&
 	git show "$BLOB" >actual &&
 	grep "first" actual
 '
 
 test_expect_success 'show shows tree listing' '
 	cd repo &&
-	TREE=$(git log --format="%T" -1) &&
+	TREE=$(git rev-parse HEAD^{tree}) &&
 	git show "$TREE" >actual &&
 	grep "file.txt" actual
 '
