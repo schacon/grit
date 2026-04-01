@@ -68,4 +68,32 @@ test_expect_success 'outside repository prints false for --is-inside-work-tree' 
 	test_cmp expect actual
 '
 
+test_expect_success '--is-bare-repository false in non-bare repository' '
+	cd repo &&
+	echo false >expect &&
+	grit rev-parse --is-bare-repository >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--is-inside-git-dir false in work tree' '
+	cd repo &&
+	echo false >expect &&
+	grit rev-parse --is-inside-git-dir >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'outside repository: --is-inside-git-dir prints false' '
+	cd .. &&
+	echo false >expect &&
+	GIT_DIR=does-not-exist grit rev-parse --is-inside-git-dir >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'multiple discovery flags in one invocation' '
+	cd repo &&
+	printf "true\nfalse\n" >expect &&
+	grit rev-parse --is-inside-work-tree --is-bare-repository >actual &&
+	test_cmp expect actual
+'
+
 test_done
