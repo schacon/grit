@@ -76,3 +76,4 @@ t0030-stripspace.sh
 t1402-check-ref-format.sh
 t5524-fmt-merge-msg.sh
 t6403-merge-file.sh
+t6120-name-rev.sh

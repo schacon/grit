@@ -110,6 +110,9 @@ enum Command {
     /// Find best common ancestors.
     #[command(name = "merge-base")]
     MergeBase(commands::merge_base::Args),
+    /// Name commits relative to refs.
+    #[command(name = "name-rev")]
+    NameRev(commands::name_rev::Args),
     /// Run a three-way file merge.
     #[command(name = "merge-file")]
     MergeFile(commands::merge_file::Args),
@@ -220,6 +223,7 @@ fn run() -> Result<()> {
         Command::DiffIndex(args) => commands::diff_index::run(args),
         Command::ForEachRef(args) => commands::for_each_ref::run(args),
         Command::MergeBase(args) => commands::merge_base::run(args),
+        Command::NameRev(args) => commands::name_rev::run(args),
         Command::MergeFile(args) => commands::merge_file::run(args),
         Command::RevList(args) => commands::rev_list::run(args),
         Command::RevParse(args) => commands::rev_parse::run(args),
