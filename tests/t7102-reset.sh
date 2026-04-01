@@ -292,6 +292,126 @@ test_expect_success 'setup repo2 for unmerged-entry test' '
 	git write-tree >../init_tree2
 '
 
+# ---------------------------------------------------------------------------
+# Giving unrecognized options should fail
+# ---------------------------------------------------------------------------
+test_expect_success 'giving unrecognized options should fail' '
+	cd repo &&
+	test_must_fail git reset --other &&
+	test_must_fail git reset --mixed --other &&
+	test_must_fail git reset --soft --other &&
+	test_must_fail git reset --hard --other
+'
+
+# ---------------------------------------------------------------------------
+# No negated form for various types of reset
+# ---------------------------------------------------------------------------
+test_expect_success "no git reset --no-soft" '
+	cd repo &&
+	test_must_fail git reset --no-soft 2>err &&
+	test -s err
+'
+
+test_expect_success "no git reset --no-mixed" '
+	cd repo &&
+	test_must_fail git reset --no-mixed 2>err &&
+	test -s err
+'
+
+test_expect_success "no git reset --no-hard" '
+	cd repo &&
+	test_must_fail git reset --no-hard 2>err &&
+	test -s err
+'
+
+# ---------------------------------------------------------------------------
+# Disambiguation tests
+# ---------------------------------------------------------------------------
+test_expect_success 'disambiguation (1) - reset removes staged new file from cache' '
+	cd repo &&
+	commit4=$(cat ../commit4) &&
+	git reset --hard "$commit4" &&
+	>secondfile &&
+	git add secondfile &&
+	git reset secondfile &&
+	test -z "$(git diff --cached --name-only)" &&
+	test -f secondfile
+'
+
+test_expect_success 'disambiguation (3) - reset HEAD <path> when file deleted' '
+	cd repo &&
+	commit4=$(cat ../commit4) &&
+	git reset --hard "$commit4" &&
+	>secondfile &&
+	git add secondfile &&
+	rm -f secondfile &&
+	git reset HEAD secondfile &&
+	test -z "$(git diff --cached --name-only)" &&
+	test ! -f secondfile
+'
+
+test_expect_success 'disambiguation (4) - reset -- <path> when file deleted' '
+	cd repo &&
+	commit4=$(cat ../commit4) &&
+	git reset --hard "$commit4" &&
+	>secondfile &&
+	git add secondfile &&
+	rm -f secondfile &&
+	git reset -- secondfile &&
+	test -z "$(git diff --cached --name-only)" &&
+	test ! -f secondfile
+'
+
+# ---------------------------------------------------------------------------
+# Resetting an unmodified path is a no-op
+# ---------------------------------------------------------------------------
+test_expect_success 'resetting an unmodified path is a no-op' '
+	cd repo &&
+	commit4=$(cat ../commit4) &&
+	git reset --hard "$commit4" &&
+	git reset -- first &&
+	git diff-files --exit-code &&
+	git diff-index --cached --exit-code HEAD
+'
+
+# ---------------------------------------------------------------------------
+# Test resetting the index at given paths
+# ---------------------------------------------------------------------------
+test_expect_success 'test resetting the index at given paths' '
+	cd repo &&
+	commit4=$(cat ../commit4) &&
+	git reset --hard "$commit4" &&
+	mkdir -p sub &&
+	>sub/file1 &&
+	>sub/file2 &&
+	git update-index --add sub/file1 sub/file2 &&
+	T=$(git write-tree) &&
+	git reset HEAD sub/file2 &&
+	U=$(git write-tree) &&
+	test_must_fail git diff-index --cached --exit-code "$T" &&
+	test "$T" != "$U"
+'
+
+# ---------------------------------------------------------------------------
+# Resetting specific path that is unmerged
+# ---------------------------------------------------------------------------
+test_expect_success 'resetting specific path that is unmerged' '
+	cd repo &&
+	commit4=$(cat ../commit4) &&
+	git reset --hard "$commit4" &&
+	F1=$(git rev-parse HEAD:first) &&
+	F2=$(git rev-parse HEAD:second) &&
+	git rm --cached second &&
+	{
+		echo "100644 $F1 1	second" &&
+		echo "100644 $F2 2	second" &&
+		echo "100644 $F1 3	second"
+	} | git update-index --index-info &&
+	git ls-files -u &&
+	git reset HEAD second &&
+	git diff-index --exit-code --cached HEAD
+'
+
 test_expect_success 'reset --hard restores files from unmerged index state' '
 	cd repo2 &&
 	hello_oid=$(git rev-parse HEAD:hello) &&
@@ -317,6 +437,21 @@ test_expect_success 'reset --hard restores files from unmerged index state' '
 	# Tree must match original
 	new_tree=$(git write-tree) &&
 	test "$new_tree" = "$(cat ../init_tree2)"
+'
+
+# ---------------------------------------------------------------------------
+# --no-merge and --no-keep also fail (additional negated modes)
+# ---------------------------------------------------------------------------
+test_expect_success "no git reset --no-merge" '
+	cd repo &&
+	test_must_fail git reset --no-merge 2>err &&
+	test -s err
+'
+
+test_expect_success "no git reset --no-keep" '
+	cd repo &&
+	test_must_fail git reset --no-keep 2>err &&
+	test -s err
 '
 
 test_done
