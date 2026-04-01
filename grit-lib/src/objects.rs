@@ -60,8 +60,6 @@ impl ObjectId {
         hex::encode(&self.0[..1])
     }
 
-    /// The 38-character suffix used as the filename inside the loose prefix dir.
-    #[must_use]
     /// Parse an object ID from a hex string.
     ///
     /// # Errors

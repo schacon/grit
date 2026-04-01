@@ -216,11 +216,10 @@ fn format_commit(
 
     match format {
         Some(fmt) if fmt.starts_with("format:") || fmt.starts_with("tformat:") => {
-            let template = if fmt.starts_with("format:") {
-                &fmt[7..]
-            } else {
-                &fmt[8..]
-            };
+            let template = fmt
+                .strip_prefix("format:")
+                .or_else(|| fmt.strip_prefix("tformat:"))
+                .unwrap_or("");
             let formatted = apply_format_string(template, oid, info);
             writeln!(out, "{formatted}")?;
         }
