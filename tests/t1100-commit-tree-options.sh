@@ -78,4 +78,81 @@ test_expect_success 'flags and then non flags' '
 	test_cmp childid-3 childid-4
 '
 
+# ---- Wave 5: additional commit-tree tests ----
+
+test_expect_success 'commit-tree with -m flag' '
+	cd repo &&
+	test_tick &&
+	git commit-tree -m "message via -m" $(cat treeid) >commitid-m &&
+	git cat-file commit $(cat commitid-m) >commit-m &&
+	grep "message via -m" commit-m
+'
+
+test_expect_success 'commit-tree with multiple -p parents' '
+	cd repo &&
+	test_tick &&
+	echo "parent 1" | git commit-tree $(cat treeid) >p1 &&
+	echo "parent 2" | git commit-tree $(cat treeid) >p2 &&
+	echo "merge" | git commit-tree $(cat treeid) -p $(cat p1) -p $(cat p2) >merge &&
+	git cat-file commit $(cat merge) >merge-commit &&
+	grep "^parent $(cat p1)" merge-commit &&
+	grep "^parent $(cat p2)" merge-commit
+'
+
+test_expect_success 'commit-tree object is a valid commit' '
+	cd repo &&
+	test_tick &&
+	echo "check type" | git commit-tree $(cat treeid) >oid &&
+	git cat-file -t $(cat oid) >actual &&
+	echo commit >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'commit-tree with -F reads message from file' '
+	cd repo &&
+	test_tick &&
+	echo "message from file" >msg-file &&
+	git commit-tree -F msg-file $(cat treeid) >commitid-f &&
+	git cat-file commit $(cat commitid-f) >commit-f &&
+	grep "message from file" commit-f
+'
+
+test_expect_success 'commit-tree respects GIT_COMMITTER_NAME/EMAIL' '
+	cd repo &&
+	test_tick &&
+	echo "env test" |
+	GIT_COMMITTER_NAME="Custom Committer" \
+	GIT_COMMITTER_EMAIL="custom@example.com" \
+	git commit-tree $(cat treeid) >commitid-env &&
+	git cat-file commit $(cat commitid-env) >commit-env &&
+	grep "committer Custom Committer <custom@example.com>" commit-env
+'
+
+test_expect_success 'commit-tree respects GIT_AUTHOR_NAME/EMAIL' '
+	cd repo &&
+	test_tick &&
+	echo "author env test" |
+	GIT_AUTHOR_NAME="Custom Author" \
+	GIT_AUTHOR_EMAIL="author@custom.com" \
+	git commit-tree $(cat treeid) >commitid-aenv &&
+	git cat-file commit $(cat commitid-aenv) >commit-aenv &&
+	grep "author Custom Author <author@custom.com>" commit-aenv
+'
+
+test_expect_success 'commit-tree with parent has correct parent field' '
+	cd repo &&
+	test_tick &&
+	echo "child" | git commit-tree $(cat treeid) -p $(cat commitid-m) >childid &&
+	git cat-file commit $(cat childid) >child-commit &&
+	grep "^parent $(cat commitid-m)" child-commit
+'
+
+test_expect_success 'commit-tree root commit has no parent' '
+	cd repo &&
+	test_tick &&
+	echo "root" | git commit-tree $(cat treeid) >rootid &&
+	git cat-file commit $(cat rootid) >root-commit &&
+	! grep "^parent" root-commit
+'
+
 test_done

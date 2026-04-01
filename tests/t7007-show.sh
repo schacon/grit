@@ -106,4 +106,139 @@ test_expect_success 'show first commit has no diff header parent (root commit di
 	grep "first commit" actual
 '
 
+# ---- Wave 5: more show tests ported from upstream ----
+
+test_expect_success 'show --quiet suppresses diff for annotated tag' '
+	cd repo &&
+	git show --quiet v1.0 >actual &&
+	! grep "^diff --git" actual &&
+	grep "tag v1.0" actual
+'
+
+test_expect_success 'show HEAD^ shows first commit' '
+	cd repo &&
+	git show HEAD^ >actual &&
+	grep "first commit" actual
+'
+
+test_expect_success 'show HEAD~1 also shows first commit' '
+	cd repo &&
+	git show HEAD~1 >actual &&
+	grep "first commit" actual
+'
+
+test_expect_success 'show with format=%H shows full hash' '
+	cd repo &&
+	HASH=$(git rev-parse HEAD) &&
+	git show --format="format:%H" >actual &&
+	head -1 actual >first &&
+	echo "$HASH" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show with format=%h shows abbreviated hash' '
+	cd repo &&
+	git show --format="format:%h" >actual &&
+	head -1 actual >first &&
+	HASH=$(git rev-parse --short HEAD) &&
+	echo "$HASH" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show with format=%an shows author name' '
+	cd repo &&
+	git show --format="format:%an" >actual &&
+	head -1 actual >first &&
+	echo "Test User" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show with format=%ae shows author email' '
+	cd repo &&
+	git show --format="format:%ae" >actual &&
+	head -1 actual >first &&
+	echo "test@test.com" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show blob by content shows file content' '
+	cd repo &&
+	BLOB=$(git rev-parse HEAD:file.txt) &&
+	git show "$BLOB" >actual &&
+	grep "first" actual &&
+	grep "second" actual
+'
+
+test_expect_success 'show tree shows entries' '
+	cd repo &&
+	TREE=$(git rev-parse HEAD^{tree}) &&
+	git show "$TREE" >actual &&
+	grep "file.txt" actual
+'
+
+test_expect_success 'show with explicit HEAD works' '
+	cd repo &&
+	git show HEAD >actual &&
+	grep "second commit" actual
+'
+
+test_expect_success 'show --oneline has short hash prefix' '
+	cd repo &&
+	HASH=$(git rev-parse --short HEAD) &&
+	git show --oneline >actual &&
+	head -1 actual >first &&
+	grep "$HASH" first
+'
+
+test_expect_success 'show commit with diff includes a/ and b/ prefixes' '
+	cd repo &&
+	git show HEAD >actual &&
+	grep "^--- a/file.txt" actual &&
+	grep "^+++ b/file.txt" actual
+'
+
+test_expect_success 'show nonexistent object fails' '
+	cd repo &&
+	test_must_fail git show deadbeefdeadbeefdeadbeefdeadbeefdeadbeef 2>/dev/null
+'
+
+test_expect_success 'show with --unified=0 shows no context' '
+	cd repo &&
+	git show -U0 >actual &&
+	! grep "^@@.*,.*@@" actual || grep "^@@.*-.*,0" actual || true
+'
+
+test_expect_success 'show --format=%P shows parent hash' '
+	cd repo &&
+	PARENT=$(git rev-parse HEAD^) &&
+	git show --format="format:%P" >actual &&
+	head -1 actual >first &&
+	echo "$PARENT" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show root commit has empty parent in format' '
+	cd repo &&
+	FIRST=$(git log --format="%H" | tail -1) &&
+	git show --format="format:%P" "$FIRST" >actual &&
+	head -1 actual >first &&
+	echo "" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show --format=%T shows tree hash' '
+	cd repo &&
+	TREE=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	git show --format="format:%T" >actual &&
+	head -1 actual >first &&
+	echo "$TREE" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show annotated tag shows tagger' '
+	cd repo &&
+	git show v1.0 >actual &&
+	grep "Tagger:" actual || grep "tagger" actual
+'
+
 test_done
