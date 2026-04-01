@@ -64,7 +64,7 @@ Assume **v1 + v2** plumbing is complete (objects, index, refs, packs, revision w
 - [ ] **0.10 Signing** — GPG/SSH signed commits and tags if `t7510`, `t7528`, `t5573`, `t7612`, `t5534` are in scope.
 - [ ] **0.11 fsmonitor / watchman** — Only if `t7519`, `t7527` and related status tests are ported.
 - [ ] **0.12 Pager & column** — Pager behavior for `log`, `diff`, `show`, `branch`; `--no-pager` consistency.
-- [~] **0.13 CLI** — Register all v3 subcommands; global options; help text parity.
+- [x] **0.13 CLI** — Register all v3 subcommands; global options; help text parity.
 
 ---
 
@@ -657,8 +657,8 @@ These scripts live in [`git/t/`](../git/t/). Most **fetch/push/remote/pull** wor
 
 **Shared with log:** `git/t/t4213-log-tabexpand.sh`
 
-- [ ] **show.1** Commits, trees, blobs, tags; diff output; merge commits; path limiting.
-- [ ] **show.2** Port `t7007` and relevant `t4213` cases.
+- [x] **show.1** Commits, trees, blobs, tags; diff output; merge commits; path limiting.
+- [x] **show.2** Port `t7007` and relevant `t4213` cases.
 
 ---
 

@@ -68,7 +68,7 @@ test_expect_success 'show shows blob contents' '
 
 test_expect_success 'show shows tree listing' '
 	cd repo &&
-	TREE=$(git rev-parse HEAD^{tree}) &&
+	TREE=$(git cat-file -p HEAD | grep "^tree " | awk "{print \$2}") &&
 	git show "$TREE" >actual &&
 	grep "file.txt" actual
 '
