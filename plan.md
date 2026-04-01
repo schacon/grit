@@ -27,7 +27,7 @@ This plan is the **second major version** of Gust: same working method as v1 ([`
 
 Work that spans multiple commands; finish enough of each before the commands that depend on it.
 
-- [ ] **0.1 CLI registration** — Dispatch all twelve v2 subcommands from `gust`; global options (`--git-dir`, `-C`, etc.) as required by ported tests; usage strings aligned with upstream.
+- [x] **0.1 CLI registration** — Dispatch all twelve v2 subcommands from `gust`; global options (`--git-dir`, `-C`, etc.) as required by ported tests; usage strings aligned with upstream.
 - [ ] **0.2 Revision parsing (`rev-parse` core)** — DWIM refs, `^{}`, peel tags, ambiguous object disambiguation behavior, pathspec/`--` boundaries, and plumbing output modes (`--verify`, `--short`, object type/size flags, etc.) as needed by later phases (much of this surfaces in `rev-parse` itself).
 - [ ] **0.3 Reachability and walk** — Commit graph traversal, parent ordering, and primitives shared by `merge-base` and `rev-list` (match `revision.c` / libgit walk semantics for the subset you port).
 - [ ] **0.4 Ignore rules** — `.gitignore`, `.git/info/exclude`, `core.excludesfile`, optional index integration for `--no-index` vs index-aware paths; pattern syntax and precedence aligned with upstream for `check-ignore`.

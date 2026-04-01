@@ -65,6 +65,40 @@ enum Command {
     /// Update the object name stored in a ref safely.
     #[command(name = "update-ref")]
     UpdateRef(commands::update_ref::Args),
+    /// Debug gitignore and exclude rules.
+    #[command(name = "check-ignore")]
+    CheckIgnore(commands::check_ignore::Args),
+    /// Count unpacked objects and disk usage.
+    #[command(name = "count-objects")]
+    CountObjects(commands::count_objects::Args),
+    /// Compare a tree against working tree or index.
+    #[command(name = "diff-index")]
+    DiffIndex(commands::diff_index::Args),
+    /// Output information on refs.
+    #[command(name = "for-each-ref")]
+    ForEachRef(commands::for_each_ref::Args),
+    /// Find best common ancestors.
+    #[command(name = "merge-base")]
+    MergeBase(commands::merge_base::Args),
+    /// List commit objects in reverse chronological order.
+    #[command(name = "rev-list")]
+    RevList(commands::rev_list::Args),
+    /// Pick out and massage revision parameters.
+    #[command(name = "rev-parse")]
+    RevParse(commands::rev_parse::Args),
+    /// List references in a local repository.
+    #[command(name = "show-ref")]
+    ShowRef(commands::show_ref::Args),
+    /// Read, modify, and delete symbolic refs.
+    #[command(name = "symbolic-ref")]
+    SymbolicRef(commands::symbolic_ref::Args),
+    /// Validate packed Git archive files.
+    #[command(name = "verify-pack")]
+    VerifyPack(commands::verify_pack::Args),
+    /// Cleanup unnecessary files and optimize the repository.
+    Gc(commands::gc::Args),
+    /// Pack unpacked objects in a repository.
+    Repack(commands::repack::Args),
 }
 
 fn main() {
@@ -99,5 +133,17 @@ fn run() -> Result<()> {
         Command::CheckoutIndex(args) => commands::checkout_index::run(args),
         Command::CommitTree(args) => commands::commit_tree::run(args),
         Command::UpdateRef(args) => commands::update_ref::run(args),
+        Command::CheckIgnore(args) => commands::check_ignore::run(args),
+        Command::CountObjects(args) => commands::count_objects::run(args),
+        Command::DiffIndex(args) => commands::diff_index::run(args),
+        Command::ForEachRef(args) => commands::for_each_ref::run(args),
+        Command::MergeBase(args) => commands::merge_base::run(args),
+        Command::RevList(args) => commands::rev_list::run(args),
+        Command::RevParse(args) => commands::rev_parse::run(args),
+        Command::ShowRef(args) => commands::show_ref::run(args),
+        Command::SymbolicRef(args) => commands::symbolic_ref::run(args),
+        Command::VerifyPack(args) => commands::verify_pack::run(args),
+        Command::Gc(args) => commands::gc::run(args),
+        Command::Repack(args) => commands::repack::run(args),
     }
 }

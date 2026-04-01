@@ -74,3 +74,24 @@ Last update: 2026-03-31.
 - Update-index / ls-files: `t2107`, `t3004`
 - Ls-tree / quoting: `t3100`, `t3102`, `t3902`
 - Write-tree: `t5000`
+
+---
+
+## Task 0.1 validation (2026-03-31)
+
+### Commands executed
+
+- `cargo fmt` -> PASS
+- `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+- `cargo test --workspace` -> PASS
+
+### Rust workspace totals
+
+- **Result:** PASS
+- **gust** (binary crate): 0 tests run, 0 failed.
+- **gust-lib**: 4 tests run, 4 passed, 0 failed.
+- **Doc-tests** (`gust_lib`): 1 test run, 1 passed, 0 failed.
+
+### Shell harness
+
+- `./tests/harness/run.sh` was not run in this task (scope limited to CLI registration/stubs).
