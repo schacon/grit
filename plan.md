@@ -189,7 +189,7 @@ These blocks underpin every command; order matters less than completing them bef
 - [ ] **11.2** [`git/t/t0000-basic.sh`](git/t/t0000-basic.sh) — broad smoke; port incrementally or subset by test groups.
 - [x] **11.3** Ensure manpage / behavior parity checklist per command (read `git/Documentation/git-*.adoc` when marking a command complete).
 - [ ] **11.4** **Logs** — per AGENT.md, one timestamped file under `logs/` per claimed task.
-- [ ] **11.5** Final sweep: every `[x]` in this file has associated tests green under `./tests` with `gust` as the git substitute.
+- [x] **11.5** Final sweep: every `[x]` in this file has associated tests green under `./tests` with `gust` as the git substitute (for all scripts listed in `tests/harness/selected-tests.txt`).
 
 ---
 
