@@ -52,9 +52,9 @@ This document is the **third major version** of Gust: the **common working (porc
 
 Assume **v1 + v2** plumbing is complete (objects, index, refs, packs, revision walking, etc.).
 
-- [~] **0.1 Config system** — Multi-file config, includes, `includeIf`, `gitdir:` / `onbranch:` conditions, `core.*` keys consumed by porcelain, `submodule.*`, `remote.*`, `branch.*`, `push.*`, `pull.*`, `diff.*`, `merge.*`, `color.*`, `alias.*` as tests require; safe reading during early startup (`t1309`).
-- [~] **0.2 Repository state machine** — `HEAD` detached/attached, unborn branch, worktree cleanness, index vs tree vs worktree (feeds `status`, `diff`, `commit`, `merge`).
-- [ ] **0.3 Diff machinery** — xdiff integration, `--stat`, `--patch`, rename/copy detection, word diff, textconv (if tests demand), color, comparison to empty tree / merge bases (shared by `diff`, `log`, `show`, `merge` conflict display).
+- [x] **0.1 Config system** — Multi-file config, includes, `includeIf`, `gitdir:` / `onbranch:` conditions, `core.*` keys consumed by porcelain, `submodule.*`, `remote.*`, `branch.*`, `push.*`, `pull.*`, `diff.*`, `merge.*`, `color.*`, `alias.*` as tests require; safe reading during early startup (`t1309`).
+- [x] **0.2 Repository state machine** — `HEAD` detached/attached, unborn branch, worktree cleanness, index vs tree vs worktree (feeds `status`, `diff`, `commit`, `merge`).
+- [x] **0.3 Diff machinery** — xdiff integration, `--stat`, `--patch`, rename/copy detection, word diff, textconv (if tests demand), color, comparison to empty tree / merge bases (shared by `diff`, `log`, `show`, `merge` conflict display).
 - [ ] **0.4 Merge engine** — Recursive/Ort strategy, directory rename detection, binary merges, conflict marker generation, `merge-ort` / `merge-recursive` parity for `t640*` / `t760*` (see merge section).
 - [ ] **0.5 Transport layer** — Local, `git://`, HTTP(S) smart/dumb, SSH (as upstream tests use); refspec expansion; shallow/partial clone; pack negotiation; alternates; quarantine; hooks on remote side (`receive-pack`, `pre-receive`, `update`).
 - [ ] **0.6 Credential / askpass** — Only as needed for HTTP/SSH tests.
@@ -64,7 +64,7 @@ Assume **v1 + v2** plumbing is complete (objects, index, refs, packs, revision w
 - [ ] **0.10 Signing** — GPG/SSH signed commits and tags if `t7510`, `t7528`, `t5573`, `t7612`, `t5534` are in scope.
 - [ ] **0.11 fsmonitor / watchman** — Only if `t7519`, `t7527` and related status tests are ported.
 - [ ] **0.12 Pager & column** — Pager behavior for `log`, `diff`, `show`, `branch`; `--no-pager` consistency.
-- [ ] **0.13 CLI** — Register all v3 subcommands; global options; help text parity.
+- [~] **0.13 CLI** — Register all v3 subcommands; global options; help text parity.
 
 ---
 
