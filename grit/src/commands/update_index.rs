@@ -243,9 +243,27 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
 
         let parts: Vec<&str> = meta.split(' ').collect();
 
-        let (mode_str, oid_str) = match parts.len() {
-            2 => (parts[0], parts[1]),
-            3 => (parts[0], parts[2]), // skip type
+        // Accepted formats:
+        //   2 parts: "<mode> <oid>"          (stage 0)
+        //   3 parts: "<mode> <oid> <stage>"  (stage 0-3, conflict entries)
+        //   3 parts: "<mode> <type> <oid>"   (tree object line — skip type)
+        // Disambiguate: if parts[2] is a single decimal digit 0-3 it's a
+        // stage number; otherwise treat parts[1] as type and parts[2] as oid.
+        let (mode_str, oid_str, stage_num): (&str, &str, u8) = match parts.len() {
+            2 => (parts[0], parts[1], 0),
+            3 => {
+                // Is parts[2] a stage number (single digit 0-3)?
+                if let Ok(s) = parts[2].parse::<u8>() {
+                    if s <= 3 {
+                        (parts[0], parts[1], s)
+                    } else {
+                        (parts[0], parts[2], 0)
+                    }
+                } else {
+                    // Treat as "<mode> <type> <oid>" — skip type
+                    (parts[0], parts[2], 0)
+                }
+            }
             _ => bail!("bad --index-info line: '{line}'"),
         };
 
@@ -261,6 +279,10 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
             .parse()
             .with_context(|| format!("invalid oid '{oid_str}'"))?;
 
+        // Encode stage in flags bits [13:12].
+        let path_len = path.len().min(0x0FFF) as u16;
+        let flags = path_len | ((stage_num as u16 & 0x3) << 12);
+
         let entry = IndexEntry {
             ctime_sec: 0,
             ctime_nsec: 0,
@@ -273,7 +295,7 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
             gid: 0,
             size: 0,
             oid,
-            flags: path.len().min(0xFFF) as u16,
+            flags,
             flags_extended: None,
             path,
         };
