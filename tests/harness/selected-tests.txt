@@ -80,3 +80,4 @@ t1800-ls-remote.sh
 t5300-unpack-objects.sh
 t6120-name-rev.sh
 t4204-patch-id.sh
+t1303-wacky-config.sh
