@@ -506,7 +506,7 @@ def generate_html():
 
 <h1><span>Grit</span> — Git in Rust</h1>
 <p class="subtitle">A from-scratch reimplementation of Git in idiomatic, library-oriented Rust.
-  <a href="{GITHUB_BASE}">GitHub</a>
+  <a href="{GITHUB_BASE}">GitHub</a> · <a href="bench.html">Benchmarks</a>
 </p>
 
 <div class="summary">
