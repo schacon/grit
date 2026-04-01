@@ -49,3 +49,25 @@ test_expect_success '--exists with directory reports missing ref' '
 	grep "reference does not exist" err
 '
 
+test_expect_success '--exists with non-existent special ref' '
+	cd repo &&
+	test_must_fail ${git_show_ref_exists} FETCH_HEAD
+'
+
+test_expect_success '--exists with pseudoref (CHERRY_PICK_HEAD)' '
+	cd repo &&
+	oid=$(git rev-parse refs/heads/master) &&
+	git update-ref CHERRY_PICK_HEAD "$oid" &&
+	${git_show_ref_exists} CHERRY_PICK_HEAD
+'
+
+test_expect_success '--exists reports missing for full nonexistent path' '
+	cd repo &&
+	test_must_fail ${git_show_ref_exists} refs/tags/nonexistent 2>err &&
+	grep "reference does not exist" err
+'
+
+test_expect_success '--exists succeeds for refs/heads/master' '
+	cd repo &&
+	${git_show_ref_exists} refs/heads/master
+'

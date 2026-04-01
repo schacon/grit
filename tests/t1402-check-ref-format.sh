@@ -40,6 +40,13 @@ invalid_ref 'heads/foo/'
 invalid_ref '///heads/foo'
 valid_ref '///heads/foo' '--normalize'
 
+# ── slash-only ref (/) ─────────────────────────────────────────────────────
+
+invalid_ref '/'
+invalid_ref '/' '--allow-onelevel'
+invalid_ref '/' '--normalize'
+invalid_ref '/' '--allow-onelevel --normalize'
+
 # ── dot rules ────────────────────────────────────────────────────────────────
 
 invalid_ref './foo'
@@ -149,8 +156,14 @@ test_expect_success "ref name 'foo/*' is valid with --refspec-pattern --allow-on
 test_expect_success "ref name '*/foo' is invalid without --refspec-pattern" '
 	test_must_fail git check-ref-format "*/foo"
 '
+test_expect_success "ref name '*/foo' is invalid with --allow-onelevel" '
+	test_must_fail git check-ref-format --allow-onelevel "*/foo"
+'
 test_expect_success "ref name '*/foo' is valid with --refspec-pattern" '
 	git check-ref-format --refspec-pattern "*/foo"
+'
+test_expect_success "ref name '*/foo' is valid with --refspec-pattern --allow-onelevel" '
+	git check-ref-format --refspec-pattern --allow-onelevel "*/foo"
 '
 test_expect_success "ref name '*/foo' is invalid with --normalize without --refspec-pattern" '
 	test_must_fail git check-ref-format --normalize "*/foo"
@@ -159,10 +172,22 @@ test_expect_success "ref name '*/foo' is valid with --refspec-pattern --normaliz
 	git check-ref-format --refspec-pattern --normalize "*/foo"
 '
 
+test_expect_success "ref name 'foo/*/bar' is invalid without --refspec-pattern" '
+	test_must_fail git check-ref-format foo/*/bar
+'
+test_expect_success "ref name 'foo/*/bar' is invalid with --allow-onelevel without --refspec-pattern" '
+	test_must_fail git check-ref-format --allow-onelevel foo/*/bar
+'
 test_expect_success "ref name 'foo/*/bar' is valid with --refspec-pattern" '
 	git check-ref-format --refspec-pattern foo/*/bar
 '
+test_expect_success "ref name 'foo/*/bar' is valid with --refspec-pattern --allow-onelevel" '
+	git check-ref-format --refspec-pattern --allow-onelevel foo/*/bar
+'
 
+test_expect_success "ref name '*' is invalid with --allow-onelevel" '
+	test_must_fail git check-ref-format --allow-onelevel "*"
+'
 test_expect_success "ref name '*' is invalid with --refspec-pattern alone" '
 	test_must_fail git check-ref-format --refspec-pattern "*"
 '
@@ -173,13 +198,59 @@ test_expect_success "ref name '*' is valid with --refspec-pattern --allow-onelev
 test_expect_success "ref name 'foo/*/*' is invalid with --refspec-pattern" '
 	test_must_fail git check-ref-format --refspec-pattern foo/*/*
 '
+test_expect_success "ref name 'foo/*/*' is invalid with --refspec-pattern --allow-onelevel" '
+	test_must_fail git check-ref-format --refspec-pattern --allow-onelevel foo/*/*
+'
 
 test_expect_success "ref name '*/foo/*' is invalid with --refspec-pattern" '
 	test_must_fail git check-ref-format --refspec-pattern "*/foo/*"
 '
+test_expect_success "ref name '*/foo/*' is invalid with --refspec-pattern --allow-onelevel" '
+	test_must_fail git check-ref-format --refspec-pattern --allow-onelevel "*/foo/*"
+'
 
 test_expect_success "ref name '*/*/foo' is invalid with --refspec-pattern" '
 	test_must_fail git check-ref-format --refspec-pattern "*/*/foo"
+'
+test_expect_success "ref name '*/*/foo' is invalid with --refspec-pattern --allow-onelevel" '
+	test_must_fail git check-ref-format --refspec-pattern --allow-onelevel "*/*/foo"
+'
+
+# ── /foo ref (Linux-only, upstream uses !MINGW prereq) ───────────────────────
+
+test_expect_success "ref name '/foo' is invalid by default" '
+	test_must_fail git check-ref-format /foo
+'
+test_expect_success "ref name '/foo' is invalid with --allow-onelevel" '
+	test_must_fail git check-ref-format --allow-onelevel /foo
+'
+test_expect_success "ref name '/foo' is invalid with --refspec-pattern" '
+	test_must_fail git check-ref-format --refspec-pattern /foo
+'
+test_expect_success "ref name '/foo' is invalid with --refspec-pattern --allow-onelevel" '
+	test_must_fail git check-ref-format --refspec-pattern --allow-onelevel /foo
+'
+test_expect_success "ref name '/foo' is invalid with --normalize" '
+	test_must_fail git check-ref-format --normalize /foo
+'
+test_expect_success "ref name '/foo' is valid with --allow-onelevel --normalize" '
+	git check-ref-format --allow-onelevel --normalize /foo
+'
+test_expect_success "ref name '/foo' is invalid with --refspec-pattern --normalize" '
+	test_must_fail git check-ref-format --refspec-pattern --normalize /foo
+'
+test_expect_success "ref name '/foo' is valid with --refspec-pattern --allow-onelevel --normalize" '
+	git check-ref-format --refspec-pattern --allow-onelevel --normalize /foo
+'
+
+# ── /heads/foo (Linux-only, upstream uses !MINGW prereq) ────────────────────
+
+test_expect_success "ref name '/heads/foo' is invalid by default" '
+	test_must_fail git check-ref-format /heads/foo
+'
+test_expect_success "ref name '/heads/foo' normalizes to heads/foo" '
+	refname=$(git check-ref-format --normalize /heads/foo) &&
+	test "$refname" = heads/foo
 '
 
 # ── normalize output ─────────────────────────────────────────────────────────
@@ -204,6 +275,45 @@ test_expect_success "normalize: 'foo/bar' stays 'foo/bar'" '
 	test "$refname" = foo/bar
 '
 
+test_expect_success "normalize: 'heads/foo' stays 'heads/foo'" '
+	refname=$(git check-ref-format --normalize heads/foo) &&
+	test "$refname" = heads/foo
+'
+
+# ── normalize rejects invalid ────────────────────────────────────────────────
+
+test_expect_success "normalize rejects single-level 'foo'" '
+	test_must_fail git check-ref-format --normalize foo
+'
+
+test_expect_success "normalize rejects 'heads/foo/../bar'" '
+	test_must_fail git check-ref-format --normalize heads/foo/../bar
+'
+
+test_expect_success "normalize rejects 'heads/./foo'" '
+	test_must_fail git check-ref-format --normalize heads/./foo
+'
+
+test_expect_success "normalize rejects backslash 'heads\\foo'" '
+	test_must_fail git check-ref-format --normalize "heads\\foo"
+'
+
+test_expect_success "normalize rejects 'heads/foo.lock'" '
+	test_must_fail git check-ref-format --normalize heads/foo.lock
+'
+
+test_expect_success "normalize rejects 'heads///foo.lock'" '
+	test_must_fail git check-ref-format --normalize "heads///foo.lock"
+'
+
+test_expect_success "normalize rejects 'foo.lock/bar'" '
+	test_must_fail git check-ref-format --normalize foo.lock/bar
+'
+
+test_expect_success "normalize rejects 'foo.lock///bar'" '
+	test_must_fail git check-ref-format --normalize "foo.lock///bar"
+'
+
 # ── --branch mode ────────────────────────────────────────────────────────────
 
 test_expect_success "check-ref-format --branch rejects -nain (starts with dash)" '
@@ -213,6 +323,12 @@ test_expect_success "check-ref-format --branch rejects -nain (starts with dash)"
 test_expect_success "check-ref-format --branch accepts plain branch name" '
 	echo main >expect &&
 	git check-ref-format --branch main >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success "check-ref-format --branch accepts master" '
+	echo master >expect &&
+	git check-ref-format --branch master >actual &&
 	test_cmp expect actual
 '
 
