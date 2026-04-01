@@ -175,7 +175,7 @@
 
 <div class="summary">
   <div class="card green">
-    <div class="number">83</div>
+    <div class="number">84</div>
     <div class="label">Tests Passing</div>
   </div>
   <div class="card">
@@ -183,7 +183,7 @@
     <div class="label">Total Upstream Tests</div>
   </div>
   <div class="card green">
-    <div class="number">8.0%</div>
+    <div class="number">8.1%</div>
     <div class="label">Compatibility</div>
   </div>
   <div class="card">
@@ -193,14 +193,14 @@
 </div>
 
 <div class="progress-bar">
-  <div class="pass" style="width: 8.0%"></div>
-  <div class="ported" style="width: 0.2%"></div>
+  <div class="pass" style="width: 8.1%"></div>
+  <div class="ported" style="width: 0.3%"></div>
 </div>
 
 <div class="legend">
-  <span><span class="dot green"></span> Passing (83)</span>
-  <span><span class="dot yellow"></span> Ported, not in harness (2)</span>
-  <span><span class="dot gray"></span> Not yet ported (956)</span>
+  <span><span class="dot green"></span> Passing (84)</span>
+  <span><span class="dot yellow"></span> Ported, not in harness (3)</span>
+  <span><span class="dot gray"></span> Not yet ported (954)</span>
 </div>
 
 <h2 id="commands">Commands <span class="cmd-count">56/191</span></h2>
@@ -395,8 +395,8 @@
 <div class="filter">
   <input type="text" id="search" placeholder="Filter tests..." oninput="filterTable()">
   <button onclick="filterStatus('all')" class="active" id="btn-all">All (1041)</button>
-  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (83)</button>
-  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (958)</button>
+  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (84)</button>
+  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (957)</button>
 </div>
 
 <table id="tests">
@@ -1627,8 +1627,8 @@
         <td>git</td>
         <td>git dir relative</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t2060-switch.sh">t2060-switch.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/switch.rs">switch</a></td>
         <td>switch basic functionality</td>
@@ -5395,8 +5395,8 @@
         <td>submodule</td>
         <td>bad git dotfiles</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="ported">
+        <td>🔧</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t7500-commit-template-squash-signoff.sh">t7500-commit-template-squash-signoff.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/commit.rs">commit/status</a></td>
         <td>commit template squash signoff</td>
