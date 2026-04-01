@@ -68,6 +68,16 @@ test_expect_success 'written blob exists in database' '
 	grit cat-file "$hello_oid" >/dev/null
 '
 
+test_expect_success 'hash from stdin and write to database (-w --stdin)' '
+	test "$example_oid" = "$(grit hash-object -w --stdin <example)" &&
+	grit cat-file "$example_oid" >/dev/null
+'
+
+test_expect_success 'hash from stdin and write to database (--stdin -w)' '
+	test "$example_oid" = "$(grit hash-object --stdin -w <example)" &&
+	grit cat-file "$example_oid" >/dev/null
+'
+
 test_expect_success '--stdin file1 reads stdin first, then file1' '
 	echo foo >file1 &&
 	obname0=$(echo bar | grit hash-object --stdin) &&
@@ -88,8 +98,19 @@ test_expect_success 'hash two files with names on stdin' '
 	test_cmp expect actual
 '
 
-test_expect_success 'hash two files with names on stdin and write to database' '
+test_expect_success 'hash two files with names on stdin and write to database (--stdin-paths -w)' '
 	printf "hello\nexample" | grit hash-object --stdin-paths -w >actual &&
+	{
+		echo "$hello_oid" &&
+		echo "$example_oid"
+	} >expect &&
+	test_cmp expect actual &&
+	grit cat-file "$hello_oid" >/dev/null &&
+	grit cat-file "$example_oid" >/dev/null
+'
+
+test_expect_success 'hash two files with names on stdin and write to database (-w --stdin-paths)' '
+	printf "hello\nexample" | grit hash-object -w --stdin-paths >actual &&
 	{
 		echo "$hello_oid" &&
 		echo "$example_oid"

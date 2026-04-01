@@ -387,6 +387,27 @@ test_expect_success 'extraHeaderEntry: strict fails, no-strict succeeds' '
 	git mktag --no-strict <tag.sig
 '
 
+test_expect_success 'extraHeaderEntry config: error overrides both modes' '
+	git config fsck.extraHeaderEntry error &&
+	test_must_fail git mktag <tag.sig &&
+	test_must_fail git mktag --no-strict <tag.sig &&
+	git config --unset fsck.extraHeaderEntry
+'
+
+test_expect_success 'extraHeaderEntry config: warn allows no-strict' '
+	git config fsck.extraHeaderEntry warn &&
+	test_must_fail git mktag <tag.sig &&
+	git mktag --no-strict <tag.sig &&
+	git config --unset fsck.extraHeaderEntry
+'
+
+test_expect_success 'extraHeaderEntry config: ignore allows both modes' '
+	git config fsck.extraHeaderEntry ignore &&
+	git mktag <tag.sig &&
+	git mktag --no-strict <tag.sig &&
+	git config --unset fsck.extraHeaderEntry
+'
+
 ###########################################################
 # Extra newlines / body format
 
