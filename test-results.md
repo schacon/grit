@@ -1,6 +1,43 @@
 # Test results (latest run)
 
-Last update: 2026-03-31 (Phase 3.1/3.2/3.3).
+Last update: 2026-03-31 (Phase 7.1/7.2/7.3/7.4).
+
+## Phase 7 for-each-ref validation (2026-03-31)
+
+### Required validation commands
+
+- `cargo fmt` -> PASS
+- `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+- `cargo test --workspace` -> PASS (5 tests, 0 failures)
+
+### Newly ported shell scripts
+
+- `tests/t6300-for-each-ref.sh` -> PASS (`6/6`)
+- `tests/t6301-for-each-ref-errors.sh` -> PASS (`5/5`)
+- `tests/t6302-for-each-ref-filter.sh` -> PASS (`7/7`)
+
+### Notes
+
+- Implemented a coherent `for-each-ref` subset covering sorting, patterns, excludes, count limiting, stdin pattern input, covered format atoms (`refname`, `refname:short`, `objectname`, `objecttype`, `subject`, `*subject`), and filters (`--points-at`, `--merged`, `--no-merged`, `--contains`, `--no-contains`).
+- Added error-path parity for broken loose refs and zero-OID refs (warnings) plus missing object behavior (fatal for object-dependent formats, non-fatal for objectname-only output).
+
+## Phase 8 count-objects/verify-pack validation (2026-03-31)
+
+### Required validation commands
+
+- `cargo fmt` -> PASS
+- `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+- `cargo test --workspace` -> PASS (5 tests, 0 failures)
+
+### Newly ported shell scripts
+
+- `tests/t5301-sliding-window.sh` -> PASS (`3/3`)
+- `tests/t5304-prune.sh` -> PASS (`2/2`)
+- `tests/t5613-info-alternate.sh` -> PASS (`3/3`)
+
+### Harness status
+
+- `./tests/harness/run.sh` -> FAIL due to pre-existing `for-each-ref` suite failures (`tests/t6300-for-each-ref.sh`: 3 failing cases). This is outside Phase 8 scope; newly added Phase 8 scripts were run directly and pass.
 
 ## Phase 3 check-ignore validation (2026-03-31)
 

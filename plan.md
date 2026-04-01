@@ -148,10 +148,10 @@ Representative files to prioritize:
 - [`git/t/t6301-for-each-ref-errors.sh`](../git/t/t6301-for-each-ref-errors.sh)
 - [`git/t/t6302-for-each-ref-filter.sh`](../git/t/t6302-for-each-ref-filter.sh)
 
-- [ ] **7.1** Ref sorting (`--sort`), patterns, `--count`, `--format` atoms matching upstream for covered tests.
-- [ ] **7.2** Filter/query language (`--contains`, `--merged`, `--no-merged`, `--points-at`, etc.) as required by `t630*`.
-- [ ] **7.3** Error handling and stdin/parse edge cases from `t6301`.
-- [ ] **7.4** Port `t6300` / `t6301` / `t6302` (or an agreed subset).
+- [x] **7.1** Ref sorting (`--sort`), patterns, `--count`, `--format` atoms matching upstream for covered tests.
+- [x] **7.2** Filter/query language (`--contains`, `--merged`, `--no-merged`, `--points-at`, etc.) as required by `t630*`.
+- [x] **7.3** Error handling and stdin/parse edge cases from `t6301`.
+- [x] **7.4** Port `t6300` / `t6301` / `t6302` (or an agreed subset).
 
 ---
 
@@ -165,9 +165,9 @@ Representative files to prioritize:
 - [`git/t/t5304-prune.sh`](../git/t/t5304-prune.sh) — uses `count-objects` for loose object counts
 - [`git/t/t5613-info-alternate.sh`](../git/t/t5613-info-alternate.sh) — `count-objects -v` with alternates
 
-- [ ] **8.1** `count-objects`: default summary; `-v` / `--verbose` breakdown (packs, loose, duplicates, alternates) per upstream output format.
-- [ ] **8.2** `verify-pack`: `-v` statistics, object enumeration, corruption detection and exit codes; optional object format flag if tests use it.
-- [ ] **8.3** Port selected scripts; omit multi-pack-index / promisor-only behavior unless those tests are in the v2 list.
+- [x] **8.1** `count-objects`: default summary; `-v` / `--verbose` breakdown (packs, loose, duplicates, alternates) per upstream output format.
+- [x] **8.2** `verify-pack`: `-v` statistics, object enumeration, corruption detection and exit codes; optional object format flag if tests use it.
+- [x] **8.3** Port selected scripts; omit multi-pack-index / promisor-only behavior unless those tests are in the v2 list.
 
 ---
 

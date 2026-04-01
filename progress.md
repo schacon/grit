@@ -7,8 +7,8 @@ Updated when `plan.md` task checkboxes change.
 | Metric | Count |
 |--------|------:|
 | **Total plan tasks** | 43 |
-| **Completed (`[x]`)** | 13 |
-| **Not started (`[ ]`)** | 30 |
+| **Completed (`[x]`)** | 20 |
+| **Not started (`[ ]`)** | 23 |
 | **Claimed (`[~]`)** | 0 |
 
 ## Remaining (`[ ]`)
@@ -28,13 +28,6 @@ Updated when `plan.md` task checkboxes change.
 - **6.2** `diff-index` shared diff options (as required)
 - **6.3** `diff-index` pathspec/stat/index interaction
 - **6.4** Port selected diff-index-heavy scripts
-- **7.1** `for-each-ref` sorting/pattern/format support
-- **7.2** `for-each-ref` filtering options
-- **7.3** `for-each-ref` error and edge-case handling
-- **7.4** Port `t6300` / `t6301` / `t6302`
-- **8.1** `count-objects` default and verbose outputs
-- **8.2** `verify-pack` verification and statistics behavior
-- **8.3** Port selected pack-focused scripts
 - **9.1** `repack` baseline options
 - **9.2** `repack` cruft/geometric/keep-unreachable behavior
 - **9.3** `repack` alternates and pack reuse behavior
@@ -59,3 +52,10 @@ Updated when `plan.md` task checkboxes change.
 - **4.1** `merge-base` operation modes implemented: default, `--all`, `--octopus`, `--independent`, and `--is-ancestor`.
 - **4.2** `merge-base` corner cases implemented: disjoint histories, root ancestry graphs, and repeated commit arguments.
 - **4.3** Ported and passing `tests/t6010-merge-base.sh` subset for merge-base behavior.
+- **8.1** `count-objects` default and `-v` output implemented, including pack totals, prune-packable counting, garbage accounting, and recursive alternate listing.
+- **8.2** `verify-pack` implemented for `.idx`/`.pack` normalization, pack/index validation, `-v` object enumeration, histogram output, and exit-code signaling on bad input.
+- **8.3** Ported and passing `tests/t5301-sliding-window.sh`, `tests/t5304-prune.sh`, and `tests/t5613-info-alternate.sh` subsets.
+- **7.1** `for-each-ref` listing support implemented for `--sort`, patterns, `--exclude`, `--count`, `--stdin`, and covered format atoms.
+- **7.2** `for-each-ref` filtering implemented for `--points-at`, `--merged`/`--no-merged`, and `--contains`/`--no-contains`.
+- **7.3** `for-each-ref` error handling implemented for broken refs, zero-OID refs, and missing object behavior across default vs objectname-only formats.
+- **7.4** Ported and passing `tests/t6300-for-each-ref.sh`, `tests/t6301-for-each-ref-errors.sh`, and `tests/t6302-for-each-ref-filter.sh`.
