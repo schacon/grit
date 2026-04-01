@@ -70,6 +70,9 @@ enum Command {
     /// Create a tree object from the current index.
     #[command(name = "write-tree")]
     WriteTree(commands::write_tree::Args),
+    /// List references in a remote (or local) repository.
+    #[command(name = "ls-remote")]
+    LsRemote(commands::ls_remote::Args),
     /// List the contents of a tree object.
     #[command(name = "ls-tree")]
     LsTree(commands::ls_tree::Args),
@@ -205,6 +208,7 @@ fn run() -> Result<()> {
         Command::Log(args) => commands::log::run(args),
         Command::UpdateIndex(args) => commands::update_index::run(args),
         Command::LsFiles(args) => commands::ls_files::run(args),
+        Command::LsRemote(args) => commands::ls_remote::run(args),
         Command::WriteTree(args) => commands::write_tree::run(args),
         Command::LsTree(args) => commands::ls_tree::run(args),
         Command::Status(args) => commands::status::run(args),
