@@ -90,9 +90,91 @@ pub fn show_prefix(repo: &Repository, cwd: &Path) -> String {
 /// Returns [`Error::ObjectNotFound`] or [`Error::InvalidRef`] when resolution
 /// fails.
 pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    let (base, peel) = parse_peel_suffix(spec);
-    let oid = resolve_base(repo, base)?;
+    let (base_with_nav, peel) = parse_peel_suffix(spec);
+    let (base, nav_steps) = parse_nav_steps(base_with_nav);
+    let mut oid = resolve_base(repo, base)?;
+    for step in nav_steps {
+        oid = apply_nav_step(repo, oid, step)?;
+    }
     apply_peel(repo, oid, peel)
+}
+
+/// A single parent/ancestor navigation step.
+#[derive(Debug, Clone, Copy)]
+enum NavStep {
+    /// `^N` — navigate to the Nth parent (1-indexed; 0 is a no-op).
+    ParentN(usize),
+    /// `~N` — follow the first parent N times.
+    AncestorN(usize),
+}
+
+/// Parse and strip any trailing `^N` / `~N` navigation steps from `spec`.
+///
+/// Returns `(base, steps)` where `steps` are in left-to-right application order.
+fn parse_nav_steps(spec: &str) -> (&str, Vec<NavStep>) {
+    let mut steps = Vec::new();
+    let mut remaining = spec;
+
+    loop {
+        // Try `~<digits>` at the end.
+        if let Some(tilde_pos) = remaining.rfind('~') {
+            let after = &remaining[tilde_pos + 1..];
+            if !after.is_empty() && after.bytes().all(|b| b.is_ascii_digit()) {
+                let n: usize = after.parse().unwrap_or(1);
+                steps.push(NavStep::AncestorN(n));
+                remaining = &remaining[..tilde_pos];
+                continue;
+            }
+        }
+
+        // Try `^<single-digit>` or bare `^` at the end (but not `^{...}`).
+        if let Some(caret_pos) = remaining.rfind('^') {
+            let after = &remaining[caret_pos + 1..];
+            if after.is_empty() {
+                // bare `^` = `^1`
+                steps.push(NavStep::ParentN(1));
+                remaining = &remaining[..caret_pos];
+                continue;
+            }
+            if after.len() == 1 && after.as_bytes()[0].is_ascii_digit() {
+                let n = (after.as_bytes()[0] - b'0') as usize;
+                steps.push(NavStep::ParentN(n));
+                remaining = &remaining[..caret_pos];
+                continue;
+            }
+        }
+
+        break;
+    }
+
+    steps.reverse();
+    (remaining, steps)
+}
+
+/// Apply a single navigation step to an OID, resolving parent/ancestor links.
+fn apply_nav_step(repo: &Repository, oid: ObjectId, step: NavStep) -> Result<ObjectId> {
+    match step {
+        NavStep::ParentN(0) => Ok(oid),
+        NavStep::ParentN(n) => {
+            let obj = repo.odb.read(&oid)?;
+            if obj.kind != ObjectKind::Commit {
+                return Err(Error::InvalidRef(format!("{oid} is not a commit")));
+            }
+            let commit = parse_commit(&obj.data)?;
+            commit
+                .parents
+                .get(n - 1)
+                .copied()
+                .ok_or_else(|| Error::ObjectNotFound(format!("{oid}^{n}")))
+        }
+        NavStep::AncestorN(n) => {
+            let mut current = oid;
+            for _ in 0..n {
+                current = apply_nav_step(repo, current, NavStep::ParentN(1))?;
+            }
+            Ok(current)
+        }
+    }
 }
 
 /// Abbreviate an object ID to a unique prefix.

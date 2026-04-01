@@ -216,8 +216,8 @@ fn format_commit(
 
     match format {
         Some(fmt) if fmt.starts_with("format:") || fmt.starts_with("tformat:") => {
-            let template = if fmt.starts_with("format:") {
-                &fmt[7..]
+            let template = if let Some(t) = fmt.strip_prefix("format:") {
+                t
             } else {
                 &fmt[8..]
             };

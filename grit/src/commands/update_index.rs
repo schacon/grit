@@ -197,16 +197,18 @@ pub fn run(args: Args) -> Result<()> {
                 .with_context(|| format!("cannot read '{}'", abs_path.display()))?
         };
 
-        let oid = if args.add || index.get(&rel_bytes, 0).is_none() {
-            repo.odb
-                .write(grit_lib::objects::ObjectKind::Blob, &data)
-                .context("writing blob")?
-        } else {
-            // Refreshing: keep existing OID but update stat
-            index.get(&rel_bytes, 0).map(|e| e.oid).unwrap_or_else(|| {
-                Odb::hash_object_data(grit_lib::objects::ObjectKind::Blob, &data)
-            })
-        };
+        // Without --add, reject files not yet in the index.
+        if !args.add && index.get(&rel_bytes, 0).is_none() {
+            if args.ignore_missing {
+                continue;
+            }
+            bail!("'{}' is not in the index", input_path.display());
+        }
+
+        let oid = repo
+            .odb
+            .write(grit_lib::objects::ObjectKind::Blob, &data)
+            .context("writing blob")?;
 
         let entry = entry_from_stat(&abs_path, &rel_bytes, oid, mode)
             .with_context(|| format!("stat failed for '{}'", abs_path.display()))?;

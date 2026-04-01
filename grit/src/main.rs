@@ -37,6 +37,13 @@ enum Command {
     Add(commands::add::Args),
     /// List, create, or delete branches.
     Branch(commands::branch::Args),
+    /// Find commits not yet applied upstream.
+    Cherry(commands::cherry::Args),
+    /// Apply the changes introduced by existing commits.
+    #[command(name = "cherry-pick")]
+    CherryPick(commands::cherry_pick::Args),
+    /// Switch branches or restore working tree files.
+    Checkout(commands::checkout::Args),
     /// Create an empty Git repository or reinitialize an existing one.
     Init(commands::init::Args),
     /// Compute object ID and optionally create an object from a file.
@@ -117,6 +124,8 @@ enum Command {
     Show(commands::show::Args),
     /// Remove files from the working tree and from the index.
     Rm(commands::rm::Args),
+    /// Switch branches.
+    Switch(commands::switch::Args),
 }
 
 fn main() {
@@ -142,6 +151,9 @@ fn run() -> Result<()> {
     match cli.command {
         Command::Add(args) => commands::add::run(args),
         Command::Branch(args) => commands::branch::run(args),
+        Command::Cherry(args) => commands::cherry::run(args),
+        Command::CherryPick(args) => commands::cherry_pick::run(args),
+        Command::Checkout(args) => commands::checkout::run(args),
         Command::Init(args) => commands::init::run(args),
         Command::HashObject(args) => commands::hash_object::run(args),
         Command::CatFile(args) => commands::cat_file::run(args),
@@ -172,5 +184,6 @@ fn run() -> Result<()> {
         Command::Tag(args) => commands::tag::run(args),
         Command::Show(args) => commands::show::run(args),
         Command::Rm(args) => commands::rm::run(args),
+        Command::Switch(args) => commands::switch::run(args),
     }
 }
