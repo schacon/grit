@@ -111,6 +111,9 @@ enum Command {
     Gc(commands::gc::Args),
     /// Pack unpacked objects in a repository.
     Repack(commands::repack::Args),
+    /// Read a tag object from stdin, validate strictly, and write to ODB.
+    #[command(name = "mktag")]
+    Mktag(commands::mktag::Args),
     /// Create, list, delete or verify a tag object.
     Tag(commands::tag::Args),
     /// Show various types of objects (commits, trees, blobs, tags).
@@ -169,6 +172,7 @@ fn run() -> Result<()> {
         Command::VerifyPack(args) => commands::verify_pack::run(args),
         Command::Gc(args) => commands::gc::run(args),
         Command::Repack(args) => commands::repack::run(args),
+        Command::Mktag(args) => commands::mktag::run(args),
         Command::Tag(args) => commands::tag::run(args),
         Command::Show(args) => commands::show::run(args),
         Command::Rm(args) => commands::rm::run(args),
