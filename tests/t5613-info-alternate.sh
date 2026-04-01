@@ -23,6 +23,36 @@ test_expect_success 'count-objects shows transitive alternates' '
 	test_cmp expect actual.alternates
 '
 
+test_expect_success 'loop in alternates does not hang' '
+	echo "$(pwd)/B/objects" >>A/objects/info/alternates &&
+	cat >expect <<-EOF &&
+	alternate: $(pwd)/B/objects
+	alternate: $(pwd)/A/objects
+	EOF
+	git -C C count-objects -v >actual &&
+	grep "^alternate:" actual >actual.alternates &&
+	test_cmp expect actual.alternates
+'
+
+test_expect_success 'deep alternate chain is traversed fully' '
+	git init --bare D &&
+	echo "$(pwd)/C/objects" >D/objects/info/alternates &&
+	git init --bare E &&
+	echo "$(pwd)/D/objects" >E/objects/info/alternates &&
+	git init --bare F &&
+	echo "$(pwd)/E/objects" >F/objects/info/alternates &&
+	cat >expect <<-EOF &&
+	alternate: $(pwd)/E/objects
+	alternate: $(pwd)/D/objects
+	alternate: $(pwd)/C/objects
+	alternate: $(pwd)/B/objects
+	alternate: $(pwd)/A/objects
+	EOF
+	git -C F count-objects -v >actual &&
+	grep "^alternate:" actual >actual.alternates &&
+	test_cmp expect actual.alternates
+'
+
 test_expect_success 'relative duplicate alternates are eliminated' '
 	mkdir -p deep/subdir &&
 	git init --bare deep/subdir/duplicate.git &&

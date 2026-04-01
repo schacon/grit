@@ -52,6 +52,20 @@ test_expect_success 'ls-tree recursive with -t' '
 	test_cmp expected check
 '
 
+test_expect_success 'ls-tree recursive' '
+	cd repo &&
+	grit ls-tree -r "$(cat ../tree_oid)" >current &&
+	cat >expected <<-\EOF &&
+	100644 blob X	path0
+	120000 blob X	path1
+	100644 blob X	path2/baz/b
+	120000 blob X	path2/bazbo
+	100644 blob X	path2/foo
+	EOF
+	normalize_output current check &&
+	test_cmp expected check
+'
+
 test_expect_success 'ls-tree filtered with path2' '
 	cd repo &&
 	grit ls-tree "$(cat ../tree_oid)" path2 >current &&
@@ -60,6 +74,29 @@ test_expect_success 'ls-tree filtered with path2' '
 	EOF
 	normalize_output current check &&
 	test_cmp expected check
+'
+
+test_expect_success 'ls-tree filtered with path (no match)' '
+	cd repo &&
+	grit ls-tree "$(cat ../tree_oid)" path >current &&
+	test_must_be_empty current
+'
+
+test_expect_success 'ls-tree filtered with path1 path0' '
+	cd repo &&
+	grit ls-tree "$(cat ../tree_oid)" path1 path0 >current &&
+	cat >expected <<-\EOF &&
+	100644 blob X	path0
+	120000 blob X	path1
+	EOF
+	normalize_output current check &&
+	test_cmp expected check
+'
+
+test_expect_success 'ls-tree filtered with path0/ is empty' '
+	cd repo &&
+	grit ls-tree "$(cat ../tree_oid)" path0/ >current &&
+	test_must_be_empty current
 '
 
 test_done

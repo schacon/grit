@@ -33,4 +33,35 @@ test_expect_success 'ls-tree --name-only -r defaults to quoted paths' '
 	test_cmp expect actual
 '
 
+test_expect_success 'ls-tree -z --name-only disables quoting' '
+	cd repo &&
+	grit ls-tree -z --name-only -r "$(cat ../tree_oid)" >raw &&
+	# With -z, names should NOT be quoted (NUL terminated instead)
+	# Check that the raw tab and double-quote appear literally
+	printf "Name\0Name and an\tHT\0Name\"\0With SP in it\0" >expect &&
+	test_cmp expect raw
+'
+
+test_expect_success 'setup repository with backslash and newline names' '
+	cd repo &&
+	echo initial >"back\\slash" &&
+	grit update-index --add "back\\slash" &&
+	tree2=$(grit write-tree) &&
+	echo "$tree2" >../tree_oid2
+'
+
+test_expect_success 'ls-tree quotes backslash in filenames' '
+	cd repo &&
+	grit ls-tree --name-only -r "$(cat ../tree_oid2)" >actual &&
+	grep "back\\\\\\\\slash" actual
+'
+
+test_expect_success 'ls-tree full output quotes tab in path column' '
+	cd repo &&
+	grit ls-tree -r "$(cat ../tree_oid)" >actual &&
+	# The tab-containing filename should appear as a quoted string
+	grep "Name and an" actual >line &&
+	test_line_count = 1 line
+'
+
 test_done

@@ -216,6 +216,49 @@ test_expect_success 'spaces without newline at end should be replaced with empty
     test_must_be_empty actual
 '
 
+test_expect_success 'text plus spaces without newline at end should not show spaces' '
+    printf "$ttt$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null &&
+    printf "$ttt$ttt$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null &&
+    printf "$ttt$ttt$ttt$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null &&
+    printf "$ttt$sss$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null &&
+    printf "$ttt$ttt$sss$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null &&
+    printf "$ttt$sss$sss$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null
+'
+
+test_expect_success 'text plus spaces at end should not show spaces' '
+    echo "$ttt$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null &&
+    echo "$ttt$ttt$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null &&
+    echo "$ttt$ttt$ttt$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null &&
+    echo "$ttt$sss$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null &&
+    echo "$ttt$ttt$sss$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null &&
+    echo "$ttt$sss$sss$sss" | git stripspace >tmp &&
+    ! grep "  " tmp >/dev/null
+'
+
+test_expect_success 'spaces without newline at end should not show spaces' '
+    printf "" | git stripspace >tmp &&
+    ! grep " " tmp >/dev/null &&
+    printf "$sss" | git stripspace >tmp &&
+    ! grep " " tmp >/dev/null &&
+    printf "$sss$sss" | git stripspace >tmp &&
+    ! grep " " tmp >/dev/null &&
+    printf "$sss$sss$sss" | git stripspace >tmp &&
+    ! grep " " tmp >/dev/null &&
+    printf "$sss$sss$sss$sss" | git stripspace >tmp &&
+    ! grep " " tmp >/dev/null
+'
+
 test_expect_success 'consecutive text lines should be unchanged' '
     printf "$ttt$ttt\n$ttt\n" >expect &&
     printf "$ttt$ttt\n$ttt\n" | git stripspace >actual &&

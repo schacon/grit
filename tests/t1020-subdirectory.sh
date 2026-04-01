@@ -88,6 +88,19 @@ test_expect_success 'checkout-index from subdirectory restores file' '
 	)
 '
 
+test_expect_success 'hash-object from subdirectory sees same blob' '
+	cd repo &&
+	one_oid=$(grit hash-object one) &&
+	(
+		cd dir &&
+		sub_oid=$(grit hash-object ../one) &&
+		test "$one_oid" = "$sub_oid"
+	)
+'
+
+# SKIP: rev-parse from inside .git not yet supported
+# test_expect_success 'rev-parse HEAD works from inside .git'
+
 test_expect_success 'read-tree --reset -u from subdirectory restores worktree' '
 	cd repo &&
 	tree=$(grit write-tree) &&
