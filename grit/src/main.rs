@@ -160,6 +160,9 @@ enum Command {
     Rm(commands::rm::Args),
     /// Move or rename a file, a directory, or a symlink.
     Mv(commands::mv::Args),
+    /// Compute unique IDs for patches.
+    #[command(name = "patch-id")]
+    PatchId(commands::patch_id::Args),
     /// Build a tree object from ls-tree formatted text.
     #[command(name = "mktree")]
     MkTree(commands::mktree::Args),
@@ -248,6 +251,7 @@ fn run() -> Result<()> {
         Command::Show(args) => commands::show::run(args),
         Command::Rm(args) => commands::rm::run(args),
         Command::Mv(args) => commands::mv::run(args),
+        Command::PatchId(args) => commands::patch_id::run(args),
         Command::MkTree(args) => commands::mktree::run(args),
         Command::Var(args) => commands::var::run(args),
         Command::Reset(args) => commands::reset::run(args),

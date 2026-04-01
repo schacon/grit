@@ -6,18 +6,13 @@
 //! produce identical patch-IDs.  This is the semantics required by
 //! `git cherry` and `git format-patch --ignore-if-in-upstream`.
 //!
-//! # Algorithm
+//! Two complementary entry points are provided:
 //!
-//! For each file changed by the commit (sorted lexicographically by path):
-//!
-//! 1. Hash a header: `"diff --git a/<src> b/<dst>\n"` where both paths have
-//!    all ASCII whitespace characters removed.
-//! 2. For each line in the Myers diff between the old and new blob that is an
-//!    addition (`+`) or deletion (`-`): hash every non-whitespace byte of the
-//!    line content (the leading `+`/`-` marker is *not* included).
-//!
-//! Context lines (`=`) are skipped entirely.  Binary files are not supported;
-//! they are treated as empty and produce only a header contribution.
+//! - [`compute_patch_id`] operates on a repository's object database, computing
+//!   the diff from the commit's tree objects.
+//! - [`compute_patch_ids_from_text`] parses unified diff text from stdin (e.g.
+//!   output of `git log -p` or `git diff-tree --patch --stdin`), matching the
+//!   behaviour of `git patch-id`.
 
 use sha1::{Digest, Sha1};
 use similar::{ChangeTag, TextDiff};
@@ -26,6 +21,358 @@ use crate::diff::{diff_trees, zero_oid};
 use crate::error::Result;
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::odb::Odb;
+
+/// How to compute a patch-ID from unified diff text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatchIdMode {
+    /// Accumulate file diffs into one rolling SHA-1; file order affects the
+    /// result.  Compatible with Git 1.9 and older.  This is the default.
+    Unstable,
+    /// Hash each file's diff independently and accumulate results with a
+    /// carry-addition, so file order does not affect the patch-ID.
+    Stable,
+    /// Like [`PatchIdMode::Stable`] but whitespace is not stripped before
+    /// hashing.
+    Verbatim,
+}
+
+/// Compute patch-IDs from unified diff text (e.g. `git log -p` output).
+///
+/// Parses the text line by line.  Each time a `commit <oid>` or
+/// `From <oid> …` marker is found the accumulated hash for the previous patch
+/// is finalised and emitted as `(patch_id, commit_id)`.  Commits with no diff
+/// content (empty patches, merge commits) are silently skipped.
+///
+/// # Parameters
+///
+/// - `input` — raw bytes of the unified diff stream.
+/// - `mode`  — which patch-ID algorithm to use (see [`PatchIdMode`]).
+///
+/// # Returns
+///
+/// A `Vec` of `(patch_id, commit_id)` pairs in the order they were encountered
+/// in the stream.
+pub fn compute_patch_ids_from_text(input: &[u8], mode: PatchIdMode) -> Vec<(ObjectId, ObjectId)> {
+    let stable = mode != PatchIdMode::Unstable;
+    let verbatim = mode == PatchIdMode::Verbatim;
+
+    let mut results: Vec<(ObjectId, ObjectId)> = Vec::new();
+
+    // Current accumulated state for the patch being processed.
+    let mut ctx = Sha1::new();
+    let mut result = [0u8; 20];
+    let mut patchlen: usize = 0;
+    // before/after: -1 = parsing file header, 0 = awaiting @@ hunk, >0 = in hunk
+    let mut before: i32 = -1;
+    let mut after: i32 = -1;
+    let mut diff_is_binary = false;
+    let mut pre_oid_str = String::new();
+    let mut post_oid_str = String::new();
+    let mut current_commit: Option<ObjectId> = None;
+
+    // Iterate lines; we keep the trailing '\n' so remove_space mirrors git's
+    // behaviour (newline counts as whitespace and is stripped).
+    let lines = split_lines_with_nl(input);
+
+    let mut i = 0;
+    while i < lines.len() {
+        let raw = lines[i];
+        i += 1;
+
+        // The line as a &str for prefix checks; non-UTF-8 treated as empty.
+        let line = std::str::from_utf8(raw).unwrap_or("");
+
+        // Try to strip "commit " or "From " prefix to reach a potential OID.
+        let oid_candidate: Option<&str> = if let Some(rest) = line.strip_prefix("commit ") {
+            Some(rest)
+        } else if let Some(rest) = line.strip_prefix("From ") {
+            Some(rest)
+        } else {
+            None
+        };
+
+        if let Some(candidate) = oid_candidate {
+            if let Some(oid) = try_parse_oid_prefix(candidate) {
+                // Finalise the patch we've been accumulating.
+                text_flush_one_hunk(&mut result, &mut ctx);
+                if patchlen > 0 {
+                    if let Some(coid) = current_commit.take() {
+                        if let Ok(pid) = ObjectId::from_bytes(&result) {
+                            results.push((pid, coid));
+                        }
+                    }
+                }
+                // Reset for the new patch.
+                result = [0u8; 20];
+                ctx = Sha1::new();
+                patchlen = 0;
+                before = -1;
+                after = -1;
+                diff_is_binary = false;
+                pre_oid_str.clear();
+                post_oid_str.clear();
+                current_commit = Some(oid);
+                continue;
+            }
+        }
+
+        // "\ No newline at end of file" markers.
+        if line.starts_with("\\ ") && line.len() > 12 {
+            if verbatim {
+                ctx.update(raw);
+                patchlen += raw.len();
+            }
+            continue;
+        }
+
+        // Skip commit metadata before the first diff hunk.
+        if patchlen == 0 && !line.starts_with("diff ") {
+            continue;
+        }
+
+        // Parsing the per-file header (before == -1).
+        if before == -1 {
+            if line.starts_with("GIT binary patch") || line.starts_with("Binary files") {
+                // Binary: only hash the blob OID strings.
+                diff_is_binary = true;
+                before = 0;
+                let pre = pre_oid_str.clone();
+                let post = post_oid_str.clone();
+                ctx.update(pre.as_bytes());
+                ctx.update(post.as_bytes());
+                patchlen += pre.len() + post.len();
+                if stable {
+                    text_flush_one_hunk(&mut result, &mut ctx);
+                }
+                continue;
+            } else if let Some(rest) = line.strip_prefix("index ") {
+                // index <pre>..<post>[  <mode>]
+                if let Some(dd) = rest.find("..") {
+                    pre_oid_str = rest[..dd].to_owned();
+                    let tail = &rest[dd + 2..];
+                    let end = tail
+                        .find(|c: char| c.is_ascii_whitespace())
+                        .unwrap_or_else(|| {
+                            tail.trim_end_matches('\n').trim_end_matches('\r').len()
+                        });
+                    post_oid_str = tail[..end].to_owned();
+                }
+                continue;
+            } else if line.starts_with("--- ") {
+                before = 1;
+                after = 1;
+                // Fall through to hunk-content processing below.
+            } else if !line
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+            {
+                // Non-alpha first char signals end of this patch's diffs.
+                // Re-use the `continue` path; treat as patch boundary.
+                text_flush_one_hunk(&mut result, &mut ctx);
+                if patchlen > 0 {
+                    if let Some(coid) = current_commit.take() {
+                        if let Ok(pid) = ObjectId::from_bytes(&result) {
+                            results.push((pid, coid));
+                        }
+                    }
+                }
+                result = [0u8; 20];
+                ctx = Sha1::new();
+                patchlen = 0;
+                before = -1;
+                after = -1;
+                diff_is_binary = false;
+                continue;
+            }
+        }
+
+        // Skip body of binary diffs; reset on the next `diff ` line.
+        if diff_is_binary {
+            if line.starts_with("diff ") {
+                diff_is_binary = false;
+                before = -1;
+                // Process this `diff ` line as a new file header.
+                i -= 1; // re-process
+            }
+            continue;
+        }
+
+        // Waiting for a hunk header or the next file.
+        if before == 0 && after == 0 {
+            if line.starts_with("@@ -") {
+                let (b, a) = scan_hunk_header(line);
+                before = b;
+                after = a;
+                continue;
+            }
+            if !line.starts_with("diff ") {
+                // End of this file's content; nothing special to do—
+                // if it's a commit boundary the loop head will handle it.
+                continue;
+            }
+            // Another file diff starts; flush per-file hash in stable mode.
+            if stable {
+                text_flush_one_hunk(&mut result, &mut ctx);
+            }
+            before = -1;
+            after = -1;
+            // Re-process this `diff ` line as a new file header.
+            i -= 1;
+            continue;
+        }
+
+        // Inside a hunk — update the line counters.
+        let first = raw.first().copied().unwrap_or(b' ');
+        if first == b'-' || first == b' ' {
+            before -= 1;
+        }
+        if first == b'+' || first == b' ' {
+            after -= 1;
+        }
+
+        // Hash the line, optionally stripping whitespace.
+        let hashed = if verbatim {
+            ctx.update(raw);
+            raw.len()
+        } else {
+            hash_without_whitespace(&mut ctx, raw)
+        };
+        patchlen += hashed;
+    }
+
+    // Flush the final patch.
+    text_flush_one_hunk(&mut result, &mut ctx);
+    if patchlen > 0 {
+        if let Some(coid) = current_commit {
+            if let Ok(pid) = ObjectId::from_bytes(&result) {
+                results.push((pid, coid));
+            }
+        }
+    }
+
+    results
+}
+
+/// Finalise `ctx`, accumulate its digest into `result` with byte-wise
+/// carry-addition (mirrors git's `flush_one_hunk`), and reset `ctx`.
+fn text_flush_one_hunk(result: &mut [u8; 20], ctx: &mut Sha1) {
+    let old = std::mem::replace(ctx, Sha1::new());
+    let hash: [u8; 20] = old.finalize().into();
+    let mut carry: u16 = 0;
+    for i in 0..20 {
+        carry = carry + result[i] as u16 + hash[i] as u16;
+        result[i] = carry as u8;
+        carry >>= 8;
+    }
+}
+
+/// Hash `raw` bytes into `ctx`, skipping ASCII whitespace.
+///
+/// Returns the number of non-whitespace bytes fed to the hasher.
+fn hash_without_whitespace(ctx: &mut Sha1, raw: &[u8]) -> usize {
+    let mut count = 0;
+    for &b in raw {
+        if !b.is_ascii_whitespace() {
+            ctx.update([b]);
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Parse a 40-hex OID at the start of `s`.
+///
+/// Returns `None` if `s` does not start with exactly 40 lowercase hex digits
+/// optionally followed by ASCII whitespace.
+fn try_parse_oid_prefix(s: &str) -> Option<ObjectId> {
+    let s = s.trim_end_matches('\n').trim_end_matches('\r');
+    if s.len() < 40 {
+        return None;
+    }
+    let hex = &s[..40];
+    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    // The character after the OID (if any) must be whitespace or end of string.
+    if s.len() > 40 && !s.as_bytes()[40].is_ascii_whitespace() {
+        return None;
+    }
+    let mut bytes = [0u8; 20];
+    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+        let hi = hex_val(chunk[0])?;
+        let lo = hex_val(chunk[1])?;
+        bytes[i] = (hi << 4) | lo;
+    }
+    ObjectId::from_bytes(&bytes).ok()
+}
+
+/// Convert a single ASCII hex digit to its value.
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Parse the before/after line counts from a `@@ -<old>[,<n>] +<new>[,<m>] @@` header.
+///
+/// Returns `(before, after)` counts, defaulting to 1 when the count is absent.
+fn scan_hunk_header(line: &str) -> (i32, i32) {
+    // line starts with "@@ -"
+    let rest = match line.strip_prefix("@@ -") {
+        Some(r) => r,
+        None => return (1, 1),
+    };
+    // Parse old count: skip start line number, grab optional comma + count.
+    let before = parse_hunk_count(rest);
+    // Find " +" separator.
+    let after = rest
+        .find(" +")
+        .and_then(|p| parse_hunk_count_opt(&rest[p + 2..]))
+        .unwrap_or(1);
+    (before, after)
+}
+
+/// Parse `<start>[,<count>]` and return `count` (or 1 if absent).
+fn parse_hunk_count(s: &str) -> i32 {
+    // Skip digits of the start line number.
+    let after_start = s.trim_start_matches(|c: char| c.is_ascii_digit());
+    if let Some(rest) = after_start.strip_prefix(',') {
+        rest.split(|c: char| !c.is_ascii_digit())
+            .next()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(1)
+    } else {
+        1
+    }
+}
+
+/// Same as [`parse_hunk_count`] but returns `Option`.
+fn parse_hunk_count_opt(s: &str) -> Option<i32> {
+    Some(parse_hunk_count(s))
+}
+
+/// Split `input` into lines, preserving the trailing `\n` on each line.
+///
+/// The final slice may lack a trailing newline if the input doesn't end with
+/// one.
+fn split_lines_with_nl(input: &[u8]) -> Vec<&[u8]> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (i, &b) in input.iter().enumerate() {
+        if b == b'\n' {
+            lines.push(&input[start..=i]);
+            start = i + 1;
+        }
+    }
+    if start < input.len() {
+        lines.push(&input[start..]);
+    }
+    lines
+}
 
 /// Compute the patch-ID for a single commit.
 ///
