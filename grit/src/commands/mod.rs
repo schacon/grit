@@ -50,6 +50,7 @@ pub mod switch;
 pub mod symbolic_ref;
 pub mod tag;
 pub mod unpack_file;
+pub mod unpack_objects;
 pub mod update_index;
 pub mod update_ref;
 pub mod var;
