@@ -238,4 +238,87 @@ test_expect_success 'diff-tree with pathspec excludes non-matching files' '
 	test_must_be_empty out
 '
 
+# ---------------------------------------------------------------------------
+# Additional tests ported from git/t/t4011-diff-tree.sh patterns
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree --no-commit-id suppresses commit line in single-commit mode' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree --no-commit-id "$c2" >out &&
+	! head -1 out | grep "^[0-9a-f]\{40\}$"
+'
+
+test_expect_success 'diff-tree two commits shows changes between them' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	c2=$(cat ../commit2) &&
+	git diff-tree "$c1" "$c2" >out &&
+	grep "M" out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff-tree identical trees produces no output' '
+	cd repo &&
+	t1=$(cat ../tree1) &&
+	git diff-tree "$t1" "$t1" >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff-tree -r on nested adds shows full paths' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	c3=$(cat ../commit3) &&
+	git diff-tree -r "$c2" "$c3" >out &&
+	grep "A" out &&
+	grep "sub/nested.txt" out
+'
+
+test_expect_success 'diff-tree --name-only on two commits' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	c2=$(cat ../commit2) &&
+	git diff-tree --name-only "$c1" "$c2" >out &&
+	grep "^file.txt$" out
+'
+
+test_expect_success 'diff-tree --name-status on two commits' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	c2=$(cat ../commit2) &&
+	git diff-tree --name-status "$c1" "$c2" >out &&
+	grep "^M" out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff-tree --stat on two commits' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	c2=$(cat ../commit2) &&
+	git diff-tree --stat "$c1" "$c2" >out &&
+	grep "file.txt" out &&
+	grep "changed" out
+'
+
+test_expect_success 'diff-tree -p shows proper hunk headers' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree -r -p "$c2" >out &&
+	grep "^@@" out
+'
+
+test_expect_success 'diff-tree --root on non-root commit still shows parent diff' '
+	cd repo &&
+	c3=$(cat ../commit3) &&
+	git diff-tree -r --root "$c3" >out &&
+	grep "sub/nested.txt" out
+'
+
+test_expect_success 'diff-tree --root shows A status for root commit' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	git diff-tree -r --root "$c1" >out &&
+	grep "^:000000" out
+'
+
 test_done
