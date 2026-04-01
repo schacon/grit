@@ -15,9 +15,11 @@
 //! - [`ignore`] — ignore/exclude pattern matching for check-ignore
 //! - [`refs`] — reference storage (files backend)
 
+pub mod check_ref_format;
 pub mod config;
 pub mod diff;
 pub mod error;
+pub mod fmt_merge_msg;
 pub mod ignore;
 pub mod index;
 pub mod merge_base;

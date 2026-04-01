@@ -1,0 +1,100 @@
+#!/bin/sh
+# Tests for 'grit fmt-merge-msg'.
+# Ported from git/t/t5524-pull-msg.sh (FETCH_HEAD message formatting subset).
+#
+# Note: tests that require shortlog body generation (--log) or GPG-signed
+# objects are not yet ported — those depend on commit history traversal
+# not implemented in this pass.
+
+test_description='grit fmt-merge-msg: produce a merge commit message'
+
+cd "$(dirname "$0")" || exit 1
+. ./test-lib.sh
+
+# ── empty input ───────────────────────────────────────────────────────────────
+
+test_expect_success 'empty input produces empty output' '
+	: | git fmt-merge-msg >actual &&
+	test_must_be_empty actual
+'
+
+# ── not-for-merge lines are ignored ──────────────────────────────────────────
+
+test_expect_success 'not-for-merge entries are ignored' '
+	printf "abc123\tnot-for-merge\tbranch '"'"'old'"'"' of https://x.com\n" |
+	git fmt-merge-msg >actual &&
+	test_must_be_empty actual
+'
+
+# ── single branch (local) ─────────────────────────────────────────────────────
+
+test_expect_success 'single local branch produces Merge branch title' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branch '"'"'feature'"'"'" actual
+'
+
+# ── single branch from remote ────────────────────────────────────────────────
+
+test_expect_success 'single remote branch includes URL' '
+	printf "abc123\t\tbranch '"'"'main'"'"' of https://example.com/repo\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branch '"'"'main'"'"'" actual &&
+	grep -q "of https://example.com/repo" actual
+'
+
+# ── multiple branches ────────────────────────────────────────────────────────
+
+test_expect_success 'multiple branches uses plural form' '
+	printf "a1\t\tbranch '"'"'foo'"'"'\nb2\t\tbranch '"'"'bar'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branches" actual
+'
+
+# ── -m / --message overrides title ───────────────────────────────────────────
+
+test_expect_success '-m overrides the auto-generated title' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg -m "Custom merge message" >actual &&
+	grep -q "Custom merge message" actual
+'
+
+test_expect_success '--message overrides the auto-generated title' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --message "Custom merge message" >actual &&
+	grep -q "Custom merge message" actual
+'
+
+# ── -F / --file reads from file ───────────────────────────────────────────────
+
+test_expect_success '-F reads merge info from a file' '
+	printf "abc123\t\tbranch '"'"'topic'"'"'\n" >fetch_head_file &&
+	git fmt-merge-msg -F fetch_head_file >actual &&
+	grep -q "branch '"'"'topic'"'"'" actual
+'
+
+test_expect_success '--file reads merge info from a file' '
+	printf "abc123\t\tbranch '"'"'topic'"'"'\n" >fetch_head_file2 &&
+	git fmt-merge-msg --file fetch_head_file2 >actual &&
+	grep -q "branch '"'"'topic'"'"'" actual
+'
+
+# ── tag merging ───────────────────────────────────────────────────────────────
+
+test_expect_success 'tag entry produces tag title' '
+	printf "abc123\t\ttag '"'"'v1.0'"'"' of https://example.com\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "tag" actual
+'
+
+# ── output has trailing newline ───────────────────────────────────────────────
+
+test_expect_success 'output ends with a newline' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	test -s actual &&
+	# The last byte should be a newline (od shows 012 = 0x0a).
+	tail -c1 actual | od -An -tx1 | grep -q 0a
+'
+
+test_done

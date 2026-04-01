@@ -73,3 +73,5 @@ t3500-cherry.sh
 t1051-unpack-file.sh
 t5302-show-index.sh
 t0030-stripspace.sh
+t1402-check-ref-format.sh
+t5524-fmt-merge-msg.sh

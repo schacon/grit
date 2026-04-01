@@ -42,6 +42,9 @@ enum Command {
     /// Apply the changes introduced by existing commits.
     #[command(name = "cherry-pick")]
     CherryPick(commands::cherry_pick::Args),
+    /// Verify that a ref name is valid.
+    #[command(name = "check-ref-format")]
+    CheckRefFormat(commands::check_ref_format::Args),
     /// Switch branches or restore working tree files.
     Checkout(commands::checkout::Args),
     /// Create an empty Git repository or reinitialize an existing one.
@@ -125,6 +128,9 @@ enum Command {
     /// Validate packed Git archive files.
     #[command(name = "verify-pack")]
     VerifyPack(commands::verify_pack::Args),
+    /// Produce a merge commit message.
+    #[command(name = "fmt-merge-msg")]
+    FmtMergeMsg(commands::fmt_merge_msg::Args),
     /// Cleanup unnecessary files and optimize the repository.
     Gc(commands::gc::Args),
     /// Pack unpacked objects in a repository.
@@ -186,6 +192,7 @@ fn run() -> Result<()> {
         Command::Branch(args) => commands::branch::run(args),
         Command::Cherry(args) => commands::cherry::run(args),
         Command::CherryPick(args) => commands::cherry_pick::run(args),
+        Command::CheckRefFormat(args) => commands::check_ref_format::run(args),
         Command::Checkout(args) => commands::checkout::run(args),
         Command::Init(args) => commands::init::run(args),
         Command::HashObject(args) => commands::hash_object::run(args),
@@ -216,6 +223,7 @@ fn run() -> Result<()> {
         Command::ShowRef(args) => commands::show_ref::run(args),
         Command::SymbolicRef(args) => commands::symbolic_ref::run(args),
         Command::VerifyPack(args) => commands::verify_pack::run(args),
+        Command::FmtMergeMsg(args) => commands::fmt_merge_msg::run(args),
         Command::Gc(args) => commands::gc::run(args),
         Command::Repack(args) => commands::repack::run(args),
         Command::Mktag(args) => commands::mktag::run(args),
