@@ -136,5 +136,7 @@ The Git-compatible engine should live in a **library crate** (`gust-lib`); the *
 
 ## Committing and Version Control
 
-- Commit after every subagent stop with a description of what that subagent worked on. Use simple Git commands to commit to the 'main' branch.
+- **Do not use GitButler** (`but`) or GitButler MCP for this project. Use plain **`git`** on branch **`main`** only.
+- Commit after every subagent completes its scoped task: stage the files that subagent changed, write a clear message describing that work, then `git commit`.
+- **After every successful commit** that concludes a subagent handoff, run **`git push origin main`** so the remote stays backed up (skip only if `origin` is missing or push is impossible—then say so in the log).
 - Before committing, always run `cargo fmt` and `cargo clippy --fix --allow-dirty` and ensure no warnings remain.
