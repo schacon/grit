@@ -148,6 +148,9 @@ enum Command {
     Reset(commands::reset::Args),
     /// Switch branches.
     Switch(commands::switch::Args),
+    /// Write a blob object to a temporary file and print its path.
+    #[command(name = "unpack-file")]
+    UnpackFile(commands::unpack_file::Args),
 }
 
 fn main() {
@@ -216,5 +219,6 @@ fn run() -> Result<()> {
         Command::Var(args) => commands::var::run(args),
         Command::Reset(args) => commands::reset::run(args),
         Command::Switch(args) => commands::switch::run(args),
+        Command::UnpackFile(args) => commands::unpack_file::run(args),
     }
 }

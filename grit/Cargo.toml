@@ -17,3 +17,4 @@ grit-lib = { path = "../grit-lib" }
 anyhow.workspace = true
 clap.workspace = true
 time.workspace = true
+tempfile.workspace = true
