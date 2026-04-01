@@ -36,7 +36,7 @@ test_expect_success 'setup repository with two commits' '
 	cd repo &&
 	head1=$(doit 1 "added foo") &&
 	head2=$(doit 2 "changed foo" "$head1") &&
-	git update-ref refs/heads/main "$head2" &&
+	git update-ref refs/heads/master "$head2" &&
 	echo "$head1" >head1 &&
 	echo "$head2" >head2
 '
@@ -51,7 +51,7 @@ test_expect_success '--format=%s includes commit headers' '
 	commit $head1
 	added foo
 	EOF
-	git rev-list --format=%s refs/heads/main >actual &&
+	git rev-list --format=%s refs/heads/master >actual &&
 	test_cmp expect actual
 '
 
@@ -63,16 +63,131 @@ test_expect_success '--format supports %H and %h' '
 	commit $head2
 	$head2 $short2
 	EOF
-	git rev-list --abbrev=4 --max-count=1 --format="%H %h" refs/heads/main >actual &&
+	git rev-list --abbrev=4 --max-count=1 --format="%H %h" refs/heads/master >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success '--quiet suppresses output' '
 	cd repo &&
-	git rev-list --quiet refs/heads/main >actual &&
+	git rev-list --quiet refs/heads/master >actual &&
 	test_path_is_file actual &&
 	lines=$(wc -c <actual | tr -d " ") &&
 	test "$lines" = "0"
+'
+
+test_expect_success 'percent literal %%' '
+	cd repo &&
+	head2=$(cat head2) &&
+	cat >expect <<-EOF &&
+	commit $head2
+	%h
+	EOF
+	git rev-list --max-count=1 --format="%%h" refs/heads/master >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--format %H alone' '
+	cd repo &&
+	head1=$(cat head1) &&
+	head2=$(cat head2) &&
+	cat >expect <<-EOF &&
+	commit $head2
+	$head2
+	commit $head1
+	$head1
+	EOF
+	git rev-list --format=%H refs/heads/master >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--format %h with default abbreviation' '
+	cd repo &&
+	head2=$(cat head2) &&
+	short2=$(git rev-parse --short "$head2") &&
+	git rev-list --max-count=1 --format="%h" refs/heads/master >actual &&
+	# Extract the formatted line (second line)
+	sed -n 2p actual >hash_line &&
+	echo "$short2" >expect &&
+	test_cmp expect hash_line
+'
+
+test_expect_success '--format with multiple specifiers' '
+	cd repo &&
+	head2=$(cat head2) &&
+	short2=$(git rev-parse --short=4 "$head2") &&
+	cat >expect <<-EOF &&
+	commit $head2
+	hash=$head2 short=$short2 subject=changed foo
+	EOF
+	git rev-list --abbrev=4 --max-count=1 --format="hash=%H short=%h subject=%s" refs/heads/master >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--format with literal text only' '
+	cd repo &&
+	head2=$(cat head2) &&
+	head1=$(cat head1) &&
+	cat >expect <<-EOF &&
+	commit $head2
+	hello world
+	commit $head1
+	hello world
+	EOF
+	git rev-list --format="hello world" refs/heads/master >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'setup third commit' '
+	cd repo &&
+	head2=$(cat head2) &&
+	head3=$(doit 3 "third commit" "$head2") &&
+	git update-ref refs/heads/master "$head3" &&
+	echo "$head3" >head3
+'
+
+test_expect_success '--format %s with three commits' '
+	cd repo &&
+	head1=$(cat head1) &&
+	head2=$(cat head2) &&
+	head3=$(cat head3) &&
+	cat >expect <<-EOF &&
+	commit $head3
+	third commit
+	commit $head2
+	changed foo
+	commit $head1
+	added foo
+	EOF
+	git rev-list --format=%s refs/heads/master >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--max-count=1 with --format shows only one' '
+	cd repo &&
+	head3=$(cat head3) &&
+	cat >expect <<-EOF &&
+	commit $head3
+	third commit
+	EOF
+	git rev-list --max-count=1 --format=%s refs/heads/master >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--format with empty string' '
+	cd repo &&
+	head3=$(cat head3) &&
+	head2=$(cat head2) &&
+	head1=$(cat head1) &&
+	cat >expect <<-EOF &&
+	commit $head3
+
+	commit $head2
+
+	commit $head1
+
+	EOF
+	git rev-list --format="" refs/heads/master >actual &&
+	test_cmp expect actual
 '
 
 test_done

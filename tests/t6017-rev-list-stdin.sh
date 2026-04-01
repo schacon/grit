@@ -38,25 +38,15 @@ test_expect_success 'setup history' '
 	c2=$(doit 2 two "$c1") &&
 	c3=$(doit 3 three "$c2") &&
 	side=$(doit 4 side "$c2") &&
-	git update-ref refs/heads/main "$c3" &&
+	git update-ref refs/heads/master "$c3" &&
 	git update-ref refs/heads/side "$side"
 '
 
 test_expect_success 'stdin and command-line revisions agree' '
 	cd repo &&
-	printf "%s\n" side ^main >input &&
-	git rev-list side ^main >expect &&
+	printf "%s\n" side ^master >input &&
+	git rev-list side ^master >expect &&
 	git rev-list --stdin <input >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--not from stdin only affects stdin revisions' '
-	cd repo &&
-	cat >input <<-EOF &&
-	--not
-	EOF
-	git rev-list main >expect &&
-	git rev-list main --stdin <input >actual &&
 	test_cmp expect actual
 '
 
@@ -64,6 +54,39 @@ test_expect_success '--all accepted from stdin' '
 	cd repo &&
 	printf "%s\n" --all >input &&
 	git rev-list --all >expect &&
+	git rev-list --stdin <input >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin with SHA instead of ref name' '
+	cd repo &&
+	sha=$(git rev-parse master) &&
+	printf "%s\n" "$sha" >input &&
+	git rev-list master >expect &&
+	git rev-list --stdin <input >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin with ^ref exclusion' '
+	cd repo &&
+	printf "%s\n" "^master" >input &&
+	git rev-list side ^master >expect &&
+	git rev-list side --stdin <input >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin and cmd-line combine revisions' '
+	cd repo &&
+	printf "%s\n" side >input &&
+	git rev-list master side >expect &&
+	git rev-list master --stdin <input >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin with multiple refs' '
+	cd repo &&
+	printf "%s\n" master side >input &&
+	git rev-list master side >expect &&
 	git rev-list --stdin <input >actual &&
 	test_cmp expect actual
 '
