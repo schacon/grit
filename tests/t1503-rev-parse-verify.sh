@@ -144,4 +144,60 @@ test_expect_success '--short=4 outputs minimum 4-character abbreviated hash' '
 	test "$(wc -c <actual)" -le 41
 '
 
+test_expect_success 'works with one good rev (full hash)' '
+	cd repo &&
+	commit1=$(cat commit1.out) &&
+	commit2=$(cat commit2.out) &&
+	rev_hash1=$(grit rev-parse --verify $commit1) &&
+	test "$rev_hash1" = "$commit1" &&
+	rev_hash2=$(grit rev-parse --verify $commit2) &&
+	test "$rev_hash2" = "$commit2"
+'
+
+test_expect_success 'fails with baz HEAD (bad before good)' '
+	cd repo &&
+	test_must_fail grit rev-parse --verify baz HEAD 2>err &&
+	grep "single revision" err
+'
+
+test_expect_success 'fails with HASH2 HEAD (two good revs)' '
+	cd repo &&
+	commit1=$(cat commit1.out) &&
+	test_must_fail grit rev-parse --verify $commit1 HEAD 2>err &&
+	grep "single revision" err
+'
+
+test_expect_success 'options can appear after --verify' '
+	cd repo &&
+	grit rev-parse --verify HEAD >expect &&
+	grit rev-parse --verify -q HEAD >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--default with explicit revision uses explicit' '
+	cd repo &&
+	commit2=$(cat commit2.out) &&
+	grit rev-parse --verify --default main HEAD >actual &&
+	echo "$commit2" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--default without argument uses default' '
+	cd repo &&
+	commit2=$(cat commit2.out) &&
+	grit rev-parse --default main --verify >actual &&
+	echo "$commit2" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--default with bad default fails' '
+	cd repo &&
+	test_must_fail grit rev-parse --default foo --verify 2>err
+'
+
+test_expect_success 'verify --default with bad explicit fails' '
+	cd repo &&
+	test_must_fail grit rev-parse --verify foo --default main
+'
+
 test_done

@@ -96,4 +96,92 @@ test_expect_success 'multiple discovery flags in one invocation' '
 	test_cmp expect actual
 '
 
+test_expect_success 'inside .git directory: --is-inside-git-dir is true' '
+	cd repo/.git &&
+	echo true >expect &&
+	grit rev-parse --is-inside-git-dir >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'inside .git directory: --is-inside-work-tree is false' '
+	cd repo/.git &&
+	echo false >expect &&
+	grit rev-parse --is-inside-work-tree >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'inside .git directory: --git-dir is .' '
+	cd repo/.git &&
+	echo . >expect &&
+	grit rev-parse --git-dir >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'inside .git/objects: --is-inside-git-dir is true' '
+	cd repo/.git/objects &&
+	echo true >expect &&
+	grit rev-parse --is-inside-git-dir >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'inside .git/objects: --git-dir reports parent' '
+	cd repo/.git/objects &&
+	grit rev-parse --git-dir >actual &&
+	test "$(cat actual)" = ".." ||
+	test "$(cat actual)" = "$(cd .. && pwd)"
+'
+
+test_expect_success '--show-toplevel from inside .git fails' '
+	cd repo/.git &&
+	test_must_fail grit rev-parse --show-toplevel
+'
+
+test_expect_success '--show-toplevel from subdirectory' '
+	cd repo &&
+	pwd >expect &&
+	grit -C sub/dir rev-parse --show-toplevel >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--short=100 truncates to actual hash length' '
+	cd repo &&
+	grit config user.email "test@test.com" &&
+	grit config user.name "Test" &&
+	echo hello >commitfile &&
+	grit add commitfile &&
+	grit commit -m "for short test" &&
+	grit rev-parse HEAD >expect &&
+	grit rev-parse --short=100 HEAD >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'bare repository: --is-bare-repository is true' '
+	grit init --bare bare-repo &&
+	cd bare-repo &&
+	echo true >expect &&
+	grit rev-parse --is-bare-repository >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'bare repository: --is-inside-work-tree is false' '
+	cd bare-repo &&
+	echo false >expect &&
+	grit rev-parse --is-inside-work-tree >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'bare repository: --is-inside-git-dir is true' '
+	cd bare-repo &&
+	echo true >expect &&
+	grit rev-parse --is-inside-git-dir >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'bare repository: --git-dir is .' '
+	cd bare-repo &&
+	echo . >expect &&
+	grit rev-parse --git-dir >actual &&
+	test_cmp expect actual
+'
+
 test_done
