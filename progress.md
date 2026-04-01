@@ -7,8 +7,8 @@ Updated when `plan.md` task checkboxes change.
 | Metric | Count |
 |--------|------:|
 | **Total plan tasks** | 43 |
-| **Completed (`[x]`)** | 1 |
-| **Not started (`[ ]`)** | 42 |
+| **Completed (`[x]`)** | 7 |
+| **Not started (`[ ]`)** | 36 |
 | **Claimed (`[~]`)** | 0 |
 
 ## Remaining (`[ ]`)
@@ -18,13 +18,7 @@ Updated when `plan.md` task checkboxes change.
 - **0.4 Ignore rules**
 - **0.5 Packfiles**
 - **0.6 Pack writing / maintenance hooks**
-- **1.1** `rev-parse` repository/non-repository discovery modes
-- **1.2** `rev-parse` object and revision parsing semantics
 - **1.3** `rev-parse` quoted path / pathspec behavior
-- **1.4** Port selected `t150*` / `t6101` rev-parse scripts
-- **2.1** `symbolic-ref` behavior and errors
-- **2.2** `show-ref` listing/filtering/exit semantics
-- **2.3** Port `t1401` / `t1403` / `t1422`
 - **3.1** `check-ignore` argument and mode coverage
 - **3.2** `check-ignore` index/exclude interaction semantics
 - **3.3** Port relevant `t0008-ignores.sh` coverage
@@ -59,3 +53,9 @@ Updated when `plan.md` task checkboxes change.
 ## Completed (reference)
 
 - **0.1** CLI registration for all v2 command entrypoints with compile-safe stubs.
+- **1.1** `rev-parse` repository/non-repository discovery modes (`--is-inside-work-tree`, `--show-toplevel`, `--git-dir`, `--show-prefix`) implemented and validated with `t1500` subset.
+- **1.2** `rev-parse` revision/object parsing in scope (`--verify`, `--default`, `--short`, `--end-of-options`, full/abbrev OIDs, `^{}`/`^{commit}` peeling) implemented and validated with `t1503` subset.
+- **1.4** Ported rev-parse scripts: `tests/t1500-rev-parse.sh` and `tests/t1503-rev-parse-verify.sh`.
+- **2.1** `symbolic-ref` read/create/delete support with target validation and quiet non-symbolic exit behavior.
+- **2.2** `show-ref` pattern listing, `--branches`/`--tags`, `--verify`, `--exists`, `--dereference`, and `--hash`.
+- **2.3** Ported and passing `tests/t1401-symbolic-ref.sh`, `tests/t1403-show-ref.sh`, and `tests/t1422-show-ref-exists.sh`.

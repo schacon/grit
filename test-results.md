@@ -1,6 +1,34 @@
 # Test results (latest run)
 
-Last update: 2026-03-31.
+Last update: 2026-03-31 (Phase 2.1/2.2/2.3).
+
+## Phase 2 symbolic-ref/show-ref validation (2026-03-31)
+
+### Required validation commands
+
+- `cargo fmt` -> PASS
+- `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+- `cargo test --workspace` -> PASS (5 tests, 0 failures)
+
+### Newly ported shell scripts
+
+- `tests/t1401-symbolic-ref.sh` -> PASS (10/10)
+- `tests/t1403-show-ref.sh` -> PASS (7/7)
+- `tests/t1422-show-ref-exists.sh` -> PASS (8/8)
+
+## Rev-parse task validation (2026-03-31)
+
+### Commands executed
+
+- `cargo fmt` -> PASS
+- `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+- `cargo test --workspace` -> PASS
+- `GUST_BIN=target/debug/gust TEST_VERBOSE=1 sh tests/t1500-rev-parse.sh` -> PASS (`8/8`)
+- `GUST_BIN=target/debug/gust TEST_VERBOSE=1 sh tests/t1503-rev-parse-verify.sh` -> PASS (`8/8`)
+
+### Notes
+
+- `t1503-rev-parse-verify.sh` intentionally exercises failing `--verify` cases; stderr includes `Needed a single revision` for those negative checks while the script result is PASS.
 
 ## `cargo test --workspace`
 

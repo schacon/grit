@@ -55,10 +55,10 @@ Work that spans multiple commands; finish enough of each before the commands tha
 - [`git/t/t1515-rev-parse-outside-repo.sh`](../git/t/t1515-rev-parse-outside-repo.sh)
 - [`git/t/t6101-rev-parse-parents.sh`](../git/t/t6101-rev-parse-parents.sh)
 
-- [ ] **1.1** Repository vs non-repository modes; `--is-inside-work-tree`, `--show-toplevel`, `--git-dir`, `--show-prefix`, and related discovery flags used in tests.
-- [ ] **1.2** Parse revisions and object names; `--verify`, short/long hashes, `^{}` peeling, ref@upstream forms as in scope.
+- [x] **1.1** Repository vs non-repository modes; `--is-inside-work-tree`, `--show-toplevel`, `--git-dir`, `--show-prefix`, and related discovery flags used in tests.
+- [x] **1.2** Parse revisions and object names; `--verify`, short/long hashes, `^{}` peeling, ref@upstream forms as in scope.
 - [ ] **1.3** Quoted path / magic pathspec handling only if ported scripts require it.
-- [ ] **1.4** Port selected `t150*.sh` / `t6101-rev-parse-parents.sh` scripts; defer parseopt-heavy behavior unless explicitly in scope.
+- [x] **1.4** Port selected `t150*.sh` / `t6101-rev-parse-parents.sh` scripts; defer parseopt-heavy behavior unless explicitly in scope.
 
 ---
 
@@ -72,9 +72,9 @@ Work that spans multiple commands; finish enough of each before the commands tha
 - [`git/t/t1403-show-ref.sh`](../git/t/t1403-show-ref.sh)
 - [`git/t/t1422-show-ref-exists.sh`](../git/t/t1422-show-ref-exists.sh)
 
-- [ ] **2.1** `symbolic-ref`: read/create/delete symbolic refs; validate ref targets; error messages matching upstream.
-- [ ] **2.2** `show-ref`: list refs with patterns, `--heads`, `--tags`, `--verify`, `-d`/`--dereference`, `-s`/`--hash`, exit codes for missing refs.
-- [ ] **2.3** Port and pass the `t1401` / `t1403` / `t1422` scripts (and shared helpers those files need).
+- [x] **2.1** `symbolic-ref`: read/create/delete symbolic refs; validate ref targets; error messages matching upstream.
+- [x] **2.2** `show-ref`: list refs with patterns, `--heads`, `--tags`, `--verify`, `-d`/`--dereference`, `-s`/`--hash`, exit codes for missing refs.
+- [x] **2.3** Port and pass the `t1401` / `t1403` / `t1422` scripts (and shared helpers those files need).
 
 ---
 

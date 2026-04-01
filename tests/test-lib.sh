@@ -197,7 +197,7 @@ test_expect_failure () {
 
 test_must_fail () {
 	set +e
-	if test "${TEST_HIDE_EXPECTED_FAIL_STDERR:-0}" = "1"
+	if test "${TEST_HIDE_EXPECTED_FAIL_STDERR:-0}" = "1" && test -t 2
 	then
 		"$@" 2>/dev/null
 	else

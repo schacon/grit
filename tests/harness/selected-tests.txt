@@ -12,7 +12,12 @@ t1009-read-tree-new-index.sh
 t1020-subdirectory.sh
 t1100-commit-tree-options.sh
 t1400-update-ref.sh
+t1401-symbolic-ref.sh
+t1403-show-ref.sh
 t1404-update-ref-errors.sh
+t1422-show-ref-exists.sh
+t1500-rev-parse.sh
+t1503-rev-parse-verify.sh
 t2002-checkout-cache-u.sh
 t2003-checkout-cache-mkdir.sh
 t2004-checkout-cache-temp.sh
