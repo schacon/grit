@@ -81,3 +81,4 @@ t5300-unpack-objects.sh
 t6120-name-rev.sh
 t4204-patch-id.sh
 t1303-wacky-config.sh
+t2060-switch.sh
