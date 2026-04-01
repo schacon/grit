@@ -12,6 +12,7 @@ pub mod commit_tree;
 pub mod config;
 pub mod count_objects;
 pub mod diff_index;
+pub mod diff_tree;
 pub mod for_each_ref;
 pub mod gc;
 pub mod git_passthrough;

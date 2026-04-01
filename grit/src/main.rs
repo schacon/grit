@@ -83,6 +83,9 @@ enum Command {
     /// Count unpacked objects and disk usage.
     #[command(name = "count-objects")]
     CountObjects(commands::count_objects::Args),
+    /// Compare the content and mode of blobs found via two tree objects.
+    #[command(name = "diff-tree")]
+    DiffTree(commands::diff_tree::Args),
     /// Compare a tree against working tree or index.
     #[command(name = "diff-index")]
     DiffIndex(commands::diff_index::Args),
@@ -159,6 +162,7 @@ fn run() -> Result<()> {
         Command::UpdateRef(args) => commands::update_ref::run(args),
         Command::CheckIgnore(args) => commands::check_ignore::run(args),
         Command::CountObjects(args) => commands::count_objects::run(args),
+        Command::DiffTree(args) => commands::diff_tree::run(args),
         Command::DiffIndex(args) => commands::diff_index::run(args),
         Command::ForEachRef(args) => commands::for_each_ref::run(args),
         Command::MergeBase(args) => commands::merge_base::run(args),
