@@ -324,4 +324,228 @@ test_expect_success 'GIT_COMMITTER_NAME overrides config' '
 	grep "^committer Env Committer <env@test.com>" actual
 '
 
+# ---- Wave 5: more tests ported from upstream t7501 ----
+
+test_expect_success 'commit message from file (absolute path)' '
+	cd repo &&
+	echo "abs-path" >>file.txt &&
+	git add file.txt &&
+	echo "absolute path msg" >"$TRASH_DIRECTORY/abs-msg.txt" &&
+	git commit -F "$TRASH_DIRECTORY/abs-msg.txt" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "absolute path msg" actual
+'
+
+test_expect_success 'commit message from stdin via -F -' '
+	cd repo &&
+	echo "stdin-content" >>file.txt &&
+	git add file.txt &&
+	echo "stdin message" | git commit -F - 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "stdin message" actual
+'
+
+test_expect_success 'multiple -m creates blank-line-separated paragraphs' '
+	cd repo &&
+	echo "multi-m" >>file.txt &&
+	git add file.txt &&
+	git commit -m "one" -m "two" -m "three" 2>/dev/null &&
+	git cat-file commit HEAD >commit &&
+	sed -e "1,/^$/d" commit >actual &&
+	{
+		echo one &&
+		echo &&
+		echo two &&
+		echo &&
+		echo three
+	} >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'amend commit to fix author' '
+	cd repo &&
+	echo "amend-auth" >>file.txt &&
+	git add file.txt &&
+	git commit -m "orig" 2>/dev/null &&
+	git commit --amend --author="The Real Author <someguy@his.email.org>" -m "amended" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "The Real Author <someguy@his.email.org>" actual
+'
+
+test_expect_success 'amend commit to fix date' '
+	cd repo &&
+	echo "amend-date" >>file.txt &&
+	git add file.txt &&
+	git commit -m "orig date" 2>/dev/null &&
+	git commit --amend --date="1300000000 +0000" -m "new date" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "^author.*1300000000 +0000" actual
+'
+
+test_expect_success 'same tree (single parent) fails without --allow-empty' '
+	cd repo &&
+	git reset --hard HEAD 2>/dev/null &&
+	test_must_fail git commit -m empty 2>/dev/null
+'
+
+test_expect_success 'same tree (single parent) --allow-empty works' '
+	cd repo &&
+	git commit --allow-empty -m "forced empty" 2>/dev/null &&
+	git cat-file commit HEAD >commit &&
+	grep "forced empty" commit
+'
+
+test_expect_success 'commit -a with removed file' '
+	cd repo &&
+	echo "to-remove" >removeme.txt &&
+	git add removeme.txt &&
+	git commit -m "add removeme" 2>/dev/null &&
+	rm removeme.txt &&
+	git commit -a -m "remove file" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "remove file" actual &&
+	test_must_fail git cat-file -e HEAD:removeme.txt 2>/dev/null
+'
+
+test_expect_success 'commit -a with modified and removed files' '
+	cd repo &&
+	echo "keep" >keep.txt &&
+	echo "gone" >gone.txt &&
+	git add keep.txt gone.txt &&
+	git commit -m "two files" 2>/dev/null &&
+	echo "changed" >>keep.txt &&
+	rm gone.txt &&
+	git commit -a -m "modify and remove" 2>/dev/null &&
+	git diff-tree --name-status HEAD^ HEAD >actual &&
+	grep "^M.*keep.txt" actual &&
+	grep "^D.*gone.txt" actual
+'
+
+test_expect_success 'commit with GIT_COMMITTER_DATE override' '
+	cd repo &&
+	echo "cdate" >>file.txt &&
+	git add file.txt &&
+	GIT_COMMITTER_DATE="1400000000 +0000" git commit -m "committer date" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "^committer.*1400000000 +0000" actual
+'
+
+test_expect_success 'commit --allow-empty-message succeeds with -m ""' '
+	cd repo &&
+	echo "aem" >>file.txt &&
+	git add file.txt &&
+	git commit --allow-empty-message -m "" 2>/dev/null &&
+	git cat-file -t HEAD >actual &&
+	echo commit >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'amend --allow-empty-message with empty message' '
+	cd repo &&
+	echo "aem2" >>file.txt &&
+	git add file.txt &&
+	git commit -m "will be emptied" 2>/dev/null &&
+	git commit --amend --allow-empty-message -m "" 2>/dev/null &&
+	git cat-file commit HEAD >commit &&
+	sed -e "1,/^$/d" commit >body &&
+	! grep -q "[^ ]" body
+'
+
+test_expect_success 'empty -m without --allow-empty-message fails' '
+	cd repo &&
+	echo "noempty" >>file.txt &&
+	git add file.txt &&
+	test_must_fail git commit -m "" 2>/dev/null
+'
+
+test_expect_success 'commit on detached HEAD' '
+	cd repo &&
+	git checkout HEAD^0 2>/dev/null &&
+	echo "detached" >>file.txt &&
+	git add file.txt &&
+	git commit -m "detached commit" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "detached commit" actual &&
+	git checkout master 2>/dev/null
+'
+
+test_expect_success 'commit with only whitespace message fails' '
+	cd repo &&
+	echo "ws" >>file.txt &&
+	git add file.txt &&
+	test_must_fail git commit -m "   " 2>/dev/null
+'
+
+test_expect_success 'amend changes commit hash' '
+	cd repo &&
+	echo "hash1" >>file.txt &&
+	git add file.txt &&
+	git commit -m "before" 2>/dev/null &&
+	OLD=$(git rev-parse HEAD) &&
+	git commit --amend -m "after" 2>/dev/null &&
+	NEW=$(git rev-parse HEAD) &&
+	test "$OLD" != "$NEW"
+'
+
+test_expect_success 'commit -a does not stage new untracked files' '
+	cd repo &&
+	echo "not-tracked" >not-tracked.txt &&
+	echo "track-change" >>file.txt &&
+	git commit -a -m "only tracked" 2>/dev/null &&
+	git ls-files >indexed &&
+	! grep "not-tracked.txt" indexed
+'
+
+test_expect_success 'amend preserves tree when only message changes' '
+	cd repo &&
+	echo "tree-same" >>file.txt &&
+	git add file.txt &&
+	git commit -m "original msg" 2>/dev/null &&
+	TREE_BEFORE=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	git commit --amend -m "new msg" 2>/dev/null &&
+	TREE_AFTER=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	test "$TREE_BEFORE" = "$TREE_AFTER"
+'
+
+test_expect_success 'consecutive --allow-empty commits all have same tree' '
+	cd repo &&
+	TREE1=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	git commit --allow-empty -m "empty 1" 2>/dev/null &&
+	TREE2=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	git commit --allow-empty -m "empty 2" 2>/dev/null &&
+	TREE3=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	test "$TREE1" = "$TREE2" &&
+	test "$TREE2" = "$TREE3"
+'
+
+test_expect_success 'commit with --author has correct author' '
+	cd repo &&
+	echo "sa" >>file.txt &&
+	git add file.txt &&
+	git commit --author="Other Dev <other@dev.com>" -m "author flag" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "author Other Dev <other@dev.com>" actual
+'
+
+test_expect_success 'commit with --date has correct date' '
+	cd repo &&
+	echo "sa2" >>file.txt &&
+	git add file.txt &&
+	git commit --date="1500000000 +0000" -m "date flag" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "^author.*1500000000 +0000" actual
+'
+
+test_expect_success 'commit -F with multiline file' '
+	cd repo &&
+	echo "mlf" >>file.txt &&
+	git add file.txt &&
+	printf "line one\n\nline three\n" >multi-msg.txt &&
+	git commit -F multi-msg.txt 2>/dev/null &&
+	git cat-file commit HEAD >commit &&
+	sed -e "1,/^$/d" commit >actual &&
+	printf "line one\n\nline three\n" >expected &&
+	test_cmp expected actual
+'
+
 test_done
