@@ -134,6 +134,8 @@ enum Command {
     MkTree(commands::mktree::Args),
     /// Show a Git logical variable.
     Var(commands::var::Args),
+    /// Reset current HEAD to the specified state.
+    Reset(commands::reset::Args),
 }
 
 fn main() {
@@ -196,5 +198,6 @@ fn run() -> Result<()> {
         Command::Mv(args) => commands::mv::run(args),
         Command::MkTree(args) => commands::mktree::run(args),
         Command::Var(args) => commands::var::run(args),
+        Command::Reset(args) => commands::reset::run(args),
     }
 }

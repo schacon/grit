@@ -243,25 +243,24 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
 
         let parts: Vec<&str> = meta.split(' ').collect();
 
-        // Accepted formats:
-        //   2 parts: "<mode> <oid>"          (stage 0)
-        //   3 parts: "<mode> <oid> <stage>"  (stage 0-3, conflict entries)
-        //   3 parts: "<mode> <type> <oid>"   (tree object line — skip type)
-        // Disambiguate: if parts[2] is a single decimal digit 0-3 it's a
-        // stage number; otherwise treat parts[1] as type and parts[2] as oid.
-        let (mode_str, oid_str, stage_num): (&str, &str, u8) = match parts.len() {
-            2 => (parts[0], parts[1], 0),
+        // Supported formats:
+        //   2-part: "<mode> <sha1>"              → stage 0
+        //   3-part: "<mode> <sha1> <stage>"      → stage 0-3 (git standard)
+        //   3-part: "<mode> <type> <sha1>"       → stage 0 (extended, legacy)
+        //
+        // Disambiguate the 3-part case: if parts[2] is a single decimal digit
+        // (0-3) it is a stage number; otherwise treat parts[1] as a type token
+        // and parts[2] as the sha1.
+        let (mode_str, oid_str, stage) = match parts.len() {
+            2 => (parts[0], parts[1], 0u8),
             3 => {
-                // Is parts[2] a stage number (single digit 0-3)?
-                if let Ok(s) = parts[2].parse::<u8>() {
-                    if s <= 3 {
-                        (parts[0], parts[1], s)
-                    } else {
-                        (parts[0], parts[2], 0)
-                    }
+                let third = parts[2];
+                if third.len() == 1 && matches!(third, "0" | "1" | "2" | "3") {
+                    let s: u8 = third.parse().unwrap_or(0);
+                    (parts[0], parts[1], s)
                 } else {
-                    // Treat as "<mode> <type> <oid>" — skip type
-                    (parts[0], parts[2], 0)
+                    // Legacy: "<mode> <type> <sha1>"
+                    (parts[0], parts[2], 0u8)
                 }
             }
             _ => bail!("bad --index-info line: '{line}'"),
@@ -279,9 +278,9 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
             .parse()
             .with_context(|| format!("invalid oid '{oid_str}'"))?;
 
-        // Encode stage in flags bits [13:12].
-        let path_len = path.len().min(0x0FFF) as u16;
-        let flags = path_len | ((stage_num as u16 & 0x3) << 12);
+        // Encode stage in the upper 2 bits of flags (bits 13-12).
+        let base_flags = path.len().min(0xFFF) as u16;
+        let flags = base_flags | ((stage as u16) << 12);
 
         let entry = IndexEntry {
             ctime_sec: 0,

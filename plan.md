@@ -383,7 +383,7 @@ These scripts live in [`git/t/`](../git/t/). Most **fetch/push/remote/pull** wor
 
 **Perf:** `git/t/perf/p7102-reset.sh`
 
-- [ ] **reset.1** Mixed / soft / hard; pathspec reset (`t7102`, `t7104`, `t7107`).
+- [x] **reset.1** Mixed / soft / hard; pathspec reset (`t7102`, `t7104`, `t7107`).
 - [ ] **reset.2** Merge state / conflict reset (`t7110`).
 - [ ] **reset.3** Unborn `HEAD`, bare repo (`t7106`, `t7103`).
 - [ ] **reset.4** Patch reset (`t7105`).

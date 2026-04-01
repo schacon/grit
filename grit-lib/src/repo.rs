@@ -45,7 +45,30 @@ impl Repository {
             .canonicalize()
             .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
 
-        if !git_dir.join("objects").exists() || !git_dir.join("HEAD").exists() {
+        if !git_dir.join("HEAD").exists() {
+            return Err(Error::NotARepository(git_dir.display().to_string()));
+        }
+
+        // For git worktrees the `objects/` directory lives in the common git
+        // directory pointed to by the `commondir` file.
+        let objects_dir = if git_dir.join("objects").exists() {
+            git_dir.join("objects")
+        } else if let Ok(common_raw) = fs::read_to_string(git_dir.join("commondir")) {
+            let common_rel = common_raw.trim();
+            let common_dir = if Path::new(common_rel).is_absolute() {
+                PathBuf::from(common_rel)
+            } else {
+                git_dir.join(common_rel)
+            };
+            let common_dir = common_dir
+                .canonicalize()
+                .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
+            common_dir.join("objects")
+        } else {
+            return Err(Error::NotARepository(git_dir.display().to_string()));
+        };
+
+        if !objects_dir.exists() {
             return Err(Error::NotARepository(git_dir.display().to_string()));
         }
 
@@ -57,7 +80,7 @@ impl Repository {
             None => None,
         };
 
-        let odb = Odb::new(&git_dir.join("objects"));
+        let odb = Odb::new(&objects_dir);
 
         Ok(Self {
             git_dir,
