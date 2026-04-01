@@ -48,6 +48,7 @@ t4013-diff-various.sh
 t4017-diff-retval.sh
 t4018-diff-files.sh
 t4044-diff-index-unique-abbrev.sh
+t1010-mktree.sh
 t5000-write-tree.sh
 t5301-sliding-window.sh
 t5304-prune.sh

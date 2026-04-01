@@ -113,9 +113,10 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         if restore_staged
-            && do_restore_staged(&repo, &mut index, rel_path, source_tree_oid.as_ref())? {
-                index_modified = true;
-            }
+            && do_restore_staged(&repo, &mut index, rel_path, source_tree_oid.as_ref())?
+        {
+            index_modified = true;
+        }
 
         if restore_worktree {
             // Source for worktree: --source tree (if given), else current index entry.

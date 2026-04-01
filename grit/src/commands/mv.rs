@@ -183,10 +183,7 @@ pub fn run(args: Args) -> Result<()> {
             }
         } else {
             // Source doesn't exist on disk — must be tracked in the index.
-            let any_entry = index
-                .entries
-                .iter()
-                .any(|e| e.path == src_rel.as_bytes());
+            let any_entry = index.entries.iter().any(|e| e.path == src_rel.as_bytes());
             if !any_entry {
                 let msg = format!(
                     "not under version control, source='{src_rel}', destination='{dst_rel}'"
