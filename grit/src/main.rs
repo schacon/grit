@@ -152,6 +152,8 @@ enum Command {
     Var(commands::var::Args),
     /// Reset current HEAD to the specified state.
     Reset(commands::reset::Args),
+    /// Remove unnecessary whitespace.
+    Stripspace(commands::stripspace::Args),
     /// Switch branches.
     Switch(commands::switch::Args),
     /// Write a blob object to a temporary file and print its path.
@@ -226,6 +228,7 @@ fn run() -> Result<()> {
         Command::MkTree(args) => commands::mktree::run(args),
         Command::Var(args) => commands::var::run(args),
         Command::Reset(args) => commands::reset::run(args),
+        Command::Stripspace(args) => commands::stripspace::run(args),
         Command::Switch(args) => commands::switch::run(args),
         Command::UnpackFile(args) => commands::unpack_file::run(args),
     }

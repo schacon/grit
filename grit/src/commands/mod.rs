@@ -42,6 +42,7 @@ pub mod show;
 pub mod show_index;
 pub mod show_ref;
 pub mod status;
+pub mod stripspace;
 pub mod switch;
 pub mod symbolic_ref;
 pub mod tag;

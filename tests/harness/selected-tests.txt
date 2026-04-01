@@ -72,3 +72,4 @@ t3800-mktag.sh
 t3500-cherry.sh
 t1051-unpack-file.sh
 t5302-show-index.sh
+t0030-stripspace.sh
