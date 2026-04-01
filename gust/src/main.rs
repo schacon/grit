@@ -33,6 +33,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Add file contents to the index.
+    Add(commands::add::Args),
     /// Create an empty Git repository or reinitialize an existing one.
     Init(commands::init::Args),
     /// Compute object ID and optionally create an object from a file.
@@ -124,6 +126,7 @@ fn run() -> Result<()> {
     }
 
     match cli.command {
+        Command::Add(args) => commands::add::run(args),
         Command::Init(args) => commands::init::run(args),
         Command::HashObject(args) => commands::hash_object::run(args),
         Command::CatFile(args) => commands::cat_file::run(args),

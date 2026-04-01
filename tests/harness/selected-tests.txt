@@ -38,6 +38,7 @@ t2005-checkout-index-symlinks.sh
 t2006-checkout-index-basic.sh
 t2107-update-index-basic.sh
 t3004-ls-files-basic.sh
+t3700-add.sh
 t3100-ls-tree-restrict.sh
 t3102-ls-tree-wildcards.sh
 t3902-quoted-ls-tree.sh

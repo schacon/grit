@@ -2,6 +2,7 @@
 //!
 //! Each submodule corresponds to one plumbing subcommand.
 
+pub mod add;
 pub mod cat_file;
 pub mod check_ignore;
 pub mod checkout_index;
