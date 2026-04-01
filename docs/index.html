@@ -175,7 +175,7 @@
 
 <div class="summary">
   <div class="card green">
-    <div class="number">80</div>
+    <div class="number">82</div>
     <div class="label">Tests Passing</div>
   </div>
   <div class="card">
@@ -183,7 +183,7 @@
     <div class="label">Total Upstream Tests</div>
   </div>
   <div class="card green">
-    <div class="number">7.7%</div>
+    <div class="number">7.9%</div>
     <div class="label">Compatibility</div>
   </div>
   <div class="card">
@@ -193,17 +193,17 @@
 </div>
 
 <div class="progress-bar">
-  <div class="pass" style="width: 7.7%"></div>
+  <div class="pass" style="width: 7.9%"></div>
   <div class="ported" style="width: 0.2%"></div>
 </div>
 
 <div class="legend">
-  <span><span class="dot green"></span> Passing (80)</span>
+  <span><span class="dot green"></span> Passing (82)</span>
   <span><span class="dot yellow"></span> Ported, not in harness (2)</span>
-  <span><span class="dot gray"></span> Not yet ported (959)</span>
+  <span><span class="dot gray"></span> Not yet ported (957)</span>
 </div>
 
-<h2 id="commands">Commands <span class="cmd-count">54/191</span></h2>
+<h2 id="commands">Commands <span class="cmd-count">56/191</span></h2>
 <div class="cmd-category">
   <h3>Main Porcelain <span class="cmd-count">17/46</span></h3>
   <div class="cmd-grid"><span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/add.rs">add</a> <span style="color:#484f58;font-size:0.8em">(Working Tree)</span></span>
@@ -312,7 +312,7 @@
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/write_tree.rs">write-tree</a></span></div>
 </div>
 <div class="cmd-category">
-  <h3>Plumbing Interrogators <span class="cmd-count">17/24</span></h3>
+  <h3>Plumbing Interrogators <span class="cmd-count">18/24</span></h3>
   <div class="cmd-grid"><span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/cat_file.rs">cat-file</a></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/cherry.rs">cherry</a></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_files.rs">diff-files</a></span>
@@ -327,7 +327,7 @@
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/ls_remote.rs">ls-remote</a></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/ls_tree.rs">ls-tree</a></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/merge_base.rs">merge-base</a></span>
-<span class="cmd-item pending">⬜ name-rev</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/name_rev.rs">name-rev</a></span>
 <span class="cmd-item pending">⬜ pack-redundant</span>
 <span class="cmd-item pending">⬜ repo</span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/rev_list.rs">rev-list</a></span>
@@ -356,7 +356,7 @@
 <span class="cmd-item pending">⬜ upload-pack</span></div>
 </div>
 <div class="cmd-category">
-  <h3>Pure Helpers <span class="cmd-count">4/18</span></h3>
+  <h3>Pure Helpers <span class="cmd-count">5/18</span></h3>
   <div class="cmd-grid"><span class="cmd-item pending">⬜ check-attr</span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/check_ignore.rs">check-ignore</a></span>
 <span class="cmd-item pending">⬜ check-mailmap</span>
@@ -371,7 +371,7 @@
 <span class="cmd-item pending">⬜ mailinfo</span>
 <span class="cmd-item pending">⬜ mailsplit</span>
 <span class="cmd-item pending">⬜ merge-one-file</span>
-<span class="cmd-item pending">⬜ patch-id</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/patch_id.rs">patch-id</a></span>
 <span class="cmd-item pending">⬜ sh-i18n</span>
 <span class="cmd-item pending">⬜ sh-setup</span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/stripspace.rs">stripspace</a></span></div>
@@ -395,8 +395,8 @@
 <div class="filter">
   <input type="text" id="search" placeholder="Filter tests..." oninput="filterTable()">
   <button onclick="filterStatus('all')" class="active" id="btn-all">All (1041)</button>
-  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (80)</button>
-  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (961)</button>
+  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (82)</button>
+  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (959)</button>
 </div>
 
 <table id="tests">
@@ -3337,8 +3337,8 @@
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/log.rs">log</a></td>
         <td>.mailmap configurations</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4204-patch-id.sh">t4204-patch-id.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/log.rs">log</a></td>
         <td>git patch-id</td>
