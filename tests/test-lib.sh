@@ -105,6 +105,17 @@ test_path_is_file () { test -f "$1"; }
 test_path_is_dir  () { test -d "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
 
+# test_line_count OP N FILE — assert wc -l $FILE $OP $N (e.g., = 1)
+test_line_count () {
+	local op="$1" count="$2" file="$3"
+	local actual
+	actual=$(wc -l <"$file")
+	test "$actual" "$op" "$count"
+}
+
+# test_must_be_empty FILE — assert FILE has zero bytes
+test_must_be_empty () { test ! -s "$1"; }
+
 test_have_prereq () {
 	case "$1" in
 	POSIXPERM) return 0 ;;

@@ -25,6 +25,7 @@ pub mod read_tree;
 pub mod repack;
 pub mod rev_list;
 pub mod rev_parse;
+pub mod rm;
 pub mod show;
 pub mod show_ref;
 pub mod status;

@@ -399,7 +399,7 @@ These scripts live in [`git/t/`](../git/t/). Most **fetch/push/remote/pull** wor
 `git/t/t3601-rm-pathspec-file.sh`  
 `git/t/t3602-rm-sparse-checkout.sh`  
 
-- [ ] **rm.1** Remove from index and worktree, `-f`, `--cached`, `-r`.
+- [x] **rm.1** Remove from index and worktree, `-f`, `--cached`, `-r`.
 - [ ] **rm.2** Pathspec from file (`t3601`).
 - [ ] **rm.3** Sparse (`t3602`).
 - [ ] **rm.4** Port all three.

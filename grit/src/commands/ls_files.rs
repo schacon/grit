@@ -100,14 +100,18 @@ pub fn run(args: Args) -> Result<()> {
         pathspec_filter.push(cwd_prefix.clone());
     }
 
+    // Track which pathspecs matched at least one entry (for --error-unmatch).
+    let mut matched: Vec<bool> = vec![false; pathspec_filter.len()];
+
     for entry in &index.entries {
         // Filter by pathspec
         if !pathspec_filter.is_empty() {
-            let matches = pathspec_filter
+            let idx = pathspec_filter
                 .iter()
-                .any(|spec| entry.path == spec.as_slice() || entry.path.starts_with(spec));
-            if !matches {
-                continue;
+                .position(|spec| entry.path == spec.as_slice() || entry.path.starts_with(spec));
+            match idx {
+                Some(i) => matched[i] = true,
+                None => continue,
             }
         }
 
@@ -136,6 +140,19 @@ pub fn run(args: Args) -> Result<()> {
             let name = String::from_utf8_lossy(display);
             write!(out, "{name}")?;
             out.write_all(&[term])?;
+        }
+    }
+
+    // --error-unmatch: fail if any pathspec matched nothing.
+    if args.error_unmatch {
+        for (i, spec) in pathspec_filter.iter().enumerate() {
+            if !matched[i] {
+                let spec_str = String::from_utf8_lossy(spec);
+                anyhow::bail!(
+                    "error: pathspec '{}' did not match any file(s) known to git",
+                    spec_str
+                );
+            }
         }
     }
 

@@ -115,6 +115,8 @@ enum Command {
     Tag(commands::tag::Args),
     /// Show various types of objects (commits, trees, blobs, tags).
     Show(commands::show::Args),
+    /// Remove files from the working tree and from the index.
+    Rm(commands::rm::Args),
 }
 
 fn main() {
@@ -169,5 +171,6 @@ fn run() -> Result<()> {
         Command::Repack(args) => commands::repack::run(args),
         Command::Tag(args) => commands::tag::run(args),
         Command::Show(args) => commands::show::run(args),
+        Command::Rm(args) => commands::rm::run(args),
     }
 }
