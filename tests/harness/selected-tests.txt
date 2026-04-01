@@ -63,3 +63,4 @@ t4035-diff-quiet.sh
 t4000-diff-format.sh
 t7001-mv.sh
 t2070-restore.sh
+t4011-diff-tree.sh

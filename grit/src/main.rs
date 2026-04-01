@@ -88,6 +88,9 @@ enum Command {
 /// Compare working tree files against the index.
     #[command(name = "diff-files")]
     DiffFiles(commands::diff_files::Args),
+/// Compare the content and mode of blobs found via two tree objects.
+    #[command(name = "diff-tree")]
+    DiffTree(commands::diff_tree::Args),
     /// Compare a tree against working tree or index.
     #[command(name = "diff-index")]
     DiffIndex(commands::diff_index::Args),
@@ -170,6 +173,7 @@ fn run() -> Result<()> {
         Command::CountObjects(args) => commands::count_objects::run(args),
 Command::Diff(args) => commands::diff::run(args),
 Command::DiffFiles(args) => commands::diff_files::run(args),
+Command::DiffTree(args) => commands::diff_tree::run(args),
         Command::DiffIndex(args) => commands::diff_index::run(args),
         Command::ForEachRef(args) => commands::for_each_ref::run(args),
         Command::MergeBase(args) => commands::merge_base::run(args),
