@@ -1,5 +1,6 @@
 t0000-basic.sh
 t0001-init.sh
+t0008-ignores.sh
 t1000-read-tree-m-3way.sh
 t1001-read-tree-m-2way.sh
 t1002-read-tree-m-u-2way.sh
@@ -18,6 +19,7 @@ t1404-update-ref-errors.sh
 t1422-show-ref-exists.sh
 t1500-rev-parse.sh
 t1503-rev-parse-verify.sh
+t6010-merge-base.sh
 t2002-checkout-cache-u.sh
 t2003-checkout-cache-mkdir.sh
 t2004-checkout-cache-temp.sh

@@ -82,9 +82,9 @@ Work that spans multiple commands; finish enough of each before the commands tha
 
 **Upstream:** [`git/builtin/check-ignore.c`](../git/builtin/check-ignore.c). **Docs:** `git/Documentation/git-check-ignore.adoc`. **Primary tests:** [`git/t/t0008-ignores.sh`](../git/t/t0008-ignores.sh) (description explicitly targets `check-ignore`; large file—implement incrementally).
 
-- [ ] **3.1** Path arguments and `-z`, `-n` (dry run), `-v` / `-vv`, `--stdin`, `--no-index`, `--non-matching` as used in `t0008`.
-- [ ] **3.2** Correct interaction with working tree, index, and nested `.gitignore` / exclude files; directory vs file semantics; trailing-slash rules.
-- [ ] **3.3** Port relevant sections of `t0008-ignores.sh` (or the whole script if feasible); skip attr-only magic pathspec cases unless v2 expands pathspec attribute support.
+- [x] **3.1** Path arguments and `-z`, `-n` (dry run), `-v` / `-vv`, `--stdin`, `--no-index`, `--non-matching` as used in `t0008`.
+- [x] **3.2** Correct interaction with working tree, index, and nested `.gitignore` / exclude files; directory vs file semantics; trailing-slash rules.
+- [x] **3.3** Port relevant sections of `t0008-ignores.sh` (or the whole script if feasible); skip attr-only magic pathspec cases unless v2 expands pathspec attribute support.
 
 ---
 
@@ -92,9 +92,9 @@ Work that spans multiple commands; finish enough of each before the commands tha
 
 **Upstream:** [`git/builtin/merge-base.c`](../git/builtin/merge-base.c). **Docs:** `git/Documentation/git-merge-base.adoc`. **Primary tests:** [`git/t/t6010-merge-base.sh`](../git/t/t6010-merge-base.sh); related: [`git/t/t4068-diff-symmetric-merge-base.sh`](../git/t/t4068-diff-symmetric-merge-base.sh) if `diff` plumbing pulls it in.
 
-- [ ] **4.1** Default merge-base selection; `--all`, `--octopus`, `--independent`, `--is-ancestor`.
-- [ ] **4.2** Corner cases: disjoint histories, root commits, same commit repeated.
-- [ ] **4.3** Port and pass `t6010-merge-base.sh` (and any merge-base-dependent chunks of other chosen scripts).
+- [x] **4.1** Default merge-base selection; `--all`, `--octopus`, `--independent`, `--is-ancestor`.
+- [x] **4.2** Corner cases: disjoint histories, root commits, same commit repeated.
+- [x] **4.3** Port and pass `t6010-merge-base.sh` (and any merge-base-dependent chunks of other chosen scripts).
 
 ---
 

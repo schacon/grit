@@ -12,10 +12,13 @@
 //! - [`odb`] — loose object store (read/write zlib-compressed objects)
 //! - [`repo`] — repository discovery and handle
 //! - [`index`] — Git index (staging area) read/write
+//! - [`ignore`] — ignore/exclude pattern matching for check-ignore
 //! - [`refs`] — reference storage (files backend)
 
 pub mod error;
+pub mod ignore;
 pub mod index;
+pub mod merge_base;
 pub mod objects;
 pub mod odb;
 pub mod refs;

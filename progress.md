@@ -7,8 +7,8 @@ Updated when `plan.md` task checkboxes change.
 | Metric | Count |
 |--------|------:|
 | **Total plan tasks** | 43 |
-| **Completed (`[x]`)** | 7 |
-| **Not started (`[ ]`)** | 36 |
+| **Completed (`[x]`)** | 13 |
+| **Not started (`[ ]`)** | 30 |
 | **Claimed (`[~]`)** | 0 |
 
 ## Remaining (`[ ]`)
@@ -19,12 +19,6 @@ Updated when `plan.md` task checkboxes change.
 - **0.5 Packfiles**
 - **0.6 Pack writing / maintenance hooks**
 - **1.3** `rev-parse` quoted path / pathspec behavior
-- **3.1** `check-ignore` argument and mode coverage
-- **3.2** `check-ignore` index/exclude interaction semantics
-- **3.3** Port relevant `t0008-ignores.sh` coverage
-- **4.1** `merge-base` operation modes
-- **4.2** `merge-base` corner cases
-- **4.3** Port `t6010-merge-base.sh`
 - **5.1** `rev-list` walking semantics
 - **5.2** `rev-list` ordering and object output options
 - **5.3** `rev-list` formatting and exit behavior
@@ -59,3 +53,9 @@ Updated when `plan.md` task checkboxes change.
 - **2.1** `symbolic-ref` read/create/delete support with target validation and quiet non-symbolic exit behavior.
 - **2.2** `show-ref` pattern listing, `--branches`/`--tags`, `--verify`, `--exists`, `--dereference`, and `--hash`.
 - **2.3** Ported and passing `tests/t1401-symbolic-ref.sh`, `tests/t1403-show-ref.sh`, and `tests/t1422-show-ref-exists.sh`.
+- **3.1** `check-ignore` path-argument and stdin modes (`--stdin`, `-z`, `-v`, `-n`, `--no-index`) implemented for the selected `t0008` subset.
+- **3.2** `check-ignore` precedence and semantics for `.gitignore`, `.git/info/exclude`, `core.excludesfile`, tracked-vs-untracked handling, and directory rules.
+- **3.3** Ported and passing `tests/t0008-ignores.sh` subset (12/12).
+- **4.1** `merge-base` operation modes implemented: default, `--all`, `--octopus`, `--independent`, and `--is-ancestor`.
+- **4.2** `merge-base` corner cases implemented: disjoint histories, root ancestry graphs, and repeated commit arguments.
+- **4.3** Ported and passing `tests/t6010-merge-base.sh` subset for merge-base behavior.

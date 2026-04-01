@@ -1,6 +1,39 @@
 # Test results (latest run)
 
-Last update: 2026-03-31 (Phase 2.1/2.2/2.3).
+Last update: 2026-03-31 (Phase 3.1/3.2/3.3).
+
+## Phase 3 check-ignore validation (2026-03-31)
+
+### Required validation commands
+
+- `cargo fmt` -> PASS
+- `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+- `cargo test --workspace` -> PASS (5 tests, 0 failures)
+
+### Newly ported shell script
+
+- `tests/t0008-ignores.sh` -> PASS (12/12)
+
+### Notes
+
+- Ported a coherent `t0008` subset focused on `check-ignore` path arguments, `--stdin` / `-z`, `-v` / `-n`, `--no-index`, and precedence across `.gitignore`, `.git/info/exclude`, and `core.excludesfile`.
+
+## Phase 4 merge-base validation (2026-03-31)
+
+### Required validation commands
+
+- `cargo fmt` -> PASS
+- `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+- `cargo test --workspace` -> PASS (5 tests, 0 failures)
+
+### Newly ported shell script
+
+- `tests/t6010-merge-base.sh` -> PASS (`10/10`)
+
+### Notes
+
+- `tests/t6010-merge-base.sh` covers default merge-base behavior, `--all`, `--octopus`, `--independent`, `--is-ancestor`, and corner cases for disjoint histories and repeated commits.
+- While validating this task, pre-existing lint/build issues in `ignore` and `check-ignore` paths surfaced and were fixed to satisfy the required workspace `clippy -D warnings` gate.
 
 ## Phase 2 symbolic-ref/show-ref validation (2026-03-31)
 
