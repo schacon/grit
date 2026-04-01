@@ -51,3 +51,4 @@ t5304-prune.sh
 t5613-info-alternate.sh
 t7700-repack.sh
 t6500-gc.sh
+t7501-commit-basic.sh

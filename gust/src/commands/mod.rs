@@ -6,6 +6,7 @@ pub mod add;
 pub mod cat_file;
 pub mod check_ignore;
 pub mod checkout_index;
+pub mod commit;
 pub mod commit_tree;
 pub mod config;
 pub mod count_objects;
