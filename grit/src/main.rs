@@ -117,6 +117,9 @@ enum Command {
     Show(commands::show::Args),
     /// Remove files from the working tree and from the index.
     Rm(commands::rm::Args),
+    /// Build a tree object from ls-tree formatted text.
+    #[command(name = "mktree")]
+    MkTree(commands::mktree::Args),
 }
 
 fn main() {
@@ -172,5 +175,6 @@ fn run() -> Result<()> {
         Command::Tag(args) => commands::tag::run(args),
         Command::Show(args) => commands::show::run(args),
         Command::Rm(args) => commands::rm::run(args),
+        Command::MkTree(args) => commands::mktree::run(args),
     }
 }

@@ -254,6 +254,16 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
                 Err(Error::InvalidRef("expected commit".to_owned()))
             }
         }
+        Some("tree") => {
+            // Peel tags, then dereference a commit to its tree.
+            oid = apply_peel(repo, oid, Some(""))?;
+            let obj = repo.odb.read(&oid)?;
+            match obj.kind {
+                ObjectKind::Tree => Ok(oid),
+                ObjectKind::Commit => Ok(parse_commit(&obj.data)?.tree),
+                _ => Err(Error::InvalidRef("expected tree or commit".to_owned())),
+            }
+        }
         Some(other) => Err(Error::InvalidRef(format!(
             "unsupported peel operator '{{{other}}}'"
         ))),

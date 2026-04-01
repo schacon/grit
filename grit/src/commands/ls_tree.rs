@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{self, Write};
 
-use grit_lib::objects::{parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 
@@ -52,6 +52,16 @@ pub fn run(args: Args) -> Result<()> {
 
     let oid = resolve_tree_ish(&repo, &args.tree_ish)?;
     let obj = repo.odb.read(&oid)?;
+
+    // Dereference commits to their tree.
+    let (tree_oid, obj) = if obj.kind == ObjectKind::Commit {
+        let commit = parse_commit(&obj.data).context("parsing commit")?;
+        let tree_obj = repo.odb.read(&commit.tree).context("reading tree")?;
+        (commit.tree, tree_obj)
+    } else {
+        (oid, obj)
+    };
+    let _ = tree_oid; // used implicitly through obj
 
     if obj.kind != ObjectKind::Tree {
         bail!("'{}' is not a tree object", args.tree_ish);
@@ -123,8 +133,11 @@ fn print_entry(
     out: &mut impl Write,
     term: u8,
 ) -> Result<()> {
-    let is_tree = entry.mode == 0o040000;
-    let kind_str = if is_tree { "tree" } else { "blob" };
+    let kind_str = match entry.mode & 0o170000 {
+        0o160000 => "commit",
+        0o040000 => "tree",
+        _ => "blob",
+    };
 
     if let Some(fmt) = &args.format {
         let line = fmt
