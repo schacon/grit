@@ -27,3 +27,50 @@ Last update: 2026-03-31.
 ## Harness selection
 
 `tests/harness/selected-tests.txt` now lists all currently ported `t*.sh` scripts so `./tests/harness/run.sh` executes the full local ported suite.
+
+---
+
+## Consolidated report (2026-03-31)
+
+### Commands executed
+
+- `cargo test --workspace`
+- `./tests/harness/run-all.sh` (verified pass)
+- Per-script accounting sweep over `tests/t*.sh` for exact totals
+
+### Rust workspace totals
+
+- **Result:** PASS
+- **Individual tests:** 5
+  - `gust` unit tests: 0
+  - `gust-lib` unit tests: 4
+  - `gust-lib` doc-tests: 1
+- **Failures:** 0
+
+### Shell suite totals (`tests/t*.sh`)
+
+- **Result:** PASS
+- **Scripts run:** 26
+- **Individual tests:** 139
+- **Pass:** 139
+- **Fail:** 0
+- **Skip:** 0
+
+### Overall totals (Rust + shell)
+
+- **Individual tests run:** 144
+- **Pass:** 144
+- **Fail:** 0
+- **Skip:** 0
+
+### Areas covered
+
+- Init/repo basics: `t0000`, `t0001`
+- Object plumbing: `t1006`, `t1007`, `t1100`
+- Read-tree family: `t1000`, `t1001`, `t1002`, `t1003`, `t1005`, `t1008`, `t1009`
+- Subdirectory behavior: `t1020`
+- Refs: `t1400`, `t1404`
+- Checkout-index: `t2002`–`t2006`
+- Update-index / ls-files: `t2107`, `t3004`
+- Ls-tree / quoting: `t3100`, `t3102`, `t3902`
+- Write-tree: `t5000`
