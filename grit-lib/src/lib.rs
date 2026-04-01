@@ -30,4 +30,5 @@ pub mod repo;
 pub mod rev_list;
 pub mod rev_parse;
 pub mod state;
+pub mod stripspace;
 pub mod write_tree;
