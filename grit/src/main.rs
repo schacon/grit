@@ -113,6 +113,8 @@ enum Command {
     Repack(commands::repack::Args),
     /// Create, list, delete or verify a tag object.
     Tag(commands::tag::Args),
+    /// Show various types of objects (commits, trees, blobs, tags).
+    Show(commands::show::Args),
 }
 
 fn main() {
@@ -166,5 +168,6 @@ fn run() -> Result<()> {
         Command::Gc(args) => commands::gc::run(args),
         Command::Repack(args) => commands::repack::run(args),
         Command::Tag(args) => commands::tag::run(args),
+        Command::Show(args) => commands::show::run(args),
     }
 }

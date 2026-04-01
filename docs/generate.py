@@ -16,6 +16,112 @@ SELECTED_FILE = os.path.join(OUR_TEST_DIR, "harness", "selected-tests.txt")
 OUTPUT = os.path.join(REPO_ROOT, "docs", "index.html")
 GITHUB_BASE = "https://github.com/schacon/grit"
 SRC_BASE = f"{GITHUB_BASE}/tree/main"
+COMMAND_LIST = os.path.join(REPO_ROOT, "git", "command-list.txt")
+CMD_DIR = os.path.join(REPO_ROOT, "grit", "src", "commands")
+
+
+# ── Category display names ────────────────────────────────────────
+
+CATEGORY_LABELS = {
+    "mainporcelain": "Main Porcelain",
+    "ancillarymanipulators": "Ancillary Manipulators",
+    "ancillaryinterrogators": "Ancillary Interrogators",
+    "plumbingmanipulators": "Plumbing Manipulators",
+    "plumbinginterrogators": "Plumbing Interrogators",
+    "synchingrepositories": "Syncing Repositories",
+    "synchelpers": "Sync Helpers",
+    "purehelpers": "Pure Helpers",
+    "foreignscminterface": "Foreign SCM Interface",
+}
+
+SUBCATEGORY_LABELS = {
+    "init": "Creating",
+    "worktree": "Working Tree",
+    "info": "Interrogation",
+    "history": "History",
+    "remote": "Remote",
+}
+
+
+def parse_command_list():
+    """Parse git/command-list.txt into {name: [categories]}."""
+    commands = {}
+    with open(COMMAND_LIST) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            name = parts[0].replace("git-", "")
+            categories = parts[1:]
+            commands[name] = categories
+    return commands
+
+
+def get_implemented_commands():
+    """Return set of command names that have a .rs file."""
+    implemented = set()
+    for f in os.listdir(CMD_DIR):
+        if f.endswith(".rs") and f != "mod.rs" and f != "git_passthrough.rs":
+            cmd_name = f[:-3].replace("_", "-")
+            implemented.add(cmd_name)
+    return implemented
+
+
+def build_commands_html(upstream_commands, implemented):
+    """Build the commands section HTML."""
+    # Group by primary category
+    by_category = {}
+    for name, cats in upstream_commands.items():
+        primary = cats[0] if cats else "unknown"
+        by_category.setdefault(primary, []).append((name, cats))
+
+    # Sort categories in display order
+    cat_order = [
+        "mainporcelain", "ancillarymanipulators", "ancillaryinterrogators",
+        "plumbingmanipulators", "plumbinginterrogators",
+        "synchingrepositories", "synchelpers", "purehelpers",
+        "foreignscminterface",
+    ]
+
+    total_upstream = len(upstream_commands)
+    total_impl = len(implemented & set(upstream_commands.keys()))
+
+    sections = []
+    for cat in cat_order:
+        cmds = by_category.get(cat, [])
+        if not cmds:
+            continue
+        cmds.sort(key=lambda x: x[0])
+        label = CATEGORY_LABELS.get(cat, cat)
+        impl_count = sum(1 for name, _ in cmds if name in implemented)
+
+        rows = []
+        for name, cats in cmds:
+            is_impl = name in implemented
+            status = "✅" if is_impl else "⬜"
+            status_class = "pass" if is_impl else "pending"
+            src_file = f"{name.replace('-', '_')}.rs"
+            src_path = f"grit/src/commands/{src_file}"
+            if is_impl:
+                link = f'<a href="{SRC_BASE}/{src_path}">{html.escape(name)}</a>'
+            else:
+                link = html.escape(name)
+
+            subcats = [SUBCATEGORY_LABELS.get(c, c) for c in cats[1:]
+                       if c in SUBCATEGORY_LABELS]
+            joined = ', '.join(subcats); subcat_str = f' <span style="color:#484f58;font-size:0.8em">({joined})</span>' if subcats else ''
+
+            rows.append(f'<span class="cmd-item {status_class}">{status} {link}{subcat_str}</span>')
+
+        section_html = f'''<div class="cmd-category">
+  <h3>{html.escape(label)} <span class="cmd-count">{impl_count}/{len(cmds)}</span></h3>
+  <div class="cmd-grid">{chr(10).join(rows)}</div>
+</div>'''
+        sections.append(section_html)
+
+    return f'''<h2 id="commands">Commands <span class="cmd-count">{total_impl}/{total_upstream}</span></h2>
+{chr(10).join(sections)}'''
 
 
 def get_all_upstream_tests():
@@ -175,6 +281,9 @@ def generate_html():
     all_tests = get_all_upstream_tests()
     passing = get_passing_tests()
     ported = get_ported_tests()
+    upstream_commands = parse_command_list()
+    implemented_commands = get_implemented_commands()
+    commands_html = build_commands_html(upstream_commands, implemented_commands)
     
     total = len(all_tests)
     num_passing = len(passing)
@@ -374,6 +483,15 @@ def generate_html():
   }}
   .filter button:hover {{ background: var(--border); }}
   .filter button.active {{ border-color: var(--accent); color: var(--accent); }}
+  h2 {{ font-size: 1.5rem; margin-top: 2.5rem; margin-bottom: 1rem; }}
+  h2 .cmd-count {{ color: #8b949e; font-size: 0.9rem; font-weight: 400; }}
+  .cmd-category {{ margin-bottom: 1.5rem; }}
+  .cmd-category h3 {{ font-size: 1.1rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }}
+  .cmd-category h3 .cmd-count {{ color: #8b949e; font-size: 0.85rem; font-weight: 400; }}
+  .cmd-grid {{ display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; }}
+  .cmd-item {{ font-size: 0.9rem; white-space: nowrap; }}
+  .cmd-item.pass {{ color: var(--fg); }}
+  .cmd-item.pending {{ color: #484f58; }}
   footer {{
     margin-top: 3rem;
     padding-top: 1rem;
@@ -420,6 +538,10 @@ def generate_html():
   <span><span class="dot yellow"></span> Ported, not in harness ({num_ported - num_passing})</span>
   <span><span class="dot gray"></span> Not yet ported ({total - num_ported})</span>
 </div>
+
+{commands_html}
+
+<h2 id="tests">Test Scripts</h2>
 
 <div class="filter">
   <input type="text" id="search" placeholder="Filter tests..." oninput="filterTable()">

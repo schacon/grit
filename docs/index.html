@@ -147,6 +147,15 @@
   }
   .filter button:hover { background: var(--border); }
   .filter button.active { border-color: var(--accent); color: var(--accent); }
+  h2 { font-size: 1.5rem; margin-top: 2.5rem; margin-bottom: 1rem; }
+  h2 .cmd-count { color: #8b949e; font-size: 0.9rem; font-weight: 400; }
+  .cmd-category { margin-bottom: 1.5rem; }
+  .cmd-category h3 { font-size: 1.1rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
+  .cmd-category h3 .cmd-count { color: #8b949e; font-size: 0.85rem; font-weight: 400; }
+  .cmd-grid { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; }
+  .cmd-item { font-size: 0.9rem; white-space: nowrap; }
+  .cmd-item.pass { color: var(--fg); }
+  .cmd-item.pending { color: #484f58; }
   footer {
     margin-top: 3rem;
     padding-top: 1rem;
@@ -193,6 +202,195 @@
   <span><span class="dot yellow"></span> Ported, not in harness (1)</span>
   <span><span class="dot gray"></span> Not yet ported (982)</span>
 </div>
+
+<h2 id="commands">Commands <span class="cmd-count">31/191</span></h2>
+<div class="cmd-category">
+  <h3>Main Porcelain <span class="cmd-count">9/46</span></h3>
+  <div class="cmd-grid"><span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/add.rs">add</a> <span style="color:#484f58;font-size:0.8em">(Working Tree)</span></span>
+<span class="cmd-item pending">⬜ am</span>
+<span class="cmd-item pending">⬜ archive</span>
+<span class="cmd-item pending">⬜ backfill <span style="color:#484f58;font-size:0.8em">(History)</span></span>
+<span class="cmd-item pending">⬜ bisect <span style="color:#484f58;font-size:0.8em">(Interrogation)</span></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/branch.rs">branch</a> <span style="color:#484f58;font-size:0.8em">(History)</span></span>
+<span class="cmd-item pending">⬜ bundle</span>
+<span class="cmd-item pending">⬜ checkout</span>
+<span class="cmd-item pending">⬜ cherry-pick</span>
+<span class="cmd-item pending">⬜ citool</span>
+<span class="cmd-item pending">⬜ clean</span>
+<span class="cmd-item pending">⬜ clone <span style="color:#484f58;font-size:0.8em">(Creating)</span></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/commit.rs">commit</a> <span style="color:#484f58;font-size:0.8em">(History)</span></span>
+<span class="cmd-item pending">⬜ describe</span>
+<span class="cmd-item pending">⬜ diff <span style="color:#484f58;font-size:0.8em">(Interrogation)</span></span>
+<span class="cmd-item pending">⬜ fetch <span style="color:#484f58;font-size:0.8em">(Remote)</span></span>
+<span class="cmd-item pending">⬜ format-patch</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/gc.rs">gc</a></span>
+<span class="cmd-item pending">⬜ gitk</span>
+<span class="cmd-item pending">⬜ grep <span style="color:#484f58;font-size:0.8em">(Interrogation)</span></span>
+<span class="cmd-item pending">⬜ gui</span>
+<span class="cmd-item pending">⬜ history <span style="color:#484f58;font-size:0.8em">(History)</span></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/init.rs">init</a> <span style="color:#484f58;font-size:0.8em">(Creating)</span></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/log.rs">log</a> <span style="color:#484f58;font-size:0.8em">(Interrogation)</span></span>
+<span class="cmd-item pending">⬜ maintenance</span>
+<span class="cmd-item pending">⬜ merge <span style="color:#484f58;font-size:0.8em">(History)</span></span>
+<span class="cmd-item pending">⬜ mv <span style="color:#484f58;font-size:0.8em">(Working Tree)</span></span>
+<span class="cmd-item pending">⬜ notes</span>
+<span class="cmd-item pending">⬜ pull <span style="color:#484f58;font-size:0.8em">(Remote)</span></span>
+<span class="cmd-item pending">⬜ push <span style="color:#484f58;font-size:0.8em">(Remote)</span></span>
+<span class="cmd-item pending">⬜ range-diff</span>
+<span class="cmd-item pending">⬜ rebase <span style="color:#484f58;font-size:0.8em">(History)</span></span>
+<span class="cmd-item pending">⬜ reset <span style="color:#484f58;font-size:0.8em">(History)</span></span>
+<span class="cmd-item pending">⬜ restore <span style="color:#484f58;font-size:0.8em">(Working Tree)</span></span>
+<span class="cmd-item pending">⬜ revert</span>
+<span class="cmd-item pending">⬜ rm <span style="color:#484f58;font-size:0.8em">(Working Tree)</span></span>
+<span class="cmd-item pending">⬜ scalar</span>
+<span class="cmd-item pending">⬜ shortlog</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/show.rs">show</a> <span style="color:#484f58;font-size:0.8em">(Interrogation)</span></span>
+<span class="cmd-item pending">⬜ sparse-checkout</span>
+<span class="cmd-item pending">⬜ stash</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/status.rs">status</a> <span style="color:#484f58;font-size:0.8em">(Interrogation)</span></span>
+<span class="cmd-item pending">⬜ submodule</span>
+<span class="cmd-item pending">⬜ switch <span style="color:#484f58;font-size:0.8em">(History)</span></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/tag.rs">tag</a> <span style="color:#484f58;font-size:0.8em">(History)</span></span>
+<span class="cmd-item pending">⬜ worktree</span></div>
+</div>
+<div class="cmd-category">
+  <h3>Ancillary Manipulators <span class="cmd-count">2/12</span></h3>
+  <div class="cmd-grid"><span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/config.rs">config</a></span>
+<span class="cmd-item pending">⬜ fast-export</span>
+<span class="cmd-item pending">⬜ fast-import</span>
+<span class="cmd-item pending">⬜ filter-branch</span>
+<span class="cmd-item pending">⬜ mergetool</span>
+<span class="cmd-item pending">⬜ pack-refs</span>
+<span class="cmd-item pending">⬜ prune</span>
+<span class="cmd-item pending">⬜ reflog</span>
+<span class="cmd-item pending">⬜ refs</span>
+<span class="cmd-item pending">⬜ remote</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/repack.rs">repack</a></span>
+<span class="cmd-item pending">⬜ replace</span></div>
+</div>
+<div class="cmd-category">
+  <h3>Ancillary Interrogators <span class="cmd-count">1/17</span></h3>
+  <div class="cmd-grid"><span class="cmd-item pending">⬜ annotate</span>
+<span class="cmd-item pending">⬜ blame</span>
+<span class="cmd-item pending">⬜ bugreport</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/count_objects.rs">count-objects</a></span>
+<span class="cmd-item pending">⬜ diagnose</span>
+<span class="cmd-item pending">⬜ difftool</span>
+<span class="cmd-item pending">⬜ fsck</span>
+<span class="cmd-item pending">⬜ gitweb</span>
+<span class="cmd-item pending">⬜ help</span>
+<span class="cmd-item pending">⬜ instaweb</span>
+<span class="cmd-item pending">⬜ merge-tree</span>
+<span class="cmd-item pending">⬜ rerere</span>
+<span class="cmd-item pending">⬜ show-branch</span>
+<span class="cmd-item pending">⬜ verify-commit</span>
+<span class="cmd-item pending">⬜ verify-tag</span>
+<span class="cmd-item pending">⬜ version</span>
+<span class="cmd-item pending">⬜ whatchanged</span></div>
+</div>
+<div class="cmd-category">
+  <h3>Plumbing Manipulators <span class="cmd-count">8/20</span></h3>
+  <div class="cmd-grid"><span class="cmd-item pending">⬜ apply</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/checkout_index.rs">checkout-index</a></span>
+<span class="cmd-item pending">⬜ commit-graph</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/commit_tree.rs">commit-tree</a></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/hash_object.rs">hash-object</a></span>
+<span class="cmd-item pending">⬜ index-pack</span>
+<span class="cmd-item pending">⬜ merge-file</span>
+<span class="cmd-item pending">⬜ merge-index</span>
+<span class="cmd-item pending">⬜ mktag</span>
+<span class="cmd-item pending">⬜ mktree</span>
+<span class="cmd-item pending">⬜ multi-pack-index</span>
+<span class="cmd-item pending">⬜ pack-objects</span>
+<span class="cmd-item pending">⬜ prune-packed</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/read_tree.rs">read-tree</a></span>
+<span class="cmd-item pending">⬜ replay</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/symbolic_ref.rs">symbolic-ref</a></span>
+<span class="cmd-item pending">⬜ unpack-objects</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/update_index.rs">update-index</a></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/update_ref.rs">update-ref</a></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/write_tree.rs">write-tree</a></span></div>
+</div>
+<div class="cmd-category">
+  <h3>Plumbing Interrogators <span class="cmd-count">10/24</span></h3>
+  <div class="cmd-grid"><span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/cat_file.rs">cat-file</a></span>
+<span class="cmd-item pending">⬜ cherry</span>
+<span class="cmd-item pending">⬜ diff-files</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff-index</a></span>
+<span class="cmd-item pending">⬜ diff-pairs</span>
+<span class="cmd-item pending">⬜ diff-tree</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/for_each_ref.rs">for-each-ref</a></span>
+<span class="cmd-item pending">⬜ for-each-repo</span>
+<span class="cmd-item pending">⬜ get-tar-commit-id</span>
+<span class="cmd-item pending">⬜ last-modified</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/ls_files.rs">ls-files</a></span>
+<span class="cmd-item pending">⬜ ls-remote</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/ls_tree.rs">ls-tree</a></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/merge_base.rs">merge-base</a></span>
+<span class="cmd-item pending">⬜ name-rev</span>
+<span class="cmd-item pending">⬜ pack-redundant</span>
+<span class="cmd-item pending">⬜ repo</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/rev_list.rs">rev-list</a></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/rev_parse.rs">rev-parse</a></span>
+<span class="cmd-item pending">⬜ show-index</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/show_ref.rs">show-ref</a></span>
+<span class="cmd-item pending">⬜ unpack-file</span>
+<span class="cmd-item pending">⬜ var</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/verify_pack.rs">verify-pack</a></span></div>
+</div>
+<div class="cmd-category">
+  <h3>Syncing Repositories <span class="cmd-count">0/5</span></h3>
+  <div class="cmd-grid"><span class="cmd-item pending">⬜ daemon</span>
+<span class="cmd-item pending">⬜ fetch-pack</span>
+<span class="cmd-item pending">⬜ http-backend</span>
+<span class="cmd-item pending">⬜ send-pack</span>
+<span class="cmd-item pending">⬜ update-server-info</span></div>
+</div>
+<div class="cmd-category">
+  <h3>Sync Helpers <span class="cmd-count">0/6</span></h3>
+  <div class="cmd-grid"><span class="cmd-item pending">⬜ http-fetch</span>
+<span class="cmd-item pending">⬜ http-push</span>
+<span class="cmd-item pending">⬜ receive-pack</span>
+<span class="cmd-item pending">⬜ shell</span>
+<span class="cmd-item pending">⬜ upload-archive</span>
+<span class="cmd-item pending">⬜ upload-pack</span></div>
+</div>
+<div class="cmd-category">
+  <h3>Pure Helpers <span class="cmd-count">1/18</span></h3>
+  <div class="cmd-grid"><span class="cmd-item pending">⬜ check-attr</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/check_ignore.rs">check-ignore</a></span>
+<span class="cmd-item pending">⬜ check-mailmap</span>
+<span class="cmd-item pending">⬜ check-ref-format</span>
+<span class="cmd-item pending">⬜ column</span>
+<span class="cmd-item pending">⬜ credential</span>
+<span class="cmd-item pending">⬜ credential-cache</span>
+<span class="cmd-item pending">⬜ credential-store</span>
+<span class="cmd-item pending">⬜ fmt-merge-msg</span>
+<span class="cmd-item pending">⬜ hook</span>
+<span class="cmd-item pending">⬜ interpret-trailers</span>
+<span class="cmd-item pending">⬜ mailinfo</span>
+<span class="cmd-item pending">⬜ mailsplit</span>
+<span class="cmd-item pending">⬜ merge-one-file</span>
+<span class="cmd-item pending">⬜ patch-id</span>
+<span class="cmd-item pending">⬜ sh-i18n</span>
+<span class="cmd-item pending">⬜ sh-setup</span>
+<span class="cmd-item pending">⬜ stripspace</span></div>
+</div>
+<div class="cmd-category">
+  <h3>Foreign SCM Interface <span class="cmd-count">0/10</span></h3>
+  <div class="cmd-grid"><span class="cmd-item pending">⬜ archimport</span>
+<span class="cmd-item pending">⬜ cvsexportcommit</span>
+<span class="cmd-item pending">⬜ cvsimport</span>
+<span class="cmd-item pending">⬜ cvsserver</span>
+<span class="cmd-item pending">⬜ imap-send</span>
+<span class="cmd-item pending">⬜ p4</span>
+<span class="cmd-item pending">⬜ quiltimport</span>
+<span class="cmd-item pending">⬜ request-pull</span>
+<span class="cmd-item pending">⬜ send-email</span>
+<span class="cmd-item pending">⬜ svn</span></div>
+</div>
+
+<h2 id="tests">Test Scripts</h2>
 
 <div class="filter">
   <input type="text" id="search" placeholder="Filter tests..." oninput="filterTable()">
