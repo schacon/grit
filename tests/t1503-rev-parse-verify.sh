@@ -34,6 +34,7 @@ test_expect_success 'setup repository with commits and tag' '
 	grit update-ref refs/tags/v1 "$tag_oid" &&
 	echo "$commit1" >commit1.out &&
 	echo "$commit2" >commit2.out &&
+	echo "$tree2" >tree2.out &&
 	echo "$tag_oid" >tag.out
 '
 
@@ -98,6 +99,49 @@ test_expect_success 'verify respects --end-of-options' '
 	grit rev-parse --verify HEAD >expect &&
 	grit rev-parse --verify --end-of-options -tricky >actual &&
 	test_cmp expect actual
+'
+
+test_expect_success 'HEAD~1 resolves to first parent commit' '
+	cd repo &&
+	commit1=$(cat commit1.out) &&
+	echo "$commit1" >expect &&
+	grit rev-parse HEAD~1 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'HEAD^1 is same as HEAD~1' '
+	cd repo &&
+	grit rev-parse HEAD~1 >expect &&
+	grit rev-parse HEAD^1 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'HEAD~2 fails when no grandparent exists' '
+	cd repo &&
+	test_must_fail grit rev-parse HEAD~2
+'
+
+test_expect_success 'verify ^{tree} peels commit to its tree' '
+	cd repo &&
+	tree2=$(cat tree2.out) &&
+	echo "$tree2" >expect &&
+	grit rev-parse --verify HEAD^{tree} >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'no stdout output on verify error' '
+	cd repo &&
+	test_must_fail grit rev-parse --verify >out 2>/dev/null &&
+	test_must_be_empty out &&
+	test_must_fail grit rev-parse --verify does-not-exist >out 2>/dev/null &&
+	test_must_be_empty out
+'
+
+test_expect_success '--short=4 outputs minimum 4-character abbreviated hash' '
+	cd repo &&
+	grit rev-parse --verify --short=4 HEAD >actual &&
+	test "$(wc -c <actual)" -ge 5 &&
+	test "$(wc -c <actual)" -le 41
 '
 
 test_done
