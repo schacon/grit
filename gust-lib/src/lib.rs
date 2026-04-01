@@ -27,3 +27,4 @@ pub mod refs;
 pub mod repo;
 pub mod rev_list;
 pub mod rev_parse;
+pub mod state;

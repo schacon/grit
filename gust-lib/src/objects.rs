@@ -62,6 +62,16 @@ impl ObjectId {
 
     /// The 38-character suffix used as the filename inside the loose prefix dir.
     #[must_use]
+    /// Parse an object ID from a hex string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidObjectId`] if the string is not a valid
+    /// 40-character hex OID.
+    pub fn from_hex(s: &str) -> Result<Self> {
+        s.parse()
+    }
+
     pub fn loose_suffix(&self) -> String {
         hex::encode(&self.0[1..])
     }
