@@ -296,6 +296,7 @@ These scripts live in [`git/t/`](../git/t/). Most **fetch/push/remote/pull** wor
 
 **Libraries sourced by many tests:** `git/t/lib-diff.sh`, `git/t/lib-diff-data.sh`, `git/t/lib-diff-alternative.sh`
 
+- [x] **diff.0** `grit diff-files` plumbing command — index vs working tree; raw/patch/stat/numstat/name-only/name-status formats; `--exit-code`/`-q`; `-1`/`-2`/`-3` merge-stage selection; pathspec filtering (`t4018`).
 - [ ] **diff.1** Working tree vs index vs `HEAD`; `--cached`; pathspecs; exit codes (`t4017`, `t4035`).
 - [ ] **diff.2** Rename/copy, break/rewrite, whitespace, algorithms (`t4001`–`t4009`, `t4015`, `t4033`, `t4071`).
 - [ ] **diff.3** Patch output, `--stat`, `--numstat`, `--shortstat`, dirstat (`t4000`, `t4047`, `t4049`, `t4052`).

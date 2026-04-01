@@ -83,8 +83,11 @@ enum Command {
     /// Count unpacked objects and disk usage.
     #[command(name = "count-objects")]
     CountObjects(commands::count_objects::Args),
-    /// Show changes between commits, commit and working tree, etc.
+/// Show changes between commits, commit and working tree, etc.
     Diff(commands::diff::Args),
+/// Compare working tree files against the index.
+    #[command(name = "diff-files")]
+    DiffFiles(commands::diff_files::Args),
     /// Compare a tree against working tree or index.
     #[command(name = "diff-index")]
     DiffIndex(commands::diff_index::Args),
@@ -165,7 +168,8 @@ fn run() -> Result<()> {
         Command::UpdateRef(args) => commands::update_ref::run(args),
         Command::CheckIgnore(args) => commands::check_ignore::run(args),
         Command::CountObjects(args) => commands::count_objects::run(args),
-        Command::Diff(args) => commands::diff::run(args),
+Command::Diff(args) => commands::diff::run(args),
+Command::DiffFiles(args) => commands::diff_files::run(args),
         Command::DiffIndex(args) => commands::diff_index::run(args),
         Command::ForEachRef(args) => commands::for_each_ref::run(args),
         Command::MergeBase(args) => commands::merge_base::run(args),

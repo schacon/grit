@@ -12,6 +12,7 @@ pub mod commit_tree;
 pub mod config;
 pub mod count_objects;
 pub mod diff;
+pub mod diff_files;
 pub mod diff_index;
 pub mod for_each_ref;
 pub mod gc;
