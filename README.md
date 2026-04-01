@@ -41,6 +41,5 @@ From the repository root:
    ```
 
 3. **Where results are recorded**
-
    - Latest summarized output: [`test-results.md`](test-results.md) (refreshed when plan work updates tests).
    - Plan checklist: [`plan.md`](plan.md); counts and remaining work: [`progress.md`](progress.md).

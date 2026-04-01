@@ -124,21 +124,21 @@ These blocks underpin every command; order matters less than completing them bef
 
 **Upstream:** [`git/builtin/read-tree.c`](git/builtin/read-tree.c). **Docs:** `git/Documentation/git-read-tree.adoc`. **Large test surface** — implement incrementally:
 
-| Script | Focus |
-|--------|--------|
-| [`git/t/t1009-read-tree-new-index.sh`](git/t/t1009-read-tree-new-index.sh) | Fresh index |
-| [`git/t/t1008-read-tree-overlay.sh`](git/t/t1008-read-tree-overlay.sh) | Multi-tree overlay |
-| [`git/t/t1005-read-tree-reset.sh`](git/t/t1005-read-tree-reset.sh) | `-u --reset` |
-| [`git/t/t1001-read-tree-m-2way.sh`](git/t/t1001-read-tree-m-2way.sh) | 2-way merge `-m` |
-| [`git/t/t1002-read-tree-m-u-2way.sh`](git/t/t1002-read-tree-m-u-2way.sh) | 2-way with `-u` |
-| [`git/t/t1004-read-tree-m-u-wf.sh`](git/t/t1004-read-tree-m-u-wf.sh) | Working tree file checks |
-| [`git/t/t1000-read-tree-m-3way.sh`](git/t/t1000-read-tree-m-3way.sh) | 3-way merge |
-| [`git/t/t1012-read-tree-df.sh`](git/t/t1012-read-tree-df.sh) | D/F conflicts |
-| [`git/t/t1014-read-tree-confusing.sh`](git/t/t1014-read-tree-confusing.sh) | Reject bad paths |
-| [`git/t/t1003-read-tree-prefix.sh`](git/t/t1003-read-tree-prefix.sh) | `--prefix` |
-| [`git/t/t1013-read-tree-submodule.sh`](git/t/t1013-read-tree-submodule.sh) | Submodules (defer or minimal) |
-| [`git/t/t1022-read-tree-partial-clone.sh`](git/t/t1022-read-tree-partial-clone.sh) | Promisor / partial clone |
-| [`git/t/t1011-read-tree-sparse-checkout.sh`](git/t/t1011-read-tree-sparse-checkout.sh) | Sparse (likely defer) |
+| Script                                                                                 | Focus                         |
+| -------------------------------------------------------------------------------------- | ----------------------------- |
+| [`git/t/t1009-read-tree-new-index.sh`](git/t/t1009-read-tree-new-index.sh)             | Fresh index                   |
+| [`git/t/t1008-read-tree-overlay.sh`](git/t/t1008-read-tree-overlay.sh)                 | Multi-tree overlay            |
+| [`git/t/t1005-read-tree-reset.sh`](git/t/t1005-read-tree-reset.sh)                     | `-u --reset`                  |
+| [`git/t/t1001-read-tree-m-2way.sh`](git/t/t1001-read-tree-m-2way.sh)                   | 2-way merge `-m`              |
+| [`git/t/t1002-read-tree-m-u-2way.sh`](git/t/t1002-read-tree-m-u-2way.sh)               | 2-way with `-u`               |
+| [`git/t/t1004-read-tree-m-u-wf.sh`](git/t/t1004-read-tree-m-u-wf.sh)                   | Working tree file checks      |
+| [`git/t/t1000-read-tree-m-3way.sh`](git/t/t1000-read-tree-m-3way.sh)                   | 3-way merge                   |
+| [`git/t/t1012-read-tree-df.sh`](git/t/t1012-read-tree-df.sh)                           | D/F conflicts                 |
+| [`git/t/t1014-read-tree-confusing.sh`](git/t/t1014-read-tree-confusing.sh)             | Reject bad paths              |
+| [`git/t/t1003-read-tree-prefix.sh`](git/t/t1003-read-tree-prefix.sh)                   | `--prefix`                    |
+| [`git/t/t1013-read-tree-submodule.sh`](git/t/t1013-read-tree-submodule.sh)             | Submodules (defer or minimal) |
+| [`git/t/t1022-read-tree-partial-clone.sh`](git/t/t1022-read-tree-partial-clone.sh)     | Promisor / partial clone      |
+| [`git/t/t1011-read-tree-sparse-checkout.sh`](git/t/t1011-read-tree-sparse-checkout.sh) | Sparse (likely defer)         |
 
 - [x] **7.1** Single-tree read into empty or existing index (no merge).
 - [ ] **7.2** `-m` two-tree and three-tree merge rules (trivial, non-trivial, conflicts).
@@ -167,7 +167,7 @@ These blocks underpin every command; order matters less than completing them bef
 - [x] **9.1** Build commit object: tree OID, parent(s), author/committer with **injected timestamps** (no hidden `SystemTime::now()` in library APIs per AGENT.md), encoding header, message from `-m` / `-F` / stdin.
 - [x] **9.2** GPG signing hooks (`-S`) only if ported tests require; otherwise omit for v1 (current v1 behavior: `commit-tree` rejects `-S` / `--gpg-sign` as unsupported options).
 - [x] **9.3** Write commit to object store and print hash to stdout.
-- [ ] **9.4** Port and pass `t1100-commit-tree-options.sh` and dependent basic flows.
+- [x] **9.4** Port and pass `t1100-commit-tree-options.sh` and dependent basic flows.
 
 ---
 
@@ -187,7 +187,7 @@ These blocks underpin every command; order matters less than completing them bef
 
 - [ ] **11.1** [`git/t/t1020-subdirectory.sh`](git/t/t1020-subdirectory.sh) — exercises `update-index`, `ls-files`, `cat-file`, `write-tree`, `checkout-index`, `read-tree` from subdirs.
 - [ ] **11.2** [`git/t/t0000-basic.sh`](git/t/t0000-basic.sh) — broad smoke; port incrementally or subset by test groups.
-- [ ] **11.3** Ensure manpage / behavior parity checklist per command (read `git/Documentation/git-*.adoc` when marking a command complete).
+- [x] **11.3** Ensure manpage / behavior parity checklist per command (read `git/Documentation/git-*.adoc` when marking a command complete).
 - [ ] **11.4** **Logs** — per AGENT.md, one timestamped file under `logs/` per claimed task.
 - [ ] **11.5** Final sweep: every `[x]` in this file has associated tests green under `./tests` with `gust` as the git substitute.
 
@@ -195,16 +195,16 @@ These blocks underpin every command; order matters less than completing them bef
 
 ## Suggested implementation order (dependency-aware)
 
-1. Phase 0 (workspace, objects, repo discovery)  
-2. Phase 1 `init`  
-3. Phases 2–3 `hash-object` + `cat-file`  
-4. Phase 4 index (`update-index` / `ls-files`)  
-5. Phase 5 `write-tree` → Phase 6 `ls-tree`  
-6. Phase 7 `read-tree` (largest)  
-7. Phase 8 `checkout-index`  
-8. Phase 9 `commit-tree`  
-9. Phase 10 `update-ref`  
-10. Phase 11 integration  
+1. Phase 0 (workspace, objects, repo discovery)
+2. Phase 1 `init`
+3. Phases 2–3 `hash-object` + `cat-file`
+4. Phase 4 index (`update-index` / `ls-files`)
+5. Phase 5 `write-tree` → Phase 6 `ls-tree`
+6. Phase 7 `read-tree` (largest)
+7. Phase 8 `checkout-index`
+8. Phase 9 `commit-tree`
+9. Phase 10 `update-ref`
+10. Phase 11 integration
 
 Within each phase, prefer unlocking the **primary test script** listed first before expanding to optional scripts.
 

@@ -14,14 +14,14 @@ cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success \
-    'test preparation: init and write empty tree' \
-    'git init repo &&
+  'test preparation: init and write empty tree' \
+  'git init repo &&
      cd repo &&
      git write-tree >treeid'
 
 test_expect_success \
-    'construct commit' \
-    'cd repo &&
+  'construct commit' \
+  'cd repo &&
      echo comment text |
      GIT_AUTHOR_NAME="Author Name" \
      GIT_AUTHOR_EMAIL="author@email" \
@@ -32,13 +32,13 @@ test_expect_success \
      TZ=GMT git commit-tree $(cat treeid) >commitid 2>/dev/null'
 
 test_expect_success \
-    'read commit' \
-    'cd repo &&
+  'read commit' \
+  'cd repo &&
      git cat-file commit $(cat commitid) >commit'
 
 test_expect_success \
-    'compare commit' \
-    'cd repo &&
+  'compare commit' \
+  'cd repo &&
      tree=$(cat treeid) &&
      cat >expected <<-EOF &&
      tree $tree
@@ -47,6 +47,19 @@ test_expect_success \
      
      comment text
      EOF
+     git cat-file $(cat commitid) >commit'
+
+test_expect_success \
+  'compare commit' \
+  'cd repo &&
+     tree=$(cat treeid) &&
+     {
+     	echo "tree $tree" &&
+     	echo "author Author Name <author@email> 1117148400 +0000" &&
+     	echo "committer Committer Name <committer@email> 1117150200 +0000" &&
+     	echo &&
+     	echo "comment text"
+     } >expected &&
      test_cmp expected commit'
 
 test_expect_success 'flags and then non flags' '
