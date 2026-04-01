@@ -35,6 +35,8 @@ struct Cli {
 enum Command {
     /// Add file contents to the index.
     Add(commands::add::Args),
+    /// List, create, or delete branches.
+    Branch(commands::branch::Args),
     /// Create an empty Git repository or reinitialize an existing one.
     Init(commands::init::Args),
     /// Compute object ID and optionally create an object from a file.
@@ -61,6 +63,8 @@ enum Command {
     /// List the contents of a tree object.
     #[command(name = "ls-tree")]
     LsTree(commands::ls_tree::Args),
+    /// Show the working tree status.
+    Status(commands::status::Args),
     /// Read tree information into the index.
     #[command(name = "read-tree")]
     ReadTree(commands::read_tree::Args),
@@ -131,6 +135,7 @@ fn run() -> Result<()> {
 
     match cli.command {
         Command::Add(args) => commands::add::run(args),
+        Command::Branch(args) => commands::branch::run(args),
         Command::Init(args) => commands::init::run(args),
         Command::HashObject(args) => commands::hash_object::run(args),
         Command::CatFile(args) => commands::cat_file::run(args),
@@ -141,6 +146,7 @@ fn run() -> Result<()> {
         Command::LsFiles(args) => commands::ls_files::run(args),
         Command::WriteTree(args) => commands::write_tree::run(args),
         Command::LsTree(args) => commands::ls_tree::run(args),
+        Command::Status(args) => commands::status::run(args),
         Command::ReadTree(args) => commands::read_tree::run(args),
         Command::CheckoutIndex(args) => commands::checkout_index::run(args),
         Command::CommitTree(args) => commands::commit_tree::run(args),

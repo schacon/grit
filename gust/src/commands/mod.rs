@@ -3,6 +3,7 @@
 //! Each submodule corresponds to one plumbing subcommand.
 
 pub mod add;
+pub mod branch;
 pub mod cat_file;
 pub mod check_ignore;
 pub mod checkout_index;
@@ -25,6 +26,7 @@ pub mod repack;
 pub mod rev_list;
 pub mod rev_parse;
 pub mod show_ref;
+pub mod status;
 pub mod symbolic_ref;
 pub mod update_index;
 pub mod update_ref;
