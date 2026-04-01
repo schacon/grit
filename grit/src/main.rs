@@ -115,6 +115,8 @@ enum Command {
     Tag(commands::tag::Args),
     /// Show various types of objects (commits, trees, blobs, tags).
     Show(commands::show::Args),
+    /// Reset current HEAD to the specified state.
+    Reset(commands::reset::Args),
 }
 
 fn main() {
@@ -169,5 +171,6 @@ fn run() -> Result<()> {
         Command::Repack(args) => commands::repack::run(args),
         Command::Tag(args) => commands::tag::run(args),
         Command::Show(args) => commands::show::run(args),
+        Command::Reset(args) => commands::reset::run(args),
     }
 }

@@ -243,9 +243,26 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
 
         let parts: Vec<&str> = meta.split(' ').collect();
 
-        let (mode_str, oid_str) = match parts.len() {
-            2 => (parts[0], parts[1]),
-            3 => (parts[0], parts[2]), // skip type
+        // Supported formats:
+        //   2-part: "<mode> <sha1>"              → stage 0
+        //   3-part: "<mode> <sha1> <stage>"      → stage 0-3 (git standard)
+        //   3-part: "<mode> <type> <sha1>"       → stage 0 (extended, legacy)
+        //
+        // Disambiguate the 3-part case: if parts[2] is a single decimal digit
+        // (0-3) it is a stage number; otherwise treat parts[1] as a type token
+        // and parts[2] as the sha1.
+        let (mode_str, oid_str, stage) = match parts.len() {
+            2 => (parts[0], parts[1], 0u8),
+            3 => {
+                let third = parts[2];
+                if third.len() == 1 && matches!(third, "0" | "1" | "2" | "3") {
+                    let s: u8 = third.parse().unwrap_or(0);
+                    (parts[0], parts[1], s)
+                } else {
+                    // Legacy: "<mode> <type> <sha1>"
+                    (parts[0], parts[2], 0u8)
+                }
+            }
             _ => bail!("bad --index-info line: '{line}'"),
         };
 
@@ -261,6 +278,10 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
             .parse()
             .with_context(|| format!("invalid oid '{oid_str}'"))?;
 
+        // Encode stage in the upper 2 bits of flags (bits 13-12).
+        let base_flags = path.len().min(0xFFF) as u16;
+        let flags = base_flags | ((stage as u16) << 12);
+
         let entry = IndexEntry {
             ctime_sec: 0,
             ctime_nsec: 0,
@@ -273,7 +294,7 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
             gid: 0,
             size: 0,
             oid,
-            flags: path.len().min(0xFFF) as u16,
+            flags,
             flags_extended: None,
             path,
         };

@@ -23,6 +23,7 @@ pub mod ls_tree;
 pub mod merge_base;
 pub mod read_tree;
 pub mod repack;
+pub mod reset;
 pub mod rev_list;
 pub mod rev_parse;
 pub mod show;

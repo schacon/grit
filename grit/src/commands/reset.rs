@@ -1,0 +1,446 @@
+//! `grit reset` — reset current HEAD to the specified state.
+//!
+//! Implements the following modes:
+//!
+//! - `--soft`  : move HEAD only; index and working tree unchanged.
+//! - `--mixed` : move HEAD and reset index to the target tree (default).
+//! - `--hard`  : move HEAD, reset index, and update working tree.
+//!
+//! When path arguments are given the HEAD is not moved; only the index entries
+//! for those paths are reset to the content of the target commit's tree.
+
+use anyhow::{bail, Context, Result};
+use clap::Args as ClapArgs;
+use std::collections::HashSet;
+use std::path::Path;
+
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::refs::write_ref;
+use grit_lib::repo::Repository;
+use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
+use grit_lib::state::{resolve_head, HeadState};
+
+/// The reset mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ResetMode {
+    Soft,
+    #[default]
+    Mixed,
+    Hard,
+}
+
+impl ResetMode {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Soft => "soft",
+            Self::Mixed => "mixed",
+            Self::Hard => "hard",
+        }
+    }
+}
+
+/// Arguments for `grit reset`.
+#[derive(Debug, ClapArgs)]
+pub struct Args {
+    /// Move HEAD only; do not touch the index or working tree.
+    #[arg(long)]
+    pub soft: bool,
+
+    /// Reset index to the target tree but leave working tree unchanged (default).
+    #[arg(long)]
+    pub mixed: bool,
+
+    /// Reset index and working tree to the target tree.
+    #[arg(long)]
+    pub hard: bool,
+
+    /// Suppress feedback messages.
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
+
+    /// Remaining positional arguments: `[<commit>] [--] [<path>…]`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
+    pub rest: Vec<String>,
+}
+
+/// Run `grit reset`.
+pub fn run(args: Args) -> Result<()> {
+    let mode = parse_mode(&args)?;
+
+    let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Split positional args into (commit_spec, paths).
+    let (commit_spec, paths) = split_commit_and_paths(&repo, &args.rest);
+
+    if !paths.is_empty() {
+        // Pathspec reset: only update index entries, HEAD stays put.
+        if mode != ResetMode::Mixed {
+            bail!("Cannot do --{} reset with paths.", mode.name());
+        }
+        return reset_paths(&repo, &commit_spec, &paths, args.quiet);
+    }
+
+    reset_commit(&repo, &commit_spec, mode, args.quiet)
+}
+
+/// Parse the reset mode from the flag combination.
+fn parse_mode(args: &Args) -> Result<ResetMode> {
+    match (args.soft, args.mixed, args.hard) {
+        (true, false, false) => Ok(ResetMode::Soft),
+        (false, true, false) => Ok(ResetMode::Mixed),
+        (false, false, true) => Ok(ResetMode::Hard),
+        (false, false, false) => Ok(ResetMode::default()),
+        _ => bail!("cannot mix --soft, --mixed and --hard"),
+    }
+}
+
+/// Split positional arguments into `(commit_spec, paths)`.
+///
+/// Handles the `--` end-of-options separator explicitly (clap passes it
+/// through when `trailing_var_arg` is in use).  If the first argument
+/// resolves as a commit-ish it is used as the commit spec and the rest are
+/// paths; otherwise `"HEAD"` is assumed and all arguments are paths.
+fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<String>) {
+    if rest.is_empty() {
+        return ("HEAD".to_owned(), vec![]);
+    }
+
+    // Detect an explicit `--` separator.
+    if let Some(sep) = rest.iter().position(|a| a == "--") {
+        // Everything before `--` is the optional commit; everything after is paths.
+        let commit_spec = if sep == 0 {
+            "HEAD".to_owned()
+        } else {
+            rest[0].clone()
+        };
+        let paths = rest[sep + 1..].to_vec();
+        return (commit_spec, paths);
+    }
+
+    let first = &rest[0];
+    // Attempt to resolve first arg as a commit-ish.
+    let first_is_commit = resolve_revision(repo, first).is_ok();
+
+    if first_is_commit {
+        // First arg is the commit; remaining args are paths (may be empty).
+        (first.clone(), rest[1..].to_vec())
+    } else {
+        // First arg is not a commit: treat all args as paths against HEAD.
+        ("HEAD".to_owned(), rest.to_vec())
+    }
+}
+
+/// Reset specific index entries to match the given commit's tree.
+///
+/// HEAD is not modified.
+fn reset_paths(repo: &Repository, commit_spec: &str, paths: &[String], _quiet: bool) -> Result<()> {
+    let commit_oid = resolve_to_commit(repo, commit_spec)?;
+    let tree_oid = commit_to_tree(repo, &commit_oid)?;
+    let tree_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
+
+    // Build a lookup table: path bytes → IndexEntry.
+    let mut tree_map: std::collections::HashMap<Vec<u8>, IndexEntry> =
+        std::collections::HashMap::new();
+    for e in tree_entries {
+        tree_map.insert(e.path.clone(), e);
+    }
+
+    let index_path = repo.index_path();
+    let mut index = Index::load(&index_path).context("loading index")?;
+
+    for path_str in paths {
+        let path_bytes = path_str.as_bytes().to_vec();
+
+        // A path must exist in the target tree or in the current index.
+        let in_tree = tree_map.contains_key(&path_bytes);
+        let in_index = index.entries.iter().any(|e| e.path == path_bytes);
+        if !in_tree && !in_index {
+            bail!("pathspec '{path_str}' did not match any file(s) known to git");
+        }
+
+        // Remove all stages for this path.
+        index.remove(&path_bytes);
+        // Re-add from tree if present.
+        if let Some(entry) = tree_map.get(&path_bytes) {
+            index.add_or_replace(entry.clone());
+        }
+        // If not in tree, path is removed from index (staged deletion).
+    }
+
+    index.write(&index_path).context("writing index")?;
+    Ok(())
+}
+
+/// Reset HEAD (and optionally index + working tree) to the given commit.
+fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bool) -> Result<()> {
+    let head = resolve_head(&repo.git_dir)?;
+
+    // --soft fails when there are unmerged entries or a merge is in progress.
+    if mode == ResetMode::Soft {
+        if repo.git_dir.join("MERGE_HEAD").exists() {
+            bail!("Cannot do a soft reset in the middle of a merge.");
+        }
+        if repo.git_dir.join("CHERRY_PICK_HEAD").exists() {
+            bail!("Cannot do a soft reset in the middle of a cherry-pick.");
+        }
+        let index_path = repo.index_path();
+        let index = Index::load(&index_path).context("loading index")?;
+        if index.entries.iter().any(|e| e.stage() != 0) {
+            bail!("Cannot do a soft reset in the middle of a merge.");
+        }
+    }
+
+    let target_oid = resolve_to_commit(repo, commit_spec)?;
+
+    // Save ORIG_HEAD before moving HEAD.
+    if let Some(old_oid) = head.oid() {
+        write_orig_head(&repo.git_dir, old_oid)?;
+    }
+
+    // Update HEAD (and the branch it points to, if on a branch).
+    update_head_ref(&repo.git_dir, &head, &target_oid)?;
+
+    if mode == ResetMode::Soft {
+        // Soft: HEAD moved, index and working tree unchanged.
+        return Ok(());
+    }
+
+    // Mixed / hard: reset index from the commit's tree.
+    let tree_oid = commit_to_tree(repo, &target_oid)?;
+    let tree_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
+
+    let index_path = repo.index_path();
+    let old_index = Index::load(&index_path).context("loading old index")?;
+    let mut new_index = Index::new();
+    new_index.entries = tree_entries;
+    new_index.sort();
+
+    if mode == ResetMode::Hard {
+        // Hard: also update working tree.
+        if repo.work_tree.is_some() {
+            checkout_index_to_worktree(repo, &old_index, &new_index)?;
+        }
+        if !quiet {
+            print_head_message(repo, &target_oid)?;
+        }
+    }
+
+    new_index.write(&index_path).context("writing index")?;
+    Ok(())
+}
+
+/// Write `.git/ORIG_HEAD`.
+fn write_orig_head(git_dir: &Path, oid: &ObjectId) -> Result<()> {
+    std::fs::write(git_dir.join("ORIG_HEAD"), format!("{oid}\n"))?;
+    Ok(())
+}
+
+/// Update HEAD and the branch ref it resolves to.
+fn update_head_ref(git_dir: &Path, head: &HeadState, new_oid: &ObjectId) -> Result<()> {
+    match head {
+        HeadState::Branch { refname, .. } => {
+            write_ref(git_dir, refname, new_oid)?;
+        }
+        HeadState::Detached { .. } | HeadState::Invalid => {
+            std::fs::write(git_dir.join("HEAD"), format!("{new_oid}\n"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Print `"HEAD is now at <abbrev> <subject>\n"` to stdout.
+fn print_head_message(repo: &Repository, oid: &ObjectId) -> Result<()> {
+    let obj = repo.odb.read(oid)?;
+    if obj.kind != ObjectKind::Commit {
+        return Ok(());
+    }
+    let commit = parse_commit(&obj.data)?;
+    let subject = commit.message.lines().next().unwrap_or("").trim();
+    let abbrev =
+        abbreviate_object_id(repo, *oid, 7).unwrap_or_else(|_| oid.to_hex()[..7].to_owned());
+    println!("HEAD is now at {abbrev} {subject}");
+    Ok(())
+}
+
+/// Resolve a revision spec to a commit OID, peeling through tags.
+fn resolve_to_commit(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    let oid =
+        resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
+    peel_to_commit(repo, oid)
+}
+
+/// Peel an OID to a commit (follows tag chains).
+fn peel_to_commit(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
+    for _ in 0..10 {
+        let obj = repo.odb.read(&oid)?;
+        match obj.kind {
+            ObjectKind::Commit => return Ok(oid),
+            ObjectKind::Tag => {
+                let text = std::str::from_utf8(&obj.data).context("tag is not UTF-8")?;
+                let target_hex = text
+                    .lines()
+                    .find_map(|l| l.strip_prefix("object "))
+                    .ok_or_else(|| anyhow::anyhow!("tag missing 'object' header"))?
+                    .trim();
+                oid = target_hex.parse()?;
+            }
+            _ => bail!("'{}' is not a commit-ish", oid),
+        }
+    }
+    bail!("too many levels of tag dereferencing")
+}
+
+/// Extract the tree OID from a commit object.
+fn commit_to_tree(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> {
+    let obj = repo.odb.read(commit_oid)?;
+    if obj.kind != ObjectKind::Commit {
+        bail!("not a commit: {commit_oid}");
+    }
+    let commit = parse_commit(&obj.data)?;
+    Ok(commit.tree)
+}
+
+/// Recursively flatten a tree object into a list of [`IndexEntry`] values.
+fn tree_to_flat_entries(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    prefix: &str,
+) -> Result<Vec<IndexEntry>> {
+    let obj = repo.odb.read(tree_oid)?;
+    if obj.kind != ObjectKind::Tree {
+        bail!("expected tree, got {}", obj.kind);
+    }
+    let entries = parse_tree(&obj.data)?;
+    let mut result = Vec::new();
+
+    for te in entries {
+        let name = String::from_utf8_lossy(&te.name).into_owned();
+        let path = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+
+        if te.mode == 0o040000 {
+            result.extend(tree_to_flat_entries(repo, &te.oid, &path)?);
+        } else {
+            let path_bytes = path.into_bytes();
+            result.push(IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: te.mode,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: te.oid,
+                flags: path_bytes.len().min(0xFFF) as u16,
+                flags_extended: None,
+                path: path_bytes,
+            });
+        }
+    }
+    Ok(result)
+}
+
+/// Update the working tree to match the new index (used for `--hard` reset).
+///
+/// Deletes files removed from the index and writes/updates files added or
+/// changed.
+fn checkout_index_to_worktree(
+    repo: &Repository,
+    old_index: &Index,
+    new_index: &Index,
+) -> Result<()> {
+    let work_tree = match &repo.work_tree {
+        Some(p) => p.clone(),
+        None => return Ok(()),
+    };
+
+    let old_stage0: HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+    let new_stage0: HashSet<Vec<u8>> = new_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+
+    // Remove paths that are no longer present in the new index.
+    for old_path in old_stage0.difference(&new_stage0) {
+        let rel = String::from_utf8_lossy(old_path).into_owned();
+        let abs = work_tree.join(&rel);
+        if abs.is_file() || abs.is_symlink() {
+            let _ = std::fs::remove_file(&abs);
+        } else if abs.is_dir() {
+            let _ = std::fs::remove_dir_all(&abs);
+        }
+        remove_empty_parent_dirs(&work_tree, &abs);
+    }
+
+    // Write all stage-0 entries from the new index.
+    for entry in &new_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+        let abs_path = work_tree.join(&path_str);
+
+        if let Some(parent) = abs_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let obj = repo
+            .odb
+            .read(&entry.oid)
+            .context("reading object for checkout")?;
+        if obj.kind != ObjectKind::Blob {
+            bail!("cannot checkout non-blob at '{path_str}'");
+        }
+
+        if abs_path.is_dir() {
+            std::fs::remove_dir_all(&abs_path)?;
+        }
+
+        if entry.mode == MODE_SYMLINK {
+            let target = String::from_utf8(obj.data)
+                .map_err(|_| anyhow::anyhow!("symlink target is not UTF-8"))?;
+            if abs_path.exists() || abs_path.is_symlink() {
+                std::fs::remove_file(&abs_path)?;
+            }
+            std::os::unix::fs::symlink(target, &abs_path)?;
+        } else {
+            std::fs::write(&abs_path, &obj.data)?;
+            if entry.mode == MODE_EXECUTABLE {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&abs_path)?.permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&abs_path, perms)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove empty parent directories up to (but not including) `work_tree`.
+fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir == work_tree {
+            break;
+        }
+        match std::fs::remove_dir(dir) {
+            Ok(()) => current = dir.parent(),
+            Err(_) => break,
+        }
+    }
+}
