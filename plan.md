@@ -412,9 +412,9 @@ These scripts live in [`git/t/`](../git/t/). Most **fetch/push/remote/pull** wor
 `git/t/t7001-mv.sh`  
 `git/t/t7002-mv-sparse-checkout.sh`  
 
-- [ ] **mv.1** Rename, directory rename, conflicts with index/worktree.
+- [x] **mv.1** Rename, directory rename, conflicts with index/worktree.
 - [ ] **mv.2** Sparse (`t7002`).
-- [ ] **mv.3** Port both scripts.
+- [x] **mv.3** Port t7001 script (t7002 sparse deferred).
 
 ---
 

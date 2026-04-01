@@ -22,6 +22,7 @@ pub mod log;
 pub mod ls_files;
 pub mod ls_tree;
 pub mod merge_base;
+pub mod mv;
 pub mod read_tree;
 pub mod repack;
 pub mod rev_list;

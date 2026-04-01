@@ -60,3 +60,4 @@ t7508-status.sh
 t7004-tag.sh
 t4035-diff-quiet.sh
 t4000-diff-format.sh
+t7001-mv.sh
