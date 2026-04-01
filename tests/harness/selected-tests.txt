@@ -1,1 +1,2 @@
 t0001-init.sh
+t1100-commit-tree-options.sh

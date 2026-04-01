@@ -10,6 +10,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::env;
 use std::io::Read;
+use time::format_description::well_known::Iso8601;
+use time::{PrimitiveDateTime, UtcOffset};
 
 use gust_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use gust_lib::refs::resolve_ref;
@@ -114,17 +116,78 @@ fn build_identity(prefix: &str, now_unix: &str, tz_str: &str) -> Result<String> 
         .unwrap_or_else(|_| "unknown@unknown".to_owned());
 
     let date_str = if let Ok(d) = env::var(&date_key) {
-        // Parse "@<unix> <tz>" or "<unix> <tz>" format
-        if let Some(rest) = d.strip_prefix('@') {
-            rest.to_owned()
-        } else {
-            d
-        }
+        normalize_git_date(&d, tz_str)?
     } else {
         format!("{now_unix} {tz_str}")
     };
 
     Ok(format!("{name} <{email}> {date_str}"))
+}
+
+fn normalize_git_date(input: &str, default_tz: &str) -> Result<String> {
+    let trimmed = input.trim();
+
+    // Accept "@<unix>", "@<unix> <tz>", "<unix>", and "<unix> <tz>".
+    let unixish = trimmed.strip_prefix('@').unwrap_or(trimmed).trim();
+    let parts: Vec<&str> = unixish.split_whitespace().collect();
+    if parts.len() == 1 && parts[0].parse::<i64>().is_ok() {
+        return Ok(format!("{} {default_tz}", parts[0]));
+    }
+    if parts.len() == 2 && parts[0].parse::<i64>().is_ok() && is_tz_offset(parts[1]) {
+        return Ok(format!("{} {}", parts[0], parts[1]));
+    }
+
+    // Common human forms used by git tests, e.g. "2005-05-26 23:00".
+    let fmt_ymdhm = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]")
+        .context("building date parser")?;
+    if let Ok(dt) = PrimitiveDateTime::parse(trimmed, &fmt_ymdhm) {
+        let offset = parse_tz_offset(default_tz)?;
+        let ts = dt.assume_offset(offset).unix_timestamp();
+        return Ok(format!("{ts} {default_tz}"));
+    }
+    let fmt_ymdhms =
+        time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+            .context("building date parser")?;
+    if let Ok(dt) = PrimitiveDateTime::parse(trimmed, &fmt_ymdhms) {
+        let offset = parse_tz_offset(default_tz)?;
+        let ts = dt.assume_offset(offset).unix_timestamp();
+        return Ok(format!("{ts} {default_tz}"));
+    }
+    if let Ok(odt) = time::OffsetDateTime::parse(trimmed, &Iso8601::DEFAULT) {
+        let ts = odt.unix_timestamp();
+        let tz = format_tz_offset(odt.offset());
+        return Ok(format!("{ts} {tz}"));
+    }
+
+    // Fall back to original text to preserve behavior for unsupported forms.
+    Ok(trimmed.to_owned())
+}
+
+fn is_tz_offset(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() != 5 {
+        return false;
+    }
+    (bytes[0] == b'+' || bytes[0] == b'-') && bytes[1..].iter().all(|b| b.is_ascii_digit())
+}
+
+fn parse_tz_offset(s: &str) -> Result<UtcOffset> {
+    if !is_tz_offset(s) {
+        bail!("invalid timezone offset: '{s}'");
+    }
+    let sign = if s.starts_with('-') { -1 } else { 1 };
+    let hours: i8 = s[1..3].parse().context("invalid timezone hours")?;
+    let mins: i8 = s[3..5].parse().context("invalid timezone minutes")?;
+    UtcOffset::from_hms(sign * hours, sign * mins, 0).context("invalid timezone offset")
+}
+
+fn format_tz_offset(offset: UtcOffset) -> String {
+    let secs = offset.whole_seconds();
+    let sign = if secs < 0 { '-' } else { '+' };
+    let abs = secs.abs();
+    let hours = abs / 3600;
+    let mins = (abs % 3600) / 60;
+    format!("{sign}{hours:02}{mins:02}")
 }
 
 /// Get the current Unix timestamp as a string.

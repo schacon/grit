@@ -167,7 +167,7 @@ These blocks underpin every command; order matters less than completing them bef
 - [x] **9.1** Build commit object: tree OID, parent(s), author/committer with **injected timestamps** (no hidden `SystemTime::now()` in library APIs per AGENT.md), encoding header, message from `-m` / `-F` / stdin.
 - [x] **9.2** GPG signing hooks (`-S`) only if ported tests require; otherwise omit for v1 (current v1 behavior: `commit-tree` rejects `-S` / `--gpg-sign` as unsupported options).
 - [x] **9.3** Write commit to object store and print hash to stdout.
-- [ ] **9.4** Port and pass `t1100-commit-tree-options.sh` and dependent basic flows.
+- [x] **9.4** Port and pass `t1100-commit-tree-options.sh` and dependent basic flows.
 
 ---
 

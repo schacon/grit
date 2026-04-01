@@ -4,15 +4,18 @@ Last update: 2026-03-31 with `cargo test --workspace` and `./tests/harness/run.s
 
 ## `cargo test --workspace`
 
-- **gust** (binary crate): 0 unit tests defined; build OK.
-- **gust-lib**: 4 tests — all **passed** (`odb` ×2, `index` ×2).
-- **Doc-tests** (`gust_lib`): 1 test — **passed** (`odb` module example).
+- **Result:** PASS
+- **gust** (binary crate): 0 tests run, 0 failed.
+- **gust-lib**: 4 tests run, 4 passed, 0 failed.
+- **Doc-tests** (`gust_lib`): 1 test run, 1 passed, 0 failed.
 
 ## Ported shell harness (`tests/harness/run.sh`)
 
 - **Binary:** `GUST_BIN` defaults to `target/debug/gust` (built if missing).
-- **Selected scripts** (`tests/harness/selected-tests.txt`): only `t0001-init.sh` was listed at capture time.
-- **t0001-init.sh:** 9 tests — **9 passed**, 0 failed.
+- **Selected scripts** (`tests/harness/selected-tests.txt`): `t0001-init.sh`, `t1100-commit-tree-options.sh`.
+- **Result:** PASS
+- **t0001-init.sh:** 9 tests — 9 passed, 0 failed.
+- **t1100-commit-tree-options.sh:** 5 tests — 5 passed, 0 failed.
 
 ## Notes
 
