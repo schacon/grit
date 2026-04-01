@@ -113,6 +113,9 @@ enum Command {
     /// Pick out and massage revision parameters.
     #[command(name = "rev-parse")]
     RevParse(commands::rev_parse::Args),
+    /// Show packed archive index.
+    #[command(name = "show-index")]
+    ShowIndex(commands::show_index::Args),
     /// List references in a local repository.
     #[command(name = "show-ref")]
     ShowRef(commands::show_ref::Args),
@@ -204,6 +207,7 @@ fn run() -> Result<()> {
         Command::MergeBase(args) => commands::merge_base::run(args),
         Command::RevList(args) => commands::rev_list::run(args),
         Command::RevParse(args) => commands::rev_parse::run(args),
+        Command::ShowIndex(args) => commands::show_index::run(args),
         Command::ShowRef(args) => commands::show_ref::run(args),
         Command::SymbolicRef(args) => commands::symbolic_ref::run(args),
         Command::VerifyPack(args) => commands::verify_pack::run(args),

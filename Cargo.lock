@@ -246,6 +246,7 @@ dependencies = [
  "anyhow",
  "clap",
  "grit-lib",
+ "tempfile",
  "time",
 ]
 
