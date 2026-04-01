@@ -387,6 +387,95 @@ pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
     })
 }
 
+/// Parsed representation of an annotated tag object.
+#[derive(Debug, Clone)]
+pub struct TagData {
+    /// The object this tag points to.
+    pub object: ObjectId,
+    /// The type of the tagged object (e.g. `"commit"`).
+    pub object_type: String,
+    /// The short tag name (without `refs/tags/` prefix).
+    pub tag: String,
+    /// The tagger identity and timestamp (raw Git format).
+    pub tagger: Option<String>,
+    /// The tag message (everything after the blank line).
+    pub message: String,
+}
+
+/// Parse the raw data of a tag object.
+///
+/// # Errors
+///
+/// Returns [`Error::CorruptObject`] if required headers are missing or malformed.
+pub fn parse_tag(data: &[u8]) -> Result<TagData> {
+    let text = std::str::from_utf8(data)
+        .map_err(|_| Error::CorruptObject("tag is not valid UTF-8".to_owned()))?;
+
+    let mut object = None;
+    let mut object_type = None;
+    let mut tag_name = None;
+    let mut tagger = None;
+    let mut message = String::new();
+    let mut in_message = false;
+
+    for line in text.split('\n') {
+        if in_message {
+            message.push_str(line);
+            message.push('\n');
+            continue;
+        }
+        if line.is_empty() {
+            in_message = true;
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("object ") {
+            object = Some(rest.trim().parse::<ObjectId>()?);
+        } else if let Some(rest) = line.strip_prefix("type ") {
+            object_type = Some(rest.trim().to_owned());
+        } else if let Some(rest) = line.strip_prefix("tag ") {
+            tag_name = Some(rest.trim().to_owned());
+        } else if let Some(rest) = line.strip_prefix("tagger ") {
+            tagger = Some(rest.to_owned());
+        }
+    }
+
+    // Strip one trailing newline that split adds
+    if message.ends_with('\n') {
+        message.pop();
+    }
+
+    Ok(TagData {
+        object: object
+            .ok_or_else(|| Error::CorruptObject("tag missing object header".to_owned()))?,
+        object_type: object_type
+            .ok_or_else(|| Error::CorruptObject("tag missing type header".to_owned()))?,
+        tag: tag_name.ok_or_else(|| Error::CorruptObject("tag missing tag header".to_owned()))?,
+        tagger,
+        message,
+    })
+}
+
+/// Serialize a [`TagData`] into the raw bytes suitable for storage as a tag object.
+///
+/// The caller is responsible for supplying a correctly-formatted `tagger` string
+/// (including timestamp and timezone) when present.
+#[must_use]
+pub fn serialize_tag(t: &TagData) -> Vec<u8> {
+    let mut out = String::new();
+    out.push_str(&format!("object {}\n", t.object));
+    out.push_str(&format!("type {}\n", t.object_type));
+    out.push_str(&format!("tag {}\n", t.tag));
+    if let Some(ref tagger) = t.tagger {
+        out.push_str(&format!("tagger {tagger}\n"));
+    }
+    out.push('\n');
+    out.push_str(&t.message);
+    if !t.message.is_empty() && !t.message.ends_with('\n') {
+        out.push('\n');
+    }
+    out.into_bytes()
+}
+
 /// Serialize a [`CommitData`] into the raw bytes suitable for storage.
 ///
 /// The caller is responsible for supplying a correctly-formatted `author` and

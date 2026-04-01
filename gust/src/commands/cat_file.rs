@@ -286,5 +286,11 @@ fn resolve_object(repo: &Repository, obj_str: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
 
+    // Try "refs/tags/<name>"
+    let as_tag = format!("refs/tags/{obj_str}");
+    if let Ok(oid) = gust_lib::refs::resolve_ref(&repo.git_dir, &as_tag) {
+        return Ok(oid);
+    }
+
     bail!("not a valid object name: '{obj_str}'")
 }

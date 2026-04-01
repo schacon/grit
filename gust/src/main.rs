@@ -111,6 +111,8 @@ enum Command {
     Gc(commands::gc::Args),
     /// Pack unpacked objects in a repository.
     Repack(commands::repack::Args),
+    /// Create, list, delete or verify a tag object.
+    Tag(commands::tag::Args),
 }
 
 fn main() {
@@ -163,5 +165,6 @@ fn run() -> Result<()> {
         Command::VerifyPack(args) => commands::verify_pack::run(args),
         Command::Gc(args) => commands::gc::run(args),
         Command::Repack(args) => commands::repack::run(args),
+        Command::Tag(args) => commands::tag::run(args),
     }
 }

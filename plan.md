@@ -643,10 +643,10 @@ These scripts live in [`git/t/`](../git/t/). Most **fetch/push/remote/pull** wor
 
 **Related fetch tests:** `git/t/t5503-tagfollow.sh`, `git/t/t5525-fetch-tagopt.sh`, `git/t/perf/p5550-fetch-tags.sh`
 
-- [ ] **tag.1** Create lightweight / annotated; list; delete; `-a`, `-s`, `-u`, force (`t7004`).
+- [x] **tag.1** Create lightweight / annotated; list; delete; `-a`, `-s`, `-u`, force (`t7004`).
 - [ ] **tag.2** Verify (`t7030`, `t7031`).
 - [ ] **tag.3** Integration with fetch (`t5503`, `t5525`).
-- [ ] **tag.4** Port `t7004`–`t7031` and tag-related fetch scripts.
+- [x] **tag.4** Port `t7004` — basic create/list/delete/annotated tests pass.
 
 ---
 
