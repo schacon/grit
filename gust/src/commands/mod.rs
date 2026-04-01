@@ -16,6 +16,7 @@ pub mod gc;
 pub mod git_passthrough;
 pub mod hash_object;
 pub mod init;
+pub mod log;
 pub mod ls_files;
 pub mod ls_tree;
 pub mod merge_base;

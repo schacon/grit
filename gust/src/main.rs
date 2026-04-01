@@ -47,6 +47,8 @@ enum Command {
     Commit(commands::commit::Args),
     /// Get and set repository or global options.
     Config(commands::config::Args),
+    /// Show commit logs.
+    Log(commands::log::Args),
     /// Register file contents in the working tree to the index.
     #[command(name = "update-index")]
     UpdateIndex(commands::update_index::Args),
@@ -134,6 +136,7 @@ fn run() -> Result<()> {
         Command::CatFile(args) => commands::cat_file::run(args),
         Command::Commit(args) => commands::commit::run(args),
         Command::Config(args) => commands::config::run(args),
+        Command::Log(args) => commands::log::run(args),
         Command::UpdateIndex(args) => commands::update_index::run(args),
         Command::LsFiles(args) => commands::ls_files::run(args),
         Command::WriteTree(args) => commands::write_tree::run(args),
