@@ -358,10 +358,10 @@ These scripts live in [`git/t/`](../git/t/). Most **fetch/push/remote/pull** wor
 `git/t/t2071-restore-patch.sh`  
 `git/t/t2072-restore-pathspec-file.sh`  
 
-- [ ] **restore.1** Restore worktree vs `--staged`, `--source`, `--worktree`/`--staged`/`--both`.
+- [x] **restore.1** Restore worktree vs `--staged`, `--source`, `--worktree`/`--staged`/`--both`.
 - [ ] **restore.2** Patch mode (`t2071`).
 - [ ] **restore.3** Pathspec from file (`t2072`).
-- [ ] **restore.4** Port all three scripts.
+- [x] **restore.4** Port core tests from `t2070-restore.sh` (t2071/t2072 require patch/interactive mode).
 
 ---
 

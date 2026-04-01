@@ -61,12 +61,10 @@ test_expect_success 'hash from stdin' '
 '
 
 test_expect_success 'hash a file and write to database' '
-	setup_repo &&
 	test "$hello_oid" = "$(grit hash-object -w hello)"
 '
 
 test_expect_success 'written blob exists in database' '
-	setup_repo &&
 	grit cat-file "$hello_oid" >/dev/null
 '
 
@@ -91,7 +89,6 @@ test_expect_success 'hash two files with names on stdin' '
 '
 
 test_expect_success 'hash two files with names on stdin and write to database' '
-	setup_repo &&
 	printf "hello\nexample" | grit hash-object --stdin-paths -w >actual &&
 	{
 		echo "$hello_oid" &&
