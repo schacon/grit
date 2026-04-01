@@ -219,6 +219,48 @@ test_must_fail () {
 	test $status -ne 0
 }
 
+test_expect_code () {
+	local expected_code="$1"
+	shift
+	set +e
+	"$@"
+	local actual_code=$?
+	set -e
+	if test "$actual_code" = "$expected_code"
+	then
+		return 0
+	else
+		echo >&2 "test_expect_code: expected exit code $expected_code, got $actual_code from: $*"
+		return 1
+	fi
+}
+
+test_must_be_empty () {
+	if test -s "$1"
+	then
+		echo >&2 "test_must_be_empty: file '$1' is not empty"
+		return 1
+	fi
+	return 0
+}
+
+test_line_count () {
+	local op="$1"
+	local count="$2"
+	local file="$3"
+	local actual
+	actual=$(wc -l <"$file")
+	# trim whitespace
+	actual=$(echo "$actual" | tr -d ' ')
+	if test "$actual" "$op" "$count"
+	then
+		return 0
+	else
+		echo >&2 "test_line_count: expected $count lines ($op), got $actual in '$file'"
+		return 1
+	fi
+}
+
 test_done () {
 	printf '\n'
 	echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"
