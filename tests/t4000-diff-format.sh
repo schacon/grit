@@ -100,4 +100,71 @@ test_expect_success 'pathspec limits diff output' '
     test_line_count = 1 out
 '
 
+# ---------------------------------------------------------------------------
+# Additional format tests ported from git/t/t4000-diff-format.sh
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-files -p after editing work tree' '
+    git init fmtrepo &&
+    cd fmtrepo &&
+    printf "Line 1\nLine 2\nline 3\n" >path0 &&
+    git update-index --add path0 &&
+    c0=$(make_commit initial_fmt) &&
+    sed -e "s/line/Line/" <path0 >path0.tmp && mv path0.tmp path0 &&
+    git diff-files -p >actual &&
+    grep "^diff --git" actual &&
+    grep "^---" actual &&
+    grep "^+++" actual
+'
+
+test_expect_success 'diff --stat shows summary line' '
+    cd fmtrepo &&
+    git diff --stat >actual &&
+    grep "changed" actual
+'
+
+test_expect_success 'diff --numstat counts lines' '
+    cd fmtrepo &&
+    git diff-files --numstat >actual &&
+    grep "path0" actual &&
+    grep "^[0-9]" actual
+'
+
+test_expect_success 'diff --exit-code returns 1 when differences exist' '
+    cd fmtrepo &&
+    test_must_fail git diff --exit-code
+'
+
+test_expect_success 'diff --exit-code returns 0 when no differences' '
+    git init cleanrepo &&
+    cd cleanrepo &&
+    printf "clean\n" >clean.txt &&
+    git update-index --add clean.txt &&
+    c0=$(make_commit clean) &&
+    git diff --exit-code
+'
+
+test_expect_success 'diff --quiet returns 0 when no differences' '
+    cd cleanrepo &&
+    git diff --quiet
+'
+
+test_expect_success 'diff --quiet returns 1 when differences exist' '
+    cd fmtrepo &&
+    test_must_fail git diff --quiet
+'
+
+test_expect_success 'diff --quiet suppresses all output' '
+    cd fmtrepo &&
+    git diff --quiet >out 2>&1 || true &&
+    test_must_be_empty out
+'
+
+test_expect_success 'diff -U0 shows zero context lines' '
+    cd fmtrepo &&
+    git diff -U0 >actual &&
+    grep "^@@" actual &&
+    ! grep "^ Line 1" actual
+'
+
 test_done

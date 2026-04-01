@@ -52,4 +52,21 @@ test_expect_success 'diff-index default raw output uses full oids' '
 	test_cmp expect.full actual.full
 '
 
+test_expect_success 'diff-index --abbrev=4 uses minimum abbreviation' '
+	cd repo &&
+	c1=$(cat c1) &&
+	git diff-index --cached --raw --abbrev=4 "$c1" -- foo >actual4 &&
+	# abbrev=4 should show at least 4 hex chars for non-zero oid
+	grep ":000000 100644 0000" actual4 &&
+	grep "A" actual4
+'
+
+test_expect_success 'diff-index --abbrev with modified file' '
+	cd repo &&
+	c2=$(cat ../c2 2>/dev/null || echo skip) &&
+	test "$c2" = skip && return 0 &&
+	git diff-index --cached --raw --abbrev=8 "$c2" -- foo >actual_mod &&
+	grep "M" actual_mod
+'
+
 test_done

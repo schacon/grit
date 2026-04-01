@@ -176,4 +176,33 @@ test_expect_success 'diff-files ignores untracked files' '
 	test_must_fail grep "untracked.txt" out
 '
 
+# ---------------------------------------------------------------------------
+# Additional diff-files tests
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-files -p shows unified patch output' '
+	cd repo &&
+	printf "line1_mod\nline2\n" >file.txt &&
+	git update-index file.txt &&
+	printf "line1_changed\nline2\n" >file.txt &&
+	git diff-files -p >out &&
+	grep "^diff --git" out &&
+	grep "^---" out &&
+	grep "^+++" out &&
+	grep "^@@" out
+'
+
+test_expect_success 'diff-files with no changes after update-index' '
+	cd repo &&
+	printf "stable\n" >stable.txt &&
+	git update-index --add stable.txt &&
+	git diff-files -- stable.txt >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff-files --exit-code with pathspec' '
+	cd repo &&
+	git diff-files --exit-code -- stable.txt
+'
+
 test_done

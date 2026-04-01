@@ -62,4 +62,79 @@ test_expect_success 'pathspec limits exit-code checks' '
 	git diff-index --cached --exit-code "$c1" -- does-not-exist
 '
 
+# ---------------------------------------------------------------------------
+# Additional tests from git/t/t4017-diff-retval.sh
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-files --exit-code succeeds when worktree matches index' '
+	cd repo &&
+	git diff-files --exit-code
+'
+
+test_expect_success 'diff-files --exit-code fails when worktree differs' '
+	cd repo &&
+	echo 3 >>a &&
+	test_must_fail git diff-files --exit-code
+'
+
+test_expect_success 'diff --quiet returns 0 when HEAD matches worktree' '
+	cd repo &&
+	git update-index a &&
+	c3=$(make_commit third "$(cat c2)") &&
+	printf "%s\n" "$c3" >c3 &&
+	git diff --quiet
+'
+
+test_expect_success 'diff --quiet returns 1 for HEAD^ HEAD with changes' '
+	cd repo &&
+	c2=$(cat c2) &&
+	c3=$(cat c3) &&
+	test_must_fail git diff --quiet "$c2" "$c3"
+'
+
+test_expect_success 'diff --exit-code returns 0 for identical commits' '
+	cd repo &&
+	c3=$(cat c3) &&
+	git diff --exit-code "$c3" "$c3"
+'
+
+test_expect_success 'diff --exit-code returns 1 for different commits' '
+	cd repo &&
+	c1=$(cat c1) &&
+	c2=$(cat c2) &&
+	test_must_fail git diff --exit-code "$c1" "$c2"
+'
+
+test_expect_success 'diff --quiet suppresses output even with differences' '
+	cd repo &&
+	c1=$(cat c1) &&
+	c2=$(cat c2) &&
+	git diff --quiet "$c1" "$c2" >out 2>&1 || true &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff --exit-code with pathspec: no match means 0' '
+	cd repo &&
+	c1=$(cat c1) &&
+	c2=$(cat c2) &&
+	git diff --exit-code "$c1" "$c2" -- nonexistent
+'
+
+test_expect_success 'diff --exit-code with pathspec: match means 1' '
+	cd repo &&
+	c1=$(cat c1) &&
+	c2=$(cat c2) &&
+	test_must_fail git diff --exit-code "$c1" "$c2" -- a
+'
+
+test_expect_success 'diff-index --cached --exit-code after adding more files' '
+	cd repo &&
+	echo 3 >c &&
+	git update-index --add c &&
+	c4=$(make_commit fourth "$(cat c3)") &&
+	printf "%s\n" "$c4" >c4 &&
+	c3=$(cat c3) &&
+	test_must_fail git diff-index --exit-code --cached "$c3"
+'
+
 test_done
