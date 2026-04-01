@@ -1,0 +1,22 @@
+//! Gust library — core Git-compatible engine.
+//!
+//! # Architecture
+//!
+//! All Git-compatible logic lives here; the `gust` binary is a thin CLI shim
+//! that parses arguments and delegates to types exposed from this crate.
+//!
+//! ## Modules
+//!
+//! - [`error`] — shared error types using `thiserror`
+//! - [`objects`] — object ID, object kinds, and in-memory representations
+//! - [`odb`] — loose object store (read/write zlib-compressed objects)
+//! - [`repo`] — repository discovery and handle
+//! - [`index`] — Git index (staging area) read/write
+//! - [`refs`] — reference storage (files backend)
+
+pub mod error;
+pub mod index;
+pub mod objects;
+pub mod odb;
+pub mod refs;
+pub mod repo;

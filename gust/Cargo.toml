@@ -1,0 +1,19 @@
+[package]
+name = "gust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Gust: a Git plumbing reimplementation in Rust"
+
+[[bin]]
+name = "gust"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+gust-lib = { path = "../gust-lib" }
+anyhow.workspace = true
+clap.workspace = true
+time.workspace = true
