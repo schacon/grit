@@ -60,4 +60,51 @@ test_expect_success 'gc --prune=now removes unreachable loose object' '
 	test_path_is_missing "$loose"
 '
 
+# ---------------------------------------------------------------------------
+# Additional gc tests
+# ---------------------------------------------------------------------------
+
+test_expect_success 'gc empty repository' '
+	rm -rf repo_gc_empty &&
+	grit init repo_gc_empty &&
+	cd repo_gc_empty &&
+	git gc
+'
+
+test_expect_success 'gc does not leave behind pid file' '
+	cd repo_gc_empty &&
+	git gc &&
+	test_path_is_missing .git/gc.pid
+'
+
+test_expect_success 'gc --quiet produces no output' '
+	rm -rf repo_gcq &&
+	grit init repo_gcq &&
+	cd repo_gcq &&
+	create_commit base one.txt one &&
+	git gc --quiet >stdout 2>stderr &&
+	test_must_be_empty stdout &&
+	test_must_be_empty stderr
+'
+
+test_expect_success 'gc after repack -a -d still works' '
+	rm -rf repo_gc_after &&
+	grit init repo_gc_after &&
+	cd repo_gc_after &&
+	create_commit base one.txt one &&
+	git repack -a -d &&
+	git gc &&
+	test_path_is_file "$(echo .git/objects/pack/*.pack)"
+'
+
+test_expect_success 'gc is idempotent' '
+	rm -rf repo_gc_idem &&
+	grit init repo_gc_idem &&
+	cd repo_gc_idem &&
+	create_commit base one.txt one &&
+	git gc &&
+	git gc &&
+	test_path_is_file "$(echo .git/objects/pack/*.pack)"
+'
+
 test_done
