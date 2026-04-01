@@ -196,8 +196,11 @@ test_expect_failure () {
 }
 
 test_must_fail () {
+	set +e
 	"$@"
-	test $? -ne 0
+	status=$?
+	set -e
+	test $status -ne 0
 }
 
 test_done () {

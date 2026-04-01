@@ -35,18 +35,41 @@ pub struct Args {
     pub batch: bool,
 
     /// Print info (type, size) for each object ID on stdin.
-    #[arg(long, conflicts_with_all = ["show_type", "size", "pretty", "exists", "batch"])]
-    pub batch_check: bool,
+    ///
+    /// Optional custom format, e.g. `%(objecttype) %(objectname)`.
+    #[arg(
+        long,
+        value_name = "format",
+        num_args = 0..=1,
+        default_missing_value = "",
+        require_equals = true,
+        conflicts_with_all = ["show_type", "size", "pretty", "exists", "batch"]
+    )]
+    pub batch_check: Option<String>,
 
     /// Read commands from stdin.
-    #[arg(long, conflicts_with_all = ["show_type", "size", "pretty", "exists", "batch", "batch_check"])]
+    #[arg(
+        long,
+        conflicts_with_all = ["show_type", "size", "pretty", "exists", "batch", "batch_check"]
+    )]
     pub batch_command: bool,
+
+    /// Buffer output in `--batch-command` mode (requires `flush` commands).
+    #[arg(long, conflicts_with = "no_buffer")]
+    pub buffer: bool,
+
+    /// Disable explicit buffering in `--batch-command` mode.
+    #[arg(long, conflicts_with = "buffer")]
+    pub no_buffer: bool,
 
     /// Follow tag objects to the tagged object.
     #[arg(long = "follow-symlinks")]
     pub follow_symlinks: bool,
 
-    /// Object to inspect (required unless --batch*).
+    /// Either `<type>` (when followed by `<object>`) or `<object>`.
+    pub type_or_object: Option<String>,
+
+    /// Object to inspect when `<type>` is provided.
     pub object: Option<String>,
 }
 
@@ -54,14 +77,20 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    if args.batch || args.batch_check || args.batch_command {
+    if args.batch || args.batch_check.is_some() || args.batch_command {
         return run_batch(&repo, &args);
     }
 
-    let obj_str = args
-        .object
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("object required when not in batch mode"))?;
+    let (expected_kind, obj_str) = match (args.type_or_object.as_deref(), args.object.as_deref()) {
+        (Some(kind_str), Some(obj)) => {
+            let kind = kind_str
+                .parse::<ObjectKind>()
+                .map_err(|_| anyhow::anyhow!("unknown type '{}'", kind_str))?;
+            (Some(kind), obj)
+        }
+        (Some(obj), None) => (None, obj),
+        (None, _) => return Err(anyhow::anyhow!("object required when not in batch mode")),
+    };
 
     let oid = resolve_object(&repo, obj_str)?;
     let obj = repo.odb.read(&oid)?;
@@ -83,6 +112,12 @@ pub fn run(args: Args) -> Result<()> {
     if args.pretty {
         pretty_print(&obj.kind, &obj.data)?;
         return Ok(());
+    }
+
+    if let Some(kind) = expected_kind {
+        if obj.kind != kind && !args.allow_unknown_type {
+            bail!("object {} is of type {}, not {}", oid, obj.kind, kind);
+        }
     }
 
     // Default: print raw content
@@ -112,17 +147,27 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                         repo,
                         obj_str,
                         args.batch_command && trimmed.starts_with("contents"),
+                        None,
                         &mut out,
                     )?;
                 }
                 Some("flush") => {
+                    if !args.buffer {
+                        bail!("flush is only valid with --buffer");
+                    }
                     out.flush()?;
                 }
                 Some(other) => bail!("unknown batch command: {other}"),
                 None => {}
             }
         } else {
-            print_batch_entry(repo, trimmed, args.batch, &mut out)?;
+            print_batch_entry(
+                repo,
+                trimmed,
+                args.batch,
+                args.batch_check.as_deref(),
+                &mut out,
+            )?;
         }
     }
     Ok(())
@@ -130,10 +175,12 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
 
 fn print_batch_entry(
     repo: &Repository,
-    obj_str: &str,
+    input: &str,
     include_content: bool,
+    batch_check_format: Option<&str>,
     out: &mut impl Write,
 ) -> Result<()> {
+    let (obj_str, rest) = parse_batch_input(input);
     match resolve_object(repo, obj_str) {
         Err(_) => {
             writeln!(out, "{obj_str} missing")?;
@@ -143,7 +190,21 @@ fn print_batch_entry(
                 writeln!(out, "{obj_str} missing")?;
             }
             Ok(obj) => {
-                writeln!(out, "{} {} {}", oid, obj.kind, obj.data.len())?;
+                if let Some(format) = batch_check_format.filter(|f| !f.is_empty()) {
+                    writeln!(
+                        out,
+                        "{}",
+                        apply_batch_check_format(
+                            format,
+                            &oid.to_string(),
+                            &obj.kind.to_string(),
+                            obj.data.len(),
+                            rest
+                        )
+                    )?;
+                } else {
+                    writeln!(out, "{} {} {}", oid, obj.kind, obj.data.len())?;
+                }
                 if include_content {
                     out.write_all(&obj.data)?;
                     writeln!(out)?;
@@ -152,6 +213,31 @@ fn print_batch_entry(
         },
     }
     Ok(())
+}
+
+fn parse_batch_input(line: &str) -> (&str, &str) {
+    let trimmed = line.trim();
+    if let Some(split_at) = trimmed.find(char::is_whitespace) {
+        let object = &trimmed[..split_at];
+        let rest = trimmed[split_at..].trim_start();
+        (object, rest)
+    } else {
+        (trimmed, "")
+    }
+}
+
+fn apply_batch_check_format(
+    format: &str,
+    object_name: &str,
+    object_type: &str,
+    object_size: usize,
+    rest: &str,
+) -> String {
+    format
+        .replace("%(objecttype)", object_type)
+        .replace("%(objectname)", object_name)
+        .replace("%(objectsize)", &object_size.to_string())
+        .replace("%(rest)", rest)
 }
 
 fn pretty_print(kind: &ObjectKind, data: &[u8]) -> Result<()> {

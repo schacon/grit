@@ -10,6 +10,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::env;
 use std::io::Read;
+use time::format_description::well_known::Rfc3339;
+use time::{format_description, OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
 use gust_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use gust_lib::refs::resolve_ref;
@@ -114,17 +116,80 @@ fn build_identity(prefix: &str, now_unix: &str, tz_str: &str) -> Result<String> 
         .unwrap_or_else(|_| "unknown@unknown".to_owned());
 
     let date_str = if let Ok(d) = env::var(&date_key) {
-        // Parse "@<unix> <tz>" or "<unix> <tz>" format
-        if let Some(rest) = d.strip_prefix('@') {
-            rest.to_owned()
-        } else {
-            d
-        }
+        parse_identity_date(&d, tz_str)?
     } else {
         format!("{now_unix} {tz_str}")
     };
 
     Ok(format!("{name} <{email}> {date_str}"))
+}
+
+fn parse_identity_date(input: &str, default_tz: &str) -> Result<String> {
+    if let Some(rest) = input.strip_prefix('@') {
+        return Ok(rest.to_owned());
+    }
+    if input
+        .split_once(' ')
+        .and_then(|(a, b)| {
+            if a.chars().all(|c| c.is_ascii_digit()) && is_git_tz(b) {
+                Some(())
+            } else {
+                None
+            }
+        })
+        .is_some()
+    {
+        return Ok(input.to_owned());
+    }
+
+    if let Ok(dt) = OffsetDateTime::parse(input, &Rfc3339) {
+        let secs = dt.unix_timestamp();
+        let tz = format_offset(dt.offset());
+        return Ok(format!("{secs} {tz}"));
+    }
+
+    let fallback_tz = parse_git_tz(default_tz)?;
+    let ymd_hm = format_description::parse("[year]-[month]-[day] [hour]:[minute]")?;
+    if let Ok(naive) = PrimitiveDateTime::parse(input, &ymd_hm) {
+        let dt = naive.assume_offset(fallback_tz);
+        let secs = dt.unix_timestamp();
+        let tz = format_offset(fallback_tz);
+        return Ok(format!("{secs} {tz}"));
+    }
+
+    Ok(input.to_owned())
+}
+
+fn is_git_tz(value: &str) -> bool {
+    parse_git_tz(value).is_ok()
+}
+
+fn parse_git_tz(value: &str) -> Result<UtcOffset> {
+    if value.len() != 5 {
+        bail!("invalid timezone offset '{value}'");
+    }
+    let sign = match &value[0..1] {
+        "+" => 1_i32,
+        "-" => -1_i32,
+        _ => bail!("invalid timezone sign in '{value}'"),
+    };
+    let hours: i32 = value[1..3]
+        .parse()
+        .with_context(|| format!("invalid timezone hours in '{value}'"))?;
+    let mins: i32 = value[3..5]
+        .parse()
+        .with_context(|| format!("invalid timezone minutes in '{value}'"))?;
+    let total_seconds = sign * ((hours * 3600) + (mins * 60));
+    UtcOffset::from_whole_seconds(total_seconds).context("invalid timezone offset")
+}
+
+fn format_offset(offset: UtcOffset) -> String {
+    let total = offset.whole_seconds();
+    let sign = if total < 0 { '-' } else { '+' };
+    let abs = total.unsigned_abs();
+    let hours = abs / 3600;
+    let mins = (abs % 3600) / 60;
+    format!("{sign}{hours:02}{mins:02}")
 }
 
 /// Get the current Unix timestamp as a string.

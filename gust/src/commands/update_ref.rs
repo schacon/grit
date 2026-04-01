@@ -2,10 +2,10 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use std::io::{self, BufRead};
+use std::io::{self, Read};
 
 use gust_lib::objects::ObjectId;
-use gust_lib::refs::{append_reflog, delete_ref, resolve_ref, write_ref};
+use gust_lib::refs::{append_reflog, delete_ref, read_symbolic_ref, resolve_ref, write_ref};
 use gust_lib::repo::Repository;
 
 /// Arguments for `gust update-ref`.
@@ -53,17 +53,15 @@ pub fn run(args: Args) -> Result<()> {
         .refname
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("ref name required"))?;
+    let target_refname = effective_refname(&repo, refname, args.no_deref)?;
 
     if args.delete {
-        // Verify old value if provided
-        if let Some(old) = &args.old_value {
-            let current = resolve_ref(&repo.git_dir, refname).ok();
-            let expected: ObjectId = old.parse().context("invalid old-value OID")?;
-            if current != Some(expected) {
-                bail!("ref '{refname}' does not point to expected value");
-            }
+        if let Some(expected) =
+            parse_old_expectation(args.old_value.as_deref().or(args.new_value.as_deref()))?
+        {
+            verify_expected_old(&repo, &target_refname, expected)?;
         }
-        delete_ref(&repo.git_dir, refname).context("deleting ref")?;
+        delete_ref(&repo.git_dir, &target_refname).context("deleting ref")?;
         return Ok(());
     }
 
@@ -73,24 +71,25 @@ pub fn run(args: Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("new value required"))?;
     let new_oid: ObjectId = resolve_oid_or_ref(&repo, new_str)?;
 
-    // Verify old value
-    if let Some(old_str) = &args.old_value {
-        let current = resolve_ref(&repo.git_dir, refname).ok();
-        let expected: ObjectId = old_str.parse().context("invalid old-value OID")?;
-        if current != Some(expected) {
-            bail!("ref '{refname}' does not point to expected value");
-        }
+    if let Some(expected) = parse_old_expectation(args.old_value.as_deref())? {
+        verify_expected_old(&repo, &target_refname, expected)?;
     }
 
-    let old_oid = resolve_ref(&repo.git_dir, refname)
-        .unwrap_or_else(|_| ObjectId::from_bytes(&[0u8; 20]).unwrap_or_else(|_| unreachable!()));
+    let old_oid = resolve_ref(&repo.git_dir, &target_refname).unwrap_or_else(|_| zero_oid());
 
-    write_ref(&repo.git_dir, refname, &new_oid).context("writing ref")?;
+    write_ref(&repo.git_dir, &target_refname, &new_oid).context("writing ref")?;
 
     // Reflog
     if let Some(msg) = &args.log_message {
         let identity = "gust <gust> 0 +0000";
-        let _ = append_reflog(&repo.git_dir, refname, &old_oid, &new_oid, identity, msg);
+        let _ = append_reflog(
+            &repo.git_dir,
+            &target_refname,
+            &old_oid,
+            &new_oid,
+            identity,
+            msg,
+        );
     }
 
     Ok(())
@@ -98,12 +97,21 @@ pub fn run(args: Args) -> Result<()> {
 
 /// Process `--stdin` batch commands.
 fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
-    let stdin = io::stdin();
-    let lines: Vec<String> = stdin.lock().lines().collect::<std::io::Result<_>>()?;
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input)?;
 
-    for line in &lines {
-        let parts: Vec<&str> = line.trim().splitn(4, ' ').collect();
-        if parts.is_empty() || parts[0].is_empty() {
+    let records: Vec<&str> = if args.null_terminated {
+        input.split('\0').collect()
+    } else {
+        input.lines().collect()
+    };
+
+    let mut transaction_active = false;
+    let mut staged = Vec::new();
+
+    for line in records {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.is_empty() {
             continue;
         }
 
@@ -112,74 +120,65 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 if parts.len() < 3 {
                     bail!("update requires ref and new-value");
                 }
-                let refname = parts[1];
-                let new_oid = resolve_oid_or_ref(repo, parts[2])?;
-                let old_oid = if parts.len() >= 4 && !parts[3].is_empty() {
-                    let o: ObjectId = parts[3].parse().context("invalid old-value")?;
-                    let current = resolve_ref(&repo.git_dir, refname).ok();
-                    if current != Some(o) {
-                        bail!("ref '{refname}' does not point to expected value");
-                    }
-                    current
-                } else {
-                    resolve_ref(&repo.git_dir, refname).ok()
+                let op = BatchOp::Update {
+                    refname: parts[1].to_owned(),
+                    new_oid: resolve_oid_or_ref(repo, parts[2])?,
+                    expected_old: parse_old_expectation(parts.get(3).copied())?,
                 };
-                let old = old_oid.unwrap_or_else(|| {
-                    ObjectId::from_bytes(&[0u8; 20]).unwrap_or_else(|_| unreachable!())
-                });
-                write_ref(&repo.git_dir, refname, &new_oid)?;
-                if let Some(msg) = &args.log_message {
-                    let _ = append_reflog(
-                        &repo.git_dir,
-                        refname,
-                        &old,
-                        &new_oid,
-                        "gust <gust> 0 +0000",
-                        msg,
-                    );
-                }
+                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
             }
             "create" => {
                 if parts.len() < 3 {
                     bail!("create requires ref and new-value");
                 }
-                let refname = parts[1];
-                // create fails if ref already exists
-                if resolve_ref(&repo.git_dir, refname).is_ok() {
-                    bail!("ref '{refname}' already exists");
-                }
-                let new_oid = resolve_oid_or_ref(repo, parts[2])?;
-                write_ref(&repo.git_dir, refname, &new_oid)?;
+                let op = BatchOp::Create {
+                    refname: parts[1].to_owned(),
+                    new_oid: resolve_oid_or_ref(repo, parts[2])?,
+                };
+                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
             }
             "delete" => {
                 if parts.len() < 2 {
                     bail!("delete requires ref");
                 }
-                let refname = parts[1];
-                if parts.len() >= 3 && !parts[2].is_empty() {
-                    let expected: ObjectId = parts[2].parse().context("invalid old-value")?;
-                    let current = resolve_ref(&repo.git_dir, refname).ok();
-                    if current != Some(expected) {
-                        bail!("ref '{refname}' does not point to expected value");
-                    }
-                }
-                delete_ref(&repo.git_dir, refname)?;
+                let op = BatchOp::Delete {
+                    refname: parts[1].to_owned(),
+                    expected_old: parse_old_expectation(parts.get(2).copied())?,
+                };
+                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
             }
             "verify" => {
                 if parts.len() < 2 {
                     bail!("verify requires ref");
                 }
-                let refname = parts[1];
-                if parts.len() >= 3 && !parts[2].is_empty() {
-                    let expected: ObjectId = parts[2].parse().context("invalid old-value")?;
-                    let current = resolve_ref(&repo.git_dir, refname)
-                        .map_err(|_| anyhow::anyhow!("ref '{refname}' does not exist"))?;
-                    if current != expected {
-                        bail!("ref '{refname}' does not match expected value");
-                    }
-                }
+                let op = BatchOp::Verify {
+                    refname: parts[1].to_owned(),
+                    expected_old: parse_old_expectation(parts.get(2).copied())?,
+                };
+                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
             }
-            "abort" => break,
+            "start" => {
+                if transaction_active {
+                    bail!("transaction already started");
+                }
+                transaction_active = true;
+                staged.clear();
+                println!("start: ok");
+            }
+            "commit" => {
+                if !transaction_active {
+                    bail!("no transaction started");
+                }
+                for op in staged.drain(..) {
+                    apply_batch_op(repo, args, op)?;
+                }
+                transaction_active = false;
+                println!("commit: ok");
+            }
+            "abort" => {
+                staged.clear();
+                break;
+            }
             other => bail!("unknown batch command: {other}"),
         }
     }
@@ -195,4 +194,154 @@ fn resolve_oid_or_ref(repo: &Repository, s: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
     bail!("not a valid object name: '{s}'")
+}
+
+#[derive(Clone, Copy)]
+enum OldExpectation {
+    MustNotExist,
+    MustEqual(ObjectId),
+}
+
+enum BatchOp {
+    Update {
+        refname: String,
+        new_oid: ObjectId,
+        expected_old: Option<OldExpectation>,
+    },
+    Create {
+        refname: String,
+        new_oid: ObjectId,
+    },
+    Delete {
+        refname: String,
+        expected_old: Option<OldExpectation>,
+    },
+    Verify {
+        refname: String,
+        expected_old: Option<OldExpectation>,
+    },
+}
+
+fn queue_or_apply(
+    repo: &Repository,
+    args: &Args,
+    transaction_active: bool,
+    staged: &mut Vec<BatchOp>,
+    op: BatchOp,
+) -> Result<()> {
+    if transaction_active {
+        staged.push(op);
+        Ok(())
+    } else {
+        apply_batch_op(repo, args, op)
+    }
+}
+
+fn apply_batch_op(repo: &Repository, args: &Args, op: BatchOp) -> Result<()> {
+    match op {
+        BatchOp::Update {
+            refname,
+            new_oid,
+            expected_old,
+        } => {
+            let target_refname = effective_refname(repo, &refname, args.no_deref)?;
+            if let Some(expected) = expected_old {
+                verify_expected_old(repo, &target_refname, expected)?;
+            }
+            let old_oid =
+                resolve_ref(&repo.git_dir, &target_refname).unwrap_or_else(|_| zero_oid());
+            write_ref(&repo.git_dir, &target_refname, &new_oid)?;
+            if let Some(msg) = &args.log_message {
+                let _ = append_reflog(
+                    &repo.git_dir,
+                    &target_refname,
+                    &old_oid,
+                    &new_oid,
+                    "gust <gust> 0 +0000",
+                    msg,
+                );
+            }
+        }
+        BatchOp::Create { refname, new_oid } => {
+            let target_refname = effective_refname(repo, &refname, args.no_deref)?;
+            if resolve_ref(&repo.git_dir, &target_refname).is_ok() {
+                bail!("ref '{target_refname}' already exists");
+            }
+            write_ref(&repo.git_dir, &target_refname, &new_oid)?;
+        }
+        BatchOp::Delete {
+            refname,
+            expected_old,
+        } => {
+            let target_refname = effective_refname(repo, &refname, args.no_deref)?;
+            if let Some(expected) = expected_old {
+                verify_expected_old(repo, &target_refname, expected)?;
+            }
+            delete_ref(&repo.git_dir, &target_refname)?;
+        }
+        BatchOp::Verify {
+            refname,
+            expected_old,
+        } => {
+            let target_refname = effective_refname(repo, &refname, args.no_deref)?;
+            if let Some(expected) = expected_old {
+                verify_expected_old(repo, &target_refname, expected)?;
+            } else if resolve_ref(&repo.git_dir, &target_refname).is_err() {
+                bail!("ref '{target_refname}' does not exist");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn effective_refname(repo: &Repository, refname: &str, no_deref: bool) -> Result<String> {
+    if no_deref {
+        return Ok(refname.to_owned());
+    }
+    if let Some(target) = read_symbolic_ref(&repo.git_dir, refname)? {
+        Ok(target)
+    } else {
+        Ok(refname.to_owned())
+    }
+}
+
+fn parse_old_expectation(raw: Option<&str>) -> Result<Option<OldExpectation>> {
+    let Some(old) = raw else {
+        return Ok(None);
+    };
+    let expected: ObjectId = old.parse().context("invalid old-value OID")?;
+    if is_zero_oid(&expected) {
+        Ok(Some(OldExpectation::MustNotExist))
+    } else {
+        Ok(Some(OldExpectation::MustEqual(expected)))
+    }
+}
+
+fn verify_expected_old(repo: &Repository, refname: &str, expected: OldExpectation) -> Result<()> {
+    let current = resolve_ref(&repo.git_dir, refname).ok();
+    match expected {
+        OldExpectation::MustNotExist => {
+            if current.is_some() {
+                bail!("ref '{refname}' already exists");
+            }
+        }
+        OldExpectation::MustEqual(oid) => {
+            if current != Some(oid) {
+                bail!("ref '{refname}' does not point to expected value");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_zero_oid(oid: &ObjectId) -> bool {
+    oid.as_bytes().iter().all(|byte| *byte == 0)
+}
+
+fn zero_oid() -> ObjectId {
+    match ObjectId::from_bytes(&[0u8; 20]) {
+        Ok(oid) => oid,
+        Err(err) => panic!("20-byte zero OID should always be valid: {err}"),
+    }
 }

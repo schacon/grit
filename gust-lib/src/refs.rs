@@ -175,6 +175,20 @@ pub fn read_head(git_dir: &Path) -> Result<Option<String>> {
     }
 }
 
+/// Read symbolic target of any loose ref.
+///
+/// Returns `Ok(Some(target))` when `refname` exists and is symbolic,
+/// `Ok(None)` when it is direct or missing.
+pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>> {
+    let path = git_dir.join(refname);
+    match read_ref_file(&path) {
+        Ok(Ref::Symbolic(target)) => Ok(Some(target)),
+        Ok(Ref::Direct(_)) => Ok(None),
+        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 /// Write a reflog entry.
 ///
 /// Appends a line to `<git-dir>/logs/<refname>`.  Creates the log file and

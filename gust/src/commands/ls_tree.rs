@@ -134,7 +134,11 @@ fn print_entry(
             .replace("%(path)", name);
         write!(out, "{line}")?;
     } else if args.name_only {
-        write!(out, "{name}")?;
+        if args.null_terminated {
+            write!(out, "{name}")?;
+        } else {
+            write!(out, "{}", quote_path_name(name))?;
+        }
     } else if args.long {
         let size_str = "-";
         write!(
@@ -147,6 +151,47 @@ fn print_entry(
     }
     out.write_all(&[term])?;
     Ok(())
+}
+
+fn quote_path_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 2);
+    let mut needs_quotes = false;
+
+    for ch in name.chars() {
+        match ch {
+            '"' => {
+                out.push_str("\\\"");
+                needs_quotes = true;
+            }
+            '\\' => {
+                out.push_str("\\\\");
+                needs_quotes = true;
+            }
+            '\t' => {
+                out.push_str("\\t");
+                needs_quotes = true;
+            }
+            '\n' => {
+                out.push_str("\\n");
+                needs_quotes = true;
+            }
+            '\r' => {
+                out.push_str("\\r");
+                needs_quotes = true;
+            }
+            c if c.is_control() => {
+                out.push_str(&format!("\\{:03o}", u32::from(c)));
+                needs_quotes = true;
+            }
+            c => out.push(c),
+        }
+    }
+
+    if needs_quotes {
+        format!("\"{out}\"")
+    } else {
+        out
+    }
 }
 
 fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {

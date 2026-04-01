@@ -1,12 +1,12 @@
 //! `gust hash-object` — compute object ID and optionally write to object store.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::Read;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use gust_lib::objects::ObjectKind;
+use gust_lib::objects::{parse_commit, ObjectKind};
 use gust_lib::odb::Odb;
 use gust_lib::repo::Repository;
 
@@ -39,6 +39,13 @@ pub struct Args {
 
 /// Run `gust hash-object`.
 pub fn run(args: Args) -> Result<()> {
+    if args.stdin && args.stdin_paths {
+        bail!("options '--stdin' and '--stdin-paths' cannot be used together");
+    }
+    if args.stdin_paths && !args.files.is_empty() {
+        bail!("can't pass filenames with --stdin-paths");
+    }
+
     let kind = ObjectKind::from_str(&args.object_type)
         .with_context(|| format!("unknown object type '{}'", args.object_type))?;
 
@@ -55,8 +62,16 @@ pub fn run(args: Args) -> Result<()> {
         std::io::stdin()
             .read_to_end(&mut data)
             .context("reading stdin")?;
+        validate_object_data(kind, &data, args.literally)?;
         let oid = hash_and_maybe_write(kind, &data, odb.as_ref())?;
         println!("{oid}");
+        for path in &args.files {
+            let file_data =
+                std::fs::read(path).with_context(|| format!("cannot read '{}'", path.display()))?;
+            validate_object_data(kind, &file_data, args.literally)?;
+            let file_oid = hash_and_maybe_write(kind, &file_data, odb.as_ref())?;
+            println!("{file_oid}");
+        }
     } else if args.stdin_paths {
         let mut buf = String::new();
         std::io::stdin()
@@ -66,6 +81,7 @@ pub fn run(args: Args) -> Result<()> {
             let path = PathBuf::from(line);
             let data = std::fs::read(&path)
                 .with_context(|| format!("cannot read '{}'", path.display()))?;
+            validate_object_data(kind, &data, args.literally)?;
             let oid = hash_and_maybe_write(kind, &data, odb.as_ref())?;
             println!("{oid}");
         }
@@ -73,12 +89,53 @@ pub fn run(args: Args) -> Result<()> {
         for path in &args.files {
             let data =
                 std::fs::read(path).with_context(|| format!("cannot read '{}'", path.display()))?;
+            validate_object_data(kind, &data, args.literally)?;
             let oid = hash_and_maybe_write(kind, &data, odb.as_ref())?;
             println!("{oid}");
         }
     }
 
     Ok(())
+}
+
+fn validate_object_data(kind: ObjectKind, data: &[u8], literally: bool) -> Result<()> {
+    if literally {
+        return Ok(());
+    }
+    match kind {
+        ObjectKind::Commit => {
+            parse_commit(data).context("corrupt commit object")?;
+            Ok(())
+        }
+        ObjectKind::Tag => validate_tag_data(data),
+        ObjectKind::Blob | ObjectKind::Tree => Ok(()),
+    }
+}
+
+fn validate_tag_data(data: &[u8]) -> Result<()> {
+    let text = std::str::from_utf8(data).context("corrupt tag object")?;
+    let mut has_object = false;
+    let mut has_type = false;
+    let mut has_tag = false;
+    let mut has_tagger = false;
+    for line in text.lines() {
+        if line.is_empty() {
+            break;
+        }
+        if line.starts_with("object ") {
+            has_object = true;
+        } else if line.starts_with("type ") {
+            has_type = true;
+        } else if line.starts_with("tag ") {
+            has_tag = true;
+        } else if line.starts_with("tagger ") {
+            has_tagger = true;
+        }
+    }
+    if has_object && has_type && has_tag && has_tagger {
+        return Ok(());
+    }
+    anyhow::bail!("corrupt tag object")
 }
 
 fn hash_and_maybe_write(

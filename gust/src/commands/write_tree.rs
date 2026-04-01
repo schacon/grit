@@ -1,6 +1,6 @@
 //! `gust write-tree` — create a tree object from the current index.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::BTreeMap;
 
@@ -26,8 +26,8 @@ pub fn run(args: Args) -> Result<()> {
     let index = Index::load(&repo.index_path()).context("loading index")?;
 
     let prefix = args.prefix.as_deref().unwrap_or("");
-    let oid =
-        write_tree_from_index(&repo.odb, &index, prefix).context("building tree from index")?;
+    let oid = write_tree_from_index(&repo.odb, &index, prefix, args.missing_ok)
+        .context("building tree from index")?;
 
     println!("{oid}");
     Ok(())
@@ -40,6 +40,7 @@ pub fn write_tree_from_index(
     odb: &gust_lib::odb::Odb,
     index: &Index,
     prefix: &str,
+    missing_ok: bool,
 ) -> Result<ObjectId> {
     // Filter entries by prefix
     let prefix_bytes = prefix.as_bytes();
@@ -48,6 +49,19 @@ pub fn write_tree_from_index(
         .iter()
         .filter(|e| e.stage() == 0 && e.path.starts_with(prefix_bytes))
         .collect();
+
+    if !missing_ok {
+        for entry in &entries {
+            if !odb.exists(&entry.oid) {
+                let path = String::from_utf8_lossy(&entry.path);
+                bail!(
+                    "invalid object {} for '{}': object does not exist",
+                    entry.oid,
+                    path
+                );
+            }
+        }
+    }
 
     build_tree(odb, &entries, prefix_bytes)
 }

@@ -3,6 +3,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{self, BufRead};
+use std::path::Component;
 use std::path::{Path, PathBuf};
 
 use gust_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
@@ -87,6 +88,7 @@ pub fn run(args: Args) -> Result<()> {
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot update-index in bare repository"))?;
+    let cwd = std::env::current_dir().context("resolving current directory")?;
 
     if args.index_info {
         return run_index_info(&mut index, &index_path, &repo.odb);
@@ -130,13 +132,13 @@ pub fn run(args: Args) -> Result<()> {
         args.files.clone()
     };
 
-    for rel_path in paths {
+    for input_path in paths {
+        let (rel_path, abs_path) = resolve_repo_path(work_tree, &cwd, &input_path)?;
         let rel_bytes = path_to_bytes(&rel_path)?;
-        let abs_path = work_tree.join(&rel_path);
 
         if args.force_remove || args.remove {
             if !index.remove(&rel_bytes) && !args.force_remove && !args.ignore_missing {
-                bail!("'{}' is not in the index", rel_path.display());
+                bail!("'{}' is not in the index", input_path.display());
             }
             continue;
         }
@@ -173,7 +175,12 @@ pub fn run(args: Args) -> Result<()> {
         let meta = match std::fs::symlink_metadata(&abs_path) {
             Ok(m) => m,
             Err(_) if args.ignore_missing => continue,
-            Err(e) => return Err(anyhow::anyhow!("cannot stat '{}': {e}", rel_path.display())),
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "cannot stat '{}': {e}",
+                    input_path.display()
+                ))
+            }
         };
 
         let mode = {
@@ -316,4 +323,38 @@ fn read_paths_nul() -> Result<Vec<PathBuf>> {
 fn path_to_bytes(p: &Path) -> Result<Vec<u8>> {
     use std::os::unix::ffi::OsStrExt;
     Ok(p.as_os_str().as_bytes().to_vec())
+}
+
+fn resolve_repo_path(
+    work_tree: &Path,
+    cwd: &Path,
+    input_path: &Path,
+) -> Result<(PathBuf, PathBuf)> {
+    let combined = if input_path.is_absolute() {
+        input_path.to_path_buf()
+    } else {
+        cwd.join(input_path)
+    };
+    let normalized = normalize_path(&combined);
+    let rel = normalized.strip_prefix(work_tree).with_context(|| {
+        format!(
+            "path '{}' is outside repository work tree",
+            input_path.display()
+        )
+    })?;
+    Ok((rel.to_path_buf(), work_tree.join(rel)))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
