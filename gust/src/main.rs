@@ -19,7 +19,7 @@ mod commands;
 )]
 struct Cli {
     /// Override the path to the git directory.
-    #[arg(long = "git-dir", global = true, env = "GIT_DIR")]
+    #[arg(long = "git-dir", env = "GIT_DIR")]
     git_dir: Option<PathBuf>,
 
     /// Run as if started in this directory (Git's `-C`).

@@ -20,3 +20,4 @@ pub mod objects;
 pub mod odb;
 pub mod refs;
 pub mod repo;
+pub mod rev_parse;
