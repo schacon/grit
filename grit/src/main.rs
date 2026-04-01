@@ -132,6 +132,9 @@ enum Command {
     /// Read a tag object from stdin, validate strictly, and write to ODB.
     #[command(name = "mktag")]
     Mktag(commands::mktag::Args),
+    /// Remove loose objects that are already stored in pack files.
+    #[command(name = "prune-packed")]
+    PrunePacked(commands::prune_packed::Args),
     /// Create, list, delete or verify a tag object.
     Tag(commands::tag::Args),
     /// Restore working tree files.
@@ -214,6 +217,7 @@ fn run() -> Result<()> {
         Command::Gc(args) => commands::gc::run(args),
         Command::Repack(args) => commands::repack::run(args),
         Command::Mktag(args) => commands::mktag::run(args),
+        Command::PrunePacked(args) => commands::prune_packed::run(args),
         Command::Tag(args) => commands::tag::run(args),
         Command::Restore(args) => commands::restore::run(args),
         Command::Show(args) => commands::show::run(args),
