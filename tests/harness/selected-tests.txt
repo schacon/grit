@@ -69,3 +69,5 @@ t4011-diff-tree.sh
 t7102-reset.sh
 t3800-mktag.sh
 t3500-cherry.sh
+t1402-check-ref-format.sh
+t5524-fmt-merge-msg.sh
