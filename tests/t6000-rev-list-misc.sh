@@ -43,7 +43,7 @@ test_expect_success 'setup graph with merge' '
 	git update-ref refs/tags/c "$c_tip" &&
 	git update-ref refs/tags/d "$d_tip" &&
 	git update-ref refs/tags/e "$e_tip" &&
-	git update-ref refs/heads/main "$e_tip"
+	git update-ref refs/heads/master "$e_tip"
 '
 
 test_expect_success '--first-parent ignores merged side commits' '
@@ -76,6 +76,21 @@ test_expect_success '--simplify-by-decoration keeps tagged commits in walk' '
 	lines_full=$(wc -l <full | tr -d " ") &&
 	lines_simple=$(wc -l <simple | tr -d " ") &&
 	test "$lines_simple" -lt "$lines_full"
+'
+
+test_expect_success 'rev-list A..B and rev-list ^A B are the same' '
+	cd repo &&
+	git rev-list ^base e >expect &&
+	git rev-list base..e >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-list --count' '
+	cd repo &&
+	count=$(git rev-list --count master) &&
+	git rev-list master >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$count" = "$lines"
 '
 
 test_done
