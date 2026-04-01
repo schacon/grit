@@ -220,6 +220,7 @@ fn format_commit(
                 .strip_prefix("format:")
                 .or_else(|| fmt.strip_prefix("tformat:"))
                 .unwrap_or(fmt);
+
             let template = if let Some(t) = fmt.strip_prefix("format:") {
                 t
             } else {

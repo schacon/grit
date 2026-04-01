@@ -68,3 +68,4 @@ t2070-restore.sh
 t4011-diff-tree.sh
 t7102-reset.sh
 t3800-mktag.sh
+t3500-cherry.sh

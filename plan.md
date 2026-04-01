@@ -663,6 +663,16 @@ These scripts live in [`git/t/`](../git/t/). Most **fetch/push/remote/pull** wor
 
 ---
 
+## `cherry`
+
+**Upstream tests (`git/t/`):**
+`git/t/t3500-cherry.sh`
+
+- [x] **cherry.1** Patch-ID comparison against upstream; `+`/`-` markers; `<upstream> <head> <limit>` args; `-v` flag; whitespace-insensitive matching.
+- [x] **cherry.2** Port `t3500-cherry.sh` — all 5 tests pass.
+
+---
+
 ## `fetch`, `push`, `pull`, `remote`
 
 See [Transport, remote, fetch, push, pull](#transport-remote-fetch-push-pull-shared-t5500t5583) for the **complete** `t5500`–`t5583`, protocol, remote-helper, and `t5411` inventories.
