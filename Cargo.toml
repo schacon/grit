@@ -1,0 +1,25 @@
+[workspace]
+members = ["gust", "gust-lib"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive", "env"] }
+sha1 = "0.10"
+flate2 = "1"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+hex = "0.4"
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

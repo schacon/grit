@@ -1,0 +1,5 @@
+- 4.2: `update-index` parses many flags, but behavior remains partial (`--info-only` is unused and refresh/racy/again semantics are not Git-complete).
+- 4.3: `ls-files` currently covers basic cached/stage/pathspec flows, but broad modes and filters (`-o/-i/-m/-d/-k`, excludes, format, with-tree, dedupe, etc.) are not implemented.
+- 6.1: `ls-tree` supports core walking flags, but `--long` does not emit real object sizes and full manpage parity is not yet clear.
+- 6.3: `ls-tree --format` has only a minimal placeholder subset and lacks evidence for the full test-required placeholder surface.
+- 6.4: `t3100` and `t3102` pass, but quoting parity is still failing in `t3902-quoted-ls-tree.sh`.
