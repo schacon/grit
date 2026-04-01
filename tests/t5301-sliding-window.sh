@@ -8,7 +8,7 @@ test_description='verify-pack -v basic behavior on generated pack'
 REAL_GIT=${REAL_GIT:-/usr/bin/git}
 
 test_expect_success 'setup packed repository fixture' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	echo one >one &&
 	git update-index --add one &&

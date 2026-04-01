@@ -69,7 +69,7 @@ Last update: 2026-03-31 (v2 completion wave: rev-parse prefix + repack + gc).
 
 ### Notes
 
-- Implemented `gust diff-index` for selected Phase 6 subset: raw output, `--cached`, non-cached missing-file handling with `-m`, `--quiet`/`--exit-code`, `--abbrev[=<n>]`, and basic pathspec filtering.
+- Implemented `grit diff-index` for selected Phase 6 subset: raw output, `--cached`, non-cached missing-file handling with `-m`, `--quiet`/`--exit-code`, `--abbrev[=<n>]`, and basic pathspec filtering.
 - `--patch` (`-p`) is intentionally not implemented in this subset because the selected scripts do not require patch output.
 
 ## Phase 7 for-each-ref validation (2026-03-31)
@@ -163,8 +163,8 @@ Last update: 2026-03-31 (v2 completion wave: rev-parse prefix + repack + gc).
 - `cargo fmt` -> PASS
 - `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
 - `cargo test --workspace` -> PASS
-- `GUST_BIN=target/debug/gust TEST_VERBOSE=1 sh tests/t1500-rev-parse.sh` -> PASS (`8/8`)
-- `GUST_BIN=target/debug/gust TEST_VERBOSE=1 sh tests/t1503-rev-parse-verify.sh` -> PASS (`8/8`)
+- `GUST_BIN=target/debug/grit TEST_VERBOSE=1 sh tests/t1500-rev-parse.sh` -> PASS (`8/8`)
+- `GUST_BIN=target/debug/grit TEST_VERBOSE=1 sh tests/t1503-rev-parse-verify.sh` -> PASS (`8/8`)
 
 ### Notes
 
@@ -173,9 +173,9 @@ Last update: 2026-03-31 (v2 completion wave: rev-parse prefix + repack + gc).
 ## `cargo test --workspace`
 
 - **Result:** PASS
-- **gust** (binary crate): 0 tests run, 0 failed.
-- **gust-lib**: 4 tests run, 4 passed, 0 failed.
-- **Doc-tests** (`gust_lib`): 1 test run, 1 passed, 0 failed.
+- **grit** (binary crate): 0 tests run, 0 failed.
+- **grit-lib**: 4 tests run, 4 passed, 0 failed.
+- **Doc-tests** (`grit_lib`): 1 test run, 1 passed, 0 failed.
 
 ## Ported shell tests (`tests/t*.sh`)
 
@@ -210,9 +210,9 @@ Last update: 2026-03-31 (v2 completion wave: rev-parse prefix + repack + gc).
 
 - **Result:** PASS
 - **Individual tests:** 5
-  - `gust` unit tests: 0
-  - `gust-lib` unit tests: 4
-  - `gust-lib` doc-tests: 1
+  - `grit` unit tests: 0
+  - `grit-lib` unit tests: 4
+  - `grit-lib` doc-tests: 1
 - **Failures:** 0
 
 ### Shell suite totals (`tests/t*.sh`)
@@ -256,9 +256,9 @@ Last update: 2026-03-31 (v2 completion wave: rev-parse prefix + repack + gc).
 ### Rust workspace totals
 
 - **Result:** PASS
-- **gust** (binary crate): 0 tests run, 0 failed.
-- **gust-lib**: 4 tests run, 4 passed, 0 failed.
-- **Doc-tests** (`gust_lib`): 1 test run, 1 passed, 0 failed.
+- **grit** (binary crate): 0 tests run, 0 failed.
+- **grit-lib**: 4 tests run, 4 passed, 0 failed.
+- **Doc-tests** (`grit_lib`): 1 test run, 1 passed, 0 failed.
 
 ### Shell harness
 

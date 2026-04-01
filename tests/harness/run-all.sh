@@ -4,10 +4,10 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
-GUST_BIN="${GUST_BIN:-$REPO_ROOT/target/debug/gust}"
+GUST_BIN="${GUST_BIN:-$REPO_ROOT/target/debug/grit}"
 if ! test -x "$GUST_BIN"; then
-  echo "Building gust binary at $GUST_BIN"
-  cargo build -p gust >/dev/null
+  echo "Building grit binary at $GUST_BIN"
+  cargo build -p grit >/dev/null
 fi
 
 echo "Using GUST_BIN=$GUST_BIN"

@@ -1,8 +1,8 @@
 #!/bin/sh
 # Ported from git/t/t7501-commit-basic-functionality.sh
-# Tests for 'gust commit'.
+# Tests for 'grit commit'.
 
-test_description='gust commit basic functionality'
+test_description='grit commit basic functionality'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh

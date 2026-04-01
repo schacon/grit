@@ -1,8 +1,8 @@
 #!/bin/sh
 # Ported from git/t/t4202-log.sh
-# Tests for 'gust log'.
+# Tests for 'grit log'.
 
-test_description='gust log'
+test_description='grit log'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh

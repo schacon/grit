@@ -32,7 +32,7 @@ doit () {
 }
 
 test_expect_success 'setup repository with two commits' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	head1=$(doit 1 "added foo") &&
 	head2=$(doit 2 "changed foo" "$head1") &&

@@ -1,9 +1,9 @@
 #!/bin/sh
 # Ported from git/t/t1100-commit-tree-options.sh
 
-test_description='gust commit-tree options test
+test_description='grit commit-tree options test
 
-This test checks that gust commit-tree can create a specific commit
+This test checks that grit commit-tree can create a specific commit
 object by defining all environment variables that it understands.
 
 Also make sure that command line parser understands the normal

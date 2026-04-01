@@ -24,7 +24,7 @@ create_commit () {
 }
 
 test_expect_success 'setup repository with loose objects' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	create_commit base one.txt one &&
 	loose=$(git count-objects | sed "s/ .*//") &&

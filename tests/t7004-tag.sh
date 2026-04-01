@@ -1,8 +1,8 @@
 #!/bin/sh
-# Tests for 'gust tag'.
+# Tests for 'grit tag'.
 # Ported from git/t/t7004-tag.sh
 
-test_description='gust tag'
+test_description='grit tag'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh

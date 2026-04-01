@@ -1,0 +1,375 @@
+//! Revision parsing and repository discovery helpers for `rev-parse`.
+//!
+//! This module implements a focused subset of Git's revision parser used by
+//! `grit rev-parse` in v2 scope: repository/work-tree discovery flags, basic
+//! object-name resolution, and lightweight peeling (`^{}`, `^{object}`,
+//! `^{commit}`).
+
+use std::ffi::OsStr;
+use std::fs;
+use std::path::{Component, Path};
+
+use crate::error::{Error, Result};
+use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use crate::refs;
+use crate::repo::Repository;
+
+/// Return `Some(repo)` when a repository can be discovered at `start`.
+///
+/// # Parameters
+///
+/// - `start` - starting path for discovery; when `None`, uses current directory.
+///
+/// # Errors
+///
+/// Returns errors other than "not a repository" (for example I/O and path
+/// canonicalization failures).
+pub fn discover_optional(start: Option<&Path>) -> Result<Option<Repository>> {
+    match Repository::discover(start) {
+        Ok(repo) => Ok(Some(repo)),
+        Err(Error::NotARepository(_)) => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Compute whether `cwd` is inside the repository's work tree.
+#[must_use]
+pub fn is_inside_work_tree(repo: &Repository, cwd: &Path) -> bool {
+    let Some(work_tree) = &repo.work_tree else {
+        return false;
+    };
+    path_is_within(cwd, work_tree)
+}
+
+/// Compute whether `cwd` is inside the repository's git-dir.
+#[must_use]
+pub fn is_inside_git_dir(repo: &Repository, cwd: &Path) -> bool {
+    path_is_within(cwd, &repo.git_dir)
+}
+
+/// Compute the `--show-prefix` output.
+///
+/// Returns an empty string when `cwd` is at repository root or outside the work
+/// tree. Returned prefixes always use `/` separators and end with `/`.
+#[must_use]
+pub fn show_prefix(repo: &Repository, cwd: &Path) -> String {
+    let Some(work_tree) = &repo.work_tree else {
+        return String::new();
+    };
+    if !path_is_within(cwd, work_tree) {
+        return String::new();
+    }
+    if cwd == work_tree {
+        return String::new();
+    }
+    let Ok(rel) = cwd.strip_prefix(work_tree) else {
+        return String::new();
+    };
+    let mut out = rel
+        .components()
+        .filter_map(component_to_text)
+        .collect::<Vec<_>>()
+        .join("/");
+    if !out.is_empty() {
+        out.push('/');
+    }
+    out
+}
+
+/// Resolve a revision string to an object ID.
+///
+/// Supports:
+/// - full 40-hex object IDs (must exist in loose store),
+/// - abbreviated object IDs (length 4-39, must resolve uniquely),
+/// - direct refs (`HEAD`, `refs/...`),
+/// - DWIM branch/tag/remote names (`name` -> `refs/heads/name`, etc.),
+/// - peeling suffixes: `^{}`, `^{object}`, `^{commit}`.
+///
+/// # Errors
+///
+/// Returns [`Error::ObjectNotFound`] or [`Error::InvalidRef`] when resolution
+/// fails.
+pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    let (base, peel) = parse_peel_suffix(spec);
+    let oid = resolve_base(repo, base)?;
+    apply_peel(repo, oid, peel)
+}
+
+/// Abbreviate an object ID to a unique prefix.
+///
+/// The returned prefix is at least `min_len` and at most 40 hex characters.
+///
+/// # Errors
+///
+/// Returns [`Error::ObjectNotFound`] when the target OID does not exist in the
+/// object database.
+pub fn abbreviate_object_id(repo: &Repository, oid: ObjectId, min_len: usize) -> Result<String> {
+    if !repo.odb.exists(&oid) {
+        return Err(Error::ObjectNotFound(oid.to_hex()));
+    }
+
+    let min_len = min_len.clamp(4, 40);
+    let target = oid.to_hex();
+    let all = collect_loose_object_ids(repo)?;
+
+    for len in min_len..=40 {
+        let prefix = &target[..len];
+        let matches = all
+            .iter()
+            .filter(|candidate| candidate.starts_with(prefix))
+            .count();
+        if matches <= 1 {
+            return Ok(prefix.to_owned());
+        }
+    }
+
+    Ok(target)
+}
+
+/// Render `path` relative to `cwd` with `/` separators.
+#[must_use]
+pub fn to_relative_path(path: &Path, cwd: &Path) -> String {
+    let path_components = normalize_components(path);
+    let cwd_components = normalize_components(cwd);
+
+    let mut common = 0usize;
+    let max_common = path_components.len().min(cwd_components.len());
+    while common < max_common && path_components[common] == cwd_components[common] {
+        common += 1;
+    }
+
+    let mut parts = Vec::new();
+    let up_count = cwd_components.len().saturating_sub(common);
+    for _ in 0..up_count {
+        parts.push("..".to_owned());
+    }
+    for item in path_components.iter().skip(common) {
+        parts.push(item.clone());
+    }
+
+    if parts.is_empty() {
+        ".".to_owned()
+    } else {
+        parts.join("/")
+    }
+}
+
+fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    if let Some((treeish, path)) = split_treeish_spec(spec) {
+        let root_oid = resolve_base(repo, treeish)?;
+        return resolve_treeish_path(repo, root_oid, path);
+    }
+
+    if let Ok(oid) = spec.parse::<ObjectId>() {
+        if repo.odb.exists(&oid) {
+            return Ok(oid);
+        }
+    }
+
+    if is_hex_prefix(spec) {
+        let matches = find_abbrev_matches(repo, spec)?;
+        if matches.len() == 1 {
+            return Ok(matches[0]);
+        }
+    }
+
+    if let Ok(oid) = refs::resolve_ref(&repo.git_dir, spec) {
+        return Ok(oid);
+    }
+    for candidate in &[
+        format!("refs/heads/{spec}"),
+        format!("refs/tags/{spec}"),
+        format!("refs/remotes/{spec}"),
+    ] {
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, candidate) {
+            return Ok(oid);
+        }
+    }
+
+    Err(Error::ObjectNotFound(spec.to_owned()))
+}
+
+fn split_treeish_spec(spec: &str) -> Option<(&str, &str)> {
+    let (treeish, path) = spec.split_once(':')?;
+    if treeish.is_empty() || path.is_empty() {
+        return None;
+    }
+    Some((treeish, path))
+}
+
+fn resolve_treeish_path(repo: &Repository, treeish: ObjectId, path: &str) -> Result<ObjectId> {
+    let object = repo.odb.read(&treeish)?;
+    let mut current_tree = match object.kind {
+        ObjectKind::Commit => parse_commit(&object.data)?.tree,
+        ObjectKind::Tree => treeish,
+        _ => {
+            return Err(Error::InvalidRef(format!(
+                "object {treeish} does not name a tree"
+            )))
+        }
+    };
+
+    let mut parts = path.split('/').filter(|part| !part.is_empty()).peekable();
+    if parts.peek().is_none() {
+        return Ok(current_tree);
+    }
+    while let Some(part) = parts.next() {
+        let tree_object = repo.odb.read(&current_tree)?;
+        if tree_object.kind != ObjectKind::Tree {
+            return Err(Error::CorruptObject(format!(
+                "object {current_tree} is not a tree"
+            )));
+        }
+        let entries = parse_tree(&tree_object.data)?;
+        let Some(entry) = entries.iter().find(|entry| entry.name == part.as_bytes()) else {
+            return Err(Error::ObjectNotFound(path.to_owned()));
+        };
+        if parts.peek().is_none() {
+            return Ok(entry.oid);
+        }
+        current_tree = entry.oid;
+    }
+
+    Err(Error::ObjectNotFound(path.to_owned()))
+}
+
+fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Result<ObjectId> {
+    match peel {
+        None | Some("object") => Ok(oid),
+        Some("") => {
+            while let Ok(obj) = repo.odb.read(&oid) {
+                if obj.kind != ObjectKind::Tag {
+                    break;
+                }
+                oid = parse_tag_target(&obj.data)?;
+            }
+            Ok(oid)
+        }
+        Some("commit") => {
+            oid = apply_peel(repo, oid, Some(""))?;
+            let obj = repo.odb.read(&oid)?;
+            if obj.kind == ObjectKind::Commit {
+                Ok(oid)
+            } else {
+                Err(Error::InvalidRef("expected commit".to_owned()))
+            }
+        }
+        Some(other) => Err(Error::InvalidRef(format!(
+            "unsupported peel operator '{{{other}}}'"
+        ))),
+    }
+}
+
+fn parse_peel_suffix(spec: &str) -> (&str, Option<&str>) {
+    if let Some(base) = spec.strip_suffix("^{}") {
+        return (base, Some(""));
+    }
+    if let Some(start) = spec.rfind("^{") {
+        if spec.ends_with('}') {
+            let base = &spec[..start];
+            let op = &spec[start + 2..spec.len() - 1];
+            return (base, Some(op));
+        }
+    }
+    (spec, None)
+}
+
+fn parse_tag_target(data: &[u8]) -> Result<ObjectId> {
+    let text = std::str::from_utf8(data)
+        .map_err(|_| Error::CorruptObject("invalid tag object".to_owned()))?;
+    let Some(line) = text.lines().find(|line| line.starts_with("object ")) else {
+        return Err(Error::CorruptObject("tag missing object header".to_owned()));
+    };
+    let oid_text = line.trim_start_matches("object ").trim();
+    oid_text.parse::<ObjectId>()
+}
+
+fn find_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>> {
+    if !is_hex_prefix(prefix) || !(4..=40).contains(&prefix.len()) {
+        return Ok(Vec::new());
+    }
+    let all = collect_loose_object_ids(repo)?;
+    let mut matches = Vec::new();
+    for candidate in all {
+        if candidate.starts_with(prefix) {
+            matches.push(candidate.parse::<ObjectId>()?);
+        }
+    }
+    Ok(matches)
+}
+
+fn collect_loose_object_ids(repo: &Repository) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    let objects_dir = repo.git_dir.join("objects");
+    let read = match fs::read_dir(&objects_dir) {
+        Ok(read) => read,
+        Err(err) => return Err(Error::Io(err)),
+    };
+
+    for dir_entry in read {
+        let dir_entry = dir_entry?;
+        let name = dir_entry.file_name();
+        let Some(prefix) = name.to_str() else {
+            continue;
+        };
+        if !is_two_hex(prefix) {
+            continue;
+        }
+        if !dir_entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        let files = fs::read_dir(dir_entry.path())?;
+        for file_entry in files {
+            let file_entry = file_entry?;
+            if !file_entry.file_type()?.is_file() {
+                continue;
+            }
+            let file_name = file_entry.file_name();
+            let Some(suffix) = file_name.to_str() else {
+                continue;
+            };
+            if suffix.len() == 38 && suffix.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                ids.push(format!("{prefix}{suffix}"));
+            }
+        }
+    }
+
+    Ok(ids)
+}
+
+fn is_two_hex(text: &str) -> bool {
+    text.len() == 2 && text.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn is_hex_prefix(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn path_is_within(path: &Path, container: &Path) -> bool {
+    if path == container {
+        return true;
+    }
+    path.starts_with(container)
+}
+
+fn normalize_components(path: &Path) -> Vec<String> {
+    path.components()
+        .filter_map(|component| match component {
+            Component::RootDir => Some(String::from("/")),
+            Component::Normal(item) => Some(item.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn component_to_text(component: Component<'_>) -> Option<String> {
+    match component {
+        Component::Normal(item) => Some(os_to_string(item)),
+        _ => None,
+    }
+}
+
+fn os_to_string(text: &OsStr) -> String {
+    text.to_string_lossy().into_owned()
+}

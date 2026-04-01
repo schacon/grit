@@ -36,7 +36,7 @@ doit () {
 }
 
 test_expect_success 'setup repository' '
-	gust init repo &&
+	grit init repo &&
 	cd repo
 '
 

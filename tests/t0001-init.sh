@@ -1,8 +1,8 @@
 #!/bin/sh
 # Ported from git/t/t0001-init.sh
-# Tests for 'gust init'.
+# Tests for 'grit init'.
 
-test_description='gust init'
+test_description='grit init'
 
 # Run from the tests/ directory so test-lib.sh is found relative to $0
 cd "$(dirname "$0")" || exit 1

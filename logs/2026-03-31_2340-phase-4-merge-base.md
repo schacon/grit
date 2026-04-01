@@ -2,7 +2,7 @@
 
 ## Scope
 
-- Implement `gust merge-base` for:
+- Implement `grit merge-base` for:
   - default merge-base
   - `--all`
   - `--octopus`
@@ -22,13 +22,13 @@
 
 ## Implementation details
 
-- Added `gust-lib/src/merge_base.rs`:
+- Added `grit-lib/src/merge_base.rs`:
   - commit-spec resolution to commit IDs
   - ancestor-closure traversal with cached parent parsing
   - best-base reduction (remove ancestors of other candidates)
   - operations for default mode, octopus mode, independent reduction, and ancestry checks
-- Exported module via `gust-lib/src/lib.rs`.
-- Replaced `gust/src/commands/merge_base.rs` stub with CLI mode parsing and dispatch to library operations.
+- Exported module via `grit-lib/src/lib.rs`.
+- Replaced `grit/src/commands/merge_base.rs` stub with CLI mode parsing and dispatch to library operations.
 - Added `tests/t6010-merge-base.sh` (ported subset) with:
   - base graph setup
   - default and `--all` checks
@@ -41,8 +41,8 @@
 ## Incidental fixes needed for required validation
 
 - Fixed pre-existing compile/lint issues surfaced by workspace gates:
-  - `gust-lib/src/ignore.rs`
-  - `gust/src/commands/check_ignore.rs`
+  - `grit-lib/src/ignore.rs`
+  - `grit/src/commands/check_ignore.rs`
 
 These were necessary to make `cargo clippy --workspace --all-targets -- -D warnings` succeed.
 
@@ -51,7 +51,7 @@ These were necessary to make `cargo clippy --workspace --all-targets -- -D warni
 - `cargo fmt` -> PASS
 - `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
 - `cargo test --workspace` -> PASS
-- `GUST_BIN=/Users/schacon/projects/gust/target/debug/gust TEST_VERBOSE=1 sh tests/t6010-merge-base.sh` -> PASS (`10/10`)
+- `GUST_BIN=/Users/schacon/projects/grit/target/debug/grit TEST_VERBOSE=1 sh tests/t6010-merge-base.sh` -> PASS (`10/10`)
 
 ## Plan/progress/test updates
 

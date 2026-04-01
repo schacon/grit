@@ -32,7 +32,7 @@ doit () {
 }
 
 test_expect_success 'setup detached HEAD' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	one=$(doit 1 one) &&
 	two=$(doit 2 two "$one") &&

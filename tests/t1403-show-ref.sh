@@ -7,14 +7,14 @@ cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	tree=$(git write-tree) &&
 	commit=$(echo base | git commit-tree "$tree") &&
-	gust update-ref refs/heads/master "$commit" &&
-	gust update-ref refs/heads/main "$commit" &&
-	gust update-ref refs/heads/side "$commit" &&
-	gust update-ref refs/heads/topic "$commit"
+	grit update-ref refs/heads/master "$commit" &&
+	grit update-ref refs/heads/main "$commit" &&
+	grit update-ref refs/heads/side "$commit" &&
+	grit update-ref refs/heads/topic "$commit"
 '
 
 test_expect_success 'show-ref pattern matching and missing ref exit' '

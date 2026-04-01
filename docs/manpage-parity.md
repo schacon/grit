@@ -1,9 +1,9 @@
 # Manpage/Behavior Parity Checklist (v1 Plumbing)
 
-This is a living checklist for reviewing `gust` against upstream Git docs and observed behavior.  
+This is a living checklist for reviewing `grit` against upstream Git docs and observed behavior.  
 Status values are intentionally conservative until reviewed command-by-command.
 
-| Command | Upstream doc path | Behavior areas to verify vs docs/tests | Reviewed vs `gust` |
+| Command | Upstream doc path | Behavior areas to verify vs docs/tests | Reviewed vs `grit` |
 |---|---|---|---|
 | `init` | `git/Documentation/git-init.adoc` | Repo directory layout (`.git` / bare), templates, `HEAD` initialization, `--initial-branch`, `--shared`, `--separate-git-dir`, re-init messaging | ☐ Not reviewed |
 | `hash-object` | `git/Documentation/git-hash-object.adoc` | stdin/file input modes, type selection, `-w` write semantics, `--stdin-paths`, `--path`, `--literally`, error handling for invalid paths/types | ☐ Not reviewed |

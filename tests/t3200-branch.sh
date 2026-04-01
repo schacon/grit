@@ -1,7 +1,7 @@
 #!/bin/sh
-# Tests for 'gust branch'.
+# Tests for 'grit branch'.
 
-test_description='gust branch'
+test_description='grit branch'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh

@@ -1,2 +1,0 @@
-#!/bin/sh
-exec "/home/hasi/gust/target/debug/gust" "$@"

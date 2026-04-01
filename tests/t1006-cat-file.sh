@@ -1,7 +1,7 @@
 #!/bin/sh
 # Ported from git/t/t1006-cat-file.sh (harness-compatible subset).
 
-test_description='gust cat-file'
+test_description='grit cat-file'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
@@ -18,38 +18,38 @@ hello_content="Hello World"
 hello_size=$(strlen "$hello_content")
 
 test_expect_success 'setup repository and blob fixture' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	echo_without_newline "$hello_content" >hello &&
-	hello_oid=$(gust hash-object -w hello) &&
+	hello_oid=$(grit hash-object -w hello) &&
 	echo "$hello_oid" >../hello_oid
 '
 
 test_expect_success 'cat-file -e confirms blob exists' '
 	cd repo &&
-	gust cat-file -e "$(cat ../hello_oid)"
+	grit cat-file -e "$(cat ../hello_oid)"
 '
 
 test_expect_success 'cat-file -t reports blob type' '
 	cd repo &&
 	echo blob >expect &&
-	gust cat-file -t "$(cat ../hello_oid)" >actual &&
+	grit cat-file -t "$(cat ../hello_oid)" >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'cat-file -s reports blob size' '
 	cd repo &&
 	echo "$hello_size" >expect &&
-	gust cat-file -s "$(cat ../hello_oid)" >actual &&
+	grit cat-file -s "$(cat ../hello_oid)" >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'cat-file default and -p print blob bytes' '
 	cd repo &&
 	echo_without_newline "$hello_content" >expect &&
-	gust cat-file "$(cat ../hello_oid)" >actual &&
+	grit cat-file "$(cat ../hello_oid)" >actual &&
 	test_cmp expect actual &&
-	gust cat-file -p "$(cat ../hello_oid)" >actual &&
+	grit cat-file -p "$(cat ../hello_oid)" >actual &&
 	test_cmp expect actual
 '
 
@@ -57,7 +57,7 @@ test_expect_success 'batch-check default format works for blob' '
 	cd repo &&
 	oid="$(cat ../hello_oid)" &&
 	echo "$oid blob $hello_size" >expect &&
-	echo "$oid" | gust cat-file --batch-check >actual &&
+	echo "$oid" | grit cat-file --batch-check >actual &&
 	test_cmp expect actual
 '
 
@@ -69,7 +69,7 @@ test_expect_success 'batch default format includes content for blob' '
 		echo_without_newline "$hello_content"
 		echo
 	} >expect &&
-	echo "$oid" | gust cat-file --batch >actual &&
+	echo "$oid" | grit cat-file --batch >actual &&
 	test_cmp expect actual
 '
 
@@ -77,7 +77,7 @@ test_expect_success 'batch-check custom format supports %(objecttype) %(objectna
 	cd repo &&
 	oid="$(cat ../hello_oid)" &&
 	echo "blob $oid" >expect &&
-	echo "$oid" | gust cat-file --batch-check="%(objecttype) %(objectname)" >actual &&
+	echo "$oid" | grit cat-file --batch-check="%(objecttype) %(objectname)" >actual &&
 	test_cmp expect actual
 '
 
@@ -85,7 +85,7 @@ test_expect_success 'batch-check custom format supports %(rest)' '
 	cd repo &&
 	echo "blob trailing words" >expect &&
 	printf "%s\n" "$(cat ../hello_oid)   trailing words" |
-		gust cat-file --batch-check="%(objecttype) %(rest)" >actual &&
+		grit cat-file --batch-check="%(objecttype) %(rest)" >actual &&
 	test_cmp expect actual
 '
 
@@ -93,7 +93,7 @@ test_expect_success 'batch-command info works with --no-buffer' '
 	cd repo &&
 	oid="$(cat ../hello_oid)" &&
 	echo "$oid blob $hello_size" >expect &&
-	printf "info %s\n" "$oid" | gust cat-file --batch-command --no-buffer >actual &&
+	printf "info %s\n" "$oid" | grit cat-file --batch-command --no-buffer >actual &&
 	test_cmp expect actual
 '
 
@@ -105,7 +105,7 @@ test_expect_success 'batch-command contents works with --no-buffer' '
 		echo_without_newline "$hello_content"
 		echo
 	} >expect &&
-	printf "contents %s\n" "$oid" | gust cat-file --batch-command --no-buffer >actual &&
+	printf "contents %s\n" "$oid" | grit cat-file --batch-command --no-buffer >actual &&
 	test_cmp expect actual
 '
 
@@ -116,13 +116,13 @@ test_expect_success 'batch-command --buffer flushes output' '
 	{
 		printf "info %s\n" "$oid"
 		echo flush
-	} | gust cat-file --batch-command --buffer >actual &&
+	} | grit cat-file --batch-command --buffer >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'batch-command rejects flush without --buffer' '
 	cd repo &&
-	test_must_fail sh -c "echo flush | gust cat-file --batch-command --no-buffer"
+	test_must_fail sh -c "echo flush | grit cat-file --batch-command --no-buffer"
 '
 
 test_expect_success 'batch-check reports missing objects' '
@@ -130,16 +130,16 @@ test_expect_success 'batch-check reports missing objects' '
 	cat >expect <<-\EOF &&
 	deadbeef missing
 	EOF
-	echo deadbeef | gust cat-file --batch-check >actual &&
+	echo deadbeef | grit cat-file --batch-check >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'create tree and commit fixtures' '
 	cd repo &&
-	gust update-index --add hello &&
-	tree_oid=$(gust write-tree) &&
+	grit update-index --add hello &&
+	tree_oid=$(grit write-tree) &&
 	echo "$tree_oid" >../tree_oid &&
-	commit_oid=$(echo "Initial commit" | gust commit-tree "$tree_oid") &&
+	commit_oid=$(echo "Initial commit" | grit commit-tree "$tree_oid") &&
 	echo "$commit_oid" >../commit_oid
 '
 
@@ -149,13 +149,13 @@ test_expect_success 'cat-file -p pretty-prints tree entries' '
 	cat >expect <<-EOF &&
 	100644 blob $hello_oid	hello
 	EOF
-	gust cat-file -p "$(cat ../tree_oid)" >actual &&
+	grit cat-file -p "$(cat ../tree_oid)" >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'cat-file -p prints commit payload' '
 	cd repo &&
-	gust cat-file -p "$(cat ../commit_oid)" >actual &&
+	grit cat-file -p "$(cat ../commit_oid)" >actual &&
 	grep "^tree " actual
 '
 

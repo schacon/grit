@@ -11,8 +11,8 @@
 
 ## Files touched in this wave
 
-- `gust-lib/src/rev_parse.rs`
-- `gust/src/commands/rev_parse.rs`
+- `grit-lib/src/rev_parse.rs`
+- `grit/src/commands/rev_parse.rs`
 - `tests/t1513-rev-parse-prefix.sh`
 - `tests/harness/selected-tests.txt`
 - `logs/2026-03-31_22-45-foundation-wave-rev-parse-prefix.md`

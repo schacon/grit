@@ -45,7 +45,7 @@ Build these core plumbing commands:
 - update-ref
 - cat-file
 
-Only implement these commands. Each command should be runnable as a subcommand such as `gust init` or `gust hash-object`.
+Only implement these commands. Each command should be runnable as a subcommand such as `grit init` or `grit hash-object`.
 
 ## Loop contract
 
@@ -107,7 +107,7 @@ If stopping, state one exact reason:
 
 ## Library crate layout and public API
 
-The Git-compatible engine should live in a **library crate** (`gust-lib`); the **`gust` binary** should stay a thin layer: parse CLI, open a `Repository` (or equivalent), call library APIs, map `gust_lib::Error` to exit codes and stderr. Agents should implement features in the library first and only wire them through the binary.
+The Git-compatible engine should live in a **library crate** (`grit-lib`); the **`grit` binary** should stay a thin layer: parse CLI, open a `Repository` (or equivalent), call library APIs, map `grit_lib::Error` to exit codes and stderr. Agents should implement features in the library first and only wire them through the binary.
 
 ### When to use one crate vs several
 
@@ -132,7 +132,7 @@ The Git-compatible engine should live in a **library crate** (`gust-lib`); the *
 
 ## Testing
 
-- As tests in `git/t/` are being implemented, copy them to `./tests` and run them from there with `gust` aliased to `git` for the purposes of the tests.
+- As tests in `git/t/` are being implemented, copy them to `./tests` and run them from there with `grit` aliased to `git` for the purposes of the tests.
 - Do not write or run tests that are not from this directory.
 
 ## Committing and Version Control

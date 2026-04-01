@@ -32,7 +32,7 @@ doit () {
 }
 
 test_expect_success 'setup history' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	c1=$(doit 1 one) &&
 	c2=$(doit 2 two "$c1") &&

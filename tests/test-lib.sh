@@ -7,13 +7,13 @@
 #   test_expect_success 'description' 'commands'
 #   test_done
 
-# Locate gust binary: prefer a local build, else fall back to PATH.
+# Locate grit binary: prefer a local build, else fall back to PATH.
 if test -z "$GUST_BIN"
 then
 	# Look in common cargo output locations
 	for candidate in \
-		"$(dirname "$(dirname "$0")")/target/debug/gust" \
-		"$(dirname "$(dirname "$0")")/target/release/gust"
+		"$(dirname "$(dirname "$0")")/target/debug/grit" \
+		"$(dirname "$(dirname "$0")")/target/release/grit"
 	do
 		if test -x "$candidate"
 		then
@@ -24,8 +24,8 @@ then
 	# Also check the sandbox cache location
 	if test -z "$GUST_BIN"
 	then
-		for f in /var/folders/*/T/cursor-sandbox-cache/*/cargo-target/debug/gust \
-		          /tmp/cargo-target/debug/gust
+		for f in /var/folders/*/T/cursor-sandbox-cache/*/cargo-target/debug/grit \
+		          /tmp/cargo-target/debug/grit
 		do
 			if test -x "$f"
 			then
@@ -38,7 +38,7 @@ fi
 
 if test -z "$GUST_BIN"
 then
-	echo "FATAL: could not locate gust binary (set GUST_BIN)" >&2
+	echo "FATAL: could not locate grit binary (set GUST_BIN)" >&2
 	exit 1
 fi
 
@@ -67,19 +67,19 @@ setup_trash () {
 	rm -rf "$TRASH_DIRECTORY"
 	mkdir -p "$TRASH_DIRECTORY"
 	mkdir -p "$TRASH_DIRECTORY/.bin"
-	# Write a 'git' wrapper script that calls gust
+	# Write a 'git' wrapper script that calls grit
 	cat >"$TRASH_DIRECTORY/.bin/git" <<EOF
 #!/bin/sh
 exec "$GUST_BIN" "\$@"
 EOF
 	chmod +x "$TRASH_DIRECTORY/.bin/git"
-	# Also write a 'gust' wrapper
-	cat >"$TRASH_DIRECTORY/.bin/gust" <<EOF
+	# Also write a 'grit' wrapper
+	cat >"$TRASH_DIRECTORY/.bin/grit" <<EOF
 #!/bin/sh
 exec "$GUST_BIN" "\$@"
 EOF
-	chmod +x "$TRASH_DIRECTORY/.bin/gust"
-	# Prepend .bin to PATH so every subshell sees 'git' → gust
+	chmod +x "$TRASH_DIRECTORY/.bin/grit"
+	# Prepend .bin to PATH so every subshell sees 'git' → grit
 	export PATH="$TRASH_DIRECTORY/.bin:$PATH"
 	# cd into trash so each test starts with a clean cwd
 	cd "$TRASH_DIRECTORY" || exit 1
@@ -91,7 +91,7 @@ setup_trash
 HOME="$TRASH_DIRECTORY"
 export HOME
 
-# Quiet git/gust unless TEST_VERBOSE is set
+# Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"
 then
 	GIT_QUIET=-q

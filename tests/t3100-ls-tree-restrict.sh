@@ -1,7 +1,7 @@
 #!/bin/sh
 # Ported from git/t/t3100-ls-tree-restrict.sh (harness-compatible subset).
 
-test_description='gust ls-tree restrict'
+test_description='grit ls-tree restrict'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
@@ -11,7 +11,7 @@ normalize_output() {
 }
 
 test_expect_success 'setup fixture tree' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	mkdir -p path2/baz &&
 	echo Hi >path0 &&
@@ -19,14 +19,14 @@ test_expect_success 'setup fixture tree' '
 	ln -s ../path1 path2/bazbo &&
 	echo Lo >path2/foo &&
 	echo Mi >path2/baz/b &&
-	gust update-index --add path0 path1 path2/foo path2/bazbo path2/baz/b &&
-	tree=$(gust write-tree) &&
+	grit update-index --add path0 path1 path2/foo path2/bazbo path2/baz/b &&
+	tree=$(grit write-tree) &&
 	echo "$tree" >../tree_oid
 '
 
 test_expect_success 'ls-tree plain' '
 	cd repo &&
-	gust ls-tree "$(cat ../tree_oid)" >current &&
+	grit ls-tree "$(cat ../tree_oid)" >current &&
 	cat >expected <<-\EOF &&
 	100644 blob X	path0
 	120000 blob X	path1
@@ -38,7 +38,7 @@ test_expect_success 'ls-tree plain' '
 
 test_expect_success 'ls-tree recursive with -t' '
 	cd repo &&
-	gust ls-tree -r -t "$(cat ../tree_oid)" >current &&
+	grit ls-tree -r -t "$(cat ../tree_oid)" >current &&
 	cat >expected <<-\EOF &&
 	100644 blob X	path0
 	120000 blob X	path1
@@ -54,7 +54,7 @@ test_expect_success 'ls-tree recursive with -t' '
 
 test_expect_success 'ls-tree filtered with path2' '
 	cd repo &&
-	gust ls-tree "$(cat ../tree_oid)" path2 >current &&
+	grit ls-tree "$(cat ../tree_oid)" path2 >current &&
 	cat >expected <<-\EOF &&
 	040000 tree X	path2
 	EOF

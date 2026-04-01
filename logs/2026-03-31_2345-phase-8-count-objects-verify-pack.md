@@ -3,8 +3,8 @@
 ## Scope
 
 - Implement a coherent v2 subset for:
-  - `gust count-objects`
-  - `gust verify-pack`
+  - `grit count-objects`
+  - `grit verify-pack`
 - Read and align with upstream:
   - `git/builtin/count-objects.c`
   - `git/builtin/verify-pack.c`
@@ -17,15 +17,15 @@
 
 ## Implementation notes
 
-- Added `gust-lib/src/pack.rs` with:
+- Added `grit-lib/src/pack.rs` with:
   - v2 `.idx` parser (`read_pack_index`)
   - local pack aggregate metrics (`collect_local_pack_info`)
   - pack verification and object record extraction (`verify_pack_and_collect`)
   - recursive alternate discovery (`read_alternates_recursive`)
-- Exported new module in `gust-lib/src/lib.rs`.
+- Exported new module in `grit-lib/src/lib.rs`.
 - Replaced CLI stubs:
-  - `gust/src/commands/count_objects.rs`
-  - `gust/src/commands/verify_pack.rs`
+  - `grit/src/commands/count_objects.rs`
+  - `grit/src/commands/verify_pack.rs`
 - `count-objects` now supports:
   - default summary (`<n> objects, <kib> kilobytes`)
   - `-v` breakdown lines (`count`, `size`, `in-pack`, `packs`, `size-pack`, `prune-packable`, `garbage`, `size-garbage`, `alternate`)

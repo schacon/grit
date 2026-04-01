@@ -1,8 +1,8 @@
 #!/bin/sh
 # Ported from git/t/t3700-add.sh
-# Tests for 'gust add'.
+# Tests for 'grit add'.
 
-test_description='gust add'
+test_description='grit add'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh

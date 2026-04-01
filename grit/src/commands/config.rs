@@ -1,0 +1,667 @@
+//! `grit config` — read and modify Git configuration files.
+//!
+//! Supports both the legacy interface (`git config --get`, `git config key value`)
+//! and the new subcommand interface (`git config get`, `git config set`).
+
+use anyhow::{bail, Context, Result};
+use clap::{Args as ClapArgs, Subcommand};
+use grit_lib::config::{parse_bool, parse_i64, parse_path, ConfigFile, ConfigScope, ConfigSet};
+use std::path::{Path, PathBuf};
+
+/// Arguments for `grit config`.
+#[derive(Debug, ClapArgs)]
+#[command(
+    about = "Get and set repository or global options",
+    after_help = "Use subcommands (get, set, unset, list) or legacy flags (--get, key value)."
+)]
+pub struct Args {
+    #[command(subcommand)]
+    pub subcommand: Option<ConfigSubcommand>,
+
+    // ── File location flags ──
+    /// Use the system-wide config file.
+    #[arg(long)]
+    pub system: bool,
+
+    /// Use the global (per-user) config file.
+    #[arg(long)]
+    pub global: bool,
+
+    /// Use the repository-local config file.
+    #[arg(long)]
+    pub local: bool,
+
+    /// Use the per-worktree config file.
+    #[arg(long)]
+    pub worktree: bool,
+
+    /// Use the given config file.
+    #[arg(short = 'f', long = "file")]
+    pub file: Option<PathBuf>,
+
+    // ── Legacy action flags ──
+    /// Get the value for a given key (legacy).
+    #[arg(long = "get", value_name = "KEY")]
+    pub get_key: Option<String>,
+
+    /// Get all values for a multi-valued key (legacy).
+    #[arg(long = "get-all", value_name = "KEY")]
+    pub get_all_key: Option<String>,
+
+    /// Get values matching a regex (legacy).
+    #[arg(long = "get-regexp", value_name = "PATTERN")]
+    pub get_regexp: Option<String>,
+
+    /// Remove a key (legacy).
+    #[arg(long = "unset", value_name = "KEY")]
+    pub unset_key: Option<String>,
+
+    /// Remove all occurrences of a key (legacy).
+    #[arg(long = "unset-all", value_name = "KEY")]
+    pub unset_all_key: Option<String>,
+
+    /// List all config entries (legacy).
+    #[arg(short = 'l', long = "list")]
+    pub list: bool,
+
+    /// Replace all matching values (legacy).
+    #[arg(long = "replace-all")]
+    pub replace_all: bool,
+
+    /// Rename a section (legacy).
+    #[arg(long = "rename-section")]
+    pub rename_section: bool,
+
+    /// Remove a section (legacy).
+    #[arg(long = "remove-section")]
+    pub remove_section: bool,
+
+    // ── Type flags ──
+    /// Ensure the value is a valid boolean and canonicalize.
+    #[arg(long = "bool")]
+    pub type_bool: bool,
+
+    /// Ensure the value is a valid integer and canonicalize.
+    #[arg(long = "int")]
+    pub type_int: bool,
+
+    /// Expand `~/` in the value.
+    #[arg(long = "path")]
+    pub type_path: bool,
+
+    /// Type selector (alternative to individual flags).
+    #[arg(long = "type", value_name = "TYPE")]
+    pub type_name: Option<String>,
+
+    // ── Display flags ──
+    /// Show origin file and scope for each entry.
+    #[arg(long = "show-origin")]
+    pub show_origin: bool,
+
+    /// Show scope for each entry.
+    #[arg(long = "show-scope")]
+    pub show_scope: bool,
+
+    /// Use NUL as delimiter.
+    #[arg(short = 'z')]
+    pub null_terminated: bool,
+
+    /// Show key names for --get-regexp.
+    #[arg(long = "name-only")]
+    pub name_only: bool,
+
+    /// Includes support.
+    #[arg(long = "includes")]
+    pub includes: bool,
+
+    /// Do not honour include directives.
+    #[arg(long = "no-includes")]
+    pub no_includes: bool,
+
+    // ── Positional args for legacy set (`git config key value`) ──
+    /// Positional arguments (key, value, value-pattern for legacy mode).
+    #[arg(trailing_var_arg = true)]
+    pub positional: Vec<String>,
+}
+
+/// Modern subcommand interface for `grit config`.
+#[derive(Debug, Subcommand)]
+pub enum ConfigSubcommand {
+    /// Get the value for a key.
+    Get(GetArgs),
+    /// Set a key to a value.
+    Set(SetArgs),
+    /// Unset (remove) a key.
+    Unset(UnsetArgs),
+    /// List all config entries.
+    List(ListArgs),
+    /// Rename a section.
+    #[command(name = "rename-section")]
+    RenameSection(RenameSectionArgs),
+    /// Remove a section.
+    #[command(name = "remove-section")]
+    RemoveSection(RemoveSectionArgs),
+    /// Open the config file in an editor.
+    Edit(EditArgs),
+}
+
+/// Arguments for `grit config get`.
+#[derive(Debug, ClapArgs)]
+pub struct GetArgs {
+    /// The configuration key.
+    pub key: String,
+
+    /// Get all values (multi-valued key).
+    #[arg(long)]
+    pub all: bool,
+
+    /// Treat key as a regex.
+    #[arg(long)]
+    pub regexp: bool,
+
+    /// Show key names alongside values.
+    #[arg(long = "show-names")]
+    pub show_names: bool,
+
+    /// Default value if key is missing.
+    #[arg(long)]
+    pub default: Option<String>,
+}
+
+/// Arguments for `grit config set`.
+#[derive(Debug, ClapArgs)]
+pub struct SetArgs {
+    /// The configuration key.
+    pub key: String,
+    /// The value to set.
+    pub value: String,
+
+    /// Replace all matching values.
+    #[arg(long)]
+    pub all: bool,
+}
+
+/// Arguments for `grit config unset`.
+#[derive(Debug, ClapArgs)]
+pub struct UnsetArgs {
+    /// The configuration key.
+    pub key: String,
+
+    /// Remove all occurrences.
+    #[arg(long)]
+    pub all: bool,
+}
+
+/// Arguments for `grit config list`.
+#[derive(Debug, ClapArgs)]
+pub struct ListArgs {}
+
+/// Arguments for `grit config rename-section`.
+#[derive(Debug, ClapArgs)]
+pub struct RenameSectionArgs {
+    /// Old section name.
+    pub old_name: String,
+    /// New section name.
+    pub new_name: String,
+}
+
+/// Arguments for `grit config remove-section`.
+#[derive(Debug, ClapArgs)]
+pub struct RemoveSectionArgs {
+    /// Section name to remove.
+    pub name: String,
+}
+
+/// Arguments for `grit config edit`.
+#[derive(Debug, ClapArgs)]
+pub struct EditArgs {}
+
+// ── Entrypoint ──────────────────────────────────────────────────────
+
+/// Run the `config` command.
+pub fn run(args: Args) -> Result<()> {
+    // Resolve which file to operate on
+    let git_dir = resolve_git_dir();
+    let (scope, file_path) = resolve_config_file(&args, git_dir.as_deref())?;
+
+    // Handle subcommands first
+    if let Some(ref sub) = args.subcommand {
+        return match sub {
+            ConfigSubcommand::Get(get_args) => cmd_get(&args, get_args, git_dir.as_deref()),
+            ConfigSubcommand::Set(set_args) => cmd_set(&args, set_args, scope, &file_path),
+            ConfigSubcommand::Unset(unset_args) => cmd_unset(&args, unset_args, scope, &file_path),
+            ConfigSubcommand::List(_) => cmd_list(&args, git_dir.as_deref()),
+            ConfigSubcommand::RenameSection(rs) => {
+                cmd_rename_section(scope, &file_path, &rs.old_name, &rs.new_name)
+            }
+            ConfigSubcommand::RemoveSection(rs) => cmd_remove_section(scope, &file_path, &rs.name),
+            ConfigSubcommand::Edit(_) => cmd_edit(&file_path),
+        };
+    }
+
+    // Legacy interface
+    if args.list {
+        return cmd_list(&args, git_dir.as_deref());
+    }
+
+    if let Some(ref key) = args.get_key {
+        let get_args = GetArgs {
+            key: key.clone(),
+            all: false,
+            regexp: false,
+            show_names: false,
+            default: None,
+        };
+        return cmd_get(&args, &get_args, git_dir.as_deref());
+    }
+
+    if let Some(ref key) = args.get_all_key {
+        let get_args = GetArgs {
+            key: key.clone(),
+            all: true,
+            regexp: false,
+            show_names: false,
+            default: None,
+        };
+        return cmd_get(&args, &get_args, git_dir.as_deref());
+    }
+
+    if let Some(ref pattern) = args.get_regexp {
+        let get_args = GetArgs {
+            key: pattern.clone(),
+            all: true,
+            regexp: true,
+            show_names: true,
+            default: None,
+        };
+        return cmd_get(&args, &get_args, git_dir.as_deref());
+    }
+
+    if let Some(ref key) = args.unset_key {
+        let unset_args = UnsetArgs {
+            key: key.clone(),
+            all: false,
+        };
+        return cmd_unset(&args, &unset_args, scope, &file_path);
+    }
+
+    if let Some(ref key) = args.unset_all_key {
+        let unset_args = UnsetArgs {
+            key: key.clone(),
+            all: true,
+        };
+        return cmd_unset(&args, &unset_args, scope, &file_path);
+    }
+
+    if args.remove_section {
+        if args.positional.is_empty() {
+            bail!("missing section name");
+        }
+        return cmd_remove_section(scope, &file_path, &args.positional[0]);
+    }
+
+    if args.rename_section {
+        if args.positional.len() < 2 {
+            bail!("missing old-name and/or new-name");
+        }
+        return cmd_rename_section(scope, &file_path, &args.positional[0], &args.positional[1]);
+    }
+
+    // Legacy set: `git config key value`
+    match args.positional.len() {
+        0 => {
+            // No args, no flags → show usage
+            bail!("usage: grit config [<options>]");
+        }
+        1 => {
+            // Legacy get: `git config key`
+            let get_args = GetArgs {
+                key: args.positional[0].clone(),
+                all: false,
+                regexp: false,
+                show_names: false,
+                default: None,
+            };
+            cmd_get(&args, &get_args, git_dir.as_deref())
+        }
+        2 => {
+            // Legacy set: `git config key value`
+            let set_args = SetArgs {
+                key: args.positional[0].clone(),
+                value: args.positional[1].clone(),
+                all: args.replace_all,
+            };
+            cmd_set(&args, &set_args, scope, &file_path)
+        }
+        3 => {
+            // Legacy set with value-pattern: `git config key value value-pattern`
+            // For now, treat as simple set
+            let set_args = SetArgs {
+                key: args.positional[0].clone(),
+                value: args.positional[1].clone(),
+                all: false,
+            };
+            cmd_set(&args, &set_args, scope, &file_path)
+        }
+        _ => bail!("too many arguments"),
+    }
+}
+
+// ── Subcommand implementations ──────────────────────────────────────
+
+fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()> {
+    let config = load_config(args, git_dir)?;
+    let terminator = if args.null_terminated { '\0' } else { '\n' };
+
+    if get_args.regexp {
+        let matches = config.get_regexp(&get_args.key);
+        if matches.is_empty() {
+            std::process::exit(1);
+        }
+        for entry in matches {
+            let val = entry.value.as_deref().unwrap_or("true");
+            let val = format_typed_value(args, val)?;
+            if get_args.show_names || args.name_only {
+                if args.name_only {
+                    print!("{}{}", entry.key, terminator);
+                } else {
+                    print!("{} {}{}", entry.key, val, terminator);
+                }
+            } else {
+                print!("{}{}", val, terminator);
+            }
+        }
+        return Ok(());
+    }
+
+    if get_args.all {
+        let values = config.get_all(&get_args.key);
+        if values.is_empty() {
+            if let Some(ref default) = get_args.default {
+                let val = format_typed_value(args, default)?;
+                print!("{val}{terminator}");
+                return Ok(());
+            }
+            std::process::exit(1);
+        }
+        for val in values {
+            let val = format_typed_value(args, &val)?;
+            print!("{val}{terminator}");
+        }
+        return Ok(());
+    }
+
+    match config.get(&get_args.key) {
+        Some(val) => {
+            let val = format_typed_value(args, &val)?;
+            print!("{val}{terminator}");
+            Ok(())
+        }
+        None => {
+            if let Some(ref default) = get_args.default {
+                let val = format_typed_value(args, default)?;
+                print!("{val}{terminator}");
+                return Ok(());
+            }
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_set(_args: &Args, set_args: &SetArgs, scope: ConfigScope, file_path: &Path) -> Result<()> {
+    let mut config = match ConfigFile::from_path(file_path, scope).context("reading config file")? {
+        Some(cfg) => cfg,
+        None => ConfigFile::parse(file_path, "", scope)?,
+    };
+
+    config.set(&set_args.key, &set_args.value)?;
+    config.write().context("writing config file")?;
+    Ok(())
+}
+
+fn cmd_unset(
+    _args: &Args,
+    unset_args: &UnsetArgs,
+    scope: ConfigScope,
+    file_path: &Path,
+) -> Result<()> {
+    let mut config = ConfigFile::from_path(file_path, scope).context("reading config file")?;
+
+    match config {
+        Some(ref mut cfg) => {
+            let removed = cfg.unset(&unset_args.key)?;
+            if removed == 0 {
+                std::process::exit(5);
+            }
+            cfg.write().context("writing config file")?;
+        }
+        None => std::process::exit(5),
+    }
+    Ok(())
+}
+
+fn cmd_list(args: &Args, git_dir: Option<&Path>) -> Result<()> {
+    let config = load_config(args, git_dir)?;
+    let terminator = if args.null_terminated { '\0' } else { '\n' };
+
+    for entry in config.entries() {
+        let mut prefix = String::new();
+        if args.show_scope {
+            prefix.push_str(&format!("{}\t", entry.scope));
+        }
+        if args.show_origin {
+            if let Some(ref file) = entry.file {
+                prefix.push_str(&format!("file:{}\t", file.display()));
+            }
+        }
+        let val = entry.value.as_deref().unwrap_or("true");
+        if args.name_only {
+            print!("{}{}{}", prefix, entry.key, terminator);
+        } else {
+            print!("{}{}={}{}", prefix, entry.key, val, terminator);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_remove_section(scope: ConfigScope, file_path: &Path, name: &str) -> Result<()> {
+    let mut config = ConfigFile::from_path(file_path, scope).context("reading config file")?;
+
+    match config {
+        Some(ref mut cfg) => {
+            if !cfg.remove_section(name)? {
+                bail!("no such section: {name}");
+            }
+            cfg.write().context("writing config file")?;
+        }
+        None => bail!("config file not found: {}", file_path.display()),
+    }
+    Ok(())
+}
+
+fn cmd_rename_section(
+    scope: ConfigScope,
+    file_path: &Path,
+    old_name: &str,
+    new_name: &str,
+) -> Result<()> {
+    let mut config = ConfigFile::from_path(file_path, scope).context("reading config file")?;
+
+    match config {
+        Some(ref mut cfg) => {
+            if !cfg.rename_section(old_name, new_name)? {
+                bail!("no such section: {old_name}");
+            }
+            cfg.write().context("writing config file")?;
+        }
+        None => bail!("config file not found: {}", file_path.display()),
+    }
+    Ok(())
+}
+
+fn cmd_edit(file_path: &Path) -> Result<()> {
+    let editor = std::env::var("GIT_EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_owned());
+
+    let status = std::process::Command::new(&editor)
+        .arg(file_path)
+        .status()
+        .with_context(|| format!("failed to launch editor '{editor}'"))?;
+
+    if !status.success() {
+        bail!("editor exited with status {}", status);
+    }
+    Ok(())
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+/// Resolve the git directory (best-effort; returns None outside a repo).
+fn resolve_git_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("GIT_DIR") {
+        return Some(PathBuf::from(dir));
+    }
+    // Walk up from cwd looking for .git
+    let cwd = std::env::current_dir().ok()?;
+    let mut cur = cwd.as_path();
+    loop {
+        let dot_git = cur.join(".git");
+        if dot_git.is_dir() {
+            return Some(dot_git);
+        }
+        if dot_git.is_file() {
+            // gitfile
+            if let Ok(content) = std::fs::read_to_string(&dot_git) {
+                for line in content.lines() {
+                    if let Some(rest) = line.strip_prefix("gitdir:") {
+                        let path = rest.trim();
+                        let resolved = if Path::new(path).is_absolute() {
+                            PathBuf::from(path)
+                        } else {
+                            cur.join(path)
+                        };
+                        return Some(resolved);
+                    }
+                }
+            }
+        }
+        // Check if cur itself is a bare repo
+        if cur.join("objects").is_dir() && cur.join("HEAD").is_file() {
+            return Some(cur.to_path_buf());
+        }
+        cur = cur.parent()?;
+    }
+}
+
+/// Determine which config file to write to based on flags.
+fn resolve_config_file(args: &Args, git_dir: Option<&Path>) -> Result<(ConfigScope, PathBuf)> {
+    if let Some(ref path) = args.file {
+        return Ok((ConfigScope::Local, path.clone()));
+    }
+    if args.system {
+        return Ok((ConfigScope::System, PathBuf::from("/etc/gitconfig")));
+    }
+    if args.global {
+        let path = global_config_path()
+            .ok_or_else(|| anyhow::anyhow!("cannot determine global config path"))?;
+        return Ok((ConfigScope::Global, path));
+    }
+    if args.worktree {
+        let gd = git_dir.ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
+        return Ok((ConfigScope::Worktree, gd.join("config.worktree")));
+    }
+    // Default: local
+    if let Some(gd) = git_dir {
+        Ok((ConfigScope::Local, gd.join("config")))
+    } else {
+        // Outside repo, default to global for read operations
+        let path = global_config_path().unwrap_or_else(|| PathBuf::from("/etc/gitconfig"));
+        Ok((ConfigScope::Global, path))
+    }
+}
+
+/// Load the config set, respecting file-scope flags.
+fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
+    // If a specific file is requested, only read that file
+    if let Some(ref path) = args.file {
+        let mut set = ConfigSet::new();
+        if let Some(f) = ConfigFile::from_path(path, ConfigScope::Local)? {
+            set.merge(&f);
+        }
+        return Ok(set);
+    }
+
+    if args.system {
+        let mut set = ConfigSet::new();
+        if let Some(f) = ConfigFile::from_path(Path::new("/etc/gitconfig"), ConfigScope::System)? {
+            set.merge(&f);
+        }
+        return Ok(set);
+    }
+
+    if args.global {
+        let mut set = ConfigSet::new();
+        if let Some(path) = global_config_path() {
+            if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Global)? {
+                set.merge(&f);
+            }
+        }
+        return Ok(set);
+    }
+
+    if args.local {
+        let mut set = ConfigSet::new();
+        if let Some(gd) = git_dir {
+            if let Some(f) = ConfigFile::from_path(&gd.join("config"), ConfigScope::Local)? {
+                set.merge(&f);
+            }
+        }
+        return Ok(set);
+    }
+
+    // Default: full cascade
+    Ok(ConfigSet::load(git_dir, true)?)
+}
+
+/// Get the path for the global config file.
+fn global_config_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("GIT_CONFIG_GLOBAL") {
+        return Some(PathBuf::from(p));
+    }
+    std::env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".gitconfig"))
+}
+
+/// Format a value according to the type flags.
+fn format_typed_value(args: &Args, val: &str) -> Result<String> {
+    let type_name = args.type_name.as_deref();
+
+    if args.type_bool || type_name == Some("bool") {
+        match parse_bool(val) {
+            Ok(b) => {
+                return Ok(if b {
+                    "true".to_owned()
+                } else {
+                    "false".to_owned()
+                })
+            }
+            Err(e) => bail!("{}", e),
+        }
+    }
+
+    if args.type_int || type_name == Some("int") {
+        match parse_i64(val) {
+            Ok(n) => return Ok(n.to_string()),
+            Err(e) => bail!("{}", e),
+        }
+    }
+
+    if args.type_path || type_name == Some("path") {
+        return Ok(parse_path(val));
+    }
+
+    Ok(val.to_owned())
+}

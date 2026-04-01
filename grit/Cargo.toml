@@ -1,0 +1,19 @@
+[package]
+name = "grit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Gust: a Git plumbing reimplementation in Rust"
+
+[[bin]]
+name = "grit"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+grit-lib = { path = "../grit-lib" }
+anyhow.workspace = true
+clap.workspace = true
+time.workspace = true

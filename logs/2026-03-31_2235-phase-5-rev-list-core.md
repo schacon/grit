@@ -2,7 +2,7 @@
 
 ## Scope
 
-- Implemented a coherent `gust rev-list` subset covering:
+- Implemented a coherent `grit rev-list` subset covering:
   - commit range parsing (`^A`, `A..B`)
   - `--all` (including detached `HEAD`)
   - `--stdin` revision ingestion (with `--not` and `--all`)
@@ -13,9 +13,9 @@
 
 ## Files changed for implementation
 
-- `gust-lib/src/rev_list.rs` (new)
-- `gust-lib/src/lib.rs` (module export)
-- `gust/src/commands/rev_list.rs` (CLI wiring and option parsing)
+- `grit-lib/src/rev_list.rs` (new)
+- `grit-lib/src/lib.rs` (module export)
+- `grit/src/commands/rev_list.rs` (CLI wiring and option parsing)
 
 ## Ported test scripts
 

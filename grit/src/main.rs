@@ -1,0 +1,170 @@
+//! `grit` — Git plumbing reimplementation in Rust.
+//!
+//! This binary is a thin CLI shim: it parses the command line, resolves
+//! global options, and delegates to the appropriate command handler in
+//! the `commands` module.  All Git-compatible logic lives in `grit-lib`.
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+mod commands;
+
+/// Gust: a Git plumbing reimplementation.
+#[derive(Debug, Parser)]
+#[command(
+    name = "grit",
+    version,
+    about = "Git plumbing reimplementation in Rust"
+)]
+struct Cli {
+    /// Override the path to the git directory.
+    #[arg(long = "git-dir", env = "GIT_DIR")]
+    git_dir: Option<PathBuf>,
+
+    /// Run as if started in this directory (Git's `-C`).
+    /// Named `change_dir` to avoid clap field-name collision with `grit init [DIRECTORY]`.
+    #[arg(short = 'C', global = true, value_name = "PATH")]
+    change_dir: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Add file contents to the index.
+    Add(commands::add::Args),
+    /// List, create, or delete branches.
+    Branch(commands::branch::Args),
+    /// Create an empty Git repository or reinitialize an existing one.
+    Init(commands::init::Args),
+    /// Compute object ID and optionally create an object from a file.
+    #[command(name = "hash-object")]
+    HashObject(commands::hash_object::Args),
+    /// Provide contents or details of repository objects.
+    #[command(name = "cat-file")]
+    CatFile(commands::cat_file::Args),
+    /// Record changes to the repository.
+    Commit(commands::commit::Args),
+    /// Get and set repository or global options.
+    Config(commands::config::Args),
+    /// Show commit logs.
+    Log(commands::log::Args),
+    /// Register file contents in the working tree to the index.
+    #[command(name = "update-index")]
+    UpdateIndex(commands::update_index::Args),
+    /// Show information about files in the index and working tree.
+    #[command(name = "ls-files")]
+    LsFiles(commands::ls_files::Args),
+    /// Create a tree object from the current index.
+    #[command(name = "write-tree")]
+    WriteTree(commands::write_tree::Args),
+    /// List the contents of a tree object.
+    #[command(name = "ls-tree")]
+    LsTree(commands::ls_tree::Args),
+    /// Show the working tree status.
+    Status(commands::status::Args),
+    /// Read tree information into the index.
+    #[command(name = "read-tree")]
+    ReadTree(commands::read_tree::Args),
+    /// Check out files from the index into the working tree.
+    #[command(name = "checkout-index")]
+    CheckoutIndex(commands::checkout_index::Args),
+    /// Create a new commit object.
+    #[command(name = "commit-tree")]
+    CommitTree(commands::commit_tree::Args),
+    /// Update the object name stored in a ref safely.
+    #[command(name = "update-ref")]
+    UpdateRef(commands::update_ref::Args),
+    /// Debug gitignore and exclude rules.
+    #[command(name = "check-ignore")]
+    CheckIgnore(commands::check_ignore::Args),
+    /// Count unpacked objects and disk usage.
+    #[command(name = "count-objects")]
+    CountObjects(commands::count_objects::Args),
+    /// Compare a tree against working tree or index.
+    #[command(name = "diff-index")]
+    DiffIndex(commands::diff_index::Args),
+    /// Output information on refs.
+    #[command(name = "for-each-ref")]
+    ForEachRef(commands::for_each_ref::Args),
+    /// Find best common ancestors.
+    #[command(name = "merge-base")]
+    MergeBase(commands::merge_base::Args),
+    /// List commit objects in reverse chronological order.
+    #[command(name = "rev-list")]
+    RevList(commands::rev_list::Args),
+    /// Pick out and massage revision parameters.
+    #[command(name = "rev-parse")]
+    RevParse(commands::rev_parse::Args),
+    /// List references in a local repository.
+    #[command(name = "show-ref")]
+    ShowRef(commands::show_ref::Args),
+    /// Read, modify, and delete symbolic refs.
+    #[command(name = "symbolic-ref")]
+    SymbolicRef(commands::symbolic_ref::Args),
+    /// Validate packed Git archive files.
+    #[command(name = "verify-pack")]
+    VerifyPack(commands::verify_pack::Args),
+    /// Cleanup unnecessary files and optimize the repository.
+    Gc(commands::gc::Args),
+    /// Pack unpacked objects in a repository.
+    Repack(commands::repack::Args),
+    /// Create, list, delete or verify a tag object.
+    Tag(commands::tag::Args),
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("error: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
+    let cli = Cli::parse();
+
+    // Handle -C: change working directory before doing anything else.
+    if let Some(dir) = &cli.change_dir {
+        std::env::set_current_dir(dir)?;
+    }
+
+    // Pass git_dir override into env so library discovery picks it up.
+    if let Some(git_dir) = &cli.git_dir {
+        std::env::set_var("GIT_DIR", git_dir);
+    }
+
+    match cli.command {
+        Command::Add(args) => commands::add::run(args),
+        Command::Branch(args) => commands::branch::run(args),
+        Command::Init(args) => commands::init::run(args),
+        Command::HashObject(args) => commands::hash_object::run(args),
+        Command::CatFile(args) => commands::cat_file::run(args),
+        Command::Commit(args) => commands::commit::run(args),
+        Command::Config(args) => commands::config::run(args),
+        Command::Log(args) => commands::log::run(args),
+        Command::UpdateIndex(args) => commands::update_index::run(args),
+        Command::LsFiles(args) => commands::ls_files::run(args),
+        Command::WriteTree(args) => commands::write_tree::run(args),
+        Command::LsTree(args) => commands::ls_tree::run(args),
+        Command::Status(args) => commands::status::run(args),
+        Command::ReadTree(args) => commands::read_tree::run(args),
+        Command::CheckoutIndex(args) => commands::checkout_index::run(args),
+        Command::CommitTree(args) => commands::commit_tree::run(args),
+        Command::UpdateRef(args) => commands::update_ref::run(args),
+        Command::CheckIgnore(args) => commands::check_ignore::run(args),
+        Command::CountObjects(args) => commands::count_objects::run(args),
+        Command::DiffIndex(args) => commands::diff_index::run(args),
+        Command::ForEachRef(args) => commands::for_each_ref::run(args),
+        Command::MergeBase(args) => commands::merge_base::run(args),
+        Command::RevList(args) => commands::rev_list::run(args),
+        Command::RevParse(args) => commands::rev_parse::run(args),
+        Command::ShowRef(args) => commands::show_ref::run(args),
+        Command::SymbolicRef(args) => commands::symbolic_ref::run(args),
+        Command::VerifyPack(args) => commands::verify_pack::run(args),
+        Command::Gc(args) => commands::gc::run(args),
+        Command::Repack(args) => commands::repack::run(args),
+        Command::Tag(args) => commands::tag::run(args),
+    }
+}

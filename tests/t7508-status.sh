@@ -1,7 +1,7 @@
 #!/bin/sh
-# Tests for 'gust status'.
+# Tests for 'grit status'.
 
-test_description='gust status'
+test_description='grit status'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh

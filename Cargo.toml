@@ -1,5 +1,5 @@
 [workspace]
-members = ["gust", "gust-lib"]
+members = ["grit", "grit-lib"]
 resolver = "2"
 
 [workspace.package]

@@ -1,8 +1,8 @@
 #!/bin/sh
 # Ported from git/t/t1300-config.sh
-# Tests for 'gust config'.
+# Tests for 'grit config'.
 
-test_description='gust config'
+test_description='grit config'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh

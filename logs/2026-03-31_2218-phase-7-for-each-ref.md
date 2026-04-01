@@ -2,7 +2,7 @@
 
 ## Scope
 
-- Implement a coherent `for-each-ref` subset in `gust/src/commands/for_each_ref.rs`.
+- Implement a coherent `for-each-ref` subset in `grit/src/commands/for_each_ref.rs`.
 - Port selected coverage from upstream `t6300`, `t6301`, and `t6302` into local `tests/`.
 
 ## Implemented command behavior

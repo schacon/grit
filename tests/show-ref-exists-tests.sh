@@ -1,13 +1,13 @@
 git_show_ref_exists=${git_show_ref_exists:-git show-ref --exists}
 
 test_expect_success 'setup' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	tree=$(git write-tree) &&
 	commit=$(echo base | git commit-tree "$tree") &&
-	gust update-ref refs/heads/master "$commit" &&
-	gust update-ref refs/heads/main "$commit" &&
-	gust update-ref refs/heads/side "$commit"
+	grit update-ref refs/heads/master "$commit" &&
+	grit update-ref refs/heads/main "$commit" &&
+	grit update-ref refs/heads/side "$commit"
 '
 
 test_expect_success '--exists with existing reference' '

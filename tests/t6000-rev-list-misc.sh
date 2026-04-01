@@ -32,7 +32,7 @@ doit () {
 }
 
 test_expect_success 'setup graph with merge' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	base=$(doit 1 A) &&
 	c_tip=$(doit 2 C "$base") &&

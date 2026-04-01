@@ -7,12 +7,12 @@ cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup repository' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	git symbolic-ref HEAD refs/heads/main &&
 	tree=$(git write-tree) &&
 	commit=$(echo initial | git commit-tree "$tree") &&
-	gust update-ref refs/heads/main "$commit"
+	grit update-ref refs/heads/main "$commit"
 '
 
 test_expect_success 'symbolic-ref read/write roundtrip' '
@@ -54,7 +54,7 @@ test_expect_success 'symbolic-ref allows top-level target for non-HEAD' '
 	cd repo &&
 	oid=$(git rev-parse refs/heads/main) &&
 	git symbolic-ref refs/heads/top-level ORIG_HEAD &&
-	gust update-ref ORIG_HEAD "$oid" &&
+	grit update-ref ORIG_HEAD "$oid" &&
 	git symbolic-ref refs/heads/top-level >actual &&
 	echo ORIG_HEAD >expect &&
 	test_cmp expect actual

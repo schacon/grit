@@ -6,7 +6,7 @@ test_description='count-objects loose count and verbose garbage accounting'
 . ./test-lib.sh
 
 test_expect_success 'count-objects loose count changes with hash-object -w' '
-	gust init repo &&
+	grit init repo &&
 	cd repo &&
 	before=$(git count-objects | sed "s/ .*//") &&
 	BLOB=$(echo aleph_0 | git hash-object -w --stdin) &&

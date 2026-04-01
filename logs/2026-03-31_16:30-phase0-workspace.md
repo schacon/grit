@@ -7,8 +7,8 @@
 
 Creating:
 - Workspace `Cargo.toml` at root
-- `gust/` binary crate (thin CLI layer)
-- `gust-lib/` library crate (all engine logic)
+- `grit/` binary crate (thin CLI layer)
+- `grit-lib/` library crate (all engine logic)
 
 Lints: deny `clippy::unwrap_used`, `clippy::expect_used` in production code.
 

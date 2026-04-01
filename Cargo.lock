@@ -240,17 +240,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "gust"
+name = "grit"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "gust-lib",
+ "grit-lib",
  "time",
 ]
 
 [[package]]
-name = "gust-lib"
+name = "grit-lib"
 version = "0.1.0"
 dependencies = [
  "flate2",

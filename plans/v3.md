@@ -1,6 +1,6 @@
 # Gust v3 implementation plan
 
-This document is the **third major version** of Gust: the **common working (porcelain)** layer on top of **v1** ([`plan.md`](../plan.md)) and **v2** ([`v2.md`](v2.md)). The methodology is unchanged: read **upstream C** under [`git/builtin/`](../git/builtin/), **docs** in [`git/Documentation/`](../git/Documentation/) as `git-<command>.adoc`, and **tests** in [`git/t/`](../git/t/); **port** scripts into `./tests` (harness replaces `git` with `gust` per contract) until they pass.
+This document is the **third major version** of Gust: the **common working (porcelain)** layer on top of **v1** ([`plan.md`](../plan.md)) and **v2** ([`v2.md`](v2.md)). The methodology is unchanged: read **upstream C** under [`git/builtin/`](../git/builtin/), **docs** in [`git/Documentation/`](../git/Documentation/) as `git-<command>.adoc`, and **tests** in [`git/t/`](../git/t/); **port** scripts into `./tests` (harness replaces `git` with `grit` per contract) until they pass.
 
 **v3 commands (22):** `config`, `clone`, `add`, `status`, `diff`, `commit`, `restore`, `reset`, `rm`, `mv`, `branch`, `checkout`, `switch`, `merge`, `log`, `stash`, `tag`, `fetch`, `pull`, `push`, `remote`, `show`.
 
@@ -771,7 +771,7 @@ Treat **submodule support** as a cross-cutting epic or defer scripts until a sub
 
 ## Completion criteria
 
-1. All **22** commands available as `gust <command>` with behavior matching upstream for the **ported** `git/t` subset (including full series listed here where claimed).
+1. All **22** commands available as `grit <command>` with behavior matching upstream for the **ported** `git/t` subset (including full series listed here where claimed).
 2. `cargo test --workspace` green; harness (`./tests/harness/run.sh`) green with `tests/harness/selected-tests.txt` covering v3 scripts.
 3. Manpage / behavior checklist extended for every v3 command (similar spirit to [`docs/manpage-parity.md`](../docs/manpage-parity.md)).
 4. Document explicit **deferrals** (submodules, fsmonitor, foreign SCM, format-patch, rerere, mergetool, etc.) anywhere the full upstream inventory is not targeted.

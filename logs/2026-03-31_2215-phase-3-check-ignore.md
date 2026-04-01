@@ -2,7 +2,7 @@
 
 ## Scope
 
-- Implement `gust check-ignore` for a robust initial subset from `t0008`.
+- Implement `grit check-ignore` for a robust initial subset from `t0008`.
 - Cover path arguments and stdin-based querying.
 - Support `-v` / `--verbose`, `-n` / `--non-matching`, `--stdin`, `-z`, and `--no-index`.
 - Implement ignore precedence for:
@@ -21,14 +21,14 @@
 
 ## Implementation notes
 
-- Added `gust-lib/src/ignore.rs`:
+- Added `grit-lib/src/ignore.rs`:
   - rule parsing for ignore files (comments, negation, directory-only, anchored patterns)
   - matching logic with last-match-wins precedence
   - repository-relative path normalization for query inputs
   - per-directory `.gitignore` loading/caching by directory chain
   - optional index integration (tracked files bypass ignore unless `--no-index`)
-- Exported ignore module from `gust-lib/src/lib.rs`.
-- Replaced `gust/src/commands/check_ignore.rs` stub with functional command:
+- Exported ignore module from `grit-lib/src/lib.rs`.
+- Replaced `grit/src/commands/check_ignore.rs` stub with functional command:
   - manual argv parsing for supported options
   - option validation matching expected constraints
   - stdin LF and NUL modes
@@ -53,7 +53,7 @@
 - `cargo fmt` -> PASS
 - `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
 - `cargo test --workspace` -> PASS (5 tests, 0 failures)
-- `GUST_BIN=/Users/schacon/projects/gust/target/debug/gust TEST_VERBOSE=1 sh ./t0008-ignores.sh` -> PASS (12/12)
+- `GUST_BIN=/Users/schacon/projects/grit/target/debug/grit TEST_VERBOSE=1 sh ./t0008-ignores.sh` -> PASS (12/12)
 
 ## Plan/progress/test-results updates
 
