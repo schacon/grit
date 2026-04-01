@@ -10,6 +10,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::env;
 use std::io::Read;
+use time::format_description::well_known::Iso8601;
+use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
 use gust_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use gust_lib::refs::resolve_ref;
@@ -47,18 +49,16 @@ pub fn run(args: Args) -> Result<()> {
     let parent_oids: Vec<ObjectId> = args
         .parents
         .iter()
-        .map(|p| resolve_tree_ish(&repo, p))
+        .map(|p| resolve_commit_ish(&repo, p))
         .collect::<Result<Vec<_>>>()?;
 
-    // Build commit message
     let message = build_message(&args)?;
 
-    // Build identity strings
     let now_unix = current_unix_timestamp();
-    let tz_str = local_tz_string();
+    let default_tz = local_tz_string();
 
-    let author = build_identity("AUTHOR", &now_unix, &tz_str)?;
-    let committer = build_identity("COMMITTER", &now_unix, &tz_str)?;
+    let author = build_identity("AUTHOR", &now_unix, &default_tz)?;
+    let committer = build_identity("COMMITTER", &now_unix, &default_tz)?;
 
     let commit_data = CommitData {
         tree: tree_oid,
@@ -94,44 +94,114 @@ fn build_message(args: &Args) -> Result<String> {
         return Ok(msg);
     }
 
-    // Read from stdin if no -m or -F
     let mut msg = String::new();
     std::io::stdin().read_to_string(&mut msg)?;
     Ok(msg)
 }
 
 /// Build a `"Name <email> <timestamp> <tz>"` identity string.
-fn build_identity(prefix: &str, now_unix: &str, tz_str: &str) -> Result<String> {
+fn build_identity(prefix: &str, now_unix: &str, default_tz: &str) -> Result<String> {
     let name_key = format!("GIT_{prefix}_NAME");
     let email_key = format!("GIT_{prefix}_EMAIL");
     let date_key = format!("GIT_{prefix}_DATE");
 
-    let name = env::var(&name_key)
-        .or_else(|_| env::var("GIT_AUTHOR_NAME"))
-        .unwrap_or_else(|_| "Unknown".to_owned());
-    let email = env::var(&email_key)
-        .or_else(|_| env::var("GIT_AUTHOR_EMAIL"))
-        .unwrap_or_else(|_| "unknown@unknown".to_owned());
+    let (name, email) = match prefix {
+        "AUTHOR" => (
+            env::var(&name_key).unwrap_or_else(|_| "Unknown".to_owned()),
+            env::var(&email_key).unwrap_or_else(|_| "unknown@unknown".to_owned()),
+        ),
+        "COMMITTER" => (
+            env::var(&name_key)
+                .or_else(|_| env::var("GIT_AUTHOR_NAME"))
+                .unwrap_or_else(|_| "Unknown".to_owned()),
+            env::var(&email_key)
+                .or_else(|_| env::var("GIT_AUTHOR_EMAIL"))
+                .unwrap_or_else(|_| "unknown@unknown".to_owned()),
+        ),
+        _ => bail!("invalid identity prefix"),
+    };
 
     let date_str = if let Ok(d) = env::var(&date_key) {
-        // Parse "@<unix> <tz>" or "<unix> <tz>" format
-        if let Some(rest) = d.strip_prefix('@') {
-            rest.to_owned()
-        } else {
-            d
-        }
+        normalize_git_date(&d, default_tz)?
     } else {
-        format!("{now_unix} {tz_str}")
+        format!("{now_unix} {default_tz}")
     };
 
     Ok(format!("{name} <{email}> {date_str}"))
 }
 
-/// Get the current Unix timestamp as a string.
-///
-/// Uses `std::time::SystemTime` only here at the CLI boundary, not in the
-/// library; this is acceptable per AGENT.md ("Avoid implicitly using …
-/// instead pass the current time as argument" — library APIs take it as arg).
+fn normalize_git_date(input: &str, default_tz: &str) -> Result<String> {
+    let trimmed = input.trim();
+
+    let unixish = trimmed.strip_prefix('@').unwrap_or(trimmed).trim();
+    let parts: Vec<&str> = unixish.split_whitespace().collect();
+    if parts.len() == 1 && parts[0].parse::<i64>().is_ok() {
+        return Ok(format!("{} {default_tz}", parts[0]));
+    }
+    if parts.len() == 2 && parts[0].parse::<i64>().is_ok() && is_tz_offset(parts[1]) {
+        return Ok(format!("{} {}", parts[0], parts[1]));
+    }
+
+    let parse_offset = offset_for_git_date_parsing(default_tz)?;
+    let fmt_ymdhm = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]")
+        .context("building date parser")?;
+    if let Ok(dt) = PrimitiveDateTime::parse(trimmed, &fmt_ymdhm) {
+        let ts = dt.assume_offset(parse_offset).unix_timestamp();
+        let tz = format_tz_offset(parse_offset);
+        return Ok(format!("{ts} {tz}"));
+    }
+    let fmt_ymdhms =
+        time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+            .context("building date parser")?;
+    if let Ok(dt) = PrimitiveDateTime::parse(trimmed, &fmt_ymdhms) {
+        let ts = dt.assume_offset(parse_offset).unix_timestamp();
+        let tz = format_tz_offset(parse_offset);
+        return Ok(format!("{ts} {tz}"));
+    }
+    if let Ok(odt) = OffsetDateTime::parse(trimmed, &Iso8601::DEFAULT) {
+        let ts = odt.unix_timestamp();
+        let tz = format_tz_offset(odt.offset());
+        return Ok(format!("{ts} {tz}"));
+    }
+
+    Ok(trimmed.to_owned())
+}
+
+fn offset_for_git_date_parsing(default_tz: &str) -> Result<UtcOffset> {
+    match env::var("TZ") {
+        Ok(ref s) if s == "GMT" || s == "UTC" || s == "UCT" => Ok(UtcOffset::UTC),
+        Ok(ref s) if !s.is_empty() && is_tz_offset(s) => parse_tz_offset(s),
+        Ok(_) => parse_tz_offset(default_tz),
+        Err(_) => parse_tz_offset(default_tz),
+    }
+}
+
+fn is_tz_offset(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 5
+        && (bytes[0] == b'+' || bytes[0] == b'-')
+        && bytes[1..].iter().all(|b| b.is_ascii_digit())
+}
+
+fn parse_tz_offset(s: &str) -> Result<UtcOffset> {
+    if !is_tz_offset(s) {
+        bail!("invalid timezone offset: '{s}'");
+    }
+    let sign: i8 = if s.starts_with('-') { -1 } else { 1 };
+    let hours: i8 = s[1..3].parse().context("invalid timezone hours")?;
+    let mins: i8 = s[3..5].parse().context("invalid timezone minutes")?;
+    UtcOffset::from_hms(sign * hours, sign * mins, 0).context("invalid timezone offset")
+}
+
+fn format_tz_offset(offset: UtcOffset) -> String {
+    let secs = offset.whole_seconds();
+    let sign = if secs < 0 { '-' } else { '+' };
+    let abs = secs.unsigned_abs();
+    let hours = abs / 3600;
+    let mins = (abs % 3600) / 60;
+    format!("{sign}{hours:02}{mins:02}")
+}
+
 fn current_unix_timestamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -141,9 +211,7 @@ fn current_unix_timestamp() -> String {
     secs.to_string()
 }
 
-/// Return a UTC offset string like `"+0000"` or `"-0500"`.
 fn local_tz_string() -> String {
-    // Simple: always UTC for now; a full implementation would read localtime
     "+0000".to_owned()
 }
 
@@ -159,4 +227,8 @@ fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
     bail!("not a valid object name: '{s}'")
+}
+
+fn resolve_commit_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
+    resolve_tree_ish(repo, s)
 }

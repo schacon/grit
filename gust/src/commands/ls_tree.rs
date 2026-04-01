@@ -61,7 +61,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut out = stdout.lock();
     let term = if args.null_terminated { b'\0' } else { b'\n' };
 
-    list_tree(&repo, &obj.data, "", &args, &mut out, term)?;
+    list_tree(&repo, &obj.data, b"", &args, &mut out, term)?;
 
     Ok(())
 }
@@ -69,7 +69,7 @@ pub fn run(args: Args) -> Result<()> {
 fn list_tree(
     repo: &Repository,
     data: &[u8],
-    prefix: &str,
+    prefix: &[u8],
     args: &Args,
     out: &mut impl Write,
     term: u8,
@@ -77,21 +77,27 @@ fn list_tree(
     let entries = parse_tree(data)?;
 
     for entry in &entries {
-        let name = String::from_utf8_lossy(&entry.name);
         let full_name = if prefix.is_empty() {
-            name.to_string()
+            entry.name.clone()
         } else {
-            format!("{prefix}/{name}")
+            let mut p = Vec::with_capacity(prefix.len() + 1 + entry.name.len());
+            p.extend_from_slice(prefix);
+            p.push(b'/');
+            p.extend_from_slice(&entry.name);
+            p
         };
 
         let is_tree = entry.mode == 0o040000;
 
         // Apply path filter
         if !args.paths.is_empty() {
-            let matches = args
-                .paths
-                .iter()
-                .any(|p| full_name == *p || full_name.starts_with(&format!("{p}/")));
+            let matches = args.paths.iter().any(|p| {
+                let p = p.as_bytes();
+                full_name == p
+                    || (full_name.len() > p.len()
+                        && full_name.starts_with(p)
+                        && full_name[p.len()] == b'/')
+            });
             if !matches {
                 continue;
             }
@@ -118,35 +124,68 @@ fn list_tree(
 
 fn print_entry(
     entry: &gust_lib::objects::TreeEntry,
-    name: &str,
+    name: &[u8],
     args: &Args,
     out: &mut impl Write,
     term: u8,
 ) -> Result<()> {
     let is_tree = entry.mode == 0o040000;
     let kind_str = if is_tree { "tree" } else { "blob" };
+    let quoted_name = quoted_path(name, args.null_terminated);
 
     if let Some(fmt) = &args.format {
+        let path_for_format = String::from_utf8_lossy(name);
         let line = fmt
             .replace("%(objectmode)", &format!("{:06o}", entry.mode))
             .replace("%(objecttype)", kind_str)
             .replace("%(objectname)", &entry.oid.to_hex())
-            .replace("%(path)", name);
+            .replace("%(path)", &path_for_format);
         write!(out, "{line}")?;
     } else if args.name_only {
-        write!(out, "{name}")?;
+        out.write_all(&quoted_name)?;
     } else if args.long {
         let size_str = "-";
         write!(
             out,
-            "{:06o} {kind_str} {}\t{size_str}\t{name}",
+            "{:06o} {kind_str} {}\t{size_str}\t",
             entry.mode, entry.oid
         )?;
+        out.write_all(&quoted_name)?;
     } else {
-        write!(out, "{:06o} {kind_str} {}\t{name}", entry.mode, entry.oid)?;
+        write!(out, "{:06o} {kind_str} {}\t", entry.mode, entry.oid)?;
+        out.write_all(&quoted_name)?;
     }
     out.write_all(&[term])?;
     Ok(())
+}
+
+fn quoted_path(path: &[u8], null_terminated: bool) -> Vec<u8> {
+    if null_terminated || !needs_c_style_quote(path) {
+        return path.to_vec();
+    }
+
+    let mut out = Vec::with_capacity(path.len() + 2);
+    out.push(b'"');
+    for &b in path {
+        match b {
+            b'\n' => out.extend_from_slice(br"\n"),
+            b'\t' => out.extend_from_slice(br"\t"),
+            b'\r' => out.extend_from_slice(br"\r"),
+            0x08 => out.extend_from_slice(br"\b"),
+            0x0c => out.extend_from_slice(br"\f"),
+            b'"' => out.extend_from_slice(br#"\""#),
+            b'\\' => out.extend_from_slice(br"\\"),
+            0x20..=0x7e => out.push(b),
+            _ => out.extend_from_slice(format!(r"\{:03o}", b).as_bytes()),
+        }
+    }
+    out.push(b'"');
+    out
+}
+
+fn needs_c_style_quote(path: &[u8]) -> bool {
+    path.iter()
+        .any(|&b| b == b'"' || b == b'\\' || b < 0x20 || b == 0x7f)
 }
 
 fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
