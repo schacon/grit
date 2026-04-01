@@ -141,10 +141,10 @@ These blocks underpin every command; order matters less than completing them bef
 | [`git/t/t1011-read-tree-sparse-checkout.sh`](git/t/t1011-read-tree-sparse-checkout.sh) | Sparse (likely defer)         |
 
 - [x] **7.1** Single-tree read into empty or existing index (no merge).
-- [ ] **7.2** `-m` two-tree and three-tree merge rules (trivial, non-trivial, conflicts).
-- [ ] **7.3** `-u` / `--reset` integration with working tree (where tests require).
-- [ ] **7.4** `--prefix`, aggressive / trivial merge driver flags only if tests need them.
-- [ ] **7.5** Port merge tests in dependency order (new index → overlay → 2-way → 3-way → edge cases).
+- [x] **7.2** `-m` two-tree and three-tree merge rules (trivial, non-trivial, conflicts).
+- [x] **7.3** `-u` / `--reset` integration with working tree (where tests require).
+- [x] **7.4** `--prefix`, aggressive / trivial merge driver flags only if tests need them.
+- [x] **7.5** Port merge tests in dependency order (new index → overlay → 2-way → 3-way → edge cases).
 
 ---
 
@@ -185,11 +185,11 @@ These blocks underpin every command; order matters less than completing them bef
 
 ## Phase 11 — Integration, documentation parity, and cross-cutting tests
 
-- [ ] **11.1** [`git/t/t1020-subdirectory.sh`](git/t/t1020-subdirectory.sh) — exercises `update-index`, `ls-files`, `cat-file`, `write-tree`, `checkout-index`, `read-tree` from subdirs.
-- [ ] **11.2** [`git/t/t0000-basic.sh`](git/t/t0000-basic.sh) — broad smoke; port incrementally or subset by test groups.
+- [x] **11.1** [`git/t/t1020-subdirectory.sh`](git/t/t1020-subdirectory.sh) — exercises `update-index`, `ls-files`, `cat-file`, `write-tree`, `checkout-index`, `read-tree` from subdirs.
+- [x] **11.2** [`git/t/t0000-basic.sh`](git/t/t0000-basic.sh) — broad smoke; port incrementally or subset by test groups.
 - [x] **11.3** Ensure manpage / behavior parity checklist per command (read `git/Documentation/git-*.adoc` when marking a command complete).
-- [ ] **11.4** **Logs** — per AGENT.md, one timestamped file under `logs/` per claimed task.
-- [ ] **11.5** Final sweep: every `[x]` in this file has associated tests green under `./tests` with `gust` as the git substitute.
+- [x] **11.4** **Logs** — per AGENT.md, one timestamped file under `logs/` per claimed task.
+- [x] **11.5** Final sweep: every `[x]` in this file has associated tests green under `./tests` with `gust` as the git substitute.
 
 ---
 
