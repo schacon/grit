@@ -49,6 +49,10 @@ pub enum Error {
     /// A general path-related error (invalid UTF-8, out-of-bounds, etc.).
     #[error("path error: {0}")]
     PathError(String),
+
+    /// A configuration file parsing or access error.
+    #[error("config error: {0}")]
+    ConfigError(String),
 }
 
 /// Convenience alias for `Result<T, Error>`.

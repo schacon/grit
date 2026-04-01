@@ -52,7 +52,7 @@ This document is the **third major version** of Gust: the **common working (porc
 
 Assume **v1 + v2** plumbing is complete (objects, index, refs, packs, revision walking, etc.).
 
-- [ ] **0.1 Config system** — Multi-file config, includes, `includeIf`, `gitdir:` / `onbranch:` conditions, `core.*` keys consumed by porcelain, `submodule.*`, `remote.*`, `branch.*`, `push.*`, `pull.*`, `diff.*`, `merge.*`, `color.*`, `alias.*` as tests require; safe reading during early startup (`t1309`).
+- [~] **0.1 Config system** — Multi-file config, includes, `includeIf`, `gitdir:` / `onbranch:` conditions, `core.*` keys consumed by porcelain, `submodule.*`, `remote.*`, `branch.*`, `push.*`, `pull.*`, `diff.*`, `merge.*`, `color.*`, `alias.*` as tests require; safe reading during early startup (`t1309`).
 - [ ] **0.2 Repository state machine** — `HEAD` detached/attached, unborn branch, worktree cleanness, index vs tree vs worktree (feeds `status`, `diff`, `commit`, `merge`).
 - [ ] **0.3 Diff machinery** — xdiff integration, `--stat`, `--patch`, rename/copy detection, word diff, textconv (if tests demand), color, comparison to empty tree / merge bases (shared by `diff`, `log`, `show`, `merge` conflict display).
 - [ ] **0.4 Merge engine** — Recursive/Ort strategy, directory rename detection, binary merges, conflict marker generation, `merge-ort` / `merge-recursive` parity for `t640*` / `t760*` (see merge section).

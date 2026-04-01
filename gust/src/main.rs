@@ -41,6 +41,8 @@ enum Command {
     /// Provide contents or details of repository objects.
     #[command(name = "cat-file")]
     CatFile(commands::cat_file::Args),
+    /// Get and set repository or global options.
+    Config(commands::config::Args),
     /// Register file contents in the working tree to the index.
     #[command(name = "update-index")]
     UpdateIndex(commands::update_index::Args),
@@ -125,6 +127,7 @@ fn run() -> Result<()> {
         Command::Init(args) => commands::init::run(args),
         Command::HashObject(args) => commands::hash_object::run(args),
         Command::CatFile(args) => commands::cat_file::run(args),
+        Command::Config(args) => commands::config::run(args),
         Command::UpdateIndex(args) => commands::update_index::run(args),
         Command::LsFiles(args) => commands::ls_files::run(args),
         Command::WriteTree(args) => commands::write_tree::run(args),
