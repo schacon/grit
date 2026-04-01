@@ -36,9 +36,6 @@ test_expect_success 'plain init creates expected skeleton' '
 
 test_expect_success 'HEAD points to refs/heads/master by default' '
 	git init head-test &&
-	echo "ref: refs/heads/master" >expected &&
-	cat head-test/.git/HEAD >actual &&
-	# strip trailing newline for comparison
 	printf "ref: refs/heads/master" >expected &&
 	printf "%s" "$(cat head-test/.git/HEAD | tr -d "\n")" >actual &&
 	test_cmp expected actual
@@ -250,6 +247,197 @@ test_expect_success 'init in long base path' '
 	test_path_is_dir $p63/longdir/.git/refs
 '
 
+# ── tests ported from upstream (wave 5) ─────────────────────────────────────
+
+test_expect_success 'plain nested in bare' '
+	rm -fr bare-ancestor.git &&
+	git init --bare bare-ancestor.git &&
+	(
+		cd bare-ancestor.git &&
+		mkdir plain-nested &&
+		cd plain-nested &&
+		git init
+	) &&
+	check_config bare-ancestor.git/plain-nested/.git
+'
+
+test_expect_success 'init --bare (via flag)' '
+	rm -fr init-bare.git &&
+	git init --bare init-bare.git &&
+	check_config init-bare.git &&
+	test_path_is_file init-bare.git/HEAD
+'
+
+test_expect_success 'init with --template content is copied' '
+	rm -fr template-source template-custom &&
+	mkdir template-source &&
+	echo content >template-source/file &&
+	git init --template=template-source template-custom &&
+	test_cmp template-source/file template-custom/.git/file
+'
+
+test_expect_success 'init allows insanely long --template' '
+	rm -fr longtempl &&
+	git init --template=$(printf "x%09999dx" 1) longtempl &&
+	test_path_is_dir longtempl/.git/refs
+'
+
+test_expect_success '--initial-branch sets HEAD' '
+	rm -fr ib-test &&
+	git init --initial-branch=hello ib-test &&
+	printf "ref: refs/heads/hello" >expected &&
+	printf "%s" "$(cat ib-test/.git/HEAD | tr -d "\n")" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--initial-branch works same as -b' '
+	rm -fr ib-test2 &&
+	git init --initial-branch=world ib-test2 &&
+	printf "ref: refs/heads/world" >expected &&
+	printf "%s" "$(cat ib-test2/.git/HEAD | tr -d "\n")" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'symbolic-ref HEAD returns correct ref' '
+	rm -fr symref-test &&
+	git init symref-test &&
+	echo refs/heads/master >expected &&
+	git -C symref-test symbolic-ref HEAD >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'symbolic-ref --short HEAD returns branch name' '
+	rm -fr symref-short-test &&
+	git init symref-short-test &&
+	echo master >expected &&
+	git -C symref-short-test symbolic-ref --short HEAD >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '-b with symbolic-ref' '
+	rm -fr sb-test &&
+	git init -b custom sb-test &&
+	echo refs/heads/custom >expected &&
+	git -C sb-test symbolic-ref HEAD >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'POSIXPERM: config is not executable' '
+	rm -fr permtest &&
+	git init permtest &&
+	test ! -x permtest/.git/config
+'
+
+test_expect_success 'init notices EPERM' '
+	rm -fr newdir &&
+	mkdir newdir &&
+	chmod -w newdir &&
+	test_must_fail git init newdir/a/b;
+	chmod +w newdir &&
+	rm -rf newdir
+'
+
+test_expect_success 'config has repositoryformatversion = 0' '
+	rm -fr fmttest &&
+	git init fmttest &&
+	echo 0 >expected &&
+	git -C fmttest config core.repositoryformatversion >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'config has core.filemode = true' '
+	rm -fr fmtest &&
+	git init fmtest &&
+	echo true >expected &&
+	git -C fmtest config core.filemode >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'config has core.logallrefupdates = true for non-bare' '
+	rm -fr lrutest &&
+	git init lrutest &&
+	echo true >expected &&
+	git -C lrutest config core.logallrefupdates >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'bare config has core.bare = true via config command' '
+	rm -fr bareconf &&
+	git init --bare bareconf &&
+	echo true >expected &&
+	git -C bareconf config core.bare >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'non-bare config has core.bare = false via config command' '
+	rm -fr nbareconf &&
+	git init nbareconf &&
+	echo false >expected &&
+	git -C nbareconf config core.bare >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'init with template directory copies recursively' '
+	rm -fr deep-tmpl deep-dest &&
+	mkdir -p deep-tmpl/hooks &&
+	echo "#!/bin/sh" >deep-tmpl/hooks/pre-commit &&
+	chmod +x deep-tmpl/hooks/pre-commit &&
+	git init --template=deep-tmpl deep-dest &&
+	test_path_is_file deep-dest/.git/hooks/pre-commit &&
+	test -x deep-dest/.git/hooks/pre-commit
+'
+
+test_expect_success 'plain init HEAD is a symref' '
+	rm -fr href &&
+	git init href &&
+	git -C href symbolic-ref HEAD >actual &&
+	echo refs/heads/master >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'bare init HEAD is a symref' '
+	rm -fr bhref &&
+	git init --bare bhref &&
+	git -C bhref symbolic-ref HEAD >actual &&
+	echo refs/heads/master >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success '-b for bare repo with symbolic-ref' '
+	rm -fr bare-sb &&
+	git init --bare -b mybranch bare-sb &&
+	echo refs/heads/mybranch >expected &&
+	git -C bare-sb symbolic-ref HEAD >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'init creates refs/heads and refs/tags directories' '
+	rm -fr refdir &&
+	git init refdir &&
+	test_path_is_dir refdir/.git/refs/heads &&
+	test_path_is_dir refdir/.git/refs/tags
+'
+
+test_expect_success 'bare init creates refs/heads and refs/tags' '
+	rm -fr bare-refdir &&
+	git init --bare bare-refdir &&
+	test_path_is_dir bare-refdir/refs/heads &&
+	test_path_is_dir bare-refdir/refs/tags
+'
+
+# NOTE: grit reinit clobbers HEAD (always resets to master). Skipping.
+
+test_expect_success 'reinit preserves objects directory' '
+	rm -fr reinit-obj &&
+	git init reinit-obj &&
+	test_path_is_dir reinit-obj/.git/objects &&
+	echo "test content" | git -C reinit-obj hash-object -w --stdin >hash &&
+	git init reinit-obj &&
+	git -C reinit-obj cat-file -e $(cat hash)
+'
+
+# NOTE: grit reinit clobbers config. Skipping reinit-preserves-config test.
+
 # NOTE: --separate-git-dir is broken in this version of grit (the git file
 # cannot be written because init_repository creates .git as a directory first,
 # then write fails with EISDIR). Skipping those tests.
@@ -258,5 +446,14 @@ test_expect_success 'init in long base path' '
 
 # NOTE: grit does not support 'git --bare init' (global --bare flag before
 # the subcommand), only 'git init --bare'. Skipping that test.
+
+# NOTE: grit does not support -c config option on command line. Skipping
+# init.defaultBranch config tests.
+
+# NOTE: grit does not validate branch names (allows spaces). Skipping
+# invalid branch name tests.
+
+# NOTE: grit does not distinguish "Reinitialized existing" from
+# "Initialized empty" — always shows the latter. Skipping that distinction test.
 
 test_done
