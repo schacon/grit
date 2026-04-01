@@ -40,6 +40,19 @@ test_expect_success \
   'compare commit' \
   'cd repo &&
      tree=$(cat treeid) &&
+     cat >expected <<-EOF &&
+     tree $tree
+     author Author Name <author@email> 1117148400 +0000
+     committer Committer Name <committer@email> 1117150200 +0000
+     
+     comment text
+     EOF
+     git cat-file $(cat commitid) >commit'
+
+test_expect_success \
+  'compare commit' \
+  'cd repo &&
+     tree=$(cat treeid) &&
      {
      	echo "tree $tree" &&
      	echo "author Author Name <author@email> 1117148400 +0000" &&

@@ -196,12 +196,8 @@ test_expect_failure () {
 }
 
 test_must_fail () {
-	# Use `if` so `set -e` does not abort when the inner command fails before we
-	# can observe its status (a bare failing "$@" triggers immediate exit under -e).
-	if "$@"; then
-		return 1
-	fi
-	return 0
+	"$@"
+	test $? -ne 0
 }
 
 test_done () {

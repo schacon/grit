@@ -35,70 +35,36 @@ pub struct Args {
     pub batch: bool,
 
     /// Print info (type, size) for each object ID on stdin.
-    #[arg(
-        long = "batch-check",
-        num_args = 0..=1,
-        default_missing_value = "",
-        conflicts_with_all = ["show_type", "size", "pretty", "exists", "batch"]
-    )]
-    pub batch_check: Option<String>,
+    #[arg(long, conflicts_with_all = ["show_type", "size", "pretty", "exists", "batch"])]
+    pub batch_check: bool,
 
     /// Read commands from stdin.
     #[arg(long, conflicts_with_all = ["show_type", "size", "pretty", "exists", "batch", "batch_check"])]
     pub batch_command: bool,
 
-    /// Buffer output in batch-command mode; use `flush` command to emit output.
-    #[arg(long, requires = "batch_command", conflicts_with = "no_buffer")]
-    pub buffer: bool,
-
-    /// Do not buffer output in batch-command mode.
-    #[arg(long, requires = "batch_command", conflicts_with = "buffer")]
-    pub no_buffer: bool,
-
     /// Follow tag objects to the tagged object.
     #[arg(long = "follow-symlinks")]
     pub follow_symlinks: bool,
 
-    /// `<object>` or `<type> <object>` (Git-compatible); not used with batch modes.
-    #[arg(trailing_var_arg = true, value_name = "args")]
-    pub rest: Vec<String>,
+    /// Object to inspect (required unless --batch*).
+    pub object: Option<String>,
 }
 
 /// Run `gust cat-file`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    let batch_mode = args.batch || args.batch_check.is_some() || args.batch_command;
-    if batch_mode {
-        if !args.rest.is_empty() {
-            bail!("unexpected argument: {}", args.rest[0]);
-        }
+    if args.batch || args.batch_check || args.batch_command {
         return run_batch(&repo, &args);
     }
 
-    let (expected_kind, obj_str) = match args.rest.len() {
-        0 => bail!("object required when not in batch mode"),
-        1 => (None, args.rest[0].as_str()),
-        2 => {
-            if args.show_type || args.size || args.pretty || args.exists {
-                bail!("cannot use <type> <object> form with -t, -s, -p, or -e");
-            }
-            (
-                Some(parse_object_kind(&args.rest[0])?),
-                args.rest[1].as_str(),
-            )
-        }
-        _ => bail!("too many arguments (expected at most 2)"),
-    };
+    let obj_str = args
+        .object
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("object required when not in batch mode"))?;
 
     let oid = resolve_object(&repo, obj_str)?;
     let obj = repo.odb.read(&oid)?;
-
-    if let Some(kind) = expected_kind {
-        if obj.kind != kind {
-            bail!("object {oid} is a {}, not a {}", obj.kind, kind);
-        }
-    }
 
     if args.exists {
         return Ok(());
@@ -130,72 +96,42 @@ pub fn run(args: Args) -> Result<()> {
 fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
-    let buffered_mode = args.batch_command && args.buffer && !args.no_buffer;
-    let mut out: Box<dyn Write> = if buffered_mode {
-        Box::new(io::BufWriter::new(stdout.lock()))
-    } else {
-        Box::new(stdout.lock())
-    };
+    let mut out = stdout.lock();
 
     for line in stdin.lock().lines() {
         let line = line?;
-        let trimmed = line.trim_end();
+        let trimmed = line.trim();
 
         if args.batch_command {
             // <command> <args>
-            let mut parts = trimmed.trim_start().splitn(2, char::is_whitespace);
+            let mut parts = trimmed.splitn(2, ' ');
             match parts.next() {
-                Some("contents") => {
+                Some("contents") | Some("info") => {
                     let obj_str = parts.next().unwrap_or("").trim();
-                    print_batch_entry_default(repo, obj_str, true, &mut out)?;
-                    if !buffered_mode {
-                        out.flush()?;
-                    }
-                }
-                Some("info") => {
-                    let obj_str = parts.next().unwrap_or("").trim();
-                    print_batch_entry_default(repo, obj_str, false, &mut out)?;
-                    if !buffered_mode {
-                        out.flush()?;
-                    }
+                    print_batch_entry(
+                        repo,
+                        obj_str,
+                        args.batch_command && trimmed.starts_with("contents"),
+                        &mut out,
+                    )?;
                 }
                 Some("flush") => {
-                    if !buffered_mode {
-                        bail!("flush is only valid in --buffer mode");
-                    }
                     out.flush()?;
                 }
                 Some(other) => bail!("unknown batch command: {other}"),
                 None => {}
             }
         } else {
-            let (obj_str, rest) = split_batch_input(trimmed);
-            let batch_check_format =
-                args.batch_check
-                    .as_deref()
-                    .and_then(|s| if s.is_empty() { None } else { Some(s) });
-            print_batch_entry(
-                repo,
-                obj_str,
-                rest,
-                args.batch,
-                batch_check_format,
-                &mut out,
-            )?;
+            print_batch_entry(repo, trimmed, args.batch, &mut out)?;
         }
     }
-
-    out.flush()?;
-
     Ok(())
 }
 
 fn print_batch_entry(
     repo: &Repository,
     obj_str: &str,
-    rest: &str,
     include_content: bool,
-    batch_check_format: Option<&str>,
     out: &mut impl Write,
 ) -> Result<()> {
     match resolve_object(repo, obj_str) {
@@ -207,17 +143,7 @@ fn print_batch_entry(
                 writeln!(out, "{obj_str} missing")?;
             }
             Ok(obj) => {
-                if include_content {
-                    writeln!(out, "{} {} {}", oid, obj.kind, obj.data.len())?;
-                } else if let Some(fmt) = batch_check_format {
-                    writeln!(
-                        out,
-                        "{}",
-                        render_batch_check_format(fmt, &oid, &obj.kind, obj.data.len(), rest)
-                    )?;
-                } else {
-                    writeln!(out, "{} {} {}", oid, obj.kind, obj.data.len())?;
-                }
+                writeln!(out, "{} {} {}", oid, obj.kind, obj.data.len())?;
                 if include_content {
                     out.write_all(&obj.data)?;
                     writeln!(out)?;
@@ -226,40 +152,6 @@ fn print_batch_entry(
         },
     }
     Ok(())
-}
-
-fn print_batch_entry_default(
-    repo: &Repository,
-    obj_str: &str,
-    include_content: bool,
-    out: &mut impl Write,
-) -> Result<()> {
-    print_batch_entry(repo, obj_str, "", include_content, None, out)
-}
-
-fn split_batch_input(line: &str) -> (&str, &str) {
-    let trimmed = line.trim_start();
-    if trimmed.is_empty() {
-        return ("", "");
-    }
-
-    let oid_end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
-    let obj = &trimmed[..oid_end];
-    let rest = trimmed[oid_end..].trim_start();
-    (obj, rest)
-}
-
-fn render_batch_check_format(
-    fmt: &str,
-    oid: &ObjectId,
-    kind: &ObjectKind,
-    size: usize,
-    rest: &str,
-) -> String {
-    fmt.replace("%(objecttype)", &kind.to_string())
-        .replace("%(objectname)", &oid.to_string())
-        .replace("%(objectsize)", &format!("{size}"))
-        .replace("%(rest)", rest)
 }
 
 fn pretty_print(kind: &ObjectKind, data: &[u8]) -> Result<()> {
@@ -309,14 +201,4 @@ fn resolve_object(repo: &Repository, obj_str: &str) -> Result<ObjectId> {
     }
 
     bail!("not a valid object name: '{obj_str}'")
-}
-
-fn parse_object_kind(value: &str) -> Result<ObjectKind> {
-    match value {
-        "blob" => Ok(ObjectKind::Blob),
-        "tree" => Ok(ObjectKind::Tree),
-        "commit" => Ok(ObjectKind::Commit),
-        "tag" => Ok(ObjectKind::Tag),
-        _ => bail!("invalid object type '{value}'"),
-    }
 }
