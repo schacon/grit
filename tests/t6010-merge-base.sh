@@ -130,4 +130,104 @@ test_expect_success 'same commit repeated is its own merge base' '
 	test_cmp expected actual
 '
 
+test_expect_success 'unsynchronized clocks' '
+	cd repo &&
+	S=$(doit 0 S) &&
+	C0=$(doit -3 C0 $S) &&
+	C1=$(doit -2 C1 $C0) &&
+	C2=$(doit -1 C2 $C1) &&
+	L0=$(doit 1 L0 $S) &&
+	L1=$(doit 2 L1 $L0) &&
+	L2=$(doit 3 L2 $L1) &&
+	R0=$(doit 1 R0 $S) &&
+	R1=$(doit 2 R1 $R0) &&
+	R2=$(doit 3 R2 $R1) &&
+	PL=$(doit 4 PL $L2 $C2) &&
+	PR=$(doit 4 PR $C2 $R2) &&
+	git rev-parse C2 >expected &&
+	MB=$(git merge-base PL PR) &&
+	echo "$MB" >actual.single &&
+	MB=$(git merge-base --all PL PR) &&
+	echo "$MB" >actual.all &&
+	test_cmp expected actual.single &&
+	test_cmp expected actual.all
+'
+
+test_expect_success '--independent with unsynchronized clocks' '
+	cd repo &&
+	IB=$(doit 0 IB) &&
+	I1=$(doit -10 I1 $IB) &&
+	I2=$(doit -9 I2 $I1) &&
+	I3=$(doit -8 I3 $I2) &&
+	I4=$(doit -7 I4 $I3) &&
+	I5=$(doit -6 I5 $I4) &&
+	I6=$(doit -5 I6 $I5) &&
+	I7=$(doit -4 I7 $I6) &&
+	I8=$(doit -3 I8 $I7) &&
+	IH=$(doit -2 IH $I8) &&
+	echo "$IH" >expected &&
+	git merge-base --independent IB IH >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'linear chain merge-base' '
+	cd repo &&
+	LA=$(doit 50 LA) &&
+	LB=$(doit 51 LB $LA) &&
+	LC=$(doit 52 LC $LB) &&
+	git rev-parse LA >expected &&
+	git merge-base LA LC >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'diamond merge-base' '
+	cd repo &&
+	D1=$(doit 60 D1) &&
+	D2=$(doit 61 D2 $D1) &&
+	D3=$(doit 62 D3 $D1) &&
+	git rev-parse D1 >expected &&
+	git merge-base D2 D3 >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'multiple merge bases with --all' '
+	cd repo &&
+	M1=$(doit 70 M1) &&
+	M2=$(doit 71 M2 $M1) &&
+	M3=$(doit 72 M3 $M1) &&
+	M4=$(doit 73 M4 $M2 $M3) &&
+	M5=$(doit 74 M5 $M2 $M3) &&
+	git merge-base --all M4 M5 >actual &&
+	sort actual >actual.sorted &&
+	printf "%s\n%s\n" "$M2" "$M3" | sort >expected.sorted &&
+	test_cmp expected.sorted actual.sorted
+'
+
+test_expect_success '--is-ancestor with linear chain' '
+	cd repo &&
+	git merge-base --is-ancestor LA LC &&
+	test_must_fail git merge-base --is-ancestor LC LA
+'
+
+test_expect_success '--is-ancestor with disjoint histories' '
+	cd repo &&
+	test_must_fail git merge-base --is-ancestor DIS1 DIS2 &&
+	test_must_fail git merge-base --is-ancestor DIS2 DIS1
+'
+
+test_expect_success '--independent filters ancestors from set' '
+	cd repo &&
+	git merge-base --independent E D F >actual &&
+	sort actual >actual.sorted &&
+	printf "%s\n%s\n" "$(git rev-parse D)" "$(git rev-parse F)" | sort >expected.sorted &&
+	test_cmp expected.sorted actual.sorted
+'
+
+test_expect_success 'merge-base of direct parent and child' '
+	cd repo &&
+	git rev-parse E >expected &&
+	git merge-base D E >actual &&
+	test_cmp expected actual
+'
+
 test_done
