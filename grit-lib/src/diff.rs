@@ -486,6 +486,116 @@ fn mode_from_metadata(meta: &fs::Metadata) -> u32 {
     }
 }
 
+/// Compare a tree against the working tree.
+///
+/// Shows changes from `tree_oid` to the current working directory state.
+/// Files tracked in the index but not in the tree are shown as Added.
+/// Files in the tree but missing from the working tree are shown as Deleted.
+///
+/// # Parameters
+///
+/// - `odb` — object database.
+/// - `tree_oid` — the tree to compare against (`None` for empty tree).
+/// - `work_tree` — path to the working tree root.
+/// - `index` — current index (used to discover new tracked files not in tree).
+///
+/// # Errors
+///
+/// Returns errors from ODB reads or I/O.
+pub fn diff_tree_to_worktree(
+    odb: &Odb,
+    tree_oid: Option<&ObjectId>,
+    work_tree: &Path,
+    index: &Index,
+) -> Result<Vec<DiffEntry>> {
+    // Flatten the tree into a BTreeMap keyed by path
+    let tree_flat = match tree_oid {
+        Some(oid) => flatten_tree(odb, oid, "")?,
+        None => Vec::new(),
+    };
+    let tree_map: std::collections::BTreeMap<String, &FlatEntry> =
+        tree_flat.iter().map(|e| (e.path.clone(), e)).collect();
+
+    // Collect index paths (stage 0 only)
+    let mut index_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for ie in &index.entries {
+        if ie.stage() != 0 {
+            continue;
+        }
+        let path = String::from_utf8_lossy(&ie.path).to_string();
+        index_paths.insert(path);
+    }
+
+    // Union of tree paths + index paths
+    let mut all_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    all_paths.extend(tree_map.keys().cloned());
+    all_paths.extend(index_paths.iter().cloned());
+
+    let mut result = Vec::new();
+
+    for path in &all_paths {
+        let tree_entry = tree_map.get(path.as_str());
+        let file_path = work_tree.join(path);
+
+        let wt_meta = match fs::symlink_metadata(&file_path) {
+            Ok(m) => Some(m),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(Error::Io(e)),
+        };
+
+        match (tree_entry, wt_meta) {
+            (Some(te), Some(ref meta)) => {
+                // Both tree and worktree file exist — check for differences
+                let wt_oid = hash_worktree_file(odb, &file_path, meta)?;
+                let wt_mode = mode_from_metadata(meta);
+                if wt_oid != te.oid || wt_mode != te.mode {
+                    result.push(DiffEntry {
+                        status: DiffStatus::Modified,
+                        old_path: Some(path.clone()),
+                        new_path: Some(path.clone()),
+                        old_mode: format_mode(te.mode),
+                        new_mode: format_mode(wt_mode),
+                        old_oid: te.oid,
+                        new_oid: wt_oid,
+                    });
+                }
+            }
+            (Some(te), None) => {
+                // In tree but missing from worktree
+                result.push(DiffEntry {
+                    status: DiffStatus::Deleted,
+                    old_path: Some(path.clone()),
+                    new_path: None,
+                    old_mode: format_mode(te.mode),
+                    new_mode: "000000".to_owned(),
+                    old_oid: te.oid,
+                    new_oid: zero_oid(),
+                });
+            }
+            (None, Some(ref meta)) => {
+                // In index but not in tree, and exists in worktree
+                let wt_oid = hash_worktree_file(odb, &file_path, meta)?;
+                let wt_mode = mode_from_metadata(meta);
+                result.push(DiffEntry {
+                    status: DiffStatus::Added,
+                    old_path: None,
+                    new_path: Some(path.clone()),
+                    old_mode: "000000".to_owned(),
+                    new_mode: format_mode(wt_mode),
+                    old_oid: zero_oid(),
+                    new_oid: wt_oid,
+                });
+            }
+            (None, None) => {
+                // Tracked in index but neither in tree nor worktree — skip
+            }
+        }
+    }
+
+    result.sort_by(|a, b| a.path().cmp(b.path()));
+    Ok(result)
+}
+
 // ── Output formatting ───────────────────────────────────────────────
 
 /// Format a diff entry in Git's raw diff format.

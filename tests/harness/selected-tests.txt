@@ -57,3 +57,5 @@ t7007-show.sh
 t7501-commit-basic.sh
 t7508-status.sh
 t7004-tag.sh
+t4035-diff-quiet.sh
+t4000-diff-format.sh
