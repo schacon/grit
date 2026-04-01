@@ -42,6 +42,9 @@ then
 	exit 1
 fi
 
+# Resolve GUST_BIN to an absolute path so wrapper scripts work regardless of cwd.
+GUST_BIN="$(cd "$(dirname "$GUST_BIN")" && pwd)/$(basename "$GUST_BIN")"
+
 # Test environment
 TEST_DIRECTORY="$(cd "$(dirname "$0")" && pwd)"
 TRASH_DIRECTORY="${TRASH_DIRECTORY:-$TEST_DIRECTORY/trash}"
