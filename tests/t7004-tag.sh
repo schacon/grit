@@ -965,4 +965,1292 @@ test_expect_success 'reverse lexical sort in clean repo' '
 	test_cmp expect actual
 '
 
+# ---- creatordate sort ----
+
+test_expect_success 'setup: creatordate sort repo' '
+	git init date-sort-repo &&
+	cd date-sort-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo a >a && git add a && git commit -m "first" &&
+	git tag tag-a &&
+	echo b >b && git add b && git commit -m "second" &&
+	git tag tag-b &&
+	echo c >c && git add c && git commit -m "third" &&
+	git tag tag-c
+'
+
+test_expect_success 'creatordate sort' '
+	cd date-sort-repo &&
+	git tag -l --sort=creatordate "tag-*" >actual &&
+	cat >expect <<-\EOF &&
+	tag-a
+	tag-b
+	tag-c
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'reverse creatordate sort' '
+	cd date-sort-repo &&
+	git tag -l --sort=-creatordate "tag-*" >actual &&
+	cat >expect <<-\EOF &&
+	tag-c
+	tag-b
+	tag-a
+	EOF
+	test_cmp expect actual
+'
+
+# ---- more -n annotation listing tests ----
+
+test_expect_success 'setup: annotation listing repo' '
+	git init ann-repo &&
+	cd ann-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init"
+'
+
+test_expect_success 'listing annotated tag -n1 shows first line of message' '
+	cd ann-repo &&
+	git tag -m "A msg" tag-one-line &&
+	echo "tag-one-line    A msg" >expect &&
+	git tag -n1 -l tag-one-line >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing annotated tag -n shows same as -n1' '
+	cd ann-repo &&
+	echo "tag-one-line    A msg" >expect &&
+	git tag -n -l tag-one-line >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing annotated tag with -n2 shows two lines concatenated' '
+	cd ann-repo &&
+	echo "tag-one-line    A msg" >expect &&
+	git tag -n2 -l tag-one-line >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing annotated tag with -n999 shows all lines concatenated' '
+	cd ann-repo &&
+	echo "tag-one-line    A msg" >expect &&
+	git tag -n999 -l tag-one-line >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '-n0 shows just tag name for annotated tag' '
+	cd ann-repo &&
+	echo "tag-one-line" >expect &&
+	git tag -n0 -l tag-one-line >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing many-line annotated tag with -n1' '
+	cd ann-repo &&
+	echo "tag line one" >annotagmsg &&
+	echo "tag line two" >>annotagmsg &&
+	echo "tag line three" >>annotagmsg &&
+	git tag -F annotagmsg tag-lines &&
+	echo "tag-lines       tag line one" >expect &&
+	git tag -n1 -l tag-lines >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing many-line annotated tag with -n2' '
+	cd ann-repo &&
+	echo "tag-lines       tag line one tag line two" >expect &&
+	git tag -n2 -l tag-lines >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing many-line annotated tag with -n3' '
+	cd ann-repo &&
+	echo "tag-lines       tag line one tag line two tag line three" >expect &&
+	git tag -n3 -l tag-lines >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing many-line annotated tag with -n4 (more than lines)' '
+	cd ann-repo &&
+	echo "tag-lines       tag line one tag line two tag line three" >expect &&
+	git tag -n4 -l tag-lines >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing many-line annotated tag with -n99' '
+	cd ann-repo &&
+	echo "tag-lines       tag line one tag line two tag line three" >expect &&
+	git tag -n99 -l tag-lines >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '-n0 shows just tag name for many-line annotated tag' '
+	cd ann-repo &&
+	echo "tag-lines" >expect &&
+	git tag -n0 -l tag-lines >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '-n listing lightweight tag shows just tag name' '
+	cd ann-repo &&
+	git tag lightweight-tag &&
+	echo "lightweight-tag" >expect &&
+	git tag -n1 -l lightweight-tag >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '-n0 listing lightweight tag shows just tag name' '
+	cd ann-repo &&
+	echo "lightweight-tag" >expect &&
+	git tag -n0 -l lightweight-tag >actual &&
+	test_cmp expect actual
+'
+
+# ---- more --contains tests ----
+
+test_expect_success 'setup: --no-contains and combined tests repo' '
+	git init nocontains-repo &&
+	cd nocontains-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo a >a && git add a && git commit -m "first" &&
+	git tag v0.1 &&
+	echo b >b && git add b && git commit -m "second" &&
+	git tag v0.2 &&
+	echo c >c && git add c && git commit -m "third" &&
+	git tag v0.3 &&
+	echo d >d && git add d && git commit -m "fourth" &&
+	git tag v0.4 &&
+	echo e >e && git add e && git commit -m "fifth" &&
+	git tag v0.5
+'
+
+test_expect_success '--contains with first commit covers all tags' '
+	cd nocontains-repo &&
+	hash1=$(git rev-parse v0.1) &&
+	cat >expected <<-\EOF &&
+	v0.1
+	v0.2
+	v0.3
+	v0.4
+	v0.5
+	EOF
+	git tag -l --contains $hash1 "v*" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--contains with last commit covers only last tag' '
+	cd nocontains-repo &&
+	hash5=$(git rev-parse v0.5) &&
+	cat >expected <<-\EOF &&
+	v0.5
+	EOF
+	git tag -l --contains $hash5 "v*" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--contains HEAD covers latest tag' '
+	cd nocontains-repo &&
+	cat >expected <<-\EOF &&
+	v0.5
+	EOF
+	git tag -l --contains HEAD "v*" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--contains with relative ref HEAD~4 covers all tags' '
+	cd nocontains-repo &&
+	cat >expected <<-\EOF &&
+	v0.1
+	v0.2
+	v0.3
+	v0.4
+	v0.5
+	EOF
+	git tag -l --contains HEAD~4 "v*" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--contains with middle commit' '
+	cd nocontains-repo &&
+	cat >expected <<-\EOF &&
+	v0.3
+	v0.4
+	v0.5
+	EOF
+	git tag -l --contains v0.3 "v*" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--contains past all tags yields empty' '
+	cd nocontains-repo &&
+	echo f >f && git add f && git commit -m "sixth" &&
+	git tag -l --contains HEAD "v*" >actual &&
+	test_must_be_empty actual
+'
+
+# ---- more pattern matching tests ----
+
+test_expect_success 'setup: pattern matching extended repo' '
+	git init pattern-repo &&
+	cd pattern-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init" &&
+	git tag a1 &&
+	git tag aa1 &&
+	git tag cba &&
+	git tag t210 &&
+	git tag t211 &&
+	git tag v0.2.1 &&
+	git tag v1.0 &&
+	git tag v1.0.1 &&
+	git tag v1.1.3
+'
+
+test_expect_success 'listing all tags sorted' '
+	cd pattern-repo &&
+	cat >expect <<-\EOF &&
+	a1
+	aa1
+	cba
+	t210
+	t211
+	v0.2.1
+	v1.0
+	v1.0.1
+	v1.1.3
+	EOF
+	git tag -l >actual &&
+	test_cmp expect actual &&
+	git tag >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing tags with substring as pattern' '
+	cd pattern-repo &&
+	cat >expect <<-\EOF &&
+	a1
+	aa1
+	cba
+	EOF
+	git tag -l "*a*" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing tags with suffix as pattern' '
+	cd pattern-repo &&
+	cat >expect <<-\EOF &&
+	v0.2.1
+	v1.0.1
+	EOF
+	git tag -l "*.1" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing tags with prefix as pattern' '
+	cd pattern-repo &&
+	cat >expect <<-\EOF &&
+	t210
+	t211
+	EOF
+	git tag -l "t21*" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing tags with exact name as pattern' '
+	cd pattern-repo &&
+	cat >expect <<-\EOF &&
+	a1
+	EOF
+	git tag -l a1 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing tags with ? wildcard' '
+	cd pattern-repo &&
+	cat >expect <<-\EOF &&
+	v1.0.1
+	v1.1.3
+	EOF
+	git tag -l "v1.?.?" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing tags using v.* should print nothing' '
+	cd pattern-repo &&
+	git tag -l "v.*" >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'listing tags using v* should print only v-prefixed' '
+	cd pattern-repo &&
+	cat >expect <<-\EOF &&
+	v0.2.1
+	v1.0
+	v1.0.1
+	v1.1.3
+	EOF
+	git tag -l "v*" >actual &&
+	test_cmp expect actual
+'
+
+# ---- more annotated tag creation/inspection tests ----
+
+test_expect_success 'setup: annotated tag inspection repo' '
+	git init ann-inspect-repo &&
+	cd ann-inspect-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo foo >foo && git add foo && git commit -m "Foo"
+'
+
+test_expect_success 'annotated tag with -m stores correct type commit' '
+	cd ann-inspect-repo &&
+	git tag -m "A message" ann1 &&
+	test $(git cat-file -t ann1) = tag &&
+	git cat-file tag ann1 | grep "^type commit"
+'
+
+test_expect_success 'annotated tag stores correct object hash' '
+	cd ann-inspect-repo &&
+	commit=$(git rev-parse HEAD) &&
+	git cat-file tag ann1 | grep "^object $commit"
+'
+
+test_expect_success 'annotated tag stores correct tag name' '
+	cd ann-inspect-repo &&
+	git cat-file tag ann1 | grep "^tag ann1"
+'
+
+test_expect_success 'annotated tag stores tagger information' '
+	cd ann-inspect-repo &&
+	git cat-file tag ann1 | grep "^tagger Test User <test@example.com>"
+'
+
+test_expect_success 'annotated tag stores message' '
+	cd ann-inspect-repo &&
+	git cat-file tag ann1 | grep "A message"
+'
+
+test_expect_success 'annotated tag on tree stores type tree' '
+	cd ann-inspect-repo &&
+	tree=$(git rev-parse HEAD^{tree}) &&
+	git tag -m "tree tag" ann-tree $tree &&
+	git cat-file tag ann-tree | grep "^type tree" &&
+	git cat-file tag ann-tree | grep "^object $tree"
+'
+
+test_expect_success 'annotated tag on blob stores type blob' '
+	cd ann-inspect-repo &&
+	blob=$(git rev-parse HEAD:foo) &&
+	git tag -m "blob tag" ann-blob $blob &&
+	git cat-file tag ann-blob | grep "^type blob" &&
+	git cat-file tag ann-blob | grep "^object $blob"
+'
+
+test_expect_success 'annotated tag on another tag stores type tag' '
+	cd ann-inspect-repo &&
+	git tag -m "level 1" level1 &&
+	git tag -m "level 2" level2 level1 &&
+	git cat-file tag level2 | grep "^type tag"
+'
+
+test_expect_success 'annotated tag with -F stores file message' '
+	cd ann-inspect-repo &&
+	echo "File message line one" >msg &&
+	echo "File message line two" >>msg &&
+	git tag -F msg ann-file &&
+	git cat-file tag ann-file | grep "File message line one" &&
+	git cat-file tag ann-file | grep "File message line two"
+'
+
+test_expect_success 'annotated tag with -F - reads from stdin' '
+	cd ann-inspect-repo &&
+	echo "Stdin message" | git tag -F - ann-stdin &&
+	git cat-file tag ann-stdin | grep "Stdin message"
+'
+
+test_expect_success 'annotated tag with multiline -F message' '
+	cd ann-inspect-repo &&
+	printf "First line\nSecond line\nThird line\n" >multi.msg &&
+	git tag -F multi.msg ann-multi &&
+	git cat-file tag ann-multi | grep "First line" &&
+	git cat-file tag ann-multi | grep "Second line" &&
+	git cat-file tag ann-multi | grep "Third line"
+'
+
+test_expect_success 'tag -F from non-existing file should fail' '
+	cd ann-inspect-repo &&
+	! test -f nonexistingfile &&
+	! git tag -F nonexistingfile notag &&
+	! tag_exists notag
+'
+
+test_expect_success 'multiple -m options concatenate messages' '
+	cd ann-inspect-repo &&
+	git tag -m "msg1" -m "msg2" multi-m &&
+	git cat-file tag multi-m | grep "msg1" &&
+	git cat-file tag multi-m | grep "msg2"
+'
+
+# ---- more deletion tests ----
+
+test_expect_success 'setup: deletion test repo' '
+	git init del-repo &&
+	cd del-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init"
+'
+
+test_expect_success 'deleting a lightweight tag' '
+	cd del-repo &&
+	git tag del-light &&
+	tag_exists del-light &&
+	git tag -d del-light &&
+	! tag_exists del-light
+'
+
+test_expect_success 'deleting an annotated tag' '
+	cd del-repo &&
+	git tag -m "delete me" del-ann &&
+	tag_exists del-ann &&
+	git tag -d del-ann &&
+	! tag_exists del-ann
+'
+
+test_expect_success 'deleting a non-existent tag should fail' '
+	cd del-repo &&
+	! git tag -d nonexistent
+'
+
+test_expect_success 'deleting then recreating same tag name' '
+	cd del-repo &&
+	git tag recycle &&
+	tag_exists recycle &&
+	git tag -d recycle &&
+	! tag_exists recycle &&
+	git tag recycle &&
+	tag_exists recycle &&
+	git tag -d recycle
+'
+
+test_expect_success 'deleting already-deleted tag should fail' '
+	cd del-repo &&
+	git tag already-del &&
+	git tag -d already-del &&
+	! git tag -d already-del
+'
+
+test_expect_success 'force overwrite annotated with lightweight' '
+	cd del-repo &&
+	git tag -m "annotated" force-ann &&
+	test $(git cat-file -t force-ann) = tag &&
+	git tag --force force-ann &&
+	test $(git cat-file -t force-ann) = commit
+'
+
+test_expect_success 'force overwrite lightweight with annotated' '
+	cd del-repo &&
+	git tag force-light &&
+	test $(git cat-file -t force-light) = commit &&
+	git tag --force -m "now annotated" force-light &&
+	test $(git cat-file -t force-light) = tag
+'
+
+# ---- --force with existing and non-existing tags ----
+
+test_expect_success 'setup: force test repo' '
+	git init force-repo &&
+	cd force-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init"
+'
+
+test_expect_success '--force on existing tag succeeds' '
+	cd force-repo &&
+	git tag existing &&
+	git tag --force existing &&
+	tag_exists existing
+'
+
+test_expect_success '--force on non-existing tag succeeds' '
+	cd force-repo &&
+	git tag --force new-force-tag &&
+	tag_exists new-force-tag
+'
+
+test_expect_success 'creating duplicate tag without --force fails' '
+	cd force-repo &&
+	git tag dup-tag &&
+	! git tag dup-tag
+'
+
+# ---- annotated tag message from subdir ----
+
+test_expect_success 'setup: subdir message repo' '
+	git init subdir-repo &&
+	cd subdir-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init"
+'
+
+test_expect_success '-F file path is relative to cwd' '
+	cd subdir-repo &&
+	mkdir -p subdir &&
+	echo "Tag message in sub directory" >subdir/msgfile &&
+	(
+		cd subdir &&
+		git tag -a -F msgfile tag-from-subdir
+	) &&
+	git cat-file tag tag-from-subdir | grep "in sub directory"
+'
+
+test_expect_success '-F file in subdir second test' '
+	cd subdir-repo &&
+	echo "Another sub directory message" >subdir/msgfile2 &&
+	(
+		cd subdir &&
+		git tag -a -F msgfile2 tag-from-subdir-2
+	) &&
+	git cat-file tag tag-from-subdir-2 | grep "Another sub directory message"
+'
+
+# ---- multiple tags point to same commit ----
+
+test_expect_success 'multiple tags can point to same commit' '
+	cd force-repo &&
+	head=$(git rev-parse HEAD) &&
+	git tag same-1 &&
+	git tag same-2 &&
+	test $(git rev-parse same-1) = "$head" &&
+	test $(git rev-parse same-2) = "$head"
+'
+
+# ---- tag on specific earlier commit ----
+
+test_expect_success 'setup: earlier commit repo' '
+	git init earlier-repo &&
+	cd earlier-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo a >a && git add a && git commit -m "first" &&
+	echo b >b && git add b && git commit -m "second" &&
+	echo c >c && git add c && git commit -m "third"
+'
+
+test_expect_success 'lightweight tag on specific earlier commit' '
+	cd earlier-repo &&
+	earlier=$(git rev-parse HEAD~1) &&
+	git tag earlier-light $earlier &&
+	test $(git rev-parse earlier-light) = "$earlier"
+'
+
+test_expect_success 'annotated tag on specific earlier commit' '
+	cd earlier-repo &&
+	earlier=$(git rev-parse HEAD~2) &&
+	git tag -m "earlier annotated" earlier-ann $earlier &&
+	git cat-file tag earlier-ann | grep "^object $earlier"
+'
+
+# ---- tag -l output matches tag output ----
+
+test_expect_success 'tag -l and tag output identical in clean repo' '
+	git init taglist-repo &&
+	cd taglist-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init" &&
+	git tag alpha &&
+	git tag beta &&
+	git tag gamma &&
+	git tag >actual1 &&
+	git tag -l >actual2 &&
+	test_cmp actual1 actual2
+'
+
+# ---- ambiguous branch/tag ----
+
+test_expect_success 'ambiguous branch/tag: tag -l only shows tag' '
+	git init ambig-repo &&
+	cd ambig-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init" &&
+	git tag ambiguous &&
+	git branch ambiguous 2>/dev/null || true &&
+	echo ambiguous >expect &&
+	git tag -l ambiguous >actual &&
+	test_cmp expect actual
+'
+
+# ---- HEAD is forbidden as tagname ----
+
+test_expect_success 'HEAD cannot be used as tag name' '
+	git init head-repo &&
+	cd head-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init" &&
+	! git tag HEAD &&
+	! git tag -m "useless" HEAD
+'
+
+# ---- --contains non-list mode works ----
+
+test_expect_success '--contains non-list mode outputs tags' '
+	cd nocontains-repo &&
+	git tag --contains v0.1 >actual &&
+	grep "v0.1" actual &&
+	grep "v0.5" actual
+'
+
+# ---- creating tag in empty tree fails ----
+
+test_expect_success 'creating tag in empty repo fails' '
+	git init empty-repo &&
+	cd empty-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	! git tag mytag &&
+	! tag_exists mytag
+'
+
+test_expect_success 'creating tag for HEAD in empty repo fails' '
+	cd empty-repo &&
+	! git tag mytaghead HEAD &&
+	! tag_exists mytaghead
+'
+
+test_expect_success 'listing tags in empty repo succeeds with no output' '
+	cd empty-repo &&
+	git tag -l >actual &&
+	test_must_be_empty actual &&
+	git tag >actual2 &&
+	test_must_be_empty actual2
+'
+
+test_expect_success 'tag for unknown revision fails' '
+	cd empty-repo &&
+	! git tag mytagnorev aaaaaaaaaaaaa &&
+	! tag_exists mytagnorev
+'
+
+# ---- sort in main repo additional tests ----
+
+test_expect_success 'version:tag sort for annotated tags' '
+	git init vsort-repo &&
+	cd vsort-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init" &&
+	git tag -a -m "sample 1.0" vsample-1.0 &&
+	git tag -a -m "sample 2.0" vsample-2.0 &&
+	git tag -a -m "sample 10.0" vsample-10.0 &&
+	cat >expect <<-\EOF &&
+	vsample-1.0
+	vsample-10.0
+	vsample-2.0
+	EOF
+	git tag --list --sort=refname "vsample-*" >actual &&
+	test_cmp expect actual
+'
+
+# ---- lightweight tag type is commit ----
+
+test_expect_success 'lightweight tag has type commit' '
+	git init lwtype-repo &&
+	cd lwtype-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init" &&
+	git tag lw-tag &&
+	test $(git cat-file -t lw-tag) = commit
+'
+
+test_expect_success 'lightweight tag points to HEAD' '
+	cd lwtype-repo &&
+	test $(git rev-parse lw-tag) = $(git rev-parse HEAD)
+'
+
+# ---- tag on blob object (lightweight) ----
+
+test_expect_success 'lightweight tag on blob' '
+	cd lwtype-repo &&
+	blob=$(git hash-object -w --stdin <<-\EOF
+	Blob content here.
+	EOF
+	) &&
+	git tag tag-blob $blob &&
+	tag_exists tag-blob &&
+	test $(git cat-file -t tag-blob) = blob
+'
+
+test_expect_success 'tag on blob can be listed' '
+	cd lwtype-repo &&
+	git tag -l tag-blob >actual &&
+	echo "tag-blob" >expect &&
+	test_cmp expect actual
+'
+
+# ---- --contains with branch and merge (separate repo) ----
+
+test_expect_success 'setup: branch --contains repo' '
+	git init branch-contains-repo &&
+	cd branch-contains-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo a >a && git add a && git commit -m "first" &&
+	git tag v1.0 &&
+	echo b >b && git add b && git commit -m "second" &&
+	git tag v2.0 &&
+	echo c >c && git add c && git commit -m "third" &&
+	git tag v3.0
+'
+
+test_expect_success '--contains with branch: create branch at v2.0' '
+	cd branch-contains-repo &&
+	git branch stable v2.0 &&
+	git checkout stable &&
+	echo d >d && git add d && git commit -m "fourth" &&
+	git tag v4.0
+'
+
+test_expect_success '--contains: branch head only in v4.0' '
+	cd branch-contains-repo &&
+	hash4=$(git rev-parse HEAD) &&
+	cat >expected <<-\EOF &&
+	v4.0
+	EOF
+	git tag -l --contains $hash4 "v*" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--contains: first commit in all tags' '
+	cd branch-contains-repo &&
+	hash1=$(git rev-parse v1.0) &&
+	cat >expected <<-\EOF &&
+	v1.0
+	v2.0
+	v3.0
+	v4.0
+	EOF
+	git tag -l --contains $hash1 "v*" >actual &&
+	test_cmp expected actual
+'
+
+# ---- tag list with -n shows annotations for various tag types ----
+
+test_expect_success 'setup: mixed tags for -n display' '
+	git init mixed-n-repo &&
+	cd mixed-n-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init" &&
+	git tag lightweight &&
+	git tag -m "annotated message" annotated
+'
+
+test_expect_success '-n shows annotation for annotated, name only for lightweight' '
+	cd mixed-n-repo &&
+	git tag -n >actual &&
+	grep "^annotated" actual | grep "annotated message" &&
+	grep "^lightweight" actual
+'
+
+test_expect_success '-n1 on annotated shows first line of message' '
+	cd mixed-n-repo &&
+	echo "annotated       annotated message" >expect &&
+	git tag -n1 -l annotated >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '-n0 on annotated shows just name' '
+	cd mixed-n-repo &&
+	echo "annotated" >expect &&
+	git tag -n0 -l annotated >actual &&
+	test_cmp expect actual
+'
+
+# ---- update-ref for creating and deleting tags ----
+
+test_expect_success 'setup: update-ref tag repo' '
+	git init updateref-repo &&
+	cd updateref-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init"
+'
+
+test_expect_success 'creating tag with update-ref and deleting it' '
+	cd updateref-repo &&
+	git update-ref refs/tags/manual-ref-tag HEAD &&
+	tag_exists manual-ref-tag &&
+	git tag -d manual-ref-tag &&
+	! tag_exists manual-ref-tag
+'
+
+test_expect_success 'tag created with update-ref appears in listing' '
+	cd updateref-repo &&
+	git update-ref refs/tags/ur-tag HEAD &&
+	git tag -l ur-tag >actual &&
+	echo "ur-tag" >expect &&
+	test_cmp expect actual &&
+	git tag -d ur-tag
+'
+
+# ---- --sort combined with --contains ----
+
+test_expect_success 'setup: sort+contains repo' '
+	git init sort-contains-repo &&
+	cd sort-contains-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo a >a && git add a && git commit -m "first" &&
+	git tag v1.0 &&
+	echo b >b && git add b && git commit -m "second" &&
+	git tag v2.0 &&
+	echo c >c && git add c && git commit -m "third" &&
+	git tag v3.0
+'
+
+test_expect_success '--sort combined with --contains' '
+	cd sort-contains-repo &&
+	cat >expect <<-\EOF &&
+	v3.0
+	v2.0
+	v1.0
+	EOF
+	git tag -l --sort=-refname --contains v1.0 "v*" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--sort refname with --contains' '
+	cd sort-contains-repo &&
+	cat >expect <<-\EOF &&
+	v1.0
+	v2.0
+	v3.0
+	EOF
+	git tag -l --sort=refname --contains v1.0 "v*" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--contains with middle commit and sort' '
+	cd sort-contains-repo &&
+	cat >expect <<-\EOF &&
+	v3.0
+	v2.0
+	EOF
+	git tag -l --sort=-refname --contains v2.0 "v*" >actual &&
+	test_cmp expect actual
+'
+
+# ---- more --contains edge cases ----
+
+test_expect_success '--contains with tag name resolves through tag' '
+	cd sort-contains-repo &&
+	cat >expected <<-\EOF &&
+	v1.0
+	v2.0
+	v3.0
+	EOF
+	git tag -l --contains v1.0 "v*" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--contains with HEAD~N' '
+	cd sort-contains-repo &&
+	cat >expected <<-\EOF &&
+	v1.0
+	v2.0
+	v3.0
+	EOF
+	git tag -l --contains HEAD~2 "v*" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--contains HEAD covers only HEAD tag' '
+	cd sort-contains-repo &&
+	cat >expected <<-\EOF &&
+	v3.0
+	EOF
+	git tag -l --contains HEAD "v*" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--contains past all tags is empty' '
+	cd sort-contains-repo &&
+	echo d >d && git add d && git commit -m "fourth" &&
+	git tag -l --contains HEAD "v*" >actual &&
+	test_must_be_empty actual
+'
+
+# ---- more annotated tag edge cases ----
+
+test_expect_success 'setup: annotated edge cases repo' '
+	git init ann-edge-repo &&
+	cd ann-edge-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init"
+'
+
+test_expect_success 'annotated tag message with special characters' '
+	cd ann-edge-repo &&
+	git tag -m "Message with special chars: !@#$%" special-chars-tag &&
+	git cat-file tag special-chars-tag | grep "special chars"
+'
+
+test_expect_success 'annotated tag with very long message' '
+	cd ann-edge-repo &&
+	printf "%.0sA long message line. " $(seq 1 50) >longmsg &&
+	git tag -F longmsg long-msg-tag &&
+	tag_exists long-msg-tag
+'
+
+test_expect_success 'annotated tag -m with newlines in message' '
+	cd ann-edge-repo &&
+	git tag -m "First line" -m "Second line" two-m-tag &&
+	git cat-file tag two-m-tag | grep "First line" &&
+	git cat-file tag two-m-tag | grep "Second line"
+'
+
+test_expect_success 'annotated tag -m with three messages' '
+	cd ann-edge-repo &&
+	git tag -m "One" -m "Two" -m "Three" three-m-tag &&
+	git cat-file tag three-m-tag | grep "One" &&
+	git cat-file tag three-m-tag | grep "Two" &&
+	git cat-file tag three-m-tag | grep "Three"
+'
+
+# ---- pattern matching additional edge cases ----
+
+test_expect_success 'setup: pattern edge case repo' '
+	git init pattern-edge-repo &&
+	cd pattern-edge-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init" &&
+	git tag release-1.0 &&
+	git tag release-1.1 &&
+	git tag release-2.0 &&
+	git tag beta-1.0 &&
+	git tag beta-2.0 &&
+	git tag alpha
+'
+
+test_expect_success 'pattern matching with prefix release-*' '
+	cd pattern-edge-repo &&
+	cat >expect <<-\EOF &&
+	release-1.0
+	release-1.1
+	release-2.0
+	EOF
+	git tag -l "release-*" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'pattern matching with prefix beta-*' '
+	cd pattern-edge-repo &&
+	cat >expect <<-\EOF &&
+	beta-1.0
+	beta-2.0
+	EOF
+	git tag -l "beta-*" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'pattern matching with suffix *.0' '
+	cd pattern-edge-repo &&
+	cat >expect <<-\EOF &&
+	beta-1.0
+	beta-2.0
+	release-1.0
+	release-2.0
+	EOF
+	git tag -l "*.0" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'pattern matching with ? single char' '
+	cd pattern-edge-repo &&
+	cat >expect <<-\EOF &&
+	release-1.0
+	release-1.1
+	release-2.0
+	EOF
+	git tag -l "release-?.?" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'exact match pattern' '
+	cd pattern-edge-repo &&
+	echo "alpha" >expect &&
+	git tag -l alpha >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'no match pattern is empty' '
+	cd pattern-edge-repo &&
+	git tag -l "zzz*" >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'listing all tags is sorted' '
+	cd pattern-edge-repo &&
+	cat >expect <<-\EOF &&
+	alpha
+	beta-1.0
+	beta-2.0
+	release-1.0
+	release-1.1
+	release-2.0
+	EOF
+	git tag -l >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'pattern with * at both ends' '
+	cd pattern-edge-repo &&
+	cat >expect <<-\EOF &&
+	beta-1.0
+	beta-2.0
+	release-1.0
+	release-1.1
+	release-2.0
+	EOF
+	git tag -l "*-*" >actual &&
+	test_cmp expect actual
+'
+
+# ---- tag listing sorted consistently ----
+
+test_expect_success 'tag and tag -l produce same output' '
+	cd pattern-edge-repo &&
+	git tag >actual1 &&
+	git tag -l >actual2 &&
+	test_cmp actual1 actual2
+'
+
+# ---- creatordate sort with mixed annotated and lightweight ----
+
+test_expect_success 'setup: mixed creatordate repo' '
+	git init mixed-date-repo &&
+	cd mixed-date-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo a >a && git add a && git commit -m "first" &&
+	git tag light-a &&
+	git tag -m "ann a" ann-a &&
+	echo b >b && git add b && git commit -m "second" &&
+	git tag light-b &&
+	git tag -m "ann b" ann-b
+'
+
+test_expect_success 'creatordate sort with mixed tag types' '
+	cd mixed-date-repo &&
+	git tag -l --sort=creatordate >actual &&
+	cat >expect <<-\EOF &&
+	ann-a
+	ann-b
+	light-a
+	light-b
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'reverse creatordate sort with mixed tag types' '
+	cd mixed-date-repo &&
+	git tag -l --sort=-creatordate >actual &&
+	cat >expect <<-\EOF &&
+	light-b
+	light-a
+	ann-b
+	ann-a
+	EOF
+	test_cmp expect actual
+'
+
+# ---- --contains across branch ----
+
+test_expect_success 'setup: multi-branch contains repo' '
+	git init multi-br-repo &&
+	cd multi-br-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo a >a && git add a && git commit -m "root" &&
+	git tag root-tag &&
+	echo b >b && git add b && git commit -m "on-master" &&
+	git tag master-tag &&
+	git branch feature root-tag &&
+	git checkout feature &&
+	echo c >c && git add c && git commit -m "on-feature" &&
+	git tag feature-tag
+'
+
+test_expect_success '--contains root commit shows all tags' '
+	cd multi-br-repo &&
+	root=$(git rev-parse root-tag) &&
+	cat >expected <<-\EOF &&
+	feature-tag
+	master-tag
+	root-tag
+	EOF
+	git tag -l --contains $root >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--contains feature commit shows only feature-tag' '
+	cd multi-br-repo &&
+	cat >expected <<-\EOF &&
+	feature-tag
+	EOF
+	git tag -l --contains feature-tag >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--contains master commit shows only master-tag' '
+	cd multi-br-repo &&
+	cat >expected <<-\EOF &&
+	master-tag
+	EOF
+	git tag -l --contains master-tag >actual &&
+	test_cmp expected actual
+'
+
+# ---- force overwrite specific scenarios ----
+
+test_expect_success 'setup: force overwrite scenarios' '
+	git init force-ow-repo &&
+	cd force-ow-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo a >a && git add a && git commit -m "first" &&
+	echo b >b && git add b && git commit -m "second"
+'
+
+test_expect_success 'force move tag to different commit' '
+	cd force-ow-repo &&
+	git tag moveme HEAD~1 &&
+	old=$(git rev-parse moveme) &&
+	git tag --force moveme HEAD &&
+	new=$(git rev-parse moveme) &&
+	test "$old" != "$new" &&
+	test "$new" = "$(git rev-parse HEAD)"
+'
+
+test_expect_success 'force overwrite lightweight with annotated on different commit' '
+	cd force-ow-repo &&
+	git tag light-to-ann HEAD~1 &&
+	test $(git cat-file -t light-to-ann) = commit &&
+	git tag --force -m "now annotated" light-to-ann HEAD &&
+	test $(git cat-file -t light-to-ann) = tag
+'
+
+test_expect_success 'force overwrite annotated with lightweight on different commit' '
+	cd force-ow-repo &&
+	git tag -m "annotated" ann-to-light HEAD~1 &&
+	test $(git cat-file -t ann-to-light) = tag &&
+	git tag --force ann-to-light HEAD &&
+	test $(git cat-file -t ann-to-light) = commit
+'
+
+# ---- show-ref and tag interaction ----
+
+test_expect_success 'setup: show-ref tags repo' '
+	git init showref-repo &&
+	cd showref-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init" &&
+	git tag v1.0 &&
+	git tag -m "annotated" v2.0
+'
+
+test_expect_success 'show-ref --verify confirms tag existence' '
+	cd showref-repo &&
+	git show-ref --verify refs/tags/v1.0 &&
+	git show-ref --verify refs/tags/v2.0
+'
+
+test_expect_success 'show-ref --verify fails for nonexistent tag' '
+	cd showref-repo &&
+	! git show-ref --quiet --verify refs/tags/nonexistent
+'
+
+# ---- cat-file with annotated tags ----
+
+test_expect_success 'cat-file -t on annotated tag returns tag' '
+	cd showref-repo &&
+	test $(git cat-file -t v2.0) = tag
+'
+
+test_expect_success 'cat-file -t on lightweight tag returns commit' '
+	cd showref-repo &&
+	test $(git cat-file -t v1.0) = commit
+'
+
+test_expect_success 'cat-file -p on annotated tag shows tag object' '
+	cd showref-repo &&
+	git cat-file -p v2.0 >actual &&
+	grep "^object " actual &&
+	grep "^type commit" actual &&
+	grep "^tag v2.0" actual &&
+	grep "^tagger " actual &&
+	grep "annotated" actual
+'
+
+# ---- -n with --sort ----
+
+test_expect_success 'setup: -n with --sort repo' '
+	git init n-sort-repo &&
+	cd n-sort-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo x >x && git add x && git commit -m "init" &&
+	git tag -m "msg-c" tag-c &&
+	git tag -m "msg-a" tag-a &&
+	git tag -m "msg-b" tag-b
+'
+
+test_expect_success '-n1 with --sort=refname' '
+	cd n-sort-repo &&
+	cat >expect <<-\EOF &&
+	tag-a           msg-a
+	tag-b           msg-b
+	tag-c           msg-c
+	EOF
+	git tag -n1 --sort=refname -l "tag-*" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '-n1 with --sort=-refname' '
+	cd n-sort-repo &&
+	cat >expect <<-\EOF &&
+	tag-c           msg-c
+	tag-b           msg-b
+	tag-a           msg-a
+	EOF
+	git tag -n1 --sort=-refname -l "tag-*" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '-n0 with --sort=refname shows just names' '
+	cd n-sort-repo &&
+	cat >expect <<-\EOF &&
+	tag-a
+	tag-b
+	tag-c
+	EOF
+	git tag -n0 --sort=refname -l "tag-*" >actual &&
+	test_cmp expect actual
+'
+
 test_done
