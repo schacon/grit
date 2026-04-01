@@ -27,6 +27,7 @@ pub mod log;
 pub mod ls_files;
 pub mod ls_tree;
 pub mod merge_base;
+pub mod merge_file;
 pub mod mktag;
 pub mod mktree;
 pub mod mv;

@@ -21,6 +21,7 @@ pub mod error;
 pub mod ignore;
 pub mod index;
 pub mod merge_base;
+pub mod merge_file;
 pub mod objects;
 pub mod odb;
 pub mod pack;
