@@ -1,219 +1,777 @@
-# Gust v2 implementation plan
+# Gust v3 implementation plan
 
-This plan is the **second major version** of Gust: same working method as v1 ([`plan.md`](../plan.md), [`AGENT.md`](../AGENT.md))—study the **upstream C** in [`git/builtin/`](../git/builtin/), the **manpage sources** in [`git/Documentation/`](../git/Documentation/) as `git-<command>.adoc`, and the **tests** under [`git/t/`](../git/t/); **port** chosen scripts into `./tests` (substitute `gust` for `git` per the harness contract) and drive implementation until those tests pass.
+This document is the **third major version** of Gust: the **common working (porcelain)** layer on top of **v1** ([`plan.md`](../plan.md)) and **v2** ([`v2.md`](v2.md)). The methodology is unchanged: read **upstream C** under [`git/builtin/`](../git/builtin/), **docs** in [`git/Documentation/`](../git/Documentation/) as `git-<command>.adoc`, and **tests** in [`git/t/`](../git/t/); **port** scripts into `./tests` (harness replaces `git` with `gust` per contract) until they pass.
 
-**v2 scope:** additional **basic plumbing** (and closely related maintenance commands) beyond the eleven v1 subcommands. Commands in this release:
+**v3 commands (22):** `config`, `clone`, `add`, `status`, `diff`, `commit`, `restore`, `reset`, `rm`, `mv`, `branch`, `checkout`, `switch`, `merge`, `log`, `stash`, `tag`, `fetch`, `pull`, `push`, `remote`, `show`.
 
-| Command | Upstream builtin | Documentation |
-|--------|------------------|---------------|
-| `check-ignore` | [`git/builtin/check-ignore.c`](../git/builtin/check-ignore.c) | `git/Documentation/git-check-ignore.adoc` |
-| `count-objects` | [`git/builtin/count-objects.c`](../git/builtin/count-objects.c) | `git/Documentation/git-count-objects.adoc` |
-| `diff-index` | [`git/builtin/diff-index.c`](../git/builtin/diff-index.c) | `git/Documentation/git-diff-index.adoc` |
-| `for-each-ref` | [`git/builtin/for-each-ref.c`](../git/builtin/for-each-ref.c) | `git/Documentation/git-for-each-ref.adoc` |
-| `merge-base` | [`git/builtin/merge-base.c`](../git/builtin/merge-base.c) | `git/Documentation/git-merge-base.adoc` |
-| `rev-list` | [`git/builtin/rev-list.c`](../git/builtin/rev-list.c) | `git/Documentation/git-rev-list.adoc` |
-| `rev-parse` | [`git/builtin/rev-parse.c`](../git/builtin/rev-parse.c) | `git/Documentation/git-rev-parse.adoc` |
-| `show-ref` | [`git/builtin/show-ref.c`](../git/builtin/show-ref.c) | `git/Documentation/git-show-ref.adoc` |
-| `symbolic-ref` | [`git/builtin/symbolic-ref.c`](../git/builtin/symbolic-ref.c) | `git/Documentation/git-symbolic-ref.adoc` |
-| `verify-pack` | [`git/builtin/verify-pack.c`](../git/builtin/verify-pack.c) | `git/Documentation/git-verify-pack.adoc` |
-| `gc` | [`git/builtin/gc.c`](../git/builtin/gc.c) | `git/Documentation/git-gc.adoc` |
-| `repack` | [`git/builtin/repack.c`](../git/builtin/repack.c) | `git/Documentation/git-repack.adoc` |
+**Implementation note:** `restore` and `switch` are implemented in the same translation unit as `checkout` ([`git/builtin/checkout.c`](../git/builtin/checkout.c)); plan them together with `checkout` even though they are separate user-facing commands.
 
 **Checkbox legend:** `[ ]` not started · `[~]` claimed · `[x]` done and tests green.
 
 ---
 
-## Phase 0 — v2 infrastructure and CLI
+## Command → upstream sources
 
-Work that spans multiple commands; finish enough of each before the commands that depend on it.
-
-- [x] **0.1 CLI registration** — Dispatch all twelve v2 subcommands from `gust`; global options (`--git-dir`, `-C`, etc.) as required by ported tests; usage strings aligned with upstream.
-- [x] **0.2 Revision parsing (`rev-parse` core)** — DWIM refs, `^{}`, peel tags, ambiguous object disambiguation behavior, pathspec/`--` boundaries, and plumbing output modes (`--verify`, `--short`, object type/size flags, etc.) as needed by later phases (much of this surfaces in `rev-parse` itself).
-- [x] **0.3 Reachability and walk** — Commit graph traversal, parent ordering, and primitives shared by `merge-base` and `rev-list` (match `revision.c` / libgit walk semantics for the subset you port).
-- [x] **0.4 Ignore rules** — `.gitignore`, `.git/info/exclude`, `core.excludesfile`, optional index integration for `--no-index` vs index-aware paths; pattern syntax and precedence aligned with upstream for `check-ignore`.
-- [x] **0.5 Packfiles** — Read `.pack` + `.idx` (and any options tests need: thin packs, promisor bits, etc. only if selected tests require). Required for `count-objects -v`, `verify-pack`, `repack`, and `gc`.
-- [x] **0.6 Pack writing / maintenance hooks** — Ability to build or rewrite packs and prune loose objects as `repack` and `gc` demand (may pull in behavior from `pack-objects` / `prune` internally even if those remain non-user-facing).
-
----
-
-## Phase 1 — `rev-parse`
-
-**Upstream:** [`git/builtin/rev-parse.c`](../git/builtin/rev-parse.c). **Docs:** `git/Documentation/git-rev-parse.adoc`.
-
-**Primary tests (representative; expand as needed):**
-
-- [`git/t/t1500-rev-parse.sh`](../git/t/t1500-rev-parse.sh)
-- [`git/t/t1502-rev-parse-parseopt.sh`](../git/t/t1502-rev-parse-parseopt.sh) — include only if v2 exposes `parseopt` / `--git-common-dir` family consistently with chosen scripts
-- [`git/t/t1503-rev-parse-verify.sh`](../git/t/t1503-rev-parse-verify.sh)
-- [`git/t/t1505-rev-parse-last.sh`](../git/t/t1505-rev-parse-last.sh)
-- [`git/t/t1506-rev-parse-diagnosis.sh`](../git/t/t1506-rev-parse-diagnosis.sh)
-- [`git/t/t1507-rev-parse-upstream.sh`](../git/t/t1507-rev-parse-upstream.sh)
-- [`git/t/t1511-rev-parse-caret.sh`](../git/t/t1511-rev-parse-caret.sh)
-- [`git/t/t1512-rev-parse-disambiguation.sh`](../git/t/t1512-rev-parse-disambiguation.sh)
-- [`git/t/t1513-rev-parse-prefix.sh`](../git/t/t1513-rev-parse-prefix.sh)
-- [`git/t/t1514-rev-parse-push.sh`](../git/t/t1514-rev-parse-push.sh)
-- [`git/t/t1515-rev-parse-outside-repo.sh`](../git/t/t1515-rev-parse-outside-repo.sh)
-- [`git/t/t6101-rev-parse-parents.sh`](../git/t/t6101-rev-parse-parents.sh)
-
-- [x] **1.1** Repository vs non-repository modes; `--is-inside-work-tree`, `--show-toplevel`, `--git-dir`, `--show-prefix`, and related discovery flags used in tests.
-- [x] **1.2** Parse revisions and object names; `--verify`, short/long hashes, `^{}` peeling, ref@upstream forms as in scope.
-- [x] **1.3** Quoted path / magic pathspec handling only if ported scripts require it.
-- [x] **1.4** Port selected `t150*.sh` / `t6101-rev-parse-parents.sh` scripts; defer parseopt-heavy behavior unless explicitly in scope.
+| Command | Builtin(s) | Documentation |
+|---------|------------|---------------|
+| `config` | [`config.c`](../git/builtin/config.c) | `git-config.adoc` |
+| `clone` | [`clone.c`](../git/builtin/clone.c) | `git-clone.adoc` |
+| `add` | [`add.c`](../git/builtin/add.c) | `git-add.adoc` |
+| `status` | [`commit.c`](../git/builtin/commit.c) (`cmd_status`; uses `wt-status` in lib) | `git-status.adoc` |
+| `diff` | [`diff.c`](../git/builtin/diff.c) | `git-diff.adoc` |
+| `commit` | [`commit.c`](../git/builtin/commit.c) | `git-commit.adoc` |
+| `restore` | [`checkout.c`](../git/builtin/checkout.c) (`cmd_restore`) | `git-restore.adoc` |
+| `reset` | [`reset.c`](../git/builtin/reset.c) | `git-reset.adoc` |
+| `rm` | [`rm.c`](../git/builtin/rm.c) | `git-rm.adoc` |
+| `mv` | [`mv.c`](../git/builtin/mv.c) | `git-mv.adoc` |
+| `branch` | [`branch.c`](../git/builtin/branch.c) | `git-branch.adoc` |
+| `checkout` | [`checkout.c`](../git/builtin/checkout.c) | `git-checkout.adoc` |
+| `switch` | [`checkout.c`](../git/builtin/checkout.c) (`cmd_switch`) | `git-switch.adoc` |
+| `merge` | [`merge.c`](../git/builtin/merge.c) + recursive backend | `git-merge.adoc` |
+| `log` | [`log.c`](../git/builtin/log.c) | `git-log.adoc` |
+| `stash` | [`stash.c`](../git/builtin/stash.c) | `git-stash.adoc` |
+| `tag` | [`tag.c`](../git/builtin/tag.c) | `git-tag.adoc` |
+| `fetch` | [`fetch.c`](../git/builtin/fetch.c), [`fetch-pack.c`](../git/builtin/fetch-pack.c), … | `git-fetch.adoc` |
+| `pull` | [`pull.c`](../git/builtin/pull.c) | `git-pull.adoc` |
+| `push` | [`push.c`](../git/builtin/push.c), [`send-pack.c`](../git/builtin/send-pack.c), … | `git-push.adoc` |
+| `remote` | [`remote.c`](../git/builtin/remote.c) | `git-remote.adoc` |
+| `show` | [`log.c`](../git/builtin/log.c) (`cmd_show`) | `git-show.adoc` |
 
 ---
 
-## Phase 2 — `symbolic-ref` and `show-ref`
+## How this inventory is organized
 
-**Upstream:** [`git/builtin/symbolic-ref.c`](../git/builtin/symbolic-ref.c), [`git/builtin/show-ref.c`](../git/builtin/show-ref.c). **Docs:** `git/Documentation/git-symbolic-ref.adoc`, `git/Documentation/git-show-ref.adoc`.
-
-**Primary tests:**
-
-- [`git/t/t1401-symbolic-ref.sh`](../git/t/t1401-symbolic-ref.sh)
-- [`git/t/t1403-show-ref.sh`](../git/t/t1403-show-ref.sh)
-- [`git/t/t1422-show-ref-exists.sh`](../git/t/t1422-show-ref-exists.sh)
-
-- [x] **2.1** `symbolic-ref`: read/create/delete symbolic refs; validate ref targets; error messages matching upstream.
-- [x] **2.2** `show-ref`: list refs with patterns, `--heads`, `--tags`, `--verify`, `-d`/`--dereference`, `-s`/`--hash`, exit codes for missing refs.
-- [x] **2.3** Port and pass the `t1401` / `t1403` / `t1422` scripts (and shared helpers those files need).
+- **Primary tests** — scripts whose `test_description` or name clearly targets the command, or whole numbered series owned by that subsystem (e.g. all `t400*.sh` for diff output).
+- **Shared transport tests** — `t5500`–`t5583` scripts often exercise **fetch**, **push**, **remote**, **pull**, and **clone** together; they are listed once in [Transport, remote, fetch, push, pull](#transport-remote-fetch-push-pull-shared-t5500t5583) and cross-referenced per command.
+- **`git/t/perf/`** — listed in [Appendix A — Performance scripts](#appendix-a--performance-scripts-gitttperf); optional unless you track perf parity.
+- **Foreign SCM / wrappers** (`t91*`, `t98*`, `scalar`, `git-p4`, …) — [Appendix B](#appendix-b--foreign-scm-and-wrapper-tests-defer-or-gate); usually **out of scope** unless v3 explicitly includes them.
 
 ---
 
-## Phase 3 — `check-ignore`
+## Phase 0 — Prerequisites and cross-cutting platform
 
-**Upstream:** [`git/builtin/check-ignore.c`](../git/builtin/check-ignore.c). **Docs:** `git/Documentation/git-check-ignore.adoc`. **Primary tests:** [`git/t/t0008-ignores.sh`](../git/t/t0008-ignores.sh) (description explicitly targets `check-ignore`; large file—implement incrementally).
+Assume **v1 + v2** plumbing is complete (objects, index, refs, packs, revision walking, etc.).
 
-- [x] **3.1** Path arguments and `-z`, `-n` (dry run), `-v` / `-vv`, `--stdin`, `--no-index`, `--non-matching` as used in `t0008`.
-- [x] **3.2** Correct interaction with working tree, index, and nested `.gitignore` / exclude files; directory vs file semantics; trailing-slash rules.
-- [x] **3.3** Port relevant sections of `t0008-ignores.sh` (or the whole script if feasible); skip attr-only magic pathspec cases unless v2 expands pathspec attribute support.
-
----
-
-## Phase 4 — `merge-base`
-
-**Upstream:** [`git/builtin/merge-base.c`](../git/builtin/merge-base.c). **Docs:** `git/Documentation/git-merge-base.adoc`. **Primary tests:** [`git/t/t6010-merge-base.sh`](../git/t/t6010-merge-base.sh); related: [`git/t/t4068-diff-symmetric-merge-base.sh`](../git/t/t4068-diff-symmetric-merge-base.sh) if `diff` plumbing pulls it in.
-
-- [x] **4.1** Default merge-base selection; `--all`, `--octopus`, `--independent`, `--is-ancestor`.
-- [x] **4.2** Corner cases: disjoint histories, root commits, same commit repeated.
-- [x] **4.3** Port and pass `t6010-merge-base.sh` (and any merge-base-dependent chunks of other chosen scripts).
-
----
-
-## Phase 5 — `rev-list`
-
-**Upstream:** [`git/builtin/rev-list.c`](../git/builtin/rev-list.c). **Docs:** `git/Documentation/git-rev-list.adoc`.
-
-**Tests:** Upstream coverage is broad ([`git/t/t6000-rev-list-misc.sh`](../git/t/t6000-rev-list-misc.sh) through [`git/t/t6022-rev-list-missing.sh`](../git/t/t6022-rev-list-missing.sh), format/graph/bitmap variants, etc.). **Strategy:** start with a minimal set (ordering, `--max-count`, `--skip`, basic `--parents`, `--objects`, `--filter` only if ported), then add scripts from `t600*.sh` until the agreed v2 bar is met.
-
-Representative files to prioritize:
-
-- [`git/t/t6000-rev-list-misc.sh`](../git/t/t6000-rev-list-misc.sh)
-- [`git/t/t6003-rev-list-topo-order.sh`](../git/t/t6003-rev-list-topo-order.sh)
-- [`git/t/t6005-rev-list-count.sh`](../git/t/t6005-rev-list-count.sh)
-- [`git/t/t6006-rev-list-format.sh`](../git/t/t6006-rev-list-format.sh)
-- [`git/t/t6014-rev-list-all.sh`](../git/t/t6014-rev-list-all.sh)
-- [`git/t/t6017-rev-list-stdin.sh`](../git/t/t6017-rev-list-stdin.sh)
-
-- [x] **5.1** Commit walking: `--first-parent`, `--ancestry-path`, `--simplify-by-decoration`, simplification flags as required by chosen tests.
-- [x] **5.2** Ordering: topo, date, reverse; `--objects` / `--object-names` / `--filter-print-omitted` only if in scope.
-- [x] **5.3** Output formatting: `--format`, hash-only modes, `--quiet` / exit code conventions.
-- [x] **5.4** Bitmap or lazy promisor behavior — deferred for v2 because no selected/ported script requires it.
-- [x] **5.5** Port agreed `t600*.sh` subset; document explicitly which rev-list features remain out of scope for v2 if not all upstream tests are targeted.
+- [ ] **0.1 Config system** — Multi-file config, includes, `includeIf`, `gitdir:` / `onbranch:` conditions, `core.*` keys consumed by porcelain, `submodule.*`, `remote.*`, `branch.*`, `push.*`, `pull.*`, `diff.*`, `merge.*`, `color.*`, `alias.*` as tests require; safe reading during early startup (`t1309`).
+- [ ] **0.2 Repository state machine** — `HEAD` detached/attached, unborn branch, worktree cleanness, index vs tree vs worktree (feeds `status`, `diff`, `commit`, `merge`).
+- [ ] **0.3 Diff machinery** — xdiff integration, `--stat`, `--patch`, rename/copy detection, word diff, textconv (if tests demand), color, comparison to empty tree / merge bases (shared by `diff`, `log`, `show`, `merge` conflict display).
+- [ ] **0.4 Merge engine** — Recursive/Ort strategy, directory rename detection, binary merges, conflict marker generation, `merge-ort` / `merge-recursive` parity for `t640*` / `t760*` (see merge section).
+- [ ] **0.5 Transport layer** — Local, `git://`, HTTP(S) smart/dumb, SSH (as upstream tests use); refspec expansion; shallow/partial clone; pack negotiation; alternates; quarantine; hooks on remote side (`receive-pack`, `pre-receive`, `update`).
+- [ ] **0.6 Credential / askpass** — Only as needed for HTTP/SSH tests.
+- [ ] **0.7 Hooks** — `pre-commit`, `prepare-commit-msg`, `commit-msg`, `post-commit`, `pre-merge-commit`, `post-merge`, `post-checkout`, `post-rewrite`, `pre-push`, `push-to-checkout`, etc., per `t540*` / `t7503` / `t7504` / `t7505` / `t5571`.
+- [ ] **0.8 Submodules (optional track)** — Many v3 tests touch submodules; either implement [`submodule--helper`](../git/builtin/submodule--helper.c) behavior incrementally or mark submodule-heavy scripts deferred (see [Appendix C](#appendix-c--submodule-heavy-scripts-intersecting-v3-commands)).
+- [ ] **0.9 Sparse checkout** — Interaction with `add`, `checkout`, `reset`, `rm`, `mv`, `merge` (`t109*`, `t3602`, `t3705`, `t7002`, `t6428`, …).
+- [ ] **0.10 Signing** — GPG/SSH signed commits and tags if `t7510`, `t7528`, `t5573`, `t7612`, `t5534` are in scope.
+- [ ] **0.11 fsmonitor / watchman** — Only if `t7519`, `t7527` and related status tests are ported.
+- [ ] **0.12 Pager & column** — Pager behavior for `log`, `diff`, `show`, `branch`; `--no-pager` consistency.
+- [ ] **0.13 CLI** — Register all v3 subcommands; global options; help text parity.
 
 ---
 
-## Phase 6 — `diff-index`
+## Transport, remote, fetch, push, pull (shared `t5500`–`t5583`)
 
-**Upstream:** [`git/builtin/diff-index.c`](../git/builtin/diff-index.c). **Docs:** `git/Documentation/git-diff-index.adoc`.
+These scripts live in [`git/t/`](../git/t/). Most **fetch/push/remote/pull** work should be validated against this full set (port in logical order; submodule and HTTP variants last).
 
-**Primary tests (representative; many scripts call `git diff-index` in passing):**
+`git/t/t5500-fetch-pack.sh`  
+`git/t/t5501-fetch-push-alternates.sh`  
+`git/t/t5502-quickfetch.sh`  
+`git/t/t5503-tagfollow.sh`  
+`git/t/t5504-fetch-receive-strict.sh`  
+`git/t/t5505-remote.sh`  
+`git/t/t5506-remote-groups.sh`  
+`git/t/t5507-remote-environment.sh`  
+`git/t/t5509-fetch-push-namespaces.sh`  
+`git/t/t5510-fetch.sh`  
+`git/t/t5511-refspec.sh`  
+`git/t/t5512-ls-remote.sh`  
+`git/t/t5513-fetch-track.sh`  
+`git/t/t5514-fetch-multiple.sh`  
+`git/t/t5515-fetch-merge-logic.sh`  
+`git/t/t5516-fetch-push.sh`  
+`git/t/t5517-push-mirror.sh`  
+`git/t/t5518-fetch-exit-status.sh`  
+`git/t/t5519-push-alternates.sh`  
+`git/t/t5520-pull.sh`  
+`git/t/t5521-pull-options.sh`  
+`git/t/t5522-pull-symlink.sh`  
+`git/t/t5523-push-upstream.sh`  
+`git/t/t5524-pull-msg.sh`  
+`git/t/t5525-fetch-tagopt.sh`  
+`git/t/t5526-fetch-submodules.sh`  
+`git/t/t5527-fetch-odd-refs.sh`  
+`git/t/t5528-push-default.sh`  
+`git/t/t5529-push-errors.sh`  
+`git/t/t5530-upload-pack-error.sh`  
+`git/t/t5531-deep-submodule-push.sh`  
+`git/t/t5532-fetch-proxy.sh`  
+`git/t/t5533-push-cas.sh`  
+`git/t/t5534-push-signed.sh`  
+`git/t/t5535-fetch-push-symref.sh`  
+`git/t/t5536-fetch-conflicts.sh`  
+`git/t/t5537-fetch-shallow.sh`  
+`git/t/t5538-push-shallow.sh`  
+`git/t/t5539-fetch-http-shallow.sh`  
+`git/t/t5540-http-push-webdav.sh`  
+`git/t/t5541-http-push-smart.sh`  
+`git/t/t5542-push-http-shallow.sh`  
+`git/t/t5543-atomic-push.sh`  
+`git/t/t5544-pack-objects-hook.sh`  
+`git/t/t5545-push-options.sh`  
+`git/t/t5546-receive-limits.sh`  
+`git/t/t5547-push-quarantine.sh`  
+`git/t/t5548-push-porcelain.sh`  
+`git/t/t5549-fetch-push-http.sh`  
+`git/t/t5550-http-fetch-dumb.sh`  
+`git/t/t5551-http-fetch-smart.sh`  
+`git/t/t5552-skipping-fetch-negotiator.sh`  
+`git/t/t5553-set-upstream.sh`  
+`git/t/t5554-noop-fetch-negotiator.sh`  
+`git/t/t5555-http-smart-common.sh`  
+`git/t/t5557-http-get.sh`  
+`git/t/t5558-clone-bundle-uri.sh`  
+`git/t/t5559-http-fetch-smart-http2.sh`  
+`git/t/t5560-http-backend-noserver.sh`  
+`git/t/t5561-http-backend.sh`  
+`git/t/t5562-http-backend-content-length.sh`  
+`git/t/t5563-simple-http-auth.sh`  
+`git/t/t5564-http-proxy.sh`  
+`git/t/t5565-push-multiple.sh`  
+`git/t/t5570-git-daemon.sh`  
+`git/t/t5571-pre-push-hook.sh`  
+`git/t/t5572-pull-submodule.sh`  
+`git/t/t5573-pull-verify-signatures.sh`  
+`git/t/t5574-fetch-output.sh`  
+`git/t/t5580-unc-paths.sh`  
+`git/t/t5581-http-curl-verbose.sh`  
+`git/t/t5582-fetch-negative-refspec.sh`  
+`git/t/t5583-push-branches.sh`  
 
-- [`git/t/t4013-diff-various.sh`](../git/t/t4013-diff-various.sh) (includes `diff-index -m` behavior)
-- [`git/t/t4017-diff-retval.sh`](../git/t/t4017-diff-retval.sh)
-- [`git/t/t4044-diff-index-unique-abbrev.sh`](../git/t/t4044-diff-index-unique-abbrev.sh)
+**Protocol / bundle URI (feeds fetch & clone):**  
+`git/t/t5700-protocol-v1.sh` … `git/t/t5705-session-id-in-capabilities.sh`, `git/t/t5710-promisor-remote-capability.sh`, `git/t/t5730-protocol-v2-bundle-uri-file.sh`, `git/t/t5731-protocol-v2-bundle-uri-git.sh`, `git/t/t5732-protocol-v2-bundle-uri-http.sh`, `git/t/t5750-bundle-uri-parse.sh`
 
-- [x] **6.1** Compare index vs tree / HEAD: `--cached`, `--merge`, `-m`, `--exit-code`, `--quiet`, `--raw`, `-p` (patch) paths used in tests.
-- [x] **6.2** Diff options shared with `git diff` (rename, indent heuristic, etc.) only as required by ported scripts.
-- [x] **6.3** Pathspec handling and stat/cache interaction consistent with v1 index behavior.
-- [x] **6.4** Port selected diff-index-heavy scripts; avoid pulling the entire `t4000` diff suite unless v2 explicitly widens scope.
+**Remote helpers / transport plumbing:**  
+`git/t/t5801-remote-helpers.sh`, `git/t/t5802-connect-helper.sh`, `git/t/t5810-proto-disable-local.sh`, `git/t/t5811-proto-disable-git.sh`, `git/t/t5812-proto-disable-http.sh`, `git/t/t5813-proto-disable-ssh.sh`, `git/t/t5814-proto-disable-ext.sh`, `git/t/t5815-submodule-protos.sh`
+
+**Porcelain receive / push reporting (`t5411/`):**  
+`git/t/t5411/test-0000-standard-git-push.sh` through `git/t/t5411/test-0050-proc-receive-refs-with-modifiers.sh` (plus `common-functions.sh`, `once-0010-report-status-v1.sh`) — exercise push status and hook edge cases.
+
+**Per-command tasks (abbreviated; detail in sections below):**
+
+- [ ] **Remote** — `remote add/rename/remove/set-url/prune`, `get-url`, `show`, tracking branches; align with `t5505`, `t5506`, `t5507`, `t5511`, `t5512`, `t5553`, `t5801`, `t5406`, `t5409`, shared scripts above.
+- [ ] **Fetch** — All negotiation paths, shallow, refspecs, tags, `--jobs`, `--prune`, `--recurse-submodules` as in `t5510`–`t5518`, `t5525`–`t5527`, `t5532`, `t5535`–`t5539`, `t5549`, `t5550`–`t5552`, `t5554`, `t5559`, `t5574`, `t5582`, HTTP variants, `t57*`.
+- [ ] **Push** — mirror, CAS, signing, atomic, porcelain, hooks (`t5517`, `t5519`, `t5523`, `t5528`–`t5531`, `t5533`–`t5535`, `t5538`, `t5540`–`t5543`, `t5545`–`t5548`, `t5565`, `t5571`, `t5583`, `t5411/*`).
+- [ ] **Pull** — `fetch` + `merge`/`rebase` integration (`t5520`–`t5524`, `t5572`, `t5573`, `t7601-merge-pull-config.sh`).
 
 ---
 
-## Phase 7 — `for-each-ref`
+## `config`
 
-**Upstream:** [`git/builtin/for-each-ref.c`](../git/builtin/for-each-ref.c). **Docs:** `git/Documentation/git-for-each-ref.adoc`. **Shared:** [`git/t/for-each-ref-tests.sh`](../git/t/for-each-ref-tests.sh) if sourced by other tests.
+**Upstream tests (`git/t/`):**  
+`git/t/t1300-config.sh`  
+`git/t/t1301-shared-repo.sh`  
+`git/t/t1302-repo-version.sh`  
+`git/t/t1303-wacky-config.sh`  
+`git/t/t1304-default-acl.sh`  
+`git/t/t1305-config-include.sh`  
+`git/t/t1306-xdg-files.sh`  
+`git/t/t1307-config-blob.sh`  
+`git/t/t1308-config-set.sh`  
+`git/t/t1309-early-config.sh`  
+`git/t/t1310-config-default.sh`  
+`git/t/t1311-config-optional.sh`  
+`git/t/t1350-config-hooks-path.sh`  
 
-**Primary tests:**
+**Also exercise `git config` heavily (cross-reference):**  
+`git/t/t0026-eol-config.sh`, `git/t/t2205-add-worktree-config.sh`, `git/t/t3907-stash-show-config.sh`, `git/t/t4119-apply-config.sh`, `git/t/t5611-clone-config.sh`
 
-- [`git/t/t6300-for-each-ref.sh`](../git/t/t6300-for-each-ref.sh)
-- [`git/t/t6301-for-each-ref-errors.sh`](../git/t/t6301-for-each-ref-errors.sh)
-- [`git/t/t6302-for-each-ref-filter.sh`](../git/t/t6302-for-each-ref-filter.sh)
-
-- [x] **7.1** Ref sorting (`--sort`), patterns, `--count`, `--format` atoms matching upstream for covered tests.
-- [x] **7.2** Filter/query language (`--contains`, `--merged`, `--no-merged`, `--points-at`, etc.) as required by `t630*`.
-- [x] **7.3** Error handling and stdin/parse edge cases from `t6301`.
-- [x] **7.4** Port `t6300` / `t6301` / `t6302` (or an agreed subset).
-
----
-
-## Phase 8 — `count-objects` and `verify-pack`
-
-**Upstream:** [`git/builtin/count-objects.c`](../git/builtin/count-objects.c), [`git/builtin/verify-pack.c`](../git/builtin/verify-pack.c). **Docs:** `git/Documentation/git-count-objects.adoc`, `git/Documentation/git-verify-pack.adoc`.
-
-**Primary tests (pick a coherent pack-focused set):**
-
-- [`git/t/t5301-sliding-window.sh`](../git/t/t5301-sliding-window.sh) — contains dedicated `verify-pack -v` cases
-- [`git/t/t5304-prune.sh`](../git/t/t5304-prune.sh) — uses `count-objects` for loose object counts
-- [`git/t/t5613-info-alternate.sh`](../git/t/t5613-info-alternate.sh) — `count-objects -v` with alternates
-
-- [x] **8.1** `count-objects`: default summary; `-v` / `--verbose` breakdown (packs, loose, duplicates, alternates) per upstream output format.
-- [x] **8.2** `verify-pack`: `-v` statistics, object enumeration, corruption detection and exit codes; optional object format flag if tests use it.
-- [x] **8.3** Port selected scripts; omit multi-pack-index / promisor-only behavior unless those tests are in the v2 list.
+- [ ] **config.1** `git config` get/set/unset/list/append/rename-section; types (`--int`, `--bool`, `--path`, `--expiry-date`, …) per `t1300`–`t1308`.
+- [ ] **config.2** Includes and conditional includes (`t1305`, `t1310`, `t1311`).
+- [ ] **config.3** `config --blob`, `--file`, `--local`/`--global`/`--system`/`--worktree` (`t1307`, `t1306`, `t1309`).
+- [ ] **config.4** Hooks path and repo version side effects (`t1350`, `t1302`, `t1301`, `t1304`).
+- [ ] **config.5** Port the `t130*` / `t131*` / `t1350` scripts; fold in cross-listed scripts when those features are enabled.
 
 ---
 
-## Phase 9 — `repack`
+## `clone`
 
-**Upstream:** [`git/builtin/repack.c`](../git/builtin/repack.c). **Docs:** `git/Documentation/git-repack.adoc`.
+**Upstream tests (`git/t/`):**  
+`git/t/t5600-clone-fail-cleanup.sh`  
+`git/t/t5601-clone.sh`  
+`git/t/t5602-clone-remote-exec.sh`  
+`git/t/t5603-clone-dirname.sh`  
+`git/t/t5604-clone-reference.sh`  
+`git/t/t5605-clone-local.sh`  
+`git/t/t5606-clone-options.sh`  
+`git/t/t5607-clone-bundle.sh`  
+`git/t/t5608-clone-2gb.sh`  
+`git/t/t5609-clone-branch.sh`  
+`git/t/t5610-clone-detached.sh`  
+`git/t/t5611-clone-config.sh`  
+`git/t/t5612-clone-refspec.sh`  
+`git/t/t5613-info-alternate.sh`  
+`git/t/t5614-clone-submodules-shallow.sh`  
+`git/t/t5615-alternate-env.sh`  
+`git/t/t5616-partial-clone.sh`  
+`git/t/t5617-clone-submodules-remote.sh`  
+`git/t/t5618-alternate-refs.sh`  
+`git/t/t5619-clone-local-ambiguous-transport.sh`  
+`git/t/t5620-backfill.sh`  
+`git/t/t5621-clone-revision.sh`  
 
-**Primary tests:**
+**Partial clone / bundle URI overlap:**  
+`git/t/t0410-partial-clone.sh`, `git/t/t0411-clone-from-partial.sh`, `git/t/t5558-clone-bundle-uri.sh` (also under transport)
 
-- [`git/t/t7700-repack.sh`](../git/t/t7700-repack.sh)
-- [`git/t/t7701-repack-unpack-unreachable.sh`](../git/t/t7701-repack-unpack-unreachable.sh)
-- [`git/t/t7702-repack-cyclic-alternate.sh`](../git/t/t7702-repack-cyclic-alternate.sh)
-- [`git/t/t7703-repack-geometric.sh`](../git/t/t7703-repack-geometric.sh)
-- [`git/t/t7704-repack-cruft.sh`](../git/t/t7704-repack-cruft.sh)
+**Wrapper / optional:**  
+`git/t/t9211-scalar-clone.sh`, `git/t/perf/p5600-partial-clone.sh`, `git/t/perf/p5601-clone-reference.sh`
 
-- [x] **9.1** Basic repack into single or multiple packs; `-a`, `-A`, `-d`, `-l`, `-f`, `-F`, `--window`, `--depth` as tests require.
-- [x] **9.2** Cruft packs, geometric factor, keep-unreachable behavior — deferred for v2; no selected/ported `t770*` subset requires full cruft/geometric parity.
-- [x] **9.3** Interaction with alternates and pack reuse from `t7702`.
-- [x] **9.4** Port agreed `t770*.sh` subset; treat full geometric/cruft coverage as optional if scope is constrained.
+- [ ] **clone.1** Local / remote URLs, default branch, `-b`, `--depth`, `--single-branch`, `--no-checkout`.
+- [ ] **clone.2** Reference / alternate / shared object stores (`t5604`, `t5613`–`t5615`, `t5618`, `t5619`).
+- [ ] **clone.3** Partial / filter / promisor (`t5616`, `t0410`, `t0411`, `p5600`).
+- [ ] **clone.4** Submodules (`t5614`, `t5617`) — gate on submodule track.
+- [ ] **clone.5** Special paths, dirname, cleanup on failure (`t5603`, `t5600`, `t5608`).
+- [ ] **clone.6** Port full `t560*`–`t562*` set plus chosen `t041*` / `t5558`.
 
 ---
 
-## Phase 10 — `gc`
+## `add`
 
-**Upstream:** [`git/builtin/gc.c`](../git/builtin/gc.c). **Docs:** `git/Documentation/git-gc.adoc`. **Primary tests:** [`git/t/t6500-gc.sh`](../git/t/t6500-gc.sh).
+**Upstream tests (`git/t/`):**  
+`git/t/t2200-add-update.sh`  
+`git/t/t2201-add-update-typechange.sh`  
+`git/t/t2202-add-addremove.sh`  
+`git/t/t2203-add-intent.sh`  
+`git/t/t2204-add-ignored.sh`  
+`git/t/t2205-add-worktree-config.sh`  
+`git/t/t2206-add-submodule-ignored.sh`  
+`git/t/t3700-add.sh`  
+`git/t/t3701-add-interactive.sh`  
+`git/t/t3702-add-edit.sh`  
+`git/t/t3703-add-magic-pathspec.sh`  
+`git/t/t3704-add-pathspec-file.sh`  
+`git/t/t3705-add-sparse-checkout.sh`  
 
-- [x] **10.1** Default `gc`: pack loose objects, prune, run `repack` / `prune` pipeline per config knobs used in `t6500`.
-- [x] **10.2** Honor `gc.*` configuration (`auto`, `packrefs`, `worktrees`, etc.) as required by ported tests.
-- [x] **10.3** Safe behavior with hooks, reflog expiry, and `--prune=` only if in scope (v2 subset covers `--prune=now`; hook/reflog-expiry parity deferred).
-- [x] **10.4** Port and pass `t6500-gc.sh` (or document deferrals for auto-gc / daemon scenarios).
+- [ ] **add.1** Staging paths, `-A`, `-u`, `-p`/`--patch`, `-N` intent-to-add, ignored files (`t220*`, `t3700`).
+- [ ] **add.2** Interactive and patch modes (`t3701`, `t3702`).
+- [ ] **add.3** Pathspec magic, `--pathspec-from-file`, `-z` (`t3703`, `t3704`).
+- [ ] **add.4** Sparse checkout (`t3705`).
+- [ ] **add.5** Submodule / ignored combinations (`t2206`) — submodule track.
+- [ ] **add.6** Port all listed scripts.
 
 ---
 
-## Explicit deferrals and notes
+## `status`
 
-- **Submodule-heavy tests:** Many `rev-list`, `diff-index`, and `gc` tests assume submodule plumbing; defer or stub unless v2 adds submodule support.
-- **Reftable:** If upstream tests assume `reftable` ref backend, scope v2 to **files** backend unless the project expands `AGENT.md`.
-- **Partial / promisor clones:** Only implement `verify-pack` / `count-objects` / `gc` behaviors for promisor packs if selected tests require them.
-- **Performance tests:** `git/t/perf/*` is not required for correctness unless the project explicitly tracks perf parity.
+**Upstream tests (`git/t/`):**  
+`git/t/t7060-wtstatus.sh`  
+`git/t/t7061-wtstatus-ignore.sh`  
+`git/t/t7062-wtstatus-ignorecase.sh`  
+`git/t/t7063-status-untracked-cache.sh`  
+`git/t/t7064-wtstatus-pv2.sh`  
+`git/t/t7508-status.sh`  
+`git/t/t7511-status-index.sh`  
+`git/t/t7512-status-help.sh`  
+`git/t/t7515-status-symlinks.sh`  
+`git/t/t7519-status-fsmonitor.sh`  
+`git/t/t7525-status-rename.sh`  
+`git/t/t7527-builtin-fsmonitor.sh`  
+`git/t/t7506-status-submodule.sh`  
+
+**Porcelain overlap:** many `t750*` / `t752*` scripts mix `commit` and `status`; see [commit / status (`t750*`–`t752*`)](#commit--status-t750t752).
+
+- [ ] **status.1** Short / long / branch display, porcelain v1/v2, ahead/behind.
+- [ ] **status.2** Untracked / ignored modes, `-u`, `--ignored`.
+- [ ] **status.3** Rename detection in status (`t7525`).
+- [ ] **status.4** Submodule rows (`t7506`).
+- [ ] **status.5** fsmonitor / untracked cache (`t7519`, `t7527`, `t7063`) — optional track.
+- [ ] **status.6** Port all listed scripts.
+
+---
+
+## `diff`
+
+**Full diff / patch / stat suite (`git/t/t40*.sh`, 75 files):**  
+`git/t/t4000-diff-format.sh` through `git/t/t4074-diff-shifted-matched-group.sh` (complete run: `ls git/t/t40*.sh` — includes rename, binary, pickaxe, word diff, `diff --no-index`, combined diff, `diff-index`-unique-abbrev, submodule options, partial clone, etc.).
+
+**Note:** `t4014-format-patch.sh`, `t4021-format-patch-numbered.sh`, `t4028-format-patch-mime-headers.sh`, `t4036-format-patch-signer-mime.sh` primarily target **`git format-patch`**, which is **not** in the v3 command list; still port them if you rely on shared diff/format machinery, or defer explicitly.
+
+**Libraries sourced by many tests:** `git/t/lib-diff.sh`, `git/t/lib-diff-data.sh`, `git/t/lib-diff-alternative.sh`
+
+- [ ] **diff.1** Working tree vs index vs `HEAD`; `--cached`; pathspecs; exit codes (`t4017`, `t4035`).
+- [ ] **diff.2** Rename/copy, break/rewrite, whitespace, algorithms (`t4001`–`t4009`, `t4015`, `t4033`, `t4071`).
+- [ ] **diff.3** Patch output, `--stat`, `--numstat`, `--shortstat`, dirstat (`t4000`, `t4047`, `t4049`, `t4052`).
+- [ ] **diff.4** Merge / combined diff, unmerged entries (`t4038`, `t4046`, `t4048`, `t4057`).
+- [ ] **diff.5** Textconv / external diff / encoding (`t4030`, `t4020`, `t4210` for i18n overlap).
+- [ ] **diff.6** Submodule diff output (`t4027`, `t4041`, `t4059`, `t4060`) — submodule track.
+- [ ] **diff.7** Port entire `t4000`–`t4074` set (minus deferred format-patch-only files if scoped out).
+
+---
+
+## `commit` / status (`t750*`–`t752*`)
+
+**All `git/t/t75*.sh` scripts (commit + status + hooks + trailers + signing):**  
+`git/t/t7500-commit-template-squash-signoff.sh`  
+`git/t/t7501-commit-basic-functionality.sh`  
+`git/t/t7502-commit-porcelain.sh`  
+`git/t/t7503-pre-commit-and-pre-merge-commit-hooks.sh`  
+`git/t/t7504-commit-msg-hook.sh`  
+`git/t/t7505-prepare-commit-msg-hook.sh`  
+`git/t/t7506-status-submodule.sh`  
+`git/t/t7507-commit-verbose.sh`  
+`git/t/t7508-status.sh`  
+`git/t/t7509-commit-authorship.sh`  
+`git/t/t7510-signed-commit.sh`  
+`git/t/t7511-status-index.sh`  
+`git/t/t7512-status-help.sh`  
+`git/t/t7513-interpret-trailers.sh`  
+`git/t/t7514-commit-patch.sh`  
+`git/t/t7515-status-symlinks.sh`  
+`git/t/t7516-commit-races.sh`  
+`git/t/t7517-per-repo-email.sh`  
+`git/t/t7518-ident-corner-cases.sh`  
+`git/t/t7519-status-fsmonitor.sh`  
+`git/t/t7520-ignored-hook-warning.sh`  
+`git/t/t7521-ignored-mode.sh`  
+`git/t/t7524-commit-summary.sh`  
+`git/t/t7525-status-rename.sh`  
+`git/t/t7526-commit-pathspec-file.sh`  
+`git/t/t7527-builtin-fsmonitor.sh`  
+`git/t/t7528-signed-commit-ssh.sh`  
+
+**i18n / encoding:** `git/t/t3900-i18n-commit.sh`
+
+- [ ] **commit.1** Basic commit, `-a`, `-m`, `-F`, editor flow, amend (`t7501`, `t7502`, `t7500`).
+- [ ] **commit.2** Hooks (`t7503`–`t7505`, `t7520`).
+- [ ] **commit.3** Authorship, config identity, mailmap (`t7509`, `t7517`, `t7518`, `t4203` with log).
+- [ ] **commit.4** Patch commit, pathspec from file (`t7514`, `t7526`).
+- [ ] **commit.5** Signoff, templates, squash messages (`t7500`, `t7524`, `t7614` merge signoff).
+- [ ] **commit.6** Signing (`t7510`, `t7528`).
+- [ ] **commit.7** Trailers (`t7513`).
+- [ ] **commit.8** Races, verbose, summary (`t7516`, `t7507`, `t7524`).
+- [ ] **commit.9** Port all `t750*`–`t752*` plus `t3900` as needed.
+
+---
+
+## `restore`
+
+**Upstream tests (`git/t/`):**  
+`git/t/t2070-restore.sh`  
+`git/t/t2071-restore-patch.sh`  
+`git/t/t2072-restore-pathspec-file.sh`  
+
+- [ ] **restore.1** Restore worktree vs `--staged`, `--source`, `--worktree`/`--staged`/`--both`.
+- [ ] **restore.2** Patch mode (`t2071`).
+- [ ] **restore.3** Pathspec from file (`t2072`).
+- [ ] **restore.4** Port all three scripts.
+
+---
+
+## `reset`
+
+**Upstream tests (`git/t/`):**  
+`git/t/t7101-reset-empty-subdirs.sh`  
+`git/t/t7102-reset.sh`  
+`git/t/t7103-reset-bare.sh`  
+`git/t/t7104-reset-hard.sh`  
+`git/t/t7105-reset-patch.sh`  
+`git/t/t7106-reset-unborn-branch.sh`  
+`git/t/t7107-reset-pathspec-file.sh`  
+`git/t/t7110-reset-merge.sh`  
+`git/t/t7111-reset-table.sh`  
+`git/t/t7112-reset-submodule.sh`  
+`git/t/t7113-post-index-change-hook.sh`  
+
+**Perf:** `git/t/perf/p7102-reset.sh`
+
+- [ ] **reset.1** Mixed / soft / hard; pathspec reset (`t7102`, `t7104`, `t7107`).
+- [ ] **reset.2** Merge state / conflict reset (`t7110`).
+- [ ] **reset.3** Unborn `HEAD`, bare repo (`t7106`, `t7103`).
+- [ ] **reset.4** Patch reset (`t7105`).
+- [ ] **reset.5** Submodule (`t7112`).
+- [ ] **reset.6** Hooks (`t7113`).
+- [ ] **reset.7** Port all listed scripts.
+
+---
+
+## `rm`
+
+**Upstream tests (`git/t/`):**  
+`git/t/t3600-rm.sh`  
+`git/t/t3601-rm-pathspec-file.sh`  
+`git/t/t3602-rm-sparse-checkout.sh`  
+
+- [ ] **rm.1** Remove from index and worktree, `-f`, `--cached`, `-r`.
+- [ ] **rm.2** Pathspec from file (`t3601`).
+- [ ] **rm.3** Sparse (`t3602`).
+- [ ] **rm.4** Port all three.
+
+---
+
+## `mv`
+
+**Upstream tests (`git/t/`):**  
+`git/t/t7001-mv.sh`  
+`git/t/t7002-mv-sparse-checkout.sh`  
+
+- [ ] **mv.1** Rename, directory rename, conflicts with index/worktree.
+- [ ] **mv.2** Sparse (`t7002`).
+- [ ] **mv.3** Port both scripts.
+
+---
+
+## `branch`
+
+**Upstream tests (`git/t/`):**  
+`git/t/t3200-branch.sh`  
+`git/t/t3201-branch-contains.sh`  
+`git/t/t3202-show-branch.sh`  
+`git/t/t3203-branch-output.sh`  
+`git/t/t3204-branch-name-interpretation.sh`  
+`git/t/t3205-branch-color.sh`  
+`git/t/t3206-range-diff.sh`  
+`git/t/t3207-branch-submodule.sh`  
+
+**Note:** `t3202` / `t3206` stress **`git show-branch`** / **`git range-diff`**; include if v3 treats them as part of branch workflow tooling or defer.
+
+- [ ] **branch.1** Create/delete/list/rename; tracking setup; `-vv`, `--contains`/`--no-contains` (`t3200`, `t3201`).
+- [ ] **branch.2** Output modes, color, column (`t3203`, `t3205`).
+- [ ] **branch.3** Ref interpretation, DWIM (`t3204`, overlaps `rev-parse`).
+- [ ] **branch.4** Submodule branches (`t3207`).
+- [ ] **branch.5** Port listed scripts; decide on `t3202`/`t3206`.
+
+---
+
+## `checkout`
+
+**Upstream tests (`git/t/`):**  
+`git/t/t2000-conflict-when-checking-files-out.sh`  
+`git/t/t2010-checkout-ambiguous.sh`  
+`git/t/t2011-checkout-invalid-head.sh`  
+`git/t/t2012-checkout-last.sh`  
+`git/t/t2013-checkout-submodule.sh`  
+`git/t/t2014-checkout-switch.sh`  
+`git/t/t2015-checkout-unborn.sh`  
+`git/t/t2016-checkout-patch.sh`  
+`git/t/t2017-checkout-orphan.sh`  
+`git/t/t2018-checkout-branch.sh`  
+`git/t/t2019-checkout-ambiguous-ref.sh`  
+`git/t/t2020-checkout-detach.sh`  
+`git/t/t2021-checkout-overwrite.sh`  
+`git/t/t2022-checkout-paths.sh`  
+`git/t/t2023-checkout-m.sh`  
+`git/t/t2024-checkout-dwim.sh`  
+`git/t/t2025-checkout-no-overlay.sh`  
+`git/t/t2026-checkout-pathspec-file.sh`  
+`git/t/t2027-checkout-track.sh`  
+`git/t/t2030-unresolve-info.sh`  
+`git/t/t2050-git-dir-relative.sh`  
+`git/t/t2007-checkout-symlink.sh`  
+`git/t/t2008-checkout-subdir.sh`  
+`git/t/t2009-checkout-statinfo.sh`  
+
+**Parallel checkout:**  
+`git/t/t2080-parallel-checkout-basics.sh`  
+`git/t/t2081-parallel-checkout-collisions.sh`  
+`git/t/t2082-parallel-checkout-attributes.sh`  
+(`git/t/lib-parallel-checkout.sh`)
+
+**Sparse:** `git/t/t1090-sparse-checkout-scope.sh`, `git/t/t1091-sparse-checkout-builtin.sh`, `git/t/t1092-sparse-checkout-compatibility.sh`, `git/t/t1011-read-tree-sparse-checkout.sh` (overlap read-tree)
+
+**Hooks:** `git/t/t5403-post-checkout-hook.sh`
+
+**Perf:** `git/t/perf/p0006-read-tree-checkout.sh`
+
+- [ ] **checkout.1** Branch switching, detach, tracking (`t2018`, `t2020`, `t2027`, `t2024`).
+- [ ] **checkout.2** Path checkout vs branch checkout; `--` disambiguation (`t2010`, `t2019`, `t2022`).
+- [ ] **checkout.3** Orphan, unborn, invalid `HEAD` (`t2017`, `t2015`, `t2011`).
+- [ ] **checkout.4** Merge / conflict states (`t2000`, `t2023`, `t2030`).
+- [ ] **checkout.5** Patch, force, overlay (`t2016`, `t2021`, `t2025`).
+- [ ] **checkout.6** Pathspec from file (`t2026`).
+- [ ] **checkout.7** Submodule (`t2013`).
+- [ ] **checkout.8** Parallel checkout (`t2080`–`t2082`).
+- [ ] **checkout.9** Sparse (`t109*`).
+- [ ] **checkout.10** Port all listed scripts.
+
+---
+
+## `switch`
+
+**Upstream tests (`git/t/`):**  
+`git/t/t2060-switch.sh`  
+`git/t/t2014-checkout-switch.sh` (shared with checkout)
+
+- [ ] **switch.1** Create branch, detach, tracking-only UX vs `checkout`.
+- [ ] **switch.2** Port `t2060` and relevant cases in `t2014`.
+
+---
+
+## `merge`
+
+**Merge machinery (`git/t/t64*.sh`, 38 files):**  
+`git/t/t6400-merge-df.sh`  
+`git/t/t6401-merge-criss-cross.sh`  
+`git/t/t6402-merge-rename.sh`  
+`git/t/t6403-merge-file.sh`  
+`git/t/t6404-recursive-merge.sh`  
+`git/t/t6405-merge-symlinks.sh`  
+`git/t/t6406-merge-attr.sh`  
+`git/t/t6407-merge-binary.sh`  
+`git/t/t6408-merge-up-to-date.sh`  
+`git/t/t6409-merge-subtree.sh`  
+`git/t/t6411-merge-filemode.sh`  
+`git/t/t6412-merge-large-rename.sh`  
+`git/t/t6413-merge-crlf.sh`  
+`git/t/t6414-merge-rename-nocruft.sh`  
+`git/t/t6415-merge-dir-to-symlink.sh`  
+`git/t/t6416-recursive-corner-cases.sh`  
+`git/t/t6417-merge-ours-theirs.sh`  
+`git/t/t6418-merge-text-auto.sh`  
+`git/t/t6419-merge-ignorecase.sh`  
+`git/t/t6421-merge-partial-clone.sh`  
+`git/t/t6422-merge-rename-corner-cases.sh`  
+`git/t/t6423-merge-rename-directories.sh`  
+`git/t/t6424-merge-unrelated-index-changes.sh`  
+`git/t/t6425-merge-rename-delete.sh`  
+`git/t/t6426-merge-skip-unneeded-updates.sh`  
+`git/t/t6427-diff3-conflict-markers.sh`  
+`git/t/t6428-merge-conflicts-sparse.sh`  
+`git/t/t6429-merge-sequence-rename-caching.sh`  
+`git/t/t6430-merge-recursive.sh`  
+`git/t/t6431-merge-criscross.sh`  
+`git/t/t6432-merge-recursive-space-options.sh`  
+`git/t/t6433-merge-toplevel.sh`  
+`git/t/t6434-merge-recursive-rename-options.sh`  
+`git/t/t6435-merge-sparse.sh`  
+`git/t/t6436-merge-overwrite.sh`  
+`git/t/t6437-submodule-merge.sh`  
+`git/t/t6438-submodule-directory-file-conflicts.sh`  
+`git/t/t6439-merge-co-error-msgs.sh`
+
+**Porcelain merge (`git/t/t76*.sh`):**  
+`git/t/t7600-merge.sh`  
+`git/t/t7601-merge-pull-config.sh`  
+`git/t/t7602-merge-octopus-many.sh`  
+`git/t/t7603-merge-reduce-heads.sh`  
+`git/t/t7604-merge-custom-message.sh`  
+`git/t/t7605-merge-resolve.sh`  
+`git/t/t7606-merge-custom.sh`  
+`git/t/t7607-merge-state.sh`  
+`git/t/t7608-merge-messages.sh`  
+`git/t/t7609-mergetool--lib.sh`  
+`git/t/t7610-mergetool.sh`  
+`git/t/t7611-merge-abort.sh`  
+`git/t/t7612-merge-verify-signatures.sh`  
+`git/t/t7614-merge-signoff.sh`  
+`git/t/t7615-diff-algo-with-mergy-operations.sh`  
+
+**Auxiliary:** `git/t/t6200-fmt-merge-msg.sh`, `git/t/t5402-post-merge-hook.sh`, `git/t/t6060-merge-index.sh` (**`git merge-index`**, plumbing—port only if needed by merge tests)
+
+- [ ] **merge.1** Fast-forward, trivial, conflicted merges; `MERGE_HEAD` state (`t7600`, `t7607`).
+- [ ] **merge.2** Octopus, reduce parents (`t7602`, `t7603`).
+- [ ] **merge.3** Custom messages, `fmt-merge-msg`, pull config (`t7604`, `t7608`, `t6200`, `t7601`).
+- [ ] **merge.4** Ours/theirs, strategies, subtree (`t6417`, `t6409`, `t6430`–`t6434`).
+- [ ] **merge.5** Rename / directory rename / binary / symlink cases (entire `t640*`–`t643*`).
+- [ ] **merge.6** Sparse / submodule merges (`t6428`, `t6437`, `t6438`) — submodule track.
+- [ ] **merge.7** `git mergetool` (`t7609`, `t7610`) — optional.
+- [ ] **merge.8** Abort, signoff, signature verification (`t7611`, `t7614`, `t7612`).
+- [ ] **merge.9** Port full `t64*` + `t76*` + hooks/auxiliary as scoped.
+
+---
+
+## `log`
+
+**Upstream tests (`git/t/`):**  
+`git/t/t4201-shortlog.sh` (**`git shortlog`**, sibling command)  
+`git/t/t4202-log.sh`  
+`git/t/t4203-mailmap.sh`  
+`git/t/t4204-patch-id.sh` (**`git patch-id`**)  
+`git/t/t4205-log-pretty-formats.sh`  
+`git/t/t4206-log-follow-harder-copies.sh`  
+`git/t/t4207-log-decoration-colors.sh`  
+`git/t/t4208-log-magic-pathspec.sh`  
+`git/t/t4209-log-pickaxe.sh`  
+`git/t/t4210-log-i18n.sh`  
+`git/t/t4211-line-log.sh`  
+`git/t/t4212-log-corrupt.sh`  
+`git/t/t4213-log-tabexpand.sh` (also **show** / expand-tabs)  
+`git/t/t4214-log-graph-octopus.sh`  
+`git/t/t4215-log-skewed-merges.sh`  
+`git/t/t4216-log-bloom.sh`  
+`git/t/t4217-log-limit.sh`  
+
+**Not `git log`:** `git/t/t4200-rerere.sh` — defer unless implementing rerere.
+
+- [ ] **log.1** Basic listing, topo/date order, `--graph`, decorations (`t4202`, `t4207`, `t4214`).
+- [ ] **log.2** Format placeholders, colors (`t4205`).
+- [ ] **log.3** Pathspec history, follow, pickaxe (`t4206`, `t4208`, `t4209`, `t4211`).
+- [ ] **log.4** Mailmap (`t4203`).
+- [ ] **log.5** Limiters, skew merges, bloom filter (`t4217`, `t4215`, `t4216`).
+- [ ] **log.6** Corrupt repo behavior (`t4212`).
+- [ ] **log.7** Shortlog (`t4201`) — implement or defer explicitly.
+- [ ] **log.8** Port all `t420*`–`t4217` except `t4200` unless rerere is in scope.
+
+---
+
+## `stash`
+
+**Upstream tests (`git/t/`):**  
+`git/t/t3903-stash.sh`  
+`git/t/t3904-stash-patch.sh`  
+`git/t/t3905-stash-include-untracked.sh`  
+`git/t/t3906-stash-submodule.sh`  
+`git/t/t3907-stash-show-config.sh`  
+`git/t/t3908-stash-in-worktree.sh`  
+`git/t/t3909-stash-pathspec-file.sh`  
+`git/t/t3420-rebase-autostash.sh` (uses stash via rebase — defer if rebase not in v3)
+
+- [ ] **stash.1** push/pop/apply/list/show/branch/drop/clear; WIP message defaults.
+- [ ] **stash.2** Patch stash (`t3904`).
+- [ ] **stash.3** Include untracked (`t3905`).
+- [ ] **stash.4** Multiple worktrees (`t3908`).
+- [ ] **stash.5** Pathspec from file (`t3909`).
+- [ ] **stash.6** Config (`t3907`).
+- [ ] **stash.7** Submodule (`t3906`).
+- [ ] **stash.8** Port `t3903`–`t3909`.
+
+---
+
+## `tag`
+
+**Upstream tests (`git/t/`):**  
+`git/t/t7004-tag.sh`  
+`git/t/t7030-verify-tag.sh`  
+`git/t/t7031-verify-tag-signed-ssh.sh`  
+
+**Related fetch tests:** `git/t/t5503-tagfollow.sh`, `git/t/t5525-fetch-tagopt.sh`, `git/t/perf/p5550-fetch-tags.sh`
+
+- [ ] **tag.1** Create lightweight / annotated; list; delete; `-a`, `-s`, `-u`, force (`t7004`).
+- [ ] **tag.2** Verify (`t7030`, `t7031`).
+- [ ] **tag.3** Integration with fetch (`t5503`, `t5525`).
+- [ ] **tag.4** Port `t7004`–`t7031` and tag-related fetch scripts.
+
+---
+
+## `show`
+
+**Upstream tests (`git/t/`):**  
+`git/t/t7007-show.sh`  
+
+**Shared with log:** `git/t/t4213-log-tabexpand.sh`
+
+- [ ] **show.1** Commits, trees, blobs, tags; diff output; merge commits; path limiting.
+- [ ] **show.2** Port `t7007` and relevant `t4213` cases.
+
+---
+
+## `fetch`, `push`, `pull`, `remote`
+
+See [Transport, remote, fetch, push, pull](#transport-remote-fetch-push-pull-shared-t5500t5583) for the **complete** `t5500`–`t5583`, protocol, remote-helper, and `t5411` inventories.
+
+Per-command checklist:
+
+- [ ] **fetch** — Port all fetch-centric scripts in that block + `t57*`/`t58*` as needed.
+- [ ] **push** — Port push-centric + `t5411` + receive hooks (`t5400`–`t5408` send-pack family if push tests need them).
+- [ ] **pull** — `t5520`–`t5524`, `t5572`, `t5573`, `t7601`.
+- [ ] **remote** — `t5505`, `t5506`, `t5507`, `t5511`, `t5512`, `t5553`, `t5801`, `t5406`, `t5409`, plus remote sections of shared scripts.
+
+**Send-pack / receive-pack plumbing (often required by push tests):**  
+`git/t/t5400-send-pack.sh`, `git/t/t5401-update-hooks.sh`, `git/t/t5402-post-merge-hook.sh`, `git/t/t5403-post-checkout-hook.sh`, `git/t/t5404-tracking-branches.sh`, `git/t/t5405-send-pack-rewind.sh`, `git/t/t5406-remote-rejects.sh`, `git/t/t5407-post-rewrite-hook.sh`, `git/t/t5408-send-pack-stdin.sh`, `git/t/t5409-colorize-remote-messages.sh`
+
+---
+
+## Appendix A — Performance scripts (`git/t/perf/`)
+
+Optional parity checks; map to v3 themes:
+
+| Script | Relates to |
+|--------|------------|
+| `p0005-status.sh` | status |
+| `p0006-read-tree-checkout.sh` | checkout / read-tree |
+| `p4000-diff-algorithms.sh`, `p4001-diff-no-index.sh`, `p4002-diff-color-moved.sh` | diff |
+| `p4205-log-pretty-formats.sh`, `p4209-pickaxe.sh`, `p4211-line-log.sh`, `p4220-log-grep-engines.sh`, `p4221-log-grep-engines-fixed.sh` | log |
+| `p5550-fetch-tags.sh`, `p5551-fetch-rescan.sh` | fetch |
+| `p5600-partial-clone.sh`, `p5601-clone-reference.sh` | clone |
+| `p7102-reset.sh` | reset |
+| `p7519-fsmonitor.sh`, `p7527-builtin-fsmonitor.sh` | status / fsmonitor |
+
+(Plus pack/bitmap perf scripts if v3 scope includes fetch bitmaps: `p5310`–`p5333`, etc.)
+
+---
+
+## Appendix B — Foreign SCM and wrapper tests (defer or gate)
+
+Examples: `git/t/t91*.sh`, `git/t/t92*.sh`, `git/t/t98*.sh`, `git/t/t99*.sh` (svn, p4, cvsexportcommit), `git/t/t9211-scalar-clone.sh`, `git/t/perf/p9210-scalar.sh`. Only port if v3 explicitly requires parity with those integrations.
+
+---
+
+## Appendix C — Submodule-heavy scripts (intersecting v3 commands)
+
+**Libraries:** `git/t/lib-submodule-update.sh`, `git/t/lib-verify-submodule-gitdir-path.sh`
+
+**Tests (`git/t/`, from `ls *submodule*.sh`):**  
+`git/t/t1013-read-tree-submodule.sh`  
+`git/t/t1406-submodule-ref-store.sh`  
+`git/t/t2013-checkout-submodule.sh`  
+`git/t/t2206-add-submodule-ignored.sh`  
+`git/t/t2405-worktree-submodule.sh`  
+`git/t/t3007-ls-files-recurse-submodules.sh`  
+`git/t/t3009-ls-files-others-nonsubmodule.sh`  
+`git/t/t3207-branch-submodule.sh`  
+`git/t/t3426-rebase-submodule.sh`  
+`git/t/t3512-cherry-pick-submodule.sh`  
+`git/t/t3513-revert-submodule.sh`  
+`git/t/t3906-stash-submodule.sh`  
+`git/t/t4027-diff-submodule.sh`  
+`git/t/t4041-diff-submodule-option.sh`  
+`git/t/t4059-diff-submodule-not-initialized.sh`  
+`git/t/t4060-diff-submodule-option-diff-format.sh`  
+`git/t/t4134-apply-submodule.sh`  
+`git/t/t4137-apply-submodule.sh`  
+`git/t/t4255-am-submodule.sh`  
+`git/t/t5526-fetch-submodules.sh`  
+`git/t/t5531-deep-submodule-push.sh`  
+`git/t/t5572-pull-submodule.sh`  
+`git/t/t5614-clone-submodules-shallow.sh`  
+`git/t/t5617-clone-submodules-remote.sh`  
+`git/t/t5815-submodule-protos.sh`  
+`git/t/t6008-rev-list-submodule.sh`  
+`git/t/t6041-bisect-submodule.sh`  
+`git/t/t6134-pathspec-in-submodule.sh`  
+`git/t/t6437-submodule-merge.sh`  
+`git/t/t6438-submodule-directory-file-conflicts.sh`  
+`git/t/t7112-reset-submodule.sh`  
+`git/t/t7400-submodule-basic.sh`  
+`git/t/t7401-submodule-summary.sh`  
+`git/t/t7402-submodule-rebase.sh`  
+`git/t/t7403-submodule-sync.sh`  
+`git/t/t7406-submodule-update.sh`  
+`git/t/t7407-submodule-foreach.sh`  
+`git/t/t7408-submodule-reference.sh`  
+`git/t/t7409-submodule-detached-work-tree.sh`  
+`git/t/t7411-submodule-config.sh`  
+`git/t/t7412-submodule-absorbgitdirs.sh`  
+`git/t/t7413-submodule-is-active.sh`  
+`git/t/t7414-submodule-mistakes.sh`  
+`git/t/t7416-submodule-dash-url.sh`  
+`git/t/t7417-submodule-path-url.sh`  
+`git/t/t7418-submodule-sparse-gitmodules.sh`  
+`git/t/t7419-submodule-set-branch.sh`  
+`git/t/t7420-submodule-set-url.sh`  
+`git/t/t7421-submodule-summary-add.sh`  
+`git/t/t7422-submodule-output.sh`  
+`git/t/t7423-submodule-symlinks.sh`  
+`git/t/t7424-submodule-mixed-ref-formats.sh`  
+`git/t/t7425-submodule-gitdir-path-extension.sh`  
+`git/t/t7426-submodule-get-default-remote.sh`  
+`git/t/t7506-status-submodule.sh`  
+`git/t/t7814-grep-recurse-submodules.sh`  
+
+Treat **submodule support** as a cross-cutting epic or defer scripts until a submodule phase exists (many of the above also depend on commands outside the v3 list, e.g. `rebase`, `cherry-pick`, `grep`).
 
 ---
 
 ## Completion criteria
 
-v2 is “done” when:
-
-1. All twelve commands are exposed as `gust <command>` with behavior matching upstream for the **ported** test set.
-2. Manpage parity (or a tracked checklist similar to [`docs/manpage-parity.md`](../docs/manpage-parity.md)) is updated for v2 commands.
-3. `cargo test --workspace` and `./tests/harness/run.sh` (with v2 entries in `tests/harness/selected-tests.txt`) succeed for the agreed script list.
+1. All **22** commands available as `gust <command>` with behavior matching upstream for the **ported** `git/t` subset (including full series listed here where claimed).
+2. `cargo test --workspace` green; harness (`./tests/harness/run.sh`) green with `tests/harness/selected-tests.txt` covering v3 scripts.
+3. Manpage / behavior checklist extended for every v3 command (similar spirit to [`docs/manpage-parity.md`](../docs/manpage-parity.md)).
+4. Document explicit **deferrals** (submodules, fsmonitor, foreign SCM, format-patch, rerere, mergetool, etc.) anywhere the full upstream inventory is not targeted.

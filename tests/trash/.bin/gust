@@ -1,2 +1,2 @@
 #!/bin/sh
-exec "/Users/schacon/projects/gust/target/debug/gust" "$@"
+exec "/home/hasi/gust/target/debug/gust" "$@"
