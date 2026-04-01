@@ -52,6 +52,7 @@ t4044-diff-index-unique-abbrev.sh
 t1010-mktree.sh
 t5000-write-tree.sh
 t5301-sliding-window.sh
+t5302-pack-index.sh
 t5304-prune.sh
 t5613-info-alternate.sh
 t7700-repack.sh

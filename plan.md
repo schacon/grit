@@ -673,6 +673,15 @@ These scripts live in [`git/t/`](../git/t/). Most **fetch/push/remote/pull** wor
 
 ---
 
+## `prune-packed`
+
+**Upstream source:** `git/builtin/prune-packed.c`, `git/prune-packed.c`
+
+- [x] **prune-packed.1** Walk loose object store; delete objects already present in any local pack index; `--dry-run` / `-n` prints `rm -f <path>` without deleting; `--quiet` / `-q` suppresses progress.
+- [x] **prune-packed.2** Port `tests/t5302-pack-index.sh` — all 5 tests pass.
+
+---
+
 ## `fetch`, `push`, `pull`, `remote`
 
 See [Transport, remote, fetch, push, pull](#transport-remote-fetch-push-pull-shared-t5500t5583) for the **complete** `t5500`–`t5583`, protocol, remote-helper, and `t5411` inventories.
