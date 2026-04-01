@@ -34,6 +34,7 @@ pub mod merge_file;
 pub mod mktag;
 pub mod mktree;
 pub mod mv;
+pub mod name_rev;
 pub mod prune_packed;
 pub mod read_tree;
 pub mod repack;
