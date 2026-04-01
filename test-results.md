@@ -1,5 +1,28 @@
 # Test results (latest run)
 
+Last update: 2026-04-01 (v4 phase 3: grit var command).
+
+## v4 var implementation (2026-04-01)
+
+### Required validation commands
+
+- `cargo fmt` -> PASS
+- `cargo clippy --workspace -- -D warnings` -> PASS
+- `cargo test --workspace` -> PASS (5 tests, 0 failures)
+- `./tests/harness/run.sh` -> 61 scripts (t0007 added: 25/25 PASS)
+
+### Newly added scripts in this wave
+
+- `tests/t0007-git-var.sh` -> PASS (`25/25`)
+
+### Notes
+
+- Pre-existing worktree path issue causes 3 failures in `t1007-hash-object.sh`
+  (grit's `Repository::discover` cannot resolve symlinked worktree `.git`).
+  Unrelated to var implementation; was not a failure in the main-repo context.
+
+---
+
 Last update: 2026-03-31 (v2 completion wave: rev-parse prefix + repack + gc).
 
 ## Final v2 completion validation (2026-03-31)

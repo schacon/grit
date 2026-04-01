@@ -1,5 +1,6 @@
 t0000-basic.sh
 t0001-init.sh
+t0007-git-var.sh
 t0008-ignores.sh
 t1300-config.sh
 t1000-read-tree-m-3way.sh

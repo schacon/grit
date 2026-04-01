@@ -132,6 +132,8 @@ enum Command {
     /// Build a tree object from ls-tree formatted text.
     #[command(name = "mktree")]
     MkTree(commands::mktree::Args),
+    /// Show a Git logical variable.
+    Var(commands::var::Args),
 }
 
 fn main() {
@@ -193,5 +195,6 @@ fn run() -> Result<()> {
         Command::Rm(args) => commands::rm::run(args),
         Command::Mv(args) => commands::mv::run(args),
         Command::MkTree(args) => commands::mktree::run(args),
+        Command::Var(args) => commands::var::run(args),
     }
 }
