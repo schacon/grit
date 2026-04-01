@@ -131,6 +131,7 @@ test_commit () {
 	git add "$file"
 	test_tick
 	git commit -q -m "$1"
+	git tag "$1"
 }
 
 # Evaluate $2 and check $1 == stdout.
@@ -192,6 +193,23 @@ test_expect_failure () {
 		test_failures="$test_failures
   FAIL(expected) $test_count: $description"
 		printf '%snot ok %d - %s%s\n' "$RED" "$test_count" "$description" "$RESET" >&2
+	fi
+}
+
+test_when_finished () {
+	# Register a command to run when the current test's subshell exits.
+	# Since each test_expect_success body runs in its own subshell, an EXIT
+	# trap is the right hook.  Multiple calls accumulate.
+	_twf_cmd="${_twf_cmd:+${_twf_cmd}; }$*"
+	trap 'eval "$_twf_cmd"' EXIT
+}
+
+test_must_be_empty () {
+	if test -s "$1"
+	then
+		echo "file '$1' is not empty"
+		cat "$1"
+		return 1
 	fi
 }
 
