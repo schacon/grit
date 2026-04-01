@@ -38,6 +38,7 @@ pub mod rev_list;
 pub mod rev_parse;
 pub mod rm;
 pub mod show;
+pub mod show_index;
 pub mod show_ref;
 pub mod status;
 pub mod switch;
