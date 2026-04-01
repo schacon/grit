@@ -1,6 +1,47 @@
 # Test results (latest run)
 
-Last update: 2026-03-31 (Phase 7.1/7.2/7.3/7.4).
+Last update: 2026-03-31 (Phase 5.1/5.2/5.3/5.5).
+
+## Phase 5 rev-list validation (2026-03-31)
+
+### Required validation commands
+
+- `cargo fmt` -> PASS
+- `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+- `cargo test --workspace` -> PASS (5 tests, 0 failures)
+
+### Newly ported shell scripts
+
+- `tests/t6000-rev-list-misc.sh` -> PASS (`4/4`)
+- `tests/t6003-rev-list-topo-order.sh` -> PASS (`4/4`)
+- `tests/t6005-rev-list-count.sh` -> PASS (`5/5`)
+- `tests/t6006-rev-list-format.sh` -> PASS (`4/4`)
+- `tests/t6014-rev-list-all.sh` -> PASS (`2/2`)
+- `tests/t6017-rev-list-stdin.sh` -> PASS (`4/4`)
+
+### Notes
+
+- Implemented and validated a coherent `rev-list` subset covering range parsing (`^A`, `A..B`), `--all`, `--stdin`, `--first-parent`, `--ancestry-path`, `--simplify-by-decoration`, ordering (`--topo-order`, `--date-order`, `--reverse`), limits (`--max-count`, `-n`, `--skip`, `--count`), and formatting (`--parents`, `--format`, `--quiet`).
+- Deferred rev-list functionality remains tracked in `plan.md` item **5.4** (bitmap/promisor behavior).
+
+## Phase 6 diff-index validation (2026-03-31)
+
+### Required validation commands
+
+- `cargo fmt` -> PASS
+- `cargo clippy --workspace --all-targets -- -D warnings` -> PASS
+- `cargo test --workspace` -> PASS (5 tests, 0 failures)
+
+### Newly ported shell scripts
+
+- `tests/t4013-diff-various.sh` -> PASS (`4/4`)
+- `tests/t4017-diff-retval.sh` -> PASS (`5/5`)
+- `tests/t4044-diff-index-unique-abbrev.sh` -> PASS (`3/3`)
+
+### Notes
+
+- Implemented `gust diff-index` for selected Phase 6 subset: raw output, `--cached`, non-cached missing-file handling with `-m`, `--quiet`/`--exit-code`, `--abbrev[=<n>]`, and basic pathspec filtering.
+- `--patch` (`-p`) is intentionally not implemented in this subset because the selected scripts do not require patch output.
 
 ## Phase 7 for-each-ref validation (2026-03-31)
 

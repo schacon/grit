@@ -113,11 +113,11 @@ Representative files to prioritize:
 - [`git/t/t6014-rev-list-all.sh`](../git/t/t6014-rev-list-all.sh)
 - [`git/t/t6017-rev-list-stdin.sh`](../git/t/t6017-rev-list-stdin.sh)
 
-- [ ] **5.1** Commit walking: `--first-parent`, `--ancestry-path`, `--simplify-by-decoration`, simplification flags as required by chosen tests.
-- [ ] **5.2** Ordering: topo, date, reverse; `--objects` / `--object-names` / `--filter-print-omitted` only if in scope.
-- [ ] **5.3** Output formatting: `--format`, hash-only modes, `--quiet` / exit code conventions.
+- [x] **5.1** Commit walking: `--first-parent`, `--ancestry-path`, `--simplify-by-decoration`, simplification flags as required by chosen tests.
+- [x] **5.2** Ordering: topo, date, reverse; `--objects` / `--object-names` / `--filter-print-omitted` only if in scope.
+- [x] **5.3** Output formatting: `--format`, hash-only modes, `--quiet` / exit code conventions.
 - [ ] **5.4** Bitmap or lazy promisor behavior — **defer** unless a ported test requires it.
-- [ ] **5.5** Port agreed `t600*.sh` subset; document explicitly which rev-list features remain out of scope for v2 if not all upstream tests are targeted.
+- [x] **5.5** Port agreed `t600*.sh` subset; document explicitly which rev-list features remain out of scope for v2 if not all upstream tests are targeted.
 
 ---
 
@@ -131,10 +131,10 @@ Representative files to prioritize:
 - [`git/t/t4017-diff-retval.sh`](../git/t/t4017-diff-retval.sh)
 - [`git/t/t4044-diff-index-unique-abbrev.sh`](../git/t/t4044-diff-index-unique-abbrev.sh)
 
-- [ ] **6.1** Compare index vs tree / HEAD: `--cached`, `--merge`, `-m`, `--exit-code`, `--quiet`, `--raw`, `-p` (patch) paths used in tests.
-- [ ] **6.2** Diff options shared with `git diff` (rename, indent heuristic, etc.) only as required by ported scripts.
-- [ ] **6.3** Pathspec handling and stat/cache interaction consistent with v1 index behavior.
-- [ ] **6.4** Port selected diff-index-heavy scripts; avoid pulling the entire `t4000` diff suite unless v2 explicitly widens scope.
+- [x] **6.1** Compare index vs tree / HEAD: `--cached`, `--merge`, `-m`, `--exit-code`, `--quiet`, `--raw`, `-p` (patch) paths used in tests.
+- [x] **6.2** Diff options shared with `git diff` (rename, indent heuristic, etc.) only as required by ported scripts.
+- [x] **6.3** Pathspec handling and stat/cache interaction consistent with v1 index behavior.
+- [x] **6.4** Port selected diff-index-heavy scripts; avoid pulling the entire `t4000` diff suite unless v2 explicitly widens scope.
 
 ---
 

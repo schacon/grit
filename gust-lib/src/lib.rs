@@ -24,4 +24,5 @@ pub mod odb;
 pub mod pack;
 pub mod refs;
 pub mod repo;
+pub mod rev_list;
 pub mod rev_parse;

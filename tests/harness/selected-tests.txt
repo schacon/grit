@@ -19,6 +19,12 @@ t1404-update-ref-errors.sh
 t1422-show-ref-exists.sh
 t1500-rev-parse.sh
 t1503-rev-parse-verify.sh
+t6000-rev-list-misc.sh
+t6003-rev-list-topo-order.sh
+t6005-rev-list-count.sh
+t6006-rev-list-format.sh
+t6014-rev-list-all.sh
+t6017-rev-list-stdin.sh
 t6300-for-each-ref.sh
 t6301-for-each-ref-errors.sh
 t6302-for-each-ref-filter.sh
@@ -33,6 +39,9 @@ t3004-ls-files-basic.sh
 t3100-ls-tree-restrict.sh
 t3102-ls-tree-wildcards.sh
 t3902-quoted-ls-tree.sh
+t4013-diff-various.sh
+t4017-diff-retval.sh
+t4044-diff-index-unique-abbrev.sh
 t5000-write-tree.sh
 t5301-sliding-window.sh
 t5304-prune.sh
