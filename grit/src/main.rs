@@ -171,6 +171,9 @@ enum Command {
     /// Write a blob object to a temporary file and print its path.
     #[command(name = "unpack-file")]
     UnpackFile(commands::unpack_file::Args),
+    /// Unpack objects from a pack stream into the object database.
+    #[command(name = "unpack-objects")]
+    UnpackObjects(commands::unpack_objects::Args),
 }
 
 fn main() {
@@ -247,5 +250,6 @@ fn run() -> Result<()> {
         Command::Stripspace(args) => commands::stripspace::run(args),
         Command::Switch(args) => commands::switch::run(args),
         Command::UnpackFile(args) => commands::unpack_file::run(args),
+        Command::UnpackObjects(args) => commands::unpack_objects::run(args),
     }
 }
