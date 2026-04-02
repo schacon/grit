@@ -259,4 +259,64 @@ test_expect_success 'patch-id default is same as --stable' '
 	test_cmp pid_def pid_stable
 '
 
+test_expect_success 'patch-id detects equality for equivalent patches' '
+	cd repo &&
+	git show HEAD >p1 &&
+	git show HEAD >p2 &&
+	git patch-id <p1 >id1 &&
+	git patch-id <p2 >id2 &&
+	sed "s/ .*//" id1 >id1_hash &&
+	sed "s/ .*//" id2 >id2_hash &&
+	test_cmp id1_hash id2_hash
+'
+
+test_expect_success 'patch-id detects inequality for different patches' '
+	cd repo &&
+	git show HEAD >p1 &&
+	git show HEAD~1 >p2 &&
+	git patch-id <p1 >id1 &&
+	git patch-id <p2 >id2 &&
+	sed "s/ .*//" id1 >id1_hash &&
+	sed "s/ .*//" id2 >id2_hash &&
+	! test_cmp id1_hash id2_hash
+'
+
+test_expect_success 'patch-id handles no-nl-at-eof markers' '
+	cd repo &&
+	cat >nonl <<-\EOF &&
+	commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+	diff --git a/x b/x
+	index e69de29..2e65efe 100644
+	--- a/x
+	+++ b/x
+	@@ -0,0 +1 @@
+	+a
+	\ No newline at end of file
+	EOF
+	git patch-id <nonl >nonl.out &&
+	grep "^$OID_REGEX $OID_REGEX$" nonl.out
+'
+
+test_expect_success 'patch-id handles diffs with one line of before/after' '
+	cd repo &&
+	cat >diffu1 <<-\EOF &&
+	commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+	diff --git a/bar b/bar
+	index bdaf90f..31051f6 100644
+	--- a/bar
+	+++ b/bar
+	@@ -2 +2,2 @@
+	 b
+	+c
+	EOF
+	git patch-id <diffu1 >diffu1.out &&
+	grep "^$OID_REGEX $OID_REGEX$" diffu1.out
+'
+
+test_expect_success 'patch-id on empty diff produces no output' '
+	cd repo &&
+	git patch-id </dev/null >empty.out &&
+	test_must_be_empty empty.out
+'
+
 test_done
