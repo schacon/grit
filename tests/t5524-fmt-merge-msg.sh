@@ -189,4 +189,36 @@ test_expect_success '--into-name alone without -m works' '
 	grep -q "branch '"'"'feat'"'"'" actual
 '
 
+test_expect_success 'two branches from different remotes' '
+	printf "a1\t\tbranch '"'"'x'"'"' of https://one.com\nb2\t\tbranch '"'"'y'"'"' of https://two.com\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branch '"'"'x'"'"'" actual &&
+	grep -q "branch '"'"'y'"'"'" actual
+'
+
+test_expect_success 'fmt-merge-msg with empty stdin produces empty output' '
+	git fmt-merge-msg </dev/null >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'single tag without remote' '
+	printf "abc123\t\ttag '"'"'v2.0'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "tag '"'"'v2.0'"'"'" actual
+'
+
+test_expect_success '-m replaces default subject line' '
+	printf "abc123\t\tbranch '"'"'test'"'"'\n" |
+	git fmt-merge-msg -m "My custom msg" >actual &&
+	head -1 actual >first &&
+	echo "My custom msg" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'four branches lists all of them' '
+	printf "a1\t\tbranch '"'"'w'"'"'\nb2\t\tbranch '"'"'x'"'"'\nc3\t\tbranch '"'"'y'"'"'\nd4\t\tbranch '"'"'z'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branches" actual
+'
+
 test_done
