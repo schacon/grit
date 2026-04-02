@@ -241,7 +241,7 @@ pub fn run(args: Args) -> Result<()> {
         return match sub {
             ConfigSubcommand::Get(get_args) => cmd_get(&args, get_args, git_dir.as_deref()),
             ConfigSubcommand::Set(set_args) => cmd_set(&args, set_args, scope, &file_path, None),
-            ConfigSubcommand::Unset(unset_args) => cmd_unset(&args, unset_args, scope, &file_path),
+            ConfigSubcommand::Unset(unset_args) => cmd_unset(&args, unset_args, scope, &file_path, None),
             ConfigSubcommand::List(_) => cmd_list(&args, git_dir.as_deref()),
             ConfigSubcommand::RenameSection(rs) => {
                 cmd_rename_section(scope, &file_path, &rs.old_name, &rs.new_name)
@@ -294,7 +294,8 @@ pub fn run(args: Args) -> Result<()> {
             key: key.clone(),
             all: false,
         };
-        return cmd_unset(&args, &unset_args, scope, &file_path);
+        let value_pattern = args.positional.first().map(|s| s.as_str());
+        return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern);
     }
 
     if let Some(ref key) = args.unset_all_key {
@@ -302,7 +303,8 @@ pub fn run(args: Args) -> Result<()> {
             key: key.clone(),
             all: true,
         };
-        return cmd_unset(&args, &unset_args, scope, &file_path);
+        let value_pattern = args.positional.first().map(|s| s.as_str());
+        return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern);
     }
 
     if let Some(ref key) = args.add_key {
@@ -471,13 +473,20 @@ fn cmd_unset(
     unset_args: &UnsetArgs,
     scope: ConfigScope,
     file_path: &Path,
+    value_pattern: Option<&str>,
 ) -> Result<()> {
     let mut config = ConfigFile::from_path(file_path, scope).context("reading config file")?;
 
     match config {
         Some(ref mut cfg) => {
             if unset_args.all {
-                let removed = cfg.unset(&unset_args.key)?;
+                let removed = cfg.unset_matching(&unset_args.key, value_pattern)?;
+                if removed == 0 {
+                    std::process::exit(5);
+                }
+            } else if let Some(pattern) = value_pattern {
+                // --unset with value-pattern: remove only matching values
+                let removed = cfg.unset_matching(&unset_args.key, Some(pattern))?;
                 if removed == 0 {
                     std::process::exit(5);
                 }

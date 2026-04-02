@@ -484,27 +484,26 @@ impl ConfigFile {
     /// - `value` — the value to set.
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
         let canon = canonical_key(key)?;
-        // Extract original-case variable name from the raw key
-        let raw_var = raw_variable_name(key);
+        // Git lowercases variable names when writing
+        let var_lower = raw_variable_name(key).to_lowercase();
 
         // Find the last entry with this key to replace in-place.
         let existing_idx = self.entries.iter().rposition(|e| e.key == canon);
 
         if let Some(idx) = existing_idx {
             let line_idx = self.entries[idx].line - 1;
-            // Rebuild the line, preserving the user's variable name case
-            self.raw_lines[line_idx] = format!("\t{} = {}", raw_var, escape_value(value));
+            self.raw_lines[line_idx] = format!("\t{} = {}", var_lower, escape_value(value));
             self.entries[idx].value = Some(value.to_owned());
         } else {
             // Need to add: find or create the section
             let (section, subsection, _var) = split_key(&canon)?;
-            // Extract original-case section/subsection from the raw key
-            let (raw_sec, raw_sub) = raw_section_parts(key);
+            // Git lowercases section names; subsection preserves case
+            let (_raw_sec, raw_sub) = raw_section_parts(key);
             let section_line = self.find_or_create_section_preserving_case(
                 &section, subsection.as_deref(),
-                &raw_sec, raw_sub.as_deref(),
+                &section, raw_sub.as_deref(),
             );
-            let new_line = format!("\t{} = {}", raw_var, escape_value(value));
+            let new_line = format!("\t{} = {}", var_lower, escape_value(value));
 
             // Insert after the section header (or last entry in section)
             let insert_at = self.last_line_in_section(section_line) + 1;
@@ -526,7 +525,7 @@ impl ConfigFile {
     /// the last occurrence with the new value (matching Git behaviour).
     pub fn replace_all(&mut self, key: &str, value: &str, value_pattern: Option<&str>) -> Result<()> {
         let canon = canonical_key(key)?;
-        let raw_var = raw_variable_name(key);
+        let var_lower = raw_variable_name(key).to_lowercase();
 
         // Compile optional regex pattern
         let re = match value_pattern {
@@ -570,7 +569,7 @@ impl ConfigFile {
 
         // Update the first matching entry's line with the new value
         let first_line_idx = self.entries[first_match].line - 1;
-        self.raw_lines[first_line_idx] = format!("\t{} = {}", raw_var, escape_value(value));
+        self.raw_lines[first_line_idx] = format!("\t{} = {}", var_lower, escape_value(value));
         self.entries[first_match].value = Some(value.to_owned());
 
         // Remove remaining matching lines from bottom to top
@@ -633,6 +632,51 @@ impl ConfigFile {
 
         let count = line_indices.len();
         // Remove from bottom to top to keep indices valid
+        for &idx in line_indices.iter().rev() {
+            self.raw_lines.remove(idx);
+        }
+
+        if count > 0 {
+            let content = self.raw_lines.join("\n");
+            let reparsed = Self::parse(&self.path, &content, self.scope)?;
+            self.entries = reparsed.entries;
+            self.raw_lines = reparsed.raw_lines;
+        }
+
+        Ok(count)
+    }
+
+    /// Unset entries matching a key and optional value-pattern regex.
+    ///
+    /// If `value_pattern` is `None`, removes all entries with the given key.
+    /// If `value_pattern` is `Some(pat)`, only removes entries whose value matches the regex.
+    pub fn unset_matching(&mut self, key: &str, value_pattern: Option<&str>) -> Result<usize> {
+        let canon = canonical_key(key)?;
+        let re = match value_pattern {
+            Some(pat) => Some(
+                regex::Regex::new(pat)
+                    .map_err(|e| Error::ConfigError(format!("invalid value-pattern regex: {e}")))?),
+            None => None,
+        };
+
+        let line_indices: Vec<usize> = self
+            .entries
+            .iter()
+            .filter(|e| {
+                if e.key != canon {
+                    return false;
+                }
+                if let Some(ref re) = re {
+                    let v = e.value.as_deref().unwrap_or("");
+                    re.is_match(v)
+                } else {
+                    true
+                }
+            })
+            .map(|e| e.line - 1)
+            .collect();
+
+        let count = line_indices.len();
         for &idx in line_indices.iter().rev() {
             self.raw_lines.remove(idx);
         }

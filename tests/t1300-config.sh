@@ -666,8 +666,8 @@ test_expect_success 'multivar replace with value-pattern' '
 	git config next.nonewline "wow3" "wow$" &&
 	git config --get-all next.nonewline >actual &&
 	cat >expect <<-\EOF &&
-	wow
 	wow3
+	wow2 for me
 	EOF
 	test_cmp expect actual
 '
@@ -680,7 +680,9 @@ test_expect_success 'multivar unset with value-pattern' '
 		nonewline = wow2 for me
 	EOF
 	git config --unset next.nonewline "wow3" &&
-	test_must_fail git config next.nonewline
+	git config next.nonewline >actual &&
+	echo "wow2 for me" >expect &&
+	test_cmp expect actual
 '
 
 # ── invalid/correct keys ──────────────────────────────────────────────────────
