@@ -17,7 +17,7 @@ GRIT="$REPO_ROOT/target/release/grit"
 GIT="$(which git)"
 BENCH_DIR="$REPO_ROOT/bench"
 RESULTS_DIR="$BENCH_DIR/results"
-SCRATCH="$BENCH_DIR/.scratch"
+SCRATCH="/tmp/grit-bench-scratch"
 
 # ── Preflight ──────────────────────────────────────────────────────
 
