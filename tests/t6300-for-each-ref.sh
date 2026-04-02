@@ -1609,4 +1609,255 @@ EOF
 	test_cmp expect actual
 '
 
+# ── cross-filter combinations ─────────────────────────────────────────────────
+
+test_expect_success '--merged=side --no-merged=main shows only four' '
+	cd repo &&
+	echo "refs/tags/four" >expect &&
+	git for-each-ref --format="%(refname)" --merged=side --no-merged=main refs/tags >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--contains B --no-contains C shows diverged refs' '
+	cd repo &&
+	B=$(git rev-parse refs/tags/two) &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/tags/four
+refs/tags/two
+EOF
+	git for-each-ref --format="%(refname)" --contains="$B" --no-contains="$C" refs/tags >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--points-at + --merged combined' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/heads/main
+refs/tags/three
+refs/tags/v1.0
+refs/tags/v2.0
+EOF
+	git for-each-ref --format="%(refname)" --points-at="$C" --merged=main \
+		refs/heads refs/tags >actual &&
+	test_cmp expect actual
+'
+
+# ── many refs: bulk operations ───────────────────────────────────────────────
+
+test_expect_success 'setup many refs' '
+	cd repo &&
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		git update-ref "refs/heads/test-$i" $(git rev-parse refs/heads/main)
+	done
+'
+
+test_expect_success '--count=5 on many refs' '
+	cd repo &&
+	git for-each-ref --format="%(refname)" --count=5 "refs/heads/test-*" >actual &&
+	test_line_count = 5 actual
+'
+
+test_expect_success '--sort=-refname --count=3 on many refs' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+test-9
+test-8
+test-7
+EOF
+	git for-each-ref --format="%(refname:short)" --sort=-refname --count=3 \
+		"refs/heads/test-*" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--exclude on many refs' '
+	cd repo &&
+	git for-each-ref --format="%(refname)" "refs/heads/test-*" \
+		--exclude=refs/heads/test-5 >actual &&
+	test_line_count = 9 actual &&
+	! grep refs/heads/test-5 actual
+'
+
+test_expect_success '--points-at on many refs all pointing same commit' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	git for-each-ref --format="%(refname)" --points-at="$C" "refs/heads/test-*" >actual &&
+	test_line_count = 10 actual
+'
+
+test_expect_success 'cleanup many refs' '
+	cd repo &&
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		git update-ref -d "refs/heads/test-$i"
+	done
+'
+
+# ── multi-level namespace refs ───────────────────────────────────────────────
+
+test_expect_success 'setup multi-level namespace refs' '
+	cd repo &&
+	git update-ref refs/custom/level1/ref1 $(git rev-parse refs/heads/main) &&
+	git update-ref refs/custom/level1/ref2 $(git rev-parse refs/heads/side) &&
+	git update-ref refs/custom/level2/ref3 $(git rev-parse refs/heads/main)
+'
+
+test_expect_success 'list custom namespace refs' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/custom/level1/ref1
+refs/custom/level1/ref2
+refs/custom/level2/ref3
+EOF
+	git for-each-ref --format="%(refname)" refs/custom >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'filter custom namespace by sub-prefix' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/custom/level1/ref1
+refs/custom/level1/ref2
+EOF
+	git for-each-ref --format="%(refname)" refs/custom/level1 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--exclude in custom namespace' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/custom/level1/ref1
+refs/custom/level2/ref3
+EOF
+	git for-each-ref --format="%(refname)" refs/custom \
+		--exclude=refs/custom/level1/ref2 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--merged with custom namespace refs' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/custom/level1/ref1
+refs/custom/level2/ref3
+EOF
+	git for-each-ref --format="%(refname)" --merged=main refs/custom >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--no-merged with custom namespace refs' '
+	cd repo &&
+	echo "refs/custom/level1/ref2" >expect &&
+	git for-each-ref --format="%(refname)" --no-merged=main refs/custom >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'cleanup custom namespace refs' '
+	cd repo &&
+	git update-ref -d refs/custom/level1/ref1 &&
+	git update-ref -d refs/custom/level1/ref2 &&
+	git update-ref -d refs/custom/level2/ref3
+'
+
+# ── format with special chars in output ─────────────────────────────────────────
+
+test_expect_success 'format with parentheses in literal' '
+	cd repo &&
+	echo "(main)" >expect &&
+	git for-each-ref --format="(%(refname:short))" refs/heads/main >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'format with colon in literal' '
+	cd repo &&
+	echo "ref: main" >expect &&
+	git for-each-ref --format="ref: %(refname:short)" refs/heads/main >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'format with equals in literal' '
+	cd repo &&
+	echo "ref=main" >expect &&
+	git for-each-ref --format="ref=%(refname:short)" refs/heads/main >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'format with comma separator' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+main,commit
+side,commit
+EOF
+	git for-each-ref --format="%(refname:short),%(objecttype)" refs/heads >actual &&
+	test_cmp expect actual
+'
+
+# ── %(objectname) matches rev-parse for various refs ─────────────────────
+
+test_expect_success '%(objectname) matches rev-parse for side' '
+	cd repo &&
+	git rev-parse refs/heads/side >expect &&
+	git for-each-ref --format="%(objectname)" refs/heads/side >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '%(objectname) matches rev-parse for annotated tag' '
+	cd repo &&
+	git rev-parse refs/tags/v1.0 >expect &&
+	git for-each-ref --format="%(objectname)" refs/tags/v1.0 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '%(objectname) matches rev-parse for lightweight tag' '
+	cd repo &&
+	git rev-parse refs/tags/one >expect &&
+	git for-each-ref --format="%(objectname)" refs/tags/one >actual &&
+	test_cmp expect actual
+'
+
+# ── sort with --count larger than result set ─────────────────────────────────
+
+test_expect_success '--sort + --count larger than result set returns all sorted' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/heads/side
+refs/heads/main
+EOF
+	git for-each-ref --format="%(refname)" --sort=-refname --count=100 refs/heads >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--sort=objectname --count=1 returns hash-first ref' '
+	cd repo &&
+	git for-each-ref --format="%(objectname) %(refname)" --sort=objectname --count=1 refs/heads >actual &&
+	test_line_count = 1 actual
+'
+
+# ── --exclude all refs from a namespace ───────────────────────────────────────
+
+test_expect_success '--exclude entire namespace with glob' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/heads/main
+refs/heads/side
+refs/odd/spot
+EOF
+	git for-each-ref --format="%(refname)" \
+		--exclude="refs/tags/*" refs/heads refs/odd refs/tags >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--exclude glob leaves other namespaces intact' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/heads/main
+refs/heads/side
+refs/odd/spot
+refs/tags/v1.0
+refs/tags/v2.0
+EOF
+	git for-each-ref --format="%(refname)" \
+		--exclude="refs/tags/o*" --exclude="refs/tags/t*" --exclude="refs/tags/f*" >actual &&
+	test_cmp expect actual
+'
+
 test_done
