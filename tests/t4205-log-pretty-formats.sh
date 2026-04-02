@@ -1068,4 +1068,103 @@ test_expect_success 'format: %t shows abbreviated tree hash' '
 	esac
 '
 
+# ===========================================================================
+# Author and committer email/name placeholders
+# ===========================================================================
+
+test_expect_success 'format: %an shows author name' '
+	cd repo &&
+	out=$(git log --format="%an" -n 1) &&
+	test -n "$out"
+'
+
+test_expect_success 'format: %ae shows author email' '
+	cd repo &&
+	out=$(git log --format="%ae" -n 1) &&
+	echo "$out" | grep -q "@"
+'
+
+test_expect_success 'format: %cn shows committer name' '
+	cd repo &&
+	out=$(git log --format="%cn" -n 1) &&
+	test -n "$out"
+'
+
+test_expect_success 'format: %ce shows committer email' '
+	cd repo &&
+	out=$(git log --format="%ce" -n 1) &&
+	echo "$out" | grep -q "@"
+'
+
+# ===========================================================================
+# Consistency and edge cases
+# ===========================================================================
+
+test_expect_success 'format: %H matches rev-parse HEAD' '
+	cd repo &&
+	out=$(git log --format="%H" -n 1) &&
+	expected=$(git rev-parse HEAD) &&
+	test "$out" = "$expected"
+'
+
+test_expect_success 'format: %h is prefix of %H' '
+	cd repo &&
+	short=$(git log --format="%h" -n 1) &&
+	full=$(git log --format="%H" -n 1) &&
+	case "$full" in
+	"$short"*) ;;
+	*) return 1 ;;
+	esac
+'
+
+test_expect_success 'format: %s is non-empty for every commit' '
+	cd repo &&
+	git log --first-parent --format="%s" >subjects &&
+	while read -r line; do
+		test -n "$line" || return 1
+	done <subjects
+'
+
+test_expect_success 'format: %P for root commit is empty' '
+	cd repo &&
+	root=$(git rev-list HEAD | tail -1) &&
+	out=$(git log --format="%P" -n 1 "$root") &&
+	test -z "$out"
+'
+
+# ===========================================================================
+# Body and raw body
+# ===========================================================================
+
+test_expect_success 'format: %b shows empty body for single-line message' '
+	cd repo &&
+	out=$(git log --format="%b" -n 1 $(git rev-list HEAD | tail -1)) &&
+	test -z "$out"
+'
+
+test_expect_success 'format: %B shows full raw body including subject' '
+	cd repo &&
+	out=$(git log --format="%B" -n 1) &&
+	test -n "$out"
+'
+
+# ===========================================================================
+# Combining multiple placeholders in one format
+# ===========================================================================
+
+test_expect_success 'format: combined %H|%an|%s with separator' '
+	cd repo &&
+	git log --format="%H|%an|%s" -n 1 >actual &&
+	fields=$(echo $(cat actual) | tr "|" "\n" | wc -l | tr -d " ") &&
+	test "$fields" = "3"
+'
+
+test_expect_success 'format: %h length is between 4 and 40' '
+	cd repo &&
+	out=$(git log --format="%h" -n 1) &&
+	len=${#out} &&
+	test $len -ge 4 &&
+	test $len -le 40
+'
+
 test_done

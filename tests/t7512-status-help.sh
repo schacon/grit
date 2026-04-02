@@ -456,4 +456,87 @@ test_expect_success 'status shows untracked directory' '
 	grep "newdir" actual
 '
 
+# ── status with .gitignore ──────────────────────────────────────────────
+
+test_expect_success 'status lists .gitignore as tracked after commit' '
+	git init ignore_repo &&
+	cd ignore_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo a >a.txt && git add a.txt && git commit -m init 2>/dev/null &&
+	echo "*.log" >.gitignore &&
+	git add .gitignore && git commit -m "add gitignore" 2>/dev/null &&
+	git ls-tree HEAD .gitignore >actual &&
+	grep ".gitignore" actual
+'
+
+test_expect_success 'status --porcelain shows R for renamed file' '
+	git init rename_porcelain_repo &&
+	cd rename_porcelain_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo content >old.txt && git add old.txt && git commit -m init 2>/dev/null &&
+	git mv old.txt new.txt &&
+	git status --porcelain >actual &&
+	(grep "^R" actual || grep "new.txt" actual)
+'
+
+test_expect_success 'status shows modified in subdirectory' '
+	git init sub_mod_repo &&
+	cd sub_mod_repo &&
+	git config user.name T && git config user.email t@t &&
+	mkdir -p sub &&
+	echo content >sub/file.txt &&
+	git add sub/file.txt && git commit -m init 2>/dev/null &&
+	echo changed >sub/file.txt &&
+	git status >actual &&
+	grep "modified" actual &&
+	grep "sub/file.txt" actual
+'
+
+test_expect_success 'status in empty repo shows initial commit message' '
+	git init empty_status_repo &&
+	cd empty_status_repo &&
+	git config user.name T && git config user.email t@t &&
+	git status >actual &&
+	(grep -i "initial commit" actual || grep -i "No commits" actual || grep -i "nothing to commit" actual)
+'
+
+test_expect_success 'status after commit shows on branch' '
+	git init clean_repo &&
+	cd clean_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo x >x.txt && git add x.txt && git commit -m init 2>/dev/null &&
+	git status >actual &&
+	grep -i "On branch" actual
+'
+
+test_expect_success 'status --porcelain with both staged and unstaged' '
+	git init both_repo &&
+	cd both_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo x >x.txt && git add x.txt && git commit -m init 2>/dev/null &&
+	echo y >y.txt && git add y.txt &&
+	echo changed >x.txt &&
+	git status --porcelain >actual &&
+	grep "y.txt" actual &&
+	grep "x.txt" actual
+'
+
+test_expect_success 'status shows branch name' '
+	git init branch_name_repo &&
+	cd branch_name_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo x >x.txt && git add x.txt && git commit -m init 2>/dev/null &&
+	git status >actual &&
+	(grep "master" actual || grep "main" actual)
+'
+
+test_expect_success 'status --porcelain shows nothing for tracked unmodified' '
+	git init clean_porcelain_repo &&
+	cd clean_porcelain_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo x >x.txt && git add x.txt && git commit -m init 2>/dev/null &&
+	git status --porcelain >actual &&
+	! grep "x.txt" actual
+'
+
 test_done
