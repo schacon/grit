@@ -63,7 +63,13 @@ pub fn write_tree_from_index(
         }
     }
 
-    build_tree(odb, &entries, prefix_bytes)
+    // Strip trailing slash from prefix for build_tree's directory prefix logic
+    let dir_prefix = if prefix_bytes.ends_with(b"/") {
+        &prefix_bytes[..prefix_bytes.len() - 1]
+    } else {
+        prefix_bytes
+    };
+    build_tree(odb, &entries, dir_prefix)
 }
 
 /// Recursively build tree objects for a directory level.
