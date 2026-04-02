@@ -321,4 +321,247 @@ test_expect_success 'diff-tree --root shows A status for root commit' '
 	grep "^:000000" out
 '
 
+# ---------------------------------------------------------------------------
+# Patch mode: new-file and deleted-file headers (ported from t4011-diff-symlink)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree -r -p --root shows new file mode header' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	git diff-tree -r -p --root "$c1" >out &&
+	grep "^new file mode 100644" out
+'
+
+test_expect_success 'diff-tree -p shows index line for modified file' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree -r -p "$c2" >out &&
+	grep "^index " out
+'
+
+# ---------------------------------------------------------------------------
+# File deletion
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup file deletion commit' '
+	cd repo &&
+	c3=$(cat ../commit3) &&
+	printf "extra content\n" >extra.txt &&
+	git update-index --add extra.txt &&
+	commit_extra=$(make_commit "add extra.txt" "$c3") &&
+	printf "%s\n" "$commit_extra" >../commit_extra &&
+	git update-index --remove extra.txt &&
+	rm -f extra.txt &&
+	commit_del=$(make_commit "delete extra.txt" "$commit_extra") &&
+	printf "%s\n" "$commit_del" >../commit_del
+'
+
+test_expect_success 'diff-tree shows D status for deleted file' '
+	cd repo &&
+	c=$(cat ../commit_del) &&
+	git diff-tree -r "$c" >out &&
+	grep "^:100644 000000 " out &&
+	grep "D	extra.txt" out
+'
+
+test_expect_success 'diff-tree -p shows deleted file mode header' '
+	cd repo &&
+	c=$(cat ../commit_del) &&
+	git diff-tree -r -p "$c" >out &&
+	grep "^deleted file mode 100644" out
+'
+
+test_expect_success 'diff-tree --name-status shows D for deleted file' '
+	cd repo &&
+	c=$(cat ../commit_del) &&
+	git diff-tree -r --name-status "$c" >out &&
+	grep "^D	extra.txt" out
+'
+
+# ---------------------------------------------------------------------------
+# Multiple files changed in one commit (ported from t4001-diff-rename patterns)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup multi-file commit' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	printf "alpha content\n" >alpha.txt &&
+	printf "beta content\n" >beta.txt &&
+	git update-index --add alpha.txt beta.txt &&
+	commit_multi=$(make_commit "add alpha and beta" "$c2") &&
+	printf "%s\n" "$commit_multi" >../commit_multi
+'
+
+test_expect_success 'diff-tree shows multiple entries for multi-file commit' '
+	cd repo &&
+	c=$(cat ../commit_multi) &&
+	git diff-tree -r "$c" >out &&
+	grep "alpha.txt" out &&
+	grep "beta.txt" out
+'
+
+test_expect_success 'diff-tree --name-only shows all files in multi-file commit' '
+	cd repo &&
+	c=$(cat ../commit_multi) &&
+	git diff-tree -r --name-only "$c" >out &&
+	grep "^alpha.txt$" out &&
+	grep "^beta.txt$" out
+'
+
+test_expect_success 'diff-tree --stat shows multiple files in multi-file commit' '
+	cd repo &&
+	c=$(cat ../commit_multi) &&
+	git diff-tree -r --stat "$c" >out &&
+	grep "alpha.txt" out &&
+	grep "beta.txt" out &&
+	grep "files changed" out
+'
+
+# ---------------------------------------------------------------------------
+# Executable file mode (ported from t4011-diff-symlink patterns)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup executable file commit' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	printf "#!/bin/sh\necho hello\n" >script.sh &&
+	chmod +x script.sh &&
+	git update-index --add script.sh &&
+	commit_exec=$(make_commit "add executable script" "$c2") &&
+	printf "%s\n" "$commit_exec" >../commit_exec
+'
+
+test_expect_success 'diff-tree shows 100755 mode for executable file' '
+	cd repo &&
+	c=$(cat ../commit_exec) &&
+	git diff-tree -r "$c" >out &&
+	grep "^:000000 100755 " out &&
+	grep "A	script.sh" out
+'
+
+test_expect_success 'diff-tree -p shows new file mode 100755' '
+	cd repo &&
+	c=$(cat ../commit_exec) &&
+	git diff-tree -r -p "$c" >out &&
+	grep "^new file mode 100755" out
+'
+
+# ---------------------------------------------------------------------------
+# Symlink mode (ported from t4011-diff-symlink.sh)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup symlink commit' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	ln -s file.txt link.txt &&
+	git update-index --add link.txt &&
+	commit_link=$(make_commit "add symlink" "$c2") &&
+	printf "%s\n" "$commit_link" >../commit_link
+'
+
+test_expect_success 'diff-tree shows 120000 mode for new symlink' '
+	cd repo &&
+	c=$(cat ../commit_link) &&
+	git diff-tree -r "$c" >out &&
+	grep "^:000000 120000 " out &&
+	grep "A	link.txt" out
+'
+
+test_expect_success 'diff-tree -p shows new file mode 120000 for symlink' '
+	cd repo &&
+	c=$(cat ../commit_link) &&
+	git diff-tree -r -p "$c" >out &&
+	grep "^new file mode 120000" out
+'
+
+# ---------------------------------------------------------------------------
+# Raw output field validation
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree raw output OIDs are 40 hex characters' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree -r "$c2" >out &&
+	# Extract the old and new OID fields (fields 3 and 4 after the colon line)
+	awk "{print \$3; print \$4}" out >oids &&
+	# Each OID should be exactly 40 hex chars (or all-zeros for null OID)
+	grep -E "^[0-9a-f]{40}$" oids
+'
+
+test_expect_success 'diff-tree raw output format: colon then 6-digit modes' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree -r "$c2" >out &&
+	grep "^:[0-9]\{6\} [0-9]\{6\} " out
+'
+
+# ---------------------------------------------------------------------------
+# -s flag: suppress diff (stdin mode)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree --stdin -s suppresses diff lines' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	printf "%s\n" "$c2" | git diff-tree --stdin -s >out &&
+	head -1 out | grep "^[0-9a-f]\{40\}$" &&
+	! grep "^:" out
+'
+
+# ---------------------------------------------------------------------------
+# -v flag: verbose commit info (stdin mode)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree --stdin -v shows indented commit message' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	printf "%s\n" "$c2" | git diff-tree --stdin -v >out &&
+	grep "^    second" out
+'
+
+# ---------------------------------------------------------------------------
+# -U context lines control (ported from t4011-diff-symlink patterns)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree -p -U0 produces patch with zero context' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree -r -p -U0 "$c2" >out &&
+	grep "^+world" out &&
+	! grep "^ hello" out
+'
+
+test_expect_success 'diff-tree -p -U1 produces patch with one context line' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree -r -p -U1 "$c2" >out &&
+	grep "^ hello" out &&
+	grep "^+world" out
+'
+
+# ---------------------------------------------------------------------------
+# --stdin with multiple commits
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree --stdin processes multiple commits sequentially' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	printf "%s\n%s\n" "$c2" "$c2" | git diff-tree --stdin >out &&
+	test "$(grep -c "M	file.txt" out)" = "2"
+'
+
+# ---------------------------------------------------------------------------
+# Two-tree mode: A and D entries from explicit tree comparison
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree two trees shows A for file in new tree only' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	c3=$(cat ../commit3) &&
+	t2=$(git cat-file -p "$c2" | awk "/^tree/{print \$2}") &&
+	t3=$(git cat-file -p "$c3" | awk "/^tree/{print \$2}") &&
+	git diff-tree -r "$t2" "$t3" >out &&
+	grep "^:000000 100644 " out &&
+	grep "A	sub/nested.txt" out
+'
+
 test_done
