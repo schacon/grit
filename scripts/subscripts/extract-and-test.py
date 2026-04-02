@@ -164,22 +164,24 @@ def file_theme_command(file_base):
 def pick_best_subcommand(body, file_base):
     """Pick exactly one git subcommand for a test case.
 
-    Prefers a command matching the file's theme; falls back to the first
-    command found in the body; falls back to the file theme if no commands
-    are found in the body at all.
+    The file name is the strongest signal — t3200-branch.sh tests 'branch',
+    even though many tests also call 'add', 'commit', etc. as setup.
+    Only fall back to body scanning if the filename doesn't map to a command.
     """
-    found = extract_subcommands(body)
     theme = file_theme_command(file_base)
 
+    # If the filename maps to a known command, always use it.
+    # This avoids attributing t3200-branch tests to 'add' just because
+    # they run 'git add' during setup.
+    if theme:
+        return theme
+
+    # No theme from filename — scan the body for commands
+    found = extract_subcommands(body)
     if found:
-        # If the file's theme command appears in the body, prefer it
-        if theme and theme in found:
-            return theme
-        # Otherwise return the first (alphabetically) found command
         return found[0]
 
-    # No commands detected in body — fall back to file theme
-    return theme or ""
+    return ""
 
 
 def generate_test_cases():
