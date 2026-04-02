@@ -1369,4 +1369,140 @@ test_expect_success 'rm -r --cached with mixed tracked and untracked' '
 	rm -rf rm_mixed
 '
 
+test_expect_success 'rm removes file from working tree' '
+	cd repo &&
+	echo rmwt >rm_wt.txt &&
+	git add rm_wt.txt && git commit -m "add rm_wt" &&
+	grit rm rm_wt.txt &&
+	test_path_is_missing rm_wt.txt
+'
+
+test_expect_success 'rm removes file from index' '
+	cd repo &&
+	echo rmidx >rm_idx.txt &&
+	git add rm_idx.txt && git commit -m "add rm_idx" &&
+	grit rm rm_idx.txt &&
+	! git ls-files --error-unmatch rm_idx.txt 2>/dev/null
+'
+
+test_expect_success 'rm --cached keeps file in working tree' '
+	cd repo &&
+	echo rmcached >rm_cached2.txt &&
+	git add rm_cached2.txt && git commit -m "add cached2" &&
+	grit rm --cached rm_cached2.txt &&
+	test_path_is_file rm_cached2.txt &&
+	! git ls-files --error-unmatch rm_cached2.txt 2>/dev/null &&
+	rm -f rm_cached2.txt
+'
+
+test_expect_success 'rm nonexistent file fails' '
+	cd repo &&
+	test_must_fail grit rm does_not_exist.txt 2>/dev/null
+'
+
+test_expect_success 'rm untracked file fails' '
+	cd repo &&
+	echo untrk >rm_untrk.txt &&
+	test_must_fail grit rm rm_untrk.txt 2>/dev/null &&
+	rm -f rm_untrk.txt
+'
+
+test_expect_success 'rm -f removes even with local modifications' '
+	cd repo &&
+	echo orig >rm_force.txt &&
+	git add rm_force.txt && git commit -m "add force" &&
+	echo modified >rm_force.txt &&
+	grit rm -f rm_force.txt &&
+	test_path_is_missing rm_force.txt
+'
+
+test_expect_success 'rm multiple files at once' '
+	cd repo &&
+	echo m1 >rm_m1.txt &&
+	echo m2 >rm_m2.txt &&
+	git add rm_m1.txt rm_m2.txt && git commit -m "add multi" &&
+	grit rm rm_m1.txt rm_m2.txt &&
+	test_path_is_missing rm_m1.txt &&
+	test_path_is_missing rm_m2.txt
+'
+
+test_expect_success 'rm -r removes directory recursively' '
+	cd repo &&
+	mkdir -p rm_dir/sub &&
+	echo d1 >rm_dir/a.txt &&
+	echo d2 >rm_dir/sub/b.txt &&
+	git add rm_dir && git commit -m "add dir" &&
+	grit rm -r rm_dir &&
+	test_path_is_missing rm_dir/a.txt &&
+	test_path_is_missing rm_dir/sub/b.txt
+'
+
+test_expect_success 'rm --cached -r removes directory from index only' '
+	cd repo &&
+	mkdir -p rm_cdir &&
+	echo cd1 >rm_cdir/x.txt &&
+	git add rm_cdir && git commit -m "add cdir" &&
+	grit rm --cached -r rm_cdir &&
+	test_path_is_file rm_cdir/x.txt &&
+	! git ls-files --error-unmatch rm_cdir/x.txt 2>/dev/null &&
+	rm -rf rm_cdir
+'
+
+test_expect_success 'rm stages the deletion' '
+	cd repo &&
+	echo staged_del >rm_staged.txt &&
+	git add rm_staged.txt && git commit -m "add staged" &&
+	grit rm rm_staged.txt &&
+	grit status -s >../actual &&
+	grep "^D" ../actual
+'
+
+test_expect_success 'rm with modified file without -f fails' '
+	cd repo &&
+	echo orig_nof >rm_nof.txt &&
+	git add rm_nof.txt && git commit -m "add nof" &&
+	echo changed >rm_nof.txt &&
+	test_must_fail grit rm rm_nof.txt 2>/dev/null &&
+	git checkout -- rm_nof.txt 2>/dev/null &&
+	rm -f rm_nof.txt
+'
+
+test_expect_success 'rm file with spaces in name' '
+	cd repo &&
+	echo sp >"rm space file.txt" &&
+	git add "rm space file.txt" && git commit -m "add space rm" &&
+	grit rm "rm space file.txt" &&
+	test_path_is_missing "rm space file.txt"
+'
+
+test_expect_success 'rm does not remove untracked files in directory' '
+	cd repo &&
+	mkdir -p rm_keep &&
+	echo tracked >rm_keep/t.txt &&
+	git add rm_keep/t.txt && git commit -m "add keep" &&
+	echo untracked >rm_keep/u.txt &&
+	grit rm rm_keep/t.txt &&
+	test_path_is_file rm_keep/u.txt &&
+	rm -rf rm_keep
+'
+
+test_expect_success 'rm --dry-run does not remove file' '
+	cd repo &&
+	echo dry >rm_dry.txt &&
+	git add rm_dry.txt && git commit -m "add dry" &&
+	grit rm --dry-run rm_dry.txt &&
+	test_path_is_file rm_dry.txt &&
+	git ls-files --error-unmatch rm_dry.txt &&
+	rm -f rm_dry.txt
+'
+
+test_expect_success 'rm then commit results in file missing from tree' '
+	cd repo &&
+	echo rmtree >rm_tree_chk.txt &&
+	git add rm_tree_chk.txt && git commit -m "add tree chk" &&
+	grit rm rm_tree_chk.txt &&
+	git commit -m "rm tree chk" 2>/dev/null &&
+	! grit ls-tree -r HEAD --name-only | grep rm_tree_chk
+'
+
 test_done
