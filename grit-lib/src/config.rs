@@ -1052,9 +1052,15 @@ impl ConfigSet {
 /// Accepts: `false`, `no`, `off`, `0` as false.
 pub fn parse_bool(s: &str) -> std::result::Result<bool, String> {
     match s.to_lowercase().as_str() {
-        "true" | "yes" | "on" | "1" | "" => Ok(true),
-        "false" | "no" | "off" | "0" => Ok(false),
-        _ => Err(format!("bad boolean config value '{s}'")),
+        "true" | "yes" | "on" => Ok(true),
+        "false" | "no" | "off" | "" => Ok(false),
+        _ => {
+            // Try parsing as integer: 0 → false, non-zero → true
+            if let Ok(n) = s.parse::<i64>() {
+                return Ok(n != 0);
+            }
+            Err(format!("bad boolean config value '{s}'"))
+        }
     }
 }
 

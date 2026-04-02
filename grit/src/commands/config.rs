@@ -89,6 +89,10 @@ pub struct Args {
     #[arg(long = "int")]
     pub type_int: bool,
 
+    /// Ensure the value is a valid bool-or-int and canonicalize.
+    #[arg(long = "bool-or-int")]
+    pub type_bool_or_int: bool,
+
     /// Expand `~/` in the value.
     #[arg(long = "path")]
     pub type_path: bool,
@@ -436,24 +440,27 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()
 }
 
 fn cmd_set(
-    _args: &Args,
+    args: &Args,
     set_args: &SetArgs,
     scope: ConfigScope,
     file_path: &Path,
     value_pattern: Option<&str>,
 ) -> Result<()> {
+    // Canonicalize the value if a type flag is given
+    let value = canonicalize_value_for_set(args, &set_args.value)?;
+
     let mut config = match ConfigFile::from_path(file_path, scope).context("reading config file")? {
         Some(cfg) => cfg,
         None => ConfigFile::parse(file_path, "", scope)?,
     };
 
     if set_args.all {
-        config.replace_all(&set_args.key, &set_args.value, value_pattern)?;
+        config.replace_all(&set_args.key, &value, value_pattern)?;
     } else if let Some(pattern) = value_pattern {
         // Single replace with value-pattern: only replace if existing value matches
-        config.replace_all(&set_args.key, &set_args.value, Some(pattern))?;
+        config.replace_all(&set_args.key, &value, Some(pattern))?;
     } else {
-        config.set(&set_args.key, &set_args.value)?;
+        config.set(&set_args.key, &value)?;
     }
     config.write().context("writing config file")?;
     Ok(())
@@ -718,6 +725,46 @@ fn global_config_path() -> Option<PathBuf> {
         .map(|h| PathBuf::from(h).join(".gitconfig"))
 }
 
+/// Canonicalize a value for writing based on type flags.
+///
+/// When `--bool` is used, the value is validated and written as "true"/"false".
+/// When `--int` is used, the value is validated and written as a plain integer.
+/// When `--bool-or-int` is used, booleans are stored as "true"/"false" and
+/// integers as plain numbers.
+fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
+    let type_name = args.type_name.as_deref();
+
+    if args.type_bool || type_name == Some("bool") {
+        match parse_bool(val) {
+            Ok(b) => return Ok(if b { "true" } else { "false" }.to_owned()),
+            Err(e) => bail!("{}", e),
+        }
+    }
+
+    if args.type_int || type_name == Some("int") {
+        match parse_i64(val) {
+            Ok(n) => return Ok(n.to_string()),
+            Err(e) => bail!("{}", e),
+        }
+    }
+
+    if args.type_bool_or_int || type_name == Some("bool-or-int") {
+        // Try named booleans first (not numbers — those go to int)
+        match val.to_lowercase().as_str() {
+            "true" | "yes" | "on" => return Ok("true".to_owned()),
+            "false" | "no" | "off" => return Ok("false".to_owned()),
+            _ => {}
+        }
+        // Then as integer
+        if let Ok(n) = parse_i64(val) {
+            return Ok(n.to_string());
+        }
+        bail!("bad bool-or-int config value '{}'", val);
+    }
+
+    Ok(val.to_owned())
+}
+
 /// Format a value according to the type flags.
 fn format_typed_value(args: &Args, val: &str) -> Result<String> {
     let type_name = args.type_name.as_deref();
@@ -744,6 +791,20 @@ fn format_typed_value(args: &Args, val: &str) -> Result<String> {
 
     if args.type_path || type_name == Some("path") {
         return Ok(parse_path(val));
+    }
+
+    if args.type_bool_or_int || type_name == Some("bool-or-int") {
+        // Try as named bool first
+        match val.to_lowercase().as_str() {
+            "true" | "yes" | "on" => return Ok("true".to_owned()),
+            "false" | "no" | "off" | "" => return Ok("false".to_owned()),
+            _ => {}
+        }
+        // Then as integer
+        match parse_i64(val) {
+            Ok(n) => return Ok(n.to_string()),
+            Err(e) => bail!("{}", e),
+        }
     }
 
     Ok(val.to_owned())
