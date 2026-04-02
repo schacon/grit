@@ -7168,30 +7168,30 @@ t4036-format-patch-signer-mime::format-normally	t4036-format-patch-signer-mime	f
 t4036-format-patch-signer-mime::format-with-signoff-without-funny-signer-name	t4036-format-patch-signer-mime	format with signoff without funny signer name	format-patch	not_ported
 t4036-format-patch-signer-mime::format-with-non-ascii-signer-name	t4036-format-patch-signer-mime	format with non ASCII signer name	format-patch	not_ported
 t4036-format-patch-signer-mime::attach-and-signoff-do-not-duplicate-mime-headers	t4036-format-patch-signer-mime	attach and signoff do not duplicate mime headers	format-patch	not_ported
-t4038-diff-combined::check-combined-output-1	t4038-diff-combined	check combined output (1)	show	partial
-t4038-diff-combined::check-combined-output-1-with-git-diff-rev	t4038-diff-combined	check combined output (1) with git diff <rev>^!	diff	partial
-t4038-diff-combined::check-combined-output-2	t4038-diff-combined	check combined output (2)	show	partial
-t4038-diff-combined::check-combined-output-2-with-git-diff-rev	t4038-diff-combined	check combined output (2) with git diff <rev>^!	diff	partial
-t4038-diff-combined::diagnose-truncated-file	t4038-diff-combined	diagnose truncated file	add	partial
-t4038-diff-combined::setup-for-cc-raw	t4038-diff-combined	setup for --cc --raw	hash-object	partial
-t4038-diff-combined::check-cc-raw-with-four-trees	t4038-diff-combined	check --cc --raw with four trees	diff	partial
-t4038-diff-combined::check-cc-raw-with-forty-trees	t4038-diff-combined	check --cc --raw with forty trees	diff	partial
-t4038-diff-combined::setup-combined-ignore-spaces	t4038-diff-combined	setup combined ignore spaces	add	partial
-t4038-diff-combined::check-combined-output-no-ignore-space	t4038-diff-combined	check combined output (no ignore space)	show	partial
-t4038-diff-combined::check-combined-output-ignore-space-at-eol	t4038-diff-combined	check combined output (ignore space at eol)	show	partial
-t4038-diff-combined::check-combined-output-ignore-space-change	t4038-diff-combined	check combined output (ignore space change)	show	partial
-t4038-diff-combined::check-combined-output-ignore-all-spaces	t4038-diff-combined	check combined output (ignore all spaces)	show	partial
-t4038-diff-combined::combine-diff-coalesce-simple	t4038-diff-combined	combine diff coalesce simple	add	partial
-t4038-diff-combined::combine-diff-coalesce-tricky	t4038-diff-combined	combine diff coalesce tricky	add	partial
-t4038-diff-combined::combine-diff-missing-delete-bug	t4038-diff-combined	combine diff missing delete bug	add	partial
-t4038-diff-combined::combine-diff-gets-tree-sorting-right	t4038-diff-combined	combine diff gets tree sorting right	add	partial
-t4038-diff-combined::setup-for-combined-all-paths	t4038-diff-combined	setup for --combined-all-paths	add	partial
-t4038-diff-combined::combined-all-paths-and-raw	t4038-diff-combined	--combined-all-paths and --raw	diff-tree	partial
-t4038-diff-combined::combined-all-paths-and-cc	t4038-diff-combined	--combined-all-paths and --cc	diff-tree	partial
-t4038-diff-combined::setup-for-combined-all-paths-with-funny-names	t4038-diff-combined	setup for --combined-all-paths with funny names	add	partial
-t4038-diff-combined::combined-all-paths-and-raw-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw and funny names	diff-tree	partial
-t4038-diff-combined::combined-all-paths-and-raw-and-z-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw -and -z and funny names	diff-tree	partial
-t4038-diff-combined::combined-all-paths-and-cc-and-funny-names	t4038-diff-combined	--combined-all-paths and --cc and funny names	diff-tree	partial
+t4038-diff-combined::check-combined-output-1	t4038-diff-combined	check combined output (1)	show	pass
+t4038-diff-combined::check-combined-output-1-with-git-diff-rev	t4038-diff-combined	check combined output (1) with git diff <rev>^!	diff	pass
+t4038-diff-combined::check-combined-output-2	t4038-diff-combined	check combined output (2)	show	pass
+t4038-diff-combined::check-combined-output-2-with-git-diff-rev	t4038-diff-combined	check combined output (2) with git diff <rev>^!	diff	pass
+t4038-diff-combined::diagnose-truncated-file	t4038-diff-combined	diagnose truncated file	add	pass
+t4038-diff-combined::setup-for-cc-raw	t4038-diff-combined	setup for --cc --raw	hash-object	pass
+t4038-diff-combined::check-cc-raw-with-four-trees	t4038-diff-combined	check --cc --raw with four trees	diff	pass
+t4038-diff-combined::check-cc-raw-with-forty-trees	t4038-diff-combined	check --cc --raw with forty trees	diff	pass
+t4038-diff-combined::setup-combined-ignore-spaces	t4038-diff-combined	setup combined ignore spaces	add	pass
+t4038-diff-combined::check-combined-output-no-ignore-space	t4038-diff-combined	check combined output (no ignore space)	show	pass
+t4038-diff-combined::check-combined-output-ignore-space-at-eol	t4038-diff-combined	check combined output (ignore space at eol)	show	pass
+t4038-diff-combined::check-combined-output-ignore-space-change	t4038-diff-combined	check combined output (ignore space change)	show	pass
+t4038-diff-combined::check-combined-output-ignore-all-spaces	t4038-diff-combined	check combined output (ignore all spaces)	show	pass
+t4038-diff-combined::combine-diff-coalesce-simple	t4038-diff-combined	combine diff coalesce simple	add	pass
+t4038-diff-combined::combine-diff-coalesce-tricky	t4038-diff-combined	combine diff coalesce tricky	add	pass
+t4038-diff-combined::combine-diff-missing-delete-bug	t4038-diff-combined	combine diff missing delete bug	add	pass
+t4038-diff-combined::combine-diff-gets-tree-sorting-right	t4038-diff-combined	combine diff gets tree sorting right	add	pass
+t4038-diff-combined::setup-for-combined-all-paths	t4038-diff-combined	setup for --combined-all-paths	add	pass
+t4038-diff-combined::combined-all-paths-and-raw	t4038-diff-combined	--combined-all-paths and --raw	diff-tree	pass
+t4038-diff-combined::combined-all-paths-and-cc	t4038-diff-combined	--combined-all-paths and --cc	diff-tree	pass
+t4038-diff-combined::setup-for-combined-all-paths-with-funny-names	t4038-diff-combined	setup for --combined-all-paths with funny names	add	pass
+t4038-diff-combined::combined-all-paths-and-raw-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw and funny names	diff-tree	pass
+t4038-diff-combined::combined-all-paths-and-raw-and-z-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw -and -z and funny names	diff-tree	pass
+t4038-diff-combined::combined-all-paths-and-cc-and-funny-names	t4038-diff-combined	--combined-all-paths and --cc and funny names	diff-tree	pass
 t4039-diff-assume-unchanged::setup	t4039-diff-assume-unchanged	setup	add	pass
 t4039-diff-assume-unchanged::diff-index-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-index does not examine assume-unchanged entries	diff-index	pass
 t4039-diff-assume-unchanged::diff-files-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-files does not examine assume-unchanged entries	diff-files	pass

@@ -29,7 +29,7 @@ restore	Main Porcelain	yes	41	14	27	34.1
 revert	Main Porcelain	yes	17	2	14	9.3
 rm	Main Porcelain	yes	90	68	22	75.6
 shortlog	Main Porcelain	yes	48	18	30	37.5
-show	Main Porcelain	yes	70	37	33	52.2
+show	Main Porcelain	yes	70	37	33	52.8
 stash	Main Porcelain	yes	200	0	200	0.0
 status	Main Porcelain	yes	289	182	107	62.9
 submodule	Main Porcelain	yes	359	0	359	0.0
@@ -83,13 +83,13 @@ credential-store	Plumbing	yes	15	0	15	0.0
 daemon	Plumbing	yes	3	0	3	0.0
 diff-files	Plumbing	yes	40	29	10	72.5
 diff-index	Plumbing	yes	118	27	90	22.9
-diff-tree	Plumbing	yes	105	51	52	48.7
+diff-tree	Plumbing	yes	105	51	52	49.0
 fetch-pack	Plumbing	yes	43	0	43	0.0
 fmt-merge-msg	Plumbing	yes	32	0	32	0.0
 for-each-ref	Plumbing	yes	103	60	43	58.3
 for-each-repo	Plumbing	yes	5	0	5	0.0
 get-tar-commit-id	Plumbing	yes	1	0	1	0.0
-hash-object	Plumbing	yes	86	45	41	52.2
+hash-object	Plumbing	yes	86	45	41	52.3
 hook	Plumbing	yes	31	0	31	0.0
 http-backend	Plumbing	yes	15	0	15	0.0
 index-pack	Plumbing	yes	41	26	15	63.4
