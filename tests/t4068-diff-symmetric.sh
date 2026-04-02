@@ -1,0 +1,137 @@
+#!/bin/sh
+test_description='grit diff symmetric (A...B) and merge-base diffs
+
+The A...B symmetric diff syntax is not yet implemented in grit.
+Tests here verify manual merge-base + diff-tree workaround and
+mark the A...B syntax as expected failures.'
+
+. ./test-lib.sh
+
+test_expect_success 'setup diverged branches' '
+	git init repo &&
+	cd repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@test.com" &&
+	echo "base" >base.txt &&
+	git add base.txt &&
+	git commit -m "base" &&
+	git branch topic &&
+	echo "main-change" >main.txt &&
+	git add main.txt &&
+	git commit -m "main commit" &&
+	git checkout topic &&
+	echo "topic-change" >topic.txt &&
+	git add topic.txt &&
+	git commit -m "topic commit" &&
+	git checkout master
+'
+
+# --- Manual merge-base approach (works today) ---
+
+test_expect_success 'merge-base finds common ancestor' '
+	cd repo &&
+	mb=$(git merge-base master topic) &&
+	test -n "$mb"
+'
+
+test_expect_success 'diff-tree from merge-base to topic shows only topic changes' '
+	cd repo &&
+	mb=$(git merge-base master topic) &&
+	topic_sha=$(git rev-parse topic) &&
+	git diff-tree -r --name-only "$mb" "$topic_sha" >out &&
+	grep "topic\.txt" out &&
+	! grep "main\.txt" out
+'
+
+test_expect_success 'diff-tree from merge-base to master shows only main changes' '
+	cd repo &&
+	mb=$(git merge-base master topic) &&
+	master_sha=$(git rev-parse master) &&
+	git diff-tree -r --name-only "$mb" "$master_sha" >out &&
+	grep "main\.txt" out &&
+	! grep "topic\.txt" out
+'
+
+test_expect_success 'diff-tree from merge-base shows name-status' '
+	cd repo &&
+	mb=$(git merge-base master topic) &&
+	topic_sha=$(git rev-parse topic) &&
+	git diff-tree -r --name-status "$mb" "$topic_sha" >out &&
+	grep "A" out &&
+	grep "topic\.txt" out
+'
+
+test_expect_success 'diff-tree from merge-base with --stat' '
+	cd repo &&
+	mb=$(git merge-base master topic) &&
+	topic_sha=$(git rev-parse topic) &&
+	git diff-tree --stat "$mb" "$topic_sha" >out &&
+	grep "topic" out
+'
+
+test_expect_success 'setup branches with file modified on both sides' '
+	cd repo &&
+	git checkout master &&
+	echo "shared-line" >shared.txt &&
+	git add shared.txt &&
+	git commit -m "add shared" &&
+	git branch topic2 &&
+	echo "master-edit" >>shared.txt &&
+	git add shared.txt &&
+	git commit -m "master edits shared" &&
+	git checkout topic2 &&
+	echo "topic-edit" >>shared.txt &&
+	git add shared.txt &&
+	git commit -m "topic edits shared" &&
+	git checkout master
+'
+
+test_expect_success 'merge-base diff shows topic side of shared file change' '
+	cd repo &&
+	mb=$(git merge-base master topic2) &&
+	topic2_sha=$(git rev-parse topic2) &&
+	git diff-tree -r --name-only "$mb" "$topic2_sha" >out &&
+	grep "shared\.txt" out
+'
+
+# --- Symmetric diff syntax A...B (not yet implemented) ---
+
+test_expect_failure 'diff master...topic shows only topic changes (not implemented)' '
+	cd repo &&
+	git diff master...topic --name-only >out &&
+	grep "topic\.txt" out &&
+	! grep "main\.txt" out
+'
+
+test_expect_failure 'diff topic...master shows only main changes (not implemented)' '
+	cd repo &&
+	git diff topic...master --name-only >out &&
+	grep "main\.txt" out &&
+	! grep "topic\.txt" out
+'
+
+test_expect_failure 'diff A...B --stat (not implemented)' '
+	cd repo &&
+	git diff master...topic --stat >out &&
+	grep "topic" out
+'
+
+test_expect_failure 'diff A...B --name-status (not implemented)' '
+	cd repo &&
+	git diff master...topic --name-status >out &&
+	grep "topic\.txt" out
+'
+
+test_expect_failure 'diff A...B --exit-code (not implemented)' '
+	cd repo &&
+	git diff master...topic --exit-code >out 2>&1 &&
+	grep "topic\.txt" out
+'
+
+test_expect_failure 'diff A...B with pathspec (not implemented)' '
+	cd repo &&
+	git diff master...topic -- topic.txt >out &&
+	grep "topic\.txt" out
+'
+
+test_done
