@@ -2,7 +2,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::index::{Index, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK};
+use grit_lib::diff::stat_matches;
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -48,7 +49,7 @@ pub fn run(args: Args) -> Result<()> {
     let changes = if options.cached {
         diff_tree_vs_index(&tree_map, &index_map)
     } else {
-        diff_tree_vs_worktree(&repo, &tree_map, &index_map, options.match_missing)?
+        diff_tree_vs_worktree(&repo, &tree_map, &index_map, &index, options.match_missing)?
     };
 
     if !options.quiet {
@@ -246,11 +247,20 @@ fn diff_tree_vs_worktree(
     repo: &Repository,
     tree_map: &BTreeMap<String, Snapshot>,
     index_map: &BTreeMap<String, Snapshot>,
+    index: &Index,
     match_missing: bool,
 ) -> Result<Vec<RawChange>> {
     let Some(work_tree) = &repo.work_tree else {
         bail!("this operation must be run in a work tree");
     };
+
+    // Build a lookup from path → index entry for stat cache checks
+    let index_entries: BTreeMap<&[u8], &IndexEntry> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.as_slice(), e))
+        .collect();
 
     let mut merged = BTreeMap::new();
     for change in diff_tree_vs_index(tree_map, index_map) {
@@ -259,7 +269,38 @@ fn diff_tree_vs_worktree(
 
     for (path, index_snapshot) in index_map {
         let abs = work_tree.join(path);
-        match read_worktree_snapshot(repo, &abs)? {
+
+        // Fast path: use stat cache to skip unchanged files
+        let meta = match fs::symlink_metadata(&abs) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if match_missing {
+                    continue;
+                }
+                let old = tree_map.get(path).copied().or(Some(*index_snapshot));
+                merged.insert(
+                    path.clone(),
+                    RawChange {
+                        path: path.clone(),
+                        status: 'D',
+                        old,
+                        new: None,
+                    },
+                );
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        // Check stat cache — if stat matches index entry, file is unchanged
+        if let Some(ie) = index_entries.get(path.as_bytes()) {
+            if stat_matches(ie, &meta) {
+                continue; // Fast path: stat data matches, skip hashing
+            }
+        }
+
+        // Stat differs — must read and hash the file
+        match read_worktree_snapshot_from_meta(repo, &abs, &meta)? {
             Some(worktree_snapshot) => {
                 if worktree_snapshot != *index_snapshot {
                     let old = tree_map.get(path).copied();
@@ -275,19 +316,7 @@ fn diff_tree_vs_worktree(
                 }
             }
             None => {
-                if match_missing {
-                    continue;
-                }
-                let old = tree_map.get(path).copied().or(Some(*index_snapshot));
-                merged.insert(
-                    path.clone(),
-                    RawChange {
-                        path: path.clone(),
-                        status: 'D',
-                        old,
-                        new: None,
-                    },
-                );
+                // Not a regular file or symlink — treat as missing
             }
         }
     }
@@ -295,13 +324,7 @@ fn diff_tree_vs_worktree(
     Ok(merged.into_values().collect())
 }
 
-fn read_worktree_snapshot(repo: &Repository, abs_path: &Path) -> Result<Option<Snapshot>> {
-    let metadata = match fs::symlink_metadata(abs_path) {
-        Ok(meta) => meta,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err.into()),
-    };
-
+fn read_worktree_snapshot_from_meta(_repo: &Repository, abs_path: &Path, metadata: &fs::Metadata) -> Result<Option<Snapshot>> {
     if metadata.file_type().is_symlink() {
         let target = fs::read_link(abs_path)?;
         let oid = Odb::hash_object_data(ObjectKind::Blob, target.as_os_str().as_bytes());
@@ -318,7 +341,6 @@ fn read_worktree_snapshot(repo: &Repository, abs_path: &Path) -> Result<Option<S
         return Ok(Some(Snapshot { mode, oid }));
     }
 
-    let _ = repo;
     Ok(None)
 }
 
