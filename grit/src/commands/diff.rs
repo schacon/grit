@@ -507,7 +507,7 @@ fn write_colored_patch(out: &mut impl Write, patch: &str) -> Result<()> {
         } else if line.starts_with('+') {
             writeln!(out, "{GREEN}{line}{RESET}")?;
         } else {
-            writeln!(out, "{line}")?;
+            writeln!(out, "{line}{RESET}")?;
         }
     }
     Ok(())
@@ -710,28 +710,82 @@ fn write_shortstat(
     Ok(())
 }
 
+/// Get the terminal width, defaulting to 80 if unavailable.
+fn terminal_width() -> usize {
+    // Try COLUMNS env var first
+    if let Ok(cols) = std::env::var("COLUMNS") {
+        if let Ok(w) = cols.parse::<usize>() {
+            if w > 0 {
+                return w;
+            }
+        }
+    }
+    // Try `stty size` which outputs "rows cols"
+    if let Ok(output) = std::process::Command::new("stty")
+        .arg("size")
+        .stdin(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::null())
+        .output()
+    {
+        let s = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = s.trim().split_whitespace().collect();
+        if parts.len() == 2 {
+            if let Ok(w) = parts[1].parse::<usize>() {
+                if w > 0 {
+                    return w;
+                }
+            }
+        }
+    }
+    80
+}
+
 /// Format a single `--stat` line matching git's output format.
 ///
-/// Git uses dynamic width for the count column based on the maximum count
-/// across all files in the diff.
+/// Git scales all bars relative to the largest change count across
+/// all files, fitting within the available bar width.
+///
+/// `max_change` is the largest (insertions + deletions) across all entries.
+/// `max_bar` is the available character width for the histogram bar.
 fn format_stat_line_git(
     path: &str,
     insertions: usize,
     deletions: usize,
     max_path_len: usize,
     count_width: usize,
+    max_change: usize,
+    max_bar: usize,
 ) -> String {
     let total = insertions + deletions;
-    // Git caps the graph bar at the terminal width minus the fixed parts.
-    // For simplicity, cap at a reasonable default.
-    let max_bar = 50;
-    let (plus_count, minus_count) = if total <= max_bar {
+    // Scale all bars relative to the largest change
+    let (plus_count, minus_count) = if max_change <= max_bar {
+        // No scaling needed — bars fit as-is
         (insertions, deletions)
     } else {
-        // Scale proportionally
-        let plus = (insertions as f64 / total as f64 * max_bar as f64).round() as usize;
-        let minus = max_bar - plus;
-        (plus, minus)
+        // Scale proportionally, ensuring at least 1 char for non-zero sides
+        let scale = max_bar as f64 / max_change as f64;
+        let plus = if insertions == 0 {
+            0
+        } else {
+            (insertions as f64 * scale).round().max(1.0) as usize
+        };
+        let minus = if deletions == 0 {
+            0
+        } else {
+            (deletions as f64 * scale).round().max(1.0) as usize
+        };
+        // Clamp total to max_bar
+        let sum = plus + minus;
+        if sum > max_bar {
+            // Shrink the larger side
+            if plus >= minus {
+                (max_bar.saturating_sub(minus), minus)
+            } else {
+                (plus, max_bar.saturating_sub(plus))
+            }
+        } else {
+            (plus, minus)
+        }
     };
     let plus = "+".repeat(plus_count);
     let minus = "-".repeat(minus_count);
@@ -777,8 +831,21 @@ fn write_stat(
     let max_count = file_stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
     let count_width = format!("{}", max_count).len();
 
+    // Compute max bar width from terminal width like git:
+    // Git limits total line width to (terminal_width - 1).
+    // line = " {path} | {count} {bar}"
+    // fixed overhead = 1 (leading space) + max_path_len + 3 (" | ") + count_width + 1 (space before bar)
+    let term_width = terminal_width();
+    let fixed = 1 + max_path_len + 3 + count_width + 1;
+    let max_bar = if term_width > fixed + 10 + 1 {
+        term_width - 1 - fixed
+    } else {
+        // Minimum bar width
+        10
+    };
+
     for (path, ins, del) in &file_stats {
-        let line = format_stat_line_git(path, *ins, *del, max_path_len, count_width);
+        let line = format_stat_line_git(path, *ins, *del, max_path_len, count_width, max_count, max_bar);
         writeln!(out, "{line}")?;
     }
 
