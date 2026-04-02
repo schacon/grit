@@ -1677,4 +1677,112 @@ test_expect_success 'branch created at HEAD matches HEAD sha' '
 	git branch -d head-match-test 2>/dev/null
 '
 
+test_expect_success 'branch -m renames branch' '
+	cd repo &&
+	git branch rename-src-v2 &&
+	git branch -m rename-src-v2 rename-dst-v2 &&
+	git rev-parse rename-dst-v2 &&
+	test_must_fail git rev-parse rename-src-v2 2>/dev/null &&
+	git branch -d rename-dst-v2 2>/dev/null
+'
+
+test_expect_success 'branch -m rename preserves commit' '
+	cd repo &&
+	git branch rename-pres-v2 &&
+	sha=$(git rev-parse rename-pres-v2) &&
+	git branch -m rename-pres-v2 rename-pres-dst-v2 &&
+	new_sha=$(git rev-parse rename-pres-dst-v2) &&
+	test "$sha" = "$new_sha" &&
+	git branch -D rename-pres-dst-v2 2>/dev/null
+'
+
+test_expect_success 'branch --contains HEAD lists current branch' '
+	cd repo &&
+	git branch --contains HEAD >output &&
+	grep "master" output
+'
+
+test_expect_success 'branch -l lists branches' '
+	cd repo &&
+	git branch -l >output &&
+	grep "master" output
+'
+
+test_expect_success 'branch created at specific SHA' '
+	cd repo &&
+	parent=$(git rev-parse HEAD~1) &&
+	git branch at-sha-v2 "$parent" &&
+	result=$(git rev-parse at-sha-v2) &&
+	test "$result" = "$parent" &&
+	git branch -d at-sha-v2 2>/dev/null
+'
+
+test_expect_success 'branch -f forces overwrite at SHA' '
+	cd repo &&
+	git branch force-br-v2 &&
+	old=$(git rev-parse force-br-v2) &&
+	parent=$(git rev-parse HEAD~1) &&
+	git branch -f force-br-v2 "$parent" &&
+	new=$(git rev-parse force-br-v2) &&
+	test "$old" != "$new" &&
+	git branch -D force-br-v2 2>/dev/null
+'
+
+test_expect_success 'branch -d on current branch fails' '
+	cd repo &&
+	test_must_fail git branch -d master 2>/dev/null
+'
+
+test_expect_success 'branch --show-current on master shows master' '
+	cd repo &&
+	result=$(git branch --show-current) &&
+	test "$result" = "master"
+'
+
+test_expect_success 'branch -a shows all branches' '
+	cd repo &&
+	git branch -a >output &&
+	grep "master" output
+'
+
+test_expect_success 'branch with slash in name' '
+	cd repo &&
+	git branch feat-v2/slash-test &&
+	git rev-parse feat-v2/slash-test &&
+	git branch -d feat-v2/slash-test 2>/dev/null
+'
+
+test_expect_success 'branch -d nonexistent branch fails' '
+	cd repo &&
+	test_must_fail git branch -d nonexistent-br-xyz 2>/dev/null
+'
+
+test_expect_success 'branch -v shows commit hash and subject' '
+	cd repo &&
+	git branch -v >output &&
+	grep "[0-9a-f]" output &&
+	test $(wc -l <output) -ge 1
+'
+
+test_expect_success 'branch --merged lists branches merged into HEAD' '
+	cd repo &&
+	git branch --merged HEAD >output &&
+	grep "master" output
+'
+
+test_expect_success 'branch -q suppresses output' '
+	cd repo &&
+	git branch -q quiet-br-v2 >output 2>&1 &&
+	test_must_be_empty output &&
+	git branch -d quiet-br-v2 2>/dev/null
+'
+
+test_expect_success 'branch list shows newly created branch' '
+	cd repo &&
+	git branch list-check-v2 &&
+	git branch >output &&
+	grep "list-check-v2" output &&
+	git branch -d list-check-v2 2>/dev/null
+'
+
 test_done
