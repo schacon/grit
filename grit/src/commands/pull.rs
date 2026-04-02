@@ -108,6 +108,7 @@ pub fn run(args: Args) -> Result<()> {
             message: None,
             ff_only: args.ff_only,
             no_ff: args.no_ff,
+            no_commit: false,
             squash: false,
             abort: false,
             continue_merge: false,

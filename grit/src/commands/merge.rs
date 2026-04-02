@@ -41,6 +41,10 @@ pub struct Args {
     #[arg(long = "no-ff")]
     pub no_ff: bool,
 
+    /// Perform the merge but don't commit.
+    #[arg(long = "no-commit")]
+    pub no_commit: bool,
+
     /// Squash merge: stage changes but don't commit.
     #[arg(long = "squash")]
     pub squash: bool,
@@ -83,6 +87,11 @@ pub fn run(args: Args) -> Result<()> {
             return merge_unborn(&repo, &head, &args);
         }
     };
+
+    // Octopus merge: if multiple commits, merge them sequentially
+    if args.commits.len() > 1 {
+        return do_octopus_merge(&repo, &head, head_oid, &args);
+    }
 
     // Resolve merge target
     let merge_oid = resolve_merge_target(&repo, &args.commits[0])?;
@@ -261,6 +270,24 @@ fn do_real_merge(
         return do_squash_from_merge(repo, &merge_result.index, head, &args.commits[0], args);
     }
 
+    if args.no_commit {
+        // --no-commit: stage the result but don't create the merge commit.
+        // Write MERGE_HEAD and MERGE_MSG so that a subsequent `git commit`
+        // creates the merge commit with the right parents.
+        fs::write(
+            repo.git_dir.join("MERGE_HEAD"),
+            format!("{}\n", merge_oid.to_hex()),
+        )?;
+        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
+        fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
+        fs::write(repo.git_dir.join("MERGE_MODE"), "no-ff\n")?;
+
+        if !args.quiet {
+            eprintln!("Automatic merge went well; stopped before committing as requested");
+        }
+        return Ok(());
+    }
+
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
     let msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
@@ -291,6 +318,172 @@ fn do_real_merge(
     }
 
     Ok(())
+}
+
+/// Octopus merge: merge multiple branches into HEAD.
+///
+/// This creates a single merge commit with N+1 parents (HEAD + each branch).
+/// If any merge produces a conflict, we bail.
+fn do_octopus_merge(
+    repo: &Repository,
+    head: &HeadState,
+    head_oid: ObjectId,
+    args: &Args,
+) -> Result<()> {
+    // Resolve all merge targets
+    let mut merge_oids = Vec::new();
+    for name in &args.commits {
+        merge_oids.push(resolve_merge_target(repo, name)?);
+    }
+
+    // Save ORIG_HEAD
+    fs::write(
+        repo.git_dir.join("ORIG_HEAD"),
+        format!("{}\n", head_oid.to_hex()),
+    )?;
+
+    // Start with HEAD's tree as "ours" and merge each branch sequentially
+    let mut current_tree_entries = {
+        let ours_tree = commit_tree(repo, head_oid)?;
+        tree_to_index_entries(repo, &ours_tree, "")?
+    };
+
+    for (i, merge_oid) in merge_oids.iter().enumerate() {
+        let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[*merge_oid])?;
+        if bases.is_empty() {
+            bail!("refusing to merge unrelated histories");
+        }
+        let base_oid = bases[0];
+        let base_tree = commit_tree(repo, base_oid)?;
+        let theirs_tree = commit_tree(repo, *merge_oid)?;
+
+        let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
+        let ours_entries = tree_to_map(current_tree_entries);
+        let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+
+        let merge_result = merge_trees(
+            repo,
+            &base_entries,
+            &ours_entries,
+            &theirs_entries,
+            head,
+            &args.commits[i],
+        )?;
+
+        if merge_result.has_conflicts {
+            // Write the conflict state to disk
+            merge_result.index.write(&repo.index_path())?;
+            if let Some(ref wt) = repo.work_tree {
+                checkout_entries(repo, wt, &merge_result.index)?;
+                for (path, content) in &merge_result.conflict_files {
+                    let abs = wt.join(path);
+                    if let Some(parent) = abs.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::write(&abs, content)?;
+                }
+            }
+            // Write MERGE_HEAD with all remaining merge OIDs
+            let merge_head_content: String = merge_oids
+                .iter()
+                .map(|oid| format!("{}\n", oid.to_hex()))
+                .collect();
+            fs::write(repo.git_dir.join("MERGE_HEAD"), &merge_head_content)?;
+            let msg = build_octopus_merge_message(head, &args.commits, args.message.as_deref());
+            fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
+            fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
+            bail!("Automatic merge failed; fix conflicts and then commit the result.");
+        }
+
+        // Advance current_tree_entries to the merged result
+        current_tree_entries = merge_result.index.entries;
+    }
+
+    // All merges succeeded — build the octopus merge commit
+    let mut final_index = Index::new();
+    final_index.entries = current_tree_entries;
+    final_index.sort();
+    final_index.write(&repo.index_path())?;
+
+    if let Some(ref wt) = repo.work_tree {
+        checkout_entries(repo, wt, &final_index)?;
+    }
+
+    if args.no_commit {
+        let merge_head_content: String = merge_oids
+            .iter()
+            .map(|oid| format!("{}\n", oid.to_hex()))
+            .collect();
+        fs::write(repo.git_dir.join("MERGE_HEAD"), &merge_head_content)?;
+        let msg = build_octopus_merge_message(head, &args.commits, args.message.as_deref());
+        fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
+        fs::write(repo.git_dir.join("MERGE_MODE"), "no-ff\n")?;
+        if !args.quiet {
+            eprintln!("Automatic merge went well; stopped before committing as requested");
+        }
+        return Ok(());
+    }
+
+    let tree_oid = write_tree_from_index(&repo.odb, &final_index, "")?;
+    let msg = build_octopus_merge_message(head, &args.commits, args.message.as_deref());
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let now = OffsetDateTime::now_utc();
+    let author = resolve_ident(&config, "author", now)?;
+    let committer = resolve_ident(&config, "committer", now)?;
+
+    let mut parents = vec![head_oid];
+    parents.extend(merge_oids);
+
+    let commit_data = CommitData {
+        tree: tree_oid,
+        parents,
+        author,
+        committer,
+        encoding: None,
+        message: msg,
+    };
+
+    let commit_bytes = serialize_commit(&commit_data);
+    let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
+    update_head(&repo.git_dir, head, &commit_oid)?;
+
+    if !args.quiet {
+        let short = &commit_oid.to_hex()[..7];
+        let branch = head.branch_name().unwrap_or("HEAD");
+        let first_line = commit_data.message.lines().next().unwrap_or("");
+        eprintln!("[{branch} {short}] {first_line}");
+    }
+
+    Ok(())
+}
+
+/// Build merge message for octopus merges.
+fn build_octopus_merge_message(head: &HeadState, branch_names: &[String], custom: Option<&str>) -> String {
+    if let Some(msg) = custom {
+        return ensure_trailing_newline(msg);
+    }
+    // Git uses "Merge branches 'a', 'b' and 'c'" for octopus
+    let formatted = if branch_names.len() == 2 {
+        format!("Merge branches '{}' and '{}'", branch_names[0], branch_names[1])
+    } else {
+        let last = branch_names.last().unwrap();
+        let rest: Vec<String> = branch_names[..branch_names.len() - 1]
+            .iter()
+            .map(|n| format!("'{}'", n))
+            .collect();
+        format!("Merge branches {} and '{}'", rest.join(", "), last)
+    };
+    let msg = if let Some(name) = head.branch_name() {
+        if name != "main" && name != "master" {
+            format!("{formatted} into {name}")
+        } else {
+            formatted
+        }
+    } else {
+        formatted
+    };
+    ensure_trailing_newline(&msg)
 }
 
 /// Squash merge: stage changes but don't commit.
