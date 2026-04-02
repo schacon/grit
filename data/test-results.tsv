@@ -671,99 +671,99 @@ t0035-safe-bare-repository::no-trace-when-bare-repository-is-git	t0035-safe-bare
 t0035-safe-bare-repository::no-trace-when-bare-repository-is-a-subdir-of-git	t0035-safe-bare-repository	no trace when "bare repository" is a subdir of .git		not_ported
 t0035-safe-bare-repository::no-trace-in-git-dir-of-secondary-worktree	t0035-safe-bare-repository	no trace in $GIT_DIR of secondary worktree		not_ported
 t0035-safe-bare-repository::no-trace-in-git-dir-of-a-submodule	t0035-safe-bare-repository	no trace in $GIT_DIR of a submodule		not_ported
-t0040-parse-options::test-help	t0040-parse-options	test help		not_ported
-t0040-parse-options::opt-bool-1	t0040-parse-options	OPT_BOOL() #1		not_ported
-t0040-parse-options::opt-bool-2	t0040-parse-options	OPT_BOOL() #2		not_ported
-t0040-parse-options::opt-bool-3	t0040-parse-options	OPT_BOOL() #3		not_ported
-t0040-parse-options::opt-bool-4	t0040-parse-options	OPT_BOOL() #4		not_ported
-t0040-parse-options::opt-bool-5	t0040-parse-options	OPT_BOOL() #5		not_ported
-t0040-parse-options::opt-bool-is-idempotent-1	t0040-parse-options	OPT_BOOL() is idempotent #1		not_ported
-t0040-parse-options::opt-bool-is-idempotent-2	t0040-parse-options	OPT_BOOL() is idempotent #2		not_ported
-t0040-parse-options::opt-bool-negation-1	t0040-parse-options	OPT_BOOL() negation #1		not_ported
-t0040-parse-options::opt-bool-negation-2	t0040-parse-options	OPT_BOOL() negation #2		not_ported
-t0040-parse-options::opt-bool-no-negation-1	t0040-parse-options	OPT_BOOL() no negation #1		not_ported
-t0040-parse-options::opt-bool-no-negation-2	t0040-parse-options	OPT_BOOL() no negation #2		not_ported
-t0040-parse-options::opt-bool-positivation	t0040-parse-options	OPT_BOOL() positivation		not_ported
-t0040-parse-options::opt-integer-negative	t0040-parse-options	OPT_INTEGER() negative		not_ported
-t0040-parse-options::opt-integer-kilo	t0040-parse-options	OPT_INTEGER() kilo		not_ported
-t0040-parse-options::opt-integer-negative-kilo	t0040-parse-options	OPT_INTEGER() negative kilo		not_ported
-t0040-parse-options::opt-unsigned-simple	t0040-parse-options	OPT_UNSIGNED() simple		not_ported
-t0040-parse-options::opt-unsigned-kilo	t0040-parse-options	OPT_UNSIGNED() kilo		not_ported
-t0040-parse-options::opt-unsigned-mega	t0040-parse-options	OPT_UNSIGNED() mega		not_ported
-t0040-parse-options::opt-unsigned-giga	t0040-parse-options	OPT_UNSIGNED() giga		not_ported
-t0040-parse-options::opt-unsigned-3giga	t0040-parse-options	OPT_UNSIGNED() 3giga		not_ported
-t0040-parse-options::short-options	t0040-parse-options	short options		not_ported
-t0040-parse-options::long-options	t0040-parse-options	long options		not_ported
-t0040-parse-options::abbreviate-to-something-longer-than-sha1-length	t0040-parse-options	abbreviate to something longer than SHA1 length		not_ported
-t0040-parse-options::missing-required-value	t0040-parse-options	missing required value		not_ported
-t0040-parse-options::superfluous-value-provided-boolean	t0040-parse-options	superfluous value provided: boolean		not_ported
-t0040-parse-options::superfluous-value-provided-boolean-abbreviated	t0040-parse-options	superfluous value provided: boolean, abbreviated		not_ported
-t0040-parse-options::superfluous-value-provided-cmdmode	t0040-parse-options	superfluous value provided: cmdmode		not_ported
-t0040-parse-options::intermingled-arguments	t0040-parse-options	intermingled arguments		not_ported
-t0040-parse-options::unambiguously-abbreviated-option	t0040-parse-options	unambiguously abbreviated option		not_ported
-t0040-parse-options::unambiguously-abbreviated-option-with	t0040-parse-options	unambiguously abbreviated option with "="		not_ported
-t0040-parse-options::ambiguously-abbreviated-option	t0040-parse-options	ambiguously abbreviated option		not_ported
-t0040-parse-options::non-ambiguous-option-after-two-options-it-abbreviates	t0040-parse-options	non ambiguous option (after two options it abbreviates)		not_ported
-t0040-parse-options::alias-options-do-not-contribute-to-abbreviation	t0040-parse-options	Alias options do not contribute to abbreviation		not_ported
-t0040-parse-options::detect-possible-typos	t0040-parse-options	detect possible typos		not_ported
-t0040-parse-options::detect-possible-typos-2	t0040-parse-options	detect possible typos		not_ported
-t0040-parse-options::opt-callback-and-opt-bit-work	t0040-parse-options	OPT_CALLBACK() and OPT_BIT() work		not_ported
-t0040-parse-options::opt-callback-and-callback-errors-work	t0040-parse-options	OPT_CALLBACK() and callback errors work		not_ported
-t0040-parse-options::opt-bit-and-opt-set-int-work	t0040-parse-options	OPT_BIT() and OPT_SET_INT() work		not_ported
-t0040-parse-options::opt-negbit-and-opt-set-int-work	t0040-parse-options	OPT_NEGBIT() and OPT_SET_INT() work		not_ported
-t0040-parse-options::opt-bit-works	t0040-parse-options	OPT_BIT() works		not_ported
-t0040-parse-options::opt-negbit-works	t0040-parse-options	OPT_NEGBIT() works		not_ported
-t0040-parse-options::opt-cmdmode-works	t0040-parse-options	OPT_CMDMODE() works		not_ported
-t0040-parse-options::opt-cmdmode-detects-incompatibility-1	t0040-parse-options	OPT_CMDMODE() detects incompatibility (1)		not_ported
-t0040-parse-options::opt-cmdmode-detects-incompatibility-2	t0040-parse-options	OPT_CMDMODE() detects incompatibility (2)		not_ported
-t0040-parse-options::opt-cmdmode-detects-incompatibility-3	t0040-parse-options	OPT_CMDMODE() detects incompatibility (3)		not_ported
-t0040-parse-options::opt-cmdmode-detects-incompatibility-4	t0040-parse-options	OPT_CMDMODE() detects incompatibility (4)		not_ported
-t0040-parse-options::opt-countup-with-parse-opt-nodash-works	t0040-parse-options	OPT_COUNTUP() with PARSE_OPT_NODASH works		not_ported
-t0040-parse-options::opt-number-callback-works	t0040-parse-options	OPT_NUMBER_CALLBACK() works		not_ported
-t0040-parse-options::negation-of-opt-noneg-flags-is-not-ambiguous	t0040-parse-options	negation of OPT_NONEG flags is not ambiguous		not_ported
-t0040-parse-options::list-keeps-list-of-strings	t0040-parse-options	--list keeps list of strings		not_ported
-t0040-parse-options::no-list-resets-list	t0040-parse-options	--no-list resets list		not_ported
-t0040-parse-options::multiple-quiet-levels	t0040-parse-options	multiple quiet levels		not_ported
-t0040-parse-options::multiple-verbose-levels	t0040-parse-options	multiple verbose levels		not_ported
-t0040-parse-options::no-quiet-sets-quiet-to-0	t0040-parse-options	--no-quiet sets --quiet to 0		not_ported
-t0040-parse-options::no-quiet-resets-multiple-q-to-0	t0040-parse-options	--no-quiet resets multiple -q to 0		not_ported
-t0040-parse-options::no-verbose-sets-verbose-to-0	t0040-parse-options	--no-verbose sets verbose to 0		not_ported
-t0040-parse-options::no-verbose-resets-multiple-verbose-to-0	t0040-parse-options	--no-verbose resets multiple verbose to 0		not_ported
-t0040-parse-options::git-test-disallow-abbreviated-options-works	t0040-parse-options	GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS works		not_ported
-t0040-parse-options::end-of-options-treats-remainder-as-args	t0040-parse-options	--end-of-options treats remainder as args		not_ported
-t0040-parse-options::keep-dashdash-works	t0040-parse-options	KEEP_DASHDASH works		not_ported
-t0040-parse-options::keep-argv0-works	t0040-parse-options	KEEP_ARGV0 works		not_ported
-t0040-parse-options::stop-at-non-option-works	t0040-parse-options	STOP_AT_NON_OPTION works		not_ported
-t0040-parse-options::keep-unknown-opt-works	t0040-parse-options	KEEP_UNKNOWN_OPT works		not_ported
-t0040-parse-options::no-internal-help-works-for-h	t0040-parse-options	NO_INTERNAL_HELP works for -h		not_ported
-t0040-parse-options::keep-unknown-opt-no-internal-help-works	t0040-parse-options	KEEP_UNKNOWN_OPT | NO_INTERNAL_HELP works		not_ported
-t0040-parse-options::subcommand-no-subcommand-shows-error-and-usage	t0040-parse-options	subcommand - no subcommand shows error and usage		not_ported
-t0040-parse-options::subcommand-subcommand-after-shows-error-and-usage	t0040-parse-options	subcommand - subcommand after -- shows error and usage		not_ported
-t0040-parse-options::subcommand-subcommand-after-end-of-options-shows-error-and-usage	t0040-parse-options	subcommand - subcommand after --end-of-options shows error and usage		not_ported
-t0040-parse-options::subcommand-unknown-subcommand-shows-error-and-usage	t0040-parse-options	subcommand - unknown subcommand shows error and usage		not_ported
-t0040-parse-options::subcommand-subcommands-cannot-be-abbreviated	t0040-parse-options	subcommand - subcommands cannot be abbreviated		not_ported
-t0040-parse-options::subcommand-no-negated-subcommands	t0040-parse-options	subcommand - no negated subcommands		not_ported
-t0040-parse-options::subcommand-simple	t0040-parse-options	subcommand - simple		not_ported
-t0040-parse-options::subcommand-stop-parsing-at-the-first-subcommand	t0040-parse-options	subcommand - stop parsing at the first subcommand		not_ported
-t0040-parse-options::subcommand-keep-argv0	t0040-parse-options	subcommand - KEEP_ARGV0		not_ported
-t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given		not_ported
-t0040-parse-options::subcommand-subcommand-optional-given-subcommand	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + given subcommand		not_ported
-t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given-unknown-dashless-args	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given + unknown dashless args		not_ported
-t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given-unknown-option	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given + unknown option		not_ported
-t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-subcommand-not-given-unknown-opt	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + subcommand not given + unknown option		not_ported
-t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-subcommand-ignored-after-unknown	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + subcommand ignored after unknown option		not_ported
-t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-command-and-subcommand-options-c	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + command and subcommand options cannot be mixed		not_ported
-t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-keep-argv0	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT | KEEP_ARGV0		not_ported
-t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-keep-dashdash	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT | KEEP_DASHDASH		not_ported
-t0040-parse-options::subcommand-completion-helper	t0040-parse-options	subcommand - completion helper		not_ported
-t0040-parse-options::subcommands-are-incompatible-with-stop-at-non-option	t0040-parse-options	subcommands are incompatible with STOP_AT_NON_OPTION		not_ported
-t0040-parse-options::subcommands-are-incompatible-with-keep-unknown-opt-unless-in-combination-with-su	t0040-parse-options	subcommands are incompatible with KEEP_UNKNOWN_OPT unless in combination with SUBCOMMAND_OPTIONAL		not_ported
-t0040-parse-options::subcommands-are-incompatible-with-keep-dashdash-unless-in-combination-with-subco	t0040-parse-options	subcommands are incompatible with KEEP_DASHDASH unless in combination with SUBCOMMAND_OPTIONAL		not_ported
-t0040-parse-options::negative-unsigned	t0040-parse-options	negative unsigned		not_ported
-t0040-parse-options::unsigned-with-units-but-no-numbers	t0040-parse-options	unsigned with units but no numbers		not_ported
-t0040-parse-options::i16-limits-range	t0040-parse-options	i16 limits range		not_ported
-t0040-parse-options::u16-limits-range	t0040-parse-options	u16 limits range		not_ported
-t0040-parse-options::no-internal-help-works-for-help-opt	t0040-parse-options	NO_INTERNAL_HELP works for --$help_opt		not_ported
+t0040-parse-options::test-help	t0040-parse-options	test help		partial
+t0040-parse-options::opt-bool-1	t0040-parse-options	OPT_BOOL() #1		partial
+t0040-parse-options::opt-bool-2	t0040-parse-options	OPT_BOOL() #2		partial
+t0040-parse-options::opt-bool-3	t0040-parse-options	OPT_BOOL() #3		partial
+t0040-parse-options::opt-bool-4	t0040-parse-options	OPT_BOOL() #4		partial
+t0040-parse-options::opt-bool-5	t0040-parse-options	OPT_BOOL() #5		partial
+t0040-parse-options::opt-bool-is-idempotent-1	t0040-parse-options	OPT_BOOL() is idempotent #1		partial
+t0040-parse-options::opt-bool-is-idempotent-2	t0040-parse-options	OPT_BOOL() is idempotent #2		partial
+t0040-parse-options::opt-bool-negation-1	t0040-parse-options	OPT_BOOL() negation #1		partial
+t0040-parse-options::opt-bool-negation-2	t0040-parse-options	OPT_BOOL() negation #2		partial
+t0040-parse-options::opt-bool-no-negation-1	t0040-parse-options	OPT_BOOL() no negation #1		partial
+t0040-parse-options::opt-bool-no-negation-2	t0040-parse-options	OPT_BOOL() no negation #2		partial
+t0040-parse-options::opt-bool-positivation	t0040-parse-options	OPT_BOOL() positivation		partial
+t0040-parse-options::opt-integer-negative	t0040-parse-options	OPT_INTEGER() negative		partial
+t0040-parse-options::opt-integer-kilo	t0040-parse-options	OPT_INTEGER() kilo		partial
+t0040-parse-options::opt-integer-negative-kilo	t0040-parse-options	OPT_INTEGER() negative kilo		partial
+t0040-parse-options::opt-unsigned-simple	t0040-parse-options	OPT_UNSIGNED() simple		partial
+t0040-parse-options::opt-unsigned-kilo	t0040-parse-options	OPT_UNSIGNED() kilo		partial
+t0040-parse-options::opt-unsigned-mega	t0040-parse-options	OPT_UNSIGNED() mega		partial
+t0040-parse-options::opt-unsigned-giga	t0040-parse-options	OPT_UNSIGNED() giga		partial
+t0040-parse-options::opt-unsigned-3giga	t0040-parse-options	OPT_UNSIGNED() 3giga		partial
+t0040-parse-options::short-options	t0040-parse-options	short options		partial
+t0040-parse-options::long-options	t0040-parse-options	long options		partial
+t0040-parse-options::abbreviate-to-something-longer-than-sha1-length	t0040-parse-options	abbreviate to something longer than SHA1 length		partial
+t0040-parse-options::missing-required-value	t0040-parse-options	missing required value		partial
+t0040-parse-options::superfluous-value-provided-boolean	t0040-parse-options	superfluous value provided: boolean		partial
+t0040-parse-options::superfluous-value-provided-boolean-abbreviated	t0040-parse-options	superfluous value provided: boolean, abbreviated		partial
+t0040-parse-options::superfluous-value-provided-cmdmode	t0040-parse-options	superfluous value provided: cmdmode		partial
+t0040-parse-options::intermingled-arguments	t0040-parse-options	intermingled arguments		partial
+t0040-parse-options::unambiguously-abbreviated-option	t0040-parse-options	unambiguously abbreviated option		partial
+t0040-parse-options::unambiguously-abbreviated-option-with	t0040-parse-options	unambiguously abbreviated option with "="		partial
+t0040-parse-options::ambiguously-abbreviated-option	t0040-parse-options	ambiguously abbreviated option		partial
+t0040-parse-options::non-ambiguous-option-after-two-options-it-abbreviates	t0040-parse-options	non ambiguous option (after two options it abbreviates)		partial
+t0040-parse-options::alias-options-do-not-contribute-to-abbreviation	t0040-parse-options	Alias options do not contribute to abbreviation		partial
+t0040-parse-options::detect-possible-typos	t0040-parse-options	detect possible typos		partial
+t0040-parse-options::detect-possible-typos-2	t0040-parse-options	detect possible typos		partial
+t0040-parse-options::opt-callback-and-opt-bit-work	t0040-parse-options	OPT_CALLBACK() and OPT_BIT() work		partial
+t0040-parse-options::opt-callback-and-callback-errors-work	t0040-parse-options	OPT_CALLBACK() and callback errors work		partial
+t0040-parse-options::opt-bit-and-opt-set-int-work	t0040-parse-options	OPT_BIT() and OPT_SET_INT() work		partial
+t0040-parse-options::opt-negbit-and-opt-set-int-work	t0040-parse-options	OPT_NEGBIT() and OPT_SET_INT() work		partial
+t0040-parse-options::opt-bit-works	t0040-parse-options	OPT_BIT() works		partial
+t0040-parse-options::opt-negbit-works	t0040-parse-options	OPT_NEGBIT() works		partial
+t0040-parse-options::opt-cmdmode-works	t0040-parse-options	OPT_CMDMODE() works		partial
+t0040-parse-options::opt-cmdmode-detects-incompatibility-1	t0040-parse-options	OPT_CMDMODE() detects incompatibility (1)		partial
+t0040-parse-options::opt-cmdmode-detects-incompatibility-2	t0040-parse-options	OPT_CMDMODE() detects incompatibility (2)		partial
+t0040-parse-options::opt-cmdmode-detects-incompatibility-3	t0040-parse-options	OPT_CMDMODE() detects incompatibility (3)		partial
+t0040-parse-options::opt-cmdmode-detects-incompatibility-4	t0040-parse-options	OPT_CMDMODE() detects incompatibility (4)		partial
+t0040-parse-options::opt-countup-with-parse-opt-nodash-works	t0040-parse-options	OPT_COUNTUP() with PARSE_OPT_NODASH works		partial
+t0040-parse-options::opt-number-callback-works	t0040-parse-options	OPT_NUMBER_CALLBACK() works		partial
+t0040-parse-options::negation-of-opt-noneg-flags-is-not-ambiguous	t0040-parse-options	negation of OPT_NONEG flags is not ambiguous		partial
+t0040-parse-options::list-keeps-list-of-strings	t0040-parse-options	--list keeps list of strings		partial
+t0040-parse-options::no-list-resets-list	t0040-parse-options	--no-list resets list		partial
+t0040-parse-options::multiple-quiet-levels	t0040-parse-options	multiple quiet levels		partial
+t0040-parse-options::multiple-verbose-levels	t0040-parse-options	multiple verbose levels		partial
+t0040-parse-options::no-quiet-sets-quiet-to-0	t0040-parse-options	--no-quiet sets --quiet to 0		partial
+t0040-parse-options::no-quiet-resets-multiple-q-to-0	t0040-parse-options	--no-quiet resets multiple -q to 0		partial
+t0040-parse-options::no-verbose-sets-verbose-to-0	t0040-parse-options	--no-verbose sets verbose to 0		partial
+t0040-parse-options::no-verbose-resets-multiple-verbose-to-0	t0040-parse-options	--no-verbose resets multiple verbose to 0		partial
+t0040-parse-options::git-test-disallow-abbreviated-options-works	t0040-parse-options	GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS works		partial
+t0040-parse-options::end-of-options-treats-remainder-as-args	t0040-parse-options	--end-of-options treats remainder as args		partial
+t0040-parse-options::keep-dashdash-works	t0040-parse-options	KEEP_DASHDASH works		partial
+t0040-parse-options::keep-argv0-works	t0040-parse-options	KEEP_ARGV0 works		partial
+t0040-parse-options::stop-at-non-option-works	t0040-parse-options	STOP_AT_NON_OPTION works		partial
+t0040-parse-options::keep-unknown-opt-works	t0040-parse-options	KEEP_UNKNOWN_OPT works		partial
+t0040-parse-options::no-internal-help-works-for-h	t0040-parse-options	NO_INTERNAL_HELP works for -h		partial
+t0040-parse-options::keep-unknown-opt-no-internal-help-works	t0040-parse-options	KEEP_UNKNOWN_OPT | NO_INTERNAL_HELP works		partial
+t0040-parse-options::subcommand-no-subcommand-shows-error-and-usage	t0040-parse-options	subcommand - no subcommand shows error and usage		partial
+t0040-parse-options::subcommand-subcommand-after-shows-error-and-usage	t0040-parse-options	subcommand - subcommand after -- shows error and usage		partial
+t0040-parse-options::subcommand-subcommand-after-end-of-options-shows-error-and-usage	t0040-parse-options	subcommand - subcommand after --end-of-options shows error and usage		partial
+t0040-parse-options::subcommand-unknown-subcommand-shows-error-and-usage	t0040-parse-options	subcommand - unknown subcommand shows error and usage		partial
+t0040-parse-options::subcommand-subcommands-cannot-be-abbreviated	t0040-parse-options	subcommand - subcommands cannot be abbreviated		partial
+t0040-parse-options::subcommand-no-negated-subcommands	t0040-parse-options	subcommand - no negated subcommands		partial
+t0040-parse-options::subcommand-simple	t0040-parse-options	subcommand - simple		partial
+t0040-parse-options::subcommand-stop-parsing-at-the-first-subcommand	t0040-parse-options	subcommand - stop parsing at the first subcommand		partial
+t0040-parse-options::subcommand-keep-argv0	t0040-parse-options	subcommand - KEEP_ARGV0		partial
+t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given		partial
+t0040-parse-options::subcommand-subcommand-optional-given-subcommand	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + given subcommand		partial
+t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given-unknown-dashless-args	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given + unknown dashless args		partial
+t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given-unknown-option	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given + unknown option		partial
+t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-subcommand-not-given-unknown-opt	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + subcommand not given + unknown option		partial
+t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-subcommand-ignored-after-unknown	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + subcommand ignored after unknown option		partial
+t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-command-and-subcommand-options-c	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + command and subcommand options cannot be mixed		partial
+t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-keep-argv0	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT | KEEP_ARGV0		partial
+t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-keep-dashdash	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT | KEEP_DASHDASH		partial
+t0040-parse-options::subcommand-completion-helper	t0040-parse-options	subcommand - completion helper		partial
+t0040-parse-options::subcommands-are-incompatible-with-stop-at-non-option	t0040-parse-options	subcommands are incompatible with STOP_AT_NON_OPTION		partial
+t0040-parse-options::subcommands-are-incompatible-with-keep-unknown-opt-unless-in-combination-with-su	t0040-parse-options	subcommands are incompatible with KEEP_UNKNOWN_OPT unless in combination with SUBCOMMAND_OPTIONAL		partial
+t0040-parse-options::subcommands-are-incompatible-with-keep-dashdash-unless-in-combination-with-subco	t0040-parse-options	subcommands are incompatible with KEEP_DASHDASH unless in combination with SUBCOMMAND_OPTIONAL		partial
+t0040-parse-options::negative-unsigned	t0040-parse-options	negative unsigned		partial
+t0040-parse-options::unsigned-with-units-but-no-numbers	t0040-parse-options	unsigned with units but no numbers		partial
+t0040-parse-options::i16-limits-range	t0040-parse-options	i16 limits range		partial
+t0040-parse-options::u16-limits-range	t0040-parse-options	u16 limits range		partial
+t0040-parse-options::no-internal-help-works-for-help-opt	t0040-parse-options	NO_INTERNAL_HELP works for --$help_opt		partial
 t0041-usage::setup	t0041-usage	setup 		not_ported
 t0041-usage::tag-contains-existent-tag	t0041-usage	tag --contains <existent_tag>	tag	not_ported
 t0041-usage::tag-contains-inexistent-tag	t0041-usage	tag --contains <inexistent_tag>	tag	not_ported
@@ -1571,37 +1571,37 @@ t1006-cat-file::cat-file-arg1-error-on-missing-full-oid	t1006-cat-file	cat-file 
 t1006-cat-file::objects-filter-with-unsupported-option-option	t1006-cat-file	objects filter with unsupported option $option	cat-file	pass
 t1006-cat-file::objects-filter-filter	t1006-cat-file	objects filter: $filter	cat-file	pass
 t1006-cat-file::objects-filter-prints-excluded-objects-filter	t1006-cat-file	objects filter prints excluded objects: $filter	cat-file	pass
-t1007-hash-object::blob-does-not-exist-in-database	t1007-hash-object	blob does not exist in database	cat-file	pass
-t1007-hash-object::blob-exists-in-database	t1007-hash-object	blob exists in database	cat-file	pass
-t1007-hash-object::setup	t1007-hash-object	setup	hash-object	pass
-t1007-hash-object::hash-a-file	t1007-hash-object	hash a file	hash-object	pass
-t1007-hash-object::hash-from-stdin	t1007-hash-object	hash from stdin	hash-object	pass
-t1007-hash-object::hash-a-file-and-write-to-database	t1007-hash-object	hash a file and write to database	hash-object	pass
-t1007-hash-object::git-hash-object-stdin-file1-file0-first-operates-on-file0-then-file1	t1007-hash-object	git hash-object --stdin file1 <file0 first operates on file0, then file1	hash-object	pass
-t1007-hash-object::set-up-crlf-tests	t1007-hash-object	set up crlf tests	hash-object	pass
-t1007-hash-object::check-that-appropriate-filter-is-invoke-when-path-is-used	t1007-hash-object	check that appropriate filter is invoke when --path is used	hash-object	pass
-t1007-hash-object::gitattributes-also-work-in-a-subdirectory	t1007-hash-object	gitattributes also work in a subdirectory	hash-object	pass
-t1007-hash-object::path-works-in-a-subdirectory	t1007-hash-object	--path works in a subdirectory	hash-object	pass
-t1007-hash-object::check-that-no-filters-option-works	t1007-hash-object	check that --no-filters option works	hash-object	pass
-t1007-hash-object::check-that-no-filters-option-works-with-stdin-paths	t1007-hash-object	check that --no-filters option works with --stdin-paths	hash-object	pass
-t1007-hash-object::too-short-tree	t1007-hash-object	too-short tree	hash-object	pass
-t1007-hash-object::malformed-mode-in-tree	t1007-hash-object	malformed mode in tree	hash-object	pass
-t1007-hash-object::empty-filename-in-tree	t1007-hash-object	empty filename in tree	hash-object	pass
-t1007-hash-object::duplicate-filename-in-tree	t1007-hash-object	duplicate filename in tree	hash-object	pass
-t1007-hash-object::corrupt-commit	t1007-hash-object	corrupt commit	hash-object	pass
-t1007-hash-object::corrupt-tag	t1007-hash-object	corrupt tag	hash-object	pass
-t1007-hash-object::hash-object-complains-about-bogus-type-name	t1007-hash-object	hash-object complains about bogus type name	hash-object	pass
-t1007-hash-object::hash-object-complains-about-truncated-type-name	t1007-hash-object	hash-object complains about truncated type name	hash-object	pass
-t1007-hash-object::literally-complains-about-non-standard-types	t1007-hash-object	--literally complains about non-standard types	hash-object	pass
-t1007-hash-object::stdin-outside-of-repository-uses-default-hash	t1007-hash-object	--stdin outside of repository (uses default hash)	hash-object	pass
-t1007-hash-object::multiple-stdin-s-are-rejected	t1007-hash-object	multiple '--stdin's are rejected	hash-object	pass
-t1007-hash-object::can-t-use-stdin-and-stdin-paths-together	t1007-hash-object	Can't use --stdin and --stdin-paths together	hash-object	pass
-t1007-hash-object::can-t-pass-filenames-as-arguments-with-stdin-paths	t1007-hash-object	Can't pass filenames as arguments with --stdin-paths	hash-object	pass
-t1007-hash-object::can-t-use-path-with-stdin-paths	t1007-hash-object	Can't use --path with --stdin-paths	hash-object	pass
-t1007-hash-object::can-t-use-path-with-no-filters	t1007-hash-object	Can't use --path with --no-filters	hash-object	pass
-t1007-hash-object::hash-from-stdin-and-write-to-database-args	t1007-hash-object	hash from stdin and write to database ($args)	hash-object	pass
-t1007-hash-object::hash-two-files-with-names-on-stdin	t1007-hash-object	hash two files with names on stdin	hash-object	pass
-t1007-hash-object::hash-two-files-with-names-on-stdin-and-write-to-database-args	t1007-hash-object	hash two files with names on stdin and write to database ($args)	hash-object	pass
+t1007-hash-object::blob-does-not-exist-in-database	t1007-hash-object	blob does not exist in database	cat-file	partial
+t1007-hash-object::blob-exists-in-database	t1007-hash-object	blob exists in database	cat-file	partial
+t1007-hash-object::setup	t1007-hash-object	setup	hash-object	partial
+t1007-hash-object::hash-a-file	t1007-hash-object	hash a file	hash-object	partial
+t1007-hash-object::hash-from-stdin	t1007-hash-object	hash from stdin	hash-object	partial
+t1007-hash-object::hash-a-file-and-write-to-database	t1007-hash-object	hash a file and write to database	hash-object	partial
+t1007-hash-object::git-hash-object-stdin-file1-file0-first-operates-on-file0-then-file1	t1007-hash-object	git hash-object --stdin file1 <file0 first operates on file0, then file1	hash-object	partial
+t1007-hash-object::set-up-crlf-tests	t1007-hash-object	set up crlf tests	hash-object	partial
+t1007-hash-object::check-that-appropriate-filter-is-invoke-when-path-is-used	t1007-hash-object	check that appropriate filter is invoke when --path is used	hash-object	partial
+t1007-hash-object::gitattributes-also-work-in-a-subdirectory	t1007-hash-object	gitattributes also work in a subdirectory	hash-object	partial
+t1007-hash-object::path-works-in-a-subdirectory	t1007-hash-object	--path works in a subdirectory	hash-object	partial
+t1007-hash-object::check-that-no-filters-option-works	t1007-hash-object	check that --no-filters option works	hash-object	partial
+t1007-hash-object::check-that-no-filters-option-works-with-stdin-paths	t1007-hash-object	check that --no-filters option works with --stdin-paths	hash-object	partial
+t1007-hash-object::too-short-tree	t1007-hash-object	too-short tree	hash-object	partial
+t1007-hash-object::malformed-mode-in-tree	t1007-hash-object	malformed mode in tree	hash-object	partial
+t1007-hash-object::empty-filename-in-tree	t1007-hash-object	empty filename in tree	hash-object	partial
+t1007-hash-object::duplicate-filename-in-tree	t1007-hash-object	duplicate filename in tree	hash-object	partial
+t1007-hash-object::corrupt-commit	t1007-hash-object	corrupt commit	hash-object	partial
+t1007-hash-object::corrupt-tag	t1007-hash-object	corrupt tag	hash-object	partial
+t1007-hash-object::hash-object-complains-about-bogus-type-name	t1007-hash-object	hash-object complains about bogus type name	hash-object	partial
+t1007-hash-object::hash-object-complains-about-truncated-type-name	t1007-hash-object	hash-object complains about truncated type name	hash-object	partial
+t1007-hash-object::literally-complains-about-non-standard-types	t1007-hash-object	--literally complains about non-standard types	hash-object	partial
+t1007-hash-object::stdin-outside-of-repository-uses-default-hash	t1007-hash-object	--stdin outside of repository (uses default hash)	hash-object	partial
+t1007-hash-object::multiple-stdin-s-are-rejected	t1007-hash-object	multiple '--stdin's are rejected	hash-object	partial
+t1007-hash-object::can-t-use-stdin-and-stdin-paths-together	t1007-hash-object	Can't use --stdin and --stdin-paths together	hash-object	partial
+t1007-hash-object::can-t-pass-filenames-as-arguments-with-stdin-paths	t1007-hash-object	Can't pass filenames as arguments with --stdin-paths	hash-object	partial
+t1007-hash-object::can-t-use-path-with-stdin-paths	t1007-hash-object	Can't use --path with --stdin-paths	hash-object	partial
+t1007-hash-object::can-t-use-path-with-no-filters	t1007-hash-object	Can't use --path with --no-filters	hash-object	partial
+t1007-hash-object::hash-from-stdin-and-write-to-database-args	t1007-hash-object	hash from stdin and write to database ($args)	hash-object	partial
+t1007-hash-object::hash-two-files-with-names-on-stdin	t1007-hash-object	hash two files with names on stdin	hash-object	partial
+t1007-hash-object::hash-two-files-with-names-on-stdin-and-write-to-database-args	t1007-hash-object	hash two files with names on stdin and write to database ($args)	hash-object	partial
 t1008-read-tree-overlay::multi-read	t1008-read-tree-overlay	multi-read	ls-files	pass
 t1009-read-tree-new-index::non-existent-index-file	t1009-read-tree-new-index	non-existent index file	read-tree	pass
 t1009-read-tree-new-index::empty-index-file	t1009-read-tree-new-index	empty index file	read-tree	pass
@@ -2781,12 +2781,12 @@ t1416-ref-transaction-hooks::hook-captures-git-symbolic-ref-updates	t1416-ref-tr
 t1416-ref-transaction-hooks::hook-gets-all-queued-symref-updates	t1416-ref-transaction-hooks	hook gets all queued symref updates	symbolic-ref	not_ported
 t1417-reflog-updateref::setup	t1417-reflog-updateref	setup	reflog	not_ported
 t1417-reflog-updateref::get-exp-with-args	t1417-reflog-updateref	get '$exp' with '$args'	rev-parse	not_ported
-t1418-reflog-exists::setup	t1418-reflog-exists	setup	reflog	not_ported
-t1418-reflog-exists::usage	t1418-reflog-exists	usage	reflog	not_ported
-t1418-reflog-exists::usage-unknown-option	t1418-reflog-exists	usage: unknown option	reflog	not_ported
-t1418-reflog-exists::reflog-exists-works	t1418-reflog-exists	reflog exists works	reflog	not_ported
-t1418-reflog-exists::reflog-exists-works-with-a-delimiter	t1418-reflog-exists	reflog exists works with a "--" delimiter	reflog	not_ported
-t1418-reflog-exists::reflog-exists-works-with-a-end-of-options-delimiter	t1418-reflog-exists	reflog exists works with a "--end-of-options" delimiter	reflog	not_ported
+t1418-reflog-exists::setup	t1418-reflog-exists	setup	reflog	partial
+t1418-reflog-exists::usage	t1418-reflog-exists	usage	reflog	partial
+t1418-reflog-exists::usage-unknown-option	t1418-reflog-exists	usage: unknown option	reflog	partial
+t1418-reflog-exists::reflog-exists-works	t1418-reflog-exists	reflog exists works	reflog	partial
+t1418-reflog-exists::reflog-exists-works-with-a-delimiter	t1418-reflog-exists	reflog exists works with a "--" delimiter	reflog	partial
+t1418-reflog-exists::reflog-exists-works-with-a-end-of-options-delimiter	t1418-reflog-exists	reflog exists works with a "--end-of-options" delimiter	reflog	partial
 t1419-exclude-refs::setup	t1419-exclude-refs	setup	pack-refs	not_ported
 t1419-exclude-refs::excluded-region-in-middle	t1419-exclude-refs	excluded region in middle		not_ported
 t1419-exclude-refs::excluded-region-at-beginning	t1419-exclude-refs	excluded region at beginning		not_ported
@@ -3781,19 +3781,19 @@ t2103-update-index-ignore-missing::ignore-missing-refresh	t2103-update-index-ign
 t2103-update-index-ignore-missing::unmerged-refresh	t2103-update-index-ignore-missing	--unmerged --refresh	update-index	not_ported
 t2103-update-index-ignore-missing::ignore-submodules-refresh-1	t2103-update-index-ignore-missing	--ignore-submodules --refresh (1)	update-index	not_ported
 t2103-update-index-ignore-missing::ignore-submodules-refresh-2	t2103-update-index-ignore-missing	--ignore-submodules --refresh (2)	update-index	not_ported
-t2104-update-index-skip-worktree::setup	t2104-update-index-skip-worktree	setup	add	not_ported
-t2104-update-index-skip-worktree::index-is-at-version-2	t2104-update-index-skip-worktree	index is at version 2	update-index	not_ported
-t2104-update-index-skip-worktree::update-index-skip-worktree	t2104-update-index-skip-worktree	update-index --skip-worktree	update-index	not_ported
-t2104-update-index-skip-worktree::index-is-at-version-3-after-having-some-skip-worktree-entries	t2104-update-index-skip-worktree	index is at version 3 after having some skip-worktree entries	update-index	not_ported
-t2104-update-index-skip-worktree::ls-files-t	t2104-update-index-skip-worktree	ls-files -t	ls-files	not_ported
-t2104-update-index-skip-worktree::update-index-no-skip-worktree	t2104-update-index-skip-worktree	update-index --no-skip-worktree	update-index	not_ported
-t2104-update-index-skip-worktree::index-version-is-back-to-2-when-there-is-no-skip-worktree-entry	t2104-update-index-skip-worktree	index version is back to 2 when there is no skip-worktree entry	update-index	not_ported
+t2104-update-index-skip-worktree::setup	t2104-update-index-skip-worktree	setup	add	partial
+t2104-update-index-skip-worktree::index-is-at-version-2	t2104-update-index-skip-worktree	index is at version 2	update-index	partial
+t2104-update-index-skip-worktree::update-index-skip-worktree	t2104-update-index-skip-worktree	update-index --skip-worktree	update-index	partial
+t2104-update-index-skip-worktree::index-is-at-version-3-after-having-some-skip-worktree-entries	t2104-update-index-skip-worktree	index is at version 3 after having some skip-worktree entries	update-index	partial
+t2104-update-index-skip-worktree::ls-files-t	t2104-update-index-skip-worktree	ls-files -t	ls-files	partial
+t2104-update-index-skip-worktree::update-index-no-skip-worktree	t2104-update-index-skip-worktree	update-index --no-skip-worktree	update-index	partial
+t2104-update-index-skip-worktree::index-version-is-back-to-2-when-there-is-no-skip-worktree-entry	t2104-update-index-skip-worktree	index version is back to 2 when there is no skip-worktree entry	update-index	partial
 t2105-update-index-gitfile::submodule-with-absolute-git-file	t2105-update-index-gitfile	submodule with absolute .git file	init	not_ported
 t2105-update-index-gitfile::add-gitlink-to-absolute-git-file	t2105-update-index-gitfile	add gitlink to absolute .git file	update-index	not_ported
 t2105-update-index-gitfile::submodule-with-relative-git-file	t2105-update-index-gitfile	submodule with relative .git file	init	not_ported
 t2105-update-index-gitfile::add-gitlink-to-relative-git-file	t2105-update-index-gitfile	add gitlink to relative .git file	update-index	not_ported
-t2106-update-index-assume-unchanged::setup	t2106-update-index-assume-unchanged	setup	add	not_ported
-t2106-update-index-assume-unchanged::do-not-switch-branches-with-dirty-file	t2106-update-index-assume-unchanged	do not switch branches with dirty file	update-index	not_ported
+t2106-update-index-assume-unchanged::setup	t2106-update-index-assume-unchanged	setup	add	partial
+t2106-update-index-assume-unchanged::do-not-switch-branches-with-dirty-file	t2106-update-index-assume-unchanged	do not switch branches with dirty file	update-index	partial
 t2107-update-index-basic::update-index-nonsense-fails	t2107-update-index-basic	update-index --nonsense fails	update-index	pass
 t2107-update-index-basic::update-index-nonsense-dumps-usage	t2107-update-index-basic	update-index --nonsense dumps usage	update-index	pass
 t2107-update-index-basic::update-index-h-with-corrupt-index	t2107-update-index-basic	update-index -h with corrupt index	update-index	pass
@@ -4129,21 +4129,21 @@ t2501-cwd-empty::git-version-continues-working-from-a-deleted-dir	t2501-cwd-empt
 t2501-cwd-empty::rm-r-with-c-leaves-submodule-if-cwd-inside	t2501-cwd-empty	rm -r with -C leaves submodule if cwd inside	rm	not_ported
 t2501-cwd-empty::rm-r-leaves-submodule-if-cwd-inside	t2501-cwd-empty	rm -r leaves submodule if cwd inside		not_ported
 t2501-cwd-empty::rm-rf-removes-submodule-even-if-cwd-inside	t2501-cwd-empty	rm -rf removes submodule even if cwd inside		not_ported
-t3000-ls-files-others::setup	t3000-ls-files-others	setup 	update-index	not_ported
-t3000-ls-files-others::setup-expected-output	t3000-ls-files-others	setup: expected output	ls-files	not_ported
-t3000-ls-files-others::ls-files-others	t3000-ls-files-others	ls-files --others	ls-files	not_ported
-t3000-ls-files-others::ls-files-others-directory	t3000-ls-files-others	ls-files --others --directory	ls-files	not_ported
-t3000-ls-files-others::no-empty-directory-hides-empty-directory	t3000-ls-files-others	--no-empty-directory hides empty directory	ls-files	not_ported
-t3000-ls-files-others::ls-files-others-handles-non-submodule-git	t3000-ls-files-others	ls-files --others handles non-submodule .git	ls-files	not_ported
-t3000-ls-files-others::setup-nested-pathspec-search	t3000-ls-files-others	setup nested pathspec search	add	not_ported
-t3000-ls-files-others::ls-files-o-directory-with-single-deep-dir-pathspec	t3000-ls-files-others	ls-files -o --directory with single deep dir pathspec	ls-files	not_ported
-t3000-ls-files-others::ls-files-o-directory-with-multiple-dir-pathspecs	t3000-ls-files-others	ls-files -o --directory with multiple dir pathspecs	ls-files	not_ported
-t3000-ls-files-others::ls-files-o-directory-with-mix-dir-file-pathspecs	t3000-ls-files-others	ls-files -o --directory with mix dir/file pathspecs	ls-files	not_ported
-t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match	t3000-ls-files-others	ls-files -o --directory with glob filetype match	ls-files	not_ported
-t3000-ls-files-others::ls-files-o-directory-with-mix-of-tracked-states	t3000-ls-files-others	ls-files -o --directory with mix of tracked states	ls-files	not_ported
-t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match-only	t3000-ls-files-others	ls-files -o --directory with glob filetype match only	ls-files	not_ported
-t3000-ls-files-others::ls-files-o-directory-to-get-immediate-paths-under-one-dir-only	t3000-ls-files-others	ls-files -o --directory to get immediate paths under one dir only	ls-files	not_ported
-t3000-ls-files-others::ls-files-o-avoids-listing-untracked-non-matching-gitdir	t3000-ls-files-others	ls-files -o avoids listing untracked non-matching gitdir	ls-files	not_ported
+t3000-ls-files-others::setup	t3000-ls-files-others	setup 	update-index	partial
+t3000-ls-files-others::setup-expected-output	t3000-ls-files-others	setup: expected output	ls-files	partial
+t3000-ls-files-others::ls-files-others	t3000-ls-files-others	ls-files --others	ls-files	partial
+t3000-ls-files-others::ls-files-others-directory	t3000-ls-files-others	ls-files --others --directory	ls-files	partial
+t3000-ls-files-others::no-empty-directory-hides-empty-directory	t3000-ls-files-others	--no-empty-directory hides empty directory	ls-files	partial
+t3000-ls-files-others::ls-files-others-handles-non-submodule-git	t3000-ls-files-others	ls-files --others handles non-submodule .git	ls-files	partial
+t3000-ls-files-others::setup-nested-pathspec-search	t3000-ls-files-others	setup nested pathspec search	add	partial
+t3000-ls-files-others::ls-files-o-directory-with-single-deep-dir-pathspec	t3000-ls-files-others	ls-files -o --directory with single deep dir pathspec	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-with-multiple-dir-pathspecs	t3000-ls-files-others	ls-files -o --directory with multiple dir pathspecs	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-with-mix-dir-file-pathspecs	t3000-ls-files-others	ls-files -o --directory with mix dir/file pathspecs	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match	t3000-ls-files-others	ls-files -o --directory with glob filetype match	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-with-mix-of-tracked-states	t3000-ls-files-others	ls-files -o --directory with mix of tracked states	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match-only	t3000-ls-files-others	ls-files -o --directory with glob filetype match only	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-to-get-immediate-paths-under-one-dir-only	t3000-ls-files-others	ls-files -o --directory to get immediate paths under one dir only	ls-files	partial
+t3000-ls-files-others::ls-files-o-avoids-listing-untracked-non-matching-gitdir	t3000-ls-files-others	ls-files -o avoids listing untracked non-matching gitdir	ls-files	partial
 t3001-ls-files-others-exclude::git-ls-files-others-with-various-exclude-options	t3001-ls-files-others-exclude	git ls-files --others with various exclude options.	ls-files	not_ported
 t3001-ls-files-others-exclude::git-ls-files-others-with-r-n-line-endings	t3001-ls-files-others-exclude	git ls-files --others with \r\n line endings.	ls-files	not_ported
 t3001-ls-files-others-exclude::setup-skip-worktree-gitignore	t3001-ls-files-others-exclude	setup skip-worktree gitignore	add	not_ported
@@ -4171,12 +4171,12 @@ t3001-ls-files-others-exclude::pattern-matches-prefix-completely	t3001-ls-files-
 t3001-ls-files-others-exclude::ls-files-with-patterns	t3001-ls-files-others-exclude	ls-files with "**" patterns	ls-files	not_ported
 t3001-ls-files-others-exclude::ls-files-with-patterns-and-directory	t3001-ls-files-others-exclude	ls-files with "**" patterns and --directory	ls-files	not_ported
 t3001-ls-files-others-exclude::ls-files-with-patterns-and-no-slashes	t3001-ls-files-others-exclude	ls-files with "**" patterns and no slashes	ls-files	not_ported
-t3002-ls-files-dashpath::setup	t3002-ls-files-dashpath	setup	ls-files	not_ported
-t3002-ls-files-dashpath::git-ls-files-without-path-restriction	t3002-ls-files-dashpath	git ls-files without path restriction.	ls-files	not_ported
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction	t3002-ls-files-dashpath	git ls-files with path restriction.	ls-files	not_ported
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with	t3002-ls-files-dashpath	git ls-files with path restriction with --.	ls-files	not_ported
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with-2	t3002-ls-files-dashpath	git ls-files with path restriction with -- --.	ls-files	not_ported
-t3002-ls-files-dashpath::git-ls-files-with-no-path-restriction	t3002-ls-files-dashpath	git ls-files with no path restriction.	ls-files	not_ported
+t3002-ls-files-dashpath::setup	t3002-ls-files-dashpath	setup	ls-files	partial
+t3002-ls-files-dashpath::git-ls-files-without-path-restriction	t3002-ls-files-dashpath	git ls-files without path restriction.	ls-files	partial
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction	t3002-ls-files-dashpath	git ls-files with path restriction.	ls-files	partial
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with	t3002-ls-files-dashpath	git ls-files with path restriction with --.	ls-files	partial
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with-2	t3002-ls-files-dashpath	git ls-files with path restriction with -- --.	ls-files	partial
+t3002-ls-files-dashpath::git-ls-files-with-no-path-restriction	t3002-ls-files-dashpath	git ls-files with no path restriction.	ls-files	partial
 t3003-ls-files-exclude::create-repo-with-file	t3003-ls-files-exclude	create repo with file	add	pass
 t3003-ls-files-exclude::add-file-to-gitignore	t3003-ls-files-exclude	add file to gitignore	ls-files	pass
 t3003-ls-files-exclude::ls-files-i-c-lists-only-tracked-but-ignored-files	t3003-ls-files-exclude	ls-files -i -c lists only tracked-but-ignored files	ls-files	pass
@@ -7266,17 +7266,17 @@ t4043-diff-rename-binary::move-the-files-into-a-sub-directory	t4043-diff-rename-
 t4043-diff-rename-binary::git-show-c-c-report-renames	t4043-diff-rename-binary	git show -C -C report renames	show	not_ported
 t4044-diff-index-unique-abbrev::setup	t4044-diff-index-unique-abbrev	setup	add	pass
 t4044-diff-index-unique-abbrev::diff-does-not-produce-ambiguous-index-line	t4044-diff-index-unique-abbrev	diff does not produce ambiguous index line	diff	pass
-t4045-diff-relative::setup	t4045-diff-relative	setup	add	not_ported
-t4045-diff-relative::external-diff-with-relative	t4045-diff-relative	external diff with --relative	diff	not_ported
-t4045-diff-relative::setup-diff-relative-unmerged	t4045-diff-relative	setup diff --relative unmerged	switch	not_ported
-t4045-diff-relative::diff-relative-without-change-in-subdir	t4045-diff-relative	diff --relative without change in subdir	diff	not_ported
-t4045-diff-relative::diff-relative-name-only-with-change-in-subdir	t4045-diff-relative	diff --relative --name-only with change in subdir	diff	not_ported
-t4045-diff-relative::p	t4045-diff-relative	-p $*	diff	not_ported
-t4045-diff-relative::numstat	t4045-diff-relative	--numstat $*	diff	not_ported
-t4045-diff-relative::stat	t4045-diff-relative	--stat $*	diff	not_ported
-t4045-diff-relative::raw	t4045-diff-relative	--raw $*	diff	not_ported
-t4045-diff-relative::config-diff-relative-relative-opt-p	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	not_ported
-t4045-diff-relative::config-diff-relative-relative-opt-p-2	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	not_ported
+t4045-diff-relative::setup	t4045-diff-relative	setup	add	pass
+t4045-diff-relative::external-diff-with-relative	t4045-diff-relative	external diff with --relative	diff	pass
+t4045-diff-relative::setup-diff-relative-unmerged	t4045-diff-relative	setup diff --relative unmerged	switch	pass
+t4045-diff-relative::diff-relative-without-change-in-subdir	t4045-diff-relative	diff --relative without change in subdir	diff	pass
+t4045-diff-relative::diff-relative-name-only-with-change-in-subdir	t4045-diff-relative	diff --relative --name-only with change in subdir	diff	pass
+t4045-diff-relative::p	t4045-diff-relative	-p $*	diff	pass
+t4045-diff-relative::numstat	t4045-diff-relative	--numstat $*	diff	pass
+t4045-diff-relative::stat	t4045-diff-relative	--stat $*	diff	pass
+t4045-diff-relative::raw	t4045-diff-relative	--raw $*	diff	pass
+t4045-diff-relative::config-diff-relative-relative-opt-p	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	pass
+t4045-diff-relative::config-diff-relative-relative-opt-p-2	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	pass
 t4046-diff-unmerged::diff-files-0	t4046-diff-unmerged	diff-files -0	diff-files	pass
 t4046-diff-unmerged::diff-files-1	t4046-diff-unmerged	diff-files -1	diff-files	pass
 t4046-diff-unmerged::diff-files-2	t4046-diff-unmerged	diff-files -2	diff-files	pass
@@ -7373,38 +7373,38 @@ t4051-diff-function-context::context-includes-begin-7	t4051-diff-function-contex
 t4051-diff-function-context::context-includes-end-7	t4051-diff-function-context	 context includes end	diff	not_ported
 t4051-diff-function-context::overlapping-hunks-are-merged	t4051-diff-function-context	 overlapping hunks are merged	diff	not_ported
 t4051-diff-function-context::desc	t4051-diff-function-context	$desc	diff	not_ported
-t4052-stat-output::preparation	t4052-stat-output	preparation	add	not_ported
-t4052-stat-output::preparation-for-big-change-tests	t4052-stat-output	preparation for big-change tests	add	not_ported
-t4052-stat-output::preparation-for-long-name-tests	t4052-stat-output	preparation for long-name tests	add	not_ported
-t4052-stat-output::merge-stat-respects-diff-statgraphwidth-with-big-change	t4052-stat-output	merge --stat respects diff.statGraphWidth with big change	checkout	not_ported
-t4052-stat-output::merge-stat-respects-columns-with-big-change	t4052-stat-output	merge --stat respects COLUMNS with big change	checkout	not_ported
-t4052-stat-output::merge-stat-respects-diff-statnamewidth-with-long-name	t4052-stat-output	merge --stat respects diff.statNameWidth with long name	merge	not_ported
-t4052-stat-output::merge-stat-respects-columns-with-long-name	t4052-stat-output	merge --stat respects COLUMNS with long name	merge	not_ported
-t4052-stat-output::diffstat-where-line-prefix-contains-ansi-escape-codes-is-correct-width	t4052-stat-output	diffstat where line_prefix contains ANSI escape codes is correct width	add	not_ported
-t4052-stat-output::format-patch-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	format-patch: small change with long name gives more space to the name	format-patch	not_ported
-t4052-stat-output::cmd-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	$cmd: small change with long name gives more space to the name		not_ported
-t4052-stat-output::cmd-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd $verb diff.statNameWidth with long name	diff	not_ported
-t4052-stat-output::cmd-stat-width-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd --stat=width $verb diff.statNameWidth with long name	diff	not_ported
-t4052-stat-output::cmd-stat-width-a-long-name-is-given-more-room-when-the-bar-is-short	t4052-stat-output	$cmd --stat=width: a long name is given more room when the bar is short		not_ported
-t4052-stat-output::cmd-stat-width-width-with-long-name	t4052-stat-output	$cmd --stat-width=width with long name		not_ported
-t4052-stat-output::cmd-stat-width-name-width-with-long-name	t4052-stat-output	$cmd --stat=width,name-width with long name		not_ported
-t4052-stat-output::cmd-stat-name-width-width-with-long-name	t4052-stat-output	$cmd --stat-name-width=width with long name		not_ported
-t4052-stat-output::format-patch-cover-letter-ignores-columns-with-big-change	t4052-stat-output	format-patch --cover-letter ignores COLUMNS with big change	format-patch	not_ported
-t4052-stat-output::cmd-verb-columns-with-big-change	t4052-stat-output	$cmd $verb COLUMNS with big change		not_ported
-t4052-stat-output::cmd-graph-verb-columns-with-big-change	t4052-stat-output	$cmd --graph $verb COLUMNS with big change		not_ported
-t4052-stat-output::cmd-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd $verb not enough COLUMNS with big change		not_ported
-t4052-stat-output::cmd-graph-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd --graph $verb not enough COLUMNS with big change		not_ported
-t4052-stat-output::cmd-verb-diff-statgraphwidth	t4052-stat-output	$cmd $verb diff.statGraphWidth	diff	not_ported
-t4052-stat-output::cmd-graph-verb-diff-statgraphwidth	t4052-stat-output	$cmd --graph $verb diff.statGraphWidth	diff	not_ported
-t4052-stat-output::cmd-stat-width-with-big-change	t4052-stat-output	$cmd --stat=width with big change		not_ported
-t4052-stat-output::cmd-stat-width-width-with-big-change	t4052-stat-output	$cmd --stat-width=width with big change		not_ported
-t4052-stat-output::cmd-stat-graph-width-width-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width with big change		not_ported
-t4052-stat-output::cmd-stat-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-width=width --graph with big change		not_ported
-t4052-stat-output::cmd-stat-graph-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width --graph with big change		not_ported
-t4052-stat-output::cmd-stat-width-with-big-change-is-more-balanced	t4052-stat-output	$cmd --stat=width with big change is more balanced		not_ported
-t4052-stat-output::cmd-stat-width-graph-with-big-change-is-balanced	t4052-stat-output	$cmd --stat=width --graph with big change is balanced		not_ported
-t4052-stat-output::cmd-verb-columns-with-long-name	t4052-stat-output	$cmd $verb COLUMNS with long name		not_ported
-t4052-stat-output::cmd-graph-verb-columns-with-long-name	t4052-stat-output	$cmd --graph $verb COLUMNS with long name		not_ported
+t4052-stat-output::preparation	t4052-stat-output	preparation	add	partial
+t4052-stat-output::preparation-for-big-change-tests	t4052-stat-output	preparation for big-change tests	add	partial
+t4052-stat-output::preparation-for-long-name-tests	t4052-stat-output	preparation for long-name tests	add	partial
+t4052-stat-output::merge-stat-respects-diff-statgraphwidth-with-big-change	t4052-stat-output	merge --stat respects diff.statGraphWidth with big change	checkout	partial
+t4052-stat-output::merge-stat-respects-columns-with-big-change	t4052-stat-output	merge --stat respects COLUMNS with big change	checkout	partial
+t4052-stat-output::merge-stat-respects-diff-statnamewidth-with-long-name	t4052-stat-output	merge --stat respects diff.statNameWidth with long name	merge	partial
+t4052-stat-output::merge-stat-respects-columns-with-long-name	t4052-stat-output	merge --stat respects COLUMNS with long name	merge	partial
+t4052-stat-output::diffstat-where-line-prefix-contains-ansi-escape-codes-is-correct-width	t4052-stat-output	diffstat where line_prefix contains ANSI escape codes is correct width	add	partial
+t4052-stat-output::format-patch-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	format-patch: small change with long name gives more space to the name	format-patch	partial
+t4052-stat-output::cmd-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	$cmd: small change with long name gives more space to the name		partial
+t4052-stat-output::cmd-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd $verb diff.statNameWidth with long name	diff	partial
+t4052-stat-output::cmd-stat-width-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd --stat=width $verb diff.statNameWidth with long name	diff	partial
+t4052-stat-output::cmd-stat-width-a-long-name-is-given-more-room-when-the-bar-is-short	t4052-stat-output	$cmd --stat=width: a long name is given more room when the bar is short		partial
+t4052-stat-output::cmd-stat-width-width-with-long-name	t4052-stat-output	$cmd --stat-width=width with long name		partial
+t4052-stat-output::cmd-stat-width-name-width-with-long-name	t4052-stat-output	$cmd --stat=width,name-width with long name		partial
+t4052-stat-output::cmd-stat-name-width-width-with-long-name	t4052-stat-output	$cmd --stat-name-width=width with long name		partial
+t4052-stat-output::format-patch-cover-letter-ignores-columns-with-big-change	t4052-stat-output	format-patch --cover-letter ignores COLUMNS with big change	format-patch	partial
+t4052-stat-output::cmd-verb-columns-with-big-change	t4052-stat-output	$cmd $verb COLUMNS with big change		partial
+t4052-stat-output::cmd-graph-verb-columns-with-big-change	t4052-stat-output	$cmd --graph $verb COLUMNS with big change		partial
+t4052-stat-output::cmd-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd $verb not enough COLUMNS with big change		partial
+t4052-stat-output::cmd-graph-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd --graph $verb not enough COLUMNS with big change		partial
+t4052-stat-output::cmd-verb-diff-statgraphwidth	t4052-stat-output	$cmd $verb diff.statGraphWidth	diff	partial
+t4052-stat-output::cmd-graph-verb-diff-statgraphwidth	t4052-stat-output	$cmd --graph $verb diff.statGraphWidth	diff	partial
+t4052-stat-output::cmd-stat-width-with-big-change	t4052-stat-output	$cmd --stat=width with big change		partial
+t4052-stat-output::cmd-stat-width-width-with-big-change	t4052-stat-output	$cmd --stat-width=width with big change		partial
+t4052-stat-output::cmd-stat-graph-width-width-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width with big change		partial
+t4052-stat-output::cmd-stat-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-width=width --graph with big change		partial
+t4052-stat-output::cmd-stat-graph-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width --graph with big change		partial
+t4052-stat-output::cmd-stat-width-with-big-change-is-more-balanced	t4052-stat-output	$cmd --stat=width with big change is more balanced		partial
+t4052-stat-output::cmd-stat-width-graph-with-big-change-is-balanced	t4052-stat-output	$cmd --stat=width --graph with big change is balanced		partial
+t4052-stat-output::cmd-verb-columns-with-long-name	t4052-stat-output	$cmd $verb COLUMNS with long name		partial
+t4052-stat-output::cmd-graph-verb-columns-with-long-name	t4052-stat-output	$cmd --graph $verb COLUMNS with long name		partial
 t4053-diff-no-index::setup	t4053-diff-no-index	setup	init	partial
 t4053-diff-no-index::git-diff-no-index-exit-code	t4053-diff-no-index	git diff --no-index --exit-code	diff	partial
 t4053-diff-no-index::git-diff-no-index-directories	t4053-diff-no-index	git diff --no-index directories	diff	partial
@@ -7627,13 +7627,13 @@ t4064-diff-oidfind::set-up-merge-tests	t4064-diff-oidfind	set up merge tests	add
 t4064-diff-oidfind::detect-merge-which-introduces-blob	t4064-diff-oidfind	detect merge which introduces blob	checkout	not_ported
 t4064-diff-oidfind::detect-merge-which-removes-blob	t4064-diff-oidfind	detect merge which removes blob	checkout	not_ported
 t4064-diff-oidfind::do-not-detect-merge-that-does-not-touch-blob	t4064-diff-oidfind	do not detect merge that does not touch blob	checkout	not_ported
-t4065-diff-anchored::anchored	t4065-diff-anchored	--anchored	diff	not_ported
-t4065-diff-anchored::anchored-multiple	t4065-diff-anchored	--anchored multiple	diff	not_ported
-t4065-diff-anchored::anchored-with-nonexistent-line-has-no-effect	t4065-diff-anchored	--anchored with nonexistent line has no effect	diff	not_ported
-t4065-diff-anchored::anchored-with-non-unique-line-has-no-effect	t4065-diff-anchored	--anchored with non-unique line has no effect	diff	not_ported
-t4065-diff-anchored::diff-still-produced-with-impossible-multiple-anchored	t4065-diff-anchored	diff still produced with impossible multiple --anchored	diff	not_ported
-t4065-diff-anchored::later-algorithm-arguments-override-earlier-ones	t4065-diff-anchored	later algorithm arguments override earlier ones	diff	not_ported
-t4065-diff-anchored::anchored-works-with-other-commands-like-git-show	t4065-diff-anchored	--anchored works with other commands like "git show"	add	not_ported
+t4065-diff-anchored::anchored	t4065-diff-anchored	--anchored	diff	pass
+t4065-diff-anchored::anchored-multiple	t4065-diff-anchored	--anchored multiple	diff	pass
+t4065-diff-anchored::anchored-with-nonexistent-line-has-no-effect	t4065-diff-anchored	--anchored with nonexistent line has no effect	diff	pass
+t4065-diff-anchored::anchored-with-non-unique-line-has-no-effect	t4065-diff-anchored	--anchored with non-unique line has no effect	diff	pass
+t4065-diff-anchored::diff-still-produced-with-impossible-multiple-anchored	t4065-diff-anchored	diff still produced with impossible multiple --anchored	diff	pass
+t4065-diff-anchored::later-algorithm-arguments-override-earlier-ones	t4065-diff-anchored	later algorithm arguments override earlier ones	diff	pass
+t4065-diff-anchored::anchored-works-with-other-commands-like-git-show	t4065-diff-anchored	--anchored works with other commands like "git show"	add	pass
 t4066-diff-emit-delay::set-up-history-with-a-merge	t4066-diff-emit-delay	set up history with a merge	checkout	not_ported
 t4066-diff-emit-delay::log-cc-p-stat-color-moved	t4066-diff-emit-delay	log --cc -p --stat --color-moved	log	not_ported
 t4067-diff-partial-clone::git-show-batches-blobs	t4067-diff-partial-clone	git show batches blobs	add	not_ported
@@ -7691,7 +7691,7 @@ t4070-diff-pairs::diff-pairs-does-not-support-normal-raw-diff-input	t4070-diff-p
 t4070-diff-pairs::diff-pairs-does-not-support-tree-objects-as-input	t4070-diff-pairs	diff-pairs does not support tree objects as input	diff-tree	not_ported
 t4070-diff-pairs::diff-pairs-does-not-support-pathspec-arguments	t4070-diff-pairs	diff-pairs does not support pathspec arguments	diff-tree	not_ported
 t4070-diff-pairs::diff-pairs-explicit-queue-flush	t4070-diff-pairs	diff-pairs explicit queue flush	diff-tree	not_ported
-t4071-diff-minimal::minimal-diff-should-not-mark-changes-between-changed-lines	t4071-diff-minimal	minimal diff should not mark changes between changed lines	diff	not_ported
+t4071-diff-minimal::minimal-diff-should-not-mark-changes-between-changed-lines	t4071-diff-minimal	minimal diff should not mark changes between changed lines	diff	pass
 t4072-diff-max-depth::setup	t4072-diff-max-depth	setup	add	not_ported
 t4072-diff-max-depth::max-depth-is-disallowed-with-wildcard-pathspecs	t4072-diff-max-depth	--max-depth is disallowed with wildcard pathspecs	diff-tree	not_ported
 t4072-diff-max-depth::find-shortest-path-within-embedded-pathspecs	t4072-diff-max-depth	find shortest path within embedded pathspecs	diff-tree	not_ported
@@ -7701,10 +7701,10 @@ t4073-diff-stat-name-width::test-name-width-not-long-enough-for-dir-name	t4073-d
 t4073-diff-stat-name-width::test-name-width-not-long-enough-for-slash	t4073-diff-stat-name-width	test name-width not long enough for slash	diff	not_ported
 t4073-diff-stat-name-width::test-name-width-not-long-enough-for-file-name	t4073-diff-stat-name-width	test name-width not long enough for file name	diff	not_ported
 t4073-diff-stat-name-width::test-name-width-minimum-length	t4073-diff-stat-name-width	test name-width minimum length	diff	not_ported
-t4074-diff-shifted-matched-group::shifted-merged-diff-group-should-re-diff-to-minimize-patch	t4074-diff-shifted-matched-group	shifted/merged diff group should re-diff to minimize patch	diff	not_ported
-t4074-diff-shifted-matched-group::merged-diff-group-with-no-shift	t4074-diff-shifted-matched-group	merged diff group with no shift	diff	not_ported
-t4074-diff-shifted-matched-group::re-diff-should-preserve-diff-flags	t4074-diff-shifted-matched-group	re-diff should preserve diff flags	diff	not_ported
-t4074-diff-shifted-matched-group::shifting-on-either-side-should-trigger-re-diff-properly	t4074-diff-shifted-matched-group	shifting on either side should trigger re-diff properly	diff	not_ported
+t4074-diff-shifted-matched-group::shifted-merged-diff-group-should-re-diff-to-minimize-patch	t4074-diff-shifted-matched-group	shifted/merged diff group should re-diff to minimize patch	diff	pass
+t4074-diff-shifted-matched-group::merged-diff-group-with-no-shift	t4074-diff-shifted-matched-group	merged diff group with no shift	diff	pass
+t4074-diff-shifted-matched-group::re-diff-should-preserve-diff-flags	t4074-diff-shifted-matched-group	re-diff should preserve diff flags	diff	pass
+t4074-diff-shifted-matched-group::shifting-on-either-side-should-trigger-re-diff-properly	t4074-diff-shifted-matched-group	shifting on either side should trigger re-diff properly	diff	pass
 t4100-apply-stat::applying-a-hunk-header-which-overflows-fails	t4100-apply-stat	applying a hunk header which overflows fails	apply	pass
 t4100-apply-stat::applying-a-hunk-header-which-overflows-from-stdin-fails	t4100-apply-stat	applying a hunk header which overflows from stdin fails	apply	pass
 t4100-apply-stat::applying-multiple-patches-reports-the-corrupted-input	t4100-apply-stat	applying multiple patches reports the corrupted input	apply	pass
@@ -7714,7 +7714,7 @@ t4100-apply-stat::applying-a-patch-with-an-invalid-mode-reports-the-input	t4100-
 t4100-apply-stat::applying-a-patch-with-only-garbage-reports-the-input	t4100-apply-stat	applying a patch with only garbage reports the input	apply	pass
 t4100-apply-stat::title	t4100-apply-stat	$title	apply	pass
 t4100-apply-stat::title-with-recount	t4100-apply-stat	$title with recount	apply	pass
-t4101-apply-nonl::apply-diff-between-i-and-j	t4101-apply-nonl	apply diff between $i and $j	apply	not_ported
+t4101-apply-nonl::apply-diff-between-i-and-j	t4101-apply-nonl	apply diff between $i and $j	apply	partial
 t4102-apply-rename::apply-reverse	t4102-apply-rename	apply reverse	apply	not_ported
 t4102-apply-rename::apply-copy	t4102-apply-rename	apply copy	apply	not_ported
 t4103-apply-binary::setup	t4103-apply-binary	setup	add	not_ported
@@ -7744,8 +7744,8 @@ t4104-apply-boundary::apply-patch-with-3-context-lines-matching-at-end	t4104-app
 t4104-apply-boundary::apply-kind-patch-with-context	t4104-apply-boundary	apply $kind-patch $with context	apply	not_ported
 t4104-apply-boundary::apply-non-git-kind-patch-without-context	t4104-apply-boundary	apply non-git $kind-patch without context	apply	not_ported
 t4105-apply-fuzz::name	t4105-apply-fuzz	$name	apply	not_ported
-t4106-apply-stdin::git-apply-numstat-patch	t4106-apply-stdin	git apply --numstat - < patch	apply	not_ported
-t4106-apply-stdin::git-apply-numstat-patch-patch	t4106-apply-stdin	git apply --numstat - < patch patch	apply	not_ported
+t4106-apply-stdin::git-apply-numstat-patch	t4106-apply-stdin	git apply --numstat - < patch	apply	partial
+t4106-apply-stdin::git-apply-numstat-patch-patch	t4106-apply-stdin	git apply --numstat - < patch patch	apply	partial
 t4107-apply-ignore-whitespace::file-creation	t4107-apply-ignore-whitespace	file creation	apply	not_ported
 t4107-apply-ignore-whitespace::patch2-fails-retab	t4107-apply-ignore-whitespace	patch2 fails (retab)	apply	not_ported
 t4107-apply-ignore-whitespace::patch2-applies-with-ignore-whitespace	t4107-apply-ignore-whitespace	patch2 applies with --ignore-whitespace	apply	not_ported
@@ -14001,26 +14001,26 @@ t7107-reset-pathspec-file::quotes	t7107-reset-pathspec-file	quotes	reset	not_por
 t7107-reset-pathspec-file::quotes-not-compatible-with-pathspec-file-nul	t7107-reset-pathspec-file	quotes not compatible with --pathspec-file-nul	reset	not_ported
 t7107-reset-pathspec-file::only-touches-what-was-listed	t7107-reset-pathspec-file	only touches what was listed	reset	not_ported
 t7107-reset-pathspec-file::error-conditions	t7107-reset-pathspec-file	error conditions	reset	not_ported
-t7110-reset-merge::reset-merge-is-ok-with-changes-in-file-it-does-not-touch	t7110-reset-merge	reset --merge is ok with changes in file it does not touch	reset	not_ported
-t7110-reset-merge::reset-merge-is-ok-when-switching-back	t7110-reset-merge	reset --merge is ok when switching back	reset	not_ported
-t7110-reset-merge::reset-keep-is-ok-with-changes-in-file-it-does-not-touch	t7110-reset-merge	reset --keep is ok with changes in file it does not touch	reset	not_ported
-t7110-reset-merge::reset-keep-is-ok-when-switching-back	t7110-reset-merge	reset --keep is ok when switching back	reset	not_ported
-t7110-reset-merge::reset-merge-discards-changes-added-to-index-1	t7110-reset-merge	reset --merge discards changes added to index (1)	reset	not_ported
-t7110-reset-merge::reset-merge-is-ok-again-when-switching-back-1	t7110-reset-merge	reset --merge is ok again when switching back (1)	reset	not_ported
-t7110-reset-merge::reset-keep-fails-with-changes-in-index-in-files-it-touches	t7110-reset-merge	reset --keep fails with changes in index in files it touches	reset	not_ported
-t7110-reset-merge::reset-merge-discards-changes-added-to-index-2	t7110-reset-merge	reset --merge discards changes added to index (2)	reset	not_ported
-t7110-reset-merge::reset-merge-is-ok-again-when-switching-back-2	t7110-reset-merge	reset --merge is ok again when switching back (2)	reset	not_ported
-t7110-reset-merge::reset-keep-keeps-changes-it-does-not-touch	t7110-reset-merge	reset --keep keeps changes it does not touch	reset	not_ported
-t7110-reset-merge::reset-keep-keeps-changes-when-switching-back	t7110-reset-merge	reset --keep keeps changes when switching back	reset	not_ported
-t7110-reset-merge::reset-merge-fails-with-changes-in-file-it-touches	t7110-reset-merge	reset --merge fails with changes in file it touches	reset	not_ported
-t7110-reset-merge::reset-keep-fails-with-changes-in-file-it-touches	t7110-reset-merge	reset --keep fails with changes in file it touches	reset	not_ported
-t7110-reset-merge::setup-3-different-branches	t7110-reset-merge	setup 3 different branches	reset	not_ported
-t7110-reset-merge::reset-merge-head-is-ok-with-pending-merge	t7110-reset-merge	"reset --merge HEAD^" is ok with pending merge	reset	not_ported
-t7110-reset-merge::reset-keep-head-fails-with-pending-merge	t7110-reset-merge	"reset --keep HEAD^" fails with pending merge	reset	not_ported
-t7110-reset-merge::reset-merge-head-is-ok-with-pending-merge-2	t7110-reset-merge	"reset --merge HEAD" is ok with pending merge	reset	not_ported
-t7110-reset-merge::reset-keep-head-fails-with-pending-merge-2	t7110-reset-merge	"reset --keep HEAD" fails with pending merge	reset	not_ported
-t7110-reset-merge::merge-is-ok-with-added-deleted-merge	t7110-reset-merge	--merge is ok with added/deleted merge	reset	not_ported
-t7110-reset-merge::keep-fails-with-added-deleted-merge	t7110-reset-merge	--keep fails with added/deleted merge	reset	not_ported
+t7110-reset-merge::reset-merge-is-ok-with-changes-in-file-it-does-not-touch	t7110-reset-merge	reset --merge is ok with changes in file it does not touch	reset	partial
+t7110-reset-merge::reset-merge-is-ok-when-switching-back	t7110-reset-merge	reset --merge is ok when switching back	reset	partial
+t7110-reset-merge::reset-keep-is-ok-with-changes-in-file-it-does-not-touch	t7110-reset-merge	reset --keep is ok with changes in file it does not touch	reset	partial
+t7110-reset-merge::reset-keep-is-ok-when-switching-back	t7110-reset-merge	reset --keep is ok when switching back	reset	partial
+t7110-reset-merge::reset-merge-discards-changes-added-to-index-1	t7110-reset-merge	reset --merge discards changes added to index (1)	reset	partial
+t7110-reset-merge::reset-merge-is-ok-again-when-switching-back-1	t7110-reset-merge	reset --merge is ok again when switching back (1)	reset	partial
+t7110-reset-merge::reset-keep-fails-with-changes-in-index-in-files-it-touches	t7110-reset-merge	reset --keep fails with changes in index in files it touches	reset	partial
+t7110-reset-merge::reset-merge-discards-changes-added-to-index-2	t7110-reset-merge	reset --merge discards changes added to index (2)	reset	partial
+t7110-reset-merge::reset-merge-is-ok-again-when-switching-back-2	t7110-reset-merge	reset --merge is ok again when switching back (2)	reset	partial
+t7110-reset-merge::reset-keep-keeps-changes-it-does-not-touch	t7110-reset-merge	reset --keep keeps changes it does not touch	reset	partial
+t7110-reset-merge::reset-keep-keeps-changes-when-switching-back	t7110-reset-merge	reset --keep keeps changes when switching back	reset	partial
+t7110-reset-merge::reset-merge-fails-with-changes-in-file-it-touches	t7110-reset-merge	reset --merge fails with changes in file it touches	reset	partial
+t7110-reset-merge::reset-keep-fails-with-changes-in-file-it-touches	t7110-reset-merge	reset --keep fails with changes in file it touches	reset	partial
+t7110-reset-merge::setup-3-different-branches	t7110-reset-merge	setup 3 different branches	reset	partial
+t7110-reset-merge::reset-merge-head-is-ok-with-pending-merge	t7110-reset-merge	"reset --merge HEAD^" is ok with pending merge	reset	partial
+t7110-reset-merge::reset-keep-head-fails-with-pending-merge	t7110-reset-merge	"reset --keep HEAD^" fails with pending merge	reset	partial
+t7110-reset-merge::reset-merge-head-is-ok-with-pending-merge-2	t7110-reset-merge	"reset --merge HEAD" is ok with pending merge	reset	partial
+t7110-reset-merge::reset-keep-head-fails-with-pending-merge-2	t7110-reset-merge	"reset --keep HEAD" fails with pending merge	reset	partial
+t7110-reset-merge::merge-is-ok-with-added-deleted-merge	t7110-reset-merge	--merge is ok with added/deleted merge	reset	partial
+t7110-reset-merge::keep-fails-with-added-deleted-merge	t7110-reset-merge	--keep fails with added/deleted merge	reset	partial
 t7111-reset-table::creating-initial-commits	t7111-reset-table	creating initial commits	reset	pass
 t7111-reset-table::setting-up-branches-to-test-with-unmerged-entries	t7111-reset-table	setting up branches to test with unmerged entries	reset	pass
 t7111-reset-table::check-w1-i1-h1-t-opt-w2-i2-h2	t7111-reset-table	check: $W1 $I1 $H1 $T --$opt $W2 $I2 $H2	reset	pass
@@ -14665,81 +14665,81 @@ t7500-commit-template-squash-signoff::setup-empty-commit-with-unstaged-rename-an
 t7500-commit-template-squash-signoff::check-commit-with-unstaged-rename-and-copy	t7500-commit-template-squash-signoff	check commit with unstaged rename and copy	commit	pass
 t7500-commit-template-squash-signoff::commit-without-staging-files-fails-and-displays-hints	t7500-commit-template-squash-signoff	commit without staging files fails and displays hints	commit	pass
 t7500-commit-template-squash-signoff::fixup-reword-incompatible-with-1	t7500-commit-template-squash-signoff	--fixup=reword: incompatible with $1	commit	pass
-t7501-commit-basic-functionality::initial-status	t7501-commit-basic-functionality	initial status	add	not_ported
-t7501-commit-basic-functionality::fail-initial-amend	t7501-commit-basic-functionality	fail initial amend	commit	not_ported
-t7501-commit-basic-functionality::setup-initial-commit	t7501-commit-basic-functionality	setup: initial commit	commit	not_ported
-t7501-commit-basic-functionality::m-and-f-do-not-mix	t7501-commit-basic-functionality	-m and -F do not mix	commit	not_ported
-t7501-commit-basic-functionality::m-and-c-do-not-mix	t7501-commit-basic-functionality	-m and -C do not mix	commit	not_ported
-t7501-commit-basic-functionality::paths-and-a-do-not-mix	t7501-commit-basic-functionality	paths and -a do not mix	commit	not_ported
-t7501-commit-basic-functionality::can-use-paths-with-interactive	t7501-commit-basic-functionality	can use paths with --interactive	commit	not_ported
-t7501-commit-basic-functionality::removed-files-and-relative-paths	t7501-commit-basic-functionality	removed files and relative paths	commit	not_ported
-t7501-commit-basic-functionality::using-invalid-commit-with-c	t7501-commit-basic-functionality	using invalid commit with -C	commit	not_ported
-t7501-commit-basic-functionality::nothing-to-commit	t7501-commit-basic-functionality	nothing to commit	commit	not_ported
-t7501-commit-basic-functionality::dry-run-fails-with-nothing-to-commit	t7501-commit-basic-functionality	--dry-run fails with nothing to commit	commit	not_ported
-t7501-commit-basic-functionality::short-fails-with-nothing-to-commit	t7501-commit-basic-functionality	--short fails with nothing to commit	commit	not_ported
-t7501-commit-basic-functionality::porcelain-fails-with-nothing-to-commit	t7501-commit-basic-functionality	--porcelain fails with nothing to commit	commit	not_ported
-t7501-commit-basic-functionality::long-fails-with-nothing-to-commit	t7501-commit-basic-functionality	--long fails with nothing to commit	commit	not_ported
-t7501-commit-basic-functionality::fail-to-commit-untracked-file-even-with-include-only	t7501-commit-basic-functionality	fail to commit untracked file (even with --include/--only)	commit	not_ported
-t7501-commit-basic-functionality::setup-non-initial-commit	t7501-commit-basic-functionality	setup: non-initial commit	commit	not_ported
-t7501-commit-basic-functionality::dry-run-with-stuff-to-commit-returns-ok	t7501-commit-basic-functionality	--dry-run with stuff to commit returns ok	commit	not_ported
-t7501-commit-basic-functionality::short-with-stuff-to-commit-returns-ok	t7501-commit-basic-functionality	--short with stuff to commit returns ok	commit	not_ported
-t7501-commit-basic-functionality::porcelain-with-stuff-to-commit-returns-ok	t7501-commit-basic-functionality	--porcelain with stuff to commit returns ok	commit	not_ported
-t7501-commit-basic-functionality::long-with-stuff-to-commit-returns-ok	t7501-commit-basic-functionality	--long with stuff to commit returns ok	commit	not_ported
-t7501-commit-basic-functionality::exclude-additional-staged-changes-when-given-pathspec	t7501-commit-basic-functionality	exclude additional staged changes when given pathspec	commit	not_ported
-t7501-commit-basic-functionality::i-include-includes-staged-changes	t7501-commit-basic-functionality	-i/--include includes staged changes	commit	not_ported
-t7501-commit-basic-functionality::include-and-only-do-not-mix	t7501-commit-basic-functionality	--include and --only do not mix	commit	not_ported
-t7501-commit-basic-functionality::commit-message-from-non-existing-file	t7501-commit-basic-functionality	commit message from non-existing file	commit	not_ported
-t7501-commit-basic-functionality::empty-commit-message	t7501-commit-basic-functionality	empty commit message	commit	not_ported
-t7501-commit-basic-functionality::template-emptyness-check-does-not-kick-in-with-f	t7501-commit-basic-functionality	template "emptyness" check does not kick in with -F	commit	not_ported
-t7501-commit-basic-functionality::template-emptyness-check	t7501-commit-basic-functionality	template "emptyness" check	commit	not_ported
-t7501-commit-basic-functionality::setup-commit-message-from-file	t7501-commit-basic-functionality	setup: commit message from file	commit	not_ported
-t7501-commit-basic-functionality::amend-commit	t7501-commit-basic-functionality	amend commit	commit	not_ported
-t7501-commit-basic-functionality::amend-only-ignores-staged-contents	t7501-commit-basic-functionality	amend --only ignores staged contents	commit	not_ported
-t7501-commit-basic-functionality::allow-empty-only-ignores-staged-contents	t7501-commit-basic-functionality	allow-empty --only ignores staged contents	commit	not_ported
-t7501-commit-basic-functionality::set-up-editor	t7501-commit-basic-functionality	set up editor	commit	not_ported
-t7501-commit-basic-functionality::amend-without-launching-editor	t7501-commit-basic-functionality	amend without launching editor	commit	not_ported
-t7501-commit-basic-functionality::amend-edit	t7501-commit-basic-functionality	--amend --edit	commit	not_ported
-t7501-commit-basic-functionality::amend-edit-of-empty-message	t7501-commit-basic-functionality	--amend --edit of empty message	commit	not_ported
-t7501-commit-basic-functionality::amend-to-set-message-to-empty	t7501-commit-basic-functionality	--amend to set message to empty	commit	not_ported
-t7501-commit-basic-functionality::amend-to-set-empty-message-needs-allow-empty-message	t7501-commit-basic-functionality	--amend to set empty message needs --allow-empty-message	commit	not_ported
-t7501-commit-basic-functionality::m-edit	t7501-commit-basic-functionality	-m --edit	commit	not_ported
-t7501-commit-basic-functionality::m-and-f-do-not-mix-2	t7501-commit-basic-functionality	-m and -F do not mix	commit	not_ported
-t7501-commit-basic-functionality::using-message-from-other-commit	t7501-commit-basic-functionality	using message from other commit	commit	not_ported
-t7501-commit-basic-functionality::editing-message-from-other-commit	t7501-commit-basic-functionality	editing message from other commit	commit	not_ported
-t7501-commit-basic-functionality::message-from-stdin	t7501-commit-basic-functionality	message from stdin	commit	not_ported
-t7501-commit-basic-functionality::overriding-author-from-command-line	t7501-commit-basic-functionality	overriding author from command line	commit	not_ported
-t7501-commit-basic-functionality::interactive-add	t7501-commit-basic-functionality	interactive add	commit	not_ported
-t7501-commit-basic-functionality::editor-not-invoked-if-f-is-given	t7501-commit-basic-functionality	editor not invoked if -F is given	commit	not_ported
-t7501-commit-basic-functionality::partial-commit-that-involves-removal-1	t7501-commit-basic-functionality	partial commit that involves removal (1)	commit	not_ported
-t7501-commit-basic-functionality::partial-commit-that-involves-removal-2	t7501-commit-basic-functionality	partial commit that involves removal (2)	commit	not_ported
-t7501-commit-basic-functionality::partial-commit-that-involves-removal-3	t7501-commit-basic-functionality	partial commit that involves removal (3)	commit	not_ported
-t7501-commit-basic-functionality::amend-commit-to-fix-author	t7501-commit-basic-functionality	amend commit to fix author	commit	not_ported
-t7501-commit-basic-functionality::amend-commit-to-fix-date	t7501-commit-basic-functionality	amend commit to fix date	commit	not_ported
-t7501-commit-basic-functionality::amend-commit-to-add-signoff	t7501-commit-basic-functionality	amend commit to add signoff	commit	not_ported
-t7501-commit-basic-functionality::amend-does-not-add-signoff-if-it-already-exists	t7501-commit-basic-functionality	amend does not add signoff if it already exists	commit	not_ported
-t7501-commit-basic-functionality::commit-mentions-forced-date-in-output	t7501-commit-basic-functionality	commit mentions forced date in output	commit	not_ported
-t7501-commit-basic-functionality::commit-complains-about-completely-bogus-dates	t7501-commit-basic-functionality	commit complains about completely bogus dates	commit	not_ported
-t7501-commit-basic-functionality::commit-date-allows-approxidate	t7501-commit-basic-functionality	commit --date allows approxidate	commit	not_ported
-t7501-commit-basic-functionality::sign-off-1	t7501-commit-basic-functionality	sign off (1)	commit	not_ported
-t7501-commit-basic-functionality::sign-off-2	t7501-commit-basic-functionality	sign off (2)	commit	not_ported
-t7501-commit-basic-functionality::signoff-gap	t7501-commit-basic-functionality	signoff gap	commit	not_ported
-t7501-commit-basic-functionality::signoff-gap-2	t7501-commit-basic-functionality	signoff gap 2	commit	not_ported
-t7501-commit-basic-functionality::signoff-respects-trailer-config	t7501-commit-basic-functionality	signoff respects trailer config	commit	not_ported
-t7501-commit-basic-functionality::signoff-not-confused-by	t7501-commit-basic-functionality	signoff not confused by ---	commit	not_ported
-t7501-commit-basic-functionality::multiple-m	t7501-commit-basic-functionality	multiple -m	commit	not_ported
-t7501-commit-basic-functionality::amend-commit-to-fix-author-2	t7501-commit-basic-functionality	amend commit to fix author	commit	not_ported
-t7501-commit-basic-functionality::git-commit-file-with-dirty-index	t7501-commit-basic-functionality	git commit <file> with dirty index	commit	not_ported
-t7501-commit-basic-functionality::same-tree-single-parent	t7501-commit-basic-functionality	same tree (single parent)	commit	not_ported
-t7501-commit-basic-functionality::same-tree-single-parent-allow-empty	t7501-commit-basic-functionality	same tree (single parent) --allow-empty	commit	not_ported
-t7501-commit-basic-functionality::same-tree-merge-and-amend-merge	t7501-commit-basic-functionality	same tree (merge and amend merge)	commit	not_ported
-t7501-commit-basic-functionality::amend-using-the-message-from-another-commit	t7501-commit-basic-functionality	amend using the message from another commit	commit	not_ported
-t7501-commit-basic-functionality::amend-using-the-message-from-a-commit-named-with-tag	t7501-commit-basic-functionality	amend using the message from a commit named with tag	commit	not_ported
-t7501-commit-basic-functionality::amend-can-copy-notes	t7501-commit-basic-functionality	amend can copy notes	commit	not_ported
-t7501-commit-basic-functionality::commit-a-file-whose-name-is-a-dash	t7501-commit-basic-functionality	commit a file whose name is a dash	commit	not_ported
-t7501-commit-basic-functionality::only-works-on-to-be-born-branch	t7501-commit-basic-functionality	--only works on to-be-born branch	commit	not_ported
-t7501-commit-basic-functionality::dry-run-with-conflicts-fixed-from-a-merge	t7501-commit-basic-functionality	--dry-run with conflicts fixed from a merge	commit	not_ported
-t7501-commit-basic-functionality::dry-run-short	t7501-commit-basic-functionality	--dry-run --short	commit	not_ported
-t7501-commit-basic-functionality::commit-interactive-doesn-t-change-index-if-editor-aborts	t7501-commit-basic-functionality	commit --interactive doesn't change index if editor aborts	commit	not_ported
+t7501-commit-basic-functionality::initial-status	t7501-commit-basic-functionality	initial status	add	pass
+t7501-commit-basic-functionality::fail-initial-amend	t7501-commit-basic-functionality	fail initial amend	commit	pass
+t7501-commit-basic-functionality::setup-initial-commit	t7501-commit-basic-functionality	setup: initial commit	commit	pass
+t7501-commit-basic-functionality::m-and-f-do-not-mix	t7501-commit-basic-functionality	-m and -F do not mix	commit	pass
+t7501-commit-basic-functionality::m-and-c-do-not-mix	t7501-commit-basic-functionality	-m and -C do not mix	commit	pass
+t7501-commit-basic-functionality::paths-and-a-do-not-mix	t7501-commit-basic-functionality	paths and -a do not mix	commit	pass
+t7501-commit-basic-functionality::can-use-paths-with-interactive	t7501-commit-basic-functionality	can use paths with --interactive	commit	pass
+t7501-commit-basic-functionality::removed-files-and-relative-paths	t7501-commit-basic-functionality	removed files and relative paths	commit	pass
+t7501-commit-basic-functionality::using-invalid-commit-with-c	t7501-commit-basic-functionality	using invalid commit with -C	commit	pass
+t7501-commit-basic-functionality::nothing-to-commit	t7501-commit-basic-functionality	nothing to commit	commit	pass
+t7501-commit-basic-functionality::dry-run-fails-with-nothing-to-commit	t7501-commit-basic-functionality	--dry-run fails with nothing to commit	commit	pass
+t7501-commit-basic-functionality::short-fails-with-nothing-to-commit	t7501-commit-basic-functionality	--short fails with nothing to commit	commit	pass
+t7501-commit-basic-functionality::porcelain-fails-with-nothing-to-commit	t7501-commit-basic-functionality	--porcelain fails with nothing to commit	commit	pass
+t7501-commit-basic-functionality::long-fails-with-nothing-to-commit	t7501-commit-basic-functionality	--long fails with nothing to commit	commit	pass
+t7501-commit-basic-functionality::fail-to-commit-untracked-file-even-with-include-only	t7501-commit-basic-functionality	fail to commit untracked file (even with --include/--only)	commit	pass
+t7501-commit-basic-functionality::setup-non-initial-commit	t7501-commit-basic-functionality	setup: non-initial commit	commit	pass
+t7501-commit-basic-functionality::dry-run-with-stuff-to-commit-returns-ok	t7501-commit-basic-functionality	--dry-run with stuff to commit returns ok	commit	pass
+t7501-commit-basic-functionality::short-with-stuff-to-commit-returns-ok	t7501-commit-basic-functionality	--short with stuff to commit returns ok	commit	pass
+t7501-commit-basic-functionality::porcelain-with-stuff-to-commit-returns-ok	t7501-commit-basic-functionality	--porcelain with stuff to commit returns ok	commit	pass
+t7501-commit-basic-functionality::long-with-stuff-to-commit-returns-ok	t7501-commit-basic-functionality	--long with stuff to commit returns ok	commit	pass
+t7501-commit-basic-functionality::exclude-additional-staged-changes-when-given-pathspec	t7501-commit-basic-functionality	exclude additional staged changes when given pathspec	commit	pass
+t7501-commit-basic-functionality::i-include-includes-staged-changes	t7501-commit-basic-functionality	-i/--include includes staged changes	commit	pass
+t7501-commit-basic-functionality::include-and-only-do-not-mix	t7501-commit-basic-functionality	--include and --only do not mix	commit	pass
+t7501-commit-basic-functionality::commit-message-from-non-existing-file	t7501-commit-basic-functionality	commit message from non-existing file	commit	pass
+t7501-commit-basic-functionality::empty-commit-message	t7501-commit-basic-functionality	empty commit message	commit	pass
+t7501-commit-basic-functionality::template-emptyness-check-does-not-kick-in-with-f	t7501-commit-basic-functionality	template "emptyness" check does not kick in with -F	commit	pass
+t7501-commit-basic-functionality::template-emptyness-check	t7501-commit-basic-functionality	template "emptyness" check	commit	pass
+t7501-commit-basic-functionality::setup-commit-message-from-file	t7501-commit-basic-functionality	setup: commit message from file	commit	pass
+t7501-commit-basic-functionality::amend-commit	t7501-commit-basic-functionality	amend commit	commit	pass
+t7501-commit-basic-functionality::amend-only-ignores-staged-contents	t7501-commit-basic-functionality	amend --only ignores staged contents	commit	pass
+t7501-commit-basic-functionality::allow-empty-only-ignores-staged-contents	t7501-commit-basic-functionality	allow-empty --only ignores staged contents	commit	pass
+t7501-commit-basic-functionality::set-up-editor	t7501-commit-basic-functionality	set up editor	commit	pass
+t7501-commit-basic-functionality::amend-without-launching-editor	t7501-commit-basic-functionality	amend without launching editor	commit	pass
+t7501-commit-basic-functionality::amend-edit	t7501-commit-basic-functionality	--amend --edit	commit	pass
+t7501-commit-basic-functionality::amend-edit-of-empty-message	t7501-commit-basic-functionality	--amend --edit of empty message	commit	pass
+t7501-commit-basic-functionality::amend-to-set-message-to-empty	t7501-commit-basic-functionality	--amend to set message to empty	commit	pass
+t7501-commit-basic-functionality::amend-to-set-empty-message-needs-allow-empty-message	t7501-commit-basic-functionality	--amend to set empty message needs --allow-empty-message	commit	pass
+t7501-commit-basic-functionality::m-edit	t7501-commit-basic-functionality	-m --edit	commit	pass
+t7501-commit-basic-functionality::m-and-f-do-not-mix-2	t7501-commit-basic-functionality	-m and -F do not mix	commit	pass
+t7501-commit-basic-functionality::using-message-from-other-commit	t7501-commit-basic-functionality	using message from other commit	commit	pass
+t7501-commit-basic-functionality::editing-message-from-other-commit	t7501-commit-basic-functionality	editing message from other commit	commit	pass
+t7501-commit-basic-functionality::message-from-stdin	t7501-commit-basic-functionality	message from stdin	commit	pass
+t7501-commit-basic-functionality::overriding-author-from-command-line	t7501-commit-basic-functionality	overriding author from command line	commit	pass
+t7501-commit-basic-functionality::interactive-add	t7501-commit-basic-functionality	interactive add	commit	pass
+t7501-commit-basic-functionality::editor-not-invoked-if-f-is-given	t7501-commit-basic-functionality	editor not invoked if -F is given	commit	pass
+t7501-commit-basic-functionality::partial-commit-that-involves-removal-1	t7501-commit-basic-functionality	partial commit that involves removal (1)	commit	pass
+t7501-commit-basic-functionality::partial-commit-that-involves-removal-2	t7501-commit-basic-functionality	partial commit that involves removal (2)	commit	pass
+t7501-commit-basic-functionality::partial-commit-that-involves-removal-3	t7501-commit-basic-functionality	partial commit that involves removal (3)	commit	pass
+t7501-commit-basic-functionality::amend-commit-to-fix-author	t7501-commit-basic-functionality	amend commit to fix author	commit	pass
+t7501-commit-basic-functionality::amend-commit-to-fix-date	t7501-commit-basic-functionality	amend commit to fix date	commit	pass
+t7501-commit-basic-functionality::amend-commit-to-add-signoff	t7501-commit-basic-functionality	amend commit to add signoff	commit	pass
+t7501-commit-basic-functionality::amend-does-not-add-signoff-if-it-already-exists	t7501-commit-basic-functionality	amend does not add signoff if it already exists	commit	pass
+t7501-commit-basic-functionality::commit-mentions-forced-date-in-output	t7501-commit-basic-functionality	commit mentions forced date in output	commit	pass
+t7501-commit-basic-functionality::commit-complains-about-completely-bogus-dates	t7501-commit-basic-functionality	commit complains about completely bogus dates	commit	pass
+t7501-commit-basic-functionality::commit-date-allows-approxidate	t7501-commit-basic-functionality	commit --date allows approxidate	commit	pass
+t7501-commit-basic-functionality::sign-off-1	t7501-commit-basic-functionality	sign off (1)	commit	pass
+t7501-commit-basic-functionality::sign-off-2	t7501-commit-basic-functionality	sign off (2)	commit	pass
+t7501-commit-basic-functionality::signoff-gap	t7501-commit-basic-functionality	signoff gap	commit	pass
+t7501-commit-basic-functionality::signoff-gap-2	t7501-commit-basic-functionality	signoff gap 2	commit	pass
+t7501-commit-basic-functionality::signoff-respects-trailer-config	t7501-commit-basic-functionality	signoff respects trailer config	commit	pass
+t7501-commit-basic-functionality::signoff-not-confused-by	t7501-commit-basic-functionality	signoff not confused by ---	commit	pass
+t7501-commit-basic-functionality::multiple-m	t7501-commit-basic-functionality	multiple -m	commit	pass
+t7501-commit-basic-functionality::amend-commit-to-fix-author-2	t7501-commit-basic-functionality	amend commit to fix author	commit	pass
+t7501-commit-basic-functionality::git-commit-file-with-dirty-index	t7501-commit-basic-functionality	git commit <file> with dirty index	commit	pass
+t7501-commit-basic-functionality::same-tree-single-parent	t7501-commit-basic-functionality	same tree (single parent)	commit	pass
+t7501-commit-basic-functionality::same-tree-single-parent-allow-empty	t7501-commit-basic-functionality	same tree (single parent) --allow-empty	commit	pass
+t7501-commit-basic-functionality::same-tree-merge-and-amend-merge	t7501-commit-basic-functionality	same tree (merge and amend merge)	commit	pass
+t7501-commit-basic-functionality::amend-using-the-message-from-another-commit	t7501-commit-basic-functionality	amend using the message from another commit	commit	pass
+t7501-commit-basic-functionality::amend-using-the-message-from-a-commit-named-with-tag	t7501-commit-basic-functionality	amend using the message from a commit named with tag	commit	pass
+t7501-commit-basic-functionality::amend-can-copy-notes	t7501-commit-basic-functionality	amend can copy notes	commit	pass
+t7501-commit-basic-functionality::commit-a-file-whose-name-is-a-dash	t7501-commit-basic-functionality	commit a file whose name is a dash	commit	pass
+t7501-commit-basic-functionality::only-works-on-to-be-born-branch	t7501-commit-basic-functionality	--only works on to-be-born branch	commit	pass
+t7501-commit-basic-functionality::dry-run-with-conflicts-fixed-from-a-merge	t7501-commit-basic-functionality	--dry-run with conflicts fixed from a merge	commit	pass
+t7501-commit-basic-functionality::dry-run-short	t7501-commit-basic-functionality	--dry-run --short	commit	pass
+t7501-commit-basic-functionality::commit-interactive-doesn-t-change-index-if-editor-aborts	t7501-commit-basic-functionality	commit --interactive doesn't change index if editor aborts	commit	pass
 t7502-commit-porcelain::output-summary-format	t7502-commit-porcelain	output summary format	add	pass
 t7502-commit-porcelain::output-summary-format-root-commit	t7502-commit-porcelain	output summary format: root-commit	commit	pass
 t7502-commit-porcelain::output-summary-format-for-commit-with-an-empty-diff	t7502-commit-porcelain	output summary format for commit with an empty diff	commit	pass
