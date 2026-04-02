@@ -2141,4 +2141,56 @@ test_expect_success '--int rejects non-integer string' '
 	test_must_fail git config --int bad.int
 '
 
+# ── rename/remove section edge cases ──────────────────────────────────────
+
+test_expect_success 'rename-section with multiple keys' '
+	cd repo &&
+	cat >>.git/config <<-\EOF &&
+	[ren]
+		a = 1
+		b = 2
+		c = 3
+	EOF
+	git config --rename-section ren renamed &&
+	git config --get renamed.a >actual_a &&
+	git config --get renamed.b >actual_b &&
+	git config --get renamed.c >actual_c &&
+	echo "1" >expect_a &&
+	echo "2" >expect_b &&
+	echo "3" >expect_c &&
+	test_cmp expect_a actual_a &&
+	test_cmp expect_b actual_b &&
+	test_cmp expect_c actual_c
+'
+
+test_expect_success 'remove-section with multiple keys' '
+	cd repo &&
+	git config --remove-section renamed &&
+	test_must_fail git config --get renamed.a &&
+	test_must_fail git config --get renamed.b &&
+	test_must_fail git config --get renamed.c
+'
+
+test_expect_success 'rename non-existing section with subsection fails' '
+	cd repo &&
+	test_must_fail git config --rename-section nosuch.sub newsub
+'
+
+test_expect_success 'remove non-existing section with subsection fails' '
+	cd repo &&
+	test_must_fail git config --remove-section nosuch.sub
+'
+
+test_expect_success '--unset-all removes all occurrences' '
+	cd repo &&
+	cat >>.git/config <<-\EOF &&
+	[ua]
+		key = one
+		key = two
+		key = three
+	EOF
+	git config --unset-all ua.key &&
+	test_must_fail git config --get ua.key
+'
+
 test_done
