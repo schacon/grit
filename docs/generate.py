@@ -146,37 +146,35 @@ def get_passing_tests():
     return passing
 
 
-def count_individual_tests():
-    """Run each of our test files and count passing tests. Also count upstream test cases."""
-    grit_bin = None
-    for candidate in [
-        os.path.join(REPO_ROOT, "target", "release", "grit"),
-        os.path.join(REPO_ROOT, "target", "debug", "grit"),
-    ]:
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            grit_bin = candidate
-            break
+UPSTREAM_RESULTS_DIR = "/tmp/grit-upstream-results"
 
-    our_counts = {}  # filename -> pass_count
-    if grit_bin:
-        for f in sorted(os.listdir(OUR_TEST_DIR)):
-            if not (f.startswith("t") and f.endswith(".sh") and f[1:5].isdigit()):
+
+def count_individual_tests():
+    """Read pre-computed upstream test results from TAP output files.
+
+    Run scripts/run-upstream-tests.sh first to populate the results.
+    Returns (per_file_pass, per_file_total, upstream_counts).
+    """
+    per_file_pass = {}
+    per_file_total = {}
+
+    if os.path.isdir(UPSTREAM_RESULTS_DIR):
+        for f in os.listdir(UPSTREAM_RESULTS_DIR):
+            if not f.endswith(".out"):
                 continue
+            test_name = f[:-4] + ".sh"
+            path = os.path.join(UPSTREAM_RESULTS_DIR, f)
             try:
-                result = subprocess.run(
-                    ["bash", f],
-                    capture_output=True, text=True, timeout=60,
-                    cwd=OUR_TEST_DIR,
-                    env={**os.environ, "GUST_BIN": grit_bin},
-                )
-                output = result.stdout + result.stderr
-                m = re.search(r'Pass:\s*(\d+)', output)
-                if m:
-                    our_counts[f] = int(m.group(1))
+                with open(path) as fh:
+                    content = fh.read()
+                ok_count = len(re.findall(r'^ok [0-9]', content, re.MULTILINE))
+                notok_count = len(re.findall(r'^not ok [0-9]', content, re.MULTILINE))
+                if ok_count + notok_count > 0:
+                    per_file_pass[test_name] = ok_count
+                    per_file_total[test_name] = ok_count + notok_count
             except Exception:
                 pass
 
-    # Count upstream test cases (test_expect_success/failure lines)
     upstream_counts = {}
     for f in os.listdir(GIT_TEST_DIR):
         if not (f.startswith("t") and f.endswith(".sh") and f[1:5].isdigit()):
@@ -190,7 +188,7 @@ def count_individual_tests():
         except Exception:
             pass
 
-    return our_counts, upstream_counts
+    return per_file_pass, per_file_total, upstream_counts
 
 
 def get_ported_tests():
@@ -333,17 +331,18 @@ def generate_html():
     upstream_commands = parse_command_list()
     implemented_commands = get_implemented_commands()
     commands_html = build_commands_html(upstream_commands, implemented_commands)
-    our_counts, upstream_counts = count_individual_tests()
+    per_file_pass, per_file_total, upstream_counts = count_individual_tests()
     
     total = len(all_tests)
     num_passing = len(passing)
     num_ported = len(ported)
     pct = (num_passing / total * 100) if total else 0
     
-    # Individual test case totals
-    total_our_cases = sum(our_counts.values())
+    # Upstream test case totals (from running git/t/ against grit)
+    total_upstream_pass = sum(per_file_pass.values())
+    total_upstream_run = sum(per_file_total.values())
     total_upstream_cases = sum(upstream_counts.values())
-    case_pct = (total_our_cases / total_upstream_cases * 100) if total_upstream_cases else 0
+    case_pct = (total_upstream_pass / total_upstream_run * 100) if total_upstream_run else 0
     
     # Group by command
     by_command = {}
@@ -378,14 +377,15 @@ def generate_html():
         src_link = f'<a href="{SRC_BASE}/{src_path}">{cmd}</a>' if src_path else html.escape(cmd)
         test_link = f'<a href="{SRC_BASE}/git/t/{t}">{html.escape(t)}</a>'
         
-        # Per-file test case counts
-        our_n = our_counts.get(t, 0)
+        # Per-file upstream test results
+        file_pass = per_file_pass.get(t, 0)
+        file_total = per_file_total.get(t, 0)
         up_n = upstream_counts.get(t, 0)
-        if our_n > 0 and up_n > 0:
-            file_pct = min(our_n / up_n * 100, 100)
-            count_str = f'{our_n}/{up_n} <span style="color:#8b949e">({file_pct:.0f}%)</span>'
+        if file_total > 0:
+            file_pct = file_pass / file_total * 100
+            count_str = f'{file_pass}/{file_total} <span style="color:#8b949e">({file_pct:.0f}%)</span>'
         elif up_n > 0:
-            count_str = f'0/{up_n}'
+            count_str = f'—/{up_n}'
         else:
             count_str = ''
         
@@ -586,12 +586,12 @@ def generate_html():
     <div class="label">Total Upstream Tests</div>
   </div>
   <div class="card green">
-    <div class="number">{total_our_cases:,}</div>
-    <div class="label">Individual Tests Passing</div>
+    <div class="number">{total_upstream_pass:,}</div>
+    <div class="label">Upstream Cases Passing</div>
   </div>
   <div class="card">
     <div class="number">{case_pct:.1f}%</div>
-    <div class="label">Test Case Coverage</div>
+    <div class="label">Upstream Test Pass Rate</div>
   </div>
 </div>
 
