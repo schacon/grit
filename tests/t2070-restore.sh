@@ -428,4 +428,130 @@ test_expect_success 'restore --worktree is default when no flags given' '
 	test "$(cat one)" = "one"
 '
 
+# ---------------------------------------------------------------------------
+# Additional restore tests — batch 2
+# ---------------------------------------------------------------------------
+
+test_expect_success 'restore with -- separator works' '
+	cd repo &&
+	git reset --hard &&
+	echo dirty >one &&
+	git restore -- one &&
+	test "$(cat one)" = "one"
+'
+
+test_expect_success 'restore --source=HEAD worktree from explicit HEAD' '
+	cd repo &&
+	git reset --hard &&
+	echo dirty >one &&
+	git add one &&
+	git restore --source=HEAD --worktree one &&
+	test "$(cat one)" = "one"
+'
+
+test_expect_success 'restore --source=HEAD --staged --worktree restores both' '
+	cd repo &&
+	git reset --hard &&
+	echo dirty >one &&
+	git add one &&
+	git restore --source=HEAD --staged --worktree one &&
+	test "$(cat one)" = "one" &&
+	git diff --cached --name-only >staged &&
+	test_must_be_empty staged
+'
+
+test_expect_success 'restore deleted file from worktree via index' '
+	cd repo &&
+	git reset --hard &&
+	rm one &&
+	test_path_is_missing one &&
+	git restore one &&
+	test_path_is_file one &&
+	test "$(cat one)" = "one"
+'
+
+test_expect_success 'restore --staged after git rm re-adds file to index' '
+	cd repo &&
+	git reset --hard &&
+	git rm one &&
+	test -z "$(git ls-files one)" &&
+	git restore --staged one &&
+	test -n "$(git ls-files one)"
+'
+
+test_expect_success 'restore --staged with newly added file removes it from index' '
+	cd repo &&
+	git reset --hard &&
+	echo newcontent >brandnew &&
+	git add brandnew &&
+	test -n "$(git ls-files brandnew)" &&
+	git restore --staged brandnew &&
+	test -z "$(git ls-files brandnew)" &&
+	rm -f brandnew
+'
+
+test_expect_success 'restore from source ref updates index when --staged given' '
+	cd repo &&
+	git reset --hard &&
+	FIRST_BLOB=$(git rev-parse first:first.t) &&
+	git restore --source=first --staged --worktree first.t &&
+	IDX_BLOB=$(git ls-files -s first.t | awk "{print \$2}") &&
+	test "$IDX_BLOB" = "$FIRST_BLOB" &&
+	git restore --source=HEAD --staged --worktree first.t
+'
+
+test_expect_success 'restore worktree when file is both staged and modified' '
+	cd repo &&
+	git reset --hard &&
+	echo staged >one &&
+	git add one &&
+	echo worktree >one &&
+	git restore one &&
+	test "$(cat one)" = "staged"
+'
+
+test_expect_success 'restore --source with full SHA works' '
+	cd repo &&
+	git reset --hard &&
+	FIRST_SHA=$(git rev-parse first) &&
+	FIRST_BLOB=$(git rev-parse first:first.t) &&
+	git cat-file -p "$FIRST_BLOB" >expected &&
+	git restore --source="$FIRST_SHA" --worktree first.t &&
+	test_cmp expected first.t &&
+	git restore first.t
+'
+
+test_expect_success 'restore --source does not affect index by default' '
+	cd repo &&
+	git reset --hard &&
+	HEAD_BLOB=$(git rev-parse HEAD:first.t) &&
+	git restore --source=first first.t &&
+	IDX_BLOB=$(git ls-files -s first.t | awk "{print \$2}") &&
+	test "$IDX_BLOB" = "$HEAD_BLOB" &&
+	git restore first.t
+'
+
+test_expect_success 'restore --quiet produces no output' '
+	cd repo &&
+	git reset --hard &&
+	echo dirty >one &&
+	git restore --quiet one >stdout 2>stderr &&
+	test_must_be_empty stdout &&
+	test_must_be_empty stderr
+'
+
+test_expect_success 'restore nonexistent pathspec gives error' '
+	cd repo &&
+	git reset --hard &&
+	test_must_fail git restore nonexistent-file 2>err &&
+	test -s err
+'
+
+test_expect_success 'restore --source with nonexistent ref fails' '
+	cd repo &&
+	git reset --hard &&
+	test_must_fail git restore --source=nonexistent-ref first.t 2>err &&
+	test -s err
+'
+
 test_done
