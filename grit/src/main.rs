@@ -121,6 +121,9 @@ enum Command {
     /// Update the object name stored in a ref safely.
     #[command(name = "update-ref")]
     UpdateRef(commands::update_ref::Args),
+    /// Update auxiliary info file to help dumb servers.
+    #[command(name = "update-server-info")]
+    UpdateServerInfo(commands::update_server_info::Args),
     /// Show canonical name/email from .mailmap.
     #[command(name = "check-mailmap")]
     CheckMailmap(commands::check_mailmap::Args),
@@ -325,6 +328,7 @@ fn run() -> Result<()> {
         Command::CheckoutIndex(args) => commands::checkout_index::run(args),
         Command::CommitTree(args) => commands::commit_tree::run(args),
         Command::UpdateRef(args) => commands::update_ref::run(args),
+        Command::UpdateServerInfo(args) => commands::update_server_info::run(args),
         Command::CheckMailmap(args) => commands::check_mailmap::run(args),
         Command::CheckIgnore(args) => commands::check_ignore::run(args),
         Command::CountObjects(args) => commands::count_objects::run(args),
