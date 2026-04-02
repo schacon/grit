@@ -12,7 +12,7 @@
 //! - Second or later parent of a merge: `<refname>^2`, `<refname>~3^2`, etc.
 
 use crate::error::{Error, Result};
-use crate::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tag, CommitData, ObjectId, ObjectKind};
 use crate::refs;
 use crate::repo::Repository;
 use std::collections::{HashMap, VecDeque};
@@ -73,6 +73,8 @@ pub fn build_name_map(
     let tips = collect_tips(repo, options)?;
     let mut names: HashMap<ObjectId, RevName> = HashMap::new();
 
+    let mut commit_cache: HashMap<ObjectId, CommitData> = HashMap::new();
+
     for tip in &tips {
         let Some(commit_oid) = tip.commit_oid else {
             continue;
@@ -80,6 +82,7 @@ pub fn build_name_map(
         name_from_tip(
             repo,
             &mut names,
+            &mut commit_cache,
             commit_oid,
             &tip.display_name,
             tip.taggerdate,
@@ -179,6 +182,7 @@ fn get_parent_name(current: &RevName, parent_number: u32) -> String {
 fn name_from_tip(
     repo: &Repository,
     names: &mut HashMap<ObjectId, RevName>,
+    commit_cache: &mut HashMap<ObjectId, CommitData>,
     start_oid: ObjectId,
     tip_name: &str,
     taggerdate: i64,
@@ -214,24 +218,21 @@ fn name_from_tip(
     let mut stack: Vec<ObjectId> = vec![start_oid];
 
     while let Some(oid) = stack.pop() {
-        // Snapshot the current commit's name (it may have been replaced by a
-        // better name from a different tip between when we enqueued and now,
-        // but we use the name that was assigned when we enqueued).
         let current = match names.get(&oid) {
             Some(n) => n.clone(),
             None => continue,
         };
 
-        let commit = match load_commit(repo, oid) {
+        let commit = match load_commit_cached(repo, commit_cache, oid) {
             Ok(c) => c,
             Err(_) => continue,
         };
+        // Clone parents out so we can release the borrow.
+        let parents = commit.parents.clone();
 
-        // Collect parents to push, then reverse so first parent goes last
-        // into the stack (and thus comes out first).
         let mut to_push: Vec<ObjectId> = Vec::new();
 
-        for (idx, &parent_oid) in commit.parents.iter().enumerate() {
+        for (idx, parent_oid) in parents.iter().enumerate() {
             let parent_number = (idx + 1) as u32;
 
             let (parent_gen, parent_dist) = if parent_number > 1 {
@@ -246,7 +247,7 @@ fn name_from_tip(
                 )
             };
 
-            let should_update = match names.get(&parent_oid) {
+            let should_update = match names.get(parent_oid) {
                 None => true,
                 Some(existing) => {
                     is_better_name(existing, taggerdate, parent_gen, parent_dist, from_tag)
@@ -261,7 +262,7 @@ fn name_from_tip(
                 };
 
                 names.insert(
-                    parent_oid,
+                    *parent_oid,
                     RevName {
                         tip_name: parent_tip_name,
                         taggerdate,
@@ -270,11 +271,10 @@ fn name_from_tip(
                         from_tag,
                     },
                 );
-                to_push.push(parent_oid);
+                to_push.push(*parent_oid);
             }
         }
 
-        // Push in reverse so that first parent is on top of the stack.
         for parent in to_push.into_iter().rev() {
             stack.push(parent);
         }
@@ -554,8 +554,27 @@ pub(crate) fn parse_signature_time(sig: &str) -> i64 {
         .unwrap_or(0)
 }
 
+/// Load and parse a commit object, using a cache to avoid re-reading.
+fn load_commit_cached<'c>(
+    repo: &Repository,
+    cache: &'c mut HashMap<ObjectId, CommitData>,
+    oid: ObjectId,
+) -> Result<&'c CommitData> {
+    if !cache.contains_key(&oid) {
+        let obj = repo.odb.read(&oid)?;
+        if obj.kind != ObjectKind::Commit {
+            return Err(Error::CorruptObject(format!(
+                "object {oid} is not a commit"
+            )));
+        }
+        let commit = parse_commit(&obj.data)?;
+        cache.insert(oid, commit);
+    }
+    Ok(cache.get(&oid).unwrap())
+}
+
 /// Load and parse a commit object from the object database.
-fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::CommitData> {
+fn load_commit(repo: &Repository, oid: ObjectId) -> Result<CommitData> {
     let obj = repo.odb.read(&oid)?;
     if obj.kind != ObjectKind::Commit {
         return Err(Error::CorruptObject(format!(
