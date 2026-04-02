@@ -389,13 +389,13 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()
             std::process::exit(1);
         }
         for entry in matches {
+            let has_type_flag = args.type_bool || args.type_int || args.type_bool_or_int
+                || args.type_path || args.type_name.is_some();
+            let is_bare = entry.value.is_none();
             let val = entry.value.as_deref().unwrap_or("true");
             let val = format_typed_value(args, val)?;
             if args.name_only {
                 print!("{}{}", entry.key, terminator);
-            } else if args.null_terminated {
-                // Git uses key\nvalue\0 with -z for --get-regexp
-                print!("{}\n{}{}", entry.key, val, terminator);
             } else if get_args.show_names {
                 print!("{} {}{}", entry.key, val, terminator);
             } else {
@@ -529,8 +529,8 @@ fn cmd_list(args: &Args, git_dir: Option<&Path>) -> Result<()> {
         if args.name_only {
             print!("{}{}{}", prefix, entry.key, terminator);
         } else if args.null_terminated {
-            // Git uses key\nvalue\0 format with -z
-            print!("{}{}\n{}{}", prefix, entry.key, val, terminator);
+            // Git uses key=value\0 format with -z for --list
+            print!("{}{}={}{}", prefix, entry.key, val, terminator);
         } else {
             print!("{}{}={}{}", prefix, entry.key, val, terminator);
         }
@@ -796,8 +796,8 @@ fn format_typed_value(args: &Args, val: &str) -> Result<String> {
     if args.type_bool_or_int || type_name == Some("bool-or-int") {
         // Try as named bool first
         match val.to_lowercase().as_str() {
-            "true" | "yes" | "on" => return Ok("true".to_owned()),
-            "false" | "no" | "off" | "" => return Ok("false".to_owned()),
+            "true" | "yes" | "on" | "" => return Ok("true".to_owned()),
+            "false" | "no" | "off" => return Ok("false".to_owned()),
             _ => {}
         }
         // Then as integer
