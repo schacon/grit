@@ -1385,4 +1385,121 @@ test_expect_success 'hash-object with empty file produces valid sha1' '
 	test ${#h} -eq 40
 '
 
+# ---------------------------------------------------------------------------
+# Deepening tests (w32-deepen)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'cat-file -p blob shows file content' '
+	cd repo &&
+	echo "blob content test" >bct.txt &&
+	h=$(grit hash-object -w bct.txt) &&
+	grit cat-file -p $h >output &&
+	grep "blob content test" output
+'
+
+test_expect_success 'cat-file -s blob returns correct byte count' '
+	cd repo &&
+	printf "12345" >five.txt &&
+	h=$(grit hash-object -w five.txt) &&
+	size=$(grit cat-file -s $h) &&
+	test "$size" -eq 5
+'
+
+test_expect_success 'hash-object is deterministic' '
+	cd repo &&
+	echo "deterministic" >det.txt &&
+	h1=$(grit hash-object det.txt) &&
+	h2=$(grit hash-object det.txt) &&
+	test "$h1" = "$h2"
+'
+
+test_expect_success 'hash-object -w stores and cat-file retrieves' '
+	cd repo &&
+	echo "roundtrip" >rt.txt &&
+	h=$(grit hash-object -w rt.txt) &&
+	grit cat-file -p $h >output &&
+	test "$(cat output)" = "roundtrip"
+'
+
+test_expect_success 'write-tree produces 40-char hash' '
+	cd repo &&
+	T=$(grit write-tree) &&
+	test ${#T} -eq 40
+'
+
+test_expect_success 'cat-file -t on tree returns tree' '
+	cd repo &&
+	T=$(grit write-tree) &&
+	grit cat-file -t $T >output &&
+	grep "tree" output
+'
+
+test_expect_success 'commit-tree produces 40-char hash' '
+	cd repo &&
+	T=$(grit write-tree) &&
+	C=$(echo "test commit" | grit commit-tree $T) &&
+	test ${#C} -eq 40
+'
+
+test_expect_success 'cat-file -t on commit returns commit' '
+	cd repo &&
+	T=$(grit write-tree) &&
+	C=$(echo "test commit" | grit commit-tree $T) &&
+	grit cat-file -t $C >output &&
+	grep "commit" output
+'
+
+test_expect_success 'commit-tree with parent links correctly' '
+	cd repo &&
+	T=$(grit write-tree) &&
+	C1=$(echo "parent1" | grit commit-tree $T) &&
+	C2=$(echo "child" | grit commit-tree -p $C1 $T) &&
+	grit cat-file -p $C2 >output &&
+	grep "^parent $C1" output
+'
+
+test_expect_success 'update-ref creates ref file' '
+	cd repo &&
+	T=$(grit write-tree) &&
+	C=$(echo "ref test" | grit commit-tree $T) &&
+	grit update-ref refs/heads/deepen-test $C &&
+	grit rev-parse refs/heads/deepen-test >output &&
+	test "$(cat output)" = "$C"
+'
+
+test_expect_success 'rev-parse HEAD resolves to valid hash' '
+	cd repo &&
+	H=$(grit rev-parse HEAD) &&
+	test ${#H} -eq 40
+'
+
+test_expect_success 'update-index --add adds file to index' '
+	cd repo &&
+	echo "idx" >idx-test.txt &&
+	grit update-index --add idx-test.txt &&
+	grit ls-files >output &&
+	grep "idx-test.txt" output
+'
+
+test_expect_success 'ls-files lists tracked files' '
+	cd repo &&
+	grit ls-files >output &&
+	test -s output
+'
+
+test_expect_success 'hash-object --stdin reads from stdin' '
+	cd repo &&
+	h=$(echo "stdin content" | grit hash-object --stdin) &&
+	test ${#h} -eq 40
+'
+
+test_expect_success 'different content produces different hashes' '
+	cd repo &&
+	echo "aaa" >diff1.txt &&
+	echo "bbb" >diff2.txt &&
+	h1=$(grit hash-object diff1.txt) &&
+	h2=$(grit hash-object diff2.txt) &&
+	test "$h1" != "$h2"
+'
+
 test_done
