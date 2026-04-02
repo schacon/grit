@@ -98,6 +98,7 @@ def generate_html(commands, total_upstream, upstream_passing, upstream_partial,
     else:
         effective_passing_est = upstream_passing
     pct_tests = round(100 * effective_passing_est / total_upstream, 1) if total_upstream > 0 else 0
+    raw_pct = round(100 * ported_pass / total_upstream, 1) if total_upstream > 0 else 0
 
     ported_pass_rate = round(100 * ported_pass / ported_tests, 1) if ported_tests > 0 else 0
 
@@ -424,8 +425,8 @@ a.cmd-cell {{
     <div class="label">Total Git Test Cases</div>
   </div>
   <div class="card green">
-    <div class="number">{pct_tests}%</div>
-    <div class="label">Estimated Coverage</div>
+    <div class="number">{raw_pct}%</div>
+    <div class="label">Tests Passing</div>
   </div>
   <div class="card yellow">
     <div class="number">{partially_impl}</div>
