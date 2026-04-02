@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::{Error, Result};
-use crate::objects::{parse_commit, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use crate::refs;
 use crate::repo::Repository;
 use crate::rev_parse::resolve_revision;
@@ -594,4 +594,189 @@ impl PartialOrd for CommitDateKey {
 pub fn read_lines(path: &Path) -> Result<Vec<String>> {
     let content = fs::read_to_string(path)?;
     Ok(content.lines().map(|line| line.to_owned()).collect())
+}
+
+/// Check if a token uses the symmetric diff `...` notation.
+#[must_use]
+pub fn is_symmetric_diff(token: &str) -> bool {
+    token.contains("...") && !token.contains("....")
+}
+
+/// Split a symmetric diff token into (lhs, rhs).
+#[must_use]
+pub fn split_symmetric_diff(token: &str) -> Option<(String, String)> {
+    token.split_once("...").map(|(l, r)| (l.to_owned(), r.to_owned()))
+}
+
+/// Collect all reachable non-commit objects (trees and blobs) from a set of commits.
+fn collect_reachable_objects(
+    repo: &Repository,
+    graph: &mut CommitGraph<'_>,
+    commits: &[ObjectId],
+) -> Result<Vec<(ObjectId, String)>> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for &commit_oid in commits {
+        let commit = load_commit(repo, commit_oid)?;
+        collect_tree_objects(repo, commit.tree, "", &mut seen, &mut result)?;
+    }
+    Ok(result)
+}
+
+fn collect_tree_objects(
+    repo: &Repository,
+    tree_oid: ObjectId,
+    prefix: &str,
+    seen: &mut HashSet<ObjectId>,
+    result: &mut Vec<(ObjectId, String)>,
+) -> Result<()> {
+    if !seen.insert(tree_oid) {
+        return Ok(());
+    }
+    result.push((tree_oid, prefix.to_owned()));
+    let object = repo.odb.read(&tree_oid)?;
+    if object.kind != ObjectKind::Tree {
+        return Ok(());
+    }
+    let entries = parse_tree(&object.data)?;
+    for entry in entries {
+        let name = String::from_utf8_lossy(&entry.name).to_string();
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if !seen.insert(entry.oid) {
+            continue;
+        }
+        let child_obj = repo.odb.read(&entry.oid)?;
+        match child_obj.kind {
+            ObjectKind::Tree => {
+                result.push((entry.oid, path.clone()));
+                seen.remove(&entry.oid);
+                collect_tree_objects(repo, entry.oid, &path, seen, result)?;
+            }
+            _ => {
+                result.push((entry.oid, path));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Compute a simple patch-id for each commit.
+fn compute_patch_ids(
+    repo: &Repository,
+    graph: &mut CommitGraph<'_>,
+    commits: &[ObjectId],
+) -> Result<HashMap<ObjectId, String>> {
+    let mut result = HashMap::new();
+    for &oid in commits {
+        let commit = load_commit(repo, oid)?;
+        let parents = graph.parents_of(oid)?;
+        let parent_tree = if let Some(&parent) = parents.first() {
+            load_commit(repo, parent)?.tree
+        } else {
+            ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")?
+        };
+        let patch_id = compute_tree_diff_id(repo, parent_tree, commit.tree)?;
+        result.insert(oid, patch_id);
+    }
+    Ok(result)
+}
+
+fn compute_tree_diff_id(
+    repo: &Repository,
+    tree_a: ObjectId,
+    tree_b: ObjectId,
+) -> Result<String> {
+    use std::collections::BTreeMap;
+    let entries_a = flatten_tree(repo, tree_a, "")?;
+    let entries_b = flatten_tree(repo, tree_b, "")?;
+    let map_a: BTreeMap<_, _> = entries_a.into_iter().collect();
+    let map_b: BTreeMap<_, _> = entries_b.into_iter().collect();
+    let mut diff_parts = Vec::new();
+    for (path, oid_b) in &map_b {
+        match map_a.get(path) {
+            Some(oid_a) if oid_a != oid_b => {
+                diff_parts.push(format!("+{path}:{oid_b}"));
+            }
+            None => {
+                diff_parts.push(format!("A{path}:{oid_b}"));
+            }
+            _ => {}
+        }
+    }
+    for (path, oid_a) in &map_a {
+        if !map_b.contains_key(path) {
+            diff_parts.push(format!("D{path}:{oid_a}"));
+        }
+    }
+    diff_parts.sort();
+    Ok(diff_parts.join("\n"))
+}
+
+fn flatten_tree(
+    repo: &Repository,
+    tree_oid: ObjectId,
+    prefix: &str,
+) -> Result<Vec<(String, ObjectId)>> {
+    let mut result = Vec::new();
+    let object = match repo.odb.read(&tree_oid) {
+        Ok(o) => o,
+        Err(_) => return Ok(result),
+    };
+    if object.kind != ObjectKind::Tree {
+        return Ok(result);
+    }
+    let entries = parse_tree(&object.data)?;
+    for entry in entries {
+        let name = String::from_utf8_lossy(&entry.name).to_string();
+        let path = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let child = repo.odb.read(&entry.oid)?;
+        if child.kind == ObjectKind::Tree {
+            result.extend(flatten_tree(repo, entry.oid, &path)?);
+        } else {
+            result.push((path, entry.oid));
+        }
+    }
+    Ok(result)
+}
+
+/// Compute merge bases between two commits.
+pub fn merge_bases(
+    repo: &Repository,
+    a: ObjectId,
+    b: ObjectId,
+    first_parent_only: bool,
+) -> Result<Vec<ObjectId>> {
+    let mut graph = CommitGraph::new(repo, first_parent_only);
+    let ancestors_a = walk_closure(&mut graph, &[a])?;
+    let ancestors_b = walk_closure(&mut graph, &[b])?;
+    let common: HashSet<ObjectId> = ancestors_a.intersection(&ancestors_b).copied().collect();
+    if common.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Merge bases: common ancestors not dominated by other common ancestors
+    let mut bases = Vec::new();
+    for &c in &common {
+        let is_dominated = common.iter().any(|&other| {
+            if other == c { return false; }
+            let other_anc = walk_closure(&mut graph, &[other]).unwrap_or_default();
+            other_anc.contains(&c)
+        });
+        if !is_dominated {
+            bases.push(c);
+        }
+    }
+    if bases.is_empty() {
+        let mut sorted: Vec<_> = common.into_iter().collect();
+        sorted.sort_by(|a, b| graph.committer_time(*b).cmp(&graph.committer_time(*a)));
+        bases.push(sorted[0]);
+    }
+    Ok(bases)
 }

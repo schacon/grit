@@ -685,8 +685,16 @@ pub fn unified_diff(
     let diff = TextDiff::from_lines(old_content, new_content);
 
     let mut output = String::new();
-    output.push_str(&format!("--- a/{old_path}\n"));
-    output.push_str(&format!("+++ b/{new_path}\n"));
+    if old_path == "/dev/null" {
+        output.push_str("--- /dev/null\n");
+    } else {
+        output.push_str(&format!("--- a/{old_path}\n"));
+    }
+    if new_path == "/dev/null" {
+        output.push_str("+++ /dev/null\n");
+    } else {
+        output.push_str(&format!("+++ b/{new_path}\n"));
+    }
 
     for hunk in diff
         .unified_diff()

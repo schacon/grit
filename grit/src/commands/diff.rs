@@ -16,7 +16,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
     count_changes, diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
-    format_stat_line, unified_diff, zero_oid, DiffEntry, DiffStatus,
+    unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::error::Error;
 use grit_lib::index::Index;
@@ -104,6 +104,15 @@ pub fn run(args: Args) -> Result<()> {
     // Get HEAD tree OID (None if unborn)
     let head_tree = get_head_tree(&repo)?;
 
+    // Determine whether worktree is involved (for content fallback)
+    let wt_for_content: Option<&Path> = match (args.cached, revs.len()) {
+        (true, _) => None,           // --cached: index vs tree, no worktree
+        (false, 0) => work_tree,     // unstaged: index vs worktree
+        (false, 1) => work_tree,     // one rev: tree vs worktree
+        (_, 2) => None,              // two revs: tree vs tree
+        _ => None,
+    };
+
     let entries: Vec<DiffEntry> = match (args.cached, revs.len()) {
         (true, 0) => {
             // --cached with no revision: index vs HEAD
@@ -159,17 +168,25 @@ pub fn run(args: Args) -> Result<()> {
     if !args.quiet {
         let context_lines = args.unified.unwrap_or(3);
         if args.shortstat {
-            write_shortstat(&mut out, &entries, &repo.odb, work_tree)?;
+            write_shortstat(&mut out, &entries, &repo.odb, wt_for_content)?;
         } else if args.stat {
-            write_stat(&mut out, &entries, &repo.odb, work_tree)?;
+            write_stat(&mut out, &entries, &repo.odb, wt_for_content)?;
         } else if args.numstat {
-            write_numstat(&mut out, &entries, &repo.odb, work_tree)?;
+            write_numstat(&mut out, &entries, &repo.odb, wt_for_content)?;
         } else if args.name_only {
             write_name_only(&mut out, &entries)?;
         } else if args.name_status {
             write_name_status(&mut out, &entries)?;
         } else {
-            write_patch(&mut out, &entries, &repo.odb, context_lines, use_color, word_diff, work_tree)?;
+            write_patch(
+                &mut out,
+                &entries,
+                &repo.odb,
+                context_lines,
+                use_color,
+                word_diff,
+                wt_for_content,
+            )?;
         }
     }
 
@@ -285,15 +302,11 @@ fn filter_by_paths(entries: Vec<DiffEntry>, paths: &[String]) -> Vec<DiffEntry> 
         .collect()
 }
 
-/// Read content for a diff entry side from the ODB (as text).
-fn read_content(odb: &Odb, oid: &ObjectId) -> String {
-    if *oid == zero_oid() {
-        return String::new();
-    }
-    match odb.read(oid) {
-        Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-        Err(_) => String::new(),
-    }
+/// Read content for a diff entry side, falling back to the working tree if
+/// the OID is not in the ODB (worktree files are hashed but not stored).
+fn read_content(odb: &Odb, oid: &ObjectId, work_tree: Option<&Path>, path: &str) -> String {
+    let raw = read_content_raw_or_worktree(odb, oid, work_tree, path);
+    String::from_utf8_lossy(&raw).into_owned()
 }
 
 /// Read raw bytes for a diff entry side from the ODB.
@@ -423,7 +436,8 @@ fn write_patch(
 
         // Check for binary content
         let old_content_raw = read_content_raw(odb, &entry.old_oid);
-        let new_content_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, new_path);
+        let new_content_raw =
+            read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, new_path);
 
         if is_binary(&old_content_raw) || is_binary(&new_content_raw) {
             writeln!(
@@ -499,8 +513,162 @@ fn write_colored_patch(out: &mut impl Write, patch: &str) -> Result<()> {
     Ok(())
 }
 
+/// Generate word-level diff output with `[-removed-]{+added+}` markers.
+fn word_diff_output(
+    old_content: &str,
+    new_content: &str,
+    old_path: &str,
+    new_path: &str,
+    context_lines: usize,
+) -> String {
+    use similar::{ChangeTag, TextDiff};
+
+    let mut output = String::new();
+    output.push_str(&format!("--- a/{old_path}\n"));
+    output.push_str(&format!("+++ b/{new_path}\n"));
+
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    let new_lines: Vec<&str> = new_content.lines().collect();
+
+    let line_diff = TextDiff::from_slices(&old_lines, &new_lines);
+
+    for hunk in line_diff
+        .unified_diff()
+        .context_radius(context_lines)
+        .iter_hunks()
+    {
+        // Write the hunk header
+        let hunk_str = format!("{hunk}");
+        // Extract the @@ line
+        if let Some(header_end) = hunk_str.find('\n') {
+            let header = &hunk_str[..header_end];
+            output.push_str(header);
+            output.push('\n');
+        }
+
+        // Process each change in the hunk
+        for change in hunk.iter_changes() {
+            match change.tag() {
+                ChangeTag::Equal => {
+                    output.push_str(change.value());
+                    output.push('\n');
+                }
+                ChangeTag::Delete => {
+                    // Look for a corresponding insert to do word-level diff
+                    // For simplicity, output the whole line as deleted
+                    // We'll handle paired changes below
+                }
+                ChangeTag::Insert => {}
+            }
+        }
+    }
+
+    // Simpler approach: use the similar crate's word-level diff directly
+    output.clear();
+    output.push_str(&format!("--- a/{old_path}\n"));
+    output.push_str(&format!("+++ b/{new_path}\n"));
+
+    // Build unified diff with word-level changes within each hunk
+    let line_diff = TextDiff::from_lines(old_content, new_content);
+
+    for hunk in line_diff
+        .unified_diff()
+        .context_radius(context_lines)
+        .iter_hunks()
+    {
+        // Write hunk header
+        let hunk_str = format!("{hunk}");
+        if let Some(header_end) = hunk_str.find('\n') {
+            output.push_str(&hunk_str[..header_end]);
+            output.push('\n');
+        }
+
+        // Collect changes and pair deletions with insertions
+        let changes: Vec<_> = hunk.iter_changes().collect();
+        let mut i = 0;
+        while i < changes.len() {
+            let change = &changes[i];
+            match change.tag() {
+                ChangeTag::Equal => {
+                    let val = change.value();
+                    // Strip trailing newline for output
+                    let line = val.strip_suffix('\n').unwrap_or(val);
+                    output.push_str(line);
+                    output.push('\n');
+                    i += 1;
+                }
+                ChangeTag::Delete => {
+                    // Collect consecutive deletions
+                    let mut del_lines = Vec::new();
+                    while i < changes.len() && changes[i].tag() == ChangeTag::Delete {
+                        del_lines.push(changes[i].value());
+                        i += 1;
+                    }
+                    // Collect consecutive insertions
+                    let mut ins_lines = Vec::new();
+                    while i < changes.len() && changes[i].tag() == ChangeTag::Insert {
+                        ins_lines.push(changes[i].value());
+                        i += 1;
+                    }
+
+                    // Do word-level diff between paired del/ins
+                    let del_text: String = del_lines.join("");
+                    let ins_text: String = ins_lines.join("");
+
+                    if ins_lines.is_empty() {
+                        // Pure deletion
+                        let text = del_text.strip_suffix('\n').unwrap_or(&del_text);
+                        output.push_str(&format!("[-{text}-]"));
+                        output.push('\n');
+                    } else if del_lines.is_empty() {
+                        // Pure insertion
+                        let text = ins_text.strip_suffix('\n').unwrap_or(&ins_text);
+                        output.push_str(&format!("{{+{text}+}}"));
+                        output.push('\n');
+                    } else {
+                        // Word-level diff
+                        let word_diff =
+                            TextDiff::from_words(&del_text, &ins_text);
+                        for word_change in word_diff.iter_all_changes() {
+                            let val = word_change.value();
+                            match word_change.tag() {
+                                ChangeTag::Equal => output.push_str(val),
+                                ChangeTag::Delete => {
+                                    output.push_str(&format!("[-{val}-]"));
+                                }
+                                ChangeTag::Insert => {
+                                    output.push_str(&format!("{{+{val}+}}"));
+                                }
+                            }
+                        }
+                        // Ensure newline at end
+                        if !output.ends_with('\n') {
+                            output.push('\n');
+                        }
+                    }
+                }
+                ChangeTag::Insert => {
+                    // Orphan insert (no preceding delete)
+                    let text = change.value();
+                    let line = text.strip_suffix('\n').unwrap_or(text);
+                    output.push_str(&format!("{{+{line}+}}"));
+                    output.push('\n');
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    output
+}
+
 /// Write only the summary line: `N files changed, N insertions(+), N deletions(-)`.
-fn write_shortstat(out: &mut impl Write, entries: &[DiffEntry], odb: &Odb) -> Result<()> {
+fn write_shortstat(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    odb: &Odb,
+    work_tree: Option<&Path>,
+) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
     }
@@ -510,8 +678,8 @@ fn write_shortstat(out: &mut impl Write, entries: &[DiffEntry], odb: &Odb) -> Re
     let mut files_changed = 0usize;
 
     for entry in entries {
-        let old_content = read_content(odb, &entry.old_oid);
-        let new_content = read_content(odb, &entry.new_oid);
+        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
+        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
         let (ins, del) = count_changes(&old_content, &new_content);
         total_ins += ins;
         total_del += del;
@@ -542,27 +710,76 @@ fn write_shortstat(out: &mut impl Write, entries: &[DiffEntry], odb: &Odb) -> Re
     Ok(())
 }
 
+/// Format a single `--stat` line matching git's output format.
+///
+/// Git uses dynamic width for the count column based on the maximum count
+/// across all files in the diff.
+fn format_stat_line_git(
+    path: &str,
+    insertions: usize,
+    deletions: usize,
+    max_path_len: usize,
+    count_width: usize,
+) -> String {
+    let total = insertions + deletions;
+    // Git caps the graph bar at the terminal width minus the fixed parts.
+    // For simplicity, cap at a reasonable default.
+    let max_bar = 50;
+    let (plus_count, minus_count) = if total <= max_bar {
+        (insertions, deletions)
+    } else {
+        // Scale proportionally
+        let plus = (insertions as f64 / total as f64 * max_bar as f64).round() as usize;
+        let minus = max_bar - plus;
+        (plus, minus)
+    };
+    let plus = "+".repeat(plus_count);
+    let minus = "-".repeat(minus_count);
+    format!(
+        " {:<width$} | {:>cw$} {plus}{minus}",
+        path,
+        total,
+        width = max_path_len,
+        cw = count_width,
+    )
+}
+
 /// Write a stat summary for each entry, followed by a totals line.
-fn write_stat(out: &mut impl Write, entries: &[DiffEntry], odb: &Odb) -> Result<()> {
+fn write_stat(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    odb: &Odb,
+    work_tree: Option<&Path>,
+) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
     }
 
     let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
 
+    // Collect per-file stats first so we can compute the count column width
+    let mut file_stats: Vec<(&str, usize, usize)> = Vec::new();
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
     let mut files_changed = 0usize;
 
     for entry in entries {
-        let old_content = read_content(odb, &entry.old_oid);
-        let new_content = read_content(odb, &entry.new_oid);
+        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
+        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
         let (ins, del) = count_changes(&old_content, &new_content);
-        let line = format_stat_line(entry.path(), ins, del, max_path_len);
-        writeln!(out, "{line}")?;
+        file_stats.push((entry.path(), ins, del));
         total_ins += ins;
         total_del += del;
         files_changed += 1;
+    }
+
+    // Compute the width for the count column (like git does)
+    let max_count = file_stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
+    let count_width = format!("{}", max_count).len();
+
+    for (path, ins, del) in &file_stats {
+        let line = format_stat_line_git(path, *ins, *del, max_path_len, count_width);
+        writeln!(out, "{line}")?;
     }
 
     // Summary line
@@ -591,10 +808,15 @@ fn write_stat(out: &mut impl Write, entries: &[DiffEntry], odb: &Odb) -> Result<
 }
 
 /// Write machine-readable numstat output: `{insertions}\t{deletions}\t{path}`.
-fn write_numstat(out: &mut impl Write, entries: &[DiffEntry], odb: &Odb) -> Result<()> {
+fn write_numstat(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    odb: &Odb,
+    work_tree: Option<&Path>,
+) -> Result<()> {
     for entry in entries {
-        let old_content = read_content(odb, &entry.old_oid);
-        let new_content = read_content(odb, &entry.new_oid);
+        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
+        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
         let (ins, del) = count_changes(&old_content, &new_content);
         writeln!(out, "{ins}\t{del}\t{}", entry.path())?;
     }

@@ -76,6 +76,133 @@ pub fn show_prefix(repo: &Repository, cwd: &Path) -> String {
     out
 }
 
+/// Resolve a symbolic ref name to its full form.
+///
+/// For `HEAD`, returns the symbolic target (e.g., `refs/heads/main`).
+/// For branch names, returns `refs/heads/<name>`.
+/// For tag names, returns `refs/tags/<name>`.
+/// Returns `None` when the name cannot be resolved symbolically.
+#[must_use]
+pub fn symbolic_full_name(repo: &Repository, spec: &str) -> Option<String> {
+    // Handle @{upstream} and @{push} suffixes
+    if let Some(base) = spec.strip_suffix("@{upstream}")
+        .or_else(|| spec.strip_suffix("@{u}"))
+        .or_else(|| spec.strip_suffix("@{UPSTREAM}"))
+        .or_else(|| spec.strip_suffix("@{U}"))
+        .or_else(|| spec.strip_suffix("@{UpSTReam}"))
+    {
+        return resolve_upstream_ref(repo, base);
+    }
+    if let Some(base) = spec.strip_suffix("@{push}") {
+        return resolve_push_ref(repo, base);
+    }
+
+    if spec == "HEAD" {
+        if let Ok(Some(target)) = refs::read_symbolic_ref(&repo.git_dir, "HEAD") {
+            return Some(target);
+        }
+        return None;
+    }
+    // If it's already a full ref path
+    if spec.starts_with("refs/") {
+        if refs::resolve_ref(&repo.git_dir, spec).is_ok() {
+            return Some(spec.to_owned());
+        }
+        return None;
+    }
+    // DWIM: try refs/heads, refs/tags, refs/remotes
+    for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
+        let candidate = format!("{prefix}{spec}");
+        if refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Abbreviate a full ref name to its shortest unambiguous form.
+///
+/// For example, `refs/heads/main` becomes `main`.
+#[must_use]
+pub fn abbreviate_ref_name(full_name: &str) -> String {
+    for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
+        if let Some(short) = full_name.strip_prefix(prefix) {
+            return short.to_owned();
+        }
+    }
+    if let Some(short) = full_name.strip_prefix("refs/") {
+        return short.to_owned();
+    }
+    full_name.to_owned()
+}
+
+/// Resolve `@{upstream}` for a given branch.
+fn resolve_upstream_ref(repo: &Repository, branch: &str) -> Option<String> {
+    // If branch is empty, use current branch from HEAD
+    let branch_name = if branch.is_empty() {
+        match refs::read_head(&repo.git_dir) {
+            Ok(Some(target)) => target.strip_prefix("refs/heads/")?.to_owned(),
+            _ => return None,
+        }
+    } else {
+        // Handle @ prefix (e.g., @funny) and branch names with @
+        branch.to_owned()
+    };
+    
+    // Read branch.<name>.remote and branch.<name>.merge from config
+    let config_path = repo.git_dir.join("config");
+    let config_content = fs::read_to_string(&config_path).ok()?;
+    let (remote, merge) = parse_branch_tracking(&config_content, &branch_name)?;
+    
+    // Convert merge ref to remote tracking ref
+    // e.g., refs/heads/main with remote "origin" -> refs/remotes/origin/main
+    let merge_branch = merge.strip_prefix("refs/heads/")?;
+    Some(format!("refs/remotes/{remote}/{merge_branch}"))
+}
+
+/// Resolve `@{push}` for a given branch.
+fn resolve_push_ref(repo: &Repository, branch: &str) -> Option<String> {
+    // @{push} is typically the same as @{upstream} unless push remote differs
+    // For simplicity, treat it the same way
+    resolve_upstream_ref(repo, branch)
+}
+
+/// Parse branch tracking configuration from git config content.
+fn parse_branch_tracking(config: &str, branch: &str) -> Option<(String, String)> {
+    let mut remote = None;
+    let mut merge = None;
+    let mut in_section = false;
+    let target_section = format!("[branch \"{}\"]", branch);
+    
+    for line in config.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed == target_section
+                || trimmed.starts_with(&format!("[branch \"{}\"", branch));
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("remote = ") {
+            remote = Some(value.trim().to_owned());
+        } else if let Some(value) = trimmed.strip_prefix("merge = ") {
+            merge = Some(value.trim().to_owned());
+        }
+        // Also handle with tabs
+        if let Some(value) = trimmed.strip_prefix("remote=") {
+            remote = Some(value.trim().to_owned());
+        } else if let Some(value) = trimmed.strip_prefix("merge=") {
+            merge = Some(value.trim().to_owned());
+        }
+    }
+    
+    match (remote, merge) {
+        (Some(r), Some(m)) => Some((r, m)),
+        _ => None,
+    }
+}
+
 /// Resolve a revision string to an object ID.
 ///
 /// Supports:
@@ -237,6 +364,12 @@ pub fn to_relative_path(path: &Path, cwd: &Path) -> String {
 }
 
 fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    // Handle @{upstream} / @{u} / @{push} suffixes
+    if let Some(full_ref) = try_resolve_at_suffix(repo, spec) {
+        return refs::resolve_ref(&repo.git_dir, &full_ref)
+            .map_err(|_| Error::ObjectNotFound(spec.to_owned()));
+    }
+
     if let Some((treeish, path)) = split_treeish_spec(spec) {
         let root_oid = resolve_base(repo, treeish)?;
         return resolve_treeish_path(repo, root_oid, path);
@@ -269,6 +402,23 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 
     Err(Error::ObjectNotFound(spec.to_owned()))
+}
+
+/// Try to resolve `@{upstream}`, `@{u}`, `@{push}` style suffixes.
+/// Returns the full ref name if recognized, None otherwise.
+fn try_resolve_at_suffix(repo: &Repository, spec: &str) -> Option<String> {
+    // Check for @{upstream}, @{u}, @{UPSTREAM}, @{U}, @{push} (case-insensitive for upstream)
+    let lower = spec.to_lowercase();
+    if lower.ends_with("@{upstream}") || lower.ends_with("@{u}") {
+        let suffix_len = if lower.ends_with("@{upstream}") { 11 } else { 4 };
+        let base = &spec[..spec.len() - suffix_len];
+        return resolve_upstream_ref(repo, base);
+    }
+    if lower.ends_with("@{push}") {
+        let base = &spec[..spec.len() - 7];
+        return resolve_push_ref(repo, base);
+    }
+    None
 }
 
 fn split_treeish_spec(spec: &str) -> Option<(&str, &str)> {

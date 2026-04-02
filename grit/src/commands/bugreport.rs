@@ -8,7 +8,6 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::repo::Repository;
 use std::fs;
-use std::io;
 use std::process::Command;
 
 /// Arguments for `grit bugreport`.

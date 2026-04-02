@@ -10,7 +10,6 @@ use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::repo::Repository;
 use std::fs;
-use std::io;
 use std::path::Path;
 
 /// Arguments for `grit diagnose`.

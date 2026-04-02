@@ -712,7 +712,6 @@ fn parse_mbox(input: &str) -> Result<Vec<MboxPatch>> {
         let mut date = String::new();
         let mut subject = String::new();
         let _body = String::new();
-        let mut diff_section = String::new();
         let mut found_from = false;
 
         // Look for "From " separator line
@@ -845,7 +844,7 @@ fn parse_mbox(input: &str) -> Result<Vec<MboxPatch>> {
         // Parse author into "Name <email>" format and extract date
         let author_ident = parse_author_ident(&author, &date);
 
-        diff_section = diff_lines.join("\n");
+        let mut diff_section = diff_lines.join("\n");
         if !diff_section.is_empty() {
             diff_section.push('\n');
         }
