@@ -147,4 +147,63 @@ test_expect_success 'patch-id unstable: file order is relevant' '
 	! test_cmp pid1u.id pid2u.id
 '
 
+# ---- more patch-id tests ----
+
+test_expect_success 'patch-id --verbatim is accepted' '
+	cd repo &&
+	git show HEAD >show.out &&
+	git patch-id --verbatim <show.out >out.verbatim &&
+	grep "^$OID_REGEX $OID_REGEX$" out.verbatim
+'
+
+test_expect_success 'patch-id --verbatim implies stable (file order irrelevant)' '
+	git patch-id --verbatim <foo-then-bar.diff >vpid1.out &&
+	git patch-id --verbatim <bar-then-foo.diff >vpid2.out &&
+	sed "s/ .*//" vpid1.out >vpid1.id &&
+	sed "s/ .*//" vpid2.out >vpid2.id &&
+	test_cmp vpid1.id vpid2.id
+'
+
+test_expect_success 'patch-id with whitespace-only change (verbatim vs default)' '
+	cat >ws1.diff <<-\EOF &&
+	commit cccccccccccccccccccccccccccccccccccccccc
+	diff --git a/file b/file
+	index e69de29..1234567 100644
+	--- a/file
+	+++ b/file
+	@@ -0,0 +1 @@
+	+hello world
+	EOF
+	cat >ws2.diff <<-\EOF &&
+	commit cccccccccccccccccccccccccccccccccccccccc
+	diff --git a/file b/file
+	index e69de29..1234567 100644
+	--- a/file
+	+++ b/file
+	@@ -0,0 +1 @@
+	+hello  world
+	EOF
+	git patch-id <ws1.diff >ws1.out &&
+	git patch-id <ws2.diff >ws2.out &&
+	sed "s/ .*//" ws1.out >ws1.id &&
+	sed "s/ .*//" ws2.out >ws2.id &&
+	test_cmp ws1.id ws2.id
+'
+
+test_expect_success 'patch-id --verbatim distinguishes whitespace changes' '
+	git patch-id --verbatim <ws1.diff >ws1v.out &&
+	git patch-id --verbatim <ws2.diff >ws2v.out &&
+	sed "s/ .*//" ws1v.out >ws1v.id &&
+	sed "s/ .*//" ws2v.out >ws2v.id &&
+	! test_cmp ws1v.id ws2v.id
+'
+
+test_expect_success 'patch-id with empty diff produces no output' '
+	cat >empty.diff <<-\EOF &&
+	commit dddddddddddddddddddddddddddddddddddddddd
+	EOF
+	git patch-id <empty.diff >empty.out &&
+	test_must_be_empty empty.out
+'
+
 test_done
