@@ -564,4 +564,220 @@ test_expect_success 'diff-tree two trees shows A for file in new tree only' '
 	grep "A	sub/nested.txt" out
 '
 
+# ---------------------------------------------------------------------------
+# --abbrev flag (ported from t4001-diff-rename patterns)
+# Two-tree mode honours --abbrev; single-commit mode inherits the same
+# underlying diff machinery but relies on the commit being resolved first.
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree --abbrev is accepted without error' '
+	cd repo &&
+	t1=$(cat ../tree1) &&
+	t2=$(cat ../tree2) &&
+	git diff-tree --abbrev "$t1" "$t2" >out &&
+	grep "^:" out
+'
+
+test_expect_success 'diff-tree --abbrev=7 is accepted without error' '
+	cd repo &&
+	t1=$(cat ../tree1) &&
+	t2=$(cat ../tree2) &&
+	git diff-tree --abbrev=7 "$t1" "$t2" >out &&
+	grep "M	file.txt" out
+'
+
+# ---------------------------------------------------------------------------
+# --diff-filter flag (ported from t4001-diff-rename patterns)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup diff-filter test: two files with one modified one added' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	printf "original content\n" >filter_orig.txt &&
+	git update-index --add filter_orig.txt &&
+	commit_filter1=$(make_commit "filter base" "$c2") &&
+	printf "%s\n" "$commit_filter1" >../commit_filter1 &&
+	printf "modified content\n" >filter_orig.txt &&
+	git update-index filter_orig.txt &&
+	printf "brand new file\n" >filter_new.txt &&
+	git update-index --add filter_new.txt &&
+	commit_filter2=$(make_commit "filter: mod+add" "$commit_filter1") &&
+	printf "%s\n" "$commit_filter2" >../commit_filter2
+'
+
+test_expect_success 'diff-tree --diff-filter=M includes modified file' '
+	cd repo &&
+	c=$(cat ../commit_filter2) &&
+	git diff-tree -r --diff-filter=M "$c" >out &&
+	grep "M	filter_orig.txt" out
+'
+
+test_expect_success 'diff-tree --diff-filter=D only shows deleted files' '
+	cd repo &&
+	commit_filter1=$(cat ../commit_filter1) &&
+	c2=$(cat ../commit2) &&
+	tree_f1=$(git cat-file -p "$commit_filter1" | awk "/^tree/{print \$2}") &&
+	tree_c2=$(git cat-file -p "$c2" | awk "/^tree/{print \$2}") &&
+	git diff-tree --diff-filter=D "$tree_f1" "$tree_c2" >out &&
+	grep "D	filter_orig.txt" out &&
+	! grep "file.txt" out
+'
+
+test_expect_success 'diff-tree --diff-filter=D excludes unrelated files in two-tree mode' '
+	cd repo &&
+	commit_filter1=$(cat ../commit_filter1) &&
+	c2=$(cat ../commit2) &&
+	tree_f1=$(git cat-file -p "$commit_filter1" | awk "/^tree/{print \$2}") &&
+	tree_c2=$(git cat-file -p "$c2" | awk "/^tree/{print \$2}") &&
+	git diff-tree --diff-filter=D "$tree_f1" "$tree_c2" >out &&
+	! grep "file.txt" out
+'
+
+# ---------------------------------------------------------------------------
+# Two-tree mode: D entries when file deleted between trees
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree two trees shows D for deleted file' '
+	cd repo &&
+	commit_extra=$(cat ../commit_extra) &&
+	commit_del=$(cat ../commit_del) &&
+	t_with=$(git cat-file -p "$commit_extra" | awk "/^tree/{print \$2}") &&
+	t_without=$(git cat-file -p "$commit_del" | awk "/^tree/{print \$2}") &&
+	git diff-tree -r "$t_with" "$t_without" >out &&
+	grep "^:100644 000000 " out &&
+	grep "D	extra.txt" out
+'
+
+# ---------------------------------------------------------------------------
+# Patch output details for added/deleted files
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree -r -p for deleted file shows minus lines' '
+	cd repo &&
+	c=$(cat ../commit_del) &&
+	git diff-tree -r -p "$c" >out &&
+	grep "^-extra content" out
+'
+
+test_expect_success 'diff-tree -r -p shows a/file b/file header' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree -r -p "$c2" >out &&
+	grep "^--- a/file.txt" out &&
+	grep "^+++ b/file.txt" out
+'
+
+test_expect_success 'diff-tree -r -p for new file references /dev/null as old path' '
+	cd repo &&
+	c=$(cat ../commit_exec) &&
+	git diff-tree -r -p "$c" >out &&
+	grep "/dev/null" out
+'
+
+test_expect_success 'diff-tree -r -p for deleted file references /dev/null as new path' '
+	cd repo &&
+	c=$(cat ../commit_del) &&
+	git diff-tree -r -p "$c" >out &&
+	grep "/dev/null" out
+'
+
+# ---------------------------------------------------------------------------
+# Root commit with multiple files (ported from t4001-diff-rename patterns)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup root commit with multiple files' '
+	git init multi_root &&
+	cd multi_root &&
+	printf "file A\n" >a.txt &&
+	printf "file B\n" >b.txt &&
+	git update-index --add a.txt b.txt &&
+	tree_mr=$(git write-tree) &&
+	commit_mr=$(printf "root\n" | git commit-tree "$tree_mr") &&
+	git update-ref HEAD "$commit_mr" &&
+	printf "%s\n" "$commit_mr" >../commit_mr
+'
+
+test_expect_success 'diff-tree --root on multi-file root commit shows all added files' '
+	cd multi_root &&
+	c=$(cat ../commit_mr) &&
+	git diff-tree -r --root "$c" >out &&
+	grep "A	a.txt" out &&
+	grep "A	b.txt" out
+'
+
+test_expect_success 'diff-tree -r --root --name-only on root shows only file names' '
+	cd multi_root &&
+	c=$(cat ../commit_mr) &&
+	git diff-tree -r --root --name-only "$c" >out &&
+	grep "^a.txt$" out &&
+	grep "^b.txt$" out &&
+	! grep "^:" out
+'
+
+# ---------------------------------------------------------------------------
+# diff-tree --stat for deleted file shows deletions
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree -r --stat for deleted file shows deletions' '
+	cd repo &&
+	c=$(cat ../commit_del) &&
+	git diff-tree -r --stat "$c" >out &&
+	grep "extra.txt" out &&
+	grep "deletion" out
+'
+
+# ---------------------------------------------------------------------------
+# diff-tree raw output with mode 100755 and 120000 (ported from t4011-diff-symlink)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree raw shows 100755 mode for executable file' '
+	cd repo &&
+	c=$(cat ../commit_exec) &&
+	git diff-tree -r "$c" >out &&
+	grep "^:000000 100755 " out
+'
+
+test_expect_success 'diff-tree raw shows 120000 mode for symlink' '
+	cd repo &&
+	c=$(cat ../commit_link) &&
+	git diff-tree -r "$c" >out &&
+	grep "^:000000 120000 " out
+'
+
+# ---------------------------------------------------------------------------
+# -l0 rename limit (ported from t4001-diff-rename.sh)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup rename test: commit file then remove+add renamed copy' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	printf "unique content line1\nline2\nline3\nline4\nline5\n" >rename_src.txt &&
+	git update-index --add rename_src.txt &&
+	commit_rsrc=$(make_commit "add rename source" "$c2") &&
+	printf "%s\n" "$commit_rsrc" >../commit_rsrc &&
+	cp rename_src.txt rename_dst.txt &&
+	git update-index --remove rename_src.txt &&
+	git update-index --add rename_dst.txt &&
+	commit_rdst=$(make_commit "rename file" "$commit_rsrc") &&
+	printf "%s\n" "$commit_rdst" >../commit_rdst
+'
+
+test_expect_success 'diff-tree with remove+add of same content shows D and A entries' '
+	cd repo &&
+	commit_rsrc=$(cat ../commit_rsrc) &&
+	commit_rdst=$(cat ../commit_rdst) &&
+	git diff-tree -r "$commit_rsrc" "$commit_rdst" >out &&
+	grep "D	rename_src.txt" out &&
+	grep "A	rename_dst.txt" out
+'
+
+test_expect_success 'diff-tree -r output line count matches changed file count' '
+	cd repo &&
+	commit_rsrc=$(cat ../commit_rsrc) &&
+	commit_rdst=$(cat ../commit_rdst) &&
+	git diff-tree -r "$commit_rsrc" "$commit_rdst" >out &&
+	count=$(wc -l <out) &&
+	test "$count" = "2"
+'
+
 test_done
