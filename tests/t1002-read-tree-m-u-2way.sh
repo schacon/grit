@@ -75,7 +75,6 @@ test_expect_success '4 - carry forward local addition.' '
 '
 
 
-
 test_expect_success '6 - local addition already has the same.' '
 	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
 	rm -f .git/index nitfol bozbar rezrov frotz &&
@@ -90,7 +89,6 @@ test_expect_success '6 - local addition already has the same.' '
 	test_cmp frotz.M frotz &&
 	test_cmp nitfol.M nitfol
 '
-
 
 
 test_expect_success '8 - conflicting addition.' '
@@ -125,6 +123,7 @@ test_expect_success '10 - path removed.' '
 	test_cmp frotz.M frotz &&
 	test_cmp nitfol.M nitfol
 '
+
 
 test_expect_success '12 - unmatching local changes being removed.' '
 	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
@@ -208,7 +207,6 @@ test_expect_success '18 - local change already having a good result.' '
 '
 
 
-
 test_expect_success '20 - no local change, use new tree.' '
 	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
 	rm -f .git/index nitfol bozbar rezrov frotz &&
@@ -223,6 +221,7 @@ test_expect_success '20 - no local change, use new tree.' '
 	test_cmp frotz.M frotz &&
 	test_cmp nitfol.M nitfol
 '
+
 
 test_expect_success 'DF vs DF/DF case setup.' '
 	rm -f .git/index &&
@@ -249,6 +248,51 @@ test_expect_success 'DF vs DF/DF case test.' '
 	grit ls-files --stage >DFDFcheck.out &&
 	test_cmp DFDF.out DFDFcheck.out &&
 	check_cache_at DF/DF clean
+'
+
+test_expect_success '4-clean - carry forward local clean addition.' '
+	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
+	rm -f .git/index nitfol bozbar rezrov frotz yomin &&
+	grit read-tree --reset -u $treeH &&
+	echo yomin >yomin &&
+	grit update-index --add yomin &&
+	grit read-tree -m -u $treeH $treeM &&
+	grit ls-files --stage >4clean.out &&
+	grep yomin 4clean.out &&
+	check_cache_at yomin clean &&
+	test_cmp bozbar.M bozbar &&
+	test_cmp frotz.M frotz &&
+	test_cmp nitfol.M nitfol &&
+	echo yomin >yomin1 &&
+	diff yomin yomin1 &&
+	rm -f yomin1
+'
+
+test_expect_success 'worktree is updated for changed path.' '
+	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
+	rm -f .git/index nitfol bozbar rezrov frotz &&
+	grit read-tree --reset -u $treeH &&
+	grit read-tree -m -u $treeH $treeM &&
+	test_cmp bozbar.M bozbar &&
+	test_cmp frotz.M frotz &&
+	test_cmp nitfol.M nitfol
+'
+
+test_expect_success 'removed path is absent in worktree after -u merge.' '
+	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
+	rm -f .git/index nitfol bozbar rezrov frotz &&
+	grit read-tree --reset -u $treeH &&
+	grit read-tree -m -u $treeH $treeM &&
+	test_path_is_missing rezrov
+'
+
+test_expect_success 'result index matches M after clean 1-2-3 merge.' '
+	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
+	rm -f .git/index nitfol bozbar rezrov frotz &&
+	grit read-tree --reset -u $treeH &&
+	grit read-tree -m -u $treeH $treeM &&
+	grit ls-files --stage >result.out &&
+	test_cmp M.out result.out
 '
 
 test_done

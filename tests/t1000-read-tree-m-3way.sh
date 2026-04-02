@@ -53,4 +53,48 @@ test_expect_success 'three-way merge resolves identical changes to stage 0' '
 	grep " 0	same-change$" actual
 '
 
+
+test_expect_success 'A-only path is absent from three-way merge result' '
+	cd repo &&
+	grit ls-files --stage >all_staged &&
+	! grep "ours-only" all_staged
+'
+
+test_expect_success 'B-only path is absent from three-way merge result' '
+	cd repo &&
+	grit ls-files --stage >all_staged2 &&
+	! grep "theirs-only" all_staged2
+'
+
+test_expect_success 'only the divergent path has unmerged entries' '
+	cd repo &&
+	grit ls-files -u >unmerged &&
+	grep "shared" unmerged &&
+	! grep "same-change" unmerged
+'
+
+test_expect_success 'three-way merge with pre-populated index matching A succeeds' '
+	cd repo &&
+	rm -f .git/index &&
+	grit read-tree "$(cat ../tree_a)" &&
+	grit read-tree -m "$(cat ../tree_o)" "$(cat ../tree_a)" "$(cat ../tree_b)" &&
+	grit ls-files -u >unmerged2 &&
+	grep "shared" unmerged2
+'
+
+test_expect_success 'total staged entries after three-way merge is one resolved' '
+	cd repo &&
+	rm -f .git/index &&
+	grit read-tree -m "$(cat ../tree_o)" "$(cat ../tree_a)" "$(cat ../tree_b)" &&
+	grit ls-files --stage >staged_all &&
+	test_line_count = 1 staged_all
+'
+
+test_expect_success 'same-change OID at stage 0 matches tree-A version' '
+	cd repo &&
+	sc_oid=$(grit ls-files -s same-change | cut -d" " -f2) &&
+	a_oid=$(grit ls-tree "$(cat ../tree_a)" | grep "same-change" | cut -d" " -f3 | cut -f1) &&
+	test "$sc_oid" = "$a_oid"
+'
+
 test_done

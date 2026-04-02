@@ -33,4 +33,24 @@ test_expect_success 'read-tree --prefix rejects leading slash' '
 	test_must_fail grit read-tree --prefix=/two/ "$(cat ../tree_oid)"
 '
 
+
+test_expect_success 'read-tree --prefix adds entries alongside existing ones' '
+	cd repo &&
+	rm -f .git/index &&
+	grit read-tree "$(cat ../tree_oid)" &&
+	grit read-tree --prefix=sub/ "$(cat ../tree_oid)" &&
+	grit ls-files >actual &&
+	cat >expect <<-\EOF &&
+	one
+	sub/one
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'read-tree --prefix=/ rejects root slash' '
+	cd repo &&
+	test_must_fail grit read-tree --prefix=/ "$(cat ../tree_oid)"
+'
+
+
 test_done

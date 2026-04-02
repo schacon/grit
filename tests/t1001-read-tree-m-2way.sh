@@ -250,6 +250,7 @@ test_expect_success '20 - no local change, use new tree.' '
 	check_cache_at bozbar dirty
 '
 
+
 test_expect_success '22 - local change cache updated.' '
 	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
 	rm -f .git/index &&
@@ -257,6 +258,66 @@ test_expect_success '22 - local change cache updated.' '
 	grit checkout-index -u -f -q -a &&
 	sed -e "s/such as/SUCH AS/" bozbar-old >bozbar &&
 	grit update-index --add bozbar &&
+	test_must_fail grit read-tree -m $treeH $treeM
+'
+
+test_expect_success 'two-way merge result matches M tree entry count' '
+	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
+	rm -f .git/index &&
+	grit read-tree $treeH &&
+	grit checkout-index -u -f -q -a &&
+	read_tree_twoway $treeH $treeM &&
+	test_line_count = 3 M.out
+'
+
+test_expect_success 'frotz path from treeM is in result after two-way merge' '
+	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
+	rm -f .git/index &&
+	grit read-tree $treeH &&
+	grit checkout-index -u -f -q -a &&
+	read_tree_twoway $treeH $treeM &&
+	grit ls-files --stage >merge_out &&
+	grep frotz merge_out
+'
+
+test_expect_success 'rezrov removed from index after two-way merge' '
+	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
+	rm -f .git/index &&
+	grit read-tree $treeH &&
+	grit checkout-index -u -f -q -a &&
+	read_tree_twoway $treeH $treeM &&
+	grit ls-files --stage >merge_out2 &&
+	! grep rezrov merge_out2
+'
+
+test_expect_success 'bozbar updated to M version after two-way merge' '
+	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
+	rm -f .git/index &&
+	grit read-tree $treeH &&
+	grit checkout-index -u -f -q -a &&
+	read_tree_twoway $treeH $treeM &&
+	grit ls-files --stage >merge_out3 &&
+	grep bozbar merge_out3
+'
+
+test_expect_success 'nitfol unchanged after two-way merge' '
+	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
+	rm -f .git/index &&
+	grit read-tree $treeH &&
+	grit checkout-index -u -f -q -a &&
+	grit update-index --add nitfol &&
+	read_tree_twoway $treeH $treeM &&
+	grit ls-files --stage >merge_out4 &&
+	grep nitfol merge_out4
+'
+
+test_expect_success '23 - conflicting addition, different content.' '
+	treeH=$(cat .treeH) && treeM=$(cat .treeM) &&
+	rm -f .git/index &&
+	grit read-tree $treeH &&
+	grit checkout-index -u -f -q -a &&
+	echo frotz different >frotz &&
+	grit update-index --add frotz &&
 	test_must_fail grit read-tree -m $treeH $treeM
 '
 

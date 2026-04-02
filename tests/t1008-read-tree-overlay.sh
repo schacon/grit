@@ -42,4 +42,14 @@ test_expect_success 'overlay initial main side yields expected paths' '
 	test_cmp expect actual
 '
 
+
+test_expect_success 'single-tree read-tree into fresh index has just one file' '
+	cd repo &&
+	rm -f .git/index &&
+	grit read-tree initial &&
+	grit ls-files >actual &&
+	echo a >expect &&
+	test_cmp expect actual
+'
+
 test_done

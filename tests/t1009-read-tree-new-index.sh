@@ -31,4 +31,24 @@ test_expect_success 'empty GIT_INDEX_FILE is replaced by read-tree' '
 	test_path_is_file new-index
 '
 
+
+test_expect_success 'custom index has expected entry after read-tree' '
+	cd repo &&
+	rm -f verify-index &&
+	GIT_INDEX_FILE=verify-index grit read-tree main &&
+	GIT_INDEX_FILE=verify-index grit ls-files >entries &&
+	echo a >expected &&
+	test_cmp expected entries
+'
+
+test_expect_success 'reading same tree twice into custom index is idempotent' '
+	cd repo &&
+	rm -f idem-index &&
+	GIT_INDEX_FILE=idem-index grit read-tree main &&
+	GIT_INDEX_FILE=idem-index grit ls-files >first &&
+	GIT_INDEX_FILE=idem-index grit read-tree main &&
+	GIT_INDEX_FILE=idem-index grit ls-files >second &&
+	test_cmp first second
+'
+
 test_done
