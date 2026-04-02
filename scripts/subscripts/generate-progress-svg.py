@@ -36,20 +36,19 @@ def get_counts_from_results():
 
 
 def get_counts_from_html():
-    """Fall back to reading last known values from index.html."""
+    """Read values from docs/index.html to match the dashboard exactly."""
     index = os.path.join(REPO_ROOT, "docs", "index.html")
     if not os.path.isfile(index):
         return 0, 1
     try:
         with open(index) as f:
             content = f.read()
-        m = re.search(r"(\d[\d,]*)\s*</div>\s*<div[^>]*>Upstream Cases Passing", content)
-        pass_count = int(m.group(1).replace(",", "")) if m else 0
-        m2 = re.search(r"([\d.]+)%\s*</div>\s*<div[^>]*>Upstream Test Pass Rate", content)
-        if m2 and pass_count:
-            pct = float(m2.group(1))
-            total = int(pass_count * 100 / pct) if pct > 0 else 28266
-            return pass_count, total
+        # Match the first two "number" divs: passing count and total count
+        numbers = re.findall(r'<div class="number">(\d[\d,]*)</div>', content)
+        if len(numbers) >= 2:
+            pass_count = int(numbers[0].replace(",", ""))
+            total_count = int(numbers[1].replace(",", ""))
+            return pass_count, total_count
     except Exception:
         pass
     return 0, 1
@@ -77,9 +76,13 @@ def generate_svg(pass_count, total_count):
 
 
 def main():
-    pass_count, total_count = get_counts_from_results()
-    if pass_count is None:
-        pass_count, total_count = get_counts_from_html()
+    # Always read from index.html to match the dashboard exactly
+    pass_count, total_count = get_counts_from_html()
+    if pass_count == 0:
+        # Fall back to upstream results only if index.html has no data
+        p, t = get_counts_from_results()
+        if p is not None:
+            pass_count, total_count = p, t
 
     svg = generate_svg(pass_count, total_count)
     with open(OUTPUT, "w") as f:
