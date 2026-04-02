@@ -175,7 +175,7 @@
 
 <div class="summary">
   <div class="card green">
-    <div class="number">91</div>
+    <div class="number">110</div>
     <div class="label">Tests Passing</div>
   </div>
   <div class="card">
@@ -183,24 +183,24 @@
     <div class="label">Total Upstream Tests</div>
   </div>
   <div class="card green">
-    <div class="number">4,379</div>
+    <div class="number">4,742</div>
     <div class="label">Individual Tests Passing</div>
   </div>
   <div class="card">
-    <div class="number">23.0%</div>
+    <div class="number">24.9%</div>
     <div class="label">Test Case Coverage</div>
   </div>
 </div>
 
 <div class="progress-bar">
-  <div class="pass" style="width: 8.7%"></div>
+  <div class="pass" style="width: 10.6%"></div>
   <div class="ported" style="width: 0.0%"></div>
 </div>
 
 <div class="legend">
-  <span><span class="dot green"></span> Passing (91)</span>
+  <span><span class="dot green"></span> Passing (110)</span>
   <span><span class="dot yellow"></span> Ported, not in harness (0)</span>
-  <span><span class="dot gray"></span> Not yet ported (950)</span>
+  <span><span class="dot gray"></span> Not yet ported (931)</span>
 </div>
 
 <h2 id="commands">Commands <span class="cmd-count">56/191</span></h2>
@@ -395,8 +395,8 @@
 <div class="filter">
   <input type="text" id="search" placeholder="Filter tests..." oninput="filterTable()">
   <button onclick="filterStatus('all')" class="active" id="btn-all">All (1041)</button>
-  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (91)</button>
-  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (950)</button>
+  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (110)</button>
+  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (931)</button>
 </div>
 
 <table id="tests">
@@ -1187,12 +1187,12 @@
         <td>Test repository with default ACL</td>
         <td>0/4</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t1305-config-include.sh">t1305-config-include.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/config.rs">config</a></td>
         <td>test config file include directives</td>
-        <td>0/37</td>
+        <td>22/37 <span style="color:#8b949e">(59%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -1208,12 +1208,12 @@
         <td>support for reading config from a blob</td>
         <td>0/13</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t1308-config-set.sh">t1308-config-set.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/config.rs">config</a></td>
         <td>Test git config-set API in different settings</td>
-        <td>0/37</td>
+        <td>35/37 <span style="color:#8b949e">(95%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -1705,12 +1705,12 @@
         <td>checkout switching away from an invalid branch</td>
         <td>0/10</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t2012-checkout-last.sh">t2012-checkout-last.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/checkout_index.rs">checkout</a></td>
         <td>checkout can switch to last branch and merge base</td>
-        <td>0/22</td>
+        <td>14/22 <span style="color:#8b949e">(64%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -1747,12 +1747,12 @@
         <td>checkout orphan</td>
         <td>0/13</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t2018-checkout-branch.sh">t2018-checkout-branch.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/checkout_index.rs">checkout</a></td>
         <td>checkout</td>
-        <td>0/25</td>
+        <td>16/25 <span style="color:#8b949e">(64%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -1761,12 +1761,12 @@
         <td>checkout handling of ambiguous (branch/tag) refs</td>
         <td>0/9</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t2020-checkout-detach.sh">t2020-checkout-detach.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/checkout_index.rs">checkout</a></td>
         <td>checkout into detached HEAD state</td>
-        <td>0/25</td>
+        <td>21/25 <span style="color:#8b949e">(84%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -1775,12 +1775,12 @@
         <td>checkout must not overwrite an untracked objects</td>
         <td>0/9</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t2022-checkout-paths.sh">t2022-checkout-paths.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/checkout_index.rs">checkout</a></td>
         <td>checkout $tree -- $paths</td>
-        <td>0/5</td>
+        <td>12/5 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -2993,12 +2993,12 @@
         <td>Same rename detection as t4003 but testing diff-raw.</td>
         <td>0/4</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4006-diff-mode.sh">t4006-diff-mode.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>diff mode</td>
-        <td>0/7</td>
+        <td>12/7 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3021,12 +3021,12 @@
         <td>diff rename 4</td>
         <td>0/7</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4010-diff-pathspec.sh">t4010-diff-pathspec.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>diff pathspec</td>
-        <td>0/17</td>
+        <td>18/17 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3035,12 +3035,12 @@
         <td>diff symlink</td>
         <td>0/8</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4012-diff-binary.sh">t4012-diff-binary.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>diff binary</td>
-        <td>0/13</td>
+        <td>13/13 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -3056,12 +3056,12 @@
         <td>various format-patch tests</td>
         <td>0/215</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4015-diff-whitespace.sh">t4015-diff-whitespace.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>diff whitespace</td>
-        <td>0/104</td>
+        <td>31/104 <span style="color:#8b949e">(30%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3294,12 +3294,12 @@
         <td>combined and merge diff handle binary files and textconv</td>
         <td>0/14</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4049-diff-stat-count.sh">t4049-diff-stat-count.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>diff --stat-count</td>
-        <td>0/4</td>
+        <td>15/4 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3322,12 +3322,12 @@
         <td>test --stat output of various commands</td>
         <td>0/34</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4053-diff-no-index.sh">t4053-diff-no-index.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>diff --no-index</td>
-        <td>0/41</td>
+        <td>10/41 <span style="color:#8b949e">(24%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3336,12 +3336,12 @@
         <td>test diff with a bogus tree containing the null sha1</td>
         <td>0/14</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4055-diff-context.sh">t4055-diff-context.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>diff.context configuration</td>
-        <td>0/10</td>
+        <td>18/10 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -5961,12 +5961,12 @@
         <td>wtstatus pv2</td>
         <td>0/28</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t7101-reset-empty-subdirs.sh">t7101-reset-empty-subdirs.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/reset.rs">reset</a></td>
         <td>git reset should cull empty subdirs</td>
-        <td>0/10</td>
+        <td>15/10 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -5982,12 +5982,12 @@
         <td>git reset in a bare repository</td>
         <td>0/13</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t7104-reset-hard.sh">t7104-reset-hard.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/reset.rs">reset</a></td>
         <td>reset --hard unmerged</td>
-        <td>0/3</td>
+        <td>15/3 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -6241,12 +6241,12 @@
         <td>git commit</td>
         <td>0/75</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t7502-commit-porcelain.sh">t7502-commit-porcelain.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/commit.rs">commit/status</a></td>
         <td>git commit porcelain-ish</td>
-        <td>0/73</td>
+        <td>36/73 <span style="color:#8b949e">(49%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -6311,12 +6311,12 @@
         <td>git status with certain file name lengths</td>
         <td>0/1</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t7512-status-help.sh">t7512-status-help.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/commit.rs">commit/status</a></td>
         <td>git status advice</td>
-        <td>0/47</td>
+        <td>37/47 <span style="color:#8b949e">(79%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
