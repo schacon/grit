@@ -501,4 +501,78 @@ test_expect_success 'diff --stat between commits shows file names' '
 	grep "dir_sub" actual
 '
 
+test_expect_success 'diff --numstat between commits shows numeric counts' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff --numstat "$c1" "$c2" >actual &&
+	grep "file0" actual &&
+	grep "^[0-9]" actual
+'
+
+test_expect_success 'diff --name-only between commits lists file names only' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff --name-only "$c1" "$c2" >actual &&
+	grep "^file0$" actual &&
+	grep "^dir_sub$" actual
+'
+
+test_expect_success 'diff --name-status between commits shows M status' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff --name-status "$c1" "$c2" >actual &&
+	grep "^M" actual
+'
+
+test_expect_success 'diff --stat summary line shows changed count' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff --stat "$c1" "$c2" >actual &&
+	grep "changed" actual
+'
+
+test_expect_success 'diff --exit-code between different commits returns 1' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	test_must_fail git diff --exit-code "$c1" "$c2"
+'
+
+# ===========================================================================
+# Part 9: diff unified output validation
+# ===========================================================================
+
+test_expect_success 'diff unified output between commits has diff header' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff "$c1" "$c2" >actual &&
+	grep "^diff --git" actual
+'
+
+test_expect_success 'diff unified output between commits has --- and +++' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff "$c1" "$c2" >actual &&
+	grep "^---" actual &&
+	grep "^+++" actual
+'
+
+test_expect_success 'diff unified output between commits has hunk header' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff "$c1" "$c2" >actual &&
+	grep "^@@" actual
+'
+
+test_expect_success 'diff --quiet between different commits returns 1' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	test_must_fail git diff --quiet "$c1" "$c2"
+'
+
+test_expect_success 'diff --quiet between same commits returns 0' '
+	cd repo_dt &&
+	c1=$(cat commit1) &&
+	git diff --quiet "$c1" "$c1"
+'
+
 test_done
