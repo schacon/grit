@@ -2011,4 +2011,50 @@ test_expect_success '--type bool-or-int with boolean' '
 	test_cmp expect actual
 '
 
+# ── get subcommand features ───────────────────────────────────────────────────
+
+test_expect_success 'get subcommand --default for missing key' '
+	cd repo &&
+	git config get --default "fallback" nonexist.key >actual &&
+	echo "fallback" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'get subcommand --default not used when key exists' '
+	cd repo &&
+	git config test.equation "a=b=c" &&
+	git config get --default "fallback" test.equation >actual &&
+	echo "a=b=c" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'get subcommand --all returns all values' '
+	cd repo &&
+	cat >>.git/config <<-\EOF &&
+	[mvs]
+		key = first
+		key = second
+	EOF
+	git config get --all mvs.key >actual &&
+	cat >expect <<-\EOF &&
+	first
+	second
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'get subcommand returns last value for multivar' '
+	cd repo &&
+	git config get mvs.key >actual &&
+	echo "second" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'list subcommand shows multivar entries' '
+	cd repo &&
+	git config list >actual &&
+	grep "mvs.key=first" actual &&
+	grep "mvs.key=second" actual
+'
+
 test_done
