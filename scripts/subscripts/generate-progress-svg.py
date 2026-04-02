@@ -39,23 +39,26 @@ def get_counts_from_html():
     """Read values from docs/index.html to match the dashboard exactly."""
     index = os.path.join(REPO_ROOT, "docs", "index.html")
     if not os.path.isfile(index):
-        return 0, 1
+        return 0, 1, None
     try:
         with open(index) as f:
             content = f.read()
-        # Match the first two "number" divs: passing count and total count
+        # Get passing tests and total upstream tests
         numbers = re.findall(r'<div class="number">(\d[\d,]*)</div>', content)
+        # Get the Estimated Coverage percentage directly
+        pct_match = re.search(r'<div class="number">([\d.]+)%</div>\s*<div class="label">Estimated Coverage', content)
+        est_pct = float(pct_match.group(1)) if pct_match else None
         if len(numbers) >= 2:
             pass_count = int(numbers[0].replace(",", ""))
             total_count = int(numbers[1].replace(",", ""))
-            return pass_count, total_count
+            return pass_count, total_count, est_pct
     except Exception:
         pass
-    return 0, 1
+    return 0, 1, None
 
 
-def generate_svg(pass_count, total_count):
-    pct = pass_count * 100 / total_count if total_count > 0 else 0
+def generate_svg(pass_count, total_count, est_pct=None):
+    pct = est_pct if est_pct is not None else (pass_count * 100 / total_count if total_count > 0 else 0)
     bar_width = 440 * pct / 100
 
     return f'''<svg xmlns="http://www.w3.org/2000/svg" width="480" height="120" viewBox="0 0 480 120">
@@ -77,18 +80,19 @@ def generate_svg(pass_count, total_count):
 
 def main():
     # Always read from index.html to match the dashboard exactly
-    pass_count, total_count = get_counts_from_html()
+    pass_count, total_count, est_pct = get_counts_from_html()
     if pass_count == 0:
-        # Fall back to upstream results only if index.html has no data
         p, t = get_counts_from_results()
         if p is not None:
             pass_count, total_count = p, t
+            est_pct = None
 
-    svg = generate_svg(pass_count, total_count)
+    # Use the dashboard's "Estimated Coverage" percentage if available
+    svg = generate_svg(pass_count, total_count, est_pct)
     with open(OUTPUT, "w") as f:
         f.write(svg)
 
-    pct = pass_count * 100 / total_count if total_count else 0
+    pct = est_pct if est_pct is not None else (pass_count * 100 / total_count if total_count else 0)
     print(f"Generated {OUTPUT}: {pass_count:,}/{total_count:,} ({pct:.1f}%)")
 
 
