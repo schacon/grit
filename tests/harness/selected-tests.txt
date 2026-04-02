@@ -10,6 +10,8 @@ t0018-advice.sh
 t0030-stripspace.sh
 t0040-parse-options.sh
 t0050-filesystem.sh
+t0060-path-utils.sh
+t0070-fundamental.sh
 t1000-read-tree-m-3way.sh
 t1001-read-tree-m-2way.sh
 t1002-read-tree-m-u-2way.sh
@@ -22,12 +24,15 @@ t1008-read-tree-overlay.sh
 t1009-read-tree-new-index.sh
 t1010-mktree.sh
 t1012-read-tree-df.sh
+t1015-read-index-unmerged.sh
 t1016-compatObjectSorting.sh
 t1020-subdirectory.sh
 t1051-unpack-file.sh
+t1060-object-corruption.sh
 t1100-commit-tree-options.sh
 t1300-config.sh
 t1301-shared-repo.sh
+t1302-repo-version.sh
 t1303-wacky-config.sh
 t1304-default-acl.sh
 t1305-config-include.sh
@@ -44,10 +49,12 @@ t1405-main-ref-store-reftable.sh
 t1410-reflog.sh
 t1422-show-ref-exists.sh
 t1430-bad-ref-name.sh
+t1450-fsck-basic.sh
 t1500-rev-parse.sh
 t1501-work-tree.sh
 t1503-rev-parse-verify.sh
 t1504-revision-range.sh
+t1505-rev-parse-last.sh
 t1510-repo-setup.sh
 t1511-rev-parse-caret.sh
 t1513-rev-parse-prefix.sh
@@ -70,6 +77,8 @@ t2020-checkout-detach.sh
 t2021-checkout-overwrite.sh
 t2022-checkout-paths.sh
 t2025-checkout-no-overlay.sh
+t2030-checkout-index-basic.sh
+t2031-checkout-index-symlink.sh
 t2050-checkout.sh
 t2060-switch.sh
 t2061-switch-orphan.sh
@@ -80,8 +89,10 @@ t3003-ls-files-exclude.sh
 t3004-ls-files-basic.sh
 t3005-ls-files-relative.sh
 t3006-ls-files-long.sh
+t3011-ls-files-staged.sh
 t3020-ls-files-error-unmatch.sh
 t3030-merge-recursive.sh
+t3050-ls-files-unmerged.sh
 t3060-ls-files-with-tree.sh
 t3070-wildmatch.sh
 t3100-ls-tree-restrict.sh
@@ -95,6 +106,7 @@ t3204-branch-name-interpretation.sh
 t3205-branch-color.sh
 t3206-branch-advanced.sh
 t3210-pack-refs.sh
+t3401-rebase-basic.sh
 t3500-cherry.sh
 t3507-cherry-pick-conflict.sh
 t3510-cherry-pick-sequence.sh
@@ -123,6 +135,8 @@ t4020-diff-plumbing.sh
 t4023-diff-rename-typechange.sh
 t4030-diff-textconv.sh
 t4031-diff-rewrite-binary.sh
+t4032-diff-inter-hunk-context.sh
+t4033-diff-patience.sh
 t4035-diff-quiet.sh
 t4038-diff-combined.sh
 t4039-diff-assume-unchanged.sh
@@ -185,6 +199,8 @@ t6100-rev-list-in-order.sh
 t6101-rev-parse-parents.sh
 t6112-rev-list-filters-objects.sh
 t6120-name-rev.sh
+t6130-pathspec-noglob.sh
+t6131-pathspec-icase.sh
 t6200-fmt-merge-msg-extra.sh
 t6300-for-each-ref.sh
 t6301-for-each-ref-errors.sh
@@ -197,6 +213,10 @@ t7001-mv.sh
 t7004-tag.sh
 t7006-pager.sh
 t7007-show.sh
+t7010-setup.sh
+t7020-commit-encoding.sh
+t7030-verify-tag.sh
+t7040-log-formatting.sh
 t7063-status-untracked-cache.sh
 t7101-reset-empty-subdirs.sh
 t7102-reset.sh
