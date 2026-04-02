@@ -329,4 +329,29 @@ test_expect_success 'show annotated tag with --oneline is concise' '
 	grep "v1.0" actual
 '
 
+test_expect_success 'show --format=%s on first commit' '
+	cd repo &&
+	FIRST=$(git log --format="%H" | tail -1) &&
+	git show --format="format:%s" "$FIRST" >actual &&
+	head -1 actual >first &&
+	echo "first commit" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show --quiet on blob still shows content' '
+	cd repo &&
+	BLOB=$(git rev-parse HEAD:file.txt) &&
+	git show --quiet "$BLOB" >actual &&
+	grep "first" actual
+'
+
+test_expect_success 'show --format=%H on first commit matches rev-parse' '
+	cd repo &&
+	FIRST=$(git rev-parse HEAD~1) &&
+	git show --format="format:%H" "$FIRST" >actual &&
+	head -1 actual >first &&
+	echo "$FIRST" >expected &&
+	test_cmp expected first
+'
+
 test_done

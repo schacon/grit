@@ -129,4 +129,18 @@ test_expect_success 'multiple tags uses plural form' '
 	grep -q "tags" actual
 '
 
+test_expect_success 'mixed branch and tag entries' '
+	printf "a1\t\tbranch '"'"'feat'"'"'\nb2\t\ttag '"'"'v1.0'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branch" actual &&
+	grep -q "tag" actual
+'
+
+test_expect_success '--into-name with remote branch' '
+	printf "abc123\t\tbranch '"'"'main'"'"' of https://example.com/repo\n" |
+	git fmt-merge-msg --into-name release >actual &&
+	grep -q "into release" actual &&
+	grep -q "of https://example.com/repo" actual
+'
+
 test_done
