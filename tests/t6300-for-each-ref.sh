@@ -820,4 +820,189 @@ test_expect_success 'nested annotated tags: %(*subject) peels to commit' '
 	test_cmp expect actual
 '
 
+
+# ── --points-at ────────────────────────────────────────────────────────────
+
+test_expect_success '--points-at shows refs pointing at given commit' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/heads/main
+refs/odd/spot
+refs/tags/three
+refs/tags/v1.0
+refs/tags/v2.0
+EOF
+	git for-each-ref --format="%(refname)" --points-at="$C" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--points-at with no matching refs gives empty' '
+	cd repo &&
+	ET=$(printf "" | git hash-object -w -t tree --stdin) &&
+	NONE=$(git commit-tree "$ET" -m "orphan") &&
+	git for-each-ref --format="%(refname)" --points-at="$NONE" >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success '--points-at with tag pattern' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/tags/three
+refs/tags/v1.0
+refs/tags/v2.0
+EOF
+	git for-each-ref --format="%(refname)" --points-at="$C" refs/tags >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--points-at with heads pattern' '
+	cd repo &&
+	D=$(git rev-parse refs/heads/side) &&
+	cat >expect <<-\EOF &&
+refs/heads/side
+EOF
+	git for-each-ref --format="%(refname)" --points-at="$D" refs/heads >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--points-at combined with --count' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	git for-each-ref --format="%(refname)" --points-at="$C" --count=1 >actual &&
+	test_line_count = 1 actual
+'
+
+test_expect_success '--points-at combined with --sort=-refname' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/tags/v2.0
+refs/tags/v1.0
+refs/tags/three
+refs/odd/spot
+refs/heads/main
+EOF
+	git for-each-ref --format="%(refname)" --points-at="$C" --sort=-refname >actual &&
+	test_cmp expect actual
+'
+
+# ── --contains / --no-contains ─────────────────────────────────────────────
+
+test_expect_success '--contains shows refs whose tip contains given commit' '
+	cd repo &&
+	B=$(git rev-parse refs/tags/two) &&
+	cat >expect <<-\EOF &&
+refs/heads/main
+refs/heads/side
+refs/odd/spot
+refs/tags/four
+refs/tags/three
+refs/tags/two
+refs/tags/v1.0
+refs/tags/v2.0
+EOF
+	git for-each-ref --format="%(refname)" --contains="$B" \
+		refs/heads refs/tags refs/odd >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--contains with root commit includes all lightweight tag refs' '
+	cd repo &&
+	A=$(git rev-parse refs/tags/one) &&
+	git for-each-ref --format="%(refname)" --contains="$A" \
+		refs/heads refs/tags/one refs/tags/two refs/tags/three refs/tags/four >actual &&
+	test_line_count -gt 0 actual
+'
+
+test_expect_success '--no-contains excludes refs that contain given commit' '
+	cd repo &&
+	B=$(git rev-parse refs/tags/two) &&
+	cat >expect <<-\EOF &&
+refs/tags/one
+EOF
+	git for-each-ref --format="%(refname)" --no-contains="$B" \
+		refs/tags/one refs/tags/two refs/tags/three refs/tags/four >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--contains with tip commit shows refs containing it' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/heads/main
+refs/odd/spot
+refs/tags/three
+EOF
+	git for-each-ref --format="%(refname)" --contains="$C" \
+		refs/heads refs/odd refs/tags/three >actual &&
+	test_cmp expect actual
+'
+
+# ── --merged / --no-merged ────────────────────────────────────────────────────
+
+test_expect_success '--merged shows refs reachable from given commit' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/tags/one
+refs/tags/three
+refs/tags/two
+EOF
+	git for-each-ref --format="%(refname)" --merged="$C" \
+		refs/tags/one refs/tags/two refs/tags/three refs/tags/four >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--no-merged shows refs not reachable from given commit' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/tags/four
+EOF
+	git for-each-ref --format="%(refname)" --no-merged="$C" \
+		refs/tags/one refs/tags/two refs/tags/three refs/tags/four >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--merged with branch name' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/heads/main
+refs/odd/spot
+EOF
+	git for-each-ref --format="%(refname)" --merged=main \
+		refs/heads/main refs/odd >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--no-merged with branch shows diverged refs' '
+	cd repo &&
+	echo "refs/heads/side" >expect &&
+	git for-each-ref --format="%(refname)" --no-merged=main refs/heads >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--merged combined with --sort=-refname' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/tags/two
+refs/tags/three
+refs/tags/one
+EOF
+	git for-each-ref --format="%(refname)" --merged="$C" --sort=-refname \
+		refs/tags/one refs/tags/two refs/tags/three refs/tags/four >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--merged combined with --count' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	git for-each-ref --format="%(refname)" --merged="$C" --count=2 \
+		refs/tags/one refs/tags/two refs/tags/three refs/tags/four >actual &&
+	test_line_count = 2 actual
+'
+
 test_done
