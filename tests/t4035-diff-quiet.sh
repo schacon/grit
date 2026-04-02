@@ -223,4 +223,86 @@ test_expect_success 'diff --cached --quiet suppresses output' '
     test_must_be_empty out
 '
 
+# ---------------------------------------------------------------------------
+# More quiet/exit-code edge cases
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup repo4 with multiple files' '
+    git init repo4 &&
+    cd repo4 &&
+    git config user.name "Test User" &&
+    git config user.email "test@test.com" &&
+    echo one >f1 &&
+    echo two >f2 &&
+    echo three >f3 &&
+    git add f1 f2 f3 &&
+    git commit -m "three files" &&
+    echo modified >f2 &&
+    git add f2 &&
+    git commit -m "modify f2"
+'
+
+test_expect_success 'diff --quiet HEAD^ HEAD -- f1 returns 0 (unchanged)' '
+    cd repo4 &&
+    test_expect_code 0 git diff --quiet HEAD^ HEAD -- f1
+'
+
+test_expect_success 'diff --quiet HEAD^ HEAD -- f2 returns 1 (changed)' '
+    cd repo4 &&
+    test_expect_code 1 git diff --quiet HEAD^ HEAD -- f2
+'
+
+test_expect_success 'diff --quiet HEAD^ HEAD -- f3 returns 0 (unchanged)' '
+    cd repo4 &&
+    test_expect_code 0 git diff --quiet HEAD^ HEAD -- f3
+'
+
+test_expect_success 'diff --exit-code HEAD^ HEAD -- f1 returns 0' '
+    cd repo4 &&
+    test_expect_code 0 git diff --exit-code HEAD^ HEAD -- f1
+'
+
+test_expect_success 'diff --exit-code HEAD^ HEAD -- f2 returns 1' '
+    cd repo4 &&
+    test_expect_code 1 git diff --exit-code HEAD^ HEAD -- f2
+'
+
+test_expect_success 'diff --quiet with unstaged change in f1' '
+    cd repo4 &&
+    echo dirty >f1 &&
+    test_expect_code 1 git diff --quiet &&
+    git checkout -- f1
+'
+
+test_expect_success 'diff --quiet returns 0 after checkout restore' '
+    cd repo4 &&
+    test_expect_code 0 git diff --quiet
+'
+
+test_expect_success 'diff --quiet --cached with new file staged' '
+    cd repo4 &&
+    echo new >f4 &&
+    git add f4 &&
+    test_expect_code 1 git diff --quiet --cached &&
+    git reset HEAD -- f4 &&
+    rm f4
+'
+
+test_expect_success 'diff --quiet --cached with deleted file staged' '
+    cd repo4 &&
+    git rm f3 &&
+    test_expect_code 1 git diff --quiet --cached &&
+    git checkout HEAD -- f3
+'
+
+test_expect_success 'diff --quiet --cached returns 0 after restoring' '
+    cd repo4 &&
+    test_expect_code 0 git diff --quiet --cached
+'
+
+test_expect_success 'diff --exit-code --cached with no changes returns 0' '
+    cd repo4 &&
+    test_expect_code 0 git diff --exit-code --cached
+'
+
 test_done

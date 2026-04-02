@@ -285,4 +285,81 @@ test_expect_success 'diff-files --quiet with pathspec on dirty file returns 1' '
 	test_must_fail git diff-files --quiet -- file.txt
 '
 
+# ---------------------------------------------------------------------------
+# Additional diff-files tests: subdirs, multiple modifications
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup: clean state and add subdir files' '
+	cd repo &&
+	git update-index file.txt other.txt &&
+	mkdir -p sub/deep &&
+	echo "sub content" >sub/a.txt &&
+	echo "deep content" >sub/deep/b.txt &&
+	git update-index --add sub/a.txt sub/deep/b.txt
+'
+
+test_expect_success 'diff-files clean after adding subdir files' '
+	cd repo &&
+	git diff-files --exit-code
+'
+
+test_expect_success 'diff-files detects changes in subdirectory' '
+	cd repo &&
+	echo modified >sub/a.txt &&
+	git diff-files --name-only >out &&
+	grep "sub/a.txt" out
+'
+
+test_expect_success 'diff-files --name-status shows M for subdir file' '
+	cd repo &&
+	git diff-files --name-status >out &&
+	grep "^M.*sub/a.txt" out
+'
+
+test_expect_success 'diff-files detects change in deeply nested file' '
+	cd repo &&
+	echo modified-deep >sub/deep/b.txt &&
+	git diff-files --name-only >out &&
+	grep "sub/deep/b.txt" out
+'
+
+test_expect_success 'diff-files pathspec with subdir prefix' '
+	cd repo &&
+	git diff-files --name-only -- sub/ >out &&
+	grep "sub/a.txt" out &&
+	grep "sub/deep/b.txt" out &&
+	! grep "file.txt" out
+'
+
+test_expect_success 'diff-files --numstat with subdir changes' '
+	cd repo &&
+	git diff-files --numstat -- sub/a.txt >out &&
+	grep "sub/a.txt" out
+'
+
+test_expect_success 'diff-files --exit-code fails with subdir changes' '
+	cd repo &&
+	test_must_fail git diff-files --exit-code -- sub/a.txt
+'
+
+test_expect_success 'diff-files --quiet with subdir pathspec' '
+	cd repo &&
+	test_must_fail git diff-files --quiet -- sub/
+'
+
+test_expect_success 'diff-files reports deleted file in working tree' '
+	cd repo &&
+	rm sub/a.txt &&
+	git diff-files --name-status >out &&
+	grep "^D.*sub/a.txt" out
+'
+
+test_expect_success 'restore and verify clean' '
+	cd repo &&
+	echo "sub content" >sub/a.txt &&
+	echo "deep content" >sub/deep/b.txt &&
+	git update-index sub/a.txt sub/deep/b.txt &&
+	git diff-files --exit-code
+'
+
 test_done

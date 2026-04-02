@@ -69,4 +69,56 @@ test_expect_success 'diff-index --abbrev with modified file' '
 	grep "M" actual_mod
 '
 
+# ---------------------------------------------------------------------------
+# Additional abbrev tests
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup: add second file for more abbrev tests' '
+	cd repo &&
+	printf "bar-content\n" >bar &&
+	git update-index --add bar &&
+	c3=$(make_commit add-bar "$(cat c2)") &&
+	printf "%s\n" "$c3" >c3
+'
+
+test_expect_success 'diff-index --abbrev=12 shows 12-char abbreviated oids' '
+	cd repo &&
+	c1=$(cat c1) &&
+	git diff-index --cached --raw --abbrev=12 "$c1" >out &&
+	# Each non-zero OID should be at least 12 hex chars
+	grep "A" out | head -1 >line &&
+	oid=$(awk "{print \$4}" line) &&
+	len=${#oid} &&
+	test "$len" -ge 12
+'
+
+test_expect_success 'diff-index --abbrev=40 shows full oids' '
+	cd repo &&
+	c1=$(cat c1) &&
+	git diff-index --cached --raw --abbrev=40 "$c1" >out &&
+	grep "A" out | head -1 >line &&
+	oid=$(awk "{print \$4}" line) &&
+	len=${#oid} &&
+	test "$len" -eq 40
+'
+
+test_expect_success 'diff-index --raw without --abbrev shows full 40-char oids' '
+	cd repo &&
+	c1=$(cat c1) &&
+	git diff-index --cached --raw "$c1" >out &&
+	grep "A" out | head -1 >line &&
+	oid=$(awk "{print \$4}" line) &&
+	len=${#oid} &&
+	test "$len" -eq 40
+'
+
+test_expect_success 'diff-index --abbrev=8 with multiple files' '
+	cd repo &&
+	c1=$(cat c1) &&
+	git diff-index --cached --raw --abbrev=8 "$c1" >out &&
+	# Should show both foo and bar as added
+	grep "foo" out &&
+	grep "bar" out
+'
+
 test_done

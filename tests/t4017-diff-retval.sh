@@ -239,4 +239,73 @@ test_expect_success 'diff --exit-code between parent and child returns 1' '
 	test_must_fail git diff --exit-code "$c3" "$c4"
 '
 
+# ---------------------------------------------------------------------------
+# Additional retval edge cases
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup repo2 for more retval tests' '
+	git init repo2 &&
+	cd repo2 &&
+	git config user.name "Test User" &&
+	git config user.email "test@test.com" &&
+	echo alpha >x &&
+	echo beta >y &&
+	git add x y &&
+	git commit -m "initial" &&
+	echo gamma >x &&
+	git add x &&
+	git commit -m "modify x"
+'
+
+test_expect_success 'diff --exit-code HEAD^ HEAD -- x returns 1' '
+	cd repo2 &&
+	test_must_fail git diff --exit-code HEAD^ HEAD -- x
+'
+
+test_expect_success 'diff --exit-code HEAD^ HEAD -- y returns 0' '
+	cd repo2 &&
+	git diff --exit-code HEAD^ HEAD -- y
+'
+
+test_expect_success 'diff --quiet HEAD^ HEAD -- x returns 1' '
+	cd repo2 &&
+	test_must_fail git diff --quiet HEAD^ HEAD -- x
+'
+
+test_expect_success 'diff --quiet HEAD^ HEAD -- y returns 0' '
+	cd repo2 &&
+	git diff --quiet HEAD^ HEAD -- y
+'
+
+test_expect_success 'diff-index --cached --exit-code HEAD with staged new file' '
+	cd repo2 &&
+	echo newcontent >z &&
+	git add z &&
+	test_must_fail git diff-index --cached --exit-code HEAD
+'
+
+test_expect_success 'diff-index --quiet --cached HEAD with staged changes' '
+	cd repo2 &&
+	test_must_fail git diff-index --quiet --cached HEAD >out 2>/dev/null &&
+	test ! -s out
+'
+
+test_expect_success 'diff-files --exit-code with dirty worktree' '
+	cd repo2 &&
+	echo dirty >>x &&
+	test_must_fail git diff-files --exit-code
+'
+
+test_expect_success 'diff-files --quiet with dirty worktree' '
+	cd repo2 &&
+	test_must_fail git diff-files --quiet >out 2>/dev/null &&
+	test ! -s out
+'
+
+test_expect_success 'diff-files --exit-code after restoring' '
+	cd repo2 &&
+	git checkout -- x &&
+	git diff-files --exit-code
+'
+
 test_done
