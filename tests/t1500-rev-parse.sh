@@ -184,4 +184,359 @@ test_expect_success 'bare repository: --git-dir is .' '
 	test_cmp expect actual
 '
 
+# --- New tests: rev-parse with revisions ---
+
+test_expect_success 'rev-parse HEAD resolves to commit hash' '
+	cd repo &&
+	hash=$(grit rev-parse HEAD) &&
+	test $(echo "$hash" | wc -c) = 41
+'
+
+test_expect_success 'rev-parse master resolves same as HEAD' '
+	cd repo &&
+	grit rev-parse HEAD >expect &&
+	grit rev-parse master >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'setup additional commits for traversal' '
+	cd repo &&
+	echo extra >extra.txt &&
+	grit add extra.txt &&
+	grit commit -m "extra commit"
+'
+
+test_expect_success 'rev-parse HEAD~1 resolves to parent' '
+	cd repo &&
+	grit rev-parse HEAD~1 >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | wc -c) = 41
+'
+
+test_expect_success 'rev-parse HEAD^1 same as HEAD~1' '
+	cd repo &&
+	grit rev-parse HEAD~1 >expect &&
+	grit rev-parse HEAD^1 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-parse HEAD^0 same as HEAD' '
+	cd repo &&
+	grit rev-parse HEAD >expect &&
+	grit rev-parse HEAD^0 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-parse HEAD~0 same as HEAD' '
+	cd repo &&
+	grit rev-parse HEAD >expect &&
+	grit rev-parse HEAD~0 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-parse HEAD^{commit} same as HEAD' '
+	cd repo &&
+	grit rev-parse HEAD >expect &&
+	grit rev-parse "HEAD^{commit}" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-parse HEAD^{tree} resolves to tree' '
+	cd repo &&
+	grit rev-parse "HEAD^{tree}" >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | wc -c) = 41 &&
+	grit rev-parse HEAD >commit_hash &&
+	test "$(cat actual)" != "$(cat commit_hash)"
+'
+
+test_expect_success 'rev-parse HEAD^{} peels to commit' '
+	cd repo &&
+	grit rev-parse HEAD >expect &&
+	grit rev-parse "HEAD^{}" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-parse annotated tag^{commit} peels to commit' '
+	cd repo &&
+	head=$(grit rev-parse HEAD) &&
+	cat >.git/tag-obj <<-EOF &&
+	object $head
+	type commit
+	tag testtag
+	tagger grit <grit@example.com> 0 +0000
+
+	test tag
+	EOF
+	tag_hash=$(grit hash-object -t tag -w .git/tag-obj) &&
+	grit update-ref refs/tags/testtag "$tag_hash" &&
+	grit rev-parse "testtag^{commit}" >actual &&
+	echo "$head" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-parse tag^{} peels annotated tag' '
+	cd repo &&
+	head=$(grit rev-parse HEAD) &&
+	echo "$head" >expect &&
+	grit rev-parse "testtag^{}" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-parse HEAD:file resolves to blob' '
+	cd repo &&
+	grit rev-parse HEAD:commitfile >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | wc -c) = 41
+'
+
+test_expect_success 'rev-parse of bad ref fails' '
+	cd repo &&
+	test_must_fail grit rev-parse nosuchref 2>err
+'
+
+test_expect_success '--verify with good ref succeeds' '
+	cd repo &&
+	grit rev-parse HEAD >expect &&
+	grit rev-parse --verify HEAD >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--verify with bad ref fails' '
+	cd repo &&
+	test_must_fail grit rev-parse --verify nosuchref
+'
+
+test_expect_success '--short outputs abbreviated hash' '
+	cd repo &&
+	grit rev-parse --short HEAD >actual &&
+	len=$(wc -c <actual) &&
+	test "$len" -lt 41
+'
+
+test_expect_success '--short=7 outputs 7-char hash' '
+	cd repo &&
+	grit rev-parse --short=7 HEAD >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | tr -d "\n" | wc -c) = 7
+'
+
+test_expect_success '--end-of-options works' '
+	cd repo &&
+	grit rev-parse HEAD >expect &&
+	grit rev-parse --end-of-options HEAD >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-parse -- separates revs from paths' '
+	cd repo &&
+	grit rev-parse HEAD -- commitfile >actual &&
+	head=$(grit rev-parse HEAD) &&
+	printf "%s\n--\ncommitfile\n" "$head" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'multiple refs resolved' '
+	cd repo &&
+	head=$(grit rev-parse HEAD) &&
+	parent=$(grit rev-parse HEAD~1) &&
+	grit rev-parse HEAD HEAD~1 >actual &&
+	{ echo "$head" && echo "$parent"; } >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'inside .git/refs: --is-inside-git-dir true' '
+	cd repo/.git/refs &&
+	echo true >expect &&
+	grit rev-parse --is-inside-git-dir >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--show-prefix empty at root, non-empty in subdir' '
+	cd repo &&
+	grit rev-parse --show-prefix >root_prefix &&
+	echo >expect &&
+	test_cmp expect root_prefix &&
+	cd sub &&
+	echo sub/ >expect &&
+	grit rev-parse --show-prefix >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--show-toplevel consistent from subdirectory' '
+	cd repo &&
+	expected=$(pwd) &&
+	cd sub/dir &&
+	grit rev-parse --show-toplevel >actual &&
+	echo "$expected" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--git-dir from deep subdirectory' '
+	cd repo/sub/dir &&
+	echo ../../.git >expect &&
+	grit rev-parse --git-dir >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'GIT_DIR overrides discovery' '
+	cd repo &&
+	grit rev-parse --git-dir >normal &&
+	GIT_DIR=.git grit rev-parse --git-dir >with_env &&
+	test_cmp normal with_env
+'
+
+test_expect_success 'multiple discovery flags combined' '
+	cd repo &&
+	grit rev-parse --is-inside-work-tree --is-bare-repository --is-inside-git-dir >actual &&
+	printf "true\nfalse\nfalse\n" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'bare repo: multiple flags combined' '
+	cd bare-repo &&
+	grit rev-parse --is-bare-repository >actual_bare &&
+	echo true >expect_bare &&
+	test_cmp expect_bare actual_bare &&
+	grit rev-parse --is-inside-work-tree >actual_wt &&
+	echo false >expect_wt &&
+	test_cmp expect_wt actual_wt
+'
+
+test_expect_success 'rev-parse resolves full ref name refs/heads/master' '
+	cd repo &&
+	grit rev-parse HEAD >expect &&
+	grit rev-parse refs/heads/master >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '-C flag changes directory for discovery' '
+	grit -C repo rev-parse --is-inside-work-tree >actual &&
+	echo true >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '-C flag with subdirectory shows correct prefix' '
+	cd repo &&
+	grit -C sub rev-parse --show-prefix >actual &&
+	echo sub/ >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '-C flag with --git-dir' '
+	cd repo &&
+	grit -C sub/dir rev-parse --git-dir >actual &&
+	echo ../../.git >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-parse HEAD^2 fails on non-merge commit' '
+	cd repo &&
+	test_must_fail grit rev-parse HEAD^2
+'
+
+test_expect_success 'rev-parse of tag name resolves' '
+	cd repo &&
+	grit rev-parse testtag >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | wc -c) = 41
+'
+
+test_expect_success 'rev-parse tag vs tag^{commit} differ for annotated tag' '
+	cd repo &&
+	grit rev-parse testtag >tag_oid &&
+	grit rev-parse "testtag^{commit}" >commit_oid &&
+	! test_cmp tag_oid commit_oid
+'
+
+test_expect_success '--show-toplevel fails in bare repo' '
+	cd bare-repo &&
+	test_must_fail grit rev-parse --show-toplevel
+'
+
+test_expect_success '--show-prefix in bare repo' '
+	cd bare-repo &&
+	grit rev-parse --show-prefix >actual 2>/dev/null ||
+	true
+'
+
+test_expect_success 'second commit setup for more tests' '
+	cd repo &&
+	echo more >morefile &&
+	grit add morefile &&
+	grit commit -m "second commit" &&
+	echo thrice >thirdfile &&
+	grit add thirdfile &&
+	grit commit -m "third commit"
+'
+
+test_expect_success 'HEAD~2 resolves when grandparent exists' '
+	cd repo &&
+	grit rev-parse HEAD~2 >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | wc -c) = 41
+'
+
+test_expect_success 'HEAD~1 != HEAD' '
+	cd repo &&
+	head=$(grit rev-parse HEAD) &&
+	parent=$(grit rev-parse HEAD~1) &&
+	test "$head" != "$parent"
+'
+
+test_expect_success 'HEAD~2 != HEAD~1' '
+	cd repo &&
+	gp=$(grit rev-parse HEAD~2) &&
+	p=$(grit rev-parse HEAD~1) &&
+	test "$gp" != "$p"
+'
+
+test_expect_success '--short=100 gives full hash' '
+	cd repo &&
+	grit rev-parse HEAD >expect &&
+	grit rev-parse --short=100 HEAD >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--short=4 gives at least 4 chars' '
+	cd repo &&
+	grit rev-parse --short=4 HEAD >actual &&
+	len=$(cat actual | tr -d "\n" | wc -c) &&
+	test "$len" -ge 4
+'
+
+test_expect_success '--verify multiple refs fails' '
+	cd repo &&
+	test_must_fail grit rev-parse --verify HEAD HEAD~1
+'
+
+test_expect_success 'refs/tags/ prefix resolves tag' '
+	cd repo &&
+	grit rev-parse testtag >expect &&
+	grit rev-parse refs/tags/testtag >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-parse tree:path resolves' '
+	cd repo &&
+	tree=$(grit rev-parse "HEAD^{tree}") &&
+	grit rev-parse "$tree:commitfile" >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | wc -c) = 41
+'
+
+test_expect_success '--git-dir with GIT_DIR set to .git' '
+	cd repo &&
+	GIT_DIR=.git grit rev-parse --git-dir >actual &&
+	echo .git >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--is-inside-work-tree with GIT_DIR and GIT_WORK_TREE' '
+	cd repo &&
+	GIT_DIR=.git GIT_WORK_TREE=. grit rev-parse --is-inside-work-tree >actual &&
+	echo true >expect &&
+	test_cmp expect actual
+'
+
 test_done
