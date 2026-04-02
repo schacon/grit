@@ -548,4 +548,178 @@ test_expect_success 'commit -F with multiline file' '
 	test_cmp expected actual
 '
 
+# ---- Wave 8: more tests ported from upstream t7501 ----
+
+test_expect_success 'commit message from non-existing file fails' '
+	cd repo &&
+	echo "nofile" >>file.txt &&
+	git add file.txt &&
+	test_must_fail git commit -F /nonexistent/path 2>/dev/null
+'
+
+test_expect_success 'empty commit message (whitespace only) fails' '
+	cd repo &&
+	printf "   \t  \n \t\n" >ws-msg.txt &&
+	test_must_fail git commit -F ws-msg.txt 2>/dev/null
+'
+
+test_expect_success 'commit -F from empty file fails without --allow-empty-message' '
+	cd repo &&
+	>empty-file &&
+	test_must_fail git commit -F empty-file 2>/dev/null
+'
+
+test_expect_success 'amend to set message to empty needs --allow-empty-message' '
+	cd repo &&
+	echo "asetmsg" >>file.txt &&
+	git add file.txt &&
+	git commit -m "will try to empty" 2>/dev/null &&
+	test_must_fail git commit --amend -m "" 2>/dev/null
+'
+
+test_expect_success 'amend to set message to empty with --allow-empty-message' '
+	cd repo &&
+	git commit --amend --allow-empty-message -m "" 2>/dev/null &&
+	git cat-file commit HEAD >commit &&
+	sed -e "1,/^$/d" commit >body &&
+	! grep -q "[^ ]" body
+'
+
+test_expect_success 'commit --date does not affect committer date' '
+	cd repo &&
+	echo "datenocommitter" >>file.txt &&
+	git add file.txt &&
+	GIT_COMMITTER_DATE="1500000000 +0000" \
+		git commit --date="1600000000 +0000" -m "date split" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "^author.*1600000000 +0000" actual &&
+	grep "^committer.*1500000000 +0000" actual
+'
+
+test_expect_success 'amend with -a stages modified tracked files' '
+	cd repo &&
+	echo "amendabase" >>file.txt &&
+	git add file.txt &&
+	git commit -m "before amend -a" 2>/dev/null &&
+	echo "amendachange" >>file.txt &&
+	git commit --amend -a -m "after amend -a" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "after amend -a" actual
+'
+
+test_expect_success 'commit -q with --allow-empty is quiet' '
+	cd repo &&
+	git commit -q --allow-empty -m "quiet empty" 2>stderr &&
+	test ! -s stderr
+'
+
+test_expect_success 'commit after git reset --hard with no changes fails' '
+	cd repo &&
+	git reset --hard HEAD 2>/dev/null &&
+	test_must_fail git commit -m "nothing changed" 2>/dev/null
+'
+
+test_expect_success 'GIT_COMMITTER_NAME and GIT_COMMITTER_EMAIL override config' '
+	cd repo &&
+	echo "gcn" >>file.txt &&
+	git add file.txt &&
+	GIT_COMMITTER_NAME="Other Committer" GIT_COMMITTER_EMAIL="other@commit.com" \
+		git commit -m "env committer name" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "^committer Other Committer <other@commit.com>" actual
+'
+
+test_expect_success 'commit -F with single line file preserves message exactly' '
+	cd repo &&
+	echo "slp" >>file.txt &&
+	git add file.txt &&
+	echo "exact message" >single-msg.txt &&
+	git commit -F single-msg.txt 2>/dev/null &&
+	git cat-file commit HEAD >commit &&
+	sed -e "1,/^$/d" commit >actual &&
+	echo "exact message" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'multiple empty -m flags' '
+	cd repo &&
+	echo "mem" >>file.txt &&
+	git add file.txt &&
+	test_must_fail git commit -m "" -m "" 2>/dev/null
+'
+
+test_expect_success 'commit in new repo has correct tree' '
+	git init tree-verify-repo &&
+	cd tree-verify-repo &&
+	git config user.name "Test" &&
+	git config user.email "t@t.com" &&
+	echo "tree data" >tree-file.txt &&
+	git add tree-file.txt &&
+	git commit -m "tree verify" 2>/dev/null &&
+	TREE=$(git cat-file -p HEAD | sed -n "s/^tree //p" | head -1 | tr -d " \n") &&
+	git cat-file -p "$TREE" >tree_listing &&
+	grep "tree-file.txt" tree_listing
+'
+
+test_expect_success 'amend --allow-empty preserves tree' '
+	git init amend-empty-tree-repo &&
+	cd amend-empty-tree-repo &&
+	git config user.name "Test" &&
+	git config user.email "t@t.com" &&
+	echo "ae" >ae.txt &&
+	git add ae.txt &&
+	git commit -m "base for amend" 2>/dev/null &&
+	TREE_BEFORE=$(git cat-file -p HEAD | head -1 | sed "s/^tree //") &&
+	git commit --amend --allow-empty -m "amend allow empty" 2>/dev/null &&
+	TREE_AFTER=$(git cat-file -p HEAD | head -1 | sed "s/^tree //") &&
+	test "$TREE_BEFORE" = "$TREE_AFTER"
+'
+
+test_expect_success 'commit --author with full identity string' '
+	cd repo &&
+	echo "fullid" >>file.txt &&
+	git add file.txt &&
+	git commit --author="Full Name <full@identity.org>" -m "full id" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "author Full Name <full@identity.org>" actual
+'
+
+test_expect_success 'commit output includes short hash' '
+	cd repo &&
+	echo "outputhash" >>file.txt &&
+	git add file.txt &&
+	git commit -m "hash in output" 2>stderr &&
+	HASH=$(git rev-parse --short HEAD) &&
+	grep "$HASH" stderr
+'
+
+test_expect_success 'multiple consecutive --allow-empty commits form chain' '
+	cd repo &&
+	git commit --allow-empty -m "chain 1" 2>/dev/null &&
+	HASH1=$(git rev-parse HEAD) &&
+	git commit --allow-empty -m "chain 2" 2>/dev/null &&
+	HASH2=$(git rev-parse HEAD) &&
+	git commit --allow-empty -m "chain 3" 2>/dev/null &&
+	HASH3=$(git rev-parse HEAD) &&
+	test "$HASH1" != "$HASH2" &&
+	test "$HASH2" != "$HASH3" &&
+	PARENT3=$(git cat-file -p HEAD | sed -n "s/^parent //p") &&
+	test "$PARENT3" = "$HASH2" &&
+	PARENT2=$(git cat-file -p "$HASH2" | sed -n "s/^parent //p") &&
+	test "$PARENT2" = "$HASH1"
+'
+
+test_expect_success 'amend consecutive times updates message each time' '
+	cd repo &&
+	echo "amendmulti" >>file.txt &&
+	git add file.txt &&
+	git commit -m "first version" 2>/dev/null &&
+	git commit --amend -m "second version" 2>/dev/null &&
+	git commit --amend -m "third version" 2>/dev/null &&
+	git cat-file commit HEAD >commit &&
+	grep "third version" commit &&
+	! grep "first version" commit &&
+	! grep "second version" commit
+'
+
 test_done

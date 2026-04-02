@@ -241,4 +241,55 @@ test_expect_success 'show annotated tag shows tagger' '
 	grep "Tagger:" actual || grep "tagger" actual
 '
 
+# ---- Wave 8: more show tests ----
+
+test_expect_success 'show --format=%cn shows committer name' '
+	cd repo &&
+	git show --format="format:%cn" >actual &&
+	head -1 actual >first &&
+	echo "Test User" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show --format=%ce shows committer email' '
+	cd repo &&
+	git show --format="format:%ce" >actual &&
+	head -1 actual >first &&
+	echo "test@test.com" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show --pretty=format is alias for --format' '
+	cd repo &&
+	git show --pretty="format:%s" >actual &&
+	head -1 actual >first &&
+	echo "second commit" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show --format=%p shows abbreviated parent hash' '
+	cd repo &&
+	PARENT=$(git rev-parse --short HEAD^) &&
+	git show --format="format:%p" >actual &&
+	head -1 actual >first &&
+	echo "$PARENT" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show --format=%t shows abbreviated tree hash' '
+	cd repo &&
+	TREE=$(git rev-parse --short HEAD^{tree}) &&
+	git show --format="format:%t" >actual &&
+	head -1 actual >first &&
+	echo "$TREE" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show --format=%ad shows author date' '
+	cd repo &&
+	git show --format="format:%ad" >actual &&
+	head -1 actual >first &&
+	grep "2001" first
+'
+
 test_done
