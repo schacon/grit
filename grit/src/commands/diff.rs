@@ -507,7 +507,7 @@ fn write_colored_patch(out: &mut impl Write, patch: &str) -> Result<()> {
         } else if line.starts_with('+') {
             writeln!(out, "{GREEN}{line}{RESET}")?;
         } else {
-            writeln!(out, "{line}")?;
+            writeln!(out, "{line}{RESET}")?;
         }
     }
     Ok(())
