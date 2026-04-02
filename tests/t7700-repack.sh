@@ -151,4 +151,98 @@ test_expect_success 'repack preserves objects reachable from HEAD' '
 	git cat-file -t $parent
 '
 
+test_expect_success 'repack creates .idx alongside .pack' '
+	rm -rf repo_idx &&
+	grit init repo_idx &&
+	cd repo_idx &&
+	create_commit base one.txt one &&
+	git repack -a -d &&
+	pack=$(echo .git/objects/pack/*.pack) &&
+	idx=${pack%.pack}.idx &&
+	test_path_is_file "$pack" &&
+	test_path_is_file "$idx"
+'
+
+test_expect_success 'repack -q produces no output' '
+	rm -rf repo_quiet &&
+	grit init repo_quiet &&
+	cd repo_quiet &&
+	create_commit base one.txt one &&
+	git repack -a -d -q >stdout 2>stderr &&
+	test_must_be_empty stdout &&
+	test_must_be_empty stderr
+'
+
+test_expect_success 'repack -a consolidates multiple packs to one' '
+	rm -rf repo_consol &&
+	grit init repo_consol &&
+	cd repo_consol &&
+	create_commit first one.txt one &&
+	git repack &&
+	create_commit second two.txt two &&
+	git repack &&
+	pack_before=$(ls .git/objects/pack/*.pack 2>/dev/null | wc -l) &&
+	test "$pack_before" -ge 2 &&
+	git repack -a -d &&
+	pack_after=$(ls .git/objects/pack/*.pack | wc -l) &&
+	test "$pack_after" -eq 1
+'
+
+test_expect_success 'packed objects are in pack after repack -a -d' '
+	rm -rf repo_access &&
+	grit init repo_access &&
+	cd repo_access &&
+	create_commit base one.txt one &&
+	oid=$(git rev-parse HEAD) &&
+	git repack -a -d &&
+	idx=$(echo .git/objects/pack/*.idx) &&
+	git verify-pack -v "$idx" >packlist &&
+	grep "^$oid " packlist
+'
+
+test_expect_success 'repack -a -d twice produces exactly one pack' '
+	rm -rf repo_one &&
+	grit init repo_one &&
+	cd repo_one &&
+	create_commit first one.txt one &&
+	git repack -a -d &&
+	packs=$(ls .git/objects/pack/*.pack | wc -l) &&
+	test "$packs" -eq 1 &&
+	echo extra >extra.txt &&
+	git hash-object -w extra.txt >/dev/null &&
+	git repack -a -d &&
+	packs=$(ls .git/objects/pack/*.pack | wc -l) &&
+	test "$packs" -eq 1
+'
+
+test_expect_success 'repack -n skips server-info update' '
+	rm -rf repo_noinfo &&
+	grit init repo_noinfo &&
+	cd repo_noinfo &&
+	create_commit base one.txt one &&
+	git repack -a -n &&
+	test_path_is_missing .git/objects/info/packs
+'
+
+test_expect_success 'repack -a -d count-objects goes to zero' '
+	rm -rf repo_zero &&
+	grit init repo_zero &&
+	cd repo_zero &&
+	create_commit first one.txt one &&
+	create_commit second two.txt two &&
+	git repack -a -d &&
+	test "$(git count-objects)" = "0 objects, 0 kilobytes"
+'
+
+test_expect_success 'repack after gc is idempotent' '
+	rm -rf repo_gc_repack &&
+	grit init repo_gc_repack &&
+	cd repo_gc_repack &&
+	create_commit base one.txt one &&
+	git gc &&
+	git repack -a -d &&
+	test "$(git count-objects)" = "0 objects, 0 kilobytes" &&
+	test_path_is_file "$(echo .git/objects/pack/*.pack)"
+'
+
 test_done

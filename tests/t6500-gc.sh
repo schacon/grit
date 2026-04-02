@@ -107,4 +107,77 @@ test_expect_success 'gc is idempotent' '
 	test_path_is_file "$(echo .git/objects/pack/*.pack)"
 '
 
+test_expect_success 'gc --gobbledegook prints usage' '
+	rm -rf repo_gunk &&
+	grit init repo_gunk &&
+	cd repo_gunk &&
+	test_must_fail git gc --no-such-option 2>err &&
+	grep -i "usage" err
+'
+
+test_expect_success 'gc --no-prune flag is accepted without error' '
+	rm -rf repo_noprune &&
+	grit init repo_noprune &&
+	cd repo_noprune &&
+	create_commit base one.txt one &&
+	git gc --no-prune
+'
+
+test_expect_success 'gc packs objects into a pack file' '
+	rm -rf repo_gcacc &&
+	grit init repo_gcacc &&
+	cd repo_gcacc &&
+	create_commit base one.txt one &&
+	head_oid=$(git rev-parse HEAD) &&
+	git gc &&
+	idx=$(echo .git/objects/pack/*.idx) &&
+	git verify-pack -v "$idx" >packlist &&
+	grep "^$head_oid " packlist
+'
+
+test_expect_success 'gc --prune=never flag is accepted without error' '
+	rm -rf repo_gcnever &&
+	grit init repo_gcnever &&
+	cd repo_gcnever &&
+	create_commit base one.txt one &&
+	git gc --prune=never
+'
+
+test_expect_success 'gc consolidates multiple packs into one' '
+	rm -rf repo_gccons &&
+	grit init repo_gccons &&
+	cd repo_gccons &&
+	create_commit first one.txt one &&
+	git repack &&
+	create_commit second two.txt two &&
+	git repack &&
+	packs_before=$(ls .git/objects/pack/*.pack 2>/dev/null | wc -l) &&
+	test "$packs_before" -ge 2 &&
+	git gc &&
+	packs_after=$(ls .git/objects/pack/*.pack | wc -l) &&
+	test "$packs_after" -eq 1
+'
+
+test_expect_success 'gc explicit run with gc.auto=0 still packs loose objects' '
+	rm -rf repo_gcexpl &&
+	grit init repo_gcexpl &&
+	cd repo_gcexpl &&
+	create_commit base one.txt one &&
+	git config gc.auto 0 &&
+	loose_before=$(git count-objects | sed "s/ .*//") &&
+	test "$loose_before" -gt 0 &&
+	git gc &&
+	test_path_is_file "$(echo .git/objects/pack/*.pack)"
+'
+
+test_expect_success 'gc does not leave .tmp files in pack directory' '
+	rm -rf repo_gctmp &&
+	grit init repo_gctmp &&
+	cd repo_gctmp &&
+	create_commit base one.txt one &&
+	git gc &&
+	tmp_count=$(find .git/objects/pack -name ".tmp-*" 2>/dev/null | wc -l) &&
+	test "$tmp_count" -eq 0
+'
+
 test_done
