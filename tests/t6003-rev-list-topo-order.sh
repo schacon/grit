@@ -170,4 +170,91 @@ test_expect_success 'multiple heads combine correctly without duplicates' '
 	test_must_be_empty dups
 '
 
+# --- New tests ---
+
+test_expect_success '--topo-order root appears last' '
+	cd repo &&
+	root_oid=$(git rev-parse root) &&
+	git rev-list --topo-order refs/heads/master >actual &&
+	tail -1 actual >last &&
+	echo "$root_oid" >expect &&
+	test_cmp expect last
+'
+
+test_expect_success '--date-order root appears last' '
+	cd repo &&
+	root_oid=$(git rev-parse root) &&
+	git rev-list --date-order refs/heads/master >actual &&
+	tail -1 actual >last &&
+	echo "$root_oid" >expect &&
+	test_cmp expect last
+'
+
+test_expect_success '--reverse with --topo-order root appears first' '
+	cd repo &&
+	root_oid=$(git rev-parse root) &&
+	git rev-list --topo-order --reverse refs/heads/master >actual &&
+	head -1 actual >first &&
+	echo "$root_oid" >expect &&
+	test_cmp expect first
+'
+
+test_expect_success '--topo-order merge appears before both parents' '
+	cd repo &&
+	merge_oid=$(git rev-parse merge) &&
+	main1_oid=$(git rev-parse main1) &&
+	side1_oid=$(git rev-parse side1) &&
+	git rev-list --topo-order refs/heads/master >actual &&
+	line_merge=$(grep -n "$merge_oid" actual | cut -d: -f1) &&
+	line_main1=$(grep -n "$main1_oid" actual | cut -d: -f1) &&
+	line_side1=$(grep -n "$side1_oid" actual | cut -d: -f1) &&
+	test "$line_merge" -lt "$line_main1" &&
+	test "$line_merge" -lt "$line_side1"
+'
+
+test_expect_success '--count matches number of lines' '
+	cd repo &&
+	count=$(git rev-list --count refs/heads/master) &&
+	git rev-list refs/heads/master >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$count" = "$lines"
+'
+
+test_expect_success '--max-count=1 with --topo-order returns tip' '
+	cd repo &&
+	l5_oid=$(git rev-parse l5) &&
+	git rev-list --topo-order --max-count=1 refs/heads/master >actual &&
+	echo "$l5_oid" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--reverse --max-count=1 returns last in reversed' '
+	cd repo &&
+	git rev-list --max-count=1 --reverse refs/heads/master >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" = "1"
+'
+
+test_expect_success '--skip=2 --topo-order skips first two' '
+	cd repo &&
+	git rev-list --topo-order refs/heads/master >full &&
+	git rev-list --topo-order --skip=2 refs/heads/master >skipped &&
+	tail -n +3 full >expect &&
+	test_cmp expect skipped
+'
+
+test_expect_success '--first-parent skips side branch commits' '
+	cd repo &&
+	side1_oid=$(git rev-parse side1) &&
+	git rev-list --first-parent refs/heads/master >fp &&
+	! grep -q "$side1_oid" fp
+'
+
+test_expect_success '--first-parent includes merge commit itself' '
+	cd repo &&
+	merge_oid=$(git rev-parse merge) &&
+	git rev-list --first-parent refs/heads/master >fp &&
+	grep -q "$merge_oid" fp
+'
+
 test_done
