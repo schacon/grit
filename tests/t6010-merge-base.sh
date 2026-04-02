@@ -230,4 +230,154 @@ test_expect_success 'merge-base of direct parent and child' '
 	test_cmp expected actual
 '
 
+# --- Additional merge-base tests ---
+
+test_expect_success '--octopus with two commits same as default' '
+	cd repo &&
+	git merge-base G H >expected &&
+	git merge-base --octopus G H >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--octopus with three commits' '
+	cd repo &&
+	git merge-base --octopus G H A >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | wc -c) = 41
+'
+
+test_expect_success '--octopus on linear chain' '
+	cd repo &&
+	git rev-parse LA >expected &&
+	git merge-base --octopus LA LB LC >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--is-ancestor with three generations' '
+	cd repo &&
+	git merge-base --is-ancestor E C &&
+	git merge-base --is-ancestor E B &&
+	git merge-base --is-ancestor E A
+'
+
+test_expect_success '--is-ancestor fails for unrelated commits' '
+	cd repo &&
+	test_must_fail git merge-base --is-ancestor DIS1 A
+'
+
+test_expect_success '--is-ancestor with merge commit lineage' '
+	cd repo &&
+	git merge-base --is-ancestor F H &&
+	git merge-base --is-ancestor E H
+'
+
+test_expect_success 'merge-base with 3 commits takes pairwise best' '
+	cd repo &&
+	git merge-base A G H >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | wc -c) = 41
+'
+
+test_expect_success 'merge-base with identical refs' '
+	cd repo &&
+	git rev-parse A >expected &&
+	git merge-base A A >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--independent with single ref returns it' '
+	cd repo &&
+	git rev-parse H >expected &&
+	git merge-base --independent H >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--independent removes ancestors from list' '
+	cd repo &&
+	git merge-base --independent A B C >actual &&
+	# A is tip, B and C are ancestors of A
+	git rev-parse A >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success '--independent with all independent refs keeps all' '
+	cd repo &&
+	git merge-base --independent DIS1 DIS2 >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" = 2
+'
+
+test_expect_success 'merge-base symmetric: order does not matter' '
+	cd repo &&
+	git merge-base G H >gh &&
+	git merge-base H G >hg &&
+	test_cmp gh hg
+'
+
+test_expect_success 'merge-base of root commit with descendant is root' '
+	cd repo &&
+	git rev-parse E >expected &&
+	git merge-base E A >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '--is-ancestor reflexive: commit is own ancestor' '
+	cd repo &&
+	git merge-base --is-ancestor A A
+'
+
+test_expect_success 'setup criss-cross merge' '
+	cd repo &&
+	CC1=$(doit 80 CC1) &&
+	CC2=$(doit 81 CC2 $CC1) &&
+	CC3=$(doit 82 CC3 $CC1) &&
+	CC4=$(doit 83 CC4 $CC2 $CC3) &&
+	CC5=$(doit 84 CC5 $CC3 $CC2) &&
+	CC6=$(doit 85 CC6 $CC4) &&
+	CC7=$(doit 86 CC7 $CC5)
+'
+
+test_expect_success 'criss-cross merge has multiple merge bases' '
+	cd repo &&
+	git merge-base --all CC6 CC7 >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" -ge 2
+'
+
+test_expect_success '--octopus with criss-cross descendants' '
+	cd repo &&
+	git merge-base --octopus CC6 CC7 >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | wc -c) = 41
+'
+
+test_expect_success '--is-ancestor through criss-cross' '
+	cd repo &&
+	git merge-base --is-ancestor CC1 CC6 &&
+	git merge-base --is-ancestor CC1 CC7
+'
+
+test_expect_success 'merge-base with tag names' '
+	cd repo &&
+	git merge-base E D >actual &&
+	git rev-parse E >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success '--independent preserves only tips in long chain' '
+	cd repo &&
+	git merge-base --independent LA LB LC >actual &&
+	git rev-parse LC >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'merge-base diamond with --all finds single base' '
+	cd repo &&
+	git merge-base --all D2 D3 >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" = 1 &&
+	git rev-parse D1 >expected &&
+	test_cmp expected actual
+'
+
 test_done
