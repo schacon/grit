@@ -221,4 +221,134 @@ test_expect_success 'four branches lists all of them' '
 	grep -q "branches" actual
 '
 
+# ── Batch 2: deeper fmt-merge-msg coverage ────────────────────────────────────
+
+test_expect_success 'five branches produces plural and lists names' '
+	printf "a1\t\tbranch '"'"'a'"'"'\nb2\t\tbranch '"'"'b'"'"'\nc3\t\tbranch '"'"'c'"'"'\nd4\t\tbranch '"'"'d'"'"'\ne5\t\tbranch '"'"'e'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branches" actual &&
+	grep -q "'"'"'a'"'"'" actual &&
+	grep -q "'"'"'e'"'"'" actual
+'
+
+test_expect_success '-m with empty string produces empty first line' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg -m "" >actual &&
+	head -1 actual >first &&
+	test_must_be_empty first
+'
+
+test_expect_success 'tag with annotated marker in line' '
+	printf "abc123\t\ttag '"'"'release-1.0'"'"' of https://example.com\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "tag '"'"'release-1.0'"'"'" actual
+'
+
+test_expect_success '--log=0 is like --no-log (title only)' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --log=0 >actual &&
+	grep -q "branch '"'"'feature'"'"'" actual
+'
+
+test_expect_success '--log=1 is accepted' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --log=1 >actual &&
+	grep -q "branch '"'"'feature'"'"'" actual
+'
+
+test_expect_success 'octopus merge: three branches from same remote' '
+	printf "a1\t\tbranch '"'"'x'"'"' of https://r.com\nb2\t\tbranch '"'"'y'"'"' of https://r.com\nc3\t\tbranch '"'"'z'"'"' of https://r.com\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branches" actual
+'
+
+test_expect_success 'branch name with slashes preserved' '
+	printf "abc123\t\tbranch '"'"'feature/login'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "feature/login" actual
+'
+
+test_expect_success 'branch name with dots preserved' '
+	printf "abc123\t\tbranch '"'"'release-2.0.1'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "release-2.0.1" actual
+'
+
+test_expect_success '-m overrides even with multiple branches' '
+	printf "a1\t\tbranch '"'"'x'"'"'\nb2\t\tbranch '"'"'y'"'"'\n" |
+	git fmt-merge-msg -m "Octopus merge" >actual &&
+	head -1 actual >first &&
+	echo "Octopus merge" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'not-for-merge mixed with for-merge filters correctly' '
+	printf "a1\tnot-for-merge\tbranch '"'"'old'"'"'\nb2\t\tbranch '"'"'new'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branch '"'"'new'"'"'" actual &&
+	! grep -q "old" actual
+'
+
+test_expect_success '--into-name with tag merge' '
+	printf "abc123\t\ttag '"'"'v3.0'"'"'\n" |
+	git fmt-merge-msg --into-name stable >actual &&
+	grep -q "into stable" actual &&
+	grep -q "tag" actual
+'
+
+test_expect_success '-F with empty file produces empty output' '
+	printf "" >empty_input &&
+	git fmt-merge-msg -F empty_input >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'remote URL with port number preserved' '
+	printf "abc123\t\tbranch '"'"'main'"'"' of ssh://git@host:2222/repo\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "ssh://git@host:2222/repo" actual
+'
+
+test_expect_success 'remote URL with .git suffix preserved' '
+	printf "abc123\t\tbranch '"'"'main'"'"' of https://github.com/user/repo.git\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "repo.git" actual
+'
+
+test_expect_success 'two tags from same remote' '
+	printf "a1\t\ttag '"'"'v1.0'"'"' of https://r.com\nb2\t\ttag '"'"'v2.0'"'"' of https://r.com\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "tags" actual
+'
+
+test_expect_success 'octopus: branches and tags mixed from multiple remotes' '
+	printf "a1\t\tbranch '"'"'dev'"'"' of https://r1.com\nb2\t\ttag '"'"'v1'"'"' of https://r2.com\nc3\t\tbranch '"'"'fix'"'"' of https://r1.com\n" |
+	git fmt-merge-msg >actual &&
+	test -s actual
+'
+
+test_expect_success '--log=20 is accepted and produces output' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --log=20 >actual &&
+	grep -q "branch '"'"'feature'"'"'" actual
+'
+
+test_expect_success 'branch with hyphen and underscore preserved' '
+	printf "abc123\t\tbranch '"'"'my-feature_v2'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "my-feature_v2" actual
+'
+
+test_expect_success '-F /dev/null produces empty output' '
+	git fmt-merge-msg -F /dev/null >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success '--message with newlines in value' '
+	printf "abc123\t\tbranch '"'"'feat'"'"'\n" |
+	git fmt-merge-msg --message "Line one" >actual &&
+	head -1 actual >first &&
+	echo "Line one" >expected &&
+	test_cmp expected first
+'
+
 test_done
