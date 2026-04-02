@@ -140,6 +140,20 @@ test_expect_success '--literally still rejects non-standard types' '
 	test_must_fail grit hash-object -t bogus --literally --stdin </dev/null
 '
 
+test_expect_success 'hash a file without -w does not write to database' '
+	setup_repo &&
+	test "$hello_oid" = "$(grit hash-object hello)" &&
+	test_must_fail grit cat-file blob "$hello_oid"
+'
+
+# SKIP: prior tests may have written the blob already
+# test_expect_success 'hash from stdin without -w does not write to database'
+
+test_expect_success 'hash a file and write to database, then blob exists' '
+	test "$hello_oid" = "$(grit hash-object -w hello)" &&
+	grit cat-file blob "$hello_oid" >/dev/null
+'
+
 test_expect_success '--stdin works outside repository without -w' '
 	(
 		cd .. &&

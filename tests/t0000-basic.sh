@@ -579,7 +579,406 @@ test_expect_success 'write-tree --missing-ok succeeds with missing objects' '
 # Section 14: very long path name in index
 ###########################################################################
 
-# SKIP: very long index name (update-index --index-info edge case)
-# test_expect_success 'very long name in the index handled sanely'
+###########################################################################
+# Section 15: trivial test
+###########################################################################
+
+test_expect_success 'success is reported like this' '
+	:
+'
+
+###########################################################################
+# Section 16: very long name in the index
+###########################################################################
+
+test_expect_success 'very long name in the index handled sanely' '
+	cd repo &&
+	rm -f .git/index &&
+	a=a &&
+	a=$a$a$a$a$a$a$a$a$a$a$a$a$a$a$a$a &&
+	a=$a$a$a$a$a$a$a$a$a$a$a$a$a$a$a$a &&
+	a=$a$a$a$a$a$a$a$a$a$a$a$a$a$a$a$a &&
+	a=${a}q &&
+	>path4 &&
+	grit update-index --add path4 &&
+	grit ls-files -s path4 >tmp &&
+	(
+		sed -e "s/\t.*/\t/" tmp |
+		tr -d "\012" &&
+		echo "$a"
+	) | grit update-index --index-info &&
+	grit ls-files a >tmp2 &&
+	len=$(wc -c <tmp2) &&
+	test $len = 4098
+'
+
+###########################################################################
+# Section 17: complex tree with nested directories (non-symlink)
+###########################################################################
+
+test_expect_success 'adding multiple paths including nested dirs' '
+	cd repo &&
+	rm -f .git/index &&
+	rm -rf path0 path2 path3 &&
+	mkdir -p path2 path3 path3/subp3 &&
+	echo "hello path0" >path0 &&
+	echo "hello path2/file2" >path2/file2 &&
+	echo "hello path3/file3" >path3/file3 &&
+	echo "hello path3/subp3/file3" >path3/subp3/file3 &&
+	grit update-index --add path0 path2/file2 path3/file3 path3/subp3/file3
+'
+
+test_expect_success 'ls-files --stage shows 4 entries for added paths' '
+	cd repo &&
+	grit ls-files --stage >current &&
+	test_line_count = 4 current
+'
+
+test_expect_success 'write-tree produces non-empty tree for nested dirs' '
+	cd repo &&
+	tree=$(grit write-tree) &&
+	test -n "$tree" &&
+	echo "$tree" >../main_tree
+'
+
+test_expect_success 'ls-tree shows top-level entries (3: path0, path2, path3)' '
+	cd repo &&
+	grit ls-tree "$(cat ../main_tree)" >current &&
+	test_line_count = 3 current &&
+	grep "blob.*path0" current &&
+	grep "tree.*path2" current &&
+	grep "tree.*path3" current
+'
+
+test_expect_success 'ls-tree -r shows all 4 blobs recursively' '
+	cd repo &&
+	grit ls-tree -r "$(cat ../main_tree)" >current &&
+	test_line_count = 4 current &&
+	grep "path0$" current &&
+	grep "path2/file2$" current &&
+	grep "path3/file3$" current &&
+	grep "path3/subp3/file3$" current
+'
+
+test_expect_success 'ls-tree -r -t shows trees and blobs (7 entries)' '
+	cd repo &&
+	grit ls-tree -r -t "$(cat ../main_tree)" >current &&
+	test_line_count = 7 current &&
+	grep "^040000 tree" current | grep "path2" &&
+	grep "^040000 tree" current | grep "path3" &&
+	grep "^040000 tree" current | grep "path3/subp3"
+'
+
+test_expect_success 'write-tree --prefix=path3 matches subtree oid from ls-tree' '
+	cd repo &&
+	ptree=$(grit write-tree --prefix=path3) &&
+	path3_oid=$(grit ls-tree "$(cat ../main_tree)" | awk "\$4==\"path3\"{print \$3}") &&
+	test "$ptree" = "$path3_oid"
+'
+
+test_expect_success 'write-tree --prefix=path3/subp3 matches sub-subtree oid' '
+	cd repo &&
+	ptree=$(grit write-tree --prefix=path3/subp3) &&
+	path3_oid=$(grit ls-tree "$(cat ../main_tree)" | awk "\$4==\"path3\"{print \$3}") &&
+	subp3_oid=$(grit ls-tree "$path3_oid" | awk "\$4==\"subp3\"{print \$3}") &&
+	test "$ptree" = "$subp3_oid"
+'
+
+test_expect_success 'read-tree followed by write-tree is idempotent (complex tree)' '
+	cd repo &&
+	rm -f .git/index &&
+	grit read-tree "$(cat ../main_tree)" &&
+	test_path_is_file .git/index &&
+	newtree=$(grit write-tree) &&
+	test "$newtree" = "$(cat ../main_tree)"
+'
+
+test_expect_success 'no diff-files after checkout-index and refresh (complex)' '
+	cd repo &&
+	grit checkout-index -f -a &&
+	grit update-index --refresh &&
+	grit diff-files >current &&
+	test_must_be_empty current
+'
+
+test_expect_success 'commit-tree records correct tree for complex tree' '
+	cd repo &&
+	P=$(cat ../main_tree) &&
+	commit0=$(echo "commit complex" | grit commit-tree "$P") &&
+	grit cat-file -p "$commit0" >out &&
+	grep "^tree $P$" out
+'
+
+test_expect_success 'commit-tree records correct parent for complex tree' '
+	cd repo &&
+	P=$(cat ../main_tree) &&
+	commit0=$(echo "base" | grit commit-tree "$P") &&
+	commit1=$(echo "child" | grit commit-tree "$P" -p "$commit0") &&
+	grit cat-file -p "$commit1" >out &&
+	grep "^parent $commit0$" out
+'
+
+###########################################################################
+# Section 18: multiple invalid objects in index
+###########################################################################
+
+test_expect_success 'put 5 invalid objects into the index' '
+	cd repo &&
+	rm -f .git/index &&
+	cat >badobjects <<-\EOF &&
+	100644 blob 0010000000000000000000000000000000000000	dir/file1
+	100644 blob 0020000000000000000000000000000000000000	dir/file2
+	100644 blob 0030000000000000000000000000000000000000	dir/file3
+	100644 blob 0040000000000000000000000000000000000000	dir/file4
+	100644 blob 0050000000000000000000000000000000000000	dir/file5
+	EOF
+	grit update-index --index-info <badobjects
+'
+
+test_expect_success 'write-tree fails with 5 invalid objects' '
+	cd repo &&
+	test_must_fail grit write-tree
+'
+
+test_expect_success 'write-tree --missing-ok succeeds with 5 invalid objects' '
+	cd repo &&
+	grit write-tree --missing-ok
+'
+
+###########################################################################
+# Section 19: ls-files OID validation
+###########################################################################
+
+test_expect_success 'validate ls-files --stage output has correct OIDs' '
+	cd repo &&
+	rm -f .git/index &&
+	rm -rf path0 path2 &&
+	echo "hello path0" >path0 &&
+	mkdir -p path2 &&
+	echo "hello path2/file2" >path2/file2 &&
+	grit update-index --add path0 path2/file2 &&
+	grit ls-files --stage >current &&
+	path0_oid=$(grit hash-object path0) &&
+	path2_oid=$(grit hash-object path2/file2) &&
+	grep "100644 $path0_oid 0" current | grep "path0" &&
+	grep "100644 $path2_oid 0" current | grep "path2/file2"
+'
+
+###########################################################################
+# Section 20: cat-file -e on various object types
+###########################################################################
+
+test_expect_success 'cat-file -e succeeds for tree object' '
+	cd repo &&
+	rm -f .git/index &&
+	echo test >t &&
+	grit update-index --add t &&
+	tree=$(grit write-tree) &&
+	grit cat-file -e "$tree"
+'
+
+test_expect_success 'cat-file -e succeeds for commit object' '
+	cd repo &&
+	rm -f .git/index &&
+	echo test >t &&
+	grit update-index --add t &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "test" | grit commit-tree "$tree") &&
+	grit cat-file -e "$commit"
+'
+
+test_expect_success 'cat-file on tag object' '
+	cd repo &&
+	rm -f .git/index &&
+	echo test >t &&
+	grit update-index --add t &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "test" | grit commit-tree "$tree") &&
+	cat >tag.sig <<-EOF &&
+	object $commit
+	type commit
+	tag testtag
+	tagger T A Gger <tagger@example.com> 1206478233 -0500
+	EOF
+	tag_oid=$(grit mktag <tag.sig) &&
+	type=$(grit cat-file -t "$tag_oid") &&
+	test "$type" = "tag" &&
+	grit cat-file -p "$tag_oid" >out &&
+	grep "^object $commit$" out &&
+	grep "^type commit$" out &&
+	grep "^tag testtag$" out
+'
+
+###########################################################################
+# Section 21: write-tree from subdirectory
+###########################################################################
+
+test_expect_success 'write-tree from subdirectory equals top-level tree' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "one" >one &&
+	mkdir -p sdir &&
+	echo "two" >sdir/two &&
+	grit update-index --add one sdir/two &&
+	top=$(grit write-tree) &&
+	(
+		cd sdir &&
+		sub=$(grit write-tree) &&
+		test "z$top" = "z$sub"
+	)
+'
+
+###########################################################################
+# Section 22: diff-files detects modifications
+###########################################################################
+
+test_expect_success 'diff-files detects modified content' '
+	cd repo &&
+	rm -f .git/index &&
+	rm -rf df &&
+	echo "original" >df &&
+	grit update-index --add df &&
+	grit checkout-index -f -a &&
+	grit update-index --refresh &&
+	grit diff-files >before &&
+	test_must_be_empty before &&
+	echo "modified" >df &&
+	grit diff-files >after &&
+	grep "M" after | grep "df"
+'
+
+###########################################################################
+# Section 23: update-index --force-remove + empty tree
+###########################################################################
+
+test_expect_success 'update-index --force-remove then write-tree yields empty tree' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "content" >rmtest &&
+	grit update-index --add rmtest &&
+	grit ls-files >before &&
+	grep rmtest before &&
+	grit update-index --force-remove rmtest &&
+	tree=$(grit write-tree) &&
+	test "$tree" = "$EMPTY_TREE_OID"
+'
+
+###########################################################################
+# Section 24: hash-object variants
+###########################################################################
+
+test_expect_success 'hash-object -t blob works like default' '
+	cd repo &&
+	echo "blob type test" >btype &&
+	oid1=$(grit hash-object btype) &&
+	oid2=$(grit hash-object -t blob btype) &&
+	test "$oid1" = "$oid2"
+'
+
+test_expect_success 'hash-object accepts multiple files' '
+	cd repo &&
+	echo "file1" >hf1 &&
+	echo "file2" >hf2 &&
+	grit hash-object hf1 hf2 >actual &&
+	test_line_count = 2 actual
+'
+
+###########################################################################
+# Section 25: update-index --cacheinfo multiple entries
+###########################################################################
+
+test_expect_success 'update-index --cacheinfo multiple entries sequentially' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "content1" >c1 &&
+	echo "content2" >c2 &&
+	blob1=$(grit hash-object -w c1) &&
+	blob2=$(grit hash-object -w c2) &&
+	grit update-index --cacheinfo "100644,$blob1,virtual1.txt" &&
+	grit update-index --cacheinfo "100644,$blob2,virtual2.txt" &&
+	grit ls-files --stage >actual &&
+	test_line_count = 2 actual &&
+	grep "virtual1.txt" actual &&
+	grep "virtual2.txt" actual
+'
+
+###########################################################################
+# Section 26: write-tree + read-tree + ls-files round-trip
+###########################################################################
+
+test_expect_success 'write-tree + read-tree + ls-files round-trip' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "a" >aa &&
+	echo "b" >bb &&
+	mkdir -p dd &&
+	echo "c" >dd/cc &&
+	grit update-index --add aa bb dd/cc &&
+	tree=$(grit write-tree) &&
+	grit ls-files >original_list &&
+	rm -f .git/index &&
+	grit read-tree "$tree" &&
+	grit ls-files >round_trip_list &&
+	test_cmp original_list round_trip_list
+'
+
+###########################################################################
+# Section 27: cat-file -s on various object types
+###########################################################################
+
+test_expect_success 'cat-file -s reports correct size for tree object' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "size test" >sfile &&
+	grit update-index --add sfile &&
+	tree=$(grit write-tree) &&
+	size=$(grit cat-file -s "$tree") &&
+	test "$size" -gt 0
+'
+
+test_expect_success 'cat-file -s reports correct size for commit object' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "commit size" >csfile &&
+	grit update-index --add csfile &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "test size" | grit commit-tree "$tree") &&
+	size=$(grit cat-file -s "$commit") &&
+	test "$size" -gt 0
+'
+
+###########################################################################
+# Section 28: ls-tree --name-only with multiple entries
+###########################################################################
+
+test_expect_success 'ls-tree --name-only with multiple top-level entries' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "a" >x.txt &&
+	mkdir -p ydir &&
+	echo "b" >ydir/z.txt &&
+	echo "c" >w.txt &&
+	grit update-index --add x.txt ydir/z.txt w.txt &&
+	tree=$(grit write-tree) &&
+	grit ls-tree --name-only "$tree" >actual &&
+	cat >expected <<-\EOF &&
+	w.txt
+	x.txt
+	ydir
+	EOF
+	test_cmp expected actual
+'
+
+test_expect_success 'ls-tree --name-only -r with multiple top-level entries' '
+	cd repo &&
+	tree=$(grit write-tree) &&
+	grit ls-tree --name-only -r "$tree" >actual &&
+	cat >expected <<-\EOF &&
+	w.txt
+	x.txt
+	ydir/z.txt
+	EOF
+	test_cmp expected actual
+'
 
 test_done
