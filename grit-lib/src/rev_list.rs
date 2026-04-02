@@ -780,7 +780,7 @@ pub fn merge_bases(
     }
     if bases.is_empty() {
         let mut sorted: Vec<_> = common.into_iter().collect();
-        sorted.sort_by(|a, b| graph.committer_time(*b).cmp(&graph.committer_time(*a)));
+        sorted.sort_by_key(|b| std::cmp::Reverse(graph.committer_time(*b)));
         bases.push(sorted[0]);
     }
     Ok(bases)

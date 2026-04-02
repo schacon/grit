@@ -224,7 +224,8 @@ fn do_push(message: Option<String>, keep_index: bool, include_untracked: bool) -
 
     // 4. Update refs/stash and its reflog
     let old_stash = resolve_ref(&repo.git_dir, "refs/stash").ok();
-    let old_oid = old_stash.unwrap_or_else(|| ObjectId::from_bytes(&[0; 20]).expect("zero oid"));
+    let zero_oid = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
+    let old_oid = old_stash.unwrap_or(zero_oid);
 
     write_ref(&repo.git_dir, "refs/stash", &stash_oid)?;
     grit_lib::refs::append_reflog(
@@ -491,7 +492,7 @@ fn drop_stash_entry(repo: &Repository, index: usize) -> Result<()> {
         let _ = fs::remove_file(repo.git_dir.join("refs").join("stash"));
     } else {
         // Top of stash is last entry's new_oid
-        let top = &remaining.last().expect("non-empty").new_oid;
+        let top = &remaining.last().ok_or_else(|| anyhow::anyhow!("stash entries unexpectedly empty"))?.new_oid;
         write_ref(&repo.git_dir, "refs/stash", top)?;
     }
 
@@ -831,14 +832,14 @@ fn create_worktree_tree(
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // File deleted — it won't be in the worktree tree
                 // Mark for removal by setting a sentinel
-                entry.oid = ObjectId::from_bytes(&[0; 20]).expect("zero oid");
+                entry.oid = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
             }
             Err(e) => return Err(e.into()),
         }
     }
 
     // Remove entries with zero OID (deleted files)
-    let zero = ObjectId::from_bytes(&[0; 20]).expect("zero oid");
+    let zero = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
     temp_index.entries.retain(|e| e.oid != zero);
 
     write_tree_from_index(odb, &temp_index, "").map_err(Into::into)

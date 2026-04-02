@@ -236,14 +236,16 @@ fn collect_reflog_oids(git_dir: &Path, queue: &mut VecDeque<ObjectId>) {
                 for line in content.lines() {
                     // Reflog format: "<old-oid> <new-oid> <identity> <timestamp> <message>"
                     let parts: Vec<&str> = line.splitn(3, ' ').collect();
+                    #[allow(clippy::unwrap_used)]
+                    let zero = ObjectId::from_bytes(&[0; 20]).unwrap();
                     if parts.len() >= 2 {
                         if let Ok(oid) = parts[0].parse::<ObjectId>() {
-                            if oid != ObjectId::from_bytes(&[0; 20]).unwrap() {
+                            if oid != zero {
                                 queue.push_back(oid);
                             }
                         }
                         if let Ok(oid) = parts[1].parse::<ObjectId>() {
-                            if oid != ObjectId::from_bytes(&[0; 20]).unwrap() {
+                            if oid != zero {
                                 queue.push_back(oid);
                             }
                         }

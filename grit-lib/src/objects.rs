@@ -72,7 +72,6 @@ impl ObjectId {
 
     /// The 38-character suffix used as the filename inside the loose prefix dir.
     #[must_use]
-
     pub fn loose_suffix(&self) -> String {
         hex::encode(&self.0[1..])
     }

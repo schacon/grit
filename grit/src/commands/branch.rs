@@ -238,19 +238,19 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     // `git branch -m <oldname> <newname>` — rename <oldname> to <newname>
     let (old_name_owned, new_name_owned);
     let (old_name, new_name): (&str, &str);
-    if args.start_point.is_some() {
+    if let Some(sp) = args.start_point.as_deref() {
         // Two-arg form: -m <old> <new>
         old_name_owned = args.name.as_deref().unwrap_or("").to_owned();
-        new_name_owned = args.start_point.as_deref().unwrap().to_owned();
+        new_name_owned = sp.to_owned();
         old_name = &old_name_owned;
         new_name = &new_name_owned;
-    } else if args.name.is_some() {
+    } else if let Some(n) = args.name.as_deref() {
         // One-arg form: -m <new> (rename current branch)
         old_name_owned = head
             .branch_name()
             .ok_or_else(|| anyhow::anyhow!("no current branch to rename"))?
             .to_owned();
-        new_name_owned = args.name.as_deref().unwrap().to_owned();
+        new_name_owned = n.to_owned();
         old_name = &old_name_owned;
         new_name = &new_name_owned;
     } else {

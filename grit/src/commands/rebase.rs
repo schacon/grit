@@ -245,7 +245,7 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
         match cherry_pick_for_rebase(repo, &commit_oid) {
             Ok(()) => {
                 let head = resolve_head(git_dir)?;
-                let _new_oid = head.oid().unwrap();
+                let _new_oid = head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
                 let obj = repo.odb.read(&commit_oid)?;
                 let commit = parse_commit(&obj.data)?;
                 let subject = commit.message.lines().next().unwrap_or("");
@@ -374,7 +374,7 @@ fn finish_rebase(repo: &Repository) -> Result<()> {
     let head_name = head_name.trim();
 
     let head = resolve_head(git_dir)?;
-    let new_tip = head.oid().unwrap().to_owned();
+    let new_tip = head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?.to_owned();
 
     if head_name != "detached HEAD" {
         // Update the branch ref to point to the new tip
@@ -435,7 +435,7 @@ fn do_continue() -> Result<()> {
     };
 
     let head = resolve_head(git_dir)?;
-    let head_oid = head.oid().unwrap().to_owned();
+    let head_oid = head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?.to_owned();
 
     let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
     let config = ConfigSet::load(Some(git_dir), true)?;

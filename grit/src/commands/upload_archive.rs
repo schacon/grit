@@ -56,14 +56,18 @@ pub fn run(args: Args) -> Result<()> {
                 format = archive_args[i].clone();
             }
             f if f.starts_with("--format=") => {
-                format = f.strip_prefix("--format=").unwrap().to_string();
+                if let Some(val) = f.strip_prefix("--format=") {
+                    format = val.to_string();
+                }
             }
             "--prefix" if i + 1 < archive_args.len() => {
                 i += 1;
                 prefix = Some(archive_args[i].clone());
             }
             p if p.starts_with("--prefix=") => {
-                prefix = Some(p.strip_prefix("--prefix=").unwrap().to_string());
+                if let Some(val) = p.strip_prefix("--prefix=") {
+                    prefix = Some(val.to_string());
+                }
             }
             "--" => {
                 break;

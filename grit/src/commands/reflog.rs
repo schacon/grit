@@ -147,7 +147,7 @@ fn run_expire(args: ExpireArgs) -> Result<()> {
     } else {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .map_err(|e| anyhow::anyhow!("system time error: {e}"))?
             .as_secs() as i64;
         Some(now - (args.expire_days as i64 * 86400))
     };

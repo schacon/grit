@@ -139,15 +139,14 @@ fn fetch_remote(
 
             if !args.quiet {
                 let tag_name = refname.strip_prefix("refs/tags/").unwrap_or(refname);
-                if old_oid.is_none() {
-                    println!(" * [new tag]         {tag_name} -> {tag_name}");
-                } else {
-                    let old = old_oid.unwrap();
+                if let Some(old) = old_oid {
                     println!(
                         "   {}..{}  {tag_name} -> {tag_name}",
                         &old.to_string()[..7],
                         &remote_oid.to_string()[..7],
                     );
+                } else {
+                    println!(" * [new tag]         {tag_name} -> {tag_name}");
                 }
             }
         }

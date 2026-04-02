@@ -221,7 +221,7 @@ fn revert_one_commit(
     // Print summary.
     let short_oid_new = {
         let new_head = resolve_head(git_dir)?;
-        let new_oid = new_head.oid().unwrap();
+        let new_oid = new_head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
         new_oid.to_hex()[..7].to_owned()
     };
     let branch = match &head {
@@ -277,7 +277,7 @@ fn do_continue() -> Result<()> {
     cleanup_revert_state(git_dir);
 
     let new_head = resolve_head(git_dir)?;
-    let new_oid = new_head.oid().unwrap();
+    let new_oid = new_head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
     let short = &new_oid.to_hex()[..7];
     let branch = match &head {
         HeadState::Branch { short_name, .. } => short_name.as_str(),

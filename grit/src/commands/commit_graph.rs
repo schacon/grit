@@ -449,6 +449,7 @@ fn sha1_hash(data: &[u8]) -> [u8; 20] {
             if let Some(ref mut stdin) = child.stdin {
                 let _ = stdin.write_all(data);
             }
+            #[allow(clippy::unwrap_used)]
             let output = child.wait_with_output().unwrap();
             let hex = String::from_utf8_lossy(&output.stdout);
             let hex = hex.trim().split_whitespace().next().unwrap_or("");
@@ -524,8 +525,8 @@ fn cmd_verify(object_dir: Option<PathBuf>) -> Result<()> {
         if entry_off + 12 > data.len() {
             bail!("chunk TOC entry out of bounds");
         }
-        let chunk_id = u32::from_be_bytes(data[entry_off..entry_off + 4].try_into().unwrap());
-        let offset = u64::from_be_bytes(data[entry_off + 4..entry_off + 12].try_into().unwrap());
+        let chunk_id = u32::from_be_bytes(data[entry_off..entry_off + 4].try_into()?);
+        let offset = u64::from_be_bytes(data[entry_off + 4..entry_off + 12].try_into()?);
         match chunk_id {
             CHUNK_OID_FANOUT => fanout_offset = Some(offset),
             CHUNK_OID_LOOKUP => oid_lookup_offset = Some(offset),
@@ -544,15 +545,14 @@ fn cmd_verify(object_dir: Option<PathBuf>) -> Result<()> {
     }
     let total_commits = u32::from_be_bytes(
         data[fanout_off + 255 * 4..fanout_off + 256 * 4]
-            .try_into()
-            .unwrap(),
+            .try_into()?,
     );
 
     // Verify fanout is monotonically increasing
     let mut prev = 0u32;
     for i in 0..256 {
         let off = fanout_off + i * 4;
-        let val = u32::from_be_bytes(data[off..off + 4].try_into().unwrap());
+        let val = u32::from_be_bytes(data[off..off + 4].try_into()?);
         if val < prev {
             bail!("fanout is not monotonically increasing at bucket {}", i);
         }

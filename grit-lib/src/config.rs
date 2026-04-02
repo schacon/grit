@@ -1090,7 +1090,11 @@ fn raw_section_parts(raw_key: &str) -> (String, Option<String>) {
         Some(i) => i,
         None => return (raw_key.to_owned(), None),
     };
-    let last_dot = raw_key.rfind('.').unwrap();
+    // rfind always succeeds here since we already found at least one dot above.
+    let last_dot = match raw_key.rfind('.') {
+        Some(i) => i,
+        None => return (raw_key[..first_dot].to_owned(), None),
+    };
     let section = raw_key[..first_dot].to_owned();
     if first_dot == last_dot {
         (section, None)

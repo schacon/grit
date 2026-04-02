@@ -357,6 +357,7 @@ fn collect_reflog_seeds(git_dir: &Path, queue: &mut VecDeque<(ObjectId, Option<O
                 for line in content.lines() {
                     let parts: Vec<&str> = line.splitn(3, ' ').collect();
                     if parts.len() >= 2 {
+                        #[allow(clippy::unwrap_used)]
                         let zero = ObjectId::from_bytes(&[0; 20]).unwrap();
                         if let Ok(oid) = parts[0].parse::<ObjectId>() {
                             if oid != zero {
