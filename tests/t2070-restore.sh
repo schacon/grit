@@ -297,4 +297,135 @@ test_expect_success 'restore --staged followed by diff-index shows no staged cha
 	git diff-index --cached --exit-code HEAD
 '
 
+# ---------------------------------------------------------------------------
+# Additional restore tests
+# ---------------------------------------------------------------------------
+
+test_expect_success 'restore --source with commit SHA' '
+	cd repo &&
+	git reset --hard &&
+	FIRST_SHA=$(git rev-parse first) &&
+	FIRST_BLOB=$(git rev-parse first:first.t) &&
+	git cat-file -p "$FIRST_BLOB" >expected &&
+	git restore --source="$FIRST_SHA" --worktree first.t &&
+	test_cmp expected first.t &&
+	git restore first.t
+'
+
+test_expect_success 'restore --source --staged restores index to older state' '
+	cd repo &&
+	git reset --hard &&
+	FIRST_BLOB=$(git rev-parse first:first.t) &&
+	git restore --source=first --staged first.t &&
+	ACTUAL=$(git ls-files -s first.t | awk "{print \$2}") &&
+	test "$ACTUAL" = "$FIRST_BLOB" &&
+	git restore --staged first.t
+'
+
+test_expect_success 'restore --source --staged --worktree restores both' '
+	cd repo &&
+	git reset --hard &&
+	FIRST_BLOB=$(git rev-parse first:first.t) &&
+	git cat-file -p "$FIRST_BLOB" >expected &&
+	git restore --source=first --staged --worktree first.t &&
+	ACTUAL=$(git ls-files -s first.t | awk "{print \$2}") &&
+	test "$ACTUAL" = "$FIRST_BLOB" &&
+	test_cmp expected first.t &&
+	git restore --source=HEAD --staged --worktree first.t
+'
+
+test_expect_success 'restore worktree only does not change index' '
+	cd repo &&
+	git reset --hard &&
+	HEAD_BLOB=$(git rev-parse HEAD:one) &&
+	echo dirty >one &&
+	git add one &&
+	DIRTY_BLOB=$(git ls-files -s one | awk "{print \$2}") &&
+	git restore --worktree one &&
+	# Index should still have the dirty blob
+	ACTUAL=$(git ls-files -s one | awk "{print \$2}") &&
+	test "$ACTUAL" = "$DIRTY_BLOB" &&
+	git restore --staged one
+'
+
+test_expect_success 'restore --staged file that was deleted from worktree' '
+	cd repo &&
+	git reset --hard &&
+	rm one &&
+	git add one &&
+	git restore --staged one &&
+	# Index should now match HEAD (file present)
+	HEAD_BLOB=$(git rev-parse HEAD:one) &&
+	ACTUAL=$(git ls-files -s one | awk "{print \$2}") &&
+	test "$ACTUAL" = "$HEAD_BLOB" &&
+	# Worktree still has file missing
+	test_path_is_missing one &&
+	git restore one
+'
+
+test_expect_success 'restore multiple files from worktree' '
+	cd repo &&
+	git reset --hard &&
+	echo dirty1 >one &&
+	echo dirty2 >two &&
+	git restore one two &&
+	test "$(cat one)" = "one" &&
+	test "$(cat two)" = "two"
+'
+
+test_expect_success 'restore dot restores all modified tracked files' '
+	cd repo &&
+	git reset --hard &&
+	echo dirty1 >one &&
+	echo dirty2 >two &&
+	git restore . &&
+	test "$(cat one)" = "one" &&
+	test "$(cat two)" = "two"
+'
+
+test_expect_success 'restore --quiet suppresses output' '
+	cd repo &&
+	git reset --hard &&
+	echo dirty >one &&
+	git restore --quiet one >stdout 2>stderr &&
+	test_must_be_empty stdout &&
+	test_must_be_empty stderr &&
+	test "$(cat one)" = "one"
+'
+
+test_expect_success 'restore nonexistent pathspec fails' '
+	cd repo &&
+	git reset --hard &&
+	test_must_fail git restore nonexistent-file
+'
+
+test_expect_success 'restore --source nonexistent ref fails' '
+	cd repo &&
+	git reset --hard &&
+	test_must_fail git restore --source=nonexistent-ref first.t
+'
+
+test_expect_success 'restore --staged then commit does not include unstaged file' '
+	cd repo &&
+	git reset --hard &&
+	echo changed >one &&
+	echo changed >two &&
+	git add one two &&
+	git restore --staged one &&
+	git commit -m "only two" &&
+	# one should not be in the commit
+	git diff-tree --no-commit-id --name-only -r HEAD >committed &&
+	grep two committed &&
+	test_must_fail grep one committed &&
+	git reset --hard HEAD~1
+'
+
+test_expect_success 'restore --worktree is default when no flags given' '
+	cd repo &&
+	git reset --hard &&
+	echo dirty >one &&
+	git restore one &&
+	test "$(cat one)" = "one"
+'
+
 test_done
