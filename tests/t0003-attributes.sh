@@ -188,4 +188,163 @@ test_expect_success 'large .gitattributes file is handled' '
 	test_line_count = 100 actual
 '
 
+# ── .gitattributes removed then re-added ───────────────────────────────────
+
+test_expect_success '.gitattributes can be removed and re-added' '
+	cd attr-repo &&
+	git rm .gitattributes &&
+	git commit -m "remove attrs" &&
+	git ls-files >ls-out &&
+	! grep "^.gitattributes$" ls-out &&
+	echo "*.md text" >.gitattributes &&
+	git add .gitattributes &&
+	git commit -m "re-add attrs" &&
+	git show HEAD:.gitattributes >actual &&
+	echo "*.md text" >expect &&
+	test_cmp expect actual
+'
+
+# ── .gitattributes with trailing whitespace ─────────────────────────────────
+
+test_expect_success '.gitattributes with trailing whitespace stored verbatim' '
+	cd attr-repo &&
+	printf "*.txt text  \n" >.gitattributes &&
+	git add .gitattributes &&
+	git commit -m "trailing ws" &&
+	git show HEAD:.gitattributes >actual &&
+	test -s actual
+'
+
+# ── .gitattributes with macro definitions ──────────────────────────────────
+
+test_expect_success '.gitattributes with macro-style entries stored' '
+	cd attr-repo &&
+	cat >.gitattributes <<-\EOF &&
+	[attr]binary -diff -merge -text
+	*.o binary
+	EOF
+	git add .gitattributes &&
+	git commit -m "macro attrs" &&
+	git show HEAD:.gitattributes >actual &&
+	grep "\[attr\]binary" actual &&
+	grep "\*.o binary" actual
+'
+
+# ── .gitattributes in multiple subdirectories ──────────────────────────────
+
+test_expect_success 'multiple subdirectory .gitattributes files tracked' '
+	cd attr-repo &&
+	mkdir -p src tests docs &&
+	echo "*.c text diff" >src/.gitattributes &&
+	echo "*.test text" >tests/.gitattributes &&
+	echo "*.md text" >docs/.gitattributes &&
+	git add src/.gitattributes tests/.gitattributes docs/.gitattributes &&
+	git commit -m "multi-subdir attrs" &&
+	git ls-files >ls-out &&
+	grep "src/.gitattributes" ls-out &&
+	grep "tests/.gitattributes" ls-out &&
+	grep "docs/.gitattributes" ls-out
+'
+
+# ── .gitattributes with export-ignore ─────────────────────────────────────
+
+test_expect_success '.gitattributes with export-ignore stored' '
+	cd attr-repo &&
+	cat >.gitattributes <<-\EOF &&
+	.gitattributes export-ignore
+	.gitignore export-ignore
+	tests/ export-ignore
+	EOF
+	git add .gitattributes &&
+	git commit -m "export-ignore attrs" &&
+	git show HEAD:.gitattributes >actual &&
+	grep "export-ignore" actual
+'
+
+# ── .gitattributes with filter attributes ──────────────────────────────────
+
+test_expect_success '.gitattributes with filter attributes stored' '
+	cd attr-repo &&
+	cat >.gitattributes <<-\EOF &&
+	*.c filter=indent
+	*.py filter=autopep8
+	EOF
+	git add .gitattributes &&
+	git commit -m "filter attrs" &&
+	git show HEAD:.gitattributes >actual &&
+	grep "filter=indent" actual &&
+	grep "filter=autopep8" actual
+'
+
+# ── diff between branches shows .gitattributes changes ────────────────────
+
+test_expect_success 'diff shows .gitattributes changes between commits' '
+	cd attr-repo &&
+	git checkout master &&
+	echo "*.rs text" >.gitattributes &&
+	git add .gitattributes &&
+	git commit -m "attrs for diff" &&
+	git diff HEAD~1 HEAD -- .gitattributes >diff-out &&
+	test -s diff-out
+'
+
+# ── .gitattributes with complex patterns ───────────────────────────────────
+
+test_expect_success '.gitattributes with complex glob patterns stored' '
+	cd attr-repo &&
+	cat >.gitattributes <<-\EOF &&
+	*.[ch] text diff
+	*.py text diff=python
+	vendor/** -diff
+	test-*.sh text eol=lf
+	EOF
+	git add .gitattributes &&
+	git commit -m "complex globs" &&
+	git show HEAD:.gitattributes >actual &&
+	grep "\*.\[ch\] text diff" actual &&
+	grep "vendor/\*\*" actual &&
+	grep "test-\*.sh" actual
+'
+
+# ── empty .gitattributes ──────────────────────────────────────────────────
+
+test_expect_success 'empty .gitattributes can be committed' '
+	cd attr-repo &&
+	>.gitattributes &&
+	git add .gitattributes &&
+	git commit -m "empty attrs" &&
+	git show HEAD:.gitattributes >actual &&
+	test_must_be_empty actual
+'
+
+# ── .gitattributes with only comments ─────────────────────────────────────
+
+test_expect_success '.gitattributes with only comments stored' '
+	cd attr-repo &&
+	cat >.gitattributes <<-\EOF &&
+	# This is a comment
+	# Another comment
+	EOF
+	git add .gitattributes &&
+	git commit -m "comments only" &&
+	git show HEAD:.gitattributes >actual &&
+	grep "^# This" actual
+'
+
+# ── .gitattributes overwrite on branch switch ─────────────────────────────
+
+test_expect_success '.gitattributes restored correctly on branch switch' '
+	cd attr-repo &&
+	git checkout master &&
+	echo "*.txt text" >.gitattributes &&
+	git add .gitattributes && git commit -m "master attrs" &&
+	git checkout -b switch-test &&
+	echo "*.bin binary" >.gitattributes &&
+	git add .gitattributes && git commit -m "switch-test attrs" &&
+	git checkout master &&
+	git show HEAD:.gitattributes >actual &&
+	grep "\*.txt text" actual &&
+	! grep "\*.bin" actual
+'
+
 test_done

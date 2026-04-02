@@ -159,4 +159,110 @@ test_expect_success '--author + GIT_COMMITTER_* combined' '
 	grep "^committer C Name <c@e.com>" commit-obj
 '
 
+# ── GIT_COMMITTER_DATE via env ───────────────────────────────────────────────
+
+test_expect_success 'GIT_COMMITTER_DATE overrides committer date' '
+	cd authorship-repo &&
+	echo "change11" >file.txt &&
+	git add file.txt &&
+	GIT_COMMITTER_DATE="2021-01-01T00:00:00+0000" \
+	git commit -m "custom committer date" &&
+	git cat-file -p HEAD >commit-obj &&
+	grep "^committer.*2021" commit-obj
+'
+
+# ── author name with special characters ──────────────────────────────────────
+
+test_expect_success 'author name with accented characters' '
+	cd authorship-repo &&
+	echo "change12" >file.txt &&
+	git add file.txt &&
+	git commit --author="José García <jose@example.com>" -m "accented author" &&
+	git cat-file -p HEAD >commit-obj &&
+	grep "^author José García" commit-obj
+'
+
+test_expect_success 'author email with plus addressing' '
+	cd authorship-repo &&
+	echo "change13" >file.txt &&
+	git add file.txt &&
+	git commit --author="User <user+tag@example.com>" -m "plus email" &&
+	git cat-file -p HEAD >commit-obj &&
+	grep "user+tag@example.com" commit-obj
+'
+
+# ── amend preserves authorship ───────────────────────────────────────────────
+
+test_expect_success 'amend changes message but keeps tree' '
+	cd authorship-repo &&
+	echo "change14" >file.txt &&
+	git add file.txt &&
+	git commit -m "original" &&
+	git cat-file -p HEAD | head -1 | awk "{print \$2}" >orig_tree &&
+	git commit --amend -m "amended" &&
+	git cat-file -p HEAD | head -1 | awk "{print \$2}" >new_tree &&
+	test_cmp orig_tree new_tree
+'
+
+test_expect_success 'amend with --author changes author' '
+	cd authorship-repo &&
+	git commit --amend --author="New Auth <new@test.com>" -m "new author amend" &&
+	git cat-file -p HEAD >commit-obj &&
+	grep "^author New Auth <new@test.com>" commit-obj
+'
+
+# ── log format for dates ─────────────────────────────────────────────────────
+
+test_expect_success 'log --format=%ai shows author date' '
+	cd authorship-repo &&
+	echo "change15" >file.txt &&
+	git add file.txt &&
+	GIT_AUTHOR_DATE="2022-07-04T12:00:00+0000" \
+	git commit -m "date format check" &&
+	git log --format="%ai" -n 1 >actual &&
+	grep "2022" actual
+'
+
+test_expect_success 'log --format=%cd shows committer date info' '
+	cd authorship-repo &&
+	git log --format="%cd" -n 1 >actual &&
+	# Should have some date output
+	test -s actual
+'
+
+# ── config user overrides ────────────────────────────────────────────────────
+
+test_expect_success 'config user.name/email used as defaults' '
+	cd authorship-repo &&
+	git config user.name "Config Author" &&
+	git config user.email "config@example.com" &&
+	echo "change16" >file.txt &&
+	git add file.txt &&
+	git commit -m "from config" &&
+	git cat-file -p HEAD >commit-obj &&
+	grep "^author Config Author <config@example.com>" commit-obj
+'
+
+test_expect_success 'env vars override config user' '
+	cd authorship-repo &&
+	echo "change17" >file.txt &&
+	git add file.txt &&
+	GIT_AUTHOR_NAME="Env Author" \
+	GIT_AUTHOR_EMAIL="env@example.com" \
+	git commit -m "env overrides config" &&
+	git cat-file -p HEAD >commit-obj &&
+	grep "^author Env Author <env@example.com>" commit-obj
+'
+
+# ── --date with various formats ──────────────────────────────────────────────
+
+test_expect_success '--date with epoch timestamp' '
+	cd authorship-repo &&
+	echo "change18" >file.txt &&
+	git add file.txt &&
+	git commit --date="1000000000 +0000" -m "epoch date" &&
+	git cat-file -p HEAD >commit-obj &&
+	grep "^author.*1000000000" commit-obj
+'
+
 test_done
