@@ -1778,4 +1778,68 @@ test_expect_success '--null --get-all uses NUL delimiters' '
 	test_cmp expect.raw actual.raw
 '
 
+# ── numbers (k/m suffixes with --int) ────────────────────────────────────────
+
+test_expect_success 'numbers: --int normalizes k suffix' '
+	cd repo &&
+	git config kilo.gram 1k &&
+	git config --int kilo.gram >actual &&
+	echo 1024 >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'numbers: --int normalizes m suffix' '
+	cd repo &&
+	git config mega.ton 1m &&
+	git config --int mega.ton >actual &&
+	echo 1048576 >expect &&
+	test_cmp expect actual
+'
+
+# ── rename-section (deeper) ──────────────────────────────────────────────────
+
+test_expect_success 'rename-section with quoted subsection' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[branch "eins"]
+		x = 1
+	[branch "eins"]
+		y = 2
+	EOF
+	git config --rename-section branch.eins branch.zwei &&
+	cat >expect <<-\EOF &&
+	[branch "zwei"]
+		x = 1
+	[branch "zwei"]
+		y = 2
+	EOF
+	test_cmp expect .git/config
+'
+
+test_expect_success 'rename non-existing section fails' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[alpha]
+		key = val
+	EOF
+	test_must_fail git config --rename-section beta gamma
+'
+
+# ── --show-origin ────────────────────────────────────────────────────────────
+
+test_expect_success '--show-origin with --list and --file' '
+	cd repo &&
+	cat >.git/origcfg <<-\EOF &&
+	[user]
+		name = Show Origin
+		email = show@origin
+	EOF
+	cat >expect <<-\EOF &&
+	file:.git/origcfg	user.name=Show Origin
+	file:.git/origcfg	user.email=show@origin
+	EOF
+	git config --show-origin --file .git/origcfg --list >actual &&
+	test_cmp expect actual
+'
+
 test_done
