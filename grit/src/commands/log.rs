@@ -16,10 +16,9 @@ use std::io::{self, Write};
 
 /// Arguments for `grit log`.
 #[derive(Debug, ClapArgs)]
-#[command(about = "Show commit logs", trailing_var_arg = true)]
+#[command(about = "Show commit logs")]
 pub struct Args {
     /// Revisions and pathspecs (separated by --).
-    #[arg(allow_hyphen_values = true)]
     pub revisions: Vec<String>,
 
     /// Limit the number of commits to show.
@@ -158,7 +157,17 @@ pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    for (oid, commit_data) in &commits {
+    // Detect format: (separator) vs tformat: (terminator) semantics
+    let is_format_separator = args
+        .format
+        .as_deref()
+        .map(|f| f.starts_with("format:"))
+        .unwrap_or(false);
+
+    for (i, (oid, commit_data)) in commits.iter().enumerate() {
+        if is_format_separator && i > 0 {
+            writeln!(out)?;
+        }
         format_commit(&mut out, oid, commit_data, &args, decorations.as_ref())?;
     }
 
@@ -362,13 +371,18 @@ fn format_commit(
 
     match format {
         Some(fmt) if fmt.starts_with("format:") || fmt.starts_with("tformat:") => {
+            let is_tformat = fmt.starts_with("tformat:");
             let template = if let Some(t) = fmt.strip_prefix("format:") {
                 t
             } else {
                 &fmt[8..]
             };
             let formatted = apply_format_string(template, oid, info, decorations, date_format);
-            writeln!(out, "{formatted}")?;
+            if is_tformat {
+                writeln!(out, "{formatted}")?;
+            } else {
+                write!(out, "{formatted}")?;
+            }
         }
         Some("short") => {
             let dec = format_decoration(&hex, decorations);
@@ -562,7 +576,8 @@ fn apply_format_string(
 
 /// Extract the message body (everything after the subject + blank line).
 fn extract_body(message: &str) -> String {
-    let mut lines = message.lines();
+    let msg = message.trim_end_matches('\n');
+    let mut lines = msg.lines();
     // Skip subject line
     lines.next();
     // Skip blank line separator if present
