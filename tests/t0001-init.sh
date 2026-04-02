@@ -803,6 +803,91 @@ test_expect_success 'reinit creates description file' '
 	test_path_is_file reinit-desc/.git/description
 '
 
+# ── additional init tests ─────────────────────────────────────────────
+
+test_expect_success 'init sets bare = false in non-bare repo' '
+	rm -fr nonbare-check &&
+	git init nonbare-check &&
+	val=$(git config -f nonbare-check/.git/config core.bare) &&
+	test "$val" = "false"
+'
+
+test_expect_success 'init --bare sets bare = true' '
+	rm -fr bare-check &&
+	git init --bare bare-check &&
+	val=$(git config -f bare-check/config core.bare) &&
+	test "$val" = "true"
+'
+
+test_expect_success 'init creates info directory' '
+	rm -fr info-dir &&
+	git init info-dir &&
+	test_path_is_dir info-dir/.git/info
+'
+
+test_expect_success 'init creates info directory with contents' '
+	rm -fr info-exc &&
+	git init info-exc &&
+	test_path_is_dir info-exc/.git/info
+'
+
+test_expect_success 'init creates objects/info directory' '
+	rm -fr obj-info &&
+	git init obj-info &&
+	test_path_is_dir obj-info/.git/objects/info
+'
+
+test_expect_success 'init creates objects/pack directory' '
+	rm -fr obj-pack &&
+	git init obj-pack &&
+	test_path_is_dir obj-pack/.git/objects/pack
+'
+
+test_expect_success 'reinit preserves existing objects directory' '
+	rm -fr reinit-obj &&
+	git init reinit-obj &&
+	test_path_is_dir reinit-obj/.git/objects &&
+	git init reinit-obj &&
+	test_path_is_dir reinit-obj/.git/objects
+'
+
+test_expect_success 'init --bare creates refs/heads directory' '
+	rm -fr bare-refs &&
+	git init --bare bare-refs &&
+	test_path_is_dir bare-refs/refs/heads
+'
+
+test_expect_success 'init --bare creates refs/tags directory' '
+	rm -fr bare-tags &&
+	git init --bare bare-tags &&
+	test_path_is_dir bare-tags/refs/tags
+'
+
+test_expect_success 'init --bare has no working tree' '
+	rm -fr bare-nowt &&
+	git init --bare bare-nowt &&
+	! test -d bare-nowt/.git
+'
+
+test_expect_success 'reinit is idempotent on HEAD' '
+	rm -fr reinit-head &&
+	git init reinit-head &&
+	head1=$(cat reinit-head/.git/HEAD) &&
+	git init reinit-head &&
+	head2=$(cat reinit-head/.git/HEAD) &&
+	test "$head1" = "$head2"
+'
+
+test_expect_success 'init HEAD points to refs/heads/master or main' '
+	rm -fr head-ref &&
+	git init head-ref &&
+	head=$(cat head-ref/.git/HEAD) &&
+	case "$head" in
+	*refs/heads/master*|*refs/heads/main*) true ;;
+	*) false ;;
+	esac
+'
+
 # NOTE: --separate-git-dir is broken (EISDIR). Skipping those tests.
 # NOTE: GIT_DIR env not supported by grit init. Skipping.
 # NOTE: grit does not support global --bare before subcommand. Skipping.
