@@ -989,6 +989,31 @@ pub fn parse_path(s: &str) -> String {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
+/// Parse `GIT_CONFIG_PARAMETERS` — single-quoted `'key=value'` entries
+/// separated by whitespace.
+fn parse_config_parameters(raw: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut iter = raw.chars().peekable();
+    while let Some(&c) = iter.peek() {
+        if c == '\'' {
+            iter.next();
+            let mut s = String::new();
+            loop {
+                match iter.next() {
+                    Some('\'') | None => break,
+                    Some(x) => s.push(x),
+                }
+            }
+            if !s.is_empty() {
+                out.push(s);
+            }
+        } else {
+            iter.next();
+        }
+    }
+    out
+}
+
 /// Return candidate paths for the global config file, in priority order.
 fn global_config_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
