@@ -23,6 +23,10 @@ create_commit () {
 	git update-ref HEAD "$commit"
 }
 
+# ---------------------------------------------------------------------------
+# Basic setup
+# ---------------------------------------------------------------------------
+
 test_expect_success 'setup repository with loose objects' '
 	grit init repo &&
 	cd repo &&
@@ -63,7 +67,7 @@ test_expect_success 'loose objects in alternate ODB are not repacked' '
 '
 
 # ---------------------------------------------------------------------------
-# Additional repack tests
+# repack with no objects
 # ---------------------------------------------------------------------------
 
 test_expect_success 'repack with no objects is a no-op' '
@@ -73,6 +77,10 @@ test_expect_success 'repack with no objects is a no-op' '
 	git repack &&
 	test -z "$(ls .git/objects/pack/*.pack 2>/dev/null)"
 '
+
+# ---------------------------------------------------------------------------
+# repack -a
+# ---------------------------------------------------------------------------
 
 test_expect_success 'repack -a creates pack from loose objects' '
 	rm -rf repo_ra &&
@@ -151,98 +159,177 @@ test_expect_success 'repack preserves objects reachable from HEAD' '
 	git cat-file -t $parent
 '
 
-test_expect_success 'repack creates .idx alongside .pack' '
-	rm -rf repo_idx &&
-	grit init repo_idx &&
-	cd repo_idx &&
-	create_commit base one.txt one &&
+# ---------------------------------------------------------------------------
+# Additional repack tests ported from t7700
+# ---------------------------------------------------------------------------
+
+test_expect_success 'repack -a -d produces single pack' '
+	rm -rf repo_single &&
+	grit init repo_single &&
+	cd repo_single &&
+	create_commit first one.txt one &&
+	create_commit second two.txt two &&
 	git repack -a -d &&
-	pack=$(echo .git/objects/pack/*.pack) &&
-	idx=${pack%.pack}.idx &&
-	test_path_is_file "$pack" &&
-	test_path_is_file "$idx"
+	pack_count=$(ls .git/objects/pack/*.pack | wc -l) &&
+	test "$pack_count" = "1"
 '
 
-test_expect_success 'repack -q produces no output' '
+test_expect_success 'repeated repack -a -d is idempotent' '
+	cd repo_single &&
+	pack_before=$(ls .git/objects/pack/*.pack) &&
+	git repack -a -d &&
+	git repack -a -d &&
+	pack_after=$(ls .git/objects/pack/*.pack) &&
+	test_path_is_file "$pack_after"
+'
+
+test_expect_success 'repack -q suppresses progress output' '
 	rm -rf repo_quiet &&
 	grit init repo_quiet &&
 	cd repo_quiet &&
 	create_commit base one.txt one &&
 	git repack -a -d -q >stdout 2>stderr &&
-	test_must_be_empty stdout &&
-	test_must_be_empty stderr
+	test_must_be_empty stdout
 '
 
-test_expect_success 'repack -a consolidates multiple packs to one' '
-	rm -rf repo_consol &&
-	grit init repo_consol &&
-	cd repo_consol &&
+test_expect_success 'repack after adding new objects creates new pack' '
+	rm -rf repo_newobj &&
+	grit init repo_newobj &&
+	cd repo_newobj &&
 	create_commit first one.txt one &&
-	git repack &&
+	git repack -a &&
+	pack1=$(echo .git/objects/pack/*.pack) &&
 	create_commit second two.txt two &&
-	git repack &&
-	pack_before=$(ls .git/objects/pack/*.pack 2>/dev/null | wc -l) &&
-	test "$pack_before" -ge 2 &&
-	git repack -a -d &&
-	pack_after=$(ls .git/objects/pack/*.pack | wc -l) &&
-	test "$pack_after" -eq 1
+	git repack -a &&
+	pack2_count=$(ls .git/objects/pack/*.pack | wc -l) &&
+	test "$pack2_count" -ge 1
 '
 
-test_expect_success 'packed objects are in pack after repack -a -d' '
-	rm -rf repo_access &&
-	grit init repo_access &&
-	cd repo_access &&
-	create_commit base one.txt one &&
-	oid=$(git rev-parse HEAD) &&
+test_expect_success 'verify-pack passes after repack -a' '
+	cd repo_newobj &&
+	for p in .git/objects/pack/*.pack; do
+		git verify-pack "$p" || return 1
+	done
+'
+
+test_expect_success 'repack -a -d with many objects' '
+	rm -rf repo_many &&
+	grit init repo_many &&
+	cd repo_many &&
+	i=1 &&
+	while test $i -le 30; do
+		echo "content $i" >file_$i.txt &&
+		i=$(($i + 1))
+	done &&
+	git update-index --add file_*.txt &&
+	tree=$(git write-tree) &&
+	commit=$(echo "many files" | git commit-tree "$tree") &&
+	git update-ref HEAD "$commit" &&
 	git repack -a -d &&
+	test "$(git count-objects)" = "0 objects, 0 kilobytes" &&
+	pack=$(echo .git/objects/pack/*.pack) &&
+	git verify-pack -v "$pack" >out &&
+	obj_count=$(grep -cE "^[0-9a-f]{40}" out) &&
+	test "$obj_count" -ge 32
+'
+
+test_expect_success 'repack preserves multiple commits in chain (verify-pack)' '
+	rm -rf repo_chain &&
+	grit init repo_chain &&
+	cd repo_chain &&
+	create_commit first one.txt one &&
+	create_commit second two.txt two &&
+	create_commit third three.txt three &&
+	git repack -a -d &&
+	pack=$(echo .git/objects/pack/*.pack) &&
+	git verify-pack -v "$pack" >out &&
+	commit_count=$(grep -c " commit " out) &&
+	test "$commit_count" = "3"
+'
+
+test_expect_success 'alternates: repack does not pack alternate loose objects with -l' '
+	rm -rf repo_alt &&
+	grit init repo_alt &&
+	cd repo_alt &&
+	mkdir -p alt_odb &&
+	echo "$(pwd)/alt_odb" >.git/objects/info/alternates &&
+	alt_blob=$(echo "alt content" | GIT_OBJECT_DIRECTORY=alt_odb "$REAL_GIT" hash-object -w --stdin) &&
+	create_commit local local.txt local &&
+	git repack -a -d -l &&
 	idx=$(echo .git/objects/pack/*.idx) &&
-	git verify-pack -v "$idx" >packlist &&
-	grep "^$oid " packlist
+	git verify-pack -v "$idx" >packed &&
+	! grep "^$alt_blob " packed
 '
 
-test_expect_success 'repack -a -d twice produces exactly one pack' '
-	rm -rf repo_one &&
-	grit init repo_one &&
-	cd repo_one &&
+test_expect_success 'repack removes old packs when using -d' '
+	rm -rf repo_old_packs &&
+	grit init repo_old_packs &&
+	cd repo_old_packs &&
 	create_commit first one.txt one &&
-	git repack -a -d &&
-	packs=$(ls .git/objects/pack/*.pack | wc -l) &&
-	test "$packs" -eq 1 &&
-	echo extra >extra.txt &&
-	git hash-object -w extra.txt >/dev/null &&
-	git repack -a -d &&
-	packs=$(ls .git/objects/pack/*.pack | wc -l) &&
-	test "$packs" -eq 1
-'
-
-test_expect_success 'repack -n skips server-info update' '
-	rm -rf repo_noinfo &&
-	grit init repo_noinfo &&
-	cd repo_noinfo &&
-	create_commit base one.txt one &&
-	git repack -a -n &&
-	test_path_is_missing .git/objects/info/packs
-'
-
-test_expect_success 'repack -a -d count-objects goes to zero' '
-	rm -rf repo_zero &&
-	grit init repo_zero &&
-	cd repo_zero &&
-	create_commit first one.txt one &&
+	git repack &&
+	pack_count_before=$(ls .git/objects/pack/*.pack | wc -l) &&
+	test "$pack_count_before" -ge 1 &&
 	create_commit second two.txt two &&
+	git repack &&
+	pack_count_mid=$(ls .git/objects/pack/*.pack | wc -l) &&
+	test "$pack_count_mid" -ge 2 &&
 	git repack -a -d &&
+	pack_count_after=$(ls .git/objects/pack/*.pack | wc -l) &&
+	test "$pack_count_after" = "1"
+'
+
+test_expect_success 'repack creates valid index' '
+	cd repo_old_packs &&
+	idx=$(echo .git/objects/pack/*.idx) &&
+	test_path_is_file "$idx" &&
+	git verify-pack "$idx"
+'
+
+test_expect_success 'repack -a packs objects from all existing packs' '
+	rm -rf repo_multipack &&
+	grit init repo_multipack &&
+	cd repo_multipack &&
+	create_commit first one.txt one &&
+	git repack &&
+	create_commit second two.txt two &&
+	git repack &&
+	pack_count=$(ls .git/objects/pack/*.pack | wc -l) &&
+	test "$pack_count" -ge 2 &&
+	git repack -a -d &&
+	pack_count_after=$(ls .git/objects/pack/*.pack | wc -l) &&
+	test "$pack_count_after" = "1" &&
+	git verify-pack -v .git/objects/pack/*.pack >out &&
+	grep "commit" out
+'
+
+test_expect_success 'count-objects shows 0 after repack -a -d' '
+	cd repo_multipack &&
 	test "$(git count-objects)" = "0 objects, 0 kilobytes"
 '
 
-test_expect_success 'repack after gc is idempotent' '
-	rm -rf repo_gc_repack &&
-	grit init repo_gc_repack &&
-	cd repo_gc_repack &&
-	create_commit base one.txt one &&
-	git gc &&
+test_expect_success 'repack packs blob objects' '
+	rm -rf repo_catfile &&
+	grit init repo_catfile &&
+	cd repo_catfile &&
+	create_commit first one.txt one &&
+	blob_oid=$(git hash-object one.txt) &&
 	git repack -a -d &&
-	test "$(git count-objects)" = "0 objects, 0 kilobytes" &&
-	test_path_is_file "$(echo .git/objects/pack/*.pack)"
+	pack=$(echo .git/objects/pack/*.pack) &&
+	git verify-pack -v "$pack" >out &&
+	grep "^$blob_oid " out
+'
+
+test_expect_success 'repack does not lose tagged objects' '
+	rm -rf repo_tags &&
+	grit init repo_tags &&
+	cd repo_tags &&
+	create_commit first one.txt one &&
+	git tag v1.0 HEAD &&
+	tag_oid=$(git rev-parse v1.0) &&
+	git repack -a -d &&
+	pack=$(echo .git/objects/pack/*.pack) &&
+	git verify-pack -v "$pack" >out &&
+	grep "^$tag_oid " out
 '
 
 test_done

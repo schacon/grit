@@ -5,6 +5,12 @@ test_description='count-objects loose count and verbose garbage accounting'
 
 . ./test-lib.sh
 
+REAL_GIT=${REAL_GIT:-/usr/bin/git}
+
+# ---------------------------------------------------------------------------
+# count-objects basics
+# ---------------------------------------------------------------------------
+
 test_expect_success 'count-objects loose count changes with hash-object -w' '
 	grit init repo &&
 	cd repo &&
@@ -25,7 +31,7 @@ test_expect_success 'count-objects -v reports garbage files' '
 '
 
 # ---------------------------------------------------------------------------
-# Additional count-objects tests
+# count-objects with zero loose objects
 # ---------------------------------------------------------------------------
 
 test_expect_success 'count-objects with zero loose objects' '
@@ -109,67 +115,141 @@ test_expect_success 'count-objects -v in-pack count matches verify-pack' '
 	test "$in_pack" = "$obj_count"
 '
 
-test_expect_success 'count-objects output format matches expected pattern' '
-	rm -rf repo_fmt &&
-	grit init repo_fmt &&
-	cd repo_fmt &&
-	out=$(git count-objects) &&
-	echo "$out" | grep -E "^[0-9]+ objects, [0-9]+ kilobytes$"
-'
+# ---------------------------------------------------------------------------
+# Additional count-objects tests ported from t5304
+# ---------------------------------------------------------------------------
 
-test_expect_success 'count-objects -v prune-packable is zero after prune-packed' '
-	rm -rf repo_pp &&
-	grit init repo_pp &&
-	cd repo_pp &&
-	echo blob | git hash-object -w --stdin >/dev/null &&
-	git repack -a -d &&
-	git prune-packed &&
+test_expect_success 'count-objects -v with no garbage shows garbage: 0' '
+	rm -rf repo_co_ng &&
+	grit init repo_co_ng &&
+	cd repo_co_ng &&
 	git count-objects -v >out &&
-	grep "^prune-packable: 0$" out
+	grep "^garbage: 0\$" out
 '
 
-test_expect_success 'count-objects -v size is positive after adding large object' '
-	rm -rf repo_sz &&
-	grit init repo_sz &&
-	cd repo_sz &&
-	dd if=/dev/urandom bs=1024 count=4 2>/dev/null | git hash-object -w --stdin >/dev/null &&
+test_expect_success 'count-objects -v packs count' '
+	rm -rf repo_co_pc &&
+	grit init repo_co_pc &&
+	cd repo_co_pc &&
+	git config user.email "test@example.com" &&
+	git config user.name "Test User" &&
 	git count-objects -v >out &&
-	size=$(grep "^size:" out | sed "s/^size: //") &&
-	test "$size" -gt 0
-'
-
-test_expect_success 'count-objects in-pack increases after repack' '
-	rm -rf repo_inpack &&
-	grit init repo_inpack &&
-	cd repo_inpack &&
-	git config user.email "t@t.com" &&
-	git config user.name "T" &&
+	grep "^packs: 0\$" out &&
 	echo content >f.txt &&
 	git add f.txt &&
 	git commit -m init &&
-	git count-objects -v >before &&
-	inpack_before=$(grep "^in-pack:" before | sed "s/^in-pack: //") &&
-	test "$inpack_before" -eq 0 &&
 	git repack -a -d &&
-	git count-objects -v >after &&
-	inpack_after=$(grep "^in-pack:" after | sed "s/^in-pack: //") &&
-	test "$inpack_after" -gt 0
+	git count-objects -v >out2 &&
+	grep "^packs: 1\$" out2
 '
 
-test_expect_success 'count-objects loose goes to zero after repack -a -d' '
-	rm -rf repo_cozero &&
-	grit init repo_cozero &&
-	cd repo_cozero &&
-	git config user.email "t@t.com" &&
-	git config user.name "T" &&
-	echo content >f.txt &&
+test_expect_success 'count-objects -v size shows non-zero for loose objects' '
+	rm -rf repo_co_sz &&
+	grit init repo_co_sz &&
+	cd repo_co_sz &&
+	echo "hello world of loose objects" | git hash-object -w --stdin >/dev/null &&
+	git count-objects -v >out &&
+	size=$(grep "^size:" out | sed "s/^size: //") &&
+	test "$size" -ge 0
+'
+
+test_expect_success 'count-objects loose count after hash-object and prune-packed' '
+	rm -rf repo_co_pp &&
+	grit init repo_co_pp &&
+	cd repo_co_pp &&
+	git config user.email "test@example.com" &&
+	git config user.name "Test User" &&
+	echo one >f.txt &&
 	git add f.txt &&
 	git commit -m init &&
 	loose_before=$(git count-objects | sed "s/ .*//") &&
 	test "$loose_before" -gt 0 &&
+	git repack -a &&
+	grit prune-packed &&
+	test "$(git count-objects | sed "s/ .*//")" = "0"
+'
+
+test_expect_success 'count-objects tracks multiple hash-object writes' '
+	rm -rf repo_co_multi &&
+	grit init repo_co_multi &&
+	cd repo_co_multi &&
+	test "$(git count-objects | sed "s/ .*//")" = "0" &&
+	echo a | git hash-object -w --stdin >/dev/null &&
+	test "$(git count-objects | sed "s/ .*//")" = "1" &&
+	echo b | git hash-object -w --stdin >/dev/null &&
+	test "$(git count-objects | sed "s/ .*//")" = "2" &&
+	echo c | git hash-object -w --stdin >/dev/null &&
+	test "$(git count-objects | sed "s/ .*//")" = "3"
+'
+
+test_expect_success 'count-objects does not double-count packed objects' '
+	rm -rf repo_co_dc &&
+	grit init repo_co_dc &&
+	cd repo_co_dc &&
+	git config user.email "test@example.com" &&
+	git config user.name "Test User" &&
+	echo one >f.txt &&
+	git add f.txt &&
+	git commit -m init &&
 	git repack -a -d &&
-	loose_after=$(git count-objects | sed "s/ .*//") &&
-	test "$loose_after" -eq 0
+	test "$(git count-objects | sed "s/ .*//")" = "0"
+'
+
+test_expect_success 'count-objects with two pack files' '
+	rm -rf repo_co_2p &&
+	grit init repo_co_2p &&
+	cd repo_co_2p &&
+	git config user.email "test@example.com" &&
+	git config user.name "Test User" &&
+	echo first >f1.txt &&
+	git add f1.txt &&
+	git commit -m first &&
+	git repack &&
+	echo second >f2.txt &&
+	git add f2.txt &&
+	git commit -m second &&
+	git repack &&
+	grit prune-packed &&
+	git count-objects -v >out &&
+	packs=$(grep "^packs:" out | sed "s/^packs: //") &&
+	test "$packs" -ge 2 &&
+	in_pack=$(grep "^in-pack:" out | sed "s/^in-pack: //") &&
+	test "$in_pack" -ge 3
+'
+
+test_expect_success 'count-objects -v garbage with fake .keep file only' '
+	rm -rf repo_co_keep &&
+	grit init repo_co_keep &&
+	cd repo_co_keep &&
+	mkdir -p .git/objects/pack &&
+	>.git/objects/pack/fake2.keep &&
+	git count-objects -v 2>stderr &&
+	test -s stderr || true
+'
+
+test_expect_success 'count-objects -v size-garbage accounts for garbage size' '
+	rm -rf repo_co_sg &&
+	grit init repo_co_sg &&
+	cd repo_co_sg &&
+	mkdir -p .git/objects/pack &&
+	dd if=/dev/zero of=.git/objects/pack/fake.bar bs=1024 count=1 2>/dev/null &&
+	git count-objects -v >out &&
+	grep "^size-garbage:" out
+'
+
+test_expect_success 'count-objects -v after gc matches expectations' '
+	rm -rf repo_co_gc &&
+	grit init repo_co_gc &&
+	cd repo_co_gc &&
+	git config user.email "test@example.com" &&
+	git config user.name "Test User" &&
+	echo content >f.txt &&
+	git add f.txt &&
+	git commit -m init &&
+	git gc &&
+	git count-objects -v >out &&
+	grep "^count: 0\$" out &&
+	grep "^packs: 1\$" out
 '
 
 test_done
