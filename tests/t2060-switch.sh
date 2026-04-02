@@ -99,4 +99,58 @@ test_expect_success 'not switching when something is in progress' '
 	rm -f .git/MERGE_HEAD
 '
 
+test_expect_success 'suggestion to detach' '
+	cd repo &&
+	git switch master &&
+	test_must_fail git switch "master^{commit}" 2>stderr &&
+	grep "try again with the --detach option" stderr
+'
+
+test_expect_success 'suggestion to detach is suppressed with advice.suggestDetachingHead=false' '
+	cd repo &&
+	git switch master &&
+	git config advice.suggestDetachingHead false &&
+	test_must_fail git switch "master^{commit}" 2>stderr &&
+	test_must_fail grep "try again with the --detach option" stderr &&
+	git config --unset advice.suggestDetachingHead
+'
+
+test_expect_success 'force create branch from HEAD' '
+	cd repo &&
+	git switch master &&
+	# Create the branch at a different commit so -c will fail
+	parent=$(git rev-parse HEAD~1) &&
+	git branch force-test "$parent" &&
+	git switch --detach master &&
+	# -c should fail because force-test already exists
+	test_must_fail git switch -c force-test &&
+	# --force-create should succeed and overwrite
+	git switch --force-create force-test &&
+	test "$(git rev-parse master)" = "$(git rev-parse force-test)" &&
+	echo refs/heads/force-test >expected-branch &&
+	git symbolic-ref HEAD >actual-branch &&
+	test_cmp expected-branch actual-branch &&
+	git switch master
+'
+
+test_expect_success 'switch -c fails when branch already exists' '
+	cd repo &&
+	git switch master &&
+	test_must_fail git switch -c first-branch
+'
+
+test_expect_success 'switch --force-create overwrites existing branch' '
+	cd repo &&
+	git switch master &&
+	git switch --force-create first-branch &&
+	test "$(git rev-parse master)" = "$(git rev-parse first-branch)" &&
+	git switch master
+'
+
+test_expect_success 'switch --no-guess does not find remote tracking branch' '
+	cd repo &&
+	git switch master &&
+	test_must_fail git switch --no-guess nonexistent-branch
+'
+
 test_done

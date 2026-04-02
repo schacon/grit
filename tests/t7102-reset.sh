@@ -454,4 +454,202 @@ test_expect_success "no git reset --no-keep" '
 	test -s err
 '
 
+# ---------------------------------------------------------------------------
+# Extended setup: repo3 with rm/mv/rename commits for diff-oriented tests
+# ---------------------------------------------------------------------------
+test_expect_success 'setup repo3 for diff-oriented reset tests' '
+	git init repo3 &&
+	cd repo3 &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+
+	test_tick &&
+	echo "1st file" >first &&
+	git add first &&
+	git commit -m "create 1st file" &&
+
+	echo "2nd file" >second &&
+	git add second &&
+	git commit -m "create 2nd file" &&
+
+	echo "2nd line 1st file" >>first &&
+	git commit -a -m "modify 1st file" &&
+	git rev-parse HEAD >../r3_head5p2 &&
+
+	git rm first &&
+	git mv second secondfile &&
+	git commit -a -m "remove 1st and rename 2nd" &&
+	git rev-parse HEAD >../r3_head5p1 &&
+
+	echo "1st line 2nd file" >secondfile &&
+	echo "2nd line 2nd file" >>secondfile &&
+	git commit -a -m "modify 2nd file (geandert)" &&
+	git rev-parse HEAD >../r3_head5
+'
+
+# ---------------------------------------------------------------------------
+# --soft reset shows changes in diff --cached
+# ---------------------------------------------------------------------------
+test_expect_success '--soft reset only should show changes in diff --cached' '
+	cd repo3 &&
+	head5=$(cat ../r3_head5) &&
+	head5p1=$(cat ../r3_head5p1) &&
+	git reset --hard "$head5" &&
+
+	git reset --soft HEAD^ &&
+	test "$(git rev-parse HEAD)" = "$head5p1" &&
+
+	# Working tree diff should be empty (soft does not touch worktree)
+	git diff >wt_diff &&
+	test_must_be_empty wt_diff &&
+
+	# Cached diff should show the change from head5p1 to head5
+	git diff --cached >cached_diff &&
+	test -s cached_diff &&
+	grep "1st line 2nd file" cached_diff &&
+	grep "2nd line 2nd file" cached_diff &&
+
+	# ORIG_HEAD should be head5
+	test "$(git rev-parse ORIG_HEAD)" = "$head5" &&
+
+	# Restore head5
+	git reset --hard "$head5"
+'
+
+# ---------------------------------------------------------------------------
+# --hard reset should change files and undo commits permanently
+# ---------------------------------------------------------------------------
+test_expect_success '--hard reset should change the files and undo commits permanently' '
+	cd repo3 &&
+	head5=$(cat ../r3_head5) &&
+	head5p2=$(cat ../r3_head5p2) &&
+
+	# Add an extra commit on top of head5
+	echo "3rd line 2nd file" >>secondfile &&
+	git commit -a -m "add 3rd line" &&
+	head4=$(git rev-parse HEAD) &&
+
+	# Reset back to head5p2 (3 commits back: head5p2 -> head5p1 -> head5 -> head4)
+	git reset --hard "$head5p2" &&
+	test "$(git rev-parse HEAD)" = "$head5p2" &&
+	test "$(git rev-parse ORIG_HEAD)" = "$head4" &&
+
+	# Working tree should match head5p2 (first and second exist)
+	test -f first &&
+	test -f second &&
+	test "$(cat first)" = "1st file
+2nd line 1st file" &&
+	test "$(cat second)" = "2nd file" &&
+	test ! -f secondfile
+'
+
+# ---------------------------------------------------------------------------
+# Redoing changes and adding without committing should succeed
+# ---------------------------------------------------------------------------
+test_expect_success 'redoing changes adding them without committing should succeed' '
+	cd repo3 &&
+	head5p2=$(cat ../r3_head5p2) &&
+
+	# We are now at head5p2 after previous hard reset
+	test "$(git rev-parse HEAD)" = "$head5p2" &&
+
+	git rm first &&
+	git mv second secondfile &&
+	echo "1st line 2nd file" >secondfile &&
+	echo "2nd line 2nd file" >>secondfile &&
+	git add secondfile &&
+
+	# Cached diff should show deletions of first/second and addition of secondfile
+	git diff --cached >cached_out &&
+	grep "deleted file" cached_out &&
+	grep "new file" cached_out &&
+
+	# Working tree diff should be empty
+	git diff >wt_out &&
+	test_must_be_empty wt_out &&
+
+	# HEAD should still be head5p2
+	test "$(git rev-parse HEAD)" = "$head5p2"
+'
+
+# ---------------------------------------------------------------------------
+# --mixed reset to HEAD should unadd the files
+# ---------------------------------------------------------------------------
+test_expect_success '--mixed reset to HEAD should unadd the files' '
+	cd repo3 &&
+	head5p2=$(cat ../r3_head5p2) &&
+
+	# Index still has staged changes from previous test
+	git reset &&
+
+	# After mixed reset, cached diff should be empty
+	git diff --cached >cached_out &&
+	test_must_be_empty cached_out &&
+
+	# Working tree should still show diffs (first deleted, second deleted, secondfile untracked)
+	git diff >wt_out &&
+	test -s wt_out &&
+
+	# HEAD unchanged
+	test "$(git rev-parse HEAD)" = "$head5p2"
+'
+
+# ---------------------------------------------------------------------------
+# Redoing the last two commits should succeed
+# ---------------------------------------------------------------------------
+test_expect_success 'redoing the last two commits should succeed' '
+	cd repo3 &&
+	head5p2=$(cat ../r3_head5p2) &&
+
+	git add secondfile &&
+	git reset --hard "$head5p2" &&
+
+	git rm first &&
+	git mv second secondfile &&
+	git commit -a -m "remove 1st and rename 2nd" &&
+
+	echo "1st line 2nd file" >secondfile &&
+	echo "2nd line 2nd file" >>secondfile &&
+	echo "modify 2nd file (geandert)" | git commit -a -F - &&
+
+	# The tree at HEAD should only have secondfile
+	test ! -f first &&
+	test ! -f second &&
+	test -f secondfile &&
+	test "$(cat secondfile)" = "1st line 2nd file
+2nd line 2nd file"
+'
+
+# ---------------------------------------------------------------------------
+# test --mixed <paths> (from upstream)
+# ---------------------------------------------------------------------------
+test_expect_success 'test --mixed <paths>' '
+	cd repo3 &&
+	git reset --hard &&
+
+	echo 1 >file1 &&
+	echo 2 >file2 &&
+	git add file1 file2 &&
+	test_tick &&
+	git commit -m files &&
+
+	git rm file2 &&
+	echo 3 >file3 &&
+	echo 4 >file4 &&
+	echo 5 >file1 &&
+	git add file1 file3 file4 &&
+
+	git reset HEAD -- file1 file2 file3 &&
+
+	# file1 should be modified in working tree but not staged
+	# file2 should be deleted in working tree but not staged
+	# file3 should be untracked
+	# file4 should remain staged (new file)
+	git diff --cached --name-only >cached_names &&
+	grep "file4" cached_names &&
+	test_must_fail grep "file1" cached_names &&
+	test_must_fail grep "file2" cached_names &&
+	test_must_fail grep "file3" cached_names
+'
+
 test_done

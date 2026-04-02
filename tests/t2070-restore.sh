@@ -152,4 +152,149 @@ test_expect_success 'restore --staged removes file not in HEAD from index' '
 	)
 '
 
+test_expect_success 'restore --staged invalidates cache tree for deletions' '
+	cd repo &&
+	git reset --hard &&
+	>new1 &&
+	>new2 &&
+	git add new1 new2 &&
+
+	# Commit and then soft-reset so index has a valid cache-tree for both files
+	git commit -m both &&
+	git reset --soft HEAD^ &&
+
+	git restore --staged new1 &&
+	git commit -m "just new2" &&
+	git rev-parse HEAD:new2 &&
+	test_must_fail git rev-parse HEAD:new1
+'
+
+test_expect_success 'restore --ignore-unmerged ignores unmerged entries' '
+	git init unmerged &&
+	(
+		cd unmerged &&
+		git config user.name "Test User" &&
+		git config user.email "test@test.com" &&
+		echo one >unmerged &&
+		echo one >common &&
+		git add unmerged common &&
+		git commit -m common &&
+
+		# Simulate merge conflict via update-index
+		O=$(git hash-object -w unmerged) &&
+		echo first >unmerged &&
+		A=$(git hash-object -w unmerged) &&
+		echo second >unmerged &&
+		B=$(git hash-object -w unmerged) &&
+		{
+			echo "100644 $O 1	unmerged" &&
+			echo "100644 $A 2	unmerged" &&
+			echo "100644 $B 3	unmerged"
+		} | git update-index --index-info &&
+
+		# Dirty common so there is something to restore
+		echo dirty >>common &&
+
+		# restore . without --ignore-unmerged should fail
+		test_must_fail git restore . &&
+
+		# restore --ignore-unmerged should succeed and restore common
+		git restore --ignore-unmerged --quiet . >output 2>&1 &&
+		test_must_be_empty output &&
+
+		# common should be restored to its original content
+		test "$(cat common)" = "one"
+	)
+'
+
+test_expect_success 'restore a file on worktree from another ref (explicit paths)' '
+	cd repo &&
+	git reset --hard &&
+	git show first:first.t >expected &&
+	git restore --source=first first.t &&
+	test_cmp expected first.t &&
+	# Index should still have HEAD content
+	HEAD_BLOB=$(git rev-parse HEAD:first.t) &&
+	ACTUAL_INDEX_OID=$(git ls-files -s first.t | awk "{print \$2}") &&
+	test "$ACTUAL_INDEX_OID" = "$HEAD_BLOB" &&
+	git restore first.t
+'
+
+test_expect_success 'restore a file in both the index and worktree from another ref (round trip)' '
+	cd repo &&
+	git reset --hard &&
+	FIRST_BLOB=$(git rev-parse first:first.t) &&
+	git cat-file -p "$FIRST_BLOB" >expected_first &&
+	git restore --source=first --staged --worktree first.t &&
+	# Verify index
+	ACTUAL_INDEX_OID=$(git ls-files -s first.t | awk "{print \$2}") &&
+	test "$ACTUAL_INDEX_OID" = "$FIRST_BLOB" &&
+	# Verify worktree
+	test_cmp expected_first first.t &&
+	# Restore both back to HEAD
+	git restore --source=HEAD --staged --worktree first.t
+'
+
+test_expect_success 'restore a single file from HEAD when multiple files exist' '
+	cd repo &&
+	git reset --hard &&
+	echo dirty >>one &&
+	echo dirty >>two &&
+	git restore one &&
+	# one should be restored, two should still be dirty
+	test "$(cat one)" = "one" &&
+	grep dirty two &&
+	git restore two
+'
+
+test_expect_success 'restore does not touch untracked files' '
+	cd repo &&
+	git reset --hard &&
+	echo brand-new >brand-new &&
+	git restore . &&
+	# Untracked file should still exist
+	test -f brand-new &&
+	test "$(cat brand-new)" = "brand-new" &&
+	rm brand-new
+'
+
+test_expect_success 'restore --staged with multiple files' '
+	cd repo &&
+	git reset --hard &&
+	echo dirty1 >>one &&
+	echo dirty2 >>two &&
+	git add one two &&
+	git restore --staged one two &&
+	# Index should match HEAD for both files
+	HEAD_ONE=$(git rev-parse HEAD:one) &&
+	HEAD_TWO=$(git rev-parse HEAD:two) &&
+	IDX_ONE=$(git ls-files -s one | awk "{print \$2}") &&
+	IDX_TWO=$(git ls-files -s two | awk "{print \$2}") &&
+	test "$IDX_ONE" = "$HEAD_ONE" &&
+	test "$IDX_TWO" = "$HEAD_TWO" &&
+	# But worktree should still be dirty
+	grep dirty1 one &&
+	grep dirty2 two &&
+	git restore one two
+'
+
+test_expect_success 'restore --source with tag name' '
+	cd repo &&
+	git reset --hard &&
+	FIRST_BLOB=$(git rev-parse first:first.t) &&
+	git cat-file -p "$FIRST_BLOB" >expected &&
+	git restore --source=first --worktree first.t &&
+	test_cmp expected first.t &&
+	git restore first.t
+'
+
+test_expect_success 'restore --staged followed by diff-index shows no staged changes' '
+	cd repo &&
+	git reset --hard &&
+	echo new-content >>one &&
+	git add one &&
+	git restore --staged one &&
+	git diff-index --cached --exit-code HEAD
+'
+
 test_done
