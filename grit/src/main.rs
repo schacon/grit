@@ -144,6 +144,8 @@ enum Command {
     Gc(commands::gc::Args),
     /// Pack unpacked objects in a repository.
     Repack(commands::repack::Args),
+    /// Create, list, delete refs to replace objects.
+    Replace(commands::replace::Args),
     /// Read a tag object from stdin, validate strictly, and write to ODB.
     #[command(name = "mktag")]
     Mktag(commands::mktag::Args),
@@ -160,6 +162,9 @@ enum Command {
     Rm(commands::rm::Args),
     /// Move or rename a file, a directory, or a symlink.
     Mv(commands::mv::Args),
+    /// Pack loose refs into packed-refs.
+    #[command(name = "pack-refs")]
+    PackRefs(commands::pack_refs::Args),
     /// Compute unique IDs for patches.
     #[command(name = "patch-id")]
     PatchId(commands::patch_id::Args),
@@ -244,6 +249,7 @@ fn run() -> Result<()> {
         Command::FmtMergeMsg(args) => commands::fmt_merge_msg::run(args),
         Command::Gc(args) => commands::gc::run(args),
         Command::Repack(args) => commands::repack::run(args),
+        Command::Replace(args) => commands::replace::run(args),
         Command::Mktag(args) => commands::mktag::run(args),
         Command::PrunePacked(args) => commands::prune_packed::run(args),
         Command::Tag(args) => commands::tag::run(args),
@@ -251,6 +257,7 @@ fn run() -> Result<()> {
         Command::Show(args) => commands::show::run(args),
         Command::Rm(args) => commands::rm::run(args),
         Command::Mv(args) => commands::mv::run(args),
+        Command::PackRefs(args) => commands::pack_refs::run(args),
         Command::PatchId(args) => commands::patch_id::run(args),
         Command::MkTree(args) => commands::mktree::run(args),
         Command::Var(args) => commands::var::run(args),
