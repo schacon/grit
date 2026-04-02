@@ -460,7 +460,7 @@ fn run() -> Result<()> {
         Command::Clone(args) => commands::clone::run(args),
         Command::Column(args) => commands::column::run(args),
         Command::Checkout(args) => commands::checkout::run(args),
-        Command::Init(args) => commands::init::run(args),
+        Command::Init(args) => commands::init::run(args, cli.bare),
         Command::InterpretTrailers(args) => commands::interpret_trailers::run(args),
         Command::HashObject(args) => commands::hash_object::run(args),
         Command::Hook(args) => commands::hook::run(args),
