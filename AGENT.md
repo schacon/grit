@@ -27,26 +27,6 @@ There may be several agents working in this directory to coordinate implementati
 
 As you run, find something in the list that starts with a blank checkbox `[ ]` and claim it by marking it as `[~]`. When it appears to pass the associated tests, mark it as done with `[x]`. For each task you take, keep a log of your work in `logs/` as a timestamped log file (such as `2026-03-31_05:30-git-add-simple.md`).
 
-## Hard scope for v1
-
-For the first version, not _every_ capability needs to be created. We will start with a implementing only the "plumbing" commands.
-
-Build these core plumbing commands:
-
-- init
-- hash-object
-- update-index
-- ls-files
-- write-tree
-- ls-tree
-- read-tree
-- checkout-index
-- commit-tree
-- update-ref
-- cat-file
-
-Only implement these commands. Each command should be runnable as a subcommand such as `grit init` or `grit hash-object`.
-
 ## Loop contract
 
 On each iteration:
