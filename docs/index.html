@@ -175,7 +175,7 @@
 
 <div class="summary">
   <div class="card green">
-    <div class="number">241</div>
+    <div class="number">262</div>
     <div class="label">Tests Passing</div>
   </div>
   <div class="card">
@@ -183,24 +183,24 @@
     <div class="label">Total Upstream Tests</div>
   </div>
   <div class="card green">
-    <div class="number">8,946</div>
+    <div class="number">9,637</div>
     <div class="label">Individual Tests Passing</div>
   </div>
   <div class="card">
-    <div class="number">47.0%</div>
+    <div class="number">50.7%</div>
     <div class="label">Test Case Coverage</div>
   </div>
 </div>
 
 <div class="progress-bar">
-  <div class="pass" style="width: 23.2%"></div>
+  <div class="pass" style="width: 25.2%"></div>
   <div class="ported" style="width: 0.0%"></div>
 </div>
 
 <div class="legend">
-  <span><span class="dot green"></span> Passing (241)</span>
+  <span><span class="dot green"></span> Passing (262)</span>
   <span><span class="dot yellow"></span> Ported, not in harness (0)</span>
-  <span><span class="dot gray"></span> Not yet ported (800)</span>
+  <span><span class="dot gray"></span> Not yet ported (779)</span>
 </div>
 
 <h2 id="commands">Commands <span class="cmd-count">56/191</span></h2>
@@ -395,8 +395,8 @@
 <div class="filter">
   <input type="text" id="search" placeholder="Filter tests..." oninput="filterTable()">
   <button onclick="filterStatus('all')" class="active" id="btn-all">All (1041)</button>
-  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (241)</button>
-  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (800)</button>
+  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (262)</button>
+  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (779)</button>
 </div>
 
 <table id="tests">
@@ -753,12 +753,12 @@
         <td>test `test-tool find-pack`</td>
         <td>0/4</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t0090-cache-tree.sh">t0090-cache-tree.sh</a></td>
         <td>setup</td>
         <td>cache tree</td>
-        <td>0/22</td>
+        <td>27/22 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -1157,7 +1157,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t1300-config.sh">t1300-config.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/config.rs">config</a></td>
         <td>Test git config in different settings</td>
-        <td>291/237 <span style="color:#8b949e">(100%)</span></td>
+        <td>306/237 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -2153,12 +2153,12 @@
         <td>directory traversal handling, especially with common prefixes</td>
         <td>0/21</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t3012-ls-files-dedup.sh">t3012-ls-files-dedup.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/ls_files.rs">ls-files</a></td>
         <td>git ls-files --deduplicate test</td>
-        <td>0/3</td>
+        <td>30/3 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -2249,7 +2249,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t3200-branch.sh">t3200-branch.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/branch.rs">branch</a></td>
         <td>git branch assorted tests</td>
-        <td>196/167 <span style="color:#8b949e">(100%)</span></td>
+        <td>211/167 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -3817,7 +3817,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4202-log.sh">t4202-log.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/log.rs">log</a></td>
         <td>git log</td>
-        <td>215/145 <span style="color:#8b949e">(100%)</span></td>
+        <td>230/145 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -4113,12 +4113,12 @@
         <td>test index-pack handling of delta cycles in packfiles</td>
         <td>0/7</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t5310-pack-bitmaps.sh">t5310-pack-bitmaps.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit-lib/src/pack.rs">pack/prune</a></td>
         <td>exercise basic bitmap functionality</td>
-        <td>0/41</td>
+        <td>37/41 <span style="color:#8b949e">(90%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -5861,7 +5861,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t7004-tag.sh">t7004-tag.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/mv.rs">mv</a></td>
         <td>tag</td>
-        <td>283/219 <span style="color:#8b949e">(100%)</span></td>
+        <td>298/219 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>

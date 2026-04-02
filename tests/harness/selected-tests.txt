@@ -12,6 +12,8 @@ t0040-parse-options.sh
 t0050-filesystem.sh
 t0060-path-utils.sh
 t0070-fundamental.sh
+t0080-tree-hash.sh
+t0090-cache-tree.sh
 t1000-read-tree-m-3way.sh
 t1001-read-tree-m-2way.sh
 t1002-read-tree-m-u-2way.sh
@@ -30,6 +32,7 @@ t1020-subdirectory.sh
 t1051-unpack-file.sh
 t1060-object-corruption.sh
 t1100-commit-tree-options.sh
+t1200-read-tree-merge.sh
 t1300-config.sh
 t1301-shared-repo.sh
 t1302-repo-version.sh
@@ -79,6 +82,7 @@ t2022-checkout-paths.sh
 t2025-checkout-no-overlay.sh
 t2030-checkout-index-basic.sh
 t2031-checkout-index-symlink.sh
+t2032-checkout-index-parallel.sh
 t2050-checkout.sh
 t2060-switch.sh
 t2061-switch-orphan.sh
@@ -90,6 +94,7 @@ t3004-ls-files-basic.sh
 t3005-ls-files-relative.sh
 t3006-ls-files-long.sh
 t3011-ls-files-staged.sh
+t3012-ls-files-dedup.sh
 t3020-ls-files-error-unmatch.sh
 t3030-merge-recursive.sh
 t3050-ls-files-unmerged.sh
@@ -106,6 +111,7 @@ t3204-branch-name-interpretation.sh
 t3205-branch-color.sh
 t3206-branch-advanced.sh
 t3210-pack-refs.sh
+t3301-notes-basic.sh
 t3401-rebase-basic.sh
 t3500-cherry.sh
 t3507-cherry-pick-conflict.sh
@@ -153,6 +159,11 @@ t4058-diff-duplicates.sh
 t4062-diff-pickaxe.sh
 t4063-diff-blobs.sh
 t4068-diff-symmetric.sh
+t4069-diff-summary.sh
+t4070-diff-submodule.sh
+t4071-diff-empty-tree.sh
+t4080-diff-permissions.sh
+t4090-diff-empty.sh
 t4100-apply-stat.sh
 t4201-log-graph.sh
 t4202-log.sh
@@ -176,6 +187,7 @@ t5302-show-index.sh
 t5303-pack-corruption.sh
 t5304-prune-packed.sh
 t5304-prune.sh
+t5310-pack-bitmaps.sh
 t5524-fmt-merge-msg.sh
 t5613-info-alternate.sh
 t6000-rev-list-misc.sh
@@ -217,7 +229,13 @@ t7010-setup.sh
 t7020-commit-encoding.sh
 t7030-verify-tag.sh
 t7040-log-formatting.sh
+t7060-status-output.sh
+t7061-status-staged.sh
+t7062-status-worktree.sh
 t7063-status-untracked-cache.sh
+t7070-commit-tree-extra.sh
+t7080-mv-advanced.sh
+t7090-rm-advanced.sh
 t7101-reset-empty-subdirs.sh
 t7102-reset.sh
 t7103-reset-bare.sh
@@ -238,4 +256,7 @@ t7512-status-help.sh
 t7517-per-repo-email.sh
 t7600-merge.sh
 t7700-repack.sh
+t8010-cat-file-batch.sh
+t8020-hash-object-extra.sh
+t8030-write-tree-extra.sh
 test-lib.sh
