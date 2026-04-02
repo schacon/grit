@@ -606,4 +606,107 @@ test_expect_success 'commit count increments' '
 	test $(cat after) -gt $(cat before)
 '
 
+# ── commit with only whitespace message body ──────────────────────────────
+
+test_expect_success 'commit --allow-empty with long message' '
+	cd repo &&
+	git commit --allow-empty -m "this is a rather long commit message for testing purposes" 2>/dev/null &&
+	git log --format="%s" -n 1 >actual &&
+	echo "this is a rather long commit message for testing purposes" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'commit tree object is valid' '
+	cd repo &&
+	tree=$(git log --format="%T" -n 1) &&
+	git cat-file -t $tree >type &&
+	echo "tree" >expected &&
+	test_cmp expected type
+'
+
+# ── commit with deleted file ──────────────────────────────────────────────
+
+test_expect_success 'commit records file deletion' '
+	cd repo &&
+	echo "to delete" >del_me.txt &&
+	git add del_me.txt &&
+	git commit -m "add del_me" 2>/dev/null &&
+	git rm del_me.txt 2>/dev/null &&
+	git commit -m "delete del_me" 2>/dev/null &&
+	git ls-tree HEAD del_me.txt >ls_out &&
+	test_must_be_empty ls_out
+'
+
+test_expect_success 'commit with multiple new files at once' '
+	cd repo &&
+	echo aa >batch_a.txt &&
+	echo bb >batch_b.txt &&
+	echo cc >batch_c.txt &&
+	git add batch_a.txt batch_b.txt batch_c.txt &&
+	git commit -m "add batch files" 2>/dev/null &&
+	git ls-tree HEAD >tree_out &&
+	grep "batch_a.txt" tree_out &&
+	grep "batch_b.txt" tree_out &&
+	grep "batch_c.txt" tree_out
+'
+
+# ── commit parent chain ──────────────────────────────────────────────────
+
+test_expect_success 'commit parent matches previous HEAD' '
+	cd repo &&
+	prev=$(git rev-parse HEAD) &&
+	git commit --allow-empty -m "parent test" 2>/dev/null &&
+	parent=$(git log --format="%P" -n 1) &&
+	test "$parent" = "$prev"
+'
+
+test_expect_success 'root commit has tree but no parent line' '
+	cd repo &&
+	root=$(git rev-list HEAD | tail -1) &&
+	git cat-file -p $root >raw &&
+	grep "^tree" raw &&
+	grep "^author" raw
+'
+
+# ── commit preserves file modes ──────────────────────────────────────────
+
+test_expect_success 'commit preserves executable bit' '
+	cd repo &&
+	echo "#!/bin/sh" >exec_file.sh &&
+	chmod +x exec_file.sh &&
+	git add exec_file.sh &&
+	git commit -m "add executable" 2>/dev/null &&
+	git ls-tree HEAD exec_file.sh >ls_out &&
+	grep "100755" ls_out
+'
+
+test_expect_success 'commit after checkout -b on new branch' '
+	cd repo &&
+	git checkout -b commit-branch-test &&
+	git commit --allow-empty -m "on new branch" 2>/dev/null &&
+	branch=$(git symbolic-ref --short HEAD) &&
+	test "$branch" = "commit-branch-test" &&
+	git checkout master
+'
+
+test_expect_success 'commit -a stages and commits modified tracked files' '
+	cd repo &&
+	echo "track me" >tracked.txt &&
+	git add tracked.txt &&
+	git commit -m "add tracked" 2>/dev/null &&
+	echo "modified" >>tracked.txt &&
+	git commit -a -m "modify tracked" 2>/dev/null &&
+	git show HEAD:tracked.txt >content &&
+	grep "modified" content
+'
+
+test_expect_success 'two consecutive empty commits have different hashes' '
+	cd repo &&
+	git commit --allow-empty -m "empty A" 2>/dev/null &&
+	hash_a=$(git rev-parse HEAD) &&
+	git commit --allow-empty -m "empty B" 2>/dev/null &&
+	hash_b=$(git rev-parse HEAD) &&
+	test "$hash_a" != "$hash_b"
+'
+
 test_done

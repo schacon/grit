@@ -656,4 +656,111 @@ test_expect_success 'cherry-pick from diverged branch applies cleanly' '
 	test -f diverged-file
 '
 
+# ---------------------------------------------------------------------------
+# cherry-pick preserves author info
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick preserves original author name' '
+	cd repo &&
+	git checkout -B author-test $(cat ../initial) &&
+	original_author=$(git log --format="%an" -n 1 $(cat ../feature1)) &&
+	git cherry-pick $(cat ../feature1) &&
+	picked_author=$(git log --format="%an" -n 1) &&
+	test "$original_author" = "$picked_author"
+'
+
+test_expect_success 'cherry-pick preserves original author email' '
+	cd repo &&
+	git checkout -B email-test $(cat ../initial) &&
+	original_email=$(git log --format="%ae" -n 1 $(cat ../feature1)) &&
+	git cherry-pick $(cat ../feature1) &&
+	picked_email=$(git log --format="%ae" -n 1) &&
+	test "$original_email" = "$picked_email"
+'
+
+# ---------------------------------------------------------------------------
+# cherry-pick creates new commit hash
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick creates different commit hash' '
+	cd repo &&
+	git checkout -B newhash-test $(cat ../initial) &&
+	git cherry-pick $(cat ../feature1) &&
+	new_hash=$(git rev-parse HEAD) &&
+	test "$new_hash" != "$(cat ../feature1)"
+'
+
+test_expect_success 'cherry-pick preserves commit message' '
+	cd repo &&
+	git checkout -B msg-test $(cat ../initial) &&
+	original_msg=$(git log --format="%s" -n 1 $(cat ../feature1)) &&
+	git cherry-pick $(cat ../feature1) &&
+	picked_msg=$(git log --format="%s" -n 1) &&
+	test "$original_msg" = "$picked_msg"
+'
+
+# ---------------------------------------------------------------------------
+# cherry-pick -n does not advance HEAD
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick -n does not change HEAD' '
+	cd repo &&
+	git checkout -B nohead-test $(cat ../initial) &&
+	head_before=$(git rev-parse HEAD) &&
+	git cherry-pick -n $(cat ../feature1) &&
+	head_after=$(git rev-parse HEAD) &&
+	test "$head_before" = "$head_after" &&
+	git reset --hard
+'
+
+# ---------------------------------------------------------------------------
+# cherry-pick onto empty-ish branch with file already present
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick adding new file does not touch existing ones' '
+	cd repo &&
+	git checkout -B existing-test $(cat ../initial) &&
+	echo existing >existing.txt &&
+	git add existing.txt &&
+	git commit -m "add existing" &&
+	git cherry-pick $(cat ../feature2) &&
+	test -f existing.txt &&
+	test -f file2
+'
+
+test_expect_success 'cherry-pick two commits in sequence' '
+	cd repo &&
+	git checkout -B seq-test $(cat ../initial) &&
+	git cherry-pick $(cat ../feature1) &&
+	git cherry-pick $(cat ../feature2) &&
+	test -f file1 &&
+	test -f file2 &&
+	count=$(git rev-list HEAD --count) &&
+	test $count -ge 3
+'
+
+test_expect_success 'cherry-pick commit is child of current HEAD' '
+	cd repo &&
+	git checkout -B parent-test2 $(cat ../initial) &&
+	git cherry-pick $(cat ../feature1) &&
+	parent=$(git log --format="%P" -n 1) &&
+	test "$parent" = "$(cat ../initial)"
+'
+
+test_expect_success 'cherry-pick tree matches original tree content' '
+	cd repo &&
+	git checkout -B tree-test $(cat ../initial) &&
+	git cherry-pick $(cat ../feature2) &&
+	git ls-tree HEAD file2 >picked_tree &&
+	git ls-tree $(cat ../feature2) file2 >orig_tree &&
+	cut -f1 <picked_tree >picked_hash &&
+	cut -f1 <orig_tree >orig_hash &&
+	test_cmp picked_hash orig_hash
+'
+
+test_expect_success 'cherry-pick on detached HEAD works' '
+	cd repo &&
+	git checkout $(cat ../initial) 2>/dev/null &&
+	git cherry-pick $(cat ../feature1) &&
+	git log --format="%s" -n 1 >msg &&
+	grep "feature: modify file1" msg &&
+	git checkout master 2>/dev/null
+'
+
 test_done

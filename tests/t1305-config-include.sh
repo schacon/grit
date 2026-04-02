@@ -465,4 +465,81 @@ test_expect_success 'include at start of file is parsed' '
 	grep "user.name=After" actual
 '
 
+# ── multiple includes in one file ──────────────────────────────────────────
+
+test_expect_success 'multiple include directives in one file' '
+	cat >cfg <<-EOF &&
+	[include]
+		path = a.cfg
+	[include]
+		path = b.cfg
+	EOF
+	git config --file cfg -l >actual &&
+	grep "include.path=a.cfg" actual &&
+	grep "include.path=b.cfg" actual
+'
+
+test_expect_success 'config --file with empty section' '
+	cat >cfg <<-EOF &&
+	[empty]
+	[user]
+		name = HasValue
+	EOF
+	git config --file cfg -l >actual &&
+	grep "user.name=HasValue" actual
+'
+
+test_expect_success 'config --file get returns specific key' '
+	cat >cfg <<-EOF &&
+	[core]
+		bare = false
+	[user]
+		email = test@test.com
+	EOF
+	git config --file cfg --get user.email >actual &&
+	echo "test@test.com" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'config --file with boolean values' '
+	cat >cfg <<-EOF &&
+	[core]
+		bare = true
+		logallrefupdates = false
+	EOF
+	git config --file cfg --get core.bare >actual &&
+	echo "true" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'config --file with numeric value' '
+	cat >cfg <<-EOF &&
+	[pack]
+		windowMemory = 100m
+	EOF
+	git config --file cfg --get pack.windowMemory >actual &&
+	echo "100m" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'config --file with spaces in value' '
+	cat >cfg <<-EOF &&
+	[user]
+		name = John Doe
+	EOF
+	git config --file cfg --get user.name >actual &&
+	echo "John Doe" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'config --file with quoted value' '
+	cat >cfg <<-EOF &&
+	[alias]
+		st = "status -s"
+	EOF
+	git config --file cfg --get alias.st >actual &&
+	echo "status -s" >expected &&
+	test_cmp expected actual
+'
+
 test_done

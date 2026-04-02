@@ -1050,4 +1050,117 @@ test_expect_success 'diff --numstat with many files lists all' '
 	test_line_count = 10 output
 '
 
+# ---------------------------------------------------------------------------
+# Diff with empty file
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --cached shows creation of empty file' '
+	cd repo &&
+	>emptyfile &&
+	git add emptyfile &&
+	git diff --cached >output &&
+	grep "emptyfile" output &&
+	git reset HEAD -- emptyfile &&
+	rm -f emptyfile
+'
+
+test_expect_success 'diff --name-only for empty file shows name' '
+	cd repo &&
+	>emptyfile2 &&
+	git add emptyfile2 &&
+	git diff --cached --name-only >output &&
+	grep "emptyfile2" output &&
+	git reset HEAD -- emptyfile2 &&
+	rm -f emptyfile2
+'
+
+# ---------------------------------------------------------------------------
+# Diff with binary file
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --cached with binary file shows Binary' '
+	cd repo &&
+	printf "\x00\x01\x02" >binfile &&
+	git add binfile &&
+	git diff --cached >output &&
+	(grep -i "binary" output || grep -i "Bin" output || grep "binfile" output) &&
+	git reset HEAD -- binfile &&
+	rm -f binfile
+'
+
+test_expect_success 'diff --stat for binary file shows Bin' '
+	cd repo &&
+	printf "\x00\x01" >binfile2 &&
+	git add binfile2 &&
+	git diff --cached --stat >output &&
+	grep -i "bin" output &&
+	git reset HEAD -- binfile2 &&
+	rm -f binfile2
+'
+
+# ---------------------------------------------------------------------------
+# Diff with symlinks
+# ---------------------------------------------------------------------------
+test_expect_success 'diff detects new symlink in --cached' '
+	cd repo &&
+	ln -s file1 link1 &&
+	git add link1 &&
+	git diff --cached >output &&
+	grep "link1" output &&
+	git reset HEAD -- link1 &&
+	rm -f link1
+'
+
+# ---------------------------------------------------------------------------
+# Diff --exit-code additional cases
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --exit-code returns 0 when no diff between identical commits' '
+	cd repo &&
+	git diff --exit-code HEAD HEAD
+'
+
+test_expect_success 'diff --exit-code returns 1 when commits differ' '
+	cd repo &&
+	test_must_fail git diff --exit-code $(cat ../commit_many1) $(cat ../commit_many2)
+'
+
+# ---------------------------------------------------------------------------
+# Diff --shortstat
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --stat shows insertion counts' '
+	cd repo &&
+	git diff --stat $(cat ../commit_many1) $(cat ../commit_many2) >output &&
+	grep "insertions" output || grep "(+)" output
+'
+
+# ---------------------------------------------------------------------------
+# Diff path limiting
+# ---------------------------------------------------------------------------
+test_expect_success 'diff with path limits output to given file' '
+	cd repo &&
+	git diff --name-only $(cat ../commit_many1) $(cat ../commit_many2) -- manyfile1 >output &&
+	test_line_count = 1 output &&
+	grep "manyfile1" output
+'
+
+test_expect_success 'diff with multiple path args limits correctly' '
+	cd repo &&
+	git diff --name-only $(cat ../commit_many1) $(cat ../commit_many2) -- manyfile1 manyfile2 >output &&
+	test_line_count = 2 output
+'
+
+# ---------------------------------------------------------------------------
+# Diff between tree and working copy via commit range
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --stat between first and last commit' '
+	cd repo &&
+	first=$(git rev-list HEAD | tail -1) &&
+	git diff --stat $first HEAD >output &&
+	test -s output
+'
+
+test_expect_success 'diff --name-status shows status letters' '
+	cd repo &&
+	git diff --name-status $(cat ../commit_many1) $(cat ../commit_many2) >output &&
+	grep "^M" output
+'
+
 test_done

@@ -816,4 +816,97 @@ test_expect_success 'checkout with empty tree then back to master' '
 	test "$(git symbolic-ref --short HEAD)" = "master"
 '
 
+# ---------------------------------------------------------------------------
+# Deepened: checkout restores file contents
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout branch restores its file state' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b restore-test &&
+	echo "restore data" >restore.txt &&
+	git add restore.txt && git commit -m "add restore" 2>/dev/null &&
+	git checkout master &&
+	test_path_is_missing restore.txt &&
+	git checkout restore-test &&
+	test -f restore.txt &&
+	grep "restore data" restore.txt &&
+	git checkout master
+'
+
+test_expect_success 'checkout -- file restores from index' '
+	cd repo &&
+	git checkout master &&
+	echo original >checkout_restore.txt &&
+	git add checkout_restore.txt && git commit -m "original" 2>/dev/null &&
+	echo modified >checkout_restore.txt &&
+	git checkout -- checkout_restore.txt &&
+	grep "original" checkout_restore.txt
+'
+
+test_expect_success 'checkout -b with start point creates branch at that commit' '
+	cd repo &&
+	git checkout master &&
+	parent=$(git rev-parse HEAD~1) &&
+	git checkout -b at-parent $parent &&
+	test "$(git rev-parse HEAD)" = "$parent" &&
+	git checkout master &&
+	git branch -D at-parent
+'
+
+test_expect_success 'checkout detached HEAD then back to branch' '
+	cd repo &&
+	git checkout master &&
+	detach_at=$(git rev-parse HEAD) &&
+	git checkout $detach_at 2>/dev/null &&
+	test "$(git rev-parse HEAD)" = "$detach_at" &&
+	git checkout master
+'
+
+test_expect_success 'checkout -b from HEAD is same commit' '
+	cd repo &&
+	git checkout master &&
+	head=$(git rev-parse HEAD) &&
+	git checkout -b same-as-head &&
+	test "$(git rev-parse HEAD)" = "$head" &&
+	git checkout master &&
+	git branch -D same-as-head
+'
+
+test_expect_success 'checkout branch updates symbolic ref' '
+	cd repo &&
+	git checkout master &&
+	git checkout branch-a &&
+	ref=$(git symbolic-ref HEAD) &&
+	test "$ref" = "refs/heads/branch-a" &&
+	git checkout master
+'
+
+test_expect_success 'checkout -b creates ref in refs/heads' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b ref-check-br &&
+	test -f .git/refs/heads/ref-check-br &&
+	git checkout master &&
+	git branch -D ref-check-br
+'
+
+test_expect_success 'checkout nonexistent path fails' '
+	cd repo &&
+	git checkout master &&
+	test_must_fail git checkout HEAD -- no_such_file.txt 2>err
+'
+
+test_expect_success 'checkout updates working tree files' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b wt-update &&
+	echo "wt content" >wt_file.txt &&
+	git add wt_file.txt && git commit -m "add wt_file" 2>/dev/null &&
+	git checkout master &&
+	test_path_is_missing wt_file.txt &&
+	git checkout wt-update &&
+	test -f wt_file.txt &&
+	git checkout master
+'
+
 test_done

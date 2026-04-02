@@ -351,4 +351,59 @@ test_expect_success '--message with newlines in value' '
 	test_cmp expected first
 '
 
+# ---------------------------------------------------------------------------
+# Deepened: various branch name formats
+# ---------------------------------------------------------------------------
+
+test_expect_success 'branch with slashes preserved' '
+	printf "abc123\t\tbranch '"'"'feature/my-thing'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "feature/my-thing" actual
+'
+
+test_expect_success 'branch with dots preserved' '
+	printf "abc123\t\tbranch '"'"'release.1.0'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "release.1.0" actual
+'
+
+test_expect_success 'remote with path components' '
+	printf "abc123\t\tbranch '"'"'main'"'"' of https://example.com/org/repo\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "example.com" actual
+'
+
+test_expect_success 'tag name with dots' '
+	printf "abc123\t\ttag '"'"'v1.2.3'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "v1.2.3" actual
+'
+
+test_expect_success 'multiple branches from same remote' '
+	printf "a1\t\tbranch '"'"'feat1'"'"' of https://r.com\nb2\t\tbranch '"'"'feat2'"'"' of https://r.com\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "feat1" actual &&
+	grep -q "feat2" actual
+'
+
+test_expect_success 'single line input produces single merge msg' '
+	printf "abc123\t\tbranch '"'"'main'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" -ge 1
+'
+
+test_expect_success 'output always starts with Merge' '
+	printf "abc123\t\tbranch '"'"'develop'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	head -1 actual >first_line &&
+	grep -q "^Merge" first_line
+'
+
+test_expect_success 'branch with numeric name' '
+	printf "abc123\t\tbranch '"'"'42'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "42" actual
+'
+
 test_done
