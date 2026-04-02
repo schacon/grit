@@ -98,4 +98,33 @@ test_expect_success 'cherry ignores whitespace' '
     test_cmp expect actual
 '
 
+test_expect_success 'cherry with no upstream argument fails' '
+    test_must_fail git cherry 2>err
+'
+
+test_expect_success 'cherry with identical branches shows all minus' '
+    cd whitespace-test &&
+    git switch upstream-with-space &&
+    git cherry upstream-with-space upstream-with-space >actual &&
+    test_must_be_empty actual
+'
+
+test_expect_success 'cherry shows + for commits not in upstream' '
+    cd whitespace-test &&
+    git cherry upstream-with-space feature-without-space >actual &&
+    grep "^+" actual
+'
+
+test_expect_success 'cherry shows - for cherry-picked equivalent commits' '
+    cd whitespace-test &&
+    git cherry upstream-with-space feature-without-space >actual &&
+    grep "^-" actual
+'
+
+test_expect_success 'cherry output has correct number of lines' '
+    cd whitespace-test &&
+    git cherry upstream-with-space feature-without-space >actual &&
+    test_line_count = 2 actual
+'
+
 test_done
