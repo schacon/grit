@@ -1610,4 +1610,63 @@ test_expect_success '--int normalizes k/m/g suffixes' '
 	test_cmp expect actual
 '
 
+# ── --null / -z delimiter ──────────────────────────────────────────────
+
+test_expect_success '--null --list uses NUL delimiters' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		val1 = one
+		val2 = two
+	EOF
+	printf "section.val1=one\0section.val2=two\0" >expect.raw &&
+	git config -z --list >actual.raw &&
+	test_cmp expect.raw actual.raw
+'
+
+test_expect_success '--null --get-regexp uses NUL delimiters' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		val1 = one
+		val2 = two
+		other = three
+	EOF
+	printf "section.val1 one\0section.val2 two\0" >expect.raw &&
+	git config -z --get-regexp "val" >actual.raw &&
+	test_cmp expect.raw actual.raw
+'
+
+test_expect_success 'inner whitespace kept verbatim, spaces only' '
+	cd repo &&
+	echo "foo   bar" >expect &&
+	git config section.val "foo   bar" &&
+	git config --get section.val >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'section ending: subsection sorts correctly' '
+	cd repo &&
+	rm -f .git/config &&
+	git config gitcvs.enabled true &&
+	git config gitcvs.ext.dbname "%Ggitcvs1.%a.%m.sqlite" &&
+	git config gitcvs.dbname "%Ggitcvs2.%a.%m.sqlite" &&
+	cat >expect <<\EOF &&
+[gitcvs]
+	enabled = true
+	dbname = %Ggitcvs2.%a.%m.sqlite
+[gitcvs "ext"]
+	dbname = %Ggitcvs1.%a.%m.sqlite
+EOF
+	test_cmp expect .git/config
+'
+
+test_expect_success '--int is at least 64 bits' '
+	cd repo &&
+	git config giga.watts 121g &&
+	echo 129922760704 >expect &&
+	git config --int --get giga.watts >actual &&
+	test_cmp expect actual
+'
+
 test_done
