@@ -109,4 +109,67 @@ test_expect_success 'count-objects -v in-pack count matches verify-pack' '
 	test "$in_pack" = "$obj_count"
 '
 
+test_expect_success 'count-objects output format matches expected pattern' '
+	rm -rf repo_fmt &&
+	grit init repo_fmt &&
+	cd repo_fmt &&
+	out=$(git count-objects) &&
+	echo "$out" | grep -E "^[0-9]+ objects, [0-9]+ kilobytes$"
+'
+
+test_expect_success 'count-objects -v prune-packable is zero after prune-packed' '
+	rm -rf repo_pp &&
+	grit init repo_pp &&
+	cd repo_pp &&
+	echo blob | git hash-object -w --stdin >/dev/null &&
+	git repack -a -d &&
+	git prune-packed &&
+	git count-objects -v >out &&
+	grep "^prune-packable: 0$" out
+'
+
+test_expect_success 'count-objects -v size is positive after adding large object' '
+	rm -rf repo_sz &&
+	grit init repo_sz &&
+	cd repo_sz &&
+	dd if=/dev/urandom bs=1024 count=4 2>/dev/null | git hash-object -w --stdin >/dev/null &&
+	git count-objects -v >out &&
+	size=$(grep "^size:" out | sed "s/^size: //") &&
+	test "$size" -gt 0
+'
+
+test_expect_success 'count-objects in-pack increases after repack' '
+	rm -rf repo_inpack &&
+	grit init repo_inpack &&
+	cd repo_inpack &&
+	git config user.email "t@t.com" &&
+	git config user.name "T" &&
+	echo content >f.txt &&
+	git add f.txt &&
+	git commit -m init &&
+	git count-objects -v >before &&
+	inpack_before=$(grep "^in-pack:" before | sed "s/^in-pack: //") &&
+	test "$inpack_before" -eq 0 &&
+	git repack -a -d &&
+	git count-objects -v >after &&
+	inpack_after=$(grep "^in-pack:" after | sed "s/^in-pack: //") &&
+	test "$inpack_after" -gt 0
+'
+
+test_expect_success 'count-objects loose goes to zero after repack -a -d' '
+	rm -rf repo_cozero &&
+	grit init repo_cozero &&
+	cd repo_cozero &&
+	git config user.email "t@t.com" &&
+	git config user.name "T" &&
+	echo content >f.txt &&
+	git add f.txt &&
+	git commit -m init &&
+	loose_before=$(git count-objects | sed "s/ .*//") &&
+	test "$loose_before" -gt 0 &&
+	git repack -a -d &&
+	loose_after=$(git count-objects | sed "s/ .*//") &&
+	test "$loose_after" -eq 0
+'
+
 test_done
