@@ -8,6 +8,8 @@ Run from the repo root:
 import os
 import re
 import html
+import subprocess
+import json
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GIT_TEST_DIR = os.path.join(REPO_ROOT, "git", "t")
@@ -142,6 +144,53 @@ def get_passing_tests():
             if line and not line.startswith("#"):
                 passing.add(line)
     return passing
+
+
+def count_individual_tests():
+    """Run each of our test files and count passing tests. Also count upstream test cases."""
+    grit_bin = None
+    for candidate in [
+        os.path.join(REPO_ROOT, "target", "release", "grit"),
+        os.path.join(REPO_ROOT, "target", "debug", "grit"),
+    ]:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            grit_bin = candidate
+            break
+
+    our_counts = {}  # filename -> pass_count
+    if grit_bin:
+        for f in sorted(os.listdir(OUR_TEST_DIR)):
+            if not (f.startswith("t") and f.endswith(".sh") and f[1:5].isdigit()):
+                continue
+            try:
+                result = subprocess.run(
+                    ["bash", f],
+                    capture_output=True, text=True, timeout=60,
+                    cwd=OUR_TEST_DIR,
+                    env={**os.environ, "GUST_BIN": grit_bin},
+                )
+                output = result.stdout + result.stderr
+                m = re.search(r'Pass:\s*(\d+)', output)
+                if m:
+                    our_counts[f] = int(m.group(1))
+            except Exception:
+                pass
+
+    # Count upstream test cases (test_expect_success/failure lines)
+    upstream_counts = {}
+    for f in os.listdir(GIT_TEST_DIR):
+        if not (f.startswith("t") and f.endswith(".sh") and f[1:5].isdigit()):
+            continue
+        path = os.path.join(GIT_TEST_DIR, f)
+        try:
+            with open(path) as fh:
+                content = fh.read()
+            count = len(re.findall(r'test_expect_(?:success|failure)', content))
+            upstream_counts[f] = count
+        except Exception:
+            pass
+
+    return our_counts, upstream_counts
 
 
 def get_ported_tests():
@@ -284,11 +333,17 @@ def generate_html():
     upstream_commands = parse_command_list()
     implemented_commands = get_implemented_commands()
     commands_html = build_commands_html(upstream_commands, implemented_commands)
+    our_counts, upstream_counts = count_individual_tests()
     
     total = len(all_tests)
     num_passing = len(passing)
     num_ported = len(ported)
     pct = (num_passing / total * 100) if total else 0
+    
+    # Individual test case totals
+    total_our_cases = sum(our_counts.values())
+    total_upstream_cases = sum(upstream_counts.values())
+    case_pct = (total_our_cases / total_upstream_cases * 100) if total_upstream_cases else 0
     
     # Group by command
     by_command = {}
@@ -323,11 +378,23 @@ def generate_html():
         src_link = f'<a href="{SRC_BASE}/{src_path}">{cmd}</a>' if src_path else html.escape(cmd)
         test_link = f'<a href="{SRC_BASE}/git/t/{t}">{html.escape(t)}</a>'
         
+        # Per-file test case counts
+        our_n = our_counts.get(t, 0)
+        up_n = upstream_counts.get(t, 0)
+        if our_n > 0 and up_n > 0:
+            file_pct = min(our_n / up_n * 100, 100)
+            count_str = f'{our_n}/{up_n} <span style="color:#8b949e">({file_pct:.0f}%)</span>'
+        elif up_n > 0:
+            count_str = f'0/{up_n}'
+        else:
+            count_str = ''
+        
         rows.append(f'''      <tr class="{status_class}">
         <td>{status}</td>
         <td>{test_link}</td>
         <td>{src_link}</td>
         <td>{html.escape(desc[:80])}</td>
+        <td>{count_str}</td>
       </tr>''')
 
     # Progress bar segments
@@ -519,12 +586,12 @@ def generate_html():
     <div class="label">Total Upstream Tests</div>
   </div>
   <div class="card green">
-    <div class="number">{pct:.1f}%</div>
-    <div class="label">Compatibility</div>
+    <div class="number">{total_our_cases:,}</div>
+    <div class="label">Individual Tests Passing</div>
   </div>
   <div class="card">
-    <div class="number">{len(by_command)}</div>
-    <div class="label">Command Areas</div>
+    <div class="number">{case_pct:.1f}%</div>
+    <div class="label">Test Case Coverage</div>
   </div>
 </div>
 
@@ -557,6 +624,7 @@ def generate_html():
       <th>Test Script</th>
       <th>Command</th>
       <th>Description</th>
+      <th>Cases</th>
     </tr>
   </thead>
   <tbody>

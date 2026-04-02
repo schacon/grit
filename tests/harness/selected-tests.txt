@@ -82,3 +82,5 @@ t6120-name-rev.sh
 t4204-patch-id.sh
 t1303-wacky-config.sh
 t2060-switch.sh
+t1511-rev-parse-caret.sh
+t7500-commit-template-squash-signoff.sh
