@@ -461,4 +461,44 @@ test_expect_success 'diff --cached --exit-code returns 0 when index matches HEAD
 	git diff --cached --exit-code
 '
 
+# ===========================================================================
+# Part 8: diff --stat/--numstat/--name-only/--name-status between commits
+# ===========================================================================
+
+test_expect_success 'diff --stat between commits' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff --stat "$c1" "$c2" >actual &&
+	test_line_count -gt 0 actual
+'
+
+test_expect_success 'diff --numstat between commits' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff --numstat "$c1" "$c2" >actual &&
+	test_line_count -gt 0 actual
+'
+
+test_expect_success 'diff --name-only between commits' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff --name-only "$c1" "$c2" >actual &&
+	test_line_count -gt 0 actual
+'
+
+test_expect_success 'diff --name-status between commits' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff --name-status "$c1" "$c2" >actual &&
+	test_line_count -gt 0 actual
+'
+
+test_expect_success 'diff --stat between commits shows file names' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff --stat "$c1" "$c2" >actual &&
+	grep "file0" actual &&
+	grep "dir_sub" actual
+'
+
 test_done
