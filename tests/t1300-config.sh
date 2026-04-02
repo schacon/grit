@@ -2343,4 +2343,54 @@ test_expect_success '--unset-all on key with single value works' '
 	test_must_fail git config --get single.ua
 '
 
+# ── --show-origin format details ─────────────────────────────────────────
+
+test_expect_success '--show-origin --list with --file shows file: prefix' '
+	cd repo &&
+	cat >../origin-test.cfg <<-\EOF &&
+	[orig]
+		key = val
+	EOF
+	git config --show-origin --list --file ../origin-test.cfg >actual &&
+	grep "^file:" actual
+'
+
+test_expect_success '--show-origin --show-scope --list combined format' '
+	cd repo &&
+	cat >../combined.cfg <<-\EOF &&
+	[comb]
+		key = val
+	EOF
+	git config --show-origin --show-scope --list --file ../combined.cfg >actual &&
+	test_line_count -gt 0 actual
+'
+
+test_expect_success '-z --list --file NUL separates' '
+	cd repo &&
+	cat >../ztest.cfg <<-\EOF &&
+	[z]
+		one = 1
+		two = 2
+	EOF
+	git config -z --list --file ../ztest.cfg >actual &&
+	printf "z.one=1\0z.two=2\0" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '-z with --get terminates value with NUL' '
+	cd repo &&
+	git config zget.key "zval" &&
+	git config -z --get zget.key >actual &&
+	printf "zval\0" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'section with numbers in name' '
+	cd repo &&
+	git config sec123.key "numval" &&
+	git config --get sec123.key >actual &&
+	echo "numval" >expect &&
+	test_cmp expect actual
+'
+
 test_done
