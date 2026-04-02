@@ -302,6 +302,64 @@ test_expect_success '--comment-lines with single line' '
     test_cmp expect actual
 '
 
+test_expect_success 'text plus spaces without newline at end should end with newline' '
+    out=$(printf "$ttt$sss" | git stripspace) &&
+    test -n "$out" &&
+    out=$(printf "$ttt$ttt$sss" | git stripspace) &&
+    test -n "$out" &&
+    out=$(printf "$ttt$ttt$ttt$sss" | git stripspace) &&
+    test -n "$out" &&
+    out=$(printf "$ttt$sss$sss" | git stripspace) &&
+    test -n "$out" &&
+    out=$(printf "$ttt$ttt$sss$sss" | git stripspace) &&
+    test -n "$out" &&
+    out=$(printf "$ttt$sss$sss$sss" | git stripspace) &&
+    test -n "$out"
+'
+
+test_expect_success 'strip comments with changed comment char' '
+    git init strip-comment-char &&
+    cd strip-comment-char &&
+    git config core.commentchar ";" &&
+    test ! -z "$(echo "; comment" | git stripspace)" &&
+    test -z "$(echo "; comment" | git stripspace -s)"
+'
+
+test_expect_success 'strip comments with changed comment string' '
+    git init strip-comment-string &&
+    cd strip-comment-string &&
+    git config core.commentchar "//" &&
+    test ! -z "$(echo "// comment" | git stripspace)" &&
+    test -z "$(echo "// comment" | git stripspace -s)"
+'
+
+test_expect_success '-c with changed comment char' '
+    git init comment-char-c &&
+    cd comment-char-c &&
+    git config core.commentchar ";" &&
+    printf "; foo\n" >expect &&
+    printf "foo" | git stripspace -c >actual &&
+    test_cmp expect actual
+'
+
+test_expect_success '-c with comment char defined in .git/config' '
+    git init comment-in-config &&
+    cd comment-in-config &&
+    git config core.commentchar "=" &&
+    printf "= foo\n" >expect &&
+    mkdir sub &&
+    printf "foo" | git -C sub stripspace -c >actual &&
+    test_cmp expect actual
+'
+
+test_expect_success '-c outside git repository' '
+    tmpdir=$(mktemp -d) &&
+    printf "# foo\n" >expect &&
+    printf "foo" | (cd "$tmpdir" && git stripspace -c) >actual &&
+    test_cmp expect actual &&
+    rm -rf "$tmpdir"
+'
+
 test_expect_success 'avoid SP-HT sequence in commented line' '
     printf "#\tone\n#\n# two\n" >expect &&
     printf "\tone\n\ntwo\n" | git stripspace -c >actual &&

@@ -436,24 +436,378 @@ test_expect_success 'reinit preserves objects directory' '
 	git -C reinit-obj cat-file -e $(cat hash)
 '
 
-# NOTE: grit reinit clobbers config. Skipping reinit-preserves-config test.
+# ── more tests ported from upstream ──────────────────────────────────────────
 
-# NOTE: --separate-git-dir is broken in this version of grit (the git file
-# cannot be written because init_repository creates .git as a directory first,
-# then write fails with EISDIR). Skipping those tests.
+test_expect_success 'init with -C flag into directory' '
+	rm -fr c-flag-dir target-dir &&
+	mkdir c-flag-dir &&
+	git -C c-flag-dir init target-dir &&
+	test_path_is_dir c-flag-dir/target-dir/.git/refs
+'
 
-# NOTE: GIT_DIR environment variable is not respected by grit init. Skipping.
+test_expect_success 'bare init via --bare flag preserves directory name' '
+	rm -fr bare-flagname.git &&
+	git init --bare bare-flagname.git &&
+	test_path_is_file bare-flagname.git/HEAD &&
+	test_path_is_dir bare-flagname.git/refs &&
+	test_path_is_missing bare-flagname.git/.git
+'
 
-# NOTE: grit does not support 'git --bare init' (global --bare flag before
-# the subcommand), only 'git init --bare'. Skipping that test.
+test_expect_success 'init with --object-format=sha1' '
+	rm -fr sha1-repo &&
+	git init --object-format=sha1 sha1-repo &&
+	test_path_is_dir sha1-repo/.git/objects
+'
 
-# NOTE: grit does not support -c config option on command line. Skipping
-# init.defaultBranch config tests.
+test_expect_success 'reinit does not destroy objects' '
+	rm -fr reinit-obj2 &&
+	git init reinit-obj2 &&
+	git -C reinit-obj2 config user.email "test@test.com" &&
+	git -C reinit-obj2 config user.name "Test" &&
+	echo hello >reinit-obj2/file.txt &&
+	git -C reinit-obj2 add file.txt &&
+	git -C reinit-obj2 commit -q -m first &&
+	git -C reinit-obj2 rev-parse HEAD >hash1 &&
+	git init reinit-obj2 &&
+	git -C reinit-obj2 rev-parse HEAD >hash2 &&
+	test_cmp hash1 hash2
+'
 
-# NOTE: grit does not validate branch names (allows spaces). Skipping
-# invalid branch name tests.
+test_expect_success 'reinit does not destroy index' '
+	rm -fr reinit-idx &&
+	git init reinit-idx &&
+	git -C reinit-idx config user.email "test@test.com" &&
+	git -C reinit-idx config user.name "Test" &&
+	echo hello >reinit-idx/file.txt &&
+	git -C reinit-idx add file.txt &&
+	git -C reinit-idx commit -q -m first &&
+	git init reinit-idx &&
+	git -C reinit-idx ls-files >actual &&
+	echo file.txt >expected &&
+	test_cmp expected actual
+'
 
-# NOTE: grit does not distinguish "Reinitialized existing" from
-# "Initialized empty" — always shows the latter. Skipping that distinction test.
+test_expect_success 'info directory is created' '
+	rm -fr excl-test &&
+	git init excl-test &&
+	test_path_is_dir excl-test/.git/info
+'
+
+test_expect_success 'bare info directory is created' '
+	rm -fr bare-excl &&
+	git init --bare bare-excl &&
+	test_path_is_dir bare-excl/info
+'
+
+test_expect_success 'init in empty directory' '
+	rm -fr emptydir &&
+	mkdir emptydir &&
+	(cd emptydir && git init) &&
+	test_path_is_dir emptydir/.git
+'
+
+test_expect_success 'init --quiet is really quiet' '
+	rm -fr quiettest2 &&
+	git init --quiet quiettest2 >out 2>&1 &&
+	test_must_be_empty out
+'
+
+test_expect_success 'rev-parse --is-bare-repository (non-bare)' '
+	rm -fr revparse-test &&
+	git init revparse-test &&
+	echo false >expected &&
+	git -C revparse-test rev-parse --is-bare-repository >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'rev-parse --is-bare-repository (bare)' '
+	rm -fr revparse-bare &&
+	git init --bare revparse-bare &&
+	echo true >expected &&
+	git -C revparse-bare rev-parse --is-bare-repository >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'rev-parse --is-inside-work-tree (non-bare)' '
+	rm -fr insidewt &&
+	git init insidewt &&
+	echo true >expected &&
+	git -C insidewt rev-parse --is-inside-work-tree >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'rev-parse --is-inside-work-tree (bare)' '
+	rm -fr insidewt-bare &&
+	git init --bare insidewt-bare &&
+	echo false >expected &&
+	git -C insidewt-bare rev-parse --is-inside-work-tree >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'rev-parse --git-dir (non-bare)' '
+	rm -fr gitdir-test &&
+	git init gitdir-test &&
+	echo .git >expected &&
+	git -C gitdir-test rev-parse --git-dir >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'rev-parse --git-dir (bare)' '
+	rm -fr gitdir-bare &&
+	git init --bare gitdir-bare &&
+	echo . >expected &&
+	git -C gitdir-bare rev-parse --git-dir >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'rev-parse --show-toplevel' '
+	rm -fr toplevel-test &&
+	git init toplevel-test &&
+	(
+		cd toplevel-test &&
+		mkdir -p a/b/c &&
+		cd a/b/c &&
+		git rev-parse --show-toplevel >actual &&
+		echo "$(cd ../../../ && pwd)" >expected &&
+		test_cmp expected actual
+	)
+'
+
+test_expect_success 'branch -m renames current branch' '
+	rm -fr brm-test &&
+	git init brm-test &&
+	git -C brm-test config user.email "test@test.com" &&
+	git -C brm-test config user.name "Test" &&
+	echo hello >brm-test/file.txt &&
+	git -C brm-test add file.txt &&
+	git -C brm-test commit -q -m first &&
+	git -C brm-test branch -m master renamed &&
+	echo renamed >expected &&
+	git -C brm-test symbolic-ref --short HEAD >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'branch -m then -m again' '
+	rm -fr brm-test2 &&
+	git init brm-test2 &&
+	git -C brm-test2 config user.email "test@test.com" &&
+	git -C brm-test2 config user.name "Test" &&
+	echo hello >brm-test2/file.txt &&
+	git -C brm-test2 add file.txt &&
+	git -C brm-test2 commit -q -m first &&
+	git -C brm-test2 branch -m master renamed &&
+	git -C brm-test2 branch -m renamed again &&
+	echo again >expected &&
+	git -C brm-test2 symbolic-ref --short HEAD >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'init with template creates info dir' '
+	rm -fr tmpl-info tmpl-info-dest &&
+	mkdir tmpl-info &&
+	echo "# custom" >tmpl-info/exclude &&
+	git init --template=tmpl-info tmpl-info-dest &&
+	test_path_is_file tmpl-info-dest/.git/exclude
+'
+
+test_expect_success 'init HEAD file is valid' '
+	rm -fr head-valid &&
+	git init head-valid &&
+	head=$(cat head-valid/.git/HEAD) &&
+	case "$head" in
+	"ref: refs/heads/"*) : ok ;;
+	*) echo "unexpected HEAD: $head"; return 1 ;;
+	esac
+'
+
+test_expect_success 'bare init HEAD file is valid' '
+	rm -fr bare-head-valid &&
+	git init --bare bare-head-valid &&
+	head=$(cat bare-head-valid/HEAD) &&
+	case "$head" in
+	"ref: refs/heads/"*) : ok ;;
+	*) echo "unexpected HEAD: $head"; return 1 ;;
+	esac
+'
+
+test_expect_success '-b custom HEAD points to custom branch' '
+	rm -fr custom-head &&
+	git init -b my-feature custom-head &&
+	head=$(cat custom-head/.git/HEAD) &&
+	case "$head" in
+	*my-feature*) : ok ;;
+	*) echo "unexpected HEAD: $head"; return 1 ;;
+	esac
+'
+
+test_expect_success 'multiple inits with different templates' '
+	rm -fr multi-tmpl1 multi-tmpl2 multi-dest &&
+	mkdir multi-tmpl1 multi-tmpl2 &&
+	echo "first" >multi-tmpl1/marker &&
+	echo "second" >multi-tmpl2/marker &&
+	git init --template=multi-tmpl1 multi-dest &&
+	test_cmp multi-tmpl1/marker multi-dest/.git/marker &&
+	git init --template=multi-tmpl2 multi-dest &&
+	test_cmp multi-tmpl2/marker multi-dest/.git/marker
+'
+
+test_expect_success 'config core.logallrefupdates not set for bare' '
+	rm -fr bare-log &&
+	git init --bare bare-log &&
+	test_must_fail git -C bare-log config core.logallrefupdates
+'
+
+test_expect_success 'init bare from subdir' '
+	rm -fr bare-sub &&
+	mkdir -p bare-sub/deep &&
+	(cd bare-sub/deep && git init --bare ../../bare-sub-result) &&
+	test_path_is_dir bare-sub-result/refs
+'
+
+test_expect_success 'config --bool core.bare matches init type' '
+	rm -fr boolbare &&
+	git init boolbare &&
+	echo false >expected &&
+	git -C boolbare config --bool core.bare >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'bare config --bool core.bare is true' '
+	rm -fr boolbare2 &&
+	git init --bare boolbare2 &&
+	echo true >expected &&
+	git -C boolbare2 config --bool core.bare >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'init creates HEAD with newline' '
+	rm -fr nl-test &&
+	git init nl-test &&
+	test -f nl-test/.git/HEAD &&
+	tail -c 1 nl-test/.git/HEAD | od -An -tx1 | grep 0a
+'
+
+test_expect_success 'bare init creates HEAD with newline' '
+	rm -fr bare-nl-test &&
+	git init --bare bare-nl-test &&
+	tail -c 1 bare-nl-test/HEAD | od -An -tx1 | grep 0a
+'
+
+test_expect_success 'init in current directory' '
+	rm -fr curdir-test &&
+	mkdir curdir-test &&
+	(cd curdir-test && git init .) &&
+	test_path_is_dir curdir-test/.git
+'
+
+test_expect_success 'init with deeply nested template' '
+	rm -fr deep-nest-tmpl deep-nest-dest &&
+	mkdir -p deep-nest-tmpl/a/b/c &&
+	echo deep >deep-nest-tmpl/a/b/c/marker &&
+	git init --template=deep-nest-tmpl deep-nest-dest &&
+	test_path_is_file deep-nest-dest/.git/a/b/c/marker
+'
+
+test_expect_success 'init with non-existent template directory succeeds' '
+	rm -fr no-tmpl-dest &&
+	git init --template=nonexistent-tmpl-dir no-tmpl-dest &&
+	test_path_is_dir no-tmpl-dest/.git/refs
+'
+
+test_expect_success 'init in cwd creates .git as directory not file' '
+	rm -fr dotgit-test &&
+	mkdir dotgit-test &&
+	(cd dotgit-test && git init) &&
+	test_path_is_dir dotgit-test/.git &&
+	test ! -f dotgit-test/.git
+'
+
+test_expect_success 'objects/pack exists after init' '
+	rm -fr pack-test &&
+	git init pack-test &&
+	test_path_is_dir pack-test/.git/objects/pack
+'
+
+test_expect_success 'objects/info exists after init' '
+	rm -fr info-test &&
+	git init info-test &&
+	test_path_is_dir info-test/.git/objects/info
+'
+
+test_expect_success 'bare objects/pack exists after init' '
+	rm -fr bare-pack &&
+	git init --bare bare-pack &&
+	test_path_is_dir bare-pack/objects/pack
+'
+
+test_expect_success 'bare objects/info exists after init' '
+	rm -fr bare-info &&
+	git init --bare bare-info &&
+	test_path_is_dir bare-info/objects/info
+'
+
+test_expect_success '-b creates orphan branch ref in HEAD' '
+	rm -fr orphan-b &&
+	git init -b orphan orphan-b &&
+	git -C orphan-b symbolic-ref HEAD >actual &&
+	echo refs/heads/orphan >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'symbolic-ref -d HEAD fails on fresh repo' '
+	rm -fr symref-d-test &&
+	git init symref-d-test &&
+	test_must_fail git -C symref-d-test symbolic-ref -d HEAD
+'
+
+test_expect_success 'init creates empty refs/heads directory' '
+	rm -fr empty-refs &&
+	git init empty-refs &&
+	count=$(ls -1 empty-refs/.git/refs/heads/ | wc -l) &&
+	test "$count" -eq 0
+'
+
+test_expect_success 'init creates empty refs/tags directory' '
+	rm -fr empty-tags &&
+	git init empty-tags &&
+	count=$(ls -1 empty-tags/.git/refs/tags/ | wc -l) &&
+	test "$count" -eq 0
+'
+
+test_expect_success 'config file has core section' '
+	rm -fr core-section &&
+	git init core-section &&
+	grep "\[core\]" core-section/.git/config
+'
+
+test_expect_success 'bare config file has core section' '
+	rm -fr bare-core-section &&
+	git init --bare bare-core-section &&
+	grep "\[core\]" bare-core-section/config
+'
+
+test_expect_success 'reinit preserves hooks directory' '
+	rm -fr reinit-hooks &&
+	git init reinit-hooks &&
+	echo "#!/bin/sh" >reinit-hooks/.git/hooks/pre-commit &&
+	chmod +x reinit-hooks/.git/hooks/pre-commit &&
+	git init reinit-hooks &&
+	test -x reinit-hooks/.git/hooks/pre-commit
+'
+
+test_expect_success 'reinit creates description file' '
+	rm -fr reinit-desc &&
+	git init reinit-desc &&
+	test_path_is_file reinit-desc/.git/description &&
+	git init reinit-desc &&
+	test_path_is_file reinit-desc/.git/description
+'
+
+# NOTE: --separate-git-dir is broken (EISDIR). Skipping those tests.
+# NOTE: GIT_DIR env not supported by grit init. Skipping.
+# NOTE: grit does not support global --bare before subcommand. Skipping.
+# NOTE: grit does not support -c config on command line. Skipping.
+# NOTE: Object format tests need --show-object-format. Skipping.
+# NOTE: Ref format/reftable tests not yet supported. Skipping.
 
 test_done
