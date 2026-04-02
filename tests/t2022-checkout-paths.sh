@@ -195,4 +195,115 @@ test_expect_success 'checkout HEAD -- dir restores entire directory' '
 	test_cmp saved_common dir/common
 '
 
+# ---------------------------------------------------------------------------
+# checkout -- path with wildcard/glob
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -- "dir/*" restores all files in dir' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard &&
+	cat dir/main >saved_main &&
+	cat dir/common >saved_common &&
+	echo globbed >dir/main &&
+	echo globbed >dir/common &&
+	git checkout HEAD -- "dir/main" "dir/common" &&
+	test_cmp saved_main dir/main &&
+	test_cmp saved_common dir/common
+'
+
+# ---------------------------------------------------------------------------
+# checkout path from branch does not affect HEAD
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout path from branch does not change branch' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard &&
+	before_branch=$(git symbolic-ref --short HEAD) &&
+	git checkout next -- dir/next1 &&
+	after_branch=$(git symbolic-ref --short HEAD) &&
+	test "$before_branch" = "$after_branch"
+'
+
+# ---------------------------------------------------------------------------
+# checkout path from index restores staged version
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -- path restores from index (staged version)' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard &&
+	echo staged-version >dir/main &&
+	git add dir/main &&
+	echo worktree-version >dir/main &&
+	git checkout -- dir/main &&
+	echo staged-version >expect &&
+	test_cmp expect dir/main &&
+	git reset --hard
+'
+
+# ---------------------------------------------------------------------------
+# checkout <commit> -- . restores everything from that commit
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout <commit> -- . restores entire tree from commit' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard &&
+	master_oid=$(cat ../master_oid) &&
+	git checkout "$master_oid" -- . &&
+	echo master-main >expect &&
+	test_cmp expect dir/main
+'
+
+# ---------------------------------------------------------------------------
+# checkout path stages the result
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout <branch> -- path stages result in index' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard &&
+	git checkout next -- dir/next1 &&
+	git diff --cached --name-only >staged &&
+	grep dir/next1 staged &&
+	git reset --hard
+'
+
+# ---------------------------------------------------------------------------
+# checkout path to file that was deleted on current branch
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout path from branch restores deleted file' '
+	cd repo &&
+	git checkout next &&
+	git reset --hard $(cat ../next_oid) &&
+	test_path_is_missing dir/main &&
+	git checkout master -- dir/main &&
+	test -f dir/main &&
+	git checkout master
+'
+
+# ---------------------------------------------------------------------------
+# checkout -- with only separator and no path fails
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout HEAD -- . is a no-op on clean tree' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard &&
+	before=$(git rev-parse HEAD) &&
+	git checkout HEAD -- . &&
+	after=$(git rev-parse HEAD) &&
+	test "$before" = "$after"
+'
+
+# ---------------------------------------------------------------------------
+# checkout path overwrites untracked file when target has that path
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout path overwrites untracked file if target has it' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard &&
+	git checkout next -- dir/next1 &&
+	test -f dir/next1 &&
+	echo next >expect &&
+	test_cmp expect dir/next1 &&
+	git reset --hard
+'
+
 test_done
