@@ -237,6 +237,54 @@ impl Parser {
     }
 }
 
+/// Check if a value line ends with a continuation backslash.
+///
+/// This checks the value portion (after `=`) for a trailing `\` that is
+/// outside quotes and outside an inline comment. If the `\` is after
+/// a `#` or `;` that starts a comment, it does NOT count as continuation.
+fn value_line_continues(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+        return false;
+    }
+    // Find the value portion (after '=')
+    // If no '=', this is a bare key — no continuation
+    let value_part = match trimmed.find('=') {
+        Some(pos) => &trimmed[pos + 1..],
+        None => return false,
+    };
+    // Walk the value portion tracking quotes and comments
+    let mut in_quote = false;
+    let mut last_was_backslash = false;
+    let mut in_comment = false;
+    for ch in value_part.chars() {
+        if in_comment {
+            // Inside comment, backslash doesn't matter
+            last_was_backslash = false;
+            continue;
+        }
+        match ch {
+            '"' if !last_was_backslash => {
+                in_quote = !in_quote;
+                last_was_backslash = false;
+            }
+            '\\' if !last_was_backslash => {
+                last_was_backslash = true;
+                continue;
+            }
+            '#' | ';' if !in_quote && !last_was_backslash => {
+                in_comment = true;
+                last_was_backslash = false;
+            }
+            _ => {
+                last_was_backslash = false;
+            }
+        }
+    }
+    // The line continues if it ends with an unescaped backslash outside comments
+    last_was_backslash && !in_comment
+}
+
 /// Strip an inline comment (`#` or `;`) that is not inside quotes.
 fn strip_inline_comment(s: &str) -> String {
     let mut in_quote = false;
@@ -342,17 +390,42 @@ impl ConfigFile {
         let mut entries = Vec::new();
         let mut parser = Parser::new();
 
-        for (idx, line) in raw_lines.iter().enumerate() {
+        let mut idx = 0;
+        while idx < raw_lines.len() {
+            let start_idx = idx;
+            let line = &raw_lines[idx];
+            idx += 1;
+
+            // Pure comment lines don't continue even with trailing \
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || trimmed.starts_with(';') {
+                continue;
+            }
+
             if parser.try_parse_section(line) {
                 continue;
             }
-            if let Some((key, value)) = parser.try_parse_entry(line) {
+
+            // For entry lines, we need to check continuation.
+            // Build a logical line by joining continuations.
+            let mut logical_line = line.clone();
+            while value_line_continues(&logical_line) && idx < raw_lines.len() {
+                // Remove the trailing backslash
+                let t = logical_line.trim_end();
+                logical_line = t[..t.len() - 1].to_string();
+                // Append next line (trimmed of leading whitespace)
+                let next = raw_lines[idx].trim_start();
+                logical_line.push_str(next);
+                idx += 1;
+            }
+
+            if let Some((key, value)) = parser.try_parse_entry(&logical_line) {
                 entries.push(ConfigEntry {
                     key,
                     value,
                     scope,
                     file: Some(path.to_path_buf()),
-                    line: idx + 1,
+                    line: start_idx + 1,
                 });
             }
         }
