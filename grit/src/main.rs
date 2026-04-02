@@ -108,6 +108,8 @@ enum Command {
     LsTree(commands::ls_tree::Args),
     /// Stash the changes in a dirty working directory away.
     Stash(commands::stash::Args),
+    /// Initialize, update, or inspect submodules.
+    Submodule(commands::submodule::Args),
     /// Show the working tree status.
     Status(commands::status::Args),
     /// Reapply commits on top of another base tip.
@@ -228,6 +230,8 @@ enum Command {
     Prune(commands::prune::Args),
     /// Fetch from and integrate with another repository.
     Pull(commands::pull::Args),
+    /// Update remote refs along with associated objects.
+    Push(commands::push::Args),
     /// Remove loose objects that are already stored in pack files.
     #[command(name = "prune-packed")]
     PrunePacked(commands::prune_packed::Args),
@@ -285,6 +289,16 @@ enum Command {
     Archive(commands::archive::Args),
     /// Display help information.
     Help(commands::help::Args),
+    /// Extract patch from a single email message.
+    Mailinfo(commands::mailinfo::Args),
+    /// Split mbox into individual messages.
+    Mailsplit(commands::mailsplit::Args),
+    /// Run a merge for files needing merge.
+    #[command(name = "merge-index")]
+    MergeIndex(commands::merge_index::Args),
+    /// Write and verify commit-graph files.
+    #[command(name = "commit-graph")]
+    CommitGraph(commands::commit_graph::Args),
 }
 
 fn main() {
@@ -339,6 +353,7 @@ fn run() -> Result<()> {
         Command::WriteTree(args) => commands::write_tree::run(args),
         Command::LsTree(args) => commands::ls_tree::run(args),
         Command::Stash(args) => commands::stash::run(args),
+        Command::Submodule(args) => commands::submodule::run(args),
         Command::Status(args) => commands::status::run(args),
         Command::Rebase(args) => commands::rebase::run(args),
         Command::ReadTree(args) => commands::read_tree::run(args),
@@ -385,6 +400,7 @@ fn run() -> Result<()> {
         Command::Mktag(args) => commands::mktag::run(args),
         Command::Prune(args) => commands::prune::run(args),
         Command::Pull(args) => commands::pull::run(args),
+        Command::Push(args) => commands::push::run(args),
         Command::PrunePacked(args) => commands::prune_packed::run(args),
         Command::Tag(args) => commands::tag::run(args),
         Command::Restore(args) => commands::restore::run(args),
@@ -409,5 +425,9 @@ fn run() -> Result<()> {
         Command::SparseCheckout(args) => commands::sparse_checkout::run(args),
         Command::Archive(args) => commands::archive::run(args),
         Command::Help(args) => commands::help::run(args),
+        Command::Mailinfo(args) => commands::mailinfo::run(args),
+        Command::Mailsplit(args) => commands::mailsplit::run(args),
+        Command::MergeIndex(args) => commands::merge_index::run(args),
+        Command::CommitGraph(args) => commands::commit_graph::run(args),
     }
 }
