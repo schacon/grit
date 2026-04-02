@@ -250,6 +250,9 @@ enum Command {
     UnpackObjects(commands::unpack_objects::Args),
     /// Manage multiple working trees.
     Worktree(commands::worktree::Args),
+    /// Manage sparse checkout patterns.
+    #[command(name = "sparse-checkout")]
+    SparseCheckout(commands::sparse_checkout::Args),
 }
 
 fn main() {
@@ -360,5 +363,6 @@ fn run() -> Result<()> {
         Command::UnpackFile(args) => commands::unpack_file::run(args),
         Command::UnpackObjects(args) => commands::unpack_objects::run(args),
         Command::Worktree(args) => commands::worktree::run(args),
+        Command::SparseCheckout(args) => commands::sparse_checkout::run(args),
     }
 }
