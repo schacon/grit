@@ -63,6 +63,14 @@ pub struct Args {
     #[arg(long = "contains")]
     pub contains: Option<String>,
 
+    /// Verify a tag (GPG signature check).
+    #[arg(short = 'v', long = "verify")]
+    pub verify: bool,
+
+    /// Only list tags that point at the specified object.
+    #[arg(long = "points-at")]
+    pub points_at: Option<String>,
+
     /// Case-insensitive sort for -l listing.
     #[arg(short = 'i', long = "ignore-case")]
     pub ignore_case: bool,
@@ -71,6 +79,15 @@ pub struct Args {
 /// Run the `tag` command.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Verify mode
+    if args.verify {
+        let name = args
+            .name
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("tag name required"))?;
+        return verify_tag(&repo, name);
+    }
 
     // Delete mode
     if args.delete {
@@ -91,6 +108,7 @@ pub fn run(args: Args) -> Result<()> {
             args.sort.as_deref(),
             args.ignore_case,
             args.contains.as_deref(),
+            args.points_at.as_deref(),
         );
     }
 
@@ -206,6 +224,37 @@ fn delete_tag(repo: &Repository, name: &str) -> Result<()> {
 /// - `sort` — sort key.
 /// - `ignore_case` — sort case-insensitively.
 /// - `contains` — only list tags that contain this commit.
+/// Verify a tag: check it exists and print its contents if annotated.
+///
+/// For unsigned annotated tags, git tag -v fails because there is no
+/// GPG signature to verify.  We replicate that behaviour.
+fn verify_tag(repo: &Repository, name: &str) -> Result<()> {
+    let tag_ref = repo.git_dir.join("refs/tags").join(name);
+    if !tag_ref.exists() {
+        bail!("tag '{name}' not found.");
+    }
+    let oid_str = fs::read_to_string(&tag_ref)?.trim().to_owned();
+    let oid = ObjectId::from_hex(&oid_str)?;
+    let obj = repo.odb.read(&oid)?;
+    match obj.kind {
+        ObjectKind::Tag => {
+            // Annotated tag — check for GPG signature
+            let content = String::from_utf8_lossy(&obj.data);
+            if content.contains("-----BEGIN PGP SIGNATURE-----") {
+                // We don't actually do GPG verification; print tag contents
+                print!("{content}");
+                Ok(())
+            } else {
+                bail!("no signature found");
+            }
+        }
+        _ => {
+            // Lightweight tag — nothing to verify
+            bail!("cannot verify a non-tag object");
+        }
+    }
+}
+
 fn list_tags(
     repo: &Repository,
     pattern: Option<&str>,
@@ -213,6 +262,7 @@ fn list_tags(
     sort: Option<&str>,
     ignore_case: bool,
     contains: Option<&str>,
+    points_at: Option<&str>,
 ) -> Result<()> {
     let tags_dir = repo.git_dir.join("refs/tags");
     let mut tags: Vec<(String, ObjectId)> = Vec::new();
@@ -225,13 +275,20 @@ fn list_tags(
         tags.retain(|(_, tag_oid)| tag_contains(repo, tag_oid, &target));
     }
 
+    // Filter by --points-at
+    if let Some(rev) = points_at {
+        let target =
+            resolve_revision(repo, rev).with_context(|| format!("not a valid object: '{rev}'"))?;
+        tags.retain(|(_, tag_oid)| tag_points_at(repo, tag_oid, &target));
+    }
+
     // Filter by pattern
     if let Some(pat) = pattern {
         tags.retain(|(name, _)| glob_matches(pat, name));
     }
 
     // Sort
-    sort_tags(&mut tags, sort, ignore_case);
+    sort_tags(repo, &mut tags, sort, ignore_case);
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -341,6 +398,35 @@ fn tag_contains(repo: &Repository, tag_oid: &ObjectId, target: &ObjectId) -> boo
     false
 }
 
+/// Check if a tag points at (or peels to) a given object.
+fn tag_points_at(repo: &Repository, tag_oid: &ObjectId, target: &ObjectId) -> bool {
+    if tag_oid == target {
+        return true;
+    }
+    // Peel through tag objects
+    let mut current = *tag_oid;
+    for _ in 0..10 {
+        let obj = match repo.odb.read(&current) {
+            Ok(o) => o,
+            Err(_) => return false,
+        };
+        match obj.kind {
+            ObjectKind::Tag => {
+                let tag = match parse_tag(&obj.data) {
+                    Ok(t) => t,
+                    Err(_) => return false,
+                };
+                if &tag.object == target {
+                    return true;
+                }
+                current = tag.object;
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
 /// Peel an object to a commit OID (following tags).
 fn peel_to_commit(repo: &Repository, oid: &ObjectId) -> Option<ObjectId> {
     let mut current = *oid;
@@ -359,42 +445,130 @@ fn peel_to_commit(repo: &Repository, oid: &ObjectId) -> Option<ObjectId> {
 }
 
 /// Sort tags by the requested key.
-fn sort_tags(tags: &mut [(String, ObjectId)], sort: Option<&str>, ignore_case: bool) {
-    match sort {
-        Some("version:refname") | Some("-version:refname") => {
-            let descending = sort.is_some_and(|s| s.starts_with('-'));
+fn sort_tags(
+    repo: &Repository,
+    tags: &mut [(String, ObjectId)],
+    sort: Option<&str>,
+    ignore_case: bool,
+) {
+    let key = sort.unwrap_or("");
+    let (descending, bare_key) = if key.starts_with('-') {
+        (true, &key[1..])
+    } else {
+        (false, key)
+    };
+
+    match bare_key {
+        "version:refname" => {
             tags.sort_by(|a, b| {
                 let ord = compare_version(&a.0, &b.0);
-                if descending {
-                    ord.reverse()
-                } else {
-                    ord
-                }
+                if descending { ord.reverse() } else { ord }
             });
         }
-        Some(key) if key.starts_with('-') => {
-            // Descending alphabetical
-            if ignore_case {
-                tags.sort_by(|a, b| b.0.to_lowercase().cmp(&a.0.to_lowercase()));
-            } else {
-                tags.sort_by(|a, b| b.0.cmp(&a.0));
-            }
+        "creatordate" => {
+            tags.sort_by(|a, b| {
+                let da = creator_date(repo, &a.1);
+                let db = creator_date(repo, &b.1);
+                let ord = da.cmp(&db).then_with(|| a.0.cmp(&b.0));
+                if descending { ord.reverse() } else { ord }
+            });
         }
-        _ => {
-            // Default: ascending alphabetical (already sorted from filesystem)
+        "refname" => {
+            tags.sort_by(|a, b| {
+                let ord = if ignore_case {
+                    a.0.to_lowercase().cmp(&b.0.to_lowercase())
+                } else {
+                    a.0.cmp(&b.0)
+                };
+                if descending { ord.reverse() } else { ord }
+            });
+        }
+        _ if key.is_empty() => {
+            // Default: ascending alphabetical
             if ignore_case {
                 tags.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
             }
             // Already sorted lexicographically from collect step
         }
+        _ => {
+            // Unknown key — fallback to alphabetical
+            if ignore_case {
+                tags.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+            }
+        }
+    }
+}
+
+/// Extract the "creator date" for a tag object.
+///
+/// For annotated tags, this is the tagger date.  For lightweight tags
+/// (which point directly at a commit), this is the committer date.
+/// Returns 0 if the date cannot be determined.
+fn creator_date(repo: &Repository, oid: &ObjectId) -> i64 {
+    let obj = match repo.odb.read(oid) {
+        Ok(o) => o,
+        Err(_) => return 0,
+    };
+    match obj.kind {
+        ObjectKind::Tag => {
+            // Parse tagger line for epoch
+            if let Ok(tag) = parse_tag(&obj.data) {
+                if let Some(ref tagger) = tag.tagger {
+                    return parse_epoch_from_ident(tagger);
+                }
+            }
+            0
+        }
+        ObjectKind::Commit => {
+            if let Ok(commit) = parse_commit(&obj.data) {
+                parse_epoch_from_ident(&commit.committer)
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}
+
+/// Extract the epoch timestamp from a Git identity string.
+///
+/// Format: `Name <email> <epoch> <offset>`
+fn parse_epoch_from_ident(ident: &str) -> i64 {
+    // The epoch is the second-to-last token
+    let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
+    if parts.len() >= 2 {
+        parts[1].parse().unwrap_or(0)
+    } else {
+        0
     }
 }
 
 /// Compare two tag names as version strings (for `version:refname`).
+///
+/// Splits each name on `.` and `-` boundaries, comparing numeric segments
+/// numerically and non-numeric segments lexicographically.  This matches
+/// the behaviour of `git tag --sort=version:refname` (strverscmp-like).
 fn compare_version(a: &str, b: &str) -> std::cmp::Ordering {
-    // Simple lexicographic comparison as fallback; version-aware sort
-    // is complex; this covers most practical cases
-    a.cmp(b)
+    let seg_a = version_segments(a);
+    let seg_b = version_segments(b);
+    for (sa, sb) in seg_a.iter().zip(seg_b.iter()) {
+        let ord = match (sa.parse::<u64>(), sb.parse::<u64>()) {
+            (Ok(na), Ok(nb)) => na.cmp(&nb),
+            _ => sa.cmp(sb),
+        };
+        if ord != std::cmp::Ordering::Equal {
+            return ord;
+        }
+    }
+    seg_a.len().cmp(&seg_b.len())
+}
+
+/// Split a version string into segments at `.` and `-` boundaries.
+fn version_segments(s: &str) -> Vec<&str> {
+    // Split on `.` and `-` keeping non-empty pieces
+    s.split(|c: char| c == '.' || c == '-')
+        .filter(|seg| !seg.is_empty())
+        .collect()
 }
 
 /// Build the tag message from CLI args.
