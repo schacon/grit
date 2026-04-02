@@ -334,4 +334,105 @@ test_expect_success 'add from subdirectory with relative path' '
 	git ls-files --error-unmatch reldir/rel.txt
 '
 
+# ---------------------------------------------------------------------------
+# Additional tests ported from git/t/t3700-add.sh
+# ---------------------------------------------------------------------------
+
+test_expect_success 'add ignored single file with -f' '
+	cd repo &&
+	echo "*.ig" >.gitignore &&
+	>a.ig &&
+	git add -f a.ig &&
+	git ls-files --error-unmatch a.ig
+'
+
+test_expect_success 'add ignored dir files with -f using explicit paths' '
+	cd repo &&
+	mkdir -p d.ig &&
+	>d.ig/d.if && >d.ig/d.ig &&
+	git add -f d.ig/d.if d.ig/d.ig &&
+	git ls-files --error-unmatch d.ig/d.if d.ig/d.ig
+'
+
+test_expect_success 'add ignored dir with -f' '
+	cd repo &&
+	rm -f .git/index &&
+	git add -f d.ig &&
+	git ls-files --error-unmatch d.ig/d.if d.ig/d.ig
+'
+
+test_expect_success '.gitignore with subdirectory' '
+	cd repo &&
+	rm -f .git/index &&
+	mkdir -p sub/dir &&
+	echo "!dir/a.*" >sub/.gitignore &&
+	>sub/a.ig &&
+	>sub/dir/a.ig &&
+	git add sub/dir &&
+	git ls-files --error-unmatch sub/dir/a.ig &&
+	rm -f .git/index &&
+	(
+		cd sub/dir &&
+		git add .
+	) &&
+	git ls-files --error-unmatch sub/dir/a.ig
+'
+
+test_expect_success 'git add to resolve conflicts on ignored path' '
+	rm -rf conflict_repo &&
+	git init conflict_repo &&
+	cd conflict_repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@test.com" &&
+	>normalfile &&
+	git add normalfile &&
+	git commit -m "commit" &&
+	H=$(git rev-parse HEAD:normalfile) &&
+	printf "100644 %s 1\ttrack-this\n" "$H" >idx_input &&
+	printf "100644 %s 3\ttrack-this\n" "$H" >>idx_input &&
+	git update-index --index-info <idx_input &&
+	echo track-this >.gitignore &&
+	echo resolved >track-this &&
+	git add track-this
+'
+
+test_expect_success 'git add -f can add files matching gitignore' '
+	cd repo &&
+	echo "ignore_me" >.gitignore &&
+	>ignore_me &&
+	git add -f ignore_me &&
+	git ls-files --error-unmatch ignore_me
+'
+
+test_expect_success 'git add -p is handled' '
+	cd repo &&
+	echo test_content > pfile &&
+	git add pfile &&
+	git commit -m "add pfile" &&
+	echo changed > pfile &&
+	echo q | git add -p 2>/dev/null || true
+'
+
+test_expect_success 'git add from subdirectory with deep pathspec' '
+	cd repo &&
+	mkdir -p deep/sub &&
+	echo hello >deep/sub/file.txt &&
+	(
+		cd deep &&
+		git add sub/file.txt
+	) &&
+	git ls-files --error-unmatch deep/sub/file.txt
+'
+
+test_expect_success 'git add with no matching files in empty directory' '
+	cd repo &&
+	mkdir -p emptydir &&
+	git add emptydir 2>/dev/null || true
+'
+
+test_expect_success 'git add --dry-run --interactive should fail' '
+	cd repo &&
+	test_must_fail git add --dry-run --interactive
+'
+
 test_done

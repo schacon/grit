@@ -517,4 +517,201 @@ test_expect_success 'moving whole subdirectory into subdirectory' '
 	grep "path1/path0/README" actual
 '
 
+# ---------------------------------------------------------------------------
+# Additional tests ported from git/t/t7001-mv.sh
+# ---------------------------------------------------------------------------
+
+test_expect_success 'git mv round trip does not change sha1' '
+	rm -fr rtrepo &&
+	git init rtrepo &&
+	cd rtrepo &&
+	echo 1 >dirty &&
+	git add dirty &&
+	entry="$(git ls-files --stage dirty | awk "{print \$2}")" &&
+	git mv dirty dirty2 &&
+	test "$entry" = "$(git ls-files --stage dirty2 | awk "{print \$2}")" &&
+	echo 2 >dirty2 &&
+	git mv dirty2 dirty &&
+	test "$entry" = "$(git ls-files --stage dirty | awk "{print \$2}")"
+'
+
+test_expect_success 'setup multi-file subdir move' '
+	rm -rf repo_mf &&
+	git init repo_mf &&
+	cd repo_mf &&
+	git config user.email "test@example.com" &&
+	git config user.name "Test User" &&
+	mkdir path0 path1 &&
+	echo content >path0/COPYING &&
+	git add path0/COPYING &&
+	git commit -m "add COPYING" &&
+	echo readme >path0/README &&
+	git add path0/README &&
+	git commit -m add2 -a
+'
+
+test_expect_success 'moving whole subdirectory (multi-file)' '
+	cd repo_mf &&
+	git mv path0 path2 &&
+	git ls-files >actual &&
+	grep "path2/COPYING" actual &&
+	grep "path2/README" actual &&
+	! grep "path0/" actual
+'
+
+test_expect_success 'moving whole subdirectory into subdirectory (nested multi-file)' '
+	cd repo_mf &&
+	git mv path2 path1 &&
+	git ls-files >actual &&
+	grep "path1/path2/COPYING" actual &&
+	grep "path1/path2/README" actual
+'
+
+test_expect_success 'move into current directory (.)' '
+	cd repo_mf &&
+	git mv path1/path2/ . &&
+	git ls-files >actual &&
+	grep "path2/COPYING" actual
+'
+
+test_expect_success 'setup for -k tests (upstream pattern)' '
+	cd repo_mf &&
+	git commit -m "temp commit" -a &&
+	git reset --hard HEAD~1
+'
+
+test_expect_success 'mv -k on non-existing file (upstream)' '
+	cd repo_mf &&
+	git mv -k idontexist path0
+'
+
+test_expect_success 'mv -k on untracked file (upstream)' '
+	cd repo_mf &&
+	>untracked1 &&
+	git mv -k untracked1 path0 &&
+	test_path_is_file untracked1 &&
+	test_path_is_missing path0/untracked1
+'
+
+test_expect_success 'checking -k on multiple untracked files (upstream)' '
+	cd repo_mf &&
+	>untracked2 &&
+	git mv -k untracked1 untracked2 path0 &&
+	test_path_is_file untracked1 &&
+	test_path_is_file untracked2 &&
+	test_path_is_missing path0/untracked1 &&
+	test_path_is_missing path0/untracked2
+'
+
+test_expect_success 'checking -f on untracked file with existing target (upstream)' '
+	cd repo_mf &&
+	>path0/untracked1 &&
+	test_must_fail git mv -f untracked1 path0 &&
+	test_path_is_file untracked1 &&
+	test_path_is_file path0/untracked1
+'
+
+test_expect_success 'mv -f overwrites and updates index' '
+	rm -rf repo_mvf &&
+	git init repo_mvf &&
+	cd repo_mvf &&
+	git config user.email "test@example.com" &&
+	git config user.name "Test User" &&
+	echo test >bar &&
+	git add bar &&
+	git commit -m test &&
+	echo foo >foo &&
+	git add foo &&
+	git mv -f foo bar &&
+	test_path_is_missing foo &&
+	test_path_is_file bar &&
+	test "$(cat bar)" = "foo"
+'
+
+test_expect_success 'mv fails on nonexistent source' '
+	cd repo_mvf &&
+	test_must_fail git mv nonexistent destination 2>err &&
+	grep -i "not under version control\|does not exist" err
+'
+
+test_expect_success 'mv fails when tracked destination exists' '
+	cd repo_mvf &&
+	echo a >src_t &&
+	echo b >dst_t &&
+	git add src_t dst_t &&
+	git commit -m "add src_t dst_t" &&
+	test_must_fail git mv src_t dst_t &&
+	test_path_is_file src_t &&
+	test_path_is_file dst_t
+'
+
+test_expect_success 'mv directory into itself should fail' '
+	cd repo_mvf &&
+	test_must_fail git mv path0 path0 2>err
+'
+
+test_expect_success 'mv preserves file content' '
+	cd repo_mvf &&
+	echo "specific content" >content_file &&
+	git add content_file &&
+	git mv content_file content_moved &&
+	test "$(cat content_moved)" = "specific content"
+'
+
+test_expect_success 'mv -k skips invalid and moves valid' '
+	cd repo_mvf &&
+	echo valid >valid_file &&
+	git add valid_file &&
+	mkdir -p target_dir &&
+	git mv -k nonexist valid_file target_dir &&
+	test_path_is_file target_dir/valid_file &&
+	test_path_is_missing valid_file
+'
+
+test_expect_success 'mv file to same name should fail' '
+	cd repo_mvf &&
+	echo same >same_file &&
+	git add same_file &&
+	test_must_fail git mv same_file same_file 2>err
+'
+
+test_expect_success 'mv updates index correctly' '
+	cd repo_mvf &&
+	echo idx_content >idx_file &&
+	git add idx_file &&
+	git mv idx_file idx_moved &&
+	git ls-files >actual &&
+	grep "idx_moved" actual &&
+	! grep "idx_file" actual
+'
+
+test_expect_success 'mv directory preserves all index entries' '
+	cd repo_mvf &&
+	mkdir -p srcdir &&
+	echo a >srcdir/a &&
+	echo b >srcdir/b &&
+	echo c >srcdir/c &&
+	git add srcdir &&
+	git mv srcdir destdir &&
+	git ls-files >actual &&
+	grep "destdir/a" actual &&
+	grep "destdir/b" actual &&
+	grep "destdir/c" actual &&
+	! grep "srcdir/" actual
+'
+
+test_expect_success 'mv -n on directory does not move' '
+	cd repo_mvf &&
+	git mv -n destdir nowhere &&
+	test_path_is_dir destdir &&
+	test_path_is_missing nowhere &&
+	git ls-files >actual &&
+	grep "destdir/" actual
+'
+
+test_expect_success 'mv on empty string should fail' '
+	cd repo_mvf &&
+	test_must_fail git mv "" newname 2>err
+'
+
 test_done
