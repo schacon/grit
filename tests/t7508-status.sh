@@ -1844,4 +1844,127 @@ test_expect_success 'status shows staged and unstaged changes together' '
 	rm -f status_both.txt
 '
 
+test_expect_success 'status -s shows A for newly staged file' '
+	cd stat-clean &&
+	echo newstaged >newstaged.txt &&
+	git add newstaged.txt &&
+	grit status -s >../actual &&
+	grep "A.*newstaged.txt" ../actual &&
+	git reset HEAD newstaged.txt 2>/dev/null &&
+	rm -f newstaged.txt
+'
+
+test_expect_success 'status -s shows D for deleted tracked file' '
+	cd stat-clean &&
+	echo deltrack >deltrack.txt &&
+	git add deltrack.txt && git commit -m "add deltrack" 2>/dev/null &&
+	rm -f deltrack.txt &&
+	grit status -s >../actual &&
+	grep "D.*deltrack.txt" ../actual &&
+	git checkout -- deltrack.txt 2>/dev/null
+'
+
+test_expect_success 'status -s shows M for modified tracked file' '
+	cd stat-clean &&
+	echo modtrack >modtrack.txt &&
+	git add modtrack.txt && git commit -m "add modtrack" 2>/dev/null &&
+	echo modified >modtrack.txt &&
+	grit status -s >../actual &&
+	grep "M.*modtrack.txt" ../actual &&
+	git checkout -- modtrack.txt 2>/dev/null
+'
+
+test_expect_success 'status with clean working tree shows nothing in short' '
+	cd stat-clean &&
+	git reset --hard HEAD 2>/dev/null &&
+	grit status -s >../actual &&
+	test_must_be_empty ../actual
+'
+
+test_expect_success 'status in subdirectory works' '
+	cd stat-clean &&
+	mkdir -p subdir &&
+	echo subfile >subdir/subfile.txt &&
+	grit status -s >../actual &&
+	grep "subdir" ../actual &&
+	rm -rf subdir
+'
+
+test_expect_success 'status --porcelain is machine parseable' '
+	cd stat-clean &&
+	echo porcelain >porc.txt &&
+	grit status --porcelain >../actual &&
+	grep "?? porc.txt" ../actual &&
+	rm -f porc.txt
+'
+
+test_expect_success 'status shows renamed file after git mv' '
+	cd stat-clean &&
+	echo rensrc >rensrc.txt &&
+	git add rensrc.txt && git commit -m "add rensrc" 2>/dev/null &&
+	git mv rensrc.txt rendst.txt &&
+	grit status -s >../actual &&
+	grep "rendst.txt" ../actual &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'status with multiple untracked files' '
+	cd stat-clean &&
+	echo u1 >untrack1.txt && echo u2 >untrack2.txt &&
+	grit status -s >../actual &&
+	grep "untrack1.txt" ../actual &&
+	grep "untrack2.txt" ../actual &&
+	rm -f untrack1.txt untrack2.txt
+'
+
+test_expect_success 'status shows .gitignore as untracked' '
+	cd stat-clean &&
+	echo "*.log" >.gitignore &&
+	grit status -s >../actual &&
+	grep ".gitignore" ../actual &&
+	rm -f .gitignore
+'
+
+test_expect_success 'status long format includes On branch' '
+	cd stat-clean &&
+	grit status >../actual &&
+	grep -i "on branch\|branch" ../actual
+'
+
+test_expect_success 'status -s empty file shows as untracked' '
+	cd stat-clean &&
+	>empty_status.txt &&
+	grit status -s >../actual &&
+	grep "?? empty_status.txt" ../actual &&
+	rm -f empty_status.txt
+'
+
+test_expect_success 'status after commit shows clean' '
+	cd stat-clean &&
+	git reset --hard HEAD 2>/dev/null &&
+	echo committed_v2 >committed_v2.txt &&
+	git add committed_v2.txt && git commit -m "committed_v2" 2>/dev/null &&
+	grit status -s >../actual &&
+	test_must_be_empty ../actual
+'
+
+test_expect_success 'status shows staged deletion' '
+	cd stat-clean &&
+	echo stgdel >stgdel.txt &&
+	git add stgdel.txt && git commit -m "add stgdel" 2>/dev/null &&
+	git rm stgdel.txt 2>/dev/null &&
+	grit status -s >../actual &&
+	grep "D.*stgdel.txt" ../actual &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'status with file in nested directory' '
+	cd stat-clean &&
+	mkdir -p deep/nested/dir &&
+	echo deep >deep/nested/dir/file.txt &&
+	grit status -s >../actual &&
+	grep "deep" ../actual &&
+	rm -rf deep
+'
+
 test_done
