@@ -446,26 +446,15 @@ a.cmd-cell {{
   <h2>Overall Test Progress</h2>
   <div class="progress-bar-bg">
     <div style="display:flex;width:100%;height:100%;">
-      <div class="progress-bar-fill green" style="width:{100*upstream_passing/total_upstream:.1f}%;justify-content:center;">
-        {upstream_passing:,}
-      </div>
-      <div class="progress-bar-fill yellow" style="width:{100*upstream_partial/total_upstream:.1f}%;justify-content:center;font-size:0.8rem;">
-        {upstream_partial:,}
+      <div class="progress-bar-fill green" style="width:{raw_pct}%;justify-content:center;">
+        {ported_pass:,} passing
       </div>
     </div>
   </div>
   <div class="progress-labels">
-    <span style="color:#3fb950;">{upstream_passing:,} in fully-passing files</span>
-    <span style="color:#d29922;">{upstream_partial:,} in partial files</span>
-    <span>{upstream_not_ported:,} not yet ported</span>
+    <span style="color:#3fb950;">{ported_pass:,} / {total_upstream:,} upstream tests passing ({raw_pct}%)</span>
+    <span>{ported_files} test files ported · {fully_passing_files} fully passing</span>
   </div>
-</div>
-
-<div class="stat-row">
-  <div class="stat"><strong>{ported_files}</strong> test files ported</div>
-  <div class="stat"><strong>{ported_tests:,}</strong> ported test cases</div>
-  <div class="stat"><strong>{ported_pass:,} / {ported_tests:,}</strong> passing ({ported_pass_rate}%)</div>
-  <div class="stat"><strong>{fully_passing_files}</strong> files fully passing</div>
 </div>
 
 <div class="grid-section">
