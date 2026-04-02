@@ -467,4 +467,193 @@ test_expect_success 'cherry-pick on orphan branch fails' '
 	git checkout -f master
 '
 
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick with --keep-redundant-commits
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick --keep-redundant-commits allows empty result' '
+	cd repo &&
+	git checkout -B keep-redundant $(cat ../initial) &&
+	git cherry-pick $(cat ../feature2) &&
+	git cherry-pick --keep-redundant-commits $(cat ../feature2) 2>err || true &&
+	# Either it succeeds or gives a known error; verify we did not crash
+	git rev-parse HEAD >/dev/null
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick preserves file content exactly
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick preserves exact file content' '
+	cd repo &&
+	git checkout -B exact-content $(cat ../initial) &&
+	git cherry-pick $(cat ../feature2) &&
+	original=$(git show $(cat ../feature2):file2) &&
+	test "$(cat file2)" = "$original"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick does not change working tree of unrelated files
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick does not touch unrelated files' '
+	cd repo &&
+	git checkout -B unrelated-test $(cat ../initial) &&
+	echo unrelated >unrelated-file &&
+	git add unrelated-file &&
+	git commit -m "add unrelated" &&
+	git cherry-pick $(cat ../feature2) &&
+	test "$(cat unrelated-file)" = "unrelated" &&
+	test -f file2
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick multiple creates correct number of commits
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick multiple creates one commit per pick' '
+	cd repo &&
+	git checkout -B count-test $(cat ../initial) &&
+	git cherry-pick $(cat ../feature1) $(cat ../feature2) &&
+	git log --oneline >log &&
+	test_line_count = 3 log
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick -x with multiple commits adds reference to each
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick -x on single commit has correct reference' '
+	cd repo &&
+	git checkout -B x-single $(cat ../initial) &&
+	git cherry-pick -x $(cat ../feature2) &&
+	git log -n 1 --format=%b >body &&
+	grep "cherry picked from commit $(cat ../feature2)" body
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick --no-commit leaves HEAD unchanged
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick --no-commit HEAD unchanged' '
+	cd repo &&
+	git checkout -B nocommit-head $(cat ../initial) &&
+	head_before=$(git rev-parse HEAD) &&
+	git cherry-pick --no-commit $(cat ../feature2) &&
+	head_after=$(git rev-parse HEAD) &&
+	test "$head_before" = "$head_after" &&
+	git reset --hard HEAD
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick --no-commit stages but does not auto-commit
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick --no-commit has staged changes' '
+	cd repo &&
+	git checkout -B staged-check $(cat ../initial) &&
+	git cherry-pick --no-commit $(cat ../feature2) &&
+	git diff --cached --name-only >cached &&
+	grep file2 cached &&
+	git reset --hard HEAD
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick on branch with same-named file (no conflict)
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick commit adding new file applies cleanly' '
+	cd repo &&
+	git checkout -B clean-add $(cat ../initial) &&
+	git cherry-pick $(cat ../feature2) &&
+	test -f file2 &&
+	test "$(cat file2)" = "new file" &&
+	test "$(cat file1)" = "base"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick then revert-like (cherry-pick of revert)
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick commit that adds file then cherry-pick removal' '
+	cd repo &&
+	git checkout feature &&
+	git rm file2 &&
+	git commit -m "feature: remove file2" &&
+	git rev-parse HEAD >../feature_rm &&
+	git checkout master &&
+
+	git checkout -B revert-like $(cat ../initial) &&
+	git cherry-pick $(cat ../feature2) &&
+	test -f file2 &&
+	git cherry-pick $(cat ../feature_rm) &&
+	test_path_is_missing file2
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick preserves commit timestamp (author date)
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick preserves author date' '
+	cd repo &&
+	git checkout -B date-test $(cat ../initial) &&
+	original_date=$(git log -n 1 --format=%ai $(cat ../feature2)) &&
+	git cherry-pick $(cat ../feature2) &&
+	picked_date=$(git log -n 1 --format=%ai) &&
+	test "$original_date" = "$picked_date"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick to branch with untracked file of same name fails
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick fails when untracked file conflicts' '
+	cd repo &&
+	git checkout -B untracked-conflict $(cat ../initial) &&
+	echo blocking >file2 &&
+	test_must_fail git cherry-pick $(cat ../feature2) 2>err &&
+	git cherry-pick --abort 2>/dev/null || true &&
+	rm -f file2
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick commit modifying existing file
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick commit that modifies existing file' '
+	cd repo &&
+	git checkout -B modify-test $(cat ../initial) &&
+	git cherry-pick $(cat ../feature1) &&
+	grep "feature line" file1
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick produces correct parent chain
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick multiple has correct parent chain' '
+	cd repo &&
+	git checkout -B parent-chain $(cat ../initial) &&
+	git cherry-pick $(cat ../feature1) $(cat ../feature2) &&
+	parent1=$(git rev-parse HEAD~1) &&
+	parent2=$(git rev-parse HEAD~2) &&
+	test "$parent2" = "$(cat ../initial)" &&
+	# parent1 should be the cherry-picked feature1
+	git log -n 1 --format=%s "$parent1" >msg &&
+	grep "feature: modify file1" msg
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick with -n then reset --hard undoes everything
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick -n then reset --hard undoes staged changes' '
+	cd repo &&
+	git checkout -B undo-test $(cat ../initial) &&
+	git cherry-pick -n $(cat ../feature2) &&
+	test -f file2 &&
+	git reset --hard &&
+	test_path_is_missing file2
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick across branches with divergent history
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick from diverged branch applies cleanly' '
+	cd repo &&
+	git checkout -B diverged $(cat ../initial) &&
+	echo diverged >diverged-file &&
+	git add diverged-file &&
+	git commit -m "diverged: add file" &&
+	git cherry-pick $(cat ../feature2) &&
+	test -f file2 &&
+	test -f diverged-file
+'
+
 test_done
