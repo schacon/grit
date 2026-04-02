@@ -185,6 +185,10 @@ fn do_fast_forward(
     new_index.sort();
 
     if let Some(ref wt) = repo.work_tree {
+        // Remove files that existed in old HEAD but not in new
+        let old_tree = commit_tree(repo, head_oid)?;
+        let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
+        remove_deleted_files(wt, &old_entries, &new_index)?;
         checkout_entries(repo, wt, &new_index)?;
     }
     new_index.write(&repo.index_path())?;
