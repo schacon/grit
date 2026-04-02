@@ -3203,4 +3203,118 @@ test_expect_success 'config subsection with dots' '
 	test "$result" = "origin"
 '
 
+# ---------------------------------------------------------------------------
+# Deepening tests (w32-deepen)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'config set and get with url-like value' '
+	cd repo &&
+	git config deepen-url.key "https://example.com/repo.git" &&
+	result=$(git config --get deepen-url.key) &&
+	test "$result" = "https://example.com/repo.git"
+'
+
+test_expect_success 'config set preserves earlier section entries' '
+	cd repo &&
+	git config deepen-keep.first "aaa" &&
+	git config deepen-keep.second "bbb" &&
+	result=$(git config --get deepen-keep.first) &&
+	test "$result" = "aaa"
+'
+
+test_expect_success 'config --unset removes a key' '
+	cd repo &&
+	git config deepen.removetest "toremove" &&
+	git config --unset deepen.removetest &&
+	test_must_fail git config --get deepen.removetest 2>/dev/null
+'
+
+test_expect_success 'config set preserves other keys in same section' '
+	cd repo &&
+	git config deepen-sect.key1 "alpha" &&
+	git config deepen-sect.key2 "beta" &&
+	result1=$(git config --get deepen-sect.key1) &&
+	result2=$(git config --get deepen-sect.key2) &&
+	test "$result1" = "alpha" &&
+	test "$result2" = "beta"
+'
+
+test_expect_success 'config --get on nonexistent key fails' '
+	cd repo &&
+	test_must_fail git config --get noexist.key 2>/dev/null
+'
+
+test_expect_success 'config --list shows newly added key' '
+	cd repo &&
+	git config deepen-list.check "visible" &&
+	git config list >output &&
+	grep "deepen-list.check=visible" output
+'
+
+test_expect_success 'config overwrite changes value' '
+	cd repo &&
+	git config deepen-ow.key "first" &&
+	git config deepen-ow.key "second" &&
+	result=$(git config --get deepen-ow.key) &&
+	test "$result" = "second"
+'
+
+test_expect_success 'config value with spaces round-trips' '
+	cd repo &&
+	git config deepen-sp.key "hello world foo" &&
+	result=$(git config --get deepen-sp.key) &&
+	test "$result" = "hello world foo"
+'
+
+test_expect_success 'config value with equals sign round-trips' '
+	cd repo &&
+	git config deepen-eq.key "a=b=c" &&
+	result=$(git config --get deepen-eq.key) &&
+	test "$result" = "a=b=c"
+'
+
+test_expect_success 'config bool true values are recognized' '
+	cd repo &&
+	git config deepen-bool.flag "true" &&
+	result=$(git config --get deepen-bool.flag) &&
+	test "$result" = "true"
+'
+
+test_expect_success 'config bool false values are recognized' '
+	cd repo &&
+	git config deepen-bool.off "false" &&
+	result=$(git config --get deepen-bool.off) &&
+	test "$result" = "false"
+'
+
+test_expect_success 'config with numeric value round-trips' '
+	cd repo &&
+	git config deepen-num.val "42" &&
+	result=$(git config --get deepen-num.val) &&
+	test "$result" = "42"
+'
+
+test_expect_success 'config subsection with hyphen' '
+	cd repo &&
+	git config "remote.my-remote.url" "https://example.com" &&
+	result=$(git config --get "remote.my-remote.url") &&
+	test "$result" = "https://example.com"
+'
+
+test_expect_success 'config set and get in same session multiple times' '
+	cd repo &&
+	git config deepen-multi.a "1" &&
+	git config deepen-multi.b "2" &&
+	git config deepen-multi.c "3" &&
+	test "$(git config --get deepen-multi.a)" = "1" &&
+	test "$(git config --get deepen-multi.b)" = "2" &&
+	test "$(git config --get deepen-multi.c)" = "3"
+'
+
+test_expect_success 'config --list output lines match key=value format' '
+	cd repo &&
+	git config list >output &&
+	! grep -v "=" output
+'
+
 test_done
