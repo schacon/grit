@@ -555,6 +555,8 @@ fn cleanup_merge_state(git_dir: &Path) {
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
     let _ = fs::remove_file(git_dir.join("MERGE_MODE"));
     let _ = fs::remove_file(git_dir.join("SQUASH_MSG"));
+    let _ = fs::remove_file(git_dir.join("CHERRY_PICK_HEAD"));
+    let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
 }
 
 /// Ensure a string ends with a newline.
