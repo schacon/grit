@@ -166,6 +166,9 @@ fn do_am(args: Args) -> Result<()> {
     let head = resolve_head(git_dir)?;
     let head_oid = head.oid().map(|o| o.to_hex()).unwrap_or_default();
     fs::write(state_dir.join("orig-head"), &head_oid)?;
+    // Save the raw HEAD content so abort can restore branch state
+    let head_content = fs::read_to_string(git_dir.join("HEAD")).unwrap_or_default();
+    fs::write(state_dir.join("head-name"), head_content.trim())?;
     fs::write(state_dir.join("last"), all_patches.len().to_string())?;
     fs::write(state_dir.join("next"), "1")?;
 
@@ -222,6 +225,8 @@ fn do_am_stdin(args: Args) -> Result<()> {
     let head = resolve_head(git_dir)?;
     let head_oid = head.oid().map(|o| o.to_hex()).unwrap_or_default();
     fs::write(state_dir.join("orig-head"), &head_oid)?;
+    let head_content = fs::read_to_string(git_dir.join("HEAD")).unwrap_or_default();
+    fs::write(state_dir.join("head-name"), head_content.trim())?;
     fs::write(state_dir.join("last"), all_patches.len().to_string())?;
     fs::write(state_dir.join("next"), "1")?;
 
@@ -283,7 +288,7 @@ fn apply_remaining(repo: &Repository, opts: &AmOptions) -> Result<()> {
 }
 
 /// Apply a single mbox patch: apply the diff, then create a commit.
-fn apply_one_patch(repo: &Repository, patch: &MboxPatch) -> Result<()> {
+fn apply_one_patch(repo: &Repository, patch: &MboxPatch, _three_way: bool) -> Result<()> {
     let git_dir = &repo.git_dir;
     let work_tree = repo
         .work_tree
@@ -521,7 +526,54 @@ fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch) -> Resu
 
 // ── --continue ──────────────────────────────────────────────────────
 
-fn do_continue() -> Result<()> {
+fn do_skip() -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+
+    if !is_am_in_progress(git_dir) {
+        bail!("error: no am session in progress");
+    }
+
+    let state_dir = am_dir(git_dir);
+    let next: usize = fs::read_to_string(state_dir.join("next"))?.trim().parse()?;
+    let last: usize = fs::read_to_string(state_dir.join("last"))?.trim().parse()?;
+
+    if next > last {
+        // Nothing left to skip — just cleanup
+        cleanup_am_state(git_dir);
+        return Ok(());
+    }
+
+    // Reset working tree to HEAD state (undo partial apply)
+    let head = resolve_head(git_dir)?;
+    if let Some(head_oid) = head.oid() {
+        let obj = repo.odb.read(head_oid)?;
+        let commit = parse_commit(&obj.data)?;
+        let entries = tree_to_index_entries(&repo, &commit.tree, "")?;
+        let mut index = Index::new();
+        index.entries = entries;
+        index.sort();
+        index.write(&repo.index_path())?;
+
+        if let Some(wt) = &repo.work_tree {
+            checkout_index_to_worktree(&repo, wt, &index)?;
+        }
+    }
+
+    // Advance past the skipped patch
+    fs::write(state_dir.join("next"), (next + 1).to_string())?;
+    let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+
+    let opts = AmOptions {
+        quiet: false,
+        three_way: false,
+    };
+    apply_remaining(&repo, &opts)?;
+
+    Ok(())
+}
+
+fn do_continue(quiet: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
@@ -560,7 +612,9 @@ fn do_continue() -> Result<()> {
     create_am_commit(&repo, &index, &patched)?;
 
     let subject = patched.message.lines().next().unwrap_or("");
-    eprintln!("Applying: {}", subject);
+    if !quiet {
+        eprintln!("Applying: {}", subject);
+    }
 
     // Advance next
     let next: usize = fs::read_to_string(state_dir.join("next"))?.trim().parse()?;
@@ -568,7 +622,11 @@ fn do_continue() -> Result<()> {
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
 
     // Continue with remaining
-    apply_remaining(&repo)?;
+    let opts = AmOptions {
+        quiet,
+        three_way: false,
+    };
+    apply_remaining(&repo, &opts)?;
 
     Ok(())
 }
@@ -603,8 +661,23 @@ fn do_abort() -> Result<()> {
             checkout_index_to_worktree(&repo, wt, &index)?;
         }
 
-        // Restore HEAD
-        fs::write(git_dir.join("HEAD"), format!("{}\n", orig_oid.to_hex()))?;
+        // Restore HEAD — use saved head-name to restore branch state
+        let head_name = fs::read_to_string(state_dir.join("head-name"))
+            .unwrap_or_default();
+        let head_name = head_name.trim();
+        if head_name.starts_with("ref: ") {
+            // Was on a branch — restore the ref
+            let refname = &head_name["ref: ".len()..];
+            fs::write(git_dir.join("HEAD"), format!("{}\n", head_name))?;
+            let ref_path = git_dir.join(refname);
+            if let Some(parent) = ref_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&ref_path, format!("{}\n", orig_oid.to_hex()))?;
+        } else {
+            // Was detached
+            fs::write(git_dir.join("HEAD"), format!("{}\n", orig_oid.to_hex()))?;
+        }
     }
 
     cleanup_am_state(git_dir);
