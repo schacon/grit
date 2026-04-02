@@ -3,6 +3,8 @@
 //! Each submodule corresponds to one plumbing subcommand.
 
 pub mod add;
+pub mod annotate;
+pub mod blame;
 pub mod apply;
 pub mod branch;
 pub mod cat_file;
@@ -35,6 +37,7 @@ pub mod log;
 pub mod ls_files;
 pub mod ls_remote;
 pub mod ls_tree;
+pub mod merge;
 pub mod merge_base;
 pub mod merge_file;
 pub mod mktag;
@@ -53,6 +56,7 @@ pub mod repack;
 pub mod replace;
 pub mod reset;
 pub mod restore;
+pub mod revert;
 pub mod rev_list;
 pub mod rev_parse;
 pub mod rm;

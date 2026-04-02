@@ -35,6 +35,10 @@ struct Cli {
 enum Command {
     /// Add file contents to the index.
     Add(commands::add::Args),
+    /// Show what revision and author last modified each line of a file.
+    Annotate(commands::annotate::Args),
+    /// Show what revision and author last modified each line of a file.
+    Blame(commands::blame::Args),
     /// Apply a patch to files and/or to the index.
     Apply(commands::apply::Args),
     /// List, create, or delete branches.
@@ -121,6 +125,8 @@ enum Command {
     /// Output information on refs.
     #[command(name = "for-each-ref")]
     ForEachRef(commands::for_each_ref::Args),
+    /// Join two or more development histories together.
+    Merge(commands::merge::Args),
     /// Find best common ancestors.
     #[command(name = "merge-base")]
     MergeBase(commands::merge_base::Args),
@@ -185,6 +191,8 @@ enum Command {
     Tag(commands::tag::Args),
     /// Restore working tree files.
     Restore(commands::restore::Args),
+    /// Revert some existing commits.
+    Revert(commands::revert::Args),
     /// Summarize git log output.
     Shortlog(commands::shortlog::Args),
     /// Show various types of objects (commits, trees, blobs, tags).
@@ -245,6 +253,8 @@ fn run() -> Result<()> {
 
     match cli.command {
         Command::Add(args) => commands::add::run(args),
+        Command::Annotate(args) => commands::annotate::run(args),
+        Command::Blame(args) => commands::blame::run(args),
         Command::Apply(args) => commands::apply::run(args),
         Command::Branch(args) => commands::branch::run(args),
         Command::Cherry(args) => commands::cherry::run(args),
@@ -278,6 +288,7 @@ fn run() -> Result<()> {
         Command::DiffTree(args) => commands::diff_tree::run(args),
         Command::DiffIndex(args) => commands::diff_index::run(args),
         Command::ForEachRef(args) => commands::for_each_ref::run(args),
+        Command::Merge(args) => commands::merge::run(args),
         Command::MergeBase(args) => commands::merge_base::run(args),
         Command::NameRev(args) => commands::name_rev::run(args),
         Command::Notes(args) => commands::notes::run(args),
@@ -303,6 +314,7 @@ fn run() -> Result<()> {
         Command::PrunePacked(args) => commands::prune_packed::run(args),
         Command::Tag(args) => commands::tag::run(args),
         Command::Restore(args) => commands::restore::run(args),
+        Command::Revert(args) => commands::revert::run(args),
         Command::Shortlog(args) => commands::shortlog::run(args),
         Command::Show(args) => commands::show::run(args),
         Command::ShowBranch(args) => commands::show_branch::run(args),
