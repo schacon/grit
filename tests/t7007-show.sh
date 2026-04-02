@@ -292,4 +292,41 @@ test_expect_success 'show --format=%ad shows author date' '
 	grep "2001" first
 '
 
+# ---- Batch: more show format and object tests ----
+
+test_expect_success 'show --format=%cd shows committer date' '
+	cd repo &&
+	git show --format="format:%cd" >actual &&
+	head -1 actual >first &&
+	grep "2001" first
+'
+
+test_expect_success 'show --format with multiple placeholders' '
+	cd repo &&
+	git show --format="format:%h %s" >actual &&
+	head -1 actual >first &&
+	HASH=$(git rev-parse --short HEAD) &&
+	echo "$HASH second commit" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show -U0 produces diff with zero context' '
+	cd repo &&
+	git show -U0 HEAD >actual &&
+	grep "^diff --git" actual &&
+	grep "^+second" actual
+'
+
+test_expect_success 'show tree by HEAD^{tree} syntax' '
+	cd repo &&
+	git show HEAD^{tree} >actual &&
+	grep "file.txt" actual
+'
+
+test_expect_success 'show annotated tag with --oneline is concise' '
+	cd repo &&
+	git show --oneline v1.0 >actual &&
+	grep "v1.0" actual
+'
+
 test_done
