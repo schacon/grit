@@ -1025,4 +1025,91 @@ test_expect_success 'rm -r then verify index is clean' '
 	grep "cleandir/f3" actual
 '
 
+# === rm with leading directory name ===
+
+test_expect_success 'rm -r with leading directory removes all contents' '
+	cd repo &&
+	mkdir -p leaddir/sub &&
+	echo a >leaddir/file1 &&
+	echo b >leaddir/sub/file2 &&
+	git add leaddir &&
+	git commit -m "add leaddir" &&
+	grit rm -r leaddir &&
+	test_must_fail git ls-files --error-unmatch leaddir/file1 &&
+	test_must_fail git ls-files --error-unmatch leaddir/sub/file2 &&
+	test_path_is_missing leaddir
+'
+
+test_expect_success 'rm -r with leading directory removes worktree files' '
+	cd repo &&
+	mkdir -p rmwt/nested &&
+	echo x >rmwt/a &&
+	echo y >rmwt/nested/b &&
+	git add rmwt &&
+	git commit -m "add rmwt" &&
+	grit rm -r rmwt &&
+	! test -f rmwt/a &&
+	! test -f rmwt/nested/b
+'
+
+test_expect_success 'rm without -r on directory fails' '
+	cd repo &&
+	mkdir -p norflag &&
+	echo z >norflag/z &&
+	git add norflag &&
+	git commit -m "add norflag" &&
+	test_must_fail grit rm norflag
+'
+
+# === rm --dry-run preserves files and index ===
+
+test_expect_success 'rm --dry-run does not remove worktree file' '
+	cd repo &&
+	echo drykeep >drykeep &&
+	git add drykeep &&
+	git commit -m "add drykeep" &&
+	grit rm --dry-run drykeep &&
+	test_path_is_file drykeep &&
+	git ls-files --error-unmatch drykeep
+'
+
+test_expect_success 'rm --dry-run does not update the index' '
+	cd repo &&
+	echo dryidx >dryidx &&
+	git add dryidx &&
+	git commit -m "add dryidx" &&
+	grit rm -n dryidx &&
+	git ls-files --error-unmatch dryidx &&
+	git diff --cached --name-only >actual &&
+	! grep dryidx actual
+'
+
+# === rm with intent-to-add entry ===
+
+test_expect_success 'rm of intent-to-add entry removes it from index' '
+	cd repo &&
+	echo ita >ita_rm &&
+	grit add -N ita_rm &&
+	git ls-files ita_rm >before &&
+	test -s before &&
+	grit rm --cached ita_rm &&
+	test_must_fail git ls-files --error-unmatch ita_rm
+'
+
+test_expect_success 'rm -r --dry-run on directory with multiple levels shows all' '
+	cd repo &&
+	mkdir -p drytree/a/b &&
+	echo 1 >drytree/x &&
+	echo 2 >drytree/a/y &&
+	echo 3 >drytree/a/b/z &&
+	git add drytree &&
+	git commit -m "add drytree" &&
+	grit rm -r --dry-run drytree >output &&
+	grep "drytree/x" output &&
+	grep "drytree/a/y" output &&
+	grep "drytree/a/b/z" output &&
+	test_path_is_file drytree/x &&
+	git ls-files --error-unmatch drytree/x
+'
+
 test_done
