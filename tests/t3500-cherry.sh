@@ -127,4 +127,31 @@ test_expect_success 'cherry output has correct number of lines' '
     test_line_count = 2 actual
 '
 
+test_expect_success 'cherry output lines start with + or -' '
+    cd whitespace-test &&
+    git cherry upstream-with-space feature-without-space >actual &&
+    ! grep -v "^[+-]" actual
+'
+
+test_expect_success 'cherry with limit restricts output' '
+    git cherry main my-topic-branch my-topic-branch~1 >actual &&
+    test_line_count = 1 actual
+'
+
+test_expect_success 'cherry with nonexistent branch fails' '
+    test_must_fail git cherry main nonexistent-branch 2>err
+'
+
+test_expect_success 'cherry between same commit is empty' '
+    git cherry main main >actual &&
+    test_must_be_empty actual
+'
+
+test_expect_success 'cherry each output line contains a commit hash' '
+    git cherry main my-topic-branch >actual &&
+    while read sign hash; do
+        echo "$hash" | grep "^[0-9a-f]\{7,\}$" || return 1
+    done <actual
+'
+
 test_done

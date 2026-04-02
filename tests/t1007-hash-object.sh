@@ -219,4 +219,38 @@ test_expect_success 'hash-object -t blob is accepted (explicit type)' '
 	test_cmp expect actual
 '
 
+test_expect_success 'hash-object with empty file' '
+	>empty-file &&
+	grit hash-object empty-file >actual &&
+	echo "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'hash-object with --stdin on empty input' '
+	grit hash-object --stdin </dev/null >actual &&
+	echo "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'hash-object on two files gives two hashes' '
+	echo_without_newline "Hello World" >h1 &&
+	echo_without_newline "This is an example" >h2 &&
+	grit hash-object h1 h2 >actual &&
+	{
+		echo "$hello_oid" &&
+		echo "$example_oid"
+	} >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'hash-object on nonexistent file fails' '
+	test_must_fail grit hash-object does-not-exist 2>err &&
+	test -s err
+'
+
+test_expect_success 'hash-object with no arguments produces no output' '
+	grit hash-object >out 2>&1 &&
+	test_must_be_empty out
+'
+
 test_done

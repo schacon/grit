@@ -394,4 +394,25 @@ test_expect_success '-c with multiple lines adds comment prefix to each' '
     test_cmp expect actual
 '
 
+test_expect_success 'stripspace collapses multiple internal blank lines into one' '
+    printf "a\n\n\n\nb\n" >input &&
+    printf "a\n\nb\n" >expect &&
+    git stripspace <input >actual &&
+    test_cmp expect actual
+'
+
+test_expect_success 'stripspace removes trailing whitespace from lines' '
+    printf "hello   \nworld\t\n" >input &&
+    printf "hello\nworld\n" >expect &&
+    git stripspace <input >actual &&
+    test_cmp expect actual
+'
+
+test_expect_success 'stripspace removes leading and trailing blank lines' '
+    printf "\n\nhello\n\n\n" >input &&
+    printf "hello\n" >expect &&
+    git stripspace <input >actual &&
+    test_cmp expect actual
+'
+
 test_done

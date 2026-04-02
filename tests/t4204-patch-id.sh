@@ -319,4 +319,16 @@ test_expect_success 'patch-id on empty diff produces no output' '
 	test_must_be_empty empty.out
 '
 
+test_expect_success 'patch-id with binary diff still produces output' '
+	cat >binary.diff <<-\EOF &&
+	commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+	diff --git a/bin b/bin
+	new file mode 100644
+	index 0000000..1234567
+	Binary files /dev/null and b/bin differ
+	EOF
+	git patch-id <binary.diff >binary.out &&
+	grep "^$OID_REGEX $OID_REGEX$" binary.out
+'
+
 test_done

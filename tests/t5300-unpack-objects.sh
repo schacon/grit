@@ -166,4 +166,43 @@ test_expect_success 'unpack-objects: commit message survives round-trip' '
 	grep "initial commit" out
 '
 
+test_expect_success 'unpack-objects: --strict -q together works' '
+	grit init strictq.git --bare &&
+	grit -C strictq.git unpack-objects --strict -q <test.pack 2>err &&
+	test_must_be_empty err
+'
+
+test_expect_success 'unpack-objects: corrupted checksum is rejected' '
+	cp test.pack corrupt-cksum.pack &&
+	# flip last byte (part of the trailing SHA-1 checksum)
+	len=$(wc -c <corrupt-cksum.pack | tr -d " ") &&
+	printf "\xff" | dd of=corrupt-cksum.pack bs=1 seek=$((len - 1)) conv=notrunc 2>/dev/null &&
+	grit init corrupt-ck.git --bare &&
+	test_must_fail grit -C corrupt-ck.git unpack-objects <corrupt-cksum.pack
+'
+
+test_expect_success 'unpack-objects: loose objects have correct type after unpack' '
+	grit init typecheck.git --bare &&
+	grit -C typecheck.git unpack-objects <test.pack &&
+	COMMIT=$("$REAL_GIT" -C src.git rev-parse HEAD) &&
+	TREE=$("$REAL_GIT" -C src.git rev-parse HEAD^{tree}) &&
+	test "$(grit -C typecheck.git cat-file -t $COMMIT)" = "commit" &&
+	test "$(grit -C typecheck.git cat-file -t $TREE)" = "tree"
+'
+
+test_expect_success 'unpack-objects: -n --strict together accepted' '
+	grit init ns.git --bare &&
+	grit -C ns.git unpack-objects -n --strict <test.pack &&
+	COUNT=$(find ns.git/objects -type f | grep -v pack | wc -l | tr -d " ") &&
+	test "$COUNT" = "0"
+'
+
+test_expect_success 'unpack-objects: pack with multiple objects all land' '
+	grit init multi.git --bare &&
+	grit -C multi.git unpack-objects <test.pack &&
+	OBJ_COUNT=$("$REAL_GIT" -C src.git rev-list --objects HEAD | wc -l | tr -d " ") &&
+	LOOSE_COUNT=$(find multi.git/objects -type f | grep -v pack | wc -l | tr -d " ") &&
+	test "$LOOSE_COUNT" -ge "$OBJ_COUNT"
+'
+
 test_done
