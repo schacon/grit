@@ -27,6 +27,7 @@ pub mod diff_files;
 pub mod diff_index;
 pub mod diff_tree;
 pub mod fmt_merge_msg;
+pub mod format_patch;
 pub mod for_each_ref;
 pub mod fsck;
 pub mod gc;

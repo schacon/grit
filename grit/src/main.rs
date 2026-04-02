@@ -174,6 +174,9 @@ enum Command {
     /// Produce a merge commit message.
     #[command(name = "fmt-merge-msg")]
     FmtMergeMsg(commands::fmt_merge_msg::Args),
+    /// Prepare patches for e-mail submission.
+    #[command(name = "format-patch")]
+    FormatPatch(commands::format_patch::Args),
     /// Verify connectivity and validity of objects in the database.
     Fsck(commands::fsck::Args),
     /// Cleanup unnecessary files and optimize the repository.
@@ -313,6 +316,7 @@ fn run() -> Result<()> {
         Command::Version(args) => commands::version::run(args),
         Command::Whatchanged(args) => commands::whatchanged::run(args),
         Command::FmtMergeMsg(args) => commands::fmt_merge_msg::run(args),
+        Command::FormatPatch(args) => commands::format_patch::run(args),
         Command::Fsck(args) => commands::fsck::run(args),
         Command::Gc(args) => commands::gc::run(args),
         Command::Grep(args) => commands::grep::run(args),
