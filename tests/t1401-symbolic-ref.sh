@@ -143,4 +143,54 @@ test_expect_success 'symbolic-ref --short handles remote HEAD' '
 	test_cmp expect actual
 '
 
+test_expect_success 'we can parse long symbolic ref via rev-parse' '
+	cd repo &&
+	long=0123456789abcdef &&
+	long=$long/$long/$long/$long &&
+	long=$long/$long/$long/$long &&
+	long_ref=refs/heads/$long &&
+	oid=$(git rev-parse refs/heads/main) &&
+	git update-ref $long_ref "$oid" &&
+	git symbolic-ref HEAD $long_ref &&
+	git rev-parse --verify HEAD >actual &&
+	echo "$oid" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'symbolic-ref does not create ref d/f conflicts' '
+	cd repo &&
+	git symbolic-ref HEAD refs/heads/main &&
+	oid=$(git rev-parse refs/heads/main) &&
+	git update-ref refs/heads/dftest "$oid" &&
+	test_must_fail git symbolic-ref refs/heads/dftest/conflict refs/heads/main
+'
+
+test_expect_success 'symbolic-ref can overwrite pointer to invalid name' '
+	cd repo &&
+	git symbolic-ref HEAD refs/heads/main &&
+	git symbolic-ref HEAD refs/heads/overwrite_outer &&
+	oid=$(git rev-parse refs/heads/main) &&
+	git update-ref refs/heads/overwrite_outer/inner "$oid" &&
+	git symbolic-ref HEAD refs/heads/unrelated
+'
+
+test_expect_success 'symbolic-ref can resolve d/f name (ENOTDIR)' '
+	cd repo &&
+	oid=$(git rev-parse refs/heads/main) &&
+	git symbolic-ref HEAD refs/heads/enotdir_outer &&
+	git update-ref refs/heads/enotdir_outer/inner "$oid" &&
+	echo refs/heads/enotdir_outer >expect &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'symbolic-ref --short handles complex utf8 case' '
+	cd repo &&
+	name="测试-加-增加-加-增加" &&
+	git symbolic-ref TEST_SYMREF "refs/heads/$name" &&
+	git symbolic-ref --short TEST_SYMREF >actual &&
+	echo "$name" >expect &&
+	test_cmp expect actual
+'
+
 test_done
