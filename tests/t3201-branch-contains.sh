@@ -1,0 +1,182 @@
+#!/bin/sh
+# Tests for 'grit branch --contains' and '--no-contains'.
+# Ported from git/t/t3201-branch-contains.sh
+#
+# NOTE: grit accepts --contains/--no-contains/--merged/--no-merged flags
+# but filtering is not yet fully implemented (all branches are returned).
+# Tests that verify correct filtering use test_expect_failure.
+
+test_description='grit branch --contains / --no-contains'
+
+cd "$(dirname "$0")" || exit 1
+. ./test-lib.sh
+
+test_expect_success 'setup: linear history with branches' '
+	git init repo &&
+	cd repo &&
+	git config user.name "Test" &&
+	git config user.email "t@t.com" &&
+	echo base >file &&
+	git add file &&
+	git commit -m "initial" &&
+	git tag initial &&
+	echo second >file &&
+	git add file &&
+	git commit -m "second" &&
+	git tag second &&
+	echo third >file &&
+	git add file &&
+	git commit -m "third" &&
+	git tag third &&
+	git branch at-initial initial &&
+	git branch at-second second &&
+	git branch at-third third
+'
+
+test_expect_success 'branch --contains runs without error' '
+	cd repo &&
+	git branch --contains initial >actual
+'
+
+test_expect_success 'branch --contains initial lists master' '
+	cd repo &&
+	git branch --contains initial >actual &&
+	grep "master" actual
+'
+
+test_expect_failure 'branch --contains second excludes at-initial' '
+	cd repo &&
+	git branch --contains second >actual &&
+	! grep "at-initial" actual &&
+	grep "at-second" actual &&
+	grep "at-third" actual &&
+	grep "master" actual
+'
+
+test_expect_failure 'branch --contains third excludes earlier branches' '
+	cd repo &&
+	git branch --contains third >actual &&
+	! grep "at-initial" actual &&
+	! grep "at-second" actual &&
+	grep "at-third" actual &&
+	grep "master" actual
+'
+
+test_expect_success 'branch --contains HEAD runs without error' '
+	cd repo &&
+	git branch --contains HEAD >actual &&
+	grep "master" actual
+'
+
+test_expect_success 'branch --no-contains runs without error' '
+	cd repo &&
+	git branch --no-contains third >actual
+'
+
+test_expect_failure 'branch --no-contains initial returns empty' '
+	cd repo &&
+	git branch --no-contains initial >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_failure 'branch --no-contains third lists earlier branches only' '
+	cd repo &&
+	git branch --no-contains third >actual &&
+	grep "at-initial" actual &&
+	grep "at-second" actual &&
+	! grep "at-third" actual &&
+	! grep "master" actual
+'
+
+test_expect_success 'setup: forked topology' '
+	cd repo &&
+	git checkout -b fork-a second &&
+	echo fork-a >fork &&
+	git add fork &&
+	git commit -m "fork-a" &&
+	git checkout master &&
+	git checkout -b fork-b second &&
+	echo fork-b >fork &&
+	git add fork &&
+	git commit -m "fork-b"
+'
+
+test_expect_success 'branch --contains second includes both forks' '
+	cd repo &&
+	git branch --contains second >actual &&
+	grep "fork-a" actual &&
+	grep "fork-b" actual
+'
+
+test_expect_failure 'branch --contains fork-a excludes fork-b' '
+	cd repo &&
+	git branch --contains fork-a >actual &&
+	grep "fork-a" actual &&
+	! grep "fork-b" actual
+'
+
+test_expect_success 'branch --merged runs without error' '
+	cd repo &&
+	git checkout master &&
+	git branch --merged master >actual &&
+	grep "master" actual
+'
+
+test_expect_failure 'branch --merged master excludes unmerged forks' '
+	cd repo &&
+	git branch --merged master >actual &&
+	grep "at-initial" actual &&
+	grep "at-second" actual &&
+	grep "at-third" actual &&
+	! grep "fork-a" actual &&
+	! grep "fork-b" actual
+'
+
+test_expect_success 'branch --no-merged runs without error' '
+	cd repo &&
+	git branch --no-merged master >actual
+'
+
+test_expect_failure 'branch --no-merged master lists only forks' '
+	cd repo &&
+	git branch --no-merged master >actual &&
+	grep "fork-a" actual &&
+	grep "fork-b" actual &&
+	! grep "at-initial" actual &&
+	! grep "at-second" actual
+'
+
+test_expect_failure 'branch --merged second excludes later branches' '
+	cd repo &&
+	git branch --merged second >actual &&
+	grep "at-initial" actual &&
+	grep "at-second" actual &&
+	! grep "at-third" actual
+'
+
+test_expect_success 'branch --contains with tag name works' '
+	cd repo &&
+	git branch --contains initial >actual &&
+	grep "master" actual
+'
+
+test_expect_success 'branch --contains with full SHA works' '
+	cd repo &&
+	SHA=$(git rev-parse initial) &&
+	git branch --contains "$SHA" >actual &&
+	grep "master" actual
+'
+
+test_expect_success 'branch --contains with short SHA works' '
+	cd repo &&
+	SHA=$(git rev-parse --short initial) &&
+	git branch --contains "$SHA" >actual &&
+	grep "master" actual
+'
+
+test_expect_failure 'branch --contains invalid ref fails' '
+	cd repo &&
+	test_must_fail git branch --contains does-not-exist
+'
+
+test_done
