@@ -771,4 +771,283 @@ test_expect_success 'diff --exit-code returns 1 between different commits' '
 	test -s output
 '
 
+# ---------------------------------------------------------------------------
+# Diff output format details
+# ---------------------------------------------------------------------------
+test_expect_success 'diff header includes a/ and b/ prefixes' '
+	cd repo &&
+	git diff $(cat ../commit1) $(cat ../commit2) >output &&
+	grep "^--- a/file1" output &&
+	grep "^+++ b/file1" output
+'
+
+test_expect_success 'diff header includes index line with blob hashes' '
+	cd repo &&
+	git diff $(cat ../commit1) $(cat ../commit2) >output &&
+	grep "^index " output
+'
+
+test_expect_success 'diff hunk header starts with @@' '
+	cd repo &&
+	git diff $(cat ../commit1) $(cat ../commit2) >output &&
+	grep "^@@ " output
+'
+
+test_expect_success 'diff context lines start with space' '
+	cd repo &&
+	git diff $(cat ../commit2) $(cat ../commit3) >output &&
+	grep "^ line 1" output
+'
+
+test_expect_success 'diff added lines start with +' '
+	cd repo &&
+	git diff $(cat ../commit1) $(cat ../commit2) >output &&
+	grep "^+line 2" output
+'
+
+test_expect_success 'diff removed lines start with -' '
+	cd repo &&
+	git diff $(cat ../commit3) $(cat ../commit1) >output &&
+	grep "^-line 2" output &&
+	grep "^-line 3" output
+'
+
+# ---------------------------------------------------------------------------
+# --stat format details
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --stat summary line shows files changed' '
+	cd repo &&
+	git diff --stat $(cat ../commit1) $(cat ../commit2) >output &&
+	grep "files changed" output
+'
+
+test_expect_success 'diff --stat shows + for insertions' '
+	cd repo &&
+	git diff --stat $(cat ../commit1) $(cat ../commit2) >output &&
+	grep "+" output
+'
+
+test_expect_success 'diff --stat single file change shows 1 file changed' '
+	cd repo &&
+	git diff --stat $(cat ../commit2) $(cat ../commit3) >output &&
+	grep "1 file changed" output
+'
+
+# ---------------------------------------------------------------------------
+# --numstat format details
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --numstat output is tab-separated' '
+	cd repo &&
+	git diff --numstat $(cat ../commit2) $(cat ../commit3) >output &&
+	# numstat format: ADDED<tab>DELETED<tab>PATH
+	awk -F"\t" "NF==3" output | grep "file1"
+'
+
+test_expect_success 'diff --numstat with no changes produces empty output' '
+	cd repo &&
+	git diff --numstat $(cat ../commit2) $(cat ../commit2) >output &&
+	test_must_be_empty output
+'
+
+# ---------------------------------------------------------------------------
+# Multiple file ordering
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --name-only sorts output alphabetically' '
+	cd repo &&
+	git diff --name-only $(cat ../commit1) $(cat ../commit2) >output &&
+	sort output >sorted &&
+	test_cmp output sorted
+'
+
+# ---------------------------------------------------------------------------
+# Diff with modifications to the same file across commits
+# ---------------------------------------------------------------------------
+test_expect_success 'diff across multiple commits shows cumulative changes' '
+	cd repo &&
+	git diff $(cat ../commit1) $(cat ../commit4) >output &&
+	grep "+line 2" output &&
+	grep "+line 3" output &&
+	grep "+line 4" output
+'
+
+test_expect_success 'diff --numstat counts cumulative additions' '
+	cd repo &&
+	git diff --numstat $(cat ../commit1) $(cat ../commit4) >output &&
+	grep "file1" output
+'
+
+# ---------------------------------------------------------------------------
+# --name-only with no changes
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --name-only with no changes is empty' '
+	cd repo &&
+	git diff --name-only $(cat ../commit2) $(cat ../commit2) >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --name-status with no changes is empty' '
+	cd repo &&
+	git diff --name-status $(cat ../commit2) $(cat ../commit2) >output &&
+	test_must_be_empty output
+'
+
+# ---------------------------------------------------------------------------
+# Diff with file containing special characters in content
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --cached handles file with special chars in content' '
+	cd repo &&
+	printf "line with \ttab\nand special chars: <>&\n" >specialfile &&
+	git add specialfile &&
+	git diff --cached >output &&
+	grep "specialfile" output &&
+	git reset HEAD -- specialfile &&
+	rm specialfile
+'
+
+# ---------------------------------------------------------------------------
+# Diff with file renamed via rm+add (no rename detection)
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --cached after manual rename shows add+delete' '
+	cd repo &&
+	cp file2 file2-renamed &&
+	git rm file2 &&
+	git add file2-renamed &&
+	git diff --cached --name-status >output &&
+	grep "^D" output | grep "file2" &&
+	grep "^A" output | grep "file2-renamed" &&
+	git checkout HEAD -- file2 &&
+	git reset HEAD -- file2-renamed &&
+	rm -f file2-renamed
+'
+
+# ---------------------------------------------------------------------------
+# Diff with only one file changed among many
+# ---------------------------------------------------------------------------
+test_expect_success 'setup: add more files' '
+	cd repo &&
+	echo "a" >afile &&
+	echo "b" >bfile &&
+	echo "c" >cfile &&
+	git add afile bfile cfile &&
+	git commit -m "add abc files" &&
+	git rev-parse HEAD >../commit_abc
+'
+
+test_expect_success 'diff --cached shows only the staged file' '
+	cd repo &&
+	echo "a-mod" >afile &&
+	git add afile &&
+	git diff --cached --name-only >output &&
+	grep "^afile$" output &&
+	test_must_fail grep "^bfile$" output &&
+	test_must_fail grep "^cfile$" output &&
+	git reset HEAD -- afile &&
+	git checkout -- afile
+'
+
+# ---------------------------------------------------------------------------
+# Diff between commit and working tree via HEAD
+# ---------------------------------------------------------------------------
+test_expect_success 'diff HEAD -- path restricts to that path' '
+	cd repo &&
+	echo "mod-a" >>afile &&
+	echo "mod-b" >>bfile &&
+	git diff HEAD -- afile >output &&
+	grep "afile" output &&
+	test_must_fail grep "bfile" output &&
+	git checkout -- afile bfile
+'
+
+# ---------------------------------------------------------------------------
+# Diff --stat counts are reasonable
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --stat insertion count matches content' '
+	cd repo &&
+	git diff --stat $(cat ../commit2) $(cat ../commit3) >output &&
+	# commit3 added one line to file1
+	grep "1 insertion" output
+'
+
+# ---------------------------------------------------------------------------
+# Diff with --cached HEAD (explicit HEAD form)
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --cached HEAD works identically to diff --cached' '
+	cd repo &&
+	echo "cmp-test" >>file1 &&
+	git add file1 &&
+	git diff --cached >out1 &&
+	git diff --cached HEAD >out2 &&
+	test_cmp out1 out2 &&
+	git reset HEAD -- file1 &&
+	git checkout -- file1
+'
+
+# ---------------------------------------------------------------------------
+# Diff with only whitespace-different lines
+# ---------------------------------------------------------------------------
+test_expect_success 'diff detects trailing whitespace addition' '
+	cd repo &&
+	printf "line 1  \n" >file1 &&
+	git diff >output &&
+	grep "file1" output &&
+	git checkout -- file1
+'
+
+# ---------------------------------------------------------------------------
+# Diff with file that has no trailing newline
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --cached handles file with no trailing newline' '
+	cd repo &&
+	printf "no-newline" >noeol &&
+	git add noeol &&
+	git diff --cached >output &&
+	grep "noeol" output &&
+	grep "No newline at end of file" output &&
+	git reset HEAD -- noeol &&
+	rm noeol
+'
+
+test_expect_success 'diff between commits with no-newline change' '
+	cd repo &&
+	printf "has-newline\n" >noeol2 &&
+	git add noeol2 &&
+	git commit -m "with newline" &&
+	git rev-parse HEAD >../commit_nl1 &&
+	printf "no-newline" >noeol2 &&
+	git add noeol2 &&
+	git commit -m "without newline" &&
+	git rev-parse HEAD >../commit_nl2 &&
+	git diff $(cat ../commit_nl1) $(cat ../commit_nl2) >output &&
+	grep "No newline at end of file" output
+'
+
+# ---------------------------------------------------------------------------
+# Diff with many files changed
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --stat with many files' '
+	cd repo &&
+	for i in $(seq 1 10); do echo "content $i" >manyfile$i; done &&
+	git add manyfile* &&
+	git commit -m "add many files" &&
+	git rev-parse HEAD >../commit_many1 &&
+	for i in $(seq 1 10); do echo "modified $i" >manyfile$i; done &&
+	git add manyfile* &&
+	git commit -m "modify many files" &&
+	git rev-parse HEAD >../commit_many2 &&
+	git diff --stat $(cat ../commit_many1) $(cat ../commit_many2) >output &&
+	grep "10 files changed" output
+'
+
+test_expect_success 'diff --name-only with many files lists all' '
+	cd repo &&
+	git diff --name-only $(cat ../commit_many1) $(cat ../commit_many2) >output &&
+	test_line_count = 10 output
+'
+
+test_expect_success 'diff --numstat with many files lists all' '
+	cd repo &&
+	git diff --numstat $(cat ../commit_many1) $(cat ../commit_many2) >output &&
+	test_line_count = 10 output
+'
+
 test_done
