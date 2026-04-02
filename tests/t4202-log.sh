@@ -1933,4 +1933,92 @@ test_expect_success 'log --oneline -n 5 shows at most 5 lines' '
 	test $(wc -l <output) -le 5
 '
 
+test_expect_success 'log -n 1 shows exactly one commit' '
+	cd repo &&
+	git log -n 1 --format="%H" >output &&
+	test_line_count = 1 output
+'
+
+test_expect_success 'log --format=%s shows subject lines' '
+	cd repo &&
+	git log -n 3 --format="%s" >output &&
+	test -s output &&
+	test $(wc -l <output) -le 3
+'
+
+test_expect_success 'log --format=%an shows author name' '
+	cd repo &&
+	git log -n 1 --format="%an" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%ae shows author email' '
+	cd repo &&
+	git log -n 1 --format="%ae" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%H shows full hash' '
+	cd repo &&
+	git log -n 1 --format="%H" >output &&
+	test $(wc -c <output) -ge 40
+'
+
+test_expect_success 'log --format=%h shows abbreviated hash' '
+	cd repo &&
+	git log -n 1 --format="%h" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%P shows parent hashes' '
+	cd repo &&
+	git log -n 1 --format="%P" >output &&
+	test -f output
+'
+
+test_expect_success 'log --format=%ai shows author date' '
+	cd repo &&
+	git log -n 1 --format="%ai" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%ci shows committer date' '
+	cd repo &&
+	git log -n 1 --format="%ci" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%T shows tree hash' '
+	cd repo &&
+	git log -n 1 --format="%T" >output &&
+	test $(wc -c <output) -ge 40
+'
+
+test_expect_success 'log shows most recent commit first' '
+	cd repo &&
+	git log -n 1 --format="%H" >output &&
+	head_sha=$(git rev-parse HEAD) &&
+	test "$(cat output)" = "$head_sha"
+'
+
+test_expect_success 'log --reverse shows oldest first' '
+	cd repo &&
+	git log --reverse --format="%H" >output &&
+	first=$(head -1 output) &&
+	last=$(tail -1 output) &&
+	test "$first" != "$last"
+'
+
+test_expect_success 'log --oneline --graph produces graph characters' '
+	cd repo &&
+	git log --graph --oneline -n 3 >output &&
+	test -s output
+'
+
+test_expect_success 'log --format with multiple placeholders' '
+	cd repo &&
+	git log -n 1 --format="%H %s" >output &&
+	test $(wc -w <output) -ge 2
+'
+
 test_done
