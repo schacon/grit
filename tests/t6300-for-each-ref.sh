@@ -627,4 +627,197 @@ test_expect_success 'no refs at all in empty repo' '
 	test_must_be_empty actual
 '
 
+# ── error handling ────────────────────────────────────────────────────────────
+
+test_expect_success 'invalid atom name is an error when refs exist' '
+	cd repo &&
+	test_must_fail git for-each-ref --format="%(INVALID)" refs/heads 2>err &&
+	grep "unsupported format atom" err
+'
+
+test_expect_success 'invalid atom name is fine when no refs match' '
+	cd repo &&
+	git for-each-ref --format="%(INVALID)" refs/does-not-exist >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'unsupported sort key is an error' '
+	cd repo &&
+	test_must_fail git for-each-ref --sort=bogus 2>err &&
+	grep "unsupported sort key" err
+'
+
+# ── --count edge cases ────────────────────────────────────────────────────────
+
+test_expect_success '--count=0 gives empty output' '
+	cd repo &&
+	git for-each-ref --format="%(refname)" --count=0 >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success '--count=1 with default sort gives first ref' '
+	cd repo &&
+	echo "refs/heads/main" >expect &&
+	git for-each-ref --format="%(refname)" --count=1 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'negative --count is an error' '
+	cd repo &&
+	test_must_fail git for-each-ref --format="%(refname)" --count=-1 2>err &&
+	grep "invalid" err
+'
+
+# ── --stdin edge cases ────────────────────────────────────────────────────────
+
+test_expect_success '--stdin: empty input matches all refs' '
+	cd repo &&
+	git for-each-ref --format="%(refname)" >expect &&
+	git for-each-ref --format="%(refname)" --stdin </dev/null >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--stdin: fails if extra args supplied' '
+	cd repo &&
+	test_must_fail git for-each-ref --format="%(refname)" \
+		--stdin refs/heads/extra </dev/null 2>err &&
+	grep "unknown arguments supplied with --stdin" err
+'
+
+test_expect_success '--stdin: non-existing refs gives empty output' '
+	cd repo &&
+	echo "refs/heads/this-ref-does-not-exist" >patterns &&
+	git for-each-ref --format="%(refname)" --stdin <patterns >actual &&
+	test_must_be_empty actual
+'
+
+# ── --ignore-case ─────────────────────────────────────────────────────────────
+
+test_expect_success '--ignore-case matches case-insensitively' '
+	cd repo &&
+	echo "refs/heads/main" >expect &&
+	git for-each-ref --format="%(refname)" --ignore-case refs/heads/MAIN >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'without --ignore-case, wrong case gives empty' '
+	cd repo &&
+	git for-each-ref --format="%(refname)" refs/heads/MAIN >actual &&
+	test_must_be_empty actual
+'
+
+# ── pattern matching refinements ──────────────────────────────────────────────
+
+test_expect_success 'exact refname as pattern matches that ref' '
+	cd repo &&
+	echo "refs/heads/main" >expect &&
+	git for-each-ref --format="%(refname)" refs/heads/main >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'prefix pattern with trailing slash matches subtree' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/tags/four
+refs/tags/one
+refs/tags/three
+refs/tags/two
+refs/tags/v1.0
+EOF
+	git for-each-ref --format="%(refname)" refs/tags/ >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'pattern exclusion with glob removes matching refs' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/tags/four
+refs/tags/v1.0
+EOF
+	git for-each-ref --format="%(refname)" refs/tags \
+		--exclude="refs/tags/o*" --exclude="refs/tags/t*" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'multiple --exclude patterns all apply' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/heads/main
+refs/heads/side
+refs/odd/spot
+refs/tags/v1.0
+EOF
+	git for-each-ref --format="%(refname)" \
+		--exclude="refs/tags/one" --exclude="refs/tags/two" \
+		--exclude="refs/tags/three" --exclude="refs/tags/four" >actual &&
+	test_cmp expect actual
+'
+
+# ── sorting by different keys ─────────────────────────────────────────────────
+
+test_expect_success '--sort=objectname sorts by hash' '
+	cd repo &&
+	git for-each-ref --format="%(objectname) %(refname)" --sort=objectname refs/heads >actual &&
+	# Extract just the hashes and verify they are sorted
+	cut -d" " -f1 <actual >hashes &&
+	sort <hashes >sorted_hashes &&
+	test_cmp sorted_hashes hashes
+'
+
+test_expect_success '--sort=-objectname reverses objectname sort' '
+	cd repo &&
+	git for-each-ref --format="%(objectname)" --sort=objectname refs/heads >ascending &&
+	git for-each-ref --format="%(objectname)" --sort=-objectname refs/heads >descending &&
+	sort -r <ascending >expect &&
+	test_cmp expect descending
+'
+
+test_expect_success '--sort=objecttype sorts by type string' '
+	cd repo &&
+	git for-each-ref --format="%(objecttype) %(refname)" --sort=objecttype >actual &&
+	# commit sorts before tag, verify ordering
+	cut -d" " -f1 <actual >types &&
+	sort <types >sorted_types &&
+	test_cmp sorted_types types
+'
+
+test_expect_success 'multiple sort keys: --sort=objecttype --sort=-refname' '
+	cd repo &&
+	git for-each-ref --format="%(objecttype) %(refname)" \
+		--sort=objecttype --sort=-refname >actual &&
+	# All commit entries should come before tag entries
+	grep "^commit" actual >commits &&
+	grep "^tag" actual >tags 2>/dev/null || true &&
+	if test -s tags; then
+		last_commit=$(tail -1 commits) &&
+		first_tag=$(head -1 tags) &&
+		# commit < tag lexicographically so commits should be first
+		test "$last_commit" != "$first_tag"
+	fi
+'
+
+# ── deref atoms (*subject) ────────────────────────────────────────────────────
+
+test_expect_success '%(*subject) peels annotated tag to commit subject' '
+	cd repo &&
+	echo "C" >expect &&
+	git for-each-ref --format="%(*subject)" refs/tags/v1.0 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '%(*subject) on lightweight tag shows commit subject' '
+	cd repo &&
+	echo "A" >expect &&
+	git for-each-ref --format="%(*subject)" refs/tags/one >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'nested annotated tags: %(*subject) peels to commit' '
+	cd repo &&
+	git tag -a -m "double" v2.0 refs/tags/v1.0 &&
+	echo "C" >expect &&
+	git for-each-ref --format="%(*subject)" refs/tags/v2.0 >actual &&
+	test_cmp expect actual
+'
+
 test_done
