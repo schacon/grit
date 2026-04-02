@@ -314,6 +314,10 @@ test_expect_success "normalize rejects 'foo.lock///bar'" '
 	test_must_fail git check-ref-format --normalize "foo.lock///bar"
 '
 
+test_expect_success "normalize rejects '/foo' (single-level after stripping slash)" '
+	test_must_fail git check-ref-format --normalize /foo
+'
+
 # ── --branch mode ────────────────────────────────────────────────────────────
 
 test_expect_success "check-ref-format --branch rejects -nain (starts with dash)" '
