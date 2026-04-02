@@ -115,6 +115,11 @@ pub struct ConfigSet {
 /// - `Section.SubSection.Key` → `section.SubSection.key`
 /// - `CORE.BARE` → `core.bare`
 pub fn canonical_key(raw: &str) -> Result<String> {
+    // Reject keys containing newlines
+    if raw.contains('\n') || raw.contains('\r') {
+        return Err(Error::ConfigError(format!("invalid key: '{}'" , raw.replace('\n', "\\n"))));
+    }
+
     let first_dot = raw
         .find('.')
         .ok_or_else(|| Error::ConfigError(format!("key does not contain a section: '{raw}'")))?;
@@ -130,6 +135,19 @@ pub fn canonical_key(raw: &str) -> Result<String> {
 
     let section = &raw[..first_dot];
     let name = &raw[last_dot + 1..];
+
+    // Validate section name: must be alphanumeric or hyphen
+    if section.is_empty() || !section.chars().all(|c| c.is_alphanumeric() || c == '-') {
+        return Err(Error::ConfigError(format!("invalid key (bad section): '{raw}'")));
+    }
+
+    // Validate variable name: must start with alpha, rest alphanumeric or hyphen
+    if name.is_empty()
+        || !name.chars().next().unwrap().is_ascii_alphabetic()
+        || !name.chars().all(|c| c.is_alphanumeric() || c == '-')
+    {
+        return Err(Error::ConfigError(format!("invalid key (bad variable name): '{raw}'")));
+    }
 
     if first_dot == last_dot {
         // No subsection: section.name
