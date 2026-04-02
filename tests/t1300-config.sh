@@ -1610,4 +1610,172 @@ test_expect_success '--int normalizes k/m/g suffixes' '
 	test_cmp expect actual
 '
 
+# ── --null / -z delimiter ──────────────────────────────────────────────
+
+test_expect_success '--null --list uses NUL delimiters' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		val1 = one
+		val2 = two
+	EOF
+	printf "section.val1=one\0section.val2=two\0" >expect.raw &&
+	git config -z --list >actual.raw &&
+	test_cmp expect.raw actual.raw
+'
+
+test_expect_success '--null --get-regexp uses NUL delimiters' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		val1 = one
+		val2 = two
+		other = three
+	EOF
+	printf "section.val1 one\0section.val2 two\0" >expect.raw &&
+	git config -z --get-regexp "val" >actual.raw &&
+	test_cmp expect.raw actual.raw
+'
+
+test_expect_success 'inner whitespace kept verbatim, spaces only' '
+	cd repo &&
+	echo "foo   bar" >expect &&
+	git config section.val "foo   bar" &&
+	git config --get section.val >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'section ending: subsection sorts correctly' '
+	cd repo &&
+	rm -f .git/config &&
+	git config gitcvs.enabled true &&
+	git config gitcvs.ext.dbname "%Ggitcvs1.%a.%m.sqlite" &&
+	git config gitcvs.dbname "%Ggitcvs2.%a.%m.sqlite" &&
+	cat >expect <<\EOF &&
+[gitcvs]
+	enabled = true
+	dbname = %Ggitcvs2.%a.%m.sqlite
+[gitcvs "ext"]
+	dbname = %Ggitcvs1.%a.%m.sqlite
+EOF
+	test_cmp expect .git/config
+'
+
+test_expect_success '--int is at least 64 bits' '
+	cd repo &&
+	git config giga.watts 121g &&
+	echo 129922760704 >expect &&
+	git config --int --get giga.watts >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'invalid unit' '
+	cd repo &&
+	git config aninvalid.unit "1auto" &&
+	echo 1auto >expect &&
+	git config aninvalid.unit >actual &&
+	test_cmp expect actual &&
+	test_must_fail git config --int --get aninvalid.unit
+'
+
+test_expect_success 'invalid bool (--get)' '
+	cd repo &&
+	git config bool.nobool foobar &&
+	test_must_fail git config --bool --get bool.nobool
+'
+
+test_expect_success 'get-regexp --bool variable with no value' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[novalue]
+		variable
+	EOF
+	echo "novalue.variable true" >expect &&
+	git config --bool --get-regexp novalue >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'get-regexp variable with empty value (trailing space)' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[emptyvalue]
+		variable =
+	EOF
+	echo "emptyvalue.variable " >expect &&
+	git config --get-regexp emptyvalue >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'refer config from subdirectory' '
+	cd repo &&
+	cat >other-config <<-\EOF &&
+	[ein]
+		bahn = strasse
+	EOF
+	mkdir -p x &&
+	echo strasse >expect &&
+	git -C x config --file=../other-config --get ein.bahn >actual &&
+	test_cmp expect actual &&
+	rm -rf x other-config
+'
+
+test_expect_success '--set in alternative file' '
+	cd repo &&
+	cat >other-config <<\EOF &&
+[ein]
+	bahn = strasse
+EOF
+	git config --file=other-config anwohner.park ausweis &&
+	cat >expect <<\EOF &&
+[ein]
+	bahn = strasse
+[anwohner]
+	park = ausweis
+EOF
+	test_cmp expect other-config &&
+	rm -f other-config
+'
+
+test_expect_success 'alternative --file (list)' '
+	cd repo &&
+	cat >alt-config <<-\EOF &&
+	[ein]
+		bahn = strasse
+	EOF
+	echo "ein.bahn=strasse" >expect &&
+	git config --list --file alt-config >actual &&
+	test_cmp expect actual &&
+	rm -f alt-config
+'
+
+test_expect_success 'no arguments, but no crash' '
+	cd repo &&
+	test_must_fail git config >output 2>&1
+'
+
+test_expect_success '--null --name-only --get-regexp' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		val1 = one
+		val2 = two
+		other = skip
+	EOF
+	printf "section.val1\0section.val2\0" >expect.raw &&
+	git config -z --name-only --get-regexp val >actual.raw &&
+	test_cmp expect.raw actual.raw
+'
+
+test_expect_success '--null --get-all uses NUL delimiters' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		key = alpha
+		key = beta
+	EOF
+	printf "alpha\0beta\0" >expect.raw &&
+	git config -z --get-all section.key >actual.raw &&
+	test_cmp expect.raw actual.raw
+'
+
 test_done
