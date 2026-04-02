@@ -57,14 +57,14 @@ def generate_svg(pass_count, total_count):
     pct = pass_count * 100 / total_count if total_count > 0 else 0
     bar_width = 440 * pct / 100
 
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="480" height="120" viewBox="0 0 480 120">
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="480" height="140" viewBox="0 0 480 140">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#1a1e24"/>
       <stop offset="100%" stop-color="#0d1117"/>
     </linearGradient>
   </defs>
-  <rect width="480" height="120" rx="10" fill="url(#bg)" stroke="#30363d" stroke-width="1"/>
+  <rect width="480" height="140" rx="10" fill="url(#bg)" stroke="#30363d" stroke-width="1"/>
   <text x="20" y="32" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="18" font-weight="700" fill="#c9d1d9">Grit — Git in Rust</text>
   <text x="20" y="58" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#8b949e">{pass_count:,} / {total_count:,} upstream tests passing</text>
   <rect x="20" y="72" width="440" height="16" rx="8" fill="#30363d"/>
