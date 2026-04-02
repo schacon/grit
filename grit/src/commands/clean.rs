@@ -223,15 +223,65 @@ fn collect_untracked(
                     out,
                 )?;
             } else if args.directories {
-                // Entirely untracked directory.
-                let should_include = should_include_path(
-                    matcher, repo, index, &rel, true, args,
-                )?;
-                if should_include {
-                    out.push((rel, true));
+                if args.ignored_only || args.ignored_too {
+                    // -X/-x with -d: recurse into untracked dirs.
+                    // -X finds individual ignored files;
+                    // -x removes the whole directory.
+                    if args.ignored_too {
+                        out.push((rel, true));
+                    } else {
+                        collect_untracked(
+                            &path,
+                            work_tree,
+                            tracked,
+                            matcher,
+                            repo,
+                            index,
+                            args,
+                            pathspec_prefixes,
+                            out,
+                        )?;
+                    }
+                } else {
+                    // Default -d: directory has a mix of ignored and
+                    // non-ignored files. Check if all contents are
+                    // ignored; if so skip the dir, otherwise recurse
+                    // to collect individual non-ignored files.
+                    let all_ignored = dir_all_ignored(
+                        &path, work_tree, matcher, repo, index,
+                    )?;
+                    if all_ignored {
+                        // Entire directory is ignored — skip it.
+                    } else {
+                        // Mixed content: recurse to pick out non-ignored files.
+                        collect_untracked(
+                            &path,
+                            work_tree,
+                            tracked,
+                            matcher,
+                            repo,
+                            index,
+                            args,
+                            pathspec_prefixes,
+                            out,
+                        )?;
+                    }
                 }
+            } else if args.ignored_only {
+                // -X without -d: still recurse to find ignored files.
+                collect_untracked(
+                    &path,
+                    work_tree,
+                    tracked,
+                    matcher,
+                    repo,
+                    index,
+                    args,
+                    pathspec_prefixes,
+                    out,
+                )?;
             }
-            // Without -d, skip untracked directories entirely.
+            // Without -d (and not -X), skip untracked directories entirely.
         } else {
             // File: check if tracked.
             if tracked.contains(&rel) {
@@ -304,6 +354,54 @@ fn resolve_pathspec_prefix(
 
     // Fallback: treat as relative to worktree root.
     Ok(pathspec.to_owned())
+}
+
+/// Check whether all files in a directory are ignored.
+fn dir_all_ignored(
+    dir: &Path,
+    work_tree: &Path,
+    matcher: &mut IgnoreMatcher,
+    repo: &Repository,
+    index: Option<&Index>,
+) -> Result<bool> {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(true),
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+
+        let rel = path
+            .strip_prefix(work_tree)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or(name);
+
+        let is_dir = path.is_dir();
+        let (ignored, _) = matcher
+            .check_path(repo, index, &rel, is_dir)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        if !ignored {
+            if is_dir {
+                let sub_all = dir_all_ignored(&path, work_tree, matcher, repo, index)?;
+                if !sub_all {
+                    return Ok(false);
+                }
+            } else {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 /// Remove empty parent directories up to (but not including) the worktree root.
