@@ -5,8 +5,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::{count_changes, format_stat_line, unified_diff, zero_oid};
-use grit_lib::index::{Index, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK};
+use grit_lib::diff::{count_changes, format_stat_line, stat_matches, unified_diff, zero_oid};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -202,7 +202,7 @@ fn collect_changes(
     // entries (stage 0).  For stage 1–3 we use that specific unmerged stage.
     // Paths that only have higher-stage entries and no stage-0 entry are
     // "unmerged"; we report them as 'U' when stage==0.
-    let mut stage0: BTreeMap<String, (u32, ObjectId)> = BTreeMap::new();
+    let mut stage0: BTreeMap<String, (u32, ObjectId, &IndexEntry)> = BTreeMap::new();
     let mut unmerged_paths: BTreeSet<String> = BTreeSet::new();
     let mut staged: BTreeMap<String, (u32, ObjectId)> = BTreeMap::new();
 
@@ -215,7 +215,7 @@ fn collect_changes(
         }
         let s = entry.stage();
         if s == 0 {
-            stage0.insert(path, (entry.mode, entry.oid));
+            stage0.insert(path, (entry.mode, entry.oid, entry));
         } else {
             unmerged_paths.insert(path.clone());
             if s == options.stage {
@@ -228,10 +228,12 @@ fn collect_changes(
 
     if options.stage == 0 {
         // Normal mode: compare stage-0 entries against worktree.
-        for (path, (idx_mode, idx_oid)) in &stage0 {
+        // Use stat info to skip unchanged files (avoid hashing).
+        for (path, (idx_mode, idx_oid, idx_entry)) in &stage0 {
             let abs = work_tree.join(path);
-            match read_worktree_info(repo, &abs)? {
-                Some((wt_mode, wt_oid)) => {
+            match read_worktree_info_fast(repo, &abs, idx_entry)? {
+                WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
+                WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
                     if wt_oid != *idx_oid || wt_mode != idx_canonical {
                         changes.insert(
@@ -246,7 +248,7 @@ fn collect_changes(
                         );
                     }
                 }
-                None => {
+                WorktreeStatus::Missing => {
                     // File missing from working tree.
                     changes.insert(
                         path.clone(),
@@ -319,6 +321,57 @@ fn collect_changes(
 
 // ── Worktree probing ─────────────────────────────────────────────────
 
+/// Result of probing a working-tree file against its index entry.
+enum WorktreeStatus {
+    /// File is unchanged according to stat info — no need to hash.
+    Unchanged,
+    /// File exists and may be modified (mode, oid from full hash).
+    Modified(u32, ObjectId),
+    /// File is missing from the working tree.
+    Missing,
+}
+
+/// Fast worktree probe: uses stat() data from the index to skip hashing
+/// when the file hasn't changed.  Falls back to full read+hash if stat
+/// info doesn't match.
+fn read_worktree_info_fast(
+    repo: &Repository,
+    abs_path: &Path,
+    index_entry: &IndexEntry,
+) -> Result<WorktreeStatus> {
+    let meta = match fs::symlink_metadata(abs_path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(WorktreeStatus::Missing),
+        Err(e) => return Err(e.into()),
+    };
+
+    let _ = repo;
+
+    // Fast path: if stat info matches the index, file is unchanged.
+    if meta.file_type().is_file() && stat_matches(index_entry, &meta) {
+        return Ok(WorktreeStatus::Unchanged);
+    }
+
+    if meta.file_type().is_symlink() {
+        let target = fs::read_link(abs_path)?;
+        let oid = Odb::hash_object_data(ObjectKind::Blob, target.as_os_str().as_bytes());
+        return Ok(WorktreeStatus::Modified(MODE_SYMLINK, oid));
+    }
+
+    if meta.file_type().is_file() {
+        let mode = if meta.permissions().mode() & 0o111 != 0 {
+            MODE_EXECUTABLE
+        } else {
+            MODE_REGULAR
+        };
+        let data = fs::read(abs_path)?;
+        let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
+        return Ok(WorktreeStatus::Modified(mode, oid));
+    }
+
+    Ok(WorktreeStatus::Missing)
+}
+
 /// Read mode and OID for a working-tree file; returns `None` if missing.
 ///
 /// The OID is computed by hashing the file content so we can detect
@@ -330,7 +383,7 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
         Err(e) => return Err(e.into()),
     };
 
-    let _ = repo; // reserved for future use (e.g. gitlink detection)
+    let _ = repo;
 
     if meta.file_type().is_symlink() {
         let target = fs::read_link(abs_path)?;
