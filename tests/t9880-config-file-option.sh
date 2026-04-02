@@ -3,10 +3,10 @@
 
 test_description='grit config -f / --file reads and writes to custom config files'
 
+REAL_GIT=$(command -v git)
+
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
-
-REAL_GIT=$(command -v git)
 
 ###########################################################################
 # Section 1: Setup

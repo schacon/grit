@@ -3,10 +3,10 @@
 
 test_description='grit init --object-format, --bare, -b, --separate-git-dir'
 
+REAL_GIT=$(command -v git)
+
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
-
-REAL_GIT=$(command -v git)
 
 ###########################################################################
 # Section 1: Basic init
