@@ -119,4 +119,42 @@ test_expect_success 'diff-index --quiet --cached HEAD returns 0 when clean' '
     test_must_fail git diff-index --quiet --cached "$c"
 '
 
+# ---------------------------------------------------------------------------
+# Additional quiet tests with a second repository
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup repo2 with two commits for additional quiet tests' '
+    git init repo2 &&
+    cd repo2 &&
+    git config user.name "Test User" &&
+    git config user.email "test@test.com" &&
+    echo a1 >a &&
+    echo b1 >b &&
+    git add a b &&
+    git commit -m first &&
+    echo b2 >b &&
+    git add b &&
+    git commit -m second
+'
+
+test_expect_success 'diff --quiet HEAD^ HEAD detects change in second commit' '
+    cd repo2 &&
+    test_expect_code 1 git diff --quiet HEAD^ HEAD
+'
+
+test_expect_success 'diff --quiet HEAD^ HEAD -- a returns 0 (a not changed)' '
+    cd repo2 &&
+    test_expect_code 0 git diff --quiet HEAD^ HEAD -- a
+'
+
+test_expect_success 'diff --quiet HEAD^ HEAD -- b returns 1 (b changed)' '
+    cd repo2 &&
+    test_expect_code 1 git diff --quiet HEAD^ HEAD -- b
+'
+
+test_expect_success 'diff --exit-code HEAD HEAD returns 0' '
+    cd repo2 &&
+    test_expect_code 0 git diff --exit-code HEAD HEAD
+'
+
 test_done
