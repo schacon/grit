@@ -6,3 +6,4 @@ tests/trash/
 tests/bare-repo/
 tests/fresh/
 tests/empty-np/
+bench/.scratch

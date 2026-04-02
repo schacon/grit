@@ -31,6 +31,7 @@ pub mod odb;
 pub mod pack;
 pub mod patch_ids;
 pub mod prune_packed;
+pub mod reflog;
 pub mod refs;
 pub mod repo;
 pub mod rev_list;
