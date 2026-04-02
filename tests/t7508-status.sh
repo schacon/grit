@@ -1693,4 +1693,155 @@ test_expect_success 'status --short is alias for -s' '
 	rm -f short_file.txt
 '
 
+test_expect_success 'status shows deleted file as D' '
+	cd stat-clean &&
+	echo delme >status_del.txt &&
+	git add status_del.txt && git commit -m "add del" 2>/dev/null &&
+	rm status_del.txt &&
+	grit status -s >../actual &&
+	grep "^ D status_del.txt" ../actual &&
+	git checkout -- status_del.txt 2>/dev/null &&
+	rm -f status_del.txt
+'
+
+test_expect_success 'status shows staged deletion as D in first column' '
+	cd stat-clean &&
+	echo delstaged >status_sdel.txt &&
+	git add status_sdel.txt && git commit -m "add sdel" 2>/dev/null &&
+	grit rm status_sdel.txt &&
+	grit status -s >../actual &&
+	grep "^D  status_sdel.txt" ../actual &&
+	git reset HEAD -- status_sdel.txt 2>/dev/null &&
+	git checkout -- status_sdel.txt 2>/dev/null &&
+	rm -f status_sdel.txt
+'
+
+test_expect_success 'status shows AM for added then modified file' '
+	cd stat-clean &&
+	echo first >status_am.txt &&
+	git add status_am.txt &&
+	echo second >status_am.txt &&
+	grit status -s >../actual &&
+	grep "AM status_am.txt" ../actual &&
+	git reset -- status_am.txt 2>/dev/null &&
+	rm -f status_am.txt
+'
+
+test_expect_success 'status with no changes shows clean output' '
+	cd stat-clean &&
+	git reset --hard HEAD 2>/dev/null &&
+	grit status >../actual &&
+	grep -i "clean\|nothing to commit" ../actual
+'
+
+test_expect_success 'status shows untracked directory contents' '
+	cd stat-clean &&
+	mkdir -p status_newdir &&
+	echo one >status_newdir/a.txt &&
+	echo two >status_newdir/b.txt &&
+	grit status -s >../actual &&
+	grep "??" ../actual &&
+	rm -rf status_newdir
+'
+
+test_expect_success 'status -s shows A for newly staged file' '
+	cd stat-clean &&
+	echo newstaged >status_staged.txt &&
+	git add status_staged.txt &&
+	grit status -s >../actual &&
+	grep "^A" ../actual &&
+	git reset -- status_staged.txt 2>/dev/null &&
+	rm -f status_staged.txt
+'
+
+test_expect_success 'status shows renamed file after git mv' '
+	cd stat-clean &&
+	echo rename_s >status_ren.txt &&
+	git add status_ren.txt && git commit -m "add ren" 2>/dev/null &&
+	git mv status_ren.txt status_ren2.txt &&
+	grit status -s >../actual &&
+	grep "status_ren" ../actual &&
+	git reset --hard HEAD 2>/dev/null &&
+	rm -f status_ren.txt status_ren2.txt
+'
+
+test_expect_success 'status shows file in subdirectory' '
+	cd stat-clean &&
+	mkdir -p status_sub &&
+	echo sub >status_sub/file.txt &&
+	git add status_sub && git commit -m "add sub" 2>/dev/null &&
+	echo changed >status_sub/file.txt &&
+	grit status -s >../actual &&
+	grep "status_sub/file.txt" ../actual &&
+	git checkout -- status_sub/file.txt 2>/dev/null &&
+	rm -rf status_sub
+'
+
+test_expect_success 'status --porcelain produces machine-readable output' '
+	cd stat-clean &&
+	echo porc >status_porc.txt &&
+	grit status --porcelain >../actual &&
+	grep "?? status_porc.txt" ../actual &&
+	rm -f status_porc.txt
+'
+
+test_expect_success 'status after adding and removing shows no change' '
+	cd stat-clean &&
+	echo tmp >status_tmp.txt &&
+	git add status_tmp.txt &&
+	git rm -f status_tmp.txt 2>/dev/null &&
+	grit status -s >../actual &&
+	! grep "status_tmp.txt" ../actual
+'
+
+test_expect_success 'status shows M for modified tracked file' '
+	cd stat-clean &&
+	echo original >status_mod.txt &&
+	git add status_mod.txt && git commit -m "add mod" 2>/dev/null &&
+	echo modified >status_mod.txt &&
+	grit status -s >../actual &&
+	grep " M status_mod.txt" ../actual &&
+	git checkout -- status_mod.txt 2>/dev/null &&
+	rm -f status_mod.txt
+'
+
+test_expect_success 'status with multiple untracked files shows all' '
+	cd stat-clean &&
+	echo u1 >status_u1.txt &&
+	echo u2 >status_u2.txt &&
+	echo u3 >status_u3.txt &&
+	grit status -s >../actual &&
+	grep "?? status_u1.txt" ../actual &&
+	grep "?? status_u2.txt" ../actual &&
+	grep "?? status_u3.txt" ../actual &&
+	rm -f status_u1.txt status_u2.txt status_u3.txt
+'
+
+test_expect_success 'status long format includes branch name' '
+	cd stat-clean &&
+	grit status >../actual &&
+	head -5 ../actual | grep -i "branch\|main\|master"
+'
+
+test_expect_success 'status --porcelain output includes XY format' '
+	cd stat-clean &&
+	echo ptest >status_p2.txt &&
+	grit status --porcelain >../actual &&
+	grep "?? status_p2.txt" ../actual &&
+	rm -f status_p2.txt
+'
+
+test_expect_success 'status shows staged and unstaged changes together' '
+	cd stat-clean &&
+	echo orig >status_both.txt &&
+	git add status_both.txt && git commit -m "add both" 2>/dev/null &&
+	echo staged >status_both.txt &&
+	git add status_both.txt &&
+	echo unstaged >status_both.txt &&
+	grit status -s >../actual &&
+	grep "MM status_both.txt" ../actual &&
+	git reset --hard HEAD 2>/dev/null &&
+	rm -f status_both.txt
+'
+
 test_done

@@ -1071,4 +1071,125 @@ test_expect_success 'rev-parse HEAD~1 gives parent commit' '
 	test "$parent" = "$parsed"
 '
 
+test_expect_success 'commit --allow-empty creates commit with same tree' '
+	cd repo &&
+	tree_before=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	grit commit --allow-empty -m "empty commit" &&
+	tree_after=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	test "$tree_before" = "$tree_after"
+'
+
+test_expect_success 'commit records correct author in commit object' '
+	cd repo &&
+	grit log -n 1 --format="%an" >../actual &&
+	test -s ../actual
+'
+
+test_expect_success 'commit with -m produces single-line message' '
+	cd repo &&
+	echo cmt_msg >cmt_msg.txt &&
+	git add cmt_msg.txt &&
+	grit commit -m "single line message" &&
+	grit log -n 1 --format="%s" >../actual &&
+	grep "single line message" ../actual
+'
+
+test_expect_success 'commit creates new SHA each time' '
+	cd repo &&
+	sha1=$(grit rev-parse HEAD) &&
+	grit commit --allow-empty -m "new sha" &&
+	sha2=$(grit rev-parse HEAD) &&
+	test "$sha1" != "$sha2"
+'
+
+test_expect_success 'commit updates HEAD ref' '
+	cd repo &&
+	old=$(grit rev-parse HEAD) &&
+	echo upd_head >upd_head.txt &&
+	git add upd_head.txt &&
+	grit commit -m "update head" &&
+	new=$(grit rev-parse HEAD) &&
+	test "$old" != "$new"
+'
+
+test_expect_success 'commit --amend changes the message' '
+	cd repo &&
+	grit commit --allow-empty -m "before amend" &&
+	grit commit --amend -m "after amend" &&
+	grit log -n 1 --format="%s" >../actual &&
+	grep "after amend" ../actual
+'
+
+test_expect_success 'commit with staged deletion removes file from tree' '
+	cd repo &&
+	echo delcommit >del_commit.txt &&
+	git add del_commit.txt &&
+	grit commit -m "add for del" &&
+	grit rm del_commit.txt &&
+	grit commit -m "remove file" &&
+	test_must_fail git ls-files --error-unmatch del_commit.txt
+'
+
+test_expect_success 'commit without staged changes fails' '
+	cd repo &&
+	test_must_fail grit commit -m "nothing staged" 2>/dev/null
+'
+
+test_expect_success 'commit on detached HEAD works' '
+	cd repo &&
+	head_sha=$(grit rev-parse HEAD) &&
+	git checkout "$head_sha" 2>/dev/null &&
+	grit commit --allow-empty -m "detached commit" &&
+	git checkout master 2>/dev/null
+'
+
+test_expect_success 'commit message is stored in commit object' '
+	cd repo &&
+	grit commit --allow-empty -m "unique message 12345" &&
+	git cat-file -p HEAD >../actual &&
+	grep "unique message 12345" ../actual
+'
+
+test_expect_success 'consecutive commits form a chain' '
+	cd repo &&
+	grit commit --allow-empty -m "chain1" &&
+	sha1=$(grit rev-parse HEAD) &&
+	grit commit --allow-empty -m "chain2" &&
+	parent=$(git cat-file -p HEAD | sed -n "s/^parent //p") &&
+	test "$sha1" = "$parent"
+'
+
+test_expect_success 'commit --allow-empty-message with empty message' '
+	cd repo &&
+	grit commit --allow-empty --allow-empty-message -m "" &&
+	grit log -n 1 --format="%s" >../actual &&
+	test -f ../actual
+'
+
+test_expect_success 'amend does not create extra parent' '
+	cd repo &&
+	grit commit --allow-empty -m "to amend" &&
+	parent_count_before=$(git cat-file -p HEAD | grep -c "^parent") &&
+	grit commit --amend -m "amended" &&
+	parent_count_after=$(git cat-file -p HEAD | grep -c "^parent") &&
+	test "$parent_count_before" = "$parent_count_after"
+'
+
+test_expect_success 'commit tree hash matches write-tree of index' '
+	cd repo &&
+	echo treematch >treematch.txt &&
+	git add treematch.txt &&
+	tree=$(grit write-tree) &&
+	grit commit -m "treematch" &&
+	commit_tree=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	test "$tree" = "$commit_tree"
+'
+
+test_expect_success 'commit sets committer date' '
+	cd repo &&
+	grit commit --allow-empty -m "dated commit" &&
+	git cat-file -p HEAD >../actual &&
+	grep "^committer .* [0-9]\{10\}" ../actual
+'
+
 test_done

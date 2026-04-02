@@ -3461,4 +3461,119 @@ test_expect_success 'for-each-ref shows ref after update-ref' '
 	grep "each-ref-test" actual
 '
 
+test_expect_success 'update-ref can create a tag ref' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/tags/test-tag-ur "$m_sha" &&
+	test "$(grit rev-parse refs/tags/test-tag-ur)" = "$m_sha"
+'
+
+test_expect_success 'update-ref can overwrite existing ref' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/overwrite-test "$m_sha" &&
+	p_sha=$(grit rev-parse HEAD~1) &&
+	grit update-ref refs/heads/overwrite-test "$p_sha" &&
+	test "$(grit rev-parse refs/heads/overwrite-test)" = "$p_sha"
+'
+
+test_expect_success 'update-ref delete removes ref' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/del-test-ur "$m_sha" &&
+	grit update-ref -d refs/heads/del-test-ur &&
+	test_must_fail grit rev-parse refs/heads/del-test-ur 2>/dev/null
+'
+
+test_expect_success 'update-ref with old-value check succeeds when matching' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	p_sha=$(grit rev-parse HEAD~1) &&
+	grit update-ref refs/heads/oldval-test "$m_sha" &&
+	grit update-ref refs/heads/oldval-test "$p_sha" "$m_sha" &&
+	test "$(grit rev-parse refs/heads/oldval-test)" = "$p_sha"
+'
+
+test_expect_success 'update-ref with wrong old-value fails' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/wrongval-test "$m_sha" &&
+	test_must_fail grit update-ref refs/heads/wrongval-test "$m_sha" 0000000000000000000000000000000000000001 2>/dev/null
+'
+
+test_expect_success 'update-ref --no-deref updates symref directly' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	p_sha=$(grit rev-parse HEAD~1) &&
+	grit update-ref refs/heads/noderef-target "$m_sha" &&
+	grit symbolic-ref refs/heads/noderef-sym refs/heads/noderef-target &&
+	grit update-ref --no-deref refs/heads/noderef-sym "$p_sha" &&
+	test "$(grit rev-parse refs/heads/noderef-sym)" = "$p_sha"
+'
+
+test_expect_success 'update-ref creates ref in refs/custom namespace' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/custom/test "$m_sha" &&
+	test "$(grit rev-parse refs/custom/test)" = "$m_sha"
+'
+
+test_expect_success 'update-ref with empty sha fails' '
+	cd real-repo &&
+	test_must_fail grit update-ref refs/heads/empty-sha "" 2>/dev/null
+'
+
+test_expect_success 'update-ref stdin create in transaction' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	printf "start\ncreate refs/heads/stdin-create-tx %s\ncommit\n" "$m_sha" >stdin &&
+	grit update-ref --stdin <stdin &&
+	test "$(grit rev-parse refs/heads/stdin-create-tx)" = "$m_sha"
+'
+
+test_expect_success 'update-ref stdin update in transaction' '
+	cd real-repo &&
+	old_sha=$(grit rev-parse refs/heads/stdin-create-tx) &&
+	p_sha=$(grit rev-parse HEAD~1) &&
+	printf "start\nupdate refs/heads/stdin-create-tx %s %s\ncommit\n" "$p_sha" "$old_sha" >stdin &&
+	grit update-ref --stdin <stdin &&
+	test "$(grit rev-parse refs/heads/stdin-create-tx)" = "$p_sha"
+'
+
+test_expect_success 'update-ref -d with old-value check succeeds' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/del-oldval "$m_sha" &&
+	grit update-ref -d refs/heads/del-oldval "$m_sha" &&
+	test_must_fail grit rev-parse refs/heads/del-oldval 2>/dev/null
+'
+
+test_expect_success 'update-ref -d with wrong old-value fails' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/del-wrongval "$m_sha" &&
+	test_must_fail grit update-ref -d refs/heads/del-wrongval 0000000000000000000000000000000000000001 2>/dev/null &&
+	test "$(grit rev-parse refs/heads/del-wrongval)" = "$m_sha"
+'
+
+test_expect_success 'update-ref on deeply nested ref path' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/deep/nested/ref "$m_sha" &&
+	test "$(grit rev-parse refs/heads/deep/nested/ref)" = "$m_sha"
+'
+
+test_expect_success 'show-ref lists multiple created refs' '
+	cd real-repo &&
+	grit show-ref >actual &&
+	grep "refs/heads/overwrite-test" actual &&
+	grep "refs/tags/test-tag-ur" actual &&
+	grep "refs/custom/test" actual
+'
+
+test_expect_success 'update-ref refuses invalid sha' '
+	cd real-repo &&
+	test_must_fail grit update-ref refs/heads/bad-sha "not-a-sha" 2>/dev/null
+'
+
 test_done

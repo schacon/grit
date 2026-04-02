@@ -1094,4 +1094,98 @@ test_expect_success 'init creates hooks directory' '
 	test -d init-hooks/.git/hooks
 '
 
+test_expect_success 'init creates refs/heads directory' '
+	rm -fr init-refs &&
+	grit init init-refs &&
+	test -d init-refs/.git/refs/heads
+'
+
+test_expect_success 'init creates refs/tags directory' '
+	rm -fr init-tags &&
+	grit init init-tags &&
+	test -d init-tags/.git/refs/tags
+'
+
+test_expect_success 'init creates objects directory' '
+	rm -fr init-obj &&
+	grit init init-obj &&
+	test -d init-obj/.git/objects
+'
+
+test_expect_success 'init creates objects/info directory' '
+	rm -fr init-objinfo &&
+	grit init init-objinfo &&
+	test -d init-objinfo/.git/objects/info
+'
+
+test_expect_success 'init creates objects/pack directory' '
+	rm -fr init-objpack &&
+	grit init init-objpack &&
+	test -d init-objpack/.git/objects/pack
+'
+
+test_expect_success 'init HEAD points to refs/heads/main or master' '
+	rm -fr init-head &&
+	grit init init-head &&
+	cat init-head/.git/HEAD >actual &&
+	grep "ref: refs/heads/" actual
+'
+
+test_expect_success 'init config contains repositoryformatversion' '
+	rm -fr init-rfv &&
+	grit init init-rfv &&
+	grep "repositoryformatversion" init-rfv/.git/config
+'
+
+test_expect_success 'init twice in same directory succeeds' '
+	rm -fr init-twice &&
+	grit init init-twice &&
+	grit init init-twice &&
+	test -d init-twice/.git
+'
+
+test_expect_success 'init bare creates objects directly in repo' '
+	rm -fr init-bare-obj &&
+	grit init --bare init-bare-obj &&
+	test -d init-bare-obj/objects
+'
+
+test_expect_success 'init bare creates refs directly in repo' '
+	rm -fr init-bare-refs &&
+	grit init --bare init-bare-refs &&
+	test -d init-bare-refs/refs
+'
+
+test_expect_success 'init bare HEAD points to refs/heads' '
+	rm -fr init-bare-head &&
+	grit init --bare init-bare-head &&
+	grep "ref: refs/heads/" init-bare-head/HEAD
+'
+
+test_expect_success 'init with absolute path works' '
+	rm -fr "$TRASH_DIRECTORY/init-abs" &&
+	grit init "$TRASH_DIRECTORY/init-abs" &&
+	test -d "$TRASH_DIRECTORY/init-abs/.git"
+'
+
+test_expect_success 'init creates description file' '
+	rm -fr init-desc &&
+	grit init init-desc &&
+	test -f init-desc/.git/description
+'
+
+test_expect_success 'init bare has no .git subdirectory' '
+	rm -fr init-bare-nogit &&
+	grit init --bare init-bare-nogit &&
+	! test -d init-bare-nogit/.git
+'
+
+test_expect_success 'init in nested path creates proper repo' '
+	rm -fr init-nested/sub &&
+	mkdir -p init-nested &&
+	grit init init-nested/sub &&
+	test -d init-nested/sub/.git &&
+	test -d init-nested/sub/.git/refs
+'
+
 test_done
