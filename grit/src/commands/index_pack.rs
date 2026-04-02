@@ -13,7 +13,6 @@ use std::path::PathBuf;
 
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
-use grit_lib::pack::PackedType;
 use grit_lib::unpack_objects::apply_delta;
 
 /// Arguments for `grit index-pack`.
