@@ -677,4 +677,26 @@ test_expect_success 'switch to tag with --detach updates worktree files' '
 	git switch master
 '
 
+test_expect_success 'switch --track with -c sets upstream for new branch' '
+	cd repo &&
+	git switch master &&
+	git switch --track -c tracked-branch first-branch &&
+	test "$(git config branch.tracked-branch.remote)" = "." &&
+	test "$(git config branch.tracked-branch.merge)" = "refs/heads/first-branch" &&
+	git switch master
+'
+
+test_expect_success 'switch to ambiguous name (tag and branch) prefers branch' '
+	cd repo &&
+	git switch master &&
+	git branch ambig-name first &&
+	git tag ambig-name second &&
+	git switch ambig-name &&
+	echo refs/heads/ambig-name >expected &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expected actual &&
+	test "$(git rev-parse HEAD)" = "$(git rev-parse first)" &&
+	git switch master
+'
+
 test_done

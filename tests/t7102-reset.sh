@@ -811,4 +811,186 @@ test_expect_success 'reset --hard leaves worktree clean' '
 	test_path_is_missing newfile
 '
 
+# ---------------------------------------------------------------------------
+# reset HEAD~N
+# ---------------------------------------------------------------------------
+
+test_expect_success 'reset HEAD~2 moves HEAD back two commits' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git reset HEAD~2 &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit2)"
+'
+
+test_expect_success 'reset --hard HEAD~1 updates worktree' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git reset --hard HEAD~1 &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit3)" &&
+	git diff-index --exit-code HEAD
+'
+
+test_expect_success 'reset --soft HEAD~3 leaves index and worktree unchanged' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git reset --soft HEAD~3 &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit1)" &&
+	# Index should still have commit4 content
+	git diff --cached --stat >staged &&
+	test -s staged
+'
+
+test_expect_success 'reset HEAD~0 is a no-op' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git reset HEAD~0 &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit4)"
+'
+
+# ---------------------------------------------------------------------------
+# reset with path args (mixed mode)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'reset -- path unstages a single file' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo modified >first &&
+	git add first &&
+	git reset -- first &&
+	# first should be unstaged
+	git diff --cached --name-only >staged &&
+	test_must_fail grep first staged &&
+	# worktree should still have modification
+	test "$(cat first)" = "modified"
+'
+
+test_expect_success 'reset -- path with multiple files' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo x >first &&
+	echo y >second &&
+	git add first second &&
+	git reset -- first second &&
+	git diff --cached --name-only >staged &&
+	test_must_be_empty staged
+'
+
+test_expect_success 'reset <commit> -- <path> restores file to old version in index' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git reset $(cat ../commit1) -- first &&
+	# HEAD stays at commit4
+	test "$(git rev-parse HEAD)" = "$(cat ../commit4)" &&
+	# Index first should match commit1 blob
+	C1_BLOB=$(git rev-parse $(cat ../commit1):first) &&
+	IDX_BLOB=$(git ls-files -s first | awk "{print \$2}") &&
+	test "$IDX_BLOB" = "$C1_BLOB"
+'
+
+test_expect_success 'reset -- path does not affect other staged files' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo a >first &&
+	echo b >second &&
+	git add first second &&
+	git reset -- first &&
+	git diff --cached --name-only >staged &&
+	grep second staged &&
+	test_must_fail grep first staged
+'
+
+# ---------------------------------------------------------------------------
+# reset after failed merge
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup for merge conflict tests' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git checkout -b merge-branch $(cat ../commit2) &&
+	echo "conflict line" >first &&
+	git commit -a -m "conflicting change" &&
+	git rev-parse HEAD >../merge_commit &&
+	git checkout master &&
+	git reset --hard $(cat ../commit4)
+'
+
+test_expect_success 'reset --hard after failed merge restores HEAD to pre-merge state' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	test_must_fail /usr/bin/git merge merge-branch &&
+	git reset --hard &&
+	rm -f .git/MERGE_HEAD &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit4)" &&
+	git diff-index --exit-code HEAD
+'
+
+test_expect_success 'reset --hard after failed merge restores worktree' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	test_must_fail /usr/bin/git merge merge-branch &&
+	git reset --hard &&
+	rm -f .git/MERGE_HEAD &&
+	git diff-index --exit-code HEAD
+'
+
+# ---------------------------------------------------------------------------
+# More reset behaviors
+# ---------------------------------------------------------------------------
+
+test_expect_success 'reset --mixed is the default mode' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git reset $(cat ../commit2) &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit2)" &&
+	# Index should match commit2
+	git diff --cached --exit-code
+'
+
+test_expect_success 'reset --mixed leaves worktree modifications intact' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo changed >first &&
+	git reset --mixed $(cat ../commit2) &&
+	# Worktree should still have our changes
+	test "$(cat first)" = "changed"
+'
+
+test_expect_success 'reset --hard removes untracked files that were added' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo new >newfile &&
+	git add newfile &&
+	git reset --hard &&
+	test_path_is_missing newfile
+'
+
+test_expect_success 'reset with -- separator disambiguates path from ref' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo modified >first &&
+	git add first &&
+	git reset -- first &&
+	git diff --cached --name-only >staged &&
+	test_must_fail grep first staged
+'
+
+test_expect_success 'reset HEAD -- path is equivalent to reset -- path' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo m1 >first &&
+	git add first &&
+	git reset HEAD -- first &&
+	git diff --cached --name-only >staged &&
+	test_must_fail grep first staged
+'
+
+test_expect_success 'reset --hard to tag works' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git tag test-reset-tag $(cat ../commit2) &&
+	git reset --hard test-reset-tag &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit2)" &&
+	git diff-index --exit-code HEAD
+'
+
 test_done
