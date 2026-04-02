@@ -1915,4 +1915,57 @@ test_expect_success '--path expands tilde to HOME' '
 	test_cmp expect_trailing actual_trailing
 '
 
+# ── includes ──────────────────────────────────────────────────────────────────
+
+test_expect_success '--includes follows include directive' '
+	cd repo &&
+	cat >.git/inc.cfg <<-\EOF &&
+	[included]
+		key = from-include
+	EOF
+	git config include.path inc.cfg &&
+	git config --includes --get included.key >actual &&
+	echo "from-include" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--includes with --list shows included entries' '
+	cd repo &&
+	git config --includes --list >actual &&
+	grep "included.key=from-include" actual
+'
+
+# ── --file with unset ─────────────────────────────────────────────────────────
+
+test_expect_success '--file --unset removes key from alternate file' '
+	cd repo &&
+	cat >../alt-unset.cfg <<-\EOF &&
+	[sec]
+		keep = yes
+		remove = bye
+	EOF
+	git config --file ../alt-unset.cfg --unset sec.remove &&
+	test_must_fail git config --file ../alt-unset.cfg --get sec.remove &&
+	git config --file ../alt-unset.cfg --get sec.keep >actual &&
+	echo "yes" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--file --list on non-existing file returns empty or error' '
+	cd repo &&
+	git config --file ../no-such-file.cfg --list >actual 2>&1 &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'GIT_CONFIG selects alternate config file' '
+	cd repo &&
+	cat >../env-alt.cfg <<-\EOF &&
+	[envalt]
+		key = fromenv
+	EOF
+	GIT_CONFIG=../env-alt.cfg git config --get envalt.key >actual &&
+	echo "fromenv" >expect &&
+	test_cmp expect actual
+'
+
 test_done
