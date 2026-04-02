@@ -1455,4 +1455,115 @@ test_expect_success 'diff --quiet with --cached exits 0 when nothing staged' '
 	git diff --quiet --cached
 '
 
+test_expect_success 'diff --stat HEAD~2 HEAD shows changes across commits' '
+	cd diff-empty &&
+	git diff --stat HEAD~2 HEAD >output &&
+	test -s output
+'
+
+test_expect_success 'diff --numstat on two commits shows numbers' '
+	cd diff-empty &&
+	git diff --numstat HEAD~1 HEAD >output &&
+	test -s output
+'
+
+test_expect_success 'diff HEAD~2..HEAD shows two commits worth of changes' '
+	cd diff-empty &&
+	git diff HEAD~2 HEAD >output &&
+	test -s output
+'
+
+test_expect_success 'diff --name-status with M status for modification' '
+	cd diff-empty &&
+	echo filter-m >filter_m.txt &&
+	git add filter_m.txt && git commit -m "add filter_m" 2>/dev/null &&
+	echo changed >filter_m.txt &&
+	git add filter_m.txt && git commit -m "mod filter_m" 2>/dev/null &&
+	git diff --name-status HEAD~1 HEAD >output &&
+	grep "^M.*filter_m.txt" output
+'
+
+test_expect_success 'diff --name-status with A status for addition' '
+	cd diff-empty &&
+	echo added >filter_a.txt &&
+	git add filter_a.txt && git commit -m "add filter_a" 2>/dev/null &&
+	git diff --name-status HEAD~1 HEAD >output &&
+	grep "^A.*filter_a.txt" output
+'
+
+test_expect_success 'diff --name-status with D status for deletion' '
+	cd diff-empty &&
+	git rm filter_a.txt 2>/dev/null && git commit -m "del filter_a" 2>/dev/null &&
+	git diff --name-status HEAD~1 HEAD >output &&
+	grep "^D.*filter_a.txt" output
+'
+
+test_expect_success 'diff --stat HEAD~1 HEAD shows summary line' '
+	cd diff-empty &&
+	git diff --stat HEAD~1 HEAD >output &&
+	grep "changed" output
+'
+
+test_expect_success 'diff --name-only lists only filenames' '
+	cd diff-empty &&
+	git diff --name-only HEAD~1 HEAD >output &&
+	! grep "^[+-]" output
+'
+
+test_expect_success 'diff with two tree hashes works' '
+	cd diff-empty &&
+	tree1=$(git rev-parse HEAD~1^{tree}) &&
+	tree2=$(git rev-parse HEAD^{tree}) &&
+	git diff "$tree1" "$tree2" >output &&
+	test -s output
+'
+
+test_expect_success 'diff shows correct +/- for single line change' '
+	cd diff-empty &&
+	echo before >single_line.txt &&
+	git add single_line.txt && git commit -m "add single" 2>/dev/null &&
+	echo after >single_line.txt &&
+	git add single_line.txt && git commit -m "mod single" 2>/dev/null &&
+	git diff HEAD~1 HEAD >output &&
+	grep "^-before" output &&
+	grep "^+after" output
+'
+
+test_expect_success 'diff --cached shows staged modification' '
+	cd diff-empty &&
+	echo orig >staged_mod.txt &&
+	git add staged_mod.txt && git commit -m "add staged_mod" 2>/dev/null &&
+	echo modified >staged_mod.txt &&
+	git add staged_mod.txt &&
+	git diff --cached >output &&
+	grep "+modified" output &&
+	git reset HEAD staged_mod.txt 2>/dev/null &&
+	git checkout -- staged_mod.txt 2>/dev/null
+'
+
+test_expect_success 'diff --exit-code returns 1 when diff exists' '
+	cd diff-empty &&
+	test_must_fail git diff --exit-code HEAD~1 HEAD
+'
+
+test_expect_success 'diff --exit-code returns 0 when no diff' '
+	cd diff-empty &&
+	git diff --exit-code HEAD HEAD
+'
+
+test_expect_success 'diff --stat and --numstat both show file' '
+	cd diff-empty &&
+	git diff --stat HEAD~1 HEAD >stat_out &&
+	git diff --numstat HEAD~1 HEAD >numstat_out &&
+	test -s stat_out &&
+	test -s numstat_out
+'
+
+test_expect_success 'diff output includes file header a/ b/ prefix' '
+	cd diff-empty &&
+	git diff HEAD~1 HEAD >output &&
+	grep "^--- a/" output &&
+	grep "^+++ b/" output
+'
+
 test_done
