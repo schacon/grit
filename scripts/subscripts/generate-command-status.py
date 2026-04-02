@@ -15,7 +15,7 @@ import os
 import re
 from collections import defaultdict
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA = os.path.join(REPO, "data")
 COMMANDS_DIR = os.path.join(REPO, "grit", "src", "commands")
 

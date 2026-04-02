@@ -15,7 +15,7 @@ import tempfile
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UPSTREAM = os.path.join(REPO, "git", "t")
 GRIT_TESTS = os.path.join(REPO, "tests")
 DATA = os.path.join(REPO, "data")

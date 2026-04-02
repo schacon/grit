@@ -5,7 +5,7 @@ Script 3: Generate docs/index.html from command-status.tsv and test-results.tsv.
 
 import os
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA = os.path.join(REPO, "data")
 OUT = os.path.join(REPO, "docs", "index.html")
 
@@ -199,6 +199,7 @@ h1 {{
   font-size: 2rem;
   font-weight: 700;
   line-height: 1.2;
+  white-space: nowrap;
 }}
 .card .label {{
   font-size: 0.78rem;
