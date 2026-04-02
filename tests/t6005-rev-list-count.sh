@@ -138,4 +138,73 @@ test_expect_success '--count with --max-count' '
 	test "$count" = "5"
 '
 
+# --- New tests ---
+
+test_expect_success '--count total' '
+	cd repo &&
+	count=$(git rev-list --count refs/heads/master) &&
+	test "$count" = "5"
+'
+
+test_expect_success '--count with --skip' '
+	cd repo &&
+	count=$(git rev-list --count --skip=2 refs/heads/master) &&
+	test "$count" = "3" &&
+	count=$(git rev-list --count --skip=5 refs/heads/master) &&
+	test "$count" = "0" &&
+	count=$(git rev-list --count --skip=10 refs/heads/master) &&
+	test "$count" = "0"
+'
+
+test_expect_success '-1 shorthand limits to one' '
+	cd repo &&
+	lines=$(git rev-list -1 refs/heads/master | wc -l | tr -d " ") &&
+	test "$lines" = "1"
+'
+
+test_expect_success '-2 shorthand limits to two' '
+	cd repo &&
+	lines=$(git rev-list -2 refs/heads/master | wc -l | tr -d " ") &&
+	test "$lines" = "2"
+'
+
+test_expect_success '-n2 (no space) limits to two' '
+	cd repo &&
+	lines=$(git rev-list -n2 refs/heads/master | wc -l | tr -d " ") &&
+	test "$lines" = "2"
+'
+
+test_expect_success '--skip with --reverse' '
+	cd repo &&
+	git rev-list refs/heads/master >full &&
+	git rev-list --reverse --skip=2 refs/heads/master >actual &&
+	# reversed skip=2 should give 3 lines
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" = "3"
+'
+
+test_expect_success '--max-count with --reverse' '
+	cd repo &&
+	git rev-list --reverse --max-count=2 refs/heads/master >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" = "2"
+'
+
+test_expect_success '--count --skip --max-count combined' '
+	cd repo &&
+	count=$(git rev-list --count --skip=1 --max-count=3 refs/heads/master) &&
+	test "$count" = "3" &&
+	count=$(git rev-list --count --skip=4 --max-count=3 refs/heads/master) &&
+	test "$count" = "1" &&
+	count=$(git rev-list --count --skip=5 --max-count=3 refs/heads/master) &&
+	test "$count" = "0"
+'
+
+test_expect_success '--count with --first-parent (linear = same)' '
+	cd repo &&
+	count_all=$(git rev-list --count refs/heads/master) &&
+	count_fp=$(git rev-list --count --first-parent refs/heads/master) &&
+	test "$count_all" = "$count_fp"
+'
+
 test_done
