@@ -165,6 +165,13 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if !errors_by_kind.is_empty() {
+        // Sort errors by kind priority to match git's output order:
+        // StagedDiffersBoth first, then StagedInIndex, then LocalModifications.
+        errors_by_kind.sort_by_key(|(kind, _)| match kind {
+            RmErrorKind::StagedDiffersBoth => 0,
+            RmErrorKind::StagedInIndex => 1,
+            RmErrorKind::LocalModifications => 2,
+        });
         for (kind, paths) in &mut errors_by_kind {
             paths.sort();
             let (header, hint) = error_message(kind, paths.len(), &args);
@@ -178,7 +185,9 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
         }
-        bail!("some files could not be removed");
+        // Exit with non-zero status without printing an additional error
+        // message — git rm does not print a summary line.
+        std::process::exit(1);
     }
 
     // Phase 2: perform all removals (only reached when all checks passed).
@@ -294,6 +303,10 @@ fn safety_check(
         false
     };
 
+    // If the file doesn't exist in the working tree at all, there is nothing
+    // to lose — allow removal without -f (matches git behaviour).
+    let file_exists = abs_path.exists();
+
     if args.cached {
         // --cached: refuse only when index matches neither HEAD nor worktree file.
         if staged_differs && worktree_differs {
@@ -304,7 +317,7 @@ fn safety_check(
         if staged_differs && worktree_differs {
             return Err(RmErrorKind::StagedDiffersBoth);
         }
-        if staged_differs {
+        if staged_differs && file_exists {
             return Err(RmErrorKind::StagedInIndex);
         }
         if worktree_differs {
