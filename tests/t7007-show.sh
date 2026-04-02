@@ -496,4 +496,123 @@ test_expect_success 'show blob by hash shows content' '
 	grep "second" actual
 '
 
+# ===========================================================================
+# Setup: merge commit for show tests
+# ===========================================================================
+
+test_expect_success 'setup: create branch and merge commit' '
+	cd repo &&
+	/usr/bin/git checkout -b feature HEAD~1 &&
+	echo "feature content" >feature.txt &&
+	git add feature.txt &&
+	GIT_AUTHOR_DATE="1000000300 +0000" GIT_COMMITTER_DATE="1000000300 +0000" \
+		git commit -m "feature branch work" &&
+	/usr/bin/git checkout master &&
+	GIT_AUTHOR_DATE="1000000400 +0000" GIT_COMMITTER_DATE="1000000400 +0000" \
+		/usr/bin/git merge feature -m "merge feature branch" --no-edit
+'
+
+# ===========================================================================
+# show on merge commits
+# ===========================================================================
+
+test_expect_success 'show merge commit displays Merge: line' '
+	cd repo &&
+	git show HEAD >actual &&
+	grep -i "merge" actual
+'
+
+test_expect_success 'show --format=%P on merge shows two parents' '
+	cd repo &&
+	parents=$(git show --format="format:%P" --quiet HEAD) &&
+	count=$(echo "$parents" | head -1 | wc -w | tr -d " ") &&
+	test "$count" = "2"
+'
+
+test_expect_success 'show --format=%s on merge shows merge subject' '
+	cd repo &&
+	git show --format="format:%s" --quiet HEAD >actual &&
+	head -1 actual >first &&
+	grep "merge feature branch" first
+'
+
+test_expect_success 'show --quiet on merge suppresses diff' '
+	cd repo &&
+	git show --quiet HEAD >actual &&
+	! grep "^diff --git" actual
+'
+
+test_expect_success 'show --oneline on merge commit' '
+	cd repo &&
+	git show --oneline HEAD >actual &&
+	head -1 actual >first &&
+	grep "merge feature branch" first
+'
+
+# ===========================================================================
+# show --format on annotated tags (deeper)
+# ===========================================================================
+
+test_expect_success 'show --format=%H on annotated tag shows tag target hash' '
+	cd repo &&
+	git show --format="format:%H" v1.0 >actual &&
+	# Should include the tagged commit hash
+	head -1 actual >first &&
+	test -n "$(cat first)"
+'
+
+test_expect_success 'show --format=%an on annotated tag' '
+	cd repo &&
+	git show --format="format:%an" v1.0 >actual &&
+	grep "Test User" actual
+'
+
+test_expect_success 'show --quiet on annotated tag shows tag info' '
+	cd repo &&
+	git show --quiet v1.0 >actual &&
+	grep "tag v1.0" actual &&
+	! grep "^diff --git" actual
+'
+
+# ===========================================================================
+# show with multiple objects (if supported, otherwise single-object edge cases)
+# ===========================================================================
+
+test_expect_success 'show commit^:file.txt shows parent file content' '
+	cd repo &&
+	PARENT=$(git rev-parse HEAD^) &&
+	git show "$PARENT":file.txt >actual &&
+	grep "first" actual
+'
+
+test_expect_success 'show --format=%H --quiet gives clean hash output' '
+	cd repo &&
+	HASH=$(git rev-parse HEAD) &&
+	git show --format="format:%H" --quiet >actual &&
+	echo "$HASH" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'show --format with literal text and placeholder' '
+	cd repo &&
+	git show --format="format:commit=%H" --quiet >actual &&
+	head -1 actual >first &&
+	grep "^commit=" first &&
+	len=$(printf "%s" "$(sed "s/^commit=//" first)" | wc -c | tr -d " ") &&
+	test "$len" = "40"
+'
+
+test_expect_success 'show --format=%h %s on annotated tag' '
+	cd repo &&
+	git show --format="format:%h %s" v1.0 >actual &&
+	grep "version 1.0" actual
+'
+
+test_expect_success 'show merge commit format %p shows abbreviated parents' '
+	cd repo &&
+	abbr_parents=$(git show --format="format:%p" --quiet HEAD) &&
+	count=$(echo "$abbr_parents" | head -1 | wc -w | tr -d " ") &&
+	test "$count" = "2"
+'
+
 test_done

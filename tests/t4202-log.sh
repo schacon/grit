@@ -1243,4 +1243,149 @@ test_expect_success 'log --format=%h is prefix of %H for every commit' '
 	done <actual
 '
 
+# ── log --format combined placeholders ────────────────────────────────────
+
+test_expect_success 'log --format "%an <%ae>" shows name and email' '
+	cd repo &&
+	out=$(git log --format="%an <%ae>" -n 1) &&
+	echo "$out" | grep -q "<" &&
+	echo "$out" | grep -q ">"
+'
+
+test_expect_success 'log --format "%cn <%ce>" shows committer info' '
+	cd repo &&
+	out=$(git log --format="%cn <%ce>" -n 1) &&
+	echo "$out" | grep -q "<" &&
+	echo "$out" | grep -q ">"
+'
+
+test_expect_success 'log --format "A=%an C=%cn" mixed placeholders' '
+	cd repo &&
+	out=$(git log --format="A=%an C=%cn" -n 1) &&
+	echo "$out" | grep -q "^A=" &&
+	echo "$out" | grep -q "C="
+'
+
+test_expect_success 'log --format with literal prefix and %H' '
+	cd repo &&
+	git log --format="commit:%H" -n 1 >actual &&
+	HASH=$(git rev-parse HEAD) &&
+	echo "commit:$HASH" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'log --format with multiple %n newlines' '
+	cd repo &&
+	git log --format="%s%n%n%H" -n 1 >actual &&
+	line_count=$(wc -l <actual | tr -d " ") &&
+	test "$line_count" = "3"
+'
+
+# ── log --format on merge commit specifics ────────────────────────────────
+
+test_expect_success 'log --format=%P merge parent hashes are valid' '
+	cd repo &&
+	parents=$(git log --format="%P" -n 1) &&
+	for p in $parents; do
+		git cat-file -t "$p" >type &&
+		grep "commit" type || return 1
+	done
+'
+
+test_expect_success 'log --format=%T on merge is valid tree hash' '
+	cd repo &&
+	tree=$(git log --format="%T" -n 1) &&
+	git cat-file -t "$tree" >type &&
+	grep "tree" type
+'
+
+test_expect_success 'log --format=%H %T %P multi-field for merge' '
+	cd repo &&
+	git log --format="%H %T %P" -n 1 >actual &&
+	# Merge: 1 commit hash + 1 tree + 2 parents = 4 words
+	words=$(wc -w <actual | tr -d " ") &&
+	test "$words" -ge 3
+'
+
+# ── log with -<n> limit variations ────────────────────────────────────────
+
+test_expect_success 'log -n 1 returns exactly one line' '
+	cd repo &&
+	git log -n 1 --format="%H" >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" = "1"
+'
+
+test_expect_success 'log -n 2 returns exactly two lines' '
+	cd repo &&
+	git log --first-parent -n 2 --format="%H" >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" = "2"
+'
+
+test_expect_success 'log -n exceeding total commits shows all' '
+	cd repo &&
+	total=$(git rev-list --first-parent HEAD | wc -l | tr -d " ") &&
+	git log --first-parent -n 999 --format="%H" >actual &&
+	count=$(wc -l <actual | tr -d " ") &&
+	test "$count" = "$total"
+'
+
+# ── log --skip edge cases ─────────────────────────────────────────────────
+
+test_expect_success 'log --skip=0 is same as no skip' '
+	cd repo &&
+	git log --first-parent --skip=0 --format="%H" >actual &&
+	git log --first-parent --format="%H" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'log --skip past end shows nothing' '
+	cd repo &&
+	git log --first-parent --skip=9999 --format="%H" >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'log --skip with --first-parent reduces output' '
+	cd repo &&
+	git log --first-parent --format="%H" >all &&
+	all_count=$(wc -l <all | tr -d " ") &&
+	git log --first-parent --skip=1 --format="%H" >skipped &&
+	skip_count=$(wc -l <skipped | tr -d " ") &&
+	test "$skip_count" -lt "$all_count"
+'
+
+# ── log tformat: vs format: ───────────────────────────────────────────────
+
+test_expect_success 'log tformat: and format: produce same output in grit' '
+	cd repo &&
+	git log --first-parent --format="tformat:%H" >tfmt &&
+	git log --first-parent --format="format:%H" >fmt &&
+	test_cmp tfmt fmt
+'
+
+test_expect_success 'log tformat: multi-commit line count matches commit count' '
+	cd repo &&
+	total=$(git rev-list --first-parent HEAD | wc -l | tr -d " ") &&
+	git log --first-parent --format="tformat:%s" >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" = "$total"
+'
+
+# ── log --format with only literal text ───────────────────────────────────
+
+test_expect_success 'log --format with only literal text' '
+	cd repo &&
+	out=$(git log --format="hello" -n 1) &&
+	test "$out" = "hello"
+'
+
+test_expect_success 'log --format literal repeated per commit' '
+	cd repo &&
+	git log --first-parent --format="LINE" >actual &&
+	while read -r line; do
+		test "$line" = "LINE" || return 1
+	done <actual
+'
+
 test_done
