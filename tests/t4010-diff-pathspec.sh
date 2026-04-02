@@ -157,4 +157,116 @@ test_expect_success 'diff --cached HEAD -- different file' '
 	! grep "alpha" out
 '
 
+# --- diff between commits with pathspec ---
+
+test_expect_success 'diff between commits -- single file' '
+	cd repo &&
+	c1=$(cat ../c1) && c2=$(cat ../c2) &&
+	git diff "$c1" "$c2" -- alpha.txt >out &&
+	grep "alpha\.txt" out &&
+	! grep "beta" out
+'
+
+test_expect_success 'diff between commits -- subdirectory' '
+	cd repo &&
+	c1=$(cat ../c1) && c2=$(cat ../c2) &&
+	git diff "$c1" "$c2" -- sub/ >out &&
+	grep "sub/deep\.txt" out &&
+	grep "sub/extra\.rs" out &&
+	! grep "alpha" out
+'
+
+test_expect_success 'diff between commits -- nonexistent path' '
+	cd repo &&
+	c1=$(cat ../c1) && c2=$(cat ../c2) &&
+	git diff "$c1" "$c2" -- no-such >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff --stat between commits -- single file' '
+	cd repo &&
+	c1=$(cat ../c1) && c2=$(cat ../c2) &&
+	git diff --stat "$c1" "$c2" -- alpha.txt >out &&
+	grep "alpha" out &&
+	! grep "beta" out
+'
+
+test_expect_success 'diff --numstat between commits -- single file' '
+	cd repo &&
+	c1=$(cat ../c1) && c2=$(cat ../c2) &&
+	git diff --numstat "$c1" "$c2" -- alpha.txt >out &&
+	grep "alpha" out &&
+	test_line_count = 1 out
+'
+
+test_expect_success 'diff --name-only between commits -- subdirectory' '
+	cd repo &&
+	c1=$(cat ../c1) && c2=$(cat ../c2) &&
+	git diff --name-only "$c1" "$c2" -- sub/ >out &&
+	grep "sub/" out &&
+	! grep "alpha" out
+'
+
+test_expect_success 'diff --name-status between commits -- single file' '
+	cd repo &&
+	c1=$(cat ../c1) && c2=$(cat ../c2) &&
+	git diff --name-status "$c1" "$c2" -- beta.rs >out &&
+	grep "beta\.rs" out &&
+	test_line_count = 1 out
+'
+
+test_expect_success 'diff --exit-code between commits -- unchanged file' '
+	cd repo &&
+	c1=$(cat ../c1) && c2=$(cat ../c2) &&
+	git diff --exit-code "$c1" "$c2" -- no-such
+'
+
+test_expect_success 'diff --quiet between commits -- changed file' '
+	cd repo &&
+	c1=$(cat ../c1) && c2=$(cat ../c2) &&
+	test_must_fail git diff --quiet "$c1" "$c2" -- alpha.txt
+'
+
+# --- pathspec with multiple paths ---
+
+test_expect_success 'diff HEAD -- two files shows both' '
+	cd repo &&
+	echo "pp" >alpha.txt &&
+	echo "qq" >beta.rs &&
+	git diff HEAD -- alpha.txt beta.rs >out &&
+	grep "alpha\.txt" out &&
+	grep "beta\.rs" out &&
+	git checkout -- alpha.txt beta.rs
+'
+
+test_expect_success 'diff --name-only HEAD -- two files' '
+	cd repo &&
+	echo "rr" >alpha.txt &&
+	echo "ss" >beta.rs &&
+	git diff --name-only HEAD -- alpha.txt beta.rs >out &&
+	test_line_count = 2 out &&
+	git checkout -- alpha.txt beta.rs
+'
+
+test_expect_success 'diff HEAD -- path excludes unmentioned file' '
+	cd repo &&
+	echo "tt" >alpha.txt &&
+	echo "uu" >sub/deep.txt &&
+	git diff --name-only HEAD -- alpha.txt >out &&
+	grep "alpha\.txt" out &&
+	! grep "sub/" out &&
+	git checkout -- alpha.txt sub/deep.txt
+'
+
+# --- diff --cached with pathspec (no explicit HEAD) ---
+
+test_expect_success 'diff --cached HEAD -- restricts pathspec' '
+	cd repo &&
+	git diff --cached HEAD -- alpha.txt >out &&
+	grep "alpha\.txt" out &&
+	! grep "beta" out &&
+	git reset HEAD -- alpha.txt beta.rs &&
+	git checkout -- alpha.txt beta.rs
+'
+
 test_done

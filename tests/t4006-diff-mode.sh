@@ -103,4 +103,77 @@ test_expect_success 'diff-tree --name-status for mode change' '
 	grep "file.txt" out
 '
 
+# --- additional mode change tests ---
+
+test_expect_success 'diff --numstat for mode-only change' '
+	cd repo &&
+	chmod -x file.txt &&
+	git add file.txt &&
+	git commit -m "remove exec" &&
+	chmod +x file.txt &&
+	git diff --numstat >out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff --exit-code returns 0 after resetting mode' '
+	cd repo &&
+	git checkout -- file.txt &&
+	git diff --exit-code
+'
+
+test_expect_success 'diff --stat for mode change between commits' '
+	cd repo &&
+	c1=$(git rev-parse HEAD~2) &&
+	c2=$(git rev-parse HEAD~1) &&
+	git diff --stat "$c1" "$c2" >out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff between commits shows old mode and new mode' '
+	cd repo &&
+	c1=$(git rev-parse HEAD~2) &&
+	c2=$(git rev-parse HEAD~1) &&
+	git diff "$c1" "$c2" >out &&
+	grep "old mode" out &&
+	grep "new mode" out
+'
+
+test_expect_success 'diff --name-only between commits with mode change' '
+	cd repo &&
+	c1=$(git rev-parse HEAD~2) &&
+	c2=$(git rev-parse HEAD~1) &&
+	git diff --name-only "$c1" "$c2" >out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff --name-status between commits with mode change' '
+	cd repo &&
+	c1=$(git rev-parse HEAD~2) &&
+	c2=$(git rev-parse HEAD~1) &&
+	git diff --name-status "$c1" "$c2" >out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff --numstat between commits with mode change' '
+	cd repo &&
+	c1=$(git rev-parse HEAD~2) &&
+	c2=$(git rev-parse HEAD~1) &&
+	git diff --numstat "$c1" "$c2" >out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff --exit-code detects mode change between commits' '
+	cd repo &&
+	c1=$(git rev-parse HEAD~2) &&
+	c2=$(git rev-parse HEAD~1) &&
+	test_must_fail git diff --exit-code "$c1" "$c2"
+'
+
+test_expect_success 'diff --quiet detects mode change between commits' '
+	cd repo &&
+	c1=$(git rev-parse HEAD~2) &&
+	c2=$(git rev-parse HEAD~1) &&
+	test_must_fail git diff --quiet "$c1" "$c2"
+'
+
 test_done

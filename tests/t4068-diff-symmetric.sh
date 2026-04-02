@@ -134,4 +134,54 @@ test_expect_failure 'diff A...B with pathspec (not implemented)' '
 	grep "topic\.txt" out
 '
 
+# --- additional merge-base diff tests ---
+
+test_expect_success 'diff from merge-base to topic with --numstat' '
+	cd repo &&
+	mb=$(git merge-base master topic) &&
+	topic_sha=$(git rev-parse topic) &&
+	git diff --numstat "$mb" "$topic_sha" >out &&
+	grep "topic\.txt" out
+'
+
+test_expect_success 'diff-tree from merge-base shows full diff patch' '
+	cd repo &&
+	mb=$(git merge-base master topic) &&
+	topic_sha=$(git rev-parse topic) &&
+	git diff "$mb" "$topic_sha" >out &&
+	grep "^diff --git" out &&
+	grep "topic" out
+'
+
+test_expect_success 'diff --exit-code from merge-base to topic' '
+	cd repo &&
+	mb=$(git merge-base master topic) &&
+	topic_sha=$(git rev-parse topic) &&
+	test_must_fail git diff --exit-code "$mb" "$topic_sha"
+'
+
+test_expect_success 'diff --quiet from merge-base to topic' '
+	cd repo &&
+	mb=$(git merge-base master topic) &&
+	topic_sha=$(git rev-parse topic) &&
+	test_must_fail git diff --quiet "$mb" "$topic_sha"
+'
+
+test_expect_success 'diff from merge-base to topic shows topic.txt added' '
+	cd repo &&
+	mb=$(git merge-base master topic) &&
+	topic_sha=$(git rev-parse topic) &&
+	git diff --name-status "$mb" "$topic_sha" >out &&
+	grep "^A" out &&
+	grep "topic\.txt" out
+'
+
+test_expect_success 'diff-tree merge-base topic2 shows shared.txt change' '
+	cd repo &&
+	mb=$(git merge-base master topic2) &&
+	topic2_sha=$(git rev-parse topic2) &&
+	git diff --numstat "$mb" "$topic2_sha" >out &&
+	grep "shared\.txt" out
+'
+
 test_done
