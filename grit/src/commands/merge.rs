@@ -261,6 +261,10 @@ fn do_real_merge(
         fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
         fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
 
+        // Print per-file conflict messages
+        for (ctype, cpath) in &merge_result.conflict_descriptions {
+            eprintln!("CONFLICT ({ctype}): Merge conflict in {cpath}");
+        }
         eprintln!("Automatic merge failed; fix conflicts and then commit the result.");
         // Return error to signal failure (exit code 1)
         bail!("Automatic merge failed; fix conflicts and then commit the result.");
@@ -392,6 +396,10 @@ fn do_octopus_merge(
             let msg = build_octopus_merge_message(head, &args.commits, args.message.as_deref());
             fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
             fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
+            for (ctype, cpath) in &merge_result.conflict_descriptions {
+                eprintln!("CONFLICT ({ctype}): Merge conflict in {cpath}");
+            }
+            eprintln!("Automatic merge failed; fix conflicts and then commit the result.");
             bail!("Automatic merge failed; fix conflicts and then commit the result.");
         }
 
@@ -663,6 +671,9 @@ struct MergeResult {
     has_conflicts: bool,
     /// Files with conflict markers: (path, content).
     conflict_files: Vec<(String, Vec<u8>)>,
+    /// Conflict descriptions for output: (conflict_type, path).
+    /// e.g. ("content", "file.txt") or ("modify/delete", "file.txt")
+    conflict_descriptions: Vec<(String, String)>,
 }
 
 /// Perform tree-level three-way merge.
@@ -682,6 +693,7 @@ fn merge_trees(
     let mut index = Index::new();
     let mut has_conflicts = false;
     let mut conflict_files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut conflict_descriptions: Vec<(String, String)> = Vec::new();
 
     let ours_label = head.branch_name().unwrap_or("HEAD");
 
@@ -735,20 +747,25 @@ fn merge_trees(
                         stage_entry(&mut index, be, 1);
                         stage_entry(&mut index, oe, 2);
                         stage_entry(&mut index, te, 3);
+                        conflict_descriptions.push(("content".to_string(), path_str.clone()));
                         conflict_files.push((path_str, content));
                     }
                 }
             }
             // Delete/modify conflicts
             (Some(be), None, Some(te)) => {
+                let path_str = String::from_utf8_lossy(path).to_string();
                 has_conflicts = true;
                 stage_entry(&mut index, be, 1);
                 stage_entry(&mut index, te, 3);
+                conflict_descriptions.push(("modify/delete".to_string(), path_str));
             }
             (Some(be), Some(oe), None) => {
+                let path_str = String::from_utf8_lossy(path).to_string();
                 has_conflicts = true;
                 stage_entry(&mut index, be, 1);
                 stage_entry(&mut index, oe, 2);
+                conflict_descriptions.push(("modify/delete".to_string(), path_str));
             }
             // Both added different content — try content merge with empty base
             (None, Some(oe), Some(te)) => {
@@ -764,6 +781,7 @@ fn merge_trees(
                         has_conflicts = true;
                         stage_entry(&mut index, oe, 2);
                         stage_entry(&mut index, te, 3);
+                        conflict_descriptions.push(("add/add".to_string(), path_str.clone()));
                         conflict_files.push((path_str, content));
                     }
                 }
@@ -779,6 +797,7 @@ fn merge_trees(
         index,
         has_conflicts,
         conflict_files,
+        conflict_descriptions,
     })
 }
 
