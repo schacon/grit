@@ -652,4 +652,163 @@ test_expect_success 'test --mixed <paths>' '
 	test_must_fail grep "file3" cached_names
 '
 
+# ---------------------------------------------------------------------------
+# Additional reset tests
+# ---------------------------------------------------------------------------
+
+test_expect_success 'reset with no args defaults to mixed HEAD' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo extra >>first &&
+	git add first &&
+	git diff --cached --name-only >before &&
+	grep first before &&
+	git reset &&
+	git diff --cached --name-only >after &&
+	test_must_be_empty after &&
+	# Worktree should still have modification
+	grep extra first
+'
+
+test_expect_success 'reset HEAD is same as reset with no args' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo extra >>first &&
+	git add first &&
+	git reset HEAD &&
+	git diff --cached --name-only >after &&
+	test_must_be_empty after &&
+	grep extra first
+'
+
+test_expect_success 'reset --quiet --hard suppresses output' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git reset --hard --quiet $(cat ../commit1) >stdout 2>stderr &&
+	test_must_be_empty stdout &&
+	test_must_be_empty stderr &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit1)" &&
+	git reset --hard $(cat ../commit4)
+'
+
+test_expect_success 'reset --soft does not change index or worktree' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo modified >first &&
+	git add first &&
+	MOD_BLOB=$(git ls-files -s first | awk "{print \$2}") &&
+	git reset --soft $(cat ../commit2) &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit2)" &&
+	# Index should still have modified blob
+	ACTUAL_BLOB=$(git ls-files -s first | awk "{print \$2}") &&
+	test "$ACTUAL_BLOB" = "$MOD_BLOB" &&
+	# Worktree should still have modified content
+	test "$(cat first)" = "modified" &&
+	git reset --hard $(cat ../commit4)
+'
+
+test_expect_success 'reset --mixed resets index but not worktree' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo modified >first &&
+	git add first &&
+	git reset --mixed $(cat ../commit2) &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit2)" &&
+	# Index should match commit2 (no staged changes)
+	git diff-index --cached --exit-code HEAD &&
+	# Worktree should still have modified content
+	test "$(cat first)" = "modified" &&
+	git reset --hard $(cat ../commit4)
+'
+
+test_expect_success 'reset --hard to ORIG_HEAD' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git reset --hard $(cat ../commit1) &&
+	test "$(git rev-parse ORIG_HEAD)" = "$(cat ../commit4)" &&
+	git reset --hard ORIG_HEAD &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit4)"
+'
+
+test_expect_success 'reset --hard removes added file' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo brand-new >brand-new &&
+	git add brand-new &&
+	git reset --hard &&
+	test_path_is_missing brand-new
+'
+
+test_expect_success 'reset -- multiple paths' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo x >first &&
+	echo y >second &&
+	git add first second &&
+	git reset HEAD -- first second &&
+	git diff --cached --name-only >staged &&
+	test_must_be_empty staged &&
+	# Worktree should still have changes
+	test "$(cat first)" = "x" &&
+	test "$(cat second)" = "y"
+'
+
+test_expect_success 'reset <commit> -- <path> does not move HEAD' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git reset $(cat ../commit1) -- first &&
+	# HEAD should stay at commit4
+	test "$(git rev-parse HEAD)" = "$(cat ../commit4)" &&
+	# Index for first should now match commit1 state
+	C1_BLOB=$(git rev-parse $(cat ../commit1):first) &&
+	ACTUAL_BLOB=$(git ls-files -s first | awk "{print \$2}") &&
+	test "$ACTUAL_BLOB" = "$C1_BLOB"
+'
+
+test_expect_success 'reset to same commit is a no-op for HEAD' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git reset --soft HEAD &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit4)" &&
+	git diff-index --cached --exit-code HEAD
+'
+
+test_expect_success 'reset --hard with dirty worktree discards changes' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo dirty >first &&
+	echo dirty >second &&
+	git reset --hard &&
+	test_must_fail grep dirty first &&
+	test_must_fail grep dirty second
+'
+
+test_expect_success 'reset --soft then commit creates new commit at reset point' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	git reset --soft $(cat ../commit2) &&
+	git commit -m "new-after-soft-reset" &&
+	# Parent should be commit2
+	PARENT=$(git rev-parse HEAD~1) &&
+	test "$PARENT" = "$(cat ../commit2)" &&
+	git reset --hard $(cat ../commit4)
+'
+
+test_expect_success 'reset nonexistent ref fails' '
+	cd repo &&
+	test_must_fail git reset --hard nonexistent-ref
+'
+
+test_expect_success 'reset --hard leaves worktree clean' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo dirty1 >first &&
+	echo dirty2 >second &&
+	echo new >newfile &&
+	git add first second newfile &&
+	git reset --hard &&
+	git diff-index --exit-code HEAD &&
+	test_path_is_missing newfile
+'
+
 test_done

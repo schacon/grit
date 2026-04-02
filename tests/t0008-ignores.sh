@@ -676,4 +676,275 @@ test_expect_success '** not confused by matching leading prefix' '
 	test_cmp expect actual
 '
 
+############################################################################
+#
+# Additional ignore tests
+
+test_expect_success 'negation pattern: !lib.a overrides *.a' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.a
+	!lib.a
+	EOF
+	grit check-ignore file.a >actual &&
+	echo file.a >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore lib.a
+'
+
+test_expect_success 'negation pattern verbose shows negation rule' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.a
+	!lib.a
+	EOF
+	grit check-ignore -v lib.a >actual &&
+	echo ".gitignore:2:!lib.a	lib.a" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rooted pattern only matches top-level' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	/TODO
+	EOF
+	mkdir -p sub &&
+	grit check-ignore TODO >actual &&
+	echo TODO >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore sub/TODO &&
+	rm -rf sub
+'
+
+test_expect_success 'directory-only pattern with trailing slash' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	build/
+	EOF
+	mkdir -p build &&
+	touch build/output &&
+	grit check-ignore build >actual &&
+	echo build >expect &&
+	test_cmp expect actual &&
+	grit check-ignore build/output >actual2 &&
+	echo build/output >expect2 &&
+	test_cmp expect2 actual2 &&
+	rm -rf build
+'
+
+test_expect_success 'directory-only pattern does not match file' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	output/
+	EOF
+	touch output &&
+	test_must_fail grit check-ignore output &&
+	rm -f output
+'
+
+test_expect_success 'wildcard *.txt in subdirectory matches' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	doc/*.txt
+	EOF
+	mkdir -p doc &&
+	grit check-ignore doc/notes.txt >actual &&
+	echo doc/notes.txt >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore doc/README &&
+	rm -rf doc
+'
+
+test_expect_success '** matches any directory depth' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	**/build
+	EOF
+	mkdir -p src/build deep/nested/build &&
+	grit check-ignore src/build deep/nested/build >actual &&
+	cat >expect <<-\EOF &&
+	src/build
+	deep/nested/build
+	EOF
+	test_cmp expect actual &&
+	rm -rf src deep
+'
+
+test_expect_success '**/ matches intermediate directories' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	**/foo/bar
+	EOF
+	mkdir -p a/foo b/c/foo &&
+	touch a/foo/bar b/c/foo/bar &&
+	grit check-ignore a/foo/bar b/c/foo/bar >actual &&
+	cat >expect <<-\EOF &&
+	a/foo/bar
+	b/c/foo/bar
+	EOF
+	test_cmp expect actual &&
+	rm -rf a b
+'
+
+test_expect_success 'patterns match case-sensitively' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.LOG
+	EOF
+	grit check-ignore test.LOG >actual &&
+	echo test.LOG >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore test.log
+'
+
+test_expect_success 'comment lines are ignored' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	# This is a comment
+	*.log
+	# Another comment
+	EOF
+	grit check-ignore test.log >actual &&
+	echo test.log >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'blank lines are ignored' '
+	cd repo &&
+	printf "*.log\n\n*.tmp\n" >.gitignore &&
+	grit check-ignore test.log test.tmp >actual &&
+	cat >expect <<-\EOF &&
+	test.log
+	test.tmp
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success '--no-index shows tracked file as ignored' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.t
+	EOF
+	grit check-ignore --no-index a/a.t >actual &&
+	echo a/a.t >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'tracked file not ignored without --no-index, ignored with' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	ignored-*
+	EOF
+	# ignored-but-in-index is tracked (via update-index in setup)
+	test_must_fail grit check-ignore ignored-but-in-index &&
+	grit check-ignore --no-index ignored-but-in-index >actual &&
+	echo ignored-but-in-index >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'nested .gitignore overrides parent' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.txt
+	EOF
+	mkdir -p sub &&
+	cat >sub/.gitignore <<-\EOF &&
+	!keep.txt
+	EOF
+	grit check-ignore sub/other.txt >actual &&
+	echo sub/other.txt >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore sub/keep.txt &&
+	rm -rf sub/.gitignore
+'
+
+test_expect_success 'nested .gitignore adds new patterns' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.log
+	EOF
+	mkdir -p sub &&
+	cat >sub/.gitignore <<-\EOF &&
+	*.tmp
+	EOF
+	grit check-ignore sub/test.log sub/test.tmp >actual &&
+	cat >expect <<-\EOF &&
+	sub/test.log
+	sub/test.tmp
+	EOF
+	test_cmp expect actual &&
+	rm -rf sub/.gitignore
+'
+
+test_expect_success '--stdin with -z NUL-delimited output' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.o
+	*.a
+	EOF
+	printf "file.o\nfile.a\nfile.c\n" | grit check-ignore --stdin >actual &&
+	cat >expect <<-\EOF &&
+	file.o
+	file.a
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success '--stdin -z produces NUL-terminated records' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.o
+	EOF
+	printf "file.o\0file.c\0" | grit check-ignore --stdin -z >actual &&
+	printf "file.o\0" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'multiple patterns in sequence last-match wins' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.txt
+	!important.txt
+	important.txt
+	EOF
+	grit check-ignore important.txt >actual &&
+	echo important.txt >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'pattern with leading slash is rooted' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	/build
+	EOF
+	mkdir -p src/build &&
+	grit check-ignore build >actual &&
+	echo build >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore src/build &&
+	rm -rf src/build
+'
+
+test_expect_success 'question mark matches single character' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	file?.txt
+	EOF
+	grit check-ignore file1.txt fileA.txt >actual &&
+	cat >expect <<-\EOF &&
+	file1.txt
+	fileA.txt
+	EOF
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore file12.txt
+'
+
+test_expect_success 'trailing spaces in pattern are stripped' '
+	cd repo &&
+	printf "*.bak   \n" >.gitignore &&
+	grit check-ignore test.bak >actual &&
+	echo test.bak >expect &&
+	test_cmp expect actual
+'
+
 test_done
