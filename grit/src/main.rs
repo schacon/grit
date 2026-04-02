@@ -1,411 +1,15 @@
 //! `grit` — Git plumbing reimplementation in Rust.
 //!
-//! This binary is a thin CLI shim: it parses the command line, resolves
-//! global options, and delegates to the appropriate command handler in
-//! the `commands` module.  All Git-compatible logic lives in `grit-lib`.
+//! This binary uses manual pre-dispatch to avoid building a clap parser for
+//! all 143+ subcommands on every invocation.  Global options (-C, --git-dir,
+//! --work-tree, -c) are extracted from argv by hand, then only the specific
+//! subcommand's clap `Args` struct is parsed.
 
-use anyhow::Result;
-use clap::{Parser, Subcommand};
+use anyhow::{bail, Result};
+use clap::{Args, FromArgMatches, Parser};
 use std::path::PathBuf;
 
 mod commands;
-
-/// Gust: a Git plumbing reimplementation.
-#[derive(Debug, Parser)]
-#[command(
-    name = "grit",
-    version,
-    about = "Git plumbing reimplementation in Rust",
-    disable_help_subcommand = true
-)]
-struct Cli {
-    /// Override the path to the git directory.
-    #[arg(long = "git-dir", env = "GIT_DIR")]
-    git_dir: Option<PathBuf>,
-
-    /// Run as if started in this directory (Git's `-C`).
-    /// Named `change_dir` to avoid clap field-name collision with `grit init [DIRECTORY]`.
-    #[arg(short = 'C', global = true, value_name = "PATH")]
-    change_dir: Option<PathBuf>,
-
-    /// Set a configuration variable (key=value).
-    #[arg(short = 'c', global = true, value_name = "KEY=VALUE")]
-    config_override: Vec<String>,
-
-    /// Override the work tree path.
-    #[arg(long = "work-tree", env = "GIT_WORK_TREE")]
-    work_tree: Option<PathBuf>,
-
-    /// Create a bare repository.
-    #[arg(long)]
-    bare: bool,
-
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// Add file contents to the index.
-    Add(commands::add::Args),
-    /// Apply patches from mailbox/mbox format files.
-    Am(commands::am::Args),
-    /// Show what revision and author last modified each line of a file.
-    Annotate(commands::annotate::Args),
-    /// Use binary search to find the commit that introduced a bug.
-    Bisect(commands::bisect::Args),
-    /// Move objects and refs by archive.
-    Bundle(commands::bundle::Args),
-    /// Show what revision and author last modified each line of a file.
-    Blame(commands::blame::Args),
-    /// Apply a patch to files and/or to the index.
-    Apply(commands::apply::Args),
-    /// List, create, or delete branches.
-    Branch(commands::branch::Args),
-    /// Find commits not yet applied upstream.
-    Cherry(commands::cherry::Args),
-    /// Apply the changes introduced by existing commits.
-    #[command(name = "cherry-pick")]
-    CherryPick(commands::cherry_pick::Args),
-    /// Verify that a ref name is valid.
-    #[command(name = "check-ref-format")]
-    CheckRefFormat(commands::check_ref_format::Args),
-    /// Remove untracked files from the working tree.
-    Clean(commands::clean::Args),
-    /// Clone a repository into a new directory.
-    Clone(commands::clone::Args),
-    /// Display data in columns.
-    Column(commands::column::Args),
-    /// Switch branches or restore working tree files.
-    Checkout(commands::checkout::Args),
-    /// Create an empty Git repository or reinitialize an existing one.
-    Init(commands::init::Args),
-    /// Add or parse structured trailers in commit messages.
-    #[command(name = "interpret-trailers")]
-    InterpretTrailers(commands::interpret_trailers::Args),
-    /// Compute object ID and optionally create an object from a file.
-    #[command(name = "hash-object")]
-    HashObject(commands::hash_object::Args),
-    /// Run git hooks.
-    Hook(commands::hook::Args),
-    /// Build pack index file for an existing packed archive.
-    #[command(name = "index-pack")]
-    IndexPack(commands::index_pack::Args),
-    /// Provide contents or details of repository objects.
-    #[command(name = "cat-file")]
-    CatFile(commands::cat_file::Args),
-    /// Display gitattributes information.
-    #[command(name = "check-attr")]
-    CheckAttr(commands::check_attr::Args),
-    /// Record changes to the repository.
-    Commit(commands::commit::Args),
-    /// Get and set repository or global options.
-    Config(commands::config::Args),
-    /// Show commit logs.
-    Log(commands::log::Args),
-    /// Run maintenance tasks on the repository.
-    Maintenance(commands::maintenance::Args),
-    /// Register file contents in the working tree to the index.
-    #[command(name = "update-index")]
-    UpdateIndex(commands::update_index::Args),
-    /// Show information about files in the index and working tree.
-    #[command(name = "ls-files")]
-    LsFiles(commands::ls_files::Args),
-    /// Create a tree object from the current index.
-    #[command(name = "write-tree")]
-    WriteTree(commands::write_tree::Args),
-    /// List references in a remote (or local) repository.
-    #[command(name = "ls-remote")]
-    LsRemote(commands::ls_remote::Args),
-    /// List the contents of a tree object.
-    #[command(name = "ls-tree")]
-    LsTree(commands::ls_tree::Args),
-    /// Stash the changes in a dirty working directory away.
-    Stash(commands::stash::Args),
-    /// Initialize, update, or inspect submodules.
-    Submodule(commands::submodule::Args),
-    /// Show the working tree status.
-    Status(commands::status::Args),
-    /// Reapply commits on top of another base tip.
-    Rebase(commands::rebase::Args),
-    /// Read tree information into the index.
-    #[command(name = "read-tree")]
-    ReadTree(commands::read_tree::Args),
-    /// Manage set of tracked repositories.
-    Remote(commands::remote::Args),
-    /// Reuse recorded resolution of conflicted merges.
-    Rerere(commands::rerere::Args),
-    /// Check out files from the index into the working tree.
-    #[command(name = "checkout-index")]
-    CheckoutIndex(commands::checkout_index::Args),
-    /// Create a new commit object.
-    #[command(name = "commit-tree")]
-    CommitTree(commands::commit_tree::Args),
-    /// Update the object name stored in a ref safely.
-    #[command(name = "update-ref")]
-    UpdateRef(commands::update_ref::Args),
-    /// Update auxiliary info file to help dumb servers.
-    #[command(name = "update-server-info")]
-    UpdateServerInfo(commands::update_server_info::Args),
-    /// Show canonical name/email from .mailmap.
-    #[command(name = "check-mailmap")]
-    CheckMailmap(commands::check_mailmap::Args),
-    /// Debug gitignore and exclude rules.
-    #[command(name = "check-ignore")]
-    CheckIgnore(commands::check_ignore::Args),
-    /// Count unpacked objects and disk usage.
-    #[command(name = "count-objects")]
-    CountObjects(commands::count_objects::Args),
-    /// Give an object a human readable name based on an available ref.
-    Describe(commands::describe::Args),
-    /// Show changes between commits, commit and working tree, etc.
-    Diff(commands::diff::Args),
-    /// Compare working tree files against the index.
-    #[command(name = "diff-files")]
-    DiffFiles(commands::diff_files::Args),
-    /// Compare the content and mode of blobs found via two tree objects.
-    #[command(name = "diff-tree")]
-    DiffTree(commands::diff_tree::Args),
-    /// Compare a tree against working tree or index.
-    #[command(name = "diff-index")]
-    DiffIndex(commands::diff_index::Args),
-    /// Download objects and refs from another repository.
-    Fetch(commands::fetch::Args),
-    /// Output information on refs.
-    #[command(name = "for-each-ref")]
-    ForEachRef(commands::for_each_ref::Args),
-    /// Join two or more development histories together.
-    Merge(commands::merge::Args),
-    /// Find best common ancestors.
-    #[command(name = "merge-base")]
-    MergeBase(commands::merge_base::Args),
-    /// Name commits relative to refs.
-    #[command(name = "name-rev")]
-    NameRev(commands::name_rev::Args),
-    /// Add or inspect object notes.
-    Notes(commands::notes::Args),
-    /// Run a three-way file merge.
-    #[command(name = "merge-file")]
-    MergeFile(commands::merge_file::Args),
-    /// Show three-way merge without touching index/worktree.
-    #[command(name = "merge-tree")]
-    MergeTree(commands::merge_tree::Args),
-    /// List commit objects in reverse chronological order.
-    #[command(name = "rev-list")]
-    RevList(commands::rev_list::Args),
-    /// Pick out and massage revision parameters.
-    #[command(name = "rev-parse")]
-    RevParse(commands::rev_parse::Args),
-    /// Show packed archive index.
-    #[command(name = "show-index")]
-    ShowIndex(commands::show_index::Args),
-    /// List references in a local repository.
-    #[command(name = "show-ref")]
-    ShowRef(commands::show_ref::Args),
-    /// Read, modify, and delete symbolic refs.
-    #[command(name = "symbolic-ref")]
-    SymbolicRef(commands::symbolic_ref::Args),
-    /// Verify a commit object.
-    #[command(name = "verify-commit")]
-    VerifyCommit(commands::verify_commit::Args),
-    /// Validate packed Git archive files.
-    #[command(name = "verify-pack")]
-    VerifyPack(commands::verify_pack::Args),
-    /// Verify a tag object.
-    #[command(name = "verify-tag")]
-    VerifyTag(commands::verify_tag::Args),
-    /// Display version information.
-    Version(commands::version::Args),
-    /// Show logs with raw diff (no merges).
-    Whatchanged(commands::whatchanged::Args),
-    /// Produce a merge commit message.
-    #[command(name = "fmt-merge-msg")]
-    FmtMergeMsg(commands::fmt_merge_msg::Args),
-    /// Prepare patches for e-mail submission.
-    #[command(name = "format-patch")]
-    FormatPatch(commands::format_patch::Args),
-    /// Verify connectivity and validity of objects in the database.
-    Fsck(commands::fsck::Args),
-    /// Cleanup unnecessary files and optimize the repository.
-    Gc(commands::gc::Args),
-    /// Search tracked files for a pattern.
-    Grep(commands::grep::Args),
-    /// Create a packed archive of objects.
-    #[command(name = "pack-objects")]
-    PackObjects(commands::pack_objects::Args),
-    /// Pack unpacked objects in a repository.
-    Repack(commands::repack::Args),
-    /// Create, list, delete refs to replace objects.
-    Replace(commands::replace::Args),
-    /// Read a tag object from stdin, validate strictly, and write to ODB.
-    #[command(name = "mktag")]
-    Mktag(commands::mktag::Args),
-    /// Remove unreachable loose objects.
-    Prune(commands::prune::Args),
-    /// Fetch from and integrate with another repository.
-    Pull(commands::pull::Args),
-    /// Update remote refs along with associated objects.
-    Push(commands::push::Args),
-    /// Remove loose objects that are already stored in pack files.
-    #[command(name = "prune-packed")]
-    PrunePacked(commands::prune_packed::Args),
-    /// Create, list, delete or verify a tag object.
-    Tag(commands::tag::Args),
-    /// Restore working tree files.
-    Restore(commands::restore::Args),
-    /// Revert some existing commits.
-    Revert(commands::revert::Args),
-    /// Summarize git log output.
-    Shortlog(commands::shortlog::Args),
-    /// Show various types of objects (commits, trees, blobs, tags).
-    Show(commands::show::Args),
-    /// Show branches and their commits.
-    #[command(name = "show-branch")]
-    ShowBranch(commands::show_branch::Args),
-    /// Remove files from the working tree and from the index.
-    Rm(commands::rm::Args),
-    /// Move or rename a file, a directory, or a symlink.
-    Mv(commands::mv::Args),
-    /// Pack loose refs into packed-refs.
-    #[command(name = "pack-refs")]
-    PackRefs(commands::pack_refs::Args),
-    /// Compute unique IDs for patches.
-    #[command(name = "patch-id")]
-    PatchId(commands::patch_id::Args),
-    /// Compare two commit ranges.
-    #[command(name = "range-diff")]
-    RangeDiff(commands::range_diff::Args),
-    /// Build a tree object from ls-tree formatted text.
-    #[command(name = "mktree")]
-    MkTree(commands::mktree::Args),
-    /// Show a Git logical variable.
-    Var(commands::var::Args),
-    /// Manage reflog information.
-    Reflog(commands::reflog::Args),
-    /// Reset current HEAD to the specified state.
-    Reset(commands::reset::Args),
-    /// Remove unnecessary whitespace.
-    Stripspace(commands::stripspace::Args),
-    /// Switch branches.
-    Switch(commands::switch::Args),
-    /// Write a blob object to a temporary file and print its path.
-    #[command(name = "unpack-file")]
-    UnpackFile(commands::unpack_file::Args),
-    /// Unpack objects from a pack stream into the object database.
-    #[command(name = "unpack-objects")]
-    UnpackObjects(commands::unpack_objects::Args),
-    /// Manage multiple working trees.
-    Worktree(commands::worktree::Args),
-    /// Manage sparse checkout patterns.
-    #[command(name = "sparse-checkout")]
-    SparseCheckout(commands::sparse_checkout::Args),
-    /// Create an archive of files from a named tree.
-    Archive(commands::archive::Args),
-    /// Display help information.
-    Help(commands::help::Args),
-    /// Extract patch from a single email message.
-    Mailinfo(commands::mailinfo::Args),
-    /// Split mbox into individual messages.
-    Mailsplit(commands::mailsplit::Args),
-    /// Run a merge for files needing merge.
-    #[command(name = "merge-index")]
-    MergeIndex(commands::merge_index::Args),
-    /// Write and verify commit-graph files.
-    #[command(name = "commit-graph")]
-    CommitGraph(commands::commit_graph::Args),
-    /// Export repository as fast-import stream.
-    #[command(name = "fast-export")]
-    FastExport(commands::fast_export::Args),
-    /// Import from fast-export stream.
-    #[command(name = "fast-import")]
-    FastImport(commands::fast_import::Args),
-    /// Manage multi-pack index.
-    #[command(name = "multi-pack-index")]
-    MultiPackIndex(commands::multi_pack_index::Args),
-    /// Replay commits on a new base.
-    Replay(commands::replay::Args),
-    /// Download missing blobs for partial clone.
-    Backfill(commands::backfill::Args),
-    /// Git protocol daemon.
-    Daemon(commands::daemon::Args),
-    /// Compare pairs of blobs/trees.
-    #[command(name = "diff-pairs")]
-    DiffPairs(commands::diff_pairs::Args),
-    /// Show commit history.
-    History(commands::history::Args),
-    /// CGI for smart HTTP transport.
-    #[command(name = "http-backend")]
-    HttpBackend(commands::http_backend::Args),
-    /// Download from remote via HTTP.
-    #[command(name = "http-fetch")]
-    HttpFetch(commands::http_fetch::Args),
-    /// Push to remote via HTTP/DAV.
-    #[command(name = "http-push")]
-    HttpPush(commands::http_push::Args),
-    /// Show when files were last modified.
-    #[command(name = "last-modified")]
-    LastModified(commands::last_modified::Args),
-    /// Manage repository metadata.
-    Repo(commands::repo::Args),
-    /// Shell i18n support.
-    #[command(name = "sh-i18n")]
-    ShI18n(commands::sh_i18n::Args),
-    /// Shell setup helpers.
-    #[command(name = "sh-setup")]
-    ShSetup(commands::sh_setup::Args),
-    /// Push objects to a remote repository (plumbing).
-    #[command(name = "send-pack")]
-    SendPack(commands::send_pack::Args),
-    /// Download objects from a remote repository (plumbing).
-    #[command(name = "fetch-pack")]
-    FetchPack(commands::fetch_pack::Args),
-    /// Receive pushed objects (server side).
-    #[command(name = "receive-pack")]
-    ReceivePack(commands::receive_pack::Args),
-    /// Send objects for fetch (server side).
-    #[command(name = "upload-pack")]
-    UploadPack(commands::upload_pack::Args),
-    /// Send archive to client (server-side of git archive --remote).
-    #[command(name = "upload-archive")]
-    UploadArchive(commands::upload_archive::Args),
-    /// Restricted login shell for Git-only SSH access.
-    Shell(commands::shell::Args),
-    /// Add file contents to the index (alias for 'add').
-    Stage(commands::stage::Args),
-    /// Launch an external diff tool.
-    Difftool(commands::difftool::Args),
-    /// Launch an external merge tool for conflicts.
-    Mergetool(commands::mergetool::Args),
-    /// Rewrite branches (deprecated — use git-filter-repo).
-    #[command(name = "filter-branch")]
-    FilterBranch(commands::filter_branch::Args),
-    /// Generate a bug report.
-    Bugreport(commands::bugreport::Args),
-    /// Generate diagnostic information.
-    Diagnose(commands::diagnose::Args),
-    /// Retrieve and store user credentials.
-    Credential(commands::credential::Args),
-    /// Cache credentials in memory.
-    #[command(name = "credential-cache")]
-    CredentialCache(commands::credential_cache::Args),
-    /// Store credentials on disk.
-    #[command(name = "credential-store")]
-    CredentialStore(commands::credential_store::Args),
-    /// Run a command in each registered repo.
-    #[command(name = "for-each-repo")]
-    ForEachRepo(commands::for_each_repo::Args),
-    /// Extract commit ID from tar archive.
-    #[command(name = "get-tar-commit-id")]
-    GetTarCommitId(commands::get_tar_commit_id::Args),
-    /// Standard helper for merge-index (three-way file merge).
-    #[command(name = "merge-one-file")]
-    MergeOneFile(commands::merge_one_file::Args),
-    /// Find redundant pack files.
-    #[command(name = "pack-redundant")]
-    PackRedundant(commands::pack_redundant::Args),
-    /// Low-level ref management.
-    Refs(commands::refs::Args),
-}
 
 fn main() {
     if let Err(e) = run() {
@@ -414,179 +18,326 @@ fn main() {
     }
 }
 
-fn run() -> Result<()> {
-    let cli = Cli::parse();
+/// Global options parsed from argv before the subcommand.
+#[derive(Default)]
+struct GlobalOpts {
+    git_dir: Option<PathBuf>,
+    work_tree: Option<PathBuf>,
+    change_dir: Option<PathBuf>,
+    config_overrides: Vec<String>,
+    bare: bool,
+}
 
-    // Handle -C: change working directory before doing anything else.
-    if let Some(dir) = &cli.change_dir {
+/// Extract global options and return (globals, subcommand_name, remaining_args).
+///
+/// We scan argv[1..] for global flags that appear before the subcommand.
+/// The first non-flag argument is the subcommand name.
+fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<String>)> {
+    let mut opts = GlobalOpts::default();
+    let mut subcmd = None;
+    let mut rest = Vec::new();
+    let mut i = 0;
+    let items = &args[1..]; // skip argv[0]
+
+    while i < items.len() {
+        let arg = &items[i];
+
+        // -C <dir>
+        if arg == "-C" {
+            i += 1;
+            if i < items.len() {
+                opts.change_dir = Some(PathBuf::from(&items[i]));
+            }
+            i += 1;
+            continue;
+        }
+
+        // --git-dir=<val> or --git-dir <val>
+        if let Some(val) = arg.strip_prefix("--git-dir=") {
+            opts.git_dir = Some(PathBuf::from(val));
+            i += 1;
+            continue;
+        }
+        if arg == "--git-dir" {
+            i += 1;
+            if i < items.len() {
+                opts.git_dir = Some(PathBuf::from(&items[i]));
+            }
+            i += 1;
+            continue;
+        }
+
+        // --work-tree=<val> or --work-tree <val>
+        if let Some(val) = arg.strip_prefix("--work-tree=") {
+            opts.work_tree = Some(PathBuf::from(val));
+            i += 1;
+            continue;
+        }
+        if arg == "--work-tree" {
+            i += 1;
+            if i < items.len() {
+                opts.work_tree = Some(PathBuf::from(&items[i]));
+            }
+            i += 1;
+            continue;
+        }
+
+        // -c key=value
+        if arg == "-c" {
+            i += 1;
+            if i < items.len() {
+                opts.config_overrides.push(items[i].clone());
+            }
+            i += 1;
+            continue;
+        }
+
+        // --bare
+        if arg == "--bare" {
+            opts.bare = true;
+            i += 1;
+            continue;
+        }
+
+        // --version / -v / --help / -h  → treat as pseudo-subcommands
+        if arg == "--version" || arg == "-v" {
+            subcmd = Some("version".to_owned());
+            rest = items[i + 1..].to_vec();
+            break;
+        }
+        if arg == "--help" || arg == "-h" || arg == "help" {
+            subcmd = Some("help".to_owned());
+            rest = items[i + 1..].to_vec();
+            break;
+        }
+
+        // First non-flag argument is the subcommand
+        if !arg.starts_with('-') {
+            subcmd = Some(arg.clone());
+            rest = items[i + 1..].to_vec();
+            break;
+        }
+
+        // Unknown global flag — pass through
+        bail!("unknown option: {arg}");
+    }
+
+    Ok((opts, subcmd, rest))
+}
+
+/// Apply global options (env vars, chdir).
+fn apply_globals(opts: &GlobalOpts) -> Result<()> {
+    if let Some(dir) = &opts.change_dir {
         std::env::set_current_dir(dir)?;
     }
-
-    // Pass git_dir override into env so library discovery picks it up.
-    if let Some(git_dir) = &cli.git_dir {
+    if let Some(git_dir) = &opts.git_dir {
         std::env::set_var("GIT_DIR", git_dir);
     }
-
-    // Pass --work-tree into env.
-    if let Some(wt) = &cli.work_tree {
+    if let Some(wt) = &opts.work_tree {
         std::env::set_var("GIT_WORK_TREE", wt);
     }
-
-    // Store -c overrides in GIT_CONFIG_PARAMETERS for ConfigSet to pick up.
-    if !cli.config_override.is_empty() {
-        // Git format: 'key=value' separated by spaces, each single-quoted.
-        let params: String = cli
-            .config_override
+    if !opts.config_overrides.is_empty() {
+        let params: String = opts
+            .config_overrides
             .iter()
             .map(|kv| format!("'{}'", kv))
             .collect::<Vec<_>>()
             .join(" ");
         std::env::set_var("GIT_CONFIG_PARAMETERS", params);
     }
+    Ok(())
+}
 
-    match cli.command {
-        Command::Add(args) => commands::add::run(args),
-        Command::Am(args) => commands::am::run(args),
-        Command::Annotate(args) => commands::annotate::run(args),
-        Command::Bisect(args) => commands::bisect::run(args),
-        Command::Bundle(args) => commands::bundle::run(args),
-        Command::Blame(args) => commands::blame::run(args),
-        Command::Apply(args) => commands::apply::run(args),
-        Command::Branch(args) => commands::branch::run(args),
-        Command::Cherry(args) => commands::cherry::run(args),
-        Command::CherryPick(args) => commands::cherry_pick::run(args),
-        Command::CheckRefFormat(args) => commands::check_ref_format::run(args),
-        Command::Clean(args) => commands::clean::run(args),
-        Command::Clone(args) => commands::clone::run(args),
-        Command::Column(args) => commands::column::run(args),
-        Command::Checkout(args) => commands::checkout::run(args),
-        Command::Init(args) => commands::init::run(args, cli.bare),
-        Command::InterpretTrailers(args) => commands::interpret_trailers::run(args),
-        Command::HashObject(args) => commands::hash_object::run(args),
-        Command::Hook(args) => commands::hook::run(args),
-        Command::IndexPack(args) => commands::index_pack::run(args),
-        Command::CatFile(args) => commands::cat_file::run(args),
-        Command::CheckAttr(args) => commands::check_attr::run(args),
-        Command::Commit(args) => commands::commit::run(args),
-        Command::Config(args) => commands::config::run(args),
-        Command::Log(args) => commands::log::run(args),
-        Command::Maintenance(args) => commands::maintenance::run(args),
-        Command::UpdateIndex(args) => commands::update_index::run(args),
-        Command::LsFiles(args) => commands::ls_files::run(args),
-        Command::LsRemote(args) => commands::ls_remote::run(args),
-        Command::WriteTree(args) => commands::write_tree::run(args),
-        Command::LsTree(args) => commands::ls_tree::run(args),
-        Command::Stash(args) => commands::stash::run(args),
-        Command::Submodule(args) => commands::submodule::run(args),
-        Command::Status(args) => commands::status::run(args),
-        Command::Rebase(args) => commands::rebase::run(args),
-        Command::ReadTree(args) => commands::read_tree::run(args),
-        Command::Remote(args) => commands::remote::run(args),
-        Command::Rerere(args) => commands::rerere::run(args),
-        Command::CheckoutIndex(args) => commands::checkout_index::run(args),
-        Command::CommitTree(args) => commands::commit_tree::run(args),
-        Command::UpdateRef(args) => commands::update_ref::run(args),
-        Command::UpdateServerInfo(args) => commands::update_server_info::run(args),
-        Command::CheckMailmap(args) => commands::check_mailmap::run(args),
-        Command::CheckIgnore(args) => commands::check_ignore::run(args),
-        Command::CountObjects(args) => commands::count_objects::run(args),
-        Command::Describe(args) => commands::describe::run(args),
-        Command::Diff(args) => commands::diff::run(args),
-        Command::DiffFiles(args) => commands::diff_files::run(args),
-        Command::DiffTree(args) => commands::diff_tree::run(args),
-        Command::DiffIndex(args) => commands::diff_index::run(args),
-        Command::Fetch(args) => commands::fetch::run(args),
-        Command::ForEachRef(args) => commands::for_each_ref::run(args),
-        Command::Merge(args) => commands::merge::run(args),
-        Command::MergeBase(args) => commands::merge_base::run(args),
-        Command::NameRev(args) => commands::name_rev::run(args),
-        Command::Notes(args) => commands::notes::run(args),
-        Command::MergeFile(args) => commands::merge_file::run(args),
-        Command::MergeTree(args) => commands::merge_tree::run(args),
-        Command::RevList(args) => commands::rev_list::run(args),
-        Command::RevParse(args) => commands::rev_parse::run(args),
-        Command::ShowIndex(args) => commands::show_index::run(args),
-        Command::ShowRef(args) => commands::show_ref::run(args),
-        Command::SymbolicRef(args) => commands::symbolic_ref::run(args),
-        Command::VerifyCommit(args) => commands::verify_commit::run(args),
-        Command::VerifyPack(args) => commands::verify_pack::run(args),
-        Command::VerifyTag(args) => commands::verify_tag::run(args),
-        Command::Version(args) => commands::version::run(args),
-        Command::Whatchanged(args) => commands::whatchanged::run(args),
-        Command::FmtMergeMsg(args) => commands::fmt_merge_msg::run(args),
-        Command::FormatPatch(args) => commands::format_patch::run(args),
-        Command::Fsck(args) => commands::fsck::run(args),
-        Command::Gc(args) => commands::gc::run(args),
-        Command::Grep(args) => commands::grep::run(args),
-        Command::PackObjects(args) => commands::pack_objects::run(args),
-        Command::Repack(args) => commands::repack::run(args),
-        Command::Replace(args) => commands::replace::run(args),
-        Command::Mktag(args) => commands::mktag::run(args),
-        Command::Prune(args) => commands::prune::run(args),
-        Command::Pull(args) => commands::pull::run(args),
-        Command::Push(args) => commands::push::run(args),
-        Command::PrunePacked(args) => commands::prune_packed::run(args),
-        Command::Tag(args) => commands::tag::run(args),
-        Command::Restore(args) => commands::restore::run(args),
-        Command::Revert(args) => commands::revert::run(args),
-        Command::Shortlog(args) => commands::shortlog::run(args),
-        Command::Show(args) => commands::show::run(args),
-        Command::ShowBranch(args) => commands::show_branch::run(args),
-        Command::Rm(args) => commands::rm::run(args),
-        Command::Mv(args) => commands::mv::run(args),
-        Command::PackRefs(args) => commands::pack_refs::run(args),
-        Command::PatchId(args) => commands::patch_id::run(args),
-        Command::RangeDiff(args) => commands::range_diff::run(args),
-        Command::MkTree(args) => commands::mktree::run(args),
-        Command::Var(args) => commands::var::run(args),
-        Command::Reflog(args) => commands::reflog::run(args),
-        Command::Reset(args) => commands::reset::run(args),
-        Command::Stripspace(args) => commands::stripspace::run(args),
-        Command::Switch(args) => commands::switch::run(args),
-        Command::UnpackFile(args) => commands::unpack_file::run(args),
-        Command::UnpackObjects(args) => commands::unpack_objects::run(args),
-        Command::Worktree(args) => commands::worktree::run(args),
-        Command::SparseCheckout(args) => commands::sparse_checkout::run(args),
-        Command::Archive(args) => commands::archive::run(args),
-        Command::Help(args) => commands::help::run(args),
-        Command::Mailinfo(args) => commands::mailinfo::run(args),
-        Command::Mailsplit(args) => commands::mailsplit::run(args),
-        Command::MergeIndex(args) => commands::merge_index::run(args),
-        Command::CommitGraph(args) => commands::commit_graph::run(args),
-        Command::FastExport(args) => commands::fast_export::run(args),
-        Command::FastImport(args) => commands::fast_import::run(args),
-        Command::MultiPackIndex(args) => commands::multi_pack_index::run(args),
-        Command::Replay(args) => commands::replay::run(args),
-        Command::Backfill(args) => commands::backfill::run(args),
-        Command::Daemon(args) => commands::daemon::run(args),
-        Command::DiffPairs(args) => commands::diff_pairs::run(args),
-        Command::History(args) => commands::history::run(args),
-        Command::HttpBackend(args) => commands::http_backend::run(args),
-        Command::HttpFetch(args) => commands::http_fetch::run(args),
-        Command::HttpPush(args) => commands::http_push::run(args),
-        Command::LastModified(args) => commands::last_modified::run(args),
-        Command::Repo(args) => commands::repo::run(args),
-        Command::ShI18n(args) => commands::sh_i18n::run(args),
-        Command::ShSetup(args) => commands::sh_setup::run(args),
-        Command::SendPack(args) => commands::send_pack::run(args),
-        Command::FetchPack(args) => commands::fetch_pack::run(args),
-        Command::ReceivePack(args) => commands::receive_pack::run(args),
-        Command::UploadPack(args) => commands::upload_pack::run(args),
-        Command::UploadArchive(args) => commands::upload_archive::run(args),
-        Command::Shell(args) => commands::shell::run(args),
-        Command::Stage(args) => commands::stage::run(args),
-        Command::Difftool(args) => commands::difftool::run(args),
-        Command::Mergetool(args) => commands::mergetool::run(args),
-        Command::FilterBranch(args) => commands::filter_branch::run(args),
-        Command::Bugreport(args) => commands::bugreport::run(args),
-        Command::Diagnose(args) => commands::diagnose::run(args),
-        Command::Credential(args) => commands::credential::run(args),
-        Command::CredentialCache(args) => commands::credential_cache::run(args),
-        Command::CredentialStore(args) => commands::credential_store::run(args),
-        Command::ForEachRepo(args) => commands::for_each_repo::run(args),
-        Command::GetTarCommitId(args) => commands::get_tar_commit_id::run(args),
-        Command::MergeOneFile(args) => commands::merge_one_file::run(args),
-        Command::PackRedundant(args) => commands::pack_redundant::run(args),
-        Command::Refs(args) => commands::refs::run(args),
+/// Wrapper to parse a clap `Args` struct as if it were a top-level `Parser`.
+///
+/// Each subcommand's Args struct derives `clap::Args`, not `clap::Parser`.
+/// This wrapper lets us parse it standalone from a slice of arguments.
+#[derive(Debug, Parser)]
+#[command(name = "grit", disable_help_subcommand = true)]
+struct ArgsWrapper<T: Args> {
+    #[command(flatten)]
+    inner: T,
+}
+
+/// Parse a command's clap Args from the remaining arguments.
+fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
+    let mut argv = vec![format!("grit {subcmd}")];
+    argv.extend(rest.iter().cloned());
+    let wrapper = ArgsWrapper::<T>::parse_from(argv);
+    wrapper.inner
+}
+
+fn run() -> Result<()> {
+    // Check env vars that clap would have handled
+    if std::env::var("GIT_DIR").is_ok() && std::env::var("GIT_DIR").unwrap().is_empty() {
+        // ignore empty GIT_DIR
+    }
+
+    let args: Vec<String> = std::env::args().collect();
+    let (opts, subcmd, rest) = extract_globals(&args)?;
+
+    let subcmd = match subcmd {
+        Some(s) => s,
+        None => {
+            eprintln!("grit: a Git plumbing reimplementation in Rust");
+            eprintln!("usage: grit <command> [<args>]");
+            std::process::exit(1);
+        }
+    };
+
+    apply_globals(&opts)?;
+
+    dispatch(&subcmd, &rest, &opts)
+}
+
+/// Dispatch to the appropriate command handler.
+///
+/// Each arm only constructs the clap parser for that specific command.
+fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+    match subcmd {
+        "add" => commands::add::run(parse_cmd_args(subcmd, rest)),
+        "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
+        "annotate" => commands::annotate::run(parse_cmd_args(subcmd, rest)),
+        "apply" => commands::apply::run(parse_cmd_args(subcmd, rest)),
+        "archive" => commands::archive::run(parse_cmd_args(subcmd, rest)),
+        "backfill" => commands::backfill::run(parse_cmd_args(subcmd, rest)),
+        "bisect" => commands::bisect::run(parse_cmd_args(subcmd, rest)),
+        "blame" => commands::blame::run(parse_cmd_args(subcmd, rest)),
+        "branch" => commands::branch::run(parse_cmd_args(subcmd, rest)),
+        "bugreport" => commands::bugreport::run(parse_cmd_args(subcmd, rest)),
+        "bundle" => commands::bundle::run(parse_cmd_args(subcmd, rest)),
+        "cat-file" => commands::cat_file::run(parse_cmd_args(subcmd, rest)),
+        "check-attr" => commands::check_attr::run(parse_cmd_args(subcmd, rest)),
+        "check-ignore" => commands::check_ignore::run(parse_cmd_args(subcmd, rest)),
+        "check-mailmap" => commands::check_mailmap::run(parse_cmd_args(subcmd, rest)),
+        "check-ref-format" => commands::check_ref_format::run(parse_cmd_args(subcmd, rest)),
+        "checkout" => commands::checkout::run(parse_cmd_args(subcmd, rest)),
+        "checkout-index" => commands::checkout_index::run(parse_cmd_args(subcmd, rest)),
+        "cherry" => commands::cherry::run(parse_cmd_args(subcmd, rest)),
+        "cherry-pick" => commands::cherry_pick::run(parse_cmd_args(subcmd, rest)),
+        "clean" => commands::clean::run(parse_cmd_args(subcmd, rest)),
+        "clone" => commands::clone::run(parse_cmd_args(subcmd, rest)),
+        "column" => commands::column::run(parse_cmd_args(subcmd, rest)),
+        "commit" => commands::commit::run(parse_cmd_args(subcmd, rest)),
+        "commit-graph" => commands::commit_graph::run(parse_cmd_args(subcmd, rest)),
+        "commit-tree" => commands::commit_tree::run(parse_cmd_args(subcmd, rest)),
+        "config" => commands::config::run(parse_cmd_args(subcmd, rest)),
+        "count-objects" => commands::count_objects::run(parse_cmd_args(subcmd, rest)),
+        "credential" => commands::credential::run(parse_cmd_args(subcmd, rest)),
+        "credential-cache" => commands::credential_cache::run(parse_cmd_args(subcmd, rest)),
+        "credential-store" => commands::credential_store::run(parse_cmd_args(subcmd, rest)),
+        "daemon" => commands::daemon::run(parse_cmd_args(subcmd, rest)),
+        "describe" => commands::describe::run(parse_cmd_args(subcmd, rest)),
+        "diagnose" => commands::diagnose::run(parse_cmd_args(subcmd, rest)),
+        "diff" => commands::diff::run(parse_cmd_args(subcmd, rest)),
+        "diff-files" => commands::diff_files::run(parse_cmd_args(subcmd, rest)),
+        "diff-index" => commands::diff_index::run(parse_cmd_args(subcmd, rest)),
+        "diff-pairs" => commands::diff_pairs::run(parse_cmd_args(subcmd, rest)),
+        "diff-tree" => commands::diff_tree::run(parse_cmd_args(subcmd, rest)),
+        "difftool" => commands::difftool::run(parse_cmd_args(subcmd, rest)),
+        "fast-export" => commands::fast_export::run(parse_cmd_args(subcmd, rest)),
+        "fast-import" => commands::fast_import::run(parse_cmd_args(subcmd, rest)),
+        "fetch" => commands::fetch::run(parse_cmd_args(subcmd, rest)),
+        "fetch-pack" => commands::fetch_pack::run(parse_cmd_args(subcmd, rest)),
+        "filter-branch" => commands::filter_branch::run(parse_cmd_args(subcmd, rest)),
+        "fmt-merge-msg" => commands::fmt_merge_msg::run(parse_cmd_args(subcmd, rest)),
+        "for-each-ref" => commands::for_each_ref::run(parse_cmd_args(subcmd, rest)),
+        "for-each-repo" => commands::for_each_repo::run(parse_cmd_args(subcmd, rest)),
+        "format-patch" => commands::format_patch::run(parse_cmd_args(subcmd, rest)),
+        "fsck" => commands::fsck::run(parse_cmd_args(subcmd, rest)),
+        "gc" => commands::gc::run(parse_cmd_args(subcmd, rest)),
+        "get-tar-commit-id" => commands::get_tar_commit_id::run(parse_cmd_args(subcmd, rest)),
+        "grep" => commands::grep::run(parse_cmd_args(subcmd, rest)),
+        "hash-object" => commands::hash_object::run(parse_cmd_args(subcmd, rest)),
+        "help" => commands::help::run(parse_cmd_args(subcmd, rest)),
+        "history" => commands::history::run(parse_cmd_args(subcmd, rest)),
+        "hook" => commands::hook::run(parse_cmd_args(subcmd, rest)),
+        "http-backend" => commands::http_backend::run(parse_cmd_args(subcmd, rest)),
+        "http-fetch" => commands::http_fetch::run(parse_cmd_args(subcmd, rest)),
+        "http-push" => commands::http_push::run(parse_cmd_args(subcmd, rest)),
+        "index-pack" => commands::index_pack::run(parse_cmd_args(subcmd, rest)),
+        "init" => commands::init::run(parse_cmd_args(subcmd, rest), opts.bare),
+        "interpret-trailers" => commands::interpret_trailers::run(parse_cmd_args(subcmd, rest)),
+        "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
+        "log" => commands::log::run(parse_cmd_args(subcmd, rest)),
+        "ls-files" => commands::ls_files::run(parse_cmd_args(subcmd, rest)),
+        "ls-remote" => commands::ls_remote::run(parse_cmd_args(subcmd, rest)),
+        "ls-tree" => commands::ls_tree::run(parse_cmd_args(subcmd, rest)),
+        "mailinfo" => commands::mailinfo::run(parse_cmd_args(subcmd, rest)),
+        "mailsplit" => commands::mailsplit::run(parse_cmd_args(subcmd, rest)),
+        "maintenance" => commands::maintenance::run(parse_cmd_args(subcmd, rest)),
+        "merge" => commands::merge::run(parse_cmd_args(subcmd, rest)),
+        "merge-base" => commands::merge_base::run(parse_cmd_args(subcmd, rest)),
+        "merge-file" => commands::merge_file::run(parse_cmd_args(subcmd, rest)),
+        "merge-index" => commands::merge_index::run(parse_cmd_args(subcmd, rest)),
+        "merge-one-file" => commands::merge_one_file::run(parse_cmd_args(subcmd, rest)),
+        "merge-tree" => commands::merge_tree::run(parse_cmd_args(subcmd, rest)),
+        "mergetool" => commands::mergetool::run(parse_cmd_args(subcmd, rest)),
+        "mktag" => commands::mktag::run(parse_cmd_args(subcmd, rest)),
+        "mktree" => commands::mktree::run(parse_cmd_args(subcmd, rest)),
+        "multi-pack-index" => commands::multi_pack_index::run(parse_cmd_args(subcmd, rest)),
+        "mv" => commands::mv::run(parse_cmd_args(subcmd, rest)),
+        "name-rev" => commands::name_rev::run(parse_cmd_args(subcmd, rest)),
+        "notes" => commands::notes::run(parse_cmd_args(subcmd, rest)),
+        "pack-objects" => commands::pack_objects::run(parse_cmd_args(subcmd, rest)),
+        "pack-redundant" => commands::pack_redundant::run(parse_cmd_args(subcmd, rest)),
+        "pack-refs" => commands::pack_refs::run(parse_cmd_args(subcmd, rest)),
+        "patch-id" => commands::patch_id::run(parse_cmd_args(subcmd, rest)),
+        "prune" => commands::prune::run(parse_cmd_args(subcmd, rest)),
+        "prune-packed" => commands::prune_packed::run(parse_cmd_args(subcmd, rest)),
+        "pull" => commands::pull::run(parse_cmd_args(subcmd, rest)),
+        "push" => commands::push::run(parse_cmd_args(subcmd, rest)),
+        "range-diff" => commands::range_diff::run(parse_cmd_args(subcmd, rest)),
+        "read-tree" => commands::read_tree::run(parse_cmd_args(subcmd, rest)),
+        "rebase" => commands::rebase::run(parse_cmd_args(subcmd, rest)),
+        "receive-pack" => commands::receive_pack::run(parse_cmd_args(subcmd, rest)),
+        "reflog" => commands::reflog::run(parse_cmd_args(subcmd, rest)),
+        "refs" => commands::refs::run(parse_cmd_args(subcmd, rest)),
+        "remote" => commands::remote::run(parse_cmd_args(subcmd, rest)),
+        "repack" => commands::repack::run(parse_cmd_args(subcmd, rest)),
+        "replace" => commands::replace::run(parse_cmd_args(subcmd, rest)),
+        "replay" => commands::replay::run(parse_cmd_args(subcmd, rest)),
+        "repo" => commands::repo::run(parse_cmd_args(subcmd, rest)),
+        "rerere" => commands::rerere::run(parse_cmd_args(subcmd, rest)),
+        "reset" => commands::reset::run(parse_cmd_args(subcmd, rest)),
+        "restore" => commands::restore::run(parse_cmd_args(subcmd, rest)),
+        "rev-list" => commands::rev_list::run(parse_cmd_args(subcmd, rest)),
+        "rev-parse" => commands::rev_parse::run(parse_cmd_args(subcmd, rest)),
+        "revert" => commands::revert::run(parse_cmd_args(subcmd, rest)),
+        "rm" => commands::rm::run(parse_cmd_args(subcmd, rest)),
+        "send-pack" => commands::send_pack::run(parse_cmd_args(subcmd, rest)),
+        "sh-i18n" => commands::sh_i18n::run(parse_cmd_args(subcmd, rest)),
+        "sh-setup" => commands::sh_setup::run(parse_cmd_args(subcmd, rest)),
+        "shell" => commands::shell::run(parse_cmd_args(subcmd, rest)),
+        "shortlog" => commands::shortlog::run(parse_cmd_args(subcmd, rest)),
+        "show" => commands::show::run(parse_cmd_args(subcmd, rest)),
+        "show-branch" => commands::show_branch::run(parse_cmd_args(subcmd, rest)),
+        "show-index" => commands::show_index::run(parse_cmd_args(subcmd, rest)),
+        "show-ref" => commands::show_ref::run(parse_cmd_args(subcmd, rest)),
+        "sparse-checkout" => commands::sparse_checkout::run(parse_cmd_args(subcmd, rest)),
+        "stage" => commands::stage::run(parse_cmd_args(subcmd, rest)),
+        "stash" => commands::stash::run(parse_cmd_args(subcmd, rest)),
+        "status" => commands::status::run(parse_cmd_args(subcmd, rest)),
+        "stripspace" => commands::stripspace::run(parse_cmd_args(subcmd, rest)),
+        "submodule" => commands::submodule::run(parse_cmd_args(subcmd, rest)),
+        "switch" => commands::switch::run(parse_cmd_args(subcmd, rest)),
+        "symbolic-ref" => commands::symbolic_ref::run(parse_cmd_args(subcmd, rest)),
+        "tag" => commands::tag::run(parse_cmd_args(subcmd, rest)),
+        "unpack-file" => commands::unpack_file::run(parse_cmd_args(subcmd, rest)),
+        "unpack-objects" => commands::unpack_objects::run(parse_cmd_args(subcmd, rest)),
+        "update-index" => commands::update_index::run(parse_cmd_args(subcmd, rest)),
+        "update-ref" => commands::update_ref::run(parse_cmd_args(subcmd, rest)),
+        "update-server-info" => commands::update_server_info::run(parse_cmd_args(subcmd, rest)),
+        "upload-archive" => commands::upload_archive::run(parse_cmd_args(subcmd, rest)),
+        "upload-pack" => commands::upload_pack::run(parse_cmd_args(subcmd, rest)),
+        "var" => commands::var::run(parse_cmd_args(subcmd, rest)),
+        "verify-commit" => commands::verify_commit::run(parse_cmd_args(subcmd, rest)),
+        "verify-pack" => commands::verify_pack::run(parse_cmd_args(subcmd, rest)),
+        "verify-tag" => commands::verify_tag::run(parse_cmd_args(subcmd, rest)),
+        "version" => commands::version::run(parse_cmd_args(subcmd, rest)),
+        "whatchanged" => commands::whatchanged::run(parse_cmd_args(subcmd, rest)),
+        "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
+        "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
+        _ => bail!("grit: '{subcmd}' is not a grit command. See 'grit help'."),
     }
 }
