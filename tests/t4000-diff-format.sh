@@ -449,4 +449,177 @@ test_expect_success 'diff --exit-code with pathspec returns 0 for unchanged path
     git diff --exit-code "$c1" "$c2" -- nonexistent
 '
 
+# ===========================================================================
+# Part 10: diff --name-only for added/deleted/modified files
+# ===========================================================================
+
+test_expect_success 'setup add-del-mod repo' '
+    git init admrepo &&
+    cd admrepo &&
+    printf "keep\n" >kept.txt &&
+    printf "remove me\n" >doomed.txt &&
+    printf "original\n" >modified.txt &&
+    git update-index --add kept.txt doomed.txt modified.txt &&
+    c1=$(make_commit "initial") &&
+    printf "%s\n" "$c1" >../adm_c1 &&
+    git update-index --remove doomed.txt &&
+    rm -f doomed.txt &&
+    printf "changed\n" >modified.txt &&
+    git update-index modified.txt &&
+    printf "new\n" >added.txt &&
+    git update-index --add added.txt &&
+    c2=$(make_commit "add-del-mod" "$c1") &&
+    printf "%s\n" "$c2" >../adm_c2
+'
+
+test_expect_success 'diff --name-only lists added file' '
+    cd admrepo &&
+    c1=$(cat ../adm_c1) && c2=$(cat ../adm_c2) &&
+    git diff --name-only "$c1" "$c2" >out &&
+    grep "added.txt" out
+'
+
+test_expect_success 'diff --name-only lists deleted file' '
+    cd admrepo &&
+    c1=$(cat ../adm_c1) && c2=$(cat ../adm_c2) &&
+    git diff --name-only "$c1" "$c2" >out &&
+    grep "doomed.txt" out
+'
+
+test_expect_success 'diff --name-only lists modified file' '
+    cd admrepo &&
+    c1=$(cat ../adm_c1) && c2=$(cat ../adm_c2) &&
+    git diff --name-only "$c1" "$c2" >out &&
+    grep "modified.txt" out
+'
+
+test_expect_success 'diff --name-only does not list unchanged file' '
+    cd admrepo &&
+    c1=$(cat ../adm_c1) && c2=$(cat ../adm_c2) &&
+    git diff --name-only "$c1" "$c2" >out &&
+    ! grep "kept.txt" out
+'
+
+test_expect_success 'diff --name-status shows A for added' '
+    cd admrepo &&
+    c1=$(cat ../adm_c1) && c2=$(cat ../adm_c2) &&
+    git diff --name-status "$c1" "$c2" >out &&
+    grep "^A" out &&
+    grep "added.txt" out
+'
+
+test_expect_success 'diff --name-status shows D for deleted' '
+    cd admrepo &&
+    c1=$(cat ../adm_c1) && c2=$(cat ../adm_c2) &&
+    git diff --name-status "$c1" "$c2" >out &&
+    grep "^D" out &&
+    grep "doomed.txt" out
+'
+
+test_expect_success 'diff --name-status shows M for modified' '
+    cd admrepo &&
+    c1=$(cat ../adm_c1) && c2=$(cat ../adm_c2) &&
+    git diff --name-status "$c1" "$c2" >out &&
+    grep "^M" out &&
+    grep "modified.txt" out
+'
+
+# ===========================================================================
+# Part 11: diff with binary files
+# ===========================================================================
+
+test_expect_success 'setup binary diff repo' '
+    git init binrepo &&
+    cd binrepo &&
+    printf "text\n" >text.txt &&
+    git update-index --add text.txt &&
+    c1=$(make_commit "text only") &&
+    printf "%s\n" "$c1" >../bin_c1 &&
+    printf "\000\001\002" >bin.dat &&
+    git update-index --add bin.dat &&
+    c2=$(make_commit "add binary" "$c1") &&
+    printf "%s\n" "$c2" >../bin_c2
+'
+
+test_expect_success 'diff --name-only shows binary file' '
+    cd binrepo &&
+    c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
+    git diff --name-only "$c1" "$c2" >out &&
+    grep "bin.dat" out
+'
+
+test_expect_success 'diff --name-status shows A for binary file' '
+    cd binrepo &&
+    c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
+    git diff --name-status "$c1" "$c2" >out &&
+    grep "A" out &&
+    grep "bin.dat" out
+'
+
+test_expect_success 'diff --stat shows binary file' '
+    cd binrepo &&
+    c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
+    git diff --stat "$c1" "$c2" >out &&
+    grep "bin.dat" out
+'
+
+test_expect_success 'diff shows new file mode for binary' '
+    cd binrepo &&
+    c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
+    git diff "$c1" "$c2" >out &&
+    grep "new file mode" out
+'
+
+# ===========================================================================
+# Part 12: diff format with multiple files
+# ===========================================================================
+
+test_expect_success 'setup multi-file format repo' '
+    git init mfrepo &&
+    cd mfrepo &&
+    printf "aaa\n" >a.txt &&
+    printf "bbb\n" >b.txt &&
+    printf "ccc\n" >c.txt &&
+    git update-index --add a.txt b.txt c.txt &&
+    c1=$(make_commit "three files") &&
+    printf "%s\n" "$c1" >../mf_c1 &&
+    printf "aaa mod\n" >a.txt &&
+    printf "bbb mod\n" >b.txt &&
+    git update-index a.txt b.txt &&
+    c2=$(make_commit "modify two" "$c1") &&
+    printf "%s\n" "$c2" >../mf_c2
+'
+
+test_expect_success 'diff --name-only shows exactly modified files' '
+    cd mfrepo &&
+    c1=$(cat ../mf_c1) && c2=$(cat ../mf_c2) &&
+    git diff --name-only "$c1" "$c2" >out &&
+    grep "a.txt" out &&
+    grep "b.txt" out &&
+    ! grep "c.txt" out
+'
+
+test_expect_success 'diff --numstat shows counts for each modified file' '
+    cd mfrepo &&
+    c1=$(cat ../mf_c1) && c2=$(cat ../mf_c2) &&
+    git diff --numstat "$c1" "$c2" >out &&
+    test $(wc -l <out) = 2
+'
+
+test_expect_success 'diff --stat shows both modified files' '
+    cd mfrepo &&
+    c1=$(cat ../mf_c1) && c2=$(cat ../mf_c2) &&
+    git diff --stat "$c1" "$c2" >out &&
+    grep "a.txt" out &&
+    grep "b.txt" out
+'
+
+test_expect_success 'diff unified patch has two diff --git headers' '
+    cd mfrepo &&
+    c1=$(cat ../mf_c1) && c2=$(cat ../mf_c2) &&
+    git diff "$c1" "$c2" >out &&
+    count=$(grep -c "^diff --git" out) &&
+    test "$count" = 2
+'
+
 test_done

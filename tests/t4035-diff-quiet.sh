@@ -157,4 +157,70 @@ test_expect_success 'diff --exit-code HEAD HEAD returns 0' '
     test_expect_code 0 git diff --exit-code HEAD HEAD
 '
 
+# ---------------------------------------------------------------------------
+# Additional quiet/exit-code tests
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff --quiet with pathspec on unchanged file returns 0' '
+    cd repo2 &&
+    test_expect_code 0 git diff --quiet HEAD^ HEAD -- a
+'
+
+test_expect_success 'diff --quiet with pathspec on changed file returns 1' '
+    cd repo2 &&
+    test_expect_code 1 git diff --quiet HEAD^ HEAD -- b
+'
+
+test_expect_success 'diff --exit-code with pathspec on unchanged file returns 0' '
+    cd repo2 &&
+    test_expect_code 0 git diff --exit-code HEAD^ HEAD -- a
+'
+
+test_expect_success 'diff --exit-code with pathspec on changed file returns 1' '
+    cd repo2 &&
+    test_expect_code 1 git diff --exit-code HEAD^ HEAD -- b
+'
+
+test_expect_success 'diff --quiet suppresses output between commits' '
+    cd repo2 &&
+    git diff --quiet HEAD^ HEAD >out 2>&1 || true &&
+    test_must_be_empty out
+'
+
+test_expect_success 'setup repo3 for staged quiet tests' '
+    git init repo3 &&
+    cd repo3 &&
+    git config user.name "Test User" &&
+    git config user.email "test@test.com" &&
+    echo x >x &&
+    git add x &&
+    git commit -m base &&
+    echo y >y &&
+    git add y &&
+    git commit -m add-y
+'
+
+test_expect_success 'diff --cached --quiet returns 0 when index matches HEAD' '
+    cd repo3 &&
+    test_expect_code 0 git diff --cached --quiet
+'
+
+test_expect_success 'diff --cached --quiet returns 1 when index differs from HEAD' '
+    cd repo3 &&
+    echo modified >x &&
+    git add x &&
+    test_expect_code 1 git diff --cached --quiet
+'
+
+test_expect_success 'diff --cached --exit-code returns 1 when staged changes exist' '
+    cd repo3 &&
+    test_expect_code 1 git diff --cached --exit-code
+'
+
+test_expect_success 'diff --cached --quiet suppresses output' '
+    cd repo3 &&
+    git diff --cached --quiet >out 2>&1 || true &&
+    test_must_be_empty out
+'
+
 test_done

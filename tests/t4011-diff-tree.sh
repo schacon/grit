@@ -823,4 +823,266 @@ test_expect_success 'diff-tree -r -p -U0 suppresses context lines' '
 	! grep "^ hello" out
 '
 
+# ---------------------------------------------------------------------------
+# diff-tree with pathspec filtering
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup multi-file repo for pathspec tests' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	mkdir -p sub &&
+	printf "sub content\n" >sub/deep.txt &&
+	git update-index --add sub/deep.txt &&
+	commit_sub=$(make_commit "add subdir" "$c2") &&
+	printf "%s\n" "$commit_sub" >../commit_sub
+'
+
+test_expect_success 'diff-tree -r with pathspec shows only matching' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	csub=$(cat ../commit_sub) &&
+	git diff-tree -r "$c2" "$csub" -- sub >out &&
+	grep "sub/deep.txt" out &&
+	! grep "file.txt" out
+'
+
+test_expect_success 'diff-tree -r with non-matching pathspec is empty' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	csub=$(cat ../commit_sub) &&
+	git diff-tree -r "$c2" "$csub" -- nonexistent >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff-tree -r --name-only with pathspec' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	csub=$(cat ../commit_sub) &&
+	git diff-tree -r --name-only "$c2" "$csub" -- sub >out &&
+	grep "sub/deep.txt" out &&
+	! grep "file.txt" out
+'
+
+test_expect_success 'diff-tree -r --name-status with pathspec' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	csub=$(cat ../commit_sub) &&
+	git diff-tree -r --name-status "$c2" "$csub" -- sub >out &&
+	grep "A" out &&
+	grep "sub/deep.txt" out
+'
+
+test_expect_success 'diff-tree -r --stat with pathspec' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	csub=$(cat ../commit_sub) &&
+	git diff-tree -r --stat "$c2" "$csub" -- sub >out &&
+	grep "sub/deep.txt" out &&
+	! grep "file.txt" out
+'
+
+# ---------------------------------------------------------------------------
+# diff-tree with binary files
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup binary file in repo' '
+	cd repo &&
+	csub=$(cat ../commit_sub) &&
+	printf "\000\001\002" >binary.dat &&
+	git update-index --add binary.dat &&
+	commit_bin=$(make_commit "add binary" "$csub") &&
+	printf "%s\n" "$commit_bin" >../commit_bin
+'
+
+test_expect_success 'diff-tree -r shows binary file addition' '
+	cd repo &&
+	csub=$(cat ../commit_sub) &&
+	cbin=$(cat ../commit_bin) &&
+	git diff-tree -r "$csub" "$cbin" >out &&
+	grep "binary.dat" out
+'
+
+test_expect_success 'diff-tree --name-only shows binary file' '
+	cd repo &&
+	csub=$(cat ../commit_sub) &&
+	cbin=$(cat ../commit_bin) &&
+	git diff-tree --name-only "$csub" "$cbin" >out &&
+	grep "binary.dat" out
+'
+
+test_expect_success 'diff-tree -p shows new file mode for binary' '
+	cd repo &&
+	csub=$(cat ../commit_sub) &&
+	cbin=$(cat ../commit_bin) &&
+	git diff-tree -p "$csub" "$cbin" >out &&
+	grep "new file mode" out
+'
+
+# ---------------------------------------------------------------------------
+# diff-tree with executable files
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup executable file' '
+	cd repo &&
+	cbin=$(cat ../commit_bin) &&
+	printf "#!/bin/sh\necho hi\n" >run.sh &&
+	chmod +x run.sh &&
+	git update-index --add run.sh &&
+	commit_exec=$(make_commit "add executable" "$cbin") &&
+	printf "%s\n" "$commit_exec" >../commit_exec
+'
+
+test_expect_success 'diff-tree -r shows 100755 for executable' '
+	cd repo &&
+	cbin=$(cat ../commit_bin) &&
+	cexec=$(cat ../commit_exec) &&
+	git diff-tree -r "$cbin" "$cexec" >out &&
+	grep "100755" out &&
+	grep "run.sh" out
+'
+
+test_expect_success 'diff-tree -p shows 100755 mode for executable' '
+	cd repo &&
+	cbin=$(cat ../commit_bin) &&
+	cexec=$(cat ../commit_exec) &&
+	git diff-tree -p "$cbin" "$cexec" >out &&
+	grep "new file mode 100755" out
+'
+
+# ---------------------------------------------------------------------------
+# diff-tree with deletions
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup deletion' '
+	cd repo &&
+	cexec=$(cat ../commit_exec) &&
+	git update-index --remove binary.dat &&
+	rm -f binary.dat &&
+	commit_del=$(make_commit "delete binary" "$cexec") &&
+	printf "%s\n" "$commit_del" >../commit_del
+'
+
+test_expect_success 'diff-tree -r shows D for deleted file' '
+	cd repo &&
+	cexec=$(cat ../commit_exec) &&
+	cdel=$(cat ../commit_del) &&
+	git diff-tree -r "$cexec" "$cdel" >out &&
+	grep "D" out &&
+	grep "binary.dat" out
+'
+
+test_expect_success 'diff-tree --name-status shows D for deleted file' '
+	cd repo &&
+	cexec=$(cat ../commit_exec) &&
+	cdel=$(cat ../commit_del) &&
+	git diff-tree --name-status "$cexec" "$cdel" >out &&
+	grep "^D" out &&
+	grep "binary.dat" out
+'
+
+test_expect_success 'diff-tree -p shows deleted file mode for deletion' '
+	cd repo &&
+	cexec=$(cat ../commit_exec) &&
+	cdel=$(cat ../commit_del) &&
+	git diff-tree -p "$cexec" "$cdel" >out &&
+	grep "deleted file mode" out
+'
+
+# ---------------------------------------------------------------------------
+# diff-tree single commit (vs parent) additional formats
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree single commit shows changes vs parent' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree "$c2" >out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff-tree --name-only single commit' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree --name-only "$c2" >out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff-tree --name-status single commit' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree --name-status "$c2" >out &&
+	grep "M" out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff-tree --stat single commit' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree --stat "$c2" >out &&
+	grep "file.txt" out &&
+	grep "changed" out
+'
+
+test_expect_success 'diff-tree -p single commit shows patch' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree -p "$c2" >out &&
+	grep "^diff --git" out &&
+	grep "^+world" out
+'
+
+# ---------------------------------------------------------------------------
+# diff-tree between non-parent-child commits
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree -r between arbitrary commits' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	cdel=$(cat ../commit_del) &&
+	git diff-tree -r "$c1" "$cdel" >out &&
+	test $(wc -l <out) -ge 3
+'
+
+test_expect_success 'diff-tree -r --name-only between arbitrary commits lists all changed files' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	cdel=$(cat ../commit_del) &&
+	git diff-tree -r --name-only "$c1" "$cdel" >out &&
+	grep "file.txt" out &&
+	grep "sub/deep.txt" out &&
+	grep "run.sh" out
+'
+
+test_expect_success 'diff-tree -p between arbitrary commits shows full patch' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	cdel=$(cat ../commit_del) &&
+	git diff-tree -p "$c1" "$cdel" >out &&
+	grep "^diff --git" out
+'
+
+# ---------------------------------------------------------------------------
+# diff-tree with identical trees
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree -r between identical commits is empty' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	git diff-tree -r "$c1" "$c1" >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff-tree --name-only between identical commits is empty' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	git diff-tree --name-only "$c1" "$c1" >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff-tree -r --stat between identical commits shows 0 files' '
+	cd repo &&
+	c1=$(cat ../commit1) &&
+	git diff-tree -r --stat "$c1" "$c1" >out &&
+	grep "0 files changed" out
+'
+
 test_done

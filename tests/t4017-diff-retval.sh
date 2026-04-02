@@ -167,4 +167,76 @@ test_expect_success 'diff --name-only same commit shows no output' '
 	test_must_be_empty out
 '
 
+# ---------------------------------------------------------------------------
+# Additional return value tests
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff --quiet same commit returns 0' '
+	cd repo &&
+	c4=$(cat c4) &&
+	git diff --quiet "$c4" "$c4"
+'
+
+test_expect_success 'diff --numstat same commit shows no output' '
+	cd repo &&
+	c4=$(cat c4) &&
+	git diff --numstat "$c4" "$c4" >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff-files --quiet returns 0 when clean' '
+	cd repo &&
+	git update-index a &&
+	git diff-files --quiet
+'
+
+test_expect_success 'diff-files --name-only is empty when clean' '
+	cd repo &&
+	git diff-files --name-only >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'setup clean state for retval tests' '
+	cd repo &&
+	git update-index a b c &&
+	c5=$(make_commit fifth "$(cat c4)") &&
+	printf "%s\n" "$c5" >c5
+'
+
+test_expect_success 'diff --exit-code returns 0 for identical index vs HEAD' '
+	cd repo &&
+	c5=$(cat c5) &&
+	git diff --exit-code --cached "$c5"
+'
+
+test_expect_success 'diff-index --quiet --cached returns 0 when same' '
+	cd repo &&
+	c5=$(cat c5) &&
+	git diff-index --quiet --cached "$c5"
+'
+
+test_expect_success 'diff --stat same commit is empty' '
+	cd repo &&
+	c5=$(cat c5) &&
+	git diff --stat "$c5" "$c5" >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff-files --exit-code succeeds after re-staging' '
+	cd repo &&
+	git diff-files --exit-code
+'
+
+test_expect_success 'diff --quiet between parent and child returns 1' '
+	cd repo &&
+	c3=$(cat c3) && c4=$(cat c4) &&
+	test_must_fail git diff --quiet "$c3" "$c4"
+'
+
+test_expect_success 'diff --exit-code between parent and child returns 1' '
+	cd repo &&
+	c3=$(cat c3) && c4=$(cat c4) &&
+	test_must_fail git diff --exit-code "$c3" "$c4"
+'
+
 test_done

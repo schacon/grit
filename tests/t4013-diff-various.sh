@@ -738,4 +738,260 @@ test_expect_success 'diff (unstaged) unified output shows removed line with -' '
 	grep "^-line2" out
 '
 
+# ===========================================================================
+# Part 14: diff with pathspec filtering (commit-to-commit)
+# ===========================================================================
+
+test_expect_success 'setup pathspec repo for diff' '
+	git init repo_pathspec &&
+	cd repo_pathspec &&
+	mkdir sub &&
+	printf "root content\n" >root.txt &&
+	printf "nested content\n" >sub/nested.txt &&
+	git update-index --add root.txt sub/nested.txt &&
+	c1=$(make_commit "initial") &&
+	printf "%s\n" "$c1" >../ps_c1 &&
+	printf "root modified\n" >root.txt &&
+	printf "nested modified\n" >sub/nested.txt &&
+	git update-index root.txt sub/nested.txt &&
+	c2=$(make_commit "modify both" "$c1") &&
+	printf "%s\n" "$c2" >../ps_c2
+'
+
+test_expect_success 'diff with pathspec -- sub shows only sub/' '
+	cd repo_pathspec &&
+	c1=$(cat ../ps_c1) && c2=$(cat ../ps_c2) &&
+	git diff --name-only "$c1" "$c2" -- sub >out &&
+	grep "sub/nested.txt" out &&
+	! grep "root.txt" out
+'
+
+test_expect_success 'diff with pathspec -- root.txt shows only root.txt' '
+	cd repo_pathspec &&
+	c1=$(cat ../ps_c1) && c2=$(cat ../ps_c2) &&
+	git diff --name-only "$c1" "$c2" -- root.txt >out &&
+	grep "root.txt" out &&
+	! grep "nested" out
+'
+
+test_expect_success 'diff with non-matching pathspec is empty' '
+	cd repo_pathspec &&
+	c1=$(cat ../ps_c1) && c2=$(cat ../ps_c2) &&
+	git diff --name-only "$c1" "$c2" -- nonexistent >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff --exit-code with non-matching pathspec returns 0' '
+	cd repo_pathspec &&
+	c1=$(cat ../ps_c1) && c2=$(cat ../ps_c2) &&
+	git diff --exit-code "$c1" "$c2" -- nonexistent
+'
+
+test_expect_success 'diff --stat with pathspec shows only matching file' '
+	cd repo_pathspec &&
+	c1=$(cat ../ps_c1) && c2=$(cat ../ps_c2) &&
+	git diff --stat "$c1" "$c2" -- root.txt >out &&
+	grep "root.txt" out &&
+	! grep "nested" out
+'
+
+# ===========================================================================
+# Part 15: diff with binary files
+# ===========================================================================
+
+test_expect_success 'setup repo with binary file' '
+	git init repo_binary &&
+	cd repo_binary &&
+	printf "text content\n" >text.txt &&
+	git update-index --add text.txt &&
+	c1=$(make_commit "initial text") &&
+	printf "%s\n" "$c1" >../bin_c1 &&
+	printf "\000\001\002\003" >binary.dat &&
+	git update-index --add binary.dat &&
+	c2=$(make_commit "add binary" "$c1") &&
+	printf "%s\n" "$c2" >../bin_c2
+'
+
+test_expect_success 'diff --name-only shows binary file' '
+	cd repo_binary &&
+	c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
+	git diff --name-only "$c1" "$c2" >out &&
+	grep "binary.dat" out
+'
+
+test_expect_success 'diff --name-status shows A for new binary file' '
+	cd repo_binary &&
+	c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
+	git diff --name-status "$c1" "$c2" >out &&
+	grep "A" out &&
+	grep "binary.dat" out
+'
+
+test_expect_success 'diff --stat shows binary file in stats' '
+	cd repo_binary &&
+	c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
+	git diff --stat "$c1" "$c2" >out &&
+	grep "binary.dat" out
+'
+
+test_expect_success 'diff shows new file mode for binary' '
+	cd repo_binary &&
+	c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
+	git diff "$c1" "$c2" >out &&
+	grep "new file mode" out
+'
+
+# ===========================================================================
+# Part 16: diff with executable file permissions
+# ===========================================================================
+
+test_expect_success 'setup repo with executable file' '
+	git init repo_exec &&
+	cd repo_exec &&
+	printf "normal\n" >script.sh &&
+	git update-index --add script.sh &&
+	c1=$(make_commit "normal file") &&
+	printf "%s\n" "$c1" >../exec_c1 &&
+	chmod +x script.sh &&
+	printf "executable\n" >run.sh &&
+	chmod +x run.sh &&
+	git update-index --add run.sh &&
+	c2=$(make_commit "add executable" "$c1") &&
+	printf "%s\n" "$c2" >../exec_c2
+'
+
+test_expect_success 'diff shows executable mode 100755 for new file' '
+	cd repo_exec &&
+	c1=$(cat ../exec_c1) && c2=$(cat ../exec_c2) &&
+	git diff "$c1" "$c2" >out &&
+	grep "new file mode 100755" out
+'
+
+test_expect_success 'diff-tree shows 100755 mode for executable' '
+	cd repo_exec &&
+	c1=$(cat ../exec_c1) && c2=$(cat ../exec_c2) &&
+	git diff-tree -r "$c1" "$c2" >out &&
+	grep "100755" out &&
+	grep "run.sh" out
+'
+
+test_expect_success 'diff --name-status shows A for executable file' '
+	cd repo_exec &&
+	c1=$(cat ../exec_c1) && c2=$(cat ../exec_c2) &&
+	git diff --name-status "$c1" "$c2" >out &&
+	grep "A" out &&
+	grep "run.sh" out
+'
+
+# ===========================================================================
+# Part 17: diff between arbitrary commits (not parent-child)
+# ===========================================================================
+
+test_expect_success 'setup repo with branching history' '
+	git init repo_arb &&
+	cd repo_arb &&
+	printf "base\n" >file.txt &&
+	git update-index --add file.txt &&
+	c1=$(make_commit "base") &&
+	printf "%s\n" "$c1" >../arb_c1 &&
+	printf "version A\n" >file.txt &&
+	git update-index file.txt &&
+	c2=$(make_commit "branch A" "$c1") &&
+	printf "%s\n" "$c2" >../arb_c2 &&
+	printf "version B\n" >file.txt &&
+	git update-index file.txt &&
+	c3=$(make_commit "branch B" "$c1") &&
+	printf "%s\n" "$c3" >../arb_c3
+'
+
+test_expect_success 'diff between non-parent-child commits works' '
+	cd repo_arb &&
+	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
+	git diff "$c2" "$c3" >out &&
+	grep "^diff --git" out &&
+	grep "^-version A" out &&
+	grep "^+version B" out
+'
+
+test_expect_success 'diff --name-only between arbitrary commits' '
+	cd repo_arb &&
+	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
+	git diff --name-only "$c2" "$c3" >out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff --stat between arbitrary commits' '
+	cd repo_arb &&
+	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
+	git diff --stat "$c2" "$c3" >out &&
+	grep "file.txt" out &&
+	grep "changed" out
+'
+
+test_expect_success 'diff --numstat between arbitrary commits' '
+	cd repo_arb &&
+	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
+	git diff --numstat "$c2" "$c3" >out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff --exit-code between arbitrary commits returns 1' '
+	cd repo_arb &&
+	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
+	test_must_fail git diff --exit-code "$c2" "$c3"
+'
+
+test_expect_success 'diff --quiet between arbitrary commits returns 1' '
+	cd repo_arb &&
+	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
+	test_must_fail git diff --quiet "$c2" "$c3"
+'
+
+# ===========================================================================
+# Part 18: diff with deleted files between commits
+# ===========================================================================
+
+test_expect_success 'setup repo with file deletion' '
+	git init repo_del &&
+	cd repo_del &&
+	printf "to be deleted\n" >doomed.txt &&
+	printf "survivor\n" >kept.txt &&
+	git update-index --add doomed.txt kept.txt &&
+	c1=$(make_commit "two files") &&
+	printf "%s\n" "$c1" >../del_c1 &&
+	git update-index --remove doomed.txt &&
+	rm -f doomed.txt &&
+	c2=$(make_commit "delete one" "$c1") &&
+	printf "%s\n" "$c2" >../del_c2
+'
+
+test_expect_success 'diff shows deleted file mode header' '
+	cd repo_del &&
+	c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
+	git diff "$c1" "$c2" >out &&
+	grep "^deleted file mode" out
+'
+
+test_expect_success 'diff --name-status shows D for deleted file' '
+	cd repo_del &&
+	c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
+	git diff --name-status "$c1" "$c2" >out &&
+	grep "D" out &&
+	grep "doomed.txt" out
+'
+
+test_expect_success 'diff pathspec on deleted file shows it' '
+	cd repo_del &&
+	c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
+	git diff --name-only "$c1" "$c2" -- doomed.txt >out &&
+	grep "doomed.txt" out
+'
+
+test_expect_success 'diff pathspec on kept file shows nothing' '
+	cd repo_del &&
+	c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
+	git diff --name-only "$c1" "$c2" -- kept.txt >out &&
+	test_must_be_empty out
+'
+
 test_done

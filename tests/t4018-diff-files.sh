@@ -205,4 +205,84 @@ test_expect_success 'diff-files --exit-code with pathspec' '
 	git diff-files --exit-code -- stable.txt
 '
 
+# ---------------------------------------------------------------------------
+# Additional diff-files tests
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-files --stat shows diffstat' '
+	cd repo &&
+	printf "changed_content\n" >file.txt &&
+	git diff-files --stat >out &&
+	grep "file.txt" out &&
+	grep "changed" out
+'
+
+test_expect_success 'diff-files with multiple modified files' '
+	cd repo &&
+	printf "mod2\n" >other.txt &&
+	git diff-files --name-only >out &&
+	grep "file.txt" out &&
+	grep "other.txt" out
+'
+
+test_expect_success 'diff-files --name-status shows M for multiple files' '
+	cd repo &&
+	git diff-files --name-status >out &&
+	count=$(grep -c "^M" out) &&
+	test "$count" -ge 2
+'
+
+test_expect_success 'diff-files -p shows --- and +++ headers' '
+	cd repo &&
+	git diff-files -p >out &&
+	grep "^--- a/" out &&
+	grep "^+++ b/" out
+'
+
+test_expect_success 'diff-files -p shows @@ hunk header' '
+	cd repo &&
+	git diff-files -p >out &&
+	grep "^@@" out
+'
+
+test_expect_success 'diff-files --numstat shows numeric counts' '
+	cd repo &&
+	git diff-files --numstat >out &&
+	grep "file.txt" out &&
+	grep "^[0-9]" out
+'
+
+test_expect_success 'diff-files pathspec limits to specific file' '
+	cd repo &&
+	git diff-files --name-only -- file.txt >out &&
+	grep "file.txt" out &&
+	! grep "other.txt" out
+'
+
+test_expect_success 'diff-files pathspec with non-matching path is empty' '
+	cd repo &&
+	git diff-files --name-only -- nonexistent >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff-files --exit-code with pathspec on clean file' '
+	cd repo &&
+	git diff-files --exit-code -- stable.txt
+'
+
+test_expect_success 'diff-files --exit-code with pathspec on dirty file fails' '
+	cd repo &&
+	test_must_fail git diff-files --exit-code -- file.txt
+'
+
+test_expect_success 'diff-files --quiet with pathspec on clean file returns 0' '
+	cd repo &&
+	git diff-files --quiet -- stable.txt
+'
+
+test_expect_success 'diff-files --quiet with pathspec on dirty file returns 1' '
+	cd repo &&
+	test_must_fail git diff-files --quiet -- file.txt
+'
+
 test_done
