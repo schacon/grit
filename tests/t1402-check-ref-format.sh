@@ -336,4 +336,88 @@ test_expect_success "check-ref-format --branch accepts master" '
 	test_cmp expect actual
 '
 
+# === additional deepening tests ===
+
+test_expect_success "check-ref-format accepts refs/heads/feature" '
+	grit check-ref-format refs/heads/feature
+'
+
+test_expect_success "check-ref-format accepts refs/tags/v1.0" '
+	grit check-ref-format refs/tags/v1.0
+'
+
+test_expect_success "check-ref-format rejects single component" '
+	test_must_fail grit check-ref-format foo
+'
+
+test_expect_success "check-ref-format rejects ref with double dot" '
+	test_must_fail grit check-ref-format refs/heads/foo..bar
+'
+
+test_expect_success "check-ref-format rejects ref ending with dot" '
+	test_must_fail grit check-ref-format refs/heads/foo.
+'
+
+test_expect_success "check-ref-format rejects ref with space" '
+	test_must_fail grit check-ref-format "refs/heads/foo bar"
+'
+
+test_expect_success "check-ref-format rejects ref with tilde" '
+	test_must_fail grit check-ref-format "refs/heads/foo~1"
+'
+
+test_expect_success "check-ref-format rejects ref with caret" '
+	test_must_fail grit check-ref-format "refs/heads/foo^bar"
+'
+
+test_expect_success "check-ref-format rejects ref with colon" '
+	test_must_fail grit check-ref-format "refs/heads/foo:bar"
+'
+
+test_expect_success "check-ref-format rejects ref with backslash" '
+	test_must_fail grit check-ref-format "refs/heads/foo\\bar"
+'
+
+test_expect_success "check-ref-format accepts deeply nested ref" '
+	grit check-ref-format refs/heads/a/b/c/d/e
+'
+
+test_expect_success "check-ref-format rejects ref with @{" '
+	test_must_fail grit check-ref-format "refs/heads/foo@{bar"
+'
+
+test_expect_success "check-ref-format rejects ref starting with dot" '
+	test_must_fail grit check-ref-format refs/heads/.hidden
+'
+
+test_expect_success "check-ref-format rejects ref with consecutive slashes" '
+	test_must_fail grit check-ref-format refs/heads//foo
+'
+
+test_expect_success "check-ref-format --normalize collapses slashes" '
+	echo refs/heads/foo >expect &&
+	grit check-ref-format --normalize refs///heads///foo >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success "check-ref-format rejects ref ending with .lock" '
+	test_must_fail grit check-ref-format refs/heads/foo.lock
+'
+
+test_expect_success "check-ref-format accepts ref with hyphen" '
+	grit check-ref-format refs/heads/my-feature
+'
+
+test_expect_success "check-ref-format accepts ref with underscore" '
+	grit check-ref-format refs/heads/my_feature
+'
+
+test_expect_success "check-ref-format rejects ref with DEL character" '
+	test_must_fail grit check-ref-format "refs/heads/foo$(printf "\177")bar"
+'
+
+test_expect_success "check-ref-format rejects ref with control char" '
+	test_must_fail grit check-ref-format "refs/heads/foo$(printf "\001")bar"
+'
+
 test_done
