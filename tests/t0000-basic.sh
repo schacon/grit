@@ -981,4 +981,137 @@ test_expect_success 'ls-tree --name-only -r with multiple top-level entries' '
 	test_cmp expected actual
 '
 
+###########################################################################
+# Section 29: hash-object variants
+###########################################################################
+
+test_expect_success 'hash-object with --stdin' '
+	cd repo &&
+	echo "stdin content" | grit hash-object --stdin >actual &&
+	test $(wc -c <actual | tr -d " ") -ge 40
+'
+
+test_expect_success 'hash-object -w writes to object store' '
+	cd repo &&
+	echo "write me" >writable.txt &&
+	oid=$(grit hash-object -w writable.txt) &&
+	grit cat-file -t "$oid" >actual &&
+	echo "blob" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'hash-object same content yields same hash' '
+	cd repo &&
+	echo "deterministic" >det1.txt &&
+	echo "deterministic" >det2.txt &&
+	oid1=$(grit hash-object det1.txt) &&
+	oid2=$(grit hash-object det2.txt) &&
+	test "$oid1" = "$oid2"
+'
+
+test_expect_success 'cat-file blob round-trips content' '
+	cd repo &&
+	echo "round trip" >rt.txt &&
+	oid=$(grit hash-object -w rt.txt) &&
+	grit cat-file -p "$oid" >actual &&
+	test_cmp rt.txt actual
+'
+
+test_expect_success 'cat-file -t reports blob for file object' '
+	cd repo &&
+	echo "type check" >tc.txt &&
+	oid=$(grit hash-object -w tc.txt) &&
+	grit cat-file -t "$oid" >actual &&
+	echo "blob" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'cat-file -t reports tree for tree object' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "tree type" >tt.txt &&
+	grit update-index --add tt.txt &&
+	tree=$(grit write-tree) &&
+	grit cat-file -t "$tree" >actual &&
+	echo "tree" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'cat-file -t reports commit for commit object' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "commit type" >ct.txt &&
+	grit update-index --add ct.txt &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "type test" | grit commit-tree "$tree") &&
+	grit cat-file -t "$commit" >actual &&
+	echo "commit" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'write-tree with empty index produces empty tree' '
+	cd repo &&
+	rm -f .git/index &&
+	tree=$(grit write-tree) &&
+	test "$tree" = "$EMPTY_TREE_OID"
+'
+
+test_expect_success 'update-index --add then remove recreates correct tree' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "add-remove" >ar.txt &&
+	grit update-index --add ar.txt &&
+	tree1=$(grit write-tree) &&
+	rm -f .git/index &&
+	echo "add-remove" >ar.txt &&
+	grit update-index --add ar.txt &&
+	tree2=$(grit write-tree) &&
+	test "$tree1" = "$tree2"
+'
+
+test_expect_success 'ls-tree on empty tree produces no output' '
+	cd repo &&
+	grit ls-tree "$EMPTY_TREE_OID" >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'commit-tree with -m flag' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "msg flag" >mf.txt &&
+	grit update-index --add mf.txt &&
+	tree=$(grit write-tree) &&
+	commit=$(grit commit-tree -m "message flag test" "$tree") &&
+	grit cat-file -p "$commit" >actual &&
+	grep "message flag test" actual
+'
+
+test_expect_success 'commit-tree with parent via -p' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "parent1" >p1.txt &&
+	grit update-index --add p1.txt &&
+	tree1=$(grit write-tree) &&
+	parent=$(echo "parent commit" | grit commit-tree "$tree1") &&
+	rm -f .git/index &&
+	echo "child1" >c1.txt &&
+	grit update-index --add c1.txt &&
+	tree2=$(grit write-tree) &&
+	child=$(echo "child commit" | grit commit-tree -p "$parent" "$tree2") &&
+	grit cat-file -p "$child" >actual &&
+	grep "parent $parent" actual
+'
+
+test_expect_success 'rev-parse HEAD works after commit-tree + update-ref' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "revparse" >rp.txt &&
+	grit update-index --add rp.txt &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "rev-parse test" | grit commit-tree "$tree") &&
+	grit update-ref refs/heads/master "$commit" &&
+	result=$(grit rev-parse HEAD) &&
+	test "$result" = "$commit"
+'
+
 test_done
