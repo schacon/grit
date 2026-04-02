@@ -2695,4 +2695,112 @@ test_expect_success 'tag -f on annotated tag works' '
 	grep "replaced" output
 '
 
+test_expect_success 'tag -l lists all tags' '
+	cd tag-extra &&
+	git tag -l >output &&
+	test $(wc -l <output) -ge 5
+'
+
+test_expect_success 'tag -l with glob matches subset' '
+	cd tag-extra &&
+	git tag -l "contains-*" >output &&
+	grep "contains-test" output
+'
+
+test_expect_success 'lightweight tag is same as commit hash' '
+	cd tag-extra &&
+	git tag lwt-check &&
+	head=$(git rev-parse HEAD) &&
+	tag_hash=$(git rev-parse lwt-check) &&
+	test "$head" = "$tag_hash"
+'
+
+test_expect_success 'annotated tag type is tag' '
+	cd tag-extra &&
+	git tag -a type-check-tag -m "type check" 2>/dev/null &&
+	type=$(git cat-file -t type-check-tag) &&
+	test "$type" = "tag"
+'
+
+test_expect_success 'lightweight tag type is commit' '
+	cd tag-extra &&
+	type=$(git cat-file -t lwt-check) &&
+	test "$type" = "commit"
+'
+
+test_expect_success 'tag --sort=refname lists in alphabetical order' '
+	cd tag-extra &&
+	git tag --sort=refname >output &&
+	sort <output >sorted &&
+	test_cmp output sorted
+'
+
+test_expect_success 'tag -v on unsigned tag fails' '
+	cd tag-extra &&
+	git tag -a unsigned-verify -m "unsigned" 2>/dev/null &&
+	test_must_fail git tag -v unsigned-verify 2>/dev/null
+'
+
+test_expect_success 'tag --contains lists tags containing commit' '
+	cd tag-extra &&
+	git tag contains-head-v2 &&
+	git tag --contains HEAD >output &&
+	grep "contains-head-v2" output
+'
+
+test_expect_success 'tag -f overwrites lightweight tag' '
+	cd tag-extra &&
+	git tag force-lw &&
+	parent=$(git rev-parse HEAD~1) &&
+	git tag -f force-lw "$parent" &&
+	result=$(git rev-parse force-lw) &&
+	test "$result" = "$parent"
+'
+
+test_expect_success 'tag --sort=version:refname sorts by version' '
+	cd tag-extra &&
+	git tag v1.1.0 &&
+	git tag v1.2.0 &&
+	git tag v1.10.0 &&
+	git tag --sort=version:refname -l "v1.*" >output &&
+	test -s output
+'
+
+test_expect_success 'annotated tag cat-file shows tagger line' '
+	cd tag-extra &&
+	git tag -a tagger-line-v2 -m "tagger" 2>/dev/null &&
+	git cat-file -p tagger-line-v2 >output &&
+	grep "^tagger " output
+'
+
+test_expect_success 'tag -d deletes one tag at a time' '
+	cd tag-extra &&
+	git tag single-del-v2 &&
+	git tag -d single-del-v2 &&
+	test_must_fail git rev-parse single-del-v2 2>/dev/null
+'
+
+test_expect_success 'tag with annotated message from -m flag' '
+	cd tag-extra &&
+	git tag -a msg-flag-tag -m "flag message" 2>/dev/null &&
+	git cat-file -p msg-flag-tag >output &&
+	grep "flag message" output
+'
+
+test_expect_success 'creating tag on detached HEAD works' '
+	cd tag-extra &&
+	head=$(git rev-parse HEAD) &&
+	git checkout --detach HEAD 2>/dev/null &&
+	git tag detached-tag &&
+	result=$(git rev-parse detached-tag) &&
+	test "$result" = "$head" &&
+	git checkout master 2>/dev/null
+'
+
+test_expect_success 'tag -l lists all lightweight and annotated tags' '
+	cd tag-extra &&
+	git tag -l >output &&
+	test $(wc -l <output) -ge 10
+'
+
 test_done

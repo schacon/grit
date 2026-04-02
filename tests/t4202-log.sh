@@ -1833,4 +1833,104 @@ test_expect_success 'log --skip=0 same as no skip' '
 	test_cmp noskip skip0
 '
 
+test_expect_success 'log --format=%h shows abbreviated hash' '
+	cd repo &&
+	git log -n 1 --format="%h" >output &&
+	len=$(wc -c <output | tr -d " ") &&
+	test "$len" -ge 7 &&
+	test "$len" -le 41
+'
+
+test_expect_success 'log --format=%ci shows committer date in ISO' '
+	cd repo &&
+	git log -n 1 --format="%ci" >output &&
+	grep "-" output
+'
+
+test_expect_success 'log --format=%ai shows author date in ISO' '
+	cd repo &&
+	git log -n 1 --format="%ai" >output &&
+	grep "-" output
+'
+
+test_expect_success 'log --reverse reverses order' '
+	cd repo &&
+	git log --format="%H" >normal &&
+	git log --reverse --format="%H" >reversed &&
+	head -n1 normal >first_normal &&
+	tail -n1 reversed >last_reversed &&
+	test_cmp first_normal last_reversed
+'
+
+test_expect_success 'log --format=%d shows ref decorations' '
+	cd repo &&
+	git log -n 1 --format="%d" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=oneline equivalent to --oneline' '
+	cd repo &&
+	git log -n 3 --oneline >oneline &&
+	git log -n 3 --format=oneline >fmt_oneline &&
+	test $(wc -l <oneline) -eq $(wc -l <fmt_oneline)
+'
+
+test_expect_success 'log -n 1 shows exactly one commit' '
+	cd repo &&
+	git log -n 1 --format="%H" >output &&
+	test $(wc -l <output) -eq 1
+'
+
+test_expect_success 'log --skip=1 skips the first commit' '
+	cd repo &&
+	git log -n 1 --format="%H" >first &&
+	git log --skip=1 -n 1 --format="%H" >second &&
+	! test_cmp first second
+'
+
+test_expect_success 'log --format=%p shows abbreviated parent' '
+	cd repo &&
+	git log -n 1 --format="%p" >output &&
+	test -s output
+'
+
+test_expect_success 'log --reverse with -n 2 shows oldest first' '
+	cd repo &&
+	git log -n 2 --format="%H" >normal &&
+	git log --reverse -n 2 --format="%H" >rev &&
+	head -n1 normal >n1 &&
+	tail -n1 rev >r2 &&
+	test_cmp n1 r2
+'
+
+test_expect_success 'log --first-parent with -n shows commits' '
+	cd repo &&
+	git log --first-parent -n 3 --format="%H" >output &&
+	test $(wc -l <output) -le 3
+'
+
+test_expect_success 'log --graph produces output' '
+	cd repo &&
+	git log --graph --oneline -n 3 >output &&
+	test -s output
+'
+
+test_expect_success 'log --format with literal text' '
+	cd repo &&
+	git log -n 1 --format="COMMIT:%H" >output &&
+	grep "^COMMIT:" output
+'
+
+test_expect_success 'log --skip larger than history returns empty' '
+	cd repo &&
+	git log --skip=99999 --format="%H" >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'log --oneline -n 5 shows at most 5 lines' '
+	cd repo &&
+	git log --oneline -n 5 >output &&
+	test $(wc -l <output) -le 5
+'
+
 test_done

@@ -1785,4 +1785,126 @@ test_expect_success 'branch list shows newly created branch' '
 	git branch -d list-check-v2 2>/dev/null
 '
 
+test_expect_success 'branch --no-merged lists unmerged branches' '
+	cd repo &&
+	git branch no-merge-test &&
+	git checkout no-merge-test 2>/dev/null &&
+	echo unique >unique_no_merge.txt &&
+	git add unique_no_merge.txt && git commit -m "unique" 2>/dev/null &&
+	git checkout master 2>/dev/null &&
+	git branch --no-merged master >output &&
+	grep "no-merge-test" output &&
+	git branch -D no-merge-test 2>/dev/null
+'
+
+test_expect_success 'branch --contains lists branches containing commit' '
+	cd repo &&
+	head=$(git rev-parse HEAD) &&
+	git branch --contains "$head" >output &&
+	grep "master" output
+'
+
+test_expect_success 'branch -m renames branch' '
+	cd repo &&
+	git branch rename-src-v2 &&
+	git branch -m rename-src-v2 rename-dst-v2 &&
+	git rev-parse rename-dst-v2 &&
+	test_must_fail git rev-parse rename-src-v2 2>/dev/null &&
+	git branch -d rename-dst-v2 2>/dev/null
+'
+
+test_expect_success 'branch -M force renames even if target exists' '
+	cd repo &&
+	git branch force-rename-src &&
+	git branch force-rename-dst &&
+	git branch -M force-rename-src force-rename-dst &&
+	test_must_fail git rev-parse force-rename-src 2>/dev/null &&
+	git branch -d force-rename-dst 2>/dev/null
+'
+
+test_expect_success 'branch -v shows hash prefix' '
+	cd repo &&
+	git branch -v >output &&
+	head=$(git rev-parse --short HEAD) &&
+	grep "$head" output
+'
+
+test_expect_success 'branch -f overwrites existing branch to new target' '
+	cd repo &&
+	git branch overwrite-v3 &&
+	parent=$(git rev-parse HEAD~1) &&
+	git branch -f overwrite-v3 "$parent" &&
+	test "$(git rev-parse overwrite-v3)" = "$parent" &&
+	git branch -d overwrite-v3 2>/dev/null
+'
+
+test_expect_success 'branch --merged HEAD shows current branch' '
+	cd repo &&
+	git branch --merged HEAD >output &&
+	grep "master" output
+'
+
+test_expect_success 'branch with dot in name' '
+	cd repo &&
+	git branch dot.branch.test &&
+	git rev-parse dot.branch.test &&
+	git branch -d dot.branch.test 2>/dev/null
+'
+
+test_expect_success 'branch with hyphen in name' '
+	cd repo &&
+	git branch hyphen-branch-test &&
+	git rev-parse hyphen-branch-test &&
+	git branch -d hyphen-branch-test 2>/dev/null
+'
+
+test_expect_success 'branch --list shows branches' '
+	cd repo &&
+	git branch --list >output &&
+	grep "master" output
+'
+
+test_expect_success 'branch --list with pattern filters' '
+	cd repo &&
+	git branch list-pat-a &&
+	git branch list-pat-b &&
+	git branch --list "list-pat-*" >output &&
+	grep "list-pat-a" output &&
+	grep "list-pat-b" output &&
+	git branch -d list-pat-a list-pat-b 2>/dev/null
+'
+
+test_expect_success 'branch -D force deletes unmerged branch' '
+	cd repo &&
+	git branch force-del-v2 &&
+	git checkout force-del-v2 2>/dev/null &&
+	echo forcedel >forcedel.txt &&
+	git add forcedel.txt && git commit -m "forcedel" 2>/dev/null &&
+	git checkout master 2>/dev/null &&
+	git branch -D force-del-v2
+'
+
+test_expect_success 'branch at tag works' '
+	cd repo &&
+	git tag branch-at-tag-v2 &&
+	git branch from-tag-v2 branch-at-tag-v2 &&
+	test "$(git rev-parse from-tag-v2)" = "$(git rev-parse branch-at-tag-v2)" &&
+	git branch -d from-tag-v2 2>/dev/null
+'
+
+test_expect_success 'branch creation does not modify HEAD' '
+	cd repo &&
+	head_before=$(git rev-parse HEAD) &&
+	git branch no-head-change-v2 &&
+	head_after=$(git rev-parse HEAD) &&
+	test "$head_before" = "$head_after" &&
+	git branch -d no-head-change-v2 2>/dev/null
+'
+
+test_expect_success 'branch -r shows no remotes in local-only repo' '
+	cd repo &&
+	git branch -r >output &&
+	test_must_be_empty output
+'
+
 test_done

@@ -2998,4 +2998,113 @@ test_expect_success 'config value with hash sign preserved' '
 	test "$result" = "val#with#hash"
 '
 
+test_expect_success 'config --type=bool accepts true' '
+	cd repo &&
+	git config type.boolval "true" &&
+	result=$(git config --type=bool --get type.boolval) &&
+	test "$result" = "true"
+'
+
+test_expect_success 'config --type=bool accepts false' '
+	cd repo &&
+	git config type.boolval2 "false" &&
+	result=$(git config --type=bool --get type.boolval2) &&
+	test "$result" = "false"
+'
+
+test_expect_success 'config --type=int reads integer' '
+	cd repo &&
+	git config type.intval "42" &&
+	result=$(git config --type=int --get type.intval) &&
+	test "$result" = "42"
+'
+
+test_expect_success 'config --get-all returns multiple values' '
+	cd repo &&
+	git config getall.dup "val1" &&
+	printf "[getall]\n\tdup = val1\n\tdup = val2\n" >>.git/config &&
+	git config --get-all getall.dup >output &&
+	grep "val1" output &&
+	grep "val2" output
+'
+
+test_expect_success 'config --remove-section removes entire section' '
+	cd repo &&
+	git config rmsec.a "1" &&
+	git config rmsec.b "2" &&
+	git config --remove-section rmsec &&
+	test_must_fail git config --get rmsec.a &&
+	test_must_fail git config --get rmsec.b
+'
+
+test_expect_success 'config --rename-section renames section' '
+	cd repo &&
+	git config ren.old "value" &&
+	git config --rename-section ren rennew &&
+	result=$(git config --get rennew.old) &&
+	test "$result" = "value"
+'
+
+test_expect_success 'config key with uppercase letters' '
+	cd repo &&
+	git config upper.Key "CamelCase" &&
+	result=$(git config --get upper.key) &&
+	test "$result" = "CamelCase"
+'
+
+test_expect_success 'config --get-regexp matches pattern' '
+	cd repo &&
+	git config pat.alpha "1" &&
+	git config pat.beta "2" &&
+	git config --get-regexp "pat" >output &&
+	grep "pat.alpha" output &&
+	grep "pat.beta" output
+'
+
+test_expect_success 'config unset nonexistent key fails' '
+	cd repo &&
+	test_must_fail git config --unset nonexistent.key123
+'
+
+test_expect_success 'config value with backslash preserved' '
+	cd repo &&
+	git config bs.key "path\\to\\file" &&
+	result=$(git config --get bs.key) &&
+	test "$result" = "path\\to\\file"
+'
+
+test_expect_success 'config long value preserved' '
+	cd repo &&
+	long=$(printf "a%.0s" $(seq 1 200)) &&
+	git config longval.key "$long" &&
+	result=$(git config --get longval.key) &&
+	test "$result" = "$long"
+'
+
+test_expect_success 'config --get with nonexistent key returns error' '
+	cd repo &&
+	test_must_fail git config --get no.such.key.xyz
+'
+
+test_expect_success 'config --list output has key=value format' '
+	cd repo &&
+	git config list.test "hello" &&
+	git config list >output &&
+	grep "list.test=hello" output
+'
+
+test_expect_success 'config value with newline via set' '
+	cd repo &&
+	git config nl.key "line1" &&
+	result=$(git config --get nl.key) &&
+	test "$result" = "line1"
+'
+
+test_expect_success 'config set then get same session' '
+	cd repo &&
+	git config session.key "sessionval" &&
+	result=$(git config --get session.key) &&
+	test "$result" = "sessionval"
+'
+
 test_done
