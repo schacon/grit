@@ -327,4 +327,448 @@ test_expect_success 'diff with reversed commit order shows reversed changes' '
 	grep "^-line 3" output
 '
 
+# ---------------------------------------------------------------------------
+# Diff between branches
+# ---------------------------------------------------------------------------
+test_expect_success 'setup branches for diff' '
+	cd repo &&
+	git checkout -b branch-a $(cat ../commit2) &&
+	echo "branch-a line" >>file1 &&
+	git add file1 &&
+	git commit -m "branch-a commit" &&
+	git rev-parse HEAD >../commit_branch_a &&
+
+	git checkout -b branch-b $(cat ../commit2) &&
+	echo "branch-b line" >>file1 &&
+	echo "extra" >file3 &&
+	git add file1 file3 &&
+	git commit -m "branch-b commit" &&
+	git rev-parse HEAD >../commit_branch_b
+'
+
+test_expect_success 'diff between branch tips' '
+	cd repo &&
+	git diff $(cat ../commit_branch_a) $(cat ../commit_branch_b) >output &&
+	grep "^diff --git a/file1 b/file1" output &&
+	grep "^-branch-a line" output &&
+	grep "^+branch-b line" output
+'
+
+test_expect_success 'diff between branches shows new file' '
+	cd repo &&
+	git diff $(cat ../commit_branch_a) $(cat ../commit_branch_b) >output &&
+	grep "^diff --git a/file3 b/file3" output &&
+	grep "new file" output &&
+	grep "+extra" output
+'
+
+test_expect_success 'diff between branches reversed hides new file as deleted' '
+	cd repo &&
+	git diff $(cat ../commit_branch_b) $(cat ../commit_branch_a) >output &&
+	grep "^diff --git a/file3 b/file3" output &&
+	grep "deleted file" output
+'
+
+test_expect_success 'diff branch to common ancestor shows only branch changes' '
+	cd repo &&
+	git diff $(cat ../commit2) $(cat ../commit_branch_a) >output &&
+	grep "+branch-a line" output &&
+	test_must_fail grep "file2" output &&
+	test_must_fail grep "file3" output
+'
+
+# ---------------------------------------------------------------------------
+# --stat with multiple files
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --stat across multiple files between branches' '
+	cd repo &&
+	git diff --stat $(cat ../commit_branch_a) $(cat ../commit_branch_b) >output &&
+	grep "file1" output &&
+	grep "file3" output &&
+	# summary line should show "2 files changed"
+	grep "2 files changed" output
+'
+
+test_expect_success 'diff --stat shows insertion/deletion counts' '
+	cd repo &&
+	git diff --stat $(cat ../commit1) $(cat ../commit4) >output &&
+	# Should show insertions (+)
+	grep "+" output
+'
+
+test_expect_success 'diff --numstat between branches shows numbers' '
+	cd repo &&
+	git diff --numstat $(cat ../commit_branch_a) $(cat ../commit_branch_b) >output &&
+	grep "file1" output &&
+	grep "file3" output
+'
+
+# ---------------------------------------------------------------------------
+# --cached after partial staging
+# ---------------------------------------------------------------------------
+test_expect_success 'setup: return to main branch' '
+	cd repo &&
+	git checkout - 2>/dev/null ||
+	git checkout $(cat ../commit4) 2>/dev/null
+'
+
+test_expect_success 'diff --cached after partial staging shows only staged file' '
+	cd repo &&
+	echo "staged change" >>file1 &&
+	echo "unstaged change" >>file2 &&
+	git add file1 &&
+	git diff --cached >output &&
+	grep "^diff --git a/file1 b/file1" output &&
+	grep "+staged change" output &&
+	test_must_fail grep "file2" output &&
+	git reset HEAD -- file1 &&
+	git checkout -- file1 file2
+'
+
+test_expect_success 'diff --cached --name-only after partial staging' '
+	cd repo &&
+	echo "a" >>file1 &&
+	echo "b" >>file2 &&
+	git add file1 &&
+	git diff --cached --name-only >output &&
+	grep "^file1$" output &&
+	test_must_fail grep "^file2$" output &&
+	git reset HEAD -- file1 &&
+	git checkout -- file1 file2
+'
+
+test_expect_success 'diff --cached --stat after partial staging' '
+	cd repo &&
+	echo "x" >>file1 &&
+	echo "y" >>file2 &&
+	git add file1 &&
+	git diff --cached --stat >output &&
+	grep "file1" output &&
+	grep "1 file changed" output &&
+	git reset HEAD -- file1 &&
+	git checkout -- file1 file2
+'
+
+test_expect_success 'diff --cached after staging both files' '
+	cd repo &&
+	echo "aa" >>file1 &&
+	echo "bb" >>file2 &&
+	git add file1 file2 &&
+	git diff --cached --name-only >output &&
+	grep "^file1$" output &&
+	grep "^file2$" output &&
+	git reset HEAD -- file1 file2 &&
+	git checkout -- file1 file2
+'
+
+# ---------------------------------------------------------------------------
+# diff HEAD (index+worktree vs HEAD)
+# ---------------------------------------------------------------------------
+test_expect_success 'diff HEAD shows staged changes' '
+	cd repo &&
+	echo "head-test" >>file1 &&
+	git add file1 &&
+	git diff HEAD >output &&
+	grep "+head-test" output &&
+	git reset HEAD -- file1 &&
+	git checkout -- file1
+'
+
+test_expect_success 'diff HEAD with no changes is empty' '
+	cd repo &&
+	git diff HEAD >output &&
+	test_must_be_empty output
+'
+
+# ---------------------------------------------------------------------------
+# diff with empty commits (no changes between commits)
+# ---------------------------------------------------------------------------
+test_expect_success 'setup empty commit' '
+	cd repo &&
+	git commit --allow-empty -m "empty commit" &&
+	git rev-parse HEAD >../commit_empty &&
+	git rev-parse HEAD~1 >../commit_before_empty
+'
+
+test_expect_success 'diff between commit and its empty successor is empty' '
+	cd repo &&
+	git diff $(cat ../commit_before_empty) $(cat ../commit_empty) >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --stat between commit and empty successor is empty' '
+	cd repo &&
+	git diff --stat $(cat ../commit_before_empty) $(cat ../commit_empty) >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --name-only between commit and empty successor is empty' '
+	cd repo &&
+	git diff --name-only $(cat ../commit_before_empty) $(cat ../commit_empty) >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --exit-code returns 0 for empty commit diff' '
+	cd repo &&
+	git diff --exit-code $(cat ../commit_before_empty) $(cat ../commit_empty)
+'
+
+# ---------------------------------------------------------------------------
+# diff with subdirectory paths
+# ---------------------------------------------------------------------------
+test_expect_success 'setup subdirectory structure' '
+	cd repo &&
+	mkdir -p sub/deep &&
+	echo "sub content" >sub/subfile &&
+	echo "deep content" >sub/deep/deepfile &&
+	git add sub/ &&
+	git commit -m "add subdirectories" &&
+	git rev-parse HEAD >../commit_sub &&
+
+	echo "modified sub" >>sub/subfile &&
+	echo "modified deep" >>sub/deep/deepfile &&
+	git add sub/ &&
+	git commit -m "modify subdirectory files" &&
+	git rev-parse HEAD >../commit_sub2
+'
+
+test_expect_success 'diff between commits shows subdirectory files' '
+	cd repo &&
+	git diff $(cat ../commit_sub) $(cat ../commit_sub2) >output &&
+	grep "^diff --git a/sub/subfile b/sub/subfile" output &&
+	grep "^diff --git a/sub/deep/deepfile b/sub/deep/deepfile" output
+'
+
+test_expect_success 'diff --name-only between commits with subdirs' '
+	cd repo &&
+	git diff --name-only $(cat ../commit_sub) $(cat ../commit_sub2) >output &&
+	grep "^sub/subfile$" output &&
+	grep "^sub/deep/deepfile$" output
+'
+
+test_expect_success 'diff --stat between commits with subdirs' '
+	cd repo &&
+	git diff --stat $(cat ../commit_sub) $(cat ../commit_sub2) >output &&
+	grep "sub/subfile" output &&
+	grep "sub/deep/deepfile" output &&
+	grep "2 files changed" output
+'
+
+test_expect_success 'diff --numstat between commits with subdirs' '
+	cd repo &&
+	git diff --numstat $(cat ../commit_sub) $(cat ../commit_sub2) >output &&
+	grep "sub/subfile" output &&
+	grep "sub/deep/deepfile" output
+'
+
+test_expect_success 'diff --cached with subdirectory changes' '
+	cd repo &&
+	echo "new sub line" >>sub/subfile &&
+	git add sub/subfile &&
+	git diff --cached >output &&
+	grep "^diff --git a/sub/subfile b/sub/subfile" output &&
+	grep "+new sub line" output &&
+	git reset HEAD -- sub/subfile &&
+	git checkout -- sub/subfile
+'
+
+# ---------------------------------------------------------------------------
+# Large file diff (many lines)
+# ---------------------------------------------------------------------------
+test_expect_success 'diff handles file with many lines' '
+	cd repo &&
+	for i in $(seq 1 100); do echo "line $i"; done >bigfile &&
+	git add bigfile &&
+	git commit -m "add bigfile" &&
+	git rev-parse HEAD >../commit_big1 &&
+
+	for i in $(seq 1 100); do
+		if test $i -eq 50; then
+			echo "MODIFIED line $i"
+		else
+			echo "line $i"
+		fi
+	done >bigfile &&
+	git add bigfile &&
+	git commit -m "modify line 50" &&
+	git rev-parse HEAD >../commit_big2
+'
+
+test_expect_success 'diff between commits shows single line change in big file' '
+	cd repo &&
+	git diff $(cat ../commit_big1) $(cat ../commit_big2) >output &&
+	grep "^-line 50" output &&
+	grep "^+MODIFIED line 50" output
+'
+
+test_expect_success 'diff -U0 on big file shows minimal context' '
+	cd repo &&
+	git diff -U0 $(cat ../commit_big1) $(cat ../commit_big2) >output &&
+	grep "^-line 50" output &&
+	grep "^+MODIFIED line 50" output &&
+	# With -U0 we should not see surrounding lines as context
+	test_must_fail grep "^ line 49" output &&
+	test_must_fail grep "^ line 51" output
+'
+
+test_expect_success 'diff -U1 on big file shows 1 line of context' '
+	cd repo &&
+	git diff -U1 $(cat ../commit_big1) $(cat ../commit_big2) >output &&
+	grep "^ line 49" output &&
+	grep "^ line 51" output
+'
+
+# ---------------------------------------------------------------------------
+# Multiple hunks
+# ---------------------------------------------------------------------------
+test_expect_success 'setup file with multiple hunks' '
+	cd repo &&
+	for i in $(seq 1 50); do echo "orig $i"; done >multifile &&
+	git add multifile &&
+	git commit -m "add multifile" &&
+	git rev-parse HEAD >../commit_multi1 &&
+
+	for i in $(seq 1 50); do
+		if test $i -eq 5; then
+			echo "CHANGED $i"
+		elif test $i -eq 45; then
+			echo "CHANGED $i"
+		else
+			echo "orig $i"
+		fi
+	done >multifile &&
+	git add multifile &&
+	git commit -m "modify lines 5 and 45" &&
+	git rev-parse HEAD >../commit_multi2
+'
+
+test_expect_success 'diff shows multiple hunks' '
+	cd repo &&
+	git diff $(cat ../commit_multi1) $(cat ../commit_multi2) >output &&
+	# Should have at least 2 @@ markers (one per hunk)
+	test $(grep -c "^@@" output) -ge 2
+'
+
+test_expect_success 'diff --numstat aggregates across hunks' '
+	cd repo &&
+	git diff --numstat $(cat ../commit_multi1) $(cat ../commit_multi2) >output &&
+	# Should show 2 additions and 2 deletions for multifile
+	grep "2.*2.*multifile" output
+'
+
+# ---------------------------------------------------------------------------
+# Binary-like / special content
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --cached with file containing only newlines' '
+	cd repo &&
+	printf "\n\n\n" >nlfile &&
+	git add nlfile &&
+	git diff --cached >output &&
+	grep "^diff --git a/nlfile b/nlfile" output &&
+	grep "new file" output &&
+	git reset HEAD -- nlfile &&
+	rm nlfile
+'
+
+test_expect_success 'diff --cached with empty file' '
+	cd repo &&
+	>emptyfile &&
+	git add emptyfile &&
+	git diff --cached >output &&
+	grep "^diff --git a/emptyfile b/emptyfile" output &&
+	grep "new file" output &&
+	git reset HEAD -- emptyfile &&
+	rm emptyfile
+'
+
+# ---------------------------------------------------------------------------
+# --name-status with various operations
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --name-status shows A for added file' '
+	cd repo &&
+	git diff --name-status $(cat ../commit_sub) $(cat ../commit_sub2) >output_ns &&
+	grep "^M" output_ns | grep "sub/subfile" &&
+	grep "^M" output_ns | grep "sub/deep/deepfile"
+'
+
+test_expect_success 'diff --name-status --cached for new file shows A' '
+	cd repo &&
+	echo "new" >addedfile &&
+	git add addedfile &&
+	git diff --name-status --cached >output &&
+	grep "^A" output &&
+	grep "addedfile" output &&
+	git reset HEAD -- addedfile &&
+	rm addedfile
+'
+
+test_expect_success 'diff --name-status --cached for deleted file shows D' '
+	cd repo &&
+	git rm file2 &&
+	git diff --name-status --cached >output &&
+	grep "^D" output &&
+	grep "file2" output &&
+	git checkout HEAD -- file2
+'
+
+# ---------------------------------------------------------------------------
+# Diff with path containing spaces (if supported)
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --cached handles file with spaces in name' '
+	cd repo &&
+	echo "spaced" >"file with spaces" &&
+	git add "file with spaces" &&
+	git diff --cached >output &&
+	grep "file with spaces" output &&
+	git reset HEAD -- "file with spaces" &&
+	rm "file with spaces"
+'
+
+# ---------------------------------------------------------------------------
+# Diff HEAD with mixed staged/unstaged
+# ---------------------------------------------------------------------------
+test_expect_success 'diff HEAD shows both staged and unstaged' '
+	cd repo &&
+	echo "staged-head" >>file1 &&
+	git add file1 &&
+	git diff HEAD >output &&
+	grep "+staged-head" output &&
+	git reset HEAD -- file1 &&
+	git checkout -- file1
+'
+
+# ---------------------------------------------------------------------------
+# diff --quiet between commits
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --quiet returns 0 between identical commits' '
+	cd repo &&
+	git diff --quiet $(cat ../commit2) $(cat ../commit2)
+'
+
+test_expect_success 'diff --quiet returns 1 between different commits' '
+	cd repo &&
+	test_must_fail git diff --quiet $(cat ../commit1) $(cat ../commit2)
+'
+
+test_expect_success 'diff --quiet between different commits produces no output' '
+	cd repo &&
+	test_must_fail git diff --quiet $(cat ../commit1) $(cat ../commit2) >output &&
+	test_must_be_empty output
+'
+
+# ---------------------------------------------------------------------------
+# diff --exit-code between commits
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --exit-code returns 0 between identical commits' '
+	cd repo &&
+	git diff --exit-code $(cat ../commit2) $(cat ../commit2) >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --exit-code returns 1 between different commits' '
+	cd repo &&
+	test_must_fail git diff --exit-code $(cat ../commit1) $(cat ../commit2) >output &&
+	test -s output
+'
+
 test_done
