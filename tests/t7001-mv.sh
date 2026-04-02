@@ -1248,4 +1248,146 @@ test_expect_success 'mv then commit records moved file' '
 	! grep "^mv_record.txt$" ../actual
 '
 
+test_expect_success 'mv preserves file content' '
+	cd repo_mv2 &&
+	echo preserved_content >mv_content.txt &&
+	git add mv_content.txt && git commit -m "add content" &&
+	grit mv mv_content.txt mv_content_new.txt &&
+	grep preserved_content mv_content_new.txt &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'mv nonexistent source fails' '
+	cd repo_mv2 &&
+	test_must_fail grit mv no_such_file.txt dest.txt 2>/dev/null
+'
+
+test_expect_success 'mv to existing file fails without -f' '
+	cd repo_mv2 &&
+	echo src >mv_src_dup.txt &&
+	echo dst >mv_dst_dup.txt &&
+	git add mv_src_dup.txt mv_dst_dup.txt && git commit -m "add dup" &&
+	test_must_fail grit mv mv_src_dup.txt mv_dst_dup.txt 2>/dev/null &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'mv -f to existing file overwrites' '
+	cd repo_mv2 &&
+	echo srcf >mv_srcf.txt &&
+	echo dstf >mv_dstf.txt &&
+	git add mv_srcf.txt mv_dstf.txt && git commit -m "add force" &&
+	grit mv -f mv_srcf.txt mv_dstf.txt &&
+	grep srcf mv_dstf.txt &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'mv into directory works' '
+	cd repo_mv2 &&
+	echo dirfile >mv_todir.txt &&
+	mkdir -p mv_target_dir &&
+	git add mv_todir.txt && git commit -m "add todir" &&
+	grit mv mv_todir.txt mv_target_dir/ &&
+	test_path_is_file mv_target_dir/mv_todir.txt &&
+	git ls-files --error-unmatch mv_target_dir/mv_todir.txt &&
+	git reset --hard HEAD 2>/dev/null &&
+	rm -rf mv_target_dir
+'
+
+test_expect_success 'mv removes source from index' '
+	cd repo_mv2 &&
+	echo rmidx >mv_rmidx.txt &&
+	git add mv_rmidx.txt && git commit -m "add rmidx" &&
+	grit mv mv_rmidx.txt mv_rmidx_new.txt &&
+	! git ls-files --error-unmatch mv_rmidx.txt 2>/dev/null &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'mv source file disappears from working tree' '
+	cd repo_mv2 &&
+	echo gone >mv_gone.txt &&
+	git add mv_gone.txt && git commit -m "add gone" &&
+	grit mv mv_gone.txt mv_gone_new.txt &&
+	test_path_is_missing mv_gone.txt &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'mv destination appears in ls-files' '
+	cd repo_mv2 &&
+	echo lsf >mv_lsf.txt &&
+	git add mv_lsf.txt && git commit -m "add lsf" &&
+	grit mv mv_lsf.txt mv_lsf_dest.txt &&
+	grit ls-files >../actual &&
+	grep mv_lsf_dest.txt ../actual &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'mv updates index with destination' '
+	cd repo_mv2 &&
+	echo idx >mv_idx_check.txt &&
+	git add mv_idx_check.txt && git commit -m "add idx check" &&
+	grit mv mv_idx_check.txt mv_idx_dest.txt &&
+	git ls-files --error-unmatch mv_idx_dest.txt &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'mv untracked file fails' '
+	cd repo_mv2 &&
+	echo untrk >mv_untrk.txt &&
+	test_must_fail grit mv mv_untrk.txt mv_untrk_new.txt 2>/dev/null &&
+	rm -f mv_untrk.txt
+'
+
+test_expect_success 'mv --dry-run does not move file' '
+	cd repo_mv2 &&
+	echo dryrun_mv >mv_dry.txt &&
+	git add mv_dry.txt && git commit -m "add dry mv" &&
+	grit mv --dry-run mv_dry.txt mv_dry_new.txt 2>/dev/null &&
+	test_path_is_file mv_dry.txt &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'mv into existing subdirectory preserves name' '
+	cd repo_mv2 &&
+	echo subname >mv_subname.txt &&
+	mkdir -p mv_sn_dir &&
+	git add mv_subname.txt && git commit -m "add subname" &&
+	grit mv mv_subname.txt mv_sn_dir/ &&
+	test_path_is_file mv_sn_dir/mv_subname.txt &&
+	git reset --hard HEAD 2>/dev/null &&
+	rm -rf mv_sn_dir
+'
+
+test_expect_success 'mv multiple files into directory' '
+	cd repo_mv2 &&
+	echo a >mv_multi_a.txt &&
+	echo b >mv_multi_b.txt &&
+	mkdir -p mv_multi_dir &&
+	git add mv_multi_a.txt mv_multi_b.txt && git commit -m "add multi" &&
+	grit mv mv_multi_a.txt mv_multi_b.txt mv_multi_dir/ &&
+	test_path_is_file mv_multi_dir/mv_multi_a.txt &&
+	test_path_is_file mv_multi_dir/mv_multi_b.txt &&
+	git reset --hard HEAD 2>/dev/null &&
+	rm -rf mv_multi_dir
+'
+
+test_expect_success 'mv preserves executable permission' '
+	cd repo_mv2 &&
+	echo exec >mv_exec.sh &&
+	chmod +x mv_exec.sh &&
+	git add mv_exec.sh && git commit -m "add exec" &&
+	grit mv mv_exec.sh mv_exec_new.sh &&
+	test -x mv_exec_new.sh &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'mv shows destination as added in status' '
+	cd repo_mv2 &&
+	echo addstat >mv_addstat.txt &&
+	git add mv_addstat.txt && git commit -m "add addstat" &&
+	grit mv mv_addstat.txt mv_addstat_new.txt &&
+	grit status -s >../actual &&
+	grep "mv_addstat_new.txt" ../actual &&
+	git reset --hard HEAD 2>/dev/null
+'
+
 test_done
