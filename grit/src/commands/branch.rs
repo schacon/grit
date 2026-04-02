@@ -6,6 +6,7 @@ use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use std::fs;
 use std::io::{self, Write};
@@ -208,7 +209,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                 .oid()
                 .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
         } else {
-            resolve_rev(repo, merged_val)?
+            resolve_revision(repo, merged_val)?
         };
         branches.retain(|b| is_ancestor(repo, b.oid, target_oid).unwrap_or(false));
     }
@@ -220,20 +221,20 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                 .oid()
                 .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
         } else {
-            resolve_rev(repo, no_merged_val)?
+            resolve_revision(repo, no_merged_val)?
         };
         branches.retain(|b| !is_ancestor(repo, b.oid, target_oid).unwrap_or(true));
     }
 
     // Apply --contains filter
     if let Some(ref contains_rev) = args.contains {
-        let contains_oid = resolve_rev(repo, contains_rev)?;
+        let contains_oid = resolve_revision(repo, contains_rev)?;
         branches.retain(|b| is_ancestor(repo, contains_oid, b.oid).unwrap_or(false));
     }
 
     // Apply --no-contains filter
     if let Some(ref no_contains_rev) = args.no_contains {
-        let no_contains_oid = resolve_rev(repo, no_contains_rev)?;
+        let no_contains_oid = resolve_revision(repo, no_contains_rev)?;
         branches.retain(|b| !is_ancestor(repo, no_contains_oid, b.oid).unwrap_or(true));
     }
 
@@ -616,7 +617,7 @@ fn create_branch(
     }
 
     let oid = match start_point {
-        Some(rev) => resolve_rev(repo, rev)?,
+        Some(rev) => resolve_revision(repo, rev)?,
         None => *head
             .oid()
             .ok_or_else(|| anyhow::anyhow!("not a valid object name: 'HEAD'"))?,
@@ -785,47 +786,3 @@ fn parse_signature_time(sig: &str) -> i64 {
     }
 }
 
-/// Resolve a revision to an OID.
-fn resolve_rev(repo: &Repository, rev: &str) -> Result<ObjectId> {
-    if let Ok(oid) = ObjectId::from_hex(rev) {
-        return Ok(oid);
-    }
-
-    // Try refs/heads/
-    let ref_path = repo.git_dir.join("refs/heads").join(rev);
-    if let Ok(content) = fs::read_to_string(&ref_path) {
-        if let Ok(oid) = ObjectId::from_hex(content.trim()) {
-            return Ok(oid);
-        }
-    }
-
-    // Try refs/tags/
-    let tag_path = repo.git_dir.join("refs/tags").join(rev);
-    if let Ok(content) = fs::read_to_string(&tag_path) {
-        if let Ok(oid) = ObjectId::from_hex(content.trim()) {
-            return Ok(oid);
-        }
-    }
-
-    // Try refs/remotes/
-    let remotes_dir = repo.git_dir.join("refs/remotes");
-    if let Ok(entries) = fs::read_dir(&remotes_dir) {
-        for entry in entries.flatten() {
-            let remote_ref = entry.path().join(rev);
-            if let Ok(content) = fs::read_to_string(&remote_ref) {
-                if let Ok(oid) = ObjectId::from_hex(content.trim()) {
-                    return Ok(oid);
-                }
-            }
-        }
-    }
-
-    if rev == "HEAD" {
-        let head = resolve_head(&repo.git_dir)?;
-        if let Some(oid) = head.oid() {
-            return Ok(*oid);
-        }
-    }
-
-    bail!("not a valid object name: '{rev}'");
-}
