@@ -259,9 +259,12 @@ fn format_long(
         writeln!(out, "  ({})", op.hint())?;
     }
 
+    // Track whether we've printed any section (to know if we need a separator)
+    let mut has_section = false;
+
     // Staged changes
     if !staged.is_empty() {
-        writeln!(out)?;
+        has_section = true;
         writeln!(out, "Changes to be committed:")?;
         writeln!(out, "  (use \"git restore --staged <file>...\" to unstage)")?;
         for entry in staged {
@@ -275,15 +278,24 @@ fn format_long(
             };
             writeln!(out, "\t{label}:   {}", entry.path())?;
         }
+        writeln!(out)?;
     }
 
     // Unstaged changes
     if !unstaged.is_empty() {
-        writeln!(out)?;
+        if has_section {
+            // blank line already printed after previous section
+        } else {
+            has_section = true;
+        }
         writeln!(out, "Changes not staged for commit:")?;
         writeln!(
             out,
             "  (use \"git add <file>...\" to update what will be committed)"
+        )?;
+        writeln!(
+            out,
+            "  (use \"git restore <file>...\" to discard changes in working directory)"
         )?;
         for entry in unstaged {
             let label = match entry.status {
@@ -294,11 +306,16 @@ fn format_long(
             };
             writeln!(out, "\t{label}:   {}", entry.path())?;
         }
+        writeln!(out)?;
     }
 
     // Untracked files
     if !untracked.is_empty() {
-        writeln!(out)?;
+        if has_section {
+            // blank line already printed after previous section
+        } else {
+            has_section = true;
+        }
         writeln!(out, "Untracked files:")?;
         writeln!(
             out,
@@ -307,11 +324,16 @@ fn format_long(
         for path in untracked {
             writeln!(out, "\t{path}")?;
         }
+        writeln!(out)?;
     }
 
     // Ignored files
     if !ignored_files.is_empty() {
-        writeln!(out)?;
+        if has_section {
+            // blank line already printed after previous section
+        } else {
+            has_section = true;
+        }
         writeln!(out, "Ignored files:")?;
         writeln!(
             out,
@@ -320,11 +342,12 @@ fn format_long(
         for path in ignored_files {
             writeln!(out, "\t{path}")?;
         }
+        writeln!(out)?;
     }
 
+    // Footer messages
     if staged.is_empty() && unstaged.is_empty() && untracked.is_empty() {
         if !ignored_files.is_empty() {
-            writeln!(out)?;
             writeln!(
                 out,
                 "nothing to commit but untracked files present (use \"git add\" to track)"
@@ -332,8 +355,19 @@ fn format_long(
         } else {
             writeln!(out, "nothing to commit, working tree clean")?;
         }
-    } else if staged.is_empty() && (!unstaged.is_empty() || !untracked.is_empty()) {
-        writeln!(out)?;
+    } else if !staged.is_empty() && unstaged.is_empty() && untracked.is_empty() {
+        // Only staged changes — no footer needed (git doesn't print one)
+    } else if staged.is_empty() && !unstaged.is_empty() && untracked.is_empty() {
+        writeln!(
+            out,
+            "no changes added to commit (use \"git add\" and/or \"git commit -a\")"
+        )?;
+    } else if staged.is_empty() && unstaged.is_empty() && !untracked.is_empty() {
+        writeln!(
+            out,
+            "nothing added to commit but untracked files present (use \"git add\" to track)"
+        )?;
+    } else if staged.is_empty() {
         writeln!(
             out,
             "no changes added to commit (use \"git add\" and/or \"git commit -a\")"
