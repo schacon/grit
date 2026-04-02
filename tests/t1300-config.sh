@@ -1719,4 +1719,63 @@ test_expect_success 'refer config from subdirectory' '
 	rm -rf x other-config
 '
 
+test_expect_success '--set in alternative file' '
+	cd repo &&
+	cat >other-config <<\EOF &&
+[ein]
+	bahn = strasse
+EOF
+	git config --file=other-config anwohner.park ausweis &&
+	cat >expect <<\EOF &&
+[ein]
+	bahn = strasse
+[anwohner]
+	park = ausweis
+EOF
+	test_cmp expect other-config &&
+	rm -f other-config
+'
+
+test_expect_success 'alternative --file (list)' '
+	cd repo &&
+	cat >alt-config <<-\EOF &&
+	[ein]
+		bahn = strasse
+	EOF
+	echo "ein.bahn=strasse" >expect &&
+	git config --list --file alt-config >actual &&
+	test_cmp expect actual &&
+	rm -f alt-config
+'
+
+test_expect_success 'no arguments, but no crash' '
+	cd repo &&
+	test_must_fail git config >output 2>&1
+'
+
+test_expect_success '--null --name-only --get-regexp' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		val1 = one
+		val2 = two
+		other = skip
+	EOF
+	printf "section.val1\0section.val2\0" >expect.raw &&
+	git config -z --name-only --get-regexp val >actual.raw &&
+	test_cmp expect.raw actual.raw
+'
+
+test_expect_success '--null --get-all uses NUL delimiters' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		key = alpha
+		key = beta
+	EOF
+	printf "alpha\0beta\0" >expect.raw &&
+	git config -z --get-all section.key >actual.raw &&
+	test_cmp expect.raw actual.raw
+'
+
 test_done
