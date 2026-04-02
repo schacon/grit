@@ -3,6 +3,7 @@
 //! Each submodule corresponds to one plumbing subcommand.
 
 pub mod add;
+pub mod archive;
 pub mod annotate;
 pub mod bisect;
 pub mod blame;
@@ -28,6 +29,7 @@ pub mod diff;
 pub mod diff_files;
 pub mod diff_index;
 pub mod diff_tree;
+pub mod fetch;
 pub mod fmt_merge_msg;
 pub mod format_patch;
 pub mod for_each_ref;

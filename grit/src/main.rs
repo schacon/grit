@@ -116,6 +116,9 @@ enum Command {
     /// Update the object name stored in a ref safely.
     #[command(name = "update-ref")]
     UpdateRef(commands::update_ref::Args),
+    /// Show canonical name/email from .mailmap.
+    #[command(name = "check-mailmap")]
+    CheckMailmap(commands::check_mailmap::Args),
     /// Debug gitignore and exclude rules.
     #[command(name = "check-ignore")]
     CheckIgnore(commands::check_ignore::Args),
@@ -135,6 +138,8 @@ enum Command {
     /// Compare a tree against working tree or index.
     #[command(name = "diff-index")]
     DiffIndex(commands::diff_index::Args),
+    /// Download objects and refs from another repository.
+    Fetch(commands::fetch::Args),
     /// Output information on refs.
     #[command(name = "for-each-ref")]
     ForEachRef(commands::for_each_ref::Args),
@@ -253,6 +258,8 @@ enum Command {
     /// Manage sparse checkout patterns.
     #[command(name = "sparse-checkout")]
     SparseCheckout(commands::sparse_checkout::Args),
+    /// Create an archive of files from a named tree.
+    Archive(commands::archive::Args),
 }
 
 fn main() {
@@ -310,6 +317,7 @@ fn run() -> Result<()> {
         Command::CheckoutIndex(args) => commands::checkout_index::run(args),
         Command::CommitTree(args) => commands::commit_tree::run(args),
         Command::UpdateRef(args) => commands::update_ref::run(args),
+        Command::CheckMailmap(args) => commands::check_mailmap::run(args),
         Command::CheckIgnore(args) => commands::check_ignore::run(args),
         Command::CountObjects(args) => commands::count_objects::run(args),
         Command::Describe(args) => commands::describe::run(args),
@@ -317,6 +325,7 @@ fn run() -> Result<()> {
         Command::DiffFiles(args) => commands::diff_files::run(args),
         Command::DiffTree(args) => commands::diff_tree::run(args),
         Command::DiffIndex(args) => commands::diff_index::run(args),
+        Command::Fetch(args) => commands::fetch::run(args),
         Command::ForEachRef(args) => commands::for_each_ref::run(args),
         Command::Merge(args) => commands::merge::run(args),
         Command::MergeBase(args) => commands::merge_base::run(args),
@@ -364,5 +373,6 @@ fn run() -> Result<()> {
         Command::UnpackObjects(args) => commands::unpack_objects::run(args),
         Command::Worktree(args) => commands::worktree::run(args),
         Command::SparseCheckout(args) => commands::sparse_checkout::run(args),
+        Command::Archive(args) => commands::archive::run(args),
     }
 }

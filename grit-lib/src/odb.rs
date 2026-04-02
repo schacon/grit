@@ -47,6 +47,12 @@ impl Odb {
         }
     }
 
+    /// Return the path to the `objects/` directory.
+    #[must_use]
+    pub fn objects_dir(&self) -> &Path {
+        &self.objects_dir
+    }
+
     /// Return the filesystem path for a given object ID.
     #[must_use]
     pub fn object_path(&self, oid: &ObjectId) -> PathBuf {
