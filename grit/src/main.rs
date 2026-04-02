@@ -57,6 +57,9 @@ enum Command {
     /// Provide contents or details of repository objects.
     #[command(name = "cat-file")]
     CatFile(commands::cat_file::Args),
+    /// Display gitattributes information.
+    #[command(name = "check-attr")]
+    CheckAttr(commands::check_attr::Args),
     /// Record changes to the repository.
     Commit(commands::commit::Args),
     /// Get and set repository or global options.
@@ -140,9 +143,19 @@ enum Command {
     /// Read, modify, and delete symbolic refs.
     #[command(name = "symbolic-ref")]
     SymbolicRef(commands::symbolic_ref::Args),
+    /// Verify a commit object.
+    #[command(name = "verify-commit")]
+    VerifyCommit(commands::verify_commit::Args),
     /// Validate packed Git archive files.
     #[command(name = "verify-pack")]
     VerifyPack(commands::verify_pack::Args),
+    /// Verify a tag object.
+    #[command(name = "verify-tag")]
+    VerifyTag(commands::verify_tag::Args),
+    /// Display version information.
+    Version(commands::version::Args),
+    /// Show logs with raw diff (no merges).
+    Whatchanged(commands::whatchanged::Args),
     /// Produce a merge commit message.
     #[command(name = "fmt-merge-msg")]
     FmtMergeMsg(commands::fmt_merge_msg::Args),
@@ -172,6 +185,9 @@ enum Command {
     Shortlog(commands::shortlog::Args),
     /// Show various types of objects (commits, trees, blobs, tags).
     Show(commands::show::Args),
+    /// Show branches and their commits.
+    #[command(name = "show-branch")]
+    ShowBranch(commands::show_branch::Args),
     /// Remove files from the working tree and from the index.
     Rm(commands::rm::Args),
     /// Move or rename a file, a directory, or a symlink.
@@ -234,6 +250,7 @@ fn run() -> Result<()> {
         Command::Init(args) => commands::init::run(args),
         Command::HashObject(args) => commands::hash_object::run(args),
         Command::CatFile(args) => commands::cat_file::run(args),
+        Command::CheckAttr(args) => commands::check_attr::run(args),
         Command::Commit(args) => commands::commit::run(args),
         Command::Config(args) => commands::config::run(args),
         Command::Log(args) => commands::log::run(args),
@@ -264,7 +281,11 @@ fn run() -> Result<()> {
         Command::ShowIndex(args) => commands::show_index::run(args),
         Command::ShowRef(args) => commands::show_ref::run(args),
         Command::SymbolicRef(args) => commands::symbolic_ref::run(args),
+        Command::VerifyCommit(args) => commands::verify_commit::run(args),
         Command::VerifyPack(args) => commands::verify_pack::run(args),
+        Command::VerifyTag(args) => commands::verify_tag::run(args),
+        Command::Version(args) => commands::version::run(args),
+        Command::Whatchanged(args) => commands::whatchanged::run(args),
         Command::FmtMergeMsg(args) => commands::fmt_merge_msg::run(args),
         Command::Fsck(args) => commands::fsck::run(args),
         Command::Gc(args) => commands::gc::run(args),
@@ -278,6 +299,7 @@ fn run() -> Result<()> {
         Command::Restore(args) => commands::restore::run(args),
         Command::Shortlog(args) => commands::shortlog::run(args),
         Command::Show(args) => commands::show::run(args),
+        Command::ShowBranch(args) => commands::show_branch::run(args),
         Command::Rm(args) => commands::rm::run(args),
         Command::Mv(args) => commands::mv::run(args),
         Command::PackRefs(args) => commands::pack_refs::run(args),
