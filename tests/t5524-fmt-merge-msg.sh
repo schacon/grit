@@ -97,4 +97,36 @@ test_expect_success 'output ends with a newline' '
 	tail -c1 actual | od -An -tx1 | grep -q 0a
 '
 
+# ---- more fmt-merge-msg tests ----
+
+test_expect_success '--into-name appends into <branch>' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --into-name develop >actual &&
+	grep -q "into develop" actual
+'
+
+test_expect_success '--log is accepted (compat flag)' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --log >actual &&
+	grep -q "branch '"'"'feature'"'"'" actual
+'
+
+test_expect_success '--log with count is accepted' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --log=5 >actual &&
+	grep -q "branch '"'"'feature'"'"'" actual
+'
+
+test_expect_success '--no-log is accepted' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --no-log >actual &&
+	grep -q "branch '"'"'feature'"'"'" actual
+'
+
+test_expect_success 'multiple tags uses plural form' '
+	printf "a1\t\ttag '"'"'v1.0'"'"'\nb2\t\ttag '"'"'v2.0'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "tags" actual
+'
+
 test_done
