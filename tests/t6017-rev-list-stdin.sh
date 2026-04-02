@@ -91,4 +91,65 @@ test_expect_success 'stdin with multiple refs' '
 	test_cmp expect actual
 '
 
+test_expect_success 'stdin with empty input fails' '
+	cd repo &&
+	printf "" >input &&
+	test_must_fail git rev-list --stdin <input
+'
+
+test_expect_success 'stdin with range notation' '
+	cd repo &&
+	printf "%s\n" "master..side" >input &&
+	git rev-list master..side >expect &&
+	git rev-list --stdin <input >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin combined with --max-count' '
+	cd repo &&
+	printf "%s\n" master >input &&
+	git rev-list --max-count=1 master >expect &&
+	git rev-list --max-count=1 --stdin <input >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin combined with --reverse' '
+	cd repo &&
+	printf "%s\n" master >input &&
+	git rev-list --reverse master >expect &&
+	git rev-list --reverse --stdin <input >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin with ^SHA exclusion by hash' '
+	cd repo &&
+	sha_c2=$(git rev-parse master~1) &&
+	printf "%s\n" "^$sha_c2" >input &&
+	git rev-list master ^"$sha_c2" >expect &&
+	git rev-list master --stdin <input >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin ref and cmd-line exclusion combine' '
+	cd repo &&
+	printf "%s\n" master >input &&
+	git rev-list master ^side >expect &&
+	git rev-list ^side --stdin <input >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin with --count' '
+	cd repo &&
+	printf "%s\n" master >input &&
+	git rev-list --count master >expect &&
+	git rev-list --count --stdin <input >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin with only exclusion and no positive ref fails' '
+	cd repo &&
+	printf "%s\n" "^master" >input &&
+	test_must_fail git rev-list --stdin <input
+'
+
 test_done

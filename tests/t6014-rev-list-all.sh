@@ -47,4 +47,50 @@ test_expect_success '--all includes detached HEAD commits' '
 	test "$lines" = "3"
 '
 
+test_expect_success '--all output includes main branch tip' '
+	cd repo &&
+	tip=$(git rev-parse main) &&
+	git rev-list --all >actual &&
+	grep "$tip" actual
+'
+
+test_expect_success '--all output includes detached HEAD' '
+	cd repo &&
+	detached=$(cat .git/HEAD) &&
+	git rev-list --all >actual &&
+	grep "$detached" actual
+'
+
+test_expect_success '--all with --count' '
+	cd repo &&
+	git rev-list --all --count >actual &&
+	echo 3 >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--all with --max-count=1' '
+	cd repo &&
+	git rev-list --all --max-count=1 >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" = "1"
+'
+
+test_expect_success '--all with --reverse' '
+	cd repo &&
+	git rev-list --all >forward &&
+	git rev-list --all --reverse >reversed &&
+	tac forward >forward_reversed &&
+	test_cmp forward_reversed reversed
+'
+
+test_expect_success 'add branch and --all sees more commits' '
+	cd repo &&
+	one_oid=$(git rev-parse main~1) &&
+	branch_commit=$(doit 4 branch-extra "$one_oid") &&
+	git update-ref refs/heads/extra "$branch_commit" &&
+	git rev-list --all --count >actual &&
+	count=$(cat actual) &&
+	test "$count" -ge 4
+'
+
 test_done
