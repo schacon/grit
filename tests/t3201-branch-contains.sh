@@ -179,4 +179,68 @@ test_expect_failure 'branch --contains invalid ref fails' '
 	test_must_fail git branch --contains does-not-exist
 '
 
+# ── branch --merged/--no-merged with tags ─────────────────────────────────
+
+test_expect_success 'branch --merged with tag name runs' '
+	cd repo &&
+	git checkout master &&
+	git branch --merged initial >actual &&
+	grep "master" actual || true
+'
+
+test_expect_success 'branch --no-merged with tag name runs' '
+	cd repo &&
+	git branch --no-merged initial >actual
+'
+
+# ── branch listing with --contains after merge ────────────────────────────
+
+test_expect_success 'branch --contains HEAD includes current branch' '
+	cd repo &&
+	git checkout master &&
+	git branch --contains HEAD >actual &&
+	grep "master" actual
+'
+
+test_expect_success 'branch --contains with abbreviated ref' '
+	cd repo &&
+	short=$(git rev-parse --short HEAD) &&
+	git branch --contains "$short" >actual &&
+	grep "master" actual
+'
+
+# ── branches with slashes in names ────────────────────────────────────────
+
+test_expect_success 'setup: branch with slash in name' '
+	cd repo &&
+	git branch feature/slash-test
+'
+
+test_expect_success 'branch --contains lists branch with slash' '
+	cd repo &&
+	git branch --contains HEAD >actual &&
+	grep "feature/slash-test" actual
+'
+
+test_expect_success 'branch --merged lists branch with slash' '
+	cd repo &&
+	git branch --merged master >actual &&
+	grep "feature/slash-test" actual
+'
+
+test_expect_success 'branch --no-contains HEAD returns empty or no current' '
+	cd repo &&
+	git branch --no-contains HEAD >actual &&
+	! grep "^\* " actual || true
+'
+
+# ── branch --contains with multiple matching refs ────────────────────────
+
+test_expect_success 'branch --contains lists many branches' '
+	cd repo &&
+	git branch --contains initial >actual &&
+	line_count=$(wc -l <actual) &&
+	test "$line_count" -ge 2
+'
+
 test_done

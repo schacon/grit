@@ -294,4 +294,175 @@ test_expect_success 'include directive with show-scope' '
 	grep "command" actual || grep "local" actual || true
 '
 
+# ── include with special characters in path ───────────────────────────────
+
+test_expect_success 'include.path with spaces in path' '
+	cat >cfg <<-EOF &&
+	[include]
+		path = my config/extra.cfg
+	[core]
+		x = 1
+	EOF
+	git config --file cfg -l >actual &&
+	grep "include.path=my config/extra.cfg" actual
+'
+
+test_expect_success 'include.path with dots in path' '
+	cat >cfg <<-EOF &&
+	[include]
+		path = config.d/local.conf
+	[core]
+		x = 1
+	EOF
+	git config --file cfg -l >actual &&
+	grep "include.path=config.d/local.conf" actual
+'
+
+# ── multiple includeIf conditions ────────────────────────────────────────
+
+test_expect_success 'multiple includeIf directives in one file' '
+	cat >cfg <<-EOF &&
+	[includeIf "gitdir:/work/"]
+		path = work.cfg
+	[includeIf "gitdir:/personal/"]
+		path = personal.cfg
+	[user]
+		name = Test
+	EOF
+	git config --file cfg -l >actual &&
+	grep "includeif.gitdir:/work/.path=work.cfg" actual &&
+	grep "includeif.gitdir:/personal/.path=personal.cfg" actual
+'
+
+# ── includeIf hasconfig ───────────────────────────────────────────────────
+
+test_expect_success 'includeIf hasconfig:remote.*.url shows in list' '
+	cat >cfg <<-EOF &&
+	[includeIf "hasconfig:remote.*.url:https://github.com/**"]
+		path = github.cfg
+	[user]
+		name = Test
+	EOF
+	git config --file cfg -l >actual &&
+	grep "github.cfg" actual
+'
+
+# ── config file with include + set preserves all ─────────────────────────
+
+test_expect_success 'setting new section preserves includes and existing sections' '
+	cat >cfg <<-EOF &&
+	[include]
+		path = a.cfg
+	[user]
+		name = Original
+	[core]
+		autocrlf = false
+	EOF
+	git config --file cfg color.ui "auto" &&
+	git config --file cfg -l >actual &&
+	grep "include.path=a.cfg" actual &&
+	grep "user.name=Original" actual &&
+	grep "core.autocrlf=false" actual &&
+	grep "color.ui=auto" actual
+'
+
+# ── get specific includeIf key ───────────────────────────────────────────
+
+test_expect_success 'get includeIf path value' '
+	cat >cfg <<-EOF &&
+	[includeIf "gitdir:/work/"]
+		path = work-settings.cfg
+	EOF
+	git config --file cfg --get "includeIf.gitdir:/work/.path" >actual &&
+	echo "work-settings.cfg" >expected &&
+	test_cmp expected actual
+'
+
+# ── include in repo config does not break basic operations ─────────────────
+
+test_expect_success 'status works with include directive in config' '
+	git init inc-status-repo &&
+	cd inc-status-repo &&
+	cat >>.git/config <<-EOF &&
+	[include]
+		path = nonexistent.cfg
+	EOF
+	git config user.name Test &&
+	git config user.email t@t &&
+	git status >actual 2>&1 &&
+	grep "On branch" actual
+'
+
+test_expect_success 'commit works with include directive in config' '
+	cd inc-status-repo &&
+	echo x >file &&
+	git add file &&
+	git commit -m "with include" 2>/dev/null &&
+	git log --format="%s" -n 1 >actual &&
+	echo "with include" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'branch works with include directive in config' '
+	cd inc-status-repo &&
+	git branch >actual &&
+	grep "master" actual
+'
+
+# ── include with multiple sections between ─────────────────────────────────
+
+test_expect_success 'config with include between other sections' '
+	cat >cfg <<-EOF &&
+	[core]
+		autocrlf = false
+	[include]
+		path = middle.cfg
+	[user]
+		name = Test
+	EOF
+	git config --file cfg -l >actual &&
+	grep "core.autocrlf=false" actual &&
+	grep "include.path=middle.cfg" actual &&
+	grep "user.name=Test" actual
+'
+
+test_expect_success 'unset key in file with include works' '
+	cat >cfg <<-EOF &&
+	[include]
+		path = keep.cfg
+	[temp]
+		key = val
+	EOF
+	git config --file cfg --unset temp.key &&
+	git config --file cfg -l >actual &&
+	grep "include.path=keep.cfg" actual &&
+	test_must_fail git config --file cfg --get temp.key
+'
+
+# ── include at end of file ─────────────────────────────────────────────────
+
+test_expect_success 'include at end of file is parsed' '
+	cat >cfg <<-EOF &&
+	[user]
+		name = First
+	[include]
+		path = last.cfg
+	EOF
+	git config --file cfg -l >actual &&
+	grep "user.name=First" actual &&
+	grep "include.path=last.cfg" actual
+'
+
+test_expect_success 'include at start of file is parsed' '
+	cat >cfg <<-EOF &&
+	[include]
+		path = first.cfg
+	[user]
+		name = After
+	EOF
+	git config --file cfg -l >actual &&
+	grep "include.path=first.cfg" actual &&
+	grep "user.name=After" actual
+'
+
 test_done
