@@ -449,6 +449,7 @@ t9830-diff-stat-binary.sh
 t9840-diff-tree-no-commit-id.sh
 t9850-status-ignored-patterns.sh
 t9860-log-max-count-skip.sh
+t9870-rev-list-reverse-count.sh
 t9880-config-file-option.sh
 t9890-init-object-format.sh
 t9900-branch-verbose-all.sh
