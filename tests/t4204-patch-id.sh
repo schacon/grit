@@ -206,4 +206,37 @@ test_expect_success 'patch-id with empty diff produces no output' '
 	test_must_be_empty empty.out
 '
 
+test_expect_success 'patch-id with multiple hunks in one file' '
+	cat >multi.diff <<-\EOF &&
+	commit eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+	diff --git a/file b/file
+	index 1234567..abcdefg 100644
+	--- a/file
+	+++ b/file
+	@@ -1,3 +1,4 @@
+	 line1
+	+added1
+	 line2
+	 line3
+	@@ -10,3 +11,4 @@
+	 line10
+	+added2
+	 line11
+	 line12
+	EOF
+	git patch-id <multi.diff >multi.out &&
+	grep "^$OID_REGEX $OID_REGEX$" multi.out
+'
+
+test_expect_success 'patch-id stable: same diff same id regardless of run' '
+	cd repo &&
+	git show HEAD >run1.out &&
+	git patch-id --stable <run1.out >pid_run1 &&
+	git show HEAD >run2.out &&
+	git patch-id --stable <run2.out >pid_run2 &&
+	sed "s/ .*//" pid_run1 >id1 &&
+	sed "s/ .*//" pid_run2 >id2 &&
+	test_cmp id1 id2
+'
+
 test_done

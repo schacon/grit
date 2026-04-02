@@ -396,4 +396,23 @@ test_expect_success 'merge with identical our and their produces clean result' '
 	test_cmp new1.txt out
 '
 
+test_expect_success 'merge-file with --diff3 shows base marker' '
+	printf "A\nB\nC\n" >d3base.txt &&
+	printf "A\nX\nC\n" >d3ours.txt &&
+	printf "A\nY\nC\n" >d3theirs.txt &&
+	test_must_fail git merge-file --diff3 -p d3ours.txt d3base.txt d3theirs.txt >d3out &&
+	grep "|||||||" d3out
+'
+
+test_expect_success 'merge-file exit code is number of conflicts' '
+	cp backup.txt test.txt &&
+	test_expect_code 1 git merge-file test.txt orig.txt new3.txt
+'
+
+test_expect_success 'merge-file clean merge returns 0' '
+	cp new1.txt clean1.txt &&
+	git merge-file clean1.txt orig.txt new2.txt &&
+	test $? -eq 0
+'
+
 test_done
