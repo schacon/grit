@@ -1269,4 +1269,85 @@ test_expect_success 'diff --name-status shows A for new file' '
 	grep "^A.*b.txt" output
 '
 
+test_expect_success 'diff --stat shows insertion count' '
+	cd diff-empty &&
+	git diff --stat HEAD~1 HEAD >output &&
+	grep "insertion" output
+'
+
+test_expect_success 'diff --numstat shows numeric columns' '
+	cd diff-empty &&
+	git diff --numstat HEAD~1 HEAD >output &&
+	test $(wc -l <output) -ge 1
+'
+
+test_expect_success 'diff --cached on empty index is empty' '
+	cd diff-empty &&
+	git diff --cached >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff between same commit is empty' '
+	cd diff-empty &&
+	git diff HEAD HEAD >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --name-only lists all changed files' '
+	cd diff-empty &&
+	git diff --name-only HEAD~1 HEAD >output &&
+	test $(wc -l <output) -ge 1
+'
+
+test_expect_success 'diff HEAD~2 HEAD spans two commits' '
+	cd diff-empty &&
+	git diff --name-only HEAD~2 HEAD >output &&
+	test $(wc -l <output) -ge 1
+'
+
+test_expect_success 'diff --quiet exits 1 when there are differences' '
+	cd diff-empty &&
+	test_must_fail git diff --quiet HEAD~1 HEAD
+'
+
+test_expect_success 'diff --quiet exits 0 when identical' '
+	cd diff-empty &&
+	git diff --quiet HEAD HEAD
+'
+
+test_expect_success 'diff --exit-code exits 1 on changes' '
+	cd diff-empty &&
+	test_must_fail git diff --exit-code HEAD~1 HEAD
+'
+
+test_expect_success 'diff --exit-code exits 0 on same commit' '
+	cd diff-empty &&
+	git diff --exit-code HEAD HEAD
+'
+
+test_expect_success 'diff output contains diff header' '
+	cd diff-empty &&
+	git diff HEAD~1 HEAD >output &&
+	grep "^diff --git" output
+'
+
+test_expect_success 'diff output contains index line' '
+	cd diff-empty &&
+	git diff HEAD~1 HEAD >output &&
+	grep "^index" output
+'
+
+test_expect_success 'diff --stat shows file summary line' '
+	cd diff-empty &&
+	git diff --stat HEAD~1 HEAD >output &&
+	grep "file.*changed" output
+'
+
+test_expect_success 'diff --name-status shows M for modified file' '
+	cd diff-empty &&
+	echo modified >>a.txt && git add a.txt && git commit -m modify 2>/dev/null &&
+	git diff --name-status HEAD~1 HEAD >output &&
+	grep "^M.*a.txt" output
+'
+
 test_done
