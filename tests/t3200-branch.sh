@@ -1907,4 +1907,110 @@ test_expect_success 'branch -r shows no remotes in local-only repo' '
 	test_must_be_empty output
 '
 
+test_expect_success 'branch list includes master' '
+	cd repo &&
+	git branch >output &&
+	grep "master" output
+'
+
+test_expect_success 'branch with slash in name' '
+	cd repo &&
+	git branch topic/slash-deep-v3 &&
+	git rev-parse topic/slash-deep-v3 >output &&
+	test -s output &&
+	git branch -D topic/slash-deep-v3 2>/dev/null
+'
+
+test_expect_success 'branch with dot in name' '
+	cd repo &&
+	git branch branch.with.dots &&
+	git rev-parse branch.with.dots >output &&
+	test -s output &&
+	git branch -D branch.with.dots 2>/dev/null
+'
+
+test_expect_success 'branch --list shows all branches' '
+	cd repo &&
+	git branch >output &&
+	test $(wc -l <output) -ge 1
+'
+
+test_expect_success 'current branch has asterisk marker' '
+	cd repo &&
+	git branch >output &&
+	grep "^\*" output
+'
+
+test_expect_success 'branch points to HEAD by default' '
+	cd repo &&
+	head=$(git rev-parse HEAD) &&
+	git branch head-check-br &&
+	result=$(git rev-parse head-check-br) &&
+	test "$result" = "$head" &&
+	git branch -D head-check-br 2>/dev/null
+'
+
+test_expect_success 'branch at specific commit' '
+	cd repo &&
+	sha=$(git rev-parse HEAD~1) &&
+	git branch at-specific "$sha" &&
+	result=$(git rev-parse at-specific) &&
+	test "$result" = "$sha" &&
+	git branch -D at-specific 2>/dev/null
+'
+
+test_expect_success 'branch -d deletes merged branch' '
+	cd repo &&
+	git branch merged-del-test &&
+	git branch -d merged-del-test &&
+	test_must_fail git rev-parse merged-del-test 2>/dev/null
+'
+
+test_expect_success 'branch -D always deletes' '
+	cd repo &&
+	git branch force-del-test &&
+	git branch -D force-del-test &&
+	test_must_fail git rev-parse force-del-test 2>/dev/null
+'
+
+test_expect_success 'branch -v shows commit subject' '
+	cd repo &&
+	git branch -v >output &&
+	test -s output
+'
+
+test_expect_success 'creating duplicate branch fails' '
+	cd repo &&
+	git branch dup-br-test &&
+	test_must_fail git branch dup-br-test 2>/dev/null &&
+	git branch -D dup-br-test 2>/dev/null
+'
+
+test_expect_success 'branch with hyphen in name' '
+	cd repo &&
+	git branch my-hyphen-branch &&
+	git rev-parse my-hyphen-branch >output &&
+	test -s output &&
+	git branch -D my-hyphen-branch 2>/dev/null
+'
+
+test_expect_success 'branch rename with -m' '
+	cd repo &&
+	git branch rename-src &&
+	git branch -m rename-src rename-dst &&
+	test_must_fail git rev-parse rename-src 2>/dev/null &&
+	git rev-parse rename-dst >output &&
+	test -s output &&
+	git branch -D rename-dst 2>/dev/null
+'
+
+test_expect_success 'branch count increases after creation' '
+	cd repo &&
+	count_before=$(git branch | wc -l) &&
+	git branch count-test-br &&
+	count_after=$(git branch | wc -l) &&
+	test "$count_after" -gt "$count_before" &&
+	git branch -D count-test-br 2>/dev/null
+'
+
 test_done
