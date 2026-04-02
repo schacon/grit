@@ -637,6 +637,33 @@ impl ConfigFile {
         Ok(found)
     }
 
+    /// Append a new value for a key without removing existing entries.
+    ///
+    /// This is the behaviour of `git config --add section.key value`.
+    /// If the section doesn't exist, it is created.
+    pub fn add_value(&mut self, key: &str, value: &str) -> Result<()> {
+        let canon = canonical_key(key)?;
+        let raw_var = raw_variable_name(key);
+        let (section, subsection, _var) = split_key(&canon)?;
+        let (raw_sec, raw_sub) = raw_section_parts(key);
+
+        let section_line = self.find_or_create_section_preserving_case(
+            &section, subsection.as_deref(),
+            &raw_sec, raw_sub.as_deref(),
+        );
+        let new_line = format!("\t{} = {}", raw_var, escape_value(value));
+        let insert_at = self.last_line_in_section(section_line) + 1;
+        self.raw_lines.insert(insert_at, new_line);
+
+        // Re-parse to fix up entries and line numbers
+        let content = self.raw_lines.join("\n");
+        let reparsed = Self::parse(&self.path, &content, self.scope)?;
+        self.entries = reparsed.entries;
+        self.raw_lines = reparsed.raw_lines;
+
+        Ok(())
+    }
+
     /// Write the (possibly modified) config back to disk.
     ///
     /// # Errors

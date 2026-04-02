@@ -64,6 +64,10 @@ pub struct Args {
     #[arg(short = 'l', long = "list")]
     pub list: bool,
 
+    /// Add a new line for a multi-valued key (legacy).
+    #[arg(long = "add", value_name = "KEY")]
+    pub add_key: Option<String>,
+
     /// Replace all matching values (legacy).
     #[arg(long = "replace-all")]
     pub replace_all: bool,
@@ -295,6 +299,13 @@ pub fn run(args: Args) -> Result<()> {
             all: true,
         };
         return cmd_unset(&args, &unset_args, scope, &file_path);
+    }
+
+    if let Some(ref key) = args.add_key {
+        if args.positional.is_empty() {
+            bail!("missing value for --add");
+        }
+        return cmd_add(&args, key, &args.positional[0], scope, &file_path);
     }
 
     if args.remove_section {
@@ -547,6 +558,22 @@ fn cmd_rename_section(
         }
         None => bail!("config file not found: {}", file_path.display()),
     }
+    Ok(())
+}
+
+fn cmd_add(
+    _args: &Args,
+    key: &str,
+    value: &str,
+    scope: ConfigScope,
+    file_path: &Path,
+) -> Result<()> {
+    let mut config = match ConfigFile::from_path(file_path, scope).context("reading config file")? {
+        Some(cfg) => cfg,
+        None => ConfigFile::parse(file_path, "", scope)?,
+    };
+    config.add_value(key, value)?;
+    config.write().context("writing config file")?;
     Ok(())
 }
 
