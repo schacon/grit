@@ -429,9 +429,22 @@ fn cmd_unset(
 
     match config {
         Some(ref mut cfg) => {
-            let removed = cfg.unset(&unset_args.key)?;
-            if removed == 0 {
-                std::process::exit(5);
+            if unset_args.all {
+                let removed = cfg.unset(&unset_args.key)?;
+                if removed == 0 {
+                    std::process::exit(5);
+                }
+            } else {
+                // --unset (single): fail with exit 5 if multiple values exist
+                let count = cfg.count(&unset_args.key)?;
+                if count == 0 {
+                    std::process::exit(5);
+                }
+                if count > 1 {
+                    eprintln!("warning: {key} has multiple values", key = unset_args.key);
+                    std::process::exit(5);
+                }
+                cfg.unset_last(&unset_args.key)?;
             }
             cfg.write().context("writing config file")?;
         }

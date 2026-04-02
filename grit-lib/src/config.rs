@@ -429,6 +429,32 @@ impl ConfigFile {
         Ok(())
     }
 
+    /// Count how many entries exist for a key.
+    pub fn count(&self, key: &str) -> Result<usize> {
+        let canon = canonical_key(key)?;
+        Ok(self.entries.iter().filter(|e| e.key == canon).count())
+    }
+
+    /// Unset (remove) only the last occurrence of a key.
+    ///
+    /// Returns the number of entries removed (0 or 1).
+    pub fn unset_last(&mut self, key: &str) -> Result<usize> {
+        let canon = canonical_key(key)?;
+        let last_idx = self.entries.iter().rposition(|e| e.key == canon);
+
+        if let Some(idx) = last_idx {
+            let line_idx = self.entries[idx].line - 1;
+            self.raw_lines.remove(line_idx);
+            let content = self.raw_lines.join("\n");
+            let reparsed = Self::parse(&self.path, &content, self.scope)?;
+            self.entries = reparsed.entries;
+            self.raw_lines = reparsed.raw_lines;
+            Ok(1)
+        } else {
+            Ok(0)
+        }
+    }
+
     /// Unset (remove) all occurrences of a key.
     ///
     /// # Parameters
