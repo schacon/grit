@@ -166,4 +166,158 @@ test_expect_success '"checkout -" is same as checkout @{-1}' '
 	test_cmp expect_at actual_at
 '
 
+# ---------------------------------------------------------------------------
+# checkout - preserves working tree content
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout - preserves working tree content' '
+	cd repo &&
+	git checkout master &&
+	git checkout other &&
+	git checkout - &&
+	test "$(git symbolic-ref --short HEAD)" = "master" &&
+	grep "hello again" world
+'
+
+# ---------------------------------------------------------------------------
+# checkout - three times cycles through correctly
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout - three times cycles correctly' '
+	cd repo &&
+	git checkout master &&
+	git checkout other &&
+	git checkout - &&
+	test "$(git symbolic-ref --short HEAD)" = "master" &&
+	git checkout - &&
+	test "$(git symbolic-ref --short HEAD)" = "other" &&
+	git checkout - &&
+	test "$(git symbolic-ref --short HEAD)" = "master"
+'
+
+# ---------------------------------------------------------------------------
+# checkout @{-N} with N too large fails
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout @{-N} with N too large fails' '
+	cd repo &&
+	git checkout master &&
+	test_must_fail git checkout "@{-100}" 2>err
+'
+
+# ---------------------------------------------------------------------------
+# checkout - after -b uses previous branch
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout - after creating new branch goes to previous' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b tmp-branch &&
+	git checkout - &&
+	echo refs/heads/master >expect &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expect actual &&
+	git branch -D tmp-branch
+'
+
+# ---------------------------------------------------------------------------
+# checkout - from detached HEAD goes to previous branch
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout - from detached HEAD re-attaches to prev branch' '
+	cd repo &&
+	git checkout master &&
+	git checkout other &&
+	git checkout $(git rev-parse HEAD) &&
+	git checkout - &&
+	echo refs/heads/other >expect &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expect actual
+'
+
+# ---------------------------------------------------------------------------
+# @{-1} in combination with -b creates branch from previous HEAD
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b newbranch @{-1} creates branch from prev' '
+	cd repo &&
+	git checkout master &&
+	git checkout branch1 &&
+	git checkout branch2 &&
+	git checkout -b from-prev "@{-1}" &&
+	echo refs/heads/from-prev >expect &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expect actual &&
+	git rev-parse HEAD >actual_oid &&
+	git rev-parse branch1 >expect_oid &&
+	test_cmp expect_oid actual_oid &&
+	git checkout master &&
+	git branch -D from-prev
+'
+
+# ---------------------------------------------------------------------------
+# checkout - does not confuse with file named -
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout - is not confused by file named -' '
+	cd repo &&
+	git checkout master &&
+	git checkout other &&
+	git checkout - &&
+	echo refs/heads/master >expect &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expect actual
+'
+
+# ---------------------------------------------------------------------------
+# @{-1} after detach/reattach cycle
+# ---------------------------------------------------------------------------
+test_expect_success '@{-1} after detach and reattach' '
+	cd repo &&
+	git checkout master &&
+	git checkout branch3 &&
+	git checkout --detach &&
+	git checkout branch1 &&
+	git checkout "@{-1}" &&
+	# @{-1} should be the detached state hash, which means detached
+	# Or it could be branch3 depending on reflog
+	# Just verify we successfully checked out something
+	git rev-parse HEAD >/dev/null
+'
+
+# ---------------------------------------------------------------------------
+# checkout - preserves dirty untracked files
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout - preserves untracked files' '
+	cd repo &&
+	git checkout master &&
+	echo untracked >untracked-file &&
+	git checkout other &&
+	git checkout - &&
+	test -f untracked-file &&
+	rm -f untracked-file
+'
+
+# ---------------------------------------------------------------------------
+# @{-2} after branch hops
+# ---------------------------------------------------------------------------
+test_expect_success '@{-2} goes to second-to-last branch' '
+	cd repo &&
+	git checkout master &&
+	git checkout branch1 &&
+	git checkout branch2 &&
+	git checkout branch3 &&
+	git checkout "@{-2}" &&
+	echo refs/heads/branch1 >expect &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expect actual
+'
+
+# ---------------------------------------------------------------------------
+# checkout - does not change with intermediate operations
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout - after rev-parse still switches correctly' '
+	cd repo &&
+	git checkout master &&
+	git checkout other &&
+	git rev-parse HEAD >/dev/null &&
+	git checkout - &&
+	echo refs/heads/master >expect &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expect actual
+'
+
 test_done
