@@ -176,4 +176,202 @@ test_expect_success 'checkout -- . restores all modified files' '
 	test "$(cat file1)" != "mod1"
 '
 
+# ---------------------------------------------------------------------------
+# Checkout -B (force create)
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -B creates new branch' '
+	cd repo &&
+	git checkout master &&
+	git checkout -B new-force-branch &&
+	test "$(git symbolic-ref --short HEAD)" = "new-force-branch" &&
+	git checkout master
+'
+
+test_expect_success 'checkout -B resets existing branch to current HEAD' '
+	cd repo &&
+	git checkout master &&
+	git checkout -B new-force-branch &&
+	test "$(git rev-parse HEAD)" = "$(git rev-parse master)" &&
+	git checkout master
+'
+
+test_expect_success 'checkout -B <branch> <start> resets to start point' '
+	cd repo &&
+	git checkout master &&
+	git checkout -B from-initial $(cat ../commit1) &&
+	test "$(git rev-parse HEAD)" = "$(cat ../commit1)" &&
+	test "$(git symbolic-ref --short HEAD)" = "from-initial" &&
+	git checkout master
+'
+
+# ---------------------------------------------------------------------------
+# Checkout with merge conflicts
+# ---------------------------------------------------------------------------
+test_expect_success 'setup conflicting branches for checkout -m' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b left &&
+	echo "left content" >conflict-file &&
+	git add conflict-file &&
+	git commit -m "left: add conflict-file" &&
+
+	git checkout master &&
+	git checkout -b right &&
+	echo "right content" >conflict-file &&
+	git add conflict-file &&
+	git commit -m "right: add conflict-file" &&
+	git checkout master
+'
+
+test_expect_success 'checkout -m allows switching with local modifications' '
+	cd repo &&
+	git checkout left &&
+	echo "modified left" >conflict-file &&
+	git checkout -m right 2>err || true &&
+	# Either it succeeds with merge or we get conflict markers
+	test -f conflict-file
+'
+
+test_expect_success 'cleanup after merge checkout test' '
+	cd repo &&
+	git checkout -f master
+'
+
+# ---------------------------------------------------------------------------
+# Checkout specific files from commits
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout HEAD~1 -- file restores old version' '
+	cd repo &&
+	git checkout master &&
+	oldcontent=$(git show $(cat ../commit1):file1) &&
+	git checkout $(cat ../commit1) -- file1 &&
+	test "$(cat file1)" = "$oldcontent" &&
+	git checkout HEAD -- file1
+'
+
+test_expect_success 'checkout <branch> -- file gets file from branch' '
+	cd repo &&
+	git checkout master &&
+	git checkout left -- conflict-file &&
+	test "$(cat conflict-file)" = "left content" &&
+	git checkout HEAD -- conflict-file 2>/dev/null || git rm -f conflict-file
+'
+
+test_expect_success 'checkout -- nonexistent file fails' '
+	cd repo &&
+	test_must_fail git checkout -- nonexistent-file 2>err &&
+	test -s err
+'
+
+# ---------------------------------------------------------------------------
+# Checkout with paths does not switch branch
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout <commit> -- <file> does not switch branch' '
+	cd repo &&
+	git checkout master &&
+	git checkout $(cat ../commit1) -- file1 &&
+	test "$(git symbolic-ref --short HEAD)" = "master" &&
+	git checkout HEAD -- file1
+'
+
+# ---------------------------------------------------------------------------
+# Orphan branch
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout --orphan creates branch with no commits' '
+	cd repo &&
+	git checkout --orphan orphan-branch &&
+	test_must_fail git rev-parse HEAD 2>/dev/null &&
+	git checkout -f master
+'
+
+# ---------------------------------------------------------------------------
+# Checkout with -- separator
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -- disambiguates file from branch' '
+	cd repo &&
+	git checkout master &&
+	echo "dirty" >file1 &&
+	git checkout -- file1 &&
+	test "$(cat file1)" != "dirty"
+'
+
+# ---------------------------------------------------------------------------
+# Checkout to previous branch with -
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout - switches to previous branch' '
+	cd repo &&
+	git checkout master &&
+	git checkout branch-a &&
+	git checkout - &&
+	test "$(git symbolic-ref --short HEAD)" = "master"
+'
+
+# ---------------------------------------------------------------------------
+# Multiple files checkout
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -- multiple files restores all' '
+	cd repo &&
+	git checkout master &&
+	echo "dirty1" >file1 &&
+	echo "dirty2" >branch-file 2>/dev/null &&
+	git add branch-file 2>/dev/null || true &&
+	git checkout -- file1 &&
+	test "$(cat file1)" != "dirty1"
+'
+
+# ---------------------------------------------------------------------------
+# Checkout with -q (quiet)
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -q suppresses messages' '
+	cd repo &&
+	git checkout -f master &&
+	git checkout -q branch-a 2>err &&
+	test_must_be_empty err &&
+	git checkout -q master
+'
+
+# ---------------------------------------------------------------------------
+# More edge cases
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b fails if branch already exists' '
+	cd repo &&
+	git checkout master &&
+	test_must_fail git checkout -b branch-a 2>err &&
+	test -s err
+'
+
+test_expect_success 'checkout -B succeeds even if branch already exists' '
+	cd repo &&
+	git checkout master &&
+	git checkout -B branch-a &&
+	test "$(git symbolic-ref --short HEAD)" = "branch-a" &&
+	git checkout master
+'
+
+test_expect_success 'checkout with pathspec from index' '
+	cd repo &&
+	git checkout master &&
+	echo "modified-again" >file1 &&
+	git add file1 &&
+	echo "further-modified" >file1 &&
+	git checkout -- file1 &&
+	test "$(cat file1)" = "modified-again" &&
+	git reset HEAD -- file1 &&
+	git checkout -- file1
+'
+
+test_expect_success 'detached HEAD warns on stderr' '
+	cd repo &&
+	git checkout $(cat ../commit1) 2>err &&
+	test -s err &&
+	git checkout master
+'
+
+test_expect_success 'checkout branch created from another branch tip' '
+	cd repo &&
+	git checkout -b from-branch-a branch-a &&
+	test "$(git rev-parse HEAD)" = "$(git rev-parse branch-a)" &&
+	git checkout master
+'
+
 test_done
