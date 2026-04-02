@@ -2446,4 +2446,62 @@ test_expect_success 'get --default with empty string' '
 	test_cmp expect actual
 '
 
+# ── additional coverage ──────────────────────────────────────────────────
+
+test_expect_success 'set same key twice, get returns last' '
+	cd repo &&
+	git config dup.key "first" &&
+	git config dup.key "second" &&
+	git config --get dup.key >actual &&
+	echo "second" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'unset subcommand removes key' '
+	cd repo &&
+	git config unsub.key "gone" &&
+	git config unset unsub.key &&
+	test_must_fail git config --get unsub.key
+'
+
+test_expect_success 'rename-section via subcommand' '
+	cd repo &&
+	git config rsub.key "moved" &&
+	git config rename-section rsub rsub2 &&
+	git config --get rsub2.key >actual &&
+	echo "moved" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'remove-section via subcommand' '
+	cd repo &&
+	git config delsec.key "bye" &&
+	git config remove-section delsec &&
+	test_must_fail git config --get delsec.key
+'
+
+test_expect_success '--type bool with 1 returns true' '
+	cd repo &&
+	git config tbool.one "1" &&
+	git config --type bool tbool.one >actual &&
+	echo "true" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--type bool with 0 returns false' '
+	cd repo &&
+	git config tbool.zero "0" &&
+	git config --type bool tbool.zero >actual &&
+	echo "false" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--file set then get-all with single value' '
+	cd repo &&
+	git config --file ../ga-single.cfg ga.key "only" &&
+	git config --file ../ga-single.cfg --get-all ga.key >actual &&
+	echo "only" >expect &&
+	test_cmp expect actual
+'
+
 test_done
