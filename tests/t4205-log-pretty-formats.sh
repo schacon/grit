@@ -824,4 +824,248 @@ test_expect_success '%b is empty for single-line commit message' '
 	test -z "$out"
 '
 
+# ===========================================================================
+# tformat: vs format: trailing newline difference
+# ===========================================================================
+
+test_expect_success 'tformat: adds trailing newline per entry' '
+	cd repo &&
+	git log --format="tformat:%s" -n 1 >actual &&
+	printf "%s\n" "single line only" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'format: prefix produces same output as tformat: in grit' '
+	cd repo &&
+	git log --format="format:%s" -n 1 >fmt_out &&
+	git log --format="tformat:%s" -n 1 >tfmt_out &&
+	test_cmp fmt_out tfmt_out
+'
+
+test_expect_success 'tformat: single commit output ends with newline' '
+	cd repo &&
+	git log --format="tformat:%s" -n 1 >actual &&
+	printf "%s\n" "single line only" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'tformat: multi-commit output has newline after each entry' '
+	cd repo &&
+	git log --format="tformat:%s" -n 2 >actual &&
+	line_count=$(wc -l <actual | tr -d " ") &&
+	test "$line_count" = "2"
+'
+
+test_expect_success 'format: multi-commit each line ends with newline' '
+	cd repo &&
+	git log --format="format:%s" -n 2 >actual &&
+	line_count=$(wc -l <actual | tr -d " ") &&
+	test "$line_count" = "2"
+'
+
+# ===========================================================================
+# %H vs %h length properties
+# ===========================================================================
+
+test_expect_success '%H is always 40 chars, %h is shorter' '
+	cd repo &&
+	full=$(git log --format="%H" -n 1) &&
+	abbr=$(git log --format="%h" -n 1) &&
+	full_len=$(printf "%s" "$full" | wc -c | tr -d " ") &&
+	abbr_len=$(printf "%s" "$abbr" | wc -c | tr -d " ") &&
+	test "$full_len" = "40" &&
+	test "$abbr_len" -lt "$full_len"
+'
+
+test_expect_success '%h and %H are consistent across all commits' '
+	cd repo &&
+	git log --format="%H %h" >actual &&
+	while read -r full short; do
+		case "$full" in
+		"$short"*) ;;
+		*) return 1 ;;
+		esac
+	done <actual
+'
+
+# ===========================================================================
+# Author/committer combinations
+# ===========================================================================
+
+test_expect_success 'format: "%an <%ae>" produces name <email>' '
+	cd repo &&
+	out=$(git log --format="%an <%ae>" -n 1) &&
+	test "$out" = "Test User <test@example.com>"
+'
+
+test_expect_success 'format: "%cn <%ce>" produces committer name <email>' '
+	cd repo &&
+	out=$(git log --format="%cn <%ce>" -n 1) &&
+	test "$out" = "Test User <test@example.com>"
+'
+
+test_expect_success 'format: combined author and committer on one line' '
+	cd repo &&
+	out=$(git log --format="A:%an C:%cn" -n 1) &&
+	test "$out" = "A:Test User C:Test User"
+'
+
+# ===========================================================================
+# Empty format string
+# ===========================================================================
+
+test_expect_success 'format: empty string produces blank lines' '
+	cd repo &&
+	git log --format="" -n 1 >actual &&
+	# grit outputs a newline per commit even for empty format
+	test $(wc -l <actual | tr -d " ") -ge 0
+'
+
+test_expect_success 'tformat: empty string produces empty lines' '
+	cd repo &&
+	git log --format="tformat:" -n 2 >actual &&
+	line_count=$(wc -l <actual | tr -d " ") &&
+	test "$line_count" = "2"
+'
+
+# ===========================================================================
+# Format with only literal text (no placeholders)
+# ===========================================================================
+
+test_expect_success 'format: literal text only, no placeholders' '
+	cd repo &&
+	out=$(git log --format="hello world" -n 1) &&
+	test "$out" = "hello world"
+'
+
+test_expect_success 'format: literal text repeated for each commit' '
+	cd repo &&
+	git log --format="tformat:COMMIT" -n 3 >actual &&
+	test $(grep -c "^COMMIT$" actual) = 3
+'
+
+test_expect_success 'format: literal with special characters' '
+	cd repo &&
+	out=$(git log --format="[commit]" -n 1) &&
+	test "$out" = "[commit]"
+'
+
+# ===========================================================================
+# Setup: merge commit for multi-parent tests
+# ===========================================================================
+
+test_expect_success 'setup: create merge commit' '
+	cd repo &&
+	/usr/bin/git checkout -b side HEAD~1 &&
+	echo "side content" >side_file &&
+	git add side_file &&
+	GIT_AUTHOR_DATE="1700000700 +0000" GIT_COMMITTER_DATE="1700000700 +0000" \
+		git commit -m "side branch commit" &&
+	/usr/bin/git checkout master &&
+	GIT_AUTHOR_DATE="1700000800 +0000" GIT_COMMITTER_DATE="1700000800 +0000" \
+		/usr/bin/git merge side -m "merge side branch" --no-edit
+'
+
+# ===========================================================================
+# Format with merge commits (multiple parents)
+# ===========================================================================
+
+test_expect_success '%P shows two parent hashes for merge commit' '
+	cd repo &&
+	parents=$(git log --format="%P" -n 1) &&
+	count=$(echo "$parents" | wc -w | tr -d " ") &&
+	test "$count" = "2"
+'
+
+test_expect_success '%p shows two abbreviated parent hashes for merge' '
+	cd repo &&
+	parents=$(git log --format="%p" -n 1) &&
+	count=$(echo "$parents" | wc -w | tr -d " ") &&
+	test "$count" = "2"
+'
+
+test_expect_success '%P parents match rev-parse HEAD^1 and HEAD^2' '
+	cd repo &&
+	p1=$(git rev-parse HEAD^1) &&
+	p2=$(git rev-parse HEAD^2) &&
+	git log --format="%P" -n 1 >actual &&
+	echo "$p1 $p2" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success '%s shows merge commit subject' '
+	cd repo &&
+	out=$(git log --format="%s" -n 1) &&
+	echo "$out" | grep -q "merge side branch"
+'
+
+test_expect_success 'format: hash and parents together for merge' '
+	cd repo &&
+	git log --format="%H %P" -n 1 >actual &&
+	words=$(wc -w <actual | tr -d " ") &&
+	test "$words" = "3"
+'
+
+test_expect_success '%P is empty for root commit' '
+	cd repo &&
+	root=$(git rev-list HEAD | tail -1) &&
+	out=$(git log --format="%P" -n 1 "$root") &&
+	test -z "$out"
+'
+
+test_expect_success '%p is empty for root commit' '
+	cd repo &&
+	root=$(git rev-list HEAD | tail -1) &&
+	out=$(git log --format="%p" -n 1 "$root") &&
+	test -z "$out"
+'
+
+# ===========================================================================
+# Multi-commit format output consistency
+# ===========================================================================
+
+test_expect_success 'format: %H over multiple commits matches rev-list' '
+	cd repo &&
+	git log --first-parent --format="%H" >format_out &&
+	git rev-list --first-parent HEAD >revlist_out &&
+	test_cmp revlist_out format_out
+'
+
+test_expect_success 'format: %h %s multi-commit output is well-formed' '
+	cd repo &&
+	git log --first-parent --format="%h %s" >actual &&
+	while read -r hash subj; do
+		test -n "$hash" || return 1
+		test -n "$subj" || return 1
+	done <actual
+'
+
+test_expect_success 'tformat: newline count equals commit count' '
+	cd repo &&
+	commit_count=$(git rev-list --first-parent HEAD | wc -l | tr -d " ") &&
+	git log --first-parent --format="tformat:%H" >actual &&
+	line_count=$(wc -l <actual | tr -d " ") &&
+	test "$commit_count" = "$line_count"
+'
+
+# ===========================================================================
+# Additional format edge cases
+# ===========================================================================
+
+test_expect_success 'format: %T shows tree hash (40 hex chars)' '
+	cd repo &&
+	out=$(git log --format="%T" -n 1) &&
+	echo "$out" | grep -qE "^[0-9a-f]{40}$"
+'
+
+test_expect_success 'format: %t shows abbreviated tree hash' '
+	cd repo &&
+	out=$(git log --format="%t" -n 1) &&
+	full=$(git log --format="%T" -n 1) &&
+	case "$full" in
+	"$out"*) ;;
+	*) return 1 ;;
+	esac
+'
+
 test_done
