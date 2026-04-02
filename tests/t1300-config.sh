@@ -1669,4 +1669,54 @@ test_expect_success '--int is at least 64 bits' '
 	test_cmp expect actual
 '
 
+test_expect_success 'invalid unit' '
+	cd repo &&
+	git config aninvalid.unit "1auto" &&
+	echo 1auto >expect &&
+	git config aninvalid.unit >actual &&
+	test_cmp expect actual &&
+	test_must_fail git config --int --get aninvalid.unit
+'
+
+test_expect_success 'invalid bool (--get)' '
+	cd repo &&
+	git config bool.nobool foobar &&
+	test_must_fail git config --bool --get bool.nobool
+'
+
+test_expect_success 'get-regexp --bool variable with no value' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[novalue]
+		variable
+	EOF
+	echo "novalue.variable true" >expect &&
+	git config --bool --get-regexp novalue >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'get-regexp variable with empty value (trailing space)' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[emptyvalue]
+		variable =
+	EOF
+	echo "emptyvalue.variable " >expect &&
+	git config --get-regexp emptyvalue >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'refer config from subdirectory' '
+	cd repo &&
+	cat >other-config <<-\EOF &&
+	[ein]
+		bahn = strasse
+	EOF
+	mkdir -p x &&
+	echo strasse >expect &&
+	git -C x config --file=../other-config --get ein.bahn >actual &&
+	test_cmp expect actual &&
+	rm -rf x other-config
+'
+
 test_done
