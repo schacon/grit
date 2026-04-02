@@ -175,7 +175,7 @@
 
 <div class="summary">
   <div class="card green">
-    <div class="number">180</div>
+    <div class="number">203</div>
     <div class="label">Tests Passing</div>
   </div>
   <div class="card">
@@ -183,24 +183,24 @@
     <div class="label">Total Upstream Tests</div>
   </div>
   <div class="card green">
-    <div class="number">6,841</div>
+    <div class="number">7,658</div>
     <div class="label">Individual Tests Passing</div>
   </div>
   <div class="card">
-    <div class="number">36.0%</div>
+    <div class="number">40.3%</div>
     <div class="label">Test Case Coverage</div>
   </div>
 </div>
 
 <div class="progress-bar">
-  <div class="pass" style="width: 17.3%"></div>
+  <div class="pass" style="width: 19.5%"></div>
   <div class="ported" style="width: 0.0%"></div>
 </div>
 
 <div class="legend">
-  <span><span class="dot green"></span> Passing (180)</span>
+  <span><span class="dot green"></span> Passing (203)</span>
   <span><span class="dot yellow"></span> Ported, not in harness (0)</span>
-  <span><span class="dot gray"></span> Not yet ported (861)</span>
+  <span><span class="dot gray"></span> Not yet ported (838)</span>
 </div>
 
 <h2 id="commands">Commands <span class="cmd-count">56/191</span></h2>
@@ -395,8 +395,8 @@
 <div class="filter">
   <input type="text" id="search" placeholder="Filter tests..." oninput="filterTable()">
   <button onclick="filterStatus('all')" class="active" id="btn-all">All (1041)</button>
-  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (180)</button>
-  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (861)</button>
+  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (203)</button>
+  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (838)</button>
 </div>
 
 <table id="tests">
@@ -415,14 +415,14 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t0000-basic.sh">t0000-basic.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/init.rs">init</a></td>
         <td>basic</td>
-        <td>93/139 <span style="color:#8b949e">(67%)</span></td>
+        <td>106/139 <span style="color:#8b949e">(76%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t0001-init.sh">t0001-init.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/init.rs">init</a></td>
         <td>git init</td>
-        <td>112/94 <span style="color:#8b949e">(100%)</span></td>
+        <td>127/94 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -1157,7 +1157,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t1300-config.sh">t1300-config.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/config.rs">config</a></td>
         <td>Test git config in different settings</td>
-        <td>262/237 <span style="color:#8b949e">(100%)</span></td>
+        <td>277/237 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -1180,12 +1180,12 @@
         <td>Test wacky input to git config</td>
         <td>9/11 <span style="color:#8b949e">(82%)</span></td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t1304-default-acl.sh">t1304-default-acl.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/config.rs">config</a></td>
         <td>Test repository with default ACL</td>
-        <td>0/4</td>
+        <td>25/4 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -1467,12 +1467,12 @@
         <td>test git rev-parse</td>
         <td>78/24 <span style="color:#8b949e">(100%)</span></td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t1501-work-tree.sh">t1501-work-tree.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/rev_parse.rs">rev-parse</a></td>
         <td>test separate work tree</td>
-        <td>0/39</td>
+        <td>27/39 <span style="color:#8b949e">(69%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -1698,12 +1698,12 @@
         <td>checkout and pathspecs/refspecs ambiguities</td>
         <td>7/10 <span style="color:#8b949e">(70%)</span></td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t2011-checkout-invalid-head.sh">t2011-checkout-invalid-head.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/checkout_index.rs">checkout</a></td>
         <td>checkout switching away from an invalid branch</td>
-        <td>0/10</td>
+        <td>24/10 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -1733,12 +1733,12 @@
         <td>checkout from unborn branch</td>
         <td>9/6 <span style="color:#8b949e">(100%)</span></td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t2016-checkout-patch.sh">t2016-checkout-patch.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/checkout_index.rs">checkout</a></td>
         <td>git checkout --patch</td>
-        <td>0/16</td>
+        <td>22/16 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -2167,12 +2167,12 @@
         <td>git ls-files --format test</td>
         <td>0/14</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t3020-ls-files-error-unmatch.sh">t3020-ls-files-error-unmatch.sh</a></td>
         <td>ls</td>
         <td>ls files error unmatch</td>
-        <td>0/3</td>
+        <td>28/3 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -2249,7 +2249,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t3200-branch.sh">t3200-branch.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/branch.rs">branch</a></td>
         <td>git branch assorted tests</td>
-        <td>166/167 <span style="color:#8b949e">(99%)</span></td>
+        <td>182/167 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -2795,7 +2795,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t3600-rm.sh">t3600-rm.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/rm.rs">rm</a></td>
         <td>Test of the various options to git rm.</td>
-        <td>111/82 <span style="color:#8b949e">(100%)</span></td>
+        <td>123/82 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -2958,19 +2958,19 @@
         <td>diff format</td>
         <td>65/11 <span style="color:#8b949e">(100%)</span></td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4001-diff-rename.sh">t4001-diff-rename.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>Test rename detection in diff engine.</td>
-        <td>0/23</td>
+        <td>29/23 <span style="color:#8b949e">(100%)</span></td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4002-diff-basic.sh">t4002-diff-basic.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>diff basic</td>
-        <td>0/19</td>
+        <td>33/19 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3000,19 +3000,19 @@
         <td>diff mode</td>
         <td>21/7 <span style="color:#8b949e">(100%)</span></td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4007-rename-3.sh">t4007-rename-3.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>rename 3</td>
-        <td>0/13</td>
+        <td>26/13 <span style="color:#8b949e">(100%)</span></td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4008-diff-break-rewrite.sh">t4008-diff-break-rewrite.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>diff break rewrite</td>
-        <td>0/14</td>
+        <td>28/14 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3063,12 +3063,12 @@
         <td>diff whitespace</td>
         <td>52/104 <span style="color:#8b949e">(50%)</span></td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4016-diff-quote.sh">t4016-diff-quote.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>diff quote</td>
-        <td>0/5</td>
+        <td>38/5 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -3112,12 +3112,12 @@
         <td>rewrite diff</td>
         <td>0/11</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4023-diff-rename-typechange.sh">t4023-diff-rename-typechange.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>typechange rename detection</td>
-        <td>0/4</td>
+        <td>32/4 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3168,12 +3168,12 @@
         <td>diff.*.textconv tests</td>
         <td>0/19</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4031-diff-rewrite-binary.sh">t4031-diff-rewrite-binary.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>rewrite diff on binary file</td>
-        <td>0/8</td>
+        <td>29/8 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3217,12 +3217,12 @@
         <td>diff -r -t shows directory additions and deletions</td>
         <td>0/2</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4038-diff-combined.sh">t4038-diff-combined.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>combined diff</td>
-        <td>0/26</td>
+        <td>28/26 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -3273,12 +3273,12 @@
         <td>diff --relative tests</td>
         <td>0/12</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4046-diff-unmerged.sh">t4046-diff-unmerged.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>diff with unmerged index entries</td>
-        <td>0/8</td>
+        <td>29/8 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3476,12 +3476,12 @@
         <td>shifted diff groups re-diffing during histogram diff</td>
         <td>0/4</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4100-apply-stat.sh">t4100-apply-stat.sh</a></td>
         <td>apply</td>
         <td>apply stat</td>
-        <td>0/9</td>
+        <td>42/9 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3817,7 +3817,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4202-log.sh">t4202-log.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/log.rs">log</a></td>
         <td>git log</td>
-        <td>177/145 <span style="color:#8b949e">(100%)</span></td>
+        <td>193/145 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -5296,12 +5296,12 @@
         <td>--all includes detached HEADs</td>
         <td>8/4 <span style="color:#8b949e">(100%)</span></td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t6016-rev-list-graph-simplify-history.sh">t6016-rev-list-graph-simplify-history.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/rev_list.rs">rev-list</a></td>
         <td>--graph and simplified history</td>
-        <td>0/12</td>
+        <td>32/12 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -5380,12 +5380,12 @@
         <td>basic git merge-index / git-merge-one-file tests</td>
         <td>0/7</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t6100-rev-list-in-order.sh">t6100-rev-list-in-order.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/rev_parse.rs">rev-parse</a></td>
         <td>rev-list testing in-commit-order</td>
-        <td>0/3</td>
+        <td>27/3 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -5861,7 +5861,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t7004-tag.sh">t7004-tag.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/mv.rs">mv</a></td>
         <td>tag</td>
-        <td>255/219 <span style="color:#8b949e">(100%)</span></td>
+        <td>271/219 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -6288,7 +6288,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t7508-status.sh">t7508-status.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/commit.rs">commit/status</a></td>
         <td>git status</td>
-        <td>138/122 <span style="color:#8b949e">(100%)</span></td>
+        <td>152/122 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
