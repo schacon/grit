@@ -371,4 +371,23 @@ test_expect_success 'show --oneline on first commit' '
 	grep "first commit" first_line
 '
 
+test_expect_success 'show diff includes index line' '
+	cd repo &&
+	git show HEAD >actual &&
+	grep "^index " actual
+'
+
+test_expect_success 'show --format=%s with annotated tag shows tag subject' '
+	cd repo &&
+	git show --format="format:%s" v1.0 >actual &&
+	grep "version 1.0" actual
+'
+
+test_expect_success 'show --format=oneline produces one-line output' '
+	cd repo &&
+	git show --format=oneline HEAD >actual &&
+	head -1 actual >first_line &&
+	grep "second commit" first_line
+'
+
 test_done

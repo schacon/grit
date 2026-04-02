@@ -239,4 +239,24 @@ test_expect_success 'patch-id stable: same diff same id regardless of run' '
 	test_cmp id1 id2
 '
 
+test_expect_success 'patch-id with rename diff produces output' '
+	cat >rename.diff <<-\EOF &&
+	commit ffffffffffffffffffffffffffffffffffffffff
+	diff --git a/old b/new
+	similarity index 100%
+	rename from old
+	rename to new
+	EOF
+	git patch-id <rename.diff >rename.out &&
+	grep "^$OID_REGEX $OID_REGEX$" rename.out
+'
+
+test_expect_success 'patch-id default is same as --stable' '
+	cd repo &&
+	git show HEAD >def.out &&
+	git patch-id <def.out >pid_def &&
+	git patch-id --stable <def.out >pid_stable &&
+	test_cmp pid_def pid_stable
+'
+
 test_done
