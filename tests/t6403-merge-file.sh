@@ -487,4 +487,13 @@ test_expect_success 'merge-file with --marker-size changes marker width' '
 	grep "^>>>>>>>>>>" ms_out
 '
 
+test_expect_success 'merge with identical our and their produces clean result' '
+	printf "line1\nline2\nline3\n" >mfid_base.txt &&
+	printf "line1\nX\nline3\n" >mfid_ours.txt &&
+	cp mfid_ours.txt mfid_theirs.txt &&
+	git merge-file -p mfid_ours.txt mfid_base.txt mfid_theirs.txt >mfid_out &&
+	printf "line1\nX\nline3\n" >mfid_expect &&
+	test_cmp mfid_expect mfid_out
+'
+
 test_done
