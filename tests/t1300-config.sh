@@ -2504,4 +2504,53 @@ test_expect_success '--file set then get-all with single value' '
 	test_cmp expect actual
 '
 
+# ── final extras ────────────────────────────────────────────────────────
+
+test_expect_success '--int with plain number (no suffix)' '
+	cd repo &&
+	git config plain.int "42" &&
+	git config --int plain.int >actual &&
+	echo "42" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--int with negative number' '
+	cd repo &&
+	git config neg.int "-7" &&
+	git config --int neg.int >actual &&
+	echo "-7" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'value with tab character' '
+	cd repo &&
+	git config tab.val "a	b" &&
+	git config --get tab.val >actual &&
+	printf "a\tb\n" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--name-only with --list' '
+	cd repo &&
+	git config --name-only --list >actual &&
+	grep "^tab\.val$" actual &&
+	! grep "=" actual
+'
+
+test_expect_success 'overwrite in --file preserves other keys' '
+	cd repo &&
+	cat >../owfile.cfg <<-\EOF &&
+	[sec]
+		keep = kept
+		change = old
+	EOF
+	git config --file ../owfile.cfg sec.change "new" &&
+	git config --file ../owfile.cfg --get sec.keep >actual_k &&
+	git config --file ../owfile.cfg --get sec.change >actual_c &&
+	echo "kept" >expect_k &&
+	echo "new" >expect_c &&
+	test_cmp expect_k actual_k &&
+	test_cmp expect_c actual_c
+'
+
 test_done
