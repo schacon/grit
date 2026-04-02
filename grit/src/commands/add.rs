@@ -9,7 +9,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::error::Error;
 use grit_lib::diff::stat_matches;
 use grit_lib::ignore::IgnoreMatcher;
-use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
+use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
 #[allow(unused_imports)]
 use grit_lib::objects::ObjectId;
 use grit_lib::objects::ObjectKind;
@@ -320,6 +320,10 @@ fn add_all(
     let mut paths = Vec::new();
     walk_directory(&scan_root, work_tree, &mut paths, repo, ignore_matcher, args.force)?;
 
+    // Build a set of worktree paths for fast deletion detection
+    let worktree_paths: std::collections::HashSet<&str> =
+        paths.iter().map(|s| s.as_str()).collect();
+
     for rel_path in &paths {
         let abs_path = work_tree.join(rel_path);
         if let Err(e) = stage_file(odb, index, work_tree, rel_path, &abs_path, args, add_cfg) {
@@ -331,14 +335,19 @@ fn add_all(
         }
     }
 
-    // Handle deletions: index entries whose files no longer exist
+    // Handle deletions: index entries whose files are not in the worktree scan
+    let prefix_bytes = prefix.map(|p| p.as_bytes());
     let removed: Vec<Vec<u8>> = index
         .entries
         .iter()
         .filter(|ie| {
-            let path_str = String::from_utf8_lossy(&ie.path);
-            let abs = work_tree.join(path_str.as_ref());
-            !abs.exists() && prefix.map(|p| path_str.starts_with(p)).unwrap_or(true)
+            if let Some(pb) = prefix_bytes {
+                if !ie.path.starts_with(pb) {
+                    return false;
+                }
+            }
+            let path_str = std::str::from_utf8(&ie.path).unwrap_or("");
+            !worktree_paths.contains(path_str)
         })
         .map(|ie| ie.path.clone())
         .collect();
@@ -567,7 +576,7 @@ fn stage_file(
     };
 
     let oid = odb.write(ObjectKind::Blob, &data)?;
-    let mut entry = entry_from_stat(abs_path, rel_path.as_bytes(), oid, final_mode)?;
+    let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
     index.add_or_replace(entry);
 
