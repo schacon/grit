@@ -1,2 +1,2 @@
 #!/bin/sh
-exec "/tmp/grit-build-branch2/release/grit" "$@"
+exec "/tmp/grit-build-reset/release/grit" "$@"
