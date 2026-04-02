@@ -1112,4 +1112,120 @@ test_expect_success 'rm -r --dry-run on directory with multiple levels shows all
 	git ls-files --error-unmatch drytree/x
 '
 
+# ---------------------------------------------------------------------------
+# Additional rm coverage
+# ---------------------------------------------------------------------------
+test_expect_success 'rm --cached leaves working tree file' '
+	cd repo &&
+	echo "keep" >keep_rm.txt &&
+	git add keep_rm.txt &&
+	git commit -m "add keep" &&
+	grit rm --cached keep_rm.txt &&
+	test_path_is_file keep_rm.txt &&
+	test_must_fail git ls-files --error-unmatch keep_rm.txt
+'
+
+test_expect_success 'rm removes file from index and working tree' '
+	cd repo &&
+	echo "gone" >gone_rm.txt &&
+	git add gone_rm.txt &&
+	git commit -m "add gone" &&
+	grit rm gone_rm.txt &&
+	! test -f gone_rm.txt &&
+	test_must_fail git ls-files --error-unmatch gone_rm.txt
+'
+
+test_expect_success 'rm on untracked file fails' '
+	cd repo &&
+	echo "untracked" >untracked_rm.txt &&
+	test_must_fail grit rm untracked_rm.txt 2>/dev/null
+'
+
+test_expect_success 'rm --dry-run does not remove file' '
+	cd repo &&
+	echo "dry" >dry_rm.txt &&
+	git add dry_rm.txt &&
+	git commit -m "add dry" &&
+	grit rm --dry-run dry_rm.txt &&
+	test_path_is_file dry_rm.txt &&
+	git ls-files --error-unmatch dry_rm.txt
+'
+
+test_expect_success 'rm multiple files at once' '
+	cd repo &&
+	echo a >multi_a.txt && echo b >multi_b.txt &&
+	git add multi_a.txt multi_b.txt &&
+	git commit -m "add multi" &&
+	grit rm multi_a.txt multi_b.txt &&
+	test_must_fail git ls-files --error-unmatch multi_a.txt &&
+	test_must_fail git ls-files --error-unmatch multi_b.txt
+'
+
+test_expect_success 'rm -r removes directory recursively' '
+	cd repo &&
+	mkdir -p rmdir_test/sub &&
+	echo 1 >rmdir_test/f1.txt &&
+	echo 2 >rmdir_test/sub/f2.txt &&
+	git add rmdir_test &&
+	git commit -m "add rmdir" &&
+	grit rm -r rmdir_test &&
+	test_must_fail git ls-files --error-unmatch rmdir_test/f1.txt &&
+	test_must_fail git ls-files --error-unmatch rmdir_test/sub/f2.txt
+'
+
+test_expect_success 'rm --cached on newly added file removes from index' '
+	cd repo &&
+	echo "new" >new_cached.txt &&
+	git add new_cached.txt &&
+	grit rm --cached new_cached.txt &&
+	test_must_fail git ls-files --error-unmatch new_cached.txt &&
+	test_path_is_file new_cached.txt
+'
+
+test_expect_success 'rm on file with spaces in name' '
+	cd repo &&
+	echo "spaces" >"file with spaces.txt" &&
+	git add "file with spaces.txt" &&
+	git commit -m "spaces" &&
+	grit rm "file with spaces.txt" &&
+	test_must_fail git ls-files --error-unmatch "file with spaces.txt"
+'
+
+test_expect_success 'rm -f forces removal of modified file' '
+	cd repo &&
+	echo "base" >force_rm.txt &&
+	git add force_rm.txt &&
+	git commit -m "add force" &&
+	echo "modified" >>force_rm.txt &&
+	grit rm -f force_rm.txt &&
+	! test -f force_rm.txt
+'
+
+test_expect_success 'rm --cached -r removes directory from index only' '
+	cd repo &&
+	mkdir -p cached_dir &&
+	echo x >cached_dir/x.txt &&
+	git add cached_dir &&
+	git commit -m "add cached_dir" &&
+	grit rm --cached -r cached_dir &&
+	test_path_is_file cached_dir/x.txt &&
+	test_must_fail git ls-files --error-unmatch cached_dir/x.txt
+'
+
+test_expect_success 'rm nonexistent file fails' '
+	cd repo &&
+	test_must_fail grit rm does_not_exist.txt 2>/dev/null
+'
+
+test_expect_success 'rm after rename removes new name' '
+	cd repo &&
+	echo ren >ren_src.txt &&
+	git add ren_src.txt &&
+	git commit -m "add ren" &&
+	git mv ren_src.txt ren_dst.txt &&
+	git commit -m "rename" &&
+	grit rm ren_dst.txt &&
+	test_must_fail git ls-files --error-unmatch ren_dst.txt
+'
+
 test_done

@@ -1114,4 +1114,134 @@ test_expect_success 'rev-parse HEAD works after commit-tree + update-ref' '
 	test "$result" = "$commit"
 '
 
+# ---------------------------------------------------------------------------
+# Additional basic plumbing coverage
+# ---------------------------------------------------------------------------
+test_expect_success 'hash-object computes sha1 for file' '
+	cd repo &&
+	echo "hash me" >hobj.txt &&
+	hash=$(grit hash-object hobj.txt) &&
+	test ${#hash} -eq 40
+'
+
+test_expect_success 'hash-object -w writes object to store' '
+	cd repo &&
+	echo "write me" >wobj.txt &&
+	hash=$(grit hash-object -w wobj.txt) &&
+	grit cat-file -t "$hash" >actual &&
+	echo "blob" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'cat-file -s shows blob size' '
+	cd repo &&
+	echo "sized" >sized.txt &&
+	hash=$(grit hash-object -w sized.txt) &&
+	size=$(grit cat-file -s "$hash") &&
+	test "$size" -gt 0
+'
+
+test_expect_success 'cat-file -p shows blob content' '
+	cd repo &&
+	echo "content check" >cc.txt &&
+	hash=$(grit hash-object -w cc.txt) &&
+	grit cat-file -p "$hash" >actual &&
+	echo "content check" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'cat-file -t on tree returns tree' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "tree type" >tt.txt &&
+	grit update-index --add tt.txt &&
+	tree=$(grit write-tree) &&
+	grit cat-file -t "$tree" >actual &&
+	echo "tree" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'write-tree produces 40-char hash' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "wt" >wt.txt &&
+	grit update-index --add wt.txt &&
+	tree=$(grit write-tree) &&
+	test ${#tree} -eq 40
+'
+
+test_expect_success 'update-index --add creates index entry' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "idx" >idx.txt &&
+	grit update-index --add idx.txt &&
+	git ls-files --cached >actual &&
+	grep "idx.txt" actual
+'
+
+test_expect_success 'rev-parse resolves branch name' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "branch-rp" >brp.txt &&
+	grit update-index --add brp.txt &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "branch resolve" | grit commit-tree "$tree") &&
+	grit update-ref refs/heads/master "$commit" &&
+	result=$(grit rev-parse master) &&
+	test "$result" = "$commit"
+'
+
+test_expect_success 'commit-tree without parent has no parent line' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "no parent" >np.txt &&
+	grit update-index --add np.txt &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "orphan" | grit commit-tree "$tree") &&
+	grit cat-file -p "$commit" >actual &&
+	! grep "^parent" actual
+'
+
+test_expect_success 'commit-tree object has author and committer' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "ac" >ac.txt &&
+	grit update-index --add ac.txt &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "author check" | grit commit-tree "$tree") &&
+	grit cat-file -p "$commit" >actual &&
+	grep "^author" actual &&
+	grep "^committer" actual
+'
+
+test_expect_success 'hash-object gives same hash for same content' '
+	cd repo &&
+	echo "deterministic" >d1.txt &&
+	echo "deterministic" >d2.txt &&
+	h1=$(grit hash-object d1.txt) &&
+	h2=$(grit hash-object d2.txt) &&
+	test "$h1" = "$h2"
+'
+
+test_expect_success 'hash-object gives different hash for different content' '
+	cd repo &&
+	echo "aaa" >diff1.txt &&
+	echo "bbb" >diff2.txt &&
+	h1=$(grit hash-object diff1.txt) &&
+	h2=$(grit hash-object diff2.txt) &&
+	test "$h1" != "$h2"
+'
+
+test_expect_success 'update-ref creates new ref' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "newref" >nr.txt &&
+	grit update-index --add nr.txt &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "new ref" | grit commit-tree "$tree") &&
+	grit update-ref refs/heads/testbranch "$commit" &&
+	result=$(grit rev-parse refs/heads/testbranch) &&
+	test "$result" = "$commit"
+'
+
 test_done

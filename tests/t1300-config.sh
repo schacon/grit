@@ -2680,4 +2680,118 @@ test_expect_success 'config --file writes to specified file' '
 	test_cmp expect actual
 '
 
+# ---------------------------------------------------------------------------
+# Additional config coverage
+# ---------------------------------------------------------------------------
+test_expect_success 'config sets and gets simple value' '
+	cd repo &&
+	git config extra.key1 "hello" &&
+	git config --get extra.key1 >actual &&
+	echo "hello" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config overwrites existing key' '
+	cd repo &&
+	git config extra.key1 "world" &&
+	git config --get extra.key1 >actual &&
+	echo "world" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config --get on nonexistent key fails' '
+	cd repo &&
+	test_must_fail git config --get nonexistent.key 2>/dev/null
+'
+
+test_expect_success 'config --unset removes key' '
+	cd repo &&
+	git config remove.me "val" &&
+	git config --unset remove.me &&
+	test_must_fail git config --get remove.me 2>/dev/null
+'
+
+test_expect_success 'config --list produces output' '
+	cd repo &&
+	git config --list >actual &&
+	test -s actual
+'
+
+test_expect_success 'config value with spaces' '
+	cd repo &&
+	git config space.key "hello world" &&
+	git config --get space.key >actual &&
+	echo "hello world" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config value with equals sign' '
+	cd repo &&
+	git config eq.key "a=b" &&
+	git config --get eq.key >actual &&
+	echo "a=b" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config --bool true values' '
+	cd repo &&
+	git config bool2.test "true" &&
+	git config --bool bool2.test >actual &&
+	echo "true" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config --bool yes is true' '
+	cd repo &&
+	git config bool3.test "yes" &&
+	git config --bool bool3.test >actual &&
+	echo "true" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config --bool on is true' '
+	cd repo &&
+	git config bool4.test "on" &&
+	git config --bool bool4.test >actual &&
+	echo "true" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config --int reads integer value' '
+	cd repo &&
+	git config int.val "42" &&
+	git config --int int.val >actual &&
+	echo "42" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config section.subsection.key works' '
+	cd repo &&
+	git config section.sub.key "nested" &&
+	git config --get section.sub.key >actual &&
+	echo "nested" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config get retrieves previously set key' '
+	cd repo &&
+	git config regexp.test "found" &&
+	result=$(git config --get regexp.test) &&
+	test "$result" = "found"
+'
+
+test_expect_success 'config reads from repo .git/config' '
+	cd repo &&
+	git config local.check "yes" &&
+	grep "yes" .git/config
+'
+
+test_expect_success 'config with empty value' '
+	cd repo &&
+	git config empty.val "" &&
+	git config --get empty.val >actual &&
+	echo "" >expect &&
+	test_cmp expect actual
+'
+
 test_done
