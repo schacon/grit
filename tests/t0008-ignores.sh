@@ -947,4 +947,297 @@ test_expect_success 'trailing spaces in pattern are stripped' '
 	test_cmp expect actual
 '
 
+# ---------------------------------------------------------------------------
+# Negation patterns (!pattern)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'negation pattern un-ignores a file' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.log
+	!important.log
+	EOF
+	grit check-ignore debug.log >actual &&
+	echo debug.log >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore important.log
+'
+
+test_expect_success 'negation after double-star pattern' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	**/*.o
+	!src/keep.o
+	EOF
+	grit check-ignore lib/foo.o >actual &&
+	echo lib/foo.o >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore src/keep.o
+'
+
+test_expect_success 'negation does not un-ignore if later pattern re-ignores' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.tmp
+	!keep.tmp
+	*.tmp
+	EOF
+	grit check-ignore keep.tmp >actual &&
+	echo keep.tmp >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'negation re-includes file from glob (not directory ignore)' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	vendor/*.dat
+	!vendor/keep.dat
+	EOF
+	grit check-ignore vendor/junk.dat >actual &&
+	echo vendor/junk.dat >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore vendor/keep.dat
+'
+
+test_expect_success 'negation only applies to matching base' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.dat
+	!special.dat
+	EOF
+	grit check-ignore random.dat >actual &&
+	echo random.dat >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore special.dat
+'
+
+# ---------------------------------------------------------------------------
+# Directory-only trailing slash patterns
+# ---------------------------------------------------------------------------
+
+test_expect_success 'trailing slash pattern matches files inside directory' '
+	cd repo &&
+	printf "logs/\n" >.gitignore &&
+	grit check-ignore logs/app.log >actual &&
+	echo logs/app.log >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'trailing slash pattern matches file inside directory' '
+	cd repo &&
+	printf "logs/\n" >.gitignore &&
+	grit check-ignore logs/debug.log >actual &&
+	echo logs/debug.log >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'trailing slash does not match regular file by same name' '
+	cd repo &&
+	printf "notadir/\n" >.gitignore &&
+	test_must_fail grit check-ignore notadir
+'
+
+test_expect_success 'directory pattern without trailing slash matches both' '
+	cd repo &&
+	printf "build\n" >.gitignore &&
+	grit check-ignore build >actual &&
+	echo build >expect &&
+	test_cmp expect actual &&
+	grit check-ignore build/output.o >actual2 &&
+	echo build/output.o >expect2 &&
+	test_cmp expect2 actual2
+'
+
+# ---------------------------------------------------------------------------
+# Anchored patterns (/pattern)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'anchored pattern matches only at top level' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	/TODO
+	EOF
+	grit check-ignore TODO >actual &&
+	echo TODO >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore src/TODO
+'
+
+test_expect_success 'anchored directory pattern with slash' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	/dist/
+	EOF
+	grit check-ignore dist/bundle.js >actual &&
+	echo dist/bundle.js >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore src/dist/bundle.js
+'
+
+test_expect_success 'non-anchored pattern matches in any directory' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	TODO
+	EOF
+	grit check-ignore TODO >actual &&
+	echo TODO >expect &&
+	test_cmp expect actual &&
+	grit check-ignore src/TODO >actual2 &&
+	echo src/TODO >expect2 &&
+	test_cmp expect2 actual2
+'
+
+# ---------------------------------------------------------------------------
+# core.excludesFile
+# ---------------------------------------------------------------------------
+
+test_expect_success 'core.excludesFile ignores globally' '
+	cd repo &&
+	echo "" >.gitignore &&
+	echo "*.global-junk" >../global-excludes &&
+	git config core.excludesFile ../global-excludes &&
+	grit check-ignore test.global-junk >actual &&
+	echo test.global-junk >expect &&
+	test_cmp expect actual &&
+	git config --unset core.excludesFile
+'
+
+test_expect_success 'core.excludesFile does not override local .gitignore' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	!special.global-junk
+	EOF
+	echo "*.global-junk" >../global-excludes &&
+	git config core.excludesFile ../global-excludes &&
+	test_must_fail grit check-ignore special.global-junk &&
+	git config --unset core.excludesFile
+'
+
+test_expect_success 'core.excludesFile with absolute path' '
+	cd repo &&
+	echo "" >.gitignore &&
+	echo "*.abs-ignore" >"$TRASH_DIRECTORY/abs-excludes" &&
+	git config core.excludesFile "$TRASH_DIRECTORY/abs-excludes" &&
+	grit check-ignore foo.abs-ignore >actual &&
+	echo foo.abs-ignore >expect &&
+	test_cmp expect actual &&
+	git config --unset core.excludesFile
+'
+
+# ---------------------------------------------------------------------------
+# info/exclude
+# ---------------------------------------------------------------------------
+
+test_expect_success 'info/exclude ignores files' '
+	cd repo &&
+	echo "" >.gitignore &&
+	mkdir -p .git/info &&
+	echo "*.info-excl" >.git/info/exclude &&
+	grit check-ignore test.info-excl >actual &&
+	echo test.info-excl >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'info/exclude has lower precedence than .gitignore' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	!keep.info-excl
+	EOF
+	mkdir -p .git/info &&
+	echo "*.info-excl" >.git/info/exclude &&
+	test_must_fail grit check-ignore keep.info-excl
+'
+
+test_expect_success 'info/exclude works in subdirectory' '
+	cd repo &&
+	echo "" >.gitignore &&
+	mkdir -p .git/info &&
+	echo "*.secret" >.git/info/exclude &&
+	grit check-ignore sub/deep/file.secret >actual &&
+	echo sub/deep/file.secret >expect &&
+	test_cmp expect actual
+'
+
+# ---------------------------------------------------------------------------
+# Bracket expressions [abc]
+# ---------------------------------------------------------------------------
+
+test_expect_success 'double-star with filename pattern in subdirectory' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	**/secret.key
+	EOF
+	grit check-ignore deep/nested/secret.key >actual &&
+	echo deep/nested/secret.key >expect &&
+	test_cmp expect actual &&
+	grit check-ignore sub/secret.key >actual2 &&
+	echo sub/secret.key >expect2 &&
+	test_cmp expect2 actual2
+'
+
+test_expect_success 'pattern with middle slash is path-anchored' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	doc/frotz/
+	EOF
+	grit check-ignore doc/frotz/file >actual &&
+	echo doc/frotz/file >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore stuff/doc/frotz/file
+'
+
+test_expect_success 'multiple negations last one wins' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.bak
+	!*.bak
+	EOF
+	test_must_fail grit check-ignore test.bak
+'
+
+test_expect_success 'negation of double-star pattern' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	**/*.pyc
+	!important.pyc
+	EOF
+	grit check-ignore lib/test.pyc >actual &&
+	echo lib/test.pyc >expect &&
+	test_cmp expect actual &&
+	test_must_fail grit check-ignore important.pyc
+'
+
+test_expect_success 'star does not match slash in path' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.txt
+	EOF
+	grit check-ignore readme.txt >actual &&
+	echo readme.txt >expect &&
+	test_cmp expect actual &&
+	grit check-ignore sub/readme.txt >actual2 &&
+	echo sub/readme.txt >expect2 &&
+	test_cmp expect2 actual2
+'
+
+test_expect_success 'verbose output shows source file and line number' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.xyz
+	EOF
+	grit check-ignore -v test.xyz >actual &&
+	grep "\.gitignore:1" actual &&
+	grep "\*.xyz" actual &&
+	grep "test.xyz" actual
+'
+
+test_expect_success 'verbose non-matching shows path for non-ignored files' '
+	cd repo &&
+	cat >.gitignore <<-\EOF &&
+	*.xyz
+	EOF
+	grit check-ignore -v -n unmatched.abc >actual || true &&
+	grep "unmatched.abc" actual
+'
+
 test_done
