@@ -448,4 +448,43 @@ test_expect_success 'merge-file only-add on both sides (no conflict)' '
 	grep "line3" add_out
 '
 
+test_expect_success 'merge-file works in subdirectory' '
+	mkdir -p subdir &&
+	cp new1.txt subdir/a.txt &&
+	cp orig.txt subdir/o.txt &&
+	cp new2.txt subdir/b.txt &&
+	( cd subdir && git merge-file a.txt o.txt b.txt ) &&
+	test_path_is_missing a.txt
+'
+
+test_expect_success 'conflict at EOF without LF resolved by --ours' '
+	printf "line1\nline2\nline3" >nolf-orig.txt &&
+	printf "line1\nline2\nline3x" >nolf-diff1.txt &&
+	printf "line1\nline2\nline3y" >nolf-diff2.txt &&
+	git merge-file -p --ours nolf-diff1.txt nolf-orig.txt nolf-diff2.txt >output.txt &&
+	printf "line1\nline2\nline3x" >expect.txt &&
+	test_cmp expect.txt output.txt
+'
+
+test_expect_success 'conflict at EOF without LF resolved by --theirs' '
+	git merge-file -p --theirs nolf-diff1.txt nolf-orig.txt nolf-diff2.txt >output.txt &&
+	printf "line1\nline2\nline3y" >expect.txt &&
+	test_cmp expect.txt output.txt
+'
+
+test_expect_success 'conflict at EOF without LF resolved by --union' '
+	git merge-file -p --union nolf-diff1.txt nolf-orig.txt nolf-diff2.txt >output.txt &&
+	printf "line1\nline2\nline3x\nline3y" >expect.txt &&
+	test_cmp expect.txt output.txt
+'
+
+test_expect_success 'merge-file with --marker-size changes marker width' '
+	printf "A\nB\nC\n" >ms_base.txt &&
+	printf "A\nX\nC\n" >ms_ours.txt &&
+	printf "A\nY\nC\n" >ms_theirs.txt &&
+	test_must_fail git merge-file -p --marker-size=10 ms_ours.txt ms_base.txt ms_theirs.txt >ms_out &&
+	grep "^<<<<<<<<<<" ms_out &&
+	grep "^>>>>>>>>>>" ms_out
+'
+
 test_done
