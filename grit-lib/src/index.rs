@@ -232,18 +232,22 @@ impl Index {
 
     /// Add or replace an entry (matched by path + stage).
     pub fn add_or_replace(&mut self, entry: IndexEntry) {
-        let path = entry.path.clone();
+        let path = &entry.path;
         let stage = entry.stage();
-        if let Some(pos) = self
-            .entries
-            .iter()
-            .position(|e| e.path == path && e.stage() == stage)
-        {
-            self.entries[pos] = entry;
-        } else {
-            self.entries.push(entry);
+        // Binary search for the insertion point by (path, stage)
+        let result = self.entries.binary_search_by(|e| {
+            e.path.as_slice().cmp(path.as_slice()).then_with(|| e.stage().cmp(&stage))
+        });
+        match result {
+            Ok(pos) => {
+                // Exact match — replace in place
+                self.entries[pos] = entry;
+            }
+            Err(pos) => {
+                // Not found — insert at sorted position
+                self.entries.insert(pos, entry);
+            }
         }
-        self.sort();
     }
 
     /// Remove all entries matching the given path (all stages).
