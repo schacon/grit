@@ -36,6 +36,8 @@ struct Cli {
 enum Command {
     /// Add file contents to the index.
     Add(commands::add::Args),
+    /// Apply patches from mailbox/mbox format files.
+    Am(commands::am::Args),
     /// Show what revision and author last modified each line of a file.
     Annotate(commands::annotate::Args),
     /// Use binary search to find the commit that introduced a bug.
@@ -302,6 +304,7 @@ fn run() -> Result<()> {
 
     match cli.command {
         Command::Add(args) => commands::add::run(args),
+        Command::Am(args) => commands::am::run(args),
         Command::Annotate(args) => commands::annotate::run(args),
         Command::Bisect(args) => commands::bisect::run(args),
         Command::Bundle(args) => commands::bundle::run(args),
