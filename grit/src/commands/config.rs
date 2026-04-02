@@ -118,6 +118,10 @@ pub struct Args {
     #[arg(long = "no-includes")]
     pub no_includes: bool,
 
+    /// Default value if key is not found (legacy --get/--get-all).
+    #[arg(long = "default", value_name = "VALUE")]
+    pub default_value: Option<String>,
+
     // ── Positional args for legacy set (`git config key value`) ──
     /// Positional arguments (key, value, value-pattern for legacy mode).
     #[arg(trailing_var_arg = true)]

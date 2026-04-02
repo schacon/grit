@@ -36,6 +36,10 @@ struct Cli {
     #[arg(long = "work-tree", env = "GIT_WORK_TREE")]
     work_tree: Option<PathBuf>,
 
+    /// Create a bare repository.
+    #[arg(long)]
+    bare: bool,
+
     #[command(subcommand)]
     command: Command,
 }
