@@ -114,6 +114,20 @@ The Git-compatible engine should live in a **library crate** (`grit-lib`); the *
 
 - As tests in `git/t/` are being implemented, copy them to `./tests` and run them from there with `grit` aliased to `git` for the purposes of the tests.
 - Do not write or run tests that are not from this directory.
+- **Never run tests inside the main repo** — always use `/tmp/` scratch directories to avoid corrupting the working tree, index, or refs.
+- Run upstream test suite: `bash scripts/run-upstream-tests.sh` (runs all `git/t/` tests against grit in an isolated `/tmp/` directory)
+- Aggregate results: `bash scripts/aggregate-upstream.sh`
+- Run our own tests: `bash tests/harness/run-all-count.sh`
+- Run benchmarks: `bash bench/run.sh`
+- Update dashboard after test runs: `bash scripts/update-dashboard.sh`
+
+## Current State (as of 2026-04-02)
+
+- **143 commands** implemented (100% of git's command-list.txt, excluding GUI/docs/foreign-SCM)
+- **21.6% upstream test pass rate** (6,117 / 28,266 tests from git/t/)
+- **720 custom test files** with 24,914 test cases (99.9% pass rate)
+- **40 benchmarks** comparing grit vs C git
+- Biggest gaps: config parsing (308 failures), for-each-ref format atoms (398), cat-file batch mode (218), diff output formatting (1315)
 
 ## Committing and Version Control
 
