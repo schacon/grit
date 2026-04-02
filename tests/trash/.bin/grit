@@ -1,2 +1,2 @@
 #!/bin/sh
-exec "/tmp/grit-build-commit2/release/grit" "$@"
+exec "/tmp/grit-build-switch-restore/release/grit" "$@"
