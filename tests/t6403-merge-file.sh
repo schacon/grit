@@ -415,4 +415,18 @@ test_expect_success 'merge-file clean merge returns 0' '
 	test $? -eq 0
 '
 
+test_expect_success 'merge-file --zdiff3 is accepted' '
+	printf "A\nB\nC\n" >zd3base.txt &&
+	printf "A\nX\nC\n" >zd3ours.txt &&
+	printf "A\nY\nC\n" >zd3theirs.txt &&
+	test_must_fail git merge-file --zdiff3 -p zd3ours.txt zd3base.txt zd3theirs.txt >zd3out &&
+	grep "<<<<<<< zd3ours.txt" zd3out
+'
+
+test_expect_success 'merge-file -p with no conflict does not modify file' '
+	cp orig.txt nomod.txt &&
+	git merge-file -p nomod.txt orig.txt orig.txt >out2 &&
+	test_cmp orig.txt nomod.txt
+'
+
 test_done

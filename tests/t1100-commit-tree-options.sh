@@ -177,4 +177,16 @@ test_expect_success 'commit-tree with multi-line message' '
 	grep "line two" multi-commit
 '
 
+test_expect_success 'commit-tree with three parents' '
+	cd repo &&
+	test_tick &&
+	echo "p1" | git commit-tree $(cat treeid) >pp1 &&
+	echo "p2" | git commit-tree $(cat treeid) >pp2 &&
+	echo "p3" | git commit-tree $(cat treeid) >pp3 &&
+	echo "octopus" | git commit-tree $(cat treeid) \
+		-p $(cat pp1) -p $(cat pp2) -p $(cat pp3) >octid &&
+	git cat-file commit $(cat octid) >oct-commit &&
+	test $(grep -c "^parent" oct-commit) = 3
+'
+
 test_done

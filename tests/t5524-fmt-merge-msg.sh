@@ -155,4 +155,17 @@ test_expect_success '-F with /dev/stdin works like pipe' '
 	grep -q "branch '"'"'dev'"'"'" actual
 '
 
+test_expect_success 'single remote tag includes URL' '
+	printf "abc123\t\ttag '"'"'v1.0'"'"' of https://example.com/repo\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "tag" actual &&
+	grep -q "of https://example.com/repo" actual
+'
+
+test_expect_success '-m with --into-name combines both' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg -m "Custom merge" --into-name main >actual &&
+	grep -q "Custom merge" actual
+'
+
 test_done
