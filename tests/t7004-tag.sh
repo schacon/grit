@@ -2370,4 +2370,128 @@ test_expect_success 'tag -d on nonexistent tag fails' '
 	test_must_fail git tag -d nonexistent-tag-xyz 2>/dev/null
 '
 
+# ---------------------------------------------------------------------------
+# Additional tag coverage
+# ---------------------------------------------------------------------------
+test_expect_success 'tag list is initially populated' '
+	cd tag-extra &&
+	git tag -l >output &&
+	test -s output
+'
+
+test_expect_success 'tag -l with pattern filters correctly' '
+	cd tag-extra &&
+	git tag filter-match-1 &&
+	git tag filter-match-2 &&
+	git tag no-match-x &&
+	git tag -l "filter-match-*" >output &&
+	test_line_count = 2 output
+'
+
+test_expect_success 'annotated tag type is tag' '
+	cd tag-extra &&
+	git tag -m "typed" typed-tag &&
+	git cat-file -t typed-tag >actual &&
+	echo "tag" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'lightweight tag type is commit' '
+	cd tag-extra &&
+	git tag lw-type-check &&
+	git cat-file -t lw-type-check >actual &&
+	echo "commit" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'tag refuses duplicate name' '
+	cd tag-extra &&
+	git tag dup-tag &&
+	test_must_fail git tag dup-tag 2>/dev/null
+'
+
+test_expect_success 'tag -d removes tag successfully' '
+	cd tag-extra &&
+	git tag del-me &&
+	git tag -d del-me &&
+	test_must_fail git rev-parse del-me 2>/dev/null
+'
+
+test_expect_success 'tag created at HEAD by default' '
+	cd tag-extra &&
+	git tag at-head-check &&
+	head=$(git rev-parse HEAD) &&
+	tag=$(git rev-parse at-head-check) &&
+	test "$head" = "$tag"
+'
+
+test_expect_success 'tag on specific commit' '
+	cd tag-extra &&
+	first=$(git rev-list --reverse HEAD | head -1) &&
+	git tag on-first "$first" &&
+	result=$(git rev-parse on-first) &&
+	test "$result" = "$first"
+'
+
+test_expect_success 'annotated tag tagger field exists' '
+	cd tag-extra &&
+	git tag -m "tagger test" tagger-check &&
+	git cat-file -p tagger-check >actual &&
+	grep "^tagger" actual
+'
+
+test_expect_success 'tag with slash in name' '
+	cd tag-extra &&
+	git tag release/v1.0 &&
+	git rev-parse release/v1.0 >/dev/null
+'
+
+test_expect_success 'tag with dots in name' '
+	cd tag-extra &&
+	git tag v2.0.1-rc1 &&
+	git rev-parse v2.0.1-rc1 >/dev/null
+'
+
+test_expect_success 'tag -l count matches expected' '
+	cd tag-extra &&
+	before=$(git tag -l | wc -l) &&
+	git tag count-check &&
+	after=$(git tag -l | wc -l) &&
+	test "$after" -eq "$((before + 1))"
+'
+
+test_expect_success 'annotated tag object field points to commit' '
+	cd tag-extra &&
+	git tag -m "obj test" obj-check &&
+	git cat-file -p obj-check >actual &&
+	grep "^object" actual &&
+	grep "^type commit" actual
+'
+
+test_expect_success 'multiple tags can point to same commit' '
+	cd tag-extra &&
+	head=$(git rev-parse HEAD) &&
+	git tag multi-a &&
+	git tag multi-b &&
+	a=$(git rev-parse multi-a) &&
+	b=$(git rev-parse multi-b) &&
+	test "$a" = "$b"
+'
+
+test_expect_success 'tag -d can delete tags one at a time' '
+	cd tag-extra &&
+	git tag mdel-1 &&
+	git tag mdel-2 &&
+	git tag -d mdel-1 &&
+	git tag -d mdel-2 &&
+	test_must_fail git rev-parse mdel-1 2>/dev/null &&
+	test_must_fail git rev-parse mdel-2 2>/dev/null
+'
+
+test_expect_success 'tag -n0 lists tags without message' '
+	cd tag-extra &&
+	git tag -n0 >output &&
+	test -s output
+'
+
 test_done

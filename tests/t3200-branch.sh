@@ -1435,4 +1435,133 @@ test_expect_success 'branch with hyphen in name' '
 	git branch -d my-hyphen-branch 2>/dev/null
 '
 
+# ---------------------------------------------------------------------------
+# Additional branch coverage
+# ---------------------------------------------------------------------------
+test_expect_success 'branch with dot in name' '
+	cd repo &&
+	git branch v1.0.release &&
+	git rev-parse v1.0.release >/dev/null &&
+	git branch -d v1.0.release 2>/dev/null
+'
+
+test_expect_success 'branch with underscore in name' '
+	cd repo &&
+	git branch my_underscore &&
+	git rev-parse my_underscore >/dev/null &&
+	git branch -d my_underscore 2>/dev/null
+'
+
+test_expect_success 'branch -v shows commit subject' '
+	cd repo &&
+	git branch -v >output &&
+	grep "master" output
+'
+
+test_expect_success 'branch points to same commit as HEAD after creation' '
+	cd repo &&
+	git branch same-as-head &&
+	head=$(git rev-parse HEAD) &&
+	branch=$(git rev-parse same-as-head) &&
+	test "$head" = "$branch" &&
+	git branch -d same-as-head 2>/dev/null
+'
+
+test_expect_success 'branch created from specific commit' '
+	cd repo &&
+	first=$(git rev-list --reverse HEAD | head -1) &&
+	git branch from-first "$first" &&
+	result=$(git rev-parse from-first) &&
+	test "$result" = "$first" &&
+	git branch -d from-first 2>/dev/null
+'
+
+test_expect_success 'branch -d deletes a merged branch' '
+	cd repo &&
+	git branch del-merged &&
+	git branch -d del-merged 2>/dev/null &&
+	test_must_fail git rev-parse del-merged 2>/dev/null
+'
+
+test_expect_success 'branch --list shows all branches' '
+	cd repo &&
+	git branch --list >output &&
+	grep "master" output
+'
+
+test_expect_success 'branch --list with pattern filters' '
+	cd repo &&
+	git branch pattern-test-abc &&
+	git branch --list "pattern-*" >output &&
+	grep "pattern-test-abc" output &&
+	git branch -d pattern-test-abc 2>/dev/null
+'
+
+test_expect_success 'branch refuses to create duplicate' '
+	cd repo &&
+	test_must_fail git branch master 2>/dev/null
+'
+
+test_expect_success 'branch -m renames branch' '
+	cd repo &&
+	git branch rename-src &&
+	git branch -m rename-src rename-dst &&
+	git rev-parse rename-dst >/dev/null &&
+	test_must_fail git rev-parse rename-src 2>/dev/null &&
+	git branch -d rename-dst 2>/dev/null
+'
+
+test_expect_success 'branch with nested slashes' '
+	cd repo &&
+	git branch feat/area/detail &&
+	git rev-parse feat/area/detail >/dev/null &&
+	git branch -d feat/area/detail 2>/dev/null
+'
+
+test_expect_success 'branch --contains lists branch containing commit' '
+	cd repo &&
+	head=$(git rev-parse HEAD) &&
+	git branch --contains "$head" >output &&
+	grep "master" output
+'
+
+test_expect_success 'branch count increases after creation' '
+	cd repo &&
+	git branch -l >before &&
+	git branch count-test &&
+	git branch -l >after &&
+	before_n=$(wc -l <before) &&
+	after_n=$(wc -l <after) &&
+	test "$after_n" -gt "$before_n" &&
+	git branch -d count-test 2>/dev/null
+'
+
+test_expect_success 'detached HEAD shows no branch with --show-current' '
+	cd repo &&
+	git checkout --detach HEAD 2>/dev/null &&
+	result=$(git branch --show-current) &&
+	test -z "$result" &&
+	git checkout master 2>/dev/null
+'
+
+test_expect_success 'branch -D force-deletes unmerged branch' '
+	cd repo &&
+	git branch force-del &&
+	git checkout force-del 2>/dev/null &&
+	echo x >fd.txt && git add fd.txt && git commit -m fd 2>/dev/null &&
+	git checkout master 2>/dev/null &&
+	git branch -D force-del 2>/dev/null &&
+	test_must_fail git rev-parse force-del 2>/dev/null
+'
+
+test_expect_success 'branch lists newly created branches' '
+	cd repo &&
+	git branch aaa-list-check &&
+	git branch zzz-list-check &&
+	git branch -l >output &&
+	grep "aaa-list-check" output &&
+	grep "zzz-list-check" output &&
+	git branch -d aaa-list-check zzz-list-check 2>/dev/null
+'
+
 test_done

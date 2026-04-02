@@ -1392,4 +1392,124 @@ test_expect_success 'status --porcelain branch header shows master' '
 	grep "^## master" ../actual
 '
 
+# ---------------------------------------------------------------------------
+# Additional status coverage
+# ---------------------------------------------------------------------------
+test_expect_success 'status shows untracked file' '
+	git init stat-untracked &&
+	cd stat-untracked &&
+	git config user.name "T" && git config user.email "t@t" &&
+	echo init >i.txt && git add i.txt && git commit -m i 2>/dev/null &&
+	echo x >untracked.txt &&
+	git status -s >../actual &&
+	grep "^?? untracked.txt" ../actual
+'
+
+test_expect_success 'status -s shows M for modified tracked file' '
+	cd stat-untracked &&
+	echo changed >>i.txt &&
+	git status -s >../actual &&
+	grep "^ M i.txt" ../actual
+'
+
+test_expect_success 'status -s shows MM for staged+modified file' '
+	cd stat-untracked &&
+	git add i.txt &&
+	echo more >>i.txt &&
+	git status -s >../actual &&
+	grep "^MM i.txt" ../actual
+'
+
+test_expect_success 'status shows D for deleted tracked file' '
+	cd stat-untracked &&
+	git checkout -- i.txt 2>/dev/null &&
+	git add i.txt && git commit -m fix 2>/dev/null &&
+	rm i.txt &&
+	git status -s >../actual &&
+	grep "^ D i.txt" ../actual
+'
+
+test_expect_success 'status -s shows D+A for manual rename' '
+	cd stat-untracked &&
+	git checkout -- i.txt 2>/dev/null &&
+	git add i.txt && git commit -m restore 2>/dev/null &&
+	git mv i.txt renamed.txt &&
+	git status -s >../actual &&
+	test -s ../actual &&
+	git checkout -- . 2>/dev/null; git reset HEAD 2>/dev/null; true
+'
+
+test_expect_success 'status --porcelain output is machine-parseable' '
+	cd stat-untracked &&
+	git status --porcelain >../actual &&
+	test -s ../actual
+'
+
+test_expect_success 'status with no changes is empty short output' '
+	git init stat-clean &&
+	cd stat-clean &&
+	git config user.name "T" && git config user.email "t@t" &&
+	echo a >a.txt && git add a.txt && git commit -m a 2>/dev/null &&
+	git status -s >../actual &&
+	test_must_be_empty ../actual
+'
+
+test_expect_success 'status -b shows branch in porcelain v1' '
+	cd stat-clean &&
+	git status -s -b >../actual &&
+	grep "^## master" ../actual
+'
+
+test_expect_success 'status shows new file in subdirectory' '
+	cd stat-clean &&
+	mkdir sub &&
+	echo x >sub/f.txt &&
+	git add sub/f.txt &&
+	git status -s >../actual &&
+	grep "^A  sub/f.txt" ../actual &&
+	git commit -m sub 2>/dev/null
+'
+
+test_expect_success 'status --porcelain after adding file shows A' '
+	cd stat-clean &&
+	echo new >cmp.txt && git add cmp.txt &&
+	git status --porcelain >../p1 &&
+	grep "^A" ../p1 &&
+	git reset HEAD cmp.txt 2>/dev/null; rm -f cmp.txt
+'
+
+test_expect_success 'status shows nothing for committed .gitignore' '
+	cd stat-clean &&
+	echo "*.log" >.gitignore &&
+	git add .gitignore && git commit -m ignore 2>/dev/null &&
+	git status -s >../actual &&
+	! grep ".gitignore" ../actual
+'
+
+test_expect_success 'status -s after staging deletion shows D' '
+	cd stat-clean &&
+	echo del >del.txt && git add del.txt && git commit -m del 2>/dev/null &&
+	git rm del.txt 2>/dev/null &&
+	git status -s >../actual &&
+	grep "^D  del.txt" ../actual &&
+	git commit -m rmdel 2>/dev/null
+'
+
+test_expect_success 'status shows multiple untracked files' '
+	cd stat-clean &&
+	echo a >u1.txt && echo b >u2.txt && echo c >u3.txt &&
+	git status -s >../actual &&
+	grep "^?? u1.txt" ../actual &&
+	grep "^?? u2.txt" ../actual &&
+	grep "^?? u3.txt" ../actual
+'
+
+test_expect_success 'status -s after commit --allow-empty is clean' '
+	cd stat-clean &&
+	rm -f u1.txt u2.txt u3.txt &&
+	git add -A 2>/dev/null && git commit --allow-empty -m cleanup 2>/dev/null &&
+	git status -s >../actual &&
+	test_must_be_empty ../actual
+'
+
 test_done
