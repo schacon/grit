@@ -248,4 +248,9 @@ test_expect_success 'hash-object on nonexistent file fails' '
 	test -s err
 '
 
+test_expect_success 'hash-object with no arguments produces no output' '
+	grit hash-object >out 2>&1 &&
+	test_must_be_empty out
+'
+
 test_done
