@@ -1264,4 +1264,350 @@ test_expect_success '--show-scope with --show-origin local' '
 	grep "file:" actual
 '
 
+# ── rename-section with subsection ─────────────────────────────────────────────
+
+test_expect_success 'rename-section with subsection' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[branch "one"]
+		remote = origin
+	[branch "two"]
+		remote = backup
+	EOF
+	git config --rename-section "branch.one" "branch.three" &&
+	git config --get branch.three.remote >actual &&
+	echo "origin" >expect &&
+	test_cmp expect actual &&
+	git config --get branch.two.remote >actual2 &&
+	echo "backup" >expect2 &&
+	test_cmp expect2 actual2
+'
+
+test_expect_success 'rename non-existing section fails' '
+	cd repo &&
+	test_must_fail git config --rename-section "branch.doesnotexist" "branch.something"
+'
+
+test_expect_success 'remove-section with multiple sections preserves others' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[alpha]
+		key = value1
+	[beta]
+		key = value2
+	[gamma]
+		key = value3
+	EOF
+	git config --remove-section beta &&
+	git config --get alpha.key >actual &&
+	echo "value1" >expect &&
+	test_cmp expect actual &&
+	git config --get gamma.key >actual2 &&
+	echo "value3" >expect2 &&
+	test_cmp expect2 actual2 &&
+	test_must_fail git config --get beta.key
+'
+
+test_expect_success 'remove non-existing section fails' '
+	cd repo &&
+	test_must_fail git config --remove-section doesnotexist
+'
+
+test_expect_success 'get --default returns fallback for missing key' '
+	cd repo &&
+	git config get --default "the-default" no.such.key >actual &&
+	echo "the-default" >expect &&
+	test_cmp expect actual
+'
+
+# ── hierarchical section stored with subsection syntax ─────────────────────
+
+test_expect_success 'hierarchical section value creates quoted subsection' '
+	cd repo &&
+	rm -f .git/config &&
+	git config Version.1.2.3eX.Alpha beta &&
+	printf "[version \"1.2.3eX\"]\n\talpha = beta\n" >expect &&
+	test_cmp expect .git/config
+'
+
+test_expect_success 'hierarchical section value can be read back' '
+	cd repo &&
+	git config --get version.1.2.3eX.alpha >actual &&
+	echo "beta" >expect &&
+	test_cmp expect actual
+'
+
+# ── section ending with subsection ────────────────────────────────────
+
+test_expect_success 'section ending with subsection reads correctly' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[gitcvs]
+		enabled = true
+		dbName = %Gcommit-hierarchical
+	[gitcvs "ext"]
+		dbName = %Gext.cvsdb
+	EOF
+	git config --get gitcvs.enabled >actual &&
+	echo "true" >expect &&
+	test_cmp expect actual &&
+	git config --get gitcvs.dbname >actual2 &&
+	echo "%Gcommit-hierarchical" >expect2 &&
+	test_cmp expect2 actual2 &&
+	git config --get gitcvs.ext.dbname >actual3 &&
+	echo "%Gext.cvsdb" >expect3 &&
+	test_cmp expect3 actual3
+'
+
+test_expect_success 'barf on syntax error in config' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	# broken
+	[section]
+	key garbage
+	EOF
+	test_must_fail git config --get section.key
+'
+
+test_expect_success 'barf on incomplete section header' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	# broken section
+	[section
+	key = value
+	EOF
+	test_must_fail git config --get section.key
+'
+
+# ── numeric section name ────────────────────────────────────────────────
+
+test_expect_success 'numeric section name works' '
+	cd repo &&
+	rm -f .git/config &&
+	git config 123456.a123 987 &&
+	git config --get 123456.a123 >actual &&
+	echo "987" >expect &&
+	test_cmp expect actual
+'
+
+# ── --unset one key keeps other keys in section ──────────────────────
+
+test_expect_success '--unset one key preserves sibling keys' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		key1 = value1
+		key2 = value2
+	EOF
+	git config --unset section.key1 &&
+	test_must_fail git config --get section.key1 &&
+	git config --get section.key2 >actual &&
+	echo "value2" >expect &&
+	test_cmp expect actual
+'
+
+# ── value with equals sign ──────────────────────────────────────────
+
+test_expect_success 'value with equals signs preserved' '
+	cd repo &&
+	rm -f .git/config &&
+	git config section.key "value=with=equals" &&
+	git config --get section.key >actual &&
+	echo "value=with=equals" >expect &&
+	test_cmp expect actual
+'
+
+# ── overwrite value in subsection preserves header ────────────────────
+
+test_expect_success 'overwrite value in subsection preserves header' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section "sub"]
+		key = old
+	EOF
+	git config section.sub.key new &&
+	git config --get section.sub.key >actual &&
+	echo "new" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'list with color subsections' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[color]
+		ui = auto
+	[color "diff"]
+		old = red
+		new = green
+	[core]
+		pager = less
+	EOF
+	cat >expect <<-\EOF &&
+	color.ui=auto
+	color.diff.old=red
+	color.diff.new=green
+	core.pager=less
+	EOF
+	git config --list --local >actual &&
+	test_cmp expect actual
+'
+
+# ── new section is partial match of another ────────────────────────────
+
+test_expect_success 'new section is partial match of another (file format)' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[a.b]
+		c = d
+	EOF
+	git config a.x y &&
+	git config --get a.x >actual &&
+	echo "y" >expect &&
+	test_cmp expect actual &&
+	git config --get a.b.c >actual2 &&
+	echo "d" >expect2 &&
+	test_cmp expect2 actual2
+'
+
+test_expect_success 'new variable inserts into proper section (file format)' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[a.b]
+		c = d
+	[a]
+		x = y
+	EOF
+	git config b.x y &&
+	git config a.b c &&
+	git config --get b.x >actual &&
+	echo "y" >expect &&
+	test_cmp expect actual &&
+	git config --get a.b >actual2 &&
+	echo "c" >expect2 &&
+	test_cmp expect2 actual2
+'
+
+test_expect_success 'comments preserved when overwriting value' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		key1 = value1
+	# a comment line
+	; another comment
+		key2 = value2
+	EOF
+	git config section.key1 newvalue1 &&
+	git config --get section.key1 >actual &&
+	echo "newvalue1" >expect &&
+	test_cmp expect actual &&
+	git config --get section.key2 >actual2 &&
+	echo "value2" >expect2 &&
+	test_cmp expect2 actual2
+'
+
+test_expect_success 'set and get with special characters in value (hash)' '
+	cd repo &&
+	rm -f .git/config &&
+	git config section.hash "test#value" &&
+	git config --get section.hash >actual &&
+	echo "test#value" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'set and get with special characters in value (semicolon)' '
+	cd repo &&
+	rm -f .git/config &&
+	git config section.semi "test;value" &&
+	git config --get section.semi >actual &&
+	echo "test;value" >expect &&
+	test_cmp expect actual
+'
+
+# ── quoting in written config values ─────────────────────────────────
+
+test_expect_success 'quoting: written config quotes special values correctly' '
+	cd repo &&
+	rm -f .git/config &&
+	git config quote.leading " test" &&
+	git config quote.ending "test " &&
+	git config quote.semicolon "test;test" &&
+	git config quote.hash "test#test" &&
+	grep "leading = \"" .git/config &&
+	grep "ending = \"" .git/config &&
+	grep "semicolon = \"" .git/config &&
+	grep "hash = \"" .git/config
+'
+
+test_expect_success 'quoting: read back semicolon in value' '
+	cd repo &&
+	git config --get quote.semicolon >actual &&
+	echo "test;test" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'quoting: read back hash in value' '
+	cd repo &&
+	git config --get quote.hash >actual &&
+	echo "test#test" >expect &&
+	test_cmp expect actual
+'
+
+# ── --bool normalization of on/off/yes/no/1/0 ───────────────────────
+
+test_expect_success '--bool normalizes on/off/yes/no/1/0' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		on = on
+		off = off
+		yes = yes
+		no = no
+		one = 1
+		zero = 0
+	EOF
+	cat >expect <<-\EOF &&
+	true
+	false
+	true
+	false
+	true
+	false
+	EOF
+	{
+		git config --bool section.on &&
+		git config --bool section.off &&
+		git config --bool section.yes &&
+		git config --bool section.no &&
+		git config --bool section.one &&
+		git config --bool section.zero
+	} >actual &&
+	test_cmp expect actual
+'
+
+# ── --int normalization with k/m/g suffix ─────────────────────────────
+
+test_expect_success '--int normalizes k/m/g suffixes' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+		plain = 42
+		kilo = 2k
+		mega = 1m
+		giga = 1g
+	EOF
+	cat >expect <<-\EOF &&
+	42
+	2048
+	1048576
+	1073741824
+	EOF
+	{
+		git config --int section.plain &&
+		git config --int section.kilo &&
+		git config --int section.mega &&
+		git config --int section.giga
+	} >actual &&
+	test_cmp expect actual
+'
+
 test_done
