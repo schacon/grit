@@ -404,8 +404,10 @@ pub fn diff_index_to_worktree(
         if ie.stage() != 0 {
             continue;
         }
-        let path_str = String::from_utf8_lossy(&ie.path).to_string();
-        let file_path = work_tree.join(&path_str);
+        // Use str slice directly to avoid allocation for path joining;
+        // only allocate String if we need it for DiffEntry output.
+        let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
+        let file_path = work_tree.join(path_str_ref);
         match fs::symlink_metadata(&file_path) {
             Ok(meta) => {
                 // Check if the file has changed using stat data first
@@ -418,10 +420,11 @@ pub fn diff_index_to_worktree(
                 let worktree_mode = mode_from_metadata(&meta);
 
                 if worktree_oid != ie.oid || worktree_mode != ie.mode {
+                    let path_owned = path_str_ref.to_owned();
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
-                        old_path: Some(path_str.clone()),
-                        new_path: Some(path_str),
+                        old_path: Some(path_owned.clone()),
+                        new_path: Some(path_owned),
                         old_mode: format_mode(ie.mode),
                         new_mode: format_mode(worktree_mode),
                         old_oid: ie.oid,
@@ -433,7 +436,7 @@ pub fn diff_index_to_worktree(
                 // File deleted from working tree
                 result.push(DiffEntry {
                     status: DiffStatus::Deleted,
-                    old_path: Some(path_str),
+                    old_path: Some(path_str_ref.to_owned()),
                     new_path: None,
                     old_mode: format_mode(ie.mode),
                     new_mode: "000000".to_owned(),
