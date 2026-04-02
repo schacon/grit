@@ -173,4 +173,83 @@ test_expect_success 'branch -D force-deletes branch' '
 	! grep "force-delete" actual
 '
 
+# ── branch with slash in name ─────────────────────────────────────────────
+
+test_expect_success 'branch with slash in name appears in listing' '
+	cd repo &&
+	git branch feature/my-feature &&
+	git branch >actual &&
+	grep "feature/my-feature" actual
+'
+
+test_expect_success 'branch -v shows branch with slash' '
+	cd repo &&
+	git branch -v >actual &&
+	grep "feature/my-feature" actual
+'
+
+test_expect_success 'branch -d can delete branch with slash' '
+	cd repo &&
+	git branch -d feature/my-feature &&
+	git branch >actual &&
+	! grep "feature/my-feature" actual
+'
+
+# ── branch pointing at different commits ─────────────────────────────────
+
+test_expect_success 'setup: branches at different commits' '
+	cd repo &&
+	git branch old-branch &&
+	echo new >new_file.txt && git add new_file.txt &&
+	git commit -m "advance master" 2>/dev/null
+'
+
+test_expect_success 'branch -v shows different hashes for diverged branches' '
+	cd repo &&
+	git branch -v >actual &&
+	master_hash=$(grep "master" actual | grep -oE "[0-9a-f]{7}") &&
+	old_hash=$(grep "old-branch" actual | grep -oE "[0-9a-f]{7}") &&
+	test "$master_hash" != "$old_hash"
+'
+
+# ── many branches ───────────────────────────────────────────────────────
+
+test_expect_success 'many branches listed correctly' '
+	cd repo &&
+	git branch br-01 && git branch br-02 && git branch br-03 &&
+	git branch br-04 && git branch br-05 &&
+	git branch >actual &&
+	grep "br-01" actual &&
+	grep "br-05" actual
+'
+
+test_expect_success 'branch list is still sorted with many branches' '
+	cd repo &&
+	git branch >actual &&
+	sed "s/^[* ] *//" actual >names &&
+	sort names >sorted &&
+	test_cmp sorted names
+'
+
+# ── branch --show-current in detached HEAD ───────────────────────────────
+
+test_expect_success 'branch --show-current in detached HEAD is empty' '
+	cd repo &&
+	git checkout HEAD~0 2>/dev/null &&
+	git branch --show-current >actual &&
+	test_must_be_empty actual &&
+	git checkout master 2>/dev/null
+'
+
+# ── branch rename ───────────────────────────────────────────────────────
+
+test_expect_success 'branch -m renames branch in listing' '
+	cd repo &&
+	git branch rename-me &&
+	git branch -m rename-me renamed &&
+	git branch >actual &&
+	! grep "rename-me" actual &&
+	grep "renamed" actual
+'
+
 test_done

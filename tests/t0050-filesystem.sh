@@ -226,4 +226,110 @@ test_expect_success 'non-executable file has 100644 mode' '
 	grep "100644" tree-out
 '
 
+# ── file with tab in content ───────────────────────────────────────────────
+
+test_expect_success 'file with tab characters in content' '
+	cd fs-repo &&
+	printf "col1\tcol2\tcol3\n" >tabfile.txt &&
+	git add tabfile.txt &&
+	git commit -m "tab content" &&
+	git show HEAD:tabfile.txt >actual &&
+	grep "col1" actual
+'
+
+# ── empty file ───────────────────────────────────────────────────────────
+
+test_expect_success 'empty file can be tracked' '
+	cd fs-repo &&
+	>empty_file.txt &&
+	git add empty_file.txt &&
+	git commit -m "empty file" &&
+	git ls-files >ls-out &&
+	grep "empty_file.txt" ls-out
+'
+
+test_expect_success 'empty file blob is the empty blob' '
+	cd fs-repo &&
+	git show HEAD:empty_file.txt >actual &&
+	test_must_be_empty actual
+'
+
+# ── file replacement ─────────────────────────────────────────────────────
+
+test_expect_success 'file content replacement is tracked' '
+	cd fs-repo &&
+	echo "original" >replace_me.txt &&
+	git add replace_me.txt &&
+	git commit -m "original content" &&
+	echo "replaced" >replace_me.txt &&
+	git add replace_me.txt &&
+	git commit -m "replaced content" &&
+	git show HEAD:replace_me.txt >actual &&
+	echo "replaced" >expect &&
+	test_cmp expect actual
+'
+
+# ── large number of files ─────────────────────────────────────────────────
+
+test_expect_success 'many files in one commit' '
+	cd fs-repo &&
+	i=0 &&
+	while test $i -lt 50
+	do
+		echo "content $i" >"many_${i}.txt"
+		i=$(($i + 1))
+	done &&
+	git add many_*.txt &&
+	git commit -m "50 files" &&
+	git ls-files >ls-out &&
+	grep -c "many_" ls-out >count &&
+	test $(cat count) -eq 50
+'
+
+# ── file with only newlines ────────────────────────────────────────────────
+
+test_expect_success 'file with only newlines tracked correctly' '
+	cd fs-repo &&
+	printf "\n\n\n" >newlines.txt &&
+	git add newlines.txt &&
+	git commit -m "newlines only" &&
+	git show HEAD:newlines.txt >actual &&
+	test -s actual
+'
+
+# ── file with very long line ───────────────────────────────────────────────
+
+test_expect_success 'file with very long line' '
+	cd fs-repo &&
+	python3 -c "print(\"x\" * 10000)" >longline.txt &&
+	git add longline.txt &&
+	git commit -m "long line" &&
+	git show HEAD:longline.txt >actual &&
+	test -s actual
+'
+
+# ── adding same file twice is idempotent ─────────────────────────────────
+
+test_expect_success 'adding same file twice is idempotent' '
+	cd fs-repo &&
+	echo "idempotent" >idem.txt &&
+	git add idem.txt &&
+	git add idem.txt &&
+	git commit -m "idem" &&
+	git ls-files >ls-out &&
+	count=$(grep -c "idem.txt" ls-out) &&
+	test "$count" -eq 1
+'
+
+# ── file with leading dash ─────────────────────────────────────────────────
+
+test_expect_success 'file with leading dash can be committed' '
+	cd fs-repo &&
+	echo "dashed" >"./-dashed-file.txt" &&
+	git add -- "-dashed-file.txt" &&
+	git commit -m "dashed file" &&
+	git ls-files >ls-out &&
+	grep "dashed-file" ls-out
+'
+
 test_done

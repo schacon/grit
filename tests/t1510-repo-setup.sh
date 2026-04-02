@@ -178,4 +178,104 @@ test_expect_success '-C flag works for log' '
 	test_cmp expect actual
 '
 
+# ── nested bare repos ─────────────────────────────────────────────────────
+
+test_expect_success 'bare repo has refs/ directory' '
+	cd bare-repo.git &&
+	test -d refs
+'
+
+test_expect_success 'bare repo has objects/ directory' '
+	cd bare-repo.git &&
+	test -d objects
+'
+
+test_expect_success 'bare repo has HEAD file' '
+	cd bare-repo.git &&
+	test -f HEAD
+'
+
+# ── rev-parse --show-prefix ───────────────────────────────────────────────
+
+test_expect_success 'rev-parse --show-prefix from root is empty' '
+	cd normal-repo &&
+	result=$(git rev-parse --show-prefix) &&
+	test -z "$result"
+'
+
+test_expect_success 'rev-parse --show-prefix from subdir shows path' '
+	cd normal-repo/a/b &&
+	result=$(git rev-parse --show-prefix) &&
+	test "$result" = "a/b/"
+'
+
+# ── GIT_DIR with relative path ────────────────────────────────────────────
+
+test_expect_success 'GIT_DIR with relative path works' '
+	cd normal-repo &&
+	GIT_DIR=.git git rev-parse HEAD >actual &&
+	test -s actual
+'
+
+# ── init in existing directory ─────────────────────────────────────────────
+
+test_expect_success 'init in existing non-empty directory' '
+	mkdir -p existing-dir &&
+	echo "existing" >existing-dir/file.txt &&
+	git init existing-dir &&
+	test -d existing-dir/.git &&
+	test -f existing-dir/file.txt
+'
+
+test_expect_success 're-init existing repo does not destroy data' '
+	git init normal-repo &&
+	cd normal-repo &&
+	git log --format="%s" -n 1 >actual &&
+	echo "init" >expect &&
+	test_cmp expect actual
+'
+
+# ── -C with nested path ───────────────────────────────────────────────────
+
+test_expect_success '-C works from deep subdirectory context' '
+	git -C normal-repo/a/b rev-parse --is-inside-work-tree >actual &&
+	grep "true" actual
+'
+
+test_expect_success '-C flag works for status' '
+	git -C normal-repo status >actual 2>&1 &&
+	grep "On branch" actual
+'
+
+# ── rev-parse --show-cdup ─────────────────────────────────────────────────
+
+test_expect_success 'rev-parse HEAD returns valid SHA' '
+	cd normal-repo &&
+	sha=$(git rev-parse HEAD) &&
+	test ${#sha} -eq 40 &&
+	echo "$sha" | grep -qE "^[0-9a-f]{40}$"
+'
+
+test_expect_success 'rev-parse HEAD~0 equals HEAD' '
+	cd normal-repo &&
+	head=$(git rev-parse HEAD) &&
+	head0=$(git rev-parse HEAD~0) &&
+	test "$head" = "$head0"
+'
+
+# ── init with directory argument ───────────────────────────────────────────
+
+test_expect_success 'init creates directory if needed' '
+	git init auto-created-dir/sub &&
+	test -d auto-created-dir/sub/.git
+'
+
+test_expect_success 'init --bare creates bare repo at path' '
+	git init --bare new-bare.git &&
+	test -f new-bare.git/HEAD &&
+	cd new-bare.git &&
+	result=$(git rev-parse --is-bare-repository) &&
+	test "$result" = "true"
+'
+
 test_done
