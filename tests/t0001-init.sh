@@ -990,4 +990,108 @@ test_expect_success 'init description file exists' '
 	test -f init-desc/.git/description
 '
 
+# === additional deepening tests ===
+
+test_expect_success 'init creates objects directory' '
+	rm -fr init-obj &&
+	grit init init-obj &&
+	test -d init-obj/.git/objects
+'
+
+test_expect_success 'init creates objects/pack directory' '
+	rm -fr init-pack &&
+	grit init init-pack &&
+	test -d init-pack/.git/objects/pack
+'
+
+test_expect_success 'init creates objects/info directory' '
+	rm -fr init-info &&
+	grit init init-info &&
+	test -d init-info/.git/objects/info
+'
+
+test_expect_success 'init creates refs/heads directory' '
+	rm -fr init-rh &&
+	grit init init-rh &&
+	test -d init-rh/.git/refs/heads
+'
+
+test_expect_success 'init creates refs/tags directory' '
+	rm -fr init-rt &&
+	grit init init-rt &&
+	test -d init-rt/.git/refs/tags
+'
+
+test_expect_success 'init HEAD points to refs/heads/main or refs/heads/master' '
+	rm -fr init-head-ref &&
+	grit init init-head-ref &&
+	head_content=$(cat init-head-ref/.git/HEAD) &&
+	case "$head_content" in
+	*refs/heads/main*|*refs/heads/master*) true ;;
+	*) false ;;
+	esac
+'
+
+test_expect_success 'init bare creates objects directory at top level' '
+	rm -fr init-bare-obj &&
+	grit init --bare init-bare-obj &&
+	test -d init-bare-obj/objects
+'
+
+test_expect_success 'init bare creates refs directory at top level' '
+	rm -fr init-bare-refs &&
+	grit init --bare init-bare-refs &&
+	test -d init-bare-refs/refs
+'
+
+test_expect_success 'reinit existing repo preserves objects' '
+	rm -fr init-reinit &&
+	grit init init-reinit &&
+	cd init-reinit &&
+	git config user.name T && git config user.email t@t &&
+	echo data >f && git add f && git commit -m c 2>/dev/null &&
+	hash=$(git rev-parse HEAD) &&
+	cd .. &&
+	grit init init-reinit &&
+	cd init-reinit &&
+	test "$(git rev-parse HEAD)" = "$hash"
+'
+
+test_expect_success 'init with absolute path works' '
+	rm -fr "$PWD/init-abs" &&
+	grit init "$PWD/init-abs" &&
+	test -d "$PWD/init-abs/.git"
+'
+
+test_expect_success 'init in existing empty directory works' '
+	rm -fr init-exist &&
+	mkdir init-exist &&
+	grit init init-exist &&
+	test -d init-exist/.git
+'
+
+test_expect_success 'init bare config has bare = true' '
+	rm -fr init-bare-cfg &&
+	grit init --bare init-bare-cfg &&
+	grep "bare = true" init-bare-cfg/config
+'
+
+test_expect_success 'init non-bare config has bare = false or no bare' '
+	rm -fr init-nonbare-cfg &&
+	grit init init-nonbare-cfg &&
+	! grep "bare = true" init-nonbare-cfg/.git/config
+'
+
+test_expect_success 'init creates info directory inside .git' '
+	rm -fr init-info-dir &&
+	grit init init-info-dir &&
+	test -d init-info-dir/.git/info
+'
+
+test_expect_success 'init creates hooks directory' '
+	rm -fr init-hooks &&
+	grit init init-hooks &&
+	test -d init-hooks/.git/hooks
+'
+
 test_done

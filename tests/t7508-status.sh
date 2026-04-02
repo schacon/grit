@@ -1512,4 +1512,185 @@ test_expect_success 'status -s after commit --allow-empty is clean' '
 	test_must_be_empty ../actual
 '
 
+# === additional deepening tests ===
+
+test_expect_success 'status --porcelain includes branch header' '
+	cd stat-clean &&
+	grit status --porcelain >../actual &&
+	grep "^##" ../actual
+'
+
+test_expect_success 'status detects renamed file after git mv' '
+	cd stat-clean &&
+	echo rename_me >rename_src.txt &&
+	git add rename_src.txt && git commit -m "add rename_src" 2>/dev/null &&
+	git mv rename_src.txt rename_dst.txt &&
+	grit status -s >../actual &&
+	(grep "R" ../actual || grep "rename_dst" ../actual) &&
+	git commit -m "renamed" 2>/dev/null
+'
+
+test_expect_success 'status shows AM for added then modified file' '
+	cd stat-clean &&
+	echo original >am_file.txt &&
+	git add am_file.txt &&
+	echo changed >>am_file.txt &&
+	grit status -s >../actual &&
+	grep "^AM am_file.txt" ../actual &&
+	git checkout -- am_file.txt 2>/dev/null &&
+	git reset HEAD am_file.txt 2>/dev/null &&
+	rm -f am_file.txt
+'
+
+test_expect_success 'status shows .gitignore changes' '
+	cd stat-clean &&
+	echo "*.ign" >.gitignore &&
+	git add .gitignore && git commit -m "ignore" 2>/dev/null &&
+	echo change >>.gitignore &&
+	grit status -s >../actual &&
+	grep ".gitignore" ../actual &&
+	git checkout -- .gitignore 2>/dev/null
+'
+
+test_expect_success 'status shows untracked directory' '
+	cd stat-clean &&
+	mkdir -p newdir &&
+	echo x >newdir/file &&
+	grit status -s >../actual &&
+	grep "?? newdir/" ../actual &&
+	rm -rf newdir
+'
+
+test_expect_success 'status -s shows MM for staged then modified' '
+	rm -rf mm_repo &&
+	git init mm_repo &&
+	cd mm_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo base >mm_file.txt &&
+	git add mm_file.txt && git commit -m "add mm" 2>/dev/null &&
+	echo staged >mm_file.txt &&
+	git add mm_file.txt &&
+	echo worktree >mm_file.txt &&
+	grit status -s >../mm_actual &&
+	grep "MM" ../mm_actual
+'
+
+test_expect_success 'status on empty repository shows nothing tracked' '
+	rm -rf empty-status-repo &&
+	git init empty-status-repo &&
+	cd empty-status-repo &&
+	grit status -s >../actual &&
+	test_must_be_empty ../actual
+'
+
+test_expect_success 'status --porcelain shows file entries' '
+	cd stat-clean &&
+	echo hdr >hdr_test.txt &&
+	grit status --porcelain >../actual &&
+	grep "hdr_test.txt" ../actual &&
+	rm -f hdr_test.txt
+'
+
+test_expect_success 'status shows staged delete as D with space' '
+	cd stat-clean &&
+	echo todelete >staged_del.txt &&
+	git add staged_del.txt && git commit -m "staged del" 2>/dev/null &&
+	git rm staged_del.txt 2>/dev/null &&
+	grit status -s >../actual &&
+	grep "^D  staged_del.txt" ../actual &&
+	git commit -m "removed staged_del" 2>/dev/null
+'
+
+test_expect_success 'status shows both untracked files' '
+	cd stat-clean &&
+	echo a >filter_a.txt && echo b >filter_b.txt &&
+	grit status -s >../actual &&
+	grep "filter_a.txt" ../actual &&
+	grep "filter_b.txt" ../actual &&
+	rm -f filter_a.txt filter_b.txt
+'
+
+test_expect_success 'status -s shows type change indicator for symlinks' '
+	cd stat-clean &&
+	echo target >link_target.txt &&
+	git add link_target.txt && git commit -m "add target" 2>/dev/null &&
+	ln -sf link_target.txt link_sym.txt &&
+	grit status -s >../actual &&
+	grep "?? link_sym.txt" ../actual &&
+	rm -f link_sym.txt
+'
+
+test_expect_success 'status in subdirectory shows repo-relative paths' '
+	cd stat-clean &&
+	mkdir -p subdir2 &&
+	echo sub >subdir2/sub.txt &&
+	git add subdir2 && git commit -m "add subdir2" 2>/dev/null &&
+	echo changed >subdir2/sub.txt &&
+	grit status -s >../actual &&
+	grep "subdir2/sub.txt" ../actual &&
+	git checkout -- subdir2/sub.txt 2>/dev/null
+'
+
+test_expect_success 'status -s is empty after staging and committing' '
+	cd stat-clean &&
+	echo allclean >allc.txt &&
+	git add allc.txt && git commit -m "all clean" 2>/dev/null &&
+	git status -s >../check_clean &&
+	grit status -s >../actual &&
+	test_must_be_empty ../actual
+'
+
+test_expect_success 'status with multiple staged files shows each' '
+	cd stat-clean &&
+	echo m1 >multi1.txt && echo m2 >multi2.txt && echo m3 >multi3.txt &&
+	git add multi1.txt multi2.txt multi3.txt &&
+	grit status -s >../actual &&
+	grep "^A  multi1.txt" ../actual &&
+	grep "^A  multi2.txt" ../actual &&
+	grep "^A  multi3.txt" ../actual &&
+	git reset HEAD multi1.txt multi2.txt multi3.txt 2>/dev/null &&
+	rm -f multi1.txt multi2.txt multi3.txt
+'
+
+test_expect_success 'status -s after reset --hard is clean' '
+	cd stat-clean &&
+	echo dirty >dirty_reset.txt &&
+	git add dirty_reset.txt && git commit -m "dirty" 2>/dev/null &&
+	echo dirtier >dirty_reset.txt &&
+	git reset --hard HEAD 2>/dev/null &&
+	grit status -s >../actual &&
+	! grep "dirty_reset" ../actual
+'
+
+test_expect_success 'status shows copied file as untracked' '
+	cd stat-clean &&
+	echo copybase >copy_src.txt &&
+	git add copy_src.txt && git commit -m "copy src" 2>/dev/null &&
+	cp copy_src.txt copy_dst.txt &&
+	grit status -s >../actual &&
+	grep "?? copy_dst.txt" ../actual &&
+	rm -f copy_dst.txt
+'
+
+test_expect_success 'status detects modification in nested subdir' '
+	cd stat-clean &&
+	mkdir -p deep/nested &&
+	echo deep >deep/nested/f.txt &&
+	git add deep && git commit -m "deep" 2>/dev/null &&
+	echo changed >deep/nested/f.txt &&
+	grit status -s >../actual &&
+	grep " M deep/nested/f.txt" ../actual &&
+	git checkout -- deep/nested/f.txt 2>/dev/null &&
+	rm -rf deep
+'
+
+test_expect_success 'status --short is alias for -s' '
+	cd stat-clean &&
+	echo shorttest >short_file.txt &&
+	grit status -s >../expect &&
+	grit status --short >../actual &&
+	test_cmp ../expect ../actual &&
+	rm -f short_file.txt
+'
+
 test_done

@@ -952,4 +952,123 @@ test_expect_success 'commit tree object is a valid tree' '
 	test_cmp expect actual
 '
 
+# === additional deepening tests ===
+
+test_expect_success 'commit records correct author name' '
+	cd repo &&
+	git commit --allow-empty -m "author test" 2>/dev/null &&
+	grit cat-file -p HEAD >actual &&
+	grep "author Test" actual
+'
+
+test_expect_success 'commit records correct committer email' '
+	cd repo &&
+	grit cat-file -p HEAD >actual &&
+	grep "committer.*test@test.com" actual
+'
+
+test_expect_success 'commit parent matches previous HEAD' '
+	cd repo &&
+	prev=$(git rev-parse HEAD) &&
+	git commit --allow-empty -m "parent test" 2>/dev/null &&
+	grit cat-file -p HEAD >actual &&
+	grep "parent $prev" actual
+'
+
+test_expect_success 'initial commit has no parent line' '
+	rm -rf repo-noparent &&
+	git init repo-noparent &&
+	cd repo-noparent &&
+	git config user.name T && git config user.email t@t &&
+	echo first >f && git add f && git commit -m "first" 2>/dev/null &&
+	grit cat-file -p HEAD >actual &&
+	! grep "^parent" actual
+'
+
+test_expect_success 'commit message body preserved verbatim' '
+	cd repo &&
+	git commit --allow-empty -m "line1" -m "line2 detail" 2>/dev/null &&
+	grit cat-file -p HEAD >actual &&
+	grep "line2 detail" actual
+'
+
+test_expect_success 'commit with --author overrides author' '
+	cd repo &&
+	git commit --allow-empty --author="Other <other@x.com>" -m "diff author" 2>/dev/null &&
+	grit cat-file -p HEAD >actual &&
+	grep "author Other <other@x.com>" actual
+'
+
+test_expect_success 'commit -a stages modified tracked files' '
+	cd repo &&
+	echo base >ca_file.txt &&
+	git add ca_file.txt && git commit -m "add ca" 2>/dev/null &&
+	echo modified >ca_file.txt &&
+	git commit -a -m "commit -a" 2>/dev/null &&
+	git diff --exit-code HEAD
+'
+
+test_expect_success 'commit creates object reachable by rev-parse' '
+	cd repo &&
+	git commit --allow-empty -m "reachable" 2>/dev/null &&
+	hash=$(grit rev-parse HEAD) &&
+	grit cat-file -t "$hash" >actual &&
+	echo "commit" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'multiple commits increment rev-list count' '
+	cd repo &&
+	count_before=$(git rev-list HEAD --count) &&
+	git commit --allow-empty -m "inc1" 2>/dev/null &&
+	git commit --allow-empty -m "inc2" 2>/dev/null &&
+	count_after=$(git rev-list HEAD --count) &&
+	test "$count_after" -eq "$((count_before + 2))"
+'
+
+test_expect_success 'commit on detached HEAD works' '
+	cd repo &&
+	git checkout --detach HEAD 2>/dev/null &&
+	git commit --allow-empty -m "detached" 2>/dev/null &&
+	grit cat-file -p HEAD >actual &&
+	grep "detached" actual &&
+	git checkout - 2>/dev/null
+'
+
+test_expect_success 'cat-file -s on commit returns nonzero size' '
+	cd repo &&
+	hash=$(grit rev-parse HEAD) &&
+	size=$(grit cat-file -s "$hash") &&
+	test "$size" -gt 0
+'
+
+test_expect_success 'commit tree changes when file content changes' '
+	cd repo &&
+	tree1=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	echo newtreedata >tree_chg.txt &&
+	git add tree_chg.txt && git commit -m "tree change" 2>/dev/null &&
+	tree2=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	test "$tree1" != "$tree2"
+'
+
+test_expect_success 'amend preserves parent of original commit' '
+	cd repo &&
+	parent_before=$(git cat-file -p HEAD | sed -n "s/^parent //p") &&
+	git commit --amend -m "amend keep parent" 2>/dev/null &&
+	parent_after=$(git cat-file -p HEAD | sed -n "s/^parent //p") &&
+	test "$parent_before" = "$parent_after"
+'
+
+test_expect_success 'commit with only whitespace message fails' '
+	cd repo &&
+	test_must_fail git commit --allow-empty -m "   " 2>/dev/null
+'
+
+test_expect_success 'rev-parse HEAD~1 gives parent commit' '
+	cd repo &&
+	parent=$(git cat-file -p HEAD | sed -n "s/^parent //p") &&
+	parsed=$(grit rev-parse HEAD~1) &&
+	test "$parent" = "$parsed"
+'
+
 test_done

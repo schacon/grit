@@ -1228,4 +1228,145 @@ test_expect_success 'rm after rename removes new name' '
 	test_must_fail git ls-files --error-unmatch ren_dst.txt
 '
 
+# === additional deepening tests ===
+
+test_expect_success 'rm multiple files in one command' '
+	cd repo &&
+	echo a >rm_multi_a.txt && echo b >rm_multi_b.txt &&
+	git add rm_multi_a.txt rm_multi_b.txt &&
+	git commit -m "add multi rm" &&
+	grit rm rm_multi_a.txt rm_multi_b.txt &&
+	! test -f rm_multi_a.txt &&
+	! test -f rm_multi_b.txt
+'
+
+test_expect_success 'rm --cached leaves working tree file' '
+	cd repo &&
+	echo cached >rm_cached2.txt &&
+	git add rm_cached2.txt &&
+	git commit -m "add cached2" &&
+	grit rm --cached rm_cached2.txt &&
+	test_path_is_file rm_cached2.txt &&
+	test_must_fail git ls-files --error-unmatch rm_cached2.txt &&
+	rm -f rm_cached2.txt
+'
+
+test_expect_success 'rm file in subdirectory' '
+	cd repo &&
+	mkdir -p rm_sub &&
+	echo sub >rm_sub/file.txt &&
+	git add rm_sub/file.txt &&
+	git commit -m "add rm_sub" &&
+	grit rm rm_sub/file.txt &&
+	! test -f rm_sub/file.txt
+'
+
+test_expect_success 'rm -r removes directory recursively' '
+	cd repo &&
+	mkdir -p rm_dir_r &&
+	echo x >rm_dir_r/x.txt && echo y >rm_dir_r/y.txt &&
+	git add rm_dir_r &&
+	git commit -m "add rm_dir_r" &&
+	grit rm -r rm_dir_r &&
+	! test -f rm_dir_r/x.txt &&
+	! test -f rm_dir_r/y.txt
+'
+
+test_expect_success 'rm --dry-run does not actually remove file' '
+	cd repo &&
+	echo dry >rm_dry.txt &&
+	git add rm_dry.txt &&
+	git commit -m "add dry" &&
+	grit rm --dry-run rm_dry.txt &&
+	test_path_is_file rm_dry.txt &&
+	git ls-files --error-unmatch rm_dry.txt
+'
+
+test_expect_success 'rm of untracked file fails' '
+	cd repo &&
+	echo untracked >rm_untracked.txt &&
+	test_must_fail grit rm rm_untracked.txt 2>/dev/null &&
+	rm -f rm_untracked.txt
+'
+
+test_expect_success 'rm updates index (status shows deletion staged)' '
+	cd repo &&
+	echo idx >rm_idx.txt &&
+	git add rm_idx.txt &&
+	git commit -m "add idx" &&
+	grit rm rm_idx.txt &&
+	git status -s >../actual &&
+	grep "^D  rm_idx.txt" ../actual &&
+	git commit -m "committed rm" 2>/dev/null
+'
+
+test_expect_success 'rm --cached of newly added file unstages it' '
+	cd repo &&
+	echo new >rm_new_staged.txt &&
+	git add rm_new_staged.txt &&
+	grit rm --cached rm_new_staged.txt &&
+	test_must_fail git ls-files --error-unmatch rm_new_staged.txt &&
+	test_path_is_file rm_new_staged.txt &&
+	rm -f rm_new_staged.txt
+'
+
+test_expect_success 'rm -f removes modified staged file' '
+	cd repo &&
+	echo base >rm_force_mod.txt &&
+	git add rm_force_mod.txt &&
+	git commit -m "add force mod" &&
+	echo changed >rm_force_mod.txt &&
+	git add rm_force_mod.txt &&
+	grit rm -f rm_force_mod.txt &&
+	! test -f rm_force_mod.txt
+'
+
+test_expect_success 'rm of file with spaces in name' '
+	cd repo &&
+	echo sp >"rm space file.txt" &&
+	git add "rm space file.txt" &&
+	git commit -m "add space file" &&
+	grit rm "rm space file.txt" &&
+	! test -f "rm space file.txt"
+'
+
+test_expect_success 'rm --cached -r on nested dir preserves working tree' '
+	cd repo &&
+	mkdir -p rm_nest/inner &&
+	echo a >rm_nest/inner/a.txt &&
+	git add rm_nest &&
+	git commit -m "add nest" &&
+	grit rm --cached -r rm_nest &&
+	test_path_is_file rm_nest/inner/a.txt &&
+	test_must_fail git ls-files --error-unmatch rm_nest/inner/a.txt &&
+	rm -rf rm_nest
+'
+
+test_expect_success 'rm then re-add same file works' '
+	cd repo &&
+	echo readd >rm_readd.txt &&
+	git add rm_readd.txt &&
+	git commit -m "add readd" &&
+	grit rm rm_readd.txt &&
+	git commit -m "rm readd" 2>/dev/null &&
+	echo readd2 >rm_readd.txt &&
+	git add rm_readd.txt &&
+	git ls-files --error-unmatch rm_readd.txt &&
+	git checkout -- rm_readd.txt 2>/dev/null && git reset HEAD rm_readd.txt 2>/dev/null &&
+	rm -f rm_readd.txt
+'
+
+test_expect_success 'rm -r --cached with mixed tracked and untracked' '
+	cd repo &&
+	mkdir -p rm_mixed &&
+	echo tracked >rm_mixed/tracked.txt &&
+	git add rm_mixed/tracked.txt &&
+	git commit -m "add mixed tracked" &&
+	echo untracked >rm_mixed/untracked.txt &&
+	grit rm --cached -r rm_mixed &&
+	test_path_is_file rm_mixed/tracked.txt &&
+	test_path_is_file rm_mixed/untracked.txt &&
+	rm -rf rm_mixed
+'
+
 test_done
