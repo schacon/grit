@@ -2057,4 +2057,50 @@ test_expect_success 'list subcommand shows multivar entries' '
 	grep "mvs.key=second" actual
 '
 
+# ── -z with various modes ────────────────────────────────────────────────────
+
+test_expect_success '-z with --get-all uses NUL' '
+	cd repo &&
+	git config --get-all mvs.key -z >actual &&
+	printf "first\0second\0" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '-z with --list --file uses NUL' '
+	cd repo &&
+	cat >../zfile.cfg <<-\EOF &&
+	[z]
+		a = 1
+		b = 2
+	EOF
+	git config --list --file ../zfile.cfg -z >actual &&
+	printf "z.a=1\0z.b=2\0" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--show-origin --show-scope combined --list' '
+	cd repo &&
+	git config --show-origin --show-scope --list >actual &&
+	grep "^local" actual | grep "file:" >filtered &&
+	test_line_count -gt 0 filtered
+'
+
+test_expect_success '--show-scope with --list and --file' '
+	cd repo &&
+	cat >../scope-file.cfg <<-\EOF &&
+	[sf]
+		k = v
+	EOF
+	git config --show-scope --list --file ../scope-file.cfg >actual &&
+	test_line_count -gt 0 actual
+'
+
+test_expect_success 'set --bool true writes canonical true' '
+	cd repo &&
+	git config --bool setbool.yes true &&
+	git config --get setbool.yes >actual &&
+	echo "true" >expect &&
+	test_cmp expect actual
+'
+
 test_done
