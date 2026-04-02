@@ -2903,4 +2903,113 @@ test_expect_success 'annotated tag cat-file -p shows type commit' '
 	grep "^type commit" output
 '
 
+# ---------------------------------------------------------------------------
+# Deepening tests (w32-deepen)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'deepen setup: create repo for tag tests' '
+	git init deepen-tag-repo &&
+	cd deepen-tag-repo &&
+	git config user.name "Tag Tester" &&
+	git config user.email "tag@test.com" &&
+	echo "initial" >file.txt &&
+	git add file.txt &&
+	git commit -m "initial for tag tests" &&
+	echo "second" >>file.txt &&
+	git add file.txt &&
+	git commit -m "second commit"
+'
+
+test_expect_success 'lightweight tag is created' '
+	cd deepen-tag-repo &&
+	git tag deepen-lw-v1 &&
+	git tag -l >output &&
+	grep "deepen-lw-v1" output
+'
+
+test_expect_success 'lightweight tag points to HEAD' '
+	cd deepen-tag-repo &&
+	HEAD_HASH=$(git rev-parse HEAD) &&
+	TAG_HASH=$(git rev-parse deepen-lw-v1) &&
+	test "$HEAD_HASH" = "$TAG_HASH"
+'
+
+test_expect_success 'annotated tag is created with -a -m' '
+	cd deepen-tag-repo &&
+	git tag -a deepen-ann-v1 -m "annotated v1" 2>/dev/null &&
+	git tag -l >output &&
+	grep "deepen-ann-v1" output
+'
+
+test_expect_success 'annotated tag object contains tagger line' '
+	cd deepen-tag-repo &&
+	git cat-file -p deepen-ann-v1 >output &&
+	grep "^tagger" output
+'
+
+test_expect_success 'annotated tag object contains tag message' '
+	cd deepen-tag-repo &&
+	git cat-file -p deepen-ann-v1 >output &&
+	grep "annotated v1" output
+'
+
+test_expect_success 'tag on specific commit via sha' '
+	cd deepen-tag-repo &&
+	FIRST=$(git rev-list --reverse HEAD | head -n 1) &&
+	git tag deepen-first-commit $FIRST &&
+	TAG_HASH=$(git rev-parse deepen-first-commit) &&
+	test "$TAG_HASH" = "$FIRST"
+'
+
+test_expect_success 'tag -l lists all tags' '
+	cd deepen-tag-repo &&
+	git tag -l >output &&
+	test $(wc -l <output) -ge 3
+'
+
+test_expect_success 'tag -d deletes a lightweight tag' '
+	cd deepen-tag-repo &&
+	git tag deepen-to-delete &&
+	git tag -d deepen-to-delete &&
+	git tag -l >output &&
+	! grep "deepen-to-delete" output
+'
+
+test_expect_success 'tag -d deletes an annotated tag' '
+	cd deepen-tag-repo &&
+	git tag -a deepen-ann-del -m "to delete" 2>/dev/null &&
+	git tag -d deepen-ann-del &&
+	git tag -l >output &&
+	! grep "deepen-ann-del" output
+'
+
+test_expect_success 'creating duplicate lightweight tag fails' '
+	cd deepen-tag-repo &&
+	test_must_fail git tag deepen-lw-v1 2>/dev/null
+'
+
+test_expect_success 'cat-file -t on annotated tag returns tag' '
+	cd deepen-tag-repo &&
+	git cat-file -t deepen-ann-v1 >output &&
+	grep "tag" output
+'
+
+test_expect_success 'cat-file -t on lightweight tag returns commit' '
+	cd deepen-tag-repo &&
+	git cat-file -t deepen-lw-v1 >output &&
+	grep "commit" output
+'
+
+test_expect_success 'tag with empty name fails' '
+	cd deepen-tag-repo &&
+	test_must_fail git tag "" 2>/dev/null
+'
+
+test_expect_success 'for-each-ref sees created tags' '
+	cd deepen-tag-repo &&
+	git for-each-ref refs/tags/ >output &&
+	grep "deepen-lw-v1" output &&
+	grep "deepen-ann-v1" output
+'
+
 test_done
