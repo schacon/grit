@@ -230,4 +230,126 @@ test_expect_success 'checkout - re-attaches from detached state' '
 	test_cmp expect actual
 '
 
+# ---------------------------------------------------------------------------
+# Deepened: detach at HEAD~N
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout HEAD~1 detaches at parent' '
+	cd repo &&
+	git checkout master &&
+	parent=$(git rev-parse master~1) &&
+	git checkout HEAD~1 &&
+	check_detached &&
+	test "$(git rev-parse HEAD)" = "$parent"
+'
+
+test_expect_success 'checkout HEAD~2 detaches at grandparent' '
+	cd repo &&
+	git checkout master &&
+	gp=$(git rev-parse master~2) &&
+	git checkout HEAD~2 &&
+	check_detached &&
+	test "$(git rev-parse HEAD)" = "$gp"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: --detach with tag
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout --detach tag detaches at tag commit' '
+	cd repo &&
+	git checkout master &&
+	git checkout --detach tag &&
+	check_detached &&
+	tag_oid=$(git rev-parse tag) &&
+	test "$(git rev-parse HEAD)" = "$tag_oid"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: detach does not lose working tree changes that are compatible
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout --detach preserves untracked files' '
+	cd repo &&
+	git checkout master &&
+	echo untracked >untracked-det &&
+	git checkout --detach &&
+	check_detached &&
+	test -f untracked-det &&
+	rm -f untracked-det
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: multiple detach hops
+# ---------------------------------------------------------------------------
+test_expect_success 'detach -> detach at different commits' '
+	cd repo &&
+	git checkout master &&
+	one_oid=$(git rev-parse one) &&
+	two_oid=$(git rev-parse two) &&
+	git checkout "$one_oid" &&
+	check_detached &&
+	test "$(git rev-parse HEAD)" = "$one_oid" &&
+	git checkout "$two_oid" &&
+	check_detached &&
+	test "$(git rev-parse HEAD)" = "$two_oid"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: HEAD contents in detached vs attached
+# ---------------------------------------------------------------------------
+test_expect_success 'HEAD file contains raw SHA when detached' '
+	cd repo &&
+	git checkout master &&
+	git checkout --detach &&
+	head_content=$(cat .git/HEAD) &&
+	# Should be a hex SHA, not a ref
+	echo "$head_content" | grep -E "^[0-9a-f]{40}$"
+'
+
+test_expect_success 'HEAD file contains ref when attached' '
+	cd repo &&
+	git checkout master &&
+	head_content=$(cat .git/HEAD) &&
+	echo "$head_content" | grep "^ref: refs/heads/master$"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout --detach from already-detached
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout --detach when already detached is a no-op' '
+	cd repo &&
+	git checkout --detach two &&
+	check_detached &&
+	two_oid=$(git rev-parse two) &&
+	test "$(git rev-parse HEAD)" = "$two_oid" &&
+	git checkout --detach &&
+	check_detached &&
+	test "$(git rev-parse HEAD)" = "$two_oid"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout -b from detached creates branch
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b from detached HEAD creates branch there' '
+	cd repo &&
+	git checkout --detach two &&
+	check_detached &&
+	two_oid=$(git rev-parse two) &&
+	git checkout -b from-detach-test &&
+	check_not_detached &&
+	test "$(git rev-parse HEAD)" = "$two_oid" &&
+	git checkout master &&
+	git branch -D from-detach-test
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: status in detached mode
+# ---------------------------------------------------------------------------
+test_expect_success 'status works in detached HEAD' '
+	cd repo &&
+	git checkout --detach master &&
+	check_detached &&
+	git status >out &&
+	grep -i "detached" out &&
+	git checkout master
+'
+
 test_done

@@ -162,4 +162,75 @@ test_expect_success 'switch --orphan from detached HEAD' '
 	test_must_be_empty tracked
 '
 
+# ---------------------------------------------------------------------------
+# switch --orphan removes tracked files from worktree
+# ---------------------------------------------------------------------------
+test_expect_success 'switch --orphan removes tracked files from worktree' '
+	cd repo &&
+	git switch master &&
+	test -f first.t &&
+	test -f second.t &&
+	git switch --orphan wt-cleared &&
+	test_path_is_missing first.t &&
+	test_path_is_missing second.t &&
+	test_path_is_missing third.t
+'
+
+# ---------------------------------------------------------------------------
+# switch --orphan preserves untracked files
+# ---------------------------------------------------------------------------
+test_expect_success 'switch --orphan preserves untracked files' '
+	cd repo &&
+	git switch master &&
+	echo untracked >untracked.t &&
+	git switch --orphan keeps-untracked &&
+	test -f untracked.t &&
+	test "$(cat untracked.t)" = "untracked" &&
+	rm -f untracked.t
+'
+
+# ---------------------------------------------------------------------------
+# switch --orphan with same name as existing branch fails
+# ---------------------------------------------------------------------------
+test_expect_success 'switch --orphan with existing branch name fails' '
+	cd repo &&
+	git switch master &&
+	test_must_fail git switch --orphan master 2>err &&
+	test -s err
+'
+
+# ---------------------------------------------------------------------------
+# switch --orphan sets HEAD as symbolic ref
+# ---------------------------------------------------------------------------
+test_expect_success 'switch --orphan HEAD is unborn (rev-parse fails)' '
+	cd repo &&
+	git switch master &&
+	git switch --orphan unborn-check &&
+	test_must_fail git rev-parse --verify HEAD 2>err
+'
+
+# ---------------------------------------------------------------------------
+# switch --orphan then switch back preserves master state
+# ---------------------------------------------------------------------------
+test_expect_success 'switch --orphan then switch back preserves master' '
+	cd repo &&
+	git switch master &&
+	master_oid=$(git rev-parse HEAD) &&
+	git switch --orphan roundtrip-orphan &&
+	git switch master &&
+	test "$(git rev-parse HEAD)" = "$master_oid" &&
+	test -f first.t &&
+	test -f second.t &&
+	test -f third.t
+'
+
+# ---------------------------------------------------------------------------
+# switch --orphan with -c flag is incompatible
+# ---------------------------------------------------------------------------
+test_expect_success 'switch --orphan with -c is rejected' '
+	cd repo &&
+	git switch master &&
+	test_must_fail git switch --orphan -c bad-combo 2>err
+'
+
 test_done

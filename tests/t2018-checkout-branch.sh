@@ -243,4 +243,136 @@ test_expect_success 'checkout -b rejects extra path argument' '
 	test -s err
 '
 
+# ---------------------------------------------------------------------------
+# checkout -b with --track sets upstream
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b --track sets upstream config' '
+	cd repo &&
+	git checkout -b tracked-branch --track branch1 &&
+	test "$(git config branch.tracked-branch.merge)" = "refs/heads/branch1" &&
+	git checkout branch1 &&
+	git branch -D tracked-branch
+'
+
+# ---------------------------------------------------------------------------
+# checkout -B creates branch if it does not exist
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -B creates new branch when it does not exist' '
+	cd repo &&
+	git checkout -B brand-new-B &&
+	echo refs/heads/brand-new-B >ref.expect &&
+	git symbolic-ref HEAD >ref.actual &&
+	test_cmp ref.expect ref.actual &&
+	git checkout branch1 &&
+	git branch -D brand-new-B
+'
+
+# ---------------------------------------------------------------------------
+# checkout -b from detached HEAD
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b from detached HEAD creates branch at detached commit' '
+	cd repo &&
+	HEAD1=$(cat ../head1) &&
+	git checkout "$HEAD1" &&
+	git checkout -b from-detached &&
+	echo refs/heads/from-detached >ref.expect &&
+	git symbolic-ref HEAD >ref.actual &&
+	test_cmp ref.expect ref.actual &&
+	echo "$HEAD1" >oid.expect &&
+	git rev-parse HEAD >oid.actual &&
+	test_cmp oid.expect oid.actual &&
+	git checkout branch1 &&
+	git branch -D from-detached
+'
+
+# ---------------------------------------------------------------------------
+# checkout -b with tag as start point
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b from tag' '
+	cd repo &&
+	HEAD1=$(cat ../head1) &&
+	git tag test-tag "$HEAD1" &&
+	git checkout -b from-tag test-tag &&
+	echo "$HEAD1" >oid.expect &&
+	git rev-parse HEAD >oid.actual &&
+	test_cmp oid.expect oid.actual &&
+	git checkout branch1 &&
+	git branch -D from-tag &&
+	git tag -d test-tag
+'
+
+# ---------------------------------------------------------------------------
+# checkout -B resets to explicit ref even when on that branch
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -B on current branch resets HEAD' '
+	cd repo &&
+	HEAD1=$(cat ../head1) &&
+	HEAD2=$(cat ../head2) &&
+	git checkout -B branch1 "$HEAD1" &&
+	echo "$HEAD1" >oid.expect &&
+	git rev-parse HEAD >oid.actual &&
+	test_cmp oid.expect oid.actual &&
+	git checkout -B branch1 "$HEAD2" &&
+	echo "$HEAD2" >oid.expect &&
+	git rev-parse HEAD >oid.actual &&
+	test_cmp oid.expect oid.actual
+'
+
+# ---------------------------------------------------------------------------
+# checkout -b preserves untracked files
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b preserves untracked files' '
+	cd repo &&
+	echo untracked >untracked-file &&
+	git checkout -b untracked-test &&
+	test -f untracked-file &&
+	test "$(cat untracked-file)" = "untracked" &&
+	git checkout branch1 &&
+	git branch -D untracked-test &&
+	rm -f untracked-file
+'
+
+# ---------------------------------------------------------------------------
+# checkout -f -B discards mergeable changes
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -f -B discards mergeable changes' '
+	cd repo &&
+	echo newfile >file2 &&
+	git add file2 &&
+	git checkout -f -B force-B-test &&
+	git diff --cached --name-only >staged &&
+	test_must_be_empty staged &&
+	git checkout branch1 &&
+	git branch -D force-B-test
+'
+
+# ---------------------------------------------------------------------------
+# checkout -b then -b again with different start points
+# ---------------------------------------------------------------------------
+test_expect_success 'consecutive -b creations at different start points' '
+	cd repo &&
+	HEAD1=$(cat ../head1) &&
+	HEAD2=$(cat ../head2) &&
+	git checkout -b seq1 "$HEAD1" &&
+	test "$(git rev-parse HEAD)" = "$HEAD1" &&
+	git checkout -b seq2 "$HEAD2" &&
+	test "$(git rev-parse HEAD)" = "$HEAD2" &&
+	git checkout branch1 &&
+	git branch -D seq1 seq2
+'
+
+# ---------------------------------------------------------------------------
+# checkout -b does not modify reflog of other branches
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b does not clobber other branch refs' '
+	cd repo &&
+	HEAD2=$(cat ../head2) &&
+	branch1_before=$(git rev-parse branch1) &&
+	git checkout -b no-clobber "$HEAD2" &&
+	branch1_after=$(git rev-parse branch1) &&
+	test "$branch1_before" = "$branch1_after" &&
+	git checkout branch1 &&
+	git branch -D no-clobber
+'
+
 test_done

@@ -560,4 +560,260 @@ test_expect_success 'checkout - alternates between two branches' '
 	git checkout master
 '
 
+# ---------------------------------------------------------------------------
+# Deepened: checkout with executable bit preservation
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout switches between branches with different file sets' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b multi-file-test &&
+	echo extra1 >extra1 &&
+	echo extra2 >extra2 &&
+	git add extra1 extra2 &&
+	git commit -m "add extras" &&
+	git checkout master &&
+	test_path_is_missing extra1 &&
+	test_path_is_missing extra2 &&
+	git checkout multi-file-test &&
+	test -f extra1 &&
+	test -f extra2 &&
+	git checkout master
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout -- <path> with staged deletion
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout HEAD -- restores staged deletion' '
+	cd repo &&
+	git checkout master &&
+	git rm file1 &&
+	git checkout HEAD -- file1 &&
+	test -f file1
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout -- <path> does not create file not in index
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -- nonexistent-in-index fails' '
+	cd repo &&
+	git checkout master &&
+	test_must_fail git checkout -- no-such-file 2>err &&
+	test -s err
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout branch with renamed file
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout branch with renamed file shows correct content' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b rename-test &&
+	git mv file1 file1-renamed &&
+	git commit -m "rename file1" &&
+	git checkout master &&
+	test -f file1 &&
+	test_path_is_missing file1-renamed &&
+	git checkout rename-test &&
+	test_path_is_missing file1 &&
+	test -f file1-renamed &&
+	git checkout master
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout -- restores from index not HEAD
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -- restores from index, not HEAD' '
+	cd repo &&
+	git checkout master &&
+	echo staged-content >file1 &&
+	git add file1 &&
+	echo worktree-only >file1 &&
+	git checkout -- file1 &&
+	test "$(cat file1)" = "staged-content" &&
+	git reset --hard
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout -b with --no-track
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b --no-track does not set upstream' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b no-track-branch --no-track branch-a &&
+	test_must_fail git config branch.no-track-branch.merge &&
+	git checkout master &&
+	git branch -D no-track-branch
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout after commit --amend
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout after amend goes to correct content' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b amend-test &&
+	echo amend >amend-file &&
+	git add amend-file &&
+	git commit -m "will amend" &&
+	echo amended >amend-file &&
+	git add amend-file &&
+	git commit --amend -m "amended" &&
+	git checkout master &&
+	git checkout amend-test &&
+	test "$(cat amend-file)" = "amended" &&
+	git checkout master
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout -- path with directory that looks like branch
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -- disambiguates path from branch name' '
+	cd repo &&
+	git checkout master &&
+	mkdir -p ambig &&
+	echo content >ambig/file &&
+	git add ambig/file &&
+	git commit -m "add ambig dir" &&
+	echo dirty >ambig/file &&
+	git checkout -- ambig/file &&
+	test "$(cat ambig/file)" = "content"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout <commit> -- path preserves other staged changes
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout <commit> -- path preserves other staged changes' '
+	cd repo &&
+	git checkout master &&
+	echo new-staged >staged-other &&
+	git add staged-other &&
+	git checkout $(cat ../commit1) -- file1 &&
+	git diff --cached --name-only >staged &&
+	grep staged-other staged &&
+	git reset --hard
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout -b from HEAD~1
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b from HEAD~1' '
+	cd repo &&
+	git checkout master &&
+	parent=$(git rev-parse HEAD~1) &&
+	git checkout -b from-parent HEAD~1 &&
+	test "$(git rev-parse HEAD)" = "$parent" &&
+	git checkout master &&
+	git branch -D from-parent
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout -- multiple specific files
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -- restores multiple named files' '
+	cd repo &&
+	git checkout master &&
+	echo d1 >file1 &&
+	echo d2 >"file with spaces" &&
+	git checkout -- file1 "file with spaces" &&
+	test "$(cat file1)" != "d1" &&
+	test "$(cat "file with spaces")" != "d2"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout branch with nested directory
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout branch with deep nested dirs' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b nested-test &&
+	mkdir -p a/b/c &&
+	echo deep >a/b/c/file &&
+	git add a/b/c/file &&
+	git commit -m "add nested" &&
+	git checkout master &&
+	test_path_is_missing a/b/c/file &&
+	git checkout nested-test &&
+	test -f a/b/c/file &&
+	test "$(cat a/b/c/file)" = "deep" &&
+	git checkout master
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout -f cleans up dirty index
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -f cleans staged changes too' '
+	cd repo &&
+	git checkout master &&
+	echo staged >file1 &&
+	git add file1 &&
+	git checkout -f branch-a &&
+	git diff --cached --exit-code &&
+	git checkout master
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout nonexistent ref with -- fails
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout nonexistent-ref -- file fails' '
+	cd repo &&
+	git checkout master &&
+	test_must_fail git checkout nonexistent-ref -- file1 2>err &&
+	test -s err
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: HEAD stays consistent after failed checkout
+# ---------------------------------------------------------------------------
+test_expect_success 'HEAD unchanged after failed checkout' '
+	cd repo &&
+	git checkout master &&
+	head_before=$(git rev-parse HEAD) &&
+	test_must_fail git checkout nonexistent 2>err &&
+	head_after=$(git rev-parse HEAD) &&
+	test "$head_before" = "$head_after"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout tag with -b creates branch at tag
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b from annotated tag' '
+	cd repo &&
+	git checkout master &&
+	git tag -a -m "annotated" ann-tag HEAD &&
+	git checkout -b from-ann-tag ann-tag &&
+	test "$(git rev-parse HEAD)" = "$(git rev-parse ann-tag^{commit})" &&
+	git checkout master &&
+	git branch -D from-ann-tag &&
+	git tag -d ann-tag
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout --orphan with committed content
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout to branch then back preserves HEAD' '
+	cd repo &&
+	git checkout master &&
+	master_head=$(git rev-parse HEAD) &&
+	git checkout branch-a &&
+	git checkout master &&
+	test "$(git rev-parse HEAD)" = "$master_head"
+'
+
+test_expect_success 'checkout -B with --no-track avoids upstream' '
+	cd repo &&
+	git checkout master &&
+	git checkout -B no-track-B --no-track branch-a &&
+	test_must_fail git config branch.no-track-B.merge &&
+	git checkout master
+'
+
+test_expect_success 'checkout with empty tree then back to master' '
+	cd repo &&
+	git checkout master &&
+	git checkout --orphan empty-tree-test 2>/dev/null &&
+	git checkout -f master &&
+	test -f file1 &&
+	test "$(git symbolic-ref --short HEAD)" = "master"
+'
+
 test_done
