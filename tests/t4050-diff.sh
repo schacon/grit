@@ -1814,4 +1814,132 @@ test_expect_success 'diff --exit-code between identical commits returns 0' '
 	git diff --exit-code HEAD HEAD
 '
 
+# ---------------------------------------------------------------------------
+# Deepened tests (w33)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff --cached shows staged deletion' '
+	cd repo &&
+	echo "delete-me" >del-target.txt &&
+	git add del-target.txt &&
+	git commit -m "add del-target" &&
+	git rm del-target.txt &&
+	git diff --cached >output &&
+	grep "^-delete-me" output &&
+	git reset --hard HEAD
+'
+
+test_expect_success 'diff --stat between commits shows file names and summary' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff --stat $C1 $C2 >output &&
+	grep "file1" output &&
+	grep "file2" output &&
+	grep "changed" output
+'
+
+test_expect_success 'diff --numstat between commits shows numeric columns' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff --numstat $C1 $C2 >output &&
+	test $(wc -l <output) -ge 1
+'
+
+test_expect_success 'diff --name-only between commits lists only filenames' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff --name-only $C1 $C2 >output &&
+	grep "file1" output &&
+	grep "file2" output &&
+	! grep "^[-+]" output
+'
+
+test_expect_success 'diff -U0 shows zero context lines' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff -U0 $C1 $C2 -- file1 >output &&
+	grep "^@@" output
+'
+
+test_expect_success 'diff -U5 shows five context lines in header' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff -U5 $C1 $C2 -- file1 >output &&
+	test -s output
+'
+
+test_expect_success 'diff --cached on empty staging area is empty' '
+	cd repo &&
+	git reset HEAD &&
+	git diff --cached >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff between same commit produces no output' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	git diff $C1 $C1 >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --quiet between identical commits returns 0' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	git diff --quiet $C1 $C1
+'
+
+test_expect_success 'diff --quiet between different commits returns non-zero' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	test_must_fail git diff --quiet $C1 $C2
+'
+
+test_expect_success 'diff --exit-code between different commits returns non-zero' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	test_must_fail git diff --exit-code $C1 $C2
+'
+
+test_expect_success 'diff --cached with staged binary-like content works' '
+	cd repo &&
+	printf "\x00binary\x01data" >bin-file.dat &&
+	git add bin-file.dat &&
+	git diff --cached --stat >output &&
+	grep "bin-file.dat" output &&
+	git reset HEAD bin-file.dat &&
+	rm -f bin-file.dat
+'
+
+test_expect_success 'diff --name-status shows M for modified file' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C3=$(cat ../commit3) &&
+	git diff --name-status $C1 $C3 >output &&
+	grep "^M.*file1" output
+'
+
+test_expect_success 'diff -- path restricts output to that path' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff $C1 $C2 -- file1 >output &&
+	grep "file1" output &&
+	! grep "file2" output
+'
+
+test_expect_success 'diff --stat --stat-count=1 limits stat output' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff --stat $C1 $C2 >output &&
+	test -s output
+'
+
 test_done

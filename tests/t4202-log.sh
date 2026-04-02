@@ -2127,4 +2127,104 @@ test_expect_success 'log specific commit shows only that commit' '
 	test "$(cat output)" = "$HEAD_HASH"
 '
 
+# ---------------------------------------------------------------------------
+# Deepened tests (w33)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'log --oneline produces abbreviated output' '
+	cd repo &&
+	git log --oneline >output &&
+	test $(wc -l <output) -ge 3
+'
+
+test_expect_success 'log --format=%an shows author name' '
+	cd repo &&
+	git log -n 1 --format="%an" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%ae shows author email' '
+	cd repo &&
+	git log -n 1 --format="%ae" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%cn shows committer name' '
+	cd repo &&
+	git log -n 1 --format="%cn" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%ce shows committer email' '
+	cd repo &&
+	git log -n 1 --format="%ce" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%s shows subject line' '
+	cd repo &&
+	git log -n 1 --format="%s" >output &&
+	test -s output
+'
+
+test_expect_success 'log -n 2 limits output to 2 commits' '
+	cd repo &&
+	git log -n 2 --format="%H" >output &&
+	test $(wc -l <output) -eq 2
+'
+
+test_expect_success 'log --format=%T shows tree hash' '
+	cd repo &&
+	git log -n 1 --format="%T" >output &&
+	line=$(cat output) &&
+	test ${#line} -eq 40
+'
+
+test_expect_success 'log --reverse shows oldest first' '
+	cd repo &&
+	git log --format="%s" >normal_out &&
+	git log --reverse --format="%s" >reverse_out &&
+	first_normal=$(head -1 normal_out) &&
+	last_reverse=$(tail -1 reverse_out) &&
+	test "$first_normal" = "$last_reverse"
+'
+
+test_expect_success 'log --format=%d shows ref decoration' '
+	cd repo &&
+	git log -n 1 --format="%d" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%h shows abbreviated commit hash' '
+	cd repo &&
+	git log -n 1 --format="%h" >output &&
+	line=$(cat output) &&
+	test ${#line} -ge 4 && test ${#line} -le 40
+'
+
+test_expect_success 'log --format=%ci shows committer date ISO-like' '
+	cd repo &&
+	git log -n 1 --format="%ci" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%ai shows author date ISO-like' '
+	cd repo &&
+	git log -n 1 --format="%ai" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format with multiple placeholders' '
+	cd repo &&
+	git log -n 1 --format="%H %an %s" >output &&
+	test -s output
+'
+
+test_expect_success 'log --skip=0 is same as no skip' '
+	cd repo &&
+	git log --oneline >no_skip &&
+	git log --oneline --skip=0 >with_skip &&
+	test $(wc -l <no_skip) -eq $(wc -l <with_skip)
+'
+
 test_done

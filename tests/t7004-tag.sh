@@ -3012,4 +3012,130 @@ test_expect_success 'for-each-ref sees created tags' '
 	grep "deepen-ann-v1" output
 '
 
+# ---------------------------------------------------------------------------
+# Deepened tests (w33)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'tag -l lists all tags' '
+	cd deepen-tag-repo &&
+	git tag -l >output &&
+	test $(wc -l <output) -ge 2
+'
+
+test_expect_success 'tag -l pattern filters tags' '
+	cd deepen-tag-repo &&
+	git tag w33-filter-a &&
+	git tag w33-filter-b &&
+	git tag -l "w33-filter-*" >output &&
+	grep "w33-filter-a" output &&
+	grep "w33-filter-b" output &&
+	! grep "deepen-lw-v1" output &&
+	git tag -d w33-filter-a &&
+	git tag -d w33-filter-b
+'
+
+test_expect_success 'tag -d deletes a lightweight tag' '
+	cd deepen-tag-repo &&
+	git tag w33-del-me &&
+	git tag -l >before &&
+	grep "w33-del-me" before &&
+	git tag -d w33-del-me &&
+	git tag -l >after &&
+	! grep "w33-del-me" after
+'
+
+test_expect_success 'tag -d on nonexistent tag fails' '
+	cd deepen-tag-repo &&
+	test_must_fail git tag -d w33-nonexistent-tag 2>/dev/null
+'
+
+test_expect_success 'tag points to correct commit' '
+	cd deepen-tag-repo &&
+	HEAD_HASH=$(git rev-parse HEAD) &&
+	git tag w33-point-check &&
+	TAG_HASH=$(git rev-parse w33-point-check) &&
+	test "$HEAD_HASH" = "$TAG_HASH" &&
+	git tag -d w33-point-check
+'
+
+test_expect_success 'annotated tag -m creates tag object' '
+	cd deepen-tag-repo &&
+	git tag -a w33-ann-check -m "check annotation" &&
+	git cat-file -t w33-ann-check >output &&
+	grep "tag" output &&
+	git tag -d w33-ann-check
+'
+
+test_expect_success 'annotated tag message is preserved' '
+	cd deepen-tag-repo &&
+	git tag -a w33-msg-check -m "my tag message" &&
+	git cat-file -p w33-msg-check >output &&
+	grep "my tag message" output &&
+	git tag -d w33-msg-check
+'
+
+test_expect_success 'tag on specific commit' '
+	cd deepen-tag-repo &&
+	FIRST=$(git rev-list HEAD | tail -1) &&
+	git tag w33-on-first $FIRST &&
+	TAG_VAL=$(git rev-parse w33-on-first) &&
+	test "$TAG_VAL" = "$FIRST" &&
+	git tag -d w33-on-first
+'
+
+test_expect_success 'show-ref includes tags' '
+	cd deepen-tag-repo &&
+	git show-ref >output &&
+	grep "refs/tags/" output
+'
+
+test_expect_success 'tag with slash in name' '
+	cd deepen-tag-repo &&
+	git tag release/w33-1.0 &&
+	git tag -l >output &&
+	grep "release/w33-1.0" output &&
+	git tag -d release/w33-1.0
+'
+
+test_expect_success 'multiple tags on same commit' '
+	cd deepen-tag-repo &&
+	git tag w33-multi-a &&
+	git tag w33-multi-b &&
+	A=$(git rev-parse w33-multi-a) &&
+	B=$(git rev-parse w33-multi-b) &&
+	test "$A" = "$B" &&
+	git tag -d w33-multi-a &&
+	git tag -d w33-multi-b
+'
+
+test_expect_success 'tag after new commit points to new HEAD' '
+	cd deepen-tag-repo &&
+	echo "w33 extra" >w33-extra.txt &&
+	git add w33-extra.txt &&
+	git commit -m "w33 extra commit" &&
+	NEW_HEAD=$(git rev-parse HEAD) &&
+	git tag w33-new-head &&
+	test "$(git rev-parse w33-new-head)" = "$NEW_HEAD" &&
+	git tag -d w33-new-head
+'
+
+test_expect_success 'rev-parse dereferences annotated tag with ^{}' '
+	cd deepen-tag-repo &&
+	ANN_DEREF=$(git rev-parse deepen-ann-v1^{}) &&
+	HEAD_HASH=$(git rev-parse deepen-ann-v1^{commit}) &&
+	test "$ANN_DEREF" = "$HEAD_HASH"
+'
+
+test_expect_success 'for-each-ref with tag format shows objecttype' '
+	cd deepen-tag-repo &&
+	git for-each-ref --format="%(objecttype) %(refname)" refs/tags/ >output &&
+	test -s output
+'
+
+test_expect_success 'tag -l with no tags matching returns empty' '
+	cd deepen-tag-repo &&
+	git tag -l "zzz-no-match-*" >output &&
+	test_must_be_empty output
+'
+
 test_done

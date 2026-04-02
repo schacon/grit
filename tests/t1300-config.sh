@@ -3317,4 +3317,115 @@ test_expect_success 'config --list output lines match key=value format' '
 	! grep -v "=" output
 '
 
+# ---------------------------------------------------------------------------
+# Deepened tests (w33)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'config --get on nonexistent key fails' '
+	cd repo &&
+	test_must_fail git config --get nonexistent.key 2>/dev/null
+'
+
+test_expect_success 'config value with spaces is preserved' '
+	cd repo &&
+	git config deepen-space.val "hello world foo" &&
+	result=$(git config --get deepen-space.val) &&
+	test "$result" = "hello world foo"
+'
+
+test_expect_success 'config value with equals sign is preserved' '
+	cd repo &&
+	git config deepen-eq.val "a=b=c" &&
+	result=$(git config --get deepen-eq.val) &&
+	test "$result" = "a=b=c"
+'
+
+test_expect_success 'config overwrite replaces old value' '
+	cd repo &&
+	git config deepen-overwrite.key "old" &&
+	git config deepen-overwrite.key "new" &&
+	result=$(git config --get deepen-overwrite.key) &&
+	test "$result" = "new"
+'
+
+test_expect_success 'config bool true values' '
+	cd repo &&
+	git config deepen-bool.t1 "true" &&
+	result=$(git config --get deepen-bool.t1) &&
+	test "$result" = "true"
+'
+
+test_expect_success 'config bool false values' '
+	cd repo &&
+	git config deepen-bool.f1 "false" &&
+	result=$(git config --get deepen-bool.f1) &&
+	test "$result" = "false"
+'
+
+test_expect_success 'config with empty value' '
+	cd repo &&
+	git config deepen-empty.key "" &&
+	result=$(git config --get deepen-empty.key) &&
+	test "$result" = ""
+'
+
+test_expect_success 'config section is case-insensitive' '
+	cd repo &&
+	git config DEEPEN-UPPER.key "val" &&
+	result=$(git config --get deepen-upper.key) &&
+	test "$result" = "val"
+'
+
+test_expect_success 'config key is case-insensitive' '
+	cd repo &&
+	git config deepen-ci.UPPER "val" &&
+	result=$(git config --get deepen-ci.upper) &&
+	test "$result" = "val"
+'
+
+test_expect_success 'config --get-regexp matches pattern' '
+	cd repo &&
+	git config deepen-regex.alpha "1" &&
+	git config deepen-regex.beta "2" &&
+	git config --get-regexp deepen-regex >output &&
+	grep "alpha" output &&
+	grep "beta" output
+'
+
+test_expect_success 'config long value is preserved' '
+	cd repo &&
+	LONG=$(printf "x%.0s" $(seq 1 200)) &&
+	git config deepen-long.key "$LONG" &&
+	result=$(git config --get deepen-long.key) &&
+	test "$result" = "$LONG"
+'
+
+test_expect_success 'config with numeric zero value' '
+	cd repo &&
+	git config deepen-zero.key "0" &&
+	result=$(git config --get deepen-zero.key) &&
+	test "$result" = "0"
+'
+
+test_expect_success 'config subsection is case-sensitive' '
+	cd repo &&
+	git config "deepen-sub.CaseSensitive.key" "val1" &&
+	result=$(git config --get "deepen-sub.CaseSensitive.key") &&
+	test "$result" = "val1"
+'
+
+test_expect_success 'config value with special chars preserved' '
+	cd repo &&
+	git config deepen-special.url "https://example.com/path?q=1&r=2" &&
+	result=$(git config --get deepen-special.url) &&
+	test "$result" = "https://example.com/path?q=1&r=2"
+'
+
+test_expect_success 'config with tab character in value' '
+	cd repo &&
+	git config deepen-tab.key "hello	world" &&
+	result=$(git config --get deepen-tab.key) &&
+	test "$result" = "hello	world"
+'
+
 test_done
