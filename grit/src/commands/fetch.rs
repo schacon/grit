@@ -104,6 +104,13 @@ fn fetch_remote(
 
     // Track which remote-tracking refs we updated (for prune)
     let mut updated_refs: Vec<String> = Vec::new();
+    let mut has_updates = false;
+
+    // Determine the remote's HEAD branch for FETCH_HEAD
+    let remote_head_branch = determine_remote_head(&remote_repo.git_dir);
+
+    // Collect FETCH_HEAD entries
+    let mut fetch_head_entries: Vec<String> = Vec::new();
 
     // Update remote-tracking refs from remote heads
     for (refname, remote_oid) in &remote_heads {
@@ -112,11 +119,24 @@ fn fetch_remote(
         let local_ref = format!("{dst_prefix}{branch}");
         updated_refs.push(local_ref.clone());
 
+        // Build FETCH_HEAD entry
+        let is_default = remote_head_branch.as_deref() == Some(branch);
+        let not_for_merge = if is_default { "" } else { "\tnot-for-merge" };
+        fetch_head_entries.push(format!(
+            "{}{not_for_merge}\tbranch '{branch}' of {url}",
+            remote_oid,
+        ));
+
         let old_oid = read_ref_oid(git_dir, &local_ref);
 
         if old_oid.as_ref() == Some(remote_oid) {
             // Already up to date
             continue;
+        }
+
+        if !has_updates && !args.quiet {
+            eprintln!("From {url}");
+            has_updates = true;
         }
 
         refs::write_ref(git_dir, &local_ref, remote_oid)
@@ -134,19 +154,25 @@ fn fetch_remote(
             if old_oid.as_ref() == Some(remote_oid) {
                 continue;
             }
+
+            if !has_updates && !args.quiet {
+                eprintln!("From {url}");
+                has_updates = true;
+            }
+
             refs::write_ref(git_dir, refname, remote_oid)
                 .with_context(|| format!("updating tag {refname}"))?;
 
             if !args.quiet {
                 let tag_name = refname.strip_prefix("refs/tags/").unwrap_or(refname);
                 if let Some(old) = old_oid {
-                    println!(
-                        "   {}..{}  {tag_name} -> {tag_name}",
+                    eprintln!(
+                        "   {}..{}  {tag_name:<17} -> {tag_name}",
                         &old.to_string()[..7],
                         &remote_oid.to_string()[..7],
                     );
                 } else {
-                    println!(" * [new tag]         {tag_name} -> {tag_name}");
+                    eprintln!(" * [new tag]         {tag_name:<17} -> {tag_name}");
                 }
             }
         }
@@ -154,38 +180,68 @@ fn fetch_remote(
 
     // Prune stale remote-tracking refs
     if args.prune {
-        prune_stale_refs(git_dir, &dst_prefix, &updated_refs, args.quiet)?;
+        if !has_updates && !args.quiet {
+            // Check if prune will actually delete anything
+            let existing = refs::list_refs(git_dir, &dst_prefix)?;
+            let will_prune = existing.iter().any(|(r, _)| !updated_refs.contains(r));
+            if will_prune {
+                eprintln!("From {url}");
+                has_updates = true;
+            }
+        }
+        prune_stale_refs(git_dir, &dst_prefix, &updated_refs, remote_name, args.quiet)?;
     }
 
-    if !args.quiet && remote_heads.is_empty() && remote_tags.is_empty() {
-        // Nothing fetched — still indicate we connected
-        eprintln!("From {url}");
+    // Write FETCH_HEAD (default branch first, then not-for-merge entries)
+    if !fetch_head_entries.is_empty() {
+        // Sort so entries without "not-for-merge" come first
+        fetch_head_entries.sort_by(|a, b| {
+            let a_nfm = a.contains("not-for-merge");
+            let b_nfm = b.contains("not-for-merge");
+            a_nfm.cmp(&b_nfm)
+        });
+        let fetch_head_path = git_dir.join("FETCH_HEAD");
+        let content = fetch_head_entries.join("\n") + "\n";
+        fs::write(&fetch_head_path, content).context("writing FETCH_HEAD")?;
     }
 
     Ok(())
 }
 
-/// Print a ref update line.
+/// Print a ref update line (to stderr, matching git).
 fn print_update(
     old_oid: &Option<ObjectId>,
     new_oid: &ObjectId,
     branch: &str,
     remote_name: &str,
 ) {
+    let tracking = format!("{remote_name}/{branch}");
     match old_oid {
         None => {
-            println!(
-                " * [new branch]      {branch} -> {remote_name}/{branch}"
+            eprintln!(
+                " * [new branch]      {branch:<17} -> {tracking}"
             );
         }
         Some(old) => {
-            println!(
-                "   {}..{}  {branch} -> {remote_name}/{branch}",
+            eprintln!(
+                "   {}..{}  {branch:<17} -> {tracking}",
                 &old.to_string()[..7],
                 &new_oid.to_string()[..7],
             );
         }
     }
+}
+
+/// Determine the remote's HEAD branch name.
+fn determine_remote_head(remote_git_dir: &Path) -> Option<String> {
+    let head_path = remote_git_dir.join("HEAD");
+    if let Ok(content) = fs::read_to_string(&head_path) {
+        let content = content.trim();
+        if let Some(refname) = content.strip_prefix("ref: refs/heads/") {
+            return Some(refname.to_string());
+        }
+    }
+    None
 }
 
 /// Read a ref to get its OID, returning None if it doesn't exist.
@@ -258,6 +314,7 @@ fn prune_stale_refs(
     git_dir: &Path,
     prefix: &str,
     current_refs: &[String],
+    remote_name: &str,
     quiet: bool,
 ) -> Result<()> {
     let existing = refs::list_refs(git_dir, prefix)?;
@@ -266,7 +323,14 @@ fn prune_stale_refs(
             refs::delete_ref(git_dir, refname)
                 .with_context(|| format!("pruning {refname}"))?;
             if !quiet {
-                println!(" - [deleted]         (none) -> {refname}");
+                // Show short name: "origin/branch" instead of "refs/remotes/origin/branch"
+                let short = refname
+                    .strip_prefix("refs/remotes/")
+                    .unwrap_or(refname);
+                let branch = short
+                    .strip_prefix(&format!("{remote_name}/"))
+                    .unwrap_or(short);
+                eprintln!(" - [deleted]         (none)     -> {remote_name}/{branch}");
             }
         }
     }

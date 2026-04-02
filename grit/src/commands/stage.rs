@@ -50,5 +50,13 @@ pub fn run(args: Args) -> Result<()> {
         dry_run: args.dry_run,
         verbose: args.verbose,
         force: args.force,
+        patch: false,
+        interactive: false,
+        edit: false,
+        chmod: None,
+        renormalize: false,
+        refresh: false,
+        ignore_errors: false,
+        ignore_missing: false,
     })
 }

@@ -71,8 +71,21 @@ pub fn run(args: Args) -> Result<()> {
         );
     }
 
-    // Determine the initial branch
-    let initial_branch = args.branch.as_deref().unwrap_or("master");
+    // Print "Cloning into..." BEFORE doing the work (matches git behavior)
+    if !args.quiet {
+        if args.bare {
+            eprintln!(
+                "Cloning into bare repository '{}'...",
+                target_name
+            );
+        } else {
+            eprintln!("Cloning into '{}'...", target_name);
+        }
+    }
+
+    // Determine the initial branch from source HEAD
+    let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
+    let initial_branch = head_branch.as_deref().unwrap_or("master");
 
     // Initialize the target repository
     fs::create_dir_all(&target_path)
@@ -85,38 +98,58 @@ pub fn run(args: Args) -> Result<()> {
     copy_objects(&source.git_dir, &dest.git_dir)
         .context("copying objects")?;
 
-    // Copy refs from source → remote-tracking refs in destination
     let remote_name = "origin";
-    copy_refs_as_remote(&source.git_dir, &dest.git_dir, remote_name)
-        .context("copying refs")?;
 
-    // Set up remote "origin" in config
-    setup_origin_remote(&dest.git_dir, &source_path, remote_name)
-        .context("setting up origin remote")?;
+    if args.bare {
+        // Bare clone: copy refs directly (mirror-style), no remote tracking
+        copy_refs_direct(&source.git_dir, &dest.git_dir)
+            .context("copying refs")?;
 
-    // Determine which branch to set HEAD to
-    let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
+        // Set up remote config (URL only, no fetch refspec for bare)
+        setup_origin_remote_bare(&dest.git_dir, &source_path, remote_name)
+            .context("setting up origin remote")?;
 
-    // Set HEAD to the chosen branch if it exists in remote refs
-    if let Some(ref branch) = head_branch {
-        let remote_ref = dest.git_dir.join("refs/remotes").join(remote_name).join(branch);
-        if remote_ref.exists() {
-            let oid_str = fs::read_to_string(&remote_ref)
-                .context("reading remote ref")?;
-            let oid = oid_str.trim().to_string();
-
-            // Create the local branch ref
-            let local_ref_path = dest.git_dir.join("refs/heads").join(branch);
-            if let Some(parent) = local_ref_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&local_ref_path, format!("{oid}\n"))?;
-
-            // Point HEAD at it
+        // Set HEAD to match source
+        if let Some(ref branch) = head_branch {
             fs::write(
                 dest.git_dir.join("HEAD"),
                 format!("ref: refs/heads/{branch}\n"),
             )?;
+        }
+    } else {
+        // Non-bare clone: copy refs as remote-tracking refs
+        copy_refs_as_remote(&source.git_dir, &dest.git_dir, remote_name)
+            .context("copying refs")?;
+
+        // Set up remote "origin" in config
+        setup_origin_remote(&dest.git_dir, &source_path, remote_name)
+            .context("setting up origin remote")?;
+
+        // Set HEAD to the chosen branch if it exists in remote refs
+        if let Some(ref branch) = head_branch {
+            let remote_ref = dest.git_dir.join("refs/remotes").join(remote_name).join(branch);
+            if remote_ref.exists() {
+                let oid_str = fs::read_to_string(&remote_ref)
+                    .context("reading remote ref")?;
+                let oid = oid_str.trim().to_string();
+
+                // Create the local branch ref
+                let local_ref_path = dest.git_dir.join("refs/heads").join(branch);
+                if let Some(parent) = local_ref_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&local_ref_path, format!("{oid}\n"))?;
+
+                // Point HEAD at it
+                fs::write(
+                    dest.git_dir.join("HEAD"),
+                    format!("ref: refs/heads/{branch}\n"),
+                )?;
+
+                // Set up branch tracking config
+                setup_branch_tracking(&dest.git_dir, branch, remote_name)
+                    .context("setting up branch tracking")?;
+            }
         }
     }
 
@@ -135,16 +168,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if !args.quiet {
-        let abs_target = target_path.canonicalize().unwrap_or(target_path);
-        if args.bare {
-            println!(
-                "Cloning into bare repository '{}'...",
-                abs_target.display()
-            );
-        } else {
-            println!("Cloning into '{}'...", abs_target.display());
-        }
-        println!("done.");
+        eprintln!("done.");
     }
 
     Ok(())
@@ -307,7 +331,54 @@ fn copy_refs_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Set up the "origin" remote in the destination config.
+/// Copy refs from source directly into destination (for bare clones).
+/// Mirrors refs/heads/* and refs/tags/* directly.
+fn copy_refs_direct(
+    src_git_dir: &Path,
+    dst_git_dir: &Path,
+) -> Result<()> {
+    // Copy refs/heads/* → refs/heads/*
+    let src_refs_heads = src_git_dir.join("refs/heads");
+    let dst_refs_heads = dst_git_dir.join("refs/heads");
+    if src_refs_heads.is_dir() {
+        copy_refs_recursive(&src_refs_heads, &dst_refs_heads)?;
+    }
+
+    // Copy refs/tags/* → refs/tags/*
+    let src_tags = src_git_dir.join("refs/tags");
+    let dst_tags = dst_git_dir.join("refs/tags");
+    if src_tags.is_dir() {
+        copy_refs_recursive(&src_tags, &dst_tags)?;
+    }
+
+    // Also handle packed-refs if present
+    let packed_refs = src_git_dir.join("packed-refs");
+    if packed_refs.is_file() {
+        let content = fs::read_to_string(&packed_refs)?;
+        for line in content.lines() {
+            if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
+                continue;
+            }
+            let mut parts = line.split_whitespace();
+            let Some(oid) = parts.next() else { continue };
+            let Some(refname) = parts.next() else { continue };
+
+            if refname.starts_with("refs/heads/") || refname.starts_with("refs/tags/") {
+                let dst_ref = dst_git_dir.join(refname);
+                if let Some(parent) = dst_ref.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                if !dst_ref.exists() {
+                    fs::write(&dst_ref, format!("{oid}\n"))?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Set up the "origin" remote in the destination config (non-bare).
 fn setup_origin_remote(
     git_dir: &Path,
     source_path: &Path,
@@ -328,6 +399,51 @@ fn setup_origin_remote(
     config.set(
         &format!("remote.{remote_name}.fetch"),
         &format!("+refs/heads/*:refs/remotes/{remote_name}/*"),
+    )?;
+    config.write().context("writing config")?;
+
+    Ok(())
+}
+
+/// Set up the "origin" remote for a bare clone (URL only, no fetch refspec).
+fn setup_origin_remote_bare(
+    git_dir: &Path,
+    source_path: &Path,
+    remote_name: &str,
+) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+
+    let abs_source = source_path
+        .canonicalize()
+        .unwrap_or_else(|_| source_path.to_path_buf());
+    let url = abs_source.to_string_lossy().to_string();
+
+    config.set(&format!("remote.{remote_name}.url"), &url)?;
+    config.write().context("writing config")?;
+
+    Ok(())
+}
+
+/// Set up branch tracking configuration (branch.<name>.remote and branch.<name>.merge).
+fn setup_branch_tracking(
+    git_dir: &Path,
+    branch: &str,
+    remote_name: &str,
+) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+
+    config.set(&format!("branch.{branch}.remote"), remote_name)?;
+    config.set(
+        &format!("branch.{branch}.merge"),
+        &format!("refs/heads/{branch}"),
     )?;
     config.write().context("writing config")?;
 
