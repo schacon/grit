@@ -122,3 +122,27 @@ The Git-compatible engine should live in a **library crate** (`grit-lib`); the *
 - **After every successful commit** that concludes a subagent handoff, run **`git push origin main`** so the remote stays backed up (skip only if `origin` is missing or push is impossible—then say so in the log).
 - Before committing, always run `cargo fmt` and `cargo clippy --fix --allow-dirty` and ensure no warnings remain.
 - After running passing tests, run scripts/update-dashboard.sh
+
+## Parallel Agent Workflow
+
+When running multiple subagents in parallel:
+
+1. **Always use git worktrees** — each agent gets its own worktree to avoid file conflicts and cargo lock contention:
+   ```bash
+   git worktree add -b <branch> /home/hasi/grit-worktrees/<agent-name> main
+   ```
+2. **Set CARGO_TARGET_DIR** per worktree so builds don't fight over the same target directory:
+   ```bash
+   CARGO_TARGET_DIR=/tmp/grit-build-<agent-name> cargo build --release -p grit
+   ```
+3. **Merge back to main** when each agent finishes:
+   ```bash
+   cd /home/hasi/grit && git merge --no-edit <branch>
+   ```
+4. **Clean up** worktrees after merging:
+   ```bash
+   git worktree remove /home/hasi/grit-worktrees/<agent-name>
+   git branch -D <branch>
+   ```
+5. **Never run tests inside the main repo** — always use `/tmp/` for test scratch directories.
+6. **Max parallel agents**: Keep to a reasonable number (3-5 for deepening work, up to 10 for independent new features) to avoid resource contention.
