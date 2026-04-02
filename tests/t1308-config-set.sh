@@ -358,4 +358,94 @@ test_expect_success 'config get with existing key ignores --default' '
 	test_cmp expected actual
 '
 
+# ── --get-regexp ─────────────────────────────────────────────────────────
+
+test_expect_success '--get-regexp matches multiple keys' '
+	cd repo &&
+	git config set grep.a "1" &&
+	git config set grep.b "2" &&
+	git config set grep.c "3" &&
+	git config --get-regexp "grep" >actual &&
+	grep "grep.a 1" actual &&
+	grep "grep.b 2" actual &&
+	grep "grep.c 3" actual
+'
+
+test_expect_success '--get-regexp with no match returns error' '
+	cd repo &&
+	test_must_fail git config --get-regexp "nonexistent\.xxx"
+'
+
+# ── multivar set ─────────────────────────────────────────────────────────
+
+test_expect_success 'config set multiple keys in same section' '
+	cd repo &&
+	git config set multi_sec.k1 "v1" &&
+	git config set multi_sec.k2 "v2" &&
+	git config set multi_sec.k3 "v3" &&
+	git config get multi_sec.k1 >actual1 &&
+	git config get multi_sec.k2 >actual2 &&
+	git config get multi_sec.k3 >actual3 &&
+	echo "v1" >exp1 && echo "v2" >exp2 && echo "v3" >exp3 &&
+	test_cmp exp1 actual1 &&
+	test_cmp exp2 actual2 &&
+	test_cmp exp3 actual3
+'
+
+# ── config list ──────────────────────────────────────────────────────────
+
+test_expect_success 'config -l lists all entries' '
+	cd repo &&
+	git config -l >actual &&
+	grep "user.name" actual || grep "core." actual
+'
+
+test_expect_success 'config list (subcommand) works' '
+	cd repo &&
+	git config list >actual &&
+	grep "core.repositoryformatversion" actual
+'
+
+# ── config with subsection containing dots ───────────────────────────────
+
+test_expect_success 'config with dotted subsection' '
+	cd repo &&
+	git config set "remote.origin.url" "https://example.com/repo.git" &&
+	git config get "remote.origin.url" >actual &&
+	echo "https://example.com/repo.git" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'config with quoted subsection in file' '
+	cd repo &&
+	git config set "branch.feature/test.merge" "refs/heads/feature/test" &&
+	git config get "branch.feature/test.merge" >actual &&
+	echo "refs/heads/feature/test" >expected &&
+	test_cmp expected actual
+'
+
+# ── numeric suffixes ──────────────────────────────────────────────────────
+
+test_expect_success '--int handles k/m suffixes' '
+	cd repo &&
+	git config set intk.val "10k" &&
+	git config --int intk.val >actual &&
+	echo "10240" >expected &&
+	test_cmp expected actual
+'
+
+# ── overwrite with different type ─────────────────────────────────────────
+
+test_expect_success 'set value then overwrite with new value' '
+	cd repo &&
+	git config set overwrite.key "first" &&
+	git config get overwrite.key >actual &&
+	echo "first" >expected &&
+	test_cmp expected actual &&
+	git config set overwrite.key "second" &&
+	git config get overwrite.key >actual &&
+	echo "second" >expected &&
+	test_cmp expected actual
+'
+
 test_done
