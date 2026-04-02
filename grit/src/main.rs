@@ -312,6 +312,87 @@ enum Command {
     MultiPackIndex(commands::multi_pack_index::Args),
     /// Replay commits on a new base.
     Replay(commands::replay::Args),
+    /// Download missing blobs for partial clone.
+    Backfill(commands::backfill::Args),
+    /// Git protocol daemon.
+    Daemon(commands::daemon::Args),
+    /// Compare pairs of blobs/trees.
+    #[command(name = "diff-pairs")]
+    DiffPairs(commands::diff_pairs::Args),
+    /// Show commit history.
+    History(commands::history::Args),
+    /// CGI for smart HTTP transport.
+    #[command(name = "http-backend")]
+    HttpBackend(commands::http_backend::Args),
+    /// Download from remote via HTTP.
+    #[command(name = "http-fetch")]
+    HttpFetch(commands::http_fetch::Args),
+    /// Push to remote via HTTP/DAV.
+    #[command(name = "http-push")]
+    HttpPush(commands::http_push::Args),
+    /// Show when files were last modified.
+    #[command(name = "last-modified")]
+    LastModified(commands::last_modified::Args),
+    /// Manage repository metadata.
+    Repo(commands::repo::Args),
+    /// Shell i18n support.
+    #[command(name = "sh-i18n")]
+    ShI18n(commands::sh_i18n::Args),
+    /// Shell setup helpers.
+    #[command(name = "sh-setup")]
+    ShSetup(commands::sh_setup::Args),
+    /// Push objects to a remote repository (plumbing).
+    #[command(name = "send-pack")]
+    SendPack(commands::send_pack::Args),
+    /// Download objects from a remote repository (plumbing).
+    #[command(name = "fetch-pack")]
+    FetchPack(commands::fetch_pack::Args),
+    /// Receive pushed objects (server side).
+    #[command(name = "receive-pack")]
+    ReceivePack(commands::receive_pack::Args),
+    /// Send objects for fetch (server side).
+    #[command(name = "upload-pack")]
+    UploadPack(commands::upload_pack::Args),
+    /// Send archive to client (server-side of git archive --remote).
+    #[command(name = "upload-archive")]
+    UploadArchive(commands::upload_archive::Args),
+    /// Restricted login shell for Git-only SSH access.
+    Shell(commands::shell::Args),
+    /// Add file contents to the index (alias for 'add').
+    Stage(commands::stage::Args),
+    /// Launch an external diff tool.
+    Difftool(commands::difftool::Args),
+    /// Launch an external merge tool for conflicts.
+    Mergetool(commands::mergetool::Args),
+    /// Rewrite branches (deprecated — use git-filter-repo).
+    #[command(name = "filter-branch")]
+    FilterBranch(commands::filter_branch::Args),
+    /// Generate a bug report.
+    Bugreport(commands::bugreport::Args),
+    /// Generate diagnostic information.
+    Diagnose(commands::diagnose::Args),
+    /// Retrieve and store user credentials.
+    Credential(commands::credential::Args),
+    /// Cache credentials in memory.
+    #[command(name = "credential-cache")]
+    CredentialCache(commands::credential_cache::Args),
+    /// Store credentials on disk.
+    #[command(name = "credential-store")]
+    CredentialStore(commands::credential_store::Args),
+    /// Run a command in each registered repo.
+    #[command(name = "for-each-repo")]
+    ForEachRepo(commands::for_each_repo::Args),
+    /// Extract commit ID from tar archive.
+    #[command(name = "get-tar-commit-id")]
+    GetTarCommitId(commands::get_tar_commit_id::Args),
+    /// Standard helper for merge-index (three-way file merge).
+    #[command(name = "merge-one-file")]
+    MergeOneFile(commands::merge_one_file::Args),
+    /// Find redundant pack files.
+    #[command(name = "pack-redundant")]
+    PackRedundant(commands::pack_redundant::Args),
+    /// Low-level ref management.
+    Refs(commands::refs::Args),
 }
 
 fn main() {
@@ -447,5 +528,36 @@ fn run() -> Result<()> {
         Command::FastImport(args) => commands::fast_import::run(args),
         Command::MultiPackIndex(args) => commands::multi_pack_index::run(args),
         Command::Replay(args) => commands::replay::run(args),
+        Command::Backfill(args) => commands::backfill::run(args),
+        Command::Daemon(args) => commands::daemon::run(args),
+        Command::DiffPairs(args) => commands::diff_pairs::run(args),
+        Command::History(args) => commands::history::run(args),
+        Command::HttpBackend(args) => commands::http_backend::run(args),
+        Command::HttpFetch(args) => commands::http_fetch::run(args),
+        Command::HttpPush(args) => commands::http_push::run(args),
+        Command::LastModified(args) => commands::last_modified::run(args),
+        Command::Repo(args) => commands::repo::run(args),
+        Command::ShI18n(args) => commands::sh_i18n::run(args),
+        Command::ShSetup(args) => commands::sh_setup::run(args),
+        Command::SendPack(args) => commands::send_pack::run(args),
+        Command::FetchPack(args) => commands::fetch_pack::run(args),
+        Command::ReceivePack(args) => commands::receive_pack::run(args),
+        Command::UploadPack(args) => commands::upload_pack::run(args),
+        Command::UploadArchive(args) => commands::upload_archive::run(args),
+        Command::Shell(args) => commands::shell::run(args),
+        Command::Stage(args) => commands::stage::run(args),
+        Command::Difftool(args) => commands::difftool::run(args),
+        Command::Mergetool(args) => commands::mergetool::run(args),
+        Command::FilterBranch(args) => commands::filter_branch::run(args),
+        Command::Bugreport(args) => commands::bugreport::run(args),
+        Command::Diagnose(args) => commands::diagnose::run(args),
+        Command::Credential(args) => commands::credential::run(args),
+        Command::CredentialCache(args) => commands::credential_cache::run(args),
+        Command::CredentialStore(args) => commands::credential_store::run(args),
+        Command::ForEachRepo(args) => commands::for_each_repo::run(args),
+        Command::GetTarCommitId(args) => commands::get_tar_commit_id::run(args),
+        Command::MergeOneFile(args) => commands::merge_one_file::run(args),
+        Command::PackRedundant(args) => commands::pack_redundant::run(args),
+        Command::Refs(args) => commands::refs::run(args),
     }
 }
