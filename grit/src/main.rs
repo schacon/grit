@@ -407,6 +407,24 @@ enum Command {
     Refs(commands::refs::Args),
 }
 
+/// Pre-process CLI args to expand combined short flags that clap
+/// can't handle with `trailing_var_arg` / `allow_hyphen_values`.
+/// Specifically, `-n<NUM>` → `-n` `<NUM>` (for log, rev-list, etc.).
+fn preprocess_args(args: impl Iterator<Item = String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for arg in args {
+        if arg.starts_with("-n") && arg.len() > 2 && !arg.starts_with("--") {
+            if arg[2..].parse::<usize>().is_ok() {
+                out.push("-n".to_string());
+                out.push(arg[2..].to_string());
+                continue;
+            }
+        }
+        out.push(arg);
+    }
+    out
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("error: {e:#}");
@@ -415,7 +433,7 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(preprocess_args(std::env::args()));
 
     // Handle -C: change working directory before doing anything else.
     if let Some(dir) = &cli.change_dir {
