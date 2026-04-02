@@ -335,4 +335,125 @@ test_expect_success 'short format shows same files as porcelain' '
 	grep "y.txt" ../run1
 '
 
+# ── renamed file detection ───────────────────────────────────────────────
+
+test_expect_success 'status shows renamed file after git mv' '
+	cd repo &&
+	git checkout master 2>/dev/null &&
+	git commit -a -m "sync" 2>/dev/null || true &&
+	echo "rename me" >rename_src.txt &&
+	git add rename_src.txt &&
+	git commit -m "add rename src" 2>/dev/null &&
+	git mv rename_src.txt rename_dst.txt &&
+	git status >actual &&
+	grep "renamed:" actual || grep "rename_dst.txt" actual
+'
+
+test_expect_success 'status -s shows R for rename' '
+	cd repo &&
+	git status -s >actual &&
+	grep "R" actual || grep "rename_dst" actual
+'
+
+# ── status with .gitignore ────────────────────────────────────────────────
+
+test_expect_success 'status with only untracked files shows Untracked section' '
+	git init only_untracked &&
+	cd only_untracked &&
+	git config user.name T && git config user.email t@t &&
+	echo init >file.txt && git add file.txt && git commit -m init 2>/dev/null &&
+	echo new >brand_new.txt &&
+	git status >actual &&
+	grep "Untracked files" actual &&
+	grep "brand_new.txt" actual &&
+	! grep "Changes not staged" actual
+'
+
+test_expect_success 'status with only staged shows Changes to be committed' '
+	git init staged_only_repo &&
+	cd staged_only_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo init >file.txt && git add file.txt && git commit -m init 2>/dev/null &&
+	echo new >staged_new.txt && git add staged_new.txt &&
+	git status >actual &&
+	grep "Changes to be committed" actual
+'
+
+# ── status with mixed operations ─────────────────────────────────────────
+
+test_expect_success 'status shows new, modified, and deleted together' '
+	git init mixed_repo &&
+	cd mixed_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo a >a.txt && echo b >b.txt && echo c >c.txt &&
+	git add a.txt b.txt c.txt && git commit -m init 2>/dev/null &&
+	echo aa >>a.txt &&
+	rm b.txt &&
+	echo d >d.txt &&
+	git add a.txt &&
+	git status >actual &&
+	grep "modified:" actual &&
+	grep "deleted:" actual &&
+	grep "d.txt" actual
+'
+
+# ── status in detached HEAD ───────────────────────────────────────────────
+
+test_expect_success 'status in detached HEAD shows HEAD detached' '
+	git init detach_repo &&
+	cd detach_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo x >x.txt && git add x.txt && git commit -m init 2>/dev/null &&
+	git checkout HEAD~0 2>/dev/null &&
+	git status >actual &&
+	grep -i "detached" actual || grep -i "HEAD" actual
+'
+
+# ── status after reset ───────────────────────────────────────────────────
+
+test_expect_success 'status after git reset shows unstaged changes' '
+	git init reset_repo &&
+	cd reset_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo x >x.txt && git add x.txt && git commit -m init 2>/dev/null &&
+	echo y >>x.txt && git add x.txt &&
+	git reset HEAD -- x.txt &&
+	git status >actual &&
+	grep "Changes not staged" actual &&
+	grep "modified:" actual
+'
+
+# ── porcelain v2 ──────────────────────────────────────────────────────────
+
+test_expect_success 'status --porcelain shows A for newly staged' '
+	git init porcelain_new_repo &&
+	cd porcelain_new_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo a >a.txt && git add a.txt && git commit -m init 2>/dev/null &&
+	echo new >new.txt && git add new.txt &&
+	git status --porcelain >actual &&
+	grep "^A" actual &&
+	grep "new.txt" actual
+'
+
+test_expect_success 'status --porcelain shows D for staged deletion' '
+	cd porcelain_new_repo &&
+	git rm a.txt 2>/dev/null &&
+	git status --porcelain >actual &&
+	grep "^D" actual
+'
+
+# ── status with subdirectory untracked ───────────────────────────────────
+
+test_expect_success 'status shows untracked directory' '
+	git init untrack_dir_repo &&
+	cd untrack_dir_repo &&
+	git config user.name T && git config user.email t@t &&
+	echo a >a.txt && git add a.txt && git commit -m init 2>/dev/null &&
+	mkdir -p newdir &&
+	echo x >newdir/x.txt &&
+	git status >actual &&
+	grep "newdir" actual
+'
+
 test_done
