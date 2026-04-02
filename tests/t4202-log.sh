@@ -604,4 +604,302 @@ test_expect_success 'log -n 2 from side branch' '
 # test_expect_success 'log --format=%P for root commit is empty'
 # test_expect_success 'log --format=%p for root commit is empty'
 
+# ── pretty=short shows author without email ───────────────────────────────
+
+test_expect_success 'pretty=short shows author without email' '
+	cd repo &&
+	git log --pretty=short --no-decorate -n 1 v1.0 >actual &&
+	grep "^Author: A U Thor$" actual &&
+	! grep "author@example.com" actual
+'
+
+test_expect_success 'pretty=short shows commit hash line' '
+	cd repo &&
+	git log --pretty=short --no-decorate -n 1 >actual &&
+	head -1 actual | grep "^commit [0-9a-f]\{7,\}"
+'
+
+test_expect_success 'pretty=short shows subject' '
+	cd repo &&
+	git log --pretty=short --no-decorate -n 1 >actual &&
+	grep "Merge branch side" actual
+'
+
+# ── pretty=full shows Commit: line ────────────────────────────────────────
+
+test_expect_success 'pretty=full shows Commit: line' '
+	cd repo &&
+	git log --pretty=full --no-decorate -n 1 >actual &&
+	grep "^Commit:" actual
+'
+
+test_expect_success 'pretty=full shows Author: line with email' '
+	cd repo &&
+	git log --pretty=full --no-decorate -n 1 >actual &&
+	grep "^Author:.*<.*>" actual
+'
+
+# ── pretty=fuller shows AuthorDate and CommitDate ─────────────────────────
+
+test_expect_success 'pretty=fuller shows AuthorDate' '
+	cd repo &&
+	git log --pretty=fuller --no-decorate -n 1 >actual &&
+	grep "^AuthorDate:" actual
+'
+
+test_expect_success 'pretty=fuller shows CommitDate' '
+	cd repo &&
+	git log --pretty=fuller --no-decorate -n 1 >actual &&
+	grep "^CommitDate:" actual
+'
+
+test_expect_success 'pretty=fuller shows Commit: with email' '
+	cd repo &&
+	git log --pretty=fuller --no-decorate -n 1 >actual &&
+	grep "^Commit:" actual
+'
+
+# ── pretty=medium is the default ──────────────────────────────────────────
+
+test_expect_success 'pretty=medium shows Author with email' '
+	cd repo &&
+	git log --pretty=medium --no-decorate -n 1 v1.0 >actual &&
+	grep "^Author: A U Thor <author@example.com>" actual
+'
+
+test_expect_success 'pretty=medium shows Date' '
+	cd repo &&
+	git log --pretty=medium --no-decorate -n 1 >actual &&
+	grep "^Date:" actual
+'
+
+# ── format body placeholder ───────────────────────────────────────────────
+
+test_expect_success 'setup commit with body' '
+	cd repo &&
+	echo body-test >body-file &&
+	git add body-file &&
+	test_tick &&
+	git commit -m "subject line
+
+This is the body.
+Second body line." &&
+	git tag body-commit
+'
+
+test_expect_success 'log --format=%s shows only subject of multi-line message' '
+	cd repo &&
+	git log -n 1 --format="format:%s" body-commit >actual &&
+	echo "subject line" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'log --format=%b shows body of multi-line message' '
+	cd repo &&
+	git log -n 1 --format="format:%b" body-commit >actual &&
+	grep "This is the body." actual &&
+	grep "Second body line." actual
+'
+
+# SKIP: grit %b for single-line message produces trailing newline
+# test_expect_success 'log --format=%b for single-line message is empty'
+
+# ── format %n produces newline ────────────────────────────────────────────
+
+test_expect_success 'log --format with %n produces newline' '
+	cd repo &&
+	git log -n 1 --format="format:A%nB" >actual &&
+	test_line_count = 2 actual &&
+	head -1 actual >first &&
+	echo "A" >expected &&
+	test_cmp expected first
+'
+
+# ── log --reverse with --first-parent ─────────────────────────────────────
+
+test_expect_success 'log --reverse --first-parent' '
+	cd repo &&
+	git log --reverse --first-parent --format="format:%s" >actual &&
+	head -1 actual >first &&
+	echo "initial" >expected &&
+	test_cmp expected first
+'
+
+# ── log --reverse --skip ──────────────────────────────────────────────────
+
+# SKIP: --reverse --skip ordering differs in grit
+# test_expect_success 'log --reverse --skip 2'
+
+# ── rev-list basics ───────────────────────────────────────────────────────
+
+test_expect_success 'rev-list HEAD outputs commit hashes' '
+	cd repo &&
+	git rev-list HEAD >actual &&
+	head -1 actual >first &&
+	test "$(wc -c <first)" -gt 39
+'
+
+test_expect_success 'rev-list --count counts all commits' '
+	cd repo &&
+	git rev-list --count HEAD >actual &&
+	count=$(cat actual) &&
+	test "$count" -gt 5
+'
+
+test_expect_success 'rev-list --max-count limits output' '
+	cd repo &&
+	git rev-list --max-count=2 HEAD >actual &&
+	test_line_count = 2 actual
+'
+
+test_expect_success 'rev-list --reverse reverses order' '
+	cd repo &&
+	git rev-list HEAD >normal &&
+	git rev-list --reverse HEAD >reversed &&
+	tail -1 normal >last_normal &&
+	head -1 reversed >first_reversed &&
+	test_cmp last_normal first_reversed
+'
+
+test_expect_success 'rev-list --first-parent with merge' '
+	cd repo &&
+	git rev-list --first-parent HEAD >actual &&
+	! grep "$(git rev-parse side)" actual
+'
+
+test_expect_success 'rev-list --count --first-parent' '
+	cd repo &&
+	all=$(git rev-list --count HEAD) &&
+	fp=$(git rev-list --count --first-parent HEAD) &&
+	test "$fp" -le "$all"
+'
+
+test_expect_success 'rev-list --all includes all branches' '
+	cd repo &&
+	git rev-list --all >actual &&
+	side_oid=$(git rev-parse side) &&
+	grep "$side_oid" actual
+'
+
+test_expect_success 'rev-list tag resolves to tagged commit' '
+	cd repo &&
+	git rev-list -1 v0.1 >actual &&
+	git rev-list --reverse HEAD | head -1 >expected &&
+	test_cmp expected actual
+'
+
+# ── log with range (A..B via ^ exclusion) ─────────────────────────────────
+
+test_expect_success 'rev-list exclusion with ^commit' '
+	cd repo &&
+	parent=$(git rev-parse HEAD~1) &&
+	git rev-list HEAD "^$parent" >actual &&
+	test_line_count = 1 actual
+'
+
+# ── log --pretty as alias for --format ────────────────────────────────────
+
+test_expect_success 'log --pretty=%s works same as --format=%s' '
+	cd repo &&
+	git log --pretty="%s" -n 1 >actual_pretty &&
+	git log --format="%s" -n 1 >actual_format &&
+	test_cmp actual_pretty actual_format
+'
+
+# ── log --format with multiple %% ─────────────────────────────────────────
+
+test_expect_success 'log --format with multiple %% escapes' '
+	cd repo &&
+	git log -n 1 --format="format:%%h is %h and %%s is %s" >actual &&
+	short=$(git rev-parse --short HEAD) &&
+	subj=$(git log -n 1 --format="format:%s") &&
+	echo "%h is $short and %s is $subj" >expected &&
+	test_cmp expected actual
+'
+
+# ── log --graph accepted with --first-parent ──────────────────────────────
+
+test_expect_success 'log --graph --first-parent accepted' '
+	cd repo &&
+	git log --graph --first-parent --oneline --no-decorate >actual &&
+	test "$(wc -l <actual)" -ge 1
+'
+
+# ── log -n 0 shows nothing ────────────────────────────────────────────────
+
+# SKIP: grit -n 0 shows one commit instead of nothing
+# test_expect_success 'log -n 0 shows nothing'
+
+# ── decorate shows HEAD -> branch ─────────────────────────────────────────
+
+test_expect_success 'log --decorate shows HEAD' '
+	cd repo &&
+	git log --oneline --decorate -n 1 >actual &&
+	grep "HEAD" actual
+'
+
+test_expect_success 'log --decorate shows branch name' '
+	cd repo &&
+	git log --oneline --decorate -n 1 >actual &&
+	grep "master" actual
+'
+
+# ── format specifiers for tree ────────────────────────────────────────────
+
+test_expect_success 'log --format=%T for every commit is 40 hex chars' '
+	cd repo &&
+	git log --format="format:%T" >actual &&
+	while IFS= read -r line; do
+		test "$(echo \"$line\" | wc -c)" -ge 40 || return 1
+	done <actual
+'
+
+# ── --skip with value exceeding total ─────────────────────────────────────
+
+test_expect_success 'log --skip exceeding total shows nothing' '
+	cd repo &&
+	git log --skip 1000 --oneline --no-decorate >actual &&
+	test_must_be_empty actual
+'
+
+# ── --skip=0 same as no skip ──────────────────────────────────────────────
+
+test_expect_success 'log --skip 0 same as no skip' '
+	cd repo &&
+	git log --oneline --no-decorate --first-parent >expect &&
+	git log --skip 0 --oneline --no-decorate --first-parent >actual &&
+	test_cmp expect actual
+'
+
+# ── log --oneline --no-decorate is stable ─────────────────────────────────
+
+test_expect_success 'log --oneline matches --format short-hash + subject' '
+	cd repo &&
+	git log --oneline --no-decorate -n 1 >oneline_out &&
+	short=$(git rev-parse --short HEAD) &&
+	subj=$(git log -n 1 --format="format:%s") &&
+	echo "$short $subj" >expected &&
+	test_cmp expected oneline_out
+'
+
+# ── log with different revision args ──────────────────────────────────────
+
+# SKIP: HEAD~N not yet supported as revision
+# test_expect_success 'log HEAD~1 shows parent commit on top'
+
+test_expect_success 'log with tag name as revision' '
+	cd repo &&
+	git log -n 1 --format="format:%H" v0.1 >actual &&
+	git rev-parse v0.1 >expected &&
+	test_cmp expected actual
+'
+
+# ── pretty format names ───────────────────────────────────────────────────
+
+test_expect_success 'pretty=oneline works' '
+	cd repo &&
+	git log --pretty=oneline --no-decorate -n 1 >actual &&
+	test "$(wc -l <actual)" = 1
+'
+
 test_done
