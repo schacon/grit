@@ -664,4 +664,78 @@ test_expect_success 'diff --cached --numstat shows counts for modified file' '
 	grep "^[0-9]" out
 '
 
+# ===========================================================================
+# Part 13: diff worktree (unstaged) tests
+# ===========================================================================
+
+test_expect_success 'setup repo for unstaged diff tests' '
+	git init repo_unstaged &&
+	cd repo_unstaged &&
+	printf "line1\nline2\nline3\n" >data.txt &&
+	git update-index --add data.txt &&
+	c1=$(make_commit "base") &&
+	printf "%s\n" "$c1" >commit1 &&
+	printf "line1\nMODIFIED\nline3\n" >data.txt
+'
+
+test_expect_success 'diff (unstaged) shows changes' '
+	cd repo_unstaged &&
+	git diff >out &&
+	grep "^diff --git" out
+'
+
+test_expect_success 'diff --name-only (unstaged) shows modified file' '
+	cd repo_unstaged &&
+	git diff --name-only >out &&
+	grep "^data.txt$" out
+'
+
+test_expect_success 'diff --name-status (unstaged) shows M' '
+	cd repo_unstaged &&
+	git diff --name-status >out &&
+	grep "^M" out
+'
+
+test_expect_success 'diff --stat (unstaged) shows diffstat' '
+	cd repo_unstaged &&
+	git diff --stat >out &&
+	grep "data.txt" out &&
+	grep "changed" out
+'
+
+test_expect_success 'diff --numstat (unstaged) shows numeric counts' '
+	cd repo_unstaged &&
+	git diff --numstat >out &&
+	grep "data.txt" out &&
+	grep "^[0-9]" out
+'
+
+test_expect_success 'diff --exit-code (unstaged) returns 1 for changes' '
+	cd repo_unstaged &&
+	test_must_fail git diff --exit-code
+'
+
+test_expect_success 'diff --quiet (unstaged) returns 1 for changes' '
+	cd repo_unstaged &&
+	test_must_fail git diff --quiet
+'
+
+test_expect_success 'diff --quiet (unstaged) suppresses output' '
+	cd repo_unstaged &&
+	git diff --quiet >out 2>&1 || true &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff -U0 (unstaged) shows zero context' '
+	cd repo_unstaged &&
+	git diff -U0 >out &&
+	grep "^@@" out
+'
+
+test_expect_success 'diff (unstaged) unified output shows removed line with -' '
+	cd repo_unstaged &&
+	git diff >out &&
+	grep "^-line2" out
+'
+
 test_done
