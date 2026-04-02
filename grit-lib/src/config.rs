@@ -393,22 +393,27 @@ impl ConfigFile {
     /// - `value` — the value to set.
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
         let canon = canonical_key(key)?;
+        // Extract original-case variable name from the raw key
+        let raw_var = raw_variable_name(key);
 
         // Find the last entry with this key to replace in-place.
         let existing_idx = self.entries.iter().rposition(|e| e.key == canon);
 
         if let Some(idx) = existing_idx {
             let line_idx = self.entries[idx].line - 1;
-            // Rebuild the line
-            let var_name = variable_name_from_key(&canon);
-            self.raw_lines[line_idx] = format!("\t{} = {}", var_name, escape_value(value));
+            // Rebuild the line, preserving the user's variable name case
+            self.raw_lines[line_idx] = format!("\t{} = {}", raw_var, escape_value(value));
             self.entries[idx].value = Some(value.to_owned());
         } else {
             // Need to add: find or create the section
             let (section, subsection, _var) = split_key(&canon)?;
-            let section_line = self.find_or_create_section(&section, subsection.as_deref());
-            let var_name = variable_name_from_key(&canon);
-            let new_line = format!("\t{} = {}", var_name, escape_value(value));
+            // Extract original-case section/subsection from the raw key
+            let (raw_sec, raw_sub) = raw_section_parts(key);
+            let section_line = self.find_or_create_section_preserving_case(
+                &section, subsection.as_deref(),
+                &raw_sec, raw_sub.as_deref(),
+            );
+            let new_line = format!("\t{} = {}", raw_var, escape_value(value));
 
             // Insert after the section header (or last entry in section)
             let insert_at = self.last_line_in_section(section_line) + 1;
@@ -574,6 +579,36 @@ impl ConfigFile {
         let header = match subsection {
             Some(sub) => format!("[{} \"{}\"]", section, sub),
             None => format!("[{}]", section),
+        };
+        self.raw_lines.push(header);
+        self.raw_lines.len() - 1
+    }
+
+    /// Find the line index of a section header (case-insensitive match),
+    /// or create one using the original-case names from user input.
+    fn find_or_create_section_preserving_case(
+        &mut self,
+        section: &str,
+        subsection: Option<&str>,
+        raw_section: &str,
+        raw_subsection: Option<&str>,
+    ) -> usize {
+        let sec_lower = section.to_lowercase();
+        let mut parser = Parser::new();
+
+        for (idx, line) in self.raw_lines.iter().enumerate() {
+            if parser.try_parse_section(line)
+                && parser.section.to_lowercase() == sec_lower
+                && parser.subsection.as_deref() == subsection
+            {
+                return idx;
+            }
+        }
+
+        // Create new section at end of file, using original case
+        let header = match raw_subsection {
+            Some(sub) => format!("[{} \"{}\"]", raw_section, sub),
+            None => format!("[{}]", raw_section),
         };
         self.raw_lines.push(header);
         self.raw_lines.len() - 1
@@ -938,5 +973,34 @@ fn parse_section_name(name: &str) -> (&str, Option<&str>) {
     match name.find('.') {
         Some(i) => (&name[..i], Some(&name[i + 1..])),
         None => (name, None),
+    }
+}
+
+/// Extract the original-case variable name from a raw (user-typed) key.
+///
+/// E.g. `"Section.Movie"` → `"Movie"`, `"a.b.CamelCase"` → `"CamelCase"`.
+fn raw_variable_name(raw_key: &str) -> &str {
+    match raw_key.rfind('.') {
+        Some(i) => &raw_key[i + 1..],
+        None => raw_key,
+    }
+}
+
+/// Extract the original-case section and subsection from a raw (user-typed) key.
+///
+/// E.g. `"Section.key"` → `("Section", None)`,
+///      `"Remote.origin.url"` → `("Remote", Some("origin"))`.
+fn raw_section_parts(raw_key: &str) -> (String, Option<String>) {
+    let first_dot = match raw_key.find('.') {
+        Some(i) => i,
+        None => return (raw_key.to_owned(), None),
+    };
+    let last_dot = raw_key.rfind('.').unwrap();
+    let section = raw_key[..first_dot].to_owned();
+    if first_dot == last_dot {
+        (section, None)
+    } else {
+        let subsection = raw_key[first_dot + 1..last_dot].to_owned();
+        (section, Some(subsection))
     }
 }
