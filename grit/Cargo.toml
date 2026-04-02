@@ -19,3 +19,4 @@ clap.workspace = true
 time.workspace = true
 tempfile.workspace = true
 regex.workspace = true
+similar.workspace = true

@@ -1,0 +1,485 @@
+//! `grit blame` — show what revision and author last modified each line of a file.
+
+use anyhow::{bail, Context, Result};
+use clap::Args as ClapArgs;
+use grit_lib::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
+use grit_lib::odb::Odb;
+use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
+use grit_lib::state::resolve_head;
+use similar::{ChangeTag, TextDiff};
+use std::collections::HashMap;
+use std::io::{self, Write};
+
+/// Arguments for `grit blame`.
+#[derive(Debug, ClapArgs)]
+#[command(about = "Show what revision and author last modified each line of a file")]
+pub struct Args {
+    /// Limit output to the given line range (e.g. -L 10,20).
+    #[arg(short = 'L')]
+    pub line_range: Option<String>,
+
+    /// Show long (full) commit hashes.
+    #[arg(short = 'l')]
+    pub long_hash: bool,
+
+    /// Suppress author name and timestamp.
+    #[arg(short = 's')]
+    pub suppress: bool,
+
+    /// Show author email instead of name.
+    #[arg(short = 'e', long = "show-email")]
+    pub email: bool,
+
+    /// Porcelain format for machine consumption.
+    #[arg(short = 'p', long = "porcelain")]
+    pub porcelain: bool,
+
+    /// Like --porcelain but outputs header for every line.
+    #[arg(long = "line-porcelain")]
+    pub line_porcelain: bool,
+
+    /// Revision to blame from (and optional file after `--`).
+    #[arg()]
+    pub args: Vec<String>,
+}
+
+/// A single line attribution.
+#[derive(Debug, Clone)]
+struct BlameLine {
+    oid: ObjectId,
+    /// 1-based line number in the final file.
+    final_lineno: usize,
+    /// 1-based line number in the originating commit.
+    orig_lineno: usize,
+    content: String,
+}
+
+/// Parsed author/committer string.
+#[derive(Debug, Clone)]
+struct AuthorInfo {
+    name: String,
+    email: String,
+    timestamp: i64,
+    tz: String,
+}
+
+fn parse_author_field(raw: &str) -> AuthorInfo {
+    // "Name <email> timestamp tz"
+    let (name, rest) = match raw.find('<') {
+        Some(lt) => (raw[..lt].trim().to_string(), &raw[lt..]),
+        None => (raw.to_string(), ""),
+    };
+    let (email, rest) = match rest.find('>') {
+        Some(gt) => (rest[1..gt].to_string(), rest[gt + 1..].trim()),
+        None => (String::new(), ""),
+    };
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    let timestamp = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let tz = parts.get(1).unwrap_or(&"+0000").to_string();
+    AuthorInfo { name, email, timestamp, tz }
+}
+
+fn format_time(timestamp: i64, tz: &str) -> String {
+    let tz_sign: i64 = if tz.starts_with('-') { -1 } else { 1 };
+    let tz_digits = tz.trim_start_matches(['+', '-']);
+    let tz_hours: i64 = tz_digits.get(..2).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let tz_mins: i64 = tz_digits.get(2..4).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let tz_offset = tz_sign * (tz_hours * 3600 + tz_mins * 60);
+
+    let adjusted = timestamp + tz_offset;
+    let days = adjusted.div_euclid(86400);
+    let day_secs = adjusted.rem_euclid(86400);
+    let hours = day_secs / 3600;
+    let mins = (day_secs % 3600) / 60;
+    let secs = day_secs % 60;
+    let (y, m, d) = civil_from_days(days);
+    format!("{y:04}-{m:02}-{d:02} {hours:02}:{mins:02}:{secs:02} {tz}")
+}
+
+/// Howard Hinnant's algorithm: days since epoch → (year, month, day).
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+/// Resolve a file path through nested trees to get the blob OID.
+fn resolve_path_in_tree(odb: &Odb, tree_oid: &ObjectId, path: &str) -> Result<Option<ObjectId>> {
+    let parts: Vec<&str> = path.split('/').collect();
+    let mut current = *tree_oid;
+
+    for (i, part) in parts.iter().enumerate() {
+        let obj = odb.read(&current)?;
+        let entries = parse_tree(&obj.data)?;
+        match entries.iter().find(|e| String::from_utf8_lossy(&e.name) == *part) {
+            Some(e) if i == parts.len() - 1 => return Ok(Some(e.oid)),
+            Some(e) => current = e.oid,
+            None => return Ok(None),
+        }
+    }
+    Ok(None)
+}
+
+fn read_blob_string(odb: &Odb, oid: &ObjectId) -> Result<String> {
+    let obj = odb.read(oid)?;
+    if obj.kind != ObjectKind::Blob {
+        bail!("expected blob object");
+    }
+    Ok(String::from_utf8_lossy(&obj.data).into_owned())
+}
+
+/// Split content into lines, handling trailing newline consistently.
+fn content_lines(s: &str) -> Vec<&str> {
+    let lines: Vec<&str> = s.split('\n').collect();
+    if lines.last() == Some(&"") && lines.len() > 1 {
+        lines[..lines.len() - 1].to_vec()
+    } else {
+        lines
+    }
+}
+
+/// Each line being tracked through history.
+/// `final_lineno` is the 1-based line number in the target file.
+/// `current_idx` is the 0-based index in the current version being examined.
+#[derive(Debug, Clone)]
+struct TrackedLine {
+    final_lineno: usize,
+    current_idx: usize,
+}
+
+/// Core blame: walk first-parent history, diff blobs, attribute lines.
+fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<BlameLine>> {
+    let start_commit = {
+        let obj = odb.read(&start_oid)?;
+        parse_commit(&obj.data)?
+    };
+
+    let blob_oid = resolve_path_in_tree(odb, &start_commit.tree, file_path)?
+        .with_context(|| format!("file '{file_path}' not found in revision"))?;
+    let content = read_blob_string(odb, &blob_oid)?;
+    let lines = content_lines(&content);
+    let num_lines = lines.len();
+
+    if num_lines == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Lines still needing attribution
+    let mut pending: Vec<TrackedLine> = (0..num_lines)
+        .map(|i| TrackedLine { final_lineno: i + 1, current_idx: i })
+        .collect();
+
+    let mut result: Vec<BlameLine> = Vec::with_capacity(num_lines);
+    // Store final content for output
+    let final_lines: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+
+    let mut current_oid = start_oid;
+    let mut current_blob_oid = blob_oid;
+    let mut commit_cache: HashMap<ObjectId, CommitData> = HashMap::new();
+    commit_cache.insert(start_oid, start_commit);
+
+    loop {
+        if pending.is_empty() {
+            break;
+        }
+
+        let commit = get_commit(odb, current_oid, &mut commit_cache)?;
+
+        if commit.parents.is_empty() {
+            // Root commit — attribute all remaining lines
+            for t in pending.drain(..) {
+                result.push(BlameLine {
+                    oid: current_oid,
+                    final_lineno: t.final_lineno,
+                    orig_lineno: t.current_idx + 1,
+                    content: final_lines[t.final_lineno - 1].clone(),
+                });
+            }
+            break;
+        }
+
+        let parent_oid = commit.parents[0];
+        let parent_commit = get_commit(odb, parent_oid, &mut commit_cache)?;
+        let parent_blob_oid = resolve_path_in_tree(odb, &parent_commit.tree, file_path)?;
+
+        match parent_blob_oid {
+            None => {
+                // File doesn't exist in parent — attribute all remaining
+                for t in pending.drain(..) {
+                    result.push(BlameLine {
+                        oid: current_oid,
+                        final_lineno: t.final_lineno,
+                        orig_lineno: t.current_idx + 1,
+                        content: final_lines[t.final_lineno - 1].clone(),
+                    });
+                }
+                break;
+            }
+            Some(p_blob_oid) if p_blob_oid == current_blob_oid => {
+                // Identical blob — skip to parent
+                current_oid = parent_oid;
+                continue;
+            }
+            Some(p_blob_oid) => {
+                // Diff current vs parent
+                let cur_content = read_blob_string(odb, &current_blob_oid)?;
+                let par_content = read_blob_string(odb, &p_blob_oid)?;
+                let cur_lines = content_lines(&cur_content);
+                let par_lines = content_lines(&par_content);
+
+                // Build mapping: cur_line_idx → Option<parent_line_idx>
+                let line_map = build_line_map(&par_lines, &cur_lines);
+
+                let mut still_pending = Vec::new();
+                for t in pending.drain(..) {
+                    if t.current_idx < line_map.len() {
+                        if let Some(parent_idx) = line_map[t.current_idx] {
+                            // Line came from parent — keep tracking
+                            still_pending.push(TrackedLine {
+                                final_lineno: t.final_lineno,
+                                current_idx: parent_idx,
+                            });
+                        } else {
+                            // Line was introduced in current commit
+                            result.push(BlameLine {
+                                oid: current_oid,
+                                final_lineno: t.final_lineno,
+                                orig_lineno: t.current_idx + 1,
+                                content: final_lines[t.final_lineno - 1].clone(),
+                            });
+                        }
+                    } else {
+                        // Out of range — attribute to current
+                        result.push(BlameLine {
+                            oid: current_oid,
+                            final_lineno: t.final_lineno,
+                            orig_lineno: t.current_idx + 1,
+                            content: final_lines[t.final_lineno - 1].clone(),
+                        });
+                    }
+                }
+
+                pending = still_pending;
+                current_oid = parent_oid;
+                current_blob_oid = p_blob_oid;
+            }
+        }
+    }
+
+    result.sort_by_key(|b| b.final_lineno);
+    Ok(result)
+}
+
+fn get_commit(
+    odb: &Odb,
+    oid: ObjectId,
+    cache: &mut HashMap<ObjectId, CommitData>,
+) -> Result<CommitData> {
+    if let Some(c) = cache.get(&oid) {
+        return Ok(c.clone());
+    }
+    let obj = odb.read(&oid)?;
+    let c = parse_commit(&obj.data)?;
+    cache.insert(oid, c.clone());
+    Ok(c)
+}
+
+/// Map each line in `new` to its origin in `old` (if any).
+fn build_line_map(old: &[&str], new: &[&str]) -> Vec<Option<usize>> {
+    // Ensure trailing newlines so `from_lines` splits consistently
+    let mut old_joined = old.join("\n");
+    old_joined.push('\n');
+    let mut new_joined = new.join("\n");
+    new_joined.push('\n');
+    let diff = TextDiff::from_lines(&old_joined, &new_joined);
+
+    let mut result = vec![None; new.len()];
+    let mut old_idx: usize = 0;
+    let mut new_idx: usize = 0;
+
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Equal => {
+                if new_idx < result.len() {
+                    result[new_idx] = Some(old_idx);
+                }
+                old_idx += 1;
+                new_idx += 1;
+            }
+            ChangeTag::Delete => {
+                old_idx += 1;
+            }
+            ChangeTag::Insert => {
+                new_idx += 1;
+            }
+        }
+    }
+
+    result
+}
+
+// ── CLI entry point ──────────────────────────────────────────────────
+
+pub fn run(args: Args) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let odb = Odb::new(&repo.git_dir.join("objects"));
+
+    let (rev, file_path) = parse_blame_args(&args.args)?;
+
+    let start_oid = match &rev {
+        Some(r) => resolve_revision(&repo, r)?,
+        None => {
+            let head = resolve_head(&repo.git_dir)?;
+            match head.oid() {
+                Some(oid) => *oid,
+                None => bail!("cannot blame on unborn branch"),
+            }
+        }
+    };
+
+    let mut blame_lines = compute_blame(&odb, start_oid, &file_path)?;
+
+    // Apply line range filter
+    if let Some(ref range) = args.line_range {
+        let (start, end) = parse_line_range(range, blame_lines.len())?;
+        blame_lines.retain(|b| b.final_lineno >= start && b.final_lineno <= end);
+    }
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    // Preload commits for display
+    let mut commits: HashMap<ObjectId, CommitData> = HashMap::new();
+    for bl in &blame_lines {
+        if !commits.contains_key(&bl.oid) {
+            let obj = odb.read(&bl.oid)?;
+            commits.insert(bl.oid, parse_commit(&obj.data)?);
+        }
+    }
+
+    if args.porcelain || args.line_porcelain {
+        write_porcelain(&mut out, &blame_lines, &commits, &file_path, args.line_porcelain)?;
+    } else {
+        write_default(&mut out, &blame_lines, &commits, &args)?;
+    }
+
+    Ok(())
+}
+
+fn parse_blame_args(args: &[String]) -> Result<(Option<String>, String)> {
+    match args.len() {
+        0 => bail!("usage: grit blame [<rev>] [--] <file>"),
+        1 => Ok((None, args[0].clone())),
+        2 if args[0] == "--" => Ok((None, args[1].clone())),
+        2 => Ok((Some(args[0].clone()), args[1].clone())),
+        3 if args[1] == "--" => Ok((Some(args[0].clone()), args[2].clone())),
+        _ => bail!("usage: grit blame [<rev>] [--] <file>"),
+    }
+}
+
+fn parse_line_range(range: &str, total: usize) -> Result<(usize, usize)> {
+    let parts: Vec<&str> = range.split(',').collect();
+    if parts.len() != 2 {
+        bail!("invalid line range: expected start,end");
+    }
+    let start: usize = parts[0].parse().context("invalid start line")?;
+    let end: usize = if parts[1] == "$" {
+        total
+    } else {
+        parts[1].parse().context("invalid end line")?
+    };
+    Ok((start, end))
+}
+
+fn write_porcelain(
+    out: &mut impl Write,
+    lines: &[BlameLine],
+    commits: &HashMap<ObjectId, CommitData>,
+    filename: &str,
+    line_porcelain: bool,
+) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+
+    for bl in lines {
+        let hex = bl.oid.to_hex();
+        let first = seen.insert(bl.oid);
+
+        writeln!(out, "{hex} {} {} 1", bl.orig_lineno, bl.final_lineno)?;
+
+        if first || line_porcelain {
+            let commit = &commits[&bl.oid];
+            let author = parse_author_field(&commit.author);
+            let committer = parse_author_field(&commit.committer);
+
+            writeln!(out, "author {}", author.name)?;
+            writeln!(out, "author-mail <{}>", author.email)?;
+            writeln!(out, "author-time {}", author.timestamp)?;
+            writeln!(out, "author-tz {}", author.tz)?;
+            writeln!(out, "committer {}", committer.name)?;
+            writeln!(out, "committer-mail <{}>", committer.email)?;
+            writeln!(out, "committer-time {}", committer.timestamp)?;
+            writeln!(out, "committer-tz {}", committer.tz)?;
+            let summary = commit.message.lines().next().unwrap_or("");
+            writeln!(out, "summary {summary}")?;
+            writeln!(out, "filename {filename}")?;
+        }
+
+        writeln!(out, "\t{}", bl.content)?;
+    }
+
+    Ok(())
+}
+
+fn write_default(
+    out: &mut impl Write,
+    lines: &[BlameLine],
+    commits: &HashMap<ObjectId, CommitData>,
+    args: &Args,
+) -> Result<()> {
+    let hash_len = if args.long_hash { 40 } else { 8 };
+    let max_lineno = lines.iter().map(|b| b.final_lineno).max().unwrap_or(1);
+    let lineno_width = format!("{max_lineno}").len();
+
+    for bl in lines {
+        let hex = bl.oid.to_hex();
+        let short = &hex[..hash_len.min(hex.len())];
+
+        if args.suppress {
+            writeln!(
+                out,
+                "{short} {lineno:>w$}) {content}",
+                lineno = bl.final_lineno,
+                w = lineno_width,
+                content = bl.content,
+            )?;
+        } else {
+            let commit = &commits[&bl.oid];
+            let ai = parse_author_field(&commit.author);
+            let who = if args.email {
+                format!("<{}>", ai.email)
+            } else {
+                ai.name.clone()
+            };
+            let ts = format_time(ai.timestamp, &ai.tz);
+
+            writeln!(
+                out,
+                "{short} ({who} {ts} {lineno:>w$}) {content}",
+                lineno = bl.final_lineno,
+                w = lineno_width,
+                content = bl.content,
+            )?;
+        }
+    }
+
+    Ok(())
+}
