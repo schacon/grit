@@ -20,3 +20,5 @@ time.workspace = true
 tempfile.workspace = true
 regex.workspace = true
 similar.workspace = true
+sha1.workspace = true
+hex.workspace = true

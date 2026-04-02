@@ -89,13 +89,19 @@ enum Command {
     /// List the contents of a tree object.
     #[command(name = "ls-tree")]
     LsTree(commands::ls_tree::Args),
+    /// Stash the changes in a dirty working directory away.
+    Stash(commands::stash::Args),
     /// Show the working tree status.
     Status(commands::status::Args),
+    /// Reapply commits on top of another base tip.
+    Rebase(commands::rebase::Args),
     /// Read tree information into the index.
     #[command(name = "read-tree")]
     ReadTree(commands::read_tree::Args),
     /// Manage set of tracked repositories.
     Remote(commands::remote::Args),
+    /// Reuse recorded resolution of conflicted merges.
+    Rerere(commands::rerere::Args),
     /// Check out files from the index into the working tree.
     #[command(name = "checkout-index")]
     CheckoutIndex(commands::checkout_index::Args),
@@ -285,9 +291,12 @@ fn run() -> Result<()> {
         Command::LsRemote(args) => commands::ls_remote::run(args),
         Command::WriteTree(args) => commands::write_tree::run(args),
         Command::LsTree(args) => commands::ls_tree::run(args),
+        Command::Stash(args) => commands::stash::run(args),
         Command::Status(args) => commands::status::run(args),
+        Command::Rebase(args) => commands::rebase::run(args),
         Command::ReadTree(args) => commands::read_tree::run(args),
         Command::Remote(args) => commands::remote::run(args),
+        Command::Rerere(args) => commands::rerere::run(args),
         Command::CheckoutIndex(args) => commands::checkout_index::run(args),
         Command::CommitTree(args) => commands::commit_tree::run(args),
         Command::UpdateRef(args) => commands::update_ref::run(args),
