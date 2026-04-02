@@ -366,4 +366,32 @@ test_expect_success 'avoid SP-HT sequence in commented line' '
     test_cmp expect actual
 '
 
+test_expect_success 'strip comments with -s flag strips comment-only lines' '
+    printf "# this is a comment\n" | git stripspace -s >actual &&
+    test_must_be_empty actual
+'
+
+test_expect_success '-s preserves non-comment content' '
+    printf "hello\n# comment\nworld\n" >input &&
+    printf "hello\nworld\n" >expect &&
+    git stripspace -s <input >actual &&
+    test_cmp expect actual
+'
+
+test_expect_success 'stripspace with no input produces empty output' '
+    git stripspace </dev/null >actual &&
+    test_must_be_empty actual
+'
+
+test_expect_success '-c on empty input produces empty commented output' '
+    git stripspace -c </dev/null >actual &&
+    test_must_be_empty actual
+'
+
+test_expect_success '-c with multiple lines adds comment prefix to each' '
+    printf "# line1\n# line2\n# line3\n" >expect &&
+    printf "line1\nline2\nline3\n" | git stripspace -c >actual &&
+    test_cmp expect actual
+'
+
 test_done
