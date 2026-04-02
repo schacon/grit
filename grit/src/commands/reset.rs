@@ -5,21 +5,30 @@
 //! - `--soft`  : move HEAD only; index and working tree unchanged.
 //! - `--mixed` : move HEAD and reset index to the target tree (default).
 //! - `--hard`  : move HEAD, reset index, and update working tree.
+//! - `--keep`  : like --hard but refuse if uncommitted local changes would be lost.
 //!
 //! When path arguments are given the HEAD is not moved; only the index entries
 //! for those paths are reset to the content of the target commit's tree.
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
-use grit_lib::refs::write_ref;
+use grit_lib::odb::Odb;
+use grit_lib::refs::{append_reflog, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use grit_lib::state::{resolve_head, HeadState};
+
+/// The zero OID for reflog entries when there is no previous value.
+fn zero_oid() -> ObjectId {
+    ObjectId::from_hex("0000000000000000000000000000000000000000")
+        .expect("zero oid is valid")
+}
 
 /// The reset mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -28,6 +37,7 @@ enum ResetMode {
     #[default]
     Mixed,
     Hard,
+    Keep,
 }
 
 impl ResetMode {
@@ -36,6 +46,7 @@ impl ResetMode {
             Self::Soft => "soft",
             Self::Mixed => "mixed",
             Self::Hard => "hard",
+            Self::Keep => "keep",
         }
     }
 }
@@ -54,6 +65,10 @@ pub struct Args {
     /// Reset index and working tree to the target tree.
     #[arg(long)]
     pub hard: bool,
+
+    /// Like --hard but refuse to reset if uncommitted changes would be lost.
+    #[arg(long)]
+    pub keep: bool,
 
     /// Suppress feedback messages.
     #[arg(short = 'q', long)]
@@ -86,12 +101,13 @@ pub fn run(args: Args) -> Result<()> {
 
 /// Parse the reset mode from the flag combination.
 fn parse_mode(args: &Args) -> Result<ResetMode> {
-    match (args.soft, args.mixed, args.hard) {
-        (true, false, false) => Ok(ResetMode::Soft),
-        (false, true, false) => Ok(ResetMode::Mixed),
-        (false, false, true) => Ok(ResetMode::Hard),
-        (false, false, false) => Ok(ResetMode::default()),
-        _ => bail!("cannot mix --soft, --mixed and --hard"),
+    match (args.soft, args.mixed, args.hard, args.keep) {
+        (true, false, false, false) => Ok(ResetMode::Soft),
+        (false, true, false, false) => Ok(ResetMode::Mixed),
+        (false, false, true, false) => Ok(ResetMode::Hard),
+        (false, false, false, true) => Ok(ResetMode::Keep),
+        (false, false, false, false) => Ok(ResetMode::default()),
+        _ => bail!("cannot mix --soft, --mixed, --hard and --keep"),
     }
 }
 
@@ -131,6 +147,61 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
     }
 }
 
+/// Resolve the committer identity for reflog entries.
+fn resolve_reflog_identity(repo: &Repository) -> String {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let name = std::env::var("GIT_COMMITTER_NAME")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_NAME").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.name")))
+        .unwrap_or_else(|| "Unknown".to_owned());
+    let email = std::env::var("GIT_COMMITTER_EMAIL")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
+        .unwrap_or_default();
+    let now = time::OffsetDateTime::now_utc();
+    let epoch = now.unix_timestamp();
+    let offset = now.offset();
+    let hours = offset.whole_hours();
+    let minutes = offset.minutes_past_hour().unsigned_abs();
+    format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
+}
+
+/// Write reflog entries for a reset operation.
+fn write_reset_reflog(
+    repo: &Repository,
+    head: &HeadState,
+    old_oid: &ObjectId,
+    new_oid: &ObjectId,
+    commit_spec: &str,
+) {
+    let identity = resolve_reflog_identity(repo);
+    let message = format!("reset: moving to {commit_spec}");
+
+    // Write reflog for HEAD.
+    let _ = append_reflog(
+        &repo.git_dir,
+        "HEAD",
+        old_oid,
+        new_oid,
+        &identity,
+        &message,
+    );
+
+    // Write reflog for the branch ref if on a branch.
+    if let HeadState::Branch { refname, .. } = head {
+        let _ = append_reflog(
+            &repo.git_dir,
+            refname,
+            old_oid,
+            new_oid,
+            &identity,
+            &message,
+        );
+    }
+}
+
 /// Reset specific index entries to match the given commit's tree.
 ///
 /// HEAD is not modified.
@@ -140,8 +211,7 @@ fn reset_paths(repo: &Repository, commit_spec: &str, paths: &[String], _quiet: b
     let tree_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
 
     // Build a lookup table: path bytes → IndexEntry.
-    let mut tree_map: std::collections::HashMap<Vec<u8>, IndexEntry> =
-        std::collections::HashMap::new();
+    let mut tree_map: HashMap<Vec<u8>, IndexEntry> = HashMap::new();
     for e in tree_entries {
         tree_map.insert(e.path.clone(), e);
     }
@@ -193,20 +263,39 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
 
     let target_oid = resolve_to_commit(repo, commit_spec)?;
 
+    // For --keep, we need to check safety before making any changes.
+    if mode == ResetMode::Keep {
+        check_keep_safety(repo, &head, &target_oid)?;
+    }
+
+    // Get the old OID for reflog and ORIG_HEAD.
+    let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
+
     // Save ORIG_HEAD before moving HEAD.
-    if let Some(old_oid) = head.oid() {
-        write_orig_head(&repo.git_dir, old_oid)?;
+    if head.oid().is_some() {
+        write_orig_head(&repo.git_dir, &old_oid)?;
     }
 
     // Update HEAD (and the branch it points to, if on a branch).
     update_head_ref(&repo.git_dir, &head, &target_oid)?;
+
+    // Write reflog entries.
+    write_reset_reflog(repo, &head, &old_oid, &target_oid, commit_spec);
+
+    // Clean up merge/cherry-pick state files on non-soft reset.
+    if mode != ResetMode::Soft {
+        let _ = std::fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
+        let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MSG"));
+        let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MODE"));
+        let _ = std::fs::remove_file(repo.git_dir.join("CHERRY_PICK_HEAD"));
+    }
 
     if mode == ResetMode::Soft {
         // Soft: HEAD moved, index and working tree unchanged.
         return Ok(());
     }
 
-    // Mixed / hard: reset index from the commit's tree.
+    // Mixed / hard / keep: reset index from the commit's tree.
     let tree_oid = commit_to_tree(repo, &target_oid)?;
     let tree_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
 
@@ -216,17 +305,197 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
     new_index.entries = tree_entries;
     new_index.sort();
 
-    if mode == ResetMode::Hard {
-        // Hard: also update working tree.
+    if mode == ResetMode::Hard || mode == ResetMode::Keep {
+        // Hard/Keep: also update working tree.
         if repo.work_tree.is_some() {
             checkout_index_to_worktree(repo, &old_index, &new_index)?;
         }
         if !quiet {
             print_head_message(repo, &target_oid)?;
         }
+    } else if mode == ResetMode::Mixed && !quiet {
+        // Mixed: print unstaged changes after reset.
+        // We need to print before writing the new index.
+        print_unstaged_changes(repo, &new_index)?;
     }
 
     new_index.write(&index_path).context("writing index")?;
+    Ok(())
+}
+
+/// Check if `--keep` is safe: refuse if there are local uncommitted changes
+/// to files that differ between HEAD and the target.
+fn check_keep_safety(repo: &Repository, head: &HeadState, target_oid: &ObjectId) -> Result<()> {
+    let head_oid = match head.oid() {
+        Some(oid) => *oid,
+        None => return Ok(()), // unborn branch, nothing to protect
+    };
+
+    if head_oid == *target_oid {
+        return Ok(()); // no-op reset
+    }
+
+    // Get trees for HEAD and target.
+    let head_tree_oid = commit_to_tree(repo, &head_oid)?;
+    let target_tree_oid = commit_to_tree(repo, target_oid)?;
+
+    let head_entries = tree_to_flat_entries(repo, &head_tree_oid, "")?;
+    let target_entries = tree_to_flat_entries(repo, &target_tree_oid, "")?;
+
+    let head_map: HashMap<Vec<u8>, &IndexEntry> =
+        head_entries.iter().map(|e| (e.path.clone(), e)).collect();
+    let target_map: HashMap<Vec<u8>, &IndexEntry> =
+        target_entries.iter().map(|e| (e.path.clone(), e)).collect();
+
+    // Files that differ between HEAD and target.
+    let mut changed_paths: HashSet<Vec<u8>> = HashSet::new();
+
+    // Files in HEAD but not in target (or different).
+    for (path, head_entry) in &head_map {
+        match target_map.get(path) {
+            Some(target_entry) if target_entry.oid == head_entry.oid && target_entry.mode == head_entry.mode => {}
+            _ => { changed_paths.insert(path.clone()); }
+        }
+    }
+    // Files in target but not in HEAD.
+    for path in target_map.keys() {
+        if !head_map.contains_key(path) {
+            changed_paths.insert(path.clone());
+        }
+    }
+
+    if changed_paths.is_empty() {
+        return Ok(());
+    }
+
+    // Check if any of these changed paths have local modifications in the
+    // working tree or index that differ from HEAD.
+    let index_path = repo.index_path();
+    let index = Index::load(&index_path).context("loading index")?;
+    let index_map: HashMap<Vec<u8>, &IndexEntry> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.clone(), e))
+        .collect();
+
+    let work_tree = match &repo.work_tree {
+        Some(p) => p.clone(),
+        None => return Ok(()),
+    };
+
+    for path in &changed_paths {
+        let path_str = String::from_utf8_lossy(path);
+
+        // Check index vs HEAD.
+        let head_entry = head_map.get(path);
+        let idx_entry = index_map.get(path);
+
+        match (head_entry, idx_entry) {
+            (Some(h), Some(i)) => {
+                if h.oid != i.oid || h.mode != i.mode {
+                    bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
+                }
+            }
+            (None, Some(_)) => {
+                // File is in index but not in HEAD — local addition.
+                bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
+            }
+            (Some(_), None) => {
+                // File was in HEAD but not in index — staged deletion.
+                bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
+            }
+            (None, None) => {}
+        }
+
+        // Check working tree vs index.
+        let abs_path = work_tree.join(&*path_str);
+        if let Some(idx_e) = idx_entry {
+            if abs_path.exists() {
+                // Compare file content with index entry.
+                if let Ok(content) = std::fs::read(&abs_path) {
+                    let worktree_oid = hash_blob_content(&content);
+                    if worktree_oid != idx_e.oid {
+                        bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
+                    }
+                }
+            } else {
+                // File in index but deleted in worktree.
+                bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
+            }
+        } else if abs_path.exists() {
+            // Untracked file would be overwritten.
+            let target_entry = target_map.get(path);
+            if target_entry.is_some() {
+                bail!("Entry '{}' would be overwritten by merge. Cannot merge.", path_str);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Compute the git blob OID for raw content (without writing to ODB).
+fn hash_blob_content(data: &[u8]) -> ObjectId {
+    Odb::hash_object_data(ObjectKind::Blob, data)
+}
+
+/// Print "Unstaged changes after reset:" with modified files (mixed mode).
+///
+/// Compares the new index against the working tree. Files that differ are
+/// printed as `M\t<path>`.
+fn print_unstaged_changes(repo: &Repository, new_index: &Index) -> Result<()> {
+    let work_tree = match &repo.work_tree {
+        Some(p) => p.clone(),
+        None => return Ok(()),
+    };
+
+    let mut modified: Vec<String> = Vec::new();
+
+    for entry in &new_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+        let abs_path = work_tree.join(&path_str);
+
+        if !abs_path.exists() {
+            // File in index but not in worktree — deleted, counts as modified.
+            modified.push(path_str);
+            continue;
+        }
+
+        // Compare content.
+        if entry.mode == MODE_SYMLINK {
+            if let Ok(target) = std::fs::read_link(&abs_path) {
+                let target_str = target.to_string_lossy();
+                let obj = repo.odb.read(&entry.oid);
+                if let Ok(obj) = obj {
+                    let index_target = String::from_utf8_lossy(&obj.data);
+                    if target_str != index_target.as_ref() {
+                        modified.push(path_str);
+                    }
+                }
+            } else {
+                modified.push(path_str);
+            }
+        } else if let Ok(content) = std::fs::read(&abs_path) {
+            let worktree_oid = hash_blob_content(&content);
+            if worktree_oid != entry.oid {
+                modified.push(path_str);
+            }
+        } else {
+            modified.push(path_str);
+        }
+    }
+
+    if !modified.is_empty() {
+        println!("Unstaged changes after reset:");
+        for path in &modified {
+            println!("M\t{path}");
+        }
+    }
+
     Ok(())
 }
 
@@ -347,7 +616,7 @@ fn tree_to_flat_entries(
     Ok(result)
 }
 
-/// Update the working tree to match the new index (used for `--hard` reset).
+/// Update the working tree to match the new index (used for `--hard`/`--keep` reset).
 ///
 /// Deletes files removed from the index and writes/updates files added or
 /// changed.
