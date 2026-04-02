@@ -460,4 +460,40 @@ test_expect_success 'show annotated tag shows both tag and commit info' '
 	grep "second commit" actual
 '
 
+# ---------------------------------------------------------------------------
+# Additional tests: format variations and edge cases
+# ---------------------------------------------------------------------------
+test_expect_success 'show --format=%b shows commit body' '
+	cd repo &&
+	git show --format="format:%s%n%b" --quiet >actual &&
+	grep "second commit" actual
+'
+
+test_expect_success 'show --quiet on root commit shows header only' '
+	cd repo &&
+	git show --quiet HEAD~1 >actual &&
+	! grep "^diff" actual &&
+	grep "first commit" actual
+'
+
+test_expect_success 'show --unified=3 produces context lines' '
+	cd repo &&
+	git show --unified=3 HEAD >actual &&
+	grep "^@@" actual
+'
+
+test_expect_success 'show --format=%s on annotated tag shows tag subject' '
+	cd repo &&
+	git show --format="format:%s" v1.0 >actual &&
+	grep "version 1.0" actual
+'
+
+test_expect_success 'show blob by hash shows content' '
+	cd repo &&
+	blob=$(git rev-parse HEAD:file.txt) &&
+	git show $blob >actual &&
+	grep "first" actual &&
+	grep "second" actual
+'
+
 test_done
