@@ -1842,4 +1842,77 @@ test_expect_success '--show-origin with --list and --file' '
 	test_cmp expect actual
 '
 
+# ── section ending ─────────────────────────────────────────────────────────────
+
+test_expect_success 'section ending: subsection set after parent key' '
+	cd repo &&
+	rm -f .git/config &&
+	git config gitcvs.enabled true &&
+	git config gitcvs.ext.dbname %Ggitcvs1.sqlite &&
+	git config gitcvs.dbname %Ggitcvs2.sqlite &&
+	git config --list --local >actual &&
+	cat >expect <<-\EOF &&
+	gitcvs.enabled=true
+	gitcvs.dbname=%Ggitcvs2.sqlite
+	gitcvs.ext.dbname=%Ggitcvs1.sqlite
+	EOF
+	test_cmp expect actual
+'
+
+# ── remove-section (deeper) ───────────────────────────────────────────────────
+
+test_expect_success 'remove-section preserves surrounding sections' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[alpha]
+		key = val
+	[beta]
+		key = val
+	[gamma]
+		key = val
+	EOF
+	git config --remove-section beta &&
+	cat >expect <<-\EOF &&
+	[alpha]
+		key = val
+	[gamma]
+		key = val
+	EOF
+	test_cmp expect .git/config
+'
+
+# ── invalid types ─────────────────────────────────────────────────────────────
+
+test_expect_success 'invalid unit with --int' '
+	cd repo &&
+	git config aninvalid.unit "1auto" &&
+	test_must_fail git config --int aninvalid.unit 2>err &&
+	grep "invalid" err
+'
+
+test_expect_success 'invalid bool with --bool (--get)' '
+	cd repo &&
+	git config commit.gpgsign "1true" &&
+	test_must_fail git config --bool commit.gpgsign 2>err &&
+	grep "bad boolean" err
+'
+
+# ── --path expands tilde ──────────────────────────────────────────────────────
+
+test_expect_success '--path expands tilde to HOME' '
+	cd repo &&
+	git config path.home "~/" &&
+	git config path.normal "/dev/null" &&
+	git config path.trailing "foo~" &&
+	git config --path path.home >actual_home &&
+	git config --path path.normal >actual_normal &&
+	git config --path path.trailing >actual_trailing &&
+	echo "$HOME/" >expect_home &&
+	echo "/dev/null" >expect_normal &&
+	echo "foo~" >expect_trailing &&
+	test_cmp expect_home actual_home &&
+	test_cmp expect_normal actual_normal &&
+	test_cmp expect_trailing actual_trailing
+'
+
 test_done
