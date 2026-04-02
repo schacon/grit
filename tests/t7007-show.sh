@@ -354,4 +354,21 @@ test_expect_success 'show --format=%H on first commit matches rev-parse' '
 	test_cmp expected first
 '
 
+test_expect_success 'show tag by hash shows tag info' '
+	cd repo &&
+	TAGHASH=$(git rev-parse v1.0) &&
+	git show "$TAGHASH" >actual &&
+	grep "tag v1.0" actual
+'
+
+test_expect_success 'show --oneline on first commit' '
+	cd repo &&
+	FIRST=$(git log --format="%H" | tail -1) &&
+	SHORT=$(git rev-parse --short "$FIRST") &&
+	git show --oneline "$FIRST" >actual &&
+	head -1 actual >first_line &&
+	grep "$SHORT" first_line &&
+	grep "first commit" first_line
+'
+
 test_done

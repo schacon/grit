@@ -143,4 +143,16 @@ test_expect_success '--into-name with remote branch' '
 	grep -q "of https://example.com/repo" actual
 '
 
+test_expect_success 'three branches uses branches plural' '
+	printf "a1\t\tbranch '"'"'a'"'"'\nb2\t\tbranch '"'"'b'"'"'\nc3\t\tbranch '"'"'c'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branches" actual
+'
+
+test_expect_success '-F with /dev/stdin works like pipe' '
+	printf "abc123\t\tbranch '"'"'dev'"'"'\n" >fminput &&
+	git fmt-merge-msg -F fminput >actual &&
+	grep -q "branch '"'"'dev'"'"'" actual
+'
+
 test_done

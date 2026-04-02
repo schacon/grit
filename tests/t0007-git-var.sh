@@ -285,4 +285,13 @@ test_expect_success 'git var -l works even without HOME' '
 	)
 '
 
+test_expect_success 'git var GIT_PAGER defaults to cat' '
+	(
+		sane_unset GIT_PAGER &&
+		echo cat >expect &&
+		git var GIT_PAGER >actual &&
+		test_cmp expect actual
+	)
+'
+
 test_done
