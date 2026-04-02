@@ -101,6 +101,25 @@ test_expect_success 'hash-object from subdirectory sees same blob' '
 # SKIP: rev-parse from inside .git not yet supported
 # test_expect_success 'rev-parse HEAD works from inside .git'
 
+test_expect_success 'diff-files from subdirectory' '
+	cd repo &&
+	echo a >>one &&
+	echo d >>dir/two &&
+	grit diff-files --name-only >actual &&
+	# Should show both files regardless of cwd
+	grep one actual &&
+	grep dir/two actual &&
+	(
+		cd dir &&
+		grit diff-files --name-only >actual &&
+		# From subdir, should still see full paths
+		grep one actual &&
+		grep dir/two actual
+	) &&
+	# Restore files
+	grit checkout-index -f -u one dir/two
+'
+
 test_expect_success 'read-tree --reset -u from subdirectory restores worktree' '
 	cd repo &&
 	tree=$(grit write-tree) &&
@@ -114,6 +133,40 @@ test_expect_success 'read-tree --reset -u from subdirectory restores worktree' '
 		grit read-tree --reset -u "$tree" &&
 		test_cmp two ../original.two &&
 		test_cmp ../one ../original.one
+	)
+'
+
+test_expect_success 'ls-files from subdirectory shows relative paths' '
+	cd repo &&
+	(
+		cd dir &&
+		grit ls-files >actual &&
+		cat >expect <<-\EOF &&
+		two
+		EOF
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'update-index --add from subdirectory with new file' '
+	cd repo &&
+	echo "new content" >dir/three &&
+	(
+		cd dir &&
+		grit update-index --add three
+	) &&
+	grit ls-files >actual &&
+	grep dir/three actual
+'
+
+test_expect_success 'no file/rev ambiguity check inside .git' '
+	cd repo &&
+	grit config user.name "Test User" &&
+	grit config user.email "test@example.com" &&
+	grit commit -q -m "test ambiguity" &&
+	(
+		cd .git &&
+		grit rev-parse HEAD
 	)
 '
 
