@@ -609,9 +609,10 @@ pub fn split_symmetric_diff(token: &str) -> Option<(String, String)> {
 }
 
 /// Collect all reachable non-commit objects (trees and blobs) from a set of commits.
+#[allow(dead_code)]
 fn collect_reachable_objects(
     repo: &Repository,
-    graph: &mut CommitGraph<'_>,
+    _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
 ) -> Result<Vec<(ObjectId, String)>> {
     let mut seen = HashSet::new();
@@ -623,6 +624,7 @@ fn collect_reachable_objects(
     Ok(result)
 }
 
+#[allow(dead_code)]
 fn collect_tree_objects(
     repo: &Repository,
     tree_oid: ObjectId,
@@ -665,6 +667,7 @@ fn collect_tree_objects(
 }
 
 /// Compute a simple patch-id for each commit.
+#[allow(dead_code)]
 fn compute_patch_ids(
     repo: &Repository,
     graph: &mut CommitGraph<'_>,
@@ -685,6 +688,7 @@ fn compute_patch_ids(
     Ok(result)
 }
 
+#[allow(dead_code)]
 fn compute_tree_diff_id(
     repo: &Repository,
     tree_a: ObjectId,
@@ -716,6 +720,7 @@ fn compute_tree_diff_id(
     Ok(diff_parts.join("\n"))
 }
 
+#[allow(dead_code)]
 fn flatten_tree(
     repo: &Repository,
     tree_oid: ObjectId,
