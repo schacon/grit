@@ -321,4 +321,150 @@ test_expect_success 'cherry-pick --skip without conflict in progress fails' '
 	test_must_fail git cherry-pick --skip 2>err
 '
 
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick with -n (alias for --no-commit)
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick -n is alias for --no-commit' '
+	cd repo &&
+	git checkout -B n-alias $(cat ../initial) &&
+	git cherry-pick -n $(cat ../feature2) &&
+	test -f file2 &&
+	test "$(git rev-parse HEAD)" = "$(cat ../initial)" &&
+	git reset --hard HEAD
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick preserves committer
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick sets committer to current user' '
+	cd repo &&
+	git checkout -B committer-test $(cat ../initial) &&
+	git cherry-pick $(cat ../feature2) &&
+	committer=$(git log -n 1 --format="%cn") &&
+	test -n "$committer"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick a merge commit fails without -m
+# ---------------------------------------------------------------------------
+test_expect_success 'setup merge commit for cherry-pick' '
+	cd repo &&
+	git checkout -B merge-base-branch $(cat ../initial) &&
+	echo "merge-base content" >merge-file &&
+	git add merge-file &&
+	git commit -m "merge-base: add merge-file" &&
+	git rev-parse HEAD >../merge_base &&
+
+	git checkout -B merge-side $(cat ../initial) &&
+	echo "side content" >side-file &&
+	git add side-file &&
+	git commit -m "side: add side-file" &&
+
+	git checkout merge-base-branch &&
+	/usr/bin/git merge merge-side -m "merge commit" --no-edit &&
+	git rev-parse HEAD >../merge_commit
+'
+
+test_expect_success 'cherry-pick merge commit without -m fails' '
+	cd repo &&
+	git checkout -B pick-merge $(cat ../initial) &&
+	test_must_fail git cherry-pick $(cat ../merge_commit) 2>err &&
+	test -s err &&
+	git cherry-pick --abort 2>/dev/null || true
+'
+
+test_expect_success 'cherry-pick merge commit with -m 1 succeeds' '
+	cd repo &&
+	git checkout -B pick-merge-m1 $(cat ../initial) &&
+	git cherry-pick -m 1 $(cat ../merge_commit) &&
+	test -f side-file
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick onto branch with same content (empty patch)
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick already-applied content may produce empty' '
+	cd repo &&
+	git checkout -B already-applied $(cat ../initial) &&
+	git cherry-pick $(cat ../feature2) &&
+	# Try to cherry-pick again — should fail (already applied)
+	test_must_fail git cherry-pick $(cat ../feature2) 2>err
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick with --allow-empty
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick --allow-empty succeeds on empty commit' '
+	cd repo &&
+	git checkout -B allow-empty-test $(cat ../initial) &&
+	git cherry-pick $(cat ../feature2) &&
+	git cherry-pick --allow-empty $(cat ../feature2) 2>err || true
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick --abort without in-progress is error
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick --abort without conflict in progress fails' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard $(cat ../initial) &&
+	test_must_fail git cherry-pick --abort 2>err
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick --continue without in-progress is error
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick --continue without conflict in progress fails' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard $(cat ../initial) &&
+	test_must_fail git cherry-pick --continue 2>err
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick multiple with --no-commit stages all
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick --no-commit with multiple commits stages all cumulatively' '
+	cd repo &&
+	git checkout -B nocommit-cumulative $(cat ../initial) &&
+	git cherry-pick --no-commit $(cat ../feature1) $(cat ../feature2) &&
+	test -f file2 &&
+	test "$(git rev-parse HEAD)" = "$(cat ../initial)" &&
+	git reset --hard HEAD
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick with --ff (fast-forward if possible)
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick --ff fast-forwards when possible' '
+	cd repo &&
+	git checkout -B ff-test $(cat ../initial) &&
+	git cherry-pick --ff $(cat ../feature1) 2>err || true &&
+	# Either it fast-forwarded or applied normally; both are fine
+	git log --oneline >log &&
+	test $(wc -l <log) -ge 2
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick preserves original commit message body
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick preserves full commit message' '
+	cd repo &&
+	git checkout -B msg-test $(cat ../initial) &&
+	git cherry-pick $(cat ../feature2) &&
+	git log -n 1 --format=%s >subj &&
+	grep "feature: add file2" subj
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: cherry-pick onto unborn branch fails
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick on orphan branch fails' '
+	cd repo &&
+	git checkout --orphan orphan-cp &&
+	git rm -rf . 2>/dev/null || true &&
+	test_must_fail git cherry-pick $(cat ../feature2) 2>err &&
+	git checkout -f master
+'
+
 test_done

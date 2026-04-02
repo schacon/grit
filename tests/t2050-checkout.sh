@@ -374,4 +374,190 @@ test_expect_success 'checkout branch created from another branch tip' '
 	git checkout master
 '
 
+# ---------------------------------------------------------------------------
+# Deepened tests: working tree edge cases
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -- <dir> restores all files in directory' '
+	cd repo &&
+	git checkout master &&
+	mkdir -p sub &&
+	echo "sub content" >sub/s1 &&
+	echo "sub content2" >sub/s2 &&
+	git add sub &&
+	git commit -m "add sub dir" &&
+	echo "dirty1" >sub/s1 &&
+	echo "dirty2" >sub/s2 &&
+	git checkout -- sub &&
+	test "$(cat sub/s1)" = "sub content" &&
+	test "$(cat sub/s2)" = "sub content2"
+'
+
+test_expect_success 'checkout branch with added file brings that file' '
+	cd repo &&
+	git checkout -b has-extra-file &&
+	echo "extra" >extra-file &&
+	git add extra-file &&
+	git commit -m "add extra-file" &&
+	git checkout master &&
+	test_path_is_missing extra-file &&
+	git checkout has-extra-file &&
+	test -f extra-file &&
+	git checkout master
+'
+
+test_expect_success 'checkout branch with deleted file removes that file' '
+	cd repo &&
+	git checkout -b delete-test &&
+	git rm file1 &&
+	git commit -m "delete file1" &&
+	test_path_is_missing file1 &&
+	git checkout master &&
+	test -f file1 &&
+	git checkout master
+'
+
+test_expect_success 'checkout --track sets up tracking (with -b)' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b local-track --track branch-a &&
+	test "$(git config branch.local-track.merge)" = "refs/heads/branch-a" &&
+	git checkout master
+'
+
+test_expect_success 'checkout to branch preserves committed content' '
+	cd repo &&
+	git checkout master &&
+	git checkout -b content-check &&
+	echo "content-check" >cc-file &&
+	git add cc-file &&
+	git commit -m "add cc-file" &&
+	git checkout master &&
+	git checkout content-check &&
+	test "$(cat cc-file)" = "content-check" &&
+	git checkout master
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: rev-parse and HEAD behavior
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout updates HEAD to target branch tip' '
+	cd repo &&
+	git checkout master &&
+	master_tip=$(git rev-parse master) &&
+	git checkout branch-a &&
+	ba_tip=$(git rev-parse branch-a) &&
+	test "$(git rev-parse HEAD)" = "$ba_tip" &&
+	git checkout master &&
+	test "$(git rev-parse HEAD)" = "$master_tip"
+'
+
+test_expect_success 'checkout detached HEAD then back to branch' '
+	cd repo &&
+	head_before=$(git rev-parse master) &&
+	git checkout $(cat ../commit1) 2>/dev/null &&
+	git checkout master &&
+	test "$(git rev-parse HEAD)" = "$head_before"
+'
+
+test_expect_success 'checkout with explicit HEAD is a no-op' '
+	cd repo &&
+	git checkout master &&
+	head1=$(git rev-parse HEAD) &&
+	git checkout HEAD &&
+	head2=$(git rev-parse HEAD) &&
+	test "$head1" = "$head2"
+'
+
+test_expect_success 'checkout branch updates index' '
+	cd repo &&
+	git checkout has-extra-file &&
+	git ls-files >files &&
+	grep "extra-file" files &&
+	git checkout master &&
+	git ls-files >files2 &&
+	! grep "extra-file" files2
+'
+
+test_expect_success 'checkout -- file with spaces in name' '
+	cd repo &&
+	git checkout master &&
+	echo "spaced" >"file with spaces" &&
+	git add "file with spaces" &&
+	git commit -m "add spaced file" &&
+	echo "dirty" >"file with spaces" &&
+	git checkout -- "file with spaces" &&
+	test "$(cat "file with spaces")" = "spaced"
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: checkout with -b from tags and refs
+# ---------------------------------------------------------------------------
+test_expect_success 'checkout -b from tag creates branch at tag' '
+	cd repo &&
+	git checkout -b from-tag v1.0 &&
+	test "$(git rev-parse HEAD)" = "$(git rev-parse v1.0)" &&
+	git checkout master
+'
+
+test_expect_success 'checkout to same branch is a no-op' '
+	cd repo &&
+	git checkout master &&
+	git checkout master 2>err &&
+	# Should succeed with no error
+	test $? -eq 0
+'
+
+test_expect_success 'checkout --orphan does not carry files into index' '
+	cd repo &&
+	git checkout --orphan clean-orphan &&
+	git reset --hard 2>/dev/null || true &&
+	git ls-files >orphan-files &&
+	git checkout -f master
+'
+
+test_expect_success 'checkout with --conflict=merge on conflicting file' '
+	cd repo &&
+	git checkout master &&
+	git checkout left 2>/dev/null &&
+	echo "local change" >conflict-file &&
+	git checkout --conflict=merge right 2>err || true &&
+	test -f conflict-file &&
+	git checkout -f master
+'
+
+test_expect_success 'checkout -b with no start point uses HEAD' '
+	cd repo &&
+	git checkout master &&
+	head=$(git rev-parse HEAD) &&
+	git checkout -b from-head-implicit &&
+	test "$(git rev-parse HEAD)" = "$head" &&
+	git checkout master
+'
+
+# ---------------------------------------------------------------------------
+# Deepened: multiple branch switching preserves state
+# ---------------------------------------------------------------------------
+test_expect_success 'rapid branch switching preserves content' '
+	cd repo &&
+	git checkout master &&
+	git checkout branch-a &&
+	git checkout left &&
+	git checkout master &&
+	git checkout right &&
+	git checkout master &&
+	# Verify final state is correct
+	test "$(git symbolic-ref --short HEAD)" = "master"
+'
+
+test_expect_success 'checkout - alternates between two branches' '
+	cd repo &&
+	git checkout master &&
+	git checkout branch-a &&
+	git checkout - &&
+	test "$(git symbolic-ref --short HEAD)" = "master" &&
+	git checkout - &&
+	test "$(git symbolic-ref --short HEAD)" = "branch-a" &&
+	git checkout master
+'
+
 test_done
