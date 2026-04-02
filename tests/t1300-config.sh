@@ -2193,4 +2193,51 @@ test_expect_success '--unset-all removes all occurrences' '
 	test_must_fail git config --get ua.key
 '
 
+# ── file format and quoting ───────────────────────────────────────────────
+
+test_expect_success 'value with trailing spaces is quoted in file' '
+	cd repo &&
+	git config quot.trailing "val  " &&
+	git config --get quot.trailing >actual &&
+	echo "val  " >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'value with leading spaces' '
+	cd repo &&
+	git config quot.leading "  val" &&
+	git config --get quot.leading >actual &&
+	echo "  val" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'value with backslash preserved' '
+	cd repo &&
+	git config quot.bs "a\\b" &&
+	git config --get quot.bs >actual &&
+	echo "a\\b" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'empty string value' '
+	cd repo &&
+	git config empty.val "" &&
+	git config --get empty.val >actual &&
+	echo "" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'overwrite preserves other keys in section' '
+	cd repo &&
+	git config ow.keep "stay" &&
+	git config ow.change "before" &&
+	git config ow.change "after" &&
+	git config --get ow.keep >actual_keep &&
+	git config --get ow.change >actual_change &&
+	echo "stay" >expect_keep &&
+	echo "after" >expect_change &&
+	test_cmp expect_keep actual_keep &&
+	test_cmp expect_change actual_change
+'
+
 test_done
