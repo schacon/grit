@@ -1,121 +1,121 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
-add	Main Porcelain	yes	2031	453	1561	22.3
+add	Main Porcelain	yes	2031	467	1561	23.0
 am	Main Porcelain	yes	142	4	138	2.8
 archive	Main Porcelain	yes	80	0	80	0.0
 bisect	Main Porcelain	yes	108	4	104	3.7
-branch	Main Porcelain	yes	815	339	473	41.6
-checkout	Main Porcelain	yes	2249	469	1747	20.9
-cherry-pick	Main Porcelain	yes	202	79	121	39.1
-clean	Main Porcelain	yes	166	24	132	14.3
-clone	Main Porcelain	yes	811	39	770	4.8
-commit	Main Porcelain	yes	2046	453	1569	22.2
-describe	Main Porcelain	yes	41	6	35	14.6
+branch	Main Porcelain	yes	815	342	473	41.9
+checkout	Main Porcelain	yes	2249	501	1747	22.3
+cherry-pick	Main Porcelain	yes	202	81	121	40.1
+clean	Main Porcelain	yes	166	34	132	20.5
+clone	Main Porcelain	yes	811	41	770	5.0
+commit	Main Porcelain	yes	2046	473	1569	23.1
+describe	Main Porcelain	yes	41	6	35	14.4
 diff	Main Porcelain	yes	846	286	544	33.8
-fetch	Main Porcelain	yes	517	40	476	7.7
+fetch	Main Porcelain	yes	517	41	476	7.9
 format-patch	Main Porcelain	yes	227	8	219	3.5
-gc	Main Porcelain	yes	68	36	32	52.8
-grep	Main Porcelain	yes	222	6	216	2.6
-init	Main Porcelain	yes	1456	275	1170	18.9
-log	Main Porcelain	yes	989	389	597	39.3
-merge	Main Porcelain	yes	752	98	587	13.0
-mv	Main Porcelain	yes	183	63	111	34.5
+gc	Main Porcelain	yes	68	36	32	52.9
+grep	Main Porcelain	yes	222	6	216	2.7
+init	Main Porcelain	yes	1456	286	1168	19.7
+log	Main Porcelain	yes	989	374	597	37.8
+merge	Main Porcelain	yes	752	165	587	21.9
+mv	Main Porcelain	yes	183	72	111	39.3
 notes	Main Porcelain	yes	225	0	225	0.0
-pull	Main Porcelain	yes	225	7	209	3.3
+pull	Main Porcelain	yes	225	16	209	7.1
 push	Main Porcelain	yes	496	17	479	3.4
 range-diff	Main Porcelain	yes	32	0	32	0.0
-rebase	Main Porcelain	yes	552	36	516	6.5
-reset	Main Porcelain	yes	1629	329	1230	20.2
-restore	Main Porcelain	yes	53	17	36	32.1
-revert	Main Porcelain	yes	55	23	32	41.2
-rm	Main Porcelain	yes	354	127	216	35.9
+rebase	Main Porcelain	yes	552	35	516	6.4
+reset	Main Porcelain	yes	1629	398	1230	24.4
+restore	Main Porcelain	yes	53	17	36	32.0
+revert	Main Porcelain	yes	55	23	32	41.8
+rm	Main Porcelain	yes	354	138	216	38.9
 shortlog	Main Porcelain	yes	52	22	30	42.3
-show	Main Porcelain	yes	285	69	207	24.4
-stash	Main Porcelain	yes	205	4	196	2.2
-status	Main Porcelain	yes	452	213	239	47.0
+show	Main Porcelain	yes	285	78	207	27.3
+stash	Main Porcelain	yes	205	9	196	4.4
+status	Main Porcelain	yes	452	213	239	47.1
 submodule	Main Porcelain	yes	463	39	424	8.4
 switch	Main Porcelain	yes	121	23	98	19.0
-tag	Main Porcelain	yes	588	281	299	47.8
+tag	Main Porcelain	yes	588	289	299	49.1
 worktree	Main Porcelain	yes	258	30	228	11.6
 annotate	Ancillary Porcelain	yes	1	0	1	0.0
 blame	Ancillary Porcelain	yes	84	3	81	3.6
 bundle	Ancillary Porcelain	yes	57	1	56	1.8
 cherry	Ancillary Porcelain	yes	4	4	0	100.0
-config	Ancillary Porcelain	yes	1815	544	1267	30.0
-count-objects	Ancillary Porcelain	yes	30	10	18	33.7
+config	Ancillary Porcelain	yes	1815	544	1266	30.0
+count-objects	Ancillary Porcelain	yes	30	14	16	46.7
 diagnose	Ancillary Porcelain	yes	4	0	4	0.0
 difftool	Ancillary Porcelain	yes	54	0	54	0.0
 fast-export	Ancillary Porcelain	yes	81	1	80	1.2
 fast-import	Ancillary Porcelain	yes	213	5	208	2.3
 filter-branch	Ancillary Porcelain	yes	41	0	41	0.0
-fsck	Ancillary Porcelain	yes	176	14	158	8.1
+fsck	Ancillary Porcelain	yes	176	18	158	10.2
 help	Ancillary Porcelain	yes	26	22	4	84.6
 maintenance	Ancillary Porcelain	yes	69	0	69	0.0
-merge-tree	Ancillary Porcelain	yes	52	18	32	34.2
+merge-tree	Ancillary Porcelain	yes	52	20	32	38.5
 mergetool	Ancillary Porcelain	yes	30	0	30	0.0
-pack-refs	Ancillary Porcelain	yes	74	11	62	15.3
-prune	Ancillary Porcelain	yes	41	24	15	59.0
-reflog	Ancillary Porcelain	yes	172	88	82	51.3
-remote	Ancillary Porcelain	yes	259	6	252	2.2
-repack	Ancillary Porcelain	yes	261	75	179	28.7
-replace	Ancillary Porcelain	yes	32	3	29	9.0
+pack-refs	Ancillary Porcelain	yes	74	12	62	16.2
+prune	Ancillary Porcelain	yes	41	26	15	63.4
+reflog	Ancillary Porcelain	yes	172	90	82	52.3
+remote	Ancillary Porcelain	yes	259	7	252	2.7
+repack	Ancillary Porcelain	yes	261	82	179	31.4
+replace	Ancillary Porcelain	yes	32	3	29	9.4
 request-pull	Ancillary Porcelain	no	8	0	8	0.0
-rerere	Ancillary Porcelain	yes	19	0	18	1.8
+rerere	Ancillary Porcelain	yes	19	1	18	5.3
 scalar	Ancillary Porcelain	no	0	0	0	0.0
-show-branch	Ancillary Porcelain	yes	29	6	16	19.7
-sparse-checkout	Ancillary Porcelain	yes	126	1	125	0.7
+show-branch	Ancillary Porcelain	yes	29	13	16	44.8
+sparse-checkout	Ancillary Porcelain	yes	126	1	125	0.8
 verify-commit	Ancillary Porcelain	yes	43	0	43	0.0
 verify-tag	Ancillary Porcelain	yes	26	15	11	57.7
 version	Ancillary Porcelain	yes	11	2	9	18.1
-whatchanged	Ancillary Porcelain	yes	2	1	1	50.0
+whatchanged	Ancillary Porcelain	yes	2	1	1	48.7
 apply	Plumbing	yes	278	19	259	6.8
-cat-file	Plumbing	yes	611	195	413	31.9
+cat-file	Plumbing	yes	611	198	413	32.4
 check-attr	Plumbing	yes	29	26	2	90.1
 check-ignore	Plumbing	yes	11	10	1	90.9
 check-mailmap	Plumbing	yes	10	10	0	100.0
 check-ref-format	Plumbing	yes	6	5	1	83.3
-checkout-index	Plumbing	yes	71	58	12	81.8
+checkout-index	Plumbing	yes	71	59	12	82.8
 column	Plumbing	yes	14	0	14	0.0
 commit-graph	Plumbing	yes	108	2	106	1.9
-commit-tree	Plumbing	yes	79	20	59	25.0
+commit-tree	Plumbing	yes	79	21	58	26.6
 credential	Plumbing	yes	8	0	8	0.0
 credential-cache	Plumbing	yes	6	0	6	0.0
 credential-store	Plumbing	yes	0	0	0	0.0
 daemon	Plumbing	yes	3	0	3	0.0
-diff-files	Plumbing	yes	111	54	53	48.8
-diff-index	Plumbing	yes	178	54	123	30.2
-diff-tree	Plumbing	yes	187	74	109	39.6
+diff-files	Plumbing	yes	111	57	53	51.2
+diff-index	Plumbing	yes	178	55	123	30.7
+diff-tree	Plumbing	yes	187	77	109	41.2
 fetch-pack	Plumbing	yes	19	0	19	0.0
 fmt-merge-msg	Plumbing	yes	31	0	31	0.0
-for-each-ref	Plumbing	yes	214	62	152	28.9
+for-each-ref	Plumbing	yes	214	62	152	29.0
 for-each-repo	Plumbing	yes	4	0	4	0.0
 get-tar-commit-id	Plumbing	yes	1	0	1	0.0
-hash-object	Plumbing	yes	403	99	298	24.6
+hash-object	Plumbing	yes	403	105	297	26.0
 hook	Plumbing	yes	25	0	25	0.0
 http-backend	Plumbing	yes	2	0	2	0.0
-index-pack	Plumbing	yes	86	20	66	23.3
+index-pack	Plumbing	yes	86	32	54	37.2
 interpret-trailers	Plumbing	yes	95	0	95	0.0
-ls-files	Plumbing	yes	724	180	531	24.8
+ls-files	Plumbing	yes	724	193	531	26.6
 ls-remote	Plumbing	yes	93	3	90	3.2
-ls-tree	Plumbing	yes	117	40	77	34.1
+ls-tree	Plumbing	yes	117	41	76	35.0
 mailinfo	Plumbing	yes	22	0	22	0.0
 mailsplit	Plumbing	yes	9	0	9	0.0
 merge-base	Plumbing	yes	21	9	12	42.9
-merge-file	Plumbing	yes	58	36	14	62.3
+merge-file	Plumbing	yes	58	44	14	75.9
 merge-index	Plumbing	yes	4	0	4	0.0
 merge-one-file	Plumbing	yes	0	0	0	0.0
 mktag	Plumbing	yes	9	5	4	55.6
-mktree	Plumbing	yes	43	13	30	30.2
+mktree	Plumbing	yes	43	14	29	32.6
 multi-pack-index	Plumbing	yes	88	0	88	0.0
 name-rev	Plumbing	yes	29	4	25	13.8
-pack-objects	Plumbing	yes	174	35	138	20.3
+pack-objects	Plumbing	yes	174	44	130	25.3
 pack-redundant	Plumbing	yes	1	0	1	0.0
 patch-id	Plumbing	yes	5	3	2	60.0
-prune-packed	Plumbing	yes	38	2	36	4.7
-read-tree	Plumbing	yes	133	33	98	24.9
+prune-packed	Plumbing	yes	38	4	34	10.5
+read-tree	Plumbing	yes	133	35	98	26.0
 receive-pack	Plumbing	yes	10	0	10	0.0
 refs	Plumbing	yes	49	0	49	0.0
-rev-list	Plumbing	yes	448	133	314	29.6
-rev-parse	Plumbing	yes	2138	514	1615	24.0
+rev-list	Plumbing	yes	448	134	314	29.9
+rev-parse	Plumbing	yes	2138	524	1614	24.5
 send-pack	Plumbing	yes	20	0	20	0.0
 show-index	Plumbing	yes	33	8	25	24.2
 show-ref	Plumbing	yes	164	93	71	56.7
@@ -123,11 +123,11 @@ stripspace	Plumbing	yes	33	29	4	87.9
 symbolic-ref	Plumbing	yes	272	131	141	48.2
 unpack-file	Plumbing	yes	2	0	2	0.0
 unpack-objects	Plumbing	yes	15	1	14	6.7
-update-index	Plumbing	yes	482	215	264	44.6
-update-ref	Plumbing	yes	632	325	305	51.4
-update-server-info	Plumbing	yes	15	4	11	26.7
+update-index	Plumbing	yes	482	217	263	45.1
+update-ref	Plumbing	yes	632	328	304	51.9
+update-server-info	Plumbing	yes	15	4	11	23.7
 upload-archive	Plumbing	yes	0	0	0	0.0
 upload-pack	Plumbing	yes	21	1	20	4.8
 var	Plumbing	yes	33	28	5	84.8
-verify-pack	Plumbing	yes	59	16	42	27.5
-write-tree	Plumbing	yes	83	43	40	51.5
+verify-pack	Plumbing	yes	59	20	39	33.9
+write-tree	Plumbing	yes	83	44	39	53.0

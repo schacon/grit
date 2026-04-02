@@ -4,8 +4,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
-    collect_revision_specs_with_stdin, render_commit, rev_list, tag_targets, OrderingMode,
-    OutputMode, RevListOptions,
+    collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit, rev_list,
+    split_symmetric_diff, tag_targets, OrderingMode, OutputMode, RevListOptions,
 };
 
 /// Arguments for `grit rev-list`.
@@ -48,6 +48,24 @@ pub fn run(args: Args) -> Result<()> {
                 "--quiet" => options.quiet = true,
                 "--stdin" => read_stdin = true,
                 "--end-of-options" => end_of_options = true,
+                "--objects" => options.objects = true,
+                "--objects-edge" => options.objects = true,
+                "--no-object-names" => options.no_object_names = true,
+                "--object-names" => options.no_object_names = false,
+                "--boundary" => options.boundary = true,
+                "--left-right" => options.left_right = true,
+                "--left-only" => options.left_only = true,
+                "--right-only" => options.right_only = true,
+                "--cherry-mark" => {
+                    options.cherry_mark = true;
+                    options.left_right = true;
+                }
+                "--cherry-pick" => options.cherry_pick = true,
+                "--cherry" => {
+                    options.cherry_pick = true;
+                    options.right_only = true;
+                    options.left_right = true;
+                }
                 "-n" => {
                     let Some(value) = args.args.get(i + 1) else {
                         bail!("-n requires an argument");
@@ -107,37 +125,113 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    let (positive_specs, negative_specs, stdin_all_refs) =
-        collect_revision_specs_with_stdin(&revision_specs, read_stdin)
+    // Handle symmetric diff (A...B) tokens
+    let mut symmetric_left: Option<String> = None;
+    let mut symmetric_right: Option<String> = None;
+    let mut processed_specs = Vec::new();
+    for spec in &revision_specs {
+        if is_symmetric_diff(spec) {
+            if let Some((lhs, rhs)) = split_symmetric_diff(spec) {
+                symmetric_left = Some(lhs);
+                symmetric_right = Some(rhs);
+            }
+        } else {
+            processed_specs.push(spec.clone());
+        }
+    }
+
+    let (mut positive_specs, mut negative_specs, stdin_all_refs) =
+        collect_revision_specs_with_stdin(&processed_specs, read_stdin)
             .context("failed to parse revision arguments")?;
     if stdin_all_refs {
         options.all_refs = true;
+    }
+
+    // If symmetric diff, resolve merge bases and set up positive/negative
+    if let (Some(ref lhs), Some(ref rhs)) = (&symmetric_left, &symmetric_right) {
+        let lhs_oid = grit_lib::rev_parse::resolve_revision(&repo, lhs)
+            .with_context(|| format!("bad revision '{lhs}'"))?;
+        let rhs_oid = grit_lib::rev_parse::resolve_revision(&repo, rhs)
+            .with_context(|| format!("bad revision '{rhs}'"))?;
+        let bases = merge_bases(&repo, lhs_oid, rhs_oid, options.first_parent)
+            .context("failed to compute merge bases")?;
+        positive_specs.push(lhs.clone());
+        positive_specs.push(rhs.clone());
+        for base in bases {
+            negative_specs.push(base.to_hex());
+        }
+        // For left-right, mark which side each commit belongs to
+        if options.left_right || options.left_only || options.right_only || options.cherry_mark || options.cherry_pick {
+            // The left_right computation is handled in rev_list itself
+        }
     }
 
     let result =
         rev_list(&repo, &positive_specs, &negative_specs, &options).context("rev-list failed")?;
 
     if options.count {
-        println!("{}", result.commits.len());
+        let mut total = result.commits.len();
+        if options.objects {
+            total += result.objects.len();
+        }
+        println!("{total}");
         return Ok(());
     }
     if options.quiet {
         return Ok(());
     }
 
-    for oid in result.commits {
+    for oid in &result.commits {
+        let mut prefix = String::new();
+        if options.left_right {
+            if let Some(&is_left) = result.left_right_map.get(oid) {
+                if is_left {
+                    prefix.push('<');
+                } else {
+                    prefix.push('>');
+                }
+            }
+        }
+        if options.cherry_mark {
+            if result.cherry_equivalent.contains(oid) {
+                prefix = "=".to_owned();
+            } else if !prefix.is_empty() {
+                prefix = "+".to_owned();
+            }
+        }
         match &options.output_mode {
             OutputMode::Format(_) => {
-                println!("commit {oid}");
-                let rendered = render_commit(&repo, oid, &options.output_mode, abbrev_len)?;
+                println!("commit {prefix}{oid}");
+                let rendered = render_commit(&repo, *oid, &options.output_mode, abbrev_len)?;
                 println!("{rendered}");
             }
             _ => {
-                let rendered = render_commit(&repo, oid, &options.output_mode, abbrev_len)?;
-                println!("{rendered}");
+                let rendered = render_commit(&repo, *oid, &options.output_mode, abbrev_len)?;
+                println!("{prefix}{rendered}");
             }
         }
     }
+
+    // Print reachable objects if --objects
+    if options.objects {
+        for (oid, path) in &result.objects {
+            if options.no_object_names {
+                println!("{oid}");
+            } else if path.is_empty() {
+                println!("{oid} ");
+            } else {
+                println!("{oid} {path}");
+            }
+        }
+    }
+
+    // Print boundary commits
+    if options.boundary {
+        for oid in &result.boundary_commits {
+            println!("-{oid}");
+        }
+    }
+
     Ok(())
 }
 

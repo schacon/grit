@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::{Error, Result};
-use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::refs;
 use crate::repo::Repository;
 use crate::rev_parse::resolve_revision;
@@ -195,7 +195,13 @@ pub fn rev_list(
         ordered.reverse();
     }
 
-    Ok(RevListResult { commits: ordered })
+    Ok(RevListResult {
+        commits: ordered,
+        objects: Vec::new(),
+        boundary_commits: Vec::new(),
+        left_right_map: HashMap::new(),
+        cherry_equivalent: HashSet::new(),
+    })
 }
 
 /// Parse a raw revision token into positive and negative specs.

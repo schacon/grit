@@ -479,6 +479,7 @@ fn cmd_unset(
 fn cmd_list(args: &Args, git_dir: Option<&Path>) -> Result<()> {
     let config = load_config(args, git_dir)?;
     let terminator = if args.null_terminated { '\0' } else { '\n' };
+    let cwd = std::env::current_dir().ok();
 
     for entry in config.entries() {
         let mut prefix = String::new();
@@ -487,7 +488,17 @@ fn cmd_list(args: &Args, git_dir: Option<&Path>) -> Result<()> {
         }
         if args.show_origin {
             if let Some(ref file) = entry.file {
-                prefix.push_str(&format!("file:{}\t", file.display()));
+                // Use relative path if possible (matches git behavior)
+                let display_path = if let Some(ref cwd) = cwd {
+                    if let Ok(rel) = file.strip_prefix(cwd) {
+                        rel.display().to_string()
+                    } else {
+                        file.display().to_string()
+                    }
+                } else {
+                    file.display().to_string()
+                };
+                prefix.push_str(&format!("file:{}\t", display_path));
             }
         }
         let val = entry.value.as_deref().unwrap_or("true");
