@@ -714,4 +714,391 @@ test_expect_success 'mv on empty string should fail' '
 	test_must_fail git mv "" newname 2>err
 '
 
+# ---------------------------------------------------------------------------
+# Additional mv tests
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup: fresh repo for additional mv tests' '
+	rm -rf repo_mv2 &&
+	git init repo_mv2 &&
+	cd repo_mv2 &&
+	git config user.email "test@example.com" &&
+	git config user.name "Test User" &&
+	echo content >file1 &&
+	git add file1 &&
+	git commit -m "initial"
+'
+
+test_expect_success 'mv to directory moves file into it' '
+	cd repo_mv2 &&
+	mkdir dest &&
+	git mv file1 dest/ &&
+	test_path_is_file dest/file1 &&
+	test_path_is_missing file1 &&
+	git ls-files >actual &&
+	grep "dest/file1" actual &&
+	! grep -x "file1" actual
+'
+
+test_expect_success 'mv commit and continue' '
+	cd repo_mv2 &&
+	git commit -m "moved to dest" &&
+	git mv dest/file1 file1 &&
+	git commit -m "moved back"
+'
+
+test_expect_success 'mv -f overwrites existing tracked file' '
+	cd repo_mv2 &&
+	echo src >src_file &&
+	echo dst >dst_file &&
+	git add src_file dst_file &&
+	git commit -m "add src and dst" &&
+	git mv -f src_file dst_file &&
+	test_path_is_missing src_file &&
+	test "$(cat dst_file)" = "src" &&
+	git ls-files >actual &&
+	grep "dst_file" actual &&
+	! grep "src_file" actual
+'
+
+test_expect_success 'mv -n does not move file' '
+	cd repo_mv2 &&
+	git commit -m "after overwrite" -a &&
+	echo x >drymv &&
+	git add drymv &&
+	git commit -m "add drymv" &&
+	git mv -n drymv drymv_dest &&
+	test_path_is_file drymv &&
+	test_path_is_missing drymv_dest &&
+	git ls-files --error-unmatch drymv
+'
+
+test_expect_success 'mv directory to new name' '
+	cd repo_mv2 &&
+	mkdir mvdir &&
+	echo a >mvdir/a &&
+	echo b >mvdir/b &&
+	git add mvdir &&
+	git commit -m "add mvdir" &&
+	git mv mvdir newdir &&
+	test_path_is_file newdir/a &&
+	test_path_is_file newdir/b &&
+	test_path_is_missing mvdir &&
+	git ls-files >actual &&
+	grep "newdir/a" actual &&
+	grep "newdir/b" actual &&
+	! grep "mvdir/" actual
+'
+
+test_expect_success 'mv multiple files to directory' '
+	cd repo_mv2 &&
+	git commit -m "moved dir" -a &&
+	echo x >ma &&
+	echo y >mb &&
+	mkdir multidir &&
+	git add ma mb &&
+	git commit -m "add multi" &&
+	git mv ma mb multidir/ &&
+	test_path_is_file multidir/ma &&
+	test_path_is_file multidir/mb &&
+	test_path_is_missing ma &&
+	test_path_is_missing mb &&
+	git ls-files >actual &&
+	grep "multidir/ma" actual &&
+	grep "multidir/mb" actual
+'
+
+test_expect_success 'mv file with spaces in name' '
+	cd repo_mv2 &&
+	git commit -m "multi done" -a &&
+	echo x >"space file" &&
+	git add "space file" &&
+	git commit -m "add space file" &&
+	git mv "space file" "new space" &&
+	test_path_is_missing "space file" &&
+	test_path_is_file "new space" &&
+	git ls-files >actual &&
+	grep "new space" actual
+'
+
+test_expect_success 'mv preserves file content' '
+	cd repo_mv2 &&
+	git commit -m "space done" -a &&
+	echo "hello world" >content_file &&
+	git add content_file &&
+	git commit -m "add content file" &&
+	git mv content_file renamed_content &&
+	test "$(cat renamed_content)" = "hello world"
+'
+
+test_expect_success 'mv updates index correctly' '
+	cd repo_mv2 &&
+	git mv renamed_content idx_check &&
+	git ls-files >actual &&
+	grep "idx_check" actual &&
+	! grep "renamed_content" actual
+'
+
+test_expect_success 'mv then status shows rename' '
+	cd repo_mv2 &&
+	git commit -m "idx done" -a &&
+	echo x >status_mv &&
+	git add status_mv &&
+	git commit -m "add status_mv" &&
+	git mv status_mv status_mv_new &&
+	git status --porcelain >actual &&
+	grep "status_mv" actual
+'
+
+test_expect_success 'setup fresh repo for mv commit test' '
+	rm -rf repo_mv_commit &&
+	git init repo_mv_commit &&
+	cd repo_mv_commit &&
+	git config user.email "test@example.com" &&
+	git config user.name "Test User" &&
+	echo x >commit_mv &&
+	git add commit_mv &&
+	git commit -m "add commit_mv"
+'
+
+test_expect_success 'mv then commit succeeds' '
+	cd repo_mv_commit &&
+	git mv commit_mv commit_mv_done &&
+	git commit -m "rename commit_mv" &&
+	git log --oneline -n 1 >actual &&
+	grep "rename" actual
+'
+
+test_expect_success 'mv directory with multiple files updates all index entries' '
+	cd repo_mv2 &&
+	mkdir bigdir &&
+	echo a >bigdir/a &&
+	echo b >bigdir/b &&
+	echo c >bigdir/c &&
+	git add bigdir &&
+	git commit -m "add bigdir" &&
+	git mv bigdir renameddir &&
+	git ls-files >actual &&
+	grep "renameddir/a" actual &&
+	grep "renameddir/b" actual &&
+	grep "renameddir/c" actual &&
+	! grep "bigdir/" actual
+'
+
+test_expect_success 'mv file into newly created directory' '
+	cd repo_mv2 &&
+	git commit -m "bigdir done" -a &&
+	echo x >newdir_mv &&
+	git add newdir_mv &&
+	git commit -m "add newdir_mv" &&
+	mkdir fresh_dir &&
+	git mv newdir_mv fresh_dir/ &&
+	test_path_is_file fresh_dir/newdir_mv &&
+	test_path_is_missing newdir_mv
+'
+
+test_expect_success 'mv -n multiple files to directory' '
+	cd repo_mv2 &&
+	git commit -m "freshdir done" -a &&
+	echo a >dn1 &&
+	echo b >dn2 &&
+	mkdir dndir &&
+	git add dn1 dn2 &&
+	git commit -m "add dn files" &&
+	git mv -n dn1 dn2 dndir/ &&
+	test_path_is_file dn1 &&
+	test_path_is_file dn2 &&
+	test_path_is_missing dndir/dn1 &&
+	test_path_is_missing dndir/dn2
+'
+
+test_expect_success 'mv preserves executable bit' '
+	cd repo_mv2 &&
+	echo "#!/bin/sh" >exec_file &&
+	chmod +x exec_file &&
+	git add exec_file &&
+	git commit -m "add exec_file" &&
+	git mv exec_file exec_renamed &&
+	test -x exec_renamed
+'
+
+test_expect_success 'mv then diff --cached shows rename' '
+	cd repo_mv2 &&
+	git commit -m "exec done" -a &&
+	echo x >diff_mv &&
+	git add diff_mv &&
+	git commit -m "add diff_mv" &&
+	git mv diff_mv diff_mv_new &&
+	git diff --cached --name-status >actual &&
+	grep "diff_mv" actual
+'
+
+test_expect_success 'mv directory with subdirectories' '
+	cd repo_mv2 &&
+	git commit -m "diff done" -a &&
+	mkdir -p deep/sub1/sub2 &&
+	echo a >deep/f &&
+	echo b >deep/sub1/g &&
+	echo c >deep/sub1/sub2/h &&
+	git add deep &&
+	git commit -m "add deep" &&
+	git mv deep deep_new &&
+	git ls-files >actual &&
+	grep "deep_new/f" actual &&
+	grep "deep_new/sub1/g" actual &&
+	grep "deep_new/sub1/sub2/h" actual &&
+	! grep -E "^deep/" actual
+'
+
+test_expect_success 'mv -f over tracked file updates index correctly' '
+	cd repo_mv2 &&
+	git commit -m "deep done" -a &&
+	echo src_content >fsrc &&
+	echo dst_content >fdst &&
+	git add fsrc fdst &&
+	git commit -m "add fsrc fdst" &&
+	git mv -f fsrc fdst &&
+	git ls-files >actual &&
+	grep "fdst" actual &&
+	! grep "fsrc" actual &&
+	git diff --cached --name-status >status &&
+	grep "fsrc" status
+'
+
+test_expect_success 'mv dir into another dir' '
+	cd repo_mv2 &&
+	git commit -m "force done" -a &&
+	mkdir d_into1 &&
+	echo x >d_into1/f &&
+	mkdir d_into2 &&
+	git add d_into1 &&
+	git commit -m "add d_into1" &&
+	git mv d_into1 d_into2/ &&
+	test_path_is_file d_into2/d_into1/f &&
+	test_path_is_missing d_into1 &&
+	git ls-files >actual &&
+	grep "d_into2/d_into1/f" actual
+'
+
+test_expect_success 'mv dir to nested destination' '
+	cd repo_mv2 &&
+	git commit -m "into done" -a &&
+	mkdir nest_src &&
+	echo x >nest_src/f &&
+	git add nest_src &&
+	git commit -m "add nest_src" &&
+	mkdir -p nest_dest &&
+	git mv nest_src nest_dest/nest_src &&
+	test_path_is_file nest_dest/nest_src/f &&
+	test_path_is_missing nest_src
+'
+
+test_expect_success 'mv file to same dir different name' '
+	cd repo_mv2 &&
+	git commit -m "nest done" -a &&
+	echo x >hello_mv &&
+	git add hello_mv &&
+	git commit -m "add hello_mv" &&
+	git mv hello_mv world_mv &&
+	test_path_is_missing hello_mv &&
+	test_path_is_file world_mv &&
+	git ls-files >actual &&
+	grep "world_mv" actual &&
+	! grep "hello_mv" actual
+'
+
+test_expect_success 'mv file into nested new name' '
+	cd repo_mv2 &&
+	git commit -m "world done" -a &&
+	echo x >nest_name &&
+	git add nest_name &&
+	git commit -m "add nest_name" &&
+	mkdir nsub &&
+	git mv nest_name nsub/new_name &&
+	test_path_is_file nsub/new_name &&
+	test_path_is_missing nest_name
+'
+
+test_expect_success 'mv -f src dst where dst is untracked' '
+	cd repo_mv2 &&
+	git commit -m "nsub done" -a &&
+	echo x >tracked_f &&
+	git add tracked_f &&
+	git commit -m "add tracked_f" &&
+	echo y >untracked_g &&
+	git mv -f tracked_f untracked_g &&
+	test_path_is_file untracked_g &&
+	test_path_is_missing tracked_f &&
+	git ls-files >actual &&
+	grep "untracked_g" actual
+'
+
+test_expect_success 'mv -n on directory does not change anything' '
+	cd repo_mv2 &&
+	git commit -m "untracked done" -a &&
+	mkdir dry_dir &&
+	echo a >dry_dir/a &&
+	echo b >dry_dir/b &&
+	git add dry_dir &&
+	git commit -m "add dry_dir" &&
+	git mv -n dry_dir nowhere &&
+	test_path_is_dir dry_dir &&
+	test_path_is_missing nowhere &&
+	git ls-files >actual &&
+	grep "dry_dir/" actual
+'
+
+test_expect_success 'mv overwrites destination content' '
+	cd repo_mv2 &&
+	echo "overwrite_src" >ow_src &&
+	echo "overwrite_dst" >ow_dst &&
+	git add ow_src ow_dst &&
+	git commit -m "add ow files" &&
+	git mv -f ow_src ow_dst &&
+	test "$(cat ow_dst)" = "overwrite_src"
+'
+
+test_expect_success 'mv directory keeps all file contents' '
+	cd repo_mv2 &&
+	git commit -m "ow done" -a &&
+	mkdir keep_dir &&
+	echo alpha >keep_dir/a &&
+	echo bravo >keep_dir/b &&
+	git add keep_dir &&
+	git commit -m "add keep_dir" &&
+	git mv keep_dir kept_dir &&
+	test "$(cat kept_dir/a)" = "alpha" &&
+	test "$(cat kept_dir/b)" = "bravo"
+'
+
+test_expect_success 'mv then re-mv back to original' '
+	cd repo_mv2 &&
+	git commit -m "keep done" -a &&
+	echo x >roundtrip &&
+	git add roundtrip &&
+	git commit -m "add roundtrip" &&
+	git mv roundtrip temp_name &&
+	git mv temp_name roundtrip &&
+	test_path_is_file roundtrip &&
+	git ls-files >actual &&
+	grep "roundtrip" actual
+'
+
+test_expect_success 'mv two files swapping requires intermediate' '
+	cd repo_mv2 &&
+	git commit --allow-empty -m "roundtrip done" &&
+	echo aa >swap_a &&
+	echo bb >swap_b &&
+	git add swap_a swap_b &&
+	git commit -m "add swap files" &&
+	git mv swap_a swap_tmp &&
+	git mv swap_b swap_a &&
+	git mv swap_tmp swap_b &&
+	test "$(cat swap_a)" = "bb" &&
+	test "$(cat swap_b)" = "aa" &&
+	git ls-files >actual &&
+	grep "swap_a" actual &&
+	grep "swap_b" actual
+'
+
 test_done

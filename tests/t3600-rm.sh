@@ -622,4 +622,407 @@ test_expect_success 'rm of tracked file shows in status' '
 	grep "D  dry1" actual
 '
 
+# ---------------------------------------------------------------------------
+# Additional rm tests
+# ---------------------------------------------------------------------------
+
+test_expect_success 'rm -r removes directory recursively' '
+	cd repo &&
+	mkdir -p rmdir_test &&
+	echo a >rmdir_test/a &&
+	echo b >rmdir_test/b &&
+	git add rmdir_test &&
+	git commit -m "add rmdir_test" &&
+	git rm -r rmdir_test &&
+	! test -d rmdir_test &&
+	test_must_fail git ls-files --error-unmatch rmdir_test/a &&
+	test_must_fail git ls-files --error-unmatch rmdir_test/b
+'
+
+test_expect_success 'rm -r --cached on directory keeps worktree' '
+	cd repo &&
+	mkdir -p cached_dir &&
+	echo a >cached_dir/a &&
+	echo b >cached_dir/b &&
+	git add cached_dir &&
+	git commit -m "add cached_dir" &&
+	git rm -r --cached cached_dir &&
+	test_path_is_file cached_dir/a &&
+	test_path_is_file cached_dir/b &&
+	test_must_fail git ls-files --error-unmatch cached_dir/a &&
+	test_must_fail git ls-files --error-unmatch cached_dir/b
+'
+
+test_expect_success 'rm --ignore-unmatch succeeds on nonexistent file' '
+	cd repo &&
+	git rm --ignore-unmatch does_not_exist
+'
+
+test_expect_success 'rm -q suppresses output' '
+	cd repo &&
+	echo suppress >suppress_file &&
+	git add suppress_file &&
+	git commit -m "add suppress_file" &&
+	git rm -q suppress_file >output 2>&1 &&
+	test_must_be_empty output
+'
+
+test_expect_success 'rm multiple files at once' '
+	cd repo &&
+	echo a >multi_a &&
+	echo b >multi_b &&
+	echo c >multi_c &&
+	git add multi_a multi_b multi_c &&
+	git commit -m "add multi files" &&
+	git rm multi_a multi_b multi_c &&
+	! test -f multi_a &&
+	! test -f multi_b &&
+	! test -f multi_c
+'
+
+test_expect_success 'rm --cached on staged but uncommitted file' '
+	cd repo &&
+	echo new >rm_new_staged &&
+	git add rm_new_staged &&
+	git rm --cached rm_new_staged &&
+	test_path_is_file rm_new_staged &&
+	test_must_fail git ls-files --error-unmatch rm_new_staged
+'
+
+test_expect_success 'rm --cached with modified worktree keeps file' '
+	cd repo &&
+	echo original >rm_cached_mod &&
+	git add rm_cached_mod &&
+	git commit -m "add rm_cached_mod" &&
+	echo modified >rm_cached_mod &&
+	git rm --cached rm_cached_mod &&
+	test_path_is_file rm_cached_mod &&
+	test_must_fail git ls-files --error-unmatch rm_cached_mod
+'
+
+test_expect_success 'rm -f removes even with local modifications' '
+	cd repo &&
+	echo original >rm_force_file &&
+	git add rm_force_file &&
+	git commit -m "add rm_force_file" &&
+	echo modified >rm_force_file &&
+	git rm -f rm_force_file &&
+	! test -f rm_force_file
+'
+
+test_expect_success 'rm file with spaces in name' '
+	cd repo &&
+	echo x >"a space file" &&
+	git add "a space file" &&
+	git commit -m "add spaced file" &&
+	git rm "a space file" &&
+	! test -f "a space file" &&
+	test_must_fail git ls-files --error-unmatch "a space file"
+'
+
+test_expect_success 'rm file in subdirectory' '
+	cd repo &&
+	mkdir -p rm_sub &&
+	echo x >rm_sub/file &&
+	git add rm_sub/file &&
+	git commit -m "add rm_sub/file" &&
+	git rm rm_sub/file &&
+	! test -f rm_sub/file &&
+	test_must_fail git ls-files --error-unmatch rm_sub/file
+'
+
+test_expect_success 'rm deeply nested file' '
+	cd repo &&
+	mkdir -p deep/nest/dir &&
+	echo x >deep/nest/dir/file &&
+	git add deep/nest/dir/file &&
+	git commit -m "add deep file" &&
+	git rm deep/nest/dir/file &&
+	! test -f deep/nest/dir/file &&
+	test_must_fail git ls-files --error-unmatch deep/nest/dir/file
+'
+
+test_expect_success 'rm -r on nested directories' '
+	cd repo &&
+	mkdir -p nested/sub/deep &&
+	echo a >nested/sub/deep/f &&
+	echo b >nested/sub/g &&
+	git add nested &&
+	git commit -m "add nested" &&
+	git rm -r nested &&
+	! test -d nested &&
+	test_must_fail git ls-files --error-unmatch nested/sub/deep/f &&
+	test_must_fail git ls-files --error-unmatch nested/sub/g
+'
+
+test_expect_success 'rm --dry-run --cached does not remove' '
+	cd repo &&
+	echo x >drycache &&
+	git add drycache &&
+	git commit -m "add drycache" &&
+	git rm --dry-run --cached drycache &&
+	git ls-files --error-unmatch drycache &&
+	test_path_is_file drycache
+'
+
+test_expect_success 'rm -rf on directory with local modifications' '
+	cd repo &&
+	mkdir -p rfdir &&
+	echo x >rfdir/f &&
+	git add rfdir &&
+	git commit -m "add rfdir" &&
+	echo y >rfdir/f &&
+	git rm -rf rfdir &&
+	! test -d rfdir
+'
+
+test_expect_success 'rm shows removed file names in output' '
+	cd repo &&
+	echo x >show_rm &&
+	git add show_rm &&
+	git commit -m "add show_rm" &&
+	git rm show_rm >output 2>&1 &&
+	grep "show_rm" output
+'
+
+test_expect_success 'rm -q -r suppresses output' '
+	cd repo &&
+	mkdir -p qr_dir &&
+	echo a >qr_dir/f1 &&
+	echo b >qr_dir/f2 &&
+	git add qr_dir &&
+	git commit -m "add qr_dir" &&
+	git rm -q -r qr_dir >output 2>&1 &&
+	test_must_be_empty output
+'
+
+test_expect_success 'rm -f --cached removes from index with staged changes' '
+	cd repo &&
+	echo x >f_cached_f &&
+	git add f_cached_f &&
+	git commit -m "add f_cached_f" &&
+	echo y >f_cached_f &&
+	git add f_cached_f &&
+	git rm -f --cached f_cached_f &&
+	test_path_is_file f_cached_f &&
+	test_must_fail git ls-files --error-unmatch f_cached_f
+'
+
+test_expect_success 'rm file then re-add it' '
+	cd repo &&
+	echo x >readd_file &&
+	git add readd_file &&
+	git commit -m "add readd_file" &&
+	git rm readd_file &&
+	! test -f readd_file &&
+	echo x >readd_file &&
+	git add readd_file &&
+	git ls-files --error-unmatch readd_file
+'
+
+test_expect_success 'rm --ignore-unmatch combined with valid file' '
+	cd repo &&
+	echo x >igvalid &&
+	git add igvalid &&
+	git commit -m "add igvalid" &&
+	git rm --ignore-unmatch igvalid nonexistent &&
+	! test -f igvalid
+'
+
+test_expect_success 'rm --cached preserves exact worktree content' '
+	cd repo &&
+	echo "original content" >preserve_file &&
+	git add preserve_file &&
+	git commit -m "add preserve_file" &&
+	echo "modified content" >preserve_file &&
+	git add preserve_file &&
+	git rm --cached preserve_file &&
+	test "$(cat preserve_file)" = "modified content"
+'
+
+test_expect_success 'rm --cached then commit shows deletion' '
+	cd repo &&
+	echo x >del_commit &&
+	git add del_commit &&
+	git commit -m "add del_commit" &&
+	git rm --cached del_commit &&
+	git diff --cached --name-only >actual &&
+	grep "del_commit" actual &&
+	git commit -m "remove del_commit" &&
+	test_must_fail git ls-files --error-unmatch del_commit
+'
+
+test_expect_success 'rm multiple from different directories' '
+	cd repo &&
+	mkdir -p dir_a dir_b &&
+	echo x >dir_a/f &&
+	echo y >dir_b/g &&
+	git add dir_a dir_b &&
+	git commit -m "add multi dir files" &&
+	git rm dir_a/f dir_b/g &&
+	! test -f dir_a/f &&
+	! test -f dir_b/g
+'
+
+test_expect_success 'rm --cached multiple files at once' '
+	cd repo &&
+	echo a >cm1 &&
+	echo b >cm2 &&
+	echo c >cm3 &&
+	git add cm1 cm2 cm3 &&
+	git commit -m "add cm files" &&
+	git rm --cached cm1 cm2 cm3 &&
+	test_path_is_file cm1 &&
+	test_path_is_file cm2 &&
+	test_path_is_file cm3 &&
+	test -z "$(git ls-files cm1 cm2 cm3)"
+'
+
+test_expect_success 'rm -r --dry-run -q combination suppresses all output' '
+	cd repo &&
+	mkdir -p dryqdir &&
+	echo x >dryqdir/f &&
+	git add dryqdir &&
+	git commit -m "add dryqdir" &&
+	git rm -r --dry-run -q dryqdir >output 2>&1 &&
+	test_must_be_empty output &&
+	test_path_is_file dryqdir/f
+'
+
+test_expect_success 'rm file with special characters (underscore, numbers)' '
+	cd repo &&
+	echo x >file_123.txt &&
+	git add file_123.txt &&
+	git commit -m "add file_123.txt" &&
+	git rm file_123.txt &&
+	! test -f file_123.txt
+'
+
+test_expect_success 'rm -r on single-file directory' '
+	cd repo &&
+	mkdir -p singledir &&
+	echo x >singledir/only &&
+	git add singledir &&
+	git commit -m "add singledir" &&
+	git rm -r singledir &&
+	! test -d singledir &&
+	test_must_fail git ls-files --error-unmatch singledir/only
+'
+
+test_expect_success 'rm --cached -r on deeply nested tree' '
+	cd repo &&
+	mkdir -p deep_cached/sub/inner &&
+	echo a >deep_cached/sub/inner/f &&
+	echo b >deep_cached/sub/g &&
+	git add deep_cached &&
+	git commit -m "add deep_cached" &&
+	git rm --cached -r deep_cached &&
+	test_path_is_file deep_cached/sub/inner/f &&
+	test_path_is_file deep_cached/sub/g &&
+	test -z "$(git ls-files deep_cached)"
+'
+
+test_expect_success 'rm multiple with --ignore-unmatch' '
+	cd repo &&
+	echo x >igm_file &&
+	git add igm_file &&
+	git commit -m "add igm_file" &&
+	git rm --ignore-unmatch igm_file noexist1 noexist2 &&
+	! test -f igm_file
+'
+
+test_expect_success 'rm -- with dash-prefixed filename' '
+	cd repo &&
+	echo x >"-dashfile" &&
+	git add -- -dashfile &&
+	git commit -m "add dashfile" &&
+	git rm -- -dashfile &&
+	! test -e "-dashfile" &&
+	test_must_fail git ls-files --error-unmatch -- -dashfile
+'
+
+test_expect_success 'rm file only in index (never committed)' '
+	cd repo &&
+	echo x >only_index &&
+	git add only_index &&
+	git rm --cached only_index &&
+	test_path_is_file only_index &&
+	test_must_fail git ls-files --error-unmatch only_index
+'
+
+test_expect_success 'rm -r --dry-run on directory preserves everything' '
+	cd repo &&
+	mkdir -p dryrdir &&
+	echo a >dryrdir/a &&
+	echo b >dryrdir/b &&
+	git add dryrdir &&
+	git commit -m "add dryrdir" &&
+	git rm -n -r dryrdir &&
+	test_path_is_file dryrdir/a &&
+	test_path_is_file dryrdir/b &&
+	git ls-files --error-unmatch dryrdir/a &&
+	git ls-files --error-unmatch dryrdir/b
+'
+
+test_expect_success 'rm status shows deletion in porcelain' '
+	cd repo &&
+	echo x >stat_rm &&
+	git add stat_rm &&
+	git commit -m "add stat_rm" &&
+	git rm stat_rm &&
+	git status --porcelain >actual &&
+	grep "D  stat_rm" actual
+'
+
+test_expect_success 'rm --dry-run refuses file with staged changes' '
+	cd repo &&
+	echo x >drystaged &&
+	git add drystaged &&
+	git commit -m "add drystaged" &&
+	echo y >drystaged &&
+	git add drystaged &&
+	test_must_fail git rm --dry-run drystaged &&
+	git ls-files --error-unmatch drystaged &&
+	test_path_is_file drystaged
+'
+
+test_expect_success 'rm -f on file with staged and worktree changes' '
+	cd repo &&
+	echo x >force_both &&
+	git add force_both &&
+	git commit -m "add force_both" &&
+	echo y >force_both &&
+	git add force_both &&
+	echo z >force_both &&
+	git rm -f force_both &&
+	! test -f force_both &&
+	test_must_fail git ls-files --error-unmatch force_both
+'
+
+test_expect_success 'rm --cached followed by add restores index entry' '
+	cd repo &&
+	echo x >rm_readd &&
+	git add rm_readd &&
+	git commit -m "add rm_readd" &&
+	git rm --cached rm_readd &&
+	test_must_fail git ls-files --error-unmatch rm_readd &&
+	git add rm_readd &&
+	git ls-files --error-unmatch rm_readd
+'
+
+test_expect_success 'rm -r then verify index is clean' '
+	cd repo &&
+	mkdir -p cleandir &&
+	echo a >cleandir/f1 &&
+	echo b >cleandir/f2 &&
+	echo c >cleandir/f3 &&
+	git add cleandir &&
+	git commit -m "add cleandir" &&
+	git rm -r cleandir &&
+	git diff --cached --name-only >actual &&
+	grep "cleandir/f1" actual &&
+	grep "cleandir/f2" actual &&
+	grep "cleandir/f3" actual
+'
+
 test_done
