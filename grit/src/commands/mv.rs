@@ -9,6 +9,7 @@ use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::repo::Repository;
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit mv`.
@@ -83,14 +84,27 @@ pub fn run(args: Args) -> Result<()> {
     // Canonicalise sources relative to worktree.
     let sources: Vec<String> = raw_sources
         .iter()
-        .map(|s| resolve_path(s, prefix.as_deref()))
+        .map(|s| resolve_path(s, prefix.as_deref(), work_tree))
         .collect();
+
+    // Validate that all sources are inside the worktree.
+    for (raw, resolved) in raw_sources.iter().zip(sources.iter()) {
+        if Path::new(resolved).is_absolute() {
+            bail!("source '{}' is outside the work tree", raw);
+        }
+    }
 
     // Destination: strip trailing slashes for stat purposes, but remember
     // whether the user supplied one (it forces "must be a directory" check).
     let dest_has_trailing_slash = raw_dest.ends_with('/') || raw_dest.ends_with('\\');
     let dest_trimmed = raw_dest.trim_end_matches('/').trim_end_matches('\\');
-    let dest_rel = resolve_path(dest_trimmed, prefix.as_deref());
+    let dest_rel = resolve_path(dest_trimmed, prefix.as_deref(), work_tree);
+
+    // Validate that destination is inside the worktree (reject absolute
+    // paths that point outside).
+    if Path::new(&dest_rel).is_absolute() {
+        bail!("destination '{}' is outside the work tree", raw_dest);
+    }
 
     let dest_abs = work_tree.join(&dest_rel);
 
@@ -116,6 +130,28 @@ pub fn run(args: Args) -> Result<()> {
         };
         if !single_src_is_dir {
             bail!("destination directory '{}' does not exist", dest_trimmed);
+        }
+    }
+
+    // Detect conflicting moves: a file and its parent directory cannot both
+    // be moved at the same time.
+    if sources.len() > 1 {
+        for (i, src_a) in sources.iter().enumerate() {
+            let src_a_clean = src_a.trim_end_matches('/').trim_end_matches('\\');
+            let prefix_a = format!("{}/", src_a_clean);
+            for (j, src_b) in sources.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                let src_b_clean = src_b.trim_end_matches('/').trim_end_matches('\\');
+                if src_b_clean.starts_with(&prefix_a) {
+                    bail!(
+                        "cannot move both '{}' and its parent directory '{}'",
+                        src_b_clean,
+                        src_a_clean
+                    );
+                }
+            }
         }
     }
 
@@ -292,6 +328,21 @@ pub fn run(args: Args) -> Result<()> {
             // Preserve flags except path length bits (low 12 bits of flags).
             new_entry.flags = (new_entry.flags & !0x0FFF) | path_len as u16;
             new_entry.path = new_path;
+
+            // Refresh stat info from the destination file so git considers
+            // the index entry up-to-date after the rename.
+            if let Ok(meta) = fs::symlink_metadata(&dst_abs) {
+                new_entry.ctime_sec = meta.ctime() as u32;
+                new_entry.ctime_nsec = meta.ctime_nsec() as u32;
+                new_entry.mtime_sec = meta.mtime() as u32;
+                new_entry.mtime_nsec = meta.mtime_nsec() as u32;
+                new_entry.dev = meta.dev() as u32;
+                new_entry.ino = meta.ino() as u32;
+                new_entry.uid = meta.uid();
+                new_entry.gid = meta.gid();
+                new_entry.size = meta.size() as u32;
+            }
+
             index.remove(op.src.as_bytes());
             index.add_or_replace(new_entry);
         }
@@ -352,11 +403,29 @@ fn compute_prefix(cwd: &Path, work_tree: &Path) -> Option<String> {
 
 /// Resolve a user-provided path (possibly relative to the subdirectory they
 /// are in) to a worktree-relative path.
-fn resolve_path(path: &str, prefix: Option<&str>) -> String {
+fn resolve_path(path: &str, prefix: Option<&str>, work_tree: &Path) -> String {
+    let p = Path::new(path);
+
+    // Handle absolute paths by stripping the worktree prefix.
+    if p.is_absolute() {
+        let wt_canon = work_tree
+            .canonicalize()
+            .unwrap_or_else(|_| work_tree.to_path_buf());
+        if let Ok(rel) = p.strip_prefix(&wt_canon) {
+            return normalise_path(&rel.to_string_lossy());
+        }
+        // Also try without canonicalising (in case worktree is already canonical).
+        if let Ok(rel) = p.strip_prefix(work_tree) {
+            return normalise_path(&rel.to_string_lossy());
+        }
+        // Absolute path outside the worktree — return as-is so the caller
+        // can detect the error.
+        return path.to_owned();
+    }
+
     match prefix {
-        Some(p) if !p.is_empty() => {
-            let combined = PathBuf::from(p).join(path);
-            // Normalise away `..` components.
+        Some(pfx) if !pfx.is_empty() => {
+            let combined = PathBuf::from(pfx).join(path);
             normalise_path(&combined.to_string_lossy())
         }
         _ => normalise_path(path),
