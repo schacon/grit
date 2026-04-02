@@ -243,17 +243,25 @@ fn collect_untracked(
                         )?;
                     }
                 } else {
-                    // Default -d: directory has a mix of ignored and
-                    // non-ignored files. Check if all contents are
-                    // ignored; if so skip the dir, otherwise recurse
-                    // to collect individual non-ignored files.
-                    let all_ignored = dir_all_ignored(
+                    // Default -d: check if directory has any ignored
+                    // content. If it does, recurse to collect only
+                    // non-ignored files. If all content is non-ignored,
+                    // remove the whole dir. If all ignored, skip.
+                    let has_any_ignored = dir_has_any_ignored(
                         &path, work_tree, matcher, repo, index,
                     )?;
+                    let all_ignored = if has_any_ignored {
+                        dir_all_ignored(
+                            &path, work_tree, matcher, repo, index,
+                        )?
+                    } else {
+                        false
+                    };
+
                     if all_ignored {
                         // Entire directory is ignored — skip it.
-                    } else {
-                        // Mixed content: recurse to pick out non-ignored files.
+                    } else if has_any_ignored {
+                        // Mixed: recurse to pick out non-ignored files.
                         collect_untracked(
                             &path,
                             work_tree,
@@ -265,6 +273,9 @@ fn collect_untracked(
                             pathspec_prefixes,
                             out,
                         )?;
+                    } else {
+                        // No ignored content — remove whole dir.
+                        out.push((rel, true));
                     }
                 }
             } else if args.ignored_only {
@@ -354,6 +365,52 @@ fn resolve_pathspec_prefix(
 
     // Fallback: treat as relative to worktree root.
     Ok(pathspec.to_owned())
+}
+
+/// Check whether a directory has any ignored files.
+fn dir_has_any_ignored(
+    dir: &Path,
+    work_tree: &Path,
+    matcher: &mut IgnoreMatcher,
+    repo: &Repository,
+    index: Option<&Index>,
+) -> Result<bool> {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(false),
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+
+        let rel = path
+            .strip_prefix(work_tree)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or(name);
+
+        let is_dir = path.is_dir();
+        let (ignored, _) = matcher
+            .check_path(repo, index, &rel, is_dir)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        if ignored {
+            return Ok(true);
+        }
+        if is_dir {
+            if dir_has_any_ignored(&path, work_tree, matcher, repo, index)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Check whether all files in a directory are ignored.
