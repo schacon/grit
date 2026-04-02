@@ -147,6 +147,41 @@ def extract_subcommands(body):
     return sorted(found)
 
 
+def file_theme_command(file_base):
+    """Infer the primary git subcommand from a test filename like t3200-branch."""
+    # Strip the tNNNN- prefix
+    name = re.sub(r'^t\d+-', '', file_base)
+    # Try progressively shorter prefixes of the name against known subcommands
+    # e.g. "status-untracked-cache" → try "status-untracked-cache", "status-untracked", "status"
+    parts = name.split('-')
+    for i in range(len(parts), 0, -1):
+        candidate = '-'.join(parts[:i])
+        if candidate in GIT_SUBCOMMANDS:
+            return candidate
+    return None
+
+
+def pick_best_subcommand(body, file_base):
+    """Pick exactly one git subcommand for a test case.
+
+    Prefers a command matching the file's theme; falls back to the first
+    command found in the body; falls back to the file theme if no commands
+    are found in the body at all.
+    """
+    found = extract_subcommands(body)
+    theme = file_theme_command(file_base)
+
+    if found:
+        # If the file's theme command appears in the body, prefer it
+        if theme and theme in found:
+            return theme
+        # Otherwise return the first (alphabetically) found command
+        return found[0]
+
+    # No commands detected in body — fall back to file theme
+    return theme or ""
+
+
 def generate_test_cases():
     """Parse all upstream test files and write data/git-test-cases.tsv."""
     outpath = os.path.join(DATA, "git-test-cases.tsv")
@@ -169,8 +204,8 @@ def generate_test_cases():
                 else:
                     seen_slugs[slug] = 1
                 test_id = f"{base}::{slug}"
-                subcmds = extract_subcommands(body)
-                out.write(f"{test_id}\t{base}\t{desc}\t{','.join(subcmds)}\n")
+                subcmd = pick_best_subcommand(body, base)
+                out.write(f"{test_id}\t{base}\t{desc}\t{subcmd}\n")
                 total += 1
 
     print(f"Extracted {total} test cases from {len(files)} upstream files → {outpath}")
