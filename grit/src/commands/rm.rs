@@ -6,6 +6,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::diff::zero_oid;
 use grit_lib::error::Error;
 use grit_lib::index::Index;
@@ -14,6 +15,17 @@ use grit_lib::repo::Repository;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+
+/// The category of a safety-check failure.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum RmErrorKind {
+    /// Index content differs from both the file and HEAD.
+    StagedDiffersBoth,
+    /// Index content differs from HEAD (staged changes).
+    StagedInIndex,
+    /// Working tree differs from index (local modifications).
+    LocalModifications,
+}
 
 /// Arguments for `grit rm`.
 #[derive(Debug, ClapArgs)]
@@ -56,6 +68,12 @@ pub fn run(args: Args) -> Result<()> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
 
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let show_hints = config
+        .get_bool("advice.rmhints")
+        .and_then(|r| r.ok())
+        .unwrap_or(true);
+
     let mut index = match Index::load(&repo.index_path()) {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
@@ -67,11 +85,31 @@ pub fn run(args: Args) -> Result<()> {
 
     // Phase 1: collect all index paths to remove and check safety.
     let mut to_remove: Vec<String> = Vec::new();
-    let mut errors: Vec<String> = Vec::new();
+    // Collect errors grouped by kind so we can emit batched messages.
+    let mut errors_by_kind: Vec<(RmErrorKind, Vec<String>)> = Vec::new();
 
     for pathspec in &args.pathspec {
         let rel = resolve_rel(pathspec, work_tree)?;
-        let abs_path = work_tree.join(&rel);
+
+        // If pathspec has trailing slash, it must be a directory
+        if pathspec.ends_with('/') {
+            let abs_path = work_tree.join(&rel);
+            // Check if it's a regular file (not a dir) — that should fail
+            if abs_path.is_file() {
+                bail!("not removing '{}' recursively without -r", pathspec);
+            }
+            // If it doesn't exist and nothing in index matches as dir prefix, fail
+            let has_entries = index.entries.iter().any(|e| {
+                let p = String::from_utf8_lossy(&e.path);
+                p.starts_with(&format!("{rel}/"))
+            });
+            if !abs_path.is_dir() && !has_entries {
+                if args.ignore_unmatch {
+                    continue;
+                }
+                bail!("pathspec '{}' did not match any files", pathspec);
+            }
+        }
 
         // Collect matching index entries (by prefix for directories).
         let matches: Vec<String> = index
@@ -98,6 +136,7 @@ pub fn run(args: Args) -> Result<()> {
                     bail!("not removing '{}' recursively without -r", pathspec);
                 }
             }
+            let abs_path = work_tree.join(&rel);
             if abs_path.is_dir() && !matches.is_empty() {
                 bail!("not removing '{}' recursively without -r", pathspec);
             }
@@ -113,14 +152,31 @@ pub fn run(args: Args) -> Result<()> {
                 &args,
             ) {
                 Ok(()) => to_remove.push(path_str),
-                Err(msg) => errors.push(msg),
+                Err(kind) => {
+                    // Group errors by kind
+                    if let Some(entry) = errors_by_kind.iter_mut().find(|(k, _)| *k == kind) {
+                        entry.1.push(path_str);
+                    } else {
+                        errors_by_kind.push((kind, vec![path_str]));
+                    }
+                }
             }
         }
     }
 
-    if !errors.is_empty() {
-        for e in &errors {
-            eprintln!("error: {e}");
+    if !errors_by_kind.is_empty() {
+        for (kind, paths) in &mut errors_by_kind {
+            paths.sort();
+            let (header, hint) = error_message(kind, paths.len(), &args);
+            eprintln!("error: {header}");
+            for p in paths {
+                eprintln!("    {p}");
+            }
+            if show_hints {
+                if let Some(h) = hint {
+                    eprintln!("{h}");
+                }
+            }
         }
         bail!("some files could not be removed");
     }
@@ -158,9 +214,41 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+/// Generate error header and optional hint for a batch of failures.
+fn error_message(kind: &RmErrorKind, count: usize, args: &Args) -> (String, Option<String>) {
+    let plural = if count > 1 { "s have" } else { " has" };
+    match kind {
+        RmErrorKind::StagedDiffersBoth => {
+            let header = format!(
+                "the following file{plural} staged content different from both the\nfile and the HEAD:"
+            );
+            let hint = Some("(use -f to force removal)".to_owned());
+            (header, hint)
+        }
+        RmErrorKind::StagedInIndex => {
+            let header = format!(
+                "the following file{plural} changes staged in the index:"
+            );
+            let hint = Some("(use --cached to keep the file, or -f to force removal)".to_owned());
+            (header, hint)
+        }
+        RmErrorKind::LocalModifications => {
+            let header = format!(
+                "the following file{plural} local modifications:"
+            );
+            let hint = if args.cached {
+                None
+            } else {
+                Some("(use --cached to keep the file, or -f to force removal)".to_owned())
+            };
+            (header, hint)
+        }
+    }
+}
+
 /// Check whether a single file can be safely removed.
 ///
-/// Returns `Err(message)` when removal is refused without `--force`.
+/// Returns `Ok(())` when safe, `Err(kind)` with the error category otherwise.
 fn safety_check(
     index: &Index,
     odb: &grit_lib::odb::Odb,
@@ -168,7 +256,7 @@ fn safety_check(
     path_str: &str,
     head_map: &HashMap<String, grit_lib::objects::ObjectId>,
     args: &Args,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<(), RmErrorKind> {
     if args.force {
         return Ok(());
     }
@@ -185,10 +273,7 @@ fn safety_check(
     if is_intent_to_add {
         // Intent-to-add entries: only allow removal with --cached.
         if !args.cached {
-            return Err(format!(
-                "'{path_str}' has changes staged in the index\n\
-                 (use --cached to keep the file, or -f to force removal)"
-            ));
+            return Err(RmErrorKind::StagedInIndex);
         }
         return Ok(());
     }
@@ -212,32 +297,18 @@ fn safety_check(
     if args.cached {
         // --cached: refuse only when index matches neither HEAD nor worktree file.
         if staged_differs && worktree_differs {
-            return Err(format!(
-                "'{path_str}' has staged content different from both \
-                 the file and the HEAD\n\
-                 (use -f to force removal)"
-            ));
+            return Err(RmErrorKind::StagedDiffersBoth);
         }
     } else {
         // Full removal: refuse if index differs from HEAD or file differs from index.
         if staged_differs && worktree_differs {
-            return Err(format!(
-                "'{path_str}' has staged content different from both \
-                 the file and the HEAD\n\
-                 (use -f to force removal)"
-            ));
+            return Err(RmErrorKind::StagedDiffersBoth);
         }
         if staged_differs {
-            return Err(format!(
-                "'{path_str}' has changes staged in the index\n\
-                 (use --cached to keep the file, or -f to force removal)"
-            ));
+            return Err(RmErrorKind::StagedInIndex);
         }
         if worktree_differs {
-            return Err(format!(
-                "'{path_str}' has local modifications\n\
-                 (use --cached to keep the file, or -f to force removal)"
-            ));
+            return Err(RmErrorKind::LocalModifications);
         }
     }
 
@@ -315,7 +386,10 @@ fn remove_empty_parents(file: &Path, work_tree: &Path) {
 /// Handles paths supplied from outside the worktree by stripping the
 /// worktree prefix when present.
 fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
-    let p = Path::new(pathspec);
+    // Strip trailing slashes for matching purposes
+    let pathspec_clean = pathspec.trim_end_matches('/');
+
+    let p = Path::new(pathspec_clean);
     if p.is_absolute() {
         let rel = p
             .strip_prefix(work_tree)
@@ -324,7 +398,7 @@ fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
     }
 
     let cwd = std::env::current_dir()?;
-    let abs = cwd.join(pathspec);
+    let abs = cwd.join(pathspec_clean);
     let wt_canon = work_tree
         .canonicalize()
         .unwrap_or_else(|_| work_tree.to_path_buf());
@@ -334,5 +408,5 @@ fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
     }
 
     // Fallback: already relative to worktree root.
-    Ok(pathspec.to_owned())
+    Ok(pathspec_clean.to_owned())
 }

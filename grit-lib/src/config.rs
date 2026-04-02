@@ -880,6 +880,19 @@ impl ConfigSet {
             }
         }
 
+        // GIT_CONFIG_PARAMETERS — single-quoted 'key=value' entries separated by spaces.
+        // This is the format used by `git -c key=value`.
+        if let Ok(params) = std::env::var("GIT_CONFIG_PARAMETERS") {
+            for entry in parse_config_parameters(&params) {
+                if let Some((key, val)) = entry.split_once('=') {
+                    let _ = set.add_command_override(key.trim(), val.trim());
+                } else {
+                    // Bare key (boolean true)
+                    let _ = set.add_command_override(entry.trim(), "true");
+                }
+            }
+        }
+
         Ok(set)
     }
 

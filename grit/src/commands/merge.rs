@@ -750,11 +750,23 @@ fn merge_trees(
                 stage_entry(&mut index, be, 1);
                 stage_entry(&mut index, oe, 2);
             }
-            // Both added different content
+            // Both added different content — try content merge with empty base
             (None, Some(oe), Some(te)) => {
-                has_conflicts = true;
-                stage_entry(&mut index, oe, 2);
-                stage_entry(&mut index, te, 3);
+                let path_str = String::from_utf8_lossy(path).to_string();
+                match try_content_merge_add_add(repo, oe, te, ours_label, their_name)? {
+                    ContentMergeResult::Clean(merged_oid, mode) => {
+                        let mut entry = oe.clone();
+                        entry.oid = merged_oid;
+                        entry.mode = mode;
+                        index.entries.push(entry);
+                    }
+                    ContentMergeResult::Conflict(content) => {
+                        has_conflicts = true;
+                        stage_entry(&mut index, oe, 2);
+                        stage_entry(&mut index, te, 3);
+                        conflict_files.push((path_str, content));
+                    }
+                }
             }
             // Shouldn't happen
             (_, None, None) => {}
@@ -813,6 +825,44 @@ fn try_content_merge(
 
     let output = merge_file::merge(&input)?;
     let mode = ours.mode; // Use ours mode by default
+
+    if output.conflicts == 0 {
+        let oid = repo.odb.write(ObjectKind::Blob, &output.content)?;
+        Ok(ContentMergeResult::Clean(oid, mode))
+    } else {
+        Ok(ContentMergeResult::Conflict(output.content))
+    }
+}
+
+/// Try content merge for add/add conflicts (empty base).
+fn try_content_merge_add_add(
+    repo: &Repository,
+    ours: &IndexEntry,
+    theirs: &IndexEntry,
+    ours_label: &str,
+    theirs_label: &str,
+) -> Result<ContentMergeResult> {
+    let ours_obj = repo.odb.read(&ours.oid)?;
+    let theirs_obj = repo.odb.read(&theirs.oid)?;
+
+    if merge_file::is_binary(&ours_obj.data) || merge_file::is_binary(&theirs_obj.data) {
+        return Ok(ContentMergeResult::Conflict(ours_obj.data.clone()));
+    }
+
+    let input = MergeInput {
+        base: &[],  // empty base for add/add
+        ours: &ours_obj.data,
+        theirs: &theirs_obj.data,
+        label_ours: ours_label,
+        label_base: "base",
+        label_theirs: theirs_label,
+        favor: MergeFavor::None,
+        style: ConflictStyle::Merge,
+        marker_size: 7,
+    };
+
+    let output = merge_file::merge(&input)?;
+    let mode = ours.mode;
 
     if output.conflicts == 0 {
         let oid = repo.odb.write(ObjectKind::Blob, &output.content)?;

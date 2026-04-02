@@ -28,6 +28,14 @@ struct Cli {
     #[arg(short = 'C', global = true, value_name = "PATH")]
     change_dir: Option<PathBuf>,
 
+    /// Set a configuration variable (key=value).
+    #[arg(short = 'c', global = true, value_name = "KEY=VALUE")]
+    config_override: Vec<String>,
+
+    /// Override the work tree path.
+    #[arg(long = "work-tree", env = "GIT_WORK_TREE")]
+    work_tree: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -413,6 +421,23 @@ fn run() -> Result<()> {
     // Pass git_dir override into env so library discovery picks it up.
     if let Some(git_dir) = &cli.git_dir {
         std::env::set_var("GIT_DIR", git_dir);
+    }
+
+    // Pass --work-tree into env.
+    if let Some(wt) = &cli.work_tree {
+        std::env::set_var("GIT_WORK_TREE", wt);
+    }
+
+    // Store -c overrides in GIT_CONFIG_PARAMETERS for ConfigSet to pick up.
+    if !cli.config_override.is_empty() {
+        // Git format: 'key=value' separated by spaces, each single-quoted.
+        let params: String = cli
+            .config_override
+            .iter()
+            .map(|kv| format!("'{}'", kv))
+            .collect::<Vec<_>>()
+            .join(" ");
+        std::env::set_var("GIT_CONFIG_PARAMETERS", params);
     }
 
     match cli.command {
