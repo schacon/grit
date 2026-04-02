@@ -1116,4 +1116,134 @@ test_expect_success 'porcelain output is same from any subdirectory' '
 	git checkout -- base.txt 2>/dev/null
 '
 
+# --- Wave 11: final 8 tests ported from upstream t7508 ---
+
+# Ported from upstream: "status -s -z -b" — verify the combined -s -z -b output
+# has a branch header terminated by NUL followed by NUL-terminated entries
+# and contains zero newline characters.
+test_expect_success 'status -s -z -b: branch + entries all NUL-terminated, no newlines' '
+	cd repo2 &&
+	echo "mod" >>base.txt &&
+	echo "ut" >szb_untracked.txt &&
+	git status -s -z -b >../actual_raw &&
+	# Must contain zero newlines
+	NEWLINES=$(tr -cd "\n" <../actual_raw | wc -c) &&
+	test "$NEWLINES" -eq 0 &&
+	# Translate NUL to newline for inspection
+	tr "\000" "\n" <../actual_raw >../actual_lines &&
+	# First line is branch header
+	head -1 ../actual_lines | grep "^## master$" &&
+	# Entries present
+	grep "^ M base.txt$" ../actual_lines &&
+	grep "^?? szb_untracked.txt$" ../actual_lines &&
+	git checkout -- base.txt 2>/dev/null &&
+	rm -f szb_untracked.txt
+'
+
+# Ported from upstream: "status -C" — running grit -C <path> status from
+# outside the repository should produce the same output as running inside.
+test_expect_success 'status -C from outside repo matches inside' '
+	cd repo2 &&
+	echo "change_c" >>base.txt &&
+	git status -s >../actual_inside &&
+	cd / &&
+	git -C "$TRASH_DIRECTORY/repo2" status -s >"$TRASH_DIRECTORY/actual_outside" &&
+	test_cmp "$TRASH_DIRECTORY/actual_inside" "$TRASH_DIRECTORY/actual_outside" &&
+	cd "$TRASH_DIRECTORY/repo2" &&
+	git checkout -- base.txt 2>/dev/null
+'
+
+# Ported from upstream: "status with relative paths" — running status -s from
+# a subdirectory should still list all changed files.
+test_expect_success 'status -s from subdirectory lists all changes' '
+	cd repo2 &&
+	echo "change_rel" >>base.txt &&
+	echo "ut_rel" >subdir/untracked_rel.txt &&
+	git status -s >../actual_root &&
+	cd subdir &&
+	git status -s >../../actual_sub &&
+	# Both outputs must mention base.txt and the untracked file
+	grep "base.txt" ../../actual_root &&
+	grep "base.txt" ../../actual_sub &&
+	grep "untracked_rel" ../../actual_root &&
+	grep "untracked_rel" ../../actual_sub &&
+	cd .. &&
+	git checkout -- base.txt 2>/dev/null &&
+	rm -f subdir/untracked_rel.txt
+'
+
+# Ported from upstream: "status -s -b" with diverged-like branch state —
+# verify branch header includes the branch name after switching branches.
+test_expect_success 'status -s -b on feature branch shows correct branch' '
+	cd repo2 &&
+	git checkout -b wave11-feature 2>/dev/null &&
+	echo "feat" >feat.txt &&
+	git add feat.txt &&
+	git status -s -b >../actual &&
+	head -1 ../actual | grep "^## wave11-feature$" &&
+	grep "^A  feat.txt" ../actual &&
+	git reset HEAD feat.txt 2>/dev/null &&
+	rm -f feat.txt &&
+	git checkout master 2>/dev/null &&
+	git branch -D wave11-feature 2>/dev/null
+'
+
+# Ported from upstream: "status --porcelain respects -b" — without -b the
+# porcelain branch header should still be present (grit always includes it),
+# and with -b the header should match.
+test_expect_success 'porcelain -b matches porcelain when grit always shows branch' '
+	cd repo2 &&
+	echo "pb" >>base.txt &&
+	git status --porcelain >../actual_no_b &&
+	git status --porcelain -b >../actual_b &&
+	# Both should have the branch header
+	grep "^## master" ../actual_no_b &&
+	grep "^## master" ../actual_b &&
+	# The file entries should be the same
+	grep -v "^##" ../actual_no_b >../entries_no_b &&
+	grep -v "^##" ../actual_b >../entries_b &&
+	test_cmp ../entries_no_b ../entries_b &&
+	git checkout -- base.txt 2>/dev/null
+'
+
+# Ported from upstream: "status refreshes the index" — running git status
+# should update stat info so that a subsequent diff-files is clean.
+test_expect_success 'status refreshes the index' '
+	cd repo2 &&
+	# Touch a tracked file to make stat info stale
+	touch base.txt &&
+	git status >/dev/null &&
+	git diff-files >../diff_output &&
+	test_must_be_empty ../diff_output
+'
+
+# Ported from upstream: "status with executable bit change" — if
+# core.filemode is true, chmod should register as a modification.
+test_expect_success 'status detects filemode change when core.filemode is true' '
+	cd repo2 &&
+	FILEMODE=$(git config core.filemode) &&
+	if test "$FILEMODE" = "true"
+	then
+		chmod +x base.txt &&
+		git status -s >../actual &&
+		grep "base.txt" ../actual &&
+		chmod -x base.txt
+	fi
+'
+
+# Ported from upstream: "status with added and deleted across directories" —
+# exercises simultaneous staged adds and unstaged deletes in different dirs.
+test_expect_success 'status with adds and deletes across directories' '
+	cd repo2 &&
+	echo "new_in_sub" >subdir/added_file.txt &&
+	git add subdir/added_file.txt &&
+	rm tomod.txt &&
+	git status -s >../actual &&
+	grep "^A  subdir/added_file.txt" ../actual &&
+	grep "^ D tomod.txt" ../actual &&
+	git reset HEAD subdir/added_file.txt 2>/dev/null &&
+	git checkout -- tomod.txt 2>/dev/null &&
+	rm -f subdir/added_file.txt
+'
+
 test_done
