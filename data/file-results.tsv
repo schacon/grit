@@ -355,7 +355,7 @@ t3910-mac-os-precompose	no	0	0	0	not_ported
 t3920-crlf-messages	no	0	0	0	not_ported
 t4000-diff-format	yes	65	63	2	ok
 t4001-diff-rename	yes	29	29	0	ok
-t4002-diff-basic	yes	33	31	2	ok
+t4002-diff-basic	yes	33	29	4	ok
 t4003-diff-rename-1	no	0	0	0	not_ported
 t4004-diff-rename-symlink	no	0	0	0	not_ported
 t4005-diff-rename-2	no	0	0	0	not_ported

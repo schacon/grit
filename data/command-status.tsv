@@ -10,7 +10,7 @@ clean	Main Porcelain	yes	166	34	132	20.5
 clone	Main Porcelain	yes	811	41	770	5.0
 commit	Main Porcelain	yes	2046	473	1569	23.1
 describe	Main Porcelain	yes	41	6	35	14.4
-diff	Main Porcelain	yes	846	286	544	33.8
+diff	Main Porcelain	yes	846	285	544	33.7
 fetch	Main Porcelain	yes	517	41	476	7.9
 format-patch	Main Porcelain	yes	227	8	219	3.5
 gc	Main Porcelain	yes	68	36	32	52.9
@@ -73,7 +73,7 @@ check-attr	Plumbing	yes	29	26	2	90.1
 check-ignore	Plumbing	yes	11	10	1	90.9
 check-mailmap	Plumbing	yes	10	10	0	100.0
 check-ref-format	Plumbing	yes	6	5	1	83.3
-checkout-index	Plumbing	yes	71	59	12	82.8
+checkout-index	Plumbing	yes	71	59	12	82.6
 column	Plumbing	yes	14	0	14	0.0
 commit-graph	Plumbing	yes	108	2	106	1.9
 commit-tree	Plumbing	yes	79	21	58	26.6
@@ -81,9 +81,9 @@ credential	Plumbing	yes	8	0	8	0.0
 credential-cache	Plumbing	yes	6	0	6	0.0
 credential-store	Plumbing	yes	0	0	0	0.0
 daemon	Plumbing	yes	3	0	3	0.0
-diff-files	Plumbing	yes	111	57	53	51.2
-diff-index	Plumbing	yes	178	55	123	30.7
-diff-tree	Plumbing	yes	187	77	109	41.2
+diff-files	Plumbing	yes	111	57	53	51.0
+diff-index	Plumbing	yes	178	54	123	30.5
+diff-tree	Plumbing	yes	187	76	109	40.8
 fetch-pack	Plumbing	yes	19	0	19	0.0
 fmt-merge-msg	Plumbing	yes	31	0	31	0.0
 for-each-ref	Plumbing	yes	214	62	152	29.0
@@ -111,7 +111,7 @@ pack-objects	Plumbing	yes	174	44	130	25.3
 pack-redundant	Plumbing	yes	1	0	1	0.0
 patch-id	Plumbing	yes	5	3	2	60.0
 prune-packed	Plumbing	yes	38	4	34	10.5
-read-tree	Plumbing	yes	133	35	98	26.0
+read-tree	Plumbing	yes	133	34	98	25.8
 receive-pack	Plumbing	yes	10	0	10	0.0
 refs	Plumbing	yes	49	0	49	0.0
 rev-list	Plumbing	yes	448	134	314	29.9
@@ -123,7 +123,7 @@ stripspace	Plumbing	yes	33	29	4	87.9
 symbolic-ref	Plumbing	yes	272	131	141	48.2
 unpack-file	Plumbing	yes	2	0	2	0.0
 unpack-objects	Plumbing	yes	15	1	14	6.7
-update-index	Plumbing	yes	482	217	263	45.1
+update-index	Plumbing	yes	482	217	263	45.0
 update-ref	Plumbing	yes	632	328	304	51.9
 update-server-info	Plumbing	yes	15	4	11	23.7
 upload-archive	Plumbing	yes	0	0	0	0.0
