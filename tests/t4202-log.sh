@@ -1735,4 +1735,102 @@ test_expect_success 'log --format=%H unique per commit' '
 	test $(sort -u output | wc -l) -eq $(wc -l <output)
 '
 
+test_expect_success 'log --reverse shows oldest first' '
+	cd repo &&
+	git log --format="%H" >normal &&
+	git log --reverse --format="%H" >reversed &&
+	first_normal=$(head -1 normal) &&
+	last_reversed=$(tail -1 reversed) &&
+	test "$first_normal" = "$last_reversed"
+'
+
+test_expect_success 'log --skip=1 returns fewer results' '
+	cd repo &&
+	git log --format="%H" >all &&
+	git log --skip=1 --format="%H" >skipped &&
+	test $(wc -l <skipped) -lt $(wc -l <all)
+'
+
+test_expect_success 'log --skip=1 -n 2 gives 2 results' '
+	cd repo &&
+	git log --skip=1 -n 2 --format="%H" >output &&
+	test $(wc -l <output) -eq 2
+'
+
+test_expect_success 'log --format=%T shows tree hash' '
+	cd repo &&
+	git log -n 1 --format="%T" >output &&
+	hash=$(cat output) &&
+	test ${#hash} -eq 40
+'
+
+test_expect_success 'log --format=%P shows parent hash' '
+	cd repo &&
+	git log -n 1 --format="%P" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%an shows author name' '
+	cd repo &&
+	git log -n 1 --format="%an" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%ae shows author email' '
+	cd repo &&
+	git log -n 1 --format="%ae" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%cn shows committer name' '
+	cd repo &&
+	git log -n 1 --format="%cn" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%B shows full message body' '
+	cd repo &&
+	git log -n 1 --format="%B" >output &&
+	test -s output
+'
+
+test_expect_success 'log --oneline first field is short hash' '
+	cd repo &&
+	git log -n 1 --oneline >output &&
+	hash=$(awk "{print \$1}" output) &&
+	fullhash=$(git log -n 1 --format="%H") &&
+	echo "$fullhash" | grep -q "^$hash"
+'
+
+test_expect_success 'log --format=%s shows subject line' '
+	cd repo &&
+	git log -n 1 --format="%s" >output &&
+	test -s output
+'
+
+test_expect_success 'log --decorate shows refs' '
+	cd repo &&
+	git log -n 1 --decorate >output &&
+	grep -E "HEAD|master" output
+'
+
+test_expect_success 'log --no-decorate suppresses refs' '
+	cd repo &&
+	git log -n 1 --no-decorate >output &&
+	! grep "(HEAD" output
+'
+
+test_expect_success 'log --first-parent shows commits' '
+	cd repo &&
+	git log --first-parent --format="%H" >fp &&
+	test $(wc -l <fp) -ge 1
+'
+
+test_expect_success 'log --skip=0 same as no skip' '
+	cd repo &&
+	git log --format="%H" >noskip &&
+	git log --skip=0 --format="%H" >skip0 &&
+	test_cmp noskip skip0
+'
+
 test_done

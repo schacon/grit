@@ -2582,4 +2582,117 @@ test_expect_success 'tag -d then recreate same name' '
 	git rev-parse recreate-me
 '
 
+test_expect_success 'tag -f overwrites existing lightweight tag' '
+	cd tag-extra &&
+	git tag force-me-v2 &&
+	old=$(git rev-parse force-me-v2) &&
+	echo advance2 >force-file2.txt && git add force-file2.txt && git commit -m "advance2" 2>/dev/null &&
+	git tag -f force-me-v2 &&
+	new=$(git rev-parse force-me-v2) &&
+	test "$old" != "$new"
+'
+
+test_expect_success 'tag -l lists all tags' '
+	cd tag-extra &&
+	git tag list-test-a &&
+	git tag list-test-b &&
+	git tag -l >output &&
+	grep "list-test-a" output &&
+	grep "list-test-b" output
+'
+
+test_expect_success 'tag -l with pattern filters tags' '
+	cd tag-extra &&
+	git tag -l "list-test-*" >output &&
+	grep "list-test-a" output &&
+	grep "list-test-b" output &&
+	! grep "force-me" output
+'
+
+test_expect_success 'annotated tag with -F reads message from file' '
+	cd tag-extra &&
+	echo "file message" >tag-msg-file &&
+	git tag -a -F tag-msg-file file-tag 2>/dev/null &&
+	git cat-file -p file-tag >output &&
+	grep "file message" output
+'
+
+test_expect_success 'tag -d removes annotated tag too' '
+	cd tag-extra &&
+	git tag -a del-ann -m "delete me" 2>/dev/null &&
+	git tag -d del-ann &&
+	test_must_fail git rev-parse del-ann 2>/dev/null
+'
+
+test_expect_success 'tag --contains HEAD lists tags on HEAD' '
+	cd tag-extra &&
+	git tag contains-test &&
+	git tag --contains HEAD >output &&
+	grep "contains-test" output
+'
+
+test_expect_success 'tag --contains excludes older tags' '
+	cd tag-extra &&
+	git tag old-tag HEAD~1 &&
+	git tag --contains HEAD >output &&
+	! grep "old-tag" output
+'
+
+test_expect_success 'annotated tag message with multiple lines' '
+	cd tag-extra &&
+	printf "line1\nline2\nline3" >multi-msg &&
+	git tag -a -F multi-msg multi-line-tag 2>/dev/null &&
+	git cat-file -p multi-line-tag >output &&
+	grep "line1" output &&
+	grep "line2" output &&
+	grep "line3" output
+'
+
+test_expect_success 'tag -n shows annotation line' '
+	cd tag-extra &&
+	git tag -a show-n-tag -m "annotation line" 2>/dev/null &&
+	git tag -n -l "show-n-tag" >output &&
+	grep "annotation line" output
+'
+
+test_expect_success 'tag on specific commit points to that commit' '
+	cd tag-extra &&
+	parent=$(git rev-parse HEAD~1) &&
+	git tag specific-commit-tag HEAD~1 &&
+	result=$(git rev-parse specific-commit-tag) &&
+	test "$result" = "$parent"
+'
+
+test_expect_success 'annotated tag has tag header in cat-file output' '
+	cd tag-extra &&
+	git tag -a tagger-check-v2 -m "check tagger v2" 2>/dev/null &&
+	git cat-file -p tagger-check-v2 >output &&
+	grep "^tag tagger-check-v2" output
+'
+
+test_expect_success 'tag -d on nonexistent tag fails' '
+	cd tag-extra &&
+	test_must_fail git tag -d no-such-tag-xyz 2>/dev/null
+'
+
+test_expect_success 'creating tag without -f on existing tag fails' '
+	cd tag-extra &&
+	git tag no-dup-tag &&
+	test_must_fail git tag no-dup-tag 2>/dev/null
+'
+
+test_expect_success 'tag -l with no match returns empty' '
+	cd tag-extra &&
+	git tag -l "zzz-nonexistent-*" >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'tag -f on annotated tag works' '
+	cd tag-extra &&
+	git tag -a force-ann-v2 -m "original" 2>/dev/null &&
+	git tag -f -a force-ann-v2 -m "replaced" 2>/dev/null &&
+	git cat-file -p force-ann-v2 >output &&
+	grep "replaced" output
+'
+
 test_done
