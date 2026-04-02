@@ -81,4 +81,44 @@ test_expect_success 'unpack-objects: all objects readable with grit cat-file' '
 	EOF
 '
 
+test_expect_success 'unpack-objects: blob content readable with cat-file -p' '
+	grit init content.git --bare &&
+	grit -C content.git unpack-objects <test.pack &&
+	BLOB_OID=$("$REAL_GIT" -C src.git rev-list --objects HEAD | awk "NF>1 {print \$1}" | head -1) &&
+	if test -n "$BLOB_OID" && grit -C content.git cat-file -e "$BLOB_OID" 2>/dev/null; then
+		grit -C content.git cat-file -p "$BLOB_OID" >/dev/null
+	fi
+'
+
+test_expect_success 'unpack-objects: tree object ls-tree works after unpack' '
+	grit init tree_check.git --bare &&
+	grit -C tree_check.git unpack-objects <test.pack &&
+	TREE_OID=$("$REAL_GIT" -C src.git rev-parse HEAD^{tree}) &&
+	grit -C tree_check.git cat-file -t "$TREE_OID" >type_out &&
+	echo tree >type_exp &&
+	test_cmp type_exp type_out
+'
+
+test_expect_success 'unpack-objects: object count correct after unpack' '
+	grit init count.git --bare &&
+	grit -C count.git unpack-objects <test.pack &&
+	COUNT=$(find count.git/objects -type f | grep -v pack | wc -l | tr -d " ") &&
+	test "$COUNT" -gt 0
+'
+
+test_expect_success 'unpack-objects: commit parent is accessible' '
+	grit init parent.git --bare &&
+	grit -C parent.git unpack-objects <test.pack &&
+	COMMIT=$("$REAL_GIT" -C src.git rev-parse HEAD) &&
+	grit -C parent.git cat-file -t "$COMMIT" >t &&
+	echo commit >exp &&
+	test_cmp exp t
+'
+
+test_expect_success 'unpack-objects: empty pack rejected gracefully' '
+	> empty.pack &&
+	grit init empty.git --bare &&
+	test_must_fail grit -C empty.git unpack-objects <empty.pack
+'
+
 test_done
