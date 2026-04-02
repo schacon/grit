@@ -390,4 +390,42 @@ test_expect_success 'show --format=oneline produces one-line output' '
 	grep "second commit" first_line
 '
 
+test_expect_success 'show HEAD:file.txt shows file content directly' '
+	cd repo &&
+	git show HEAD:file.txt >actual &&
+	grep "first" actual &&
+	grep "second" actual
+'
+
+test_expect_success 'show HEAD~1 shows diff for first commit' '
+	cd repo &&
+	git show HEAD~1 >actual &&
+	grep "first commit" actual &&
+	grep "^diff --git" actual
+'
+
+test_expect_success 'show multiple format placeholders %an <%ae>' '
+	cd repo &&
+	git show --format="format:%an <%ae>" >actual &&
+	head -1 actual >first &&
+	echo "Test User <test@test.com>" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show --quiet --format=%H shows only hash' '
+	cd repo &&
+	HASH=$(git rev-parse HEAD) &&
+	git show --quiet --format="format:%H" >actual &&
+	echo "$HASH" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'show with explicit commit hash' '
+	cd repo &&
+	HASH=$(git rev-parse HEAD) &&
+	git show "$HASH" >actual &&
+	grep "second commit" actual &&
+	grep "^diff --git" actual
+'
+
 test_done
