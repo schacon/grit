@@ -842,4 +842,114 @@ test_expect_success 'commit cat-file -t is commit' '
 	test_cmp expect actual
 '
 
+# ---------------------------------------------------------------------------
+# Additional commit coverage
+# ---------------------------------------------------------------------------
+test_expect_success 'commit --allow-empty creates commit with same tree' '
+	cd repo &&
+	tree1=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	git commit --allow-empty -m "empty again" 2>/dev/null &&
+	tree2=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	test "$tree1" = "$tree2"
+'
+
+test_expect_success 'commit records parent' '
+	cd repo &&
+	parent=$(git rev-parse HEAD) &&
+	git commit --allow-empty -m "has parent" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "parent $parent" actual
+'
+
+test_expect_success 'commit records author' '
+	cd repo &&
+	git cat-file -p HEAD >actual &&
+	grep "^author" actual
+'
+
+test_expect_success 'commit records committer' '
+	cd repo &&
+	git cat-file -p HEAD >actual &&
+	grep "^committer" actual
+'
+
+test_expect_success 'commit message is stored correctly' '
+	cd repo &&
+	git commit --allow-empty -m "exact message check" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "exact message check" actual
+'
+
+test_expect_success 'commit updates HEAD' '
+	cd repo &&
+	old=$(git rev-parse HEAD) &&
+	git commit --allow-empty -m "move head" 2>/dev/null &&
+	new=$(git rev-parse HEAD) &&
+	test "$old" != "$new"
+'
+
+test_expect_success 'commit with staged new file adds it to tree' '
+	cd repo &&
+	echo "newfile" >nf.txt &&
+	git add nf.txt &&
+	git commit -m "add nf" 2>/dev/null &&
+	git ls-tree HEAD >actual &&
+	grep "nf.txt" actual
+'
+
+test_expect_success 'commit with staged modification updates blob' '
+	cd repo &&
+	echo "modified" >>nf.txt &&
+	git add nf.txt &&
+	blob1=$(git ls-tree HEAD -- nf.txt | awk "{print \$3}") &&
+	git commit -m "modify nf" 2>/dev/null &&
+	blob2=$(git ls-tree HEAD -- nf.txt | awk "{print \$3}") &&
+	test "$blob1" != "$blob2"
+'
+
+test_expect_success 'amend keeps single parent' '
+	cd repo &&
+	git commit --allow-empty -m "amend base" 2>/dev/null &&
+	git commit --amend -m "amended" 2>/dev/null &&
+	parent_count=$(git cat-file -p HEAD | grep -c "^parent") &&
+	test "$parent_count" -eq 1
+'
+
+test_expect_success 'amend replaces commit message' '
+	cd repo &&
+	git commit --allow-empty -m "before amend" 2>/dev/null &&
+	git commit --amend -m "after amend" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "after amend" actual &&
+	! grep "before amend" actual
+'
+
+test_expect_success 'commit with empty message fails' '
+	cd repo &&
+	test_must_fail git commit --allow-empty -m "" 2>/dev/null
+'
+
+test_expect_success 'commit hash is 40 characters' '
+	cd repo &&
+	git commit --allow-empty -m "hash len" 2>/dev/null &&
+	hash=$(git rev-parse HEAD) &&
+	test ${#hash} -eq 40
+'
+
+test_expect_success 'second commit has different hash from first' '
+	cd repo &&
+	h1=$(git rev-parse HEAD) &&
+	git commit --allow-empty -m "different" 2>/dev/null &&
+	h2=$(git rev-parse HEAD) &&
+	test "$h1" != "$h2"
+'
+
+test_expect_success 'commit tree object is a valid tree' '
+	cd repo &&
+	tree=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	grit cat-file -t "$tree" >actual &&
+	echo "tree" >expect &&
+	test_cmp expect actual
+'
+
 test_done

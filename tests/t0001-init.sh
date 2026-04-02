@@ -895,4 +895,99 @@ test_expect_success 'init HEAD points to refs/heads/master or main' '
 # NOTE: Object format tests need --show-object-format. Skipping.
 # NOTE: Ref format/reftable tests not yet supported. Skipping.
 
+# ---------------------------------------------------------------------------
+# Additional init coverage
+# ---------------------------------------------------------------------------
+test_expect_success 'init creates objects directory' '
+	rm -fr init-obj &&
+	git init init-obj &&
+	test -d init-obj/.git/objects
+'
+
+test_expect_success 'init creates refs directory' '
+	rm -fr init-refs &&
+	git init init-refs &&
+	test -d init-refs/.git/refs
+'
+
+test_expect_success 'init creates refs/heads directory' '
+	rm -fr init-rh &&
+	git init init-rh &&
+	test -d init-rh/.git/refs/heads
+'
+
+test_expect_success 'init creates refs/tags directory' '
+	rm -fr init-rt &&
+	git init init-rt &&
+	test -d init-rt/.git/refs/tags
+'
+
+test_expect_success 'init creates HEAD file' '
+	rm -fr init-head2 &&
+	git init init-head2 &&
+	test -f init-head2/.git/HEAD
+'
+
+test_expect_success 'init HEAD contains ref: prefix' '
+	rm -fr init-headref &&
+	git init init-headref &&
+	grep "^ref:" init-headref/.git/HEAD
+'
+
+test_expect_success 'init creates objects/pack directory' '
+	rm -fr init-pack &&
+	git init init-pack &&
+	test -d init-pack/.git/objects/pack
+'
+
+test_expect_success 'init creates objects/info directory' '
+	rm -fr init-info &&
+	git init init-info &&
+	test -d init-info/.git/objects/info
+'
+
+test_expect_success 'init in existing empty dir succeeds' '
+	rm -fr init-exist &&
+	mkdir init-exist &&
+	git init init-exist &&
+	test -d init-exist/.git
+'
+
+test_expect_success 'init creates config file' '
+	rm -fr init-cfg &&
+	git init init-cfg &&
+	test -f init-cfg/.git/config
+'
+
+test_expect_success 'init config contains core section' '
+	rm -fr init-core &&
+	git init init-core &&
+	grep "\[core\]" init-core/.git/config
+'
+
+test_expect_success 'init bare creates HEAD at top level' '
+	rm -fr init-bare2 &&
+	git init --bare init-bare2 &&
+	test -f init-bare2/HEAD
+'
+
+test_expect_success 'init bare has no .git subdirectory' '
+	rm -fr init-bare3 &&
+	git init --bare init-bare3 &&
+	! test -d init-bare3/.git
+'
+
+test_expect_success 'init in nested new directory' '
+	rm -fr init-nested &&
+	mkdir -p init-nested/a/b &&
+	git init init-nested/a/b &&
+	test -d init-nested/a/b/.git
+'
+
+test_expect_success 'init description file exists' '
+	rm -fr init-desc &&
+	git init init-desc &&
+	test -f init-desc/.git/description
+'
+
 test_done

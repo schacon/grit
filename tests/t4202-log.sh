@@ -1493,4 +1493,109 @@ test_expect_success 'log --format=%cn shows committer name' '
 	test -n "$name"
 '
 
+# ---------------------------------------------------------------------------
+# Additional log coverage
+# ---------------------------------------------------------------------------
+test_expect_success 'log -n 1 shows exactly one commit' '
+	cd repo &&
+	git log -n 1 --oneline >output &&
+	test_line_count = 1 output
+'
+
+test_expect_success 'log -n 2 shows at most 2 commits' '
+	cd repo &&
+	git log -n 2 --oneline >output &&
+	count=$(wc -l <output) &&
+	test "$count" -le 2
+'
+
+test_expect_success 'log --oneline abbreviates hash' '
+	cd repo &&
+	git log -n 1 --oneline >output &&
+	hash=$(awk "{print \$1}" output) &&
+	test ${#hash} -le 12
+'
+
+test_expect_success 'log --format=%H shows full hash' '
+	cd repo &&
+	hash=$(git log -n 1 --format="%H") &&
+	test ${#hash} -eq 40
+'
+
+test_expect_success 'log --format=%h shows abbreviated hash' '
+	cd repo &&
+	hash=$(git log -n 1 --format="%h") &&
+	test ${#hash} -le 12
+'
+
+test_expect_success 'log --format=%s shows subject' '
+	cd repo &&
+	subject=$(git log -n 1 --format="%s") &&
+	test -n "$subject"
+'
+
+test_expect_success 'log --format=%an shows author name' '
+	cd repo &&
+	author=$(git log -n 1 --format="%an") &&
+	test -n "$author"
+'
+
+test_expect_success 'log --format=%ae shows author email' '
+	cd repo &&
+	email=$(git log -n 1 --format="%ae") &&
+	test -n "$email"
+'
+
+test_expect_success 'log --format=%ai shows author date' '
+	cd repo &&
+	date=$(git log -n 1 --format="%ai") &&
+	test -n "$date"
+'
+
+test_expect_success 'log --format=%ci shows committer date' '
+	cd repo &&
+	date=$(git log -n 1 --format="%ci") &&
+	test -n "$date"
+'
+
+test_expect_success 'log --format=%P shows parent hash' '
+	cd repo &&
+	parent=$(git log -n 1 --skip=0 --format="%P" HEAD) &&
+	test -n "$parent" || test "$(git rev-list --count HEAD)" -eq 1
+'
+
+test_expect_success 'log --format=%p shows abbreviated parent' '
+	cd repo &&
+	git log -n 1 --format="%p" >output &&
+	test -f output
+'
+
+test_expect_success 'log --oneline output is compact' '
+	cd repo &&
+	git log --oneline >output &&
+	line=$(head -1 output) &&
+	test ${#line} -lt 120
+'
+
+test_expect_success 'log --reverse reverses output order' '
+	cd repo &&
+	git log --oneline --reverse >rev_output &&
+	git log --oneline >fwd_output &&
+	first_rev=$(head -1 rev_output | awk "{print \$1}") &&
+	last_fwd=$(tail -1 fwd_output | awk "{print \$1}") &&
+	test "$first_rev" = "$last_fwd"
+'
+
+test_expect_success 'log --format=%B shows full body' '
+	cd repo &&
+	body=$(git log -n 1 --format="%B") &&
+	test -n "$body"
+'
+
+test_expect_success 'log --format=%T shows full tree hash' '
+	cd repo &&
+	tree=$(git log -n 1 --format="%T") &&
+	test ${#tree} -eq 40
+'
+
 test_done

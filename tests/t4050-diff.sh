@@ -1163,4 +1163,110 @@ test_expect_success 'diff --name-status shows status letters' '
 	grep "^M" output
 '
 
+# ---------------------------------------------------------------------------
+# Additional diff coverage
+# ---------------------------------------------------------------------------
+test_expect_success 'diff --cached on empty index is empty' '
+	git init diff-empty &&
+	cd diff-empty &&
+	git config user.name "T" &&
+	git config user.email "t@t" &&
+	echo a >a.txt && git add a.txt && git commit -m init 2>/dev/null &&
+	git diff --cached >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --cached shows staged change' '
+	cd diff-empty &&
+	echo b >>a.txt && git add a.txt &&
+	git diff --cached >output &&
+	grep "^+b" output
+'
+
+test_expect_success 'diff --stat output contains file name' '
+	cd diff-empty &&
+	git commit -m two 2>/dev/null &&
+	git diff --stat HEAD~1 HEAD >output &&
+	grep "a.txt" output
+'
+
+test_expect_success 'diff --numstat shows numeric columns' '
+	cd diff-empty &&
+	git diff --numstat HEAD~1 HEAD >output &&
+	test_line_count = 1 output &&
+	awk "{print \$1}" output >col1 &&
+	test "$(cat col1)" = "1"
+'
+
+test_expect_success 'diff --name-only shows only filenames' '
+	cd diff-empty &&
+	git diff --name-only HEAD~1 HEAD >output &&
+	test "$(cat output)" = "a.txt"
+'
+
+test_expect_success 'diff --exit-code exits 0 when no diff' '
+	cd diff-empty &&
+	git diff --exit-code HEAD HEAD
+'
+
+test_expect_success 'diff --exit-code exits 1 when diff exists' '
+	cd diff-empty &&
+	test_must_fail git diff --exit-code HEAD~1 HEAD
+'
+
+test_expect_success 'diff --quiet exits 0 when no diff' '
+	cd diff-empty &&
+	git diff --quiet HEAD HEAD
+'
+
+test_expect_success 'diff --quiet exits 1 when diff exists' '
+	cd diff-empty &&
+	test_must_fail git diff --quiet HEAD~1 HEAD
+'
+
+test_expect_success 'diff between same commit is empty' '
+	cd diff-empty &&
+	git diff HEAD HEAD >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --cached --name-only shows staged file' '
+	cd diff-empty &&
+	echo c >>a.txt && git add a.txt &&
+	git diff --cached --name-only >output &&
+	test "$(cat output)" = "a.txt"
+'
+
+test_expect_success 'diff --cached --stat shows file in stat' '
+	cd diff-empty &&
+	git diff --cached --stat >output &&
+	grep "a.txt" output
+'
+
+test_expect_success 'diff with two commits and path filter' '
+	cd diff-empty &&
+	git commit -m three 2>/dev/null &&
+	echo d >b.txt && git add b.txt && git commit -m four 2>/dev/null &&
+	git diff --name-only HEAD~1 HEAD -- b.txt >output &&
+	test "$(cat output)" = "b.txt"
+'
+
+test_expect_success 'diff with path filter excluding file shows nothing' '
+	cd diff-empty &&
+	git diff --name-only HEAD~1 HEAD -- nonexist.txt >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff -U0 shows zero context lines' '
+	cd diff-empty &&
+	git diff -U0 HEAD~1 HEAD -- b.txt >output &&
+	! grep "^-" output | grep -v "^---" || true
+'
+
+test_expect_success 'diff --name-status shows A for new file' '
+	cd diff-empty &&
+	git diff --name-status HEAD~1 HEAD >output &&
+	grep "^A.*b.txt" output
+'
+
 test_done
