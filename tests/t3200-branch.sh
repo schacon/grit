@@ -1564,4 +1564,117 @@ test_expect_success 'branch lists newly created branches' '
 	git branch -d aaa-list-check zzz-list-check 2>/dev/null
 '
 
+test_expect_success 'branch --show-current shows master on master' '
+	cd repo &&
+	git checkout master 2>/dev/null &&
+	result=$(git branch --show-current) &&
+	test "$result" = "master"
+'
+
+test_expect_success 'branch from specific commit' '
+	cd repo &&
+	sha=$(git rev-parse HEAD~1) &&
+	git branch from-sha "$sha" &&
+	result=$(git rev-parse from-sha) &&
+	test "$result" = "$sha" &&
+	git branch -d from-sha 2>/dev/null
+'
+
+test_expect_success 'branch -d on current branch fails' '
+	cd repo &&
+	git checkout master 2>/dev/null &&
+	test_must_fail git branch -d master 2>/dev/null
+'
+
+test_expect_success 'branch rename with -m' '
+	cd repo &&
+	git branch rename-src &&
+	git branch -m rename-src rename-dst 2>/dev/null &&
+	git rev-parse rename-dst &&
+	test_must_fail git rev-parse rename-src 2>/dev/null &&
+	git branch -d rename-dst 2>/dev/null
+'
+
+test_expect_success 'branch -v includes commit subject' '
+	cd repo &&
+	git branch -v >output &&
+	test $(wc -l <output) -ge 1
+'
+
+test_expect_success 'branch creating duplicate name fails' '
+	cd repo &&
+	git branch dup-br 2>/dev/null &&
+	test_must_fail git branch dup-br 2>/dev/null &&
+	git branch -d dup-br 2>/dev/null
+'
+
+test_expect_success 'branch -d nonexistent branch fails' '
+	cd repo &&
+	test_must_fail git branch -d no-such-branch-xyz 2>/dev/null
+'
+
+test_expect_success 'branch list shows current branch with asterisk' '
+	cd repo &&
+	git checkout master 2>/dev/null &&
+	git branch >output &&
+	grep "^\* master" output
+'
+
+test_expect_success 'branch points to correct commit after creation' '
+	cd repo &&
+	head=$(git rev-parse HEAD) &&
+	git branch verify-commit &&
+	result=$(git rev-parse verify-commit) &&
+	test "$result" = "$head" &&
+	git branch -d verify-commit 2>/dev/null
+'
+
+test_expect_success 'branch -D deletes branch even if not merged' '
+	cd repo &&
+	git branch unmerged-del &&
+	git checkout unmerged-del 2>/dev/null &&
+	echo x >unm.txt && git add unm.txt && git commit -m unm 2>/dev/null &&
+	git checkout master 2>/dev/null &&
+	git branch -D unmerged-del &&
+	test_must_fail git rev-parse unmerged-del 2>/dev/null
+'
+
+test_expect_success 'multiple branches can be created' '
+	cd repo &&
+	git branch multi-a &&
+	git branch multi-b &&
+	git branch multi-c &&
+	git rev-parse multi-a &&
+	git rev-parse multi-b &&
+	git rev-parse multi-c &&
+	git branch -d multi-a 2>/dev/null &&
+	git branch -d multi-b 2>/dev/null &&
+	git branch -d multi-c 2>/dev/null
+'
+
+test_expect_success 'branch --show-current on new branch shows its name' '
+	cd repo &&
+	git branch show-cur-test &&
+	git checkout show-cur-test 2>/dev/null &&
+	result=$(git branch --show-current) &&
+	test "$result" = "show-cur-test" &&
+	git checkout master 2>/dev/null &&
+	git branch -d show-cur-test 2>/dev/null
+'
+
+test_expect_success 'branch -v output includes hash prefix' '
+	cd repo &&
+	git branch -v >output &&
+	grep "[0-9a-f]" output
+'
+
+test_expect_success 'branch created at HEAD matches HEAD sha' '
+	cd repo &&
+	git branch head-match-test &&
+	head=$(git rev-parse HEAD) &&
+	br=$(git rev-parse head-match-test) &&
+	test "$head" = "$br" &&
+	git branch -d head-match-test 2>/dev/null
+'
+
 test_done

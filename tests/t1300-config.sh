@@ -2794,4 +2794,102 @@ test_expect_success 'config with empty value' '
 	test_cmp expect actual
 '
 
+test_expect_success 'config --list shows all entries' '
+	cd repo &&
+	git config --list >actual &&
+	test $(wc -l <actual) -ge 1
+'
+
+test_expect_success 'config --list includes user.name' '
+	cd repo &&
+	git config user.name "ConfigTest" &&
+	git config --list >actual &&
+	grep "user.name=ConfigTest" actual
+'
+
+test_expect_success 'config value with spaces' '
+	cd repo &&
+	git config space.key "hello world" &&
+	result=$(git config --get space.key) &&
+	test "$result" = "hello world"
+'
+
+test_expect_success 'config value with equals sign' '
+	cd repo &&
+	git config eq.key "a=b" &&
+	result=$(git config --get eq.key) &&
+	test "$result" = "a=b"
+'
+
+test_expect_success 'config overwrite existing key' '
+	cd repo &&
+	git config over.key "first" &&
+	git config over.key "second" &&
+	result=$(git config --get over.key) &&
+	test "$result" = "second"
+'
+
+test_expect_success 'config --get nonexistent key fails' '
+	cd repo &&
+	test_must_fail git config --get nonexist.key 2>/dev/null
+'
+
+test_expect_success 'config bool true value' '
+	cd repo &&
+	git config bool.key "true" &&
+	result=$(git config --get bool.key) &&
+	test "$result" = "true"
+'
+
+test_expect_success 'config numeric value' '
+	cd repo &&
+	git config num.key "42" &&
+	result=$(git config --get num.key) &&
+	test "$result" = "42"
+'
+
+test_expect_success 'config key with hyphen in section' '
+	cd repo &&
+	git config my-section.key "hyphen" &&
+	result=$(git config --get my-section.key) &&
+	test "$result" = "hyphen"
+'
+
+test_expect_success 'config key with hyphen in key name' '
+	cd repo &&
+	git config section.my-key "hyphkey" &&
+	result=$(git config --get section.my-key) &&
+	test "$result" = "hyphkey"
+'
+
+test_expect_success 'config multiple sections coexist' '
+	cd repo &&
+	git config sec-a.key "alpha" &&
+	git config sec-b.key "beta" &&
+	test "$(git config --get sec-a.key)" = "alpha" &&
+	test "$(git config --get sec-b.key)" = "beta"
+'
+
+test_expect_success 'config --list includes section.subsection entries' '
+	cd repo &&
+	git config section.sub.key "nested" &&
+	git config --list >actual &&
+	grep "section.sub.key=nested" actual
+'
+
+test_expect_success 'config long value preserved' '
+	cd repo &&
+	long_val=$(printf "a%.0s" $(seq 1 200)) &&
+	git config long.key "$long_val" &&
+	result=$(git config --get long.key) &&
+	test "$result" = "$long_val"
+'
+
+test_expect_success 'config value with special chars' '
+	cd repo &&
+	git config special.key "hello/world@test" &&
+	result=$(git config --get special.key) &&
+	test "$result" = "hello/world@test"
+'
+
 test_done

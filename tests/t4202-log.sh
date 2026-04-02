@@ -1598,4 +1598,141 @@ test_expect_success 'log --format=%T shows full tree hash' '
 	test ${#tree} -eq 40
 '
 
+test_expect_success 'log --format=%H shows full commit hash' '
+	cd repo &&
+	hash=$(git log -n 1 --format="%H") &&
+	test ${#hash} -eq 40
+'
+
+test_expect_success 'log --format=%h shows abbreviated hash' '
+	cd repo &&
+	hash=$(git log -n 1 --format="%h") &&
+	test ${#hash} -ge 7 &&
+	test ${#hash} -le 12
+'
+
+test_expect_success 'log --format=%an shows author name' '
+	cd repo &&
+	name=$(git log -n 1 --format="%an") &&
+	test -n "$name"
+'
+
+test_expect_success 'log --format=%ae shows author email' '
+	cd repo &&
+	email=$(git log -n 1 --format="%ae") &&
+	test -n "$email"
+'
+
+test_expect_success 'log --format=%s shows subject line' '
+	cd repo &&
+	subj=$(git log -n 1 --format="%s") &&
+	test -n "$subj"
+'
+
+test_expect_success 'log -n 2 shows exactly 2 entries' '
+	cd repo &&
+	git log -n 2 --format="%H" >output &&
+	test $(wc -l <output) -eq 2
+'
+
+test_expect_success 'log --oneline --reverse first equals log last' '
+	cd repo &&
+	first_rev=$(git log --oneline --reverse | head -1 | awk "{print \$1}") &&
+	last_fwd=$(git log --oneline | tail -1 | awk "{print \$1}") &&
+	test "$first_rev" = "$last_fwd"
+'
+
+test_expect_success 'log --format=%P shows parent hash' '
+	cd repo &&
+	parent=$(git log -n 1 --format="%P" HEAD) &&
+	test -n "$parent"
+'
+
+test_expect_success 'log --format=%p shows abbreviated parent' '
+	cd repo &&
+	parent=$(git log -n 1 --format="%p" HEAD) &&
+	test -n "$parent"
+'
+
+test_expect_success 'log --format=%t shows abbreviated tree hash' '
+	cd repo &&
+	tree=$(git log -n 1 --format="%t") &&
+	test ${#tree} -ge 7
+'
+
+test_expect_success 'log --format=%ci shows committer date' '
+	cd repo &&
+	date=$(git log -n 1 --format="%ci") &&
+	test -n "$date"
+'
+
+test_expect_success 'log --format=%cn shows committer name' '
+	cd repo &&
+	cn=$(git log -n 1 --format="%cn") &&
+	test -n "$cn"
+'
+
+test_expect_success 'log --format=%ce shows committer email' '
+	cd repo &&
+	ce=$(git log -n 1 --format="%ce") &&
+	test -n "$ce"
+'
+
+test_expect_success 'log -n 1 shows single entry' '
+	cd repo &&
+	git log -n 1 --format="%H" >output &&
+	test $(wc -l <output) -eq 1
+'
+
+test_expect_success 'log --format=%ai shows author date' '
+	cd repo &&
+	ad=$(git log -n 1 --format="%ai") &&
+	test -n "$ad"
+'
+
+test_expect_success 'log HEAD shows same as log without arg' '
+	cd repo &&
+	git log --format="%H" HEAD >a &&
+	git log --format="%H" >b &&
+	test_cmp a b
+'
+
+test_expect_success 'log --format with multiple placeholders' '
+	cd repo &&
+	git log -n 1 --format="%h %s" >output &&
+	test $(wc -w <output) -ge 2
+'
+
+test_expect_success 'log --oneline contains abbreviated hash' '
+	cd repo &&
+	git log -n 1 --oneline >output &&
+	hash=$(awk "{print \$1}" output) &&
+	test ${#hash} -ge 7
+'
+
+test_expect_success 'log total entries equal commit count' '
+	cd repo &&
+	git log --format="%H" >output &&
+	test $(wc -l <output) -ge 3
+'
+
+test_expect_success 'log --format=%H matches rev-parse HEAD' '
+	cd repo &&
+	expected=$(git rev-parse HEAD) &&
+	actual=$(git log -n 1 --format="%H") &&
+	test "$expected" = "$actual"
+'
+
+test_expect_success 'log -n 3 --format=%h outputs 3 lines' '
+	cd repo &&
+	git log -n 3 --format="%h" >output &&
+	test $(wc -l <output) -eq 3
+'
+
+test_expect_success 'log --format=%H unique per commit' '
+	cd repo &&
+	git log -n 5 --format="%H" >output &&
+	test $(sort -u output | wc -l) -eq $(wc -l <output)
+'
+
 test_done

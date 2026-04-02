@@ -2494,4 +2494,92 @@ test_expect_success 'tag -n0 lists tags without message' '
 	test -s output
 '
 
+test_expect_success 'tag on specific commit via SHA' '
+	cd tag-extra &&
+	sha=$(git rev-parse HEAD~1) &&
+	git tag sha-tag "$sha" &&
+	result=$(git rev-parse sha-tag) &&
+	test "$result" = "$sha"
+'
+
+test_expect_success 'tag -l pattern filters tags' '
+	cd tag-extra &&
+	git tag filter-a-1 &&
+	git tag filter-a-2 &&
+	git tag filter-b-1 &&
+	git tag -l "filter-a-*" >output &&
+	grep "filter-a-1" output &&
+	grep "filter-a-2" output &&
+	! grep "filter-b-1" output
+'
+
+test_expect_success 'tag list is sorted alphabetically' '
+	cd tag-extra &&
+	git tag -l >output &&
+	sort output >sorted &&
+	test_cmp sorted output
+'
+
+test_expect_success 'tag cannot create duplicate name' '
+	cd tag-extra &&
+	git tag dup-tag-new 2>/dev/null &&
+	test_must_fail git tag dup-tag-new 2>/dev/null
+'
+
+test_expect_success 'tag -d nonexistent tag fails' '
+	cd tag-extra &&
+	test_must_fail git tag -d nonexistent-tag-xyz 2>/dev/null
+'
+
+test_expect_success 'annotated tag message is retrievable' '
+	cd tag-extra &&
+	git tag -a ann-msg -m "my annotation" 2>/dev/null &&
+	git cat-file -p ann-msg >output &&
+	grep "my annotation" output
+'
+
+test_expect_success 'annotated tag type field is commit' '
+	cd tag-extra &&
+	git cat-file -p ann-msg >output &&
+	grep "^type commit" output
+'
+
+test_expect_success 'lightweight tag resolves directly to commit' '
+	cd tag-extra &&
+	git tag light-resolve &&
+	type=$(git cat-file -t light-resolve) &&
+	test "$type" = "commit"
+'
+
+test_expect_success 'annotated tag object type is tag' '
+	cd tag-extra &&
+	git tag -a ann-type-check -m "type check" 2>/dev/null &&
+	raw_sha=$(git rev-parse ann-type-check) &&
+	type=$(git cat-file -t "$raw_sha") &&
+	test "$type" = "tag"
+'
+
+test_expect_success 'tag -l with no tags matching shows empty' '
+	cd tag-extra &&
+	git tag -l "zzzz-no-match-*" >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'tag on HEAD is same as tag with no arg' '
+	cd tag-extra &&
+	git tag explicit-head HEAD &&
+	git tag implicit-head &&
+	a=$(git rev-parse explicit-head) &&
+	b=$(git rev-parse implicit-head) &&
+	test "$a" = "$b"
+'
+
+test_expect_success 'tag -d then recreate same name' '
+	cd tag-extra &&
+	git tag recreate-me &&
+	git tag -d recreate-me &&
+	git tag recreate-me &&
+	git rev-parse recreate-me
+'
+
 test_done
