@@ -2013,4 +2013,125 @@ test_expect_success 'branch count increases after creation' '
 	git branch -D count-test-br 2>/dev/null
 '
 
+# ---------------------------------------------------------------------------
+# Deepening tests (w32-deepen)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'deepen setup: repo for branch tests' '
+	git init deepen-branch-repo &&
+	cd deepen-branch-repo &&
+	git config user.name "Branch Tester" &&
+	git config user.email "branch@test.com" &&
+	echo "init" >file.txt &&
+	git add file.txt &&
+	git commit -m "initial"
+'
+
+test_expect_success 'branch creates new branch from HEAD' '
+	cd deepen-branch-repo &&
+	git branch deepen-new &&
+	git rev-parse deepen-new >output &&
+	test -s output
+'
+
+test_expect_success 'branch new points to same commit as HEAD' '
+	cd deepen-branch-repo &&
+	HEAD_HASH=$(git rev-parse HEAD) &&
+	BR_HASH=$(git rev-parse deepen-new) &&
+	test "$HEAD_HASH" = "$BR_HASH"
+'
+
+test_expect_success 'branch -l lists the new branch' '
+	cd deepen-branch-repo &&
+	git branch >output &&
+	grep "deepen-new" output
+'
+
+test_expect_success 'branch -D deletes a branch' '
+	cd deepen-branch-repo &&
+	git branch deepen-del &&
+	git branch -D deepen-del &&
+	git branch >output &&
+	! grep "deepen-del" output
+'
+
+test_expect_success 'branch -m renames a branch' '
+	cd deepen-branch-repo &&
+	git branch deepen-old-name &&
+	git branch -m deepen-old-name deepen-new-name &&
+	git branch >output &&
+	! grep "deepen-old-name" output &&
+	grep "deepen-new-name" output &&
+	git branch -D deepen-new-name
+'
+
+test_expect_success 'branch from specific commit' '
+	cd deepen-branch-repo &&
+	FIRST=$(git rev-list --reverse HEAD | head -n 1) &&
+	git branch deepen-from-first $FIRST &&
+	BR_HASH=$(git rev-parse deepen-from-first) &&
+	test "$BR_HASH" = "$FIRST" &&
+	git branch -D deepen-from-first
+'
+
+test_expect_success 'creating duplicate branch fails' '
+	cd deepen-branch-repo &&
+	test_must_fail git branch deepen-new 2>/dev/null
+'
+
+test_expect_success 'deleting current branch fails' '
+	cd deepen-branch-repo &&
+	CURRENT=$(git branch --show-current) &&
+	test_must_fail git branch -D $CURRENT 2>/dev/null
+'
+
+test_expect_success 'branch -d (lowercase) deletes merged branch' '
+	cd deepen-branch-repo &&
+	git branch deepen-merged &&
+	git branch -d deepen-merged &&
+	git branch >output &&
+	! grep "deepen-merged" output
+'
+
+test_expect_success 'branch list shows current branch with asterisk' '
+	cd deepen-branch-repo &&
+	git branch >output &&
+	grep "^\*" output
+'
+
+test_expect_success 'for-each-ref sees new branch in refs/heads/' '
+	cd deepen-branch-repo &&
+	git for-each-ref refs/heads/ >output &&
+	grep "deepen-new" output
+'
+
+test_expect_success 'rev-parse resolves branch name to sha' '
+	cd deepen-branch-repo &&
+	git rev-parse deepen-new >output &&
+	line=$(cat output) &&
+	test ${#line} -eq 40
+'
+
+test_expect_success 'branch with slash in name' '
+	cd deepen-branch-repo &&
+	git branch feature/deepen-test &&
+	git branch >output &&
+	grep "feature/deepen-test" output &&
+	git branch -D feature/deepen-test
+'
+
+test_expect_success 'multiple branches can be created' '
+	cd deepen-branch-repo &&
+	git branch deepen-multi-a &&
+	git branch deepen-multi-b &&
+	git branch deepen-multi-c &&
+	git branch >output &&
+	grep "deepen-multi-a" output &&
+	grep "deepen-multi-b" output &&
+	grep "deepen-multi-c" output &&
+	git branch -D deepen-multi-a &&
+	git branch -D deepen-multi-b &&
+	git branch -D deepen-multi-c
+'
+
 test_done

@@ -2021,4 +2021,110 @@ test_expect_success 'log --format with multiple placeholders' '
 	test $(wc -w <output) -ge 2
 '
 
+# ---------------------------------------------------------------------------
+# Deepening tests (w32-deepen)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'log -n 2 shows at most 2 commits' '
+	cd repo &&
+	git log -n 2 --oneline >output &&
+	test_line_count = 2 output
+'
+
+test_expect_success 'log -n 1 shows exactly one commit' '
+	cd repo &&
+	git log -n 1 --oneline >output &&
+	test_line_count = 1 output
+'
+
+test_expect_success 'log --format=%H outputs only full hashes' '
+	cd repo &&
+	git log -n 3 --format="%H" >output &&
+	while read line; do
+		test ${#line} -eq 40 || return 1
+	done <output
+'
+
+test_expect_success 'log --format=%h outputs abbreviated hashes' '
+	cd repo &&
+	git log -n 3 --format="%h" >output &&
+	while read line; do
+		test ${#line} -ge 4 && test ${#line} -le 40 || return 1
+	done <output
+'
+
+test_expect_success 'log --format=%s outputs subject lines' '
+	cd repo &&
+	git log -n 1 --format="%s" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%an outputs author name' '
+	cd repo &&
+	git log -n 1 --format="%an" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%ae outputs author email' '
+	cd repo &&
+	git log -n 1 --format="%ae" >output &&
+	grep "@" output
+'
+
+test_expect_success 'log --format=%cn outputs committer name' '
+	cd repo &&
+	git log -n 1 --format="%cn" >output &&
+	test -s output
+'
+
+test_expect_success 'log --format=%ce outputs committer email' '
+	cd repo &&
+	git log -n 1 --format="%ce" >output &&
+	grep "@" output
+'
+
+test_expect_success 'log --format=%T outputs tree hash' '
+	cd repo &&
+	git log -n 1 --format="%T" >output &&
+	line=$(cat output) &&
+	test ${#line} -eq 40
+'
+
+test_expect_success 'log --oneline output is shorter than default' '
+	cd repo &&
+	git log -n 3 >default_out &&
+	git log -n 3 --oneline >oneline_out &&
+	test $(wc -l <oneline_out) -lt $(wc -l <default_out)
+'
+
+test_expect_success 'log --format=%P shows parent hash for non-root commit' '
+	cd repo &&
+	git log -n 1 --skip=1 --format="%P" >output &&
+	line=$(cat output) &&
+	test ${#line} -ge 40
+'
+
+test_expect_success 'log --format=%t outputs abbreviated tree hash' '
+	cd repo &&
+	git log -n 1 --format="%t" >output &&
+	line=$(cat output) &&
+	test ${#line} -ge 4 && test ${#line} -le 40
+'
+
+test_expect_success 'log --skip skips the right number of commits' '
+	cd repo &&
+	git log --oneline >all_out &&
+	git log --oneline --skip=2 >skip_out &&
+	all_count=$(wc -l <all_out) &&
+	skip_count=$(wc -l <skip_out) &&
+	test $skip_count -eq $((all_count - 2))
+'
+
+test_expect_success 'log specific commit shows only that commit' '
+	cd repo &&
+	HEAD_HASH=$(git rev-parse HEAD) &&
+	git log -n 1 --format="%H" $HEAD_HASH >output &&
+	test "$(cat output)" = "$HEAD_HASH"
+'
+
 test_done

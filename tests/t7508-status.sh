@@ -1967,4 +1967,155 @@ test_expect_success 'status with file in nested directory' '
 	rm -rf deep
 '
 
+# ---------------------------------------------------------------------------
+# Deepening tests (w32-deepen)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'deepen setup: fresh repo for status tests' '
+	git init deepen-status-repo &&
+	cd deepen-status-repo &&
+	git config user.name "Status Tester" &&
+	git config user.email "status@test.com" &&
+	echo "base" >base.txt &&
+	git add base.txt &&
+	git commit -m "initial"
+'
+
+test_expect_success 'status -s clean repo is empty' '
+	cd deepen-status-repo &&
+	grit status -s >../actual &&
+	test_must_be_empty ../actual
+'
+
+test_expect_success 'status -s shows ?? for untracked file' '
+	cd deepen-status-repo &&
+	echo "untracked" >untracked.txt &&
+	grit status -s >../actual &&
+	grep "^??" ../actual &&
+	grep "untracked.txt" ../actual &&
+	rm -f untracked.txt
+'
+
+test_expect_success 'status -s shows A for newly staged file' '
+	cd deepen-status-repo &&
+	echo "new file" >newfile.txt &&
+	git add newfile.txt &&
+	grit status -s >../actual &&
+	grep "^A" ../actual &&
+	grep "newfile.txt" ../actual &&
+	git reset HEAD newfile.txt &&
+	rm -f newfile.txt
+'
+
+test_expect_success 'status -s shows M for modified tracked file' '
+	cd deepen-status-repo &&
+	echo "modified" >>base.txt &&
+	grit status -s >../actual &&
+	grep "M" ../actual &&
+	grep "base.txt" ../actual &&
+	git checkout -- base.txt
+'
+
+test_expect_success 'status -s shows D for deleted tracked file' '
+	cd deepen-status-repo &&
+	rm base.txt &&
+	grit status -s >../actual &&
+	grep "D" ../actual &&
+	git checkout -- base.txt
+'
+
+test_expect_success 'status -s with staged and unstaged changes' '
+	cd deepen-status-repo &&
+	echo "staged" >>base.txt &&
+	git add base.txt &&
+	echo "unstaged" >>base.txt &&
+	grit status -s >../actual &&
+	grep "base.txt" ../actual &&
+	git checkout -- base.txt &&
+	git reset HEAD base.txt 2>/dev/null
+'
+
+test_expect_success 'status -s with multiple untracked files' '
+	cd deepen-status-repo &&
+	echo a >ut1.txt &&
+	echo b >ut2.txt &&
+	echo c >ut3.txt &&
+	grit status -s >../actual &&
+	grep "ut1.txt" ../actual &&
+	grep "ut2.txt" ../actual &&
+	grep "ut3.txt" ../actual &&
+	rm -f ut1.txt ut2.txt ut3.txt
+'
+
+test_expect_success 'status after staging shows staged file' '
+	cd deepen-status-repo &&
+	echo "new" >staged-file.txt &&
+	git add staged-file.txt &&
+	grit status -s >../actual &&
+	grep "staged-file.txt" ../actual &&
+	git reset HEAD staged-file.txt &&
+	rm -f staged-file.txt
+'
+
+test_expect_success 'status shows .gitignore as untracked when created' '
+	cd deepen-status-repo &&
+	echo "*.log" >.gitignore &&
+	grit status -s >../actual &&
+	grep ".gitignore" ../actual &&
+	rm -f .gitignore
+'
+
+test_expect_success 'status -s on empty repo with no commits shows staged files' '
+	git init deepen-empty-status &&
+	cd deepen-empty-status &&
+	git config user.name "T" &&
+	git config user.email "t@t" &&
+	echo "first" >first.txt &&
+	git add first.txt &&
+	grit status -s >../actual &&
+	grep "first.txt" ../actual
+'
+
+test_expect_success 'status porcelain format uses two-column codes' '
+	cd deepen-status-repo &&
+	echo "porcelain test" >porcelain.txt &&
+	grit status -s >../actual &&
+	awk "{ if (length(\$0) > 2) ok=1 } END { exit !ok }" ../actual &&
+	rm -f porcelain.txt
+'
+
+test_expect_success 'status -s with untracked directory shows dir entry' '
+	cd deepen-status-repo &&
+	mkdir -p sub/dir &&
+	echo subfile >sub/dir/f.txt &&
+	grit status -s >../actual &&
+	grep "sub" ../actual &&
+	rm -rf sub
+'
+
+test_expect_success 'status reflects staged rename via add+rm' '
+	cd deepen-status-repo &&
+	echo "rename me" >rename-src.txt &&
+	git add rename-src.txt &&
+	git commit -m "add rename src" &&
+	mv rename-src.txt rename-dst.txt &&
+	git add rename-dst.txt &&
+	git rm rename-src.txt 2>/dev/null &&
+	grit status -s >../actual &&
+	test -s ../actual &&
+	git reset --hard HEAD 2>/dev/null
+'
+
+test_expect_success 'status -s after commit is clean' '
+	git init deepen-clean-repo &&
+	cd deepen-clean-repo &&
+	git config user.name "T" &&
+	git config user.email "t@t" &&
+	echo "commit-clean" >cc.txt &&
+	git add cc.txt &&
+	git commit -m "add cc" &&
+	grit status -s >../actual &&
+	test_must_be_empty ../actual
+'
+
 test_done

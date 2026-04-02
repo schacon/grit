@@ -1689,4 +1689,129 @@ test_expect_success 'diff --stat shows insertion and deletion counts' '
 	grep "-" output
 '
 
+# ---------------------------------------------------------------------------
+# Deepening tests (w32-deepen)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff --cached with no staged changes is empty' '
+	cd repo &&
+	git diff --cached >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --cached detects staged addition of new file' '
+	cd repo &&
+	echo "new content" >newfile-diff-cached.txt &&
+	git add newfile-diff-cached.txt &&
+	git diff --cached >output &&
+	grep "+new content" output &&
+	git reset HEAD newfile-diff-cached.txt &&
+	rm -f newfile-diff-cached.txt
+'
+
+test_expect_success 'diff between same commit produces no output' '
+	cd repo &&
+	C=$(git rev-parse HEAD) &&
+	git diff $C $C >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --quiet returns 0 when no diff' '
+	cd repo &&
+	git diff --quiet HEAD HEAD
+'
+
+test_expect_success 'diff --quiet returns 1 when diff exists' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	test_must_fail git diff --quiet $C1 $C2
+'
+
+test_expect_success 'diff -U0 produces zero context lines' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff -U0 $C1 $C2 >output &&
+	! grep "^  " output
+'
+
+test_expect_success 'diff --name-only between commits lists changed files only' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff --name-only $C1 $C2 >output &&
+	grep "file1" output &&
+	grep "file2" output &&
+	! grep "^---" output &&
+	! grep "^+++" output
+'
+
+test_expect_success 'diff --cached after staging deletion shows removed lines' '
+	cd repo &&
+	echo "temp line" >tempfile-del.txt &&
+	git add tempfile-del.txt &&
+	git commit -m "add tempfile" &&
+	git rm tempfile-del.txt &&
+	git diff --cached >output &&
+	grep "^-temp line" output &&
+	git commit -m "remove tempfile"
+'
+
+test_expect_success 'diff commit-to-commit with path filter on nonexistent path is empty' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff $C1 $C2 -- nonexistent-path >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --stat output contains filenames' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff --stat $C1 $C2 >output &&
+	grep "file1" output &&
+	grep "file2" output
+'
+
+test_expect_success 'diff --numstat produces tab-separated columns' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff --numstat $C1 $C2 >output &&
+	awk -F"\t" "NF >= 3 { ok=1 } END { exit !ok }" output
+'
+
+test_expect_success 'diff --name-status shows M for modified file' '
+	cd repo &&
+	C1=$(cat ../commit1) &&
+	C2=$(cat ../commit2) &&
+	git diff --name-status $C1 $C2 >output &&
+	grep "^M" output
+'
+
+test_expect_success 'diff --cached with newly staged multiline file shows all added lines' '
+	cd repo &&
+	printf "line A\nline B\nline C\n" >multi-cached.txt &&
+	git add multi-cached.txt &&
+	git diff --cached >output &&
+	grep "+line A" output &&
+	grep "+line B" output &&
+	grep "+line C" output &&
+	git reset HEAD multi-cached.txt &&
+	rm -f multi-cached.txt
+'
+
+test_expect_success 'diff between HEAD~1 and HEAD shows last commit changes' '
+	cd repo &&
+	git diff HEAD~1 HEAD >output &&
+	test -s output
+'
+
+test_expect_success 'diff --exit-code between identical commits returns 0' '
+	cd repo &&
+	git diff --exit-code HEAD HEAD
+'
+
 test_done
