@@ -89,6 +89,10 @@ pub struct Args {
     #[arg(long = "int")]
     pub type_int: bool,
 
+    /// Ensure the value is a valid bool-or-int and canonicalize.
+    #[arg(long = "bool-or-int")]
+    pub type_bool_or_int: bool,
+
     /// Expand `~/` in the value.
     #[arg(long = "path")]
     pub type_path: bool,
@@ -237,7 +241,7 @@ pub fn run(args: Args) -> Result<()> {
         return match sub {
             ConfigSubcommand::Get(get_args) => cmd_get(&args, get_args, git_dir.as_deref()),
             ConfigSubcommand::Set(set_args) => cmd_set(&args, set_args, scope, &file_path, None),
-            ConfigSubcommand::Unset(unset_args) => cmd_unset(&args, unset_args, scope, &file_path),
+            ConfigSubcommand::Unset(unset_args) => cmd_unset(&args, unset_args, scope, &file_path, None),
             ConfigSubcommand::List(_) => cmd_list(&args, git_dir.as_deref()),
             ConfigSubcommand::RenameSection(rs) => {
                 cmd_rename_section(scope, &file_path, &rs.old_name, &rs.new_name)
@@ -290,7 +294,8 @@ pub fn run(args: Args) -> Result<()> {
             key: key.clone(),
             all: false,
         };
-        return cmd_unset(&args, &unset_args, scope, &file_path);
+        let value_pattern = args.positional.first().map(|s| s.as_str());
+        return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern);
     }
 
     if let Some(ref key) = args.unset_all_key {
@@ -298,7 +303,8 @@ pub fn run(args: Args) -> Result<()> {
             key: key.clone(),
             all: true,
         };
-        return cmd_unset(&args, &unset_args, scope, &file_path);
+        let value_pattern = args.positional.first().map(|s| s.as_str());
+        return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern);
     }
 
     if let Some(ref key) = args.add_key {
@@ -385,13 +391,13 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()
             std::process::exit(1);
         }
         for entry in matches {
+            let has_type_flag = args.type_bool || args.type_int || args.type_bool_or_int
+                || args.type_path || args.type_name.is_some();
+            let is_bare = entry.value.is_none();
             let val = entry.value.as_deref().unwrap_or("true");
             let val = format_typed_value(args, val)?;
             if args.name_only {
                 print!("{}{}", entry.key, terminator);
-            } else if args.null_terminated {
-                // Git uses key\nvalue\0 with -z for --get-regexp
-                print!("{}\n{}{}", entry.key, val, terminator);
             } else if get_args.show_names {
                 print!("{} {}{}", entry.key, val, terminator);
             } else {
@@ -436,24 +442,27 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()
 }
 
 fn cmd_set(
-    _args: &Args,
+    args: &Args,
     set_args: &SetArgs,
     scope: ConfigScope,
     file_path: &Path,
     value_pattern: Option<&str>,
 ) -> Result<()> {
+    // Canonicalize the value if a type flag is given
+    let value = canonicalize_value_for_set(args, &set_args.value)?;
+
     let mut config = match ConfigFile::from_path(file_path, scope).context("reading config file")? {
         Some(cfg) => cfg,
         None => ConfigFile::parse(file_path, "", scope)?,
     };
 
     if set_args.all {
-        config.replace_all(&set_args.key, &set_args.value, value_pattern)?;
+        config.replace_all(&set_args.key, &value, value_pattern)?;
     } else if let Some(pattern) = value_pattern {
         // Single replace with value-pattern: only replace if existing value matches
-        config.replace_all(&set_args.key, &set_args.value, Some(pattern))?;
+        config.replace_all(&set_args.key, &value, Some(pattern))?;
     } else {
-        config.set(&set_args.key, &set_args.value)?;
+        config.set(&set_args.key, &value)?;
     }
     config.write().context("writing config file")?;
     Ok(())
@@ -464,13 +473,20 @@ fn cmd_unset(
     unset_args: &UnsetArgs,
     scope: ConfigScope,
     file_path: &Path,
+    value_pattern: Option<&str>,
 ) -> Result<()> {
     let mut config = ConfigFile::from_path(file_path, scope).context("reading config file")?;
 
     match config {
         Some(ref mut cfg) => {
             if unset_args.all {
-                let removed = cfg.unset(&unset_args.key)?;
+                let removed = cfg.unset_matching(&unset_args.key, value_pattern)?;
+                if removed == 0 {
+                    std::process::exit(5);
+                }
+            } else if let Some(pattern) = value_pattern {
+                // --unset with value-pattern: remove only matching values
+                let removed = cfg.unset_matching(&unset_args.key, Some(pattern))?;
                 if removed == 0 {
                     std::process::exit(5);
                 }
@@ -522,8 +538,8 @@ fn cmd_list(args: &Args, git_dir: Option<&Path>) -> Result<()> {
         if args.name_only {
             print!("{}{}{}", prefix, entry.key, terminator);
         } else if args.null_terminated {
-            // Git uses key\nvalue\0 format with -z
-            print!("{}{}\n{}{}", prefix, entry.key, val, terminator);
+            // Git uses key=value\0 format with -z for --list
+            print!("{}{}={}{}", prefix, entry.key, val, terminator);
         } else {
             print!("{}{}={}{}", prefix, entry.key, val, terminator);
         }
@@ -718,6 +734,46 @@ fn global_config_path() -> Option<PathBuf> {
         .map(|h| PathBuf::from(h).join(".gitconfig"))
 }
 
+/// Canonicalize a value for writing based on type flags.
+///
+/// When `--bool` is used, the value is validated and written as "true"/"false".
+/// When `--int` is used, the value is validated and written as a plain integer.
+/// When `--bool-or-int` is used, booleans are stored as "true"/"false" and
+/// integers as plain numbers.
+fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
+    let type_name = args.type_name.as_deref();
+
+    if args.type_bool || type_name == Some("bool") {
+        match parse_bool(val) {
+            Ok(b) => return Ok(if b { "true" } else { "false" }.to_owned()),
+            Err(e) => bail!("{}", e),
+        }
+    }
+
+    if args.type_int || type_name == Some("int") {
+        match parse_i64(val) {
+            Ok(n) => return Ok(n.to_string()),
+            Err(e) => bail!("{}", e),
+        }
+    }
+
+    if args.type_bool_or_int || type_name == Some("bool-or-int") {
+        // Try named booleans first (not numbers — those go to int)
+        match val.to_lowercase().as_str() {
+            "true" | "yes" | "on" => return Ok("true".to_owned()),
+            "false" | "no" | "off" => return Ok("false".to_owned()),
+            _ => {}
+        }
+        // Then as integer
+        if let Ok(n) = parse_i64(val) {
+            return Ok(n.to_string());
+        }
+        bail!("bad bool-or-int config value '{}'", val);
+    }
+
+    Ok(val.to_owned())
+}
+
 /// Format a value according to the type flags.
 fn format_typed_value(args: &Args, val: &str) -> Result<String> {
     let type_name = args.type_name.as_deref();
@@ -744,6 +800,20 @@ fn format_typed_value(args: &Args, val: &str) -> Result<String> {
 
     if args.type_path || type_name == Some("path") {
         return Ok(parse_path(val));
+    }
+
+    if args.type_bool_or_int || type_name == Some("bool-or-int") {
+        // Try as named bool first
+        match val.to_lowercase().as_str() {
+            "true" | "yes" | "on" | "" => return Ok("true".to_owned()),
+            "false" | "no" | "off" => return Ok("false".to_owned()),
+            _ => {}
+        }
+        // Then as integer
+        match parse_i64(val) {
+            Ok(n) => return Ok(n.to_string()),
+            Err(e) => bail!("{}", e),
+        }
     }
 
     Ok(val.to_owned())

@@ -115,6 +115,11 @@ pub struct ConfigSet {
 /// - `Section.SubSection.Key` → `section.SubSection.key`
 /// - `CORE.BARE` → `core.bare`
 pub fn canonical_key(raw: &str) -> Result<String> {
+    // Reject keys containing newlines
+    if raw.contains('\n') || raw.contains('\r') {
+        return Err(Error::ConfigError(format!("invalid key: '{}'" , raw.replace('\n', "\\n"))));
+    }
+
     let first_dot = raw
         .find('.')
         .ok_or_else(|| Error::ConfigError(format!("key does not contain a section: '{raw}'")))?;
@@ -130,6 +135,19 @@ pub fn canonical_key(raw: &str) -> Result<String> {
 
     let section = &raw[..first_dot];
     let name = &raw[last_dot + 1..];
+
+    // Validate section name: must be alphanumeric or hyphen
+    if section.is_empty() || !section.chars().all(|c| c.is_alphanumeric() || c == '-') {
+        return Err(Error::ConfigError(format!("invalid key (bad section): '{raw}'")));
+    }
+
+    // Validate variable name: must start with alpha, rest alphanumeric or hyphen
+    if name.is_empty()
+        || !name.chars().next().unwrap().is_ascii_alphabetic()
+        || !name.chars().all(|c| c.is_alphanumeric() || c == '-')
+    {
+        return Err(Error::ConfigError(format!("invalid key (bad variable name): '{raw}'")));
+    }
 
     if first_dot == last_dot {
         // No subsection: section.name
@@ -237,6 +255,54 @@ impl Parser {
     }
 }
 
+/// Check if a value line ends with a continuation backslash.
+///
+/// This checks the value portion (after `=`) for a trailing `\` that is
+/// outside quotes and outside an inline comment. If the `\` is after
+/// a `#` or `;` that starts a comment, it does NOT count as continuation.
+fn value_line_continues(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+        return false;
+    }
+    // Find the value portion (after '=')
+    // If no '=', this is a bare key — no continuation
+    let value_part = match trimmed.find('=') {
+        Some(pos) => &trimmed[pos + 1..],
+        None => return false,
+    };
+    // Walk the value portion tracking quotes and comments
+    let mut in_quote = false;
+    let mut last_was_backslash = false;
+    let mut in_comment = false;
+    for ch in value_part.chars() {
+        if in_comment {
+            // Inside comment, backslash doesn't matter
+            last_was_backslash = false;
+            continue;
+        }
+        match ch {
+            '"' if !last_was_backslash => {
+                in_quote = !in_quote;
+                last_was_backslash = false;
+            }
+            '\\' if !last_was_backslash => {
+                last_was_backslash = true;
+                continue;
+            }
+            '#' | ';' if !in_quote && !last_was_backslash => {
+                in_comment = true;
+                last_was_backslash = false;
+            }
+            _ => {
+                last_was_backslash = false;
+            }
+        }
+    }
+    // The line continues if it ends with an unescaped backslash outside comments
+    last_was_backslash && !in_comment
+}
+
 /// Strip an inline comment (`#` or `;`) that is not inside quotes.
 fn strip_inline_comment(s: &str) -> String {
     let mut in_quote = false;
@@ -342,17 +408,42 @@ impl ConfigFile {
         let mut entries = Vec::new();
         let mut parser = Parser::new();
 
-        for (idx, line) in raw_lines.iter().enumerate() {
+        let mut idx = 0;
+        while idx < raw_lines.len() {
+            let start_idx = idx;
+            let line = &raw_lines[idx];
+            idx += 1;
+
+            // Pure comment lines don't continue even with trailing \
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || trimmed.starts_with(';') {
+                continue;
+            }
+
             if parser.try_parse_section(line) {
                 continue;
             }
-            if let Some((key, value)) = parser.try_parse_entry(line) {
+
+            // For entry lines, we need to check continuation.
+            // Build a logical line by joining continuations.
+            let mut logical_line = line.clone();
+            while value_line_continues(&logical_line) && idx < raw_lines.len() {
+                // Remove the trailing backslash
+                let t = logical_line.trim_end();
+                logical_line = t[..t.len() - 1].to_string();
+                // Append next line (trimmed of leading whitespace)
+                let next = raw_lines[idx].trim_start();
+                logical_line.push_str(next);
+                idx += 1;
+            }
+
+            if let Some((key, value)) = parser.try_parse_entry(&logical_line) {
                 entries.push(ConfigEntry {
                     key,
                     value,
                     scope,
                     file: Some(path.to_path_buf()),
-                    line: idx + 1,
+                    line: start_idx + 1,
                 });
             }
         }
@@ -393,27 +484,26 @@ impl ConfigFile {
     /// - `value` — the value to set.
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
         let canon = canonical_key(key)?;
-        // Extract original-case variable name from the raw key
-        let raw_var = raw_variable_name(key);
+        // Git lowercases variable names when writing
+        let var_lower = raw_variable_name(key).to_lowercase();
 
         // Find the last entry with this key to replace in-place.
         let existing_idx = self.entries.iter().rposition(|e| e.key == canon);
 
         if let Some(idx) = existing_idx {
             let line_idx = self.entries[idx].line - 1;
-            // Rebuild the line, preserving the user's variable name case
-            self.raw_lines[line_idx] = format!("\t{} = {}", raw_var, escape_value(value));
+            self.raw_lines[line_idx] = format!("\t{} = {}", var_lower, escape_value(value));
             self.entries[idx].value = Some(value.to_owned());
         } else {
             // Need to add: find or create the section
             let (section, subsection, _var) = split_key(&canon)?;
-            // Extract original-case section/subsection from the raw key
-            let (raw_sec, raw_sub) = raw_section_parts(key);
+            // Git lowercases section names; subsection preserves case
+            let (_raw_sec, raw_sub) = raw_section_parts(key);
             let section_line = self.find_or_create_section_preserving_case(
                 &section, subsection.as_deref(),
-                &raw_sec, raw_sub.as_deref(),
+                &section, raw_sub.as_deref(),
             );
-            let new_line = format!("\t{} = {}", raw_var, escape_value(value));
+            let new_line = format!("\t{} = {}", var_lower, escape_value(value));
 
             // Insert after the section header (or last entry in section)
             let insert_at = self.last_line_in_section(section_line) + 1;
@@ -435,7 +525,7 @@ impl ConfigFile {
     /// the last occurrence with the new value (matching Git behaviour).
     pub fn replace_all(&mut self, key: &str, value: &str, value_pattern: Option<&str>) -> Result<()> {
         let canon = canonical_key(key)?;
-        let raw_var = raw_variable_name(key);
+        let var_lower = raw_variable_name(key).to_lowercase();
 
         // Compile optional regex pattern
         let re = match value_pattern {
@@ -479,7 +569,7 @@ impl ConfigFile {
 
         // Update the first matching entry's line with the new value
         let first_line_idx = self.entries[first_match].line - 1;
-        self.raw_lines[first_line_idx] = format!("\t{} = {}", raw_var, escape_value(value));
+        self.raw_lines[first_line_idx] = format!("\t{} = {}", var_lower, escape_value(value));
         self.entries[first_match].value = Some(value.to_owned());
 
         // Remove remaining matching lines from bottom to top
@@ -542,6 +632,51 @@ impl ConfigFile {
 
         let count = line_indices.len();
         // Remove from bottom to top to keep indices valid
+        for &idx in line_indices.iter().rev() {
+            self.raw_lines.remove(idx);
+        }
+
+        if count > 0 {
+            let content = self.raw_lines.join("\n");
+            let reparsed = Self::parse(&self.path, &content, self.scope)?;
+            self.entries = reparsed.entries;
+            self.raw_lines = reparsed.raw_lines;
+        }
+
+        Ok(count)
+    }
+
+    /// Unset entries matching a key and optional value-pattern regex.
+    ///
+    /// If `value_pattern` is `None`, removes all entries with the given key.
+    /// If `value_pattern` is `Some(pat)`, only removes entries whose value matches the regex.
+    pub fn unset_matching(&mut self, key: &str, value_pattern: Option<&str>) -> Result<usize> {
+        let canon = canonical_key(key)?;
+        let re = match value_pattern {
+            Some(pat) => Some(
+                regex::Regex::new(pat)
+                    .map_err(|e| Error::ConfigError(format!("invalid value-pattern regex: {e}")))?),
+            None => None,
+        };
+
+        let line_indices: Vec<usize> = self
+            .entries
+            .iter()
+            .filter(|e| {
+                if e.key != canon {
+                    return false;
+                }
+                if let Some(ref re) = re {
+                    let v = e.value.as_deref().unwrap_or("");
+                    re.is_match(v)
+                } else {
+                    true
+                }
+            })
+            .map(|e| e.line - 1)
+            .collect();
+
+        let count = line_indices.len();
         for &idx in line_indices.iter().rev() {
             self.raw_lines.remove(idx);
         }
@@ -979,9 +1114,15 @@ impl ConfigSet {
 /// Accepts: `false`, `no`, `off`, `0` as false.
 pub fn parse_bool(s: &str) -> std::result::Result<bool, String> {
     match s.to_lowercase().as_str() {
-        "true" | "yes" | "on" | "1" | "" => Ok(true),
-        "false" | "no" | "off" | "0" => Ok(false),
-        _ => Err(format!("bad boolean config value '{s}'")),
+        "true" | "yes" | "on" | "" => Ok(true),
+        "false" | "no" | "off" => Ok(false),
+        _ => {
+            // Try parsing as integer: 0 → false, non-zero → true
+            if let Ok(n) = s.parse::<i64>() {
+                return Ok(n != 0);
+            }
+            Err(format!("bad boolean config value '{s}'"))
+        }
     }
 }
 
