@@ -186,7 +186,7 @@
 <div class="nav"><a href="index.html">← Test Coverage</a></div>
 
 <h1>Grit <span>vs</span> Git</h1>
-<p class="subtitle">Performance benchmarks — 2026-04-01 23:00 UTC</p>
+<p class="subtitle">Performance benchmarks — 2026-04-02 01:15 UTC</p>
 
 <div class="summary">
   <div class="card"><div class="number">21</div><div class="label">Benchmarks</div></div>
@@ -435,36 +435,23 @@
       </td>
       <td class="runs">168</td>
     </tr>
-    <tr class="much-slower">
+    <tr class="slower">
       <td class="bench-name">diff-files</td>
-      <td class="time">6.4 ms <span class="range">±738.0 µs</span></td>
-      <td class="time">14.5 ms <span class="range">±1.1 ms</span></td>
-      <td class="ratio much-slower">2.2× slower</td>
+      <td class="time">8.9 ms <span class="range">±1.5 ms</span></td>
+      <td class="time">15.8 ms <span class="range">±1.9 ms</span></td>
+      <td class="ratio slower">1.8× slower</td>
       <td class="bar-cell">
         <div class="bar-container">
           <div class="bar bar-git" style="width: 100%"></div>
-          <div class="bar bar-grit" style="width: 44%"></div>
+          <div class="bar bar-grit" style="width: 56%"></div>
         </div>
       </td>
-      <td class="runs">174</td>
+      <td class="runs">177</td>
     </tr>
     <tr class="much-slower">
       <td class="bench-name">status-clean</td>
-      <td class="time">6.3 ms <span class="range">±1.5 ms</span></td>
-      <td class="time">19.6 ms <span class="range">±1.7 ms</span></td>
-      <td class="ratio much-slower">3.1× slower</td>
-      <td class="bar-cell">
-        <div class="bar-container">
-          <div class="bar bar-git" style="width: 100%"></div>
-          <div class="bar bar-grit" style="width: 32%"></div>
-        </div>
-      </td>
-      <td class="runs">125</td>
-    </tr>
-    <tr class="much-slower">
-      <td class="bench-name">status</td>
-      <td class="time">6.1 ms <span class="range">±1.4 ms</span></td>
-      <td class="time">19.7 ms <span class="range">±1.8 ms</span></td>
+      <td class="time">6.1 ms <span class="range">±1.5 ms</span></td>
+      <td class="time">19.6 ms <span class="range">±1.8 ms</span></td>
       <td class="ratio much-slower">3.2× slower</td>
       <td class="bar-cell">
         <div class="bar-container">
@@ -472,20 +459,33 @@
           <div class="bar bar-grit" style="width: 31%"></div>
         </div>
       </td>
-      <td class="runs">140</td>
+      <td class="runs">155</td>
     </tr>
     <tr class="much-slower">
-      <td class="bench-name">add</td>
-      <td class="time">5.7 ms <span class="range">±2.7 ms</span></td>
-      <td class="time">32.8 ms <span class="range">±2.7 ms</span></td>
-      <td class="ratio much-slower">5.8× slower</td>
+      <td class="bench-name">status</td>
+      <td class="time">5.1 ms <span class="range">±980.8 µs</span></td>
+      <td class="time">20.2 ms <span class="range">±1.5 ms</span></td>
+      <td class="ratio much-slower">3.9× slower</td>
       <td class="bar-cell">
         <div class="bar-container">
           <div class="bar bar-git" style="width: 100%"></div>
-          <div class="bar bar-grit" style="width: 17%"></div>
+          <div class="bar bar-grit" style="width: 25%"></div>
         </div>
       </td>
-      <td class="runs">71</td>
+      <td class="runs">150</td>
+    </tr>
+    <tr class="much-slower">
+      <td class="bench-name">add</td>
+      <td class="time">5.4 ms <span class="range">±1.4 ms</span></td>
+      <td class="time">40.7 ms <span class="range">±22.5 ms</span></td>
+      <td class="ratio much-slower">7.6× slower</td>
+      <td class="bar-cell">
+        <div class="bar-container">
+          <div class="bar bar-git" style="width: 100%"></div>
+          <div class="bar bar-grit" style="width: 13%"></div>
+        </div>
+      </td>
+      <td class="runs">76</td>
     </tr>
   </tbody>
 </table>

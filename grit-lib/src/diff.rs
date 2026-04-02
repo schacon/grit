@@ -449,17 +449,33 @@ pub fn diff_index_to_worktree(
 }
 
 /// Quick stat check: does the index entry's cached stat data match the file?
-fn stat_matches(ie: &IndexEntry, meta: &fs::Metadata) -> bool {
+pub fn stat_matches(ie: &IndexEntry, meta: &fs::Metadata) -> bool {
     // Compare size
     if meta.len() as u32 != ie.size {
         return false;
     }
-    // Compare mtime (seconds)
+    // Compare mtime (seconds + nanoseconds)
     if meta.mtime() as u32 != ie.mtime_sec {
         return false;
     }
-    false // Conservative: if size + mtime match, still hash to be safe for now
-          // TODO: Full stat comparison (ctime, ino, dev, uid, gid)
+    if meta.mtime_nsec() as u32 != ie.mtime_nsec {
+        return false;
+    }
+    // Compare ctime (seconds + nanoseconds)
+    if meta.ctime() as u32 != ie.ctime_sec {
+        return false;
+    }
+    if meta.ctime_nsec() as u32 != ie.ctime_nsec {
+        return false;
+    }
+    // Compare inode and device
+    if meta.ino() as u32 != ie.ino {
+        return false;
+    }
+    if meta.dev() as u32 != ie.dev {
+        return false;
+    }
+    true
 }
 
 /// Hash a working tree file as a blob to get its OID.
