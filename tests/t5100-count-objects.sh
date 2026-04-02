@@ -192,4 +192,87 @@ test_expect_success 'count-objects works in a fresh repo' '
 	grep "^count: 0" output
 '
 
+# ---------------------------------------------------------------------------
+# Size field checks
+# ---------------------------------------------------------------------------
+test_expect_success 'count-objects -v size field is numeric' '
+	cd repo &&
+	git count-objects -v >output &&
+	size=$(grep "^size:" output | sed "s/size: //") &&
+	test "$size" -ge 0
+'
+
+test_expect_success 'count-objects -v garbage field defaults to 0' '
+	cd repo &&
+	git count-objects -v >output &&
+	garbage=$(grep "^garbage:" output | sed "s/garbage: //") &&
+	test "$garbage" -eq 0
+'
+
+# ---------------------------------------------------------------------------
+# count-objects after gc
+# ---------------------------------------------------------------------------
+test_expect_success 'count-objects after gc shows 0 loose' '
+	cd repo &&
+	git gc --quiet &&
+	git count-objects -v >output &&
+	loose=$(grep "^count:" output | sed "s/count: //") &&
+	test "$loose" -eq 0
+'
+
+test_expect_success 'count-objects after gc shows packs' '
+	cd repo &&
+	git count-objects -v >output &&
+	packs=$(grep "^packs:" output | sed "s/packs: //") &&
+	test "$packs" -ge 1
+'
+
+# ---------------------------------------------------------------------------
+# Object count increases with different types
+# ---------------------------------------------------------------------------
+test_expect_success 'adding a blob increases loose count' '
+	cd repo &&
+	git count-objects -v >before &&
+	cb=$(grep "^count:" before | sed "s/count: //") &&
+	echo "extra-blob-data" | git hash-object -w --stdin &&
+	git count-objects -v >after &&
+	ca=$(grep "^count:" after | sed "s/count: //") &&
+	test "$ca" -gt "$cb"
+'
+
+test_expect_success 'count-objects non-verbose counts match verbose count field' '
+	cd repo &&
+	git count-objects >nv &&
+	nv_count=$(sed "s/ objects.*//" nv) &&
+	git count-objects -v >v &&
+	v_count=$(grep "^count:" v | sed "s/count: //") &&
+	test "$nv_count" = "$v_count"
+'
+
+test_expect_success 'count-objects in bare repo works' '
+	cd .. &&
+	git init --bare bare-repo &&
+	cd bare-repo &&
+	git count-objects >output &&
+	grep "objects" output &&
+	git count-objects -v >output &&
+	grep "^count:" output
+'
+
+test_expect_success 'count-objects with no packs shows packs: 0' '
+	cd .. &&
+	git init empty-np &&
+	cd empty-np &&
+	git count-objects -v >output &&
+	packs=$(grep "^packs:" output | sed "s/packs: //") &&
+	test "$packs" -eq 0
+'
+
+test_expect_success 'size field is non-negative' '
+	cd repo &&
+	git count-objects -v >output &&
+	size=$(grep "^size:" output | sed "s/size: //") &&
+	test "$size" -ge 0
+'
+
 test_done
