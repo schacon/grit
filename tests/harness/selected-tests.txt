@@ -1,6 +1,8 @@
 t0000-basic.sh
 t0001-init.sh
+t0002-gitfile.sh
 t0003-attributes.sh
+t0006-date.sh
 t0007-git-var.sh
 t0008-ignores.sh
 t0030-stripspace.sh
@@ -21,6 +23,7 @@ t1020-subdirectory.sh
 t1051-unpack-file.sh
 t1100-commit-tree-options.sh
 t1300-config.sh
+t1301-shared-repo.sh
 t1303-wacky-config.sh
 t1305-config-include.sh
 t1306-xdg-files.sh
@@ -42,7 +45,9 @@ t2003-checkout-cache-mkdir.sh
 t2004-checkout-cache-temp.sh
 t2005-checkout-index-symlinks.sh
 t2006-checkout-index-basic.sh
+t2010-checkout-ambiguous.sh
 t2012-checkout-last.sh
+t2015-checkout-unborn.sh
 t2018-checkout-branch.sh
 t2020-checkout-detach.sh
 t2022-checkout-paths.sh
@@ -57,6 +62,7 @@ t3102-ls-tree-wildcards.sh
 t3200-branch.sh
 t3201-branch-contains.sh
 t3203-branch-output.sh
+t3204-branch-name-interpretation.sh
 t3500-cherry.sh
 t3510-cherry-pick.sh
 t3600-rm.sh
@@ -115,6 +121,7 @@ t7007-show.sh
 t7101-reset-empty-subdirs.sh
 t7102-reset.sh
 t7104-reset-hard.sh
+t7106-reset-unborn-branch.sh
 t7500-commit-template-squash-signoff.sh
 t7501-commit-basic.sh
 t7502-commit-porcelain.sh
@@ -122,5 +129,6 @@ t7507-commit-verbose.sh
 t7508-status.sh
 t7509-commit-authorship.sh
 t7512-status-help.sh
+t7517-per-repo-email.sh
 t7700-repack.sh
 test-lib.sh
