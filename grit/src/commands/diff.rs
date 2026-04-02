@@ -149,13 +149,34 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 /// Split args on `--` to separate revisions from paths.
+///
+/// If `--` is present, everything before is revisions, everything after is paths.
+/// Otherwise, we try each arg: if it exists as a file, treat it (and all
+/// subsequent args) as paths rather than revisions.
 fn parse_rev_and_paths(args: &[String]) -> (Vec<String>, Vec<String>) {
     if let Some(sep) = args.iter().position(|a| a == "--") {
         let revs = args[..sep].to_vec();
         let paths = args[sep + 1..].to_vec();
         (revs, paths)
     } else {
-        (args.to_vec(), Vec::new())
+        // Without `--`, try to guess: if an arg exists as a file/directory,
+        // treat it and everything after as paths.
+        let mut revs = Vec::new();
+        let mut paths = Vec::new();
+        let mut in_paths = false;
+
+        for arg in args {
+            if in_paths {
+                paths.push(arg.clone());
+            } else if std::path::Path::new(arg).exists() {
+                in_paths = true;
+                paths.push(arg.clone());
+            } else {
+                revs.push(arg.clone());
+            }
+        }
+
+        (revs, paths)
     }
 }
 
