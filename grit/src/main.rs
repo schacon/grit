@@ -45,6 +45,8 @@ enum Command {
     /// Verify that a ref name is valid.
     #[command(name = "check-ref-format")]
     CheckRefFormat(commands::check_ref_format::Args),
+    /// Remove untracked files from the working tree.
+    Clean(commands::clean::Args),
     /// Switch branches or restore working tree files.
     Checkout(commands::checkout::Args),
     /// Create an empty Git repository or reinitialize an existing one.
@@ -98,6 +100,8 @@ enum Command {
     /// Count unpacked objects and disk usage.
     #[command(name = "count-objects")]
     CountObjects(commands::count_objects::Args),
+    /// Give an object a human readable name based on an available ref.
+    Describe(commands::describe::Args),
     /// Show changes between commits, commit and working tree, etc.
     Diff(commands::diff::Args),
     /// Compare working tree files against the index.
@@ -142,8 +146,12 @@ enum Command {
     /// Produce a merge commit message.
     #[command(name = "fmt-merge-msg")]
     FmtMergeMsg(commands::fmt_merge_msg::Args),
+    /// Verify connectivity and validity of objects in the database.
+    Fsck(commands::fsck::Args),
     /// Cleanup unnecessary files and optimize the repository.
     Gc(commands::gc::Args),
+    /// Search tracked files for a pattern.
+    Grep(commands::grep::Args),
     /// Pack unpacked objects in a repository.
     Repack(commands::repack::Args),
     /// Create, list, delete refs to replace objects.
@@ -160,6 +168,8 @@ enum Command {
     Tag(commands::tag::Args),
     /// Restore working tree files.
     Restore(commands::restore::Args),
+    /// Summarize git log output.
+    Shortlog(commands::shortlog::Args),
     /// Show various types of objects (commits, trees, blobs, tags).
     Show(commands::show::Args),
     /// Remove files from the working tree and from the index.
@@ -219,6 +229,7 @@ fn run() -> Result<()> {
         Command::Cherry(args) => commands::cherry::run(args),
         Command::CherryPick(args) => commands::cherry_pick::run(args),
         Command::CheckRefFormat(args) => commands::check_ref_format::run(args),
+        Command::Clean(args) => commands::clean::run(args),
         Command::Checkout(args) => commands::checkout::run(args),
         Command::Init(args) => commands::init::run(args),
         Command::HashObject(args) => commands::hash_object::run(args),
@@ -239,6 +250,7 @@ fn run() -> Result<()> {
         Command::UpdateRef(args) => commands::update_ref::run(args),
         Command::CheckIgnore(args) => commands::check_ignore::run(args),
         Command::CountObjects(args) => commands::count_objects::run(args),
+        Command::Describe(args) => commands::describe::run(args),
         Command::Diff(args) => commands::diff::run(args),
         Command::DiffFiles(args) => commands::diff_files::run(args),
         Command::DiffTree(args) => commands::diff_tree::run(args),
@@ -254,7 +266,9 @@ fn run() -> Result<()> {
         Command::SymbolicRef(args) => commands::symbolic_ref::run(args),
         Command::VerifyPack(args) => commands::verify_pack::run(args),
         Command::FmtMergeMsg(args) => commands::fmt_merge_msg::run(args),
+        Command::Fsck(args) => commands::fsck::run(args),
         Command::Gc(args) => commands::gc::run(args),
+        Command::Grep(args) => commands::grep::run(args),
         Command::Repack(args) => commands::repack::run(args),
         Command::Replace(args) => commands::replace::run(args),
         Command::Mktag(args) => commands::mktag::run(args),
@@ -262,6 +276,7 @@ fn run() -> Result<()> {
         Command::PrunePacked(args) => commands::prune_packed::run(args),
         Command::Tag(args) => commands::tag::run(args),
         Command::Restore(args) => commands::restore::run(args),
+        Command::Shortlog(args) => commands::shortlog::run(args),
         Command::Show(args) => commands::show::run(args),
         Command::Rm(args) => commands::rm::run(args),
         Command::Mv(args) => commands::mv::run(args),
