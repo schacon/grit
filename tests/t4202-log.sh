@@ -1388,4 +1388,109 @@ test_expect_success 'log --format literal repeated per commit' '
 	done <actual
 '
 
+# ── log format: email, abbreviated hashes ─────────────────────────
+
+test_expect_success 'log --format=%ae shows author email' '
+	cd repo &&
+	git log -n 1 --format="%ae" >actual &&
+	echo "author@example.com" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log --format=%an shows author name' '
+	cd repo &&
+	git log -n 1 --format="%an" >actual &&
+	echo "A U Thor" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log --format=%h shows abbreviated hash' '
+	cd repo &&
+	full=$(git rev-parse HEAD) &&
+	abbrev=$(git log -n 1 --format="%h") &&
+	# abbreviated hash is a prefix of the full hash
+	case "$full" in
+	"$abbrev"*) true ;;
+	*) false ;;
+	esac
+'
+
+test_expect_success 'log --format=%H matches rev-parse HEAD' '
+	cd repo &&
+	git log -n 1 --format="%H" >actual &&
+	git rev-parse HEAD >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log --format=%s shows subject' '
+	cd repo &&
+	subject=$(git log -n 1 --format="%s") &&
+	test -n "$subject"
+'
+
+test_expect_success 'log -n 2 shows exactly two commits' '
+	cd repo &&
+	git log --first-parent -n 2 --format="%H" >actual &&
+	lines=$(wc -l <actual | tr -d " ") &&
+	test "$lines" = "2"
+'
+
+test_expect_success 'log --format=%P shows parent hash' '
+	cd repo &&
+	parent=$(git log -n 1 --format="%P") &&
+	# HEAD should have a parent
+	test -n "$parent" &&
+	# parent should be a valid object
+	git cat-file -t "$parent" >actual &&
+	echo "commit" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log --format=%p shows abbreviated parent hash' '
+	cd repo &&
+	abbr_parent=$(git log -n 1 --format="%p") &&
+	full_parent=$(git log -n 1 --format="%P") &&
+	case "$full_parent" in
+	"$abbr_parent"*) true ;;
+	*) false ;;
+	esac
+'
+
+test_expect_success 'log --format=%T shows tree hash' '
+	cd repo &&
+	tree=$(git log -n 1 --format="%T") &&
+	git cat-file -t "$tree" >actual &&
+	echo "tree" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log --format=%t shows abbreviated tree hash' '
+	cd repo &&
+	abbr_tree=$(git log -n 1 --format="%t") &&
+	full_tree=$(git log -n 1 --format="%T") &&
+	case "$full_tree" in
+	"$abbr_tree"*) true ;;
+	*) false ;;
+	esac
+'
+
+test_expect_success 'log --format with multiple placeholders' '
+	cd repo &&
+	git log -n 1 --format="%H %s" >actual &&
+	hash=$(git rev-parse HEAD) &&
+	grep "^$hash " actual
+'
+
+test_expect_success 'log --format=%ce shows committer email' '
+	cd repo &&
+	email=$(git log -n 1 --format="%ce") &&
+	test -n "$email"
+'
+
+test_expect_success 'log --format=%cn shows committer name' '
+	cd repo &&
+	name=$(git log -n 1 --format="%cn") &&
+	test -n "$name"
+'
+
 test_done

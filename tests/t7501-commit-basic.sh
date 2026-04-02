@@ -722,4 +722,124 @@ test_expect_success 'amend consecutive times updates message each time' '
 	! grep "second version" commit
 '
 
+# ── additional commit tests ─────────────────────────────────────────────
+
+test_expect_success 'commit records correct committer' '
+	cd repo &&
+	echo "committer-test" >>file.txt &&
+	git add file.txt &&
+	git commit -m "committer check" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "^committer " actual
+'
+
+test_expect_success 'commit records tree in header' '
+	cd repo &&
+	echo "tree-check" >>file.txt &&
+	git add file.txt &&
+	git commit -m "tree check" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "^tree [0-9a-f]\{40\}" actual
+'
+
+test_expect_success 'commit with only whitespace message still works' '
+	cd repo &&
+	echo "ws-msg" >>file.txt &&
+	git add file.txt &&
+	git commit -m "   spaces   " 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "spaces" actual
+'
+
+test_expect_success 'commit on new branch preserves parent' '
+	cd repo &&
+	parent=$(git rev-parse HEAD) &&
+	git checkout -b commit-branch-test 2>/dev/null &&
+	echo "on branch" >>file.txt &&
+	git add file.txt &&
+	git commit -m "branch commit" 2>/dev/null &&
+	actual_parent=$(git cat-file -p HEAD | sed -n "s/^parent //p") &&
+	test "$actual_parent" = "$parent" &&
+	git checkout master 2>/dev/null
+'
+
+test_expect_success 'commit --allow-empty with --author' '
+	cd repo &&
+	git commit --allow-empty --author="Empty Author <empty@test.org>" -m "empty author" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "author Empty Author <empty@test.org>" actual
+'
+
+test_expect_success 'commit creates different hash for different message' '
+	cd repo &&
+	git commit --allow-empty -m "unique msg alpha" 2>/dev/null &&
+	hash1=$(git rev-parse HEAD) &&
+	git commit --allow-empty -m "unique msg beta" 2>/dev/null &&
+	hash2=$(git rev-parse HEAD) &&
+	test "$hash1" != "$hash2"
+'
+
+test_expect_success 'amend preserves parent' '
+	cd repo &&
+	echo "amend-parent" >>file.txt &&
+	git add file.txt &&
+	git commit -m "pre-amend" 2>/dev/null &&
+	parent_before=$(git cat-file -p HEAD | sed -n "s/^parent //p") &&
+	git commit --amend -m "post-amend" 2>/dev/null &&
+	parent_after=$(git cat-file -p HEAD | sed -n "s/^parent //p") &&
+	test "$parent_before" = "$parent_after"
+'
+
+test_expect_success 'amend changes the commit hash' '
+	cd repo &&
+	echo "amend-hash" >>file.txt &&
+	git add file.txt &&
+	git commit -m "before amend hash" 2>/dev/null &&
+	hash_before=$(git rev-parse HEAD) &&
+	git commit --amend -m "after amend hash" 2>/dev/null &&
+	hash_after=$(git rev-parse HEAD) &&
+	test "$hash_before" != "$hash_after"
+'
+
+test_expect_success 'rev-list counts commits correctly' '
+	cd repo &&
+	git commit --allow-empty -m "count1" 2>/dev/null &&
+	git commit --allow-empty -m "count2" 2>/dev/null &&
+	count=$(git rev-list HEAD | wc -l | tr -d " ") &&
+	test "$count" -gt 2
+'
+
+test_expect_success 'commit with multi-line message' '
+	cd repo &&
+	echo "multiline" >>file.txt &&
+	git add file.txt &&
+	git commit -m "line one
+
+line three" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "line one" actual &&
+	grep "line three" actual
+'
+
+test_expect_success 'amend updates tree when index changed' '
+	cd repo &&
+	echo "amend-tree-1" >>file.txt &&
+	git add file.txt &&
+	git commit -m "amend tree base" 2>/dev/null &&
+	tree1=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	echo "amend-tree-2" >>file.txt &&
+	git add file.txt &&
+	git commit --amend -m "amend tree update" 2>/dev/null &&
+	tree2=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	test "$tree1" != "$tree2"
+'
+
+test_expect_success 'commit cat-file -t is commit' '
+	cd repo &&
+	git commit --allow-empty -m "type test" 2>/dev/null &&
+	grit cat-file -t HEAD >actual &&
+	echo "commit" >expect &&
+	test_cmp expect actual
+'
+
 test_done

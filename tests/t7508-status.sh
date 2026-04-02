@@ -1246,4 +1246,150 @@ test_expect_success 'status with adds and deletes across directories' '
 	rm -f subdir/added_file.txt
 '
 
+# ── additional status tests ─────────────────────────────────────────────
+
+test_expect_success 'setup repo3 for additional tests' '
+	rm -rf repo3 &&
+	git init repo3 &&
+	cd repo3 &&
+	git config user.name "Test" &&
+	git config user.email "t@t.com" &&
+	echo "base" >base.txt &&
+	mkdir -p sub &&
+	echo "sub" >sub/file.txt &&
+	git add . &&
+	git commit -m "init" 2>/dev/null
+'
+
+test_expect_success 'status -s clean repo shows nothing' '
+	cd repo3 &&
+	git status -s >../actual &&
+	test_must_be_empty ../actual
+'
+
+test_expect_success 'status --porcelain clean repo has no file entries' '
+	cd repo3 &&
+	git status --porcelain >../actual &&
+	! grep -v "^##" ../actual
+'
+
+test_expect_success 'status -s shows renamed file after mv' '
+	cd repo3 &&
+	git mv base.txt renamed.txt &&
+	git status -s >../actual &&
+	grep "renamed.txt" ../actual &&
+	git mv renamed.txt base.txt
+'
+
+test_expect_success 'status -s shows deleted file' '
+	cd repo3 &&
+	rm sub/file.txt &&
+	git status -s >../actual &&
+	grep "sub/file.txt" ../actual &&
+	git checkout -- sub/file.txt 2>/dev/null
+'
+
+test_expect_success 'status -s shows staged delete with git rm' '
+	cd repo3 &&
+	git rm sub/file.txt 2>/dev/null &&
+	git status -s >../actual &&
+	grep "^D  sub/file.txt" ../actual &&
+	git reset HEAD sub/file.txt 2>/dev/null &&
+	git checkout -- sub/file.txt 2>/dev/null
+'
+
+test_expect_success 'status -s shows both staged and unstaged modification' '
+	cd repo3 &&
+	echo "staged" >base.txt &&
+	git add base.txt &&
+	echo "unstaged" >>base.txt &&
+	git status -s >../actual &&
+	grep "^MM base.txt" ../actual &&
+	git checkout -- base.txt 2>/dev/null &&
+	git reset HEAD base.txt 2>/dev/null
+'
+
+test_expect_success 'status porcelain shows ?? for untracked file' '
+	cd repo3 &&
+	echo "new" >brand-new.txt &&
+	git status --porcelain >../actual &&
+	grep "^?? brand-new.txt" ../actual &&
+	rm brand-new.txt
+'
+
+test_expect_success 'status -s untracked in subdirectory' '
+	cd repo3 &&
+	echo "newsub" >sub/newsub.txt &&
+	git status -s >../actual &&
+	grep "^?? sub/newsub.txt" ../actual &&
+	rm sub/newsub.txt
+'
+
+test_expect_success 'status -s with new untracked directory' '
+	cd repo3 &&
+	mkdir -p newdir &&
+	echo "x" >newdir/x.txt &&
+	git status -s >../actual &&
+	grep "newdir/" ../actual &&
+	rm -rf newdir
+'
+
+test_expect_success 'status long format shows Changes to be committed' '
+	cd repo3 &&
+	echo "stage me" >base.txt &&
+	git add base.txt &&
+	git status >../actual &&
+	grep "Changes to be committed" ../actual &&
+	git reset HEAD base.txt 2>/dev/null &&
+	git checkout -- base.txt 2>/dev/null
+'
+
+test_expect_success 'status long format shows Untracked files section' '
+	cd repo3 &&
+	echo "ut" >ut.txt &&
+	git status >../actual &&
+	grep "Untracked files" ../actual &&
+	rm ut.txt
+'
+
+test_expect_success 'status long format shows Changes not staged' '
+	cd repo3 &&
+	echo "mod" >>base.txt &&
+	git status >../actual &&
+	grep "Changes not staged for commit" ../actual &&
+	git checkout -- base.txt 2>/dev/null
+'
+
+test_expect_success 'status -s shows A for newly added file' '
+	git init repo-add &&
+	cd repo-add &&
+	git config user.name "Test" &&
+	git config user.email "t@t.com" &&
+	echo "init" >init.txt &&
+	git add init.txt &&
+	git commit -m "init" 2>/dev/null &&
+	echo "new" >new.txt &&
+	git add new.txt &&
+	git status -s >../actual &&
+	grep "^A  new.txt" ../actual
+'
+
+test_expect_success 'status -s shows clean after committing everything' '
+	git init repo-clean &&
+	cd repo-clean &&
+	git config user.name "Test" &&
+	git config user.email "t@t.com" &&
+	echo "data" >file.txt &&
+	git add file.txt &&
+	git commit -m "all" 2>/dev/null &&
+	git status -s >../actual &&
+	test_must_be_empty ../actual
+'
+
+test_expect_success 'status --porcelain branch header shows master' '
+	cd repo3 &&
+	git status --porcelain -b >../actual &&
+	grep "^## master" ../actual
+'
+
 test_done
