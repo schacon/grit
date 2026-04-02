@@ -55,10 +55,15 @@ enum Command {
     CheckRefFormat(commands::check_ref_format::Args),
     /// Remove untracked files from the working tree.
     Clean(commands::clean::Args),
+    /// Clone a repository into a new directory.
+    Clone(commands::clone::Args),
     /// Switch branches or restore working tree files.
     Checkout(commands::checkout::Args),
     /// Create an empty Git repository or reinitialize an existing one.
     Init(commands::init::Args),
+    /// Add or parse structured trailers in commit messages.
+    #[command(name = "interpret-trailers")]
+    InterpretTrailers(commands::interpret_trailers::Args),
     /// Compute object ID and optionally create an object from a file.
     #[command(name = "hash-object")]
     HashObject(commands::hash_object::Args),
@@ -278,8 +283,10 @@ fn run() -> Result<()> {
         Command::CherryPick(args) => commands::cherry_pick::run(args),
         Command::CheckRefFormat(args) => commands::check_ref_format::run(args),
         Command::Clean(args) => commands::clean::run(args),
+        Command::Clone(args) => commands::clone::run(args),
         Command::Checkout(args) => commands::checkout::run(args),
         Command::Init(args) => commands::init::run(args),
+        Command::InterpretTrailers(args) => commands::interpret_trailers::run(args),
         Command::HashObject(args) => commands::hash_object::run(args),
         Command::CatFile(args) => commands::cat_file::run(args),
         Command::CheckAttr(args) => commands::check_attr::run(args),

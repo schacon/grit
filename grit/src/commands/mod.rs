@@ -36,6 +36,7 @@ pub mod git_passthrough;
 pub mod grep;
 pub mod hash_object;
 pub mod init;
+pub mod interpret_trailers;
 pub mod log;
 pub mod ls_files;
 pub mod ls_remote;
