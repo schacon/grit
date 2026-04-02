@@ -2240,4 +2240,66 @@ test_expect_success 'overwrite preserves other keys in section' '
 	test_cmp expect_change actual_change
 '
 
+# ── GIT_CONFIG_COUNT and env injection ─────────────────────────────────
+
+test_expect_success 'GIT_CONFIG_COUNT with higher count' '
+	cd repo &&
+	GIT_CONFIG_COUNT=3 \
+	GIT_CONFIG_KEY_0="env.a" GIT_CONFIG_VALUE_0="alpha" \
+	GIT_CONFIG_KEY_1="env.b" GIT_CONFIG_VALUE_1="beta" \
+	GIT_CONFIG_KEY_2="env.c" GIT_CONFIG_VALUE_2="gamma" \
+	git config --get env.a >actual_a &&
+	GIT_CONFIG_COUNT=3 \
+	GIT_CONFIG_KEY_0="env.a" GIT_CONFIG_VALUE_0="alpha" \
+	GIT_CONFIG_KEY_1="env.b" GIT_CONFIG_VALUE_1="beta" \
+	GIT_CONFIG_KEY_2="env.c" GIT_CONFIG_VALUE_2="gamma" \
+	git config --get env.b >actual_b &&
+	GIT_CONFIG_COUNT=3 \
+	GIT_CONFIG_KEY_0="env.a" GIT_CONFIG_VALUE_0="alpha" \
+	GIT_CONFIG_KEY_1="env.b" GIT_CONFIG_VALUE_1="beta" \
+	GIT_CONFIG_KEY_2="env.c" GIT_CONFIG_VALUE_2="gamma" \
+	git config --get env.c >actual_c &&
+	echo "alpha" >expect_a &&
+	echo "beta" >expect_b &&
+	echo "gamma" >expect_c &&
+	test_cmp expect_a actual_a &&
+	test_cmp expect_b actual_b &&
+	test_cmp expect_c actual_c
+'
+
+test_expect_success 'GIT_CONFIG_COUNT env overrides file config' '
+	cd repo &&
+	git config env.over "fromfile" &&
+	GIT_CONFIG_COUNT=1 \
+	GIT_CONFIG_KEY_0="env.over" GIT_CONFIG_VALUE_0="fromenv" \
+	git config --get env.over >actual &&
+	echo "fromenv" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'set and immediately get back with subcommands' '
+	cd repo &&
+	git config set roundtrip.key "round" &&
+	git config get roundtrip.key >actual &&
+	echo "round" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--get with --file on non-existent key returns exit 1' '
+	cd repo &&
+	cat >../getmiss.cfg <<-\EOF &&
+	[exists]
+		key = yes
+	EOF
+	test_must_fail git config --file ../getmiss.cfg --get nonexist.key
+'
+
+test_expect_success 'set writes new key to file and reads back' '
+	cd repo &&
+	git config set fresh.key "newvalue" &&
+	git config get fresh.key >actual &&
+	echo "newvalue" >expect &&
+	test_cmp expect actual
+'
+
 test_done
