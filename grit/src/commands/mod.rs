@@ -111,3 +111,7 @@ pub mod mailinfo;
 pub mod mailsplit;
 pub mod merge_index;
 pub mod commit_graph;
+pub mod fast_export;
+pub mod fast_import;
+pub mod multi_pack_index;
+pub mod replay;

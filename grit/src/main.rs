@@ -301,6 +301,17 @@ enum Command {
     /// Write and verify commit-graph files.
     #[command(name = "commit-graph")]
     CommitGraph(commands::commit_graph::Args),
+    /// Export repository as fast-import stream.
+    #[command(name = "fast-export")]
+    FastExport(commands::fast_export::Args),
+    /// Import from fast-export stream.
+    #[command(name = "fast-import")]
+    FastImport(commands::fast_import::Args),
+    /// Manage multi-pack index.
+    #[command(name = "multi-pack-index")]
+    MultiPackIndex(commands::multi_pack_index::Args),
+    /// Replay commits on a new base.
+    Replay(commands::replay::Args),
 }
 
 fn main() {
@@ -432,5 +443,9 @@ fn run() -> Result<()> {
         Command::Mailsplit(args) => commands::mailsplit::run(args),
         Command::MergeIndex(args) => commands::merge_index::run(args),
         Command::CommitGraph(args) => commands::commit_graph::run(args),
+        Command::FastExport(args) => commands::fast_export::run(args),
+        Command::FastImport(args) => commands::fast_import::run(args),
+        Command::MultiPackIndex(args) => commands::multi_pack_index::run(args),
+        Command::Replay(args) => commands::replay::run(args),
     }
 }
