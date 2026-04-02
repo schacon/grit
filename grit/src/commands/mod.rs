@@ -39,6 +39,8 @@ pub mod pack_refs;
 pub mod patch_id;
 pub mod prune_packed;
 pub mod read_tree;
+pub mod reflog;
+pub mod remote;
 pub mod repack;
 pub mod replace;
 pub mod reset;

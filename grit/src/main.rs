@@ -81,6 +81,8 @@ enum Command {
     /// Read tree information into the index.
     #[command(name = "read-tree")]
     ReadTree(commands::read_tree::Args),
+    /// Manage set of tracked repositories.
+    Remote(commands::remote::Args),
     /// Check out files from the index into the working tree.
     #[command(name = "checkout-index")]
     CheckoutIndex(commands::checkout_index::Args),
@@ -173,6 +175,8 @@ enum Command {
     MkTree(commands::mktree::Args),
     /// Show a Git logical variable.
     Var(commands::var::Args),
+    /// Manage reflog information.
+    Reflog(commands::reflog::Args),
     /// Reset current HEAD to the specified state.
     Reset(commands::reset::Args),
     /// Remove unnecessary whitespace.
@@ -227,6 +231,7 @@ fn run() -> Result<()> {
         Command::LsTree(args) => commands::ls_tree::run(args),
         Command::Status(args) => commands::status::run(args),
         Command::ReadTree(args) => commands::read_tree::run(args),
+        Command::Remote(args) => commands::remote::run(args),
         Command::CheckoutIndex(args) => commands::checkout_index::run(args),
         Command::CommitTree(args) => commands::commit_tree::run(args),
         Command::UpdateRef(args) => commands::update_ref::run(args),
@@ -261,6 +266,7 @@ fn run() -> Result<()> {
         Command::PatchId(args) => commands::patch_id::run(args),
         Command::MkTree(args) => commands::mktree::run(args),
         Command::Var(args) => commands::var::run(args),
+        Command::Reflog(args) => commands::reflog::run(args),
         Command::Reset(args) => commands::reset::run(args),
         Command::Stripspace(args) => commands::stripspace::run(args),
         Command::Switch(args) => commands::switch::run(args),
