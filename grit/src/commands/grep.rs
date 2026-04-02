@@ -54,9 +54,52 @@ pub struct Args {
     #[arg(short = 'F', long = "fixed-strings")]
     pub fixed_strings: bool,
 
+    /// Show column number of first match.
+    #[arg(long = "column")]
+    pub column: bool,
+
+    /// Show context lines after match.
+    #[arg(short = 'A', long = "after-context", value_name = "NUM", allow_hyphen_values = true)]
+    pub after_context: Option<usize>,
+
+    /// Show context lines before match.
+    #[arg(short = 'B', long = "before-context", value_name = "NUM", allow_hyphen_values = true)]
+    pub before_context: Option<usize>,
+
+    /// Show context lines before and after match.
+    #[arg(short = 'C', long = "context", value_name = "NUM", allow_hyphen_values = true)]
+    pub context: Option<usize>,
+
+    /// Only print the matched parts of a matching line.
+    #[arg(short = 'o', long = "only-matching")]
+    pub only_matching: bool,
+
+    /// Descend at most <depth> levels of directories.
+    #[arg(long = "max-depth", value_name = "DEPTH")]
+    pub max_depth: Option<usize>,
+
+    /// Use color in output: always, never, auto.
+    #[arg(long = "color", value_name = "WHEN", default_value = "never")]
+    pub color: String,
+
     /// Positional arguments: [pattern] [<tree>] [-- pathspec...]
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[arg(trailing_var_arg = true)]
     pub positional: Vec<String>,
+}
+
+impl Args {
+    fn before_ctx(&self) -> usize {
+        self.context.or(self.before_context).unwrap_or(0)
+    }
+    fn after_ctx(&self) -> usize {
+        self.context.or(self.after_context).unwrap_or(0)
+    }
+    fn use_color(&self) -> bool {
+        self.color == "always"
+    }
+    fn has_context(&self) -> bool {
+        self.before_ctx() > 0 || self.after_ctx() > 0
+    }
 }
 
 /// Run `grit grep`.
@@ -76,6 +119,8 @@ pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let mut found_any = false;
+    // Tracks whether we need a "--" separator before the next context group
+    let mut need_sep = false;
 
     if let Some(tree_spec) = &tree_ish {
         // Search a tree object
@@ -99,10 +144,12 @@ pub fn run(args: Args) -> Result<()> {
             &repo,
             &tree_obj.data,
             "",
+            0,
             &matchers,
             &args,
             &pathspecs,
             Some(tree_spec),
+            &mut need_sep,
             &mut out,
         )?;
     } else {
@@ -132,6 +179,14 @@ pub fn run(args: Args) -> Result<()> {
                 continue;
             }
 
+            // Apply max-depth filter
+            if let Some(max_depth) = args.max_depth {
+                let depth = path_str.matches('/').count();
+                if depth > max_depth {
+                    continue;
+                }
+            }
+
             let full_path = work_tree.join(&path_str);
             let content = match std::fs::read(&full_path) {
                 Ok(c) => c,
@@ -144,7 +199,15 @@ pub fn run(args: Args) -> Result<()> {
             }
 
             let content_str = String::from_utf8_lossy(&content);
-            if grep_content(&path_str, &content_str, &matchers, &args, None, &mut out)? {
+            if grep_content(
+                &path_str,
+                &content_str,
+                &matchers,
+                &args,
+                None,
+                &mut need_sep,
+                &mut out,
+            )? {
                 found_any = true;
             }
         }
@@ -165,7 +228,6 @@ fn is_revision(repo: &Repository, spec: &str) -> bool {
 }
 
 /// Parse positional arguments into (patterns, tree_ish, pathspecs).
-/// Uses the repo to disambiguate tree-ish vs pathspec.
 fn parse_positional(
     args: &Args,
     repo: &Repository,
@@ -184,12 +246,10 @@ fn parse_positional(
     let mut tree_ish = None;
 
     if patterns.is_empty() {
-        // First positional is the pattern (required)
         if before_sep.is_empty() {
             return Ok((patterns, tree_ish, pathspecs));
         }
         patterns.push(before_sep[0].clone());
-        // Remaining: check if first remaining resolves as revision
         let rest = &before_sep[1..];
         if !rest.is_empty() && is_revision(repo, &rest[0]) {
             tree_ish = Some(rest[0].clone());
@@ -197,13 +257,11 @@ fn parse_positional(
             ps.extend(rest[1..].iter().cloned());
             return Ok((patterns, tree_ish, ps));
         }
-        // Otherwise all remaining are pathspecs
         let mut ps = pathspecs;
         ps.extend(rest.iter().cloned());
         return Ok((patterns, tree_ish, ps));
     }
 
-    // Patterns given via -e; positional args are [tree-ish] [pathspecs...]
     if !before_sep.is_empty() && is_revision(repo, &before_sep[0]) {
         tree_ish = Some(before_sep[0].clone());
         let mut ps = pathspecs;
@@ -211,7 +269,6 @@ fn parse_positional(
         return Ok((patterns, tree_ish, ps));
     }
 
-    // All positional are pathspecs
     let mut ps = pathspecs;
     ps.extend(before_sep.iter().cloned());
     Ok((patterns, tree_ish, ps))
@@ -240,80 +297,277 @@ fn build_matchers(patterns: &[String], args: &Args) -> Result<Vec<Regex>> {
     Ok(matchers)
 }
 
+// Color constants
+const COLOR_FILENAME: &str = "\x1b[35m";
+const COLOR_LINENO: &str = "\x1b[32m";
+const COLOR_COLUMNNO: &str = "\x1b[32m";
+const COLOR_MATCH: &str = "\x1b[1;31m";
+const COLOR_SEP: &str = "\x1b[36m";
+const COLOR_RESET: &str = "\x1b[m";
+
+/// Colorize all matches in a line.
+fn colorize_matches(line: &str, matchers: &[Regex]) -> String {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for re in matchers {
+        for m in re.find_iter(line) {
+            ranges.push((m.start(), m.end()));
+        }
+    }
+    if ranges.is_empty() {
+        return line.to_string();
+    }
+    ranges.sort();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in ranges {
+        if let Some(last) = merged.last_mut() {
+            if s <= last.1 {
+                last.1 = last.1.max(e);
+                continue;
+            }
+        }
+        merged.push((s, e));
+    }
+    let mut result = String::new();
+    let mut pos = 0;
+    for (s, e) in merged {
+        result.push_str(&line[pos..s]);
+        result.push_str(COLOR_MATCH);
+        result.push_str(&line[s..e]);
+        result.push_str(COLOR_RESET);
+        pos = e;
+    }
+    result.push_str(&line[pos..]);
+    result
+}
+
+fn sep_char(ch: char, color: bool) -> String {
+    if color {
+        format!("{COLOR_SEP}{ch}{COLOR_RESET}")
+    } else {
+        ch.to_string()
+    }
+}
+
+fn fmt_name(name: &str, color: bool) -> String {
+    if color {
+        format!("{COLOR_FILENAME}{name}{COLOR_RESET}")
+    } else {
+        name.to_string()
+    }
+}
+
+fn fmt_num(n: usize, color: bool) -> String {
+    if color {
+        format!("{COLOR_LINENO}{n}{COLOR_RESET}")
+    } else {
+        n.to_string()
+    }
+}
+
+fn fmt_col(n: usize, color: bool) -> String {
+    if color {
+        format!("{COLOR_COLUMNNO}{n}{COLOR_RESET}")
+    } else {
+        n.to_string()
+    }
+}
+
+/// Get column (1-based) of first match in a line.
+fn first_match_col(line: &str, matchers: &[Regex]) -> Option<usize> {
+    let mut earliest: Option<usize> = None;
+    for re in matchers {
+        if let Some(m) = re.find(line) {
+            let col = m.start() + 1;
+            earliest = Some(earliest.map_or(col, |e: usize| e.min(col)));
+        }
+    }
+    earliest
+}
+
 /// Search content of a single file. Returns true if any match found.
+/// `need_sep` tracks whether a "--" separator should be printed before the next context group.
 fn grep_content(
     filename: &str,
     content: &str,
     matchers: &[Regex],
     args: &Args,
     tree_prefix: Option<&str>,
+    need_sep: &mut bool,
     out: &mut impl Write,
 ) -> Result<bool> {
-    let mut match_count = 0u64;
-    let mut has_match = false;
-
-    for (lineno, line) in content.lines().enumerate() {
-        // A line matches if ANY pattern matches (implicit OR for multiple -e)
-        let line_matches = matchers.iter().any(|re| re.is_match(line));
-        let effective_match = if args.invert_match {
-            !line_matches
-        } else {
-            line_matches
-        };
-
-        if effective_match {
-            has_match = true;
-            match_count += 1;
-
-            if args.files_with_matches || args.files_without_match {
-                // Will handle after the loop
-                continue;
-            }
-            if args.count {
-                continue;
-            }
-
-            // Print matching line
-            let display_name = match tree_prefix {
-                Some(p) => format!("{p}:{filename}"),
-                None => filename.to_string(),
-            };
-            if args.line_number {
-                writeln!(out, "{display_name}:{}:{line}", lineno + 1)?;
-            } else {
-                writeln!(out, "{display_name}:{line}")?;
-            }
-        }
-    }
+    let color = args.use_color();
 
     let display_name = match tree_prefix {
         Some(p) => format!("{p}:{filename}"),
         None => filename.to_string(),
     };
 
+    let lines: Vec<&str> = content.lines().collect();
+    let nlines = lines.len();
+    let before = args.before_ctx();
+    let after = args.after_ctx();
+    let use_context = args.has_context();
+
+    // Collect matching line indices
+    let mut match_indices: Vec<usize> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let line_matches = matchers.iter().any(|re| re.is_match(line));
+        let effective_match = if args.invert_match {
+            !line_matches
+        } else {
+            line_matches
+        };
+        if effective_match {
+            match_indices.push(i);
+        }
+    }
+
+    let has_match = !match_indices.is_empty();
+    let match_count = match_indices.len() as u64;
+
+    // Special modes: files-with-matches, files-without-match, count
     if args.files_with_matches {
         if has_match {
-            writeln!(out, "{display_name}")?;
+            writeln!(out, "{}", fmt_name(&display_name, color))?;
         }
         return Ok(has_match);
     }
 
     if args.files_without_match {
         if !has_match {
-            writeln!(out, "{display_name}")?;
-            return Ok(true); // counts as "found" for exit code
+            writeln!(out, "{}", fmt_name(&display_name, color))?;
+            return Ok(true);
         }
         return Ok(false);
     }
 
     if args.count {
         if match_count > 0 {
-            writeln!(out, "{display_name}:{match_count}")?;
+            writeln!(
+                out,
+                "{}{}{}",
+                fmt_name(&display_name, color),
+                sep_char(':', color),
+                match_count
+            )?;
         }
         return Ok(has_match);
     }
 
-    Ok(has_match)
+    if !has_match {
+        return Ok(false);
+    }
+
+    // --only-matching
+    if args.only_matching {
+        for &idx in &match_indices {
+            let line = lines[idx];
+            for re in matchers {
+                for m in re.find_iter(line) {
+                    let matched_text = m.as_str();
+                    let col = m.start() + 1;
+                    let mut prefix_str = fmt_name(&display_name, color);
+                    prefix_str.push_str(&sep_char(':', color));
+                    if args.line_number {
+                        prefix_str.push_str(&fmt_num(idx + 1, color));
+                        prefix_str.push_str(&sep_char(':', color));
+                    }
+                    if args.column {
+                        prefix_str.push_str(&fmt_col(col, color));
+                        prefix_str.push_str(&sep_char(':', color));
+                    }
+                    if color {
+                        writeln!(out, "{prefix_str}{COLOR_MATCH}{matched_text}{COLOR_RESET}")?;
+                    } else {
+                        writeln!(out, "{prefix_str}{matched_text}")?;
+                    }
+                }
+            }
+        }
+        return Ok(true);
+    }
+
+    // Context mode
+    if use_context {
+        // Build groups of (start, end) ranges
+        let mut groups: Vec<(usize, usize)> = Vec::new();
+        for &idx in &match_indices {
+            let start = idx.saturating_sub(before);
+            let end = (idx + after).min(nlines - 1);
+            if let Some(last) = groups.last_mut() {
+                if start <= last.1 + 1 {
+                    last.1 = last.1.max(end);
+                    continue;
+                }
+            }
+            groups.push((start, end));
+        }
+
+        let match_set: std::collections::HashSet<usize> =
+            match_indices.iter().copied().collect();
+
+        for &(start, end) in &groups {
+            // Print separator between groups (including across files)
+            if *need_sep {
+                writeln!(out, "--")?;
+            }
+            *need_sep = true;
+
+            for i in start..=end {
+                let is_match_line = match_set.contains(&i);
+                let separator = if is_match_line { ':' } else { '-' };
+                let mut prefix_str = fmt_name(&display_name, color);
+                prefix_str.push_str(&sep_char(separator, color));
+                if args.line_number {
+                    prefix_str.push_str(&fmt_num(i + 1, color));
+                    prefix_str.push_str(&sep_char(separator, color));
+                }
+                if args.column && is_match_line {
+                    if let Some(col) = first_match_col(lines[i], matchers) {
+                        prefix_str.push_str(&fmt_col(col, color));
+                        prefix_str.push_str(&sep_char(separator, color));
+                    }
+                }
+                if color && is_match_line {
+                    writeln!(
+                        out,
+                        "{prefix_str}{}",
+                        colorize_matches(lines[i], matchers)
+                    )?;
+                } else {
+                    writeln!(out, "{prefix_str}{}", lines[i])?;
+                }
+            }
+        }
+    } else {
+        // No context — just print matching lines
+        for &idx in &match_indices {
+            let line = lines[idx];
+            let mut prefix_str = fmt_name(&display_name, color);
+            prefix_str.push_str(&sep_char(':', color));
+            if args.line_number {
+                prefix_str.push_str(&fmt_num(idx + 1, color));
+                prefix_str.push_str(&sep_char(':', color));
+            }
+            if args.column {
+                if let Some(col) = first_match_col(line, matchers) {
+                    prefix_str.push_str(&fmt_col(col, color));
+                    prefix_str.push_str(&sep_char(':', color));
+                }
+            }
+            if color {
+                writeln!(
+                    out,
+                    "{prefix_str}{}",
+                    colorize_matches(line, matchers)
+                )?;
+            } else {
+                writeln!(out, "{prefix_str}{line}")?;
+            }
+        }
+    }
+
+    Ok(true)
 }
 
 /// Recursively search a tree object.
@@ -321,10 +575,12 @@ fn grep_tree(
     repo: &Repository,
     tree_data: &[u8],
     prefix: &str,
+    depth: usize,
     matchers: &[Regex],
     args: &Args,
     pathspecs: &[String],
     tree_name: Option<&str>,
+    need_sep: &mut bool,
     out: &mut impl Write,
 ) -> Result<bool> {
     let entries = parse_tree(tree_data)?;
@@ -353,24 +609,45 @@ fn grep_tree(
         }
 
         if is_tree {
+            if let Some(max_depth) = args.max_depth {
+                if depth >= max_depth {
+                    continue;
+                }
+            }
             let sub_obj = repo.odb.read(&entry.oid)?;
-            if grep_tree(repo, &sub_obj.data, &full_name, matchers, args, pathspecs, tree_name, out)? {
+            if grep_tree(
+                repo,
+                &sub_obj.data,
+                &full_name,
+                depth + 1,
+                matchers,
+                args,
+                pathspecs,
+                tree_name,
+                need_sep,
+                out,
+            )? {
                 found = true;
             }
         } else {
-            // Read blob
+            if let Some(max_depth) = args.max_depth {
+                let file_depth = full_name.matches('/').count();
+                if file_depth > max_depth {
+                    continue;
+                }
+            }
+
             let obj = match repo.odb.read(&entry.oid) {
                 Ok(o) => o,
                 Err(_) => continue,
             };
 
-            // Skip binary
             if obj.data.iter().take(8000).any(|&b| b == 0) {
                 continue;
             }
 
             let content = String::from_utf8_lossy(&obj.data);
-            if grep_content(&full_name, &content, matchers, args, tree_name, out)? {
+            if grep_content(&full_name, &content, matchers, args, tree_name, need_sep, out)? {
                 found = true;
             }
         }
