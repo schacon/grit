@@ -2302,4 +2302,45 @@ test_expect_success 'set writes new key to file and reads back' '
 	test_cmp expect actual
 '
 
+# ── more config format tests ────────────────────────────────────────────────
+
+test_expect_success 'multi-level subsection (a.b.c.d)' '
+	cd repo &&
+	git config "http.https://example.com/repo.git.proxy" "socks5://proxy" &&
+	git config --get "http.https://example.com/repo.git.proxy" >actual &&
+	echo "socks5://proxy" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rename-section preserves subsection case' '
+	cd repo &&
+	git config "OldSec.SubCase.key" "val" &&
+	git config --rename-section "OldSec.SubCase" "NewSec.SubCase" &&
+	git config --get "NewSec.SubCase.key" >actual &&
+	echo "val" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'unset last key in section leaves empty section' '
+	cd repo &&
+	git config lonely.key "alone" &&
+	git config --unset lonely.key &&
+	test_must_fail git config --get lonely.key
+'
+
+test_expect_success '--get on key set via --file roundtrips' '
+	cd repo &&
+	git config --file ../rtfile.cfg rt.key "roundtrip" &&
+	git config --file ../rtfile.cfg --get rt.key >actual &&
+	echo "roundtrip" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--unset-all on key with single value works' '
+	cd repo &&
+	git config single.ua "only" &&
+	git config --unset-all single.ua &&
+	test_must_fail git config --get single.ua
+'
+
 test_done
