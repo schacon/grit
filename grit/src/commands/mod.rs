@@ -37,6 +37,7 @@ pub mod mv;
 pub mod name_rev;
 pub mod pack_refs;
 pub mod patch_id;
+pub mod prune;
 pub mod prune_packed;
 pub mod read_tree;
 pub mod reflog;
