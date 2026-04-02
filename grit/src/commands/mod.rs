@@ -3,6 +3,7 @@
 //! Each submodule corresponds to one plumbing subcommand.
 
 pub mod add;
+pub mod am;
 pub mod archive;
 pub mod annotate;
 pub mod bisect;
@@ -41,6 +42,7 @@ pub mod git_passthrough;
 pub mod grep;
 pub mod help;
 pub mod hash_object;
+pub mod hook;
 pub mod index_pack;
 pub mod init;
 pub mod interpret_trailers;

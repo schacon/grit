@@ -15,7 +15,8 @@ mod commands;
 #[command(
     name = "grit",
     version,
-    about = "Git plumbing reimplementation in Rust"
+    about = "Git plumbing reimplementation in Rust",
+    disable_help_subcommand = true
 )]
 struct Cli {
     /// Override the path to the git directory.
@@ -71,6 +72,8 @@ enum Command {
     /// Compute object ID and optionally create an object from a file.
     #[command(name = "hash-object")]
     HashObject(commands::hash_object::Args),
+    /// Run git hooks.
+    Hook(commands::hook::Args),
     /// Build pack index file for an existing packed archive.
     #[command(name = "index-pack")]
     IndexPack(commands::index_pack::Args),
@@ -315,6 +318,7 @@ fn run() -> Result<()> {
         Command::Init(args) => commands::init::run(args),
         Command::InterpretTrailers(args) => commands::interpret_trailers::run(args),
         Command::HashObject(args) => commands::hash_object::run(args),
+        Command::Hook(args) => commands::hook::run(args),
         Command::IndexPack(args) => commands::index_pack::run(args),
         Command::CatFile(args) => commands::cat_file::run(args),
         Command::CheckAttr(args) => commands::check_attr::run(args),
