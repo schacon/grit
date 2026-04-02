@@ -259,4 +259,169 @@ test_expect_failure 'diff --ignore-space-change (not implemented)' '
 	test_must_be_empty out
 '
 
+# ---- More trailing whitespace tests ----
+
+test_expect_success 'diff --name-status for trailing whitespace' '
+	cd trailing-ws &&
+	printf "line1  \nline2\nline3\n" >file.txt &&
+	git diff --name-status >out &&
+	grep "^M" out &&
+	grep "file\.txt" out
+'
+
+test_expect_success 'diff --cached with staged trailing whitespace' '
+	cd trailing-ws &&
+	printf "line1  \nline2\nline3\n" >file.txt &&
+	git add file.txt &&
+	git diff --cached >out &&
+	grep "file\.txt" out &&
+	git reset HEAD -- file.txt &&
+	git checkout -- file.txt
+'
+
+# ---- Multiple whitespace changes in one file ----
+
+test_expect_success 'setup multi-ws repo' '
+	git init multi-ws &&
+	cd multi-ws &&
+	git config user.name "Test User" &&
+	git config user.email "test@test.com" &&
+	printf "aaa\nbbb\nccc\nddd\neee\n" >file.txt &&
+	git add file.txt &&
+	git commit -m "initial"
+'
+
+test_expect_success 'diff detects multiple trailing-ws additions' '
+	cd multi-ws &&
+	printf "aaa  \nbbb\nccc  \nddd\neee  \n" >file.txt &&
+	git diff >out &&
+	grep "file\.txt" out
+'
+
+test_expect_success 'diff --stat for multiple ws changes shows 1 file' '
+	cd multi-ws &&
+	printf "aaa  \nbbb\nccc  \nddd\neee  \n" >file.txt &&
+	git diff --stat >out &&
+	grep "1 file changed" out
+'
+
+test_expect_success 'diff --numstat for multiple ws changes' '
+	cd multi-ws &&
+	printf "aaa  \nbbb\nccc  \nddd\neee  \n" >file.txt &&
+	git diff --numstat >out &&
+	grep "file\.txt" out
+'
+
+test_expect_success 'diff --exit-code detects multiple ws changes' '
+	cd multi-ws &&
+	printf "aaa  \nbbb\nccc  \nddd\neee  \n" >file.txt &&
+	test_must_fail git diff --exit-code
+'
+
+# ---- Leading whitespace changes ----
+
+test_expect_success 'setup leading-ws repo' '
+	git init leading-ws &&
+	cd leading-ws &&
+	git config user.name "Test User" &&
+	git config user.email "test@test.com" &&
+	printf "line1\nline2\nline3\n" >file.txt &&
+	git add file.txt &&
+	git commit -m "initial"
+'
+
+test_expect_success 'diff detects added leading whitespace' '
+	cd leading-ws &&
+	printf "  line1\nline2\nline3\n" >file.txt &&
+	git diff >out &&
+	grep "file\.txt" out
+'
+
+test_expect_success 'diff --exit-code detects leading ws change' '
+	cd leading-ws &&
+	printf "  line1\nline2\nline3\n" >file.txt &&
+	test_must_fail git diff --exit-code
+'
+
+test_expect_success 'diff --name-only for leading ws change' '
+	cd leading-ws &&
+	printf "  line1\nline2\nline3\n" >file.txt &&
+	git diff --name-only >out &&
+	grep "file\.txt" out
+'
+
+test_expect_success 'diff --stat for leading ws change' '
+	cd leading-ws &&
+	printf "  line1\nline2\nline3\n" >file.txt &&
+	git diff --stat >out &&
+	grep "file\.txt" out
+'
+
+# ---- Committed whitespace diffs (more tests) ----
+
+test_expect_success 'diff between commits with trailing-ws changes' '
+	cd committed-ws &&
+	c1=$(cat ../ws_c1) && c2=$(cat ../ws_c2) &&
+	git diff "$c1" "$c2" >out &&
+	grep "file\.txt" out
+'
+
+test_expect_success 'diff --stat between commits with ws changes' '
+	cd committed-ws &&
+	c1=$(cat ../ws_c1) && c2=$(cat ../ws_c2) &&
+	git diff --stat "$c1" "$c2" >out &&
+	grep "file\.txt" out
+'
+
+test_expect_success 'diff --numstat between commits with ws changes' '
+	cd committed-ws &&
+	c1=$(cat ../ws_c1) && c2=$(cat ../ws_c2) &&
+	git diff --numstat "$c1" "$c2" >out &&
+	grep "file\.txt" out
+'
+
+test_expect_success 'diff --name-only between commits with ws changes' '
+	cd committed-ws &&
+	c1=$(cat ../ws_c1) && c2=$(cat ../ws_c2) &&
+	git diff --name-only "$c1" "$c2" >out &&
+	grep "file\.txt" out
+'
+
+test_expect_success 'diff --exit-code between commits with ws changes' '
+	cd committed-ws &&
+	c1=$(cat ../ws_c1) && c2=$(cat ../ws_c2) &&
+	test_must_fail git diff --exit-code "$c1" "$c2"
+'
+
+test_expect_success 'diff --quiet between commits with ws changes' '
+	cd committed-ws &&
+	c1=$(cat ../ws_c1) && c2=$(cat ../ws_c2) &&
+	test_must_fail git diff --quiet "$c1" "$c2"
+'
+
+# ---- CRLF whitespace ----
+
+test_expect_success 'setup crlf repo' '
+	git init crlf-repo &&
+	cd crlf-repo &&
+	git config user.name "Test User" &&
+	git config user.email "test@test.com" &&
+	printf "line1\nline2\nline3\n" >file.txt &&
+	git add file.txt &&
+	git commit -m "initial"
+'
+
+test_expect_success 'diff detects LF to CRLF change' '
+	cd crlf-repo &&
+	printf "line1\r\nline2\nline3\n" >file.txt &&
+	git diff >out &&
+	grep "file\.txt" out
+'
+
+test_expect_success 'diff --exit-code detects CRLF change' '
+	cd crlf-repo &&
+	printf "line1\r\nline2\nline3\n" >file.txt &&
+	test_must_fail git diff --exit-code
+'
+
 test_done
