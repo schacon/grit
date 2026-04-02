@@ -826,15 +826,17 @@ impl ConfigSet {
         self.get(key).map(|v| parse_i64(&v))
     }
 
-    /// Get all entries matching a key pattern (regex or glob).
+    /// Get all entries matching a key pattern (regex).
     ///
-    /// Used by `git config --get-regexp`.
-    #[must_use]
-    pub fn get_regexp(&self, pattern: &str) -> Vec<&ConfigEntry> {
-        self.entries
+    /// Used by `git config --get-regexp`. Returns an error if the pattern
+    /// is not a valid regex.
+    pub fn get_regexp(&self, pattern: &str) -> std::result::Result<Vec<&ConfigEntry>, String> {
+        let re = regex::Regex::new(pattern)
+            .map_err(|e| format!("invalid key pattern: {e}"))?;
+        Ok(self.entries
             .iter()
-            .filter(|e| e.key.contains(pattern))
-            .collect()
+            .filter(|e| re.is_match(&e.key))
+            .collect())
     }
 
     /// List all entries in load order.

@@ -379,7 +379,8 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
     if get_args.regexp {
-        let matches = config.get_regexp(&get_args.key);
+        let matches = config.get_regexp(&get_args.key)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         if matches.is_empty() {
             std::process::exit(1);
         }
