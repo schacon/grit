@@ -163,15 +163,21 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     })
 }
 
+/// Resolve a revision to a tree OID without redundantly reading the tree object.
+/// Returns the tree OID which can be passed directly to collect_tree_entries.
 fn resolve_tree_ish(repo: &Repository, spec: &str) -> Result<ObjectId> {
     let mut oid = resolve_revision(repo, spec)?;
+    // Peel commits to get their tree OID without reading the tree itself.
+    // The tree will be read later by collect_tree_entries.
     loop {
         let obj = repo.odb.read(&oid)?;
         match obj.kind {
             ObjectKind::Tree => return Ok(oid),
             ObjectKind::Commit => {
                 let commit = parse_commit(&obj.data)?;
-                oid = commit.tree;
+                // Return the tree OID directly — don't read/verify the tree
+                // object here, collect_tree_entries will do that.
+                return Ok(commit.tree);
             }
             _ => bail!("object '{}' does not name a tree", oid),
         }
