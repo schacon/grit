@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, DiffStatus};
 use grit_lib::error::Error;
+use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::Index;
 use grit_lib::objects::parse_commit;
 use grit_lib::repo::Repository;
@@ -78,18 +79,30 @@ pub fn run(args: Args) -> Result<()> {
     // Diff: unstaged (worktree vs index)
     let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
 
-    // Untracked files
-    let untracked = if args.untracked != "no" {
-        find_untracked(work_tree, &index)?
+    // Untracked and ignored files
+    let (untracked, ignored_files) = if args.untracked != "no" {
+        collect_untracked_and_ignored(&repo, &index, work_tree, args.ignored)?
+    } else if args.ignored {
+        // Even with -u no, --ignored should show ignored files
+        let (_, ignored) = collect_untracked_and_ignored(&repo, &index, work_tree, true)?;
+        (Vec::new(), ignored)
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
     if args.short || args.porcelain {
-        format_short(&mut out, &args, &head, &staged, &unstaged, &untracked)?;
+        format_short(
+            &mut out,
+            &args,
+            &head,
+            &staged,
+            &unstaged,
+            &untracked,
+            &ignored_files,
+        )?;
     } else {
         format_long(
             &mut out,
@@ -98,10 +111,55 @@ pub fn run(args: Args) -> Result<()> {
             &staged,
             &unstaged,
             &untracked,
+            &ignored_files,
         )?;
     }
 
     Ok(())
+}
+
+/// Collect untracked files, filtering out ignored ones.
+/// If `collect_ignored` is true, also return the ignored file list.
+fn collect_untracked_and_ignored(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    collect_ignored: bool,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let tracked: BTreeSet<String> = index
+        .entries
+        .iter()
+        .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
+        .collect();
+
+    let mut all_untracked = Vec::new();
+    walk_for_untracked(work_tree, work_tree, &tracked, &mut all_untracked)?;
+    all_untracked.sort();
+
+    // Build ignore matcher
+    let mut matcher = IgnoreMatcher::from_repository(repo)?;
+
+    let mut untracked = Vec::new();
+    let mut ignored_files = Vec::new();
+
+    for path in all_untracked {
+        let is_dir = path.ends_with('/');
+        let check_path = if is_dir {
+            &path[..path.len() - 1]
+        } else {
+            &path
+        };
+        let (is_ignored, _) = matcher.check_path(repo, Some(index), check_path, is_dir)?;
+        if is_ignored {
+            if collect_ignored {
+                ignored_files.push(path);
+            }
+        } else {
+            untracked.push(path);
+        }
+    }
+
+    Ok((untracked, ignored_files))
 }
 
 /// Short/porcelain format.
@@ -112,6 +170,7 @@ fn format_short(
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
+    ignored_files: &[String],
 ) -> Result<()> {
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
@@ -149,6 +208,10 @@ fn format_short(
         write!(out, "?? {path}{terminator}")?;
     }
 
+    for path in ignored_files {
+        write!(out, "!! {path}{terminator}")?;
+    }
+
     Ok(())
 }
 
@@ -160,6 +223,7 @@ fn format_long(
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
+    ignored_files: &[String],
 ) -> Result<()> {
     // Branch info
     match head {
@@ -245,8 +309,29 @@ fn format_long(
         }
     }
 
+    // Ignored files
+    if !ignored_files.is_empty() {
+        writeln!(out)?;
+        writeln!(out, "Ignored files:")?;
+        writeln!(
+            out,
+            "  (use \"git add -f <file>...\" to include in what will be committed)"
+        )?;
+        for path in ignored_files {
+            writeln!(out, "\t{path}")?;
+        }
+    }
+
     if staged.is_empty() && unstaged.is_empty() && untracked.is_empty() {
-        writeln!(out, "nothing to commit, working tree clean")?;
+        if !ignored_files.is_empty() {
+            writeln!(out)?;
+            writeln!(
+                out,
+                "nothing to commit but untracked files present (use \"git add\" to track)"
+            )?;
+        } else {
+            writeln!(out, "nothing to commit, working tree clean")?;
+        }
     } else if staged.is_empty() && (!unstaged.is_empty() || !untracked.is_empty()) {
         writeln!(out)?;
         writeln!(
@@ -258,7 +343,7 @@ fn format_long(
     Ok(())
 }
 
-/// Find untracked files in the working tree.
+/// Find untracked files in the working tree (raw, before ignore filtering).
 fn find_untracked(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
     let tracked: BTreeSet<String> = index
         .entries

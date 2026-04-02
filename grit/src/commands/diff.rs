@@ -6,8 +6,8 @@
 //! - `<commit>`: commit's tree vs working tree (combined view)
 //! - `<commit> <commit>`: commit-to-commit diff
 //!
-//! Output formats: unified patch (default), `--stat`, `--numstat`,
-//! `--name-only`, `--name-status`.
+//! Output formats: unified patch (default), `--stat`, `--shortstat`,
+//! `--numstat`, `--name-only`, `--name-status`.
 //!
 //! Exit codes: `--exit-code` / `--quiet` return exit code 1 if there are
 //! differences.
@@ -24,7 +24,14 @@ use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
+
+/// ANSI color codes for diff output.
+const RESET: &str = "\x1b[m";
+const BOLD: &str = "\x1b[1m";
+const RED: &str = "\x1b[31m";
+const GREEN: &str = "\x1b[32m";
+const CYAN: &str = "\x1b[36m";
 
 /// Arguments for `grit diff`.
 #[derive(Debug, ClapArgs)]
@@ -37,6 +44,10 @@ pub struct Args {
     /// Show a diffstat summary instead of the patch.
     #[arg(long = "stat")]
     pub stat: bool,
+
+    /// Show only the summary line: N files changed, N insertions(+), N deletions(-).
+    #[arg(long = "shortstat")]
+    pub shortstat: bool,
 
     /// Show machine-readable stat (additions/deletions per file).
     #[arg(long = "numstat")]
@@ -58,12 +69,16 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Colorize the output. Values: always, never, auto.
+    #[arg(long = "color", value_name = "WHEN", default_missing_value = "always", num_args = 0..=1)]
+    pub color: Option<String>,
+
     /// Number of context lines in unified diff output (default: 3).
     #[arg(short = 'U', long = "unified", value_name = "N")]
     pub unified: Option<usize>,
 
     /// Commits or paths. Use `--` to separate revisions from paths.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
 }
 
@@ -123,12 +138,22 @@ pub fn run(args: Args) -> Result<()> {
 
     let has_diff = !entries.is_empty();
 
+    // Determine color mode
+    let use_color = match args.color.as_deref() {
+        Some("always") => true,
+        Some("never") => false,
+        Some("auto") | None => io::stdout().is_terminal(),
+        Some(_) => false,
+    };
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
     if !args.quiet {
         let context_lines = args.unified.unwrap_or(3);
-        if args.stat {
+        if args.shortstat {
+            write_shortstat(&mut out, &entries, &repo.odb)?;
+        } else if args.stat {
             write_stat(&mut out, &entries, &repo.odb)?;
         } else if args.numstat {
             write_numstat(&mut out, &entries, &repo.odb)?;
@@ -137,7 +162,7 @@ pub fn run(args: Args) -> Result<()> {
         } else if args.name_status {
             write_name_status(&mut out, &entries)?;
         } else {
-            write_patch(&mut out, &entries, &repo.odb, context_lines)?;
+            write_patch(&mut out, &entries, &repo.odb, context_lines, use_color)?;
         }
     }
 
@@ -253,7 +278,7 @@ fn filter_by_paths(entries: Vec<DiffEntry>, paths: &[String]) -> Vec<DiffEntry> 
         .collect()
 }
 
-/// Read content for a diff entry side from the ODB.
+/// Read content for a diff entry side from the ODB (as text).
 fn read_content(odb: &Odb, oid: &ObjectId) -> String {
     if *oid == zero_oid() {
         return String::new();
@@ -264,8 +289,25 @@ fn read_content(odb: &Odb, oid: &ObjectId) -> String {
     }
 }
 
+/// Read raw bytes for a diff entry side from the ODB.
+fn read_content_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
+    if *oid == zero_oid() {
+        return Vec::new();
+    }
+    match odb.read(oid) {
+        Ok(obj) => obj.data,
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Check if content appears to be binary (contains NUL bytes in first 8KB).
+fn is_binary(data: &[u8]) -> bool {
+    let check_len = data.len().min(8192);
+    data[..check_len].contains(&0)
+}
+
 /// Write a `diff --git` header plus index/mode lines.
-fn write_diff_header(out: &mut impl Write, entry: &DiffEntry) -> Result<()> {
+fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -> Result<()> {
     let old_path = entry
         .old_path
         .as_deref()
@@ -275,47 +317,52 @@ fn write_diff_header(out: &mut impl Write, entry: &DiffEntry) -> Result<()> {
         .as_deref()
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
 
-    writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
+    let (b, r) = if use_color { (BOLD, RESET) } else { ("", "") };
+    writeln!(out, "{b}diff --git a/{old_path} b/{new_path}{r}")?;
 
     match entry.status {
         DiffStatus::Added => {
-            writeln!(out, "new file mode {}", entry.new_mode)?;
+            writeln!(out, "{b}new file mode {}{r}", entry.new_mode)?;
             let old_abbrev = &entry.old_oid.to_hex()[..7];
             let new_abbrev = &entry.new_oid.to_hex()[..7];
-            writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
+            writeln!(out, "{b}index {old_abbrev}..{new_abbrev}{r}")?;
         }
         DiffStatus::Deleted => {
-            writeln!(out, "deleted file mode {}", entry.old_mode)?;
+            writeln!(out, "{b}deleted file mode {}{r}", entry.old_mode)?;
             let old_abbrev = &entry.old_oid.to_hex()[..7];
             let new_abbrev = &entry.new_oid.to_hex()[..7];
-            writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
+            writeln!(out, "{b}index {old_abbrev}..{new_abbrev}{r}")?;
         }
         DiffStatus::Modified => {
             if entry.old_mode != entry.new_mode {
-                writeln!(out, "old mode {}", entry.old_mode)?;
-                writeln!(out, "new mode {}", entry.new_mode)?;
+                writeln!(out, "{b}old mode {}{r}", entry.old_mode)?;
+                writeln!(out, "{b}new mode {}{r}", entry.new_mode)?;
             }
             let old_abbrev = &entry.old_oid.to_hex()[..7];
             let new_abbrev = &entry.new_oid.to_hex()[..7];
             if entry.old_mode == entry.new_mode {
-                writeln!(out, "index {old_abbrev}..{new_abbrev} {}", entry.old_mode)?;
+                writeln!(
+                    out,
+                    "{b}index {old_abbrev}..{new_abbrev} {}{r}",
+                    entry.old_mode
+                )?;
             } else {
-                writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
+                writeln!(out, "{b}index {old_abbrev}..{new_abbrev}{r}")?;
             }
         }
         DiffStatus::Renamed => {
-            writeln!(out, "similarity index 100%")?;
-            writeln!(out, "rename from {old_path}")?;
-            writeln!(out, "rename to {new_path}")?;
+            writeln!(out, "{b}similarity index 100%{r}")?;
+            writeln!(out, "{b}rename from {old_path}{r}")?;
+            writeln!(out, "{b}rename to {new_path}{r}")?;
         }
         DiffStatus::Copied => {
-            writeln!(out, "similarity index 100%")?;
-            writeln!(out, "copy from {old_path}")?;
-            writeln!(out, "copy to {new_path}")?;
+            writeln!(out, "{b}similarity index 100%{r}")?;
+            writeln!(out, "{b}copy from {old_path}{r}")?;
+            writeln!(out, "{b}copy to {new_path}{r}")?;
         }
         DiffStatus::TypeChanged => {
-            writeln!(out, "old mode {}", entry.old_mode)?;
-            writeln!(out, "new mode {}", entry.new_mode)?;
+            writeln!(out, "{b}old mode {}{r}", entry.old_mode)?;
+            writeln!(out, "{b}new mode {}{r}", entry.new_mode)?;
         }
         DiffStatus::Unmerged => {}
     }
@@ -329,15 +376,29 @@ fn write_patch(
     entries: &[DiffEntry],
     odb: &Odb,
     context_lines: usize,
+    use_color: bool,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
 
-        write_diff_header(out, entry)?;
+        write_diff_header(out, entry, use_color)?;
 
-        let old_content = read_content(odb, &entry.old_oid);
-        let new_content = read_content(odb, &entry.new_oid);
+        // Check for binary content
+        let old_content_raw = read_content_raw(odb, &entry.old_oid);
+        let new_content_raw = read_content_raw(odb, &entry.new_oid);
+
+        if is_binary(&old_content_raw) || is_binary(&new_content_raw) {
+            writeln!(
+                out,
+                "Binary files a/{} and b/{} differ",
+                old_path, new_path
+            )?;
+            continue;
+        }
+
+        let old_content = String::from_utf8_lossy(&old_content_raw).into_owned();
+        let new_content = String::from_utf8_lossy(&new_content_raw).into_owned();
 
         let patch = unified_diff(
             &old_content,
@@ -346,8 +407,74 @@ fn write_patch(
             new_path,
             context_lines,
         );
-        write!(out, "{patch}")?;
+
+        if use_color {
+            write_colored_patch(out, &patch)?;
+        } else {
+            write!(out, "{patch}")?;
+        }
     }
+    Ok(())
+}
+
+/// Write a unified diff patch with ANSI color codes.
+fn write_colored_patch(out: &mut impl Write, patch: &str) -> Result<()> {
+    for line in patch.lines() {
+        if line.starts_with("---") || line.starts_with("+++") {
+            writeln!(out, "{BOLD}{line}{RESET}")?;
+        } else if line.starts_with("@@") {
+            writeln!(out, "{CYAN}{line}{RESET}")?;
+        } else if line.starts_with('-') {
+            writeln!(out, "{RED}{line}{RESET}")?;
+        } else if line.starts_with('+') {
+            writeln!(out, "{GREEN}{line}{RESET}")?;
+        } else {
+            writeln!(out, "{line}")?;
+        }
+    }
+    Ok(())
+}
+
+/// Write only the summary line: `N files changed, N insertions(+), N deletions(-)`.
+fn write_shortstat(out: &mut impl Write, entries: &[DiffEntry], odb: &Odb) -> Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+    let mut files_changed = 0usize;
+
+    for entry in entries {
+        let old_content = read_content(odb, &entry.old_oid);
+        let new_content = read_content(odb, &entry.new_oid);
+        let (ins, del) = count_changes(&old_content, &new_content);
+        total_ins += ins;
+        total_del += del;
+        files_changed += 1;
+    }
+
+    let mut summary = format!(
+        " {} file{} changed",
+        files_changed,
+        if files_changed == 1 { "" } else { "s" }
+    );
+    if total_ins > 0 {
+        summary.push_str(&format!(
+            ", {} insertion{}(+)",
+            total_ins,
+            if total_ins == 1 { "" } else { "s" }
+        ));
+    }
+    if total_del > 0 {
+        summary.push_str(&format!(
+            ", {} deletion{}(-)",
+            total_del,
+            if total_del == 1 { "" } else { "s" }
+        ));
+    }
+    writeln!(out, "{summary}")?;
+
     Ok(())
 }
 
@@ -419,9 +546,30 @@ fn write_name_only(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
 }
 
 /// Write `{status_letter}\t{path}` for each entry.
+/// For renames/copies, output `R100\told_path\tnew_path`.
 fn write_name_status(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
     for entry in entries {
-        writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
+        match entry.status {
+            DiffStatus::Renamed => {
+                writeln!(
+                    out,
+                    "R100\t{}\t{}",
+                    entry.old_path.as_deref().unwrap_or(""),
+                    entry.new_path.as_deref().unwrap_or("")
+                )?;
+            }
+            DiffStatus::Copied => {
+                writeln!(
+                    out,
+                    "C100\t{}\t{}",
+                    entry.old_path.as_deref().unwrap_or(""),
+                    entry.new_path.as_deref().unwrap_or("")
+                )?;
+            }
+            _ => {
+                writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
+            }
+        }
     }
     Ok(())
 }
