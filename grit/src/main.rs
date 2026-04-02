@@ -39,6 +39,8 @@ enum Command {
     Annotate(commands::annotate::Args),
     /// Use binary search to find the commit that introduced a bug.
     Bisect(commands::bisect::Args),
+    /// Move objects and refs by archive.
+    Bundle(commands::bundle::Args),
     /// Show what revision and author last modified each line of a file.
     Blame(commands::blame::Args),
     /// Apply a patch to files and/or to the index.
@@ -67,6 +69,9 @@ enum Command {
     /// Compute object ID and optionally create an object from a file.
     #[command(name = "hash-object")]
     HashObject(commands::hash_object::Args),
+    /// Build pack index file for an existing packed archive.
+    #[command(name = "index-pack")]
+    IndexPack(commands::index_pack::Args),
     /// Provide contents or details of repository objects.
     #[command(name = "cat-file")]
     CatFile(commands::cat_file::Args),
@@ -199,6 +204,9 @@ enum Command {
     Gc(commands::gc::Args),
     /// Search tracked files for a pattern.
     Grep(commands::grep::Args),
+    /// Create a packed archive of objects.
+    #[command(name = "pack-objects")]
+    PackObjects(commands::pack_objects::Args),
     /// Pack unpacked objects in a repository.
     Repack(commands::repack::Args),
     /// Create, list, delete refs to replace objects.
