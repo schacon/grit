@@ -2103,4 +2103,42 @@ test_expect_success 'set --bool true writes canonical true' '
 	test_cmp expect actual
 '
 
+# ── more bool/int/path edge cases ──────────────────────────────────────────
+
+test_expect_success 'set --bool false writes canonical false' '
+	cd repo &&
+	git config --bool setbool.no false &&
+	git config --get setbool.no >actual &&
+	echo "false" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'set --int writes integer value' '
+	cd repo &&
+	git config --int setint.val 2048 &&
+	git config --get setint.val >actual &&
+	echo "2048" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--int normalizes G suffix' '
+	cd repo &&
+	git config numg.val "2g" &&
+	git config --int numg.val >actual &&
+	echo "2147483648" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--bool rejects non-boolean string' '
+	cd repo &&
+	git config bad.bool "notabool" &&
+	test_must_fail git config --bool bad.bool
+'
+
+test_expect_success '--int rejects non-integer string' '
+	cd repo &&
+	git config bad.int "notanumber" &&
+	test_must_fail git config --int bad.int
+'
+
 test_done
