@@ -91,6 +91,8 @@ enum Command {
     Config(commands::config::Args),
     /// Show commit logs.
     Log(commands::log::Args),
+    /// Run maintenance tasks on the repository.
+    Maintenance(commands::maintenance::Args),
     /// Register file contents in the working tree to the index.
     #[command(name = "update-index")]
     UpdateIndex(commands::update_index::Args),
@@ -347,6 +349,7 @@ fn run() -> Result<()> {
         Command::Commit(args) => commands::commit::run(args),
         Command::Config(args) => commands::config::run(args),
         Command::Log(args) => commands::log::run(args),
+        Command::Maintenance(args) => commands::maintenance::run(args),
         Command::UpdateIndex(args) => commands::update_index::run(args),
         Command::LsFiles(args) => commands::ls_files::run(args),
         Command::LsRemote(args) => commands::ls_remote::run(args),
