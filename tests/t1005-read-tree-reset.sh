@@ -46,4 +46,29 @@ test_expect_success 'read-tree --reset -u removes stale working tree files' '
 	test_path_is_file df/file
 '
 
+
+test_expect_success 'read-tree --reset switches between trees correctly' '
+	cd repo &&
+	grit read-tree --reset -u "$(cat ../tree_one)" &&
+	grit ls-files >after_one &&
+	echo "df/file" >expect_one &&
+	test_cmp expect_one after_one &&
+	grit read-tree --reset -u "$(cat ../tree_two)" &&
+	grit ls-files >after_two &&
+	printf "df\nnew\n" >expect_two &&
+	test_cmp expect_two after_two
+'
+
+test_expect_success 'read-tree --reset without -u updates index but leaves working tree' '
+	cd repo &&
+	grit read-tree --reset -u "$(cat ../tree_two)" &&
+	test_path_is_file new &&
+	grit read-tree --reset "$(cat ../tree_one)" &&
+	grit ls-files >after_idx &&
+	echo "df/file" >expected_idx &&
+	test_cmp expected_idx after_idx &&
+	test_path_is_file new
+'
+
+
 test_done
