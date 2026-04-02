@@ -2892,4 +2892,110 @@ test_expect_success 'config value with special chars' '
 	test "$result" = "hello/world@test"
 '
 
+test_expect_success 'config unset removes key' '
+	cd repo &&
+	git config tmp.remove "gone" &&
+	git config --unset tmp.remove &&
+	test_must_fail git config --get tmp.remove
+'
+
+test_expect_success 'config --list output contains key=value format' '
+	cd repo &&
+	git config --list >output &&
+	grep "=" output
+'
+
+test_expect_success 'config --get on missing key fails' '
+	cd repo &&
+	test_must_fail git config --get nonexistent.key
+'
+
+test_expect_success 'config set subcommand creates entry' '
+	cd repo &&
+	git config set sub.cmd.key "subval" &&
+	result=$(git config get sub.cmd.key) &&
+	test "$result" = "subval"
+'
+
+test_expect_success 'config unset subcommand removes entry' '
+	cd repo &&
+	git config set sub.rm.key "removeme" &&
+	git config unset sub.rm.key &&
+	test_must_fail git config get sub.rm.key
+'
+
+test_expect_success 'config list subcommand lists all entries' '
+	cd repo &&
+	git config list >output &&
+	grep "=" output
+'
+
+test_expect_success 'config with empty value' '
+	cd repo &&
+	git config empty.key "" &&
+	result=$(git config --get empty.key) &&
+	test "$result" = ""
+'
+
+test_expect_success 'config overwrite with set subcommand' '
+	cd repo &&
+	git config set over.key "first" &&
+	git config set over.key "second" &&
+	result=$(git config get over.key) &&
+	test "$result" = "second"
+'
+
+test_expect_success 'config section with dots in subsection' '
+	cd repo &&
+	git config "branch.main/topic.remote" "origin" &&
+	result=$(git config --get "branch.main/topic.remote") &&
+	test "$result" = "origin"
+'
+
+test_expect_success 'config --local flag works in repo' '
+	cd repo &&
+	git config --local local.key "localval" &&
+	result=$(git config --get local.key) &&
+	test "$result" = "localval"
+'
+
+test_expect_success 'config value with equals sign preserved' '
+	cd repo &&
+	git config eq.key "a=b=c" &&
+	result=$(git config --get eq.key) &&
+	test "$result" = "a=b=c"
+'
+
+test_expect_success 'config value with leading spaces preserved' '
+	cd repo &&
+	git config space.key "  leading" &&
+	result=$(git config --get space.key) &&
+	test "$result" = "  leading"
+'
+
+test_expect_success 'config multiple keys in same section' '
+	cd repo &&
+	git config multi.a "1" &&
+	git config multi.b "2" &&
+	git config multi.c "3" &&
+	test "$(git config --get multi.a)" = "1" &&
+	test "$(git config --get multi.b)" = "2" &&
+	test "$(git config --get multi.c)" = "3"
+'
+
+test_expect_success 'config list contains recently set keys' '
+	cd repo &&
+	git config list >output &&
+	grep "multi.a=1" output &&
+	grep "multi.b=2" output &&
+	grep "multi.c=3" output
+'
+
+test_expect_success 'config value with hash sign preserved' '
+	cd repo &&
+	git config hash.key "val#with#hash" &&
+	result=$(git config --get hash.key) &&
+	test "$result" = "val#with#hash"
+'
+
 test_done
