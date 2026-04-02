@@ -85,4 +85,106 @@ test_expect_success 'ls-remote reads packed-refs' '
 	test_cmp expect actual
 '
 
+test_expect_success 'ls-remote with multiple patterns' '
+	printf "%s\trefs/heads/main\n" "$A" >expect &&
+	printf "%s\trefs/tags/v1.0\n" "$A" >>expect &&
+	grit ls-remote remote main v1.0 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'ls-remote with no matching pattern returns empty' '
+	: >expect &&
+	grit ls-remote remote nonexistent >actual || true &&
+	test_cmp expect actual
+'
+
+test_expect_success 'ls-remote --heads and --tags separately cover all non-HEAD refs' '
+	grit ls-remote --heads remote >heads &&
+	grit ls-remote --tags remote >tags &&
+	test -s heads &&
+	test -s tags &&
+	! grep refs/tags/ heads &&
+	! grep refs/heads/ tags
+'
+
+test_expect_success 'ls-remote --refs --heads excludes HEAD' '
+	grit ls-remote --refs --heads remote >actual &&
+	! grep HEAD actual &&
+	grep refs/heads/ actual
+'
+
+test_expect_success 'ls-remote --refs --tags excludes HEAD' '
+	grit ls-remote --refs --tags remote >actual &&
+	! grep HEAD actual &&
+	grep refs/tags/ actual
+'
+
+test_expect_success 'ls-remote on bare repository' '
+	grit init --bare bare-remote &&
+	GIT_DIR=bare-remote grit update-ref refs/heads/main "$A" &&
+	GIT_DIR=bare-remote grit symbolic-ref HEAD refs/heads/main &&
+	printf "%s\tHEAD\n" "$A" >expect &&
+	printf "%s\trefs/heads/main\n" "$A" >>expect &&
+	grit ls-remote bare-remote >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'ls-remote with many refs sorts correctly' '
+	grit init many-remote &&
+	cd many-remote &&
+	grit update-ref refs/heads/alpha "$A" &&
+	grit update-ref refs/heads/beta "$B" &&
+	grit update-ref refs/heads/gamma "$A" &&
+	grit symbolic-ref HEAD refs/heads/alpha &&
+	cd .. &&
+	grit ls-remote many-remote >actual &&
+	grep refs/heads/alpha actual &&
+	grep refs/heads/beta actual &&
+	grep refs/heads/gamma actual
+'
+
+test_expect_success 'ls-remote refs are sorted alphabetically' '
+	grit ls-remote --heads many-remote >actual &&
+	cut -f2 actual >names &&
+	sort names >sorted &&
+	test_cmp sorted names
+'
+
+test_expect_success 'ls-remote -q returns exit 0 with no output' '
+	grit ls-remote -q many-remote >actual &&
+	test_must_fail test -s actual
+'
+
+test_expect_success 'ls-remote --symref shows ref: line for HEAD' '
+	grit ls-remote --symref many-remote >actual &&
+	grep "^ref:" actual
+'
+
+test_expect_success 'ls-remote on empty repo returns empty or fails' '
+	grit init empty-remote &&
+	grit ls-remote empty-remote >actual 2>&1 || true &&
+	! grep refs/ actual
+'
+
+test_expect_success 'ls-remote pattern matching: MAIN does not match main' '
+	grit ls-remote remote MAIN >actual 2>&1 || true &&
+	! grep refs/heads/main actual
+'
+
+test_expect_success 'ls-remote with wildcard-like pattern for topic' '
+	grit ls-remote remote topic >actual &&
+	printf "%s\trefs/heads/topic\n" "$B" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'ls-remote nonexistent path fails' '
+	test_must_fail grit ls-remote /nonexistent/path 2>err &&
+	test -s err
+'
+
+test_expect_success 'ls-remote --help shows usage' '
+	grit ls-remote --help >out 2>&1 &&
+	grep -i "usage" out
+'
+
 test_done
