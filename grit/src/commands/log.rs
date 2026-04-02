@@ -16,10 +16,9 @@ use std::io::{self, Write};
 
 /// Arguments for `grit log`.
 #[derive(Debug, ClapArgs)]
-#[command(about = "Show commit logs", trailing_var_arg = true)]
+#[command(about = "Show commit logs")]
 pub struct Args {
     /// Revisions and pathspecs (separated by --).
-    #[arg(allow_hyphen_values = true)]
     pub revisions: Vec<String>,
 
     /// Limit the number of commits to show.
