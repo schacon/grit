@@ -359,4 +359,93 @@ test_expect_success 'conflict at EOF without LF resolved by --union' '
 	test_cmp expect.txt output.txt
 '
 
+# ---- more merge-file tests ----
+
+test_expect_success 'merge-file -p sends to stdout, does not modify input' '
+	cp new1.txt input.txt &&
+	md5before=$(md5sum input.txt | cut -d" " -f1) &&
+	git merge-file -p input.txt orig.txt new2.txt >stdout.txt &&
+	md5after=$(md5sum input.txt | cut -d" " -f1) &&
+	test "$md5before" = "$md5after"
+'
+
+test_expect_success 'merge with all three labels via -L' '
+	cp backup.txt test.txt &&
+	test_must_fail git merge-file -L ours -L base -L theirs test.txt orig.txt new3.txt &&
+	grep "<<<<<<< ours" test.txt &&
+	grep ">>>>>>> theirs" test.txt
+'
+
+test_expect_success 'merge with only two -L labels' '
+	cp backup.txt test.txt &&
+	test_must_fail git merge-file -L mine -L ancestor test.txt orig.txt new3.txt &&
+	grep "<<<<<<< mine" test.txt &&
+	grep ">>>>>>> new3.txt" test.txt
+'
+
+test_expect_success 'merge-file --quiet suppresses conflict warnings' '
+	cp backup.txt test.txt &&
+	test_must_fail git merge-file --quiet test.txt orig.txt new3.txt 2>stderr &&
+	test_must_be_empty stderr
+'
+
+test_expect_success 'merge with identical our and their produces clean result' '
+	cp new1.txt ident1.txt &&
+	cp new1.txt ident2.txt &&
+	git merge-file -p ident1.txt orig.txt ident2.txt >out &&
+	test_cmp new1.txt out
+'
+
+test_expect_success 'merge-file with --diff3 shows base marker' '
+	printf "A\nB\nC\n" >d3base.txt &&
+	printf "A\nX\nC\n" >d3ours.txt &&
+	printf "A\nY\nC\n" >d3theirs.txt &&
+	test_must_fail git merge-file --diff3 -p d3ours.txt d3base.txt d3theirs.txt >d3out &&
+	grep "|||||||" d3out
+'
+
+test_expect_success 'merge-file exit code is number of conflicts' '
+	cp backup.txt test.txt &&
+	test_expect_code 1 git merge-file test.txt orig.txt new3.txt
+'
+
+test_expect_success 'merge-file clean merge returns 0' '
+	cp new1.txt clean1.txt &&
+	git merge-file clean1.txt orig.txt new2.txt &&
+	test $? -eq 0
+'
+
+test_expect_success 'merge-file --zdiff3 is accepted' '
+	printf "A\nB\nC\n" >zd3base.txt &&
+	printf "A\nX\nC\n" >zd3ours.txt &&
+	printf "A\nY\nC\n" >zd3theirs.txt &&
+	test_must_fail git merge-file --zdiff3 -p zd3ours.txt zd3base.txt zd3theirs.txt >zd3out &&
+	grep "<<<<<<< zd3ours.txt" zd3out
+'
+
+test_expect_success 'merge-file -p with no conflict does not modify file' '
+	cp orig.txt nomod.txt &&
+	git merge-file -p nomod.txt orig.txt orig.txt >out2 &&
+	test_cmp orig.txt nomod.txt
+'
+
+test_expect_success 'merge-file with all three -L labels in --diff3' '
+	printf "A\nB\nC\n" >lb.txt &&
+	printf "A\nX\nC\n" >lo.txt &&
+	printf "A\nY\nC\n" >lt.txt &&
+	test_must_fail git merge-file --diff3 -p \
+		-L OURS -L BASE -L THEIRS lo.txt lb.txt lt.txt >lout &&
+	grep "<<<<<<< OURS" lout &&
+	grep "||||||| BASE" lout &&
+	grep ">>>>>>> THEIRS" lout
+'
+
+test_expect_success 'merge-file only-add on both sides (no conflict)' '
+	printf "line1\nline2\n" >add_base.txt &&
+	printf "line1\nline2\nline3\n" >add_ours.txt &&
+	printf "line1\nline2\n" >add_theirs.txt &&
+	git merge-file -p add_ours.txt add_base.txt add_theirs.txt >add_out &&
+	grep "line3" add_out
+'
+
 test_done

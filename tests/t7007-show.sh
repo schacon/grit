@@ -292,4 +292,140 @@ test_expect_success 'show --format=%ad shows author date' '
 	grep "2001" first
 '
 
+# ---- Batch: more show format and object tests ----
+
+test_expect_success 'show --format=%cd shows committer date' '
+	cd repo &&
+	git show --format="format:%cd" >actual &&
+	head -1 actual >first &&
+	grep "2001" first
+'
+
+test_expect_success 'show --format with multiple placeholders' '
+	cd repo &&
+	git show --format="format:%h %s" >actual &&
+	head -1 actual >first &&
+	HASH=$(git rev-parse --short HEAD) &&
+	echo "$HASH second commit" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show -U0 produces diff with zero context' '
+	cd repo &&
+	git show -U0 HEAD >actual &&
+	grep "^diff --git" actual &&
+	grep "^+second" actual
+'
+
+test_expect_success 'show tree by HEAD^{tree} syntax' '
+	cd repo &&
+	git show HEAD^{tree} >actual &&
+	grep "file.txt" actual
+'
+
+test_expect_success 'show annotated tag with --oneline is concise' '
+	cd repo &&
+	git show --oneline v1.0 >actual &&
+	grep "v1.0" actual
+'
+
+test_expect_success 'show --format=%s on first commit' '
+	cd repo &&
+	FIRST=$(git log --format="%H" | tail -1) &&
+	git show --format="format:%s" "$FIRST" >actual &&
+	head -1 actual >first &&
+	echo "first commit" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show --quiet on blob still shows content' '
+	cd repo &&
+	BLOB=$(git rev-parse HEAD:file.txt) &&
+	git show --quiet "$BLOB" >actual &&
+	grep "first" actual
+'
+
+test_expect_success 'show --format=%H on first commit matches rev-parse' '
+	cd repo &&
+	FIRST=$(git rev-parse HEAD~1) &&
+	git show --format="format:%H" "$FIRST" >actual &&
+	head -1 actual >first &&
+	echo "$FIRST" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show tag by hash shows tag info' '
+	cd repo &&
+	TAGHASH=$(git rev-parse v1.0) &&
+	git show "$TAGHASH" >actual &&
+	grep "tag v1.0" actual
+'
+
+test_expect_success 'show --oneline on first commit' '
+	cd repo &&
+	FIRST=$(git log --format="%H" | tail -1) &&
+	SHORT=$(git rev-parse --short "$FIRST") &&
+	git show --oneline "$FIRST" >actual &&
+	head -1 actual >first_line &&
+	grep "$SHORT" first_line &&
+	grep "first commit" first_line
+'
+
+test_expect_success 'show diff includes index line' '
+	cd repo &&
+	git show HEAD >actual &&
+	grep "^index " actual
+'
+
+test_expect_success 'show --format=%s with annotated tag shows tag subject' '
+	cd repo &&
+	git show --format="format:%s" v1.0 >actual &&
+	grep "version 1.0" actual
+'
+
+test_expect_success 'show --format=oneline produces one-line output' '
+	cd repo &&
+	git show --format=oneline HEAD >actual &&
+	head -1 actual >first_line &&
+	grep "second commit" first_line
+'
+
+test_expect_success 'show HEAD:file.txt shows file content directly' '
+	cd repo &&
+	git show HEAD:file.txt >actual &&
+	grep "first" actual &&
+	grep "second" actual
+'
+
+test_expect_success 'show HEAD~1 shows diff for first commit' '
+	cd repo &&
+	git show HEAD~1 >actual &&
+	grep "first commit" actual &&
+	grep "^diff --git" actual
+'
+
+test_expect_success 'show multiple format placeholders %an <%ae>' '
+	cd repo &&
+	git show --format="format:%an <%ae>" >actual &&
+	head -1 actual >first &&
+	echo "Test User <test@test.com>" >expected &&
+	test_cmp expected first
+'
+
+test_expect_success 'show --quiet --format=%H shows only hash' '
+	cd repo &&
+	HASH=$(git rev-parse HEAD) &&
+	git show --quiet --format="format:%H" >actual &&
+	echo "$HASH" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'show with explicit commit hash' '
+	cd repo &&
+	HASH=$(git rev-parse HEAD) &&
+	git show "$HASH" >actual &&
+	grep "second commit" actual &&
+	grep "^diff --git" actual
+'
+
 test_done

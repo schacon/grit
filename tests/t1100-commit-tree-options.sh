@@ -155,4 +155,38 @@ test_expect_success 'commit-tree root commit has no parent' '
 	! grep "^parent" root-commit
 '
 
+# ---- more commit-tree tests ----
+
+test_expect_success 'commit-tree with empty message via -m' '
+	cd repo &&
+	test_tick &&
+	git commit-tree -m "" $(cat treeid) >emptyid &&
+	git cat-file commit $(cat emptyid) >empty-commit &&
+	git cat-file -t $(cat emptyid) >type &&
+	echo commit >expect-type &&
+	test_cmp expect-type type
+'
+
+test_expect_success 'commit-tree with multi-line message' '
+	cd repo &&
+	test_tick &&
+	printf "line one\nline two\n" >multi-msg &&
+	git commit-tree -F multi-msg $(cat treeid) >multiid &&
+	git cat-file commit $(cat multiid) >multi-commit &&
+	grep "line one" multi-commit &&
+	grep "line two" multi-commit
+'
+
+test_expect_success 'commit-tree with three parents' '
+	cd repo &&
+	test_tick &&
+	echo "p1" | git commit-tree $(cat treeid) >pp1 &&
+	echo "p2" | git commit-tree $(cat treeid) >pp2 &&
+	echo "p3" | git commit-tree $(cat treeid) >pp3 &&
+	echo "octopus" | git commit-tree $(cat treeid) \
+		-p $(cat pp1) -p $(cat pp2) -p $(cat pp3) >octid &&
+	git cat-file commit $(cat octid) >oct-commit &&
+	test $(grep -c "^parent" oct-commit) = 3
+'
+
 test_done

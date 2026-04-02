@@ -147,4 +147,116 @@ test_expect_success 'patch-id unstable: file order is relevant' '
 	! test_cmp pid1u.id pid2u.id
 '
 
+# ---- more patch-id tests ----
+
+test_expect_success 'patch-id --verbatim is accepted' '
+	cd repo &&
+	git show HEAD >show.out &&
+	git patch-id --verbatim <show.out >out.verbatim &&
+	grep "^$OID_REGEX $OID_REGEX$" out.verbatim
+'
+
+test_expect_success 'patch-id --verbatim implies stable (file order irrelevant)' '
+	git patch-id --verbatim <foo-then-bar.diff >vpid1.out &&
+	git patch-id --verbatim <bar-then-foo.diff >vpid2.out &&
+	sed "s/ .*//" vpid1.out >vpid1.id &&
+	sed "s/ .*//" vpid2.out >vpid2.id &&
+	test_cmp vpid1.id vpid2.id
+'
+
+test_expect_success 'patch-id with whitespace-only change (verbatim vs default)' '
+	cat >ws1.diff <<-\EOF &&
+	commit cccccccccccccccccccccccccccccccccccccccc
+	diff --git a/file b/file
+	index e69de29..1234567 100644
+	--- a/file
+	+++ b/file
+	@@ -0,0 +1 @@
+	+hello world
+	EOF
+	cat >ws2.diff <<-\EOF &&
+	commit cccccccccccccccccccccccccccccccccccccccc
+	diff --git a/file b/file
+	index e69de29..1234567 100644
+	--- a/file
+	+++ b/file
+	@@ -0,0 +1 @@
+	+hello  world
+	EOF
+	git patch-id <ws1.diff >ws1.out &&
+	git patch-id <ws2.diff >ws2.out &&
+	sed "s/ .*//" ws1.out >ws1.id &&
+	sed "s/ .*//" ws2.out >ws2.id &&
+	test_cmp ws1.id ws2.id
+'
+
+test_expect_success 'patch-id --verbatim distinguishes whitespace changes' '
+	git patch-id --verbatim <ws1.diff >ws1v.out &&
+	git patch-id --verbatim <ws2.diff >ws2v.out &&
+	sed "s/ .*//" ws1v.out >ws1v.id &&
+	sed "s/ .*//" ws2v.out >ws2v.id &&
+	! test_cmp ws1v.id ws2v.id
+'
+
+test_expect_success 'patch-id with empty diff produces no output' '
+	cat >empty.diff <<-\EOF &&
+	commit dddddddddddddddddddddddddddddddddddddddd
+	EOF
+	git patch-id <empty.diff >empty.out &&
+	test_must_be_empty empty.out
+'
+
+test_expect_success 'patch-id with multiple hunks in one file' '
+	cat >multi.diff <<-\EOF &&
+	commit eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+	diff --git a/file b/file
+	index 1234567..abcdefg 100644
+	--- a/file
+	+++ b/file
+	@@ -1,3 +1,4 @@
+	 line1
+	+added1
+	 line2
+	 line3
+	@@ -10,3 +11,4 @@
+	 line10
+	+added2
+	 line11
+	 line12
+	EOF
+	git patch-id <multi.diff >multi.out &&
+	grep "^$OID_REGEX $OID_REGEX$" multi.out
+'
+
+test_expect_success 'patch-id stable: same diff same id regardless of run' '
+	cd repo &&
+	git show HEAD >run1.out &&
+	git patch-id --stable <run1.out >pid_run1 &&
+	git show HEAD >run2.out &&
+	git patch-id --stable <run2.out >pid_run2 &&
+	sed "s/ .*//" pid_run1 >id1 &&
+	sed "s/ .*//" pid_run2 >id2 &&
+	test_cmp id1 id2
+'
+
+test_expect_success 'patch-id with rename diff produces output' '
+	cat >rename.diff <<-\EOF &&
+	commit ffffffffffffffffffffffffffffffffffffffff
+	diff --git a/old b/new
+	similarity index 100%
+	rename from old
+	rename to new
+	EOF
+	git patch-id <rename.diff >rename.out &&
+	grep "^$OID_REGEX $OID_REGEX$" rename.out
+'
+
+test_expect_success 'patch-id default is same as --stable' '
+	cd repo &&
+	git show HEAD >def.out &&
+	git patch-id <def.out >pid_def &&
+	git patch-id --stable <def.out >pid_stable &&
+	test_cmp pid_def pid_stable
+'
+
 test_done

@@ -169,4 +169,23 @@ test_expect_success 'teardown repository' '
 	teardown_repo
 '
 
+# ---- more hash-object tests ----
+
+test_expect_success 'hash-object -t blob is accepted' '
+	echo_without_newline "Hello World" >hblob &&
+	grit hash-object -t blob hblob >actual &&
+	echo "$hello_oid" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'hash-object with --no-filters is rejected (unsupported)' '
+	test_must_fail grit hash-object --no-filters hello 2>err &&
+	grep -qi "no-filters\|unexpected" err
+'
+
+test_expect_success 'hash-object computes correct sha for known content' '
+	echo_without_newline "This is an example" >ex2 &&
+	test "$example_oid" = "$(grit hash-object ex2)"
+'
+
 test_done

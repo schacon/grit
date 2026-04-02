@@ -97,4 +97,96 @@ test_expect_success 'output ends with a newline' '
 	tail -c1 actual | od -An -tx1 | grep -q 0a
 '
 
+# ---- more fmt-merge-msg tests ----
+
+test_expect_success '--into-name appends into <branch>' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --into-name develop >actual &&
+	grep -q "into develop" actual
+'
+
+test_expect_success '--log is accepted (compat flag)' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --log >actual &&
+	grep -q "branch '"'"'feature'"'"'" actual
+'
+
+test_expect_success '--log with count is accepted' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --log=5 >actual &&
+	grep -q "branch '"'"'feature'"'"'" actual
+'
+
+test_expect_success '--no-log is accepted' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg --no-log >actual &&
+	grep -q "branch '"'"'feature'"'"'" actual
+'
+
+test_expect_success 'multiple tags uses plural form' '
+	printf "a1\t\ttag '"'"'v1.0'"'"'\nb2\t\ttag '"'"'v2.0'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "tags" actual
+'
+
+test_expect_success 'mixed branch and tag entries' '
+	printf "a1\t\tbranch '"'"'feat'"'"'\nb2\t\ttag '"'"'v1.0'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branch" actual &&
+	grep -q "tag" actual
+'
+
+test_expect_success '--into-name with remote branch' '
+	printf "abc123\t\tbranch '"'"'main'"'"' of https://example.com/repo\n" |
+	git fmt-merge-msg --into-name release >actual &&
+	grep -q "into release" actual &&
+	grep -q "of https://example.com/repo" actual
+'
+
+test_expect_success 'three branches uses branches plural' '
+	printf "a1\t\tbranch '"'"'a'"'"'\nb2\t\tbranch '"'"'b'"'"'\nc3\t\tbranch '"'"'c'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branches" actual
+'
+
+test_expect_success '-F with /dev/stdin works like pipe' '
+	printf "abc123\t\tbranch '"'"'dev'"'"'\n" >fminput &&
+	git fmt-merge-msg -F fminput >actual &&
+	grep -q "branch '"'"'dev'"'"'" actual
+'
+
+test_expect_success 'single remote tag includes URL' '
+	printf "abc123\t\ttag '"'"'v1.0'"'"' of https://example.com/repo\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "tag" actual &&
+	grep -q "of https://example.com/repo" actual
+'
+
+test_expect_success '-m with --into-name combines both' '
+	printf "abc123\t\tbranch '"'"'feature'"'"'\n" |
+	git fmt-merge-msg -m "Custom merge" --into-name main >actual &&
+	grep -q "Custom merge" actual
+'
+
+test_expect_success 'single branch without remote is just Merge branch' '
+	printf "abc123\t\tbranch '"'"'bugfix'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	echo "Merge branch '"'"'bugfix'"'"'" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'multiple remote branches from same remote' '
+	printf "a1\t\tbranch '"'"'a'"'"' of https://example.com\nb2\t\tbranch '"'"'b'"'"' of https://example.com\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branches" actual &&
+	grep -q "of https://example.com" actual
+'
+
+test_expect_success '--into-name alone without -m works' '
+	printf "abc123\t\tbranch '"'"'feat'"'"'\n" |
+	git fmt-merge-msg --into-name develop >actual &&
+	grep -q "into develop" actual &&
+	grep -q "branch '"'"'feat'"'"'" actual
+'
+
 test_done
