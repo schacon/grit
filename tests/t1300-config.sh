@@ -2393,4 +2393,57 @@ test_expect_success 'section with numbers in name' '
 	test_cmp expect actual
 '
 
+# ── more edge cases ─────────────────────────────────────────────────────
+
+test_expect_success 'key with hyphen in name' '
+	cd repo &&
+	git config my-section.my-key "hyphen-val" &&
+	git config --get my-section.my-key >actual &&
+	echo "hyphen-val" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'very long value preserved' '
+	cd repo &&
+	long_val=$(printf "a%.0s" $(seq 1 500)) &&
+	git config long.val "$long_val" &&
+	git config --get long.val >actual &&
+	echo "$long_val" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'multiple sections interleaved preserves order' '
+	cd repo &&
+	cat >>.git/config <<-\EOF &&
+	[order]
+		first = 1
+	[other]
+		middle = m
+	[order]
+		second = 2
+	EOF
+	git config --get-all order.first >actual_f &&
+	git config --get-all order.second >actual_s &&
+	echo "1" >expect_f &&
+	echo "2" >expect_s &&
+	test_cmp expect_f actual_f &&
+	test_cmp expect_s actual_s
+'
+
+test_expect_success '--replace-all with single value replaces it' '
+	cd repo &&
+	git config ra.single "old" &&
+	git config --replace-all ra.single "new" &&
+	git config --get ra.single >actual &&
+	echo "new" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'get --default with empty string' '
+	cd repo &&
+	git config get --default "" missing.def >actual &&
+	echo "" >expect &&
+	test_cmp expect actual
+'
+
 test_done
