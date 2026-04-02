@@ -17,6 +17,7 @@ time = { version = "0.3", features = ["formatting", "parsing"] }
 hex = "0.4"
 tempfile = "3"
 similar = "2"
+regex = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
