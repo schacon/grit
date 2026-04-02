@@ -665,9 +665,8 @@ fn do_abort() -> Result<()> {
         let head_name = fs::read_to_string(state_dir.join("head-name"))
             .unwrap_or_default();
         let head_name = head_name.trim();
-        if head_name.starts_with("ref: ") {
+        if let Some(refname) = head_name.strip_prefix("ref: ") {
             // Was on a branch — restore the ref
-            let refname = &head_name["ref: ".len()..];
             fs::write(git_dir.join("HEAD"), format!("{}\n", head_name))?;
             let ref_path = git_dir.join(refname);
             if let Some(parent) = ref_path.parent() {
@@ -1072,22 +1071,22 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 && !lines[i].starts_with("@@ ")
             {
                 let line = lines[i];
-                if line.starts_with("old mode ") {
-                    fp.old_mode = Some(line["old mode ".len()..].to_string());
-                } else if line.starts_with("new mode ") {
-                    fp.new_mode = Some(line["new mode ".len()..].to_string());
-                } else if line.starts_with("new file mode ") {
+                if let Some(val) = line.strip_prefix("old mode ") {
+                    fp.old_mode = Some(val.to_string());
+                } else if let Some(val) = line.strip_prefix("new mode ") {
+                    fp.new_mode = Some(val.to_string());
+                } else if let Some(val) = line.strip_prefix("new file mode ") {
                     fp.is_new = true;
-                    fp.new_mode = Some(line["new file mode ".len()..].to_string());
-                } else if line.starts_with("deleted file mode ") {
+                    fp.new_mode = Some(val.to_string());
+                } else if let Some(val) = line.strip_prefix("deleted file mode ") {
                     fp.is_deleted = true;
-                    fp.old_mode = Some(line["deleted file mode ".len()..].to_string());
-                } else if line.starts_with("rename from ") {
+                    fp.old_mode = Some(val.to_string());
+                } else if let Some(val) = line.strip_prefix("rename from ") {
                     fp.is_rename = true;
-                    fp.old_path = Some(line["rename from ".len()..].to_string());
-                } else if line.starts_with("rename to ") {
+                    fp.old_path = Some(val.to_string());
+                } else if let Some(val) = line.strip_prefix("rename to ") {
                     fp.is_rename = true;
-                    fp.new_path = Some(line["rename to ".len()..].to_string());
+                    fp.new_path = Some(val.to_string());
                 }
                 i += 1;
             }
@@ -1130,8 +1129,7 @@ fn split_diff_git_paths(s: &str) -> Option<(String, String)> {
             return Some((strip_ab_prefix(a), "/dev/null".to_string()));
         }
     }
-    if s.starts_with("/dev/null ") {
-        let b = &s["/dev/null ".len()..];
+    if let Some(b) = s.strip_prefix("/dev/null ") {
         return Some(("/dev/null".to_string(), strip_ab_prefix(b)));
     }
     None
@@ -1181,13 +1179,14 @@ fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
         if line.starts_with("@@ ") || line.starts_with("diff --git ") {
             break;
         }
-        if line.starts_with('+') {
-            hunk.lines.push(HunkLine::Add(line[1..].to_string()));
-        } else if line.starts_with('-') {
-            hunk.lines.push(HunkLine::Remove(line[1..].to_string()));
-        } else if line.starts_with(' ') || line.is_empty() {
-            let content = if line.is_empty() { "" } else { &line[1..] };
-            hunk.lines.push(HunkLine::Context(content.to_string()));
+        if let Some(rest) = line.strip_prefix('+') {
+            hunk.lines.push(HunkLine::Add(rest.to_string()));
+        } else if let Some(rest) = line.strip_prefix('-') {
+            hunk.lines.push(HunkLine::Remove(rest.to_string()));
+        } else if line.is_empty() {
+            hunk.lines.push(HunkLine::Context(String::new()));
+        } else if let Some(rest) = line.strip_prefix(' ') {
+            hunk.lines.push(HunkLine::Context(rest.to_string()));
         } else if line.starts_with('\\') {
             hunk.lines.push(HunkLine::NoNewline);
         } else {
