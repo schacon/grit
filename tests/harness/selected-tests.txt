@@ -85,3 +85,7 @@ t7501-commit-basic.sh
 t7508-status.sh
 t7700-repack.sh
 test-lib.sh
+t2050-checkout.sh
+t3510-cherry-pick.sh
+t4050-diff.sh
+t5100-count-objects.sh
