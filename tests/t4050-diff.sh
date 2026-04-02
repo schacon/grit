@@ -1350,4 +1350,109 @@ test_expect_success 'diff --name-status shows M for modified file' '
 	grep "^M.*a.txt" output
 '
 
+test_expect_success 'diff --stat output includes insertions or deletions' '
+	cd diff-empty &&
+	git diff --stat HEAD~1 HEAD >output &&
+	grep "+\|-" output
+'
+
+test_expect_success 'diff --numstat shows numeric stats' '
+	cd diff-empty &&
+	git diff --numstat HEAD~1 HEAD >output &&
+	test $(wc -l <output) -ge 1 &&
+	awk "{print \$1}" output | grep -q "[0-9]"
+'
+
+test_expect_success 'diff --name-only with two commits shows changed files' '
+	cd diff-empty &&
+	git diff --name-only HEAD~1 HEAD >output &&
+	grep "a.txt" output
+'
+
+test_expect_success 'diff --unified=0 shows no context lines' '
+	cd diff-empty &&
+	git diff --unified=0 HEAD~1 HEAD >output &&
+	! grep "^@@.*,.*@@" output | grep -v ",0\|,1"
+'
+
+test_expect_success 'diff --cached shows staged changes' '
+	cd diff-empty &&
+	echo staged-line >>a.txt &&
+	git add a.txt &&
+	git diff --cached >output &&
+	grep "+staged-line" output &&
+	git reset HEAD a.txt 2>/dev/null &&
+	git checkout -- a.txt 2>/dev/null
+'
+
+test_expect_success 'diff --cached with no staged changes is empty' '
+	cd diff-empty &&
+	git diff --cached >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --name-status shows A for added file' '
+	cd diff-empty &&
+	echo brandnew >new_file_ns.txt &&
+	git add new_file_ns.txt && git commit -m add-new 2>/dev/null &&
+	git diff --name-status HEAD~1 HEAD >output &&
+	grep "^A.*new_file_ns.txt" output
+'
+
+test_expect_success 'diff --name-status shows D for deleted file' '
+	cd diff-empty &&
+	git rm new_file_ns.txt 2>/dev/null && git commit -m del-new 2>/dev/null &&
+	git diff --name-status HEAD~1 HEAD >output &&
+	grep "^D.*new_file_ns.txt" output
+'
+
+test_expect_success 'diff -U5 shows 5 context lines' '
+	cd diff-empty &&
+	for i in 1 2 3 4 5 6 7 8 9 10; do echo line$i; done >ctx.txt &&
+	git add ctx.txt && git commit -m ctx 2>/dev/null &&
+	sed -i "s/line5/LINE5/" ctx.txt &&
+	git add ctx.txt && git commit -m ctx2 2>/dev/null &&
+	git diff -U5 HEAD~1 HEAD >output &&
+	grep "^-line5" output &&
+	grep "^+LINE5" output
+'
+
+test_expect_success 'diff between same commit produces empty output' '
+	cd diff-empty &&
+	git diff HEAD HEAD >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --numstat format is tab-separated numbers' '
+	cd diff-empty &&
+	git diff --numstat HEAD~1 HEAD >output &&
+	awk -F"\t" "{if(NF<3) exit 1}" output
+'
+
+test_expect_success 'diff --stat width respects file names' '
+	cd diff-empty &&
+	git diff --stat HEAD~1 HEAD >output &&
+	grep "ctx.txt" output
+'
+
+test_expect_success 'diff with path limiter restricts output' '
+	cd diff-empty &&
+	echo extra >extra.txt &&
+	git add extra.txt && git commit -m extra 2>/dev/null &&
+	git diff --name-only HEAD~1 HEAD -- extra.txt >output &&
+	test $(wc -l <output) -eq 1 &&
+	grep "extra.txt" output
+'
+
+test_expect_success 'diff --name-only with -- path separator works' '
+	cd diff-empty &&
+	git diff --name-only HEAD~1 HEAD -- ctx.txt >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --quiet with --cached exits 0 when nothing staged' '
+	cd diff-empty &&
+	git diff --quiet --cached
+'
+
 test_done
