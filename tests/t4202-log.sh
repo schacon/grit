@@ -902,4 +902,345 @@ test_expect_success 'pretty=oneline works' '
 	test "$(wc -l <actual)" = 1
 '
 
+# ── graph with merge ──────────────────────────────────────────────────────
+
+test_expect_success 'log --graph shows merge commit' '
+	cd repo &&
+	merge=$(git rev-parse body-commit~1) &&
+	git log --graph --oneline --no-decorate -n 1 "$merge" >actual &&
+	grep "Merge branch side" actual
+'
+
+test_expect_success 'log --graph --format=%s lists all commits' '
+	cd repo &&
+	git log --graph --format="%s" >actual &&
+	grep "initial" actual &&
+	grep "Merge branch side" actual
+'
+
+test_expect_success 'log --graph --first-parent shows only mainline' '
+	cd repo &&
+	git log --graph --first-parent --format="%s" >actual &&
+	! grep "side-1" actual &&
+	! grep "side-2" actual &&
+	grep "Merge branch side" actual
+'
+
+# ── rev-list ordering modes ───────────────────────────────────────────────
+
+test_expect_success 'rev-list --topo-order' '
+	cd repo &&
+	git rev-list --topo-order HEAD >actual &&
+	test_line_count = $(git rev-list HEAD | wc -l) actual
+'
+
+test_expect_success 'rev-list --date-order' '
+	cd repo &&
+	git rev-list --date-order HEAD >actual &&
+	test_line_count = $(git rev-list HEAD | wc -l) actual
+'
+
+test_expect_success 'rev-list --parents shows parent hashes' '
+	cd repo &&
+	merge=$(git rev-parse body-commit~1) &&
+	git rev-list --parents "$merge" >actual &&
+	# The merge commit line should have 3 hashes (commit + 2 parents)
+	grep "$merge" actual >merge_line &&
+	test $(wc -w <merge_line) -ge 3
+'
+
+test_expect_success 'rev-list --quiet produces no output' '
+	cd repo &&
+	git rev-list --quiet HEAD >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'rev-list --format=%s shows commit header and subject' '
+	cd repo &&
+	git rev-list --format="%s" HEAD >actual &&
+	grep "^commit " actual &&
+	grep "subject line" actual &&
+	grep "initial" actual
+'
+
+# ── rev-list --skip ───────────────────────────────────────────────────────
+
+test_expect_success 'rev-list --skip=1 skips first commit' '
+	cd repo &&
+	git rev-list HEAD >all &&
+	git rev-list --skip=1 HEAD >actual &&
+	all_count=$(wc -l <all) &&
+	skip_count=$(wc -l <actual) &&
+	test $skip_count -eq $(($all_count - 1))
+'
+
+test_expect_success 'rev-list --skip=1000 with few commits shows nothing' '
+	cd repo &&
+	git rev-list --skip=1000 HEAD >actual &&
+	test_must_be_empty actual
+'
+
+# ── decorate variations ───────────────────────────────────────────────────
+
+test_expect_success 'log --decorate=full shows ref names' '
+	cd repo &&
+	git log --oneline --decorate=full -n 1 >actual &&
+	grep "master" actual
+'
+
+test_expect_success 'log --decorate=short shows short ref names' '
+	cd repo &&
+	git log --oneline --decorate=short -n 1 >actual &&
+	grep "master" actual
+'
+
+# ── log on empty repo ─────────────────────────────────────────────────────
+
+test_expect_success 'log on empty repo produces no output' '
+	git init empty-repo &&
+	test_when_finished "rm -rf empty-repo" &&
+	git -C empty-repo log >actual 2>stderr &&
+	test_must_be_empty actual
+'
+
+# ── rev-list --all with multiple branches ─────────────────────────────────
+
+test_expect_success 'rev-list --all includes commits from all branches' '
+	cd repo &&
+	git rev-list --all >all_commits &&
+	git rev-list HEAD >head_commits &&
+	git rev-list side >side_commits &&
+	# --all should have at least as many as HEAD
+	all_count=$(wc -l <all_commits) &&
+	head_count=$(wc -l <head_commits) &&
+	test $all_count -ge $head_count
+'
+
+# ── combined format placeholders ──────────────────────────────────────────
+
+test_expect_success 'log --format with %an <%ae> shows author identity' '
+	cd repo &&
+	git log --format="%an <%ae>" -n 1 >actual &&
+	grep "<" actual &&
+	grep ">" actual
+'
+
+test_expect_success 'log --format with %cn <%ce> shows committer identity' '
+	cd repo &&
+	git log --format="%cn <%ce>" -n 1 >actual &&
+	grep "<" actual &&
+	grep ">" actual
+'
+
+test_expect_success 'log --format=%H|%s pipe-separated' '
+	cd repo &&
+	git log --format="%H|%s" -n 1 >actual &&
+	# Should be hash|subject
+	grep "^[0-9a-f]\{40\}|" actual
+'
+
+# ── rev-list --first-parent count with merge ──────────────────────────────
+
+test_expect_success 'rev-list --first-parent --count with merge' '
+	cd repo &&
+	git rev-list --first-parent --count HEAD >actual &&
+	# first-parent count should be less than total count
+	git rev-list --count HEAD >total &&
+	fp=$(cat actual) &&
+	all=$(cat total) &&
+	test $fp -le $all
+'
+
+# ── log --reverse with --format ──────────────────────────────────────────
+
+test_expect_success 'log --reverse --format=%s shows oldest first' '
+	cd repo &&
+	git log --reverse --first-parent --format="%s" >actual &&
+	head -1 actual >first &&
+	grep "initial" first
+'
+
+# ── rev-list multiple revision arguments ──────────────────────────────────
+
+test_expect_success 'rev-list with ^exclusion excludes ancestors' '
+	cd repo &&
+	git rev-list HEAD >all &&
+	parent=$(git rev-parse HEAD^) &&
+	git rev-list "^$parent" HEAD >excluded &&
+	excl_count=$(wc -l <excluded) &&
+	all_count=$(wc -l <all) &&
+	test $excl_count -lt $all_count
+'
+
+# ── format: combined tree + parent checks ─────────────────────────────────
+
+test_expect_success 'log --format=%T is consistent with cat-file' '
+	cd repo &&
+	head_hash=$(git rev-parse HEAD) &&
+	tree_from_log=$(git log -n 1 --format="format:%T") &&
+	tree_from_cat=$(git cat-file -p "$head_hash" | grep "^tree " | cut -d" " -f2) &&
+	test "$tree_from_log" = "$tree_from_cat"
+'
+
+test_expect_success 'log --format=%P is consistent with cat-file for merge' '
+	cd repo &&
+	parents_from_log=$(git log -n 1 --format="format:%P") &&
+	parents_from_cat=$(git cat-file -p HEAD | grep "^parent " | cut -d" " -f2 | tr "\n" " " | sed "s/ $//") &&
+	test "$parents_from_log" = "$parents_from_cat"
+'
+
+# ── pretty=short format details ───────────────────────────────────────────
+
+test_expect_success 'pretty=short does not show Date line' '
+	cd repo &&
+	git log --pretty=short -n 1 >actual &&
+	! grep "^Date:" actual
+'
+
+test_expect_success 'pretty=short does not show email in Author line' '
+	cd repo &&
+	git log --pretty=short -n 1 >actual &&
+	grep "Author:" actual >author_line &&
+	! grep "@" author_line
+'
+
+# ── pretty=full format details ────────────────────────────────────────────
+
+test_expect_success 'pretty=full shows both Author and Commit lines' '
+	cd repo &&
+	git log --pretty=full -n 1 >actual &&
+	grep "^Author:" actual &&
+	grep "^Commit:" actual
+'
+
+test_expect_success 'pretty=full does not show Date line' '
+	cd repo &&
+	git log --pretty=full -n 1 >actual &&
+	! grep "^Date:" actual &&
+	! grep "^AuthorDate:" actual &&
+	! grep "^CommitDate:" actual
+'
+
+# ── pretty=fuller format details ──────────────────────────────────────────
+
+test_expect_success 'pretty=fuller shows AuthorDate and CommitDate' '
+	cd repo &&
+	git log --pretty=fuller -n 1 >actual &&
+	grep "^AuthorDate:" actual &&
+	grep "^CommitDate:" actual
+'
+
+test_expect_success 'pretty=fuller shows Author and Commit with email' '
+	cd repo &&
+	git log --pretty=fuller -n 1 >actual &&
+	grep "^Author:" actual | grep "@" &&
+	grep "^Commit:" actual | grep "@"
+'
+
+# ── show command basics ───────────────────────────────────────────────────
+
+test_expect_success 'show HEAD displays commit message' '
+	cd repo &&
+	git show -q >actual &&
+	grep "subject line" actual
+'
+
+test_expect_success 'show --format=%s shows subject' '
+	cd repo &&
+	git show --format="%s" -q >actual &&
+	grep "subject line" actual
+'
+
+test_expect_success 'show --oneline shows short format' '
+	cd repo &&
+	git show --oneline -q >actual &&
+	test "$(wc -l <actual)" = 1
+'
+
+# ── rev-list --first-parent excludes side branch ──────────────────────────
+
+test_expect_success 'rev-list --first-parent skips side commits' '
+	cd repo &&
+	git rev-list --first-parent HEAD >actual &&
+	! grep "$(git rev-parse side)" actual
+'
+
+# ── log -n combined with --skip ───────────────────────────────────────────
+
+test_expect_success 'log -n 2 --skip 1 shows 2 commits after skipping 1' '
+	cd repo &&
+	git log --first-parent -n 2 --skip 1 --format="%s" >actual &&
+	test_line_count = 2 actual
+'
+
+test_expect_success 'log --skip with --reverse' '
+	cd repo &&
+	git log --first-parent --skip 1 --reverse --format="%s" >actual &&
+	# first line should NOT be the latest commit
+	head -1 actual >first &&
+	! grep "subject line" first
+'
+
+# ── rev-list --topo-order puts parent after child ─────────────────────────
+
+test_expect_success 'rev-list --topo-order merge parent appears after merge' '
+	cd repo &&
+	merge=$(git rev-parse body-commit~1) &&
+	p1=$(git cat-file -p "$merge" | grep "^parent " | head -1 | cut -d" " -f2) &&
+	git rev-list --topo-order "$merge" >actual &&
+	merge_line=$(grep -n "$merge" actual | cut -d: -f1) &&
+	p1_line=$(grep -n "$p1" actual | cut -d: -f1) &&
+	test $merge_line -lt $p1_line
+'
+
+# ── pretty format: alias 'pretty' equals 'format' ────────────────────────
+
+test_expect_success 'log --pretty=%H equals --format=%H' '
+	cd repo &&
+	git log --pretty="%H" -n 3 >pretty_out &&
+	git log --format="%H" -n 3 >format_out &&
+	test_cmp pretty_out format_out
+'
+
+# ── log format %t is 7-char prefix of %T ──────────────────────────────────
+
+test_expect_success 'log --format=%t is prefix of %T' '
+	cd repo &&
+	git log -n 1 --format="format:%T" >full &&
+	git log -n 1 --format="format:%t" >short &&
+	prefix=$(cat short) &&
+	grep "^$prefix" full
+'
+
+# ── rev-list with tag name ────────────────────────────────────────────────
+
+test_expect_success 'rev-list with tag name works like rev-parse' '
+	cd repo &&
+	git rev-list -n 1 v0.1 >actual &&
+	git rev-parse v0.1 >expected &&
+	test_cmp expected actual
+'
+
+# ── log --format with empty string ────────────────────────────────────────
+
+test_expect_success 'log --format="" produces empty lines' '
+	cd repo &&
+	git log --first-parent --format="" >actual &&
+	# Each commit produces an empty line, so file should have content
+	test -f actual
+'
+
+# ── format %h is 7-char prefix of %H ─────────────────────────────────────
+
+test_expect_success 'log --format=%h is prefix of %H for every commit' '
+	cd repo &&
+	git log --first-parent --format="%H %h" >actual &&
+	while IFS=" " read -r full short; do
+		case "$full" in
+		"$short"*) ;;
+		*) return 1 ;;
+		esac
+	done <actual
+'
+
 test_done
