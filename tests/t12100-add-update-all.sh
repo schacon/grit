@@ -5,7 +5,7 @@ cd "$(dirname "$0")" || exit 1
 
 # Helper: grit status --porcelain minus the ## branch header
 grit_status () {
-    grit status --porcelain | grep -v "^##"
+    grit status --porcelain | grep -v "^##" || true
 }
 
 test_expect_success 'setup' '

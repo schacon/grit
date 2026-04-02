@@ -4,7 +4,7 @@ cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 grit_status () {
-    grit status --porcelain | grep -v "^##"
+    grit status --porcelain | grep -v "^##" || true
 }
 
 test_expect_success 'setup' '
