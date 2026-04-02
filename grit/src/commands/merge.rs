@@ -185,6 +185,10 @@ fn do_fast_forward(
     new_index.sort();
 
     if let Some(ref wt) = repo.work_tree {
+        // Remove files that existed in old HEAD but not in new
+        let old_tree = commit_tree(repo, head_oid)?;
+        let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
+        remove_deleted_files(wt, &old_entries, &new_index)?;
         checkout_entries(repo, wt, &new_index)?;
     }
     new_index.write(&repo.index_path())?;
@@ -240,6 +244,8 @@ fn do_real_merge(
 
     // Update working tree
     if let Some(ref wt) = repo.work_tree {
+        // Remove files that were in ours but are no longer in the merged index
+        remove_deleted_files(wt, &ours_entries, &merge_result.index)?;
         checkout_entries(repo, wt, &merge_result.index)?;
         // Write conflict files to working tree
         for (path, content) in &merge_result.conflict_files {
@@ -261,6 +267,10 @@ fn do_real_merge(
         fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
         fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
 
+        // Print per-file conflict messages
+        for (ctype, cpath) in &merge_result.conflict_descriptions {
+            eprintln!("CONFLICT ({ctype}): Merge conflict in {cpath}");
+        }
         eprintln!("Automatic merge failed; fix conflicts and then commit the result.");
         // Return error to signal failure (exit code 1)
         bail!("Automatic merge failed; fix conflicts and then commit the result.");
@@ -392,6 +402,10 @@ fn do_octopus_merge(
             let msg = build_octopus_merge_message(head, &args.commits, args.message.as_deref());
             fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
             fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
+            for (ctype, cpath) in &merge_result.conflict_descriptions {
+                eprintln!("CONFLICT ({ctype}): Merge conflict in {cpath}");
+            }
+            eprintln!("Automatic merge failed; fix conflicts and then commit the result.");
             bail!("Automatic merge failed; fix conflicts and then commit the result.");
         }
 
@@ -663,6 +677,9 @@ struct MergeResult {
     has_conflicts: bool,
     /// Files with conflict markers: (path, content).
     conflict_files: Vec<(String, Vec<u8>)>,
+    /// Conflict descriptions for output: (conflict_type, path).
+    /// e.g. ("content", "file.txt") or ("modify/delete", "file.txt")
+    conflict_descriptions: Vec<(String, String)>,
 }
 
 /// Perform tree-level three-way merge.
@@ -682,6 +699,7 @@ fn merge_trees(
     let mut index = Index::new();
     let mut has_conflicts = false;
     let mut conflict_files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut conflict_descriptions: Vec<(String, String)> = Vec::new();
 
     let ours_label = head.branch_name().unwrap_or("HEAD");
 
@@ -735,20 +753,35 @@ fn merge_trees(
                         stage_entry(&mut index, be, 1);
                         stage_entry(&mut index, oe, 2);
                         stage_entry(&mut index, te, 3);
+                        conflict_descriptions.push(("content".to_string(), path_str.clone()));
                         conflict_files.push((path_str, content));
                     }
                 }
             }
-            // Delete/modify conflicts
+            // Delete/modify — conflict only if the surviving side changed
             (Some(be), None, Some(te)) => {
-                has_conflicts = true;
-                stage_entry(&mut index, be, 1);
-                stage_entry(&mut index, te, 3);
+                if be.oid == te.oid && be.mode == te.mode {
+                    // Theirs didn't change it, ours deleted → clean delete
+                } else {
+                    // Theirs modified, ours deleted → conflict
+                    let path_str = String::from_utf8_lossy(path).to_string();
+                    has_conflicts = true;
+                    stage_entry(&mut index, be, 1);
+                    stage_entry(&mut index, te, 3);
+                    conflict_descriptions.push(("modify/delete".to_string(), path_str));
+                }
             }
             (Some(be), Some(oe), None) => {
-                has_conflicts = true;
-                stage_entry(&mut index, be, 1);
-                stage_entry(&mut index, oe, 2);
+                if be.oid == oe.oid && be.mode == oe.mode {
+                    // Ours didn't change it, theirs deleted → clean delete
+                } else {
+                    // Ours modified, theirs deleted → conflict
+                    let path_str = String::from_utf8_lossy(path).to_string();
+                    has_conflicts = true;
+                    stage_entry(&mut index, be, 1);
+                    stage_entry(&mut index, oe, 2);
+                    conflict_descriptions.push(("modify/delete".to_string(), path_str));
+                }
             }
             // Both added different content — try content merge with empty base
             (None, Some(oe), Some(te)) => {
@@ -764,6 +797,7 @@ fn merge_trees(
                         has_conflicts = true;
                         stage_entry(&mut index, oe, 2);
                         stage_entry(&mut index, te, 3);
+                        conflict_descriptions.push(("add/add".to_string(), path_str.clone()));
                         conflict_files.push((path_str, content));
                     }
                 }
@@ -779,6 +813,7 @@ fn merge_trees(
         index,
         has_conflicts,
         conflict_files,
+        conflict_descriptions,
     })
 }
 
@@ -977,6 +1012,29 @@ fn update_head(git_dir: &Path, head: &HeadState, commit_oid: &ObjectId) -> Resul
         }
         HeadState::Detached { .. } | HeadState::Invalid => {
             fs::write(git_dir.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Remove files from working tree that existed before but are no longer in the merged index.
+fn remove_deleted_files(
+    work_tree: &Path,
+    old_entries: &HashMap<Vec<u8>, IndexEntry>,
+    new_index: &Index,
+) -> Result<()> {
+    let new_paths: std::collections::HashSet<&[u8]> = new_index
+        .entries
+        .iter()
+        .map(|e| e.path.as_slice())
+        .collect();
+    for path in old_entries.keys() {
+        if !new_paths.contains(path.as_slice()) {
+            let path_str = String::from_utf8_lossy(path);
+            let abs = work_tree.join(path_str.as_ref());
+            if abs.exists() {
+                let _ = fs::remove_file(&abs);
+            }
         }
     }
     Ok(())
