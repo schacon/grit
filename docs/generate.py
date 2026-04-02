@@ -587,6 +587,8 @@ def generate_html():
 <h1><span>Grit</span> — Git in Rust</h1>
 <p class="subtitle">A from-scratch reimplementation of Git in idiomatic, library-oriented Rust.
   <a href="{GITHUB_BASE}">GitHub</a> · <a href="bench.html">Benchmarks</a>
+  · <span id="gen-time" data-ts="{gen_timestamp}">{gen_time_str}</span>
+  · <a href="{GITHUB_BASE}/commit/{commit_sha}">{commit_sha_short}</a>
 </p>
 
 <div class="summary">
@@ -648,8 +650,6 @@ def generate_html():
 <footer>
   Generated from upstream <code>git/t/</code> ({total} scripts).
   Grit is a project by <a href="https://github.com/schacon">Scott Chacon</a>.
-  &middot; <span id="gen-time" data-ts="{gen_timestamp}">{gen_time_str}</span>
-  &middot; <a href="{GITHUB_BASE}/commit/{commit_sha}">{commit_sha_short}</a>
 </footer>
 
 <script>
