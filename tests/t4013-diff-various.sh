@@ -575,4 +575,93 @@ test_expect_success 'diff --quiet between same commits returns 0' '
 	git diff --quiet "$c1" "$c1"
 '
 
+# ===========================================================================
+# Part 10: diff -U context control between commits
+# ===========================================================================
+
+test_expect_success 'diff -U0 between commits shows no context lines' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff -U0 "$c1" "$c2" >actual &&
+	grep "^@@" actual &&
+	grep "^+" actual
+'
+
+test_expect_success 'diff -U1 between commits reduces context' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c2=$(cat commit2) &&
+	git diff -U1 "$c1" "$c2" >actual &&
+	grep "^@@" actual
+'
+
+# ===========================================================================
+# Part 11: diff with three commits (c1->c2->c3)
+# ===========================================================================
+
+test_expect_success 'diff --name-only across two commits shows all changed files' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c3=$(cat commit3) &&
+	git diff --name-only "$c1" "$c3" >actual &&
+	grep "file0" actual &&
+	grep "dir_sub" actual &&
+	grep "file1" actual
+'
+
+test_expect_success 'diff --name-status across two commits shows status' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c3=$(cat commit3) &&
+	git diff --name-status "$c1" "$c3" >actual &&
+	test_line_count -ge 3 actual
+'
+
+test_expect_success 'diff --stat across two commits shows summary' '
+	cd repo_dt &&
+	c1=$(cat commit1) && c3=$(cat commit3) &&
+	git diff --stat "$c1" "$c3" >actual &&
+	grep "file0" actual &&
+	grep "file1" actual
+'
+
+# ===========================================================================
+# Part 12: diff --cached with modifications
+# ===========================================================================
+
+test_expect_success 'setup repo for diff --cached modification tests' '
+	git init repo_cached2 &&
+	cd repo_cached2 &&
+	printf "original\n" >file.txt &&
+	git update-index --add file.txt &&
+	commit1=$(make_commit "first") &&
+	printf "%s\n" "$commit1" >commit1 &&
+	printf "modified\n" >file.txt &&
+	git update-index file.txt
+'
+
+test_expect_success 'diff --cached --name-only shows modified file' '
+	cd repo_cached2 &&
+	git diff --cached --name-only >out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff --cached --name-status shows M for modified file' '
+	cd repo_cached2 &&
+	git diff --cached --name-status >out &&
+	grep "^M" out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff --cached --stat shows modified file in summary' '
+	cd repo_cached2 &&
+	git diff --cached --stat >out &&
+	grep "file.txt" out &&
+	grep "changed" out
+'
+
+test_expect_success 'diff --cached --numstat shows counts for modified file' '
+	cd repo_cached2 &&
+	git diff --cached --numstat >out &&
+	grep "file.txt" out &&
+	grep "^[0-9]" out
+'
+
 test_done
