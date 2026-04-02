@@ -1,4 +1,0 @@
-tests/t7501-commit-basic.sh
-tests/t1100-commit-tree-options.sh
-tests/t7007-show.sh
-tests/t7500-commit-template-squash-signoff.sh
