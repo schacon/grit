@@ -39,6 +39,10 @@ pub struct Args {
     #[arg(long, value_name = "permissions")]
     pub shared: Option<String>,
 
+    /// Specify the ref storage format.
+    #[arg(long, value_name = "format")]
+    pub ref_format: Option<String>,
+
     /// Path to initialize (defaults to current directory).
     pub directory: Option<PathBuf>,
 }
@@ -49,7 +53,7 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
 
     // --bare and --separate-git-dir are incompatible
     if bare && args.separate_git_dir.is_some() {
-        bail!("--bare and --separate-git-dir are incompatible");
+        bail!("options '--bare' and '--separate-git-dir' cannot be used together");
     }
 
     let path = args
@@ -66,34 +70,57 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
     let abs_path = fs::canonicalize(&path)
         .unwrap_or_else(|_| path.clone());
 
-    // Determine the git directory
-    let git_dir = if bare {
+    // Determine the real git directory (where HEAD, objects, refs live)
+    let real_git_dir = if let Some(ref sep) = args.separate_git_dir {
+        // --separate-git-dir: git dir goes to the separate location
+        let sep_abs = if sep.is_absolute() {
+            sep.clone()
+        } else {
+            std::env::current_dir()?.join(sep)
+        };
+        fs::canonicalize(&sep_abs).unwrap_or(sep_abs)
+    } else if bare {
         abs_path.clone()
     } else {
         abs_path.join(".git")
     };
 
     // Check if this is a reinit
-    let is_reinit = git_dir.join("HEAD").exists();
+    let is_reinit = real_git_dir.join("HEAD").exists();
+
+    // On reinit, warn if --initial-branch is given (it's ignored)
+    if is_reinit && args.initial_branch.is_some() {
+        eprintln!("hint: ignored --initial-branch={} for existing repository",
+                  args.initial_branch.as_deref().unwrap_or(""));
+    }
 
     // Load config to get defaults (system + global + GIT_CONFIG_PARAMETERS)
-    // For init, we don't have a local config yet (or we do on reinit)
     let config = if is_reinit {
-        ConfigSet::load(Some(&git_dir), true).unwrap_or_else(|_| ConfigSet::new())
+        ConfigSet::load(Some(&real_git_dir), true).unwrap_or_else(|_| ConfigSet::new())
     } else {
         ConfigSet::load(None, true).unwrap_or_else(|_| ConfigSet::new())
     };
 
     // Determine initial branch name:
-    // 1. --initial-branch / -b flag
-    // 2. init.defaultBranch config
-    // 3. "master" as fallback
-    let initial_branch = if let Some(ref b) = args.initial_branch {
-        b.clone()
-    } else if let Some(b) = config.get("init.defaultBranch") {
-        b
+    // 1. --initial-branch / -b flag (only on fresh init)
+    // 2. GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME env (test support)
+    // 3. init.defaultBranch config
+    // 4. "master" as fallback
+    let initial_branch = if !is_reinit {
+        if let Some(ref b) = args.initial_branch {
+            b.clone()
+        } else if let Ok(b) = std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME") {
+            if !b.is_empty() { b } else {
+                config.get("init.defaultBranch").unwrap_or_else(|| "master".to_owned())
+            }
+        } else if let Some(b) = config.get("init.defaultBranch") {
+            b
+        } else {
+            "master".to_owned()
+        }
     } else {
-        "master".to_owned()
+        // On reinit, don't change HEAD
+        String::new()
     };
 
     // Determine object format:
@@ -104,7 +131,7 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
     let object_format = if let Some(ref fmt) = args.object_format {
         fmt.clone()
     } else if let Ok(hash) = std::env::var("GIT_DEFAULT_HASH") {
-        hash
+        if !hash.is_empty() { hash } else { "sha1".to_owned() }
     } else if let Some(fmt) = config.get("init.defaultObjectFormat") {
         fmt
     } else {
@@ -114,13 +141,19 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
     // Determine template directory:
     // --template=<path> → use that path
     // --template= (empty string) → skip templates
-    // not specified → check init.templateDir config, then use built-in defaults
+    // not specified → check GIT_TEMPLATE_DIR env, then init.templateDir config, then built-in defaults
     let template_dir: Option<PathBuf> = match &args.template {
         Some(t) if t.is_empty() => None, // explicitly empty → skip
         Some(t) => Some(PathBuf::from(t)),
         None => {
-            // Check config for init.templateDir
-            if let Some(tdir) = config.get("init.templateDir") {
+            // Check GIT_TEMPLATE_DIR env var first
+            if let Ok(tdir) = std::env::var("GIT_TEMPLATE_DIR") {
+                if !tdir.is_empty() {
+                    Some(PathBuf::from(tdir))
+                } else {
+                    None
+                }
+            } else if let Some(tdir) = config.get("init.templateDir") {
                 let expanded = expand_tilde(&tdir);
                 if !expanded.is_empty() {
                     Some(PathBuf::from(expanded))
@@ -135,30 +168,16 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
     let skip_default_templates = matches!(&args.template, Some(t) if t.is_empty());
 
     // Create the git directory structure
-    create_git_dir(&git_dir, &initial_branch, bare, &object_format,
+    create_git_dir(&real_git_dir, &initial_branch, bare, &object_format,
                    template_dir.as_deref(), skip_default_templates,
                    args.shared.as_deref(), is_reinit)?;
 
-    // Handle --separate-git-dir
-    if let Some(sep) = &args.separate_git_dir {
-        if !bare {
-            // Move git dir content to the separate location
-            let sep_abs = if sep.is_absolute() {
-                sep.clone()
-            } else {
-                std::env::current_dir()?.join(sep)
-            };
-            if !sep_abs.exists() {
-                fs::create_dir_all(&sep_abs)?;
-            }
-            // If we just created git_dir, move its contents to sep_abs
-            // and write a gitfile in the original location
-            move_git_dir(&git_dir, &sep_abs)?;
-            // Write gitfile
-            let gitfile_content = format!("gitdir: {}\n", sep_abs.display());
-            fs::write(&git_dir, gitfile_content)
-                .with_context(|| "cannot write gitfile")?;
-        }
+    // Handle --separate-git-dir: write gitfile at path/.git
+    if args.separate_git_dir.is_some() && !bare {
+        let gitfile_path = abs_path.join(".git");
+        let gitfile_content = format!("gitdir: {}\n", real_git_dir.display());
+        fs::write(&gitfile_path, gitfile_content)
+            .with_context(|| "cannot write gitfile")?;
     }
 
     if !args.quiet {
@@ -170,8 +189,10 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
 
         if bare {
             println!("{} Git repository in {}/", prefix, abs_path.display());
+        } else if args.separate_git_dir.is_some() {
+            println!("{} Git repository in {}/", prefix, real_git_dir.display());
         } else {
-            println!("{} Git repository in {}/", prefix, git_dir.display());
+            println!("{} Git repository in {}/", prefix, real_git_dir.display());
         }
     }
 
@@ -225,9 +246,12 @@ fn create_git_dir(
         }
     }
 
-    // Write HEAD (only if not reinit, or if it doesn't exist)
+    // Write HEAD (only on fresh init)
     let head_path = git_dir.join("HEAD");
-    if !head_path.exists() {
+    if !is_reinit && !initial_branch.is_empty() {
+        let head_content = format!("ref: refs/heads/{initial_branch}\n");
+        fs::write(&head_path, head_content)?;
+    } else if !head_path.exists() && !initial_branch.is_empty() {
         let head_content = format!("ref: refs/heads/{initial_branch}\n");
         fs::write(&head_path, head_content)?;
     }
@@ -258,11 +282,9 @@ fn create_git_dir(
             ));
         }
 
-        // Write shared repository config
+        // Write shared repository config in [core] section
         if let Some(perm) = shared {
             let shared_value = normalize_shared(perm);
-            // Insert sharedRepository into existing [core] section
-            // Find the last line of core section content and append there
             let insert_before_extensions = if let Some(pos) = config_content.find("[extensions]") {
                 pos
             } else {
@@ -295,10 +317,7 @@ fn normalize_shared(perm: &str) -> String {
         "group" | "true" => "1".to_owned(),
         "all" | "world" | "everybody" => "2".to_owned(),
         "umask" | "false" => "0".to_owned(),
-        other => {
-            // If it's an octal number, keep it as-is (e.g. "0666")
-            other.to_owned()
-        }
+        other => other.to_owned(),
     }
 }
 
@@ -325,24 +344,5 @@ fn copy_template(src: &Path, dst: &Path) -> Result<()> {
             fs::copy(&src_path, &dst_path)?;
         }
     }
-    Ok(())
-}
-
-/// Move contents of `src` directory to `dst`, then remove `src`.
-fn move_git_dir(src: &Path, dst: &Path) -> Result<()> {
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
-            fs::create_dir_all(&dst_path)?;
-            move_git_dir(&src_path, &dst_path)?;
-            fs::remove_dir(&src_path)?;
-        } else {
-            fs::rename(&src_path, &dst_path)?;
-        }
-    }
-    // Remove the now-empty source directory
-    let _ = fs::remove_dir(src);
     Ok(())
 }
