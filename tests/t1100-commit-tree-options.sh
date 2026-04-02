@@ -189,4 +189,56 @@ test_expect_success 'commit-tree with three parents' '
 	test $(grep -c "^parent" oct-commit) = 3
 '
 
+test_expect_success 'flags and then non flags' '
+	cd repo &&
+	test_tick &&
+	echo comment text |
+	git commit-tree $(cat treeid) >commitid-f1 &&
+	echo comment text |
+	git commit-tree $(cat treeid) -p $(cat commitid-f1) >childid-1 &&
+	echo comment text |
+	git commit-tree -p $(cat commitid-f1) $(cat treeid) >childid-2 &&
+	test_cmp childid-1 childid-2 &&
+	git commit-tree $(cat treeid) -m foo >childid-3 &&
+	git commit-tree -m foo $(cat treeid) >childid-4 &&
+	test_cmp childid-3 childid-4
+'
+
+test_expect_success 'commit-tree output is a valid object ID' '
+	cd repo &&
+	test_tick &&
+	echo "valid" | git commit-tree $(cat treeid) >oid &&
+	test $(wc -c <oid) -gt 30 &&
+	git cat-file -t $(cat oid) >type &&
+	echo commit >expect &&
+	test_cmp expect type
+'
+
+test_expect_success 'commit-tree -m produces same tree as stdin message' '
+	cd repo &&
+	test_tick &&
+	git commit-tree -m "same message" $(cat treeid) >id1 &&
+	git cat-file commit $(cat id1) >c1 &&
+	grep "same message" c1
+'
+
+test_expect_success 'commit-tree with -F reads message from file' '
+	cd repo &&
+	test_tick &&
+	echo "file message" >msg-file &&
+	git commit-tree -F msg-file $(cat treeid) >fid &&
+	git cat-file commit $(cat fid) >fc &&
+	grep "file message" fc
+'
+
+test_expect_success 'commit-tree with two parents' '
+	cd repo &&
+	test_tick &&
+	echo "merge-p1" | git commit-tree $(cat treeid) >mp1 &&
+	echo "merge-p2" | git commit-tree $(cat treeid) >mp2 &&
+	echo "merge" | git commit-tree $(cat treeid) -p $(cat mp1) -p $(cat mp2) >mid &&
+	git cat-file commit $(cat mid) >mc &&
+	test $(grep -c "^parent" mc) = 2
+'
+
 test_done

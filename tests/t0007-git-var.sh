@@ -294,4 +294,29 @@ test_expect_success 'git var GIT_PAGER defaults to cat' '
 	)
 '
 
+test_expect_success 'git var GIT_DEFAULT_BRANCH returns a value' '
+	git var GIT_DEFAULT_BRANCH >actual &&
+	test -s actual
+'
+
+test_expect_success 'git var GIT_SHELL_PATH returns a path' '
+	git var GIT_SHELL_PATH >actual &&
+	test -s actual
+'
+
+test_expect_success 'git var with unknown variable fails' '
+	test_must_fail git var UNKNOWN_VAR 2>err &&
+	test -s err
+'
+
+test_expect_success 'git var GIT_ATTR_SYSTEM returns a path' '
+	git var GIT_ATTR_SYSTEM >actual &&
+	test -s actual
+'
+
+test_expect_success 'git var GIT_CONFIG_SYSTEM returns a path' '
+	git var GIT_CONFIG_SYSTEM >actual &&
+	test -s actual
+'
+
 test_done

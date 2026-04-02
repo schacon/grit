@@ -36,4 +36,35 @@ test_expect_success 'verify-pack -v accepts .idx path' '
 	grep "^$pack1: ok\$" out
 '
 
+test_expect_success 'verify-pack -v output lists objects' '
+	cd repo &&
+	pack1=$(echo .git/objects/pack/*.pack) &&
+	git verify-pack -v "$pack1" >out &&
+	grep "^[0-9a-f]\{40\}" out
+'
+
+test_expect_success 'show-index reads pack index' '
+	cd repo &&
+	idx1=$(echo .git/objects/pack/*.idx) &&
+	git show-index <"$idx1" >out &&
+	test -s out
+'
+
+test_expect_success 'count-objects shows 0 after repack' '
+	cd repo &&
+	git count-objects >out &&
+	grep "^0 objects" out
+'
+
+test_expect_success 'verify-pack without -v just validates' '
+	cd repo &&
+	pack1=$(echo .git/objects/pack/*.pack) &&
+	git verify-pack "$pack1"
+'
+
+test_expect_success 'verify-pack rejects nonexistent file' '
+	cd repo &&
+	test_must_fail git verify-pack nonexistent.pack
+'
+
 test_done

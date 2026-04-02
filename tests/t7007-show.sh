@@ -428,4 +428,36 @@ test_expect_success 'show with explicit commit hash' '
 	grep "^diff --git" actual
 '
 
+test_expect_success 'show --format=%ci shows committer date' '
+	cd repo &&
+	git show --format="format:%ci" --quiet >actual &&
+	test -s actual
+'
+
+test_expect_success 'show HEAD:file.txt shows file content directly' '
+	cd repo &&
+	printf "first\nsecond\n" >expected &&
+	git show HEAD:file.txt >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'show tree by HEAD^{tree} syntax' '
+	cd repo &&
+	git show HEAD^{tree} >actual &&
+	grep "file.txt" actual
+'
+
+test_expect_success 'show --format=%d shows decoration' '
+	cd repo &&
+	git show --format="format:%d" --quiet >actual &&
+	test -s actual
+'
+
+test_expect_success 'show annotated tag shows both tag and commit info' '
+	cd repo &&
+	git show v1.0 >actual &&
+	grep "tag v1.0" actual &&
+	grep "second commit" actual
+'
+
 test_done

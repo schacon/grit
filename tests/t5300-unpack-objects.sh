@@ -121,4 +121,49 @@ test_expect_success 'unpack-objects: empty pack rejected gracefully' '
 	test_must_fail grit -C empty.git unpack-objects <empty.pack
 '
 
+test_expect_success 'unpack-objects: -n does not affect subsequent real unpack' '
+	grit init drythenreal.git --bare &&
+	grit -C drythenreal.git unpack-objects -n <test.pack &&
+	COUNT_AFTER_DRY=$(find drythenreal.git/objects -type f | grep -v pack | wc -l | tr -d " ") &&
+	test "$COUNT_AFTER_DRY" = "0" &&
+	grit -C drythenreal.git unpack-objects <test.pack &&
+	COUNT_AFTER_REAL=$(find drythenreal.git/objects -type f | grep -v pack | wc -l | tr -d " ") &&
+	test "$COUNT_AFTER_REAL" -gt 0
+'
+
+test_expect_success 'unpack-objects: unpacked objects match source OIDs' '
+	grit init match.git --bare &&
+	grit -C match.git unpack-objects <test.pack &&
+	COMMIT=$( "$REAL_GIT" -C src.git rev-parse HEAD) &&
+	TREE=$( "$REAL_GIT" -C src.git rev-parse HEAD^{tree}) &&
+	grit -C match.git cat-file -t "$COMMIT" >tc &&
+	echo commit >ec &&
+	test_cmp ec tc &&
+	grit -C match.git cat-file -t "$TREE" >tt &&
+	echo tree >et &&
+	test_cmp et tt
+'
+
+test_expect_success 'unpack-objects: -q -n together works' '
+	grit init qn.git --bare &&
+	grit -C qn.git unpack-objects -q -n <test.pack 2>err &&
+	test_must_be_empty err &&
+	COUNT=$(find qn.git/objects -type f | grep -v pack | wc -l | tr -d " ") &&
+	test "$COUNT" = "0"
+'
+
+test_expect_success 'unpack-objects: truncated pack is rejected' '
+	head -c 20 test.pack >truncated.pack &&
+	grit init trunc.git --bare &&
+	test_must_fail grit -C trunc.git unpack-objects <truncated.pack
+'
+
+test_expect_success 'unpack-objects: commit message survives round-trip' '
+	grit init msgcheck.git --bare &&
+	grit -C msgcheck.git unpack-objects <test.pack &&
+	COMMIT=$( "$REAL_GIT" -C src.git rev-parse HEAD) &&
+	grit -C msgcheck.git cat-file -p "$COMMIT" >out &&
+	grep "initial commit" out
+'
+
 test_done

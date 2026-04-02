@@ -188,4 +188,35 @@ test_expect_success 'hash-object computes correct sha for known content' '
 	test "$example_oid" = "$(grit hash-object ex2)"
 '
 
+test_expect_success "multiple '--stdin's are rejected" '
+	echo example | test_must_fail grit hash-object --stdin --stdin
+'
+
+test_expect_success "Can't use --stdin and --stdin-paths together" '
+	echo example | test_must_fail grit hash-object --stdin --stdin-paths &&
+	echo example | test_must_fail grit hash-object --stdin-paths --stdin
+'
+
+test_expect_success "Can't pass filenames as arguments with --stdin-paths" '
+	echo example | test_must_fail grit hash-object --stdin-paths hello
+'
+
+test_expect_success 'git hash-object --stdin file1 first operates on stdin then file1' '
+	setup_repo &&
+	echo foo >file1 &&
+	obname0=$(echo bar | grit hash-object --stdin) &&
+	obname1=$(grit hash-object file1) &&
+	obname0new=$(echo bar | grit hash-object --stdin file1 | sed -n -e 1p) &&
+	obname1new=$(echo bar | grit hash-object --stdin file1 | sed -n -e 2p) &&
+	test "$obname0" = "$obname0new" &&
+	test "$obname1" = "$obname1new"
+'
+
+test_expect_success 'hash-object -t blob is accepted (explicit type)' '
+	echo_without_newline "Hello World" >hblob2 &&
+	grit hash-object -t blob hblob2 >actual &&
+	echo "$hello_oid" >expect &&
+	test_cmp expect actual
+'
+
 test_done
