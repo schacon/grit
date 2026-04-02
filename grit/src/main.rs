@@ -226,6 +226,8 @@ enum Command {
     Mktag(commands::mktag::Args),
     /// Remove unreachable loose objects.
     Prune(commands::prune::Args),
+    /// Fetch from and integrate with another repository.
+    Pull(commands::pull::Args),
     /// Remove loose objects that are already stored in pack files.
     #[command(name = "prune-packed")]
     PrunePacked(commands::prune_packed::Args),
@@ -379,6 +381,7 @@ fn run() -> Result<()> {
         Command::Replace(args) => commands::replace::run(args),
         Command::Mktag(args) => commands::mktag::run(args),
         Command::Prune(args) => commands::prune::run(args),
+        Command::Pull(args) => commands::pull::run(args),
         Command::PrunePacked(args) => commands::prune_packed::run(args),
         Command::Tag(args) => commands::tag::run(args),
         Command::Restore(args) => commands::restore::run(args),

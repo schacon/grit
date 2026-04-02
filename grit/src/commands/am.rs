@@ -42,6 +42,18 @@ pub struct Args {
     #[arg(long = "abort")]
     pub abort: bool,
 
+    /// Skip the current patch.
+    #[arg(long = "skip")]
+    pub skip: bool,
+
+    /// Attempt three-way merge if patch doesn't apply cleanly.
+    #[arg(short = '3', long = "3way")]
+    pub three_way: bool,
+
+    /// Quiet mode — suppress output.
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Do not apply the patch, just show what would be applied.
     #[arg(long = "dry-run")]
     pub dry_run: bool,
@@ -65,16 +77,24 @@ struct MboxPatch {
 }
 
 /// Run the `am` command.
+/// Options threaded through the apply loop.
+struct AmOptions {
+    quiet: bool,
+    three_way: bool,
+}
+
 pub fn run(args: Args) -> Result<()> {
     if args.abort {
         return do_abort();
     }
+    if args.skip {
+        return do_skip();
+    }
     if args.r#continue {
-        return do_continue();
+        return do_continue(args.quiet);
     }
 
     if args.mbox.is_empty() && !args.stdin {
-        // Read from stdin by default
         return do_am_stdin(args);
     }
     if args.stdin {
@@ -157,7 +177,11 @@ fn do_am(args: Args) -> Result<()> {
     }
 
     // Apply patches
-    apply_remaining(&repo)?;
+    let opts = AmOptions {
+        quiet: args.quiet,
+        three_way: args.three_way,
+    };
+    apply_remaining(&repo, &opts)?;
 
     Ok(())
 }
@@ -207,12 +231,16 @@ fn do_am_stdin(args: Args) -> Result<()> {
         fs::write(&patch_file, serialized)?;
     }
 
-    apply_remaining(&repo)?;
+    let opts = AmOptions {
+        quiet: args.quiet,
+        three_way: args.three_way,
+    };
+    apply_remaining(&repo, &opts)?;
     Ok(())
 }
 
 /// Apply all remaining patches.
-fn apply_remaining(repo: &Repository) -> Result<()> {
+fn apply_remaining(repo: &Repository, opts: &AmOptions) -> Result<()> {
     let git_dir = &repo.git_dir;
     let state_dir = am_dir(git_dir);
 
@@ -226,10 +254,12 @@ fn apply_remaining(repo: &Repository) -> Result<()> {
 
         fs::write(state_dir.join("current"), next.to_string())?;
 
-        match apply_one_patch(repo, &patch) {
+        match apply_one_patch(repo, &patch, opts.three_way) {
             Ok(()) => {
                 let subject = patch.message.lines().next().unwrap_or("");
-                eprintln!("Applying: {}", subject);
+                if !opts.quiet {
+                    eprintln!("Applying: {}", subject);
+                }
                 next += 1;
                 fs::write(state_dir.join("next"), next.to_string())?;
             }

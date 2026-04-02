@@ -63,6 +63,7 @@ pub mod pack_objects;
 pub mod pack_refs;
 pub mod patch_id;
 pub mod prune;
+pub mod pull;
 pub mod prune_packed;
 pub mod rebase;
 pub mod read_tree;
