@@ -462,7 +462,7 @@ fn build_idx_for_pack(pack_bytes: &[u8], entries: &[PackEntry]) -> Result<Vec<u8
     let mut offsets = Vec::with_capacity(nr);
     let mut pos = 12usize; // skip header
 
-    for entry in entries {
+    for _entry in entries {
         offsets.push(pos as u64);
         // Skip past the entry in the pack.
         let c = pack_bytes[pos];

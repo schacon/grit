@@ -41,7 +41,7 @@ pub struct CreateArgs {
     pub file: String,
 
     /// Revision arguments (refs, commit ranges, --all).
-    #[arg(value_name = "REV", num_args = 0.., trailing_var_arg = true)]
+    #[arg(value_name = "REV", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
     pub rev_list_args: Vec<String>,
 }
 

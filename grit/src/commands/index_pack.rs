@@ -38,7 +38,7 @@ pub struct Args {
 /// A resolved pack object.
 struct ResolvedObject {
     oid: ObjectId,
-    kind: ObjectKind,
+    _kind: ObjectKind,
     offset: u64,
     crc32: u32,
 }
@@ -189,7 +189,7 @@ fn parse_and_resolve(
                 by_oid.insert(oid, (kind, data.clone()));
                 resolved.push(ResolvedObject {
                     oid,
-                    kind,
+                    _kind: kind,
                     offset: *offset,
                     crc32: crc,
                 });
@@ -244,7 +244,7 @@ fn parse_and_resolve(
                 by_oid.insert(oid, (base_kind, result_data));
                 resolved.push(ResolvedObject {
                     oid,
-                    kind: base_kind,
+                    _kind: base_kind,
                     offset,
                     crc32: crc_smuggled as u32,
                 });
@@ -386,7 +386,6 @@ fn build_idx_v2(entries: &[ResolvedObject], pack_bytes: &[u8]) -> Result<Vec<u8>
     let mut sorted: Vec<&ResolvedObject> = entries.iter().collect();
     sorted.sort_by_key(|e| *e.oid.as_bytes());
 
-    let count = sorted.len();
     let mut buf: Vec<u8> = Vec::new();
 
     // Header: magic + version.

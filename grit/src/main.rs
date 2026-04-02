@@ -59,6 +59,8 @@ enum Command {
     Clean(commands::clean::Args),
     /// Clone a repository into a new directory.
     Clone(commands::clone::Args),
+    /// Display data in columns.
+    Column(commands::column::Args),
     /// Switch branches or restore working tree files.
     Checkout(commands::checkout::Args),
     /// Create an empty Git repository or reinitialize an existing one.
@@ -271,6 +273,8 @@ enum Command {
     SparseCheckout(commands::sparse_checkout::Args),
     /// Create an archive of files from a named tree.
     Archive(commands::archive::Args),
+    /// Display help information.
+    Help(commands::help::Args),
 }
 
 fn main() {
@@ -306,6 +310,7 @@ fn run() -> Result<()> {
         Command::CheckRefFormat(args) => commands::check_ref_format::run(args),
         Command::Clean(args) => commands::clean::run(args),
         Command::Clone(args) => commands::clone::run(args),
+        Command::Column(args) => commands::column::run(args),
         Command::Checkout(args) => commands::checkout::run(args),
         Command::Init(args) => commands::init::run(args),
         Command::InterpretTrailers(args) => commands::interpret_trailers::run(args),
@@ -389,5 +394,6 @@ fn run() -> Result<()> {
         Command::Worktree(args) => commands::worktree::run(args),
         Command::SparseCheckout(args) => commands::sparse_checkout::run(args),
         Command::Archive(args) => commands::archive::run(args),
+        Command::Help(args) => commands::help::run(args),
     }
 }
