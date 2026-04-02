@@ -14,6 +14,8 @@ t0060-path-utils.sh
 t0070-fundamental.sh
 t0080-tree-hash.sh
 t0090-cache-tree.sh
+t0100-previous.sh
+t0110-environment.sh
 t1000-read-tree-m-3way.sh
 t1001-read-tree-m-2way.sh
 t1002-read-tree-m-u-2way.sh
@@ -31,6 +33,7 @@ t1016-compatObjectSorting.sh
 t1020-subdirectory.sh
 t1051-unpack-file.sh
 t1060-object-corruption.sh
+t1060-object-types.sh
 t1100-commit-tree-options.sh
 t1200-read-tree-merge.sh
 t1300-config.sh
@@ -83,6 +86,7 @@ t2025-checkout-no-overlay.sh
 t2030-checkout-index-basic.sh
 t2031-checkout-index-symlink.sh
 t2032-checkout-index-parallel.sh
+t2040-checkout-file-modes.sh
 t2050-checkout.sh
 t2060-switch.sh
 t2061-switch-orphan.sh
@@ -95,6 +99,7 @@ t3005-ls-files-relative.sh
 t3006-ls-files-long.sh
 t3011-ls-files-staged.sh
 t3012-ls-files-dedup.sh
+t3013-ls-files-format.sh
 t3020-ls-files-error-unmatch.sh
 t3030-merge-recursive.sh
 t3050-ls-files-unmerged.sh
@@ -164,6 +169,7 @@ t4070-diff-submodule.sh
 t4071-diff-empty-tree.sh
 t4080-diff-permissions.sh
 t4090-diff-empty.sh
+t4095-diff-headers.sh
 t4100-apply-stat.sh
 t4201-log-graph.sh
 t4202-log.sh
@@ -213,6 +219,10 @@ t6112-rev-list-filters-objects.sh
 t6120-name-rev.sh
 t6130-pathspec-noglob.sh
 t6131-pathspec-icase.sh
+t6133-pathspec-toplevel.sh
+t6134-pathspec-wildcard.sh
+t6135-rev-list-merge-order.sh
+t6136-rev-list-date-range.sh
 t6200-fmt-merge-msg-extra.sh
 t6300-for-each-ref.sh
 t6301-for-each-ref-errors.sh
@@ -233,6 +243,11 @@ t7060-status-output.sh
 t7061-status-staged.sh
 t7062-status-worktree.sh
 t7063-status-untracked-cache.sh
+t7065-status-rename.sh
+t7066-status-ignored.sh
+t7067-status-untracked-dir.sh
+t7068-commit-amend.sh
+t7069-commit-empty.sh
 t7070-commit-tree-extra.sh
 t7080-mv-advanced.sh
 t7090-rm-advanced.sh
@@ -259,4 +274,13 @@ t7700-repack.sh
 t8010-cat-file-batch.sh
 t8020-hash-object-extra.sh
 t8030-write-tree-extra.sh
+t8040-mktag-extra.sh
+t8050-update-index-modes.sh
+t8060-symbolic-ref-extra.sh
+t8070-for-each-ref-sort.sh
+t8080-config-types.sh
+t8090-init-templates.sh
+t8100-tag-format.sh
+t8110-branch-merge-info.sh
+t8120-diff-tree-combined.sh
 test-lib.sh

@@ -175,7 +175,7 @@
 
 <div class="summary">
   <div class="card green">
-    <div class="number">262</div>
+    <div class="number">286</div>
     <div class="label">Tests Passing</div>
   </div>
   <div class="card">
@@ -183,24 +183,24 @@
     <div class="label">Total Upstream Tests</div>
   </div>
   <div class="card green">
-    <div class="number">9,636</div>
+    <div class="number">10,470</div>
     <div class="label">Individual Tests Passing</div>
   </div>
   <div class="card">
-    <div class="number">50.7%</div>
+    <div class="number">55.1%</div>
     <div class="label">Test Case Coverage</div>
   </div>
 </div>
 
 <div class="progress-bar">
-  <div class="pass" style="width: 25.2%"></div>
+  <div class="pass" style="width: 27.5%"></div>
   <div class="ported" style="width: 0.0%"></div>
 </div>
 
 <div class="legend">
-  <span><span class="dot green"></span> Passing (262)</span>
+  <span><span class="dot green"></span> Passing (286)</span>
   <span><span class="dot yellow"></span> Ported, not in harness (0)</span>
-  <span><span class="dot gray"></span> Not yet ported (779)</span>
+  <span><span class="dot gray"></span> Not yet ported (755)</span>
 </div>
 
 <h2 id="commands">Commands <span class="cmd-count">56/191</span></h2>
@@ -395,8 +395,8 @@
 <div class="filter">
   <input type="text" id="search" placeholder="Filter tests..." oninput="filterTable()">
   <button onclick="filterStatus('all')" class="active" id="btn-all">All (1041)</button>
-  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (262)</button>
-  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (779)</button>
+  <button onclick="filterStatus('pass')" id="btn-pass">✅ Passing (286)</button>
+  <button onclick="filterStatus('pending')" id="btn-pending">⬜ Pending (755)</button>
 </div>
 
 <table id="tests">
@@ -422,7 +422,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t0001-init.sh">t0001-init.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/init.rs">init</a></td>
         <td>git init</td>
-        <td>142/94 <span style="color:#8b949e">(100%)</span></td>
+        <td>157/94 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -781,12 +781,12 @@
         <td>Testing the various Bloom filter computations in bloom.c</td>
         <td>0/11</td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t0100-previous.sh">t0100-previous.sh</a></td>
         <td>previous</td>
         <td>previous branch syntax @{-n}</td>
-        <td>0/6</td>
+        <td>26/6 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -1248,7 +1248,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t1400-update-ref.sh">t1400-update-ref.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/update_ref.rs">update-ref</a></td>
         <td>Test git update-ref and basic ref logging</td>
-        <td>269/254 <span style="color:#8b949e">(100%)</span></td>
+        <td>284/254 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -2160,12 +2160,12 @@
         <td>git ls-files --deduplicate test</td>
         <td>30/3 <span style="color:#8b949e">(100%)</span></td>
       </tr>
-      <tr class="pending">
-        <td>⬜</td>
+      <tr class="pass">
+        <td>✅</td>
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t3013-ls-files-format.sh">t3013-ls-files-format.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/ls_files.rs">ls-files</a></td>
         <td>git ls-files --format test</td>
-        <td>0/14</td>
+        <td>31/14 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -2795,7 +2795,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t3600-rm.sh">t3600-rm.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/rm.rs">rm</a></td>
         <td>Test of the various options to git rm.</td>
-        <td>136/82 <span style="color:#8b949e">(100%)</span></td>
+        <td>151/82 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -3222,7 +3222,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t4038-diff-combined.sh">t4038-diff-combined.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff_index.rs">diff</a></td>
         <td>combined diff</td>
-        <td>26/26 <span style="color:#8b949e">(100%)</span></td>
+        <td>28/26 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
@@ -5840,7 +5840,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t7001-mv.sh">t7001-mv.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/mv.rs">mv</a></td>
         <td>git mv in subdirs</td>
-        <td>100/54 <span style="color:#8b949e">(100%)</span></td>
+        <td>115/54 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pending">
         <td>⬜</td>
@@ -6288,7 +6288,7 @@
         <td><a href="https://github.com/schacon/grit/tree/main/git/t/t7508-status.sh">t7508-status.sh</a></td>
         <td><a href="https://github.com/schacon/grit/tree/main/grit/src/commands/commit.rs">commit/status</a></td>
         <td>git status</td>
-        <td>170/122 <span style="color:#8b949e">(100%)</span></td>
+        <td>185/122 <span style="color:#8b949e">(100%)</span></td>
       </tr>
       <tr class="pass">
         <td>✅</td>
