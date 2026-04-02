@@ -167,4 +167,36 @@ test_expect_success 'diff -U0 shows zero context lines' '
     ! grep "^ Line 1" actual
 '
 
+# ---------------------------------------------------------------------------
+# Additional diff-files format tests (ported from git/t/t4000 patterns)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-files --name-only shows changed file name' '
+    cd fmtrepo &&
+    git diff-files --name-only >out &&
+    grep "path0" out
+'
+
+test_expect_success 'diff-files --name-status shows M for modified file' '
+    cd fmtrepo &&
+    git diff-files --name-status >out &&
+    grep "^M.*path0" out
+'
+
+test_expect_success 'diff-files --stat shows summary with changed count' '
+    cd fmtrepo &&
+    git diff-files --stat >out &&
+    grep "changed" out
+'
+
+test_expect_success 'diff-files --quiet returns 0 when worktree is clean' '
+    cd cleanrepo &&
+    git diff-files --quiet
+'
+
+test_expect_success 'diff-files --exit-code returns 0 when worktree is clean' '
+    cd cleanrepo &&
+    git diff-files --exit-code
+'
+
 test_done

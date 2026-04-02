@@ -137,4 +137,34 @@ test_expect_success 'diff-index --cached --exit-code after adding more files' '
 	test_must_fail git diff-index --exit-code --cached "$c3"
 '
 
+# ---------------------------------------------------------------------------
+# Additional diff-files format and clean-state tests
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-files shows no output when clean' '
+	cd repo &&
+	git diff-files >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff-files --name-only is empty when clean' '
+	cd repo &&
+	git diff-files --name-only >out &&
+	test_must_be_empty out
+'
+
+test_expect_success 'diff-files --name-status shows M for modified file' '
+	cd repo &&
+	echo extra >>a &&
+	git diff-files --name-status >out &&
+	grep "^M.*a" out
+'
+
+test_expect_success 'diff --name-only same commit shows no output' '
+	cd repo &&
+	c4=$(cat c4) &&
+	git diff --name-only "$c4" "$c4" >out &&
+	test_must_be_empty out
+'
+
 test_done

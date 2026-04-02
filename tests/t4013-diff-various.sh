@@ -132,4 +132,110 @@ test_expect_success 'diff-index detects deletion of worktree file' '
 	grep "dir_sub" out
 '
 
+# ---------------------------------------------------------------------------
+# diff-tree and commit-to-commit diff tests (ported from git/t/t4013 patterns)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'setup repo3 for commit-to-commit diff tests' '
+	git init repo3 &&
+	cd repo3 &&
+	printf "alpha\nbeta\ngamma\n" >file.txt &&
+	printf "first content\n" >readme.txt &&
+	git update-index --add file.txt readme.txt &&
+	c1=$(make_commit initial) &&
+	printf "%s\n" "$c1" >c1 &&
+	printf "alpha\nbeta\ngamma\ndelta\n" >file.txt &&
+	printf "new file content\n" >newfile.txt &&
+	git update-index --add file.txt newfile.txt &&
+	c2=$(make_commit second "$c1") &&
+	printf "%s\n" "$c2" >c2
+'
+
+test_expect_success 'diff-tree with two commits shows changes' '
+	cd repo3 &&
+	c1=$(cat c1) c2=$(cat c2) &&
+	git diff-tree "$c1" "$c2" >out &&
+	grep "file.txt" out &&
+	grep "newfile.txt" out
+'
+
+test_expect_success 'diff-tree --name-only between two commits' '
+	cd repo3 &&
+	c1=$(cat c1) c2=$(cat c2) &&
+	git diff-tree --name-only "$c1" "$c2" >out &&
+	grep "^file.txt$" out &&
+	grep "^newfile.txt$" out
+'
+
+test_expect_success 'diff-tree --name-status shows M and A' '
+	cd repo3 &&
+	c1=$(cat c1) c2=$(cat c2) &&
+	git diff-tree --name-status "$c1" "$c2" >out &&
+	grep "^M.*file.txt" out &&
+	grep "^A.*newfile.txt" out
+'
+
+test_expect_success 'diff-tree -p shows patch between commits' '
+	cd repo3 &&
+	c1=$(cat c1) c2=$(cat c2) &&
+	git diff-tree -p "$c1" "$c2" >out &&
+	grep "^diff --git" out &&
+	grep "^+delta" out
+'
+
+test_expect_success 'diff-tree --stat shows changed files' '
+	cd repo3 &&
+	c1=$(cat c1) c2=$(cat c2) &&
+	git diff-tree --stat "$c1" "$c2" >out &&
+	grep "file.txt" out &&
+	grep "changed" out
+'
+
+test_expect_success 'diff-tree with pathspec limits to matching file' '
+	cd repo3 &&
+	c1=$(cat c1) c2=$(cat c2) &&
+	git diff-tree --name-only "$c1" "$c2" -- file.txt >out &&
+	grep "^file.txt$" out &&
+	! grep "newfile.txt" out
+'
+
+test_expect_success 'diff between two commits shows unified diff' '
+	cd repo3 &&
+	c1=$(cat c1) c2=$(cat c2) &&
+	git diff "$c1" "$c2" >out &&
+	grep "^diff --git" out &&
+	grep "^+delta" out
+'
+
+test_expect_success 'diff --name-only between two commits' '
+	cd repo3 &&
+	c1=$(cat c1) c2=$(cat c2) &&
+	git diff --name-only "$c1" "$c2" >out &&
+	grep "file.txt" out &&
+	grep "newfile.txt" out
+'
+
+test_expect_success 'diff --stat between two commits' '
+	cd repo3 &&
+	c1=$(cat c1) c2=$(cat c2) &&
+	git diff --stat "$c1" "$c2" >out &&
+	grep "file.txt" out
+'
+
+test_expect_success 'diff --numstat between two commits' '
+	cd repo3 &&
+	c1=$(cat c1) c2=$(cat c2) &&
+	git diff --numstat "$c1" "$c2" >out &&
+	grep "file.txt" out &&
+	grep "^[0-9]" out
+'
+
+test_expect_success 'diff with pathspec limits output to matching file' '
+	cd repo3 &&
+	c1=$(cat c1) c2=$(cat c2) &&
+	git diff --name-only "$c1" "$c2" -- file.txt >out &&
+	grep "^file.txt$" out &&
+	! grep "newfile.txt" out
+'
+
 test_done
