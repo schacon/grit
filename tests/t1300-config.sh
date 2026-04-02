@@ -2553,4 +2553,131 @@ test_expect_success 'overwrite in --file preserves other keys' '
 	test_cmp expect_c actual_c
 '
 
+# ── additional config tests ───────────────────────────────────────────
+
+test_expect_success 'config --get returns exact value' '
+	cd repo &&
+	git config extra.key "exact-value" &&
+	git config --get extra.key >actual &&
+	echo "exact-value" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config --get for nonexistent key fails' '
+	cd repo &&
+	test_must_fail git config --get nonexistent.key123
+'
+
+test_expect_success 'config sets value in correct section' '
+	cd repo &&
+	git config mysection.mykey "myvalue" &&
+	grep "\[mysection\]" .git/config &&
+	grep "mykey = myvalue" .git/config
+'
+
+test_expect_success 'config --list includes all entries' '
+	cd repo &&
+	git config --list >actual &&
+	grep "mysection.mykey=myvalue" actual
+'
+
+test_expect_success 'config overwrite replaces value' '
+	cd repo &&
+	git config ow.key "old" &&
+	git config ow.key "new" &&
+	git config --get ow.key >actual &&
+	echo "new" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config --unset removes key' '
+	cd repo &&
+	git config rm.key "remove-me" &&
+	git config --unset rm.key &&
+	test_must_fail git config --get rm.key
+'
+
+test_expect_success 'config with empty value' '
+	cd repo &&
+	git config empty.key "" &&
+	val=$(git config --get empty.key) &&
+	test -z "$val"
+'
+
+test_expect_success 'config value with spaces' '
+	cd repo &&
+	git config space.key "hello world" &&
+	git config --get space.key >actual &&
+	echo "hello world" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config value with equals sign' '
+	cd repo &&
+	git config eq.key "a=b" &&
+	git config --get eq.key >actual &&
+	echo "a=b" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config multiple keys in same section' '
+	cd repo &&
+	git config multi.a "1" &&
+	git config multi.b "2" &&
+	git config multi.c "3" &&
+	git config --get multi.a >actual_a &&
+	git config --get multi.b >actual_b &&
+	git config --get multi.c >actual_c &&
+	echo "1" >expect_a &&
+	echo "2" >expect_b &&
+	echo "3" >expect_c &&
+	test_cmp expect_a actual_a &&
+	test_cmp expect_b actual_b &&
+	test_cmp expect_c actual_c
+'
+
+test_expect_success 'config --get-regexp matches pattern' '
+	cd repo &&
+	git config pat.alpha "one" &&
+	git config pat.beta "two" &&
+	git config --get-regexp "pat" >actual &&
+	grep "pat.alpha one" actual &&
+	grep "pat.beta two" actual
+'
+
+test_expect_success 'config --bool true values' '
+	cd repo &&
+	git config bool.test "true" &&
+	git config --bool bool.test >actual &&
+	echo "true" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config --bool false values' '
+	cd repo &&
+	git config bool.test "false" &&
+	git config --bool bool.test >actual &&
+	echo "false" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config --file reads from specified file' '
+	cd repo &&
+	cat >../extfile.cfg <<-\EOF &&
+	[ext]
+		val = fromfile
+	EOF
+	git config --file ../extfile.cfg ext.val >actual &&
+	echo "fromfile" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config --file writes to specified file' '
+	cd repo &&
+	git config --file ../writefile.cfg wr.key "written" &&
+	git config --file ../writefile.cfg --get wr.key >actual &&
+	echo "written" >expect &&
+	test_cmp expect actual
+'
+
 test_done
