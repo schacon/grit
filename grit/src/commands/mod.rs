@@ -4,6 +4,7 @@
 
 pub mod add;
 pub mod annotate;
+pub mod bisect;
 pub mod blame;
 pub mod apply;
 pub mod branch;
@@ -40,6 +41,7 @@ pub mod ls_tree;
 pub mod merge;
 pub mod merge_base;
 pub mod merge_file;
+pub mod merge_tree;
 pub mod mktag;
 pub mod mktree;
 pub mod mv;
@@ -80,4 +82,5 @@ pub mod verify_pack;
 pub mod verify_tag;
 pub mod version;
 pub mod whatchanged;
+pub mod worktree;
 pub mod write_tree;

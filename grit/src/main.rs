@@ -37,6 +37,8 @@ enum Command {
     Add(commands::add::Args),
     /// Show what revision and author last modified each line of a file.
     Annotate(commands::annotate::Args),
+    /// Use binary search to find the commit that introduced a bug.
+    Bisect(commands::bisect::Args),
     /// Show what revision and author last modified each line of a file.
     Blame(commands::blame::Args),
     /// Apply a patch to files and/or to the index.
@@ -138,6 +140,9 @@ enum Command {
     /// Run a three-way file merge.
     #[command(name = "merge-file")]
     MergeFile(commands::merge_file::Args),
+    /// Show three-way merge without touching index/worktree.
+    #[command(name = "merge-tree")]
+    MergeTree(commands::merge_tree::Args),
     /// List commit objects in reverse chronological order.
     #[command(name = "rev-list")]
     RevList(commands::rev_list::Args),
@@ -229,6 +234,8 @@ enum Command {
     /// Unpack objects from a pack stream into the object database.
     #[command(name = "unpack-objects")]
     UnpackObjects(commands::unpack_objects::Args),
+    /// Manage multiple working trees.
+    Worktree(commands::worktree::Args),
 }
 
 fn main() {
@@ -254,6 +261,7 @@ fn run() -> Result<()> {
     match cli.command {
         Command::Add(args) => commands::add::run(args),
         Command::Annotate(args) => commands::annotate::run(args),
+        Command::Bisect(args) => commands::bisect::run(args),
         Command::Blame(args) => commands::blame::run(args),
         Command::Apply(args) => commands::apply::run(args),
         Command::Branch(args) => commands::branch::run(args),
@@ -293,6 +301,7 @@ fn run() -> Result<()> {
         Command::NameRev(args) => commands::name_rev::run(args),
         Command::Notes(args) => commands::notes::run(args),
         Command::MergeFile(args) => commands::merge_file::run(args),
+        Command::MergeTree(args) => commands::merge_tree::run(args),
         Command::RevList(args) => commands::rev_list::run(args),
         Command::RevParse(args) => commands::rev_parse::run(args),
         Command::ShowIndex(args) => commands::show_index::run(args),
@@ -330,5 +339,6 @@ fn run() -> Result<()> {
         Command::Switch(args) => commands::switch::run(args),
         Command::UnpackFile(args) => commands::unpack_file::run(args),
         Command::UnpackObjects(args) => commands::unpack_objects::run(args),
+        Command::Worktree(args) => commands::worktree::run(args),
     }
 }
