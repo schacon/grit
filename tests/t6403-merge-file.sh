@@ -359,4 +359,41 @@ test_expect_success 'conflict at EOF without LF resolved by --union' '
 	test_cmp expect.txt output.txt
 '
 
+# ---- more merge-file tests ----
+
+test_expect_success 'merge-file -p sends to stdout, does not modify input' '
+	cp new1.txt input.txt &&
+	md5before=$(md5sum input.txt | cut -d" " -f1) &&
+	git merge-file -p input.txt orig.txt new2.txt >stdout.txt &&
+	md5after=$(md5sum input.txt | cut -d" " -f1) &&
+	test "$md5before" = "$md5after"
+'
+
+test_expect_success 'merge with all three labels via -L' '
+	cp backup.txt test.txt &&
+	test_must_fail git merge-file -L ours -L base -L theirs test.txt orig.txt new3.txt &&
+	grep "<<<<<<< ours" test.txt &&
+	grep ">>>>>>> theirs" test.txt
+'
+
+test_expect_success 'merge with only two -L labels' '
+	cp backup.txt test.txt &&
+	test_must_fail git merge-file -L mine -L ancestor test.txt orig.txt new3.txt &&
+	grep "<<<<<<< mine" test.txt &&
+	grep ">>>>>>> new3.txt" test.txt
+'
+
+test_expect_success 'merge-file --quiet suppresses conflict warnings' '
+	cp backup.txt test.txt &&
+	test_must_fail git merge-file --quiet test.txt orig.txt new3.txt 2>stderr &&
+	test_must_be_empty stderr
+'
+
+test_expect_success 'merge with identical our and their produces clean result' '
+	cp new1.txt ident1.txt &&
+	cp new1.txt ident2.txt &&
+	git merge-file -p ident1.txt orig.txt ident2.txt >out &&
+	test_cmp new1.txt out
+'
+
 test_done
