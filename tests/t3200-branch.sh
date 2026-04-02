@@ -2134,4 +2134,126 @@ test_expect_success 'multiple branches can be created' '
 	git branch -D deepen-multi-c
 '
 
+# ---------------------------------------------------------------------------
+# Deepened tests (w33)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'branch -d deletes a merged branch' '
+	cd deepen-branch-repo &&
+	git branch w33-del-test &&
+	git branch >output &&
+	grep "w33-del-test" output &&
+	git branch -d w33-del-test &&
+	git branch >output2 &&
+	! grep "w33-del-test" output2
+'
+
+test_expect_success 'branch -D force-deletes a branch' '
+	cd deepen-branch-repo &&
+	git branch w33-force-del &&
+	git branch -D w33-force-del &&
+	git branch >output &&
+	! grep "w33-force-del" output
+'
+
+test_expect_success 'branch with dot in name' '
+	cd deepen-branch-repo &&
+	git branch w33.dotted &&
+	git branch >output &&
+	grep "w33.dotted" output &&
+	git branch -D w33.dotted
+'
+
+test_expect_success 'branch --list shows branches' '
+	cd deepen-branch-repo &&
+	git branch --list >output &&
+	test -s output
+'
+
+test_expect_success 'branch on specific commit' '
+	cd deepen-branch-repo &&
+	FIRST=$(git rev-list HEAD | tail -1) &&
+	git branch w33-on-first $FIRST &&
+	BR_HASH=$(git rev-parse w33-on-first) &&
+	test "$BR_HASH" = "$FIRST" &&
+	git branch -D w33-on-first
+'
+
+test_expect_success 'creating duplicate branch fails' '
+	cd deepen-branch-repo &&
+	git branch w33-dup &&
+	test_must_fail git branch w33-dup 2>/dev/null &&
+	git branch -D w33-dup
+'
+
+test_expect_success 'branch -d on nonexistent branch fails' '
+	cd deepen-branch-repo &&
+	test_must_fail git branch -d w33-nonexistent-branch 2>/dev/null
+'
+
+test_expect_success 'show-ref shows created branch' '
+	cd deepen-branch-repo &&
+	git branch w33-showref &&
+	git show-ref >output &&
+	grep "refs/heads/w33-showref" output &&
+	git branch -D w33-showref
+'
+
+test_expect_success 'for-each-ref shows branch with correct objecttype' '
+	cd deepen-branch-repo &&
+	git for-each-ref --format="%(objecttype) %(refname)" refs/heads/ >output &&
+	grep "commit" output
+'
+
+test_expect_success 'branch --contains HEAD includes current branch' '
+	cd deepen-branch-repo &&
+	CUR=$(git branch --show-current) &&
+	git branch --contains HEAD >output &&
+	grep "$CUR" output
+'
+
+test_expect_success 'branch -v shows commit info' '
+	cd deepen-branch-repo &&
+	git branch -v >output &&
+	test -s output
+'
+
+test_expect_success 'branch with hyphen in name' '
+	cd deepen-branch-repo &&
+	git branch w33-hyphen-name &&
+	git branch >output &&
+	grep "w33-hyphen-name" output &&
+	git branch -D w33-hyphen-name
+'
+
+test_expect_success 'branch at HEAD matches rev-parse HEAD' '
+	cd deepen-branch-repo &&
+	git branch w33-at-head &&
+	test "$(git rev-parse w33-at-head)" = "$(git rev-parse HEAD)" &&
+	git branch -D w33-at-head
+'
+
+test_expect_success 'branch -m renames branch' '
+	cd deepen-branch-repo &&
+	git branch w33-old-name &&
+	git branch -m w33-old-name w33-new-name &&
+	git branch >output &&
+	! grep "w33-old-name" output &&
+	grep "w33-new-name" output &&
+	git branch -D w33-new-name
+'
+
+test_expect_success 'branch count increases after creating branches' '
+	cd deepen-branch-repo &&
+	git branch >before &&
+	BEFORE=$(wc -l <before) &&
+	git branch w33-count-a &&
+	git branch w33-count-b &&
+	git branch >after &&
+	AFTER=$(wc -l <after) &&
+	test $AFTER -eq $((BEFORE + 2)) &&
+	git branch -D w33-count-a &&
+	git branch -D w33-count-b
+'
+
 test_done
