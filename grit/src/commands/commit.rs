@@ -6,13 +6,17 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, DiffEntry, DiffStatus};
 use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
+use std::collections::BTreeSet;
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
 use time::OffsetDateTime;
 
@@ -44,6 +48,10 @@ pub struct Args {
     #[arg(long = "allow-empty-message")]
     pub allow_empty_message: bool,
 
+    /// Show what would be committed without committing.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+
     /// Suppress commit summary output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
@@ -51,6 +59,10 @@ pub struct Args {
     /// Add Signed-off-by trailer.
     #[arg(short = 's', long = "signoff")]
     pub signoff: bool,
+
+    /// Take the commit message from an existing commit.
+    #[arg(long = "reuse-message", value_name = "COMMIT")]
+    pub reuse_message: Option<String>,
 
     /// Override the author.
     #[arg(long = "author")]
@@ -113,8 +125,35 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    // Compute diffs for --dry-run output
+    let head_tree = match head.oid() {
+        Some(oid) => {
+            let obj = repo.odb.read(oid)?;
+            let c = grit_lib::objects::parse_commit(&obj.data)?;
+            Some(c.tree)
+        }
+        None => None,
+    };
+    let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
+    let unstaged = if let Some(wt) = work_tree {
+        diff_index_to_worktree(&repo.odb, &index, wt)?
+    } else {
+        Vec::new()
+    };
+    let untracked = if let Some(wt) = work_tree {
+        find_untracked_files(wt, &index)?
+    } else {
+        Vec::new()
+    };
+
+    // --dry-run: show what would be committed and exit
+    if args.dry_run {
+        print_dry_run(&head, &staged, &unstaged, &untracked)?;
+        return Ok(());
+    }
+
     // Build commit message
-    let message = build_message(&args, &repo)?;
+    let mut message = build_message(&args, &repo)?;
     if message.trim().is_empty() && !args.allow_empty_message {
         bail!("Aborting commit due to empty commit message.");
     }
@@ -124,6 +163,19 @@ pub fn run(args: Args) -> Result<()> {
     let now = OffsetDateTime::now_utc();
     let author = resolve_author(&args, &config, now)?;
     let committer = resolve_committer(&config, now)?;
+
+    // Append Signed-off-by trailer if --signoff
+    if args.signoff {
+        let trailer = if let Some(angle_end) = committer.find('>') {
+            format!("Signed-off-by: {}", &committer[..=angle_end])
+        } else {
+            format!("Signed-off-by: {committer}")
+        };
+        if !message.contains(&trailer) {
+            let trimmed = message.trim_end();
+            message = format!("{trimmed}\n\n{trailer}\n");
+        }
+    }
 
     // Build commit object
     let commit_data = CommitData {
@@ -160,6 +212,154 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Print dry-run output (like `git commit --dry-run`).
+fn print_dry_run(
+    head: &HeadState,
+    staged: &[DiffEntry],
+    unstaged: &[DiffEntry],
+    untracked: &[String],
+) -> Result<()> {
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    match head {
+        HeadState::Branch {
+            short_name,
+            oid: Some(_),
+            ..
+        } => {
+            writeln!(out, "On branch {short_name}")?;
+        }
+        HeadState::Branch {
+            short_name,
+            oid: None,
+            ..
+        } => {
+            writeln!(out, "On branch {short_name}")?;
+            writeln!(out)?;
+            writeln!(out, "No commits yet")?;
+        }
+        HeadState::Detached { oid } => {
+            let short = &oid.to_hex()[..7];
+            writeln!(out, "HEAD detached at {short}")?;
+        }
+        HeadState::Invalid => {
+            writeln!(out, "Not currently on any branch.")?;
+        }
+    }
+
+    if !staged.is_empty() {
+        writeln!(out)?;
+        writeln!(out, "Changes to be committed:")?;
+        writeln!(
+            out,
+            "  (use \"git restore --staged <file>...\" to unstage)"
+        )?;
+        for entry in staged {
+            let label = status_label_staged(entry.status);
+            writeln!(out, "\t{label}:   {}", entry.path())?;
+        }
+    }
+
+    if !unstaged.is_empty() {
+        writeln!(out)?;
+        writeln!(out, "Changes not staged for commit:")?;
+        writeln!(
+            out,
+            "  (use \"git add <file>...\" to update what will be committed)"
+        )?;
+        for entry in unstaged {
+            let label = status_label_unstaged(entry.status);
+            writeln!(out, "\t{label}:   {}", entry.path())?;
+        }
+    }
+
+    if !untracked.is_empty() {
+        writeln!(out)?;
+        writeln!(out, "Untracked files:")?;
+        writeln!(
+            out,
+            "  (use \"git add <file>...\" to include in what will be committed)"
+        )?;
+        for path in untracked {
+            writeln!(out, "\t{path}")?;
+        }
+    }
+
+    Ok(())
+}
+
+fn status_label_staged(status: DiffStatus) -> &'static str {
+    match status {
+        DiffStatus::Added => "new file",
+        DiffStatus::Deleted => "deleted",
+        DiffStatus::Modified => "modified",
+        DiffStatus::Renamed => "renamed",
+        DiffStatus::TypeChanged => "typechange",
+        _ => "changed",
+    }
+}
+
+fn status_label_unstaged(status: DiffStatus) -> &'static str {
+    match status {
+        DiffStatus::Deleted => "deleted",
+        DiffStatus::Modified => "modified",
+        DiffStatus::TypeChanged => "typechange",
+        _ => "changed",
+    }
+}
+
+/// Find untracked files in the working tree.
+fn find_untracked_files(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
+    let tracked: BTreeSet<String> = index
+        .entries
+        .iter()
+        .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
+        .collect();
+
+    let mut untracked = Vec::new();
+    walk_untracked(work_tree, work_tree, &tracked, &mut untracked)?;
+    untracked.sort();
+    Ok(untracked)
+}
+
+fn walk_untracked(
+    dir: &Path,
+    work_tree: &Path,
+    tracked: &BTreeSet<String>,
+    out: &mut Vec<String>,
+) -> Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+    sorted.sort_by_key(|e| e.file_name());
+    for entry in sorted {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(work_tree)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| name);
+        if path.is_dir() {
+            let prefix = format!("{rel}/");
+            let has_tracked = tracked.iter().any(|t| t.starts_with(&prefix));
+            if has_tracked {
+                walk_untracked(&path, work_tree, tracked, out)?;
+            } else {
+                out.push(format!("{rel}/"));
+            }
+        } else if !tracked.contains(&rel) {
+            out.push(rel);
+        }
+    }
     Ok(())
 }
 
@@ -210,8 +410,16 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Build the commit message from -m, -F, MERGE_MSG, or editor.
+/// Build the commit message from --reuse-message, -m, -F, MERGE_MSG, or editor.
 fn build_message(args: &Args, repo: &Repository) -> Result<String> {
+    // --reuse-message: take message (and author) from an existing commit
+    if let Some(ref rev) = args.reuse_message {
+        let oid = resolve_revision(repo, rev)?;
+        let obj = repo.odb.read(&oid)?;
+        let commit = grit_lib::objects::parse_commit(&obj.data)?;
+        return Ok(commit.message);
+    }
+
     // -m flags
     if !args.message.is_empty() {
         let msg = args.message.join("\n\n");
@@ -252,6 +460,15 @@ fn build_message(args: &Args, repo: &Repository) -> Result<String> {
 
 /// Resolve the author identity from args, env, and config.
 fn resolve_author(args: &Args, config: &ConfigSet, now: OffsetDateTime) -> Result<String> {
+    // --reuse-message: reuse the original commit's author
+    if let Some(ref rev) = args.reuse_message {
+        let repo = Repository::discover(None)?;
+        let oid = resolve_revision(&repo, rev)?;
+        let obj = repo.odb.read(&oid)?;
+        let commit = grit_lib::objects::parse_commit(&obj.data)?;
+        return Ok(commit.author);
+    }
+
     if let Some(ref author) = args.author {
         return Ok(author.clone());
     }
