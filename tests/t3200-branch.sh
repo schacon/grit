@@ -1339,4 +1339,100 @@ test_expect_success 'branch --show-current is empty on detached HEAD' '
 	git checkout master 2>/dev/null
 '
 
+# ── additional branch tests ───────────────────────────────────────────
+
+test_expect_success 'branch creates ref under refs/heads' '
+	cd repo &&
+	git branch ref-check-br &&
+	test -f .git/refs/heads/ref-check-br &&
+	git branch -d ref-check-br 2>/dev/null
+'
+
+test_expect_success 'branch listing includes new branch' '
+	cd repo &&
+	git branch list-test-br &&
+	git branch >../actual &&
+	grep "list-test-br" ../actual &&
+	git branch -d list-test-br 2>/dev/null
+'
+
+test_expect_success 'branch listing marks current branch with asterisk' '
+	cd repo &&
+	git checkout master 2>/dev/null &&
+	git branch >../actual &&
+	grep "^\* master" ../actual
+'
+
+test_expect_success 'branch -d on nonexistent branch fails' '
+	cd repo &&
+	test_must_fail git branch -d nonexistent-branch-xyz 2>/dev/null
+'
+
+test_expect_success 'branch with same name as existing fails' '
+	cd repo &&
+	git branch dup-test &&
+	test_must_fail git branch dup-test 2>/dev/null &&
+	git branch -d dup-test 2>/dev/null
+'
+
+test_expect_success 'branch -f moves existing branch to HEAD' '
+	cd repo &&
+	git branch move-target &&
+	git commit --allow-empty -m "advance" 2>/dev/null &&
+	new_head=$(git rev-parse HEAD) &&
+	git branch -f move-target &&
+	result=$(git rev-parse move-target) &&
+	test "$result" = "$new_head" &&
+	git branch -d move-target 2>/dev/null
+'
+
+test_expect_success 'multiple branches can coexist' '
+	cd repo &&
+	git branch multi-a &&
+	git branch multi-b &&
+	git branch multi-c &&
+	git rev-parse multi-a >/dev/null &&
+	git rev-parse multi-b >/dev/null &&
+	git rev-parse multi-c >/dev/null &&
+	git branch -d multi-a 2>/dev/null &&
+	git branch -d multi-b 2>/dev/null &&
+	git branch -d multi-c 2>/dev/null
+'
+
+test_expect_success 'branch points to correct commit' '
+	cd repo &&
+	head=$(git rev-parse HEAD) &&
+	git branch point-check &&
+	result=$(git rev-parse point-check) &&
+	test "$result" = "$head" &&
+	git branch -d point-check 2>/dev/null
+'
+
+test_expect_success 'branch with slash in name' '
+	cd repo &&
+	git branch feat/w22-slash &&
+	git rev-parse feat/w22-slash >/dev/null &&
+	git branch -d feat/w22-slash 2>/dev/null
+'
+
+test_expect_success 'branch --show-current shows master after checkout' '
+	cd repo &&
+	git checkout master 2>/dev/null &&
+	result=$(git branch --show-current) &&
+	test "$result" = "master"
+'
+
+test_expect_success 'branch -d cannot delete current branch' '
+	cd repo &&
+	git checkout master 2>/dev/null &&
+	test_must_fail git branch -d master 2>/dev/null
+'
+
+test_expect_success 'branch with hyphen in name' '
+	cd repo &&
+	git branch my-hyphen-branch &&
+	git rev-parse my-hyphen-branch >/dev/null &&
+	git branch -d my-hyphen-branch 2>/dev/null
+'
+
 test_done
