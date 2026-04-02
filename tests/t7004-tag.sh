@@ -2803,4 +2803,104 @@ test_expect_success 'tag -l lists all lightweight and annotated tags' '
 	test $(wc -l <output) -ge 10
 '
 
+test_expect_success 'tag on specific commit works' '
+	cd tag-extra &&
+	echo newthing >newthing.txt &&
+	git add newthing.txt && git commit -m "newthing" 2>/dev/null &&
+	sha=$(git rev-parse HEAD~1) &&
+	git tag specific-commit-tag-v3 "$sha" &&
+	result=$(git rev-parse specific-commit-tag-v3) &&
+	test "$result" = "$sha"
+'
+
+test_expect_success 'tag name with slash is valid' '
+	cd tag-extra &&
+	git tag release/v9.0 &&
+	git rev-parse release/v9.0 >output &&
+	test -s output
+'
+
+test_expect_success 'tag name with dots is valid' '
+	cd tag-extra &&
+	git tag v1.2.3 &&
+	git rev-parse v1.2.3 >output &&
+	test -s output
+'
+
+test_expect_success 'tag -d removes tag completely' '
+	cd tag-extra &&
+	git tag ephemeral-tag &&
+	git tag -d ephemeral-tag &&
+	test_must_fail git rev-parse ephemeral-tag 2>/dev/null
+'
+
+test_expect_success 'annotated tag cat-file -p shows message' '
+	cd tag-extra &&
+	git tag -a msg-check-tag -m "typed message here" 2>/dev/null &&
+	git cat-file -p msg-check-tag >output &&
+	grep "typed message here" output
+'
+
+test_expect_success 'annotated tag has tagger line' '
+	cd tag-extra &&
+	git cat-file -p typed-tag >output &&
+	grep "^tagger" output
+'
+
+test_expect_success 'annotated tag has tag name in object' '
+	cd tag-extra &&
+	git cat-file -p typed-tag >output &&
+	grep "^tag typed-tag" output
+'
+
+test_expect_success 'tag points to correct commit' '
+	cd tag-extra &&
+	head=$(git rev-parse HEAD) &&
+	git tag verify-target-tag &&
+	result=$(git rev-parse verify-target-tag) &&
+	test "$result" = "$head"
+'
+
+test_expect_success 'multiple tags on same commit allowed' '
+	cd tag-extra &&
+	git tag multi-tag-1 &&
+	git tag multi-tag-2 &&
+	r1=$(git rev-parse multi-tag-1) &&
+	r2=$(git rev-parse multi-tag-2) &&
+	test "$r1" = "$r2"
+'
+
+test_expect_success 'tag -l output is sorted' '
+	cd tag-extra &&
+	git tag -l >output &&
+	sort output >sorted &&
+	test_cmp sorted output
+'
+
+test_expect_success 'creating duplicate tag fails' '
+	cd tag-extra &&
+	git tag dup-test-tag &&
+	test_must_fail git tag dup-test-tag 2>/dev/null
+'
+
+test_expect_success 'tag with hyphen in name works' '
+	cd tag-extra &&
+	git tag my-hyphen-tag &&
+	git rev-parse my-hyphen-tag >output &&
+	test -s output
+'
+
+test_expect_success 'annotated tag cat-file -p shows object line' '
+	cd tag-extra &&
+	git tag -a cat-test-tag -m "cat test" 2>/dev/null &&
+	git cat-file -p cat-test-tag >output &&
+	grep "^object" output
+'
+
+test_expect_success 'annotated tag cat-file -p shows type commit' '
+	cd tag-extra &&
+	git cat-file -p cat-test-tag >output &&
+	grep "^type commit" output
+'
+
 test_done

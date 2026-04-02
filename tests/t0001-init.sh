@@ -1188,4 +1188,92 @@ test_expect_success 'init in nested path creates proper repo' '
 	test -d init-nested/sub/.git/refs
 '
 
+test_expect_success 'init creates objects/pack directory' '
+	rm -fr init-objpack &&
+	grit init init-objpack &&
+	test -d init-objpack/.git/objects/pack
+'
+
+test_expect_success 'init creates objects/info directory' '
+	rm -fr init-objinfo &&
+	grit init init-objinfo &&
+	test -d init-objinfo/.git/objects/info
+'
+
+test_expect_success 'init creates refs/tags directory' '
+	rm -fr init-refstags &&
+	grit init init-refstags &&
+	test -d init-refstags/.git/refs/tags
+'
+
+test_expect_success 'init creates refs/heads directory' '
+	rm -fr init-refsheads &&
+	grit init init-refsheads &&
+	test -d init-refsheads/.git/refs/heads
+'
+
+test_expect_success 'init creates config file' '
+	rm -fr init-cfg &&
+	grit init init-cfg &&
+	test -f init-cfg/.git/config
+'
+
+test_expect_success 'init bare creates objects directory' '
+	rm -fr init-bare-obj &&
+	grit init --bare init-bare-obj &&
+	test -d init-bare-obj/objects
+'
+
+test_expect_success 'init bare creates refs directory' '
+	rm -fr init-bare-refs &&
+	grit init --bare init-bare-refs &&
+	test -d init-bare-refs/refs
+'
+
+test_expect_success 'init bare creates HEAD file' '
+	rm -fr init-bare-head2 &&
+	grit init --bare init-bare-head2 &&
+	test -f init-bare-head2/HEAD
+'
+
+test_expect_success 'init bare creates config file' '
+	rm -fr init-bare-cfg &&
+	grit init --bare init-bare-cfg &&
+	test -f init-bare-cfg/config
+'
+
+test_expect_success 'init bare config has bare = true' '
+	rm -fr init-bare-check &&
+	grit init --bare init-bare-check &&
+	grep "bare = true" init-bare-check/config
+'
+
+test_expect_success 'init non-bare config has bare = false' '
+	rm -fr init-nonbare-check &&
+	grit init init-nonbare-check &&
+	grep "bare = false" init-nonbare-check/.git/config
+'
+
+test_expect_success 'init twice in same dir succeeds (reinit)' '
+	rm -fr init-reinit &&
+	grit init init-reinit &&
+	grit init init-reinit &&
+	test -d init-reinit/.git
+'
+
+test_expect_success 'init HEAD points to refs/heads/master or main' '
+	rm -fr init-head-check &&
+	grit init init-head-check &&
+	grep "ref: refs/heads/" init-head-check/.git/HEAD
+'
+
+test_expect_success 'init with existing files does not overwrite them' '
+	rm -fr init-existing &&
+	mkdir -p init-existing &&
+	echo "keep" >init-existing/myfile.txt &&
+	grit init init-existing &&
+	test -d init-existing/.git &&
+	test "$(cat init-existing/myfile.txt)" = "keep"
+'
+
 test_done

@@ -1244,4 +1244,145 @@ test_expect_success 'update-ref creates new ref' '
 	test "$result" = "$commit"
 '
 
+test_expect_success 'write-tree with multiple files in index' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "m1" >m1.txt && echo "m2" >m2.txt &&
+	grit update-index --add m1.txt m2.txt &&
+	tree=$(grit write-tree) &&
+	test ${#tree} -eq 40
+'
+
+test_expect_success 'cat-file -t returns commit for commit object' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "typecheck" >tc.txt &&
+	grit update-index --add tc.txt &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "type" | grit commit-tree "$tree") &&
+	type=$(grit cat-file -t "$commit") &&
+	test "$type" = "commit"
+'
+
+test_expect_success 'cat-file -t returns tree for tree object' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "treeobj" >to.txt &&
+	grit update-index --add to.txt &&
+	tree=$(grit write-tree) &&
+	type=$(grit cat-file -t "$tree") &&
+	test "$type" = "tree"
+'
+
+test_expect_success 'cat-file -t returns blob for blob object' '
+	cd repo &&
+	blob=$(echo "blobtest" | grit hash-object --stdin -w) &&
+	type=$(grit cat-file -t "$blob") &&
+	test "$type" = "blob"
+'
+
+test_expect_success 'cat-file -s returns size of blob' '
+	cd repo &&
+	echo "hello" >size.txt &&
+	blob=$(grit hash-object -w size.txt) &&
+	size=$(grit cat-file -s "$blob") &&
+	test "$size" -gt 0
+'
+
+test_expect_success 'commit-tree with -p creates parent link' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "p1" >p1.txt &&
+	grit update-index --add p1.txt &&
+	tree1=$(grit write-tree) &&
+	commit1=$(echo "first" | grit commit-tree "$tree1") &&
+	echo "p2" >p2.txt &&
+	grit update-index --add p2.txt &&
+	tree2=$(grit write-tree) &&
+	commit2=$(echo "second" | grit commit-tree -p "$commit1" "$tree2") &&
+	grit cat-file -p "$commit2" >actual &&
+	grep "^parent $commit1" actual
+'
+
+test_expect_success 'hash-object -w stores object retrievable by cat-file' '
+	cd repo &&
+	echo "stored" >stored.txt &&
+	blob=$(grit hash-object -w stored.txt) &&
+	content=$(grit cat-file -p "$blob") &&
+	test "$content" = "stored"
+'
+
+test_expect_success 'hash-object --stdin reads from stdin' '
+	cd repo &&
+	h1=$(echo "stdin_test" | grit hash-object --stdin) &&
+	test ${#h1} -eq 40
+'
+
+test_expect_success 'write-tree fails on empty index' '
+	cd repo &&
+	rm -f .git/index &&
+	tree=$(grit write-tree) &&
+	test ${#tree} -eq 40
+'
+
+test_expect_success 'cat-file -p on commit shows tree line' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "tl" >tl.txt &&
+	grit update-index --add tl.txt &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "treeline" | grit commit-tree "$tree") &&
+	grit cat-file -p "$commit" >actual &&
+	grep "^tree $tree" actual
+'
+
+test_expect_success 'rev-parse HEAD works after update-ref' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "hp" >hp.txt &&
+	grit update-index --add hp.txt &&
+	tree=$(grit write-tree) &&
+	commit=$(echo "head" | grit commit-tree "$tree") &&
+	grit update-ref refs/heads/master "$commit" &&
+	grit update-ref HEAD "$commit" &&
+	result=$(grit rev-parse HEAD) &&
+	test "$result" = "$commit"
+'
+
+test_expect_success 'update-index --add with subdirectory file' '
+	cd repo &&
+	rm -f .git/index &&
+	mkdir -p sub &&
+	echo "sub content" >sub/file.txt &&
+	grit update-index --add sub/file.txt &&
+	tree=$(grit write-tree) &&
+	test ${#tree} -eq 40
+'
+
+test_expect_success 'commit-tree with multiple -p parents creates merge' '
+	cd repo &&
+	rm -f .git/index &&
+	echo "merge1" >mg1.txt &&
+	grit update-index --add mg1.txt &&
+	t1=$(grit write-tree) &&
+	c1=$(echo "parent1" | grit commit-tree "$t1") &&
+	echo "merge2" >mg2.txt &&
+	grit update-index --add mg2.txt &&
+	t2=$(grit write-tree) &&
+	c2=$(echo "parent2" | grit commit-tree "$t2") &&
+	echo "merge3" >mg3.txt &&
+	grit update-index --add mg3.txt &&
+	t3=$(grit write-tree) &&
+	cm=$(echo "merge" | grit commit-tree -p "$c1" -p "$c2" "$t3") &&
+	grit cat-file -p "$cm" >actual &&
+	test $(grep -c "^parent" actual) -eq 2
+'
+
+test_expect_success 'hash-object with empty file produces valid sha1' '
+	cd repo &&
+	>empty.txt &&
+	h=$(grit hash-object empty.txt) &&
+	test ${#h} -eq 40
+'
+
 test_done

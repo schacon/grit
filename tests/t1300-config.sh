@@ -3107,4 +3107,100 @@ test_expect_success 'config set then get same session' '
 	test "$result" = "sessionval"
 '
 
+test_expect_success 'config set and get with hyphenated section' '
+	cd repo &&
+	git config my-section.key "hyphenval" &&
+	result=$(git config --get my-section.key) &&
+	test "$result" = "hyphenval"
+'
+
+test_expect_success 'config --unset removes single key' '
+	cd repo &&
+	git config unset.key "toremove" &&
+	git config --unset unset.key &&
+	test_must_fail git config --get unset.key
+'
+
+test_expect_success 'config bool value true' '
+	cd repo &&
+	git config bool.key "true" &&
+	result=$(git config --get bool.key) &&
+	test "$result" = "true"
+'
+
+test_expect_success 'config bool value false' '
+	cd repo &&
+	git config bool.key "false" &&
+	result=$(git config --get bool.key) &&
+	test "$result" = "false"
+'
+
+test_expect_success 'config with spaces in value' '
+	cd repo &&
+	git config space.key "hello world" &&
+	result=$(git config --get space.key) &&
+	test "$result" = "hello world"
+'
+
+test_expect_success 'config with equals sign in value' '
+	cd repo &&
+	git config eq.key "a=b" &&
+	result=$(git config --get eq.key) &&
+	test "$result" = "a=b"
+'
+
+test_expect_success 'config list shows all entries' '
+	cd repo &&
+	git config list >output &&
+	test $(wc -l <output) -ge 5
+'
+
+test_expect_success 'config overwrites existing key' '
+	cd repo &&
+	git config ow.key "first" &&
+	git config ow.key "second" &&
+	result=$(git config --get ow.key) &&
+	test "$result" = "second"
+'
+
+test_expect_success 'config --get on missing section fails' '
+	cd repo &&
+	test_must_fail git config --get nosuchsection.nosuchkey
+'
+
+test_expect_success 'config with numeric value' '
+	cd repo &&
+	git config num.key "42" &&
+	result=$(git config --get num.key) &&
+	test "$result" = "42"
+'
+
+test_expect_success 'config with empty value' '
+	cd repo &&
+	git config empty.key "" &&
+	result=$(git config --get empty.key) &&
+	test -z "$result"
+'
+
+test_expect_success 'config with special characters in section name' '
+	cd repo &&
+	git config "special-sec.key" "val" &&
+	result=$(git config --get "special-sec.key") &&
+	test "$result" = "val"
+'
+
+test_expect_success 'config --list contains user.name if set' '
+	cd repo &&
+	git config user.name "Test User" &&
+	git config list >output &&
+	grep "user.name=Test User" output
+'
+
+test_expect_success 'config subsection with dots' '
+	cd repo &&
+	git config "branch.main.remote" "origin" &&
+	result=$(git config --get "branch.main.remote") &&
+	test "$result" = "origin"
+'
+
 test_done
