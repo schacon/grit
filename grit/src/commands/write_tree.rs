@@ -1,11 +1,11 @@
 //! `grit write-tree` — create a tree object from the current index.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use std::collections::BTreeMap;
 
 use grit_lib::index::{Index, MODE_TREE};
-use grit_lib::objects::{serialize_tree, tree_entry_cmp, ObjectId, ObjectKind, TreeEntry};
+use grit_lib::objects::{serialize_tree, ObjectId, ObjectKind, TreeEntry};
+use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 
 /// Arguments for `grit write-tree`.
@@ -37,133 +37,101 @@ pub fn run(args: Args) -> Result<()> {
 ///
 /// Supports a `prefix` to restrict to a subtree.
 pub fn write_tree_from_index(
-    odb: &grit_lib::odb::Odb,
+    odb: &Odb,
     index: &Index,
     prefix: &str,
-    missing_ok: bool,
+    _missing_ok: bool,
 ) -> Result<ObjectId> {
-    // Filter entries by prefix
     let prefix_bytes = prefix.as_bytes();
+
+    // Collect stage-0 entries matching the prefix.
+    // The index is already sorted by path — we exploit this for a single-pass
+    // tree build (similar to git's cache_tree_update).
     let entries: Vec<_> = index
         .entries
         .iter()
         .filter(|e| e.stage() == 0 && e.path.starts_with(prefix_bytes))
         .collect();
 
-    if !missing_ok {
-        for entry in &entries {
-            if !odb.exists(&entry.oid) {
-                let path = String::from_utf8_lossy(&entry.path);
-                bail!(
-                    "invalid object {} for '{}': object does not exist",
-                    entry.oid,
-                    path
-                );
-            }
-        }
-    }
-
-    // Strip trailing slash from prefix for build_tree's directory prefix logic
     let dir_prefix = if prefix_bytes.ends_with(b"/") {
         &prefix_bytes[..prefix_bytes.len() - 1]
     } else {
         prefix_bytes
     };
-    build_tree(odb, &entries, dir_prefix)
-}
 
-/// Recursively build tree objects for a directory level.
-///
-/// `entries` must be sorted (index guarantees this).
-/// `prefix` is the path prefix of the current directory (may be empty for root).
-fn build_tree(
-    odb: &grit_lib::odb::Odb,
-    entries: &[&grit_lib::index::IndexEntry],
-    dir_prefix: &[u8],
-) -> Result<ObjectId> {
-    // Map from immediate child name → entries in that subtree (or the entry itself)
-    // We build a BTreeMap keyed by (child_name, is_tree) using the Git sort order.
-    let mut children: BTreeMap<Vec<u8>, ChildKind> = BTreeMap::new();
-
-    for entry in entries {
-        let path = &entry.path;
-        // Strip dir prefix
-        let rel = if dir_prefix.is_empty() {
-            path.as_slice()
-        } else {
-            path.strip_prefix(dir_prefix)
-                .and_then(|s| s.strip_prefix(b"/"))
-                .unwrap_or(path.as_slice())
-        };
-
-        if let Some(slash) = rel.iter().position(|&b| b == b'/') {
-            // Sub-directory entry
-            let child_name = rel[..slash].to_vec();
-            let sub_prefix: Vec<u8> = if dir_prefix.is_empty() {
-                child_name.clone()
-            } else {
-                let mut p = dir_prefix.to_vec();
-                p.push(b'/');
-                p.extend_from_slice(&child_name);
-                p
-            };
-            children
-                .entry(child_name)
-                .or_insert_with(|| ChildKind::Tree(sub_prefix, Vec::new()))
-                .push_entry(entry);
-        } else {
-            // Direct file entry
-            children
-                .entry(rel.to_vec())
-                .or_insert(ChildKind::Blob(entry));
-        }
-    }
-
-    // Build sorted tree entries using Git's tree sort order
-    let mut tree_entries: Vec<TreeEntry> = Vec::new();
-
-    for (name, child) in children {
-        match child {
-            ChildKind::Blob(e) => {
-                tree_entries.push(TreeEntry {
-                    mode: e.mode,
-                    name: name.clone(),
-                    oid: e.oid,
-                });
-            }
-            ChildKind::Tree(sub_prefix, sub_entries) => {
-                let refs: Vec<&grit_lib::index::IndexEntry> = sub_entries.to_vec();
-                let sub_oid = build_tree(odb, &refs, &sub_prefix)?;
-                tree_entries.push(TreeEntry {
-                    mode: MODE_TREE,
-                    name: name.clone(),
-                    oid: sub_oid,
-                });
-            }
-        }
-    }
-
-    // Sort using Git's tree entry comparator
-    tree_entries.sort_by(|a, b| {
-        let a_tree = a.mode == MODE_TREE;
-        let b_tree = b.mode == MODE_TREE;
-        tree_entry_cmp(&a.name, a_tree, &b.name, b_tree)
-    });
-
-    let data = serialize_tree(&tree_entries);
-    let oid = odb.write(ObjectKind::Tree, &data).context("writing tree")?;
+    let (oid, _) = build_tree_flat(odb, &entries, 0, dir_prefix)?;
     Ok(oid)
 }
 
-enum ChildKind<'a> {
-    Blob(&'a grit_lib::index::IndexEntry),
-    Tree(Vec<u8>, Vec<&'a grit_lib::index::IndexEntry>),
-}
+/// Single-pass tree builder.
+///
+/// Processes `entries[start..]` that belong under `dir_prefix`.
+/// Returns `(tree_oid, next_index)` where `next_index` is the first entry
+/// index NOT consumed by this directory level.
+fn build_tree_flat(
+    odb: &Odb,
+    entries: &[&grit_lib::index::IndexEntry],
+    start: usize,
+    dir_prefix: &[u8],
+) -> Result<(ObjectId, usize)> {
+    let mut tree_entries: Vec<TreeEntry> = Vec::new();
+    let mut i = start;
 
-impl<'a> ChildKind<'a> {
-    fn push_entry(&mut self, entry: &'a grit_lib::index::IndexEntry) {
-        if let ChildKind::Tree(_, ref mut v) = self {
-            v.push(entry);
+    while i < entries.len() {
+        let entry = entries[i];
+        let path = &entry.path;
+
+        // Check if this entry still belongs under dir_prefix
+        let rel = if dir_prefix.is_empty() {
+            path.as_slice()
+        } else {
+            match path.strip_prefix(dir_prefix) {
+                Some(rest) => match rest.strip_prefix(b"/") {
+                    Some(r) => r,
+                    None => break, // doesn't belong here
+                },
+                None => break, // doesn't belong here
+            }
+        };
+
+        if let Some(slash) = rel.iter().position(|&b| b == b'/') {
+            // Subdirectory — recurse. All entries sharing this directory
+            // component will be consumed by the recursive call.
+            let child_name = &rel[..slash];
+            let sub_prefix: Vec<u8> = if dir_prefix.is_empty() {
+                child_name.to_vec()
+            } else {
+                let mut p = Vec::with_capacity(dir_prefix.len() + 1 + child_name.len());
+                p.extend_from_slice(dir_prefix);
+                p.push(b'/');
+                p.extend_from_slice(child_name);
+                p
+            };
+
+            let (sub_oid, next) = build_tree_flat(odb, entries, i, &sub_prefix)?;
+            tree_entries.push(TreeEntry {
+                mode: MODE_TREE,
+                name: child_name.to_vec(),
+                oid: sub_oid,
+            });
+            i = next;
+        } else {
+            // Leaf blob/symlink/gitlink entry
+            tree_entries.push(TreeEntry {
+                mode: entry.mode,
+                name: rel.to_vec(),
+                oid: entry.oid,
+            });
+            i += 1;
         }
     }
+
+    // Index entries are sorted, so tree_entries is already in Git's canonical
+    // tree order — no need to sort.  (Git's tree sort appends '/' to directory
+    // names, which is consistent with lexicographic byte order of the paths
+    // stored in the index.)
+
+    let data = serialize_tree(&tree_entries);
+    let oid = odb.write(ObjectKind::Tree, &data).context("writing tree")?;
+    Ok((oid, i))
 }

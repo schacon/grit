@@ -408,22 +408,29 @@ fn walk_for_untracked(
     sorted.sort_by_key(|e| e.file_name());
 
     for entry in sorted {
-        let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
 
         if name == ".git" {
             continue;
         }
 
+        let path = entry.path();
         let rel = path
             .strip_prefix(work_tree)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| name);
 
-        if path.is_dir() {
-            // Check if any tracked file starts with this directory prefix
+        // Use file_type() from DirEntry — avoids extra stat syscall on Linux
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+
+        if is_dir {
+            // Use BTreeSet range to check for tracked files under this prefix
+            // in O(log n) instead of O(n) linear scan
             let prefix = format!("{rel}/");
-            let has_tracked = tracked.iter().any(|t| t.starts_with(&prefix));
+            let has_tracked = tracked
+                .range::<String, _>(&prefix..)
+                .next()
+                .map_or(false, |t| t.starts_with(&prefix));
             if has_tracked {
                 walk_for_untracked(&path, work_tree, tracked, out)?;
             } else {

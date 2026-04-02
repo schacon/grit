@@ -438,8 +438,22 @@ pub fn entry_from_stat(
 ) -> Result<IndexEntry> {
     use std::os::unix::fs::MetadataExt;
     let meta = fs::metadata(path)?;
+    Ok(entry_from_metadata(&meta, rel_path, oid, mode))
+}
 
-    Ok(IndexEntry {
+/// Build an [`IndexEntry`] from already-obtained metadata.
+///
+/// This avoids a redundant `stat()` call when the caller already has
+/// filesystem metadata (e.g. from `symlink_metadata`).
+#[must_use]
+pub fn entry_from_metadata(
+    meta: &fs::Metadata,
+    rel_path: &[u8],
+    oid: ObjectId,
+    mode: u32,
+) -> IndexEntry {
+    use std::os::unix::fs::MetadataExt;
+    IndexEntry {
         ctime_sec: meta.ctime() as u32,
         ctime_nsec: meta.ctime_nsec() as u32,
         mtime_sec: meta.mtime() as u32,
@@ -454,7 +468,7 @@ pub fn entry_from_stat(
         flags: rel_path.len().min(0xFFF) as u16,
         flags_extended: None,
         path: rel_path.to_vec(),
-    })
+    }
 }
 
 /// Convert a `stat` mode to the Git index mode, normalised to one of the

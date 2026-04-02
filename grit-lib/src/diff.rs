@@ -404,8 +404,10 @@ pub fn diff_index_to_worktree(
         if ie.stage() != 0 {
             continue;
         }
-        let path_str = String::from_utf8_lossy(&ie.path).to_string();
-        let file_path = work_tree.join(&path_str);
+        // Use str slice directly to avoid allocation for path joining;
+        // only allocate String if we need it for DiffEntry output.
+        let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
+        let file_path = work_tree.join(path_str_ref);
         match fs::symlink_metadata(&file_path) {
             Ok(meta) => {
                 // Check if the file has changed using stat data first
@@ -418,10 +420,11 @@ pub fn diff_index_to_worktree(
                 let worktree_mode = mode_from_metadata(&meta);
 
                 if worktree_oid != ie.oid || worktree_mode != ie.mode {
+                    let path_owned = path_str_ref.to_owned();
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
-                        old_path: Some(path_str.clone()),
-                        new_path: Some(path_str),
+                        old_path: Some(path_owned.clone()),
+                        new_path: Some(path_owned),
                         old_mode: format_mode(ie.mode),
                         new_mode: format_mode(worktree_mode),
                         old_oid: ie.oid,
@@ -433,7 +436,7 @@ pub fn diff_index_to_worktree(
                 // File deleted from working tree
                 result.push(DiffEntry {
                     status: DiffStatus::Deleted,
-                    old_path: Some(path_str),
+                    old_path: Some(path_str_ref.to_owned()),
                     new_path: None,
                     old_mode: format_mode(ie.mode),
                     new_mode: "000000".to_owned(),
@@ -532,13 +535,16 @@ pub fn diff_tree_to_worktree(
     let tree_map: std::collections::BTreeMap<String, &FlatEntry> =
         tree_flat.iter().map(|e| (e.path.clone(), e)).collect();
 
-    // Collect index paths (stage 0 only)
+    // Build index lookup: path → &IndexEntry (stage 0 only)
+    let mut index_entries: std::collections::BTreeMap<&[u8], &IndexEntry> =
+        std::collections::BTreeMap::new();
     let mut index_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for ie in &index.entries {
         if ie.stage() != 0 {
             continue;
         }
         let path = String::from_utf8_lossy(&ie.path).to_string();
+        index_entries.insert(&ie.path, ie);
         index_paths.insert(path);
     }
 
@@ -561,7 +567,15 @@ pub fn diff_tree_to_worktree(
 
         match (tree_entry, wt_meta) {
             (Some(te), Some(ref meta)) => {
-                // Both tree and worktree file exist — check for differences
+                // Fast path: if the index entry matches the tree entry AND
+                // stat cache matches, the file is unchanged — skip hashing.
+                if let Some(ie) = index_entries.get(path.as_bytes()) {
+                    if ie.oid == te.oid && ie.mode == te.mode && stat_matches(ie, meta) {
+                        continue;
+                    }
+                }
+
+                // Stat or content differs — hash the file
                 let wt_oid = hash_worktree_file(odb, &file_path, meta)?;
                 let wt_mode = mode_from_metadata(meta);
                 if wt_oid != te.oid || wt_mode != te.mode {

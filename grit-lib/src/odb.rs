@@ -92,8 +92,13 @@ impl Odb {
     /// This does **not** write anything to disk.
     #[must_use]
     pub fn hash_object_data(kind: ObjectKind, data: &[u8]) -> ObjectId {
-        let store_bytes = build_store_bytes(kind, data);
-        hash_bytes(&store_bytes)
+        // Stream the hash without copying data into a contiguous buffer.
+        let header = format!("{} {}\0", kind, data.len());
+        let mut hasher = Sha1::new();
+        hasher.update(header.as_bytes());
+        hasher.update(data);
+        let digest = hasher.finalize();
+        ObjectId::from_bytes(digest.as_slice()).unwrap_or_else(|_| unreachable!("SHA-1 is 20 bytes"))
     }
 
     /// Write an object to the loose store and return its [`ObjectId`].
