@@ -387,12 +387,13 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()
         for entry in matches {
             let val = entry.value.as_deref().unwrap_or("true");
             let val = format_typed_value(args, val)?;
-            if get_args.show_names || args.name_only {
-                if args.name_only {
-                    print!("{}{}", entry.key, terminator);
-                } else {
-                    print!("{} {}{}", entry.key, val, terminator);
-                }
+            if args.name_only {
+                print!("{}{}", entry.key, terminator);
+            } else if args.null_terminated {
+                // Git uses key\nvalue\0 with -z for --get-regexp
+                print!("{}\n{}{}", entry.key, val, terminator);
+            } else if get_args.show_names {
+                print!("{} {}{}", entry.key, val, terminator);
             } else {
                 print!("{}{}", val, terminator);
             }
@@ -520,6 +521,9 @@ fn cmd_list(args: &Args, git_dir: Option<&Path>) -> Result<()> {
         let val = entry.value.as_deref().unwrap_or("true");
         if args.name_only {
             print!("{}{}{}", prefix, entry.key, terminator);
+        } else if args.null_terminated {
+            // Git uses key\nvalue\0 format with -z
+            print!("{}{}\n{}{}", prefix, entry.key, val, terminator);
         } else {
             print!("{}{}={}{}", prefix, entry.key, val, terminator);
         }
