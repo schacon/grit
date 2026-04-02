@@ -355,4 +355,152 @@ test_expect_success 'commit -F from /dev/null with --allow-empty-message' '
 	test_cmp expected actual
 '
 
+# ---- Wave 8: more tests ported from upstream t7500 ----
+
+test_expect_success 'commit message from non-existing file fails' '
+	cd repo &&
+	echo "nofile" >>foo &&
+	git add foo &&
+	test_must_fail git commit -F /nonexistent/path 2>/dev/null
+'
+
+test_expect_success 'commit -F with absolute path' '
+	cd repo &&
+	echo "abspath" >>foo &&
+	git add foo &&
+	echo "absolute path message" >"$TRASH_DIRECTORY/abs-msg.txt" &&
+	git commit -F "$TRASH_DIRECTORY/abs-msg.txt" 2>/dev/null &&
+	git cat-file commit HEAD >actual &&
+	grep "absolute path message" actual
+'
+
+test_expect_success 'commit -F with relative path from subdirectory' '
+	cd repo &&
+	mkdir -p deep/nested &&
+	echo "relative msg" >deep/nested/msg.txt &&
+	echo "relsub" >>foo &&
+	git add foo &&
+	cd deep/nested &&
+	git commit -F msg.txt 2>/dev/null &&
+	cd ../.. &&
+	git cat-file commit HEAD >actual &&
+	grep "relative msg" actual
+'
+
+test_expect_success 'commit -F with empty file fails' '
+	cd repo &&
+	echo "emptyf" >>foo &&
+	git add foo &&
+	>empty-file &&
+	test_must_fail git commit -F empty-file 2>/dev/null
+'
+
+test_expect_success 'commit -F with whitespace-only file fails' '
+	cd repo &&
+	printf "   \n   \n" >ws-only.txt &&
+	test_must_fail git commit -F ws-only.txt 2>/dev/null
+'
+
+test_expect_success 'commit -m with empty string fails' '
+	cd repo &&
+	echo "empty-m" >>foo &&
+	git add foo &&
+	test_must_fail git commit -m "" 2>/dev/null
+'
+
+test_expect_success 'commit -m with whitespace-only string fails' '
+	cd repo &&
+	test_must_fail git commit -m "   " 2>/dev/null
+'
+
+test_expect_success 'commit --allow-empty-message -F from empty file' '
+	cd repo &&
+	echo "aem-f" >>foo &&
+	git add foo &&
+	>aem-empty &&
+	git commit --allow-empty-message -F aem-empty 2>/dev/null &&
+	git cat-file -t HEAD >actual &&
+	echo "commit" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'commit -F preserves multi-paragraph message' '
+	cd repo &&
+	echo "mpara" >>foo &&
+	git add foo &&
+	printf "paragraph one\n\nparagraph two\n" >multi-para.txt &&
+	git commit -F multi-para.txt 2>/dev/null &&
+	git cat-file commit HEAD >commit &&
+	sed -e "1,/^$/d" commit >actual &&
+	printf "paragraph one\n\nparagraph two\n" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'commit -m with newlines in message' '
+	cd repo &&
+	echo "nlmsg" >>foo &&
+	git add foo &&
+	git commit -m "first line" -m "second line" 2>/dev/null &&
+	git cat-file commit HEAD >commit &&
+	sed -e "1,/^$/d" commit >actual &&
+	grep "first line" actual &&
+	grep "second line" actual
+'
+
+test_expect_success 'commit --date with epoch format' '
+	cd repo &&
+	echo "epoch" >>foo &&
+	git add foo &&
+	git commit --date="1234567890 +0000" -m "epoch date" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "^author.*1234567890 +0000" actual
+'
+
+test_expect_success 'commit --author with name and email' '
+	cd repo &&
+	echo "authne" >>foo &&
+	git add foo &&
+	git commit --author="Special Author <special@example.com>" -m "special" 2>/dev/null &&
+	git cat-file -p HEAD >actual &&
+	grep "author Special Author <special@example.com>" actual
+'
+
+test_expect_success 'commit --amend does not create new parent' '
+	cd repo &&
+	echo "nopar" >>foo &&
+	git add foo &&
+	git commit -m "before" 2>/dev/null &&
+	PARENT_BEFORE=$(git cat-file -p HEAD | sed -n "s/^parent //p" | head -1) &&
+	git commit --amend -m "after" 2>/dev/null &&
+	PARENT_AFTER=$(git cat-file -p HEAD | sed -n "s/^parent //p" | head -1) &&
+	test "$PARENT_BEFORE" = "$PARENT_AFTER"
+'
+
+test_expect_success 'commit --amend changes hash' '
+	cd repo &&
+	echo "chash" >>foo &&
+	git add foo &&
+	git commit -m "original" 2>/dev/null &&
+	OLD=$(git rev-parse HEAD) &&
+	git commit --amend -m "changed" 2>/dev/null &&
+	NEW=$(git rev-parse HEAD) &&
+	test "$OLD" != "$NEW"
+'
+
+test_expect_success 'commit -a stages tracked file modifications' '
+	cd repo &&
+	echo "ca-mod" >>foo &&
+	git commit -a -m "auto staged mod" 2>/dev/null &&
+	git diff-tree --name-status HEAD^ HEAD >actual &&
+	grep "^M.*foo" actual
+'
+
+test_expect_success 'commit --allow-empty creates commit with same tree as parent' '
+	cd repo &&
+	PARENT_TREE=$(git cat-file -p HEAD | head -1 | sed "s/^tree //") &&
+	git commit --allow-empty -m "same tree empty" 2>/dev/null &&
+	CHILD_TREE=$(git cat-file -p HEAD | head -1 | sed "s/^tree //") &&
+	test "$PARENT_TREE" = "$CHILD_TREE"
+'
+
 test_done
