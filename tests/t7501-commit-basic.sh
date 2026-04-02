@@ -1192,4 +1192,120 @@ test_expect_success 'commit sets committer date' '
 	grep "^committer .* [0-9]\{10\}" ../actual
 '
 
+# ---------------------------------------------------------------------------
+# Deepening tests (w32-deepen)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'deepen setup: fresh repo for commit tests' '
+	git init deepen-commit-repo &&
+	cd deepen-commit-repo &&
+	git config user.name "Commit Tester" &&
+	git config user.email "commit@test.com" &&
+	echo "base" >base.txt &&
+	git add base.txt &&
+	grit commit -m "initial commit"
+'
+
+test_expect_success 'commit creates a commit object' '
+	cd deepen-commit-repo &&
+	git cat-file -t HEAD >output &&
+	grep "commit" output
+'
+
+test_expect_success 'commit message is stored correctly' '
+	cd deepen-commit-repo &&
+	git log -n 1 --format="%s" >output &&
+	test "$(cat output)" = "initial commit"
+'
+
+test_expect_success 'commit with --allow-empty creates empty commit' '
+	cd deepen-commit-repo &&
+	grit commit --allow-empty -m "empty commit" &&
+	git log -n 1 --format="%s" >output &&
+	test "$(cat output)" = "empty commit"
+'
+
+test_expect_success 'commit sets author name from config' '
+	cd deepen-commit-repo &&
+	git log -n 1 --format="%an" >output &&
+	test "$(cat output)" = "Commit Tester"
+'
+
+test_expect_success 'commit sets author email from config' '
+	cd deepen-commit-repo &&
+	git log -n 1 --format="%ae" >output &&
+	test "$(cat output)" = "commit@test.com"
+'
+
+test_expect_success 'commit HEAD advances after new commit' '
+	cd deepen-commit-repo &&
+	H1=$(git rev-parse HEAD) &&
+	echo "new" >new.txt &&
+	git add new.txt &&
+	grit commit -m "advance HEAD" &&
+	H2=$(git rev-parse HEAD) &&
+	test "$H1" != "$H2"
+'
+
+test_expect_success 'commit parent is previous HEAD' '
+	cd deepen-commit-repo &&
+	PARENT=$(git cat-file -p HEAD | sed -n "s/^parent //p") &&
+	test ${#PARENT} -eq 40
+'
+
+test_expect_success 'commit tree matches index' '
+	cd deepen-commit-repo &&
+	TREE=$(grit write-tree) &&
+	COMMIT_TREE=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
+	test "$TREE" = "$COMMIT_TREE"
+'
+
+test_expect_success 'commit with multi-word message' '
+	cd deepen-commit-repo &&
+	grit commit --allow-empty -m "this is a longer commit message" &&
+	git log -n 1 --format="%s" >output &&
+	test "$(cat output)" = "this is a longer commit message"
+'
+
+test_expect_success 'commit without staged changes fails' '
+	cd deepen-commit-repo &&
+	test_must_fail grit commit -m "nothing staged" 2>/dev/null
+'
+
+test_expect_success 'commit with added file shows in log' '
+	cd deepen-commit-repo &&
+	echo "logged" >logged.txt &&
+	git add logged.txt &&
+	grit commit -m "add logged" &&
+	git log --oneline >output &&
+	grep "add logged" output
+'
+
+test_expect_success 'commit preserves file content' '
+	cd deepen-commit-repo &&
+	echo "preserved" >preserved.txt &&
+	git add preserved.txt &&
+	grit commit -m "preserve test" &&
+	git show HEAD:preserved.txt >output &&
+	test "$(cat output)" = "preserved"
+'
+
+test_expect_success 'multiple commits increase log count' '
+	cd deepen-commit-repo &&
+	COUNT1=$(git log --oneline | wc -l) &&
+	grit commit --allow-empty -m "extra1" &&
+	grit commit --allow-empty -m "extra2" &&
+	COUNT2=$(git log --oneline | wc -l) &&
+	test $COUNT2 -eq $((COUNT1 + 2))
+'
+
+test_expect_success 'commit on detached HEAD works' '
+	cd deepen-commit-repo &&
+	git checkout --detach HEAD 2>/dev/null &&
+	grit commit --allow-empty -m "detached commit" &&
+	git log -n 1 --format="%s" >output &&
+	test "$(cat output)" = "detached commit" &&
+	git checkout - 2>/dev/null
+'
+
 test_done

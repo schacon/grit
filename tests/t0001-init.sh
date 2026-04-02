@@ -1276,4 +1276,91 @@ test_expect_success 'init with existing files does not overwrite them' '
 	test "$(cat init-existing/myfile.txt)" = "keep"
 '
 
+# ---------------------------------------------------------------------------
+# Deepening tests (w32-deepen)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'init creates objects directory' '
+	rm -rf deepen-init1 &&
+	grit init deepen-init1 &&
+	test -d deepen-init1/.git/objects
+'
+
+test_expect_success 'init creates refs directory' '
+	test -d deepen-init1/.git/refs
+'
+
+test_expect_success 'init creates refs/heads directory' '
+	test -d deepen-init1/.git/refs/heads
+'
+
+test_expect_success 'init creates refs/tags directory' '
+	test -d deepen-init1/.git/refs/tags
+'
+
+test_expect_success 'init creates HEAD file' '
+	test -f deepen-init1/.git/HEAD
+'
+
+test_expect_success 'init HEAD points to refs/heads/' '
+	grep "ref: refs/heads/" deepen-init1/.git/HEAD
+'
+
+test_expect_success 'init creates config file' '
+	test -f deepen-init1/.git/config
+'
+
+test_expect_success 'init --bare creates bare repository' '
+	rm -rf deepen-bare &&
+	grit init --bare deepen-bare &&
+	test -d deepen-bare/objects &&
+	test -d deepen-bare/refs &&
+	test -f deepen-bare/HEAD
+'
+
+test_expect_success 'init --bare has no .git subdirectory' '
+	! test -d deepen-bare/.git
+'
+
+test_expect_success 'init --bare config has bare = true' '
+	grep "bare = true" deepen-bare/config
+'
+
+test_expect_success 'reinit in existing repo does not fail' '
+	rm -rf deepen-reinit &&
+	grit init deepen-reinit &&
+	grit init deepen-reinit
+'
+
+test_expect_success 'reinit preserves existing objects' '
+	cd deepen-reinit &&
+	git config user.name "T" &&
+	git config user.email "t@t" &&
+	echo content >f.txt &&
+	git add f.txt &&
+	H=$(grit hash-object f.txt) &&
+	cd .. &&
+	grit init deepen-reinit &&
+	cd deepen-reinit &&
+	grit cat-file -t $H >../actual &&
+	grep "blob" ../actual
+'
+
+test_expect_success 'init in subdirectory creates proper .git' '
+	rm -rf deepen-sub &&
+	mkdir -p deepen-sub/a/b &&
+	grit init deepen-sub/a/b &&
+	test -d deepen-sub/a/b/.git
+'
+
+test_expect_success 'init objects/pack directory exists' '
+	rm -rf deepen-pack &&
+	grit init deepen-pack &&
+	test -d deepen-pack/.git/objects/pack
+'
+
+test_expect_success 'init objects/info directory exists' '
+	test -d deepen-pack/.git/objects/info
+'
+
 test_done

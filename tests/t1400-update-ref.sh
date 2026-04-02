@@ -3576,4 +3576,125 @@ test_expect_success 'update-ref refuses invalid sha' '
 	test_must_fail grit update-ref refs/heads/bad-sha "not-a-sha" 2>/dev/null
 '
 
+# ---------------------------------------------------------------------------
+# Deepening tests (w32-deepen)
+# ---------------------------------------------------------------------------
+
+test_expect_success 'deepen setup: fresh repo for update-ref tests' '
+	git init deepen-uref-repo &&
+	cd deepen-uref-repo &&
+	git config user.name "T" &&
+	git config user.email "t@t" &&
+	echo init >f.txt &&
+	git add f.txt &&
+	git commit -m "initial"
+'
+
+test_expect_success 'update-ref creates new ref' '
+	cd deepen-uref-repo &&
+	H=$(git rev-parse HEAD) &&
+	grit update-ref refs/heads/deepen-new $H &&
+	grit rev-parse refs/heads/deepen-new >output &&
+	test "$(cat output)" = "$H"
+'
+
+test_expect_success 'update-ref creates ref in custom namespace' '
+	cd deepen-uref-repo &&
+	H=$(git rev-parse HEAD) &&
+	grit update-ref refs/custom/deepen-ns $H &&
+	grit rev-parse refs/custom/deepen-ns >output &&
+	test "$(cat output)" = "$H"
+'
+
+test_expect_success 'update-ref creates tag ref' '
+	cd deepen-uref-repo &&
+	H=$(git rev-parse HEAD) &&
+	grit update-ref refs/tags/deepen-tag-ref $H &&
+	grit rev-parse refs/tags/deepen-tag-ref >output &&
+	test "$(cat output)" = "$H"
+'
+
+test_expect_success 'update-ref overwrites existing ref' '
+	cd deepen-uref-repo &&
+	echo second >>f.txt &&
+	git add f.txt &&
+	git commit -m "second" &&
+	H2=$(git rev-parse HEAD) &&
+	grit update-ref refs/heads/deepen-new $H2 &&
+	grit rev-parse refs/heads/deepen-new >output &&
+	test "$(cat output)" = "$H2"
+'
+
+test_expect_success 'update-ref -d deletes a ref' '
+	cd deepen-uref-repo &&
+	H=$(git rev-parse HEAD) &&
+	grit update-ref refs/heads/deepen-to-delete $H &&
+	grit update-ref -d refs/heads/deepen-to-delete &&
+	test_must_fail grit rev-parse refs/heads/deepen-to-delete 2>/dev/null
+'
+
+test_expect_success 'show-ref lists the created ref' '
+	cd deepen-uref-repo &&
+	grit show-ref >output &&
+	grep "refs/heads/deepen-new" output
+'
+
+test_expect_success 'show-ref lists tag ref' '
+	cd deepen-uref-repo &&
+	grit show-ref >output &&
+	grep "refs/tags/deepen-tag-ref" output
+'
+
+test_expect_success 'symbolic-ref reads HEAD' '
+	cd deepen-uref-repo &&
+	grit symbolic-ref HEAD >output &&
+	grep "refs/heads/" output
+'
+
+test_expect_success 'symbolic-ref sets HEAD to new branch' '
+	cd deepen-uref-repo &&
+	grit symbolic-ref HEAD refs/heads/deepen-new &&
+	grit symbolic-ref HEAD >output &&
+	test "$(cat output)" = "refs/heads/deepen-new" &&
+	grit symbolic-ref HEAD refs/heads/master
+'
+
+test_expect_success 'update-ref with old-value check succeeds when matching' '
+	cd deepen-uref-repo &&
+	H=$(grit rev-parse refs/heads/deepen-new) &&
+	echo third >>f.txt &&
+	git add f.txt &&
+	git commit -m "third" &&
+	H2=$(git rev-parse HEAD) &&
+	grit update-ref refs/heads/deepen-new $H2 $H &&
+	grit rev-parse refs/heads/deepen-new >output &&
+	test "$(cat output)" = "$H2"
+'
+
+test_expect_success 'update-ref with wrong old-value fails' '
+	cd deepen-uref-repo &&
+	H=$(git rev-parse HEAD) &&
+	test_must_fail grit update-ref refs/heads/deepen-new $H 0000000000000000000000000000000000000001 2>/dev/null
+'
+
+test_expect_success 'update-ref refuses empty refname' '
+	cd deepen-uref-repo &&
+	H=$(git rev-parse HEAD) &&
+	test_must_fail grit update-ref "" $H 2>/dev/null
+'
+
+test_expect_success 'show-ref --heads only shows heads' '
+	cd deepen-uref-repo &&
+	grit show-ref --heads >output &&
+	! grep "refs/tags/" output &&
+	grep "refs/heads/" output
+'
+
+test_expect_success 'show-ref --tags only shows tags' '
+	cd deepen-uref-repo &&
+	grit show-ref --tags >output &&
+	! grep "refs/heads/" output &&
+	grep "refs/tags/" output
+'
+
 test_done
