@@ -539,4 +539,54 @@ test_expect_success '--is-inside-work-tree with GIT_DIR and GIT_WORK_TREE' '
 	test_cmp expect actual
 '
 
+# --- Additional rev-parse tests ---
+
+test_expect_success '--short=12 outputs 12-char hash' '
+	cd repo &&
+	grit rev-parse --short=12 HEAD >actual &&
+	hash=$(cat actual | tr -d "\n") &&
+	len=$(printf "%s" "$hash" | wc -c) &&
+	test "$len" = 12
+'
+
+test_expect_success '--short default is 7 chars' '
+	cd repo &&
+	grit rev-parse --short HEAD >actual &&
+	hash=$(cat actual | tr -d "\n") &&
+	len=$(printf "%s" "$hash" | wc -c) &&
+	test "$len" = 7
+'
+
+test_expect_success '--short hash is prefix of full hash' '
+	cd repo &&
+	grit rev-parse HEAD >full &&
+	grit rev-parse --short=10 HEAD >short &&
+	prefix=$(head -c 10 full) &&
+	short_val=$(cat short | tr -d "\n") &&
+	test "$prefix" = "$short_val"
+'
+
+test_expect_success '--verify with --short outputs short hash' '
+	cd repo &&
+	grit rev-parse --verify --short HEAD >actual &&
+	hash=$(cat actual | tr -d "\n") &&
+	len=$(printf "%s" "$hash" | wc -c) &&
+	test "$len" -lt 41
+'
+
+test_expect_success 'rev-parse HEAD^{tree} differs from HEAD^{commit}' '
+	cd repo &&
+	grit rev-parse "HEAD^{tree}" >tree &&
+	grit rev-parse "HEAD^{commit}" >commit &&
+	! test_cmp tree commit
+'
+
+test_expect_success 'rev-parse handles mixed flags and revisions' '
+	cd repo &&
+	grit rev-parse --is-inside-work-tree HEAD >actual &&
+	head_hash=$(grit rev-parse HEAD) &&
+	printf "true\n%s\n" "$head_hash" >expect &&
+	test_cmp expect actual
+'
+
 test_done

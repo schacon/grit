@@ -182,4 +182,95 @@ test_expect_success 'commit^{} is idempotent' '
 	test_cmp expected actual
 '
 
+# --- Additional caret/peel tests ---
+
+test_expect_success 'blob-tag^{tree} fails' '
+	cd repo &&
+	test_must_fail grit rev-parse blob-tag^{tree}
+'
+
+test_expect_success 'commit-tag^{} double peel is idempotent' '
+	cd repo &&
+	grit rev-parse commit-tag^{} >first &&
+	result=$(cat first) &&
+	grit rev-parse "$result^{}" >second &&
+	test_cmp first second
+'
+
+test_expect_success 'tree-tag^{} peels to tree' '
+	cd repo &&
+	TREE_SHA1=$(cat tree_sha1.out) &&
+	echo "$TREE_SHA1" >expected &&
+	grit rev-parse tree-tag^{} >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'commit-tag^{commit} equals ref' '
+	cd repo &&
+	grit rev-parse ref >expected &&
+	grit rev-parse commit-tag^{commit} >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'ref^{tree} resolves HEAD to tree' '
+	cd repo &&
+	grit rev-parse HEAD^{tree} >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | wc -c) = 41
+'
+
+test_expect_success 'ref^{commit}^{tree} peels commit then to tree' '
+	cd repo &&
+	grit rev-parse ref^{tree} >expected &&
+	grit rev-parse ref^{commit} >commit_oid &&
+	commit=$(cat commit_oid) &&
+	grit rev-parse "$commit^{tree}" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'tree-tag^{blob} fails' '
+	cd repo &&
+	test_must_fail grit rev-parse tree-tag^{blob}
+'
+
+test_expect_success 'HEAD^1^{commit} same as HEAD^1' '
+	cd repo &&
+	grit rev-parse HEAD^1 >expected &&
+	grit rev-parse HEAD^1^{commit} >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'HEAD^1^{tree} gives parent tree' '
+	cd repo &&
+	grit rev-parse HEAD^1^{tree} >actual &&
+	grit rev-parse HEAD^{tree} >head_tree &&
+	! test_cmp head_tree actual
+'
+
+test_expect_success 'HEAD~3^{commit} resolves' '
+	cd repo &&
+	grit rev-parse HEAD~3 >expected &&
+	grit rev-parse HEAD~3^{commit} >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'HEAD~3^{tree} resolves to tree' '
+	cd repo &&
+	grit rev-parse HEAD~3^{tree} >actual &&
+	hash=$(cat actual) &&
+	test $(echo "$hash" | wc -c) = 41
+'
+
+test_expect_success 'bad type in ^{badtype} fails' '
+	cd repo &&
+	test_must_fail grit rev-parse HEAD^{foobar}
+'
+
+test_expect_success 'commit-tag^{tree} != tree-tag^{tree} check objects differ' '
+	cd repo &&
+	grit rev-parse commit-tag^{tree} >commit_tree &&
+	grit rev-parse tree-tag^{tree} >tree_tree &&
+	test_cmp commit_tree tree_tree
+'
+
 test_done

@@ -111,4 +111,87 @@ test_expect_success 'two-level prefix with -- file' '
 	test_cmp expect actual
 '
 
+# --- Additional prefix tests ---
+
+test_expect_success 'prefix with multiple files' '
+	cd repo &&
+	grit rev-parse --prefix sub1/ -- file1 sub2/file2 >actual &&
+	cat >expect <<-\EOF &&
+	--
+	sub1/file1
+	sub1/sub2/file2
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'empty prefix passes paths through unchanged' '
+	cd repo &&
+	grit rev-parse --prefix "" -- top >actual &&
+	cat >expect <<-\EOF &&
+	--
+	top
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'prefix with rev and -- and file' '
+	cd repo &&
+	grit rev-parse --prefix sub1/ main -- file1 >actual &&
+	cat >expected <<-EOF &&
+	$(grit rev-parse main)
+	--
+	sub1/file1
+	EOF
+	test_cmp expected actual
+'
+
+test_expect_success 'prefix with HEAD:./file resolves correctly' '
+	cd repo &&
+	grit rev-parse --prefix sub1/sub2/ HEAD:./file2 >actual &&
+	grit rev-parse HEAD:sub1/sub2/file2 >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'prefix with HEAD:../file resolves parent' '
+	cd repo &&
+	grit rev-parse --prefix sub1/sub2/ HEAD:../file1 >actual &&
+	grit rev-parse HEAD:sub1/file1 >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'prefix does not affect absolute rev' '
+	cd repo &&
+	grit rev-parse --prefix sub1/ HEAD >actual &&
+	grit rev-parse HEAD >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'prefix with only rev (no --)' '
+	cd repo &&
+	grit rev-parse --prefix sub1/ main >actual &&
+	grit rev-parse main >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'prefix with only -- and multiple paths' '
+	cd repo &&
+	grit rev-parse --prefix sub1/ -- file1 sub2/file2 >actual &&
+	cat >expect <<-\EOF &&
+	--
+	sub1/file1
+	sub1/sub2/file2
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'prefix with trailing slash consistency' '
+	cd repo &&
+	grit rev-parse --prefix "sub1/" -- file1 >actual &&
+	cat >expect <<-\EOF &&
+	--
+	sub1/file1
+	EOF
+	test_cmp expect actual
+'
+
 test_done
