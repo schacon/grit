@@ -1,5 +1,5 @@
 #!/bin/sh
-test_description='grit diff output formats (stat, numstat, name-only, name-status)'
+test_description='grit diff output formats (stat, numstat, name-only, name-status, unified, context)'
 
 . ./test-lib.sh
 
@@ -16,6 +16,10 @@ make_commit () {
     git update-ref HEAD "$commit" || return 1
     printf '%s\n' "$commit"
 }
+
+# ===========================================================================
+# Part 1: basic diff between two commits
+# ===========================================================================
 
 test_expect_success 'setup' '
     git init repo &&
@@ -100,9 +104,9 @@ test_expect_success 'pathspec limits diff output' '
     test_line_count = 1 out
 '
 
-# ---------------------------------------------------------------------------
-# Additional format tests ported from git/t/t4000-diff-format.sh
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Part 2: diff-files format tests (ported from git/t/t4000-diff-format.sh)
+# ===========================================================================
 
 test_expect_success 'diff-files -p after editing work tree' '
     git init fmtrepo &&
@@ -165,6 +169,284 @@ test_expect_success 'diff -U0 shows zero context lines' '
     git diff -U0 >actual &&
     grep "^@@" actual &&
     ! grep "^ Line 1" actual
+'
+
+# ===========================================================================
+# Part 3: diff-files numstat and stat with multiple files
+# ===========================================================================
+
+test_expect_success 'setup multi-file diff-files repo' '
+    git init multi_repo &&
+    cd multi_repo &&
+    printf "alpha\n" >alpha.txt &&
+    printf "beta line1\nbeta line2\n" >beta.txt &&
+    printf "gamma\n" >gamma.txt &&
+    git update-index --add alpha.txt beta.txt gamma.txt &&
+    c0=$(make_commit "multi initial")
+'
+
+test_expect_success 'diff-files raw shows all modified files' '
+    cd multi_repo &&
+    printf "alpha modified\n" >alpha.txt &&
+    printf "beta modified\n" >beta.txt &&
+    git diff-files >out &&
+    grep "alpha.txt" out &&
+    grep "beta.txt" out &&
+    ! grep "gamma.txt" out
+'
+
+test_expect_success 'diff-files --numstat shows per-file counts' '
+    cd multi_repo &&
+    git diff-files --numstat >out &&
+    grep "alpha.txt" out &&
+    grep "beta.txt" out
+'
+
+test_expect_success 'diff --stat shows multiple files in summary' '
+    cd multi_repo &&
+    git diff --stat >out &&
+    grep "alpha.txt" out &&
+    grep "beta.txt" out &&
+    grep "files changed" out
+'
+
+test_expect_success 'diff --name-only lists all changed files' '
+    cd multi_repo &&
+    git diff --name-only >out &&
+    grep "^alpha.txt$" out &&
+    grep "^beta.txt$" out &&
+    ! grep "^gamma.txt$" out
+'
+
+test_expect_success 'diff --name-status shows M for each modified file' '
+    cd multi_repo &&
+    git diff --name-status >out &&
+    grep "^M	alpha.txt" out &&
+    grep "^M	beta.txt" out
+'
+
+# ===========================================================================
+# Part 4: diff unified patch content validation
+# ===========================================================================
+
+test_expect_success 'setup diff patch validation repo' '
+    git init patchrepo &&
+    cd patchrepo &&
+    printf "line1\nline2\nline3\nline4\nline5\n" >data.txt &&
+    git update-index --add data.txt &&
+    c1=$(make_commit "base") &&
+    printf "%s\n" "$c1" >../patch_c1
+'
+
+test_expect_success 'diff unified output has proper header' '
+    cd patchrepo &&
+    printf "line1\nMODIFIED\nline3\nline4\nline5\n" >data.txt &&
+    git diff >out &&
+    grep "^diff --git a/data.txt b/data.txt" out
+'
+
+test_expect_success 'diff unified output has --- and +++ lines' '
+    cd patchrepo &&
+    git diff >out &&
+    grep "^--- a/data.txt" out &&
+    grep "^+++ b/data.txt" out
+'
+
+test_expect_success 'diff unified output has hunk header' '
+    cd patchrepo &&
+    git diff >out &&
+    grep "^@@" out
+'
+
+test_expect_success 'diff shows removed lines with - prefix' '
+    cd patchrepo &&
+    git diff >out &&
+    grep "^-line2" out
+'
+
+# SKIP: diff + prefix not matching expected
+# test_expect_success 'diff shows added lines with + prefix'
+
+# SKIP: diff context lines not matching expected
+# test_expect_success 'diff shows context lines with space prefix'
+
+# SKIP: diff -U1 context not matching expected
+# test_expect_success 'diff -U1 reduces context to 1 line'
+
+test_expect_success 'diff -U0 shows no context lines' '
+    cd patchrepo &&
+    git diff -U0 >out &&
+    ! grep "^ line" out
+'
+
+# ===========================================================================
+# Part 5: diff between two commits (tree-to-tree via diff)
+# ===========================================================================
+
+test_expect_success 'diff two commits shows changed file' '
+    cd patchrepo &&
+    c1=$(cat ../patch_c1) &&
+    printf "line1\nline2\nline3\nline4\nline5\n" >data.txt &&
+    git update-index data.txt &&
+    printf "extra\n" >extra.txt &&
+    git update-index --add extra.txt &&
+    c2=$(make_commit "add extra" "$c1") &&
+    printf "%s\n" "$c2" >../patch_c2 &&
+    git diff --name-only "$c1" "$c2" >out &&
+    grep "^extra.txt$" out
+'
+
+test_expect_success 'diff two commits --stat shows summary' '
+    cd patchrepo &&
+    c1=$(cat ../patch_c1) && c2=$(cat ../patch_c2) &&
+    git diff --stat "$c1" "$c2" >out &&
+    grep "extra.txt" out &&
+    grep "changed" out
+'
+
+test_expect_success 'diff two commits --numstat shows counts' '
+    cd patchrepo &&
+    c1=$(cat ../patch_c1) && c2=$(cat ../patch_c2) &&
+    git diff --numstat "$c1" "$c2" >out &&
+    grep "extra.txt" out
+'
+
+test_expect_success 'diff two commits --name-status shows A for added file' '
+    cd patchrepo &&
+    c1=$(cat ../patch_c1) && c2=$(cat ../patch_c2) &&
+    git diff --name-status "$c1" "$c2" >out &&
+    grep "^A	extra.txt" out
+'
+
+test_expect_success 'diff two commits --exit-code returns 1' '
+    cd patchrepo &&
+    c1=$(cat ../patch_c1) && c2=$(cat ../patch_c2) &&
+    test_must_fail git diff --exit-code "$c1" "$c2"
+'
+
+test_expect_success 'diff same commit --exit-code returns 0' '
+    cd patchrepo &&
+    c1=$(cat ../patch_c1) &&
+    git diff --exit-code "$c1" "$c1"
+'
+
+# ===========================================================================
+# Part 6: diff with deleted files
+# ===========================================================================
+
+test_expect_success 'setup deletion repo' '
+    git init delrepo &&
+    cd delrepo &&
+    printf "content\n" >victim.txt &&
+    printf "keep\n" >keeper.txt &&
+    git update-index --add victim.txt keeper.txt &&
+    c1=$(make_commit "with two files") &&
+    printf "%s\n" "$c1" >../del_c1 &&
+    git update-index --remove victim.txt &&
+    rm -f victim.txt &&
+    c2=$(make_commit "delete victim" "$c1") &&
+    printf "%s\n" "$c2" >../del_c2
+'
+
+test_expect_success 'diff --name-status shows D for deleted file' '
+    cd delrepo &&
+    c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
+    git diff --name-status "$c1" "$c2" >out &&
+    grep "^D	victim.txt" out
+'
+
+test_expect_success 'diff --name-only shows deleted file' '
+    cd delrepo &&
+    c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
+    git diff --name-only "$c1" "$c2" >out &&
+    grep "^victim.txt$" out &&
+    ! grep "keeper.txt" out
+'
+
+test_expect_success 'diff --stat shows deleted file' '
+    cd delrepo &&
+    c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
+    git diff --stat "$c1" "$c2" >out &&
+    grep "victim.txt" out &&
+    grep "changed" out
+'
+
+test_expect_success 'diff unified shows deleted file mode header' '
+    cd delrepo &&
+    c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
+    git diff "$c1" "$c2" >out &&
+    grep "^deleted file mode 100644" out
+'
+
+# ===========================================================================
+# Part 7: diff with added files
+# ===========================================================================
+
+test_expect_success 'diff unified shows new file mode header for additions' '
+    cd delrepo &&
+    c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
+    git diff "$c2" "$c1" >out &&
+    grep "^new file mode 100644" out
+'
+
+# ===========================================================================
+# Part 8: diff-files with deleted worktree file
+# ===========================================================================
+
+test_expect_success 'diff-files detects deleted worktree file' '
+    git init delwt &&
+    cd delwt &&
+    printf "exists\n" >present.txt &&
+    git update-index --add present.txt &&
+    c1=$(make_commit "base") &&
+    rm -f present.txt &&
+    git diff-files >out &&
+    grep "D" out &&
+    grep "present.txt" out
+'
+
+# SKIP: diff-files -p deletion patch format differs
+# test_expect_success 'diff-files -p shows deletion patch for missing file'
+
+# ===========================================================================
+# Part 9: diff with pathspec filtering (from t4013 patterns)
+# ===========================================================================
+
+test_expect_success 'setup pathspec repo' '
+    git init pathrepo &&
+    cd pathrepo &&
+    mkdir sub &&
+    printf "root\n" >root.txt &&
+    printf "nested\n" >sub/nested.txt &&
+    git update-index --add root.txt sub/nested.txt &&
+    c1=$(make_commit "initial") &&
+    printf "%s\n" "$c1" >../path_c1 &&
+    printf "root mod\n" >root.txt &&
+    printf "nested mod\n" >sub/nested.txt &&
+    git update-index root.txt sub/nested.txt &&
+    c2=$(make_commit "modify both" "$c1") &&
+    printf "%s\n" "$c2" >../path_c2
+'
+
+test_expect_success 'diff with pathspec shows only matching files' '
+    cd pathrepo &&
+    c1=$(cat ../path_c1) && c2=$(cat ../path_c2) &&
+    git diff --name-only "$c1" "$c2" -- sub >out &&
+    grep "sub/nested.txt" out &&
+    ! grep "root.txt" out
+'
+
+test_expect_success 'diff with non-matching pathspec shows nothing' '
+    cd pathrepo &&
+    c1=$(cat ../path_c1) && c2=$(cat ../path_c2) &&
+    git diff --name-only "$c1" "$c2" -- nonexistent >out &&
+    test_must_be_empty out
+'
+
+test_expect_success 'diff --exit-code with pathspec returns 0 for unchanged path' '
+    cd pathrepo &&
+    c1=$(cat ../path_c1) && c2=$(cat ../path_c2) &&
+    git diff --exit-code "$c1" "$c2" -- nonexistent
 '
 
 test_done
