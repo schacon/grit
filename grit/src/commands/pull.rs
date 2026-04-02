@@ -6,12 +6,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
-use grit_lib::merge_base::is_ancestor;
-use grit_lib::objects::parse_commit;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::state::{resolve_head, HeadState};
-use std::path::PathBuf;
+use grit_lib::state::resolve_head;
 
 /// Arguments for `grit pull`.
 #[derive(Debug, ClapArgs)]
@@ -49,35 +46,17 @@ pub fn run(args: Args) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
     let current_branch = head.branch_name().map(|s| s.to_owned());
 
-    let remote_name = args
-        .remote
-        .as_deref()
-        .or_else(|| {
-            // Check branch.<name>.remote config
-            current_branch.as_ref().and_then(|b| {
-                config
-                    .get(&format!("branch.{b}.remote"))
-                    .as_deref()
-                    .map(|_| ()) // just checking existence
-                    .ok()?;
-                None // we'll re-read below
-            })
-        })
-        .unwrap_or("origin");
-
-    // Re-read remote name from branch config if not explicitly provided
-    let remote_name = if args.remote.is_some() {
-        args.remote.as_deref().unwrap()
+    // Determine remote name: explicit arg > branch.<name>.remote > "origin"
+    let remote_name_owned: String = if let Some(ref r) = args.remote {
+        r.clone()
     } else if let Some(ref branch) = current_branch {
         config
             .get(&format!("branch.{branch}.remote"))
-            .as_deref()
-            .unwrap_or("origin")
-            .to_owned()
-            .leak() // safe: short-lived process
+            .unwrap_or_else(|| "origin".to_owned())
     } else {
-        "origin"
+        "origin".to_owned()
     };
+    let remote_name = remote_name_owned.as_str();
 
     // Determine merge branch
     let merge_branch = if let Some(ref b) = args.branch {
@@ -114,7 +93,6 @@ pub fn run(args: Args) -> Result<()> {
 
     // Step 3: Merge or rebase
     if args.rebase {
-        // Delegate to rebase
         let rebase_args = super::rebase::Args {
             upstream: Some(tracking_ref),
             onto: None,
@@ -125,7 +103,6 @@ pub fn run(args: Args) -> Result<()> {
         };
         super::rebase::run(rebase_args)
     } else {
-        // Delegate to merge
         let merge_args = super::merge::Args {
             commits: vec![remote_oid.to_hex()],
             message: None,
