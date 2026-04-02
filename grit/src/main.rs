@@ -254,6 +254,9 @@ enum Command {
     /// Compute unique IDs for patches.
     #[command(name = "patch-id")]
     PatchId(commands::patch_id::Args),
+    /// Compare two commit ranges.
+    #[command(name = "range-diff")]
+    RangeDiff(commands::range_diff::Args),
     /// Build a tree object from ls-tree formatted text.
     #[command(name = "mktree")]
     MkTree(commands::mktree::Args),
@@ -393,6 +396,7 @@ fn run() -> Result<()> {
         Command::Mv(args) => commands::mv::run(args),
         Command::PackRefs(args) => commands::pack_refs::run(args),
         Command::PatchId(args) => commands::patch_id::run(args),
+        Command::RangeDiff(args) => commands::range_diff::run(args),
         Command::MkTree(args) => commands::mktree::run(args),
         Command::Var(args) => commands::var::run(args),
         Command::Reflog(args) => commands::reflog::run(args),
