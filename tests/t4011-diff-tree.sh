@@ -780,4 +780,47 @@ test_expect_success 'diff-tree -r output line count matches changed file count' 
 	test "$count" = "2"
 '
 
+# ---------------------------------------------------------------------------
+# diff-tree -p patch content validation
+# ---------------------------------------------------------------------------
+
+test_expect_success 'diff-tree -r -p shows diff --git header for each file' '
+	cd repo &&
+	c=$(cat ../commit_multi) &&
+	git diff-tree -r -p "$c" >out &&
+	grep "^diff --git a/alpha.txt b/alpha.txt" out &&
+	grep "^diff --git a/beta.txt b/beta.txt" out
+'
+
+test_expect_success 'diff-tree -r -p shows +++ b/ lines' '
+	cd repo &&
+	c=$(cat ../commit_multi) &&
+	git diff-tree -r -p "$c" >out &&
+	grep "^+++ b/alpha.txt" out &&
+	grep "^+++ b/beta.txt" out
+'
+
+test_expect_success 'diff-tree -r -p shows added content with + prefix' '
+	cd repo &&
+	c=$(cat ../commit_multi) &&
+	git diff-tree -r -p "$c" >out &&
+	grep "^+alpha content" out &&
+	grep "^+beta content" out
+'
+
+test_expect_success 'diff-tree -r -p for modification shows both - and + lines' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree -r -p "$c2" >out &&
+	grep "^+world" out
+'
+
+test_expect_success 'diff-tree -r -p -U0 suppresses context lines' '
+	cd repo &&
+	c2=$(cat ../commit2) &&
+	git diff-tree -r -p -U0 "$c2" >out &&
+	grep "^@@" out &&
+	! grep "^ hello" out
+'
+
 test_done
