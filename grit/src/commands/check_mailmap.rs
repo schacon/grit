@@ -12,7 +12,6 @@ use clap::Args as ClapArgs;
 use grit_lib::repo::Repository;
 use std::fs;
 use std::io::{self, BufRead, Write};
-use std::path::Path;
 
 /// Arguments for `grit check-mailmap`.
 #[derive(Debug, ClapArgs)]

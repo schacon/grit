@@ -16,7 +16,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, BufWriter, Write};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
@@ -57,7 +57,6 @@ const CHUNK_OID_FANOUT: u32 = 0x4f494446; // "OIDF"
 const CHUNK_OID_LOOKUP: u32 = 0x4f49444c; // "OIDL"
 const CHUNK_COMMIT_DATA: u32 = 0x43444154; // "CDAT"
 
-const GENERATION_NUMBER_INFINITY: u32 = 0xFFFF_FFFF;
 const PARENT_NONE: u32 = 0x7000_0000;
 
 /// Run `grit commit-graph`.

@@ -399,7 +399,7 @@ fn checkout_tree(
     work_tree: &Path,
     prefix: &str,
 ) -> Result<()> {
-    use grit_lib::objects::{parse_tree, ObjectKind};
+    use grit_lib::objects::parse_tree;
 
     let obj = odb.read(tree_oid).context("reading tree")?;
     let entries = parse_tree(&obj.data).context("parsing tree")?;

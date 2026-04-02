@@ -270,6 +270,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "hex",
+ "regex",
  "sha1",
  "similar",
  "tempfile",

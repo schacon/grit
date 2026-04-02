@@ -344,6 +344,7 @@ fn format_long(
 }
 
 /// Find untracked files in the working tree (raw, before ignore filtering).
+#[allow(dead_code)]
 fn find_untracked(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
     let tracked: BTreeSet<String> = index
         .entries

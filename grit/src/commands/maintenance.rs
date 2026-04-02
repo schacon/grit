@@ -8,7 +8,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::repo::Repository;
 use std::fs;
 use std::path::PathBuf;

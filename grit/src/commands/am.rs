@@ -707,11 +707,11 @@ fn parse_mbox(input: &str) -> Result<Vec<MboxPatch>> {
     while lines.peek().is_some() {
         // Skip to next "From " line (mbox separator)
         // Or if we're at the start and there's no "From " line, treat as single patch
-        let mut in_headers = false;
+        let mut _in_headers = false;
         let mut author = String::new();
         let mut date = String::new();
         let mut subject = String::new();
-        let mut body = String::new();
+        let _body = String::new();
         let mut diff_section = String::new();
         let mut found_from = false;
 
@@ -739,13 +739,13 @@ fn parse_mbox(input: &str) -> Result<Vec<MboxPatch>> {
         }
 
         // Parse headers
-        in_headers = true;
+        _in_headers = true;
         let mut last_header = String::new();
 
         while let Some(&line) = lines.peek() {
             if line.is_empty() {
                 lines.next();
-                in_headers = false;
+                _in_headers = false;
                 break;
             }
             // Continuation line (starts with whitespace)
@@ -1028,9 +1028,9 @@ impl FilePatch {
 #[derive(Debug, Clone)]
 struct Hunk {
     old_start: usize,
-    old_count: usize,
-    new_start: usize,
-    new_count: usize,
+    _old_count: usize,
+    _new_start: usize,
+    _new_count: usize,
     lines: Vec<HunkLine>,
 }
 
@@ -1170,9 +1170,9 @@ fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
 
     let mut hunk = Hunk {
         old_start,
-        old_count,
-        new_start,
-        new_count,
+        _old_count: old_count,
+        _new_start: new_start,
+        _new_count: new_count,
         lines: Vec::new(),
     };
 

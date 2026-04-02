@@ -10,7 +10,7 @@ use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use grit_lib::state::{resolve_head, HeadState};
+use grit_lib::state::resolve_head;
 use std::fs;
 use std::path::{Path, PathBuf};
 

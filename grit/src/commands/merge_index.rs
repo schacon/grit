@@ -6,7 +6,6 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::process::Command;
 
 use grit_lib::index::Index;

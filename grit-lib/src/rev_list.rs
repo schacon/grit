@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::{Error, Result};
-use crate::objects::{parse_commit, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use crate::refs;
 use crate::repo::Repository;
 use crate::rev_parse::resolve_revision;
@@ -65,6 +65,22 @@ pub struct RevListOptions {
     pub ordering: OrderingMode,
     /// Reverse selected output order.
     pub reverse: bool,
+    /// List reachable objects (trees, blobs) in addition to commits.
+    pub objects: bool,
+    /// Suppress object path names in --objects output.
+    pub no_object_names: bool,
+    /// Show boundary commits with `-` prefix.
+    pub boundary: bool,
+    /// Show left/right markers for symmetric diff.
+    pub left_right: bool,
+    /// Filter to left-only commits in symmetric diff.
+    pub left_only: bool,
+    /// Filter to right-only commits in symmetric diff.
+    pub right_only: bool,
+    /// Cherry-mark equivalent commits with `=` instead of `+`.
+    pub cherry_mark: bool,
+    /// Cherry-pick: omit equivalent commits from output.
+    pub cherry_pick: bool,
 }
 
 impl Default for RevListOptions {
@@ -82,6 +98,14 @@ impl Default for RevListOptions {
             max_count: None,
             ordering: OrderingMode::Default,
             reverse: false,
+            objects: false,
+            no_object_names: false,
+            boundary: false,
+            left_right: false,
+            left_only: false,
+            right_only: false,
+            cherry_mark: false,
+            cherry_pick: false,
         }
     }
 }
@@ -91,6 +115,15 @@ impl Default for RevListOptions {
 pub struct RevListResult {
     /// Selected commits in final output order, after skip/max/reverse.
     pub commits: Vec<ObjectId>,
+    /// Reachable non-commit objects when `--objects` is active.
+    /// Each entry is `(oid, optional_path)`.
+    pub objects: Vec<(ObjectId, String)>,
+    /// Boundary commits (excluded parents shown with `-` prefix).
+    pub boundary_commits: Vec<ObjectId>,
+    /// For `--left-right`: mapping commit OID -> true=left, false=right.
+    pub left_right_map: HashMap<ObjectId, bool>,
+    /// For `--cherry-mark`: set of commits that are equivalent (patch-id match).
+    pub cherry_equivalent: HashSet<ObjectId>,
 }
 
 /// Resolve and walk revisions for the requested options.

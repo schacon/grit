@@ -16,3 +16,4 @@ time.workspace = true
 hex.workspace = true
 tempfile.workspace = true
 similar.workspace = true
+regex.workspace = true

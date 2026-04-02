@@ -6,9 +6,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use sha1::{Digest, Sha1};
-use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::PathBuf;
 
 use grit_lib::objects::{ObjectId, ObjectKind};

@@ -29,7 +29,7 @@ pub struct Args {
 }
 
 /// Run `grit pack-redundant`.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(_args: Args) -> Result<()> {
     // NOTE: git itself has deprecated pack-redundant and recommends `repack -d` instead.
     eprintln!("warning: git pack-redundant is deprecated; use 'git repack -d' instead");
 

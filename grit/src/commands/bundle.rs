@@ -7,11 +7,9 @@ use clap::{Args as ClapArgs, Subcommand};
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, BufRead, Read, Write};
-use std::path::PathBuf;
+use std::io::{Read, Write};
 
 use grit_lib::objects::{ObjectId, ObjectKind};
-use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 
 /// Arguments for `grit bundle`.

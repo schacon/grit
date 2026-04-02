@@ -14,7 +14,6 @@ use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::patch_ids::compute_patch_id;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{rev_list, RevListOptions, RevListResult};
-use grit_lib::rev_parse::resolve_revision;
 use std::collections::HashMap;
 use std::io::{self, Write};
 

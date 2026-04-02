@@ -11,7 +11,6 @@ use grit_lib::config::{ConfigSet};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -89,7 +88,7 @@ fn fetch_remote(
 
     // Read the refspec from config (e.g. +refs/heads/*:refs/remotes/origin/*)
     let fetch_key = format!("remote.{remote_name}.fetch");
-    let refspec = config.get(&fetch_key);
+    let _refspec = config.get(&fetch_key);
 
     // Enumerate remote refs
     let remote_heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;

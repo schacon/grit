@@ -228,7 +228,7 @@ pub fn run(args: Args) -> Result<()> {
     if let Some(ref sub) = args.subcommand {
         return match sub {
             ConfigSubcommand::Get(get_args) => cmd_get(&args, get_args, git_dir.as_deref()),
-            ConfigSubcommand::Set(set_args) => cmd_set(&args, set_args, scope, &file_path),
+            ConfigSubcommand::Set(set_args) => cmd_set(&args, set_args, scope, &file_path, None),
             ConfigSubcommand::Unset(unset_args) => cmd_unset(&args, unset_args, scope, &file_path),
             ConfigSubcommand::List(_) => cmd_list(&args, git_dir.as_deref()),
             ConfigSubcommand::RenameSection(rs) => {
@@ -326,22 +326,32 @@ pub fn run(args: Args) -> Result<()> {
         }
         2 => {
             // Legacy set: `git config key value`
+            // or `git config --replace-all key value`
             let set_args = SetArgs {
                 key: args.positional[0].clone(),
                 value: args.positional[1].clone(),
                 all: args.replace_all,
             };
-            cmd_set(&args, &set_args, scope, &file_path)
+            cmd_set(&args, &set_args, scope, &file_path, None)
         }
         3 => {
-            // Legacy set with value-pattern: `git config key value value-pattern`
-            // For now, treat as simple set
-            let set_args = SetArgs {
-                key: args.positional[0].clone(),
-                value: args.positional[1].clone(),
-                all: false,
-            };
-            cmd_set(&args, &set_args, scope, &file_path)
+            if args.replace_all {
+                // `git config --replace-all key value value-pattern`
+                let set_args = SetArgs {
+                    key: args.positional[0].clone(),
+                    value: args.positional[1].clone(),
+                    all: true,
+                };
+                cmd_set(&args, &set_args, scope, &file_path, Some(&args.positional[2]))
+            } else {
+                // `git config key value value-pattern` (legacy with value-pattern)
+                let set_args = SetArgs {
+                    key: args.positional[0].clone(),
+                    value: args.positional[1].clone(),
+                    all: false,
+                };
+                cmd_set(&args, &set_args, scope, &file_path, Some(&args.positional[2]))
+            }
         }
         _ => bail!("too many arguments"),
     }
@@ -408,13 +418,26 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()
     }
 }
 
-fn cmd_set(_args: &Args, set_args: &SetArgs, scope: ConfigScope, file_path: &Path) -> Result<()> {
+fn cmd_set(
+    _args: &Args,
+    set_args: &SetArgs,
+    scope: ConfigScope,
+    file_path: &Path,
+    value_pattern: Option<&str>,
+) -> Result<()> {
     let mut config = match ConfigFile::from_path(file_path, scope).context("reading config file")? {
         Some(cfg) => cfg,
         None => ConfigFile::parse(file_path, "", scope)?,
     };
 
-    config.set(&set_args.key, &set_args.value)?;
+    if set_args.all {
+        config.replace_all(&set_args.key, &set_args.value, value_pattern)?;
+    } else if let Some(pattern) = value_pattern {
+        // Single replace with value-pattern: only replace if existing value matches
+        config.replace_all(&set_args.key, &set_args.value, Some(pattern))?;
+    } else {
+        config.set(&set_args.key, &set_args.value)?;
+    }
     config.write().context("writing config file")?;
     Ok(())
 }

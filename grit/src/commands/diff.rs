@@ -25,6 +25,7 @@ use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::io::{self, IsTerminal, Write};
+use std::path::Path;
 
 /// ANSI color codes for diff output.
 const RESET: &str = "\x1b[m";
@@ -72,6 +73,10 @@ pub struct Args {
     /// Colorize the output. Values: always, never, auto.
     #[arg(long = "color", value_name = "WHEN", default_missing_value = "always", num_args = 0..=1)]
     pub color: Option<String>,
+
+    /// Show a word-level diff with `[-removed-]{+added+}` markers.
+    #[arg(long = "word-diff", value_name = "MODE", default_missing_value = "plain", num_args = 0..=1)]
+    pub word_diff: Option<String>,
 
     /// Number of context lines in unified diff output (default: 3).
     #[arg(short = 'U', long = "unified", value_name = "N")]
@@ -149,20 +154,22 @@ pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
+    let word_diff = args.word_diff.is_some();
+
     if !args.quiet {
         let context_lines = args.unified.unwrap_or(3);
         if args.shortstat {
-            write_shortstat(&mut out, &entries, &repo.odb)?;
+            write_shortstat(&mut out, &entries, &repo.odb, work_tree)?;
         } else if args.stat {
-            write_stat(&mut out, &entries, &repo.odb)?;
+            write_stat(&mut out, &entries, &repo.odb, work_tree)?;
         } else if args.numstat {
-            write_numstat(&mut out, &entries, &repo.odb)?;
+            write_numstat(&mut out, &entries, &repo.odb, work_tree)?;
         } else if args.name_only {
             write_name_only(&mut out, &entries)?;
         } else if args.name_status {
             write_name_status(&mut out, &entries)?;
         } else {
-            write_patch(&mut out, &entries, &repo.odb, context_lines, use_color)?;
+            write_patch(&mut out, &entries, &repo.odb, context_lines, use_color, word_diff, work_tree)?;
         }
     }
 
@@ -300,6 +307,31 @@ fn read_content_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
     }
 }
 
+/// Read raw bytes, falling back to the working tree if the OID isn't in the ODB.
+fn read_content_raw_or_worktree(
+    odb: &Odb,
+    oid: &ObjectId,
+    work_tree: Option<&Path>,
+    path: &str,
+) -> Vec<u8> {
+    if *oid == zero_oid() {
+        return Vec::new();
+    }
+    // Try ODB first
+    if let Ok(obj) = odb.read(oid) {
+        return obj.data;
+    }
+    // Fall back to reading from working tree
+    if let Some(wt) = work_tree {
+        if path != "/dev/null" {
+            if let Ok(data) = std::fs::read(wt.join(path)) {
+                return data;
+            }
+        }
+    }
+    Vec::new()
+}
+
 /// Check if content appears to be binary (contains NUL bytes in first 8KB).
 fn is_binary(data: &[u8]) -> bool {
     let check_len = data.len().min(8192);
@@ -371,12 +403,17 @@ fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -
 }
 
 /// Write full unified diff output with `diff --git` headers.
+///
+/// `work_tree` is provided when one side of the diff is the working tree,
+/// so we can read file content from disk when the blob is not in the ODB.
 fn write_patch(
     out: &mut impl Write,
     entries: &[DiffEntry],
     odb: &Odb,
     context_lines: usize,
     use_color: bool,
+    word_diff: bool,
+    work_tree: Option<&Path>,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
@@ -386,7 +423,7 @@ fn write_patch(
 
         // Check for binary content
         let old_content_raw = read_content_raw(odb, &entry.old_oid);
-        let new_content_raw = read_content_raw(odb, &entry.new_oid);
+        let new_content_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, new_path);
 
         if is_binary(&old_content_raw) || is_binary(&new_content_raw) {
             writeln!(
@@ -400,18 +437,45 @@ fn write_patch(
         let old_content = String::from_utf8_lossy(&old_content_raw).into_owned();
         let new_content = String::from_utf8_lossy(&new_content_raw).into_owned();
 
-        let patch = unified_diff(
-            &old_content,
-            &new_content,
-            old_path,
-            new_path,
-            context_lines,
-        );
-
-        if use_color {
-            write_colored_patch(out, &patch)?;
+        // For Added files, show --- /dev/null; for Deleted files, show +++ /dev/null
+        let display_old = if entry.status == DiffStatus::Added {
+            "/dev/null"
         } else {
-            write!(out, "{patch}")?;
+            old_path
+        };
+        let display_new = if entry.status == DiffStatus::Deleted {
+            "/dev/null"
+        } else {
+            new_path
+        };
+
+        if word_diff {
+            let patch = word_diff_output(
+                &old_content,
+                &new_content,
+                display_old,
+                display_new,
+                context_lines,
+            );
+            if use_color {
+                write_colored_patch(out, &patch)?;
+            } else {
+                write!(out, "{patch}")?;
+            }
+        } else {
+            let patch = unified_diff(
+                &old_content,
+                &new_content,
+                display_old,
+                display_new,
+                context_lines,
+            );
+
+            if use_color {
+                write_colored_patch(out, &patch)?;
+            } else {
+                write!(out, "{patch}")?;
+            }
         }
     }
     Ok(())

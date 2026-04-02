@@ -3,7 +3,7 @@
 //! Reads an mbox-format file and splits it into numbered message files
 //! in the output directory, printing the count to stdout.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use std::fs;
 use std::io::Write;

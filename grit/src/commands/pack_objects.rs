@@ -10,7 +10,6 @@ use flate2::Compression;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeSet;
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
 
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;

@@ -10,7 +10,6 @@ use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::repo::Repository;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
 
 /// Arguments for `grit sparse-checkout`.
 #[derive(Debug, ClapArgs)]

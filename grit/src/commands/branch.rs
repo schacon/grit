@@ -234,17 +234,28 @@ fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
 
 /// Rename a branch.
 fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
-    let old_name = match &args.name {
-        Some(n) => n.as_str(),
-        None => head
+    // `git branch -m <newname>` — rename current branch to <newname>
+    // `git branch -m <oldname> <newname>` — rename <oldname> to <newname>
+    let (old_name_owned, new_name_owned);
+    let (old_name, new_name): (&str, &str);
+    if args.start_point.is_some() {
+        // Two-arg form: -m <old> <new>
+        old_name_owned = args.name.as_deref().unwrap_or("").to_owned();
+        new_name_owned = args.start_point.as_deref().unwrap().to_owned();
+        old_name = &old_name_owned;
+        new_name = &new_name_owned;
+    } else if args.name.is_some() {
+        // One-arg form: -m <new> (rename current branch)
+        old_name_owned = head
             .branch_name()
-            .ok_or_else(|| anyhow::anyhow!("no current branch to rename"))?,
+            .ok_or_else(|| anyhow::anyhow!("no current branch to rename"))?
+            .to_owned();
+        new_name_owned = args.name.as_deref().unwrap().to_owned();
+        old_name = &old_name_owned;
+        new_name = &new_name_owned;
+    } else {
+        bail!("branch name required");
     };
-
-    let new_name = args
-        .start_point
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("new branch name required"))?;
 
     let old_path = repo.git_dir.join("refs/heads").join(old_name);
     let new_path = repo.git_dir.join("refs/heads").join(new_name);

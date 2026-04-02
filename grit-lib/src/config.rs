@@ -429,6 +429,73 @@ impl ConfigFile {
         Ok(())
     }
 
+    /// Replace ALL occurrences of a key with a new value.
+    ///
+    /// Removes all but the last occurrence from the file, then updates
+    /// the last occurrence with the new value (matching Git behaviour).
+    pub fn replace_all(&mut self, key: &str, value: &str, value_pattern: Option<&str>) -> Result<()> {
+        let canon = canonical_key(key)?;
+        let raw_var = raw_variable_name(key);
+
+        // Compile optional regex pattern
+        let re = match value_pattern {
+            Some(pat) => Some(
+                regex::Regex::new(pat)
+                    .map_err(|e| Error::ConfigError(format!("invalid value-pattern regex: {e}")))?),
+            None => None,
+        };
+
+        // Find all matching entries (by key, and optionally by value pattern)
+        let matching_indices: Vec<usize> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| {
+                if e.key != canon {
+                    return false;
+                }
+                if let Some(ref re) = re {
+                    let v = e.value.as_deref().unwrap_or("");
+                    re.is_match(v)
+                } else {
+                    true
+                }
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        if matching_indices.is_empty() {
+            // No matching entries — add a new one (same as set)
+            return self.set(key, value);
+        }
+
+        // Keep the first matching entry, remove the rest
+        let first_match = matching_indices[0];
+        let lines_to_remove: Vec<usize> = matching_indices
+            .iter()
+            .skip(1)
+            .map(|&i| self.entries[i].line - 1)
+            .collect();
+
+        // Update the first matching entry's line with the new value
+        let first_line_idx = self.entries[first_match].line - 1;
+        self.raw_lines[first_line_idx] = format!("\t{} = {}", raw_var, escape_value(value));
+        self.entries[first_match].value = Some(value.to_owned());
+
+        // Remove remaining matching lines from bottom to top
+        for &line_idx in lines_to_remove.iter().rev() {
+            self.raw_lines.remove(line_idx);
+        }
+
+        // Re-parse after modifications
+        let content = self.raw_lines.join("\n");
+        let reparsed = Self::parse(&self.path, &content, self.scope)?;
+        self.entries = reparsed.entries;
+        self.raw_lines = reparsed.raw_lines;
+
+        Ok(())
+    }
+
     /// Count how many entries exist for a key.
     pub fn count(&self, key: &str) -> Result<usize> {
         let canon = canonical_key(key)?;
@@ -588,6 +655,7 @@ impl ConfigFile {
     }
 
     /// Find the line index of a section header, or create one.
+    #[allow(dead_code)]
     fn find_or_create_section(&mut self, section: &str, subsection: Option<&str>) -> usize {
         let sec_lower = section.to_lowercase();
         let mut parser = Parser::new();
@@ -985,6 +1053,7 @@ fn split_key(key: &str) -> Result<(String, Option<String>, String)> {
 }
 
 /// Extract the variable name from a canonical key.
+#[allow(dead_code)]
 fn variable_name_from_key(key: &str) -> &str {
     match key.rfind('.') {
         Some(i) => &key[i + 1..],
