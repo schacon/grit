@@ -84,13 +84,13 @@ t0612-reftable-jgit-compatibility	no	0	0	0	not_ported
 t0613-reftable-write-options	no	0	0	0	not_ported
 t0614-reftable-fsck	no	0	0	0	not_ported
 t1000-read-tree-m-3way	yes	9	9	0	ok
-t1001-read-tree-m-2way	yes	26	26	0	ok
+t1001-read-tree-m-2way	yes	0	0	0	ok
 t1002-read-tree-m-u-2way	yes	21	21	0	ok
 t1003-read-tree-prefix	yes	5	5	0	ok
 t1004-read-tree-m-u-wf	yes	13	13	0	ok
 t1005-read-tree-reset	yes	5	5	0	ok
 t1006-cat-file	yes	119	119	0	ok
-t1007-hash-object	yes	38	31	7	ok
+t1007-hash-object	yes	38	30	8	ok
 t1008-read-tree-overlay	yes	3	3	0	ok
 t1009-read-tree-new-index	yes	5	5	0	ok
 t1010-mktree	yes	17	17	0	ok
