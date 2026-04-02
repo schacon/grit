@@ -2253,4 +2253,121 @@ test_expect_success '-n0 with --sort=refname shows just names' '
 	test_cmp expect actual
 '
 
+# ── additional tag tests ─────────────────────────────────────────────
+
+test_expect_success 'setup: repo for additional tag tests' '
+	git init tag-extra &&
+	cd tag-extra &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
+	echo "base" >base.txt &&
+	git add base.txt &&
+	git commit -m "initial" 2>/dev/null
+'
+
+test_expect_success 'lightweight tag points to HEAD' '
+	cd tag-extra &&
+	git tag lw-test &&
+	tag_sha=$(git rev-parse lw-test) &&
+	head_sha=$(git rev-parse HEAD) &&
+	test "$tag_sha" = "$head_sha"
+'
+
+test_expect_success 'annotated tag object type is tag' '
+	cd tag-extra &&
+	git tag -m "annotated" ann-test &&
+	git cat-file -t ann-test >actual &&
+	echo "tag" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'annotated tag object points to commit' '
+	cd tag-extra &&
+	git cat-file -p ann-test >actual &&
+	grep "^type commit" actual
+'
+
+test_expect_success 'tag -l with pattern filters correctly' '
+	cd tag-extra &&
+	git tag alpha-one &&
+	git tag alpha-two &&
+	git tag beta-one &&
+	git tag -l "alpha-*" >actual &&
+	grep "alpha-one" actual &&
+	grep "alpha-two" actual &&
+	! grep "beta-one" actual
+'
+
+test_expect_success 'tag -d removes lightweight tag' '
+	cd tag-extra &&
+	git tag del-me &&
+	git tag -d del-me 2>/dev/null &&
+	test_must_fail git rev-parse --verify refs/tags/del-me
+'
+
+test_expect_success 'tag -d removes annotated tag' '
+	cd tag-extra &&
+	git tag -m "delete me" ann-del &&
+	git tag -d ann-del 2>/dev/null &&
+	test_must_fail git rev-parse --verify refs/tags/ann-del
+'
+
+test_expect_success 'duplicate lightweight tag fails' '
+	cd tag-extra &&
+	git tag dup-lw &&
+	test_must_fail git tag dup-lw 2>/dev/null
+'
+
+test_expect_success 'tag -f overwrites existing tag' '
+	cd tag-extra &&
+	git tag force-me &&
+	old=$(git rev-parse force-me) &&
+	git commit --allow-empty -m "advance" 2>/dev/null &&
+	git tag -f force-me 2>/dev/null &&
+	new=$(git rev-parse force-me) &&
+	test "$old" != "$new"
+'
+
+test_expect_success 'tag -l lists all tags' '
+	cd tag-extra &&
+	git tag -l >actual &&
+	count=$(wc -l <actual | tr -d " ") &&
+	test "$count" -ge 5
+'
+
+test_expect_success 'tag on specific commit via sha' '
+	cd tag-extra &&
+	sha=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD) &&
+	git tag at-sha "$sha" &&
+	result=$(git rev-parse at-sha) &&
+	test "$result" = "$sha"
+'
+
+test_expect_success 'annotated tag message is stored' '
+	cd tag-extra &&
+	git tag -m "my special message" msg-check &&
+	git cat-file -p msg-check >actual &&
+	grep "my special message" actual
+'
+
+test_expect_success 'tag -n1 shows first line of message' '
+	cd tag-extra &&
+	git tag -m "line one" n1-check &&
+	git tag -n1 -l n1-check >actual &&
+	grep "line one" actual
+'
+
+test_expect_success 'lightweight tag dereferences to commit' '
+	cd tag-extra &&
+	git tag lw-deref &&
+	git cat-file -t lw-deref >actual &&
+	echo "commit" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'tag -d on nonexistent tag fails' '
+	cd tag-extra &&
+	test_must_fail git tag -d nonexistent-tag-xyz 2>/dev/null
+'
+
 test_done
