@@ -10,6 +10,7 @@ import re
 import html
 import subprocess
 import json
+from datetime import datetime, timezone
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GIT_TEST_DIR = os.path.join(REPO_ROOT, "git", "t")
@@ -401,6 +402,18 @@ def generate_html():
     pct_pass = num_passing / total * 100
     pct_port = (num_ported - num_passing) / total * 100
     
+    # Timestamp and commit info
+    now = datetime.now(timezone.utc)
+    gen_timestamp = int(now.timestamp())
+    gen_time_str = now.strftime('%Y-%m-%d %H:%M UTC')
+    try:
+        commit_sha = subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'], cwd=REPO_ROOT, text=True
+        ).strip()
+    except Exception:
+        commit_sha = 'unknown'
+    commit_sha_short = commit_sha[:7]
+
     page = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -635,7 +648,25 @@ def generate_html():
 <footer>
   Generated from upstream <code>git/t/</code> ({total} scripts).
   Grit is a project by <a href="https://github.com/schacon">Scott Chacon</a>.
+  &middot; <span id="gen-time" data-ts="{gen_timestamp}">{gen_time_str}</span>
+  &middot; <a href="{GITHUB_BASE}/commit/{commit_sha}">{commit_sha_short}</a>
 </footer>
+
+<script>
+(function() {{
+  var el = document.getElementById('gen-time');
+  if (!el) return;
+  var ts = parseInt(el.dataset.ts, 10);
+  var now = Date.now() / 1000;
+  var diff = Math.floor(now - ts);
+  var text;
+  if (diff < 60) text = 'just now';
+  else if (diff < 3600) text = Math.floor(diff/60) + 'm ago';
+  else if (diff < 86400) text = Math.floor(diff/3600) + 'h ago';
+  else text = Math.floor(diff/86400) + 'd ago';
+  el.textContent = text;
+}})();
+</script>
 
 <script>
 let currentFilter = 'all';
