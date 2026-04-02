@@ -1566,4 +1566,127 @@ test_expect_success 'diff output includes file header a/ b/ prefix' '
 	grep "^+++ b/" output
 '
 
+test_expect_success 'diff with empty file addition' '
+	cd diff-empty &&
+	>empty_file.txt &&
+	git add empty_file.txt && git commit -m "add empty" 2>/dev/null &&
+	git diff HEAD~1 HEAD >output &&
+	grep "empty_file.txt" output
+'
+
+test_expect_success 'diff detects binary file change' '
+	cd diff-empty &&
+	printf "\x00\x01\x02" >binary.bin &&
+	git add binary.bin && git commit -m "add binary" 2>/dev/null &&
+	printf "\x03\x04\x05" >binary.bin &&
+	git add binary.bin && git commit -m "mod binary" 2>/dev/null &&
+	git diff HEAD~1 HEAD >output &&
+	grep -i "binary" output
+'
+
+test_expect_success 'diff between tree objects shows changes' '
+	cd diff-empty &&
+	tree1=$(git rev-parse HEAD~1^{tree}) &&
+	tree2=$(git rev-parse HEAD^{tree}) &&
+	git diff "$tree1" "$tree2" >output &&
+	test -s output
+'
+
+test_expect_success 'diff with multiple files changed' '
+	cd diff-empty &&
+	echo multi1 >multi1.txt && echo multi2 >multi2.txt &&
+	git add multi1.txt multi2.txt && git commit -m "add multi" 2>/dev/null &&
+	echo changed1 >multi1.txt && echo changed2 >multi2.txt &&
+	git add multi1.txt multi2.txt && git commit -m "mod multi" 2>/dev/null &&
+	git diff HEAD~1 HEAD >output &&
+	grep "multi1.txt" output &&
+	grep "multi2.txt" output
+'
+
+test_expect_success 'diff --name-only with multiple files' '
+	cd diff-empty &&
+	git diff --name-only HEAD~1 HEAD >output &&
+	test $(wc -l <output) -ge 2
+'
+
+test_expect_success 'diff between two explicit commits' '
+	cd diff-empty &&
+	c1=$(git rev-parse HEAD~2) &&
+	c2=$(git rev-parse HEAD) &&
+	git diff "$c1" "$c2" >output &&
+	test -s output
+'
+
+test_expect_success 'diff with added and deleted file in same commit' '
+	cd diff-empty &&
+	echo delme >delme.txt &&
+	git add delme.txt && git commit -m "add delme" 2>/dev/null &&
+	git rm -f delme.txt 2>/dev/null &&
+	echo addnew >addnew.txt &&
+	git add addnew.txt && git commit -m "swap files" 2>/dev/null &&
+	git diff --name-status HEAD~1 HEAD >output &&
+	grep "D.*delme.txt" output &&
+	grep "A.*addnew.txt" output
+'
+
+test_expect_success 'diff with large file shows full diff' '
+	cd diff-empty &&
+	seq 1 100 >bigfile.txt &&
+	git add bigfile.txt && git commit -m "add bigfile" 2>/dev/null &&
+	seq 1 50 >bigfile.txt &&
+	git add bigfile.txt && git commit -m "shrink bigfile" 2>/dev/null &&
+	git diff HEAD~1 HEAD >output &&
+	test -s output
+'
+
+test_expect_success 'diff of file with trailing newline vs without' '
+	cd diff-empty &&
+	printf "line\n" >trail.txt &&
+	git add trail.txt && git commit -m "with newline" 2>/dev/null &&
+	printf "line" >trail.txt &&
+	git add trail.txt && git commit -m "no newline" 2>/dev/null &&
+	git diff HEAD~1 HEAD >output &&
+	grep "No newline at end of file" output || grep "no newline" output || grep "\\\\ No" output
+'
+
+test_expect_success 'diff --numstat shows numeric columns' '
+	cd diff-empty &&
+	git diff --numstat HEAD~1 HEAD >output &&
+	test -s output
+'
+
+test_expect_success 'diff with path filter limits output' '
+	cd diff-empty &&
+	echo pathA >pathA.txt && echo pathB >pathB.txt &&
+	git add pathA.txt pathB.txt && git commit -m "add paths" 2>/dev/null &&
+	echo changed_pathA >pathA.txt &&
+	git add pathA.txt && git commit -m "change pathA" 2>/dev/null &&
+	git diff HEAD~1 HEAD -- pathA.txt >output &&
+	grep "pathA.txt" output &&
+	! grep "pathB.txt" output
+'
+
+test_expect_success 'diff HEAD with no changes is empty' '
+	cd diff-empty &&
+	git diff HEAD HEAD >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'diff --name-status shows file after rename' '
+	cd diff-empty &&
+	echo rename_me >rename_src.txt &&
+	git add rename_src.txt && git commit -m "add rename_src" 2>/dev/null &&
+	git mv rename_src.txt rename_dst.txt &&
+	git commit -m "rename" 2>/dev/null &&
+	git diff --name-status HEAD~1 HEAD >output &&
+	grep "rename_dst.txt" output
+'
+
+test_expect_success 'diff --stat shows insertion and deletion counts' '
+	cd diff-empty &&
+	git diff --stat HEAD~3 HEAD >output &&
+	grep "+" output &&
+	grep "-" output
+'
+
 test_done
