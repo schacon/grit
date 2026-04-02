@@ -1968,4 +1968,47 @@ test_expect_success 'GIT_CONFIG selects alternate config file' '
 	test_cmp expect actual
 '
 
+# ── subsections with special characters ───────────────────────────────────────
+
+test_expect_success 'subsection with dots in URL' '
+	cd repo &&
+	git config "http.https://example.com.proxy" "http://proxy:8080" &&
+	git config --get "http.https://example.com.proxy" >actual &&
+	echo "http://proxy:8080" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'value with equals signs preserved' '
+	cd repo &&
+	git config test.equation "a=b=c" &&
+	git config --get test.equation >actual &&
+	echo "a=b=c" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'config accessible from subdirectory' '
+	cd repo &&
+	git config sub.dirtest "found" &&
+	mkdir -p subdir &&
+	(cd subdir && git config --get sub.dirtest >../actual) &&
+	echo "found" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--type bool-or-int with integer' '
+	cd repo &&
+	git config boi.num "42" &&
+	git config --type bool-or-int boi.num >actual &&
+	echo "42" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--type bool-or-int with boolean' '
+	cd repo &&
+	git config boi.flag "true" &&
+	git config --type bool-or-int boi.flag >actual &&
+	echo "true" >expect &&
+	test_cmp expect actual
+'
+
 test_done
