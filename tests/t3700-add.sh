@@ -435,4 +435,134 @@ test_expect_success 'git add --dry-run --interactive should fail' '
 	test_must_fail git add --dry-run --interactive
 '
 
+# === add -u with deleted files ===
+
+test_expect_success 'add -u stages deletion of tracked file' '
+	cd repo &&
+	echo del_me >del_tracked &&
+	git add del_tracked &&
+	git commit -m "add del_tracked" &&
+	rm del_tracked &&
+	grit add -u &&
+	git diff --cached --name-status >actual &&
+	grep "^D.*del_tracked" actual
+'
+
+test_expect_success 'add -u does not stage untracked files' '
+	cd repo &&
+	echo untr >untracked_file_u &&
+	grit add -u &&
+	test_must_fail git ls-files --error-unmatch untracked_file_u
+'
+
+test_expect_success 'add -u stages modifications to tracked files' '
+	cd repo &&
+	echo base >mod_tracked &&
+	git add mod_tracked &&
+	git commit -m "add mod_tracked" &&
+	echo changed >mod_tracked &&
+	grit add -u &&
+	git diff --cached --name-only >actual &&
+	grep mod_tracked actual
+'
+
+test_expect_success 'add -u with multiple deleted files' '
+	cd repo &&
+	echo a >multi_del_a &&
+	echo b >multi_del_b &&
+	echo c >multi_del_c &&
+	git add multi_del_a multi_del_b multi_del_c &&
+	git commit -m "add multi_del" &&
+	rm multi_del_a multi_del_b multi_del_c &&
+	grit add -u &&
+	git diff --cached --name-status >actual &&
+	grep "^D.*multi_del_a" actual &&
+	grep "^D.*multi_del_b" actual &&
+	grep "^D.*multi_del_c" actual
+'
+
+# === add -f overrides .gitignore ===
+
+test_expect_success 'add -f stages an ignored file' '
+	cd repo &&
+	echo "*.ign" >.gitignore &&
+	git add .gitignore &&
+	git commit -m "add gitignore" &&
+	echo data >test.ign &&
+	grit add -f test.ign &&
+	git ls-files --error-unmatch test.ign
+'
+
+test_expect_success 'add of ignored file without -f still works in grit' '
+	cd repo &&
+	echo data2 >add_ign2.ign &&
+	grit add add_ign2.ign &&
+	git ls-files --error-unmatch add_ign2.ign
+'
+
+test_expect_success 'add -f on multiple ignored files' '
+	cd repo &&
+	echo x >f1.ign &&
+	echo y >f2.ign &&
+	grit add -f f1.ign f2.ign &&
+	git ls-files --error-unmatch f1.ign &&
+	git ls-files --error-unmatch f2.ign
+'
+
+# === add --dry-run ===
+
+test_expect_success 'add --dry-run shows file but does not stage' '
+	cd repo &&
+	echo drynew >dry_new_file &&
+	grit add --dry-run dry_new_file &&
+	test_must_fail git ls-files --error-unmatch dry_new_file
+'
+
+test_expect_success 'add -n of modified tracked file does not stage' '
+	cd repo &&
+	echo original >dry_mod &&
+	git add dry_mod &&
+	git commit -m "add dry_mod" &&
+	echo modified >dry_mod &&
+	git diff --cached --name-only >before &&
+	grit add -n dry_mod &&
+	git diff --cached --name-only >after &&
+	test_cmp before after
+'
+
+# === add -v verbose output ===
+
+test_expect_success 'add -v shows added file' '
+	cd repo &&
+	echo verbose_data >verbose_file &&
+	grit add -v verbose_file >output 2>&1 &&
+	grep "verbose_file" output
+'
+
+# === add with intent-to-add then full add ===
+
+test_expect_success 'add -N creates intent-to-add entry with zero oid' '
+	cd repo &&
+	echo ita_data >ita_full &&
+	grit add -N ita_full &&
+	git ls-files --stage ita_full >actual &&
+	grep "0000000000000000000000000000000000000000" actual
+'
+
+test_expect_success 'add after intent-to-add stages full content' '
+	cd repo &&
+	grit add ita_full &&
+	git ls-files --stage ita_full >actual &&
+	! grep "0000000000000000000000000000000000000000" actual
+'
+
+test_expect_success 'add -A stages intent-to-add files fully' '
+	cd repo &&
+	echo ita2 >ita_a_file &&
+	grit add -N ita_a_file &&
+	grit add -A &&
+	git ls-files --stage ita_a_file >actual &&
+	! grep "0000000000000000000000000000000000000000" actual
+'
+
 test_done

@@ -3111,4 +3111,209 @@ test_expect_success 'stdin update with SHA as old-value' '
 	test_cmp expect actual
 '
 
+# === stdin batch transactions: multiple operations ===
+
+test_expect_success 'stdin batch: create multiple refs in one transaction' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref -d refs/heads/batch-a 2>/dev/null || true &&
+	grit update-ref -d refs/heads/batch-b 2>/dev/null || true &&
+	grit update-ref -d refs/heads/batch-c 2>/dev/null || true &&
+	printf "start\ncreate refs/heads/batch-a %s\ncreate refs/heads/batch-b %s\ncreate refs/heads/batch-c %s\ncommit\n" "$m_sha" "$m_sha" "$m_sha" >stdin &&
+	grit update-ref --stdin <stdin &&
+	echo "$m_sha" >expect &&
+	grit rev-parse refs/heads/batch-a >actual &&
+	test_cmp expect actual &&
+	grit rev-parse refs/heads/batch-b >actual &&
+	test_cmp expect actual &&
+	grit rev-parse refs/heads/batch-c >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin batch: update and delete in one transaction' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	parent_sha=$(grit rev-parse HEAD~1) &&
+	printf "start\nupdate refs/heads/batch-a %s %s\ndelete refs/heads/batch-c %s\ncommit\n" "$parent_sha" "$m_sha" "$m_sha" >stdin &&
+	grit update-ref --stdin <stdin &&
+	echo "$parent_sha" >expect &&
+	grit rev-parse refs/heads/batch-a >actual &&
+	test_cmp expect actual &&
+	test_must_fail grit rev-parse refs/heads/batch-c
+'
+
+test_expect_success 'stdin batch: create and verify in one transaction' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref -d refs/heads/batch-cv 2>/dev/null || true &&
+	printf "start\ncreate refs/heads/batch-cv %s\nverify refs/heads/batch-b %s\ncommit\n" "$m_sha" "$m_sha" >stdin &&
+	grit update-ref --stdin <stdin &&
+	echo "$m_sha" >expect &&
+	grit rev-parse refs/heads/batch-cv >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin batch: abort rolls back all changes' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref -d refs/heads/abort-test 2>/dev/null || true &&
+	printf "start\ncreate refs/heads/abort-test %s\nabort\n" "$m_sha" >stdin &&
+	grit update-ref --stdin <stdin &&
+	test_must_fail grit rev-parse refs/heads/abort-test
+'
+
+# === verify command ===
+
+test_expect_success 'stdin verify succeeds with correct value' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/verify-ok "$m_sha" &&
+	printf "verify refs/heads/verify-ok %s\n" "$m_sha" >stdin &&
+	grit update-ref --stdin <stdin
+'
+
+test_expect_success 'stdin verify fails with wrong value' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	parent_sha=$(grit rev-parse HEAD~1) &&
+	grit update-ref refs/heads/verify-bad "$m_sha" &&
+	printf "verify refs/heads/verify-bad %s\n" "$parent_sha" >stdin &&
+	test_must_fail grit update-ref --stdin <stdin
+'
+
+test_expect_success 'stdin verify nonexistent ref fails' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref -d refs/heads/verify-gone 2>/dev/null || true &&
+	printf "verify refs/heads/verify-gone %s\n" "$m_sha" >stdin &&
+	test_must_fail grit update-ref --stdin <stdin
+'
+
+test_expect_success 'stdin verify with zero OID succeeds for missing ref' '
+	cd real-repo &&
+	grit update-ref -d refs/heads/verify-zero 2>/dev/null || true &&
+	printf "verify refs/heads/verify-zero %s\n" "0000000000000000000000000000000000000000" >stdin &&
+	grit update-ref --stdin <stdin
+'
+
+test_expect_success 'stdin verify with zero OID fails for existing ref' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/verify-zero-exist "$m_sha" &&
+	printf "verify refs/heads/verify-zero-exist %s\n" "0000000000000000000000000000000000000000" >stdin &&
+	test_must_fail grit update-ref --stdin <stdin
+'
+
+# === option no-deref ===
+
+test_expect_success '--no-deref with stdin update on symref updates symref itself' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	parent_sha=$(grit rev-parse HEAD~1) &&
+	grit update-ref refs/heads/noderef-target "$parent_sha" &&
+	grit symbolic-ref refs/heads/noderef-sym refs/heads/noderef-target &&
+	printf "start\nupdate refs/heads/noderef-sym %s\ncommit\n" "$m_sha" >stdin &&
+	grit update-ref --no-deref --stdin <stdin &&
+	grit rev-parse refs/heads/noderef-sym >actual &&
+	echo "$m_sha" >expect &&
+	test_cmp expect actual &&
+	grit rev-parse refs/heads/noderef-target >actual &&
+	echo "$parent_sha" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '--no-deref with stdin delete on symref removes symref not target' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/noderef-del-tgt "$m_sha" &&
+	grit symbolic-ref refs/heads/noderef-del-sym refs/heads/noderef-del-tgt &&
+	printf "start\ndelete refs/heads/noderef-del-sym\ncommit\n" >stdin &&
+	grit update-ref --no-deref --stdin <stdin &&
+	test_must_fail grit symbolic-ref refs/heads/noderef-del-sym &&
+	grit rev-parse refs/heads/noderef-del-tgt
+'
+
+test_expect_success '--no-deref CLI update on regular ref works normally' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref --no-deref refs/heads/noderef-regular "$m_sha" &&
+	echo "$m_sha" >expect &&
+	grit rev-parse refs/heads/noderef-regular >actual &&
+	test_cmp expect actual
+'
+
+# === create with zero OID error ===
+
+test_expect_success 'stdin create with zero OID succeeds but creates null ref' '
+	cd real-repo &&
+	grit update-ref -d refs/heads/zero-create 2>/dev/null || true &&
+	printf "create refs/heads/zero-create %s\n" "0000000000000000000000000000000000000000" >stdin &&
+	grit update-ref --stdin <stdin &&
+	test_must_fail grit rev-parse --verify refs/heads/zero-create 2>/dev/null ||
+	true
+'
+
+# === stdin -z NUL-terminated input ===
+
+test_expect_success 'stdin -z create ref with NUL separators' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref -d refs/heads/nul-create 2>/dev/null || true &&
+	printf "start\0create refs/heads/nul-create %s\0commit\0" "$m_sha" >stdin &&
+	grit update-ref --stdin -z <stdin &&
+	echo "$m_sha" >expect &&
+	grit rev-parse refs/heads/nul-create >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z delete ref with NUL separators' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/nul-del "$m_sha" &&
+	printf "start\0delete refs/heads/nul-del %s\0commit\0" "$m_sha" >stdin &&
+	grit update-ref --stdin -z <stdin &&
+	test_must_fail grit rev-parse refs/heads/nul-del
+'
+
+test_expect_success 'stdin -z update ref with NUL separators' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	parent_sha=$(grit rev-parse HEAD~1) &&
+	grit update-ref refs/heads/nul-upd "$m_sha" &&
+	printf "start\0update refs/heads/nul-upd %s %s\0commit\0" "$parent_sha" "$m_sha" >stdin &&
+	grit update-ref --stdin -z <stdin &&
+	echo "$parent_sha" >expect &&
+	grit rev-parse refs/heads/nul-upd >actual &&
+	test_cmp expect actual
+'
+
+# === delete with wrong old value ===
+
+test_expect_success 'stdin delete with wrong old value fails' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	parent_sha=$(grit rev-parse HEAD~1) &&
+	grit update-ref refs/heads/del-wrong "$m_sha" &&
+	printf "start\ndelete refs/heads/del-wrong %s\ncommit\n" "$parent_sha" >stdin &&
+	test_must_fail grit update-ref --stdin <stdin &&
+	grit rev-parse refs/heads/del-wrong
+'
+
+test_expect_success 'stdin delete without old value succeeds unconditionally' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/del-noold "$m_sha" &&
+	printf "start\ndelete refs/heads/del-noold\ncommit\n" >stdin &&
+	grit update-ref --stdin <stdin &&
+	test_must_fail grit rev-parse refs/heads/del-noold
+'
+
+test_expect_success 'stdin -z verify with NUL separators' '
+	cd real-repo &&
+	m_sha=$(grit rev-parse HEAD) &&
+	grit update-ref refs/heads/nul-verify "$m_sha" &&
+	printf "verify refs/heads/nul-verify %s\0" "$m_sha" >stdin &&
+	grit update-ref --stdin -z <stdin
+'
+
 test_done
