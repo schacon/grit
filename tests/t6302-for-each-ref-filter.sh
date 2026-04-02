@@ -509,4 +509,52 @@ EOF
 	test_cmp expect actual
 '
 
+# ── additional filter combinations ───────────────────────────────────────────
+
+test_expect_success '--merged is compatible with --no-merged' '
+	cd repo &&
+	git for-each-ref --merged HEAD --no-merged HEAD
+'
+
+test_expect_success '--no-merged combined with --count' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/heads/side
+EOF
+	git for-each-ref --format="%(refname)" --no-merged=main --count=1 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--points-at combined with --sort=-refname' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/tags/three
+refs/odd/spot
+refs/heads/main
+EOF
+	git for-each-ref --format="%(refname)" --points-at=main --sort=-refname >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--no-contains combined with --count' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/heads/side
+refs/tags/four
+EOF
+	git for-each-ref --format="%(refname)" --no-contains=refs/heads/main --count=2 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--contains combined with --exclude and --sort' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/tags/three
+refs/heads/main
+EOF
+	git for-each-ref --format="%(refname)" --contains=refs/tags/three \
+		--exclude=refs/odd/spot --sort=-refname >actual &&
+	test_cmp expect actual
+'
+
 test_done
