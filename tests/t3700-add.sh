@@ -565,4 +565,119 @@ test_expect_success 'add -A stages intent-to-add files fully' '
 	! grep "0000000000000000000000000000000000000000" actual
 '
 
+# === additional deepening tests ===
+
+test_expect_success 'add file in subdirectory' '
+	cd repo &&
+	mkdir -p add_sub &&
+	echo subdata >add_sub/file.txt &&
+	grit add add_sub/file.txt &&
+	git ls-files --error-unmatch add_sub/file.txt
+'
+
+test_expect_success 'add multiple files at once' '
+	cd repo &&
+	echo m1 >add_m1.txt && echo m2 >add_m2.txt && echo m3 >add_m3.txt &&
+	grit add add_m1.txt add_m2.txt add_m3.txt &&
+	git ls-files --error-unmatch add_m1.txt &&
+	git ls-files --error-unmatch add_m2.txt &&
+	git ls-files --error-unmatch add_m3.txt
+'
+
+test_expect_success 'add with shell glob pattern' '
+	cd repo &&
+	echo g1 >glob1.g && echo g2 >glob2.g &&
+	grit add *.g &&
+	git ls-files --error-unmatch glob1.g &&
+	git ls-files --error-unmatch glob2.g
+'
+
+test_expect_success 'add updates modified tracked file' '
+	cd repo &&
+	git commit -m "add glob" 2>/dev/null &&
+	echo updated >glob1.g &&
+	grit add glob1.g &&
+	git diff --cached --name-only >staged &&
+	grep glob1.g staged
+'
+
+test_expect_success 'add -A stages deletions' '
+	cd repo &&
+	git commit -m "update glob" 2>/dev/null &&
+	rm -f glob2.g &&
+	grit add -A &&
+	git diff --cached --name-only >staged &&
+	grep "glob2.g" staged
+'
+
+test_expect_success 'add -A stages new files' '
+	cd repo &&
+	git commit -m "del glob" 2>/dev/null &&
+	echo new_a >add_a_new.txt &&
+	grit add -A &&
+	git ls-files --error-unmatch add_a_new.txt
+'
+
+test_expect_success 'add stages file even when matching gitignore' '
+	cd repo &&
+	git commit -m "add new" 2>/dev/null &&
+	echo "*.ignored" >.gitignore &&
+	git add .gitignore && git commit -m "gitignore" 2>/dev/null &&
+	echo ignored >test.ignored &&
+	grit add test.ignored &&
+	git ls-files --stage test.ignored >actual &&
+	test -s actual &&
+	git reset HEAD test.ignored 2>/dev/null &&
+	rm -f test.ignored
+'
+
+test_expect_success 'add -f stages ignored files' '
+	cd repo &&
+	echo ignored >force.ignored &&
+	grit add -f force.ignored &&
+	git ls-files --error-unmatch force.ignored
+'
+
+test_expect_success 'add . stages all changes in current dir' '
+	cd repo &&
+	git commit -m "force ignored" 2>/dev/null &&
+	echo dot1 >dot1.txt && echo dot2 >dot2.txt &&
+	grit add . &&
+	git ls-files --error-unmatch dot1.txt &&
+	git ls-files --error-unmatch dot2.txt
+'
+
+test_expect_success 'add empty file creates blob' '
+	cd repo &&
+	git commit -m "dot" 2>/dev/null &&
+	>empty_add.txt &&
+	grit add empty_add.txt &&
+	git ls-files --stage empty_add.txt >actual &&
+	test -s actual
+'
+
+test_expect_success 'add file with spaces in name' '
+	cd repo &&
+	echo sp >"add space file.txt" &&
+	grit add "add space file.txt" &&
+	git ls-files --error-unmatch "add space file.txt"
+'
+
+test_expect_success 'add --dry-run does not stage file' '
+	cd repo &&
+	git commit -m "space" 2>/dev/null &&
+	echo drytest >add_dry.txt &&
+	grit add --dry-run add_dry.txt 2>/dev/null &&
+	git ls-files add_dry.txt >actual &&
+	test_must_be_empty actual &&
+	rm -f add_dry.txt
+'
+
+test_expect_success 'add symlink stages the link' '
+	cd repo &&
+	ln -sf glob1.g add_link &&
+	grit add add_link &&
+	git ls-files --error-unmatch add_link
+'
+
 test_done

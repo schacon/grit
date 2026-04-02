@@ -993,4 +993,119 @@ test_expect_success 'reset --hard to tag works' '
 	git diff-index --exit-code HEAD
 '
 
+# === additional deepening tests ===
+
+test_expect_success 'reset --soft keeps changes staged' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	prev=$(grit rev-parse HEAD) &&
+	grit reset --soft HEAD~1 &&
+	git diff --cached --name-only >staged &&
+	test -s staged &&
+	git reset --hard "$prev" 2>/dev/null
+'
+
+test_expect_success 'reset --mixed unstages but keeps working tree' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo mix >mix_file.txt &&
+	git add mix_file.txt &&
+	grit reset HEAD mix_file.txt &&
+	test_path_is_file mix_file.txt &&
+	git diff --cached --name-only >staged &&
+	! grep mix_file staged &&
+	rm -f mix_file.txt
+'
+
+test_expect_success 'reset --hard restores deleted file' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	rm -f first &&
+	grit reset --hard &&
+	test_path_is_file first
+'
+
+test_expect_success 'reset --hard changes HEAD to target commit' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	grit reset --hard $(cat ../commit1) &&
+	test "$(grit rev-parse HEAD)" = "$(cat ../commit1)" &&
+	git reset --hard $(cat ../commit4) 2>/dev/null
+'
+
+test_expect_success 'reset to HEAD is no-op for clean tree' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	grit reset --hard HEAD &&
+	test "$(grit rev-parse HEAD)" = "$(cat ../commit4)" &&
+	git diff-index --exit-code HEAD
+'
+
+test_expect_success 'reset --soft does not touch working tree' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo content >soft_check.txt &&
+	git add soft_check.txt && git commit -m "soft check" 2>/dev/null &&
+	grit reset --soft HEAD~1 &&
+	test_path_is_file soft_check.txt &&
+	test "$(cat soft_check.txt)" = "content" &&
+	git reset --hard $(cat ../commit4) 2>/dev/null
+'
+
+test_expect_success 'reset --hard removes staged new file' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo ephemeral >eph.txt &&
+	git add eph.txt &&
+	grit reset --hard &&
+	test_path_is_missing eph.txt
+'
+
+test_expect_success 'reset multiple paths unstages all' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo a >ra.txt && echo b >rb.txt &&
+	git add ra.txt rb.txt &&
+	grit reset -- ra.txt rb.txt &&
+	git diff --cached --name-only >staged &&
+	! grep ra.txt staged &&
+	! grep rb.txt staged &&
+	rm -f ra.txt rb.txt
+'
+
+test_expect_success 'reset --hard with short hash works' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	short=$(cat ../commit2 | cut -c1-8) &&
+	grit reset --hard "$short" &&
+	test "$(grit rev-parse HEAD)" = "$(cat ../commit2)" &&
+	git reset --hard $(cat ../commit4) 2>/dev/null
+'
+
+test_expect_success 'reset preserves untracked files' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo untracked >ut_preserve.txt &&
+	grit reset --hard HEAD &&
+	test_path_is_file ut_preserve.txt &&
+	rm -f ut_preserve.txt
+'
+
+test_expect_success 'reset --soft HEAD~2 moves back two commits' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	expect=$(grit rev-parse HEAD~2) &&
+	grit reset --soft HEAD~2 &&
+	test "$(grit rev-parse HEAD)" = "$expect" &&
+	git reset --hard $(cat ../commit4) 2>/dev/null
+'
+
+test_expect_success 'reset --hard updates working tree to match' '
+	cd repo &&
+	git reset --hard $(cat ../commit4) &&
+	echo dirty >first &&
+	grit reset --hard &&
+	! grep dirty first
+'
+
 test_done

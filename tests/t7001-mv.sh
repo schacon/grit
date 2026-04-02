@@ -1101,4 +1101,151 @@ test_expect_success 'mv two files swapping requires intermediate' '
 	grep "swap_b" actual
 '
 
+# === additional deepening tests ===
+
+test_expect_success 'mv file to new subdirectory' '
+	cd repo_mv2 &&
+	git commit --allow-empty -m "swap done" &&
+	echo mvd >mv_to_dir.txt &&
+	git add mv_to_dir.txt && git commit -m "add mv_to_dir" &&
+	mkdir -p mv_target_dir &&
+	grit mv mv_to_dir.txt mv_target_dir/ &&
+	test_path_is_file mv_target_dir/mv_to_dir.txt &&
+	! test -f mv_to_dir.txt &&
+	git ls-files >actual &&
+	grep "mv_target_dir/mv_to_dir.txt" actual
+'
+
+test_expect_success 'mv preserves file content' '
+	cd repo_mv2 &&
+	git commit -m "mv_to_dir done" -a 2>/dev/null &&
+	echo preserve_content >preserve.txt &&
+	git add preserve.txt && git commit -m "add preserve" &&
+	grit mv preserve.txt preserved.txt &&
+	test "$(cat preserved.txt)" = "preserve_content"
+'
+
+test_expect_success 'mv nonexistent source fails' '
+	cd repo_mv2 &&
+	git commit -m "preserve done" -a 2>/dev/null &&
+	test_must_fail grit mv no_such_file.txt dest.txt 2>/dev/null
+'
+
+test_expect_success 'mv to existing file fails without -f' '
+	cd repo_mv2 &&
+	echo src >mv_clash_src.txt && echo dst >mv_clash_dst.txt &&
+	git add mv_clash_src.txt mv_clash_dst.txt && git commit -m "add clash" &&
+	test_must_fail grit mv mv_clash_src.txt mv_clash_dst.txt 2>/dev/null
+'
+
+test_expect_success 'mv -f overwrites existing destination' '
+	cd repo_mv2 &&
+	grit mv -f mv_clash_src.txt mv_clash_dst.txt &&
+	test "$(cat mv_clash_dst.txt)" = "src" &&
+	! test -f mv_clash_src.txt
+'
+
+test_expect_success 'mv updates index with new path' '
+	cd repo_mv2 &&
+	git commit -m "clash done" -a 2>/dev/null &&
+	echo idx >mv_idx.txt &&
+	git add mv_idx.txt && git commit -m "add idx" &&
+	grit mv mv_idx.txt mv_idx_new.txt &&
+	git ls-files >../actual &&
+	grep "mv_idx_new.txt" ../actual &&
+	! grep "^mv_idx.txt$" ../actual
+'
+
+test_expect_success 'mv file with spaces in name' '
+	cd repo_mv2 &&
+	git commit -m "idx done" -a 2>/dev/null &&
+	echo sp >"mv space src.txt" &&
+	git add "mv space src.txt" && git commit -m "add space" &&
+	grit mv "mv space src.txt" "mv space dst.txt" &&
+	test_path_is_file "mv space dst.txt" &&
+	! test -f "mv space src.txt"
+'
+
+test_expect_success 'mv -k skips errors and continues' '
+	cd repo_mv2 &&
+	git commit -m "space done" -a 2>/dev/null &&
+	echo kk >mv_k_file.txt &&
+	git add mv_k_file.txt && git commit -m "add k" &&
+	mkdir -p mv_k_dir &&
+	grit mv -k nonexist.txt mv_k_file.txt mv_k_dir/ 2>/dev/null &&
+	test_path_is_file mv_k_dir/mv_k_file.txt
+'
+
+test_expect_success 'mv directory moves all contents' '
+	cd repo_mv2 &&
+	git commit -m "k done" -a 2>/dev/null &&
+	mkdir -p mv_dir_src &&
+	echo a >mv_dir_src/a.txt && echo b >mv_dir_src/b.txt &&
+	git add mv_dir_src && git commit -m "add dir_src" &&
+	grit mv mv_dir_src mv_dir_dst &&
+	test_path_is_file mv_dir_dst/a.txt &&
+	test_path_is_file mv_dir_dst/b.txt &&
+	! test -d mv_dir_src
+'
+
+test_expect_success 'mv file up from subdirectory' '
+	cd repo_mv2 &&
+	git commit -m "dir done" -a 2>/dev/null &&
+	mkdir -p mv_up_sub &&
+	echo up >mv_up_sub/up.txt &&
+	git add mv_up_sub && git commit -m "add up" &&
+	grit mv mv_up_sub/up.txt mv_up_here.txt &&
+	test_path_is_file mv_up_here.txt &&
+	! test -f mv_up_sub/up.txt
+'
+
+test_expect_success 'mv --dry-run does not move file' '
+	cd repo_mv2 &&
+	git commit -m "up done" -a 2>/dev/null &&
+	echo dry >mv_dry.txt &&
+	git add mv_dry.txt && git commit -m "add dry" &&
+	grit mv --dry-run mv_dry.txt mv_dry_dst.txt 2>/dev/null &&
+	test_path_is_file mv_dry.txt &&
+	! test -f mv_dry_dst.txt
+'
+
+test_expect_success 'mv multiple files to directory' '
+	cd repo_mv2 &&
+	echo m1 >mv_multi1.txt && echo m2 >mv_multi2.txt &&
+	git add mv_multi1.txt mv_multi2.txt && git commit -m "add multi" &&
+	mkdir -p mv_multi_dst &&
+	grit mv mv_multi1.txt mv_multi2.txt mv_multi_dst/ &&
+	test_path_is_file mv_multi_dst/mv_multi1.txt &&
+	test_path_is_file mv_multi_dst/mv_multi2.txt
+'
+
+test_expect_success 'mv shows rename in status after move' '
+	cd repo_mv2 &&
+	git commit -m "multi done" -a 2>/dev/null &&
+	echo stat >mv_stat.txt &&
+	git add mv_stat.txt && git commit -m "add stat" &&
+	grit mv mv_stat.txt mv_stat_new.txt &&
+	git ls-files >../actual &&
+	grep "mv_stat_new.txt" ../actual
+'
+
+test_expect_success 'mv to same name fails' '
+	cd repo_mv2 &&
+	git commit -m "stat done" -a 2>/dev/null &&
+	echo nd >mv_same.txt &&
+	git add mv_same.txt && git commit -m "add same" &&
+	test_must_fail grit mv mv_same.txt mv_same.txt 2>/dev/null
+'
+
+test_expect_success 'mv then commit records moved file' '
+	cd repo_mv2 &&
+	echo rec >mv_record.txt &&
+	git add mv_record.txt && git commit -m "add record" &&
+	grit mv mv_record.txt mv_recorded.txt &&
+	git commit -m "moved record" 2>/dev/null &&
+	git ls-files >../actual &&
+	grep "mv_recorded.txt" ../actual &&
+	! grep "^mv_record.txt$" ../actual
+'
+
 test_done

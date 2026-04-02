@@ -615,4 +615,97 @@ test_expect_success 'show merge commit format %p shows abbreviated parents' '
 	test "$count" = "2"
 '
 
+# === additional deepening tests ===
+
+test_expect_success 'show HEAD shows commit info' '
+	cd repo &&
+	grit show HEAD >actual &&
+	grep "commit" actual
+'
+
+test_expect_success 'show with commit hash works' '
+	cd repo &&
+	hash=$(grit rev-parse HEAD~2) &&
+	grit show "$hash" >actual &&
+	test -s actual
+'
+
+test_expect_success 'show --format=%T gives tree hash' '
+	cd repo &&
+	grit show --format="format:%T" --quiet HEAD~2 >actual &&
+	len=$(wc -c <actual | tr -d " ") &&
+	test "$len" -ge 40
+'
+
+test_expect_success 'show --format=%an gives author name' '
+	cd repo &&
+	grit show --format="format:%an" --quiet >actual &&
+	test -s actual
+'
+
+test_expect_success 'show --format=%ae gives author email' '
+	cd repo &&
+	grit show --format="format:%ae" --quiet >actual &&
+	grep "@" actual
+'
+
+test_expect_success 'show --format=%cn gives committer name' '
+	cd repo &&
+	grit show --format="format:%cn" --quiet >actual &&
+	test -s actual
+'
+
+test_expect_success 'show --format=%s gives subject line' '
+	cd repo &&
+	git commit --allow-empty -m "subject line test" 2>/dev/null &&
+	grit show --format="format:%s" --quiet >actual &&
+	grep "subject line test" actual
+'
+
+test_expect_success 'show --format=%P gives full parent hashes' '
+	cd repo &&
+	grit show --format="format:%P" --quiet HEAD >actual &&
+	parent=$(cat actual | head -1 | awk "{print \$1}") &&
+	len=${#parent} &&
+	test "$len" -eq 40
+'
+
+test_expect_success 'show --format=%t gives abbreviated tree' '
+	cd repo &&
+	grit show --format="format:%t" --quiet >actual &&
+	len=$(wc -c <actual | tr -d " ") &&
+	test "$len" -ge 7
+'
+
+test_expect_success 'show --format=%ce gives committer email' '
+	cd repo &&
+	grit show --format="format:%ce" --quiet >actual &&
+	grep "@" actual
+'
+
+test_expect_success 'show blob by hash shows content' '
+	cd repo &&
+	blob=$(git hash-object file.txt) &&
+	grit show "$blob" >actual &&
+	test -s actual
+'
+
+test_expect_success 'show --quiet suppresses diff output' '
+	cd repo &&
+	grit show --quiet >actual &&
+	! grep "^diff" actual
+'
+
+test_expect_success 'show tag by name shows tag info' '
+	cd repo &&
+	grit show v1.0 >actual &&
+	grep "v1.0" actual
+'
+
+test_expect_success 'show --format with multiple placeholders' '
+	cd repo &&
+	grit show --format="format:%h %s" --quiet >actual &&
+	test -s actual
+'
+
 test_done
