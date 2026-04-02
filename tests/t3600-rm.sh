@@ -414,4 +414,212 @@ test_expect_success 'rm output shows each removed file' '
 	grep "rm .out2." output
 '
 
+# ---------------------------------------------------------------------------
+# Additional tests ported from git/t/t3600-rm.sh
+# ---------------------------------------------------------------------------
+
+test_expect_success 'rm removes subdirectories recursively' '
+	cd repo &&
+	mkdir -p dir/subdir/subsubdir &&
+	echo content >dir/subdir/subsubdir/file &&
+	git add dir/subdir/subsubdir/file &&
+	git rm -f dir/subdir/subsubdir/file &&
+	test_path_is_missing dir
+'
+
+test_expect_success 'rm fails when given a file with a trailing /' '
+	cd repo &&
+	>emptyfile &&
+	git add emptyfile &&
+	test_must_fail git rm emptyfile/
+'
+
+test_expect_success 'rm succeeds when given a directory with a trailing /' '
+	cd repo &&
+	mkdir -p frotz2 &&
+	echo qfwfq >frotz2/nitfol &&
+	git add frotz2 &&
+	git commit -m "add frotz2" &&
+	git rm -r frotz2/
+'
+
+test_expect_success 'rm file with local modification shows error' '
+	cd repo &&
+	git reset --hard &&
+	>bar.txt &&
+	>foo.txt &&
+	git add bar.txt foo.txt &&
+	git commit -m "testing rm msg" &&
+	echo content3 >foo.txt &&
+	test_must_fail git rm foo.txt 2>actual &&
+	grep -i "local modifications" actual
+'
+
+test_expect_success 'rm file with changes in the index shows error' '
+	cd repo &&
+	git reset --hard &&
+	echo content5 >foo.txt &&
+	git add foo.txt &&
+	test_must_fail git rm foo.txt 2>actual &&
+	grep "foo.txt" actual
+'
+
+test_expect_success 'rm files with different staged content shows error' '
+	cd repo &&
+	git reset --hard &&
+	>bar2.txt &&
+	>foo2.txt &&
+	git add bar2.txt foo2.txt &&
+	echo content1 >foo2.txt &&
+	echo content1 >bar2.txt &&
+	test_must_fail git rm foo2.txt bar2.txt 2>actual &&
+	grep "bar2.txt" actual &&
+	grep "foo2.txt" actual
+'
+
+test_expect_success 'rm files with two different errors' '
+	cd repo &&
+	git reset --hard &&
+	echo content >foo1.txt &&
+	git add foo1.txt &&
+	echo content6 >foo1.txt &&
+	echo content6 >bar1.txt &&
+	git add bar1.txt &&
+	test_must_fail git rm bar1.txt foo1.txt 2>actual &&
+	grep "bar1.txt" actual &&
+	grep "foo1.txt" actual
+'
+
+test_expect_success 'rm -r cleans up empty parent dirs' '
+	cd repo &&
+	git reset --hard &&
+	mkdir -p x/y/z &&
+	echo content >x/y/z/file &&
+	git add x &&
+	git commit -m "add nested" &&
+	git rm -r x &&
+	test_path_is_missing x
+'
+
+test_expect_success 'rm --cached then re-add works' '
+	cd repo &&
+	echo content >readd &&
+	git add readd &&
+	git rm --cached readd &&
+	test_must_fail git ls-files --error-unmatch readd &&
+	git add readd &&
+	git ls-files --error-unmatch readd
+'
+
+test_expect_success 'rm on file with leading dash' '
+	cd repo &&
+	echo data >-dashfile &&
+	git add -- -dashfile &&
+	git commit -m "add dashfile" &&
+	git rm -- -dashfile &&
+	test_must_fail git ls-files --error-unmatch -- -dashfile
+'
+
+test_expect_success 'rm --quiet --dry-run produces no output' '
+	cd repo &&
+	echo qdr >qdr_file &&
+	git add qdr_file &&
+	git commit -m "add qdr" &&
+	git rm -n --quiet qdr_file >output &&
+	test_must_be_empty output
+'
+
+test_expect_success 'rm followed by commit works' '
+	cd repo &&
+	echo to_commit_rm >commit_rm_file &&
+	git add commit_rm_file &&
+	git commit -m "add commit_rm_file" &&
+	git rm commit_rm_file &&
+	git commit -m "remove commit_rm_file" &&
+	test_must_fail git ls-files --error-unmatch commit_rm_file &&
+	test_path_is_missing commit_rm_file
+'
+
+test_expect_success 'rm -r --dry-run on directory' '
+	cd repo &&
+	mkdir -p drydir &&
+	echo a >drydir/a &&
+	echo b >drydir/b &&
+	git add drydir &&
+	git commit -m "add drydir" &&
+	git rm -r -n drydir >output &&
+	grep "drydir/a" output &&
+	grep "drydir/b" output &&
+	test_path_is_dir drydir &&
+	git ls-files --error-unmatch drydir/a
+'
+
+test_expect_success 'rm --ignore-unmatch with already removed file' '
+	cd repo &&
+	echo temp >already_gone &&
+	git add already_gone &&
+	git commit -m "add already_gone" &&
+	rm already_gone &&
+	git rm --ignore-unmatch already_gone &&
+	test_must_fail git ls-files --error-unmatch already_gone
+'
+
+test_expect_success 'When rm fails on a file, other files stay in index' '
+	cd repo &&
+	git reset --hard &&
+	echo a >keep1 &&
+	echo b >keep2 &&
+	git add keep1 keep2 &&
+	git commit -m "add keep files" &&
+	echo modified >keep1 &&
+	echo modified >keep2 &&
+	git add keep1 &&
+	echo extra_mod >keep1 &&
+	test_must_fail git rm keep1 keep2 &&
+	git ls-files --error-unmatch keep1 &&
+	git ls-files --error-unmatch keep2
+'
+
+test_expect_success 'rm --cached with pathspec matching multiple fresh files' '
+	cd repo &&
+	git reset --hard &&
+	echo a >multi_rm_a &&
+	echo b >multi_rm_b &&
+	echo c >multi_rm_c &&
+	git add multi_rm_a multi_rm_b multi_rm_c &&
+	git rm --cached multi_rm_a multi_rm_b multi_rm_c &&
+	test_path_is_file multi_rm_a &&
+	test_path_is_file multi_rm_b &&
+	test_path_is_file multi_rm_c &&
+	test_must_fail git ls-files --error-unmatch multi_rm_a
+'
+
+test_expect_success 'rm on file only in index (never committed)' '
+	cd repo &&
+	echo new_staged >only_staged &&
+	git add only_staged &&
+	git rm -f only_staged &&
+	test_must_fail git ls-files --error-unmatch only_staged
+'
+
+test_expect_success 'rm --dry-run with multiple files shows all' '
+	cd repo &&
+	echo a >dry1 &&
+	echo b >dry2 &&
+	git add dry1 dry2 &&
+	git commit -m "add dry files" &&
+	git rm -n dry1 dry2 >output &&
+	grep "dry1" output &&
+	grep "dry2" output &&
+	git ls-files --error-unmatch dry1 &&
+	git ls-files --error-unmatch dry2
+'
+
+test_expect_success 'rm of tracked file shows in status' '
+	cd repo &&
+	git rm dry1 &&
+	git status --porcelain >actual &&
+	grep "D  dry1" actual
+'
+
 test_done
