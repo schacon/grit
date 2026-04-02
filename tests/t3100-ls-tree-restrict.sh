@@ -99,4 +99,10 @@ test_expect_success 'ls-tree filtered with path0/ is empty' '
 	test_must_be_empty current
 '
 
+test_expect_success 'ls-tree filtered with path2/bak (no match)' '
+	cd repo &&
+	grit ls-tree "$(cat ../tree_oid)" path2/bak >current &&
+	test_must_be_empty current
+'
+
 test_done

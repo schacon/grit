@@ -168,6 +168,17 @@ EOF
 check_verify_failure '"type" line type-name length check'
 
 ###########################################################
+#  8. tag line label check #2 (empty tag name)
+
+cat >tag.sig <<EOF
+object $head
+type taggggggggggggggggggggggggggggggg
+tag
+EOF
+
+check_verify_failure '"tag" line label check #2 (empty tag name)'
+
+###########################################################
 #  9. verify object (hash/type) checks
 
 cat >tag.sig <<EOF
@@ -190,6 +201,16 @@ tagger . <> 0 +0000
 EOF
 
 check_verify_failure 'verify object -- made-up type, valid object'
+
+cat >tag.sig <<EOF
+object 0000000000000000000000000000000000000001
+type tagggg
+tag mytag
+tagger . <> 0 +0000
+
+EOF
+
+check_verify_failure 'verify object -- made-up type, nonexisting object'
 
 cat >tag.sig <<EOF
 object $head
@@ -408,6 +429,8 @@ test_expect_success 'extraHeaderEntry config: ignore allows both modes' '
 	git config --unset fsck.extraHeaderEntry
 '
 
+
+
 ###########################################################
 # Extra newlines / body format
 
@@ -441,6 +464,73 @@ tagger T A Gger <tagger@example.com> 1206478233 -0500
 EOF
 
 test_expect_mktag_success 'allow no blank line before an empty body'
+
+###########################################################
+# Tag with blob as target
+
+cat >tag.sig <<EOF
+object $blob
+type blob
+tag myblob
+tagger T A Gger <tagger@example.com> 1206478233 -0500
+
+EOF
+
+test_expect_mktag_success 'create valid tag pointing to blob'
+
+###########################################################
+# Tag with tree as target
+
+cat >tag.sig <<EOF
+object $tree
+type tree
+tag mytree
+tagger T A Gger <tagger@example.com> 1206478233 -0500
+
+EOF
+
+test_expect_mktag_success 'create valid tag pointing to tree'
+
+###########################################################
+# Tag with message body
+
+cat >tag.sig <<EOF
+object $head
+type commit
+tag mytag
+tagger T A Gger <tagger@example.com> 1206478233 -0500
+
+This is a tag message body.
+With multiple lines.
+EOF
+
+test_expect_mktag_success 'create valid tag with message body'
+
+###########################################################
+# Tag with very long tag name
+
+cat >tag.sig <<EOF
+object $head
+type commit
+tag this-is-a-very-long-tag-name-that-should-still-be-accepted-by-mktag
+tagger T A Gger <tagger@example.com> 1206478233 -0500
+
+EOF
+
+test_expect_mktag_success 'create tag with long tag name'
+
+###########################################################
+# Tag with positive timezone
+
+cat >tag.sig <<EOF
+object $head
+type commit
+tag mytag
+tagger T A Gger <tagger@example.com> 1206478233 +0530
+
+EOF
+
+test_expect_mktag_success 'create tag with positive timezone'
 
 ###########################################################
 # 24. create valid tag

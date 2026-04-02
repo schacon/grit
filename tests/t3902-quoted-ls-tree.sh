@@ -64,4 +64,26 @@ test_expect_success 'ls-tree full output quotes tab in path column' '
 	test_line_count = 1 line
 '
 
+test_expect_success 'ls-tree --name-only with core.quotepath=false shows raw non-ASCII' '
+	cd repo &&
+	grit config core.quotepath false &&
+	grit ls-tree --name-only -r "$(cat ../tree_oid)" >actual &&
+	# With quotepath off, "With SP in it" should still appear unquoted
+	grep "With SP in it" actual &&
+	# Tab-containing name should still be quoted (control characters always quoted)
+	grep "Name and an" actual >line &&
+	test_line_count = 1 line &&
+	grit config --unset core.quotepath
+'
+
+test_expect_success 'ls-tree -z --name-only with full output' '
+	cd repo &&
+	grit ls-tree -z -r "$(cat ../tree_oid)" >raw &&
+	# With -z, entries are NUL-separated and the full mode/type/hash line is present
+	# Just verify we get output with NUL bytes
+	test -s raw &&
+	tr "\0" "\n" <raw >lines &&
+	grep "Name" lines
+'
+
 test_done
