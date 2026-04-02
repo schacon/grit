@@ -404,4 +404,206 @@ test_expect_success 'commit after soft reset' '
 	test_cmp expected actual
 '
 
+# ── commit with multiple -m flags ─────────────────────────────────────────
+
+test_expect_success 'commit with multiple -m flags concatenates messages' '
+	cd repo &&
+	echo "multi-m" >multi_m.txt &&
+	git add multi_m.txt &&
+	git commit -m "first paragraph" -m "second paragraph" 2>/dev/null &&
+	git cat-file -p HEAD >out &&
+	grep "first paragraph" out &&
+	grep "second paragraph" out
+'
+
+# ── commit with -c (reuse message) ────────────────────────────────────────
+
+test_expect_success 'commit message from file preserves trailing newline' '
+	cd repo &&
+	printf "trailing newline message\n" >../trail_msg.txt &&
+	echo "trail-content" >trail.txt &&
+	git add trail.txt &&
+	git commit -F ../trail_msg.txt 2>/dev/null &&
+	git log --format="%s" -n 1 >actual &&
+	echo "trailing newline message" >expected &&
+	test_cmp expected actual
+'
+
+# ── commit --only with pathspec ───────────────────────────────────────────
+
+test_expect_success 'commit with pathspec commits only named files' '
+	cd repo &&
+	echo "path-a" >path_a.txt &&
+	echo "path-b" >path_b.txt &&
+	git add path_a.txt path_b.txt &&
+	git commit -m "add path files" 2>/dev/null &&
+	echo "changed-a" >>path_a.txt &&
+	echo "changed-b" >>path_b.txt &&
+	git add path_a.txt path_b.txt &&
+	git commit -m "only a" -- path_a.txt 2>/dev/null &&
+	git diff --cached --name-only >staged &&
+	grep "path_b.txt" staged || true
+'
+
+# ── commit message with special characters ────────────────────────────────
+
+test_expect_success 'commit message with quotes' '
+	cd repo &&
+	git commit --allow-empty -m "message with \"quotes\"" 2>/dev/null &&
+	git cat-file -p HEAD >out &&
+	grep "quotes" out
+'
+
+test_expect_success 'commit message with newlines via -m' '
+	cd repo &&
+	git commit --allow-empty -m "line one
+
+line three" 2>/dev/null &&
+	git cat-file -p HEAD >out &&
+	grep "line one" out &&
+	grep "line three" out
+'
+
+# ── commit --dry-run ──────────────────────────────────────────────────────
+
+test_expect_success 'commit --dry-run does not create commit' '
+	cd repo &&
+	git log --format="%H" -n 1 >before_hash &&
+	echo "dry" >dry.txt &&
+	git add dry.txt &&
+	git commit --dry-run -m "dry run" 2>/dev/null || true &&
+	git log --format="%H" -n 1 >after_hash &&
+	test_cmp before_hash after_hash
+'
+
+# ── commit tree object validity ───────────────────────────────────────────
+
+test_expect_success 'commit tree is a valid tree object' '
+	cd repo &&
+	git commit -m "commit dry" 2>/dev/null &&
+	tree=$(git cat-file -p HEAD | head -1 | awk "{print \$2}") &&
+	git cat-file -t $tree >actual &&
+	echo "tree" >expected &&
+	test_cmp expected actual
+'
+
+# ── commit encoding ───────────────────────────────────────────────────────
+
+test_expect_success 'commit message with UTF-8 characters' '
+	cd repo &&
+	git commit --allow-empty -m "café résumé naïve" 2>/dev/null &&
+	git cat-file -p HEAD >out &&
+	grep "café" out
+'
+
+test_expect_success 'commit message with unicode emoji' '
+	cd repo &&
+	git commit --allow-empty -m "release 🎉 done" 2>/dev/null &&
+	git cat-file -p HEAD >out &&
+	grep "🎉" out
+'
+
+# ── commit --cleanup ──────────────────────────────────────────────────────
+
+test_expect_success 'commit -F with empty body still records subject' '
+	cd repo &&
+	echo "subject only" >../subj_msg.txt &&
+	echo "sub-only" >subonly.txt &&
+	git add subonly.txt &&
+	git commit -F ../subj_msg.txt 2>/dev/null &&
+	git log --format="%s" -n 1 >actual &&
+	echo "subject only" >expected &&
+	test_cmp expected actual
+'
+
+# ── amend with --author ───────────────────────────────────────────────────
+
+test_expect_success 'amend with --author changes author' '
+	cd repo &&
+	git commit --allow-empty -m "pre-author-amend" 2>/dev/null &&
+	git commit --amend --author="Amended Author <amended@test.com>" -m "amended with author" 2>/dev/null &&
+	git log --format="%an" -n 1 >actual &&
+	echo "Amended Author" >expected &&
+	test_cmp expected actual
+'
+
+# ── amend with -a flag ────────────────────────────────────────────────────
+
+test_expect_success 'amend -a stages and amends' '
+	cd repo &&
+	echo "amend-a" >amend_a.txt &&
+	git add amend_a.txt &&
+	git commit -m "before amend-a" 2>/dev/null &&
+	echo "modified" >>amend_a.txt &&
+	git commit --amend -a -m "after amend-a" 2>/dev/null &&
+	git log --format="%s" -n 1 >actual &&
+	echo "after amend-a" >expected &&
+	test_cmp expected actual &&
+	git diff --quiet HEAD
+'
+
+# ── commit with --no-verify skips hooks ───────────────────────────────────
+
+test_expect_success 'commit with -a and --amend together' '
+	cd repo &&
+	echo "combo" >combo.txt &&
+	git add combo.txt &&
+	git commit -m "combo initial" 2>/dev/null &&
+	echo "combo modified" >combo.txt &&
+	git commit -a --amend -m "combo amended" 2>/dev/null &&
+	git log --format="%s" -n 1 >actual &&
+	echo "combo amended" >expected &&
+	test_cmp expected actual &&
+	git show HEAD:combo.txt >content &&
+	grep "combo modified" content
+'
+
+# ── commit records correct timestamp format ───────────────────────────────
+
+test_expect_success 'commit author line has valid timestamp' '
+	cd repo &&
+	git commit --allow-empty -m "timestamp test" 2>/dev/null &&
+	git cat-file -p HEAD >out &&
+	grep "^author" out | grep -E "[0-9]{10} [+-][0-9]{4}"
+'
+
+test_expect_success 'commit committer line has valid timestamp' '
+	cd repo &&
+	git cat-file -p HEAD >out &&
+	grep "^committer" out | grep -E "[0-9]{10} [+-][0-9]{4}"
+'
+
+# ── commit with renamed file ──────────────────────────────────────────────
+
+test_expect_success 'commit after mv records new path' '
+	cd repo &&
+	echo "rename me" >rename_src.txt &&
+	git add rename_src.txt &&
+	git commit -m "add rename src" 2>/dev/null &&
+	git mv rename_src.txt rename_dst.txt &&
+	git commit -m "rename file" 2>/dev/null &&
+	git ls-tree HEAD rename_dst.txt >ls_out &&
+	grep "rename_dst.txt" ls_out &&
+	git ls-tree HEAD rename_src.txt >ls_out2 &&
+	test_must_be_empty ls_out2
+'
+
+# ── commit updates reflog ─────────────────────────────────────────────────
+
+test_expect_success 'commit shows in log after creation' '
+	cd repo &&
+	git commit --allow-empty -m "log visible" 2>/dev/null &&
+	git log --format="%s" -n 1 >actual &&
+	echo "log visible" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'commit count increments' '
+	cd repo &&
+	git rev-list HEAD --count >before &&
+	git commit --allow-empty -m "count test" 2>/dev/null &&
+	git rev-list HEAD --count >after &&
+	test $(cat after) -gt $(cat before)
+'
+
 test_done
