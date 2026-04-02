@@ -200,4 +200,150 @@ test_expect_success 'verify --default with bad explicit fails' '
 	test_must_fail grit rev-parse --verify foo --default main
 '
 
+# --- New tests ---
+
+test_expect_success 'verify with full SHA resolves' '
+	cd repo &&
+	commit2=$(cat commit2.out) &&
+	grit rev-parse --verify "$commit2" >actual &&
+	echo "$commit2" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'verify with tag name resolves' '
+	cd repo &&
+	tag_oid=$(cat tag.out) &&
+	grit rev-parse --verify v1 >actual &&
+	echo "$tag_oid" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'verify HEAD^{tree} returns tree hash' '
+	cd repo &&
+	tree2=$(cat tree2.out) &&
+	grit rev-parse --verify "HEAD^{tree}" >actual &&
+	echo "$tree2" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'verify HEAD^0 same as HEAD' '
+	cd repo &&
+	commit2=$(cat commit2.out) &&
+	grit rev-parse --verify "HEAD^0" >actual &&
+	echo "$commit2" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'verify HEAD~0 same as HEAD' '
+	cd repo &&
+	commit2=$(cat commit2.out) &&
+	grit rev-parse --verify "HEAD~0" >actual &&
+	echo "$commit2" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'verify refs/heads/main resolves' '
+	cd repo &&
+	commit2=$(cat commit2.out) &&
+	grit rev-parse --verify refs/heads/main >actual &&
+	echo "$commit2" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'verify refs/tags/v1 resolves to tag object' '
+	cd repo &&
+	tag_oid=$(cat tag.out) &&
+	grit rev-parse --verify refs/tags/v1 >actual &&
+	echo "$tag_oid" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'verify -q with valid ref succeeds silently' '
+	cd repo &&
+	commit2=$(cat commit2.out) &&
+	grit rev-parse --verify -q HEAD >actual 2>err &&
+	echo "$commit2" >expect &&
+	test_cmp expect actual &&
+	test_must_be_empty err
+'
+
+test_expect_success 'verify tag^{commit} peels annotated tag to commit' '
+	cd repo &&
+	commit2=$(cat commit2.out) &&
+	grit rev-parse --verify "v1^{commit}" >actual &&
+	echo "$commit2" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'verify with --short gives abbreviated output' '
+	cd repo &&
+	grit rev-parse --verify --short HEAD >actual &&
+	len=$(cat actual | tr -d "\n" | wc -c) &&
+	test "$len" -ge 4 &&
+	test "$len" -le 40
+'
+
+test_expect_success 'verify --short=7 gives exactly 7 chars' '
+	cd repo &&
+	grit rev-parse --verify --short=7 HEAD >actual &&
+	len=$(cat actual | tr -d "\n" | wc -c) &&
+	test "$len" = 7
+'
+
+test_expect_success 'verify empty string fails' '
+	cd repo &&
+	test_must_fail grit rev-parse --verify "" 2>err
+'
+
+test_expect_success 'HEAD^1 same as HEAD~1 via verify' '
+	cd repo &&
+	commit1=$(cat commit1.out) &&
+	grit rev-parse --verify HEAD^1 >actual1 &&
+	grit rev-parse --verify HEAD~1 >actual2 &&
+	echo "$commit1" >expect &&
+	test_cmp expect actual1 &&
+	test_cmp expect actual2
+'
+
+test_expect_success 'verify rejects HEAD^2 on non-merge' '
+	cd repo &&
+	test_must_fail grit rev-parse --verify HEAD^2
+'
+
+test_expect_success 'setup third commit for deeper traversal' '
+	cd repo &&
+	echo three >>hello &&
+	grit hash-object -w hello >/dev/null &&
+	grit update-index --add hello &&
+	tree3=$(grit write-tree) &&
+	commit2=$(cat commit2.out) &&
+	commit3=$(printf "three\n" | grit commit-tree "$tree3" -p "$commit2") &&
+	grit update-ref refs/heads/main "$commit3" &&
+	echo "$commit3" >commit3.out
+'
+
+test_expect_success 'HEAD~2 resolves to grandparent' '
+	cd repo &&
+	commit1=$(cat commit1.out) &&
+	grit rev-parse --verify HEAD~2 >actual &&
+	echo "$commit1" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'verify HEAD~1 resolves to parent of new head' '
+	cd repo &&
+	commit2=$(cat commit2.out) &&
+	grit rev-parse --verify HEAD~1 >actual &&
+	echo "$commit2" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'verify HEAD^{} peels HEAD (no-op for commit)' '
+	cd repo &&
+	commit3=$(cat commit3.out) &&
+	grit rev-parse --verify "HEAD^{}" >actual &&
+	echo "$commit3" >expect &&
+	test_cmp expect actual
+'
+
 test_done
