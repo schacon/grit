@@ -35,6 +35,8 @@ struct Cli {
 enum Command {
     /// Add file contents to the index.
     Add(commands::add::Args),
+    /// Apply a patch to files and/or to the index.
+    Apply(commands::apply::Args),
     /// List, create, or delete branches.
     Branch(commands::branch::Args),
     /// Find commits not yet applied upstream.
@@ -125,6 +127,8 @@ enum Command {
     /// Name commits relative to refs.
     #[command(name = "name-rev")]
     NameRev(commands::name_rev::Args),
+    /// Add or inspect object notes.
+    Notes(commands::notes::Args),
     /// Run a three-way file merge.
     #[command(name = "merge-file")]
     MergeFile(commands::merge_file::Args),
@@ -241,6 +245,7 @@ fn run() -> Result<()> {
 
     match cli.command {
         Command::Add(args) => commands::add::run(args),
+        Command::Apply(args) => commands::apply::run(args),
         Command::Branch(args) => commands::branch::run(args),
         Command::Cherry(args) => commands::cherry::run(args),
         Command::CherryPick(args) => commands::cherry_pick::run(args),
@@ -275,6 +280,7 @@ fn run() -> Result<()> {
         Command::ForEachRef(args) => commands::for_each_ref::run(args),
         Command::MergeBase(args) => commands::merge_base::run(args),
         Command::NameRev(args) => commands::name_rev::run(args),
+        Command::Notes(args) => commands::notes::run(args),
         Command::MergeFile(args) => commands::merge_file::run(args),
         Command::RevList(args) => commands::rev_list::run(args),
         Command::RevParse(args) => commands::rev_parse::run(args),

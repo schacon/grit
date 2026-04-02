@@ -203,9 +203,9 @@
   <span><span class="dot gray"></span> Not yet ported (321)</span>
 </div>
 
-<h2 id="commands">Commands <span class="cmd-count">60/191</span></h2>
+<h2 id="commands">Commands <span class="cmd-count">75/191</span></h2>
 <div class="cmd-category">
-  <h3>Main Porcelain <span class="cmd-count">17/46</span></h3>
+  <h3>Main Porcelain <span class="cmd-count">22/46</span></h3>
   <div class="cmd-grid"><span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/add.rs">add</a> <span style="color:#484f58;font-size:0.8em">(Working Tree)</span></span>
 <span class="cmd-item pending">⬜ am</span>
 <span class="cmd-item pending">⬜ archive</span>
@@ -216,16 +216,16 @@
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/checkout.rs">checkout</a></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/cherry_pick.rs">cherry-pick</a></span>
 <span class="cmd-item pending">⬜ citool</span>
-<span class="cmd-item pending">⬜ clean</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/clean.rs">clean</a></span>
 <span class="cmd-item pending">⬜ clone <span style="color:#484f58;font-size:0.8em">(Creating)</span></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/commit.rs">commit</a> <span style="color:#484f58;font-size:0.8em">(History)</span></span>
-<span class="cmd-item pending">⬜ describe</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/describe.rs">describe</a></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/diff.rs">diff</a> <span style="color:#484f58;font-size:0.8em">(Interrogation)</span></span>
 <span class="cmd-item pending">⬜ fetch <span style="color:#484f58;font-size:0.8em">(Remote)</span></span>
 <span class="cmd-item pending">⬜ format-patch</span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/gc.rs">gc</a></span>
 <span class="cmd-item pending">⬜ gitk</span>
-<span class="cmd-item pending">⬜ grep <span style="color:#484f58;font-size:0.8em">(Interrogation)</span></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/grep.rs">grep</a> <span style="color:#484f58;font-size:0.8em">(Interrogation)</span></span>
 <span class="cmd-item pending">⬜ gui</span>
 <span class="cmd-item pending">⬜ history <span style="color:#484f58;font-size:0.8em">(History)</span></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/init.rs">init</a> <span style="color:#484f58;font-size:0.8em">(Creating)</span></span>
@@ -233,7 +233,7 @@
 <span class="cmd-item pending">⬜ maintenance</span>
 <span class="cmd-item pending">⬜ merge <span style="color:#484f58;font-size:0.8em">(History)</span></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/mv.rs">mv</a> <span style="color:#484f58;font-size:0.8em">(Working Tree)</span></span>
-<span class="cmd-item pending">⬜ notes</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/notes.rs">notes</a></span>
 <span class="cmd-item pending">⬜ pull <span style="color:#484f58;font-size:0.8em">(Remote)</span></span>
 <span class="cmd-item pending">⬜ push <span style="color:#484f58;font-size:0.8em">(Remote)</span></span>
 <span class="cmd-item pending">⬜ range-diff</span>
@@ -243,7 +243,7 @@
 <span class="cmd-item pending">⬜ revert</span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/rm.rs">rm</a> <span style="color:#484f58;font-size:0.8em">(Working Tree)</span></span>
 <span class="cmd-item pending">⬜ scalar</span>
-<span class="cmd-item pending">⬜ shortlog</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/shortlog.rs">shortlog</a></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/show.rs">show</a> <span style="color:#484f58;font-size:0.8em">(Interrogation)</span></span>
 <span class="cmd-item pending">⬜ sparse-checkout</span>
 <span class="cmd-item pending">⬜ stash</span>
@@ -254,14 +254,14 @@
 <span class="cmd-item pending">⬜ worktree</span></div>
 </div>
 <div class="cmd-category">
-  <h3>Ancillary Manipulators <span class="cmd-count">6/12</span></h3>
+  <h3>Ancillary Manipulators <span class="cmd-count">7/12</span></h3>
   <div class="cmd-grid"><span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/config.rs">config</a></span>
 <span class="cmd-item pending">⬜ fast-export</span>
 <span class="cmd-item pending">⬜ fast-import</span>
 <span class="cmd-item pending">⬜ filter-branch</span>
 <span class="cmd-item pending">⬜ mergetool</span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/pack_refs.rs">pack-refs</a></span>
-<span class="cmd-item pending">⬜ prune</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/prune.rs">prune</a></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/reflog.rs">reflog</a></span>
 <span class="cmd-item pending">⬜ refs</span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/remote.rs">remote</a></span>
@@ -269,28 +269,28 @@
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/replace.rs">replace</a></span></div>
 </div>
 <div class="cmd-category">
-  <h3>Ancillary Interrogators <span class="cmd-count">1/17</span></h3>
+  <h3>Ancillary Interrogators <span class="cmd-count">8/17</span></h3>
   <div class="cmd-grid"><span class="cmd-item pending">⬜ annotate</span>
-<span class="cmd-item pending">⬜ blame</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/blame.rs">blame</a></span>
 <span class="cmd-item pending">⬜ bugreport</span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/count_objects.rs">count-objects</a></span>
 <span class="cmd-item pending">⬜ diagnose</span>
 <span class="cmd-item pending">⬜ difftool</span>
-<span class="cmd-item pending">⬜ fsck</span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/fsck.rs">fsck</a></span>
 <span class="cmd-item pending">⬜ gitweb</span>
 <span class="cmd-item pending">⬜ help</span>
 <span class="cmd-item pending">⬜ instaweb</span>
 <span class="cmd-item pending">⬜ merge-tree</span>
 <span class="cmd-item pending">⬜ rerere</span>
-<span class="cmd-item pending">⬜ show-branch</span>
-<span class="cmd-item pending">⬜ verify-commit</span>
-<span class="cmd-item pending">⬜ verify-tag</span>
-<span class="cmd-item pending">⬜ version</span>
-<span class="cmd-item pending">⬜ whatchanged</span></div>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/show_branch.rs">show-branch</a></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/verify_commit.rs">verify-commit</a></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/verify_tag.rs">verify-tag</a></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/version.rs">version</a></span>
+<span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/whatchanged.rs">whatchanged</a></span></div>
 </div>
 <div class="cmd-category">
-  <h3>Plumbing Manipulators <span class="cmd-count">13/20</span></h3>
-  <div class="cmd-grid"><span class="cmd-item pending">⬜ apply</span>
+  <h3>Plumbing Manipulators <span class="cmd-count">14/20</span></h3>
+  <div class="cmd-grid"><span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/apply.rs">apply</a></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/checkout_index.rs">checkout-index</a></span>
 <span class="cmd-item pending">⬜ commit-graph</span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/commit_tree.rs">commit-tree</a></span>
@@ -356,8 +356,8 @@
 <span class="cmd-item pending">⬜ upload-pack</span></div>
 </div>
 <div class="cmd-category">
-  <h3>Pure Helpers <span class="cmd-count">5/18</span></h3>
-  <div class="cmd-grid"><span class="cmd-item pending">⬜ check-attr</span>
+  <h3>Pure Helpers <span class="cmd-count">6/18</span></h3>
+  <div class="cmd-grid"><span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/check_attr.rs">check-attr</a></span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/check_ignore.rs">check-ignore</a></span>
 <span class="cmd-item pending">⬜ check-mailmap</span>
 <span class="cmd-item pass">✅ <a href="https://github.com/schacon/grit/tree/main/grit/src/commands/check_ref_format.rs">check-ref-format</a></span>
