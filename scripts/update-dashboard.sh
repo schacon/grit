@@ -12,4 +12,7 @@ python3 "$SCRIPT_DIR/subscripts/generate-command-status.py"
 echo "==> Generating dashboard HTML..."
 python3 "$SCRIPT_DIR/subscripts/generate-progress-html.py"
 
+echo "==> Generating progress badge SVG..."
+python3 "$SCRIPT_DIR/subscripts/generate-progress-svg.py"
+
 echo "==> Dashboard updated."
