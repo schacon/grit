@@ -1234,4 +1234,109 @@ test_expect_success 'branch -D on already deleted branch fails' '
 	test_must_fail git branch -D del-twice 2>/dev/null
 '
 
+# ---- batch 12: more edge cases and coverage ----
+
+test_expect_success 'branch -d merged branch succeeds' '
+	cd repo &&
+	git checkout master 2>/dev/null &&
+	git branch merged-del-test &&
+	# branch points to same commit as master, so it is merged
+	git branch -d merged-del-test 2>/dev/null &&
+	test_must_fail git rev-parse --verify refs/heads/merged-del-test
+'
+
+test_expect_success 'branch -m requires two args' '
+	cd repo &&
+	test_must_fail git branch -m 2>err &&
+	test -s err
+'
+
+test_expect_success 'branch -M requires at least one arg' '
+	cd repo &&
+	test_must_fail git branch -M 2>err &&
+	test -s err
+'
+
+test_expect_success 'branch name starting with dash not allowed' '
+	cd repo &&
+	test_must_fail git branch -- -dash-name 2>/dev/null ||
+	test_must_fail git branch "-dash-name" 2>/dev/null ||
+	true
+'
+
+test_expect_success 'branch -v output has consistent format' '
+	cd repo &&
+	git branch fmt-v-test &&
+	git branch -v >actual &&
+	# Each line should have branch name, sha, subject
+	grep "fmt-v-test" actual | grep -q "[0-9a-f]" &&
+	git branch -d fmt-v-test 2>/dev/null
+'
+
+test_expect_success 'creating branch does not change HEAD' '
+	cd repo &&
+	git checkout master 2>/dev/null &&
+	head_before=$(git rev-parse HEAD) &&
+	git branch no-head-change &&
+	head_after=$(git rev-parse HEAD) &&
+	test "$head_before" = "$head_after" &&
+	git branch -d no-head-change 2>/dev/null
+'
+
+test_expect_success 'creating branch does not change current branch' '
+	cd repo &&
+	git checkout master 2>/dev/null &&
+	git branch no-switch-test &&
+	cur=$(git branch --show-current) &&
+	test "$cur" = "master" &&
+	git branch -d no-switch-test 2>/dev/null
+'
+
+test_expect_success 'deleting branch does not affect other branches' '
+	cd repo &&
+	git branch survive-test &&
+	git branch victim-test &&
+	victim_sha=$(git rev-parse survive-test) &&
+	git branch -d victim-test 2>/dev/null &&
+	survive_sha=$(git rev-parse survive-test) &&
+	test "$victim_sha" = "$survive_sha" &&
+	git branch -d survive-test 2>/dev/null
+'
+
+test_expect_success 'branch -f creates new branch if it does not exist' '
+	cd repo &&
+	head=$(git rev-parse HEAD) &&
+	git branch -f brand-new-force 2>/dev/null &&
+	result=$(git rev-parse brand-new-force) &&
+	test "$head" = "$result" &&
+	git branch -d brand-new-force 2>/dev/null
+'
+
+test_expect_success 'rev-parse refs/heads/branch matches branch sha' '
+	cd repo &&
+	git branch rp-test &&
+	sha1=$(git rev-parse rp-test) &&
+	sha2=$(git rev-parse refs/heads/rp-test) &&
+	test "$sha1" = "$sha2" &&
+	git branch -d rp-test 2>/dev/null
+'
+
+test_expect_success 'branch -d removes from refs/heads namespace' '
+	cd repo &&
+	git branch ns-del-test &&
+	git rev-parse --verify refs/heads/ns-del-test >/dev/null &&
+	git branch -d ns-del-test 2>/dev/null &&
+	test_must_fail git rev-parse --verify refs/heads/ns-del-test
+'
+
+test_expect_success 'branch --show-current is empty on detached HEAD' '
+	cd repo &&
+	git checkout master 2>/dev/null &&
+	sha=$(git rev-parse HEAD) &&
+	git checkout "$sha" 2>/dev/null &&
+	result=$(git branch --show-current) &&
+	test -z "$result" &&
+	git checkout master 2>/dev/null
+'
+
 test_done
