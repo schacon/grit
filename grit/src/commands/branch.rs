@@ -118,6 +118,24 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let head = resolve_head(&repo.git_dir)?;
 
+    // Validate mutually exclusive mode options
+    {
+        let mut modes = Vec::new();
+        if args.delete || args.force_delete { modes.push("delete"); }
+        if args.rename || args.force_rename { modes.push("rename"); }
+        if args.copy { modes.push("copy"); }
+        if args.set_upstream_to.is_some() { modes.push("set-upstream-to"); }
+        if args.unset_upstream { modes.push("unset-upstream"); }
+        if args.show_current { modes.push("show-current"); }
+        // --list conflicts with delete/rename/copy but not with filtering
+        if args.list && !modes.is_empty() {
+            bail!("options are incompatible");
+        }
+        if modes.len() > 1 {
+            bail!("options are incompatible");
+        }
+    }
+
     if args.show_current {
         if let Some(name) = head.branch_name() {
             println!("{name}");
@@ -149,6 +167,10 @@ pub fn run(args: Args) -> Result<()> {
             && args.merged.is_none()
             && args.no_merged.is_none()
         {
+            // Reject invalid branch names
+            if name == "HEAD" || name.starts_with('-') {
+                bail!("'{name}' is not a valid branch name");
+            }
             return create_branch(&repo, &head, name, args.start_point.as_deref(), &args);
         }
     }
@@ -612,8 +634,14 @@ fn create_branch(
 ) -> Result<()> {
     let ref_path = repo.git_dir.join("refs/heads").join(name);
 
-    if ref_path.exists() && !args.force {
+    if ref_path.is_file() && !args.force {
         bail!("A branch named '{name}' already exists.");
+    }
+
+    // Check for d/f conflicts: if ref_path is a directory, remove it if empty
+    if ref_path.is_dir() {
+        // Only remove if it's truly empty (no nested branch refs)
+        let _ = fs::remove_dir(&ref_path);
     }
 
     let oid = match start_point {
@@ -656,6 +684,19 @@ fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
 
     let oid_str = fs::read_to_string(&ref_path)?.trim().to_owned();
     fs::remove_file(&ref_path)?;
+
+    // Clean up empty parent directories under refs/heads/
+    let heads_dir = repo.git_dir.join("refs/heads");
+    let mut parent = ref_path.parent();
+    while let Some(p) = parent {
+        if p == heads_dir || !p.starts_with(&heads_dir) {
+            break;
+        }
+        if fs::remove_dir(p).is_err() {
+            break; // not empty or other error
+        }
+        parent = p.parent();
+    }
 
     if !args.quiet {
         let short = &oid_str[..7.min(oid_str.len())];
