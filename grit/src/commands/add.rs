@@ -6,6 +6,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::error::Error;
+use grit_lib::diff::stat_matches;
 use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
 #[allow(unused_imports)]
 use grit_lib::objects::ObjectId;
@@ -246,6 +247,13 @@ fn stage_file(
             eprintln!("add '{rel_path}'");
         }
         return Ok(());
+    }
+
+    // Skip if index already has this file with matching stat data
+    if let Some(existing) = index.get(rel_path.as_bytes(), 0) {
+        if stat_matches(existing, &meta) && existing.mode == normalize_mode(meta.mode()) {
+            return Ok(());
+        }
     }
 
     // Read file content and hash it
