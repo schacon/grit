@@ -429,4 +429,23 @@ test_expect_success 'merge-file -p with no conflict does not modify file' '
 	test_cmp orig.txt nomod.txt
 '
 
+test_expect_success 'merge-file with all three -L labels in --diff3' '
+	printf "A\nB\nC\n" >lb.txt &&
+	printf "A\nX\nC\n" >lo.txt &&
+	printf "A\nY\nC\n" >lt.txt &&
+	test_must_fail git merge-file --diff3 -p \
+		-L OURS -L BASE -L THEIRS lo.txt lb.txt lt.txt >lout &&
+	grep "<<<<<<< OURS" lout &&
+	grep "||||||| BASE" lout &&
+	grep ">>>>>>> THEIRS" lout
+'
+
+test_expect_success 'merge-file only-add on both sides (no conflict)' '
+	printf "line1\nline2\n" >add_base.txt &&
+	printf "line1\nline2\nline3\n" >add_ours.txt &&
+	printf "line1\nline2\n" >add_theirs.txt &&
+	git merge-file -p add_ours.txt add_base.txt add_theirs.txt >add_out &&
+	grep "line3" add_out
+'
+
 test_done

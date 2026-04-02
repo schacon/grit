@@ -168,4 +168,25 @@ test_expect_success '-m with --into-name combines both' '
 	grep -q "Custom merge" actual
 '
 
+test_expect_success 'single branch without remote is just Merge branch' '
+	printf "abc123\t\tbranch '"'"'bugfix'"'"'\n" |
+	git fmt-merge-msg >actual &&
+	echo "Merge branch '"'"'bugfix'"'"'" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'multiple remote branches from same remote' '
+	printf "a1\t\tbranch '"'"'a'"'"' of https://example.com\nb2\t\tbranch '"'"'b'"'"' of https://example.com\n" |
+	git fmt-merge-msg >actual &&
+	grep -q "branches" actual &&
+	grep -q "of https://example.com" actual
+'
+
+test_expect_success '--into-name alone without -m works' '
+	printf "abc123\t\tbranch '"'"'feat'"'"'\n" |
+	git fmt-merge-msg --into-name develop >actual &&
+	grep -q "into develop" actual &&
+	grep -q "branch '"'"'feat'"'"'" actual
+'
+
 test_done
