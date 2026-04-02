@@ -167,6 +167,17 @@ t11570-for-each-ref-creatordate.sh
 t11580-show-ref-heads-tags.sh
 t11590-update-ref-reflog.sh
 t11600-symbolic-ref-bare-worktree.sh
+t11620-diff-no-index-binary.sh
+t11630-diff-cached-subdir.sh
+t11640-diff-tree-format-patch.sh
+t11650-diff-stat-width.sh
+t11660-diff-index-typechange.sh
+t11670-status-untracked-dirs.sh
+t11740-config-global-system.sh
+t11750-config-multivar.sh
+t11760-init-default-branch.sh
+t11770-branch-set-upstream.sh
+t11780-tag-verify-list.sh
 t1200-read-tree-merge.sh
 t1300-config.sh
 t1301-shared-repo.sh
