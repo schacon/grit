@@ -1005,4 +1005,280 @@ test_expect_success '--merged combined with --count' '
 	test_line_count = 2 actual
 '
 
+# ── format edge cases ─────────────────────────────────────────────────────────
+
+test_expect_success 'empty format string produces empty lines' '
+	cd repo &&
+	git for-each-ref --format="" refs/heads/main >actual &&
+	echo "" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'format with only literal text' '
+	cd repo &&
+	echo "hello" >expect &&
+	git for-each-ref --format="hello" refs/heads/main >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'format with repeated atoms' '
+	cd repo &&
+	echo "refs/heads/main refs/heads/main" >expect &&
+	git for-each-ref --format="%(refname) %(refname)" refs/heads/main >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'format with literal before and after atom' '
+	cd repo &&
+	echo "[refs/heads/main]" >expect &&
+	git for-each-ref --format="[%(refname)]" refs/heads/main >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'format with multiple literals and atoms' '
+	cd repo &&
+	echo "<main> is a <commit>" >expect &&
+	git for-each-ref --format="<%(refname:short)> is a <%(objecttype)>" refs/heads/main >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'format with tab characters' '
+	cd repo &&
+	printf "main\tcommit\n" >expect &&
+	git for-each-ref --format="%(refname:short)	%(objecttype)" refs/heads/main >actual &&
+	test_cmp expect actual
+'
+
+# ── sort by objecttype ────────────────────────────────────────────────────────
+
+test_expect_success '--sort=objecttype puts commits before tags' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+commit refs/heads/main
+commit refs/heads/side
+commit refs/odd/spot
+commit refs/tags/four
+commit refs/tags/one
+commit refs/tags/three
+commit refs/tags/two
+tag refs/tags/v1.0
+tag refs/tags/v2.0
+EOF
+	git for-each-ref --format="%(objecttype) %(refname)" --sort=objecttype >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--sort=-objecttype puts tags before commits' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+tag refs/tags/v1.0
+tag refs/tags/v2.0
+commit refs/heads/main
+commit refs/heads/side
+commit refs/odd/spot
+commit refs/tags/four
+commit refs/tags/one
+commit refs/tags/three
+commit refs/tags/two
+EOF
+	git for-each-ref --format="%(objecttype) %(refname)" --sort=-objecttype >actual &&
+	test_cmp expect actual
+'
+
+# ── --merged with different branches ──────────────────────────────────────────
+
+test_expect_success '--merged=side shows refs merged into side' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/tags/four
+refs/tags/one
+refs/tags/two
+EOF
+	git for-each-ref --format="%(refname)" --merged=side \
+		refs/tags/one refs/tags/two refs/tags/three refs/tags/four >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--no-merged=side shows refs not merged into side' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+refs/tags/three
+refs/tags/v1.0
+refs/tags/v2.0
+EOF
+	git for-each-ref --format="%(refname)" --no-merged=side refs/tags >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--merged and --no-merged combined narrows results' '
+	cd repo &&
+	echo "refs/heads/main" >expect &&
+	git for-each-ref --format="%(refname)" --merged=main --no-merged=side refs/heads >actual &&
+	test_cmp expect actual
+'
+
+# ── --contains / --no-contains combos ─────────────────────────────────────────
+
+test_expect_success '--contains + --no-contains narrows results' '
+	cd repo &&
+	B=$(git rev-parse refs/tags/two) &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/heads/side
+refs/tags/four
+refs/tags/two
+EOF
+	git for-each-ref --format="%(refname)" --contains="$B" --no-contains="$C" \
+		refs/heads refs/tags/two refs/tags/four >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--no-contains + --no-merged combined' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/tags/four
+EOF
+	git for-each-ref --format="%(refname)" --no-contains="$C" --no-merged=main refs/tags >actual &&
+	test_cmp expect actual
+'
+
+# ── --points-at with --exclude ────────────────────────────────────────────────
+
+test_expect_success '--points-at combined with --exclude' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	cat >expect <<-\EOF &&
+refs/heads/main
+refs/odd/spot
+refs/tags/three
+EOF
+	git for-each-ref --format="%(refname)" --points-at="$C" \
+		--exclude=refs/tags/v1.0 --exclude=refs/tags/v2.0 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--points-at with different commit' '
+	cd repo &&
+	D=$(git rev-parse refs/heads/side) &&
+	cat >expect <<-\EOF &&
+refs/heads/side
+refs/tags/four
+EOF
+	git for-each-ref --format="%(refname)" --points-at="$D" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--points-at with root commit' '
+	cd repo &&
+	A=$(git rev-parse refs/tags/one) &&
+	cat >expect <<-\EOF &&
+refs/tags/one
+EOF
+	git for-each-ref --format="%(refname)" --points-at="$A" >actual &&
+	test_cmp expect actual
+'
+
+# ── --merged + --contains combo ───────────────────────────────────────────────
+
+test_expect_success '--merged + --contains combined' '
+	cd repo &&
+	B=$(git rev-parse refs/tags/two) &&
+	cat >expect <<-\EOF &&
+refs/tags/three
+refs/tags/two
+refs/tags/v1.0
+refs/tags/v2.0
+EOF
+	git for-each-ref --format="%(refname)" --merged=main --contains="$B" refs/tags >actual &&
+	test_cmp expect actual
+'
+
+# ── subject on various object types ───────────────────────────────────────────
+
+test_expect_success '%(subject) shows tag annotation for annotated tags' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+tag annotation refs/tags/v1.0
+double refs/tags/v2.0
+EOF
+	git for-each-ref --format="%(subject) %(refname)" refs/tags/v1.0 refs/tags/v2.0 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '%(subject) for all tags' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+D refs/tags/four
+A refs/tags/one
+C refs/tags/three
+B refs/tags/two
+tag annotation refs/tags/v1.0
+double refs/tags/v2.0
+EOF
+	git for-each-ref --format="%(subject) %(refname)" refs/tags >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '%(subject) for heads matches commit messages' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+C refs/heads/main
+D refs/heads/side
+EOF
+	git for-each-ref --format="%(subject) %(refname)" refs/heads >actual &&
+	test_cmp expect actual
+'
+
+# ── objectname consistency checks ─────────────────────────────────────────────
+
+test_expect_success '%(objectname) for annotated tag differs from peeled commit' '
+	cd repo &&
+	git for-each-ref --format="%(objectname)" refs/tags/v1.0 >tag_oid &&
+	git for-each-ref --format="%(objectname)" refs/heads/main >commit_oid &&
+	! test_cmp tag_oid commit_oid
+'
+
+test_expect_success '%(objectname) is consistent across runs' '
+	cd repo &&
+	git for-each-ref --format="%(objectname)" refs/heads/main >run1 &&
+	git for-each-ref --format="%(objectname)" refs/heads/main >run2 &&
+	test_cmp run1 run2
+'
+
+# ── edge cases: no matching refs ──────────────────────────────────────────────
+
+test_expect_success '--merged with no matching refs gives empty' '
+	cd repo &&
+	git for-each-ref --format="%(refname)" --merged=main refs/nonexistent >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success '--contains with no matching refs gives empty' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	git for-each-ref --format="%(refname)" --contains="$C" refs/nonexistent >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success '--points-at with no matching refs gives empty' '
+	cd repo &&
+	C=$(git rev-parse refs/heads/main) &&
+	git for-each-ref --format="%(refname)" --points-at="$C" refs/nonexistent >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success '--no-merged with all-merged refs gives empty' '
+	cd repo &&
+	git for-each-ref --format="%(refname)" --no-merged=main refs/heads/main >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success '--no-contains with all-contained refs gives empty' '
+	cd repo &&
+	A=$(git rev-parse refs/tags/one) &&
+	git for-each-ref --format="%(refname)" --no-contains="$A" refs/tags/one >actual &&
+	test_must_be_empty actual
+'
+
 test_done
