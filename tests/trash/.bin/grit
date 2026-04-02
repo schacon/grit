@@ -1,2 +1,2 @@
 #!/bin/sh
-exec "/home/hasi/grit/target/release/grit" "$@"
+exec "/tmp/grit-build-branch2/release/grit" "$@"

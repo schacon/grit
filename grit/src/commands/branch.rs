@@ -6,6 +6,7 @@ use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use std::fs;
 use std::io::{self, Write};
@@ -117,6 +118,24 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let head = resolve_head(&repo.git_dir)?;
 
+    // Validate mutually exclusive mode options
+    {
+        let mut modes = Vec::new();
+        if args.delete || args.force_delete { modes.push("delete"); }
+        if args.rename || args.force_rename { modes.push("rename"); }
+        if args.copy { modes.push("copy"); }
+        if args.set_upstream_to.is_some() { modes.push("set-upstream-to"); }
+        if args.unset_upstream { modes.push("unset-upstream"); }
+        if args.show_current { modes.push("show-current"); }
+        // --list conflicts with delete/rename/copy but not with filtering
+        if args.list && !modes.is_empty() {
+            bail!("options are incompatible");
+        }
+        if modes.len() > 1 {
+            bail!("options are incompatible");
+        }
+    }
+
     if args.show_current {
         if let Some(name) = head.branch_name() {
             println!("{name}");
@@ -148,6 +167,10 @@ pub fn run(args: Args) -> Result<()> {
             && args.merged.is_none()
             && args.no_merged.is_none()
         {
+            // Reject invalid branch names
+            if name == "HEAD" || name.starts_with('-') {
+                bail!("'{name}' is not a valid branch name");
+            }
             return create_branch(&repo, &head, name, args.start_point.as_deref(), &args);
         }
     }
@@ -208,7 +231,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                 .oid()
                 .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
         } else {
-            resolve_rev(repo, merged_val)?
+            resolve_revision(repo, merged_val)?
         };
         branches.retain(|b| is_ancestor(repo, b.oid, target_oid).unwrap_or(false));
     }
@@ -220,20 +243,20 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                 .oid()
                 .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
         } else {
-            resolve_rev(repo, no_merged_val)?
+            resolve_revision(repo, no_merged_val)?
         };
         branches.retain(|b| !is_ancestor(repo, b.oid, target_oid).unwrap_or(true));
     }
 
     // Apply --contains filter
     if let Some(ref contains_rev) = args.contains {
-        let contains_oid = resolve_rev(repo, contains_rev)?;
+        let contains_oid = resolve_revision(repo, contains_rev)?;
         branches.retain(|b| is_ancestor(repo, contains_oid, b.oid).unwrap_or(false));
     }
 
     // Apply --no-contains filter
     if let Some(ref no_contains_rev) = args.no_contains {
-        let no_contains_oid = resolve_rev(repo, no_contains_rev)?;
+        let no_contains_oid = resolve_revision(repo, no_contains_rev)?;
         branches.retain(|b| !is_ancestor(repo, no_contains_oid, b.oid).unwrap_or(true));
     }
 
@@ -611,12 +634,18 @@ fn create_branch(
 ) -> Result<()> {
     let ref_path = repo.git_dir.join("refs/heads").join(name);
 
-    if ref_path.exists() && !args.force {
+    if ref_path.is_file() && !args.force {
         bail!("A branch named '{name}' already exists.");
     }
 
+    // Check for d/f conflicts: if ref_path is a directory, remove it if empty
+    if ref_path.is_dir() {
+        // Only remove if it's truly empty (no nested branch refs)
+        let _ = fs::remove_dir(&ref_path);
+    }
+
     let oid = match start_point {
-        Some(rev) => resolve_rev(repo, rev)?,
+        Some(rev) => resolve_revision(repo, rev)?,
         None => *head
             .oid()
             .ok_or_else(|| anyhow::anyhow!("not a valid object name: 'HEAD'"))?,
@@ -655,6 +684,19 @@ fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
 
     let oid_str = fs::read_to_string(&ref_path)?.trim().to_owned();
     fs::remove_file(&ref_path)?;
+
+    // Clean up empty parent directories under refs/heads/
+    let heads_dir = repo.git_dir.join("refs/heads");
+    let mut parent = ref_path.parent();
+    while let Some(p) = parent {
+        if p == heads_dir || !p.starts_with(&heads_dir) {
+            break;
+        }
+        if fs::remove_dir(p).is_err() {
+            break; // not empty or other error
+        }
+        parent = p.parent();
+    }
 
     if !args.quiet {
         let short = &oid_str[..7.min(oid_str.len())];
@@ -785,47 +827,3 @@ fn parse_signature_time(sig: &str) -> i64 {
     }
 }
 
-/// Resolve a revision to an OID.
-fn resolve_rev(repo: &Repository, rev: &str) -> Result<ObjectId> {
-    if let Ok(oid) = ObjectId::from_hex(rev) {
-        return Ok(oid);
-    }
-
-    // Try refs/heads/
-    let ref_path = repo.git_dir.join("refs/heads").join(rev);
-    if let Ok(content) = fs::read_to_string(&ref_path) {
-        if let Ok(oid) = ObjectId::from_hex(content.trim()) {
-            return Ok(oid);
-        }
-    }
-
-    // Try refs/tags/
-    let tag_path = repo.git_dir.join("refs/tags").join(rev);
-    if let Ok(content) = fs::read_to_string(&tag_path) {
-        if let Ok(oid) = ObjectId::from_hex(content.trim()) {
-            return Ok(oid);
-        }
-    }
-
-    // Try refs/remotes/
-    let remotes_dir = repo.git_dir.join("refs/remotes");
-    if let Ok(entries) = fs::read_dir(&remotes_dir) {
-        for entry in entries.flatten() {
-            let remote_ref = entry.path().join(rev);
-            if let Ok(content) = fs::read_to_string(&remote_ref) {
-                if let Ok(oid) = ObjectId::from_hex(content.trim()) {
-                    return Ok(oid);
-                }
-            }
-        }
-    }
-
-    if rev == "HEAD" {
-        let head = resolve_head(&repo.git_dir)?;
-        if let Some(oid) = head.oid() {
-            return Ok(*oid);
-        }
-    }
-
-    bail!("not a valid object name: '{rev}'");
-}
