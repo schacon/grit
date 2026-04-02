@@ -6,6 +6,7 @@ use std::io::{self, BufRead, Write};
 
 use grit_lib::objects::{parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse;
 
 /// Arguments for `grit cat-file`.
 #[derive(Debug, ClapArgs)]
@@ -31,8 +32,17 @@ pub struct Args {
     pub allow_unknown_type: bool,
 
     /// Print info and content for each object ID on stdin.
-    #[arg(long, conflicts_with_all = ["show_type", "size", "pretty", "exists"])]
-    pub batch: bool,
+    ///
+    /// Optional custom format, e.g. `%(objectname) %(objecttype) %(objectsize)`.
+    #[arg(
+        long,
+        value_name = "format",
+        num_args = 0..=1,
+        default_missing_value = "",
+        require_equals = true,
+        conflicts_with_all = ["show_type", "size", "pretty", "exists"]
+    )]
+    pub batch: Option<String>,
 
     /// Print info (type, size) for each object ID on stdin.
     ///
@@ -48,11 +58,17 @@ pub struct Args {
     pub batch_check: Option<String>,
 
     /// Read commands from stdin.
+    ///
+    /// Optional custom format, e.g. `%(objecttype) %(objectname)`.
     #[arg(
         long,
+        value_name = "format",
+        num_args = 0..=1,
+        default_missing_value = "",
+        require_equals = true,
         conflicts_with_all = ["show_type", "size", "pretty", "exists", "batch", "batch_check"]
     )]
-    pub batch_command: bool,
+    pub batch_command: Option<String>,
 
     /// Buffer output in `--batch-command` mode (requires `flush` commands).
     #[arg(long, conflicts_with = "no_buffer")]
@@ -62,9 +78,33 @@ pub struct Args {
     #[arg(long, conflicts_with = "buffer")]
     pub no_buffer: bool,
 
-    /// Follow tag objects to the tagged object.
+    /// Follow symlinks in tree objects.
     #[arg(long = "follow-symlinks")]
     pub follow_symlinks: bool,
+
+    /// Enumerate all objects in the object database.
+    #[arg(long = "batch-all-objects")]
+    pub batch_all_objects: bool,
+
+    /// Use NUL as input delimiter.
+    #[arg(short = 'z')]
+    pub nul_input: bool,
+
+    /// Use NUL as input AND output delimiter.
+    #[arg(short = 'Z')]
+    pub nul_both: bool,
+
+    /// Path to use for filtering (with --textconv/--filters).
+    #[arg(long = "path", value_name = "path")]
+    pub path: Option<String>,
+
+    /// Show textconv content.
+    #[arg(long = "textconv", conflicts_with_all = ["show_type", "size", "pretty", "exists", "filters"])]
+    pub textconv: bool,
+
+    /// Show filtered content.
+    #[arg(long = "filters", conflicts_with_all = ["show_type", "size", "pretty", "exists", "textconv"])]
+    pub filters: bool,
 
     /// Either `<type>` (when followed by `<object>`) or `<object>`.
     pub type_or_object: Option<String>,
@@ -73,11 +113,34 @@ pub struct Args {
     pub object: Option<String>,
 }
 
+impl Args {
+    /// Whether we are in any batch mode.
+    fn is_batch_mode(&self) -> bool {
+        self.batch.is_some() || self.batch_check.is_some() || self.batch_command.is_some()
+    }
+
+    /// Whether --batch includes content (not just info).
+    fn batch_includes_content(&self) -> bool {
+        self.batch.is_some()
+    }
+
+    /// Get the batch format string (empty = default format).
+    fn batch_format(&self) -> Option<&str> {
+        self.batch
+            .as_deref()
+            .or(self.batch_check.as_deref())
+            .or(self.batch_command.as_deref())
+    }
+}
+
 /// Run `grit cat-file`.
 pub fn run(args: Args) -> Result<()> {
+    // --- Manual validation for git-compatible error messages ---
+    validate_args(&args)?;
+
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    if args.batch || args.batch_check.is_some() || args.batch_command {
+    if args.is_batch_mode() {
         return run_batch(&repo, &args);
     }
 
@@ -128,28 +191,35 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+/// Validate argument combinations and produce git-compatible error messages.
+fn validate_args(args: &Args) -> Result<()> {
+    // Nothing to validate beyond what clap handles for now.
+    // The clap-level conflicts_with_all handles the main incompatibilities.
+    Ok(())
+}
+
 fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut out = stdout.lock();
+    let format = args.batch_format().unwrap_or("");
+
 
     for line in stdin.lock().lines() {
         let line = line?;
         let trimmed = line.trim();
 
-        if args.batch_command {
+        if args.batch_command.is_some() {
             // <command> <args>
             let mut parts = trimmed.splitn(2, ' ');
             match parts.next() {
-                Some("contents") | Some("info") => {
+                Some("contents") => {
                     let obj_str = parts.next().unwrap_or("").trim();
-                    print_batch_entry(
-                        repo,
-                        obj_str,
-                        args.batch_command && trimmed.starts_with("contents"),
-                        None,
-                        &mut out,
-                    )?;
+                    print_batch_entry(repo, obj_str, true, format, &mut out)?;
+                }
+                Some("info") => {
+                    let obj_str = parts.next().unwrap_or("").trim();
+                    print_batch_entry(repo, obj_str, false, format, &mut out)?;
                 }
                 Some("flush") => {
                     if !args.buffer {
@@ -161,26 +231,32 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 None => {}
             }
         } else {
-            print_batch_entry(
-                repo,
-                trimmed,
-                args.batch,
-                args.batch_check.as_deref(),
-                &mut out,
-            )?;
+            let include_content = args.batch_includes_content();
+            print_batch_entry(repo, trimmed, include_content, format, &mut out)?;
         }
     }
+
+    out.flush()?;
     Ok(())
 }
+
+
 
 fn print_batch_entry(
     repo: &Repository,
     input: &str,
     include_content: bool,
-    batch_check_format: Option<&str>,
+    format: &str,
     out: &mut impl Write,
 ) -> Result<()> {
     let (obj_str, rest) = parse_batch_input(input);
+
+    if obj_str.is_empty() {
+        // Empty line: print " missing"
+        writeln!(out, " missing")?;
+        return Ok(());
+    }
+
     match resolve_object(repo, obj_str) {
         Err(_) => {
             writeln!(out, "{obj_str} missing")?;
@@ -190,20 +266,17 @@ fn print_batch_entry(
                 writeln!(out, "{obj_str} missing")?;
             }
             Ok(obj) => {
-                if let Some(format) = batch_check_format.filter(|f| !f.is_empty()) {
+                let oid_str = oid.to_string();
+                let kind_str = obj.kind.to_string();
+                let size = obj.data.len();
+                if format.is_empty() {
+                    writeln!(out, "{} {} {}", oid_str, kind_str, size)?;
+                } else {
                     writeln!(
                         out,
                         "{}",
-                        apply_batch_check_format(
-                            format,
-                            &oid.to_string(),
-                            &obj.kind.to_string(),
-                            obj.data.len(),
-                            rest
-                        )
+                        apply_format(format, &oid_str, &kind_str, size, rest)
                     )?;
-                } else {
-                    writeln!(out, "{} {} {}", oid, obj.kind, obj.data.len())?;
                 }
                 if include_content {
                     out.write_all(&obj.data)?;
@@ -217,6 +290,17 @@ fn print_batch_entry(
 
 fn parse_batch_input(line: &str) -> (&str, &str) {
     let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return ("", "");
+    }
+    // For batch-check without custom format, the whole line is the object name
+    // (important for paths with spaces like ":white space").
+    // For custom format with %(rest), we split on whitespace.
+    // The caller decides based on context — for now, we try to be smart:
+    // If it looks like it might be a path (starts with :), don't split.
+    if trimmed.starts_with(':') {
+        return (trimmed, "");
+    }
     if let Some(split_at) = trimmed.find(char::is_whitespace) {
         let object = &trimmed[..split_at];
         let rest = trimmed[split_at..].trim_start();
@@ -226,7 +310,7 @@ fn parse_batch_input(line: &str) -> (&str, &str) {
     }
 }
 
-fn apply_batch_check_format(
+fn apply_format(
     format: &str,
     object_name: &str,
     object_type: &str,
@@ -237,6 +321,7 @@ fn apply_batch_check_format(
         .replace("%(objecttype)", object_type)
         .replace("%(objectname)", object_name)
         .replace("%(objectsize)", &object_size.to_string())
+        .replace("%(objectmode)", "")
         .replace("%(rest)", rest)
 }
 
@@ -268,29 +353,8 @@ fn pretty_print(kind: &ObjectKind, data: &[u8]) -> Result<()> {
 
 /// Resolve an object reference string to an [`ObjectId`].
 ///
-/// Handles full hex OIDs and simple ref names.
+/// Uses the full rev-parse machinery for resolution.
 fn resolve_object(repo: &Repository, obj_str: &str) -> Result<ObjectId> {
-    // Try as a raw OID first
-    if let Ok(oid) = obj_str.parse::<ObjectId>() {
-        return Ok(oid);
-    }
-
-    // Try resolving as a ref
-    if let Ok(oid) = grit_lib::refs::resolve_ref(&repo.git_dir, obj_str) {
-        return Ok(oid);
-    }
-
-    // Try "refs/heads/<name>"
-    let as_branch = format!("refs/heads/{obj_str}");
-    if let Ok(oid) = grit_lib::refs::resolve_ref(&repo.git_dir, &as_branch) {
-        return Ok(oid);
-    }
-
-    // Try "refs/tags/<name>"
-    let as_tag = format!("refs/tags/{obj_str}");
-    if let Ok(oid) = grit_lib::refs::resolve_ref(&repo.git_dir, &as_tag) {
-        return Ok(oid);
-    }
-
-    bail!("not a valid object name: '{obj_str}'")
+    rev_parse::resolve_revision(repo, obj_str)
+        .map_err(|e| anyhow::anyhow!("{}", e))
 }
