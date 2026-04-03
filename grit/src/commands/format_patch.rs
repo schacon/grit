@@ -55,6 +55,50 @@ pub struct Args {
     /// Output directory for patch files.
     #[arg(short = 'o', long = "output-directory", value_name = "DIR")]
     pub output_directory: Option<PathBuf>,
+
+    /// Add base-commit info (the commit the series is based on).
+    #[arg(long = "base", value_name = "COMMIT")]
+    pub base: Option<String>,
+
+    /// Add Signed-off-by trailer using the committer identity.
+    #[arg(short = 's', long = "signoff")]
+    pub signoff: bool,
+
+    /// Set the In-Reply-To header (for threading patches).
+    #[arg(long = "in-reply-to", value_name = "MESSAGE-ID")]
+    pub in_reply_to: Option<String>,
+
+    /// Add Cc header(s) to each patch email.
+    #[arg(long = "cc", value_name = "EMAIL")]
+    pub cc: Vec<String>,
+
+    /// Add To header(s) to each patch email.
+    #[arg(long = "to", value_name = "EMAIL")]
+    pub to: Vec<String>,
+
+    /// Create MIME multipart attachment.
+    #[arg(long = "attach")]
+    pub attach: bool,
+
+    /// Create MIME inline attachment.
+    #[arg(long = "inline")]
+    pub inline: bool,
+
+    /// Keep subject intact (do not strip/add [PATCH] prefix).
+    #[arg(short = 'k', long = "keep-subject")]
+    pub keep_subject: bool,
+}
+
+/// Extra headers/options computed from args, passed into formatting functions.
+struct PatchOptions<'a> {
+    in_reply_to: Option<&'a str>,
+    cc: &'a [String],
+    to: &'a [String],
+    signoff: bool,
+    attach: bool,
+    inline: bool,
+    keep_subject: bool,
+    base_commit: Option<String>,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -76,10 +120,6 @@ pub fn run(args: Args) -> Result<()> {
     let prefix = args.subject_prefix.as_deref().unwrap_or("PATCH");
 
     // Determine whether to number patches.
-    // --no-numbered (-N) forces no numbering.
-    // --numbered (-n) forces numbering.
-    // --cover-letter forces numbering (unless --no-numbered is also given).
-    // Otherwise: number if total > 1.
     let use_numbering = if args.no_numbered {
         false
     } else if args.numbered || args.cover_letter {
@@ -88,10 +128,28 @@ pub fn run(args: Args) -> Result<()> {
         total > 1
     };
 
-    // start_number adjusts the displayed patch number
     let start = args.start_number;
-    // When using --start-number, total is adjusted so last patch = start + total - 1
     let display_total = if start != 1 { start + total - 1 } else { total };
+
+    // Resolve --base commit
+    let base_commit = if let Some(ref base_rev) = args.base {
+        let base_oid = resolve_revision(&repo, base_rev)
+            .with_context(|| format!("unknown base revision '{base_rev}'"))?;
+        Some(base_oid.to_hex())
+    } else {
+        None
+    };
+
+    let opts = PatchOptions {
+        in_reply_to: args.in_reply_to.as_deref(),
+        cc: &args.cc,
+        to: &args.to,
+        signoff: args.signoff,
+        attach: args.attach,
+        inline: args.inline,
+        keep_subject: args.keep_subject,
+        base_commit,
+    };
 
     // Ensure output directory exists
     let out_dir = if let Some(ref dir) = args.output_directory {
@@ -124,19 +182,24 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    let is_last_patch = |idx: usize| idx + 1 == total;
+
     for (idx, (oid, commit)) in commits.iter().enumerate() {
         let patch_num = start + idx;
         let subject_line = commit.message.lines().next().unwrap_or("");
 
         // Build the subject with optional numbering
-        let subject = if use_numbering {
+        let subject = if opts.keep_subject {
+            subject_line.to_string()
+        } else if use_numbering {
             format!("[{prefix} {patch_num}/{display_total}] {subject_line}")
         } else {
             format!("[{prefix}] {subject_line}")
         };
 
-        // Format the patch
-        let patch = format_single_patch(&repo.odb, oid, commit, &subject)?;
+        // Format the patch — append base-commit info to last patch
+        let include_base = is_last_patch(idx);
+        let patch = format_single_patch(&repo.odb, oid, commit, &subject, &opts, include_base)?;
 
         if args.stdout {
             let mut out = stdout_handle.lock();
@@ -413,14 +476,96 @@ fn format_cover_letter(
     Ok(out)
 }
 
+/// Extract the email portion from an ident string like "Name <email> ts tz".
+fn extract_email(ident: &str) -> Option<&str> {
+    let start = ident.find('<')?;
+    let end = ident.find('>')?;
+    Some(&ident[start + 1..end])
+}
+
 /// Format a single commit as an email-style patch.
 fn format_single_patch(
     odb: &Odb,
     oid: &ObjectId,
     commit: &CommitData,
     subject: &str,
+    opts: &PatchOptions<'_>,
+    include_base: bool,
 ) -> Result<String> {
     let mut out = String::new();
+
+    // Generate the diff first (needed for MIME attachment)
+    let parent_tree = commit.parents.first().map(|parent_oid| {
+        odb.read(parent_oid)
+            .ok()
+            .and_then(|obj| parse_commit(&obj.data).ok())
+            .map(|c| c.tree)
+    });
+    let parent_tree_oid: Option<ObjectId> = parent_tree.flatten();
+
+    let diff_entries = diff_trees(odb, parent_tree_oid.as_ref(), Some(&commit.tree), "")
+        .context("computing diff")?;
+
+    // Build stat + full diff into separate string
+    let mut diff_text = String::new();
+    let mut stat_lines = Vec::new();
+    let mut total_ins = 0;
+    let mut total_del = 0;
+    let mut max_path_len = 0;
+
+    for entry in &diff_entries {
+        let path = entry.path().to_owned();
+        if path.len() > max_path_len {
+            max_path_len = path.len();
+        }
+        let old_content = read_blob_content(odb, &entry.old_oid);
+        let new_content = read_blob_content(odb, &entry.new_oid);
+        let (ins, del) = grit_lib::diff::count_changes(&old_content, &new_content);
+        total_ins += ins;
+        total_del += del;
+        stat_lines.push(grit_lib::diff::format_stat_line(&path, ins, del, max_path_len));
+    }
+
+    for line in &stat_lines {
+        diff_text.push_str(line);
+        diff_text.push('\n');
+    }
+
+    let files_changed = diff_entries.len();
+    diff_text.push_str(&format!(
+        " {} file{} changed",
+        files_changed,
+        if files_changed == 1 { "" } else { "s" }
+    ));
+    if total_ins > 0 {
+        diff_text.push_str(&format!(
+            ", {} insertion{}(+)",
+            total_ins,
+            if total_ins == 1 { "" } else { "s" }
+        ));
+    }
+    if total_del > 0 {
+        diff_text.push_str(&format!(
+            ", {} deletion{}(-)",
+            total_del,
+            if total_del == 1 { "" } else { "s" }
+        ));
+    }
+    diff_text.push('\n');
+    diff_text.push('\n');
+
+    for entry in &diff_entries {
+        let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
+        let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
+        write_diff_header_to_string(&mut diff_text, entry);
+        let old_content = read_blob_content(odb, &entry.old_oid);
+        let new_content = read_blob_content(odb, &entry.new_oid);
+        let patch = unified_diff(&old_content, &new_content, old_path, new_path, 3);
+        diff_text.push_str(&patch);
+    }
+
+    let use_mime = opts.attach || opts.inline;
+    let boundary = "------------grit-patch-boundary";
 
     // From line
     out.push_str(&format!("From {} Mon Sep 17 00:00:00 2001\n", oid.to_hex()));
@@ -435,6 +580,32 @@ fn format_single_patch(
 
     // Subject
     out.push_str(&format!("Subject: {subject}\n"));
+
+    // In-Reply-To / References headers
+    if let Some(msg_id) = opts.in_reply_to {
+        out.push_str(&format!("In-Reply-To: {msg_id}\n"));
+        out.push_str(&format!("References: {msg_id}\n"));
+    }
+
+    // Cc headers
+    for cc in opts.cc {
+        out.push_str(&format!("Cc: {cc}\n"));
+    }
+
+    // To headers
+    for to in opts.to {
+        out.push_str(&format!("To: {to}\n"));
+    }
+
+    // MIME headers for --attach / --inline
+    if use_mime {
+        out.push_str("MIME-Version: 1.0\n");
+        out.push_str(&format!(
+            "Content-Type: multipart/mixed; boundary=\"{}\"\n",
+            boundary
+        ));
+    }
+
     out.push('\n');
 
     // Commit message body (skip first line which is in Subject)
@@ -445,85 +616,77 @@ fn format_single_patch(
         .collect::<Vec<_>>()
         .join("\n");
     let body = body.trim_start_matches('\n');
-    if !body.is_empty() {
-        out.push_str(body);
+
+    if use_mime {
+        // MIME multipart: description part, then patch as attachment
+        out.push_str(&format!("--{boundary}\n"));
+        out.push_str("Content-Type: text/plain; charset=UTF-8\n");
+        out.push_str("Content-Transfer-Encoding: 8bit\n");
         out.push('\n');
-    }
-
-    out.push_str("---\n");
-
-    // Generate the diff
-    let parent_tree = commit.parents.first().map(|parent_oid| {
-        odb.read(parent_oid)
-            .ok()
-            .and_then(|obj| parse_commit(&obj.data).ok())
-            .map(|c| c.tree)
-    });
-    let parent_tree_oid: Option<ObjectId> = parent_tree.flatten();
-
-    let diff_entries = diff_trees(odb, parent_tree_oid.as_ref(), Some(&commit.tree), "")
-        .context("computing diff")?;
-
-    // Stat summary
-    let mut stat_lines = Vec::new();
-    let mut total_ins = 0;
-    let mut total_del = 0;
-    let mut max_path_len = 0;
-
-    for entry in &diff_entries {
-        let path = entry.path().to_owned();
-        if path.len() > max_path_len {
-            max_path_len = path.len();
+        if !body.is_empty() {
+            out.push_str(body);
+            out.push('\n');
         }
 
-        let old_content = read_blob_content(odb, &entry.old_oid);
-        let new_content = read_blob_content(odb, &entry.new_oid);
-        let (ins, del) = grit_lib::diff::count_changes(&old_content, &new_content);
-        total_ins += ins;
-        total_del += del;
-        stat_lines.push(grit_lib::diff::format_stat_line(&path, ins, del, max_path_len));
-    }
+        // Signoff in body part
+        if opts.signoff {
+            let email = extract_email(&commit.committer).unwrap_or("unknown");
+            let name = if let Some(bracket) = commit.committer.find('<') {
+                commit.committer[..bracket].trim()
+            } else {
+                "Unknown"
+            };
+            out.push_str(&format!("\nSigned-off-by: {name} <{email}>\n"));
+        }
 
-    for line in &stat_lines {
-        out.push_str(line);
+        out.push_str("---\n");
+        // Stat in description part
+        for line in &stat_lines {
+            out.push_str(line);
+            out.push('\n');
+        }
         out.push('\n');
-    }
 
-    let files_changed = diff_entries.len();
-    out.push_str(&format!(
-        " {} file{} changed",
-        files_changed,
-        if files_changed == 1 { "" } else { "s" }
-    ));
-    if total_ins > 0 {
+        // Patch attachment part
+        out.push_str(&format!("--{boundary}\n"));
+        let disposition = if opts.inline { "inline" } else { "attachment" };
+        let subject_line = commit.message.lines().next().unwrap_or("patch");
+        let filename = format!("{}.patch", sanitize_subject(subject_line));
+        out.push_str("Content-Type: text/x-patch; charset=UTF-8\n");
+        out.push_str("Content-Transfer-Encoding: 8bit\n");
         out.push_str(&format!(
-            ", {} insertion{}(+)",
-            total_ins,
-            if total_ins == 1 { "" } else { "s" }
+            "Content-Disposition: {disposition}; filename=\"{filename}\"\n"
         ));
+        out.push('\n');
+        out.push_str(&diff_text);
+        out.push_str(&format!("--{boundary}--\n"));
+    } else {
+        // Standard (non-MIME) patch format
+        if !body.is_empty() {
+            out.push_str(body);
+            out.push('\n');
+        }
+
+        // Signoff trailer
+        if opts.signoff {
+            let email = extract_email(&commit.committer).unwrap_or("unknown");
+            let name = if let Some(bracket) = commit.committer.find('<') {
+                commit.committer[..bracket].trim()
+            } else {
+                "Unknown"
+            };
+            out.push_str(&format!("\nSigned-off-by: {name} <{email}>\n"));
+        }
+
+        out.push_str("---\n");
+        out.push_str(&diff_text);
     }
-    if total_del > 0 {
-        out.push_str(&format!(
-            ", {} deletion{}(-)",
-            total_del,
-            if total_del == 1 { "" } else { "s" }
-        ));
-    }
-    out.push('\n');
-    out.push('\n');
 
-    // Full diff
-    for entry in &diff_entries {
-        let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
-        let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
-
-        // diff --git header
-        write_diff_header_to_string(&mut out, entry);
-
-        let old_content = read_blob_content(odb, &entry.old_oid);
-        let new_content = read_blob_content(odb, &entry.new_oid);
-        let patch = unified_diff(&old_content, &new_content, old_path, new_path, 3);
-        out.push_str(&patch);
+    // base-commit info (appended to the last patch in the series)
+    if include_base {
+        if let Some(ref base_hex) = opts.base_commit {
+            out.push_str(&format!("base-commit: {base_hex}\n"));
+        }
     }
 
     out.push_str("-- \n");
