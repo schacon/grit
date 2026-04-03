@@ -40,7 +40,7 @@ pub fn write_tree_from_index(
     odb: &Odb,
     index: &Index,
     prefix: &str,
-    _missing_ok: bool,
+    missing_ok: bool,
 ) -> Result<ObjectId> {
     let prefix_bytes = prefix.as_bytes();
 
@@ -52,6 +52,16 @@ pub fn write_tree_from_index(
         .iter()
         .filter(|e| e.stage() == 0 && e.path.starts_with(prefix_bytes))
         .collect();
+
+    // Verify all referenced objects exist (unless --missing-ok)
+    if !missing_ok {
+        for entry in &entries {
+            if odb.read(&entry.oid).is_err() {
+                let path = String::from_utf8_lossy(&entry.path);
+                anyhow::bail!("invalid object {} '{}'", entry.oid.to_hex(), path);
+            }
+        }
+    }
 
     let dir_prefix = if prefix_bytes.ends_with(b"/") {
         &prefix_bytes[..prefix_bytes.len() - 1]

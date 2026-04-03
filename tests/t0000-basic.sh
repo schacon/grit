@@ -559,7 +559,7 @@ test_expect_success 'no diff-files output after checkout and refresh' '
 # Section 13: write-tree with missing objects
 ###########################################################################
 
-test_expect_failure 'write-tree fails on missing objects without --missing-ok' '
+test_expect_success 'write-tree fails on missing objects without --missing-ok' '
 	cd repo &&
 	rm -f .git/index &&
 	echo "100644 1111111111111111111111111111111111111111 0	bad/file" |
@@ -735,7 +735,7 @@ test_expect_success 'put 5 invalid objects into the index' '
 	grit update-index --index-info <badobjects
 '
 
-test_expect_failure 'write-tree fails with 5 invalid objects' '
+test_expect_success 'write-tree fails with 5 invalid objects' '
 	cd repo &&
 	test_must_fail grit write-tree
 '
