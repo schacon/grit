@@ -1,5 +1,5 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
-add	Main Porcelain	yes	813	132	678	16.2
+add	Main Porcelain	yes	813	132	678	16.3
 am	Main Porcelain	yes	162	1	161	0.6
 archive	Main Porcelain	yes	102	0	102	0.0
 bisect	Main Porcelain	yes	107	0	107	0.0
@@ -10,14 +10,14 @@ clean	Main Porcelain	yes	90	2	88	2.2
 clone	Main Porcelain	yes	519	14	505	2.7
 commit	Main Porcelain	yes	435	246	187	56.7
 describe	Main Porcelain	yes	59	0	59	0.0
-diff	Main Porcelain	yes	983	457	499	46.5
+diff	Main Porcelain	yes	983	458	499	46.6
 fetch	Main Porcelain	yes	465	2	463	0.4
-format-patch	Main Porcelain	yes	231	2	229	0.8
+format-patch	Main Porcelain	yes	231	2	229	0.9
 gc	Main Porcelain	yes	38	33	5	86.8
 grep	Main Porcelain	yes	264	3	261	1.1
 init	Main Porcelain	yes	293	111	180	37.9
 log	Main Porcelain	yes	594	334	240	56.3
-merge	Main Porcelain	yes	658	132	526	20.0
+merge	Main Porcelain	yes	658	132	526	20.1
 mv	Main Porcelain	yes	77	54	23	70.1
 notes	Main Porcelain	yes	308	0	308	0.0
 pull	Main Porcelain	yes	142	0	142	0.0
@@ -40,7 +40,7 @@ annotate	Ancillary Porcelain	yes	1	0	1	0.0
 blame	Ancillary Porcelain	yes	102	3	99	2.9
 bundle	Ancillary Porcelain	yes	44	1	43	2.3
 cherry	Ancillary Porcelain	yes	4	4	0	100.0
-config	Ancillary Porcelain	yes	657	388	267	59.0
+config	Ancillary Porcelain	yes	657	385	267	58.6
 count-objects	Ancillary Porcelain	yes	9	5	4	55.6
 diagnose	Ancillary Porcelain	yes	4	0	4	0.0
 difftool	Ancillary Porcelain	yes	61	0	61	0.0
@@ -67,7 +67,7 @@ verify-commit	Ancillary Porcelain	yes	16	0	16	0.0
 verify-tag	Ancillary Porcelain	yes	30	16	14	53.3
 version	Ancillary Porcelain	yes	8	0	8	0.0
 whatchanged	Ancillary Porcelain	yes	1	0	1	0.0
-apply	Plumbing	yes	300	11	286	3.7
+apply	Plumbing	yes	300	12	286	3.9
 cat-file	Plumbing	yes	265	132	132	49.9
 check-attr	Plumbing	yes	26	25	0	96.8
 check-ignore	Plumbing	yes	11	10	1	90.9

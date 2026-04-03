@@ -7373,38 +7373,38 @@ t4051-diff-function-context::context-includes-begin-7	t4051-diff-function-contex
 t4051-diff-function-context::context-includes-end-7	t4051-diff-function-context	 context includes end	diff	not_ported
 t4051-diff-function-context::overlapping-hunks-are-merged	t4051-diff-function-context	 overlapping hunks are merged	diff	not_ported
 t4051-diff-function-context::desc	t4051-diff-function-context	$desc	diff	not_ported
-t4052-stat-output::preparation	t4052-stat-output	preparation	add	partial
-t4052-stat-output::preparation-for-big-change-tests	t4052-stat-output	preparation for big-change tests	add	partial
-t4052-stat-output::preparation-for-long-name-tests	t4052-stat-output	preparation for long-name tests	add	partial
-t4052-stat-output::merge-stat-respects-diff-statgraphwidth-with-big-change	t4052-stat-output	merge --stat respects diff.statGraphWidth with big change	checkout	partial
-t4052-stat-output::merge-stat-respects-columns-with-big-change	t4052-stat-output	merge --stat respects COLUMNS with big change	checkout	partial
-t4052-stat-output::merge-stat-respects-diff-statnamewidth-with-long-name	t4052-stat-output	merge --stat respects diff.statNameWidth with long name	merge	partial
-t4052-stat-output::merge-stat-respects-columns-with-long-name	t4052-stat-output	merge --stat respects COLUMNS with long name	merge	partial
-t4052-stat-output::diffstat-where-line-prefix-contains-ansi-escape-codes-is-correct-width	t4052-stat-output	diffstat where line_prefix contains ANSI escape codes is correct width	add	partial
-t4052-stat-output::format-patch-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	format-patch: small change with long name gives more space to the name	format-patch	partial
-t4052-stat-output::cmd-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	$cmd: small change with long name gives more space to the name		partial
-t4052-stat-output::cmd-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd $verb diff.statNameWidth with long name	diff	partial
-t4052-stat-output::cmd-stat-width-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd --stat=width $verb diff.statNameWidth with long name	diff	partial
-t4052-stat-output::cmd-stat-width-a-long-name-is-given-more-room-when-the-bar-is-short	t4052-stat-output	$cmd --stat=width: a long name is given more room when the bar is short		partial
-t4052-stat-output::cmd-stat-width-width-with-long-name	t4052-stat-output	$cmd --stat-width=width with long name		partial
-t4052-stat-output::cmd-stat-width-name-width-with-long-name	t4052-stat-output	$cmd --stat=width,name-width with long name		partial
-t4052-stat-output::cmd-stat-name-width-width-with-long-name	t4052-stat-output	$cmd --stat-name-width=width with long name		partial
-t4052-stat-output::format-patch-cover-letter-ignores-columns-with-big-change	t4052-stat-output	format-patch --cover-letter ignores COLUMNS with big change	format-patch	partial
-t4052-stat-output::cmd-verb-columns-with-big-change	t4052-stat-output	$cmd $verb COLUMNS with big change		partial
-t4052-stat-output::cmd-graph-verb-columns-with-big-change	t4052-stat-output	$cmd --graph $verb COLUMNS with big change		partial
-t4052-stat-output::cmd-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd $verb not enough COLUMNS with big change		partial
-t4052-stat-output::cmd-graph-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd --graph $verb not enough COLUMNS with big change		partial
-t4052-stat-output::cmd-verb-diff-statgraphwidth	t4052-stat-output	$cmd $verb diff.statGraphWidth	diff	partial
-t4052-stat-output::cmd-graph-verb-diff-statgraphwidth	t4052-stat-output	$cmd --graph $verb diff.statGraphWidth	diff	partial
-t4052-stat-output::cmd-stat-width-with-big-change	t4052-stat-output	$cmd --stat=width with big change		partial
-t4052-stat-output::cmd-stat-width-width-with-big-change	t4052-stat-output	$cmd --stat-width=width with big change		partial
-t4052-stat-output::cmd-stat-graph-width-width-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width with big change		partial
-t4052-stat-output::cmd-stat-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-width=width --graph with big change		partial
-t4052-stat-output::cmd-stat-graph-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width --graph with big change		partial
-t4052-stat-output::cmd-stat-width-with-big-change-is-more-balanced	t4052-stat-output	$cmd --stat=width with big change is more balanced		partial
-t4052-stat-output::cmd-stat-width-graph-with-big-change-is-balanced	t4052-stat-output	$cmd --stat=width --graph with big change is balanced		partial
-t4052-stat-output::cmd-verb-columns-with-long-name	t4052-stat-output	$cmd $verb COLUMNS with long name		partial
-t4052-stat-output::cmd-graph-verb-columns-with-long-name	t4052-stat-output	$cmd --graph $verb COLUMNS with long name		partial
+t4052-stat-output::preparation	t4052-stat-output	preparation	add	pass
+t4052-stat-output::preparation-for-big-change-tests	t4052-stat-output	preparation for big-change tests	add	pass
+t4052-stat-output::preparation-for-long-name-tests	t4052-stat-output	preparation for long-name tests	add	pass
+t4052-stat-output::merge-stat-respects-diff-statgraphwidth-with-big-change	t4052-stat-output	merge --stat respects diff.statGraphWidth with big change	checkout	pass
+t4052-stat-output::merge-stat-respects-columns-with-big-change	t4052-stat-output	merge --stat respects COLUMNS with big change	checkout	pass
+t4052-stat-output::merge-stat-respects-diff-statnamewidth-with-long-name	t4052-stat-output	merge --stat respects diff.statNameWidth with long name	merge	pass
+t4052-stat-output::merge-stat-respects-columns-with-long-name	t4052-stat-output	merge --stat respects COLUMNS with long name	merge	pass
+t4052-stat-output::diffstat-where-line-prefix-contains-ansi-escape-codes-is-correct-width	t4052-stat-output	diffstat where line_prefix contains ANSI escape codes is correct width	add	pass
+t4052-stat-output::format-patch-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	format-patch: small change with long name gives more space to the name	format-patch	pass
+t4052-stat-output::cmd-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	$cmd: small change with long name gives more space to the name		pass
+t4052-stat-output::cmd-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd $verb diff.statNameWidth with long name	diff	pass
+t4052-stat-output::cmd-stat-width-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd --stat=width $verb diff.statNameWidth with long name	diff	pass
+t4052-stat-output::cmd-stat-width-a-long-name-is-given-more-room-when-the-bar-is-short	t4052-stat-output	$cmd --stat=width: a long name is given more room when the bar is short		pass
+t4052-stat-output::cmd-stat-width-width-with-long-name	t4052-stat-output	$cmd --stat-width=width with long name		pass
+t4052-stat-output::cmd-stat-width-name-width-with-long-name	t4052-stat-output	$cmd --stat=width,name-width with long name		pass
+t4052-stat-output::cmd-stat-name-width-width-with-long-name	t4052-stat-output	$cmd --stat-name-width=width with long name		pass
+t4052-stat-output::format-patch-cover-letter-ignores-columns-with-big-change	t4052-stat-output	format-patch --cover-letter ignores COLUMNS with big change	format-patch	pass
+t4052-stat-output::cmd-verb-columns-with-big-change	t4052-stat-output	$cmd $verb COLUMNS with big change		pass
+t4052-stat-output::cmd-graph-verb-columns-with-big-change	t4052-stat-output	$cmd --graph $verb COLUMNS with big change		pass
+t4052-stat-output::cmd-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd $verb not enough COLUMNS with big change		pass
+t4052-stat-output::cmd-graph-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd --graph $verb not enough COLUMNS with big change		pass
+t4052-stat-output::cmd-verb-diff-statgraphwidth	t4052-stat-output	$cmd $verb diff.statGraphWidth	diff	pass
+t4052-stat-output::cmd-graph-verb-diff-statgraphwidth	t4052-stat-output	$cmd --graph $verb diff.statGraphWidth	diff	pass
+t4052-stat-output::cmd-stat-width-with-big-change	t4052-stat-output	$cmd --stat=width with big change		pass
+t4052-stat-output::cmd-stat-width-width-with-big-change	t4052-stat-output	$cmd --stat-width=width with big change		pass
+t4052-stat-output::cmd-stat-graph-width-width-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width with big change		pass
+t4052-stat-output::cmd-stat-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-width=width --graph with big change		pass
+t4052-stat-output::cmd-stat-graph-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width --graph with big change		pass
+t4052-stat-output::cmd-stat-width-with-big-change-is-more-balanced	t4052-stat-output	$cmd --stat=width with big change is more balanced		pass
+t4052-stat-output::cmd-stat-width-graph-with-big-change-is-balanced	t4052-stat-output	$cmd --stat=width --graph with big change is balanced		pass
+t4052-stat-output::cmd-verb-columns-with-long-name	t4052-stat-output	$cmd $verb COLUMNS with long name		pass
+t4052-stat-output::cmd-graph-verb-columns-with-long-name	t4052-stat-output	$cmd --graph $verb COLUMNS with long name		pass
 t4053-diff-no-index::setup	t4053-diff-no-index	setup	diff	partial
 t4053-diff-no-index::git-diff-no-index-exit-code	t4053-diff-no-index	git diff --no-index --exit-code	diff	partial
 t4053-diff-no-index::git-diff-no-index-directories	t4053-diff-no-index	git diff --no-index directories	diff	partial

@@ -86,13 +86,29 @@ EOF
 	export PATH="$TRASH_DIRECTORY/.bin:$PATH"
 	# cd into trash so each test starts with a clean cwd
 	cd "$TRASH_DIRECTORY" || exit 1
+	# initialise a git repo like upstream test-lib does
+	"$GUST_BIN" init -q || exit 1
 }
 
-setup_trash
-
-# Allow tests to use $HOME
+# Allow tests to use $HOME (set before setup_trash so git config works)
 HOME="$TRASH_DIRECTORY"
 export HOME
+
+# Default author/committer identity for tests
+GIT_AUTHOR_NAME="Test Author"
+GIT_AUTHOR_EMAIL="test@example.com"
+GIT_COMMITTER_NAME="Test Committer"
+GIT_COMMITTER_EMAIL="test@example.com"
+export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+
+# GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME support (before init)
+if test -n "$GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME"
+then
+	mkdir -p "$TRASH_DIRECTORY"
+	HOME="$TRASH_DIRECTORY" "$GUST_BIN" config --global init.defaultBranch "$GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME"
+fi
+
+setup_trash
 
 # Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"
@@ -103,6 +119,35 @@ else
 fi
 
 # ── helpers used by test bodies ──────────────────────────────────────────────
+
+
+test_write_lines () {
+	printf '%s\n' "$@"
+}
+
+test_grep () {
+	local negate=""
+	if test "$1" = "!"
+	then
+		negate="!"
+		shift
+	fi
+	if test "$1" = "-e"
+	then
+		shift
+	fi
+	if test -n "$negate"
+	then
+		! grep "$@"
+	else
+		grep "$@"
+	fi
+}
+
+test_config () {
+	git config "$1" "$2" &&
+	test_when_finished "git config --unset '$1'"
+}
 
 test_path_is_file () { test -f "$1"; }
 test_path_is_dir  () { test -d "$1"; }
