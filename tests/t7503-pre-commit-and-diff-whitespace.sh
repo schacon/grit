@@ -1,7 +1,6 @@
 #!/bin/sh
 # Tests for pre-commit hook behavior and diff whitespace handling.
-# NOTE: grit does not currently run pre-commit hooks (or any hooks).
-# Tests document this gap and exercise diff whitespace detection.
+# Tests exercise hook behavior and diff whitespace detection.
 
 test_description='grit pre-commit hooks and diff whitespace'
 
@@ -15,9 +14,9 @@ test_expect_success 'setup' '
 	git config user.name "Test User"
 '
 
-# --- Hook behavior (documenting gaps) ---
+# --- Hook behavior ---
 
-test_expect_failure 'pre-commit hook exit 1 blocks commit (gap)' '
+test_expect_success 'pre-commit hook exit 1 blocks commit' '
 	cd repo &&
 	echo "first" >file &&
 	git add file &&
@@ -27,26 +26,25 @@ test_expect_failure 'pre-commit hook exit 1 blocks commit (gap)' '
 	chmod +x .git/hooks/pre-commit &&
 	echo "second" >>file &&
 	git add file &&
-	git commit -m "hooks not implemented"
+	test_must_fail git commit -m "should be blocked by pre-commit"
 '
 
-test_expect_failure 'commit-msg hook exit 1 blocks commit (gap)' '
+test_expect_success 'commit-msg hook exit 1 blocks commit' '
 	cd repo &&
+	rm -f .git/hooks/pre-commit &&
 	printf "#!/bin/sh\nexit 1\n" >.git/hooks/commit-msg &&
 	chmod +x .git/hooks/commit-msg &&
-	echo "third" >>file &&
-	git add file &&
-	git commit -m "commit-msg not run"
+	test_must_fail git commit -m "should be blocked by commit-msg"
 '
 
-test_expect_failure 'post-commit hook is executed (gap)' '
+test_expect_success 'post-commit hook is executed' '
 	cd repo &&
+	rm -f .git/hooks/commit-msg &&
 	printf "#!/bin/sh\ntouch ../post-commit-ran\n" >.git/hooks/post-commit &&
 	chmod +x .git/hooks/post-commit &&
-	echo "fourth" >>file &&
-	git add file &&
-	git commit -m "post-commit not run" &&
-	! test -f ../post-commit-ran
+	rm -f ../post-commit-ran &&
+	git commit -m "should trigger post-commit" &&
+	test -f ../post-commit-ran
 '
 
 # --- Diff whitespace tests ---

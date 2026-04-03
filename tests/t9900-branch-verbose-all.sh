@@ -209,13 +209,18 @@ test_expect_success 'branch --merged matches real git' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'branch --no-merged shows unmerged branches' '
+test_expect_success 'branch --no-merged shows unmerged branches' '
 	cd repo &&
+	"$REAL_GIT" checkout feature-a &&
+	echo diverge >diverge.txt &&
+	"$REAL_GIT" add diverge.txt &&
+	"$REAL_GIT" commit -m "diverge on feature-a" &&
+	"$REAL_GIT" checkout master &&
 	grit branch --no-merged HEAD >actual &&
 	grep "feature-a" actual
 '
 
-test_expect_failure 'branch --no-merged shows diverged branches' '
+test_expect_success 'branch --no-merged shows diverged branches' '
 	cd repo &&
 	grit branch --no-merged HEAD >actual &&
 	grep "feature-a" actual

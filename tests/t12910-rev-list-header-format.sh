@@ -122,7 +122,7 @@ test_expect_success 'rev-list --format with multiple placeholders' '
 	grep "[0-9a-f]\{40\} fifth" actual
 '
 
-test_expect_failure 'rev-list --format=%s --max-count=1 shows one subject' '
+test_expect_success 'rev-list --format=%s --max-count=1 shows one subject' '
 	(cd repo && grit rev-list --format="%s" --max-count=1 HEAD >../actual) &&
 	grep "fifth" actual &&
 	! grep "fourth" actual

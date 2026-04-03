@@ -204,9 +204,9 @@ test_expect_success 'setup: empty base file' '
     printf "theirs-content\n" >etheirs
 '
 
-test_expect_failure 'both sides adding to empty base merges or conflicts' '
+test_expect_success 'both sides adding to empty base produces conflict' '
     cp eours eours_copy &&
-    grit merge-file -p eours_copy ebase etheirs >actual 2>err &&
+    test_must_fail grit merge-file -p eours_copy ebase etheirs >actual 2>err &&
     grep "ours-content" actual &&
     grep "theirs-content" actual
 '

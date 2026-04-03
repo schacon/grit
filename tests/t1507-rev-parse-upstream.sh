@@ -64,7 +64,7 @@ test_expect_success '@{u} shorthand resolves to upstream' '
 	)
 '
 
-test_expect_failure 'other-branch@{upstream} resolves' '
+test_expect_success 'other-branch@{upstream} resolves' '
 	(
 		cd clone &&
 		git rev-parse my-side@{upstream} >actual &&

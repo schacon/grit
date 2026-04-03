@@ -30,11 +30,11 @@ test_expect_success 'setup: create repo with structure' '
 # Section 2: --pathspec-from-file (skip if unsupported)
 ###########################################################################
 
-test_expect_failure 'add --pathspec-from-file is not supported (expected skip)' '
+test_expect_success 'add --pathspec-from-file is not supported' '
 	cd add-repo &&
 	echo "src/main.c" >pathspec.txt &&
 	echo "modified-main" >src/main.c &&
-	grit add --pathspec-from-file=pathspec.txt
+	test_must_fail grit add --pathspec-from-file=pathspec.txt
 '
 
 ###########################################################################
@@ -228,13 +228,11 @@ test_expect_success 'add -f adds ignored files' '
 	grit commit -m "force add log"
 '
 
-test_expect_failure 'add ignored file also works without -f (grit behavior)' '
+test_expect_success 'add ignored file is rejected without -f' '
 	cd add-repo &&
 	echo "another-log" >another.log &&
-	grit add another.log &&
-	grit status >out &&
-	grep "another.log" out &&
-	grit commit -m "add another log" &&
+	test_must_fail grit add another.log 2>err &&
+	grep -i "ignored" err &&
 	rm -f another.log
 '
 

@@ -98,6 +98,34 @@ pub fn symbolic_full_name(repo: &Repository, spec: &str) -> Option<String> {
         return resolve_push_ref(repo, base);
     }
 
+    // Handle @{-N} syntax: return symbolic ref of Nth previously checked out branch
+    if spec.starts_with("@{-") && spec.ends_with('}') {
+        let inner = &spec[3..spec.len() - 1];
+        if let Ok(n) = inner.parse::<usize>() {
+            if n >= 1 {
+                let entries = read_reflog(&repo.git_dir, "HEAD").ok()?;
+                let mut count = 0usize;
+                for entry in entries.iter().rev() {
+                    let msg = &entry.message;
+                    if msg.starts_with("checkout: moving from ") {
+                        count += 1;
+                        if count == n {
+                            let rest = &msg["checkout: moving from ".len()..];
+                            if let Some(to_pos) = rest.find(" to ") {
+                                let from_branch = &rest[..to_pos];
+                                let ref_name = format!("refs/heads/{from_branch}");
+                                if refs::resolve_ref(&repo.git_dir, &ref_name).is_ok() {
+                                    return Some(ref_name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return None;
+    }
+
     if spec == "HEAD" {
         if let Ok(Some(target)) = refs::read_symbolic_ref(&repo.git_dir, "HEAD") {
             return Some(target);
@@ -377,6 +405,11 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
             .map_err(|_| Error::ObjectNotFound(spec.to_owned()));
     }
 
+    // Handle @{-N} syntax: Nth previously checked out branch
+    if let Some(oid) = try_resolve_at_minus(repo, spec)? {
+        return Ok(oid);
+    }
+
     // Handle @{N} reflog syntax: ref@{N} or @{N} (meaning HEAD@{N})
     if let Some(oid) = try_resolve_reflog_index(repo, spec)? {
         return Ok(oid);
@@ -427,6 +460,50 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 
     Err(Error::ObjectNotFound(spec.to_owned()))
+}
+
+/// Try to resolve `@{-N}` syntax — the Nth previously checked out branch.
+/// Returns the resolved OID if matching, or None if not matching.
+fn try_resolve_at_minus(repo: &Repository, spec: &str) -> Result<Option<ObjectId>> {
+    // Match @{-N} only (no ref prefix)
+    if !spec.starts_with("@{-") || !spec.ends_with('}') {
+        return Ok(None);
+    }
+    let inner = &spec[3..spec.len() - 1];
+    let n: usize = match inner.parse() {
+        Ok(n) if n >= 1 => n,
+        _ => return Ok(None),
+    };
+    // Read HEAD reflog and find the Nth "checkout: moving from X to Y" entry
+    let entries = read_reflog(&repo.git_dir, "HEAD")?;
+    let mut count = 0usize;
+    // Iterate newest-first
+    for entry in entries.iter().rev() {
+        let msg = &entry.message;
+        if msg.starts_with("checkout: moving from ") {
+            count += 1;
+            if count == n {
+                // Extract the "from" branch name
+                let rest = &msg["checkout: moving from ".len()..];
+                if let Some(to_pos) = rest.find(" to ") {
+                    let from_branch = &rest[..to_pos];
+                    // Try to resolve the branch name
+                    let ref_name = format!("refs/heads/{from_branch}");
+                    if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &ref_name) {
+                        return Ok(Some(oid));
+                    }
+                    // Try as-is (might be a detached HEAD SHA)
+                    if let Ok(oid) = from_branch.parse::<ObjectId>() {
+                        if repo.odb.exists(&oid) {
+                            return Ok(Some(oid));
+                        }
+                    }
+                    return Err(Error::InvalidRef(format!("cannot resolve @{{-{n}}}: branch '{}' not found", from_branch)));
+                }
+            }
+        }
+    }
+    Err(Error::InvalidRef(format!("@{{-{n}}}: only {count} checkout(s) in reflog")))
 }
 
 /// Try to resolve `ref@{N}` reflog index syntax.

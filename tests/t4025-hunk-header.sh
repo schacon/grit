@@ -25,7 +25,7 @@ test_expect_success setup '
 	mv file+ file
 '
 
-test_expect_failure 'hunk header includes funcname context' '
+test_expect_success 'hunk header includes funcname context' '
 	git diff >output &&
 	grep "^@@.*@@" output >headers &&
 	test_line_count = 2 headers

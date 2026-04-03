@@ -85,8 +85,8 @@ pub struct Args {
     pub force: bool,
 
     /// Set up tracking.
-    #[arg(short = 't', long = "track")]
-    pub track: Option<Option<String>>,
+    #[arg(short = 't', long = "track", require_equals = true, num_args = 0..=1, default_missing_value = "direct")]
+    pub track: Option<String>,
 
     /// Do not set up tracking.
     #[arg(long = "no-track")]
@@ -689,6 +689,34 @@ fn create_branch(
 
     grit_lib::refs::write_ref(&repo.git_dir, &refname, &oid)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // Set up tracking if --track was used or start_point is a remote tracking branch
+    if args.track.is_some() || (!args.no_track && start_point.is_some()) {
+        if let Some(sp) = start_point {
+            // Try to parse as remote tracking branch: origin/branch or refs/remotes/origin/branch
+            let remote_ref = if sp.starts_with("refs/remotes/") {
+                Some(sp.to_string())
+            } else if let Ok(_) = grit_lib::refs::resolve_ref(&repo.git_dir, &format!("refs/remotes/{sp}")) {
+                Some(format!("refs/remotes/{sp}"))
+            } else {
+                None
+            };
+            if let Some(rref) = remote_ref {
+                // Parse remote/branch from refs/remotes/remote/branch
+                let stripped = rref.strip_prefix("refs/remotes/").unwrap_or(&rref);
+                if let Some(slash) = stripped.find('/') {
+                    let remote = &stripped[..slash];
+                    let branch = &stripped[slash + 1..];
+                    let config_path = repo.git_dir.join("config");
+                    let mut cfg = std::fs::read_to_string(&config_path).unwrap_or_default();
+                    cfg.push_str(&format!("\n[branch \"{}\"]",name));
+                    cfg.push_str(&format!("\n\tremote = {}", remote));
+                    cfg.push_str(&format!("\n\tmerge = refs/heads/{}\n", branch));
+                    std::fs::write(&config_path, cfg)?;
+                }
+            }
+        }
+    }
 
     Ok(())
 }

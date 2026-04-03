@@ -214,7 +214,8 @@ test_expect_success 'cherry-pick onto orphan branch works or fails gracefully' '
 
 test_expect_success 'cherry-pick --allow-empty-message on commit with no message body' '
 	cd repo &&
-	$REAL_GIT checkout master &&
+	$REAL_GIT checkout -f master &&
+	$REAL_GIT clean -fd &&
 	grit log --oneline -n 1 >../actual &&
 	grep "post-merge" ../actual
 '

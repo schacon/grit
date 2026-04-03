@@ -72,6 +72,19 @@ pub fn run(args: Args) -> Result<()> {
                 show_git_dir = true;
             } else if arg == "--absolute-git-dir" {
                 show_absolute_git_dir = true;
+            } else if arg == "--git-path" {
+                // --git-path <path> outputs the resolved path relative to GIT_DIR
+                i += 1;
+                let path_arg = args
+                    .args
+                    .get(i)
+                    .ok_or_else(|| anyhow::anyhow!("--git-path requires an argument"))?;
+                if let Some(current) = discover_optional(None)? {
+                    let resolved = current.git_dir.join(path_arg);
+                    println!("{}", resolved.display());
+                } else {
+                    bail!("not a git repository");
+                }
             } else if arg == "--prefix" {
                 i += 1;
                 let value = args

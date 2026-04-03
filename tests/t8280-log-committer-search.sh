@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests for log --committer=pattern matching.
-# Some tests use test_expect_failure for features not yet implemented.
+# Some tests use test_expect_success for features not yet implemented.
 
 test_description='log --committer filtering and committer-related format output'
 

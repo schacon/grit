@@ -23,14 +23,14 @@ test_expect_success 'setup - create superproject and submodule' '
 	git commit -m "submodule initial"
 '
 
-test_expect_failure 'add submodule' '
+test_expect_success 'add submodule' '
 	cd super &&
 	git add sub &&
 	test_tick &&
 	git commit -m "add submodule"
 '
 
-test_expect_failure 'diff-tree after adding submodule' '
+test_expect_success 'diff-tree after adding submodule' '
 	cd super &&
 	git diff-tree -r --name-only HEAD~1 HEAD >actual &&
 	test -s actual

@@ -356,12 +356,12 @@ test_expect_success 'merge-file with all three identical returns clean' '
 
 # ── empty files ──────────────────────────────────────────────────────────────
 
-test_expect_failure 'merge-file with empty base and different additions merges cleanly' '
+test_expect_success 'merge-file with empty base and different additions produces conflict' '
 	>empty_base.txt &&
 	echo "ours content" >ours_e.txt &&
 	echo "theirs content" >theirs_e.txt &&
 	cp ours_e.txt result_e.txt &&
-	git merge-file -p result_e.txt empty_base.txt theirs_e.txt >out.txt &&
+	test_must_fail git merge-file -p result_e.txt empty_base.txt theirs_e.txt >out.txt &&
 	grep "ours content" out.txt &&
 	grep "theirs content" out.txt
 '

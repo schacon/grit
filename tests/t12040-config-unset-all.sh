@@ -56,13 +56,15 @@ test_expect_success 'legacy --unset-all removes all occurrences' '
 	test_must_fail grit -C repo config --get-all leg.key
 '
 
-test_expect_failure 'config unset without --all on multi-valued key removes all' '
+test_expect_success 'config unset without --all on multi-valued key warns and fails' '
 	(cd repo &&
 	 $REAL_GIT config --add partial.key x &&
 	 $REAL_GIT config --add partial.key y &&
 	 $REAL_GIT config --add partial.key z) &&
-	(cd repo && grit config unset partial.key) &&
-	test_must_fail grit -C repo config --get-all partial.key
+	test_must_fail grit -C repo config unset partial.key 2>err &&
+	grep -i "multiple values" err &&
+	grit -C repo config --get-all partial.key >actual &&
+	test_line_count = 3 actual
 '
 
 test_expect_success 'config set creates a new key' '
@@ -85,7 +87,7 @@ test_expect_success 'unset after set leaves key absent' '
 	test_must_fail grit -C repo config get tmp.key
 '
 
-test_expect_failure 'config --replace-all replaces last of multiple values' '
+test_expect_success 'config --replace-all replaces all values with new value' '
 	(cd repo &&
 	 $REAL_GIT config --add rep.key r1 &&
 	 $REAL_GIT config --add rep.key r2 &&
@@ -93,8 +95,6 @@ test_expect_failure 'config --replace-all replaces last of multiple values' '
 	(cd repo && grit config --replace-all rep.key replaced) &&
 	(cd repo && grit config --get-all rep.key >../actual) &&
 	cat >expect <<-\EOF &&
-	r1
-	r2
 	replaced
 	EOF
 	test_cmp expect actual
@@ -105,14 +105,13 @@ test_expect_success 'config unset --all after replace-all' '
 	test_must_fail grit -C repo config get rep.key
 '
 
-test_expect_failure 'config set --all replaces last of multiple values' '
+test_expect_success 'config set --all replaces all values with new value' '
 	(cd repo &&
 	 $REAL_GIT config --add sa.key p &&
 	 $REAL_GIT config --add sa.key q) &&
 	(cd repo && grit config set --all sa.key replaced) &&
 	(cd repo && grit config --get-all sa.key >../actual) &&
 	cat >expect <<-\EOF &&
-	p
 	replaced
 	EOF
 	test_cmp expect actual &&
