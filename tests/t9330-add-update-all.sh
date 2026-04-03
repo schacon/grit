@@ -195,25 +195,22 @@ test_expect_success 'setup: create .gitignore' '
 	grit commit -m "add gitignore"
 '
 
-test_expect_failure 'add stages file matching gitignore pattern' '
+test_expect_success 'add refuses ignored file without -f' '
 	cd repo &&
 	echo "log data" >debug.log &&
-	grit add debug.log &&
-	grit status --porcelain >actual &&
-	grep "debug.log" actual
+	test_must_fail grit add debug.log 2>err &&
+	grep -i "ignored" err
 '
 
-test_expect_failure 'add -f also stages ignored files' '
+test_expect_success 'add -f stages ignored files' '
 	cd repo &&
-	test_tick &&
-	grit commit -m "debug log" &&
 	echo "forced" >forced.log &&
 	grit add -f forced.log &&
 	grit status --porcelain >actual &&
 	grep "forced.log" actual
 '
 
-test_expect_failure 'add --force is same as -f' '
+test_expect_success 'add --force is same as -f' '
 	cd repo &&
 	test_tick &&
 	grit commit -m "with log" &&
@@ -225,16 +222,16 @@ test_expect_failure 'add --force is same as -f' '
 
 # -- pathspec ----------------------------------------------------------------
 
-test_expect_failure 'add with specific pathspec' '
+test_expect_success 'add with specific pathspec' '
 	cd repo &&
 	test_tick &&
 	grit commit -m "clean" &&
-	echo "x" >a.txt &&
-	echo "y" >b.txt &&
-	grit add a.txt &&
+	echo "x" >pathspec-a.txt &&
+	echo "y" >pathspec-b.txt &&
+	grit add pathspec-a.txt &&
 	grit status --porcelain >actual &&
-	grep "^A  a.txt" actual &&
-	grep "^?? b.txt" actual
+	grep "pathspec-a.txt" actual &&
+	grep "^?? pathspec-b.txt" actual
 '
 
 test_expect_success 'add with directory pathspec' '

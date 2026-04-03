@@ -47,26 +47,18 @@ test_expect_success 'get-all reads multi-valued keys' '
     test_cmp expect actual
 '
 
-test_expect_failure 'replace-all replaces last occurrence of multi-valued key' '
+test_expect_success 'replace-all replaces all occurrences of multi-valued key' '
     (cd repo && grit config --replace-all mtest.multi "replaced") &&
     (cd repo && grit config --get-all mtest.multi >../actual) &&
-    cat >expect <<-\EOF &&
-	alpha
-	beta
-	replaced
-	EOF
+    echo "replaced" >expect &&
     test_cmp expect actual
 '
 
-test_expect_failure 'config set --all replaces last of multi-valued key' '
+test_expect_success 'config set --all replaces all of multi-valued key' '
     (cd repo && printf "[setmulti]\n\tkey = one\n\tkey = two\n\tkey = three\n" >>.git/config) &&
     (cd repo && grit config set --all setmulti.key "unified") &&
     (cd repo && grit config get --all setmulti.key >../actual) &&
-    cat >expect <<-\EOF &&
-	one
-	two
-	unified
-	EOF
+    echo "unified" >expect &&
     test_cmp expect actual
 '
 
@@ -106,14 +98,11 @@ test_expect_success 'config set replaces last occurrence of multi-valued key' '
     test_cmp expect actual
 '
 
-test_expect_failure 'config set --all with multi-valued entries replaces last' '
+test_expect_success 'config set --all with multi-valued entries replaces all' '
     (cd repo && printf "[boolm]\n\tmulti = yes\n\tmulti = on\n" >>.git/config) &&
     (cd repo && grit config set --all boolm.multi "true") &&
     (cd repo && grit config get --all boolm.multi >../actual) &&
-    cat >expect <<-\EOF &&
-	yes
-	true
-	EOF
+    echo "true" >expect &&
     test_cmp expect actual
 '
 
@@ -217,14 +206,11 @@ test_expect_success 'config set multiple keys in same section' '
     test_cmp expect actual
 '
 
-test_expect_failure 'replace-all with --int type replaces last' '
+test_expect_success 'replace-all with --int type replaces all' '
     (cd repo && printf "[intm]\n\tmulti = 10\n\tmulti = 20\n" >>.git/config) &&
     (cd repo && grit config --replace-all --int intm.multi "99") &&
     (cd repo && grit config --get-all intm.multi >../actual) &&
-    cat >expect <<-\EOF &&
-	10
-	99
-	EOF
+    echo "99" >expect &&
     test_cmp expect actual
 '
 
@@ -238,17 +224,17 @@ test_expect_success 'config set overwrites previous value in same session' '
     test_cmp expect actual
 '
 
-test_expect_failure 'config --bool stores yes literally' '
+test_expect_success 'config --bool canonicalizes yes to true' '
     (cd repo && grit config --bool norm.bool yes) &&
     (cd repo && grit config get norm.bool >../actual) &&
-    echo "yes" >expect &&
+    echo "true" >expect &&
     test_cmp expect actual
 '
 
-test_expect_failure 'config --bool stores no literally' '
+test_expect_success 'config --bool canonicalizes no to false' '
     (cd repo && grit config --bool norm.boolno no) &&
     (cd repo && grit config get norm.boolno >../actual) &&
-    echo "no" >expect &&
+    echo "false" >expect &&
     test_cmp expect actual
 '
 
@@ -277,17 +263,17 @@ test_expect_success 'config set preserves other keys in section' '
     test_cmp expect actual
 '
 
-test_expect_failure 'config --bool on stores literally' '
+test_expect_success 'config --bool canonicalizes on to true' '
     (cd repo && grit config --bool norm.on on) &&
     (cd repo && grit config get norm.on >../actual) &&
-    echo "on" >expect &&
+    echo "true" >expect &&
     test_cmp expect actual
 '
 
-test_expect_failure 'config --bool off stores literally' '
+test_expect_success 'config --bool canonicalizes off to false' '
     (cd repo && grit config --bool norm.off off) &&
     (cd repo && grit config get norm.off >../actual) &&
-    echo "off" >expect &&
+    echo "false" >expect &&
     test_cmp expect actual
 '
 

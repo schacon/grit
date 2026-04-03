@@ -151,6 +151,10 @@ pub fn run(args: Args) -> Result<()> {
 
         // --deleted: only show entries whose file is missing from worktree
         if args.deleted && !show_cached {
+            // skip-worktree entries are intentionally absent — never report them
+            if entry.skip_worktree() {
+                continue;
+            }
             let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
             if full.exists() {
                 continue;
@@ -159,6 +163,10 @@ pub fn run(args: Args) -> Result<()> {
 
         // --modified: only show entries that differ from worktree
         if args.modified && !show_cached {
+            // skip-worktree entries are intentionally absent — never report them
+            if entry.skip_worktree() {
+                continue;
+            }
             let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
             if !is_modified(entry, &full) {
                 continue;
