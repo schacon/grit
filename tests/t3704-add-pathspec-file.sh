@@ -5,6 +5,8 @@ test_description='add with pathspec tests'
 . ./test-lib.sh
 
 test_expect_success 'setup' '
+	mkdir repo &&
+	cd repo &&
 	git init -q &&
 	git config user.name "Test User" &&
 	git config user.email "test@example.com" &&
@@ -20,6 +22,7 @@ test_expect_success 'setup' '
 '
 
 test_expect_success 'add specific files with pathspec' '
+	cd repo &&
 	git reset --hard checkpoint &&
 	echo A2 >fileA.t &&
 	echo B2 >fileB.t &&
@@ -30,6 +33,7 @@ test_expect_success 'add specific files with pathspec' '
 '
 
 test_expect_success 'add all with dot' '
+	cd repo &&
 	git reset --hard checkpoint &&
 	echo A2 >fileA.t &&
 	echo B2 >fileB.t &&
@@ -39,7 +43,8 @@ test_expect_success 'add all with dot' '
 	grep fileB.t actual
 '
 
-test_expect_failure 'add with directory pathspec' '
+test_expect_success 'add with directory pathspec' '
+	cd repo &&
 	git reset --hard checkpoint &&
 	mkdir -p subdir &&
 	echo sub >subdir/file.t &&
@@ -48,6 +53,7 @@ test_expect_failure 'add with directory pathspec' '
 '
 
 test_expect_success 'add with glob pathspec' '
+	cd repo &&
 	git reset --hard checkpoint &&
 	echo A2 >fileA.t &&
 	echo B2 >fileB.t &&

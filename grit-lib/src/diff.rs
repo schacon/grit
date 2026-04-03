@@ -1514,9 +1514,14 @@ fn extract_function_context(header: &str, old_lines: &[&str]) -> Option<String> 
             // or certain other non-whitespace chars. We use a simpler heuristic:
             // any line that doesn't start with whitespace.
             if first != b' ' && first != b'\t' {
-                // Truncate to 40 chars like Git does.
+                // Truncate to ~40 chars like Git does, respecting
+                // character boundaries.
                 let truncated = if line.len() > 40 {
-                    &line[..40]
+                    let mut end = 40;
+                    while end > 0 && !line.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    &line[..end]
                 } else {
                     line
                 };

@@ -1091,7 +1091,15 @@ fn find_func_context(header: &str, old_lines: &[&str]) -> Option<String> {
         if !line.is_empty() {
             let first = line.as_bytes()[0];
             if first != b' ' && first != b'\t' {
-                let truncated = if line.len() > 40 { &line[..40] } else { line };
+                let truncated = if line.len() > 40 {
+                    let mut end = 40;
+                    while end > 0 && !line.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    &line[..end]
+                } else {
+                    line
+                };
                 return Some(truncated.to_owned());
             }
         }

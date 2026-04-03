@@ -5,6 +5,8 @@ test_description='add -i and add -p basic tests'
 . ./test-lib.sh
 
 test_expect_success 'setup' '
+	mkdir repo &&
+	cd repo &&
 	git init -q &&
 	git config user.name "Test User" &&
 	git config user.email "test@example.com" &&
@@ -16,17 +18,20 @@ test_expect_success 'setup' '
 '
 
 test_expect_success 'add --help shows interactive option' '
+	cd repo &&
 	git add --help 2>&1 >output &&
 	grep -i "interactive\|patch" output
 '
 
 test_expect_success 'add basic file' '
+	cd repo &&
 	echo new >newfile &&
 	git add newfile &&
 	git ls-files --error-unmatch newfile
 '
 
 test_expect_success 'add with -A adds and removes' '
+	cd repo &&
 	git rm --cached newfile &&
 	echo newer >newfile &&
 	echo extra >extra &&
@@ -35,7 +40,8 @@ test_expect_success 'add with -A adds and removes' '
 	git ls-files --error-unmatch extra
 '
 
-test_expect_failure 'add -u updates tracked files only' '
+test_expect_success 'add -u updates tracked files only' '
+	cd repo &&
 	git reset --hard &&
 	echo modified >file &&
 	echo untracked >untracked &&
