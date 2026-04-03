@@ -145,13 +145,13 @@ test_expect_success 'cat-file -p of commit contains tree line' '
 test_expect_success 'cat-file -p of commit contains author' '
 	cd repo &&
 	grit cat-file -p HEAD >actual &&
-	grep "^author Test User" actual
+	grep "^author A U Thor" actual
 '
 
 test_expect_success 'cat-file -p of commit contains committer' '
 	cd repo &&
 	grit cat-file -p HEAD >actual &&
-	grep "^committer Test User" actual
+	grep "^committer C O Mitter" actual
 '
 
 test_expect_success 'cat-file -p of commit contains parent' '
