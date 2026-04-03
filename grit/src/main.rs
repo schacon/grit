@@ -190,6 +190,29 @@ fn run() -> Result<()> {
     dispatch(&subcmd, &rest, &opts)
 }
 
+/// Preprocess diff arguments: expand `-U<N>` to `--unified=<N>` so that
+/// clap does not swallow it into the trailing var-arg positional.
+fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut iter = rest.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "-U" {
+            // `-U <N>` with a space — merge into `--unified=<N>`
+            if let Some(val) = iter.next() {
+                result.push(format!("--unified={val}"));
+            } else {
+                result.push(arg.clone());
+            }
+        } else if let Some(n) = arg.strip_prefix("-U") {
+            // `-U<N>` without a space
+            result.push(format!("--unified={n}"));
+        } else {
+            result.push(arg.clone());
+        }
+    }
+    result
+}
+
 /// Preprocess log arguments: convert `-<N>` shorthand to `-n <N>`.
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
@@ -243,7 +266,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "daemon" => commands::daemon::run(parse_cmd_args(subcmd, rest)),
         "describe" => commands::describe::run(parse_cmd_args(subcmd, rest)),
         "diagnose" => commands::diagnose::run(parse_cmd_args(subcmd, rest)),
-        "diff" => commands::diff::run(parse_cmd_args(subcmd, rest)),
+        "diff" => commands::diff::run(parse_cmd_args(subcmd, &preprocess_diff_args(rest))),
         "diff-files" => commands::diff_files::run(parse_cmd_args(subcmd, rest)),
         "diff-index" => commands::diff_index::run(parse_cmd_args(subcmd, rest)),
         "diff-pairs" => commands::diff_pairs::run(parse_cmd_args(subcmd, rest)),

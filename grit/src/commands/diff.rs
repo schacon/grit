@@ -78,8 +78,12 @@ pub struct Args {
     #[arg(long = "word-diff", value_name = "MODE", default_missing_value = "plain", num_args = 0..=1)]
     pub word_diff: Option<String>,
 
+    /// Generate patch output (default behavior; for compatibility with git).
+    #[arg(short = 'p', long = "patch")]
+    pub patch: bool,
+
     /// Number of context lines in unified diff output (default: 3).
-    #[arg(short = 'U', long = "unified", value_name = "N")]
+    #[arg(short = 'U', long = "unified", value_name = "N", allow_hyphen_values = true)]
     pub unified: Option<usize>,
 
     /// Detect renames.
