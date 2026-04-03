@@ -115,9 +115,9 @@ test_expect_success 'format %h %s matches git' '
     test_cmp expect actual
 '
 
-test_expect_success 'format: prefix works same as without prefix' '
+test_expect_success 'format: prefix produces same content as git format:' '
     (cd repo && grit log --format="format:%h %s" >../actual) &&
-    (cd repo && grit log --format="%h %s" >../expect) &&
+    (cd repo && git log --format="format:%h %s" >../expect) &&
     test_cmp expect actual
 '
 

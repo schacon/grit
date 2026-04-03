@@ -113,9 +113,8 @@ test_expect_success 'branch -m renames a branch' '
     ! grep "old-name" actual
 '
 
-test_expect_success 'branch -m fails without new name' '
-    (cd repo && ! grit branch -m master 2>../actual_err) &&
-    grep -i "new branch name required" actual_err
+test_expect_success 'branch -m to same name is a no-op' '
+    (cd repo && grit branch -m master)
 '
 
 test_expect_success 'branch -m fails if target exists' '

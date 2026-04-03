@@ -777,6 +777,11 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         bail!("branch name required");
     };
 
+    // Renaming a branch to itself is a no-op
+    if old_name == new_name {
+        return Ok(());
+    }
+
     let old_path = repo.git_dir.join("refs/heads").join(old_name);
     let new_path = repo.git_dir.join("refs/heads").join(new_name);
 
