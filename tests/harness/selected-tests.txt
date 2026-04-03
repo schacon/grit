@@ -861,3 +861,4 @@ t7816-grep-binary-pattern.sh
 t7817-grep-sparse-checkout.sh
 t7900-maintenance.sh
 t7901-stash-resolve-merge.sh
+t8001-annotate.sh
