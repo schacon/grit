@@ -7168,30 +7168,30 @@ t4036-format-patch-signer-mime::format-normally	t4036-format-patch-signer-mime	f
 t4036-format-patch-signer-mime::format-with-signoff-without-funny-signer-name	t4036-format-patch-signer-mime	format with signoff without funny signer name	format-patch	not_ported
 t4036-format-patch-signer-mime::format-with-non-ascii-signer-name	t4036-format-patch-signer-mime	format with non ASCII signer name	format-patch	not_ported
 t4036-format-patch-signer-mime::attach-and-signoff-do-not-duplicate-mime-headers	t4036-format-patch-signer-mime	attach and signoff do not duplicate mime headers	format-patch	not_ported
-t4038-diff-combined::check-combined-output-1	t4038-diff-combined	check combined output (1)	diff	partial
-t4038-diff-combined::check-combined-output-1-with-git-diff-rev	t4038-diff-combined	check combined output (1) with git diff <rev>^!	diff	partial
-t4038-diff-combined::check-combined-output-2	t4038-diff-combined	check combined output (2)	diff	partial
-t4038-diff-combined::check-combined-output-2-with-git-diff-rev	t4038-diff-combined	check combined output (2) with git diff <rev>^!	diff	partial
-t4038-diff-combined::diagnose-truncated-file	t4038-diff-combined	diagnose truncated file	diff	partial
-t4038-diff-combined::setup-for-cc-raw	t4038-diff-combined	setup for --cc --raw	diff	partial
-t4038-diff-combined::check-cc-raw-with-four-trees	t4038-diff-combined	check --cc --raw with four trees	diff	partial
-t4038-diff-combined::check-cc-raw-with-forty-trees	t4038-diff-combined	check --cc --raw with forty trees	diff	partial
-t4038-diff-combined::setup-combined-ignore-spaces	t4038-diff-combined	setup combined ignore spaces	diff	partial
-t4038-diff-combined::check-combined-output-no-ignore-space	t4038-diff-combined	check combined output (no ignore space)	diff	partial
-t4038-diff-combined::check-combined-output-ignore-space-at-eol	t4038-diff-combined	check combined output (ignore space at eol)	diff	partial
-t4038-diff-combined::check-combined-output-ignore-space-change	t4038-diff-combined	check combined output (ignore space change)	diff	partial
-t4038-diff-combined::check-combined-output-ignore-all-spaces	t4038-diff-combined	check combined output (ignore all spaces)	diff	partial
-t4038-diff-combined::combine-diff-coalesce-simple	t4038-diff-combined	combine diff coalesce simple	diff	partial
-t4038-diff-combined::combine-diff-coalesce-tricky	t4038-diff-combined	combine diff coalesce tricky	diff	partial
-t4038-diff-combined::combine-diff-missing-delete-bug	t4038-diff-combined	combine diff missing delete bug	diff	partial
-t4038-diff-combined::combine-diff-gets-tree-sorting-right	t4038-diff-combined	combine diff gets tree sorting right	diff	partial
-t4038-diff-combined::setup-for-combined-all-paths	t4038-diff-combined	setup for --combined-all-paths	diff	partial
-t4038-diff-combined::combined-all-paths-and-raw	t4038-diff-combined	--combined-all-paths and --raw	diff	partial
-t4038-diff-combined::combined-all-paths-and-cc	t4038-diff-combined	--combined-all-paths and --cc	diff	partial
-t4038-diff-combined::setup-for-combined-all-paths-with-funny-names	t4038-diff-combined	setup for --combined-all-paths with funny names	diff	partial
-t4038-diff-combined::combined-all-paths-and-raw-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw and funny names	diff	partial
-t4038-diff-combined::combined-all-paths-and-raw-and-z-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw -and -z and funny names	diff	partial
-t4038-diff-combined::combined-all-paths-and-cc-and-funny-names	t4038-diff-combined	--combined-all-paths and --cc and funny names	diff	partial
+t4038-diff-combined::check-combined-output-1	t4038-diff-combined	check combined output (1)	diff	pass
+t4038-diff-combined::check-combined-output-1-with-git-diff-rev	t4038-diff-combined	check combined output (1) with git diff <rev>^!	diff	pass
+t4038-diff-combined::check-combined-output-2	t4038-diff-combined	check combined output (2)	diff	pass
+t4038-diff-combined::check-combined-output-2-with-git-diff-rev	t4038-diff-combined	check combined output (2) with git diff <rev>^!	diff	pass
+t4038-diff-combined::diagnose-truncated-file	t4038-diff-combined	diagnose truncated file	diff	pass
+t4038-diff-combined::setup-for-cc-raw	t4038-diff-combined	setup for --cc --raw	diff	pass
+t4038-diff-combined::check-cc-raw-with-four-trees	t4038-diff-combined	check --cc --raw with four trees	diff	pass
+t4038-diff-combined::check-cc-raw-with-forty-trees	t4038-diff-combined	check --cc --raw with forty trees	diff	pass
+t4038-diff-combined::setup-combined-ignore-spaces	t4038-diff-combined	setup combined ignore spaces	diff	pass
+t4038-diff-combined::check-combined-output-no-ignore-space	t4038-diff-combined	check combined output (no ignore space)	diff	pass
+t4038-diff-combined::check-combined-output-ignore-space-at-eol	t4038-diff-combined	check combined output (ignore space at eol)	diff	pass
+t4038-diff-combined::check-combined-output-ignore-space-change	t4038-diff-combined	check combined output (ignore space change)	diff	pass
+t4038-diff-combined::check-combined-output-ignore-all-spaces	t4038-diff-combined	check combined output (ignore all spaces)	diff	pass
+t4038-diff-combined::combine-diff-coalesce-simple	t4038-diff-combined	combine diff coalesce simple	diff	pass
+t4038-diff-combined::combine-diff-coalesce-tricky	t4038-diff-combined	combine diff coalesce tricky	diff	pass
+t4038-diff-combined::combine-diff-missing-delete-bug	t4038-diff-combined	combine diff missing delete bug	diff	pass
+t4038-diff-combined::combine-diff-gets-tree-sorting-right	t4038-diff-combined	combine diff gets tree sorting right	diff	pass
+t4038-diff-combined::setup-for-combined-all-paths	t4038-diff-combined	setup for --combined-all-paths	diff	pass
+t4038-diff-combined::combined-all-paths-and-raw	t4038-diff-combined	--combined-all-paths and --raw	diff	pass
+t4038-diff-combined::combined-all-paths-and-cc	t4038-diff-combined	--combined-all-paths and --cc	diff	pass
+t4038-diff-combined::setup-for-combined-all-paths-with-funny-names	t4038-diff-combined	setup for --combined-all-paths with funny names	diff	pass
+t4038-diff-combined::combined-all-paths-and-raw-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw and funny names	diff	pass
+t4038-diff-combined::combined-all-paths-and-raw-and-z-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw -and -z and funny names	diff	pass
+t4038-diff-combined::combined-all-paths-and-cc-and-funny-names	t4038-diff-combined	--combined-all-paths and --cc and funny names	diff	pass
 t4039-diff-assume-unchanged::setup	t4039-diff-assume-unchanged	setup	diff	pass
 t4039-diff-assume-unchanged::diff-index-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-index does not examine assume-unchanged entries	diff	pass
 t4039-diff-assume-unchanged::diff-files-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-files does not examine assume-unchanged entries	diff	pass
@@ -9006,27 +9006,27 @@ t5301-sliding-window::verify-pack-v-packedgitwindowsize-1-page	t5301-sliding-win
 t5301-sliding-window::verify-pack-v-packedgit-windowsize-limit-1-page	t5301-sliding-window	verify-pack -v, packedGit{WindowSize,Limit} == 1 page	config	pass
 t5301-sliding-window::repack-a-d-packedgit-windowsize-limit-1-page	t5301-sliding-window	repack -a -d, packedGit{WindowSize,Limit} == 1 page	commit-tree	pass
 t5301-sliding-window::verify-pack-v-defaults-2	t5301-sliding-window	verify-pack -v, defaults	config	pass
-t5302-pack-index::setup	t5302-pack-index	setup	commit-tree	pass
-t5302-pack-index::pack-objects-with-index-version-1	t5302-pack-index	pack-objects with index version 1	pack-objects	pass
-t5302-pack-index::pack-objects-with-index-version-2	t5302-pack-index	pack-objects with index version 2	pack-objects	pass
-t5302-pack-index::both-packs-should-be-identical	t5302-pack-index	both packs should be identical		pass
-t5302-pack-index::index-v1-and-index-v2-should-be-different	t5302-pack-index	index v1 and index v2 should be different		pass
-t5302-pack-index::index-pack-with-index-version-1	t5302-pack-index	index-pack with index version 1	index-pack	pass
-t5302-pack-index::index-pack-with-index-version-2	t5302-pack-index	index-pack with index version 2	index-pack	pass
-t5302-pack-index::index-pack-results-should-match-pack-objects-ones	t5302-pack-index	index-pack results should match pack-objects ones		pass
-t5302-pack-index::index-pack-verify-on-index-version-1	t5302-pack-index	index-pack --verify on index version 1	index-pack	pass
-t5302-pack-index::index-pack-verify-on-index-version-2	t5302-pack-index	index-pack --verify on index version 2	index-pack	pass
-t5302-pack-index::pack-objects-index-version-2-is-not-accepted	t5302-pack-index	pack-objects --index-version=2, is not accepted	pack-objects	pass
-t5302-pack-index::index-v2-force-some-64-bit-offsets-with-pack-objects	t5302-pack-index	index v2: force some 64-bit offsets with pack-objects	pack-objects	pass
-t5302-pack-index::index-v1-1-stream-pack-to-repository	t5302-pack-index	[index v1] 1) stream pack to repository	count-objects	pass
-t5302-pack-index::index-v1-6-newly-created-pack-is-bad	t5302-pack-index	[index v1] 6) newly created pack is BAD !	verify-pack	pass
-t5302-pack-index::index-v2-1-stream-pack-to-repository	t5302-pack-index	[index v2] 1) stream pack to repository	count-objects	pass
-t5302-pack-index::running-index-pack-in-the-object-store	t5302-pack-index	running index-pack in the object store	index-pack	pass
-t5302-pack-index::index-pack-strict-warns-upon-missing-tagger-in-tag	t5302-pack-index	index-pack --strict warns upon missing tagger in tag	hash-object	pass
-t5302-pack-index::index-pack-fsck-objects-also-warns-upon-missing-tagger-in-tag	t5302-pack-index	index-pack --fsck-objects also warns upon missing tagger in tag	index-pack	pass
-t5302-pack-index::index-pack-v-stdin-produces-progress-for-both-phases	t5302-pack-index	index-pack -v --stdin produces progress for both phases	index-pack	pass
-t5302-pack-index::too-large-packs-report-the-breach	t5302-pack-index	too-large packs report the breach	index-pack	pass
-t5302-pack-index::index-pack-fsck-objects-outside-of-a-repo	t5302-pack-index	index-pack --fsck-objects outside of a repo	index-pack	pass
+t5302-pack-index::setup	t5302-pack-index	setup	commit-tree	partial
+t5302-pack-index::pack-objects-with-index-version-1	t5302-pack-index	pack-objects with index version 1	pack-objects	partial
+t5302-pack-index::pack-objects-with-index-version-2	t5302-pack-index	pack-objects with index version 2	pack-objects	partial
+t5302-pack-index::both-packs-should-be-identical	t5302-pack-index	both packs should be identical		partial
+t5302-pack-index::index-v1-and-index-v2-should-be-different	t5302-pack-index	index v1 and index v2 should be different		partial
+t5302-pack-index::index-pack-with-index-version-1	t5302-pack-index	index-pack with index version 1	index-pack	partial
+t5302-pack-index::index-pack-with-index-version-2	t5302-pack-index	index-pack with index version 2	index-pack	partial
+t5302-pack-index::index-pack-results-should-match-pack-objects-ones	t5302-pack-index	index-pack results should match pack-objects ones		partial
+t5302-pack-index::index-pack-verify-on-index-version-1	t5302-pack-index	index-pack --verify on index version 1	index-pack	partial
+t5302-pack-index::index-pack-verify-on-index-version-2	t5302-pack-index	index-pack --verify on index version 2	index-pack	partial
+t5302-pack-index::pack-objects-index-version-2-is-not-accepted	t5302-pack-index	pack-objects --index-version=2, is not accepted	pack-objects	partial
+t5302-pack-index::index-v2-force-some-64-bit-offsets-with-pack-objects	t5302-pack-index	index v2: force some 64-bit offsets with pack-objects	pack-objects	partial
+t5302-pack-index::index-v1-1-stream-pack-to-repository	t5302-pack-index	[index v1] 1) stream pack to repository	count-objects	partial
+t5302-pack-index::index-v1-6-newly-created-pack-is-bad	t5302-pack-index	[index v1] 6) newly created pack is BAD !	verify-pack	partial
+t5302-pack-index::index-v2-1-stream-pack-to-repository	t5302-pack-index	[index v2] 1) stream pack to repository	count-objects	partial
+t5302-pack-index::running-index-pack-in-the-object-store	t5302-pack-index	running index-pack in the object store	index-pack	partial
+t5302-pack-index::index-pack-strict-warns-upon-missing-tagger-in-tag	t5302-pack-index	index-pack --strict warns upon missing tagger in tag	hash-object	partial
+t5302-pack-index::index-pack-fsck-objects-also-warns-upon-missing-tagger-in-tag	t5302-pack-index	index-pack --fsck-objects also warns upon missing tagger in tag	index-pack	partial
+t5302-pack-index::index-pack-v-stdin-produces-progress-for-both-phases	t5302-pack-index	index-pack -v --stdin produces progress for both phases	index-pack	partial
+t5302-pack-index::too-large-packs-report-the-breach	t5302-pack-index	too-large packs report the breach	index-pack	partial
+t5302-pack-index::index-pack-fsck-objects-outside-of-a-repo	t5302-pack-index	index-pack --fsck-objects outside of a repo	index-pack	partial
 t5303-pack-corruption-resilience::initial-setup-validation	t5303-pack-corruption-resilience	initial setup validation	cat-file	not_ported
 t5303-pack-corruption-resilience::create-corruption-in-header-of-first-object	t5303-pack-corruption-resilience	create corruption in header of first object	cat-file	not_ported
 t5303-pack-corruption-resilience::but-having-a-loose-copy-allows-for-full-recovery	t5303-pack-corruption-resilience	... but having a loose copy allows for full recovery	cat-file	not_ported
@@ -10120,43 +10120,43 @@ t5510-fetch::upstream-tracking-info-is-added-with-set-upstream	t5510-fetch	upstr
 t5510-fetch::upstream-tracking-info-is-added-even-with-conflicts	t5510-fetch	upstream tracking info is added even with conflicts	fetch	pass
 t5510-fetch::head-is-updated-even-with-conflicts	t5510-fetch	HEAD is updated even with conflicts	fetch	pass
 t5511-refspec::title	t5511-refspec	$title		not_ported
-t5512-ls-remote::set-up-fake-upload-pack	t5512-ls-remote	set up fake upload-pack	ls-remote	pass
-t5512-ls-remote::dies-when-no-remote-found	t5512-ls-remote	dies when no remote found	ls-remote	pass
-t5512-ls-remote::ls-remote-tags-git	t5512-ls-remote	ls-remote --tags .git	ls-remote	pass
-t5512-ls-remote::ls-remote-git	t5512-ls-remote	ls-remote .git	ls-remote	pass
-t5512-ls-remote::ls-remote-tags-self	t5512-ls-remote	ls-remote --tags self	ls-remote	pass
-t5512-ls-remote::ls-remote-self	t5512-ls-remote	ls-remote self	ls-remote	pass
-t5512-ls-remote::ls-remote-branches-self	t5512-ls-remote	ls-remote --branches self	ls-remote	pass
-t5512-ls-remote::ls-remote-h-is-deprecated-w-o-warning	t5512-ls-remote	ls-remote -h is deprecated w/o warning	ls-remote	pass
-t5512-ls-remote::ls-remote-heads-is-deprecated-and-hidden-w-o-warning	t5512-ls-remote	ls-remote --heads is deprecated and hidden w/o warning	ls-remote	pass
-t5512-ls-remote::ls-remote-sort-version-refname-tags-self	t5512-ls-remote	ls-remote --sort="version:refname" --tags self	ls-remote	pass
-t5512-ls-remote::ls-remote-sort-version-refname-tags-self-2	t5512-ls-remote	ls-remote --sort="-version:refname" --tags self	ls-remote	pass
-t5512-ls-remote::ls-remote-sort-refname-tags-self	t5512-ls-remote	ls-remote --sort="-refname" --tags self	ls-remote	pass
-t5512-ls-remote::dies-when-no-remote-specified-multiple-remotes-found-and-no-default-specified	t5512-ls-remote	dies when no remote specified, multiple remotes found, and no default specified	ls-remote	pass
-t5512-ls-remote::succeeds-when-no-remote-specified-but-only-one-found	t5512-ls-remote	succeeds when no remote specified but only one found	ls-remote	pass
-t5512-ls-remote::use-origin-when-no-remote-specified-and-multiple-found	t5512-ls-remote	use "origin" when no remote specified and multiple found	ls-remote	pass
-t5512-ls-remote::suppress-from-url-with-q	t5512-ls-remote	suppress "From <url>" with -q	ls-remote	pass
-t5512-ls-remote::use-branch-name-remote-if-possible	t5512-ls-remote	use branch.<name>.remote if possible	ls-remote	pass
-t5512-ls-remote::confuses-pattern-as-remote-when-no-remote-specified	t5512-ls-remote	confuses pattern as remote when no remote specified	ls-remote	pass
-t5512-ls-remote::die-with-non-2-for-wrong-repository-even-with-exit-code	t5512-ls-remote	die with non-2 for wrong repository even with --exit-code	ls-remote	pass
-t5512-ls-remote::report-success-even-when-nothing-matches	t5512-ls-remote	Report success even when nothing matches	ls-remote	pass
-t5512-ls-remote::report-no-match-with-exit-code	t5512-ls-remote	Report no-match with --exit-code	ls-remote	pass
-t5512-ls-remote::report-match-with-exit-code	t5512-ls-remote	Report match with --exit-code	ls-remote	pass
-t5512-ls-remote::set-up-some-extra-tags-for-ref-hiding	t5512-ls-remote	set up some extra tags for ref hiding	ls-remote	pass
-t5512-ls-remote::overrides-work-between-mixed-transfer-upload-pack-hiderefs	t5512-ls-remote	overrides work between mixed transfer/upload-pack hideRefs	ls-remote	pass
-t5512-ls-remote::protocol-v2-supports-hiderefs	t5512-ls-remote	protocol v2 supports hiderefs	ls-remote	pass
-t5512-ls-remote::ls-remote-symref	t5512-ls-remote	ls-remote --symref	ls-remote	pass
-t5512-ls-remote::ls-remote-with-filtered-symref-refname	t5512-ls-remote	ls-remote with filtered symref (refname)	ls-remote	pass
-t5512-ls-remote::ls-remote-with-filtered-symref-branches	t5512-ls-remote	ls-remote with filtered symref (--branches)	ls-remote	pass
-t5512-ls-remote::indicate-no-refs-in-v0-standards-compliant-empty-remote	t5512-ls-remote	indicate no refs in v0 standards-compliant empty remote	ls-remote	pass
-t5512-ls-remote::ls-remote-works-outside-repository	t5512-ls-remote	ls-remote works outside repository	ls-remote	pass
-t5512-ls-remote::ls-remote-sort-fails-gracefully-outside-repository	t5512-ls-remote	ls-remote --sort fails gracefully outside repository	ls-remote	pass
-t5512-ls-remote::ls-remote-patterns-work-with-all-protocol-versions	t5512-ls-remote	ls-remote patterns work with all protocol versions	ls-remote	pass
-t5512-ls-remote::ls-remote-prefixes-work-with-all-protocol-versions	t5512-ls-remote	ls-remote prefixes work with all protocol versions	ls-remote	pass
-t5512-ls-remote::v0-clients-can-handle-multiple-symrefs	t5512-ls-remote	v0 clients can handle multiple symrefs	ls-remote	pass
-t5512-ls-remote::helper-with-refspec-capability-fails-gracefully	t5512-ls-remote	helper with refspec capability fails gracefully	ls-remote	pass
-t5512-ls-remote::hide-some-refs-with-configsection-hiderefs	t5512-ls-remote	Hide some refs with $configsection.hiderefs	ls-remote	pass
-t5512-ls-remote::override-hiding-of-configsection-hiderefs	t5512-ls-remote	Override hiding of $configsection.hiderefs	ls-remote	pass
+t5512-ls-remote::set-up-fake-upload-pack	t5512-ls-remote	set up fake upload-pack	ls-remote	partial
+t5512-ls-remote::dies-when-no-remote-found	t5512-ls-remote	dies when no remote found	ls-remote	partial
+t5512-ls-remote::ls-remote-tags-git	t5512-ls-remote	ls-remote --tags .git	ls-remote	partial
+t5512-ls-remote::ls-remote-git	t5512-ls-remote	ls-remote .git	ls-remote	partial
+t5512-ls-remote::ls-remote-tags-self	t5512-ls-remote	ls-remote --tags self	ls-remote	partial
+t5512-ls-remote::ls-remote-self	t5512-ls-remote	ls-remote self	ls-remote	partial
+t5512-ls-remote::ls-remote-branches-self	t5512-ls-remote	ls-remote --branches self	ls-remote	partial
+t5512-ls-remote::ls-remote-h-is-deprecated-w-o-warning	t5512-ls-remote	ls-remote -h is deprecated w/o warning	ls-remote	partial
+t5512-ls-remote::ls-remote-heads-is-deprecated-and-hidden-w-o-warning	t5512-ls-remote	ls-remote --heads is deprecated and hidden w/o warning	ls-remote	partial
+t5512-ls-remote::ls-remote-sort-version-refname-tags-self	t5512-ls-remote	ls-remote --sort="version:refname" --tags self	ls-remote	partial
+t5512-ls-remote::ls-remote-sort-version-refname-tags-self-2	t5512-ls-remote	ls-remote --sort="-version:refname" --tags self	ls-remote	partial
+t5512-ls-remote::ls-remote-sort-refname-tags-self	t5512-ls-remote	ls-remote --sort="-refname" --tags self	ls-remote	partial
+t5512-ls-remote::dies-when-no-remote-specified-multiple-remotes-found-and-no-default-specified	t5512-ls-remote	dies when no remote specified, multiple remotes found, and no default specified	ls-remote	partial
+t5512-ls-remote::succeeds-when-no-remote-specified-but-only-one-found	t5512-ls-remote	succeeds when no remote specified but only one found	ls-remote	partial
+t5512-ls-remote::use-origin-when-no-remote-specified-and-multiple-found	t5512-ls-remote	use "origin" when no remote specified and multiple found	ls-remote	partial
+t5512-ls-remote::suppress-from-url-with-q	t5512-ls-remote	suppress "From <url>" with -q	ls-remote	partial
+t5512-ls-remote::use-branch-name-remote-if-possible	t5512-ls-remote	use branch.<name>.remote if possible	ls-remote	partial
+t5512-ls-remote::confuses-pattern-as-remote-when-no-remote-specified	t5512-ls-remote	confuses pattern as remote when no remote specified	ls-remote	partial
+t5512-ls-remote::die-with-non-2-for-wrong-repository-even-with-exit-code	t5512-ls-remote	die with non-2 for wrong repository even with --exit-code	ls-remote	partial
+t5512-ls-remote::report-success-even-when-nothing-matches	t5512-ls-remote	Report success even when nothing matches	ls-remote	partial
+t5512-ls-remote::report-no-match-with-exit-code	t5512-ls-remote	Report no-match with --exit-code	ls-remote	partial
+t5512-ls-remote::report-match-with-exit-code	t5512-ls-remote	Report match with --exit-code	ls-remote	partial
+t5512-ls-remote::set-up-some-extra-tags-for-ref-hiding	t5512-ls-remote	set up some extra tags for ref hiding	ls-remote	partial
+t5512-ls-remote::overrides-work-between-mixed-transfer-upload-pack-hiderefs	t5512-ls-remote	overrides work between mixed transfer/upload-pack hideRefs	ls-remote	partial
+t5512-ls-remote::protocol-v2-supports-hiderefs	t5512-ls-remote	protocol v2 supports hiderefs	ls-remote	partial
+t5512-ls-remote::ls-remote-symref	t5512-ls-remote	ls-remote --symref	ls-remote	partial
+t5512-ls-remote::ls-remote-with-filtered-symref-refname	t5512-ls-remote	ls-remote with filtered symref (refname)	ls-remote	partial
+t5512-ls-remote::ls-remote-with-filtered-symref-branches	t5512-ls-remote	ls-remote with filtered symref (--branches)	ls-remote	partial
+t5512-ls-remote::indicate-no-refs-in-v0-standards-compliant-empty-remote	t5512-ls-remote	indicate no refs in v0 standards-compliant empty remote	ls-remote	partial
+t5512-ls-remote::ls-remote-works-outside-repository	t5512-ls-remote	ls-remote works outside repository	ls-remote	partial
+t5512-ls-remote::ls-remote-sort-fails-gracefully-outside-repository	t5512-ls-remote	ls-remote --sort fails gracefully outside repository	ls-remote	partial
+t5512-ls-remote::ls-remote-patterns-work-with-all-protocol-versions	t5512-ls-remote	ls-remote patterns work with all protocol versions	ls-remote	partial
+t5512-ls-remote::ls-remote-prefixes-work-with-all-protocol-versions	t5512-ls-remote	ls-remote prefixes work with all protocol versions	ls-remote	partial
+t5512-ls-remote::v0-clients-can-handle-multiple-symrefs	t5512-ls-remote	v0 clients can handle multiple symrefs	ls-remote	partial
+t5512-ls-remote::helper-with-refspec-capability-fails-gracefully	t5512-ls-remote	helper with refspec capability fails gracefully	ls-remote	partial
+t5512-ls-remote::hide-some-refs-with-configsection-hiderefs	t5512-ls-remote	Hide some refs with $configsection.hiderefs	ls-remote	partial
+t5512-ls-remote::override-hiding-of-configsection-hiderefs	t5512-ls-remote	Override hiding of $configsection.hiderefs	ls-remote	partial
 t5514-fetch-multiple::git-fetch-all	t5514-fetch-multiple	git fetch --all	fetch	not_ported
 t5514-fetch-multiple::git-fetch-all-no-write-fetch-head	t5514-fetch-multiple	git fetch --all --no-write-fetch-head	fetch	not_ported
 t5514-fetch-multiple::git-fetch-all-should-continue-if-a-remote-has-errors	t5514-fetch-multiple	git fetch --all should continue if a remote has errors	fetch	not_ported

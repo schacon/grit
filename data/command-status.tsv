@@ -10,13 +10,13 @@ clean	Main Porcelain	yes	90	10	80	11.1
 clone	Main Porcelain	yes	519	138	380	26.5
 commit	Main Porcelain	yes	435	289	142	66.4
 describe	Main Porcelain	yes	59	1	58	1.7
-diff	Main Porcelain	yes	983	720	233	73.2
+diff	Main Porcelain	yes	983	721	233	73.4
 fetch	Main Porcelain	yes	465	107	358	23.0
 format-patch	Main Porcelain	yes	231	2	229	0.9
 gc	Main Porcelain	yes	38	33	5	86.8
 grep	Main Porcelain	yes	264	197	67	74.6
 init	Main Porcelain	yes	293	117	174	39.8
-log	Main Porcelain	yes	594	392	159	65.9
+log	Main Porcelain	yes	594	391	159	65.8
 merge	Main Porcelain	yes	658	197	461	29.9
 mv	Main Porcelain	yes	77	54	23	70.1
 notes	Main Porcelain	yes	308	0	308	0.0
@@ -41,7 +41,7 @@ blame	Ancillary Porcelain	yes	102	2	99	2.4
 bundle	Ancillary Porcelain	yes	44	1	43	2.3
 cherry	Ancillary Porcelain	yes	4	4	0	100.0
 config	Ancillary Porcelain	yes	657	426	228	64.9
-count-objects	Ancillary Porcelain	yes	9	5	4	55.6
+count-objects	Ancillary Porcelain	yes	9	5	4	54.8
 diagnose	Ancillary Porcelain	yes	4	0	4	0.0
 difftool	Ancillary Porcelain	yes	61	0	61	0.0
 fast-export	Ancillary Porcelain	yes	89	0	89	0.0
@@ -76,7 +76,7 @@ check-ref-format	Plumbing	yes	6	5	1	83.3
 checkout-index	Plumbing	yes	13	10	3	76.9
 column	Plumbing	yes	15	0	15	0.0
 commit-graph	Plumbing	yes	94	0	94	0.0
-commit-tree	Plumbing	yes	15	10	5	66.4
+commit-tree	Plumbing	yes	15	10	5	66.2
 credential	Plumbing	yes	8	0	8	0.0
 credential-cache	Plumbing	yes	6	0	6	0.0
 credential-store	Plumbing	yes	15	0	15	0.0
@@ -89,13 +89,13 @@ fmt-merge-msg	Plumbing	yes	37	36	1	97.3
 for-each-ref	Plumbing	yes	90	69	21	76.7
 for-each-repo	Plumbing	yes	5	0	5	0.0
 get-tar-commit-id	Plumbing	yes	1	1	0	100.0
-hash-object	Plumbing	yes	56	36	14	64.8
+hash-object	Plumbing	yes	56	36	14	64.7
 hook	Plumbing	yes	41	0	41	0.0
 http-backend	Plumbing	yes	18	0	18	0.0
-index-pack	Plumbing	yes	39	26	13	66.7
+index-pack	Plumbing	yes	39	26	13	65.9
 interpret-trailers	Plumbing	yes	98	0	98	0.0
 ls-files	Plumbing	yes	215	72	132	33.6
-ls-remote	Plumbing	yes	64	40	24	62.5
+ls-remote	Plumbing	yes	64	3	24	4.7
 ls-tree	Plumbing	yes	45	39	5	86.6
 mailinfo	Plumbing	yes	23	23	0	100.0
 mailsplit	Plumbing	yes	0	0	0	0.0
@@ -107,7 +107,7 @@ mktag	Plumbing	yes	11	11	0	100.0
 mktree	Plumbing	yes	8	7	1	87.5
 multi-pack-index	Plumbing	yes	102	0	102	0.0
 name-rev	Plumbing	yes	0	0	0	0.0
-pack-objects	Plumbing	yes	120	18	102	15.0
+pack-objects	Plumbing	yes	120	18	102	14.9
 pack-redundant	Plumbing	yes	18	0	18	0.0
 patch-id	Plumbing	yes	26	25	1	96.2
 prune-packed	Plumbing	yes	0	0	0	0.0
@@ -129,5 +129,5 @@ update-server-info	Plumbing	yes	11	3	8	24.2
 upload-archive	Plumbing	yes	0	0	0	0.0
 upload-pack	Plumbing	yes	43	0	43	0.0
 var	Plumbing	yes	27	27	0	100.0
-verify-pack	Plumbing	yes	12	11	1	91.7
+verify-pack	Plumbing	yes	12	11	1	91.4
 write-tree	Plumbing	yes	13	12	1	91.5
