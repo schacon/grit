@@ -907,6 +907,11 @@ fn apply_format_string(
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.author, Some("iso-strict")));
                         }
+                        Some('r') => {
+                            chars.next();
+                            // %ar — author relative date
+                            result.push_str(&format_date_with_mode(&info.author, Some("relative")));
+                        }
                         _ => result.push_str("%a"),
                     }
                 }
@@ -937,6 +942,11 @@ fn apply_format_string(
                         Some('I') => {
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.committer, Some("iso-strict")));
+                        }
+                        Some('r') => {
+                            chars.next();
+                            // %cr — committer relative date
+                            result.push_str(&format_date_with_mode(&info.committer, Some("relative")));
                         }
                         _ => result.push_str("%c"),
                     }
