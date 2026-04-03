@@ -143,7 +143,7 @@ test_expect_success 'ls-files with nonexistent pathspec returns empty' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'ls-files -d shows deleted tracked files' '
+test_expect_success 'ls-files -d shows deleted tracked files' '
 	cd repo &&
 	rm tracked.txt &&
 	git ls-files -d >actual &&

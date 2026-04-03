@@ -124,6 +124,14 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
 
+        // --deleted: only show entries whose file is missing from worktree
+        if args.deleted && !show_cached {
+            let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
+            if full.exists() {
+                continue;
+            }
+        }
+
         let tag = if args.show_tag {
             Some(status_tag(entry))
         } else {
@@ -145,7 +153,7 @@ pub fn run(args: Args) -> Result<()> {
                 name
             )?;
             out.write_all(&[term])?;
-        } else if show_cached {
+        } else if show_cached || args.deleted {
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(display);
             if let Some(t) = tag {
