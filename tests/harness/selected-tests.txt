@@ -556,9 +556,11 @@ t6003-rev-list-topo-order.sh
 t6004-rev-list-path-optim.sh
 t6005-rev-list-count.sh
 t6006-rev-list-format.sh
+t6007-rev-list-cherry-pick-file.sh
 t6007-rev-list-cherry-pick-status.sh
 t6009-rev-list-parent.sh
 t6010-merge-base.sh
+t6011-rev-list-with-bad-commit.sh
 t6011-rev-list-with-hierarchies.sh
 t6012-rev-list-simplify.sh
 t6013-rev-list-reverse-parents.sh
@@ -591,6 +593,7 @@ t6403-merge-file.sh
 t6500-gc.sh
 t7001-mv.sh
 t7004-tag.sh
+t7005-editor.sh
 t7006-pager.sh
 t7007-show.sh
 t7010-setup.sh
@@ -625,6 +628,8 @@ t7501-commit-basic-functionality.sh
 t7501-commit-basic.sh
 t7502-commit-porcelain.sh
 t7503-pre-commit-and-diff-whitespace.sh
+t7503-pre-commit-and-pre-merge-commit-hooks.sh
+t7504-commit-msg-hook.sh
 t7505-prepare-commit-msg.sh
 t7507-commit-verbose.sh
 t7508-status.sh
@@ -633,11 +638,15 @@ t7511-status-index.sh
 t7512-status-help.sh
 t7515-status-symlinks.sh
 t7517-per-repo-email.sh
+t7518-ident-corner-cases.sh
 t7521-ignored-mode.sh
+t7524-commit-summary.sh
 t7525-status-rename.sh
 t7600-merge.sh
+t7601-merge-pull-config.sh
 t7700-repack.sh
 t7810-grep.sh
+t7815-grep-binary.sh
 t8010-cat-file-batch.sh
 t8020-hash-object-extra.sh
 t8030-write-tree-extra.sh

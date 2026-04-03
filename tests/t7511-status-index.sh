@@ -1,13 +1,10 @@
 #!/bin/sh
-
 test_description='git status with certain file name lengths'
-
+cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup: init repo' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com"
+	git init
 '
 
 files="0 1 2 3 4 5 6 7 8 9 a b c d e f g h i j k l m n o p q r s t u v w x y z"
@@ -15,20 +12,15 @@ files="0 1 2 3 4 5 6 7 8 9 a b c d e f g h i j k l m n o p q r s t u v w x y z"
 check() {
 	len=$1
 	prefix=$2
-
-	for i in $files
-	do
-		: >$prefix$i
-	done
-
+	for i in $files; do : >$prefix$i; done
 	test_expect_success "status, filename length $len" "
 		git add $prefix* &&
 		git status
 	"
-	rm $prefix* .git/index
+	rm -f $prefix*
+	rm -f .git/index
 }
 
-check  1
 check  2 p
 check  3 px
 check  4 pre

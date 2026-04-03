@@ -1,24 +1,28 @@
 #!/bin/sh
-
 test_description='log/show --expand-tabs'
-
+cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com"
+HT="	"
+
+test_expect_success 'setup' '
+	git init repo &&
+	cd repo &&
+	git config user.name "Test" &&
+	git config user.email "t@t.com" &&
+	test_tick &&
+	sed -e "s/Q/$HT/g" <<-EOFMSG >msg &&
+	Qtab indent at the beginning of the title line
+
+	Qtab indent on a line in the body
+	EOFMSG
+	git commit --allow-empty -F msg
 '
 
-test_expect_success 'setup commit with tab in message' '
-	git commit --allow-empty -m "	tab-indented title" &&
-	git commit --allow-empty -m "normal title"
-'
-
-test_expect_success 'log shows commit messages' '
-	git log --oneline >actual &&
-	grep "tab-indented" actual &&
-	grep "normal" actual
+test_expect_success 'log shows commit with tab in message' '
+	cd repo &&
+	git log -n 1 >output &&
+	grep "tab indent" output
 '
 
 test_done

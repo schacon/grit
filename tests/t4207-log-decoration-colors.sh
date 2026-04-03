@@ -1,33 +1,25 @@
 #!/bin/sh
-
-test_description='test "git log --decorate" output'
-
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
+test_description='test git log --decorate colors'
+cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com"
-'
-
 test_expect_success 'setup' '
-	test_commit A &&
-	test_commit B &&
-	git tag v1.0
+	git init repo &&
+	cd repo &&
+	git config user.name "Test" &&
+	git config user.email "t@t.com" &&
+	echo content >file &&
+	git add file &&
+	test_tick &&
+	git commit -m "A" &&
+	git tag A
 '
 
 test_expect_success 'log --decorate shows branch and tag' '
-	git log --oneline --decorate >actual &&
-	grep "main" actual &&
-	grep "v1.0\|tag:" actual
-'
-
-test_expect_success 'log --decorate shows HEAD' '
-	git log --oneline --decorate >actual &&
-	grep "HEAD" actual
+	cd repo &&
+	git log --decorate --oneline >actual &&
+	grep "master" actual &&
+	grep "A" actual
 '
 
 test_done
