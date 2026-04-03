@@ -161,18 +161,6 @@ pub fn run(args: Args) -> Result<()> {
         diff_tree_to_worktree(&repo.odb, Some(&tree_oid), work_tree, &index)?
     };
 
-    // For non-cached mode, git diff-index shows 0{40} for the worktree side
-    let entries = if !options.cached {
-        entries.into_iter().map(|mut e| {
-            if e.status != DiffStatus::Deleted {
-                e.new_oid = zero_oid();
-            }
-            e
-        }).collect()
-    } else {
-        entries
-    };
-
     // Filter by pathspecs
     let entries = filter_pathspecs(entries, &options.pathspecs);
 
@@ -194,10 +182,18 @@ pub fn run(args: Args) -> Result<()> {
         match options.format {
             OutputFormat::Raw => {
                 for entry in &entries {
-                    if let Some(abbrev) = options.abbrev {
-                        writeln!(out, "{}", format_raw_with_abbrev(entry, abbrev))?;
+                    // For non-cached mode, show 0{40} for worktree side in raw format
+                    let display_entry = if !options.cached && entry.status != DiffStatus::Deleted {
+                        let mut e = entry.clone();
+                        e.new_oid = zero_oid();
+                        e
                     } else {
-                        writeln!(out, "{}", format_raw(entry))?;
+                        entry.clone()
+                    };
+                    if let Some(abbrev) = options.abbrev {
+                        writeln!(out, "{}", format_raw_with_abbrev(&display_entry, abbrev))?;
+                    } else {
+                        writeln!(out, "{}", format_raw(&display_entry))?;
                     }
                 }
             }
