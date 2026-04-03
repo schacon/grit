@@ -8,6 +8,7 @@ use clap::Args as ClapArgs;
 use grit_lib::diff::diff_trees;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::odb::Odb;
+use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
 use regex::Regex;
@@ -81,6 +82,10 @@ pub struct Args {
     #[arg(long = "date")]
     pub date: Option<String>,
 
+    /// Walk the reflog instead of the commit ancestry chain.
+    #[arg(short = 'g', long = "walk-reflogs")]
+    pub walk_reflogs: bool,
+
     /// Pathspecs (after --).
     #[arg(last = true)]
     pub pathspecs: Vec<String>,
@@ -89,6 +94,11 @@ pub struct Args {
 /// Run the `log` command.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Handle -g / --walk-reflogs mode
+    if args.walk_reflogs {
+        return run_reflog_walk(&repo, &args);
+    }
 
     // Determine starting points
     let start_oids = if args.revisions.is_empty() {
@@ -172,6 +182,192 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Run the reflog walk mode (`log -g` / `log --walk-reflogs`).
+fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
+    // Determine which ref to walk
+    let refname = if args.revisions.is_empty() {
+        "HEAD".to_string()
+    } else {
+        let r = &args.revisions[0];
+        if r == "HEAD" || r.starts_with("refs/") {
+            r.clone()
+        } else {
+            let candidate = format!("refs/heads/{r}");
+            if grit_lib::refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
+                candidate
+            } else {
+                r.clone()
+            }
+        }
+    };
+
+    let display_name = if refname.starts_with("refs/heads/") {
+        refname.strip_prefix("refs/heads/").unwrap_or(&refname)
+    } else {
+        &refname
+    };
+
+    let entries = read_reflog(&repo.git_dir, &refname)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let max = args.max_count.unwrap_or(usize::MAX);
+    let skip = args.skip.unwrap_or(0);
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    // Detect format
+    let is_format_separator = args
+        .format
+        .as_deref()
+        .map(|f| f.starts_with("format:"))
+        .unwrap_or(false);
+
+    let mut shown = 0usize;
+    let mut skipped = 0usize;
+
+    for (i, entry) in entries.iter().rev().enumerate() {
+        if shown >= max {
+            break;
+        }
+        if skipped < skip {
+            skipped += 1;
+            continue;
+        }
+
+        // Read the commit object for this entry
+        let commit_data = match repo.odb.read(&entry.new_oid) {
+            Ok(obj) => match parse_commit(&obj.data) {
+                Ok(c) => c,
+                Err(_) => continue,
+            },
+            Err(_) => continue,
+        };
+
+        let selector = format!("{}@{{{}}}", display_name, i);
+
+        if let Some(ref fmt) = args.format {
+            let fmt_str = fmt.strip_prefix("tformat:").or_else(|| fmt.strip_prefix("format:")).unwrap_or(fmt);
+            if is_format_separator && shown > 0 {
+                writeln!(out)?;
+            }
+            let line = apply_reflog_format_string(
+                fmt_str,
+                &entry.new_oid,
+                &commit_data,
+                &selector,
+                &entry.message,
+                &entry.identity,
+            );
+            writeln!(out, "{}", line)?;
+        } else if args.oneline {
+            let abbrev = &entry.new_oid.to_hex()[..7];
+            let subject = commit_data.message.lines().next().unwrap_or("");
+            writeln!(out, "{} {}@{{{}}}: {}", abbrev, display_name, i, entry.message)?;
+        } else {
+            // Full format with Reflog headers
+            writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+            writeln!(out, "Reflog: {} ({})", selector, entry.identity)?;
+            writeln!(out, "Reflog message: {}", entry.message)?;
+            writeln!(out, "Author: {}", format_ident_for_header(&commit_data.author))?;
+            let date = format_date_for_header(&commit_data.author);
+            writeln!(out, "Date:   {}", date)?;
+            writeln!(out)?;
+            for line in commit_data.message.lines() {
+                writeln!(out, "    {}", line)?;
+            }
+            writeln!(out)?;
+        }
+        shown += 1;
+    }
+
+    Ok(())
+}
+
+/// Apply format placeholders for reflog walk entries.
+/// Supports %H, %h, %s, %gd, %gs, %gn, %ge, %an, %ae, %cn, %ce, %B, %b, %N, %n.
+fn apply_reflog_format_string(
+    fmt: &str,
+    oid: &ObjectId,
+    commit: &grit_lib::objects::CommitData,
+    selector: &str,
+    reflog_msg: &str,
+    reflog_identity: &str,
+) -> String {
+    let hex = oid.to_hex();
+    let short = &hex[..7.min(hex.len())];
+    let subject = commit.message.lines().next().unwrap_or("");
+    let body = extract_body(&commit.message);
+
+    let reflog_name = extract_name(reflog_identity);
+    let reflog_email = extract_email(reflog_identity);
+
+    let mut result = String::new();
+    let mut chars = fmt.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            match chars.peek() {
+                Some('H') => { chars.next(); result.push_str(&hex); }
+                Some('h') => { chars.next(); result.push_str(short); }
+                Some('s') => { chars.next(); result.push_str(subject); }
+                Some('B') => { chars.next(); result.push_str(commit.message.trim()); }
+                Some('b') => { chars.next(); result.push_str(&body); }
+                Some('n') => { chars.next(); result.push('\n'); }
+                Some('g') => {
+                    chars.next();
+                    match chars.peek() {
+                        Some('d') => { chars.next(); result.push_str(selector); }
+                        Some('s') => { chars.next(); result.push_str(reflog_msg); }
+                        Some('n') => { chars.next(); result.push_str(&reflog_name); }
+                        Some('e') => { chars.next(); result.push_str(&reflog_email); }
+                        _ => { result.push_str("%g"); }
+                    }
+                }
+                Some('a') => {
+                    chars.next();
+                    match chars.peek() {
+                        Some('n') => { chars.next(); result.push_str(&extract_name(&commit.author)); }
+                        Some('e') => { chars.next(); result.push_str(&extract_email(&commit.author)); }
+                        _ => { result.push_str("%a"); }
+                    }
+                }
+                Some('c') => {
+                    chars.next();
+                    match chars.peek() {
+                        Some('n') => { chars.next(); result.push_str(&extract_name(&commit.committer)); }
+                        Some('e') => { chars.next(); result.push_str(&extract_email(&commit.committer)); }
+                        _ => { result.push_str("%c"); }
+                    }
+                }
+                _ => { result.push('%'); }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Format ident for header display ("Name <email>").
+fn format_ident_for_header(ident: &str) -> String {
+    let name = extract_name(ident);
+    let email = extract_email(ident);
+    if email.is_empty() {
+        name
+    } else {
+        format!("{name} <{email}>")
+    }
+}
+
+/// Format date from ident for header display.
+fn format_date_for_header(ident: &str) -> String {
+    format_date_with_mode(ident, None)
 }
 
 /// Parsed commit with its OID.

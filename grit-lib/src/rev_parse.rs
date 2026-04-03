@@ -11,6 +11,7 @@ use std::path::{Component, Path};
 
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use crate::reflog::read_reflog;
 use crate::refs;
 use crate::repo::Repository;
 
@@ -243,10 +244,16 @@ fn parse_nav_steps(spec: &str) -> (&str, Vec<NavStep>) {
     let mut remaining = spec;
 
     loop {
-        // Try `~<digits>` at the end.
+        // Try `~<digits>` or bare `~` at the end.
         if let Some(tilde_pos) = remaining.rfind('~') {
             let after = &remaining[tilde_pos + 1..];
-            if !after.is_empty() && after.bytes().all(|b| b.is_ascii_digit()) {
+            if after.is_empty() {
+                // bare `~` = `~1`
+                steps.push(NavStep::AncestorN(1));
+                remaining = &remaining[..tilde_pos];
+                continue;
+            }
+            if after.bytes().all(|b| b.is_ascii_digit()) {
                 let n: usize = after.parse().unwrap_or(1);
                 steps.push(NavStep::AncestorN(n));
                 remaining = &remaining[..tilde_pos];
@@ -370,6 +377,11 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
             .map_err(|_| Error::ObjectNotFound(spec.to_owned()));
     }
 
+    // Handle @{N} reflog syntax: ref@{N} or @{N} (meaning HEAD@{N})
+    if let Some(oid) = try_resolve_reflog_index(repo, spec)? {
+        return Ok(oid);
+    }
+
     if let Some((treeish, path)) = split_treeish_spec(spec) {
         let root_oid = resolve_base(repo, treeish)?;
         return resolve_treeish_path(repo, root_oid, path);
@@ -402,6 +414,47 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 
     Err(Error::ObjectNotFound(spec.to_owned()))
+}
+
+/// Try to resolve `ref@{N}` reflog index syntax.
+/// Returns the OID at that reflog position, or None if not matching.
+fn try_resolve_reflog_index(repo: &Repository, spec: &str) -> Result<Option<ObjectId>> {
+    // Match patterns like HEAD@{0}, main@{1}, @{0}, refs/heads/main@{2}
+    let at_pos = match spec.find("@{") {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    if !spec.ends_with('}') {
+        return Ok(None);
+    }
+    let inner = &spec[at_pos + 2..spec.len() - 1];
+    // Only handle numeric indices here (not upstream/push/etc)
+    let index: usize = match inner.parse() {
+        Ok(n) => n,
+        Err(_) => return Ok(None),
+    };
+    let refname_raw = &spec[..at_pos];
+    let refname = if refname_raw.is_empty() {
+        "HEAD".to_string()
+    } else if refname_raw == "HEAD" || refname_raw.starts_with("refs/") {
+        refname_raw.to_string()
+    } else {
+        // DWIM: try refs/heads/<name>
+        let candidate = format!("refs/heads/{refname_raw}");
+        if refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
+            candidate
+        } else {
+            refname_raw.to_string()
+        }
+    };
+    let entries = read_reflog(&repo.git_dir, &refname)?;
+    if entries.is_empty() {
+        return Err(Error::InvalidRef(format!("log for '{}' is empty", refname_raw)));
+    }
+    // Reflog entries are oldest-first in file; @{0} is the newest (last)
+    let reversed_idx = entries.len().checked_sub(1 + index)
+        .ok_or_else(|| Error::InvalidRef(format!("log for '{}' only has {} entries", refname_raw, entries.len())))?;
+    Ok(Some(entries[reversed_idx].new_oid))
 }
 
 /// Try to resolve `@{upstream}`, `@{u}`, `@{push}` style suffixes.

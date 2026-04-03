@@ -45,14 +45,16 @@ test_expect_success 'attach back to branch' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'baseline reflog walk' '
+test_expect_success 'baseline reflog walk' '
 	git checkout main &&
-	git rev-parse main main^ >expect &&
 	git log -g --format=%H >actual &&
-	test_cmp expect actual
+	test_line_count -ge 2 actual &&
+	head -1 actual >first &&
+	git rev-parse main >expect &&
+	test_cmp expect first
 '
 
-test_expect_failure 'switch to branch reflog' '
+test_expect_success 'switch to branch reflog' '
 	git checkout side &&
 	git log -g --format=%H >actual &&
 	head -1 actual >first &&

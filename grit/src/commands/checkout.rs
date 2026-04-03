@@ -12,9 +12,10 @@ use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
-use grit_lib::refs;
+use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use grit_lib::state::{resolve_head, HeadState};
@@ -154,6 +155,16 @@ fn switch_branch(repo: &Repository, branch_name: &str, branch_ref: &str, force: 
     // Update working tree and index
     switch_to_tree(repo, &head, &target_tree, force)?;
 
+    // Write reflog entries before updating HEAD
+    let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let from_desc = match &head {
+        HeadState::Branch { short_name, .. } => short_name.clone(),
+        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+        HeadState::Invalid => "unknown".to_string(),
+    };
+    let msg = format!("checkout: moving from {} to {}", from_desc, branch_name);
+    write_checkout_reflog(repo, &head, &old_oid, &target_oid, &msg);
+
     // Update HEAD to point to the branch
     std::fs::write(
         repo.git_dir.join("HEAD"),
@@ -199,6 +210,16 @@ fn create_and_switch_branch(
 
     // Create the branch ref
     refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
+
+    // Write reflog entries
+    let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let from_desc = match &head {
+        HeadState::Branch { short_name, .. } => short_name.clone(),
+        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+        HeadState::Invalid => "unknown".to_string(),
+    };
+    let msg = format!("checkout: moving from {} to {}", from_desc, name);
+    write_checkout_reflog(repo, &head, &old_oid, &start_oid, &msg);
 
     // Update HEAD to point to the new branch
     std::fs::write(
@@ -328,6 +349,17 @@ fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
 
     // Update working tree
     switch_to_tree(repo, &head, &target_tree, force)?;
+
+    // Write reflog entries
+    let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let from_desc = match &head {
+        HeadState::Branch { short_name, .. } => short_name.clone(),
+        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+        HeadState::Invalid => "unknown".to_string(),
+    };
+    let to_desc = oid.to_hex()[..7].to_string();
+    let msg = format!("checkout: moving from {} to {}", from_desc, to_desc);
+    write_checkout_reflog(repo, &head, &old_oid, oid, &msg);
 
     // Write detached HEAD
     std::fs::write(repo.git_dir.join("HEAD"), format!("{oid}\n"))?;
@@ -854,4 +886,58 @@ fn resolve_pathspec(spec: &str, work_tree: &Path, cwd: &Path) -> String {
     } else {
         spec.to_owned()
     }
+}
+
+/// Write reflog entries for a checkout operation.
+fn write_checkout_reflog(
+    repo: &Repository,
+    head: &HeadState,
+    old_oid: &ObjectId,
+    new_oid: &ObjectId,
+    message: &str,
+) {
+    let identity = resolve_checkout_identity(repo);
+
+    // Write reflog for HEAD
+    let _ = append_reflog(
+        &repo.git_dir,
+        "HEAD",
+        old_oid,
+        new_oid,
+        &identity,
+        message,
+    );
+
+    // Write reflog for the branch ref if on a branch
+    if let HeadState::Branch { refname, .. } = head {
+        let _ = append_reflog(
+            &repo.git_dir,
+            refname,
+            old_oid,
+            new_oid,
+            &identity,
+            message,
+        );
+    }
+}
+
+/// Resolve the committer identity for reflog entries.
+fn resolve_checkout_identity(repo: &Repository) -> String {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let name = std::env::var("GIT_COMMITTER_NAME")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_NAME").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.name")))
+        .unwrap_or_else(|| "Unknown".to_owned());
+    let email = std::env::var("GIT_COMMITTER_EMAIL")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
+        .unwrap_or_default();
+    let now = time::OffsetDateTime::now_utc();
+    let epoch = now.unix_timestamp();
+    let offset = now.offset();
+    let hours = offset.whole_hours();
+    let minutes = offset.minutes_past_hour().unsigned_abs();
+    format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
 }

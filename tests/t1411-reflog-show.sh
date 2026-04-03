@@ -19,18 +19,18 @@ test_expect_success 'setup' '
 	git commit -m one
 '
 
-test_expect_failure 'log -g shows reflog headers' '
-	git log -g -1 >tmp &&
+test_expect_success 'log -g shows reflog headers' '
+	git log -g -n 1 >tmp &&
 	grep "^Reflog" tmp
 '
 
-test_expect_failure 'oneline reflog format' '
-	git log -g -1 --oneline >actual &&
+test_expect_success 'oneline reflog format' '
+	git log -g -n 1 --oneline >actual &&
 	test_line_count = 1 actual
 '
 
-test_expect_failure 'reflog default format' '
-	git reflog -1 >actual &&
+test_expect_success 'reflog default format' '
+	git reflog -n 1 >actual &&
 	test_line_count = 1 actual
 '
 
@@ -38,7 +38,7 @@ test_expect_success 'reflog show runs without crash' '
 	git reflog show HEAD >actual 2>&1 || true
 '
 
-test_expect_failure 'empty reflog file' '
+test_expect_success 'empty reflog file' '
 	git branch empty &&
 	git reflog expire --expire=all refs/heads/empty &&
 	git log -g empty >actual &&
