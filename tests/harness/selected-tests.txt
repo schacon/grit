@@ -1140,3 +1140,5 @@ tests/t4021-format-patch-numbered.sh
 tests/t1800-hook.sh
 tests/t1601-index-bogus.sh
 tests/t4043-diff-rename-binary.sh
+tests/t4020-diff-external.sh
+tests/t4024-diff-optimize-common.sh
