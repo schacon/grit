@@ -1297,3 +1297,4 @@ tests/t6418-merge-text-auto.sh
 tests/t6419-merge-ignorecase.sh
 tests/t6421-merge-partial-clone.sh
 tests/t6422-merge-rename-corner-cases.sh
+tests/t6423-merge-rename-directories.sh
