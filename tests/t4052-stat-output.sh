@@ -34,7 +34,7 @@ test_expect_success "diff --stat: small change with long name produces stat outp
 	test -s actual
 '
 
-test_expect_failure "diff --stat: long name is abbreviated to fit terminal width (not implemented)" '
+test_expect_success "diff --stat: long name is abbreviated to fit terminal width" '
 	git diff --stat HEAD^ HEAD >output &&
 	grep " | " output >actual &&
 	cat >expect80 <<-\EOF &&
@@ -49,7 +49,7 @@ test_expect_success "diff --stat=60: stat width limits output" '
 	test -s actual
 '
 
-test_expect_failure "diff --stat with stat-name-width config (not implemented)" '
+test_expect_success "diff --stat with stat-name-width config" '
 	git -c diff.statNameWidth=30 diff --stat HEAD^ HEAD >output &&
 	grep " | " output >actual &&
 	# Verify the name was actually truncated to ~30 chars
