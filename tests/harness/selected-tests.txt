@@ -851,3 +851,4 @@ t3431-rebase-fork-point.sh
 t3432-rebase-fast-forward.sh
 t3434-rebase-i18n.sh
 t3435-rebase-gpg-sign.sh
+t3436-rebase-more-options.sh
