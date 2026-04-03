@@ -5,7 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
-use grit_lib::config::{parse_bool, parse_i64, parse_path, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{parse_bool, parse_color, parse_i64, parse_path, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
@@ -137,6 +137,15 @@ pub struct Args {
     #[arg(long = "default", value_name = "VALUE")]
     pub default_value: Option<String>,
 
+    // ── URL match flags ──
+    /// Get the best-matching value for the given URL.
+    #[arg(long = "get-urlmatch", value_name = "KEY", num_args = 1)]
+    pub get_urlmatch_key: Option<String>,
+
+    /// Get the color setting (legacy): returns ANSI code for the color, with default.
+    #[arg(long = "get-color", value_name = "KEY", num_args = 1)]
+    pub get_color_key: Option<String>,
+
     // ── Positional args for legacy set (`git config key value`) ──
     /// Positional arguments (key, value, value-pattern for legacy mode).
     #[arg(trailing_var_arg = true)]
@@ -185,6 +194,10 @@ pub struct GetArgs {
     /// Default value if key is missing.
     #[arg(long)]
     pub default: Option<String>,
+
+    /// Match config against a URL.
+    #[arg(long = "url")]
+    pub url: Option<String>,
 }
 
 /// Arguments for `grit config set`.
@@ -274,7 +287,8 @@ pub fn run(args: Args) -> Result<()> {
             all: false,
             regexp: false,
             show_names: false,
-            default: None,
+            default: args.default_value.clone(),
+            url: None,
         };
         return cmd_get(&args, &get_args, git_dir.as_deref());
     }
@@ -285,7 +299,8 @@ pub fn run(args: Args) -> Result<()> {
             all: true,
             regexp: false,
             show_names: false,
-            default: None,
+            default: args.default_value.clone(),
+            url: None,
         };
         return cmd_get(&args, &get_args, git_dir.as_deref());
     }
@@ -296,9 +311,22 @@ pub fn run(args: Args) -> Result<()> {
             all: true,
             regexp: true,
             show_names: true,
-            default: None,
+            default: args.default_value.clone(),
+            url: None,
         };
         return cmd_get(&args, &get_args, git_dir.as_deref());
+    }
+
+    if let Some(ref key) = args.get_urlmatch_key {
+        if args.positional.is_empty() {
+            bail!("usage: git config --get-urlmatch <key> <URL>");
+        }
+        return cmd_get_urlmatch(&args, key, &args.positional[0], git_dir.as_deref());
+    }
+
+    if let Some(ref key) = args.get_color_key {
+        let default_color = args.positional.first().map(|s| s.as_str()).unwrap_or("");
+        return cmd_get_color(key, default_color, git_dir.as_deref());
     }
 
     if let Some(ref key) = args.unset_key {
@@ -353,7 +381,8 @@ pub fn run(args: Args) -> Result<()> {
                 all: false,
                 regexp: false,
                 show_names: false,
-                default: None,
+                default: args.default_value.clone(),
+            url: None,
             };
             cmd_get(&args, &get_args, git_dir.as_deref())
         }
@@ -395,6 +424,28 @@ pub fn run(args: Args) -> Result<()> {
 fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()> {
     let config = load_config(args, git_dir)?;
     let terminator = if args.null_terminated { '\0' } else { '\n' };
+
+    // Handle --url for URL matching (subcommand interface)
+    if let Some(ref url) = get_args.url {
+        let (section, variable) = match get_args.key.find('.') {
+            Some(i) => (&get_args.key[..i], &get_args.key[i + 1..]),
+            None => bail!("key does not contain a section: '{}'", get_args.key),
+        };
+        let entries = grit_lib::config::get_urlmatch_entries(config.entries(), section, variable, url);
+        if entries.is_empty() {
+            if let Some(ref default) = get_args.default {
+                let val = format_typed_value(args, default)?;
+                print!("{val}{terminator}");
+                return Ok(());
+            }
+            std::process::exit(1);
+        }
+        let entry = entries.last().unwrap();
+        let val = entry.value.as_deref().unwrap_or("true");
+        let val = format_typed_value(args, val)?;
+        print!("{val}{terminator}");
+        return Ok(());
+    }
 
     if get_args.regexp {
         let matches = config.get_regexp(&get_args.key)
@@ -611,13 +662,25 @@ fn cmd_add(
 }
 
 fn cmd_edit(file_path: &Path) -> Result<()> {
-    let editor = std::env::var("GIT_EDITOR")
-        .or_else(|_| std::env::var("VISUAL"))
-        .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".to_owned());
+    // Resolve editor: GIT_EDITOR env → core.editor config → VISUAL env → EDITOR env → vi
+    let git_dir = resolve_git_dir();
+    let config = ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
 
-    let status = std::process::Command::new(&editor)
-        .arg(file_path)
+    let editor = std::env::var("GIT_EDITOR")
+        .ok()
+        .or_else(|| config.get("core.editor"))
+        .or_else(|| std::env::var("VISUAL").ok())
+        .or_else(|| std::env::var("EDITOR").ok())
+        .unwrap_or_else(|| "vi".to_owned());
+
+    // Use shell to handle editors that include arguments/redirections
+    // (matches Git's launch_editor behavior)
+    let file_str = file_path.display().to_string();
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{} \"$@\"", editor))
+        .arg("--")
+        .arg(&file_str)
         .status()
         .with_context(|| format!("failed to launch editor '{editor}'"))?;
 
@@ -628,6 +691,65 @@ fn cmd_edit(file_path: &Path) -> Result<()> {
 }
 
 /// Handle `--blob=<blob-ish>` — read config from a blob object (read-only).
+/// Handle `--get-urlmatch <key> <URL>`.
+fn cmd_get_urlmatch(args: &Args, key: &str, url: &str, git_dir: Option<&Path>) -> Result<()> {
+    let config = load_config(args, git_dir)?;
+    let terminator = if args.null_terminated { '\0' } else { '\n' };
+
+    if let Some(dot) = key.find('.') {
+        let section = &key[..dot];
+        let variable = &key[dot + 1..];
+        let entries = grit_lib::config::get_urlmatch_entries(
+            config.entries(), section, variable, url,
+        );
+        if entries.is_empty() {
+            std::process::exit(1);
+        }
+        let entry = entries.last().unwrap();
+        let val = entry.value.as_deref().unwrap_or("true");
+        let val = format_typed_value(args, val)?;
+        print!("{val}{terminator}");
+    } else {
+        // Section-only: return all variables from that section matching the URL
+        let entries = grit_lib::config::get_urlmatch_all_in_section(
+            config.entries(), key, url,
+        );
+        if entries.is_empty() {
+            std::process::exit(1);
+        }
+        for (var_key, val, scope) in &entries {
+            let val = format_typed_value(args, val)?;
+            let prefix = if args.show_scope {
+                format!("{}\t", scope)
+            } else {
+                String::new()
+            };
+            print!("{prefix}{var_key} {val}{terminator}");
+        }
+    }
+    Ok(())
+}
+
+/// Handle `--get-color <key> [<default>]`.
+fn cmd_get_color(key: &str, default_color: &str, git_dir: Option<&Path>) -> Result<()> {
+    let git_dir_resolved = git_dir.map(|p| p.to_path_buf());
+    let config = ConfigSet::load(git_dir_resolved.as_deref(), true).unwrap_or_default();
+
+    let color_str = if !key.is_empty() {
+        config.get(key).unwrap_or_else(|| default_color.to_owned())
+    } else {
+        default_color.to_owned()
+    };
+
+    if color_str.is_empty() {
+        return Ok(());
+    }
+
+    let ansi = parse_color(&color_str).map_err(|e| anyhow::anyhow!("{}", e))?;
+    print!("{ansi}");
+    Ok(())
+}
+
 fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let oid = resolve_revision(&repo, blob_spec)
@@ -939,6 +1061,13 @@ fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
         bail!("bad bool-or-int config value '{}'", val);
     }
 
+    if type_name == Some("color") {
+        match parse_color(val) {
+            Ok(_) => return Ok(val.to_owned()),
+            Err(e) => bail!("{}", e),
+        }
+    }
+
     Ok(val.to_owned())
 }
 
@@ -980,6 +1109,13 @@ fn format_typed_value(args: &Args, val: &str) -> Result<String> {
         // Then as integer
         match parse_i64(val) {
             Ok(n) => return Ok(n.to_string()),
+            Err(e) => bail!("{}", e),
+        }
+    }
+
+    if type_name == Some("color") {
+        match parse_color(val) {
+            Ok(ansi) => return Ok(ansi),
             Err(e) => bail!("{}", e),
         }
     }

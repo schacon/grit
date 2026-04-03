@@ -682,6 +682,9 @@ impl ConfigFile {
         }
 
         if count > 0 {
+            // Remove empty section headers (sections with no remaining entries and no comments)
+            self.remove_empty_section_headers();
+
             let content = self.raw_lines.join("\n");
             let reparsed = Self::parse(&self.path, &content, self.scope)?;
             self.entries = reparsed.entries;
@@ -800,19 +803,74 @@ impl ConfigFile {
     }
 
     /// Write the (possibly modified) config back to disk.
+    /// Remove section headers that have no remaining entries or comments.
+    fn remove_empty_section_headers(&mut self) {
+        let section_re = regex::Regex::new(r"^\s*\[").unwrap();
+        let comment_re = regex::Regex::new(r"^\s*(#|;)").unwrap();
+
+        let mut to_remove: Vec<usize> = Vec::new();
+        let len = self.raw_lines.len();
+
+        for i in 0..len {
+            let line = &self.raw_lines[i];
+            if !section_re.is_match(line) {
+                continue;
+            }
+            // Check if this section header is followed only by blank lines,
+            // comments, or another section header (or end of file).
+            let mut has_entries = false;
+            for j in (i + 1)..len {
+                let next = self.raw_lines[j].trim();
+                if next.is_empty() {
+                    continue;
+                }
+                if section_re.is_match(&self.raw_lines[j]) {
+                    break;
+                }
+                if comment_re.is_match(&self.raw_lines[j]) {
+                    // Has comments — keep the section
+                    has_entries = true;
+                    break;
+                }
+                // Has a key-value entry
+                has_entries = true;
+                break;
+            }
+            if !has_entries {
+                to_remove.push(i);
+            }
+        }
+
+        // Remove in reverse to preserve indices
+        for &idx in to_remove.iter().rev() {
+            self.raw_lines.remove(idx);
+        }
+
+        // Also remove trailing blank lines
+        while self.raw_lines.last().map_or(false, |l| l.trim().is_empty()) {
+            self.raw_lines.pop();
+        }
+    }
+
     ///
     /// # Errors
     ///
     /// Returns [`Error::Io`] on write failure.
     pub fn write(&self) -> Result<()> {
         let content = self.raw_lines.join("\n");
-        // Ensure trailing newline
-        let content = if content.ends_with('\n') {
-            content
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            // Write empty file if no content
+            fs::write(&self.path, "")?;
         } else {
-            format!("{content}\n")
-        };
-        fs::write(&self.path, content)?;
+            // Ensure trailing newline
+            let content = if content.ends_with('\n') {
+                content
+            } else {
+                format!("{content}\n")
+            };
+            fs::write(&self.path, content)?;
+        }
         Ok(())
     }
 
@@ -1145,6 +1203,172 @@ pub fn parse_i64(s: &str) -> std::result::Result<i64, String> {
         .map_err(|_| format!("invalid integer: '{s}'"))?;
     base.checked_mul(multiplier)
         .ok_or_else(|| format!("integer overflow: '{s}'"))
+}
+
+/// Parse a Git color value and return the ANSI escape sequence.
+pub fn parse_color(s: &str) -> std::result::Result<String, String> {
+    let s = s.trim();
+    if s.is_empty() || s == "reset" || s == "normal" {
+        return Ok("\x1b[m".to_owned());
+    }
+
+    let mut codes: Vec<String> = Vec::new();
+    let mut fg_set = false;
+    let mut bg_set = false;
+
+    for token in s.split_whitespace() {
+        match token.to_lowercase().as_str() {
+            "bold" => codes.push("1".to_owned()),
+            "dim" => codes.push("2".to_owned()),
+            "italic" => codes.push("3".to_owned()),
+            "ul" | "underline" => codes.push("4".to_owned()),
+            "blink" => codes.push("5".to_owned()),
+            "reverse" => codes.push("7".to_owned()),
+            "strike" => codes.push("9".to_owned()),
+            "nobold" | "nodim" => codes.push("22".to_owned()),
+            "noitalic" => codes.push("23".to_owned()),
+            "noul" | "nounderline" => codes.push("24".to_owned()),
+            "noblink" => codes.push("25".to_owned()),
+            "noreverse" => codes.push("27".to_owned()),
+            "nostrike" => codes.push("29".to_owned()),
+            name => {
+                if let Some(code) = color_name_to_ansi(name) {
+                    if !fg_set {
+                        codes.push(format!("3{code}"));
+                        fg_set = true;
+                    } else if !bg_set {
+                        codes.push(format!("4{code}"));
+                        bg_set = true;
+                    } else {
+                        return Err(format!("bad color value '{s}'"));
+                    }
+                } else if let Ok(n) = token.parse::<u8>() {
+                    if !fg_set {
+                        codes.push(format!("38;5;{n}"));
+                        fg_set = true;
+                    } else if !bg_set {
+                        codes.push(format!("48;5;{n}"));
+                        bg_set = true;
+                    } else {
+                        return Err(format!("bad color value '{s}'"));
+                    }
+                } else {
+                    return Err(format!("bad color value '{s}'"));
+                }
+            }
+        }
+    }
+
+    if codes.is_empty() {
+        return Err(format!("bad color value '{s}'"));
+    }
+
+    Ok(format!("\x1b[{}m", codes.join(";")))
+}
+
+fn color_name_to_ansi(name: &str) -> Option<&'static str> {
+    match name.to_lowercase().as_str() {
+        "normal" | "default" => Some("9"),
+        "black" => Some("0"),
+        "red" => Some("1"),
+        "green" => Some("2"),
+        "yellow" => Some("3"),
+        "blue" => Some("4"),
+        "magenta" => Some("5"),
+        "cyan" => Some("6"),
+        "white" => Some("7"),
+        _ => None,
+    }
+}
+
+/// Match a URL against a URL pattern from config.
+pub fn url_matches(pattern_url: &str, target_url: &str) -> bool {
+    let pattern = pattern_url.trim_end_matches('/');
+    let target = target_url.trim_end_matches('/');
+    if target == pattern {
+        return true;
+    }
+    if target.starts_with(pattern) {
+        let rest = &target[pattern.len()..];
+        return rest.starts_with('/') || rest.is_empty();
+    }
+    let pattern_slash = format!("{}/", pattern);
+    target.starts_with(&pattern_slash)
+}
+
+/// Get the best URL match for a specific key.
+pub fn get_urlmatch_entries<'a>(
+    entries: &'a [ConfigEntry],
+    section: &str,
+    variable: &str,
+    url: &str,
+) -> Vec<&'a ConfigEntry> {
+    let section_lower = section.to_lowercase();
+    let variable_lower = variable.to_lowercase();
+    let mut matches: Vec<(usize, &'a ConfigEntry)> = Vec::new();
+
+    for entry in entries {
+        let key = &entry.key;
+        let first_dot = match key.find('.') { Some(i) => i, None => continue };
+        let last_dot = match key.rfind('.') { Some(i) => i, None => continue };
+        let entry_section = &key[..first_dot];
+        let entry_variable = &key[last_dot + 1..];
+        if entry_section.to_lowercase() != section_lower
+            || entry_variable.to_lowercase() != variable_lower
+        {
+            continue;
+        }
+        if first_dot == last_dot {
+            matches.push((0, entry));
+        } else {
+            let subsection = &key[first_dot + 1..last_dot];
+            if url_matches(subsection, url) {
+                matches.push((subsection.len(), entry));
+            }
+        }
+    }
+    matches.sort_by(|a, b| a.0.cmp(&b.0));
+    matches.into_iter().map(|(_, e)| e).collect()
+}
+
+/// Get all matching variables in a section for a given URL.
+pub fn get_urlmatch_all_in_section(
+    entries: &[ConfigEntry],
+    section: &str,
+    url: &str,
+) -> Vec<(String, String, ConfigScope)> {
+    let section_lower = section.to_lowercase();
+    let mut matches: Vec<(String, usize, String, String, ConfigScope)> = Vec::new();
+
+    for entry in entries {
+        let key = &entry.key;
+        let first_dot = match key.find('.') { Some(i) => i, None => continue };
+        let last_dot = match key.rfind('.') { Some(i) => i, None => continue };
+        let entry_section = &key[..first_dot];
+        if entry_section.to_lowercase() != section_lower { continue; }
+        let entry_variable = &key[last_dot + 1..];
+        let val = entry.value.as_deref().unwrap_or("true");
+        if first_dot == last_dot {
+            let canonical = format!("{}.{}", section_lower, entry_variable);
+            matches.push((entry_variable.to_lowercase(), 0, val.to_owned(), canonical, entry.scope));
+        } else {
+            let subsection = &key[first_dot + 1..last_dot];
+            if url_matches(subsection, url) {
+                let canonical = format!("{}.{}", section_lower, entry_variable);
+                matches.push((entry_variable.to_lowercase(), subsection.len(), val.to_owned(), canonical, entry.scope));
+            }
+        }
+    }
+
+    let mut best: std::collections::BTreeMap<String, (usize, String, String, ConfigScope)> =
+        std::collections::BTreeMap::new();
+    for (var, specificity, val, canonical, scope) in matches {
+        let entry = best.entry(var).or_insert((0, String::new(), String::new(), scope));
+        if specificity >= entry.0 {
+            *entry = (specificity, val, canonical, scope);
+        }
+    }
+    best.into_values().map(|(_, val, canonical, scope)| (canonical, val, scope)).collect()
 }
 
 /// Parse a Git path value (expand `~/` to home directory).
