@@ -40,11 +40,12 @@ test_expect_success 'diff --no-index --exit-code' '
 	test_expect_code 1 git diff --no-index --exit-code p.txt q.txt
 '
 
-test_expect_failure 'diff --no-index works outside git repo (test harness set -e issue)' '
+test_expect_success 'diff --no-index works outside git repo' '
 	mkdir -p no-repo &&
 	echo "a" >no-repo/f1 &&
 	echo "b" >no-repo/f2 &&
-	(cd no-repo && git diff --no-index f1 f2 >out 2>&1; test $? -ne 0)
+	test_expect_code 1 git diff --no-index no-repo/f1 no-repo/f2 >out 2>&1 &&
+	test -s out
 '
 
 test_expect_success 'diff --no-index with /dev/null (new file)' '
