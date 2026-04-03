@@ -200,7 +200,7 @@ t2026-checkout-pathspec-file	yes	3	3	0	ok
 t2027-checkout-track	yes	5	5	0	ok
 t2030-unresolve-info	yes	5	5	0	ok
 t2050-git-dir-relative	yes	4	4	0	ok
-t2060-switch	yes	72	71	1	ok
+t2060-switch	yes	72	72	0	ok
 t2070-restore	yes	44	44	0	ok
 t2071-restore-patch	yes	4	4	0	ok
 t2072-restore-pathspec-file	yes	4	4	0	ok

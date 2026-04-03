@@ -3696,22 +3696,22 @@ t2050-git-dir-relative::setting-up-post-commit-hook	t2050-git-dir-relative	Setti
 t2050-git-dir-relative::post-commit-hook-used-ordinarily	t2050-git-dir-relative	post-commit hook used ordinarily	add	pass
 t2050-git-dir-relative::post-commit-hook-created-and-used-from-top-dir	t2050-git-dir-relative	post-commit-hook created and used from top dir	add	pass
 t2050-git-dir-relative::post-commit-hook-from-sub-dir	t2050-git-dir-relative	post-commit-hook from sub dir		pass
-t2060-switch::setup	t2060-switch	setup	switch	partial
-t2060-switch::switch-branch-no-arguments	t2060-switch	switch branch no arguments	switch	partial
-t2060-switch::switch-branch	t2060-switch	switch branch	switch	partial
-t2060-switch::switch-and-detach	t2060-switch	switch and detach	switch	partial
-t2060-switch::suggestion-to-detach	t2060-switch	suggestion to detach	switch	partial
-t2060-switch::suggestion-to-detach-is-suppressed-with-advice-suggestdetachinghead-false	t2060-switch	suggestion to detach is suppressed with advice.suggestDetachingHead=false	switch	partial
-t2060-switch::switch-and-detach-current-branch	t2060-switch	switch and detach current branch	switch	partial
-t2060-switch::switch-and-create-branch	t2060-switch	switch and create branch	switch	partial
-t2060-switch::force-create-branch-from-head	t2060-switch	force create branch from HEAD	switch	partial
-t2060-switch::new-orphan-branch-from-empty	t2060-switch	new orphan branch from empty	switch	partial
-t2060-switch::orphan-branch-works-with-discard-changes	t2060-switch	orphan branch works with --discard-changes	switch	partial
-t2060-switch::switching-ignores-file-of-same-branch-name	t2060-switch	switching ignores file of same branch name	switch	partial
-t2060-switch::guess-and-create-branch	t2060-switch	guess and create branch	switch	partial
-t2060-switch::not-switching-when-something-is-in-progress	t2060-switch	not switching when something is in progress	switch	partial
-t2060-switch::tracking-info-copied-with-autosetupmerge-inherit	t2060-switch	tracking info copied with autoSetupMerge=inherit	switch	partial
-t2060-switch::switch-back-when-temporarily-detached-and-checked-out-elsewhere	t2060-switch	switch back when temporarily detached and checked out elsewhere 	switch	partial
+t2060-switch::setup	t2060-switch	setup	switch	pass
+t2060-switch::switch-branch-no-arguments	t2060-switch	switch branch no arguments	switch	pass
+t2060-switch::switch-branch	t2060-switch	switch branch	switch	pass
+t2060-switch::switch-and-detach	t2060-switch	switch and detach	switch	pass
+t2060-switch::suggestion-to-detach	t2060-switch	suggestion to detach	switch	pass
+t2060-switch::suggestion-to-detach-is-suppressed-with-advice-suggestdetachinghead-false	t2060-switch	suggestion to detach is suppressed with advice.suggestDetachingHead=false	switch	pass
+t2060-switch::switch-and-detach-current-branch	t2060-switch	switch and detach current branch	switch	pass
+t2060-switch::switch-and-create-branch	t2060-switch	switch and create branch	switch	pass
+t2060-switch::force-create-branch-from-head	t2060-switch	force create branch from HEAD	switch	pass
+t2060-switch::new-orphan-branch-from-empty	t2060-switch	new orphan branch from empty	switch	pass
+t2060-switch::orphan-branch-works-with-discard-changes	t2060-switch	orphan branch works with --discard-changes	switch	pass
+t2060-switch::switching-ignores-file-of-same-branch-name	t2060-switch	switching ignores file of same branch name	switch	pass
+t2060-switch::guess-and-create-branch	t2060-switch	guess and create branch	switch	pass
+t2060-switch::not-switching-when-something-is-in-progress	t2060-switch	not switching when something is in progress	switch	pass
+t2060-switch::tracking-info-copied-with-autosetupmerge-inherit	t2060-switch	tracking info copied with autoSetupMerge=inherit	switch	pass
+t2060-switch::switch-back-when-temporarily-detached-and-checked-out-elsewhere	t2060-switch	switch back when temporarily detached and checked out elsewhere 	switch	pass
 t2070-restore::setup	t2070-restore	setup	restore	pass
 t2070-restore::restore-without-pathspec-is-not-ok	t2070-restore	restore without pathspec is not ok	restore	pass
 t2070-restore::restore-a-file-ignoring-branch-of-same-name	t2070-restore	restore a file, ignoring branch of same name	restore	pass

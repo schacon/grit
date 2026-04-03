@@ -33,7 +33,7 @@ show	Main Porcelain	yes	32	29	3	90.6
 stash	Main Porcelain	yes	207	205	2	99.0
 status	Main Porcelain	yes	361	357	1	98.8
 submodule	Main Porcelain	yes	478	456	22	95.4
-switch	Main Porcelain	yes	40	16	24	39.4
+switch	Main Porcelain	yes	40	16	24	40.0
 tag	Main Porcelain	yes	231	229	0	99.2
 worktree	Main Porcelain	yes	237	234	3	98.7
 annotate	Ancillary Porcelain	yes	1	1	0	100.0
