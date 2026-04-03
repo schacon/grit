@@ -434,10 +434,15 @@ fn try_resolve_reflog_index(repo: &Repository, spec: &str) -> Result<Option<Obje
         return Ok(None);
     }
     let inner = &spec[at_pos + 2..spec.len() - 1];
-    // Only handle numeric indices here (not upstream/push/etc)
-    let index: usize = match inner.parse() {
-        Ok(n) => n,
-        Err(_) => return Ok(None),
+    // Handle @{now} — equivalent to @{0} (most recent reflog entry)
+    let index: usize = if inner.eq_ignore_ascii_case("now") {
+        0
+    } else {
+        // Only handle numeric indices here (not upstream/push/etc)
+        match inner.parse() {
+            Ok(n) => n,
+            Err(_) => return Ok(None),
+        }
     };
     let refname_raw = &spec[..at_pos];
     let refname = if refname_raw.is_empty() {
