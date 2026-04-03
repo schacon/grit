@@ -972,3 +972,9 @@ t9900-branch-verbose-all.sh
 t9910-tag-pattern-glob.sh
 t9920-commit-tree-author-env.sh
 test-lib.sh
+t3408-rebase-multi-line.sh
+t3307-notes-man.sh
+t3301-notes.sh
+t3413-rebase-hook.sh
+t3206-range-diff.sh
+t3405-rebase-malformed.sh
