@@ -137,7 +137,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // Try as a branch first
     let branch_ref = format!("refs/heads/{target}");
-    if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+    if !args.detach && refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
         return switch_branch(&repo, &target, &branch_ref, args.force);
     }
 

@@ -247,7 +247,7 @@ test_expect_success 'setup: modify files for diff wildcard tests' '
 	echo "modified" >>lib/core.c
 '
 
-test_expect_failure 'diff --name-only -- *.c with wildcard pathspec' '
+test_expect_success 'diff --name-only -- *.c with wildcard pathspec' '
 	cd repo &&
 	git diff --name-only -- "*.c" >../actual &&
 	test_line_count = 2 ../actual &&
@@ -255,13 +255,13 @@ test_expect_failure 'diff --name-only -- *.c with wildcard pathspec' '
 	grep "lib/core.c" ../actual
 '
 
-test_expect_failure 'diff --name-only -- src/*.? with wildcard' '
+test_expect_success 'diff --name-only -- src/*.? with wildcard' '
 	cd repo &&
 	git diff --name-only -- "src/*.?" >../actual &&
 	test_line_count = 2 ../actual
 '
 
-test_expect_failure 'log --oneline -- *.md with wildcard pathspec' '
+test_expect_success 'log --oneline -- *.md with wildcard pathspec' '
 	cd repo &&
 	git log --oneline -- "*.md" >../actual &&
 	test_line_count = 1 ../actual

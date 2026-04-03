@@ -127,7 +127,7 @@ test_expect_success 'log --committer matches email domain' '
 	test $(wc -l <actual) -eq 1
 '
 
-test_expect_failure 'log --committer is case-insensitive' '
+test_expect_success 'log --committer is case-insensitive' '
 	cd repo &&
 	git log --committer=dana --format="%cn" >lower &&
 	git log --committer=DANA --format="%cn" >upper &&

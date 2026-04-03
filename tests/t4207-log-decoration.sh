@@ -78,7 +78,7 @@ test_expect_success '--decorate=short shows short tag names' '
 
 # ── --decorate=full ──────────────────────────────────────────────────────────
 
-test_expect_failure '--decorate=full shows full ref paths (not yet distinct from short)' '
+test_expect_success '--decorate=full shows full ref paths (not yet distinct from short)' '
 	cd repo &&
 	git log --decorate=full --oneline -n 1 >out &&
 	grep "refs/" out

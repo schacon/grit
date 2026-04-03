@@ -10,6 +10,7 @@ use clap::{Args, FromArgMatches, Parser};
 use std::path::PathBuf;
 
 mod commands;
+pub mod pathspec;
 
 fn main() {
     if let Err(e) = run() {

@@ -104,7 +104,7 @@ test_expect_success 'log --grep with exact phrase' '
 	test $(wc -l <actual) -eq 1
 '
 
-test_expect_failure 'log --grep is case-insensitive by default' '
+test_expect_success 'log --grep is case-insensitive by default' '
 	cd repo &&
 	git log --grep=FEAT --format="%s" >lower &&
 	git log --grep=feat --format="%s" >upper &&
@@ -143,7 +143,7 @@ test_expect_success 'log --grep with regex pattern' '
 	test $(wc -l <actual) -eq 1
 '
 
-test_expect_failure 'log --grep with alternation' '
+test_expect_success 'log --grep with alternation' '
 	cd repo &&
 	git log --grep="feat\|docs" --format="%s" >actual &&
 	test $(wc -l <actual) -eq 4

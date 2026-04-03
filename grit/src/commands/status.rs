@@ -427,21 +427,19 @@ fn walk_for_untracked(
         let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
 
         if is_dir {
-            // Use BTreeSet range to check for tracked files under this prefix
-            // in O(log n) instead of O(n) linear scan
-            let prefix = format!("{rel}/");
-            let has_tracked = tracked
-                .range::<String, _>(&prefix..)
-                .next()
-                .map_or(false, |t| t.starts_with(&prefix));
-            if has_tracked {
-                walk_for_untracked(&path, work_tree, tracked, out, show_all)?;
-            } else if show_all {
-                // -u all: recurse into untracked directories to list individual files
+            if show_all {
                 walk_for_untracked(&path, work_tree, tracked, out, show_all)?;
             } else {
-                // Show directory as untracked entry
-                out.push(format!("{rel}/"));
+                let prefix = format!("{rel}/");
+                let has_tracked = tracked
+                    .range::<String, _>(&prefix..)
+                    .next()
+                    .map_or(false, |t| t.starts_with(&prefix));
+                if has_tracked {
+                    walk_for_untracked(&path, work_tree, tracked, out, show_all)?;
+                } else {
+                    out.push(format!("{rel}/"));
+                }
             }
         } else if !tracked.contains(&rel) {
             out.push(rel);

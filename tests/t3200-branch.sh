@@ -1536,7 +1536,7 @@ test_expect_success 'branch count increases after creation' '
 	git branch -d count-test 2>/dev/null
 '
 
-test_expect_failure 'detached HEAD shows no branch with --show-current' '
+test_expect_success 'detached HEAD shows no branch with --show-current' '
 	cd repo &&
 	git checkout --detach HEAD 2>/dev/null &&
 	result=$(git branch --show-current) &&
