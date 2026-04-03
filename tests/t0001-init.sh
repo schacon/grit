@@ -640,7 +640,7 @@ test_expect_success '-b custom HEAD points to custom branch' '
 	esac
 '
 
-test_expect_failure 'multiple inits with different templates' '
+test_expect_success 'multiple inits with different templates' '
 	rm -fr multi-tmpl1 multi-tmpl2 multi-dest &&
 	mkdir multi-tmpl1 multi-tmpl2 &&
 	echo "first" >multi-tmpl1/marker &&

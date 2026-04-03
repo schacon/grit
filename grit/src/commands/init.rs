@@ -340,7 +340,7 @@ fn copy_template(src: &Path, dst: &Path) -> Result<()> {
         if src_path.is_dir() {
             fs::create_dir_all(&dst_path)?;
             copy_template(&src_path, &dst_path)?;
-        } else if !dst_path.exists() {
+        } else {
             fs::copy(&src_path, &dst_path)?;
         }
     }
