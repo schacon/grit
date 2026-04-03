@@ -7168,30 +7168,30 @@ t4036-format-patch-signer-mime::format-normally	t4036-format-patch-signer-mime	f
 t4036-format-patch-signer-mime::format-with-signoff-without-funny-signer-name	t4036-format-patch-signer-mime	format with signoff without funny signer name	format-patch	pass
 t4036-format-patch-signer-mime::format-with-non-ascii-signer-name	t4036-format-patch-signer-mime	format with non ASCII signer name	format-patch	pass
 t4036-format-patch-signer-mime::attach-and-signoff-do-not-duplicate-mime-headers	t4036-format-patch-signer-mime	attach and signoff do not duplicate mime headers	format-patch	pass
-t4038-diff-combined::check-combined-output-1	t4038-diff-combined	check combined output (1)	diff	partial
-t4038-diff-combined::check-combined-output-1-with-git-diff-rev	t4038-diff-combined	check combined output (1) with git diff <rev>^!	diff	partial
-t4038-diff-combined::check-combined-output-2	t4038-diff-combined	check combined output (2)	diff	partial
-t4038-diff-combined::check-combined-output-2-with-git-diff-rev	t4038-diff-combined	check combined output (2) with git diff <rev>^!	diff	partial
-t4038-diff-combined::diagnose-truncated-file	t4038-diff-combined	diagnose truncated file	diff	partial
-t4038-diff-combined::setup-for-cc-raw	t4038-diff-combined	setup for --cc --raw	diff	partial
-t4038-diff-combined::check-cc-raw-with-four-trees	t4038-diff-combined	check --cc --raw with four trees	diff	partial
-t4038-diff-combined::check-cc-raw-with-forty-trees	t4038-diff-combined	check --cc --raw with forty trees	diff	partial
-t4038-diff-combined::setup-combined-ignore-spaces	t4038-diff-combined	setup combined ignore spaces	diff	partial
-t4038-diff-combined::check-combined-output-no-ignore-space	t4038-diff-combined	check combined output (no ignore space)	diff	partial
-t4038-diff-combined::check-combined-output-ignore-space-at-eol	t4038-diff-combined	check combined output (ignore space at eol)	diff	partial
-t4038-diff-combined::check-combined-output-ignore-space-change	t4038-diff-combined	check combined output (ignore space change)	diff	partial
-t4038-diff-combined::check-combined-output-ignore-all-spaces	t4038-diff-combined	check combined output (ignore all spaces)	diff	partial
-t4038-diff-combined::combine-diff-coalesce-simple	t4038-diff-combined	combine diff coalesce simple	diff	partial
-t4038-diff-combined::combine-diff-coalesce-tricky	t4038-diff-combined	combine diff coalesce tricky	diff	partial
-t4038-diff-combined::combine-diff-missing-delete-bug	t4038-diff-combined	combine diff missing delete bug	diff	partial
-t4038-diff-combined::combine-diff-gets-tree-sorting-right	t4038-diff-combined	combine diff gets tree sorting right	diff	partial
-t4038-diff-combined::setup-for-combined-all-paths	t4038-diff-combined	setup for --combined-all-paths	diff	partial
-t4038-diff-combined::combined-all-paths-and-raw	t4038-diff-combined	--combined-all-paths and --raw	diff	partial
-t4038-diff-combined::combined-all-paths-and-cc	t4038-diff-combined	--combined-all-paths and --cc	diff	partial
-t4038-diff-combined::setup-for-combined-all-paths-with-funny-names	t4038-diff-combined	setup for --combined-all-paths with funny names	diff	partial
-t4038-diff-combined::combined-all-paths-and-raw-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw and funny names	diff	partial
-t4038-diff-combined::combined-all-paths-and-raw-and-z-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw -and -z and funny names	diff	partial
-t4038-diff-combined::combined-all-paths-and-cc-and-funny-names	t4038-diff-combined	--combined-all-paths and --cc and funny names	diff	partial
+t4038-diff-combined::check-combined-output-1	t4038-diff-combined	check combined output (1)	diff	pass
+t4038-diff-combined::check-combined-output-1-with-git-diff-rev	t4038-diff-combined	check combined output (1) with git diff <rev>^!	diff	pass
+t4038-diff-combined::check-combined-output-2	t4038-diff-combined	check combined output (2)	diff	pass
+t4038-diff-combined::check-combined-output-2-with-git-diff-rev	t4038-diff-combined	check combined output (2) with git diff <rev>^!	diff	pass
+t4038-diff-combined::diagnose-truncated-file	t4038-diff-combined	diagnose truncated file	diff	pass
+t4038-diff-combined::setup-for-cc-raw	t4038-diff-combined	setup for --cc --raw	diff	pass
+t4038-diff-combined::check-cc-raw-with-four-trees	t4038-diff-combined	check --cc --raw with four trees	diff	pass
+t4038-diff-combined::check-cc-raw-with-forty-trees	t4038-diff-combined	check --cc --raw with forty trees	diff	pass
+t4038-diff-combined::setup-combined-ignore-spaces	t4038-diff-combined	setup combined ignore spaces	diff	pass
+t4038-diff-combined::check-combined-output-no-ignore-space	t4038-diff-combined	check combined output (no ignore space)	diff	pass
+t4038-diff-combined::check-combined-output-ignore-space-at-eol	t4038-diff-combined	check combined output (ignore space at eol)	diff	pass
+t4038-diff-combined::check-combined-output-ignore-space-change	t4038-diff-combined	check combined output (ignore space change)	diff	pass
+t4038-diff-combined::check-combined-output-ignore-all-spaces	t4038-diff-combined	check combined output (ignore all spaces)	diff	pass
+t4038-diff-combined::combine-diff-coalesce-simple	t4038-diff-combined	combine diff coalesce simple	diff	pass
+t4038-diff-combined::combine-diff-coalesce-tricky	t4038-diff-combined	combine diff coalesce tricky	diff	pass
+t4038-diff-combined::combine-diff-missing-delete-bug	t4038-diff-combined	combine diff missing delete bug	diff	pass
+t4038-diff-combined::combine-diff-gets-tree-sorting-right	t4038-diff-combined	combine diff gets tree sorting right	diff	pass
+t4038-diff-combined::setup-for-combined-all-paths	t4038-diff-combined	setup for --combined-all-paths	diff	pass
+t4038-diff-combined::combined-all-paths-and-raw	t4038-diff-combined	--combined-all-paths and --raw	diff	pass
+t4038-diff-combined::combined-all-paths-and-cc	t4038-diff-combined	--combined-all-paths and --cc	diff	pass
+t4038-diff-combined::setup-for-combined-all-paths-with-funny-names	t4038-diff-combined	setup for --combined-all-paths with funny names	diff	pass
+t4038-diff-combined::combined-all-paths-and-raw-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw and funny names	diff	pass
+t4038-diff-combined::combined-all-paths-and-raw-and-z-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw -and -z and funny names	diff	pass
+t4038-diff-combined::combined-all-paths-and-cc-and-funny-names	t4038-diff-combined	--combined-all-paths and --cc and funny names	diff	pass
 t4039-diff-assume-unchanged::setup	t4039-diff-assume-unchanged	setup	diff	pass
 t4039-diff-assume-unchanged::diff-index-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-index does not examine assume-unchanged entries	diff	pass
 t4039-diff-assume-unchanged::diff-files-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-files does not examine assume-unchanged entries	diff	pass
@@ -9709,17 +9709,17 @@ t5408-send-pack-stdin::cmdline-refs-with-multiple-duplicates	t5408-send-pack-std
 t5408-send-pack-stdin::stdin-refs-come-after-cmdline	t5408-send-pack-stdin	--stdin refs come after cmdline	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-cmdline	t5408-send-pack-stdin	refspecs and --mirror do not mix (cmdline)	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-stdin	t5408-send-pack-stdin	refspecs and --mirror do not mix (stdin)	send-pack	pass
-t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	partial
-t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	partial
-t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	partial
-t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	partial
-t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	partial
-t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	partial
-t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	partial
-t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	partial
-t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	partial
-t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	partial
-t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	partial
+t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	pass
+t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	pass
+t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	pass
+t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	pass
+t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	pass
+t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	pass
+t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	pass
+t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	pass
+t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	pass
+t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	pass
+t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	pass
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	not_ported
@@ -9817,8 +9817,8 @@ t5500-fetch-pack::fetch-pack-diag-url-p-h-r-3	t5500-fetch-pack	fetch-pack --diag
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-4	t5500-fetch-pack	fetch-pack --diag-url $p://$h/~$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-h-r	t5500-fetch-pack	fetch-pack --diag-url ./$h:$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-5	t5500-fetch-pack	fetch-pack --diag-url ./$p:$h/~$r	fetch-pack	pass
-t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	partial
-t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	partial
+t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	pass
+t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	pass
 t5502-quickfetch::clone-without-alternate	t5502-quickfetch	clone without alternate	count-objects	pass
 t5502-quickfetch::further-commits-in-the-original	t5502-quickfetch	further commits in the original	commit	pass
 t5502-quickfetch::copy-commit-and-tree-but-not-blob-by-hand	t5502-quickfetch	copy commit and tree but not blob by hand	count-objects	pass
@@ -13971,8 +13971,8 @@ t7103-reset-bare::merge-reset-is-not-allowed-in-bare	t7103-reset-bare	"merge" re
 t7103-reset-bare::keep-reset-is-not-allowed-in-bare	t7103-reset-bare	"keep" reset is not allowed in bare	reset	pass
 t7103-reset-bare::mixed-reset-is-not-allowed-in-bare	t7103-reset-bare	"mixed" reset is not allowed in bare	reset	pass
 t7103-reset-bare::soft-reset-is-allowed-in-bare	t7103-reset-bare	"soft" reset is allowed in bare	reset	pass
-t7104-reset-hard::reset-hard-should-restore-unmerged-ones	t7104-reset-hard	reset --hard should restore unmerged ones	reset	pass
-t7104-reset-hard::reset-hard-did-not-corrupt-index-or-cache-tree	t7104-reset-hard	reset --hard did not corrupt index or cache-tree	reset	pass
+t7104-reset-hard::reset-hard-should-restore-unmerged-ones	t7104-reset-hard	reset --hard should restore unmerged ones	reset	partial
+t7104-reset-hard::reset-hard-did-not-corrupt-index-or-cache-tree	t7104-reset-hard	reset --hard did not corrupt index or cache-tree	reset	partial
 t7105-reset-patch::setup	t7105-reset-patch	setup	reset	pass
 t7105-reset-patch::saying-n-does-nothing	t7105-reset-patch	saying "n" does nothing	reset	pass
 t7105-reset-patch::git-reset-p-head	t7105-reset-patch	git reset -p HEAD^	reset	pass

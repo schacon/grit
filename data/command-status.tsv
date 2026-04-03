@@ -10,8 +10,8 @@ clean	Main Porcelain	yes	90	90	0	100.0
 clone	Main Porcelain	yes	519	363	155	69.9
 commit	Main Porcelain	yes	435	350	79	80.6
 describe	Main Porcelain	yes	59	59	0	100.0
-diff	Main Porcelain	yes	983	961	5	97.7
-fetch	Main Porcelain	yes	465	375	89	80.7
+diff	Main Porcelain	yes	983	962	5	97.9
+fetch	Main Porcelain	yes	465	376	89	80.8
 format-patch	Main Porcelain	yes	231	231	0	100.0
 gc	Main Porcelain	yes	38	37	1	96.7
 grep	Main Porcelain	yes	264	264	0	100.0
@@ -21,10 +21,10 @@ merge	Main Porcelain	yes	658	648	10	98.5
 mv	Main Porcelain	yes	77	77	0	100.0
 notes	Main Porcelain	yes	308	308	0	100.0
 pull	Main Porcelain	yes	142	111	31	78.2
-push	Main Porcelain	yes	211	86	120	40.8
+push	Main Porcelain	yes	211	91	120	43.1
 range-diff	Main Porcelain	yes	47	47	0	100.0
 rebase	Main Porcelain	yes	561	560	1	99.8
-reset	Main Porcelain	yes	152	123	29	80.9
+reset	Main Porcelain	yes	152	123	29	80.7
 restore	Main Porcelain	yes	41	40	1	97.6
 revert	Main Porcelain	yes	22	22	0	100.0
 rm	Main Porcelain	yes	103	99	4	96.1
