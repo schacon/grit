@@ -195,6 +195,14 @@ pub fn resolve_head(git_dir: &Path) -> Result<HeadState> {
 /// `Ok(Some(oid))` if the ref exists, `Ok(None)` if it doesn't (unborn),
 /// or `Err` on I/O failure.
 fn resolve_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> {
+    // Dispatch to reftable backend if configured
+    if crate::reftable::is_reftable_repo(git_dir) {
+        match crate::reftable::reftable_resolve_ref(git_dir, refname) {
+            Ok(oid) => return Ok(Some(oid)),
+            Err(_) => return Ok(None),
+        }
+    }
+
     let ref_path = git_dir.join(refname);
 
     // Try loose ref first

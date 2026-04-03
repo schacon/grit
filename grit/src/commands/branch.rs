@@ -201,8 +201,20 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     let mut branches: Vec<BranchInfo> = Vec::new();
 
     if !args.remotes {
-        let mut local = Vec::new();
-        collect_branches(&repo.git_dir.join("refs/heads"), "", &mut local)?;
+        let mut local = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+            grit_lib::reftable::reftable_list_refs(&repo.git_dir, "refs/heads/")
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .into_iter()
+                .map(|(name, oid)| {
+                    let short = name.strip_prefix("refs/heads/").unwrap_or(&name).to_owned();
+                    (short, oid)
+                })
+                .collect()
+        } else {
+            let mut v = Vec::new();
+            collect_branches(&repo.git_dir.join("refs/heads"), "", &mut v)?;
+            v
+        };
         for (name, oid) in local {
             branches.push(BranchInfo {
                 name,
@@ -213,8 +225,20 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     }
 
     if args.remotes || args.all {
-        let mut remote = Vec::new();
-        collect_branches(&repo.git_dir.join("refs/remotes"), "", &mut remote)?;
+        let mut remote = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+            grit_lib::reftable::reftable_list_refs(&repo.git_dir, "refs/remotes/")
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .into_iter()
+                .map(|(name, oid)| {
+                    let short = name.strip_prefix("refs/remotes/").unwrap_or(&name).to_owned();
+                    (short, oid)
+                })
+                .collect()
+        } else {
+            let mut v = Vec::new();
+            collect_branches(&repo.git_dir.join("refs/remotes"), "", &mut v)?;
+            v
+        };
         for (name, oid) in remote {
             branches.push(BranchInfo {
                 name: if args.remotes && !args.all {
@@ -641,16 +665,11 @@ fn create_branch(
     start_point: Option<&str>,
     args: &Args,
 ) -> Result<()> {
-    let ref_path = repo.git_dir.join("refs/heads").join(name);
+    let refname = format!("refs/heads/{name}");
+    let exists = grit_lib::refs::resolve_ref(&repo.git_dir, &refname).is_ok();
 
-    if ref_path.is_file() && !args.force {
+    if exists && !args.force {
         bail!("A branch named '{name}' already exists.");
-    }
-
-    // Check for d/f conflicts: if ref_path is a directory, remove it if empty
-    if ref_path.is_dir() {
-        // Only remove if it's truly empty (no nested branch refs)
-        let _ = fs::remove_dir(&ref_path);
     }
 
     let oid = match start_point {
@@ -660,10 +679,8 @@ fn create_branch(
             .ok_or_else(|| anyhow::anyhow!("not a valid object name: 'HEAD'"))?,
     };
 
-    if let Some(parent) = ref_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&ref_path, format!("{}\n", oid.to_hex()))?;
+    grit_lib::refs::write_ref(&repo.git_dir, &refname, &oid)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     Ok(())
 }
@@ -686,45 +703,45 @@ fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         );
     }
 
-    let ref_path = repo.git_dir.join("refs/heads").join(name);
-    if !ref_path.exists() {
-        bail!("branch '{name}' not found.");
-    }
-
-    let oid_str = fs::read_to_string(&ref_path)?.trim().to_owned();
+    let refname = format!("refs/heads/{name}");
+    let branch_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &refname)
+        .map_err(|_| anyhow::anyhow!("branch '{name}' not found."))?;
 
     // For -d (not -D), check if branch is merged into HEAD
     if args.delete && !args.force_delete {
-        if let Ok(branch_oid) = ObjectId::from_hex(&oid_str) {
-            if let Some(head_oid) = head.oid() {
-                if !is_ancestor(repo, branch_oid, *head_oid).unwrap_or(false) {
-                    bail!(
-                        "error: the branch '{}' is not fully merged.\nIf you are sure you want to delete it, run 'git branch -D {}'",
-                        name,
-                        name
-                    );
-                }
+        if let Some(head_oid) = head.oid() {
+            if !is_ancestor(repo, branch_oid, *head_oid).unwrap_or(false) {
+                bail!(
+                    "error: the branch '{}' is not fully merged.\nIf you are sure you want to delete it, run 'git branch -D {}'",
+                    name,
+                    name
+                );
             }
         }
     }
 
-    fs::remove_file(&ref_path)?;
+    grit_lib::refs::delete_ref(&repo.git_dir, &refname)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Clean up empty parent directories under refs/heads/
-    let heads_dir = repo.git_dir.join("refs/heads");
-    let mut parent = ref_path.parent();
-    while let Some(p) = parent {
-        if p == heads_dir || !p.starts_with(&heads_dir) {
-            break;
+    // For files backend, clean up empty parent directories
+    if !grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+        let ref_path = repo.git_dir.join(&refname);
+        let heads_dir = repo.git_dir.join("refs/heads");
+        let mut parent = ref_path.parent();
+        while let Some(p) = parent {
+            if p == heads_dir || !p.starts_with(&heads_dir) {
+                break;
+            }
+            if fs::remove_dir(p).is_err() {
+                break;
+            }
+            parent = p.parent();
         }
-        if fs::remove_dir(p).is_err() {
-            break; // not empty or other error
-        }
-        parent = p.parent();
     }
 
     if !args.quiet {
-        let short = &oid_str[..7.min(oid_str.len())];
+        let hex = branch_oid.to_hex();
+        let short = &hex[..7.min(hex.len())];
         eprintln!("Deleted branch {name} (was {short}).");
     }
 

@@ -130,9 +130,14 @@ pub fn run(args: Args) -> Result<()> {
 
     let annotated = args.annotate || !args.message.is_empty() || args.file.is_some();
 
-    let tag_ref = repo.git_dir.join("refs/tags").join(name);
+    let tag_refname = format!("refs/tags/{name}");
+    let tag_exists = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+        grit_lib::refs::resolve_ref(&repo.git_dir, &tag_refname).is_ok()
+    } else {
+        repo.git_dir.join(&tag_refname).exists()
+    };
 
-    if tag_ref.exists() && !args.force {
+    if tag_exists && !args.force {
         bail!("tag '{name}' already exists");
     }
 
@@ -152,11 +157,9 @@ fn create_lightweight_tag(
     target_oid: ObjectId,
     _args: &Args,
 ) -> Result<()> {
-    let tag_ref = repo.git_dir.join("refs/tags").join(name);
-    if let Some(parent) = tag_ref.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&tag_ref, format!("{}\n", target_oid.to_hex()))?;
+    let refname = format!("refs/tags/{name}");
+    grit_lib::refs::write_ref(&repo.git_dir, &refname, &target_oid)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
 }
 
@@ -196,23 +199,21 @@ fn create_annotated_tag(
     let tag_bytes = serialize_tag(&tag_data);
     let tag_oid = repo.odb.write(ObjectKind::Tag, &tag_bytes)?;
 
-    let tag_ref = repo.git_dir.join("refs/tags").join(name);
-    if let Some(parent) = tag_ref.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&tag_ref, format!("{}\n", tag_oid.to_hex()))?;
+    let refname = format!("refs/tags/{name}");
+    grit_lib::refs::write_ref(&repo.git_dir, &refname, &tag_oid)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(())
 }
 
 /// Delete a tag by name.
 fn delete_tag(repo: &Repository, name: &str) -> Result<()> {
-    let tag_ref = repo.git_dir.join("refs/tags").join(name);
-    if !tag_ref.exists() {
-        bail!("tag '{name}' not found.");
-    }
-    let oid_str = fs::read_to_string(&tag_ref)?.trim().to_owned();
-    fs::remove_file(&tag_ref)?;
-    let short = &oid_str[..7.min(oid_str.len())];
+    let refname = format!("refs/tags/{name}");
+    let oid = grit_lib::refs::resolve_ref(&repo.git_dir, &refname)
+        .map_err(|_| anyhow::anyhow!("tag '{name}' not found."))?;
+    grit_lib::refs::delete_ref(&repo.git_dir, &refname)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let hex = oid.to_hex();
+    let short = &hex[..7.min(hex.len())];
     eprintln!("Deleted tag '{name}' (was {short})");
     Ok(())
 }
@@ -229,12 +230,9 @@ fn delete_tag(repo: &Repository, name: &str) -> Result<()> {
 /// For unsigned annotated tags, git tag -v fails because there is no
 /// GPG signature to verify.  We replicate that behaviour.
 fn verify_tag(repo: &Repository, name: &str) -> Result<()> {
-    let tag_ref = repo.git_dir.join("refs/tags").join(name);
-    if !tag_ref.exists() {
-        bail!("tag '{name}' not found.");
-    }
-    let oid_str = fs::read_to_string(&tag_ref)?.trim().to_owned();
-    let oid = ObjectId::from_hex(&oid_str)?;
+    let refname = format!("refs/tags/{name}");
+    let oid = grit_lib::refs::resolve_ref(&repo.git_dir, &refname)
+        .map_err(|_| anyhow::anyhow!("tag '{name}' not found."))?;
     let obj = repo.odb.read(&oid)?;
     match obj.kind {
         ObjectKind::Tag => {
@@ -264,9 +262,21 @@ fn list_tags(
     contains: Option<&str>,
     points_at: Option<&str>,
 ) -> Result<()> {
-    let tags_dir = repo.git_dir.join("refs/tags");
-    let mut tags: Vec<(String, ObjectId)> = Vec::new();
-    collect_tags(&tags_dir, "", &mut tags)?;
+    let mut tags: Vec<(String, ObjectId)> = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+        grit_lib::reftable::reftable_list_refs(&repo.git_dir, "refs/tags/")
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .into_iter()
+            .map(|(name, oid)| {
+                let short = name.strip_prefix("refs/tags/").unwrap_or(&name).to_owned();
+                (short, oid)
+            })
+            .collect()
+    } else {
+        let tags_dir = repo.git_dir.join("refs/tags");
+        let mut t = Vec::new();
+        collect_tags(&tags_dir, "", &mut t)?;
+        t
+    };
 
     // Filter by --contains
     if let Some(rev) = contains {

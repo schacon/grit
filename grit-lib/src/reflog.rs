@@ -35,6 +35,9 @@ pub fn reflog_path(git_dir: &Path, refname: &str) -> PathBuf {
 
 /// Check whether a reflog exists for the given ref.
 pub fn reflog_exists(git_dir: &Path, refname: &str) -> bool {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return crate::reftable::reftable_reflog_exists(git_dir, refname);
+    }
     let path = reflog_path(git_dir, refname);
     path.is_file()
 }
@@ -43,6 +46,9 @@ pub fn reflog_exists(git_dir: &Path, refname: &str) -> bool {
 ///
 /// Returns an empty vec if the reflog file does not exist.
 pub fn read_reflog(git_dir: &Path, refname: &str) -> Result<Vec<ReflogEntry>> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return crate::reftable::reftable_read_reflog(git_dir, refname);
+    }
     let path = reflog_path(git_dir, refname);
     let content = match fs::read_to_string(&path) {
         Ok(c) => c,

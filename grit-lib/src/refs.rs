@@ -1,4 +1,4 @@
-//! Reference storage — files backend.
+//! Reference storage — files backend + reftable backend.
 //!
 //! Git stores references as text files under `<git-dir>/refs/` (and
 //! `<git-dir>/packed-refs` for the packed backend).  Each loose ref file
@@ -10,10 +10,8 @@
 //! `HEAD` is a special case: it is normally a symbolic ref but may also be
 //! detached (pointing directly at a commit hash).
 //!
-//! # Scope
-//!
-//! This module implements the **files backend** only (loose refs + read-only
-//! packed-refs).  The reftable backend is out of scope for v1.
+//! When `extensions.refStorage = reftable`, the reftable backend is used
+//! instead.  The public API is the same; dispatch is handled internally.
 
 use std::fs;
 use std::io;
@@ -57,6 +55,8 @@ pub(crate) fn parse_ref_content(content: &str) -> Result<Ref> {
 
 /// Resolve a reference to its target [`ObjectId`], following symbolic refs.
 ///
+/// Dispatches to the reftable backend when `extensions.refStorage = reftable`.
+///
 /// # Parameters
 ///
 /// - `git_dir` — path to the git directory.
@@ -67,6 +67,9 @@ pub(crate) fn parse_ref_content(content: &str) -> Result<Ref> {
 /// - [`Error::InvalidRef`] if the ref is malformed or forms a cycle.
 /// - [`Error::ObjectNotFound`] if a symbolic target does not exist.
 pub fn resolve_ref(git_dir: &Path, refname: &str) -> Result<ObjectId> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return crate::reftable::reftable_resolve_ref(git_dir, refname);
+    }
     resolve_ref_depth(git_dir, refname, 0)
 }
 
@@ -121,7 +124,9 @@ fn lookup_packed_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> 
     Ok(None)
 }
 
-/// Write a loose ref, creating parent directories as needed.
+/// Write a ref, creating parent directories as needed.
+///
+/// Dispatches to the reftable backend when `extensions.refStorage = reftable`.
 ///
 /// # Parameters
 ///
@@ -133,6 +138,9 @@ fn lookup_packed_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> 
 ///
 /// Returns [`Error::Io`] on filesystem errors.
 pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return crate::reftable::reftable_write_ref(git_dir, refname, oid, None, None);
+    }
     let path = git_dir.join(refname);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -145,14 +153,17 @@ pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
     Ok(())
 }
 
-/// Delete a loose ref file.
+/// Delete a ref.
 ///
-/// Returns `Ok(())` even if the file did not exist.
+/// Dispatches to the reftable backend when `extensions.refStorage = reftable`.
 ///
 /// # Errors
 ///
 /// Returns [`Error::Io`] for errors other than "not found".
 pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return crate::reftable::reftable_delete_ref(git_dir, refname);
+    }
     let path = git_dir.join(refname);
     match fs::remove_file(&path) {
         Ok(()) => Ok(()),
@@ -177,11 +188,16 @@ pub fn read_head(git_dir: &Path) -> Result<Option<String>> {
     }
 }
 
-/// Read symbolic target of any loose ref.
+/// Read symbolic target of any ref.
+///
+/// Dispatches to the reftable backend when `extensions.refStorage = reftable`.
 ///
 /// Returns `Ok(Some(target))` when `refname` exists and is symbolic,
 /// `Ok(None)` when it is direct or missing.
 pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return crate::reftable::reftable_read_symbolic_ref(git_dir, refname);
+    }
     let path = git_dir.join(refname);
     match read_ref_file(&path) {
         Ok(Ref::Symbolic(target)) => Ok(Some(target)),
@@ -193,8 +209,7 @@ pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>
 
 /// Write a reflog entry.
 ///
-/// Appends a line to `<git-dir>/logs/<refname>`.  Creates the log file and
-/// parent directories if they do not exist.
+/// Dispatches to the reftable backend when `extensions.refStorage = reftable`.
 ///
 /// # Parameters
 ///
@@ -216,6 +231,11 @@ pub fn append_reflog(
     identity: &str,
     message: &str,
 ) -> Result<()> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return crate::reftable::reftable_append_reflog(
+            git_dir, refname, old_oid, new_oid, identity, message,
+        );
+    }
     let log_path = git_dir.join("logs").join(refname);
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent)?;
@@ -230,7 +250,9 @@ pub fn append_reflog(
     Ok(())
 }
 
-/// List all loose refs under a given prefix (e.g. `"refs/heads/"`).
+/// List all refs under a given prefix (e.g. `"refs/heads/"`).
+///
+/// Dispatches to the reftable backend when `extensions.refStorage = reftable`.
 ///
 /// Returns a sorted list of `(refname, ObjectId)` pairs.
 ///
@@ -238,6 +260,9 @@ pub fn append_reflog(
 ///
 /// Returns [`Error::Io`] on directory traversal errors.
 pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>> {
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return crate::reftable::reftable_list_refs(git_dir, prefix);
+    }
     let base = git_dir.join(prefix);
     let mut results = Vec::new();
     collect_refs(&base, prefix, git_dir, &mut results)?;

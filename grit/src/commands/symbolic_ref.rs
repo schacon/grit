@@ -101,6 +101,25 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 fn read_symbolic_ref_target(git_dir: &Path, name: &str, recurse: bool) -> Result<Option<String>> {
+    // Reftable backend: check reftable stack for symrefs
+    if grit_lib::reftable::is_reftable_repo(git_dir) {
+        // HEAD is still a file even in reftable repos
+        if name != "HEAD" {
+            match grit_lib::reftable::reftable_read_symbolic_ref(git_dir, name)
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+            {
+                Some(target) => return Ok(Some(target)),
+                None => {
+                    // Check if it exists as a direct ref
+                    match grit_lib::reftable::reftable_resolve_ref(git_dir, name) {
+                        Ok(_) => return Ok(None), // exists but not symbolic
+                        Err(_) => bail!("No such ref: {name}"),
+                    }
+                }
+            }
+        }
+    }
+
     let path = git_dir.join(name);
     match read_ref_file(&path) {
         Ok(Ref::Direct(_)) => Ok(None),
@@ -131,6 +150,14 @@ fn read_symbolic_ref_target(git_dir: &Path, name: &str, recurse: bool) -> Result
 }
 
 fn is_symbolic_ref(git_dir: &Path, name: &str) -> Result<bool> {
+    if grit_lib::reftable::is_reftable_repo(git_dir) && name != "HEAD" {
+        match grit_lib::reftable::reftable_read_symbolic_ref(git_dir, name)
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+        {
+            Some(_) => return Ok(true),
+            None => return Ok(false),
+        }
+    }
     let path = git_dir.join(name);
     match read_ref_file(&path) {
         Ok(Ref::Symbolic(_)) => Ok(true),
@@ -141,6 +168,11 @@ fn is_symbolic_ref(git_dir: &Path, name: &str) -> Result<bool> {
 }
 
 fn write_symbolic_ref(git_dir: &Path, name: &str, target: &str) -> Result<()> {
+    if grit_lib::reftable::is_reftable_repo(git_dir) && name != "HEAD" {
+        grit_lib::reftable::reftable_write_symref(git_dir, name, target, None, None)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        return Ok(());
+    }
     let path = git_dir.join(name);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -152,6 +184,11 @@ fn write_symbolic_ref(git_dir: &Path, name: &str, target: &str) -> Result<()> {
 }
 
 fn delete_loose_ref(git_dir: &Path, name: &str) -> Result<()> {
+    if grit_lib::reftable::is_reftable_repo(git_dir) && name != "HEAD" {
+        grit_lib::reftable::reftable_delete_ref(git_dir, name)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        return Ok(());
+    }
     let path = git_dir.join(name);
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
