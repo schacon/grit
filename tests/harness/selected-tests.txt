@@ -858,3 +858,4 @@ t3506-cherry-pick-ff.sh
 t3508-cherry-pick-many-commits.sh
 t3509-cherry-pick-merge-df.sh
 t3511-cherry-pick-x.sh
+t3512-cherry-pick-submodule.sh
