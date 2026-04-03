@@ -1135,3 +1135,5 @@ tests/t1512-rev-parse-disambiguation.sh
 tests/t1514-rev-parse-push.sh
 tests/t1515-rev-parse-outside-repo.sh
 tests/t1517-outside-repo.sh
+tests/t4014-format-patch.sh
+tests/t4021-format-patch-numbered.sh
