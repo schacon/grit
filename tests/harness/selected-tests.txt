@@ -973,3 +973,4 @@ t9910-tag-pattern-glob.sh
 t9920-commit-tree-author-env.sh
 test-lib.sh
 t3408-rebase-multi-line.sh
+t3307-notes-man.sh
