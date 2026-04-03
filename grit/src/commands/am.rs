@@ -89,6 +89,30 @@ pub struct Args {
     /// Show the current patch.
     #[arg(long = "show-current-patch", value_name = "MODE", num_args = 0..=1, default_missing_value = "raw")]
     pub show_current_patch: Option<String>,
+
+    /// Skip hook execution.
+    #[arg(long = "no-verify")]
+    pub no_verify: bool,
+
+    /// Add Message-Id trailer to commit messages.
+    #[arg(long = "message-id")]
+    pub message_id: bool,
+
+    /// What to do with empty patches (stop/drop/keep).
+    #[arg(long = "empty", value_name = "ACTION")]
+    pub empty: Option<String>,
+
+    /// Allow empty commits.
+    #[arg(long = "allow-empty")]
+    pub allow_empty: bool,
+
+    /// Override patch format detection.
+    #[arg(long = "patch-format", value_name = "FORMAT")]
+    pub patch_format: Option<String>,
+
+    /// Disable three-way merge fallback.
+    #[arg(long = "no-3way")]
+    pub no_three_way: bool,
 }
 
 /// A parsed patch from an mbox message.
@@ -102,6 +126,8 @@ struct MboxPatch {
     message: String,
     /// The unified diff portion.
     diff: String,
+    /// Message-ID from the email headers.
+    message_id: String,
 }
 
 /// Run the `am` command.
@@ -109,12 +135,16 @@ struct MboxPatch {
 struct AmOptions {
     quiet: bool,
     three_way: bool,
+    no_verify: bool,
     signoff: bool,
     keep: bool,
     keep_non_patch: bool,
     scissors: bool,
     no_scissors: bool,
     committer_date_is_author_date: bool,
+    message_id: bool,
+    empty: String,
+    allow_empty: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -222,16 +252,23 @@ fn do_am(args: Args) -> Result<()> {
     }
 
     // Apply patches
+    let three_way = if args.no_three_way { false } else { args.three_way };
     let opts = AmOptions {
         quiet: args.quiet,
-        three_way: args.three_way,
+        three_way,
+        no_verify: args.no_verify,
         signoff: args.signoff,
         keep: args.keep,
         keep_non_patch: args.keep_non_patch,
         scissors: args.scissors,
         no_scissors: args.no_scissors,
         committer_date_is_author_date: args.committer_date_is_author_date,
+        message_id: args.message_id,
+        empty: args.empty.unwrap_or_else(|| "stop".to_string()),
+        allow_empty: args.allow_empty,
     };
+    // Save options to state dir for --continue
+    save_am_options(&state_dir, &opts)?;
     apply_remaining(&repo, &opts)?;
 
     Ok(())
@@ -284,16 +321,22 @@ fn do_am_stdin(args: Args) -> Result<()> {
         fs::write(&patch_file, serialized)?;
     }
 
+    let three_way = if args.no_three_way { false } else { args.three_way };
     let opts = AmOptions {
         quiet: args.quiet,
-        three_way: args.three_way,
+        three_way,
+        no_verify: args.no_verify,
         signoff: args.signoff,
         keep: args.keep,
         keep_non_patch: args.keep_non_patch,
         scissors: args.scissors,
         no_scissors: args.no_scissors,
         committer_date_is_author_date: args.committer_date_is_author_date,
+        message_id: args.message_id,
+        empty: args.empty.unwrap_or_else(|| "stop".to_string()),
+        allow_empty: args.allow_empty,
     };
+    save_am_options(&state_dir, &opts)?;
     apply_remaining(&repo, &opts)?;
     Ok(())
 }
@@ -312,6 +355,40 @@ fn apply_remaining(repo: &Repository, opts: &AmOptions) -> Result<()> {
         let patch = deserialize_mbox_patch(&serialized)?;
 
         fs::write(state_dir.join("current"), next.to_string())?;
+
+        // Check if this is an empty patch (no diff)
+        let is_empty_patch = patch.diff.trim().is_empty();
+
+        if is_empty_patch {
+            match opts.empty.as_str() {
+                "drop" => {
+                    if !opts.quiet {
+                        let subject = patch.message.lines().next().unwrap_or("");
+                        eprintln!("Skipping: {}", subject);
+                    }
+                    next += 1;
+                    fs::write(state_dir.join("next"), next.to_string())?;
+                    continue;
+                }
+                "keep" => {
+                    // Will be handled in apply_one_patch as empty commit
+                }
+                _ => {
+                    // "stop" is the default - error on empty patch
+                    let subject = patch.message.lines().next().unwrap_or("");
+                    eprintln!(
+                        "error: patch failed: patch does not contain a valid diff\n\
+                         Applying: {}\n\
+                         hint: Fix the patch and run \"grit am --continue\".\n\
+                         hint: To abort, run \"grit am --abort\".",
+                        subject
+                    );
+                    // Save message for --continue
+                    fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
+                    std::process::exit(1);
+                }
+            }
+        }
 
         match apply_one_patch(repo, &patch, opts) {
             Ok(()) => {
@@ -349,15 +426,16 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot apply patches in a bare repository"))?;
 
-    // Check if the index is dirty (has changes compared to HEAD tree)
-    {
+    let is_empty_patch = patch.diff.trim().is_empty();
+
+    // For non-empty patches, check if the index is dirty
+    if !is_empty_patch {
         let index = load_index(repo)?;
         let head = resolve_head(git_dir)?;
         if let Some(head_oid) = head.oid() {
             let obj = repo.odb.read(head_oid)?;
             let commit = parse_commit(&obj.data)?;
             let head_entries = tree_to_index_entries(repo, &commit.tree, "")?;
-            // Compare index entries with HEAD tree entries
             if index.entries.len() != head_entries.len() ||
                 index.entries.iter().zip(head_entries.iter()).any(|(a, b)| a.oid != b.oid || a.path != b.path) {
                 bail!("your local changes would be overwritten by am.\n\
@@ -366,30 +444,326 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
         }
     }
 
-    // Reject patches with no diff section
-    if patch.diff.is_empty() {
-        bail!("patch does not contain a valid diff");
+    // Handle empty patches
+    if is_empty_patch {
+        if opts.empty == "keep" || opts.allow_empty {
+            // Run applypatch-msg hook
+            if !opts.no_verify {
+                let msg_path = git_dir.join("MERGE_MSG");
+                fs::write(&msg_path, &patch.message)?;
+                if !run_hook(git_dir, "applypatch-msg", &[msg_path.to_str().unwrap_or("")])? {
+                    let _ = fs::remove_file(&msg_path);
+                    bail!("applypatch-msg hook rejected the patch");
+                }
+            }
+
+            // Run pre-applypatch hook
+            if !opts.no_verify {
+                if !run_hook(git_dir, "pre-applypatch", &[])? {
+                    bail!("pre-applypatch hook rejected the patch");
+                }
+            }
+
+            // Create empty commit
+            let index = load_index(repo)?;
+            create_am_commit(repo, &index, patch, opts)?;
+
+            // Run post-applypatch hook
+            if !opts.no_verify {
+                let _ = run_hook(git_dir, "post-applypatch", &[]);
+            }
+
+            let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+            return Ok(());
+        } else {
+            bail!("patch does not contain a valid diff");
+        }
     }
 
-    // Apply the diff to the working tree and collect affected paths
-    let affected_paths = apply_patch_to_worktree(work_tree, &patch.diff)?;
+    // Run applypatch-msg hook
+    if !opts.no_verify {
+        let msg_path = git_dir.join("MERGE_MSG");
+        fs::write(&msg_path, &patch.message)?;
+        if !run_hook(git_dir, "applypatch-msg", &[msg_path.to_str().unwrap_or("")])? {
+            let _ = fs::remove_file(&msg_path);
+            bail!("applypatch-msg hook rejected the patch");
+        }
+    }
 
-    // Stage only the files that the patch touched
-    stage_affected_files(repo, &affected_paths)?;
+    // Try to apply the diff to the working tree
+    let apply_result = apply_patch_to_worktree(work_tree, &patch.diff);
+
+    match apply_result {
+        Ok(affected_paths) => {
+            // Stage only the files that the patch touched
+            stage_affected_files(repo, &affected_paths)?;
+        }
+        Err(e) => {
+            if opts.three_way {
+                // Attempt 3-way merge
+                apply_three_way(repo, patch)?;
+            } else {
+                // Save message for --continue
+                fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
+                return Err(e);
+            }
+        }
+    }
 
     // Create commit
     let index = load_index(repo)?;
 
     // Check for conflicts
     if index.entries.iter().any(|e| e.stage() != 0) {
-        // Save message for --continue
         fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
         bail!("patch has conflicts");
     }
 
+    // Check if the tree changed (for --allow-empty)
+    let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
+    let head = resolve_head(git_dir)?;
+    if let Some(head_oid) = head.oid() {
+        let obj = repo.odb.read(head_oid)?;
+        let commit = parse_commit(&obj.data)?;
+        if tree_oid == commit.tree && !opts.allow_empty {
+            // The patch produced an empty commit - this shouldn't happen for non-empty patches
+            // but if it does, error out
+            bail!("patch does not apply");
+        }
+    }
+
+    // Run pre-applypatch hook
+    if !opts.no_verify {
+        if !run_hook(git_dir, "pre-applypatch", &[])? {
+            bail!("pre-applypatch hook rejected the patch");
+        }
+    }
+
     create_am_commit(repo, &index, patch, opts)?;
 
+    // Run post-applypatch hook (failure doesn't abort)
+    if !opts.no_verify {
+        let _ = run_hook(git_dir, "post-applypatch", &[]);
+    }
+
+    let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+
     Ok(())
+}
+
+/// Attempt a 3-way merge when a patch doesn't apply cleanly.
+fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
+    let git_dir = &repo.git_dir;
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("no work tree"))?;
+
+    // Parse the patch to extract index lines with blob SHAs
+    let file_patches = parse_patch(&patch.diff)?;
+    let head = resolve_head(git_dir)?;
+    let head_oid = head.oid().ok_or_else(|| anyhow::anyhow!("no HEAD for 3-way merge"))?;
+    let head_obj = repo.odb.read(head_oid)?;
+    let head_commit = parse_commit(&head_obj.data)?;
+
+    // Build the "base" tree by finding the common ancestor blobs from index lines
+    // Then apply the patch to the base, and merge base->patched with HEAD
+    //
+    // For each file in the patch, we need:
+    // 1. The base version (from the patch's index line pre-image hash)
+    // 2. The "ours" version (from HEAD tree)
+    // 3. The "theirs" version (base + patch applied)
+
+    let mut any_conflict = false;
+    let mut affected_paths = Vec::new();
+
+    for fp in &file_patches {
+        let path_str = fp.effective_path()
+            .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
+        let rel_path = strip_components(path_str, 1);
+        let abs_path = work_tree.join(&rel_path);
+        affected_paths.push(rel_path.clone());
+
+        if fp.is_new {
+            // New file - just apply directly
+            if let Some(parent) = abs_path.parent() {
+                if !parent.as_os_str().is_empty() && !parent.exists() {
+                    fs::create_dir_all(parent)?;
+                }
+            }
+            let content = apply_hunks("", &fp.hunks)?;
+            fs::write(&abs_path, content.as_bytes())?;
+            continue;
+        }
+
+        if fp.is_deleted {
+            if abs_path.exists() {
+                fs::remove_file(&abs_path)?;
+            }
+            continue;
+        }
+
+        // Get "ours" from working tree / HEAD
+        let ours = if abs_path.exists() {
+            fs::read_to_string(&abs_path).unwrap_or_default()
+        } else {
+            // Try from HEAD tree
+            get_blob_from_tree(repo, &head_commit.tree, &rel_path)
+                .unwrap_or_default()
+        };
+
+        // Try to find the base blob from the index line in the diff
+        // The patch's context lines tell us what the pre-image looks like
+        // Build the pre-image from hunks
+        let base = build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone());
+
+        // Apply the patch to the base to get "theirs"
+        let theirs = match apply_hunks(&base, &fp.hunks) {
+            Ok(t) => t,
+            Err(_) => {
+                // If we can't even apply to base, that's a real failure
+                bail!("Failed to apply patch to {} even in 3-way mode", rel_path);
+            }
+        };
+
+        // Now do a 3-way merge: base, ours, theirs
+        let merged = three_way_merge(&base, &ours, &theirs);
+        if merged.has_conflicts {
+            any_conflict = true;
+        }
+        fs::write(&abs_path, &merged.content)?;
+    }
+
+    // Stage affected files
+    stage_affected_files(repo, &affected_paths)?;
+
+    if any_conflict {
+        bail!("3-way merge has conflicts");
+    }
+
+    Ok(())
+}
+
+/// Build a pre-image by reversing the hunk operations on the current content.
+fn build_preimage_from_hunks(current: &str, hunks: &[Hunk]) -> Result<String> {
+    // The pre-image is what the file looked like before the patch.
+    // We can reconstruct it from context + remove lines (those are in the original)
+    // while ignoring add lines (those are new)
+    let mut pre_lines: Vec<String> = Vec::new();
+    let current_lines: Vec<&str> = current.lines().collect();
+
+    let mut cur_idx = 0;
+    for hunk in hunks {
+        let hunk_start = if hunk.old_start == 0 { 0 } else { hunk.old_start - 1 };
+        // Copy lines before this hunk from current
+        while cur_idx < hunk_start && cur_idx < current_lines.len() {
+            pre_lines.push(current_lines[cur_idx].to_string());
+            cur_idx += 1;
+        }
+
+        for hl in &hunk.lines {
+            match hl {
+                HunkLine::Context(s) => {
+                    pre_lines.push(s.clone());
+                    cur_idx += 1;
+                }
+                HunkLine::Remove(s) => {
+                    pre_lines.push(s.clone());
+                    cur_idx += 1;
+                }
+                HunkLine::Add(_) => {
+                    // Skip add lines - they're not in the pre-image
+                }
+                HunkLine::NoNewline => {}
+            }
+        }
+    }
+
+    // Copy remaining lines
+    while cur_idx < current_lines.len() {
+        pre_lines.push(current_lines[cur_idx].to_string());
+        cur_idx += 1;
+    }
+
+    let mut out = pre_lines.join("\n");
+    if !out.is_empty() && (current.ends_with('\n') || current.is_empty()) {
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+struct MergeResult {
+    content: String,
+    has_conflicts: bool,
+}
+
+/// Simple line-based 3-way merge.
+fn three_way_merge(base: &str, ours: &str, theirs: &str) -> MergeResult {
+    let base_lines: Vec<&str> = base.lines().collect();
+    let ours_lines: Vec<&str> = ours.lines().collect();
+    let theirs_lines: Vec<&str> = theirs.lines().collect();
+
+    let mut result = Vec::new();
+    let mut has_conflicts = false;
+    let max_len = base_lines.len().max(ours_lines.len()).max(theirs_lines.len());
+
+    for i in 0..max_len {
+        let b = base_lines.get(i).copied().unwrap_or("");
+        let o = ours_lines.get(i).copied().unwrap_or("");
+        let t = theirs_lines.get(i).copied().unwrap_or("");
+
+        if o == t {
+            result.push(o.to_string());
+        } else if b == o {
+            // Only theirs changed
+            result.push(t.to_string());
+        } else if b == t {
+            // Only ours changed
+            result.push(o.to_string());
+        } else {
+            // Both changed differently - conflict
+            has_conflicts = true;
+            result.push(format!("<<<<<<< HEAD"));
+            result.push(o.to_string());
+            result.push(format!("======="));
+            result.push(t.to_string());
+            result.push(format!(">>>>>>> patch"));
+        }
+    }
+
+    // Handle length differences
+    let mut content = result.join("\n");
+    if !content.is_empty() {
+        content.push('\n');
+    }
+
+    MergeResult { content, has_conflicts }
+}
+
+/// Get a blob from a tree by path.
+fn get_blob_from_tree(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<String> {
+    use grit_lib::objects::parse_tree;
+    let parts: Vec<&str> = path.splitn(2, '/').collect();
+    let name = parts[0];
+
+    let obj = repo.odb.read(tree_oid)?;
+    let entries = parse_tree(&obj.data)?;
+
+    for entry in &entries {
+        let entry_name = String::from_utf8_lossy(&entry.name);
+        if entry_name == name {
+            if parts.len() == 1 {
+                // This is the file
+                let blob = repo.odb.read(&entry.oid)?;
+                return Ok(String::from_utf8_lossy(&blob.data).into_owned());
+            } else if entry.mode == 0o040000 {
+                // Recurse into subdirectory
+                return get_blob_from_tree(repo, &entry.oid, parts[1]);
+            }
+        }
+    }
+
+    bail!("path not found in tree: {}", path);
 }
 
 /// Apply a unified diff to the working tree files.
@@ -700,8 +1074,14 @@ fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch, opts: &
         format_ident(&committer, now)
     };
 
-    // Handle --signoff
+    // Handle --message-id: add Message-Id trailer
     let mut message = patch.message.clone();
+    if opts.message_id && !patch.message_id.is_empty() {
+        let mid_line = format!("Message-Id: {}", patch.message_id);
+        message = add_trailer(&message, &mid_line);
+    }
+
+    // Handle --signoff
     if opts.signoff {
         let sob_line = format!("Signed-off-by: {} <{}>", committer.0, committer.1);
         message = add_signoff(&message, &sob_line);
@@ -723,6 +1103,23 @@ fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch, opts: &
     update_head(git_dir, &head, &commit_oid)?;
 
     Ok(())
+}
+
+/// Add a trailer line to a commit message.
+fn add_trailer(message: &str, trailer: &str) -> String {
+    let trimmed = message.trim_end();
+    let lines: Vec<&str> = trimmed.lines().collect();
+
+    // Check if there's already a trailer block
+    let has_trailer_block = lines.last().map_or(false, |l| {
+        l.contains(": ") && !l.starts_with(' ') && !l.starts_with('\t')
+    });
+
+    if has_trailer_block {
+        format!("{}\n{}\n", trimmed, trailer)
+    } else {
+        format!("{}\n\n{}\n", trimmed, trailer)
+    }
 }
 
 /// Add Signed-off-by line to commit message, following git conventions.
@@ -825,16 +1222,7 @@ fn do_skip() -> Result<()> {
     fs::write(state_dir.join("next"), (next + 1).to_string())?;
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
 
-    let opts = AmOptions {
-        quiet: false,
-        three_way: false,
-        signoff: false,
-        keep: false,
-        keep_non_patch: false,
-        scissors: false,
-        no_scissors: false,
-        committer_date_is_author_date: false,
-    };
+    let opts = load_am_options(&state_dir);
     apply_remaining(&repo, &opts)?;
 
     Ok(())
@@ -858,6 +1246,21 @@ fn do_continue(quiet: bool) -> Result<()> {
     }
 
     let state_dir = am_dir(git_dir);
+
+    // Check that the index has actually changed compared to HEAD
+    let head = resolve_head(git_dir)?;
+    if let Some(head_oid) = head.oid() {
+        let head_tree = {
+            let obj = repo.odb.read(head_oid)?;
+            let commit = parse_commit(&obj.data)?;
+            commit.tree
+        };
+        let index_tree = write_tree_from_index(&repo.odb, &index, "")?;
+        if head_tree == index_tree {
+            bail!("error: no changes - did you forget to use 'git add'?");
+        }
+    }
+
     let current: usize = fs::read_to_string(state_dir.join("current"))?.trim().parse()?;
     let patch_file = state_dir.join("patches").join(current.to_string());
     let serialized = fs::read_to_string(&patch_file)?;
@@ -874,17 +1277,11 @@ fn do_continue(quiet: bool) -> Result<()> {
         ..patch
     };
 
-    let default_opts = AmOptions {
-        quiet,
-        three_way: false,
-        signoff: false,
-        keep: false,
-        keep_non_patch: false,
-        scissors: false,
-        no_scissors: false,
-        committer_date_is_author_date: false,
-    };
-    create_am_commit(&repo, &index, &patched, &default_opts)?;
+    // Load saved options
+    let mut opts = load_am_options(&state_dir);
+    opts.quiet = quiet;
+
+    create_am_commit(&repo, &index, &patched, &opts)?;
 
     let subject = patched.message.lines().next().unwrap_or("");
     if !quiet {
@@ -897,16 +1294,6 @@ fn do_continue(quiet: bool) -> Result<()> {
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
 
     // Continue with remaining
-    let opts = AmOptions {
-        quiet,
-        three_way: false,
-        signoff: false,
-        keep: false,
-        keep_non_patch: false,
-        scissors: false,
-        no_scissors: false,
-        committer_date_is_author_date: false,
-    };
     apply_remaining(&repo, &opts)?;
 
     Ok(())
@@ -973,6 +1360,84 @@ fn do_abort() -> Result<()> {
     Ok(())
 }
 
+// ── Save/Load options ───────────────────────────────────────────────
+
+fn save_am_options(state_dir: &Path, opts: &AmOptions) -> Result<()> {
+    let mut out = String::new();
+    if opts.three_way { out.push_str("threeway\n"); }
+    if opts.no_verify { out.push_str("no-verify\n"); }
+    if opts.signoff { out.push_str("signoff\n"); }
+    if opts.quiet { out.push_str("quiet\n"); }
+    if opts.message_id { out.push_str("message-id\n"); }
+    if opts.allow_empty { out.push_str("allow-empty\n"); }
+    out.push_str(&format!("empty={}\n", opts.empty));
+    fs::write(state_dir.join("options"), out)?;
+    Ok(())
+}
+
+fn load_am_options(state_dir: &Path) -> AmOptions {
+    let content = fs::read_to_string(state_dir.join("options")).unwrap_or_default();
+    let mut opts = AmOptions {
+        quiet: false,
+        three_way: false,
+        no_verify: false,
+        signoff: false,
+        keep: false,
+        keep_non_patch: false,
+        scissors: false,
+        no_scissors: false,
+        committer_date_is_author_date: false,
+        message_id: false,
+        empty: "stop".to_string(),
+        allow_empty: false,
+    };
+    for line in content.lines() {
+        match line.trim() {
+            "threeway" => opts.three_way = true,
+            "no-verify" => opts.no_verify = true,
+            "signoff" => opts.signoff = true,
+            "quiet" => opts.quiet = true,
+            "message-id" => opts.message_id = true,
+            "allow-empty" => opts.allow_empty = true,
+            l if l.starts_with("empty=") => opts.empty = l[6..].to_string(),
+            _ => {}
+        }
+    }
+    opts
+}
+
+// ── Hooks ───────────────────────────────────────────────────────────
+
+fn run_hook(git_dir: &Path, hook_name: &str, args: &[&str]) -> Result<bool> {
+    let hook_path = git_dir.join("hooks").join(hook_name);
+    if !hook_path.exists() {
+        return Ok(true); // No hook = success
+    }
+
+    // Determine the work tree (parent of git_dir, unless it's a bare repo)
+    let work_dir = git_dir.parent().unwrap_or(git_dir);
+
+    // Build the command - use sh to handle scripts without shebangs
+    let mut cmd = std::process::Command::new(&hook_path);
+    cmd.args(args)
+        .env("GIT_DIR", git_dir)
+        .current_dir(work_dir);
+
+    let status = cmd.status()
+        .or_else(|_| {
+            // If direct execution fails, try via /bin/sh
+            std::process::Command::new("/bin/sh")
+                .arg(&hook_path)
+                .args(args)
+                .env("GIT_DIR", git_dir)
+                .current_dir(work_dir)
+                .status()
+        })
+        .with_context(|| format!("failed to execute hook {}", hook_name))?;
+
+    Ok(status.success())
+}
+
 // ── Cleanup ─────────────────────────────────────────────────────────
 
 fn cleanup_am_state(git_dir: &Path) {
@@ -991,8 +1456,56 @@ fn parse_mbox(input: &str) -> Result<Vec<MboxPatch>> {
     parse_mbox_with_opts(input, false, false, false, false)
 }
 
+/// Unquote mboxrd format: lines starting with >From (or >>From, etc.) are unquoted.
+/// In mboxrd, "From " lines inside messages are escaped by prepending ">".
+fn unquote_mboxrd(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut in_body = false;
+    let mut seen_blank_after_headers = false;
+
+    for line in input.lines() {
+        if line.starts_with("From ") && line.len() > 5 {
+            // mbox separator - reset state
+            in_body = false;
+            seen_blank_after_headers = false;
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        if !in_body {
+            if line.is_empty() {
+                seen_blank_after_headers = true;
+                in_body = true;
+            }
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        // In body: unquote >From lines
+        if line.starts_with(">From ") || line.starts_with(">>") && line.contains("From ") {
+            // Strip one leading > if the line matches >+From pattern
+            let stripped = line.strip_prefix(">").unwrap_or(line);
+            result.push_str(stripped);
+        } else {
+            result.push_str(line);
+        }
+        result.push('\n');
+    }
+
+    // Remove trailing extra newline if input didn't end with one
+    if !input.ends_with('\n') && result.ends_with('\n') {
+        result.pop();
+    }
+
+    result
+}
+
 /// Parse an mbox file into individual patches with options.
 fn parse_mbox_with_opts(input: &str, keep: bool, keep_non_patch: bool, scissors: bool, no_scissors: bool) -> Result<Vec<MboxPatch>> {
+    // Handle mboxrd: unquote >From lines
+    let input = unquote_mboxrd(input);
     let mut patches = Vec::new();
     let mut lines = input.lines().peekable();
 
@@ -1003,6 +1516,7 @@ fn parse_mbox_with_opts(input: &str, keep: bool, keep_non_patch: bool, scissors:
         let mut author = String::new();
         let mut date = String::new();
         let mut subject = String::new();
+        let mut message_id = String::new();
         let _body = String::new();
         let mut found_from = false;
 
@@ -1066,6 +1580,11 @@ fn parse_mbox_with_opts(input: &str, keep: bool, keep_non_patch: bool, scissors:
                 };
                 subject = subj;
                 last_header = "subject".to_string();
+            } else if let Some(value) = line.strip_prefix("Message-ID: ")
+                .or_else(|| line.strip_prefix("Message-Id: "))
+                .or_else(|| line.strip_prefix("Message-id: ")) {
+                message_id = value.trim().to_string();
+                last_header = "message-id".to_string();
             } else {
                 last_header = String::new();
             }
@@ -1161,6 +1680,7 @@ fn parse_mbox_with_opts(input: &str, keep: bool, keep_non_patch: bool, scissors:
                 date: author_ident.1,
                 message,
                 diff: diff_section,
+                message_id: message_id.clone(),
             });
         }
     }
@@ -1400,6 +1920,9 @@ fn serialize_mbox_patch(patch: &MboxPatch) -> String {
     let mut out = String::new();
     out.push_str(&format!("Author: {}\n", patch.author));
     out.push_str(&format!("Date: {}\n", patch.date));
+    if !patch.message_id.is_empty() {
+        out.push_str(&format!("Message-ID: {}\n", patch.message_id));
+    }
     out.push_str(&format!("Message-Length: {}\n", patch.message.len()));
     out.push_str(&format!("Diff-Length: {}\n", patch.diff.len()));
     out.push('\n');
@@ -1412,6 +1935,7 @@ fn serialize_mbox_patch(patch: &MboxPatch) -> String {
 fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
     let mut author = String::new();
     let mut date = String::new();
+    let mut message_id = String::new();
     let mut msg_len = 0usize;
     let mut diff_len = 0usize;
 
@@ -1424,6 +1948,8 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
             author = v.to_string();
         } else if let Some(v) = line.strip_prefix("Date: ") {
             date = v.to_string();
+        } else if let Some(v) = line.strip_prefix("Message-ID: ") {
+            message_id = v.to_string();
         } else if let Some(v) = line.strip_prefix("Message-Length: ") {
             msg_len = v.parse().unwrap_or(0);
         } else if let Some(v) = line.strip_prefix("Diff-Length: ") {
@@ -1459,6 +1985,7 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
         date,
         message,
         diff,
+        message_id,
     })
 }
 
