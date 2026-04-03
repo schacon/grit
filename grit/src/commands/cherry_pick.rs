@@ -337,9 +337,9 @@ fn cherry_pick_one_commit(
     // Build the cherry-pick message.
     let mut msg = commit.message.clone();
     if args.append_source {
-        let trailer = format!("\n(cherry picked from commit {})\n", commit_oid.to_hex());
+        let trailer = format!("\n\n(cherry picked from commit {})", commit_oid.to_hex());
         let trimmed = msg.trim_end().to_owned();
-        msg = format!("{trimmed}{trailer}");
+        msg = format!("{trimmed}{trailer}\n");
     }
     if args.signoff {
         msg = append_signoff(&msg, git_dir)?;
@@ -418,9 +418,9 @@ fn do_continue(args: &Args) -> Result<()> {
     };
 
     if args.append_source {
-        let trailer = format!("\n(cherry picked from commit {})\n", cp_oid.to_hex());
+        let trailer = format!("\n\n(cherry picked from commit {})", cp_oid.to_hex());
         let trimmed = msg.trim_end().to_owned();
-        msg = format!("{trimmed}{trailer}");
+        msg = format!("{trimmed}{trailer}\n");
     }
     if args.signoff {
         msg = append_signoff(&msg, git_dir)?;

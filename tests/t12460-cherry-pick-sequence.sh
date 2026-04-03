@@ -143,14 +143,13 @@ test_expect_success 'cherry-pick file addition does not touch other files' '
     test_cmp expect actual
 '
 
-test_expect_failure 'cherry-pick same commit twice yields empty pick' '
-    (cd repo &&
-     grit checkout -b double base &&
-     h=$(grit rev-parse source~4) &&
-     grit cherry-pick "$h" &&
-     test_must_fail grit cherry-pick "$h" &&
-     /usr/bin/git cherry-pick --skip
-    )
+test_expect_success 'cherry-pick same commit twice yields empty pick' '
+    cd repo &&
+    grit checkout -b double base &&
+    h=$(grit rev-parse source~4) &&
+    grit cherry-pick "$h" &&
+    test_must_fail grit cherry-pick "$h" &&
+    rm -f .git/CHERRY_PICK_HEAD
 '
 
 test_expect_success 'cherry-pick source branch is unmodified' '
