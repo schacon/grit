@@ -841,3 +841,4 @@ t9900-branch-verbose-all.sh
 t9910-tag-pattern-glob.sh
 t9920-commit-tree-author-env.sh
 test-lib.sh
+t7510-signed-commit.sh
