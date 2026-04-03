@@ -494,38 +494,38 @@ t0020-crlf::lf-only-file-gets-crlf-with-autocrlf	t0020-crlf	LF only file gets CR
 t0020-crlf::mixed-file-is-still-mixed-with-autocrlf	t0020-crlf	Mixed file is still mixed with autocrlf		not_ported
 t0020-crlf::crlf-only-file-has-crlf-with-autocrlf	t0020-crlf	CRLF only file has CRLF with autocrlf		not_ported
 t0020-crlf::new-crlf-file-gets-lf-in-repo	t0020-crlf	New CRLF file gets LF in repo	add	not_ported
-t0021-conversion::filter-shell-escaped-filenames	t0021-conversion	filter shell-escaped filenames		not_ported
-t0021-conversion::required-filter-should-filter-data	t0021-conversion	required filter should filter data	add	not_ported
-t0021-conversion::required-filter-smudge-failure	t0021-conversion	required filter smudge failure	add	not_ported
-t0021-conversion::required-filter-clean-failure	t0021-conversion	required filter clean failure	add	not_ported
-t0021-conversion::required-filter-with-absent-clean-field	t0021-conversion	required filter with absent clean field	add	not_ported
-t0021-conversion::required-filter-with-absent-smudge-field	t0021-conversion	required filter with absent smudge field	add	not_ported
-t0021-conversion::filtering-large-input-to-small-output-should-use-little-memory	t0021-conversion	filtering large input to small output should use little memory	add	not_ported
-t0021-conversion::filter-that-does-not-read-is-fine	t0021-conversion	filter that does not read is fine	add	not_ported
-t0021-conversion::filter-large-file	t0021-conversion	filter large file	add	not_ported
-t0021-conversion::disable-filter-with-empty-override	t0021-conversion	disable filter with empty override	add	not_ported
-t0021-conversion::diff-does-not-reuse-worktree-files-that-need-cleaning	t0021-conversion	diff does not reuse worktree files that need cleaning	diff-tree	not_ported
-t0021-conversion::required-process-filter-should-filter-data	t0021-conversion	required process filter should filter data	add	not_ported
-t0021-conversion::required-process-filter-should-filter-data-for-various-subcommands	t0021-conversion	required process filter should filter data for various subcommands		not_ported
-t0021-conversion::required-process-filter-takes-precedence	t0021-conversion	required process filter takes precedence	init	not_ported
-t0021-conversion::required-process-filter-should-be-used-only-for-clean-operation-only	t0021-conversion	required process filter should be used only for "clean" operation only	init	not_ported
-t0021-conversion::required-process-filter-should-process-multiple-packets	t0021-conversion	required process filter should process multiple packets	hash-object	not_ported
-t0021-conversion::required-process-filter-with-clean-error-should-fail	t0021-conversion	required process filter with clean error should fail	add	not_ported
-t0021-conversion::process-filter-should-restart-after-unexpected-write-failure	t0021-conversion	process filter should restart after unexpected write failure	add	not_ported
-t0021-conversion::process-filter-should-not-be-restarted-if-it-signals-an-error	t0021-conversion	process filter should not be restarted if it signals an error	add	not_ported
-t0021-conversion::process-filter-abort-stops-processing-of-all-further-files	t0021-conversion	process filter abort stops processing of all further files	add	not_ported
-t0021-conversion::invalid-process-filter-must-fail-and-not-hang	t0021-conversion	invalid process filter must fail (and not hang!)	add	not_ported
-t0021-conversion::delayed-checkout-in-process-filter	t0021-conversion	delayed checkout in process filter	add	not_ported
-t0021-conversion::missing-file-in-delayed-checkout	t0021-conversion	missing file in delayed checkout	add	not_ported
-t0021-conversion::invalid-file-in-delayed-checkout	t0021-conversion	invalid file in delayed checkout	add	not_ported
-t0021-conversion::setup-for-progress-tests	t0021-conversion	setup for progress tests	add	not_ported
-t0021-conversion::delayed-checkout-correctly-reports-the-number-of-updated-entries	t0021-conversion	delayed checkout correctly reports the number of updated entries	add	not_ported
-t0021-conversion::filter-clean-empty-file	t0021-conversion	filter: clean empty file	add	not_ported
-t0021-conversion::filter-smudge-empty-file	t0021-conversion	filter: smudge empty file	add	not_ported
-t0021-conversion::delayed-checkout-shows-progress-by-default-on-tty-mode-checkout	t0021-conversion	delayed checkout shows progress by default on tty ($mode checkout)	checkout	not_ported
-t0021-conversion::delayed-checkout-omits-progress-on-non-tty-mode-checkout	t0021-conversion	delayed checkout omits progress on non-tty ($mode checkout)	checkout	not_ported
-t0021-conversion::delayed-checkout-omits-progress-with-quiet-mode-checkout	t0021-conversion	delayed checkout omits progress with --quiet ($mode checkout)	checkout	not_ported
-t0021-conversion::delayed-checkout-honors-no-progress-mode-checkout	t0021-conversion	delayed checkout honors --[no]-progress ($mode checkout)	checkout	not_ported
+t0021-conversion::filter-shell-escaped-filenames	t0021-conversion	filter shell-escaped filenames		pass
+t0021-conversion::required-filter-should-filter-data	t0021-conversion	required filter should filter data	add	pass
+t0021-conversion::required-filter-smudge-failure	t0021-conversion	required filter smudge failure	add	pass
+t0021-conversion::required-filter-clean-failure	t0021-conversion	required filter clean failure	add	pass
+t0021-conversion::required-filter-with-absent-clean-field	t0021-conversion	required filter with absent clean field	add	pass
+t0021-conversion::required-filter-with-absent-smudge-field	t0021-conversion	required filter with absent smudge field	add	pass
+t0021-conversion::filtering-large-input-to-small-output-should-use-little-memory	t0021-conversion	filtering large input to small output should use little memory	add	pass
+t0021-conversion::filter-that-does-not-read-is-fine	t0021-conversion	filter that does not read is fine	add	pass
+t0021-conversion::filter-large-file	t0021-conversion	filter large file	add	pass
+t0021-conversion::disable-filter-with-empty-override	t0021-conversion	disable filter with empty override	add	pass
+t0021-conversion::diff-does-not-reuse-worktree-files-that-need-cleaning	t0021-conversion	diff does not reuse worktree files that need cleaning	diff-tree	pass
+t0021-conversion::required-process-filter-should-filter-data	t0021-conversion	required process filter should filter data	add	pass
+t0021-conversion::required-process-filter-should-filter-data-for-various-subcommands	t0021-conversion	required process filter should filter data for various subcommands		pass
+t0021-conversion::required-process-filter-takes-precedence	t0021-conversion	required process filter takes precedence	init	pass
+t0021-conversion::required-process-filter-should-be-used-only-for-clean-operation-only	t0021-conversion	required process filter should be used only for "clean" operation only	init	pass
+t0021-conversion::required-process-filter-should-process-multiple-packets	t0021-conversion	required process filter should process multiple packets	hash-object	pass
+t0021-conversion::required-process-filter-with-clean-error-should-fail	t0021-conversion	required process filter with clean error should fail	add	pass
+t0021-conversion::process-filter-should-restart-after-unexpected-write-failure	t0021-conversion	process filter should restart after unexpected write failure	add	pass
+t0021-conversion::process-filter-should-not-be-restarted-if-it-signals-an-error	t0021-conversion	process filter should not be restarted if it signals an error	add	pass
+t0021-conversion::process-filter-abort-stops-processing-of-all-further-files	t0021-conversion	process filter abort stops processing of all further files	add	pass
+t0021-conversion::invalid-process-filter-must-fail-and-not-hang	t0021-conversion	invalid process filter must fail (and not hang!)	add	pass
+t0021-conversion::delayed-checkout-in-process-filter	t0021-conversion	delayed checkout in process filter	add	pass
+t0021-conversion::missing-file-in-delayed-checkout	t0021-conversion	missing file in delayed checkout	add	pass
+t0021-conversion::invalid-file-in-delayed-checkout	t0021-conversion	invalid file in delayed checkout	add	pass
+t0021-conversion::setup-for-progress-tests	t0021-conversion	setup for progress tests	add	pass
+t0021-conversion::delayed-checkout-correctly-reports-the-number-of-updated-entries	t0021-conversion	delayed checkout correctly reports the number of updated entries	add	pass
+t0021-conversion::filter-clean-empty-file	t0021-conversion	filter: clean empty file	add	pass
+t0021-conversion::filter-smudge-empty-file	t0021-conversion	filter: smudge empty file	add	pass
+t0021-conversion::delayed-checkout-shows-progress-by-default-on-tty-mode-checkout	t0021-conversion	delayed checkout shows progress by default on tty ($mode checkout)	checkout	pass
+t0021-conversion::delayed-checkout-omits-progress-on-non-tty-mode-checkout	t0021-conversion	delayed checkout omits progress on non-tty ($mode checkout)	checkout	pass
+t0021-conversion::delayed-checkout-omits-progress-with-quiet-mode-checkout	t0021-conversion	delayed checkout omits progress with --quiet ($mode checkout)	checkout	pass
+t0021-conversion::delayed-checkout-honors-no-progress-mode-checkout	t0021-conversion	delayed checkout honors --[no]-progress ($mode checkout)	checkout	pass
 t0022-crlf-rename::diff-m	t0022-crlf-rename	diff -M	diff-tree	not_ported
 t0023-crlf-am::setup	t0023-crlf-am	setup	add	not_ported
 t0023-crlf-am::am	t0023-crlf-am	am	am	not_ported
@@ -533,11 +533,11 @@ t0024-crlf-archive::tar-archive	t0024-crlf-archive	tar archive	archive	not_porte
 t0024-crlf-archive::zip-archive	t0024-crlf-archive	zip archive	archive	not_ported
 t0025-crlf-renormalize::renormalize-crlf-in-repo	t0025-crlf-renormalize	renormalize CRLF in repo	add	not_ported
 t0025-crlf-renormalize::ignore-errors-not-mistaken-for-renormalize	t0025-crlf-renormalize	ignore-errors not mistaken for renormalize	add	not_ported
-t0026-eol-config::eol-lf-puts-lfs-in-normalized-file	t0026-eol-config	eol=lf puts LFs in normalized file	config	not_ported
-t0026-eol-config::eol-crlf-puts-crlfs-in-normalized-file	t0026-eol-config	eol=crlf puts CRLFs in normalized file	config	not_ported
-t0026-eol-config::autocrlf-true-overrides-eol-lf	t0026-eol-config	autocrlf=true overrides eol=lf	config	not_ported
-t0026-eol-config::autocrlf-true-overrides-unset-eol	t0026-eol-config	autocrlf=true overrides unset eol	config	not_ported
-t0026-eol-config::eol-native-is-crlf	t0026-eol-config	eol native is crlf	add	not_ported
+t0026-eol-config::eol-lf-puts-lfs-in-normalized-file	t0026-eol-config	eol=lf puts LFs in normalized file	config	pass
+t0026-eol-config::eol-crlf-puts-crlfs-in-normalized-file	t0026-eol-config	eol=crlf puts CRLFs in normalized file	config	pass
+t0026-eol-config::autocrlf-true-overrides-eol-lf	t0026-eol-config	autocrlf=true overrides eol=lf	config	pass
+t0026-eol-config::autocrlf-true-overrides-unset-eol	t0026-eol-config	autocrlf=true overrides unset eol	config	pass
+t0026-eol-config::eol-native-is-crlf	t0026-eol-config	eol native is crlf	add	pass
 t0027-auto-crlf::setup-commit-nno-files	t0027-auto-crlf	setup commit NNO files	add	not_ported
 t0027-auto-crlf::setup-commit-file-with-mixed-eol	t0027-auto-crlf	setup commit file with mixed EOL	add	not_ported
 t0027-auto-crlf::ls-files-eol-o-text-binary	t0027-auto-crlf	ls-files --eol -o Text/Binary	ls-files	not_ported
@@ -577,19 +577,19 @@ t0027-auto-crlf::checkout-attr-attr-ident-aeol-aeol-core-autocrlf-crlf-core-eol-
 t0027-auto-crlf::checkout-attr-attr-ident-aeol-aeol-core-autocrlf-crlf-core-eol-ceol-file-crlf-mi	t0027-auto-crlf	checkout attr=$attr $ident aeol=$aeol core.autocrlf=$crlf core.eol=$ceol file=CRLF_mix_LF		not_ported
 t0027-auto-crlf::checkout-attr-attr-ident-aeol-aeol-core-autocrlf-crlf-core-eol-ceol-file-lf-mix	t0027-auto-crlf	checkout attr=$attr $ident aeol=$aeol core.autocrlf=$crlf core.eol=$ceol file=LF_mix_CR		not_ported
 t0027-auto-crlf::checkout-attr-attr-ident-aeol-aeol-core-autocrlf-crlf-core-eol-ceol-file-lf-nul	t0027-auto-crlf	checkout attr=$attr $ident aeol=$aeol core.autocrlf=$crlf core.eol=$ceol file=LF_nul		not_ported
-t0028-working-tree-encoding::setup-test-files	t0028-working-tree-encoding	setup test files	add	not_ported
-t0028-working-tree-encoding::ensure-utf-8-is-stored-in-git	t0028-working-tree-encoding	ensure UTF-8 is stored in Git	cat-file	not_ported
-t0028-working-tree-encoding::re-encode-to-utf-16-on-checkout	t0028-working-tree-encoding	re-encode to UTF-16 on checkout	checkout	not_ported
-t0028-working-tree-encoding::re-encode-to-utf-16-le-bom-on-checkout	t0028-working-tree-encoding	re-encode to UTF-16-LE-BOM on checkout	checkout	not_ported
-t0028-working-tree-encoding::check-git-dir-info-attributes-support	t0028-working-tree-encoding	check $GIT_DIR/info/attributes support	add	not_ported
-t0028-working-tree-encoding::check-unsupported-encodings	t0028-working-tree-encoding	check unsupported encodings	add	not_ported
-t0028-working-tree-encoding::error-if-encoding-round-trip-is-not-the-same-during-refresh	t0028-working-tree-encoding	error if encoding round trip is not the same during refresh	checkout	not_ported
-t0028-working-tree-encoding::error-if-encoding-garbage-is-already-in-git	t0028-working-tree-encoding	error if encoding garbage is already in Git	commit-tree	not_ported
-t0028-working-tree-encoding::check-roundtrip-encoding	t0028-working-tree-encoding	check roundtrip encoding	add	not_ported
-t0028-working-tree-encoding::check-prohibited-utf-i-bom	t0028-working-tree-encoding	check prohibited UTF-${i} BOM	add	not_ported
-t0028-working-tree-encoding::check-required-utf-i-bom	t0028-working-tree-encoding	check required UTF-${i} BOM	add	not_ported
-t0028-working-tree-encoding::eol-conversion-for-utf-i-encoded-files-on-checkout	t0028-working-tree-encoding	eol conversion for UTF-${i} encoded files on checkout	add	not_ported
-t0028-working-tree-encoding::commit-utf-8-checkout-encoding	t0028-working-tree-encoding	Commit UTF-8, checkout $encoding	add	not_ported
+t0028-working-tree-encoding::setup-test-files	t0028-working-tree-encoding	setup test files	add	pass
+t0028-working-tree-encoding::ensure-utf-8-is-stored-in-git	t0028-working-tree-encoding	ensure UTF-8 is stored in Git	cat-file	pass
+t0028-working-tree-encoding::re-encode-to-utf-16-on-checkout	t0028-working-tree-encoding	re-encode to UTF-16 on checkout	checkout	pass
+t0028-working-tree-encoding::re-encode-to-utf-16-le-bom-on-checkout	t0028-working-tree-encoding	re-encode to UTF-16-LE-BOM on checkout	checkout	pass
+t0028-working-tree-encoding::check-git-dir-info-attributes-support	t0028-working-tree-encoding	check $GIT_DIR/info/attributes support	add	pass
+t0028-working-tree-encoding::check-unsupported-encodings	t0028-working-tree-encoding	check unsupported encodings	add	pass
+t0028-working-tree-encoding::error-if-encoding-round-trip-is-not-the-same-during-refresh	t0028-working-tree-encoding	error if encoding round trip is not the same during refresh	checkout	pass
+t0028-working-tree-encoding::error-if-encoding-garbage-is-already-in-git	t0028-working-tree-encoding	error if encoding garbage is already in Git	commit-tree	pass
+t0028-working-tree-encoding::check-roundtrip-encoding	t0028-working-tree-encoding	check roundtrip encoding	add	pass
+t0028-working-tree-encoding::check-prohibited-utf-i-bom	t0028-working-tree-encoding	check prohibited UTF-${i} BOM	add	pass
+t0028-working-tree-encoding::check-required-utf-i-bom	t0028-working-tree-encoding	check required UTF-${i} BOM	add	pass
+t0028-working-tree-encoding::eol-conversion-for-utf-i-encoded-files-on-checkout	t0028-working-tree-encoding	eol conversion for UTF-${i} encoded files on checkout	add	pass
+t0028-working-tree-encoding::commit-utf-8-checkout-encoding	t0028-working-tree-encoding	Commit UTF-8, checkout $encoding	add	pass
 t0029-core-unsetenvvars::setup	t0029-core-unsetenvvars	setup		pass
 t0029-core-unsetenvvars::core-unsetenvvars-works	t0029-core-unsetenvvars	core.unsetenvvars works	commit	pass
 t0030-stripspace::long-lines-without-spaces-should-be-unchanged	t0030-stripspace	long lines without spaces should be unchanged	stripspace	pass
@@ -1246,99 +1246,99 @@ t0602-reffiles-fsck::packed-ref-without-sorted-trait-should-not-be-checked	t0602
 t0602-reffiles-fsck::no-references-option-should-apply-to-fsck	t0602-reffiles-fsck	--[no-]references option should apply to fsck	fsck	pass
 t0602-reffiles-fsck::complains-about-broken-root-ref	t0602-reffiles-fsck	complains about broken root ref	init	pass
 t0602-reffiles-fsck::complains-about-broken-root-ref-in-worktree	t0602-reffiles-fsck	complains about broken root ref in worktree	init	pass
-t0610-reftable-basics::pack-refs-does-not-crash-with-h	t0610-reftable-basics	pack-refs does not crash with -h	pack-refs	not_ported
-t0610-reftable-basics::init-creates-basic-reftable-structures	t0610-reftable-basics	init: creates basic reftable structures	init	not_ported
-t0610-reftable-basics::init-sha256-object-format-via-environment-variable	t0610-reftable-basics	init: sha256 object format via environment variable	init	not_ported
-t0610-reftable-basics::init-sha256-object-format-via-option	t0610-reftable-basics	init: sha256 object format via option	init	not_ported
-t0610-reftable-basics::init-reinitializing-reftable-backend-succeeds	t0610-reftable-basics	init: reinitializing reftable backend succeeds	for-each-ref	not_ported
-t0610-reftable-basics::init-reinitializing-files-with-reftable-backend-fails	t0610-reftable-basics	init: reinitializing files with reftable backend fails	init	not_ported
-t0610-reftable-basics::init-reinitializing-reftable-with-files-backend-fails	t0610-reftable-basics	init: reinitializing reftable with files backend fails	init	not_ported
-t0610-reftable-basics::clone-can-clone-reftable-repository	t0610-reftable-basics	clone: can clone reftable repository	clone	not_ported
-t0610-reftable-basics::clone-can-clone-reffiles-into-reftable-repository	t0610-reftable-basics	clone: can clone reffiles into reftable repository	clone	not_ported
-t0610-reftable-basics::clone-can-clone-reftable-into-reffiles-repository	t0610-reftable-basics	clone: can clone reftable into reffiles repository	clone	not_ported
-t0610-reftable-basics::ref-transaction-corrupted-tables-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables cause failure	init	not_ported
-t0610-reftable-basics::ref-transaction-corrupted-tables-list-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables.list cause failure	init	not_ported
-t0610-reftable-basics::ref-transaction-refuses-to-write-ref-causing-f-d-conflict	t0610-reftable-basics	ref transaction: refuses to write ref causing F/D conflict	init	not_ported
-t0610-reftable-basics::ref-transaction-deleting-ref-with-invalid-name-fails	t0610-reftable-basics	ref transaction: deleting ref with invalid name fails	init	not_ported
-t0610-reftable-basics::ref-transaction-can-skip-object-id-verification	t0610-reftable-basics	ref transaction: can skip object ID verification	init	not_ported
-t0610-reftable-basics::ref-transaction-updating-same-ref-multiple-times-fails	t0610-reftable-basics	ref transaction: updating same ref multiple times fails	init	not_ported
-t0610-reftable-basics::ref-transaction-can-delete-symbolic-self-reference-with-git-symbolic-ref-1	t0610-reftable-basics	ref transaction: can delete symbolic self-reference with git-symbolic-ref(1)	init	not_ported
-t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-without-no-deref-fails	t0610-reftable-basics	ref transaction: deleting symbolic self-reference without --no-deref fails	init	not_ported
-t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-with-no-deref-succeeds	t0610-reftable-basics	ref transaction: deleting symbolic self-reference with --no-deref succeeds	init	not_ported
-t0610-reftable-basics::ref-transaction-creating-symbolic-ref-fails-with-f-d-conflict	t0610-reftable-basics	ref transaction: creating symbolic ref fails with F/D conflict	init	not_ported
-t0610-reftable-basics::ref-transaction-ref-deletion	t0610-reftable-basics	ref transaction: ref deletion	init	not_ported
-t0610-reftable-basics::ref-transaction-writes-cause-auto-compaction	t0610-reftable-basics	ref transaction: writes cause auto-compaction	init	not_ported
-t0610-reftable-basics::ref-transaction-env-var-disables-compaction	t0610-reftable-basics	ref transaction: env var disables compaction	init	not_ported
-t0610-reftable-basics::ref-transaction-alternating-table-sizes-are-compacted	t0610-reftable-basics	ref transaction: alternating table sizes are compacted	branch	not_ported
-t0610-reftable-basics::ref-transaction-writes-are-synced	t0610-reftable-basics	ref transaction: writes are synced	init	not_ported
-t0610-reftable-basics::ref-transaction-empty-transaction-in-empty-repo	t0610-reftable-basics	ref transaction: empty transaction in empty repo	init	not_ported
-t0610-reftable-basics::ref-transaction-fails-gracefully-when-auto-compaction-fails	t0610-reftable-basics	ref transaction: fails gracefully when auto compaction fails	branch	not_ported
-t0610-reftable-basics::ref-transaction-timeout-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: timeout acquiring tables.list lock	init	not_ported
-t0610-reftable-basics::ref-transaction-retry-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: retry acquiring tables.list lock	init	not_ported
-t0610-reftable-basics::ref-transaction-many-concurrent-writers	t0610-reftable-basics	ref transaction: many concurrent writers	config	not_ported
-t0610-reftable-basics::pack-refs-compacts-tables	t0610-reftable-basics	pack-refs: compacts tables	init	not_ported
-t0610-reftable-basics::pack-refs-compaction-raises-locking-errors	t0610-reftable-basics	pack-refs: compaction raises locking errors	init	not_ported
-t0610-reftable-basics::pack-refs-prunes-stale-tables	t0610-reftable-basics	pack-refs: prunes stale tables	init	not_ported
-t0610-reftable-basics::pack-refs-does-not-prune-non-table-files	t0610-reftable-basics	pack-refs: does not prune non-table files	init	not_ported
-t0610-reftable-basics::packed-refs-writes-are-synced	t0610-reftable-basics	packed-refs: writes are synced	init	not_ported
-t0610-reftable-basics::ref-iterator-bogus-names-are-flagged	t0610-reftable-basics	ref iterator: bogus names are flagged	init	not_ported
-t0610-reftable-basics::ref-iterator-missing-object-ids-are-not-flagged	t0610-reftable-basics	ref iterator: missing object IDs are not flagged	init	not_ported
-t0610-reftable-basics::basic-commit-and-list-refs	t0610-reftable-basics	basic: commit and list refs	for-each-ref	not_ported
-t0610-reftable-basics::basic-can-write-large-commit-message	t0610-reftable-basics	basic: can write large commit message	commit	not_ported
-t0610-reftable-basics::basic-show-ref-fails-with-empty-repository	t0610-reftable-basics	basic: show-ref fails with empty repository	init	not_ported
-t0610-reftable-basics::basic-can-check-out-unborn-branch	t0610-reftable-basics	basic: can check out unborn branch	checkout	not_ported
-t0610-reftable-basics::basic-peeled-tags-are-stored	t0610-reftable-basics	basic: peeled tags are stored	init	not_ported
-t0610-reftable-basics::basic-for-each-ref-can-print-symrefs	t0610-reftable-basics	basic: for-each-ref can print symrefs	branch	not_ported
-t0610-reftable-basics::basic-notes	t0610-reftable-basics	basic: notes	init	not_ported
-t0610-reftable-basics::basic-stash	t0610-reftable-basics	basic: stash	init	not_ported
-t0610-reftable-basics::basic-cherry-pick	t0610-reftable-basics	basic: cherry-pick	branch	not_ported
-t0610-reftable-basics::basic-rebase	t0610-reftable-basics	basic: rebase	branch	not_ported
-t0610-reftable-basics::reflog-can-delete-separate-reflog-entries	t0610-reftable-basics	reflog: can delete separate reflog entries	init	not_ported
-t0610-reftable-basics::reflog-can-switch-to-previous-branch	t0610-reftable-basics	reflog: can switch to previous branch	checkout	not_ported
-t0610-reftable-basics::reflog-copying-branch-writes-reflog-entry	t0610-reftable-basics	reflog: copying branch writes reflog entry	branch	not_ported
-t0610-reftable-basics::reflog-renaming-branch-writes-reflog-entry	t0610-reftable-basics	reflog: renaming branch writes reflog entry	branch	not_ported
-t0610-reftable-basics::reflog-can-store-empty-logs	t0610-reftable-basics	reflog: can store empty logs	init	not_ported
-t0610-reftable-basics::reflog-expiry-empties-reflog	t0610-reftable-basics	reflog: expiry empties reflog	checkout	not_ported
-t0610-reftable-basics::reflog-can-be-deleted	t0610-reftable-basics	reflog: can be deleted	init	not_ported
-t0610-reftable-basics::reflog-garbage-collection-deletes-reflog-entries	t0610-reftable-basics	reflog: garbage collection deletes reflog entries	gc	not_ported
-t0610-reftable-basics::reflog-updates-via-head-update-head-reflog	t0610-reftable-basics	reflog: updates via HEAD update HEAD reflog	checkout	not_ported
-t0610-reftable-basics::branch-copying-branch-with-d-f-conflict	t0610-reftable-basics	branch: copying branch with D/F conflict	branch	not_ported
-t0610-reftable-basics::branch-moving-branch-with-d-f-conflict	t0610-reftable-basics	branch: moving branch with D/F conflict	branch	not_ported
-t0610-reftable-basics::worktree-adding-worktree-creates-separate-stack	t0610-reftable-basics	worktree: adding worktree creates separate stack	init	not_ported
-t0610-reftable-basics::worktree-pack-refs-in-main-repo-packs-main-refs	t0610-reftable-basics	worktree: pack-refs in main repo packs main refs	init	not_ported
-t0610-reftable-basics::worktree-pack-refs-in-worktree-packs-worktree-refs	t0610-reftable-basics	worktree: pack-refs in worktree packs worktree refs	init	not_ported
-t0610-reftable-basics::worktree-creating-shared-ref-updates-main-stack	t0610-reftable-basics	worktree: creating shared ref updates main stack	init	not_ported
-t0610-reftable-basics::worktree-creating-per-worktree-ref-updates-worktree-stack	t0610-reftable-basics	worktree: creating per-worktree ref updates worktree stack	init	not_ported
-t0610-reftable-basics::worktree-creating-per-worktree-ref-from-main-repo	t0610-reftable-basics	worktree: creating per-worktree ref from main repo	init	not_ported
-t0610-reftable-basics::worktree-creating-per-worktree-ref-from-second-worktree	t0610-reftable-basics	worktree: creating per-worktree ref from second worktree	init	not_ported
-t0610-reftable-basics::worktree-can-create-shared-and-per-worktree-ref-in-one-transaction	t0610-reftable-basics	worktree: can create shared and per-worktree ref in one transaction	init	not_ported
-t0610-reftable-basics::worktree-can-access-common-refs	t0610-reftable-basics	worktree: can access common refs	branch	not_ported
-t0610-reftable-basics::worktree-adds-worktree-with-detached-head	t0610-reftable-basics	worktree: adds worktree with detached HEAD	init	not_ported
-t0610-reftable-basics::fetch-accessing-fetch-head-special-ref-works	t0610-reftable-basics	fetch: accessing FETCH_HEAD special ref works	fetch	not_ported
-t0610-reftable-basics::writes-do-not-persist-peeled-value-for-invalid-tags	t0610-reftable-basics	writes do not persist peeled value for invalid tags	cat-file	not_ported
-t0610-reftable-basics::init-honors-shared-shared-with-umask-umask	t0610-reftable-basics	init: honors --shared=$shared with umask $umask	init	not_ported
-t0610-reftable-basics::pack-refs-honors-shared-shared-with-umask-umask	t0610-reftable-basics	pack-refs: honors --shared=$shared with umask $umask	init	not_ported
-t0610-reftable-basics::command-auto-compaction	t0610-reftable-basics	$command: auto compaction	branch	not_ported
-t0611-reftable-httpd::serving-ls-remote	t0611-reftable-httpd	serving ls-remote	init	not_ported
-t0612-reftable-jgit-compatibility::cgit-repository-can-be-read-by-jgit	t0612-reftable-jgit-compatibility	CGit repository can be read by JGit	init	not_ported
-t0612-reftable-jgit-compatibility::jgit-repository-can-be-read-by-cgit	t0612-reftable-jgit-compatibility	JGit repository can be read by CGit	reflog	not_ported
-t0612-reftable-jgit-compatibility::mixed-writes-from-jgit-and-cgit	t0612-reftable-jgit-compatibility	mixed writes from JGit and CGit	init	not_ported
-t0612-reftable-jgit-compatibility::jgit-can-read-multi-level-index	t0612-reftable-jgit-compatibility	JGit can read multi-level index	init	not_ported
-t0613-reftable-write-options::default-write-options	t0613-reftable-write-options	default write options	pack-refs	not_ported
-t0613-reftable-write-options::disabled-reflog-writes-no-log-blocks	t0613-reftable-write-options	disabled reflog writes no log blocks	pack-refs	not_ported
-t0613-reftable-write-options::many-refs-results-in-multiple-blocks	t0613-reftable-write-options	many refs results in multiple blocks	pack-refs	not_ported
-t0613-reftable-write-options::tiny-block-size-leads-to-error	t0613-reftable-write-options	tiny block size leads to error	init	not_ported
-t0613-reftable-write-options::small-block-size-leads-to-multiple-ref-blocks	t0613-reftable-write-options	small block size leads to multiple ref blocks	pack-refs	not_ported
-t0613-reftable-write-options::small-block-size-fails-with-large-reflog-message	t0613-reftable-write-options	small block size fails with large reflog message	init	not_ported
-t0613-reftable-write-options::block-size-exceeding-maximum-supported-size	t0613-reftable-write-options	block size exceeding maximum supported size	init	not_ported
-t0613-reftable-write-options::restart-interval-at-every-single-record	t0613-reftable-write-options	restart interval at every single record	pack-refs	not_ported
-t0613-reftable-write-options::restart-interval-exceeding-maximum-supported-interval	t0613-reftable-write-options	restart interval exceeding maximum supported interval	init	not_ported
-t0613-reftable-write-options::object-index-gets-written-by-default-with-ref-index	t0613-reftable-write-options	object index gets written by default with ref index	pack-refs	not_ported
-t0613-reftable-write-options::object-index-can-be-disabled	t0613-reftable-write-options	object index can be disabled	pack-refs	not_ported
-t0614-reftable-fsck::worktree-stacks-can-be-verified	t0614-reftable-fsck	worktree stacks can be verified	init	not_ported
-t0614-reftable-fsck::invalid-symref-gets-reported	t0614-reftable-fsck	invalid symref gets reported	init	not_ported
-t0614-reftable-fsck::no-errors-reported-on-a-well-formed-repository	t0614-reftable-fsck	no errors reported on a well formed repository	commit	not_ported
-t0614-reftable-fsck::table-name-table-name-should-be-checked	t0614-reftable-fsck	table name $TABLE_NAME should be checked	commit	not_ported
+t0610-reftable-basics::pack-refs-does-not-crash-with-h	t0610-reftable-basics	pack-refs does not crash with -h	pack-refs	pass
+t0610-reftable-basics::init-creates-basic-reftable-structures	t0610-reftable-basics	init: creates basic reftable structures	init	pass
+t0610-reftable-basics::init-sha256-object-format-via-environment-variable	t0610-reftable-basics	init: sha256 object format via environment variable	init	pass
+t0610-reftable-basics::init-sha256-object-format-via-option	t0610-reftable-basics	init: sha256 object format via option	init	pass
+t0610-reftable-basics::init-reinitializing-reftable-backend-succeeds	t0610-reftable-basics	init: reinitializing reftable backend succeeds	for-each-ref	pass
+t0610-reftable-basics::init-reinitializing-files-with-reftable-backend-fails	t0610-reftable-basics	init: reinitializing files with reftable backend fails	init	pass
+t0610-reftable-basics::init-reinitializing-reftable-with-files-backend-fails	t0610-reftable-basics	init: reinitializing reftable with files backend fails	init	pass
+t0610-reftable-basics::clone-can-clone-reftable-repository	t0610-reftable-basics	clone: can clone reftable repository	clone	pass
+t0610-reftable-basics::clone-can-clone-reffiles-into-reftable-repository	t0610-reftable-basics	clone: can clone reffiles into reftable repository	clone	pass
+t0610-reftable-basics::clone-can-clone-reftable-into-reffiles-repository	t0610-reftable-basics	clone: can clone reftable into reffiles repository	clone	pass
+t0610-reftable-basics::ref-transaction-corrupted-tables-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables cause failure	init	pass
+t0610-reftable-basics::ref-transaction-corrupted-tables-list-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables.list cause failure	init	pass
+t0610-reftable-basics::ref-transaction-refuses-to-write-ref-causing-f-d-conflict	t0610-reftable-basics	ref transaction: refuses to write ref causing F/D conflict	init	pass
+t0610-reftable-basics::ref-transaction-deleting-ref-with-invalid-name-fails	t0610-reftable-basics	ref transaction: deleting ref with invalid name fails	init	pass
+t0610-reftable-basics::ref-transaction-can-skip-object-id-verification	t0610-reftable-basics	ref transaction: can skip object ID verification	init	pass
+t0610-reftable-basics::ref-transaction-updating-same-ref-multiple-times-fails	t0610-reftable-basics	ref transaction: updating same ref multiple times fails	init	pass
+t0610-reftable-basics::ref-transaction-can-delete-symbolic-self-reference-with-git-symbolic-ref-1	t0610-reftable-basics	ref transaction: can delete symbolic self-reference with git-symbolic-ref(1)	init	pass
+t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-without-no-deref-fails	t0610-reftable-basics	ref transaction: deleting symbolic self-reference without --no-deref fails	init	pass
+t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-with-no-deref-succeeds	t0610-reftable-basics	ref transaction: deleting symbolic self-reference with --no-deref succeeds	init	pass
+t0610-reftable-basics::ref-transaction-creating-symbolic-ref-fails-with-f-d-conflict	t0610-reftable-basics	ref transaction: creating symbolic ref fails with F/D conflict	init	pass
+t0610-reftable-basics::ref-transaction-ref-deletion	t0610-reftable-basics	ref transaction: ref deletion	init	pass
+t0610-reftable-basics::ref-transaction-writes-cause-auto-compaction	t0610-reftable-basics	ref transaction: writes cause auto-compaction	init	pass
+t0610-reftable-basics::ref-transaction-env-var-disables-compaction	t0610-reftable-basics	ref transaction: env var disables compaction	init	pass
+t0610-reftable-basics::ref-transaction-alternating-table-sizes-are-compacted	t0610-reftable-basics	ref transaction: alternating table sizes are compacted	branch	pass
+t0610-reftable-basics::ref-transaction-writes-are-synced	t0610-reftable-basics	ref transaction: writes are synced	init	pass
+t0610-reftable-basics::ref-transaction-empty-transaction-in-empty-repo	t0610-reftable-basics	ref transaction: empty transaction in empty repo	init	pass
+t0610-reftable-basics::ref-transaction-fails-gracefully-when-auto-compaction-fails	t0610-reftable-basics	ref transaction: fails gracefully when auto compaction fails	branch	pass
+t0610-reftable-basics::ref-transaction-timeout-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: timeout acquiring tables.list lock	init	pass
+t0610-reftable-basics::ref-transaction-retry-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: retry acquiring tables.list lock	init	pass
+t0610-reftable-basics::ref-transaction-many-concurrent-writers	t0610-reftable-basics	ref transaction: many concurrent writers	config	pass
+t0610-reftable-basics::pack-refs-compacts-tables	t0610-reftable-basics	pack-refs: compacts tables	init	pass
+t0610-reftable-basics::pack-refs-compaction-raises-locking-errors	t0610-reftable-basics	pack-refs: compaction raises locking errors	init	pass
+t0610-reftable-basics::pack-refs-prunes-stale-tables	t0610-reftable-basics	pack-refs: prunes stale tables	init	pass
+t0610-reftable-basics::pack-refs-does-not-prune-non-table-files	t0610-reftable-basics	pack-refs: does not prune non-table files	init	pass
+t0610-reftable-basics::packed-refs-writes-are-synced	t0610-reftable-basics	packed-refs: writes are synced	init	pass
+t0610-reftable-basics::ref-iterator-bogus-names-are-flagged	t0610-reftable-basics	ref iterator: bogus names are flagged	init	pass
+t0610-reftable-basics::ref-iterator-missing-object-ids-are-not-flagged	t0610-reftable-basics	ref iterator: missing object IDs are not flagged	init	pass
+t0610-reftable-basics::basic-commit-and-list-refs	t0610-reftable-basics	basic: commit and list refs	for-each-ref	pass
+t0610-reftable-basics::basic-can-write-large-commit-message	t0610-reftable-basics	basic: can write large commit message	commit	pass
+t0610-reftable-basics::basic-show-ref-fails-with-empty-repository	t0610-reftable-basics	basic: show-ref fails with empty repository	init	pass
+t0610-reftable-basics::basic-can-check-out-unborn-branch	t0610-reftable-basics	basic: can check out unborn branch	checkout	pass
+t0610-reftable-basics::basic-peeled-tags-are-stored	t0610-reftable-basics	basic: peeled tags are stored	init	pass
+t0610-reftable-basics::basic-for-each-ref-can-print-symrefs	t0610-reftable-basics	basic: for-each-ref can print symrefs	branch	pass
+t0610-reftable-basics::basic-notes	t0610-reftable-basics	basic: notes	init	pass
+t0610-reftable-basics::basic-stash	t0610-reftable-basics	basic: stash	init	pass
+t0610-reftable-basics::basic-cherry-pick	t0610-reftable-basics	basic: cherry-pick	branch	pass
+t0610-reftable-basics::basic-rebase	t0610-reftable-basics	basic: rebase	branch	pass
+t0610-reftable-basics::reflog-can-delete-separate-reflog-entries	t0610-reftable-basics	reflog: can delete separate reflog entries	init	pass
+t0610-reftable-basics::reflog-can-switch-to-previous-branch	t0610-reftable-basics	reflog: can switch to previous branch	checkout	pass
+t0610-reftable-basics::reflog-copying-branch-writes-reflog-entry	t0610-reftable-basics	reflog: copying branch writes reflog entry	branch	pass
+t0610-reftable-basics::reflog-renaming-branch-writes-reflog-entry	t0610-reftable-basics	reflog: renaming branch writes reflog entry	branch	pass
+t0610-reftable-basics::reflog-can-store-empty-logs	t0610-reftable-basics	reflog: can store empty logs	init	pass
+t0610-reftable-basics::reflog-expiry-empties-reflog	t0610-reftable-basics	reflog: expiry empties reflog	checkout	pass
+t0610-reftable-basics::reflog-can-be-deleted	t0610-reftable-basics	reflog: can be deleted	init	pass
+t0610-reftable-basics::reflog-garbage-collection-deletes-reflog-entries	t0610-reftable-basics	reflog: garbage collection deletes reflog entries	gc	pass
+t0610-reftable-basics::reflog-updates-via-head-update-head-reflog	t0610-reftable-basics	reflog: updates via HEAD update HEAD reflog	checkout	pass
+t0610-reftable-basics::branch-copying-branch-with-d-f-conflict	t0610-reftable-basics	branch: copying branch with D/F conflict	branch	pass
+t0610-reftable-basics::branch-moving-branch-with-d-f-conflict	t0610-reftable-basics	branch: moving branch with D/F conflict	branch	pass
+t0610-reftable-basics::worktree-adding-worktree-creates-separate-stack	t0610-reftable-basics	worktree: adding worktree creates separate stack	init	pass
+t0610-reftable-basics::worktree-pack-refs-in-main-repo-packs-main-refs	t0610-reftable-basics	worktree: pack-refs in main repo packs main refs	init	pass
+t0610-reftable-basics::worktree-pack-refs-in-worktree-packs-worktree-refs	t0610-reftable-basics	worktree: pack-refs in worktree packs worktree refs	init	pass
+t0610-reftable-basics::worktree-creating-shared-ref-updates-main-stack	t0610-reftable-basics	worktree: creating shared ref updates main stack	init	pass
+t0610-reftable-basics::worktree-creating-per-worktree-ref-updates-worktree-stack	t0610-reftable-basics	worktree: creating per-worktree ref updates worktree stack	init	pass
+t0610-reftable-basics::worktree-creating-per-worktree-ref-from-main-repo	t0610-reftable-basics	worktree: creating per-worktree ref from main repo	init	pass
+t0610-reftable-basics::worktree-creating-per-worktree-ref-from-second-worktree	t0610-reftable-basics	worktree: creating per-worktree ref from second worktree	init	pass
+t0610-reftable-basics::worktree-can-create-shared-and-per-worktree-ref-in-one-transaction	t0610-reftable-basics	worktree: can create shared and per-worktree ref in one transaction	init	pass
+t0610-reftable-basics::worktree-can-access-common-refs	t0610-reftable-basics	worktree: can access common refs	branch	pass
+t0610-reftable-basics::worktree-adds-worktree-with-detached-head	t0610-reftable-basics	worktree: adds worktree with detached HEAD	init	pass
+t0610-reftable-basics::fetch-accessing-fetch-head-special-ref-works	t0610-reftable-basics	fetch: accessing FETCH_HEAD special ref works	fetch	pass
+t0610-reftable-basics::writes-do-not-persist-peeled-value-for-invalid-tags	t0610-reftable-basics	writes do not persist peeled value for invalid tags	cat-file	pass
+t0610-reftable-basics::init-honors-shared-shared-with-umask-umask	t0610-reftable-basics	init: honors --shared=$shared with umask $umask	init	pass
+t0610-reftable-basics::pack-refs-honors-shared-shared-with-umask-umask	t0610-reftable-basics	pack-refs: honors --shared=$shared with umask $umask	init	pass
+t0610-reftable-basics::command-auto-compaction	t0610-reftable-basics	$command: auto compaction	branch	pass
+t0611-reftable-httpd::serving-ls-remote	t0611-reftable-httpd	serving ls-remote	init	pass
+t0612-reftable-jgit-compatibility::cgit-repository-can-be-read-by-jgit	t0612-reftable-jgit-compatibility	CGit repository can be read by JGit	init	pass
+t0612-reftable-jgit-compatibility::jgit-repository-can-be-read-by-cgit	t0612-reftable-jgit-compatibility	JGit repository can be read by CGit	reflog	pass
+t0612-reftable-jgit-compatibility::mixed-writes-from-jgit-and-cgit	t0612-reftable-jgit-compatibility	mixed writes from JGit and CGit	init	pass
+t0612-reftable-jgit-compatibility::jgit-can-read-multi-level-index	t0612-reftable-jgit-compatibility	JGit can read multi-level index	init	pass
+t0613-reftable-write-options::default-write-options	t0613-reftable-write-options	default write options	pack-refs	pass
+t0613-reftable-write-options::disabled-reflog-writes-no-log-blocks	t0613-reftable-write-options	disabled reflog writes no log blocks	pack-refs	pass
+t0613-reftable-write-options::many-refs-results-in-multiple-blocks	t0613-reftable-write-options	many refs results in multiple blocks	pack-refs	pass
+t0613-reftable-write-options::tiny-block-size-leads-to-error	t0613-reftable-write-options	tiny block size leads to error	init	pass
+t0613-reftable-write-options::small-block-size-leads-to-multiple-ref-blocks	t0613-reftable-write-options	small block size leads to multiple ref blocks	pack-refs	pass
+t0613-reftable-write-options::small-block-size-fails-with-large-reflog-message	t0613-reftable-write-options	small block size fails with large reflog message	init	pass
+t0613-reftable-write-options::block-size-exceeding-maximum-supported-size	t0613-reftable-write-options	block size exceeding maximum supported size	init	pass
+t0613-reftable-write-options::restart-interval-at-every-single-record	t0613-reftable-write-options	restart interval at every single record	pack-refs	pass
+t0613-reftable-write-options::restart-interval-exceeding-maximum-supported-interval	t0613-reftable-write-options	restart interval exceeding maximum supported interval	init	pass
+t0613-reftable-write-options::object-index-gets-written-by-default-with-ref-index	t0613-reftable-write-options	object index gets written by default with ref index	pack-refs	pass
+t0613-reftable-write-options::object-index-can-be-disabled	t0613-reftable-write-options	object index can be disabled	pack-refs	pass
+t0614-reftable-fsck::worktree-stacks-can-be-verified	t0614-reftable-fsck	worktree stacks can be verified	init	pass
+t0614-reftable-fsck::invalid-symref-gets-reported	t0614-reftable-fsck	invalid symref gets reported	init	pass
+t0614-reftable-fsck::no-errors-reported-on-a-well-formed-repository	t0614-reftable-fsck	no errors reported on a well formed repository	commit	pass
+t0614-reftable-fsck::table-name-table-name-should-be-checked	t0614-reftable-fsck	table name $TABLE_NAME should be checked	commit	pass
 t1000-read-tree-m-3way::3-way-merge-with-git-read-tree-m-empty-cache	t1000-read-tree-m-3way	3-way merge with git read-tree -m, empty cache	read-tree	pass
 t1000-read-tree-m-3way::3-way-merge-with-git-read-tree-m-match-h	t1000-read-tree-m-3way	3-way merge with git read-tree -m, match H	read-tree	pass
 t1000-read-tree-m-3way::1-must-not-have-an-entry-not-in-a	t1000-read-tree-m-3way	1 - must not have an entry not in A.	read-tree	pass
@@ -1639,12 +1639,12 @@ t1012-read-tree-df::3-way-1	t1012-read-tree-df	3-way (1)	read-tree	pass
 t1012-read-tree-df::3-way-2	t1012-read-tree-df	3-way (2)	read-tree	pass
 t1012-read-tree-df::3-way-3	t1012-read-tree-df	3-way (3)	read-tree	pass
 t1012-read-tree-df::2-way-1	t1012-read-tree-df	2-way (1)	read-tree	pass
-t1014-read-tree-confusing::create-base-tree	t1014-read-tree-confusing	create base tree	read-tree	not_ported
-t1014-read-tree-confusing::enable-core-protecthfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectHFS for rejection tests	read-tree	not_ported
-t1014-read-tree-confusing::enable-core-protectntfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectNTFS for rejection tests	read-tree	not_ported
-t1014-read-tree-confusing::utf-8-paths-allowed-with-core-protecthfs-off	t1014-read-tree-confusing	utf-8 paths allowed with core.protectHFS off	read-tree	not_ported
-t1014-read-tree-confusing::reject-pretty-at-end-of-path	t1014-read-tree-confusing	reject $pretty at end of path	read-tree	not_ported
-t1014-read-tree-confusing::reject-pretty-as-subtree	t1014-read-tree-confusing	reject $pretty as subtree	read-tree	not_ported
+t1014-read-tree-confusing::create-base-tree	t1014-read-tree-confusing	create base tree	read-tree	pass
+t1014-read-tree-confusing::enable-core-protecthfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectHFS for rejection tests	read-tree	pass
+t1014-read-tree-confusing::enable-core-protectntfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectNTFS for rejection tests	read-tree	pass
+t1014-read-tree-confusing::utf-8-paths-allowed-with-core-protecthfs-off	t1014-read-tree-confusing	utf-8 paths allowed with core.protectHFS off	read-tree	pass
+t1014-read-tree-confusing::reject-pretty-at-end-of-path	t1014-read-tree-confusing	reject $pretty at end of path	read-tree	pass
+t1014-read-tree-confusing::reject-pretty-as-subtree	t1014-read-tree-confusing	reject $pretty as subtree	read-tree	pass
 t1015-read-index-unmerged::setup-modify-delete-directory-file-conflict	t1015-read-index-unmerged	setup modify/delete + directory/file conflict	add	pass
 t1015-read-index-unmerged::read-tree-reset-cleans-unmerged-entries	t1015-read-index-unmerged	read-tree --reset cleans unmerged entries	checkout	pass
 t1015-read-index-unmerged::one-reset-hard-cleans-unmerged-entries	t1015-read-index-unmerged	One reset --hard cleans unmerged entries	checkout	pass
@@ -1692,16 +1692,16 @@ t1050-large::zip-archiving-store-only	t1050-large	zip archiving, store only	arch
 t1050-large::zip-archiving-deflate	t1050-large	zip archiving, deflate	archive	pass
 t1050-large::fsck-large-blobs	t1050-large	fsck large blobs	fsck	pass
 t1050-large::add-with-config	t1050-large	add with $config		pass
-t1051-large-conversion::setup-input-tests	t1051-large-conversion	setup input tests	config	not_ported
-t1051-large-conversion::autocrlf-true-converts-on-input	t1051-large-conversion	autocrlf=true converts on input		not_ported
-t1051-large-conversion::eol-crlf-converts-on-input	t1051-large-conversion	eol=crlf converts on input		not_ported
-t1051-large-conversion::ident-converts-on-input	t1051-large-conversion	ident converts on input		not_ported
-t1051-large-conversion::user-defined-filters-convert-on-input	t1051-large-conversion	user-defined filters convert on input		not_ported
-t1051-large-conversion::setup-output-tests	t1051-large-conversion	setup output tests	add	not_ported
-t1051-large-conversion::autocrlf-true-converts-on-output	t1051-large-conversion	autocrlf=true converts on output		not_ported
-t1051-large-conversion::eol-crlf-converts-on-output	t1051-large-conversion	eol=crlf converts on output		not_ported
-t1051-large-conversion::user-defined-filters-convert-on-output	t1051-large-conversion	user-defined filters convert on output		not_ported
-t1051-large-conversion::ident-converts-on-output	t1051-large-conversion	ident converts on output	checkout	not_ported
+t1051-large-conversion::setup-input-tests	t1051-large-conversion	setup input tests	config	pass
+t1051-large-conversion::autocrlf-true-converts-on-input	t1051-large-conversion	autocrlf=true converts on input		pass
+t1051-large-conversion::eol-crlf-converts-on-input	t1051-large-conversion	eol=crlf converts on input		pass
+t1051-large-conversion::ident-converts-on-input	t1051-large-conversion	ident converts on input		pass
+t1051-large-conversion::user-defined-filters-convert-on-input	t1051-large-conversion	user-defined filters convert on input		pass
+t1051-large-conversion::setup-output-tests	t1051-large-conversion	setup output tests	add	pass
+t1051-large-conversion::autocrlf-true-converts-on-output	t1051-large-conversion	autocrlf=true converts on output		pass
+t1051-large-conversion::eol-crlf-converts-on-output	t1051-large-conversion	eol=crlf converts on output		pass
+t1051-large-conversion::user-defined-filters-convert-on-output	t1051-large-conversion	user-defined filters convert on output		pass
+t1051-large-conversion::ident-converts-on-output	t1051-large-conversion	ident converts on output	checkout	pass
 t1060-object-corruption::setup-corrupt-repo	t1060-object-corruption	setup corrupt repo	init	pass
 t1060-object-corruption::setup-repo-with-missing-object	t1060-object-corruption	setup repo with missing object	init	pass
 t1060-object-corruption::setup-repo-with-misnamed-object	t1060-object-corruption	setup repo with misnamed object	hash-object	pass
@@ -2779,8 +2779,8 @@ t1416-ref-transaction-hooks::hook-gets-all-queued-updates-in-aborted-state	t1416
 t1416-ref-transaction-hooks::interleaving-hook-calls-succeed	t1416-ref-transaction-hooks	interleaving hook calls succeed	init	pass
 t1416-ref-transaction-hooks::hook-captures-git-symbolic-ref-updates	t1416-ref-transaction-hooks	hook captures git-symbolic-ref updates	symbolic-ref	pass
 t1416-ref-transaction-hooks::hook-gets-all-queued-symref-updates	t1416-ref-transaction-hooks	hook gets all queued symref updates	symbolic-ref	pass
-t1417-reflog-updateref::setup	t1417-reflog-updateref	setup	reflog	not_ported
-t1417-reflog-updateref::get-exp-with-args	t1417-reflog-updateref	get '$exp' with '$args'	reflog	not_ported
+t1417-reflog-updateref::setup	t1417-reflog-updateref	setup	reflog	pass
+t1417-reflog-updateref::get-exp-with-args	t1417-reflog-updateref	get '$exp' with '$args'	reflog	pass
 t1418-reflog-exists::setup	t1418-reflog-exists	setup	reflog	pass
 t1418-reflog-exists::usage	t1418-reflog-exists	usage	reflog	pass
 t1418-reflog-exists::usage-unknown-option	t1418-reflog-exists	usage: unknown option	reflog	pass
@@ -2811,15 +2811,15 @@ t1421-reflog-write::simple-writes	t1421-reflog-write	simple writes	reflog	pass
 t1421-reflog-write::uses-user-name-and-user-email-config	t1421-reflog-write	uses user.name and user.email config	reflog	pass
 t1421-reflog-write::environment-variables-take-precedence-over-config	t1421-reflog-write	environment variables take precedence over config	reflog	pass
 t1421-reflog-write::can-write-to-root-ref	t1421-reflog-write	can write to root ref	reflog	pass
-t1423-ref-backend::initializing-repository-with-alt-ref-directory	t1423-ref-backend	initializing repository with alt ref directory	config	not_ported
-t1423-ref-backend::cloning-repository-with-alt-ref-directory	t1423-ref-backend	cloning repository with alt ref directory	clone	not_ported
-t1423-ref-backend::method-uri-is-invalid	t1423-ref-backend	$method: URI is invalid	init	not_ported
-t1423-ref-backend::method-uri-ends-with-colon	t1423-ref-backend	$method: URI ends with colon	init	not_ported
-t1423-ref-backend::method-unknown-reference-backend	t1423-ref-backend	$method: unknown reference backend	init	not_ported
-t1423-ref-backend::method-read-from-to-format-backend-dir-dir	t1423-ref-backend	$method: read from $to_format backend, $dir dir	init	not_ported
-t1423-ref-backend::method-write-to-to-format-backend-dir-dir	t1423-ref-backend	$method: write to $to_format backend, $dir dir	init	not_ported
-t1423-ref-backend::method-with-worktree-and-to-format-backend-dir-dir	t1423-ref-backend	$method: with worktree and $to_format backend, $dir dir	init	not_ported
-t1423-ref-backend::migrating-repository-to-to-format-with-alternate-refs-directory	t1423-ref-backend	migrating repository to $to_format with alternate refs directory	init	not_ported
+t1423-ref-backend::initializing-repository-with-alt-ref-directory	t1423-ref-backend	initializing repository with alt ref directory	config	pass
+t1423-ref-backend::cloning-repository-with-alt-ref-directory	t1423-ref-backend	cloning repository with alt ref directory	clone	pass
+t1423-ref-backend::method-uri-is-invalid	t1423-ref-backend	$method: URI is invalid	init	pass
+t1423-ref-backend::method-uri-ends-with-colon	t1423-ref-backend	$method: URI ends with colon	init	pass
+t1423-ref-backend::method-unknown-reference-backend	t1423-ref-backend	$method: unknown reference backend	init	pass
+t1423-ref-backend::method-read-from-to-format-backend-dir-dir	t1423-ref-backend	$method: read from $to_format backend, $dir dir	init	pass
+t1423-ref-backend::method-write-to-to-format-backend-dir-dir	t1423-ref-backend	$method: write to $to_format backend, $dir dir	init	pass
+t1423-ref-backend::method-with-worktree-and-to-format-backend-dir-dir	t1423-ref-backend	$method: with worktree and $to_format backend, $dir dir	init	pass
+t1423-ref-backend::migrating-repository-to-to-format-with-alternate-refs-directory	t1423-ref-backend	migrating repository to $to_format with alternate refs directory	init	pass
 t1430-bad-ref-name::fast-import-fail-on-invalid-branch-name-badbranchname	t1430-bad-ref-name	fast-import: fail on invalid branch name ".badbranchname"	fast-import	pass
 t1430-bad-ref-name::fast-import-fail-on-invalid-branch-name-bad-branch-name	t1430-bad-ref-name	fast-import: fail on invalid branch name "bad[branch]name"	fast-import	pass
 t1430-bad-ref-name::git-branch-shows-badly-named-ref-as-warning	t1430-bad-ref-name	git branch shows badly named ref as warning	branch	pass
@@ -2932,34 +2932,34 @@ t1450-fsck::fsck-error-on-gitattributes-with-excessive-size	t1450-fsck	fsck erro
 t1450-fsck::fsck-detects-problems-in-worktree-index	t1450-fsck	fsck detects problems in worktree index	fsck	pass
 t1450-fsck::fsck-reports-problems-in-current-worktree-index-without-filename	t1450-fsck	fsck reports problems in current worktree index without filename	fsck	pass
 t1450-fsck::fsck-notices-pretty-as-type	t1450-fsck	fsck notices $pretty as $type	fsck	pass
-t1451-fsck-buffer::reset-input-to-empty	t1451-fsck-buffer	reset input to empty	fsck	not_ported
-t1451-fsck-buffer::create-valid-objects	t1451-fsck-buffer	create valid objects	fsck	not_ported
-t1451-fsck-buffer::truncated-tree-short-hash	t1451-fsck-buffer	truncated tree (short hash)	fsck	not_ported
-t1451-fsck-buffer::truncated-tree-missing-nul	t1451-fsck-buffer	truncated tree (missing nul)	fsck	not_ported
-t1451-fsck-buffer::add-type-line	t1451-fsck-buffer	add $type line	fsck	not_ported
-t1451-fsck-buffer::truncated-type-fsck	t1451-fsck-buffer	truncated $type ($fsck, \	fsck	not_ported
-t1460-refs-migrate::setup	t1460-refs-migrate	setup	refs	not_ported
-t1460-refs-migrate::multiple-reftable-blocks-with-multiple-entries	t1460-refs-migrate	multiple reftable blocks with multiple entries	refs	not_ported
-t1460-refs-migrate::migrating-from-files-format-deletes-backend-files	t1460-refs-migrate	migrating from files format deletes backend files	refs	not_ported
-t1460-refs-migrate::migrating-from-reftable-format-deletes-backend-files	t1460-refs-migrate	migrating from reftable format deletes backend files	refs	not_ported
-t1460-refs-migrate::superfluous-arguments	t1460-refs-migrate	superfluous arguments	refs	not_ported
-t1460-refs-migrate::missing-ref-storage-format	t1460-refs-migrate	missing ref storage format	refs	not_ported
-t1460-refs-migrate::unknown-ref-storage-format	t1460-refs-migrate	unknown ref storage format	refs	not_ported
-t1460-refs-migrate::from-format-migration-to-same-format-fails	t1460-refs-migrate	$from_format: migration to same format fails	refs	not_ported
-t1460-refs-migrate::from-format-to-format-migration-with-worktree-fails	t1460-refs-migrate	$from_format -> $to_format: migration with worktree fails	refs	not_ported
-t1460-refs-migrate::from-format-to-format-unborn-head	t1460-refs-migrate	$from_format -> $to_format: unborn HEAD	refs	not_ported
-t1460-refs-migrate::from-format-to-format-single-ref	t1460-refs-migrate	$from_format -> $to_format: single ref	refs	not_ported
-t1460-refs-migrate::from-format-to-format-bare-repository	t1460-refs-migrate	$from_format -> $to_format: bare repository	refs	not_ported
-t1460-refs-migrate::from-format-to-format-dangling-symref	t1460-refs-migrate	$from_format -> $to_format: dangling symref	refs	not_ported
-t1460-refs-migrate::from-format-to-format-broken-ref	t1460-refs-migrate	$from_format -> $to_format: broken ref	refs	not_ported
-t1460-refs-migrate::from-format-to-format-pseudo-refs	t1460-refs-migrate	$from_format -> $to_format: pseudo-refs	refs	not_ported
-t1460-refs-migrate::from-format-to-format-special-refs-are-left-alone	t1460-refs-migrate	$from_format -> $to_format: special refs are left alone	refs	not_ported
-t1460-refs-migrate::from-format-to-format-a-bunch-of-refs	t1460-refs-migrate	$from_format -> $to_format: a bunch of refs	refs	not_ported
-t1460-refs-migrate::from-format-to-format-dry-run-migration-does-not-modify-repository	t1460-refs-migrate	$from_format -> $to_format: dry-run migration does not modify repository	refs	not_ported
-t1460-refs-migrate::from-format-to-format-reflogs-of-symrefs-with-target-deleted	t1460-refs-migrate	$from_format -> $to_format: reflogs of symrefs with target deleted	refs	not_ported
-t1460-refs-migrate::from-format-to-format-reflogs-order-is-retained	t1460-refs-migrate	$from_format -> $to_format: reflogs order is retained	refs	not_ported
-t1460-refs-migrate::from-format-to-format-stash-is-retained	t1460-refs-migrate	$from_format -> $to_format: stash is retained	refs	not_ported
-t1460-refs-migrate::from-format-to-format-skip-reflog-with-skip-reflog	t1460-refs-migrate	$from_format -> $to_format: skip reflog with --skip-reflog	refs	not_ported
+t1451-fsck-buffer::reset-input-to-empty	t1451-fsck-buffer	reset input to empty	fsck	pass
+t1451-fsck-buffer::create-valid-objects	t1451-fsck-buffer	create valid objects	fsck	pass
+t1451-fsck-buffer::truncated-tree-short-hash	t1451-fsck-buffer	truncated tree (short hash)	fsck	pass
+t1451-fsck-buffer::truncated-tree-missing-nul	t1451-fsck-buffer	truncated tree (missing nul)	fsck	pass
+t1451-fsck-buffer::add-type-line	t1451-fsck-buffer	add $type line	fsck	pass
+t1451-fsck-buffer::truncated-type-fsck	t1451-fsck-buffer	truncated $type ($fsck, \	fsck	pass
+t1460-refs-migrate::setup	t1460-refs-migrate	setup	refs	pass
+t1460-refs-migrate::multiple-reftable-blocks-with-multiple-entries	t1460-refs-migrate	multiple reftable blocks with multiple entries	refs	pass
+t1460-refs-migrate::migrating-from-files-format-deletes-backend-files	t1460-refs-migrate	migrating from files format deletes backend files	refs	pass
+t1460-refs-migrate::migrating-from-reftable-format-deletes-backend-files	t1460-refs-migrate	migrating from reftable format deletes backend files	refs	pass
+t1460-refs-migrate::superfluous-arguments	t1460-refs-migrate	superfluous arguments	refs	pass
+t1460-refs-migrate::missing-ref-storage-format	t1460-refs-migrate	missing ref storage format	refs	pass
+t1460-refs-migrate::unknown-ref-storage-format	t1460-refs-migrate	unknown ref storage format	refs	pass
+t1460-refs-migrate::from-format-migration-to-same-format-fails	t1460-refs-migrate	$from_format: migration to same format fails	refs	pass
+t1460-refs-migrate::from-format-to-format-migration-with-worktree-fails	t1460-refs-migrate	$from_format -> $to_format: migration with worktree fails	refs	pass
+t1460-refs-migrate::from-format-to-format-unborn-head	t1460-refs-migrate	$from_format -> $to_format: unborn HEAD	refs	pass
+t1460-refs-migrate::from-format-to-format-single-ref	t1460-refs-migrate	$from_format -> $to_format: single ref	refs	pass
+t1460-refs-migrate::from-format-to-format-bare-repository	t1460-refs-migrate	$from_format -> $to_format: bare repository	refs	pass
+t1460-refs-migrate::from-format-to-format-dangling-symref	t1460-refs-migrate	$from_format -> $to_format: dangling symref	refs	pass
+t1460-refs-migrate::from-format-to-format-broken-ref	t1460-refs-migrate	$from_format -> $to_format: broken ref	refs	pass
+t1460-refs-migrate::from-format-to-format-pseudo-refs	t1460-refs-migrate	$from_format -> $to_format: pseudo-refs	refs	pass
+t1460-refs-migrate::from-format-to-format-special-refs-are-left-alone	t1460-refs-migrate	$from_format -> $to_format: special refs are left alone	refs	pass
+t1460-refs-migrate::from-format-to-format-a-bunch-of-refs	t1460-refs-migrate	$from_format -> $to_format: a bunch of refs	refs	pass
+t1460-refs-migrate::from-format-to-format-dry-run-migration-does-not-modify-repository	t1460-refs-migrate	$from_format -> $to_format: dry-run migration does not modify repository	refs	pass
+t1460-refs-migrate::from-format-to-format-reflogs-of-symrefs-with-target-deleted	t1460-refs-migrate	$from_format -> $to_format: reflogs of symrefs with target deleted	refs	pass
+t1460-refs-migrate::from-format-to-format-reflogs-order-is-retained	t1460-refs-migrate	$from_format -> $to_format: reflogs order is retained	refs	pass
+t1460-refs-migrate::from-format-to-format-stash-is-retained	t1460-refs-migrate	$from_format -> $to_format: stash is retained	refs	pass
+t1460-refs-migrate::from-format-to-format-skip-reflog-with-skip-reflog	t1460-refs-migrate	$from_format -> $to_format: skip reflog with --skip-reflog	refs	pass
 t1500-rev-parse::setup	t1500-rev-parse	setup	rev-parse	pass
 t1500-rev-parse::rev-parse-path-format-absolute	t1500-rev-parse	rev-parse --path-format=absolute	rev-parse	pass
 t1500-rev-parse::rev-parse-path-format-relative	t1500-rev-parse	rev-parse --path-format=relative	rev-parse	pass
@@ -3023,41 +3023,41 @@ t1501-work-tree::git-dir-common-overrides-core-worktree	t1501-work-tree	$GIT_DIR
 t1501-work-tree::git-work-tree-overrides-git-dir-common	t1501-work-tree	$GIT_WORK_TREE overrides $GIT_DIR/common	ls-files	pass
 t1501-work-tree::error-out-gracefully-on-invalid-git-work-tree	t1501-work-tree	error out gracefully on invalid $GIT_WORK_TREE	rev-parse	pass
 t1501-work-tree::refs-work-with-relative-gitdir-and-work-tree	t1501-work-tree	refs work with relative gitdir and work tree	commit	pass
-t1502-rev-parse-parseopt::setup-optionspec	t1502-rev-parse-parseopt	setup optionspec	rev-parse	not_ported
-t1502-rev-parse-parseopt::setup-optionspec-no-switches	t1502-rev-parse-parseopt	setup optionspec-no-switches	rev-parse	not_ported
-t1502-rev-parse-parseopt::setup-optionspec-only-hidden-switches	t1502-rev-parse-parseopt	setup optionspec-only-hidden-switches	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-help-output	t1502-rev-parse-parseopt	test --parseopt help output	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-help-output-no-switches	t1502-rev-parse-parseopt	test --parseopt help output no switches	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-help-output-hidden-switches	t1502-rev-parse-parseopt	test --parseopt help output hidden switches	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-help-all-output-hidden-switches	t1502-rev-parse-parseopt	test --parseopt help-all output hidden switches	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-invalid-switch-help-output	t1502-rev-parse-parseopt	test --parseopt invalid switch help output	rev-parse	not_ported
-t1502-rev-parse-parseopt::setup-expect-1	t1502-rev-parse-parseopt	setup expect.1	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt	t1502-rev-parse-parseopt	test --parseopt	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-with-mixed-options-and-arguments	t1502-rev-parse-parseopt	test --parseopt with mixed options and arguments	rev-parse	not_ported
-t1502-rev-parse-parseopt::setup-expect-2	t1502-rev-parse-parseopt	setup expect.2	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-with	t1502-rev-parse-parseopt	test --parseopt with --	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-stop-at-non-option	t1502-rev-parse-parseopt	test --parseopt --stop-at-non-option	rev-parse	not_ported
-t1502-rev-parse-parseopt::setup-expect-3	t1502-rev-parse-parseopt	setup expect.3	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-keep-dashdash	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash	rev-parse	not_ported
-t1502-rev-parse-parseopt::setup-expect-4	t1502-rev-parse-parseopt	setup expect.4	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-keep-dashdash-stop-at-non-option-with	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash --stop-at-non-option with --	rev-parse	not_ported
-t1502-rev-parse-parseopt::setup-expect-5	t1502-rev-parse-parseopt	setup expect.5	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-keep-dashdash-stop-at-non-option-without	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash --stop-at-non-option without --	rev-parse	not_ported
-t1502-rev-parse-parseopt::setup-expect-6	t1502-rev-parse-parseopt	setup expect.6	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-stuck-long	t1502-rev-parse-parseopt	test --parseopt --stuck-long	rev-parse	not_ported
-t1502-rev-parse-parseopt::setup-expect-7	t1502-rev-parse-parseopt	setup expect.7	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-empty-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and empty optional argument	rev-parse	not_ported
-t1502-rev-parse-parseopt::setup-expect-8	t1502-rev-parse-parseopt	setup expect.8	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-long-option-with-unset-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and long option with unset optional argument	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-short-option-with-unset-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and short option with unset optional argument	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-help-output-wrapped-options-normal-or-lines	t1502-rev-parse-parseopt	test --parseopt help output: "wrapped" options normal "or:" lines	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-invalid-opt-spec	t1502-rev-parse-parseopt	test --parseopt invalid opt-spec	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-help-output-multi-line-blurb-after-empty-line	t1502-rev-parse-parseopt	test --parseopt help output: multi-line blurb after empty line	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-help-output-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt help output for optionspec-neg	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-valid-options-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt valid options for optionspec-neg	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-positivated-option-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt positivated option for optionspec-neg	rev-parse	not_ported
-t1502-rev-parse-parseopt::ambiguous-no-matches-both-noble-and-no-noble	t1502-rev-parse-parseopt	ambiguous: --no matches both --noble and --no-noble	rev-parse	not_ported
-t1502-rev-parse-parseopt::test-parseopt-invalid-switch-opt-help-output-for-spec	t1502-rev-parse-parseopt	test --parseopt invalid switch $opt help output for $spec	rev-parse	not_ported
+t1502-rev-parse-parseopt::setup-optionspec	t1502-rev-parse-parseopt	setup optionspec	rev-parse	pass
+t1502-rev-parse-parseopt::setup-optionspec-no-switches	t1502-rev-parse-parseopt	setup optionspec-no-switches	rev-parse	pass
+t1502-rev-parse-parseopt::setup-optionspec-only-hidden-switches	t1502-rev-parse-parseopt	setup optionspec-only-hidden-switches	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-help-output	t1502-rev-parse-parseopt	test --parseopt help output	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-help-output-no-switches	t1502-rev-parse-parseopt	test --parseopt help output no switches	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-help-output-hidden-switches	t1502-rev-parse-parseopt	test --parseopt help output hidden switches	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-help-all-output-hidden-switches	t1502-rev-parse-parseopt	test --parseopt help-all output hidden switches	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-invalid-switch-help-output	t1502-rev-parse-parseopt	test --parseopt invalid switch help output	rev-parse	pass
+t1502-rev-parse-parseopt::setup-expect-1	t1502-rev-parse-parseopt	setup expect.1	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt	t1502-rev-parse-parseopt	test --parseopt	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-with-mixed-options-and-arguments	t1502-rev-parse-parseopt	test --parseopt with mixed options and arguments	rev-parse	pass
+t1502-rev-parse-parseopt::setup-expect-2	t1502-rev-parse-parseopt	setup expect.2	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-with	t1502-rev-parse-parseopt	test --parseopt with --	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-stop-at-non-option	t1502-rev-parse-parseopt	test --parseopt --stop-at-non-option	rev-parse	pass
+t1502-rev-parse-parseopt::setup-expect-3	t1502-rev-parse-parseopt	setup expect.3	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-keep-dashdash	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash	rev-parse	pass
+t1502-rev-parse-parseopt::setup-expect-4	t1502-rev-parse-parseopt	setup expect.4	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-keep-dashdash-stop-at-non-option-with	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash --stop-at-non-option with --	rev-parse	pass
+t1502-rev-parse-parseopt::setup-expect-5	t1502-rev-parse-parseopt	setup expect.5	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-keep-dashdash-stop-at-non-option-without	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash --stop-at-non-option without --	rev-parse	pass
+t1502-rev-parse-parseopt::setup-expect-6	t1502-rev-parse-parseopt	setup expect.6	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-stuck-long	t1502-rev-parse-parseopt	test --parseopt --stuck-long	rev-parse	pass
+t1502-rev-parse-parseopt::setup-expect-7	t1502-rev-parse-parseopt	setup expect.7	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-empty-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and empty optional argument	rev-parse	pass
+t1502-rev-parse-parseopt::setup-expect-8	t1502-rev-parse-parseopt	setup expect.8	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-long-option-with-unset-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and long option with unset optional argument	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-short-option-with-unset-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and short option with unset optional argument	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-help-output-wrapped-options-normal-or-lines	t1502-rev-parse-parseopt	test --parseopt help output: "wrapped" options normal "or:" lines	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-invalid-opt-spec	t1502-rev-parse-parseopt	test --parseopt invalid opt-spec	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-help-output-multi-line-blurb-after-empty-line	t1502-rev-parse-parseopt	test --parseopt help output: multi-line blurb after empty line	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-help-output-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt help output for optionspec-neg	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-valid-options-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt valid options for optionspec-neg	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-positivated-option-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt positivated option for optionspec-neg	rev-parse	pass
+t1502-rev-parse-parseopt::ambiguous-no-matches-both-noble-and-no-noble	t1502-rev-parse-parseopt	ambiguous: --no matches both --noble and --no-noble	rev-parse	pass
+t1502-rev-parse-parseopt::test-parseopt-invalid-switch-opt-help-output-for-spec	t1502-rev-parse-parseopt	test --parseopt invalid switch $opt help output for $spec	rev-parse	pass
 t1503-rev-parse-verify::set-up-basic-repo-with-1-file-hello-and-4-commits	t1503-rev-parse-verify	set up basic repo with 1 file (hello) and 4 commits	rev-parse	pass
 t1503-rev-parse-verify::works-with-one-good-rev	t1503-rev-parse-verify	works with one good rev	rev-parse	pass
 t1503-rev-parse-verify::fails-with-any-bad-rev-or-many-good-revs	t1503-rev-parse-verify	fails with any bad rev or many good revs	rev-parse	pass
@@ -3070,8 +3070,8 @@ t1503-rev-parse-verify::use-default	t1503-rev-parse-verify	use --default	rev-par
 t1503-rev-parse-verify::main-n-for-various-n	t1503-rev-parse-verify	main@{n} for various n	rev-parse	pass
 t1503-rev-parse-verify::options-can-appear-after-verify	t1503-rev-parse-verify	options can appear after --verify	rev-parse	pass
 t1503-rev-parse-verify::verify-respects-end-of-options	t1503-rev-parse-verify	verify respects --end-of-options	rev-parse	pass
-t1504-ceiling-dirs::1-git-rev-parse-show-prefix-is-2	t1504-ceiling-dirs	$1: git rev-parse --show-prefix is '$2'	rev-parse	not_ported
-t1504-ceiling-dirs::1-prefix	t1504-ceiling-dirs	$1: prefix	rev-parse	not_ported
+t1504-ceiling-dirs::1-git-rev-parse-show-prefix-is-2	t1504-ceiling-dirs	$1: git rev-parse --show-prefix is '$2'	rev-parse	pass
+t1504-ceiling-dirs::1-prefix	t1504-ceiling-dirs	$1: prefix	rev-parse	pass
 t1505-rev-parse-last::setup	t1505-rev-parse-last	setup	rev-parse	pass
 t1505-rev-parse-last::1-works	t1505-rev-parse-last	@{-1} works	rev-parse	pass
 t1505-rev-parse-last::1-2-works	t1505-rev-parse-last	@{-1}~2 works	rev-parse	pass
@@ -3109,67 +3109,67 @@ t1506-rev-parse-diagnosis::escaped-char-does-not-trigger-wildcard-rule	t1506-rev
 t1506-rev-parse-diagnosis::arg-after-dashdash-not-interpreted-as-option	t1506-rev-parse-diagnosis	arg after dashdash not interpreted as option	rev-parse	pass
 t1506-rev-parse-diagnosis::arg-after-end-of-options-not-interpreted-as-option	t1506-rev-parse-diagnosis	arg after end-of-options not interpreted as option	rev-parse	pass
 t1506-rev-parse-diagnosis::end-of-options-still-allows	t1506-rev-parse-diagnosis	end-of-options still allows --	rev-parse	pass
-t1507-rev-parse-upstream::setup	t1507-rev-parse-upstream	setup	rev-parse	not_ported
-t1507-rev-parse-upstream::upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{upstream} resolves to correct full name	rev-parse	not_ported
-t1507-rev-parse-upstream::u-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{u} resolves to correct full name	rev-parse	not_ported
-t1507-rev-parse-upstream::my-side-upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	my-side@{upstream} resolves to correct full name	rev-parse	not_ported
-t1507-rev-parse-upstream::upstream-of-branch-with-in-middle	t1507-rev-parse-upstream	upstream of branch with @ in middle	rev-parse	not_ported
-t1507-rev-parse-upstream::upstream-of-branch-with-at-start	t1507-rev-parse-upstream	upstream of branch with @ at start	rev-parse	not_ported
-t1507-rev-parse-upstream::upstream-of-branch-with-at-end	t1507-rev-parse-upstream	upstream of branch with @ at end	rev-parse	not_ported
-t1507-rev-parse-upstream::refs-heads-my-side-upstream-does-not-resolve-to-my-side-upstream	t1507-rev-parse-upstream	refs/heads/my-side@{upstream} does not resolve to my-side{upstream}	rev-parse	not_ported
-t1507-rev-parse-upstream::my-side-u-resolves-to-correct-commit	t1507-rev-parse-upstream	my-side@{u} resolves to correct commit	rev-parse	not_ported
-t1507-rev-parse-upstream::not-tracking-u-fails	t1507-rev-parse-upstream	not-tracking@{u} fails	rev-parse	not_ported
-t1507-rev-parse-upstream::branch-u-1-resolves-correctly	t1507-rev-parse-upstream	<branch>@{u}@{1} resolves correctly	rev-parse	not_ported
-t1507-rev-parse-upstream::u-without-specifying-branch-fails-on-a-detached-head	t1507-rev-parse-upstream	@{u} without specifying branch fails on a detached HEAD	rev-parse	not_ported
-t1507-rev-parse-upstream::checkout-b-new-my-side-u-forks-from-the-same	t1507-rev-parse-upstream	checkout -b new my-side@{u} forks from the same	rev-parse	not_ported
-t1507-rev-parse-upstream::merge-my-side-u-records-the-correct-name	t1507-rev-parse-upstream	merge my-side@{u} records the correct name	rev-parse	not_ported
-t1507-rev-parse-upstream::branch-d-other-u	t1507-rev-parse-upstream	branch -d other@{u}	rev-parse	not_ported
-t1507-rev-parse-upstream::checkout-other-u	t1507-rev-parse-upstream	checkout other@{u}	rev-parse	not_ported
-t1507-rev-parse-upstream::branch-u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	branch@{u} works when tracking a local branch	rev-parse	not_ported
-t1507-rev-parse-upstream::branch-u-error-message-when-no-upstream	t1507-rev-parse-upstream	branch@{u} error message when no upstream	rev-parse	not_ported
-t1507-rev-parse-upstream::u-error-message-when-no-upstream	t1507-rev-parse-upstream	@{u} error message when no upstream	rev-parse	not_ported
-t1507-rev-parse-upstream::u-silent-error-when-no-upstream	t1507-rev-parse-upstream	@{u} silent error when no upstream	rev-parse	not_ported
-t1507-rev-parse-upstream::branch-u-error-message-with-misspelt-branch	t1507-rev-parse-upstream	branch@{u} error message with misspelt branch	rev-parse	not_ported
-t1507-rev-parse-upstream::u-error-message-when-not-on-a-branch	t1507-rev-parse-upstream	@{u} error message when not on a branch	rev-parse	not_ported
-t1507-rev-parse-upstream::branch-u-error-message-if-upstream-branch-not-fetched	t1507-rev-parse-upstream	branch@{u} error message if upstream branch not fetched	rev-parse	not_ported
-t1507-rev-parse-upstream::pull-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	pull works when tracking a local branch	rev-parse	not_ported
-t1507-rev-parse-upstream::u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	@{u} works when tracking a local branch	rev-parse	not_ported
-t1507-rev-parse-upstream::log-g-other-u	t1507-rev-parse-upstream	log -g other@{u}	rev-parse	not_ported
-t1507-rev-parse-upstream::log-g-other-u-now	t1507-rev-parse-upstream	log -g other@{u}@{now}	rev-parse	not_ported
-t1507-rev-parse-upstream::reflog-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{reflog}-parsing does not look beyond colon	rev-parse	not_ported
-t1507-rev-parse-upstream::upstream-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{upstream}-parsing does not look beyond colon	rev-parse	not_ported
-t1508-at-combinations::setup	t1508-at-combinations	setup	branch	not_ported
-t1508-at-combinations::switch-to-old-branch	t1508-at-combinations	switch to old-branch	checkout	not_ported
-t1508-at-combinations::create-path-with	t1508-at-combinations	create path with @	add	not_ported
-t1508-at-combinations::1-works-with-only-one-reflog-entry	t1508-at-combinations	@{1} works with only one reflog entry	checkout	not_ported
-t1508-at-combinations::0-works-with-empty-reflog	t1508-at-combinations	@{0} works with empty reflog	checkout	not_ported
-t1509-root-work-tree::add-relative	t1509-root-work-tree	add relative	add	not_ported
-t1509-root-work-tree::add-absolute	t1509-root-work-tree	add absolute	add	not_ported
-t1509-root-work-tree::add-relative-2	t1509-root-work-tree	add relative	add	not_ported
-t1509-root-work-tree::add-absolute-2	t1509-root-work-tree	add absolute	add	not_ported
-t1509-root-work-tree::add-relative-3	t1509-root-work-tree	add relative	add	not_ported
-t1509-root-work-tree::add-absolute-3	t1509-root-work-tree	add absolute	add	not_ported
-t1509-root-work-tree::setup	t1509-root-work-tree	setup		not_ported
-t1509-root-work-tree::go-to	t1509-root-work-tree	go to /		not_ported
-t1509-root-work-tree::go-to-foo	t1509-root-work-tree	go to /foo		not_ported
-t1509-root-work-tree::go-to-foo-bar	t1509-root-work-tree	go to /foo/bar		not_ported
-t1509-root-work-tree::go-to-2	t1509-root-work-tree	go to /		not_ported
-t1509-root-work-tree::go-to-foo-2	t1509-root-work-tree	go to /foo		not_ported
-t1509-root-work-tree::go-to-foo-bar-2	t1509-root-work-tree	go to /foo/bar		not_ported
-t1509-root-work-tree::go-to-3	t1509-root-work-tree	go to /		not_ported
-t1509-root-work-tree::go-to-4	t1509-root-work-tree	go to /		not_ported
-t1509-root-work-tree::go-to-foo-bar-3	t1509-root-work-tree	go to /foo/bar		not_ported
-t1509-root-work-tree::go-to-5	t1509-root-work-tree	go to /		not_ported
-t1509-root-work-tree::setup-2	t1509-root-work-tree	setup	config	not_ported
-t1509-root-work-tree::go-to-foo-3	t1509-root-work-tree	go to /foo		not_ported
-t1509-root-work-tree::go-to-foo-bar-4	t1509-root-work-tree	go to /foo/bar		not_ported
-t1509-root-work-tree::cleanup	t1509-root-work-tree	cleanup		not_ported
-t1509-root-work-tree::setup-3	t1509-root-work-tree	setup	init	not_ported
-t1509-root-work-tree::go-to-foo-4	t1509-root-work-tree	go to /foo		not_ported
-t1509-root-work-tree::cleanup-root	t1509-root-work-tree	cleanup root		not_ported
-t1509-root-work-tree::1-gitdir	t1509-root-work-tree	$1: gitdir		not_ported
-t1509-root-work-tree::1-worktree	t1509-root-work-tree	$1: worktree		not_ported
-t1509-root-work-tree::1-prefix	t1509-root-work-tree	$1: prefix		not_ported
+t1507-rev-parse-upstream::setup	t1507-rev-parse-upstream	setup	rev-parse	pass
+t1507-rev-parse-upstream::upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{upstream} resolves to correct full name	rev-parse	pass
+t1507-rev-parse-upstream::u-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{u} resolves to correct full name	rev-parse	pass
+t1507-rev-parse-upstream::my-side-upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	my-side@{upstream} resolves to correct full name	rev-parse	pass
+t1507-rev-parse-upstream::upstream-of-branch-with-in-middle	t1507-rev-parse-upstream	upstream of branch with @ in middle	rev-parse	pass
+t1507-rev-parse-upstream::upstream-of-branch-with-at-start	t1507-rev-parse-upstream	upstream of branch with @ at start	rev-parse	pass
+t1507-rev-parse-upstream::upstream-of-branch-with-at-end	t1507-rev-parse-upstream	upstream of branch with @ at end	rev-parse	pass
+t1507-rev-parse-upstream::refs-heads-my-side-upstream-does-not-resolve-to-my-side-upstream	t1507-rev-parse-upstream	refs/heads/my-side@{upstream} does not resolve to my-side{upstream}	rev-parse	pass
+t1507-rev-parse-upstream::my-side-u-resolves-to-correct-commit	t1507-rev-parse-upstream	my-side@{u} resolves to correct commit	rev-parse	pass
+t1507-rev-parse-upstream::not-tracking-u-fails	t1507-rev-parse-upstream	not-tracking@{u} fails	rev-parse	pass
+t1507-rev-parse-upstream::branch-u-1-resolves-correctly	t1507-rev-parse-upstream	<branch>@{u}@{1} resolves correctly	rev-parse	pass
+t1507-rev-parse-upstream::u-without-specifying-branch-fails-on-a-detached-head	t1507-rev-parse-upstream	@{u} without specifying branch fails on a detached HEAD	rev-parse	pass
+t1507-rev-parse-upstream::checkout-b-new-my-side-u-forks-from-the-same	t1507-rev-parse-upstream	checkout -b new my-side@{u} forks from the same	rev-parse	pass
+t1507-rev-parse-upstream::merge-my-side-u-records-the-correct-name	t1507-rev-parse-upstream	merge my-side@{u} records the correct name	rev-parse	pass
+t1507-rev-parse-upstream::branch-d-other-u	t1507-rev-parse-upstream	branch -d other@{u}	rev-parse	pass
+t1507-rev-parse-upstream::checkout-other-u	t1507-rev-parse-upstream	checkout other@{u}	rev-parse	pass
+t1507-rev-parse-upstream::branch-u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	branch@{u} works when tracking a local branch	rev-parse	pass
+t1507-rev-parse-upstream::branch-u-error-message-when-no-upstream	t1507-rev-parse-upstream	branch@{u} error message when no upstream	rev-parse	pass
+t1507-rev-parse-upstream::u-error-message-when-no-upstream	t1507-rev-parse-upstream	@{u} error message when no upstream	rev-parse	pass
+t1507-rev-parse-upstream::u-silent-error-when-no-upstream	t1507-rev-parse-upstream	@{u} silent error when no upstream	rev-parse	pass
+t1507-rev-parse-upstream::branch-u-error-message-with-misspelt-branch	t1507-rev-parse-upstream	branch@{u} error message with misspelt branch	rev-parse	pass
+t1507-rev-parse-upstream::u-error-message-when-not-on-a-branch	t1507-rev-parse-upstream	@{u} error message when not on a branch	rev-parse	pass
+t1507-rev-parse-upstream::branch-u-error-message-if-upstream-branch-not-fetched	t1507-rev-parse-upstream	branch@{u} error message if upstream branch not fetched	rev-parse	pass
+t1507-rev-parse-upstream::pull-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	pull works when tracking a local branch	rev-parse	pass
+t1507-rev-parse-upstream::u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	@{u} works when tracking a local branch	rev-parse	pass
+t1507-rev-parse-upstream::log-g-other-u	t1507-rev-parse-upstream	log -g other@{u}	rev-parse	pass
+t1507-rev-parse-upstream::log-g-other-u-now	t1507-rev-parse-upstream	log -g other@{u}@{now}	rev-parse	pass
+t1507-rev-parse-upstream::reflog-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{reflog}-parsing does not look beyond colon	rev-parse	pass
+t1507-rev-parse-upstream::upstream-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{upstream}-parsing does not look beyond colon	rev-parse	pass
+t1508-at-combinations::setup	t1508-at-combinations	setup	branch	pass
+t1508-at-combinations::switch-to-old-branch	t1508-at-combinations	switch to old-branch	checkout	pass
+t1508-at-combinations::create-path-with	t1508-at-combinations	create path with @	add	pass
+t1508-at-combinations::1-works-with-only-one-reflog-entry	t1508-at-combinations	@{1} works with only one reflog entry	checkout	pass
+t1508-at-combinations::0-works-with-empty-reflog	t1508-at-combinations	@{0} works with empty reflog	checkout	pass
+t1509-root-work-tree::add-relative	t1509-root-work-tree	add relative	add	pass
+t1509-root-work-tree::add-absolute	t1509-root-work-tree	add absolute	add	pass
+t1509-root-work-tree::add-relative-2	t1509-root-work-tree	add relative	add	pass
+t1509-root-work-tree::add-absolute-2	t1509-root-work-tree	add absolute	add	pass
+t1509-root-work-tree::add-relative-3	t1509-root-work-tree	add relative	add	pass
+t1509-root-work-tree::add-absolute-3	t1509-root-work-tree	add absolute	add	pass
+t1509-root-work-tree::setup	t1509-root-work-tree	setup		pass
+t1509-root-work-tree::go-to	t1509-root-work-tree	go to /		pass
+t1509-root-work-tree::go-to-foo	t1509-root-work-tree	go to /foo		pass
+t1509-root-work-tree::go-to-foo-bar	t1509-root-work-tree	go to /foo/bar		pass
+t1509-root-work-tree::go-to-2	t1509-root-work-tree	go to /		pass
+t1509-root-work-tree::go-to-foo-2	t1509-root-work-tree	go to /foo		pass
+t1509-root-work-tree::go-to-foo-bar-2	t1509-root-work-tree	go to /foo/bar		pass
+t1509-root-work-tree::go-to-3	t1509-root-work-tree	go to /		pass
+t1509-root-work-tree::go-to-4	t1509-root-work-tree	go to /		pass
+t1509-root-work-tree::go-to-foo-bar-3	t1509-root-work-tree	go to /foo/bar		pass
+t1509-root-work-tree::go-to-5	t1509-root-work-tree	go to /		pass
+t1509-root-work-tree::setup-2	t1509-root-work-tree	setup	config	pass
+t1509-root-work-tree::go-to-foo-3	t1509-root-work-tree	go to /foo		pass
+t1509-root-work-tree::go-to-foo-bar-4	t1509-root-work-tree	go to /foo/bar		pass
+t1509-root-work-tree::cleanup	t1509-root-work-tree	cleanup		pass
+t1509-root-work-tree::setup-3	t1509-root-work-tree	setup	init	pass
+t1509-root-work-tree::go-to-foo-4	t1509-root-work-tree	go to /foo		pass
+t1509-root-work-tree::cleanup-root	t1509-root-work-tree	cleanup root		pass
+t1509-root-work-tree::1-gitdir	t1509-root-work-tree	$1: gitdir		pass
+t1509-root-work-tree::1-worktree	t1509-root-work-tree	$1: worktree		pass
+t1509-root-work-tree::1-prefix	t1509-root-work-tree	$1: prefix		pass
 t1510-repo-setup::0-nonbare-repo-no-explicit-configuration	t1510-repo-setup	#0: nonbare repo, no explicit configuration		pass
 t1510-repo-setup::1-git-work-tree-without-explicit-git-dir-is-accepted	t1510-repo-setup	#1: GIT_WORK_TREE without explicit GIT_DIR is accepted		pass
 t1510-repo-setup::2-worktree-defaults-to-cwd-with-explicit-git-dir	t1510-repo-setup	#2: worktree defaults to cwd with explicit GIT_DIR		pass
@@ -3242,41 +3242,41 @@ t1511-rev-parse-caret::ref-5	t1511-rev-parse-caret	ref^{/!-.}	rev-parse	pass
 t1511-rev-parse-caret::ref-non-existent-3	t1511-rev-parse-caret	ref^{/!-non-existent}	rev-parse	pass
 t1511-rev-parse-caret::ref-changed	t1511-rev-parse-caret	ref^{/!-Changed}	rev-parse	pass
 t1511-rev-parse-caret::ref-exp-3	t1511-rev-parse-caret	ref^{/!-!Exp}	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguous-blob-output	t1512-rev-parse-disambiguation	ambiguous blob output	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambiguous-loose-bad-object-parsed-as-obj-bad	t1512-rev-parse-disambiguation	ambiguous loose bad object parsed as OBJ_BAD	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambigous-zlib-corrupt-loose-blob	t1512-rev-parse-disambiguation	ambigous zlib corrupt loose blob	rev-parse	not_ported
-t1512-rev-parse-disambiguation::blob-and-tree	t1512-rev-parse-disambiguation	blob and tree	rev-parse	not_ported
-t1512-rev-parse-disambiguation::warn-ambiguity-when-no-candidate-matches-type-hint	t1512-rev-parse-disambiguation	warn ambiguity when no candidate matches type hint	rev-parse	not_ported
-t1512-rev-parse-disambiguation::disambiguate-tree-ish	t1512-rev-parse-disambiguation	disambiguate tree-ish	rev-parse	not_ported
-t1512-rev-parse-disambiguation::disambiguate-blob	t1512-rev-parse-disambiguation	disambiguate blob	rev-parse	not_ported
-t1512-rev-parse-disambiguation::disambiguate-tree	t1512-rev-parse-disambiguation	disambiguate tree	rev-parse	not_ported
-t1512-rev-parse-disambiguation::first-commit	t1512-rev-parse-disambiguation	first commit	rev-parse	not_ported
-t1512-rev-parse-disambiguation::disambiguate-commit-ish	t1512-rev-parse-disambiguation	disambiguate commit-ish	rev-parse	not_ported
-t1512-rev-parse-disambiguation::disambiguate-commit	t1512-rev-parse-disambiguation	disambiguate commit	rev-parse	not_ported
-t1512-rev-parse-disambiguation::log-name1-name2-takes-only-commit-ishes-on-both-ends	t1512-rev-parse-disambiguation	log name1..name2 takes only commit-ishes on both ends	rev-parse	not_ported
-t1512-rev-parse-disambiguation::rev-parse-name1-name2-takes-only-commit-ishes-on-both-ends	t1512-rev-parse-disambiguation	rev-parse name1..name2 takes only commit-ishes on both ends	rev-parse	not_ported
-t1512-rev-parse-disambiguation::git-log-takes-only-commit-ish	t1512-rev-parse-disambiguation	git log takes only commit-ish	rev-parse	not_ported
-t1512-rev-parse-disambiguation::git-reset-takes-only-commit-ish	t1512-rev-parse-disambiguation	git reset takes only commit-ish	rev-parse	not_ported
-t1512-rev-parse-disambiguation::first-tag	t1512-rev-parse-disambiguation	first tag	rev-parse	not_ported
-t1512-rev-parse-disambiguation::parse-describe-name	t1512-rev-parse-disambiguation	parse describe name	rev-parse	not_ported
-t1512-rev-parse-disambiguation::more-history	t1512-rev-parse-disambiguation	more history	rev-parse	not_ported
-t1512-rev-parse-disambiguation::parse-describe-name-not-ignoring-ambiguity	t1512-rev-parse-disambiguation	parse describe name not ignoring ambiguity	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambiguous-commit-ish	t1512-rev-parse-disambiguation	ambiguous commit-ish	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambiguous-tags-peel-to-treeish	t1512-rev-parse-disambiguation	ambiguous tags peel to treeish	rev-parse	not_ported
-t1512-rev-parse-disambiguation::rev-parse-disambiguate	t1512-rev-parse-disambiguation	rev-parse --disambiguate	rev-parse	not_ported
-t1512-rev-parse-disambiguation::rev-parse-disambiguate-drops-duplicates	t1512-rev-parse-disambiguation	rev-parse --disambiguate drops duplicates	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambiguous-40-hex-ref	t1512-rev-parse-disambiguation	ambiguous 40-hex ref	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambiguous-short-sha1-ref	t1512-rev-parse-disambiguation	ambiguous short sha1 ref	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-raw	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (raw)	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-treeish	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (treeish)	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-peel	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (peel)	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambiguity-hints	t1512-rev-parse-disambiguation	ambiguity hints	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambiguity-hints-respect-type	t1512-rev-parse-disambiguation	ambiguity hints respect type	rev-parse	not_ported
-t1512-rev-parse-disambiguation::failed-type-selector-still-shows-hint	t1512-rev-parse-disambiguation	failed type-selector still shows hint	rev-parse	not_ported
-t1512-rev-parse-disambiguation::core-disambiguate-config-can-prefer-types	t1512-rev-parse-disambiguation	core.disambiguate config can prefer types	rev-parse	not_ported
-t1512-rev-parse-disambiguation::core-disambiguate-does-not-override-context	t1512-rev-parse-disambiguation	core.disambiguate does not override context	rev-parse	not_ported
-t1512-rev-parse-disambiguation::ambiguous-commits-are-printed-by-type-first-then-hash-order	t1512-rev-parse-disambiguation	ambiguous commits are printed by type first, then hash order	rev-parse	not_ported
-t1512-rev-parse-disambiguation::cat-file-batch-and-batch-check-show-ambiguous	t1512-rev-parse-disambiguation	cat-file --batch and --batch-check show ambiguous	rev-parse	not_ported
+t1512-rev-parse-disambiguation::ambiguous-blob-output	t1512-rev-parse-disambiguation	ambiguous blob output	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguous-loose-bad-object-parsed-as-obj-bad	t1512-rev-parse-disambiguation	ambiguous loose bad object parsed as OBJ_BAD	rev-parse	pass
+t1512-rev-parse-disambiguation::ambigous-zlib-corrupt-loose-blob	t1512-rev-parse-disambiguation	ambigous zlib corrupt loose blob	rev-parse	pass
+t1512-rev-parse-disambiguation::blob-and-tree	t1512-rev-parse-disambiguation	blob and tree	rev-parse	pass
+t1512-rev-parse-disambiguation::warn-ambiguity-when-no-candidate-matches-type-hint	t1512-rev-parse-disambiguation	warn ambiguity when no candidate matches type hint	rev-parse	pass
+t1512-rev-parse-disambiguation::disambiguate-tree-ish	t1512-rev-parse-disambiguation	disambiguate tree-ish	rev-parse	pass
+t1512-rev-parse-disambiguation::disambiguate-blob	t1512-rev-parse-disambiguation	disambiguate blob	rev-parse	pass
+t1512-rev-parse-disambiguation::disambiguate-tree	t1512-rev-parse-disambiguation	disambiguate tree	rev-parse	pass
+t1512-rev-parse-disambiguation::first-commit	t1512-rev-parse-disambiguation	first commit	rev-parse	pass
+t1512-rev-parse-disambiguation::disambiguate-commit-ish	t1512-rev-parse-disambiguation	disambiguate commit-ish	rev-parse	pass
+t1512-rev-parse-disambiguation::disambiguate-commit	t1512-rev-parse-disambiguation	disambiguate commit	rev-parse	pass
+t1512-rev-parse-disambiguation::log-name1-name2-takes-only-commit-ishes-on-both-ends	t1512-rev-parse-disambiguation	log name1..name2 takes only commit-ishes on both ends	rev-parse	pass
+t1512-rev-parse-disambiguation::rev-parse-name1-name2-takes-only-commit-ishes-on-both-ends	t1512-rev-parse-disambiguation	rev-parse name1..name2 takes only commit-ishes on both ends	rev-parse	pass
+t1512-rev-parse-disambiguation::git-log-takes-only-commit-ish	t1512-rev-parse-disambiguation	git log takes only commit-ish	rev-parse	pass
+t1512-rev-parse-disambiguation::git-reset-takes-only-commit-ish	t1512-rev-parse-disambiguation	git reset takes only commit-ish	rev-parse	pass
+t1512-rev-parse-disambiguation::first-tag	t1512-rev-parse-disambiguation	first tag	rev-parse	pass
+t1512-rev-parse-disambiguation::parse-describe-name	t1512-rev-parse-disambiguation	parse describe name	rev-parse	pass
+t1512-rev-parse-disambiguation::more-history	t1512-rev-parse-disambiguation	more history	rev-parse	pass
+t1512-rev-parse-disambiguation::parse-describe-name-not-ignoring-ambiguity	t1512-rev-parse-disambiguation	parse describe name not ignoring ambiguity	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguous-commit-ish	t1512-rev-parse-disambiguation	ambiguous commit-ish	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguous-tags-peel-to-treeish	t1512-rev-parse-disambiguation	ambiguous tags peel to treeish	rev-parse	pass
+t1512-rev-parse-disambiguation::rev-parse-disambiguate	t1512-rev-parse-disambiguation	rev-parse --disambiguate	rev-parse	pass
+t1512-rev-parse-disambiguation::rev-parse-disambiguate-drops-duplicates	t1512-rev-parse-disambiguation	rev-parse --disambiguate drops duplicates	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguous-40-hex-ref	t1512-rev-parse-disambiguation	ambiguous 40-hex ref	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguous-short-sha1-ref	t1512-rev-parse-disambiguation	ambiguous short sha1 ref	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-raw	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (raw)	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-treeish	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (treeish)	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-peel	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (peel)	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguity-hints	t1512-rev-parse-disambiguation	ambiguity hints	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguity-hints-respect-type	t1512-rev-parse-disambiguation	ambiguity hints respect type	rev-parse	pass
+t1512-rev-parse-disambiguation::failed-type-selector-still-shows-hint	t1512-rev-parse-disambiguation	failed type-selector still shows hint	rev-parse	pass
+t1512-rev-parse-disambiguation::core-disambiguate-config-can-prefer-types	t1512-rev-parse-disambiguation	core.disambiguate config can prefer types	rev-parse	pass
+t1512-rev-parse-disambiguation::core-disambiguate-does-not-override-context	t1512-rev-parse-disambiguation	core.disambiguate does not override context	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguous-commits-are-printed-by-type-first-then-hash-order	t1512-rev-parse-disambiguation	ambiguous commits are printed by type first, then hash order	rev-parse	pass
+t1512-rev-parse-disambiguation::cat-file-batch-and-batch-check-show-ambiguous	t1512-rev-parse-disambiguation	cat-file --batch and --batch-check show ambiguous	rev-parse	pass
 t1513-rev-parse-prefix::setup	t1513-rev-parse-prefix	setup	rev-parse	pass
 t1513-rev-parse-prefix::empty-prefix-file	t1513-rev-parse-prefix	empty prefix -- file	rev-parse	pass
 t1513-rev-parse-prefix::valid-prefix-file	t1513-rev-parse-prefix	valid prefix -- file	rev-parse	pass
@@ -3288,30 +3288,30 @@ t1513-rev-parse-prefix::prefix-ignored-with-head-top	t1513-rev-parse-prefix	pref
 t1513-rev-parse-prefix::disambiguate-path-with-valid-prefix	t1513-rev-parse-prefix	disambiguate path with valid prefix	rev-parse	pass
 t1513-rev-parse-prefix::file-and-refs-with-prefix	t1513-rev-parse-prefix	file and refs with prefix	rev-parse	pass
 t1513-rev-parse-prefix::two-levels-deep	t1513-rev-parse-prefix	two-levels deep	rev-parse	pass
-t1514-rev-parse-push::setup	t1514-rev-parse-push	setup	rev-parse	not_ported
-t1514-rev-parse-push::push-with-default-nothing	t1514-rev-parse-push	@{push} with default=nothing	rev-parse	not_ported
-t1514-rev-parse-push::push-with-default-simple	t1514-rev-parse-push	@{push} with default=simple	rev-parse	not_ported
-t1514-rev-parse-push::triangular-push-fails-with-default-simple	t1514-rev-parse-push	triangular @{push} fails with default=simple	rev-parse	not_ported
-t1514-rev-parse-push::push-with-default-current	t1514-rev-parse-push	@{push} with default=current	rev-parse	not_ported
-t1514-rev-parse-push::push-with-default-matching	t1514-rev-parse-push	@{push} with default=matching	rev-parse	not_ported
-t1514-rev-parse-push::push-with-pushremote-defined	t1514-rev-parse-push	@{push} with pushremote defined	rev-parse	not_ported
-t1514-rev-parse-push::push-with-push-refspecs	t1514-rev-parse-push	@{push} with push refspecs	rev-parse	not_ported
-t1514-rev-parse-push::resolving-push-fails-with-a-detached-head	t1514-rev-parse-push	resolving @{push} fails with a detached HEAD	rev-parse	not_ported
-t1515-rev-parse-outside-repo::set-up-non-repo-directory	t1515-rev-parse-outside-repo	set up non-repo directory	rev-parse	not_ported
-t1515-rev-parse-outside-repo::rev-parse-sq-quote	t1515-rev-parse-outside-repo	rev-parse --sq-quote	rev-parse	not_ported
-t1515-rev-parse-outside-repo::rev-parse-local-env-vars	t1515-rev-parse-outside-repo	rev-parse --local-env-vars	rev-parse	not_ported
-t1515-rev-parse-outside-repo::rev-parse-resolve-git-dir	t1515-rev-parse-outside-repo	rev-parse --resolve-git-dir	rev-parse	not_ported
-t1517-outside-repo::set-up-a-non-repo-directory-and-test-file	t1517-outside-repo	set up a non-repo directory and test file	add	not_ported
-t1517-outside-repo::compute-a-patch-id-outside-repository-uses-sha-1	t1517-outside-repo	compute a patch-id outside repository (uses SHA-1)	patch-id	not_ported
-t1517-outside-repo::hash-object-outside-repository-uses-sha-1	t1517-outside-repo	hash-object outside repository (uses SHA-1)	hash-object	not_ported
-t1517-outside-repo::apply-a-patch-outside-repository	t1517-outside-repo	apply a patch outside repository	apply	not_ported
-t1517-outside-repo::grep-outside-repository	t1517-outside-repo	grep outside repository	grep	not_ported
-t1517-outside-repo::imap-send-outside-repository	t1517-outside-repo	imap-send outside repository	imap-send	not_ported
-t1517-outside-repo::check-ref-format-outside-repository	t1517-outside-repo	check-ref-format outside repository	check-ref-format	not_ported
-t1517-outside-repo::diff-outside-repository	t1517-outside-repo	diff outside repository	diff	not_ported
-t1517-outside-repo::stripspace-outside-repository	t1517-outside-repo	stripspace outside repository	stripspace	not_ported
-t1517-outside-repo::remote-http-outside-repository	t1517-outside-repo	remote-http outside repository		not_ported
-t1517-outside-repo::fmt-merge-msg-does-not-crash-with-h	t1517-outside-repo	fmt-merge-msg does not crash with -h	fmt-merge-msg	not_ported
+t1514-rev-parse-push::setup	t1514-rev-parse-push	setup	rev-parse	pass
+t1514-rev-parse-push::push-with-default-nothing	t1514-rev-parse-push	@{push} with default=nothing	rev-parse	pass
+t1514-rev-parse-push::push-with-default-simple	t1514-rev-parse-push	@{push} with default=simple	rev-parse	pass
+t1514-rev-parse-push::triangular-push-fails-with-default-simple	t1514-rev-parse-push	triangular @{push} fails with default=simple	rev-parse	pass
+t1514-rev-parse-push::push-with-default-current	t1514-rev-parse-push	@{push} with default=current	rev-parse	pass
+t1514-rev-parse-push::push-with-default-matching	t1514-rev-parse-push	@{push} with default=matching	rev-parse	pass
+t1514-rev-parse-push::push-with-pushremote-defined	t1514-rev-parse-push	@{push} with pushremote defined	rev-parse	pass
+t1514-rev-parse-push::push-with-push-refspecs	t1514-rev-parse-push	@{push} with push refspecs	rev-parse	pass
+t1514-rev-parse-push::resolving-push-fails-with-a-detached-head	t1514-rev-parse-push	resolving @{push} fails with a detached HEAD	rev-parse	pass
+t1515-rev-parse-outside-repo::set-up-non-repo-directory	t1515-rev-parse-outside-repo	set up non-repo directory	rev-parse	pass
+t1515-rev-parse-outside-repo::rev-parse-sq-quote	t1515-rev-parse-outside-repo	rev-parse --sq-quote	rev-parse	pass
+t1515-rev-parse-outside-repo::rev-parse-local-env-vars	t1515-rev-parse-outside-repo	rev-parse --local-env-vars	rev-parse	pass
+t1515-rev-parse-outside-repo::rev-parse-resolve-git-dir	t1515-rev-parse-outside-repo	rev-parse --resolve-git-dir	rev-parse	pass
+t1517-outside-repo::set-up-a-non-repo-directory-and-test-file	t1517-outside-repo	set up a non-repo directory and test file	add	pass
+t1517-outside-repo::compute-a-patch-id-outside-repository-uses-sha-1	t1517-outside-repo	compute a patch-id outside repository (uses SHA-1)	patch-id	pass
+t1517-outside-repo::hash-object-outside-repository-uses-sha-1	t1517-outside-repo	hash-object outside repository (uses SHA-1)	hash-object	pass
+t1517-outside-repo::apply-a-patch-outside-repository	t1517-outside-repo	apply a patch outside repository	apply	pass
+t1517-outside-repo::grep-outside-repository	t1517-outside-repo	grep outside repository	grep	pass
+t1517-outside-repo::imap-send-outside-repository	t1517-outside-repo	imap-send outside repository	imap-send	pass
+t1517-outside-repo::check-ref-format-outside-repository	t1517-outside-repo	check-ref-format outside repository	check-ref-format	pass
+t1517-outside-repo::diff-outside-repository	t1517-outside-repo	diff outside repository	diff	pass
+t1517-outside-repo::stripspace-outside-repository	t1517-outside-repo	stripspace outside repository	stripspace	pass
+t1517-outside-repo::remote-http-outside-repository	t1517-outside-repo	remote-http outside repository		pass
+t1517-outside-repo::fmt-merge-msg-does-not-crash-with-h	t1517-outside-repo	fmt-merge-msg does not crash with -h	fmt-merge-msg	pass
 t1600-index::setup	t1600-index	setup		not_ported
 t1600-index::bogus-git-index-version-issues-warning	t1600-index	bogus GIT_INDEX_VERSION issues warning	add	not_ported
 t1600-index::out-of-bounds-git-index-version-issues-warning	t1600-index	out of bounds GIT_INDEX_VERSION issues warning	add	not_ported
@@ -4245,20 +4245,20 @@ t3011-common-prefixes-and-directory-traversal::git-status-ignored-shows-same-fil
 t3012-ls-files-dedup::setup	t3012-ls-files-dedup	setup	ls-files	pass
 t3012-ls-files-dedup::git-ls-files-deduplicate-to-show-unique-unmerged-path	t3012-ls-files-dedup	git ls-files --deduplicate to show unique unmerged path	ls-files	pass
 t3012-ls-files-dedup::git-ls-files-d-m-deduplicate-with-different-display-options	t3012-ls-files-dedup	git ls-files -d -m --deduplicate with different display options	ls-files	pass
-t3013-ls-files-format::setup	t3013-ls-files-format	setup	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-objectmode-v-s-s	t3013-ls-files-format	git ls-files --format objectmode v.s. -s	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-objectname-v-s-s	t3013-ls-files-format	git ls-files --format objectname v.s. -s	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-objecttype	t3013-ls-files-format	git ls-files --format objecttype	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-objectsize	t3013-ls-files-format	git ls-files --format objectsize	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-objectsize-padded	t3013-ls-files-format	git ls-files --format objectsize:padded	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-v-s-eol	t3013-ls-files-format	git ls-files --format v.s. --eol	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-path-v-s-s	t3013-ls-files-format	git ls-files --format path v.s. -s	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-with-relative-path	t3013-ls-files-format	git ls-files --format with relative path	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-with-m	t3013-ls-files-format	git ls-files --format with -m	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-with-d	t3013-ls-files-format	git ls-files --format with -d	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-v-s-s	t3013-ls-files-format	git ls-files --format v.s -s	ls-files	pass
-t3013-ls-files-format::git-ls-files-format-with-debug	t3013-ls-files-format	git ls-files --format with --debug	ls-files	pass
-t3013-ls-files-format::usage-format-is-incompatible-with-flag	t3013-ls-files-format	usage: --format is incompatible with $flag	ls-files	pass
+t3013-ls-files-format::setup	t3013-ls-files-format	setup	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-objectmode-v-s-s	t3013-ls-files-format	git ls-files --format objectmode v.s. -s	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-objectname-v-s-s	t3013-ls-files-format	git ls-files --format objectname v.s. -s	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-objecttype	t3013-ls-files-format	git ls-files --format objecttype	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-objectsize	t3013-ls-files-format	git ls-files --format objectsize	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-objectsize-padded	t3013-ls-files-format	git ls-files --format objectsize:padded	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-v-s-eol	t3013-ls-files-format	git ls-files --format v.s. --eol	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-path-v-s-s	t3013-ls-files-format	git ls-files --format path v.s. -s	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-with-relative-path	t3013-ls-files-format	git ls-files --format with relative path	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-with-m	t3013-ls-files-format	git ls-files --format with -m	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-with-d	t3013-ls-files-format	git ls-files --format with -d	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-v-s-s	t3013-ls-files-format	git ls-files --format v.s -s	ls-files	partial
+t3013-ls-files-format::git-ls-files-format-with-debug	t3013-ls-files-format	git ls-files --format with --debug	ls-files	partial
+t3013-ls-files-format::usage-format-is-incompatible-with-flag	t3013-ls-files-format	usage: --format is incompatible with $flag	ls-files	partial
 t3020-ls-files-error-unmatch::setup	t3020-ls-files-error-unmatch	setup	ls-files	pass
 t3020-ls-files-error-unmatch::git-ls-files-error-unmatch-should-fail-with-unmatched-path	t3020-ls-files-error-unmatch	git ls-files --error-unmatch should fail with unmatched path.	ls-files	pass
 t3020-ls-files-error-unmatch::git-ls-files-error-unmatch-should-succeed-with-matched-paths	t3020-ls-files-error-unmatch	git ls-files --error-unmatch should succeed with matched paths.	ls-files	pass
