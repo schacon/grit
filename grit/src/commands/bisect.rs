@@ -51,8 +51,11 @@ pub fn run(args: Args) -> Result<()> {
         "skip" => cmd_skip(rest),
         "reset" => cmd_reset(rest),
         "log" => cmd_log(),
+        "run" => cmd_run(rest),
+        "terms" => cmd_terms(),
+        "replay" => cmd_replay(rest),
         "help" => {
-            println!("usage: git bisect [start|bad|good|skip|reset|log]");
+            println!("usage: git bisect [start|bad|good|skip|reset|log|run|terms|replay]");
             Ok(())
         }
         other => bail!("unknown bisect subcommand: {other}"),
@@ -243,6 +246,179 @@ fn cmd_log() -> Result<()> {
     let content = fs::read_to_string(&log_path).context("cannot read BISECT_LOG")?;
     print!("{content}");
     Ok(())
+}
+
+fn cmd_run(args: &[String]) -> Result<()> {
+    if args.is_empty() {
+        bail!("bisect run failed: no command provided.");
+    }
+
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+    ensure_bisecting(git_dir)?;
+
+    let cmd_str = args.join(" ");
+    let work_dir = repo
+        .work_tree
+        .as_deref()
+        .unwrap_or_else(|| std::path::Path::new("."));
+
+    loop {
+        // Read the bad ref — if missing, bisect is not ready.
+        if read_bisect_ref(git_dir, "refs/bisect/bad").is_none() {
+            bail!("bisect run requires a bad commit to be marked");
+        }
+        if read_bisect_good_refs(git_dir)?.is_empty() {
+            bail!("bisect run requires at least one good commit to be marked");
+        }
+
+        // Run the user command.
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&cmd_str)
+            .current_dir(work_dir)
+            .status()
+            .with_context(|| format!("failed to execute: {cmd_str}"))?;
+
+        let code = status.code().unwrap_or(1);
+
+        // Exit code meaning (git convention):
+        //   0       = good
+        //   1-124   = bad
+        //   125     = skip
+        //   126-127 = run error, abort bisect
+        //   128+    = signal/fatal, abort
+        //   <0      = signal, abort
+        if code < 0 || code == 126 || code == 127 || code >= 128 {
+            eprintln!(
+                "bisect run failed:\nexit code {code} from '{}' is fatal, aborting.",
+                cmd_str
+            );
+            return Ok(());
+        }
+
+        if code == 125 {
+            // skip
+            cmd_skip(&[])?;
+        } else if code == 0 {
+            // good
+            cmd_good(&[])?;
+        } else {
+            // bad (1-124)
+            cmd_bad(&[])?;
+        }
+
+        // Check if bisect is done (BISECT_LOG removed by reset, or
+        // the first-bad-commit message was printed).
+        // We detect done-ness by checking if the bad commit has been found:
+        // after bisect_next finds the culprit, it prints the result and returns.
+        // We need to check if there's still a bisect in progress.
+        if !git_dir.join("BISECT_LOG").exists() {
+            break;
+        }
+
+        // Check if bisect has converged: re-read state and see if
+        // there's only one candidate left.
+        let new_bad = match read_bisect_ref(git_dir, "refs/bisect/bad") {
+            Some(oid) => oid,
+            None => break,
+        };
+        let new_goods = read_bisect_good_refs(git_dir)?;
+        if new_goods.is_empty() {
+            break;
+        }
+        let candidates = find_bisect_candidates(&repo, new_bad, &new_goods)?;
+        if candidates.is_empty() {
+            // Already converged (printed by bisect_next)
+            break;
+        }
+
+        // Filter skipped
+        let skip_oids = read_bisect_skip_refs(git_dir)?;
+        let unskipped: Vec<ObjectId> = candidates
+            .iter()
+            .copied()
+            .filter(|oid| !skip_oids.contains(oid))
+            .collect();
+
+        if unskipped.len() <= 1 {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_terms() -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+
+    // Read custom terms if they exist, otherwise use defaults.
+    let (term_bad, term_good) = read_bisect_terms(git_dir);
+    println!("Your current terms are {} for the old state and {} for the new state.", term_good, term_bad);
+    Ok(())
+}
+
+fn cmd_replay(args: &[String]) -> Result<()> {
+    if args.is_empty() {
+        bail!("no logfile given");
+    }
+
+    let logfile = &args[0];
+    let content = fs::read_to_string(logfile)
+        .with_context(|| format!("cannot open file '{}' for replaying", logfile))?;
+
+    // Reset any current bisect state first.
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+    if git_dir.join("BISECT_LOG").exists() {
+        clean_bisect_state(git_dir)?;
+    }
+
+    // Auto-start a bisect session for replay.
+    cmd_start(&[])?;
+
+    for line in content.lines() {
+        let line = line.trim();
+        // Skip comments and empty lines.
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Lines look like: git bisect <subcmd> <args...>
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 3 || parts[0] != "git" || parts[1] != "bisect" {
+            continue;
+        }
+
+        let subcmd = parts[2];
+        let rest_args: Vec<String> = parts[3..].iter().map(|s| s.to_string()).collect();
+
+        match subcmd {
+            "start" => { /* already started */ }
+            "bad" | "new" => cmd_bad(&rest_args)?,
+            "good" | "old" => cmd_good(&rest_args)?,
+            "skip" => cmd_skip(&rest_args)?,
+            _ => {
+                // Ignore unknown commands in replay
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Read custom bisect terms from .git/BISECT_TERMS or return defaults.
+fn read_bisect_terms(git_dir: &Path) -> (String, String) {
+    let terms_path = git_dir.join("BISECT_TERMS");
+    if let Ok(content) = fs::read_to_string(&terms_path) {
+        let mut lines = content.lines();
+        let bad = lines.next().unwrap_or("bad").trim().to_owned();
+        let good = lines.next().unwrap_or("good").trim().to_owned();
+        (bad, good)
+    } else {
+        ("bad".to_owned(), "good".to_owned())
+    }
 }
 
 // ---------------------------------------------------------------------------

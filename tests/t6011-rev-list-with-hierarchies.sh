@@ -245,7 +245,7 @@ test_expect_success 'rev-list --first-parent through octopus' '
 	test_line_count = 7 actual
 '
 
-test_expect_failure 'rev-list --parents for octopus merge shows both parents' '
+test_expect_success 'rev-list --parents for octopus merge shows both parents' '
 	git rev-list --parents L -1 >actual &&
 	line=$(cat actual) &&
 	set -- $line &&
