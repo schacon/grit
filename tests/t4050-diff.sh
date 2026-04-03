@@ -1561,6 +1561,8 @@ test_expect_success 'diff --stat and --numstat both show file' '
 
 test_expect_success 'diff output includes file header a/ b/ prefix' '
 	cd diff-empty &&
+	echo tweaked >a.txt &&
+	git add a.txt && git commit -m "tweak a" 2>/dev/null &&
 	git diff HEAD~1 HEAD >output &&
 	grep "^--- a/" output &&
 	grep "^+++ b/" output
