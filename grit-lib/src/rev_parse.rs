@@ -398,6 +398,12 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
         if matches.len() == 1 {
             return Ok(matches[0]);
         }
+        if matches.len() > 1 {
+            return Err(Error::InvalidRef(format!(
+                "short object ID {} is ambiguous",
+                spec
+            )));
+        }
     }
 
     if let Ok(oid) = refs::resolve_ref(&repo.git_dir, spec) {

@@ -93,28 +93,28 @@ test_expect_success 'subdir_ceil_empty: prefix is sub/dir/' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'subdir_ceil_at_trash: fails' '
+test_expect_success 'subdir_ceil_at_trash: fails' '
 	mkdir -p sub/dir &&
 	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT"'" &&
 	export GIT_CEILING_DIRECTORIES &&
 	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
 '
 
-test_expect_failure 'subdir_ceil_at_trash_slash: fails' '
+test_expect_success 'subdir_ceil_at_trash_slash: fails' '
 	mkdir -p sub/dir &&
 	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/"'" &&
 	export GIT_CEILING_DIRECTORIES &&
 	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
 '
 
-test_expect_failure 'subdir_ceil_at_sub: fails' '
+test_expect_success 'subdir_ceil_at_sub: fails' '
 	mkdir -p sub/dir &&
 	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub"'" &&
 	export GIT_CEILING_DIRECTORIES &&
 	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
 '
 
-test_expect_failure 'subdir_ceil_at_sub_slash: fails' '
+test_expect_success 'subdir_ceil_at_sub_slash: fails' '
 	mkdir -p sub/dir &&
 	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub/"'" &&
 	export GIT_CEILING_DIRECTORIES &&
@@ -175,21 +175,21 @@ test_expect_success 'subdir_ceil_at_subdi: prefix is sub/dir/' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'second_of_two: fails' '
+test_expect_success 'second_of_two: fails' '
 	mkdir -p sub/dir &&
 	GIT_CEILING_DIRECTORIES="/foo:'"$TRASH_ROOT/sub"'" &&
 	export GIT_CEILING_DIRECTORIES &&
 	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
 '
 
-test_expect_failure 'first_of_two: fails' '
+test_expect_success 'first_of_two: fails' '
 	mkdir -p sub/dir &&
 	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub"':/bar" &&
 	export GIT_CEILING_DIRECTORIES &&
 	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
 '
 
-test_expect_failure 'second_of_three: fails' '
+test_expect_success 'second_of_three: fails' '
 	mkdir -p sub/dir &&
 	GIT_CEILING_DIRECTORIES="/foo:'"$TRASH_ROOT/sub"':/bar" &&
 	export GIT_CEILING_DIRECTORIES &&
@@ -224,28 +224,28 @@ test_expect_success 'sd_ceil_empty: prefix is s/d/' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'sd_ceil_at_trash: fails' '
+test_expect_success 'sd_ceil_at_trash: fails' '
 	mkdir -p s/d &&
 	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT"'" &&
 	export GIT_CEILING_DIRECTORIES &&
 	(cd s/d && test_must_fail git rev-parse --show-prefix)
 '
 
-test_expect_failure 'sd_ceil_at_trash_slash: fails' '
+test_expect_success 'sd_ceil_at_trash_slash: fails' '
 	mkdir -p s/d &&
 	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/"'" &&
 	export GIT_CEILING_DIRECTORIES &&
 	(cd s/d && test_must_fail git rev-parse --show-prefix)
 '
 
-test_expect_failure 'sd_ceil_at_s: fails' '
+test_expect_success 'sd_ceil_at_s: fails' '
 	mkdir -p s/d &&
 	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/s"'" &&
 	export GIT_CEILING_DIRECTORIES &&
 	(cd s/d && test_must_fail git rev-parse --show-prefix)
 '
 
-test_expect_failure 'sd_ceil_at_s_slash: fails' '
+test_expect_success 'sd_ceil_at_s_slash: fails' '
 	mkdir -p s/d &&
 	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/s/"'" &&
 	export GIT_CEILING_DIRECTORIES &&

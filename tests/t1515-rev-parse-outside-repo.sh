@@ -22,14 +22,12 @@ test_expect_success 'rev-parse --sq-quote' '
 	git rev-parse --sq-quote "hello world" >actual 2>&1
 '
 
-# --local-env-vars is not implemented in grit
-test_expect_failure 'rev-parse --local-env-vars' '
+test_expect_success 'rev-parse --local-env-vars' '
 	git rev-parse --local-env-vars >actual &&
 	grep ^GIT_DIR actual
 '
 
-# --resolve-git-dir is not implemented in grit
-test_expect_failure 'rev-parse --resolve-git-dir' '
+test_expect_success 'rev-parse --resolve-git-dir' '
 	git init --separate-git-dir repo dir &&
 	git rev-parse --resolve-git-dir dir/.git >actual
 '

@@ -134,8 +134,7 @@ test_expect_success '--git-dir flag works for log' '
 
 # ── rev-parse --absolute-git-dir ─────────────────────────────────────────────
 
-# NOTE: grit does not yet support --absolute-git-dir
-test_expect_failure 'rev-parse --absolute-git-dir returns absolute path' '
+test_expect_success 'rev-parse --absolute-git-dir returns absolute path' '
 	cd normal-repo &&
 	result=$(git rev-parse --absolute-git-dir 2>/dev/null) &&
 	case "$result" in
