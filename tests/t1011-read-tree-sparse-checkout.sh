@@ -22,7 +22,7 @@ test_expect_success 'read-tree without sparse checkout works normally' '
 	grep "sub/added" result
 '
 
-test_expect_failure 'ls-files -t shows status prefix for tracked files' '
+test_expect_success 'ls-files -t shows status prefix for tracked files' '
 	git ls-files -t >result &&
 	grep "^H init.t" result &&
 	grep "^H sub/added" result
