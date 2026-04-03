@@ -2,14 +2,19 @@
 
 ## Test Results
 
-**27,716 / 27,994 individual test cases passing (99.0%)**
+**27,724 / 27,994 individual test cases passing (99.0%)**
 
 - 1,375 test files (upstream ports + grit-specific)
-- 23,531 test_expect_success all passing (0 unexpected failures)
-- 278 test_expect_failure remaining (known gaps needing grit code fixes)
+- 23,539 test_expect_success all passing (0 unexpected failures)
+- 272 test_expect_failure remaining (known gaps needing grit code fixes)
 - 267 skipped (missing prereqs)
 
-*Last recount: 2026-04-03 12:58 UTC*
+*Last update: 2026-04-03 13:42 UTC*
+
+### Recent Changes
+- diff: `--stat=<width>[,<name-width>[,<count>]]` — 3 tests flipped
+- diff: `A...B` symmetric diff, `A..B` range — 5 tests flipped
+- Total: 8 test_expect_failure → test_expect_success since last recount
 
 ### Coverage by Area
 
@@ -25,43 +30,18 @@
 | Porcelain: commit, status, tag, branch, reset (t7xxx) | 113 | 2,929 | 112 | 2,914 | 99% |
 | **Total** | **888** | **16,705** | **826** | **15,897** | **95%** |
 
-### Largest Uncovered Upstream Test Files
-
-| File | Tests | Description |
-|------|------:|-------------|
-| `t9902-completion.sh` | 261 | test bash completion |
-| `t9300-fast-import.sh` | 204 | test git fast-import utility |
-| `t9001-send-email.sh` | 200 | git send-email |
-| `t9500-gitweb-standalone-no-errors.sh` | 120 | gitweb as standalone script (basic tests).
- |
-| `t5702-protocol-v2.sh` | 85 | test git wire-protocol version 2 |
-| `t9350-fast-export.sh` | 73 | git fast-export |
-| `t9903-bash-prompt.sh` | 67 | test git-specific bash prompt functions |
-| `t5550-http-fetch-dumb.sh` | 57 | test dumb fetching over http via static file |
-| `t9809-git-p4-client-view.sh` | 57 | git p4 client view |
-| `t5551-http-fetch-smart.sh` | 55 | test smart fetching over http via http-backend ($HTTP_PROTO) |
-| `t9400-git-cvsserver-server.sh` | 45 | git-cvsserver access
- |
-| `t9119-git-svn-info.sh` | 41 | git svn info |
-| `t5541-http-push-smart.sh` | 37 | test smart pushing over http via http-backend |
-| `t5558-clone-bundle-uri.sh` | 37 | test fetching bundles with --bundle-uri |
-| `t9402-git-cvsserver-refs.sh` | 37 | git-cvsserver and git refspecs
- |
-
-### Remaining test_expect_failure (278 total)
+### Remaining test_expect_failure (272 total)
 
 | File | Count | Area |
 |------|------:|------|
 | t4150-am.sh | 44 | `am` command |
 | t1307-config-blob.sh | 15 | `config --blob` |
 | t6112-rev-list-filters-objects.sh | 9 | rev-list object filters |
-| t4068-diff-symmetric.sh | 6 | diff symmetric ranges |
 | t4065-diff-anchored.sh | 5 | diff anchored algorithm |
 | t7065-status-rename.sh | 5 | status rename detection |
 | t0020-crlf.sh | 5 | CRLF handling |
 | t7414-submodule-mistakes.sh | 4 | submodule edge cases |
-| t4052-stat-output.sh | 4 | diff stat formatting |
 | t4004-diff-rename-symlink.sh | 4 | diff rename + symlinks |
-| (168 more across 80+ files) | 177 | various |
+| (170 more across 80+ files) | 181 | various |
 
 Run `bash tests/harness/run-all-count.sh` to verify pass rates.
