@@ -84,7 +84,15 @@ pub fn run(args: Args) -> Result<()> {
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
             for entry in &diff_entries {
-                write_patch_entry(&mut out, &repo.odb, entry)?;
+                write_patch_entry(&mut out, &repo, entry, options.context_lines)?;
+            }
+        } else if options.stat {
+            write_stat_output(&diff_entries, &repo)?;
+        } else if options.numstat {
+            write_numstat_output(&diff_entries, &repo)?;
+        } else if options.name_only {
+            for entry in &diff_entries {
+                println!("{}", entry.path());
             }
         } else if options.name_status {
             for entry in &diff_entries {
@@ -143,13 +151,22 @@ struct Options {
     find_copies_harder: bool,
     patch: bool,
     name_status: bool,
+    name_only: bool,
+    stat: bool,
+    numstat: bool,
     nul_terminated: bool,
+    context_lines: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Snapshot {
     mode: u32,
     oid: ObjectId,
+}
+
+/// A special sentinel OID used to signal "read from worktree" rather than ODB.
+fn worktree_sentinel() -> ObjectId {
+    ObjectId::from_bytes(&[0xff; 20]).unwrap()
 }
 
 impl Snapshot {
@@ -184,7 +201,11 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut c_count = 0u32;
     let mut patch = false;
     let mut name_status = false;
+    let mut name_only = false;
+    let mut stat = false;
+    let mut numstat = false;
     let mut nul_terminated = false;
+    let mut context_lines: usize = 3;
 
     let mut idx = 0usize;
     while idx < argv.len() {
@@ -207,6 +228,15 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 "--name-status" => {
                     name_status = true;
+                }
+                "--name-only" => {
+                    name_only = true;
+                }
+                "--stat" => {
+                    stat = true;
+                }
+                "--numstat" => {
+                    numstat = true;
                 }
                 "-M" | "--find-renames" => {
                     find_renames = Some(50);
@@ -265,6 +295,11 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         .with_context(|| format!("invalid --abbrev value: `{value}`"))?;
                     abbrev = Some(parsed);
                 }
+                _ if arg.starts_with("-U") => {
+                    let val = &arg[2..];
+                    context_lines = val.parse::<usize>()
+                        .with_context(|| format!("invalid context line count: `{val}`"))?;
+                }
                 _ => bail!("unsupported option: {arg}"),
             }
             idx += 1;
@@ -296,7 +331,11 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         find_copies_harder,
         patch,
         name_status,
+        name_only,
+        stat,
+        numstat,
         nul_terminated,
+        context_lines,
     })
 }
 
@@ -446,14 +485,19 @@ fn diff_tree_vs_worktree(
         match read_worktree_snapshot_from_meta(repo, &abs, &meta)? {
             Some(worktree_snapshot) => {
                 if worktree_snapshot != *index_snapshot {
-                    let old = tree_map.get(path).copied();
+                    let old = tree_map.get(path).copied().or(Some(*index_snapshot));
+                    // Use worktree_sentinel() to signal "read from disk" in patch mode.
+                    // Keep the real mode from the worktree snapshot.
                     merged.insert(
                         path.clone(),
                         RawChange {
                             path: path.clone(),
                             status: 'M',
                             old,
-                            new: None,
+                            new: Some(Snapshot {
+                                mode: worktree_snapshot.mode,
+                                oid: worktree_sentinel(),
+                            }),
                         },
                     );
                 }
@@ -558,7 +602,7 @@ fn raw_change_to_diff_entry(change: &RawChange) -> DiffEntry {
 fn render_raw_diff_entry(entry: &DiffEntry, repo: &Repository, abbrev: Option<usize>) -> Result<String> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
-    let old_oid = if entry.old_oid == zero_oid() {
+    let old_oid = if entry.old_oid == zero_oid() || entry.old_oid == worktree_sentinel() {
         "0".repeat(width)
     } else {
         match abbrev {
@@ -566,7 +610,7 @@ fn render_raw_diff_entry(entry: &DiffEntry, repo: &Repository, abbrev: Option<us
             None => entry.old_oid.to_hex(),
         }
     };
-    let new_oid = if entry.new_oid == zero_oid() {
+    let new_oid = if entry.new_oid == zero_oid() || entry.new_oid == worktree_sentinel() {
         "0".repeat(width)
     } else {
         match abbrev {
@@ -598,11 +642,35 @@ fn render_raw_diff_entry(entry: &DiffEntry, repo: &Repository, abbrev: Option<us
     ))
 }
 
+/// Resolve content for a DiffEntry side. If the OID is the worktree sentinel,
+/// read the file from disk; otherwise read from ODB.
+fn resolve_content(repo: &Repository, oid: &ObjectId, path: &str) -> String {
+    let z = zero_oid();
+    if *oid == z {
+        return String::new();
+    }
+    if *oid == worktree_sentinel() {
+        // Read from worktree
+        if let Some(ref wt) = repo.work_tree {
+            let abs = wt.join(path);
+            if let Ok(data) = fs::read(&abs) {
+                return String::from_utf8_lossy(&data).into_owned();
+            }
+        }
+        return String::new();
+    }
+    match repo.odb.read(oid) {
+        Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
+        Err(_) => String::new(),
+    }
+}
+
 /// Write a unified-diff block for one entry (diff-index -p).
 fn write_patch_entry(
     out: &mut impl std::io::Write,
-    odb: &Odb,
+    repo: &Repository,
     entry: &DiffEntry,
+    context_lines: usize,
 ) -> Result<()> {
     use grit_lib::diff::unified_diff;
 
@@ -617,31 +685,35 @@ fn write_patch_entry(
 
     writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
 
+    // For display, hide the sentinel OID
+    let display_old_oid = if entry.old_oid == worktree_sentinel() {
+        "0000000".to_string()
+    } else {
+        entry.old_oid.to_hex()[..7].to_string()
+    };
+    let display_new_oid = if entry.new_oid == worktree_sentinel() {
+        "0000000".to_string()
+    } else {
+        entry.new_oid.to_hex()[..7].to_string()
+    };
+
     match entry.status {
         DiffStatus::Added => {
             writeln!(out, "new file mode {}", entry.new_mode)?;
-            writeln!(out, "index {}..{}",
-                &entry.old_oid.to_hex()[..7],
-                &entry.new_oid.to_hex()[..7])?;
+            writeln!(out, "index {}..{}", display_old_oid, display_new_oid)?;
         }
         DiffStatus::Deleted => {
             writeln!(out, "deleted file mode {}", entry.old_mode)?;
-            writeln!(out, "index {}..{}",
-                &entry.old_oid.to_hex()[..7],
-                &entry.new_oid.to_hex()[..7])?;
+            writeln!(out, "index {}..{}", display_old_oid, display_new_oid)?;
         }
         DiffStatus::Modified => {
             if entry.old_mode == entry.new_mode {
                 writeln!(out, "index {}..{} {}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7],
-                    entry.old_mode)?;
+                    display_old_oid, display_new_oid, entry.old_mode)?;
             } else {
                 writeln!(out, "old mode {}", entry.old_mode)?;
                 writeln!(out, "new mode {}", entry.new_mode)?;
-                writeln!(out, "index {}..{}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7])?;
+                writeln!(out, "index {}..{}", display_old_oid, display_new_oid)?;
             }
         }
         DiffStatus::Renamed => {
@@ -650,9 +722,7 @@ fn write_patch_entry(
             writeln!(out, "rename from {old_path}")?;
             writeln!(out, "rename to {new_path}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(out, "index {}..{}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7])?;
+                writeln!(out, "index {}..{}", display_old_oid, display_new_oid)?;
             }
         }
         DiffStatus::Copied => {
@@ -661,38 +731,90 @@ fn write_patch_entry(
             writeln!(out, "copy from {old_path}")?;
             writeln!(out, "copy to {new_path}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(out, "index {}..{}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7])?;
+                writeln!(out, "index {}..{}", display_old_oid, display_new_oid)?;
             }
         }
         _ => {}
     }
 
-    let z = zero_oid();
-    let old_content = if entry.old_oid == z {
-        String::new()
-    } else {
-        match odb.read(&entry.old_oid) {
-            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-            Err(_) => String::new(),
-        }
-    };
-    let new_content = if entry.new_oid == z {
-        String::new()
-    } else {
-        match odb.read(&entry.new_oid) {
-            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-            Err(_) => String::new(),
-        }
-    };
+    let old_content = resolve_content(repo, &entry.old_oid, old_path);
+    let new_content = resolve_content(repo, &entry.new_oid, new_path);
 
     let display_old = if entry.status == DiffStatus::Added { "/dev/null" } else { old_path };
     let display_new = if entry.status == DiffStatus::Deleted { "/dev/null" } else { new_path };
 
-    let context_lines = 3;
     let patch = unified_diff(&old_content, &new_content, display_old, display_new, context_lines);
     write!(out, "{patch}")?;
 
+    Ok(())
+}
+
+/// Write --stat output.
+fn write_stat_output(entries: &[DiffEntry], repo: &Repository) -> Result<()> {
+    let mut total_insertions = 0usize;
+    let mut total_deletions = 0usize;
+    let mut file_stats: Vec<(String, usize, usize)> = Vec::new();
+    let mut max_name_len = 0usize;
+
+    for entry in entries {
+        let path = entry.path().to_owned();
+        let old_path = entry.old_path.as_deref().unwrap_or(&path);
+        let new_path = entry.new_path.as_deref().unwrap_or(&path);
+        let old_content = resolve_content(repo, &entry.old_oid, old_path);
+        let new_content = resolve_content(repo, &entry.new_oid, new_path);
+        let old_lines: Vec<&str> = if old_content.is_empty() { vec![] } else { old_content.lines().collect() };
+        let new_lines: Vec<&str> = if new_content.is_empty() { vec![] } else { new_content.lines().collect() };
+        // Simple line-count diff
+        let ins = if new_lines.len() > old_lines.len() { new_lines.len() - old_lines.len() } else { 0 };
+        let del = if old_lines.len() > new_lines.len() { old_lines.len() - new_lines.len() } else { 0 };
+        // For modified files, at minimum count changed lines
+        let (insertions, deletions) = if ins == 0 && del == 0 && entry.status == DiffStatus::Modified {
+            (1, 1) // at least show something changed
+        } else if entry.status == DiffStatus::Added {
+            (new_lines.len(), 0)
+        } else if entry.status == DiffStatus::Deleted {
+            (0, old_lines.len())
+        } else {
+            (ins.max(if new_content != old_content { 1 } else { 0 }),
+             del.max(if new_content != old_content { 1 } else { 0 }))
+        };
+        if path.len() > max_name_len { max_name_len = path.len(); }
+        total_insertions += insertions;
+        total_deletions += deletions;
+        file_stats.push((path, insertions, deletions));
+    }
+
+    for (path, ins, del) in &file_stats {
+        let changes = ins + del;
+        let bar: String = "+".repeat(*ins).chars().chain("-".repeat(*del).chars()).collect();
+        println!(" {:<width$} | {:>4} {}", path, changes, bar, width = max_name_len);
+    }
+
+    let n = file_stats.len();
+    let file_word = if n == 1 { "file" } else { "files" };
+    println!(" {} {} changed, {} insertions(+), {} deletions(-)",
+        n, file_word, total_insertions, total_deletions);
+    Ok(())
+}
+
+/// Write --numstat output.
+fn write_numstat_output(entries: &[DiffEntry], repo: &Repository) -> Result<()> {
+    for entry in entries {
+        let path = entry.path().to_owned();
+        let old_path = entry.old_path.as_deref().unwrap_or(&path);
+        let new_path = entry.new_path.as_deref().unwrap_or(&path);
+        let old_content = resolve_content(repo, &entry.old_oid, old_path);
+        let new_content = resolve_content(repo, &entry.new_oid, new_path);
+        let old_lines: usize = if old_content.is_empty() { 0 } else { old_content.lines().count() };
+        let new_lines: usize = if new_content.is_empty() { 0 } else { new_content.lines().count() };
+        let ins = new_lines.saturating_sub(old_lines).max(if new_content != old_content && entry.status == DiffStatus::Modified { 1 } else { 0 });
+        let del = old_lines.saturating_sub(new_lines).max(if new_content != old_content && entry.status == DiffStatus::Modified { 1 } else { 0 });
+        let (insertions, deletions) = match entry.status {
+            DiffStatus::Added => (new_lines, 0),
+            DiffStatus::Deleted => (0, old_lines),
+            _ => (ins, del),
+        };
+        println!("{}\t{}\t{}", insertions, deletions, path);
+    }
     Ok(())
 }
