@@ -177,6 +177,13 @@ pub fn run(args: Args) -> Result<()> {
         oids
     };
 
+    // Build source map for --source
+    let source_map: std::collections::HashMap<ObjectId, String> = if args.source && args.all {
+        build_source_map(&repo.odb, &repo.git_dir, args.first_parent)?
+    } else {
+        std::collections::HashMap::new()
+    };
+
     // Compile filter regexes
     let author_re = args
         .author
@@ -286,6 +293,17 @@ pub fn run(args: Args) -> Result<()> {
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
             writeln!(out)?;
+        }
+        // Show --source annotation if available
+        if args.source {
+            if let Some(src) = source_map.get(oid) {
+                let short_src = src
+                    .strip_prefix("refs/heads/")
+                    .or_else(|| src.strip_prefix("refs/tags/"))
+                    .or_else(|| src.strip_prefix("refs/remotes/"))
+                    .unwrap_or(src);
+                write!(out, "{}\t", short_src)?;
+            }
         }
         format_commit(&mut out, oid, commit_data, &args, decorations.as_ref())?;
 
@@ -1705,4 +1723,116 @@ fn follow_filter(
     }
 
     Ok(result)
+}
+
+/// Build a map from commit OID → source ref name for --source.
+/// For each ref, walk its commit ancestry and record the first ref that reaches each commit.
+fn build_source_map(
+    odb: &Odb,
+    git_dir: &std::path::Path,
+    first_parent: bool,
+) -> Result<std::collections::HashMap<ObjectId, String>> {
+    let mut source_map: std::collections::HashMap<ObjectId, String> = std::collections::HashMap::new();
+
+    // Collect refs with names
+    let refs = collect_all_refs_with_names(git_dir)?;
+
+    for (oid, ref_name) in &refs {
+        let mut queue = vec![*oid];
+        let mut visited = HashSet::new();
+        while let Some(commit_oid) = queue.pop() {
+            if !visited.insert(commit_oid) {
+                continue;
+            }
+            source_map.entry(commit_oid).or_insert_with(|| ref_name.clone());
+            if let Ok(obj) = odb.read(&commit_oid) {
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    if first_parent {
+                        if let Some(p) = commit.parents.first() {
+                            queue.push(*p);
+                        }
+                    } else {
+                        for p in &commit.parents {
+                            if !visited.contains(p) {
+                                queue.push(*p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(source_map)
+}
+
+/// Collect all refs with their names from the repository.
+fn collect_all_refs_with_names(
+    git_dir: &std::path::Path,
+) -> Result<Vec<(ObjectId, String)>> {
+    let mut refs = Vec::new();
+
+    // HEAD
+    let head = resolve_head(git_dir)?;
+    if let Some(oid) = head.oid() {
+        refs.push((*oid, "HEAD".to_string()));
+    }
+
+    // Loose refs
+    collect_named_refs_from_dir(git_dir, &git_dir.join("refs"), &mut refs)?;
+
+    // Packed refs
+    let packed_path = git_dir.join("packed-refs");
+    if let Ok(text) = std::fs::read_to_string(packed_path) {
+        for line in text.lines() {
+            if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = line.splitn(2, ' ').collect();
+            if parts.len() == 2 {
+                if let Ok(oid) = parts[0].parse::<ObjectId>() {
+                    refs.push((oid, parts[1].to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(refs)
+}
+
+/// Recursively collect refs with their full names from a directory.
+fn collect_named_refs_from_dir(
+    git_dir: &std::path::Path,
+    dir: &std::path::Path,
+    refs: &mut Vec<(ObjectId, String)>,
+) -> Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_named_refs_from_dir(git_dir, &path, refs)?;
+        } else if let Ok(content) = std::fs::read_to_string(&path) {
+            let raw = content.trim();
+            if raw.starts_with("ref: ") {
+                // Symbolic ref — resolve
+                let target = &raw[5..];
+                if let Ok(oid) = grit_lib::refs::resolve_ref(git_dir, target) {
+                    let full_path = path.to_string_lossy();
+                    if let Some(idx) = full_path.find("refs/") {
+                        refs.push((oid, full_path[idx..].to_string()));
+                    }
+                }
+            } else if let Ok(oid) = raw.parse::<ObjectId>() {
+                let full_path = path.to_string_lossy();
+                if let Some(idx) = full_path.find("refs/") {
+                    refs.push((oid, full_path[idx..].to_string()));
+                }
+            }
+        }
+    }
+    Ok(())
 }
