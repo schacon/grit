@@ -17,7 +17,7 @@ test_expect_success 'setup' '
 	git rev-parse POST >POST_OID_file
 '
 
-test_expect_failure 'hook allows updating ref if successful' '
+test_expect_success 'hook allows updating ref if successful' '
 	PRE_OID=$(cat PRE_OID_file) && POST_OID=$(cat POST_OID_file) &&
 	git reset --hard PRE &&
 	test_hook reference-transaction <<-\EOF &&
@@ -32,7 +32,7 @@ test_expect_failure 'hook allows updating ref if successful' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'hook aborts updating ref in preparing state' '
+test_expect_success 'hook aborts updating ref in preparing state' '
 	PRE_OID=$(cat PRE_OID_file) && POST_OID=$(cat POST_OID_file) &&
 	git reset --hard PRE &&
 	test_hook reference-transaction <<-\EOF &&
