@@ -37,7 +37,10 @@ test_expect_success 'commit uses per-repo identity' '
 	cd repo &&
 	echo "content" >file.txt &&
 	grit add file.txt &&
-	grit commit -m "test commit" &&
+	(
+		unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+		grit commit -m "test commit"
+	) &&
 	grit log --format="%ae" >actual_email &&
 	echo "local@example.com" >expect &&
 	test_cmp expect actual_email &&
@@ -53,7 +56,10 @@ test_expect_success 'different repos can have different identities' '
 	grit config user.name "Other User" &&
 	echo "data" >file.txt &&
 	grit add file.txt &&
-	grit commit -m "other commit" &&
+	(
+		unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+		grit commit -m "other commit"
+	) &&
 	grit log --format="%ae" >actual_email &&
 	echo "other@example.com" >expect &&
 	test_cmp expect actual_email &&
@@ -68,7 +74,10 @@ test_expect_success 'changing config updates subsequent commits' '
 	grit config user.name "Updated User" &&
 	echo "more" >>file.txt &&
 	grit add file.txt &&
-	grit commit -m "updated identity commit" &&
+	(
+		unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+		grit commit -m "updated identity commit"
+	) &&
 	grit log -n1 --format="%ae" >actual_email &&
 	echo "updated@example.com" >expect &&
 	test_cmp expect actual_email
@@ -79,7 +88,10 @@ test_expect_success 'commit without user config fails' '
 	cd no-config &&
 	echo "x" >f.txt &&
 	grit add f.txt &&
-	test_must_fail grit commit -m "should fail" 2>stderr &&
+	(
+		unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+		test_must_fail grit commit -m "should fail" 2>stderr
+	) &&
 	grep -i "tell me who you are\|user.email\|user.name" stderr
 '
 

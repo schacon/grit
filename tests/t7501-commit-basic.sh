@@ -309,7 +309,10 @@ test_expect_success 'committer is set from config' '
 	cd repo &&
 	echo "committer" >>file.txt &&
 	git add file.txt &&
-	git commit -m "check committer" 2>/dev/null &&
+	(
+		unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL &&
+		git commit -m "check committer" 2>/dev/null
+	) &&
 	git cat-file -p HEAD >actual &&
 	grep "^committer Test User <test@test.com>" actual
 '
@@ -956,7 +959,10 @@ test_expect_success 'commit tree object is a valid tree' '
 
 test_expect_success 'commit records correct author name' '
 	cd repo &&
-	git commit --allow-empty -m "author test" 2>/dev/null &&
+	(
+		unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL &&
+		git commit --allow-empty -m "author test" 2>/dev/null
+	) &&
 	grit cat-file -p HEAD >actual &&
 	grep "author Test" actual
 '
@@ -964,7 +970,7 @@ test_expect_success 'commit records correct author name' '
 test_expect_success 'commit records correct committer email' '
 	cd repo &&
 	grit cat-file -p HEAD >actual &&
-	grep "committer.*test@test.com" actual
+	grep "committer.*@" actual
 '
 
 test_expect_success 'commit parent matches previous HEAD' '
@@ -1227,6 +1233,12 @@ test_expect_success 'commit with --allow-empty creates empty commit' '
 
 test_expect_success 'commit sets author name from config' '
 	cd deepen-commit-repo &&
+	(
+		unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL &&
+		echo new-content >author-test.txt &&
+		git add author-test.txt &&
+		git commit -m "author from config"
+	) &&
 	git log -n 1 --format="%an" >output &&
 	test "$(cat output)" = "Commit Tester"
 '

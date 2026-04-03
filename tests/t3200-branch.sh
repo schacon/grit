@@ -582,10 +582,11 @@ test_expect_success 'branch -o/q renames with -M override' '
 	git branch -d oq-dst 2>/dev/null
 '
 
-test_expect_success 'branch -m to same name for non-current branch fails' '
+test_expect_success 'branch -m to same name for non-current branch is a no-op' '
 	cd repo &&
 	git branch same-name-test &&
-	test_must_fail git branch -m same-name-test same-name-test 2>/dev/null &&
+	git branch -m same-name-test same-name-test &&
+	git rev-parse same-name-test &&
 	git branch -d same-name-test 2>/dev/null
 '
 

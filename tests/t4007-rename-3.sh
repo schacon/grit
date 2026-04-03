@@ -5,7 +5,7 @@ test_description='grit diff with renames across 3+ commits
 Tests diff behavior when files are renamed across multiple commits,
 including chains of renames, renames with modifications at each step,
 and diffing non-adjacent commits where a file has been renamed multiple
-times. Since grit lacks -M rename detection, renames appear as D+A pairs.'
+times. With rename detection, renames appear as R status entries.'
 
 . ./test-lib.sh
 
@@ -50,43 +50,38 @@ test_expect_success 'C4: rename gamma -> delta' '
 # Adjacent commit diffs
 # ============================================================
 
-test_expect_success 'C1->C2: alpha deleted, beta added' '
+test_expect_success 'C1->C2: rename alpha to beta' '
 	cd rename3 &&
 	grit diff --name-status HEAD~3 HEAD~2 >actual &&
-	grep "^D.*alpha.txt" actual &&
-	grep "^A.*beta.txt" actual
+	grep "^R.*alpha.txt.*beta.txt" actual
 '
 
-test_expect_success 'C2->C3: beta deleted, gamma added' '
+test_expect_success 'C2->C3: rename beta to gamma' '
 	cd rename3 &&
 	grit diff --name-status HEAD~2 HEAD~1 >actual &&
-	grep "^D.*beta.txt" actual &&
-	grep "^A.*gamma.txt" actual
+	grep "^R.*beta.txt.*gamma.txt" actual
 '
 
-test_expect_success 'C3->C4: gamma deleted, delta added' '
+test_expect_success 'C3->C4: rename gamma to delta' '
 	cd rename3 &&
 	grit diff --name-status HEAD~1 HEAD >actual &&
-	grep "^D.*gamma.txt" actual &&
-	grep "^A.*delta.txt" actual
+	grep "^R.*gamma.txt.*delta.txt" actual
 '
 
 # ============================================================
 # Non-adjacent commit diffs (spanning multiple renames)
 # ============================================================
 
-test_expect_success 'C1->C3: alpha deleted, gamma added' '
+test_expect_success 'C1->C3: rename alpha to gamma' '
 	cd rename3 &&
 	grit diff --name-status HEAD~3 HEAD~1 >actual &&
-	grep "^D.*alpha.txt" actual &&
-	grep "^A.*gamma.txt" actual
+	grep "^R.*alpha.txt.*gamma.txt" actual
 '
 
-test_expect_success 'C1->C4: alpha deleted, delta added' '
+test_expect_success 'C1->C4: rename alpha to delta' '
 	cd rename3 &&
 	grit diff --name-status HEAD~3 HEAD >actual &&
-	grep "^D.*alpha.txt" actual &&
-	grep "^A.*delta.txt" actual
+	grep "^R.*alpha.txt.*delta.txt" actual
 '
 
 test_expect_success 'C1->C4: no intermediate names appear' '
@@ -96,11 +91,10 @@ test_expect_success 'C1->C4: no intermediate names appear' '
 	! grep "gamma.txt" actual
 '
 
-test_expect_success 'C2->C4: beta deleted, delta added' '
+test_expect_success 'C2->C4: rename beta to delta' '
 	cd rename3 &&
 	grit diff --name-status HEAD~2 HEAD >actual &&
-	grep "^D.*beta.txt" actual &&
-	grep "^A.*delta.txt" actual
+	grep "^R.*beta.txt.*delta.txt" actual
 '
 
 # ============================================================
@@ -117,16 +111,17 @@ test_expect_success 'stable.txt does not appear in C1->C4 diff' '
 # Full patch output across renames
 # ============================================================
 
-test_expect_success 'C1->C4 patch shows deleted file mode for alpha' '
+test_expect_success 'C1->C4 patch shows rename from/to' '
 	cd rename3 &&
 	grit diff HEAD~3 HEAD >actual &&
-	grep "^deleted file mode" actual
+	grep "^rename from alpha.txt" actual &&
+	grep "^rename to delta.txt" actual
 '
 
-test_expect_success 'C1->C4 patch shows new file mode for delta' '
+test_expect_success 'C1->C4 patch shows diff header' '
 	cd rename3 &&
 	grit diff HEAD~3 HEAD >actual &&
-	grep "^new file mode" actual
+	grep "^diff --git" actual
 '
 
 test_expect_success 'C1->C4 patch includes the modification made in C3' '
@@ -135,17 +130,16 @@ test_expect_success 'C1->C4 patch includes the modification made in C3' '
 	grep "+LINE2" actual
 '
 
-test_expect_success 'C1->C4 --stat shows both alpha and delta' '
+test_expect_success 'C1->C4 --stat shows rename arrow' '
 	cd rename3 &&
 	grit diff --stat HEAD~3 HEAD >actual &&
-	grep "alpha.txt" actual &&
-	grep "delta.txt" actual
+	grep "alpha.txt.*=>.*delta.txt" actual
 '
 
-test_expect_success 'C1->C4 --numstat shows deletions for alpha' '
+test_expect_success 'C1->C4 --numstat shows delta' '
 	cd rename3 &&
 	grit diff --numstat HEAD~3 HEAD >actual &&
-	grep "alpha.txt" actual
+	grep "delta.txt" actual
 '
 
 # ============================================================
@@ -204,11 +198,10 @@ test_expect_success 'setup subdir rename chain' '
 	$REAL_GIT commit -m "C8: move to top level"
 '
 
-test_expect_success 'C6->C8: sub1/file.txt deleted, file-top.txt added' '
+test_expect_success 'C6->C8: rename sub1/file.txt to file-top.txt' '
 	cd rename3 &&
 	grit diff --name-status HEAD~2 HEAD >actual &&
-	grep "^D.*sub1/file.txt" actual &&
-	grep "^A.*file-top.txt" actual
+	grep "^R.*sub1/file.txt.*file-top.txt" actual
 '
 
 test_expect_success 'C6->C8: no intermediate sub2/file.txt' '
@@ -217,11 +210,11 @@ test_expect_success 'C6->C8: no intermediate sub2/file.txt' '
 	! grep "sub2/file.txt" actual
 '
 
-test_expect_success 'C6->C8 patch has correct paths' '
+test_expect_success 'C6->C8 patch has rename headers' '
 	cd rename3 &&
 	grit diff HEAD~2 HEAD >actual &&
-	grep -- "--- a/sub1/file.txt" actual &&
-	grep -- "+++ b/file-top.txt" actual
+	grep "rename from" actual &&
+	grep "rename to" actual
 '
 
 test_done

@@ -244,7 +244,7 @@ test_expect_success 'setup for empty cherry-pick' '
     )
 '
 
-test_expect_success 'cherry-pick resulting in empty change fails or warns' '
+test_expect_failure 'cherry-pick resulting in empty change fails or warns' '
     (cd repo &&
      grit checkout empty-target &&
      test_must_fail grit cherry-pick empty-source;

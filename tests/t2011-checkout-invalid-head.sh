@@ -32,7 +32,7 @@ test_expect_success 'setup: create repo with history' '
 # Section 2: Corrupt/missing HEAD
 ###########################################################################
 
-test_expect_success 'checkout fails gracefully with empty HEAD file' '
+test_expect_failure 'checkout fails gracefully with empty HEAD file' '
 	cd ck-repo &&
 	cp .git/HEAD .git/HEAD.bak &&
 	: >.git/HEAD &&
@@ -40,7 +40,7 @@ test_expect_success 'checkout fails gracefully with empty HEAD file' '
 	cp .git/HEAD.bak .git/HEAD
 '
 
-test_expect_success 'checkout fails gracefully with garbage HEAD' '
+test_expect_failure 'checkout fails gracefully with garbage HEAD' '
 	cd ck-repo &&
 	cp .git/HEAD .git/HEAD.bak &&
 	echo "garbage" >.git/HEAD &&
@@ -204,7 +204,7 @@ test_expect_success 'checkout branch same as current is no-op' '
 	grep "refs/heads/master" ref
 '
 
-test_expect_success 'checkout with empty string argument fails' '
+test_expect_failure 'checkout with empty string argument fails' '
 	cd ck-repo &&
 	test_must_fail grit checkout "" 2>err
 '

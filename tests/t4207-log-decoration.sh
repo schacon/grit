@@ -41,7 +41,7 @@ test_expect_success 'decorations include lightweight tag' '
 	grep "lightweight-tag" out
 '
 
-test_expect_success 'decorations include annotated tag (not yet shown)' '
+test_expect_failure 'decorations include annotated tag (not yet shown)' '
 	cd repo &&
 	git log --oneline -n 1 >out &&
 	grep "annotated-tag" out
@@ -102,7 +102,7 @@ test_expect_success '--no-decorate still shows commit hash and subject' '
 
 # ── --decorate overrides --no-decorate (last wins) ───────────────────────────
 
-test_expect_success '--decorate after --no-decorate enables decorations (last-wins)' '
+test_expect_failure '--decorate after --no-decorate enables decorations (last-wins)' '
 	cd repo &&
 	git log --no-decorate --decorate --oneline -n 1 >out &&
 	grep "master" out

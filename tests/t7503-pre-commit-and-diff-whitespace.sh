@@ -17,7 +17,7 @@ test_expect_success 'setup' '
 
 # --- Hook behavior (documenting gaps) ---
 
-test_expect_success 'pre-commit hook exit 1 does not block commit (gap)' '
+test_expect_failure 'pre-commit hook exit 1 blocks commit (gap)' '
 	cd repo &&
 	echo "first" >file &&
 	git add file &&
@@ -30,7 +30,7 @@ test_expect_success 'pre-commit hook exit 1 does not block commit (gap)' '
 	git commit -m "hooks not implemented"
 '
 
-test_expect_success 'commit-msg hook exit 1 does not block commit (gap)' '
+test_expect_failure 'commit-msg hook exit 1 blocks commit (gap)' '
 	cd repo &&
 	printf "#!/bin/sh\nexit 1\n" >.git/hooks/commit-msg &&
 	chmod +x .git/hooks/commit-msg &&
@@ -39,7 +39,7 @@ test_expect_success 'commit-msg hook exit 1 does not block commit (gap)' '
 	git commit -m "commit-msg not run"
 '
 
-test_expect_success 'post-commit hook is not executed (gap)' '
+test_expect_failure 'post-commit hook is executed (gap)' '
 	cd repo &&
 	printf "#!/bin/sh\ntouch ../post-commit-ran\n" >.git/hooks/post-commit &&
 	chmod +x .git/hooks/post-commit &&

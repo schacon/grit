@@ -47,7 +47,10 @@ GUST_BIN="$(cd "$(dirname "$GUST_BIN")" && pwd)/$(basename "$GUST_BIN")"
 
 # Test environment
 TEST_DIRECTORY="$(cd "$(dirname "$0")" && pwd)"
-TRASH_DIRECTORY="${TRASH_DIRECTORY:-$TEST_DIRECTORY/trash}"
+# Use a per-test trash directory to avoid interference between tests.
+# Derive from the test script name (e.g., t4050-diff.sh -> trash.t4050-diff)
+_test_basename="$(basename "$0" .sh)"
+TRASH_DIRECTORY="${TRASH_DIRECTORY:-$TEST_DIRECTORY/trash.$_test_basename}"
 TEST_RESULTS_DIR="${TEST_DIRECTORY}/test-results"
 
 # Counters
@@ -67,7 +70,16 @@ fi
 
 # Set up a fresh trash directory for this test script.
 setup_trash () {
-	rm -rf "$TRASH_DIRECTORY"
+	if test -d "$TRASH_DIRECTORY"; then
+		chmod -R u+rwx "$TRASH_DIRECTORY" 2>/dev/null
+		rm -rf "$TRASH_DIRECTORY" 2>/dev/null
+		# If rm -rf failed (e.g. locked files), try harder
+		if test -d "$TRASH_DIRECTORY"; then
+			find "$TRASH_DIRECTORY" -type f -exec chmod u+w {} + 2>/dev/null
+			find "$TRASH_DIRECTORY" -type d -exec chmod u+rwx {} + 2>/dev/null
+			rm -rf "$TRASH_DIRECTORY"
+		fi
+	fi
 	mkdir -p "$TRASH_DIRECTORY"
 	mkdir -p "$TRASH_DIRECTORY/.bin"
 	# Write a 'git' wrapper script that calls grit

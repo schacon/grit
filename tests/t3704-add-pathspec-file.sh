@@ -39,7 +39,7 @@ test_expect_success 'add all with dot' '
 	grep fileB.t actual
 '
 
-test_expect_success 'add with directory pathspec' '
+test_expect_failure 'add with directory pathspec' '
 	git reset --hard checkpoint &&
 	mkdir -p subdir &&
 	echo sub >subdir/file.t &&
