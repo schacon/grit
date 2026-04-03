@@ -32,14 +32,14 @@ test_expect_success 'update-index --no-skip-worktree unmarks file' '
 	grep "1$" actual
 '
 
-test_expect_failure 'skip-worktree file absent from ls-files --modified' '
+test_expect_success 'skip-worktree file absent from ls-files --modified' '
 	git update-index --skip-worktree 1 &&
 	rm 1 &&
 	git ls-files -m >actual &&
 	! grep "^1$" actual
 '
 
-test_expect_failure 'skip-worktree file absent from ls-files --deleted' '
+test_expect_success 'skip-worktree file absent from ls-files --deleted' '
 	git ls-files -d >actual &&
 	! grep "^1$" actual
 '
@@ -50,7 +50,7 @@ test_expect_success 'update-index --remove on skip-worktree file' '
 	test_must_be_empty actual
 '
 
-test_expect_failure 'restore and re-add for further tests' '
+test_expect_success 'restore and re-add for further tests' '
 	echo 1 >1 &&
 	git add 1 &&
 	git update-index --skip-worktree sub/1 &&
