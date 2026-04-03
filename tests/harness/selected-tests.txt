@@ -1304,3 +1304,4 @@ tests/t6428-merge-conflicts-sparse.sh
 tests/t6432-merge-recursive-space-options.sh
 tests/t6434-merge-recursive-rename-options.sh
 tests/t6435-merge-sparse.sh
+tests/t6501-freshen-objects.sh
