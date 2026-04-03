@@ -382,21 +382,42 @@ fn emit_inserts_at(
     let o_ins = &ours_inserts[pos];
     let t_ins = &theirs_inserts[pos];
 
-    for &(ns, ne) in o_ins {
-        let lines: Vec<Vec<u8>> = ours[ns..ne].to_vec();
-        if lines.is_empty() {
-            continue;
-        }
-        let also_theirs = t_ins.iter().any(|&(ts, te)| theirs[ts..te] == ours[ns..ne]);
-        if also_theirs {
-            hunks.push(Hunk::Unchanged(lines));
+    let has_ours = !o_ins.is_empty();
+    let has_theirs = !t_ins.is_empty();
+
+    if has_ours && has_theirs {
+        // Both sides insert at the same position — check if identical.
+        let o_lines: Vec<Vec<u8>> = o_ins.iter()
+            .flat_map(|&(s, e)| ours[s..e].to_vec())
+            .collect();
+        let t_lines: Vec<Vec<u8>> = t_ins.iter()
+            .flat_map(|&(s, e)| theirs[s..e].to_vec())
+            .collect();
+
+        if o_lines == t_lines {
+            // Identical insertions — treat as unchanged.
+            if !o_lines.is_empty() {
+                hunks.push(Hunk::Unchanged(o_lines));
+            }
         } else {
-            hunks.push(Hunk::OnlyOurs(lines));
+            // Different insertions at the same point — conflict.
+            if !o_lines.is_empty() || !t_lines.is_empty() {
+                hunks.push(Hunk::Conflict {
+                    base: Vec::new(),
+                    ours: o_lines,
+                    theirs: t_lines,
+                });
+            }
         }
-    }
-    for &(ns, ne) in t_ins {
-        let already_from_ours = o_ins.iter().any(|&(os, oe)| ours[os..oe] == theirs[ns..ne]);
-        if !already_from_ours {
+    } else if has_ours {
+        for &(ns, ne) in o_ins {
+            let lines: Vec<Vec<u8>> = ours[ns..ne].to_vec();
+            if !lines.is_empty() {
+                hunks.push(Hunk::OnlyOurs(lines));
+            }
+        }
+    } else if has_theirs {
+        for &(ns, ne) in t_ins {
             let lines: Vec<Vec<u8>> = theirs[ns..ne].to_vec();
             if !lines.is_empty() {
                 hunks.push(Hunk::OnlyTheirs(lines));
