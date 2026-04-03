@@ -1308,3 +1308,4 @@ tests/t6501-freshen-objects.sh
 tests/t6601-path-walk.sh
 tests/t6700-tree-depth.sh
 tests/t7002-mv-sparse-checkout.sh
+tests/t7011-skip-worktree-reading.sh
