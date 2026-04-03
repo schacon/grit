@@ -44,13 +44,13 @@ test_expect_success 'tag -m message content is correct' '
 test_expect_success 'tag -m stores tagger name' '
 	cd repo &&
 	git cat-file tag v1.0 >raw &&
-	grep "tagger Test User" raw
+	grep "tagger C O Mitter" raw
 '
 
 test_expect_success 'tag -m stores tagger email' '
 	cd repo &&
 	git cat-file tag v1.0 >raw &&
-	grep "test@example.com" raw
+	grep "committer@example.com" raw
 '
 
 test_expect_success 'tag -m with empty message is rejected' '
