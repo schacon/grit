@@ -555,7 +555,7 @@ t5409-colorize-remote-messages	yes	2	2	0	ok
 t5410-receive-pack	no	0	0	0	not_ported
 t5411-proc-receive-hook	no	0	0	0	not_ported
 t5500-fetch-pack	yes	5	5	0	ok
-t5501-fetch-push-alternates	yes	3	2	1	ok
+t5501-fetch-push-alternates	yes	3	3	0	ok
 t5502-quickfetch	yes	4	4	0	ok
 t5503-tagfollow	yes	6	6	0	ok
 t5504-fetch-receive-strict	yes	3	3	0	ok

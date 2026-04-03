@@ -11,7 +11,7 @@ clone	Main Porcelain	yes	519	364	155	70.1
 commit	Main Porcelain	yes	435	356	79	81.8
 describe	Main Porcelain	yes	59	59	0	100.0
 diff	Main Porcelain	yes	983	978	5	99.5
-fetch	Main Porcelain	yes	465	375	89	80.7
+fetch	Main Porcelain	yes	465	376	89	80.9
 format-patch	Main Porcelain	yes	231	231	0	100.0
 gc	Main Porcelain	yes	38	37	1	97.4
 grep	Main Porcelain	yes	264	264	0	100.0

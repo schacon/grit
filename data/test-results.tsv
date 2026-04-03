@@ -9817,8 +9817,8 @@ t5500-fetch-pack::fetch-pack-diag-url-p-h-r-3	t5500-fetch-pack	fetch-pack --diag
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-4	t5500-fetch-pack	fetch-pack --diag-url $p://$h/~$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-h-r	t5500-fetch-pack	fetch-pack --diag-url ./$h:$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-5	t5500-fetch-pack	fetch-pack --diag-url ./$p:$h/~$r	fetch-pack	pass
-t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	partial
-t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	partial
+t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	pass
+t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	pass
 t5502-quickfetch::clone-without-alternate	t5502-quickfetch	clone without alternate	count-objects	pass
 t5502-quickfetch::further-commits-in-the-original	t5502-quickfetch	further commits in the original	commit	pass
 t5502-quickfetch::copy-commit-and-tree-but-not-blob-by-hand	t5502-quickfetch	copy commit and tree but not blob by hand	count-objects	pass
