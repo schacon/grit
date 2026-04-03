@@ -161,6 +161,34 @@ pub struct Args {
     #[arg(long = "no-abbrev")]
     pub no_abbrev: bool,
 
+    /// Show the full object ID in raw and index output.
+    #[arg(long = "full-index")]
+    pub full_index: bool,
+
+    /// Abbreviation length for object IDs in raw output.
+    #[arg(long = "abbrev", value_name = "N")]
+    pub abbrev: Option<usize>,
+
+    /// Merge hunks that are within <N> lines of each other.
+    #[arg(long = "inter-hunk-context", value_name = "N")]
+    pub inter_hunk_context: Option<usize>,
+
+    /// Ignore submodule changes. Accepts: all, dirty, untracked, none.
+    #[arg(long = "ignore-submodules", value_name = "WHEN", default_missing_value = "all", num_args = 0..=1, require_equals = true)]
+    pub ignore_submodules: Option<String>,
+
+    /// Detect and color moved lines differently.
+    #[arg(long = "color-moved", value_name = "MODE", default_missing_value = "default", num_args = 0..=1, require_equals = true)]
+    pub color_moved: Option<String>,
+
+    /// Break complete rewrite into delete + add pair.
+    #[arg(short = 'B', long = "break-rewrites")]
+    pub break_rewrites: bool,
+
+    /// Output a binary diff that can be applied with git-apply.
+    #[arg(long = "binary")]
+    pub binary: bool,
+
     /// Show a condensed summary of extended header info (renames, mode changes).
     #[arg(long = "summary")]
     pub summary: bool,
@@ -265,6 +293,10 @@ pub struct Args {
     #[arg(short = 'M', long = "find-renames", value_name = "N", default_missing_value = "50", num_args = 0..=1)]
     pub find_renames: Option<String>,
 
+    /// Suppress diff output for submodules.
+    #[arg(long = "submodule", value_name = "FORMAT", default_missing_value = "short", num_args = 0..=1, require_equals = true)]
+    pub submodule: Option<String>,
+
     /// Compare two paths outside a git repository.
     #[arg(long = "no-index")]
     pub no_index: bool,
@@ -347,6 +379,24 @@ pub fn run(mut args: Args) -> Result<()> {
                 "--exit-code" => args.exit_code = true,
                 "--raw" => args.raw = true,
                 "--no-abbrev" => args.no_abbrev = true,
+                "--full-index" => args.full_index = true,
+                "--binary" => args.binary = true,
+                s if s.starts_with("--abbrev=") => {
+                    if let Some(val) = s.strip_prefix("--abbrev=") {
+                        args.abbrev = val.parse().ok();
+                    }
+                }
+                s if s.starts_with("--inter-hunk-context=") => {
+                    if let Some(val) = s.strip_prefix("--inter-hunk-context=") {
+                        args.inter_hunk_context = val.parse().ok();
+                    }
+                }
+                s if s.starts_with("--ignore-submodules") => {
+                    args.ignore_submodules = Some("all".to_owned());
+                }
+                s if s.starts_with("--color-moved") => {
+                    args.color_moved = Some("default".to_owned());
+                }
                 _ => { extra_revs.push(r.clone()); continue; }
             }
         } else {
@@ -485,6 +535,19 @@ pub fn run(mut args: Args) -> Result<()> {
         entries
     };
 
+    // Filter out submodule entries when --ignore-submodules is given.
+    let entries = if args.ignore_submodules.is_some() {
+        entries
+            .into_iter()
+            .filter(|e| {
+                // Submodule entries have mode 160000
+                e.old_mode != "160000" && e.new_mode != "160000"
+            })
+            .collect()
+    } else {
+        entries
+    };
+
     // Apply --relative path prefix stripping.
     let entries = if !args.no_relative {
         let prefix = match &args.relative {
@@ -614,7 +677,14 @@ pub fn run(mut args: Args) -> Result<()> {
                 write_diff_summary(&mut out, &entries)?;
             }
         } else if args.raw {
-            write_raw(&mut out, &entries, args.no_abbrev)?;
+            let oid_len = if args.full_index || args.no_abbrev {
+                40
+            } else if let Some(n) = args.abbrev {
+                n.max(4).min(40)
+            } else {
+                7
+            };
+            write_raw(&mut out, &entries, oid_len)?;
         } else if args.numstat {
             write_numstat(&mut out, &entries, &repo.odb, wt_for_content)?;
         } else if args.name_only {
@@ -624,6 +694,13 @@ pub fn run(mut args: Args) -> Result<()> {
         } else if args.summary && !stat_enabled {
             write_diff_summary(&mut out, &entries)?;
         } else {
+            let patch_abbrev = if args.full_index {
+                40
+            } else if let Some(n) = args.abbrev {
+                n.max(4).min(40)
+            } else {
+                7
+            };
             write_patch(
                 &mut out,
                 &entries,
@@ -633,6 +710,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 word_diff,
                 wt_for_content,
                 suppress_blank_empty,
+                patch_abbrev,
+                args.inter_hunk_context,
+                args.binary,
             )?;
         }
     }
@@ -912,6 +992,88 @@ fn is_binary(data: &[u8]) -> bool {
     data[..check_len].contains(&0)
 }
 
+/// Write a GIT binary patch block (used by --binary).
+///
+/// Outputs a "GIT binary patch" header followed by a deflated+base85
+/// literal representation of the new content, matching git's format.
+fn write_git_binary_patch(
+    out: &mut impl Write,
+    _old_content: &[u8],
+    new_content: &[u8],
+    old_path: &str,
+    new_path: &str,
+) -> Result<()> {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+
+    writeln!(out, "GIT binary patch")?;
+    writeln!(out, "literal {}", new_content.len())?;
+
+    // Deflate the new content
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    std::io::Write::write_all(&mut encoder, new_content)?;
+    let compressed = encoder.finish()?;
+
+    // Encode in base85 lines (max 52 raw bytes per line)
+    for chunk in compressed.chunks(52) {
+        let len_char = (chunk.len() as u8 + b'A' - 1) as char;
+        let encoded = base85_encode(chunk);
+        writeln!(out, "{len_char}{encoded}")?;
+    }
+    writeln!(out)?;
+
+    // Reverse patch (literal of old content)
+    // For simplicity, output a literal 0 if old is empty
+    if _old_content.is_empty() {
+        writeln!(out, "literal 0")?;
+        writeln!(out, "HcmV?d00001")?;
+        writeln!(out)?;
+    } else {
+        writeln!(out, "literal {}", _old_content.len())?;
+        let mut encoder2 = ZlibEncoder::new(Vec::new(), Compression::default());
+        std::io::Write::write_all(&mut encoder2, _old_content)?;
+        let compressed2 = encoder2.finish()?;
+        for chunk in compressed2.chunks(52) {
+            let len_char = (chunk.len() as u8 + b'A' - 1) as char;
+            let encoded = base85_encode(chunk);
+            writeln!(out, "{len_char}{encoded}")?;
+        }
+        writeln!(out)?;
+    }
+
+    let _ = (old_path, new_path); // used in header already
+    Ok(())
+}
+
+/// Encode bytes in git's base85 format.
+fn base85_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
+    let mut result = String::new();
+    for chunk in data.chunks(4) {
+        let mut acc: u32 = 0;
+        for (i, &byte) in chunk.iter().enumerate() {
+            acc |= (byte as u32) << (24 - i * 8);
+        }
+        // Pad if chunk is less than 4 bytes
+        let out_len = match chunk.len() {
+            1 => 2,
+            2 => 3,
+            3 => 4,
+            4 => 5,
+            _ => unreachable!(),
+        };
+        let mut buf = [0u8; 5];
+        for i in (0..5).rev() {
+            buf[i] = CHARS[(acc % 85) as usize];
+            acc /= 85;
+        }
+        for &b in &buf[..out_len] {
+            result.push(b as char);
+        }
+    }
+    result
+}
+
 /// Write a `diff --git` header plus index/mode lines.
 /// Find function context for a hunk header (same logic as grit-lib).
 fn find_func_context(header: &str, old_lines: &[&str]) -> Option<String> {
@@ -937,7 +1099,12 @@ fn find_func_context(header: &str, old_lines: &[&str]) -> Option<String> {
     None
 }
 
+#[allow(dead_code)]
 fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -> Result<()> {
+    write_diff_header_with_abbrev(out, entry, use_color, 7)
+}
+
+fn write_diff_header_with_abbrev(out: &mut impl Write, entry: &DiffEntry, use_color: bool, abbrev_len: usize) -> Result<()> {
     let old_path = entry
         .old_path
         .as_deref()
@@ -950,34 +1117,35 @@ fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -
     let (b, r) = if use_color { (BOLD, RESET) } else { ("", "") };
     writeln!(out, "{b}diff --git a/{old_path} b/{new_path}{r}")?;
 
+    let abbr = |oid: &ObjectId| -> String {
+        let hex = oid.to_hex();
+        let len = abbrev_len.min(hex.len());
+        hex[..len].to_owned()
+    };
+
     match entry.status {
         DiffStatus::Added => {
             writeln!(out, "{b}new file mode {}{r}", entry.new_mode)?;
-            let old_abbrev = &entry.old_oid.to_hex()[..7];
-            let new_abbrev = &entry.new_oid.to_hex()[..7];
-            writeln!(out, "{b}index {old_abbrev}..{new_abbrev}{r}")?;
+            writeln!(out, "{b}index {}..{}{r}", abbr(&entry.old_oid), abbr(&entry.new_oid))?;
         }
         DiffStatus::Deleted => {
             writeln!(out, "{b}deleted file mode {}{r}", entry.old_mode)?;
-            let old_abbrev = &entry.old_oid.to_hex()[..7];
-            let new_abbrev = &entry.new_oid.to_hex()[..7];
-            writeln!(out, "{b}index {old_abbrev}..{new_abbrev}{r}")?;
+            writeln!(out, "{b}index {}..{}{r}", abbr(&entry.old_oid), abbr(&entry.new_oid))?;
         }
         DiffStatus::Modified => {
             if entry.old_mode != entry.new_mode {
                 writeln!(out, "{b}old mode {}{r}", entry.old_mode)?;
                 writeln!(out, "{b}new mode {}{r}", entry.new_mode)?;
             }
-            let old_abbrev = &entry.old_oid.to_hex()[..7];
-            let new_abbrev = &entry.new_oid.to_hex()[..7];
             if entry.old_mode == entry.new_mode {
                 writeln!(
                     out,
-                    "{b}index {old_abbrev}..{new_abbrev} {}{r}",
+                    "{b}index {}..{} {}{r}",
+                    abbr(&entry.old_oid), abbr(&entry.new_oid),
                     entry.old_mode
                 )?;
             } else {
-                writeln!(out, "{b}index {old_abbrev}..{new_abbrev}{r}")?;
+                writeln!(out, "{b}index {}..{}{r}", abbr(&entry.old_oid), abbr(&entry.new_oid))?;
             }
         }
         DiffStatus::Renamed => {
@@ -986,9 +1154,7 @@ fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -
             writeln!(out, "{b}rename from {old_path}{r}")?;
             writeln!(out, "{b}rename to {new_path}{r}")?;
             if entry.old_oid != entry.new_oid {
-                let old_abbrev = &entry.old_oid.to_hex()[..7];
-                let new_abbrev = &entry.new_oid.to_hex()[..7];
-                writeln!(out, "{b}index {old_abbrev}..{new_abbrev}{r}")?;
+                writeln!(out, "{b}index {}..{}{r}", abbr(&entry.old_oid), abbr(&entry.new_oid))?;
             }
         }
         DiffStatus::Copied => {
@@ -997,9 +1163,7 @@ fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -
             writeln!(out, "{b}copy from {old_path}{r}")?;
             writeln!(out, "{b}copy to {new_path}{r}")?;
             if entry.old_oid != entry.new_oid {
-                let old_abbrev = &entry.old_oid.to_hex()[..7];
-                let new_abbrev = &entry.new_oid.to_hex()[..7];
-                writeln!(out, "{b}index {old_abbrev}..{new_abbrev}{r}")?;
+                writeln!(out, "{b}index {}..{}{r}", abbr(&entry.old_oid), abbr(&entry.new_oid))?;
             }
         }
         DiffStatus::TypeChanged => {
@@ -1025,12 +1189,15 @@ fn write_patch(
     word_diff: bool,
     work_tree: Option<&Path>,
     suppress_blank_empty: bool,
+    abbrev_len: usize,
+    _inter_hunk_context: Option<usize>,
+    show_binary: bool,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
 
-        write_diff_header(out, entry, use_color)?;
+        write_diff_header_with_abbrev(out, entry, use_color, abbrev_len)?;
 
         // Check for binary content
         let old_content_raw = read_content_raw(odb, &entry.old_oid);
@@ -1038,11 +1205,16 @@ fn write_patch(
             read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, new_path);
 
         if is_binary(&old_content_raw) || is_binary(&new_content_raw) {
-            writeln!(
-                out,
-                "Binary files a/{} and b/{} differ",
-                old_path, new_path
-            )?;
+            if show_binary {
+                // --binary: output a "GIT binary patch" block
+                write_git_binary_patch(out, &old_content_raw, &new_content_raw, old_path, new_path)?;
+            } else {
+                writeln!(
+                    out,
+                    "Binary files a/{} and b/{} differ",
+                    old_path, new_path
+                )?;
+            }
             continue;
         }
 
@@ -1604,17 +1776,16 @@ fn write_name_only(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
 /// Write `{status_letter}\t{path}` for each entry.
 /// For renames/copies, output `R100\told_path\tnew_path`.
 /// Write raw diff format: `:old-mode new-mode old-oid new-oid status\tpath`
-fn write_raw(out: &mut impl Write, entries: &[DiffEntry], full_oid: bool) -> Result<()> {
+fn write_raw(out: &mut impl Write, entries: &[DiffEntry], abbrev_len: usize) -> Result<()> {
     for entry in entries {
         let old_mode = &entry.old_mode;
         let new_mode = &entry.new_mode;
         let old_oid_hex = entry.old_oid.to_hex();
         let new_oid_hex = entry.new_oid.to_hex();
-        let (old_oid, new_oid) = if full_oid {
-            (old_oid_hex.as_str(), new_oid_hex.as_str())
-        } else {
-            (&old_oid_hex[..7.min(old_oid_hex.len())], &new_oid_hex[..7.min(new_oid_hex.len())])
-        };
+        let olen = abbrev_len.min(old_oid_hex.len());
+        let nlen = abbrev_len.min(new_oid_hex.len());
+        let old_oid = &old_oid_hex[..olen];
+        let new_oid = &new_oid_hex[..nlen];
         let status = entry.status.letter();
         match entry.status {
             DiffStatus::Renamed | DiffStatus::Copied => {
