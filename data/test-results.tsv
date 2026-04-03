@@ -2301,10 +2301,10 @@ t1310-config-default::does-not-allow-default-without-get	t1310-config-default	do
 t1311-config-optional::var-optional-path-exists	t1311-config-optional	var=:(optional)path-exists	config	pass
 t1311-config-optional::missing-optional-value-is-ignored	t1311-config-optional	missing optional value is ignored	config	pass
 t1311-config-optional::missing-optional-value-is-ignored-in-multi-value-config	t1311-config-optional	missing optional value is ignored in multi-value config	config	pass
-t1350-config-hooks-path::set-up-a-pre-commit-hook-in-core-hookspath	t1350-config-hooks-path	set up a pre-commit hook in core.hooksPath	config	pass
-t1350-config-hooks-path::check-that-various-forms-of-specifying-core-hookspath-work	t1350-config-hooks-path	Check that various forms of specifying core.hooksPath work	config	pass
-t1350-config-hooks-path::git-rev-parse-git-path-hooks	t1350-config-hooks-path	git rev-parse --git-path hooks	config	pass
-t1350-config-hooks-path::core-hookspath-dev-null	t1350-config-hooks-path	core.hooksPath=/dev/null	config	pass
+t1350-config-hooks-path::set-up-a-pre-commit-hook-in-core-hookspath	t1350-config-hooks-path	set up a pre-commit hook in core.hooksPath	config	partial
+t1350-config-hooks-path::check-that-various-forms-of-specifying-core-hookspath-work	t1350-config-hooks-path	Check that various forms of specifying core.hooksPath work	config	partial
+t1350-config-hooks-path::git-rev-parse-git-path-hooks	t1350-config-hooks-path	git rev-parse --git-path hooks	config	partial
+t1350-config-hooks-path::core-hookspath-dev-null	t1350-config-hooks-path	core.hooksPath=/dev/null	config	partial
 t1400-update-ref::update-ref-does-not-create-reflogs-by-default	t1400-update-ref	update-ref does not create reflogs by default	update-ref	pass
 t1400-update-ref::update-ref-creates-reflogs-with-create-reflog	t1400-update-ref	update-ref creates reflogs with --create-reflog	update-ref	pass
 t1400-update-ref::creates-no-reflog-in-bare-repository	t1400-update-ref	creates no reflog in bare repository	update-ref	pass
@@ -2723,43 +2723,43 @@ t1410-reflog::reflog-drop-all-multiple-worktrees	t1410-reflog	reflog drop --all 
 t1410-reflog::reflog-drop-all-single-worktree	t1410-reflog	reflog drop --all --single-worktree	reflog	pass
 t1410-reflog::reflog-drop-all-with-reference	t1410-reflog	reflog drop --all with reference	reflog	pass
 t1410-reflog::expire-with-pattern-config	t1410-reflog	expire with pattern config	reflog	pass
-t1411-reflog-show::setup	t1411-reflog-show	setup	reflog	pass
-t1411-reflog-show::log-g-shows-reflog-headers	t1411-reflog-show	log -g shows reflog headers	reflog	pass
-t1411-reflog-show::oneline-reflog-format	t1411-reflog-show	oneline reflog format	reflog	pass
-t1411-reflog-show::reflog-default-format	t1411-reflog-show	reflog default format	reflog	pass
-t1411-reflog-show::override-reflog-default-format	t1411-reflog-show	override reflog default format	reflog	pass
-t1411-reflog-show::using-now-syntax-shows-reflog-date-multiline	t1411-reflog-show	using @{now} syntax shows reflog date (multiline)	reflog	pass
-t1411-reflog-show::using-now-syntax-shows-reflog-date-oneline	t1411-reflog-show	using @{now} syntax shows reflog date (oneline)	reflog	pass
-t1411-reflog-show::using-now-syntax-shows-reflog-date-format-gd	t1411-reflog-show	using @{now} syntax shows reflog date (format=%gd)	reflog	pass
-t1411-reflog-show::using-date-shows-reflog-date-multiline	t1411-reflog-show	using --date= shows reflog date (multiline)	reflog	pass
-t1411-reflog-show::using-date-shows-reflog-date-oneline	t1411-reflog-show	using --date= shows reflog date (oneline)	reflog	pass
-t1411-reflog-show::using-date-shows-reflog-date-format-gd	t1411-reflog-show	using --date= shows reflog date (format=%gd)	reflog	pass
-t1411-reflog-show::log-date-does-not-invoke-date-magic-multiline	t1411-reflog-show	log.date does not invoke "--date" magic (multiline)	reflog	pass
-t1411-reflog-show::log-date-does-not-invoke-date-magic-oneline	t1411-reflog-show	log.date does not invoke "--date" magic (oneline)	reflog	pass
-t1411-reflog-show::log-date-does-not-invoke-date-magic-format-gd	t1411-reflog-show	log.date does not invoke "--date" magic (format=%gd)	reflog	pass
-t1411-reflog-show::date-magic-does-not-override-explicit-0-syntax	t1411-reflog-show	--date magic does not override explicit @{0} syntax	reflog	pass
-t1411-reflog-show::empty-reflog-file	t1411-reflog-show	empty reflog file	reflog	pass
-t1411-reflog-show::git-log-g-p-shows-diffs-vs-parents	t1411-reflog-show	git log -g -p shows diffs vs. parents	reflog	pass
+t1411-reflog-show::setup	t1411-reflog-show	setup	reflog	partial
+t1411-reflog-show::log-g-shows-reflog-headers	t1411-reflog-show	log -g shows reflog headers	reflog	partial
+t1411-reflog-show::oneline-reflog-format	t1411-reflog-show	oneline reflog format	reflog	partial
+t1411-reflog-show::reflog-default-format	t1411-reflog-show	reflog default format	reflog	partial
+t1411-reflog-show::override-reflog-default-format	t1411-reflog-show	override reflog default format	reflog	partial
+t1411-reflog-show::using-now-syntax-shows-reflog-date-multiline	t1411-reflog-show	using @{now} syntax shows reflog date (multiline)	reflog	partial
+t1411-reflog-show::using-now-syntax-shows-reflog-date-oneline	t1411-reflog-show	using @{now} syntax shows reflog date (oneline)	reflog	partial
+t1411-reflog-show::using-now-syntax-shows-reflog-date-format-gd	t1411-reflog-show	using @{now} syntax shows reflog date (format=%gd)	reflog	partial
+t1411-reflog-show::using-date-shows-reflog-date-multiline	t1411-reflog-show	using --date= shows reflog date (multiline)	reflog	partial
+t1411-reflog-show::using-date-shows-reflog-date-oneline	t1411-reflog-show	using --date= shows reflog date (oneline)	reflog	partial
+t1411-reflog-show::using-date-shows-reflog-date-format-gd	t1411-reflog-show	using --date= shows reflog date (format=%gd)	reflog	partial
+t1411-reflog-show::log-date-does-not-invoke-date-magic-multiline	t1411-reflog-show	log.date does not invoke "--date" magic (multiline)	reflog	partial
+t1411-reflog-show::log-date-does-not-invoke-date-magic-oneline	t1411-reflog-show	log.date does not invoke "--date" magic (oneline)	reflog	partial
+t1411-reflog-show::log-date-does-not-invoke-date-magic-format-gd	t1411-reflog-show	log.date does not invoke "--date" magic (format=%gd)	reflog	partial
+t1411-reflog-show::date-magic-does-not-override-explicit-0-syntax	t1411-reflog-show	--date magic does not override explicit @{0} syntax	reflog	partial
+t1411-reflog-show::empty-reflog-file	t1411-reflog-show	empty reflog file	reflog	partial
+t1411-reflog-show::git-log-g-p-shows-diffs-vs-parents	t1411-reflog-show	git log -g -p shows diffs vs. parents	reflog	partial
 t1412-reflog-loop::setup-commits	t1412-reflog-loop	setup commits	reflog	pass
 t1412-reflog-loop::setup-reflog-with-alternating-commits	t1412-reflog-loop	setup reflog with alternating commits	reflog	pass
 t1412-reflog-loop::reflog-shows-all-entries	t1412-reflog-loop	reflog shows all entries	reflog	pass
-t1413-reflog-detach::switch-to-branch	t1413-reflog-detach	switch to branch	reflog	pass
-t1413-reflog-detach::detach-to-other	t1413-reflog-detach	detach to other	reflog	pass
-t1413-reflog-detach::detach-to-self	t1413-reflog-detach	detach to self	reflog	pass
-t1413-reflog-detach::attach-to-self	t1413-reflog-detach	attach to self	reflog	pass
-t1413-reflog-detach::attach-to-other	t1413-reflog-detach	attach to other	reflog	pass
-t1414-reflog-walk::set-up-some-reflog-entries	t1414-reflog-walk	set up some reflog entries	reflog	pass
-t1414-reflog-walk::set-up-expected-reflog	t1414-reflog-walk	set up expected reflog	reflog	pass
-t1414-reflog-walk::reflog-walk-shows-expected-logs	t1414-reflog-walk	reflog walk shows expected logs	reflog	pass
-t1414-reflog-walk::reflog-can-limit-with-no-merges	t1414-reflog-walk	reflog can limit with --no-merges	reflog	pass
-t1414-reflog-walk::reflog-can-limit-with-pathspecs	t1414-reflog-walk	reflog can limit with pathspecs	reflog	pass
-t1414-reflog-walk::pathspec-limiting-handles-merges	t1414-reflog-walk	pathspec limiting handles merges	reflog	pass
-t1414-reflog-walk::parents-shows-true-parents	t1414-reflog-walk	--parents shows true parents	reflog	pass
-t1414-reflog-walk::walking-multiple-reflogs-shows-all	t1414-reflog-walk	walking multiple reflogs shows all	reflog	pass
-t1414-reflog-walk::date-limiting-does-not-interfere-with-other-logs	t1414-reflog-walk	date-limiting does not interfere with other logs	reflog	pass
-t1414-reflog-walk::min-max-age-uses-entry-date-to-limit	t1414-reflog-walk	min/max age uses entry date to limit	reflog	pass
-t1414-reflog-walk::walk-prefers-reflog-to-ref-tip	t1414-reflog-walk	walk prefers reflog to ref tip	reflog	pass
-t1414-reflog-walk::rev-list-g-complains-when-there-are-no-reflogs	t1414-reflog-walk	rev-list -g complains when there are no reflogs	reflog	pass
+t1413-reflog-detach::switch-to-branch	t1413-reflog-detach	switch to branch	reflog	partial
+t1413-reflog-detach::detach-to-other	t1413-reflog-detach	detach to other	reflog	partial
+t1413-reflog-detach::detach-to-self	t1413-reflog-detach	detach to self	reflog	partial
+t1413-reflog-detach::attach-to-self	t1413-reflog-detach	attach to self	reflog	partial
+t1413-reflog-detach::attach-to-other	t1413-reflog-detach	attach to other	reflog	partial
+t1414-reflog-walk::set-up-some-reflog-entries	t1414-reflog-walk	set up some reflog entries	reflog	partial
+t1414-reflog-walk::set-up-expected-reflog	t1414-reflog-walk	set up expected reflog	reflog	partial
+t1414-reflog-walk::reflog-walk-shows-expected-logs	t1414-reflog-walk	reflog walk shows expected logs	reflog	partial
+t1414-reflog-walk::reflog-can-limit-with-no-merges	t1414-reflog-walk	reflog can limit with --no-merges	reflog	partial
+t1414-reflog-walk::reflog-can-limit-with-pathspecs	t1414-reflog-walk	reflog can limit with pathspecs	reflog	partial
+t1414-reflog-walk::pathspec-limiting-handles-merges	t1414-reflog-walk	pathspec limiting handles merges	reflog	partial
+t1414-reflog-walk::parents-shows-true-parents	t1414-reflog-walk	--parents shows true parents	reflog	partial
+t1414-reflog-walk::walking-multiple-reflogs-shows-all	t1414-reflog-walk	walking multiple reflogs shows all	reflog	partial
+t1414-reflog-walk::date-limiting-does-not-interfere-with-other-logs	t1414-reflog-walk	date-limiting does not interfere with other logs	reflog	partial
+t1414-reflog-walk::min-max-age-uses-entry-date-to-limit	t1414-reflog-walk	min/max age uses entry date to limit	reflog	partial
+t1414-reflog-walk::walk-prefers-reflog-to-ref-tip	t1414-reflog-walk	walk prefers reflog to ref tip	reflog	partial
+t1414-reflog-walk::rev-list-g-complains-when-there-are-no-reflogs	t1414-reflog-walk	rev-list -g complains when there are no reflogs	reflog	partial
 t1415-worktree-refs::setup	t1415-worktree-refs	setup	worktree	pass
 t1415-worktree-refs::refs-worktree-are-per-worktree	t1415-worktree-refs	refs/worktree are per-worktree	worktree	pass
 t1415-worktree-refs::resolve-main-worktree-head	t1415-worktree-refs	resolve main-worktree/HEAD	worktree	pass
@@ -2770,17 +2770,17 @@ t1415-worktree-refs::reflog-of-main-worktree-head	t1415-worktree-refs	reflog of 
 t1415-worktree-refs::reflog-of-worktrees-xx-head	t1415-worktree-refs	reflog of worktrees/xx/HEAD	worktree	pass
 t1415-worktree-refs::for-each-ref-from-main-worktree	t1415-worktree-refs	for-each-ref from main worktree	worktree	pass
 t1415-worktree-refs::for-each-ref-from-linked-worktree	t1415-worktree-refs	for-each-ref from linked worktree	worktree	pass
-t1416-ref-transaction-hooks::hook-allows-updating-ref-if-successful	t1416-ref-transaction-hooks	hook allows updating ref if successful	reset	pass
-t1416-ref-transaction-hooks::hook-aborts-updating-ref-in-preparing-state	t1416-ref-transaction-hooks	hook aborts updating ref in preparing state	reset	pass
-t1416-ref-transaction-hooks::hook-aborts-updating-ref-in-prepared-state	t1416-ref-transaction-hooks	hook aborts updating ref in prepared state	reset	pass
-t1416-ref-transaction-hooks::hook-gets-all-queued-updates-in-prepared-state	t1416-ref-transaction-hooks	hook gets all queued updates in prepared state	reset	pass
-t1416-ref-transaction-hooks::hook-gets-all-queued-updates-in-committed-state	t1416-ref-transaction-hooks	hook gets all queued updates in committed state	reset	pass
-t1416-ref-transaction-hooks::hook-gets-all-queued-updates-in-aborted-state	t1416-ref-transaction-hooks	hook gets all queued updates in aborted state	reset	pass
-t1416-ref-transaction-hooks::interleaving-hook-calls-succeed	t1416-ref-transaction-hooks	interleaving hook calls succeed	init	pass
-t1416-ref-transaction-hooks::hook-captures-git-symbolic-ref-updates	t1416-ref-transaction-hooks	hook captures git-symbolic-ref updates	symbolic-ref	pass
-t1416-ref-transaction-hooks::hook-gets-all-queued-symref-updates	t1416-ref-transaction-hooks	hook gets all queued symref updates	symbolic-ref	pass
-t1417-reflog-updateref::setup	t1417-reflog-updateref	setup	reflog	pass
-t1417-reflog-updateref::get-exp-with-args	t1417-reflog-updateref	get '$exp' with '$args'	reflog	pass
+t1416-ref-transaction-hooks::hook-allows-updating-ref-if-successful	t1416-ref-transaction-hooks	hook allows updating ref if successful	reset	partial
+t1416-ref-transaction-hooks::hook-aborts-updating-ref-in-preparing-state	t1416-ref-transaction-hooks	hook aborts updating ref in preparing state	reset	partial
+t1416-ref-transaction-hooks::hook-aborts-updating-ref-in-prepared-state	t1416-ref-transaction-hooks	hook aborts updating ref in prepared state	reset	partial
+t1416-ref-transaction-hooks::hook-gets-all-queued-updates-in-prepared-state	t1416-ref-transaction-hooks	hook gets all queued updates in prepared state	reset	partial
+t1416-ref-transaction-hooks::hook-gets-all-queued-updates-in-committed-state	t1416-ref-transaction-hooks	hook gets all queued updates in committed state	reset	partial
+t1416-ref-transaction-hooks::hook-gets-all-queued-updates-in-aborted-state	t1416-ref-transaction-hooks	hook gets all queued updates in aborted state	reset	partial
+t1416-ref-transaction-hooks::interleaving-hook-calls-succeed	t1416-ref-transaction-hooks	interleaving hook calls succeed	init	partial
+t1416-ref-transaction-hooks::hook-captures-git-symbolic-ref-updates	t1416-ref-transaction-hooks	hook captures git-symbolic-ref updates	symbolic-ref	partial
+t1416-ref-transaction-hooks::hook-gets-all-queued-symref-updates	t1416-ref-transaction-hooks	hook gets all queued symref updates	symbolic-ref	partial
+t1417-reflog-updateref::setup	t1417-reflog-updateref	setup	reflog	partial
+t1417-reflog-updateref::get-exp-with-args	t1417-reflog-updateref	get '$exp' with '$args'	reflog	partial
 t1418-reflog-exists::setup	t1418-reflog-exists	setup	reflog	pass
 t1418-reflog-exists::usage	t1418-reflog-exists	usage	reflog	pass
 t1418-reflog-exists::usage-unknown-option	t1418-reflog-exists	usage: unknown option	reflog	pass
@@ -3546,19 +3546,19 @@ t2016-checkout-patch::empty-tree-can-be-handled	t2016-checkout-patch	empty tree 
 t2016-checkout-patch::git-checkout-p-opt-with-no-staged-changes-abort	t2016-checkout-patch	git checkout -p $opt with NO staged changes: abort	checkout	partial
 t2016-checkout-patch::git-checkout-p-opt-with-no-staged-changes-apply	t2016-checkout-patch	git checkout -p $opt with NO staged changes: apply	checkout	partial
 t2016-checkout-patch::git-checkout-p-opt-with-change-already-staged	t2016-checkout-patch	git checkout -p $opt with change already staged	checkout	partial
-t2017-checkout-orphan::setup	t2017-checkout-orphan	Setup	checkout	pass
-t2017-checkout-orphan::orphan-creates-a-new-orphan-branch-from-head	t2017-checkout-orphan	--orphan creates a new orphan branch from HEAD	checkout	pass
-t2017-checkout-orphan::orphan-creates-a-new-orphan-branch-from-start-point	t2017-checkout-orphan	--orphan creates a new orphan branch from <start_point>	checkout	pass
-t2017-checkout-orphan::orphan-must-be-rejected-with-b	t2017-checkout-orphan	--orphan must be rejected with -b	checkout	pass
-t2017-checkout-orphan::orphan-must-be-rejected-with-t	t2017-checkout-orphan	--orphan must be rejected with -t	checkout	pass
-t2017-checkout-orphan::orphan-ignores-branch-autosetupmerge	t2017-checkout-orphan	--orphan ignores branch.autosetupmerge	checkout	pass
-t2017-checkout-orphan::orphan-makes-reflog-by-default	t2017-checkout-orphan	--orphan makes reflog by default	checkout	pass
-t2017-checkout-orphan::orphan-does-not-make-reflog-when-core-logallrefupdates-false	t2017-checkout-orphan	--orphan does not make reflog when core.logAllRefUpdates = false	checkout	pass
-t2017-checkout-orphan::orphan-with-l-makes-reflog-when-core-logallrefupdates-false	t2017-checkout-orphan	--orphan with -l makes reflog when core.logAllRefUpdates = false	checkout	pass
-t2017-checkout-orphan::giving-up-orphan-not-committed-when-l-and-core-logallrefupdates-false-deletes-re	t2017-checkout-orphan	giving up --orphan not committed when -l and core.logAllRefUpdates = false deletes reflog	checkout	pass
-t2017-checkout-orphan::orphan-is-rejected-with-an-existing-name	t2017-checkout-orphan	--orphan is rejected with an existing name	checkout	pass
-t2017-checkout-orphan::orphan-refuses-to-switch-if-a-merge-is-needed	t2017-checkout-orphan	--orphan refuses to switch if a merge is needed	checkout	pass
-t2017-checkout-orphan::cannot-detach-on-an-unborn-branch	t2017-checkout-orphan	cannot --detach on an unborn branch	checkout	pass
+t2017-checkout-orphan::setup	t2017-checkout-orphan	Setup	checkout	partial
+t2017-checkout-orphan::orphan-creates-a-new-orphan-branch-from-head	t2017-checkout-orphan	--orphan creates a new orphan branch from HEAD	checkout	partial
+t2017-checkout-orphan::orphan-creates-a-new-orphan-branch-from-start-point	t2017-checkout-orphan	--orphan creates a new orphan branch from <start_point>	checkout	partial
+t2017-checkout-orphan::orphan-must-be-rejected-with-b	t2017-checkout-orphan	--orphan must be rejected with -b	checkout	partial
+t2017-checkout-orphan::orphan-must-be-rejected-with-t	t2017-checkout-orphan	--orphan must be rejected with -t	checkout	partial
+t2017-checkout-orphan::orphan-ignores-branch-autosetupmerge	t2017-checkout-orphan	--orphan ignores branch.autosetupmerge	checkout	partial
+t2017-checkout-orphan::orphan-makes-reflog-by-default	t2017-checkout-orphan	--orphan makes reflog by default	checkout	partial
+t2017-checkout-orphan::orphan-does-not-make-reflog-when-core-logallrefupdates-false	t2017-checkout-orphan	--orphan does not make reflog when core.logAllRefUpdates = false	checkout	partial
+t2017-checkout-orphan::orphan-with-l-makes-reflog-when-core-logallrefupdates-false	t2017-checkout-orphan	--orphan with -l makes reflog when core.logAllRefUpdates = false	checkout	partial
+t2017-checkout-orphan::giving-up-orphan-not-committed-when-l-and-core-logallrefupdates-false-deletes-re	t2017-checkout-orphan	giving up --orphan not committed when -l and core.logAllRefUpdates = false deletes reflog	checkout	partial
+t2017-checkout-orphan::orphan-is-rejected-with-an-existing-name	t2017-checkout-orphan	--orphan is rejected with an existing name	checkout	partial
+t2017-checkout-orphan::orphan-refuses-to-switch-if-a-merge-is-needed	t2017-checkout-orphan	--orphan refuses to switch if a merge is needed	checkout	partial
+t2017-checkout-orphan::cannot-detach-on-an-unborn-branch	t2017-checkout-orphan	cannot --detach on an unborn branch	checkout	partial
 t2018-checkout-branch::setup	t2018-checkout-branch	setup	checkout	partial
 t2018-checkout-branch::checkout-a-branch-without-refs-heads-prefix	t2018-checkout-branch	checkout a branch without refs/heads/* prefix	checkout	partial
 t2018-checkout-branch::checkout-b-to-a-new-branch-set-to-head	t2018-checkout-branch	checkout -b to a new branch, set to HEAD	checkout	partial
@@ -3635,29 +3635,29 @@ t2023-checkout-m::git-merge-main	t2023-checkout-m	git merge main	checkout	pass
 t2023-checkout-m::m-restores-2-way-conflicted-resolved-file	t2023-checkout-m	-m restores 2-way conflicted+resolved file	checkout	pass
 t2023-checkout-m::m-restores-3-way-conflicted-resolved-file	t2023-checkout-m	-m restores 3-way conflicted+resolved file	checkout	pass
 t2023-checkout-m::force-checkout-a-conflict-file-creates-stage-zero-entry	t2023-checkout-m	force checkout a conflict file creates stage zero entry	checkout	pass
-t2024-checkout-dwim::setup	t2024-checkout-dwim	setup	checkout	pass
-t2024-checkout-dwim::checkout-of-non-existing-branch-fails	t2024-checkout-dwim	checkout of non-existing branch fails	checkout	pass
-t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-1	t2024-checkout-dwim	checkout of branch from multiple remotes fails #1	checkout	pass
-t2024-checkout-dwim::when-arg-matches-multiple-remotes-do-not-fallback-to-interpreting-as-pathspec	t2024-checkout-dwim	when arg matches multiple remotes, do not fallback to interpreting as pathspec	checkout	pass
-t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-with-advice	t2024-checkout-dwim	checkout of branch from multiple remotes fails with advice	checkout	pass
-t2024-checkout-dwim::checkout-p-with-multiple-remotes-does-not-print-advice	t2024-checkout-dwim	checkout -p with multiple remotes does not print advice	checkout	pass
-t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-succeeds-with-checkout-defaultremote-1	t2024-checkout-dwim	checkout of branch from multiple remotes succeeds with checkout.defaultRemote #1	checkout	pass
-t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-1	t2024-checkout-dwim	checkout of branch from a single remote succeeds #1	checkout	pass
-t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-2	t2024-checkout-dwim	checkout of branch from a single remote succeeds #2	checkout	pass
-t2024-checkout-dwim::no-guess-suppresses-branch-auto-vivification	t2024-checkout-dwim	--no-guess suppresses branch auto-vivification	checkout	pass
-t2024-checkout-dwim::checkout-guess-false-suppresses-branch-auto-vivification	t2024-checkout-dwim	checkout.guess = false suppresses branch auto-vivification	checkout	pass
-t2024-checkout-dwim::setup-more-remotes-with-unconventional-refspecs	t2024-checkout-dwim	setup more remotes with unconventional refspecs	checkout	pass
-t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-2	t2024-checkout-dwim	checkout of branch from multiple remotes fails #2	checkout	pass
-t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-3	t2024-checkout-dwim	checkout of branch from multiple remotes fails #3	checkout	pass
-t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-3	t2024-checkout-dwim	checkout of branch from a single remote succeeds #3	checkout	pass
-t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-4	t2024-checkout-dwim	checkout of branch from a single remote succeeds #4	checkout	pass
-t2024-checkout-dwim::checkout-of-branch-with-a-file-having-the-same-name-fails	t2024-checkout-dwim	checkout of branch with a file having the same name fails	checkout	pass
-t2024-checkout-dwim::checkout-of-branch-with-a-file-in-subdir-having-the-same-name-fails	t2024-checkout-dwim	checkout of branch with a file in subdir having the same name fails	checkout	pass
-t2024-checkout-dwim::checkout-branch-succeeds-even-if-a-file-with-the-same-name-exists	t2024-checkout-dwim	checkout <branch> -- succeeds, even if a file with the same name exists	checkout	pass
-t2024-checkout-dwim::loosely-defined-local-base-branch-is-reported-correctly	t2024-checkout-dwim	loosely defined local base branch is reported correctly	checkout	pass
-t2024-checkout-dwim::reject-when-arg-could-be-part-of-dwim-branch	t2024-checkout-dwim	reject when arg could be part of dwim branch	checkout	pass
-t2024-checkout-dwim::disambiguate-dwim-branch-and-checkout-path-1	t2024-checkout-dwim	disambiguate dwim branch and checkout path (1)	checkout	pass
-t2024-checkout-dwim::disambiguate-dwim-branch-and-checkout-path-2	t2024-checkout-dwim	disambiguate dwim branch and checkout path (2)	checkout	pass
+t2024-checkout-dwim::setup	t2024-checkout-dwim	setup	checkout	partial
+t2024-checkout-dwim::checkout-of-non-existing-branch-fails	t2024-checkout-dwim	checkout of non-existing branch fails	checkout	partial
+t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-1	t2024-checkout-dwim	checkout of branch from multiple remotes fails #1	checkout	partial
+t2024-checkout-dwim::when-arg-matches-multiple-remotes-do-not-fallback-to-interpreting-as-pathspec	t2024-checkout-dwim	when arg matches multiple remotes, do not fallback to interpreting as pathspec	checkout	partial
+t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-with-advice	t2024-checkout-dwim	checkout of branch from multiple remotes fails with advice	checkout	partial
+t2024-checkout-dwim::checkout-p-with-multiple-remotes-does-not-print-advice	t2024-checkout-dwim	checkout -p with multiple remotes does not print advice	checkout	partial
+t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-succeeds-with-checkout-defaultremote-1	t2024-checkout-dwim	checkout of branch from multiple remotes succeeds with checkout.defaultRemote #1	checkout	partial
+t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-1	t2024-checkout-dwim	checkout of branch from a single remote succeeds #1	checkout	partial
+t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-2	t2024-checkout-dwim	checkout of branch from a single remote succeeds #2	checkout	partial
+t2024-checkout-dwim::no-guess-suppresses-branch-auto-vivification	t2024-checkout-dwim	--no-guess suppresses branch auto-vivification	checkout	partial
+t2024-checkout-dwim::checkout-guess-false-suppresses-branch-auto-vivification	t2024-checkout-dwim	checkout.guess = false suppresses branch auto-vivification	checkout	partial
+t2024-checkout-dwim::setup-more-remotes-with-unconventional-refspecs	t2024-checkout-dwim	setup more remotes with unconventional refspecs	checkout	partial
+t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-2	t2024-checkout-dwim	checkout of branch from multiple remotes fails #2	checkout	partial
+t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-3	t2024-checkout-dwim	checkout of branch from multiple remotes fails #3	checkout	partial
+t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-3	t2024-checkout-dwim	checkout of branch from a single remote succeeds #3	checkout	partial
+t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-4	t2024-checkout-dwim	checkout of branch from a single remote succeeds #4	checkout	partial
+t2024-checkout-dwim::checkout-of-branch-with-a-file-having-the-same-name-fails	t2024-checkout-dwim	checkout of branch with a file having the same name fails	checkout	partial
+t2024-checkout-dwim::checkout-of-branch-with-a-file-in-subdir-having-the-same-name-fails	t2024-checkout-dwim	checkout of branch with a file in subdir having the same name fails	checkout	partial
+t2024-checkout-dwim::checkout-branch-succeeds-even-if-a-file-with-the-same-name-exists	t2024-checkout-dwim	checkout <branch> -- succeeds, even if a file with the same name exists	checkout	partial
+t2024-checkout-dwim::loosely-defined-local-base-branch-is-reported-correctly	t2024-checkout-dwim	loosely defined local base branch is reported correctly	checkout	partial
+t2024-checkout-dwim::reject-when-arg-could-be-part-of-dwim-branch	t2024-checkout-dwim	reject when arg could be part of dwim branch	checkout	partial
+t2024-checkout-dwim::disambiguate-dwim-branch-and-checkout-path-1	t2024-checkout-dwim	disambiguate dwim branch and checkout path (1)	checkout	partial
+t2024-checkout-dwim::disambiguate-dwim-branch-and-checkout-path-2	t2024-checkout-dwim	disambiguate dwim branch and checkout path (2)	checkout	partial
 t2025-checkout-no-overlay::setup	t2025-checkout-no-overlay	setup	checkout	partial
 t2025-checkout-no-overlay::checkout-no-overlay-deletes-files-not-in-tree-ish	t2025-checkout-no-overlay	checkout --no-overlay deletes files not in <tree-ish>	checkout	partial
 t2025-checkout-no-overlay::checkout-no-overlay-removing-last-file-from-directory	t2025-checkout-no-overlay	checkout --no-overlay removing last file from directory	checkout	partial
@@ -7701,10 +7701,10 @@ t4073-diff-stat-name-width::test-name-width-not-long-enough-for-dir-name	t4073-d
 t4073-diff-stat-name-width::test-name-width-not-long-enough-for-slash	t4073-diff-stat-name-width	test name-width not long enough for slash	diff	pass
 t4073-diff-stat-name-width::test-name-width-not-long-enough-for-file-name	t4073-diff-stat-name-width	test name-width not long enough for file name	diff	pass
 t4073-diff-stat-name-width::test-name-width-minimum-length	t4073-diff-stat-name-width	test name-width minimum length	diff	pass
-t4074-diff-shifted-matched-group::shifted-merged-diff-group-should-re-diff-to-minimize-patch	t4074-diff-shifted-matched-group	shifted/merged diff group should re-diff to minimize patch	diff	pass
-t4074-diff-shifted-matched-group::merged-diff-group-with-no-shift	t4074-diff-shifted-matched-group	merged diff group with no shift	diff	pass
-t4074-diff-shifted-matched-group::re-diff-should-preserve-diff-flags	t4074-diff-shifted-matched-group	re-diff should preserve diff flags	diff	pass
-t4074-diff-shifted-matched-group::shifting-on-either-side-should-trigger-re-diff-properly	t4074-diff-shifted-matched-group	shifting on either side should trigger re-diff properly	diff	pass
+t4074-diff-shifted-matched-group::shifted-merged-diff-group-should-re-diff-to-minimize-patch	t4074-diff-shifted-matched-group	shifted/merged diff group should re-diff to minimize patch	diff	partial
+t4074-diff-shifted-matched-group::merged-diff-group-with-no-shift	t4074-diff-shifted-matched-group	merged diff group with no shift	diff	partial
+t4074-diff-shifted-matched-group::re-diff-should-preserve-diff-flags	t4074-diff-shifted-matched-group	re-diff should preserve diff flags	diff	partial
+t4074-diff-shifted-matched-group::shifting-on-either-side-should-trigger-re-diff-properly	t4074-diff-shifted-matched-group	shifting on either side should trigger re-diff properly	diff	partial
 t4100-apply-stat::applying-a-hunk-header-which-overflows-fails	t4100-apply-stat	applying a hunk header which overflows fails	apply	pass
 t4100-apply-stat::applying-a-hunk-header-which-overflows-from-stdin-fails	t4100-apply-stat	applying a hunk header which overflows from stdin fails	apply	pass
 t4100-apply-stat::applying-multiple-patches-reports-the-corrupted-input	t4100-apply-stat	applying multiple patches reports the corrupted input	apply	pass
@@ -9682,23 +9682,23 @@ t5405-send-pack-rewind::forced-push-should-succeed	t5405-send-pack-rewind	forced
 t5406-remote-rejects::setup	t5406-remote-rejects	setup	remote	pass
 t5406-remote-rejects::push-reports-error	t5406-remote-rejects	push reports error	remote	pass
 t5406-remote-rejects::individual-ref-reports-error	t5406-remote-rejects	individual ref reports error	remote	pass
-t5407-post-rewrite-hook::setup	t5407-post-rewrite-hook	setup	checkout	pass
-t5407-post-rewrite-hook::git-commit-amend	t5407-post-rewrite-hook	git commit --amend	commit	pass
-t5407-post-rewrite-hook::git-commit-amend-no-post-rewrite	t5407-post-rewrite-hook	git commit --amend --no-post-rewrite	commit	pass
-t5407-post-rewrite-hook::git-rebase-apply	t5407-post-rewrite-hook	git rebase --apply	add	pass
-t5407-post-rewrite-hook::git-rebase-apply-skip	t5407-post-rewrite-hook	git rebase --apply --skip	add	pass
-t5407-post-rewrite-hook::git-rebase-apply-skip-the-last-one	t5407-post-rewrite-hook	git rebase --apply --skip the last one	rebase	pass
-t5407-post-rewrite-hook::git-rebase-m	t5407-post-rewrite-hook	git rebase -m	add	pass
-t5407-post-rewrite-hook::git-rebase-m-skip	t5407-post-rewrite-hook	git rebase -m --skip	add	pass
-t5407-post-rewrite-hook::git-rebase-with-implicit-use-of-merge-backend	t5407-post-rewrite-hook	git rebase with implicit use of merge backend	add	pass
-t5407-post-rewrite-hook::git-rebase-skip-with-implicit-use-of-merge-backend	t5407-post-rewrite-hook	git rebase --skip with implicit use of merge backend	add	pass
-t5407-post-rewrite-hook::git-rebase-with-failed-pick	t5407-post-rewrite-hook	git rebase with failed pick	rebase	pass
-t5407-post-rewrite-hook::git-rebase-i-unchanged	t5407-post-rewrite-hook	git rebase -i (unchanged)	add	pass
-t5407-post-rewrite-hook::git-rebase-i-skip	t5407-post-rewrite-hook	git rebase -i (skip)	add	pass
-t5407-post-rewrite-hook::git-rebase-i-squash	t5407-post-rewrite-hook	git rebase -i (squash)	add	pass
-t5407-post-rewrite-hook::git-rebase-i-fixup-without-conflict	t5407-post-rewrite-hook	git rebase -i (fixup without conflict)	rebase	pass
-t5407-post-rewrite-hook::git-rebase-i-double-edit	t5407-post-rewrite-hook	git rebase -i (double edit)	add	pass
-t5407-post-rewrite-hook::git-rebase-i-exec	t5407-post-rewrite-hook	git rebase -i (exec)	add	pass
+t5407-post-rewrite-hook::setup	t5407-post-rewrite-hook	setup	checkout	partial
+t5407-post-rewrite-hook::git-commit-amend	t5407-post-rewrite-hook	git commit --amend	commit	partial
+t5407-post-rewrite-hook::git-commit-amend-no-post-rewrite	t5407-post-rewrite-hook	git commit --amend --no-post-rewrite	commit	partial
+t5407-post-rewrite-hook::git-rebase-apply	t5407-post-rewrite-hook	git rebase --apply	add	partial
+t5407-post-rewrite-hook::git-rebase-apply-skip	t5407-post-rewrite-hook	git rebase --apply --skip	add	partial
+t5407-post-rewrite-hook::git-rebase-apply-skip-the-last-one	t5407-post-rewrite-hook	git rebase --apply --skip the last one	rebase	partial
+t5407-post-rewrite-hook::git-rebase-m	t5407-post-rewrite-hook	git rebase -m	add	partial
+t5407-post-rewrite-hook::git-rebase-m-skip	t5407-post-rewrite-hook	git rebase -m --skip	add	partial
+t5407-post-rewrite-hook::git-rebase-with-implicit-use-of-merge-backend	t5407-post-rewrite-hook	git rebase with implicit use of merge backend	add	partial
+t5407-post-rewrite-hook::git-rebase-skip-with-implicit-use-of-merge-backend	t5407-post-rewrite-hook	git rebase --skip with implicit use of merge backend	add	partial
+t5407-post-rewrite-hook::git-rebase-with-failed-pick	t5407-post-rewrite-hook	git rebase with failed pick	rebase	partial
+t5407-post-rewrite-hook::git-rebase-i-unchanged	t5407-post-rewrite-hook	git rebase -i (unchanged)	add	partial
+t5407-post-rewrite-hook::git-rebase-i-skip	t5407-post-rewrite-hook	git rebase -i (skip)	add	partial
+t5407-post-rewrite-hook::git-rebase-i-squash	t5407-post-rewrite-hook	git rebase -i (squash)	add	partial
+t5407-post-rewrite-hook::git-rebase-i-fixup-without-conflict	t5407-post-rewrite-hook	git rebase -i (fixup without conflict)	rebase	partial
+t5407-post-rewrite-hook::git-rebase-i-double-edit	t5407-post-rewrite-hook	git rebase -i (double edit)	add	partial
+t5407-post-rewrite-hook::git-rebase-i-exec	t5407-post-rewrite-hook	git rebase -i (exec)	add	partial
 t5408-send-pack-stdin::setup-refs	t5408-send-pack-stdin	setup refs	send-pack	pass
 t5408-send-pack-stdin::refs-on-cmdline	t5408-send-pack-stdin	refs on cmdline	send-pack	pass
 t5408-send-pack-stdin::refs-over-stdin	t5408-send-pack-stdin	refs over stdin	send-pack	pass

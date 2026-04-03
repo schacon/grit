@@ -1,21 +1,21 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
-add	Main Porcelain	yes	813	664	145	81.7
+add	Main Porcelain	yes	813	657	145	80.8
 am	Main Porcelain	yes	162	136	0	84.1
 archive	Main Porcelain	yes	102	101	1	99.0
 bisect	Main Porcelain	yes	107	96	11	89.7
 branch	Main Porcelain	yes	399	371	17	92.9
-checkout	Main Porcelain	yes	567	380	99	67.1
+checkout	Main Porcelain	yes	567	365	99	64.3
 cherry-pick	Main Porcelain	yes	193	136	2	70.5
 clean	Main Porcelain	yes	90	90	0	100.0
 clone	Main Porcelain	yes	519	363	155	69.9
-commit	Main Porcelain	yes	435	351	79	80.6
+commit	Main Porcelain	yes	435	349	79	80.3
 describe	Main Porcelain	yes	59	59	0	100.0
-diff	Main Porcelain	yes	983	949	5	96.6
+diff	Main Porcelain	yes	983	929	5	94.5
 fetch	Main Porcelain	yes	465	376	89	80.9
 format-patch	Main Porcelain	yes	231	231	0	100.0
 gc	Main Porcelain	yes	38	37	1	97.4
 grep	Main Porcelain	yes	264	264	0	100.0
-init	Main Porcelain	yes	293	244	46	83.3
+init	Main Porcelain	yes	293	244	46	83.1
 log	Main Porcelain	yes	594	482	69	81.1
 merge	Main Porcelain	yes	658	645	10	98.0
 mv	Main Porcelain	yes	77	77	0	100.0
@@ -23,8 +23,8 @@ notes	Main Porcelain	yes	308	308	0	100.0
 pull	Main Porcelain	yes	142	111	31	78.2
 push	Main Porcelain	yes	211	91	120	43.1
 range-diff	Main Porcelain	yes	47	47	0	100.0
-rebase	Main Porcelain	yes	561	560	1	99.8
-reset	Main Porcelain	yes	152	123	29	80.9
+rebase	Main Porcelain	yes	561	558	1	99.5
+reset	Main Porcelain	yes	152	119	29	78.3
 restore	Main Porcelain	yes	41	40	1	97.6
 revert	Main Porcelain	yes	22	22	0	100.0
 rm	Main Porcelain	yes	103	99	4	96.1
@@ -40,7 +40,7 @@ annotate	Ancillary Porcelain	yes	1	1	0	100.0
 blame	Ancillary Porcelain	yes	102	101	0	99.5
 bundle	Ancillary Porcelain	yes	44	31	13	70.5
 cherry	Ancillary Porcelain	yes	4	4	0	100.0
-config	Ancillary Porcelain	yes	657	526	126	80.1
+config	Ancillary Porcelain	yes	657	526	126	80.0
 count-objects	Ancillary Porcelain	yes	9	9	0	100.0
 diagnose	Ancillary Porcelain	yes	4	4	0	100.0
 difftool	Ancillary Porcelain	yes	61	61	0	100.0
@@ -54,7 +54,7 @@ merge-tree	Ancillary Porcelain	yes	54	54	0	100.0
 mergetool	Ancillary Porcelain	yes	32	32	0	100.0
 pack-refs	Ancillary Porcelain	yes	27	25	2	92.6
 prune	Ancillary Porcelain	yes	43	43	0	100.0
-reflog	Ancillary Porcelain	yes	96	96	0	100.0
+reflog	Ancillary Porcelain	yes	96	73	0	75.7
 remote	Ancillary Porcelain	yes	179	142	37	79.3
 repack	Ancillary Porcelain	yes	127	127	0	100.0
 replace	Ancillary Porcelain	yes	37	37	0	100.0
@@ -120,7 +120,7 @@ send-pack	Plumbing	yes	28	28	0	100.0
 show-index	Plumbing	yes	1	1	0	100.0
 show-ref	Plumbing	yes	14	14	0	100.0
 stripspace	Plumbing	yes	31	31	0	100.0
-symbolic-ref	Plumbing	yes	34	31	3	91.2
+symbolic-ref	Plumbing	yes	34	30	3	87.3
 unpack-file	Plumbing	yes	0	0	0	0.0
 unpack-objects	Plumbing	yes	3	3	0	100.0
 update-index	Plumbing	yes	66	65	0	98.5
