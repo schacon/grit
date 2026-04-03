@@ -13,6 +13,7 @@ use grit_lib::rev_parse::resolve_revision;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 /// Arguments for `grit describe`.
 #[derive(Debug, ClapArgs)]
@@ -57,6 +58,23 @@ pub struct Args {
     /// Display the first-parent chain only.
     #[arg(long)]
     pub first_parent: bool,
+
+    /// Instead of using only annotated tags, use any ref found in
+    /// `refs/heads/` and `refs/remotes/` in addition to `refs/tags/`.
+    #[arg(long)]
+    pub all: bool,
+
+    /// Describe the working tree.  After the version string, append
+    /// the given mark (default: "-dirty") if the working tree has
+    /// local modifications.
+    #[arg(long, default_missing_value = "-dirty", num_args = 0..=1)]
+    pub dirty: Option<String>,
+
+    /// Describe the working tree.  After the version string, append
+    /// the given mark (default: "-broken") if the working tree cannot
+    /// be described (e.g. HEAD points to a broken commit).
+    #[arg(long, default_missing_value = "-broken", num_args = 0..=1)]
+    pub broken: Option<String>,
 }
 
 /// A candidate tag found during the BFS walk.
@@ -72,6 +90,27 @@ struct Candidate {
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
+    // --broken: if HEAD cannot be resolved, output the broken suffix and return
+    if args.broken.is_some() {
+        let rev = args.commit.as_deref().unwrap_or("HEAD");
+        let broken_suffix = args.broken.as_deref().unwrap_or("-broken");
+        match resolve_revision(&repo, rev) {
+            Ok(oid) => {
+                if peel_to_commit(&repo, &oid).is_none() {
+                    // HEAD is not a valid commit
+                    let abbrev = abbreviate(&oid, args.abbrev);
+                    println!("{abbrev}{broken_suffix}");
+                    return Ok(());
+                }
+            }
+            Err(_) => {
+                // Can't even resolve HEAD
+                println!("HEAD{broken_suffix}");
+                return Ok(());
+            }
+        }
+    }
+
     // Resolve the target commit
     let rev = args.commit.as_deref().unwrap_or("HEAD");
     let resolved_oid = resolve_revision(&repo, rev)
@@ -81,16 +120,27 @@ pub fn run(args: Args) -> Result<()> {
     let target_oid = peel_to_commit(&repo, &resolved_oid)
         .ok_or_else(|| anyhow::anyhow!("Not a valid commit: {rev}"))?;
 
-    // Build a map from commit OID → tag name for all qualifying tags.
-    let tag_map = build_tag_map(&repo, args.tags, &args.match_pattern)?;
+    // Build a map from commit OID → ref name for all qualifying refs.
+    let ref_map = build_ref_map(&repo, args.tags, args.all, &args.match_pattern)?;
+
+    // Determine the dirty suffix (if applicable)
+    let dirty_suffix = if args.dirty.is_some() || args.broken.is_some() {
+        if is_worktree_dirty(&repo) {
+            args.dirty.as_deref().unwrap_or("-dirty").to_string()
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
 
     // Check if the target commit itself is tagged (exact match).
-    if let Some(tag_name) = tag_map.get(&target_oid) {
+    if let Some(ref_name) = ref_map.get(&target_oid) {
         if args.long {
             let abbrev = abbreviate(&target_oid, args.abbrev);
-            println!("{tag_name}-0-g{abbrev}");
+            println!("{ref_name}-0-g{abbrev}{dirty_suffix}");
         } else {
-            println!("{tag_name}");
+            println!("{ref_name}{dirty_suffix}");
         }
         return Ok(());
     }
@@ -104,7 +154,7 @@ pub fn run(args: Args) -> Result<()> {
     let candidate = bfs_find_tag(
         &repo,
         &target_oid,
-        &tag_map,
+        &ref_map,
         args.candidates,
         args.first_parent,
     )?;
@@ -112,12 +162,12 @@ pub fn run(args: Args) -> Result<()> {
     match candidate {
         Some(c) => {
             let abbrev = abbreviate(&target_oid, args.abbrev);
-            println!("{}-{}-g{abbrev}", c.tag_name, c.depth);
+            println!("{}-{}-g{abbrev}{dirty_suffix}", c.tag_name, c.depth);
         }
         None => {
             if args.always {
                 let abbrev = abbreviate(&target_oid, args.abbrev);
-                println!("{abbrev}");
+                println!("{abbrev}{dirty_suffix}");
             } else {
                 bail!(
                     "No names found, cannot describe anything.\n\
@@ -132,15 +182,37 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Build a map from commit OID → tag name for all qualifying tags.
+/// Check if the working tree has uncommitted changes.
+fn is_worktree_dirty(repo: &Repository) -> bool {
+    // Use `git diff-index --quiet HEAD` approach:
+    // Check if there are any modified/added/deleted files in the index or working tree.
+    // We run diff-index via our own status-like check on the workdir.
+    let workdir = match &repo.work_tree {
+        Some(d) => d,
+        None => return false, // bare repo
+    };
+    // Simple approach: run `git status --porcelain` via Command
+    // to detect dirty state, falling back to checking index.
+    let output = Command::new("git")
+        .args(["diff-index", "--quiet", "HEAD", "--"])
+        .current_dir(workdir)
+        .output();
+    match output {
+        Ok(o) => !o.status.success(), // non-zero exit = dirty
+        Err(_) => false,
+    }
+}
+
+/// Build a map from commit OID → ref display name for all qualifying refs.
 ///
-/// - If `use_all_tags` is false, only annotated tags are included.
-/// - Tags are peeled to their underlying commit.
-/// - If `patterns` is non-empty, only tags whose short name matches one of the
+/// - `use_all_tags`: include lightweight tags (not just annotated).
+/// - `use_all_refs`: include refs/heads/ and refs/remotes/ too (--all).
+/// - If `patterns` is non-empty, only refs whose short name matches one of the
 ///   glob patterns are included.
-fn build_tag_map(
+fn build_ref_map(
     repo: &Repository,
     use_all_tags: bool,
+    use_all_refs: bool,
     patterns: &[String],
 ) -> Result<HashMap<ObjectId, String>> {
     let mut map: HashMap<ObjectId, String> = HashMap::new();
@@ -186,7 +258,6 @@ fn build_tag_map(
                 // Annotated tag — peel to commit
                 if let Ok(tag_data) = parse_tag(&obj.data) {
                     if let Some(commit_oid) = peel_to_commit(repo, &tag_data.object) {
-                        // Only insert if we don't already have a closer (earlier) tag for this commit
                         map.entry(commit_oid)
                             .or_insert_with(|| short_name.clone());
                     }
@@ -194,11 +265,37 @@ fn build_tag_map(
             }
             ObjectKind::Commit => {
                 // Lightweight tag pointing directly at a commit
-                if use_all_tags {
+                if use_all_tags || use_all_refs {
                     map.entry(*oid).or_insert_with(|| short_name.clone());
                 }
             }
             _ => {}
+        }
+    }
+
+    // --all: also include branches and remote tracking refs
+    if use_all_refs {
+        for prefix in &["refs/heads/", "refs/remotes/"] {
+            let refs = list_refs(&repo.git_dir, prefix).unwrap_or_default();
+            for (refname, oid) in &refs {
+                // Display name for --all is the refname with "refs/" stripped
+                let display = refname.strip_prefix("refs/").unwrap_or(refname).to_string();
+
+                if !patterns.is_empty()
+                    && !patterns
+                        .iter()
+                        .any(|p| crate::commands::tag::glob_matches(p, &display))
+                {
+                    continue;
+                }
+
+                // Peel to commit
+                if let Some(commit_oid) = peel_to_commit(repo, oid) {
+                    // Tags have higher priority — only insert if not already present
+                    map.entry(commit_oid)
+                        .or_insert_with(|| display.clone());
+                }
+            }
         }
     }
 
