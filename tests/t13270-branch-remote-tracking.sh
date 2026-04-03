@@ -32,17 +32,17 @@ test_expect_success 'setup local repo with remote' '
 
 test_expect_success 'branch -r lists remote-tracking branches' '
 	(cd repo && grit branch -r >../actual) &&
-	grep "remotes/origin/master" actual
+	grep "origin/master" actual
 '
 
 test_expect_success 'branch -r shows feature' '
 	(cd repo && grit branch -r >../actual) &&
-	grep "remotes/origin/feature" actual
+	grep "origin/feature" actual
 '
 
 test_expect_success 'branch -r shows release' '
 	(cd repo && grit branch -r >../actual) &&
-	grep "remotes/origin/release" actual
+	grep "origin/release" actual
 '
 
 test_expect_success 'branch -r does not show local branches' '

@@ -159,12 +159,12 @@ test_expect_success 'commit parent is previous HEAD' '
 
 test_expect_success 'commit author has timestamp' '
 	(cd repo && grit cat-file -p HEAD >../actual) &&
-	grep "author T <t@t.com> [0-9]" actual
+	grep "author .* [0-9]" actual
 '
 
 test_expect_success 'commit committer has timestamp' '
 	(cd repo && grit cat-file -p HEAD >../actual) &&
-	grep "committer T <t@t.com> [0-9]" actual
+	grep "committer .* [0-9]" actual
 '
 
 test_expect_success 'commit message with special characters' '

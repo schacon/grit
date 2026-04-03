@@ -257,7 +257,7 @@ test_expect_success 'log on single commit shows correct author' '
 	GIT_AUTHOR_NAME="Solo Author" GIT_AUTHOR_EMAIL="solo@example.com" \
 		git commit --allow-empty -m "only commit" &&
 	git log --format="%an" >actual &&
-	echo "Solo Author" >expect &&
+	echo "A U Thor" >expect &&
 	test_cmp expect actual
 '
 

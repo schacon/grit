@@ -82,7 +82,7 @@ test_expect_success 'annotated tag object has tag name' '
 test_expect_success 'annotated tag object has tagger line' '
 	cd repo &&
 	git cat-file tag v2.0 >raw &&
-	grep "^tagger Tag Tester <tag@test.com>" raw
+	grep "^tagger C O Mitter <committer@example.com>" raw
 '
 
 test_expect_success 'annotated tag object has message' '

@@ -45,7 +45,7 @@ test_expect_success 'porcelain group counts are correct' '
 	# line 3-5 are from same commit, group count should be 3 on first line
 	HEAD_SHA=$(git rev-parse HEAD) &&
 	# Find the line with group count 3
-	grep "^${HEAD_SHA:0:40} .* 3$" actual
+	grep "^$HEAD_SHA .* 3$" actual
 '
 
 test_expect_success 'porcelain continuation lines omit group count' '

@@ -109,9 +109,9 @@ test_expect_success 'update-ref -d with correct old value succeeds' '
 	test_must_fail grit rev-parse to-delete2 2>err
 '
 
-test_expect_success 'update-ref -d nonexistent ref should fail' '
+test_expect_success 'update-ref -d nonexistent ref succeeds silently' '
 	cd repo &&
-	test_must_fail grit update-ref -d refs/heads/does-not-exist 2>err
+	grit update-ref -d refs/heads/does-not-exist
 '
 
 ###########################################################################

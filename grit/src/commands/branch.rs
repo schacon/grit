@@ -672,6 +672,14 @@ fn create_branch(
         bail!("A branch named '{name}' already exists.");
     }
 
+    // Cannot force-update the current branch
+    if args.force {
+        let current = head.branch_name().unwrap_or("");
+        if name == current {
+            bail!("Cannot force update the current branch.");
+        }
+    }
+
     let oid = match start_point {
         Some(rev) => resolve_revision(repo, rev)?,
         None => *head
@@ -768,6 +776,11 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     } else {
         bail!("branch name required");
     };
+
+    // Renaming a branch to itself is a no-op
+    if old_name == new_name {
+        return Ok(());
+    }
 
     let old_path = repo.git_dir.join("refs/heads").join(old_name);
     let new_path = repo.git_dir.join("refs/heads").join(new_name);

@@ -99,7 +99,7 @@ test_expect_success 'log --committer=Dana shows commits by Dana' '
 	test $(wc -l <actual) -eq 3
 '
 
-test_expect_success 'log --committer=Eve shows one commit' '
+test_expect_success 'log --committer="Eve Engineer" shows one commit' '
 	cd repo &&
 	git log --committer="Eve Engineer" --format="%cn" >actual &&
 	test $(wc -l <actual) -eq 1 &&

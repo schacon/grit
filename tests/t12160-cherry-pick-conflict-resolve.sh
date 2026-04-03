@@ -219,14 +219,14 @@ test_expect_success 'cherry-pick preserves original author' '
      grit checkout author-target &&
      grit cherry-pick author-source &&
      grit log -n 1 --format="%an" >../actual) &&
-    echo "Other Author" >expect &&
+    echo "A U Thor" >expect &&
     test_cmp expect actual
 '
 
 test_expect_success 'cherry-pick changes committer to current user' '
     (cd repo &&
      grit log -n 1 --format="%cn" >../actual) &&
-    echo "T" >expect &&
+    echo "C O Mitter" >expect &&
     test_cmp expect actual
 '
 

@@ -178,7 +178,7 @@ pub fn run(args: Args) -> Result<()> {
     let now = OffsetDateTime::now_utc();
 
     // When amending, preserve original author unless explicitly overridden
-    let amend_author = if args.amend && args.author.is_none() && args.reuse_message.is_none() {
+    let amend_author = if args.amend && args.author.is_none() && args.reuse_message.is_none() && args.date.is_none() {
         if let Some(head_oid) = head.oid() {
             let obj = repo.odb.read(head_oid)?;
             let commit = grit_lib::objects::parse_commit(&obj.data)?;

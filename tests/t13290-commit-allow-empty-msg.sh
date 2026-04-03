@@ -177,7 +177,7 @@ test_expect_success 'commit without --author uses default' '
 	 grit add file.txt &&
 	 grit commit -m "default author" &&
 	 grit log -n 1 >../actual) &&
-	grep "T <t@t.com>" actual
+	grep "A U Thor <author@example.com>" actual
 '
 
 # ── commit --signoff flag is accepted ────────────────────────────────────

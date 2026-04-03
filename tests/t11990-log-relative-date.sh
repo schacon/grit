@@ -58,6 +58,10 @@ test_expect_success 'format %cd for second commit' '
 
 test_expect_success 'setup third commit with timezone offset' '
     (cd repo &&
+     sane_unset GIT_AUTHOR_NAME &&
+     sane_unset GIT_AUTHOR_EMAIL &&
+     sane_unset GIT_COMMITTER_NAME &&
+     sane_unset GIT_COMMITTER_EMAIL &&
      echo foo >file3.txt &&
      grit add file3.txt &&
      GIT_AUTHOR_DATE="1700300000 +0500" GIT_COMMITTER_DATE="1700300000 -0300" \
@@ -137,26 +141,26 @@ test_expect_success 'format %cd shows committer date for fourth commit' '
     test_cmp expect actual
 '
 
-test_expect_success 'format %ai shows raw author ident with date' '
+test_expect_success 'format %ai shows ISO 8601 author date' '
     (cd repo && grit log -n1 --format="%ai" >../actual) &&
-    grep "alice@example.com" actual &&
-    grep "1700400000" actual
+    grep "2023-11-19" actual &&
+    grep "+0000" actual
 '
 
-test_expect_success 'format %ci shows raw committer ident with date' '
+test_expect_success 'format %ci shows ISO 8601 committer date' '
     (cd repo && grit log -n1 --format="%ci" >../actual) &&
-    grep "bob@example.com" actual &&
-    grep "1700500000" actual
+    grep "2023-11-20" actual &&
+    grep "+0000" actual
 '
 
-test_expect_success 'format %ai includes author name' '
+test_expect_success 'format %ai does not include author name' '
     (cd repo && grit log -n1 --format="%ai" >../actual) &&
-    grep "Alice" actual
+    ! grep "Alice" actual
 '
 
-test_expect_success 'format %ci includes committer name' '
+test_expect_success 'format %ci does not include committer name' '
     (cd repo && grit log -n1 --format="%ci" >../actual) &&
-    grep "Bob" actual
+    ! grep "Bob" actual
 '
 
 test_expect_success 'dates in oneline mode are not shown' '

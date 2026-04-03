@@ -772,7 +772,11 @@ fn apply_format_string(
                         }
                         Some('i') => {
                             chars.next();
-                            result.push_str(&info.author);
+                            result.push_str(&format_date_with_mode(&info.author, Some("iso")));
+                        }
+                        Some('I') => {
+                            chars.next();
+                            result.push_str(&format_date_with_mode(&info.author, Some("iso-strict")));
                         }
                         _ => result.push_str("%a"),
                     }
@@ -794,7 +798,11 @@ fn apply_format_string(
                         }
                         Some('i') => {
                             chars.next();
-                            result.push_str(&info.committer);
+                            result.push_str(&format_date_with_mode(&info.committer, Some("iso")));
+                        }
+                        Some('I') => {
+                            chars.next();
+                            result.push_str(&format_date_with_mode(&info.committer, Some("iso-strict")));
                         }
                         _ => result.push_str("%c"),
                     }

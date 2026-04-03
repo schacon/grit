@@ -55,7 +55,7 @@ test_expect_success 'log -n 2 shows only two commits' '
 
 test_expect_success 'log -n 0 shows zero or minimal output' '
 	(cd repo && grit log -n 0 --format="%s" >../actual) &&
-	test_line_count = 1 actual
+	test_must_be_empty actual
 '
 
 test_expect_success 'log --max-count=3 limits output' '
