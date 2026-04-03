@@ -59,5 +59,6 @@ pub fn run(args: Args) -> Result<()> {
         ignore_errors: false,
         ignore_missing: false,
         no_warn_embedded_repo: false,
+        pathspec_from_file: None,
     })
 }

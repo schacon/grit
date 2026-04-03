@@ -80,11 +80,20 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     if !options.quiet {
-        if options.patch {
+        if options.stat {
+            write_diff_index_stat(&diff_entries, &repo.odb)?;
+        } else if options.numstat {
+            write_diff_index_numstat(&diff_entries, &repo.odb)?;
+        } else if options.name_only {
+            for entry in &diff_entries {
+                println!("{}", entry.path());
+            }
+        } else if options.patch {
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
+            let wt = repo.work_tree.as_deref();
             for entry in &diff_entries {
-                write_patch_entry(&mut out, &repo.odb, entry)?;
+                write_patch_entry(&mut out, &repo.odb, entry, options.context_lines, wt)?;
             }
         } else if options.name_status {
             for entry in &diff_entries {
@@ -143,6 +152,10 @@ struct Options {
     find_copies_harder: bool,
     patch: bool,
     name_status: bool,
+    name_only: bool,
+    stat: bool,
+    numstat: bool,
+    context_lines: usize,
     nul_terminated: bool,
 }
 
@@ -184,6 +197,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut c_count = 0u32;
     let mut patch = false;
     let mut name_status = false;
+    let mut name_only = false;
+    let mut stat = false;
+    let mut numstat = false;
+    let mut context_lines: usize = 3;
     let mut nul_terminated = false;
 
     let mut idx = 0usize;
@@ -207,6 +224,15 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 "--name-status" => {
                     name_status = true;
+                }
+                "--name-only" => {
+                    name_only = true;
+                }
+                "--stat" => {
+                    stat = true;
+                }
+                "--numstat" => {
+                    numstat = true;
                 }
                 "-M" | "--find-renames" => {
                     find_renames = Some(50);
@@ -237,6 +263,12 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 "-r" => {
                     // recursive - default behavior for diff-index
+                }
+                _ if arg.starts_with("-U") && arg[2..].parse::<usize>().is_ok() => {
+                    context_lines = arg[2..].parse::<usize>().unwrap();
+                }
+                _ if arg.starts_with("--unified=") => {
+                    context_lines = arg["--unified=".len()..].parse::<usize>().unwrap_or(3);
                 }
                 "-z" => {
                     nul_terminated = true;
@@ -296,6 +328,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         find_copies_harder,
         patch,
         name_status,
+        name_only,
+        stat,
+        numstat,
+        context_lines,
         nul_terminated,
     })
 }
@@ -446,14 +482,14 @@ fn diff_tree_vs_worktree(
         match read_worktree_snapshot_from_meta(repo, &abs, &meta)? {
             Some(worktree_snapshot) => {
                 if worktree_snapshot != *index_snapshot {
-                    let old = tree_map.get(path).copied();
+                    let old = tree_map.get(path).copied().or(Some(*index_snapshot));
                     merged.insert(
                         path.clone(),
                         RawChange {
                             path: path.clone(),
                             status: 'M',
                             old,
-                            new: None,
+                            new: Some(worktree_snapshot),
                         },
                     );
                 }
@@ -603,6 +639,8 @@ fn write_patch_entry(
     out: &mut impl std::io::Write,
     odb: &Odb,
     entry: &DiffEntry,
+    context_lines: usize,
+    work_tree: Option<&Path>,
 ) -> Result<()> {
     use grit_lib::diff::unified_diff;
 
@@ -683,16 +721,129 @@ fn write_patch_entry(
     } else {
         match odb.read(&entry.new_oid) {
             Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-            Err(_) => String::new(),
+            Err(_) => {
+                // Fall back to reading from worktree (for non-cached diffs)
+                if let Some(wt) = work_tree {
+                    let path = entry.new_path.as_deref().unwrap_or(new_path);
+                    fs::read_to_string(wt.join(path)).unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            }
         }
     };
 
     let display_old = if entry.status == DiffStatus::Added { "/dev/null" } else { old_path };
     let display_new = if entry.status == DiffStatus::Deleted { "/dev/null" } else { new_path };
 
-    let context_lines = 3;
     let patch = unified_diff(&old_content, &new_content, display_old, display_new, context_lines);
     write!(out, "{patch}")?;
 
     Ok(())
+}
+
+/// Write --stat output for diff-index.
+fn write_diff_index_stat(entries: &[DiffEntry], odb: &Odb) -> Result<()> {
+    let z = zero_oid();
+    let mut file_stats: Vec<(&str, usize, usize)> = Vec::new();
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+    let mut files_changed = 0usize;
+
+    for entry in entries {
+        let old_content = if entry.old_oid == z {
+            String::new()
+        } else {
+            odb.read(&entry.old_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
+        };
+        let new_content = if entry.new_oid == z {
+            String::new()
+        } else {
+            odb.read(&entry.new_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
+        };
+        let (ins, del) = count_line_changes(&old_content, &new_content);
+        file_stats.push((entry.path(), ins, del));
+        total_ins += ins;
+        total_del += del;
+        files_changed += 1;
+    }
+
+    let max_path_len = file_stats.iter().map(|(p, _, _)| p.len()).max().unwrap_or(0);
+    let max_count = file_stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
+    let count_width = format!("{}", max_count).len();
+
+    for (path, ins, del) in &file_stats {
+        let total = ins + del;
+        let bar_len = if max_count > 0 { (total * 40) / max_count.max(1) } else { 0 };
+        let plus_len = if total > 0 { (ins * bar_len) / total.max(1) } else { 0 };
+        let minus_len = bar_len.saturating_sub(plus_len);
+        let bar: String = "+".repeat(plus_len) + &"-".repeat(minus_len);
+        println!(" {:<width$} | {:>cw$} {}", path, total, bar, width = max_path_len, cw = count_width);
+    }
+
+    let mut summary = format!(" {} file{} changed", files_changed, if files_changed == 1 { "" } else { "s" });
+    if total_ins > 0 {
+        summary.push_str(&format!(", {} insertion{}(+)", total_ins, if total_ins == 1 { "" } else { "s" }));
+    }
+    if total_del > 0 {
+        summary.push_str(&format!(", {} deletion{}(-)", total_del, if total_del == 1 { "" } else { "s" }));
+    }
+    println!("{summary}");
+    Ok(())
+}
+
+/// Write --numstat output for diff-index.
+fn write_diff_index_numstat(entries: &[DiffEntry], odb: &Odb) -> Result<()> {
+    let z = zero_oid();
+    for entry in entries {
+        let old_content = if entry.old_oid == z {
+            String::new()
+        } else {
+            odb.read(&entry.old_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
+        };
+        let new_content = if entry.new_oid == z {
+            String::new()
+        } else {
+            odb.read(&entry.new_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
+        };
+        let (ins, del) = count_line_changes(&old_content, &new_content);
+        println!("{}\t{}\t{}", ins, del, entry.path());
+    }
+    Ok(())
+}
+
+/// Count insertions and deletions between two text contents.
+fn count_line_changes(old: &str, new: &str) -> (usize, usize) {
+    let old_lines: Vec<&str> = if old.is_empty() { vec![] } else { old.lines().collect() };
+    let new_lines: Vec<&str> = if new.is_empty() { vec![] } else { new.lines().collect() };
+
+    // Use a simple LCS-based approach
+    let mut ins = 0;
+    let mut del = 0;
+    let mut i = 0;
+    let mut j = 0;
+    while i < old_lines.len() && j < new_lines.len() {
+        if old_lines[i] == new_lines[j] {
+            i += 1;
+            j += 1;
+        } else {
+            // Try to find old_lines[i] ahead in new_lines
+            let mut found_in_new = false;
+            for k in (j + 1)..new_lines.len().min(j + 10) {
+                if old_lines[i] == new_lines[k] {
+                    ins += k - j;
+                    j = k;
+                    found_in_new = true;
+                    break;
+                }
+            }
+            if !found_in_new {
+                del += 1;
+                i += 1;
+            }
+        }
+    }
+    del += old_lines.len() - i;
+    ins += new_lines.len() - j;
+    (ins, del)
 }

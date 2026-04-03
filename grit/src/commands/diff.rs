@@ -667,6 +667,22 @@ pub fn run(mut args: Args) -> Result<()> {
             .unwrap_or(false)
     };
 
+    // Load diff.statNameWidth from config if not specified on command line
+    if args.stat_name_width.is_none() {
+        let snw_config = {
+            use grit_lib::config::ConfigSet;
+            let cfg = ConfigSet::load(Some(&repo.git_dir), false)
+                .unwrap_or_else(|_| ConfigSet::new());
+            cfg.get("diff.statNameWidth").and_then(|v| v.parse::<usize>().ok())
+        };
+        if snw_config.is_some() {
+            args.stat_name_width = snw_config;
+            if !stat_enabled {
+                stat_enabled = true;
+            }
+        }
+    }
+
     if !args.quiet {
         let context_lines = args.unified.unwrap_or(3);
         if args.shortstat {
@@ -1653,10 +1669,10 @@ fn write_stat(
     let line_budget = total_width.saturating_sub(1).saturating_sub(overhead);
     // line_budget = name_len + bar_len
 
-    // Apply stat_name_width if set
+    // Apply stat_name_width if set, or truncate to fit terminal width
     let max_path_len = if let Some(nw) = stat_name_width {
         max_path_len.min(nw)
-    } else if stat_width.is_some() && max_path_len > line_budget.saturating_sub(1) {
+    } else if max_path_len > line_budget.saturating_sub(1) {
         // Name too long for the budget — truncate, leaving at least 1 char for bar
         line_budget.saturating_sub(1)
     } else {

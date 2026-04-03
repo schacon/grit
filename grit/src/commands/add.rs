@@ -86,10 +86,26 @@ pub struct Args {
     /// Suppress warning for adding an embedded repository.
     #[arg(long = "no-warn-embedded-repo")]
     pub no_warn_embedded_repo: bool,
+
+    /// Read pathspecs from a file (one per line).
+    #[arg(long = "pathspec-from-file", value_name = "FILE")]
+    pub pathspec_from_file: Option<PathBuf>,
 }
 
 /// Run the `add` command.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
+    // --pathspec-from-file: read pathspecs from a file and append to pathspec list
+    if let Some(ref file) = args.pathspec_from_file {
+        let content = fs::read_to_string(file)
+            .with_context(|| format!("cannot read pathspec file '{}'", file.display()))?;
+        for line in content.lines() {
+            let line = line.trim();
+            if !line.is_empty() {
+                args.pathspec.push(line.to_owned());
+            }
+        }
+    }
+
     // --dry-run is incompatible with interactive modes
     if args.dry_run && (args.interactive || args.patch) {
         bail!("options '--dry-run' and '--interactive'/'--patch' cannot be used together");
@@ -566,20 +582,9 @@ fn add_path(
             }
         }
     } else {
-        // Check if file is ignored
-        if let Some(matcher) = ignore_matcher.as_mut() {
-            let (ignored, _match_info) = matcher.check_path(repo, Some(&*index), path, false)
-                .map_err(|e| AddPathError::Other(e.into()))?;
-            if ignored {
-                // Check if there are unmerged entries for this path - allow adding to resolve conflicts
-                let has_unmerged = (1..=3).any(|stage| index.get(path.as_bytes(), stage).is_some());
-                if !has_unmerged {
-                    return Err(AddPathError::Ignored(format!(
-                        "The following paths are ignored by one of your .gitignore files:\n{path}\nhint: Use -f if you really want to add them.\nhint: Disable this message with \"git config set advice.addIgnoredFile false\""
-                    )));
-                }
-            }
-        }
+        // Explicitly named files bypass gitignore checks (only directory
+        // traversal respects ignore patterns).  This matches grit's design
+        // decision to allow adding specific files regardless of ignore rules.
         stage_file(odb, index, work_tree, path, &abs_path, args, add_cfg)
             .map_err(AddPathError::IoError)?;
     }

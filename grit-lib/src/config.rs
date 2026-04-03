@@ -559,23 +559,13 @@ impl ConfigFile {
             return self.set(key, value);
         }
 
-        // Keep the first matching entry, remove the rest
-        let first_match = matching_indices[0];
-        let lines_to_remove: Vec<usize> = matching_indices
-            .iter()
-            .skip(1)
-            .map(|&i| self.entries[i].line - 1)
-            .collect();
+        // Update only the last matching entry's value, keeping all others intact
+        let last_match = *matching_indices.last().unwrap();
 
-        // Update the first matching entry's line with the new value
-        let first_line_idx = self.entries[first_match].line - 1;
-        self.raw_lines[first_line_idx] = format!("\t{} = {}", var_lower, escape_value(value));
-        self.entries[first_match].value = Some(value.to_owned());
-
-        // Remove remaining matching lines from bottom to top
-        for &line_idx in lines_to_remove.iter().rev() {
-            self.raw_lines.remove(line_idx);
-        }
+        // Update the last matching entry's line with the new value
+        let last_line_idx = self.entries[last_match].line - 1;
+        self.raw_lines[last_line_idx] = format!("\t{} = {}", var_lower, escape_value(value));
+        self.entries[last_match].value = Some(value.to_owned());
 
         // Re-parse after modifications
         let content = self.raw_lines.join("\n");
