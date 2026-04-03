@@ -155,8 +155,8 @@ t1503-rev-parse-verify	yes	40	40	0	ok
 t1504-ceiling-dirs	yes	37	37	0	ok
 t1505-rev-parse-last	yes	35	35	0	ok
 t1506-rev-parse-diagnosis	yes	8	8	0	ok
-t1507-rev-parse-upstream	yes	8	8	0	ok
-t1508-at-combinations	yes	14	14	0	ok
+t1507-rev-parse-upstream	yes	8	7	1	ok
+t1508-at-combinations	yes	14	13	1	ok
 t1509-root-work-tree	yes	3	3	0	ok
 t1510-repo-setup	yes	36	36	0	ok
 t1511-rev-parse-caret	yes	30	30	0	ok
@@ -200,7 +200,7 @@ t2026-checkout-pathspec-file	yes	3	3	0	ok
 t2027-checkout-track	yes	5	5	0	ok
 t2030-unresolve-info	yes	5	5	0	ok
 t2050-git-dir-relative	yes	4	4	0	ok
-t2060-switch	yes	72	71	1	ok
+t2060-switch	yes	72	72	0	ok
 t2070-restore	yes	44	44	0	ok
 t2071-restore-patch	yes	4	4	0	ok
 t2072-restore-pathspec-file	yes	4	4	0	ok
@@ -335,10 +335,10 @@ t3601-rm-pathspec-file	yes	5	5	0	ok
 t3602-rm-sparse-checkout	yes	8	8	0	ok
 t3650-replay-basics	yes	5	5	0	ok
 t3700-add	yes	73	73	0	ok
-t3701-add-interactive	yes	5	4	1	ok
+t3701-add-interactive	yes	5	5	0	ok
 t3702-add-edit	yes	7	7	0	ok
 t3703-add-magic-pathspec	yes	4	4	0	ok
-t3704-add-pathspec-file	yes	5	3	2	ok
+t3704-add-pathspec-file	yes	5	4	1	ok
 t3705-add-sparse-checkout	yes	5	5	0	ok
 t3800-mktag	yes	63	63	0	ok
 t3900-i18n-commit	yes	6	6	0	ok
@@ -346,8 +346,8 @@ t3901-i18n-patch	yes	5	5	0	ok
 t3902-quoted	yes	6	6	0	ok
 t3903-stash	yes	31	31	0	ok
 t3904-stash-patch	yes	8	8	0	ok
-t3905-stash-include-untracked	yes	5	4	1	ok
-t3906-stash-submodule	yes	5	1	4	ok
+t3905-stash-include-untracked	yes	5	5	0	ok
+t3906-stash-submodule	yes	5	5	0	ok
 t3907-stash-show-config	yes	7	7	0	ok
 t3908-stash-in-worktree	yes	7	7	0	ok
 t3909-stash-pathspec-file	yes	4	4	0	ok
@@ -377,9 +377,9 @@ t4021-format-patch-numbered	yes	12	12	0	ok
 t4022-diff-rewrite	yes	5	5	0	ok
 t4023-diff-rename-typechange	yes	32	32	0	ok
 t4024-diff-optimize-common	yes	3	3	0	ok
-t4025-hunk-header	yes	3	3	0	ok
+t4025-hunk-header	yes	3	2	1	ok
 t4026-color	yes	5	5	0	ok
-t4027-diff-submodule	yes	5	2	3	ok
+t4027-diff-submodule	yes	5	5	0	ok
 t4028-format-patch-mime-headers	yes	3	3	0	ok
 t4029-diff-trailing-space	yes	5	5	0	ok
 t4030-diff-textconv	yes	20	20	0	ok
@@ -409,7 +409,7 @@ t4055-diff-context	yes	25	25	0	ok
 t4056-diff-order	yes	5	5	0	ok
 t4057-diff-combined-paths	yes	4	4	0	ok
 t4058-diff-duplicates	yes	16	16	0	ok
-t4059-diff-submodule-not-initialized	yes	3	1	2	ok
+t4059-diff-submodule-not-initialized	yes	3	3	0	ok
 t4060-diff-submodule-option-diff-format	yes	4	4	0	ok
 t4061-diff-indent	yes	5	5	0	ok
 t4062-diff-pickaxe	yes	23	23	0	ok
@@ -551,7 +551,7 @@ t5405-send-pack-rewind	yes	3	3	0	ok
 t5406-remote-rejects	yes	3	3	0	ok
 t5407-post-rewrite-hook	yes	3	3	0	ok
 t5408-send-pack-stdin	yes	2	2	0	ok
-t5409-colorize-remote-messages	yes	2	2	0	ok
+t5409-colorize-remote-messages	yes	2	1	1	ok
 t5410-receive-pack	no	0	0	0	not_ported
 t5411-proc-receive-hook	no	0	0	0	not_ported
 t5500-fetch-pack	yes	5	5	0	ok

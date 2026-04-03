@@ -3109,40 +3109,40 @@ t1506-rev-parse-diagnosis::escaped-char-does-not-trigger-wildcard-rule	t1506-rev
 t1506-rev-parse-diagnosis::arg-after-dashdash-not-interpreted-as-option	t1506-rev-parse-diagnosis	arg after dashdash not interpreted as option	rev-parse	pass
 t1506-rev-parse-diagnosis::arg-after-end-of-options-not-interpreted-as-option	t1506-rev-parse-diagnosis	arg after end-of-options not interpreted as option	rev-parse	pass
 t1506-rev-parse-diagnosis::end-of-options-still-allows	t1506-rev-parse-diagnosis	end-of-options still allows --	rev-parse	pass
-t1507-rev-parse-upstream::setup	t1507-rev-parse-upstream	setup	rev-parse	pass
-t1507-rev-parse-upstream::upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{upstream} resolves to correct full name	rev-parse	pass
-t1507-rev-parse-upstream::u-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{u} resolves to correct full name	rev-parse	pass
-t1507-rev-parse-upstream::my-side-upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	my-side@{upstream} resolves to correct full name	rev-parse	pass
-t1507-rev-parse-upstream::upstream-of-branch-with-in-middle	t1507-rev-parse-upstream	upstream of branch with @ in middle	rev-parse	pass
-t1507-rev-parse-upstream::upstream-of-branch-with-at-start	t1507-rev-parse-upstream	upstream of branch with @ at start	rev-parse	pass
-t1507-rev-parse-upstream::upstream-of-branch-with-at-end	t1507-rev-parse-upstream	upstream of branch with @ at end	rev-parse	pass
-t1507-rev-parse-upstream::refs-heads-my-side-upstream-does-not-resolve-to-my-side-upstream	t1507-rev-parse-upstream	refs/heads/my-side@{upstream} does not resolve to my-side{upstream}	rev-parse	pass
-t1507-rev-parse-upstream::my-side-u-resolves-to-correct-commit	t1507-rev-parse-upstream	my-side@{u} resolves to correct commit	rev-parse	pass
-t1507-rev-parse-upstream::not-tracking-u-fails	t1507-rev-parse-upstream	not-tracking@{u} fails	rev-parse	pass
-t1507-rev-parse-upstream::branch-u-1-resolves-correctly	t1507-rev-parse-upstream	<branch>@{u}@{1} resolves correctly	rev-parse	pass
-t1507-rev-parse-upstream::u-without-specifying-branch-fails-on-a-detached-head	t1507-rev-parse-upstream	@{u} without specifying branch fails on a detached HEAD	rev-parse	pass
-t1507-rev-parse-upstream::checkout-b-new-my-side-u-forks-from-the-same	t1507-rev-parse-upstream	checkout -b new my-side@{u} forks from the same	rev-parse	pass
-t1507-rev-parse-upstream::merge-my-side-u-records-the-correct-name	t1507-rev-parse-upstream	merge my-side@{u} records the correct name	rev-parse	pass
-t1507-rev-parse-upstream::branch-d-other-u	t1507-rev-parse-upstream	branch -d other@{u}	rev-parse	pass
-t1507-rev-parse-upstream::checkout-other-u	t1507-rev-parse-upstream	checkout other@{u}	rev-parse	pass
-t1507-rev-parse-upstream::branch-u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	branch@{u} works when tracking a local branch	rev-parse	pass
-t1507-rev-parse-upstream::branch-u-error-message-when-no-upstream	t1507-rev-parse-upstream	branch@{u} error message when no upstream	rev-parse	pass
-t1507-rev-parse-upstream::u-error-message-when-no-upstream	t1507-rev-parse-upstream	@{u} error message when no upstream	rev-parse	pass
-t1507-rev-parse-upstream::u-silent-error-when-no-upstream	t1507-rev-parse-upstream	@{u} silent error when no upstream	rev-parse	pass
-t1507-rev-parse-upstream::branch-u-error-message-with-misspelt-branch	t1507-rev-parse-upstream	branch@{u} error message with misspelt branch	rev-parse	pass
-t1507-rev-parse-upstream::u-error-message-when-not-on-a-branch	t1507-rev-parse-upstream	@{u} error message when not on a branch	rev-parse	pass
-t1507-rev-parse-upstream::branch-u-error-message-if-upstream-branch-not-fetched	t1507-rev-parse-upstream	branch@{u} error message if upstream branch not fetched	rev-parse	pass
-t1507-rev-parse-upstream::pull-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	pull works when tracking a local branch	rev-parse	pass
-t1507-rev-parse-upstream::u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	@{u} works when tracking a local branch	rev-parse	pass
-t1507-rev-parse-upstream::log-g-other-u	t1507-rev-parse-upstream	log -g other@{u}	rev-parse	pass
-t1507-rev-parse-upstream::log-g-other-u-now	t1507-rev-parse-upstream	log -g other@{u}@{now}	rev-parse	pass
-t1507-rev-parse-upstream::reflog-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{reflog}-parsing does not look beyond colon	rev-parse	pass
-t1507-rev-parse-upstream::upstream-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{upstream}-parsing does not look beyond colon	rev-parse	pass
-t1508-at-combinations::setup	t1508-at-combinations	setup	branch	pass
-t1508-at-combinations::switch-to-old-branch	t1508-at-combinations	switch to old-branch	checkout	pass
-t1508-at-combinations::create-path-with	t1508-at-combinations	create path with @	add	pass
-t1508-at-combinations::1-works-with-only-one-reflog-entry	t1508-at-combinations	@{1} works with only one reflog entry	checkout	pass
-t1508-at-combinations::0-works-with-empty-reflog	t1508-at-combinations	@{0} works with empty reflog	checkout	pass
+t1507-rev-parse-upstream::setup	t1507-rev-parse-upstream	setup	rev-parse	partial
+t1507-rev-parse-upstream::upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{upstream} resolves to correct full name	rev-parse	partial
+t1507-rev-parse-upstream::u-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{u} resolves to correct full name	rev-parse	partial
+t1507-rev-parse-upstream::my-side-upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	my-side@{upstream} resolves to correct full name	rev-parse	partial
+t1507-rev-parse-upstream::upstream-of-branch-with-in-middle	t1507-rev-parse-upstream	upstream of branch with @ in middle	rev-parse	partial
+t1507-rev-parse-upstream::upstream-of-branch-with-at-start	t1507-rev-parse-upstream	upstream of branch with @ at start	rev-parse	partial
+t1507-rev-parse-upstream::upstream-of-branch-with-at-end	t1507-rev-parse-upstream	upstream of branch with @ at end	rev-parse	partial
+t1507-rev-parse-upstream::refs-heads-my-side-upstream-does-not-resolve-to-my-side-upstream	t1507-rev-parse-upstream	refs/heads/my-side@{upstream} does not resolve to my-side{upstream}	rev-parse	partial
+t1507-rev-parse-upstream::my-side-u-resolves-to-correct-commit	t1507-rev-parse-upstream	my-side@{u} resolves to correct commit	rev-parse	partial
+t1507-rev-parse-upstream::not-tracking-u-fails	t1507-rev-parse-upstream	not-tracking@{u} fails	rev-parse	partial
+t1507-rev-parse-upstream::branch-u-1-resolves-correctly	t1507-rev-parse-upstream	<branch>@{u}@{1} resolves correctly	rev-parse	partial
+t1507-rev-parse-upstream::u-without-specifying-branch-fails-on-a-detached-head	t1507-rev-parse-upstream	@{u} without specifying branch fails on a detached HEAD	rev-parse	partial
+t1507-rev-parse-upstream::checkout-b-new-my-side-u-forks-from-the-same	t1507-rev-parse-upstream	checkout -b new my-side@{u} forks from the same	rev-parse	partial
+t1507-rev-parse-upstream::merge-my-side-u-records-the-correct-name	t1507-rev-parse-upstream	merge my-side@{u} records the correct name	rev-parse	partial
+t1507-rev-parse-upstream::branch-d-other-u	t1507-rev-parse-upstream	branch -d other@{u}	rev-parse	partial
+t1507-rev-parse-upstream::checkout-other-u	t1507-rev-parse-upstream	checkout other@{u}	rev-parse	partial
+t1507-rev-parse-upstream::branch-u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	branch@{u} works when tracking a local branch	rev-parse	partial
+t1507-rev-parse-upstream::branch-u-error-message-when-no-upstream	t1507-rev-parse-upstream	branch@{u} error message when no upstream	rev-parse	partial
+t1507-rev-parse-upstream::u-error-message-when-no-upstream	t1507-rev-parse-upstream	@{u} error message when no upstream	rev-parse	partial
+t1507-rev-parse-upstream::u-silent-error-when-no-upstream	t1507-rev-parse-upstream	@{u} silent error when no upstream	rev-parse	partial
+t1507-rev-parse-upstream::branch-u-error-message-with-misspelt-branch	t1507-rev-parse-upstream	branch@{u} error message with misspelt branch	rev-parse	partial
+t1507-rev-parse-upstream::u-error-message-when-not-on-a-branch	t1507-rev-parse-upstream	@{u} error message when not on a branch	rev-parse	partial
+t1507-rev-parse-upstream::branch-u-error-message-if-upstream-branch-not-fetched	t1507-rev-parse-upstream	branch@{u} error message if upstream branch not fetched	rev-parse	partial
+t1507-rev-parse-upstream::pull-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	pull works when tracking a local branch	rev-parse	partial
+t1507-rev-parse-upstream::u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	@{u} works when tracking a local branch	rev-parse	partial
+t1507-rev-parse-upstream::log-g-other-u	t1507-rev-parse-upstream	log -g other@{u}	rev-parse	partial
+t1507-rev-parse-upstream::log-g-other-u-now	t1507-rev-parse-upstream	log -g other@{u}@{now}	rev-parse	partial
+t1507-rev-parse-upstream::reflog-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{reflog}-parsing does not look beyond colon	rev-parse	partial
+t1507-rev-parse-upstream::upstream-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{upstream}-parsing does not look beyond colon	rev-parse	partial
+t1508-at-combinations::setup	t1508-at-combinations	setup	branch	partial
+t1508-at-combinations::switch-to-old-branch	t1508-at-combinations	switch to old-branch	checkout	partial
+t1508-at-combinations::create-path-with	t1508-at-combinations	create path with @	add	partial
+t1508-at-combinations::1-works-with-only-one-reflog-entry	t1508-at-combinations	@{1} works with only one reflog entry	checkout	partial
+t1508-at-combinations::0-works-with-empty-reflog	t1508-at-combinations	@{0} works with empty reflog	checkout	partial
 t1509-root-work-tree::add-relative	t1509-root-work-tree	add relative	add	pass
 t1509-root-work-tree::add-absolute	t1509-root-work-tree	add absolute	add	pass
 t1509-root-work-tree::add-relative-2	t1509-root-work-tree	add relative	add	pass
@@ -3696,22 +3696,22 @@ t2050-git-dir-relative::setting-up-post-commit-hook	t2050-git-dir-relative	Setti
 t2050-git-dir-relative::post-commit-hook-used-ordinarily	t2050-git-dir-relative	post-commit hook used ordinarily	add	pass
 t2050-git-dir-relative::post-commit-hook-created-and-used-from-top-dir	t2050-git-dir-relative	post-commit-hook created and used from top dir	add	pass
 t2050-git-dir-relative::post-commit-hook-from-sub-dir	t2050-git-dir-relative	post-commit-hook from sub dir		pass
-t2060-switch::setup	t2060-switch	setup	switch	partial
-t2060-switch::switch-branch-no-arguments	t2060-switch	switch branch no arguments	switch	partial
-t2060-switch::switch-branch	t2060-switch	switch branch	switch	partial
-t2060-switch::switch-and-detach	t2060-switch	switch and detach	switch	partial
-t2060-switch::suggestion-to-detach	t2060-switch	suggestion to detach	switch	partial
-t2060-switch::suggestion-to-detach-is-suppressed-with-advice-suggestdetachinghead-false	t2060-switch	suggestion to detach is suppressed with advice.suggestDetachingHead=false	switch	partial
-t2060-switch::switch-and-detach-current-branch	t2060-switch	switch and detach current branch	switch	partial
-t2060-switch::switch-and-create-branch	t2060-switch	switch and create branch	switch	partial
-t2060-switch::force-create-branch-from-head	t2060-switch	force create branch from HEAD	switch	partial
-t2060-switch::new-orphan-branch-from-empty	t2060-switch	new orphan branch from empty	switch	partial
-t2060-switch::orphan-branch-works-with-discard-changes	t2060-switch	orphan branch works with --discard-changes	switch	partial
-t2060-switch::switching-ignores-file-of-same-branch-name	t2060-switch	switching ignores file of same branch name	switch	partial
-t2060-switch::guess-and-create-branch	t2060-switch	guess and create branch	switch	partial
-t2060-switch::not-switching-when-something-is-in-progress	t2060-switch	not switching when something is in progress	switch	partial
-t2060-switch::tracking-info-copied-with-autosetupmerge-inherit	t2060-switch	tracking info copied with autoSetupMerge=inherit	switch	partial
-t2060-switch::switch-back-when-temporarily-detached-and-checked-out-elsewhere	t2060-switch	switch back when temporarily detached and checked out elsewhere 	switch	partial
+t2060-switch::setup	t2060-switch	setup	switch	pass
+t2060-switch::switch-branch-no-arguments	t2060-switch	switch branch no arguments	switch	pass
+t2060-switch::switch-branch	t2060-switch	switch branch	switch	pass
+t2060-switch::switch-and-detach	t2060-switch	switch and detach	switch	pass
+t2060-switch::suggestion-to-detach	t2060-switch	suggestion to detach	switch	pass
+t2060-switch::suggestion-to-detach-is-suppressed-with-advice-suggestdetachinghead-false	t2060-switch	suggestion to detach is suppressed with advice.suggestDetachingHead=false	switch	pass
+t2060-switch::switch-and-detach-current-branch	t2060-switch	switch and detach current branch	switch	pass
+t2060-switch::switch-and-create-branch	t2060-switch	switch and create branch	switch	pass
+t2060-switch::force-create-branch-from-head	t2060-switch	force create branch from HEAD	switch	pass
+t2060-switch::new-orphan-branch-from-empty	t2060-switch	new orphan branch from empty	switch	pass
+t2060-switch::orphan-branch-works-with-discard-changes	t2060-switch	orphan branch works with --discard-changes	switch	pass
+t2060-switch::switching-ignores-file-of-same-branch-name	t2060-switch	switching ignores file of same branch name	switch	pass
+t2060-switch::guess-and-create-branch	t2060-switch	guess and create branch	switch	pass
+t2060-switch::not-switching-when-something-is-in-progress	t2060-switch	not switching when something is in progress	switch	pass
+t2060-switch::tracking-info-copied-with-autosetupmerge-inherit	t2060-switch	tracking info copied with autoSetupMerge=inherit	switch	pass
+t2060-switch::switch-back-when-temporarily-detached-and-checked-out-elsewhere	t2060-switch	switch back when temporarily detached and checked out elsewhere 	switch	pass
 t2070-restore::setup	t2070-restore	setup	restore	pass
 t2070-restore::restore-without-pathspec-is-not-ok	t2070-restore	restore without pathspec is not ok	restore	pass
 t2070-restore::restore-a-file-ignoring-branch-of-same-name	t2070-restore	restore a file, ignoring branch of same name	restore	pass
@@ -5990,117 +5990,117 @@ t3700-add::all-statuses-changed-in-folder-if-is-given	t3700-add	all statuses cha
 t3700-add::cannot-add-a-submodule-of-a-different-algorithm	t3700-add	cannot add a submodule of a different algorithm	add	pass
 t3700-add::path-is-case-insensitive	t3700-add	path is case-insensitive	add	pass
 t3700-add::git-add-fo-ou-bar-ignores-foobar	t3700-add	git add 'fo\\[ou\\]bar' ignores foobar	add	pass
-t3701-add-interactive::unknown-command	t3701-add-interactive	unknown command	add	partial
-t3701-add-interactive::setup-initial	t3701-add-interactive	setup (initial)	add	partial
-t3701-add-interactive::status-works-initial	t3701-add-interactive	status works (initial)	add	partial
-t3701-add-interactive::setup-expected	t3701-add-interactive	setup expected	add	partial
-t3701-add-interactive::diff-works-initial	t3701-add-interactive	diff works (initial)	add	partial
-t3701-add-interactive::revert-works-initial	t3701-add-interactive	revert works (initial)	add	partial
-t3701-add-interactive::add-untracked-multiple	t3701-add-interactive	add untracked (multiple)	add	partial
-t3701-add-interactive::setup-commit	t3701-add-interactive	setup (commit)	add	partial
-t3701-add-interactive::status-works-commit	t3701-add-interactive	status works (commit)	add	partial
-t3701-add-interactive::update-can-stage-deletions	t3701-add-interactive	update can stage deletions	add	partial
-t3701-add-interactive::setup-expected-2	t3701-add-interactive	setup expected	add	partial
-t3701-add-interactive::diff-works-commit	t3701-add-interactive	diff works (commit)	add	partial
-t3701-add-interactive::revert-works-commit	t3701-add-interactive	revert works (commit)	add	partial
-t3701-add-interactive::reject-multi-key-input	t3701-add-interactive	reject multi-key input	add	partial
-t3701-add-interactive::setup-expected-3	t3701-add-interactive	setup expected	add	partial
-t3701-add-interactive::dummy-edit-works	t3701-add-interactive	dummy edit works	add	partial
-t3701-add-interactive::setup-patch	t3701-add-interactive	setup patch	add	partial
-t3701-add-interactive::setup-fake-editor	t3701-add-interactive	setup fake editor	add	partial
-t3701-add-interactive::bad-edit-rejected	t3701-add-interactive	bad edit rejected	add	partial
-t3701-add-interactive::setup-patch-2	t3701-add-interactive	setup patch	add	partial
-t3701-add-interactive::garbage-edit-rejected	t3701-add-interactive	garbage edit rejected	add	partial
-t3701-add-interactive::setup-patch-3	t3701-add-interactive	setup patch	add	partial
-t3701-add-interactive::setup-expected-4	t3701-add-interactive	setup expected	add	partial
-t3701-add-interactive::real-edit-works	t3701-add-interactive	real edit works	add	partial
-t3701-add-interactive::setup-file	t3701-add-interactive	setup file	add	partial
-t3701-add-interactive::setup-patch-4	t3701-add-interactive	setup patch	add	partial
-t3701-add-interactive::setup-expected-5	t3701-add-interactive	setup expected	add	partial
-t3701-add-interactive::edit-can-strip-spaces-from-empty-context-lines	t3701-add-interactive	edit can strip spaces from empty context lines	add	partial
-t3701-add-interactive::skip-files-similarly-as-commit-a	t3701-add-interactive	skip files similarly as commit -a	add	partial
-t3701-add-interactive::patch-does-not-affect-mode	t3701-add-interactive	patch does not affect mode	add	partial
-t3701-add-interactive::stage-mode-but-not-hunk	t3701-add-interactive	stage mode but not hunk	add	partial
-t3701-add-interactive::stage-mode-and-hunk	t3701-add-interactive	stage mode and hunk	add	partial
-t3701-add-interactive::different-prompts-for-mode-change-deleted	t3701-add-interactive	different prompts for mode change/deleted	add	partial
-t3701-add-interactive::correct-message-when-there-is-nothing-to-do	t3701-add-interactive	correct message when there is nothing to do	add	partial
-t3701-add-interactive::setup-again	t3701-add-interactive	setup again	add	partial
-t3701-add-interactive::setup-patch-5	t3701-add-interactive	setup patch	add	partial
-t3701-add-interactive::setup-expected-6	t3701-add-interactive	setup expected	add	partial
-t3701-add-interactive::add-first-line-works	t3701-add-interactive	add first line works	add	partial
-t3701-add-interactive::setup-expected-7	t3701-add-interactive	setup expected	add	partial
-t3701-add-interactive::deleting-a-non-empty-file	t3701-add-interactive	deleting a non-empty file	add	partial
-t3701-add-interactive::setup-expected-8	t3701-add-interactive	setup expected	add	partial
-t3701-add-interactive::deleting-an-empty-file	t3701-add-interactive	deleting an empty file	add	partial
-t3701-add-interactive::adding-an-empty-file	t3701-add-interactive	adding an empty file	add	partial
-t3701-add-interactive::split-hunk-setup	t3701-add-interactive	split hunk setup	add	partial
-t3701-add-interactive::goto-hunk-1-with-g-1	t3701-add-interactive	goto hunk 1 with "g 1"	add	partial
-t3701-add-interactive::goto-hunk-1-with-g1	t3701-add-interactive	goto hunk 1 with "g1"	add	partial
-t3701-add-interactive::navigate-to-hunk-via-regex-pattern	t3701-add-interactive	navigate to hunk via regex /pattern	add	partial
-t3701-add-interactive::navigate-to-hunk-via-regex-pattern-2	t3701-add-interactive	navigate to hunk via regex / pattern	add	partial
-t3701-add-interactive::print-again-the-hunk	t3701-add-interactive	print again the hunk	add	partial
-t3701-add-interactive::print-again-the-hunk-pager	t3701-add-interactive	print again the hunk (PAGER)	add	partial
-t3701-add-interactive::p-handles-sigpipe-when-writing-to-pager	t3701-add-interactive	P handles SIGPIPE when writing to pager	add	partial
-t3701-add-interactive::split-hunk-add-p-edit	t3701-add-interactive	split hunk "add -p (edit)"	add	partial
-t3701-add-interactive::split-hunk-add-p-no-yes-edit	t3701-add-interactive	split hunk "add -p (no, yes, edit)"	add	partial
-t3701-add-interactive::split-hunk-with-incomplete-line-at-end	t3701-add-interactive	split hunk with incomplete line at end	add	partial
-t3701-add-interactive::edit-adding-lines-to-the-first-hunk	t3701-add-interactive	edit, adding lines to the first hunk	add	partial
-t3701-add-interactive::patch-mode-ignores-unmerged-entries	t3701-add-interactive	patch mode ignores unmerged entries	add	partial
-t3701-add-interactive::index-is-refreshed-after-applying-patch	t3701-add-interactive	index is refreshed after applying patch	add	partial
-t3701-add-interactive::diffs-can-be-colorized	t3701-add-interactive	diffs can be colorized	add	partial
-t3701-add-interactive::colors-can-be-overridden	t3701-add-interactive	colors can be overridden	add	partial
-t3701-add-interactive::brackets-appear-without-color	t3701-add-interactive	brackets appear without color	add	partial
-t3701-add-interactive::colors-can-be-skipped-with-color-ui-false	t3701-add-interactive	colors can be skipped with color.ui=false	add	partial
-t3701-add-interactive::colorized-diffs-respect-diff-wserrorhighlight	t3701-add-interactive	colorized diffs respect diff.wsErrorHighlight	add	partial
-t3701-add-interactive::diff-color-respects-color-diff	t3701-add-interactive	diff color respects color.diff	add	partial
-t3701-add-interactive::re-coloring-diff-without-color-interactive	t3701-add-interactive	re-coloring diff without color.interactive	add	partial
-t3701-add-interactive::difffilter-filters-diff	t3701-add-interactive	diffFilter filters diff	add	partial
-t3701-add-interactive::detect-bogus-difffilter-output	t3701-add-interactive	detect bogus diffFilter output	add	partial
-t3701-add-interactive::handle-iffy-colored-hunk-headers	t3701-add-interactive	handle iffy colored hunk headers	add	partial
-t3701-add-interactive::handle-very-large-filtered-diff	t3701-add-interactive	handle very large filtered diff	add	partial
-t3701-add-interactive::diff-algorithm-is-passed-to-git-diff-files	t3701-add-interactive	diff.algorithm is passed to `git diff-files`	add	partial
-t3701-add-interactive::patch-mode-via-i-prompts-for-files	t3701-add-interactive	patch-mode via -i prompts for files	add	partial
-t3701-add-interactive::add-p-handles-globs	t3701-add-interactive	add -p handles globs	add	partial
-t3701-add-interactive::add-p-handles-relative-paths	t3701-add-interactive	add -p handles relative paths	add	partial
-t3701-add-interactive::add-p-does-not-expand-argument-lists	t3701-add-interactive	add -p does not expand argument lists	add	partial
-t3701-add-interactive::hunk-editing-handles-custom-comment-char	t3701-add-interactive	hunk-editing handles custom comment char	add	partial
-t3701-add-interactive::add-p-works-even-with-color-ui-always	t3701-add-interactive	add -p works even with color.ui=always	add	partial
-t3701-add-interactive::setup-different-kinds-of-dirty-submodules	t3701-add-interactive	setup different kinds of dirty submodules	add	partial
-t3701-add-interactive::status-ignores-dirty-submodules-except-head	t3701-add-interactive	status ignores dirty submodules (except HEAD)	add	partial
-t3701-add-interactive::handle-submodules	t3701-add-interactive	handle submodules	add	partial
-t3701-add-interactive::set-up-pathological-context	t3701-add-interactive	set up pathological context	add	partial
-t3701-add-interactive::add-p-works-with-pathological-context-lines	t3701-add-interactive	add -p works with pathological context lines	add	partial
-t3701-add-interactive::add-p-patch-editing-works-with-pathological-context-lines	t3701-add-interactive	add -p patch editing works with pathological context lines	add	partial
-t3701-add-interactive::checkout-p-works-with-pathological-context-lines	t3701-add-interactive	checkout -p works with pathological context lines	add	partial
-t3701-add-interactive::add-n-followed-by-add-p-patch-editing	t3701-add-interactive	add -N followed by add -p patch editing	add	partial
-t3701-add-interactive::checkout-p-patch-editing-of-added-file	t3701-add-interactive	checkout -p patch editing of added file	add	partial
-t3701-add-interactive::show-help-from-add-helper	t3701-add-interactive	show help from add--helper	add	partial
-t3701-add-interactive::reset-p-with-unmerged-files	t3701-add-interactive	reset -p with unmerged files	add	partial
-t3701-add-interactive::hunk-splitting-works-with-diff-suppressblankempty	t3701-add-interactive	hunk splitting works with diff.suppressBlankEmpty	add	partial
-t3701-add-interactive::add-p-respects-diff-context	t3701-add-interactive	add -p respects diff.context	add	partial
-t3701-add-interactive::add-p-respects-diff-interhunkcontext	t3701-add-interactive	add -p respects diff.interHunkContext	add	partial
-t3701-add-interactive::add-p-rejects-negative-diff-context	t3701-add-interactive	add -p rejects negative diff.context	add	partial
-t3701-add-interactive::reset-accepts-u-and-inter-hunk-context	t3701-add-interactive	reset accepts -U and --inter-hunk-context	add	partial
-t3701-add-interactive::stash-accepts-u-and-inter-hunk-context	t3701-add-interactive	stash accepts -U and --inter-hunk-context	add	partial
-t3701-add-interactive::set-up-base-for-p-color-tests	t3701-add-interactive	set up base for -p color tests	add	partial
-t3701-add-interactive::splitting-previous-hunk-marks-split-hunks-as-undecided	t3701-add-interactive	splitting previous hunk marks split hunks as undecided	add	partial
-t3701-add-interactive::splitting-edited-hunk	t3701-add-interactive	splitting edited hunk	add	partial
-t3701-add-interactive::options-j-k-roll-over	t3701-add-interactive	options J, K roll over	add	partial
-t3701-add-interactive::options-y-n-a-d-j-k-e-roll-over-to-next-undecided-1	t3701-add-interactive	options y, n, a, d, j, k, e roll over to next undecided (1)	add	partial
-t3701-add-interactive::options-y-n-a-d-j-k-e-roll-over-to-next-undecided-2	t3701-add-interactive	options y, n, a, d, j, k, e roll over to next undecided (2)	add	partial
-t3701-add-interactive::invalid-option-s-is-rejected	t3701-add-interactive	invalid option s is rejected	add	partial
-t3701-add-interactive::eof-quits	t3701-add-interactive	EOF quits	add	partial
-t3701-add-interactive::manual-advance-moves-to-next-file-with-no-auto-advance	t3701-add-interactive	manual advance (">") moves to next file with --no-auto-advance	add	partial
-t3701-add-interactive::select-n-on-a-hunk-go-to-another-file-come-back-and-change-to-y-stages	t3701-add-interactive	select n on a hunk, go to another file, come back and change to y stages	add	partial
-t3701-add-interactive::select-y-on-a-hunk-go-to-another-file-come-back-and-change-to-n-does-not-stage	t3701-add-interactive	select y on a hunk, go to another file, come back and change to n does not stage	add	partial
-t3701-add-interactive::deciding-all-hunks-in-a-file-does-not-auto-advance	t3701-add-interactive	deciding all hunks in a file does not auto advance	add	partial
-t3701-add-interactive::hunks-summary-does-not-show-in-help-text-when-there-are-undecided-hunks	t3701-add-interactive	HUNKS SUMMARY does not show in help text when there are undecided hunks	add	partial
-t3701-add-interactive::help-text-shows-hunk-summary-when-all-hunks-have-been-decided	t3701-add-interactive	help text shows HUNK SUMMARY when all hunks have been decided	add	partial
-t3701-add-interactive::selective-staging-across-multiple-files-with-no-advance	t3701-add-interactive	selective staging across multiple files with --no-advance	add	partial
-t3701-add-interactive::cmd-accepts-u-and-inter-hunk-context	t3701-add-interactive	${cmd%% *} accepts -U and --inter-hunk-context	add	partial
-t3701-add-interactive::cmd-rejects-invalid-context-options	t3701-add-interactive	$cmd rejects invalid context options	add	partial
-t3701-add-interactive::cmd-falls-back-to-color-ui	t3701-add-interactive	$cmd falls back to color.ui	add	partial
-t3701-add-interactive::cmd-rejects-invalid-no-auto-advance-options	t3701-add-interactive	$cmd rejects invalid --no-auto-advance options	add	partial
+t3701-add-interactive::unknown-command	t3701-add-interactive	unknown command	add	pass
+t3701-add-interactive::setup-initial	t3701-add-interactive	setup (initial)	add	pass
+t3701-add-interactive::status-works-initial	t3701-add-interactive	status works (initial)	add	pass
+t3701-add-interactive::setup-expected	t3701-add-interactive	setup expected	add	pass
+t3701-add-interactive::diff-works-initial	t3701-add-interactive	diff works (initial)	add	pass
+t3701-add-interactive::revert-works-initial	t3701-add-interactive	revert works (initial)	add	pass
+t3701-add-interactive::add-untracked-multiple	t3701-add-interactive	add untracked (multiple)	add	pass
+t3701-add-interactive::setup-commit	t3701-add-interactive	setup (commit)	add	pass
+t3701-add-interactive::status-works-commit	t3701-add-interactive	status works (commit)	add	pass
+t3701-add-interactive::update-can-stage-deletions	t3701-add-interactive	update can stage deletions	add	pass
+t3701-add-interactive::setup-expected-2	t3701-add-interactive	setup expected	add	pass
+t3701-add-interactive::diff-works-commit	t3701-add-interactive	diff works (commit)	add	pass
+t3701-add-interactive::revert-works-commit	t3701-add-interactive	revert works (commit)	add	pass
+t3701-add-interactive::reject-multi-key-input	t3701-add-interactive	reject multi-key input	add	pass
+t3701-add-interactive::setup-expected-3	t3701-add-interactive	setup expected	add	pass
+t3701-add-interactive::dummy-edit-works	t3701-add-interactive	dummy edit works	add	pass
+t3701-add-interactive::setup-patch	t3701-add-interactive	setup patch	add	pass
+t3701-add-interactive::setup-fake-editor	t3701-add-interactive	setup fake editor	add	pass
+t3701-add-interactive::bad-edit-rejected	t3701-add-interactive	bad edit rejected	add	pass
+t3701-add-interactive::setup-patch-2	t3701-add-interactive	setup patch	add	pass
+t3701-add-interactive::garbage-edit-rejected	t3701-add-interactive	garbage edit rejected	add	pass
+t3701-add-interactive::setup-patch-3	t3701-add-interactive	setup patch	add	pass
+t3701-add-interactive::setup-expected-4	t3701-add-interactive	setup expected	add	pass
+t3701-add-interactive::real-edit-works	t3701-add-interactive	real edit works	add	pass
+t3701-add-interactive::setup-file	t3701-add-interactive	setup file	add	pass
+t3701-add-interactive::setup-patch-4	t3701-add-interactive	setup patch	add	pass
+t3701-add-interactive::setup-expected-5	t3701-add-interactive	setup expected	add	pass
+t3701-add-interactive::edit-can-strip-spaces-from-empty-context-lines	t3701-add-interactive	edit can strip spaces from empty context lines	add	pass
+t3701-add-interactive::skip-files-similarly-as-commit-a	t3701-add-interactive	skip files similarly as commit -a	add	pass
+t3701-add-interactive::patch-does-not-affect-mode	t3701-add-interactive	patch does not affect mode	add	pass
+t3701-add-interactive::stage-mode-but-not-hunk	t3701-add-interactive	stage mode but not hunk	add	pass
+t3701-add-interactive::stage-mode-and-hunk	t3701-add-interactive	stage mode and hunk	add	pass
+t3701-add-interactive::different-prompts-for-mode-change-deleted	t3701-add-interactive	different prompts for mode change/deleted	add	pass
+t3701-add-interactive::correct-message-when-there-is-nothing-to-do	t3701-add-interactive	correct message when there is nothing to do	add	pass
+t3701-add-interactive::setup-again	t3701-add-interactive	setup again	add	pass
+t3701-add-interactive::setup-patch-5	t3701-add-interactive	setup patch	add	pass
+t3701-add-interactive::setup-expected-6	t3701-add-interactive	setup expected	add	pass
+t3701-add-interactive::add-first-line-works	t3701-add-interactive	add first line works	add	pass
+t3701-add-interactive::setup-expected-7	t3701-add-interactive	setup expected	add	pass
+t3701-add-interactive::deleting-a-non-empty-file	t3701-add-interactive	deleting a non-empty file	add	pass
+t3701-add-interactive::setup-expected-8	t3701-add-interactive	setup expected	add	pass
+t3701-add-interactive::deleting-an-empty-file	t3701-add-interactive	deleting an empty file	add	pass
+t3701-add-interactive::adding-an-empty-file	t3701-add-interactive	adding an empty file	add	pass
+t3701-add-interactive::split-hunk-setup	t3701-add-interactive	split hunk setup	add	pass
+t3701-add-interactive::goto-hunk-1-with-g-1	t3701-add-interactive	goto hunk 1 with "g 1"	add	pass
+t3701-add-interactive::goto-hunk-1-with-g1	t3701-add-interactive	goto hunk 1 with "g1"	add	pass
+t3701-add-interactive::navigate-to-hunk-via-regex-pattern	t3701-add-interactive	navigate to hunk via regex /pattern	add	pass
+t3701-add-interactive::navigate-to-hunk-via-regex-pattern-2	t3701-add-interactive	navigate to hunk via regex / pattern	add	pass
+t3701-add-interactive::print-again-the-hunk	t3701-add-interactive	print again the hunk	add	pass
+t3701-add-interactive::print-again-the-hunk-pager	t3701-add-interactive	print again the hunk (PAGER)	add	pass
+t3701-add-interactive::p-handles-sigpipe-when-writing-to-pager	t3701-add-interactive	P handles SIGPIPE when writing to pager	add	pass
+t3701-add-interactive::split-hunk-add-p-edit	t3701-add-interactive	split hunk "add -p (edit)"	add	pass
+t3701-add-interactive::split-hunk-add-p-no-yes-edit	t3701-add-interactive	split hunk "add -p (no, yes, edit)"	add	pass
+t3701-add-interactive::split-hunk-with-incomplete-line-at-end	t3701-add-interactive	split hunk with incomplete line at end	add	pass
+t3701-add-interactive::edit-adding-lines-to-the-first-hunk	t3701-add-interactive	edit, adding lines to the first hunk	add	pass
+t3701-add-interactive::patch-mode-ignores-unmerged-entries	t3701-add-interactive	patch mode ignores unmerged entries	add	pass
+t3701-add-interactive::index-is-refreshed-after-applying-patch	t3701-add-interactive	index is refreshed after applying patch	add	pass
+t3701-add-interactive::diffs-can-be-colorized	t3701-add-interactive	diffs can be colorized	add	pass
+t3701-add-interactive::colors-can-be-overridden	t3701-add-interactive	colors can be overridden	add	pass
+t3701-add-interactive::brackets-appear-without-color	t3701-add-interactive	brackets appear without color	add	pass
+t3701-add-interactive::colors-can-be-skipped-with-color-ui-false	t3701-add-interactive	colors can be skipped with color.ui=false	add	pass
+t3701-add-interactive::colorized-diffs-respect-diff-wserrorhighlight	t3701-add-interactive	colorized diffs respect diff.wsErrorHighlight	add	pass
+t3701-add-interactive::diff-color-respects-color-diff	t3701-add-interactive	diff color respects color.diff	add	pass
+t3701-add-interactive::re-coloring-diff-without-color-interactive	t3701-add-interactive	re-coloring diff without color.interactive	add	pass
+t3701-add-interactive::difffilter-filters-diff	t3701-add-interactive	diffFilter filters diff	add	pass
+t3701-add-interactive::detect-bogus-difffilter-output	t3701-add-interactive	detect bogus diffFilter output	add	pass
+t3701-add-interactive::handle-iffy-colored-hunk-headers	t3701-add-interactive	handle iffy colored hunk headers	add	pass
+t3701-add-interactive::handle-very-large-filtered-diff	t3701-add-interactive	handle very large filtered diff	add	pass
+t3701-add-interactive::diff-algorithm-is-passed-to-git-diff-files	t3701-add-interactive	diff.algorithm is passed to `git diff-files`	add	pass
+t3701-add-interactive::patch-mode-via-i-prompts-for-files	t3701-add-interactive	patch-mode via -i prompts for files	add	pass
+t3701-add-interactive::add-p-handles-globs	t3701-add-interactive	add -p handles globs	add	pass
+t3701-add-interactive::add-p-handles-relative-paths	t3701-add-interactive	add -p handles relative paths	add	pass
+t3701-add-interactive::add-p-does-not-expand-argument-lists	t3701-add-interactive	add -p does not expand argument lists	add	pass
+t3701-add-interactive::hunk-editing-handles-custom-comment-char	t3701-add-interactive	hunk-editing handles custom comment char	add	pass
+t3701-add-interactive::add-p-works-even-with-color-ui-always	t3701-add-interactive	add -p works even with color.ui=always	add	pass
+t3701-add-interactive::setup-different-kinds-of-dirty-submodules	t3701-add-interactive	setup different kinds of dirty submodules	add	pass
+t3701-add-interactive::status-ignores-dirty-submodules-except-head	t3701-add-interactive	status ignores dirty submodules (except HEAD)	add	pass
+t3701-add-interactive::handle-submodules	t3701-add-interactive	handle submodules	add	pass
+t3701-add-interactive::set-up-pathological-context	t3701-add-interactive	set up pathological context	add	pass
+t3701-add-interactive::add-p-works-with-pathological-context-lines	t3701-add-interactive	add -p works with pathological context lines	add	pass
+t3701-add-interactive::add-p-patch-editing-works-with-pathological-context-lines	t3701-add-interactive	add -p patch editing works with pathological context lines	add	pass
+t3701-add-interactive::checkout-p-works-with-pathological-context-lines	t3701-add-interactive	checkout -p works with pathological context lines	add	pass
+t3701-add-interactive::add-n-followed-by-add-p-patch-editing	t3701-add-interactive	add -N followed by add -p patch editing	add	pass
+t3701-add-interactive::checkout-p-patch-editing-of-added-file	t3701-add-interactive	checkout -p patch editing of added file	add	pass
+t3701-add-interactive::show-help-from-add-helper	t3701-add-interactive	show help from add--helper	add	pass
+t3701-add-interactive::reset-p-with-unmerged-files	t3701-add-interactive	reset -p with unmerged files	add	pass
+t3701-add-interactive::hunk-splitting-works-with-diff-suppressblankempty	t3701-add-interactive	hunk splitting works with diff.suppressBlankEmpty	add	pass
+t3701-add-interactive::add-p-respects-diff-context	t3701-add-interactive	add -p respects diff.context	add	pass
+t3701-add-interactive::add-p-respects-diff-interhunkcontext	t3701-add-interactive	add -p respects diff.interHunkContext	add	pass
+t3701-add-interactive::add-p-rejects-negative-diff-context	t3701-add-interactive	add -p rejects negative diff.context	add	pass
+t3701-add-interactive::reset-accepts-u-and-inter-hunk-context	t3701-add-interactive	reset accepts -U and --inter-hunk-context	add	pass
+t3701-add-interactive::stash-accepts-u-and-inter-hunk-context	t3701-add-interactive	stash accepts -U and --inter-hunk-context	add	pass
+t3701-add-interactive::set-up-base-for-p-color-tests	t3701-add-interactive	set up base for -p color tests	add	pass
+t3701-add-interactive::splitting-previous-hunk-marks-split-hunks-as-undecided	t3701-add-interactive	splitting previous hunk marks split hunks as undecided	add	pass
+t3701-add-interactive::splitting-edited-hunk	t3701-add-interactive	splitting edited hunk	add	pass
+t3701-add-interactive::options-j-k-roll-over	t3701-add-interactive	options J, K roll over	add	pass
+t3701-add-interactive::options-y-n-a-d-j-k-e-roll-over-to-next-undecided-1	t3701-add-interactive	options y, n, a, d, j, k, e roll over to next undecided (1)	add	pass
+t3701-add-interactive::options-y-n-a-d-j-k-e-roll-over-to-next-undecided-2	t3701-add-interactive	options y, n, a, d, j, k, e roll over to next undecided (2)	add	pass
+t3701-add-interactive::invalid-option-s-is-rejected	t3701-add-interactive	invalid option s is rejected	add	pass
+t3701-add-interactive::eof-quits	t3701-add-interactive	EOF quits	add	pass
+t3701-add-interactive::manual-advance-moves-to-next-file-with-no-auto-advance	t3701-add-interactive	manual advance (">") moves to next file with --no-auto-advance	add	pass
+t3701-add-interactive::select-n-on-a-hunk-go-to-another-file-come-back-and-change-to-y-stages	t3701-add-interactive	select n on a hunk, go to another file, come back and change to y stages	add	pass
+t3701-add-interactive::select-y-on-a-hunk-go-to-another-file-come-back-and-change-to-n-does-not-stage	t3701-add-interactive	select y on a hunk, go to another file, come back and change to n does not stage	add	pass
+t3701-add-interactive::deciding-all-hunks-in-a-file-does-not-auto-advance	t3701-add-interactive	deciding all hunks in a file does not auto advance	add	pass
+t3701-add-interactive::hunks-summary-does-not-show-in-help-text-when-there-are-undecided-hunks	t3701-add-interactive	HUNKS SUMMARY does not show in help text when there are undecided hunks	add	pass
+t3701-add-interactive::help-text-shows-hunk-summary-when-all-hunks-have-been-decided	t3701-add-interactive	help text shows HUNK SUMMARY when all hunks have been decided	add	pass
+t3701-add-interactive::selective-staging-across-multiple-files-with-no-advance	t3701-add-interactive	selective staging across multiple files with --no-advance	add	pass
+t3701-add-interactive::cmd-accepts-u-and-inter-hunk-context	t3701-add-interactive	${cmd%% *} accepts -U and --inter-hunk-context	add	pass
+t3701-add-interactive::cmd-rejects-invalid-context-options	t3701-add-interactive	$cmd rejects invalid context options	add	pass
+t3701-add-interactive::cmd-falls-back-to-color-ui	t3701-add-interactive	$cmd falls back to color.ui	add	pass
+t3701-add-interactive::cmd-rejects-invalid-no-auto-advance-options	t3701-add-interactive	$cmd rejects invalid --no-auto-advance options	add	pass
 t3702-add-edit::setup	t3702-add-edit	setup	add	pass
 t3702-add-edit::add-e	t3702-add-edit	add -e	add	pass
 t3702-add-edit::add-e-notices-editor-failure	t3702-add-edit	add -e notices editor failure	add	pass
@@ -6349,42 +6349,42 @@ t3904-stash-patch::none-of-this-moved-head	t3904-stash-patch	none of this moved 
 t3904-stash-patch::stash-p-with-split-hunk	t3904-stash-patch	stash -p with split hunk	stash	pass
 t3904-stash-patch::stash-p-not-confused-by-git-pager-in-use	t3904-stash-patch	stash -p not confused by GIT_PAGER_IN_USE	stash	pass
 t3904-stash-patch::index-push-not-confused-by-git-pager-in-use	t3904-stash-patch	index push not confused by GIT_PAGER_IN_USE	stash	pass
-t3905-stash-include-untracked::stash-save-include-untracked-some-dirty-working-directory	t3905-stash-include-untracked	stash save --include-untracked some dirty working directory	stash	partial
-t3905-stash-include-untracked::stash-save-include-untracked-cleaned-the-untracked-files	t3905-stash-include-untracked	stash save --include-untracked cleaned the untracked files	stash	partial
-t3905-stash-include-untracked::stash-save-include-untracked-stashed-the-untracked-files	t3905-stash-include-untracked	stash save --include-untracked stashed the untracked files	stash	partial
-t3905-stash-include-untracked::stash-save-patch-include-untracked-fails	t3905-stash-include-untracked	stash save --patch --include-untracked fails	stash	partial
-t3905-stash-include-untracked::stash-save-patch-all-fails	t3905-stash-include-untracked	stash save --patch --all fails	stash	partial
-t3905-stash-include-untracked::clean-up-untracked-untracked-file-to-prepare-for-next-tests	t3905-stash-include-untracked	clean up untracked/untracked file to prepare for next tests	stash	partial
-t3905-stash-include-untracked::stash-pop-after-save-include-untracked-leaves-files-untracked-again	t3905-stash-include-untracked	stash pop after save --include-untracked leaves files untracked again	stash	partial
-t3905-stash-include-untracked::clean-up-untracked-directory-to-prepare-for-next-tests	t3905-stash-include-untracked	clean up untracked/ directory to prepare for next tests	stash	partial
-t3905-stash-include-untracked::stash-save-u-dirty-index	t3905-stash-include-untracked	stash save -u dirty index	stash	partial
-t3905-stash-include-untracked::stash-save-include-untracked-dirty-index-got-stashed	t3905-stash-include-untracked	stash save --include-untracked dirty index got stashed	stash	partial
-t3905-stash-include-untracked::stash-save-include-untracked-q-is-quiet	t3905-stash-include-untracked	stash save --include-untracked -q is quiet	stash	partial
-t3905-stash-include-untracked::stash-save-include-untracked-removed-files	t3905-stash-include-untracked	stash save --include-untracked removed files	stash	partial
-t3905-stash-include-untracked::stash-save-include-untracked-removed-files-got-stashed	t3905-stash-include-untracked	stash save --include-untracked removed files got stashed	stash	partial
-t3905-stash-include-untracked::stash-save-include-untracked-respects-gitignore	t3905-stash-include-untracked	stash save --include-untracked respects .gitignore	stash	partial
-t3905-stash-include-untracked::stash-save-u-can-stash-with-only-untracked-files-different	t3905-stash-include-untracked	stash save -u can stash with only untracked files different	stash	partial
-t3905-stash-include-untracked::stash-save-all-does-not-respect-gitignore	t3905-stash-include-untracked	stash save --all does not respect .gitignore	stash	partial
-t3905-stash-include-untracked::stash-save-all-is-stash-poppable	t3905-stash-include-untracked	stash save --all is stash poppable	stash	partial
-t3905-stash-include-untracked::stash-push-include-untracked-with-pathspec	t3905-stash-include-untracked	stash push --include-untracked with pathspec	stash	partial
-t3905-stash-include-untracked::stash-push-with-ifs-character	t3905-stash-include-untracked	stash push with $IFS character	stash	partial
-t3905-stash-include-untracked::stash-previously-ignored-file	t3905-stash-include-untracked	stash previously ignored file	stash	partial
-t3905-stash-include-untracked::stash-u-untracked-doesnt-print-error	t3905-stash-include-untracked	stash -u -- <untracked> doesnt print error	stash	partial
-t3905-stash-include-untracked::stash-u-untracked-leaves-rest-of-working-tree-in-place	t3905-stash-include-untracked	stash -u -- <untracked> leaves rest of working tree in place	stash	partial
-t3905-stash-include-untracked::stash-u-tracked-untracked-clears-changes-in-both	t3905-stash-include-untracked	stash -u -- <tracked> <untracked> clears changes in both	stash	partial
-t3905-stash-include-untracked::stash-all-ignored-stashes-ignored-file	t3905-stash-include-untracked	stash --all -- <ignored> stashes ignored file	stash	partial
-t3905-stash-include-untracked::stash-all-tracked-ignored-clears-changes-in-both	t3905-stash-include-untracked	stash --all -- <tracked> <ignored> clears changes in both	stash	partial
-t3905-stash-include-untracked::stash-u-ignored-leaves-ignored-file-alone	t3905-stash-include-untracked	stash -u -- <ignored> leaves ignored file alone	stash	partial
-t3905-stash-include-untracked::stash-u-non-existent-shows-no-changes-when-there-are-none	t3905-stash-include-untracked	stash -u -- <non-existent> shows no changes when there are none	stash	partial
-t3905-stash-include-untracked::stash-u-with-globs	t3905-stash-include-untracked	stash -u with globs	stash	partial
-t3905-stash-include-untracked::stash-show-include-untracked-shows-untracked-files	t3905-stash-include-untracked	stash show --include-untracked shows untracked files	stash	partial
-t3905-stash-include-untracked::stash-show-only-untracked-only-shows-untracked-files	t3905-stash-include-untracked	stash show --only-untracked only shows untracked files	stash	partial
-t3905-stash-include-untracked::stash-show-no-include-untracked-cancels-include-only-untracked	t3905-stash-include-untracked	stash show --no-include-untracked cancels --{include,only}-untracked	stash	partial
-t3905-stash-include-untracked::stash-show-include-untracked-errors-on-duplicate-files	t3905-stash-include-untracked	stash show --include-untracked errors on duplicate files	stash	partial
-t3905-stash-include-untracked::stash-show-include-only-untracked-on-stashes-without-untracked-entries	t3905-stash-include-untracked	stash show --{include,only}-untracked on stashes without untracked entries	stash	partial
-t3905-stash-include-untracked::stash-u-ignores-sub-repository	t3905-stash-include-untracked	stash -u ignores sub-repository	stash	partial
-t3906-stash-submodule::stash-push-with-submodule-recurse-true-preserves-dirty-submodule-worktree	t3906-stash-submodule	stash push with submodule.recurse=true preserves dirty submodule worktree	stash	partial
-t3906-stash-submodule::stash-push-and-pop-with-submodule-recurse-true-preserves-dirty-submodule-worktre	t3906-stash-submodule	stash push and pop with submodule.recurse=true preserves dirty submodule worktree	stash	partial
+t3905-stash-include-untracked::stash-save-include-untracked-some-dirty-working-directory	t3905-stash-include-untracked	stash save --include-untracked some dirty working directory	stash	pass
+t3905-stash-include-untracked::stash-save-include-untracked-cleaned-the-untracked-files	t3905-stash-include-untracked	stash save --include-untracked cleaned the untracked files	stash	pass
+t3905-stash-include-untracked::stash-save-include-untracked-stashed-the-untracked-files	t3905-stash-include-untracked	stash save --include-untracked stashed the untracked files	stash	pass
+t3905-stash-include-untracked::stash-save-patch-include-untracked-fails	t3905-stash-include-untracked	stash save --patch --include-untracked fails	stash	pass
+t3905-stash-include-untracked::stash-save-patch-all-fails	t3905-stash-include-untracked	stash save --patch --all fails	stash	pass
+t3905-stash-include-untracked::clean-up-untracked-untracked-file-to-prepare-for-next-tests	t3905-stash-include-untracked	clean up untracked/untracked file to prepare for next tests	stash	pass
+t3905-stash-include-untracked::stash-pop-after-save-include-untracked-leaves-files-untracked-again	t3905-stash-include-untracked	stash pop after save --include-untracked leaves files untracked again	stash	pass
+t3905-stash-include-untracked::clean-up-untracked-directory-to-prepare-for-next-tests	t3905-stash-include-untracked	clean up untracked/ directory to prepare for next tests	stash	pass
+t3905-stash-include-untracked::stash-save-u-dirty-index	t3905-stash-include-untracked	stash save -u dirty index	stash	pass
+t3905-stash-include-untracked::stash-save-include-untracked-dirty-index-got-stashed	t3905-stash-include-untracked	stash save --include-untracked dirty index got stashed	stash	pass
+t3905-stash-include-untracked::stash-save-include-untracked-q-is-quiet	t3905-stash-include-untracked	stash save --include-untracked -q is quiet	stash	pass
+t3905-stash-include-untracked::stash-save-include-untracked-removed-files	t3905-stash-include-untracked	stash save --include-untracked removed files	stash	pass
+t3905-stash-include-untracked::stash-save-include-untracked-removed-files-got-stashed	t3905-stash-include-untracked	stash save --include-untracked removed files got stashed	stash	pass
+t3905-stash-include-untracked::stash-save-include-untracked-respects-gitignore	t3905-stash-include-untracked	stash save --include-untracked respects .gitignore	stash	pass
+t3905-stash-include-untracked::stash-save-u-can-stash-with-only-untracked-files-different	t3905-stash-include-untracked	stash save -u can stash with only untracked files different	stash	pass
+t3905-stash-include-untracked::stash-save-all-does-not-respect-gitignore	t3905-stash-include-untracked	stash save --all does not respect .gitignore	stash	pass
+t3905-stash-include-untracked::stash-save-all-is-stash-poppable	t3905-stash-include-untracked	stash save --all is stash poppable	stash	pass
+t3905-stash-include-untracked::stash-push-include-untracked-with-pathspec	t3905-stash-include-untracked	stash push --include-untracked with pathspec	stash	pass
+t3905-stash-include-untracked::stash-push-with-ifs-character	t3905-stash-include-untracked	stash push with $IFS character	stash	pass
+t3905-stash-include-untracked::stash-previously-ignored-file	t3905-stash-include-untracked	stash previously ignored file	stash	pass
+t3905-stash-include-untracked::stash-u-untracked-doesnt-print-error	t3905-stash-include-untracked	stash -u -- <untracked> doesnt print error	stash	pass
+t3905-stash-include-untracked::stash-u-untracked-leaves-rest-of-working-tree-in-place	t3905-stash-include-untracked	stash -u -- <untracked> leaves rest of working tree in place	stash	pass
+t3905-stash-include-untracked::stash-u-tracked-untracked-clears-changes-in-both	t3905-stash-include-untracked	stash -u -- <tracked> <untracked> clears changes in both	stash	pass
+t3905-stash-include-untracked::stash-all-ignored-stashes-ignored-file	t3905-stash-include-untracked	stash --all -- <ignored> stashes ignored file	stash	pass
+t3905-stash-include-untracked::stash-all-tracked-ignored-clears-changes-in-both	t3905-stash-include-untracked	stash --all -- <tracked> <ignored> clears changes in both	stash	pass
+t3905-stash-include-untracked::stash-u-ignored-leaves-ignored-file-alone	t3905-stash-include-untracked	stash -u -- <ignored> leaves ignored file alone	stash	pass
+t3905-stash-include-untracked::stash-u-non-existent-shows-no-changes-when-there-are-none	t3905-stash-include-untracked	stash -u -- <non-existent> shows no changes when there are none	stash	pass
+t3905-stash-include-untracked::stash-u-with-globs	t3905-stash-include-untracked	stash -u with globs	stash	pass
+t3905-stash-include-untracked::stash-show-include-untracked-shows-untracked-files	t3905-stash-include-untracked	stash show --include-untracked shows untracked files	stash	pass
+t3905-stash-include-untracked::stash-show-only-untracked-only-shows-untracked-files	t3905-stash-include-untracked	stash show --only-untracked only shows untracked files	stash	pass
+t3905-stash-include-untracked::stash-show-no-include-untracked-cancels-include-only-untracked	t3905-stash-include-untracked	stash show --no-include-untracked cancels --{include,only}-untracked	stash	pass
+t3905-stash-include-untracked::stash-show-include-untracked-errors-on-duplicate-files	t3905-stash-include-untracked	stash show --include-untracked errors on duplicate files	stash	pass
+t3905-stash-include-untracked::stash-show-include-only-untracked-on-stashes-without-untracked-entries	t3905-stash-include-untracked	stash show --{include,only}-untracked on stashes without untracked entries	stash	pass
+t3905-stash-include-untracked::stash-u-ignores-sub-repository	t3905-stash-include-untracked	stash -u ignores sub-repository	stash	pass
+t3906-stash-submodule::stash-push-with-submodule-recurse-true-preserves-dirty-submodule-worktree	t3906-stash-submodule	stash push with submodule.recurse=true preserves dirty submodule worktree	stash	pass
+t3906-stash-submodule::stash-push-and-pop-with-submodule-recurse-true-preserves-dirty-submodule-worktre	t3906-stash-submodule	stash push and pop with submodule.recurse=true preserves dirty submodule worktree	stash	pass
 t3907-stash-show-config::setup	t3907-stash-show-config	setup	stash	pass
 t3907-stash-show-config::showstat-unset-showpatch-unset	t3907-stash-show-config	showStat unset showPatch unset	stash	pass
 t3907-stash-show-config::showstat-unset-showpatch-false	t3907-stash-show-config	showStat unset showPatch false	stash	pass
@@ -7025,7 +7025,7 @@ t4023-diff-rename-typechange::cross-renames-to-be-detected-for-regular-files	t40
 t4023-diff-rename-typechange::cross-renames-to-be-detected-for-typechange	t4023-diff-rename-typechange	cross renames to be detected for typechange	diff	pass
 t4023-diff-rename-typechange::moves-and-renames	t4023-diff-rename-typechange	moves and renames	diff	pass
 t4024-diff-optimize-common::diff-u0	t4024-diff-optimize-common	diff -U0	diff	pass
-t4025-hunk-header::hunk-header-truncation-with-an-overly-long-line	t4025-hunk-header	hunk header truncation with an overly long line	diff	pass
+t4025-hunk-header::hunk-header-truncation-with-an-overly-long-line	t4025-hunk-header	hunk header truncation with an overly long line	diff	partial
 t4026-color::reset	t4026-color	reset		pass
 t4026-color::empty-color-is-empty	t4026-color	empty color is empty		pass
 t4026-color::attribute-before-color-name	t4026-color	attribute before color name		pass
@@ -7060,25 +7060,25 @@ t4026-color::wrong-number-of-letters-in-rgb-color	t4026-color	wrong number of le
 t4026-color::unknown-color-slots-are-ignored-diff	t4026-color	unknown color slots are ignored (diff)	config	pass
 t4026-color::unknown-color-slots-are-ignored-branch	t4026-color	unknown color slots are ignored (branch)	branch	pass
 t4026-color::unknown-color-slots-are-ignored-status	t4026-color	unknown color slots are ignored (status)	config	pass
-t4027-diff-submodule::git-diff-raw-head	t4027-diff-submodule	git diff --raw HEAD	diff	partial
-t4027-diff-submodule::git-diff-index-raw-head	t4027-diff-submodule	git diff-index --raw HEAD	diff	partial
-t4027-diff-submodule::git-diff-files-raw	t4027-diff-submodule	git diff-files --raw	diff	partial
-t4027-diff-submodule::git-diff-head	t4027-diff-submodule	git diff HEAD	diff	partial
-t4027-diff-submodule::git-diff-head-with-dirty-submodule-work-tree	t4027-diff-submodule	git diff HEAD with dirty submodule (work tree)	diff	partial
-t4027-diff-submodule::git-diff-head-with-dirty-submodule-index	t4027-diff-submodule	git diff HEAD with dirty submodule (index)	diff	partial
-t4027-diff-submodule::git-diff-head-with-dirty-submodule-untracked	t4027-diff-submodule	git diff HEAD with dirty submodule (untracked)	diff	partial
-t4027-diff-submodule::git-diff-head-with-dirty-submodule-untracked-none-ignored	t4027-diff-submodule	git diff HEAD with dirty submodule (untracked) (none ignored)	diff	partial
-t4027-diff-submodule::git-diff-head-with-dirty-submodule-work-tree-refs-match	t4027-diff-submodule	git diff HEAD with dirty submodule (work tree, refs match)	diff	partial
-t4027-diff-submodule::git-diff-head-with-dirty-submodule-work-tree-refs-match-gitmodules	t4027-diff-submodule	git diff HEAD with dirty submodule (work tree, refs match) [.gitmodules]	diff	partial
-t4027-diff-submodule::git-diff-head-with-dirty-submodule-index-refs-match	t4027-diff-submodule	git diff HEAD with dirty submodule (index, refs match)	diff	partial
-t4027-diff-submodule::git-diff-head-with-dirty-submodule-untracked-refs-match	t4027-diff-submodule	git diff HEAD with dirty submodule (untracked, refs match)	diff	partial
-t4027-diff-submodule::git-diff-head-with-dirty-submodule-untracked-refs-match-gitmodules	t4027-diff-submodule	git diff HEAD with dirty submodule (untracked, refs match) [.gitmodules]	diff	partial
-t4027-diff-submodule::git-diff-between-submodule-commits	t4027-diff-submodule	git diff between submodule commits	diff	partial
-t4027-diff-submodule::git-diff-between-submodule-commits-gitmodules	t4027-diff-submodule	git diff between submodule commits [.gitmodules]	diff	partial
-t4027-diff-submodule::git-diff-empty-submodule-dir	t4027-diff-submodule	git diff (empty submodule dir)	diff	partial
-t4027-diff-submodule::conflicted-submodule-setup	t4027-diff-submodule	conflicted submodule setup	diff	partial
-t4027-diff-submodule::combined-empty-submodule	t4027-diff-submodule	combined (empty submodule)	diff	partial
-t4027-diff-submodule::combined-with-submodule	t4027-diff-submodule	combined (with submodule)	diff	partial
+t4027-diff-submodule::git-diff-raw-head	t4027-diff-submodule	git diff --raw HEAD	diff	pass
+t4027-diff-submodule::git-diff-index-raw-head	t4027-diff-submodule	git diff-index --raw HEAD	diff	pass
+t4027-diff-submodule::git-diff-files-raw	t4027-diff-submodule	git diff-files --raw	diff	pass
+t4027-diff-submodule::git-diff-head	t4027-diff-submodule	git diff HEAD	diff	pass
+t4027-diff-submodule::git-diff-head-with-dirty-submodule-work-tree	t4027-diff-submodule	git diff HEAD with dirty submodule (work tree)	diff	pass
+t4027-diff-submodule::git-diff-head-with-dirty-submodule-index	t4027-diff-submodule	git diff HEAD with dirty submodule (index)	diff	pass
+t4027-diff-submodule::git-diff-head-with-dirty-submodule-untracked	t4027-diff-submodule	git diff HEAD with dirty submodule (untracked)	diff	pass
+t4027-diff-submodule::git-diff-head-with-dirty-submodule-untracked-none-ignored	t4027-diff-submodule	git diff HEAD with dirty submodule (untracked) (none ignored)	diff	pass
+t4027-diff-submodule::git-diff-head-with-dirty-submodule-work-tree-refs-match	t4027-diff-submodule	git diff HEAD with dirty submodule (work tree, refs match)	diff	pass
+t4027-diff-submodule::git-diff-head-with-dirty-submodule-work-tree-refs-match-gitmodules	t4027-diff-submodule	git diff HEAD with dirty submodule (work tree, refs match) [.gitmodules]	diff	pass
+t4027-diff-submodule::git-diff-head-with-dirty-submodule-index-refs-match	t4027-diff-submodule	git diff HEAD with dirty submodule (index, refs match)	diff	pass
+t4027-diff-submodule::git-diff-head-with-dirty-submodule-untracked-refs-match	t4027-diff-submodule	git diff HEAD with dirty submodule (untracked, refs match)	diff	pass
+t4027-diff-submodule::git-diff-head-with-dirty-submodule-untracked-refs-match-gitmodules	t4027-diff-submodule	git diff HEAD with dirty submodule (untracked, refs match) [.gitmodules]	diff	pass
+t4027-diff-submodule::git-diff-between-submodule-commits	t4027-diff-submodule	git diff between submodule commits	diff	pass
+t4027-diff-submodule::git-diff-between-submodule-commits-gitmodules	t4027-diff-submodule	git diff between submodule commits [.gitmodules]	diff	pass
+t4027-diff-submodule::git-diff-empty-submodule-dir	t4027-diff-submodule	git diff (empty submodule dir)	diff	pass
+t4027-diff-submodule::conflicted-submodule-setup	t4027-diff-submodule	conflicted submodule setup	diff	pass
+t4027-diff-submodule::combined-empty-submodule	t4027-diff-submodule	combined (empty submodule)	diff	pass
+t4027-diff-submodule::combined-with-submodule	t4027-diff-submodule	combined (with submodule)	diff	pass
 t4028-format-patch-mime-headers::create-commit-with-utf-8-body	t4028-format-patch-mime-headers	create commit with utf-8 body	format-patch	pass
 t4028-format-patch-mime-headers::patch-has-mime-headers	t4028-format-patch-mime-headers	patch has mime headers	format-patch	pass
 t4028-format-patch-mime-headers::patch-has-mime-and-extra-headers	t4028-format-patch-mime-headers	patch has mime and extra headers	format-patch	pass
@@ -7505,14 +7505,14 @@ t4058-diff-duplicates::git-diff-head-does-not-segfault	t4058-diff-duplicates	git
 t4058-diff-duplicates::forcibly-switch-to-another-branch-verify-status-empty	t4058-diff-duplicates	forcibly switch to another branch, verify status empty	diff	pass
 t4058-diff-duplicates::fast-forward-from-non-duplicate-entries-to-duplicate	t4058-diff-duplicates	fast-forward from non-duplicate entries to duplicate	diff	pass
 t4058-diff-duplicates::switch-to-base-branch-and-force-status-to-be-clean	t4058-diff-duplicates	switch to base branch and force status to be clean	diff	pass
-t4059-diff-submodule-not-initialized::setup-submodules	t4059-diff-submodule-not-initialized	setup - submodules	diff	partial
-t4059-diff-submodule-not-initialized::setup-git-submodule-add	t4059-diff-submodule-not-initialized	setup - git submodule add	diff	partial
-t4059-diff-submodule-not-initialized::submodule-directory-removed	t4059-diff-submodule-not-initialized	submodule directory removed	diff	partial
-t4059-diff-submodule-not-initialized::setup-submodule-multiple-commits	t4059-diff-submodule-not-initialized	setup - submodule multiple commits	diff	partial
-t4059-diff-submodule-not-initialized::submodule-removed-multiple-commits	t4059-diff-submodule-not-initialized	submodule removed multiple commits	diff	partial
-t4059-diff-submodule-not-initialized::submodule-not-initialized-in-new-clone	t4059-diff-submodule-not-initialized	submodule not initialized in new clone	diff	partial
-t4059-diff-submodule-not-initialized::setup-submodule-moved	t4059-diff-submodule-not-initialized	setup submodule moved	diff	partial
-t4059-diff-submodule-not-initialized::submodule-moved-then-removed	t4059-diff-submodule-not-initialized	submodule moved then removed	diff	partial
+t4059-diff-submodule-not-initialized::setup-submodules	t4059-diff-submodule-not-initialized	setup - submodules	diff	pass
+t4059-diff-submodule-not-initialized::setup-git-submodule-add	t4059-diff-submodule-not-initialized	setup - git submodule add	diff	pass
+t4059-diff-submodule-not-initialized::submodule-directory-removed	t4059-diff-submodule-not-initialized	submodule directory removed	diff	pass
+t4059-diff-submodule-not-initialized::setup-submodule-multiple-commits	t4059-diff-submodule-not-initialized	setup - submodule multiple commits	diff	pass
+t4059-diff-submodule-not-initialized::submodule-removed-multiple-commits	t4059-diff-submodule-not-initialized	submodule removed multiple commits	diff	pass
+t4059-diff-submodule-not-initialized::submodule-not-initialized-in-new-clone	t4059-diff-submodule-not-initialized	submodule not initialized in new clone	diff	pass
+t4059-diff-submodule-not-initialized::setup-submodule-moved	t4059-diff-submodule-not-initialized	setup submodule moved	diff	pass
+t4059-diff-submodule-not-initialized::submodule-moved-then-removed	t4059-diff-submodule-not-initialized	submodule moved then removed	diff	pass
 t4060-diff-submodule-option-diff-format::setup-repository	t4060-diff-submodule-option-diff-format	setup repository	diff	pass
 t4060-diff-submodule-option-diff-format::added-submodule	t4060-diff-submodule-option-diff-format	added submodule	diff	pass
 t4060-diff-submodule-option-diff-format::added-submodule-set-diff-submodule	t4060-diff-submodule-option-diff-format	added submodule, set diff.submodule	diff	pass
@@ -9709,17 +9709,17 @@ t5408-send-pack-stdin::cmdline-refs-with-multiple-duplicates	t5408-send-pack-std
 t5408-send-pack-stdin::stdin-refs-come-after-cmdline	t5408-send-pack-stdin	--stdin refs come after cmdline	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-cmdline	t5408-send-pack-stdin	refspecs and --mirror do not mix (cmdline)	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-stdin	t5408-send-pack-stdin	refspecs and --mirror do not mix (stdin)	send-pack	pass
-t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	pass
-t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	pass
-t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	pass
-t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	pass
-t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	pass
-t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	pass
-t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	pass
-t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	pass
-t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	pass
-t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	pass
-t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	pass
+t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	partial
+t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	partial
+t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	partial
+t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	partial
+t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	partial
+t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	partial
+t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	partial
+t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	partial
+t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	partial
+t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	partial
+t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	partial
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	not_ported
