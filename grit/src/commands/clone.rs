@@ -508,51 +508,60 @@ fn copy_refs_as_remote(
     remote_name: &str,
     no_tags: bool,
 ) -> Result<()> {
-    let src_refs_heads = src_git_dir.join("refs/heads");
-    let dst_remotes = dst_git_dir.join("refs/remotes").join(remote_name);
-
-    // Copy refs/heads/* → refs/remotes/<remote>/*
-    if src_refs_heads.is_dir() {
-        copy_refs_recursive(&src_refs_heads, &dst_remotes)?;
+    // Use the library ref-listing API which handles both files and reftable
+    let heads = grit_lib::refs::list_refs(src_git_dir, "refs/heads/")
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    for (refname, oid) in &heads {
+        let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+        let dst_ref = dst_git_dir.join("refs/remotes").join(remote_name).join(branch);
+        if let Some(parent) = dst_ref.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
     }
 
-    // Copy refs/tags/* → refs/tags/* (tags are shared), unless --no-tags
     if !no_tags {
-        let src_tags = src_git_dir.join("refs/tags");
-        let dst_tags = dst_git_dir.join("refs/tags");
-        if src_tags.is_dir() {
-            copy_refs_recursive(&src_tags, &dst_tags)?;
+        let tags = grit_lib::refs::list_refs(src_git_dir, "refs/tags/")
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        for (refname, oid) in &tags {
+            let dst_ref = dst_git_dir.join(refname);
+            if let Some(parent) = dst_ref.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
         }
     }
 
-    // Also handle packed-refs if present
-    let packed_refs = src_git_dir.join("packed-refs");
-    if packed_refs.is_file() {
-        let content = fs::read_to_string(&packed_refs)?;
-        for line in content.lines() {
-            if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
-                continue;
-            }
-            let mut parts = line.split_whitespace();
-            let Some(oid) = parts.next() else { continue };
-            let Some(refname) = parts.next() else { continue };
+    // Also handle packed-refs if present (files backend only)
+    if !grit_lib::reftable::is_reftable_repo(src_git_dir) {
+        let packed_refs = src_git_dir.join("packed-refs");
+        if packed_refs.is_file() {
+            let content = fs::read_to_string(&packed_refs)?;
+            let dst_remotes = dst_git_dir.join("refs/remotes").join(remote_name);
+            for line in content.lines() {
+                if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
+                    continue;
+                }
+                let mut parts = line.split_whitespace();
+                let Some(oid) = parts.next() else { continue };
+                let Some(refname) = parts.next() else { continue };
 
-            if let Some(branch) = refname.strip_prefix("refs/heads/") {
-                let dst_ref = dst_remotes.join(branch);
-                if let Some(parent) = dst_ref.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                // Don't overwrite loose refs (they're more up-to-date)
-                if !dst_ref.exists() {
-                    fs::write(&dst_ref, format!("{oid}\n"))?;
-                }
-            } else if !no_tags && refname.starts_with("refs/tags/") {
-                let dst_ref = dst_git_dir.join(refname);
-                if let Some(parent) = dst_ref.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                if !dst_ref.exists() {
-                    fs::write(&dst_ref, format!("{oid}\n"))?;
+                if let Some(branch) = refname.strip_prefix("refs/heads/") {
+                    let dst_ref = dst_remotes.join(branch);
+                    if let Some(parent) = dst_ref.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    if !dst_ref.exists() {
+                        fs::write(&dst_ref, format!("{oid}\n"))?;
+                    }
+                } else if !no_tags && refname.starts_with("refs/tags/") {
+                    let dst_ref = dst_git_dir.join(refname);
+                    if let Some(parent) = dst_ref.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    if !dst_ref.exists() {
+                        fs::write(&dst_ref, format!("{oid}\n"))?;
+                    }
                 }
             }
         }
@@ -582,18 +591,17 @@ fn copy_refs_direct(
     src_git_dir: &Path,
     dst_git_dir: &Path,
 ) -> Result<()> {
-    // Copy refs/heads/* → refs/heads/*
-    let src_refs_heads = src_git_dir.join("refs/heads");
-    let dst_refs_heads = dst_git_dir.join("refs/heads");
-    if src_refs_heads.is_dir() {
-        copy_refs_recursive(&src_refs_heads, &dst_refs_heads)?;
-    }
-
-    // Copy refs/tags/* → refs/tags/*
-    let src_tags = src_git_dir.join("refs/tags");
-    let dst_tags = dst_git_dir.join("refs/tags");
-    if src_tags.is_dir() {
-        copy_refs_recursive(&src_tags, &dst_tags)?;
+    // Use the library API to read refs (handles both files and reftable)
+    for prefix in &["refs/heads/", "refs/tags/"] {
+        let refs = grit_lib::refs::list_refs(src_git_dir, prefix)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        for (refname, oid) in &refs {
+            let dst_ref = dst_git_dir.join(refname);
+            if let Some(parent) = dst_ref.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&dst_ref, format!("{}\n", oid.to_hex()))?;
+        }
     }
 
     // Also handle packed-refs if present

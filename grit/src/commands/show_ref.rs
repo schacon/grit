@@ -258,6 +258,13 @@ fn ref_matches_pattern(refname: &str, pattern: &str) -> bool {
 }
 
 fn collect_all_refs(git_dir: &Path) -> Result<BTreeMap<String, ObjectId>> {
+    // Dispatch to reftable backend if configured
+    if grit_lib::reftable::is_reftable_repo(git_dir) {
+        let refs = grit_lib::reftable::reftable_list_refs(git_dir, "refs/")
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        return Ok(refs.into_iter().collect());
+    }
+
     let mut refs = BTreeMap::new();
     collect_loose_refs(git_dir, &git_dir.join("refs"), "refs", &mut refs)?;
     for (name, oid) in parse_packed_refs(git_dir)? {
