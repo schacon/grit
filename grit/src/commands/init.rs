@@ -167,10 +167,30 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
     };
     let skip_default_templates = matches!(&args.template, Some(t) if t.is_empty());
 
+    // Determine ref format
+    let ref_format = args.ref_format.as_deref().unwrap_or("files");
+    match ref_format {
+        "files" | "reftable" => {}
+        other => bail!("unknown ref storage format: {other}"),
+    }
+
+    // On reinit, check for format mismatch
+    if is_reinit {
+        let existing_format = detect_ref_format(&real_git_dir);
+        if existing_format != ref_format {
+            bail!(
+                "attempt to reinitialize repository with mismatched ref format: \
+                 existing '{}', requested '{}'",
+                existing_format,
+                ref_format
+            );
+        }
+    }
+
     // Create the git directory structure
     create_git_dir(&real_git_dir, &initial_branch, bare, &object_format,
                    template_dir.as_deref(), skip_default_templates,
-                   args.shared.as_deref(), is_reinit)?;
+                   args.shared.as_deref(), is_reinit, ref_format)?;
 
     // Handle --separate-git-dir: write gitfile at path/.git
     if args.separate_git_dir.is_some() && !bare {
@@ -200,6 +220,34 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
 }
 
 /// Create or update the git directory structure.
+/// Detect the ref storage format of an existing repository.
+fn detect_ref_format(git_dir: &Path) -> &'static str {
+    // Check config for extensions.refStorage
+    let config_path = git_dir.join("config");
+    if let Ok(content) = fs::read_to_string(&config_path) {
+        // Simple INI parsing: look for refStorage under [extensions]
+        let mut in_extensions = false;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') {
+                in_extensions = trimmed.eq_ignore_ascii_case("[extensions]");
+                continue;
+            }
+            if in_extensions {
+                if let Some((key, value)) = trimmed.split_once('=') {
+                    if key.trim().eq_ignore_ascii_case("refstorage") {
+                        let v = value.trim();
+                        if v.eq_ignore_ascii_case("reftable") {
+                            return "reftable";
+                        }
+                    }
+                }
+            }
+        }
+    }
+    "files"
+}
+
 fn create_git_dir(
     git_dir: &Path,
     initial_branch: &str,
@@ -209,6 +257,7 @@ fn create_git_dir(
     skip_default_templates: bool,
     shared: Option<&str>,
     is_reinit: bool,
+    ref_format: &str,
 ) -> Result<()> {
     // Create core directories
     for sub in &[
@@ -220,6 +269,16 @@ fn create_git_dir(
         "refs/tags",
     ] {
         fs::create_dir_all(git_dir.join(sub))?;
+    }
+
+    // Create reftable directory structure if needed
+    if ref_format == "reftable" {
+        let reftable_dir = git_dir.join("reftable");
+        fs::create_dir_all(&reftable_dir)?;
+        let tables_list = reftable_dir.join("tables.list");
+        if !tables_list.exists() {
+            fs::write(&tables_list, "")?;
+        }
     }
 
     // Apply templates or built-in defaults
@@ -259,8 +318,11 @@ fn create_git_dir(
     // Write config
     let config_path = git_dir.join("config");
     if !is_reinit || !config_path.exists() {
+        let needs_extensions = object_format != "sha1" || ref_format == "reftable";
+        let repo_version = if needs_extensions { 1 } else { 0 };
+
         let mut config_content = String::from("[core]\n");
-        config_content.push_str("\trepositoryformatversion = 0\n");
+        config_content.push_str(&format!("\trepositoryformatversion = {repo_version}\n"));
         config_content.push_str("\tfilemode = true\n");
         if bare {
             config_content.push_str("\tbare = true\n");
@@ -269,17 +331,15 @@ fn create_git_dir(
             config_content.push_str("\tlogallrefupdates = true\n");
         }
 
-        // Write object format extension if not sha1
-        if object_format != "sha1" {
-            // Bump repository format version to 1 for extensions
-            config_content = config_content.replace(
-                "repositoryformatversion = 0",
-                "repositoryformatversion = 1",
-            );
-            config_content.push_str(&format!(
-                "[extensions]\n\tobjectformat = {}\n",
-                object_format
-            ));
+        // Write extensions if needed
+        if needs_extensions {
+            config_content.push_str("[extensions]\n");
+            if object_format != "sha1" {
+                config_content.push_str(&format!("\tobjectformat = {}\n", object_format));
+            }
+            if ref_format == "reftable" {
+                config_content.push_str("\trefStorage = reftable\n");
+            }
         }
 
         // Write shared repository config in [core] section
