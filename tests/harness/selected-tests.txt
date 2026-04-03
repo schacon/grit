@@ -843,3 +843,4 @@ t9920-commit-tree-author-env.sh
 test-lib.sh
 t3424-rebase-empty.sh
 t3425-rebase-topology-merges.sh
+t3427-rebase-subtree.sh
