@@ -262,8 +262,8 @@ struct AddConfig {
     config: ConfigSet,
 }
 
+#[allow(dead_code)]
 enum AddPathError {
-    #[allow(dead_code)]
     Ignored(String),
     IoError(anyhow::Error),
     Other(anyhow::Error),

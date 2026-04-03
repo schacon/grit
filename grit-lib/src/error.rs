@@ -14,6 +14,10 @@ pub enum Error {
     #[error("not a git repository (or any of the parent directories): {0}")]
     NotARepository(String),
 
+    /// A bare repository was found but access is forbidden by safe.bareRepository.
+    #[error("cannot use bare repository '{0}' (safe.bareRepository is 'explicit')")]
+    ForbiddenBareRepository(String),
+
     /// A supplied object ID string was not valid hex or the wrong length.
     #[error("invalid object id '{0}'")]
     InvalidObjectId(String),

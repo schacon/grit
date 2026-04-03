@@ -398,7 +398,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.color_moved = Some("default".to_owned());
                 }
                 s if s.starts_with("-O") && s.len() > 2 => {
-                    args.order_file = Some(s[2..].to_owned());
+                    args.order_file = Some(s[2..].to_string());
                 }
                 _ => { extra_revs.push(r.clone()); continue; }
             }
@@ -645,8 +645,12 @@ pub fn run(mut args: Args) -> Result<()> {
         entries
     };
 
-    // Apply orderfile sorting (-O <file> or diff.orderFile config)
-    let entries = apply_orderfile(entries, &args.order_file, &repo.git_dir)?;
+    // Apply orderfile sorting if specified
+    let entries = if let Some(ref order_path) = args.order_file {
+        apply_orderfile(entries, order_path)
+    } else {
+        entries
+    };
 
     let has_diff = !entries.is_empty();
 
@@ -759,7 +763,7 @@ fn run_no_index(args: &Args) -> Result<()> {
     let path_a = Path::new(paths[0].as_str());
     let path_b = Path::new(paths[1].as_str());
 
-    // If both are directories, diff all files recursively
+    // If both paths are directories, diff all files recursively
     if path_a.is_dir() && path_b.is_dir() {
         return run_no_index_dirs(args, path_a, path_b);
     }
@@ -871,95 +875,156 @@ fn run_no_index(args: &Args) -> Result<()> {
     std::process::exit(1);
 }
 
-/// Run `diff --no-index` between two directories: walk both, collect relative
-/// paths, and produce unified diff output for each differing file.
+/// Diff two directories recursively with --no-index.
 fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     use std::collections::BTreeSet;
-    fn collect_files(base: &Path, rel: &Path, out: &mut BTreeSet<String>) -> Result<()> {
-        let full = base.join(rel);
-        if full.is_dir() {
-            let mut entries: Vec<_> = std::fs::read_dir(&full)?
-                .filter_map(|e| e.ok())
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                collect_files(base, &rel.join(entry.file_name()), out)?;
+
+    fn collect_files(dir: &Path, prefix: &str, out: &mut BTreeSet<String>) -> Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let rel = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if entry.file_type()?.is_dir() {
+                collect_files(&entry.path(), &rel, out)?;
+            } else {
+                out.insert(rel);
             }
-        } else if full.is_file() {
-            out.insert(rel.to_string_lossy().into_owned());
         }
         Ok(())
     }
+
     let mut files_a = BTreeSet::new();
     let mut files_b = BTreeSet::new();
-    collect_files(dir_a, Path::new(""), &mut files_a)?;
-    collect_files(dir_b, Path::new(""), &mut files_b)?;
+    collect_files(dir_a, "", &mut files_a)?;
+    collect_files(dir_b, "", &mut files_b)?;
 
-    let all_files: BTreeSet<_> = files_a.union(&files_b).cloned().collect();
+    let all_files: BTreeSet<_> = files_a.iter().chain(files_b.iter()).cloned().collect();
+    let mut has_diff = false;
     let stdout = io::stdout();
     let mut out = stdout.lock();
-    let mut has_diff = false;
     let context_lines = args.unified.unwrap_or(3);
-
-    let use_color = match args.color.as_deref() {
-        Some("always") => true,
-        Some("never") => false,
-        Some("auto") | None => io::stdout().is_terminal(),
-        Some(_) => false,
-    };
 
     for rel in &all_files {
         let fa = dir_a.join(rel);
         let fb = dir_b.join(rel);
-        let data_a = if fa.is_file() { std::fs::read(&fa).unwrap_or_default() } else { Vec::new() };
-        let data_b = if fb.is_file() { std::fs::read(&fb).unwrap_or_default() } else { Vec::new() };
-        if data_a == data_b {
-            continue;
+        let data_a = if fa.is_file() { std::fs::read(&fa).ok() } else { None };
+        let data_b = if fb.is_file() { std::fs::read(&fb).ok() } else { None };
+
+        match (&data_a, &data_b) {
+            (Some(a), Some(b)) if a == b => continue,
+            _ => {}
         }
+
         has_diff = true;
-        let label_a = format!("{}/{}", dir_a.display(), rel);
+        let _label_a = format!("{}/{}", dir_a.display(), rel);
         let label_b = format!("{}/{}", dir_b.display(), rel);
 
         if args.name_only {
-            writeln!(out, "{label_b}")?;
+            writeln!(out, "{}", label_b)?;
             continue;
         }
         if args.name_status {
-            let status = if !fa.is_file() { "A" } else if !fb.is_file() { "D" } else { "M" };
-            writeln!(out, "{status}\t{label_b}")?;
-            continue;
-        }
-        if args.numstat {
-            let text_a = String::from_utf8_lossy(&data_a);
-            let text_b = String::from_utf8_lossy(&data_b);
-            let (ins, del) = count_changes(&text_a, &text_b);
-            writeln!(out, "{}\t{}\t{}", ins, del, label_b)?;
+            let status = match (&data_a, &data_b) {
+                (None, Some(_)) => "A",
+                (Some(_), None) => "D",
+                _ => "M",
+            };
+            writeln!(out, "{}\t{}", status, label_b)?;
             continue;
         }
 
-        let text_a = String::from_utf8_lossy(&data_a);
-        let text_b = String::from_utf8_lossy(&data_b);
-        let diff_output = unified_diff(&text_a, &text_b, &label_a, &label_b, context_lines);
-        if use_color {
-            for line in diff_output.lines() {
-                if line.starts_with("@@") {
-                    writeln!(out, "{CYAN}{line}{RESET}")?;
-                } else if line.starts_with('+') && !line.starts_with("+++") {
-                    writeln!(out, "{GREEN}{line}{RESET}")?;
-                } else if line.starts_with('-') && !line.starts_with("---") {
-                    writeln!(out, "{RED}{line}{RESET}")?;
-                } else {
-                    writeln!(out, "{line}")?;
-                }
-            }
-        } else {
-            write!(out, "{diff_output}")?;
+        let text_a = data_a.as_ref().map(|d| String::from_utf8_lossy(d).to_string()).unwrap_or_default();
+        let text_b = data_b.as_ref().map(|d| String::from_utf8_lossy(d).to_string()).unwrap_or_default();
+
+        let old_label = if data_a.is_some() { format!("a/{}", rel) } else { "/dev/null".to_string() };
+        let new_label = if data_b.is_some() { format!("b/{}", rel) } else { "/dev/null".to_string() };
+        writeln!(out, "diff --git a/{} b/{}", rel, rel)?;
+        if data_a.is_none() {
+            writeln!(out, "new file mode 100644")?;
+        } else if data_b.is_none() {
+            writeln!(out, "deleted file mode 100644")?;
         }
+        let patch = grit_lib::diff::unified_diff(&text_a, &text_b, &old_label, &new_label, context_lines);
+        write!(out, "{}", patch)?;
     }
+
     if has_diff {
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Apply an orderfile to sort diff entries.
+///
+/// The orderfile contains one pattern per line. Files matching the first
+/// pattern come first, then files matching the second, etc. Files not
+/// matching any pattern come last in their original order.
+fn apply_orderfile(mut entries: Vec<DiffEntry>, order_path: &str) -> Vec<DiffEntry> {
+    let patterns: Vec<String> = match std::fs::read_to_string(order_path) {
+        Ok(content) => content
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect(),
+        Err(_) => return entries,
+    };
+
+    // Assign a sort key to each entry based on which pattern it matches first
+    let sort_key = |entry: &DiffEntry| -> usize {
+        let path = entry.new_path.as_ref().or(entry.old_path.as_ref()).cloned().unwrap_or_default();
+        for (i, pat) in patterns.iter().enumerate() {
+            if orderfile_pattern_matches(pat, &path) {
+                return i;
+            }
+        }
+        patterns.len() // unmatched files go last
+    };
+
+    entries.sort_by_key(|e| sort_key(e));
+    entries
+}
+
+/// Check if an orderfile pattern matches a path.
+/// Supports basic glob patterns: `*` matches any sequence, `?` matches one char.
+fn orderfile_pattern_matches(pattern: &str, path: &str) -> bool {
+    // Simple glob matching: just check if the pattern matches the filename or full path
+    let name = path.rsplit('/').next().unwrap_or(path);
+    glob_match(pattern, name) || glob_match(pattern, path)
+}
+
+/// Basic glob matching (supports `*` and `?`).
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let mut pi = 0;
+    let mut ti = 0;
+    let pb = pattern.as_bytes();
+    let tb = text.as_bytes();
+    let mut star_pi = usize::MAX;
+    let mut star_ti = 0;
+
+    while ti < tb.len() {
+        if pi < pb.len() && (pb[pi] == b'?' || pb[pi] == tb[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pb.len() && pb[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if star_pi != usize::MAX {
+            pi = star_pi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+    while pi < pb.len() && pb[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pb.len()
 }
 
 /// If `--` is present, everything before is revisions, everything after is paths.
@@ -1635,90 +1700,6 @@ fn write_shortstat(
 }
 
 /// Get the terminal width, defaulting to 80 if unavailable.
-/// Apply orderfile sorting: entries matching earlier patterns come first.
-/// Patterns are simple glob patterns (fnmatch-style) read from the given file.
-fn apply_orderfile(
-    mut entries: Vec<DiffEntry>,
-    order_file: &Option<String>,
-    git_dir: &Path,
-) -> Result<Vec<DiffEntry>> {
-    let path = match order_file {
-        Some(p) => Some(p.clone()),
-        None => {
-            // Check diff.orderFile config
-            use grit_lib::config::ConfigSet;
-            let cfg = ConfigSet::load(Some(git_dir), false)
-                .unwrap_or_else(|_| ConfigSet::new());
-            cfg.get("diff.orderFile")
-        }
-    };
-    let path = match path {
-        Some(p) if !p.is_empty() => p,
-        _ => return Ok(entries),
-    };
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return Ok(entries), // silently ignore missing orderfile
-    };
-    let patterns: Vec<&str> = content.lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .collect();
-    if patterns.is_empty() {
-        return Ok(entries);
-    }
-    // Assign a sort key to each entry: index of the first matching pattern,
-    // or patterns.len() for non-matching entries (they go last).
-    let sort_key = |e: &DiffEntry| -> usize {
-        let path = e.path();
-        for (i, pat) in patterns.iter().enumerate() {
-            if orderfile_match(pat, path) {
-                return i;
-            }
-        }
-        patterns.len()
-    };
-    entries.sort_by_key(sort_key);
-    Ok(entries)
-}
-
-/// Simple glob matching for orderfile patterns.
-/// Supports `*` as a wildcard matching any substring.
-fn orderfile_match(pattern: &str, path: &str) -> bool {
-    // If pattern has no '/', match against just the filename
-    let name = if !pattern.contains('/') {
-        path.rsplit('/').next().unwrap_or(path)
-    } else {
-        path
-    };
-    glob_match(pattern, name)
-}
-
-/// Simple glob match: `*` matches any number of chars, `?` matches one char.
-fn glob_match(pattern: &str, text: &str) -> bool {
-    let pat: Vec<char> = pattern.chars().collect();
-    let txt: Vec<char> = text.chars().collect();
-    glob_match_inner(&pat, &txt)
-}
-
-fn glob_match_inner(pat: &[char], txt: &[char]) -> bool {
-    match (pat.first(), txt.first()) {
-        (None, None) => true,
-        (Some(&'*'), _) => {
-            // Try matching rest of pattern at every position
-            for i in 0..=txt.len() {
-                if glob_match_inner(&pat[1..], &txt[i..]) {
-                    return true;
-                }
-            }
-            false
-        }
-        (Some(&'?'), Some(_)) => glob_match_inner(&pat[1..], &txt[1..]),
-        (Some(&a), Some(&b)) if a == b => glob_match_inner(&pat[1..], &txt[1..]),
-        _ => false,
-    }
-}
-
 fn terminal_width() -> usize {
     // Try COLUMNS env var first
     if let Ok(cols) = std::env::var("COLUMNS") {

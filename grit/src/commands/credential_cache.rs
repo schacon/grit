@@ -61,6 +61,9 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
         }
+        "exit" => {
+            // Tell the daemon to exit. Since we have no daemon, this is a no-op.
+        }
         other => bail!("unknown credential-cache action: {other}"),
     }
     Ok(())

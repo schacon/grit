@@ -15,6 +15,8 @@ pub mod pathspec;
 fn main() {
     let start = std::time::Instant::now();
     let trace2_path = std::env::var("GIT_TRACE2").ok().filter(|s| !s.is_empty());
+    let trace2_perf_path = std::env::var("GIT_TRACE2_PERF").ok().filter(|s| !s.is_empty());
+    let trace2_event_path = std::env::var("GIT_TRACE2_EVENT").ok().filter(|s| !s.is_empty());
     let exit_code;
 
     // Write trace2 version event at startup
@@ -22,6 +24,18 @@ fn main() {
         let _ = trace2_write_event(path, "version", env!("CARGO_PKG_VERSION"));
         let cmd_line: Vec<String> = std::env::args().collect();
         let _ = trace2_write_event(path, "start", &cmd_line.join(" "));
+        let ancestry = get_process_ancestry();
+        let _ = trace2_write_event(path, "cmd_ancestry", &format!("ancestry:[{}]", ancestry.join(" ")));
+    }
+    if let Some(ref path) = trace2_perf_path {
+        let cmd_line: Vec<String> = std::env::args().collect();
+        let _ = trace2_write_perf(path, "version", env!("CARGO_PKG_VERSION"));
+        let _ = trace2_write_perf(path, "start", &cmd_line.join(" "));
+    }
+    if let Some(ref path) = trace2_event_path {
+        let cmd_line: Vec<String> = std::env::args().collect();
+        let _ = trace2_write_json_event(path, "version", env!("CARGO_PKG_VERSION"));
+        let _ = trace2_write_json_event(path, "start", &cmd_line.join(" "));
     }
 
     match run() {
@@ -43,8 +57,54 @@ fn main() {
             &format!("elapsed:{:.6} code:{}", elapsed.as_secs_f64(), exit_code),
         );
     }
+    if let Some(ref path) = trace2_perf_path {
+        let elapsed = start.elapsed();
+        let _ = trace2_write_perf(
+            path,
+            "exit",
+            &format!("elapsed:{:.6} code:{}", elapsed.as_secs_f64(), exit_code),
+        );
+    }
+    if let Some(ref path) = trace2_event_path {
+        let elapsed = start.elapsed();
+        let _ = trace2_write_json_event(
+            path,
+            "exit",
+            &format!("elapsed:{:.6} code:{}", elapsed.as_secs_f64(), exit_code),
+        );
+    }
 
     std::process::exit(exit_code);
+}
+
+/// Get process ancestry by walking parent PIDs on Linux.
+fn get_process_ancestry() -> Vec<String> {
+    let mut result = Vec::new();
+    #[cfg(target_os = "linux")]
+    {
+        let mut pid = std::process::id();
+        // Walk up to 10 ancestors
+        for _ in 0..10 {
+            if let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
+                let name = status.lines()
+                    .find(|l| l.starts_with("Name:"))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("unknown")
+                    .to_string();
+                let ppid = status.lines()
+                    .find(|l| l.starts_with("PPid:"))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(0);
+                result.push(name);
+                if ppid <= 1 { break; }
+                pid = ppid;
+            } else {
+                break;
+            }
+        }
+    }
+    result
 }
 
 /// Write a trace2 normal-format event to the trace file.
@@ -56,6 +116,38 @@ fn trace2_write_event(path: &str, event: &str, data: &str) -> std::io::Result<()
         .append(true)
         .open(path)?;
     writeln!(file, "{} grit:0                         {} {}", now, event, data)?;
+    Ok(())
+}
+
+/// Write a trace2 perf-format line.
+fn trace2_write_perf(path: &str, event: &str, data: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let now = chrono_now();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(
+        file,
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | {}",
+        now, event, data
+    )?;
+    Ok(())
+}
+
+/// Write a trace2 JSON event line.
+fn trace2_write_json_event(path: &str, event: &str, data: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let now = chrono_now();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(
+        file,
+        r#"{{"event":"{}","sid":"grit-0","time":"{}","data":"{}"}}"#,
+        event, now, data
+    )?;
     Ok(())
 }
 

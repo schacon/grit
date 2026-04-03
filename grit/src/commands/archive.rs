@@ -6,6 +6,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use flate2::write::DeflateEncoder;
 use flate2::Compression;
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf::{convert_to_worktree, get_file_attrs, load_gitattributes, ConversionConfig, GitAttributes};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
@@ -62,9 +64,15 @@ pub fn run(args: Args) -> Result<()> {
         other => bail!("unsupported archive format: '{other}'"),
     };
 
+    // Load conversion config for CRLF handling
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let conv = ConversionConfig::from_config(&config);
+    let work_tree = repo.work_tree.clone().unwrap_or_default();
+    let attrs = load_gitattributes(&work_tree);
+
     // Collect all entries
     let mut entries: Vec<ArchiveEntry> = Vec::new();
-    collect_entries(&repo, &tree_data, prefix, &args.paths, &mut entries)?;
+    collect_entries(&repo, &tree_data, prefix, &args.paths, &conv, &attrs, &config, &mut entries)?;
 
     // If prefix ends with '/', add a directory entry for it
     if !prefix.is_empty() && prefix.ends_with('/') {
@@ -118,6 +126,9 @@ fn collect_entries(
     tree_data: &[u8],
     prefix: &str,
     filter_paths: &[String],
+    conv: &ConversionConfig,
+    attrs: &GitAttributes,
+    config: &ConfigSet,
     entries: &mut Vec<ArchiveEntry>,
 ) -> Result<()> {
     let tree_entries = parse_tree(tree_data)?;
@@ -151,13 +162,17 @@ fn collect_entries(
                 mode: entry.mode,
                 data: Vec::new(),
             });
-            collect_entries(repo, &sub_obj.data, &dir_path, filter_paths, entries)?;
+            collect_entries(repo, &sub_obj.data, &dir_path, filter_paths, conv, attrs, config, entries)?;
         } else {
             let blob = repo.odb.read(&entry.oid)?;
+            // Apply working-tree conversion (CRLF, ident, filters)
+            let file_attrs = get_file_attrs(attrs, &full_path, config);
+            let oid_hex = entry.oid.to_hex();
+            let converted = convert_to_worktree(&blob.data, &full_path, conv, &file_attrs, Some(&oid_hex));
             entries.push(ArchiveEntry {
                 path: full_path,
                 mode: entry.mode,
-                data: blob.data,
+                data: converted,
             });
         }
     }

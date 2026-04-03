@@ -66,8 +66,8 @@ A	ft/5
 EOF
 
 test_expect_success 'diff-tree -r -t includes tree entries' '
-	git diff-tree -r -t --name-status HEAD~1 HEAD >raw &&
-	grep -v "\.test_tick" raw >actual &&
+	git diff-tree -r -t --name-status HEAD~1 HEAD >raw_full &&
+	grep -v "\.test_tick" raw_full >actual &&
 	test_cmp expect_full actual
 '
 

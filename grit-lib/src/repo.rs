@@ -257,6 +257,18 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
 
     // Check if `dir` itself is a bare repo (has objects/ and HEAD directly)
     if dir.join("objects").is_dir() && dir.join("HEAD").is_file() {
+        // Check safe.bareRepository policy before opening bare repos.
+        // When set to "explicit", implicit bare repo discovery is forbidden
+        // unless GIT_DIR was set (handled earlier in discover()).
+        if let Ok(cfg) = crate::config::ConfigSet::load(None, true) {
+            if let Some(val) = cfg.get("safe.bareRepository") {
+                if val == "explicit" {
+                    return Err(Error::ForbiddenBareRepository(
+                        dir.display().to_string()
+                    ));
+                }
+            }
+        }
         let repo = Repository::open(dir, None)?;
         return Ok(Some(repo));
     }

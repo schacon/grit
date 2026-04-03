@@ -62,7 +62,7 @@ test_expect_success 'apply a patch outside repository' '
 		printf "one\ntwo\nthree\nfour\nfive\n" >nums &&
 		git diff >sample.patch
 	) &&
-	patch_abs="$PWD/patch-test/sample.patch" &&
+	patch_abs="$(cd patch-test && pwd)/sample.patch" &&
 	tmpdir=$(mktemp -d) &&
 	cp patch-test/nums.old "$tmpdir/nums" &&
 	(

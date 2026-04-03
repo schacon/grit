@@ -16,8 +16,7 @@ test_expect_success 'credential fill with verbatim helper' '
 	echo "username=testuser"
 	echo "password=testpass"
 	EOF
-	PATH="$PWD:$PATH" &&
-	export PATH &&
+	PATH="$TRASH_DIRECTORY:$PATH" && export PATH &&
 	echo "protocol=https
 host=example.com
 " | git -c credential.helper=test-helper credential fill >actual &&
@@ -34,8 +33,7 @@ test_expect_success 'credential fill passes through protocol and host' '
 	echo "username=user"
 	echo "password=pass"
 	EOF
-	PATH="$PWD:$PATH" &&
-	export PATH &&
+	PATH="$TRASH_DIRECTORY:$PATH" && export PATH &&
 	echo "protocol=https
 host=example.com
 " | git -c credential.helper=echo credential fill >stdout 2>stderr &&

@@ -10,7 +10,7 @@ test_expect_success 'setup' '
 	git init
 '
 
-test_expect_failure 'trace2 ancestry event (requires test-tool and trace2)' '
+test_expect_success 'trace2 ancestry event' '
 	GIT_TRACE2="$(pwd)/trace.ancestry" git version >out &&
 	grep "cmd_ancestry" trace.ancestry
 '

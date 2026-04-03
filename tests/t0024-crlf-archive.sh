@@ -13,7 +13,7 @@ test_expect_success setup '
 	git commit -m Initial
 '
 
-test_expect_failure 'tar archive' '
+test_expect_success 'tar archive' '
 	git archive --format=tar HEAD >test.tar &&
 	mkdir untarred &&
 	"$TAR" xf test.tar -C untarred &&

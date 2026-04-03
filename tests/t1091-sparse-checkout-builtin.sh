@@ -26,7 +26,7 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'git sparse-checkout list (not sparse)' '
+test_expect_success 'git sparse-checkout list (not sparse)' '
 	test_must_fail git -C repo sparse-checkout list 2>err &&
 	test_grep "this worktree is not sparse" err
 '
