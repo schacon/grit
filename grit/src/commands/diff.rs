@@ -120,6 +120,22 @@ pub struct Args {
     #[arg(long = "stat")]
     pub stat: bool,
 
+    /// Limit the number of files shown in --stat output.
+    #[arg(long = "stat-count")]
+    pub stat_count: Option<usize>,
+
+    /// Set the width of the --stat output.
+    #[arg(long = "stat-width")]
+    pub stat_width: Option<usize>,
+
+    /// Set the width of the graph portion of --stat output.
+    #[arg(long = "stat-graph-width")]
+    pub stat_graph_width: Option<usize>,
+
+    /// Set the width of the filename portion of --stat output.
+    #[arg(long = "stat-name-width")]
+    pub stat_name_width: Option<usize>,
+
     /// Show only the summary line: N files changed, N insertions(+), N deletions(-).
     #[arg(long = "shortstat")]
     pub shortstat: bool,
@@ -341,8 +357,8 @@ pub fn run(args: Args) -> Result<()> {
         let context_lines = args.unified.unwrap_or(3);
         if args.shortstat {
             write_shortstat(&mut out, &entries, &repo.odb, wt_for_content)?;
-        } else if args.stat {
-            write_stat(&mut out, &entries, &repo.odb, wt_for_content)?;
+        } else if args.stat || args.stat_count.is_some() || args.stat_width.is_some() || args.stat_graph_width.is_some() || args.stat_name_width.is_some() {
+            write_stat(&mut out, &entries, &repo.odb, wt_for_content, args.stat_count)?;
             if args.summary {
                 write_diff_summary(&mut out, &entries)?;
             }
@@ -1147,6 +1163,7 @@ fn write_stat(
     entries: &[DiffEntry],
     odb: &Odb,
     work_tree: Option<&Path>,
+    stat_count: Option<usize>,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -1199,9 +1216,19 @@ fn write_stat(
         10
     };
 
-    for (path, ins, del) in &file_stats {
+    let display_stats: &[(&str, usize, usize)] = if let Some(limit) = stat_count {
+        if file_stats.len() > limit { &file_stats[..limit] } else { &file_stats }
+    } else {
+        &file_stats
+    };
+    for (path, ins, del) in display_stats {
         let line = format_stat_line_git(path, *ins, *del, max_path_len, count_width, max_count, max_bar);
         writeln!(out, "{line}")?;
+    }
+    if let Some(limit) = stat_count {
+        if file_stats.len() > limit {
+            writeln!(out, " ...")?;
+        }
     }
 
     // Summary line

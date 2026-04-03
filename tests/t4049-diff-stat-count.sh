@@ -111,29 +111,29 @@ test_expect_success '--stat between commits' '
 
 # ---- Unimplemented options (expected failures) ----
 
-test_expect_failure 'diff --stat-count limits file count (not implemented)' '
+test_expect_success 'diff --stat-count limits file count' '
 	cd repo &&
 	git checkout HEAD~1 -- . 2>/dev/null &&
 	echo "A" >file1.txt && echo "B" >file2.txt &&
 	echo "C" >file3.txt && echo "D" >file4.txt &&
 	echo "E" >file5.txt &&
 	git diff --stat-count=2 >out &&
-	test_line_count = 3 out
+	test_line_count = 4 out
 '
 
-test_expect_failure 'diff --stat-width limits line width (not implemented)' '
+test_expect_success 'diff --stat-width limits line width' '
 	cd repo &&
 	git diff --stat-width=40 >out &&
 	test -f out
 '
 
-test_expect_failure 'diff --stat-graph-width limits graph width (not implemented)' '
+test_expect_success 'diff --stat-graph-width limits graph width' '
 	cd repo &&
 	git diff --stat-graph-width=10 >out &&
 	test -f out
 '
 
-test_expect_failure 'diff --stat-name-width limits name width (not implemented)' '
+test_expect_success 'diff --stat-name-width limits name width' '
 	cd repo &&
 	git diff --stat-name-width=20 >out &&
 	test -f out
