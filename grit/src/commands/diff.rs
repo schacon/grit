@@ -117,8 +117,9 @@ pub struct Args {
     pub cached: bool,
 
     /// Show a diffstat summary instead of the patch.
-    #[arg(long = "stat")]
-    pub stat: bool,
+    /// Accepts optional `--stat=<width>[,<name-width>[,<count>]]`.
+    #[arg(long = "stat", num_args = 0..=1, default_missing_value = "", require_equals = true)]
+    pub stat: Option<String>,
 
     /// Limit the number of files shown in --stat output.
     #[arg(long = "stat-count")]
@@ -266,7 +267,32 @@ pub struct Args {
 }
 
 /// Run the `diff` command.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
+    // Parse --stat=<width>[,<name-width>[,<count>]] into separate fields
+    let stat_enabled = if let Some(ref val) = args.stat {
+        if !val.is_empty() {
+            let parts: Vec<&str> = val.split(',').collect();
+            if let Some(w) = parts.first().and_then(|s| s.parse::<usize>().ok()) {
+                if args.stat_width.is_none() {
+                    args.stat_width = Some(w);
+                }
+            }
+            if let Some(nw) = parts.get(1).and_then(|s| s.parse::<usize>().ok()) {
+                if args.stat_name_width.is_none() {
+                    args.stat_name_width = Some(nw);
+                }
+            }
+            if let Some(c) = parts.get(2).and_then(|s| s.parse::<usize>().ok()) {
+                if args.stat_count.is_none() {
+                    args.stat_count = Some(c);
+                }
+            }
+        }
+        true
+    } else {
+        false
+    };
+
     // --no-index: compare two files outside a git repository
     if args.no_index {
         return run_no_index(&args);
@@ -405,8 +431,8 @@ pub fn run(args: Args) -> Result<()> {
         let context_lines = args.unified.unwrap_or(3);
         if args.shortstat {
             write_shortstat(&mut out, &entries, &repo.odb, wt_for_content)?;
-        } else if args.stat || args.stat_count.is_some() || args.stat_width.is_some() || args.stat_graph_width.is_some() || args.stat_name_width.is_some() {
-            write_stat(&mut out, &entries, &repo.odb, wt_for_content, args.stat_count)?;
+        } else if stat_enabled || args.stat_count.is_some() || args.stat_width.is_some() || args.stat_graph_width.is_some() || args.stat_name_width.is_some() {
+            write_stat(&mut out, &entries, &repo.odb, wt_for_content, args.stat_count, args.stat_width, args.stat_name_width)?;
             if args.summary {
                 write_diff_summary(&mut out, &entries)?;
             }
@@ -416,7 +442,7 @@ pub fn run(args: Args) -> Result<()> {
             write_name_only(&mut out, &entries)?;
         } else if args.name_status {
             write_name_status(&mut out, &entries)?;
-        } else if args.summary && !args.stat {
+        } else if args.summary && !stat_enabled {
             write_diff_summary(&mut out, &entries)?;
         } else {
             write_patch(
@@ -488,9 +514,9 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
 
-    if args.stat || args.shortstat {
+    if args.stat.is_some() || args.shortstat {
         let (adds, dels) = count_changes(&text_a, &text_b);
-        if args.stat {
+        if args.stat.is_some() {
             let display = if paths[0] != paths[1] {
                 format!("{} => {}", paths[0], paths[1])
             } else {
@@ -1212,6 +1238,8 @@ fn write_stat(
     odb: &Odb,
     work_tree: Option<&Path>,
     stat_count: Option<usize>,
+    stat_width: Option<usize>,
+    stat_name_width: Option<usize>,
 ) -> Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -1251,18 +1279,26 @@ fn write_stat(
     let max_count = file_stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
     let count_width = format!("{}", max_count).len();
 
-    // Compute max bar width from terminal width like git:
-    // Git limits total line width to (terminal_width - 1).
-    // line = " {path} | {count} {bar}"
-    // fixed overhead = 1 (leading space) + max_path_len + 3 (" | ") + count_width + 1 (space before bar)
-    let term_width = terminal_width();
-    let fixed = 1 + max_path_len + 3 + count_width + 1;
-    let max_bar = if term_width > fixed + 10 + 1 {
-        term_width - 1 - fixed
+    // Compute layout widths from total width, like git.
+    // Line format: " {name:<N} | {count:>C} {bar}"
+    // Total chars = 1 + N + 3 + C + 1 + bar_len = N + C + 5 + bar_len
+    // Target total = total_width - 1
+    let total_width = stat_width.unwrap_or_else(terminal_width);
+    let overhead = count_width + 5; // " " + " | " + " " before bar = 1+3+1 = 5
+    let line_budget = total_width.saturating_sub(1).saturating_sub(overhead);
+    // line_budget = name_len + bar_len
+
+    // Apply stat_name_width if set
+    let max_path_len = if let Some(nw) = stat_name_width {
+        max_path_len.min(nw)
+    } else if stat_width.is_some() && max_path_len > line_budget.saturating_sub(1) {
+        // Name too long for the budget — truncate, leaving at least 1 char for bar
+        line_budget.saturating_sub(1)
     } else {
-        // Minimum bar width
-        10
+        max_path_len
     };
+
+    let max_bar = line_budget.saturating_sub(max_path_len).max(10);
 
     let display_stats: &[(&str, usize, usize)] = if let Some(limit) = stat_count {
         if file_stats.len() > limit { &file_stats[..limit] } else { &file_stats }
@@ -1270,7 +1306,20 @@ fn write_stat(
         &file_stats
     };
     for (path, ins, del) in display_stats {
-        let line = format_stat_line_git(path, *ins, *del, max_path_len, count_width, max_count, max_bar);
+        // Truncate path if it exceeds max_path_len (from stat_name_width or stat_width)
+        let display_path: std::borrow::Cow<str> = if path.len() > max_path_len {
+            // Git truncates with "..." prefix, being careful with char boundaries
+            let suffix_len = max_path_len.saturating_sub(3);
+            // Walk backwards from end to find suffix_len bytes on a char boundary
+            let mut start = path.len().saturating_sub(suffix_len);
+            while start < path.len() && !path.is_char_boundary(start) {
+                start += 1;
+            }
+            std::borrow::Cow::Owned(format!("...{}", &path[start..]))
+        } else {
+            std::borrow::Cow::Borrowed(*path)
+        };
+        let line = format_stat_line_git(&display_path, *ins, *del, max_path_len, count_width, max_count, max_bar);
         writeln!(out, "{line}")?;
     }
     if let Some(limit) = stat_count {

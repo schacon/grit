@@ -43,7 +43,7 @@ test_expect_failure "diff --stat: long name is abbreviated to fit terminal width
 	test_cmp expect80 actual
 '
 
-test_expect_failure "diff --stat=60: stat width limits output (--stat=N not implemented)" '
+test_expect_success "diff --stat=60: stat width limits output" '
 	git diff --stat=60 HEAD^ HEAD >output &&
 	grep " | " output >actual &&
 	test -s actual
@@ -75,7 +75,7 @@ test_expect_success "diff --stat: big change produces stat output" '
 	test -s actual
 '
 
-test_expect_failure "diff --stat=40: big change with narrow terminal (--stat=N not implemented)" '
+test_expect_success "diff --stat=40: big change with narrow terminal" '
 	git diff --stat=40 HEAD^ HEAD >output &&
 	grep " | " output >actual &&
 	test -s actual

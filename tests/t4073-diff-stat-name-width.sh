@@ -31,7 +31,7 @@ test_expect_failure 'test name-width not long enough for dir name (not implement
 	grep ".../f再见  |" out
 '
 
-test_expect_failure 'test name-width minimum length (not implemented)' '
+test_expect_success 'test name-width minimum length' '
 	git diff --stat --stat-name-width=3 HEAD~1 HEAD >out &&
 	grep "... |" out
 '
