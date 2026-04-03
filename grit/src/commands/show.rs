@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::{diff_trees, unified_diff};
+use grit_lib::diff::{anchored_unified_diff, diff_trees, unified_diff};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -41,6 +41,14 @@ pub struct Args {
     /// Number of unified context lines for diff output.
     #[arg(short = 'U', long = "unified", value_name = "N")]
     pub unified: Option<usize>,
+
+    /// Anchored diff: keep the specified text as context.
+    #[arg(long = "anchored")]
+    pub anchored: Vec<String>,
+
+    /// Use the patience diff algorithm.
+    #[arg(long = "patience")]
+    pub patience: bool,
 }
 
 /// Run the `show` command.
@@ -208,7 +216,11 @@ fn show_commit(
             }
         };
 
-        let patch = unified_diff(&old_content, &new_content, old_path, new_path, context);
+        let patch = if !args.anchored.is_empty() {
+            anchored_unified_diff(&old_content, &new_content, old_path, new_path, context, &args.anchored)
+        } else {
+            unified_diff(&old_content, &new_content, old_path, new_path, context)
+        };
         write!(out, "{patch}")?;
     }
 

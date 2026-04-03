@@ -147,6 +147,33 @@ test_expect_success setup '
 		git format-patch --stdout first | sed -e "1d"
 	} > patch1.eml &&
 	{
+		sed -ne "1p" msg &&
+		echo &&
+		echo "From: $GIT_AUTHOR_NAME <$GIT_AUTHOR_EMAIL>" &&
+		echo "Date: $GIT_AUTHOR_DATE" &&
+		echo &&
+		sed -e "1,2d" msg &&
+		echo "---" &&
+		git diff-tree --no-commit-id --stat -p second
+	} >patch1-stgit.eml &&
+	mkdir -p stgit-series &&
+	cp patch1-stgit.eml stgit-series/patch &&
+	{
+		echo "# This series applies on GIT commit $(git rev-parse first)" &&
+		echo "patch"
+	} >stgit-series/series &&
+	{
+		echo "# HG changeset patch" &&
+		echo "# User $GIT_AUTHOR_NAME <$GIT_AUTHOR_EMAIL>" &&
+		echo "# Date $test_tick 25200" &&
+		echo "#      $(git show --pretty="%aD" -s second)" &&
+		echo "# Node ID 0000000000000000000000000000000000000000" &&
+		echo "# Parent  0000000000000000000000000000000000000000" &&
+		cat msg &&
+		echo &&
+		git diff-tree --no-commit-id -p second
+	} >patch1-hg.eml &&
+	{
 		echo "X-Fake-Field: Line One" &&
 		echo "X-Fake-Field: Line Two" &&
 		echo "X-Fake-Field: Line Three" &&
@@ -261,24 +288,49 @@ test_expect_success 'am applies patch e-mail with preceding whitespace' '
 	test "$(git rev-parse second^)" = "$(git rev-parse HEAD^)"
 '
 
-test_expect_failure 'am applies stgit patch' '
-	false
+test_expect_success 'am applies stgit patch' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am patch1-stgit.eml &&
+	test_path_is_missing .git/rebase-apply &&
+	git diff --exit-code second
 '
 
-test_expect_failure 'am --patch-format=stgit applies stgit patch' '
-	false
+test_expect_success 'am --patch-format=stgit applies stgit patch' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --patch-format=stgit <patch1-stgit.eml &&
+	test_path_is_missing .git/rebase-apply &&
+	git diff --exit-code second
 '
 
-test_expect_failure 'am applies stgit series' '
-	false
+test_expect_success 'am applies stgit series' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am stgit-series/series &&
+	test_path_is_missing .git/rebase-apply &&
+	git diff --exit-code second
 '
 
-test_expect_failure 'am applies hg patch' '
-	false
+test_expect_success 'am applies hg patch' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am patch1-hg.eml &&
+	test_path_is_missing .git/rebase-apply &&
+	git diff --exit-code second
 '
 
-test_expect_failure 'am --patch-format=hg applies hg patch' '
-	false
+test_expect_success 'am --patch-format=hg applies hg patch' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --patch-format=hg <patch1-hg.eml &&
+	test_path_is_missing .git/rebase-apply &&
+	git diff --exit-code second
 '
 
 test_expect_success 'am with applypatch-msg hook' '
@@ -810,8 +862,15 @@ test_expect_success 'am without --committer-date-is-author-date' '
 	! test_cmp at ct
 '
 
-test_expect_failure 'am --ignore-date' '
-	false
+test_expect_success 'am --ignore-date' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_tick &&
+	git am --ignore-date patch1 &&
+	git cat-file commit HEAD | sed -e "/^$/q" >head1 &&
+	sed -ne "/^author /s/.*> //p" head1 >at &&
+	grep "+0000" at
 '
 
 test_expect_success 'am into an unborn branch' '

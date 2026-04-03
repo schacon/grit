@@ -775,9 +775,19 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
             continue;
         }
 
-        // Modify existing file
-        let old_content = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
+        // Modify existing file — read from old_path if it differs from new_path
+        let read_path = if let Some(old_p) = fp.old_path.as_deref().filter(|p| *p != "/dev/null") {
+            let adj = PathBuf::from(adjust_path(old_p, args.strip, args.directory.as_deref()));
+            if adj != path && adj.exists() {
+                adj
+            } else {
+                path.clone()
+            }
+        } else {
+            path.clone()
+        };
+        let old_content = fs::read_to_string(&read_path)
+            .with_context(|| format!("failed to read {}", read_path.display()))?;
 
         if fp.hunks.is_empty() {
             // Mode-only change

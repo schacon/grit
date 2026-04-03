@@ -1165,6 +1165,245 @@ pub fn unified_diff(
     output
 }
 
+/// Compute a unified diff with anchored lines.
+///
+/// Anchored lines that appear exactly once in both old and new content are
+/// forced to match, splitting the diff into segments around those anchor points.
+/// This produces diffs where the anchored text stays as context and surrounding
+/// lines are shown as additions/removals.
+pub fn anchored_unified_diff(
+    old_content: &str,
+    new_content: &str,
+    old_path: &str,
+    new_path: &str,
+    context_lines: usize,
+    anchors: &[String],
+) -> String {
+    use similar::TextDiff;
+    use std::collections::HashMap;
+
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    let new_lines: Vec<&str> = new_content.lines().collect();
+
+    // Find anchored lines that appear exactly once in both old and new
+    let mut anchor_pairs: Vec<(usize, usize)> = Vec::new(); // (old_idx, new_idx)
+
+    for anchor in anchors {
+        let anchor_str = anchor.as_str();
+
+        // Count occurrences in old
+        let old_positions: Vec<usize> = old_lines.iter().enumerate()
+            .filter(|(_, l)| l.trim_end() == anchor_str)
+            .map(|(i, _)| i)
+            .collect();
+
+        // Count occurrences in new
+        let new_positions: Vec<usize> = new_lines.iter().enumerate()
+            .filter(|(_, l)| l.trim_end() == anchor_str)
+            .map(|(i, _)| i)
+            .collect();
+
+        // Only anchor if unique in both
+        if old_positions.len() == 1 && new_positions.len() == 1 {
+            anchor_pairs.push((old_positions[0], new_positions[0]));
+        }
+    }
+
+    // If no valid anchors, fall back to normal diff
+    if anchor_pairs.is_empty() {
+        return unified_diff(old_content, new_content, old_path, new_path, context_lines);
+    }
+
+    // Sort anchor pairs by their position in the old file
+    anchor_pairs.sort_by_key(|&(old_idx, _)| old_idx);
+
+    // Filter to only keep pairs where new positions are also increasing
+    // (longest increasing subsequence of new positions)
+    let mut filtered: Vec<(usize, usize)> = Vec::new();
+    for &pair in &anchor_pairs {
+        if filtered.is_empty() || pair.1 > filtered.last().unwrap().1 {
+            filtered.push(pair);
+        }
+    }
+    let anchor_pairs = filtered;
+
+    // Build a modified version of old/new where we diff segments between anchors.
+    // We'll construct the diff by processing segments:
+    // - Before first anchor
+    // - Between consecutive anchors
+    // - After last anchor
+    // Each anchor line itself is a fixed context match.
+
+    // Collect all diff operations
+    struct DiffOp {
+        tag: char, // ' ', '+', '-'
+        line: String,
+    }
+
+    let mut ops: Vec<DiffOp> = Vec::new();
+    let mut old_pos = 0usize;
+    let mut new_pos = 0usize;
+
+    for &(old_anchor, new_anchor) in &anchor_pairs {
+        // Diff the segment before this anchor
+        let old_segment: Vec<&str> = old_lines[old_pos..old_anchor].to_vec();
+        let new_segment: Vec<&str> = new_lines[new_pos..new_anchor].to_vec();
+
+        let old_seg_text = old_segment.join("\n");
+        let new_seg_text = new_segment.join("\n");
+
+        if !old_seg_text.is_empty() || !new_seg_text.is_empty() {
+            let old_seg_input = if old_seg_text.is_empty() { String::new() } else { format!("{}\n", old_seg_text) };
+            let new_seg_input = if new_seg_text.is_empty() { String::new() } else { format!("{}\n", new_seg_text) };
+            let seg_diff = TextDiff::from_lines(
+                &old_seg_input,
+                &new_seg_input,
+            );
+            for change in seg_diff.iter_all_changes() {
+                let tag = match change.tag() {
+                    similar::ChangeTag::Equal => ' ',
+                    similar::ChangeTag::Delete => '-',
+                    similar::ChangeTag::Insert => '+',
+                };
+                ops.push(DiffOp {
+                    tag,
+                    line: change.value().trim_end_matches('\n').to_string(),
+                });
+            }
+        }
+
+        // The anchor line itself is always context
+        ops.push(DiffOp {
+            tag: ' ',
+            line: old_lines[old_anchor].to_string(),
+        });
+
+        old_pos = old_anchor + 1;
+        new_pos = new_anchor + 1;
+    }
+
+    // Diff the remaining segment after the last anchor
+    let old_segment: Vec<&str> = old_lines[old_pos..].to_vec();
+    let new_segment: Vec<&str> = new_lines[new_pos..].to_vec();
+    let old_seg_text = old_segment.join("\n");
+    let new_seg_text = new_segment.join("\n");
+
+    if !old_seg_text.is_empty() || !new_seg_text.is_empty() {
+        let old_seg_input = if old_seg_text.is_empty() { String::new() } else { format!("{}\n", old_seg_text) };
+        let new_seg_input = if new_seg_text.is_empty() { String::new() } else { format!("{}\n", new_seg_text) };
+        let seg_diff = TextDiff::from_lines(
+            &old_seg_input,
+            &new_seg_input,
+        );
+        for change in seg_diff.iter_all_changes() {
+            let tag = match change.tag() {
+                similar::ChangeTag::Equal => ' ',
+                similar::ChangeTag::Delete => '-',
+                similar::ChangeTag::Insert => '+',
+            };
+            ops.push(DiffOp {
+                tag,
+                line: change.value().trim_end_matches('\n').to_string(),
+            });
+        }
+    }
+
+    // Now format as unified diff with hunks
+    let mut output = String::new();
+    if old_path == "/dev/null" {
+        output.push_str("--- /dev/null\n");
+    } else {
+        output.push_str(&format!("--- a/{old_path}\n"));
+    }
+    if new_path == "/dev/null" {
+        output.push_str("+++ /dev/null\n");
+    } else {
+        output.push_str(&format!("+++ b/{new_path}\n"));
+    }
+
+    // Group ops into hunks with context
+    let total_ops = ops.len();
+    if total_ops == 0 {
+        return output;
+    }
+
+    // Find ranges of changes
+    let mut hunks: Vec<(usize, usize)> = Vec::new(); // (start, end) indices into ops
+    let mut i = 0;
+    while i < total_ops {
+        if ops[i].tag != ' ' {
+            let start = if i > context_lines { i - context_lines } else { 0 };
+            let mut end = i;
+            // Extend to include consecutive changes and their context
+            while end < total_ops {
+                if ops[end].tag != ' ' {
+                    end += 1;
+                    continue;
+                }
+                // Check if there's another change within context_lines
+                let mut next_change = end;
+                while next_change < total_ops && ops[next_change].tag == ' ' {
+                    next_change += 1;
+                }
+                if next_change < total_ops && next_change - end <= context_lines * 2 {
+                    end = next_change + 1;
+                } else {
+                    end = (end + context_lines).min(total_ops);
+                    break;
+                }
+            }
+            // Merge with previous hunk if overlapping
+            if let Some(last) = hunks.last_mut() {
+                if start <= last.1 {
+                    last.1 = end;
+                } else {
+                    hunks.push((start, end));
+                }
+            } else {
+                hunks.push((start, end));
+            }
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+
+    // Output each hunk
+    for (start, end) in hunks {
+        // Count old/new lines in this hunk
+        let mut old_start = 1usize;
+        let mut new_start = 1usize;
+        // Calculate line numbers by counting ops before this hunk
+        for op in &ops[..start] {
+            match op.tag {
+                ' ' => { old_start += 1; new_start += 1; }
+                '-' => { old_start += 1; }
+                '+' => { new_start += 1; }
+                _ => {}
+            }
+        }
+        let mut old_count = 0usize;
+        let mut new_count = 0usize;
+        for op in &ops[start..end] {
+            match op.tag {
+                ' ' => { old_count += 1; new_count += 1; }
+                '-' => { old_count += 1; }
+                '+' => { new_count += 1; }
+                _ => {}
+            }
+        }
+
+        output.push_str(&format!("@@ -{},{} +{},{} @@\n", old_start, old_count, new_start, new_count));
+        for op in &ops[start..end] {
+            output.push(op.tag);
+            output.push_str(&op.line);
+            output.push('\n');
+        }
+    }
+
+    output
+}
+
 /// Extract function context for a hunk header.
 ///
 /// Given a hunk header like `@@ -8,7 +8,7 @@`, find the last line

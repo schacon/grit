@@ -15,7 +15,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    count_changes, detect_renames, diff_index_to_tree, diff_index_to_worktree,
+    anchored_unified_diff, count_changes, detect_renames, diff_index_to_tree, diff_index_to_worktree,
     diff_tree_to_worktree, diff_trees, unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::error::Error;
@@ -725,7 +725,11 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
 
-    let diff_output = unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines);
+    let diff_output = if !args.anchored.is_empty() {
+        anchored_unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines, &args.anchored)
+    } else {
+        unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines)
+    };
 
     // Determine color mode
     let use_color = match args.color.as_deref() {
