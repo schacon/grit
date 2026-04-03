@@ -7196,16 +7196,16 @@ t4039-diff-assume-unchanged::setup	t4039-diff-assume-unchanged	setup	diff	pass
 t4039-diff-assume-unchanged::diff-index-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-index does not examine assume-unchanged entries	diff	pass
 t4039-diff-assume-unchanged::diff-files-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-files does not examine assume-unchanged entries	diff	pass
 t4039-diff-assume-unchanged::find-copies-harder-is-not-confused-by-mode-bits	t4039-diff-assume-unchanged	find-copies-harder is not confused by mode bits	diff	pass
-t4040-whitespace-status::diff-tree-exit-code	t4040-whitespace-status	diff-tree --exit-code	diff	partial
-t4040-whitespace-status::diff-tree-b-exit-code	t4040-whitespace-status	diff-tree -b --exit-code	diff	partial
-t4040-whitespace-status::diff-index-cached-exit-code	t4040-whitespace-status	diff-index --cached --exit-code	diff	partial
-t4040-whitespace-status::diff-index-b-p-cached-exit-code	t4040-whitespace-status	diff-index -b -p --cached --exit-code	diff	partial
-t4040-whitespace-status::diff-index-exit-code	t4040-whitespace-status	diff-index --exit-code	diff	partial
-t4040-whitespace-status::diff-index-b-p-exit-code	t4040-whitespace-status	diff-index -b -p --exit-code	diff	partial
-t4040-whitespace-status::diff-files-exit-code	t4040-whitespace-status	diff-files --exit-code	diff	partial
-t4040-whitespace-status::diff-files-b-p-exit-code	t4040-whitespace-status	diff-files -b -p --exit-code	diff	partial
-t4040-whitespace-status::diff-files-diff-filter-quiet	t4040-whitespace-status	diff-files --diff-filter --quiet	diff-files	partial
-t4040-whitespace-status::diff-tree-diff-filter-quiet	t4040-whitespace-status	diff-tree --diff-filter --quiet	commit	partial
+t4040-whitespace-status::diff-tree-exit-code	t4040-whitespace-status	diff-tree --exit-code	diff	pass
+t4040-whitespace-status::diff-tree-b-exit-code	t4040-whitespace-status	diff-tree -b --exit-code	diff	pass
+t4040-whitespace-status::diff-index-cached-exit-code	t4040-whitespace-status	diff-index --cached --exit-code	diff	pass
+t4040-whitespace-status::diff-index-b-p-cached-exit-code	t4040-whitespace-status	diff-index -b -p --cached --exit-code	diff	pass
+t4040-whitespace-status::diff-index-exit-code	t4040-whitespace-status	diff-index --exit-code	diff	pass
+t4040-whitespace-status::diff-index-b-p-exit-code	t4040-whitespace-status	diff-index -b -p --exit-code	diff	pass
+t4040-whitespace-status::diff-files-exit-code	t4040-whitespace-status	diff-files --exit-code	diff	pass
+t4040-whitespace-status::diff-files-b-p-exit-code	t4040-whitespace-status	diff-files -b -p --exit-code	diff	pass
+t4040-whitespace-status::diff-files-diff-filter-quiet	t4040-whitespace-status	diff-files --diff-filter --quiet	diff-files	pass
+t4040-whitespace-status::diff-tree-diff-filter-quiet	t4040-whitespace-status	diff-tree --diff-filter --quiet	commit	pass
 t4041-diff-submodule-option::setup-submodule	t4041-diff-submodule-option	setup submodule	diff	pass
 t4041-diff-submodule-option::added-submodule	t4041-diff-submodule-option	added submodule	diff	pass
 t4041-diff-submodule-option::added-submodule-set-diff-submodule	t4041-diff-submodule-option	added submodule, set diff.submodule	diff	pass
@@ -9709,17 +9709,17 @@ t5408-send-pack-stdin::cmdline-refs-with-multiple-duplicates	t5408-send-pack-std
 t5408-send-pack-stdin::stdin-refs-come-after-cmdline	t5408-send-pack-stdin	--stdin refs come after cmdline	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-cmdline	t5408-send-pack-stdin	refspecs and --mirror do not mix (cmdline)	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-stdin	t5408-send-pack-stdin	refspecs and --mirror do not mix (stdin)	send-pack	pass
-t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	partial
-t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	partial
-t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	partial
-t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	partial
-t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	partial
-t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	partial
-t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	partial
-t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	partial
-t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	partial
-t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	partial
-t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	partial
+t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	pass
+t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	pass
+t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	pass
+t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	pass
+t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	pass
+t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	pass
+t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	pass
+t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	pass
+t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	pass
+t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	pass
+t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	pass
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	not_ported
@@ -9817,8 +9817,8 @@ t5500-fetch-pack::fetch-pack-diag-url-p-h-r-3	t5500-fetch-pack	fetch-pack --diag
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-4	t5500-fetch-pack	fetch-pack --diag-url $p://$h/~$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-h-r	t5500-fetch-pack	fetch-pack --diag-url ./$h:$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-5	t5500-fetch-pack	fetch-pack --diag-url ./$p:$h/~$r	fetch-pack	pass
-t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	pass
-t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	pass
+t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	partial
+t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	partial
 t5502-quickfetch::clone-without-alternate	t5502-quickfetch	clone without alternate	count-objects	pass
 t5502-quickfetch::further-commits-in-the-original	t5502-quickfetch	further commits in the original	commit	pass
 t5502-quickfetch::copy-commit-and-tree-but-not-blob-by-hand	t5502-quickfetch	copy commit and tree but not blob by hand	count-objects	pass

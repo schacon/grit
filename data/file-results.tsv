@@ -181,7 +181,7 @@ t2007-checkout-symlink	yes	4	4	0	ok
 t2008-checkout-subdir	yes	22	12	10	ok
 t2009-checkout-statinfo	yes	25	20	5	ok
 t2010-checkout-ambiguous	yes	7	5	2	ok
-t2011-checkout-invalid-head	yes	24	21	3	ok
+t2011-checkout-invalid-head	yes	24	20	4	ok
 t2012-checkout-last	yes	25	6	19	ok
 t2013-checkout-submodule	yes	3	3	0	ok
 t2014-checkout-switch	yes	24	7	17	ok
@@ -212,7 +212,7 @@ t2103-update-index-ignore-missing	yes	5	5	0	ok
 t2104-update-index-skip-worktree	yes	4	4	0	ok
 t2105-update-index-gitfile	yes	5	5	0	ok
 t2106-update-index-assume-unchanged	yes	3	3	0	ok
-t2107-update-index-basic	yes	24	21	3	ok
+t2107-update-index-basic	yes	24	22	2	ok
 t2108-update-index-refresh-racy	yes	4	4	0	ok
 t2200-add-update	yes	22	22	0	ok
 t2201-add-update-typechange	yes	4	4	0	ok
@@ -391,7 +391,7 @@ t4035-diff-quiet	yes	45	45	0	ok
 t4036-format-patch-signer-mime	yes	2	2	0	ok
 t4038-diff-combined	yes	28	28	0	ok
 t4039-diff-assume-unchanged	yes	20	20	0	ok
-t4040-whitespace-status	yes	24	23	1	ok
+t4040-whitespace-status	yes	24	24	0	ok
 t4041-diff-submodule-option	yes	5	5	0	ok
 t4042-diff-textconv-caching	yes	3	3	0	ok
 t4043-diff-rename-binary	yes	5	5	0	ok
@@ -551,11 +551,11 @@ t5405-send-pack-rewind	yes	3	3	0	ok
 t5406-remote-rejects	yes	3	3	0	ok
 t5407-post-rewrite-hook	yes	3	3	0	ok
 t5408-send-pack-stdin	yes	2	2	0	ok
-t5409-colorize-remote-messages	yes	2	1	1	ok
+t5409-colorize-remote-messages	yes	2	2	0	ok
 t5410-receive-pack	no	0	0	0	not_ported
 t5411-proc-receive-hook	no	0	0	0	not_ported
 t5500-fetch-pack	yes	5	5	0	ok
-t5501-fetch-push-alternates	yes	3	3	0	ok
+t5501-fetch-push-alternates	yes	3	2	1	ok
 t5502-quickfetch	yes	4	4	0	ok
 t5503-tagfollow	yes	6	6	0	ok
 t5504-fetch-receive-strict	yes	3	3	0	ok
