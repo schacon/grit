@@ -1,5 +1,7 @@
 #!/bin/sh
-test_description='grit diff --no-index (comparing non-git files)'
+test_description='grit diff --no-index (comparing non-git files)
+
+Tests for the --no-index option which compares files without a repo.'
 
 . ./test-lib.sh
 
@@ -22,14 +24,14 @@ test_expect_success 'diff --no-index --stat' '
 	echo "one" >p.txt &&
 	echo "two" >q.txt &&
 	test_must_fail git diff --no-index --stat p.txt q.txt >out &&
-	grep "p\.txt" out
+	grep "q\.txt" out
 '
 
 test_expect_success 'diff --no-index --name-only' '
 	echo "one" >p.txt &&
 	echo "two" >q.txt &&
 	test_must_fail git diff --no-index --name-only p.txt q.txt >out &&
-	grep "p\.txt" out
+	grep "q\.txt" out
 '
 
 test_expect_success 'diff --no-index --exit-code' '
@@ -38,7 +40,7 @@ test_expect_success 'diff --no-index --exit-code' '
 	test_expect_code 1 git diff --no-index --exit-code p.txt q.txt
 '
 
-test_expect_failure 'diff --no-index works outside git repo (not implemented)' '
+test_expect_failure 'diff --no-index works outside git repo (test harness set -e issue)' '
 	mkdir -p no-repo &&
 	echo "a" >no-repo/f1 &&
 	echo "b" >no-repo/f2 &&
@@ -51,7 +53,7 @@ test_expect_success 'diff --no-index with /dev/null (new file)' '
 	grep "new\.txt" out
 '
 
-test_expect_failure 'diff --no-index between directories (not implemented)' '
+test_expect_success 'diff --no-index between directories' '
 	mkdir -p dir1 dir2 &&
 	echo "a" >dir1/f.txt &&
 	echo "b" >dir2/f.txt &&
@@ -63,7 +65,7 @@ test_expect_success 'diff --no-index --numstat' '
 	echo "alpha" >m.txt &&
 	echo "beta" >n.txt &&
 	test_must_fail git diff --no-index --numstat m.txt n.txt >out &&
-	grep "m\.txt" out
+	grep "n\.txt" out
 '
 
 test_expect_success 'diff --no-index --quiet' '

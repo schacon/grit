@@ -160,6 +160,21 @@ struct ArgsWrapper<T: Args> {
 }
 
 /// Parse a command's clap Args from the remaining arguments.
+/// Expand `-<N>` shorthand (e.g. `-1`, `-5`) to `--max-count=<N>` so that
+/// clap can parse it.  Git allows `git log -3` as a shorthand for
+/// `git log --max-count=3`.
+fn expand_dash_number_args(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len());
+    for arg in rest {
+        if arg.len() >= 2 && arg.starts_with('-') && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+            out.push(format!("--max-count={}", &arg[1..]));
+        } else {
+            out.push(arg.clone());
+        }
+    }
+    out
+}
+
 fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
     let mut argv = vec![format!("grit {subcmd}")];
     argv.extend(rest.iter().cloned());

@@ -393,6 +393,11 @@ fn walk_commits(
     merges_only: bool,
     pathspecs: &[String],
 ) -> Result<Vec<(ObjectId, CommitInfo)>> {
+    // Short-circuit: if max_count is explicitly 0, return nothing.
+    if max_count == Some(0) {
+        return Ok(Vec::new());
+    }
+
     let mut visited = HashSet::new();
     let mut queue: Vec<ObjectId> = start.to_vec();
     let mut result = Vec::new();
