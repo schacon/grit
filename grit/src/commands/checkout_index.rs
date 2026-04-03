@@ -194,7 +194,7 @@ fn checkout_entry(
 
     if let Some(parent) = abs_path.parent() {
         if !parent.exists() {
-            if args.mkdir {
+            if args.mkdir || args.force || args.all {
                 std::fs::create_dir_all(parent)?;
             } else {
                 bail!("'{rel_path}': leading directories do not exist");

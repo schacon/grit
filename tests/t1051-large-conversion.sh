@@ -13,7 +13,7 @@ test_expect_success 'setup' '
 	git config core.bigfilethreshold 20
 '
 
-test_expect_failure 'autocrlf=true converts on input (large file)' '
+test_expect_success 'autocrlf=true converts on input (large file)' '
 	printf "\$Id: foo\$\\r\\n" >small &&
 	cat small small >large &&
 	git config core.autocrlf true &&
@@ -24,7 +24,7 @@ test_expect_failure 'autocrlf=true converts on input (large file)' '
 	test_cmp small.index large.index
 '
 
-test_expect_failure 'eol=crlf converts on input (large file)' '
+test_expect_success 'eol=crlf converts on input (large file)' '
 	echo "* eol=crlf" >.gitattributes &&
 	printf "\$Id: foo\$\\r\\n" >small &&
 	cat small small >large &&
@@ -35,7 +35,7 @@ test_expect_failure 'eol=crlf converts on input (large file)' '
 	test_cmp small.index large.index
 '
 
-test_expect_failure 'user-defined filter converts on input (large file)' '
+test_expect_success 'user-defined filter converts on input (large file)' '
 	git config filter.test.clean "sed s/.*/CLEAN/" &&
 	echo "* filter=test" >.gitattributes &&
 	printf "\$Id: foo\$\\r\\n" >small &&
