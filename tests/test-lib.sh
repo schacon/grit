@@ -1,16 +1,10 @@
 #!/bin/sh
 # Simplified test library for Gust tests.
 # Modelled on git/t/test-lib.sh but stripped to what our tests need.
-#
-# Usage in test scripts:
-#   . ./test-lib.sh
-#   test_expect_success 'description' 'commands'
-#   test_done
 
 # Locate grit binary: prefer a local build, else fall back to PATH.
 if test -z "$GUST_BIN"
 then
-	# Look in common cargo output locations
 	for candidate in \
 		"$(dirname "$(dirname "$0")")/target/debug/grit" \
 		"$(dirname "$(dirname "$0")")/target/release/grit"
@@ -21,7 +15,6 @@ then
 			break
 		fi
 	done
-	# Also check the sandbox cache location
 	if test -z "$GUST_BIN"
 	then
 		for f in /var/folders/*/T/cursor-sandbox-cache/*/cargo-target/debug/grit \
@@ -42,22 +35,18 @@ then
 	exit 1
 fi
 
-# Resolve GUST_BIN to an absolute path so wrapper scripts work regardless of cwd.
 GUST_BIN="$(cd "$(dirname "$GUST_BIN")" && pwd)/$(basename "$GUST_BIN")"
 
-# Test environment
 TEST_DIRECTORY="$(cd "$(dirname "$0")" && pwd)"
 TRASH_DIRECTORY="${TRASH_DIRECTORY:-$TEST_DIRECTORY/trash}"
 TEST_RESULTS_DIR="${TEST_DIRECTORY}/test-results"
 
-# Counters
 test_count=0
 test_pass=0
 test_fail=0
 test_skip=0
 test_failures=""
 
-# Colour
 if test -t 1 && command -v tput >/dev/null 2>&1
 then
 	RED="$(tput setaf 1)" GREEN="$(tput setaf 2)" YELLOW="$(tput setaf 3)" RESET="$(tput sgr0)"
@@ -65,52 +54,32 @@ else
 	RED='' GREEN='' YELLOW='' RESET=''
 fi
 
-# Set up a fresh trash directory for this test script.
 setup_trash () {
 	rm -rf "$TRASH_DIRECTORY"
 	mkdir -p "$TRASH_DIRECTORY"
-	mkdir -p "$TRASH_DIRECTORY/.bin"
-	# Write a 'git' wrapper script that calls grit
-	cat >"$TRASH_DIRECTORY/.bin/git" <<EOF
+	TEST_BIN_DIR="${TEST_DIRECTORY}/trash-bin"
+	rm -rf "$TEST_BIN_DIR"
+	mkdir -p "$TEST_BIN_DIR"
+	cat >"$TEST_BIN_DIR/git" <<EOF
 #!/bin/sh
 exec "$GUST_BIN" "\$@"
 EOF
-	chmod +x "$TRASH_DIRECTORY/.bin/git"
-	# Also write a 'grit' wrapper
-	cat >"$TRASH_DIRECTORY/.bin/grit" <<EOF
+	chmod +x "$TEST_BIN_DIR/git"
+	cat >"$TEST_BIN_DIR/grit" <<EOF
 #!/bin/sh
 exec "$GUST_BIN" "\$@"
 EOF
-	chmod +x "$TRASH_DIRECTORY/.bin/grit"
-	# Prepend .bin to PATH so every subshell sees 'git' -> grit
-	export PATH="$TRASH_DIRECTORY/.bin:$PATH"
-	# cd into trash so each test starts with a clean cwd
+	chmod +x "$TEST_BIN_DIR/grit"
+	export PATH="$TEST_BIN_DIR:$PATH"
 	cd "$TRASH_DIRECTORY" || exit 1
-	# initialise a git repo like upstream test-lib does
 	"$GUST_BIN" init -q || exit 1
 }
 
-# Allow tests to use $HOME (set before setup_trash so git config works)
+setup_trash
+
 HOME="$TRASH_DIRECTORY"
 export HOME
 
-# Default author/committer identity for tests
-GIT_AUTHOR_NAME="Test Author"
-GIT_AUTHOR_EMAIL="test@example.com"
-GIT_COMMITTER_NAME="Test Committer"
-GIT_COMMITTER_EMAIL="test@example.com"
-export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
-
-# GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME support (before init)
-if test -n "$GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME"
-then
-	mkdir -p "$TRASH_DIRECTORY"
-	HOME="$TRASH_DIRECTORY" "$GUST_BIN" config --global init.defaultBranch "$GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME"
-fi
-
-setup_trash
-
-# Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"
 then
 	GIT_QUIET=-q
@@ -118,48 +87,79 @@ else
 	GIT_QUIET=
 fi
 
-# Common constants
 ZERO_OID=0000000000000000000000000000000000000000
 SQ="'"
 LF='
 '
 export ZERO_OID SQ LF
 
-# ── helpers used by test bodies ──────────────────────────────────────────────
+if test -n "$GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME"
+then
+	git config --global init.defaultBranch "$GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME"
+fi
 
-test_write_lines () {
-	printf '%s\n' "$@"
-}
+# ── helpers ──
 
 test_grep () {
-	local negate=""
-	if test "$1" = "!"
-	then
-		negate="!"
+	local invert=""
+	while test $# -gt 0; do
+		case "$1" in
+		-e) shift; break ;;
+		-v|!) invert="-v"; shift ;;
+		--) shift; break ;;
+		-*) shift ;;
+		*) break ;;
+		esac
+	done
+	local pattern="$1"
+	shift
+	grep $invert "$pattern" "$@"
+}
+
+test_create_repo () {
+	local repo="$1"
+	mkdir -p "$repo" &&
+	(
+		cd "$repo" &&
+		git init &&
+		git config user.name "Test User" &&
+		git config user.email "test@example.com"
+	)
+}
+
+test_write_lines () {
+	while test $# -gt 0; do
+		printf '%s\n' "$1"
 		shift
-	fi
-	if test "$1" = "-e"
-	then
-		shift
-	fi
-	if test -n "$negate"
-	then
-		! grep "$@"
-	else
-		grep "$@"
-	fi
+	done
 }
 
 test_config () {
-	git config "$1" "$2" &&
-	test_when_finished "git config --unset '$1'"
+	local key="$1" val="$2"
+	git config "$key" "$val"
+}
+
+test_file_not_empty () {
+	if ! test -s "$1"
+	then
+		echo >&2 "test_file_not_empty: '$1' is empty"
+		return 1
+	fi
+}
+
+test_might_fail () {
+	"$@"
+	return 0
+}
+
+test_set_prereq () {
+	:
 }
 
 test_path_is_file () { test -f "$1"; }
 test_path_is_dir  () { test -d "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
 
-# test_line_count OP N FILE
 test_line_count () {
 	local op="$1" count="$2" file="$3"
 	local actual
@@ -212,26 +212,22 @@ test_commit () {
 	git tag "$1"
 }
 
-# Evaluate $2 and check $1 == stdout.
 test_cmp () {
 	diff -u "$1" "$2"
 }
 
-# ── core test functions ───────────────────────────────────────────────────────
+# ── core test functions ──
 
 test_expect_success () {
 	local description="$1"
 	local commands="$2"
 	test_count=$(($test_count + 1))
-
-	# Run in a subshell so each test starts clean
 	(
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1
 		eval "$commands"
 	)
 	local result=$?
-
 	if test $result -eq 0
 	then
 		test_pass=$(($test_pass + 1))
@@ -253,14 +249,12 @@ test_expect_failure () {
 	local description="$1"
 	local commands="$2"
 	test_count=$(($test_count + 1))
-
 	(
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1
 		eval "$commands"
 	)
 	local result=$?
-
 	if test $result -ne 0
 	then
 		test_pass=$(($test_pass + 1))
