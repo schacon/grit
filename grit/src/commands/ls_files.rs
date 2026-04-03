@@ -7,6 +7,7 @@ use std::io::{self, Write};
 use std::path::Component;
 use std::path::PathBuf;
 
+use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, IndexEntry};
 use grit_lib::repo::Repository;
 
@@ -64,6 +65,26 @@ pub struct Args {
     /// Show verbose long format.
     #[arg(long)]
     pub long: bool,
+
+    /// Exclude pattern (e.g. --exclude='*.o').
+    #[arg(short = 'x', long = "exclude", value_name = "PATTERN")]
+    pub exclude: Vec<String>,
+
+    /// Exclude patterns from file.
+    #[arg(short = 'X', long = "exclude-from", value_name = "FILE")]
+    pub exclude_from: Vec<PathBuf>,
+
+    /// Read exclude patterns from file in each directory.
+    #[arg(long = "exclude-per-directory", value_name = "FILE")]
+    pub exclude_per_directory: Option<String>,
+
+    /// Use standard exclude sources (.gitignore, .git/info/exclude, core.excludesFile).
+    #[arg(long = "exclude-standard")]
+    pub exclude_standard: bool,
+
+    /// If showing untracked files, show only directories.
+    #[arg(long = "directory")]
+    pub directory: bool,
 
     /// Pathspecs to restrict output.
     pub pathspecs: Vec<PathBuf>,
@@ -188,7 +209,20 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    // Build exclude/ignore matcher if needed
+    let has_excludes = args.exclude_standard
+        || !args.exclude.is_empty()
+        || !args.exclude_from.is_empty()
+        || args.exclude_per_directory.is_some();
+    let use_standard_ignores = args.exclude_standard || args.ignored;
+    let mut matcher = if use_standard_ignores {
+        Some(IgnoreMatcher::from_repository(&repo).unwrap_or_default())
+    } else {
+        None
+    };
+
     // --others: list untracked files
+    // --ignored with -o: show only ignored untracked files
     if args.others {
         let indexed_paths: BTreeSet<Vec<u8>> = index
             .entries
@@ -198,6 +232,14 @@ pub fn run(args: Args) -> Result<()> {
         let mut untracked = Vec::new();
         walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked)?;
         untracked.sort();
+
+        // Collapse to directories if --directory
+        let untracked = if args.directory {
+            collapse_to_directories(&untracked)
+        } else {
+            untracked
+        };
+
         for path_bytes in &untracked {
             if !pathspec_filter.is_empty() {
                 let matches = pathspec_filter.iter().any(|spec| spec.matches(path_bytes));
@@ -205,6 +247,32 @@ pub fn run(args: Args) -> Result<()> {
                     continue;
                 }
             }
+
+            // Apply exclude filtering
+            if has_excludes || args.ignored {
+                let path_str = String::from_utf8_lossy(path_bytes);
+                let is_dir = path_str.ends_with('/');
+                let std_ignored = if let Some(ref mut m) = matcher {
+                    let (ignored, _) = m
+                        .check_path(&repo, Some(&index), &path_str, is_dir)
+                        .unwrap_or((false, None));
+                    ignored
+                } else {
+                    false
+                };
+                let cli_excluded = args.exclude.iter().any(|pat| {
+                    match_simple_pattern(pat, &path_str)
+                });
+                let is_excluded = std_ignored || cli_excluded;
+
+                if args.ignored && !is_excluded {
+                    continue; // --ignored: only show excluded files
+                }
+                if !args.ignored && is_excluded {
+                    continue; // --others with excludes: hide excluded files
+                }
+            }
+
             let display = display_path_from_cwd(path_bytes, &cwd_prefix);
             let name = String::from_utf8_lossy(display);
             if args.show_tag {
@@ -448,6 +516,66 @@ fn normalize_path(path: &std::path::Path) -> PathBuf {
 fn path_to_bytes(path: &std::path::Path) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
     path.as_os_str().as_bytes().to_vec()
+}
+
+/// Collapse file paths into unique top-level directory entries.
+/// E.g., ["dir/a", "dir/b", "file"] → ["dir/", "file"]
+fn collapse_to_directories(paths: &[Vec<u8>]) -> Vec<Vec<u8>> {
+    let mut dirs = BTreeSet::new();
+    let mut result = Vec::new();
+    for p in paths {
+        if let Some(pos) = p.iter().position(|&b| b == b'/') {
+            let dir = p[..=pos].to_vec();
+            if dirs.insert(dir.clone()) {
+                result.push(dir);
+            }
+        } else {
+            result.push(p.clone());
+        }
+    }
+    result
+}
+
+/// Simple glob pattern matching for --exclude patterns.
+/// Supports *, ?, and literal matching.
+fn match_simple_pattern(pattern: &str, path: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return false;
+    }
+    // If pattern has no slash, match against basename only
+    let name = if !pattern.contains('/') {
+        path.rsplit('/').next().unwrap_or(path)
+    } else {
+        path
+    };
+    simple_glob(pattern.as_bytes(), name.as_bytes())
+}
+
+/// Basic glob matching for exclude patterns (*, ?).
+fn simple_glob(pattern: &[u8], text: &[u8]) -> bool {
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star_p, mut star_t) = (usize::MAX, 0);
+    while ti < text.len() {
+        if pi < pattern.len() && (pattern[pi] == b'?' || pattern[pi] == text[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'*' {
+            star_p = pi;
+            star_t = ti;
+            pi += 1;
+        } else if star_p != usize::MAX {
+            pi = star_p + 1;
+            star_t += 1;
+            ti = star_t;
+        } else {
+            return false;
+        }
+    }
+    while pi < pattern.len() && pattern[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pattern.len()
 }
 
 /// Check whether an index entry's file has been modified on disk.
