@@ -4600,53 +4600,53 @@ t3205-branch-color::set-up-some-sample-branches	t3205-branch-color	set up some s
 t3205-branch-color::set-up-some-color-config	t3205-branch-color	set up some color config	branch	pass
 t3205-branch-color::regular-output-shows-colors	t3205-branch-color	regular output shows colors	branch	pass
 t3205-branch-color::verbose-output-shows-colors	t3205-branch-color	verbose output shows colors	branch	pass
-t3206-range-diff::setup	t3206-range-diff	setup	range-diff	not_ported
-t3206-range-diff::simple-a-b-a-c-unmodified	t3206-range-diff	simple A..B A..C (unmodified)	range-diff	not_ported
-t3206-range-diff::simple-b-c-unmodified	t3206-range-diff	simple B...C (unmodified)	range-diff	not_ported
-t3206-range-diff::simple-a-b-c-unmodified	t3206-range-diff	simple A B C (unmodified)	range-diff	not_ported
-t3206-range-diff::simple-a-b-a-c-unmodified-with-abbrev	t3206-range-diff	simple A..B A..C (unmodified) with --abbrev	range-diff	not_ported
-t3206-range-diff::a-and-a-n-unmodified	t3206-range-diff	A^! and A^-<n> (unmodified)	range-diff	not_ported
-t3206-range-diff::a-is-not-mistaken-for-a-range	t3206-range-diff	A^{/..} is not mistaken for a range	range-diff	not_ported
-t3206-range-diff::trivial-reordering	t3206-range-diff	trivial reordering	range-diff	not_ported
-t3206-range-diff::removed-a-commit	t3206-range-diff	removed a commit	range-diff	not_ported
-t3206-range-diff::added-a-commit	t3206-range-diff	added a commit	range-diff	not_ported
-t3206-range-diff::new-base-a-b-c	t3206-range-diff	new base, A B C	range-diff	not_ported
-t3206-range-diff::new-base-b-c	t3206-range-diff	new base, B...C	range-diff	not_ported
-t3206-range-diff::changed-commit	t3206-range-diff	changed commit	range-diff	not_ported
-t3206-range-diff::changed-commit-with-no-patch-diff-option	t3206-range-diff	changed commit with --no-patch diff option	range-diff	not_ported
-t3206-range-diff::changed-commit-with-stat-diff-option	t3206-range-diff	changed commit with --stat diff option	range-diff	not_ported
-t3206-range-diff::changed-commit-with-sm-config	t3206-range-diff	changed commit with sm config	range-diff	not_ported
-t3206-range-diff::renamed-file	t3206-range-diff	renamed file	range-diff	not_ported
-t3206-range-diff::file-with-mode-only-change	t3206-range-diff	file with mode only change	range-diff	not_ported
-t3206-range-diff::file-added-and-later-removed	t3206-range-diff	file added and later removed	range-diff	not_ported
-t3206-range-diff::no-commits-on-one-side	t3206-range-diff	no commits on one side	range-diff	not_ported
-t3206-range-diff::changed-message	t3206-range-diff	changed message	range-diff	not_ported
-t3206-range-diff::dual-coloring	t3206-range-diff	dual-coloring	range-diff	not_ported
-t3206-range-diff::format-patch-range-diff-as-commentary	t3206-range-diff	format-patch --range-diff as commentary	range-diff	not_ported
-t3206-range-diff::format-patch-range-diff-reroll-count-with-a-non-integer	t3206-range-diff	format-patch --range-diff reroll-count with a non-integer	range-diff	not_ported
-t3206-range-diff::format-patch-range-diff-reroll-count-with-a-integer	t3206-range-diff	format-patch --range-diff reroll-count with a integer	range-diff	not_ported
-t3206-range-diff::format-patch-range-diff-with-v0	t3206-range-diff	format-patch --range-diff with v0	range-diff	not_ported
-t3206-range-diff::range-diff-overrides-diff-noprefix-internally	t3206-range-diff	range-diff overrides diff.noprefix internally	range-diff	not_ported
-t3206-range-diff::basic-with-modified-format-pretty-with-suffix	t3206-range-diff	basic with modified format.pretty with suffix	range-diff	not_ported
-t3206-range-diff::basic-with-modified-format-pretty-without-commit	t3206-range-diff	basic with modified format.pretty without "commit "	range-diff	not_ported
-t3206-range-diff::range-diff-compares-notes-by-default	t3206-range-diff	range-diff compares notes by default	range-diff	not_ported
-t3206-range-diff::range-diff-with-no-notes	t3206-range-diff	range-diff with --no-notes	range-diff	not_ported
-t3206-range-diff::range-diff-with-multiple-notes	t3206-range-diff	range-diff with multiple --notes	range-diff	not_ported
-t3206-range-diff::range-diff-with-notes-custom-does-not-show-default-notes	t3206-range-diff	range-diff with --notes=custom does not show default notes	range-diff	not_ported
-t3206-range-diff::format-patch-range-diff-does-not-compare-notes-by-default	t3206-range-diff	format-patch --range-diff does not compare notes by default	range-diff	not_ported
-t3206-range-diff::format-patch-notes-custom-range-diff-cover-letter-only-compares-custom-notes	t3206-range-diff	format-patch --notes=custom --range-diff --cover-letter only compares custom notes	range-diff	not_ported
-t3206-range-diff::format-patch-notes-custom-range-diff-on-single-commit-only-compares-custom-notes	t3206-range-diff	format-patch --notes=custom --range-diff on single commit only compares custom notes	range-diff	not_ported
-t3206-range-diff::format-patch-range-diff-with-no-notes	t3206-range-diff	format-patch --range-diff with --no-notes	range-diff	not_ported
-t3206-range-diff::format-patch-range-diff-with-notes	t3206-range-diff	format-patch --range-diff with --notes	range-diff	not_ported
-t3206-range-diff::format-patch-range-diff-with-format-notes-config	t3206-range-diff	format-patch --range-diff with format.notes config	range-diff	not_ported
-t3206-range-diff::format-patch-range-diff-with-multiple-notes	t3206-range-diff	format-patch --range-diff with multiple notes	range-diff	not_ported
-t3206-range-diff::left-only-right-only	t3206-range-diff	--left-only/--right-only	range-diff	not_ported
-t3206-range-diff::ranges-with-pathspecs	t3206-range-diff	ranges with pathspecs	range-diff	not_ported
-t3206-range-diff::submodule-changes-are-shown-irrespective-of-diff-submodule	t3206-range-diff	submodule changes are shown irrespective of diff.submodule	range-diff	not_ported
-t3206-range-diff::diff-merges	t3206-range-diff	--diff-merges	range-diff	not_ported
-t3206-range-diff::format-patch-range-diff-prev	t3206-range-diff	format-patch --range-diff=$prev	range-diff	not_ported
-t3206-range-diff::range-diff-implies-cover-letter-for-multi-patch-series	t3206-range-diff	--range-diff implies --cover-letter for multi-patch series	range-diff	not_ported
-t3206-range-diff::explicit-no-cover-letter-defeats-implied-cover-letter	t3206-range-diff	explicit --no-cover-letter defeats implied --cover-letter	range-diff	not_ported
+t3206-range-diff::setup	t3206-range-diff	setup	range-diff	pass
+t3206-range-diff::simple-a-b-a-c-unmodified	t3206-range-diff	simple A..B A..C (unmodified)	range-diff	pass
+t3206-range-diff::simple-b-c-unmodified	t3206-range-diff	simple B...C (unmodified)	range-diff	pass
+t3206-range-diff::simple-a-b-c-unmodified	t3206-range-diff	simple A B C (unmodified)	range-diff	pass
+t3206-range-diff::simple-a-b-a-c-unmodified-with-abbrev	t3206-range-diff	simple A..B A..C (unmodified) with --abbrev	range-diff	pass
+t3206-range-diff::a-and-a-n-unmodified	t3206-range-diff	A^! and A^-<n> (unmodified)	range-diff	pass
+t3206-range-diff::a-is-not-mistaken-for-a-range	t3206-range-diff	A^{/..} is not mistaken for a range	range-diff	pass
+t3206-range-diff::trivial-reordering	t3206-range-diff	trivial reordering	range-diff	pass
+t3206-range-diff::removed-a-commit	t3206-range-diff	removed a commit	range-diff	pass
+t3206-range-diff::added-a-commit	t3206-range-diff	added a commit	range-diff	pass
+t3206-range-diff::new-base-a-b-c	t3206-range-diff	new base, A B C	range-diff	pass
+t3206-range-diff::new-base-b-c	t3206-range-diff	new base, B...C	range-diff	pass
+t3206-range-diff::changed-commit	t3206-range-diff	changed commit	range-diff	pass
+t3206-range-diff::changed-commit-with-no-patch-diff-option	t3206-range-diff	changed commit with --no-patch diff option	range-diff	pass
+t3206-range-diff::changed-commit-with-stat-diff-option	t3206-range-diff	changed commit with --stat diff option	range-diff	pass
+t3206-range-diff::changed-commit-with-sm-config	t3206-range-diff	changed commit with sm config	range-diff	pass
+t3206-range-diff::renamed-file	t3206-range-diff	renamed file	range-diff	pass
+t3206-range-diff::file-with-mode-only-change	t3206-range-diff	file with mode only change	range-diff	pass
+t3206-range-diff::file-added-and-later-removed	t3206-range-diff	file added and later removed	range-diff	pass
+t3206-range-diff::no-commits-on-one-side	t3206-range-diff	no commits on one side	range-diff	pass
+t3206-range-diff::changed-message	t3206-range-diff	changed message	range-diff	pass
+t3206-range-diff::dual-coloring	t3206-range-diff	dual-coloring	range-diff	pass
+t3206-range-diff::format-patch-range-diff-as-commentary	t3206-range-diff	format-patch --range-diff as commentary	range-diff	pass
+t3206-range-diff::format-patch-range-diff-reroll-count-with-a-non-integer	t3206-range-diff	format-patch --range-diff reroll-count with a non-integer	range-diff	pass
+t3206-range-diff::format-patch-range-diff-reroll-count-with-a-integer	t3206-range-diff	format-patch --range-diff reroll-count with a integer	range-diff	pass
+t3206-range-diff::format-patch-range-diff-with-v0	t3206-range-diff	format-patch --range-diff with v0	range-diff	pass
+t3206-range-diff::range-diff-overrides-diff-noprefix-internally	t3206-range-diff	range-diff overrides diff.noprefix internally	range-diff	pass
+t3206-range-diff::basic-with-modified-format-pretty-with-suffix	t3206-range-diff	basic with modified format.pretty with suffix	range-diff	pass
+t3206-range-diff::basic-with-modified-format-pretty-without-commit	t3206-range-diff	basic with modified format.pretty without "commit "	range-diff	pass
+t3206-range-diff::range-diff-compares-notes-by-default	t3206-range-diff	range-diff compares notes by default	range-diff	pass
+t3206-range-diff::range-diff-with-no-notes	t3206-range-diff	range-diff with --no-notes	range-diff	pass
+t3206-range-diff::range-diff-with-multiple-notes	t3206-range-diff	range-diff with multiple --notes	range-diff	pass
+t3206-range-diff::range-diff-with-notes-custom-does-not-show-default-notes	t3206-range-diff	range-diff with --notes=custom does not show default notes	range-diff	pass
+t3206-range-diff::format-patch-range-diff-does-not-compare-notes-by-default	t3206-range-diff	format-patch --range-diff does not compare notes by default	range-diff	pass
+t3206-range-diff::format-patch-notes-custom-range-diff-cover-letter-only-compares-custom-notes	t3206-range-diff	format-patch --notes=custom --range-diff --cover-letter only compares custom notes	range-diff	pass
+t3206-range-diff::format-patch-notes-custom-range-diff-on-single-commit-only-compares-custom-notes	t3206-range-diff	format-patch --notes=custom --range-diff on single commit only compares custom notes	range-diff	pass
+t3206-range-diff::format-patch-range-diff-with-no-notes	t3206-range-diff	format-patch --range-diff with --no-notes	range-diff	pass
+t3206-range-diff::format-patch-range-diff-with-notes	t3206-range-diff	format-patch --range-diff with --notes	range-diff	pass
+t3206-range-diff::format-patch-range-diff-with-format-notes-config	t3206-range-diff	format-patch --range-diff with format.notes config	range-diff	pass
+t3206-range-diff::format-patch-range-diff-with-multiple-notes	t3206-range-diff	format-patch --range-diff with multiple notes	range-diff	pass
+t3206-range-diff::left-only-right-only	t3206-range-diff	--left-only/--right-only	range-diff	pass
+t3206-range-diff::ranges-with-pathspecs	t3206-range-diff	ranges with pathspecs	range-diff	pass
+t3206-range-diff::submodule-changes-are-shown-irrespective-of-diff-submodule	t3206-range-diff	submodule changes are shown irrespective of diff.submodule	range-diff	pass
+t3206-range-diff::diff-merges	t3206-range-diff	--diff-merges	range-diff	pass
+t3206-range-diff::format-patch-range-diff-prev	t3206-range-diff	format-patch --range-diff=$prev	range-diff	pass
+t3206-range-diff::range-diff-implies-cover-letter-for-multi-patch-series	t3206-range-diff	--range-diff implies --cover-letter for multi-patch series	range-diff	pass
+t3206-range-diff::explicit-no-cover-letter-defeats-implied-cover-letter	t3206-range-diff	explicit --no-cover-letter defeats implied --cover-letter	range-diff	pass
 t3207-branch-submodule::setup-superproject-and-submodule	t3207-branch-submodule	setup superproject and submodule	branch	not_ported
 t3207-branch-submodule::recurse-submodules-should-create-branches	t3207-branch-submodule	--recurse-submodules should create branches	branch	not_ported
 t3207-branch-submodule::recurse-submodules-should-die-if-submodule-propagatebranches-is-false	t3207-branch-submodule	--recurse-submodules should die if submodule.propagateBranches is false	branch	not_ported
@@ -4696,131 +4696,131 @@ t3300-funny-names::diffstat-for-rename-quotes-funny-filename	t3300-funny-names	d
 t3300-funny-names::numstat-for-rename-quotes-funny-filename	t3300-funny-names	numstat for rename quotes funny filename	apply	pass
 t3300-funny-names::numstat-without-m-quotes-funny-filename	t3300-funny-names	numstat without -M quotes funny filename	apply	pass
 t3300-funny-names::numstat-for-non-git-rename-diff-quotes-funny-filename	t3300-funny-names	numstat for non-git rename diff quotes funny filename	apply	pass
-t3301-notes::cannot-annotate-non-existing-head	t3301-notes	cannot annotate non-existing HEAD	notes	not_ported
-t3301-notes::setup	t3301-notes	setup	notes	not_ported
-t3301-notes::need-valid-notes-ref	t3301-notes	need valid notes ref	notes	not_ported
-t3301-notes::refusing-to-add-notes-in-refs-heads	t3301-notes	refusing to add notes in refs/heads/	notes	not_ported
-t3301-notes::refusing-to-edit-notes-in-refs-remotes	t3301-notes	refusing to edit notes in refs/remotes/	notes	not_ported
-t3301-notes::handle-empty-notes-gracefully	t3301-notes	handle empty notes gracefully	notes	not_ported
-t3301-notes::show-non-existent-notes-entry-with-n	t3301-notes	show non-existent notes entry with %N	notes	not_ported
-t3301-notes::create-notes	t3301-notes	create notes	notes	not_ported
-t3301-notes::show-notes-entry-with-n	t3301-notes	show notes entry with %N	notes	not_ported
-t3301-notes::create-reflog-entry	t3301-notes	create reflog entry	notes	not_ported
-t3301-notes::edit-existing-notes	t3301-notes	edit existing notes	notes	not_ported
-t3301-notes::show-notes-from-treeish	t3301-notes	show notes from treeish	notes	not_ported
-t3301-notes::cannot-edit-notes-from-non-ref	t3301-notes	cannot edit notes from non-ref	notes	not_ported
-t3301-notes::cannot-git-notes-add-m-where-notes-already-exists	t3301-notes	cannot "git notes add -m" where notes already exists	notes	not_ported
-t3301-notes::can-overwrite-existing-note-with-git-notes-add-f-m	t3301-notes	can overwrite existing note with "git notes add -f -m"	notes	not_ported
-t3301-notes::add-w-no-options-on-existing-note-morphs-into-edit	t3301-notes	add w/no options on existing note morphs into edit	notes	not_ported
-t3301-notes::can-overwrite-existing-note-with-git-notes-add-f	t3301-notes	can overwrite existing note with "git notes add -f"	notes	not_ported
-t3301-notes::show-notes	t3301-notes	show notes	notes	not_ported
-t3301-notes::show-multi-line-notes	t3301-notes	show multi-line notes	notes	not_ported
-t3301-notes::show-f-notes	t3301-notes	show -F notes	notes	not_ported
-t3301-notes::re-adding-f-notes-without-f-fails	t3301-notes	Re-adding -F notes without -f fails	notes	not_ported
-t3301-notes::git-log-pretty-raw-does-not-show-notes	t3301-notes	git log --pretty=raw does not show notes	notes	not_ported
-t3301-notes::git-log-show-notes	t3301-notes	git log --show-notes	notes	not_ported
-t3301-notes::git-log-no-notes	t3301-notes	git log --no-notes	notes	not_ported
-t3301-notes::git-format-patch-does-not-show-notes	t3301-notes	git format-patch does not show notes	notes	not_ported
-t3301-notes::git-format-patch-show-notes-does-show-notes	t3301-notes	git format-patch --show-notes does show notes	notes	not_ported
-t3301-notes::setup-alternate-notes-ref	t3301-notes	setup alternate notes ref	notes	not_ported
-t3301-notes::git-log-notes-shows-default-notes	t3301-notes	git log --notes shows default notes	notes	not_ported
-t3301-notes::git-log-notes-x-shows-only-x	t3301-notes	git log --notes=X shows only X	notes	not_ported
-t3301-notes::git-log-notes-notes-x-shows-both	t3301-notes	git log --notes --notes=X shows both	notes	not_ported
-t3301-notes::git-log-no-notes-resets-default-state	t3301-notes	git log --no-notes resets default state	notes	not_ported
-t3301-notes::git-log-no-notes-resets-ref-list	t3301-notes	git log --no-notes resets ref list	notes	not_ported
-t3301-notes::show-m-notes	t3301-notes	show -m notes	notes	not_ported
-t3301-notes::remove-note-with-add-f-f-dev-null	t3301-notes	remove note with add -f -F /dev/null	notes	not_ported
-t3301-notes::do-not-create-empty-note-with-m	t3301-notes	do not create empty note with -m ""	notes	not_ported
-t3301-notes::create-note-with-combination-of-m-and-f	t3301-notes	create note with combination of -m and -F	notes	not_ported
-t3301-notes::create-note-with-combination-of-m-and-f-and-separator	t3301-notes	create note with combination of -m and -F and --separator	notes	not_ported
-t3301-notes::create-note-with-combination-of-m-and-f-and-no-separator	t3301-notes	create note with combination of -m and -F and --no-separator	notes	not_ported
-t3301-notes::remove-note-with-git-notes-remove	t3301-notes	remove note with "git notes remove"	notes	not_ported
-t3301-notes::removing-non-existing-note-should-not-create-new-commit	t3301-notes	removing non-existing note should not create new commit	notes	not_ported
-t3301-notes::removing-more-than-one	t3301-notes	removing more than one	notes	not_ported
-t3301-notes::removing-is-atomic	t3301-notes	removing is atomic	notes	not_ported
-t3301-notes::removing-with-ignore-missing	t3301-notes	removing with --ignore-missing	notes	not_ported
-t3301-notes::removing-with-ignore-missing-but-bogus-ref	t3301-notes	removing with --ignore-missing but bogus ref	notes	not_ported
-t3301-notes::remove-reads-from-stdin	t3301-notes	remove reads from --stdin	notes	not_ported
-t3301-notes::remove-stdin-is-also-atomic	t3301-notes	remove --stdin is also atomic	notes	not_ported
-t3301-notes::removing-with-stdin-ignore-missing	t3301-notes	removing with --stdin --ignore-missing	notes	not_ported
-t3301-notes::list-notes-with-git-notes-list	t3301-notes	list notes with "git notes list"	notes	not_ported
-t3301-notes::list-notes-with-git-notes	t3301-notes	list notes with "git notes"	notes	not_ported
-t3301-notes::git-notes-without-subcommand-does-not-take-arguments	t3301-notes	"git notes" without subcommand does not take arguments	notes	not_ported
-t3301-notes::list-specific-note-with-git-notes-list-object	t3301-notes	list specific note with "git notes list <object>"	notes	not_ported
-t3301-notes::listing-non-existing-notes-fails	t3301-notes	listing non-existing notes fails	notes	not_ported
-t3301-notes::append-specify-a-separator-with-an-empty-arg	t3301-notes	append: specify a separator with an empty arg	notes	not_ported
-t3301-notes::append-specify-a-separator-without-arg	t3301-notes	append: specify a separator without arg	notes	not_ported
-t3301-notes::append-specify-as-no-separator	t3301-notes	append: specify as --no-separator	notes	not_ported
-t3301-notes::append-specify-separator-with-line-break	t3301-notes	append: specify separator with line break	notes	not_ported
-t3301-notes::append-specify-separator-without-line-break	t3301-notes	append: specify separator without line break	notes	not_ported
-t3301-notes::append-specify-separator-with-multiple-messages	t3301-notes	append: specify separator with multiple messages	notes	not_ported
-t3301-notes::append-note-with-combination-of-m-and-f-and-separator	t3301-notes	append note with combination of -m and -F and --separator	notes	not_ported
-t3301-notes::append-to-existing-note-with-git-notes-append	t3301-notes	append to existing note with "git notes append"	notes	not_ported
-t3301-notes::git-notes-list-does-not-expand-to-git-notes-list-head	t3301-notes	"git notes list" does not expand to "git notes list HEAD"	notes	not_ported
-t3301-notes::appending-empty-string-does-not-change-existing-note	t3301-notes	appending empty string does not change existing note	notes	not_ported
-t3301-notes::git-notes-append-add-when-there-is-no-existing-note	t3301-notes	git notes append == add when there is no existing note	notes	not_ported
-t3301-notes::appending-empty-string-to-non-existing-note-does-not-create-note	t3301-notes	appending empty string to non-existing note does not create note	notes	not_ported
-t3301-notes::create-other-note-on-a-different-notes-ref-setup	t3301-notes	create other note on a different notes ref (setup)	notes	not_ported
-t3301-notes::do-not-show-note-on-other-ref-by-default	t3301-notes	Do not show note on other ref by default	notes	not_ported
-t3301-notes::do-show-note-when-ref-is-given-in-git-notes-ref	t3301-notes	Do show note when ref is given in GIT_NOTES_REF	notes	not_ported
-t3301-notes::do-show-note-when-ref-is-given-in-core-notesref-config	t3301-notes	Do show note when ref is given in core.notesRef config	notes	not_ported
-t3301-notes::do-not-show-note-when-core-notesref-is-overridden	t3301-notes	Do not show note when core.notesRef is overridden	notes	not_ported
-t3301-notes::show-all-notes-when-notes-displayref-refs-notes	t3301-notes	Show all notes when notes.displayRef=refs/notes/*	notes	not_ported
-t3301-notes::core-notesref-is-implicitly-in-notes-displayref	t3301-notes	core.notesRef is implicitly in notes.displayRef	notes	not_ported
-t3301-notes::notes-displayref-can-be-given-more-than-once	t3301-notes	notes.displayRef can be given more than once	notes	not_ported
-t3301-notes::notes-displayref-respects-order	t3301-notes	notes.displayRef respects order	notes	not_ported
-t3301-notes::notes-displayref-with-no-value-handled-gracefully	t3301-notes	notes.displayRef with no value handled gracefully	notes	not_ported
-t3301-notes::git-notes-display-ref-works	t3301-notes	GIT_NOTES_DISPLAY_REF works	notes	not_ported
-t3301-notes::git-notes-display-ref-overrides-config	t3301-notes	GIT_NOTES_DISPLAY_REF overrides config	notes	not_ported
-t3301-notes::show-notes-adds-to-git-notes-display-ref	t3301-notes	--show-notes=* adds to GIT_NOTES_DISPLAY_REF	notes	not_ported
-t3301-notes::no-standard-notes	t3301-notes	--no-standard-notes	notes	not_ported
-t3301-notes::standard-notes	t3301-notes	--standard-notes	notes	not_ported
-t3301-notes::show-notes-ref-accumulates	t3301-notes	--show-notes=ref accumulates	notes	not_ported
-t3301-notes::allow-notes-on-non-commits-trees-blobs-tags	t3301-notes	Allow notes on non-commits (trees, blobs, tags)	notes	not_ported
-t3301-notes::create-note-from-other-note-with-git-notes-add-c	t3301-notes	create note from other note with "git notes add -C"	notes	not_ported
-t3301-notes::create-note-from-non-existing-note-with-git-notes-add-c-fails	t3301-notes	create note from non-existing note with "git notes add -C" fails	notes	not_ported
-t3301-notes::create-note-from-non-blob-with-git-notes-add-c-fails	t3301-notes	create note from non-blob with "git notes add -C" fails	notes	not_ported
-t3301-notes::create-note-from-blob-with-git-notes-add-c-reuses-blob-id	t3301-notes	create note from blob with "git notes add -C" reuses blob id	notes	not_ported
-t3301-notes::create-note-from-blob-with-c-also-specify-m-f-and-separator	t3301-notes	create note from blob with "-C", also specify "-m", "-F" and "--separator"	notes	not_ported
-t3301-notes::create-note-from-other-note-with-git-notes-add-c-2	t3301-notes	create note from other note with "git notes add -c"	notes	not_ported
-t3301-notes::create-note-from-non-existing-note-with-git-notes-add-c-fails-2	t3301-notes	create note from non-existing note with "git notes add -c" fails	notes	not_ported
-t3301-notes::append-to-note-from-other-note-with-git-notes-append-c	t3301-notes	append to note from other note with "git notes append -C"	notes	not_ported
-t3301-notes::create-note-from-other-note-with-git-notes-append-c	t3301-notes	create note from other note with "git notes append -c"	notes	not_ported
-t3301-notes::append-to-note-from-other-note-with-git-notes-append-c-2	t3301-notes	append to note from other note with "git notes append -c"	notes	not_ported
-t3301-notes::copy-note-with-git-notes-copy	t3301-notes	copy note with "git notes copy"	notes	not_ported
-t3301-notes::copy-note-with-git-notes-copy-with-default	t3301-notes	copy note with "git notes copy" with default	notes	not_ported
-t3301-notes::prevent-overwrite-with-git-notes-copy	t3301-notes	prevent overwrite with "git notes copy"	notes	not_ported
-t3301-notes::allow-overwrite-with-git-notes-copy-f	t3301-notes	allow overwrite with "git notes copy -f"	notes	not_ported
-t3301-notes::allow-overwrite-with-git-notes-copy-f-with-default	t3301-notes	allow overwrite with "git notes copy -f" with default	notes	not_ported
-t3301-notes::cannot-copy-note-from-object-without-notes	t3301-notes	cannot copy note from object without notes	notes	not_ported
-t3301-notes::git-notes-copy-stdin	t3301-notes	git notes copy --stdin	notes	not_ported
-t3301-notes::git-notes-copy-for-rewrite-unconfigured	t3301-notes	git notes copy --for-rewrite (unconfigured)	notes	not_ported
-t3301-notes::git-notes-copy-for-rewrite-enabled	t3301-notes	git notes copy --for-rewrite (enabled)	notes	not_ported
-t3301-notes::git-notes-copy-for-rewrite-disabled	t3301-notes	git notes copy --for-rewrite (disabled)	notes	not_ported
-t3301-notes::git-notes-copy-for-rewrite-overwrite	t3301-notes	git notes copy --for-rewrite (overwrite)	notes	not_ported
-t3301-notes::git-notes-copy-for-rewrite-ignore	t3301-notes	git notes copy --for-rewrite (ignore)	notes	not_ported
-t3301-notes::git-notes-copy-for-rewrite-append	t3301-notes	git notes copy --for-rewrite (append)	notes	not_ported
-t3301-notes::git-notes-copy-for-rewrite-append-two-to-one	t3301-notes	git notes copy --for-rewrite (append two to one)	notes	not_ported
-t3301-notes::git-notes-copy-for-rewrite-append-empty	t3301-notes	git notes copy --for-rewrite (append empty)	notes	not_ported
-t3301-notes::git-notes-rewrite-mode-works	t3301-notes	GIT_NOTES_REWRITE_MODE works	notes	not_ported
-t3301-notes::git-notes-rewrite-ref-works	t3301-notes	GIT_NOTES_REWRITE_REF works	notes	not_ported
-t3301-notes::git-notes-rewrite-ref-overrides-config	t3301-notes	GIT_NOTES_REWRITE_REF overrides config	notes	not_ported
-t3301-notes::git-notes-copy-diagnoses-too-many-or-too-few-arguments	t3301-notes	git notes copy diagnoses too many or too few arguments	notes	not_ported
-t3301-notes::git-notes-get-ref-expands-refs-heads-main-to-refs-notes-refs-heads-main	t3301-notes	git notes get-ref expands refs/heads/main to refs/notes/refs/heads/main	notes	not_ported
-t3301-notes::git-notes-get-ref-no-overrides	t3301-notes	git notes get-ref (no overrides)	notes	not_ported
-t3301-notes::git-notes-get-ref-core-notesref	t3301-notes	git notes get-ref (core.notesRef)	notes	not_ported
-t3301-notes::git-notes-get-ref-git-notes-ref	t3301-notes	git notes get-ref (GIT_NOTES_REF)	notes	not_ported
-t3301-notes::git-notes-get-ref-ref	t3301-notes	git notes get-ref (--ref)	notes	not_ported
-t3301-notes::setup-testing-of-empty-notes	t3301-notes	setup testing of empty notes	notes	not_ported
-t3301-notes::empty-notes-are-displayed-by-git-log	t3301-notes	empty notes are displayed by git log	notes	not_ported
-t3301-notes::empty-notes-do-not-invoke-the-editor	t3301-notes	empty notes do not invoke the editor	notes	not_ported
-t3301-notes::git-notes-add-with-m-f-invokes-editor-with-e	t3301-notes	git notes add with -m/-F invokes editor with -e	notes	not_ported
-t3301-notes::git-notes-append-with-m-f-invokes-the-editor-with-e	t3301-notes	git notes append with -m/-F invokes the editor with -e	notes	not_ported
-t3301-notes::git-notes-with-a-combination-of-m-f-and-e-invokes-editor	t3301-notes	git notes with a combination of -m, -F and -e invokes editor	notes	not_ported
-t3301-notes::git-notes-append-aborts-when-editor-fails-with-e	t3301-notes	git notes append aborts when editor fails with -e	notes	not_ported
-t3301-notes::git-show-pretty-does-not-show-notes	t3301-notes	git show $pretty does$not show notes	notes	not_ported
-t3301-notes::git-notes-cmd-removes-empty-note	t3301-notes	'git notes $cmd' removes empty note	notes	not_ported
-t3301-notes::git-notes-cmd-allow-empty-stores-empty-note	t3301-notes	'git notes $cmd --allow-empty' stores empty note	notes	not_ported
+t3301-notes::cannot-annotate-non-existing-head	t3301-notes	cannot annotate non-existing HEAD	notes	pass
+t3301-notes::setup	t3301-notes	setup	notes	pass
+t3301-notes::need-valid-notes-ref	t3301-notes	need valid notes ref	notes	pass
+t3301-notes::refusing-to-add-notes-in-refs-heads	t3301-notes	refusing to add notes in refs/heads/	notes	pass
+t3301-notes::refusing-to-edit-notes-in-refs-remotes	t3301-notes	refusing to edit notes in refs/remotes/	notes	pass
+t3301-notes::handle-empty-notes-gracefully	t3301-notes	handle empty notes gracefully	notes	pass
+t3301-notes::show-non-existent-notes-entry-with-n	t3301-notes	show non-existent notes entry with %N	notes	pass
+t3301-notes::create-notes	t3301-notes	create notes	notes	pass
+t3301-notes::show-notes-entry-with-n	t3301-notes	show notes entry with %N	notes	pass
+t3301-notes::create-reflog-entry	t3301-notes	create reflog entry	notes	pass
+t3301-notes::edit-existing-notes	t3301-notes	edit existing notes	notes	pass
+t3301-notes::show-notes-from-treeish	t3301-notes	show notes from treeish	notes	pass
+t3301-notes::cannot-edit-notes-from-non-ref	t3301-notes	cannot edit notes from non-ref	notes	pass
+t3301-notes::cannot-git-notes-add-m-where-notes-already-exists	t3301-notes	cannot "git notes add -m" where notes already exists	notes	pass
+t3301-notes::can-overwrite-existing-note-with-git-notes-add-f-m	t3301-notes	can overwrite existing note with "git notes add -f -m"	notes	pass
+t3301-notes::add-w-no-options-on-existing-note-morphs-into-edit	t3301-notes	add w/no options on existing note morphs into edit	notes	pass
+t3301-notes::can-overwrite-existing-note-with-git-notes-add-f	t3301-notes	can overwrite existing note with "git notes add -f"	notes	pass
+t3301-notes::show-notes	t3301-notes	show notes	notes	pass
+t3301-notes::show-multi-line-notes	t3301-notes	show multi-line notes	notes	pass
+t3301-notes::show-f-notes	t3301-notes	show -F notes	notes	pass
+t3301-notes::re-adding-f-notes-without-f-fails	t3301-notes	Re-adding -F notes without -f fails	notes	pass
+t3301-notes::git-log-pretty-raw-does-not-show-notes	t3301-notes	git log --pretty=raw does not show notes	notes	pass
+t3301-notes::git-log-show-notes	t3301-notes	git log --show-notes	notes	pass
+t3301-notes::git-log-no-notes	t3301-notes	git log --no-notes	notes	pass
+t3301-notes::git-format-patch-does-not-show-notes	t3301-notes	git format-patch does not show notes	notes	pass
+t3301-notes::git-format-patch-show-notes-does-show-notes	t3301-notes	git format-patch --show-notes does show notes	notes	pass
+t3301-notes::setup-alternate-notes-ref	t3301-notes	setup alternate notes ref	notes	pass
+t3301-notes::git-log-notes-shows-default-notes	t3301-notes	git log --notes shows default notes	notes	pass
+t3301-notes::git-log-notes-x-shows-only-x	t3301-notes	git log --notes=X shows only X	notes	pass
+t3301-notes::git-log-notes-notes-x-shows-both	t3301-notes	git log --notes --notes=X shows both	notes	pass
+t3301-notes::git-log-no-notes-resets-default-state	t3301-notes	git log --no-notes resets default state	notes	pass
+t3301-notes::git-log-no-notes-resets-ref-list	t3301-notes	git log --no-notes resets ref list	notes	pass
+t3301-notes::show-m-notes	t3301-notes	show -m notes	notes	pass
+t3301-notes::remove-note-with-add-f-f-dev-null	t3301-notes	remove note with add -f -F /dev/null	notes	pass
+t3301-notes::do-not-create-empty-note-with-m	t3301-notes	do not create empty note with -m ""	notes	pass
+t3301-notes::create-note-with-combination-of-m-and-f	t3301-notes	create note with combination of -m and -F	notes	pass
+t3301-notes::create-note-with-combination-of-m-and-f-and-separator	t3301-notes	create note with combination of -m and -F and --separator	notes	pass
+t3301-notes::create-note-with-combination-of-m-and-f-and-no-separator	t3301-notes	create note with combination of -m and -F and --no-separator	notes	pass
+t3301-notes::remove-note-with-git-notes-remove	t3301-notes	remove note with "git notes remove"	notes	pass
+t3301-notes::removing-non-existing-note-should-not-create-new-commit	t3301-notes	removing non-existing note should not create new commit	notes	pass
+t3301-notes::removing-more-than-one	t3301-notes	removing more than one	notes	pass
+t3301-notes::removing-is-atomic	t3301-notes	removing is atomic	notes	pass
+t3301-notes::removing-with-ignore-missing	t3301-notes	removing with --ignore-missing	notes	pass
+t3301-notes::removing-with-ignore-missing-but-bogus-ref	t3301-notes	removing with --ignore-missing but bogus ref	notes	pass
+t3301-notes::remove-reads-from-stdin	t3301-notes	remove reads from --stdin	notes	pass
+t3301-notes::remove-stdin-is-also-atomic	t3301-notes	remove --stdin is also atomic	notes	pass
+t3301-notes::removing-with-stdin-ignore-missing	t3301-notes	removing with --stdin --ignore-missing	notes	pass
+t3301-notes::list-notes-with-git-notes-list	t3301-notes	list notes with "git notes list"	notes	pass
+t3301-notes::list-notes-with-git-notes	t3301-notes	list notes with "git notes"	notes	pass
+t3301-notes::git-notes-without-subcommand-does-not-take-arguments	t3301-notes	"git notes" without subcommand does not take arguments	notes	pass
+t3301-notes::list-specific-note-with-git-notes-list-object	t3301-notes	list specific note with "git notes list <object>"	notes	pass
+t3301-notes::listing-non-existing-notes-fails	t3301-notes	listing non-existing notes fails	notes	pass
+t3301-notes::append-specify-a-separator-with-an-empty-arg	t3301-notes	append: specify a separator with an empty arg	notes	pass
+t3301-notes::append-specify-a-separator-without-arg	t3301-notes	append: specify a separator without arg	notes	pass
+t3301-notes::append-specify-as-no-separator	t3301-notes	append: specify as --no-separator	notes	pass
+t3301-notes::append-specify-separator-with-line-break	t3301-notes	append: specify separator with line break	notes	pass
+t3301-notes::append-specify-separator-without-line-break	t3301-notes	append: specify separator without line break	notes	pass
+t3301-notes::append-specify-separator-with-multiple-messages	t3301-notes	append: specify separator with multiple messages	notes	pass
+t3301-notes::append-note-with-combination-of-m-and-f-and-separator	t3301-notes	append note with combination of -m and -F and --separator	notes	pass
+t3301-notes::append-to-existing-note-with-git-notes-append	t3301-notes	append to existing note with "git notes append"	notes	pass
+t3301-notes::git-notes-list-does-not-expand-to-git-notes-list-head	t3301-notes	"git notes list" does not expand to "git notes list HEAD"	notes	pass
+t3301-notes::appending-empty-string-does-not-change-existing-note	t3301-notes	appending empty string does not change existing note	notes	pass
+t3301-notes::git-notes-append-add-when-there-is-no-existing-note	t3301-notes	git notes append == add when there is no existing note	notes	pass
+t3301-notes::appending-empty-string-to-non-existing-note-does-not-create-note	t3301-notes	appending empty string to non-existing note does not create note	notes	pass
+t3301-notes::create-other-note-on-a-different-notes-ref-setup	t3301-notes	create other note on a different notes ref (setup)	notes	pass
+t3301-notes::do-not-show-note-on-other-ref-by-default	t3301-notes	Do not show note on other ref by default	notes	pass
+t3301-notes::do-show-note-when-ref-is-given-in-git-notes-ref	t3301-notes	Do show note when ref is given in GIT_NOTES_REF	notes	pass
+t3301-notes::do-show-note-when-ref-is-given-in-core-notesref-config	t3301-notes	Do show note when ref is given in core.notesRef config	notes	pass
+t3301-notes::do-not-show-note-when-core-notesref-is-overridden	t3301-notes	Do not show note when core.notesRef is overridden	notes	pass
+t3301-notes::show-all-notes-when-notes-displayref-refs-notes	t3301-notes	Show all notes when notes.displayRef=refs/notes/*	notes	pass
+t3301-notes::core-notesref-is-implicitly-in-notes-displayref	t3301-notes	core.notesRef is implicitly in notes.displayRef	notes	pass
+t3301-notes::notes-displayref-can-be-given-more-than-once	t3301-notes	notes.displayRef can be given more than once	notes	pass
+t3301-notes::notes-displayref-respects-order	t3301-notes	notes.displayRef respects order	notes	pass
+t3301-notes::notes-displayref-with-no-value-handled-gracefully	t3301-notes	notes.displayRef with no value handled gracefully	notes	pass
+t3301-notes::git-notes-display-ref-works	t3301-notes	GIT_NOTES_DISPLAY_REF works	notes	pass
+t3301-notes::git-notes-display-ref-overrides-config	t3301-notes	GIT_NOTES_DISPLAY_REF overrides config	notes	pass
+t3301-notes::show-notes-adds-to-git-notes-display-ref	t3301-notes	--show-notes=* adds to GIT_NOTES_DISPLAY_REF	notes	pass
+t3301-notes::no-standard-notes	t3301-notes	--no-standard-notes	notes	pass
+t3301-notes::standard-notes	t3301-notes	--standard-notes	notes	pass
+t3301-notes::show-notes-ref-accumulates	t3301-notes	--show-notes=ref accumulates	notes	pass
+t3301-notes::allow-notes-on-non-commits-trees-blobs-tags	t3301-notes	Allow notes on non-commits (trees, blobs, tags)	notes	pass
+t3301-notes::create-note-from-other-note-with-git-notes-add-c	t3301-notes	create note from other note with "git notes add -C"	notes	pass
+t3301-notes::create-note-from-non-existing-note-with-git-notes-add-c-fails	t3301-notes	create note from non-existing note with "git notes add -C" fails	notes	pass
+t3301-notes::create-note-from-non-blob-with-git-notes-add-c-fails	t3301-notes	create note from non-blob with "git notes add -C" fails	notes	pass
+t3301-notes::create-note-from-blob-with-git-notes-add-c-reuses-blob-id	t3301-notes	create note from blob with "git notes add -C" reuses blob id	notes	pass
+t3301-notes::create-note-from-blob-with-c-also-specify-m-f-and-separator	t3301-notes	create note from blob with "-C", also specify "-m", "-F" and "--separator"	notes	pass
+t3301-notes::create-note-from-other-note-with-git-notes-add-c-2	t3301-notes	create note from other note with "git notes add -c"	notes	pass
+t3301-notes::create-note-from-non-existing-note-with-git-notes-add-c-fails-2	t3301-notes	create note from non-existing note with "git notes add -c" fails	notes	pass
+t3301-notes::append-to-note-from-other-note-with-git-notes-append-c	t3301-notes	append to note from other note with "git notes append -C"	notes	pass
+t3301-notes::create-note-from-other-note-with-git-notes-append-c	t3301-notes	create note from other note with "git notes append -c"	notes	pass
+t3301-notes::append-to-note-from-other-note-with-git-notes-append-c-2	t3301-notes	append to note from other note with "git notes append -c"	notes	pass
+t3301-notes::copy-note-with-git-notes-copy	t3301-notes	copy note with "git notes copy"	notes	pass
+t3301-notes::copy-note-with-git-notes-copy-with-default	t3301-notes	copy note with "git notes copy" with default	notes	pass
+t3301-notes::prevent-overwrite-with-git-notes-copy	t3301-notes	prevent overwrite with "git notes copy"	notes	pass
+t3301-notes::allow-overwrite-with-git-notes-copy-f	t3301-notes	allow overwrite with "git notes copy -f"	notes	pass
+t3301-notes::allow-overwrite-with-git-notes-copy-f-with-default	t3301-notes	allow overwrite with "git notes copy -f" with default	notes	pass
+t3301-notes::cannot-copy-note-from-object-without-notes	t3301-notes	cannot copy note from object without notes	notes	pass
+t3301-notes::git-notes-copy-stdin	t3301-notes	git notes copy --stdin	notes	pass
+t3301-notes::git-notes-copy-for-rewrite-unconfigured	t3301-notes	git notes copy --for-rewrite (unconfigured)	notes	pass
+t3301-notes::git-notes-copy-for-rewrite-enabled	t3301-notes	git notes copy --for-rewrite (enabled)	notes	pass
+t3301-notes::git-notes-copy-for-rewrite-disabled	t3301-notes	git notes copy --for-rewrite (disabled)	notes	pass
+t3301-notes::git-notes-copy-for-rewrite-overwrite	t3301-notes	git notes copy --for-rewrite (overwrite)	notes	pass
+t3301-notes::git-notes-copy-for-rewrite-ignore	t3301-notes	git notes copy --for-rewrite (ignore)	notes	pass
+t3301-notes::git-notes-copy-for-rewrite-append	t3301-notes	git notes copy --for-rewrite (append)	notes	pass
+t3301-notes::git-notes-copy-for-rewrite-append-two-to-one	t3301-notes	git notes copy --for-rewrite (append two to one)	notes	pass
+t3301-notes::git-notes-copy-for-rewrite-append-empty	t3301-notes	git notes copy --for-rewrite (append empty)	notes	pass
+t3301-notes::git-notes-rewrite-mode-works	t3301-notes	GIT_NOTES_REWRITE_MODE works	notes	pass
+t3301-notes::git-notes-rewrite-ref-works	t3301-notes	GIT_NOTES_REWRITE_REF works	notes	pass
+t3301-notes::git-notes-rewrite-ref-overrides-config	t3301-notes	GIT_NOTES_REWRITE_REF overrides config	notes	pass
+t3301-notes::git-notes-copy-diagnoses-too-many-or-too-few-arguments	t3301-notes	git notes copy diagnoses too many or too few arguments	notes	pass
+t3301-notes::git-notes-get-ref-expands-refs-heads-main-to-refs-notes-refs-heads-main	t3301-notes	git notes get-ref expands refs/heads/main to refs/notes/refs/heads/main	notes	pass
+t3301-notes::git-notes-get-ref-no-overrides	t3301-notes	git notes get-ref (no overrides)	notes	pass
+t3301-notes::git-notes-get-ref-core-notesref	t3301-notes	git notes get-ref (core.notesRef)	notes	pass
+t3301-notes::git-notes-get-ref-git-notes-ref	t3301-notes	git notes get-ref (GIT_NOTES_REF)	notes	pass
+t3301-notes::git-notes-get-ref-ref	t3301-notes	git notes get-ref (--ref)	notes	pass
+t3301-notes::setup-testing-of-empty-notes	t3301-notes	setup testing of empty notes	notes	pass
+t3301-notes::empty-notes-are-displayed-by-git-log	t3301-notes	empty notes are displayed by git log	notes	pass
+t3301-notes::empty-notes-do-not-invoke-the-editor	t3301-notes	empty notes do not invoke the editor	notes	pass
+t3301-notes::git-notes-add-with-m-f-invokes-editor-with-e	t3301-notes	git notes add with -m/-F invokes editor with -e	notes	pass
+t3301-notes::git-notes-append-with-m-f-invokes-the-editor-with-e	t3301-notes	git notes append with -m/-F invokes the editor with -e	notes	pass
+t3301-notes::git-notes-with-a-combination-of-m-f-and-e-invokes-editor	t3301-notes	git notes with a combination of -m, -F and -e invokes editor	notes	pass
+t3301-notes::git-notes-append-aborts-when-editor-fails-with-e	t3301-notes	git notes append aborts when editor fails with -e	notes	pass
+t3301-notes::git-show-pretty-does-not-show-notes	t3301-notes	git show $pretty does$not show notes	notes	pass
+t3301-notes::git-notes-cmd-removes-empty-note	t3301-notes	'git notes $cmd' removes empty note	notes	pass
+t3301-notes::git-notes-cmd-allow-empty-stores-empty-note	t3301-notes	'git notes $cmd --allow-empty' stores empty note	notes	pass
 t3302-notes-index-expensive::usr-bin-time-pr-pr	t3302-notes-index-expensive	USR_BIN_TIME${pr:+,$pr}	notes	not_ported
 t3303-notes-subtrees::test-notes-in-2-38-fanout	t3303-notes-subtrees	test notes in 2/38-fanout	notes	not_ported
 t3303-notes-subtrees::verify-notes-in-2-38-fanout	t3303-notes-subtrees	verify notes in 2/38-fanout	notes	not_ported
@@ -4870,9 +4870,9 @@ t3306-notes-prune::verify-that-notes-are-gone	t3306-notes-prune	verify that note
 t3306-notes-prune::remove-some-commits-2	t3306-notes-prune	remove some commits	notes	not_ported
 t3306-notes-prune::prune-v-notes	t3306-notes-prune	prune -v notes	notes	not_ported
 t3306-notes-prune::verify-that-notes-are-gone-2	t3306-notes-prune	verify that notes are gone	notes	not_ported
-t3307-notes-man::setup	t3307-notes-man	setup	notes	not_ported
-t3307-notes-man::example-1-notes-to-add-an-acked-by-line	t3307-notes-man	example 1: notes to add an Acked-by line	notes	not_ported
-t3307-notes-man::example-2-binary-notes	t3307-notes-man	example 2: binary notes	notes	not_ported
+t3307-notes-man::setup	t3307-notes-man	setup	notes	pass
+t3307-notes-man::example-1-notes-to-add-an-acked-by-line	t3307-notes-man	example 1: notes to add an Acked-by line	notes	pass
+t3307-notes-man::example-2-binary-notes	t3307-notes-man	example 2: binary notes	notes	pass
 t3308-notes-merge::verify-initial-notes-x	t3308-notes-merge	verify initial notes (x)	notes	not_ported
 t3308-notes-merge::fail-to-merge-empty-notes-ref-into-empty-notes-ref-z-y	t3308-notes-merge	fail to merge empty notes ref into empty notes ref (z => y)	notes	not_ported
 t3308-notes-merge::fail-to-merge-into-various-non-notes-refs	t3308-notes-merge	fail to merge into various non-notes refs	notes	not_ported
@@ -5213,10 +5213,10 @@ t3404-rebase-interactive::update-refs-check-failed-ref-update	t3404-rebase-inter
 t3404-rebase-interactive::bad-labels-and-refs-rejected-when-parsing-todo-list	t3404-rebase-interactive	bad labels and refs rejected when parsing todo list	rebase	not_ported
 t3404-rebase-interactive::non-merge-commands-reject-merge-commits	t3404-rebase-interactive	non-merge commands reject merge commits	rebase	not_ported
 t3404-rebase-interactive::editor-and-friends-are-unchanged	t3404-rebase-interactive	$EDITOR and friends are unchanged	rebase	not_ported
-t3405-rebase-malformed::rebase-commit-with-multi-line-subject	t3405-rebase-malformed	rebase commit with multi-line subject	rebase	not_ported
-t3405-rebase-malformed::rebase-commit-with-diff-in-message	t3405-rebase-malformed	rebase commit with diff in message	rebase	not_ported
-t3405-rebase-malformed::rebase-m-commit-with-empty-message	t3405-rebase-malformed	rebase -m commit with empty message	rebase	not_ported
-t3405-rebase-malformed::rebase-i-commit-with-empty-message	t3405-rebase-malformed	rebase -i commit with empty message	rebase	not_ported
+t3405-rebase-malformed::rebase-commit-with-multi-line-subject	t3405-rebase-malformed	rebase commit with multi-line subject	rebase	pass
+t3405-rebase-malformed::rebase-commit-with-diff-in-message	t3405-rebase-malformed	rebase commit with diff in message	rebase	pass
+t3405-rebase-malformed::rebase-m-commit-with-empty-message	t3405-rebase-malformed	rebase -m commit with empty message	rebase	pass
+t3405-rebase-malformed::rebase-i-commit-with-empty-message	t3405-rebase-malformed	rebase -i commit with empty message	rebase	pass
 t3406-rebase-message::setup	t3406-rebase-message	setup	rebase	not_ported
 t3406-rebase-message::rebase-m	t3406-rebase-message	rebase -m	rebase	not_ported
 t3406-rebase-message::rebase-against-main-twice	t3406-rebase-message	rebase against main twice	rebase	not_ported
@@ -5270,20 +5270,20 @@ t3412-rebase-root::rebase-i-root-with-conflict-first-part	t3412-rebase-root	reba
 t3412-rebase-root::fix-the-conflict-2	t3412-rebase-root	fix the conflict	rebase	not_ported
 t3412-rebase-root::rebase-i-root-with-conflict-second-part	t3412-rebase-root	rebase -i --root with conflict (second part)	rebase	not_ported
 t3412-rebase-root::fix-the-conflict-3	t3412-rebase-root	fix the conflict	rebase	not_ported
-t3413-rebase-hook::rebase	t3413-rebase-hook	rebase	rebase	not_ported
-t3413-rebase-hook::rebase-i	t3413-rebase-hook	rebase -i	rebase	not_ported
-t3413-rebase-hook::setup-pre-rebase-hook	t3413-rebase-hook	setup pre-rebase hook	rebase	not_ported
-t3413-rebase-hook::pre-rebase-hook-gets-correct-input-1	t3413-rebase-hook	pre-rebase hook gets correct input (1)	rebase	not_ported
-t3413-rebase-hook::pre-rebase-hook-gets-correct-input-2	t3413-rebase-hook	pre-rebase hook gets correct input (2)	rebase	not_ported
-t3413-rebase-hook::pre-rebase-hook-gets-correct-input-3	t3413-rebase-hook	pre-rebase hook gets correct input (3)	rebase	not_ported
-t3413-rebase-hook::pre-rebase-hook-gets-correct-input-4	t3413-rebase-hook	pre-rebase hook gets correct input (4)	rebase	not_ported
-t3413-rebase-hook::pre-rebase-hook-gets-correct-input-5	t3413-rebase-hook	pre-rebase hook gets correct input (5)	rebase	not_ported
-t3413-rebase-hook::pre-rebase-hook-gets-correct-input-6	t3413-rebase-hook	pre-rebase hook gets correct input (6)	rebase	not_ported
-t3413-rebase-hook::setup-pre-rebase-hook-that-fails	t3413-rebase-hook	setup pre-rebase hook that fails	rebase	not_ported
-t3413-rebase-hook::pre-rebase-hook-stops-rebase-1	t3413-rebase-hook	pre-rebase hook stops rebase (1)	rebase	not_ported
-t3413-rebase-hook::pre-rebase-hook-stops-rebase-2	t3413-rebase-hook	pre-rebase hook stops rebase (2)	rebase	not_ported
-t3413-rebase-hook::rebase-no-verify-overrides-pre-rebase-1	t3413-rebase-hook	rebase --no-verify overrides pre-rebase (1)	rebase	not_ported
-t3413-rebase-hook::rebase-no-verify-overrides-pre-rebase-2	t3413-rebase-hook	rebase --no-verify overrides pre-rebase (2)	rebase	not_ported
+t3413-rebase-hook::rebase	t3413-rebase-hook	rebase	rebase	pass
+t3413-rebase-hook::rebase-i	t3413-rebase-hook	rebase -i	rebase	pass
+t3413-rebase-hook::setup-pre-rebase-hook	t3413-rebase-hook	setup pre-rebase hook	rebase	pass
+t3413-rebase-hook::pre-rebase-hook-gets-correct-input-1	t3413-rebase-hook	pre-rebase hook gets correct input (1)	rebase	pass
+t3413-rebase-hook::pre-rebase-hook-gets-correct-input-2	t3413-rebase-hook	pre-rebase hook gets correct input (2)	rebase	pass
+t3413-rebase-hook::pre-rebase-hook-gets-correct-input-3	t3413-rebase-hook	pre-rebase hook gets correct input (3)	rebase	pass
+t3413-rebase-hook::pre-rebase-hook-gets-correct-input-4	t3413-rebase-hook	pre-rebase hook gets correct input (4)	rebase	pass
+t3413-rebase-hook::pre-rebase-hook-gets-correct-input-5	t3413-rebase-hook	pre-rebase hook gets correct input (5)	rebase	pass
+t3413-rebase-hook::pre-rebase-hook-gets-correct-input-6	t3413-rebase-hook	pre-rebase hook gets correct input (6)	rebase	pass
+t3413-rebase-hook::setup-pre-rebase-hook-that-fails	t3413-rebase-hook	setup pre-rebase hook that fails	rebase	pass
+t3413-rebase-hook::pre-rebase-hook-stops-rebase-1	t3413-rebase-hook	pre-rebase hook stops rebase (1)	rebase	pass
+t3413-rebase-hook::pre-rebase-hook-stops-rebase-2	t3413-rebase-hook	pre-rebase hook stops rebase (2)	rebase	pass
+t3413-rebase-hook::rebase-no-verify-overrides-pre-rebase-1	t3413-rebase-hook	rebase --no-verify overrides pre-rebase (1)	rebase	pass
+t3413-rebase-hook::rebase-no-verify-overrides-pre-rebase-2	t3413-rebase-hook	rebase --no-verify overrides pre-rebase (2)	rebase	pass
 t3415-rebase-autosquash::auto-fixup-option	t3415-rebase-autosquash	auto fixup (option)	rebase	not_ported
 t3415-rebase-autosquash::auto-fixup-config-true	t3415-rebase-autosquash	auto fixup (config true)	rebase	not_ported
 t3415-rebase-autosquash::auto-fixup-config-false	t3415-rebase-autosquash	auto fixup (config false)	rebase	not_ported
@@ -5390,24 +5390,24 @@ t3421-rebase-topology-linear::setup-branches-and-remote-tracking	t3421-rebase-to
 t3421-rebase-topology-linear::setup-of-linear-history-for-range-selection-tests	t3421-rebase-topology-linear	setup of linear history for range selection tests	rebase	not_ported
 t3421-rebase-topology-linear::setup-of-linear-history-for-empty-commit-tests	t3421-rebase-topology-linear	setup of linear history for empty commit tests	rebase	not_ported
 t3421-rebase-topology-linear::setup-of-linear-history-for-test-involving-root	t3421-rebase-topology-linear	setup of linear history for test involving root	rebase	not_ported
-t3422-rebase-incompatible-options::setup	t3422-rebase-incompatible-options	setup	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-merge	t3422-rebase-incompatible-options	$opt incompatible with --merge	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-strategy-ours	t3422-rebase-incompatible-options	$opt incompatible with --strategy=ours	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-strategy-option-ours	t3422-rebase-incompatible-options	$opt incompatible with --strategy-option=ours	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-autosquash	t3422-rebase-incompatible-options	$opt incompatible with --autosquash	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-interactive	t3422-rebase-incompatible-options	$opt incompatible with --interactive	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-exec	t3422-rebase-incompatible-options	$opt incompatible with --exec	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-keep-empty	t3422-rebase-incompatible-options	$opt incompatible with --keep-empty	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-empty	t3422-rebase-incompatible-options	$opt incompatible with --empty=...	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-no-reapply-cherry-picks	t3422-rebase-incompatible-options	$opt incompatible with --no-reapply-cherry-picks	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-reapply-cherry-picks	t3422-rebase-incompatible-options	$opt incompatible with --reapply-cherry-picks	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-rebase-merges	t3422-rebase-incompatible-options	$opt incompatible with --rebase-merges	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-update-refs	t3422-rebase-incompatible-options	$opt incompatible with --update-refs	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-root-without-onto	t3422-rebase-incompatible-options	$opt incompatible with --root without --onto	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-rebase-rebasemerges	t3422-rebase-incompatible-options	$opt incompatible with rebase.rebaseMerges	rebase	not_ported
-t3422-rebase-incompatible-options::opt-incompatible-with-rebase-updaterefs	t3422-rebase-incompatible-options	$opt incompatible with rebase.updateRefs	rebase	not_ported
-t3422-rebase-incompatible-options::opt-okay-with-overridden-rebase-rebasemerges	t3422-rebase-incompatible-options	$opt okay with overridden rebase.rebaseMerges	rebase	not_ported
-t3422-rebase-incompatible-options::opt-okay-with-overridden-rebase-updaterefs	t3422-rebase-incompatible-options	$opt okay with overridden rebase.updateRefs	rebase	not_ported
+t3422-rebase-incompatible-options::setup	t3422-rebase-incompatible-options	setup	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-merge	t3422-rebase-incompatible-options	$opt incompatible with --merge	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-strategy-ours	t3422-rebase-incompatible-options	$opt incompatible with --strategy=ours	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-strategy-option-ours	t3422-rebase-incompatible-options	$opt incompatible with --strategy-option=ours	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-autosquash	t3422-rebase-incompatible-options	$opt incompatible with --autosquash	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-interactive	t3422-rebase-incompatible-options	$opt incompatible with --interactive	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-exec	t3422-rebase-incompatible-options	$opt incompatible with --exec	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-keep-empty	t3422-rebase-incompatible-options	$opt incompatible with --keep-empty	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-empty	t3422-rebase-incompatible-options	$opt incompatible with --empty=...	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-no-reapply-cherry-picks	t3422-rebase-incompatible-options	$opt incompatible with --no-reapply-cherry-picks	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-reapply-cherry-picks	t3422-rebase-incompatible-options	$opt incompatible with --reapply-cherry-picks	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-rebase-merges	t3422-rebase-incompatible-options	$opt incompatible with --rebase-merges	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-update-refs	t3422-rebase-incompatible-options	$opt incompatible with --update-refs	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-root-without-onto	t3422-rebase-incompatible-options	$opt incompatible with --root without --onto	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-rebase-rebasemerges	t3422-rebase-incompatible-options	$opt incompatible with rebase.rebaseMerges	rebase	pass
+t3422-rebase-incompatible-options::opt-incompatible-with-rebase-updaterefs	t3422-rebase-incompatible-options	$opt incompatible with rebase.updateRefs	rebase	pass
+t3422-rebase-incompatible-options::opt-okay-with-overridden-rebase-rebasemerges	t3422-rebase-incompatible-options	$opt okay with overridden rebase.rebaseMerges	rebase	pass
+t3422-rebase-incompatible-options::opt-okay-with-overridden-rebase-updaterefs	t3422-rebase-incompatible-options	$opt okay with overridden rebase.updateRefs	rebase	pass
 t3423-rebase-reword::setup	t3423-rebase-reword	setup	rebase	not_ported
 t3423-rebase-reword::reword-without-issues-functions-as-intended	t3423-rebase-reword	reword without issues functions as intended	rebase	not_ported
 t3423-rebase-reword::reword-after-a-conflict-preserves-commit	t3423-rebase-reword	reword after a conflict preserves commit	rebase	not_ported
@@ -5493,10 +5493,10 @@ t3431-rebase-fork-point::rebase-forkpoint-set-to-true-and-root-given	t3431-rebas
 t3431-rebase-fork-point::git-rebase	t3431-rebase-fork-point	git rebase $*	rebase	pass
 t3432-rebase-fast-forward::add-work-same-to-side	t3432-rebase-fast-forward	add work same to side	rebase	pass
 t3432-rebase-fast-forward::add-work-same-to-upstream	t3432-rebase-fast-forward	add work same to upstream	rebase	pass
-t3433-rebase-across-mode-change::setup	t3433-rebase-across-mode-change	setup	rebase	not_ported
-t3433-rebase-across-mode-change::rebase-changes-with-the-apply-backend	t3433-rebase-across-mode-change	rebase changes with the apply backend	rebase	not_ported
-t3433-rebase-across-mode-change::rebase-changes-with-the-merge-backend	t3433-rebase-across-mode-change	rebase changes with the merge backend	rebase	not_ported
-t3433-rebase-across-mode-change::rebase-changes-with-the-merge-backend-with-a-delay	t3433-rebase-across-mode-change	rebase changes with the merge backend with a delay	rebase	not_ported
+t3433-rebase-across-mode-change::setup	t3433-rebase-across-mode-change	setup	rebase	pass
+t3433-rebase-across-mode-change::rebase-changes-with-the-apply-backend	t3433-rebase-across-mode-change	rebase changes with the apply backend	rebase	pass
+t3433-rebase-across-mode-change::rebase-changes-with-the-merge-backend	t3433-rebase-across-mode-change	rebase changes with the merge backend	rebase	pass
+t3433-rebase-across-mode-change::rebase-changes-with-the-merge-backend-with-a-delay	t3433-rebase-across-mode-change	rebase changes with the merge backend with a delay	rebase	pass
 t3434-rebase-i18n::rebase-rebase-merges-update-encoding-eucjp-to-utf-8	t3434-rebase-i18n	rebase --rebase-merges update encoding eucJP to UTF-8	rebase	pass
 t3434-rebase-i18n::rebase-rebase-merges-update-encoding-eucjp-to-iso-2022-jp	t3434-rebase-i18n	rebase --rebase-merges update encoding eucJP to ISO-2022-JP	rebase	pass
 t3434-rebase-i18n::rebase-continue-update-from-old-to-new	t3434-rebase-i18n	rebase --continue update from $old to $new	rebase	pass
@@ -5543,11 +5543,11 @@ t3437-rebase-fixup-options::multiple-fixup-c-opens-editor-once	t3437-rebase-fixu
 t3437-rebase-fixup-options::sequence-squash-fixup-fixup-c-gives-combined-message	t3437-rebase-fixup-options	sequence squash, fixup & fixup -c gives combined message	rebase	pass
 t3437-rebase-fixup-options::fixup-c-works-upon-autosquash-with-amend	t3437-rebase-fixup-options	fixup -C works upon --autosquash with amend!	rebase	pass
 t3437-rebase-fixup-options::fixup-cc-commit-works	t3437-rebase-fixup-options	fixup -[Cc]<commit> works	rebase	pass
-t3438-rebase-broken-files::set-up-conflicting-branches	t3438-rebase-broken-files	set up conflicting branches	rebase	not_ported
-t3438-rebase-broken-files::unknown-key-in-author-script	t3438-rebase-broken-files	unknown key in author-script	rebase	not_ported
-t3438-rebase-broken-files::unwritable-rebased-patches-does-not-leak	t3438-rebase-broken-files	unwritable rebased-patches does not leak	rebase	not_ported
-t3438-rebase-broken-files::detect-missing-git-author-item	t3438-rebase-broken-files	detect missing GIT_AUTHOR_$item	rebase	not_ported
-t3438-rebase-broken-files::detect-duplicate-git-author-item	t3438-rebase-broken-files	detect duplicate GIT_AUTHOR_$item	rebase	not_ported
+t3438-rebase-broken-files::set-up-conflicting-branches	t3438-rebase-broken-files	set up conflicting branches	rebase	pass
+t3438-rebase-broken-files::unknown-key-in-author-script	t3438-rebase-broken-files	unknown key in author-script	rebase	pass
+t3438-rebase-broken-files::unwritable-rebased-patches-does-not-leak	t3438-rebase-broken-files	unwritable rebased-patches does not leak	rebase	pass
+t3438-rebase-broken-files::detect-missing-git-author-item	t3438-rebase-broken-files	detect missing GIT_AUTHOR_$item	rebase	pass
+t3438-rebase-broken-files::detect-duplicate-git-author-item	t3438-rebase-broken-files	detect duplicate GIT_AUTHOR_$item	rebase	pass
 t3440-rebase-trailer::setup-repo-with-a-small-history	t3440-rebase-trailer	setup repo with a small history	rebase	not_ported
 t3440-rebase-trailer::apply-backend-is-rejected-with-trailer	t3440-rebase-trailer	apply backend is rejected with --trailer	rebase	not_ported
 t3440-rebase-trailer::reject-empty-trailer-argument	t3440-rebase-trailer	reject empty --trailer argument	rebase	not_ported
@@ -5634,11 +5634,11 @@ t3502-cherry-pick-merge::revert-a-merge-without-m-should-fail	t3502-cherry-pick-
 t3502-cherry-pick-merge::revert-a-merge-1	t3502-cherry-pick-merge	revert a merge (1)	cherry-pick	pass
 t3502-cherry-pick-merge::revert-a-merge-2	t3502-cherry-pick-merge	revert a merge (2)	cherry-pick	pass
 t3502-cherry-pick-merge::revert-a-merge-relative-to-nonexistent-parent-should-fail	t3502-cherry-pick-merge	revert a merge relative to nonexistent parent should fail	cherry-pick	pass
-t3503-cherry-pick-root::cherry-pick-a-root-commit	t3503-cherry-pick-root	cherry-pick a root commit	cherry-pick	not_ported
-t3503-cherry-pick-root::revert-a-root-commit	t3503-cherry-pick-root	revert a root commit	cherry-pick	not_ported
-t3503-cherry-pick-root::cherry-pick-a-root-commit-with-an-external-strategy	t3503-cherry-pick-root	cherry-pick a root commit with an external strategy	cherry-pick	not_ported
-t3503-cherry-pick-root::revert-a-root-commit-with-an-external-strategy	t3503-cherry-pick-root	revert a root commit with an external strategy	cherry-pick	not_ported
-t3503-cherry-pick-root::cherry-pick-two-root-commits	t3503-cherry-pick-root	cherry-pick two root commits	cherry-pick	not_ported
+t3503-cherry-pick-root::cherry-pick-a-root-commit	t3503-cherry-pick-root	cherry-pick a root commit	cherry-pick	pass
+t3503-cherry-pick-root::revert-a-root-commit	t3503-cherry-pick-root	revert a root commit	cherry-pick	pass
+t3503-cherry-pick-root::cherry-pick-a-root-commit-with-an-external-strategy	t3503-cherry-pick-root	cherry-pick a root commit with an external strategy	cherry-pick	pass
+t3503-cherry-pick-root::revert-a-root-commit-with-an-external-strategy	t3503-cherry-pick-root	revert a root commit with an external strategy	cherry-pick	pass
+t3503-cherry-pick-root::cherry-pick-two-root-commits	t3503-cherry-pick-root	cherry-pick two root commits	cherry-pick	pass
 t3504-cherry-pick-rerere::conflicting-merge	t3504-cherry-pick-rerere	conflicting merge	cherry-pick	not_ported
 t3504-cherry-pick-rerere::fixup	t3504-cherry-pick-rerere	fixup	cherry-pick	not_ported
 t3504-cherry-pick-rerere::cherry-pick-conflict-with-rerere-autoupdate	t3504-cherry-pick-rerere	cherry-pick conflict with --rerere-autoupdate	cherry-pick	not_ported
@@ -6186,19 +6186,19 @@ t3901-i18n-patch::am-l-l	t3901-i18n-patch	am (L/L)	am	partial
 t3901-i18n-patch::am-u-l	t3901-i18n-patch	am (U/L)	am	partial
 t3901-i18n-patch::am-no-utf8-u-l	t3901-i18n-patch	am --no-utf8 (U/L)	am	partial
 t3901-i18n-patch::am-l-u	t3901-i18n-patch	am (L/U)	am	partial
-t3902-quoted::setup	t3902-quoted	setup	add	not_ported
-t3902-quoted::setup-expected-files	t3902-quoted	setup expected files		not_ported
-t3902-quoted::check-fully-quoted-output-from-ls-files	t3902-quoted	check fully quoted output from ls-files	ls-files	not_ported
-t3902-quoted::check-fully-quoted-output-from-diff-files	t3902-quoted	check fully quoted output from diff-files	diff	not_ported
-t3902-quoted::check-fully-quoted-output-from-diff-index	t3902-quoted	check fully quoted output from diff-index	diff	not_ported
-t3902-quoted::check-fully-quoted-output-from-diff-tree	t3902-quoted	check fully quoted output from diff-tree	diff	not_ported
-t3902-quoted::check-fully-quoted-output-from-ls-tree	t3902-quoted	check fully quoted output from ls-tree	ls-tree	not_ported
-t3902-quoted::setting-core-quotepath	t3902-quoted	setting core.quotepath	config	not_ported
-t3902-quoted::check-fully-quoted-output-from-ls-files-2	t3902-quoted	check fully quoted output from ls-files	ls-files	not_ported
-t3902-quoted::check-fully-quoted-output-from-diff-files-2	t3902-quoted	check fully quoted output from diff-files	diff	not_ported
-t3902-quoted::check-fully-quoted-output-from-diff-index-2	t3902-quoted	check fully quoted output from diff-index	diff	not_ported
-t3902-quoted::check-fully-quoted-output-from-diff-tree-2	t3902-quoted	check fully quoted output from diff-tree	diff	not_ported
-t3902-quoted::check-fully-quoted-output-from-ls-tree-2	t3902-quoted	check fully quoted output from ls-tree	ls-tree	not_ported
+t3902-quoted::setup	t3902-quoted	setup	add	pass
+t3902-quoted::setup-expected-files	t3902-quoted	setup expected files		pass
+t3902-quoted::check-fully-quoted-output-from-ls-files	t3902-quoted	check fully quoted output from ls-files	ls-files	pass
+t3902-quoted::check-fully-quoted-output-from-diff-files	t3902-quoted	check fully quoted output from diff-files	diff	pass
+t3902-quoted::check-fully-quoted-output-from-diff-index	t3902-quoted	check fully quoted output from diff-index	diff	pass
+t3902-quoted::check-fully-quoted-output-from-diff-tree	t3902-quoted	check fully quoted output from diff-tree	diff	pass
+t3902-quoted::check-fully-quoted-output-from-ls-tree	t3902-quoted	check fully quoted output from ls-tree	ls-tree	pass
+t3902-quoted::setting-core-quotepath	t3902-quoted	setting core.quotepath	config	pass
+t3902-quoted::check-fully-quoted-output-from-ls-files-2	t3902-quoted	check fully quoted output from ls-files	ls-files	pass
+t3902-quoted::check-fully-quoted-output-from-diff-files-2	t3902-quoted	check fully quoted output from diff-files	diff	pass
+t3902-quoted::check-fully-quoted-output-from-diff-index-2	t3902-quoted	check fully quoted output from diff-index	diff	pass
+t3902-quoted::check-fully-quoted-output-from-diff-tree-2	t3902-quoted	check fully quoted output from diff-tree	diff	pass
+t3902-quoted::check-fully-quoted-output-from-ls-tree-2	t3902-quoted	check fully quoted output from ls-tree	ls-tree	pass
 t3903-stash::setup	t3903-stash	setup	stash	pass
 t3903-stash::usage-on-cmd-and-subcommand-invalid-option	t3903-stash	usage on cmd and subcommand invalid option	stash	pass
 t3903-stash::usage-on-main-command-h-emits-a-summary-of-subcommands	t3903-stash	usage on main command -h emits a summary of subcommands	stash	pass
@@ -6385,16 +6385,16 @@ t3905-stash-include-untracked::stash-show-include-only-untracked-on-stashes-with
 t3905-stash-include-untracked::stash-u-ignores-sub-repository	t3905-stash-include-untracked	stash -u ignores sub-repository	stash	pass
 t3906-stash-submodule::stash-push-with-submodule-recurse-true-preserves-dirty-submodule-worktree	t3906-stash-submodule	stash push with submodule.recurse=true preserves dirty submodule worktree	stash	not_ported
 t3906-stash-submodule::stash-push-and-pop-with-submodule-recurse-true-preserves-dirty-submodule-worktre	t3906-stash-submodule	stash push and pop with submodule.recurse=true preserves dirty submodule worktree	stash	not_ported
-t3907-stash-show-config::setup	t3907-stash-show-config	setup	stash	not_ported
-t3907-stash-show-config::showstat-unset-showpatch-unset	t3907-stash-show-config	showStat unset showPatch unset	stash	not_ported
-t3907-stash-show-config::showstat-unset-showpatch-false	t3907-stash-show-config	showStat unset showPatch false	stash	not_ported
-t3907-stash-show-config::showstat-unset-showpatch-true	t3907-stash-show-config	showStat unset showPatch true	stash	not_ported
-t3907-stash-show-config::showstat-false-showpatch-unset	t3907-stash-show-config	showStat false showPatch unset	stash	not_ported
-t3907-stash-show-config::showstat-false-showpatch-false	t3907-stash-show-config	showStat false showPatch false	stash	not_ported
-t3907-stash-show-config::showstat-false-showpatch-true	t3907-stash-show-config	showStat false showPatch true	stash	not_ported
-t3907-stash-show-config::showstat-true-showpatch-unset	t3907-stash-show-config	showStat true showPatch unset	stash	not_ported
-t3907-stash-show-config::showstat-true-showpatch-false	t3907-stash-show-config	showStat true showPatch false	stash	not_ported
-t3907-stash-show-config::showstat-true-showpatch-true	t3907-stash-show-config	showStat true showPatch true	stash	not_ported
+t3907-stash-show-config::setup	t3907-stash-show-config	setup	stash	pass
+t3907-stash-show-config::showstat-unset-showpatch-unset	t3907-stash-show-config	showStat unset showPatch unset	stash	pass
+t3907-stash-show-config::showstat-unset-showpatch-false	t3907-stash-show-config	showStat unset showPatch false	stash	pass
+t3907-stash-show-config::showstat-unset-showpatch-true	t3907-stash-show-config	showStat unset showPatch true	stash	pass
+t3907-stash-show-config::showstat-false-showpatch-unset	t3907-stash-show-config	showStat false showPatch unset	stash	pass
+t3907-stash-show-config::showstat-false-showpatch-false	t3907-stash-show-config	showStat false showPatch false	stash	pass
+t3907-stash-show-config::showstat-false-showpatch-true	t3907-stash-show-config	showStat false showPatch true	stash	pass
+t3907-stash-show-config::showstat-true-showpatch-unset	t3907-stash-show-config	showStat true showPatch unset	stash	pass
+t3907-stash-show-config::showstat-true-showpatch-false	t3907-stash-show-config	showStat true showPatch false	stash	pass
+t3907-stash-show-config::showstat-true-showpatch-true	t3907-stash-show-config	showStat true showPatch true	stash	pass
 t3908-stash-in-worktree::setup	t3908-stash-in-worktree	setup	stash	pass
 t3908-stash-in-worktree::apply-in-subdirectory	t3908-stash-in-worktree	apply in subdirectory	stash	pass
 t3909-stash-pathspec-file::simplest	t3909-stash-pathspec-file	simplest	stash	not_ported
@@ -7692,9 +7692,9 @@ t4070-diff-pairs::diff-pairs-does-not-support-tree-objects-as-input	t4070-diff-p
 t4070-diff-pairs::diff-pairs-does-not-support-pathspec-arguments	t4070-diff-pairs	diff-pairs does not support pathspec arguments	diff	not_ported
 t4070-diff-pairs::diff-pairs-explicit-queue-flush	t4070-diff-pairs	diff-pairs explicit queue flush	diff	not_ported
 t4071-diff-minimal::minimal-diff-should-not-mark-changes-between-changed-lines	t4071-diff-minimal	minimal diff should not mark changes between changed lines	diff	pass
-t4072-diff-max-depth::setup	t4072-diff-max-depth	setup	diff	partial
-t4072-diff-max-depth::max-depth-is-disallowed-with-wildcard-pathspecs	t4072-diff-max-depth	--max-depth is disallowed with wildcard pathspecs	diff	partial
-t4072-diff-max-depth::find-shortest-path-within-embedded-pathspecs	t4072-diff-max-depth	find shortest path within embedded pathspecs	diff	partial
+t4072-diff-max-depth::setup	t4072-diff-max-depth	setup	diff	pass
+t4072-diff-max-depth::max-depth-is-disallowed-with-wildcard-pathspecs	t4072-diff-max-depth	--max-depth is disallowed with wildcard pathspecs	diff	pass
+t4072-diff-max-depth::find-shortest-path-within-embedded-pathspecs	t4072-diff-max-depth	find shortest path within embedded pathspecs	diff	pass
 t4073-diff-stat-name-width::setup	t4073-diff-stat-name-width	setup	diff	pass
 t4073-diff-stat-name-width::test-name-width-long-enough-for-filepath	t4073-diff-stat-name-width	test name-width long enough for filepath	diff	pass
 t4073-diff-stat-name-width::test-name-width-not-long-enough-for-dir-name	t4073-diff-stat-name-width	test name-width not long enough for dir name	diff	pass
@@ -8175,150 +8175,150 @@ t4201-shortlog::set-up-option-selection-tests	t4201-shortlog	set up option selec
 t4201-shortlog::no-group-resets-group-list-to-author	t4201-shortlog	--no-group resets group list to author	shortlog	partial
 t4201-shortlog::no-group-resets-trailer-list	t4201-shortlog	--no-group resets trailer list	shortlog	partial
 t4201-shortlog::stdin-with-multiple-groups-reports-error	t4201-shortlog	stdin with multiple groups reports error	shortlog	partial
-t4202-log::pretty	t4202-log	pretty	log	not_ported
-t4202-log::pretty-tformat	t4202-log	pretty (tformat)	log	not_ported
-t4202-log::pretty-shortcut	t4202-log	pretty (shortcut)	log	not_ported
-t4202-log::format	t4202-log	format	log	not_ported
-t4202-log::format-w-11-1-2	t4202-log	format %w(11,1,2)	log	not_ported
-t4202-log::format-w-1-2	t4202-log	format %w(,1,2)	log	not_ported
-t4202-log::oneline	t4202-log	oneline	log	not_ported
-t4202-log::diff-filter-a	t4202-log	diff-filter=A	log	not_ported
-t4202-log::diff-filter-m	t4202-log	diff-filter=M	log	not_ported
-t4202-log::diff-filter-d	t4202-log	diff-filter=D	log	not_ported
-t4202-log::all-negative-filter	t4202-log	all-negative filter	log	not_ported
-t4202-log::diff-filter-r	t4202-log	diff-filter=R	log	not_ported
-t4202-log::multiple-diff-filter-bits	t4202-log	multiple --diff-filter bits	log	not_ported
-t4202-log::diff-filter-c	t4202-log	diff-filter=C	log	not_ported
-t4202-log::git-log-follow	t4202-log	git log --follow	log	not_ported
-t4202-log::git-config-log-follow-works-like-follow	t4202-log	git config log.follow works like --follow	log	not_ported
-t4202-log::git-config-log-follow-does-not-die-with-multiple-paths	t4202-log	git config log.follow does not die with multiple paths	log	not_ported
-t4202-log::git-config-log-follow-does-not-die-with-no-paths	t4202-log	git config log.follow does not die with no paths	log	not_ported
-t4202-log::git-log-follow-rejects-unsupported-pathspec-magic	t4202-log	git log --follow rejects unsupported pathspec magic	log	not_ported
-t4202-log::log-follow-disabled-with-unsupported-pathspec-magic	t4202-log	log.follow disabled with unsupported pathspec magic	log	not_ported
-t4202-log::git-config-log-follow-is-overridden-by-no-follow	t4202-log	git config log.follow is overridden by --no-follow	log	not_ported
-t4202-log::git-log-no-walk-commits-sorts-by-commit-time	t4202-log	git log --no-walk <commits> sorts by commit time	log	not_ported
-t4202-log::git-log-no-walk-sorted-commits-sorts-by-commit-time	t4202-log	git log --no-walk=sorted <commits> sorts by commit time	log	not_ported
-t4202-log::git-log-line-prefix-no-walk-commits-sorts-by-commit-time	t4202-log	git log --line-prefix="=== " --no-walk <commits> sorts by commit time	log	not_ported
-t4202-log::git-log-no-walk-unsorted-commits-leaves-list-of-commits-as-given	t4202-log	git log --no-walk=unsorted <commits> leaves list of commits as given	log	not_ported
-t4202-log::git-show-commits-leaves-list-of-commits-as-given	t4202-log	git show <commits> leaves list of commits as given	log	not_ported
-t4202-log::setup-case-sensitivity-tests	t4202-log	setup case sensitivity tests	log	not_ported
-t4202-log::log-grep	t4202-log	log --grep	log	not_ported
-t4202-log::log-invert-grep-grep	t4202-log	log --invert-grep --grep	log	not_ported
-t4202-log::log-invert-grep-grep-i	t4202-log	log --invert-grep --grep -i	log	not_ported
-t4202-log::log-grep-option-parsing	t4202-log	log --grep option parsing	log	not_ported
-t4202-log::log-i-grep	t4202-log	log -i --grep	log	not_ported
-t4202-log::log-grep-i	t4202-log	log --grep -i	log	not_ported
-t4202-log::log-f-e-grep-ere-uses-ere	t4202-log	log -F -E --grep=<ere> uses ere	log	not_ported
-t4202-log::log-f-e-perl-regexp-grep-pcre-uses-pcre	t4202-log	log -F -E --perl-regexp --grep=<pcre> uses PCRE	log	not_ported
-t4202-log::log-with-grep-patterntype-configuration	t4202-log	log with grep.patternType configuration	log	not_ported
-t4202-log::log-with-grep-patterntype-configuration-and-command-line	t4202-log	log with grep.patternType configuration and command line	log	not_ported
-t4202-log::log-with-various-grep-patterntype-configurations-command-lines	t4202-log	log with various grep.patternType configurations & command-lines	log	not_ported
-t4202-log::log-author	t4202-log	log --author	log	not_ported
-t4202-log::log-committer	t4202-log	log --committer	log	not_ported
-t4202-log::log-i-grep-with-color	t4202-log	log -i --grep with color	log	not_ported
-t4202-log::c-color-grep-selected-log-grep	t4202-log	-c color.grep.selected log --grep	log	not_ported
-t4202-log::c-color-grep-matchselected-log-grep	t4202-log	-c color.grep.matchSelected log --grep	log	not_ported
-t4202-log::simple-log-graph	t4202-log	simple log --graph	log	not_ported
-t4202-log::simple-log-graph-line-prefix-123	t4202-log	simple log --graph --line-prefix="123 "	log	not_ported
-t4202-log::set-up-merge-history	t4202-log	set up merge history	log	not_ported
-t4202-log::log-graph-with-merge	t4202-log	log --graph with merge	log	not_ported
-t4202-log::log-graph-line-prefix-with-merge	t4202-log	log --graph --line-prefix="| | | " with merge	log	not_ported
-t4202-log::log-graph-with-merge-with-log-graphcolors	t4202-log	log --graph with merge with log.graphColors	log	not_ported
-t4202-log::log-raw-graph-m-with-merge	t4202-log	log --raw --graph -m with merge	log	not_ported
-t4202-log::diff-tree-graph	t4202-log	diff-tree --graph	log	not_ported
-t4202-log::log-graph-with-full-output	t4202-log	log --graph with full output	log	not_ported
-t4202-log::set-up-more-tangled-history	t4202-log	set up more tangled history	log	not_ported
-t4202-log::log-graph-with-merge-2	t4202-log	log --graph with merge	log	not_ported
-t4202-log::log-decorate-configuration	t4202-log	log.decorate configuration	log	not_ported
-t4202-log::parse-log-excludedecoration-with-no-value	t4202-log	parse log.excludeDecoration with no value	log	not_ported
-t4202-log::decorate-refs-with-glob	t4202-log	decorate-refs with glob	log	not_ported
-t4202-log::decorate-refs-without-globs	t4202-log	decorate-refs without globs	log	not_ported
-t4202-log::multiple-decorate-refs	t4202-log	multiple decorate-refs	log	not_ported
-t4202-log::decorate-refs-exclude-with-glob	t4202-log	decorate-refs-exclude with glob	log	not_ported
-t4202-log::decorate-refs-exclude-without-globs	t4202-log	decorate-refs-exclude without globs	log	not_ported
-t4202-log::multiple-decorate-refs-exclude	t4202-log	multiple decorate-refs-exclude	log	not_ported
-t4202-log::decorate-refs-and-decorate-refs-exclude	t4202-log	decorate-refs and decorate-refs-exclude	log	not_ported
-t4202-log::deocrate-refs-and-log-excludedecoration	t4202-log	deocrate-refs and log.excludeDecoration	log	not_ported
-t4202-log::decorate-refs-exclude-and-simplify-by-decoration	t4202-log	decorate-refs-exclude and simplify-by-decoration	log	not_ported
-t4202-log::decorate-refs-with-implied-decorate-from-format	t4202-log	decorate-refs with implied decorate from format	log	not_ported
-t4202-log::implied-decorate-does-not-override-option	t4202-log	implied decorate does not override option	log	not_ported
-t4202-log::decorate-refs-and-simplify-by-decoration-without-output	t4202-log	decorate-refs and simplify-by-decoration without output	log	not_ported
-t4202-log::decorate-refs-exclude-head	t4202-log	decorate-refs-exclude HEAD	log	not_ported
-t4202-log::decorate-refs-focus-from-default	t4202-log	decorate-refs focus from default	log	not_ported
-t4202-log::clear-decorations-overrides-defaults	t4202-log	--clear-decorations overrides defaults	log	not_ported
-t4202-log::clear-decorations-clears-previous-exclusions	t4202-log	--clear-decorations clears previous exclusions	log	not_ported
-t4202-log::log-decorate-config-parsing	t4202-log	log.decorate config parsing	log	not_ported
-t4202-log::log-output-on-a-tty	t4202-log	log output on a TTY	log	not_ported
-t4202-log::reflog-is-expected-format	t4202-log	reflog is expected format	log	not_ported
-t4202-log::whatchanged-is-expected-format	t4202-log	whatchanged is expected format	log	not_ported
-t4202-log::log-abbrevcommit-configuration	t4202-log	log.abbrevCommit configuration	log	not_ported
-t4202-log::abbrev-commit-with-core-abbrev-false	t4202-log	--abbrev-commit with core.abbrev=false	log	not_ported
-t4202-log::abbrev-commit-with-no-abbrev	t4202-log	--abbrev-commit with --no-abbrev	log	not_ported
-t4202-log::abbrev-commit-with-core-abbrev-9000	t4202-log	--abbrev-commit with core.abbrev=9000	log	not_ported
-t4202-log::abbrev-commit-with-abbrev-9000	t4202-log	--abbrev-commit with --abbrev=9000	log	not_ported
-t4202-log::show-added-path-under-follow-m	t4202-log	show added path under "--follow -M"	log	not_ported
-t4202-log::git-log-c-follow	t4202-log	git log -c --follow	log	not_ported
-t4202-log::log-graph-with-diff-and-stats	t4202-log	log --graph with diff and stats	log	not_ported
-t4202-log::log-line-prefix-graph-with-diff-and-stats	t4202-log	log --line-prefix="*** " --graph with diff and stats	log	not_ported
-t4202-log::log-graph-with-name-status	t4202-log	log --graph with --name-status	log	not_ported
-t4202-log::log-graph-with-name-only	t4202-log	log --graph with --name-only	log	not_ported
-t4202-log::no-graph-countermands-graph	t4202-log	--no-graph countermands --graph	log	not_ported
-t4202-log::graph-countermands-no-graph	t4202-log	--graph countermands --no-graph	log	not_ported
-t4202-log::no-graph-does-not-unset-topo-order	t4202-log	--no-graph does not unset --topo-order	log	not_ported
-t4202-log::no-graph-does-not-unset-parents	t4202-log	--no-graph does not unset --parents	log	not_ported
-t4202-log::reverse-and-graph-conflict	t4202-log	--reverse and --graph conflict	log	not_ported
-t4202-log::reverse-graph-no-graph-works	t4202-log	--reverse --graph --no-graph works	log	not_ported
-t4202-log::show-linear-break-and-graph-conflict	t4202-log	--show-linear-break and --graph conflict	log	not_ported
-t4202-log::show-linear-break-graph-no-graph-works	t4202-log	--show-linear-break --graph --no-graph works	log	not_ported
-t4202-log::no-walk-and-graph-conflict	t4202-log	--no-walk and --graph conflict	log	not_ported
-t4202-log::no-walk-graph-no-graph-works	t4202-log	--no-walk --graph --no-graph works	log	not_ported
-t4202-log::walk-reflogs-and-graph-conflict	t4202-log	--walk-reflogs and --graph conflict	log	not_ported
-t4202-log::walk-reflogs-graph-no-graph-works	t4202-log	--walk-reflogs --graph --no-graph works	log	not_ported
-t4202-log::dotdot-is-a-parent-directory	t4202-log	dotdot is a parent directory	log	not_ported
-t4202-log::setup-signed-branch	t4202-log	setup signed branch	log	not_ported
-t4202-log::setup-signed-branch-with-subkey	t4202-log	setup signed branch with subkey	log	not_ported
-t4202-log::setup-signed-branch-x509	t4202-log	setup signed branch x509	log	not_ported
-t4202-log::setup-sshkey-signed-branch	t4202-log	setup sshkey signed branch	log	not_ported
-t4202-log::create-signed-commits-with-keys-having-defined-lifetimes	t4202-log	create signed commits with keys having defined lifetimes	log	not_ported
-t4202-log::log-x509-fingerprint	t4202-log	log x509 fingerprint	log	not_ported
-t4202-log::log-openpgp-fingerprint	t4202-log	log OpenPGP fingerprint	log	not_ported
-t4202-log::log-ssh-key-fingerprint	t4202-log	log ssh key fingerprint	log	not_ported
-t4202-log::log-graph-show-signature	t4202-log	log --graph --show-signature	log	not_ported
-t4202-log::log-graph-show-signature-x509	t4202-log	log --graph --show-signature x509	log	not_ported
-t4202-log::log-graph-show-signature-ssh	t4202-log	log --graph --show-signature ssh	log	not_ported
-t4202-log::log-shows-failure-on-expired-signature-key	t4202-log	log shows failure on expired signature key	log	not_ported
-t4202-log::log-shows-failure-on-not-yet-valid-signature-key	t4202-log	log shows failure on not yet valid signature key	log	not_ported
-t4202-log::log-show-success-with-commit-date-and-key-validity-matching	t4202-log	log show success with commit date and key validity matching	log	not_ported
-t4202-log::log-shows-failure-with-commit-date-outside-of-key-validity	t4202-log	log shows failure with commit date outside of key validity	log	not_ported
-t4202-log::log-graph-show-signature-for-merged-tag	t4202-log	log --graph --show-signature for merged tag	log	not_ported
-t4202-log::log-graph-show-signature-for-merged-tag-in-shallow-clone	t4202-log	log --graph --show-signature for merged tag in shallow clone	log	not_ported
-t4202-log::log-graph-show-signature-for-merged-tag-with-missing-key	t4202-log	log --graph --show-signature for merged tag with missing key	log	not_ported
-t4202-log::log-graph-show-signature-for-merged-tag-with-bad-signature	t4202-log	log --graph --show-signature for merged tag with bad signature	log	not_ported
-t4202-log::log-show-signature-for-merged-tag-with-gpg-failure	t4202-log	log --show-signature for merged tag with GPG failure	log	not_ported
-t4202-log::log-graph-show-signature-for-merged-tag-x509	t4202-log	log --graph --show-signature for merged tag x509	log	not_ported
-t4202-log::log-graph-show-signature-for-merged-tag-x509-missing-key	t4202-log	log --graph --show-signature for merged tag x509 missing key	log	not_ported
-t4202-log::log-graph-show-signature-for-merged-tag-x509-bad-signature	t4202-log	log --graph --show-signature for merged tag x509 bad signature	log	not_ported
-t4202-log::no-show-signature-overrides-show-signature	t4202-log	--no-show-signature overrides --show-signature	log	not_ported
-t4202-log::log-showsignature-true-behaves-like-show-signature	t4202-log	log.showsignature=true behaves like --show-signature	log	not_ported
-t4202-log::no-show-signature-overrides-log-showsignature-true	t4202-log	--no-show-signature overrides log.showsignature=true	log	not_ported
-t4202-log::show-signature-overrides-log-showsignature-false	t4202-log	--show-signature overrides log.showsignature=false	log	not_ported
-t4202-log::log-graph-no-walk-is-forbidden	t4202-log	log --graph --no-walk is forbidden	log	not_ported
-t4202-log::log-on-empty-repo-fails	t4202-log	log on empty repo fails	log	not_ported
-t4202-log::log-does-not-default-to-head-when-rev-input-is-given	t4202-log	log does not default to HEAD when rev input is given	log	not_ported
-t4202-log::do-not-default-to-head-with-ignored-object-on-cmdline	t4202-log	do not default to HEAD with ignored object on cmdline	log	not_ported
-t4202-log::do-not-default-to-head-with-ignored-object-on-stdin	t4202-log	do not default to HEAD with ignored object on stdin	log	not_ported
-t4202-log::set-up-source-tests	t4202-log	set up --source tests	log	not_ported
-t4202-log::log-source-paints-branch-names	t4202-log	log --source paints branch names	log	not_ported
-t4202-log::log-source-paints-tag-names	t4202-log	log --source paints tag names	log	not_ported
-t4202-log::log-source-paints-symmetric-ranges	t4202-log	log --source paints symmetric ranges	log	not_ported
-t4202-log::exclude-promisor-objects-does-not-bug-crash	t4202-log	--exclude-promisor-objects does not BUG-crash	log	not_ported
-t4202-log::log-decorate-includes-all-levels-of-tag-annotated-tags	t4202-log	log --decorate includes all levels of tag annotated tags	log	not_ported
-t4202-log::log-decorate-does-not-include-things-outside-filter	t4202-log	log --decorate does not include things outside filter	log	not_ported
-t4202-log::log-end-of-options	t4202-log	log --end-of-options	log	not_ported
-t4202-log::set-up-commits-with-different-authors	t4202-log	set up commits with different authors	log	not_ported
-t4202-log::log-invert-grep-grep-author	t4202-log	log --invert-grep --grep --author	log	not_ported
-t4202-log::log-noop-opt-without-grep-is-a-noop	t4202-log	log $noop_opt without --grep is a NOOP	log	not_ported
-t4202-log::cmd-understands-grep-patterntype-like-log	t4202-log	$cmd: understands grep.patternType, like 'log'	log	not_ported
+t4202-log::pretty	t4202-log	pretty	log	partial
+t4202-log::pretty-tformat	t4202-log	pretty (tformat)	log	partial
+t4202-log::pretty-shortcut	t4202-log	pretty (shortcut)	log	partial
+t4202-log::format	t4202-log	format	log	partial
+t4202-log::format-w-11-1-2	t4202-log	format %w(11,1,2)	log	partial
+t4202-log::format-w-1-2	t4202-log	format %w(,1,2)	log	partial
+t4202-log::oneline	t4202-log	oneline	log	partial
+t4202-log::diff-filter-a	t4202-log	diff-filter=A	log	partial
+t4202-log::diff-filter-m	t4202-log	diff-filter=M	log	partial
+t4202-log::diff-filter-d	t4202-log	diff-filter=D	log	partial
+t4202-log::all-negative-filter	t4202-log	all-negative filter	log	partial
+t4202-log::diff-filter-r	t4202-log	diff-filter=R	log	partial
+t4202-log::multiple-diff-filter-bits	t4202-log	multiple --diff-filter bits	log	partial
+t4202-log::diff-filter-c	t4202-log	diff-filter=C	log	partial
+t4202-log::git-log-follow	t4202-log	git log --follow	log	partial
+t4202-log::git-config-log-follow-works-like-follow	t4202-log	git config log.follow works like --follow	log	partial
+t4202-log::git-config-log-follow-does-not-die-with-multiple-paths	t4202-log	git config log.follow does not die with multiple paths	log	partial
+t4202-log::git-config-log-follow-does-not-die-with-no-paths	t4202-log	git config log.follow does not die with no paths	log	partial
+t4202-log::git-log-follow-rejects-unsupported-pathspec-magic	t4202-log	git log --follow rejects unsupported pathspec magic	log	partial
+t4202-log::log-follow-disabled-with-unsupported-pathspec-magic	t4202-log	log.follow disabled with unsupported pathspec magic	log	partial
+t4202-log::git-config-log-follow-is-overridden-by-no-follow	t4202-log	git config log.follow is overridden by --no-follow	log	partial
+t4202-log::git-log-no-walk-commits-sorts-by-commit-time	t4202-log	git log --no-walk <commits> sorts by commit time	log	partial
+t4202-log::git-log-no-walk-sorted-commits-sorts-by-commit-time	t4202-log	git log --no-walk=sorted <commits> sorts by commit time	log	partial
+t4202-log::git-log-line-prefix-no-walk-commits-sorts-by-commit-time	t4202-log	git log --line-prefix="=== " --no-walk <commits> sorts by commit time	log	partial
+t4202-log::git-log-no-walk-unsorted-commits-leaves-list-of-commits-as-given	t4202-log	git log --no-walk=unsorted <commits> leaves list of commits as given	log	partial
+t4202-log::git-show-commits-leaves-list-of-commits-as-given	t4202-log	git show <commits> leaves list of commits as given	log	partial
+t4202-log::setup-case-sensitivity-tests	t4202-log	setup case sensitivity tests	log	partial
+t4202-log::log-grep	t4202-log	log --grep	log	partial
+t4202-log::log-invert-grep-grep	t4202-log	log --invert-grep --grep	log	partial
+t4202-log::log-invert-grep-grep-i	t4202-log	log --invert-grep --grep -i	log	partial
+t4202-log::log-grep-option-parsing	t4202-log	log --grep option parsing	log	partial
+t4202-log::log-i-grep	t4202-log	log -i --grep	log	partial
+t4202-log::log-grep-i	t4202-log	log --grep -i	log	partial
+t4202-log::log-f-e-grep-ere-uses-ere	t4202-log	log -F -E --grep=<ere> uses ere	log	partial
+t4202-log::log-f-e-perl-regexp-grep-pcre-uses-pcre	t4202-log	log -F -E --perl-regexp --grep=<pcre> uses PCRE	log	partial
+t4202-log::log-with-grep-patterntype-configuration	t4202-log	log with grep.patternType configuration	log	partial
+t4202-log::log-with-grep-patterntype-configuration-and-command-line	t4202-log	log with grep.patternType configuration and command line	log	partial
+t4202-log::log-with-various-grep-patterntype-configurations-command-lines	t4202-log	log with various grep.patternType configurations & command-lines	log	partial
+t4202-log::log-author	t4202-log	log --author	log	partial
+t4202-log::log-committer	t4202-log	log --committer	log	partial
+t4202-log::log-i-grep-with-color	t4202-log	log -i --grep with color	log	partial
+t4202-log::c-color-grep-selected-log-grep	t4202-log	-c color.grep.selected log --grep	log	partial
+t4202-log::c-color-grep-matchselected-log-grep	t4202-log	-c color.grep.matchSelected log --grep	log	partial
+t4202-log::simple-log-graph	t4202-log	simple log --graph	log	partial
+t4202-log::simple-log-graph-line-prefix-123	t4202-log	simple log --graph --line-prefix="123 "	log	partial
+t4202-log::set-up-merge-history	t4202-log	set up merge history	log	partial
+t4202-log::log-graph-with-merge	t4202-log	log --graph with merge	log	partial
+t4202-log::log-graph-line-prefix-with-merge	t4202-log	log --graph --line-prefix="| | | " with merge	log	partial
+t4202-log::log-graph-with-merge-with-log-graphcolors	t4202-log	log --graph with merge with log.graphColors	log	partial
+t4202-log::log-raw-graph-m-with-merge	t4202-log	log --raw --graph -m with merge	log	partial
+t4202-log::diff-tree-graph	t4202-log	diff-tree --graph	log	partial
+t4202-log::log-graph-with-full-output	t4202-log	log --graph with full output	log	partial
+t4202-log::set-up-more-tangled-history	t4202-log	set up more tangled history	log	partial
+t4202-log::log-graph-with-merge-2	t4202-log	log --graph with merge	log	partial
+t4202-log::log-decorate-configuration	t4202-log	log.decorate configuration	log	partial
+t4202-log::parse-log-excludedecoration-with-no-value	t4202-log	parse log.excludeDecoration with no value	log	partial
+t4202-log::decorate-refs-with-glob	t4202-log	decorate-refs with glob	log	partial
+t4202-log::decorate-refs-without-globs	t4202-log	decorate-refs without globs	log	partial
+t4202-log::multiple-decorate-refs	t4202-log	multiple decorate-refs	log	partial
+t4202-log::decorate-refs-exclude-with-glob	t4202-log	decorate-refs-exclude with glob	log	partial
+t4202-log::decorate-refs-exclude-without-globs	t4202-log	decorate-refs-exclude without globs	log	partial
+t4202-log::multiple-decorate-refs-exclude	t4202-log	multiple decorate-refs-exclude	log	partial
+t4202-log::decorate-refs-and-decorate-refs-exclude	t4202-log	decorate-refs and decorate-refs-exclude	log	partial
+t4202-log::deocrate-refs-and-log-excludedecoration	t4202-log	deocrate-refs and log.excludeDecoration	log	partial
+t4202-log::decorate-refs-exclude-and-simplify-by-decoration	t4202-log	decorate-refs-exclude and simplify-by-decoration	log	partial
+t4202-log::decorate-refs-with-implied-decorate-from-format	t4202-log	decorate-refs with implied decorate from format	log	partial
+t4202-log::implied-decorate-does-not-override-option	t4202-log	implied decorate does not override option	log	partial
+t4202-log::decorate-refs-and-simplify-by-decoration-without-output	t4202-log	decorate-refs and simplify-by-decoration without output	log	partial
+t4202-log::decorate-refs-exclude-head	t4202-log	decorate-refs-exclude HEAD	log	partial
+t4202-log::decorate-refs-focus-from-default	t4202-log	decorate-refs focus from default	log	partial
+t4202-log::clear-decorations-overrides-defaults	t4202-log	--clear-decorations overrides defaults	log	partial
+t4202-log::clear-decorations-clears-previous-exclusions	t4202-log	--clear-decorations clears previous exclusions	log	partial
+t4202-log::log-decorate-config-parsing	t4202-log	log.decorate config parsing	log	partial
+t4202-log::log-output-on-a-tty	t4202-log	log output on a TTY	log	partial
+t4202-log::reflog-is-expected-format	t4202-log	reflog is expected format	log	partial
+t4202-log::whatchanged-is-expected-format	t4202-log	whatchanged is expected format	log	partial
+t4202-log::log-abbrevcommit-configuration	t4202-log	log.abbrevCommit configuration	log	partial
+t4202-log::abbrev-commit-with-core-abbrev-false	t4202-log	--abbrev-commit with core.abbrev=false	log	partial
+t4202-log::abbrev-commit-with-no-abbrev	t4202-log	--abbrev-commit with --no-abbrev	log	partial
+t4202-log::abbrev-commit-with-core-abbrev-9000	t4202-log	--abbrev-commit with core.abbrev=9000	log	partial
+t4202-log::abbrev-commit-with-abbrev-9000	t4202-log	--abbrev-commit with --abbrev=9000	log	partial
+t4202-log::show-added-path-under-follow-m	t4202-log	show added path under "--follow -M"	log	partial
+t4202-log::git-log-c-follow	t4202-log	git log -c --follow	log	partial
+t4202-log::log-graph-with-diff-and-stats	t4202-log	log --graph with diff and stats	log	partial
+t4202-log::log-line-prefix-graph-with-diff-and-stats	t4202-log	log --line-prefix="*** " --graph with diff and stats	log	partial
+t4202-log::log-graph-with-name-status	t4202-log	log --graph with --name-status	log	partial
+t4202-log::log-graph-with-name-only	t4202-log	log --graph with --name-only	log	partial
+t4202-log::no-graph-countermands-graph	t4202-log	--no-graph countermands --graph	log	partial
+t4202-log::graph-countermands-no-graph	t4202-log	--graph countermands --no-graph	log	partial
+t4202-log::no-graph-does-not-unset-topo-order	t4202-log	--no-graph does not unset --topo-order	log	partial
+t4202-log::no-graph-does-not-unset-parents	t4202-log	--no-graph does not unset --parents	log	partial
+t4202-log::reverse-and-graph-conflict	t4202-log	--reverse and --graph conflict	log	partial
+t4202-log::reverse-graph-no-graph-works	t4202-log	--reverse --graph --no-graph works	log	partial
+t4202-log::show-linear-break-and-graph-conflict	t4202-log	--show-linear-break and --graph conflict	log	partial
+t4202-log::show-linear-break-graph-no-graph-works	t4202-log	--show-linear-break --graph --no-graph works	log	partial
+t4202-log::no-walk-and-graph-conflict	t4202-log	--no-walk and --graph conflict	log	partial
+t4202-log::no-walk-graph-no-graph-works	t4202-log	--no-walk --graph --no-graph works	log	partial
+t4202-log::walk-reflogs-and-graph-conflict	t4202-log	--walk-reflogs and --graph conflict	log	partial
+t4202-log::walk-reflogs-graph-no-graph-works	t4202-log	--walk-reflogs --graph --no-graph works	log	partial
+t4202-log::dotdot-is-a-parent-directory	t4202-log	dotdot is a parent directory	log	partial
+t4202-log::setup-signed-branch	t4202-log	setup signed branch	log	partial
+t4202-log::setup-signed-branch-with-subkey	t4202-log	setup signed branch with subkey	log	partial
+t4202-log::setup-signed-branch-x509	t4202-log	setup signed branch x509	log	partial
+t4202-log::setup-sshkey-signed-branch	t4202-log	setup sshkey signed branch	log	partial
+t4202-log::create-signed-commits-with-keys-having-defined-lifetimes	t4202-log	create signed commits with keys having defined lifetimes	log	partial
+t4202-log::log-x509-fingerprint	t4202-log	log x509 fingerprint	log	partial
+t4202-log::log-openpgp-fingerprint	t4202-log	log OpenPGP fingerprint	log	partial
+t4202-log::log-ssh-key-fingerprint	t4202-log	log ssh key fingerprint	log	partial
+t4202-log::log-graph-show-signature	t4202-log	log --graph --show-signature	log	partial
+t4202-log::log-graph-show-signature-x509	t4202-log	log --graph --show-signature x509	log	partial
+t4202-log::log-graph-show-signature-ssh	t4202-log	log --graph --show-signature ssh	log	partial
+t4202-log::log-shows-failure-on-expired-signature-key	t4202-log	log shows failure on expired signature key	log	partial
+t4202-log::log-shows-failure-on-not-yet-valid-signature-key	t4202-log	log shows failure on not yet valid signature key	log	partial
+t4202-log::log-show-success-with-commit-date-and-key-validity-matching	t4202-log	log show success with commit date and key validity matching	log	partial
+t4202-log::log-shows-failure-with-commit-date-outside-of-key-validity	t4202-log	log shows failure with commit date outside of key validity	log	partial
+t4202-log::log-graph-show-signature-for-merged-tag	t4202-log	log --graph --show-signature for merged tag	log	partial
+t4202-log::log-graph-show-signature-for-merged-tag-in-shallow-clone	t4202-log	log --graph --show-signature for merged tag in shallow clone	log	partial
+t4202-log::log-graph-show-signature-for-merged-tag-with-missing-key	t4202-log	log --graph --show-signature for merged tag with missing key	log	partial
+t4202-log::log-graph-show-signature-for-merged-tag-with-bad-signature	t4202-log	log --graph --show-signature for merged tag with bad signature	log	partial
+t4202-log::log-show-signature-for-merged-tag-with-gpg-failure	t4202-log	log --show-signature for merged tag with GPG failure	log	partial
+t4202-log::log-graph-show-signature-for-merged-tag-x509	t4202-log	log --graph --show-signature for merged tag x509	log	partial
+t4202-log::log-graph-show-signature-for-merged-tag-x509-missing-key	t4202-log	log --graph --show-signature for merged tag x509 missing key	log	partial
+t4202-log::log-graph-show-signature-for-merged-tag-x509-bad-signature	t4202-log	log --graph --show-signature for merged tag x509 bad signature	log	partial
+t4202-log::no-show-signature-overrides-show-signature	t4202-log	--no-show-signature overrides --show-signature	log	partial
+t4202-log::log-showsignature-true-behaves-like-show-signature	t4202-log	log.showsignature=true behaves like --show-signature	log	partial
+t4202-log::no-show-signature-overrides-log-showsignature-true	t4202-log	--no-show-signature overrides log.showsignature=true	log	partial
+t4202-log::show-signature-overrides-log-showsignature-false	t4202-log	--show-signature overrides log.showsignature=false	log	partial
+t4202-log::log-graph-no-walk-is-forbidden	t4202-log	log --graph --no-walk is forbidden	log	partial
+t4202-log::log-on-empty-repo-fails	t4202-log	log on empty repo fails	log	partial
+t4202-log::log-does-not-default-to-head-when-rev-input-is-given	t4202-log	log does not default to HEAD when rev input is given	log	partial
+t4202-log::do-not-default-to-head-with-ignored-object-on-cmdline	t4202-log	do not default to HEAD with ignored object on cmdline	log	partial
+t4202-log::do-not-default-to-head-with-ignored-object-on-stdin	t4202-log	do not default to HEAD with ignored object on stdin	log	partial
+t4202-log::set-up-source-tests	t4202-log	set up --source tests	log	partial
+t4202-log::log-source-paints-branch-names	t4202-log	log --source paints branch names	log	partial
+t4202-log::log-source-paints-tag-names	t4202-log	log --source paints tag names	log	partial
+t4202-log::log-source-paints-symmetric-ranges	t4202-log	log --source paints symmetric ranges	log	partial
+t4202-log::exclude-promisor-objects-does-not-bug-crash	t4202-log	--exclude-promisor-objects does not BUG-crash	log	partial
+t4202-log::log-decorate-includes-all-levels-of-tag-annotated-tags	t4202-log	log --decorate includes all levels of tag annotated tags	log	partial
+t4202-log::log-decorate-does-not-include-things-outside-filter	t4202-log	log --decorate does not include things outside filter	log	partial
+t4202-log::log-end-of-options	t4202-log	log --end-of-options	log	partial
+t4202-log::set-up-commits-with-different-authors	t4202-log	set up commits with different authors	log	partial
+t4202-log::log-invert-grep-grep-author	t4202-log	log --invert-grep --grep --author	log	partial
+t4202-log::log-noop-opt-without-grep-is-a-noop	t4202-log	log $noop_opt without --grep is a NOOP	log	partial
+t4202-log::cmd-understands-grep-patterntype-like-log	t4202-log	$cmd: understands grep.patternType, like 'log'	log	partial
 t4203-mailmap::setup-commits-and-contacts-file	t4203-mailmap	setup commits and contacts file		partial
 t4203-mailmap::check-mailmap-no-arguments	t4203-mailmap	check-mailmap no arguments	check-mailmap	partial
 t4203-mailmap::check-mailmap-arguments	t4203-mailmap	check-mailmap arguments	check-mailmap	partial
@@ -9655,12 +9655,12 @@ t5401-update-hooks::all-receive-hook-args-are-empty	t5401-update-hooks	all *-rec
 t5401-update-hooks::send-pack-produced-no-output	t5401-update-hooks	send-pack produced no output		pass
 t5401-update-hooks::send-pack-stderr-contains-hook-messages	t5401-update-hooks	send-pack stderr contains hook messages		pass
 t5401-update-hooks::pre-receive-hook-that-forgets-to-read-its-input	t5401-update-hooks	pre-receive hook that forgets to read its input	push	pass
-t5402-post-merge-hook::setup-clone-hooks	t5402-post-merge-hook	setup clone hooks		not_ported
-t5402-post-merge-hook::post-merge-does-not-run-for-up-to-date	t5402-post-merge-hook	post-merge does not run for up-to-date 		not_ported
-t5402-post-merge-hook::post-merge-runs-as-expected	t5402-post-merge-hook	post-merge runs as expected 		not_ported
-t5402-post-merge-hook::post-merge-from-normal-merge-receives-the-right-argument	t5402-post-merge-hook	post-merge from normal merge receives the right argument 		not_ported
-t5402-post-merge-hook::post-merge-from-squash-merge-runs-as-expected	t5402-post-merge-hook	post-merge from squash merge runs as expected 		not_ported
-t5402-post-merge-hook::post-merge-from-squash-merge-receives-the-right-argument	t5402-post-merge-hook	post-merge from squash merge receives the right argument 		not_ported
+t5402-post-merge-hook::setup-clone-hooks	t5402-post-merge-hook	setup clone hooks		pass
+t5402-post-merge-hook::post-merge-does-not-run-for-up-to-date	t5402-post-merge-hook	post-merge does not run for up-to-date 		pass
+t5402-post-merge-hook::post-merge-runs-as-expected	t5402-post-merge-hook	post-merge runs as expected 		pass
+t5402-post-merge-hook::post-merge-from-normal-merge-receives-the-right-argument	t5402-post-merge-hook	post-merge from normal merge receives the right argument 		pass
+t5402-post-merge-hook::post-merge-from-squash-merge-runs-as-expected	t5402-post-merge-hook	post-merge from squash merge runs as expected 		pass
+t5402-post-merge-hook::post-merge-from-squash-merge-receives-the-right-argument	t5402-post-merge-hook	post-merge from squash merge receives the right argument 		pass
 t5403-post-checkout-hook::post-checkout-receives-the-right-arguments-with-head-unchanged	t5403-post-checkout-hook	post-checkout receives the right arguments with HEAD unchanged 	checkout	pass
 t5403-post-checkout-hook::post-checkout-args-are-correct-with-git-checkout-b	t5403-post-checkout-hook	post-checkout args are correct with git checkout -b 	checkout	pass
 t5403-post-checkout-hook::post-checkout-receives-the-right-args-with-head-changed	t5403-post-checkout-hook	post-checkout receives the right args with HEAD changed 	checkout	pass
