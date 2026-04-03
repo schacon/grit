@@ -103,4 +103,41 @@ test_expect_success 'bisect reset returns to original branch' '
 	test "refs/heads/main" = "$current"
 '
 
+test_expect_success 'bisect run finds the first bad commit' '
+	git checkout main &&
+	git bisect start &&
+	git bisect bad $HASH4 &&
+	git bisect good $HASH1 &&
+	git bisect run test ! -f hello_extra 2>run_err &&
+	git bisect reset
+'
+
+test_expect_success 'bisect run with a script finds culprit' '
+	git checkout main &&
+	git bisect start &&
+	git bisect bad $HASH4 &&
+	git bisect good $HASH2 &&
+	git bisect run sh -c "test \$(git rev-list --count HEAD) -le 2" >run_out 2>&1 &&
+	git bisect reset
+'
+
+test_expect_success 'bisect terms shows default terms' '
+	git bisect start &&
+	git bisect terms >terms_out &&
+	grep "bad" terms_out &&
+	grep "good" terms_out &&
+	git bisect reset
+'
+
+test_expect_success 'bisect replay replays a log file' '
+	git checkout main &&
+	git bisect start &&
+	git bisect bad $HASH4 &&
+	git bisect good $HASH1 &&
+	git bisect log >saved_log &&
+	git bisect reset &&
+	git bisect replay saved_log &&
+	git bisect reset
+'
+
 test_done
