@@ -89,6 +89,11 @@ pub struct Args {
 
 /// Run the `add` command.
 pub fn run(args: Args) -> Result<()> {
+    // --dry-run is incompatible with interactive modes
+    if args.dry_run && (args.interactive || args.patch) {
+        bail!("options '--dry-run' and '--interactive'/'--patch' cannot be used together");
+    }
+
     // Stubs for unsupported interactive modes — accept the flags
     // gracefully so scripts that pass them don't hard-fail.
     if args.patch || args.interactive || args.edit {
