@@ -1040,8 +1040,13 @@ fn same_basename(del: &DiffEntry, add: &DiffEntry) -> bool {
 /// Uses Git's approach: count the bytes that are "shared" (appear in
 /// equal lines), then compute `score = shared_bytes * 2 * 100 / (src_size + dst_size)`.
 fn compute_similarity(old: &[u8], new: &[u8]) -> u32 {
-    let src_size = old.len();
-    let dst_size = new.len();
+    // Normalize CRLF → LF before comparing so that files differing
+    // only in line endings are detected as renames.
+    let old_norm = crate::crlf::crlf_to_lf(old);
+    let new_norm = crate::crlf::crlf_to_lf(new);
+
+    let src_size = old_norm.len();
+    let dst_size = new_norm.len();
 
     if src_size == 0 && dst_size == 0 {
         return 100;
@@ -1053,8 +1058,8 @@ fn compute_similarity(old: &[u8], new: &[u8]) -> u32 {
 
     // Use line-level diff to find shared content, then count bytes.
     use similar::{ChangeTag, TextDiff};
-    let old_str = String::from_utf8_lossy(old);
-    let new_str = String::from_utf8_lossy(new);
+    let old_str = String::from_utf8_lossy(&old_norm);
+    let new_str = String::from_utf8_lossy(&new_norm);
     let diff = TextDiff::from_lines(&old_str as &str, &new_str as &str);
 
     let mut shared_bytes = 0usize;

@@ -17,7 +17,7 @@ test_expect_success setup '
 	git commit -a -m Second
 '
 
-test_expect_failure 'diff -M' '
+test_expect_success 'diff -M' '
 	git diff-tree -M -r --name-status HEAD^ HEAD >tmp &&
 	sed -e "s/R[0-9]*/RNUM/" tmp >actual &&
 	echo "RNUM	sample	elpmas" >expect &&

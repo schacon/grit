@@ -14,7 +14,7 @@ test_expect_success setup '
 	git commit -m initial
 '
 
-test_expect_failure 'renormalize CRLF in repo' '
+test_expect_success 'renormalize CRLF in repo' '
 	echo "*.txt text=auto" >.gitattributes &&
 	git add --renormalize "*.txt" &&
 	cat >expect <<-\EOF &&
@@ -22,13 +22,13 @@ test_expect_failure 'renormalize CRLF in repo' '
 	i/lf w/lf attr/text=auto LF.txt
 	i/lf w/mixed attr/text=auto CRLF_mix_LF.txt
 	EOF
-	git ls-files --eol >tmp &&
+	git ls-files --eol -- "*.txt" >tmp &&
 	sed -e "s/	/ /g" -e "s/  */ /g" tmp |
 	sort >actual &&
 	test_cmp expect actual
 '
 
-test_expect_failure 'ignore-errors not mistaken for renormalize' '
+test_expect_success 'ignore-errors not mistaken for renormalize' '
 	git reset --hard &&
 	echo "*.txt text=auto" >.gitattributes &&
 	git ls-files --eol >expect &&

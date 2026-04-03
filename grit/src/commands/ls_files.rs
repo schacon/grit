@@ -86,6 +86,10 @@ pub struct Args {
     #[arg(long = "directory")]
     pub directory: bool,
 
+    /// Show line-ending information for files.
+    #[arg(long)]
+    pub eol: bool,
+
     /// Pathspecs to restrict output.
     pub pathspecs: Vec<PathBuf>,
 }
@@ -167,7 +171,55 @@ pub fn run(args: Args) -> Result<()> {
             None
         };
 
-        if show_stage {
+        if args.eol {
+            let display = display_path_from_cwd(&entry.path, &cwd_prefix);
+            let name = String::from_utf8_lossy(display);
+            let path_str = std::str::from_utf8(&entry.path).unwrap_or("");
+
+            // Determine index line endings
+            let index_eol = if entry.oid != grit_lib::diff::zero_oid() {
+                if let Ok(obj) = repo.odb.read(&entry.oid) {
+                    describe_eol(&obj.data)
+                } else {
+                    "binary".to_string()
+                }
+            } else {
+                "".to_string()
+            };
+
+            // Determine worktree line endings
+            let wt_path = work_tree.join(path_str);
+            let wt_eol = if let Ok(data) = std::fs::read(&wt_path) {
+                describe_eol(&data)
+            } else {
+                "".to_string()
+            };
+
+            // Determine attribute setting
+            let attr_str = {
+                use grit_lib::crlf;
+                let attrs = crlf::load_gitattributes(work_tree);
+                let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+                let file_attrs = crlf::get_file_attrs(&attrs, path_str, &config);
+                match file_attrs.text {
+                    crlf::TextAttr::Set => match file_attrs.eol {
+                        crlf::EolAttr::Lf => "text=auto eol=lf".to_string(),
+                        crlf::EolAttr::Crlf => "text=auto eol=crlf".to_string(),
+                        crlf::EolAttr::Unspecified => "text".to_string(),
+                    },
+                    crlf::TextAttr::Auto => match file_attrs.eol {
+                        crlf::EolAttr::Lf => "text=auto eol=lf".to_string(),
+                        crlf::EolAttr::Crlf => "text=auto eol=crlf".to_string(),
+                        crlf::EolAttr::Unspecified => "text=auto".to_string(),
+                    },
+                    crlf::TextAttr::Unset => "binary".to_string(),
+                    crlf::TextAttr::Unspecified => "".to_string(),
+                }
+            };
+
+            write!(out, "i/{index_eol} w/{wt_eol} attr/{attr_str}\t{name}")?;
+            out.write_all(&[term])?;
+        } else if show_stage {
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(display);
             if let Some(t) = tag {
@@ -613,6 +665,22 @@ fn is_modified(entry: &IndexEntry, path: &std::path::Path) -> bool {
 }
 
 /// Return the status tag character for an index entry (used by `-t`).
+/// Describe the line ending style of file data.
+fn describe_eol(data: &[u8]) -> String {
+    use grit_lib::crlf;
+    if crlf::is_binary(data) {
+        return "binary".to_string();
+    }
+    let has_crlf = crlf::has_crlf(data);
+    let has_lf = crlf::has_lone_lf(data);
+    match (has_crlf, has_lf) {
+        (true, true) => "mixed".to_string(),
+        (true, false) => "crlf".to_string(),
+        (false, true) => "lf".to_string(),
+        (false, false) => "".to_string(),
+    }
+}
+
 fn status_tag(entry: &IndexEntry) -> char {
     if entry.stage() != 0 {
         'M' // unmerged
