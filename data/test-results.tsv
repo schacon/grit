@@ -1378,56 +1378,56 @@ t1000-read-tree-m-3way::15-must-match-a-in-o-a-b-o-a-o-b-case	t1000-read-tree-m-
 t1000-read-tree-m-3way::15-must-match-a-in-o-a-b-o-a-o-b-case-2	t1000-read-tree-m-3way	15 - must match A in O && A && B && O==A && O==B case	read-tree	pass
 t1000-read-tree-m-3way::15-fail-must-match-a-in-o-a-b-o-a-o-b-case	t1000-read-tree-m-3way	15 (fail) - must match A in O && A && B && O==A && O==B case	read-tree	pass
 t1000-read-tree-m-3way::16-a-matches-in-one-and-b-matches-in-another	t1000-read-tree-m-3way	16 - A matches in one and B matches in another.	read-tree	pass
-t1001-read-tree-m-2way::setup	t1001-read-tree-m-2way	setup	read-tree	partial
-t1001-read-tree-m-2way::1-2-3-no-carry-forward	t1001-read-tree-m-2way	1, 2, 3 - no carry forward	read-tree	partial
-t1001-read-tree-m-2way::4-carry-forward-local-addition	t1001-read-tree-m-2way	4 - carry forward local addition.	read-tree	partial
-t1001-read-tree-m-2way::5-carry-forward-local-addition	t1001-read-tree-m-2way	5 - carry forward local addition.	read-tree	partial
-t1001-read-tree-m-2way::6-local-addition-already-has-the-same	t1001-read-tree-m-2way	6 - local addition already has the same.	read-tree	partial
-t1001-read-tree-m-2way::7-local-addition-already-has-the-same	t1001-read-tree-m-2way	7 - local addition already has the same.	read-tree	partial
-t1001-read-tree-m-2way::8-conflicting-addition	t1001-read-tree-m-2way	8 - conflicting addition.	read-tree	partial
-t1001-read-tree-m-2way::9-conflicting-addition	t1001-read-tree-m-2way	9 - conflicting addition.	read-tree	partial
-t1001-read-tree-m-2way::10-path-removed	t1001-read-tree-m-2way	10 - path removed.	read-tree	partial
-t1001-read-tree-m-2way::11-dirty-path-removed	t1001-read-tree-m-2way	11 - dirty path removed.	read-tree	partial
-t1001-read-tree-m-2way::12-unmatching-local-changes-being-removed	t1001-read-tree-m-2way	12 - unmatching local changes being removed.	read-tree	partial
-t1001-read-tree-m-2way::13-unmatching-local-changes-being-removed	t1001-read-tree-m-2way	13 - unmatching local changes being removed.	read-tree	partial
-t1001-read-tree-m-2way::14-unchanged-in-two-heads	t1001-read-tree-m-2way	14 - unchanged in two heads.	read-tree	partial
-t1001-read-tree-m-2way::15-unchanged-in-two-heads	t1001-read-tree-m-2way	15 - unchanged in two heads.	read-tree	partial
-t1001-read-tree-m-2way::16-conflicting-local-change	t1001-read-tree-m-2way	16 - conflicting local change.	read-tree	partial
-t1001-read-tree-m-2way::17-conflicting-local-change	t1001-read-tree-m-2way	17 - conflicting local change.	read-tree	partial
-t1001-read-tree-m-2way::18-local-change-already-having-a-good-result	t1001-read-tree-m-2way	18 - local change already having a good result.	read-tree	partial
-t1001-read-tree-m-2way::19-local-change-already-having-a-good-result-further-modified	t1001-read-tree-m-2way	19 - local change already having a good result, further modified.	read-tree	partial
-t1001-read-tree-m-2way::20-no-local-change-use-new-tree	t1001-read-tree-m-2way	20 - no local change, use new tree.	read-tree	partial
-t1001-read-tree-m-2way::21-no-local-change-dirty-cache	t1001-read-tree-m-2way	21 - no local change, dirty cache.	read-tree	partial
-t1001-read-tree-m-2way::22-local-change-cache-updated	t1001-read-tree-m-2way	22 - local change cache updated.	read-tree	partial
-t1001-read-tree-m-2way::df-vs-df-df-case-setup	t1001-read-tree-m-2way	DF vs DF/DF case setup.	read-tree	partial
-t1001-read-tree-m-2way::df-vs-df-df-case-test	t1001-read-tree-m-2way	DF vs DF/DF case test.	read-tree	partial
-t1001-read-tree-m-2way::a-b-untracked-vs-a-case-setup	t1001-read-tree-m-2way	a/b (untracked) vs a case setup.	read-tree	partial
-t1001-read-tree-m-2way::a-b-untracked-vs-a-plus-c-d-case-test	t1001-read-tree-m-2way	a/b (untracked) vs a, plus c/d case test.	read-tree	partial
-t1001-read-tree-m-2way::read-tree-supports-the-super-prefix	t1001-read-tree-m-2way	read-tree supports the super-prefix	read-tree	partial
-t1001-read-tree-m-2way::a-b-vs-a-plus-c-d-case-setup	t1001-read-tree-m-2way	a/b vs a, plus c/d case setup.	read-tree	partial
-t1001-read-tree-m-2way::a-b-vs-a-plus-c-d-case-test	t1001-read-tree-m-2way	a/b vs a, plus c/d case test.	read-tree	partial
-t1001-read-tree-m-2way::m-references-the-correct-modified-tree	t1001-read-tree-m-2way	-m references the correct modified tree	read-tree	partial
-t1002-read-tree-m-u-2way::1-2-3-no-carry-forward	t1002-read-tree-m-u-2way	1, 2, 3 - no carry forward	read-tree	partial
-t1002-read-tree-m-u-2way::4-carry-forward-local-addition	t1002-read-tree-m-u-2way	4 - carry forward local addition.	read-tree	partial
-t1002-read-tree-m-u-2way::5-carry-forward-local-addition	t1002-read-tree-m-u-2way	5 - carry forward local addition.	read-tree	partial
-t1002-read-tree-m-u-2way::6-local-addition-already-has-the-same	t1002-read-tree-m-u-2way	6 - local addition already has the same.	read-tree	partial
-t1002-read-tree-m-u-2way::7-local-addition-already-has-the-same	t1002-read-tree-m-u-2way	7 - local addition already has the same.	read-tree	partial
-t1002-read-tree-m-u-2way::8-conflicting-addition	t1002-read-tree-m-u-2way	8 - conflicting addition.	read-tree	partial
-t1002-read-tree-m-u-2way::9-conflicting-addition	t1002-read-tree-m-u-2way	9 - conflicting addition.	read-tree	partial
-t1002-read-tree-m-u-2way::10-path-removed	t1002-read-tree-m-u-2way	10 - path removed.	read-tree	partial
-t1002-read-tree-m-u-2way::11-dirty-path-removed	t1002-read-tree-m-u-2way	11 - dirty path removed.	read-tree	partial
-t1002-read-tree-m-u-2way::12-unmatching-local-changes-being-removed	t1002-read-tree-m-u-2way	12 - unmatching local changes being removed.	read-tree	partial
-t1002-read-tree-m-u-2way::13-unmatching-local-changes-being-removed	t1002-read-tree-m-u-2way	13 - unmatching local changes being removed.	read-tree	partial
-t1002-read-tree-m-u-2way::14-unchanged-in-two-heads	t1002-read-tree-m-u-2way	14 - unchanged in two heads.	read-tree	partial
-t1002-read-tree-m-u-2way::15-unchanged-in-two-heads	t1002-read-tree-m-u-2way	15 - unchanged in two heads.	read-tree	partial
-t1002-read-tree-m-u-2way::16-conflicting-local-change	t1002-read-tree-m-u-2way	16 - conflicting local change.	read-tree	partial
-t1002-read-tree-m-u-2way::17-conflicting-local-change	t1002-read-tree-m-u-2way	17 - conflicting local change.	read-tree	partial
-t1002-read-tree-m-u-2way::18-local-change-already-having-a-good-result	t1002-read-tree-m-u-2way	18 - local change already having a good result.	read-tree	partial
-t1002-read-tree-m-u-2way::19-local-change-already-having-a-good-result-further-modified	t1002-read-tree-m-u-2way	19 - local change already having a good result, further modified.	read-tree	partial
-t1002-read-tree-m-u-2way::20-no-local-change-use-new-tree	t1002-read-tree-m-u-2way	20 - no local change, use new tree.	read-tree	partial
-t1002-read-tree-m-u-2way::21-no-local-change-dirty-cache	t1002-read-tree-m-u-2way	21 - no local change, dirty cache.	read-tree	partial
-t1002-read-tree-m-u-2way::df-vs-df-df-case-setup	t1002-read-tree-m-u-2way	DF vs DF/DF case setup.	read-tree	partial
-t1002-read-tree-m-u-2way::df-vs-df-df-case-test	t1002-read-tree-m-u-2way	DF vs DF/DF case test.	read-tree	partial
+t1001-read-tree-m-2way::setup	t1001-read-tree-m-2way	setup	read-tree	pass
+t1001-read-tree-m-2way::1-2-3-no-carry-forward	t1001-read-tree-m-2way	1, 2, 3 - no carry forward	read-tree	pass
+t1001-read-tree-m-2way::4-carry-forward-local-addition	t1001-read-tree-m-2way	4 - carry forward local addition.	read-tree	pass
+t1001-read-tree-m-2way::5-carry-forward-local-addition	t1001-read-tree-m-2way	5 - carry forward local addition.	read-tree	pass
+t1001-read-tree-m-2way::6-local-addition-already-has-the-same	t1001-read-tree-m-2way	6 - local addition already has the same.	read-tree	pass
+t1001-read-tree-m-2way::7-local-addition-already-has-the-same	t1001-read-tree-m-2way	7 - local addition already has the same.	read-tree	pass
+t1001-read-tree-m-2way::8-conflicting-addition	t1001-read-tree-m-2way	8 - conflicting addition.	read-tree	pass
+t1001-read-tree-m-2way::9-conflicting-addition	t1001-read-tree-m-2way	9 - conflicting addition.	read-tree	pass
+t1001-read-tree-m-2way::10-path-removed	t1001-read-tree-m-2way	10 - path removed.	read-tree	pass
+t1001-read-tree-m-2way::11-dirty-path-removed	t1001-read-tree-m-2way	11 - dirty path removed.	read-tree	pass
+t1001-read-tree-m-2way::12-unmatching-local-changes-being-removed	t1001-read-tree-m-2way	12 - unmatching local changes being removed.	read-tree	pass
+t1001-read-tree-m-2way::13-unmatching-local-changes-being-removed	t1001-read-tree-m-2way	13 - unmatching local changes being removed.	read-tree	pass
+t1001-read-tree-m-2way::14-unchanged-in-two-heads	t1001-read-tree-m-2way	14 - unchanged in two heads.	read-tree	pass
+t1001-read-tree-m-2way::15-unchanged-in-two-heads	t1001-read-tree-m-2way	15 - unchanged in two heads.	read-tree	pass
+t1001-read-tree-m-2way::16-conflicting-local-change	t1001-read-tree-m-2way	16 - conflicting local change.	read-tree	pass
+t1001-read-tree-m-2way::17-conflicting-local-change	t1001-read-tree-m-2way	17 - conflicting local change.	read-tree	pass
+t1001-read-tree-m-2way::18-local-change-already-having-a-good-result	t1001-read-tree-m-2way	18 - local change already having a good result.	read-tree	pass
+t1001-read-tree-m-2way::19-local-change-already-having-a-good-result-further-modified	t1001-read-tree-m-2way	19 - local change already having a good result, further modified.	read-tree	pass
+t1001-read-tree-m-2way::20-no-local-change-use-new-tree	t1001-read-tree-m-2way	20 - no local change, use new tree.	read-tree	pass
+t1001-read-tree-m-2way::21-no-local-change-dirty-cache	t1001-read-tree-m-2way	21 - no local change, dirty cache.	read-tree	pass
+t1001-read-tree-m-2way::22-local-change-cache-updated	t1001-read-tree-m-2way	22 - local change cache updated.	read-tree	pass
+t1001-read-tree-m-2way::df-vs-df-df-case-setup	t1001-read-tree-m-2way	DF vs DF/DF case setup.	read-tree	pass
+t1001-read-tree-m-2way::df-vs-df-df-case-test	t1001-read-tree-m-2way	DF vs DF/DF case test.	read-tree	pass
+t1001-read-tree-m-2way::a-b-untracked-vs-a-case-setup	t1001-read-tree-m-2way	a/b (untracked) vs a case setup.	read-tree	pass
+t1001-read-tree-m-2way::a-b-untracked-vs-a-plus-c-d-case-test	t1001-read-tree-m-2way	a/b (untracked) vs a, plus c/d case test.	read-tree	pass
+t1001-read-tree-m-2way::read-tree-supports-the-super-prefix	t1001-read-tree-m-2way	read-tree supports the super-prefix	read-tree	pass
+t1001-read-tree-m-2way::a-b-vs-a-plus-c-d-case-setup	t1001-read-tree-m-2way	a/b vs a, plus c/d case setup.	read-tree	pass
+t1001-read-tree-m-2way::a-b-vs-a-plus-c-d-case-test	t1001-read-tree-m-2way	a/b vs a, plus c/d case test.	read-tree	pass
+t1001-read-tree-m-2way::m-references-the-correct-modified-tree	t1001-read-tree-m-2way	-m references the correct modified tree	read-tree	pass
+t1002-read-tree-m-u-2way::1-2-3-no-carry-forward	t1002-read-tree-m-u-2way	1, 2, 3 - no carry forward	read-tree	pass
+t1002-read-tree-m-u-2way::4-carry-forward-local-addition	t1002-read-tree-m-u-2way	4 - carry forward local addition.	read-tree	pass
+t1002-read-tree-m-u-2way::5-carry-forward-local-addition	t1002-read-tree-m-u-2way	5 - carry forward local addition.	read-tree	pass
+t1002-read-tree-m-u-2way::6-local-addition-already-has-the-same	t1002-read-tree-m-u-2way	6 - local addition already has the same.	read-tree	pass
+t1002-read-tree-m-u-2way::7-local-addition-already-has-the-same	t1002-read-tree-m-u-2way	7 - local addition already has the same.	read-tree	pass
+t1002-read-tree-m-u-2way::8-conflicting-addition	t1002-read-tree-m-u-2way	8 - conflicting addition.	read-tree	pass
+t1002-read-tree-m-u-2way::9-conflicting-addition	t1002-read-tree-m-u-2way	9 - conflicting addition.	read-tree	pass
+t1002-read-tree-m-u-2way::10-path-removed	t1002-read-tree-m-u-2way	10 - path removed.	read-tree	pass
+t1002-read-tree-m-u-2way::11-dirty-path-removed	t1002-read-tree-m-u-2way	11 - dirty path removed.	read-tree	pass
+t1002-read-tree-m-u-2way::12-unmatching-local-changes-being-removed	t1002-read-tree-m-u-2way	12 - unmatching local changes being removed.	read-tree	pass
+t1002-read-tree-m-u-2way::13-unmatching-local-changes-being-removed	t1002-read-tree-m-u-2way	13 - unmatching local changes being removed.	read-tree	pass
+t1002-read-tree-m-u-2way::14-unchanged-in-two-heads	t1002-read-tree-m-u-2way	14 - unchanged in two heads.	read-tree	pass
+t1002-read-tree-m-u-2way::15-unchanged-in-two-heads	t1002-read-tree-m-u-2way	15 - unchanged in two heads.	read-tree	pass
+t1002-read-tree-m-u-2way::16-conflicting-local-change	t1002-read-tree-m-u-2way	16 - conflicting local change.	read-tree	pass
+t1002-read-tree-m-u-2way::17-conflicting-local-change	t1002-read-tree-m-u-2way	17 - conflicting local change.	read-tree	pass
+t1002-read-tree-m-u-2way::18-local-change-already-having-a-good-result	t1002-read-tree-m-u-2way	18 - local change already having a good result.	read-tree	pass
+t1002-read-tree-m-u-2way::19-local-change-already-having-a-good-result-further-modified	t1002-read-tree-m-u-2way	19 - local change already having a good result, further modified.	read-tree	pass
+t1002-read-tree-m-u-2way::20-no-local-change-use-new-tree	t1002-read-tree-m-u-2way	20 - no local change, use new tree.	read-tree	pass
+t1002-read-tree-m-u-2way::21-no-local-change-dirty-cache	t1002-read-tree-m-u-2way	21 - no local change, dirty cache.	read-tree	pass
+t1002-read-tree-m-u-2way::df-vs-df-df-case-setup	t1002-read-tree-m-u-2way	DF vs DF/DF case setup.	read-tree	pass
+t1002-read-tree-m-u-2way::df-vs-df-df-case-test	t1002-read-tree-m-u-2way	DF vs DF/DF case test.	read-tree	pass
 t1003-read-tree-prefix::read-tree-prefix	t1003-read-tree-prefix	read-tree --prefix	read-tree	pass
 t1003-read-tree-prefix::read-tree-prefix-with-leading-slash-exits-with-error	t1003-read-tree-prefix	read-tree --prefix with leading slash exits with error	read-tree	pass
 t1004-read-tree-m-u-wf::two-way-setup	t1004-read-tree-m-u-wf	two-way setup	read-tree	pass
@@ -6595,215 +6595,215 @@ t4013-diff-various::diff-src-dst-prefix-ignored-with-diff-noprefix	t4013-diff-va
 t4013-diff-various::diff-src-dst-prefix-ignored-with-diff-mnemonicprefix	t4013-diff-various	diff.{src,dst}Prefix ignored with diff.mnemonicPrefix	diff	pass
 t4013-diff-various::diff-src-dst-prefix-ignored-with-default-prefix	t4013-diff-various	diff.{src,dst}Prefix ignored with --default-prefix	diff	pass
 t4013-diff-various::diff-no-renames-cannot-be-abbreviated	t4013-diff-various	diff --no-renames cannot be abbreviated	diff	pass
-t4014-format-patch::format-patch-ignore-if-in-upstream	t4014-format-patch	format-patch --ignore-if-in-upstream	format-patch	not_ported
-t4014-format-patch::format-patch-ignore-if-in-upstream-2	t4014-format-patch	format-patch --ignore-if-in-upstream	format-patch	not_ported
-t4014-format-patch::format-patch-ignore-if-in-upstream-handles-tags	t4014-format-patch	format-patch --ignore-if-in-upstream handles tags	format-patch	not_ported
-t4014-format-patch::format-patch-result-applies	t4014-format-patch	format-patch result applies	format-patch	not_ported
-t4014-format-patch::format-patch-ignore-if-in-upstream-result-applies	t4014-format-patch	format-patch --ignore-if-in-upstream result applies	format-patch	not_ported
-t4014-format-patch::commit-did-not-screw-up-the-log-message	t4014-format-patch	commit did not screw up the log message	format-patch	not_ported
-t4014-format-patch::format-patch-did-not-screw-up-the-log-message	t4014-format-patch	format-patch did not screw up the log message	format-patch	not_ported
-t4014-format-patch::replay-did-not-screw-up-the-log-message	t4014-format-patch	replay did not screw up the log message	format-patch	not_ported
-t4014-format-patch::format-patch-empty-commit	t4014-format-patch	format-patch empty commit	format-patch	not_ported
-t4014-format-patch::extra-headers	t4014-format-patch	extra headers	format-patch	not_ported
-t4014-format-patch::extra-headers-without-newlines	t4014-format-patch	extra headers without newlines	format-patch	not_ported
-t4014-format-patch::extra-headers-with-multiple-to-s	t4014-format-patch	extra headers with multiple To:s	format-patch	not_ported
-t4014-format-patch::additional-command-line-cc-ascii	t4014-format-patch	additional command line cc (ascii)	format-patch	not_ported
-t4014-format-patch::command-line-headers	t4014-format-patch	command line headers	format-patch	not_ported
-t4014-format-patch::configuration-headers-and-command-line-headers	t4014-format-patch	configuration headers and command line headers	format-patch	not_ported
-t4014-format-patch::command-line-to-header-ascii	t4014-format-patch	command line To: header (ascii)	format-patch	not_ported
-t4014-format-patch::configuration-to-header-ascii	t4014-format-patch	configuration To: header (ascii)	format-patch	not_ported
-t4014-format-patch::format-from-false	t4014-format-patch	format.from=false	format-patch	not_ported
-t4014-format-patch::format-from-true	t4014-format-patch	format.from=true	format-patch	not_ported
-t4014-format-patch::format-from-with-address	t4014-format-patch	format.from with address	format-patch	not_ported
-t4014-format-patch::no-from-overrides-format-from	t4014-format-patch	--no-from overrides format.from	format-patch	not_ported
-t4014-format-patch::from-overrides-format-from	t4014-format-patch	--from overrides format.from	format-patch	not_ported
-t4014-format-patch::no-to-overrides-config-to	t4014-format-patch	--no-to overrides config.to	format-patch	not_ported
-t4014-format-patch::no-to-and-to-replaces-config-to	t4014-format-patch	--no-to and --to replaces config.to	format-patch	not_ported
-t4014-format-patch::no-cc-overrides-config-cc	t4014-format-patch	--no-cc overrides config.cc	format-patch	not_ported
-t4014-format-patch::no-add-header-overrides-config-headers	t4014-format-patch	--no-add-header overrides config.headers	format-patch	not_ported
-t4014-format-patch::multiple-files	t4014-format-patch	multiple files	format-patch	not_ported
-t4014-format-patch::filename-length-limit	t4014-format-patch	filename length limit	format-patch	not_ported
-t4014-format-patch::filename-length-limit-from-config	t4014-format-patch	filename length limit from config	format-patch	not_ported
-t4014-format-patch::filename-limit-applies-only-to-basename	t4014-format-patch	filename limit applies only to basename	format-patch	not_ported
-t4014-format-patch::reroll-count	t4014-format-patch	reroll count	format-patch	not_ported
-t4014-format-patch::reroll-count-v	t4014-format-patch	reroll count (-v)	format-patch	not_ported
-t4014-format-patch::reroll-count-v-with-a-fractional-number	t4014-format-patch	reroll count (-v) with a fractional number	format-patch	not_ported
-t4014-format-patch::reroll-v-count-with-a-non-number	t4014-format-patch	reroll (-v) count with a non number	format-patch	not_ported
-t4014-format-patch::reroll-v-count-with-a-non-pathname-character	t4014-format-patch	reroll (-v) count with a non-pathname character	format-patch	not_ported
-t4014-format-patch::no-threading	t4014-format-patch	no threading	format-patch	not_ported
-t4014-format-patch::thread	t4014-format-patch	thread	format-patch	not_ported
-t4014-format-patch::thread-overrides-format-thread-deep	t4014-format-patch	--thread overrides format.thread=deep	format-patch	not_ported
-t4014-format-patch::thread-in-reply-to	t4014-format-patch	thread in-reply-to	format-patch	not_ported
-t4014-format-patch::thread-cover-letter	t4014-format-patch	thread cover-letter	format-patch	not_ported
-t4014-format-patch::thread-cover-letter-in-reply-to	t4014-format-patch	thread cover-letter in-reply-to	format-patch	not_ported
-t4014-format-patch::thread-explicit-shallow	t4014-format-patch	thread explicit shallow	format-patch	not_ported
-t4014-format-patch::thread-deep	t4014-format-patch	thread deep	format-patch	not_ported
-t4014-format-patch::thread-deep-in-reply-to	t4014-format-patch	thread deep in-reply-to	format-patch	not_ported
-t4014-format-patch::thread-deep-cover-letter	t4014-format-patch	thread deep cover-letter	format-patch	not_ported
-t4014-format-patch::thread-deep-cover-letter-in-reply-to	t4014-format-patch	thread deep cover-letter in-reply-to	format-patch	not_ported
-t4014-format-patch::thread-via-config	t4014-format-patch	thread via config	format-patch	not_ported
-t4014-format-patch::thread-deep-via-config	t4014-format-patch	thread deep via config	format-patch	not_ported
-t4014-format-patch::thread-config-override	t4014-format-patch	thread config + override	format-patch	not_ported
-t4014-format-patch::thread-config-no-thread	t4014-format-patch	thread config + --no-thread	format-patch	not_ported
-t4014-format-patch::excessive-subject	t4014-format-patch	excessive subject	format-patch	not_ported
-t4014-format-patch::failure-to-write-cover-letter-aborts-gracefully	t4014-format-patch	failure to write cover-letter aborts gracefully	format-patch	not_ported
-t4014-format-patch::cover-letter-inherits-diff-options	t4014-format-patch	cover-letter inherits diff options	format-patch	not_ported
-t4014-format-patch::shortlog-of-cover-letter-wraps-overly-long-onelines	t4014-format-patch	shortlog of cover-letter wraps overly-long onelines	format-patch	not_ported
-t4014-format-patch::format-patch-respects-u	t4014-format-patch	format-patch respects -U	format-patch	not_ported
-t4014-format-patch::format-patch-p-suppresses-stat	t4014-format-patch	format-patch -p suppresses stat	format-patch	not_ported
-t4014-format-patch::format-patch-from-a-subdirectory-1	t4014-format-patch	format-patch from a subdirectory (1)	format-patch	not_ported
-t4014-format-patch::format-patch-from-a-subdirectory-2	t4014-format-patch	format-patch from a subdirectory (2)	format-patch	not_ported
-t4014-format-patch::format-patch-from-a-subdirectory-3	t4014-format-patch	format-patch from a subdirectory (3)	format-patch	not_ported
-t4014-format-patch::format-patch-in-reply-to	t4014-format-patch	format-patch --in-reply-to	format-patch	not_ported
-t4014-format-patch::format-patch-signoff	t4014-format-patch	format-patch --signoff	format-patch	not_ported
-t4014-format-patch::format-patch-notes-signoff	t4014-format-patch	format-patch --notes --signoff	format-patch	not_ported
-t4014-format-patch::format-patch-notes-output-control	t4014-format-patch	format-patch notes output control	format-patch	not_ported
-t4014-format-patch::format-patch-with-multiple-notes-refs	t4014-format-patch	format-patch with multiple notes refs	format-patch	not_ported
-t4014-format-patch::format-patch-with-multiple-notes-refs-in-config	t4014-format-patch	format-patch with multiple notes refs in config	format-patch	not_ported
-t4014-format-patch::options-no-longer-allowed-for-format-patch	t4014-format-patch	options no longer allowed for format-patch	format-patch	not_ported
-t4014-format-patch::format-patch-numstat-should-produce-a-patch	t4014-format-patch	format-patch --numstat should produce a patch	format-patch	not_ported
-t4014-format-patch::format-patch-path	t4014-format-patch	format-patch -- <path>	format-patch	not_ported
-t4014-format-patch::format-patch-ignore-if-in-upstream-head	t4014-format-patch	format-patch --ignore-if-in-upstream HEAD	format-patch	not_ported
-t4014-format-patch::get-git-version	t4014-format-patch	get git version	format-patch	not_ported
-t4014-format-patch::format-patch-default-signature	t4014-format-patch	format-patch default signature	format-patch	not_ported
-t4014-format-patch::format-patch-signature	t4014-format-patch	format-patch --signature	format-patch	not_ported
-t4014-format-patch::format-patch-with-format-signature-config	t4014-format-patch	format-patch with format.signature config	format-patch	not_ported
-t4014-format-patch::format-patch-signature-overrides-format-signature	t4014-format-patch	format-patch --signature overrides format.signature	format-patch	not_ported
-t4014-format-patch::format-patch-no-signature-ignores-format-signature	t4014-format-patch	format-patch --no-signature ignores format.signature	format-patch	not_ported
-t4014-format-patch::format-patch-signature-cover-letter	t4014-format-patch	format-patch --signature --cover-letter	format-patch	not_ported
-t4014-format-patch::format-signature-suppresses-signatures	t4014-format-patch	format.signature="" suppresses signatures	format-patch	not_ported
-t4014-format-patch::format-patch-no-signature-suppresses-signatures	t4014-format-patch	format-patch --no-signature suppresses signatures	format-patch	not_ported
-t4014-format-patch::format-patch-signature-suppresses-signatures	t4014-format-patch	format-patch --signature="" suppresses signatures	format-patch	not_ported
-t4014-format-patch::prepare-mail-signature-input	t4014-format-patch	prepare mail-signature input	format-patch	not_ported
-t4014-format-patch::signature-file-file-works	t4014-format-patch	--signature-file=file works	format-patch	not_ported
-t4014-format-patch::format-signaturefile-works	t4014-format-patch	format.signaturefile works	format-patch	not_ported
-t4014-format-patch::no-signature-suppresses-format-signaturefile	t4014-format-patch	--no-signature suppresses format.signaturefile 	format-patch	not_ported
-t4014-format-patch::signature-file-overrides-format-signaturefile	t4014-format-patch	--signature-file overrides format.signaturefile	format-patch	not_ported
-t4014-format-patch::signature-overrides-format-signaturefile	t4014-format-patch	--signature overrides format.signaturefile	format-patch	not_ported
-t4014-format-patch::format-patch-stdout-paginates	t4014-format-patch	format-patch --stdout paginates	format-patch	not_ported
-t4014-format-patch::format-patch-stdout-pagination-can-be-disabled	t4014-format-patch	format-patch --stdout pagination can be disabled	format-patch	not_ported
-t4014-format-patch::format-patch-handles-multi-line-subjects	t4014-format-patch	format-patch handles multi-line subjects	format-patch	not_ported
-t4014-format-patch::format-patch-handles-multi-line-encoded-subjects	t4014-format-patch	format-patch handles multi-line encoded subjects	format-patch	not_ported
-t4014-format-patch::format-patch-wraps-extremely-long-subject-ascii	t4014-format-patch	format-patch wraps extremely long subject (ascii)	format-patch	not_ported
-t4014-format-patch::format-patch-wraps-extremely-long-subject-rfc2047	t4014-format-patch	format-patch wraps extremely long subject (rfc2047)	format-patch	not_ported
-t4014-format-patch::format-patch-quotes-dot-in-from-headers	t4014-format-patch	format-patch quotes dot in from-headers	format-patch	not_ported
-t4014-format-patch::format-patch-quotes-double-quote-in-from-headers	t4014-format-patch	format-patch quotes double-quote in from-headers	format-patch	not_ported
-t4014-format-patch::format-patch-uses-rfc2047-encoded-from-headers-when-necessary	t4014-format-patch	format-patch uses rfc2047-encoded from-headers when necessary	format-patch	not_ported
-t4014-format-patch::rfc2047-encoded-from-headers-leave-no-rfc822-specials	t4014-format-patch	rfc2047-encoded from-headers leave no rfc822 specials	format-patch	not_ported
-t4014-format-patch::format-patch-wraps-moderately-long-from-header-ascii	t4014-format-patch	format-patch wraps moderately long from-header (ascii)	format-patch	not_ported
-t4014-format-patch::format-patch-wraps-extremely-long-from-header-ascii	t4014-format-patch	format-patch wraps extremely long from-header (ascii)	format-patch	not_ported
-t4014-format-patch::format-patch-wraps-extremely-long-from-header-rfc822	t4014-format-patch	format-patch wraps extremely long from-header (rfc822)	format-patch	not_ported
-t4014-format-patch::format-patch-wraps-extremely-long-from-header-rfc2047	t4014-format-patch	format-patch wraps extremely long from-header (rfc2047)	format-patch	not_ported
-t4014-format-patch::format-patch-wraps-extremely-long-from-header-non-ascii-without-q-encoding	t4014-format-patch	format-patch wraps extremely long from-header (non-ASCII without Q-encoding)	format-patch	not_ported
-t4014-format-patch::subject-lines-are-unencoded-with-no-encode-email-headers	t4014-format-patch	subject lines are unencoded with --no-encode-email-headers	format-patch	not_ported
-t4014-format-patch::subject-lines-are-unencoded-with-format-encodeemailheaders-false	t4014-format-patch	subject lines are unencoded with format.encodeEmailHeaders=false	format-patch	not_ported
-t4014-format-patch::encode-email-headers-overrides-format-encodeemailheaders	t4014-format-patch	--encode-email-headers overrides format.encodeEmailHeaders	format-patch	not_ported
-t4014-format-patch::subject-lines-do-not-have-822-atom-quoting	t4014-format-patch	subject lines do not have 822 atom-quoting	format-patch	not_ported
-t4014-format-patch::subject-prefixes-have-space-prepended	t4014-format-patch	subject prefixes have space prepended	format-patch	not_ported
-t4014-format-patch::empty-subject-prefix-does-not-have-extra-space	t4014-format-patch	empty subject prefix does not have extra space	format-patch	not_ported
-t4014-format-patch::rfc-and-no-rfc	t4014-format-patch	--rfc and --no-rfc	format-patch	not_ported
-t4014-format-patch::rfc-wip-and-rfc	t4014-format-patch	--rfc=WIP and --rfc=	format-patch	not_ported
-t4014-format-patch::rfc-wip-appends	t4014-format-patch	--rfc=-(WIP) appends	format-patch	not_ported
-t4014-format-patch::rfc-does-not-overwrite-prefix	t4014-format-patch	--rfc does not overwrite prefix	format-patch	not_ported
-t4014-format-patch::rfc-is-argument-order-independent	t4014-format-patch	--rfc is argument order independent	format-patch	not_ported
-t4014-format-patch::subject-prefix-non-empty-and-k-cannot-be-used-together	t4014-format-patch	--subject-prefix="<non-empty>" and -k cannot be used together	format-patch	not_ported
-t4014-format-patch::subject-prefix-and-k-cannot-be-used-together	t4014-format-patch	--subject-prefix="" and -k cannot be used together	format-patch	not_ported
-t4014-format-patch::rfc-and-k-cannot-be-used-together	t4014-format-patch	--rfc and -k cannot be used together	format-patch	not_ported
-t4014-format-patch::from-ident-notices-bogus-ident	t4014-format-patch	--from=ident notices bogus ident	format-patch	not_ported
-t4014-format-patch::from-ident-replaces-author	t4014-format-patch	--from=ident replaces author	format-patch	not_ported
-t4014-format-patch::from-uses-committer-ident	t4014-format-patch	--from uses committer ident	format-patch	not_ported
-t4014-format-patch::from-applies-to-cover-letter	t4014-format-patch	--from applies to cover letter	format-patch	not_ported
-t4014-format-patch::from-omits-redundant-in-body-header	t4014-format-patch	--from omits redundant in-body header	format-patch	not_ported
-t4014-format-patch::with-force-in-body-from-redundant-in-body-from-is-kept	t4014-format-patch	with --force-in-body-from, redundant in-body from is kept	format-patch	not_ported
-t4014-format-patch::format-forceinbodyfrom-equivalent-to-force-in-body-from	t4014-format-patch	format.forceInBodyFrom, equivalent to --force-in-body-from	format-patch	not_ported
-t4014-format-patch::format-forceinbodyfrom-equivalent-to-force-in-body-from-2	t4014-format-patch	format.forceInBodyFrom, equivalent to --force-in-body-from	format-patch	not_ported
-t4014-format-patch::in-body-headers-trigger-content-encoding	t4014-format-patch	in-body headers trigger content encoding	format-patch	not_ported
-t4014-format-patch::signoff-commit-with-no-body	t4014-format-patch	signoff: commit with no body	format-patch	not_ported
-t4014-format-patch::signoff-commit-with-only-subject	t4014-format-patch	signoff: commit with only subject	format-patch	not_ported
-t4014-format-patch::signoff-commit-with-only-subject-that-does-not-end-with-nl	t4014-format-patch	signoff: commit with only subject that does not end with NL	format-patch	not_ported
-t4014-format-patch::signoff-no-existing-signoffs	t4014-format-patch	signoff: no existing signoffs	format-patch	not_ported
-t4014-format-patch::signoff-no-existing-signoffs-and-no-trailing-nl	t4014-format-patch	signoff: no existing signoffs and no trailing NL	format-patch	not_ported
-t4014-format-patch::signoff-some-random-signoff	t4014-format-patch	signoff: some random signoff	format-patch	not_ported
-t4014-format-patch::signoff-misc-conforming-footer-elements	t4014-format-patch	signoff: misc conforming footer elements	format-patch	not_ported
-t4014-format-patch::signoff-some-random-signoff-alike	t4014-format-patch	signoff: some random signoff-alike	format-patch	not_ported
-t4014-format-patch::signoff-not-really-a-signoff	t4014-format-patch	signoff: not really a signoff	format-patch	not_ported
-t4014-format-patch::signoff-not-really-a-signoff-2	t4014-format-patch	signoff: not really a signoff (2)	format-patch	not_ported
-t4014-format-patch::signoff-valid-s-o-b-paragraph-in-the-middle	t4014-format-patch	signoff: valid S-o-b paragraph in the middle	format-patch	not_ported
-t4014-format-patch::signoff-the-same-signoff-at-the-end	t4014-format-patch	signoff: the same signoff at the end	format-patch	not_ported
-t4014-format-patch::signoff-the-same-signoff-at-the-end-no-trailing-nl	t4014-format-patch	signoff: the same signoff at the end, no trailing NL	format-patch	not_ported
-t4014-format-patch::signoff-the-same-signoff-not-at-the-end	t4014-format-patch	signoff: the same signoff NOT at the end	format-patch	not_ported
-t4014-format-patch::signoff-tolerate-garbage-in-conforming-footer	t4014-format-patch	signoff: tolerate garbage in conforming footer	format-patch	not_ported
-t4014-format-patch::signoff-respect-trailer-config	t4014-format-patch	signoff: respect trailer config	format-patch	not_ported
-t4014-format-patch::signoff-footer-begins-with-non-signoff-without-sign	t4014-format-patch	signoff: footer begins with non-signoff without @ sign	format-patch	not_ported
-t4014-format-patch::format-patch-ignores-color-ui	t4014-format-patch	format patch ignores color.ui	format-patch	not_ported
-t4014-format-patch::format-patch-respects-diff-relative	t4014-format-patch	format patch respects diff.relative	format-patch	not_ported
-t4014-format-patch::cover-letter-with-invalid-cover-from-description-and-config	t4014-format-patch	cover letter with invalid --cover-from-description and config	format-patch	not_ported
-t4014-format-patch::cover-letter-with-format-coverfromdescription-default	t4014-format-patch	cover letter with format.coverFromDescription = default	format-patch	not_ported
-t4014-format-patch::cover-letter-with-cover-from-description-default	t4014-format-patch	cover letter with --cover-from-description default	format-patch	not_ported
-t4014-format-patch::cover-letter-with-format-coverfromdescription-none	t4014-format-patch	cover letter with format.coverFromDescription = none	format-patch	not_ported
-t4014-format-patch::cover-letter-with-cover-from-description-none	t4014-format-patch	cover letter with --cover-from-description none	format-patch	not_ported
-t4014-format-patch::cover-letter-with-format-coverfromdescription-message	t4014-format-patch	cover letter with format.coverFromDescription = message	format-patch	not_ported
-t4014-format-patch::cover-letter-with-cover-from-description-message	t4014-format-patch	cover letter with --cover-from-description message	format-patch	not_ported
-t4014-format-patch::cover-letter-with-format-coverfromdescription-subject	t4014-format-patch	cover letter with format.coverFromDescription = subject	format-patch	not_ported
-t4014-format-patch::cover-letter-with-cover-from-description-subject	t4014-format-patch	cover letter with --cover-from-description subject	format-patch	not_ported
-t4014-format-patch::cover-letter-with-cover-from-description-subject-utf-8-subject-line	t4014-format-patch	cover letter with --cover-from-description subject (UTF-8 subject line)	format-patch	not_ported
-t4014-format-patch::cover-letter-with-format-coverfromdescription-auto-short-subject-line	t4014-format-patch	cover letter with format.coverFromDescription = auto (short subject line)	format-patch	not_ported
-t4014-format-patch::cover-letter-with-cover-from-description-auto-short-subject-line	t4014-format-patch	cover letter with --cover-from-description auto (short subject line)	format-patch	not_ported
-t4014-format-patch::cover-letter-with-format-coverfromdescription-auto-long-subject-line	t4014-format-patch	cover letter with format.coverFromDescription = auto (long subject line)	format-patch	not_ported
-t4014-format-patch::cover-letter-with-cover-from-description-auto-long-subject-line	t4014-format-patch	cover letter with --cover-from-description auto (long subject line)	format-patch	not_ported
-t4014-format-patch::cover-letter-with-command-line-cover-from-description-overrides-config	t4014-format-patch	cover letter with command-line --cover-from-description overrides config	format-patch	not_ported
-t4014-format-patch::cover-letter-using-branch-description-1	t4014-format-patch	cover letter using branch description (1)	format-patch	not_ported
-t4014-format-patch::cover-letter-using-branch-description-2	t4014-format-patch	cover letter using branch description (2)	format-patch	not_ported
-t4014-format-patch::cover-letter-using-branch-description-3	t4014-format-patch	cover letter using branch description (3)	format-patch	not_ported
-t4014-format-patch::cover-letter-using-branch-description-4	t4014-format-patch	cover letter using branch description (4)	format-patch	not_ported
-t4014-format-patch::cover-letter-using-branch-description-5	t4014-format-patch	cover letter using branch description (5)	format-patch	not_ported
-t4014-format-patch::cover-letter-using-branch-description-6	t4014-format-patch	cover letter using branch description (6)	format-patch	not_ported
-t4014-format-patch::cover-letter-with-description-file	t4014-format-patch	cover letter with --description-file	format-patch	not_ported
-t4014-format-patch::cover-letter-with-nothing	t4014-format-patch	cover letter with nothing	format-patch	not_ported
-t4014-format-patch::cover-letter-auto	t4014-format-patch	cover letter auto	format-patch	not_ported
-t4014-format-patch::cover-letter-auto-user-override	t4014-format-patch	cover letter auto user override	format-patch	not_ported
-t4014-format-patch::format-patch-zero-commit	t4014-format-patch	format-patch --zero-commit	format-patch	not_ported
-t4014-format-patch::from-line-has-expected-format	t4014-format-patch	From line has expected format	format-patch	not_ported
-t4014-format-patch::format-patch-o-with-no-leading-directories	t4014-format-patch	format-patch -o with no leading directories	format-patch	not_ported
-t4014-format-patch::format-patch-o-with-leading-existing-directories	t4014-format-patch	format-patch -o with leading existing directories	format-patch	not_ported
-t4014-format-patch::format-patch-o-with-leading-non-existing-directories	t4014-format-patch	format-patch -o with leading non-existing directories	format-patch	not_ported
-t4014-format-patch::format-patch-format-outputdirectory-option	t4014-format-patch	format-patch format.outputDirectory option	format-patch	not_ported
-t4014-format-patch::format-patch-o-overrides-format-outputdirectory	t4014-format-patch	format-patch -o overrides format.outputDirectory	format-patch	not_ported
-t4014-format-patch::format-patch-forbids-multiple-outputs	t4014-format-patch	format-patch forbids multiple outputs	format-patch	not_ported
-t4014-format-patch::configured-outdir-does-not-conflict-with-output-options	t4014-format-patch	configured outdir does not conflict with output options	format-patch	not_ported
-t4014-format-patch::format-patch-output	t4014-format-patch	format-patch --output	format-patch	not_ported
-t4014-format-patch::format-patch-cover-letter-output	t4014-format-patch	format-patch --cover-letter --output	format-patch	not_ported
-t4014-format-patch::format-patch-base	t4014-format-patch	format-patch --base	format-patch	not_ported
-t4014-format-patch::format-patch-base-errors-out-when-base-commit-is-in-revision-list	t4014-format-patch	format-patch --base errors out when base commit is in revision list	format-patch	not_ported
-t4014-format-patch::format-patch-base-errors-out-when-base-commit-is-not-ancestor-of-revision-list	t4014-format-patch	format-patch --base errors out when base commit is not ancestor of revision list	format-patch	not_ported
-t4014-format-patch::format-patch-base-auto	t4014-format-patch	format-patch --base=auto	format-patch	not_ported
-t4014-format-patch::format-patch-errors-out-when-history-involves-criss-cross	t4014-format-patch	format-patch errors out when history involves criss-cross	format-patch	not_ported
-t4014-format-patch::format-patch-format-useautobase-whenable-history-involves-criss-cross	t4014-format-patch	format-patch format.useAutoBase whenAble history involves criss-cross	format-patch	not_ported
-t4014-format-patch::format-patch-format-useautobase-option	t4014-format-patch	format-patch format.useAutoBase option	format-patch	not_ported
-t4014-format-patch::format-patch-format-useautobase-option-with-whenable	t4014-format-patch	format-patch format.useAutoBase option with whenAble	format-patch	not_ported
-t4014-format-patch::format-patch-base-overrides-format-useautobase	t4014-format-patch	format-patch --base overrides format.useAutoBase	format-patch	not_ported
-t4014-format-patch::format-patch-no-base-overrides-format-useautobase	t4014-format-patch	format-patch --no-base overrides format.useAutoBase	format-patch	not_ported
-t4014-format-patch::format-patch-no-base-overrides-format-useautobase-whenable	t4014-format-patch	format-patch --no-base overrides format.useAutoBase whenAble	format-patch	not_ported
-t4014-format-patch::format-patch-base-with-attach	t4014-format-patch	format-patch --base with --attach	format-patch	not_ported
-t4014-format-patch::format-patch-attach-cover-letter-only-is-non-multipart	t4014-format-patch	format-patch --attach cover-letter only is non-multipart	format-patch	not_ported
-t4014-format-patch::format-patch-with-format-attach	t4014-format-patch	format-patch with format.attach	format-patch	not_ported
-t4014-format-patch::format-patch-with-format-attach-disabled	t4014-format-patch	format-patch with format.attach=disabled	format-patch	not_ported
-t4014-format-patch::c-format-mboxrd-format-patch	t4014-format-patch	-c format.mboxrd format-patch	format-patch	not_ported
-t4014-format-patch::interdiff-setup	t4014-format-patch	interdiff: setup	format-patch	not_ported
-t4014-format-patch::interdiff-cover-letter	t4014-format-patch	interdiff: cover-letter	format-patch	not_ported
-t4014-format-patch::interdiff-reroll-count	t4014-format-patch	interdiff: reroll-count	format-patch	not_ported
-t4014-format-patch::interdiff-reroll-count-with-a-non-integer	t4014-format-patch	interdiff: reroll-count with a non-integer	format-patch	not_ported
-t4014-format-patch::interdiff-reroll-count-with-a-integer	t4014-format-patch	interdiff: reroll-count with a integer	format-patch	not_ported
-t4014-format-patch::interdiff-solo-patch	t4014-format-patch	interdiff: solo-patch	format-patch	not_ported
-t4014-format-patch::range-diff-solo-patch	t4014-format-patch	range-diff: solo-patch	format-patch	not_ported
-t4014-format-patch::interdiff-multi-patch-implicit-cover-letter	t4014-format-patch	interdiff: multi-patch, implicit --cover-letter	format-patch	not_ported
-t4014-format-patch::interdiff-explicit-no-cover-letter-defeats-implied-cover-letter	t4014-format-patch	interdiff: explicit --no-cover-letter defeats implied --cover-letter	format-patch	not_ported
-t4014-format-patch::format-patch-does-not-respect-diff-noprefix	t4014-format-patch	format-patch does not respect diff.noprefix	format-patch	not_ported
-t4014-format-patch::format-patch-respects-format-noprefix	t4014-format-patch	format-patch respects format.noprefix	format-patch	not_ported
-t4014-format-patch::format-noprefix-false	t4014-format-patch	format.noprefix=false	format-patch	not_ported
-t4014-format-patch::format-patch-default-prefix-overrides-format-noprefix	t4014-format-patch	format-patch --default-prefix overrides format.noprefix	format-patch	not_ported
-t4014-format-patch::errors-on-format-noprefix-which-is-not-boolean	t4014-format-patch	errors on format.noprefix which is not boolean	format-patch	not_ported
-t4014-format-patch::format-patch-doesn-t-consider-merge-commits	t4014-format-patch	format-patch doesn't consider merge commits	format-patch	not_ported
+t4014-format-patch::format-patch-ignore-if-in-upstream	t4014-format-patch	format-patch --ignore-if-in-upstream	format-patch	pass
+t4014-format-patch::format-patch-ignore-if-in-upstream-2	t4014-format-patch	format-patch --ignore-if-in-upstream	format-patch	pass
+t4014-format-patch::format-patch-ignore-if-in-upstream-handles-tags	t4014-format-patch	format-patch --ignore-if-in-upstream handles tags	format-patch	pass
+t4014-format-patch::format-patch-result-applies	t4014-format-patch	format-patch result applies	format-patch	pass
+t4014-format-patch::format-patch-ignore-if-in-upstream-result-applies	t4014-format-patch	format-patch --ignore-if-in-upstream result applies	format-patch	pass
+t4014-format-patch::commit-did-not-screw-up-the-log-message	t4014-format-patch	commit did not screw up the log message	format-patch	pass
+t4014-format-patch::format-patch-did-not-screw-up-the-log-message	t4014-format-patch	format-patch did not screw up the log message	format-patch	pass
+t4014-format-patch::replay-did-not-screw-up-the-log-message	t4014-format-patch	replay did not screw up the log message	format-patch	pass
+t4014-format-patch::format-patch-empty-commit	t4014-format-patch	format-patch empty commit	format-patch	pass
+t4014-format-patch::extra-headers	t4014-format-patch	extra headers	format-patch	pass
+t4014-format-patch::extra-headers-without-newlines	t4014-format-patch	extra headers without newlines	format-patch	pass
+t4014-format-patch::extra-headers-with-multiple-to-s	t4014-format-patch	extra headers with multiple To:s	format-patch	pass
+t4014-format-patch::additional-command-line-cc-ascii	t4014-format-patch	additional command line cc (ascii)	format-patch	pass
+t4014-format-patch::command-line-headers	t4014-format-patch	command line headers	format-patch	pass
+t4014-format-patch::configuration-headers-and-command-line-headers	t4014-format-patch	configuration headers and command line headers	format-patch	pass
+t4014-format-patch::command-line-to-header-ascii	t4014-format-patch	command line To: header (ascii)	format-patch	pass
+t4014-format-patch::configuration-to-header-ascii	t4014-format-patch	configuration To: header (ascii)	format-patch	pass
+t4014-format-patch::format-from-false	t4014-format-patch	format.from=false	format-patch	pass
+t4014-format-patch::format-from-true	t4014-format-patch	format.from=true	format-patch	pass
+t4014-format-patch::format-from-with-address	t4014-format-patch	format.from with address	format-patch	pass
+t4014-format-patch::no-from-overrides-format-from	t4014-format-patch	--no-from overrides format.from	format-patch	pass
+t4014-format-patch::from-overrides-format-from	t4014-format-patch	--from overrides format.from	format-patch	pass
+t4014-format-patch::no-to-overrides-config-to	t4014-format-patch	--no-to overrides config.to	format-patch	pass
+t4014-format-patch::no-to-and-to-replaces-config-to	t4014-format-patch	--no-to and --to replaces config.to	format-patch	pass
+t4014-format-patch::no-cc-overrides-config-cc	t4014-format-patch	--no-cc overrides config.cc	format-patch	pass
+t4014-format-patch::no-add-header-overrides-config-headers	t4014-format-patch	--no-add-header overrides config.headers	format-patch	pass
+t4014-format-patch::multiple-files	t4014-format-patch	multiple files	format-patch	pass
+t4014-format-patch::filename-length-limit	t4014-format-patch	filename length limit	format-patch	pass
+t4014-format-patch::filename-length-limit-from-config	t4014-format-patch	filename length limit from config	format-patch	pass
+t4014-format-patch::filename-limit-applies-only-to-basename	t4014-format-patch	filename limit applies only to basename	format-patch	pass
+t4014-format-patch::reroll-count	t4014-format-patch	reroll count	format-patch	pass
+t4014-format-patch::reroll-count-v	t4014-format-patch	reroll count (-v)	format-patch	pass
+t4014-format-patch::reroll-count-v-with-a-fractional-number	t4014-format-patch	reroll count (-v) with a fractional number	format-patch	pass
+t4014-format-patch::reroll-v-count-with-a-non-number	t4014-format-patch	reroll (-v) count with a non number	format-patch	pass
+t4014-format-patch::reroll-v-count-with-a-non-pathname-character	t4014-format-patch	reroll (-v) count with a non-pathname character	format-patch	pass
+t4014-format-patch::no-threading	t4014-format-patch	no threading	format-patch	pass
+t4014-format-patch::thread	t4014-format-patch	thread	format-patch	pass
+t4014-format-patch::thread-overrides-format-thread-deep	t4014-format-patch	--thread overrides format.thread=deep	format-patch	pass
+t4014-format-patch::thread-in-reply-to	t4014-format-patch	thread in-reply-to	format-patch	pass
+t4014-format-patch::thread-cover-letter	t4014-format-patch	thread cover-letter	format-patch	pass
+t4014-format-patch::thread-cover-letter-in-reply-to	t4014-format-patch	thread cover-letter in-reply-to	format-patch	pass
+t4014-format-patch::thread-explicit-shallow	t4014-format-patch	thread explicit shallow	format-patch	pass
+t4014-format-patch::thread-deep	t4014-format-patch	thread deep	format-patch	pass
+t4014-format-patch::thread-deep-in-reply-to	t4014-format-patch	thread deep in-reply-to	format-patch	pass
+t4014-format-patch::thread-deep-cover-letter	t4014-format-patch	thread deep cover-letter	format-patch	pass
+t4014-format-patch::thread-deep-cover-letter-in-reply-to	t4014-format-patch	thread deep cover-letter in-reply-to	format-patch	pass
+t4014-format-patch::thread-via-config	t4014-format-patch	thread via config	format-patch	pass
+t4014-format-patch::thread-deep-via-config	t4014-format-patch	thread deep via config	format-patch	pass
+t4014-format-patch::thread-config-override	t4014-format-patch	thread config + override	format-patch	pass
+t4014-format-patch::thread-config-no-thread	t4014-format-patch	thread config + --no-thread	format-patch	pass
+t4014-format-patch::excessive-subject	t4014-format-patch	excessive subject	format-patch	pass
+t4014-format-patch::failure-to-write-cover-letter-aborts-gracefully	t4014-format-patch	failure to write cover-letter aborts gracefully	format-patch	pass
+t4014-format-patch::cover-letter-inherits-diff-options	t4014-format-patch	cover-letter inherits diff options	format-patch	pass
+t4014-format-patch::shortlog-of-cover-letter-wraps-overly-long-onelines	t4014-format-patch	shortlog of cover-letter wraps overly-long onelines	format-patch	pass
+t4014-format-patch::format-patch-respects-u	t4014-format-patch	format-patch respects -U	format-patch	pass
+t4014-format-patch::format-patch-p-suppresses-stat	t4014-format-patch	format-patch -p suppresses stat	format-patch	pass
+t4014-format-patch::format-patch-from-a-subdirectory-1	t4014-format-patch	format-patch from a subdirectory (1)	format-patch	pass
+t4014-format-patch::format-patch-from-a-subdirectory-2	t4014-format-patch	format-patch from a subdirectory (2)	format-patch	pass
+t4014-format-patch::format-patch-from-a-subdirectory-3	t4014-format-patch	format-patch from a subdirectory (3)	format-patch	pass
+t4014-format-patch::format-patch-in-reply-to	t4014-format-patch	format-patch --in-reply-to	format-patch	pass
+t4014-format-patch::format-patch-signoff	t4014-format-patch	format-patch --signoff	format-patch	pass
+t4014-format-patch::format-patch-notes-signoff	t4014-format-patch	format-patch --notes --signoff	format-patch	pass
+t4014-format-patch::format-patch-notes-output-control	t4014-format-patch	format-patch notes output control	format-patch	pass
+t4014-format-patch::format-patch-with-multiple-notes-refs	t4014-format-patch	format-patch with multiple notes refs	format-patch	pass
+t4014-format-patch::format-patch-with-multiple-notes-refs-in-config	t4014-format-patch	format-patch with multiple notes refs in config	format-patch	pass
+t4014-format-patch::options-no-longer-allowed-for-format-patch	t4014-format-patch	options no longer allowed for format-patch	format-patch	pass
+t4014-format-patch::format-patch-numstat-should-produce-a-patch	t4014-format-patch	format-patch --numstat should produce a patch	format-patch	pass
+t4014-format-patch::format-patch-path	t4014-format-patch	format-patch -- <path>	format-patch	pass
+t4014-format-patch::format-patch-ignore-if-in-upstream-head	t4014-format-patch	format-patch --ignore-if-in-upstream HEAD	format-patch	pass
+t4014-format-patch::get-git-version	t4014-format-patch	get git version	format-patch	pass
+t4014-format-patch::format-patch-default-signature	t4014-format-patch	format-patch default signature	format-patch	pass
+t4014-format-patch::format-patch-signature	t4014-format-patch	format-patch --signature	format-patch	pass
+t4014-format-patch::format-patch-with-format-signature-config	t4014-format-patch	format-patch with format.signature config	format-patch	pass
+t4014-format-patch::format-patch-signature-overrides-format-signature	t4014-format-patch	format-patch --signature overrides format.signature	format-patch	pass
+t4014-format-patch::format-patch-no-signature-ignores-format-signature	t4014-format-patch	format-patch --no-signature ignores format.signature	format-patch	pass
+t4014-format-patch::format-patch-signature-cover-letter	t4014-format-patch	format-patch --signature --cover-letter	format-patch	pass
+t4014-format-patch::format-signature-suppresses-signatures	t4014-format-patch	format.signature="" suppresses signatures	format-patch	pass
+t4014-format-patch::format-patch-no-signature-suppresses-signatures	t4014-format-patch	format-patch --no-signature suppresses signatures	format-patch	pass
+t4014-format-patch::format-patch-signature-suppresses-signatures	t4014-format-patch	format-patch --signature="" suppresses signatures	format-patch	pass
+t4014-format-patch::prepare-mail-signature-input	t4014-format-patch	prepare mail-signature input	format-patch	pass
+t4014-format-patch::signature-file-file-works	t4014-format-patch	--signature-file=file works	format-patch	pass
+t4014-format-patch::format-signaturefile-works	t4014-format-patch	format.signaturefile works	format-patch	pass
+t4014-format-patch::no-signature-suppresses-format-signaturefile	t4014-format-patch	--no-signature suppresses format.signaturefile 	format-patch	pass
+t4014-format-patch::signature-file-overrides-format-signaturefile	t4014-format-patch	--signature-file overrides format.signaturefile	format-patch	pass
+t4014-format-patch::signature-overrides-format-signaturefile	t4014-format-patch	--signature overrides format.signaturefile	format-patch	pass
+t4014-format-patch::format-patch-stdout-paginates	t4014-format-patch	format-patch --stdout paginates	format-patch	pass
+t4014-format-patch::format-patch-stdout-pagination-can-be-disabled	t4014-format-patch	format-patch --stdout pagination can be disabled	format-patch	pass
+t4014-format-patch::format-patch-handles-multi-line-subjects	t4014-format-patch	format-patch handles multi-line subjects	format-patch	pass
+t4014-format-patch::format-patch-handles-multi-line-encoded-subjects	t4014-format-patch	format-patch handles multi-line encoded subjects	format-patch	pass
+t4014-format-patch::format-patch-wraps-extremely-long-subject-ascii	t4014-format-patch	format-patch wraps extremely long subject (ascii)	format-patch	pass
+t4014-format-patch::format-patch-wraps-extremely-long-subject-rfc2047	t4014-format-patch	format-patch wraps extremely long subject (rfc2047)	format-patch	pass
+t4014-format-patch::format-patch-quotes-dot-in-from-headers	t4014-format-patch	format-patch quotes dot in from-headers	format-patch	pass
+t4014-format-patch::format-patch-quotes-double-quote-in-from-headers	t4014-format-patch	format-patch quotes double-quote in from-headers	format-patch	pass
+t4014-format-patch::format-patch-uses-rfc2047-encoded-from-headers-when-necessary	t4014-format-patch	format-patch uses rfc2047-encoded from-headers when necessary	format-patch	pass
+t4014-format-patch::rfc2047-encoded-from-headers-leave-no-rfc822-specials	t4014-format-patch	rfc2047-encoded from-headers leave no rfc822 specials	format-patch	pass
+t4014-format-patch::format-patch-wraps-moderately-long-from-header-ascii	t4014-format-patch	format-patch wraps moderately long from-header (ascii)	format-patch	pass
+t4014-format-patch::format-patch-wraps-extremely-long-from-header-ascii	t4014-format-patch	format-patch wraps extremely long from-header (ascii)	format-patch	pass
+t4014-format-patch::format-patch-wraps-extremely-long-from-header-rfc822	t4014-format-patch	format-patch wraps extremely long from-header (rfc822)	format-patch	pass
+t4014-format-patch::format-patch-wraps-extremely-long-from-header-rfc2047	t4014-format-patch	format-patch wraps extremely long from-header (rfc2047)	format-patch	pass
+t4014-format-patch::format-patch-wraps-extremely-long-from-header-non-ascii-without-q-encoding	t4014-format-patch	format-patch wraps extremely long from-header (non-ASCII without Q-encoding)	format-patch	pass
+t4014-format-patch::subject-lines-are-unencoded-with-no-encode-email-headers	t4014-format-patch	subject lines are unencoded with --no-encode-email-headers	format-patch	pass
+t4014-format-patch::subject-lines-are-unencoded-with-format-encodeemailheaders-false	t4014-format-patch	subject lines are unencoded with format.encodeEmailHeaders=false	format-patch	pass
+t4014-format-patch::encode-email-headers-overrides-format-encodeemailheaders	t4014-format-patch	--encode-email-headers overrides format.encodeEmailHeaders	format-patch	pass
+t4014-format-patch::subject-lines-do-not-have-822-atom-quoting	t4014-format-patch	subject lines do not have 822 atom-quoting	format-patch	pass
+t4014-format-patch::subject-prefixes-have-space-prepended	t4014-format-patch	subject prefixes have space prepended	format-patch	pass
+t4014-format-patch::empty-subject-prefix-does-not-have-extra-space	t4014-format-patch	empty subject prefix does not have extra space	format-patch	pass
+t4014-format-patch::rfc-and-no-rfc	t4014-format-patch	--rfc and --no-rfc	format-patch	pass
+t4014-format-patch::rfc-wip-and-rfc	t4014-format-patch	--rfc=WIP and --rfc=	format-patch	pass
+t4014-format-patch::rfc-wip-appends	t4014-format-patch	--rfc=-(WIP) appends	format-patch	pass
+t4014-format-patch::rfc-does-not-overwrite-prefix	t4014-format-patch	--rfc does not overwrite prefix	format-patch	pass
+t4014-format-patch::rfc-is-argument-order-independent	t4014-format-patch	--rfc is argument order independent	format-patch	pass
+t4014-format-patch::subject-prefix-non-empty-and-k-cannot-be-used-together	t4014-format-patch	--subject-prefix="<non-empty>" and -k cannot be used together	format-patch	pass
+t4014-format-patch::subject-prefix-and-k-cannot-be-used-together	t4014-format-patch	--subject-prefix="" and -k cannot be used together	format-patch	pass
+t4014-format-patch::rfc-and-k-cannot-be-used-together	t4014-format-patch	--rfc and -k cannot be used together	format-patch	pass
+t4014-format-patch::from-ident-notices-bogus-ident	t4014-format-patch	--from=ident notices bogus ident	format-patch	pass
+t4014-format-patch::from-ident-replaces-author	t4014-format-patch	--from=ident replaces author	format-patch	pass
+t4014-format-patch::from-uses-committer-ident	t4014-format-patch	--from uses committer ident	format-patch	pass
+t4014-format-patch::from-applies-to-cover-letter	t4014-format-patch	--from applies to cover letter	format-patch	pass
+t4014-format-patch::from-omits-redundant-in-body-header	t4014-format-patch	--from omits redundant in-body header	format-patch	pass
+t4014-format-patch::with-force-in-body-from-redundant-in-body-from-is-kept	t4014-format-patch	with --force-in-body-from, redundant in-body from is kept	format-patch	pass
+t4014-format-patch::format-forceinbodyfrom-equivalent-to-force-in-body-from	t4014-format-patch	format.forceInBodyFrom, equivalent to --force-in-body-from	format-patch	pass
+t4014-format-patch::format-forceinbodyfrom-equivalent-to-force-in-body-from-2	t4014-format-patch	format.forceInBodyFrom, equivalent to --force-in-body-from	format-patch	pass
+t4014-format-patch::in-body-headers-trigger-content-encoding	t4014-format-patch	in-body headers trigger content encoding	format-patch	pass
+t4014-format-patch::signoff-commit-with-no-body	t4014-format-patch	signoff: commit with no body	format-patch	pass
+t4014-format-patch::signoff-commit-with-only-subject	t4014-format-patch	signoff: commit with only subject	format-patch	pass
+t4014-format-patch::signoff-commit-with-only-subject-that-does-not-end-with-nl	t4014-format-patch	signoff: commit with only subject that does not end with NL	format-patch	pass
+t4014-format-patch::signoff-no-existing-signoffs	t4014-format-patch	signoff: no existing signoffs	format-patch	pass
+t4014-format-patch::signoff-no-existing-signoffs-and-no-trailing-nl	t4014-format-patch	signoff: no existing signoffs and no trailing NL	format-patch	pass
+t4014-format-patch::signoff-some-random-signoff	t4014-format-patch	signoff: some random signoff	format-patch	pass
+t4014-format-patch::signoff-misc-conforming-footer-elements	t4014-format-patch	signoff: misc conforming footer elements	format-patch	pass
+t4014-format-patch::signoff-some-random-signoff-alike	t4014-format-patch	signoff: some random signoff-alike	format-patch	pass
+t4014-format-patch::signoff-not-really-a-signoff	t4014-format-patch	signoff: not really a signoff	format-patch	pass
+t4014-format-patch::signoff-not-really-a-signoff-2	t4014-format-patch	signoff: not really a signoff (2)	format-patch	pass
+t4014-format-patch::signoff-valid-s-o-b-paragraph-in-the-middle	t4014-format-patch	signoff: valid S-o-b paragraph in the middle	format-patch	pass
+t4014-format-patch::signoff-the-same-signoff-at-the-end	t4014-format-patch	signoff: the same signoff at the end	format-patch	pass
+t4014-format-patch::signoff-the-same-signoff-at-the-end-no-trailing-nl	t4014-format-patch	signoff: the same signoff at the end, no trailing NL	format-patch	pass
+t4014-format-patch::signoff-the-same-signoff-not-at-the-end	t4014-format-patch	signoff: the same signoff NOT at the end	format-patch	pass
+t4014-format-patch::signoff-tolerate-garbage-in-conforming-footer	t4014-format-patch	signoff: tolerate garbage in conforming footer	format-patch	pass
+t4014-format-patch::signoff-respect-trailer-config	t4014-format-patch	signoff: respect trailer config	format-patch	pass
+t4014-format-patch::signoff-footer-begins-with-non-signoff-without-sign	t4014-format-patch	signoff: footer begins with non-signoff without @ sign	format-patch	pass
+t4014-format-patch::format-patch-ignores-color-ui	t4014-format-patch	format patch ignores color.ui	format-patch	pass
+t4014-format-patch::format-patch-respects-diff-relative	t4014-format-patch	format patch respects diff.relative	format-patch	pass
+t4014-format-patch::cover-letter-with-invalid-cover-from-description-and-config	t4014-format-patch	cover letter with invalid --cover-from-description and config	format-patch	pass
+t4014-format-patch::cover-letter-with-format-coverfromdescription-default	t4014-format-patch	cover letter with format.coverFromDescription = default	format-patch	pass
+t4014-format-patch::cover-letter-with-cover-from-description-default	t4014-format-patch	cover letter with --cover-from-description default	format-patch	pass
+t4014-format-patch::cover-letter-with-format-coverfromdescription-none	t4014-format-patch	cover letter with format.coverFromDescription = none	format-patch	pass
+t4014-format-patch::cover-letter-with-cover-from-description-none	t4014-format-patch	cover letter with --cover-from-description none	format-patch	pass
+t4014-format-patch::cover-letter-with-format-coverfromdescription-message	t4014-format-patch	cover letter with format.coverFromDescription = message	format-patch	pass
+t4014-format-patch::cover-letter-with-cover-from-description-message	t4014-format-patch	cover letter with --cover-from-description message	format-patch	pass
+t4014-format-patch::cover-letter-with-format-coverfromdescription-subject	t4014-format-patch	cover letter with format.coverFromDescription = subject	format-patch	pass
+t4014-format-patch::cover-letter-with-cover-from-description-subject	t4014-format-patch	cover letter with --cover-from-description subject	format-patch	pass
+t4014-format-patch::cover-letter-with-cover-from-description-subject-utf-8-subject-line	t4014-format-patch	cover letter with --cover-from-description subject (UTF-8 subject line)	format-patch	pass
+t4014-format-patch::cover-letter-with-format-coverfromdescription-auto-short-subject-line	t4014-format-patch	cover letter with format.coverFromDescription = auto (short subject line)	format-patch	pass
+t4014-format-patch::cover-letter-with-cover-from-description-auto-short-subject-line	t4014-format-patch	cover letter with --cover-from-description auto (short subject line)	format-patch	pass
+t4014-format-patch::cover-letter-with-format-coverfromdescription-auto-long-subject-line	t4014-format-patch	cover letter with format.coverFromDescription = auto (long subject line)	format-patch	pass
+t4014-format-patch::cover-letter-with-cover-from-description-auto-long-subject-line	t4014-format-patch	cover letter with --cover-from-description auto (long subject line)	format-patch	pass
+t4014-format-patch::cover-letter-with-command-line-cover-from-description-overrides-config	t4014-format-patch	cover letter with command-line --cover-from-description overrides config	format-patch	pass
+t4014-format-patch::cover-letter-using-branch-description-1	t4014-format-patch	cover letter using branch description (1)	format-patch	pass
+t4014-format-patch::cover-letter-using-branch-description-2	t4014-format-patch	cover letter using branch description (2)	format-patch	pass
+t4014-format-patch::cover-letter-using-branch-description-3	t4014-format-patch	cover letter using branch description (3)	format-patch	pass
+t4014-format-patch::cover-letter-using-branch-description-4	t4014-format-patch	cover letter using branch description (4)	format-patch	pass
+t4014-format-patch::cover-letter-using-branch-description-5	t4014-format-patch	cover letter using branch description (5)	format-patch	pass
+t4014-format-patch::cover-letter-using-branch-description-6	t4014-format-patch	cover letter using branch description (6)	format-patch	pass
+t4014-format-patch::cover-letter-with-description-file	t4014-format-patch	cover letter with --description-file	format-patch	pass
+t4014-format-patch::cover-letter-with-nothing	t4014-format-patch	cover letter with nothing	format-patch	pass
+t4014-format-patch::cover-letter-auto	t4014-format-patch	cover letter auto	format-patch	pass
+t4014-format-patch::cover-letter-auto-user-override	t4014-format-patch	cover letter auto user override	format-patch	pass
+t4014-format-patch::format-patch-zero-commit	t4014-format-patch	format-patch --zero-commit	format-patch	pass
+t4014-format-patch::from-line-has-expected-format	t4014-format-patch	From line has expected format	format-patch	pass
+t4014-format-patch::format-patch-o-with-no-leading-directories	t4014-format-patch	format-patch -o with no leading directories	format-patch	pass
+t4014-format-patch::format-patch-o-with-leading-existing-directories	t4014-format-patch	format-patch -o with leading existing directories	format-patch	pass
+t4014-format-patch::format-patch-o-with-leading-non-existing-directories	t4014-format-patch	format-patch -o with leading non-existing directories	format-patch	pass
+t4014-format-patch::format-patch-format-outputdirectory-option	t4014-format-patch	format-patch format.outputDirectory option	format-patch	pass
+t4014-format-patch::format-patch-o-overrides-format-outputdirectory	t4014-format-patch	format-patch -o overrides format.outputDirectory	format-patch	pass
+t4014-format-patch::format-patch-forbids-multiple-outputs	t4014-format-patch	format-patch forbids multiple outputs	format-patch	pass
+t4014-format-patch::configured-outdir-does-not-conflict-with-output-options	t4014-format-patch	configured outdir does not conflict with output options	format-patch	pass
+t4014-format-patch::format-patch-output	t4014-format-patch	format-patch --output	format-patch	pass
+t4014-format-patch::format-patch-cover-letter-output	t4014-format-patch	format-patch --cover-letter --output	format-patch	pass
+t4014-format-patch::format-patch-base	t4014-format-patch	format-patch --base	format-patch	pass
+t4014-format-patch::format-patch-base-errors-out-when-base-commit-is-in-revision-list	t4014-format-patch	format-patch --base errors out when base commit is in revision list	format-patch	pass
+t4014-format-patch::format-patch-base-errors-out-when-base-commit-is-not-ancestor-of-revision-list	t4014-format-patch	format-patch --base errors out when base commit is not ancestor of revision list	format-patch	pass
+t4014-format-patch::format-patch-base-auto	t4014-format-patch	format-patch --base=auto	format-patch	pass
+t4014-format-patch::format-patch-errors-out-when-history-involves-criss-cross	t4014-format-patch	format-patch errors out when history involves criss-cross	format-patch	pass
+t4014-format-patch::format-patch-format-useautobase-whenable-history-involves-criss-cross	t4014-format-patch	format-patch format.useAutoBase whenAble history involves criss-cross	format-patch	pass
+t4014-format-patch::format-patch-format-useautobase-option	t4014-format-patch	format-patch format.useAutoBase option	format-patch	pass
+t4014-format-patch::format-patch-format-useautobase-option-with-whenable	t4014-format-patch	format-patch format.useAutoBase option with whenAble	format-patch	pass
+t4014-format-patch::format-patch-base-overrides-format-useautobase	t4014-format-patch	format-patch --base overrides format.useAutoBase	format-patch	pass
+t4014-format-patch::format-patch-no-base-overrides-format-useautobase	t4014-format-patch	format-patch --no-base overrides format.useAutoBase	format-patch	pass
+t4014-format-patch::format-patch-no-base-overrides-format-useautobase-whenable	t4014-format-patch	format-patch --no-base overrides format.useAutoBase whenAble	format-patch	pass
+t4014-format-patch::format-patch-base-with-attach	t4014-format-patch	format-patch --base with --attach	format-patch	pass
+t4014-format-patch::format-patch-attach-cover-letter-only-is-non-multipart	t4014-format-patch	format-patch --attach cover-letter only is non-multipart	format-patch	pass
+t4014-format-patch::format-patch-with-format-attach	t4014-format-patch	format-patch with format.attach	format-patch	pass
+t4014-format-patch::format-patch-with-format-attach-disabled	t4014-format-patch	format-patch with format.attach=disabled	format-patch	pass
+t4014-format-patch::c-format-mboxrd-format-patch	t4014-format-patch	-c format.mboxrd format-patch	format-patch	pass
+t4014-format-patch::interdiff-setup	t4014-format-patch	interdiff: setup	format-patch	pass
+t4014-format-patch::interdiff-cover-letter	t4014-format-patch	interdiff: cover-letter	format-patch	pass
+t4014-format-patch::interdiff-reroll-count	t4014-format-patch	interdiff: reroll-count	format-patch	pass
+t4014-format-patch::interdiff-reroll-count-with-a-non-integer	t4014-format-patch	interdiff: reroll-count with a non-integer	format-patch	pass
+t4014-format-patch::interdiff-reroll-count-with-a-integer	t4014-format-patch	interdiff: reroll-count with a integer	format-patch	pass
+t4014-format-patch::interdiff-solo-patch	t4014-format-patch	interdiff: solo-patch	format-patch	pass
+t4014-format-patch::range-diff-solo-patch	t4014-format-patch	range-diff: solo-patch	format-patch	pass
+t4014-format-patch::interdiff-multi-patch-implicit-cover-letter	t4014-format-patch	interdiff: multi-patch, implicit --cover-letter	format-patch	pass
+t4014-format-patch::interdiff-explicit-no-cover-letter-defeats-implied-cover-letter	t4014-format-patch	interdiff: explicit --no-cover-letter defeats implied --cover-letter	format-patch	pass
+t4014-format-patch::format-patch-does-not-respect-diff-noprefix	t4014-format-patch	format-patch does not respect diff.noprefix	format-patch	pass
+t4014-format-patch::format-patch-respects-format-noprefix	t4014-format-patch	format-patch respects format.noprefix	format-patch	pass
+t4014-format-patch::format-noprefix-false	t4014-format-patch	format.noprefix=false	format-patch	pass
+t4014-format-patch::format-patch-default-prefix-overrides-format-noprefix	t4014-format-patch	format-patch --default-prefix overrides format.noprefix	format-patch	pass
+t4014-format-patch::errors-on-format-noprefix-which-is-not-boolean	t4014-format-patch	errors on format.noprefix which is not boolean	format-patch	pass
+t4014-format-patch::format-patch-doesn-t-consider-merge-commits	t4014-format-patch	format-patch doesn't consider merge commits	format-patch	pass
 t4015-diff-whitespace::another-test-without-options	t4015-diff-whitespace	another test, without options	diff	pass
 t4015-diff-whitespace::ignore-blank-lines-only-new-lines	t4015-diff-whitespace	ignore-blank-lines: only new lines	diff	pass
 t4015-diff-whitespace::ignore-blank-lines-only-new-lines-with-space	t4015-diff-whitespace	ignore-blank-lines: only new lines with space	diff	pass
@@ -6998,19 +6998,19 @@ t4020-diff-external::submodule-diff	t4020-diff-external	submodule diff	diff	pass
 t4020-diff-external::desc-via-attribute-with-options	t4020-diff-external	$desc via attribute$with_options	diff	pass
 t4020-diff-external::desc-via-diff-external-with-options	t4020-diff-external	$desc via diff.external$with_options	diff	pass
 t4020-diff-external::desc-via-git-external-diff-with-options	t4020-diff-external	$desc via GIT_EXTERNAL_DIFF$with_options	diff	pass
-t4021-format-patch-numbered::single-patch-defaults-to-no-numbers	t4021-format-patch-numbered	single patch defaults to no numbers	format-patch	not_ported
-t4021-format-patch-numbered::multiple-patch-defaults-to-numbered	t4021-format-patch-numbered	multiple patch defaults to numbered	format-patch	not_ported
-t4021-format-patch-numbered::use-numbered	t4021-format-patch-numbered	Use --numbered	format-patch	not_ported
-t4021-format-patch-numbered::format-numbered-true	t4021-format-patch-numbered	format.numbered = true	format-patch	not_ported
-t4021-format-patch-numbered::format-numbered-single-patch	t4021-format-patch-numbered	format.numbered && single patch	format-patch	not_ported
-t4021-format-patch-numbered::format-numbered-no-numbered	t4021-format-patch-numbered	format.numbered && --no-numbered	format-patch	not_ported
-t4021-format-patch-numbered::format-numbered-keep-subject	t4021-format-patch-numbered	format.numbered && --keep-subject	format-patch	not_ported
-t4021-format-patch-numbered::format-numbered-auto	t4021-format-patch-numbered	format.numbered = auto	format-patch	not_ported
-t4021-format-patch-numbered::format-numbered-auto-single-patch	t4021-format-patch-numbered	format.numbered = auto && single patch	format-patch	not_ported
-t4021-format-patch-numbered::format-numbered-auto-no-numbered	t4021-format-patch-numbered	format.numbered = auto && --no-numbered	format-patch	not_ported
-t4021-format-patch-numbered::start-number-numbered	t4021-format-patch-numbered	--start-number && --numbered	format-patch	not_ported
-t4021-format-patch-numbered::single-patch-with-cover-letter-defaults-to-numbers	t4021-format-patch-numbered	single patch with cover-letter defaults to numbers	format-patch	not_ported
-t4021-format-patch-numbered::use-no-numbered-and-cover-letter-single-patch	t4021-format-patch-numbered	Use --no-numbered and --cover-letter single patch	format-patch	not_ported
+t4021-format-patch-numbered::single-patch-defaults-to-no-numbers	t4021-format-patch-numbered	single patch defaults to no numbers	format-patch	pass
+t4021-format-patch-numbered::multiple-patch-defaults-to-numbered	t4021-format-patch-numbered	multiple patch defaults to numbered	format-patch	pass
+t4021-format-patch-numbered::use-numbered	t4021-format-patch-numbered	Use --numbered	format-patch	pass
+t4021-format-patch-numbered::format-numbered-true	t4021-format-patch-numbered	format.numbered = true	format-patch	pass
+t4021-format-patch-numbered::format-numbered-single-patch	t4021-format-patch-numbered	format.numbered && single patch	format-patch	pass
+t4021-format-patch-numbered::format-numbered-no-numbered	t4021-format-patch-numbered	format.numbered && --no-numbered	format-patch	pass
+t4021-format-patch-numbered::format-numbered-keep-subject	t4021-format-patch-numbered	format.numbered && --keep-subject	format-patch	pass
+t4021-format-patch-numbered::format-numbered-auto	t4021-format-patch-numbered	format.numbered = auto	format-patch	pass
+t4021-format-patch-numbered::format-numbered-auto-single-patch	t4021-format-patch-numbered	format.numbered = auto && single patch	format-patch	pass
+t4021-format-patch-numbered::format-numbered-auto-no-numbered	t4021-format-patch-numbered	format.numbered = auto && --no-numbered	format-patch	pass
+t4021-format-patch-numbered::start-number-numbered	t4021-format-patch-numbered	--start-number && --numbered	format-patch	pass
+t4021-format-patch-numbered::single-patch-with-cover-letter-defaults-to-numbers	t4021-format-patch-numbered	single patch with cover-letter defaults to numbers	format-patch	pass
+t4021-format-patch-numbered::use-no-numbered-and-cover-letter-single-patch	t4021-format-patch-numbered	Use --no-numbered and --cover-letter single patch	format-patch	pass
 t4022-diff-rewrite::detect-rewrite	t4022-diff-rewrite	detect rewrite	diff	pass
 t4022-diff-rewrite::show-deletion-diff-without-d	t4022-diff-rewrite	show deletion diff without -D	diff	pass
 t4022-diff-rewrite::suppress-deletion-diff-with-d	t4022-diff-rewrite	suppress deletion diff with -D	diff	pass
@@ -11847,20 +11847,20 @@ t6007-rev-list-cherry-pick-file::cherry-pick-with-duplicates-on-each-side	t6007-
 t6007-rev-list-cherry-pick-file::cherry-pick-avoids-looking-at-full-diffs	t6007-rev-list-cherry-pick-file	--cherry-pick avoids looking at full diffs	rev-list	pass
 t6008-rev-list-submodule::setup	t6008-rev-list-submodule	setup	rev-list	partial
 t6008-rev-list-submodule::ilari-s-test	t6008-rev-list-submodule	Ilari's test	rev-list	partial
-t6009-rev-list-parent::one-is-ancestor-of-others-and-should-not-be-shown	t6009-rev-list-parent	one is ancestor of others and should not be shown	rev-list	not_ported
-t6009-rev-list-parent::setup-roots-merges-and-octopuses	t6009-rev-list-parent	setup roots, merges and octopuses	rev-list	not_ported
-t6009-rev-list-parent::parse-max-parents-min-parents	t6009-rev-list-parent	parse --max-parents & --min-parents	rev-list	not_ported
-t6009-rev-list-parent::rev-list-roots	t6009-rev-list-parent	rev-list roots	rev-list	not_ported
-t6009-rev-list-parent::rev-list-no-merges	t6009-rev-list-parent	rev-list no merges	rev-list	not_ported
-t6009-rev-list-parent::rev-list-no-octopuses	t6009-rev-list-parent	rev-list no octopuses	rev-list	not_ported
-t6009-rev-list-parent::rev-list-no-roots	t6009-rev-list-parent	rev-list no roots	rev-list	not_ported
-t6009-rev-list-parent::rev-list-merges	t6009-rev-list-parent	rev-list merges	rev-list	not_ported
-t6009-rev-list-parent::rev-list-octopus	t6009-rev-list-parent	rev-list octopus	rev-list	not_ported
-t6009-rev-list-parent::rev-list-ordinary-commits	t6009-rev-list-parent	rev-list ordinary commits	rev-list	not_ported
-t6009-rev-list-parent::rev-list-merges-no-merges-yields-empty-set	t6009-rev-list-parent	rev-list --merges --no-merges yields empty set	rev-list	not_ported
-t6009-rev-list-parent::rev-list-override-and-infinities	t6009-rev-list-parent	rev-list override and infinities	rev-list	not_ported
-t6009-rev-list-parent::dodecapus	t6009-rev-list-parent	dodecapus	rev-list	not_ported
-t6009-rev-list-parent::ancestors-with-the-same-commit-time	t6009-rev-list-parent	ancestors with the same commit time	rev-list	not_ported
+t6009-rev-list-parent::one-is-ancestor-of-others-and-should-not-be-shown	t6009-rev-list-parent	one is ancestor of others and should not be shown	rev-list	pass
+t6009-rev-list-parent::setup-roots-merges-and-octopuses	t6009-rev-list-parent	setup roots, merges and octopuses	rev-list	pass
+t6009-rev-list-parent::parse-max-parents-min-parents	t6009-rev-list-parent	parse --max-parents & --min-parents	rev-list	pass
+t6009-rev-list-parent::rev-list-roots	t6009-rev-list-parent	rev-list roots	rev-list	pass
+t6009-rev-list-parent::rev-list-no-merges	t6009-rev-list-parent	rev-list no merges	rev-list	pass
+t6009-rev-list-parent::rev-list-no-octopuses	t6009-rev-list-parent	rev-list no octopuses	rev-list	pass
+t6009-rev-list-parent::rev-list-no-roots	t6009-rev-list-parent	rev-list no roots	rev-list	pass
+t6009-rev-list-parent::rev-list-merges	t6009-rev-list-parent	rev-list merges	rev-list	pass
+t6009-rev-list-parent::rev-list-octopus	t6009-rev-list-parent	rev-list octopus	rev-list	pass
+t6009-rev-list-parent::rev-list-ordinary-commits	t6009-rev-list-parent	rev-list ordinary commits	rev-list	pass
+t6009-rev-list-parent::rev-list-merges-no-merges-yields-empty-set	t6009-rev-list-parent	rev-list --merges --no-merges yields empty set	rev-list	pass
+t6009-rev-list-parent::rev-list-override-and-infinities	t6009-rev-list-parent	rev-list override and infinities	rev-list	pass
+t6009-rev-list-parent::dodecapus	t6009-rev-list-parent	dodecapus	rev-list	pass
+t6009-rev-list-parent::ancestors-with-the-same-commit-time	t6009-rev-list-parent	ancestors with the same commit time	rev-list	pass
 t6010-merge-base::setup	t6010-merge-base	setup	merge-base	pass
 t6010-merge-base::set-up-g-and-h	t6010-merge-base	set up G and H	merge-base	pass
 t6010-merge-base::merge-base-g-h	t6010-merge-base	merge-base G H	merge-base	pass
@@ -11879,10 +11879,10 @@ t6011-rev-list-with-bad-commit::corrupt-second-commit-object	t6011-rev-list-with
 t6011-rev-list-with-bad-commit::rev-list-should-fail	t6011-rev-list-with-bad-commit	rev-list should fail	rev-list	pass
 t6011-rev-list-with-bad-commit::git-repack-must-fail	t6011-rev-list-with-bad-commit	git repack _MUST_ fail	rev-list	pass
 t6011-rev-list-with-bad-commit::first-commit-is-still-available	t6011-rev-list-with-bad-commit	first commit is still available	rev-list	pass
-t6012-rev-list-simplify::full-history-simplification-without-parent	t6012-rev-list-simplify	full history simplification without parent	rev-list	not_ported
-t6012-rev-list-simplify::full-diff-is-not-affected-by-parents	t6012-rev-list-simplify	--full-diff is not affected by --parents	rev-list	not_ported
-t6012-rev-list-simplify::setup-rebuild-repo	t6012-rev-list-simplify	setup rebuild repo	rev-list	not_ported
-t6012-rev-list-simplify::log-graph-simplify-merges-show-pulls	t6012-rev-list-simplify	log --graph --simplify-merges --show-pulls	rev-list	not_ported
+t6012-rev-list-simplify::full-history-simplification-without-parent	t6012-rev-list-simplify	full history simplification without parent	rev-list	pass
+t6012-rev-list-simplify::full-diff-is-not-affected-by-parents	t6012-rev-list-simplify	--full-diff is not affected by --parents	rev-list	pass
+t6012-rev-list-simplify::setup-rebuild-repo	t6012-rev-list-simplify	setup rebuild repo	rev-list	pass
+t6012-rev-list-simplify::log-graph-simplify-merges-show-pulls	t6012-rev-list-simplify	log --graph --simplify-merges --show-pulls	rev-list	pass
 t6013-rev-list-reverse-parents::set-up-reverse-example	t6013-rev-list-reverse-parents	set up --reverse example	rev-list	pass
 t6013-rev-list-reverse-parents::reverse-parents-full-history-combines-correctly	t6013-rev-list-reverse-parents	--reverse --parents --full-history combines correctly	rev-list	pass
 t6013-rev-list-reverse-parents::boundary-does-too	t6013-rev-list-reverse-parents	--boundary does too	rev-list	pass
@@ -11909,71 +11909,71 @@ t6017-rev-list-stdin::unknown-option-without-end-of-options	t6017-rev-list-stdin
 t6017-rev-list-stdin::not-on-command-line-does-not-influence-revisions-read-via-stdin	t6017-rev-list-stdin	--not on command line does not influence revisions read via --stdin	rev-list	pass
 t6017-rev-list-stdin::not-via-stdin-does-not-influence-revisions-from-command-line	t6017-rev-list-stdin	--not via stdin does not influence revisions from command line	rev-list	pass
 t6017-rev-list-stdin::check-cmd	t6017-rev-list-stdin	check $cmd $*	rev-list	pass
-t6018-rev-list-glob::setup	t6018-rev-list-glob	setup	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-glob-refs-heads-subspace	t6018-rev-list-glob	rev-parse --glob=refs/heads/subspace/*	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-glob-heads-subspace	t6018-rev-list-glob	rev-parse --glob=heads/subspace/*	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-glob-refs-heads-subspace-2	t6018-rev-list-glob	rev-parse --glob=refs/heads/subspace/	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-glob-heads-subspace-2	t6018-rev-list-glob	rev-parse --glob=heads/subspace/	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-glob-heads-subspace-3	t6018-rev-list-glob	rev-parse --glob=heads/subspace	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-branches-subspace	t6018-rev-list-glob	rev-parse --branches=subspace/*	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-branches-subspace-2	t6018-rev-list-glob	rev-parse --branches=subspace/	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-branches-subspace-3	t6018-rev-list-glob	rev-parse --branches=subspace	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-glob-heads-subspace-glob-heads-other	t6018-rev-list-glob	rev-parse --glob=heads/subspace/* --glob=heads/other/*	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-glob-heads-someref-main	t6018-rev-list-glob	rev-parse --glob=heads/someref/* main	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-glob-heads	t6018-rev-list-glob	rev-parse --glob=heads/*	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-tags-foo	t6018-rev-list-glob	rev-parse --tags=foo	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-remotes-foo	t6018-rev-list-glob	rev-parse --remotes=foo	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-with-branches	t6018-rev-list-glob	rev-parse --exclude with --branches	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-with-all	t6018-rev-list-glob	rev-parse --exclude with --all	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-accumulates-multiple-exclude	t6018-rev-list-glob	rev-parse accumulates multiple --exclude	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-branches-clears-exclude	t6018-rev-list-glob	rev-parse --branches clears --exclude	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-tags-clears-exclude	t6018-rev-list-glob	rev-parse --tags clears --exclude	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-all-clears-exclude	t6018-rev-list-glob	rev-parse --all clears --exclude	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-glob-with-branches-glob	t6018-rev-list-glob	rev-parse --exclude=glob with --branches=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-glob-with-tags-glob	t6018-rev-list-glob	rev-parse --exclude=glob with --tags=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-glob-with-remotes-glob	t6018-rev-list-glob	rev-parse --exclude=glob with --remotes=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-ref-with-branches-glob	t6018-rev-list-glob	rev-parse --exclude=ref with --branches=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-ref-with-tags-glob	t6018-rev-list-glob	rev-parse --exclude=ref with --tags=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-ref-with-remotes-glob	t6018-rev-list-glob	rev-parse --exclude=ref with --remotes=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-list-exclude-glob-with-branches-glob	t6018-rev-list-glob	rev-list --exclude=glob with --branches=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-list-exclude-glob-with-tags-glob	t6018-rev-list-glob	rev-list --exclude=glob with --tags=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-list-exclude-glob-with-remotes-glob	t6018-rev-list-glob	rev-list --exclude=glob with --remotes=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-list-exclude-ref-with-branches-glob	t6018-rev-list-glob	rev-list --exclude=ref with --branches=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-list-exclude-ref-with-tags-glob	t6018-rev-list-glob	rev-list --exclude=ref with --tags=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-list-exclude-ref-with-remotes-glob	t6018-rev-list-glob	rev-list --exclude=ref with --remotes=glob	rev-list	not_ported
-t6018-rev-list-glob::rev-list-glob-refs-heads-subspace	t6018-rev-list-glob	rev-list --glob=refs/heads/subspace/*	rev-list	not_ported
-t6018-rev-list-glob::rev-list-glob-refs-heads-subspace-2	t6018-rev-list-glob	rev-list --glob refs/heads/subspace/*	rev-list	not_ported
-t6018-rev-list-glob::rev-list-not-confused-by-option-like-glob-arg	t6018-rev-list-glob	rev-list not confused by option-like --glob arg	rev-list	not_ported
-t6018-rev-list-glob::rev-list-glob-heads-subspace	t6018-rev-list-glob	rev-list --glob=heads/subspace/*	rev-list	not_ported
-t6018-rev-list-glob::rev-list-glob-refs-heads-subspace-3	t6018-rev-list-glob	rev-list --glob=refs/heads/subspace/	rev-list	not_ported
-t6018-rev-list-glob::rev-list-glob-heads-subspace-2	t6018-rev-list-glob	rev-list --glob=heads/subspace/	rev-list	not_ported
-t6018-rev-list-glob::rev-list-glob-heads-subspace-3	t6018-rev-list-glob	rev-list --glob=heads/subspace	rev-list	not_ported
-t6018-rev-list-glob::rev-list-branches-subspace	t6018-rev-list-glob	rev-list --branches=subspace/*	rev-list	not_ported
-t6018-rev-list-glob::rev-list-branches-subspace-2	t6018-rev-list-glob	rev-list --branches=subspace/	rev-list	not_ported
-t6018-rev-list-glob::rev-list-branches-subspace-3	t6018-rev-list-glob	rev-list --branches=subspace	rev-list	not_ported
-t6018-rev-list-glob::rev-list-branches	t6018-rev-list-glob	rev-list --branches	rev-list	not_ported
-t6018-rev-list-glob::rev-list-glob-heads-someref-main	t6018-rev-list-glob	rev-list --glob=heads/someref/* main	rev-list	not_ported
-t6018-rev-list-glob::rev-list-glob-heads-subspace-glob-heads-other	t6018-rev-list-glob	rev-list --glob=heads/subspace/* --glob=heads/other/*	rev-list	not_ported
-t6018-rev-list-glob::rev-list-glob-heads	t6018-rev-list-glob	rev-list --glob=heads/*	rev-list	not_ported
-t6018-rev-list-glob::rev-list-tags-foo	t6018-rev-list-glob	rev-list --tags=foo	rev-list	not_ported
-t6018-rev-list-glob::rev-list-tags	t6018-rev-list-glob	rev-list --tags	rev-list	not_ported
-t6018-rev-list-glob::rev-list-remotes-foo	t6018-rev-list-glob	rev-list --remotes=foo	rev-list	not_ported
-t6018-rev-list-glob::rev-list-exclude-with-branches	t6018-rev-list-glob	rev-list --exclude with --branches	rev-list	not_ported
-t6018-rev-list-glob::rev-list-exclude-with-all	t6018-rev-list-glob	rev-list --exclude with --all	rev-list	not_ported
-t6018-rev-list-glob::rev-list-accumulates-multiple-exclude	t6018-rev-list-glob	rev-list accumulates multiple --exclude	rev-list	not_ported
-t6018-rev-list-glob::rev-list-should-succeed-with-empty-output-on-empty-stdin	t6018-rev-list-glob	rev-list should succeed with empty output on empty stdin	rev-list	not_ported
-t6018-rev-list-glob::rev-list-should-succeed-with-empty-output-with-all-refs-excluded	t6018-rev-list-glob	rev-list should succeed with empty output with all refs excluded	rev-list	not_ported
-t6018-rev-list-glob::rev-list-should-succeed-with-empty-output-with-empty-all	t6018-rev-list-glob	rev-list should succeed with empty output with empty --all	rev-list	not_ported
-t6018-rev-list-glob::rev-list-should-succeed-with-empty-output-with-empty-glob	t6018-rev-list-glob	rev-list should succeed with empty output with empty glob	rev-list	not_ported
-t6018-rev-list-glob::rev-list-should-succeed-with-empty-output-when-ignoring-missing	t6018-rev-list-glob	rev-list should succeed with empty output when ignoring missing	rev-list	not_ported
-t6018-rev-list-glob::shortlog-accepts-glob-tags-remotes	t6018-rev-list-glob	shortlog accepts --glob/--tags/--remotes	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-hidden-section-with-all	t6018-rev-list-glob	rev-parse --exclude-hidden=$section with --all	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-hidden-section-with-all-2	t6018-rev-list-glob	rev-parse --exclude-hidden=$section with --all	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-hidden-section-with-glob	t6018-rev-list-glob	rev-parse --exclude-hidden=$section with --glob	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-hidden-section-can-be-passed-once-per-pseudo-ref	t6018-rev-list-glob	rev-parse --exclude-hidden=$section can be passed once per pseudo-ref	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-hidden-section-can-only-be-passed-once-per-pseudo-ref	t6018-rev-list-glob	rev-parse --exclude-hidden=$section can only be passed once per pseudo-ref	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-hidden-section-fails-with-pseudoopt	t6018-rev-list-glob	rev-parse --exclude-hidden=$section fails with --$pseudoopt	rev-list	not_ported
-t6018-rev-list-glob::rev-parse-exclude-hidden-section-fails-with-pseudoopt-pattern	t6018-rev-list-glob	rev-parse --exclude-hidden=$section fails with --$pseudoopt=pattern	rev-list	not_ported
+t6018-rev-list-glob::setup	t6018-rev-list-glob	setup	rev-list	pass
+t6018-rev-list-glob::rev-parse-glob-refs-heads-subspace	t6018-rev-list-glob	rev-parse --glob=refs/heads/subspace/*	rev-list	pass
+t6018-rev-list-glob::rev-parse-glob-heads-subspace	t6018-rev-list-glob	rev-parse --glob=heads/subspace/*	rev-list	pass
+t6018-rev-list-glob::rev-parse-glob-refs-heads-subspace-2	t6018-rev-list-glob	rev-parse --glob=refs/heads/subspace/	rev-list	pass
+t6018-rev-list-glob::rev-parse-glob-heads-subspace-2	t6018-rev-list-glob	rev-parse --glob=heads/subspace/	rev-list	pass
+t6018-rev-list-glob::rev-parse-glob-heads-subspace-3	t6018-rev-list-glob	rev-parse --glob=heads/subspace	rev-list	pass
+t6018-rev-list-glob::rev-parse-branches-subspace	t6018-rev-list-glob	rev-parse --branches=subspace/*	rev-list	pass
+t6018-rev-list-glob::rev-parse-branches-subspace-2	t6018-rev-list-glob	rev-parse --branches=subspace/	rev-list	pass
+t6018-rev-list-glob::rev-parse-branches-subspace-3	t6018-rev-list-glob	rev-parse --branches=subspace	rev-list	pass
+t6018-rev-list-glob::rev-parse-glob-heads-subspace-glob-heads-other	t6018-rev-list-glob	rev-parse --glob=heads/subspace/* --glob=heads/other/*	rev-list	pass
+t6018-rev-list-glob::rev-parse-glob-heads-someref-main	t6018-rev-list-glob	rev-parse --glob=heads/someref/* main	rev-list	pass
+t6018-rev-list-glob::rev-parse-glob-heads	t6018-rev-list-glob	rev-parse --glob=heads/*	rev-list	pass
+t6018-rev-list-glob::rev-parse-tags-foo	t6018-rev-list-glob	rev-parse --tags=foo	rev-list	pass
+t6018-rev-list-glob::rev-parse-remotes-foo	t6018-rev-list-glob	rev-parse --remotes=foo	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-with-branches	t6018-rev-list-glob	rev-parse --exclude with --branches	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-with-all	t6018-rev-list-glob	rev-parse --exclude with --all	rev-list	pass
+t6018-rev-list-glob::rev-parse-accumulates-multiple-exclude	t6018-rev-list-glob	rev-parse accumulates multiple --exclude	rev-list	pass
+t6018-rev-list-glob::rev-parse-branches-clears-exclude	t6018-rev-list-glob	rev-parse --branches clears --exclude	rev-list	pass
+t6018-rev-list-glob::rev-parse-tags-clears-exclude	t6018-rev-list-glob	rev-parse --tags clears --exclude	rev-list	pass
+t6018-rev-list-glob::rev-parse-all-clears-exclude	t6018-rev-list-glob	rev-parse --all clears --exclude	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-glob-with-branches-glob	t6018-rev-list-glob	rev-parse --exclude=glob with --branches=glob	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-glob-with-tags-glob	t6018-rev-list-glob	rev-parse --exclude=glob with --tags=glob	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-glob-with-remotes-glob	t6018-rev-list-glob	rev-parse --exclude=glob with --remotes=glob	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-ref-with-branches-glob	t6018-rev-list-glob	rev-parse --exclude=ref with --branches=glob	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-ref-with-tags-glob	t6018-rev-list-glob	rev-parse --exclude=ref with --tags=glob	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-ref-with-remotes-glob	t6018-rev-list-glob	rev-parse --exclude=ref with --remotes=glob	rev-list	pass
+t6018-rev-list-glob::rev-list-exclude-glob-with-branches-glob	t6018-rev-list-glob	rev-list --exclude=glob with --branches=glob	rev-list	pass
+t6018-rev-list-glob::rev-list-exclude-glob-with-tags-glob	t6018-rev-list-glob	rev-list --exclude=glob with --tags=glob	rev-list	pass
+t6018-rev-list-glob::rev-list-exclude-glob-with-remotes-glob	t6018-rev-list-glob	rev-list --exclude=glob with --remotes=glob	rev-list	pass
+t6018-rev-list-glob::rev-list-exclude-ref-with-branches-glob	t6018-rev-list-glob	rev-list --exclude=ref with --branches=glob	rev-list	pass
+t6018-rev-list-glob::rev-list-exclude-ref-with-tags-glob	t6018-rev-list-glob	rev-list --exclude=ref with --tags=glob	rev-list	pass
+t6018-rev-list-glob::rev-list-exclude-ref-with-remotes-glob	t6018-rev-list-glob	rev-list --exclude=ref with --remotes=glob	rev-list	pass
+t6018-rev-list-glob::rev-list-glob-refs-heads-subspace	t6018-rev-list-glob	rev-list --glob=refs/heads/subspace/*	rev-list	pass
+t6018-rev-list-glob::rev-list-glob-refs-heads-subspace-2	t6018-rev-list-glob	rev-list --glob refs/heads/subspace/*	rev-list	pass
+t6018-rev-list-glob::rev-list-not-confused-by-option-like-glob-arg	t6018-rev-list-glob	rev-list not confused by option-like --glob arg	rev-list	pass
+t6018-rev-list-glob::rev-list-glob-heads-subspace	t6018-rev-list-glob	rev-list --glob=heads/subspace/*	rev-list	pass
+t6018-rev-list-glob::rev-list-glob-refs-heads-subspace-3	t6018-rev-list-glob	rev-list --glob=refs/heads/subspace/	rev-list	pass
+t6018-rev-list-glob::rev-list-glob-heads-subspace-2	t6018-rev-list-glob	rev-list --glob=heads/subspace/	rev-list	pass
+t6018-rev-list-glob::rev-list-glob-heads-subspace-3	t6018-rev-list-glob	rev-list --glob=heads/subspace	rev-list	pass
+t6018-rev-list-glob::rev-list-branches-subspace	t6018-rev-list-glob	rev-list --branches=subspace/*	rev-list	pass
+t6018-rev-list-glob::rev-list-branches-subspace-2	t6018-rev-list-glob	rev-list --branches=subspace/	rev-list	pass
+t6018-rev-list-glob::rev-list-branches-subspace-3	t6018-rev-list-glob	rev-list --branches=subspace	rev-list	pass
+t6018-rev-list-glob::rev-list-branches	t6018-rev-list-glob	rev-list --branches	rev-list	pass
+t6018-rev-list-glob::rev-list-glob-heads-someref-main	t6018-rev-list-glob	rev-list --glob=heads/someref/* main	rev-list	pass
+t6018-rev-list-glob::rev-list-glob-heads-subspace-glob-heads-other	t6018-rev-list-glob	rev-list --glob=heads/subspace/* --glob=heads/other/*	rev-list	pass
+t6018-rev-list-glob::rev-list-glob-heads	t6018-rev-list-glob	rev-list --glob=heads/*	rev-list	pass
+t6018-rev-list-glob::rev-list-tags-foo	t6018-rev-list-glob	rev-list --tags=foo	rev-list	pass
+t6018-rev-list-glob::rev-list-tags	t6018-rev-list-glob	rev-list --tags	rev-list	pass
+t6018-rev-list-glob::rev-list-remotes-foo	t6018-rev-list-glob	rev-list --remotes=foo	rev-list	pass
+t6018-rev-list-glob::rev-list-exclude-with-branches	t6018-rev-list-glob	rev-list --exclude with --branches	rev-list	pass
+t6018-rev-list-glob::rev-list-exclude-with-all	t6018-rev-list-glob	rev-list --exclude with --all	rev-list	pass
+t6018-rev-list-glob::rev-list-accumulates-multiple-exclude	t6018-rev-list-glob	rev-list accumulates multiple --exclude	rev-list	pass
+t6018-rev-list-glob::rev-list-should-succeed-with-empty-output-on-empty-stdin	t6018-rev-list-glob	rev-list should succeed with empty output on empty stdin	rev-list	pass
+t6018-rev-list-glob::rev-list-should-succeed-with-empty-output-with-all-refs-excluded	t6018-rev-list-glob	rev-list should succeed with empty output with all refs excluded	rev-list	pass
+t6018-rev-list-glob::rev-list-should-succeed-with-empty-output-with-empty-all	t6018-rev-list-glob	rev-list should succeed with empty output with empty --all	rev-list	pass
+t6018-rev-list-glob::rev-list-should-succeed-with-empty-output-with-empty-glob	t6018-rev-list-glob	rev-list should succeed with empty output with empty glob	rev-list	pass
+t6018-rev-list-glob::rev-list-should-succeed-with-empty-output-when-ignoring-missing	t6018-rev-list-glob	rev-list should succeed with empty output when ignoring missing	rev-list	pass
+t6018-rev-list-glob::shortlog-accepts-glob-tags-remotes	t6018-rev-list-glob	shortlog accepts --glob/--tags/--remotes	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-hidden-section-with-all	t6018-rev-list-glob	rev-parse --exclude-hidden=$section with --all	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-hidden-section-with-all-2	t6018-rev-list-glob	rev-parse --exclude-hidden=$section with --all	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-hidden-section-with-glob	t6018-rev-list-glob	rev-parse --exclude-hidden=$section with --glob	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-hidden-section-can-be-passed-once-per-pseudo-ref	t6018-rev-list-glob	rev-parse --exclude-hidden=$section can be passed once per pseudo-ref	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-hidden-section-can-only-be-passed-once-per-pseudo-ref	t6018-rev-list-glob	rev-parse --exclude-hidden=$section can only be passed once per pseudo-ref	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-hidden-section-fails-with-pseudoopt	t6018-rev-list-glob	rev-parse --exclude-hidden=$section fails with --$pseudoopt	rev-list	pass
+t6018-rev-list-glob::rev-parse-exclude-hidden-section-fails-with-pseudoopt-pattern	t6018-rev-list-glob	rev-parse --exclude-hidden=$section fails with --$pseudoopt=pattern	rev-list	pass
 t6019-rev-list-ancestry-path::setup-criss-cross	t6019-rev-list-ancestry-path	setup criss-cross	rev-list	pass
 t6019-rev-list-ancestry-path::criss-cross-rev-list-ancestry-path-cb-bc	t6019-rev-list-ancestry-path	criss-cross: rev-list --ancestry-path cb..bc	rev-list	pass
 t6019-rev-list-ancestry-path::criss-cross-rev-list-ancestry-path-all-cb	t6019-rev-list-ancestry-path	criss-cross: rev-list --ancestry-path --all ^cb	rev-list	pass
@@ -16158,7 +16158,7 @@ t7900-maintenance::maintenance-aborts-with-existing-lock-file	t7900-maintenance	
 t7900-maintenance::cfg-true-config-option	t7900-maintenance	$cfg=true config option	maintenance	pass
 t7900-maintenance::cfg-false-config-option	t7900-maintenance	$cfg=false config option	maintenance	pass
 t7900-maintenance::maintenance-autodetach-overrides-gc-autodetach	t7900-maintenance	maintenance.autoDetach overrides gc.autoDetach	maintenance	pass
-t8001-annotate::annotate-old-revision	t8001-annotate	annotate old revision	annotate	partial
+t8001-annotate::annotate-old-revision	t8001-annotate	annotate old revision	annotate	pass
 t8002-blame::setup	t8002-blame	setup	blame	pass
 t8002-blame::blame-untracked-file-in-empty-repo	t8002-blame	blame untracked file in empty repo	blame	pass
 t8002-blame::blame-show-email	t8002-blame	blame --show-email	blame	pass
