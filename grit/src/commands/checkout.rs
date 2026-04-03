@@ -632,41 +632,81 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String]) -> 
             for path_str in paths {
                 let rel = resolve_pathspec(path_str, work_tree, &cwd);
 
-                let (blob_oid, mode) = find_in_tree(repo, tree_oid, &rel)?
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "error: pathspec '{}' did not match any file(s) known to git",
-                        path_str
-                    ))?;
-
-                let obj = repo.odb.read(&blob_oid)
-                    .with_context(|| format!("reading blob for '{rel}'"))?;
-                if obj.kind != ObjectKind::Blob {
-                    bail!("'{}' is not a blob in the source tree", rel);
-                }
-
-                // Write to working tree
-                write_to_worktree(work_tree, &rel, &obj.data, mode)?;
-
-                // Update index entry
-                let path_bytes = rel.as_bytes().to_vec();
-                let entry = IndexEntry {
-                    ctime_sec: 0,
-                    ctime_nsec: 0,
-                    mtime_sec: 0,
-                    mtime_nsec: 0,
-                    dev: 0,
-                    ino: 0,
-                    mode,
-                    uid: 0,
-                    gid: 0,
-                    size: obj.data.len() as u32,
-                    oid: blob_oid,
-                    flags: path_bytes.len().min(0xFFF) as u16,
-                    flags_extended: None,
-                    path: path_bytes,
+                // Check if this is a directory prefix or empty ("."/root)
+                let is_dir_prefix = rel.is_empty() || {
+                    // Check if the path is a tree (directory) in the source
+                    match find_in_tree(repo, tree_oid, &rel)? {
+                        Some((_, mode)) if mode == 0o40000 => true,
+                        Some(_) => false,
+                        None => rel.is_empty(),
+                    }
                 };
-                index.add_or_replace(entry);
-                index_modified = true;
+
+                if is_dir_prefix {
+                    // Restore all files under this directory from the source tree
+                    let flat = tree_to_flat_entries(repo, &tree_oid, "")?;
+                    let prefix = if rel.is_empty() {
+                        String::new()
+                    } else if rel.ends_with('/') {
+                        rel.clone()
+                    } else {
+                        format!("{}/", rel)
+                    };
+                    let mut matched = false;
+                    for flat_entry in &flat {
+                        let entry_path = String::from_utf8_lossy(&flat_entry.path).to_string();
+                        if !prefix.is_empty() && !entry_path.starts_with(&prefix) {
+                            continue;
+                        }
+                        let obj = repo.odb.read(&flat_entry.oid)
+                            .with_context(|| format!("reading blob for '{}'", entry_path))?;
+                        if obj.kind == ObjectKind::Blob {
+                            write_to_worktree(work_tree, &entry_path, &obj.data, flat_entry.mode)?;
+                            index.add_or_replace(flat_entry.clone());
+                            index_modified = true;
+                            matched = true;
+                        }
+                    }
+                    if !matched {
+                        bail!("error: pathspec '{}' did not match any file(s) known to git", path_str);
+                    }
+                } else {
+                    let (blob_oid, mode) = find_in_tree(repo, tree_oid, &rel)?
+                        .ok_or_else(|| anyhow::anyhow!(
+                            "error: pathspec '{}' did not match any file(s) known to git",
+                            path_str
+                        ))?;
+
+                    let obj = repo.odb.read(&blob_oid)
+                        .with_context(|| format!("reading blob for '{rel}'"))?;
+                    if obj.kind != ObjectKind::Blob {
+                        bail!("'{}' is not a blob in the source tree", rel);
+                    }
+
+                    // Write to working tree
+                    write_to_worktree(work_tree, &rel, &obj.data, mode)?;
+
+                    // Update index entry
+                    let path_bytes = rel.as_bytes().to_vec();
+                    let entry = IndexEntry {
+                        ctime_sec: 0,
+                        ctime_nsec: 0,
+                        mtime_sec: 0,
+                        mtime_nsec: 0,
+                        dev: 0,
+                        ino: 0,
+                        mode,
+                        uid: 0,
+                        gid: 0,
+                        size: obj.data.len() as u32,
+                        oid: blob_oid,
+                        flags: path_bytes.len().min(0xFFF) as u16,
+                        flags_extended: None,
+                        path: path_bytes,
+                    };
+                    index.add_or_replace(entry);
+                    index_modified = true;
+                }
             }
 
             if index_modified {
