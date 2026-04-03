@@ -526,18 +526,47 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String]) -> 
                 let rel = resolve_pathspec(path_str, work_tree, &cwd);
                 let path_bytes = rel.as_bytes();
 
-                let entry = index.get(path_bytes, 0)
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "error: pathspec '{}' did not match any file(s) known to git",
-                        path_str
-                    ))?;
-
-                let obj = repo.odb.read(&entry.oid)
-                    .with_context(|| format!("reading blob for '{rel}'"))?;
-                if obj.kind != ObjectKind::Blob {
-                    bail!("'{}' is not a blob in the index", rel);
+                // Handle directory pathspecs (including "." for repo root)
+                let is_root = rel.is_empty() || rel == ".";
+                if is_root {
+                    // Restore ALL index entries
+                    for ie in &index.entries {
+                        if ie.stage() != 0 { continue; }
+                        let p = String::from_utf8_lossy(&ie.path).to_string();
+                        if let Ok(obj) = repo.odb.read(&ie.oid) {
+                            if obj.kind == ObjectKind::Blob {
+                                write_to_worktree(work_tree, &p, &obj.data, ie.mode)?;
+                            }
+                        }
+                    }
+                } else if let Some(entry) = index.get(path_bytes, 0) {
+                    // Exact file match
+                    let obj = repo.odb.read(&entry.oid)
+                        .with_context(|| format!("reading blob for '{rel}'"))?;
+                    if obj.kind != ObjectKind::Blob {
+                        bail!("'{}' is not a blob in the index", rel);
+                    }
+                    write_to_worktree(work_tree, &rel, &obj.data, entry.mode)?;
+                } else {
+                    // Try as a directory prefix
+                    let prefix = if rel.ends_with('/') { rel.clone() } else { format!("{rel}/") };
+                    let mut matched = false;
+                    for ie in &index.entries {
+                        if ie.stage() != 0 { continue; }
+                        let p = String::from_utf8_lossy(&ie.path).to_string();
+                        if p.starts_with(&prefix) {
+                            if let Ok(obj) = repo.odb.read(&ie.oid) {
+                                if obj.kind == ObjectKind::Blob {
+                                    write_to_worktree(work_tree, &p, &obj.data, ie.mode)?;
+                                    matched = true;
+                                }
+                            }
+                        }
+                    }
+                    if !matched {
+                        bail!("error: pathspec '{}' did not match any file(s) known to git", path_str);
+                    }
                 }
-                write_to_worktree(work_tree, &rel, &obj.data, entry.mode)?;
             }
         }
         Some(source_spec) => {
