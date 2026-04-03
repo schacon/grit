@@ -34,6 +34,10 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Suppress diff output (alias for --quiet / -q).
+    #[arg(short = 's', long = "no-patch")]
+    pub no_patch: bool,
+
     /// Number of unified context lines for diff output.
     #[arg(short = 'U', long = "unified", value_name = "N")]
     pub unified: Option<usize>,
@@ -159,7 +163,7 @@ fn show_commit(
         }
     }
 
-    if args.quiet {
+    if args.quiet || args.no_patch {
         return Ok(());
     }
 
