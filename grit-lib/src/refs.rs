@@ -164,12 +164,74 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_delete_ref(git_dir, refname);
     }
+    // Remove the loose ref file
     let path = git_dir.join(refname);
     match fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(Error::Io(e)),
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(Error::Io(e)),
     }
+
+    // Also remove the entry from packed-refs if present
+    remove_packed_ref(git_dir, refname)?;
+
+    Ok(())
+}
+
+/// Remove a single entry from the packed-refs file, rewriting it.
+fn remove_packed_ref(git_dir: &Path, refname: &str) -> Result<()> {
+    let packed_path = git_dir.join("packed-refs");
+    let content = match fs::read_to_string(&packed_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(Error::Io(e)),
+    };
+
+    let mut out = String::new();
+    let mut skip_peeled = false;
+    let mut changed = false;
+
+    for line in content.lines() {
+        if skip_peeled {
+            if line.starts_with('^') {
+                changed = true;
+                continue;
+            }
+            skip_peeled = false;
+        }
+
+        if line.starts_with('#') {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        if line.starts_with('^') {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        // Check if this line matches the ref to remove
+        let mut parts = line.splitn(2, ' ');
+        let _hash = parts.next().unwrap_or("");
+        let name = parts.next().unwrap_or("").trim();
+        if name == refname {
+            changed = true;
+            skip_peeled = true;
+            continue;
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    if changed {
+        let lock = packed_path.with_extension("lock");
+        fs::write(&lock, &out).map_err(Error::Io)?;
+        fs::rename(&lock, &packed_path).map_err(Error::Io)?;
+    }
+
+    Ok(())
 }
 
 /// Read the symbolic ref target of `HEAD`.

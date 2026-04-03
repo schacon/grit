@@ -6,7 +6,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use grit_lib::objects::{parse_commit, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 
@@ -108,7 +108,11 @@ fn validate_object_data(kind: ObjectKind, data: &[u8], literally: bool) -> Resul
             Ok(())
         }
         ObjectKind::Tag => validate_tag_data(data),
-        ObjectKind::Blob | ObjectKind::Tree => Ok(()),
+        ObjectKind::Tree => {
+            parse_tree(data).context("corrupt tree object")?;
+            Ok(())
+        }
+        ObjectKind::Blob => Ok(()),
     }
 }
 

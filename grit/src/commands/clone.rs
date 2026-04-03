@@ -72,6 +72,22 @@ pub struct Args {
     /// Use shallow submodule clones.
     #[arg(long = "shallow-submodules")]
     pub shallow_submodules: bool,
+
+    /// Use a custom upload-pack command on the remote side.
+    #[arg(short = 'u', long = "upload-pack", value_name = "UPLOAD_PACK")]
+    pub upload_pack: Option<String>,
+
+    /// Force local clone (default for local paths, accepted for compatibility).
+    #[arg(short = 'l', long = "local")]
+    pub local: bool,
+
+    /// Set up shared clone using alternates instead of copying objects.
+    #[arg(short = 's', long = "shared")]
+    pub shared: bool,
+
+    /// Reference repository for alternates (can be repeated).
+    #[arg(long = "reference", value_name = "REPO", action = clap::ArgAction::Append)]
+    pub reference: Vec<String>,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -81,6 +97,11 @@ pub fn run(args: Args) -> Result<()> {
     }
     if args.revision.is_some() && args.mirror {
         bail!("--revision and --mirror are mutually exclusive");
+    }
+
+    // Detect SSH URL: host:/path (colon after hostname, no preceding //)
+    if is_ssh_url(&args.repository) {
+        return run_ssh_clone(args);
     }
 
     // Strip file:// prefix if present
@@ -142,9 +163,15 @@ pub fn run(args: Args) -> Result<()> {
     let dest = init_repository(&target_path, args.bare, initial_branch, None)
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?;
 
-    // Copy all objects from source to destination
-    copy_objects(&source.git_dir, &dest.git_dir)
-        .context("copying objects")?;
+    // Copy or share objects from source to destination
+    if args.shared {
+        // Write alternates file instead of copying objects
+        write_alternates(&source.git_dir, &dest.git_dir, &args.reference)
+            .context("setting up alternates")?;
+    } else {
+        copy_objects(&source.git_dir, &dest.git_dir)
+            .context("copying objects")?;
+    }
 
     let remote_name = "origin";
 
@@ -269,6 +296,58 @@ pub fn run(args: Args) -> Result<()> {
             clone_submodules(wt, &dest, args.quiet)
                 .context("cloning submodules")?;
         }
+    }
+
+    Ok(())
+}
+
+/// Check whether a URL looks like an SSH-style `host:/path` address.
+///
+/// Returns `false` for local paths, `file://` URLs, or URLs containing `://`.
+fn is_ssh_url(url: &str) -> bool {
+    // Skip anything with a scheme (e.g., file://, http://, ssh://)
+    if url.contains("://") {
+        return false;
+    }
+    // Look for host:/path pattern
+    if let Some(colon_pos) = url.find(':') {
+        let host = &url[..colon_pos];
+        let path = &url[colon_pos + 1..];
+        return !host.is_empty() && !path.is_empty();
+    }
+    false
+}
+
+/// Run an SSH-based clone by invoking $GIT_SSH (or "ssh") with the appropriate
+/// arguments: `<host> <upload-pack> '<path>'`.
+fn run_ssh_clone(args: Args) -> Result<()> {
+    let ssh_cmd = std::env::var("GIT_SSH").unwrap_or_else(|_| "ssh".to_string());
+    let upload_pack = args
+        .upload_pack
+        .as_deref()
+        .unwrap_or("git-upload-pack");
+
+    // Parse host and path from the URL
+    let colon_pos = args.repository.find(':').unwrap();
+    let host = &args.repository[..colon_pos];
+    let path = &args.repository[colon_pos + 1..];
+
+    // Build the argument with single-quoted path (matching git's behavior)
+    let quoted_path = format!("'{}'", path);
+
+    let status = std::process::Command::new(&ssh_cmd)
+        .arg(host)
+        .arg(upload_pack)
+        .arg(&quoted_path)
+        .status()
+        .with_context(|| format!("failed to run SSH command '{}'", ssh_cmd))?;
+
+    if !status.success() {
+        bail!(
+            "ssh command '{}' failed with exit code {}",
+            ssh_cmd,
+            status.code().unwrap_or(-1)
+        );
     }
 
     Ok(())
@@ -425,6 +504,44 @@ fn open_source_repo(path: &Path) -> Result<Repository> {
     // Try path/.git for non-bare repos
     let git_dir = path.join(".git");
     Repository::open(&git_dir, Some(path)).map_err(Into::into)
+}
+
+/// Write an alternates file pointing to the source and reference repos' object stores.
+/// This is used for `--shared` (`-s`) clones: instead of copying objects, the clone
+/// uses alternates to borrow them from the source (and any `--reference` repos).
+fn write_alternates(
+    src_git_dir: &Path,
+    dst_git_dir: &Path,
+    references: &[String],
+) -> Result<()> {
+    let dst_info = dst_git_dir.join("objects/info");
+    fs::create_dir_all(&dst_info)?;
+
+    let mut lines = Vec::new();
+
+    // Add source repo's objects directory
+    let src_objects = src_git_dir.join("objects");
+    let src_objects_abs = src_objects
+        .canonicalize()
+        .unwrap_or(src_objects);
+    lines.push(src_objects_abs.to_string_lossy().to_string());
+
+    // Add each --reference repo's objects directory
+    for reference in references {
+        let ref_path = PathBuf::from(reference);
+        let ref_repo = open_source_repo(&ref_path)
+            .with_context(|| format!("cannot open reference repository '{}'", reference))?;
+        let ref_objects = ref_repo.git_dir.join("objects");
+        let ref_objects_abs = ref_objects
+            .canonicalize()
+            .unwrap_or(ref_objects);
+        lines.push(ref_objects_abs.to_string_lossy().to_string());
+    }
+
+    let content = lines.join("\n") + "\n";
+    fs::write(dst_info.join("alternates"), content)?;
+
+    Ok(())
 }
 
 /// Copy all objects (loose + packs) from source to destination.

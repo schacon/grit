@@ -27,11 +27,11 @@ test_expect_success 'preparing second repository' '
 	git -C B prune
 '
 
-test_expect_failure 'cloning with reference (-l -s)' '
+test_expect_success 'cloning with reference (-l -s)' '
 	git clone -l -s --reference B A C
 '
 
-test_expect_failure 'existence of info/alternates' '
+test_expect_success 'existence of info/alternates' '
 	test_line_count = 2 C/.git/objects/info/alternates
 '
 

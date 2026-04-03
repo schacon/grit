@@ -11,7 +11,7 @@ test_expect_success 'setup' '
 	echo 1 >a
 '
 
-test_expect_failure 'bogus GIT_INDEX_VERSION issues warning' '
+test_expect_success 'bogus GIT_INDEX_VERSION issues warning' '
 	(
 		rm -f .git/index &&
 		GIT_INDEX_VERSION=2bogus &&
@@ -26,7 +26,7 @@ test_expect_failure 'bogus GIT_INDEX_VERSION issues warning' '
 	)
 '
 
-test_expect_failure 'out of bounds GIT_INDEX_VERSION issues warning' '
+test_expect_success 'out of bounds GIT_INDEX_VERSION issues warning' '
 	(
 		rm -f .git/index &&
 		GIT_INDEX_VERSION=1 &&

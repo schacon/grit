@@ -12,6 +12,7 @@ use anyhow::{bail, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
+use std::process::{Command, Stdio};
 
 /// Arguments for `grit credential`.
 #[derive(Debug, ClapArgs)]
@@ -46,6 +47,100 @@ fn read_credential_input() -> Result<BTreeMap<String, String>> {
     Ok(map)
 }
 
+/// Discover the `.git` directory by walking up from the current directory.
+fn find_git_dir() -> Option<std::path::PathBuf> {
+    // Check GIT_DIR env var first
+    if let Ok(d) = std::env::var("GIT_DIR") {
+        let p = std::path::PathBuf::from(&d);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    // Walk up from cwd looking for .git
+    if let Ok(mut dir) = std::env::current_dir() {
+        loop {
+            let dot_git = dir.join(".git");
+            if dot_git.is_dir() {
+                return Some(dot_git);
+            }
+            // Bare repo check
+            if dir.join("HEAD").is_file() && dir.join("objects").is_dir() {
+                return Some(dir);
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+    }
+    None
+}
+
+/// Read `credential.helper` from Git config (supports -c overrides via
+/// `GIT_CONFIG_PARAMETERS` and the normal config file cascade).
+fn get_credential_helper() -> Option<String> {
+    let git_dir = find_git_dir();
+    let config = grit_lib::config::ConfigSet::load(
+        git_dir.as_deref(),
+        true,
+    )
+    .unwrap_or_default();
+    config.get("credential.helper")
+}
+
+/// Invoke an external credential helper program.
+///
+/// The helper name from config (e.g. `test-helper`) is expanded to
+/// `git-credential-test-helper`.  The helper is spawned with `get` as
+/// its sole argument.  The credential fields are written to its stdin
+/// followed by a blank line; its stdout is parsed for key=value pairs
+/// that are merged back into the credential map.
+fn invoke_helper(
+    helper: &str,
+    action: &str,
+    creds: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>> {
+    let program = format!("git-credential-{helper}");
+
+    let mut child = Command::new(&program)
+        .arg(action)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("failed to run credential helper '{program}': {e}"))?;
+
+    // Write credential fields to helper's stdin, followed by blank line.
+    {
+        let stdin = child.stdin.as_mut().expect("piped stdin");
+        for (key, value) in creds {
+            writeln!(stdin, "{key}={value}")?;
+        }
+        writeln!(stdin)?;
+    }
+
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        bail!(
+            "credential helper '{program}' exited with status {}",
+            output.status
+        );
+    }
+
+    // Parse helper output — key=value lines until blank line or EOF.
+    let mut result = creds.clone();
+    for line in output.stdout.split(|&b| b == b'\n') {
+        let line = std::str::from_utf8(line).unwrap_or("").trim_end_matches('\r');
+        if line.is_empty() {
+            break;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            result.insert(key.to_string(), value.to_string());
+        }
+    }
+
+    Ok(result)
+}
+
 /// Run `grit credential`.
 pub fn run(args: Args) -> Result<()> {
     let creds = read_credential_input()?;
@@ -56,10 +151,22 @@ pub fn run(args: Args) -> Result<()> {
             if !creds.contains_key("protocol") || !creds.contains_key("host") {
                 bail!("credential input must include protocol and host");
             }
-            // Output all known fields back (pass-through).
+
+            // Try to invoke configured credential helper.
+            let filled = if let Some(helper) = get_credential_helper() {
+                if !helper.is_empty() {
+                    invoke_helper(&helper, "get", &creds)?
+                } else {
+                    creds
+                }
+            } else {
+                creds
+            };
+
+            // Output all known fields.
             let stdout = io::stdout();
             let mut out = stdout.lock();
-            for (key, value) in &creds {
+            for (key, value) in &filled {
                 writeln!(out, "{key}={value}")?;
             }
             writeln!(out)?;

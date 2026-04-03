@@ -117,12 +117,44 @@ pub struct Index {
     pub entries: Vec<IndexEntry>,
 }
 
+/// Default index version when `GIT_INDEX_VERSION` is unset or invalid.
+const INDEX_FORMAT_DEFAULT: u32 = 3;
+/// Minimum supported index version.
+const INDEX_FORMAT_LB: u32 = 2;
+/// Maximum supported index version (version 4 not yet supported, but accepted).
+const INDEX_FORMAT_UB: u32 = 4;
+
+/// Read `GIT_INDEX_VERSION` and return the requested version.
+///
+/// If the environment variable is unset, returns `None`.
+/// If it is set but invalid (non-numeric or out of range 2..=4), prints a
+/// warning to stderr and returns the default version.
+pub fn get_index_format_from_env() -> Option<u32> {
+    let val = std::env::var("GIT_INDEX_VERSION").ok()?;
+    if val.is_empty() {
+        return None;
+    }
+    match val.parse::<u32>() {
+        Ok(v) if v >= INDEX_FORMAT_LB && v <= INDEX_FORMAT_UB => Some(v),
+        _ => {
+            eprintln!(
+                "warning: GIT_INDEX_VERSION set, but the value is invalid.\n\
+                 Using version {INDEX_FORMAT_DEFAULT}"
+            );
+            Some(INDEX_FORMAT_DEFAULT)
+        }
+    }
+}
+
 impl Index {
     /// Create a new, empty index.
+    ///
+    /// Respects `GIT_INDEX_VERSION` if set, otherwise defaults to version 2.
     #[must_use]
     pub fn new() -> Self {
+        let version = get_index_format_from_env().unwrap_or(2);
         Self {
-            version: 2,
+            version,
             entries: Vec::new(),
         }
     }

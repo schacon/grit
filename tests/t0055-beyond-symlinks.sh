@@ -15,7 +15,7 @@ test_expect_success SYMLINKS 'setup' '
 	git update-index --add a b/d
 '
 
-test_expect_failure 'update-index --add beyond symlinks' '
+test_expect_success 'update-index --add beyond symlinks' '
 	test_have_prereq SYMLINKS || return 0 &&
 	test_must_fail git update-index --add c/d &&
 	cat >expect <<-\EOF &&
@@ -26,7 +26,7 @@ test_expect_failure 'update-index --add beyond symlinks' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'add beyond symlinks' '
+test_expect_success 'add beyond symlinks' '
 	test_have_prereq SYMLINKS || return 0 &&
 	test_must_fail git add c/d &&
 	cat >expect <<-\EOF &&

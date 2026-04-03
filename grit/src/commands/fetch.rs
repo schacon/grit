@@ -22,6 +22,10 @@ pub struct Args {
     #[arg(value_name = "REMOTE")]
     pub remote: Option<String>,
 
+    /// Refspec(s) to fetch (e.g. "main", "main:refs/heads/from-one").
+    #[arg(value_name = "REFSPEC")]
+    pub refspecs: Vec<String>,
+
     /// Fetch all configured remotes.
     #[arg(long)]
     pub all: bool,
@@ -85,27 +89,40 @@ pub fn run(args: Args) -> Result<()> {
             bail!("no remotes configured");
         }
         for name in &remotes {
-            fetch_remote(&git_dir, &config, name, &args)?;
+            fetch_remote(&git_dir, &config, name, None, &args)?;
         }
         Ok(())
     } else {
         let remote_name = args.remote.as_deref().unwrap_or("origin");
-        fetch_remote(&git_dir, &config, remote_name, &args)
+        // Detect path-based remote: contains '/' or starts with '.'
+        if remote_name.contains('/') || remote_name.starts_with('.') {
+            fetch_remote(&git_dir, &config, remote_name, Some(remote_name), &args)
+        } else {
+            fetch_remote(&git_dir, &config, remote_name, None, &args)
+        }
     }
 }
 
 /// Fetch from a single remote.
+///
+/// If `url_override` is Some, use it directly as the remote URL instead of
+/// looking it up in config.  This supports path-based remotes like `../one`.
 fn fetch_remote(
     git_dir: &Path,
     config: &ConfigSet,
     remote_name: &str,
+    url_override: Option<&str>,
     args: &Args,
 ) -> Result<()> {
-    // Read remote URL from config
-    let url_key = format!("remote.{remote_name}.url");
-    let url = config
-        .get(&url_key)
-        .with_context(|| format!("remote '{remote_name}' not found; no such remote"))?;
+    // Determine remote URL: use override (path-based) or config lookup
+    let url = if let Some(u) = url_override {
+        u.to_owned()
+    } else {
+        let url_key = format!("remote.{remote_name}.url");
+        config
+            .get(&url_key)
+            .with_context(|| format!("remote '{remote_name}' not found; no such remote"))?
+    };
 
     // Strip file:// prefix if present
     let remote_path = if let Some(stripped) = url.strip_prefix("file://") {
@@ -118,9 +135,14 @@ fn fetch_remote(
     let remote_repo = open_repo(&remote_path)
         .with_context(|| format!("could not open remote repository at '{}'", remote_path.display()))?;
 
-    // Read the refspec(s) from config (e.g. +refs/heads/*:refs/remotes/origin/*)
+    // If command-line refspecs were provided, use those; otherwise use config
+    let cli_refspecs = &args.refspecs;
     let fetch_key = format!("remote.{remote_name}.fetch");
-    let refspecs = collect_refspecs(config, &fetch_key);
+    let refspecs = if cli_refspecs.is_empty() {
+        collect_refspecs(config, &fetch_key)
+    } else {
+        Vec::new() // we'll handle CLI refspecs specially below
+    };
 
     // Enumerate remote refs
     let remote_heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;
@@ -150,47 +172,117 @@ fn fetch_remote(
     // Collect FETCH_HEAD entries
     let mut fetch_head_entries: Vec<String> = Vec::new();
 
-    // Update remote-tracking refs from remote heads
-    for (refname, remote_oid) in &remote_heads {
-        // refname is like "refs/heads/main"
-        let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+    if !cli_refspecs.is_empty() {
+        // Process command-line refspecs directly.
+        // e.g. "main:refs/heads/from-one" means: fetch remote's refs/heads/main,
+        // store locally as refs/heads/from-one.
+        for spec in cli_refspecs {
+            let (src, dst) = if let Some(idx) = spec.find(':') {
+                (spec[..idx].to_owned(), spec[idx + 1..].to_owned())
+            } else {
+                (spec.clone(), String::new())
+            };
 
-        // Map through refspecs if configured, otherwise use default mapping
-        let local_ref = if refspecs.is_empty() {
-            format!("{dst_prefix}{branch}")
-        } else {
-            match map_ref_through_refspecs(refname, &refspecs) {
-                Some(mapped) => mapped,
-                None => continue, // ref not matched by any refspec, skip
+            // Normalize source: if it doesn't start with refs/, assume refs/heads/
+            let remote_ref = if src.starts_with("refs/") {
+                src.clone()
+            } else {
+                format!("refs/heads/{src}")
+            };
+
+            // Resolve the remote ref
+            let remote_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref)
+                .with_context(|| format!("couldn't find remote ref '{}'", src))?;
+
+            // Build FETCH_HEAD entry
+            let branch = remote_ref.strip_prefix("refs/heads/").unwrap_or(&remote_ref);
+            fetch_head_entries.push(format!(
+                "{}\tbranch '{}' of {url}",
+                remote_oid, branch,
+            ));
+
+            // If a destination is specified, write the ref there
+            if !dst.is_empty() {
+                let local_ref = if dst.starts_with("refs/") {
+                    dst.clone()
+                } else {
+                    format!("refs/heads/{dst}")
+                };
+
+                let old_oid = read_ref_oid(git_dir, &local_ref);
+
+                if old_oid.as_ref() != Some(&remote_oid) {
+                    if !has_updates && !args.quiet {
+                        eprintln!("From {url}");
+                        has_updates = true;
+                    }
+
+                    refs::write_ref(git_dir, &local_ref, &remote_oid)
+                        .with_context(|| format!("updating ref {local_ref}"))?;
+
+                    if !args.quiet {
+                        let short = local_ref.strip_prefix("refs/heads/")
+                            .or_else(|| local_ref.strip_prefix("refs/tags/"))
+                            .unwrap_or(&local_ref);
+                        match old_oid {
+                            None => {
+                                eprintln!(" * [new branch]      {branch:<17} -> {short}");
+                            }
+                            Some(old) => {
+                                eprintln!(
+                                    "   {}..{}  {branch:<17} -> {short}",
+                                    &old.to_string()[..7],
+                                    &remote_oid.to_string()[..7],
+                                );
+                            }
+                        }
+                    }
+                }
             }
-        };
-        updated_refs.push(local_ref.clone());
-
-        // Build FETCH_HEAD entry
-        let is_default = remote_head_branch.as_deref() == Some(branch);
-        let not_for_merge = if is_default { "" } else { "\tnot-for-merge" };
-        fetch_head_entries.push(format!(
-            "{}{not_for_merge}\tbranch '{branch}' of {url}",
-            remote_oid,
-        ));
-
-        let old_oid = read_ref_oid(git_dir, &local_ref);
-
-        if old_oid.as_ref() == Some(remote_oid) {
-            // Already up to date
-            continue;
         }
+    } else {
+        // Standard path: update remote-tracking refs from remote heads
+        for (refname, remote_oid) in &remote_heads {
+            // refname is like "refs/heads/main"
+            let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
 
-        if !has_updates && !args.quiet {
-            eprintln!("From {url}");
-            has_updates = true;
-        }
+            // Map through refspecs if configured, otherwise use default mapping
+            let local_ref = if refspecs.is_empty() {
+                format!("{dst_prefix}{branch}")
+            } else {
+                match map_ref_through_refspecs(refname, &refspecs) {
+                    Some(mapped) => mapped,
+                    None => continue, // ref not matched by any refspec, skip
+                }
+            };
+            updated_refs.push(local_ref.clone());
 
-        refs::write_ref(git_dir, &local_ref, remote_oid)
-            .with_context(|| format!("updating ref {local_ref}"))?;
+            // Build FETCH_HEAD entry
+            let is_default = remote_head_branch.as_deref() == Some(branch);
+            let not_for_merge = if is_default { "" } else { "\tnot-for-merge" };
+            fetch_head_entries.push(format!(
+                "{}{not_for_merge}\tbranch '{branch}' of {url}",
+                remote_oid,
+            ));
 
-        if !args.quiet {
-            print_update(&old_oid, remote_oid, branch, remote_name);
+            let old_oid = read_ref_oid(git_dir, &local_ref);
+
+            if old_oid.as_ref() == Some(remote_oid) {
+                // Already up to date
+                continue;
+            }
+
+            if !has_updates && !args.quiet {
+                eprintln!("From {url}");
+                has_updates = true;
+            }
+
+            refs::write_ref(git_dir, &local_ref, remote_oid)
+                .with_context(|| format!("updating ref {local_ref}"))?;
+
+            if !args.quiet {
+                print_update(&old_oid, remote_oid, branch, remote_name);
+            }
         }
     }
 

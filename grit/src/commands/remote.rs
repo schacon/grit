@@ -455,6 +455,7 @@ fn cmd_update(args: UpdateArgs) -> Result<()> {
         eprintln!("Fetching {name}");
         let fetch_args = super::fetch::Args {
             remote: Some(name.clone()),
+            refspecs: Vec::new(),
             all: false,
             tags: false,
             no_tags: false,

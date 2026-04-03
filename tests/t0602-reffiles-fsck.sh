@@ -18,14 +18,14 @@ test_expect_success 'refs verify runs without error on clean repo' '
 	! grep -i error err
 '
 
-test_expect_failure 'ref name should be checked for invalid names' '
+test_expect_success 'ref name should be checked for invalid names' '
 	cp .git/refs/heads/default-branch ".git/refs/heads/.starts-with-dot" &&
 	test_must_fail git refs verify 2>err &&
 	grep "badRefName" err &&
 	rm ".git/refs/heads/.starts-with-dot"
 '
 
-test_expect_failure 'ref name check adapted into fsck messages' '
+test_expect_success 'ref name check adapted into fsck messages' '
 	cp .git/refs/heads/default-branch ".git/refs/heads/.branch-bad" &&
 	git -c fsck.badRefName=warn refs verify 2>err &&
 	grep "warning.*badRefName" err &&

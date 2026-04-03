@@ -78,6 +78,7 @@ pub fn run(args: Args) -> Result<()> {
     // Step 1: Fetch
     let fetch_args = super::fetch::Args {
         remote: Some(remote_name.to_owned()),
+        refspecs: Vec::new(),
         all: false,
         tags: false,
         no_tags: false,

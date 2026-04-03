@@ -65,11 +65,35 @@ impl Odb {
     /// Check whether an object exists in the loose store or any pack file.
     #[must_use]
     pub fn exists(&self, oid: &ObjectId) -> bool {
-        if self.object_path(oid).exists() {
+        if self.exists_in_dir(&self.objects_dir, oid) {
             return true;
         }
-        // Check pack files.
-        if let Ok(indexes) = pack::read_local_pack_indexes(&self.objects_dir) {
+        // Check alternates from info/alternates file.
+        if let Ok(alts) = pack::read_alternates_recursive(&self.objects_dir) {
+            for alt_dir in &alts {
+                if self.exists_in_dir(alt_dir, oid) {
+                    return true;
+                }
+            }
+        }
+        // Check GIT_ALTERNATE_OBJECT_DIRECTORIES env var.
+        for alt_dir in env_alternate_dirs() {
+            if self.exists_in_dir(&alt_dir, oid) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check whether an object exists in a specific objects directory.
+    fn exists_in_dir(&self, objects_dir: &Path, oid: &ObjectId) -> bool {
+        let loose = objects_dir
+            .join(oid.loose_prefix())
+            .join(oid.loose_suffix());
+        if loose.exists() {
+            return true;
+        }
+        if let Ok(indexes) = pack::read_local_pack_indexes(objects_dir) {
             for idx in &indexes {
                 if idx.entries.iter().any(|e| e.oid == *oid) {
                     return true;
@@ -103,7 +127,43 @@ impl Odb {
         }
 
         // Fall back to pack files.
-        pack::read_object_from_packs(&self.objects_dir, oid)
+        if let Ok(obj) = pack::read_object_from_packs(&self.objects_dir, oid) {
+            return Ok(obj);
+        }
+
+        // Check alternates from info/alternates file.
+        if let Ok(alts) = pack::read_alternates_recursive(&self.objects_dir) {
+            for alt_dir in &alts {
+                if let Ok(obj) = Self::read_from_dir(alt_dir, oid) {
+                    return Ok(obj);
+                }
+            }
+        }
+
+        // Check GIT_ALTERNATE_OBJECT_DIRECTORIES env var.
+        for alt_dir in env_alternate_dirs() {
+            if let Ok(obj) = Self::read_from_dir(&alt_dir, oid) {
+                return Ok(obj);
+            }
+        }
+
+        Err(Error::ObjectNotFound(oid.to_hex()))
+    }
+
+    /// Try to read an object from a specific objects directory (loose or pack).
+    fn read_from_dir(objects_dir: &Path, oid: &ObjectId) -> Result<Object> {
+        let loose = objects_dir
+            .join(oid.loose_prefix())
+            .join(oid.loose_suffix());
+        if let Ok(file) = fs::File::open(&loose) {
+            let mut decoder = ZlibDecoder::new(file);
+            let mut raw = Vec::new();
+            decoder
+                .read_to_end(&mut raw)
+                .map_err(|e| Error::Zlib(e.to_string()))?;
+            return parse_object_bytes(&raw);
+        }
+        pack::read_object_from_packs(objects_dir, oid)
     }
 
     /// Hash raw content of a given kind and return the [`ObjectId`].
@@ -245,6 +305,17 @@ pub(crate) fn parse_object_bytes(raw: &[u8]) -> Result<Object> {
     }
 
     Ok(Object::new(kind, data))
+}
+
+/// Parse `GIT_ALTERNATE_OBJECT_DIRECTORIES` into a list of paths.
+///
+/// The env var contains colon-separated (`:`-separated on Unix) absolute paths
+/// to additional object directories to search.
+fn env_alternate_dirs() -> Vec<PathBuf> {
+    match std::env::var("GIT_ALTERNATE_OBJECT_DIRECTORIES") {
+        Ok(val) if !val.is_empty() => val.split(':').map(PathBuf::from).collect(),
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]
