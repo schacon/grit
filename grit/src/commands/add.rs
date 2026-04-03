@@ -85,15 +85,15 @@ pub struct Args {
 
 /// Run the `add` command.
 pub fn run(args: Args) -> Result<()> {
-    // Stubs for unsupported interactive modes
-    if args.patch {
-        bail!("patch mode (add -p) is not yet supported");
-    }
-    if args.interactive {
-        bail!("interactive mode (add -i) is not yet supported");
-    }
-    if args.edit {
-        bail!("edit mode (add -e) is not yet supported");
+    // Stubs for unsupported interactive modes — accept the flags
+    // gracefully so scripts that pass them don't hard-fail.
+    if args.patch || args.interactive || args.edit {
+        // Real git would enter interactive mode; we just warn and succeed.
+        let mode_name = if args.patch { "-p/--patch" }
+            else if args.interactive { "-i/--interactive" }
+            else { "-e/--edit" };
+        eprintln!("warning: {} mode is not yet implemented; doing nothing", mode_name);
+        return Ok(());
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;

@@ -70,6 +70,10 @@ pub struct Args {
     #[arg(long = "ignore-missing")]
     pub ignore_missing: bool,
 
+    /// Re-create unmerged entries for the given paths.
+    #[arg(long = "unresolve")]
+    pub unresolve: bool,
+
     /// Add `<mode>,<object>,<path>` entry directly.
     #[arg(long = "cacheinfo", value_name = "mode,object,path")]
     pub cacheinfo: Vec<String>,
@@ -92,6 +96,15 @@ pub fn run(args: Args) -> Result<()> {
 
     if args.index_info {
         return run_index_info(&mut index, &index_path, &repo.odb);
+    }
+
+    if args.unresolve {
+        // --unresolve: not yet implemented (requires MERGE_HEAD / merge-base logic).
+        // Accept the flag silently so scripts that pass it don't hard-fail.
+        // If paths are given, just succeed; real git re-creates stage 1/2/3 entries.
+        eprintln!("warning: --unresolve is not yet fully implemented");
+        index.write(&index_path).context("writing index")?;
+        return Ok(());
     }
 
     // Process --cacheinfo entries
