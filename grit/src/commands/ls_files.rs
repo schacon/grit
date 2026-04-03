@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::path::Component;
 use std::path::PathBuf;
 
-use grit_lib::index::Index;
+use grit_lib::index::{Index, IndexEntry};
 use grit_lib::repo::Repository;
 
 /// Arguments for `grit ls-files`.
@@ -124,9 +124,18 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
 
+        let tag = if args.show_tag {
+            Some(status_tag(entry))
+        } else {
+            None
+        };
+
         if show_stage {
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(display);
+            if let Some(t) = tag {
+                write!(out, "{} ", t)?;
+            }
             write!(
                 out,
                 "{:06o} {} {}\t{}",
@@ -139,6 +148,9 @@ pub fn run(args: Args) -> Result<()> {
         } else if show_cached {
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(display);
+            if let Some(t) = tag {
+                write!(out, "{} ", t)?;
+            }
             write!(out, "{name}")?;
             out.write_all(&[term])?;
         }
@@ -294,4 +306,17 @@ fn normalize_path(path: &std::path::Path) -> PathBuf {
 fn path_to_bytes(path: &std::path::Path) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
     path.as_os_str().as_bytes().to_vec()
+}
+
+/// Return the status tag character for an index entry (used by `-t`).
+fn status_tag(entry: &IndexEntry) -> char {
+    if entry.stage() != 0 {
+        'M' // unmerged
+    } else if entry.skip_worktree() {
+        'S'
+    } else if entry.assume_unchanged() {
+        'h' // assume-unchanged uses lowercase
+    } else {
+        'H' // regular cached
+    }
 }
