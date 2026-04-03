@@ -184,55 +184,55 @@ test_expect_success 'diff-tree --name-status shows M for whitespace change' '
 
 # ---- Upstream whitespace options (not yet implemented, expected failures) ----
 
-test_expect_failure 'diff -w ignores all whitespace (not implemented)' '
+test_expect_success 'diff -w ignores all whitespace' '
 	cd trailing-ws &&
 	printf "line1  \nline2\nline3\n" >file.txt &&
 	git diff -w >out &&
 	test_must_be_empty out
 '
 
-test_expect_failure 'diff -b ignores space amount changes (not implemented)' '
+test_expect_success 'diff -b ignores space amount changes' '
 	cd trailing-ws &&
 	printf "line1  \nline2\nline3\n" >file.txt &&
 	git diff -b >out &&
 	test_must_be_empty out
 '
 
-test_expect_failure 'diff --ignore-space-at-eol (not implemented)' '
+test_expect_success 'diff --ignore-space-at-eol' '
 	cd trailing-ws &&
 	printf "line1  \nline2\nline3\n" >file.txt &&
 	git diff --ignore-space-at-eol >out &&
 	test_must_be_empty out
 '
 
-test_expect_failure 'diff --ignore-blank-lines (not implemented)' '
+test_expect_success 'diff --ignore-blank-lines' '
 	cd blank-repo &&
 	printf "line1\n\nline2\nline3\n" >file.txt &&
 	git diff --ignore-blank-lines >out &&
 	test_must_be_empty out
 '
 
-test_expect_failure 'diff --ignore-all-space (not implemented)' '
+test_expect_success 'diff --ignore-all-space' '
 	cd middle-repo &&
 	printf "a b\ncd\nef\n" >file.txt &&
 	git diff --ignore-all-space >out &&
 	test_must_be_empty out
 '
 
-test_expect_failure 'diff -w with --stat (not implemented)' '
+test_expect_success 'diff -w with --stat' '
 	cd trailing-ws &&
 	printf "line1  \nline2\nline3\n" >file.txt &&
 	git diff -w --stat >out &&
 	test_must_be_empty out
 '
 
-test_expect_failure 'diff -w with --exit-code returns 0 (not implemented)' '
+test_expect_success 'diff -w with --exit-code returns 0' '
 	cd trailing-ws &&
 	printf "line1  \nline2\nline3\n" >file.txt &&
 	git diff -w --exit-code
 '
 
-test_expect_failure 'diff -b collapses multiple spaces (not implemented)' '
+test_expect_success 'diff -b collapses multiple spaces' '
 	git init collapse-repo &&
 	cd collapse-repo &&
 	git config user.name "Test User" &&
@@ -245,14 +245,14 @@ test_expect_failure 'diff -b collapses multiple spaces (not implemented)' '
 	test_must_be_empty out
 '
 
-test_expect_failure 'diff --ignore-cr-at-eol (not implemented)' '
+test_expect_success 'diff --ignore-cr-at-eol' '
 	cd trailing-ws &&
 	printf "line1\r\nline2\nline3\n" >file.txt &&
 	git diff --ignore-cr-at-eol >out &&
 	test_must_be_empty out
 '
 
-test_expect_failure 'diff --ignore-space-change (not implemented)' '
+test_expect_success 'diff --ignore-space-change' '
 	cd trailing-ws &&
 	printf "line1  \nline2\nline3\n" >file.txt &&
 	git diff --ignore-space-change >out &&

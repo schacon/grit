@@ -34,6 +34,80 @@ const RED: &str = "\x1b[31m";
 const GREEN: &str = "\x1b[32m";
 const CYAN: &str = "\x1b[36m";
 
+/// Whitespace-ignore options bundled together.
+#[derive(Debug, Default)]
+struct WhitespaceMode {
+    ignore_all_space: bool,
+    ignore_space_change: bool,
+    ignore_space_at_eol: bool,
+    ignore_blank_lines: bool,
+    ignore_cr_at_eol: bool,
+}
+
+impl WhitespaceMode {
+    /// Returns true if any whitespace-ignore option is active.
+    fn any(&self) -> bool {
+        self.ignore_all_space
+            || self.ignore_space_change
+            || self.ignore_space_at_eol
+            || self.ignore_blank_lines
+            || self.ignore_cr_at_eol
+    }
+
+    /// Normalize a string according to the active whitespace modes.
+    fn normalize(&self, s: &str) -> String {
+        let mut lines: Vec<String> = s.lines().map(|l| self.normalize_line(l)).collect();
+        if self.ignore_blank_lines {
+            lines.retain(|l| !l.trim().is_empty());
+        }
+        lines.join("\n")
+    }
+
+    /// Normalize a single line according to the active whitespace modes.
+    fn normalize_line(&self, line: &str) -> String {
+        let mut s = line.to_owned();
+
+        // --ignore-cr-at-eol: strip trailing CR
+        if self.ignore_cr_at_eol {
+            if s.ends_with('\r') {
+                s.truncate(s.len() - 1);
+            }
+        }
+
+        // -w / --ignore-all-space: remove all whitespace
+        if self.ignore_all_space {
+            s = s.chars().filter(|c| !c.is_whitespace()).collect();
+            return s;
+        }
+
+        // -b / --ignore-space-change: collapse runs of whitespace to single space
+        if self.ignore_space_change {
+            let mut result = String::with_capacity(s.len());
+            let mut in_space = false;
+            for c in s.chars() {
+                if c.is_whitespace() {
+                    if !in_space {
+                        result.push(' ');
+                        in_space = true;
+                    }
+                } else {
+                    result.push(c);
+                    in_space = false;
+                }
+            }
+            s = result.trim_end().to_owned();
+            return s;
+        }
+
+        // --ignore-space-at-eol: strip trailing whitespace
+        if self.ignore_space_at_eol {
+            s = s.trim_end().to_owned();
+        }
+
+        s
+    }
+}
+
 /// Arguments for `grit diff`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Show changes between commits, commit and working tree, etc.")]
@@ -77,6 +151,30 @@ pub struct Args {
     /// Show a word-level diff with `[-removed-]{+added+}` markers.
     #[arg(long = "word-diff", value_name = "MODE", default_missing_value = "plain", num_args = 0..=1)]
     pub word_diff: Option<String>,
+
+    /// Show colored word diff (shorthand for --word-diff=color).
+    #[arg(long = "color-words")]
+    pub color_words: bool,
+
+    /// Ignore all whitespace when comparing lines (-w).
+    #[arg(short = 'w', long = "ignore-all-space")]
+    pub ignore_all_space: bool,
+
+    /// Ignore changes in amount of whitespace (-b).
+    #[arg(short = 'b', long = "ignore-space-change")]
+    pub ignore_space_change: bool,
+
+    /// Ignore whitespace at end of line.
+    #[arg(long = "ignore-space-at-eol")]
+    pub ignore_space_at_eol: bool,
+
+    /// Ignore changes whose lines are all blank.
+    #[arg(long = "ignore-blank-lines")]
+    pub ignore_blank_lines: bool,
+
+    /// Ignore carriage-return at end of line.
+    #[arg(long = "ignore-cr-at-eol")]
+    pub ignore_cr_at_eol: bool,
 
     /// Generate patch output (default behavior; for compatibility with git).
     #[arg(short = 'p', long = "patch")]
@@ -167,6 +265,30 @@ pub fn run(args: Args) -> Result<()> {
     // Filter by pathspecs
     let entries = filter_by_paths(entries, &paths);
 
+    // Build whitespace mode from flags
+    let ws_mode = WhitespaceMode {
+        ignore_all_space: args.ignore_all_space,
+        ignore_space_change: args.ignore_space_change,
+        ignore_space_at_eol: args.ignore_space_at_eol,
+        ignore_blank_lines: args.ignore_blank_lines,
+        ignore_cr_at_eol: args.ignore_cr_at_eol,
+    };
+
+    // When a whitespace-ignore mode is active, filter out entries whose
+    // normalised content is identical.
+    let entries = if ws_mode.any() {
+        entries
+            .into_iter()
+            .filter(|e| {
+                let old = read_content(&repo.odb, &e.old_oid, None, e.path());
+                let new = read_content(&repo.odb, &e.new_oid, wt_for_content, e.path());
+                ws_mode.normalize(&old) != ws_mode.normalize(&new)
+            })
+            .collect()
+    } else {
+        entries
+    };
+
     let has_diff = !entries.is_empty();
 
     // Determine color mode
@@ -180,7 +302,7 @@ pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    let word_diff = args.word_diff.is_some();
+    let word_diff = args.word_diff.is_some() || args.color_words;
 
     if !args.quiet {
         let context_lines = args.unified.unwrap_or(3);
