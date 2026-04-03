@@ -101,6 +101,62 @@ pub fn run(args: Args) -> Result<()> {
                 {
                     options.max_count = Some(parse_non_negative(&arg[1..], "-<n>")?);
                 }
+                _ if arg.starts_with("--glob=") => {
+                    let pattern = arg.trim_start_matches("--glob=");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, pattern)
+                        .context("failed to list glob refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                "--branches" => {
+                    let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")
+                        .context("failed to list branch refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                _ if arg.starts_with("--branches=") => {
+                    let pattern = arg.trim_start_matches("--branches=");
+                    let full_pattern = format!("refs/heads/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
+                        .context("failed to list branch refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                "--tags" => {
+                    let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/tags/")
+                        .context("failed to list tag refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                _ if arg.starts_with("--tags=") => {
+                    let pattern = arg.trim_start_matches("--tags=");
+                    let full_pattern = format!("refs/tags/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
+                        .context("failed to list tag refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                "--remotes" => {
+                    let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/remotes/")
+                        .context("failed to list remote refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                _ if arg.starts_with("--remotes=") => {
+                    let pattern = arg.trim_start_matches("--remotes=");
+                    let full_pattern = format!("refs/remotes/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
+                        .context("failed to list remote refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
                 _ if arg.starts_with("--min-parents=") => {
                     let value = arg.trim_start_matches("--min-parents=");
                     options.min_parents = Some(parse_non_negative(value, "--min-parents")?);

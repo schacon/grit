@@ -243,6 +243,53 @@ pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>
     Ok(results)
 }
 
+/// List refs matching a glob pattern (e.g. `refs/heads/topic/*`).
+pub fn list_refs_glob(git_dir: &Path, pattern: &str) -> Result<Vec<(String, ObjectId)>> {
+    let glob_pos = pattern.find(|c: char| c == '*' || c == '?' || c == '[');
+    let prefix = match glob_pos {
+        Some(pos) => match pattern[..pos].rfind('/') {
+            Some(slash) => &pattern[..=slash],
+            None => "",
+        },
+        None => pattern,
+    };
+    let all = list_refs(git_dir, prefix)?;
+    let mut results = Vec::new();
+    for (refname, oid) in all {
+        if glob_match(pattern, &refname) {
+            results.push((refname, oid));
+        }
+    }
+    Ok(results)
+}
+
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let txt = text.as_bytes();
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star_pi, mut star_ti) = (usize::MAX, 0);
+    while ti < txt.len() {
+        if pi < pat.len() && (pat[pi] == b'?' || pat[pi] == txt[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pat.len() && pat[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if star_pi != usize::MAX {
+            pi = star_pi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
+}
+
 fn collect_refs(
     dir: &Path,
     prefix: &str,
