@@ -80,6 +80,8 @@ pub struct DiffEntry {
     pub old_oid: ObjectId,
     /// New object ID (zero OID for Deleted).
     pub new_oid: ObjectId,
+    /// Similarity score (0–100) for renames/copies.
+    pub score: Option<u32>,
 }
 
 impl DiffEntry {
@@ -213,6 +215,7 @@ fn diff_tree_entries(
                                     new_mode: format_mode(n.mode),
                                     old_oid: o.oid,
                                     new_oid: n.oid,
+                    score: None,
                                 });
                             }
                         }
@@ -257,6 +260,7 @@ fn emit_deleted(
             new_mode: "000000".to_owned(),
             old_oid: entry.oid,
             new_oid: zero_oid(),
+                    score: None,
         });
     }
     Ok(())
@@ -283,193 +287,7 @@ fn emit_added(
             new_mode: format_mode(entry.mode),
             old_oid: zero_oid(),
             new_oid: entry.oid,
-        });
-    }
-    Ok(())
-}
-
-// ── Tree-to-tree diff with -t flag ──────────────────────────────────
-
-/// Like `diff_trees`, but also emits entries for tree objects themselves
-/// (used by `diff-tree -t`). Tree entries are emitted *before* their
-/// recursive contents.
-pub fn diff_trees_with_tree_entries(
-    odb: &Odb,
-    old_tree_oid: Option<&ObjectId>,
-    new_tree_oid: Option<&ObjectId>,
-    prefix: &str,
-) -> Result<Vec<DiffEntry>> {
-    let old_entries = match old_tree_oid {
-        Some(oid) => read_tree(odb, oid)?,
-        None => Vec::new(),
-    };
-    let new_entries = match new_tree_oid {
-        Some(oid) => read_tree(odb, oid)?,
-        None => Vec::new(),
-    };
-
-    let mut result = Vec::new();
-    diff_tree_entries_with_trees(odb, &old_entries, &new_entries, prefix, &mut result)?;
-    Ok(result)
-}
-
-/// Compare two sorted lists of tree entries, recursing into subtrees,
-/// and also emitting DiffEntry for tree objects themselves.
-fn diff_tree_entries_with_trees(
-    odb: &Odb,
-    old: &[TreeEntry],
-    new: &[TreeEntry],
-    prefix: &str,
-    result: &mut Vec<DiffEntry>,
-) -> Result<()> {
-    let mut oi = 0;
-    let mut ni = 0;
-
-    while oi < old.len() || ni < new.len() {
-        match (old.get(oi), new.get(ni)) {
-            (Some(o), Some(n)) => {
-                let cmp = crate::objects::tree_entry_cmp(
-                    &o.name,
-                    is_tree_mode(o.mode),
-                    &n.name,
-                    is_tree_mode(n.mode),
-                );
-                match cmp {
-                    std::cmp::Ordering::Less => {
-                        emit_deleted_with_trees(odb, o, prefix, result)?;
-                        oi += 1;
-                    }
-                    std::cmp::Ordering::Greater => {
-                        emit_added_with_trees(odb, n, prefix, result)?;
-                        ni += 1;
-                    }
-                    std::cmp::Ordering::Equal => {
-                        if o.oid != n.oid || o.mode != n.mode {
-                            let name_str = String::from_utf8_lossy(&o.name);
-                            let path = format_path(prefix, &name_str);
-                            if is_tree_mode(o.mode) && is_tree_mode(n.mode) {
-                                // Emit tree entry itself
-                                result.push(DiffEntry {
-                                    status: DiffStatus::Modified,
-                                    old_path: Some(path.clone()),
-                                    new_path: Some(path.clone()),
-                                    old_mode: format_mode(o.mode),
-                                    new_mode: format_mode(n.mode),
-                                    old_oid: o.oid,
-                                    new_oid: n.oid,
-                                });
-                                // Then recurse
-                                let nested = diff_trees_with_tree_entries(odb, Some(&o.oid), Some(&n.oid), &path)?;
-                                result.extend(nested);
-                            } else if is_tree_mode(o.mode) && !is_tree_mode(n.mode) {
-                                emit_deleted_with_trees(odb, o, prefix, result)?;
-                                emit_added_with_trees(odb, n, prefix, result)?;
-                            } else if !is_tree_mode(o.mode) && is_tree_mode(n.mode) {
-                                emit_deleted_with_trees(odb, o, prefix, result)?;
-                                emit_added_with_trees(odb, n, prefix, result)?;
-                            } else {
-                                result.push(DiffEntry {
-                                    status: if o.mode != n.mode && o.oid == n.oid {
-                                        DiffStatus::TypeChanged
-                                    } else {
-                                        DiffStatus::Modified
-                                    },
-                                    old_path: Some(path.clone()),
-                                    new_path: Some(path),
-                                    old_mode: format_mode(o.mode),
-                                    new_mode: format_mode(n.mode),
-                                    old_oid: o.oid,
-                                    new_oid: n.oid,
-                                });
-                            }
-                        }
-                        oi += 1;
-                        ni += 1;
-                    }
-                }
-            }
-            (Some(o), None) => {
-                emit_deleted_with_trees(odb, o, prefix, result)?;
-                oi += 1;
-            }
-            (None, Some(n)) => {
-                emit_added_with_trees(odb, n, prefix, result)?;
-                ni += 1;
-            }
-            (None, None) => break,
-        }
-    }
-
-    Ok(())
-}
-
-fn emit_deleted_with_trees(
-    odb: &Odb,
-    entry: &TreeEntry,
-    prefix: &str,
-    result: &mut Vec<DiffEntry>,
-) -> Result<()> {
-    let name_str = String::from_utf8_lossy(&entry.name);
-    let path = format_path(prefix, &name_str);
-    if is_tree_mode(entry.mode) {
-        // Emit tree entry itself
-        result.push(DiffEntry {
-            status: DiffStatus::Deleted,
-            old_path: Some(path.clone()),
-            new_path: None,
-            old_mode: format_mode(entry.mode),
-            new_mode: "000000".to_owned(),
-            old_oid: entry.oid,
-            new_oid: zero_oid(),
-        });
-        // Then recurse
-        let nested = diff_trees_with_tree_entries(odb, Some(&entry.oid), None, &path)?;
-        result.extend(nested);
-    } else {
-        result.push(DiffEntry {
-            status: DiffStatus::Deleted,
-            old_path: Some(path.clone()),
-            new_path: None,
-            old_mode: format_mode(entry.mode),
-            new_mode: "000000".to_owned(),
-            old_oid: entry.oid,
-            new_oid: zero_oid(),
-        });
-    }
-    Ok(())
-}
-
-fn emit_added_with_trees(
-    odb: &Odb,
-    entry: &TreeEntry,
-    prefix: &str,
-    result: &mut Vec<DiffEntry>,
-) -> Result<()> {
-    let name_str = String::from_utf8_lossy(&entry.name);
-    let path = format_path(prefix, &name_str);
-    if is_tree_mode(entry.mode) {
-        // Emit tree entry itself
-        result.push(DiffEntry {
-            status: DiffStatus::Added,
-            old_path: None,
-            new_path: Some(path.clone()),
-            old_mode: "000000".to_owned(),
-            new_mode: format_mode(entry.mode),
-            old_oid: zero_oid(),
-            new_oid: entry.oid,
-        });
-        // Then recurse
-        let nested = diff_trees_with_tree_entries(odb, None, Some(&entry.oid), &path)?;
-        result.extend(nested);
-    } else {
-        result.push(DiffEntry {
-            status: DiffStatus::Added,
-            old_path: None,
-            new_path: Some(path),
-            old_mode: "000000".to_owned(),
-            new_mode: format_mode(entry.mode),
-            old_oid: zero_oid(),
-            new_oid: entry.oid,
+                    score: None,
         });
     }
     Ok(())
@@ -530,6 +348,7 @@ pub fn diff_index_to_tree(
                         new_mode: format_mode(ie.mode),
                         old_oid: te.oid,
                         new_oid: ie.oid,
+                    score: None,
                     });
                 }
             }
@@ -543,6 +362,7 @@ pub fn diff_index_to_tree(
                     new_mode: format_mode(ie.mode),
                     old_oid: zero_oid(),
                     new_oid: ie.oid,
+                    score: None,
                 });
             }
         }
@@ -558,6 +378,7 @@ pub fn diff_index_to_tree(
             new_mode: "000000".to_owned(),
             old_oid: te.oid,
             new_oid: zero_oid(),
+                    score: None,
         });
     }
 
@@ -616,6 +437,7 @@ pub fn diff_index_to_worktree(
                         new_mode: format_mode(worktree_mode),
                         old_oid: ie.oid,
                         new_oid: worktree_oid,
+                    score: None,
                     });
                 }
             }
@@ -630,6 +452,7 @@ pub fn diff_index_to_worktree(
                     new_mode: "000000".to_owned(),
                     old_oid: ie.oid,
                     new_oid: zero_oid(),
+                    score: None,
                 });
             }
             Err(e) => return Err(Error::Io(e)),
@@ -775,6 +598,7 @@ pub fn diff_tree_to_worktree(
                         new_mode: format_mode(wt_mode),
                         old_oid: te.oid,
                         new_oid: wt_oid,
+                    score: None,
                     });
                 }
             }
@@ -788,6 +612,7 @@ pub fn diff_tree_to_worktree(
                     new_mode: "000000".to_owned(),
                     old_oid: te.oid,
                     new_oid: zero_oid(),
+                    score: None,
                 });
             }
             (None, Some(ref meta)) => {
@@ -802,6 +627,7 @@ pub fn diff_tree_to_worktree(
                     new_mode: format_mode(wt_mode),
                     old_oid: zero_oid(),
                     new_oid: wt_oid,
+                    score: None,
                 });
             }
             (None, None) => {
@@ -812,6 +638,270 @@ pub fn diff_tree_to_worktree(
 
     result.sort_by(|a, b| a.path().cmp(b.path()));
     Ok(result)
+}
+
+// ── Rename detection ────────────────────────────────────────────────
+
+/// Detect renames by pairing Deleted and Added entries with similar content.
+///
+/// `threshold` is the minimum similarity percentage (0–100) for a pair to
+/// be considered a rename (Git's default is 50%).  The function reads blob
+/// content from the ODB to compute a line-level similarity score.
+///
+/// Exact-OID matches are always 100% similar regardless of content.
+pub fn detect_renames(odb: &Odb, entries: Vec<DiffEntry>, threshold: u32) -> Vec<DiffEntry> {
+    // Split entries into deleted, added, and others.
+    let mut deleted: Vec<DiffEntry> = Vec::new();
+    let mut added: Vec<DiffEntry> = Vec::new();
+    let mut others: Vec<DiffEntry> = Vec::new();
+
+    for entry in entries {
+        match entry.status {
+            DiffStatus::Deleted => deleted.push(entry),
+            DiffStatus::Added => added.push(entry),
+            _ => others.push(entry),
+        }
+    }
+
+    if deleted.is_empty() || added.is_empty() {
+        // Nothing to pair — return original order.
+        let mut result = others;
+        result.extend(deleted);
+        result.extend(added);
+        result.sort_by(|a, b| a.path().cmp(b.path()));
+        return result;
+    }
+
+    // Read content for all deleted blobs.
+    let deleted_contents: Vec<Option<Vec<u8>>> = deleted
+        .iter()
+        .map(|d| odb.read(&d.old_oid).ok().map(|obj| obj.data))
+        .collect();
+
+    // Read content for all added blobs.
+    let added_contents: Vec<Option<Vec<u8>>> = added
+        .iter()
+        .map(|a| odb.read(&a.new_oid).ok().map(|obj| obj.data))
+        .collect();
+
+    // Build a matrix of similarity scores and find the best pairings.
+    // We use a greedy approach: pick the highest-scoring pair first.
+    let mut scores: Vec<(u32, usize, usize)> = Vec::new();
+
+    for (di, del) in deleted.iter().enumerate() {
+        for (ai, add) in added.iter().enumerate() {
+            // Exact OID match → 100%
+            if del.old_oid == add.new_oid {
+                scores.push((100, di, ai));
+                continue;
+            }
+
+            let score = match (&deleted_contents[di], &added_contents[ai]) {
+                (Some(old_data), Some(new_data)) => {
+                    compute_similarity(old_data, new_data)
+                }
+                _ => 0,
+            };
+
+            if score >= threshold {
+                scores.push((score, di, ai));
+            }
+        }
+    }
+
+    // Sort: prefer same-basename pairs first, then by score descending.
+    // This matches Git's behavior where basename matches are checked first.
+    scores.sort_by(|a, b| {
+        let a_same = same_basename(&deleted[a.1], &added[a.2]);
+        let b_same = same_basename(&deleted[b.1], &added[b.2]);
+        b_same.cmp(&a_same).then_with(|| b.0.cmp(&a.0))
+    });
+
+    let mut used_deleted = vec![false; deleted.len()];
+    let mut used_added = vec![false; added.len()];
+    let mut renames: Vec<DiffEntry> = Vec::new();
+
+    for (score, di, ai) in &scores {
+        if used_deleted[*di] || used_added[*ai] {
+            continue;
+        }
+        used_deleted[*di] = true;
+        used_added[*ai] = true;
+
+        let del = &deleted[*di];
+        let add = &added[*ai];
+
+        renames.push(DiffEntry {
+            status: DiffStatus::Renamed,
+            old_path: del.old_path.clone(),
+            new_path: add.new_path.clone(),
+            old_mode: del.old_mode.clone(),
+            new_mode: add.new_mode.clone(),
+            old_oid: del.old_oid,
+            new_oid: add.new_oid,
+            score: Some(*score),
+        });
+    }
+
+    // Collect unmatched entries.
+    let mut result = others;
+    result.extend(renames);
+    for (i, entry) in deleted.into_iter().enumerate() {
+        if !used_deleted[i] {
+            result.push(entry);
+        }
+    }
+    for (i, entry) in added.into_iter().enumerate() {
+        if !used_added[i] {
+            result.push(entry);
+        }
+    }
+
+    result.sort_by(|a, b| a.path().cmp(b.path()));
+    result
+}
+
+/// Format a rename pair using Git's compact path format.
+///
+/// Examples:
+/// - `a/b/c` → `c/b/a` → `a/b/c => c/b/a`
+/// - `c/b/a` → `c/d/e` → `c/{b/a => d/e}`
+/// - `c/d/e` → `d/e` → `{c/d => d}/e`
+/// - `d/e` → `d/f/e` → `d/{ => f}/e`
+pub fn format_rename_path(old: &str, new: &str) -> String {
+    let ob = old.as_bytes();
+    let nb = new.as_bytes();
+
+    // Find common prefix length, snapped to '/' boundary.
+    let pfx = {
+        let mut last_sep = 0usize;
+        let min_len = ob.len().min(nb.len());
+        for i in 0..min_len {
+            if ob[i] != nb[i] {
+                break;
+            }
+            if ob[i] == b'/' {
+                last_sep = i + 1;
+            }
+        }
+        last_sep
+    };
+
+    // Find common suffix length, snapped to '/' boundary.
+    let mut sfx = {
+        let mut last_sep = 0usize;
+        let min_len = ob.len().min(nb.len());
+        for i in 0..min_len {
+            let oi = ob.len() - 1 - i;
+            let ni = nb.len() - 1 - i;
+            if ob[oi] != nb[ni] {
+                break;
+            }
+            if ob[oi] == b'/' {
+                last_sep = i + 1;
+            }
+        }
+        last_sep
+    };
+
+    // Suffix starts at this position in each string.
+    let mut sfx_at_old = ob.len() - sfx;
+    let mut sfx_at_new = nb.len() - sfx;
+
+    // If prefix and suffix overlap in both strings (both middles empty),
+    // reduce the suffix so that at least the longer string has a non-empty middle.
+    while pfx > sfx_at_old && pfx > sfx_at_new && sfx > 0 {
+        // Reduce suffix by snapping to the next smaller '/' boundary.
+        let suffix_bytes = &ob[sfx_at_old..];
+        let mut new_sfx = 0;
+        // Find the next '/' after sfx_at_old (i.e., reduce suffix).
+        for i in 1..suffix_bytes.len() {
+            if suffix_bytes[i] == b'/' {
+                new_sfx = sfx - i;
+                break;
+            }
+        }
+        if new_sfx == 0 || new_sfx >= sfx {
+            sfx = 0;
+            sfx_at_old = ob.len();
+            sfx_at_new = nb.len();
+            break;
+        }
+        sfx = new_sfx;
+        sfx_at_old = ob.len() - sfx;
+        sfx_at_new = nb.len() - sfx;
+    }
+
+    // When prefix and suffix overlap in the shorter string, they share
+    // the '/' boundary character. In the output format, the shared '/'
+    // appears in both positions (e.g. "d/{ => f}/e" for d/e → d/f/e).
+    // Compute the middle parts. When prefix and suffix overlap in a
+    // string, the middle for that string is empty. The shared '/' shows
+    // in both prefix (trailing) and suffix (leading) positions.
+    let prefix = &old[..pfx];
+    let suffix = &old[sfx_at_old..];
+    let old_mid = if pfx <= sfx_at_old {
+        &old[pfx..sfx_at_old]
+    } else {
+        ""
+    };
+    let new_mid = if pfx <= sfx_at_new {
+        &new[pfx..sfx_at_new]
+    } else {
+        ""
+    };
+
+    if prefix.is_empty() && suffix.is_empty() {
+        return format!("{old} => {new}");
+    }
+
+    format!("{prefix}{{{old_mid} => {new_mid}}}{suffix}")
+}
+
+/// Check if two entries share the same filename (basename).
+fn same_basename(del: &DiffEntry, add: &DiffEntry) -> bool {
+    let old = del.old_path.as_deref().unwrap_or("");
+    let new = add.new_path.as_deref().unwrap_or("");
+    let old_base = old.rsplit('/').next().unwrap_or(old);
+    let new_base = new.rsplit('/').next().unwrap_or(new);
+    old_base == new_base && !old_base.is_empty()
+}
+
+/// Compute a similarity percentage (0–100) between two byte slices.
+///
+/// Uses Git's approach: count the bytes that are "shared" (appear in
+/// equal lines), then compute `score = shared_bytes * 2 * 100 / (src_size + dst_size)`.
+fn compute_similarity(old: &[u8], new: &[u8]) -> u32 {
+    let src_size = old.len();
+    let dst_size = new.len();
+
+    if src_size == 0 && dst_size == 0 {
+        return 100;
+    }
+    let total = src_size + dst_size;
+    if total == 0 {
+        return 100;
+    }
+
+    // Use line-level diff to find shared content, then count bytes.
+    use similar::{ChangeTag, TextDiff};
+    let old_str = String::from_utf8_lossy(old);
+    let new_str = String::from_utf8_lossy(new);
+    let diff = TextDiff::from_lines(&old_str as &str, &new_str as &str);
+
+    let mut shared_bytes = 0usize;
+    for change in diff.iter_all_changes() {
+        if change.tag() == ChangeTag::Equal {
+            // Count bytes in the matching line (including newline).
+            shared_bytes += change.value().len();
+        }
+    }
+
+    // Git: score = copied * MAX_SCORE / max(src_size, dst_size)
+    // We normalize to 0-100.
+    let max_size = src_size.max(dst_size);
+    let score = ((shared_bytes * 100) / max_size).min(100) as u32;
+    score
 }
 
 // ── Output formatting ───────────────────────────────────────────────
@@ -831,13 +921,19 @@ pub fn format_raw(entry: &DiffEntry) -> String {
         _ => entry.path().to_owned(),
     };
 
+    let status_str = match (entry.status, entry.score) {
+        (DiffStatus::Renamed, Some(s)) => format!("R{:03}", s),
+        (DiffStatus::Copied, Some(s)) => format!("C{:03}", s),
+        _ => entry.status.letter().to_string(),
+    };
+
     format!(
         ":{} {} {} {} {}\t{}",
         entry.old_mode,
         entry.new_mode,
         entry.old_oid,
         entry.new_oid,
-        entry.status.letter(),
+        status_str,
         path
     )
 }
@@ -898,15 +994,79 @@ pub fn unified_diff(
         output.push_str(&format!("+++ b/{new_path}\n"));
     }
 
+    let old_lines: Vec<&str> = old_content.lines().collect();
+
     for hunk in diff
         .unified_diff()
         .context_radius(context_lines)
         .iter_hunks()
     {
-        output.push_str(&format!("{hunk}"));
+        let hunk_str = format!("{hunk}");
+        // The similar crate outputs @@ -a,b +c,d @@\n but Git adds
+        // function context after the closing @@. Extract the hunk header
+        // and add function context.
+        if let Some(first_newline) = hunk_str.find('\n') {
+            let header_line = &hunk_str[..first_newline];
+            let rest = &hunk_str[first_newline..];
+
+            // Parse the old start line from the @@ header
+            if let Some(func_ctx) = extract_function_context(header_line, &old_lines) {
+                output.push_str(header_line);
+                output.push(' ');
+                output.push_str(&func_ctx);
+                output.push_str(rest);
+            } else {
+                output.push_str(&hunk_str);
+            }
+        } else {
+            output.push_str(&hunk_str);
+        }
     }
 
     output
+}
+
+/// Extract function context for a hunk header.
+///
+/// Given a hunk header like `@@ -8,7 +8,7 @@`, find the last line
+/// before line 8 in the old content that looks like a function header
+/// (starts with a non-whitespace character, like Git's default).
+fn extract_function_context(header: &str, old_lines: &[&str]) -> Option<String> {
+    // Parse the old start line number from "@@ -<start>,<count> ..."
+    let at_pos = header.find("-")?;
+    let rest = &header[at_pos + 1..];
+    let comma_or_space = rest.find(|c: char| c == ',' || c == ' ')?;
+    let start_str = &rest[..comma_or_space];
+    let start_line: usize = start_str.parse().ok()?;
+
+    if start_line <= 1 {
+        return None;
+    }
+
+    // Look backwards from the line before the hunk start for a line that
+    // starts with a non-whitespace character (Git's default funcname pattern).
+    // start_line is 1-indexed, so the hunk starts at old_lines[start_line-1].
+    // We want to look at lines before that: old_lines[0..start_line-1].
+    let search_end = (start_line - 1).min(old_lines.len());
+    for i in (0..search_end).rev() {
+        let line = old_lines[i];
+        if !line.is_empty() {
+            let first = line.as_bytes()[0];
+            // Git's default: line must start with a letter, digit, '_', '$',
+            // or certain other non-whitespace chars. We use a simpler heuristic:
+            // any line that doesn't start with whitespace.
+            if first != b' ' && first != b'\t' {
+                // Truncate to 40 chars like Git does.
+                let truncated = if line.len() > 40 {
+                    &line[..40]
+                } else {
+                    line
+                };
+                return Some(truncated.to_owned());
+            }
+        }
+    }
+    None
 }
 
 /// Generate diff stat output (file name + insertions/deletions).

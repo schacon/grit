@@ -9,8 +9,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    count_changes, diff_trees, diff_trees_with_tree_entries, format_raw, format_stat_line,
-    unified_diff, DiffEntry, DiffStatus,
+    count_changes, detect_renames, diff_trees, format_raw, format_stat_line, unified_diff,
+    DiffEntry, DiffStatus,
 };
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -52,8 +52,6 @@ struct Options {
     pathspecs: Vec<String>,
     /// Recurse into sub-trees (`-r`).
     recursive: bool,
-    /// Show tree entries in output (`-t`, implies `-r`).
-    show_trees: bool,
     /// Show root commit as diff against empty tree (`--root`).
     root: bool,
     /// Read OIDs from stdin (`--stdin`).
@@ -72,6 +70,10 @@ struct Options {
     context_lines: usize,
     /// Abbreviate OIDs to this length (None = full).
     abbrev: Option<usize>,
+    /// Rename detection threshold (None = disabled).
+    find_renames: Option<u32>,
+    /// Rename limit (max number of rename source candidates).
+    rename_limit: Option<usize>,
 }
 
 impl Default for Options {
@@ -80,7 +82,6 @@ impl Default for Options {
             objects: Vec::new(),
             pathspecs: Vec::new(),
             recursive: false,
-            show_trees: false,
             root: false,
             stdin_mode: false,
             no_commit_id: false,
@@ -90,6 +91,8 @@ impl Default for Options {
             format: OutputFormat::Raw,
             context_lines: 3,
             abbrev: None,
+            find_renames: None,
+            rename_limit: None,
         }
     }
 }
@@ -112,10 +115,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
                 "-r" => opts.recursive = true,
-                "-t" => {
-                    opts.recursive = true;
-                    opts.show_trees = true;
-                }
+                "-t" => opts.recursive = true, // -t implies -r
                 "--root" => opts.root = true,
                 "--stdin" => opts.stdin_mode = true,
                 "--no-commit-id" => opts.no_commit_id = true,
@@ -151,8 +151,35 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                             .with_context(|| format!("invalid -U value: `{val}`"))?;
                     }
                 }
+                "-M" | "--find-renames" => opts.find_renames = Some(50),
+                "--no-renames" => opts.find_renames = None,
+                _ if arg.starts_with("-M") => {
+                    let val = &arg[2..];
+                    let pct = if val.ends_with('%') {
+                        val[..val.len()-1].parse::<u32>().unwrap_or(50)
+                    } else {
+                        // Could be e.g. -M80 or -M80%
+                        val.parse::<u32>().unwrap_or(50)
+                    };
+                    opts.find_renames = Some(pct);
+                }
+                _ if arg.starts_with("--find-renames=") => {
+                    let val = &arg["--find-renames=".len()..];
+                    let pct = if val.ends_with('%') {
+                        val[..val.len()-1].parse::<u32>().unwrap_or(50)
+                    } else {
+                        val.parse::<u32>().unwrap_or(50)
+                    };
+                    opts.find_renames = Some(pct);
+                }
+                _ if arg.starts_with("-l") => {
+                    let val = &arg[2..];
+                    if let Ok(n) = val.parse::<usize>() {
+                        opts.rename_limit = Some(if n == 0 { 32767 } else { n });
+                    }
+                }
                 // Silently accept common diff options that we do not implement.
-                "--no-renames" | "--no-rename-empty" | "--always" | "--diff-merges=off" | "-c"
+                "--no-rename-empty" | "--always" | "--diff-merges=off" | "-c"
                 | "--cc" => {}
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
@@ -208,7 +235,7 @@ pub fn run(args: Args) -> Result<()> {
 fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<()> {
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
-    let entries = diff_maybe_recursive(&repo.odb, Some(&oid1), Some(&oid2), opts.recursive, opts.show_trees)?;
+    let entries = diff_maybe_recursive(&repo.odb, Some(&oid1), Some(&oid2), opts.recursive)?;
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
     print_diff(out, &repo.odb, &filtered, opts)
 }
@@ -227,7 +254,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
             if commit.parents.is_empty() {
                 if opts.root {
                     let entries =
-                        diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_trees)?;
+                        diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive)?;
                     let filtered = filter_pathspecs(entries, &opts.pathspecs);
                     print_diff(out, &repo.odb, &filtered, opts)?;
                 }
@@ -239,7 +266,6 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     Some(&parent_tree),
                     Some(&commit.tree),
                     opts.recursive,
-                    opts.show_trees,
                 )?;
                 let filtered = filter_pathspecs(entries, &opts.pathspecs);
                 print_diff(out, &repo.odb, &filtered, opts)?;
@@ -351,7 +377,7 @@ fn process_stdin_commit(
     if parent_oids.is_empty() {
         if opts.root {
             let entries =
-                diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_trees)?;
+                diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive)?;
             let filtered = filter_pathspecs(entries, &opts.pathspecs);
             print_diff(out, &repo.odb, &filtered, opts)?;
         }
@@ -362,7 +388,6 @@ fn process_stdin_commit(
             Some(&parent_tree),
             Some(&commit.tree),
             opts.recursive,
-            opts.show_trees,
         )?;
         let filtered = filter_pathspecs(entries, &opts.pathspecs);
         print_diff(out, &repo.odb, &filtered, opts)?;
@@ -390,7 +415,7 @@ fn process_stdin_two_trees(
     // Print both tree OIDs.
     writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
 
-    let entries = diff_maybe_recursive(&repo.odb, Some(oid1), Some(&oid2), opts.recursive, opts.show_trees)?;
+    let entries = diff_maybe_recursive(&repo.odb, Some(oid1), Some(&oid2), opts.recursive)?;
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
     print_diff(out, &repo.odb, &filtered, opts)
 }
@@ -398,17 +423,13 @@ fn process_stdin_two_trees(
 // ── Diff helpers ─────────────────────────────────────────────────────
 
 /// Compute the diff, recursing into sub-trees only when `recursive` is set.
-/// When `show_trees` is true, also emit DiffEntry for tree objects.
 fn diff_maybe_recursive(
     odb: &Odb,
     old_tree: Option<&ObjectId>,
     new_tree: Option<&ObjectId>,
     recursive: bool,
-    show_trees: bool,
 ) -> Result<Vec<DiffEntry>> {
-    if show_trees {
-        diff_trees_with_tree_entries(odb, old_tree, new_tree, "").map_err(Into::into)
-    } else if recursive {
+    if recursive {
         diff_trees(odb, old_tree, new_tree, "").map_err(Into::into)
     } else {
         diff_trees_toplevel(odb, old_tree, new_tree)
@@ -460,6 +481,7 @@ fn diff_trees_toplevel(
                             new_mode: "000000".to_owned(),
                             old_oid: o.oid,
                             new_oid: zero,
+                            score: None,
                         });
                         oi += 1;
                     }
@@ -472,6 +494,7 @@ fn diff_trees_toplevel(
                             new_mode: format!("{:06o}", n.mode),
                             old_oid: zero,
                             new_oid: n.oid,
+                            score: None,
                         });
                         ni += 1;
                     }
@@ -491,6 +514,7 @@ fn diff_trees_toplevel(
                                 new_mode: format!("{:06o}", n.mode),
                                 old_oid: o.oid,
                                 new_oid: n.oid,
+                                score: None,
                             });
                         }
                         oi += 1;
@@ -507,6 +531,7 @@ fn diff_trees_toplevel(
                     new_mode: "000000".to_owned(),
                     old_oid: o.oid,
                     new_oid: zero,
+                    score: None,
                 });
                 oi += 1;
             }
@@ -519,6 +544,7 @@ fn diff_trees_toplevel(
                     new_mode: format!("{:06o}", n.mode),
                     old_oid: zero,
                     new_oid: n.oid,
+                    score: None,
                 });
                 ni += 1;
             }
@@ -538,6 +564,15 @@ fn print_diff(
     entries: &[DiffEntry],
     opts: &Options,
 ) -> Result<()> {
+    // Apply rename detection if requested.
+    let owned_entries;
+    let entries = if let Some(threshold) = opts.find_renames {
+        owned_entries = detect_renames(odb, entries.to_vec(), threshold);
+        &owned_entries[..]
+    } else {
+        entries
+    };
+
     match opts.format {
         OutputFormat::Raw => {
             for entry in entries {
@@ -559,7 +594,21 @@ fn print_diff(
         }
         OutputFormat::NameStatus => {
             for entry in entries {
-                writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
+                match (entry.status, entry.score) {
+                    (DiffStatus::Renamed, Some(s)) => {
+                        writeln!(out, "R{:03}\t{}\t{}", s,
+                            entry.old_path.as_deref().unwrap_or(""),
+                            entry.new_path.as_deref().unwrap_or(""))?;
+                    }
+                    (DiffStatus::Copied, Some(s)) => {
+                        writeln!(out, "C{:03}\t{}\t{}", s,
+                            entry.old_path.as_deref().unwrap_or(""),
+                            entry.new_path.as_deref().unwrap_or(""))?;
+                    }
+                    _ => {
+                        writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
+                    }
+                }
             }
         }
     }
@@ -626,14 +675,32 @@ fn write_patch_entry(
             }
         }
         DiffStatus::Renamed => {
-            writeln!(out, "similarity index 100%")?;
+            let sim = entry.score.unwrap_or(100);
+            writeln!(out, "similarity index {sim}%")?;
             writeln!(out, "rename from {old_path}")?;
             writeln!(out, "rename to {new_path}")?;
+            if entry.old_oid != entry.new_oid {
+                writeln!(
+                    out,
+                    "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7]
+                )?;
+            }
         }
         DiffStatus::Copied => {
-            writeln!(out, "similarity index 100%")?;
+            let sim = entry.score.unwrap_or(100);
+            writeln!(out, "similarity index {sim}%")?;
             writeln!(out, "copy from {old_path}")?;
             writeln!(out, "copy to {new_path}")?;
+            if entry.old_oid != entry.new_oid {
+                writeln!(
+                    out,
+                    "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7]
+                )?;
+            }
         }
         DiffStatus::TypeChanged => {
             writeln!(out, "old mode {}", entry.old_mode)?;

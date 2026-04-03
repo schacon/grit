@@ -186,13 +186,14 @@ test_expect_success 'status still hides non-negated *.log files' '
 
 # ── git add respects .gitignore ─────────────────────────────────────────────
 
-test_expect_failure 'git add . does not stage ignored files' '
+test_expect_success 'git add . does not stage ignored files' '
 	cd repo &&
 	git add . &&
 	git diff --cached --name-only >../actual &&
 	! grep "\.o$" ../actual &&
 	! grep "\.a$" ../actual &&
-	! grep "\.log$" ../actual
+	! grep "error\.log" ../actual &&
+	! grep "debug\.log" ../actual
 '
 
 test_expect_success 'reset index for next tests' '
@@ -251,7 +252,7 @@ test_expect_success 'setup: directory with only ignored content' '
 	echo "archive" >onlyignored/lib.a
 '
 
-test_expect_failure 'status does not show directory containing only ignored files' '
+test_expect_success 'status does not show directory containing only ignored files' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	! grep "onlyignored" ../actual

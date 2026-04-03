@@ -156,6 +156,26 @@ fn collect_untracked_and_ignored(
             if collect_ignored {
                 ignored_files.push(path);
             }
+        } else if is_dir {
+            // For untracked directories, check if all files inside are ignored.
+            // Git hides directories whose entire contents are ignored.
+            let dir_path = work_tree.join(check_path);
+            let mut sub_files = Vec::new();
+            walk_for_untracked(&dir_path, work_tree, &tracked, &mut sub_files, true)?;
+            let all_ignored = !sub_files.is_empty() && sub_files.iter().all(|f| {
+                let f_is_dir = f.ends_with('/');
+                let f_check = if f_is_dir { &f[..f.len() - 1] } else { f.as_str() };
+                matcher.check_path(repo, Some(index), f_check, f_is_dir)
+                    .map(|(ig, _)| ig)
+                    .unwrap_or(false)
+            });
+            if all_ignored {
+                if collect_ignored {
+                    ignored_files.push(path);
+                }
+            } else {
+                untracked.push(path);
+            }
         } else {
             untracked.push(path);
         }
