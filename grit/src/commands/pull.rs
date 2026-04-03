@@ -112,6 +112,7 @@ pub fn run(args: Args) -> Result<()> {
             squash: false,
             abort: false,
             continue_merge: false,
+            strategy: None,
             quiet: args.quiet,
         };
         super::merge::run(merge_args)
