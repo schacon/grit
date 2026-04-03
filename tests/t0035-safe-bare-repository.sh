@@ -17,7 +17,7 @@ test_expect_success 'safe.bareRepository=all allows access' '
 	git -C bare-repo rev-parse --git-dir
 '
 
-test_expect_failure 'safe.bareRepository=explicit rejects implicit bare repo' '
+test_expect_success 'safe.bareRepository=explicit rejects implicit bare repo' '
 	git config --global safe.bareRepository explicit &&
 	test_must_fail git -C bare-repo rev-parse --git-dir 2>err &&
 	grep "cannot use bare repository" err

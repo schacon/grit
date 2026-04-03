@@ -753,6 +753,11 @@ fn run_no_index(args: &Args) -> Result<()> {
     let path_a = Path::new(paths[0].as_str());
     let path_b = Path::new(paths[1].as_str());
 
+    // If both paths are directories, diff all files recursively
+    if path_a.is_dir() && path_b.is_dir() {
+        return run_no_index_dirs(args, path_a, path_b);
+    }
+
     let data_a = std::fs::read(path_a)
         .with_context(|| format!("could not read '{}'", paths[0]))?;
     let data_b = std::fs::read(path_b)
@@ -858,6 +863,89 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
     std::process::exit(1);
+}
+
+/// Diff two directories recursively with --no-index.
+fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
+    use std::collections::BTreeSet;
+
+    fn collect_files(dir: &Path, prefix: &str, out: &mut BTreeSet<String>) -> Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let rel = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if entry.file_type()?.is_dir() {
+                collect_files(&entry.path(), &rel, out)?;
+            } else {
+                out.insert(rel);
+            }
+        }
+        Ok(())
+    }
+
+    let mut files_a = BTreeSet::new();
+    let mut files_b = BTreeSet::new();
+    collect_files(dir_a, "", &mut files_a)?;
+    collect_files(dir_b, "", &mut files_b)?;
+
+    let all_files: BTreeSet<_> = files_a.iter().chain(files_b.iter()).cloned().collect();
+    let mut has_diff = false;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let context_lines = args.unified.unwrap_or(3);
+
+    for rel in &all_files {
+        let fa = dir_a.join(rel);
+        let fb = dir_b.join(rel);
+        let data_a = if fa.is_file() { std::fs::read(&fa).ok() } else { None };
+        let data_b = if fb.is_file() { std::fs::read(&fb).ok() } else { None };
+
+        match (&data_a, &data_b) {
+            (Some(a), Some(b)) if a == b => continue,
+            _ => {}
+        }
+
+        has_diff = true;
+        let _label_a = format!("{}/{}", dir_a.display(), rel);
+        let label_b = format!("{}/{}", dir_b.display(), rel);
+
+        if args.name_only {
+            writeln!(out, "{}", label_b)?;
+            continue;
+        }
+        if args.name_status {
+            let status = match (&data_a, &data_b) {
+                (None, Some(_)) => "A",
+                (Some(_), None) => "D",
+                _ => "M",
+            };
+            writeln!(out, "{}\t{}", status, label_b)?;
+            continue;
+        }
+
+        let text_a = data_a.as_ref().map(|d| String::from_utf8_lossy(d).to_string()).unwrap_or_default();
+        let text_b = data_b.as_ref().map(|d| String::from_utf8_lossy(d).to_string()).unwrap_or_default();
+
+        let old_label = if data_a.is_some() { format!("a/{}", rel) } else { "/dev/null".to_string() };
+        let new_label = if data_b.is_some() { format!("b/{}", rel) } else { "/dev/null".to_string() };
+        writeln!(out, "diff --git a/{} b/{}", rel, rel)?;
+        if data_a.is_none() {
+            writeln!(out, "new file mode 100644")?;
+        } else if data_b.is_none() {
+            writeln!(out, "deleted file mode 100644")?;
+        }
+        let patch = grit_lib::diff::unified_diff(&text_a, &text_b, &old_label, &new_label, context_lines);
+        write!(out, "{}", patch)?;
+    }
+
+    if has_diff {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// If `--` is present, everything before is revisions, everything after is paths.
