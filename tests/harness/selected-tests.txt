@@ -1292,3 +1292,4 @@ tests/t4069-remerge-diff.sh
 tests/t6414-merge-rename-nocruft.sh
 tests/t6415-merge-dir-to-symlink.sh
 tests/t6416-recursive-corner-cases.sh
+tests/t6417-merge-ours-theirs.sh
