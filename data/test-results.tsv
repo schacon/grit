@@ -7989,92 +7989,92 @@ t4140-apply-ita::apply-deletion-patch-to-ita-path-index	t4140-apply-ita	apply de
 t4140-apply-ita::apply-creation-patch-to-existing-index-with-n	t4140-apply-ita	apply creation patch to existing index with -N	apply	pass
 t4140-apply-ita::apply-complex-patch-with-n	t4140-apply-ita	apply complex patch with -N	apply	pass
 t4141-apply-too-large::git-apply-rejects-patches-that-are-too-large	t4141-apply-too-large	git apply rejects patches that are too large	apply	pass
-t4150-am::setup-messages	t4150-am	setup: messages	am	pass
-t4150-am::am-applies-patch-correctly	t4150-am	am applies patch correctly	am	pass
-t4150-am::am-fails-if-index-is-dirty	t4150-am	am fails if index is dirty	am	pass
-t4150-am::am-applies-patch-e-mail-not-in-a-mbox	t4150-am	am applies patch e-mail not in a mbox	am	pass
-t4150-am::am-applies-patch-e-mail-not-in-a-mbox-with-crlf	t4150-am	am applies patch e-mail not in a mbox with CRLF	am	pass
-t4150-am::am-applies-patch-e-mail-with-preceding-whitespace	t4150-am	am applies patch e-mail with preceding whitespace	am	pass
-t4150-am::am-applies-stgit-patch	t4150-am	am applies stgit patch	am	pass
-t4150-am::am-patch-format-stgit-applies-stgit-patch	t4150-am	am --patch-format=stgit applies stgit patch	am	pass
-t4150-am::am-applies-stgit-series	t4150-am	am applies stgit series	am	pass
-t4150-am::am-applies-hg-patch	t4150-am	am applies hg patch	am	pass
-t4150-am::am-patch-format-hg-applies-hg-patch	t4150-am	am --patch-format=hg applies hg patch	am	pass
-t4150-am::am-with-applypatch-msg-hook	t4150-am	am with applypatch-msg hook	am	pass
-t4150-am::am-with-failing-applypatch-msg-hook	t4150-am	am with failing applypatch-msg hook	am	pass
-t4150-am::am-with-failing-applypatch-msg-hook-no-verify	t4150-am	am with failing applypatch-msg hook (no verify)	am	pass
-t4150-am::am-with-pre-applypatch-hook	t4150-am	am with pre-applypatch hook	am	pass
-t4150-am::am-with-failing-pre-applypatch-hook	t4150-am	am with failing pre-applypatch hook	am	pass
-t4150-am::am-with-failing-pre-applypatch-hook-no-verify	t4150-am	am with failing pre-applypatch hook (no verify)	am	pass
-t4150-am::am-with-post-applypatch-hook	t4150-am	am with post-applypatch hook	am	pass
-t4150-am::am-with-failing-post-applypatch-hook	t4150-am	am with failing post-applypatch hook	am	pass
-t4150-am::am-scissors-cuts-the-message-at-the-scissors-line	t4150-am	am --scissors cuts the message at the scissors line	am	pass
-t4150-am::am-no-scissors-overrides-mailinfo-scissors	t4150-am	am --no-scissors overrides mailinfo.scissors	am	pass
-t4150-am::setup-new-author-and-committer	t4150-am	setup: new author and committer	am	pass
-t4150-am::am-changes-committer-and-keeps-author	t4150-am	am changes committer and keeps author	am	pass
-t4150-am::am-signoff-adds-signed-off-by-line	t4150-am	am --signoff adds Signed-off-by: line	am	pass
-t4150-am::am-stays-in-branch	t4150-am	am stays in branch	am	pass
-t4150-am::am-signoff-does-not-add-signed-off-by-line-if-already-there	t4150-am	am --signoff does not add Signed-off-by: line if already there	am	pass
-t4150-am::am-signoff-adds-signed-off-by-if-another-author-is-preset	t4150-am	am --signoff adds Signed-off-by: if another author is preset	am	pass
-t4150-am::am-signoff-duplicates-signed-off-by-if-it-is-not-the-last-one	t4150-am	am --signoff duplicates Signed-off-by: if it is not the last one	am	pass
-t4150-am::am-without-keep-removes-re-and-patch-stuff	t4150-am	am without --keep removes Re: and [PATCH] stuff	am	pass
-t4150-am::am-keep-really-keeps-the-subject	t4150-am	am --keep really keeps the subject	am	pass
-t4150-am::am-keep-non-patch-really-keeps-the-non-patch-part	t4150-am	am --keep-non-patch really keeps the non-patch part	am	pass
-t4150-am::setup-am-3	t4150-am	setup am -3	am	pass
-t4150-am::am-3-falls-back-to-3-way-merge	t4150-am	am -3 falls back to 3-way merge	am	pass
-t4150-am::am-3-p0-can-read-no-prefix-patch	t4150-am	am -3 -p0 can read --no-prefix patch	am	pass
-t4150-am::am-with-config-am-threeway-falls-back-to-3-way-merge	t4150-am	am with config am.threeWay falls back to 3-way merge	am	pass
-t4150-am::am-with-config-am-threeway-overridden-by-no-3way	t4150-am	am with config am.threeWay overridden by --no-3way	am	pass
-t4150-am::am-can-rename-a-file	t4150-am	am can rename a file	am	pass
-t4150-am::am-3-can-rename-a-file	t4150-am	am -3 can rename a file	am	pass
-t4150-am::am-3-can-rename-a-file-after-falling-back-to-3-way-merge	t4150-am	am -3 can rename a file after falling back to 3-way merge	am	pass
-t4150-am::am-3-q-is-quiet	t4150-am	am -3 -q is quiet	am	pass
-t4150-am::am-pauses-on-conflict	t4150-am	am pauses on conflict	am	pass
-t4150-am::am-show-current-patch	t4150-am	am --show-current-patch	am	pass
-t4150-am::am-show-current-patch-raw	t4150-am	am --show-current-patch=raw	am	pass
-t4150-am::am-show-current-patch-diff	t4150-am	am --show-current-patch=diff	am	pass
-t4150-am::am-accepts-repeated-show-current-patch	t4150-am	am accepts repeated --show-current-patch	am	pass
-t4150-am::am-detects-incompatible-show-current-patch	t4150-am	am detects incompatible --show-current-patch	am	pass
-t4150-am::am-skip-works	t4150-am	am --skip works	am	pass
-t4150-am::am-abort-removes-a-stray-directory	t4150-am	am --abort removes a stray directory	am	pass
-t4150-am::am-refuses-patches-when-paused	t4150-am	am refuses patches when paused	am	pass
-t4150-am::am-resolved-works	t4150-am	am --resolved works	am	pass
-t4150-am::am-resolved-fails-if-index-has-no-changes	t4150-am	am --resolved fails if index has no changes	am	pass
-t4150-am::am-resolved-fails-if-index-has-unmerged-entries	t4150-am	am --resolved fails if index has unmerged entries	am	pass
-t4150-am::am-takes-patches-from-a-pine-mailbox	t4150-am	am takes patches from a Pine mailbox	am	pass
-t4150-am::am-fails-on-mail-without-patch	t4150-am	am fails on mail without patch	am	pass
-t4150-am::am-fails-on-empty-patch	t4150-am	am fails on empty patch	am	pass
-t4150-am::am-works-from-stdin-in-subdirectory	t4150-am	am works from stdin in subdirectory	am	pass
-t4150-am::am-works-from-file-relative-path-given-in-subdirectory	t4150-am	am works from file (relative path given) in subdirectory	am	pass
-t4150-am::am-works-from-file-absolute-path-given-in-subdirectory	t4150-am	am works from file (absolute path given) in subdirectory	am	pass
-t4150-am::am-committer-date-is-author-date	t4150-am	am --committer-date-is-author-date	am	pass
-t4150-am::am-without-committer-date-is-author-date	t4150-am	am without --committer-date-is-author-date	am	pass
-t4150-am::am-ignore-date	t4150-am	am --ignore-date	am	pass
-t4150-am::am-into-an-unborn-branch	t4150-am	am into an unborn branch	am	pass
-t4150-am::am-newline-in-subject	t4150-am	am newline in subject	am	pass
-t4150-am::am-q-is-quiet	t4150-am	am -q is quiet	am	pass
-t4150-am::am-empty-file-does-not-infloop	t4150-am	am empty-file does not infloop	am	pass
-t4150-am::am-message-id-really-adds-the-message-id	t4150-am	am --message-id really adds the message id	am	pass
-t4150-am::am-messageid-really-adds-the-message-id	t4150-am	am.messageid really adds the message id	am	pass
-t4150-am::am-message-id-s-signs-off-after-the-message-id	t4150-am	am --message-id -s signs off after the message id	am	pass
-t4150-am::am-3-works-with-rerere	t4150-am	am -3 works with rerere	am	pass
-t4150-am::am-s-unexpected-trailer-block	t4150-am	am -s unexpected trailer block	am	pass
-t4150-am::am-patch-format-mboxrd-handles-mboxrd	t4150-am	am --patch-format=mboxrd handles mboxrd	am	pass
-t4150-am::am-works-with-multi-line-in-body-headers	t4150-am	am works with multi-line in-body headers	am	pass
-t4150-am::am-quit-keeps-head-where-it-is	t4150-am	am --quit keeps HEAD where it is	am	pass
-t4150-am::am-and-gitattibutes	t4150-am	am and .gitattibutes	am	pass
-t4150-am::apply-binary-blob-in-partial-clone	t4150-am	apply binary blob in partial clone	am	pass
-t4150-am::an-empty-input-file-is-error-regardless-of-empty-option	t4150-am	an empty input file is error regardless of --empty option	am	pass
-t4150-am::invalid-when-passing-the-empty-option-alone	t4150-am	invalid when passing the --empty option alone	am	pass
-t4150-am::a-message-without-a-patch-is-an-error-default	t4150-am	a message without a patch is an error (default)	am	pass
-t4150-am::a-message-without-a-patch-is-an-error-where-an-explicit-empty-stop-is-given	t4150-am	a message without a patch is an error where an explicit "--empty=stop" is given	am	pass
-t4150-am::a-message-without-a-patch-will-be-skipped-when-empty-drop-is-given	t4150-am	a message without a patch will be skipped when "--empty=drop" is given	am	pass
-t4150-am::record-as-an-empty-commit-when-meeting-e-mail-message-that-lacks-a-patch	t4150-am	record as an empty commit when meeting e-mail message that lacks a patch	am	pass
-t4150-am::skip-an-empty-patch-in-the-middle-of-an-am-session	t4150-am	skip an empty patch in the middle of an am session	am	pass
-t4150-am::record-an-empty-patch-as-an-empty-commit-in-the-middle-of-an-am-session	t4150-am	record an empty patch as an empty commit in the middle of an am session	am	pass
-t4150-am::create-an-non-empty-commit-when-the-index-is-changed-though-allow-empty-is-given	t4150-am	create an non-empty commit when the index IS changed though "--allow-empty" is given	am	pass
-t4150-am::cannot-create-empty-commits-when-there-is-a-clean-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is a clean index due to merge conflicts	am	pass
-t4150-am::cannot-create-empty-commits-when-there-is-unmerged-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is unmerged index due to merge conflicts	am	pass
+t4150-am::setup-messages	t4150-am	setup: messages	am	partial
+t4150-am::am-applies-patch-correctly	t4150-am	am applies patch correctly	am	partial
+t4150-am::am-fails-if-index-is-dirty	t4150-am	am fails if index is dirty	am	partial
+t4150-am::am-applies-patch-e-mail-not-in-a-mbox	t4150-am	am applies patch e-mail not in a mbox	am	partial
+t4150-am::am-applies-patch-e-mail-not-in-a-mbox-with-crlf	t4150-am	am applies patch e-mail not in a mbox with CRLF	am	partial
+t4150-am::am-applies-patch-e-mail-with-preceding-whitespace	t4150-am	am applies patch e-mail with preceding whitespace	am	partial
+t4150-am::am-applies-stgit-patch	t4150-am	am applies stgit patch	am	partial
+t4150-am::am-patch-format-stgit-applies-stgit-patch	t4150-am	am --patch-format=stgit applies stgit patch	am	partial
+t4150-am::am-applies-stgit-series	t4150-am	am applies stgit series	am	partial
+t4150-am::am-applies-hg-patch	t4150-am	am applies hg patch	am	partial
+t4150-am::am-patch-format-hg-applies-hg-patch	t4150-am	am --patch-format=hg applies hg patch	am	partial
+t4150-am::am-with-applypatch-msg-hook	t4150-am	am with applypatch-msg hook	am	partial
+t4150-am::am-with-failing-applypatch-msg-hook	t4150-am	am with failing applypatch-msg hook	am	partial
+t4150-am::am-with-failing-applypatch-msg-hook-no-verify	t4150-am	am with failing applypatch-msg hook (no verify)	am	partial
+t4150-am::am-with-pre-applypatch-hook	t4150-am	am with pre-applypatch hook	am	partial
+t4150-am::am-with-failing-pre-applypatch-hook	t4150-am	am with failing pre-applypatch hook	am	partial
+t4150-am::am-with-failing-pre-applypatch-hook-no-verify	t4150-am	am with failing pre-applypatch hook (no verify)	am	partial
+t4150-am::am-with-post-applypatch-hook	t4150-am	am with post-applypatch hook	am	partial
+t4150-am::am-with-failing-post-applypatch-hook	t4150-am	am with failing post-applypatch hook	am	partial
+t4150-am::am-scissors-cuts-the-message-at-the-scissors-line	t4150-am	am --scissors cuts the message at the scissors line	am	partial
+t4150-am::am-no-scissors-overrides-mailinfo-scissors	t4150-am	am --no-scissors overrides mailinfo.scissors	am	partial
+t4150-am::setup-new-author-and-committer	t4150-am	setup: new author and committer	am	partial
+t4150-am::am-changes-committer-and-keeps-author	t4150-am	am changes committer and keeps author	am	partial
+t4150-am::am-signoff-adds-signed-off-by-line	t4150-am	am --signoff adds Signed-off-by: line	am	partial
+t4150-am::am-stays-in-branch	t4150-am	am stays in branch	am	partial
+t4150-am::am-signoff-does-not-add-signed-off-by-line-if-already-there	t4150-am	am --signoff does not add Signed-off-by: line if already there	am	partial
+t4150-am::am-signoff-adds-signed-off-by-if-another-author-is-preset	t4150-am	am --signoff adds Signed-off-by: if another author is preset	am	partial
+t4150-am::am-signoff-duplicates-signed-off-by-if-it-is-not-the-last-one	t4150-am	am --signoff duplicates Signed-off-by: if it is not the last one	am	partial
+t4150-am::am-without-keep-removes-re-and-patch-stuff	t4150-am	am without --keep removes Re: and [PATCH] stuff	am	partial
+t4150-am::am-keep-really-keeps-the-subject	t4150-am	am --keep really keeps the subject	am	partial
+t4150-am::am-keep-non-patch-really-keeps-the-non-patch-part	t4150-am	am --keep-non-patch really keeps the non-patch part	am	partial
+t4150-am::setup-am-3	t4150-am	setup am -3	am	partial
+t4150-am::am-3-falls-back-to-3-way-merge	t4150-am	am -3 falls back to 3-way merge	am	partial
+t4150-am::am-3-p0-can-read-no-prefix-patch	t4150-am	am -3 -p0 can read --no-prefix patch	am	partial
+t4150-am::am-with-config-am-threeway-falls-back-to-3-way-merge	t4150-am	am with config am.threeWay falls back to 3-way merge	am	partial
+t4150-am::am-with-config-am-threeway-overridden-by-no-3way	t4150-am	am with config am.threeWay overridden by --no-3way	am	partial
+t4150-am::am-can-rename-a-file	t4150-am	am can rename a file	am	partial
+t4150-am::am-3-can-rename-a-file	t4150-am	am -3 can rename a file	am	partial
+t4150-am::am-3-can-rename-a-file-after-falling-back-to-3-way-merge	t4150-am	am -3 can rename a file after falling back to 3-way merge	am	partial
+t4150-am::am-3-q-is-quiet	t4150-am	am -3 -q is quiet	am	partial
+t4150-am::am-pauses-on-conflict	t4150-am	am pauses on conflict	am	partial
+t4150-am::am-show-current-patch	t4150-am	am --show-current-patch	am	partial
+t4150-am::am-show-current-patch-raw	t4150-am	am --show-current-patch=raw	am	partial
+t4150-am::am-show-current-patch-diff	t4150-am	am --show-current-patch=diff	am	partial
+t4150-am::am-accepts-repeated-show-current-patch	t4150-am	am accepts repeated --show-current-patch	am	partial
+t4150-am::am-detects-incompatible-show-current-patch	t4150-am	am detects incompatible --show-current-patch	am	partial
+t4150-am::am-skip-works	t4150-am	am --skip works	am	partial
+t4150-am::am-abort-removes-a-stray-directory	t4150-am	am --abort removes a stray directory	am	partial
+t4150-am::am-refuses-patches-when-paused	t4150-am	am refuses patches when paused	am	partial
+t4150-am::am-resolved-works	t4150-am	am --resolved works	am	partial
+t4150-am::am-resolved-fails-if-index-has-no-changes	t4150-am	am --resolved fails if index has no changes	am	partial
+t4150-am::am-resolved-fails-if-index-has-unmerged-entries	t4150-am	am --resolved fails if index has unmerged entries	am	partial
+t4150-am::am-takes-patches-from-a-pine-mailbox	t4150-am	am takes patches from a Pine mailbox	am	partial
+t4150-am::am-fails-on-mail-without-patch	t4150-am	am fails on mail without patch	am	partial
+t4150-am::am-fails-on-empty-patch	t4150-am	am fails on empty patch	am	partial
+t4150-am::am-works-from-stdin-in-subdirectory	t4150-am	am works from stdin in subdirectory	am	partial
+t4150-am::am-works-from-file-relative-path-given-in-subdirectory	t4150-am	am works from file (relative path given) in subdirectory	am	partial
+t4150-am::am-works-from-file-absolute-path-given-in-subdirectory	t4150-am	am works from file (absolute path given) in subdirectory	am	partial
+t4150-am::am-committer-date-is-author-date	t4150-am	am --committer-date-is-author-date	am	partial
+t4150-am::am-without-committer-date-is-author-date	t4150-am	am without --committer-date-is-author-date	am	partial
+t4150-am::am-ignore-date	t4150-am	am --ignore-date	am	partial
+t4150-am::am-into-an-unborn-branch	t4150-am	am into an unborn branch	am	partial
+t4150-am::am-newline-in-subject	t4150-am	am newline in subject	am	partial
+t4150-am::am-q-is-quiet	t4150-am	am -q is quiet	am	partial
+t4150-am::am-empty-file-does-not-infloop	t4150-am	am empty-file does not infloop	am	partial
+t4150-am::am-message-id-really-adds-the-message-id	t4150-am	am --message-id really adds the message id	am	partial
+t4150-am::am-messageid-really-adds-the-message-id	t4150-am	am.messageid really adds the message id	am	partial
+t4150-am::am-message-id-s-signs-off-after-the-message-id	t4150-am	am --message-id -s signs off after the message id	am	partial
+t4150-am::am-3-works-with-rerere	t4150-am	am -3 works with rerere	am	partial
+t4150-am::am-s-unexpected-trailer-block	t4150-am	am -s unexpected trailer block	am	partial
+t4150-am::am-patch-format-mboxrd-handles-mboxrd	t4150-am	am --patch-format=mboxrd handles mboxrd	am	partial
+t4150-am::am-works-with-multi-line-in-body-headers	t4150-am	am works with multi-line in-body headers	am	partial
+t4150-am::am-quit-keeps-head-where-it-is	t4150-am	am --quit keeps HEAD where it is	am	partial
+t4150-am::am-and-gitattibutes	t4150-am	am and .gitattibutes	am	partial
+t4150-am::apply-binary-blob-in-partial-clone	t4150-am	apply binary blob in partial clone	am	partial
+t4150-am::an-empty-input-file-is-error-regardless-of-empty-option	t4150-am	an empty input file is error regardless of --empty option	am	partial
+t4150-am::invalid-when-passing-the-empty-option-alone	t4150-am	invalid when passing the --empty option alone	am	partial
+t4150-am::a-message-without-a-patch-is-an-error-default	t4150-am	a message without a patch is an error (default)	am	partial
+t4150-am::a-message-without-a-patch-is-an-error-where-an-explicit-empty-stop-is-given	t4150-am	a message without a patch is an error where an explicit "--empty=stop" is given	am	partial
+t4150-am::a-message-without-a-patch-will-be-skipped-when-empty-drop-is-given	t4150-am	a message without a patch will be skipped when "--empty=drop" is given	am	partial
+t4150-am::record-as-an-empty-commit-when-meeting-e-mail-message-that-lacks-a-patch	t4150-am	record as an empty commit when meeting e-mail message that lacks a patch	am	partial
+t4150-am::skip-an-empty-patch-in-the-middle-of-an-am-session	t4150-am	skip an empty patch in the middle of an am session	am	partial
+t4150-am::record-an-empty-patch-as-an-empty-commit-in-the-middle-of-an-am-session	t4150-am	record an empty patch as an empty commit in the middle of an am session	am	partial
+t4150-am::create-an-non-empty-commit-when-the-index-is-changed-though-allow-empty-is-given	t4150-am	create an non-empty commit when the index IS changed though "--allow-empty" is given	am	partial
+t4150-am::cannot-create-empty-commits-when-there-is-a-clean-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is a clean index due to merge conflicts	am	partial
+t4150-am::cannot-create-empty-commits-when-there-is-unmerged-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is unmerged index due to merge conflicts	am	partial
 t4151-am-abort::am-3-skip-removes-otherfile-4	t4151-am-abort	am -3 --skip removes otherfile-4	am	pass
 t4151-am-abort::am-3-abort-removes-otherfile-4	t4151-am-abort	am -3 --abort removes otherfile-4	am	pass
 t4151-am-abort::am-abort-will-keep-the-local-commits-intact	t4151-am-abort	am --abort will keep the local commits intact	am	pass

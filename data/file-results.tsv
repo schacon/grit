@@ -466,7 +466,7 @@ t4138-apply-ws-expansion	yes	4	4	0	ok
 t4139-apply-escape	yes	5	5	0	ok
 t4140-apply-ita	yes	4	4	0	ok
 t4141-apply-too-large	yes	4	4	0	ok
-t4150-am	yes	87	87	0	ok
+t4150-am	yes	87	83	4	ok
 t4151-am-abort	yes	8	8	0	ok
 t4152-am-subjects	yes	5	5	0	ok
 t4153-am-resume-override-opts	yes	4	4	0	ok
