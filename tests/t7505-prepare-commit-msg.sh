@@ -249,7 +249,7 @@ test_expect_success 'commit --author overrides author' '
 test_expect_success 'commit --author does not affect committer' '
 	cd repo &&
 	git log -n1 --format="%cn <%ce>" >actual &&
-	echo "A U Thor <author@example.com>" >expect &&
+	echo "C O Mitter <committer@example.com>" >expect &&
 	test_cmp expect actual
 '
 

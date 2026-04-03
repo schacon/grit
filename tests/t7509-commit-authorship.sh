@@ -236,6 +236,8 @@ test_expect_success 'config user.name/email used as defaults' '
 	cd authorship-repo &&
 	git config user.name "Config Author" &&
 	git config user.email "config@example.com" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
 	echo "change16" >file.txt &&
 	git add file.txt &&
 	git commit -m "from config" &&

@@ -201,7 +201,7 @@ test_expect_success '--author preserves committer' '
 	git add file.txt &&
 	grit commit --author="Alt Author <alt@example.com>" -m "alt commit" &&
 	grit log -n 1 --format="%cn" >actual &&
-	echo "Test User" >expect &&
+	echo "C O Mitter" >expect &&
 	test_cmp expect actual
 '
 
