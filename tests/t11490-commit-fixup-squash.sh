@@ -17,6 +17,10 @@ test_expect_success 'setup: create repo with history' '
 	cd repo &&
 	"$REAL_GIT" config user.name "Test User" &&
 	"$REAL_GIT" config user.email "test@example.com" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo a >a.txt &&
 	"$REAL_GIT" add a.txt &&
 	"$REAL_GIT" commit -m "add a" &&
@@ -218,6 +222,8 @@ test_expect_success 'commit -a with multiple modified files' '
 
 test_expect_success 'commit --author sets author name' '
 	cd repo &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo auth >auth.txt &&
 	git add auth.txt &&
 	git commit --author="Other Person <other@example.com>" -m "by other" &&

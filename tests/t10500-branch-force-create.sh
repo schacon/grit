@@ -13,6 +13,10 @@ test_expect_success 'setup: repo with multiple commits' '
 	cd repo &&
 	grit config user.email "test@example.com" &&
 	grit config user.name "Test User" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "first" >file.txt &&
 	grit add file.txt &&
 	test_tick &&
@@ -182,7 +186,7 @@ test_expect_success 'branch -c copies branch' '
 	cd repo &&
 	parent=$(grit rev-parse HEAD~1) &&
 	grit branch copy-src "$parent" &&
-	grit branch -c copy-dst copy-src &&
+	grit branch -c copy-src copy-dst &&
 	grit rev-parse copy-src >src_sha &&
 	grit rev-parse copy-dst >dst_sha &&
 	test_cmp src_sha dst_sha
@@ -190,7 +194,7 @@ test_expect_success 'branch -c copies branch' '
 
 test_expect_success 'branch --copy copies branch' '
 	cd repo &&
-	grit branch --copy copy-dst2 copy-src &&
+	grit branch --copy copy-src copy-dst2 &&
 	grit rev-parse copy-dst2 >actual &&
 	grit rev-parse copy-src >expect &&
 	test_cmp expect actual

@@ -17,6 +17,10 @@ test_expect_success 'setup: create repo with multiple branches' '
 	cd repo &&
 	"$REAL_GIT" config user.name "Test User" &&
 	"$REAL_GIT" config user.email "test@example.com" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "base" >file.txt &&
 	"$REAL_GIT" add file.txt &&
 	"$REAL_GIT" commit -m "initial commit" &&
@@ -117,6 +121,8 @@ test_expect_success 'cherry-pick --signoff: adds Signed-off-by line' '
 
 test_expect_success 'cherry-pick --signoff: includes committer identity' '
 	cd repo &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	clean_checkout test-signoff2 base &&
 	PICK=$("$REAL_GIT" rev-parse feature~2) &&
 	"$GUST_BIN" cherry-pick --signoff "$PICK" &&
@@ -323,6 +329,8 @@ test_expect_success 'cherry-pick -n: stages but no commit' '
 
 test_expect_success 'cherry-pick --signoff: uses current committer name' '
 	cd repo &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	clean_checkout test-signoff-name main &&
 	"$REAL_GIT" config user.name "Different User" &&
 	"$REAL_GIT" config user.email "different@example.com" &&

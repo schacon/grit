@@ -17,6 +17,10 @@ test_expect_success 'setup: create repository with commits' '
 	cd repo &&
 	"$REAL_GIT" config user.name "Test User" &&
 	"$REAL_GIT" config user.email "test@example.com" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "first" >file.txt &&
 	"$REAL_GIT" add . &&
 	"$REAL_GIT" commit -m "first commit" &&
@@ -67,6 +71,8 @@ test_expect_success 'lightweight tag matches real git rev-parse' '
 
 test_expect_success 'tag -a creates annotated tag' '
 	cd repo &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	grit tag -a -m "Release 2.0" v2.0 &&
 	grit tag -l >actual &&
 	grep "v2.0" actual

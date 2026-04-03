@@ -17,6 +17,10 @@ test_expect_success 'setup: create repo with branches and merges' '
 	cd repo &&
 	"$REAL_GIT" config user.name "Test User" &&
 	"$REAL_GIT" config user.email "test@example.com" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "initial" >file.txt &&
 	"$REAL_GIT" add file.txt &&
 	"$REAL_GIT" commit -m "initial commit" &&

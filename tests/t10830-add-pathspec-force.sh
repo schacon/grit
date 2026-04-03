@@ -16,6 +16,10 @@ test_expect_success 'setup repository' '
 	cd repo &&
 	git config user.email "test@test.com" &&
 	git config user.name "Test" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "a" >a.txt &&
 	echo "b" >b.txt &&
 	mkdir -p sub/deep &&
@@ -93,12 +97,10 @@ test_expect_success 'setup gitignore' '
 	grit commit -m "add gitignore"
 '
 
-test_expect_success 'add ignored file succeeds (added to index)' '
+test_expect_success 'add ignored file is rejected without --force' '
 	cd repo &&
 	echo "log data" >test.log &&
-	grit add test.log &&
-	grit ls-files >out &&
-	grep "test.log" out
+	test_must_fail grit add test.log
 '
 
 test_expect_success 'add ignored file with --force succeeds' '

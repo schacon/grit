@@ -15,6 +15,10 @@ test_expect_success 'setup: init repo with config' '
 	git init &&
 	git config user.email "test@test.com" &&
 	git config user.name "Test User" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	git add .bin &&
 	git commit -m "add bin wrappers"
 '
@@ -169,11 +173,11 @@ test_expect_success 'add gitignore and commit' '
 	git commit -m "add gitignore"
 '
 
-test_expect_success 'status shows empty untracked directory' '
+test_expect_success 'status does not show empty untracked directory' '
 	mkdir -p emptydir &&
 	rm -f "$TOUTDIR/out" &&
 	git status -s >"$TOUTDIR/out" &&
-	grep -q "emptydir" "$TOUTDIR/out"
+	! grep -q "emptydir" "$TOUTDIR/out"
 '
 
 test_expect_success 'status with file inside directory' '

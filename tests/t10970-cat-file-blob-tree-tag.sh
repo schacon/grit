@@ -17,6 +17,10 @@ test_expect_success 'setup: create repo with history and tag' '
 	cd repo &&
 	"$REAL_GIT" config user.name "Test User" &&
 	"$REAL_GIT" config user.email "test@example.com" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "hello" >file.txt &&
 	mkdir -p sub &&
 	echo "nested" >sub/inner.txt &&

@@ -12,6 +12,10 @@ test_expect_success 'setup: init repo with files' '
 	cd repo &&
 	git config user.email "test@test.com" &&
 	git config user.name "Test" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "a" >file_a.txt &&
 	echo "b" >file_b.txt &&
 	echo "c" >file_c.txt &&
@@ -236,7 +240,7 @@ test_expect_success 'rm -C changes directory context' '
 	grit add cdir/cf.txt &&
 	grit commit -m "add cdir" &&
 	cd .. &&
-	grit rm -C repo cdir/cf.txt &&
+	grit -C repo rm cdir/cf.txt &&
 	cd repo &&
 	! grit ls-files --error-unmatch cdir/cf.txt 2>/dev/null
 '

@@ -244,11 +244,11 @@ test_expect_success 'cat-file -s second commit is larger than first (has parent)
 	test "$size2" -gt "$size1"
 '
 
-test_expect_success 'cat-file -e rejects truncated OID on command line' '
+test_expect_success 'cat-file -e accepts abbreviated OID on command line' '
 	cd repo &&
 	blob=$(cat ../blob_oid) &&
 	short=$(echo "$blob" | cut -c1-7) &&
-	test_must_fail grit cat-file -e "$short" 2>err
+	grit cat-file -e "$short"
 '
 
 test_expect_success 'cat-file with no flags and no args fails' '

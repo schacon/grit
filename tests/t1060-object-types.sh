@@ -15,6 +15,10 @@ test_expect_success 'setup: init repo and create initial commit' '
 	cd repo &&
 	git config user.name "Test User" &&
 	git config user.email "test@example.com" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "Hello World" >hello.txt &&
 	mkdir -p sub &&
 	echo "sub content" >sub/file.txt &&
@@ -24,6 +28,10 @@ test_expect_success 'setup: init repo and create initial commit' '
 
 test_expect_success 'setup: record object OIDs' '
 	cd repo &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	blob_oid=$(git hash-object hello.txt) &&
 	echo "$blob_oid" >../blob_oid &&
 	tree_oid=$(git rev-parse HEAD^{tree}) &&
