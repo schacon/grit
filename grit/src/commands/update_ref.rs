@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{self, Read};
 
+use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::{append_reflog, delete_ref, read_symbolic_ref, resolve_ref, write_ref};
 use grit_lib::repo::Repository;
@@ -76,6 +77,9 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let old_oid = resolve_ref(&repo.git_dir, &target_refname).unwrap_or_else(|_| zero_oid());
+
+    // Run reference-transaction hook
+    run_ref_transaction_hook(&repo, &old_oid, &new_oid, &target_refname)?;
 
     write_ref(&repo.git_dir, &target_refname, &new_oid).context("writing ref")?;
 
@@ -344,4 +348,33 @@ fn zero_oid() -> ObjectId {
         Ok(oid) => oid,
         Err(err) => panic!("20-byte zero OID should always be valid: {err}"),
     }
+}
+
+/// Run the reference-transaction hook through three phases: preparing, prepared, committed.
+/// If the hook fails during "preparing", the update is aborted.
+fn run_ref_transaction_hook(
+    repo: &Repository,
+    old_oid: &ObjectId,
+    new_oid: &ObjectId,
+    refname: &str,
+) -> Result<()> {
+    let stdin_data = format!("{} {} {}\n", old_oid.to_hex(), new_oid.to_hex(), refname);
+    let stdin_bytes = stdin_data.as_bytes();
+
+    // Phase 1: preparing — abort if hook fails
+    match run_hook(repo, "reference-transaction", &["preparing"], Some(stdin_bytes)) {
+        HookResult::Failed(code) => {
+            bail!("reference-transaction hook (preparing) exited with status {code}");
+        }
+        HookResult::NotFound => return Ok(()),
+        HookResult::Success => {}
+    }
+
+    // Phase 2: prepared — informational (don't abort)
+    let _ = run_hook(repo, "reference-transaction", &["prepared"], Some(stdin_bytes));
+
+    // Phase 3: committed — informational (don't abort)
+    let _ = run_hook(repo, "reference-transaction", &["committed"], Some(stdin_bytes));
+
+    Ok(())
 }

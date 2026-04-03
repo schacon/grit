@@ -20,6 +20,7 @@ pub mod config;
 pub mod diff;
 pub mod error;
 pub mod fmt_merge_msg;
+pub mod hooks;
 pub mod ignore;
 pub mod index;
 pub mod ls_remote;
