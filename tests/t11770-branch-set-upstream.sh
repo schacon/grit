@@ -268,7 +268,7 @@ test_expect_success 'branch -l is alias for --list' '
 	grep "develop" actual
 '
 
-test_expect_failure 'branch --list with pattern filters' '
+test_expect_success 'branch --list with pattern filters' '
 	git -C "$R" branch --list "multi-*" >actual &&
 	grep "multi-4" actual &&
 	! grep "master" actual

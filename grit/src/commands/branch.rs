@@ -264,6 +264,11 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         branches.retain(|b| !is_ancestor(repo, no_contains_oid, b.oid).unwrap_or(true));
     }
 
+    // Apply pattern filter (branch --list <pattern>)
+    if let Some(ref pattern) = args.name {
+        branches.retain(|b| glob_match(pattern, &b.name));
+    }
+
     // Sort branches
     sort_branches(repo, &mut branches, args.sort.as_deref())?;
 
@@ -886,3 +891,42 @@ fn parse_signature_time(sig: &str) -> i64 {
     }
 }
 
+
+/// Simple glob matching for branch pattern filtering.
+/// Supports `*` (match any chars) and `?` (match one char).
+fn glob_match(pattern: &str, text: &str) -> bool {
+    glob_match_inner(pattern.as_bytes(), text.as_bytes())
+}
+
+fn glob_match_inner(pattern: &[u8], text: &[u8]) -> bool {
+    let mut pi = 0;
+    let mut ti = 0;
+    let mut star_pi = usize::MAX;
+    let mut star_ti = 0;
+
+    while ti < text.len() {
+        if pi < pattern.len() && pattern[pi] == b'?' {
+            pi += 1;
+            ti += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if pi < pattern.len() && pattern[pi] == text[ti] {
+            pi += 1;
+            ti += 1;
+        } else if star_pi != usize::MAX {
+            star_ti += 1;
+            ti = star_ti;
+            pi = star_pi + 1;
+        } else {
+            return false;
+        }
+    }
+
+    while pi < pattern.len() && pattern[pi] == b'*' {
+        pi += 1;
+    }
+
+    pi == pattern.len()
+}
