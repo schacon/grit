@@ -852,3 +852,4 @@ t7527-builtin-fsmonitor.sh
 t7528-signed-commit-ssh.sh
 t7602-merge-octopus-many.sh
 t7610-mergetool.sh
+t7701-repack-unpack-unreachable.sh
