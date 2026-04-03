@@ -145,6 +145,8 @@ fn print_entry(
             .replace("%(objecttype)", kind_str)
             .replace("%(objectname)", &entry.oid.to_hex())
             .replace("%(path)", name);
+        // Expand %xNN hex escapes (e.g. %x09 -> tab)
+        let line = expand_hex_escapes(&line);
         write!(out, "{line}")?;
     } else if args.name_only {
         if args.null_terminated {
@@ -164,6 +166,43 @@ fn print_entry(
     }
     out.write_all(&[term])?;
     Ok(())
+}
+
+fn expand_hex_escapes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            if chars.peek() == Some(&'x') || chars.peek() == Some(&'X') {
+                chars.next();
+                let mut hex = String::new();
+                for _ in 0..2 {
+                    if let Some(&d) = chars.peek() {
+                        if d.is_ascii_hexdigit() {
+                            hex.push(d);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                if hex.len() == 2 {
+                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                        result.push(byte as char);
+                        continue;
+                    }
+                }
+                result.push('%');
+                result.push('x');
+                result.push_str(&hex);
+            } else {
+                result.push(c);
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 fn quote_path_name(name: &str) -> String {
