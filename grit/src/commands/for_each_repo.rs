@@ -18,14 +18,20 @@ pub struct Args {
     pub config_key: String,
 
     /// Command and arguments to run in each repo.
-    #[arg(last = true, required = true)]
+    #[arg(last = true)]
     pub command: Vec<String>,
 }
 
 /// Run `grit for-each-repo`.
 pub fn run(args: Args) -> Result<()> {
+    // Validate config key format first (must be section.key or section.subsection.key)
+    if !args.config_key.contains('.') || args.config_key.ends_with('.') {
+        eprintln!("error: got bad config key: {}", args.config_key);
+        std::process::exit(129);
+    }
+
     if args.command.is_empty() {
-        bail!("no command specified");
+        bail!("missing -- <command>");
     }
 
     // Load git config to find the repo list.
@@ -43,8 +49,12 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    let cmd_name = &args.command[0];
-    let cmd_args = &args.command[1..];
+    // git for-each-repo runs `git <command>` in each repo.
+    // Find our own binary path to use as the git executable.
+    let git_exe = std::env::current_exe()
+        .unwrap_or_else(|_| std::path::PathBuf::from("git"));
+    let cmd_name = git_exe.as_os_str();
+    let cmd_args = &args.command[..];
 
     let mut had_error = false;
 
