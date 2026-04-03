@@ -67,7 +67,16 @@ fi
 
 # Set up a fresh trash directory for this test script.
 setup_trash () {
-	rm -rf "$TRASH_DIRECTORY"
+	if test -d "$TRASH_DIRECTORY"; then
+		chmod -R u+rwx "$TRASH_DIRECTORY" 2>/dev/null
+		rm -rf "$TRASH_DIRECTORY" 2>/dev/null
+		# If rm -rf failed (e.g. locked files), try harder
+		if test -d "$TRASH_DIRECTORY"; then
+			find "$TRASH_DIRECTORY" -type f -exec chmod u+w {} + 2>/dev/null
+			find "$TRASH_DIRECTORY" -type d -exec chmod u+rwx {} + 2>/dev/null
+			rm -rf "$TRASH_DIRECTORY"
+		fi
+	fi
 	mkdir -p "$TRASH_DIRECTORY"
 	mkdir -p "$TRASH_DIRECTORY/.bin"
 	# Write a 'git' wrapper script that calls grit
