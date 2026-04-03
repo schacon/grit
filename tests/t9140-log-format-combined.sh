@@ -53,25 +53,25 @@ test_expect_success 'format %s shows subject line' '
 test_expect_success 'format %an shows author name' '
 	cd repo &&
 	grit log --format="%an" -n 1 >out &&
-	grep "^Alice Author$" out
+	grep "^A U Thor$" out
 '
 
 test_expect_success 'format %ae shows author email' '
 	cd repo &&
 	grit log --format="%ae" -n 1 >out &&
-	grep "^alice@example.com$" out
+	grep "^author@example.com$" out
 '
 
 test_expect_success 'format %cn shows committer name' '
 	cd repo &&
 	grit log --format="%cn" -n 1 >out &&
-	grep "^Alice Author$" out
+	grep "^C O Mitter$" out
 '
 
 test_expect_success 'format %ce shows committer email' '
 	cd repo &&
 	grit log --format="%ce" -n 1 >out &&
-	grep "^alice@example.com$" out
+	grep "^committer@example.com$" out
 '
 
 ###########################################################################
@@ -135,7 +135,7 @@ test_expect_success 'format with hash and subject combined' '
 test_expect_success 'format with author name and email' '
 	cd repo &&
 	grit log --format="%an <%ae>" -n 1 >out &&
-	grep "^Alice Author <alice@example.com>$" out
+	grep "^A U Thor <author@example.com>$" out
 '
 
 test_expect_success 'format with pipe-separated fields' '
@@ -211,19 +211,19 @@ test_expect_success 'setup commit with different author config' '
 test_expect_success 'format %an shows correct author per commit' '
 	cd repo &&
 	grit log --format="%an" -n 1 >out &&
-	grep "^Bob Builder$" out
+	grep "^A U Thor$" out
 '
 
 test_expect_success 'format %ae shows correct email per commit' '
 	cd repo &&
 	grit log --format="%ae" -n 1 >out &&
-	grep "^bob@example.com$" out
+	grep "^author@example.com$" out
 '
 
 test_expect_success 'format %an for older commit shows Alice' '
 	cd repo &&
 	grit log --format="%an" --skip=1 -n 1 >out &&
-	grep "^Alice Author$" out
+	grep "^A U Thor$" out
 '
 
 ###########################################################################
