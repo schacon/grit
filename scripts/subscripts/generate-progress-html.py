@@ -429,7 +429,7 @@ a.cmd-cell {{
 <h1>Grit &mdash; Git Reimplementation Progress</h1>
 <p class="subtitle">Test-driven compatibility tracking against the upstream Git test suite
   &middot; <span id="gen-time" data-ts="{gen_timestamp}">{gen_time_str}</span>
-  &middot; <a href="https://github.com/schacon/grit/commit/{commit_sha}">{commit_sha_short}</a>
+  &middot; <a href="https://github.com/schacon/grit/commit/{commit_sha}" style="color:#484f58">{commit_sha_short}</a>
 </p>
 
 <div class="cards">
