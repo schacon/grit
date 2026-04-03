@@ -49,12 +49,28 @@ pub struct Args {
     pub graph: bool,
 
     /// Decorate refs.
-    #[arg(long = "decorate")]
+    #[arg(long = "decorate", overrides_with = "no_decorate")]
     pub decorate: Option<Option<String>>,
 
     /// Do not decorate refs.
-    #[arg(long = "no-decorate")]
+    #[arg(long = "no-decorate", overrides_with = "decorate")]
     pub no_decorate: bool,
+
+    /// Do not walk the commit graph — show given commits only.
+    #[arg(long = "no-walk")]
+    pub no_walk: bool,
+
+    /// Show which ref led to each commit (with --all).
+    #[arg(long = "source")]
+    pub source: bool,
+
+    /// Only show commits on the ancestry path between endpoints.
+    #[arg(long = "ancestry-path")]
+    pub ancestry_path: bool,
+
+    /// Only show commits that are decorated (have refs).
+    #[arg(long = "simplify-by-decoration")]
+    pub simplify_by_decoration: bool,
 
     /// Skip this many commits.
     #[arg(long = "skip")]
@@ -116,10 +132,6 @@ pub struct Args {
     #[arg(long = "all")]
     pub all: bool,
 
-    /// Show which ref led to each commit.
-    #[arg(long = "source")]
-    pub source: bool,
-
     /// Follow file renames (single file only).
     #[arg(long = "follow")]
     pub follow: bool,
@@ -140,6 +152,11 @@ pub fn run(args: Args) -> Result<()> {
     // Handle -g / --walk-reflogs mode
     if args.walk_reflogs {
         return run_reflog_walk(&repo, &args);
+    }
+
+    // Handle --no-walk: show given commits without walking parents
+    if args.no_walk {
+        return run_no_walk(&repo, &args);
     }
 
     // Determine starting points
@@ -233,6 +250,21 @@ pub fn run(args: Args) -> Result<()> {
         commits
     };
 
+    // Apply --simplify-by-decoration: only show commits with decorations
+    let commits = if args.simplify_by_decoration {
+        match &decorations {
+            Some(dec_map) => {
+                commits
+                    .into_iter()
+                    .filter(|(oid, _)| dec_map.contains_key(&oid.to_hex()))
+                    .collect::<Vec<_>>()
+            }
+            None => commits,
+        }
+    } else {
+        commits
+    };
+
     let commits = if args.reverse {
         commits.into_iter().rev().collect::<Vec<_>>()
     } else {
@@ -259,6 +291,80 @@ pub fn run(args: Args) -> Result<()> {
 
         if show_diff {
             write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Run `--no-walk` mode: show the given commits without walking their parents.
+fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
+    let mut oids = Vec::new();
+    if args.revisions.is_empty() {
+        let head = resolve_head(&repo.git_dir)?;
+        if let Some(oid) = head.oid() {
+            oids.push(*oid);
+        }
+    } else {
+        for rev in &args.revisions {
+            let oid = resolve_revision(repo, rev)?;
+            oids.push(oid);
+        }
+    }
+
+    let decorate_full = match &args.decorate {
+        Some(Some(s)) if s == "full" => true,
+        _ => false,
+    };
+    let decorations = if args.no_decorate {
+        None
+    } else {
+        Some(collect_decorations(repo, decorate_full)?)
+    };
+
+    let mut commits = Vec::new();
+    for oid in oids {
+        let obj = repo.odb.read(&oid)?;
+        let commit = parse_commit(&obj.data)?;
+        let info = CommitInfo {
+            tree: commit.tree,
+            parents: commit.parents.clone(),
+            author: commit.author.clone(),
+            committer: commit.committer.clone(),
+            message: commit.message.clone(),
+        };
+        commits.push((oid, info));
+    }
+
+    // Sort by committer timestamp descending (same as regular log)
+    commits.sort_by(|a, b| {
+        let ts_a = extract_timestamp(&a.1.committer);
+        let ts_b = extract_timestamp(&b.1.committer);
+        ts_b.cmp(&ts_a)
+    });
+
+    if args.reverse {
+        commits.reverse();
+    }
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    let is_format_separator = args
+        .format
+        .as_deref()
+        .map(|f| f.starts_with("format:"))
+        .unwrap_or(false);
+
+    let show_diff = args.patch || args.patch_u || args.stat || args.name_only || args.name_status || args.raw;
+
+    for (i, (oid, commit_data)) in commits.iter().enumerate() {
+        if is_format_separator && i > 0 {
+            writeln!(out)?;
+        }
+        format_commit(&mut out, oid, commit_data, args, decorations.as_ref())?;
+        if show_diff {
+            write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
         }
     }
 
@@ -1020,11 +1126,11 @@ fn collect_decorations(
     }
 
     if full {
-        collect_refs_from_dir(&repo.git_dir.join("refs/heads"), "refs/heads/", "refs/heads/", &mut map)?;
-        collect_refs_from_dir(&repo.git_dir.join("refs/tags"), "refs/tags/", "tag: refs/tags/", &mut map)?;
+        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/heads"), "refs/heads/", "refs/heads/", &mut map)?;
+        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/tags"), "refs/tags/", "tag: refs/tags/", &mut map)?;
     } else {
-        collect_refs_from_dir(&repo.git_dir.join("refs/heads"), "refs/heads/", "", &mut map)?;
-        collect_refs_from_dir(&repo.git_dir.join("refs/tags"), "refs/tags/", "tag: ", &mut map)?;
+        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/heads"), "refs/heads/", "", &mut map)?;
+        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/tags"), "refs/tags/", "tag: ", &mut map)?;
     }
 
     Ok(map)
@@ -1032,6 +1138,7 @@ fn collect_decorations(
 
 /// Recursively collect refs from a directory.
 fn collect_refs_from_dir(
+    odb: &Odb,
     dir: &std::path::Path,
     strip_prefix: &str,
     display_prefix: &str,
@@ -1046,20 +1153,46 @@ fn collect_refs_from_dir(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_refs_from_dir(&path, strip_prefix, display_prefix, map)?;
+            collect_refs_from_dir(odb, &path, strip_prefix, display_prefix, map)?;
         } else if let Ok(content) = std::fs::read_to_string(&path) {
             let hex = content.trim();
             let full_ref = path.to_string_lossy();
-            // Extract the ref name after the git_dir prefix
             if let Some(idx) = full_ref.find(strip_prefix) {
                 let name = &full_ref[idx + strip_prefix.len()..];
                 let label = format!("{display_prefix}{name}");
-                map.entry(hex.to_owned()).or_default().push(label);
+                // Dereference annotated tags to the commit they point at
+                let resolved_hex = if display_prefix.contains("tag") {
+                    peel_to_commit_hex(odb, hex).unwrap_or_else(|| hex.to_owned())
+                } else {
+                    hex.to_owned()
+                };
+                map.entry(resolved_hex).or_default().push(label);
             }
         }
     }
 
     Ok(())
+}
+
+/// Peel an object (possibly a tag) down to a commit and return its hex.
+fn peel_to_commit_hex(odb: &Odb, hex: &str) -> Option<String> {
+    use grit_lib::objects::ObjectKind;
+    let oid: ObjectId = hex.parse().ok()?;
+    let obj = odb.read(&oid).ok()?;
+    match obj.kind {
+        ObjectKind::Commit => Some(hex.to_owned()),
+        ObjectKind::Tag => {
+            let text = std::str::from_utf8(&obj.data).ok()?;
+            for line in text.lines() {
+                if let Some(target) = line.strip_prefix("object ") {
+                    let target_hex = target.trim();
+                    return peel_to_commit_hex(odb, target_hex);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 /// Format decoration string for a commit (with parentheses).
