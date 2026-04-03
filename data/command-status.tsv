@@ -10,7 +10,7 @@ clean	Main Porcelain	yes	90	2	88	2.2
 clone	Main Porcelain	yes	519	14	505	2.7
 commit	Main Porcelain	yes	435	185	187	42.6
 describe	Main Porcelain	yes	59	1	58	1.7
-diff	Main Porcelain	yes	983	533	420	54.2
+diff	Main Porcelain	yes	983	534	420	54.4
 fetch	Main Porcelain	yes	465	2	463	0.4
 format-patch	Main Porcelain	yes	231	2	229	0.9
 gc	Main Porcelain	yes	38	33	5	86.8
