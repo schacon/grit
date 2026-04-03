@@ -2,17 +2,13 @@
 
 test_description='histogram diff algorithm
 
-Upstream git test t4050 relies on lib-diff-alternative.sh which exercises
---histogram via diff --no-index.  Both --histogram and --no-index are not
-yet implemented in grit, so every case is marked test_expect_failure.'
+Exercise --histogram via diff --no-index.'
 
 . ./test-lib.sh
 
 # The upstream test sources lib-diff-alternative.sh and calls
 # test_diff_frobnitz "histogram" / test_diff_unique "histogram".
-# Those helpers exercise diff --no-index --histogram, which grit
-# does not support yet.  We stub out the most representative cases
-# so the file is ready to flip once the features land.
+# We exercise the most representative cases.
 
 test_expect_success 'histogram diff: simple file comparison' '
 	cat >file1 <<-\EOF &&
