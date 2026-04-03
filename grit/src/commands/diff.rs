@@ -313,7 +313,7 @@ pub fn run(args: Args) -> Result<()> {
                     _ => None,
                 }
             }
-            None => None, // Git defaults to true in newer versions, but be conservative
+            None => Some(50), // Git 2.x defaults diff.renames to true
         }
     };
     let entries = if let Some(threshold) = rename_threshold {
