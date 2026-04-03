@@ -865,3 +865,4 @@ t8001-annotate.sh
 t8003-blame-corner-cases.sh
 t8004-blame-with-conflicts.sh
 t8005-blame-i18n.sh
+t8007-cat-file-textconv.sh
