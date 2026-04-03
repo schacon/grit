@@ -81,6 +81,10 @@ pub struct RevListOptions {
     pub cherry_mark: bool,
     /// Cherry-pick: omit equivalent commits from output.
     pub cherry_pick: bool,
+    /// Minimum number of parents a commit must have to be included.
+    pub min_parents: Option<usize>,
+    /// Maximum number of parents a commit may have to be included.
+    pub max_parents: Option<usize>,
 }
 
 impl Default for RevListOptions {
@@ -106,6 +110,8 @@ impl Default for RevListOptions {
             right_only: false,
             cherry_mark: false,
             cherry_pick: false,
+            min_parents: None,
+            max_parents: None,
         }
     }
 }
@@ -178,6 +184,16 @@ pub fn rev_list(
             ));
         }
         limit_to_ancestry(&mut graph, &mut included, &bottoms)?;
+    }
+
+    // Filter by parent count (--merges, --no-merges, --min-parents, --max-parents)
+    if options.min_parents.is_some() || options.max_parents.is_some() {
+        let min_p = options.min_parents.unwrap_or(0);
+        let max_p = options.max_parents.unwrap_or(usize::MAX);
+        included.retain(|oid| {
+            let count = graph.parents_of(*oid).map(|p| p.len()).unwrap_or(0);
+            count >= min_p && count <= max_p
+        });
     }
 
     let mut ordered = match options.ordering {

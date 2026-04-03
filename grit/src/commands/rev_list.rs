@@ -61,6 +61,8 @@ pub fn run(args: Args) -> Result<()> {
                     options.left_right = true;
                 }
                 "--cherry-pick" => options.cherry_pick = true,
+                "--merges" => options.min_parents = Some(2),
+                "--no-merges" => options.max_parents = Some(1),
                 "--cherry" => {
                     options.cherry_pick = true;
                     options.right_only = true;
@@ -98,6 +100,14 @@ pub fn run(args: Args) -> Result<()> {
                     && arg[1..].chars().all(|ch| ch.is_ascii_digit()) =>
                 {
                     options.max_count = Some(parse_non_negative(&arg[1..], "-<n>")?);
+                }
+                _ if arg.starts_with("--min-parents=") => {
+                    let value = arg.trim_start_matches("--min-parents=");
+                    options.min_parents = Some(parse_non_negative(value, "--min-parents")?);
+                }
+                _ if arg.starts_with("--max-parents=") => {
+                    let value = arg.trim_start_matches("--max-parents=");
+                    options.max_parents = Some(parse_non_negative(value, "--max-parents")?);
                 }
                 _ if arg.starts_with("--ancestry-path=") => {
                     let value = arg.trim_start_matches("--ancestry-path=");

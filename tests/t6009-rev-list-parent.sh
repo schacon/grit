@@ -64,7 +64,7 @@ test_expect_success 'rev-list --parents shows parent OIDs' '
 	grep "$m $b $c" actual
 '
 
-test_expect_failure '--merges shows only merge commits' '
+test_expect_success '--merges shows only merge commits' '
 	cd repo &&
 	m=$(cat ../oid_m) &&
 	git rev-list --merges HEAD >actual &&
@@ -72,7 +72,7 @@ test_expect_failure '--merges shows only merge commits' '
 	test_cmp expect actual
 '
 
-test_expect_failure '--no-merges excludes merge commits' '
+test_expect_success '--no-merges excludes merge commits' '
 	cd repo &&
 	m=$(cat ../oid_m) &&
 	git rev-list --no-merges HEAD >actual &&
@@ -81,7 +81,7 @@ test_expect_failure '--no-merges excludes merge commits' '
 	test "$count" = "5"
 '
 
-test_expect_failure '--min-parents=2 selects merges' '
+test_expect_success '--min-parents=2 selects merges' '
 	cd repo &&
 	m=$(cat ../oid_m) &&
 	git rev-list --min-parents=2 HEAD >actual &&
@@ -89,7 +89,7 @@ test_expect_failure '--min-parents=2 selects merges' '
 	test_cmp expect actual
 '
 
-test_expect_failure '--max-parents=0 selects root commits' '
+test_expect_success '--max-parents=0 selects root commits' '
 	cd repo &&
 	root=$(cat ../oid_root) &&
 	git rev-list --max-parents=0 HEAD >actual &&
@@ -97,7 +97,7 @@ test_expect_failure '--max-parents=0 selects root commits' '
 	test_cmp expect actual
 '
 
-test_expect_failure '--max-parents=1 excludes merges and includes rest' '
+test_expect_success '--max-parents=1 excludes merges and includes rest' '
 	cd repo &&
 	m=$(cat ../oid_m) &&
 	git rev-list --max-parents=1 HEAD >actual &&
@@ -106,7 +106,7 @@ test_expect_failure '--max-parents=1 excludes merges and includes rest' '
 	test "$count" = "5"
 '
 
-test_expect_failure '--min-parents=1 --max-parents=1 selects single-parent only' '
+test_expect_success '--min-parents=1 --max-parents=1 selects single-parent only' '
 	cd repo &&
 	m=$(cat ../oid_m) &&
 	root=$(cat ../oid_root) &&
@@ -117,14 +117,14 @@ test_expect_failure '--min-parents=1 --max-parents=1 selects single-parent only'
 	test "$count" = "4"
 '
 
-test_expect_failure '--merges --count returns 1' '
+test_expect_success '--merges --count returns 1' '
 	cd repo &&
 	git rev-list --merges --count HEAD >actual &&
 	echo 1 >expect &&
 	test_cmp expect actual
 '
 
-test_expect_failure '--no-merges --count returns 5' '
+test_expect_success '--no-merges --count returns 5' '
 	cd repo &&
 	git rev-list --no-merges --count HEAD >actual &&
 	echo 5 >expect &&
