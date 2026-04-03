@@ -163,6 +163,33 @@ impl Repository {
     pub fn is_bare(&self) -> bool {
         self.work_tree.is_none()
     }
+
+    /// Read an object, transparently following replace refs.
+    ///
+    /// If `refs/replace/<hex>` exists for the requested OID and
+    /// `GIT_NO_REPLACE_OBJECTS` is **not** set, this reads the
+    /// replacement object instead.  Otherwise it behaves identically
+    /// to `self.odb.read(oid)`.
+    pub fn read_replaced(
+        &self,
+        oid: &crate::objects::ObjectId,
+    ) -> Result<crate::objects::Object> {
+        if std::env::var_os("GIT_NO_REPLACE_OBJECTS").is_some() {
+            return self.odb.read(oid);
+        }
+        let replace_ref = self.git_dir.join(format!("refs/replace/{}", oid.to_hex()));
+        if replace_ref.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&replace_ref) {
+                let hex = content.trim();
+                if let Ok(replacement_oid) = hex.parse::<crate::objects::ObjectId>() {
+                    if let Ok(obj) = self.odb.read(&replacement_oid) {
+                        return Ok(obj);
+                    }
+                }
+            }
+        }
+        self.odb.read(oid)
+    }
 }
 
 /// Try to open a repository rooted exactly at `dir`.

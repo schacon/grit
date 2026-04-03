@@ -342,7 +342,7 @@ fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
 
     let mut commits = Vec::new();
     for oid in oids {
-        let obj = repo.odb.read(&oid)?;
+        let obj = repo.read_replaced(&oid)?;
         let commit = parse_commit(&obj.data)?;
         let info = CommitInfo {
             tree: commit.tree,

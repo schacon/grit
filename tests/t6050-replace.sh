@@ -130,4 +130,16 @@ test_expect_success 'replace --graft with no parents makes root commit' '
 	git rev-parse --verify "refs/replace/$HASH3"
 '
 
+test_expect_success 'cat-file shows replacement content' '
+	cd repo &&
+	HASH1=$(cat ../hash1) &&
+	# HASH1 has no replace ref yet; create one with modified author
+	GIT_NO_REPLACE_OBJECTS=1 git cat-file commit $HASH1 >orig &&
+	sed -e "s/A U Thor/Replaced Author/" <orig >replaced &&
+	NEWHASH=$(git hash-object -t commit -w replaced) &&
+	git replace $HASH1 $NEWHASH &&
+	git cat-file commit $HASH1 >actual &&
+	grep "Replaced Author" actual
+'
+
 test_done
