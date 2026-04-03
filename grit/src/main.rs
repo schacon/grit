@@ -227,7 +227,6 @@ fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     result
 }
 
-
 /// Dispatch to the appropriate command handler.
 ///
 /// Each arm only constructs the clap parser for that specific command.
@@ -267,10 +266,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "daemon" => commands::daemon::run(parse_cmd_args(subcmd, rest)),
         "describe" => commands::describe::run(parse_cmd_args(subcmd, rest)),
         "diagnose" => commands::diagnose::run(parse_cmd_args(subcmd, rest)),
-        "diff" => {
-            let rest = preprocess_diff_args(rest);
-            commands::diff::run(parse_cmd_args(subcmd, &rest))
-        }
+        "diff" => commands::diff::run(parse_cmd_args(subcmd, &preprocess_diff_args(rest))),
         "diff-files" => commands::diff_files::run(parse_cmd_args(subcmd, rest)),
         "diff-index" => commands::diff_index::run(parse_cmd_args(subcmd, rest)),
         "diff-pairs" => commands::diff_pairs::run(parse_cmd_args(subcmd, rest)),
@@ -357,10 +353,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "sh-setup" => commands::sh_setup::run(parse_cmd_args(subcmd, rest)),
         "shell" => commands::shell::run(parse_cmd_args(subcmd, rest)),
         "shortlog" => commands::shortlog::run(parse_cmd_args(subcmd, rest)),
-        "show" => {
-            let rest = preprocess_diff_args(rest);
-            commands::show::run(parse_cmd_args(subcmd, &rest))
-        }
+        "show" => commands::show::run(parse_cmd_args(subcmd, rest)),
         "show-branch" => commands::show_branch::run(parse_cmd_args(subcmd, rest)),
         "show-index" => commands::show_index::run(parse_cmd_args(subcmd, rest)),
         "show-ref" => commands::show_ref::run(parse_cmd_args(subcmd, rest)),
