@@ -80,11 +80,12 @@ pub fn run(args: Args) -> Result<()> {
     let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
 
     // Untracked and ignored files
+    let show_all_untracked = args.untracked == "all";
     let (untracked, ignored_files) = if args.untracked != "no" {
-        collect_untracked_and_ignored(&repo, &index, work_tree, args.ignored)?
+        collect_untracked_and_ignored(&repo, &index, work_tree, args.ignored, show_all_untracked)?
     } else if args.ignored {
         // Even with -u no, --ignored should show ignored files
-        let (_, ignored) = collect_untracked_and_ignored(&repo, &index, work_tree, true)?;
+        let (_, ignored) = collect_untracked_and_ignored(&repo, &index, work_tree, true, false)?;
         (Vec::new(), ignored)
     } else {
         (Vec::new(), Vec::new())
@@ -125,6 +126,7 @@ fn collect_untracked_and_ignored(
     index: &Index,
     work_tree: &Path,
     collect_ignored: bool,
+    show_all: bool,
 ) -> Result<(Vec<String>, Vec<String>)> {
     let tracked: BTreeSet<String> = index
         .entries
@@ -133,7 +135,7 @@ fn collect_untracked_and_ignored(
         .collect();
 
     let mut all_untracked = Vec::new();
-    walk_for_untracked(work_tree, work_tree, &tracked, &mut all_untracked)?;
+    walk_for_untracked(work_tree, work_tree, &tracked, &mut all_untracked, show_all)?;
     all_untracked.sort();
 
     // Build ignore matcher
@@ -387,7 +389,7 @@ fn find_untracked(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
         .collect();
 
     let mut untracked = Vec::new();
-    walk_for_untracked(work_tree, work_tree, &tracked, &mut untracked)?;
+    walk_for_untracked(work_tree, work_tree, &tracked, &mut untracked, false)?;
     untracked.sort();
     Ok(untracked)
 }
@@ -398,6 +400,7 @@ fn walk_for_untracked(
     work_tree: &Path,
     tracked: &BTreeSet<String>,
     out: &mut Vec<String>,
+    show_all: bool,
 ) -> Result<()> {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -424,18 +427,19 @@ fn walk_for_untracked(
         let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
 
         if is_dir {
-            // Use BTreeSet range to check for tracked files under this prefix
-            // in O(log n) instead of O(n) linear scan
-            let prefix = format!("{rel}/");
-            let has_tracked = tracked
-                .range::<String, _>(&prefix..)
-                .next()
-                .map_or(false, |t| t.starts_with(&prefix));
-            if has_tracked {
-                walk_for_untracked(&path, work_tree, tracked, out)?;
+            if show_all {
+                walk_for_untracked(&path, work_tree, tracked, out, show_all)?;
             } else {
-                // Show directory as untracked entry
-                out.push(format!("{rel}/"));
+                let prefix = format!("{rel}/");
+                let has_tracked = tracked
+                    .range::<String, _>(&prefix..)
+                    .next()
+                    .map_or(false, |t| t.starts_with(&prefix));
+                if has_tracked {
+                    walk_for_untracked(&path, work_tree, tracked, out, show_all)?;
+                } else {
+                    out.push(format!("{rel}/"));
+                }
             }
         } else if !tracked.contains(&rel) {
             out.push(rel);

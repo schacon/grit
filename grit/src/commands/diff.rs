@@ -204,7 +204,9 @@ pub fn run(args: Args) -> Result<()> {
         return run_no_index(&args);
     }
 
-    let (revs, paths) = parse_rev_and_paths(&args.args);
+    let raw_args: Vec<String> = std::env::args().collect();
+    let has_separator = raw_args.iter().any(|a| a == "--");
+    let (revs, paths) = parse_rev_and_paths(&args.args, has_separator);
 
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_deref();
@@ -465,11 +467,13 @@ fn count_added_removed(old: &[&str], new: &[&str]) -> (usize, usize) {
 /// If `--` is present, everything before is revisions, everything after is paths.
 /// Otherwise, we try each arg: if it exists as a file, treat it (and all
 /// subsequent args) as paths rather than revisions.
-fn parse_rev_and_paths(args: &[String]) -> (Vec<String>, Vec<String>) {
+fn parse_rev_and_paths(args: &[String], has_separator: bool) -> (Vec<String>, Vec<String>) {
     if let Some(sep) = args.iter().position(|a| a == "--") {
         let revs = args[..sep].to_vec();
         let paths = args[sep + 1..].to_vec();
         (revs, paths)
+    } else if has_separator {
+        (Vec::new(), args.to_vec())
     } else {
         // Without `--`, try to guess: if an arg exists as a file/directory,
         // treat it and everything after as paths.
@@ -554,13 +558,7 @@ fn filter_by_paths(entries: Vec<DiffEntry>, paths: &[String]) -> Vec<DiffEntry> 
         .into_iter()
         .filter(|e| {
             let path = e.path();
-            paths.iter().any(|spec| {
-                if let Some(prefix) = spec.strip_suffix('/') {
-                    path == prefix || path.starts_with(&format!("{prefix}/"))
-                } else {
-                    path == spec || path.starts_with(&format!("{spec}/"))
-                }
-            })
+            paths.iter().any(|spec| crate::pathspec::pathspec_matches(spec, path))
         })
         .collect()
 }

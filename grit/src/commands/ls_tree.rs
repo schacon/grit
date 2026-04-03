@@ -98,18 +98,30 @@ fn list_tree(
 
         // Apply path filter
         if !args.paths.is_empty() {
-            let matches = args
-                .paths
-                .iter()
-                .any(|p| full_name == *p || full_name.starts_with(&format!("{p}/")));
+            let matches = args.paths.iter().any(|p| {
+                let ps = p.strip_suffix('/').unwrap_or(p.as_str());
+                full_name == ps
+                    || full_name.starts_with(&format!("{ps}/"))
+                    || ps.starts_with(&format!("{full_name}/"))
+            });
             if !matches {
+                continue;
+            }
+            // If pathspec points INTO this tree, descend
+            let is_ancestor = is_tree && args.paths.iter().any(|p| {
+                let ps = p.strip_suffix('/').unwrap_or(p.as_str());
+                ps.starts_with(&format!("{full_name}/")) || ps == full_name
+            });
+            if is_tree && is_ancestor && !args.recursive {
+                let sub_obj = repo.odb.read(&entry.oid)?;
+                list_tree(repo, &sub_obj.data, &full_name, args, out, term)?;
                 continue;
             }
         }
 
         if args.recursive && is_tree {
             if args.show_trees {
-                print_entry(entry, &full_name, args, out, term)?;
+                print_entry(repo, entry, &full_name, args, out, term)?;
             }
             // Recurse
             let sub_obj = repo.odb.read(&entry.oid)?;
@@ -121,12 +133,13 @@ fn list_tree(
             continue;
         }
 
-        print_entry(entry, &full_name, args, out, term)?;
+        print_entry(repo, entry, &full_name, args, out, term)?;
     }
     Ok(())
 }
 
 fn print_entry(
+    repo: &Repository,
     entry: &grit_lib::objects::TreeEntry,
     name: &str,
     args: &Args,
@@ -155,10 +168,17 @@ fn print_entry(
             write!(out, "{}", quote_path_name(name))?;
         }
     } else if args.long {
-        let size_str = "-";
+        let size_str = if kind_str == "blob" {
+            match repo.odb.read(&entry.oid) {
+                Ok(obj) => format!("{:>7}", obj.data.len()),
+                Err(_) => "      -".to_string(),
+            }
+        } else {
+            "      -".to_string()
+        };
         write!(
             out,
-            "{:06o} {kind_str} {}\t{size_str}\t{name}",
+            "{:06o} {kind_str} {} {size_str}\t{name}",
             entry.mode, entry.oid
         )?;
     } else {

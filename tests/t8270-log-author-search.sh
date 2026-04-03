@@ -127,7 +127,7 @@ test_expect_success 'log --author with partial email match' '
 	test $(wc -l <actual) -eq 3
 '
 
-test_expect_failure 'log --author is case-insensitive by default' '
+test_expect_success 'log --author is case-insensitive by default' '
 	cd repo &&
 	git log --author=alice --format="%an" >actual_lower &&
 	git log --author=ALICE --format="%an" >actual_upper &&

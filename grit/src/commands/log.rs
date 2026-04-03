@@ -13,7 +13,7 @@ use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use std::collections::HashSet;
 use std::io::{self, Write};
 
@@ -146,27 +146,34 @@ pub fn run(args: Args) -> Result<()> {
     let author_re = args
         .author
         .as_ref()
-        .map(|p| Regex::new(p))
+        .map(|p| RegexBuilder::new(p).case_insensitive(true).build())
         .transpose()
         .context("invalid --author regex")?;
     let committer_re = args
         .committer_filter
         .as_ref()
-        .map(|p| Regex::new(p))
+        .map(|p| RegexBuilder::new(p).case_insensitive(true).build())
         .transpose()
         .context("invalid --committer regex")?;
     let grep_re = args
         .grep
         .as_ref()
-        .map(|p| Regex::new(p))
+        .map(|p| {
+            let pattern = p.replace(r"\|", "|");
+            RegexBuilder::new(&pattern).case_insensitive(true).build()
+        })
         .transpose()
         .context("invalid --grep regex")?;
 
     // Collect ref decorations
+    let decorate_full = match &args.decorate {
+        Some(Some(s)) if s == "full" => true,
+        _ => false,
+    };
     let decorations = if args.no_decorate {
         None
     } else {
-        Some(collect_decorations(&repo)?)
+        Some(collect_decorations(&repo, decorate_full)?)
     };
 
     // Walk commits
@@ -544,19 +551,7 @@ fn commit_touches_paths(odb: &Odb, info: &CommitInfo, pathspecs: &[String]) -> R
 
 /// Check if a file path matches a pathspec (prefix match or exact match).
 fn path_matches(path: &str, pathspec: &str) -> bool {
-    if path == pathspec {
-        return true;
-    }
-    // Prefix match: pathspec is a directory prefix
-    if path.starts_with(pathspec) && path.as_bytes().get(pathspec.len()) == Some(&b'/') {
-        return true;
-    }
-    // pathspec could be a directory
-    let ps = pathspec.strip_suffix('/').unwrap_or(pathspec);
-    if path.starts_with(ps) && path.as_bytes().get(ps.len()) == Some(&b'/') {
-        return true;
-    }
-    false
+    crate::pathspec::pathspec_matches(pathspec, path)
 }
 
 /// Extract unix timestamp from an author/committer line.
@@ -979,6 +974,7 @@ fn resolve_revision(repo: &Repository, rev: &str) -> Result<ObjectId> {
 /// Collect ref name → OID decorations from the repository.
 fn collect_decorations(
     repo: &Repository,
+    full: bool,
 ) -> Result<std::collections::HashMap<String, Vec<String>>> {
     let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
 
@@ -987,27 +983,25 @@ fn collect_decorations(
     if let Some(oid) = head.oid() {
         let hex = oid.to_hex();
         let label = match &head {
-            HeadState::Branch { short_name, .. } => format!("HEAD -> {short_name}"),
+            HeadState::Branch { short_name, .. } => {
+                if full {
+                    format!("HEAD -> refs/heads/{short_name}")
+                } else {
+                    format!("HEAD -> {short_name}")
+                }
+            }
             _ => "HEAD".to_owned(),
         };
         map.entry(hex).or_default().push(label);
     }
 
-    // refs/heads/
-    collect_refs_from_dir(
-        &repo.git_dir.join("refs/heads"),
-        "refs/heads/",
-        "",
-        &mut map,
-    )?;
-
-    // refs/tags/
-    collect_refs_from_dir(
-        &repo.git_dir.join("refs/tags"),
-        "refs/tags/",
-        "tag: ",
-        &mut map,
-    )?;
+    if full {
+        collect_refs_from_dir(&repo.git_dir.join("refs/heads"), "refs/heads/", "refs/heads/", &mut map)?;
+        collect_refs_from_dir(&repo.git_dir.join("refs/tags"), "refs/tags/", "tag: refs/tags/", &mut map)?;
+    } else {
+        collect_refs_from_dir(&repo.git_dir.join("refs/heads"), "refs/heads/", "", &mut map)?;
+        collect_refs_from_dir(&repo.git_dir.join("refs/tags"), "refs/tags/", "tag: ", &mut map)?;
+    }
 
     Ok(map)
 }

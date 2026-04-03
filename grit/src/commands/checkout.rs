@@ -44,6 +44,10 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Detach HEAD (even if switching to a branch name).
+    #[arg(long = "detach")]
+    pub detach: bool,
+
     /// Remaining positional arguments: `[<branch|commit>] [--] [<paths>...]`
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub rest: Vec<String>,
@@ -93,9 +97,9 @@ pub fn run(args: Args) -> Result<()> {
         None => bail!("you must specify a branch, commit, or paths to checkout"),
     };
 
-    // Try as a branch first
+    // Try as a branch first (unless --detach is specified)
     let branch_ref = format!("refs/heads/{target}");
-    if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+    if !args.detach && refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
         return switch_branch(&repo, &target, &branch_ref, args.force);
     }
 

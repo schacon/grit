@@ -177,14 +177,14 @@ test_expect_success 'ls-tree -l HEAD shows sizes' '
 	grep "[0-9]" actual | grep "root.txt"
 '
 
-test_expect_failure 'ls-tree -l HEAD matches git (grit shows dash for blob sizes)' '
+test_expect_success 'ls-tree -l HEAD matches git (grit shows dash for blob sizes)' '
 	cd repo &&
 	grit ls-tree -l HEAD >grit_out &&
 	"$REAL_GIT" ls-tree -l HEAD >git_out &&
 	test_cmp git_out grit_out
 '
 
-test_expect_failure 'ls-tree -r -l HEAD matches git (grit shows dash for blob sizes)' '
+test_expect_success 'ls-tree -r -l HEAD matches git (grit shows dash for blob sizes)' '
 	cd repo &&
 	grit ls-tree -r -l HEAD >grit_out &&
 	"$REAL_GIT" ls-tree -r -l HEAD >git_out &&
@@ -246,14 +246,14 @@ test_expect_success 'ls-tree -r -z HEAD matches git' '
 # Section 10: Path filtering
 ###########################################################################
 
-test_expect_failure 'ls-tree HEAD src/ shows src contents (grit path filter bug)' '
+test_expect_success 'ls-tree HEAD src/ shows src contents (grit path filter bug)' '
 	cd repo &&
 	grit ls-tree HEAD src/ >actual &&
 	grep "main.rs" actual &&
 	grep "lib" actual
 '
 
-test_expect_failure 'ls-tree HEAD src/ matches git (grit path filter bug)' '
+test_expect_success 'ls-tree HEAD src/ matches git (grit path filter bug)' '
 	cd repo &&
 	grit ls-tree HEAD src/ >grit_out &&
 	"$REAL_GIT" ls-tree HEAD src/ >git_out &&
