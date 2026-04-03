@@ -43,29 +43,29 @@ test_expect_success 'setup repository with various objects' '
 	git tag fourth
 '
 
-# --objects is not supported in grit yet
-test_expect_failure 'rev-list --objects lists commits and objects' '
+
+test_expect_success 'rev-list --objects lists commits and objects' '
 	git rev-list --objects HEAD >actual &&
 	# Should include commit SHAs plus tree/blob SHAs with paths
 	test $(wc -l <actual) -gt 4
 '
 
-test_expect_failure 'rev-list --objects HEAD lists blobs with paths' '
+test_expect_success 'rev-list --objects HEAD lists blobs with paths' '
 	git rev-list --objects HEAD >actual &&
 	grep "small.txt" actual
 '
 
-test_expect_failure 'rev-list --objects includes trees' '
+test_expect_success 'rev-list --objects includes trees' '
 	git rev-list --objects HEAD >actual &&
 	grep "subdir" actual
 '
 
-test_expect_failure 'rev-list --objects with range' '
+test_expect_success 'rev-list --objects with range' '
 	git rev-list --objects first..HEAD >actual &&
 	test $(wc -l <actual) -gt 3
 '
 
-test_expect_failure 'rev-list --objects --all' '
+test_expect_success 'rev-list --objects --all' '
 	git rev-list --objects --all >actual &&
 	test $(wc -l <actual) -gt 4
 '

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests for rev-list: commit enumeration, counting, ordering, ranges.
-# --objects and --objects-edge are not yet implemented (test_expect_failure).
+# --objects basic tests now pass; --objects-edge still TODO.
 
 test_description='rev-list commit enumeration and object listing'
 
@@ -236,7 +236,7 @@ test_expect_success 'topo-order and date-order contain same commits' '
 # Section 8: --objects (not yet implemented)
 ###########################################################################
 
-test_expect_failure 'rev-list --objects lists commits and their trees/blobs' '
+test_expect_success 'rev-list --objects lists commits and their trees/blobs' '
 	cd repo &&
 	git rev-list --objects HEAD >actual &&
 	commit_count=$(git rev-list --count HEAD) &&
@@ -244,14 +244,14 @@ test_expect_failure 'rev-list --objects lists commits and their trees/blobs' '
 	test "$total" -gt "$commit_count"
 '
 
-test_expect_failure 'rev-list --objects includes blob OIDs' '
+test_expect_success 'rev-list --objects includes blob OIDs' '
 	cd repo &&
 	git rev-list --objects HEAD >actual &&
 	blob_oid=$(git hash-object file1.txt) &&
 	grep "$blob_oid" actual
 '
 
-test_expect_failure 'rev-list --objects includes tree OIDs' '
+test_expect_success 'rev-list --objects includes tree OIDs' '
 	cd repo &&
 	tree_oid=$(git log -n1 --format="%T") &&
 	git rev-list --objects HEAD >actual &&
