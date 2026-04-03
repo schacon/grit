@@ -117,7 +117,7 @@ test_expect_success 'commit and reset for next tests' '
 
 # ── -u all (show all individual files) ──────────────────────────────────────
 
-test_expect_failure '-u all shows individual files in untracked dirs' '
+test_expect_success '-u all shows individual files in untracked dirs' '
 	cd repo &&
 	git status --porcelain -u all >../actual &&
 	grep "^?? newdir/a.txt" ../actual &&
@@ -125,14 +125,14 @@ test_expect_failure '-u all shows individual files in untracked dirs' '
 	grep "^?? newdir/sub/c.txt" ../actual
 '
 
-test_expect_failure '-u all shows files in all untracked dirs' '
+test_expect_success '-u all shows files in all untracked dirs' '
 	cd repo &&
 	git status --porcelain -u all >../actual &&
 	grep "^?? extra/x.txt" ../actual &&
 	grep "^?? docs/y.md" ../actual
 '
 
-test_expect_failure '-u all does not collapse directories' '
+test_expect_success '-u all does not collapse directories' '
 	cd repo &&
 	git status --porcelain -u all >../actual &&
 	! grep "^?? newdir/$" ../actual &&
