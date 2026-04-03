@@ -28,7 +28,7 @@ verify_hook_input () {
 	test_cmp expected.data "$TRASH_DIRECTORY"/post-rewrite.data
 }
 
-test_expect_failure 'git commit --amend fires post-rewrite hook' '
+test_expect_success 'git commit --amend fires post-rewrite hook' '
 	clear_hook_input &&
 	echo "D new message" > newmsg &&
 	oldsha=$(git rev-parse HEAD^0) &&
@@ -38,7 +38,7 @@ test_expect_failure 'git commit --amend fires post-rewrite hook' '
 	verify_hook_input
 '
 
-test_expect_failure 'git commit --amend --no-post-rewrite' '
+test_expect_success 'git commit --amend --no-post-rewrite' '
 	clear_hook_input &&
 	echo "D new message again" > newmsg &&
 	git commit --no-post-rewrite -Fnewmsg --amend &&

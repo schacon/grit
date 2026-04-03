@@ -10,7 +10,7 @@ test_expect_success 'setup' '
 	git config user.email "test@example.com"
 '
 
-test_expect_failure 'Check that various forms of specifying core.hooksPath work' '
+test_expect_success 'Check that various forms of specifying core.hooksPath work' '
 	>actual &&
 	mkdir -p .git/custom-hooks &&
 	write_script .git/custom-hooks/pre-commit <<-\EOF &&
