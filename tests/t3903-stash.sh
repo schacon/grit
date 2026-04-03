@@ -220,4 +220,76 @@ test_expect_success 'stash create with message' '
 	git cat-file commit "$STASH_ID" | grep "create test message"
 '
 
+# ---------------------------------------------------------------------------
+# stash show -p (patch diff)
+# ---------------------------------------------------------------------------
+test_expect_success 'stash show -p shows diff output' '
+	git stash clear &&
+	git reset --hard &&
+	echo stash-show-p >>file &&
+	git stash &&
+	git stash show -p >actual &&
+	grep "+stash-show-p" actual
+'
+
+# ---------------------------------------------------------------------------
+# stash show --stat
+# ---------------------------------------------------------------------------
+test_expect_success 'stash show --stat shows stat output' '
+	git stash show --stat >actual &&
+	grep "file" actual &&
+	grep "1 insertion" actual
+'
+
+test_expect_success 'stash show default shows stat format' '
+	git stash show >actual &&
+	grep "file" actual &&
+	grep "+" actual
+'
+
+# ---------------------------------------------------------------------------
+# stash branch
+# ---------------------------------------------------------------------------
+test_expect_success 'stash branch creates branch from stash' '
+	git stash drop &&
+	git reset --hard &&
+	echo branch-content >>file &&
+	git stash &&
+	git stash branch stash-test-branch &&
+	test "$(git symbolic-ref HEAD)" = "refs/heads/stash-test-branch" &&
+	grep "branch-content" file &&
+	test 0 = $(git stash list | wc -l)
+'
+
+# ---------------------------------------------------------------------------
+# stash push --staged
+# ---------------------------------------------------------------------------
+test_expect_success 'stash push --staged only stashes staged changes' '
+	git checkout main &&
+	git reset --hard &&
+	echo staged-change >newfile &&
+	git add newfile &&
+	echo unstaged-extra >>file &&
+	git stash push --staged &&
+	# Worktree should still have unstaged change in file
+	grep "unstaged-extra" file &&
+	# newfile (staged) should be gone from worktree
+	! test -f newfile &&
+	# Reset to clean state for pop
+	git checkout -- file &&
+	git stash pop &&
+	# After pop, the staged change should be back
+	test -f newfile &&
+	grep "staged-change" newfile
+'
+
+test_expect_success 'stash push -q --staged is quiet' '
+	git reset --hard &&
+	echo staged-quiet >file &&
+	git add file &&
+	git stash push -q --staged >output.out 2>&1 &&
+	test_must_be_empty output.out &&
+	git stash drop
+'
+
 test_done
