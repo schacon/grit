@@ -371,32 +371,49 @@ fn run_no_index(args: &Args) -> Result<()> {
     let mut out = stdout.lock();
 
     if args.name_only {
-        writeln!(out, "{}", paths[0])?;
+        writeln!(out, "{}", paths[1])?;
         std::process::exit(1);
     }
 
     if args.name_status {
-        writeln!(out, "M\t{}", paths[0])?;
+        writeln!(out, "M\t{}", paths[1])?;
         std::process::exit(1);
     }
 
     if args.numstat {
-        // Count added/removed lines
-        let lines_a: Vec<&str> = text_a.lines().collect();
-        let lines_b: Vec<&str> = text_b.lines().collect();
-        let (adds, dels) = count_added_removed(&lines_a, &lines_b);
-        writeln!(out, "{}\t{}\t{}", adds, dels, paths[0])?;
+        let (adds, dels) = count_changes(&text_a, &text_b);
+        writeln!(out, "{}\t{}\t{}", adds, dels, paths[1])?;
         std::process::exit(1);
     }
 
     if args.stat || args.shortstat {
-        let lines_a: Vec<&str> = text_a.lines().collect();
-        let lines_b: Vec<&str> = text_b.lines().collect();
-        let (adds, dels) = count_added_removed(&lines_a, &lines_b);
+        let (adds, dels) = count_changes(&text_a, &text_b);
         if args.stat {
-            writeln!(out, " {} | {}", paths[0], adds + dels)?;
+            let display = if paths[0] != paths[1] {
+                format!("{} => {}", paths[0], paths[1])
+            } else {
+                paths[0].to_string()
+            };
+            let total = adds + dels;
+            writeln!(out, " {} | {}", display, total)?;
         }
-        writeln!(out, " 1 file changed, {} insertions(+), {} deletions(-)", adds, dels)?;
+        let mut summary = format!(
+            " 1 file changed");
+        if adds > 0 {
+            summary.push_str(&format!(
+                ", {} insertion{}(+)",
+                adds,
+                if adds == 1 { "" } else { "s" }
+            ));
+        }
+        if dels > 0 {
+            summary.push_str(&format!(
+                ", {} deletion{}(-)",
+                dels,
+                if dels == 1 { "" } else { "s" }
+            ));
+        }
+        writeln!(out, "{summary}")?;
         std::process::exit(1);
     }
 
