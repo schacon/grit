@@ -25,6 +25,12 @@ pub struct Args {
     #[arg(long = "line-porcelain")]
     pub line_porcelain: bool,
 
+    #[arg(long = "ignore-rev")]
+    pub ignore_rev: Vec<String>,
+
+    #[arg(long = "ignore-revs-file")]
+    pub ignore_revs_file: Vec<String>,
+
     #[arg()]
     pub args: Vec<String>,
 }
@@ -38,6 +44,8 @@ pub fn run(args: Args) -> Result<()> {
         email: args.email,
         porcelain: args.porcelain,
         line_porcelain: args.line_porcelain,
+        ignore_rev: args.ignore_rev,
+        ignore_revs_file: args.ignore_revs_file,
         args: args.args,
     })
 }

@@ -8,8 +8,9 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::resolve_head;
 use similar::{ChangeTag, TextDiff};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
+
 
 /// Arguments for `grit blame`.
 #[derive(Debug, ClapArgs)]
@@ -38,6 +39,14 @@ pub struct Args {
     /// Like --porcelain but outputs header for every line.
     #[arg(long = "line-porcelain")]
     pub line_porcelain: bool,
+
+    /// Ignore a specific revision when assigning blame.
+    #[arg(long = "ignore-rev")]
+    pub ignore_rev: Vec<String>,
+
+    /// File listing revisions to ignore (one hex SHA per line).
+    #[arg(long = "ignore-revs-file")]
+    pub ignore_revs_file: Vec<String>,
 
     /// Revision to blame from (and optional file after `--`).
     #[arg()]
@@ -157,7 +166,7 @@ struct TrackedLine {
 }
 
 /// Core blame: walk first-parent history, diff blobs, attribute lines.
-fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<BlameLine>> {
+fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &HashSet<ObjectId>) -> Result<Vec<BlameLine>> {
     let start_commit = {
         let obj = odb.read(&start_oid)?;
         parse_commit(&obj.data)?
@@ -194,6 +203,8 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<
 
         let commit = get_commit(odb, current_oid, &mut commit_cache)?;
 
+        let is_ignored = ignore_revs.contains(&current_oid);
+
         if commit.parents.is_empty() {
             // Root commit — attribute all remaining lines
             for t in pending.drain(..) {
@@ -212,8 +223,21 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<
         let parent_blob_oid = resolve_path_in_tree(odb, &parent_commit.tree, file_path)?;
 
         match parent_blob_oid {
-            None => {
+            None if !is_ignored => {
                 // File doesn't exist in parent — attribute all remaining
+                for t in pending.drain(..) {
+                    result.push(BlameLine {
+                        oid: current_oid,
+                        final_lineno: t.final_lineno,
+                        orig_lineno: t.current_idx + 1,
+                        content: final_lines[t.final_lineno - 1].clone(),
+                    });
+                }
+                break;
+            }
+            None => {
+                // Ignored commit but file doesn't exist in parent.
+                // Attribute to current anyway (can't go further back).
                 for t in pending.drain(..) {
                     result.push(BlameLine {
                         oid: current_oid,
@@ -248,6 +272,15 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<
                                 final_lineno: t.final_lineno,
                                 current_idx: parent_idx,
                             });
+                        } else if is_ignored {
+                            // Commit is ignored — pass line through to parent
+                            // even though it was "introduced" here.
+                            // Use a best-effort mapping: keep the same index.
+                            let par_idx = t.current_idx.min(par_lines.len().saturating_sub(1));
+                            still_pending.push(TrackedLine {
+                                final_lineno: t.final_lineno,
+                                current_idx: par_idx,
+                            });
                         } else {
                             // Line was introduced in current commit
                             result.push(BlameLine {
@@ -257,6 +290,12 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<
                                 content: final_lines[t.final_lineno - 1].clone(),
                             });
                         }
+                    } else if is_ignored {
+                        let par_idx = par_lines.len().saturating_sub(1);
+                        still_pending.push(TrackedLine {
+                            final_lineno: t.final_lineno,
+                            current_idx: par_idx,
+                        });
                     } else {
                         // Out of range — attribute to current
                         result.push(BlameLine {
@@ -346,7 +385,29 @@ pub fn run(args: Args) -> Result<()> {
         }
     };
 
-    let mut blame_lines = compute_blame(&odb, start_oid, &file_path)?;
+    // Build the set of revisions to ignore
+    let mut ignore_revs = HashSet::new();
+    for rev_str in &args.ignore_rev {
+        let oid = ObjectId::from_hex(rev_str)
+            .with_context(|| format!("invalid --ignore-rev: {rev_str}"))?;
+        ignore_revs.insert(oid);
+    }
+    for file in &args.ignore_revs_file {
+        let contents = std::fs::read_to_string(file)
+            .with_context(|| format!("cannot read --ignore-revs-file: {file}"))?;
+        for line in contents.lines() {
+            let line = line.trim();
+            // Skip blank lines and comments
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let oid = ObjectId::from_hex(line)
+                .with_context(|| format!("invalid rev in {file}: {line}"))?;
+            ignore_revs.insert(oid);
+        }
+    }
+
+    let mut blame_lines = compute_blame(&odb, start_oid, &file_path, &ignore_revs)?;
 
     // Apply line range filter
     if let Some(ref range) = args.line_range {
