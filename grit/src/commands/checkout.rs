@@ -65,6 +65,10 @@ pub struct Args {
     #[arg(long = "overlay")]
     pub overlay: bool,
 
+    /// Interactively select hunks to discard.
+    #[arg(short = 'p', long = "patch")]
+    pub patch: bool,
+
     /// Merge local modifications when switching branches.
     #[arg(short = 'm', long = "merge")]
     pub merge: bool,
@@ -106,6 +110,11 @@ pub fn run(args: Args) -> Result<()> {
 
     // Resolve @{-N} in start point if present
     let target = target.map(|t| resolve_at_minus(&repo, &t).unwrap_or(t));
+
+    // Case: checkout -p (interactive patch mode)
+    if args.patch {
+        return checkout_patch(&repo, target.as_deref(), &paths);
+    }
 
     // Case: checkout --orphan <name>
     if let Some(ref orphan_name) = args.orphan {
@@ -1103,6 +1112,312 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String], no_
         }
     }
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Interactive patch mode
+// ---------------------------------------------------------------------------
+
+/// Interactive patch-mode checkout (`checkout -p`).
+///
+/// Shows each hunk of difference between the source (index or commit) and the
+/// working tree, prompting the user to accept (y), reject (n), quit (q),
+/// accept-all-in-file (a), or skip-rest-of-file (d) for each hunk.
+fn checkout_patch(repo: &Repository, source: Option<&str>, paths: &[String]) -> Result<()> {
+    use similar::TextDiff;
+    use std::io::{self, BufRead, Write};
+
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+
+    let cwd = std::env::current_dir().context("resolving cwd")?;
+    let index_path = repo.index_path();
+    let index = Index::load(&index_path).context("loading index")?;
+
+    // Determine which files to consider
+    let filter_paths: Vec<String> = paths.iter()
+        .map(|p| resolve_pathspec(p, work_tree, &cwd))
+        .collect();
+
+    // Build list of (rel_path, source_content) pairs for modified files
+    let mut file_diffs: Vec<(String, Vec<u8>, Vec<u8>)> = Vec::new(); // (path, source_bytes, worktree_bytes)
+
+    match source {
+        None => {
+            // Diff working tree against index
+            for ie in &index.entries {
+                if ie.stage() != 0 { continue; }
+                if ie.mode == MODE_SYMLINK { continue; }
+
+                let path_str = String::from_utf8_lossy(&ie.path).to_string();
+
+                // Apply path filter if specified
+                if !filter_paths.is_empty() {
+                    let matches = filter_paths.iter().any(|fp| {
+                        if is_glob_pattern(fp) {
+                            glob_matches(fp, &path_str)
+                        } else if fp.is_empty() || fp == "." {
+                            true
+                        } else if fp.ends_with('/') {
+                            path_str.starts_with(fp.as_str())
+                        } else {
+                            path_str == *fp || path_str.starts_with(&format!("{fp}/"))
+                        }
+                    });
+                    if !matches { continue; }
+                }
+
+                let abs_path = work_tree.join(&path_str);
+                if !abs_path.exists() {
+                    // Deleted file — treat as empty worktree content
+                    let obj = repo.odb.read(&ie.oid)?;
+                    if obj.kind == ObjectKind::Blob {
+                        file_diffs.push((path_str, obj.data.clone(), Vec::new()));
+                    }
+                    continue;
+                }
+
+                let worktree_data = std::fs::read(&abs_path)
+                    .with_context(|| format!("reading {path_str}"))?;
+                let obj = repo.odb.read(&ie.oid)?;
+                if obj.kind != ObjectKind::Blob { continue; }
+
+                if worktree_data != obj.data {
+                    file_diffs.push((path_str, obj.data.clone(), worktree_data));
+                }
+            }
+        }
+        Some(source_spec) => {
+            // Diff working tree against a specific commit's tree
+            let source_oid = resolve_to_commit(repo, source_spec)?;
+            let tree_oid = commit_to_tree(repo, &source_oid)?;
+            let flat = tree_to_flat_entries(repo, &tree_oid, "")?;
+
+            for flat_entry in &flat {
+                if flat_entry.mode == MODE_SYMLINK { continue; }
+                let path_str = String::from_utf8_lossy(&flat_entry.path).to_string();
+
+                if !filter_paths.is_empty() {
+                    let matches = filter_paths.iter().any(|fp| {
+                        if is_glob_pattern(fp) {
+                            glob_matches(fp, &path_str)
+                        } else if fp.is_empty() || fp == "." {
+                            true
+                        } else {
+                            path_str == *fp || path_str.starts_with(&format!("{fp}/"))
+                        }
+                    });
+                    if !matches { continue; }
+                }
+
+                let abs_path = work_tree.join(&path_str);
+                let worktree_data = if abs_path.exists() {
+                    std::fs::read(&abs_path)
+                        .with_context(|| format!("reading {path_str}"))?
+                } else {
+                    Vec::new()
+                };
+
+                let obj = repo.odb.read(&flat_entry.oid)?;
+                if obj.kind != ObjectKind::Blob { continue; }
+
+                if worktree_data != obj.data {
+                    file_diffs.push((path_str, obj.data.clone(), worktree_data));
+                }
+            }
+        }
+    }
+
+    if file_diffs.is_empty() {
+        return Ok(());
+    }
+
+    // Sort for deterministic order
+    file_diffs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+    let mut stdout = io::stderr();
+
+    for (path, source_data, worktree_data) in &file_diffs {
+        let source_str = String::from_utf8_lossy(source_data);
+        let worktree_str = String::from_utf8_lossy(worktree_data);
+
+        // The diff shows what changed FROM source TO worktree.
+        // "Accepting" a hunk means reverting the worktree back to source.
+        let text_diff = TextDiff::from_lines(source_str.as_ref(), worktree_str.as_ref());
+        let hunks: Vec<_> = text_diff
+            .unified_diff()
+            .context_radius(3)
+            .iter_hunks()
+            .collect();
+
+        if hunks.is_empty() { continue; }
+
+        let mut accept_all = false;
+        let mut skip_file = false;
+        let mut accepted_hunks: Vec<bool> = vec![false; hunks.len()];
+
+        for (i, hunk) in hunks.iter().enumerate() {
+            if skip_file { break; }
+            if accept_all {
+                accepted_hunks[i] = true;
+                continue;
+            }
+
+            // Display the hunk
+            write!(stdout, "diff --git a/{path} b/{path}\n").ok();
+            write!(stdout, "--- a/{path}\n+++ b/{path}\n").ok();
+            write!(stdout, "{hunk}").ok();
+            write!(stdout, "Discard this hunk from worktree [y,n,q,a,d,?]? ").ok();
+            stdout.flush().ok();
+
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                // EOF — keep remaining changes
+                break;
+            }
+            let answer = line.trim();
+            match answer {
+                "y" | "Y" => { accepted_hunks[i] = true; }
+                "n" | "N" => { /* keep this hunk (don't revert) */ }
+                "a" | "A" => { accepted_hunks[i] = true; accept_all = true; }
+                "d" | "D" => { skip_file = true; }
+                "q" | "Q" => {
+                    // Apply what we've accepted so far, then return
+                    apply_accepted_hunks(repo, work_tree, path, source_data, worktree_data, &accepted_hunks)?;
+                    return Ok(());
+                }
+                _ => { /* Unrecognized — treat as 'n' */ }
+            }
+        }
+
+        // Apply accepted hunks for this file
+        apply_accepted_hunks(repo, work_tree, path, source_data, worktree_data, &accepted_hunks)?;
+    }
+
+    Ok(())
+}
+
+/// Apply accepted hunks by reconstructing the file content.
+///
+/// For each accepted hunk, we revert the worktree lines back to the source
+/// version. Unaccepted hunks keep the worktree version.
+fn apply_accepted_hunks(
+    _repo: &Repository,
+    work_tree: &std::path::Path,
+    path: &str,
+    source_data: &[u8],
+    worktree_data: &[u8],
+    accepted: &[bool],
+) -> Result<()> {
+    if !accepted.iter().any(|&a| a) {
+        return Ok(()); // Nothing accepted
+    }
+
+    let abs_path = work_tree.join(path);
+
+    // If all hunks are accepted, just write the source content
+    if accepted.iter().all(|&a| a) {
+        if source_data.is_empty() {
+            let _ = std::fs::remove_file(&abs_path);
+        } else {
+            if let Some(parent) = abs_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&abs_path, source_data)?;
+        }
+        return Ok(());
+    }
+
+    // Partial acceptance: reconstruct file using diff ops.
+    // Each non-Equal op is a "hunk". We map each contiguous group of
+    // non-Equal ops to the same hunk index.
+    let source_str = String::from_utf8_lossy(source_data);
+    let worktree_str = String::from_utf8_lossy(worktree_data);
+    let source_lines: Vec<&str> = source_str.lines().collect();
+    let worktree_lines: Vec<&str> = worktree_str.lines().collect();
+
+    let text_diff = similar::TextDiff::from_lines(source_str.as_ref(), worktree_str.as_ref());
+
+    // Map ops to hunk indices: consecutive non-Equal ops share a hunk index.
+    let ops: Vec<_> = text_diff.ops().to_vec();
+    let mut hunk_indices: Vec<usize> = Vec::new();
+    let mut current_hunk: usize = 0;
+    let mut prev_was_change = false;
+    for op in &ops {
+        match op {
+            similar::DiffOp::Equal { .. } => {
+                hunk_indices.push(usize::MAX); // sentinel for equal
+                if prev_was_change {
+                    current_hunk += 1;
+                    prev_was_change = false;
+                }
+            }
+            _ => {
+                hunk_indices.push(current_hunk);
+                prev_was_change = true;
+            }
+        }
+    }
+
+    let mut output = String::new();
+    for (i, op) in ops.iter().enumerate() {
+        let hi = hunk_indices[i];
+        let is_accepted = hi != usize::MAX && hi < accepted.len() && accepted[hi];
+
+        match op {
+            similar::DiffOp::Equal { old_index, len, .. } => {
+                for j in 0..*len {
+                    output.push_str(source_lines[old_index + j]);
+                    output.push('\n');
+                }
+            }
+            similar::DiffOp::Delete { old_index, old_len, .. } => {
+                if is_accepted {
+                    // Restore source lines
+                    for j in 0..*old_len {
+                        output.push_str(source_lines[old_index + j]);
+                        output.push('\n');
+                    }
+                }
+                // Rejected: lines stay deleted
+            }
+            similar::DiffOp::Insert { new_index, new_len, .. } => {
+                if !is_accepted {
+                    // Keep worktree additions
+                    for j in 0..*new_len {
+                        output.push_str(worktree_lines[new_index + j]);
+                        output.push('\n');
+                    }
+                }
+                // Accepted: revert additions (don't include them)
+            }
+            similar::DiffOp::Replace { old_index, old_len, new_index, new_len } => {
+                if is_accepted {
+                    // Restore source lines
+                    for j in 0..*old_len {
+                        output.push_str(source_lines[old_index + j]);
+                        output.push('\n');
+                    }
+                } else {
+                    // Keep worktree lines
+                    for j in 0..*new_len {
+                        output.push_str(worktree_lines[new_index + j]);
+                        output.push('\n');
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(parent) = abs_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&abs_path, output.as_bytes())?;
     Ok(())
 }
 
