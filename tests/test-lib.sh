@@ -184,6 +184,10 @@ test_set_prereq () {
 sane_unset () {
 	while test $# -gt 0; do
 		unset "$1" 2>/dev/null
+		if test "$1" = "test_tick" && test -f "$TRASH_DIRECTORY/.test_tick"
+		then
+			rm -f "$TRASH_DIRECTORY/.test_tick"
+		fi
 		shift
 	done
 }
@@ -268,12 +272,21 @@ test_have_prereq () {
 }
 
 test_tick () {
+	# Persist test_tick across subshells using a file
 	if test -z "${test_tick+set}"
 	then
-		test_tick=1112911993
+		# Try to read from persistent state
+		if test -f "$TRASH_DIRECTORY/.test_tick"
+		then
+			test_tick=$(cat "$TRASH_DIRECTORY/.test_tick")
+			test_tick=$(($test_tick + 60))
+		else
+			test_tick=1112911993
+		fi
 	else
 		test_tick=$(($test_tick + 60))
 	fi
+	echo "$test_tick" > "$TRASH_DIRECTORY/.test_tick"
 	GIT_COMMITTER_DATE="$test_tick -0700"
 	GIT_AUTHOR_DATE="$test_tick -0700"
 	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
@@ -300,15 +313,26 @@ test_expect_success () {
 	local commands="$2"
 	test_count=$(($test_count + 1))
 
-	# Run in a subshell so each test starts clean
+	_test_eval_result=0
+	_twf_cmd=""
 	(
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1
+		# Restore persisted test_tick state
+		if test -f "$TRASH_DIRECTORY/.test_tick"; then
+			test_tick=$(cat "$TRASH_DIRECTORY/.test_tick")
+			GIT_COMMITTER_DATE="$test_tick -0700"
+			GIT_AUTHOR_DATE="$test_tick -0700"
+			export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
+		fi
+		# Restore persisted env vars
+		if test -f "$TRASH_DIRECTORY/.test_env"; then
+			. "$TRASH_DIRECTORY/.test_env"
+		fi
 		eval "$commands"
-	)
-	local result=$?
+	) || _test_eval_result=$?
 
-	if test $result -eq 0
+	if test $_test_eval_result -eq 0
 	then
 		test_pass=$(($test_pass + 1))
 		if test -n "$TEST_VERBOSE"
