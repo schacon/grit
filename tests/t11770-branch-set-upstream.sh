@@ -91,7 +91,7 @@ test_expect_success 'branch -D force deletes branch' '
 	cd "$TRASH_DIRECTORY"
 '
 
-test_expect_failure 'branch -d on unmerged branch fails' '
+test_expect_success 'branch -d on unmerged branch fails' '
 	cd "$R" &&
 	git checkout -b unmerged-br &&
 	echo "unmerged" >unmerged-file &&

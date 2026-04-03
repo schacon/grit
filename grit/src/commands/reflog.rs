@@ -28,6 +28,10 @@ pub struct Args {
     /// Reference name (used when no subcommand is given, defaults to HEAD).
     #[arg(value_name = "REF")]
     pub default_ref: Option<String>,
+
+    /// Maximum number of entries to show (used when no subcommand is given).
+    #[arg(short = 'n', long = "max-count")]
+    pub max_count: Option<usize>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -57,9 +61,9 @@ pub struct ShowArgs {
 /// Arguments for `reflog expire`.
 #[derive(Debug, ClapArgs)]
 pub struct ExpireArgs {
-    /// Expire entries older than this many days (default: 90).
+    /// Expire entries older than this value. Use "all" to expire all, or a number of days.
     #[arg(long = "expire", default_value = "90")]
-    pub expire_days: u64,
+    pub expire: String,
 
     /// Process all refs, not just the named one.
     #[arg(long)]
@@ -84,6 +88,10 @@ pub struct DeleteArgs {
     /// Dry run: show what would be deleted.
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
+
+    /// Update the ref to the value of the entry being deleted.
+    #[arg(long = "updateref")]
+    pub updateref: bool,
 }
 
 /// Arguments for `reflog exists`.
@@ -106,7 +114,7 @@ pub fn run(args: Args) -> Result<()> {
             let refname = args.default_ref.unwrap_or_else(|| "HEAD".to_string());
             run_show(ShowArgs {
                 refname,
-                max_count: None,
+                max_count: args.max_count,
             })
         }
     }
@@ -142,14 +150,16 @@ fn run_show(args: ShowArgs) -> Result<()> {
 fn run_expire(args: ExpireArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    let expire_secs = if args.expire_days == 0 {
+    let expire_secs = if args.expire == "all" || args.expire == "0" {
         None // expire all
     } else {
+        let expire_days: u64 = args.expire.parse()
+            .with_context(|| format!("invalid expire value: '{}'", args.expire))?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| anyhow::anyhow!("system time error: {e}"))?
             .as_secs() as i64;
-        Some(now - (args.expire_days as i64 * 86400))
+        Some(now - (expire_days as i64 * 86400))
     };
 
     let refs_to_expire: Vec<String> = if args.all {
@@ -208,7 +218,34 @@ fn run_delete(args: DeleteArgs) -> Result<()> {
                 eprintln!("would delete {refname}@{{{idx}}}");
             }
         } else {
-            delete_reflog_entries(&repo.git_dir, refname, indices)
+            // If --updateref, after deleting, update the ref to the new_oid
+            // of whatever entry becomes the new @{0}
+            if args.updateref {
+                let entries = read_reflog(&repo.git_dir, &refname)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                // Entries are oldest-first; indices are newest-first
+                let mut reversed = entries.clone();
+                reversed.reverse();
+                // Figure out which entries will remain after deletion
+                let indices_set: std::collections::HashSet<usize> = indices.iter().copied().collect();
+                let remaining: Vec<&grit_lib::reflog::ReflogEntry> = reversed.iter().enumerate()
+                    .filter(|(i, _)| !indices_set.contains(i))
+                    .map(|(_, e)| e)
+                    .collect();
+                if let Some(new_top) = remaining.first() {
+                    let update_oid = &new_top.new_oid;
+                    if refname == "HEAD" {
+                        if let Ok(Some(target)) = grit_lib::refs::read_head(&repo.git_dir) {
+                            grit_lib::refs::write_ref(&repo.git_dir, &target, update_oid)
+                                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                        }
+                    } else {
+                        grit_lib::refs::write_ref(&repo.git_dir, &refname, update_oid)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    }
+                }
+            }
+            delete_reflog_entries(&repo.git_dir, &refname, indices)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
     }

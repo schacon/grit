@@ -1,0 +1,47 @@
+#!/bin/sh
+
+test_description='rebasing a commit with multi-line first paragraph.'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
+. ./test-lib.sh
+
+test_expect_success setup '
+	git init -q &&
+
+	>file &&
+	git add file &&
+	test_tick &&
+	git commit -m initial &&
+
+	echo hello >file &&
+	test_tick &&
+	git commit -a -m "A sample commit log message that has a long
+summary that spills over multiple lines.
+
+But otherwise with a sane description." &&
+
+	git branch side &&
+
+	git reset --hard HEAD^ &&
+	>elif &&
+	git add elif &&
+	test_tick &&
+	git commit -m second
+'
+
+test_expect_success rebase '
+	git checkout side &&
+	git rebase main &&
+	git cat-file commit HEAD | sed -e "1,/^\$/d" >actual &&
+	cat >expect <<-\EOF &&
+	A sample commit log message that has a long
+	summary that spills over multiple lines.
+
+	But otherwise with a sane description.
+	EOF
+	test_cmp expect actual
+'
+
+test_done

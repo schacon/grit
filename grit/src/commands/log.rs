@@ -5,9 +5,12 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::diff_trees;
+use grit_lib::diff::{
+    count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
+};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::odb::Odb;
+use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
 use regex::Regex;
@@ -81,6 +84,34 @@ pub struct Args {
     #[arg(long = "date")]
     pub date: Option<String>,
 
+    /// Walk the reflog instead of the commit ancestry chain.
+    #[arg(short = 'g', long = "walk-reflogs")]
+    pub walk_reflogs: bool,
+
+    /// Show unified diff (patch) after each commit.
+    #[arg(short = 'p', long = "patch", alias = "unified")]
+    pub patch: bool,
+
+    /// Alias for --patch.
+    #[arg(short = 'u', hide = true)]
+    pub patch_u: bool,
+
+    /// Show diffstat per commit.
+    #[arg(long = "stat")]
+    pub stat: bool,
+
+    /// List changed file names per commit.
+    #[arg(long = "name-only")]
+    pub name_only: bool,
+
+    /// Show status letter + filename per commit.
+    #[arg(long = "name-status")]
+    pub name_status: bool,
+
+    /// Show raw diff-tree output per commit.
+    #[arg(long = "raw")]
+    pub raw: bool,
+
     /// Pathspecs (after --).
     #[arg(last = true)]
     pub pathspecs: Vec<String>,
@@ -89,6 +120,11 @@ pub struct Args {
 /// Run the `log` command.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Handle -g / --walk-reflogs mode
+    if args.walk_reflogs {
+        return run_reflog_walk(&repo, &args);
+    }
 
     // Determine starting points
     let start_oids = if args.revisions.is_empty() {
@@ -164,14 +200,206 @@ pub fn run(args: Args) -> Result<()> {
         .map(|f| f.starts_with("format:"))
         .unwrap_or(false);
 
+    let show_diff = args.patch || args.patch_u || args.stat || args.name_only || args.name_status || args.raw;
+
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
             writeln!(out)?;
         }
         format_commit(&mut out, oid, commit_data, &args, decorations.as_ref())?;
+
+        if show_diff {
+            write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
+        }
     }
 
     Ok(())
+}
+
+/// Run the reflog walk mode (`log -g` / `log --walk-reflogs`).
+fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
+    // Determine which ref to walk
+    let refname = if args.revisions.is_empty() {
+        "HEAD".to_string()
+    } else {
+        let r = &args.revisions[0];
+        if r == "HEAD" || r.starts_with("refs/") {
+            r.clone()
+        } else {
+            let candidate = format!("refs/heads/{r}");
+            if grit_lib::refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
+                candidate
+            } else {
+                r.clone()
+            }
+        }
+    };
+
+    let display_name = if refname.starts_with("refs/heads/") {
+        refname.strip_prefix("refs/heads/").unwrap_or(&refname)
+    } else {
+        &refname
+    };
+
+    let entries = read_reflog(&repo.git_dir, &refname)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    let max = args.max_count.unwrap_or(usize::MAX);
+    let skip = args.skip.unwrap_or(0);
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    // Detect format
+    let is_format_separator = args
+        .format
+        .as_deref()
+        .map(|f| f.starts_with("format:"))
+        .unwrap_or(false);
+
+    let mut shown = 0usize;
+    let mut skipped = 0usize;
+
+    for (i, entry) in entries.iter().rev().enumerate() {
+        if shown >= max {
+            break;
+        }
+        if skipped < skip {
+            skipped += 1;
+            continue;
+        }
+
+        // Read the commit object for this entry
+        let commit_data = match repo.odb.read(&entry.new_oid) {
+            Ok(obj) => match parse_commit(&obj.data) {
+                Ok(c) => c,
+                Err(_) => continue,
+            },
+            Err(_) => continue,
+        };
+
+        let selector = format!("{}@{{{}}}", display_name, i);
+
+        if let Some(ref fmt) = args.format {
+            let fmt_str = fmt.strip_prefix("tformat:").or_else(|| fmt.strip_prefix("format:")).unwrap_or(fmt);
+            if is_format_separator && shown > 0 {
+                writeln!(out)?;
+            }
+            let line = apply_reflog_format_string(
+                fmt_str,
+                &entry.new_oid,
+                &commit_data,
+                &selector,
+                &entry.message,
+                &entry.identity,
+            );
+            writeln!(out, "{}", line)?;
+        } else if args.oneline {
+            let abbrev = &entry.new_oid.to_hex()[..7];
+            let subject = commit_data.message.lines().next().unwrap_or("");
+            writeln!(out, "{} {}@{{{}}}: {}", abbrev, display_name, i, entry.message)?;
+        } else {
+            // Full format with Reflog headers
+            writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+            writeln!(out, "Reflog: {} ({})", selector, entry.identity)?;
+            writeln!(out, "Reflog message: {}", entry.message)?;
+            writeln!(out, "Author: {}", format_ident_for_header(&commit_data.author))?;
+            let date = format_date_for_header(&commit_data.author);
+            writeln!(out, "Date:   {}", date)?;
+            writeln!(out)?;
+            for line in commit_data.message.lines() {
+                writeln!(out, "    {}", line)?;
+            }
+            writeln!(out)?;
+        }
+        shown += 1;
+    }
+
+    Ok(())
+}
+
+/// Apply format placeholders for reflog walk entries.
+/// Supports %H, %h, %s, %gd, %gs, %gn, %ge, %an, %ae, %cn, %ce, %B, %b, %N, %n.
+fn apply_reflog_format_string(
+    fmt: &str,
+    oid: &ObjectId,
+    commit: &grit_lib::objects::CommitData,
+    selector: &str,
+    reflog_msg: &str,
+    reflog_identity: &str,
+) -> String {
+    let hex = oid.to_hex();
+    let short = &hex[..7.min(hex.len())];
+    let subject = commit.message.lines().next().unwrap_or("");
+    let body = extract_body(&commit.message);
+
+    let reflog_name = extract_name(reflog_identity);
+    let reflog_email = extract_email(reflog_identity);
+
+    let mut result = String::new();
+    let mut chars = fmt.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            match chars.peek() {
+                Some('H') => { chars.next(); result.push_str(&hex); }
+                Some('h') => { chars.next(); result.push_str(short); }
+                Some('s') => { chars.next(); result.push_str(subject); }
+                Some('B') => { chars.next(); result.push_str(commit.message.trim()); }
+                Some('b') => { chars.next(); result.push_str(&body); }
+                Some('n') => { chars.next(); result.push('\n'); }
+                Some('g') => {
+                    chars.next();
+                    match chars.peek() {
+                        Some('d') => { chars.next(); result.push_str(selector); }
+                        Some('s') => { chars.next(); result.push_str(reflog_msg); }
+                        Some('n') => { chars.next(); result.push_str(&reflog_name); }
+                        Some('e') => { chars.next(); result.push_str(&reflog_email); }
+                        _ => { result.push_str("%g"); }
+                    }
+                }
+                Some('a') => {
+                    chars.next();
+                    match chars.peek() {
+                        Some('n') => { chars.next(); result.push_str(&extract_name(&commit.author)); }
+                        Some('e') => { chars.next(); result.push_str(&extract_email(&commit.author)); }
+                        _ => { result.push_str("%a"); }
+                    }
+                }
+                Some('c') => {
+                    chars.next();
+                    match chars.peek() {
+                        Some('n') => { chars.next(); result.push_str(&extract_name(&commit.committer)); }
+                        Some('e') => { chars.next(); result.push_str(&extract_email(&commit.committer)); }
+                        _ => { result.push_str("%c"); }
+                    }
+                }
+                _ => { result.push('%'); }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Format ident for header display ("Name <email>").
+fn format_ident_for_header(ident: &str) -> String {
+    let name = extract_name(ident);
+    let email = extract_email(ident);
+    if email.is_empty() {
+        name
+    } else {
+        format!("{name} <{email}>")
+    }
+}
+
+/// Format date from ident for header display.
+fn format_date_for_header(ident: &str) -> String {
+    format_date_with_mode(ident, None)
 }
 
 /// Parsed commit with its OID.
@@ -197,6 +425,11 @@ fn walk_commits(
     merges_only: bool,
     pathspecs: &[String],
 ) -> Result<Vec<(ObjectId, CommitInfo)>> {
+    // Short-circuit: if max_count is explicitly 0, return nothing.
+    if max_count == Some(0) {
+        return Ok(Vec::new());
+    }
+
     let mut visited = HashSet::new();
     let mut queue: Vec<ObjectId> = start.to_vec();
     let mut result = Vec::new();
@@ -843,4 +1076,222 @@ fn format_decoration_no_parens(
         }
         None => String::new(),
     }
+}
+
+// ── Diff output for log ──────────────────────────────────────────────
+
+/// Compute diff entries for a commit against its first parent (or empty tree for root commits).
+fn compute_commit_diff(odb: &Odb, info: &CommitInfo) -> Result<Vec<DiffEntry>> {
+    if info.parents.is_empty() {
+        // Root commit: diff against empty tree
+        Ok(diff_trees(odb, None, Some(&info.tree), "")?)
+    } else {
+        let parent_obj = odb.read(&info.parents[0])?;
+        let parent_commit = parse_commit(&parent_obj.data)?;
+        Ok(diff_trees(odb, Some(&parent_commit.tree), Some(&info.tree), "")?)
+    }
+}
+
+/// Write diff output for a single commit.
+fn write_commit_diff(
+    out: &mut impl Write,
+    odb: &Odb,
+    info: &CommitInfo,
+    args: &Args,
+) -> Result<()> {
+    let entries = compute_commit_diff(odb, info)?;
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    if args.raw {
+        for entry in &entries {
+            writeln!(out, "{}", format_raw(entry))?;
+        }
+        writeln!(out)?;
+    }
+
+    if args.stat {
+        log_print_stat_summary(out, odb, &entries)?;
+    }
+
+    if args.name_only {
+        for entry in &entries {
+            writeln!(out, "{}", entry.path())?;
+        }
+        writeln!(out)?;
+    }
+
+    if args.name_status {
+        for entry in &entries {
+            writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
+        }
+        writeln!(out)?;
+    }
+
+    if args.patch || args.patch_u {
+        for entry in &entries {
+            log_write_patch_entry(out, odb, entry, 3)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Write a unified-diff block for one entry.
+fn log_write_patch_entry(
+    out: &mut impl Write,
+    odb: &Odb,
+    entry: &DiffEntry,
+    context_lines: usize,
+) -> Result<()> {
+    let old_path = entry
+        .old_path
+        .as_deref()
+        .unwrap_or(entry.new_path.as_deref().unwrap_or(""));
+    let new_path = entry
+        .new_path
+        .as_deref()
+        .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
+
+    writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
+
+    match entry.status {
+        DiffStatus::Added => {
+            writeln!(out, "new file mode {}", entry.new_mode)?;
+            writeln!(
+                out,
+                "index {}..{}",
+                &entry.old_oid.to_hex()[..7],
+                &entry.new_oid.to_hex()[..7]
+            )?;
+        }
+        DiffStatus::Deleted => {
+            writeln!(out, "deleted file mode {}", entry.old_mode)?;
+            writeln!(
+                out,
+                "index {}..{}",
+                &entry.old_oid.to_hex()[..7],
+                &entry.new_oid.to_hex()[..7]
+            )?;
+        }
+        DiffStatus::Modified => {
+            if entry.old_mode != entry.new_mode {
+                writeln!(out, "old mode {}", entry.old_mode)?;
+                writeln!(out, "new mode {}", entry.new_mode)?;
+            }
+            if entry.old_mode == entry.new_mode {
+                writeln!(
+                    out,
+                    "index {}..{} {}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7],
+                    entry.old_mode
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7]
+                )?;
+            }
+        }
+        DiffStatus::Renamed => {
+            writeln!(out, "similarity index 100%")?;
+            writeln!(out, "rename from {old_path}")?;
+            writeln!(out, "rename to {new_path}")?;
+        }
+        DiffStatus::Copied => {
+            writeln!(out, "similarity index 100%")?;
+            writeln!(out, "copy from {old_path}")?;
+            writeln!(out, "copy to {new_path}")?;
+        }
+        DiffStatus::TypeChanged => {
+            writeln!(out, "old mode {}", entry.old_mode)?;
+            writeln!(out, "new mode {}", entry.new_mode)?;
+        }
+        DiffStatus::Unmerged => {}
+    }
+
+    let (old_content, new_content) = log_read_blob_pair(odb, entry)?;
+    let display_old = if entry.status == DiffStatus::Added {
+        "/dev/null"
+    } else {
+        old_path
+    };
+    let display_new = if entry.status == DiffStatus::Deleted {
+        "/dev/null"
+    } else {
+        new_path
+    };
+    let patch = unified_diff(
+        &old_content,
+        &new_content,
+        display_old,
+        display_new,
+        context_lines,
+    );
+    write!(out, "{patch}")?;
+
+    Ok(())
+}
+
+/// Write a `--stat` summary for log.
+fn log_print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) -> Result<()> {
+    let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+
+    for entry in entries {
+        let (old_content, new_content) = log_read_blob_pair(odb, entry)?;
+        let (ins, del) = count_changes(&old_content, &new_content);
+        total_ins += ins;
+        total_del += del;
+        writeln!(
+            out,
+            "{}",
+            format_stat_line(entry.path(), ins, del, max_path_len)
+        )?;
+    }
+
+    let n = entries.len();
+    writeln!(
+        out,
+        " {} file{} changed, {} insertion{}(+), {} deletion{}(-)",
+        n,
+        if n == 1 { "" } else { "s" },
+        total_ins,
+        if total_ins == 1 { "" } else { "s" },
+        total_del,
+        if total_del == 1 { "" } else { "s" },
+    )?;
+    writeln!(out)?;
+
+    Ok(())
+}
+
+/// Read both blob sides of a diff entry as UTF-8 strings.
+fn log_read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
+    let zero = grit_lib::diff::zero_oid();
+
+    let old_content = if entry.old_oid == zero {
+        String::new()
+    } else {
+        match odb.read(&entry.old_oid) {
+            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
+            Err(_) => String::new(),
+        }
+    };
+
+    let new_content = if entry.new_oid == zero {
+        String::new()
+    } else {
+        match odb.read(&entry.new_oid) {
+            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
+            Err(_) => String::new(),
+        }
+    };
+
+    Ok((old_content, new_content))
 }

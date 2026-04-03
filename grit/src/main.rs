@@ -190,6 +190,20 @@ fn run() -> Result<()> {
     dispatch(&subcmd, &rest, &opts)
 }
 
+/// Preprocess log arguments: convert `-<N>` shorthand to `-n <N>`.
+fn preprocess_log_args(rest: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    for arg in rest {
+        if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+            result.push("-n".to_string());
+            result.push(arg[1..].to_string());
+        } else {
+            result.push(arg.clone());
+        }
+    }
+    result
+}
+
 /// Dispatch to the appropriate command handler.
 ///
 /// Each arm only constructs the clap parser for that specific command.
@@ -259,7 +273,10 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "init" => commands::init::run(parse_cmd_args(subcmd, rest), opts.bare),
         "interpret-trailers" => commands::interpret_trailers::run(parse_cmd_args(subcmd, rest)),
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
-        "log" => commands::log::run(parse_cmd_args(subcmd, rest)),
+        "log" => {
+            let rest = preprocess_log_args(rest);
+            commands::log::run(parse_cmd_args(subcmd, &rest))
+        }
         "ls-files" => commands::ls_files::run(parse_cmd_args(subcmd, rest)),
         "ls-remote" => commands::ls_remote::run(parse_cmd_args(subcmd, rest)),
         "ls-tree" => commands::ls_tree::run(parse_cmd_args(subcmd, rest)),
@@ -291,7 +308,10 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "read-tree" => commands::read_tree::run(parse_cmd_args(subcmd, rest)),
         "rebase" => commands::rebase::run(parse_cmd_args(subcmd, rest)),
         "receive-pack" => commands::receive_pack::run(parse_cmd_args(subcmd, rest)),
-        "reflog" => commands::reflog::run(parse_cmd_args(subcmd, rest)),
+        "reflog" => {
+            let rest = preprocess_log_args(rest);
+            commands::reflog::run(parse_cmd_args(subcmd, &rest))
+        }
         "refs" => commands::refs::run(parse_cmd_args(subcmd, rest)),
         "remote" => commands::remote::run(parse_cmd_args(subcmd, rest)),
         "repack" => commands::repack::run(parse_cmd_args(subcmd, rest)),

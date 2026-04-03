@@ -136,8 +136,18 @@ pub fn run(args: Args) -> Result<()> {
         let (rel_path, abs_path) = resolve_repo_path(work_tree, &cwd, &input_path)?;
         let rel_bytes = path_to_bytes(&rel_path)?;
 
-        if args.force_remove || args.remove {
-            if !index.remove(&rel_bytes) && !args.force_remove && !args.ignore_missing {
+        if args.force_remove {
+            if !index.remove(&rel_bytes) && !args.ignore_missing {
+                bail!("'{}' is not in the index", input_path.display());
+            }
+            continue;
+        }
+
+        // --remove (without --force-remove): remove from index only if the
+        // file does not exist on disk.  When --add is also given, files that
+        // *do* exist should fall through to the add logic below.
+        if args.remove && !abs_path.exists() {
+            if !index.remove(&rel_bytes) && !args.ignore_missing {
                 bail!("'{}' is not in the index", input_path.display());
             }
             continue;

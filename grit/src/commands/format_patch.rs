@@ -385,23 +385,41 @@ fn format_date_rfc2822(ident: &str) -> String {
     let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
     if parts.len() >= 2 {
         let ts_str = parts[1];
-        let offset = parts[0];
+        let offset_str = parts[0];
         if let Ok(ts) = ts_str.parse::<i64>() {
+            // Parse the offset string (e.g. "+0000", "-0700") into a UtcOffset
+            let tz_offset = parse_tz_offset(offset_str)
+                .unwrap_or(time::UtcOffset::UTC);
             let dt = time::OffsetDateTime::from_unix_timestamp(ts)
-                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+                .to_offset(tz_offset);
             let format = time::format_description::parse(
                 "[weekday repr:short], [day] [month repr:short] [year] [hour]:[minute]:[second] ",
             );
             if let Ok(fmt) = format {
                 if let Ok(formatted) = dt.format(&fmt) {
-                    return format!("{formatted}{offset}");
+                    return format!("{formatted}{offset_str}");
                 }
             }
         }
-        format!("{ts_str} {offset}")
+        format!("{ts_str} {offset_str}")
     } else {
         ident.to_owned()
     }
+}
+
+fn parse_tz_offset(s: &str) -> Option<time::UtcOffset> {
+    if s.len() != 5 {
+        return None;
+    }
+    let sign: i8 = match s.as_bytes()[0] {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let hours: i8 = s[1..3].parse::<i8>().ok()?;
+    let minutes: i8 = s[3..5].parse::<i8>().ok()?;
+    time::UtcOffset::from_hms(sign * hours, sign * minutes, 0).ok()
 }
 
 /// Sanitize a subject line for use as a filename.

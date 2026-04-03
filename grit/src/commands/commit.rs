@@ -10,6 +10,7 @@ use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, DiffEntry, Diff
 use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
+use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
@@ -19,6 +20,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use time::OffsetDateTime;
+use grit_lib::hooks::{run_hook, HookResult};
 
 /// Arguments for `grit commit`.
 #[derive(Debug, ClapArgs)]
@@ -71,6 +73,10 @@ pub struct Args {
     /// Override the date.
     #[arg(long = "date")]
     pub date: Option<String>,
+
+    /// Suppress the post-rewrite hook.
+    #[arg(long = "no-post-rewrite")]
+    pub no_post_rewrite: bool,
 }
 
 /// Run the `commit` command.
@@ -98,6 +104,7 @@ pub fn run(args: Args) -> Result<()> {
     // Resolve HEAD for parent(s)
     let head = resolve_head(&repo.git_dir)?;
     let mut parents = Vec::new();
+    let old_head_oid = head.oid().cloned();
 
     if args.amend {
         // Amend: use the parent(s) of the current HEAD commit
@@ -152,6 +159,14 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
+    // Run pre-commit hook
+    match run_hook(&repo, "pre-commit", &[], None) {
+        HookResult::Failed(code) => {
+            bail!("pre-commit hook exited with status {code}");
+        }
+        _ => {}
+    }
+
     // Build commit message
     let mut message = build_message(&args, &repo)?;
     if message.trim().is_empty() && !args.allow_empty_message {
@@ -177,6 +192,23 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    // Run commit-msg hook with temp file containing the message
+    {
+        let msg_file = repo.git_dir.join("COMMIT_EDITMSG");
+        fs::write(&msg_file, &message)?;
+        let msg_path_str = msg_file.to_string_lossy().to_string();
+        match run_hook(&repo, "commit-msg", &[&msg_path_str], None) {
+            HookResult::Failed(code) => {
+                bail!("commit-msg hook exited with status {code}");
+            }
+            HookResult::Success => {
+                // Re-read the message in case the hook modified it
+                message = fs::read_to_string(&msg_file)?;
+            }
+            _ => {}
+        }
+    }
+
     // Build commit object
     let commit_data = CommitData {
         tree: tree_oid,
@@ -191,10 +223,53 @@ pub fn run(args: Args) -> Result<()> {
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
     // Update HEAD
+    let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     update_head(&repo.git_dir, &head, &commit_oid)?;
+
+    // Write reflog entries
+    {
+        let msg = if head.is_unborn() {
+            format!("commit (initial): {}", commit_data.message.lines().next().unwrap_or(""))
+        } else if args.amend {
+            format!("commit (amend): {}", commit_data.message.lines().next().unwrap_or(""))
+        } else {
+            format!("commit: {}", commit_data.message.lines().next().unwrap_or(""))
+        };
+        // Write to HEAD reflog
+        let _ = append_reflog(
+            &repo.git_dir,
+            "HEAD",
+            &old_oid,
+            &commit_oid,
+            &commit_data.committer,
+            &msg,
+        );
+        // Write to branch reflog if on a branch
+        if let HeadState::Branch { refname, .. } = &head {
+            let _ = append_reflog(
+                &repo.git_dir,
+                refname,
+                &old_oid,
+                &commit_oid,
+                &commit_data.committer,
+                &msg,
+            );
+        }
+    }
 
     // Clean up merge state files if present
     cleanup_merge_state(&repo.git_dir);
+
+    // Run post-commit hook (informational, don't abort on failure)
+    let _ = run_hook(&repo, "post-commit", &[], None);
+
+    // Run post-rewrite hook for --amend (unless --no-post-rewrite)
+    if args.amend && !args.no_post_rewrite {
+        if let Some(old_oid) = old_head_oid {
+            let stdin_data = format!("{} {}\n", old_oid.to_hex(), commit_oid.to_hex());
+            let _ = run_hook(&repo, "post-rewrite", &["amend"], Some(stdin_data.as_bytes()));
+        }
+    }
 
     // Output summary
     if !args.quiet {

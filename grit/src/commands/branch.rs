@@ -683,6 +683,22 @@ fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     }
 
     let oid_str = fs::read_to_string(&ref_path)?.trim().to_owned();
+
+    // For -d (not -D), check if branch is merged into HEAD
+    if args.delete && !args.force_delete {
+        if let Ok(branch_oid) = ObjectId::from_hex(&oid_str) {
+            if let Some(head_oid) = head.oid() {
+                if !is_ancestor(repo, branch_oid, *head_oid).unwrap_or(false) {
+                    bail!(
+                        "error: the branch '{}' is not fully merged.\nIf you are sure you want to delete it, run 'git branch -D {}'",
+                        name,
+                        name
+                    );
+                }
+            }
+        }
+    }
+
     fs::remove_file(&ref_path)?;
 
     // Clean up empty parent directories under refs/heads/

@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::Component;
 use std::path::PathBuf;
@@ -135,7 +136,7 @@ pub fn run(args: Args) -> Result<()> {
                 name
             )?;
             out.write_all(&[term])?;
-        } else {
+        } else if show_cached {
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(display);
             write!(out, "{name}")?;
@@ -156,6 +157,77 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    // --others: list untracked files
+    if args.others {
+        let indexed_paths: BTreeSet<Vec<u8>> = index
+            .entries
+            .iter()
+            .map(|e| e.path.clone())
+            .collect();
+        let mut untracked = Vec::new();
+        walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked)?;
+        untracked.sort();
+        for path_bytes in &untracked {
+            if !pathspec_filter.is_empty() {
+                let matches = pathspec_filter.iter().any(|spec| {
+                    path_bytes == spec
+                        || path_bytes.starts_with(spec.as_slice())
+                });
+                if !matches {
+                    continue;
+                }
+            }
+            let display = display_path_from_cwd(path_bytes, &cwd_prefix);
+            let name = String::from_utf8_lossy(display);
+            if args.show_tag {
+                write!(out, "? {name}")?;
+            } else {
+                write!(out, "{name}")?;
+            }
+            out.write_all(&[term])?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Walk the worktree and collect paths of untracked files.
+fn walk_worktree(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    indexed: &BTreeSet<Vec<u8>>,
+    out: &mut Vec<Vec<u8>>,
+) -> Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let rel = path.strip_prefix(root).unwrap_or(&path);
+        let rel_bytes = path_to_bytes(rel);
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        // Skip .git directory
+        if name_str == ".git" {
+            continue;
+        }
+
+        let ft = entry.file_type()?;
+        if ft.is_file() || ft.is_symlink() {
+            if !indexed.contains(&rel_bytes) {
+                out.push(rel_bytes);
+            }
+        } else if ft.is_dir() {
+            let dot_git = path.join(".git");
+            if dot_git.exists() {
+                continue;
+            }
+            walk_worktree(root, &path, indexed, out)?;
+        }
+    }
     Ok(())
 }
 

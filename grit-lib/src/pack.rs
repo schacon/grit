@@ -4,7 +4,9 @@
 //! `count-objects`, `verify-pack`, and `show-index`.
 
 use crate::error::{Error, Result};
-use crate::objects::ObjectId;
+use crate::objects::{Object, ObjectId, ObjectKind};
+use crate::unpack_objects::apply_delta;
+use flate2::read::ZlibDecoder;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
@@ -599,6 +601,129 @@ fn read_alternates_inner(
 
 fn canonical_or_self(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Convert a [`PackedType`] to an [`ObjectKind`] for non-delta types.
+fn packed_type_to_kind(pt: PackedType) -> Result<ObjectKind> {
+    match pt {
+        PackedType::Commit => Ok(ObjectKind::Commit),
+        PackedType::Tree => Ok(ObjectKind::Tree),
+        PackedType::Blob => Ok(ObjectKind::Blob),
+        PackedType::Tag => Ok(ObjectKind::Tag),
+        PackedType::OfsDelta | PackedType::RefDelta => Err(Error::CorruptObject(
+            "cannot convert delta type to object kind directly".to_owned(),
+        )),
+    }
+}
+
+/// Decompress zlib data from a byte slice starting at `pos`.
+///
+/// Returns the decompressed data and advances `pos` past the consumed
+/// compressed bytes.
+fn decompress_pack_data(bytes: &[u8], pos: &mut usize, expected_size: u64) -> Result<Vec<u8>> {
+    let slice = &bytes[*pos..];
+    let mut decoder = ZlibDecoder::new(slice);
+    let mut out = Vec::with_capacity(expected_size as usize);
+    decoder
+        .read_to_end(&mut out)
+        .map_err(|e| Error::Zlib(e.to_string()))?;
+    *pos += decoder.total_in() as usize;
+    Ok(out)
+}
+
+/// Read and fully resolve one object from a pack file given its offset.
+///
+/// Handles OFS_DELTA and REF_DELTA by recursively reading the base object.
+/// The `idx` is used for REF_DELTA resolution (to find a base by OID).
+fn read_pack_object_at(
+    pack_bytes: &[u8],
+    offset: u64,
+    idx: &PackIndex,
+    depth: usize,
+) -> Result<(ObjectKind, Vec<u8>)> {
+    if depth > 50 {
+        return Err(Error::CorruptObject(
+            "delta chain too deep (>50)".to_owned(),
+        ));
+    }
+    let mut pos = offset as usize;
+    let (packed_type, size) = parse_pack_object_header(pack_bytes, &mut pos)?;
+
+    match packed_type {
+        PackedType::Commit | PackedType::Tree | PackedType::Blob | PackedType::Tag => {
+            let data = decompress_pack_data(pack_bytes, &mut pos, size)?;
+            let kind = packed_type_to_kind(packed_type)?;
+            Ok((kind, data))
+        }
+        PackedType::OfsDelta => {
+            let base_offset = parse_ofs_delta_base(pack_bytes, &mut pos, offset)?;
+            let delta_data = decompress_pack_data(pack_bytes, &mut pos, size)?;
+            let (base_kind, base_data) =
+                read_pack_object_at(pack_bytes, base_offset, idx, depth + 1)?;
+            let result = apply_delta(&base_data, &delta_data)?;
+            Ok((base_kind, result))
+        }
+        PackedType::RefDelta => {
+            if pos + 20 > pack_bytes.len() {
+                return Err(Error::CorruptObject(
+                    "truncated ref-delta base OID".to_owned(),
+                ));
+            }
+            let base_oid = ObjectId::from_bytes(&pack_bytes[pos..pos + 20])?;
+            pos += 20;
+            let delta_data = decompress_pack_data(pack_bytes, &mut pos, size)?;
+            // Find the base in the same pack index
+            let base_entry = idx
+                .entries
+                .iter()
+                .find(|e| e.oid == base_oid)
+                .ok_or_else(|| {
+                    Error::CorruptObject(format!(
+                        "ref-delta base {} not found in pack",
+                        base_oid
+                    ))
+                })?;
+            let (base_kind, base_data) =
+                read_pack_object_at(pack_bytes, base_entry.offset, idx, depth + 1)?;
+            let result = apply_delta(&base_data, &delta_data)?;
+            Ok((base_kind, result))
+        }
+    }
+}
+
+/// Read an object from a pack file by its OID.
+///
+/// Searches the given pack index for the OID, then reads and decompresses
+/// the object from the corresponding pack file, resolving delta chains.
+///
+/// # Errors
+///
+/// Returns [`Error::ObjectNotFound`] if the OID is not in this pack.
+pub fn read_object_from_pack(idx: &PackIndex, oid: &ObjectId) -> Result<Object> {
+    let entry = idx
+        .entries
+        .iter()
+        .find(|e| e.oid == *oid)
+        .ok_or_else(|| Error::ObjectNotFound(oid.to_hex()))?;
+
+    let pack_bytes = fs::read(&idx.pack_path).map_err(Error::Io)?;
+    let (kind, data) = read_pack_object_at(&pack_bytes, entry.offset, idx, 0)?;
+    Ok(Object::new(kind, data))
+}
+
+/// Search all pack indexes in `objects_dir` for the given OID and read it.
+///
+/// # Errors
+///
+/// Returns [`Error::ObjectNotFound`] if no pack contains the OID.
+pub fn read_object_from_packs(objects_dir: &Path, oid: &ObjectId) -> Result<Object> {
+    let indexes = read_local_pack_indexes(objects_dir)?;
+    for idx in &indexes {
+        if idx.entries.iter().any(|e| e.oid == *oid) {
+            return read_object_from_pack(idx, oid);
+        }
+    }
+    Err(Error::ObjectNotFound(oid.to_hex()))
 }
 
 fn parse_pack_object_header(bytes: &[u8], pos: &mut usize) -> Result<(PackedType, u64)> {

@@ -12,9 +12,10 @@ use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
-use grit_lib::refs;
+use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use grit_lib::state::{resolve_head, HeadState};
@@ -26,6 +27,14 @@ pub struct Args {
     /// Create a new branch and switch to it.
     #[arg(short = 'b')]
     pub new_branch: Option<String>,
+
+    /// Create (or force-reset) a new branch and switch to it.
+    #[arg(short = 'B', conflicts_with = "new_branch")]
+    pub force_branch: Option<String>,
+
+    /// Create a new orphan branch (no parent commit).
+    #[arg(long = "orphan")]
+    pub orphan: Option<String>,
 
     /// Force: discard local changes.
     #[arg(short = 'f', long = "force")]
@@ -48,6 +57,16 @@ pub fn run(args: Args) -> Result<()> {
     // Parse rest into (target, paths) handling `--` separator
     let (target, paths) = split_target_and_paths(&args.rest, has_separator);
 
+    // Case: checkout --orphan <name>
+    if let Some(ref orphan_name) = args.orphan {
+        return create_orphan_branch(&repo, orphan_name);
+    }
+
+    // Case: checkout -B <name> [<start_point>] (force create/reset)
+    if let Some(ref force_branch_name) = args.force_branch {
+        return force_create_and_switch_branch(&repo, force_branch_name, target.as_deref(), args.force);
+    }
+
     // Case 1: checkout -b <new_branch> [<start_point>]
     if let Some(ref new_branch_name) = args.new_branch {
         return create_and_switch_branch(&repo, new_branch_name, target.as_deref(), args.force);
@@ -56,6 +75,11 @@ pub fn run(args: Args) -> Result<()> {
     // Case 2: checkout [<tree-ish>] -- <paths>  (path restore)
     if !paths.is_empty() {
         return checkout_paths(&repo, target.as_deref(), &paths);
+    }
+
+    // Case: checkout -f (no args) — force reset working tree to HEAD
+    if args.force && target.is_none() && paths.is_empty() {
+        return force_reset_to_head(&repo);
     }
 
     // Case 3: checkout -- (with no paths and no target) is a no-op
@@ -131,6 +155,16 @@ fn switch_branch(repo: &Repository, branch_name: &str, branch_ref: &str, force: 
     // Update working tree and index
     switch_to_tree(repo, &head, &target_tree, force)?;
 
+    // Write reflog entries before updating HEAD
+    let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let from_desc = match &head {
+        HeadState::Branch { short_name, .. } => short_name.clone(),
+        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+        HeadState::Invalid => "unknown".to_string(),
+    };
+    let msg = format!("checkout: moving from {} to {}", from_desc, branch_name);
+    write_checkout_reflog(repo, &head, &old_oid, &target_oid, &msg);
+
     // Update HEAD to point to the branch
     std::fs::write(
         repo.git_dir.join("HEAD"),
@@ -177,6 +211,16 @@ fn create_and_switch_branch(
     // Create the branch ref
     refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
 
+    // Write reflog entries
+    let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let from_desc = match &head {
+        HeadState::Branch { short_name, .. } => short_name.clone(),
+        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+        HeadState::Invalid => "unknown".to_string(),
+    };
+    let msg = format!("checkout: moving from {} to {}", from_desc, name);
+    write_checkout_reflog(repo, &head, &old_oid, &start_oid, &msg);
+
     // Update HEAD to point to the new branch
     std::fs::write(
         repo.git_dir.join("HEAD"),
@@ -187,6 +231,117 @@ fn create_and_switch_branch(
     Ok(())
 }
 
+/// Create (or force-reset) a branch and switch to it (`checkout -B`).
+fn force_create_and_switch_branch(
+    repo: &Repository,
+    name: &str,
+    start: Option<&str>,
+    force: bool,
+) -> Result<()> {
+    let branch_ref = format!("refs/heads/{name}");
+
+    // Resolve start point (default: HEAD)
+    let start_oid = match start {
+        Some(s) => resolve_to_commit(repo, s)?,
+        None => {
+            let head = resolve_head(&repo.git_dir)?;
+            match head.oid() {
+                Some(oid) => *oid,
+                None => bail!("cannot create branch '{}': HEAD does not point to a commit", name),
+            }
+        }
+    };
+
+    let head = resolve_head(&repo.git_dir)?;
+    let target_tree = commit_to_tree(repo, &start_oid)?;
+
+    // Update working tree if start point differs from current HEAD
+    if head.oid() != Some(&start_oid) {
+        switch_to_tree(repo, &head, &target_tree, force)?;
+    }
+
+    // Create or overwrite the branch ref
+    refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
+
+    // Update HEAD to point to the new branch
+    std::fs::write(
+        repo.git_dir.join("HEAD"),
+        format!("ref: {branch_ref}\n"),
+    )?;
+
+    // Message depends on whether branch existed
+    println!("Switched to and reset branch '{}'", name);
+    Ok(())
+}
+
+/// Create an orphan branch (`checkout --orphan <name>`).
+///
+/// Sets HEAD to the new branch but does NOT create the ref (no commit yet).
+/// The index is preserved so the next commit will have the current content.
+fn create_orphan_branch(repo: &Repository, name: &str) -> Result<()> {
+    let branch_ref = format!("refs/heads/{name}");
+
+    // Check the branch doesn't already exist
+    if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+        bail!("a branch named '{}' already exists", name);
+    }
+
+    // Point HEAD at the new branch (which doesn't exist yet = unborn)
+    std::fs::write(
+        repo.git_dir.join("HEAD"),
+        format!("ref: {branch_ref}\n"),
+    )?;
+
+    println!("Switched to a new branch '{}'", name);
+    Ok(())
+}
+
+/// Force-reset working tree to HEAD (`checkout -f` with no arguments).
+fn force_reset_to_head(repo: &Repository) -> Result<()> {
+    let head = resolve_head(&repo.git_dir)?;
+    let head_oid = match head.oid() {
+        Some(oid) => *oid,
+        None => bail!("HEAD does not point to a commit"),
+    };
+    let target_tree = commit_to_tree(repo, &head_oid)?;
+
+    let work_tree = match &repo.work_tree {
+        Some(p) => p.clone(),
+        None => bail!("this operation must be run in a work tree"),
+    };
+
+    // Build index from the target tree and force-write all entries
+    let new_entries = tree_to_flat_entries(repo, &target_tree, "")?;
+    let mut new_index = Index::new();
+    new_index.entries = new_entries;
+    new_index.sort();
+
+    // Write every entry to the worktree (force overwrite)
+    for entry in &new_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+        write_blob_to_worktree(repo, &work_tree, &path_str, &entry.oid, entry.mode)?;
+    }
+
+    // Write the new index
+    let index_path = repo.index_path();
+    new_index.write(&index_path).context("writing index")?;
+
+    // Print current branch/commit info
+    match &head {
+        HeadState::Branch { refname, .. } => {
+            let branch_name = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+            println!("Already on '{}'", branch_name);
+        }
+        _ => {
+            print_detached_head_message(repo, &head_oid)?;
+        }
+    }
+    Ok(())
+}
+
 /// Detach HEAD at a specific commit.
 fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
@@ -194,6 +349,17 @@ fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
 
     // Update working tree
     switch_to_tree(repo, &head, &target_tree, force)?;
+
+    // Write reflog entries
+    let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let from_desc = match &head {
+        HeadState::Branch { short_name, .. } => short_name.clone(),
+        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+        HeadState::Invalid => "unknown".to_string(),
+    };
+    let to_desc = oid.to_hex()[..7].to_string();
+    let msg = format!("checkout: moving from {} to {}", from_desc, to_desc);
+    write_checkout_reflog(repo, &head, &old_oid, oid, &msg);
 
     // Write detached HEAD
     std::fs::write(repo.git_dir.join("HEAD"), format!("{oid}\n"))?;
@@ -720,4 +886,58 @@ fn resolve_pathspec(spec: &str, work_tree: &Path, cwd: &Path) -> String {
     } else {
         spec.to_owned()
     }
+}
+
+/// Write reflog entries for a checkout operation.
+fn write_checkout_reflog(
+    repo: &Repository,
+    head: &HeadState,
+    old_oid: &ObjectId,
+    new_oid: &ObjectId,
+    message: &str,
+) {
+    let identity = resolve_checkout_identity(repo);
+
+    // Write reflog for HEAD
+    let _ = append_reflog(
+        &repo.git_dir,
+        "HEAD",
+        old_oid,
+        new_oid,
+        &identity,
+        message,
+    );
+
+    // Write reflog for the branch ref if on a branch
+    if let HeadState::Branch { refname, .. } = head {
+        let _ = append_reflog(
+            &repo.git_dir,
+            refname,
+            old_oid,
+            new_oid,
+            &identity,
+            message,
+        );
+    }
+}
+
+/// Resolve the committer identity for reflog entries.
+fn resolve_checkout_identity(repo: &Repository) -> String {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let name = std::env::var("GIT_COMMITTER_NAME")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_NAME").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.name")))
+        .unwrap_or_else(|| "Unknown".to_owned());
+    let email = std::env::var("GIT_COMMITTER_EMAIL")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
+        .unwrap_or_default();
+    let now = time::OffsetDateTime::now_utc();
+    let epoch = now.unix_timestamp();
+    let offset = now.offset();
+    let hours = offset.whole_hours();
+    let minutes = offset.minutes_past_hour().unsigned_abs();
+    format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
 }
