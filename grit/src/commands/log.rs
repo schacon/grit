@@ -1075,19 +1075,107 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
         Some("raw") => {
             format!("{ts} {offset_str}")
         }
-        _ => {
-            // Default Git date format
-            let dt = time::OffsetDateTime::from_unix_timestamp(ts)
-                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-            let format = time::format_description::parse(
-                "[weekday repr:short] [month repr:short] [day] [hour]:[minute]:[second] [year]",
-            );
-            if let Ok(fmt) = format {
-                if let Ok(formatted) = dt.format(&fmt) {
-                    return format!("{formatted} {offset_str}");
-                }
+        Some("relative") => {
+            // Show relative time like "2 hours ago", "3 days ago"
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let diff = now - ts;
+            if diff < 0 {
+                "in the future".to_owned()
+            } else if diff < 60 {
+                format!("{} seconds ago", diff)
+            } else if diff < 3600 {
+                let m = diff / 60;
+                if m == 1 { "1 minute ago".to_owned() } else { format!("{m} minutes ago") }
+            } else if diff < 86400 {
+                let h = diff / 3600;
+                if h == 1 { "1 hour ago".to_owned() } else { format!("{h} hours ago") }
+            } else if diff < 86400 * 30 {
+                let d = diff / 86400;
+                if d == 1 { "1 day ago".to_owned() } else { format!("{d} days ago") }
+            } else if diff < 86400 * 365 {
+                let months = diff / (86400 * 30);
+                if months == 1 { "1 month ago".to_owned() } else { format!("{months} months ago") }
+            } else {
+                let years = diff / (86400 * 365);
+                if years == 1 { "1 year ago".to_owned() } else { format!("{years} years ago") }
             }
-            format!("{ts_str} {offset_str}")
+        }
+        Some("rfc") | Some("rfc2822") => {
+            // RFC 2822: Thu, 07 Apr 2005 22:13:13 +0200
+            let adjusted = ts + tz_offset_secs;
+            let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+            let weekday = match dt.weekday() {
+                time::Weekday::Monday => "Mon",
+                time::Weekday::Tuesday => "Tue",
+                time::Weekday::Wednesday => "Wed",
+                time::Weekday::Thursday => "Thu",
+                time::Weekday::Friday => "Fri",
+                time::Weekday::Saturday => "Sat",
+                time::Weekday::Sunday => "Sun",
+            };
+            let month = match dt.month() {
+                time::Month::January => "Jan",
+                time::Month::February => "Feb",
+                time::Month::March => "Mar",
+                time::Month::April => "Apr",
+                time::Month::May => "May",
+                time::Month::June => "Jun",
+                time::Month::July => "Jul",
+                time::Month::August => "Aug",
+                time::Month::September => "Sep",
+                time::Month::October => "Oct",
+                time::Month::November => "Nov",
+                time::Month::December => "Dec",
+            };
+            format!(
+                "{}, {} {} {} {:02}:{:02}:{:02} {}",
+                weekday, dt.day(), month, dt.year(),
+                dt.hour(), dt.minute(), dt.second(),
+                offset_str
+            )
+        }
+        Some("unix") => {
+            format!("{ts}")
+        }
+        _ => {
+            // Default Git date format: "Thu Apr  7 15:13:13 2005 -0700"
+            // Note: day is right-justified in a 2-char field (space-padded)
+            let adjusted = ts + tz_offset_secs;
+            let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+            let weekday = match dt.weekday() {
+                time::Weekday::Monday => "Mon",
+                time::Weekday::Tuesday => "Tue",
+                time::Weekday::Wednesday => "Wed",
+                time::Weekday::Thursday => "Thu",
+                time::Weekday::Friday => "Fri",
+                time::Weekday::Saturday => "Sat",
+                time::Weekday::Sunday => "Sun",
+            };
+            let month = match dt.month() {
+                time::Month::January => "Jan",
+                time::Month::February => "Feb",
+                time::Month::March => "Mar",
+                time::Month::April => "Apr",
+                time::Month::May => "May",
+                time::Month::June => "Jun",
+                time::Month::July => "Jul",
+                time::Month::August => "Aug",
+                time::Month::September => "Sep",
+                time::Month::October => "Oct",
+                time::Month::November => "Nov",
+                time::Month::December => "Dec",
+            };
+            format!(
+                "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
+                weekday, month, dt.day(),
+                dt.hour(), dt.minute(), dt.second(),
+                dt.year(), offset_str
+            )
         }
     }
 }
