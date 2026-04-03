@@ -5,7 +5,7 @@ use clap::Args as ClapArgs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit, rev_list,
-    split_symmetric_diff, tag_targets, OrderingMode, OutputMode, RevListOptions,
+    split_symmetric_diff, tag_targets, ObjectFilter, OrderingMode, OutputMode, RevListOptions,
 };
 
 /// Arguments for `grit rev-list`.
@@ -196,6 +196,13 @@ pub fn run(args: Args) -> Result<()> {
                     options.ancestry_path = true;
                     options.ancestry_path_bottoms.push(oid);
                 }
+                "--filter-print-omitted" => options.filter_print_omitted = true,
+                _ if arg.starts_with("--filter=") => {
+                    let spec = arg.trim_start_matches("--filter=");
+                    let filter = ObjectFilter::parse(spec)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    options.filter = Some(filter);
+                }
                 _ => bail!("unsupported option: {arg}"),
             }
             i += 1;
@@ -320,6 +327,13 @@ pub fn run(args: Args) -> Result<()> {
             } else {
                 println!("{oid} {path}");
             }
+        }
+    }
+
+    // Print omitted objects if --filter-print-omitted
+    if options.filter_print_omitted {
+        for oid in &result.omitted_objects {
+            println!("~{oid}");
         }
     }
 
