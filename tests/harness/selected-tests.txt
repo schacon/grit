@@ -335,6 +335,7 @@ t1501-work-tree.sh
 t1503-rev-parse-verify.sh
 t1504-revision-range.sh
 t1505-rev-parse-last.sh
+t1506-rev-parse-diagnosis.sh
 t1510-repo-setup.sh
 t1511-rev-parse-caret.sh
 t1513-rev-parse-prefix.sh
@@ -466,6 +467,10 @@ t4100-apply-stat.sh
 t4101-apply-nonl.sh
 t4106-apply-stdin.sh
 t4109-apply-multifrag.sh
+t4118-apply-empty-context.sh
+t4120-apply-popt.sh
+t4126-apply-empty.sh
+t4129-apply-samemode.sh
 t4201-log-graph.sh
 t4202-log.sh
 t4203-mailmap.sh
@@ -493,6 +498,7 @@ t5524-fmt-merge-msg.sh
 t5613-info-alternate.sh
 t6000-rev-list-misc.sh
 t6003-rev-list-topo-order.sh
+t6004-rev-list-path-optim.sh
 t6005-rev-list-count.sh
 t6006-rev-list-format.sh
 t6007-rev-list-cherry-pick-status.sh
@@ -555,10 +561,12 @@ t7102-reset.sh
 t7103-reset-bare.sh
 t7104-reset-hard.sh
 t7106-reset-unborn-branch.sh
+t7110-reset-merge.sh
 t7110-reset-modes.sh
 t7111-reset-table.sh
 t7201-co.sh
 t7500-commit-template-squash-signoff.sh
+t7501-commit-basic-functionality.sh
 t7501-commit-basic.sh
 t7502-commit-porcelain.sh
 t7503-pre-commit-and-diff-whitespace.sh

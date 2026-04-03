@@ -10,7 +10,7 @@ clean	Main Porcelain	yes	90	2	88	2.2
 clone	Main Porcelain	yes	519	14	505	2.7
 commit	Main Porcelain	yes	435	246	187	56.7
 describe	Main Porcelain	yes	59	0	59	0.0
-diff	Main Porcelain	yes	983	457	499	46.5
+diff	Main Porcelain	yes	983	456	499	46.4
 fetch	Main Porcelain	yes	465	2	463	0.4
 format-patch	Main Porcelain	yes	231	2	229	0.8
 gc	Main Porcelain	yes	38	33	5	86.8
@@ -34,7 +34,7 @@ stash	Main Porcelain	yes	207	0	207	0.0
 status	Main Porcelain	yes	361	217	127	60.1
 submodule	Main Porcelain	yes	478	0	478	0.0
 switch	Main Porcelain	yes	40	16	24	40.0
-tag	Main Porcelain	yes	231	222	8	96.3
+tag	Main Porcelain	yes	231	219	8	95.0
 worktree	Main Porcelain	yes	237	0	237	0.0
 annotate	Ancillary Porcelain	yes	1	0	1	0.0
 blame	Ancillary Porcelain	yes	102	3	99	2.9
