@@ -272,8 +272,9 @@ fn switch_branch(repo: &Repository, branch_name: &str, branch_ref: &str, force: 
 
     // If target commit is the same as current HEAD, just re-attach
     // without touching the working tree or index (preserves dirty state).
+    // But with -f, always rebuild.
     let already_at_target = head.oid().map_or(false, |h| h == &target_oid);
-    if !already_at_target {
+    if !already_at_target || force {
         let target_tree = commit_to_tree(repo, &target_oid)?;
 
         // Update working tree and index
@@ -449,8 +450,8 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
     new_index.entries = new_entries;
     new_index.sort();
 
-    // Remove files that are in old index but not in new
-    checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree)?;
+    // Remove files that are in old index but not in new, and write all entries
+    checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, true)?;
 
     // Force-write every entry to the worktree
     for entry in &new_index.entries {
@@ -514,11 +515,9 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
 fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
 
-    // If already at this commit, just update HEAD without touching tree/index.
     let already_at_target = head.oid().map_or(false, |h| h == oid);
-    if !already_at_target {
+    if !already_at_target || force {
         let target_tree = commit_to_tree(repo, oid)?;
-        // Update working tree
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
 
@@ -618,8 +617,9 @@ fn switch_to_tree(
         new_index.sort();
     }
 
-    // Perform the actual working tree update
-    checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree)?;
+    // Perform the actual working tree update.
+    // When force, write all entries even if OID matches (to restore dirty files).
+    checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, force)?;
 
     // Write the new index
     new_index.write(&index_path).context("writing index")?;
@@ -1254,6 +1254,7 @@ fn checkout_index_to_worktree(
     old_index: &Index,
     new_index: &Index,
     work_tree: &std::path::Path,
+    force_write_all: bool,
 ) -> Result<()> {
     let old_stage0: HashSet<Vec<u8>> = old_index
         .entries
@@ -1295,13 +1296,16 @@ fn checkout_index_to_worktree(
         }
 
         // Skip unchanged entries (same OID and mode) — but only if file exists
-        if let Some(old_entry) = old_map.get(entry.path.as_slice()) {
-            if old_entry.oid == entry.oid && old_entry.mode == entry.mode {
-                let abs_path = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
-                if abs_path.exists() || abs_path.is_symlink() {
-                    continue;
+        // and we're not in force mode.
+        if !force_write_all {
+            if let Some(old_entry) = old_map.get(entry.path.as_slice()) {
+                if old_entry.oid == entry.oid && old_entry.mode == entry.mode {
+                    let abs_path = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+                    if abs_path.exists() || abs_path.is_symlink() {
+                        continue;
+                    }
+                    // File was deleted from worktree, restore it
                 }
-                // File was deleted from worktree, restore it
             }
         }
 
