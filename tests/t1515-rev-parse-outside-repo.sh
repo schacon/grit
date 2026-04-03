@@ -18,8 +18,7 @@ test_expect_success 'git rev-parse --git-dir fails outside repo' '
 	rm -rf "$tmpdir"
 '
 
-# --sq-quote is not implemented in grit
-test_expect_failure 'rev-parse --sq-quote' '
+test_expect_success 'rev-parse --sq-quote' '
 	git rev-parse --sq-quote "hello world" >actual 2>&1
 '
 

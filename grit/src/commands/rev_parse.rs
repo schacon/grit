@@ -21,6 +21,7 @@ pub fn run(args: Args) -> Result<()> {
     let cwd = env::current_dir().context("failed to read current directory")?;
     let mut verify = false;
     let mut quiet = false;
+    let mut sq_quote = false;
     let mut short_len: Option<usize> = None;
     let mut show_is_inside_work_tree = false;
     let mut show_is_inside_git_dir = false;
@@ -138,6 +139,8 @@ pub fn run(args: Args) -> Result<()> {
                         println!("{oid}");
                     }
                 }
+            } else if arg == "--sq-quote" {
+                sq_quote = true;
             } else {
                 bail!("unsupported option: {arg}");
             }
@@ -150,6 +153,19 @@ pub fn run(args: Args) -> Result<()> {
             revisions.push(arg.clone());
         }
         i += 1;
+    }
+
+    // --sq-quote: shell-quote all remaining args and exit
+    if sq_quote {
+        let mut out = String::new();
+        for rev in &revisions {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(&sq_quote_str(rev));
+        }
+        println!("{out}");
+        return Ok(());
     }
 
     let repo = discover_optional(None)?;
@@ -296,6 +312,21 @@ fn rewrite_tree_path_spec(spec: &str, prefix: Option<&str>) -> String {
     joined.push_str(raw_path);
     let normalized = normalize_slash_path(&joined);
     format!("{treeish}:{normalized}")
+}
+
+/// Shell-quote a string using single quotes, matching git's sq_quote_buf.
+fn sq_quote_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 fn normalize_slash_path(path: &str) -> String {
