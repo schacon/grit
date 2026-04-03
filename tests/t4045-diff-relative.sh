@@ -38,7 +38,7 @@ test_expect_success '--stat --relative=subdir/' '
 	grep "file2" actual
 '
 
-test_expect_failure '--raw --relative=subdir/ (not implemented)' '
+test_expect_success '--raw --relative=subdir/' '
 	cd repo &&
 	git diff --raw --relative=subdir/ HEAD^ >actual &&
 	grep "file2" actual

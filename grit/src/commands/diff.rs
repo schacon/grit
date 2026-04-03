@@ -153,6 +153,14 @@ pub struct Args {
     #[arg(long = "name-status")]
     pub name_status: bool,
 
+    /// Show raw diff format (:old-mode new-mode old-oid new-oid status\tpath).
+    #[arg(long = "raw")]
+    pub raw: bool,
+
+    /// Do not abbreviate object IDs.
+    #[arg(long = "no-abbrev")]
+    pub no_abbrev: bool,
+
     /// Show a condensed summary of extended header info (renames, mode changes).
     #[arg(long = "summary")]
     pub summary: bool,
@@ -337,6 +345,8 @@ pub fn run(mut args: Args) -> Result<()> {
                     stat_enabled = true;
                 }
                 "--exit-code" => args.exit_code = true,
+                "--raw" => args.raw = true,
+                "--no-abbrev" => args.no_abbrev = true,
                 _ => { extra_revs.push(r.clone()); continue; }
             }
         } else {
@@ -593,6 +603,8 @@ pub fn run(mut args: Args) -> Result<()> {
             if args.summary {
                 write_diff_summary(&mut out, &entries)?;
             }
+        } else if args.raw {
+            write_raw(&mut out, &entries, args.no_abbrev)?;
         } else if args.numstat {
             write_numstat(&mut out, &entries, &repo.odb, wt_for_content)?;
         } else if args.name_only {
@@ -1567,6 +1579,34 @@ fn write_name_only(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
 
 /// Write `{status_letter}\t{path}` for each entry.
 /// For renames/copies, output `R100\told_path\tnew_path`.
+/// Write raw diff format: `:old-mode new-mode old-oid new-oid status\tpath`
+fn write_raw(out: &mut impl Write, entries: &[DiffEntry], full_oid: bool) -> Result<()> {
+    for entry in entries {
+        let old_mode = &entry.old_mode;
+        let new_mode = &entry.new_mode;
+        let old_oid_hex = entry.old_oid.to_hex();
+        let new_oid_hex = entry.new_oid.to_hex();
+        let (old_oid, new_oid) = if full_oid {
+            (old_oid_hex.as_str(), new_oid_hex.as_str())
+        } else {
+            (&old_oid_hex[..7.min(old_oid_hex.len())], &new_oid_hex[..7.min(new_oid_hex.len())])
+        };
+        let status = entry.status.letter();
+        match entry.status {
+            DiffStatus::Renamed | DiffStatus::Copied => {
+                let score = entry.score.unwrap_or(100);
+                let old_path = entry.old_path.as_deref().unwrap_or("");
+                let new_path = entry.new_path.as_deref().unwrap_or("");
+                writeln!(out, ":{old_mode} {new_mode} {old_oid} {new_oid} {status}{score:03}\t{old_path}\t{new_path}")?;
+            }
+            _ => {
+                writeln!(out, ":{old_mode} {new_mode} {old_oid} {new_oid} {status}\t{}", entry.path())?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn write_name_status(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
     for entry in entries {
         match entry.status {
