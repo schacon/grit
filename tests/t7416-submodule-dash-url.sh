@@ -38,7 +38,7 @@ test_expect_success 'create submodule with protected dash in url' '
 	)
 '
 
-test_expect_failure 'clone can recurse submodule with dash url' '
+test_expect_success 'clone can recurse submodule with dash url' '
 	git clone --recurse-submodules main-repo dst &&
 	test -d dst/sub
 '
