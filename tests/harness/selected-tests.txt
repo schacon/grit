@@ -855,3 +855,4 @@ t3436-rebase-more-options.sh
 t3437-rebase-fixup-options.sh
 t3502-cherry-pick-merge.sh
 t3506-cherry-pick-ff.sh
+t3508-cherry-pick-many-commits.sh
