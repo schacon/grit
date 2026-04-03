@@ -7,7 +7,7 @@ branch	Main Porcelain	yes	399	378	17	94.7
 checkout	Main Porcelain	yes	567	387	99	68.2
 cherry-pick	Main Porcelain	yes	193	160	2	83.0
 clean	Main Porcelain	yes	90	90	0	100.0
-clone	Main Porcelain	yes	519	363	155	70.0
+clone	Main Porcelain	yes	519	347	155	66.9
 commit	Main Porcelain	yes	435	354	79	81.4
 describe	Main Porcelain	yes	59	59	0	100.0
 diff	Main Porcelain	yes	983	959	5	97.6
