@@ -79,4 +79,65 @@ test_expect_success 'cherry-pick multiple commits' '
 	test_path_is_file c2
 '
 
+# ---------------------------------------------------------------------------
+# Revert range syntax
+# ---------------------------------------------------------------------------
+test_expect_success 'revert A..B range syntax' '
+	git checkout -b revert-range initial &&
+	echo r1 >r1 &&
+	git add r1 &&
+	test_tick &&
+	git commit -m r1 &&
+	git tag range-r1 &&
+
+	echo r2 >r2 &&
+	git add r2 &&
+	test_tick &&
+	git commit -m r2 &&
+	git tag range-r2 &&
+
+	echo r3 >r3 &&
+	git add r3 &&
+	test_tick &&
+	git commit -m r3 &&
+	git tag range-r3 &&
+
+	# Revert r2..r3 (only r3, newest first)
+	git revert range-r1..range-r3 &&
+	! test -f r3 &&
+	! test -f r2 &&
+	test -f r1
+'
+
+# ---------------------------------------------------------------------------
+# cherry-pick --empty
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick --empty=drop silently skips empty commit' '
+	git checkout -b empty-test initial &&
+	echo e1 >e1 &&
+	git add e1 &&
+	test_tick &&
+	git commit -m "add e1" &&
+	git tag e1-tag &&
+
+	# Create a branch where e1 already exists
+	git checkout -b empty-target e1-tag &&
+	# Now cherry-pick e1 — it should be empty
+	git cherry-pick --empty=drop e1-tag &&
+	# HEAD should not have advanced
+	test $(git rev-parse HEAD) = $(git rev-parse e1-tag)
+'
+
+test_expect_success 'cherry-pick --empty=keep creates empty commit' '
+	git checkout -b empty-keep e1-tag &&
+	git cherry-pick --allow-empty --empty=keep e1-tag &&
+	# HEAD should have advanced
+	test $(git rev-parse HEAD) != $(git rev-parse e1-tag)
+'
+
+test_expect_success 'cherry-pick --empty=stop fails on empty commit' '
+	git checkout -b empty-stop e1-tag &&
+	test_must_fail git cherry-pick --empty=stop e1-tag
+'
+
 test_done

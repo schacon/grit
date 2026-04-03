@@ -83,11 +83,61 @@ fn do_revert(args: Args) -> Result<()> {
         );
     }
 
-    for spec in &args.commits {
+    // Expand commit specs (including A..B ranges) into a list of specs
+    let expanded = expand_revert_specs(&repo, &args.commits)?;
+
+    for spec in &expanded {
         revert_one_commit(&repo, spec, args.mainline, args.no_commit)?;
     }
 
     Ok(())
+}
+
+/// Expand revert commit specs, handling A..B ranges.
+/// For revert, A..B means revert commits from B down to (but not including) A,
+/// in reverse order (newest first).
+fn expand_revert_specs(repo: &Repository, specs: &[String]) -> Result<Vec<String>> {
+    let mut result = Vec::new();
+    for spec in specs {
+        if let Some((lhs, rhs)) = spec.split_once("..") {
+            let exclude_oid = resolve_revision(repo, lhs)
+                .with_context(|| format!("bad revision '{lhs}'"))?;
+            let include_oid = resolve_revision(repo, rhs)
+                .with_context(|| format!("bad revision '{rhs}'"))?;
+            let range_oids = walk_commit_range(repo, exclude_oid, include_oid)?;
+            // Revert in reverse order (newest first)
+            for oid in range_oids.into_iter().rev() {
+                result.push(oid.to_hex());
+            }
+        } else {
+            result.push(spec.clone());
+        }
+    }
+    Ok(result)
+}
+
+/// Walk commits reachable from `tip` but not from `base`, oldest first.
+fn walk_commit_range(
+    repo: &Repository,
+    base: ObjectId,
+    tip: ObjectId,
+) -> Result<Vec<ObjectId>> {
+    let mut result = Vec::new();
+    let mut current = tip;
+    loop {
+        if current == base {
+            break;
+        }
+        result.push(current);
+        let obj = repo.odb.read(&current)?;
+        let commit = parse_commit(&obj.data)?;
+        if commit.parents.is_empty() {
+            break;
+        }
+        current = commit.parents[0];
+    }
+    result.reverse(); // oldest first
+    Ok(result)
 }
 
 fn revert_one_commit(
