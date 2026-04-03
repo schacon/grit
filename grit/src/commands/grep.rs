@@ -50,9 +50,41 @@ pub struct Args {
     #[arg(short = 'E', long = "extended-regexp")]
     pub extended_regexp: bool,
 
+    /// Use Perl-compatible regular expressions.
+    #[arg(short = 'P', long = "perl-regexp")]
+    pub perl_regexp: bool,
+
     /// Use fixed strings (literal matching, no regex).
     #[arg(short = 'F', long = "fixed-strings")]
     pub fixed_strings: bool,
+
+    /// Read patterns from file, one per line.
+    #[arg(short = 'f', long = "file", value_name = "FILE")]
+    pub pattern_file: Option<String>,
+
+    /// Combine patterns with AND (all -e patterns must match).
+    #[arg(long = "and")]
+    pub and: bool,
+
+    /// Combine patterns with OR (any -e pattern must match) — this is the default.
+    #[arg(long = "or")]
+    pub or: bool,
+
+    /// Negate the next pattern.
+    #[arg(long = "not")]
+    pub not: bool,
+
+    /// Require all patterns to match (line-level AND).
+    #[arg(long = "all-match")]
+    pub all_match: bool,
+
+    /// Show the whole function as context.
+    #[arg(short = 'W', long = "function-context")]
+    pub function_context: bool,
+
+    /// Number of threads to use (accepted but ignored).
+    #[arg(long = "threads", value_name = "N")]
+    pub threads: Option<usize>,
 
     /// Show column number of first match.
     #[arg(long = "column")]
@@ -107,11 +139,25 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
     // Parse positional arguments: [pattern] [tree-ish] [-- pathspec...]
-    let (patterns, tree_ish, pathspecs) = parse_positional(&args, &repo)?;
+    let (mut patterns, tree_ish, pathspecs) = parse_positional(&args, &repo)?;
+
+    // Read patterns from file if -f is given
+    if let Some(ref pattern_file) = args.pattern_file {
+        let content = std::fs::read_to_string(pattern_file)
+            .with_context(|| format!("cannot read pattern file: '{pattern_file}'"))?;
+        for line in content.lines() {
+            if !line.is_empty() {
+                patterns.push(line.to_string());
+            }
+        }
+    }
 
     if patterns.is_empty() {
         bail!("no pattern given");
     }
+
+    // Determine matching mode: --all-match or --and means all patterns must match a line
+    let all_match = args.all_match || args.and;
 
     // Build the regex matchers
     let matchers = build_matchers(&patterns, &args)?;
@@ -121,6 +167,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut found_any = false;
     // Tracks whether we need a "--" separator before the next context group
     let mut need_sep = false;
+    let all_match = all_match; // shadow to pass into closures
 
     if let Some(tree_spec) = &tree_ish {
         // Search a tree object
@@ -151,6 +198,7 @@ pub fn run(args: Args) -> Result<()> {
             Some(tree_spec),
             &mut need_sep,
             &mut out,
+            all_match,
         )?;
     } else {
         // Search working tree (tracked files from index)
@@ -207,6 +255,7 @@ pub fn run(args: Args) -> Result<()> {
                 None,
                 &mut need_sep,
                 &mut out,
+                all_match,
             )? {
                 found_any = true;
             }
@@ -394,6 +443,7 @@ fn grep_content(
     tree_prefix: Option<&str>,
     need_sep: &mut bool,
     out: &mut impl Write,
+    all_match: bool,
 ) -> Result<bool> {
     let color = args.use_color();
 
@@ -411,7 +461,11 @@ fn grep_content(
     // Collect matching line indices
     let mut match_indices: Vec<usize> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        let line_matches = matchers.iter().any(|re| re.is_match(line));
+        let line_matches = if all_match {
+            matchers.iter().all(|re| re.is_match(line))
+        } else {
+            matchers.iter().any(|re| re.is_match(line))
+        };
         let effective_match = if args.invert_match {
             !line_matches
         } else {
@@ -582,6 +636,7 @@ fn grep_tree(
     tree_name: Option<&str>,
     need_sep: &mut bool,
     out: &mut impl Write,
+    all_match: bool,
 ) -> Result<bool> {
     let entries = parse_tree(tree_data)?;
     let mut found = false;
@@ -626,6 +681,7 @@ fn grep_tree(
                 tree_name,
                 need_sep,
                 out,
+                all_match,
             )? {
                 found = true;
             }
@@ -647,7 +703,7 @@ fn grep_tree(
             }
 
             let content = String::from_utf8_lossy(&obj.data);
-            if grep_content(&full_name, &content, matchers, args, tree_name, need_sep, out)? {
+            if grep_content(&full_name, &content, matchers, args, tree_name, need_sep, out, all_match)? {
                 found = true;
             }
         }
