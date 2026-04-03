@@ -90,12 +90,27 @@ pub struct Args {
     #[arg(long)]
     pub eol: bool,
 
+    /// Change directory before listing files.
+    #[arg(short = 'C', value_name = "DIR")]
+    pub change_dir: Option<PathBuf>,
+
     /// Pathspecs to restrict output.
     pub pathspecs: Vec<PathBuf>,
 }
 
 /// Run `grit ls-files`.
 pub fn run(args: Args) -> Result<()> {
+    // Handle -C flag: change directory before doing anything else
+    if let Some(ref dir) = args.change_dir {
+        let target = if dir.is_absolute() {
+            dir.clone()
+        } else {
+            std::env::current_dir()?.join(dir)
+        };
+        std::env::set_current_dir(&target)
+            .with_context(|| format!("cannot change to directory '{}'", target.display()))?;
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree
@@ -151,7 +166,6 @@ pub fn run(args: Args) -> Result<()> {
 
         // --deleted: only show entries whose file is missing from worktree
         if args.deleted && !show_cached {
-            // skip-worktree entries are intentionally absent — never report them
             if entry.skip_worktree() {
                 continue;
             }
@@ -163,7 +177,6 @@ pub fn run(args: Args) -> Result<()> {
 
         // --modified: only show entries that differ from worktree
         if args.modified && !show_cached {
-            // skip-worktree entries are intentionally absent — never report them
             if entry.skip_worktree() {
                 continue;
             }

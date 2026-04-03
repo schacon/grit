@@ -207,12 +207,31 @@ pub fn run(args: Args) -> Result<()> {
         .transpose()
         .context("invalid --grep regex")?;
 
-    // Collect ref decorations
-    let decorate_full = match &args.decorate {
-        Some(Some(s)) if s == "full" => true,
-        _ => false,
+    // Collect ref decorations — manually determine last-wins for
+    // --decorate / --no-decorate so that flag order is respected.
+    let (show_decorations, decorate_full) = {
+        let mut show = true; // default: decorations on
+        let mut full = false;
+        for arg in std::env::args() {
+            if arg == "--no-decorate" {
+                show = false;
+                full = false;
+            } else if arg.starts_with("--decorate") {
+                show = true;
+                if arg == "--decorate=full" {
+                    full = true;
+                } else {
+                    full = false;
+                }
+            }
+        }
+        // If user explicitly passed --no-decorate and nothing else, respect it
+        if args.no_decorate && args.decorate.is_none() {
+            show = false;
+        }
+        (show, full)
     };
-    let decorations = if args.no_decorate {
+    let decorations = if !show_decorations {
         None
     } else {
         Some(collect_decorations(&repo, decorate_full)?)
