@@ -90,6 +90,29 @@ EOF
 
 setup_trash
 
+# Persist test_tick across subshell boundaries via a state file.
+_TICK_FILE="$TRASH_DIRECTORY/.test_tick"
+
+test_tick () {
+	if test -z "${test_tick+set}"
+	then
+		# Try to load from file (survives subshell boundaries)
+		if test -f "$_TICK_FILE"
+		then
+			test_tick=$(cat "$_TICK_FILE")
+			test_tick=$(($test_tick + 60))
+		else
+			test_tick=1112911993
+		fi
+	else
+		test_tick=$(($test_tick + 60))
+	fi
+	echo "$test_tick" >"$_TICK_FILE"
+	GIT_COMMITTER_DATE="$test_tick -0700"
+	GIT_AUTHOR_DATE="$test_tick -0700"
+	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
+}
+
 # Allow tests to use $HOME
 HOME="$TRASH_DIRECTORY"
 export HOME
@@ -186,6 +209,11 @@ test_might_fail () {
 
 sane_unset () {
 	while test $# -gt 0; do
+		# If unsetting test_tick, also remove the persistence file
+		if test "$1" = "test_tick" && test -n "${_TICK_FILE:-}"
+		then
+			rm -f "$_TICK_FILE"
+		fi
 		unset "$1" 2>/dev/null
 		shift
 	done
@@ -438,18 +466,6 @@ test_cmp_config () {
 	fi
 }
 
-test_tick () {
-	if test -z "${test_tick+set}"
-	then
-		test_tick=1112911993
-	else
-		test_tick=$(($test_tick + 60))
-	fi
-	GIT_COMMITTER_DATE="$test_tick -0700"
-	GIT_AUTHOR_DATE="$test_tick -0700"
-	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
-}
-
 test_commit () {
 	local file="$1.t"
 	printf '%s' "${2-$1}" >"$file"
@@ -522,6 +538,18 @@ test_expect_success () {
 	)
 	local result=$?
 
+	# Sync test_tick state from file back to parent shell
+	if test -f "$_TICK_FILE"
+	then
+		test_tick=$(cat "$_TICK_FILE")
+		GIT_COMMITTER_DATE="$test_tick -0700"
+		GIT_AUTHOR_DATE="$test_tick -0700"
+		export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
+	elif test -n "${test_tick+set}"
+	then
+		unset test_tick GIT_COMMITTER_DATE GIT_AUTHOR_DATE 2>/dev/null
+	fi
+
 	if test $result -eq 0
 	then
 		test_pass=$(($test_pass + 1))
@@ -593,6 +621,18 @@ test_expect_failure () {
 		eval "$commands"
 	)
 	local result=$?
+
+	# Sync test_tick state from file back to parent shell
+	if test -f "$_TICK_FILE"
+	then
+		test_tick=$(cat "$_TICK_FILE")
+		GIT_COMMITTER_DATE="$test_tick -0700"
+		GIT_AUTHOR_DATE="$test_tick -0700"
+		export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
+	elif test -n "${test_tick+set}"
+	then
+		unset test_tick GIT_COMMITTER_DATE GIT_AUTHOR_DATE 2>/dev/null
+	fi
 
 	if test $result -ne 0
 	then
