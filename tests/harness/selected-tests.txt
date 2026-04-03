@@ -849,3 +849,4 @@ t3429-rebase-edit-todo.sh
 t3430-rebase-merges.sh
 t3431-rebase-fork-point.sh
 t3432-rebase-fast-forward.sh
+t3434-rebase-i18n.sh
