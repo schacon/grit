@@ -981,3 +981,4 @@ t3405-rebase-malformed.sh
 t3402-rebase-merge.sh
 t3406-rebase-message.sh
 t3407-rebase-abort.sh
+t3404-rebase-interactive.sh
