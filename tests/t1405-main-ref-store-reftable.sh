@@ -71,7 +71,7 @@ test_expect_success 'update-ref --no-deref updates ref directly' '
 	grep "$FIRST" out
 '
 
-test_expect_failure 'update-ref fails with wrong old value' '
+test_expect_success 'update-ref fails with wrong old value' '
 	cd ref-repo &&
 	HEAD_OID=$(grit rev-parse HEAD) &&
 	FIRST=$(grit rev-list --reverse HEAD | head -1) &&

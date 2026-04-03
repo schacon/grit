@@ -8,12 +8,15 @@ test_description='Test git stash --include-untracked'
 . ./test-lib.sh
 
 test_expect_success 'setup: init repo' '
+	mkdir repo &&
+	cd repo &&
 	git init -q &&
 	git config user.name "Test User" &&
 	git config user.email "test@example.com"
 '
 
 test_expect_success 'stash --include-untracked saves and cleans untracked files' '
+	cd repo &&
 	echo 1 >file &&
 	git add file &&
 	test_tick &&
@@ -27,12 +30,14 @@ test_expect_success 'stash --include-untracked saves and cleans untracked files'
 '
 
 test_expect_success 'stash pop restores untracked files' '
+	cd repo &&
 	git stash pop &&
 	test_path_is_file file2 &&
 	test_path_is_file untracked/untracked
 '
 
-test_expect_failure 'stash -u is short for --include-untracked' '
+test_expect_success 'stash -u is short for --include-untracked' '
+	cd repo &&
 	rm -rf file2 untracked &&
 	echo new-content >untracked-file &&
 	git stash -u &&
@@ -42,6 +47,7 @@ test_expect_failure 'stash -u is short for --include-untracked' '
 '
 
 test_expect_success 'stash --include-untracked with dirty tracked file' '
+	cd repo &&
 	rm -rf untracked-file &&
 	echo changed >file &&
 	echo ufile >ufile &&

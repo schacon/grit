@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests for log --grep=pattern (commit message search).
-# Some tests use test_expect_failure for features not yet implemented.
+# Some tests use test_expect_success for features not yet implemented.
 
 test_description='log --grep commit message filtering'
 

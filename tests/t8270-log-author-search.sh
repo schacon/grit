@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests for log --author=pattern matching.
-# Some tests use test_expect_failure for features not yet implemented.
+# Some tests use test_expect_success for features not yet implemented.
 
 test_description='log --author filtering and author-related format output'
 
@@ -87,7 +87,7 @@ test_expect_success 'log --format=%H with author produces valid OIDs' '
 '
 
 ###########################################################################
-# Section 2: --author filtering (not yet implemented — test_expect_failure)
+# Section 2: --author filtering (not yet implemented — test_expect_success)
 ###########################################################################
 
 test_expect_success 'log --author=Alice shows only commits by Alice' '
