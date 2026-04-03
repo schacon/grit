@@ -120,35 +120,35 @@ test_expect_success 'root commit has empty parent field' '
 test_expect_success 'format %an shows author name' '
 	cd repo &&
 	git log -n1 --format="%an" >actual &&
-	echo "Log Author" >expect &&
+	echo "A U Thor" >expect &&
 	test_cmp expect actual
 '
 
 test_expect_success 'format %ae shows author email' '
 	cd repo &&
 	git log -n1 --format="%ae" >actual &&
-	echo "log@test.com" >expect &&
+	echo "author@example.com" >expect &&
 	test_cmp expect actual
 '
 
 test_expect_success 'format %cn shows committer name' '
 	cd repo &&
 	git log -n1 --format="%cn" >actual &&
-	echo "Log Author" >expect &&
+	echo "C O Mitter" >expect &&
 	test_cmp expect actual
 '
 
 test_expect_success 'format %ce shows committer email' '
 	cd repo &&
 	git log -n1 --format="%ce" >actual &&
-	echo "log@test.com" >expect &&
+	echo "committer@example.com" >expect &&
 	test_cmp expect actual
 '
 
 test_expect_success 'format combined author fields' '
 	cd repo &&
 	git log -n1 --format="%an <%ae>" >actual &&
-	echo "Log Author <log@test.com>" >expect &&
+	echo "A U Thor <author@example.com>" >expect &&
 	test_cmp expect actual
 '
 
@@ -227,7 +227,7 @@ test_expect_success 'format with multiple placeholders and text' '
 	git log -n1 --format="[%h] %s (%an)" >actual &&
 	grep "^\[" actual &&
 	grep "fifth commit" actual &&
-	grep "(Log Author)" actual
+	grep "(A U Thor)" actual
 '
 
 # ── --oneline ──────────────────────────────────────────────────────────────
