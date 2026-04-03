@@ -416,7 +416,7 @@ test_expect_success 'checkout branch with deleted file removes that file' '
 	git checkout master
 '
 
-test_expect_failure 'checkout --track sets up tracking (with -b)' '
+test_expect_success 'checkout --track sets up tracking (with -b)' '
 	cd repo &&
 	git checkout master &&
 	git checkout -b local-track --track branch-a &&
@@ -636,7 +636,7 @@ test_expect_success 'checkout -- restores from index, not HEAD' '
 # ---------------------------------------------------------------------------
 # Deepened: checkout -b with --no-track
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout -b --no-track does not set upstream' '
+test_expect_success 'checkout -b --no-track does not set upstream' '
 	cd repo &&
 	git checkout master &&
 	git checkout -b no-track-branch --no-track branch-a &&
@@ -799,7 +799,7 @@ test_expect_success 'checkout to branch then back preserves HEAD' '
 	test "$(git rev-parse HEAD)" = "$master_head"
 '
 
-test_expect_failure 'checkout -B with --no-track avoids upstream' '
+test_expect_success 'checkout -B with --no-track avoids upstream' '
 	cd repo &&
 	git checkout master &&
 	git checkout -B no-track-B --no-track branch-a &&
