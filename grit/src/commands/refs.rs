@@ -28,6 +28,10 @@ pub enum RefsAction {
         #[arg(long = "ref-format")]
         ref_format: String,
     },
+    /// Optimize the ref database (pack loose refs).
+    Optimize,
+    /// List all refs.
+    List,
 }
 
 /// Run `grit refs`.
@@ -37,6 +41,8 @@ pub fn run(args: Args) -> Result<()> {
     match args.action {
         RefsAction::Verify => verify_refs(&repo),
         RefsAction::Migrate { ref_format } => migrate_refs(&repo, &ref_format),
+        RefsAction::Optimize => optimize_refs(&repo),
+        RefsAction::List => list_refs(&repo),
     }
 }
 
@@ -135,6 +141,20 @@ fn verify_refs_dir(repo: &Repository, dir: &Path) -> Result<usize> {
         }
     }
     Ok(errors)
+}
+
+fn list_refs(repo: &Repository) -> Result<()> {
+    let refs = grit_lib::refs::list_refs(&repo.git_dir, "refs/")
+        .context("failed to list refs")?;
+    for (name, oid) in refs {
+        println!("{oid} {name}");
+    }
+    Ok(())
+}
+
+fn optimize_refs(_repo: &Repository) -> Result<()> {
+    // Delegate to pack-refs --all
+    crate::commands::pack_refs::run(crate::commands::pack_refs::Args { all: true, no_prune: false })
 }
 
 fn migrate_refs(_repo: &Repository, ref_format: &str) -> Result<()> {

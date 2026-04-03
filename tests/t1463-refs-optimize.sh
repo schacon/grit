@@ -42,7 +42,7 @@ test_expect_success 'tags still resolve after pack-refs' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'refs optimize preserves refs' '
+test_expect_success 'refs optimize preserves refs' '
 	git show-ref >before &&
 	git refs optimize &&
 	git show-ref >after &&
