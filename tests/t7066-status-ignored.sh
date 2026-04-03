@@ -202,7 +202,7 @@ test_expect_success 'reset index for next tests' '
 
 # ── ls-files --ignored ─────────────────────────────────────────────────────
 
-test_expect_failure 'ls-files --ignored shows ignored files' '
+test_expect_success 'ls-files --ignored shows ignored files' '
 	cd repo &&
 	git ls-files --ignored >../actual &&
 	grep "main.o" ../actual &&
@@ -210,7 +210,7 @@ test_expect_failure 'ls-files --ignored shows ignored files' '
 	grep "lib.a" ../actual
 '
 
-test_expect_failure 'ls-files --others shows untracked non-ignored files' '
+test_expect_success 'ls-files --others shows untracked non-ignored files' '
 	cd repo &&
 	git ls-files --others >../actual &&
 	grep "notes.txt" ../actual &&

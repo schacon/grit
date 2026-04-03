@@ -110,7 +110,7 @@ pub fn run(args: Args) -> Result<()> {
     // Determine which mode to use
     let show_cached = args.cached
         || args.stage
-        || (!args.deleted && !args.modified && !args.others && !args.unmerged && !args.killed);
+        || (!args.deleted && !args.modified && !args.others && !args.ignored && !args.unmerged && !args.killed);
     let show_stage = args.stage || args.unmerged;
 
     let mut pathspec_filter: Vec<Pathspec> = args
@@ -214,7 +214,9 @@ pub fn run(args: Args) -> Result<()> {
         || !args.exclude.is_empty()
         || !args.exclude_from.is_empty()
         || args.exclude_per_directory.is_some();
-    let use_standard_ignores = args.exclude_standard || args.ignored;
+    // Load standard ignores for --exclude-standard, --ignored, or --others
+    // (--others implicitly applies gitignore to hide ignored files)
+    let use_standard_ignores = args.exclude_standard || args.ignored || args.others;
     let mut matcher = if use_standard_ignores {
         Some(IgnoreMatcher::from_repository(&repo).unwrap_or_default())
     } else {
@@ -222,8 +224,9 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     // --others: list untracked files
-    // --ignored with -o: show only ignored untracked files
-    if args.others {
+    // --ignored: show only ignored untracked files (implies --others)
+    let show_others = args.others || args.ignored;
+    if show_others {
         let indexed_paths: BTreeSet<Vec<u8>> = index
             .entries
             .iter()
@@ -248,8 +251,8 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
 
-            // Apply exclude filtering
-            if has_excludes || args.ignored {
+            // Apply exclude filtering (always when matcher is loaded)
+            if has_excludes || args.ignored || matcher.is_some() {
                 let path_str = String::from_utf8_lossy(path_bytes);
                 let is_dir = path_str.ends_with('/');
                 let std_ignored = if let Some(ref mut m) = matcher {
