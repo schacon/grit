@@ -994,15 +994,79 @@ pub fn unified_diff(
         output.push_str(&format!("+++ b/{new_path}\n"));
     }
 
+    let old_lines: Vec<&str> = old_content.lines().collect();
+
     for hunk in diff
         .unified_diff()
         .context_radius(context_lines)
         .iter_hunks()
     {
-        output.push_str(&format!("{hunk}"));
+        let hunk_str = format!("{hunk}");
+        // The similar crate outputs @@ -a,b +c,d @@\n but Git adds
+        // function context after the closing @@. Extract the hunk header
+        // and add function context.
+        if let Some(first_newline) = hunk_str.find('\n') {
+            let header_line = &hunk_str[..first_newline];
+            let rest = &hunk_str[first_newline..];
+
+            // Parse the old start line from the @@ header
+            if let Some(func_ctx) = extract_function_context(header_line, &old_lines) {
+                output.push_str(header_line);
+                output.push(' ');
+                output.push_str(&func_ctx);
+                output.push_str(rest);
+            } else {
+                output.push_str(&hunk_str);
+            }
+        } else {
+            output.push_str(&hunk_str);
+        }
     }
 
     output
+}
+
+/// Extract function context for a hunk header.
+///
+/// Given a hunk header like `@@ -8,7 +8,7 @@`, find the last line
+/// before line 8 in the old content that looks like a function header
+/// (starts with a non-whitespace character, like Git's default).
+fn extract_function_context(header: &str, old_lines: &[&str]) -> Option<String> {
+    // Parse the old start line number from "@@ -<start>,<count> ..."
+    let at_pos = header.find("-")?;
+    let rest = &header[at_pos + 1..];
+    let comma_or_space = rest.find(|c: char| c == ',' || c == ' ')?;
+    let start_str = &rest[..comma_or_space];
+    let start_line: usize = start_str.parse().ok()?;
+
+    if start_line <= 1 {
+        return None;
+    }
+
+    // Look backwards from the line before the hunk start for a line that
+    // starts with a non-whitespace character (Git's default funcname pattern).
+    // start_line is 1-indexed, so the hunk starts at old_lines[start_line-1].
+    // We want to look at lines before that: old_lines[0..start_line-1].
+    let search_end = (start_line - 1).min(old_lines.len());
+    for i in (0..search_end).rev() {
+        let line = old_lines[i];
+        if !line.is_empty() {
+            let first = line.as_bytes()[0];
+            // Git's default: line must start with a letter, digit, '_', '$',
+            // or certain other non-whitespace chars. We use a simpler heuristic:
+            // any line that doesn't start with whitespace.
+            if first != b' ' && first != b'\t' {
+                // Truncate to 40 chars like Git does.
+                let truncated = if line.len() > 40 {
+                    &line[..40]
+                } else {
+                    line
+                };
+                return Some(truncated.to_owned());
+            }
+        }
+    }
+    None
 }
 
 /// Generate diff stat output (file name + insertions/deletions).
