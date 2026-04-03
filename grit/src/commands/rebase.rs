@@ -56,6 +56,10 @@ pub struct Args {
     /// Skip the current commit and continue.
     #[arg(long = "skip")]
     pub skip: bool,
+
+    /// Run a shell command after each commit is applied.
+    #[arg(short = 'x', long = "exec")]
+    pub exec: Option<String>,
 }
 
 /// Run the `rebase` command.
@@ -169,6 +173,11 @@ fn do_rebase(args: Args) -> Result<()> {
     fs::write(rb_dir.join("end"), total.to_string())?;
     fs::write(rb_dir.join("msgnum"), "1")?;
 
+    // Save --exec command if given
+    if let Some(ref exec_cmd) = args.exec {
+        fs::write(rb_dir.join("exec"), exec_cmd)?;
+    }
+
     // Detach HEAD at onto
     fs::write(git_dir.join("HEAD"), format!("{}\n", onto_oid.to_hex()))?;
 
@@ -253,6 +262,37 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
                     "Applying: {}",
                     subject
                 );
+
+                // Run --exec command if present
+                if let Ok(exec_cmd) = fs::read_to_string(rb_dir.join("exec")) {
+                    let exec_cmd = exec_cmd.trim();
+                    if !exec_cmd.is_empty() {
+                        eprintln!("Executing: {}", exec_cmd);
+                        let status = std::process::Command::new("sh")
+                            .arg("-c")
+                            .arg(exec_cmd)
+                            .current_dir(
+                                repo.work_tree.as_deref().unwrap_or_else(|| Path::new(".")),
+                            )
+                            .status()
+                            .with_context(|| format!("failed to execute: {}", exec_cmd))?;
+                        if !status.success() {
+                            let code = status.code().unwrap_or(1);
+                            eprintln!(
+                                "warning: execution failed for: {}\n\
+                                 hint: You can fix the problem, and then run\n\
+                                 hint:   grit rebase --continue",
+                                exec_cmd
+                            );
+                            // Save remaining todo for --continue
+                            let remaining: Vec<&str> = todo[i + 1..].to_vec();
+                            fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
+                            fs::write(rb_dir.join("msgnum"), "1")?;
+                            fs::write(rb_dir.join("end"), remaining.len().to_string())?;
+                            std::process::exit(code);
+                        }
+                    }
+                }
             }
             Err(_e) => {
                 // Conflicts — leave state for --continue

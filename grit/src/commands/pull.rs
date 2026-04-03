@@ -100,6 +100,7 @@ pub fn run(args: Args) -> Result<()> {
             r#continue: false,
             abort: false,
             skip: false,
+            exec: None,
         };
         super::rebase::run(rebase_args)
     } else {

@@ -232,13 +232,13 @@ test_expect_success 'cherry-pick preserves author name' '
 	cd repo &&
 	git checkout rebased &&
 	git log -n 1 --format="%an" >../auth_name &&
-	grep "Test User" ../auth_name
+	grep "A U Thor" ../auth_name
 '
 
 test_expect_success 'cherry-pick preserves author email' '
 	cd repo &&
 	git log -n 1 --format="%ae" >../auth_email &&
-	grep "test@example.com" ../auth_email
+	grep "author@example.com" ../auth_email
 '
 
 # ---------------------------------------------------------------------------
