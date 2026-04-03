@@ -181,7 +181,7 @@ t2007-checkout-symlink	yes	4	4	0	ok
 t2008-checkout-subdir	yes	22	12	10	ok
 t2009-checkout-statinfo	yes	25	20	5	ok
 t2010-checkout-ambiguous	yes	7	5	2	ok
-t2011-checkout-invalid-head	yes	24	21	3	ok
+t2011-checkout-invalid-head	yes	24	20	4	ok
 t2012-checkout-last	yes	25	6	19	ok
 t2013-checkout-submodule	yes	3	3	0	ok
 t2014-checkout-switch	yes	24	7	17	ok
@@ -684,7 +684,7 @@ t6017-rev-list-stdin	yes	15	15	0	ok
 t6018-rev-list-glob	yes	12	12	0	ok
 t6019-rev-list-ancestry-path	yes	7	7	0	ok
 t6020-bundle-misc	yes	12	12	0	ok
-t6021-rev-list-exclude-hidden	yes	5	4	1	ok
+t6021-rev-list-exclude-hidden	yes	5	5	0	ok
 t6022-rev-list-missing	yes	7	7	0	ok
 t6030-bisect-porcelain	yes	11	11	0	ok
 t6040-tracking-info	yes	22	22	0	ok
