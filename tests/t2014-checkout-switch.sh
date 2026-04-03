@@ -102,7 +102,7 @@ test_expect_success 'switch with dirty file not conflicting succeeds' '
 	git checkout -- master-file.txt
 '
 
-test_expect_failure 'switch with staged non-conflicting change succeeds' '
+test_expect_success 'switch with staged non-conflicting change succeeds' '
 	cd repo &&
 	echo "staged" >master-file.txt &&
 	git add master-file.txt &&
@@ -116,7 +116,7 @@ test_expect_failure 'switch with staged non-conflicting change succeeds' '
 # ---------------------------------------------------------------------------
 # Dirty worktree: conflicting changes (should fail)
 # ---------------------------------------------------------------------------
-test_expect_failure 'switch refuses with conflicting dirty file' '
+test_expect_success 'switch refuses with conflicting dirty file' '
 	cd repo &&
 	echo "dirty-common" >common.txt &&
 	test_must_fail git checkout branchA 2>err &&
@@ -124,7 +124,7 @@ test_expect_failure 'switch refuses with conflicting dirty file' '
 	git checkout -- common.txt
 '
 
-test_expect_failure 'switch refuses with conflicting staged file' '
+test_expect_success 'switch refuses with conflicting staged file' '
 	cd repo &&
 	echo "staged-common" >common.txt &&
 	git add common.txt &&
@@ -137,7 +137,7 @@ test_expect_failure 'switch refuses with conflicting staged file' '
 # ---------------------------------------------------------------------------
 # HEAD and index are unchanged after refused switch
 # ---------------------------------------------------------------------------
-test_expect_failure 'HEAD unchanged after refused switch' '
+test_expect_success 'HEAD unchanged after refused switch' '
 	cd repo &&
 	head_before=$(git rev-parse HEAD) &&
 	echo "dirty-common" >common.txt &&
@@ -151,7 +151,7 @@ test_expect_failure 'HEAD unchanged after refused switch' '
 # ---------------------------------------------------------------------------
 # Switch with new file that would conflict with branch file
 # ---------------------------------------------------------------------------
-test_expect_failure 'switch refuses when new file conflicts with branch file' '
+test_expect_success 'switch refuses when new file conflicts with branch file' '
 	cd repo &&
 	echo "local-a-file" >a-file.txt &&
 	git add a-file.txt &&
@@ -164,7 +164,7 @@ test_expect_failure 'switch refuses when new file conflicts with branch file' '
 # ---------------------------------------------------------------------------
 # Switch between branches with different directory structures
 # ---------------------------------------------------------------------------
-test_expect_failure 'setup branches with different dirs' '
+test_expect_success 'setup branches with different dirs' '
 	cd repo &&
 	git checkout master &&
 	git checkout -b has-subdir &&
@@ -175,7 +175,7 @@ test_expect_failure 'setup branches with different dirs' '
 	git checkout master
 '
 
-test_expect_failure 'switch to branch with extra dirs adds them' '
+test_expect_success 'switch to branch with extra dirs adds them' '
 	cd repo &&
 	git checkout has-subdir &&
 	test -f extra/nested/file.txt &&
@@ -183,7 +183,7 @@ test_expect_failure 'switch to branch with extra dirs adds them' '
 	git checkout master
 '
 
-test_expect_failure 'switch from branch removes extra dirs' '
+test_expect_success 'switch from branch removes extra dirs' '
 	cd repo &&
 	git checkout has-subdir &&
 	git checkout master &&
@@ -193,7 +193,7 @@ test_expect_failure 'switch from branch removes extra dirs' '
 # ---------------------------------------------------------------------------
 # Switch with deleted file in worktree
 # ---------------------------------------------------------------------------
-test_expect_failure 'switch with deleted tracked file restores on return' '
+test_expect_success 'switch with deleted tracked file restores on return' '
 	cd repo &&
 	rm -f master-file.txt &&
 	git checkout branchA &&
@@ -205,7 +205,7 @@ test_expect_failure 'switch with deleted tracked file restores on return' '
 # ---------------------------------------------------------------------------
 # Switch preserves staged changes on non-conflicting files
 # ---------------------------------------------------------------------------
-test_expect_failure 'switch preserves staged new file' '
+test_expect_success 'switch preserves staged new file' '
 	cd repo &&
 	echo "new-staged" >new-staged.txt &&
 	git add new-staged.txt &&
@@ -220,7 +220,7 @@ test_expect_failure 'switch preserves staged new file' '
 # ---------------------------------------------------------------------------
 # Switch with multiple dirty files, one conflicting
 # ---------------------------------------------------------------------------
-test_expect_failure 'one conflicting dirty file blocks entire switch' '
+test_expect_success 'one conflicting dirty file blocks entire switch' '
 	cd repo &&
 	echo "dirty-master" >master-file.txt &&
 	echo "dirty-common" >common.txt &&
@@ -233,7 +233,7 @@ test_expect_failure 'one conflicting dirty file blocks entire switch' '
 # ---------------------------------------------------------------------------
 # Switch to same branch is a no-op
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout same branch is a no-op' '
+test_expect_success 'checkout same branch is a no-op' '
 	cd repo &&
 	git checkout master 2>err &&
 	test "$(git symbolic-ref --short HEAD)" = "master"
@@ -242,7 +242,7 @@ test_expect_failure 'checkout same branch is a no-op' '
 # ---------------------------------------------------------------------------
 # Switch using - (previous branch)
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout - switches to previous branch' '
+test_expect_success 'checkout - switches to previous branch' '
 	cd repo &&
 	git checkout branchA &&
 	git checkout master &&
@@ -251,7 +251,7 @@ test_expect_failure 'checkout - switches to previous branch' '
 	git checkout master
 '
 
-test_expect_failure 'checkout - alternates correctly' '
+test_expect_success 'checkout - alternates correctly' '
 	cd repo &&
 	git checkout branchA &&
 	git checkout branchB &&
@@ -265,7 +265,7 @@ test_expect_failure 'checkout - alternates correctly' '
 # ---------------------------------------------------------------------------
 # Switch to nonexistent branch fails
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout nonexistent branch fails' '
+test_expect_success 'checkout nonexistent branch fails' '
 	cd repo &&
 	test_must_fail git checkout no-such-branch 2>err &&
 	test -s err &&
@@ -275,7 +275,7 @@ test_expect_failure 'checkout nonexistent branch fails' '
 # ---------------------------------------------------------------------------
 # Switch with dirty worktree file that matches target (trivial merge)
 # ---------------------------------------------------------------------------
-test_expect_failure 'switch refuses even when dirty file matches target' '
+test_expect_success 'switch refuses even when dirty file matches target' '
 	cd repo &&
 	git checkout master &&
 	echo "branchA" >common.txt &&
@@ -287,7 +287,7 @@ test_expect_failure 'switch refuses even when dirty file matches target' '
 # ---------------------------------------------------------------------------
 # Switch with permission bits preserved
 # ---------------------------------------------------------------------------
-test_expect_failure 'switch with only worktree-deleted file carries deletion' '
+test_expect_success 'switch with only worktree-deleted file carries deletion' '
 	cd repo &&
 	git checkout master &&
 	rm -f dir/file.txt &&

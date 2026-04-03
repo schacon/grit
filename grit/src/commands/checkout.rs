@@ -69,6 +69,10 @@ pub struct Args {
     #[arg(short = 'm', long = "merge")]
     pub merge: bool,
 
+    /// Interactively select hunks to discard (patch mode).
+    #[arg(short = 'p', long = "patch")]
+    pub patch: bool,
+
     /// Remaining positional arguments: `[<branch|commit>] [--] [<paths>...]`
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub rest: Vec<String>,
@@ -101,11 +105,23 @@ pub fn run(args: Args) -> Result<()> {
     let raw_args: Vec<String> = std::env::args().collect();
     let has_separator = raw_args.iter().any(|a| a == "--");
 
+    // Reject empty string arguments early
+    for arg in &args.rest {
+        if arg.is_empty() {
+            bail!("empty string is not a valid pathspec. please use . instead if you meant to match all paths");
+        }
+    }
+
     // Parse rest into (target, paths) handling `--` separator
     let (target, paths) = split_target_and_paths(&args.rest, has_separator);
 
     // Resolve @{-N} in start point if present
     let target = target.map(|t| resolve_at_minus(&repo, &t).unwrap_or(t));
+
+    // Case: checkout -p (patch mode)
+    if args.patch {
+        return checkout_patch(&repo, target.as_deref(), &paths);
+    }
 
     // Case: checkout --orphan <name>
     if let Some(ref orphan_name) = args.orphan {
@@ -273,6 +289,11 @@ fn split_target_and_paths(rest: &[String], has_separator: bool) -> (Option<Strin
 /// Switch HEAD to an existing branch, updating the working tree and index.
 fn switch_branch(repo: &Repository, branch_name: &str, branch_ref: &str, force: bool) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
+
+    // Refuse to operate with a corrupt/invalid HEAD
+    if matches!(head, HeadState::Invalid) {
+        bail!("cannot switch branches: HEAD is invalid or corrupt");
+    }
 
     // Check if already on this branch
     if let HeadState::Branch { ref refname, .. } = head {
@@ -923,17 +944,76 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String], no_
             for path_str in paths {
                 let rel = resolve_pathspec(path_str, work_tree, &cwd);
 
+                // Check if this is a glob pattern
+                let is_glob = is_glob_pattern(&rel) || is_glob_pattern(path_str);
+                let glob_pattern = if is_glob {
+                    // Use the original pathspec for globbing (not resolved)
+                    Some(path_str.as_str())
+                } else {
+                    None
+                };
+
                 // Check if this is a directory prefix or empty ("."/root)
-                let is_dir_prefix = rel.is_empty() || {
+                let is_dir_prefix = !is_glob && (rel.is_empty() || {
                     // Check if the path is a tree (directory) in the source
                     match find_in_tree(repo, tree_oid, &rel)? {
                         Some((_, mode)) if mode == 0o40000 => true,
                         Some(_) => false,
                         None => rel.is_empty(),
                     }
-                };
+                });
 
-                if is_dir_prefix {
+                if is_glob {
+                    // Handle glob pathspec: match entries against the pattern
+                    let flat = tree_to_flat_entries(repo, &tree_oid, "")?;
+                    let pattern = glob_pattern.unwrap();
+                    let source_paths: HashSet<Vec<u8>> = flat.iter()
+                        .filter(|e| {
+                            let p = String::from_utf8_lossy(&e.path);
+                            pathspec_glob_matches(pattern, &p)
+                        })
+                        .map(|e| e.path.clone())
+                        .collect();
+                    let mut matched = false;
+                    for flat_entry in &flat {
+                        let entry_path = String::from_utf8_lossy(&flat_entry.path).to_string();
+                        if !pathspec_glob_matches(pattern, &entry_path) {
+                            continue;
+                        }
+                        write_blob_to_worktree(repo, work_tree, &entry_path, &flat_entry.oid, flat_entry.mode)?;
+                        index.add_or_replace(flat_entry.clone());
+                        index_modified = true;
+                        matched = true;
+                    }
+                    if no_overlay {
+                        let to_remove: Vec<Vec<u8>> = index.entries.iter()
+                            .filter(|e| e.stage() == 0)
+                            .filter(|e| {
+                                let p = String::from_utf8_lossy(&e.path);
+                                pathspec_glob_matches(pattern, &p)
+                            })
+                            .filter(|e| !source_paths.contains(&e.path))
+                            .map(|e| e.path.clone())
+                            .collect();
+                        for path in &to_remove {
+                            let p = String::from_utf8_lossy(path);
+                            let abs = work_tree.join(p.as_ref());
+                            let _ = std::fs::remove_file(&abs);
+                            remove_empty_parent_dirs(work_tree, &abs);
+                        }
+                        index.entries.retain(|e| {
+                            if e.stage() != 0 { return true; }
+                            !to_remove.contains(&e.path)
+                        });
+                        if !to_remove.is_empty() {
+                            index_modified = true;
+                        }
+                        matched = matched || !to_remove.is_empty();
+                    }
+                    if !matched {
+                        bail!("error: pathspec '{}' did not match any file(s) known to git", path_str);
+                    }
+                } else if is_dir_prefix {
                     // Restore all files under this directory from the source tree
                     let flat = tree_to_flat_entries(repo, &tree_oid, "")?;
                     let prefix = if rel.is_empty() {
@@ -1035,6 +1115,283 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String], no_
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Patch mode (checkout -p)
+// ---------------------------------------------------------------------------
+
+/// Interactive patch mode: selectively discard worktree changes hunk-by-hunk.
+///
+/// For each modified tracked file, computes the diff between the source (index
+/// or a specified tree) and the working tree. Each hunk is presented to the
+/// user. Accepted hunks (y) are reverted to the source version; rejected
+/// hunks (n) keep the working tree version.
+fn checkout_patch(
+    repo: &Repository,
+    source: Option<&str>,
+    paths: &[String],
+) -> Result<()> {
+    use similar::{ChangeTag, TextDiff};
+    use std::io::{self, BufRead, Write};
+
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+    let cwd = std::env::current_dir().context("resolving cwd")?;
+    let index = Index::load(&repo.index_path()).context("loading index")?;
+
+    // Determine the source entries: from a tree or from the index
+    let source_entries: HashMap<Vec<u8>, (ObjectId, u32)> = if let Some(spec) = source {
+        let source_oid = resolve_to_commit(repo, spec)?;
+        let tree_oid = commit_to_tree(repo, &source_oid)?;
+        let flat = tree_to_flat_entries(repo, &tree_oid, "")?;
+        flat.into_iter().map(|e| (e.path.clone(), (e.oid, e.mode))).collect()
+    } else {
+        index.entries.iter()
+            .filter(|e| e.stage() == 0)
+            .map(|e| (e.path.clone(), (e.oid, e.mode)))
+            .collect()
+    };
+
+    // Collect files to process: modified tracked files
+    let mut files_to_process: Vec<(String, Vec<u8>, ObjectId, u32)> = Vec::new();
+
+    for (path_bytes, (source_oid, mode)) in &source_entries {
+        let rel_path = String::from_utf8_lossy(path_bytes).to_string();
+
+        // Filter by pathspec if given
+        if !paths.is_empty() {
+            let resolved = resolve_pathspec(&rel_path, work_tree, &cwd);
+            let matched = paths.iter().any(|p| {
+                let p_resolved = resolve_pathspec(p, work_tree, &cwd);
+                resolved == p_resolved
+                    || resolved.starts_with(&format!("{}/", p_resolved))
+                    || p_resolved.is_empty()
+            });
+            if !matched {
+                continue;
+            }
+        }
+
+        // Skip symlinks
+        if *mode == MODE_SYMLINK {
+            continue;
+        }
+
+        let abs_path = work_tree.join(&rel_path);
+        if !abs_path.exists() {
+            // File was deleted — treat entire file as one hunk
+            files_to_process.push((rel_path, path_bytes.clone(), *source_oid, *mode));
+            continue;
+        }
+
+        // Compare worktree content with source
+        let wt_data = std::fs::read(&abs_path).context("reading worktree file")?;
+        let src_obj = repo.odb.read(source_oid).context("reading source blob")?;
+        if wt_data != src_obj.data {
+            files_to_process.push((rel_path, path_bytes.clone(), *source_oid, *mode));
+        }
+    }
+
+    // Sort files for deterministic order
+    files_to_process.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if files_to_process.is_empty() {
+        return Ok(());
+    }
+
+    let stdin = io::stdin();
+    let mut stdin_reader = stdin.lock();
+
+    for (rel_path, _path_bytes, source_oid, mode) in &files_to_process {
+        let abs_path = work_tree.join(rel_path);
+
+        // Get source (index/tree) content
+        let src_obj = repo.odb.read(source_oid)?;
+        let src_content = String::from_utf8_lossy(&src_obj.data).to_string();
+
+        // Get worktree content (empty if deleted)
+        let wt_content = if abs_path.exists() {
+            std::fs::read_to_string(&abs_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        // Compute diff: hunks are the changes FROM source TO worktree.
+        // Accepting a hunk means reverting it (restoring source version).
+        let diff = TextDiff::from_lines(&src_content, &wt_content);
+        let hunks: Vec<_> = diff
+            .unified_diff()
+            .context_radius(3)
+            .iter_hunks()
+            .collect();
+
+        if hunks.is_empty() {
+            continue;
+        }
+
+        // Track which hunks are accepted (to be reverted)
+        let mut hunk_decisions: Vec<bool> = Vec::with_capacity(hunks.len());
+        let mut skip_rest = false;
+
+        for hunk in &hunks {
+            if skip_rest {
+                hunk_decisions.push(false); // keep (don't revert)
+                continue;
+            }
+
+            // Display the hunk
+            let hunk_str = format!("{hunk}");
+            eprint!("{}", hunk_str);
+            eprint!("Discard this hunk from worktree [y,n,q,a,d,?]? ");
+            io::stderr().flush().ok();
+
+            let mut response = String::new();
+            if stdin_reader.read_line(&mut response).is_err() || response.is_empty() {
+                hunk_decisions.push(false);
+                skip_rest = true;
+                continue;
+            }
+            let choice = response.trim();
+
+            match choice {
+                "y" | "Y" => hunk_decisions.push(true),
+                "n" | "N" | "" => hunk_decisions.push(false),
+                "q" | "Q" => {
+                    hunk_decisions.push(false);
+                    skip_rest = true;
+                }
+                "a" | "A" => {
+                    // Accept all remaining hunks in this file
+                    hunk_decisions.push(true);
+                    for _ in hunk_decisions.len()..hunks.len() {
+                        hunk_decisions.push(true);
+                    }
+                    break;
+                }
+                "d" | "D" => {
+                    // Reject all remaining hunks in this file
+                    hunk_decisions.push(false);
+                    for _ in hunk_decisions.len()..hunks.len() {
+                        hunk_decisions.push(false);
+                    }
+                    break;
+                }
+                _ => hunk_decisions.push(false),
+            }
+        }
+
+        // Apply the decisions: reconstruct the file content
+        // We need to rebuild the working tree file by selectively
+        // reverting accepted hunks (restoring source lines).
+        let any_accepted = hunk_decisions.iter().any(|&d| d);
+        let all_accepted = hunk_decisions.iter().all(|&d| d);
+
+        if !any_accepted {
+            continue; // nothing to change for this file
+        }
+
+        if all_accepted {
+            // Revert entire file to source
+            if !abs_path.exists() {
+                // File was deleted, restore it
+                write_blob_to_worktree(repo, work_tree, rel_path, source_oid, *mode)?;
+            } else {
+                std::fs::write(&abs_path, src_content.as_bytes())?;
+            }
+            continue;
+        }
+
+        // Partial revert: apply only accepted hunks using diff change operations
+        // Walk through all changes and selectively revert accepted hunks.
+        //
+        // Collect accepted hunk ranges first from hunk headers.
+        let mut accepted_old_ranges: Vec<(usize, usize)> = Vec::new();
+        let mut accepted_new_ranges: Vec<(usize, usize)> = Vec::new();
+        for (i, hunk) in hunks.iter().enumerate() {
+            if i >= hunk_decisions.len() || !hunk_decisions[i] {
+                continue;
+            }
+            let header = format!("{hunk}");
+            if let Some((old_start, old_count, new_start, new_count)) = parse_hunk_range(&header) {
+                let old_s = if old_start > 0 { old_start - 1 } else { 0 };
+                let new_s = if new_start > 0 { new_start - 1 } else { 0 };
+                accepted_old_ranges.push((old_s, old_s + old_count));
+                accepted_new_ranges.push((new_s, new_s + new_count));
+            }
+        }
+
+        // Rebuild content from changes
+        let mut result = String::new();
+        for change in diff.iter_all_changes() {
+            let tag = change.tag();
+            let old_idx = change.old_index();
+            let new_idx = change.new_index();
+
+            let in_accepted = match tag {
+                ChangeTag::Delete => {
+                    old_idx.map_or(false, |oi| {
+                        accepted_old_ranges.iter().any(|(s, e)| oi >= *s && oi < *e)
+                    })
+                }
+                ChangeTag::Insert => {
+                    new_idx.map_or(false, |ni| {
+                        accepted_new_ranges.iter().any(|(s, e)| ni >= *s && ni < *e)
+                    })
+                }
+                ChangeTag::Equal => false,
+            };
+
+            match tag {
+                ChangeTag::Equal => result.push_str(change.value()),
+                ChangeTag::Delete => {
+                    if in_accepted {
+                        result.push_str(change.value());
+                    }
+                }
+                ChangeTag::Insert => {
+                    if !in_accepted {
+                        result.push_str(change.value());
+                    }
+                }
+            }
+        }
+        std::fs::write(&abs_path, result.as_bytes())?;
+    }
+
+    Ok(())
+}
+
+/// Parse `@@ -old_start[,old_count] +new_start[,new_count] @@` from a hunk header.
+fn parse_hunk_range(hunk_text: &str) -> Option<(usize, usize, usize, usize)> {
+    let line = hunk_text.lines().next()?;
+    let line = line.strip_prefix("@@ ")?;
+    let end = line.find(" @@")?;
+    let range_str = &line[..end];
+    let parts: Vec<&str> = range_str.split_whitespace().collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let old_part = parts[0].strip_prefix('-')?;
+    let new_part = parts[1].strip_prefix('+')?;
+
+    let (old_start, old_count) = parse_range_part(old_part);
+    let (new_start, new_count) = parse_range_part(new_part);
+
+    Some((old_start, old_count, new_start, new_count))
+}
+
+fn parse_range_part(s: &str) -> (usize, usize) {
+    if let Some((start, count)) = s.split_once(',') {
+        (
+            start.parse().unwrap_or(0),
+            count.parse().unwrap_or(0),
+        )
+    } else {
+        (s.parse().unwrap_or(0), 1)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1571,4 +1928,33 @@ fn resolve_checkout_identity(repo: &Repository) -> String {
     let hours = offset.whole_hours();
     let minutes = offset.minutes_past_hour().unsigned_abs();
     format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
+}
+
+/// Check if a pathspec contains glob metacharacters.
+fn is_glob_pattern(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+/// Match a path against a glob-style pathspec.
+/// Supports `*` (match any chars except `/`), `?` (match one char), and `**` (match across dirs).
+fn pathspec_glob_matches(pattern: &str, path: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let txt: Vec<char> = path.chars().collect();
+    glob_match_inner(&pat, &txt)
+}
+
+fn glob_match_inner(pat: &[char], txt: &[char]) -> bool {
+    match (pat.first(), txt.first()) {
+        (None, None) => true,
+        (None, Some(_)) => false,
+        (Some('*'), _) => {
+            // '*' matches zero or more characters
+            glob_match_inner(&pat[1..], txt)
+                || (!txt.is_empty() && glob_match_inner(pat, &txt[1..]))
+        }
+        (Some('?'), Some(_)) => glob_match_inner(&pat[1..], &txt[1..]),
+        (Some('?'), None) => false,
+        (Some(p), Some(t)) => p == t && glob_match_inner(&pat[1..], &txt[1..]),
+        (Some(_), None) => false,
+    }
 }

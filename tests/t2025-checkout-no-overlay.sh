@@ -40,7 +40,7 @@ test_expect_success 'setup repository' '
 # ---------------------------------------------------------------------------
 # --no-overlay removes files not in source tree
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout --no-overlay other -- . removes master-only files' '
+test_expect_success 'checkout --no-overlay other -- . removes master-only files' '
 	cd repo &&
 	git checkout --no-overlay other -- . &&
 	test_path_is_missing master-only.txt &&
@@ -64,7 +64,7 @@ test_expect_success 'regular checkout (overlay) keeps files not in source' '
 # ---------------------------------------------------------------------------
 # --no-overlay with specific directory
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout --no-overlay other -- dir/ removes dir-only-on-master' '
+test_expect_success 'checkout --no-overlay other -- dir/ removes dir-only-on-master' '
 	cd repo &&
 	git checkout --no-overlay other -- dir &&
 	test_path_is_missing dir/master.txt &&
@@ -79,7 +79,7 @@ test_expect_failure 'checkout --no-overlay other -- dir/ removes dir-only-on-mas
 # ---------------------------------------------------------------------------
 # --no-overlay with single file (no removal effect)
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout --no-overlay other -- shared.txt updates file' '
+test_expect_success 'checkout --no-overlay other -- shared.txt updates file' '
 	cd repo &&
 	git checkout --no-overlay other -- shared.txt &&
 	test "$(cat shared.txt)" = "shared-other" &&
@@ -90,7 +90,7 @@ test_expect_failure 'checkout --no-overlay other -- shared.txt updates file' '
 # ---------------------------------------------------------------------------
 # --no-overlay removes from index too
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout --no-overlay removes files from index' '
+test_expect_success 'checkout --no-overlay removes files from index' '
 	cd repo &&
 	git checkout --no-overlay other -- . &&
 	git ls-files >index-files &&
@@ -110,7 +110,7 @@ test_expect_success 'setup extra staged file' '
 	git add extra-staged.txt
 '
 
-test_expect_failure 'checkout --no-overlay HEAD -- . removes staged-only files' '
+test_expect_success 'checkout --no-overlay HEAD -- . removes staged-only files' '
 	cd repo &&
 	git checkout --no-overlay HEAD -- . &&
 	test_path_is_missing extra-staged.txt &&
@@ -131,7 +131,7 @@ test_expect_success 'setup branch with minimal files' '
 	git checkout master
 '
 
-test_expect_failure 'checkout --no-overlay minimal -- . removes most files' '
+test_expect_success 'checkout --no-overlay minimal -- . removes most files' '
 	cd repo &&
 	git checkout --no-overlay minimal -- . &&
 	test -f master-only.txt &&
@@ -145,7 +145,7 @@ test_expect_failure 'checkout --no-overlay minimal -- . removes most files' '
 # ---------------------------------------------------------------------------
 # --no-overlay does not affect untracked files
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout --no-overlay does not remove untracked files' '
+test_expect_success 'checkout --no-overlay does not remove untracked files' '
 	cd repo &&
 	echo "untracked" >untracked.txt &&
 	git checkout --no-overlay other -- . &&
@@ -168,7 +168,7 @@ test_expect_success 'setup branch with deep nesting' '
 	git checkout master
 '
 
-test_expect_failure 'checkout --no-overlay deep-branch -- . adds deep files and removes master-only' '
+test_expect_success 'checkout --no-overlay deep-branch -- . adds deep files and removes master-only' '
 	cd repo &&
 	git checkout --no-overlay deep-branch -- . &&
 	test -f a/b/c/file.txt &&
@@ -179,7 +179,7 @@ test_expect_failure 'checkout --no-overlay deep-branch -- . adds deep files and 
 # ---------------------------------------------------------------------------
 # --no-overlay vs --overlay (explicit overlay)
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout --overlay other -- . preserves files (contrast)' '
+test_expect_success 'checkout --overlay other -- . preserves files (contrast)' '
 	cd repo &&
 	git checkout --overlay other -- . 2>/dev/null &&
 	test -f master-only.txt &&
@@ -190,7 +190,7 @@ test_expect_failure 'checkout --overlay other -- . preserves files (contrast)' '
 # ---------------------------------------------------------------------------
 # --no-overlay with commit SHA
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout --no-overlay <sha> -- . works' '
+test_expect_success 'checkout --no-overlay <sha> -- . works' '
 	cd repo &&
 	other_sha=$(git rev-parse other) &&
 	git checkout --no-overlay "$other_sha" -- . &&
@@ -203,7 +203,7 @@ test_expect_failure 'checkout --no-overlay <sha> -- . works' '
 # ---------------------------------------------------------------------------
 # --no-overlay with pathspec that matches nothing on source
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout --no-overlay with glob pathspec' '
+test_expect_success 'checkout --no-overlay with glob pathspec' '
 	cd repo &&
 	echo "extra-m1" >m1.log &&
 	echo "extra-m2" >m2.log &&
@@ -219,7 +219,7 @@ test_expect_failure 'checkout --no-overlay with glob pathspec' '
 # ---------------------------------------------------------------------------
 # --no-overlay idempotency
 # ---------------------------------------------------------------------------
-test_expect_failure 'running --no-overlay twice yields same result' '
+test_expect_success 'running --no-overlay twice yields same result' '
 	cd repo &&
 	git checkout --no-overlay other -- . &&
 	git ls-files >first &&
@@ -233,7 +233,7 @@ test_expect_failure 'running --no-overlay twice yields same result' '
 # ---------------------------------------------------------------------------
 # --no-overlay does not switch branch
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout --no-overlay other -- . does not switch branch' '
+test_expect_success 'checkout --no-overlay other -- . does not switch branch' '
 	cd repo &&
 	git checkout --no-overlay other -- . &&
 	test "$(git symbolic-ref --short HEAD)" = "master" &&
