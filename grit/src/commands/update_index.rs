@@ -144,13 +144,24 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         // --remove (without --force-remove): remove from index only if the
-        // file does not exist on disk.  When --add is also given, files that
-        // *do* exist should fall through to the add logic below.
-        if args.remove && !abs_path.exists() {
-            if !index.remove(&rel_bytes) && !args.ignore_missing {
-                bail!("'{}' is not in the index", input_path.display());
+        // path does not exist on disk as a regular file or symlink.  When
+        // --add is also given, files that *do* exist as regular files should
+        // fall through to the add logic below.  A directory at the path
+        // means the original file was replaced by a directory, so the old
+        // index entry must be removed.
+        if args.remove {
+            let dominated_by_dir = abs_path.is_dir();
+            let file_missing = !abs_path.exists();
+            if file_missing || dominated_by_dir {
+                if !index.remove(&rel_bytes) && !args.ignore_missing {
+                    // If path is absent and not in index, it's an error
+                    // unless --ignore-missing
+                    if file_missing {
+                        bail!("'{}' is not in the index", input_path.display());
+                    }
+                }
+                continue;
             }
-            continue;
         }
 
         if args.assume_unchanged {
