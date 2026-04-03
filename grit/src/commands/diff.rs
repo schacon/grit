@@ -82,6 +82,14 @@ pub struct Args {
     #[arg(short = 'U', long = "unified", value_name = "N")]
     pub unified: Option<usize>,
 
+    /// Detect renames.
+    #[arg(short = 'M', long = "find-renames", value_name = "N", default_missing_value = "50", num_args = 0..=1)]
+    pub find_renames: Option<String>,
+
+    /// Compare two paths outside a git repository.
+    #[arg(long = "no-index")]
+    pub no_index: bool,
+
     /// Commits or paths. Use `--` to separate revisions from paths.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
@@ -89,6 +97,11 @@ pub struct Args {
 
 /// Run the `diff` command.
 pub fn run(args: Args) -> Result<()> {
+    // --no-index: compare two files outside a git repository
+    if args.no_index {
+        return run_no_index(&args);
+    }
+
     let (revs, paths) = parse_rev_and_paths(&args.args);
 
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -199,6 +212,113 @@ pub fn run(args: Args) -> Result<()> {
 
 /// Split args on `--` to separate revisions from paths.
 ///
+/// Run `diff --no-index <path_a> <path_b>` — compare two files outside a repo.
+fn run_no_index(args: &Args) -> Result<()> {
+    // Collect paths (skip "--" separators and unrecognized flags)
+    let paths: Vec<&String> = args.args.iter().filter(|a| a.as_str() != "--" && !a.starts_with('-')).collect();
+    if paths.len() != 2 {
+        bail!("diff --no-index requires exactly two paths");
+    }
+
+    let path_a = Path::new(paths[0].as_str());
+    let path_b = Path::new(paths[1].as_str());
+
+    let data_a = std::fs::read(path_a)
+        .with_context(|| format!("could not read '{}'", paths[0]))?;
+    let data_b = std::fs::read(path_b)
+        .with_context(|| format!("could not read '{}'", paths[1]))?;
+
+    if data_a == data_b {
+        return Ok(());
+    }
+
+    // --quiet / --exit-code: just exit 1 for differences, no output
+    if args.quiet {
+        std::process::exit(1);
+    }
+
+    let text_a = String::from_utf8_lossy(&data_a);
+    let text_b = String::from_utf8_lossy(&data_b);
+    let context_lines = args.unified.unwrap_or(3);
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    if args.name_only {
+        writeln!(out, "{}", paths[0])?;
+        std::process::exit(1);
+    }
+
+    if args.name_status {
+        writeln!(out, "M\t{}", paths[0])?;
+        std::process::exit(1);
+    }
+
+    if args.numstat {
+        // Count added/removed lines
+        let lines_a: Vec<&str> = text_a.lines().collect();
+        let lines_b: Vec<&str> = text_b.lines().collect();
+        let (adds, dels) = count_added_removed(&lines_a, &lines_b);
+        writeln!(out, "{}\t{}\t{}", adds, dels, paths[0])?;
+        std::process::exit(1);
+    }
+
+    if args.stat || args.shortstat {
+        let lines_a: Vec<&str> = text_a.lines().collect();
+        let lines_b: Vec<&str> = text_b.lines().collect();
+        let (adds, dels) = count_added_removed(&lines_a, &lines_b);
+        if args.stat {
+            writeln!(out, " {} | {}", paths[0], adds + dels)?;
+        }
+        writeln!(out, " 1 file changed, {} insertions(+), {} deletions(-)", adds, dels)?;
+        std::process::exit(1);
+    }
+
+    let diff_output = unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines);
+
+    // Determine color mode
+    let use_color = match args.color.as_deref() {
+        Some("always") => true,
+        Some("never") => false,
+        Some("auto") | None => io::stdout().is_terminal(),
+        Some(_) => false,
+    };
+
+    if use_color {
+        for line in diff_output.lines() {
+            if line.starts_with("@@") {
+                writeln!(out, "{CYAN}{line}{RESET}")?;
+            } else if line.starts_with('+') && !line.starts_with("+++") {
+                writeln!(out, "{GREEN}{line}{RESET}")?;
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                writeln!(out, "{RED}{line}{RESET}")?;
+            } else if line.starts_with("diff ") || line.starts_with("---") || line.starts_with("+++") {
+                writeln!(out, "{BOLD}{line}{RESET}")?;
+            } else {
+                writeln!(out, "{line}")?;
+            }
+        }
+    } else {
+        write!(out, "{diff_output}")?;
+    }
+
+    // Exit with code 1 to indicate differences (like git)
+    if args.exit_code || args.quiet {
+        std::process::exit(1);
+    }
+    std::process::exit(1);
+}
+
+/// Count added and removed lines between two sets of lines.
+fn count_added_removed(old: &[&str], new: &[&str]) -> (usize, usize) {
+    use std::collections::HashSet;
+    let old_set: HashSet<&&str> = old.iter().collect();
+    let new_set: HashSet<&&str> = new.iter().collect();
+    let dels = old.iter().filter(|l| !new_set.contains(l)).count();
+    let adds = new.iter().filter(|l| !old_set.contains(l)).count();
+    (adds, dels)
+}
+
 /// If `--` is present, everything before is revisions, everything after is paths.
 /// Otherwise, we try each arg: if it exists as a file, treat it (and all
 /// subsequent args) as paths rather than revisions.
