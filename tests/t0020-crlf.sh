@@ -21,7 +21,7 @@ test_expect_success 'setup' '
 	git commit -m initial
 '
 
-test_expect_failure 'checkout with autocrlf=input restores files without CR' '
+test_expect_success 'checkout with autocrlf=input restores files without CR' '
 	rm -f one dir/two &&
 	git config core.autocrlf input &&
 	git checkout -f HEAD &&
@@ -31,14 +31,14 @@ test_expect_failure 'checkout with autocrlf=input restores files without CR' '
 	! has_cr dir/two
 '
 
-test_expect_failure 'safecrlf: autocrlf=input, all CRLF' '
+test_expect_success 'safecrlf: autocrlf=input, all CRLF' '
 	git config core.autocrlf input &&
 	git config core.safecrlf true &&
 	printf "I am all CRLF\r\n" >allcrlf &&
 	test_must_fail git add allcrlf
 '
 
-test_expect_failure 'safecrlf: autocrlf=true, all LF' '
+test_expect_success 'safecrlf: autocrlf=true, all LF' '
 	git config core.autocrlf true &&
 	git config core.safecrlf true &&
 	test_write_lines I am all LF >alllf &&
@@ -51,7 +51,7 @@ test_expect_success 'switch off autocrlf, safecrlf, reset HEAD' '
 	git checkout -f HEAD
 '
 
-test_expect_failure 'autocrlf false preserves LF' '
+test_expect_success 'autocrlf false preserves LF' '
 	git config core.autocrlf false &&
 	rm -f one &&
 	git checkout -f HEAD &&
@@ -59,7 +59,7 @@ test_expect_failure 'autocrlf false preserves LF' '
 	! has_cr one
 '
 
-test_expect_failure 'autocrlf true adds CR on checkout' '
+test_expect_success 'autocrlf true adds CR on checkout' '
 	git config core.autocrlf true &&
 	rm -f one &&
 	git checkout -f HEAD &&

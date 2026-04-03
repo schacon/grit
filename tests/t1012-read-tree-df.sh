@@ -3,7 +3,7 @@
 # Ported from git/t/t1012-read-tree-df.sh
 #
 # NOTE: grit's read-tree -m -u has issues replacing directories with
-# files in the working tree (ENOTDIR). Those tests use test_expect_failure.
+# files in the working tree (ENOTDIR). Those tests use test_expect_success.
 
 test_description='grit read-tree directory/file conflicts'
 
@@ -70,7 +70,7 @@ test_expect_success 'read-tree switches from dir to file in index' '
 	! grep "path/subfile" actual
 '
 
-test_expect_failure 'working tree updated: file replaces dir (ENOTDIR)' '
+test_expect_success 'working tree updated: file replaces dir (ENOTDIR)' '
 	cd repo &&
 	T_FILE=$(cat ../tree_file) &&
 	T_DIR=$(cat ../tree_dir) &&
@@ -156,7 +156,7 @@ test_expect_success 'df conflict: unchanged file preserved during switch' '
 	test -f keep
 '
 
-test_expect_failure 'df conflict: switch back dir->file (ENOTDIR)' '
+test_expect_success 'df conflict: switch back dir->file (ENOTDIR)' '
 	cd repo &&
 	T_TWO=$(cat ../tree_two) &&
 	T_ONEDIR=$(cat ../tree_onedir) &&

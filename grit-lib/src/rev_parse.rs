@@ -382,6 +382,13 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
 
+    // Handle `:path` — look up path in the index (stage 0)
+    if let Some(path) = spec.strip_prefix(':') {
+        if !path.is_empty() && !path.starts_with('/') {
+            return resolve_index_path(repo, path);
+        }
+    }
+
     if let Some((treeish, path)) = split_treeish_spec(spec) {
         let root_oid = resolve_base(repo, treeish)?;
         return resolve_treeish_path(repo, root_oid, path);
@@ -483,6 +490,18 @@ fn try_resolve_at_suffix(repo: &Repository, spec: &str) -> Option<String> {
         return resolve_push_ref(repo, base);
     }
     None
+}
+
+/// Look up a path in the index (stage 0) and return its OID.
+fn resolve_index_path(repo: &Repository, path: &str) -> Result<ObjectId> {
+    use crate::index::Index;
+    let index_path = repo.index_path();
+    let index = Index::load(&index_path)
+        .map_err(|_| Error::ObjectNotFound(format!(":{path}")))?;
+    match index.get(path.as_bytes(), 0) {
+        Some(entry) => Ok(entry.oid),
+        None => Err(Error::ObjectNotFound(format!(":{path}"))),
+    }
 }
 
 fn split_treeish_spec(spec: &str) -> Option<(&str, &str)> {

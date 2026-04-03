@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
@@ -137,7 +138,11 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Handle "checkout HEAD" — no-op when on a branch (don't detach)
+    // But with -f, force-reset the working tree
     if target == "HEAD" && !args.detach {
+        if args.force {
+            return force_reset_to_head(&repo);
+        }
         return Ok(());
     }
 
@@ -638,20 +643,11 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String]) -> 
                     for ie in &index.entries {
                         if ie.stage() != 0 { continue; }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
-                        if let Ok(obj) = repo.odb.read(&ie.oid) {
-                            if obj.kind == ObjectKind::Blob {
-                                write_to_worktree(work_tree, &p, &obj.data, ie.mode)?;
-                            }
-                        }
+                        write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode)?;
                     }
                 } else if let Some(entry) = index.get(path_bytes, 0) {
                     // Exact file match
-                    let obj = repo.odb.read(&entry.oid)
-                        .with_context(|| format!("reading blob for '{rel}'"))?;
-                    if obj.kind != ObjectKind::Blob {
-                        bail!("'{}' is not a blob in the index", rel);
-                    }
-                    write_to_worktree(work_tree, &rel, &obj.data, entry.mode)?;
+                    write_blob_to_worktree(repo, work_tree, &rel, &entry.oid, entry.mode)?;
                 } else {
                     // Try as a directory prefix
                     let prefix = if rel.ends_with('/') { rel.clone() } else { format!("{rel}/") };
@@ -660,12 +656,8 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String]) -> 
                         if ie.stage() != 0 { continue; }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if p.starts_with(&prefix) {
-                            if let Ok(obj) = repo.odb.read(&ie.oid) {
-                                if obj.kind == ObjectKind::Blob {
-                                    write_to_worktree(work_tree, &p, &obj.data, ie.mode)?;
-                                    matched = true;
-                                }
-                            }
+                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode)?;
+                            matched = true;
                         }
                     }
                     if !matched {
@@ -712,14 +704,10 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String]) -> 
                         if !prefix.is_empty() && !entry_path.starts_with(&prefix) {
                             continue;
                         }
-                        let obj = repo.odb.read(&flat_entry.oid)
-                            .with_context(|| format!("reading blob for '{}'", entry_path))?;
-                        if obj.kind == ObjectKind::Blob {
-                            write_to_worktree(work_tree, &entry_path, &obj.data, flat_entry.mode)?;
-                            index.add_or_replace(flat_entry.clone());
-                            index_modified = true;
-                            matched = true;
-                        }
+                        write_blob_to_worktree(repo, work_tree, &entry_path, &flat_entry.oid, flat_entry.mode)?;
+                        index.add_or_replace(flat_entry.clone());
+                        index_modified = true;
+                        matched = true;
                     }
                     if !matched {
                         bail!("error: pathspec '{}' did not match any file(s) known to git", path_str);
@@ -731,14 +719,12 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String]) -> 
                             path_str
                         ))?;
 
+                    // Write to working tree with CRLF conversion
+                    write_blob_to_worktree(repo, work_tree, &rel, &blob_oid, mode)?;
+
+                    // Read blob size for index entry
                     let obj = repo.odb.read(&blob_oid)
                         .with_context(|| format!("reading blob for '{rel}'"))?;
-                    if obj.kind != ObjectKind::Blob {
-                        bail!("'{}' is not a blob in the source tree", rel);
-                    }
-
-                    // Write to working tree
-                    write_to_worktree(work_tree, &rel, &obj.data, mode)?;
 
                     // Update index entry
                     let path_bytes = rel.as_bytes().to_vec();
@@ -1030,7 +1016,25 @@ fn write_blob_to_worktree(
         bail!("cannot checkout non-blob at '{rel_path}'");
     }
 
-    write_to_worktree(work_tree, rel_path, &obj.data, mode)
+    // Apply CRLF / smudge conversion for checkout
+    let data = if mode != MODE_SYMLINK {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let conv = crlf::ConversionConfig::from_config(&config);
+        let mut attrs = crlf::load_gitattributes(work_tree);
+        if attrs.is_empty() {
+            // Try loading from the index (during checkout when worktree may not have .gitattributes yet)
+            if let Ok(idx) = Index::load(&repo.index_path()) {
+                attrs = crlf::load_gitattributes_from_index(&idx, &repo.odb);
+            }
+        }
+        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+        let oid_hex = format!("{oid}");
+        crlf::convert_to_worktree(&obj.data, rel_path, &conv, &file_attrs, Some(&oid_hex))
+    } else {
+        obj.data
+    };
+
+    write_to_worktree(work_tree, rel_path, &data, mode)
 }
 
 /// Write data to a working tree file, handling symlinks and executable bits.

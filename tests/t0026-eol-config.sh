@@ -35,7 +35,7 @@ test_expect_success 'eol=lf puts LFs in normalized file' '
 	test -z "$onediff" && test -z "$twodiff"
 '
 
-test_expect_failure 'eol=crlf puts CRLFs in normalized file' '
+test_expect_success 'eol=crlf puts CRLFs in normalized file' '
 	rm -f .gitattributes tmp one two &&
 	git config core.eol crlf &&
 	git read-tree --reset -u HEAD &&
@@ -46,7 +46,7 @@ test_expect_failure 'eol=crlf puts CRLFs in normalized file' '
 	test -z "$onediff" && test -z "$twodiff"
 '
 
-test_expect_failure 'autocrlf=true overrides eol=lf' '
+test_expect_success 'autocrlf=true overrides eol=lf' '
 	rm -f .gitattributes tmp one two &&
 	git config core.eol lf &&
 	git config core.autocrlf true &&
@@ -58,7 +58,7 @@ test_expect_failure 'autocrlf=true overrides eol=lf' '
 	test -z "$onediff" && test -z "$twodiff"
 '
 
-test_expect_failure 'autocrlf=true overrides unset eol' '
+test_expect_success 'autocrlf=true overrides unset eol' '
 	rm -f .gitattributes tmp one two &&
 	git config --unset-all core.eol &&
 	git config core.autocrlf true &&

@@ -6,6 +6,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::error::Error as GustError;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
@@ -34,6 +35,10 @@ pub struct Args {
     /// Do not print error messages for missing paths.
     #[arg(long = "aggressive")]
     pub aggressive: bool,
+
+    /// Empty the index.
+    #[arg(long = "empty")]
+    pub empty: bool,
 
     /// Tree-ish arguments (1 for reset, 2 for 2-way merge, 3 for 3-way merge).
     pub trees: Vec<String>,
@@ -109,6 +114,13 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let index_path = effective_index_path(&repo)?;
     let prot = PathProtection::load(&repo.git_dir);
+
+    // Handle --empty: clear the index
+    if args.empty {
+        let empty_index = Index::new();
+        empty_index.write(&index_path).context("writing empty index")?;
+        return Ok(());
+    }
 
     let tree_oids: Vec<ObjectId> = args
         .trees
@@ -515,18 +527,31 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         if obj.kind != ObjectKind::Blob {
             bail!("cannot checkout non-blob at '{}'", path_str);
         }
-        if abs_path.is_dir() {
-            std::fs::remove_dir_all(&abs_path)?;
+        // Remove existing directory/file at target path
+        if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
+            if meta.is_dir() {
+                std::fs::remove_dir_all(&abs_path)?;
+            } else {
+                std::fs::remove_file(&abs_path)?;
+            }
         }
         if entry.mode == MODE_SYMLINK {
             let target = String::from_utf8(obj.data)
                 .map_err(|_| anyhow::anyhow!("symlink target is not UTF-8"))?;
-            if abs_path.exists() {
-                std::fs::remove_file(&abs_path)?;
-            }
             std::os::unix::fs::symlink(target, &abs_path)?;
         } else {
-            std::fs::write(&abs_path, &obj.data)?;
+            // Apply CRLF / smudge conversion
+            let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+            let conv = crlf::ConversionConfig::from_config(&config);
+            // Load attrs from worktree first, fall back to index
+            let mut attrs = crlf::load_gitattributes(&work_tree);
+            if attrs.is_empty() {
+                attrs = crlf::load_gitattributes_from_index(new_index, &repo.odb);
+            }
+            let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
+            let oid_hex = format!("{}", entry.oid);
+            let data = crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex));
+            std::fs::write(&abs_path, &data)?;
             if entry.mode == MODE_EXECUTABLE {
                 use std::os::unix::fs::PermissionsExt;
                 let mut perms = std::fs::metadata(&abs_path)?.permissions();

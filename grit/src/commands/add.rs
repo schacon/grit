@@ -6,6 +6,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf::{self, ConversionConfig, FileAttrs, GitAttributes};
 use grit_lib::error::Error;
 use grit_lib::diff::stat_matches;
 use grit_lib::ignore::IgnoreMatcher;
@@ -159,10 +160,21 @@ pub fn run(args: Args) -> Result<()> {
         None
     };
 
+    let conv = ConversionConfig::from_config(&config);
+    let attrs = crlf::load_gitattributes(work_tree);
+
     let add_cfg = AddConfig {
         core_filemode,
         ignore_errors: args.ignore_errors || config.get_bool("add.ignore-errors").and_then(|r| r.ok()).unwrap_or(false),
+        conv,
+        attrs,
+        config: config.clone(),
     };
+
+    // --renormalize: re-apply clean conversion to tracked files
+    if args.renormalize {
+        return run_renormalize(odb, &mut index, work_tree, prefix.as_deref(), &args, &add_cfg);
+    }
 
     if args.all || args.pathspec.iter().any(|p| p == ".") {
         add_all(odb, &mut index, work_tree, prefix.as_deref(), &args, &repo, &mut ignore_matcher, &add_cfg)?;
@@ -224,6 +236,9 @@ pub fn run(args: Args) -> Result<()> {
 struct AddConfig {
     core_filemode: bool,
     ignore_errors: bool,
+    conv: ConversionConfig,
+    attrs: GitAttributes,
+    config: ConfigSet,
 }
 
 enum AddPathError {
@@ -303,6 +318,83 @@ fn run_refresh(
     }
 
     Ok(())
+}
+
+/// Re-apply clean conversion (CRLF normalization) to tracked files.
+fn run_renormalize(
+    odb: &Odb,
+    index: &mut Index,
+    work_tree: &Path,
+    _prefix: Option<&str>,
+    args: &Args,
+    add_cfg: &AddConfig,
+) -> Result<()> {
+    // Reload gitattributes (may have been updated)
+    let attrs = crlf::load_gitattributes(work_tree);
+
+    // Collect paths to renormalize based on pathspecs
+    let entries: Vec<(Vec<u8>, ObjectId, u32)> = index
+        .entries
+        .iter()
+        .filter(|ie| {
+            if ie.stage() != 0 {
+                return false;
+            }
+            if args.pathspec.is_empty() {
+                return true;
+            }
+            let path_str = String::from_utf8_lossy(&ie.path);
+            args.pathspec.iter().any(|ps| {
+                // Simple glob/prefix match
+                let ps_clean = ps.trim_end_matches('*').trim_end_matches('/');
+                path_str.starts_with(ps_clean) ||
+                    glob_matches_simple(ps, &path_str)
+            })
+        })
+        .map(|ie| (ie.path.clone(), ie.oid, ie.mode))
+        .collect();
+
+    for (path, oid, mode) in entries {
+        let rel_path = String::from_utf8_lossy(&path).to_string();
+        let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &add_cfg.config);
+
+        // Read current blob content
+        let obj = odb.read(&oid).context("reading blob for renormalize")?;
+        if obj.kind != ObjectKind::Blob {
+            continue;
+        }
+
+        // Apply clean conversion
+        let converted = match crlf::convert_to_git(&obj.data, &rel_path, &add_cfg.conv, &file_attrs) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // If content changed, write new blob and update index
+        if converted != obj.data {
+            let new_oid = odb.write(ObjectKind::Blob, &converted)?;
+            if let Some(entry) = index.get_mut(path.as_slice(), 0) {
+                entry.oid = new_oid;
+            }
+        }
+    }
+
+    if !args.dry_run {
+        index.write(&work_tree.join(".git/index"))?;
+    }
+
+    Ok(())
+}
+
+fn glob_matches_simple(pattern: &str, text: &str) -> bool {
+    if !pattern.contains('*') && !pattern.contains('?') {
+        return text == pattern || text.starts_with(&format!("{pattern}/"));
+    }
+    // Simple glob: *.txt
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        return text.ends_with(suffix);
+    }
+    text == pattern
 }
 
 /// Add all files under the working tree (or a prefix) to the index.
@@ -676,7 +768,13 @@ fn stage_file(
         let target = fs::read_link(abs_path)?;
         target.to_string_lossy().into_owned().into_bytes()
     } else {
-        fs::read(abs_path)?
+        let raw = fs::read(abs_path)?;
+        // Apply CRLF / clean-filter conversion
+        let file_attrs = crlf::get_file_attrs(&add_cfg.attrs, rel_path, &add_cfg.config);
+        match crlf::convert_to_git(&raw, rel_path, &add_cfg.conv, &file_attrs) {
+            Ok(converted) => converted,
+            Err(msg) => bail!("{msg}"),
+        }
     };
 
     let oid = odb.write(ObjectKind::Blob, &data)?;
