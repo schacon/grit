@@ -357,7 +357,7 @@ t4000-diff-format	yes	65	65	0	ok
 t4001-diff-rename	yes	29	15	14	ok
 t4002-diff-basic	yes	33	33	0	ok
 t4003-diff-rename-1	yes	7	7	0	ok
-t4004-diff-rename-symlink	yes	4	4	0	ok
+t4004-diff-rename-symlink	yes	4	0	4	ok
 t4005-diff-rename-2	yes	4	4	0	ok
 t4006-diff-mode	yes	21	21	0	ok
 t4007-rename-3	yes	26	16	10	ok
@@ -396,7 +396,7 @@ t4041-diff-submodule-option	yes	5	5	0	ok
 t4042-diff-textconv-caching	yes	3	3	0	ok
 t4043-diff-rename-binary	yes	5	5	0	ok
 t4044-diff-index-unique-abbrev	yes	10	10	0	ok
-t4045-diff-relative	yes	8	8	0	ok
+t4045-diff-relative	yes	8	7	1	ok
 t4046-diff-unmerged	yes	29	29	0	ok
 t4047-diff-dirstat	yes	7	7	0	ok
 t4048-diff-combined-binary	yes	4	4	0	ok
@@ -423,7 +423,7 @@ t4069-remerge-diff	yes	3	3	0	ok
 t4070-diff-pairs	yes	4	4	0	ok
 t4071-diff-minimal	yes	1	1	0	ok
 t4072-diff-max-depth	yes	5	5	0	ok
-t4073-diff-stat-name-width	yes	5	4	1	ok
+t4073-diff-stat-name-width	yes	5	5	0	ok
 t4074-diff-shifted-matched-group	yes	4	4	0	ok
 t4100-apply-stat	yes	42	42	0	ok
 t4101-apply-nonl	yes	12	12	0	ok

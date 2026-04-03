@@ -6488,10 +6488,10 @@ t4003-diff-rename-1::prepare-work-tree-again	t4003-diff-rename-1	prepare work tr
 t4003-diff-rename-1::validate-output-from-rename-copy-detection-2	t4003-diff-rename-1	validate output from rename/copy detection (#2)	diff	pass
 t4003-diff-rename-1::prepare-work-tree-once-again	t4003-diff-rename-1	prepare work tree once again	diff	pass
 t4003-diff-rename-1::validate-output-from-rename-copy-detection-3	t4003-diff-rename-1	validate output from rename/copy detection (#3)	diff	pass
-t4004-diff-rename-symlink::prepare-reference-tree	t4004-diff-rename-symlink	prepare reference tree	diff	pass
-t4004-diff-rename-symlink::prepare-work-tree	t4004-diff-rename-symlink	prepare work tree	diff	pass
-t4004-diff-rename-symlink::setup-diff-output	t4004-diff-rename-symlink	setup diff output	diff	pass
-t4004-diff-rename-symlink::validate-diff-output	t4004-diff-rename-symlink	validate diff output	diff	pass
+t4004-diff-rename-symlink::prepare-reference-tree	t4004-diff-rename-symlink	prepare reference tree	diff	partial
+t4004-diff-rename-symlink::prepare-work-tree	t4004-diff-rename-symlink	prepare work tree	diff	partial
+t4004-diff-rename-symlink::setup-diff-output	t4004-diff-rename-symlink	setup diff output	diff	partial
+t4004-diff-rename-symlink::validate-diff-output	t4004-diff-rename-symlink	validate diff output	diff	partial
 t4005-diff-rename-2::setup-reference-tree	t4005-diff-rename-2	setup reference tree	diff	pass
 t4005-diff-rename-2::validate-output-from-rename-copy-detection-1	t4005-diff-rename-2	validate output from rename/copy detection (#1)	diff	pass
 t4005-diff-rename-2::validate-output-from-rename-copy-detection-2	t4005-diff-rename-2	validate output from rename/copy detection (#2)	diff	pass
@@ -7266,17 +7266,17 @@ t4043-diff-rename-binary::move-the-files-into-a-sub-directory	t4043-diff-rename-
 t4043-diff-rename-binary::git-show-c-c-report-renames	t4043-diff-rename-binary	git show -C -C report renames	diff	pass
 t4044-diff-index-unique-abbrev::setup	t4044-diff-index-unique-abbrev	setup	diff-index	pass
 t4044-diff-index-unique-abbrev::diff-does-not-produce-ambiguous-index-line	t4044-diff-index-unique-abbrev	diff does not produce ambiguous index line	diff-index	pass
-t4045-diff-relative::setup	t4045-diff-relative	setup	diff	pass
-t4045-diff-relative::external-diff-with-relative	t4045-diff-relative	external diff with --relative	diff	pass
-t4045-diff-relative::setup-diff-relative-unmerged	t4045-diff-relative	setup diff --relative unmerged	diff	pass
-t4045-diff-relative::diff-relative-without-change-in-subdir	t4045-diff-relative	diff --relative without change in subdir	diff	pass
-t4045-diff-relative::diff-relative-name-only-with-change-in-subdir	t4045-diff-relative	diff --relative --name-only with change in subdir	diff	pass
-t4045-diff-relative::p	t4045-diff-relative	-p $*	diff	pass
-t4045-diff-relative::numstat	t4045-diff-relative	--numstat $*	diff	pass
-t4045-diff-relative::stat	t4045-diff-relative	--stat $*	diff	pass
-t4045-diff-relative::raw	t4045-diff-relative	--raw $*	diff	pass
-t4045-diff-relative::config-diff-relative-relative-opt-p	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	pass
-t4045-diff-relative::config-diff-relative-relative-opt-p-2	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	pass
+t4045-diff-relative::setup	t4045-diff-relative	setup	diff	partial
+t4045-diff-relative::external-diff-with-relative	t4045-diff-relative	external diff with --relative	diff	partial
+t4045-diff-relative::setup-diff-relative-unmerged	t4045-diff-relative	setup diff --relative unmerged	diff	partial
+t4045-diff-relative::diff-relative-without-change-in-subdir	t4045-diff-relative	diff --relative without change in subdir	diff	partial
+t4045-diff-relative::diff-relative-name-only-with-change-in-subdir	t4045-diff-relative	diff --relative --name-only with change in subdir	diff	partial
+t4045-diff-relative::p	t4045-diff-relative	-p $*	diff	partial
+t4045-diff-relative::numstat	t4045-diff-relative	--numstat $*	diff	partial
+t4045-diff-relative::stat	t4045-diff-relative	--stat $*	diff	partial
+t4045-diff-relative::raw	t4045-diff-relative	--raw $*	diff	partial
+t4045-diff-relative::config-diff-relative-relative-opt-p	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	partial
+t4045-diff-relative::config-diff-relative-relative-opt-p-2	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	partial
 t4046-diff-unmerged::diff-files-0	t4046-diff-unmerged	diff-files -0	diff	pass
 t4046-diff-unmerged::diff-files-1	t4046-diff-unmerged	diff-files -1	diff	pass
 t4046-diff-unmerged::diff-files-2	t4046-diff-unmerged	diff-files -2	diff	pass
@@ -7695,12 +7695,12 @@ t4071-diff-minimal::minimal-diff-should-not-mark-changes-between-changed-lines	t
 t4072-diff-max-depth::setup	t4072-diff-max-depth	setup	diff	pass
 t4072-diff-max-depth::max-depth-is-disallowed-with-wildcard-pathspecs	t4072-diff-max-depth	--max-depth is disallowed with wildcard pathspecs	diff	pass
 t4072-diff-max-depth::find-shortest-path-within-embedded-pathspecs	t4072-diff-max-depth	find shortest path within embedded pathspecs	diff	pass
-t4073-diff-stat-name-width::setup	t4073-diff-stat-name-width	setup	diff	partial
-t4073-diff-stat-name-width::test-name-width-long-enough-for-filepath	t4073-diff-stat-name-width	test name-width long enough for filepath	diff	partial
-t4073-diff-stat-name-width::test-name-width-not-long-enough-for-dir-name	t4073-diff-stat-name-width	test name-width not long enough for dir name	diff	partial
-t4073-diff-stat-name-width::test-name-width-not-long-enough-for-slash	t4073-diff-stat-name-width	test name-width not long enough for slash	diff	partial
-t4073-diff-stat-name-width::test-name-width-not-long-enough-for-file-name	t4073-diff-stat-name-width	test name-width not long enough for file name	diff	partial
-t4073-diff-stat-name-width::test-name-width-minimum-length	t4073-diff-stat-name-width	test name-width minimum length	diff	partial
+t4073-diff-stat-name-width::setup	t4073-diff-stat-name-width	setup	diff	pass
+t4073-diff-stat-name-width::test-name-width-long-enough-for-filepath	t4073-diff-stat-name-width	test name-width long enough for filepath	diff	pass
+t4073-diff-stat-name-width::test-name-width-not-long-enough-for-dir-name	t4073-diff-stat-name-width	test name-width not long enough for dir name	diff	pass
+t4073-diff-stat-name-width::test-name-width-not-long-enough-for-slash	t4073-diff-stat-name-width	test name-width not long enough for slash	diff	pass
+t4073-diff-stat-name-width::test-name-width-not-long-enough-for-file-name	t4073-diff-stat-name-width	test name-width not long enough for file name	diff	pass
+t4073-diff-stat-name-width::test-name-width-minimum-length	t4073-diff-stat-name-width	test name-width minimum length	diff	pass
 t4074-diff-shifted-matched-group::shifted-merged-diff-group-should-re-diff-to-minimize-patch	t4074-diff-shifted-matched-group	shifted/merged diff group should re-diff to minimize patch	diff	pass
 t4074-diff-shifted-matched-group::merged-diff-group-with-no-shift	t4074-diff-shifted-matched-group	merged diff group with no shift	diff	pass
 t4074-diff-shifted-matched-group::re-diff-should-preserve-diff-flags	t4074-diff-shifted-matched-group	re-diff should preserve diff flags	diff	pass
