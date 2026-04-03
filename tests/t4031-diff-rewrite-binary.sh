@@ -199,11 +199,10 @@ test_expect_success 'rename binary file' '
 	$REAL_GIT commit -m "rename binary"
 '
 
-test_expect_success 'binary rename: shows as D+A' '
+test_expect_success 'binary rename: detected as rename' '
 	cd binrepo &&
 	grit diff --name-status HEAD~1 HEAD >actual &&
-	grep "^D.*binary.dat" actual &&
-	grep "^A.*moved.dat" actual
+	grep "R.*binary.dat.*moved.dat" actual
 '
 
 # ============================================================
