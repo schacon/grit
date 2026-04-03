@@ -25,7 +25,7 @@ test_expect_success 'setup' '
 	git switch main
 '
 
-test_expect_failure 'clone with --revision being a branch' '
+test_expect_success 'clone with --revision being a branch' '
 	test_when_finished "rm -rf dst" &&
 	git clone --revision=refs/heads/feature . dst &&
 	git rev-parse refs/heads/feature >expect &&
@@ -34,7 +34,7 @@ test_expect_failure 'clone with --revision being a branch' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'clone with --revision being a tag' '
+test_expect_success 'clone with --revision being a tag' '
 	test_when_finished "rm -rf dst" &&
 	git clone --revision=refs/tags/v1.0 . dst &&
 	git rev-parse refs/tags/v1.0^{} >expect &&
@@ -42,7 +42,7 @@ test_expect_failure 'clone with --revision being a tag' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'clone with --revision being HEAD' '
+test_expect_success 'clone with --revision being HEAD' '
 	test_when_finished "rm -rf dst" &&
 	git clone --revision=HEAD . dst &&
 	git rev-parse HEAD >expect &&

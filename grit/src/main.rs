@@ -13,10 +13,65 @@ mod commands;
 pub mod pathspec;
 
 fn main() {
-    if let Err(e) = run() {
-        eprintln!("error: {e:#}");
-        std::process::exit(1);
+    let start = std::time::Instant::now();
+    let trace2_path = std::env::var("GIT_TRACE2").ok().filter(|s| !s.is_empty());
+    let exit_code;
+
+    // Write trace2 version event at startup
+    if let Some(ref path) = trace2_path {
+        let _ = trace2_write_event(path, "version", env!("CARGO_PKG_VERSION"));
+        let cmd_line: Vec<String> = std::env::args().collect();
+        let _ = trace2_write_event(path, "start", &cmd_line.join(" "));
     }
+
+    match run() {
+        Ok(()) => {
+            exit_code = 0;
+        }
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            exit_code = 1;
+        }
+    }
+
+    // Write trace2 exit event
+    if let Some(ref path) = trace2_path {
+        let elapsed = start.elapsed();
+        let _ = trace2_write_event(
+            path,
+            "exit",
+            &format!("elapsed:{:.6} code:{}", elapsed.as_secs_f64(), exit_code),
+        );
+    }
+
+    std::process::exit(exit_code);
+}
+
+/// Write a trace2 normal-format event to the trace file.
+fn trace2_write_event(path: &str, event: &str, data: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let now = chrono_now();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{} grit:0                         {} {}", now, event, data)?;
+    Ok(())
+}
+
+/// Format current time as HH:MM:SS.microseconds for trace2 output.
+fn chrono_now() -> String {
+    use std::time::SystemTime;
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let total_secs = now.as_secs();
+    let micros = now.subsec_micros();
+    let secs_in_day = total_secs % 86400;
+    let hours = secs_in_day / 3600;
+    let mins = (secs_in_day % 3600) / 60;
+    let secs = secs_in_day % 60;
+    format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros)
 }
 
 /// Global options parsed from argv before the subcommand.

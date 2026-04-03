@@ -157,11 +157,13 @@ test_path_is_dir  () { test -d "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
 
 test_grep () {
+	local negate=""
 	local invert=""
 	while test $# -gt 0; do
 		case "$1" in
 		-e) shift; break ;;
-		-v|!) invert="-v"; shift ;;
+		!) negate=1; shift ;;
+		-v) invert="-v"; shift ;;
 		--) shift; break ;;
 		-*) shift ;;
 		*) break ;;
@@ -169,7 +171,12 @@ test_grep () {
 	done
 	local pattern="$1"
 	shift
-	grep $invert "$pattern" "$@"
+	if test -n "$negate"
+	then
+		! grep "$pattern" "$@"
+	else
+		grep $invert "$pattern" "$@"
+	fi
 }
 
 test_create_repo () {

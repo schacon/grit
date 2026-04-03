@@ -9,7 +9,7 @@ test_expect_success 'setup: create parent git repository' '
 	(cd parent && git config user.name "Test" && git config user.email "t@t" && test_commit root-commit)
 '
 
-test_expect_failure 'setup: .git as a symlink to a directory is valid' '
+test_expect_success 'setup: .git as a symlink to a directory is valid' '
 	test_have_prereq SYMLINKS || return 0 &&
 	test_when_finished "rm -rf parent/link-to-dir" &&
 	mkdir -p parent/link-to-dir &&
@@ -23,7 +23,7 @@ test_expect_failure 'setup: .git as a symlink to a directory is valid' '
 	)
 '
 
-test_expect_failure 'setup: .git as a FIFO (named pipe) is rejected' '
+test_expect_success 'setup: .git as a FIFO (named pipe) is rejected' '
 	test_have_prereq PIPE || return 0 &&
 	test_when_finished "rm -rf parent/fifo-trap" &&
 	mkdir -p parent/fifo-trap &&
@@ -44,7 +44,7 @@ test_expect_success 'setup: .git with garbage content is rejected' '
 	)
 '
 
-test_expect_failure 'setup: .git as an empty directory is ignored' '
+test_expect_success 'setup: .git as an empty directory is ignored' '
 	test_when_finished "rm -rf parent/empty-dir" &&
 	mkdir -p parent/empty-dir &&
 	(

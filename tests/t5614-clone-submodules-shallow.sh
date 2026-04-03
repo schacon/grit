@@ -38,12 +38,12 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'clone with --recurse-submodules' '
+test_expect_success 'clone with --recurse-submodules' '
 	git clone --recurse-submodules super clone1 &&
 	test -f clone1/sub/file
 '
 
-test_expect_failure 'basic clone of super repo (grit fails on submodule gitlink during checkout)' '
+test_expect_success 'basic clone of super repo (grit fails on submodule gitlink during checkout)' '
 	git clone super clone2 &&
 	test -f clone2/file
 '

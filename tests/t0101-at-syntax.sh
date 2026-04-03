@@ -12,19 +12,19 @@ test_expect_success 'setup' '
 	test_commit two
 '
 
-test_expect_failure '@{0} shows current' '
+test_expect_success '@{0} shows current' '
 	echo two >expect &&
 	git log --max-count=1 --format=%s "@{0}" >actual &&
 	test_cmp expect actual
 '
 
-test_expect_failure '@{1} shows old' '
+test_expect_success '@{1} shows old' '
 	echo one >expect &&
 	git log --max-count=1 --format=%s "@{1}" >actual &&
 	test_cmp expect actual
 '
 
-test_expect_failure '@{now} shows current' '
+test_expect_success '@{now} shows current' '
 	echo two >expect &&
 	git log --max-count=1 --format=%s "@{now}" >actual &&
 	test_cmp expect actual

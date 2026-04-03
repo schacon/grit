@@ -939,36 +939,10 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
 /// Format the date from an ident string (legacy, default mode).
 /// Resolve a revision string to an ObjectId.
 fn resolve_revision(repo: &Repository, rev: &str) -> Result<ObjectId> {
-    // Try as a hex OID first
-    if let Ok(oid) = ObjectId::from_hex(rev) {
-        return Ok(oid);
-    }
-
-    // Try as a ref
-    let head = resolve_head(&repo.git_dir)?;
-    if rev == "HEAD" {
-        if let Some(oid) = head.oid() {
-            return Ok(*oid);
-        }
-    }
-
-    // Try refs/heads/<rev>
-    let ref_path = repo.git_dir.join("refs/heads").join(rev);
-    if let Ok(content) = std::fs::read_to_string(&ref_path) {
-        if let Ok(oid) = ObjectId::from_hex(content.trim()) {
-            return Ok(oid);
-        }
-    }
-
-    // Try refs/tags/<rev>
-    let tag_path = repo.git_dir.join("refs/tags").join(rev);
-    if let Ok(content) = std::fs::read_to_string(&tag_path) {
-        if let Ok(oid) = ObjectId::from_hex(content.trim()) {
-            return Ok(oid);
-        }
-    }
-
-    anyhow::bail!("unknown revision '{rev}'");
+    // Delegate to the library's full revision parser which handles
+    // @{N}, @{now}, @{upstream}, peeling, parent navigation, etc.
+    grit_lib::rev_parse::resolve_revision(repo, rev)
+        .map_err(|e| anyhow::anyhow!("unknown revision '{}': {}", rev, e))
 }
 
 /// Collect ref name → OID decorations from the repository.
