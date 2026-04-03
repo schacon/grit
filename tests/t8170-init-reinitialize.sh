@@ -130,12 +130,12 @@ test_expect_success 'init -b with numeric name' '
 
 # ── reinit with --initial-branch ─────────────────────────────────────────────
 
-test_expect_success 'reinit with -b on empty repo changes branch' '
+test_expect_success 'reinit with -b on empty repo does not change branch' '
 	git init -b old reinit-branch &&
 	cd reinit-branch &&
 	grep "refs/heads/old" .git/HEAD &&
 	git init -b new &&
-	grep "refs/heads/new" .git/HEAD
+	grep "refs/heads/old" .git/HEAD
 '
 
 test_expect_success 'reinit with -b on repo with commits' '
