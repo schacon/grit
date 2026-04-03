@@ -19,7 +19,7 @@ test_expect_success 'local clone works' '
 	test_path_is_dir clone1/.git
 '
 
-test_expect_failure 'file:// clone works' '
+test_expect_success 'file:// clone works' '
 	git clone "file://$(pwd)" clone2 &&
 	test_path_is_dir clone2/.git
 '
