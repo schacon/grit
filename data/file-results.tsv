@@ -423,7 +423,7 @@ t4069-remerge-diff	yes	3	3	0	ok
 t4070-diff-pairs	yes	4	4	0	ok
 t4071-diff-minimal	yes	1	1	0	ok
 t4072-diff-max-depth	yes	5	5	0	ok
-t4073-diff-stat-name-width	yes	5	5	0	ok
+t4073-diff-stat-name-width	yes	5	4	1	ok
 t4074-diff-shifted-matched-group	yes	4	4	0	ok
 t4100-apply-stat	yes	42	42	0	ok
 t4101-apply-nonl	yes	12	12	0	ok
@@ -497,7 +497,7 @@ t4257-am-interactive	yes	4	4	0	ok
 t4258-am-quoted-cr	yes	4	4	0	ok
 t4300-merge-tree	yes	27	27	0	ok
 t4301-merge-tree-write-tree	yes	4	4	0	ok
-t5000-tar-tree	yes	9	8	1	ok
+t5000-tar-tree	yes	9	9	0	ok
 t5001-archive-attr	yes	6	6	0	ok
 t5002-archive-attr-pattern	yes	5	5	0	ok
 t5003-archive-zip	yes	6	6	0	ok
@@ -836,7 +836,7 @@ t7527-builtin-fsmonitor	yes	9	9	0	ok
 t7528-signed-commit-ssh	yes	6	6	0	ok
 t7600-merge	yes	12	12	0	ok
 t7601-merge-pull-config	yes	2	2	0	ok
-t7602-merge-octopus-many	yes	8	5	3	ok
+t7602-merge-octopus-many	yes	8	8	0	ok
 t7603-merge-reduce-heads	yes	5	5	0	ok
 t7604-merge-custom-message	yes	2	2	0	ok
 t7605-merge-resolve	yes	3	3	0	ok
