@@ -21,7 +21,7 @@ test_expect_success setup '
 	)
 '
 
-test_expect_failure fetch '
+test_expect_success fetch '
 	(
 		cd other && git fetch origin &&
 		test "$(git for-each-ref --format="%(refname)")" = refs/remotes/b/one

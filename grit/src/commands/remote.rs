@@ -40,6 +40,13 @@ pub enum RemoteSubcommand {
     SetUrl(SetUrlArgs),
     /// Show information about a remote.
     Show(ShowArgs),
+    /// Configure the set of tracked branches for a remote.
+    #[command(name = "set-branches")]
+    SetBranches(SetBranchesArgs),
+    /// Remove stale remote-tracking branches.
+    Prune(PruneArgs),
+    /// Fetch updates from remote(s).
+    Update(UpdateArgs),
 }
 
 /// Arguments for `grit remote add`.
@@ -90,6 +97,32 @@ pub struct ShowArgs {
     pub name: String,
 }
 
+/// Arguments for `grit remote set-branches`.
+#[derive(Debug, ClapArgs)]
+pub struct SetBranchesArgs {
+    /// Replace (instead of add to) the list of currently tracked branches.
+    #[arg(long)]
+    pub add: bool,
+    /// Name of the remote.
+    pub name: String,
+    /// Branch patterns to track.
+    pub branches: Vec<String>,
+}
+
+/// Arguments for `grit remote prune`.
+#[derive(Debug, ClapArgs)]
+pub struct PruneArgs {
+    /// Name of the remote.
+    pub name: String,
+}
+
+/// Arguments for `grit remote update`.
+#[derive(Debug, ClapArgs)]
+pub struct UpdateArgs {
+    /// Remote or group names to update (default: all configured remotes).
+    pub groups: Vec<String>,
+}
+
 // ── Entrypoint ──────────────────────────────────────────────────────
 
 pub fn run(args: Args) -> Result<()> {
@@ -102,6 +135,9 @@ pub fn run(args: Args) -> Result<()> {
         Some(RemoteSubcommand::GetUrl(get_url_args)) => cmd_get_url(get_url_args),
         Some(RemoteSubcommand::SetUrl(set_url_args)) => cmd_set_url(set_url_args),
         Some(RemoteSubcommand::Show(show_args)) => cmd_show(show_args),
+        Some(RemoteSubcommand::SetBranches(sb_args)) => cmd_set_branches(sb_args),
+        Some(RemoteSubcommand::Prune(prune_args)) => cmd_prune(prune_args),
+        Some(RemoteSubcommand::Update(update_args)) => cmd_update(update_args),
         None => cmd_list(args.verbose),
     }
 }
@@ -299,6 +335,146 @@ fn cmd_show(args: ShowArgs) -> Result<()> {
     }
 }
 
+// ── Set Branches ────────────────────────────────────────────────────
+
+fn cmd_set_branches(args: SetBranchesArgs) -> Result<()> {
+    let git_dir = resolve_git_dir()?;
+    let config_path = git_dir.join("config");
+
+    // Verify remote exists
+    {
+        let config = load_local_config(&git_dir)?;
+        let remotes = collect_remotes(&config);
+        if !remotes.contains_key(&args.name) {
+            bail!("No such remote '{}'", args.name);
+        }
+    }
+
+    let mut config_file = load_or_create_config_file(&config_path)?;
+    let fetch_key = format!("remote.{}.fetch", args.name);
+
+    if !args.add {
+        // Remove all existing fetch refspecs first
+        config_file.unset(&fetch_key)?;
+    }
+
+    // Add a fetch refspec for each branch pattern
+    for branch in &args.branches {
+        let refspec = format!("+refs/heads/{branch}:refs/remotes/{}/{branch}", args.name);
+        config_file.add_value(&fetch_key, &refspec)?;
+    }
+
+    config_file.write().context("writing config")?;
+    Ok(())
+}
+
+// ── Prune ───────────────────────────────────────────────────────────
+
+fn cmd_prune(args: PruneArgs) -> Result<()> {
+    let git_dir = resolve_git_dir()?;
+    let config = load_local_config(&git_dir)?;
+    let remotes = collect_remotes(&config);
+
+    if !remotes.contains_key(&args.name) {
+        bail!("No such remote '{}'", args.name);
+    }
+
+    let info = &remotes[&args.name];
+    let url = &info.url;
+
+    // Open the remote repo to see which branches still exist
+    let remote_path = if let Some(stripped) = url.strip_prefix("file://") {
+        PathBuf::from(stripped)
+    } else {
+        PathBuf::from(url)
+    };
+
+    let remote_git_dir = find_git_dir(&remote_path)?;
+    let remote_heads = grit_lib::refs::list_refs(&remote_git_dir, "refs/heads/")?;
+
+    // List our local remote-tracking refs for this remote
+    let prefix = format!("refs/remotes/{}/", args.name);
+    let local_tracking = grit_lib::refs::list_refs(&git_dir, &prefix)?;
+
+    let mut pruned = false;
+    for (local_ref, _oid) in &local_tracking {
+        // Reconstruct what remote ref this corresponds to
+        let branch = local_ref.strip_prefix(&prefix).unwrap_or(local_ref);
+        let remote_ref = format!("refs/heads/{branch}");
+        if !remote_heads.iter().any(|(r, _)| r == &remote_ref) {
+            grit_lib::refs::delete_ref(&git_dir, local_ref)
+                .with_context(|| format!("pruning {local_ref}"))?;
+            eprintln!(" * [pruned] {}", local_ref);
+            pruned = true;
+        }
+    }
+
+    if !pruned {
+        eprintln!("No stale remote-tracking branches for '{}'", args.name);
+    }
+
+    Ok(())
+}
+
+// ── Update ──────────────────────────────────────────────────────────
+
+fn cmd_update(args: UpdateArgs) -> Result<()> {
+    let git_dir = resolve_git_dir()?;
+    let config = load_local_config(&git_dir)?;
+    let all_remotes = collect_remotes(&config);
+
+    // Determine which remotes to fetch
+    let remote_names: Vec<String> = if args.groups.is_empty() {
+        // Fetch all remotes
+        all_remotes.keys().cloned().collect()
+    } else {
+        // Each arg can be a remote name or a remotes group
+        let mut names = Vec::new();
+        for group in &args.groups {
+            if all_remotes.contains_key(group) {
+                names.push(group.clone());
+            } else {
+                // Check remotes.<group> config for group members
+                let group_key = format!("remotes.{group}");
+                if let Some(members) = config.get(&group_key) {
+                    for member in members.split_whitespace() {
+                        if !names.contains(&member.to_string()) {
+                            names.push(member.to_string());
+                        }
+                    }
+                } else {
+                    bail!("No such remote or remote group: '{}'", group);
+                }
+            }
+        }
+        names
+    };
+
+    // Fetch from each remote using the fetch command
+    for name in &remote_names {
+        eprintln!("Fetching {name}");
+        let fetch_args = super::fetch::Args {
+            remote: Some(name.clone()),
+            all: false,
+            tags: false,
+            no_tags: false,
+            prune: false,
+            prune_tags: false,
+            deepen: None,
+            depth: None,
+            shallow_since: None,
+            shallow_exclude: None,
+            refetch: false,
+            output: None,
+            quiet: false,
+            jobs: None,
+        };
+        super::fetch::run(fetch_args)?;
+    }
+
+    Ok(())
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 struct RemoteInfo {
@@ -387,4 +563,18 @@ fn load_or_create_config_file(config_path: &Path) -> Result<ConfigFile> {
         Some(cfg) => Ok(cfg),
         None => Ok(ConfigFile::parse(config_path, "", ConfigScope::Local)?),
     }
+}
+
+/// Find the .git directory for a given path (bare or non-bare repo).
+fn find_git_dir(path: &Path) -> Result<PathBuf> {
+    // Bare repo: path itself has objects/ and HEAD
+    if path.join("objects").is_dir() && path.join("HEAD").is_file() {
+        return Ok(path.to_path_buf());
+    }
+    // Non-bare: path/.git
+    let dot_git = path.join(".git");
+    if dot_git.is_dir() {
+        return Ok(dot_git);
+    }
+    bail!("not a git repository: '{}'", path.display())
 }
