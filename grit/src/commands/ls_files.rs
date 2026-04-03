@@ -92,13 +92,13 @@ pub fn run(args: Args) -> Result<()> {
         || (!args.deleted && !args.modified && !args.others && !args.unmerged && !args.killed);
     let show_stage = args.stage || args.unmerged;
 
-    let mut pathspec_filter: Vec<Vec<u8>> = args
+    let mut pathspec_filter: Vec<Pathspec> = args
         .pathspecs
         .iter()
         .map(|p| resolve_pathspec(work_tree, &cwd, p))
         .collect::<Result<Vec<_>>>()?;
     if pathspec_filter.is_empty() && !cwd_prefix.is_empty() {
-        pathspec_filter.push(cwd_prefix.clone());
+        pathspec_filter.push(Pathspec::Literal(cwd_prefix.clone()));
     }
 
     // Track which pathspecs matched at least one entry (for --error-unmatch).
@@ -109,7 +109,7 @@ pub fn run(args: Args) -> Result<()> {
         if !pathspec_filter.is_empty() {
             let idx = pathspec_filter
                 .iter()
-                .position(|spec| entry.path == spec.as_slice() || entry.path.starts_with(spec));
+                .position(|spec| spec.matches(&entry.path));
             match idx {
                 Some(i) => matched[i] = true,
                 None => continue,
@@ -148,7 +148,10 @@ pub fn run(args: Args) -> Result<()> {
     if args.error_unmatch {
         for (i, spec) in pathspec_filter.iter().enumerate() {
             if !matched[i] {
-                let spec_str = String::from_utf8_lossy(spec);
+                let spec_str = match spec {
+                    Pathspec::Literal(v) => String::from_utf8_lossy(v).into_owned(),
+                    Pathspec::Glob(s) => s.clone(),
+                };
                 anyhow::bail!(
                     "error: pathspec '{}' did not match any file(s) known to git",
                     spec_str
@@ -169,10 +172,7 @@ pub fn run(args: Args) -> Result<()> {
         untracked.sort();
         for path_bytes in &untracked {
             if !pathspec_filter.is_empty() {
-                let matches = pathspec_filter.iter().any(|spec| {
-                    path_bytes == spec
-                        || path_bytes.starts_with(spec.as_slice())
-                });
+                let matches = pathspec_filter.iter().any(|spec| spec.matches(path_bytes));
                 if !matches {
                     continue;
                 }
@@ -231,13 +231,139 @@ fn walk_worktree(
     Ok(())
 }
 
+/// A parsed pathspec — either a literal prefix or a glob pattern.
+#[derive(Debug, Clone)]
+enum Pathspec {
+    Literal(Vec<u8>),
+    Glob(String),
+}
+
+impl Pathspec {
+    fn matches(&self, path: &[u8]) -> bool {
+        match self {
+            Pathspec::Literal(spec) => path == spec.as_slice() || path.starts_with(spec),
+            Pathspec::Glob(pattern) => {
+                let path_str = String::from_utf8_lossy(path);
+                glob_match(pattern, &path_str)
+            }
+        }
+    }
+}
+
+/// Check if a string contains glob meta-characters.
+fn has_glob_chars(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+/// Simple glob matching for git pathspecs.
+/// `*` matches any sequence of characters including `/`.
+/// `?` matches any single character except `/`.
+/// `[abc]` matches any one character in the set.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    glob_match_inner(pattern.as_bytes(), text.as_bytes())
+}
+
+fn glob_match_inner(pattern: &[u8], text: &[u8]) -> bool {
+    let mut pi = 0;
+    let mut ti = 0;
+    let mut star_pi = usize::MAX;
+    let mut star_ti = 0;
+
+    while ti < text.len() {
+        if pi < pattern.len() && pattern[pi] == b'?' && text[ti] != b'/' {
+            pi += 1;
+            ti += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'[' {
+            // Character class
+            if let Some((matched, end)) = match_char_class(&pattern[pi..], text[ti]) {
+                if matched {
+                    pi += end;
+                    ti += 1;
+                } else if star_pi != usize::MAX {
+                    star_ti += 1;
+                    ti = star_ti;
+                    pi = star_pi + 1;
+                } else {
+                    return false;
+                }
+            } else if star_pi != usize::MAX {
+                star_ti += 1;
+                ti = star_ti;
+                pi = star_pi + 1;
+            } else {
+                return false;
+            }
+        } else if pi < pattern.len() && pattern[pi] == text[ti] {
+            pi += 1;
+            ti += 1;
+        } else if star_pi != usize::MAX {
+            star_ti += 1;
+            ti = star_ti;
+            pi = star_pi + 1;
+        } else {
+            return false;
+        }
+    }
+
+    while pi < pattern.len() && pattern[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pattern.len()
+}
+
+/// Match a character class like [abc] or [a-z]. Returns (matched, bytes_consumed) or None if invalid.
+fn match_char_class(pattern: &[u8], ch: u8) -> Option<(bool, usize)> {
+    if pattern.is_empty() || pattern[0] != b'[' {
+        return None;
+    }
+    let mut i = 1;
+    let negate = i < pattern.len() && (pattern[i] == b'!' || pattern[i] == b'^');
+    if negate {
+        i += 1;
+    }
+    let mut matched = false;
+    while i < pattern.len() && pattern[i] != b']' {
+        if i + 2 < pattern.len() && pattern[i + 1] == b'-' {
+            if ch >= pattern[i] && ch <= pattern[i + 2] {
+                matched = true;
+            }
+            i += 3;
+        } else {
+            if ch == pattern[i] {
+                matched = true;
+            }
+            i += 1;
+        }
+    }
+    if i < pattern.len() && pattern[i] == b']' {
+        if negate {
+            matched = !matched;
+        }
+        Some((matched, i + 1))
+    } else {
+        None // unclosed bracket
+    }
+}
+
 fn resolve_pathspec(
     work_tree: &std::path::Path,
     cwd: &std::path::Path,
     pathspec: &std::path::Path,
-) -> Result<Vec<u8>> {
+) -> Result<Pathspec> {
     if pathspec.as_os_str().is_empty() || pathspec == std::path::Path::new(".") {
-        return cwd_prefix_bytes(work_tree, cwd);
+        return Ok(Pathspec::Literal(cwd_prefix_bytes(work_tree, cwd)?));
+    }
+    let pathspec_str = pathspec.to_string_lossy();
+    if has_glob_chars(&pathspec_str) {
+        // For glob pathspecs, prepend the cwd prefix (relative to work_tree)
+        let prefix = cwd_prefix_bytes(work_tree, cwd)?;
+        let prefix_str = String::from_utf8_lossy(&prefix).into_owned();
+        let pattern = format!("{}{}", prefix_str, pathspec_str);
+        return Ok(Pathspec::Glob(pattern));
     }
     let combined = if pathspec.is_absolute() {
         pathspec.to_path_buf()
@@ -251,7 +377,7 @@ fn resolve_pathspec(
             pathspec.display()
         )
     })?;
-    Ok(path_to_bytes(rel))
+    Ok(Pathspec::Literal(path_to_bytes(rel)))
 }
 
 fn cwd_prefix_bytes(work_tree: &std::path::Path, cwd: &std::path::Path) -> Result<Vec<u8>> {

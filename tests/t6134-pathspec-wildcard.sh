@@ -41,7 +41,7 @@ test_expect_success 'setup repository with varied file extensions' '
 
 # ── Star wildcard with extensions ────────────────────────────────────────────
 
-test_expect_failure 'ls-files *.c matches all C files recursively' '
+test_expect_success 'ls-files *.c matches all C files recursively' '
 	cd repo &&
 	git ls-files "*.c" >../actual &&
 	grep "src/main.c" ../actual &&
@@ -51,7 +51,7 @@ test_expect_failure 'ls-files *.c matches all C files recursively' '
 	test_line_count = 4 ../actual
 '
 
-test_expect_failure 'ls-files *.h matches all header files' '
+test_expect_success 'ls-files *.h matches all header files' '
 	cd repo &&
 	git ls-files "*.h" >../actual &&
 	grep "src/main.h" ../actual &&
@@ -60,7 +60,7 @@ test_expect_failure 'ls-files *.h matches all header files' '
 	test_line_count = 3 ../actual
 '
 
-test_expect_failure 'ls-files *.md matches all markdown files' '
+test_expect_success 'ls-files *.md matches all markdown files' '
 	cd repo &&
 	git ls-files "*.md" >../actual &&
 	grep "doc/readme.md" ../actual &&
@@ -69,25 +69,25 @@ test_expect_failure 'ls-files *.md matches all markdown files' '
 	test_line_count = 3 ../actual
 '
 
-test_expect_failure 'ls-files *.png matches PNG files' '
+test_expect_success 'ls-files *.png matches PNG files' '
 	cd repo &&
 	git ls-files "*.png" >../actual &&
 	test_line_count = 2 ../actual
 '
 
-test_expect_failure 'ls-files *.jpg matches JPG files' '
+test_expect_success 'ls-files *.jpg matches JPG files' '
 	cd repo &&
 	git ls-files "*.jpg" >../actual &&
 	test_line_count = 1 ../actual
 '
 
-test_expect_failure 'ls-files *.rs matches Rust files' '
+test_expect_success 'ls-files *.rs matches Rust files' '
 	cd repo &&
 	git ls-files "*.rs" >../actual &&
 	test_line_count = 1 ../actual
 '
 
-test_expect_failure 'ls-files *.toml matches TOML files' '
+test_expect_success 'ls-files *.toml matches TOML files' '
 	cd repo &&
 	git ls-files "*.toml" >../actual &&
 	test_line_count = 1 ../actual
@@ -101,7 +101,7 @@ test_expect_success 'ls-files *.xyz matches nothing' '
 
 # ── Star wildcard with directory prefix ──────────────────────────────────────
 
-test_expect_failure 'ls-files src/*.c matches only src C files' '
+test_expect_success 'ls-files src/*.c matches only src C files' '
 	cd repo &&
 	git ls-files "src/*.c" >../actual &&
 	test_line_count = 2 ../actual &&
@@ -109,25 +109,25 @@ test_expect_failure 'ls-files src/*.c matches only src C files' '
 	grep "src/util.c" ../actual
 '
 
-test_expect_failure 'ls-files src/*.h matches only src headers' '
+test_expect_success 'ls-files src/*.h matches only src headers' '
 	cd repo &&
 	git ls-files "src/*.h" >../actual &&
 	test_line_count = 2 ../actual
 '
 
-test_expect_failure 'ls-files lib/*.c matches only lib C files' '
+test_expect_success 'ls-files lib/*.c matches only lib C files' '
 	cd repo &&
 	git ls-files "lib/*.c" >../actual &&
 	test_line_count = 2 ../actual
 '
 
-test_expect_failure 'ls-files doc/*.md matches only doc markdown' '
+test_expect_success 'ls-files doc/*.md matches only doc markdown' '
 	cd repo &&
 	git ls-files "doc/*.md" >../actual &&
 	test_line_count = 2 ../actual
 '
 
-test_expect_failure 'ls-files imgs/* matches all image files' '
+test_expect_success 'ls-files imgs/* matches all image files' '
 	cd repo &&
 	git ls-files "imgs/*" >../actual &&
 	test_line_count = 3 ../actual
@@ -135,7 +135,7 @@ test_expect_failure 'ls-files imgs/* matches all image files' '
 
 # ── Question mark wildcard ──────────────────────────────────────────────────
 
-test_expect_failure 'ls-files src/main.? matches main.c and main.h' '
+test_expect_success 'ls-files src/main.? matches main.c and main.h' '
 	cd repo &&
 	git ls-files "src/main.?" >../actual &&
 	test_line_count = 2 ../actual &&
@@ -143,13 +143,13 @@ test_expect_failure 'ls-files src/main.? matches main.c and main.h' '
 	grep "src/main.h" ../actual
 '
 
-test_expect_failure 'ls-files src/util.? matches util.c and util.h' '
+test_expect_success 'ls-files src/util.? matches util.c and util.h' '
 	cd repo &&
 	git ls-files "src/util.?" >../actual &&
 	test_line_count = 2 ../actual
 '
 
-test_expect_failure 'ls-files *.?? matches two-char extensions' '
+test_expect_success 'ls-files *.?? matches two-char extensions' '
 	cd repo &&
 	git ls-files "*.??" >../actual &&
 	grep "src/build.rs" ../actual &&
@@ -158,19 +158,19 @@ test_expect_failure 'ls-files *.?? matches two-char extensions' '
 
 # ── Bracket character class ─────────────────────────────────────────────────
 
-test_expect_failure 'ls-files src/*.[ch] matches C and header files' '
+test_expect_success 'ls-files src/*.[ch] matches C and header files' '
 	cd repo &&
 	git ls-files "src/*.[ch]" >../actual &&
 	test_line_count = 4 ../actual
 '
 
-test_expect_failure 'ls-files lib/*.[ch] matches lib C and headers' '
+test_expect_success 'ls-files lib/*.[ch] matches lib C and headers' '
 	cd repo &&
 	git ls-files "lib/*.[ch]" >../actual &&
 	test_line_count = 3 ../actual
 '
 
-test_expect_failure 'ls-files imgs/*.[pj]?? matches png and jpg' '
+test_expect_success 'ls-files imgs/*.[pj]?? matches png and jpg' '
 	cd repo &&
 	git ls-files "imgs/*.[pj]??" >../actual &&
 	test_line_count = 3 ../actual
@@ -178,7 +178,7 @@ test_expect_failure 'ls-files imgs/*.[pj]?? matches png and jpg' '
 
 # ── Wildcard from subdirectory ──────────────────────────────────────────────
 
-test_expect_failure 'ls-files *.c from src shows local C files' '
+test_expect_success 'ls-files *.c from src shows local C files' '
 	cd repo/src &&
 	git ls-files "*.c" >../../actual &&
 	test_line_count = 2 ../../actual &&
@@ -186,19 +186,19 @@ test_expect_failure 'ls-files *.c from src shows local C files' '
 	grep "util.c" ../../actual
 '
 
-test_expect_failure 'ls-files *.h from src shows local headers' '
+test_expect_success 'ls-files *.h from src shows local headers' '
 	cd repo/src &&
 	git ls-files "*.h" >../../actual &&
 	test_line_count = 2 ../../actual
 '
 
-test_expect_failure 'ls-files *.c from lib shows lib C files' '
+test_expect_success 'ls-files *.c from lib shows lib C files' '
 	cd repo/lib &&
 	git ls-files "*.c" >../../actual &&
 	test_line_count = 2 ../../actual
 '
 
-test_expect_failure 'ls-files *.md from doc shows doc markdown' '
+test_expect_success 'ls-files *.md from doc shows doc markdown' '
 	cd repo/doc &&
 	git ls-files "*.md" >../../actual &&
 	test_line_count = 2 ../../actual
@@ -206,13 +206,13 @@ test_expect_failure 'ls-files *.md from doc shows doc markdown' '
 
 # ── Multiple wildcards combined ─────────────────────────────────────────────
 
-test_expect_failure 'ls-files with multiple wildcard pathspecs' '
+test_expect_success 'ls-files with multiple wildcard pathspecs' '
 	cd repo &&
 	git ls-files "*.c" "*.h" >../actual &&
 	test_line_count = 7 ../actual
 '
 
-test_expect_failure 'ls-files with file and wildcard pathspecs' '
+test_expect_success 'ls-files with file and wildcard pathspecs' '
 	cd repo &&
 	git ls-files "Makefile" "*.md" >../actual &&
 	test_line_count = 4 ../actual
@@ -220,7 +220,7 @@ test_expect_failure 'ls-files with file and wildcard pathspecs' '
 
 # ── Wildcard only shows tracked files ───────────────────────────────────────
 
-test_expect_failure 'ls-files wildcard only shows tracked (not untracked)' '
+test_expect_success 'ls-files wildcard only shows tracked (not untracked)' '
 	cd repo &&
 	echo "untracked" >src/temp.c &&
 	git ls-files "src/*.c" >../actual &&
@@ -229,7 +229,7 @@ test_expect_failure 'ls-files wildcard only shows tracked (not untracked)' '
 	rm -f src/temp.c
 '
 
-test_expect_failure 'ls-files -o with wildcard shows untracked' '
+test_expect_success 'ls-files -o with wildcard shows untracked' '
 	cd repo &&
 	echo "untracked" >src/temp.c &&
 	git ls-files -o "src/*.c" >../actual &&
