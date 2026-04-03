@@ -202,4 +202,96 @@ test_expect_success 'cherry-pick preserves original commit message' '
 	grep "the original message" msg.out
 '
 
+# ---------------------------------------------------------------------------
+# REVERT_HEAD
+# ---------------------------------------------------------------------------
+test_expect_success 'setup for revert tests' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard &&
+
+	# Create a clean linear history: initial -> base -> picked
+	echo "a" >rvt &&
+	git add rvt &&
+	git commit -m "revert-initial" &&
+	git tag revert-initial &&
+
+	echo "b" >rvt &&
+	git add rvt &&
+	git commit -m "revert-base" &&
+	git tag revert-base &&
+
+	echo "c" >rvt &&
+	git add rvt &&
+	git commit -m "revert-picked" &&
+	git tag revert-picked
+'
+
+test_expect_success 'failed revert sets REVERT_HEAD' '
+	cd repo &&
+	git checkout revert-initial^0 &&
+	test_must_fail git revert revert-picked &&
+	test -f .git/REVERT_HEAD &&
+	head_val=$(cat .git/REVERT_HEAD | tr -d "\n") &&
+	expect_val=$(git rev-parse revert-picked) &&
+	test "$head_val" = "$expect_val" &&
+	git revert --abort
+'
+
+test_expect_success 'successful revert does not set REVERT_HEAD' '
+	cd repo &&
+	git checkout revert-picked^0 &&
+	git revert revert-picked &&
+	! test -f .git/REVERT_HEAD
+'
+
+test_expect_success 'revert --no-commit sets REVERT_HEAD' '
+	cd repo &&
+	git checkout revert-base^0 &&
+	git revert --no-commit revert-base &&
+	test -f .git/REVERT_HEAD &&
+	head_val=$(cat .git/REVERT_HEAD | tr -d "\n") &&
+	expect_val=$(git rev-parse revert-base) &&
+	test "$head_val" = "$expect_val" &&
+	rm -f .git/REVERT_HEAD .git/MERGE_MSG
+'
+
+test_expect_success 'git reset clears REVERT_HEAD' '
+	cd repo &&
+	git checkout revert-initial^0 &&
+	test_must_fail git revert revert-picked &&
+	test -f .git/REVERT_HEAD &&
+	git reset &&
+	! test -f .git/REVERT_HEAD
+'
+
+# ---------------------------------------------------------------------------
+# cherry-pick -Xtheirs
+# ---------------------------------------------------------------------------
+test_expect_success 'cherry-pick -Xtheirs resolves conflicts by taking theirs' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard revert-initial &&
+
+	# Pick revert-picked which changes rvt from a->c; our side has a
+	git cherry-pick -Xtheirs revert-picked &&
+	echo "c" >expect &&
+	test_cmp expect rvt
+'
+
+test_expect_success 'cherry-pick --strategy-option=theirs resolves conflicts' '
+	cd repo &&
+	git checkout master &&
+	git reset --hard revert-base &&
+
+	echo "d" >rvt &&
+	git add rvt &&
+	git commit -m "diverge" &&
+
+	# This should conflict (base->c vs base->d), but -Xtheirs takes theirs
+	git cherry-pick --strategy-option=theirs revert-picked &&
+	echo "c" >expect &&
+	test_cmp expect rvt
+'
+
 test_done

@@ -562,7 +562,7 @@ fn do_push_pathspec(
 /// Push with --staged: only stash staged changes.
 fn do_push_staged(
     repo: &Repository,
-    _work_tree: &Path,
+    work_tree: &Path,
     head: &HeadState,
     head_oid: &ObjectId,
     index: &Index,
@@ -613,11 +613,46 @@ fn do_push_staged(
     // Update refs/stash
     update_stash_ref(repo, &stash_oid, &reflog_msg)?;
 
-    // Reset index back to HEAD (unstage the changes), but leave worktree alone
+    // Reset index back to HEAD (unstage the changes)
+    // For files that were newly added (not in HEAD), also remove from worktree
+    // For files that were modified, restore them to HEAD content in worktree
     let head_tree_entries = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
+    let head_paths: std::collections::BTreeSet<String> = head_tree_entries.iter().map(|e| e.path.clone()).collect();
+
+    // Revert staged changes in the worktree
+    for change in &staged {
+        if let Some(path) = change.new_path.as_ref().or(change.old_path.as_ref()) {
+            let file_path = work_tree.join(path);
+            if !head_paths.contains(path) {
+                // New file (added) — remove from worktree
+                let _ = fs::remove_file(&file_path);
+                if let Some(parent) = file_path.parent() {
+                    remove_empty_dirs(parent, work_tree);
+                }
+            } else {
+                // Modified file — restore HEAD content
+                for te in &head_tree_entries {
+                    if te.path == *path {
+                        let blob = repo.odb.read(&te.oid)?;
+                        if te.mode == MODE_SYMLINK {
+                            let target = String::from_utf8(blob.data)
+                                .map_err(|_| anyhow::anyhow!("symlink not UTF-8"))?;
+                            if file_path.exists() || file_path.symlink_metadata().is_ok() {
+                                let _ = fs::remove_file(&file_path);
+                            }
+                            #[cfg(unix)]
+                            std::os::unix::fs::symlink(&target, &file_path)?;
+                        } else {
+                            fs::write(&file_path, &blob.data)?;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     let new_index = build_index_from_tree(&repo.odb, &head_tree_entries)?;
-    // But we need to preserve any unstaged worktree changes in the index stat info
-    // Just write the HEAD-based index and let git sort it out on next status
     new_index.write(&repo.index_path())?;
 
     if !opts.quiet {

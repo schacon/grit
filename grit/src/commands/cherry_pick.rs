@@ -15,7 +15,7 @@ use std::path::Path;
 use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as GritError;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
-use grit_lib::merge_file::{merge, MergeInput};
+use grit_lib::merge_file::{merge, MergeFavor, MergeInput};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
@@ -78,6 +78,14 @@ pub struct Args {
     /// Allow empty commits (already-applied content).
     #[arg(long = "allow-empty")]
     pub allow_empty: bool,
+
+    /// Strategy option (e.g. "theirs", "ours", "patience").
+    #[arg(short = 'X', long = "strategy-option")]
+    pub strategy_option: Vec<String>,
+
+    /// What to do with empty commits: stop, drop, or keep.
+    #[arg(long = "empty", value_name = "ACTION")]
+    pub empty: Option<String>,
 }
 
 /// Run the `cherry-pick` command.
@@ -291,11 +299,13 @@ fn cherry_pick_one_commit(
     };
     let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
 
+    let favor = parse_merge_favor(&args.strategy_option);
     let merge_result = three_way_merge_with_content(
         repo,
         &base_entries,
         &ours_entries,
         &theirs_entries,
+        favor,
     )?;
 
     let has_conflicts = merge_result.index.entries.iter().any(|e| e.stage() != 0);
@@ -304,7 +314,14 @@ fn cherry_pick_one_commit(
     if !has_conflicts && !args.allow_empty {
         let new_tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
         if new_tree_oid == head_tree_oid {
-            bail!("The previous cherry-pick is now empty, possibly due to conflict resolution.\nIf you wish to commit it anyway, use --allow-empty.");
+            let empty_action = args.empty.as_deref().unwrap_or("stop");
+            match empty_action {
+                "drop" => return Ok(()),
+                "keep" => { /* fall through to commit */ }
+                _ /* "stop" */ => {
+                    bail!("The previous cherry-pick is now empty, possibly due to conflict resolution.\nIf you wish to commit it anyway, use --allow-empty.");
+                }
+            }
         }
     }
 
@@ -777,12 +794,25 @@ fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
     index.entries.push(e);
 }
 
+/// Parse strategy options into a MergeFavor.
+fn parse_merge_favor(strategy_options: &[String]) -> MergeFavor {
+    for opt in strategy_options {
+        match opt.as_str() {
+            "theirs" => return MergeFavor::Theirs,
+            "ours" => return MergeFavor::Ours,
+            _ => {}
+        }
+    }
+    MergeFavor::None
+}
+
 /// Three-way merge with content-level merging.
 fn three_way_merge_with_content(
     repo: &Repository,
     base: &HashMap<Vec<u8>, IndexEntry>,
     ours: &HashMap<Vec<u8>, IndexEntry>,
     theirs: &HashMap<Vec<u8>, IndexEntry>,
+    favor: MergeFavor,
 ) -> Result<MergeResult> {
     let mut all_paths = BTreeSet::new();
     all_paths.extend(base.keys().cloned());
@@ -808,7 +838,7 @@ fn three_way_merge_with_content(
                 out.entries.push(oe.clone());
             }
             (Some(be), Some(oe), Some(te)) => {
-                content_merge_or_conflict(repo, &mut out, &mut conflict_content, &path, be, oe, te)?;
+                content_merge_or_conflict(repo, &mut out, &mut conflict_content, &path, be, oe, te, favor)?;
             }
             (None, Some(oe), None) => {
                 out.entries.push(oe.clone());
@@ -850,6 +880,7 @@ fn content_merge_or_conflict(
     base: &IndexEntry,
     ours: &IndexEntry,
     theirs: &IndexEntry,
+    favor: MergeFavor,
 ) -> Result<()> {
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
@@ -859,10 +890,23 @@ fn content_merge_or_conflict(
         || grit_lib::merge_file::is_binary(&ours_obj.data)
         || grit_lib::merge_file::is_binary(&theirs_obj.data)
     {
-        stage_entry(index, base, 1);
-        stage_entry(index, ours, 2);
-        stage_entry(index, theirs, 3);
-        return Ok(());
+        // With -Xtheirs or -Xours, resolve binary conflicts by taking one side
+        match favor {
+            MergeFavor::Theirs => {
+                index.entries.push(theirs.clone());
+                return Ok(());
+            }
+            MergeFavor::Ours => {
+                index.entries.push(ours.clone());
+                return Ok(());
+            }
+            _ => {
+                stage_entry(index, base, 1);
+                stage_entry(index, ours, 2);
+                stage_entry(index, theirs, 3);
+                return Ok(());
+            }
+        }
     }
 
     let path_str = String::from_utf8_lossy(path);
@@ -873,7 +917,7 @@ fn content_merge_or_conflict(
         label_ours: "HEAD",
         label_base: "parent of picked commit",
         label_theirs: &path_str,
-        favor: Default::default(),
+        favor,
         style: Default::default(),
         marker_size: 7,
     };
