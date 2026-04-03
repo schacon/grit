@@ -57,6 +57,10 @@ pub struct Args {
     #[arg(long = "continue")]
     pub continue_merge: bool,
 
+    /// Merge strategy to use (e.g. recursive, ort, resolve, octopus, ours).
+    #[arg(short = 's', long = "strategy")]
+    pub strategy: Option<String>,
+
     /// Suppress output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
@@ -78,6 +82,25 @@ pub fn run(args: Args) -> Result<()> {
         bail!("cannot combine --ff-only and --no-ff");
     }
 
+    // Validate --strategy: accept known names, warn on unsupported ones.
+    if let Some(ref strat) = args.strategy {
+        match strat.as_str() {
+            "recursive" | "ort" | "resolve" => {
+                // These are compatible with our three-way merge implementation.
+            }
+            "octopus" => {
+                // Octopus is handled separately when multiple commits are given.
+            }
+            "ours" => {
+                // "ours" strategy: keep our tree, just make a merge commit.
+                // We handle this specially below.
+            }
+            other => {
+                bail!("Could not find merge strategy '{}'", other);
+            }
+        }
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
     let head = resolve_head(&repo.git_dir)?;
     let head_oid = match head.oid() {
@@ -95,6 +118,11 @@ pub fn run(args: Args) -> Result<()> {
 
     // Resolve merge target
     let merge_oid = resolve_merge_target(&repo, &args.commits[0])?;
+
+    // Handle -s ours: keep our tree, just create merge commit
+    if args.strategy.as_deref() == Some("ours") {
+        return do_strategy_ours(&repo, &head, head_oid, merge_oid, &args);
+    }
 
     // Already up-to-date?
     if head_oid == merge_oid {
@@ -498,6 +526,51 @@ fn build_octopus_merge_message(head: &HeadState, branch_names: &[String], custom
         formatted
     };
     ensure_trailing_newline(&msg)
+}
+
+/// Strategy "ours": create merge commit keeping HEAD's tree.
+fn do_strategy_ours(
+    repo: &Repository,
+    head: &HeadState,
+    head_oid: ObjectId,
+    merge_oid: ObjectId,
+    args: &Args,
+) -> Result<()> {
+    // Save ORIG_HEAD
+    fs::write(
+        repo.git_dir.join("ORIG_HEAD"),
+        format!("{}\n", head_oid.to_hex()),
+    )?;
+
+    let tree_oid = commit_tree(repo, head_oid)?;
+    let msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let now = OffsetDateTime::now_utc();
+    let author = resolve_ident(&config, "author", now)?;
+    let committer = resolve_ident(&config, "committer", now)?;
+
+    let commit_data = CommitData {
+        tree: tree_oid,
+        parents: vec![head_oid, merge_oid],
+        author,
+        committer,
+        encoding: None,
+        message: msg,
+    };
+
+    let commit_bytes = serialize_commit(&commit_data);
+    let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
+    update_head(&repo.git_dir, head, &commit_oid)?;
+
+    if !args.quiet {
+        let short = &commit_oid.to_hex()[..7];
+        let branch = head.branch_name().unwrap_or("HEAD");
+        let first_line = commit_data.message.lines().next().unwrap_or("");
+        eprintln!("[{branch} {short}] {first_line}");
+    }
+
+    Ok(())
 }
 
 /// Squash merge: stage changes but don't commit.
