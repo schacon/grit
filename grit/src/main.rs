@@ -190,6 +190,29 @@ fn run() -> Result<()> {
     dispatch(&subcmd, &rest, &opts)
 }
 
+/// Preprocess diff arguments: expand `-U<N>` to `--unified=<N>` so that
+/// clap does not swallow it into the trailing var-arg positional.
+fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut iter = rest.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "-U" {
+            // `-U <N>` with a space — merge into `--unified=<N>`
+            if let Some(val) = iter.next() {
+                result.push(format!("--unified={val}"));
+            } else {
+                result.push(arg.clone());
+            }
+        } else if let Some(n) = arg.strip_prefix("-U") {
+            // `-U<N>` without a space
+            result.push(format!("--unified={n}"));
+        } else {
+            result.push(arg.clone());
+        }
+    }
+    result
+}
+
 /// Preprocess log arguments: convert `-<N>` shorthand to `-n <N>`.
 fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
