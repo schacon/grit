@@ -45,6 +45,14 @@ pub struct Args {
     #[arg(short = 'c', value_name = "KEY=VALUE", action = clap::ArgAction::Append)]
     pub config: Vec<String>,
 
+    /// Check out a specific revision (detached HEAD).
+    #[arg(long, value_name = "REV")]
+    pub revision: Option<String>,
+
+    /// Create a mirror clone.
+    #[arg(long)]
+    pub mirror: bool,
+
     /// Clone only the history leading to the tip of a single branch.
     #[arg(long)]
     pub single_branch: bool,
@@ -55,6 +63,14 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    // --revision conflicts with --branch and --mirror
+    if args.revision.is_some() && args.branch.is_some() {
+        bail!("--revision and --branch are mutually exclusive");
+    }
+    if args.revision.is_some() && args.mirror {
+        bail!("--revision and --mirror are mutually exclusive");
+    }
+
     // Strip file:// prefix if present
     let repo_path_str = if let Some(stripped) = args.repository.strip_prefix("file://") {
         stripped.to_string()
@@ -214,6 +230,18 @@ pub fn run(args: Args) -> Result<()> {
         config.write().context("writing config")?;
     }
 
+    // Handle --revision: resolve the specified ref in the source repo and set
+    // the destination to a detached HEAD at that commit.
+    if let Some(ref revision) = args.revision {
+        let rev_oid = resolve_revision_in_source(&source, revision)
+            .with_context(|| format!("cannot resolve --revision '{}'", revision))?;
+        // Set HEAD to the resolved OID directly (detached)
+        fs::write(
+            dest.git_dir.join("HEAD"),
+            format!("{}\n", rev_oid),
+        )?;
+    }
+
     // Checkout working tree unless --bare or --no-checkout
     if !args.bare && !args.no_checkout {
         checkout_head(&dest).context("checking out HEAD")?;
@@ -224,6 +252,36 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolve a revision string (ref, OID, HEAD) in the source repository.
+/// For tags, peels to the commit. Returns the OID string.
+fn resolve_revision_in_source(source: &Repository, revision: &str) -> Result<String> {
+    use grit_lib::refs;
+
+    // Try resolving as a ref first
+    if let Ok(oid) = refs::resolve_ref(&source.git_dir, revision) {
+        // If it's a tag, peel it to the commit
+        let obj = source.odb.read(&oid)?;
+        if obj.kind == grit_lib::objects::ObjectKind::Tag {
+            // Parse tag to find the target object
+            let text = std::str::from_utf8(&obj.data).unwrap_or("");
+            if let Some(line) = text.lines().find(|l| l.starts_with("object ")) {
+                let target_hex = line.trim_start_matches("object ").trim();
+                return Ok(target_hex.to_string());
+            }
+        }
+        return Ok(oid.to_hex());
+    }
+
+    // Try as a hex OID
+    if let Ok(oid) = ObjectId::from_hex(revision) {
+        if source.odb.exists(&oid) {
+            return Ok(oid.to_hex());
+        }
+    }
+
+    bail!("revision '{}' not found in source repository", revision);
 }
 
 /// Open a source repository (bare or non-bare).
