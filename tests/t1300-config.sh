@@ -2217,7 +2217,7 @@ test_expect_success 'value with backslash preserved' '
 	cd repo &&
 	git config quot.bs "a\\b" &&
 	git config --get quot.bs >actual &&
-	echo "a\\b" >expect &&
+	printf "%s\n" "a\\b" >expect &&
 	test_cmp expect actual
 '
 
@@ -3428,6 +3428,87 @@ test_expect_success 'config with tab character in value' '
 	git config deepen-tab.key "hello	world" &&
 	result=$(git config --get deepen-tab.key) &&
 	test "$result" = "hello	world"
+'
+
+# ── --get-urlmatch tests ──────────────────────────────────────────────────────
+
+test_expect_success 'urlmatch: non-existent key returns exit 1' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[http]
+		sslVerify
+	[http "https://weak.example.com"]
+		sslVerify = false
+		cookieFile = /tmp/cookie.txt
+	EOF
+	test_expect_code 1 git config --bool --get-urlmatch doesnt.exist https://good.example.com >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'urlmatch: base value used for non-matching URL' '
+	cd repo &&
+	echo true >expect &&
+	git config --bool --get-urlmatch http.SSLverify https://good.example.com >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'urlmatch: specific URL overrides base' '
+	cd repo &&
+	echo false >expect &&
+	git config --bool --get-urlmatch http.sslverify https://weak.example.com >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'urlmatch: section-only key returns all matching variables' '
+	cd repo &&
+	cat >expect <<-\EOF &&
+	http.cookiefile /tmp/cookie.txt
+	http.sslverify false
+	EOF
+	git config --get-urlmatch HTTP https://weak.example.com >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'urlmatch via subcommand --url' '
+	cd repo &&
+	echo false >expect &&
+	git config --bool get --url=https://weak.example.com http.sslverify >actual &&
+	test_cmp expect actual
+'
+
+# ── --type=color tests ────────────────────────────────────────────────────────
+
+test_expect_success 'get --type=color returns ANSI escape' '
+	cd repo &&
+	git config foo.color "red" &&
+	git config --type=color --get foo.color >actual.raw &&
+	test -s actual.raw
+'
+
+test_expect_success 'set --type=color validates color value' '
+	cd repo &&
+	git config --type=color foo.color2 "green bold" &&
+	git config --get foo.color2 >actual &&
+	echo "green bold" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'set --type=color rejects non-color' '
+	cd repo &&
+	test_expect_code 1 git config --type=color foo.badcolor "not-a-color"
+'
+
+test_expect_success '--get-color returns ANSI for key value' '
+	cd repo &&
+	git config color.test "red" &&
+	git config --get-color color.test >actual &&
+	test -s actual
+'
+
+test_expect_success '--get-color with default returns ANSI' '
+	cd repo &&
+	git config --get-color "" "green" >actual &&
+	test -s actual
 '
 
 test_done
