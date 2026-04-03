@@ -30,6 +30,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut show_prefix_flag = false;
     let mut show_cdup = false;
     let mut show_git_dir = false;
+    let mut show_absolute_git_dir = false;
     let mut show_symbolic_full_name = false;
     let mut prefix: Option<String> = None;
     let mut default_rev: Option<String> = None;
@@ -68,6 +69,8 @@ pub fn run(args: Args) -> Result<()> {
                 show_symbolic_full_name = true;
             } else if arg == "--git-dir" {
                 show_git_dir = true;
+            } else if arg == "--absolute-git-dir" {
+                show_absolute_git_dir = true;
             } else if arg == "--prefix" {
                 i += 1;
                 let value = args
@@ -147,6 +150,54 @@ pub fn run(args: Args) -> Result<()> {
                 }
             } else if arg == "--sq-quote" {
                 sq_quote = true;
+            } else if arg == "--local-env-vars" {
+                // Output the list of GIT_* environment variables that are local
+                // to the repository (same list as real Git).
+                for var in &[
+                    "GIT_DIR",
+                    "GIT_WORK_TREE",
+                    "GIT_OBJECT_DIRECTORY",
+                    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                    "GIT_INDEX_FILE",
+                    "GIT_GRAFT_FILE",
+                    "GIT_COMMON_DIR",
+                ] {
+                    println!("{var}");
+                }
+                return Ok(());
+            } else if arg == "--resolve-git-dir" {
+                i += 1;
+                let path_arg = args
+                    .args
+                    .get(i)
+                    .ok_or_else(|| anyhow::anyhow!("--resolve-git-dir requires an argument"))?;
+                let p = std::path::Path::new(path_arg);
+                if p.is_dir() && p.join("HEAD").exists() {
+                    // It's already a git directory
+                    let resolved = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+                    println!("{}", resolved.display());
+                } else if p.is_file() {
+                    // It's a gitfile — read and resolve
+                    let content = std::fs::read_to_string(p)
+                        .with_context(|| format!("cannot read '{}'", p.display()))?;
+                    for line in content.lines() {
+                        if let Some(rest) = line.strip_prefix("gitdir:") {
+                            let rel = rest.trim();
+                            let git_dir = if std::path::Path::new(rel).is_absolute() {
+                                std::path::PathBuf::from(rel)
+                            } else {
+                                p.parent().unwrap_or(std::path::Path::new(".")).join(rel)
+                            };
+                            let resolved = git_dir.canonicalize().unwrap_or(git_dir);
+                            println!("{}", resolved.display());
+                            return Ok(());
+                        }
+                    }
+                    bail!("not a gitdir: {path_arg}");
+                } else {
+                    bail!("not a valid directory: {path_arg}");
+                }
+                return Ok(());
             } else {
                 bail!("unsupported option: {arg}");
             }
@@ -232,6 +283,12 @@ pub fn run(args: Args) -> Result<()> {
         };
         println!("{}", to_relative_path(&current.git_dir, &cwd));
     }
+    if show_absolute_git_dir {
+        let Some(current) = repo.as_ref() else {
+            bail!("not a git repository (or any of the parent directories)");
+        };
+        println!("{}", current.git_dir.display());
+    }
 
     if !verify && revisions.is_empty() && forced_paths.is_empty() {
         return Ok(());
@@ -274,9 +331,17 @@ pub fn run(args: Args) -> Result<()> {
             // If symbolic resolution fails, fall through to OID resolution
         }
         let rewritten = rewrite_tree_path_spec(&rev, prefix.as_deref());
-        if let Ok(oid) = resolve_revision(current, &rewritten) {
-            println!("{oid}");
-            continue;
+        match resolve_revision(current, &rewritten) {
+            Ok(oid) => {
+                println!("{oid}");
+                continue;
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("ambiguous") {
+                    return Err(anyhow::anyhow!("{msg}"));
+                }
+            }
         }
         if let Some(path_prefix) = prefix.as_deref() {
             println!("{}", apply_prefix_for_forced_path(path_prefix, &rev));

@@ -29,7 +29,7 @@ test_expect_success 'short SHA resolves unambiguously' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'ambiguous short SHA reports error' '
+test_expect_success 'ambiguous short SHA reports error' '
 	git init --bare blob.prefix &&
 	(
 		cd blob.prefix &&
