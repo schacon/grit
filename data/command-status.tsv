@@ -4,13 +4,13 @@ am	Main Porcelain	yes	162	83	61	51.4
 archive	Main Porcelain	yes	102	85	17	83.3
 bisect	Main Porcelain	yes	107	96	11	89.7
 branch	Main Porcelain	yes	399	301	87	75.3
-checkout	Main Porcelain	yes	567	238	241	42.0
+checkout	Main Porcelain	yes	567	239	241	42.1
 cherry-pick	Main Porcelain	yes	193	51	88	26.4
 clean	Main Porcelain	yes	90	10	80	11.1
 clone	Main Porcelain	yes	519	138	380	26.5
 commit	Main Porcelain	yes	435	289	142	66.4
 describe	Main Porcelain	yes	59	1	58	1.7
-diff	Main Porcelain	yes	983	721	233	73.4
+diff	Main Porcelain	yes	983	720	233	73.2
 fetch	Main Porcelain	yes	465	107	358	23.0
 format-patch	Main Porcelain	yes	231	2	229	0.9
 gc	Main Porcelain	yes	38	33	5	86.8
