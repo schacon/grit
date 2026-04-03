@@ -4,13 +4,13 @@ EOF	no	0	0	0	not_ported
 add	no	0	0	0	not_ported
 cat >>gitweb_config.perl <<-\EOF	no	0	0	0	not_ported
 our $highlight_bin = "highlight";	no	0	0	0	not_ported
-t0000-basic	yes	135	133	2	ok
-t0001-init	yes	186	184	2	ok
+t0000-basic	yes	135	135	0	ok
+t0001-init	yes	186	186	0	ok
 t0002-gitfile	yes	10	10	0	ok
-t0003-attributes	yes	25	24	1	ok
+t0003-attributes	yes	25	25	0	ok
 t0004-unwritable	yes	6	6	0	ok
 t0005-signals	yes	1	1	0	ok
-t0006-date	yes	13	12	1	ok
+t0006-date	yes	13	13	0	ok
 t0007-git-var	yes	30	30	0	ok
 t0008-ignores	yes	109	109	0	ok
 t0009-git-dir-validation	yes	5	5	0	ok
@@ -109,14 +109,14 @@ t1091-sparse-checkout-builtin	yes	10	10	0	ok
 t1092-sparse-checkout-compatibility	yes	4	4	0	ok
 t1100-commit-tree-options	yes	22	22	0	ok
 t1300-config	yes	365	364	1	ok
-t1301-shared-repo	yes	9	8	1	ok
+t1301-shared-repo	yes	9	9	0	ok
 t1302-repo-version	yes	27	27	0	ok
 t1303-wacky-config	yes	9	9	0	ok
 t1304-default-acl	yes	25	25	0	ok
 t1305-config-include	yes	42	42	0	ok
 t1306-xdg-files	yes	20	20	0	ok
 t1307-config-blob	yes	23	23	0	ok
-t1308-config-set	yes	44	43	1	ok
+t1308-config-set	yes	44	44	0	ok
 t1309-early-config	yes	22	22	0	ok
 t1310-config-default	yes	3	3	0	ok
 t1311-config-optional	yes	3	3	0	ok
@@ -181,7 +181,7 @@ t2007-checkout-symlink	yes	4	4	0	ok
 t2008-checkout-subdir	yes	22	12	10	ok
 t2009-checkout-statinfo	yes	25	20	5	ok
 t2010-checkout-ambiguous	yes	7	5	2	ok
-t2011-checkout-invalid-head	yes	24	20	4	ok
+t2011-checkout-invalid-head	yes	24	21	3	ok
 t2012-checkout-last	yes	25	6	19	ok
 t2013-checkout-submodule	yes	3	3	0	ok
 t2014-checkout-switch	yes	24	7	17	ok
@@ -207,16 +207,16 @@ t2072-restore-pathspec-file	yes	4	4	0	ok
 t2080-parallel-checkout-basics	yes	3	3	0	ok
 t2081-parallel-checkout-collisions	yes	3	3	0	ok
 t2082-parallel-checkout-attributes	yes	3	3	0	ok
-t2101-update-index-reupdate	yes	4	3	1	ok
+t2101-update-index-reupdate	yes	4	4	0	ok
 t2103-update-index-ignore-missing	yes	5	5	0	ok
 t2104-update-index-skip-worktree	yes	4	4	0	ok
 t2105-update-index-gitfile	yes	5	5	0	ok
 t2106-update-index-assume-unchanged	yes	3	3	0	ok
-t2107-update-index-basic	yes	24	22	2	ok
+t2107-update-index-basic	yes	24	21	3	ok
 t2108-update-index-refresh-racy	yes	4	4	0	ok
 t2200-add-update	yes	22	22	0	ok
 t2201-add-update-typechange	yes	4	4	0	ok
-t2202-add-addremove	yes	3	2	1	ok
+t2202-add-addremove	yes	3	3	0	ok
 t2203-add-intent	yes	5	5	0	ok
 t2204-add-ignored	yes	17	17	0	ok
 t2205-add-worktree-config	yes	5	5	0	ok
@@ -231,9 +231,9 @@ t2406-worktree-repair	yes	4	4	0	ok
 t2407-worktree-heads	yes	4	4	0	ok
 t2500-untracked-overwriting	yes	3	3	0	ok
 t2501-cwd-empty	yes	3	3	0	ok
-t3000-ls-files-others	yes	5	3	2	ok
+t3000-ls-files-others	yes	5	5	0	ok
 t3001-ls-files-others-exclude	yes	5	5	0	ok
-t3002-ls-files-dashpath	yes	7	5	2	ok
+t3002-ls-files-dashpath	yes	7	7	0	ok
 t3003-ls-files-exclude	yes	24	24	0	ok
 t3004-ls-files-basic	yes	7	7	0	ok
 t3005-ls-files-relative	yes	24	19	5	ok
@@ -245,7 +245,7 @@ t3010-ls-files-killed-modified	yes	4	4	0	ok
 t3011-common-prefixes-and-directory-traversal	yes	5	5	0	ok
 t3012-ls-files-dedup	yes	30	30	0	ok
 t3013-ls-files-format	yes	31	31	0	ok
-t3020-ls-files-error-unmatch	yes	28	26	2	ok
+t3020-ls-files-error-unmatch	yes	28	28	0	ok
 t3040-subprojects-basic	yes	5	5	0	ok
 t3060-ls-files-with-tree	yes	26	26	0	ok
 t3070-wildmatch	yes	27	27	0	ok
@@ -254,7 +254,7 @@ t3102-ls-tree-wildcards	yes	6	6	0	ok
 t3103-ls-tree-misc	yes	24	24	0	ok
 t3104-ls-tree-format	yes	5	5	0	ok
 t3105-ls-tree-output	yes	9	9	0	ok
-t3200-branch	yes	270	269	1	ok
+t3200-branch	yes	270	270	0	ok
 t3201-branch-contains	yes	30	30	0	ok
 t3202-show-branch	yes	3	3	0	ok
 t3203-branch-output	yes	30	30	0	ok
@@ -334,7 +334,7 @@ t3600-rm	yes	151	151	0	ok
 t3601-rm-pathspec-file	yes	5	5	0	ok
 t3602-rm-sparse-checkout	yes	8	8	0	ok
 t3650-replay-basics	yes	5	5	0	ok
-t3700-add	yes	73	71	2	ok
+t3700-add	yes	73	73	0	ok
 t3701-add-interactive	yes	5	5	0	ok
 t3702-add-edit	yes	7	7	0	ok
 t3703-add-magic-pathspec	yes	4	4	0	ok
@@ -355,7 +355,7 @@ t3910-mac-os-precompose	yes	3	3	0	ok
 t3920-crlf-messages	yes	3	3	0	ok
 t4000-diff-format	yes	65	65	0	ok
 t4001-diff-rename	yes	29	29	0	ok
-t4002-diff-basic	yes	33	31	2	ok
+t4002-diff-basic	yes	33	33	0	ok
 t4003-diff-rename-1	yes	7	7	0	ok
 t4004-diff-rename-symlink	yes	4	4	0	ok
 t4005-diff-rename-2	yes	4	4	0	ok
@@ -365,7 +365,7 @@ t4008-diff-break-rewrite	yes	28	28	0	ok
 t4010-diff-pathspec	yes	31	31	0	ok
 t4011-diff-symlink	yes	5	5	0	ok
 t4012-diff-binary	yes	21	21	0	ok
-t4013-diff-various	yes	112	109	3	ok
+t4013-diff-various	yes	112	112	0	ok
 t4014-format-patch	yes	9	9	0	ok
 t4015-diff-whitespace	yes	52	52	0	ok
 t4016-diff-quote	yes	38	38	0	ok
@@ -403,7 +403,7 @@ t4048-diff-combined-binary	yes	4	4	0	ok
 t4049-diff-stat-count	yes	15	15	0	ok
 t4051-diff-function-context	yes	5	5	0	ok
 t4052-stat-output	yes	8	8	0	ok
-t4053-diff-no-index	yes	10	9	1	ok
+t4053-diff-no-index	yes	10	10	0	ok
 t4054-diff-bogus-tree	yes	8	8	0	ok
 t4055-diff-context	yes	25	25	0	ok
 t4056-diff-order	yes	5	5	0	ok
@@ -412,7 +412,7 @@ t4058-diff-duplicates	yes	16	16	0	ok
 t4059-diff-submodule-not-initialized	yes	3	3	0	ok
 t4060-diff-submodule-option-diff-format	yes	4	4	0	ok
 t4061-diff-indent	yes	5	5	0	ok
-t4062-diff-pickaxe	yes	23	22	1	ok
+t4062-diff-pickaxe	yes	23	23	0	ok
 t4063-diff-blobs	yes	23	23	0	ok
 t4064-diff-oidfind	yes	3	3	0	ok
 t4065-diff-anchored	yes	7	7	0	ok
@@ -471,7 +471,7 @@ t4151-am-abort	yes	8	8	0	ok
 t4152-am-subjects	yes	5	5	0	ok
 t4153-am-resume-override-opts	yes	4	4	0	ok
 t4200-rerere	yes	6	6	0	ok
-t4201-shortlog	yes	3	1	2	ok
+t4201-shortlog	yes	3	3	0	ok
 t4202-log	yes	289	289	0	ok
 t4203-mailmap	yes	27	27	0	ok
 t4204-patch-id	yes	24	24	0	ok
@@ -479,7 +479,7 @@ t4205-log-pretty-formats	yes	132	132	0	ok
 t4206-log-follow-harder-copies	yes	7	7	0	ok
 t4207-log-decoration-colors	yes	2	2	0	ok
 t4208-log-magic-pathspec	yes	5	5	0	ok
-t4209-log-pickaxe	yes	30	26	4	ok
+t4209-log-pickaxe	yes	30	30	0	ok
 t4210-log-i18n	yes	29	29	0	ok
 t4211-line-log	yes	29	29	0	ok
 t4212-log-corrupt	yes	7	7	0	ok
@@ -551,7 +551,7 @@ t5405-send-pack-rewind	yes	3	3	0	ok
 t5406-remote-rejects	yes	3	3	0	ok
 t5407-post-rewrite-hook	yes	3	3	0	ok
 t5408-send-pack-stdin	yes	2	2	0	ok
-t5409-colorize-remote-messages	yes	2	2	0	ok
+t5409-colorize-remote-messages	yes	2	1	1	ok
 t5410-receive-pack	no	0	0	0	not_ported
 t5411-proc-receive-hook	no	0	0	0	not_ported
 t5500-fetch-pack	yes	5	5	0	ok

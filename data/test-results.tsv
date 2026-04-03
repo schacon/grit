@@ -1,228 +1,228 @@
 test_id	file	description	subcommands	status
-t0000-basic::verify-that-the-running-shell-supports-local	t0000-basic	verify that the running shell supports "local"		partial
-t0000-basic::git-objects-should-be-empty-after-git-init-in-an-empty-repo	t0000-basic	.git/objects should be empty after git init in an empty repo		partial
-t0000-basic::git-objects-should-have-3-subdirectories	t0000-basic	.git/objects should have 3 subdirectories		partial
-t0000-basic::success-is-reported-like-this	t0000-basic	success is reported like this		partial
-t0000-basic::subtest-3-passing-tests	t0000-basic	subtest: 3 passing tests		partial
-t0000-basic::subtest-2-3-tests-passing	t0000-basic	subtest: 2/3 tests passing		partial
-t0000-basic::subtest-immediate	t0000-basic	subtest: --immediate		partial
-t0000-basic::subtest-a-failing-todo-test	t0000-basic	subtest: a failing TODO test		partial
-t0000-basic::subtest-a-passing-todo-test	t0000-basic	subtest: a passing TODO test		partial
-t0000-basic::subtest-2-todo-tests-one-passin	t0000-basic	subtest: 2 TODO tests, one passin		partial
-t0000-basic::subtest-mixed-results-pass-failure-and-a-todo-test	t0000-basic	subtest: mixed results: pass, failure and a TODO test		partial
-t0000-basic::subtest-mixed-results-a-mixture-of-all-possible-results	t0000-basic	subtest: mixed results: a mixture of all possible results		partial
-t0000-basic::subtest-verbose-option	t0000-basic	subtest: --verbose option		partial
-t0000-basic::subtest-verbose-only-option	t0000-basic	subtest: --verbose-only option		partial
-t0000-basic::subtest-skip-one-with-git-skip-tests	t0000-basic	subtest: skip one with GIT_SKIP_TESTS		partial
-t0000-basic::subtest-skip-several-with-git-skip-tests	t0000-basic	subtest: skip several with GIT_SKIP_TESTS		partial
-t0000-basic::subtest-sh-pattern-skipping-with-git-skip-tests	t0000-basic	subtest: sh pattern skipping with GIT_SKIP_TESTS		partial
-t0000-basic::subtest-skip-entire-test-suite-with-git-skip-tests	t0000-basic	subtest: skip entire test suite with GIT_SKIP_TESTS		partial
-t0000-basic::subtest-git-skip-tests-does-not-skip-unmatched-suite	t0000-basic	subtest: GIT_SKIP_TESTS does not skip unmatched suite		partial
-t0000-basic::subtest-run-basic	t0000-basic	subtest: --run basic		partial
-t0000-basic::subtest-run-with-a-range	t0000-basic	subtest: --run with a range		partial
-t0000-basic::subtest-run-with-two-ranges	t0000-basic	subtest: --run with two ranges		partial
-t0000-basic::subtest-run-with-a-left-open-range	t0000-basic	subtest: --run with a left open range		partial
-t0000-basic::subtest-run-with-a-right-open-range	t0000-basic	subtest: --run with a right open range		partial
-t0000-basic::subtest-run-with-basic-negation	t0000-basic	subtest: --run with basic negation		partial
-t0000-basic::subtest-run-with-two-negations	t0000-basic	subtest: --run with two negations		partial
-t0000-basic::subtest-run-a-range-and-negation	t0000-basic	subtest: --run a range and negation		partial
-t0000-basic::subtest-run-range-negation	t0000-basic	subtest: --run range negation		partial
-t0000-basic::subtest-run-include-exclude-and-include	t0000-basic	subtest: --run include, exclude and include		partial
-t0000-basic::subtest-run-include-exclude-and-include-comma-separated	t0000-basic	subtest: --run include, exclude and include, comma separated		partial
-t0000-basic::subtest-run-exclude-and-include	t0000-basic	subtest: --run exclude and include		partial
-t0000-basic::subtest-run-empty-selectors	t0000-basic	subtest: --run empty selectors		partial
-t0000-basic::subtest-run-substring-selector	t0000-basic	subtest: --run substring selector		partial
-t0000-basic::subtest-run-keyword-selection	t0000-basic	subtest: --run keyword selection		partial
-t0000-basic::subtest-run-invalid-range-end	t0000-basic	subtest: --run invalid range end		partial
-t0000-basic::subtest-invert-exit-code-without-immediate	t0000-basic	subtest: --invert-exit-code without --immediate		partial
-t0000-basic::subtest-invert-exit-code-with-immediate-all-passed	t0000-basic	subtest: --invert-exit-code with --immediate: all passed		partial
-t0000-basic::subtest-invert-exit-code-without-immediate-partial-pass	t0000-basic	subtest: --invert-exit-code without --immediate: partial pass		partial
-t0000-basic::subtest-invert-exit-code-with-immediate-partial-pass	t0000-basic	subtest: --invert-exit-code with --immediate: partial pass		partial
-t0000-basic::subtest-invert-exit-code-immediate-got-a-failure	t0000-basic	subtest: --invert-exit-code --immediate: got a failure		partial
-t0000-basic::subtest-tests-respect-prerequisites	t0000-basic	subtest: tests respect prerequisites		partial
-t0000-basic::subtest-tests-respect-lazy-prerequisites	t0000-basic	subtest: tests respect lazy prerequisites		partial
-t0000-basic::subtest-nested-lazy-prerequisites	t0000-basic	subtest: nested lazy prerequisites		partial
-t0000-basic::subtest-lazy-prereqs-do-not-turn-off-tracing	t0000-basic	subtest: lazy prereqs do not turn off tracing		partial
-t0000-basic::subtest-tests-clean-up-after-themselves	t0000-basic	subtest: tests clean up after themselves		partial
-t0000-basic::subtest-tests-clean-up-even-on-failures	t0000-basic	subtest: tests clean up even on failures		partial
-t0000-basic::subtest-test-atexit-is-run	t0000-basic	subtest: test_atexit is run		partial
-t0000-basic::test-oid-provides-sane-info-by-default	t0000-basic	test_oid provides sane info by default		partial
-t0000-basic::test-oid-can-look-up-data-for-sha-1	t0000-basic	test_oid can look up data for SHA-1		partial
-t0000-basic::test-oid-can-look-up-data-for-sha-256	t0000-basic	test_oid can look up data for SHA-256		partial
-t0000-basic::test-oid-can-look-up-data-for-a-specified-algorithm	t0000-basic	test_oid can look up data for a specified algorithm		partial
-t0000-basic::test-bool-env	t0000-basic	test_bool_env		partial
-t0000-basic::git-update-index-without-add-should-fail-adding	t0000-basic	git update-index without --add should fail adding	update-index	partial
-t0000-basic::git-update-index-with-add-should-succeed	t0000-basic	git update-index with --add should succeed	update-index	partial
-t0000-basic::writing-tree-out-with-git-write-tree	t0000-basic	writing tree out with git write-tree	write-tree	partial
-t0000-basic::validate-object-id-of-a-known-tree	t0000-basic	validate object ID of a known tree		partial
-t0000-basic::git-update-index-without-remove-should-fail-removing	t0000-basic	git update-index without --remove should fail removing	update-index	partial
-t0000-basic::git-update-index-with-remove-should-be-able-to-remove	t0000-basic	git update-index with --remove should be able to remove	update-index	partial
-t0000-basic::git-write-tree-should-be-able-to-write-an-empty-tree	t0000-basic	git write-tree should be able to write an empty tree	write-tree	partial
-t0000-basic::validate-object-id-of-a-known-tree-2	t0000-basic	validate object ID of a known tree		partial
-t0000-basic::adding-various-types-of-objects-with-git-update-index-add	t0000-basic	adding various types of objects with git update-index --add	update-index	partial
-t0000-basic::showing-stage-with-git-ls-files-stage	t0000-basic	showing stage with git ls-files --stage	ls-files	partial
-t0000-basic::validate-git-ls-files-output-for-a-known-tree	t0000-basic	validate git ls-files output for a known tree		partial
-t0000-basic::writing-tree-out-with-git-write-tree-2	t0000-basic	writing tree out with git write-tree	write-tree	partial
-t0000-basic::validate-object-id-for-a-known-tree	t0000-basic	validate object ID for a known tree		partial
-t0000-basic::showing-tree-with-git-ls-tree	t0000-basic	showing tree with git ls-tree	ls-tree	partial
-t0000-basic::git-ls-tree-output-for-a-known-tree	t0000-basic	git ls-tree output for a known tree		partial
-t0000-basic::showing-tree-with-git-ls-tree-r	t0000-basic	showing tree with git ls-tree -r	ls-tree	partial
-t0000-basic::git-ls-tree-r-output-for-a-known-tree	t0000-basic	git ls-tree -r output for a known tree		partial
-t0000-basic::showing-tree-with-git-ls-tree-r-t	t0000-basic	showing tree with git ls-tree -r -t	ls-tree	partial
-t0000-basic::git-ls-tree-r-output-for-a-known-tree-2	t0000-basic	git ls-tree -r output for a known tree		partial
-t0000-basic::writing-partial-tree-out-with-git-write-tree-prefix	t0000-basic	writing partial tree out with git write-tree --prefix	write-tree	partial
-t0000-basic::validate-object-id-for-a-known-tree-2	t0000-basic	validate object ID for a known tree		partial
-t0000-basic::writing-partial-tree-out-with-git-write-tree-prefix-2	t0000-basic	writing partial tree out with git write-tree --prefix	write-tree	partial
-t0000-basic::validate-object-id-for-a-known-tree-3	t0000-basic	validate object ID for a known tree		partial
-t0000-basic::put-invalid-objects-into-the-index	t0000-basic	put invalid objects into the index	update-index	partial
-t0000-basic::writing-this-tree-without-missing-ok	t0000-basic	writing this tree without --missing-ok	write-tree	partial
-t0000-basic::writing-this-tree-with-missing-ok	t0000-basic	writing this tree with --missing-ok	write-tree	partial
-t0000-basic::git-read-tree-followed-by-write-tree-should-be-idempotent	t0000-basic	git read-tree followed by write-tree should be idempotent	read-tree	partial
-t0000-basic::validate-git-diff-files-output-for-a-know-cache-work-tree-state	t0000-basic	validate git diff-files output for a know cache/work tree state	diff-files	partial
-t0000-basic::git-update-index-refresh-should-succeed	t0000-basic	git update-index --refresh should succeed	update-index	partial
-t0000-basic::no-diff-after-checkout-and-git-update-index-refresh	t0000-basic	no diff after checkout and git update-index --refresh	diff-files	partial
-t0000-basic::git-commit-tree-records-the-correct-tree-in-a-commit	t0000-basic	git commit-tree records the correct tree in a commit	commit-tree	partial
-t0000-basic::git-commit-tree-records-the-correct-parent-in-a-commit	t0000-basic	git commit-tree records the correct parent in a commit	commit-tree	partial
-t0000-basic::git-commit-tree-omits-duplicated-parent-in-a-commit	t0000-basic	git commit-tree omits duplicated parent in a commit	commit-tree	partial
-t0000-basic::update-index-d-f-conflict	t0000-basic	update-index D/F conflict	ls-files	partial
-t0000-basic::very-long-name-in-the-index-handled-sanely	t0000-basic	very long name in the index handled sanely	ls-files	partial
-t0000-basic::more-update-index-d-f-conflicts	t0000-basic	more update-index D/F conflicts	ls-files	partial
-t0000-basic::test-must-fail-on-a-failing-git-command	t0000-basic	test_must_fail on a failing git command		partial
-t0000-basic::test-must-fail-on-a-failing-git-command-with-env	t0000-basic	test_must_fail on a failing git command with env		partial
-t0000-basic::test-must-fail-rejects-a-non-git-command	t0000-basic	test_must_fail rejects a non-git command		partial
-t0000-basic::test-must-fail-rejects-a-non-git-command-with-env	t0000-basic	test_must_fail rejects a non-git command with env		partial
-t0000-basic::passing-test-i	t0000-basic	passing test #$i		partial
-t0000-basic::passing-test-1	t0000-basic	passing test #1		partial
-t0000-basic::failing-test-2	t0000-basic	failing test #2		partial
-t0000-basic::passing-test-3	t0000-basic	passing test #3		partial
-t0000-basic::passing-test	t0000-basic	passing test		partial
-t0000-basic::pretend-we-have-a-passing-test	t0000-basic	pretend we have a passing test		partial
-t0000-basic::passing-test-2	t0000-basic	passing test		partial
-t0000-basic::failing-test	t0000-basic	failing test		partial
-t0000-basic::passing-test-3	t0000-basic	passing test		partial
-t0000-basic::passing-test-4	t0000-basic	passing test		partial
-t0000-basic::passing-test-5	t0000-basic	passing test		partial
-t0000-basic::passing-test-6	t0000-basic	passing test		partial
-t0000-basic::failing-test-2	t0000-basic	failing test		partial
-t0000-basic::failing-test-3	t0000-basic	failing test		partial
-t0000-basic::failing-test-4	t0000-basic	failing test		partial
-t0000-basic::passing-test-7	t0000-basic	passing test		partial
-t0000-basic::test-with-output	t0000-basic	test with output		partial
-t0000-basic::failing-test-5	t0000-basic	failing test		partial
-t0000-basic::passing-test-i-2	t0000-basic	passing test #$i		partial
-t0000-basic::relevant-test	t0000-basic	relevant test		partial
-t0000-basic::other-test-i	t0000-basic	other test #$i		partial
-t0000-basic::passing-test-1-2	t0000-basic	passing test #1		partial
-t0000-basic::prereq-is-satisfied	t0000-basic	prereq is satisfied		partial
-t0000-basic::have-prereq-works	t0000-basic	have_prereq works		partial
-t0000-basic::prereq-not-satisfied	t0000-basic	prereq not satisfied		partial
-t0000-basic::multiple-prereqs	t0000-basic	multiple prereqs		partial
-t0000-basic::mixed-prereqs-yes-no	t0000-basic	mixed prereqs (yes,no)		partial
-t0000-basic::mixed-prereqs-no-yes	t0000-basic	mixed prereqs (no,yes)		partial
-t0000-basic::lazy-prereq-is-satisfied	t0000-basic	lazy prereq is satisfied		partial
-t0000-basic::negative-lazy-prereq	t0000-basic	negative lazy prereq		partial
-t0000-basic::lazy-prereq-not-satisfied	t0000-basic	lazy prereq not satisfied		partial
-t0000-basic::negative-false-prereq	t0000-basic	negative false prereq		partial
-t0000-basic::evaluate-nested-prereq	t0000-basic	evaluate nested prereq		partial
-t0000-basic::do-cleanup	t0000-basic	do cleanup		partial
-t0000-basic::cleanup-happened	t0000-basic	cleanup happened		partial
-t0000-basic::tests-clean-up-even-after-a-failure	t0000-basic	tests clean up even after a failure		partial
-t0000-basic::failure-to-clean-up-causes-the-test-to-fail	t0000-basic	failure to clean up causes the test to fail		partial
-t0000-basic::tests-clean-up-even-after-a-failure-2	t0000-basic	tests clean up even after a failure		partial
-t0001-init::plain	t0001-init	plain	init	partial
-t0001-init::plain-nested-in-bare	t0001-init	plain nested in bare	init	partial
-t0001-init::plain-through-aliased-command-outside-any-git-repo	t0001-init	plain through aliased command, outside any git repo	init	partial
-t0001-init::plain-nested-through-aliased-command	t0001-init	plain nested through aliased command	init	partial
-t0001-init::plain-nested-in-bare-through-aliased-command	t0001-init	plain nested in bare through aliased command	init	partial
-t0001-init::no-extra-git-on-alias-scripts	t0001-init	No extra GIT_* on alias scripts	init	partial
-t0001-init::plain-with-git-work-tree	t0001-init	plain with GIT_WORK_TREE	init	partial
-t0001-init::plain-bare	t0001-init	plain bare	init	partial
-t0001-init::plain-bare-with-git-work-tree	t0001-init	plain bare with GIT_WORK_TREE	init	partial
-t0001-init::git-dir-bare	t0001-init	GIT_DIR bare	init	partial
-t0001-init::init-bare	t0001-init	init --bare	init	partial
-t0001-init::git-dir-non-bare	t0001-init	GIT_DIR non-bare	init	partial
-t0001-init::git-dir-git-work-tree-1	t0001-init	GIT_DIR & GIT_WORK_TREE (1)	init	partial
-t0001-init::git-dir-git-work-tree-2	t0001-init	GIT_DIR & GIT_WORK_TREE (2)	init	partial
-t0001-init::reinit	t0001-init	reinit	init	partial
-t0001-init::init-with-template	t0001-init	init with --template	init	partial
-t0001-init::init-with-template-blank	t0001-init	init with --template (blank)	init	partial
-t0001-init::init-with-init-templatedir-set	t0001-init	init with init.templatedir set	init	partial
-t0001-init::init-with-init-templatedir-using-expansion	t0001-init	init with init.templatedir using ~ expansion	init	partial
-t0001-init::init-bare-shared-overrides-system-global-config	t0001-init	init --bare/--shared overrides system/global config	init	partial
-t0001-init::init-honors-global-core-sharedrepository	t0001-init	init honors global core.sharedRepository	init	partial
-t0001-init::init-allows-insanely-long-template	t0001-init	init allows insanely long --template	init	partial
-t0001-init::init-creates-a-new-directory	t0001-init	init creates a new directory	init	partial
-t0001-init::init-creates-a-new-bare-directory	t0001-init	init creates a new bare directory	init	partial
-t0001-init::init-recreates-a-directory	t0001-init	init recreates a directory	init	partial
-t0001-init::init-recreates-a-new-bare-directory	t0001-init	init recreates a new bare directory	init	partial
-t0001-init::init-creates-a-new-deep-directory	t0001-init	init creates a new deep directory	init	partial
-t0001-init::init-creates-a-new-deep-directory-umask-vs-shared	t0001-init	init creates a new deep directory (umask vs. shared)	init	partial
-t0001-init::init-notices-eexist-1	t0001-init	init notices EEXIST (1)	init	partial
-t0001-init::init-notices-eexist-2	t0001-init	init notices EEXIST (2)	init	partial
-t0001-init::init-notices-eperm	t0001-init	init notices EPERM	init	partial
-t0001-init::init-creates-a-new-bare-directory-with-global-bare	t0001-init	init creates a new bare directory with global --bare	init	partial
-t0001-init::init-prefers-command-line-to-git-dir	t0001-init	init prefers command line to GIT_DIR	init	partial
-t0001-init::init-with-separate-gitdir	t0001-init	init with separate gitdir	init	partial
-t0001-init::explicit-bare-separate-git-dir-incompatible	t0001-init	explicit bare & --separate-git-dir incompatible	init	partial
-t0001-init::implicit-bare-separate-git-dir-incompatible	t0001-init	implicit bare & --separate-git-dir incompatible	init	partial
-t0001-init::bare-separate-git-dir-incompatible-within-worktree	t0001-init	bare & --separate-git-dir incompatible within worktree	init	partial
-t0001-init::init-in-long-base-path	t0001-init	init in long base path	init	partial
-t0001-init::init-in-long-restricted-base-path	t0001-init	init in long restricted base path	init	partial
-t0001-init::re-init-on-git-file	t0001-init	re-init on .git file	init	partial
-t0001-init::re-init-to-update-git-link	t0001-init	re-init to update git link	init	partial
-t0001-init::re-init-to-move-gitdir	t0001-init	re-init to move gitdir	init	partial
-t0001-init::re-init-to-move-gitdir-symlink	t0001-init	re-init to move gitdir symlink	init	partial
-t0001-init::re-init-to-move-gitdir-with-linked-worktrees-absolute	t0001-init	re-init to move gitdir with linked worktrees (absolute)	init	partial
-t0001-init::re-init-to-move-gitdir-within-linked-worktree-absolute	t0001-init	re-init to move gitdir within linked worktree (absolute)	init	partial
-t0001-init::re-init-to-move-gitdir-with-linked-worktrees-relative	t0001-init	re-init to move gitdir with linked worktrees (relative)	init	partial
-t0001-init::re-init-to-move-gitdir-within-linked-worktree-relative	t0001-init	re-init to move gitdir within linked worktree (relative)	init	partial
-t0001-init::git-hidden	t0001-init	.git hidden	init	partial
-t0001-init::bare-git-dir-not-hidden	t0001-init	bare git dir not hidden	init	partial
-t0001-init::remote-init-from-does-not-use-config-from-cwd	t0001-init	remote init from does not use config from cwd	init	partial
-t0001-init::re-init-from-a-linked-worktree	t0001-init	re-init from a linked worktree	init	partial
-t0001-init::init-honors-git-default-hash	t0001-init	init honors GIT_DEFAULT_HASH	init	partial
-t0001-init::init-honors-object-format	t0001-init	init honors --object-format	init	partial
-t0001-init::init-honors-init-defaultobjectformat	t0001-init	init honors init.defaultObjectFormat	init	partial
-t0001-init::init-warns-about-invalid-init-defaultobjectformat	t0001-init	init warns about invalid init.defaultObjectFormat	init	partial
-t0001-init::object-format-overrides-git-default-hash	t0001-init	--object-format overrides GIT_DEFAULT_HASH	init	partial
-t0001-init::git-default-hash-overrides-init-defaultobjectformat	t0001-init	GIT_DEFAULT_HASH overrides init.defaultObjectFormat	init	partial
-t0001-init::extensions-objectformat-is-not-allowed-with-repo-version-0	t0001-init	extensions.objectFormat is not allowed with repo version 0	init	partial
-t0001-init::init-rejects-attempts-to-initialize-with-different-hash	t0001-init	init rejects attempts to initialize with different hash	init	partial
-t0001-init::extensions-refstorage-is-not-allowed-with-repo-version-0	t0001-init	extensions.refStorage is not allowed with repo version 0	init	partial
-t0001-init::extensions-refstorage-with-files-backend	t0001-init	extensions.refStorage with files backend	init	partial
-t0001-init::extensions-refstorage-with-unknown-backend	t0001-init	extensions.refStorage with unknown backend	init	partial
-t0001-init::init-with-git-default-ref-format-garbage	t0001-init	init with GIT_DEFAULT_REF_FORMAT=garbage	init	partial
-t0001-init::init-warns-about-invalid-init-defaultrefformat	t0001-init	init warns about invalid init.defaultRefFormat	init	partial
-t0001-init::default-ref-format	t0001-init	default ref format	init	partial
-t0001-init::init-with-ref-format-garbage	t0001-init	init with --ref-format=garbage	init	partial
-t0001-init::core-hidedotfiles-false	t0001-init	core.hidedotfiles = false	init	partial
-t0001-init::redirect-std-handles	t0001-init	redirect std handles	init	partial
-t0001-init::initial-branch	t0001-init	--initial-branch	init	partial
-t0001-init::overridden-default-initial-branch-name-config	t0001-init	overridden default initial branch name (config)	init	partial
-t0001-init::advice-on-unconfigured-init-defaultbranch	t0001-init	advice on unconfigured init.defaultBranch	init	partial
-t0001-init::advice-on-unconfigured-init-defaultbranch-disabled	t0001-init	advice on unconfigured init.defaultBranch disabled	init	partial
-t0001-init::default-branch-name	t0001-init	default branch name	init	partial
-t0001-init::overridden-default-main-branch-name-env	t0001-init	overridden default main branch name (env)	init	partial
-t0001-init::invalid-default-branch-name	t0001-init	invalid default branch name	init	partial
-t0001-init::branch-m-with-the-initial-branch	t0001-init	branch -m with the initial branch	init	partial
-t0001-init::init-with-includeif-onbranch-condition	t0001-init	init with includeIf.onbranch condition	init	partial
-t0001-init::init-with-includeif-onbranch-condition-with-existing-directory	t0001-init	init with includeIf.onbranch condition with existing directory	init	partial
-t0001-init::re-init-with-includeif-onbranch-condition	t0001-init	re-init with includeIf.onbranch condition	init	partial
-t0001-init::re-init-skips-non-matching-includeif-onbranch	t0001-init	re-init skips non-matching includeIf.onbranch	init	partial
-t0001-init::re-init-reads-matching-includeif-onbranch	t0001-init	re-init reads matching includeIf.onbranch	init	partial
-t0001-init::reinit-repository-with-git-default-hash-hash-does-not-change-format	t0001-init	reinit repository with GIT_DEFAULT_HASH=$hash does not change format	init	partial
-t0001-init::init-with-git-default-ref-format-format	t0001-init	init with GIT_DEFAULT_REF_FORMAT=$format	init	partial
-t0001-init::init-with-ref-format-format	t0001-init	init with --ref-format=$format	init	partial
-t0001-init::init-with-init-defaultrefformat-format	t0001-init	init with init.defaultRefFormat=$format	init	partial
-t0001-init::ref-format-format-overrides-git-default-ref-format	t0001-init	--ref-format=$format overrides GIT_DEFAULT_REF_FORMAT	init	partial
-t0001-init::reinit-repository-with-git-default-ref-format-format-does-not-change-format	t0001-init	reinit repository with GIT_DEFAULT_REF_FORMAT=$format does not change format	init	partial
-t0001-init::ref-format-overrides-git-default-ref-format	t0001-init	--ref-format= overrides GIT_DEFAULT_REF_FORMAT	init	partial
-t0001-init::git-default-ref-format-overrides-init-defaultrefformat	t0001-init	GIT_DEFAULT_REF_FORMAT= overrides init.defaultRefFormat	init	partial
-t0001-init::init-with-feature-experimental-true	t0001-init	init with feature.experimental=true	init	partial
-t0001-init::init-defaultrefformat-overrides-feature-experimental-true	t0001-init	init.defaultRefFormat overrides feature.experimental=true	init	partial
-t0001-init::git-default-ref-format-overrides-feature-experimental-true	t0001-init	GIT_DEFAULT_REF_FORMAT= overrides feature.experimental=true	init	partial
-t0001-init::re-init-with-same-format-from-format	t0001-init	re-init with same format ($from_format)	init	partial
-t0001-init::re-init-with-different-format-fails-from-format-to-format	t0001-init	re-init with different format fails ($from_format -> $to_format)	init	partial
+t0000-basic::verify-that-the-running-shell-supports-local	t0000-basic	verify that the running shell supports "local"		pass
+t0000-basic::git-objects-should-be-empty-after-git-init-in-an-empty-repo	t0000-basic	.git/objects should be empty after git init in an empty repo		pass
+t0000-basic::git-objects-should-have-3-subdirectories	t0000-basic	.git/objects should have 3 subdirectories		pass
+t0000-basic::success-is-reported-like-this	t0000-basic	success is reported like this		pass
+t0000-basic::subtest-3-passing-tests	t0000-basic	subtest: 3 passing tests		pass
+t0000-basic::subtest-2-3-tests-passing	t0000-basic	subtest: 2/3 tests passing		pass
+t0000-basic::subtest-immediate	t0000-basic	subtest: --immediate		pass
+t0000-basic::subtest-a-failing-todo-test	t0000-basic	subtest: a failing TODO test		pass
+t0000-basic::subtest-a-passing-todo-test	t0000-basic	subtest: a passing TODO test		pass
+t0000-basic::subtest-2-todo-tests-one-passin	t0000-basic	subtest: 2 TODO tests, one passin		pass
+t0000-basic::subtest-mixed-results-pass-failure-and-a-todo-test	t0000-basic	subtest: mixed results: pass, failure and a TODO test		pass
+t0000-basic::subtest-mixed-results-a-mixture-of-all-possible-results	t0000-basic	subtest: mixed results: a mixture of all possible results		pass
+t0000-basic::subtest-verbose-option	t0000-basic	subtest: --verbose option		pass
+t0000-basic::subtest-verbose-only-option	t0000-basic	subtest: --verbose-only option		pass
+t0000-basic::subtest-skip-one-with-git-skip-tests	t0000-basic	subtest: skip one with GIT_SKIP_TESTS		pass
+t0000-basic::subtest-skip-several-with-git-skip-tests	t0000-basic	subtest: skip several with GIT_SKIP_TESTS		pass
+t0000-basic::subtest-sh-pattern-skipping-with-git-skip-tests	t0000-basic	subtest: sh pattern skipping with GIT_SKIP_TESTS		pass
+t0000-basic::subtest-skip-entire-test-suite-with-git-skip-tests	t0000-basic	subtest: skip entire test suite with GIT_SKIP_TESTS		pass
+t0000-basic::subtest-git-skip-tests-does-not-skip-unmatched-suite	t0000-basic	subtest: GIT_SKIP_TESTS does not skip unmatched suite		pass
+t0000-basic::subtest-run-basic	t0000-basic	subtest: --run basic		pass
+t0000-basic::subtest-run-with-a-range	t0000-basic	subtest: --run with a range		pass
+t0000-basic::subtest-run-with-two-ranges	t0000-basic	subtest: --run with two ranges		pass
+t0000-basic::subtest-run-with-a-left-open-range	t0000-basic	subtest: --run with a left open range		pass
+t0000-basic::subtest-run-with-a-right-open-range	t0000-basic	subtest: --run with a right open range		pass
+t0000-basic::subtest-run-with-basic-negation	t0000-basic	subtest: --run with basic negation		pass
+t0000-basic::subtest-run-with-two-negations	t0000-basic	subtest: --run with two negations		pass
+t0000-basic::subtest-run-a-range-and-negation	t0000-basic	subtest: --run a range and negation		pass
+t0000-basic::subtest-run-range-negation	t0000-basic	subtest: --run range negation		pass
+t0000-basic::subtest-run-include-exclude-and-include	t0000-basic	subtest: --run include, exclude and include		pass
+t0000-basic::subtest-run-include-exclude-and-include-comma-separated	t0000-basic	subtest: --run include, exclude and include, comma separated		pass
+t0000-basic::subtest-run-exclude-and-include	t0000-basic	subtest: --run exclude and include		pass
+t0000-basic::subtest-run-empty-selectors	t0000-basic	subtest: --run empty selectors		pass
+t0000-basic::subtest-run-substring-selector	t0000-basic	subtest: --run substring selector		pass
+t0000-basic::subtest-run-keyword-selection	t0000-basic	subtest: --run keyword selection		pass
+t0000-basic::subtest-run-invalid-range-end	t0000-basic	subtest: --run invalid range end		pass
+t0000-basic::subtest-invert-exit-code-without-immediate	t0000-basic	subtest: --invert-exit-code without --immediate		pass
+t0000-basic::subtest-invert-exit-code-with-immediate-all-passed	t0000-basic	subtest: --invert-exit-code with --immediate: all passed		pass
+t0000-basic::subtest-invert-exit-code-without-immediate-partial-pass	t0000-basic	subtest: --invert-exit-code without --immediate: partial pass		pass
+t0000-basic::subtest-invert-exit-code-with-immediate-partial-pass	t0000-basic	subtest: --invert-exit-code with --immediate: partial pass		pass
+t0000-basic::subtest-invert-exit-code-immediate-got-a-failure	t0000-basic	subtest: --invert-exit-code --immediate: got a failure		pass
+t0000-basic::subtest-tests-respect-prerequisites	t0000-basic	subtest: tests respect prerequisites		pass
+t0000-basic::subtest-tests-respect-lazy-prerequisites	t0000-basic	subtest: tests respect lazy prerequisites		pass
+t0000-basic::subtest-nested-lazy-prerequisites	t0000-basic	subtest: nested lazy prerequisites		pass
+t0000-basic::subtest-lazy-prereqs-do-not-turn-off-tracing	t0000-basic	subtest: lazy prereqs do not turn off tracing		pass
+t0000-basic::subtest-tests-clean-up-after-themselves	t0000-basic	subtest: tests clean up after themselves		pass
+t0000-basic::subtest-tests-clean-up-even-on-failures	t0000-basic	subtest: tests clean up even on failures		pass
+t0000-basic::subtest-test-atexit-is-run	t0000-basic	subtest: test_atexit is run		pass
+t0000-basic::test-oid-provides-sane-info-by-default	t0000-basic	test_oid provides sane info by default		pass
+t0000-basic::test-oid-can-look-up-data-for-sha-1	t0000-basic	test_oid can look up data for SHA-1		pass
+t0000-basic::test-oid-can-look-up-data-for-sha-256	t0000-basic	test_oid can look up data for SHA-256		pass
+t0000-basic::test-oid-can-look-up-data-for-a-specified-algorithm	t0000-basic	test_oid can look up data for a specified algorithm		pass
+t0000-basic::test-bool-env	t0000-basic	test_bool_env		pass
+t0000-basic::git-update-index-without-add-should-fail-adding	t0000-basic	git update-index without --add should fail adding	update-index	pass
+t0000-basic::git-update-index-with-add-should-succeed	t0000-basic	git update-index with --add should succeed	update-index	pass
+t0000-basic::writing-tree-out-with-git-write-tree	t0000-basic	writing tree out with git write-tree	write-tree	pass
+t0000-basic::validate-object-id-of-a-known-tree	t0000-basic	validate object ID of a known tree		pass
+t0000-basic::git-update-index-without-remove-should-fail-removing	t0000-basic	git update-index without --remove should fail removing	update-index	pass
+t0000-basic::git-update-index-with-remove-should-be-able-to-remove	t0000-basic	git update-index with --remove should be able to remove	update-index	pass
+t0000-basic::git-write-tree-should-be-able-to-write-an-empty-tree	t0000-basic	git write-tree should be able to write an empty tree	write-tree	pass
+t0000-basic::validate-object-id-of-a-known-tree-2	t0000-basic	validate object ID of a known tree		pass
+t0000-basic::adding-various-types-of-objects-with-git-update-index-add	t0000-basic	adding various types of objects with git update-index --add	update-index	pass
+t0000-basic::showing-stage-with-git-ls-files-stage	t0000-basic	showing stage with git ls-files --stage	ls-files	pass
+t0000-basic::validate-git-ls-files-output-for-a-known-tree	t0000-basic	validate git ls-files output for a known tree		pass
+t0000-basic::writing-tree-out-with-git-write-tree-2	t0000-basic	writing tree out with git write-tree	write-tree	pass
+t0000-basic::validate-object-id-for-a-known-tree	t0000-basic	validate object ID for a known tree		pass
+t0000-basic::showing-tree-with-git-ls-tree	t0000-basic	showing tree with git ls-tree	ls-tree	pass
+t0000-basic::git-ls-tree-output-for-a-known-tree	t0000-basic	git ls-tree output for a known tree		pass
+t0000-basic::showing-tree-with-git-ls-tree-r	t0000-basic	showing tree with git ls-tree -r	ls-tree	pass
+t0000-basic::git-ls-tree-r-output-for-a-known-tree	t0000-basic	git ls-tree -r output for a known tree		pass
+t0000-basic::showing-tree-with-git-ls-tree-r-t	t0000-basic	showing tree with git ls-tree -r -t	ls-tree	pass
+t0000-basic::git-ls-tree-r-output-for-a-known-tree-2	t0000-basic	git ls-tree -r output for a known tree		pass
+t0000-basic::writing-partial-tree-out-with-git-write-tree-prefix	t0000-basic	writing partial tree out with git write-tree --prefix	write-tree	pass
+t0000-basic::validate-object-id-for-a-known-tree-2	t0000-basic	validate object ID for a known tree		pass
+t0000-basic::writing-partial-tree-out-with-git-write-tree-prefix-2	t0000-basic	writing partial tree out with git write-tree --prefix	write-tree	pass
+t0000-basic::validate-object-id-for-a-known-tree-3	t0000-basic	validate object ID for a known tree		pass
+t0000-basic::put-invalid-objects-into-the-index	t0000-basic	put invalid objects into the index	update-index	pass
+t0000-basic::writing-this-tree-without-missing-ok	t0000-basic	writing this tree without --missing-ok	write-tree	pass
+t0000-basic::writing-this-tree-with-missing-ok	t0000-basic	writing this tree with --missing-ok	write-tree	pass
+t0000-basic::git-read-tree-followed-by-write-tree-should-be-idempotent	t0000-basic	git read-tree followed by write-tree should be idempotent	read-tree	pass
+t0000-basic::validate-git-diff-files-output-for-a-know-cache-work-tree-state	t0000-basic	validate git diff-files output for a know cache/work tree state	diff-files	pass
+t0000-basic::git-update-index-refresh-should-succeed	t0000-basic	git update-index --refresh should succeed	update-index	pass
+t0000-basic::no-diff-after-checkout-and-git-update-index-refresh	t0000-basic	no diff after checkout and git update-index --refresh	diff-files	pass
+t0000-basic::git-commit-tree-records-the-correct-tree-in-a-commit	t0000-basic	git commit-tree records the correct tree in a commit	commit-tree	pass
+t0000-basic::git-commit-tree-records-the-correct-parent-in-a-commit	t0000-basic	git commit-tree records the correct parent in a commit	commit-tree	pass
+t0000-basic::git-commit-tree-omits-duplicated-parent-in-a-commit	t0000-basic	git commit-tree omits duplicated parent in a commit	commit-tree	pass
+t0000-basic::update-index-d-f-conflict	t0000-basic	update-index D/F conflict	ls-files	pass
+t0000-basic::very-long-name-in-the-index-handled-sanely	t0000-basic	very long name in the index handled sanely	ls-files	pass
+t0000-basic::more-update-index-d-f-conflicts	t0000-basic	more update-index D/F conflicts	ls-files	pass
+t0000-basic::test-must-fail-on-a-failing-git-command	t0000-basic	test_must_fail on a failing git command		pass
+t0000-basic::test-must-fail-on-a-failing-git-command-with-env	t0000-basic	test_must_fail on a failing git command with env		pass
+t0000-basic::test-must-fail-rejects-a-non-git-command	t0000-basic	test_must_fail rejects a non-git command		pass
+t0000-basic::test-must-fail-rejects-a-non-git-command-with-env	t0000-basic	test_must_fail rejects a non-git command with env		pass
+t0000-basic::passing-test-i	t0000-basic	passing test #$i		pass
+t0000-basic::passing-test-1	t0000-basic	passing test #1		pass
+t0000-basic::failing-test-2	t0000-basic	failing test #2		pass
+t0000-basic::passing-test-3	t0000-basic	passing test #3		pass
+t0000-basic::passing-test	t0000-basic	passing test		pass
+t0000-basic::pretend-we-have-a-passing-test	t0000-basic	pretend we have a passing test		pass
+t0000-basic::passing-test-2	t0000-basic	passing test		pass
+t0000-basic::failing-test	t0000-basic	failing test		pass
+t0000-basic::passing-test-3	t0000-basic	passing test		pass
+t0000-basic::passing-test-4	t0000-basic	passing test		pass
+t0000-basic::passing-test-5	t0000-basic	passing test		pass
+t0000-basic::passing-test-6	t0000-basic	passing test		pass
+t0000-basic::failing-test-2	t0000-basic	failing test		pass
+t0000-basic::failing-test-3	t0000-basic	failing test		pass
+t0000-basic::failing-test-4	t0000-basic	failing test		pass
+t0000-basic::passing-test-7	t0000-basic	passing test		pass
+t0000-basic::test-with-output	t0000-basic	test with output		pass
+t0000-basic::failing-test-5	t0000-basic	failing test		pass
+t0000-basic::passing-test-i-2	t0000-basic	passing test #$i		pass
+t0000-basic::relevant-test	t0000-basic	relevant test		pass
+t0000-basic::other-test-i	t0000-basic	other test #$i		pass
+t0000-basic::passing-test-1-2	t0000-basic	passing test #1		pass
+t0000-basic::prereq-is-satisfied	t0000-basic	prereq is satisfied		pass
+t0000-basic::have-prereq-works	t0000-basic	have_prereq works		pass
+t0000-basic::prereq-not-satisfied	t0000-basic	prereq not satisfied		pass
+t0000-basic::multiple-prereqs	t0000-basic	multiple prereqs		pass
+t0000-basic::mixed-prereqs-yes-no	t0000-basic	mixed prereqs (yes,no)		pass
+t0000-basic::mixed-prereqs-no-yes	t0000-basic	mixed prereqs (no,yes)		pass
+t0000-basic::lazy-prereq-is-satisfied	t0000-basic	lazy prereq is satisfied		pass
+t0000-basic::negative-lazy-prereq	t0000-basic	negative lazy prereq		pass
+t0000-basic::lazy-prereq-not-satisfied	t0000-basic	lazy prereq not satisfied		pass
+t0000-basic::negative-false-prereq	t0000-basic	negative false prereq		pass
+t0000-basic::evaluate-nested-prereq	t0000-basic	evaluate nested prereq		pass
+t0000-basic::do-cleanup	t0000-basic	do cleanup		pass
+t0000-basic::cleanup-happened	t0000-basic	cleanup happened		pass
+t0000-basic::tests-clean-up-even-after-a-failure	t0000-basic	tests clean up even after a failure		pass
+t0000-basic::failure-to-clean-up-causes-the-test-to-fail	t0000-basic	failure to clean up causes the test to fail		pass
+t0000-basic::tests-clean-up-even-after-a-failure-2	t0000-basic	tests clean up even after a failure		pass
+t0001-init::plain	t0001-init	plain	init	pass
+t0001-init::plain-nested-in-bare	t0001-init	plain nested in bare	init	pass
+t0001-init::plain-through-aliased-command-outside-any-git-repo	t0001-init	plain through aliased command, outside any git repo	init	pass
+t0001-init::plain-nested-through-aliased-command	t0001-init	plain nested through aliased command	init	pass
+t0001-init::plain-nested-in-bare-through-aliased-command	t0001-init	plain nested in bare through aliased command	init	pass
+t0001-init::no-extra-git-on-alias-scripts	t0001-init	No extra GIT_* on alias scripts	init	pass
+t0001-init::plain-with-git-work-tree	t0001-init	plain with GIT_WORK_TREE	init	pass
+t0001-init::plain-bare	t0001-init	plain bare	init	pass
+t0001-init::plain-bare-with-git-work-tree	t0001-init	plain bare with GIT_WORK_TREE	init	pass
+t0001-init::git-dir-bare	t0001-init	GIT_DIR bare	init	pass
+t0001-init::init-bare	t0001-init	init --bare	init	pass
+t0001-init::git-dir-non-bare	t0001-init	GIT_DIR non-bare	init	pass
+t0001-init::git-dir-git-work-tree-1	t0001-init	GIT_DIR & GIT_WORK_TREE (1)	init	pass
+t0001-init::git-dir-git-work-tree-2	t0001-init	GIT_DIR & GIT_WORK_TREE (2)	init	pass
+t0001-init::reinit	t0001-init	reinit	init	pass
+t0001-init::init-with-template	t0001-init	init with --template	init	pass
+t0001-init::init-with-template-blank	t0001-init	init with --template (blank)	init	pass
+t0001-init::init-with-init-templatedir-set	t0001-init	init with init.templatedir set	init	pass
+t0001-init::init-with-init-templatedir-using-expansion	t0001-init	init with init.templatedir using ~ expansion	init	pass
+t0001-init::init-bare-shared-overrides-system-global-config	t0001-init	init --bare/--shared overrides system/global config	init	pass
+t0001-init::init-honors-global-core-sharedrepository	t0001-init	init honors global core.sharedRepository	init	pass
+t0001-init::init-allows-insanely-long-template	t0001-init	init allows insanely long --template	init	pass
+t0001-init::init-creates-a-new-directory	t0001-init	init creates a new directory	init	pass
+t0001-init::init-creates-a-new-bare-directory	t0001-init	init creates a new bare directory	init	pass
+t0001-init::init-recreates-a-directory	t0001-init	init recreates a directory	init	pass
+t0001-init::init-recreates-a-new-bare-directory	t0001-init	init recreates a new bare directory	init	pass
+t0001-init::init-creates-a-new-deep-directory	t0001-init	init creates a new deep directory	init	pass
+t0001-init::init-creates-a-new-deep-directory-umask-vs-shared	t0001-init	init creates a new deep directory (umask vs. shared)	init	pass
+t0001-init::init-notices-eexist-1	t0001-init	init notices EEXIST (1)	init	pass
+t0001-init::init-notices-eexist-2	t0001-init	init notices EEXIST (2)	init	pass
+t0001-init::init-notices-eperm	t0001-init	init notices EPERM	init	pass
+t0001-init::init-creates-a-new-bare-directory-with-global-bare	t0001-init	init creates a new bare directory with global --bare	init	pass
+t0001-init::init-prefers-command-line-to-git-dir	t0001-init	init prefers command line to GIT_DIR	init	pass
+t0001-init::init-with-separate-gitdir	t0001-init	init with separate gitdir	init	pass
+t0001-init::explicit-bare-separate-git-dir-incompatible	t0001-init	explicit bare & --separate-git-dir incompatible	init	pass
+t0001-init::implicit-bare-separate-git-dir-incompatible	t0001-init	implicit bare & --separate-git-dir incompatible	init	pass
+t0001-init::bare-separate-git-dir-incompatible-within-worktree	t0001-init	bare & --separate-git-dir incompatible within worktree	init	pass
+t0001-init::init-in-long-base-path	t0001-init	init in long base path	init	pass
+t0001-init::init-in-long-restricted-base-path	t0001-init	init in long restricted base path	init	pass
+t0001-init::re-init-on-git-file	t0001-init	re-init on .git file	init	pass
+t0001-init::re-init-to-update-git-link	t0001-init	re-init to update git link	init	pass
+t0001-init::re-init-to-move-gitdir	t0001-init	re-init to move gitdir	init	pass
+t0001-init::re-init-to-move-gitdir-symlink	t0001-init	re-init to move gitdir symlink	init	pass
+t0001-init::re-init-to-move-gitdir-with-linked-worktrees-absolute	t0001-init	re-init to move gitdir with linked worktrees (absolute)	init	pass
+t0001-init::re-init-to-move-gitdir-within-linked-worktree-absolute	t0001-init	re-init to move gitdir within linked worktree (absolute)	init	pass
+t0001-init::re-init-to-move-gitdir-with-linked-worktrees-relative	t0001-init	re-init to move gitdir with linked worktrees (relative)	init	pass
+t0001-init::re-init-to-move-gitdir-within-linked-worktree-relative	t0001-init	re-init to move gitdir within linked worktree (relative)	init	pass
+t0001-init::git-hidden	t0001-init	.git hidden	init	pass
+t0001-init::bare-git-dir-not-hidden	t0001-init	bare git dir not hidden	init	pass
+t0001-init::remote-init-from-does-not-use-config-from-cwd	t0001-init	remote init from does not use config from cwd	init	pass
+t0001-init::re-init-from-a-linked-worktree	t0001-init	re-init from a linked worktree	init	pass
+t0001-init::init-honors-git-default-hash	t0001-init	init honors GIT_DEFAULT_HASH	init	pass
+t0001-init::init-honors-object-format	t0001-init	init honors --object-format	init	pass
+t0001-init::init-honors-init-defaultobjectformat	t0001-init	init honors init.defaultObjectFormat	init	pass
+t0001-init::init-warns-about-invalid-init-defaultobjectformat	t0001-init	init warns about invalid init.defaultObjectFormat	init	pass
+t0001-init::object-format-overrides-git-default-hash	t0001-init	--object-format overrides GIT_DEFAULT_HASH	init	pass
+t0001-init::git-default-hash-overrides-init-defaultobjectformat	t0001-init	GIT_DEFAULT_HASH overrides init.defaultObjectFormat	init	pass
+t0001-init::extensions-objectformat-is-not-allowed-with-repo-version-0	t0001-init	extensions.objectFormat is not allowed with repo version 0	init	pass
+t0001-init::init-rejects-attempts-to-initialize-with-different-hash	t0001-init	init rejects attempts to initialize with different hash	init	pass
+t0001-init::extensions-refstorage-is-not-allowed-with-repo-version-0	t0001-init	extensions.refStorage is not allowed with repo version 0	init	pass
+t0001-init::extensions-refstorage-with-files-backend	t0001-init	extensions.refStorage with files backend	init	pass
+t0001-init::extensions-refstorage-with-unknown-backend	t0001-init	extensions.refStorage with unknown backend	init	pass
+t0001-init::init-with-git-default-ref-format-garbage	t0001-init	init with GIT_DEFAULT_REF_FORMAT=garbage	init	pass
+t0001-init::init-warns-about-invalid-init-defaultrefformat	t0001-init	init warns about invalid init.defaultRefFormat	init	pass
+t0001-init::default-ref-format	t0001-init	default ref format	init	pass
+t0001-init::init-with-ref-format-garbage	t0001-init	init with --ref-format=garbage	init	pass
+t0001-init::core-hidedotfiles-false	t0001-init	core.hidedotfiles = false	init	pass
+t0001-init::redirect-std-handles	t0001-init	redirect std handles	init	pass
+t0001-init::initial-branch	t0001-init	--initial-branch	init	pass
+t0001-init::overridden-default-initial-branch-name-config	t0001-init	overridden default initial branch name (config)	init	pass
+t0001-init::advice-on-unconfigured-init-defaultbranch	t0001-init	advice on unconfigured init.defaultBranch	init	pass
+t0001-init::advice-on-unconfigured-init-defaultbranch-disabled	t0001-init	advice on unconfigured init.defaultBranch disabled	init	pass
+t0001-init::default-branch-name	t0001-init	default branch name	init	pass
+t0001-init::overridden-default-main-branch-name-env	t0001-init	overridden default main branch name (env)	init	pass
+t0001-init::invalid-default-branch-name	t0001-init	invalid default branch name	init	pass
+t0001-init::branch-m-with-the-initial-branch	t0001-init	branch -m with the initial branch	init	pass
+t0001-init::init-with-includeif-onbranch-condition	t0001-init	init with includeIf.onbranch condition	init	pass
+t0001-init::init-with-includeif-onbranch-condition-with-existing-directory	t0001-init	init with includeIf.onbranch condition with existing directory	init	pass
+t0001-init::re-init-with-includeif-onbranch-condition	t0001-init	re-init with includeIf.onbranch condition	init	pass
+t0001-init::re-init-skips-non-matching-includeif-onbranch	t0001-init	re-init skips non-matching includeIf.onbranch	init	pass
+t0001-init::re-init-reads-matching-includeif-onbranch	t0001-init	re-init reads matching includeIf.onbranch	init	pass
+t0001-init::reinit-repository-with-git-default-hash-hash-does-not-change-format	t0001-init	reinit repository with GIT_DEFAULT_HASH=$hash does not change format	init	pass
+t0001-init::init-with-git-default-ref-format-format	t0001-init	init with GIT_DEFAULT_REF_FORMAT=$format	init	pass
+t0001-init::init-with-ref-format-format	t0001-init	init with --ref-format=$format	init	pass
+t0001-init::init-with-init-defaultrefformat-format	t0001-init	init with init.defaultRefFormat=$format	init	pass
+t0001-init::ref-format-format-overrides-git-default-ref-format	t0001-init	--ref-format=$format overrides GIT_DEFAULT_REF_FORMAT	init	pass
+t0001-init::reinit-repository-with-git-default-ref-format-format-does-not-change-format	t0001-init	reinit repository with GIT_DEFAULT_REF_FORMAT=$format does not change format	init	pass
+t0001-init::ref-format-overrides-git-default-ref-format	t0001-init	--ref-format= overrides GIT_DEFAULT_REF_FORMAT	init	pass
+t0001-init::git-default-ref-format-overrides-init-defaultrefformat	t0001-init	GIT_DEFAULT_REF_FORMAT= overrides init.defaultRefFormat	init	pass
+t0001-init::init-with-feature-experimental-true	t0001-init	init with feature.experimental=true	init	pass
+t0001-init::init-defaultrefformat-overrides-feature-experimental-true	t0001-init	init.defaultRefFormat overrides feature.experimental=true	init	pass
+t0001-init::git-default-ref-format-overrides-feature-experimental-true	t0001-init	GIT_DEFAULT_REF_FORMAT= overrides feature.experimental=true	init	pass
+t0001-init::re-init-with-same-format-from-format	t0001-init	re-init with same format ($from_format)	init	pass
+t0001-init::re-init-with-different-format-fails-from-format-to-format	t0001-init	re-init with different format fails ($from_format -> $to_format)	init	pass
 t0002-gitfile::initial-setup	t0002-gitfile	initial setup		pass
 t0002-gitfile::bad-setup-invalid-git-file-format	t0002-gitfile	bad setup: invalid .git file format	rev-parse	pass
 t0002-gitfile::bad-setup-invalid-git-file-path	t0002-gitfile	bad setup: invalid .git file path	rev-parse	pass
@@ -237,61 +237,61 @@ t0002-gitfile::setup-git-dir-twice-in-subdir	t0002-gitfile	setup_git_dir twice i
 t0002-gitfile::enter-repo-non-strict-mode	t0002-gitfile	enter_repo non-strict mode	ls-remote	pass
 t0002-gitfile::enter-repo-linked-checkout	t0002-gitfile	enter_repo linked checkout	ls-remote	pass
 t0002-gitfile::enter-repo-strict-mode	t0002-gitfile	enter_repo strict mode	ls-remote	pass
-t0003-attributes::open-quoted-pathname	t0003-attributes	open-quoted pathname		partial
-t0003-attributes::setup	t0003-attributes	setup		partial
-t0003-attributes::setup-branches	t0003-attributes	setup branches		partial
-t0003-attributes::command-line-checks	t0003-attributes	command line checks	check-attr	partial
-t0003-attributes::attribute-test	t0003-attributes	attribute test		partial
-t0003-attributes::attribute-matching-is-case-sensitive-when-core-ignorecase-0	t0003-attributes	attribute matching is case sensitive when core.ignorecase=0		partial
-t0003-attributes::attribute-matching-is-case-insensitive-when-core-ignorecase-1	t0003-attributes	attribute matching is case insensitive when core.ignorecase=1		partial
-t0003-attributes::additional-case-insensitivity-tests	t0003-attributes	additional case insensitivity tests		partial
-t0003-attributes::unnormalized-paths	t0003-attributes	unnormalized paths		partial
-t0003-attributes::relative-paths	t0003-attributes	relative paths		partial
-t0003-attributes::prefixes-are-not-confused-with-leading-directories	t0003-attributes	prefixes are not confused with leading directories	check-attr	partial
-t0003-attributes::core-attributesfile	t0003-attributes	core.attributesfile	config	partial
-t0003-attributes::attribute-test-read-paths-from-stdin	t0003-attributes	attribute test: read paths from stdin	check-attr	partial
-t0003-attributes::setup-all-option	t0003-attributes	setup --all option		partial
-t0003-attributes::attribute-test-all-option	t0003-attributes	attribute test: --all option	check-attr	partial
-t0003-attributes::attribute-test-cached-option	t0003-attributes	attribute test: --cached option	add	partial
-t0003-attributes::root-subdir-attribute-test	t0003-attributes	root subdir attribute test		partial
-t0003-attributes::negative-patterns	t0003-attributes	negative patterns	check-attr	partial
-t0003-attributes::patterns-starting-with-exclamation	t0003-attributes	patterns starting with exclamation		partial
-t0003-attributes::test	t0003-attributes	"**" test	check-attr	partial
-t0003-attributes::with-no-slashes-test	t0003-attributes	"**" with no slashes test	check-attr	partial
-t0003-attributes::using-git-dir-and-work-tree	t0003-attributes	using --git-dir and --work-tree	init	partial
-t0003-attributes::using-source	t0003-attributes	using --source		partial
-t0003-attributes::setup-bare	t0003-attributes	setup bare	clone	partial
-t0003-attributes::bare-repository-check-that-gitattribute-is-ignored	t0003-attributes	bare repository: check that .gitattribute is ignored		partial
-t0003-attributes::attr-source-is-bad	t0003-attributes	--attr-source is bad	init	partial
-t0003-attributes::attr-tree-when-head-is-unborn	t0003-attributes	attr.tree when HEAD is unborn	check-attr	partial
-t0003-attributes::bad-attr-source-defaults-to-reading-gitattributes-file	t0003-attributes	bad attr source defaults to reading .gitattributes file	check-attr	partial
-t0003-attributes::bare-repo-no-longer-defaults-to-reading-gitattributes-from-head	t0003-attributes	bare repo no longer defaults to reading .gitattributes from HEAD	check-attr	partial
-t0003-attributes::precedence-of-attr-source-git-attr-source-then-attr-tree	t0003-attributes	precedence of --attr-source, GIT_ATTR_SOURCE, then attr.tree	checkout	partial
-t0003-attributes::diff-without-repository-with-attr-source	t0003-attributes	diff without repository with attr source	grep	partial
-t0003-attributes::bare-repository-with-source	t0003-attributes	bare repository: with --source		partial
-t0003-attributes::bare-repository-check-that-cached-honors-index	t0003-attributes	bare repository: check that --cached honors index	check-attr	partial
-t0003-attributes::bare-repository-test-info-attributes	t0003-attributes	bare repository: test info/attributes		partial
-t0003-attributes::binary-macro-expanded-by-a	t0003-attributes	binary macro expanded by -a	check-attr	partial
-t0003-attributes::query-binary-macro-directly	t0003-attributes	query binary macro directly	check-attr	partial
-t0003-attributes::set-up-symlink-tests	t0003-attributes	set up symlink tests		partial
-t0003-attributes::symlinks-respected-in-core-attributesfile	t0003-attributes	symlinks respected in core.attributesFile		partial
-t0003-attributes::symlinks-respected-in-info-attributes	t0003-attributes	symlinks respected in info/attributes		partial
-t0003-attributes::symlinks-not-respected-in-tree	t0003-attributes	symlinks not respected in-tree		partial
-t0003-attributes::large-attributes-line-ignored-in-tree	t0003-attributes	large attributes line ignored in tree	check-attr	partial
-t0003-attributes::large-attributes-line-ignores-trailing-content-in-tree	t0003-attributes	large attributes line ignores trailing content in tree	check-attr	partial
-t0003-attributes::large-attributes-file-ignored-in-tree	t0003-attributes	large attributes file ignored in tree	check-attr	partial
-t0003-attributes::large-attributes-line-ignored-in-index	t0003-attributes	large attributes line ignored in index	check-attr	partial
-t0003-attributes::large-attributes-line-ignores-trailing-content-in-index	t0003-attributes	large attributes line ignores trailing content in index	check-attr	partial
-t0003-attributes::large-attributes-file-ignored-in-index	t0003-attributes	large attributes file ignored in index	check-attr	partial
-t0003-attributes::large-attributes-blob-ignored	t0003-attributes	large attributes blob ignored	check-attr	partial
-t0003-attributes::builtin-object-mode-attributes-work-dir-and-regular-paths	t0003-attributes	builtin object mode attributes work (dir and regular paths)		partial
-t0003-attributes::builtin-object-mode-attributes-work-executable	t0003-attributes	builtin object mode attributes work (executable)		partial
-t0003-attributes::builtin-object-mode-attributes-work-symlinks	t0003-attributes	builtin object mode attributes work (symlinks)		partial
-t0003-attributes::native-object-mode-attributes-work-with-cached	t0003-attributes	native object mode attributes work with --cached	add	partial
-t0003-attributes::check-object-mode-attributes-work-for-submodules	t0003-attributes	check object mode attributes work for submodules	add	partial
-t0003-attributes::we-do-not-allow-user-defined-builtin-attributes	t0003-attributes	we do not allow user defined builtin_* attributes	add	partial
-t0003-attributes::user-defined-builtin-objectmode-values-are-ignored	t0003-attributes	user defined builtin_objectmode values are ignored	add	partial
-t0003-attributes::deep-macro-recursion	t0003-attributes	deep macro recursion	check-attr	partial
+t0003-attributes::open-quoted-pathname	t0003-attributes	open-quoted pathname		pass
+t0003-attributes::setup	t0003-attributes	setup		pass
+t0003-attributes::setup-branches	t0003-attributes	setup branches		pass
+t0003-attributes::command-line-checks	t0003-attributes	command line checks	check-attr	pass
+t0003-attributes::attribute-test	t0003-attributes	attribute test		pass
+t0003-attributes::attribute-matching-is-case-sensitive-when-core-ignorecase-0	t0003-attributes	attribute matching is case sensitive when core.ignorecase=0		pass
+t0003-attributes::attribute-matching-is-case-insensitive-when-core-ignorecase-1	t0003-attributes	attribute matching is case insensitive when core.ignorecase=1		pass
+t0003-attributes::additional-case-insensitivity-tests	t0003-attributes	additional case insensitivity tests		pass
+t0003-attributes::unnormalized-paths	t0003-attributes	unnormalized paths		pass
+t0003-attributes::relative-paths	t0003-attributes	relative paths		pass
+t0003-attributes::prefixes-are-not-confused-with-leading-directories	t0003-attributes	prefixes are not confused with leading directories	check-attr	pass
+t0003-attributes::core-attributesfile	t0003-attributes	core.attributesfile	config	pass
+t0003-attributes::attribute-test-read-paths-from-stdin	t0003-attributes	attribute test: read paths from stdin	check-attr	pass
+t0003-attributes::setup-all-option	t0003-attributes	setup --all option		pass
+t0003-attributes::attribute-test-all-option	t0003-attributes	attribute test: --all option	check-attr	pass
+t0003-attributes::attribute-test-cached-option	t0003-attributes	attribute test: --cached option	add	pass
+t0003-attributes::root-subdir-attribute-test	t0003-attributes	root subdir attribute test		pass
+t0003-attributes::negative-patterns	t0003-attributes	negative patterns	check-attr	pass
+t0003-attributes::patterns-starting-with-exclamation	t0003-attributes	patterns starting with exclamation		pass
+t0003-attributes::test	t0003-attributes	"**" test	check-attr	pass
+t0003-attributes::with-no-slashes-test	t0003-attributes	"**" with no slashes test	check-attr	pass
+t0003-attributes::using-git-dir-and-work-tree	t0003-attributes	using --git-dir and --work-tree	init	pass
+t0003-attributes::using-source	t0003-attributes	using --source		pass
+t0003-attributes::setup-bare	t0003-attributes	setup bare	clone	pass
+t0003-attributes::bare-repository-check-that-gitattribute-is-ignored	t0003-attributes	bare repository: check that .gitattribute is ignored		pass
+t0003-attributes::attr-source-is-bad	t0003-attributes	--attr-source is bad	init	pass
+t0003-attributes::attr-tree-when-head-is-unborn	t0003-attributes	attr.tree when HEAD is unborn	check-attr	pass
+t0003-attributes::bad-attr-source-defaults-to-reading-gitattributes-file	t0003-attributes	bad attr source defaults to reading .gitattributes file	check-attr	pass
+t0003-attributes::bare-repo-no-longer-defaults-to-reading-gitattributes-from-head	t0003-attributes	bare repo no longer defaults to reading .gitattributes from HEAD	check-attr	pass
+t0003-attributes::precedence-of-attr-source-git-attr-source-then-attr-tree	t0003-attributes	precedence of --attr-source, GIT_ATTR_SOURCE, then attr.tree	checkout	pass
+t0003-attributes::diff-without-repository-with-attr-source	t0003-attributes	diff without repository with attr source	grep	pass
+t0003-attributes::bare-repository-with-source	t0003-attributes	bare repository: with --source		pass
+t0003-attributes::bare-repository-check-that-cached-honors-index	t0003-attributes	bare repository: check that --cached honors index	check-attr	pass
+t0003-attributes::bare-repository-test-info-attributes	t0003-attributes	bare repository: test info/attributes		pass
+t0003-attributes::binary-macro-expanded-by-a	t0003-attributes	binary macro expanded by -a	check-attr	pass
+t0003-attributes::query-binary-macro-directly	t0003-attributes	query binary macro directly	check-attr	pass
+t0003-attributes::set-up-symlink-tests	t0003-attributes	set up symlink tests		pass
+t0003-attributes::symlinks-respected-in-core-attributesfile	t0003-attributes	symlinks respected in core.attributesFile		pass
+t0003-attributes::symlinks-respected-in-info-attributes	t0003-attributes	symlinks respected in info/attributes		pass
+t0003-attributes::symlinks-not-respected-in-tree	t0003-attributes	symlinks not respected in-tree		pass
+t0003-attributes::large-attributes-line-ignored-in-tree	t0003-attributes	large attributes line ignored in tree	check-attr	pass
+t0003-attributes::large-attributes-line-ignores-trailing-content-in-tree	t0003-attributes	large attributes line ignores trailing content in tree	check-attr	pass
+t0003-attributes::large-attributes-file-ignored-in-tree	t0003-attributes	large attributes file ignored in tree	check-attr	pass
+t0003-attributes::large-attributes-line-ignored-in-index	t0003-attributes	large attributes line ignored in index	check-attr	pass
+t0003-attributes::large-attributes-line-ignores-trailing-content-in-index	t0003-attributes	large attributes line ignores trailing content in index	check-attr	pass
+t0003-attributes::large-attributes-file-ignored-in-index	t0003-attributes	large attributes file ignored in index	check-attr	pass
+t0003-attributes::large-attributes-blob-ignored	t0003-attributes	large attributes blob ignored	check-attr	pass
+t0003-attributes::builtin-object-mode-attributes-work-dir-and-regular-paths	t0003-attributes	builtin object mode attributes work (dir and regular paths)		pass
+t0003-attributes::builtin-object-mode-attributes-work-executable	t0003-attributes	builtin object mode attributes work (executable)		pass
+t0003-attributes::builtin-object-mode-attributes-work-symlinks	t0003-attributes	builtin object mode attributes work (symlinks)		pass
+t0003-attributes::native-object-mode-attributes-work-with-cached	t0003-attributes	native object mode attributes work with --cached	add	pass
+t0003-attributes::check-object-mode-attributes-work-for-submodules	t0003-attributes	check object mode attributes work for submodules	add	pass
+t0003-attributes::we-do-not-allow-user-defined-builtin-attributes	t0003-attributes	we do not allow user defined builtin_* attributes	add	pass
+t0003-attributes::user-defined-builtin-objectmode-values-are-ignored	t0003-attributes	user defined builtin_objectmode values are ignored	add	pass
+t0003-attributes::deep-macro-recursion	t0003-attributes	deep macro recursion	check-attr	pass
 t0004-unwritable::write-tree-should-notice-unwritable-repository	t0004-unwritable	write-tree should notice unwritable repository	write-tree	pass
 t0004-unwritable::write-tree-output-on-unwritable-repository	t0004-unwritable	write-tree output on unwritable repository		pass
 t0004-unwritable::commit-should-notice-unwritable-repository	t0004-unwritable	commit should notice unwritable repository	commit	pass
@@ -305,7 +305,7 @@ t0005-signals::signals-are-propagated-using-shell-convention	t0005-signals	signa
 t0005-signals::create-blob	t0005-signals	create blob	add	pass
 t0005-signals::a-constipated-git-dies-with-sigpipe	t0005-signals	a constipated git dies with SIGPIPE		pass
 t0005-signals::a-constipated-git-dies-with-sigpipe-even-if-parent-ignores-it	t0005-signals	a constipated git dies with SIGPIPE even if parent ignores it		pass
-t0006-date::human-date-t	t0006-date	human date $t		partial
+t0006-date::human-date-t	t0006-date	human date $t		pass
 t0007-git-var::get-git-author-ident	t0007-git-var	get GIT_AUTHOR_IDENT	var	pass
 t0007-git-var::get-git-committer-ident	t0007-git-var	get GIT_COMMITTER_IDENT	var	pass
 t0007-git-var::requested-identities-are-strict	t0007-git-var	requested identities are strict	var	pass
@@ -2138,19 +2138,19 @@ t1300-config::value-for-title-is-not-printed	t1300-config	value for $title is no
 t1300-config::git-c-var-val-rejects-invalid-var	t1300-config	git -c $VAR=VAL rejects invalid '$VAR'	config	partial
 t1300-config::git-c-var-val-works-with-valid-var	t1300-config	git -c $VAR=VAL works with valid '$VAR'	config	partial
 t1300-config::opt-requires-a-repo	t1300-config	$opt requires a repo	config	partial
-t1301-shared-repo::shared-0400-faulty-permission-u-w	t1301-shared-repo	shared = 0400 (faulty permission u-w)	init	partial
-t1301-shared-repo::shared-all	t1301-shared-repo	shared=all	config	partial
-t1301-shared-repo::template-cannot-set-core-bare	t1301-shared-repo	template cannot set core.bare	init	partial
-t1301-shared-repo::update-server-info-honors-core-sharedrepository	t1301-shared-repo	update-server-info honors core.sharedRepository	add	partial
-t1301-shared-repo::info-refs-respects-umask-in-unshared-repo	t1301-shared-repo	info/refs respects umask in unshared repo	update-server-info	partial
-t1301-shared-repo::forced-modes	t1301-shared-repo	forced modes	add	partial
-t1301-shared-repo::remote-init-does-not-use-config-from-cwd	t1301-shared-repo	remote init does not use config from cwd	config	partial
-t1301-shared-repo::re-init-respects-core-sharedrepository-local	t1301-shared-repo	re-init respects core.sharedrepository (local)	config	partial
-t1301-shared-repo::re-init-respects-core-sharedrepository-remote	t1301-shared-repo	re-init respects core.sharedrepository (remote)	init	partial
-t1301-shared-repo::template-can-set-core-sharedrepository	t1301-shared-repo	template can set core.sharedrepository	config	partial
-t1301-shared-repo::shared-1-does-not-clear-bits-preset-by-umask-u	t1301-shared-repo	shared=1 does not clear bits preset by umask $u	config	partial
-t1301-shared-repo::shared-u-y-ro	t1301-shared-repo	shared = $u ($y) ro	update-server-info	partial
-t1301-shared-repo::shared-u-x-rw	t1301-shared-repo	shared = $u ($x) rw	update-server-info	partial
+t1301-shared-repo::shared-0400-faulty-permission-u-w	t1301-shared-repo	shared = 0400 (faulty permission u-w)	init	pass
+t1301-shared-repo::shared-all	t1301-shared-repo	shared=all	config	pass
+t1301-shared-repo::template-cannot-set-core-bare	t1301-shared-repo	template cannot set core.bare	init	pass
+t1301-shared-repo::update-server-info-honors-core-sharedrepository	t1301-shared-repo	update-server-info honors core.sharedRepository	add	pass
+t1301-shared-repo::info-refs-respects-umask-in-unshared-repo	t1301-shared-repo	info/refs respects umask in unshared repo	update-server-info	pass
+t1301-shared-repo::forced-modes	t1301-shared-repo	forced modes	add	pass
+t1301-shared-repo::remote-init-does-not-use-config-from-cwd	t1301-shared-repo	remote init does not use config from cwd	config	pass
+t1301-shared-repo::re-init-respects-core-sharedrepository-local	t1301-shared-repo	re-init respects core.sharedrepository (local)	config	pass
+t1301-shared-repo::re-init-respects-core-sharedrepository-remote	t1301-shared-repo	re-init respects core.sharedrepository (remote)	init	pass
+t1301-shared-repo::template-can-set-core-sharedrepository	t1301-shared-repo	template can set core.sharedrepository	config	pass
+t1301-shared-repo::shared-1-does-not-clear-bits-preset-by-umask-u	t1301-shared-repo	shared=1 does not clear bits preset by umask $u	config	pass
+t1301-shared-repo::shared-u-y-ro	t1301-shared-repo	shared = $u ($y) ro	update-server-info	pass
+t1301-shared-repo::shared-u-x-rw	t1301-shared-repo	shared = $u ($x) rw	update-server-info	pass
 t1302-repo-version::setup	t1302-repo-version	setup	config	pass
 t1302-repo-version::gitdir-selection-on-normal-repos	t1302-repo-version	gitdir selection on normal repos	config	pass
 t1302-repo-version::gitdir-selection-on-unsupported-repo	t1302-repo-version	gitdir selection on unsupported repo	config	pass
@@ -2248,43 +2248,43 @@ t1307-config-blob::editing-a-blob-is-an-error	t1307-config-blob	editing a blob i
 t1307-config-blob::parse-errors-in-blobs-are-properly-attributed	t1307-config-blob	parse errors in blobs are properly attributed	config	pass
 t1307-config-blob::can-parse-blob-ending-with-cr	t1307-config-blob	can parse blob ending with CR	config	pass
 t1307-config-blob::config-blob-outside-of-a-repository-is-an-error	t1307-config-blob	config --blob outside of a repository is an error	config	pass
-t1308-config-set::setup-default-config	t1308-config-set	setup default config	config	partial
-t1308-config-set::get-value-for-a-simple-key	t1308-config-set	get value for a simple key	config	partial
-t1308-config-set::get-value-for-a-key-with-value-as-an-empty-string	t1308-config-set	get value for a key with value as an empty string	config	partial
-t1308-config-set::get-value-for-a-key-with-value-as-null	t1308-config-set	get value for a key with value as NULL	config	partial
-t1308-config-set::upper-case-key	t1308-config-set	upper case key	config	partial
-t1308-config-set::mixed-case-key	t1308-config-set	mixed case key	config	partial
-t1308-config-set::key-and-value-with-mixed-case	t1308-config-set	key and value with mixed case	config	partial
-t1308-config-set::key-with-case-sensitive-subsection	t1308-config-set	key with case sensitive subsection	config	partial
-t1308-config-set::key-with-case-insensitive-section-header	t1308-config-set	key with case insensitive section header	config	partial
-t1308-config-set::key-with-case-insensitive-section-header-variable	t1308-config-set	key with case insensitive section header & variable	config	partial
-t1308-config-set::find-value-with-misspelled-key	t1308-config-set	find value with misspelled key	config	partial
-t1308-config-set::find-value-with-the-highest-priority	t1308-config-set	find value with the highest priority	config	partial
-t1308-config-set::return-value-for-an-existing-key	t1308-config-set	return value for an existing key	config	partial
-t1308-config-set::return-value-for-value-less-key	t1308-config-set	return value for value-less key	config	partial
-t1308-config-set::return-value-for-a-missing-key	t1308-config-set	return value for a missing key	config	partial
-t1308-config-set::return-value-for-a-bad-key-config-invalid-key	t1308-config-set	return value for a bad key: CONFIG_INVALID_KEY	config	partial
-t1308-config-set::return-value-for-a-bad-key-config-no-section-or-name	t1308-config-set	return value for a bad key: CONFIG_NO_SECTION_OR_NAME	config	partial
-t1308-config-set::find-integer-value-for-a-key	t1308-config-set	find integer value for a key	config	partial
-t1308-config-set::parse-integer-value-during-iteration	t1308-config-set	parse integer value during iteration	config	partial
-t1308-config-set::find-string-value-for-a-key	t1308-config-set	find string value for a key	config	partial
-t1308-config-set::check-line-error-when-null-string-is-queried	t1308-config-set	check line error when NULL string is queried	config	partial
-t1308-config-set::find-integer-if-value-is-non-parse-able	t1308-config-set	find integer if value is non parse-able	config	partial
-t1308-config-set::non-parse-able-integer-value-during-iteration	t1308-config-set	non parse-able integer value during iteration	config	partial
-t1308-config-set::find-bool-value-for-the-entered-key	t1308-config-set	find bool value for the entered key	config	partial
-t1308-config-set::find-multiple-values	t1308-config-set	find multiple values	config	partial
-t1308-config-set::find-value-from-a-configset	t1308-config-set	find value from a configset	config	partial
-t1308-config-set::find-value-with-highest-priority-from-a-configset	t1308-config-set	find value with highest priority from a configset	config	partial
-t1308-config-set::find-value-list-for-a-key-from-a-configset	t1308-config-set	find value_list for a key from a configset	config	partial
-t1308-config-set::proper-error-on-non-existent-files	t1308-config-set	proper error on non-existent files	config	partial
-t1308-config-set::proper-error-on-directory-files	t1308-config-set	proper error on directory "files"	config	partial
-t1308-config-set::proper-error-on-non-accessible-files	t1308-config-set	proper error on non-accessible files	config	partial
-t1308-config-set::proper-error-on-error-in-default-config-files	t1308-config-set	proper error on error in default config files	config	partial
-t1308-config-set::proper-error-on-error-in-custom-config-files	t1308-config-set	proper error on error in custom config files	config	partial
-t1308-config-set::check-line-errors-for-malformed-values	t1308-config-set	check line errors for malformed values	config	partial
-t1308-config-set::error-on-modifying-repo-config-without-repo	t1308-config-set	error on modifying repo config without repo	config	partial
-t1308-config-set::iteration-shows-correct-origins	t1308-config-set	iteration shows correct origins	config	partial
-t1308-config-set::op-null-value-in-config-file-in-file	t1308-config-set	$op: NULL value in config${file:+ in $file}	config	partial
+t1308-config-set::setup-default-config	t1308-config-set	setup default config	config	pass
+t1308-config-set::get-value-for-a-simple-key	t1308-config-set	get value for a simple key	config	pass
+t1308-config-set::get-value-for-a-key-with-value-as-an-empty-string	t1308-config-set	get value for a key with value as an empty string	config	pass
+t1308-config-set::get-value-for-a-key-with-value-as-null	t1308-config-set	get value for a key with value as NULL	config	pass
+t1308-config-set::upper-case-key	t1308-config-set	upper case key	config	pass
+t1308-config-set::mixed-case-key	t1308-config-set	mixed case key	config	pass
+t1308-config-set::key-and-value-with-mixed-case	t1308-config-set	key and value with mixed case	config	pass
+t1308-config-set::key-with-case-sensitive-subsection	t1308-config-set	key with case sensitive subsection	config	pass
+t1308-config-set::key-with-case-insensitive-section-header	t1308-config-set	key with case insensitive section header	config	pass
+t1308-config-set::key-with-case-insensitive-section-header-variable	t1308-config-set	key with case insensitive section header & variable	config	pass
+t1308-config-set::find-value-with-misspelled-key	t1308-config-set	find value with misspelled key	config	pass
+t1308-config-set::find-value-with-the-highest-priority	t1308-config-set	find value with the highest priority	config	pass
+t1308-config-set::return-value-for-an-existing-key	t1308-config-set	return value for an existing key	config	pass
+t1308-config-set::return-value-for-value-less-key	t1308-config-set	return value for value-less key	config	pass
+t1308-config-set::return-value-for-a-missing-key	t1308-config-set	return value for a missing key	config	pass
+t1308-config-set::return-value-for-a-bad-key-config-invalid-key	t1308-config-set	return value for a bad key: CONFIG_INVALID_KEY	config	pass
+t1308-config-set::return-value-for-a-bad-key-config-no-section-or-name	t1308-config-set	return value for a bad key: CONFIG_NO_SECTION_OR_NAME	config	pass
+t1308-config-set::find-integer-value-for-a-key	t1308-config-set	find integer value for a key	config	pass
+t1308-config-set::parse-integer-value-during-iteration	t1308-config-set	parse integer value during iteration	config	pass
+t1308-config-set::find-string-value-for-a-key	t1308-config-set	find string value for a key	config	pass
+t1308-config-set::check-line-error-when-null-string-is-queried	t1308-config-set	check line error when NULL string is queried	config	pass
+t1308-config-set::find-integer-if-value-is-non-parse-able	t1308-config-set	find integer if value is non parse-able	config	pass
+t1308-config-set::non-parse-able-integer-value-during-iteration	t1308-config-set	non parse-able integer value during iteration	config	pass
+t1308-config-set::find-bool-value-for-the-entered-key	t1308-config-set	find bool value for the entered key	config	pass
+t1308-config-set::find-multiple-values	t1308-config-set	find multiple values	config	pass
+t1308-config-set::find-value-from-a-configset	t1308-config-set	find value from a configset	config	pass
+t1308-config-set::find-value-with-highest-priority-from-a-configset	t1308-config-set	find value with highest priority from a configset	config	pass
+t1308-config-set::find-value-list-for-a-key-from-a-configset	t1308-config-set	find value_list for a key from a configset	config	pass
+t1308-config-set::proper-error-on-non-existent-files	t1308-config-set	proper error on non-existent files	config	pass
+t1308-config-set::proper-error-on-directory-files	t1308-config-set	proper error on directory "files"	config	pass
+t1308-config-set::proper-error-on-non-accessible-files	t1308-config-set	proper error on non-accessible files	config	pass
+t1308-config-set::proper-error-on-error-in-default-config-files	t1308-config-set	proper error on error in default config files	config	pass
+t1308-config-set::proper-error-on-error-in-custom-config-files	t1308-config-set	proper error on error in custom config files	config	pass
+t1308-config-set::check-line-errors-for-malformed-values	t1308-config-set	check line errors for malformed values	config	pass
+t1308-config-set::error-on-modifying-repo-config-without-repo	t1308-config-set	error on modifying repo config without repo	config	pass
+t1308-config-set::iteration-shows-correct-origins	t1308-config-set	iteration shows correct origins	config	pass
+t1308-config-set::op-null-value-in-config-file-in-file	t1308-config-set	$op: NULL value in config${file:+ in $file}	config	pass
 t1309-early-config::read-early-config	t1309-early-config	read early config		pass
 t1309-early-config::in-a-sub-directory	t1309-early-config	in a sub-directory		pass
 t1309-early-config::ceiling	t1309-early-config	ceiling		pass
@@ -3770,13 +3770,13 @@ t2082-parallel-checkout-attributes::parallel-checkout-with-re-encoding	t2082-par
 t2082-parallel-checkout-attributes::parallel-checkout-with-eol-conversions	t2082-parallel-checkout-attributes	parallel-checkout with eol conversions	add	pass
 t2082-parallel-checkout-attributes::parallel-checkout-and-external-filter	t2082-parallel-checkout-attributes	parallel-checkout and external filter	add	pass
 t2082-parallel-checkout-attributes::parallel-checkout-and-delayed-checkout	t2082-parallel-checkout-attributes	parallel-checkout and delayed checkout	add	pass
-t2101-update-index-reupdate::update-index-add	t2101-update-index-reupdate	update-index --add	update-index	partial
-t2101-update-index-reupdate::update-index-again	t2101-update-index-reupdate	update-index --again	update-index	partial
-t2101-update-index-reupdate::update-index-remove-again	t2101-update-index-reupdate	update-index --remove --again	update-index	partial
-t2101-update-index-reupdate::first-commit	t2101-update-index-reupdate	first commit	update-index	partial
-t2101-update-index-reupdate::update-index-again-2	t2101-update-index-reupdate	update-index again	update-index	partial
-t2101-update-index-reupdate::update-index-update-from-subdir	t2101-update-index-reupdate	update-index --update from subdir	update-index	partial
-t2101-update-index-reupdate::update-index-update-with-pathspec	t2101-update-index-reupdate	update-index --update with pathspec	update-index	partial
+t2101-update-index-reupdate::update-index-add	t2101-update-index-reupdate	update-index --add	update-index	pass
+t2101-update-index-reupdate::update-index-again	t2101-update-index-reupdate	update-index --again	update-index	pass
+t2101-update-index-reupdate::update-index-remove-again	t2101-update-index-reupdate	update-index --remove --again	update-index	pass
+t2101-update-index-reupdate::first-commit	t2101-update-index-reupdate	first commit	update-index	pass
+t2101-update-index-reupdate::update-index-again-2	t2101-update-index-reupdate	update-index again	update-index	pass
+t2101-update-index-reupdate::update-index-update-from-subdir	t2101-update-index-reupdate	update-index --update from subdir	update-index	pass
+t2101-update-index-reupdate::update-index-update-with-pathspec	t2101-update-index-reupdate	update-index --update with pathspec	update-index	pass
 t2103-update-index-ignore-missing::ignore-missing-refresh	t2103-update-index-ignore-missing	--ignore-missing --refresh	update-index	pass
 t2103-update-index-ignore-missing::unmerged-refresh	t2103-update-index-ignore-missing	--unmerged --refresh	update-index	pass
 t2103-update-index-ignore-missing::ignore-submodules-refresh-1	t2103-update-index-ignore-missing	--ignore-submodules --refresh (1)	update-index	pass
@@ -3829,8 +3829,8 @@ t2200-add-update::add-u-non-existent-should-fail	t2200-add-update	"add -u non-ex
 t2200-add-update::commit-a-implies-add-u-if-index-becomes-empty	t2200-add-update	"commit -a" implies "add -u" if index becomes empty	add	pass
 t2201-add-update-typechange::add-u	t2201-add-update-typechange	add -u	add	pass
 t2201-add-update-typechange::commit-a	t2201-add-update-typechange	commit -a	add	pass
-t2202-add-addremove::git-add-all	t2202-add-addremove	git add --all	add	partial
-t2202-add-addremove::just-git-add-is-a-no-op	t2202-add-addremove	Just "git add" is a no-op	add	partial
+t2202-add-addremove::git-add-all	t2202-add-addremove	git add --all	add	pass
+t2202-add-addremove::just-git-add-is-a-no-op	t2202-add-addremove	Just "git add" is a no-op	add	pass
 t2203-add-intent::intent-to-add	t2203-add-intent	intent to add	add	pass
 t2203-add-intent::git-status	t2203-add-intent	git status	add	pass
 t2203-add-intent::git-status-with-porcelain-v2	t2203-add-intent	git status with porcelain v2	add	pass
@@ -4129,21 +4129,21 @@ t2501-cwd-empty::git-version-continues-working-from-a-deleted-dir	t2501-cwd-empt
 t2501-cwd-empty::rm-r-with-c-leaves-submodule-if-cwd-inside	t2501-cwd-empty	rm -r with -C leaves submodule if cwd inside	rm	pass
 t2501-cwd-empty::rm-r-leaves-submodule-if-cwd-inside	t2501-cwd-empty	rm -r leaves submodule if cwd inside		pass
 t2501-cwd-empty::rm-rf-removes-submodule-even-if-cwd-inside	t2501-cwd-empty	rm -rf removes submodule even if cwd inside		pass
-t3000-ls-files-others::setup	t3000-ls-files-others	setup 	ls-files	partial
-t3000-ls-files-others::setup-expected-output	t3000-ls-files-others	setup: expected output	ls-files	partial
-t3000-ls-files-others::ls-files-others	t3000-ls-files-others	ls-files --others	ls-files	partial
-t3000-ls-files-others::ls-files-others-directory	t3000-ls-files-others	ls-files --others --directory	ls-files	partial
-t3000-ls-files-others::no-empty-directory-hides-empty-directory	t3000-ls-files-others	--no-empty-directory hides empty directory	ls-files	partial
-t3000-ls-files-others::ls-files-others-handles-non-submodule-git	t3000-ls-files-others	ls-files --others handles non-submodule .git	ls-files	partial
-t3000-ls-files-others::setup-nested-pathspec-search	t3000-ls-files-others	setup nested pathspec search	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-single-deep-dir-pathspec	t3000-ls-files-others	ls-files -o --directory with single deep dir pathspec	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-multiple-dir-pathspecs	t3000-ls-files-others	ls-files -o --directory with multiple dir pathspecs	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-mix-dir-file-pathspecs	t3000-ls-files-others	ls-files -o --directory with mix dir/file pathspecs	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match	t3000-ls-files-others	ls-files -o --directory with glob filetype match	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-mix-of-tracked-states	t3000-ls-files-others	ls-files -o --directory with mix of tracked states	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match-only	t3000-ls-files-others	ls-files -o --directory with glob filetype match only	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-to-get-immediate-paths-under-one-dir-only	t3000-ls-files-others	ls-files -o --directory to get immediate paths under one dir only	ls-files	partial
-t3000-ls-files-others::ls-files-o-avoids-listing-untracked-non-matching-gitdir	t3000-ls-files-others	ls-files -o avoids listing untracked non-matching gitdir	ls-files	partial
+t3000-ls-files-others::setup	t3000-ls-files-others	setup 	ls-files	pass
+t3000-ls-files-others::setup-expected-output	t3000-ls-files-others	setup: expected output	ls-files	pass
+t3000-ls-files-others::ls-files-others	t3000-ls-files-others	ls-files --others	ls-files	pass
+t3000-ls-files-others::ls-files-others-directory	t3000-ls-files-others	ls-files --others --directory	ls-files	pass
+t3000-ls-files-others::no-empty-directory-hides-empty-directory	t3000-ls-files-others	--no-empty-directory hides empty directory	ls-files	pass
+t3000-ls-files-others::ls-files-others-handles-non-submodule-git	t3000-ls-files-others	ls-files --others handles non-submodule .git	ls-files	pass
+t3000-ls-files-others::setup-nested-pathspec-search	t3000-ls-files-others	setup nested pathspec search	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-single-deep-dir-pathspec	t3000-ls-files-others	ls-files -o --directory with single deep dir pathspec	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-multiple-dir-pathspecs	t3000-ls-files-others	ls-files -o --directory with multiple dir pathspecs	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-mix-dir-file-pathspecs	t3000-ls-files-others	ls-files -o --directory with mix dir/file pathspecs	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match	t3000-ls-files-others	ls-files -o --directory with glob filetype match	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-mix-of-tracked-states	t3000-ls-files-others	ls-files -o --directory with mix of tracked states	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match-only	t3000-ls-files-others	ls-files -o --directory with glob filetype match only	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-to-get-immediate-paths-under-one-dir-only	t3000-ls-files-others	ls-files -o --directory to get immediate paths under one dir only	ls-files	pass
+t3000-ls-files-others::ls-files-o-avoids-listing-untracked-non-matching-gitdir	t3000-ls-files-others	ls-files -o avoids listing untracked non-matching gitdir	ls-files	pass
 t3001-ls-files-others-exclude::git-ls-files-others-with-various-exclude-options	t3001-ls-files-others-exclude	git ls-files --others with various exclude options.	ls-files	pass
 t3001-ls-files-others-exclude::git-ls-files-others-with-r-n-line-endings	t3001-ls-files-others-exclude	git ls-files --others with \r\n line endings.	ls-files	pass
 t3001-ls-files-others-exclude::setup-skip-worktree-gitignore	t3001-ls-files-others-exclude	setup skip-worktree gitignore	ls-files	pass
@@ -4171,12 +4171,12 @@ t3001-ls-files-others-exclude::pattern-matches-prefix-completely	t3001-ls-files-
 t3001-ls-files-others-exclude::ls-files-with-patterns	t3001-ls-files-others-exclude	ls-files with "**" patterns	ls-files	pass
 t3001-ls-files-others-exclude::ls-files-with-patterns-and-directory	t3001-ls-files-others-exclude	ls-files with "**" patterns and --directory	ls-files	pass
 t3001-ls-files-others-exclude::ls-files-with-patterns-and-no-slashes	t3001-ls-files-others-exclude	ls-files with "**" patterns and no slashes	ls-files	pass
-t3002-ls-files-dashpath::setup	t3002-ls-files-dashpath	setup	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-without-path-restriction	t3002-ls-files-dashpath	git ls-files without path restriction.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction	t3002-ls-files-dashpath	git ls-files with path restriction.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with	t3002-ls-files-dashpath	git ls-files with path restriction with --.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with-2	t3002-ls-files-dashpath	git ls-files with path restriction with -- --.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-no-path-restriction	t3002-ls-files-dashpath	git ls-files with no path restriction.	ls-files	partial
+t3002-ls-files-dashpath::setup	t3002-ls-files-dashpath	setup	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-without-path-restriction	t3002-ls-files-dashpath	git ls-files without path restriction.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction	t3002-ls-files-dashpath	git ls-files with path restriction.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with	t3002-ls-files-dashpath	git ls-files with path restriction with --.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with-2	t3002-ls-files-dashpath	git ls-files with path restriction with -- --.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-no-path-restriction	t3002-ls-files-dashpath	git ls-files with no path restriction.	ls-files	pass
 t3003-ls-files-exclude::create-repo-with-file	t3003-ls-files-exclude	create repo with file	ls-files	pass
 t3003-ls-files-exclude::add-file-to-gitignore	t3003-ls-files-exclude	add file to gitignore	ls-files	pass
 t3003-ls-files-exclude::ls-files-i-c-lists-only-tracked-but-ignored-files	t3003-ls-files-exclude	ls-files -i -c lists only tracked-but-ignored files	ls-files	pass
@@ -4259,9 +4259,9 @@ t3013-ls-files-format::git-ls-files-format-with-d	t3013-ls-files-format	git ls-f
 t3013-ls-files-format::git-ls-files-format-v-s-s	t3013-ls-files-format	git ls-files --format v.s -s	ls-files	pass
 t3013-ls-files-format::git-ls-files-format-with-debug	t3013-ls-files-format	git ls-files --format with --debug	ls-files	pass
 t3013-ls-files-format::usage-format-is-incompatible-with-flag	t3013-ls-files-format	usage: --format is incompatible with $flag	ls-files	pass
-t3020-ls-files-error-unmatch::setup	t3020-ls-files-error-unmatch	setup	ls-files	partial
-t3020-ls-files-error-unmatch::git-ls-files-error-unmatch-should-fail-with-unmatched-path	t3020-ls-files-error-unmatch	git ls-files --error-unmatch should fail with unmatched path.	ls-files	partial
-t3020-ls-files-error-unmatch::git-ls-files-error-unmatch-should-succeed-with-matched-paths	t3020-ls-files-error-unmatch	git ls-files --error-unmatch should succeed with matched paths.	ls-files	partial
+t3020-ls-files-error-unmatch::setup	t3020-ls-files-error-unmatch	setup	ls-files	pass
+t3020-ls-files-error-unmatch::git-ls-files-error-unmatch-should-fail-with-unmatched-path	t3020-ls-files-error-unmatch	git ls-files --error-unmatch should fail with unmatched path.	ls-files	pass
+t3020-ls-files-error-unmatch::git-ls-files-error-unmatch-should-succeed-with-matched-paths	t3020-ls-files-error-unmatch	git ls-files --error-unmatch should succeed with matched paths.	ls-files	pass
 t3040-subprojects-basic::setup-create-superproject	t3040-subprojects-basic	setup: create superproject	add	pass
 t3040-subprojects-basic::setup-create-subprojects	t3040-subprojects-basic	setup: create subprojects	add	pass
 t3040-subprojects-basic::check-if-fsck-ignores-the-subprojects	t3040-subprojects-basic	check if fsck ignores the subprojects	fsck	pass
@@ -4327,173 +4327,173 @@ t3105-ls-tree-output::setup-head-short-variables	t3105-ls-tree-output	setup: HEA
 t3105-ls-tree-output::ls-tree-opts-mode-mode-output	t3105-ls-tree-output	'ls-tree $opts${mode:+ $mode}' output	ls-tree	pass
 t3105-ls-tree-output::ls-tree-opts-mode-mode-output-via-subdir-fails	t3105-ls-tree-output	'ls-tree $opts${mode:+ $mode}' output (via subdir, fails)	ls-tree	pass
 t3105-ls-tree-output::ls-tree-opts-mode-mode-output-via-subdir	t3105-ls-tree-output	'ls-tree $opts${mode:+ $mode}' output (via subdir)	ls-tree	pass
-t3200-branch::prepare-a-trivial-repository	t3200-branch	prepare a trivial repository	branch	partial
-t3200-branch::git-branch-help-should-not-have-created-a-bogus-branch	t3200-branch	git branch --help should not have created a bogus branch	branch	partial
-t3200-branch::branch-h-in-broken-repository	t3200-branch	branch -h in broken repository	branch	partial
-t3200-branch::git-branch-abc-should-create-a-branch	t3200-branch	git branch abc should create a branch	branch	partial
-t3200-branch::git-branch-abc-should-fail-when-abc-exists	t3200-branch	git branch abc should fail when abc exists	branch	partial
-t3200-branch::git-branch-force-abc-should-fail-when-abc-is-checked-out	t3200-branch	git branch --force abc should fail when abc is checked out	branch	partial
-t3200-branch::git-branch-force-abc-should-succeed-when-abc-exists	t3200-branch	git branch --force abc should succeed when abc exists	branch	partial
-t3200-branch::git-branch-a-b-c-should-create-a-branch	t3200-branch	git branch a/b/c should create a branch	branch	partial
-t3200-branch::git-branch-mb-main-should-create-a-branch	t3200-branch	git branch mb main... should create a branch	branch	partial
-t3200-branch::git-branch-head-should-fail	t3200-branch	git branch HEAD should fail	branch	partial
-t3200-branch::git-branch-create-reflog-d-e-f-should-create-a-branch-and-a-log	t3200-branch	git branch --create-reflog d/e/f should create a branch and a log	branch	partial
-t3200-branch::git-branch-d-d-e-f-should-delete-a-branch-and-a-log	t3200-branch	git branch -d d/e/f should delete a branch and a log	branch	partial
-t3200-branch::git-branch-j-k-should-work-after-branch-j-has-been-deleted	t3200-branch	git branch j/k should work after branch j has been deleted	branch	partial
-t3200-branch::git-branch-l-should-work-after-branch-l-m-has-been-deleted	t3200-branch	git branch l should work after branch l/m has been deleted	branch	partial
-t3200-branch::git-branch-m-dumps-usage	t3200-branch	git branch -m dumps usage	branch	partial
-t3200-branch::git-branch-m-m-broken-symref-should-work	t3200-branch	git branch -m m broken_symref should work	branch	partial
-t3200-branch::git-branch-m-m-m-m-should-work	t3200-branch	git branch -m m m/m should work	branch	partial
-t3200-branch::git-branch-m-n-n-n-should-work	t3200-branch	git branch -m n/n n should work	branch	partial
-t3200-branch::git-branch-m-bbb-should-rename-checked-out-branch	t3200-branch	git branch -m bbb should rename checked out branch	branch	partial
-t3200-branch::renaming-checked-out-branch-works-with-d-f-conflict	t3200-branch	renaming checked out branch works with d/f conflict	branch	partial
-t3200-branch::git-branch-m-o-o-o-should-fail-when-o-p-exists	t3200-branch	git branch -m o/o o should fail when o/p exists	branch	partial
-t3200-branch::git-branch-m-o-q-o-p-should-fail-when-o-p-exists	t3200-branch	git branch -m o/q o/p should fail when o/p exists	branch	partial
-t3200-branch::git-branch-m-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -M o/q o/p should work when o/p exists	branch	partial
-t3200-branch::git-branch-m-f-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -m -f o/q o/p should work when o/p exists	branch	partial
-t3200-branch::git-branch-m-q-r-q-should-fail-when-r-exists	t3200-branch	git branch -m q r/q should fail when r exists	branch	partial
-t3200-branch::git-branch-m-foo-bar-should-fail-when-bar-is-checked-out	t3200-branch	git branch -M foo bar should fail when bar is checked out	branch	partial
-t3200-branch::git-branch-m-foo-bar-should-fail-when-bar-is-checked-out-in-worktree	t3200-branch	git branch -M foo bar should fail when bar is checked out in worktree	branch	partial
-t3200-branch::git-branch-m-baz-bam-should-succeed-when-baz-is-checked-out	t3200-branch	git branch -M baz bam should succeed when baz is checked out	branch	partial
-t3200-branch::git-branch-m-baz-bam-should-add-entries-to-head-reflog	t3200-branch	git branch -M baz bam should add entries to HEAD reflog	branch	partial
-t3200-branch::git-branch-m-should-leave-orphaned-head-alone	t3200-branch	git branch -M should leave orphaned HEAD alone	branch	partial
-t3200-branch::resulting-reflog-can-be-shown-by-log-g	t3200-branch	resulting reflog can be shown by log -g	branch	partial
-t3200-branch::git-branch-m-baz-bam-should-succeed-when-baz-is-checked-out-as-linked-working-tr	t3200-branch	git branch -M baz bam should succeed when baz is checked out as linked working tree	branch	partial
-t3200-branch::git-branch-m-fails-if-updating-any-linked-working-tree-fails	t3200-branch	git branch -M fails if updating any linked working tree fails	branch	partial
-t3200-branch::git-branch-m-baz-bam-should-succeed-within-a-worktree-in-which-baz-is-checked-ou	t3200-branch	git branch -M baz bam should succeed within a worktree in which baz is checked out	branch	partial
-t3200-branch::git-branch-m-main-should-work-when-main-is-checked-out	t3200-branch	git branch -M main should work when main is checked out	branch	partial
-t3200-branch::git-branch-m-main-main-should-work-when-main-is-checked-out	t3200-branch	git branch -M main main should work when main is checked out	branch	partial
-t3200-branch::git-branch-m-topic-topic-should-work-when-main-is-checked-out	t3200-branch	git branch -M topic topic should work when main is checked out	branch	partial
-t3200-branch::git-branch-m-and-c-fail-on-detached-head	t3200-branch	git branch -M and -C fail on detached HEAD	branch	partial
-t3200-branch::git-branch-m-should-work-with-orphan-branches	t3200-branch	git branch -m should work with orphan branches	branch	partial
-t3200-branch::git-branch-d-on-orphan-head-merged	t3200-branch	git branch -d on orphan HEAD (merged)	branch	partial
-t3200-branch::git-branch-d-on-orphan-head-merged-graph	t3200-branch	git branch -d on orphan HEAD (merged, graph)	branch	partial
-t3200-branch::git-branch-d-on-orphan-head-unmerged	t3200-branch	git branch -d on orphan HEAD (unmerged)	branch	partial
-t3200-branch::git-branch-d-on-orphan-head-unmerged-graph	t3200-branch	git branch -d on orphan HEAD (unmerged, graph)	branch	partial
-t3200-branch::git-branch-v-d-t-should-work	t3200-branch	git branch -v -d t should work	branch	partial
-t3200-branch::git-branch-v-m-t-s-should-work	t3200-branch	git branch -v -m t s should work	branch	partial
-t3200-branch::git-branch-m-d-t-s-should-fail	t3200-branch	git branch -m -d t s should fail	branch	partial
-t3200-branch::git-branch-list-d-t-should-fail	t3200-branch	git branch --list -d t should fail	branch	partial
-t3200-branch::deleting-checked-out-branch-from-repo-that-is-a-submodule	t3200-branch	deleting checked-out branch from repo that is a submodule	branch	partial
-t3200-branch::bare-main-worktree-has-head-at-branch-deleted-by-secondary-worktree	t3200-branch	bare main worktree has HEAD at branch deleted by secondary worktree	branch	partial
-t3200-branch::secondary-worktrees-recognize-core-bare-true-in-main-config-worktree	t3200-branch	secondary worktrees recognize core.bare=true in main config.worktree	branch	partial
-t3200-branch::git-branch-list-v-with-abbrev	t3200-branch	git branch --list -v with --abbrev	branch	partial
-t3200-branch::git-branch-column	t3200-branch	git branch --column	branch	partial
-t3200-branch::git-branch-column-with-an-extremely-long-branch-name	t3200-branch	git branch --column with an extremely long branch name	branch	partial
-t3200-branch::git-branch-with-column	t3200-branch	git branch with column.*	branch	partial
-t3200-branch::git-branch-column-v-should-fail	t3200-branch	git branch --column -v should fail	branch	partial
-t3200-branch::git-branch-v-with-column-ui-ignored	t3200-branch	git branch -v with column.ui ignored	branch	partial
-t3200-branch::git-branch-m-q-q2-without-config-should-succeed	t3200-branch	git branch -m q q2 without config should succeed	branch	partial
-t3200-branch::git-branch-m-s-s-s-should-work-when-s-t-is-deleted	t3200-branch	git branch -m s/s s should work when s/t is deleted	branch	partial
-t3200-branch::config-information-was-renamed-too	t3200-branch	config information was renamed, too	branch	partial
-t3200-branch::git-branch-m-correctly-renames-multiple-config-sections	t3200-branch	git branch -m correctly renames multiple config sections	branch	partial
-t3200-branch::git-branch-c-dumps-usage	t3200-branch	git branch -c dumps usage	branch	partial
-t3200-branch::git-branch-copy-dumps-usage	t3200-branch	git branch --copy dumps usage	branch	partial
-t3200-branch::git-branch-c-d-e-should-work	t3200-branch	git branch -c d e should work	branch	partial
-t3200-branch::git-branch-copy-is-a-synonym-for-c	t3200-branch	git branch --copy is a synonym for -c	branch	partial
-t3200-branch::git-branch-c-ee-ef-should-copy-ee-to-create-branch-ef	t3200-branch	git branch -c ee ef should copy ee to create branch ef	branch	partial
-t3200-branch::git-branch-c-f-f-g-g-should-work	t3200-branch	git branch -c f/f g/g should work	branch	partial
-t3200-branch::git-branch-c-m2-m2-should-work	t3200-branch	git branch -c m2 m2 should work	branch	partial
-t3200-branch::git-branch-c-zz-zz-zz-should-fail	t3200-branch	git branch -c zz zz/zz should fail	branch	partial
-t3200-branch::git-branch-c-b-b-b-should-fail	t3200-branch	git branch -c b/b b should fail	branch	partial
-t3200-branch::git-branch-c-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -C o/q o/p should work when o/p exists	branch	partial
-t3200-branch::git-branch-c-f-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -c -f o/q o/p should work when o/p exists	branch	partial
-t3200-branch::git-branch-c-qq-rr-qq-should-fail-when-rr-exists	t3200-branch	git branch -c qq rr/qq should fail when rr exists	branch	partial
-t3200-branch::git-branch-c-b1-b2-should-fail-when-b2-is-checked-out	t3200-branch	git branch -C b1 b2 should fail when b2 is checked out	branch	partial
-t3200-branch::git-branch-c-c1-c2-should-succeed-when-c1-is-checked-out	t3200-branch	git branch -C c1 c2 should succeed when c1 is checked out	branch	partial
-t3200-branch::git-branch-c-c1-c2-should-never-touch-head	t3200-branch	git branch -C c1 c2 should never touch HEAD	branch	partial
-t3200-branch::git-branch-c-main-should-work-when-main-is-checked-out	t3200-branch	git branch -C main should work when main is checked out	branch	partial
-t3200-branch::git-branch-c-main-main-should-work-when-main-is-checked-out	t3200-branch	git branch -C main main should work when main is checked out	branch	partial
-t3200-branch::git-branch-c-main5-main5-should-work-when-main-is-checked-out	t3200-branch	git branch -C main5 main5 should work when main is checked out	branch	partial
-t3200-branch::git-branch-c-ab-cd-should-overwrite-existing-config-for-cd	t3200-branch	git branch -C ab cd should overwrite existing config for cd	branch	partial
-t3200-branch::git-branch-c-correctly-copies-multiple-config-sections	t3200-branch	git branch -c correctly copies multiple config sections	branch	partial
-t3200-branch::deleting-a-symref	t3200-branch	deleting a symref	branch	partial
-t3200-branch::deleting-a-dangling-symref	t3200-branch	deleting a dangling symref	branch	partial
-t3200-branch::deleting-a-self-referential-symref	t3200-branch	deleting a self-referential symref	branch	partial
-t3200-branch::renaming-a-symref-is-not-allowed	t3200-branch	renaming a symref is not allowed	branch	partial
-t3200-branch::test-tracking-setup-via-track	t3200-branch	test tracking setup via --track	branch	partial
-t3200-branch::test-tracking-setup-non-wildcard-matching	t3200-branch	test tracking setup (non-wildcard, matching)	branch	partial
-t3200-branch::tracking-setup-fails-on-non-matching-refspec	t3200-branch	tracking setup fails on non-matching refspec	branch	partial
-t3200-branch::test-tracking-setup-via-config	t3200-branch	test tracking setup via config	branch	partial
-t3200-branch::test-overriding-tracking-setup-via-no-track	t3200-branch	test overriding tracking setup via --no-track	branch	partial
-t3200-branch::no-tracking-without-fetch-entries	t3200-branch	no tracking without .fetch entries	branch	partial
-t3200-branch::test-tracking-setup-via-track-but-deeper	t3200-branch	test tracking setup via --track but deeper	branch	partial
-t3200-branch::test-deleting-branch-deletes-branch-config	t3200-branch	test deleting branch deletes branch config	branch	partial
-t3200-branch::test-deleting-branch-without-config	t3200-branch	test deleting branch without config	branch	partial
-t3200-branch::deleting-currently-checked-out-branch-fails	t3200-branch	deleting currently checked out branch fails	branch	partial
-t3200-branch::deleting-in-use-branch-fails	t3200-branch	deleting in-use branch fails	branch	partial
-t3200-branch::test-track-without-fetch-entries	t3200-branch	test --track without .fetch entries	branch	partial
-t3200-branch::branch-from-non-branch-head-w-autosetupmerge-always	t3200-branch	branch from non-branch HEAD w/autosetupmerge=always	branch	partial
-t3200-branch::branch-from-non-branch-head-w-track-causes-failure	t3200-branch	branch from non-branch HEAD w/--track causes failure	branch	partial
-t3200-branch::branch-from-tag-w-track-causes-failure	t3200-branch	branch from tag w/--track causes failure	branch	partial
-t3200-branch::simple-tracking-works-when-remote-branch-name-matches	t3200-branch	simple tracking works when remote branch name matches	branch	partial
-t3200-branch::simple-tracking-skips-when-remote-branch-name-does-not-match	t3200-branch	simple tracking skips when remote branch name does not match	branch	partial
-t3200-branch::simple-tracking-skips-when-remote-ref-is-not-a-branch	t3200-branch	simple tracking skips when remote ref is not a branch	branch	partial
-t3200-branch::set-upstream-to-fails-on-multiple-branches	t3200-branch	--set-upstream-to fails on multiple branches	branch	partial
-t3200-branch::set-upstream-to-fails-on-detached-head	t3200-branch	--set-upstream-to fails on detached HEAD	branch	partial
-t3200-branch::set-upstream-to-fails-on-a-missing-dst-branch	t3200-branch	--set-upstream-to fails on a missing dst branch	branch	partial
-t3200-branch::set-upstream-to-fails-on-a-missing-src-branch	t3200-branch	--set-upstream-to fails on a missing src branch	branch	partial
-t3200-branch::set-upstream-to-fails-on-a-non-ref	t3200-branch	--set-upstream-to fails on a non-ref	branch	partial
-t3200-branch::set-upstream-to-fails-on-locked-config	t3200-branch	--set-upstream-to fails on locked config	branch	partial
-t3200-branch::use-set-upstream-to-modify-head	t3200-branch	use --set-upstream-to modify HEAD	branch	partial
-t3200-branch::use-set-upstream-to-modify-a-particular-branch	t3200-branch	use --set-upstream-to modify a particular branch	branch	partial
-t3200-branch::unset-upstream-should-fail-if-given-a-non-existent-branch	t3200-branch	--unset-upstream should fail if given a non-existent branch	branch	partial
-t3200-branch::unset-upstream-should-fail-if-config-is-locked	t3200-branch	--unset-upstream should fail if config is locked	branch	partial
-t3200-branch::test-unset-upstream-on-head	t3200-branch	test --unset-upstream on HEAD	branch	partial
-t3200-branch::unset-upstream-should-fail-on-multiple-branches	t3200-branch	--unset-upstream should fail on multiple branches	branch	partial
-t3200-branch::unset-upstream-should-fail-on-detached-head	t3200-branch	--unset-upstream should fail on detached HEAD	branch	partial
-t3200-branch::test-unset-upstream-on-a-particular-branch	t3200-branch	test --unset-upstream on a particular branch	branch	partial
-t3200-branch::disabled-option-set-upstream-fails	t3200-branch	disabled option --set-upstream fails	branch	partial
-t3200-branch::set-upstream-to-notices-an-error-to-set-branch-as-own-upstream	t3200-branch	--set-upstream-to notices an error to set branch as own upstream	branch	partial
-t3200-branch::git-checkout-b-g-h-i-l-should-create-a-branch-and-a-log	t3200-branch	git checkout -b g/h/i -l should create a branch and a log	branch	partial
-t3200-branch::checkout-b-makes-reflog-by-default	t3200-branch	checkout -b makes reflog by default	branch	partial
-t3200-branch::checkout-b-does-not-make-reflog-when-core-logallrefupdates-false	t3200-branch	checkout -b does not make reflog when core.logAllRefUpdates = false	branch	partial
-t3200-branch::checkout-b-with-l-makes-reflog-when-core-logallrefupdates-false	t3200-branch	checkout -b with -l makes reflog when core.logAllRefUpdates = false	branch	partial
-t3200-branch::avoid-ambiguous-track-and-advise	t3200-branch	avoid ambiguous track and advise	branch	partial
-t3200-branch::autosetuprebase-local-on-a-tracked-local-branch	t3200-branch	autosetuprebase local on a tracked local branch	branch	partial
-t3200-branch::autosetuprebase-always-on-a-tracked-local-branch	t3200-branch	autosetuprebase always on a tracked local branch	branch	partial
-t3200-branch::autosetuprebase-remote-on-a-tracked-local-branch	t3200-branch	autosetuprebase remote on a tracked local branch	branch	partial
-t3200-branch::autosetuprebase-never-on-a-tracked-local-branch	t3200-branch	autosetuprebase never on a tracked local branch	branch	partial
-t3200-branch::autosetuprebase-local-on-a-tracked-remote-branch	t3200-branch	autosetuprebase local on a tracked remote branch	branch	partial
-t3200-branch::autosetuprebase-never-on-a-tracked-remote-branch	t3200-branch	autosetuprebase never on a tracked remote branch	branch	partial
-t3200-branch::autosetuprebase-remote-on-a-tracked-remote-branch	t3200-branch	autosetuprebase remote on a tracked remote branch	branch	partial
-t3200-branch::autosetuprebase-always-on-a-tracked-remote-branch	t3200-branch	autosetuprebase always on a tracked remote branch	branch	partial
-t3200-branch::autosetuprebase-unconfigured-on-a-tracked-remote-branch	t3200-branch	autosetuprebase unconfigured on a tracked remote branch	branch	partial
-t3200-branch::autosetuprebase-unconfigured-on-a-tracked-local-branch	t3200-branch	autosetuprebase unconfigured on a tracked local branch	branch	partial
-t3200-branch::autosetuprebase-unconfigured-on-untracked-local-branch	t3200-branch	autosetuprebase unconfigured on untracked local branch	branch	partial
-t3200-branch::autosetuprebase-unconfigured-on-untracked-remote-branch	t3200-branch	autosetuprebase unconfigured on untracked remote branch	branch	partial
-t3200-branch::autosetuprebase-never-on-an-untracked-local-branch	t3200-branch	autosetuprebase never on an untracked local branch	branch	partial
-t3200-branch::autosetuprebase-local-on-an-untracked-local-branch	t3200-branch	autosetuprebase local on an untracked local branch	branch	partial
-t3200-branch::autosetuprebase-remote-on-an-untracked-local-branch	t3200-branch	autosetuprebase remote on an untracked local branch	branch	partial
-t3200-branch::autosetuprebase-always-on-an-untracked-local-branch	t3200-branch	autosetuprebase always on an untracked local branch	branch	partial
-t3200-branch::autosetuprebase-never-on-an-untracked-remote-branch	t3200-branch	autosetuprebase never on an untracked remote branch	branch	partial
-t3200-branch::autosetuprebase-local-on-an-untracked-remote-branch	t3200-branch	autosetuprebase local on an untracked remote branch	branch	partial
-t3200-branch::autosetuprebase-remote-on-an-untracked-remote-branch	t3200-branch	autosetuprebase remote on an untracked remote branch	branch	partial
-t3200-branch::autosetuprebase-always-on-an-untracked-remote-branch	t3200-branch	autosetuprebase always on an untracked remote branch	branch	partial
-t3200-branch::autosetuprebase-always-on-detached-head	t3200-branch	autosetuprebase always on detached HEAD	branch	partial
-t3200-branch::detect-misconfigured-autosetuprebase-bad-value	t3200-branch	detect misconfigured autosetuprebase (bad value)	branch	partial
-t3200-branch::detect-misconfigured-autosetuprebase-no-value	t3200-branch	detect misconfigured autosetuprebase (no value)	branch	partial
-t3200-branch::attempt-to-delete-a-branch-without-base-and-unmerged-to-head	t3200-branch	attempt to delete a branch without base and unmerged to HEAD	branch	partial
-t3200-branch::attempt-to-delete-a-branch-merged-to-its-base	t3200-branch	attempt to delete a branch merged to its base	branch	partial
-t3200-branch::attempt-to-delete-a-branch-merged-to-its-base-2	t3200-branch	attempt to delete a branch merged to its base	branch	partial
-t3200-branch::branch-delete-force-removes-dangling-branch	t3200-branch	branch --delete --force removes dangling branch	branch	partial
-t3200-branch::use-edit-description	t3200-branch	use --edit-description	branch	partial
-t3200-branch::detect-typo-in-branch-name-when-using-edit-description	t3200-branch	detect typo in branch name when using --edit-description	branch	partial
-t3200-branch::refuse-edit-description-on-unborn-branch-for-now	t3200-branch	refuse --edit-description on unborn branch for now	branch	partial
-t3200-branch::merged-catches-invalid-object-names	t3200-branch	--merged catches invalid object names	branch	partial
-t3200-branch::list-during-rebase	t3200-branch	--list during rebase	branch	partial
-t3200-branch::list-during-rebase-from-detached-head	t3200-branch	--list during rebase from detached HEAD	branch	partial
-t3200-branch::tracking-with-unexpected-fetch-refspec	t3200-branch	tracking with unexpected .fetch refspec	branch	partial
-t3200-branch::configured-committerdate-sort	t3200-branch	configured committerdate sort	branch	partial
-t3200-branch::option-override-configured-sort	t3200-branch	option override configured sort	branch	partial
-t3200-branch::no-sort-cancels-config-sort-keys	t3200-branch	--no-sort cancels config sort keys	branch	partial
-t3200-branch::no-sort-cancels-command-line-sort-keys	t3200-branch	--no-sort cancels command line sort keys	branch	partial
-t3200-branch::no-sort-without-subsequent-sort-prints-expected-branches	t3200-branch	--no-sort without subsequent --sort prints expected branches	branch	partial
-t3200-branch::invalid-sort-parameter-in-configuration	t3200-branch	invalid sort parameter in configuration	branch	partial
-t3200-branch::tracking-info-copied-with-track-inherit	t3200-branch	tracking info copied with --track=inherit	branch	partial
-t3200-branch::tracking-info-copied-with-autosetupmerge-inherit	t3200-branch	tracking info copied with autoSetupMerge=inherit	branch	partial
-t3200-branch::track-overrides-branch-autosetupmerge	t3200-branch	--track overrides branch.autoSetupMerge	branch	partial
-t3200-branch::errors-if-given-a-bad-branch-name	t3200-branch	errors if given a bad branch name	branch	partial
+t3200-branch::prepare-a-trivial-repository	t3200-branch	prepare a trivial repository	branch	pass
+t3200-branch::git-branch-help-should-not-have-created-a-bogus-branch	t3200-branch	git branch --help should not have created a bogus branch	branch	pass
+t3200-branch::branch-h-in-broken-repository	t3200-branch	branch -h in broken repository	branch	pass
+t3200-branch::git-branch-abc-should-create-a-branch	t3200-branch	git branch abc should create a branch	branch	pass
+t3200-branch::git-branch-abc-should-fail-when-abc-exists	t3200-branch	git branch abc should fail when abc exists	branch	pass
+t3200-branch::git-branch-force-abc-should-fail-when-abc-is-checked-out	t3200-branch	git branch --force abc should fail when abc is checked out	branch	pass
+t3200-branch::git-branch-force-abc-should-succeed-when-abc-exists	t3200-branch	git branch --force abc should succeed when abc exists	branch	pass
+t3200-branch::git-branch-a-b-c-should-create-a-branch	t3200-branch	git branch a/b/c should create a branch	branch	pass
+t3200-branch::git-branch-mb-main-should-create-a-branch	t3200-branch	git branch mb main... should create a branch	branch	pass
+t3200-branch::git-branch-head-should-fail	t3200-branch	git branch HEAD should fail	branch	pass
+t3200-branch::git-branch-create-reflog-d-e-f-should-create-a-branch-and-a-log	t3200-branch	git branch --create-reflog d/e/f should create a branch and a log	branch	pass
+t3200-branch::git-branch-d-d-e-f-should-delete-a-branch-and-a-log	t3200-branch	git branch -d d/e/f should delete a branch and a log	branch	pass
+t3200-branch::git-branch-j-k-should-work-after-branch-j-has-been-deleted	t3200-branch	git branch j/k should work after branch j has been deleted	branch	pass
+t3200-branch::git-branch-l-should-work-after-branch-l-m-has-been-deleted	t3200-branch	git branch l should work after branch l/m has been deleted	branch	pass
+t3200-branch::git-branch-m-dumps-usage	t3200-branch	git branch -m dumps usage	branch	pass
+t3200-branch::git-branch-m-m-broken-symref-should-work	t3200-branch	git branch -m m broken_symref should work	branch	pass
+t3200-branch::git-branch-m-m-m-m-should-work	t3200-branch	git branch -m m m/m should work	branch	pass
+t3200-branch::git-branch-m-n-n-n-should-work	t3200-branch	git branch -m n/n n should work	branch	pass
+t3200-branch::git-branch-m-bbb-should-rename-checked-out-branch	t3200-branch	git branch -m bbb should rename checked out branch	branch	pass
+t3200-branch::renaming-checked-out-branch-works-with-d-f-conflict	t3200-branch	renaming checked out branch works with d/f conflict	branch	pass
+t3200-branch::git-branch-m-o-o-o-should-fail-when-o-p-exists	t3200-branch	git branch -m o/o o should fail when o/p exists	branch	pass
+t3200-branch::git-branch-m-o-q-o-p-should-fail-when-o-p-exists	t3200-branch	git branch -m o/q o/p should fail when o/p exists	branch	pass
+t3200-branch::git-branch-m-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -M o/q o/p should work when o/p exists	branch	pass
+t3200-branch::git-branch-m-f-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -m -f o/q o/p should work when o/p exists	branch	pass
+t3200-branch::git-branch-m-q-r-q-should-fail-when-r-exists	t3200-branch	git branch -m q r/q should fail when r exists	branch	pass
+t3200-branch::git-branch-m-foo-bar-should-fail-when-bar-is-checked-out	t3200-branch	git branch -M foo bar should fail when bar is checked out	branch	pass
+t3200-branch::git-branch-m-foo-bar-should-fail-when-bar-is-checked-out-in-worktree	t3200-branch	git branch -M foo bar should fail when bar is checked out in worktree	branch	pass
+t3200-branch::git-branch-m-baz-bam-should-succeed-when-baz-is-checked-out	t3200-branch	git branch -M baz bam should succeed when baz is checked out	branch	pass
+t3200-branch::git-branch-m-baz-bam-should-add-entries-to-head-reflog	t3200-branch	git branch -M baz bam should add entries to HEAD reflog	branch	pass
+t3200-branch::git-branch-m-should-leave-orphaned-head-alone	t3200-branch	git branch -M should leave orphaned HEAD alone	branch	pass
+t3200-branch::resulting-reflog-can-be-shown-by-log-g	t3200-branch	resulting reflog can be shown by log -g	branch	pass
+t3200-branch::git-branch-m-baz-bam-should-succeed-when-baz-is-checked-out-as-linked-working-tr	t3200-branch	git branch -M baz bam should succeed when baz is checked out as linked working tree	branch	pass
+t3200-branch::git-branch-m-fails-if-updating-any-linked-working-tree-fails	t3200-branch	git branch -M fails if updating any linked working tree fails	branch	pass
+t3200-branch::git-branch-m-baz-bam-should-succeed-within-a-worktree-in-which-baz-is-checked-ou	t3200-branch	git branch -M baz bam should succeed within a worktree in which baz is checked out	branch	pass
+t3200-branch::git-branch-m-main-should-work-when-main-is-checked-out	t3200-branch	git branch -M main should work when main is checked out	branch	pass
+t3200-branch::git-branch-m-main-main-should-work-when-main-is-checked-out	t3200-branch	git branch -M main main should work when main is checked out	branch	pass
+t3200-branch::git-branch-m-topic-topic-should-work-when-main-is-checked-out	t3200-branch	git branch -M topic topic should work when main is checked out	branch	pass
+t3200-branch::git-branch-m-and-c-fail-on-detached-head	t3200-branch	git branch -M and -C fail on detached HEAD	branch	pass
+t3200-branch::git-branch-m-should-work-with-orphan-branches	t3200-branch	git branch -m should work with orphan branches	branch	pass
+t3200-branch::git-branch-d-on-orphan-head-merged	t3200-branch	git branch -d on orphan HEAD (merged)	branch	pass
+t3200-branch::git-branch-d-on-orphan-head-merged-graph	t3200-branch	git branch -d on orphan HEAD (merged, graph)	branch	pass
+t3200-branch::git-branch-d-on-orphan-head-unmerged	t3200-branch	git branch -d on orphan HEAD (unmerged)	branch	pass
+t3200-branch::git-branch-d-on-orphan-head-unmerged-graph	t3200-branch	git branch -d on orphan HEAD (unmerged, graph)	branch	pass
+t3200-branch::git-branch-v-d-t-should-work	t3200-branch	git branch -v -d t should work	branch	pass
+t3200-branch::git-branch-v-m-t-s-should-work	t3200-branch	git branch -v -m t s should work	branch	pass
+t3200-branch::git-branch-m-d-t-s-should-fail	t3200-branch	git branch -m -d t s should fail	branch	pass
+t3200-branch::git-branch-list-d-t-should-fail	t3200-branch	git branch --list -d t should fail	branch	pass
+t3200-branch::deleting-checked-out-branch-from-repo-that-is-a-submodule	t3200-branch	deleting checked-out branch from repo that is a submodule	branch	pass
+t3200-branch::bare-main-worktree-has-head-at-branch-deleted-by-secondary-worktree	t3200-branch	bare main worktree has HEAD at branch deleted by secondary worktree	branch	pass
+t3200-branch::secondary-worktrees-recognize-core-bare-true-in-main-config-worktree	t3200-branch	secondary worktrees recognize core.bare=true in main config.worktree	branch	pass
+t3200-branch::git-branch-list-v-with-abbrev	t3200-branch	git branch --list -v with --abbrev	branch	pass
+t3200-branch::git-branch-column	t3200-branch	git branch --column	branch	pass
+t3200-branch::git-branch-column-with-an-extremely-long-branch-name	t3200-branch	git branch --column with an extremely long branch name	branch	pass
+t3200-branch::git-branch-with-column	t3200-branch	git branch with column.*	branch	pass
+t3200-branch::git-branch-column-v-should-fail	t3200-branch	git branch --column -v should fail	branch	pass
+t3200-branch::git-branch-v-with-column-ui-ignored	t3200-branch	git branch -v with column.ui ignored	branch	pass
+t3200-branch::git-branch-m-q-q2-without-config-should-succeed	t3200-branch	git branch -m q q2 without config should succeed	branch	pass
+t3200-branch::git-branch-m-s-s-s-should-work-when-s-t-is-deleted	t3200-branch	git branch -m s/s s should work when s/t is deleted	branch	pass
+t3200-branch::config-information-was-renamed-too	t3200-branch	config information was renamed, too	branch	pass
+t3200-branch::git-branch-m-correctly-renames-multiple-config-sections	t3200-branch	git branch -m correctly renames multiple config sections	branch	pass
+t3200-branch::git-branch-c-dumps-usage	t3200-branch	git branch -c dumps usage	branch	pass
+t3200-branch::git-branch-copy-dumps-usage	t3200-branch	git branch --copy dumps usage	branch	pass
+t3200-branch::git-branch-c-d-e-should-work	t3200-branch	git branch -c d e should work	branch	pass
+t3200-branch::git-branch-copy-is-a-synonym-for-c	t3200-branch	git branch --copy is a synonym for -c	branch	pass
+t3200-branch::git-branch-c-ee-ef-should-copy-ee-to-create-branch-ef	t3200-branch	git branch -c ee ef should copy ee to create branch ef	branch	pass
+t3200-branch::git-branch-c-f-f-g-g-should-work	t3200-branch	git branch -c f/f g/g should work	branch	pass
+t3200-branch::git-branch-c-m2-m2-should-work	t3200-branch	git branch -c m2 m2 should work	branch	pass
+t3200-branch::git-branch-c-zz-zz-zz-should-fail	t3200-branch	git branch -c zz zz/zz should fail	branch	pass
+t3200-branch::git-branch-c-b-b-b-should-fail	t3200-branch	git branch -c b/b b should fail	branch	pass
+t3200-branch::git-branch-c-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -C o/q o/p should work when o/p exists	branch	pass
+t3200-branch::git-branch-c-f-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -c -f o/q o/p should work when o/p exists	branch	pass
+t3200-branch::git-branch-c-qq-rr-qq-should-fail-when-rr-exists	t3200-branch	git branch -c qq rr/qq should fail when rr exists	branch	pass
+t3200-branch::git-branch-c-b1-b2-should-fail-when-b2-is-checked-out	t3200-branch	git branch -C b1 b2 should fail when b2 is checked out	branch	pass
+t3200-branch::git-branch-c-c1-c2-should-succeed-when-c1-is-checked-out	t3200-branch	git branch -C c1 c2 should succeed when c1 is checked out	branch	pass
+t3200-branch::git-branch-c-c1-c2-should-never-touch-head	t3200-branch	git branch -C c1 c2 should never touch HEAD	branch	pass
+t3200-branch::git-branch-c-main-should-work-when-main-is-checked-out	t3200-branch	git branch -C main should work when main is checked out	branch	pass
+t3200-branch::git-branch-c-main-main-should-work-when-main-is-checked-out	t3200-branch	git branch -C main main should work when main is checked out	branch	pass
+t3200-branch::git-branch-c-main5-main5-should-work-when-main-is-checked-out	t3200-branch	git branch -C main5 main5 should work when main is checked out	branch	pass
+t3200-branch::git-branch-c-ab-cd-should-overwrite-existing-config-for-cd	t3200-branch	git branch -C ab cd should overwrite existing config for cd	branch	pass
+t3200-branch::git-branch-c-correctly-copies-multiple-config-sections	t3200-branch	git branch -c correctly copies multiple config sections	branch	pass
+t3200-branch::deleting-a-symref	t3200-branch	deleting a symref	branch	pass
+t3200-branch::deleting-a-dangling-symref	t3200-branch	deleting a dangling symref	branch	pass
+t3200-branch::deleting-a-self-referential-symref	t3200-branch	deleting a self-referential symref	branch	pass
+t3200-branch::renaming-a-symref-is-not-allowed	t3200-branch	renaming a symref is not allowed	branch	pass
+t3200-branch::test-tracking-setup-via-track	t3200-branch	test tracking setup via --track	branch	pass
+t3200-branch::test-tracking-setup-non-wildcard-matching	t3200-branch	test tracking setup (non-wildcard, matching)	branch	pass
+t3200-branch::tracking-setup-fails-on-non-matching-refspec	t3200-branch	tracking setup fails on non-matching refspec	branch	pass
+t3200-branch::test-tracking-setup-via-config	t3200-branch	test tracking setup via config	branch	pass
+t3200-branch::test-overriding-tracking-setup-via-no-track	t3200-branch	test overriding tracking setup via --no-track	branch	pass
+t3200-branch::no-tracking-without-fetch-entries	t3200-branch	no tracking without .fetch entries	branch	pass
+t3200-branch::test-tracking-setup-via-track-but-deeper	t3200-branch	test tracking setup via --track but deeper	branch	pass
+t3200-branch::test-deleting-branch-deletes-branch-config	t3200-branch	test deleting branch deletes branch config	branch	pass
+t3200-branch::test-deleting-branch-without-config	t3200-branch	test deleting branch without config	branch	pass
+t3200-branch::deleting-currently-checked-out-branch-fails	t3200-branch	deleting currently checked out branch fails	branch	pass
+t3200-branch::deleting-in-use-branch-fails	t3200-branch	deleting in-use branch fails	branch	pass
+t3200-branch::test-track-without-fetch-entries	t3200-branch	test --track without .fetch entries	branch	pass
+t3200-branch::branch-from-non-branch-head-w-autosetupmerge-always	t3200-branch	branch from non-branch HEAD w/autosetupmerge=always	branch	pass
+t3200-branch::branch-from-non-branch-head-w-track-causes-failure	t3200-branch	branch from non-branch HEAD w/--track causes failure	branch	pass
+t3200-branch::branch-from-tag-w-track-causes-failure	t3200-branch	branch from tag w/--track causes failure	branch	pass
+t3200-branch::simple-tracking-works-when-remote-branch-name-matches	t3200-branch	simple tracking works when remote branch name matches	branch	pass
+t3200-branch::simple-tracking-skips-when-remote-branch-name-does-not-match	t3200-branch	simple tracking skips when remote branch name does not match	branch	pass
+t3200-branch::simple-tracking-skips-when-remote-ref-is-not-a-branch	t3200-branch	simple tracking skips when remote ref is not a branch	branch	pass
+t3200-branch::set-upstream-to-fails-on-multiple-branches	t3200-branch	--set-upstream-to fails on multiple branches	branch	pass
+t3200-branch::set-upstream-to-fails-on-detached-head	t3200-branch	--set-upstream-to fails on detached HEAD	branch	pass
+t3200-branch::set-upstream-to-fails-on-a-missing-dst-branch	t3200-branch	--set-upstream-to fails on a missing dst branch	branch	pass
+t3200-branch::set-upstream-to-fails-on-a-missing-src-branch	t3200-branch	--set-upstream-to fails on a missing src branch	branch	pass
+t3200-branch::set-upstream-to-fails-on-a-non-ref	t3200-branch	--set-upstream-to fails on a non-ref	branch	pass
+t3200-branch::set-upstream-to-fails-on-locked-config	t3200-branch	--set-upstream-to fails on locked config	branch	pass
+t3200-branch::use-set-upstream-to-modify-head	t3200-branch	use --set-upstream-to modify HEAD	branch	pass
+t3200-branch::use-set-upstream-to-modify-a-particular-branch	t3200-branch	use --set-upstream-to modify a particular branch	branch	pass
+t3200-branch::unset-upstream-should-fail-if-given-a-non-existent-branch	t3200-branch	--unset-upstream should fail if given a non-existent branch	branch	pass
+t3200-branch::unset-upstream-should-fail-if-config-is-locked	t3200-branch	--unset-upstream should fail if config is locked	branch	pass
+t3200-branch::test-unset-upstream-on-head	t3200-branch	test --unset-upstream on HEAD	branch	pass
+t3200-branch::unset-upstream-should-fail-on-multiple-branches	t3200-branch	--unset-upstream should fail on multiple branches	branch	pass
+t3200-branch::unset-upstream-should-fail-on-detached-head	t3200-branch	--unset-upstream should fail on detached HEAD	branch	pass
+t3200-branch::test-unset-upstream-on-a-particular-branch	t3200-branch	test --unset-upstream on a particular branch	branch	pass
+t3200-branch::disabled-option-set-upstream-fails	t3200-branch	disabled option --set-upstream fails	branch	pass
+t3200-branch::set-upstream-to-notices-an-error-to-set-branch-as-own-upstream	t3200-branch	--set-upstream-to notices an error to set branch as own upstream	branch	pass
+t3200-branch::git-checkout-b-g-h-i-l-should-create-a-branch-and-a-log	t3200-branch	git checkout -b g/h/i -l should create a branch and a log	branch	pass
+t3200-branch::checkout-b-makes-reflog-by-default	t3200-branch	checkout -b makes reflog by default	branch	pass
+t3200-branch::checkout-b-does-not-make-reflog-when-core-logallrefupdates-false	t3200-branch	checkout -b does not make reflog when core.logAllRefUpdates = false	branch	pass
+t3200-branch::checkout-b-with-l-makes-reflog-when-core-logallrefupdates-false	t3200-branch	checkout -b with -l makes reflog when core.logAllRefUpdates = false	branch	pass
+t3200-branch::avoid-ambiguous-track-and-advise	t3200-branch	avoid ambiguous track and advise	branch	pass
+t3200-branch::autosetuprebase-local-on-a-tracked-local-branch	t3200-branch	autosetuprebase local on a tracked local branch	branch	pass
+t3200-branch::autosetuprebase-always-on-a-tracked-local-branch	t3200-branch	autosetuprebase always on a tracked local branch	branch	pass
+t3200-branch::autosetuprebase-remote-on-a-tracked-local-branch	t3200-branch	autosetuprebase remote on a tracked local branch	branch	pass
+t3200-branch::autosetuprebase-never-on-a-tracked-local-branch	t3200-branch	autosetuprebase never on a tracked local branch	branch	pass
+t3200-branch::autosetuprebase-local-on-a-tracked-remote-branch	t3200-branch	autosetuprebase local on a tracked remote branch	branch	pass
+t3200-branch::autosetuprebase-never-on-a-tracked-remote-branch	t3200-branch	autosetuprebase never on a tracked remote branch	branch	pass
+t3200-branch::autosetuprebase-remote-on-a-tracked-remote-branch	t3200-branch	autosetuprebase remote on a tracked remote branch	branch	pass
+t3200-branch::autosetuprebase-always-on-a-tracked-remote-branch	t3200-branch	autosetuprebase always on a tracked remote branch	branch	pass
+t3200-branch::autosetuprebase-unconfigured-on-a-tracked-remote-branch	t3200-branch	autosetuprebase unconfigured on a tracked remote branch	branch	pass
+t3200-branch::autosetuprebase-unconfigured-on-a-tracked-local-branch	t3200-branch	autosetuprebase unconfigured on a tracked local branch	branch	pass
+t3200-branch::autosetuprebase-unconfigured-on-untracked-local-branch	t3200-branch	autosetuprebase unconfigured on untracked local branch	branch	pass
+t3200-branch::autosetuprebase-unconfigured-on-untracked-remote-branch	t3200-branch	autosetuprebase unconfigured on untracked remote branch	branch	pass
+t3200-branch::autosetuprebase-never-on-an-untracked-local-branch	t3200-branch	autosetuprebase never on an untracked local branch	branch	pass
+t3200-branch::autosetuprebase-local-on-an-untracked-local-branch	t3200-branch	autosetuprebase local on an untracked local branch	branch	pass
+t3200-branch::autosetuprebase-remote-on-an-untracked-local-branch	t3200-branch	autosetuprebase remote on an untracked local branch	branch	pass
+t3200-branch::autosetuprebase-always-on-an-untracked-local-branch	t3200-branch	autosetuprebase always on an untracked local branch	branch	pass
+t3200-branch::autosetuprebase-never-on-an-untracked-remote-branch	t3200-branch	autosetuprebase never on an untracked remote branch	branch	pass
+t3200-branch::autosetuprebase-local-on-an-untracked-remote-branch	t3200-branch	autosetuprebase local on an untracked remote branch	branch	pass
+t3200-branch::autosetuprebase-remote-on-an-untracked-remote-branch	t3200-branch	autosetuprebase remote on an untracked remote branch	branch	pass
+t3200-branch::autosetuprebase-always-on-an-untracked-remote-branch	t3200-branch	autosetuprebase always on an untracked remote branch	branch	pass
+t3200-branch::autosetuprebase-always-on-detached-head	t3200-branch	autosetuprebase always on detached HEAD	branch	pass
+t3200-branch::detect-misconfigured-autosetuprebase-bad-value	t3200-branch	detect misconfigured autosetuprebase (bad value)	branch	pass
+t3200-branch::detect-misconfigured-autosetuprebase-no-value	t3200-branch	detect misconfigured autosetuprebase (no value)	branch	pass
+t3200-branch::attempt-to-delete-a-branch-without-base-and-unmerged-to-head	t3200-branch	attempt to delete a branch without base and unmerged to HEAD	branch	pass
+t3200-branch::attempt-to-delete-a-branch-merged-to-its-base	t3200-branch	attempt to delete a branch merged to its base	branch	pass
+t3200-branch::attempt-to-delete-a-branch-merged-to-its-base-2	t3200-branch	attempt to delete a branch merged to its base	branch	pass
+t3200-branch::branch-delete-force-removes-dangling-branch	t3200-branch	branch --delete --force removes dangling branch	branch	pass
+t3200-branch::use-edit-description	t3200-branch	use --edit-description	branch	pass
+t3200-branch::detect-typo-in-branch-name-when-using-edit-description	t3200-branch	detect typo in branch name when using --edit-description	branch	pass
+t3200-branch::refuse-edit-description-on-unborn-branch-for-now	t3200-branch	refuse --edit-description on unborn branch for now	branch	pass
+t3200-branch::merged-catches-invalid-object-names	t3200-branch	--merged catches invalid object names	branch	pass
+t3200-branch::list-during-rebase	t3200-branch	--list during rebase	branch	pass
+t3200-branch::list-during-rebase-from-detached-head	t3200-branch	--list during rebase from detached HEAD	branch	pass
+t3200-branch::tracking-with-unexpected-fetch-refspec	t3200-branch	tracking with unexpected .fetch refspec	branch	pass
+t3200-branch::configured-committerdate-sort	t3200-branch	configured committerdate sort	branch	pass
+t3200-branch::option-override-configured-sort	t3200-branch	option override configured sort	branch	pass
+t3200-branch::no-sort-cancels-config-sort-keys	t3200-branch	--no-sort cancels config sort keys	branch	pass
+t3200-branch::no-sort-cancels-command-line-sort-keys	t3200-branch	--no-sort cancels command line sort keys	branch	pass
+t3200-branch::no-sort-without-subsequent-sort-prints-expected-branches	t3200-branch	--no-sort without subsequent --sort prints expected branches	branch	pass
+t3200-branch::invalid-sort-parameter-in-configuration	t3200-branch	invalid sort parameter in configuration	branch	pass
+t3200-branch::tracking-info-copied-with-track-inherit	t3200-branch	tracking info copied with --track=inherit	branch	pass
+t3200-branch::tracking-info-copied-with-autosetupmerge-inherit	t3200-branch	tracking info copied with autoSetupMerge=inherit	branch	pass
+t3200-branch::track-overrides-branch-autosetupmerge	t3200-branch	--track overrides branch.autoSetupMerge	branch	pass
+t3200-branch::errors-if-given-a-bad-branch-name	t3200-branch	errors if given a bad branch name	branch	pass
 t3201-branch-contains::branch-contains-main	t3201-branch-contains	branch --contains=main	branch	pass
 t3201-branch-contains::branch-contains-main-2	t3201-branch-contains	branch --contains main	branch	pass
 t3201-branch-contains::branch-no-contains-main	t3201-branch-contains	branch --no-contains=main	branch	pass
@@ -5935,61 +5935,61 @@ t3650-replay-basics::replay-refaction-print-config-option	t3650-replay-basics	re
 t3650-replay-basics::replay-refaction-update-config-option	t3650-replay-basics	replay.refAction=update config option	replay	pass
 t3650-replay-basics::command-line-ref-action-overrides-config	t3650-replay-basics	command-line --ref-action overrides config	replay	pass
 t3650-replay-basics::invalid-replay-refaction-value	t3650-replay-basics	invalid replay.refAction value	replay	pass
-t3700-add::test-of-git-add	t3700-add	Test of git add	add	partial
-t3700-add::test-with-no-pathspecs	t3700-add	Test with no pathspecs	add	partial
-t3700-add::post-check-that-foo-is-in-the-index	t3700-add	Post-check that foo is in the index	add	partial
-t3700-add::test-that-git-add-q-works	t3700-add	Test that "git add -- -q" works	add	partial
-t3700-add::git-add-core-fsyncmethod-batch	t3700-add	git add: core.fsyncmethod=batch	add	partial
-t3700-add::git-update-index-core-fsyncmethod-batch	t3700-add	git update-index: core.fsyncmethod=batch	add	partial
-t3700-add::git-add-filemode-0-should-not-get-confused-by-symlink	t3700-add	git add: filemode=0 should not get confused by symlink	add	partial
-t3700-add::git-add-filemode-0-should-not-get-confused-by-symlink-2	t3700-add	git add: filemode=0 should not get confused by symlink	add	partial
-t3700-add::gitignore-test-setup	t3700-add	.gitignore test setup	add	partial
-t3700-add::gitignore-is-honored	t3700-add	.gitignore is honored	add	partial
-t3700-add::error-out-when-attempting-to-add-ignored-ones-without-f	t3700-add	error out when attempting to add ignored ones without -f	add	partial
-t3700-add::error-out-when-attempting-to-add-ignored-ones-without-f-2	t3700-add	error out when attempting to add ignored ones without -f	add	partial
-t3700-add::error-out-when-attempting-to-add-ignored-ones-but-add-others	t3700-add	error out when attempting to add ignored ones but add others	add	partial
-t3700-add::add-ignored-ones-with-f	t3700-add	add ignored ones with -f	add	partial
-t3700-add::add-ignored-ones-with-f-2	t3700-add	add ignored ones with -f	add	partial
-t3700-add::add-ignored-ones-with-f-3	t3700-add	add ignored ones with -f	add	partial
-t3700-add::gitignore-with-subdirectory	t3700-add	.gitignore with subdirectory	add	partial
-t3700-add::check-correct-prefix-detection	t3700-add	check correct prefix detection	add	partial
-t3700-add::git-add-with-filemode-0-symlinks-0-and-unmerged-entries	t3700-add	git add with filemode=0, symlinks=0, and unmerged entries	add	partial
-t3700-add::git-add-with-filemode-0-symlinks-0-prefers-stage-2-over-stage-1	t3700-add	git add with filemode=0, symlinks=0 prefers stage 2 over stage 1	add	partial
-t3700-add::git-add-refresh	t3700-add	git add --refresh	add	partial
-t3700-add::git-add-refresh-with-pathspec	t3700-add	git add --refresh with pathspec	add	partial
-t3700-add::git-add-refresh-correctly-reports-no-match-error	t3700-add	git add --refresh correctly reports no match error	add	partial
-t3700-add::git-add-should-fail-atomically-upon-an-unreadable-file	t3700-add	git add should fail atomically upon an unreadable file	add	partial
-t3700-add::git-add-ignore-errors	t3700-add	git add --ignore-errors	add	partial
-t3700-add::git-add-add-ignore-errors	t3700-add	git add (add.ignore-errors)	add	partial
-t3700-add::git-add-add-ignore-errors-false	t3700-add	git add (add.ignore-errors = false)	add	partial
-t3700-add::no-ignore-errors-overrides-config	t3700-add	--no-ignore-errors overrides config	add	partial
-t3700-add::git-add-to-resolve-conflicts-on-otherwise-ignored-path	t3700-add	git add to resolve conflicts on otherwise ignored path	add	partial
-t3700-add::add-non-existent-should-fail	t3700-add	"add non-existent" should fail	add	partial
-t3700-add::git-add-a-on-empty-repo-does-not-error-out	t3700-add	git add -A on empty repo does not error out	add	partial
-t3700-add::git-add-in-empty-repo	t3700-add	"git add ." in empty repo	add	partial
-t3700-add::git-add-a-embedded-repository	t3700-add	"git add" a embedded repository	add	partial
-t3700-add::error-on-a-repository-with-no-commits	t3700-add	error on a repository with no commits	add	partial
-t3700-add::git-add-dry-run-of-existing-changed-file	t3700-add	git add --dry-run of existing changed file	add	partial
-t3700-add::git-add-dry-run-of-non-existing-file	t3700-add	git add --dry-run of non-existing file	add	partial
-t3700-add::git-add-dry-run-of-an-existing-file-output	t3700-add	git add --dry-run of an existing file output	add	partial
-t3700-add::git-add-dry-run-ignore-missing-of-non-existing-file	t3700-add	git add --dry-run --ignore-missing of non-existing file	add	partial
-t3700-add::git-add-dry-run-ignore-missing-of-non-existing-file-output	t3700-add	git add --dry-run --ignore-missing of non-existing file output	add	partial
-t3700-add::git-add-dry-run-interactive-should-fail	t3700-add	git add --dry-run --interactive should fail	add	partial
-t3700-add::git-add-empty-string-should-fail	t3700-add	git add empty string should fail	add	partial
-t3700-add::git-add-chmod-x-stages-correctly	t3700-add	git add --chmod=[+-]x stages correctly	add	partial
-t3700-add::git-add-chmod-x-with-symlinks	t3700-add	git add --chmod=+x with symlinks	add	partial
-t3700-add::git-add-chmod-x-changes-index-with-already-added-file	t3700-add	git add --chmod=[+-]x changes index with already added file	add	partial
-t3700-add::git-add-chmod-x-does-not-change-the-working-tree	t3700-add	git add --chmod=[+-]x does not change the working tree	add	partial
-t3700-add::git-add-chmod-fails-with-non-regular-files-but-updates-the-other-paths	t3700-add	git add --chmod fails with non regular files (but updates the other paths)	add	partial
-t3700-add::git-add-chmod-honors-dry-run	t3700-add	git add --chmod honors --dry-run	add	partial
-t3700-add::git-add-chmod-dry-run-reports-error-for-non-regular-files	t3700-add	git add --chmod --dry-run reports error for non regular files	add	partial
-t3700-add::git-add-chmod-dry-run-reports-error-for-unmatched-pathspec	t3700-add	git add --chmod --dry-run reports error for unmatched pathspec	add	partial
-t3700-add::no-file-status-change-if-no-pathspec-is-given	t3700-add	no file status change if no pathspec is given	add	partial
-t3700-add::no-file-status-change-if-no-pathspec-is-given-in-subdir	t3700-add	no file status change if no pathspec is given in subdir	add	partial
-t3700-add::all-statuses-changed-in-folder-if-is-given	t3700-add	all statuses changed in folder if . is given	add	partial
-t3700-add::cannot-add-a-submodule-of-a-different-algorithm	t3700-add	cannot add a submodule of a different algorithm	add	partial
-t3700-add::path-is-case-insensitive	t3700-add	path is case-insensitive	add	partial
-t3700-add::git-add-fo-ou-bar-ignores-foobar	t3700-add	git add 'fo\\[ou\\]bar' ignores foobar	add	partial
+t3700-add::test-of-git-add	t3700-add	Test of git add	add	pass
+t3700-add::test-with-no-pathspecs	t3700-add	Test with no pathspecs	add	pass
+t3700-add::post-check-that-foo-is-in-the-index	t3700-add	Post-check that foo is in the index	add	pass
+t3700-add::test-that-git-add-q-works	t3700-add	Test that "git add -- -q" works	add	pass
+t3700-add::git-add-core-fsyncmethod-batch	t3700-add	git add: core.fsyncmethod=batch	add	pass
+t3700-add::git-update-index-core-fsyncmethod-batch	t3700-add	git update-index: core.fsyncmethod=batch	add	pass
+t3700-add::git-add-filemode-0-should-not-get-confused-by-symlink	t3700-add	git add: filemode=0 should not get confused by symlink	add	pass
+t3700-add::git-add-filemode-0-should-not-get-confused-by-symlink-2	t3700-add	git add: filemode=0 should not get confused by symlink	add	pass
+t3700-add::gitignore-test-setup	t3700-add	.gitignore test setup	add	pass
+t3700-add::gitignore-is-honored	t3700-add	.gitignore is honored	add	pass
+t3700-add::error-out-when-attempting-to-add-ignored-ones-without-f	t3700-add	error out when attempting to add ignored ones without -f	add	pass
+t3700-add::error-out-when-attempting-to-add-ignored-ones-without-f-2	t3700-add	error out when attempting to add ignored ones without -f	add	pass
+t3700-add::error-out-when-attempting-to-add-ignored-ones-but-add-others	t3700-add	error out when attempting to add ignored ones but add others	add	pass
+t3700-add::add-ignored-ones-with-f	t3700-add	add ignored ones with -f	add	pass
+t3700-add::add-ignored-ones-with-f-2	t3700-add	add ignored ones with -f	add	pass
+t3700-add::add-ignored-ones-with-f-3	t3700-add	add ignored ones with -f	add	pass
+t3700-add::gitignore-with-subdirectory	t3700-add	.gitignore with subdirectory	add	pass
+t3700-add::check-correct-prefix-detection	t3700-add	check correct prefix detection	add	pass
+t3700-add::git-add-with-filemode-0-symlinks-0-and-unmerged-entries	t3700-add	git add with filemode=0, symlinks=0, and unmerged entries	add	pass
+t3700-add::git-add-with-filemode-0-symlinks-0-prefers-stage-2-over-stage-1	t3700-add	git add with filemode=0, symlinks=0 prefers stage 2 over stage 1	add	pass
+t3700-add::git-add-refresh	t3700-add	git add --refresh	add	pass
+t3700-add::git-add-refresh-with-pathspec	t3700-add	git add --refresh with pathspec	add	pass
+t3700-add::git-add-refresh-correctly-reports-no-match-error	t3700-add	git add --refresh correctly reports no match error	add	pass
+t3700-add::git-add-should-fail-atomically-upon-an-unreadable-file	t3700-add	git add should fail atomically upon an unreadable file	add	pass
+t3700-add::git-add-ignore-errors	t3700-add	git add --ignore-errors	add	pass
+t3700-add::git-add-add-ignore-errors	t3700-add	git add (add.ignore-errors)	add	pass
+t3700-add::git-add-add-ignore-errors-false	t3700-add	git add (add.ignore-errors = false)	add	pass
+t3700-add::no-ignore-errors-overrides-config	t3700-add	--no-ignore-errors overrides config	add	pass
+t3700-add::git-add-to-resolve-conflicts-on-otherwise-ignored-path	t3700-add	git add to resolve conflicts on otherwise ignored path	add	pass
+t3700-add::add-non-existent-should-fail	t3700-add	"add non-existent" should fail	add	pass
+t3700-add::git-add-a-on-empty-repo-does-not-error-out	t3700-add	git add -A on empty repo does not error out	add	pass
+t3700-add::git-add-in-empty-repo	t3700-add	"git add ." in empty repo	add	pass
+t3700-add::git-add-a-embedded-repository	t3700-add	"git add" a embedded repository	add	pass
+t3700-add::error-on-a-repository-with-no-commits	t3700-add	error on a repository with no commits	add	pass
+t3700-add::git-add-dry-run-of-existing-changed-file	t3700-add	git add --dry-run of existing changed file	add	pass
+t3700-add::git-add-dry-run-of-non-existing-file	t3700-add	git add --dry-run of non-existing file	add	pass
+t3700-add::git-add-dry-run-of-an-existing-file-output	t3700-add	git add --dry-run of an existing file output	add	pass
+t3700-add::git-add-dry-run-ignore-missing-of-non-existing-file	t3700-add	git add --dry-run --ignore-missing of non-existing file	add	pass
+t3700-add::git-add-dry-run-ignore-missing-of-non-existing-file-output	t3700-add	git add --dry-run --ignore-missing of non-existing file output	add	pass
+t3700-add::git-add-dry-run-interactive-should-fail	t3700-add	git add --dry-run --interactive should fail	add	pass
+t3700-add::git-add-empty-string-should-fail	t3700-add	git add empty string should fail	add	pass
+t3700-add::git-add-chmod-x-stages-correctly	t3700-add	git add --chmod=[+-]x stages correctly	add	pass
+t3700-add::git-add-chmod-x-with-symlinks	t3700-add	git add --chmod=+x with symlinks	add	pass
+t3700-add::git-add-chmod-x-changes-index-with-already-added-file	t3700-add	git add --chmod=[+-]x changes index with already added file	add	pass
+t3700-add::git-add-chmod-x-does-not-change-the-working-tree	t3700-add	git add --chmod=[+-]x does not change the working tree	add	pass
+t3700-add::git-add-chmod-fails-with-non-regular-files-but-updates-the-other-paths	t3700-add	git add --chmod fails with non regular files (but updates the other paths)	add	pass
+t3700-add::git-add-chmod-honors-dry-run	t3700-add	git add --chmod honors --dry-run	add	pass
+t3700-add::git-add-chmod-dry-run-reports-error-for-non-regular-files	t3700-add	git add --chmod --dry-run reports error for non regular files	add	pass
+t3700-add::git-add-chmod-dry-run-reports-error-for-unmatched-pathspec	t3700-add	git add --chmod --dry-run reports error for unmatched pathspec	add	pass
+t3700-add::no-file-status-change-if-no-pathspec-is-given	t3700-add	no file status change if no pathspec is given	add	pass
+t3700-add::no-file-status-change-if-no-pathspec-is-given-in-subdir	t3700-add	no file status change if no pathspec is given in subdir	add	pass
+t3700-add::all-statuses-changed-in-folder-if-is-given	t3700-add	all statuses changed in folder if . is given	add	pass
+t3700-add::cannot-add-a-submodule-of-a-different-algorithm	t3700-add	cannot add a submodule of a different algorithm	add	pass
+t3700-add::path-is-case-insensitive	t3700-add	path is case-insensitive	add	pass
+t3700-add::git-add-fo-ou-bar-ignores-foobar	t3700-add	git add 'fo\\[ou\\]bar' ignores foobar	add	pass
 t3701-add-interactive::unknown-command	t3701-add-interactive	unknown command	add	pass
 t3701-add-interactive::setup-initial	t3701-add-interactive	setup (initial)	add	pass
 t3701-add-interactive::status-works-initial	t3701-add-interactive	status works (initial)	add	pass
@@ -6462,25 +6462,25 @@ t4001-diff-rename::rename-pretty-print-common-prefix-and-suffix-overlap	t4001-di
 t4001-diff-rename::diff-tree-l0-defaults-to-a-big-rename-limit-not-zero	t4001-diff-rename	diff-tree -l0 defaults to a big rename limit, not zero	diff	pass
 t4001-diff-rename::basename-similarity-vs-best-similarity	t4001-diff-rename	basename similarity vs best similarity	diff	pass
 t4001-diff-rename::last-line-matters-too	t4001-diff-rename	last line matters too	diff	pass
-t4002-diff-basic::diff-tree-of-known-trees	t4002-diff-basic	diff-tree of known trees.	diff	partial
-t4002-diff-basic::diff-tree-of-known-trees-2	t4002-diff-basic	diff-tree of known trees.	diff	partial
-t4002-diff-basic::diff-tree-of-known-trees-3	t4002-diff-basic	diff-tree of known trees.	diff	partial
-t4002-diff-basic::diff-tree-of-known-trees-4	t4002-diff-basic	diff-tree of known trees.	diff	partial
-t4002-diff-basic::diff-tree-of-known-trees-5	t4002-diff-basic	diff-tree of known trees.	diff	partial
-t4002-diff-basic::diff-tree-of-known-trees-6	t4002-diff-basic	diff-tree of known trees.	diff	partial
-t4002-diff-basic::diff-tree-stdin-of-known-trees	t4002-diff-basic	diff-tree --stdin of known trees.	diff	partial
-t4002-diff-basic::diff-tree-stdin-of-known-trees-2	t4002-diff-basic	diff-tree --stdin of known trees.	diff	partial
-t4002-diff-basic::diff-cache-o-with-a-in-cache	t4002-diff-basic	diff-cache O with A in cache	diff	partial
-t4002-diff-basic::diff-cache-o-with-b-in-cache	t4002-diff-basic	diff-cache O with B in cache	diff	partial
-t4002-diff-basic::diff-cache-a-with-b-in-cache	t4002-diff-basic	diff-cache A with B in cache	diff	partial
-t4002-diff-basic::diff-files-with-o-in-cache-and-a-checked-out	t4002-diff-basic	diff-files with O in cache and A checked out	diff	partial
-t4002-diff-basic::diff-files-with-o-in-cache-and-b-checked-out	t4002-diff-basic	diff-files with O in cache and B checked out	diff	partial
-t4002-diff-basic::diff-files-with-a-in-cache-and-b-checked-out	t4002-diff-basic	diff-files with A in cache and B checked out	diff	partial
-t4002-diff-basic::diff-tree-o-a-diff-tree-r-a-o	t4002-diff-basic	diff-tree O A == diff-tree -R A O	diff	partial
-t4002-diff-basic::diff-tree-r-o-a-diff-tree-r-r-a-o	t4002-diff-basic	diff-tree -r O A == diff-tree -r -R A O	diff	partial
-t4002-diff-basic::diff-tree-b-a-diff-tree-r-a-b	t4002-diff-basic	diff-tree B A == diff-tree -R A B	diff	partial
-t4002-diff-basic::diff-tree-r-b-a-diff-tree-r-r-a-b	t4002-diff-basic	diff-tree -r B A == diff-tree -r -R A B	diff	partial
-t4002-diff-basic::diff-can-read-from-stdin	t4002-diff-basic	diff can read from stdin	diff	partial
+t4002-diff-basic::diff-tree-of-known-trees	t4002-diff-basic	diff-tree of known trees.	diff	pass
+t4002-diff-basic::diff-tree-of-known-trees-2	t4002-diff-basic	diff-tree of known trees.	diff	pass
+t4002-diff-basic::diff-tree-of-known-trees-3	t4002-diff-basic	diff-tree of known trees.	diff	pass
+t4002-diff-basic::diff-tree-of-known-trees-4	t4002-diff-basic	diff-tree of known trees.	diff	pass
+t4002-diff-basic::diff-tree-of-known-trees-5	t4002-diff-basic	diff-tree of known trees.	diff	pass
+t4002-diff-basic::diff-tree-of-known-trees-6	t4002-diff-basic	diff-tree of known trees.	diff	pass
+t4002-diff-basic::diff-tree-stdin-of-known-trees	t4002-diff-basic	diff-tree --stdin of known trees.	diff	pass
+t4002-diff-basic::diff-tree-stdin-of-known-trees-2	t4002-diff-basic	diff-tree --stdin of known trees.	diff	pass
+t4002-diff-basic::diff-cache-o-with-a-in-cache	t4002-diff-basic	diff-cache O with A in cache	diff	pass
+t4002-diff-basic::diff-cache-o-with-b-in-cache	t4002-diff-basic	diff-cache O with B in cache	diff	pass
+t4002-diff-basic::diff-cache-a-with-b-in-cache	t4002-diff-basic	diff-cache A with B in cache	diff	pass
+t4002-diff-basic::diff-files-with-o-in-cache-and-a-checked-out	t4002-diff-basic	diff-files with O in cache and A checked out	diff	pass
+t4002-diff-basic::diff-files-with-o-in-cache-and-b-checked-out	t4002-diff-basic	diff-files with O in cache and B checked out	diff	pass
+t4002-diff-basic::diff-files-with-a-in-cache-and-b-checked-out	t4002-diff-basic	diff-files with A in cache and B checked out	diff	pass
+t4002-diff-basic::diff-tree-o-a-diff-tree-r-a-o	t4002-diff-basic	diff-tree O A == diff-tree -R A O	diff	pass
+t4002-diff-basic::diff-tree-r-o-a-diff-tree-r-r-a-o	t4002-diff-basic	diff-tree -r O A == diff-tree -r -R A O	diff	pass
+t4002-diff-basic::diff-tree-b-a-diff-tree-r-a-b	t4002-diff-basic	diff-tree B A == diff-tree -R A B	diff	pass
+t4002-diff-basic::diff-tree-r-b-a-diff-tree-r-r-a-b	t4002-diff-basic	diff-tree -r B A == diff-tree -r -R A B	diff	pass
+t4002-diff-basic::diff-can-read-from-stdin	t4002-diff-basic	diff can read from stdin	diff	pass
 t4003-diff-rename-1::prepare-reference-tree	t4003-diff-rename-1	prepare reference tree	diff	pass
 t4003-diff-rename-1::prepare-work-tree	t4003-diff-rename-1	prepare work tree	diff	pass
 t4003-diff-rename-1::validate-output-from-rename-copy-detection-1	t4003-diff-rename-1	validate output from rename/copy detection (#1)	diff	pass
@@ -6560,41 +6560,41 @@ t4012-diff-binary::diff-index-with-binary	t4012-diff-binary	diff-index with --bi
 t4012-diff-binary::apply-binary-patch	t4012-diff-binary	apply binary patch	diff	pass
 t4012-diff-binary::diff-no-index-with-binary-creation	t4012-diff-binary	diff --no-index with binary creation	diff	pass
 t4012-diff-binary::diff-stat-with-binary-files-and-big-change-count	t4012-diff-binary	diff --stat with binary files and big change count	diff	pass
-t4013-diff-various::whatchanged-needs-i-still-use-this	t4013-diff-various	whatchanged needs --i-still-use-this	diff	partial
-t4013-diff-various::log-m-matches-pure-log	t4013-diff-various	log -m matches pure log	diff	partial
-t4013-diff-various::log-diff-merges-on-matches-diff-merges-separate	t4013-diff-various	log --diff-merges=on matches --diff-merges=separate	diff	partial
-t4013-diff-various::log-dd-matches-diff-merges-1-p	t4013-diff-various	log --dd matches --diff-merges=1 -p	diff	partial
-t4013-diff-various::deny-wrong-log-diffmerges-config	t4013-diff-various	deny wrong log.diffMerges config	diff	partial
-t4013-diff-various::git-config-log-diffmerges-first-parent	t4013-diff-various	git config log.diffMerges first-parent	diff	partial
-t4013-diff-various::git-config-log-diffmerges-first-parent-vs-m	t4013-diff-various	git config log.diffMerges first-parent vs -m	diff	partial
-t4013-diff-various::git-diff-index-m	t4013-diff-various	git diff-index -m	diff	partial
-t4013-diff-various::log-s-requires-an-argument	t4013-diff-various	log -S requires an argument	diff	partial
-t4013-diff-various::diff-cached-on-unborn-branch	t4013-diff-various	diff --cached on unborn branch	diff	partial
-t4013-diff-various::diff-cached-file-on-unborn-branch	t4013-diff-various	diff --cached -- file on unborn branch	diff	partial
-t4013-diff-various::diff-line-prefix-with-spaces	t4013-diff-various	diff --line-prefix with spaces	diff	partial
-t4013-diff-various::diff-tree-stdin-with-log-formatting	t4013-diff-various	diff-tree --stdin with log formatting	diff	partial
-t4013-diff-various::diff-tree-stdin-with-pathspec	t4013-diff-various	diff-tree --stdin with pathspec	diff	partial
-t4013-diff-various::show-a-b-pathspec	t4013-diff-various	show A B ... -- <pathspec>	diff	partial
-t4013-diff-various::diff-i-regex-setup	t4013-diff-various	diff -I<regex>: setup	diff	partial
-t4013-diff-various::diff-i-regex	t4013-diff-various	diff -I<regex>	diff	partial
-t4013-diff-various::diff-i-regex-stat	t4013-diff-various	diff -I<regex> --stat	diff	partial
-t4013-diff-various::diff-i-regex-detect-malformed-regex	t4013-diff-various	diff -I<regex>: detect malformed regex	diff	partial
-t4013-diff-various::diff-i-regex-ignore-matching-file	t4013-diff-various	diff -I<regex>: ignore matching file	diff	partial
-t4013-diff-various::diff-i-regex-ignore-all-content-changes	t4013-diff-various	diff -I<regex>: ignore all content changes	diff	partial
-t4013-diff-various::diff-files-does-not-respect-diff-noprefix	t4013-diff-various	diff-files does not respect diff.noPrefix	diff	partial
-t4013-diff-various::diff-files-respects-no-prefix	t4013-diff-various	diff-files respects --no-prefix	diff	partial
-t4013-diff-various::diff-respects-diff-noprefix	t4013-diff-various	diff respects diff.noPrefix	diff	partial
-t4013-diff-various::diff-default-prefix-overrides-diff-noprefix	t4013-diff-various	diff --default-prefix overrides diff.noPrefix	diff	partial
-t4013-diff-various::diff-respects-diff-mnemonicprefix	t4013-diff-various	diff respects diff.mnemonicPrefix	diff	partial
-t4013-diff-various::diff-default-prefix-overrides-diff-mnemonicprefix	t4013-diff-various	diff --default-prefix overrides diff.mnemonicPrefix	diff	partial
-t4013-diff-various::diff-respects-diff-srcprefix	t4013-diff-various	diff respects diff.srcPrefix	diff	partial
-t4013-diff-various::diff-respects-diff-dstprefix	t4013-diff-various	diff respects diff.dstPrefix	diff	partial
-t4013-diff-various::diff-src-prefix-overrides-diff-srcprefix	t4013-diff-various	diff --src-prefix overrides diff.srcPrefix	diff	partial
-t4013-diff-various::diff-dst-prefix-overrides-diff-dstprefix	t4013-diff-various	diff --dst-prefix overrides diff.dstPrefix	diff	partial
-t4013-diff-various::diff-src-dst-prefix-ignored-with-diff-noprefix	t4013-diff-various	diff.{src,dst}Prefix ignored with diff.noPrefix	diff	partial
-t4013-diff-various::diff-src-dst-prefix-ignored-with-diff-mnemonicprefix	t4013-diff-various	diff.{src,dst}Prefix ignored with diff.mnemonicPrefix	diff	partial
-t4013-diff-various::diff-src-dst-prefix-ignored-with-default-prefix	t4013-diff-various	diff.{src,dst}Prefix ignored with --default-prefix	diff	partial
-t4013-diff-various::diff-no-renames-cannot-be-abbreviated	t4013-diff-various	diff --no-renames cannot be abbreviated	diff	partial
+t4013-diff-various::whatchanged-needs-i-still-use-this	t4013-diff-various	whatchanged needs --i-still-use-this	diff	pass
+t4013-diff-various::log-m-matches-pure-log	t4013-diff-various	log -m matches pure log	diff	pass
+t4013-diff-various::log-diff-merges-on-matches-diff-merges-separate	t4013-diff-various	log --diff-merges=on matches --diff-merges=separate	diff	pass
+t4013-diff-various::log-dd-matches-diff-merges-1-p	t4013-diff-various	log --dd matches --diff-merges=1 -p	diff	pass
+t4013-diff-various::deny-wrong-log-diffmerges-config	t4013-diff-various	deny wrong log.diffMerges config	diff	pass
+t4013-diff-various::git-config-log-diffmerges-first-parent	t4013-diff-various	git config log.diffMerges first-parent	diff	pass
+t4013-diff-various::git-config-log-diffmerges-first-parent-vs-m	t4013-diff-various	git config log.diffMerges first-parent vs -m	diff	pass
+t4013-diff-various::git-diff-index-m	t4013-diff-various	git diff-index -m	diff	pass
+t4013-diff-various::log-s-requires-an-argument	t4013-diff-various	log -S requires an argument	diff	pass
+t4013-diff-various::diff-cached-on-unborn-branch	t4013-diff-various	diff --cached on unborn branch	diff	pass
+t4013-diff-various::diff-cached-file-on-unborn-branch	t4013-diff-various	diff --cached -- file on unborn branch	diff	pass
+t4013-diff-various::diff-line-prefix-with-spaces	t4013-diff-various	diff --line-prefix with spaces	diff	pass
+t4013-diff-various::diff-tree-stdin-with-log-formatting	t4013-diff-various	diff-tree --stdin with log formatting	diff	pass
+t4013-diff-various::diff-tree-stdin-with-pathspec	t4013-diff-various	diff-tree --stdin with pathspec	diff	pass
+t4013-diff-various::show-a-b-pathspec	t4013-diff-various	show A B ... -- <pathspec>	diff	pass
+t4013-diff-various::diff-i-regex-setup	t4013-diff-various	diff -I<regex>: setup	diff	pass
+t4013-diff-various::diff-i-regex	t4013-diff-various	diff -I<regex>	diff	pass
+t4013-diff-various::diff-i-regex-stat	t4013-diff-various	diff -I<regex> --stat	diff	pass
+t4013-diff-various::diff-i-regex-detect-malformed-regex	t4013-diff-various	diff -I<regex>: detect malformed regex	diff	pass
+t4013-diff-various::diff-i-regex-ignore-matching-file	t4013-diff-various	diff -I<regex>: ignore matching file	diff	pass
+t4013-diff-various::diff-i-regex-ignore-all-content-changes	t4013-diff-various	diff -I<regex>: ignore all content changes	diff	pass
+t4013-diff-various::diff-files-does-not-respect-diff-noprefix	t4013-diff-various	diff-files does not respect diff.noPrefix	diff	pass
+t4013-diff-various::diff-files-respects-no-prefix	t4013-diff-various	diff-files respects --no-prefix	diff	pass
+t4013-diff-various::diff-respects-diff-noprefix	t4013-diff-various	diff respects diff.noPrefix	diff	pass
+t4013-diff-various::diff-default-prefix-overrides-diff-noprefix	t4013-diff-various	diff --default-prefix overrides diff.noPrefix	diff	pass
+t4013-diff-various::diff-respects-diff-mnemonicprefix	t4013-diff-various	diff respects diff.mnemonicPrefix	diff	pass
+t4013-diff-various::diff-default-prefix-overrides-diff-mnemonicprefix	t4013-diff-various	diff --default-prefix overrides diff.mnemonicPrefix	diff	pass
+t4013-diff-various::diff-respects-diff-srcprefix	t4013-diff-various	diff respects diff.srcPrefix	diff	pass
+t4013-diff-various::diff-respects-diff-dstprefix	t4013-diff-various	diff respects diff.dstPrefix	diff	pass
+t4013-diff-various::diff-src-prefix-overrides-diff-srcprefix	t4013-diff-various	diff --src-prefix overrides diff.srcPrefix	diff	pass
+t4013-diff-various::diff-dst-prefix-overrides-diff-dstprefix	t4013-diff-various	diff --dst-prefix overrides diff.dstPrefix	diff	pass
+t4013-diff-various::diff-src-dst-prefix-ignored-with-diff-noprefix	t4013-diff-various	diff.{src,dst}Prefix ignored with diff.noPrefix	diff	pass
+t4013-diff-various::diff-src-dst-prefix-ignored-with-diff-mnemonicprefix	t4013-diff-various	diff.{src,dst}Prefix ignored with diff.mnemonicPrefix	diff	pass
+t4013-diff-various::diff-src-dst-prefix-ignored-with-default-prefix	t4013-diff-various	diff.{src,dst}Prefix ignored with --default-prefix	diff	pass
+t4013-diff-various::diff-no-renames-cannot-be-abbreviated	t4013-diff-various	diff --no-renames cannot be abbreviated	diff	pass
 t4014-format-patch::format-patch-ignore-if-in-upstream	t4014-format-patch	format-patch --ignore-if-in-upstream	format-patch	pass
 t4014-format-patch::format-patch-ignore-if-in-upstream-2	t4014-format-patch	format-patch --ignore-if-in-upstream	format-patch	pass
 t4014-format-patch::format-patch-ignore-if-in-upstream-handles-tags	t4014-format-patch	format-patch --ignore-if-in-upstream handles tags	format-patch	pass
@@ -7405,47 +7405,47 @@ t4052-stat-output::cmd-stat-width-with-big-change-is-more-balanced	t4052-stat-ou
 t4052-stat-output::cmd-stat-width-graph-with-big-change-is-balanced	t4052-stat-output	$cmd --stat=width --graph with big change is balanced		pass
 t4052-stat-output::cmd-verb-columns-with-long-name	t4052-stat-output	$cmd $verb COLUMNS with long name		pass
 t4052-stat-output::cmd-graph-verb-columns-with-long-name	t4052-stat-output	$cmd --graph $verb COLUMNS with long name		pass
-t4053-diff-no-index::setup	t4053-diff-no-index	setup	diff	partial
-t4053-diff-no-index::git-diff-no-index-exit-code	t4053-diff-no-index	git diff --no-index --exit-code	diff	partial
-t4053-diff-no-index::git-diff-no-index-directories	t4053-diff-no-index	git diff --no-index directories	diff	partial
-t4053-diff-no-index::git-diff-no-index-with	t4053-diff-no-index	git diff --no-index with -	diff	partial
-t4053-diff-no-index::git-diff-no-index-relative-path-outside-repo	t4053-diff-no-index	git diff --no-index relative path outside repo	diff	partial
-t4053-diff-no-index::git-diff-no-index-with-broken-index	t4053-diff-no-index	git diff --no-index with broken index	diff	partial
-t4053-diff-no-index::git-diff-outside-repo-with-broken-index	t4053-diff-no-index	git diff outside repo with broken index	diff	partial
-t4053-diff-no-index::git-diff-no-index-executed-outside-repo-gives-correct-error-message	t4053-diff-no-index	git diff --no-index executed outside repo gives correct error message	diff	partial
-t4053-diff-no-index::git-diff-find-object-outside-repo-fails-gracefully	t4053-diff-no-index	git diff --find-object outside repo fails gracefully	diff	partial
-t4053-diff-no-index::diff-d-f-and-diff-f-d	t4053-diff-no-index	diff D F and diff F D	diff	partial
-t4053-diff-no-index::turning-a-file-into-a-directory	t4053-diff-no-index	turning a file into a directory	diff	partial
-t4053-diff-no-index::diff-from-repo-subdir-shows-real-paths-explicit	t4053-diff-no-index	diff from repo subdir shows real paths (explicit)	diff	partial
-t4053-diff-no-index::diff-from-repo-subdir-shows-real-paths-implicit	t4053-diff-no-index	diff from repo subdir shows real paths (implicit)	diff	partial
-t4053-diff-no-index::diff-no-index-from-repo-subdir-respects-config-explicit	t4053-diff-no-index	diff --no-index from repo subdir respects config (explicit)	diff	partial
-t4053-diff-no-index::diff-no-index-from-repo-subdir-respects-config-implicit	t4053-diff-no-index	diff --no-index from repo subdir respects config (implicit)	diff	partial
-t4053-diff-no-index::diff-no-index-from-repo-subdir-with-absolute-paths	t4053-diff-no-index	diff --no-index from repo subdir with absolute paths	diff	partial
-t4053-diff-no-index::diff-no-index-allows-external-diff	t4053-diff-no-index	diff --no-index allows external diff	diff	partial
-t4053-diff-no-index::diff-no-index-normalizes-mode-no-changes	t4053-diff-no-index	diff --no-index normalizes mode: no changes	diff	partial
-t4053-diff-no-index::diff-no-index-normalizes-mode-chmod-x	t4053-diff-no-index	diff --no-index normalizes mode: chmod +x	diff	partial
-t4053-diff-no-index::diff-no-index-normalizes-mode-not-like-git-mode	t4053-diff-no-index	diff --no-index normalizes: mode not like git mode	diff	partial
-t4053-diff-no-index::diff-no-index-normalizes-mode-not-like-git-mode-symlink	t4053-diff-no-index	diff --no-index normalizes: mode not like git mode (symlink)	diff	partial
-t4053-diff-no-index::external-diff-with-mode-only-change	t4053-diff-no-index	external diff with mode-only change	diff	partial
-t4053-diff-no-index::diff-no-index-refuses-to-diff-stdin-and-a-directory	t4053-diff-no-index	diff --no-index refuses to diff stdin and a directory	diff	partial
-t4053-diff-no-index::diff-no-index-refuses-to-diff-a-named-pipe-and-a-directory	t4053-diff-no-index	diff --no-index refuses to diff a named pipe and a directory	diff	partial
-t4053-diff-no-index::diff-no-index-reads-from-pipes	t4053-diff-no-index	diff --no-index reads from pipes	diff	partial
-t4053-diff-no-index::diff-no-index-f-f-rejects-pathspecs	t4053-diff-no-index	diff --no-index F F rejects pathspecs	diff	partial
-t4053-diff-no-index::diff-no-index-d-f-rejects-pathspecs	t4053-diff-no-index	diff --no-index D F rejects pathspecs	diff	partial
-t4053-diff-no-index::diff-no-index-f-d-rejects-pathspecs	t4053-diff-no-index	diff --no-index F D rejects pathspecs	diff	partial
-t4053-diff-no-index::diff-no-index-rejects-absolute-pathspec	t4053-diff-no-index	diff --no-index rejects absolute pathspec	diff	partial
-t4053-diff-no-index::diff-no-index-with-pathspec	t4053-diff-no-index	diff --no-index with pathspec	diff	partial
-t4053-diff-no-index::diff-no-index-first-path-ending-in-slash-with-pathspec	t4053-diff-no-index	diff --no-index first path ending in slash with pathspec	diff	partial
-t4053-diff-no-index::diff-no-index-second-path-ending-in-slash-with-pathspec	t4053-diff-no-index	diff --no-index second path ending in slash with pathspec	diff	partial
-t4053-diff-no-index::diff-no-index-with-pathspec-no-matches	t4053-diff-no-index	diff --no-index with pathspec no matches	diff	partial
-t4053-diff-no-index::diff-no-index-with-negative-pathspec	t4053-diff-no-index	diff --no-index with negative pathspec	diff	partial
-t4053-diff-no-index::setup-nested	t4053-diff-no-index	setup nested	diff	partial
-t4053-diff-no-index::diff-no-index-with-pathspec-nested-negative-pathspec	t4053-diff-no-index	diff --no-index with pathspec nested negative pathspec	diff	partial
-t4053-diff-no-index::diff-no-index-with-pathspec-nested-pathspec	t4053-diff-no-index	diff --no-index with pathspec nested pathspec	diff	partial
-t4053-diff-no-index::diff-no-index-with-pathspec-glob	t4053-diff-no-index	diff --no-index with pathspec glob	diff	partial
-t4053-diff-no-index::diff-no-index-with-pathspec-glob-and-exclude	t4053-diff-no-index	diff --no-index with pathspec glob and exclude	diff	partial
-t4053-diff-no-index::diff-no-index-treats-as-stdin	t4053-diff-no-index	diff --no-index treats '-' as stdin	diff	partial
-t4053-diff-no-index::diff-no-index-r-treats-as-stdin	t4053-diff-no-index	diff --no-index -R treats '-' as stdin	diff	partial
+t4053-diff-no-index::setup	t4053-diff-no-index	setup	diff	pass
+t4053-diff-no-index::git-diff-no-index-exit-code	t4053-diff-no-index	git diff --no-index --exit-code	diff	pass
+t4053-diff-no-index::git-diff-no-index-directories	t4053-diff-no-index	git diff --no-index directories	diff	pass
+t4053-diff-no-index::git-diff-no-index-with	t4053-diff-no-index	git diff --no-index with -	diff	pass
+t4053-diff-no-index::git-diff-no-index-relative-path-outside-repo	t4053-diff-no-index	git diff --no-index relative path outside repo	diff	pass
+t4053-diff-no-index::git-diff-no-index-with-broken-index	t4053-diff-no-index	git diff --no-index with broken index	diff	pass
+t4053-diff-no-index::git-diff-outside-repo-with-broken-index	t4053-diff-no-index	git diff outside repo with broken index	diff	pass
+t4053-diff-no-index::git-diff-no-index-executed-outside-repo-gives-correct-error-message	t4053-diff-no-index	git diff --no-index executed outside repo gives correct error message	diff	pass
+t4053-diff-no-index::git-diff-find-object-outside-repo-fails-gracefully	t4053-diff-no-index	git diff --find-object outside repo fails gracefully	diff	pass
+t4053-diff-no-index::diff-d-f-and-diff-f-d	t4053-diff-no-index	diff D F and diff F D	diff	pass
+t4053-diff-no-index::turning-a-file-into-a-directory	t4053-diff-no-index	turning a file into a directory	diff	pass
+t4053-diff-no-index::diff-from-repo-subdir-shows-real-paths-explicit	t4053-diff-no-index	diff from repo subdir shows real paths (explicit)	diff	pass
+t4053-diff-no-index::diff-from-repo-subdir-shows-real-paths-implicit	t4053-diff-no-index	diff from repo subdir shows real paths (implicit)	diff	pass
+t4053-diff-no-index::diff-no-index-from-repo-subdir-respects-config-explicit	t4053-diff-no-index	diff --no-index from repo subdir respects config (explicit)	diff	pass
+t4053-diff-no-index::diff-no-index-from-repo-subdir-respects-config-implicit	t4053-diff-no-index	diff --no-index from repo subdir respects config (implicit)	diff	pass
+t4053-diff-no-index::diff-no-index-from-repo-subdir-with-absolute-paths	t4053-diff-no-index	diff --no-index from repo subdir with absolute paths	diff	pass
+t4053-diff-no-index::diff-no-index-allows-external-diff	t4053-diff-no-index	diff --no-index allows external diff	diff	pass
+t4053-diff-no-index::diff-no-index-normalizes-mode-no-changes	t4053-diff-no-index	diff --no-index normalizes mode: no changes	diff	pass
+t4053-diff-no-index::diff-no-index-normalizes-mode-chmod-x	t4053-diff-no-index	diff --no-index normalizes mode: chmod +x	diff	pass
+t4053-diff-no-index::diff-no-index-normalizes-mode-not-like-git-mode	t4053-diff-no-index	diff --no-index normalizes: mode not like git mode	diff	pass
+t4053-diff-no-index::diff-no-index-normalizes-mode-not-like-git-mode-symlink	t4053-diff-no-index	diff --no-index normalizes: mode not like git mode (symlink)	diff	pass
+t4053-diff-no-index::external-diff-with-mode-only-change	t4053-diff-no-index	external diff with mode-only change	diff	pass
+t4053-diff-no-index::diff-no-index-refuses-to-diff-stdin-and-a-directory	t4053-diff-no-index	diff --no-index refuses to diff stdin and a directory	diff	pass
+t4053-diff-no-index::diff-no-index-refuses-to-diff-a-named-pipe-and-a-directory	t4053-diff-no-index	diff --no-index refuses to diff a named pipe and a directory	diff	pass
+t4053-diff-no-index::diff-no-index-reads-from-pipes	t4053-diff-no-index	diff --no-index reads from pipes	diff	pass
+t4053-diff-no-index::diff-no-index-f-f-rejects-pathspecs	t4053-diff-no-index	diff --no-index F F rejects pathspecs	diff	pass
+t4053-diff-no-index::diff-no-index-d-f-rejects-pathspecs	t4053-diff-no-index	diff --no-index D F rejects pathspecs	diff	pass
+t4053-diff-no-index::diff-no-index-f-d-rejects-pathspecs	t4053-diff-no-index	diff --no-index F D rejects pathspecs	diff	pass
+t4053-diff-no-index::diff-no-index-rejects-absolute-pathspec	t4053-diff-no-index	diff --no-index rejects absolute pathspec	diff	pass
+t4053-diff-no-index::diff-no-index-with-pathspec	t4053-diff-no-index	diff --no-index with pathspec	diff	pass
+t4053-diff-no-index::diff-no-index-first-path-ending-in-slash-with-pathspec	t4053-diff-no-index	diff --no-index first path ending in slash with pathspec	diff	pass
+t4053-diff-no-index::diff-no-index-second-path-ending-in-slash-with-pathspec	t4053-diff-no-index	diff --no-index second path ending in slash with pathspec	diff	pass
+t4053-diff-no-index::diff-no-index-with-pathspec-no-matches	t4053-diff-no-index	diff --no-index with pathspec no matches	diff	pass
+t4053-diff-no-index::diff-no-index-with-negative-pathspec	t4053-diff-no-index	diff --no-index with negative pathspec	diff	pass
+t4053-diff-no-index::setup-nested	t4053-diff-no-index	setup nested	diff	pass
+t4053-diff-no-index::diff-no-index-with-pathspec-nested-negative-pathspec	t4053-diff-no-index	diff --no-index with pathspec nested negative pathspec	diff	pass
+t4053-diff-no-index::diff-no-index-with-pathspec-nested-pathspec	t4053-diff-no-index	diff --no-index with pathspec nested pathspec	diff	pass
+t4053-diff-no-index::diff-no-index-with-pathspec-glob	t4053-diff-no-index	diff --no-index with pathspec glob	diff	pass
+t4053-diff-no-index::diff-no-index-with-pathspec-glob-and-exclude	t4053-diff-no-index	diff --no-index with pathspec glob and exclude	diff	pass
+t4053-diff-no-index::diff-no-index-treats-as-stdin	t4053-diff-no-index	diff --no-index treats '-' as stdin	diff	pass
+t4053-diff-no-index::diff-no-index-r-treats-as-stdin	t4053-diff-no-index	diff --no-index -R treats '-' as stdin	diff	pass
 t4054-diff-bogus-tree::create-bogus-tree	t4054-diff-bogus-tree	create bogus tree	diff	pass
 t4054-diff-bogus-tree::create-tree-with-matching-file	t4054-diff-bogus-tree	create tree with matching file	diff	pass
 t4054-diff-bogus-tree::raw-diff-shows-null-sha1-addition	t4054-diff-bogus-tree	raw diff shows null sha1 (addition)	diff	pass
@@ -7597,8 +7597,8 @@ t4061-diff-indent::diff-files-ugly-spaces-with-no-indent-heuristic	t4061-diff-in
 t4061-diff-indent::diff-files-ugly-spaces-with-diff-indentheuristic-false	t4061-diff-indent	diff-files: ugly spaces with diff.indentHeuristic=false	diff	pass
 t4061-diff-indent::diff-files-indent-heuristic-overrides-config	t4061-diff-indent	diff-files: --indent-heuristic overrides config	diff	pass
 t4061-diff-indent::diff-files-no-indent-heuristic-overrides-config	t4061-diff-indent	diff-files: --no-indent-heuristic overrides config	diff	pass
-t4062-diff-pickaxe::g-matches	t4062-diff-pickaxe	-G matches	diff	partial
-t4062-diff-pickaxe::s-pickaxe-regex	t4062-diff-pickaxe	-S --pickaxe-regex	diff	partial
+t4062-diff-pickaxe::g-matches	t4062-diff-pickaxe	-G matches	diff	pass
+t4062-diff-pickaxe::s-pickaxe-regex	t4062-diff-pickaxe	-S --pickaxe-regex	diff	pass
 t4063-diff-blobs::create-some-blobs	t4063-diff-blobs	create some blobs	diff	pass
 t4063-diff-blobs::diff-by-sha1	t4063-diff-blobs	diff by sha1	diff	pass
 t4063-diff-blobs::index-of-sha1-diff	t4063-diff-blobs	index of sha1 diff	diff	pass
@@ -8143,38 +8143,38 @@ t4200-rerere::test-simple-stage-1-handling	t4200-rerere	test simple stage 1 hand
 t4200-rerere::rerere-does-not-crash-with-missing-preimage	t4200-rerere	rerere does not crash with missing preimage	rerere	pass
 t4200-rerere::rerere-does-not-crash-with-unmatched-conflict-marker	t4200-rerere	rerere does not crash with unmatched conflict marker	rerere	pass
 t4200-rerere::rerere-gc-with-custom-expiry-five-days-right-now	t4200-rerere	rerere gc with custom expiry ($five_days, $right_now)	rerere	pass
-t4201-shortlog::setup	t4201-shortlog	setup	shortlog	partial
-t4201-shortlog::default-output-format	t4201-shortlog	default output format	shortlog	partial
-t4201-shortlog::pretty-format	t4201-shortlog	pretty format	shortlog	partial
-t4201-shortlog::pretty-format-with-date	t4201-shortlog	pretty format (with --date)	shortlog	partial
-t4201-shortlog::abbrev	t4201-shortlog	--abbrev	shortlog	partial
-t4201-shortlog::output-from-user-defined-format-is-re-wrapped	t4201-shortlog	output from user-defined format is re-wrapped	shortlog	partial
-t4201-shortlog::shortlog-wrapping	t4201-shortlog	shortlog wrapping	shortlog	partial
-t4201-shortlog::shortlog-from-non-git-directory	t4201-shortlog	shortlog from non-git directory	shortlog	partial
-t4201-shortlog::shortlog-can-read-format-raw-output	t4201-shortlog	shortlog can read --format=raw output	shortlog	partial
-t4201-shortlog::shortlog-from-non-git-directory-refuses-extra-arguments	t4201-shortlog	shortlog from non-git directory refuses extra arguments	shortlog	partial
-t4201-shortlog::shortlog-author-from-non-git-directory-does-not-segfault	t4201-shortlog	shortlog --author from non-git directory does not segfault	shortlog	partial
-t4201-shortlog::shortlog-should-add-newline-when-input-line-matches-wraplen	t4201-shortlog	shortlog should add newline when input line matches wraplen	shortlog	partial
-t4201-shortlog::shortlog-encoding	t4201-shortlog	shortlog encoding	shortlog	partial
-t4201-shortlog::shortlog-with-revision-pseudo-options	t4201-shortlog	shortlog with revision pseudo options	shortlog	partial
-t4201-shortlog::shortlog-with-output-file	t4201-shortlog	shortlog with --output=<file>	shortlog	partial
-t4201-shortlog::shortlog-committer-internal	t4201-shortlog	shortlog --committer (internal)	shortlog	partial
-t4201-shortlog::shortlog-committer-external	t4201-shortlog	shortlog --committer (external)	shortlog	partial
-t4201-shortlog::group-committer-is-the-same-as-committer	t4201-shortlog	--group=committer is the same as --committer	shortlog	partial
-t4201-shortlog::shortlog-group-trailer-signed-off-by	t4201-shortlog	shortlog --group=trailer:signed-off-by	shortlog	partial
-t4201-shortlog::shortlog-group-format	t4201-shortlog	shortlog --group=format	shortlog	partial
-t4201-shortlog::shortlog-group-format-dwim	t4201-shortlog	shortlog --group=<format> DWIM	shortlog	partial
-t4201-shortlog::shortlog-bogus-group	t4201-shortlog	shortlog bogus --group	shortlog	partial
-t4201-shortlog::trailer-idents-are-split	t4201-shortlog	trailer idents are split	shortlog	partial
-t4201-shortlog::trailer-idents-are-mailmapped	t4201-shortlog	trailer idents are mailmapped	shortlog	partial
-t4201-shortlog::shortlog-de-duplicates-trailers-in-a-single-commit	t4201-shortlog	shortlog de-duplicates trailers in a single commit	shortlog	partial
-t4201-shortlog::shortlog-de-duplicates-trailers-in-a-single-commit-folded-unfolded-values	t4201-shortlog	shortlog de-duplicates trailers in a single commit (folded/unfolded values)	shortlog	partial
-t4201-shortlog::shortlog-can-match-multiple-groups	t4201-shortlog	shortlog can match multiple groups	shortlog	partial
-t4201-shortlog::shortlog-can-match-multiple-format-groups	t4201-shortlog	shortlog can match multiple format groups	shortlog	partial
-t4201-shortlog::set-up-option-selection-tests	t4201-shortlog	set up option selection tests	shortlog	partial
-t4201-shortlog::no-group-resets-group-list-to-author	t4201-shortlog	--no-group resets group list to author	shortlog	partial
-t4201-shortlog::no-group-resets-trailer-list	t4201-shortlog	--no-group resets trailer list	shortlog	partial
-t4201-shortlog::stdin-with-multiple-groups-reports-error	t4201-shortlog	stdin with multiple groups reports error	shortlog	partial
+t4201-shortlog::setup	t4201-shortlog	setup	shortlog	pass
+t4201-shortlog::default-output-format	t4201-shortlog	default output format	shortlog	pass
+t4201-shortlog::pretty-format	t4201-shortlog	pretty format	shortlog	pass
+t4201-shortlog::pretty-format-with-date	t4201-shortlog	pretty format (with --date)	shortlog	pass
+t4201-shortlog::abbrev	t4201-shortlog	--abbrev	shortlog	pass
+t4201-shortlog::output-from-user-defined-format-is-re-wrapped	t4201-shortlog	output from user-defined format is re-wrapped	shortlog	pass
+t4201-shortlog::shortlog-wrapping	t4201-shortlog	shortlog wrapping	shortlog	pass
+t4201-shortlog::shortlog-from-non-git-directory	t4201-shortlog	shortlog from non-git directory	shortlog	pass
+t4201-shortlog::shortlog-can-read-format-raw-output	t4201-shortlog	shortlog can read --format=raw output	shortlog	pass
+t4201-shortlog::shortlog-from-non-git-directory-refuses-extra-arguments	t4201-shortlog	shortlog from non-git directory refuses extra arguments	shortlog	pass
+t4201-shortlog::shortlog-author-from-non-git-directory-does-not-segfault	t4201-shortlog	shortlog --author from non-git directory does not segfault	shortlog	pass
+t4201-shortlog::shortlog-should-add-newline-when-input-line-matches-wraplen	t4201-shortlog	shortlog should add newline when input line matches wraplen	shortlog	pass
+t4201-shortlog::shortlog-encoding	t4201-shortlog	shortlog encoding	shortlog	pass
+t4201-shortlog::shortlog-with-revision-pseudo-options	t4201-shortlog	shortlog with revision pseudo options	shortlog	pass
+t4201-shortlog::shortlog-with-output-file	t4201-shortlog	shortlog with --output=<file>	shortlog	pass
+t4201-shortlog::shortlog-committer-internal	t4201-shortlog	shortlog --committer (internal)	shortlog	pass
+t4201-shortlog::shortlog-committer-external	t4201-shortlog	shortlog --committer (external)	shortlog	pass
+t4201-shortlog::group-committer-is-the-same-as-committer	t4201-shortlog	--group=committer is the same as --committer	shortlog	pass
+t4201-shortlog::shortlog-group-trailer-signed-off-by	t4201-shortlog	shortlog --group=trailer:signed-off-by	shortlog	pass
+t4201-shortlog::shortlog-group-format	t4201-shortlog	shortlog --group=format	shortlog	pass
+t4201-shortlog::shortlog-group-format-dwim	t4201-shortlog	shortlog --group=<format> DWIM	shortlog	pass
+t4201-shortlog::shortlog-bogus-group	t4201-shortlog	shortlog bogus --group	shortlog	pass
+t4201-shortlog::trailer-idents-are-split	t4201-shortlog	trailer idents are split	shortlog	pass
+t4201-shortlog::trailer-idents-are-mailmapped	t4201-shortlog	trailer idents are mailmapped	shortlog	pass
+t4201-shortlog::shortlog-de-duplicates-trailers-in-a-single-commit	t4201-shortlog	shortlog de-duplicates trailers in a single commit	shortlog	pass
+t4201-shortlog::shortlog-de-duplicates-trailers-in-a-single-commit-folded-unfolded-values	t4201-shortlog	shortlog de-duplicates trailers in a single commit (folded/unfolded values)	shortlog	pass
+t4201-shortlog::shortlog-can-match-multiple-groups	t4201-shortlog	shortlog can match multiple groups	shortlog	pass
+t4201-shortlog::shortlog-can-match-multiple-format-groups	t4201-shortlog	shortlog can match multiple format groups	shortlog	pass
+t4201-shortlog::set-up-option-selection-tests	t4201-shortlog	set up option selection tests	shortlog	pass
+t4201-shortlog::no-group-resets-group-list-to-author	t4201-shortlog	--no-group resets group list to author	shortlog	pass
+t4201-shortlog::no-group-resets-trailer-list	t4201-shortlog	--no-group resets trailer list	shortlog	pass
+t4201-shortlog::stdin-with-multiple-groups-reports-error	t4201-shortlog	stdin with multiple groups reports error	shortlog	pass
 t4202-log::pretty	t4202-log	pretty	log	pass
 t4202-log::pretty-tformat	t4202-log	pretty (tformat)	log	pass
 t4202-log::pretty-shortcut	t4202-log	pretty (shortcut)	log	pass
@@ -8561,24 +8561,24 @@ t4208-log-magic-pathspec::git-log-exclude-sub-must-resolve-as-an-object	t4208-lo
 t4208-log-magic-pathspec::git-log-unknown-magic-complains-of-bogus-magic	t4208-log-magic-pathspec	"git log :(unknown-magic) complains of bogus magic	log	pass
 t4208-log-magic-pathspec::command-line-pathspec-parsing-for-git-log	t4208-log-magic-pathspec	command line pathspec parsing for "git log"	log	pass
 t4208-log-magic-pathspec::tree-entry-interesting-does-not-match-past-submodule-boundaries	t4208-log-magic-pathspec	tree_entry_interesting does not match past submodule boundaries	log	pass
-t4209-log-pickaxe::usage	t4209-log-pickaxe	usage	log	partial
-t4209-log-pickaxe::usage-pickaxe-regex	t4209-log-pickaxe	usage: --pickaxe-regex	log	partial
-t4209-log-pickaxe::usage-no-pickaxe-regex	t4209-log-pickaxe	usage: --no-pickaxe-regex	log	partial
-t4209-log-pickaxe::usage-g-and-s-with-empty-argument	t4209-log-pickaxe	usage: -G and -S with empty argument	log	partial
-t4209-log-pickaxe::log-g-textconv-missing-textconv-tool	t4209-log-pickaxe	log -G --textconv (missing textconv tool)	log	partial
-t4209-log-pickaxe::log-g-no-textconv-missing-textconv-tool	t4209-log-pickaxe	log -G --no-textconv (missing textconv tool)	log	partial
-t4209-log-pickaxe::log-s-textconv-missing-textconv-tool	t4209-log-pickaxe	log -S --textconv (missing textconv tool)	log	partial
-t4209-log-pickaxe::log-s-no-textconv-missing-textconv-tool	t4209-log-pickaxe	log -S --no-textconv (missing textconv tool)	log	partial
-t4209-log-pickaxe::setup-log-gs-plain-regex	t4209-log-pickaxe	setup log -[GS] plain & regex	log	partial
-t4209-log-pickaxe::log-g-trims-diff-new-old	t4209-log-pickaxe	log -G trims diff new/old [-+]	log	partial
-t4209-log-pickaxe::log-s-pat-is-not-a-regex-but-s-pat-pickaxe-regex-is	t4209-log-pickaxe	log -S<pat> is not a regex, but -S<pat> --pickaxe-regex is	log	partial
-t4209-log-pickaxe::setup-log-gs-binary-text	t4209-log-pickaxe	setup log -[GS] binary & --text	log	partial
-t4209-log-pickaxe::log-g-ignores-binary-files	t4209-log-pickaxe	log -G ignores binary files	log	partial
-t4209-log-pickaxe::log-g-looks-into-binary-files-with-a	t4209-log-pickaxe	log -G looks into binary files with -a	log	partial
-t4209-log-pickaxe::log-g-looks-into-binary-files-with-textconv-filter	t4209-log-pickaxe	log -G looks into binary files with textconv filter	log	partial
-t4209-log-pickaxe::log-s-looks-into-binary-files	t4209-log-pickaxe	log -S looks into binary files	log	partial
-t4209-log-pickaxe::log-s-pickaxe-regex-looks-into-binary-files	t4209-log-pickaxe	log -S --pickaxe-regex looks into binary files	log	partial
-t4209-log-pickaxe::log-kind-rest-rest-match	t4209-log-pickaxe	log $kind${rest:+ $rest} ($match)	log	partial
+t4209-log-pickaxe::usage	t4209-log-pickaxe	usage	log	pass
+t4209-log-pickaxe::usage-pickaxe-regex	t4209-log-pickaxe	usage: --pickaxe-regex	log	pass
+t4209-log-pickaxe::usage-no-pickaxe-regex	t4209-log-pickaxe	usage: --no-pickaxe-regex	log	pass
+t4209-log-pickaxe::usage-g-and-s-with-empty-argument	t4209-log-pickaxe	usage: -G and -S with empty argument	log	pass
+t4209-log-pickaxe::log-g-textconv-missing-textconv-tool	t4209-log-pickaxe	log -G --textconv (missing textconv tool)	log	pass
+t4209-log-pickaxe::log-g-no-textconv-missing-textconv-tool	t4209-log-pickaxe	log -G --no-textconv (missing textconv tool)	log	pass
+t4209-log-pickaxe::log-s-textconv-missing-textconv-tool	t4209-log-pickaxe	log -S --textconv (missing textconv tool)	log	pass
+t4209-log-pickaxe::log-s-no-textconv-missing-textconv-tool	t4209-log-pickaxe	log -S --no-textconv (missing textconv tool)	log	pass
+t4209-log-pickaxe::setup-log-gs-plain-regex	t4209-log-pickaxe	setup log -[GS] plain & regex	log	pass
+t4209-log-pickaxe::log-g-trims-diff-new-old	t4209-log-pickaxe	log -G trims diff new/old [-+]	log	pass
+t4209-log-pickaxe::log-s-pat-is-not-a-regex-but-s-pat-pickaxe-regex-is	t4209-log-pickaxe	log -S<pat> is not a regex, but -S<pat> --pickaxe-regex is	log	pass
+t4209-log-pickaxe::setup-log-gs-binary-text	t4209-log-pickaxe	setup log -[GS] binary & --text	log	pass
+t4209-log-pickaxe::log-g-ignores-binary-files	t4209-log-pickaxe	log -G ignores binary files	log	pass
+t4209-log-pickaxe::log-g-looks-into-binary-files-with-a	t4209-log-pickaxe	log -G looks into binary files with -a	log	pass
+t4209-log-pickaxe::log-g-looks-into-binary-files-with-textconv-filter	t4209-log-pickaxe	log -G looks into binary files with textconv filter	log	pass
+t4209-log-pickaxe::log-s-looks-into-binary-files	t4209-log-pickaxe	log -S looks into binary files	log	pass
+t4209-log-pickaxe::log-s-pickaxe-regex-looks-into-binary-files	t4209-log-pickaxe	log -S --pickaxe-regex looks into binary files	log	pass
+t4209-log-pickaxe::log-kind-rest-rest-match	t4209-log-pickaxe	log $kind${rest:+ $rest} ($match)	log	pass
 t4210-log-i18n::create-commits-in-different-encodings	t4210-log-i18n	create commits in different encodings	log	pass
 t4210-log-i18n::log-grep-searches-in-log-output-encoding-utf8	t4210-log-i18n	log --grep searches in log output encoding (utf8)	log	pass
 t4210-log-i18n::log-grep-searches-in-log-output-encoding-latin1	t4210-log-i18n	log --grep searches in log output encoding (latin1)	log	pass
@@ -9709,17 +9709,17 @@ t5408-send-pack-stdin::cmdline-refs-with-multiple-duplicates	t5408-send-pack-std
 t5408-send-pack-stdin::stdin-refs-come-after-cmdline	t5408-send-pack-stdin	--stdin refs come after cmdline	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-cmdline	t5408-send-pack-stdin	refspecs and --mirror do not mix (cmdline)	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-stdin	t5408-send-pack-stdin	refspecs and --mirror do not mix (stdin)	send-pack	pass
-t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	pass
-t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	pass
-t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	pass
-t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	pass
-t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	pass
-t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	pass
-t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	pass
-t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	pass
-t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	pass
-t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	pass
-t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	pass
+t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	partial
+t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	partial
+t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	partial
+t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	partial
+t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	partial
+t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	partial
+t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	partial
+t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	partial
+t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	partial
+t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	partial
+t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	partial
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	not_ported
