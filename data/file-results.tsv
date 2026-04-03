@@ -84,13 +84,13 @@ t0612-reftable-jgit-compatibility	no	0	0	0	not_ported
 t0613-reftable-write-options	no	0	0	0	not_ported
 t0614-reftable-fsck	no	0	0	0	not_ported
 t1000-read-tree-m-3way	yes	9	9	0	ok
-t1001-read-tree-m-2way	yes	0	0	0	ok
+t1001-read-tree-m-2way	yes	26	26	0	ok
 t1002-read-tree-m-u-2way	yes	21	21	0	ok
 t1003-read-tree-prefix	yes	5	5	0	ok
 t1004-read-tree-m-u-wf	yes	13	13	0	ok
 t1005-read-tree-reset	yes	5	5	0	ok
 t1006-cat-file	yes	119	119	0	ok
-t1007-hash-object	yes	38	30	8	ok
+t1007-hash-object	yes	38	31	7	ok
 t1008-read-tree-overlay	yes	3	3	0	ok
 t1009-read-tree-new-index	yes	5	5	0	ok
 t1010-mktree	yes	17	17	0	ok
@@ -181,7 +181,7 @@ t2007-checkout-symlink	no	0	0	0	not_ported
 t2008-checkout-subdir	yes	22	12	10	ok
 t2009-checkout-statinfo	yes	25	20	5	ok
 t2010-checkout-ambiguous	yes	7	5	2	ok
-t2011-checkout-invalid-head	yes	24	19	5	ok
+t2011-checkout-invalid-head	yes	24	20	4	ok
 t2012-checkout-last	yes	25	6	19	ok
 t2013-checkout-submodule	no	0	0	0	not_ported
 t2014-checkout-switch	yes	24	7	17	ok
@@ -389,7 +389,7 @@ t4033-diff-patience	yes	35	35	0	ok
 t4034-diff-words	no	0	0	0	not_ported
 t4035-diff-quiet	yes	45	45	0	ok
 t4036-format-patch-signer-mime	no	0	0	0	not_ported
-t4038-diff-combined	yes	28	28	0	ok
+t4038-diff-combined	yes	28	26	2	ok
 t4039-diff-assume-unchanged	yes	20	20	0	ok
 t4040-whitespace-status	yes	24	23	1	ok
 t4041-diff-submodule-option	no	0	0	0	not_ported
@@ -755,7 +755,7 @@ t6700-tree-depth	no	0	0	0	not_ported
 t7001-mv	yes	115	115	0	ok
 t7002-mv-sparse-checkout	no	0	0	0	not_ported
 t7003-filter-branch	no	0	0	0	not_ported
-t7004-tag	yes	357	356	1	ok
+t7004-tag	yes	357	351	6	ok
 t7005-editor	no	0	0	0	not_ported
 t7006-pager	yes	21	21	0	ok
 t7007-show	yes	92	92	0	ok
