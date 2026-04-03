@@ -108,7 +108,7 @@ t1090-sparse-checkout-scope	yes	6	6	0	ok
 t1091-sparse-checkout-builtin	yes	10	10	0	ok
 t1092-sparse-checkout-compatibility	yes	4	4	0	ok
 t1100-commit-tree-options	yes	22	22	0	ok
-t1300-config	yes	365	364	1	ok
+t1300-config	yes	0	0	0	timeout
 t1301-shared-repo	yes	9	9	0	ok
 t1302-repo-version	yes	27	27	0	ok
 t1303-wacky-config	yes	9	9	0	ok
@@ -181,7 +181,7 @@ t2007-checkout-symlink	yes	4	2	2	ok
 t2008-checkout-subdir	yes	22	22	0	ok
 t2009-checkout-statinfo	yes	25	25	0	ok
 t2010-checkout-ambiguous	yes	7	7	0	ok
-t2011-checkout-invalid-head	yes	24	24	0	ok
+t2011-checkout-invalid-head	yes	24	21	3	ok
 t2012-checkout-last	yes	25	25	0	ok
 t2013-checkout-submodule	yes	3	3	0	ok
 t2014-checkout-switch	yes	24	24	0	ok
