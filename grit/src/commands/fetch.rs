@@ -38,6 +38,22 @@ pub struct Args {
     #[arg(long)]
     pub prune: bool,
 
+    /// Remove local tags that no longer exist on the remote (implies --prune).
+    #[arg(long)]
+    pub prune_tags: bool,
+
+    /// Deepen a shallow clone by N commits.
+    #[arg(long, value_name = "N")]
+    pub deepen: Option<usize>,
+
+    /// Deepen history of a shallow clone back to a date.
+    #[arg(long, value_name = "DATE")]
+    pub shallow_since: Option<String>,
+
+    /// Deepen history of a shallow clone excluding a revision.
+    #[arg(long, value_name = "REV")]
+    pub shallow_exclude: Option<String>,
+
     /// Be quiet — suppress informational output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
@@ -178,8 +194,28 @@ fn fetch_remote(
         }
     }
 
+    // Prune tags that no longer exist on the remote
+    if args.prune_tags {
+        let local_tags = refs::list_refs(git_dir, "refs/tags/")?;
+        for (local_tag_ref, _oid) in &local_tags {
+            let exists_on_remote = remote_tags.iter().any(|(r, _)| r == local_tag_ref);
+            if !exists_on_remote {
+                if !has_updates && !args.quiet {
+                    eprintln!("From {url}");
+                    has_updates = true;
+                }
+                refs::delete_ref(git_dir, local_tag_ref)
+                    .with_context(|| format!("pruning tag {local_tag_ref}"))?;
+                if !args.quiet {
+                    let tag_name = local_tag_ref.strip_prefix("refs/tags/").unwrap_or(local_tag_ref);
+                    eprintln!(" - [deleted]         (none)     -> {tag_name}");
+                }
+            }
+        }
+    }
+
     // Prune stale remote-tracking refs
-    if args.prune {
+    if args.prune || args.prune_tags {
         if !has_updates && !args.quiet {
             // Check if prune will actually delete anything
             let existing = refs::list_refs(git_dir, &dst_prefix)?;
