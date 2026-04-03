@@ -867,3 +867,4 @@ t8004-blame-with-conflicts.sh
 t8005-blame-i18n.sh
 t8007-cat-file-textconv.sh
 t8008-blame-formats.sh
+t8010-cat-file-filters.sh
