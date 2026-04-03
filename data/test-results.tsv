@@ -1612,29 +1612,29 @@ t1010-mktree::ls-tree-output-in-wrong-order-given-to-mktree-2	t1010-mktree	ls-tr
 t1010-mktree::allow-missing-object-with-missing	t1010-mktree	allow missing object with --missing	mktree	pass
 t1010-mktree::mktree-refuses-to-read-ls-tree-r-output-1	t1010-mktree	mktree refuses to read ls-tree -r output (1)	mktree	pass
 t1010-mktree::mktree-refuses-to-read-ls-tree-r-output-2	t1010-mktree	mktree refuses to read ls-tree -r output (2)	mktree	pass
-t1011-read-tree-sparse-checkout::setup	t1011-read-tree-sparse-checkout	setup	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-without-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree without .git/info/sparse-checkout	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-with-git-info-sparse-checkout-but-disabled	t1011-read-tree-sparse-checkout	read-tree with .git/info/sparse-checkout but disabled	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-no-sparse-checkout-with-empty-git-info-sparse-checkout-and-enabled	t1011-read-tree-sparse-checkout	read-tree --no-sparse-checkout with empty .git/info/sparse-checkout and enabled	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-with-empty-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree with empty .git/info/sparse-checkout	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-with-trailing-slash	t1011-read-tree-sparse-checkout	match directories with trailing slash	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-without-trailing-slash	t1011-read-tree-sparse-checkout	match directories without trailing slash	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns	t1011-read-tree-sparse-checkout	match directories with negated patterns	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns-2	t1011-read-tree-sparse-checkout	match directories with negated patterns (2)	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directory-pattern	t1011-read-tree-sparse-checkout	match directory pattern	read-tree	partial
-t1011-read-tree-sparse-checkout::checkout-area-changes	t1011-read-tree-sparse-checkout	checkout area changes	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-updates-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, absent case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-non-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, non-sparse	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, sparse	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-updates-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, dirty case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-removes-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree removes worktree, dirty case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, absent case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, dirty case	read-tree	partial
-t1011-read-tree-sparse-checkout::index-removal-and-worktree-narrowing-at-the-same-time	t1011-read-tree-sparse-checkout	index removal and worktree narrowing at the same time	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-reset-removes-outside-worktree	t1011-read-tree-sparse-checkout	read-tree --reset removes outside worktree	read-tree	partial
-t1011-read-tree-sparse-checkout::print-warnings-when-some-worktree-updates-disabled	t1011-read-tree-sparse-checkout	print warnings when some worktree updates disabled	read-tree	partial
-t1011-read-tree-sparse-checkout::checkout-without-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout without --ignore-skip-worktree-bits	read-tree	partial
-t1011-read-tree-sparse-checkout::checkout-with-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout with --ignore-skip-worktree-bits	read-tree	partial
+t1011-read-tree-sparse-checkout::setup	t1011-read-tree-sparse-checkout	setup	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-without-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree without .git/info/sparse-checkout	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-with-git-info-sparse-checkout-but-disabled	t1011-read-tree-sparse-checkout	read-tree with .git/info/sparse-checkout but disabled	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-no-sparse-checkout-with-empty-git-info-sparse-checkout-and-enabled	t1011-read-tree-sparse-checkout	read-tree --no-sparse-checkout with empty .git/info/sparse-checkout and enabled	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-with-empty-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree with empty .git/info/sparse-checkout	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-with-trailing-slash	t1011-read-tree-sparse-checkout	match directories with trailing slash	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-without-trailing-slash	t1011-read-tree-sparse-checkout	match directories without trailing slash	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns	t1011-read-tree-sparse-checkout	match directories with negated patterns	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns-2	t1011-read-tree-sparse-checkout	match directories with negated patterns (2)	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directory-pattern	t1011-read-tree-sparse-checkout	match directory pattern	read-tree	pass
+t1011-read-tree-sparse-checkout::checkout-area-changes	t1011-read-tree-sparse-checkout	checkout area changes	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-updates-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, absent case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-non-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, non-sparse	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, sparse	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-updates-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, dirty case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-removes-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree removes worktree, dirty case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, absent case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, dirty case	read-tree	pass
+t1011-read-tree-sparse-checkout::index-removal-and-worktree-narrowing-at-the-same-time	t1011-read-tree-sparse-checkout	index removal and worktree narrowing at the same time	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-reset-removes-outside-worktree	t1011-read-tree-sparse-checkout	read-tree --reset removes outside worktree	read-tree	pass
+t1011-read-tree-sparse-checkout::print-warnings-when-some-worktree-updates-disabled	t1011-read-tree-sparse-checkout	print warnings when some worktree updates disabled	read-tree	pass
+t1011-read-tree-sparse-checkout::checkout-without-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout without --ignore-skip-worktree-bits	read-tree	pass
+t1011-read-tree-sparse-checkout::checkout-with-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout with --ignore-skip-worktree-bits	read-tree	pass
 t1012-read-tree-df::3-way-1	t1012-read-tree-df	3-way (1)	read-tree	pass
 t1012-read-tree-df::3-way-2	t1012-read-tree-df	3-way (2)	read-tree	pass
 t1012-read-tree-df::3-way-3	t1012-read-tree-df	3-way (3)	read-tree	pass
@@ -4259,9 +4259,9 @@ t3013-ls-files-format::git-ls-files-format-with-d	t3013-ls-files-format	git ls-f
 t3013-ls-files-format::git-ls-files-format-v-s-s	t3013-ls-files-format	git ls-files --format v.s -s	ls-files	pass
 t3013-ls-files-format::git-ls-files-format-with-debug	t3013-ls-files-format	git ls-files --format with --debug	ls-files	pass
 t3013-ls-files-format::usage-format-is-incompatible-with-flag	t3013-ls-files-format	usage: --format is incompatible with $flag	ls-files	pass
-t3020-ls-files-error-unmatch::setup	t3020-ls-files-error-unmatch	setup	ls-files	partial
-t3020-ls-files-error-unmatch::git-ls-files-error-unmatch-should-fail-with-unmatched-path	t3020-ls-files-error-unmatch	git ls-files --error-unmatch should fail with unmatched path.	ls-files	partial
-t3020-ls-files-error-unmatch::git-ls-files-error-unmatch-should-succeed-with-matched-paths	t3020-ls-files-error-unmatch	git ls-files --error-unmatch should succeed with matched paths.	ls-files	partial
+t3020-ls-files-error-unmatch::setup	t3020-ls-files-error-unmatch	setup	ls-files	pass
+t3020-ls-files-error-unmatch::git-ls-files-error-unmatch-should-fail-with-unmatched-path	t3020-ls-files-error-unmatch	git ls-files --error-unmatch should fail with unmatched path.	ls-files	pass
+t3020-ls-files-error-unmatch::git-ls-files-error-unmatch-should-succeed-with-matched-paths	t3020-ls-files-error-unmatch	git ls-files --error-unmatch should succeed with matched paths.	ls-files	pass
 t3040-subprojects-basic::setup-create-superproject	t3040-subprojects-basic	setup: create superproject	add	pass
 t3040-subprojects-basic::setup-create-subprojects	t3040-subprojects-basic	setup: create subprojects	add	pass
 t3040-subprojects-basic::check-if-fsck-ignores-the-subprojects	t3040-subprojects-basic	check if fsck ignores the subprojects	fsck	pass
@@ -9817,8 +9817,8 @@ t5500-fetch-pack::fetch-pack-diag-url-p-h-r-3	t5500-fetch-pack	fetch-pack --diag
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-4	t5500-fetch-pack	fetch-pack --diag-url $p://$h/~$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-h-r	t5500-fetch-pack	fetch-pack --diag-url ./$h:$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-5	t5500-fetch-pack	fetch-pack --diag-url ./$p:$h/~$r	fetch-pack	pass
-t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	partial
-t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	partial
+t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	pass
+t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	pass
 t5502-quickfetch::clone-without-alternate	t5502-quickfetch	clone without alternate	count-objects	pass
 t5502-quickfetch::further-commits-in-the-original	t5502-quickfetch	further commits in the original	commit	pass
 t5502-quickfetch::copy-commit-and-tree-but-not-blob-by-hand	t5502-quickfetch	copy commit and tree but not blob by hand	count-objects	pass
@@ -11845,8 +11845,8 @@ t6007-rev-list-cherry-pick-file::cherry-pick-with-independent-but-identical-bran
 t6007-rev-list-cherry-pick-file::count-left-right	t6007-rev-list-cherry-pick-file	--count --left-right	rev-list	pass
 t6007-rev-list-cherry-pick-file::cherry-pick-with-duplicates-on-each-side	t6007-rev-list-cherry-pick-file	--cherry-pick with duplicates on each side	rev-list	pass
 t6007-rev-list-cherry-pick-file::cherry-pick-avoids-looking-at-full-diffs	t6007-rev-list-cherry-pick-file	--cherry-pick avoids looking at full diffs	rev-list	pass
-t6008-rev-list-submodule::setup	t6008-rev-list-submodule	setup	rev-list	pass
-t6008-rev-list-submodule::ilari-s-test	t6008-rev-list-submodule	Ilari's test	rev-list	pass
+t6008-rev-list-submodule::setup	t6008-rev-list-submodule	setup	rev-list	partial
+t6008-rev-list-submodule::ilari-s-test	t6008-rev-list-submodule	Ilari's test	rev-list	partial
 t6009-rev-list-parent::one-is-ancestor-of-others-and-should-not-be-shown	t6009-rev-list-parent	one is ancestor of others and should not be shown	rev-list	not_ported
 t6009-rev-list-parent::setup-roots-merges-and-octopuses	t6009-rev-list-parent	setup roots, merges and octopuses	rev-list	not_ported
 t6009-rev-list-parent::parse-max-parents-min-parents	t6009-rev-list-parent	parse --max-parents & --min-parents	rev-list	not_ported
@@ -12416,27 +12416,27 @@ t6120-describe::always-with-no-refs-falls-back-to-commit-hash	t6120-describe	--a
 t6120-describe::exact-match-does-not-show-always-fallback	t6120-describe	--exact-match does not show --always fallback	describe	pass
 t6120-describe::avoid-being-fooled-by-describe-like-filename	t6120-describe	avoid being fooled by describe-like filename	describe	pass
 t6120-describe::do-not-be-fooled-by-invalid-describe-format	t6120-describe	do not be fooled by invalid describe format 	describe	pass
-t6130-pathspec-noglob::create-commits-with-glob-characters	t6130-pathspec-noglob	create commits with glob characters	commit	pass
-t6130-pathspec-noglob::vanilla-pathspec-matches-literally	t6130-pathspec-noglob	vanilla pathspec matches literally	log	pass
-t6130-pathspec-noglob::star-pathspec-globs	t6130-pathspec-noglob	star pathspec globs	log	pass
-t6130-pathspec-noglob::star-pathspec-globs-2	t6130-pathspec-noglob	star pathspec globs	log	pass
-t6130-pathspec-noglob::bracket-pathspec-globs-and-matches-literal-brackets	t6130-pathspec-noglob	bracket pathspec globs and matches literal brackets	log	pass
-t6130-pathspec-noglob::bracket-pathspec-globs-and-matches-literal-brackets-2	t6130-pathspec-noglob	bracket pathspec globs and matches literal brackets	log	pass
-t6130-pathspec-noglob::no-glob-option-matches-literally-vanilla	t6130-pathspec-noglob	no-glob option matches literally (vanilla)		pass
-t6130-pathspec-noglob::no-glob-option-matches-literally-vanilla-2	t6130-pathspec-noglob	no-glob option matches literally (vanilla)	log	pass
-t6130-pathspec-noglob::no-glob-option-matches-literally-star	t6130-pathspec-noglob	no-glob option matches literally (star)		pass
-t6130-pathspec-noglob::no-glob-option-matches-literally-star-2	t6130-pathspec-noglob	no-glob option matches literally (star)	log	pass
-t6130-pathspec-noglob::no-glob-option-matches-literally-bracket	t6130-pathspec-noglob	no-glob option matches literally (bracket)		pass
-t6130-pathspec-noglob::no-glob-option-matches-literally-bracket-2	t6130-pathspec-noglob	no-glob option matches literally (bracket)	log	pass
-t6130-pathspec-noglob::no-glob-option-disables-literal	t6130-pathspec-noglob	no-glob option disables :(literal)		pass
-t6130-pathspec-noglob::no-glob-environment-variable-works	t6130-pathspec-noglob	no-glob environment variable works	log	pass
-t6130-pathspec-noglob::blame-takes-global-pathspec-flags	t6130-pathspec-noglob	blame takes global pathspec flags		pass
-t6130-pathspec-noglob::setup-xxx-bar	t6130-pathspec-noglob	setup xxx/bar		pass
-t6130-pathspec-noglob::works-with-glob	t6130-pathspec-noglob	**/ works with :(glob)	log	pass
-t6130-pathspec-noglob::does-not-work-with-noglob-pathspecs	t6130-pathspec-noglob	**/ does not work with --noglob-pathspecs		pass
-t6130-pathspec-noglob::works-with-glob-and-noglob-pathspecs	t6130-pathspec-noglob	**/ works with :(glob) and --noglob-pathspecs		pass
-t6130-pathspec-noglob::works-with-glob-pathspecs	t6130-pathspec-noglob	**/ works with --glob-pathspecs		pass
-t6130-pathspec-noglob::does-not-work-with-literal-and-glob-pathspecs	t6130-pathspec-noglob	**/ does not work with :(literal) and --glob-pathspecs		pass
+t6130-pathspec-noglob::create-commits-with-glob-characters	t6130-pathspec-noglob	create commits with glob characters	commit	partial
+t6130-pathspec-noglob::vanilla-pathspec-matches-literally	t6130-pathspec-noglob	vanilla pathspec matches literally	log	partial
+t6130-pathspec-noglob::star-pathspec-globs	t6130-pathspec-noglob	star pathspec globs	log	partial
+t6130-pathspec-noglob::star-pathspec-globs-2	t6130-pathspec-noglob	star pathspec globs	log	partial
+t6130-pathspec-noglob::bracket-pathspec-globs-and-matches-literal-brackets	t6130-pathspec-noglob	bracket pathspec globs and matches literal brackets	log	partial
+t6130-pathspec-noglob::bracket-pathspec-globs-and-matches-literal-brackets-2	t6130-pathspec-noglob	bracket pathspec globs and matches literal brackets	log	partial
+t6130-pathspec-noglob::no-glob-option-matches-literally-vanilla	t6130-pathspec-noglob	no-glob option matches literally (vanilla)		partial
+t6130-pathspec-noglob::no-glob-option-matches-literally-vanilla-2	t6130-pathspec-noglob	no-glob option matches literally (vanilla)	log	partial
+t6130-pathspec-noglob::no-glob-option-matches-literally-star	t6130-pathspec-noglob	no-glob option matches literally (star)		partial
+t6130-pathspec-noglob::no-glob-option-matches-literally-star-2	t6130-pathspec-noglob	no-glob option matches literally (star)	log	partial
+t6130-pathspec-noglob::no-glob-option-matches-literally-bracket	t6130-pathspec-noglob	no-glob option matches literally (bracket)		partial
+t6130-pathspec-noglob::no-glob-option-matches-literally-bracket-2	t6130-pathspec-noglob	no-glob option matches literally (bracket)	log	partial
+t6130-pathspec-noglob::no-glob-option-disables-literal	t6130-pathspec-noglob	no-glob option disables :(literal)		partial
+t6130-pathspec-noglob::no-glob-environment-variable-works	t6130-pathspec-noglob	no-glob environment variable works	log	partial
+t6130-pathspec-noglob::blame-takes-global-pathspec-flags	t6130-pathspec-noglob	blame takes global pathspec flags		partial
+t6130-pathspec-noglob::setup-xxx-bar	t6130-pathspec-noglob	setup xxx/bar		partial
+t6130-pathspec-noglob::works-with-glob	t6130-pathspec-noglob	**/ works with :(glob)	log	partial
+t6130-pathspec-noglob::does-not-work-with-noglob-pathspecs	t6130-pathspec-noglob	**/ does not work with --noglob-pathspecs		partial
+t6130-pathspec-noglob::works-with-glob-and-noglob-pathspecs	t6130-pathspec-noglob	**/ works with :(glob) and --noglob-pathspecs		partial
+t6130-pathspec-noglob::works-with-glob-pathspecs	t6130-pathspec-noglob	**/ works with --glob-pathspecs		partial
+t6130-pathspec-noglob::does-not-work-with-literal-and-glob-pathspecs	t6130-pathspec-noglob	**/ does not work with :(literal) and --glob-pathspecs		partial
 t6131-pathspec-icase::create-commits-with-glob-characters	t6131-pathspec-icase	create commits with glob characters		pass
 t6131-pathspec-icase::tree-entry-interesting-matches-bar	t6131-pathspec-icase	tree_entry_interesting matches bar	log	pass
 t6131-pathspec-icase::tree-entry-interesting-matches-icase-bar	t6131-pathspec-icase	tree_entry_interesting matches :(icase)bar	log	pass
@@ -13731,21 +13731,21 @@ t7010-setup::setup-deeper-work-tree	t7010-setup	setup deeper work tree		pass
 t7010-setup::add-a-directory-outside-the-work-tree	t7010-setup	add a directory outside the work tree	add	pass
 t7010-setup::add-a-file-outside-the-work-tree-nasty-case-1	t7010-setup	add a file outside the work tree, nasty case 1	add	pass
 t7010-setup::add-a-file-outside-the-work-tree-nasty-case-2	t7010-setup	add a file outside the work tree, nasty case 2	add	pass
-t7011-skip-worktree-reading::setup	t7011-skip-worktree-reading	setup	add	pass
-t7011-skip-worktree-reading::update-index	t7011-skip-worktree-reading	update-index	update-index	pass
-t7011-skip-worktree-reading::update-index-2	t7011-skip-worktree-reading	update-index	update-index	pass
-t7011-skip-worktree-reading::update-index-remove	t7011-skip-worktree-reading	update-index --remove	ls-files	pass
-t7011-skip-worktree-reading::update-index-remove-2	t7011-skip-worktree-reading	update-index --remove	ls-files	pass
-t7011-skip-worktree-reading::ls-files-deleted	t7011-skip-worktree-reading	ls-files --deleted	ls-files	pass
-t7011-skip-worktree-reading::ls-files-deleted-2	t7011-skip-worktree-reading	ls-files --deleted	ls-files	pass
-t7011-skip-worktree-reading::ls-files-modified	t7011-skip-worktree-reading	ls-files --modified	ls-files	pass
-t7011-skip-worktree-reading::ls-files-modified-2	t7011-skip-worktree-reading	ls-files --modified	ls-files	pass
-t7011-skip-worktree-reading::diff-index-does-not-examine-skip-worktree-absent-entries	t7011-skip-worktree-reading	diff-index does not examine skip-worktree absent entries	diff-index	pass
-t7011-skip-worktree-reading::diff-index-does-not-examine-skip-worktree-dirty-entries	t7011-skip-worktree-reading	diff-index does not examine skip-worktree dirty entries	diff-index	pass
-t7011-skip-worktree-reading::diff-files-does-not-examine-skip-worktree-absent-entries	t7011-skip-worktree-reading	diff-files does not examine skip-worktree absent entries	diff-files	pass
-t7011-skip-worktree-reading::diff-files-does-not-examine-skip-worktree-dirty-entries	t7011-skip-worktree-reading	diff-files does not examine skip-worktree dirty entries	diff-files	pass
-t7011-skip-worktree-reading::commit-on-skip-worktree-absent-entries	t7011-skip-worktree-reading	commit on skip-worktree absent entries	commit	pass
-t7011-skip-worktree-reading::commit-on-skip-worktree-dirty-entries	t7011-skip-worktree-reading	commit on skip-worktree dirty entries	commit	pass
+t7011-skip-worktree-reading::setup	t7011-skip-worktree-reading	setup	add	partial
+t7011-skip-worktree-reading::update-index	t7011-skip-worktree-reading	update-index	update-index	partial
+t7011-skip-worktree-reading::update-index-2	t7011-skip-worktree-reading	update-index	update-index	partial
+t7011-skip-worktree-reading::update-index-remove	t7011-skip-worktree-reading	update-index --remove	ls-files	partial
+t7011-skip-worktree-reading::update-index-remove-2	t7011-skip-worktree-reading	update-index --remove	ls-files	partial
+t7011-skip-worktree-reading::ls-files-deleted	t7011-skip-worktree-reading	ls-files --deleted	ls-files	partial
+t7011-skip-worktree-reading::ls-files-deleted-2	t7011-skip-worktree-reading	ls-files --deleted	ls-files	partial
+t7011-skip-worktree-reading::ls-files-modified	t7011-skip-worktree-reading	ls-files --modified	ls-files	partial
+t7011-skip-worktree-reading::ls-files-modified-2	t7011-skip-worktree-reading	ls-files --modified	ls-files	partial
+t7011-skip-worktree-reading::diff-index-does-not-examine-skip-worktree-absent-entries	t7011-skip-worktree-reading	diff-index does not examine skip-worktree absent entries	diff-index	partial
+t7011-skip-worktree-reading::diff-index-does-not-examine-skip-worktree-dirty-entries	t7011-skip-worktree-reading	diff-index does not examine skip-worktree dirty entries	diff-index	partial
+t7011-skip-worktree-reading::diff-files-does-not-examine-skip-worktree-absent-entries	t7011-skip-worktree-reading	diff-files does not examine skip-worktree absent entries	diff-files	partial
+t7011-skip-worktree-reading::diff-files-does-not-examine-skip-worktree-dirty-entries	t7011-skip-worktree-reading	diff-files does not examine skip-worktree dirty entries	diff-files	partial
+t7011-skip-worktree-reading::commit-on-skip-worktree-absent-entries	t7011-skip-worktree-reading	commit on skip-worktree absent entries	commit	partial
+t7011-skip-worktree-reading::commit-on-skip-worktree-dirty-entries	t7011-skip-worktree-reading	commit on skip-worktree dirty entries	commit	partial
 t7012-skip-worktree-writing::setup	t7012-skip-worktree-writing	setup	add	pass
 t7012-skip-worktree-writing::read-tree-updates-worktree-absent-case	t7012-skip-worktree-writing	read-tree updates worktree, absent case	checkout	pass
 t7012-skip-worktree-writing::read-tree-updates-worktree-dirty-case	t7012-skip-worktree-writing	read-tree updates worktree, dirty case	checkout	pass
@@ -16158,7 +16158,7 @@ t7900-maintenance::maintenance-aborts-with-existing-lock-file	t7900-maintenance	
 t7900-maintenance::cfg-true-config-option	t7900-maintenance	$cfg=true config option	maintenance	pass
 t7900-maintenance::cfg-false-config-option	t7900-maintenance	$cfg=false config option	maintenance	pass
 t7900-maintenance::maintenance-autodetach-overrides-gc-autodetach	t7900-maintenance	maintenance.autoDetach overrides gc.autoDetach	maintenance	pass
-t8001-annotate::annotate-old-revision	t8001-annotate	annotate old revision	annotate	pass
+t8001-annotate::annotate-old-revision	t8001-annotate	annotate old revision	annotate	partial
 t8002-blame::setup	t8002-blame	setup	blame	pass
 t8002-blame::blame-untracked-file-in-empty-repo	t8002-blame	blame untracked file in empty repo	blame	pass
 t8002-blame::blame-show-email	t8002-blame	blame --show-email	blame	pass
