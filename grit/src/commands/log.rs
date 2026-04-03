@@ -5,7 +5,9 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::diff_trees;
+use grit_lib::diff::{
+    count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
+};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
@@ -85,6 +87,30 @@ pub struct Args {
     /// Walk the reflog instead of the commit ancestry chain.
     #[arg(short = 'g', long = "walk-reflogs")]
     pub walk_reflogs: bool,
+
+    /// Show unified diff (patch) after each commit.
+    #[arg(short = 'p', long = "patch", alias = "unified")]
+    pub patch: bool,
+
+    /// Alias for --patch.
+    #[arg(short = 'u', hide = true)]
+    pub patch_u: bool,
+
+    /// Show diffstat per commit.
+    #[arg(long = "stat")]
+    pub stat: bool,
+
+    /// List changed file names per commit.
+    #[arg(long = "name-only")]
+    pub name_only: bool,
+
+    /// Show status letter + filename per commit.
+    #[arg(long = "name-status")]
+    pub name_status: bool,
+
+    /// Show raw diff-tree output per commit.
+    #[arg(long = "raw")]
+    pub raw: bool,
 
     /// Pathspecs (after --).
     #[arg(last = true)]
@@ -174,11 +200,17 @@ pub fn run(args: Args) -> Result<()> {
         .map(|f| f.starts_with("format:"))
         .unwrap_or(false);
 
+    let show_diff = args.patch || args.patch_u || args.stat || args.name_only || args.name_status || args.raw;
+
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
             writeln!(out)?;
         }
         format_commit(&mut out, oid, commit_data, &args, decorations.as_ref())?;
+
+        if show_diff {
+            write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
+        }
     }
 
     Ok(())
@@ -1044,4 +1076,222 @@ fn format_decoration_no_parens(
         }
         None => String::new(),
     }
+}
+
+// ── Diff output for log ──────────────────────────────────────────────
+
+/// Compute diff entries for a commit against its first parent (or empty tree for root commits).
+fn compute_commit_diff(odb: &Odb, info: &CommitInfo) -> Result<Vec<DiffEntry>> {
+    if info.parents.is_empty() {
+        // Root commit: diff against empty tree
+        Ok(diff_trees(odb, None, Some(&info.tree), "")?)
+    } else {
+        let parent_obj = odb.read(&info.parents[0])?;
+        let parent_commit = parse_commit(&parent_obj.data)?;
+        Ok(diff_trees(odb, Some(&parent_commit.tree), Some(&info.tree), "")?)
+    }
+}
+
+/// Write diff output for a single commit.
+fn write_commit_diff(
+    out: &mut impl Write,
+    odb: &Odb,
+    info: &CommitInfo,
+    args: &Args,
+) -> Result<()> {
+    let entries = compute_commit_diff(odb, info)?;
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    if args.raw {
+        for entry in &entries {
+            writeln!(out, "{}", format_raw(entry))?;
+        }
+        writeln!(out)?;
+    }
+
+    if args.stat {
+        log_print_stat_summary(out, odb, &entries)?;
+    }
+
+    if args.name_only {
+        for entry in &entries {
+            writeln!(out, "{}", entry.path())?;
+        }
+        writeln!(out)?;
+    }
+
+    if args.name_status {
+        for entry in &entries {
+            writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
+        }
+        writeln!(out)?;
+    }
+
+    if args.patch || args.patch_u {
+        for entry in &entries {
+            log_write_patch_entry(out, odb, entry, 3)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Write a unified-diff block for one entry.
+fn log_write_patch_entry(
+    out: &mut impl Write,
+    odb: &Odb,
+    entry: &DiffEntry,
+    context_lines: usize,
+) -> Result<()> {
+    let old_path = entry
+        .old_path
+        .as_deref()
+        .unwrap_or(entry.new_path.as_deref().unwrap_or(""));
+    let new_path = entry
+        .new_path
+        .as_deref()
+        .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
+
+    writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
+
+    match entry.status {
+        DiffStatus::Added => {
+            writeln!(out, "new file mode {}", entry.new_mode)?;
+            writeln!(
+                out,
+                "index {}..{}",
+                &entry.old_oid.to_hex()[..7],
+                &entry.new_oid.to_hex()[..7]
+            )?;
+        }
+        DiffStatus::Deleted => {
+            writeln!(out, "deleted file mode {}", entry.old_mode)?;
+            writeln!(
+                out,
+                "index {}..{}",
+                &entry.old_oid.to_hex()[..7],
+                &entry.new_oid.to_hex()[..7]
+            )?;
+        }
+        DiffStatus::Modified => {
+            if entry.old_mode != entry.new_mode {
+                writeln!(out, "old mode {}", entry.old_mode)?;
+                writeln!(out, "new mode {}", entry.new_mode)?;
+            }
+            if entry.old_mode == entry.new_mode {
+                writeln!(
+                    out,
+                    "index {}..{} {}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7],
+                    entry.old_mode
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7]
+                )?;
+            }
+        }
+        DiffStatus::Renamed => {
+            writeln!(out, "similarity index 100%")?;
+            writeln!(out, "rename from {old_path}")?;
+            writeln!(out, "rename to {new_path}")?;
+        }
+        DiffStatus::Copied => {
+            writeln!(out, "similarity index 100%")?;
+            writeln!(out, "copy from {old_path}")?;
+            writeln!(out, "copy to {new_path}")?;
+        }
+        DiffStatus::TypeChanged => {
+            writeln!(out, "old mode {}", entry.old_mode)?;
+            writeln!(out, "new mode {}", entry.new_mode)?;
+        }
+        DiffStatus::Unmerged => {}
+    }
+
+    let (old_content, new_content) = log_read_blob_pair(odb, entry)?;
+    let display_old = if entry.status == DiffStatus::Added {
+        "/dev/null"
+    } else {
+        old_path
+    };
+    let display_new = if entry.status == DiffStatus::Deleted {
+        "/dev/null"
+    } else {
+        new_path
+    };
+    let patch = unified_diff(
+        &old_content,
+        &new_content,
+        display_old,
+        display_new,
+        context_lines,
+    );
+    write!(out, "{patch}")?;
+
+    Ok(())
+}
+
+/// Write a `--stat` summary for log.
+fn log_print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) -> Result<()> {
+    let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+
+    for entry in entries {
+        let (old_content, new_content) = log_read_blob_pair(odb, entry)?;
+        let (ins, del) = count_changes(&old_content, &new_content);
+        total_ins += ins;
+        total_del += del;
+        writeln!(
+            out,
+            "{}",
+            format_stat_line(entry.path(), ins, del, max_path_len)
+        )?;
+    }
+
+    let n = entries.len();
+    writeln!(
+        out,
+        " {} file{} changed, {} insertion{}(+), {} deletion{}(-)",
+        n,
+        if n == 1 { "" } else { "s" },
+        total_ins,
+        if total_ins == 1 { "" } else { "s" },
+        total_del,
+        if total_del == 1 { "" } else { "s" },
+    )?;
+    writeln!(out)?;
+
+    Ok(())
+}
+
+/// Read both blob sides of a diff entry as UTF-8 strings.
+fn log_read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
+    let zero = grit_lib::diff::zero_oid();
+
+    let old_content = if entry.old_oid == zero {
+        String::new()
+    } else {
+        match odb.read(&entry.old_oid) {
+            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
+            Err(_) => String::new(),
+        }
+    };
+
+    let new_content = if entry.new_oid == zero {
+        String::new()
+    } else {
+        match odb.read(&entry.new_oid) {
+            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
+            Err(_) => String::new(),
+        }
+    };
+
+    Ok((old_content, new_content))
 }
