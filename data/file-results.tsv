@@ -389,7 +389,7 @@ t4033-diff-patience	yes	35	35	0	ok
 t4034-diff-words	yes	5	5	0	ok
 t4035-diff-quiet	yes	45	45	0	ok
 t4036-format-patch-signer-mime	yes	2	2	0	ok
-t4038-diff-combined	yes	28	28	0	ok
+t4038-diff-combined	yes	28	26	2	ok
 t4039-diff-assume-unchanged	yes	20	20	0	ok
 t4040-whitespace-status	yes	24	24	0	ok
 t4041-diff-submodule-option	yes	5	5	0	ok
@@ -497,7 +497,7 @@ t4257-am-interactive	yes	4	4	0	ok
 t4258-am-quoted-cr	yes	4	4	0	ok
 t4300-merge-tree	yes	27	27	0	ok
 t4301-merge-tree-write-tree	yes	4	4	0	ok
-t5000-tar-tree	yes	9	9	0	ok
+t5000-tar-tree	yes	9	8	1	ok
 t5001-archive-attr	yes	6	6	0	ok
 t5002-archive-attr-pattern	yes	5	5	0	ok
 t5003-archive-zip	yes	6	6	0	ok
@@ -829,7 +829,7 @@ t7518-ident-corner-cases	yes	2	2	0	ok
 t7519-status-fsmonitor	yes	7	7	0	ok
 t7520-ignored-hook-warning	yes	5	5	0	ok
 t7521-ignored-mode	yes	3	3	0	ok
-t7524-commit-summary	yes	3	0	3	ok
+t7524-commit-summary	yes	3	3	0	ok
 t7525-status-rename	yes	3	3	0	ok
 t7526-commit-pathspec-file	yes	6	6	0	ok
 t7527-builtin-fsmonitor	yes	9	9	0	ok

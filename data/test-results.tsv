@@ -7168,30 +7168,30 @@ t4036-format-patch-signer-mime::format-normally	t4036-format-patch-signer-mime	f
 t4036-format-patch-signer-mime::format-with-signoff-without-funny-signer-name	t4036-format-patch-signer-mime	format with signoff without funny signer name	format-patch	pass
 t4036-format-patch-signer-mime::format-with-non-ascii-signer-name	t4036-format-patch-signer-mime	format with non ASCII signer name	format-patch	pass
 t4036-format-patch-signer-mime::attach-and-signoff-do-not-duplicate-mime-headers	t4036-format-patch-signer-mime	attach and signoff do not duplicate mime headers	format-patch	pass
-t4038-diff-combined::check-combined-output-1	t4038-diff-combined	check combined output (1)	diff	pass
-t4038-diff-combined::check-combined-output-1-with-git-diff-rev	t4038-diff-combined	check combined output (1) with git diff <rev>^!	diff	pass
-t4038-diff-combined::check-combined-output-2	t4038-diff-combined	check combined output (2)	diff	pass
-t4038-diff-combined::check-combined-output-2-with-git-diff-rev	t4038-diff-combined	check combined output (2) with git diff <rev>^!	diff	pass
-t4038-diff-combined::diagnose-truncated-file	t4038-diff-combined	diagnose truncated file	diff	pass
-t4038-diff-combined::setup-for-cc-raw	t4038-diff-combined	setup for --cc --raw	diff	pass
-t4038-diff-combined::check-cc-raw-with-four-trees	t4038-diff-combined	check --cc --raw with four trees	diff	pass
-t4038-diff-combined::check-cc-raw-with-forty-trees	t4038-diff-combined	check --cc --raw with forty trees	diff	pass
-t4038-diff-combined::setup-combined-ignore-spaces	t4038-diff-combined	setup combined ignore spaces	diff	pass
-t4038-diff-combined::check-combined-output-no-ignore-space	t4038-diff-combined	check combined output (no ignore space)	diff	pass
-t4038-diff-combined::check-combined-output-ignore-space-at-eol	t4038-diff-combined	check combined output (ignore space at eol)	diff	pass
-t4038-diff-combined::check-combined-output-ignore-space-change	t4038-diff-combined	check combined output (ignore space change)	diff	pass
-t4038-diff-combined::check-combined-output-ignore-all-spaces	t4038-diff-combined	check combined output (ignore all spaces)	diff	pass
-t4038-diff-combined::combine-diff-coalesce-simple	t4038-diff-combined	combine diff coalesce simple	diff	pass
-t4038-diff-combined::combine-diff-coalesce-tricky	t4038-diff-combined	combine diff coalesce tricky	diff	pass
-t4038-diff-combined::combine-diff-missing-delete-bug	t4038-diff-combined	combine diff missing delete bug	diff	pass
-t4038-diff-combined::combine-diff-gets-tree-sorting-right	t4038-diff-combined	combine diff gets tree sorting right	diff	pass
-t4038-diff-combined::setup-for-combined-all-paths	t4038-diff-combined	setup for --combined-all-paths	diff	pass
-t4038-diff-combined::combined-all-paths-and-raw	t4038-diff-combined	--combined-all-paths and --raw	diff	pass
-t4038-diff-combined::combined-all-paths-and-cc	t4038-diff-combined	--combined-all-paths and --cc	diff	pass
-t4038-diff-combined::setup-for-combined-all-paths-with-funny-names	t4038-diff-combined	setup for --combined-all-paths with funny names	diff	pass
-t4038-diff-combined::combined-all-paths-and-raw-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw and funny names	diff	pass
-t4038-diff-combined::combined-all-paths-and-raw-and-z-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw -and -z and funny names	diff	pass
-t4038-diff-combined::combined-all-paths-and-cc-and-funny-names	t4038-diff-combined	--combined-all-paths and --cc and funny names	diff	pass
+t4038-diff-combined::check-combined-output-1	t4038-diff-combined	check combined output (1)	diff	partial
+t4038-diff-combined::check-combined-output-1-with-git-diff-rev	t4038-diff-combined	check combined output (1) with git diff <rev>^!	diff	partial
+t4038-diff-combined::check-combined-output-2	t4038-diff-combined	check combined output (2)	diff	partial
+t4038-diff-combined::check-combined-output-2-with-git-diff-rev	t4038-diff-combined	check combined output (2) with git diff <rev>^!	diff	partial
+t4038-diff-combined::diagnose-truncated-file	t4038-diff-combined	diagnose truncated file	diff	partial
+t4038-diff-combined::setup-for-cc-raw	t4038-diff-combined	setup for --cc --raw	diff	partial
+t4038-diff-combined::check-cc-raw-with-four-trees	t4038-diff-combined	check --cc --raw with four trees	diff	partial
+t4038-diff-combined::check-cc-raw-with-forty-trees	t4038-diff-combined	check --cc --raw with forty trees	diff	partial
+t4038-diff-combined::setup-combined-ignore-spaces	t4038-diff-combined	setup combined ignore spaces	diff	partial
+t4038-diff-combined::check-combined-output-no-ignore-space	t4038-diff-combined	check combined output (no ignore space)	diff	partial
+t4038-diff-combined::check-combined-output-ignore-space-at-eol	t4038-diff-combined	check combined output (ignore space at eol)	diff	partial
+t4038-diff-combined::check-combined-output-ignore-space-change	t4038-diff-combined	check combined output (ignore space change)	diff	partial
+t4038-diff-combined::check-combined-output-ignore-all-spaces	t4038-diff-combined	check combined output (ignore all spaces)	diff	partial
+t4038-diff-combined::combine-diff-coalesce-simple	t4038-diff-combined	combine diff coalesce simple	diff	partial
+t4038-diff-combined::combine-diff-coalesce-tricky	t4038-diff-combined	combine diff coalesce tricky	diff	partial
+t4038-diff-combined::combine-diff-missing-delete-bug	t4038-diff-combined	combine diff missing delete bug	diff	partial
+t4038-diff-combined::combine-diff-gets-tree-sorting-right	t4038-diff-combined	combine diff gets tree sorting right	diff	partial
+t4038-diff-combined::setup-for-combined-all-paths	t4038-diff-combined	setup for --combined-all-paths	diff	partial
+t4038-diff-combined::combined-all-paths-and-raw	t4038-diff-combined	--combined-all-paths and --raw	diff	partial
+t4038-diff-combined::combined-all-paths-and-cc	t4038-diff-combined	--combined-all-paths and --cc	diff	partial
+t4038-diff-combined::setup-for-combined-all-paths-with-funny-names	t4038-diff-combined	setup for --combined-all-paths with funny names	diff	partial
+t4038-diff-combined::combined-all-paths-and-raw-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw and funny names	diff	partial
+t4038-diff-combined::combined-all-paths-and-raw-and-z-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw -and -z and funny names	diff	partial
+t4038-diff-combined::combined-all-paths-and-cc-and-funny-names	t4038-diff-combined	--combined-all-paths and --cc and funny names	diff	partial
 t4039-diff-assume-unchanged::setup	t4039-diff-assume-unchanged	setup	diff	pass
 t4039-diff-assume-unchanged::diff-index-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-index does not examine assume-unchanged entries	diff	pass
 t4039-diff-assume-unchanged::diff-files-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-files does not examine assume-unchanged entries	diff	pass
@@ -8790,63 +8790,63 @@ t4301-merge-tree-write-tree::error-out-on-missing-tree-objects	t4301-merge-tree-
 t4301-merge-tree-write-tree::error-out-on-missing-blob-objects	t4301-merge-tree-write-tree	error out on missing blob objects	merge-tree	pass
 t4301-merge-tree-write-tree::error-out-on-missing-commits-as-well	t4301-merge-tree-write-tree	error out on missing commits as well	merge-tree	pass
 t4301-merge-tree-write-tree::usage-trivial-merge-is-incompatible-with-opt	t4301-merge-tree-write-tree	usage: --trivial-merge is incompatible with $opt	merge-tree	pass
-t5000-tar-tree::extract-tar-archive	t5000-tar-tree	 extract tar archive		pass
-t5000-tar-tree::interpret-pax-headers	t5000-tar-tree	 interpret pax headers		pass
-t5000-tar-tree::validate-filenames	t5000-tar-tree	 validate filenames		pass
-t5000-tar-tree::validate-file-contents	t5000-tar-tree	 validate file contents		pass
-t5000-tar-tree::setup	t5000-tar-tree	setup		pass
-t5000-tar-tree::list-notices-extra-parameters	t5000-tar-tree	--list notices extra parameters	archive	pass
-t5000-tar-tree::end-of-options-is-correctly-eaten	t5000-tar-tree	end-of-options is correctly eaten	archive	pass
-t5000-tar-tree::populate-workdir	t5000-tar-tree	populate workdir	add	pass
-t5000-tar-tree::add-files-to-repository	t5000-tar-tree	add files to repository	add	pass
-t5000-tar-tree::setup-export-subst	t5000-tar-tree	setup export-subst	log	pass
-t5000-tar-tree::create-bare-clone	t5000-tar-tree	create bare clone	clone	pass
-t5000-tar-tree::remove-ignored-file	t5000-tar-tree	remove ignored file		pass
-t5000-tar-tree::git-archive	t5000-tar-tree	git archive	archive	pass
-t5000-tar-tree::git-archive-mtime	t5000-tar-tree	git archive --mtime	archive	pass
-t5000-tar-tree::git-archive-prefix-prefix	t5000-tar-tree	git archive --prefix=prefix/	archive	pass
-t5000-tar-tree::git-archive-prefix-olde	t5000-tar-tree	git-archive --prefix=olde-	archive	pass
-t5000-tar-tree::git-archive-add-file	t5000-tar-tree	git archive --add-file	archive	pass
-t5000-tar-tree::git-archive-add-file-twice	t5000-tar-tree	git archive --add-file twice	archive	pass
-t5000-tar-tree::git-archive-on-large-files	t5000-tar-tree	git archive on large files	archive	pass
-t5000-tar-tree::git-archive-in-a-bare-repo	t5000-tar-tree	git archive in a bare repo	archive	pass
-t5000-tar-tree::git-archive-vs-the-same-in-a-bare-repo	t5000-tar-tree	git archive vs. the same in a bare repo		pass
-t5000-tar-tree::git-archive-with-output	t5000-tar-tree	git archive with --output	archive	pass
-t5000-tar-tree::git-archive-remote	t5000-tar-tree	git archive --remote	archive	pass
-t5000-tar-tree::git-archive-remote-with-configured-remote	t5000-tar-tree	git archive --remote with configured remote	archive	pass
-t5000-tar-tree::git-get-tar-commit-id	t5000-tar-tree	git get-tar-commit-id	get-tar-commit-id	pass
-t5000-tar-tree::git-archive-with-output-override-inferred-format	t5000-tar-tree	git archive with --output, override inferred format	archive	pass
-t5000-tar-tree::git-archive-with-output-and-remote-creates-tgz	t5000-tar-tree	git archive with --output and --remote creates .tgz	archive	pass
-t5000-tar-tree::git-archive-list-outside-of-a-git-repo	t5000-tar-tree	git archive --list outside of a git repo	archive	pass
-t5000-tar-tree::git-archive-remote-outside-of-a-git-repo	t5000-tar-tree	git archive --remote outside of a git repo	archive	pass
-t5000-tar-tree::clients-cannot-access-unreachable-commits	t5000-tar-tree	clients cannot access unreachable commits	archive	pass
-t5000-tar-tree::upload-archive-can-allow-unreachable-commits	t5000-tar-tree	upload-archive can allow unreachable commits	archive	pass
-t5000-tar-tree::setup-tar-filters	t5000-tar-tree	setup tar filters	config	pass
-t5000-tar-tree::archive-list-mentions-user-filter	t5000-tar-tree	archive --list mentions user filter	archive	pass
-t5000-tar-tree::archive-list-shows-only-enabled-remote-filters	t5000-tar-tree	archive --list shows only enabled remote filters	archive	pass
-t5000-tar-tree::invoke-tar-filter-by-format	t5000-tar-tree	invoke tar filter by format	archive	pass
-t5000-tar-tree::invoke-tar-filter-by-extension	t5000-tar-tree	invoke tar filter by extension	archive	pass
-t5000-tar-tree::default-output-format-remains-tar	t5000-tar-tree	default output format remains tar	archive	pass
-t5000-tar-tree::extension-matching-requires-dot	t5000-tar-tree	extension matching requires dot	archive	pass
-t5000-tar-tree::only-enabled-filters-are-available-remotely	t5000-tar-tree	only enabled filters are available remotely	archive	pass
-t5000-tar-tree::invalid-filter-is-reported-only-once	t5000-tar-tree	invalid filter is reported only once	archive	pass
-t5000-tar-tree::git-archive-format-tgz	t5000-tar-tree	git archive --format=tgz	archive	pass
-t5000-tar-tree::git-archive-format-tar-gz	t5000-tar-tree	git archive --format=tar.gz	archive	pass
-t5000-tar-tree::infer-tgz-from-tgz-filename	t5000-tar-tree	infer tgz from .tgz filename	archive	pass
-t5000-tar-tree::infer-tgz-from-tar-gz-filename	t5000-tar-tree	infer tgz from .tar.gz filename	archive	pass
-t5000-tar-tree::extract-tgz-file	t5000-tar-tree	extract tgz file		pass
-t5000-tar-tree::remote-tar-gz-is-allowed-by-default	t5000-tar-tree	remote tar.gz is allowed by default	archive	pass
-t5000-tar-tree::remote-tar-gz-can-be-disabled	t5000-tar-tree	remote tar.gz can be disabled	archive	pass
-t5000-tar-tree::git-archive-format-tgz-external-gzip	t5000-tar-tree	git archive --format=tgz (external gzip)	archive	pass
-t5000-tar-tree::git-archive-format-tar-gz-external-gzip	t5000-tar-tree	git archive --format=tar.gz (external gzip)	archive	pass
-t5000-tar-tree::extract-tgz-file-external-gzip	t5000-tar-tree	extract tgz file (external gzip)		pass
-t5000-tar-tree::archive-and-glob	t5000-tar-tree	archive and :(glob)	archive	pass
-t5000-tar-tree::catch-non-matching-pathspec	t5000-tar-tree	catch non-matching pathspec	archive	pass
-t5000-tar-tree::reject-paths-outside-the-current-directory	t5000-tar-tree	reject paths outside the current directory	archive	pass
-t5000-tar-tree::allow-pathspecs-that-resolve-to-the-current-directory	t5000-tar-tree	allow pathspecs that resolve to the current directory	archive	pass
-t5000-tar-tree::attr-pathspec-in-bare-repo	t5000-tar-tree	attr pathspec in bare repo	archive	pass
-t5000-tar-tree::validate-extra-file-path-in-archive	t5000-tar-tree	 validate extra file $path_in_archive		pass
-t5000-tar-tree::validate-mtime-of-path-in-archive	t5000-tar-tree	 validate mtime of $path_in_archive		pass
+t5000-tar-tree::extract-tar-archive	t5000-tar-tree	 extract tar archive		partial
+t5000-tar-tree::interpret-pax-headers	t5000-tar-tree	 interpret pax headers		partial
+t5000-tar-tree::validate-filenames	t5000-tar-tree	 validate filenames		partial
+t5000-tar-tree::validate-file-contents	t5000-tar-tree	 validate file contents		partial
+t5000-tar-tree::setup	t5000-tar-tree	setup		partial
+t5000-tar-tree::list-notices-extra-parameters	t5000-tar-tree	--list notices extra parameters	archive	partial
+t5000-tar-tree::end-of-options-is-correctly-eaten	t5000-tar-tree	end-of-options is correctly eaten	archive	partial
+t5000-tar-tree::populate-workdir	t5000-tar-tree	populate workdir	add	partial
+t5000-tar-tree::add-files-to-repository	t5000-tar-tree	add files to repository	add	partial
+t5000-tar-tree::setup-export-subst	t5000-tar-tree	setup export-subst	log	partial
+t5000-tar-tree::create-bare-clone	t5000-tar-tree	create bare clone	clone	partial
+t5000-tar-tree::remove-ignored-file	t5000-tar-tree	remove ignored file		partial
+t5000-tar-tree::git-archive	t5000-tar-tree	git archive	archive	partial
+t5000-tar-tree::git-archive-mtime	t5000-tar-tree	git archive --mtime	archive	partial
+t5000-tar-tree::git-archive-prefix-prefix	t5000-tar-tree	git archive --prefix=prefix/	archive	partial
+t5000-tar-tree::git-archive-prefix-olde	t5000-tar-tree	git-archive --prefix=olde-	archive	partial
+t5000-tar-tree::git-archive-add-file	t5000-tar-tree	git archive --add-file	archive	partial
+t5000-tar-tree::git-archive-add-file-twice	t5000-tar-tree	git archive --add-file twice	archive	partial
+t5000-tar-tree::git-archive-on-large-files	t5000-tar-tree	git archive on large files	archive	partial
+t5000-tar-tree::git-archive-in-a-bare-repo	t5000-tar-tree	git archive in a bare repo	archive	partial
+t5000-tar-tree::git-archive-vs-the-same-in-a-bare-repo	t5000-tar-tree	git archive vs. the same in a bare repo		partial
+t5000-tar-tree::git-archive-with-output	t5000-tar-tree	git archive with --output	archive	partial
+t5000-tar-tree::git-archive-remote	t5000-tar-tree	git archive --remote	archive	partial
+t5000-tar-tree::git-archive-remote-with-configured-remote	t5000-tar-tree	git archive --remote with configured remote	archive	partial
+t5000-tar-tree::git-get-tar-commit-id	t5000-tar-tree	git get-tar-commit-id	get-tar-commit-id	partial
+t5000-tar-tree::git-archive-with-output-override-inferred-format	t5000-tar-tree	git archive with --output, override inferred format	archive	partial
+t5000-tar-tree::git-archive-with-output-and-remote-creates-tgz	t5000-tar-tree	git archive with --output and --remote creates .tgz	archive	partial
+t5000-tar-tree::git-archive-list-outside-of-a-git-repo	t5000-tar-tree	git archive --list outside of a git repo	archive	partial
+t5000-tar-tree::git-archive-remote-outside-of-a-git-repo	t5000-tar-tree	git archive --remote outside of a git repo	archive	partial
+t5000-tar-tree::clients-cannot-access-unreachable-commits	t5000-tar-tree	clients cannot access unreachable commits	archive	partial
+t5000-tar-tree::upload-archive-can-allow-unreachable-commits	t5000-tar-tree	upload-archive can allow unreachable commits	archive	partial
+t5000-tar-tree::setup-tar-filters	t5000-tar-tree	setup tar filters	config	partial
+t5000-tar-tree::archive-list-mentions-user-filter	t5000-tar-tree	archive --list mentions user filter	archive	partial
+t5000-tar-tree::archive-list-shows-only-enabled-remote-filters	t5000-tar-tree	archive --list shows only enabled remote filters	archive	partial
+t5000-tar-tree::invoke-tar-filter-by-format	t5000-tar-tree	invoke tar filter by format	archive	partial
+t5000-tar-tree::invoke-tar-filter-by-extension	t5000-tar-tree	invoke tar filter by extension	archive	partial
+t5000-tar-tree::default-output-format-remains-tar	t5000-tar-tree	default output format remains tar	archive	partial
+t5000-tar-tree::extension-matching-requires-dot	t5000-tar-tree	extension matching requires dot	archive	partial
+t5000-tar-tree::only-enabled-filters-are-available-remotely	t5000-tar-tree	only enabled filters are available remotely	archive	partial
+t5000-tar-tree::invalid-filter-is-reported-only-once	t5000-tar-tree	invalid filter is reported only once	archive	partial
+t5000-tar-tree::git-archive-format-tgz	t5000-tar-tree	git archive --format=tgz	archive	partial
+t5000-tar-tree::git-archive-format-tar-gz	t5000-tar-tree	git archive --format=tar.gz	archive	partial
+t5000-tar-tree::infer-tgz-from-tgz-filename	t5000-tar-tree	infer tgz from .tgz filename	archive	partial
+t5000-tar-tree::infer-tgz-from-tar-gz-filename	t5000-tar-tree	infer tgz from .tar.gz filename	archive	partial
+t5000-tar-tree::extract-tgz-file	t5000-tar-tree	extract tgz file		partial
+t5000-tar-tree::remote-tar-gz-is-allowed-by-default	t5000-tar-tree	remote tar.gz is allowed by default	archive	partial
+t5000-tar-tree::remote-tar-gz-can-be-disabled	t5000-tar-tree	remote tar.gz can be disabled	archive	partial
+t5000-tar-tree::git-archive-format-tgz-external-gzip	t5000-tar-tree	git archive --format=tgz (external gzip)	archive	partial
+t5000-tar-tree::git-archive-format-tar-gz-external-gzip	t5000-tar-tree	git archive --format=tar.gz (external gzip)	archive	partial
+t5000-tar-tree::extract-tgz-file-external-gzip	t5000-tar-tree	extract tgz file (external gzip)		partial
+t5000-tar-tree::archive-and-glob	t5000-tar-tree	archive and :(glob)	archive	partial
+t5000-tar-tree::catch-non-matching-pathspec	t5000-tar-tree	catch non-matching pathspec	archive	partial
+t5000-tar-tree::reject-paths-outside-the-current-directory	t5000-tar-tree	reject paths outside the current directory	archive	partial
+t5000-tar-tree::allow-pathspecs-that-resolve-to-the-current-directory	t5000-tar-tree	allow pathspecs that resolve to the current directory	archive	partial
+t5000-tar-tree::attr-pathspec-in-bare-repo	t5000-tar-tree	attr pathspec in bare repo	archive	partial
+t5000-tar-tree::validate-extra-file-path-in-archive	t5000-tar-tree	 validate extra file $path_in_archive		partial
+t5000-tar-tree::validate-mtime-of-path-in-archive	t5000-tar-tree	 validate mtime of $path_in_archive		partial
 t5001-archive-attr::setup	t5001-archive-attr	setup	archive	pass
 t5001-archive-attr::git-archive	t5001-archive-attr	git archive	archive	pass
 t5001-archive-attr::git-archive-with-pathspec	t5001-archive-attr	git archive with pathspec	archive	pass
@@ -15320,8 +15320,8 @@ t7521-ignored-mode::verify-status-behavior-on-ignored-directory-containing-track
 t7521-ignored-mode::verify-behavior-of-status-with-ignored-no	t7521-ignored-mode	Verify behavior of status with --ignored=no	clean	pass
 t7521-ignored-mode::verify-behavior-of-status-with-ignored-traditional-and-untracked-files-all	t7521-ignored-mode	Verify behavior of status with --ignored=traditional and --untracked-files=all	clean	pass
 t7521-ignored-mode::verify-behavior-of-status-with-ignored-traditional-and-untracked-files-normal	t7521-ignored-mode	Verify behavior of status with --ignored=traditional and --untracked-files=normal	clean	pass
-t7524-commit-summary::setup	t7524-commit-summary	setup	commit	partial
-t7524-commit-summary::commit-summary-ignores-rewrites	t7524-commit-summary	commit summary ignores rewrites	commit	partial
+t7524-commit-summary::setup	t7524-commit-summary	setup	commit	pass
+t7524-commit-summary::commit-summary-ignores-rewrites	t7524-commit-summary	commit summary ignores rewrites	commit	pass
 t7525-status-rename::setup	t7525-status-rename	setup	status	pass
 t7525-status-rename::status-no-options	t7525-status-rename	status no-options	status	pass
 t7525-status-rename::status-no-renames	t7525-status-rename	status --no-renames	status	pass
