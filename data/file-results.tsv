@@ -181,7 +181,7 @@ t2007-checkout-symlink	yes	4	4	0	ok
 t2008-checkout-subdir	yes	22	12	10	ok
 t2009-checkout-statinfo	yes	25	20	5	ok
 t2010-checkout-ambiguous	yes	7	5	2	ok
-t2011-checkout-invalid-head	yes	24	19	5	ok
+t2011-checkout-invalid-head	yes	24	20	4	ok
 t2012-checkout-last	yes	25	6	19	ok
 t2013-checkout-submodule	yes	3	3	0	ok
 t2014-checkout-switch	yes	24	7	17	ok
@@ -384,7 +384,7 @@ t4028-format-patch-mime-headers	yes	3	3	0	ok
 t4029-diff-trailing-space	yes	5	5	0	ok
 t4030-diff-textconv	yes	20	20	0	ok
 t4031-diff-rewrite-binary	yes	29	29	0	ok
-t4032-diff-inter-hunk-context	yes	32	12	20	ok
+t4032-diff-inter-hunk-context	yes	32	1	31	ok
 t4033-diff-patience	yes	35	35	0	ok
 t4034-diff-words	yes	5	5	0	ok
 t4035-diff-quiet	yes	45	45	0	ok

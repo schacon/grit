@@ -61,6 +61,34 @@ pub struct Args {
     /// Read patches from stdin (default if no files given).
     #[arg(long = "stdin")]
     pub stdin: bool,
+
+    /// Add Signed-off-by trailer.
+    #[arg(short = 's', long = "signoff")]
+    pub signoff: bool,
+
+    /// Keep the [PATCH] prefix in the subject.
+    #[arg(short = 'k', long = "keep")]
+    pub keep: bool,
+
+    /// Keep non-patch bracket content in the subject.
+    #[arg(long = "keep-non-patch")]
+    pub keep_non_patch: bool,
+
+    /// Strip everything before scissors line.
+    #[arg(long = "scissors")]
+    pub scissors: bool,
+
+    /// Override scissors with --no-scissors.
+    #[arg(long = "no-scissors")]
+    pub no_scissors: bool,
+
+    /// Set committer date to author date.
+    #[arg(long = "committer-date-is-author-date")]
+    pub committer_date_is_author_date: bool,
+
+    /// Show the current patch.
+    #[arg(long = "show-current-patch", value_name = "MODE", num_args = 0..=1, default_missing_value = "raw")]
+    pub show_current_patch: Option<String>,
 }
 
 /// A parsed patch from an mbox message.
@@ -81,9 +109,18 @@ struct MboxPatch {
 struct AmOptions {
     quiet: bool,
     three_way: bool,
+    signoff: bool,
+    keep: bool,
+    keep_non_patch: bool,
+    scissors: bool,
+    no_scissors: bool,
+    committer_date_is_author_date: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
+    if let Some(ref mode) = args.show_current_patch {
+        return do_show_current_patch(mode);
+    }
     if args.abort {
         return do_abort();
     }
@@ -137,12 +174,17 @@ fn do_am(args: Args) -> Result<()> {
         );
     }
 
+    let keep = args.keep;
+    let keep_non_patch = args.keep_non_patch;
+    let scissors = args.scissors;
+    let no_scissors = args.no_scissors;
+
     // Read and parse all mbox files
     let mut all_patches = Vec::new();
     for mbox_path in &args.mbox {
         let content = fs::read_to_string(mbox_path)
             .with_context(|| format!("cannot read mbox file '{mbox_path}'"))?;
-        let mut patches = parse_mbox(&content)?;
+        let mut patches = parse_mbox_with_opts(&content, keep, keep_non_patch, scissors, no_scissors)?;
         all_patches.append(&mut patches);
     }
 
@@ -183,6 +225,12 @@ fn do_am(args: Args) -> Result<()> {
     let opts = AmOptions {
         quiet: args.quiet,
         three_way: args.three_way,
+        signoff: args.signoff,
+        keep: args.keep,
+        keep_non_patch: args.keep_non_patch,
+        scissors: args.scissors,
+        no_scissors: args.no_scissors,
+        committer_date_is_author_date: args.committer_date_is_author_date,
     };
     apply_remaining(&repo, &opts)?;
 
@@ -205,7 +253,7 @@ fn do_am_stdin(args: Args) -> Result<()> {
         );
     }
 
-    let all_patches = parse_mbox(&input)?;
+    let all_patches = parse_mbox_with_opts(&input, args.keep, args.keep_non_patch, args.scissors, args.no_scissors)?;
     if all_patches.is_empty() {
         eprintln!("Patch format detection failed."); std::process::exit(128);
     }
@@ -239,6 +287,12 @@ fn do_am_stdin(args: Args) -> Result<()> {
     let opts = AmOptions {
         quiet: args.quiet,
         three_way: args.three_way,
+        signoff: args.signoff,
+        keep: args.keep,
+        keep_non_patch: args.keep_non_patch,
+        scissors: args.scissors,
+        no_scissors: args.no_scissors,
+        committer_date_is_author_date: args.committer_date_is_author_date,
     };
     apply_remaining(&repo, &opts)?;
     Ok(())
@@ -259,7 +313,7 @@ fn apply_remaining(repo: &Repository, opts: &AmOptions) -> Result<()> {
 
         fs::write(state_dir.join("current"), next.to_string())?;
 
-        match apply_one_patch(repo, &patch, opts.three_way) {
+        match apply_one_patch(repo, &patch, opts) {
             Ok(()) => {
                 let subject = patch.message.lines().next().unwrap_or("");
                 if !opts.quiet {
@@ -288,7 +342,7 @@ fn apply_remaining(repo: &Repository, opts: &AmOptions) -> Result<()> {
 }
 
 /// Apply a single mbox patch: apply the diff, then create a commit.
-fn apply_one_patch(repo: &Repository, patch: &MboxPatch, _three_way: bool) -> Result<()> {
+fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Result<()> {
     let git_dir = &repo.git_dir;
     let work_tree = repo
         .work_tree
@@ -333,7 +387,7 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, _three_way: bool) -> Re
         bail!("patch has conflicts");
     }
 
-    create_am_commit(repo, &index, patch)?;
+    create_am_commit(repo, &index, patch, opts)?;
 
     Ok(())
 }
@@ -608,7 +662,7 @@ fn collect_files(root: &Path, dir: &Path, out: &mut HashSet<String>) -> Result<(
 }
 
 /// Create a commit from the current index using the patch metadata.
-fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch) -> Result<()> {
+fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch, opts: &AmOptions) -> Result<()> {
     let git_dir = &repo.git_dir;
     let tree_oid = write_tree_from_index(&repo.odb, index, "")?;
 
@@ -632,13 +686,34 @@ fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch) -> Resu
         format_ident(&committer, now)
     };
 
+    // Handle --committer-date-is-author-date
+    let committer_ident = if opts.committer_date_is_author_date {
+        // Extract the date portion from author_ident (everything after the closing >)
+        let date_part = if let Some(pos) = author_ident.rfind("> ") {
+            &author_ident[pos + 2..]
+        } else {
+            ""
+        };
+        let (cname, cemail) = &committer;
+        format!("{cname} <{cemail}> {date_part}")
+    } else {
+        format_ident(&committer, now)
+    };
+
+    // Handle --signoff
+    let mut message = patch.message.clone();
+    if opts.signoff {
+        let sob_line = format!("Signed-off-by: {} <{}>", committer.0, committer.1);
+        message = add_signoff(&message, &sob_line);
+    }
+
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
         author: author_ident,
-        committer: format_ident(&committer, now),
+        committer: committer_ident,
         encoding: None,
-        message: patch.message.clone(),
+        message,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -646,6 +721,66 @@ fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch) -> Resu
 
     // Update HEAD
     update_head(git_dir, &head, &commit_oid)?;
+
+    Ok(())
+}
+
+/// Add Signed-off-by line to commit message, following git conventions.
+fn add_signoff(message: &str, sob_line: &str) -> String {
+    let trimmed = message.trim_end();
+    let lines: Vec<&str> = trimmed.lines().collect();
+
+    // Check if the last line is already this exact Signed-off-by
+    if let Some(last) = lines.last() {
+        if last.trim() == sob_line {
+            // Already there as the last trailer — don't add again
+            return format!("{}\n", trimmed);
+        }
+    }
+
+    // Check if there's already a trailer block (lines matching "Key: value")
+    let has_trailer_block = lines.last().map_or(false, |l| {
+        l.contains(": ") && !l.starts_with(' ') && !l.starts_with('\t')
+    });
+
+    if has_trailer_block {
+        // Append to existing trailer block
+        format!("{}\n{}\n", trimmed, sob_line)
+    } else {
+        // Add blank line before trailer
+        format!("{}\n\n{}\n", trimmed, sob_line)
+    }
+}
+
+/// Show current patch during an am session.
+fn do_show_current_patch(mode: &str) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+
+    if !is_am_in_progress(git_dir) {
+        bail!("error: no am session in progress");
+    }
+
+    let state_dir = am_dir(git_dir);
+    let current_str = fs::read_to_string(state_dir.join("current"))
+        .or_else(|_| fs::read_to_string(state_dir.join("next")))?;
+    let current: usize = current_str.trim().parse()?;
+    let patch_file = state_dir.join("patches").join(current.to_string());
+
+    match mode {
+        "raw" => {
+            let content = fs::read_to_string(&patch_file)?;
+            print!("{}", content);
+        }
+        "diff" => {
+            let content = fs::read_to_string(&patch_file)?;
+            let patch = deserialize_mbox_patch(&content)?;
+            print!("{}", patch.diff);
+        }
+        _ => {
+            bail!("invalid value for --show-current-patch: {}", mode);
+        }
+    }
 
     Ok(())
 }
@@ -693,6 +828,12 @@ fn do_skip() -> Result<()> {
     let opts = AmOptions {
         quiet: false,
         three_way: false,
+        signoff: false,
+        keep: false,
+        keep_non_patch: false,
+        scissors: false,
+        no_scissors: false,
+        committer_date_is_author_date: false,
     };
     apply_remaining(&repo, &opts)?;
 
@@ -733,7 +874,17 @@ fn do_continue(quiet: bool) -> Result<()> {
         ..patch
     };
 
-    create_am_commit(&repo, &index, &patched)?;
+    let default_opts = AmOptions {
+        quiet,
+        three_way: false,
+        signoff: false,
+        keep: false,
+        keep_non_patch: false,
+        scissors: false,
+        no_scissors: false,
+        committer_date_is_author_date: false,
+    };
+    create_am_commit(&repo, &index, &patched, &default_opts)?;
 
     let subject = patched.message.lines().next().unwrap_or("");
     if !quiet {
@@ -749,6 +900,12 @@ fn do_continue(quiet: bool) -> Result<()> {
     let opts = AmOptions {
         quiet,
         three_way: false,
+        signoff: false,
+        keep: false,
+        keep_non_patch: false,
+        scissors: false,
+        no_scissors: false,
+        committer_date_is_author_date: false,
     };
     apply_remaining(&repo, &opts)?;
 
@@ -831,6 +988,11 @@ fn cleanup_am_state(git_dir: &Path) {
 
 /// Parse an mbox file into individual patches.
 fn parse_mbox(input: &str) -> Result<Vec<MboxPatch>> {
+    parse_mbox_with_opts(input, false, false, false, false)
+}
+
+/// Parse an mbox file into individual patches with options.
+fn parse_mbox_with_opts(input: &str, keep: bool, keep_non_patch: bool, scissors: bool, no_scissors: bool) -> Result<Vec<MboxPatch>> {
     let mut patches = Vec::new();
     let mut lines = input.lines().peekable();
 
@@ -894,8 +1056,14 @@ fn parse_mbox(input: &str) -> Result<Vec<MboxPatch>> {
                 date = value.trim().to_string();
                 last_header = "date".to_string();
             } else if let Some(value) = line.strip_prefix("Subject: ") {
-                // Strip [PATCH ...] prefix
-                let subj = strip_patch_prefix(value.trim());
+                // Strip [PATCH ...] prefix unless --keep
+                let subj = if keep {
+                    value.trim().to_string()
+                } else if keep_non_patch {
+                    strip_patch_prefix_keep_non_patch(value.trim())
+                } else {
+                    strip_patch_prefix(value.trim())
+                };
                 subject = subj;
                 last_header = "subject".to_string();
             } else {
@@ -964,7 +1132,15 @@ fn parse_mbox(input: &str) -> Result<Vec<MboxPatch>> {
         }
 
         // Build message from subject + body
-        let body_str = body_lines.join("\n").trim().to_string();
+        let mut body_str = body_lines.join("\n").trim().to_string();
+
+        // Handle --scissors: trim at scissors line, potentially replace subject
+        if scissors && !no_scissors {
+            let (new_subject, new_body) = apply_scissors_to_message(&subject, &body_str);
+            subject = new_subject;
+            body_str = new_body;
+        }
+
         let message = if body_str.is_empty() {
             format!("{}\n", subject)
         } else {
@@ -1003,6 +1179,108 @@ fn strip_patch_prefix(subject: &str) -> String {
         }
     }
     subject.to_string()
+}
+
+/// Strip only PATCH-related bracket content, keep non-patch brackets.
+fn strip_patch_prefix_keep_non_patch(subject: &str) -> String {
+    if subject.starts_with('[') {
+        if let Some(end) = subject.find(']') {
+            let bracket_content = &subject[1..end];
+            // If it looks like a PATCH prefix, strip it
+            if bracket_content.contains("PATCH") {
+                let rest = subject[end + 1..].trim();
+                if !rest.is_empty() {
+                    return rest.to_string();
+                }
+            }
+        }
+    }
+    subject.to_string()
+}
+
+/// Apply scissors: find the scissors line in body and keep only content below it.
+/// Returns the new body text (may be empty).
+fn apply_scissors(body: &str) -> String {
+    for (i, line) in body.lines().enumerate() {
+        if is_scissors_line(line.trim()) {
+            let remaining: Vec<&str> = body.lines().skip(i + 1).collect();
+            return remaining.join("\n").trim().to_string();
+        }
+    }
+    body.to_string()
+}
+
+/// Apply scissors to the full message (subject + body), replacing subject if needed.
+fn apply_scissors_to_message(subject: &str, body: &str) -> (String, String) {
+    // Check if scissors line is in the body
+    let mut scissors_idx = None;
+    let body_lines: Vec<&str> = body.lines().collect();
+    for (i, line) in body_lines.iter().enumerate() {
+        if is_scissors_line(line.trim()) {
+            scissors_idx = Some(i);
+            break;
+        }
+    }
+
+    if let Some(idx) = scissors_idx {
+        // Everything after scissors
+        let after: Vec<&str> = body_lines[idx + 1..].to_vec();
+        let after_text = after.join("\n");
+        let after_trimmed = after_text.trim();
+
+        // Look for Subject: pseudo-header after scissors
+        let mut new_subject = String::new();
+        let mut new_body_lines = Vec::new();
+        let mut in_headers = true;
+
+        for line in after_trimmed.lines() {
+            if in_headers {
+                if line.is_empty() {
+                    in_headers = false;
+                    continue;
+                }
+                if let Some(val) = line.strip_prefix("Subject: ") {
+                    new_subject = val.trim().to_string();
+                    continue;
+                }
+                // Non-header line
+                in_headers = false;
+                new_body_lines.push(line);
+            } else {
+                new_body_lines.push(line);
+            }
+        }
+
+        if new_subject.is_empty() {
+            new_subject = subject.to_string();
+        }
+
+        let new_body = new_body_lines.join("\n").trim().to_string();
+        (new_subject, new_body)
+    } else {
+        (subject.to_string(), body.to_string())
+    }
+}
+
+/// Check if a line is a scissors line.
+/// Git looks for lines containing ">8" or "8<" preceded by dashes/spaces.
+/// Examples: "-- >8 --", " - - >8 - - remove everything above"
+fn is_scissors_line(line: &str) -> bool {
+    // Find ">8" or "8<" in the line
+    let scissors_pos = if let Some(pos) = line.find(">8") {
+        pos
+    } else if let Some(pos) = line.find("8<") {
+        pos
+    } else {
+        return false;
+    };
+
+    // Everything before the scissors marker must be only '-' and ' '
+    let prefix = &line[..scissors_pos];
+    if prefix.is_empty() {
+        return false;
+    }
+    prefix.chars().all(|c| c == '-' || c == ' ')
 }
 
 /// Parse "Name <email>" and date string into (author_ident, epoch_offset).
