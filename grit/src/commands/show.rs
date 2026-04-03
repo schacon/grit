@@ -49,6 +49,22 @@ pub struct Args {
     /// Use the patience diff algorithm.
     #[arg(long = "patience")]
     pub patience: bool,
+
+    /// Show a diffstat summary after the commit header.
+    #[arg(long = "stat")]
+    pub stat: bool,
+
+    /// Show raw diff-tree output format.
+    #[arg(long = "raw")]
+    pub raw: bool,
+
+    /// Show only names of changed files.
+    #[arg(long = "name-only")]
+    pub name_only: bool,
+
+    /// Show names and status of changed files.
+    #[arg(long = "name-status")]
+    pub name_status: bool,
 }
 
 /// Run the `show` command.
@@ -191,6 +207,79 @@ fn show_commit(
     let diff_entries =
         diff_trees(odb, old_tree_oid.as_ref(), new_tree, "").context("computing diff")?;
 
+    // --name-only: just print file names
+    if args.name_only {
+        for entry in &diff_entries {
+            let path = entry.new_path.as_deref()
+                .or(entry.old_path.as_deref())
+                .unwrap_or("");
+            writeln!(out, "{path}")?;
+        }
+        return Ok(());
+    }
+
+    // --name-status: print status letter and file name
+    if args.name_status {
+        for entry in &diff_entries {
+            let path = entry.new_path.as_deref()
+                .or(entry.old_path.as_deref())
+                .unwrap_or("");
+            let status = match entry.status {
+                grit_lib::diff::DiffStatus::Added => 'A',
+                grit_lib::diff::DiffStatus::Deleted => 'D',
+                grit_lib::diff::DiffStatus::Modified => 'M',
+                grit_lib::diff::DiffStatus::Renamed => 'R',
+                grit_lib::diff::DiffStatus::Copied => 'C',
+                grit_lib::diff::DiffStatus::TypeChanged => 'T',
+                grit_lib::diff::DiffStatus::Unmerged => 'U',
+            };
+            writeln!(out, "{status}\t{path}")?;
+        }
+        return Ok(());
+    }
+
+    // --raw: raw diff-tree output format
+    if args.raw {
+        for entry in &diff_entries {
+            let old_path = entry.old_path.as_deref()
+                .or(entry.new_path.as_deref())
+                .unwrap_or("");
+            let new_path = entry.new_path.as_deref()
+                .or(entry.old_path.as_deref())
+                .unwrap_or("");
+            let status_char = match entry.status {
+                grit_lib::diff::DiffStatus::Added => 'A',
+                grit_lib::diff::DiffStatus::Deleted => 'D',
+                grit_lib::diff::DiffStatus::Modified => 'M',
+                grit_lib::diff::DiffStatus::Renamed => 'R',
+                grit_lib::diff::DiffStatus::Copied => 'C',
+                grit_lib::diff::DiffStatus::TypeChanged => 'T',
+                grit_lib::diff::DiffStatus::Unmerged => 'U',
+            };
+            writeln!(
+                out,
+                ":{} {} {} {} {status_char}\t{}",
+                entry.old_mode,
+                entry.new_mode,
+                &entry.old_oid.to_hex()[..7],
+                &entry.new_oid.to_hex()[..7],
+                if entry.status == grit_lib::diff::DiffStatus::Renamed {
+                    format!("{old_path}\t{new_path}")
+                } else {
+                    new_path.to_string()
+                }
+            )?;
+        }
+        return Ok(());
+    }
+
+    // --stat: show diffstat summary
+    if args.stat {
+        write_diffstat(out, odb, &diff_entries)?;
+        return Ok(());
+    }
+
+    // Default: full unified diff
     for entry in &diff_entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
@@ -223,6 +312,105 @@ fn show_commit(
         };
         write!(out, "{patch}")?;
     }
+
+    Ok(())
+}
+
+/// Write a diffstat summary for the given diff entries.
+fn write_diffstat(
+    out: &mut impl Write,
+    odb: &Odb,
+    entries: &[grit_lib::diff::DiffEntry],
+) -> Result<()> {
+    let mut stats: Vec<(String, usize, usize)> = Vec::new();
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+
+    for entry in entries {
+        let path = entry.new_path.as_deref()
+            .or(entry.old_path.as_deref())
+            .unwrap_or("")
+            .to_string();
+
+        let old_content = if entry.old_oid == grit_lib::diff::zero_oid() {
+            String::new()
+        } else {
+            match odb.read(&entry.old_oid) {
+                Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
+                Err(_) => String::new(),
+            }
+        };
+
+        let new_content = if entry.new_oid == grit_lib::diff::zero_oid() {
+            String::new()
+        } else {
+            match odb.read(&entry.new_oid) {
+                Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
+                Err(_) => String::new(),
+            }
+        };
+
+        let old_lines: Vec<&str> = if old_content.is_empty() {
+            vec![]
+        } else {
+            old_content.lines().collect()
+        };
+        let new_lines: Vec<&str> = if new_content.is_empty() {
+            vec![]
+        } else {
+            new_content.lines().collect()
+        };
+
+        // Simple line-count based insertions/deletions.
+        let ins = new_lines.len().saturating_sub(old_lines.len().min(new_lines.len()));
+        let del = old_lines.len().saturating_sub(new_lines.len().min(old_lines.len()));
+
+        // More accurate: count changed lines using the diff
+        let patch = unified_diff(&old_content, &new_content, &path, &path, 0);
+        let mut insertions = 0usize;
+        let mut deletions = 0usize;
+        for line in patch.lines() {
+            if line.starts_with('+') && !line.starts_with("+++") {
+                insertions += 1;
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                deletions += 1;
+            }
+        }
+        // Use diff-based counts if available, else line-based.
+        let _ = (ins, del);
+
+        total_ins += insertions;
+        total_del += deletions;
+        stats.push((path, insertions, deletions));
+    }
+
+    let max_name_len = stats.iter().map(|(p, _, _)| p.len()).max().unwrap_or(0);
+
+    for (path, ins, del) in &stats {
+        let total = ins + del;
+        let bar: String = "+".repeat(*ins).to_string() + &"-".repeat(*del);
+        writeln!(
+            out,
+            " {path:<width$} | {total:>4} {bar}",
+            width = max_name_len
+        )?;
+    }
+
+    let files = stats.len();
+    let file_word = if files == 1 { "file changed" } else { "files changed" };
+    let ins_part = if total_ins > 0 {
+        let word = if total_ins == 1 { "insertion(+)" } else { "insertions(+)" };
+        format!(", {total_ins} {word}")
+    } else {
+        String::new()
+    };
+    let del_part = if total_del > 0 {
+        let word = if total_del == 1 { "deletion(-)" } else { "deletions(-)" };
+        format!(", {total_del} {word}")
+    } else {
+        String::new()
+    };
+    writeln!(out, " {files} {file_word}{ins_part}{del_part}")?;
 
     Ok(())
 }
@@ -423,7 +611,11 @@ fn apply_format_string(
                         }
                         Some('i') => {
                             chars.next();
-                            result.push_str(info.author);
+                            result.push_str(&format_date_iso(info.author));
+                        }
+                        Some('r') => {
+                            chars.next();
+                            result.push_str(&format_date_relative(info.author));
                         }
                         _ => result.push_str("%a"),
                     }
@@ -445,7 +637,11 @@ fn apply_format_string(
                         }
                         Some('i') => {
                             chars.next();
-                            result.push_str(info.committer);
+                            result.push_str(&format_date_iso(info.committer));
+                        }
+                        Some('r') => {
+                            chars.next();
+                            result.push_str(&format_date_relative(info.committer));
                         }
                         _ => result.push_str("%c"),
                     }
@@ -462,6 +658,15 @@ fn apply_format_string(
                 Some('n') => {
                     chars.next();
                     result.push('\n');
+                }
+                Some('D') => {
+                    chars.next();
+                    // %D: decorations without parentheses — we leave it empty
+                    // since we don't have a ref database context here.
+                }
+                Some('d') => {
+                    chars.next();
+                    // %d: decorations with parentheses — we leave it empty.
                 }
                 Some('%') => {
                     chars.next();
@@ -501,6 +706,89 @@ fn format_ident_display(ident: &str) -> String {
     let name = extract_name(ident);
     let email = extract_email(ident);
     format!("{name} <{email}>")
+}
+
+/// Format the date portion of a Git ident string in ISO 8601 format (%ci / %ai).
+fn format_date_iso(ident: &str) -> String {
+    let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
+    if parts.len() >= 2 {
+        let ts_str = parts[1];
+        let offset_str = parts[0];
+        if let Ok(ts) = ts_str.parse::<i64>() {
+            // Parse the offset to apply to the timestamp.
+            let offset_secs = parse_offset_seconds(offset_str);
+            let dt = time::OffsetDateTime::from_unix_timestamp(ts + offset_secs as i64)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+            let format = time::format_description::parse(
+                "[year]-[month]-[day] [hour]:[minute]:[second]",
+            );
+            if let Ok(fmt) = format {
+                if let Ok(formatted) = dt.format(&fmt) {
+                    // Git outputs: 2001-09-09 01:46:40 +0000
+                    return format!("{formatted} {offset_str}");
+                }
+            }
+        }
+        format!("{ts_str} {offset_str}")
+    } else {
+        ident.to_owned()
+    }
+}
+
+/// Parse a Git timezone offset string like "+0200" or "-0530" into seconds.
+fn parse_offset_seconds(offset: &str) -> i32 {
+    if offset.len() < 5 {
+        return 0;
+    }
+    let sign = if offset.starts_with('-') { -1 } else { 1 };
+    let hours: i32 = offset[1..3].parse().unwrap_or(0);
+    let minutes: i32 = offset[3..5].parse().unwrap_or(0);
+    sign * (hours * 3600 + minutes * 60)
+}
+
+/// Format the date portion of a Git ident string as a relative date (%cr / %ar).
+fn format_date_relative(ident: &str) -> String {
+    let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
+    if parts.len() >= 2 {
+        let ts_str = parts[1];
+        if let Ok(ts) = ts_str.parse::<i64>() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let diff = now - ts;
+            if diff < 0 {
+                return "in the future".to_string();
+            }
+            let diff = diff as u64;
+            if diff < 60 {
+                return format!("{diff} seconds ago");
+            }
+            let minutes = diff / 60;
+            if minutes < 60 {
+                return format!("{minutes} minutes ago");
+            }
+            let hours = minutes / 60;
+            if hours < 24 {
+                return format!("{hours} hours ago");
+            }
+            let days = hours / 24;
+            if days < 14 {
+                return format!("{days} days ago");
+            }
+            let weeks = days / 7;
+            if weeks < 8 {
+                return format!("{weeks} weeks ago");
+            }
+            let months = days / 30;
+            if months < 12 {
+                return format!("{months} months ago");
+            }
+            let years = days / 365;
+            return format!("{years} years ago");
+        }
+    }
+    ident.to_owned()
 }
 
 /// Format the date portion of a Git ident string for human display.
