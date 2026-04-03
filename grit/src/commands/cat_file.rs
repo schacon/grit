@@ -192,7 +192,7 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 /// Validate argument combinations and produce git-compatible error messages.
-fn validate_args(args: &Args) -> Result<()> {
+fn validate_args(_args: &Args) -> Result<()> {
     // Nothing to validate beyond what clap handles for now.
     // The clap-level conflicts_with_all handles the main incompatibilities.
     Ok(())

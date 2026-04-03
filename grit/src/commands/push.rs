@@ -391,7 +391,7 @@ fn apply_ref_update(
     remote_repo: &Repository,
     update: &RefUpdate,
     args: &Args,
-    url: &str,
+    _url: &str,
 ) -> Result<()> {
     let zero_oid = "0".repeat(40);
 

@@ -403,9 +403,9 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()
             std::process::exit(1);
         }
         for entry in matches {
-            let has_type_flag = args.type_bool || args.type_int || args.type_bool_or_int
+            let _has_type_flag = args.type_bool || args.type_int || args.type_bool_or_int
                 || args.type_path || args.type_name.is_some();
-            let is_bare = entry.value.is_none();
+            let _is_bare = entry.value.is_none();
             let val = entry.value.as_deref().unwrap_or("true");
             let val = format_typed_value(args, val)?;
             if args.name_only {

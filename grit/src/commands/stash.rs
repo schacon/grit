@@ -562,7 +562,7 @@ fn do_push_pathspec(
 /// Push with --staged: only stash staged changes.
 fn do_push_staged(
     repo: &Repository,
-    work_tree: &Path,
+    _work_tree: &Path,
     head: &HeadState,
     head_oid: &ObjectId,
     index: &Index,

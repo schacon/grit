@@ -249,8 +249,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "grit"
-version = "0.1.0"
+name = "grit-lib"
+version = "0.1.1"
+dependencies = [
+ "flate2",
+ "hex",
+ "regex",
+ "sha1",
+ "similar",
+ "tempfile",
+ "thiserror",
+ "time",
+]
+
+[[package]]
+name = "grit-rs"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -261,20 +275,6 @@ dependencies = [
  "sha1",
  "similar",
  "tempfile",
- "time",
-]
-
-[[package]]
-name = "grit-lib"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "hex",
- "regex",
- "sha1",
- "similar",
- "tempfile",
- "thiserror",
  "time",
 ]
 

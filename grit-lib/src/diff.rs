@@ -961,7 +961,6 @@ pub fn format_rename_path(old: &str, new: &str) -> String {
             }
         }
         if new_sfx == 0 || new_sfx >= sfx {
-            sfx = 0;
             sfx_at_old = ob.len();
             sfx_at_new = nb.len();
             break;

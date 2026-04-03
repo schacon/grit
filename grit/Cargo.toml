@@ -1,9 +1,11 @@
 [package]
-name = "grit"
+name = "grit-rs"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
-description = "Gust: a Git plumbing reimplementation in Rust"
+license = "MIT"
+description = "A Git implementation in Rust"
+readme = "README.md"
+repository = "https://github.com/schacon/grit"
 
 [[bin]]
 name = "grit"
@@ -13,7 +15,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-grit-lib = { path = "../grit-lib" }
+grit-lib = { version = "0.1.0", path = "../grit-lib" }
 anyhow.workspace = true
 clap.workspace = true
 time.workspace = true
