@@ -54,7 +54,25 @@ pub struct Args {
 }
 
 /// Run `grit checkout`.
+use std::cell::Cell;
+
+thread_local! {
+    static QUIET: Cell<bool> = Cell::new(false);
+}
+
+/// Print to stderr unless quiet mode is enabled.
+macro_rules! checkout_eprintln {
+    ($($arg:tt)*) => {
+        QUIET.with(|q| {
+            if !q.get() {
+                eprintln!($($arg)*);
+            }
+        })
+    };
+}
+
 pub fn run(args: Args) -> Result<()> {
+    QUIET.with(|q| q.set(args.quiet));
     let repo = Repository::discover(None).context("not a git repository")?;
 
     // Detect if `--` was used in the original command line. Clap strips a
@@ -196,7 +214,7 @@ fn switch_branch(repo: &Repository, branch_name: &str, branch_ref: &str, force: 
     // Check if already on this branch
     if let HeadState::Branch { ref refname, .. } = head {
         if refname == branch_ref {
-            eprintln!("Already on '{}'", branch_name);
+            checkout_eprintln!("Already on '{}'", branch_name);
             if force {
                 // Force mode: reset working tree to match the branch
                 let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
@@ -237,7 +255,7 @@ fn switch_branch(repo: &Repository, branch_name: &str, branch_ref: &str, force: 
         format!("ref: {branch_ref}\n"),
     )?;
 
-    eprintln!("Switched to branch '{}'", branch_name);
+    checkout_eprintln!("Switched to branch '{}'", branch_name);
     Ok(())
 }
 
@@ -293,7 +311,7 @@ fn create_and_switch_branch(
         format!("ref: {branch_ref}\n"),
     )?;
 
-    eprintln!("Switched to a new branch '{}'", name);
+    checkout_eprintln!("Switched to a new branch '{}'", name);
     Ok(())
 }
 
@@ -336,7 +354,7 @@ fn force_create_and_switch_branch(
     )?;
 
     // Message depends on whether branch existed
-    eprintln!("Switched to and reset branch '{}'", name);
+    checkout_eprintln!("Switched to and reset branch '{}'", name);
     Ok(())
 }
 
@@ -358,7 +376,7 @@ fn create_orphan_branch(repo: &Repository, name: &str) -> Result<()> {
         format!("ref: {branch_ref}\n"),
     )?;
 
-    eprintln!("Switched to a new branch '{}'", name);
+    checkout_eprintln!("Switched to a new branch '{}'", name);
     Ok(())
 }
 
@@ -428,7 +446,7 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
     match &head {
         HeadState::Branch { refname, .. } => {
             let branch_name = refname.strip_prefix("refs/heads/").unwrap_or(refname);
-            eprintln!("Already on '{}'", branch_name);
+            checkout_eprintln!("Already on '{}'", branch_name);
         }
         _ => {
             print_detached_head_message(repo, &head_oid)?;
@@ -778,7 +796,7 @@ fn print_detached_head_message(repo: &Repository, oid: &ObjectId) -> Result<()> 
         Err(_) => true,
     };
     if show_advice {
-        eprintln!(
+        checkout_eprintln!(
             "Note: switching to '{}'.\n\
              \n\
              You are in 'detached HEAD' state. You can look around, make experimental\n\
@@ -799,7 +817,7 @@ fn print_detached_head_message(repo: &Repository, oid: &ObjectId) -> Result<()> 
         );
     }
 
-    eprintln!("HEAD is now at {} {}", abbrev, subject);
+    checkout_eprintln!("HEAD is now at {} {}", abbrev, subject);
     Ok(())
 }
 
