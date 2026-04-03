@@ -1213,7 +1213,7 @@ pub fn anchored_unified_diff(
     anchors: &[String],
 ) -> String {
     use similar::TextDiff;
-    use std::collections::HashMap;
+    
 
     let old_lines: Vec<&str> = old_content.lines().collect();
     let new_lines: Vec<&str> = new_content.lines().collect();

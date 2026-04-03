@@ -117,7 +117,7 @@ fn resolve_remote_or_path(path: &Path) -> PathBuf {
     if let Ok(repo) = Repository::discover(None) {
         let config_path = repo.git_dir.join("config");
         if let Ok(content) = std::fs::read_to_string(&config_path) {
-            let key = format!("remote.{}.url", path_str);
+            let _key = format!("remote.{}.url", path_str);
             // Simple config parsing: look for [remote "name"] section and url key
             if let Some(url) = parse_remote_url(&content, &path_str) {
                 return PathBuf::from(url);

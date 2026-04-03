@@ -201,7 +201,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     let mut branches: Vec<BranchInfo> = Vec::new();
 
     if !args.remotes {
-        let mut local = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+        let local = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
             grit_lib::reftable::reftable_list_refs(&repo.git_dir, "refs/heads/")
                 .map_err(|e| anyhow::anyhow!("{e}"))?
                 .into_iter()
@@ -225,7 +225,7 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     }
 
     if args.remotes || args.all {
-        let mut remote = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+        let remote = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
             grit_lib::reftable::reftable_list_refs(&repo.git_dir, "refs/remotes/")
                 .map_err(|e| anyhow::anyhow!("{e}"))?
                 .into_iter()

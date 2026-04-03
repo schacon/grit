@@ -6,7 +6,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
-use grit_lib::crlf::{self, ConversionConfig, FileAttrs, GitAttributes};
+use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
 use grit_lib::error::Error;
 use grit_lib::diff::stat_matches;
 use grit_lib::ignore::IgnoreMatcher;
@@ -359,7 +359,7 @@ fn run_renormalize(
         .map(|ie| (ie.path.clone(), ie.oid, ie.mode))
         .collect();
 
-    for (path, oid, mode) in entries {
+    for (path, oid, _mode) in entries {
         let rel_path = String::from_utf8_lossy(&path).to_string();
         let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &add_cfg.config);
 
@@ -595,7 +595,7 @@ fn add_path(
 fn stage_gitlink(
     _odb: &Odb,
     index: &mut Index,
-    work_tree: &Path,
+    _work_tree: &Path,
     rel_path: &str,
     abs_path: &Path,
     args: &Args,
