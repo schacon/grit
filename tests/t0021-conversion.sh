@@ -29,7 +29,7 @@ test_expect_success 'autocrlf=false preserves LF on input' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'clean filter converts on input' '
+test_expect_success 'clean filter converts on input' '
 	git config filter.test.clean "sed s/.*/CLEAN/" &&
 	echo "* filter=test" >.gitattributes &&
 	echo "original" >filtered_file &&
@@ -39,7 +39,7 @@ test_expect_failure 'clean filter converts on input' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'smudge filter converts on output' '
+test_expect_success 'smudge filter converts on output' '
 	git config filter.test.smudge "sed s/.*/SMUDGE/" &&
 	echo "* filter=test" >.gitattributes &&
 	echo "original" >smudge_file &&
@@ -51,7 +51,7 @@ test_expect_failure 'smudge filter converts on output' '
 	test_cmp expect smudge_file
 '
 
-test_expect_failure 'ident keyword expansion on checkout' '
+test_expect_success 'ident keyword expansion on checkout' '
 	echo "*.txt ident" >.gitattributes &&
 	echo "\$Id\$" >ident_file.txt &&
 	git add .gitattributes ident_file.txt &&
