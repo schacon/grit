@@ -8,8 +8,9 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::resolve_head;
 use similar::{ChangeTag, TextDiff};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
+
 
 /// Arguments for `grit blame`.
 #[derive(Debug, ClapArgs)]
@@ -39,6 +40,31 @@ pub struct Args {
     #[arg(long = "line-porcelain")]
     pub line_porcelain: bool,
 
+    /// Ignore a specific revision when assigning blame.
+    #[arg(long = "ignore-rev")]
+    pub ignore_rev: Vec<String>,
+
+    /// File listing revisions to ignore (one hex SHA per line).
+    #[arg(long = "ignore-revs-file")]
+    pub ignore_revs_file: Vec<String>,
+
+    /// Color lines from the same commit in alternating colors.
+    #[arg(long = "color-lines")]
+    pub color_lines: bool,
+
+    /// Color lines by age of the commit.
+    #[arg(long = "color-by-age")]
+    pub color_by_age: bool,
+
+    /// Detect lines moved/copied from other files.
+    /// Can be given up to 3 times (-C -C -C) for deeper detection.
+    #[arg(short = 'C', action = clap::ArgAction::Count)]
+    pub copy_detection: u8,
+
+    /// Show the filename in the output.
+    #[arg(short = 'f', long = "show-name")]
+    pub show_name: bool,
+
     /// Revision to blame from (and optional file after `--`).
     #[arg()]
     pub args: Vec<String>,
@@ -53,6 +79,8 @@ struct BlameLine {
     /// 1-based line number in the originating commit.
     orig_lineno: usize,
     content: String,
+    /// Source filename (differs from target when -C detects a copy).
+    source_file: Option<String>,
 }
 
 /// Parsed author/committer string.
@@ -157,7 +185,7 @@ struct TrackedLine {
 }
 
 /// Core blame: walk first-parent history, diff blobs, attribute lines.
-fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<BlameLine>> {
+fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &HashSet<ObjectId>) -> Result<Vec<BlameLine>> {
     let start_commit = {
         let obj = odb.read(&start_oid)?;
         parse_commit(&obj.data)?
@@ -194,6 +222,8 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<
 
         let commit = get_commit(odb, current_oid, &mut commit_cache)?;
 
+        let is_ignored = ignore_revs.contains(&current_oid);
+
         if commit.parents.is_empty() {
             // Root commit — attribute all remaining lines
             for t in pending.drain(..) {
@@ -202,6 +232,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<
                     final_lineno: t.final_lineno,
                     orig_lineno: t.current_idx + 1,
                     content: final_lines[t.final_lineno - 1].clone(),
+                    source_file: None,
                 });
             }
             break;
@@ -212,7 +243,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<
         let parent_blob_oid = resolve_path_in_tree(odb, &parent_commit.tree, file_path)?;
 
         match parent_blob_oid {
-            None => {
+            None if !is_ignored => {
                 // File doesn't exist in parent — attribute all remaining
                 for t in pending.drain(..) {
                     result.push(BlameLine {
@@ -220,6 +251,21 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<
                         final_lineno: t.final_lineno,
                         orig_lineno: t.current_idx + 1,
                         content: final_lines[t.final_lineno - 1].clone(),
+                    source_file: None,
+                    });
+                }
+                break;
+            }
+            None => {
+                // Ignored commit but file doesn't exist in parent.
+                // Attribute to current anyway (can't go further back).
+                for t in pending.drain(..) {
+                    result.push(BlameLine {
+                        oid: current_oid,
+                        final_lineno: t.final_lineno,
+                        orig_lineno: t.current_idx + 1,
+                        content: final_lines[t.final_lineno - 1].clone(),
+                    source_file: None,
                     });
                 }
                 break;
@@ -248,6 +294,15 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<
                                 final_lineno: t.final_lineno,
                                 current_idx: parent_idx,
                             });
+                        } else if is_ignored {
+                            // Commit is ignored — pass line through to parent
+                            // even though it was "introduced" here.
+                            // Use a best-effort mapping: keep the same index.
+                            let par_idx = t.current_idx.min(par_lines.len().saturating_sub(1));
+                            still_pending.push(TrackedLine {
+                                final_lineno: t.final_lineno,
+                                current_idx: par_idx,
+                            });
                         } else {
                             // Line was introduced in current commit
                             result.push(BlameLine {
@@ -255,8 +310,15 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<
                                 final_lineno: t.final_lineno,
                                 orig_lineno: t.current_idx + 1,
                                 content: final_lines[t.final_lineno - 1].clone(),
+                    source_file: None,
                             });
                         }
+                    } else if is_ignored {
+                        let par_idx = par_lines.len().saturating_sub(1);
+                        still_pending.push(TrackedLine {
+                            final_lineno: t.final_lineno,
+                            current_idx: par_idx,
+                        });
                     } else {
                         // Out of range — attribute to current
                         result.push(BlameLine {
@@ -264,6 +326,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str) -> Result<Vec<
                             final_lineno: t.final_lineno,
                             orig_lineno: t.current_idx + 1,
                             content: final_lines[t.final_lineno - 1].clone(),
+                    source_file: None,
                         });
                     }
                 }
@@ -346,11 +409,34 @@ pub fn run(args: Args) -> Result<()> {
         }
     };
 
-    let mut blame_lines = compute_blame(&odb, start_oid, &file_path)?;
+    // Build the set of revisions to ignore
+    let mut ignore_revs = HashSet::new();
+    for rev_str in &args.ignore_rev {
+        let oid = ObjectId::from_hex(rev_str)
+            .with_context(|| format!("invalid --ignore-rev: {rev_str}"))?;
+        ignore_revs.insert(oid);
+    }
+    for file in &args.ignore_revs_file {
+        let contents = std::fs::read_to_string(file)
+            .with_context(|| format!("cannot read --ignore-revs-file: {file}"))?;
+        for line in contents.lines() {
+            let line = line.trim();
+            // Skip blank lines and comments
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let oid = ObjectId::from_hex(line)
+                .with_context(|| format!("invalid rev in {file}: {line}"))?;
+            ignore_revs.insert(oid);
+        }
+    }
+
+    let mut blame_lines = compute_blame(&odb, start_oid, &file_path, &ignore_revs)?;
 
     // Apply line range filter
     if let Some(ref range) = args.line_range {
-        let (start, end) = parse_line_range(range, blame_lines.len())?;
+        let line_contents: Vec<&str> = blame_lines.iter().map(|b| b.content.as_str()).collect();
+        let (start, end) = parse_line_range(range, &blame_lines, &line_contents)?;
         blame_lines.retain(|b| b.final_lineno >= start && b.final_lineno <= end);
     }
 
@@ -369,7 +455,7 @@ pub fn run(args: Args) -> Result<()> {
     if args.porcelain || args.line_porcelain {
         write_porcelain(&mut out, &blame_lines, &commits, &file_path, args.line_porcelain)?;
     } else {
-        write_default(&mut out, &blame_lines, &commits, &args)?;
+        write_default(&mut out, &blame_lines, &commits, &args, &file_path)?;
     }
 
     Ok(())
@@ -386,18 +472,69 @@ fn parse_blame_args(args: &[String]) -> Result<(Option<String>, String)> {
     }
 }
 
-fn parse_line_range(range: &str, total: usize) -> Result<(usize, usize)> {
-    let parts: Vec<&str> = range.split(',').collect();
+fn parse_line_range(range: &str, blame_lines: &[BlameLine], _line_contents: &[&str]) -> Result<(usize, usize)> {
+    let total = blame_lines.len();
+    // Find the max final_lineno for $ handling
+    let max_lineno = blame_lines.iter().map(|b| b.final_lineno).max().unwrap_or(total);
+
+    let parts: Vec<&str> = range.splitn(2, ',').collect();
     if parts.len() != 2 {
         bail!("invalid line range: expected start,end");
     }
-    let start: usize = parts[0].parse().context("invalid start line")?;
-    let end: usize = if parts[1] == "$" {
-        total
-    } else {
-        parts[1].parse().context("invalid end line")?
-    };
-    Ok((start, end))
+
+    let start = parse_line_spec(parts[0], blame_lines, None)?;
+    let end = parse_line_spec(parts[1], blame_lines, Some(start))?;
+
+    Ok((start, end.min(max_lineno)))
+}
+
+/// Parse a single line-range endpoint.
+/// `relative_to` is `Some(start)` when parsing the end portion (to support `+N`).
+fn parse_line_spec(spec: &str, blame_lines: &[BlameLine], relative_to: Option<usize>) -> Result<usize> {
+    let max_lineno = blame_lines.iter().map(|b| b.final_lineno).max().unwrap_or(0);
+
+    if spec == "$" {
+        return Ok(max_lineno);
+    }
+
+    // +N means "relative offset from start"
+    if let Some(offset_str) = spec.strip_prefix('+') {
+        let offset: usize = offset_str.parse().context("invalid +N offset")?;
+        let base = relative_to.unwrap_or(1);
+        // git semantics: -L N,+M means lines N through N+M-1
+        return Ok(base + offset - 1);
+    }
+
+    // -N means "relative negative offset from start"
+    if let Some(offset_str) = spec.strip_prefix('-') {
+        if let Ok(offset) = offset_str.parse::<usize>() {
+            let base = relative_to.unwrap_or(1);
+            return Ok(base.saturating_sub(offset).max(1));
+        }
+    }
+
+    // /regex/ — find first line matching the pattern
+    if spec.starts_with('/') && spec.ends_with('/') && spec.len() > 2 {
+        let pattern = &spec[1..spec.len() - 1];
+        let search_start = relative_to.unwrap_or(0);
+        for bl in blame_lines {
+            if bl.final_lineno > search_start && bl.content.contains(pattern) {
+                return Ok(bl.final_lineno);
+            }
+        }
+        // If nothing found searching forward, search from beginning
+        if search_start > 0 {
+            for bl in blame_lines {
+                if bl.content.contains(pattern) {
+                    return Ok(bl.final_lineno);
+                }
+            }
+        }
+        bail!("no line matching pattern: {pattern}");
+    }
+
+    // Plain number
+    spec.parse().context("invalid line number")
 }
 
 fn write_porcelain(
@@ -409,11 +546,29 @@ fn write_porcelain(
 ) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
 
-    for bl in lines {
+    // Pre-compute group counts: for each position, how many consecutive lines
+    // share the same oid starting from the first occurrence in the group.
+    let mut group_counts: Vec<Option<usize>> = vec![None; lines.len()];
+    let mut i = 0;
+    while i < lines.len() {
+        let oid = lines[i].oid;
+        let start = i;
+        while i < lines.len() && lines[i].oid == oid {
+            i += 1;
+        }
+        group_counts[start] = Some(i - start);
+    }
+
+    for (idx, bl) in lines.iter().enumerate() {
         let hex = bl.oid.to_hex();
         let first = seen.insert(bl.oid);
 
-        writeln!(out, "{hex} {} {} 1", bl.orig_lineno, bl.final_lineno)?;
+        // Header line: hash orig_lineno final_lineno [group_count]
+        if let Some(count) = group_counts[idx] {
+            writeln!(out, "{hex} {} {} {count}", bl.orig_lineno, bl.final_lineno)?;
+        } else {
+            writeln!(out, "{hex} {} {}", bl.orig_lineno, bl.final_lineno)?;
+        }
 
         if first || line_porcelain {
             let commit = &commits[&bl.oid];
@@ -428,8 +583,20 @@ fn write_porcelain(
             writeln!(out, "committer-mail <{}>", committer.email)?;
             writeln!(out, "committer-time {}", committer.timestamp)?;
             writeln!(out, "committer-tz {}", committer.tz)?;
-            let summary = commit.message.lines().next().unwrap_or("");
+            // Summary: first non-blank line of the commit message
+            let summary = commit.message.lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("");
             writeln!(out, "summary {summary}")?;
+            // Previous commit (parent) if not a root commit
+            if !commit.parents.is_empty() {
+                let parent_hex = commit.parents[0].to_hex();
+                writeln!(out, "previous {parent_hex} {filename}")?;
+            }
+            // Boundary: root commit has no parents
+            if commit.parents.is_empty() {
+                writeln!(out, "boundary")?;
+            }
             writeln!(out, "filename {filename}")?;
         }
 
@@ -439,24 +606,77 @@ fn write_porcelain(
     Ok(())
 }
 
+/// ANSI color codes.
+const RESET: &str = "\x1b[0m";
+const YELLOW: &str = "\x1b[33m";
+const BLUE: &str = "\x1b[34m";
+const CYAN: &str = "\x1b[36m";
+const WHITE: &str = "\x1b[37m";
+
+/// Classify a commit's age for --color-by-age.
+fn age_color(timestamp: i64) -> &'static str {
+    // Use a rough "now" based on the system clock
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let age_secs = now - timestamp;
+    let one_month = 30 * 24 * 3600;
+    let one_year = 365 * 24 * 3600;
+
+    if age_secs < one_month {
+        CYAN
+    } else if age_secs < one_year {
+        WHITE
+    } else {
+        BLUE
+    }
+}
+
 fn write_default(
     out: &mut impl Write,
     lines: &[BlameLine],
     commits: &HashMap<ObjectId, CommitData>,
     args: &Args,
+    file_path: &str,
 ) -> Result<()> {
     let hash_len = if args.long_hash { 40 } else { 8 };
     let max_lineno = lines.iter().map(|b| b.final_lineno).max().unwrap_or(1);
     let lineno_width = format!("{max_lineno}").len();
+    let use_color = args.color_lines || args.color_by_age;
+
+    let mut prev_oid: Option<ObjectId> = None;
 
     for bl in lines {
         let hex = bl.oid.to_hex();
         let short = &hex[..hash_len.min(hex.len())];
 
+        // Determine color prefix/suffix
+        let (color_start, color_end) = if args.color_by_age {
+            let commit = &commits[&bl.oid];
+            let ai = parse_author_field(&commit.author);
+            (age_color(ai.timestamp), RESET)
+        } else if args.color_lines && prev_oid == Some(bl.oid) {
+            // Repeated (contiguous) commit — highlight
+            (YELLOW, RESET)
+        } else if use_color {
+            ("", "")
+        } else {
+            ("", "")
+        };
+
+        // Filename field for -f / --show-name
+        let fname = if args.show_name {
+            let name = bl.source_file.as_deref().unwrap_or(&file_path);
+            format!("{name} ")
+        } else {
+            String::new()
+        };
+
         if args.suppress {
             writeln!(
                 out,
-                "{short} {lineno:>w$}) {content}",
+                "{color_start}{short} {fname}{lineno:>w$}) {content}{color_end}",
                 lineno = bl.final_lineno,
                 w = lineno_width,
                 content = bl.content,
@@ -473,12 +693,14 @@ fn write_default(
 
             writeln!(
                 out,
-                "{short} ({who} {ts} {lineno:>w$}) {content}",
+                "{color_start}{short} {fname}({who} {ts} {lineno:>w$}) {content}{color_end}",
                 lineno = bl.final_lineno,
                 w = lineno_width,
                 content = bl.content,
             )?;
         }
+
+        prev_oid = Some(bl.oid);
     }
 
     Ok(())

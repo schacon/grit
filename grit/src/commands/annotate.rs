@@ -25,6 +25,24 @@ pub struct Args {
     #[arg(long = "line-porcelain")]
     pub line_porcelain: bool,
 
+    #[arg(long = "ignore-rev")]
+    pub ignore_rev: Vec<String>,
+
+    #[arg(long = "ignore-revs-file")]
+    pub ignore_revs_file: Vec<String>,
+
+    #[arg(long = "color-lines")]
+    pub color_lines: bool,
+
+    #[arg(long = "color-by-age")]
+    pub color_by_age: bool,
+
+    #[arg(short = 'C', action = clap::ArgAction::Count)]
+    pub copy_detection: u8,
+
+    #[arg(short = 'f', long = "show-name")]
+    pub show_name: bool,
+
     #[arg()]
     pub args: Vec<String>,
 }
@@ -38,6 +56,12 @@ pub fn run(args: Args) -> Result<()> {
         email: args.email,
         porcelain: args.porcelain,
         line_porcelain: args.line_porcelain,
+        ignore_rev: args.ignore_rev,
+        ignore_revs_file: args.ignore_revs_file,
+        color_lines: args.color_lines,
+        color_by_age: args.color_by_age,
+        copy_detection: args.copy_detection,
+        show_name: args.show_name,
         args: args.args,
     })
 }
