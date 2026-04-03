@@ -96,27 +96,27 @@ test_expect_success 'merge-base diff shows topic side of shared file change' '
 
 # --- Symmetric diff syntax A...B (not yet implemented) ---
 
-test_expect_failure 'diff master...topic shows only topic changes (not implemented)' '
+test_expect_success 'diff master...topic shows only topic changes' '
 	cd repo &&
 	git diff master...topic --name-only >out &&
 	grep "topic\.txt" out &&
 	! grep "main\.txt" out
 '
 
-test_expect_failure 'diff topic...master shows only main changes (not implemented)' '
+test_expect_success 'diff topic...master shows only main changes' '
 	cd repo &&
 	git diff topic...master --name-only >out &&
 	grep "main\.txt" out &&
 	! grep "topic\.txt" out
 '
 
-test_expect_failure 'diff A...B --stat (not implemented)' '
+test_expect_success 'diff A...B --stat' '
 	cd repo &&
 	git diff master...topic --stat >out &&
 	grep "topic" out
 '
 
-test_expect_failure 'diff A...B --name-status (not implemented)' '
+test_expect_success 'diff A...B --name-status' '
 	cd repo &&
 	git diff master...topic --name-status >out &&
 	grep "topic\.txt" out
@@ -128,7 +128,7 @@ test_expect_failure 'diff A...B --exit-code (not implemented)' '
 	grep "topic\.txt" out
 '
 
-test_expect_failure 'diff A...B with pathspec (not implemented)' '
+test_expect_success 'diff A...B with pathspec' '
 	cd repo &&
 	git diff master...topic -- topic.txt >out &&
 	grep "topic\.txt" out

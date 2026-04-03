@@ -269,7 +269,7 @@ pub struct Args {
 /// Run the `diff` command.
 pub fn run(mut args: Args) -> Result<()> {
     // Parse --stat=<width>[,<name-width>[,<count>]] into separate fields
-    let stat_enabled = if let Some(ref val) = args.stat {
+    let mut stat_enabled = if let Some(ref val) = args.stat {
         if !val.is_empty() {
             let parts: Vec<&str> = val.split(',').collect();
             if let Some(w) = parts.first().and_then(|s| s.parse::<usize>().ok()) {
@@ -300,9 +300,72 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let raw_args: Vec<String> = std::env::args().collect();
     let has_separator = raw_args.iter().any(|a| a == "--");
-    let (revs, paths) = parse_rev_and_paths(&args.args, has_separator);
+    let (mut revs, paths) = parse_rev_and_paths(&args.args, has_separator);
 
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Expand A...B (symmetric diff) → merge-base(A,B)..B
+    // Expand A..B → A B (two-rev diff)
+    // trailing_var_arg may capture flags like --name-only into args.
+    // Move them back into the flags struct so they take effect.
+    let mut extra_revs = Vec::new();
+    for r in &revs {
+        if r.starts_with("--") || r.starts_with("-") && r.len() > 1 {
+            // Re-apply trailing flags
+            match r.as_str() {
+                "--name-only" => args.name_only = true,
+                "--name-status" => args.name_status = true,
+                "--numstat" => args.numstat = true,
+                "--shortstat" => args.shortstat = true,
+                "--summary" => args.summary = true,
+                "--quiet" | "-q" => args.quiet = true,
+                s if s.starts_with("--stat") => {
+                    if s == "--stat" {
+                        if args.stat.is_none() { args.stat = Some(String::new()); }
+                    } else if let Some(val) = s.strip_prefix("--stat=") {
+                        args.stat = Some(val.to_owned());
+                    }
+                    // re-parse stat
+                    if let Some(ref val) = args.stat {
+                        if !val.is_empty() {
+                            let parts: Vec<&str> = val.split(',').collect();
+                            if let Some(w) = parts.first().and_then(|s| s.parse::<usize>().ok()) {
+                                if args.stat_width.is_none() { args.stat_width = Some(w); }
+                            }
+                        }
+                    }
+                    stat_enabled = true;
+                }
+                "--exit-code" => args.exit_code = true,
+                _ => { extra_revs.push(r.clone()); continue; }
+            }
+        } else {
+            extra_revs.push(r.clone());
+        }
+    }
+    revs = extra_revs;
+
+    let mut _symmetric = false;
+    if revs.len() == 1 {
+        if let Some((left, right)) = revs[0].split_once("...") {
+            let left = if left.is_empty() { "HEAD" } else { left };
+            let right = if right.is_empty() { "HEAD" } else { right };
+            let left_oid = resolve_revision(&repo, left)
+                .with_context(|| format!("unknown revision: '{left}'"))?;
+            let right_oid = resolve_revision(&repo, right)
+                .with_context(|| format!("unknown revision: '{right}'"))?;
+            let bases = grit_lib::rev_list::merge_bases(&repo, left_oid, right_oid, false)?;
+            if bases.is_empty() {
+                bail!("no merge base between {} and {}", left, right);
+            }
+            revs = vec![bases[0].to_string(), right_oid.to_string()];
+            _symmetric = true;
+        } else if let Some((left, right)) = revs[0].split_once("..") {
+            let left = if left.is_empty() { "HEAD" } else { left };
+            let right = if right.is_empty() { "HEAD" } else { right };
+            revs = vec![left.to_owned(), right.to_owned()];
+        }
+    }
     let work_tree = repo.work_tree.as_deref();
 
     // Load index (empty if not found)
