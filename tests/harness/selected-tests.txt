@@ -845,3 +845,4 @@ t7510-signed-commit.sh
 t7513-interpret-trailers.sh
 t7514-commit-patch.sh
 t7516-commit-races.sh
+t7519-status-fsmonitor.sh
