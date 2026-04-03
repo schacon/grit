@@ -28,6 +28,7 @@ use sha1::{Digest, Sha1};
 
 use crate::error::{Error, Result};
 use crate::objects::{Object, ObjectId, ObjectKind};
+use crate::pack;
 
 /// A loose-object database rooted at a given `objects/` directory.
 #[derive(Debug, Clone)]
@@ -61,10 +62,21 @@ impl Odb {
             .join(oid.loose_suffix())
     }
 
-    /// Check whether an object exists in the loose store.
+    /// Check whether an object exists in the loose store or any pack file.
     #[must_use]
     pub fn exists(&self, oid: &ObjectId) -> bool {
-        self.object_path(oid).exists()
+        if self.object_path(oid).exists() {
+            return true;
+        }
+        // Check pack files.
+        if let Ok(indexes) = pack::read_local_pack_indexes(&self.objects_dir) {
+            for idx in &indexes {
+                if idx.entries.iter().any(|e| e.oid == *oid) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Read and decompress an object from the loose store.
@@ -76,15 +88,22 @@ impl Odb {
     /// - [`Error::CorruptObject`] — header is malformed.
     pub fn read(&self, oid: &ObjectId) -> Result<Object> {
         let path = self.object_path(oid);
-        let file = fs::File::open(&path).map_err(|_| Error::ObjectNotFound(oid.to_hex()))?;
+        match fs::File::open(&path) {
+            Ok(file) => {
+                let mut decoder = ZlibDecoder::new(file);
+                let mut raw = Vec::new();
+                decoder
+                    .read_to_end(&mut raw)
+                    .map_err(|e| Error::Zlib(e.to_string()))?;
+                return parse_object_bytes(&raw);
+            }
+            Err(_) => {
+                // Loose object not found; try pack files.
+            }
+        }
 
-        let mut decoder = ZlibDecoder::new(file);
-        let mut raw = Vec::new();
-        decoder
-            .read_to_end(&mut raw)
-            .map_err(|e| Error::Zlib(e.to_string()))?;
-
-        parse_object_bytes(&raw)
+        // Fall back to pack files.
+        pack::read_object_from_packs(&self.objects_dir, oid)
     }
 
     /// Hash raw content of a given kind and return the [`ObjectId`].
