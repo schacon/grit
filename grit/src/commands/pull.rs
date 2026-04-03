@@ -22,9 +22,9 @@ pub struct Args {
     #[arg(value_name = "BRANCH")]
     pub branch: Option<String>,
 
-    /// Rebase instead of merge.
-    #[arg(long = "rebase", short = 'r')]
-    pub rebase: bool,
+    /// Rebase instead of merge. Optionally accepts a strategy like "merges".
+    #[arg(long = "rebase", short = 'r', num_args = 0..=1, default_missing_value = "true")]
+    pub rebase: Option<String>,
 
     /// Only allow fast-forward merges.
     #[arg(long = "ff-only")]
@@ -90,6 +90,7 @@ pub fn run(args: Args) -> Result<()> {
         refetch: false,
         output: None,
         quiet: args.quiet,
+        jobs: None,
     };
     super::fetch::run(fetch_args)?;
 
@@ -99,7 +100,7 @@ pub fn run(args: Args) -> Result<()> {
         .with_context(|| format!("no tracking ref '{tracking_ref}' after fetch"))?;
 
     // Step 3: Merge or rebase
-    if args.rebase {
+    if args.rebase.is_some() {
         let rebase_args = super::rebase::Args {
             upstream: Some(tracking_ref),
             onto: None,

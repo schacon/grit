@@ -62,6 +62,10 @@ pub struct Args {
     #[arg(long)]
     pub porcelain: bool,
 
+    /// Mirror all refs to the remote.
+    #[arg(long)]
+    pub mirror: bool,
+
     /// Suppress output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
@@ -119,7 +123,45 @@ pub fn run(args: Args) -> Result<()> {
     // Build list of ref updates
     let mut updates = Vec::new();
 
-    if args.delete {
+    if args.mirror {
+        // Mirror: push all local refs to remote, and delete remote refs
+        // that don't exist locally.
+        let local_all = refs::list_refs(&repo.git_dir, "refs/")?;
+        for (refname, local_oid) in &local_all {
+            // Skip special refs like HEAD, FETCH_HEAD, etc.
+            if !refname.starts_with("refs/") {
+                continue;
+            }
+            let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
+            if old_oid.as_ref() == Some(local_oid) {
+                continue;
+            }
+            updates.push(RefUpdate {
+                local_ref: Some(refname.clone()),
+                remote_ref: refname.clone(),
+                old_oid,
+                new_oid: Some(*local_oid),
+                expected_oid: None,
+            });
+        }
+        // Delete remote refs that don't exist locally
+        let remote_all = refs::list_refs(&remote_repo.git_dir, "refs/")?;
+        for (refname, _remote_oid) in &remote_all {
+            if !refname.starts_with("refs/") {
+                continue;
+            }
+            if !local_all.iter().any(|(r, _)| r == refname) {
+                let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
+                updates.push(RefUpdate {
+                    local_ref: None,
+                    remote_ref: refname.clone(),
+                    old_oid,
+                    new_oid: None,
+                    expected_oid: None,
+                });
+            }
+        }
+    } else if args.delete {
         // Delete mode: refspecs are remote ref names to delete
         if args.refspecs.is_empty() {
             bail!("--delete requires at least one refspec");
@@ -142,6 +184,24 @@ pub fn run(args: Args) -> Result<()> {
         // Explicit refspecs
         for spec in &args.refspecs {
             let (src, dst) = parse_refspec(spec);
+
+            // Empty src (e.g. ":branch") means delete
+            if src.is_empty() {
+                let remote_ref = normalize_ref(&dst);
+                let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
+                if old_oid.is_none() {
+                    bail!("remote ref '{}' not found", dst);
+                }
+                updates.push(RefUpdate {
+                    local_ref: None,
+                    remote_ref,
+                    old_oid,
+                    new_oid: None,
+                    expected_oid: None,
+                });
+                continue;
+            }
+
             let local_ref = normalize_ref(&src);
             let remote_ref = normalize_ref(&dst);
 

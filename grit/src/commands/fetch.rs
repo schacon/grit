@@ -69,6 +69,10 @@ pub struct Args {
     /// Be quiet — suppress informational output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
+
+    /// Number of parallel children for fetching (accepted but ignored).
+    #[arg(short = 'j', long = "jobs", value_name = "N")]
+    pub jobs: Option<usize>,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -114,9 +118,9 @@ fn fetch_remote(
     let remote_repo = open_repo(&remote_path)
         .with_context(|| format!("could not open remote repository at '{}'", remote_path.display()))?;
 
-    // Read the refspec from config (e.g. +refs/heads/*:refs/remotes/origin/*)
+    // Read the refspec(s) from config (e.g. +refs/heads/*:refs/remotes/origin/*)
     let fetch_key = format!("remote.{remote_name}.fetch");
-    let _refspec = config.get(&fetch_key);
+    let refspecs = collect_refspecs(config, &fetch_key);
 
     // Enumerate remote refs
     let remote_heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;
@@ -150,7 +154,16 @@ fn fetch_remote(
     for (refname, remote_oid) in &remote_heads {
         // refname is like "refs/heads/main"
         let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
-        let local_ref = format!("{dst_prefix}{branch}");
+
+        // Map through refspecs if configured, otherwise use default mapping
+        let local_ref = if refspecs.is_empty() {
+            format!("{dst_prefix}{branch}")
+        } else {
+            match map_ref_through_refspecs(refname, &refspecs) {
+                Some(mapped) => mapped,
+                None => continue, // ref not matched by any refspec, skip
+            }
+        };
         updated_refs.push(local_ref.clone());
 
         // Build FETCH_HEAD entry
@@ -475,6 +488,73 @@ fn write_shallow_info(
     let content = entries.join("\n") + "\n";
     fs::write(&shallow_path, content).context("writing shallow file")?;
     Ok(())
+}
+
+/// A parsed refspec (e.g. "+refs/heads/*:refs/remotes/origin/*").
+struct FetchRefspec {
+    /// Source pattern (remote side), e.g. "refs/heads/*".
+    src: String,
+    /// Destination pattern (local side), e.g. "refs/remotes/origin/*".
+    dst: String,
+    /// Whether this is a force refspec (leading '+').
+    #[allow(dead_code)]
+    force: bool,
+}
+
+/// Collect all fetch refspecs from a config key (may be multi-valued).
+fn collect_refspecs(config: &ConfigSet, key: &str) -> Vec<FetchRefspec> {
+    let mut result = Vec::new();
+    for entry in config.entries() {
+        if entry.key == key {
+            if let Some(ref val) = entry.value {
+                let val = val.trim();
+                let (force, val) = if let Some(stripped) = val.strip_prefix('+') {
+                    (true, stripped)
+                } else {
+                    (false, val)
+                };
+                if let Some(colon) = val.find(':') {
+                    result.push(FetchRefspec {
+                        src: val[..colon].to_owned(),
+                        dst: val[colon + 1..].to_owned(),
+                        force,
+                    });
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Map a remote ref through fetch refspecs.
+///
+/// For a refspec like `refs/heads/*:refs/remotes/origin/*`, if the remote ref
+/// is `refs/heads/main`, the result is `refs/remotes/origin/main`.
+/// Returns None if no refspec matches.
+fn map_ref_through_refspecs(remote_ref: &str, refspecs: &[FetchRefspec]) -> Option<String> {
+    for rs in refspecs {
+        if let Some(mapped) = match_refspec_pattern(&rs.src, &rs.dst, remote_ref) {
+            return Some(mapped);
+        }
+    }
+    None
+}
+
+/// Match a single refspec pattern. Both src and dst may contain a single '*'.
+fn match_refspec_pattern(src_pattern: &str, dst_pattern: &str, refname: &str) -> Option<String> {
+    if let Some(star_pos) = src_pattern.find('*') {
+        let prefix = &src_pattern[..star_pos];
+        let suffix = &src_pattern[star_pos + 1..];
+        if refname.starts_with(prefix) && refname.ends_with(suffix) {
+            let matched = &refname[prefix.len()..refname.len() - suffix.len()];
+            let result = dst_pattern.replacen('*', matched, 1);
+            return Some(result);
+        }
+    } else if src_pattern == refname {
+        // Exact match (no wildcard)
+        return Some(dst_pattern.to_owned());
+    }
+    None
 }
 
 /// Collect all configured remote names.
