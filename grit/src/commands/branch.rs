@@ -159,6 +159,10 @@ pub fn run(args: Args) -> Result<()> {
         return rename_branch(&repo, &head, &args);
     }
 
+    if args.copy {
+        return copy_branch(&repo, &head, &args);
+    }
+
     // If a name is given and we're not listing/filtering, create a branch
     if let Some(ref name) = args.name {
         if !args.list
@@ -765,6 +769,45 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         let head_content = format!("ref: refs/heads/{new_name}\n");
         fs::write(repo.git_dir.join("HEAD"), head_content)?;
     }
+
+    Ok(())
+}
+
+fn copy_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
+    let (src_name_owned, dst_name_owned);
+    let (src_name, dst_name): (&str, &str);
+    if let Some(sp) = args.start_point.as_deref() {
+        src_name_owned = args.name.as_deref().unwrap_or("").to_owned();
+        dst_name_owned = sp.to_owned();
+        src_name = &src_name_owned;
+        dst_name = &dst_name_owned;
+    } else if let Some(n) = args.name.as_deref() {
+        src_name_owned = head
+            .branch_name()
+            .ok_or_else(|| anyhow::anyhow!("no current branch to copy"))?
+            .to_owned();
+        dst_name_owned = n.to_owned();
+        src_name = &src_name_owned;
+        dst_name = &dst_name_owned;
+    } else {
+        bail!("branch name required");
+    };
+
+    let src_path = repo.git_dir.join("refs/heads").join(src_name);
+    let dst_path = repo.git_dir.join("refs/heads").join(dst_name);
+
+    if !src_path.exists() {
+        bail!("branch '{src_name}' not found.");
+    }
+    if dst_path.exists() {
+        bail!("A branch named '{dst_name}' already exists.");
+    }
+
+    let content = fs::read_to_string(&src_path)?;
+    if let Some(parent) = dst_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&dst_path, &content)?;
 
     Ok(())
 }

@@ -144,8 +144,9 @@ test_expect_success 'force rename with -M' '
 
 # ── Branch copying ───────────────────────────────────────────────────────────
 
-test_expect_failure 'copy branch with -c (grit copy may have bug)' '
+test_expect_success 'copy branch with -c' '
 	cd repo &&
+	git branch src-branch &&
 	git branch -c src-branch copied-branch &&
 	git branch >out &&
 	grep "src-branch" out &&
