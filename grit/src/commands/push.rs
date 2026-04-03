@@ -46,6 +46,22 @@ pub struct Args {
     #[arg(short = 'u', long = "set-upstream")]
     pub set_upstream: bool,
 
+    /// Force push only if the remote ref matches the expected old value.
+    #[arg(long = "force-with-lease")]
+    pub force_with_lease: bool,
+
+    /// Request an atomic push: either all refs update or none do.
+    #[arg(long)]
+    pub atomic: bool,
+
+    /// Send a push option string to the server.
+    #[arg(long = "push-option", short = 'o', value_name = "OPTION")]
+    pub push_option: Vec<String>,
+
+    /// Machine-readable output (one line per ref update).
+    #[arg(long)]
+    pub porcelain: bool,
+
     /// Suppress output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
@@ -61,6 +77,8 @@ struct RefUpdate {
     old_oid: Option<ObjectId>,
     /// New OID (None for delete).
     new_oid: Option<ObjectId>,
+    /// Expected old OID for force-with-lease (None = use actual old).
+    expected_oid: Option<ObjectId>,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -117,6 +135,7 @@ pub fn run(args: Args) -> Result<()> {
                 remote_ref,
                 old_oid,
                 new_oid: None,
+                expected_oid: None,
             });
         }
     } else if !args.refspecs.is_empty() {
@@ -130,11 +149,27 @@ pub fn run(args: Args) -> Result<()> {
                 .with_context(|| format!("src refspec '{}' does not match any", src))?;
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
+            // For --force-with-lease, the expected oid comes from the local
+            // remote-tracking ref (what `fetch` last stored), NOT re-reading
+            // the remote. This detects when someone else pushed since our
+            // last fetch.
+            let expected_oid = if args.force_with_lease {
+                let tracking_ref = format!(
+                    "refs/remotes/{}/{}",
+                    remote_name,
+                    dst.strip_prefix("refs/heads/").unwrap_or(&dst)
+                );
+                refs::resolve_ref(&repo.git_dir, &tracking_ref).ok()
+            } else {
+                None
+            };
+
             updates.push(RefUpdate {
                 local_ref: Some(local_ref),
                 remote_ref,
                 old_oid,
                 new_oid: Some(local_oid),
+                expected_oid,
             });
         }
     } else {
@@ -150,11 +185,21 @@ pub fn run(args: Args) -> Result<()> {
             .with_context(|| format!("branch '{}' has no commits", branch))?;
         let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
+        // For --force-with-lease, the expected oid comes from the local
+        // remote-tracking ref.
+        let expected_oid = if args.force_with_lease {
+            let tracking_ref = format!("refs/remotes/{remote_name}/{branch}");
+            refs::resolve_ref(&repo.git_dir, &tracking_ref).ok()
+        } else {
+            None
+        };
+
         updates.push(RefUpdate {
             local_ref: Some(local_ref),
             remote_ref,
             old_oid,
             new_oid: Some(local_oid),
+            expected_oid,
         });
     }
 
@@ -171,6 +216,7 @@ pub fn run(args: Args) -> Result<()> {
                 remote_ref: refname.clone(),
                 old_oid,
                 new_oid: Some(*local_oid),
+                expected_oid: None,
             });
         }
     }
@@ -182,13 +228,26 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    // Validate updates (fast-forward check unless --force)
+    // Validate updates (fast-forward check unless --force or --force-with-lease)
     for update in &updates {
+        // force-with-lease: verify remote ref matches what we think it is
+        // (i.e., what our remote-tracking ref says)
+        if let Some(expected) = &update.expected_oid {
+            let actual_remote = refs::resolve_ref(&remote_repo.git_dir, &update.remote_ref).ok();
+            if actual_remote.as_ref() != Some(expected) {
+                bail!(
+                    "failed to push some refs: stale info for '{}' \
+                     (force-with-lease check failed)",
+                    update.remote_ref
+                );
+            }
+        }
+
         if let (Some(old), Some(new)) = (&update.old_oid, &update.new_oid) {
             if old == new {
                 continue;
             }
-            if !args.force && !is_ancestor(&repo, *old, *new)? {
+            if !args.force && !args.force_with_lease && !is_ancestor(&repo, *old, *new)? {
                 bail!(
                     "Updates were rejected because the tip of your current branch is behind\n\
                      its remote counterpart. If you want to force the update, use --force.\n\
@@ -199,93 +258,112 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    // Run pre-push hook
+    {
+        use grit_lib::hooks::{run_hook, HookResult};
+        let zero_oid = "0".repeat(40);
+        let mut hook_lines = Vec::new();
+        for update in &updates {
+            let local_ref = update.local_ref.as_deref().unwrap_or("(delete)");
+            let local_oid = update
+                .new_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid.clone());
+            let remote_ref = &update.remote_ref;
+            let remote_oid = update
+                .old_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid.clone());
+            hook_lines.push(format!(
+                "{local_ref} {local_oid} {remote_ref} {remote_oid}\n"
+            ));
+        }
+        let stdin_data = hook_lines.join("");
+        let result = run_hook(
+            &repo,
+            "pre-push",
+            &[remote_name, &url],
+            Some(stdin_data.as_bytes()),
+        );
+        match result {
+            HookResult::Failed(code) => {
+                bail!("pre-push hook declined the push (exit code {code})");
+            }
+            _ => {}
+        }
+    }
+
+    // Write push options file for the remote (local transport simulation)
+    if !args.push_option.is_empty() {
+        let push_opts_path = remote_repo.git_dir.join("push_options");
+        let content = args.push_option.join("\n") + "\n";
+        fs::write(&push_opts_path, content)
+            .context("writing push options")?;
+    }
+
     if !args.dry_run {
         // Copy objects from local → remote
         copy_objects(&repo.git_dir, &remote_repo.git_dir)
             .context("copying objects to remote")?;
     }
 
+    // For --atomic, verify all refs can be updated before writing any.
+    // In local transport we do this by checking that nothing changed between
+    // our initial read and now.
+    if args.atomic {
+        for update in &updates {
+            let current = refs::resolve_ref(&remote_repo.git_dir, &update.remote_ref).ok();
+            if current != update.old_oid {
+                bail!(
+                    "atomic push failed: remote ref '{}' changed during push",
+                    update.remote_ref
+                );
+            }
+        }
+    }
+
     // Apply ref updates
-    if !args.quiet {
+    if !args.quiet && !args.porcelain {
         println!("To {url}");
     }
 
+    // Track results for atomic rollback on failure
+    let mut applied_updates: Vec<(&RefUpdate, Option<ObjectId>)> = Vec::new();
+
     for update in &updates {
-        match (&update.new_oid, &update.old_oid) {
-            (Some(new_oid), old_oid_opt) => {
-                if !args.dry_run {
-                    refs::write_ref(&remote_repo.git_dir, &update.remote_ref, new_oid)
-                        .with_context(|| {
-                            format!("updating remote ref {}", update.remote_ref)
-                        })?;
-                }
+        let result = apply_ref_update(
+            &repo,
+            &remote_repo,
+            update,
+            &args,
+            &url,
+        );
 
-                if !args.quiet {
-                    let branch_short = update
-                        .remote_ref
-                        .strip_prefix("refs/heads/")
-                        .or_else(|| update.remote_ref.strip_prefix("refs/tags/"))
-                        .unwrap_or(&update.remote_ref);
-                    let src_short = update
-                        .local_ref
-                        .as_deref()
-                        .and_then(|r| r.strip_prefix("refs/heads/"))
-                        .or_else(|| {
-                            update
-                                .local_ref
-                                .as_deref()
-                                .and_then(|r| r.strip_prefix("refs/tags/"))
-                        })
-                        .unwrap_or(
-                            update.local_ref.as_deref().unwrap_or("(unknown)"),
-                        );
-
-                    match old_oid_opt {
-                        Some(old) if old != new_oid => {
-                            println!(
-                                "   {}..{}  {} -> {}",
-                                &old.to_hex()[..7],
-                                &new_oid.to_hex()[..7],
-                                src_short,
-                                branch_short,
+        match result {
+            Ok(()) => {
+                applied_updates.push((update, update.old_oid));
+            }
+            Err(e) => {
+                if args.atomic {
+                    // Rollback all applied updates
+                    for (prev_update, prev_old) in &applied_updates {
+                        if let Some(old_oid) = prev_old {
+                            let _ = refs::write_ref(
+                                &remote_repo.git_dir,
+                                &prev_update.remote_ref,
+                                old_oid,
+                            );
+                        } else {
+                            let _ = refs::delete_ref(
+                                &remote_repo.git_dir,
+                                &prev_update.remote_ref,
                             );
                         }
-                        None => {
-                            let kind = if update.remote_ref.starts_with("refs/tags/") {
-                                "tag"
-                            } else {
-                                "branch"
-                            };
-                            println!(" * [new {kind}]      {src_short} -> {branch_short}");
-                        }
-                        _ => {
-                            // Up to date
-                            println!(" = [up to date]      {} -> {}", src_short, branch_short);
-                        }
                     }
+                    bail!("atomic push failed: {}", e);
                 }
+                return Err(e);
             }
-            (None, Some(old_oid)) => {
-                // Delete
-                if !args.dry_run {
-                    refs::delete_ref(&remote_repo.git_dir, &update.remote_ref)
-                        .with_context(|| {
-                            format!("deleting remote ref {}", update.remote_ref)
-                        })?;
-                }
-                if !args.quiet {
-                    let branch_short = update
-                        .remote_ref
-                        .strip_prefix("refs/heads/")
-                        .unwrap_or(&update.remote_ref);
-                    println!(
-                        " - [deleted]         {} -> {}",
-                        &old_oid.to_hex()[..7],
-                        branch_short,
-                    );
-                }
-            }
-            _ => {}
         }
     }
 
@@ -302,6 +380,120 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Apply a single ref update on the remote, printing output as appropriate.
+fn apply_ref_update(
+    _repo: &Repository,
+    remote_repo: &Repository,
+    update: &RefUpdate,
+    args: &Args,
+    url: &str,
+) -> Result<()> {
+    let zero_oid = "0".repeat(40);
+
+    match (&update.new_oid, &update.old_oid) {
+        (Some(new_oid), old_oid_opt) => {
+            if !args.dry_run {
+                refs::write_ref(&remote_repo.git_dir, &update.remote_ref, new_oid)
+                    .with_context(|| {
+                        format!("updating remote ref {}", update.remote_ref)
+                    })?;
+            }
+
+            let branch_short = update
+                .remote_ref
+                .strip_prefix("refs/heads/")
+                .or_else(|| update.remote_ref.strip_prefix("refs/tags/"))
+                .unwrap_or(&update.remote_ref);
+            let src_short = update
+                .local_ref
+                .as_deref()
+                .and_then(|r| r.strip_prefix("refs/heads/"))
+                .or_else(|| {
+                    update
+                        .local_ref
+                        .as_deref()
+                        .and_then(|r| r.strip_prefix("refs/tags/"))
+                })
+                .unwrap_or(
+                    update.local_ref.as_deref().unwrap_or("(unknown)"),
+                );
+
+            if args.porcelain {
+                let old_hex = old_oid_opt
+                    .map(|o| o.to_hex())
+                    .unwrap_or_else(|| zero_oid.clone());
+                let flag = match old_oid_opt {
+                    Some(old) if old != new_oid => " ",
+                    None => "*",
+                    _ => "=",
+                };
+                let local_ref_str = update.local_ref.as_deref().unwrap_or("(delete)");
+                println!(
+                    "{flag}\t{local_ref_str}:{remote_ref}\t{old_hex}..{new_hex}\t{src_short} -> {branch_short}",
+                    remote_ref = update.remote_ref,
+                    old_hex = &old_hex[..7],
+                    new_hex = &new_oid.to_hex()[..7],
+                );
+            } else if !args.quiet {
+                match old_oid_opt {
+                    Some(old) if old != new_oid => {
+                        println!(
+                            "   {}..{}  {} -> {}",
+                            &old.to_hex()[..7],
+                            &new_oid.to_hex()[..7],
+                            src_short,
+                            branch_short,
+                        );
+                    }
+                    None => {
+                        let kind = if update.remote_ref.starts_with("refs/tags/") {
+                            "tag"
+                        } else {
+                            "branch"
+                        };
+                        println!(" * [new {kind}]      {src_short} -> {branch_short}");
+                    }
+                    _ => {
+                        println!(" = [up to date]      {} -> {}", src_short, branch_short);
+                    }
+                }
+            }
+        }
+        (None, Some(old_oid)) => {
+            // Delete
+            if !args.dry_run {
+                refs::delete_ref(&remote_repo.git_dir, &update.remote_ref)
+                    .with_context(|| {
+                        format!("deleting remote ref {}", update.remote_ref)
+                    })?;
+            }
+
+            let branch_short = update
+                .remote_ref
+                .strip_prefix("refs/heads/")
+                .unwrap_or(&update.remote_ref);
+
+            if args.porcelain {
+                println!(
+                    "-\t:{remote_ref}\t{old_hex}..{zero}\t(delete) -> {branch_short}",
+                    remote_ref = update.remote_ref,
+                    old_hex = &old_oid.to_hex()[..7],
+                    zero = &zero_oid[..7],
+                );
+            } else if !args.quiet {
+                println!(
+                    " - [deleted]         {} -> {}",
+                    &old_oid.to_hex()[..7],
+                    branch_short,
+                );
+            }
+        }
+        _ => {}
     }
 
     Ok(())

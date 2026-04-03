@@ -46,6 +46,10 @@ pub struct Args {
     #[arg(long, value_name = "N")]
     pub deepen: Option<usize>,
 
+    /// Limit fetching to the specified number of commits from the tip.
+    #[arg(long, value_name = "N")]
+    pub depth: Option<usize>,
+
     /// Deepen history of a shallow clone back to a date.
     #[arg(long, value_name = "DATE")]
     pub shallow_since: Option<String>,
@@ -53,6 +57,14 @@ pub struct Args {
     /// Deepen history of a shallow clone excluding a revision.
     #[arg(long, value_name = "REV")]
     pub shallow_exclude: Option<String>,
+
+    /// Re-fetch all objects even if they already exist locally.
+    #[arg(long)]
+    pub refetch: bool,
+
+    /// Write machine-readable fetch output to the given file.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<PathBuf>,
 
     /// Be quiet — suppress informational output.
     #[arg(short = 'q', long = "quiet")]
@@ -111,8 +123,14 @@ fn fetch_remote(
     let remote_tags = refs::list_refs(&remote_repo.git_dir, "refs/tags/")?;
 
     // Copy objects from remote → local
-    copy_objects(&remote_repo.git_dir, git_dir)
+    copy_objects(&remote_repo.git_dir, git_dir, args.refetch)
         .context("copying objects from remote")?;
+
+    // Handle --depth / --deepen: write shallow graft info
+    let effective_depth = args.depth.or(args.deepen);
+    if let Some(depth) = effective_depth {
+        write_shallow_info(git_dir, &remote_heads, &remote_repo, depth)?;
+    }
 
     // Determine the destination prefix for remote-tracking refs
     // Default: refs/heads/* → refs/remotes/<remote>/*
@@ -241,6 +259,32 @@ fn fetch_remote(
         fs::write(&fetch_head_path, content).context("writing FETCH_HEAD")?;
     }
 
+    // Write machine-readable output if --output is given
+    if let Some(ref output_path) = args.output {
+        let mut lines = Vec::new();
+        for (refname, remote_oid) in &remote_heads {
+            let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+            let local_ref = format!("{dst_prefix}{branch}");
+            let old_oid = read_ref_oid(git_dir, &local_ref);
+            let old_hex = old_oid
+                .map(|o| o.to_string())
+                .unwrap_or_else(|| "0".repeat(40));
+            let flag = if old_oid.is_none() {
+                "*"
+            } else if old_oid.as_ref() == Some(remote_oid) {
+                "="
+            } else {
+                " "
+            };
+            lines.push(format!(
+                "{flag} {} {} {local_ref}",
+                old_hex, remote_oid,
+            ));
+        }
+        let content = lines.join("\n") + "\n";
+        fs::write(output_path, content).context("writing --output file")?;
+    }
+
     Ok(())
 }
 
@@ -285,8 +329,9 @@ fn read_ref_oid(git_dir: &Path, refname: &str) -> Option<ObjectId> {
     refs::resolve_ref(git_dir, refname).ok()
 }
 
-/// Copy all objects (loose + packs) from remote to local, skipping existing.
-fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
+/// Copy all objects (loose + packs) from remote to local.
+/// If `refetch` is true, re-copy objects even if they already exist locally.
+fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result<()> {
     let src_objects = src_git_dir.join("objects");
     let dst_objects = dst_git_dir.join("objects");
 
@@ -312,10 +357,12 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
                 let inner = inner?;
                 if inner.file_type()?.is_file() {
                     let dst_file = dst_dir.join(inner.file_name());
-                    if !dst_file.exists() {
+                    if refetch || !dst_file.exists() {
                         fs::create_dir_all(&dst_dir)?;
-                        // Try hard link first, fall back to copy
-                        if fs::hard_link(inner.path(), &dst_file).is_err() {
+                        if refetch {
+                            // Force copy when refetching
+                            fs::copy(inner.path(), &dst_file)?;
+                        } else if fs::hard_link(inner.path(), &dst_file).is_err() {
                             fs::copy(inner.path(), &dst_file)?;
                         }
                     }
@@ -333,8 +380,10 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
             let entry = entry?;
             if entry.file_type()?.is_file() {
                 let dst_file = dst_pack.join(entry.file_name());
-                if !dst_file.exists() {
-                    if fs::hard_link(entry.path(), &dst_file).is_err() {
+                if refetch || !dst_file.exists() {
+                    if refetch {
+                        fs::copy(entry.path(), &dst_file)?;
+                    } else if fs::hard_link(entry.path(), &dst_file).is_err() {
                         fs::copy(entry.path(), &dst_file)?;
                     }
                 }
@@ -370,6 +419,62 @@ fn prune_stale_refs(
             }
         }
     }
+    Ok(())
+}
+
+/// Write shallow graft information when --depth / --deepen is used.
+///
+/// For local transport we approximate shallowness by listing the commit(s) at
+/// the boundary depth and recording them in `$GIT_DIR/shallow`.
+fn write_shallow_info(
+    git_dir: &Path,
+    remote_heads: &[(String, ObjectId)],
+    remote_repo: &Repository,
+    depth: usize,
+) -> Result<()> {
+    use grit_lib::objects::{ObjectKind, parse_commit};
+    use grit_lib::odb::Odb;
+
+    let shallow_path = git_dir.join("shallow");
+    // Collect existing shallow commits
+    let mut shallow_set: std::collections::HashSet<String> = if shallow_path.exists() {
+        fs::read_to_string(&shallow_path)?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    let odb = Odb::new(&remote_repo.git_dir.join("objects"));
+
+    // For each remote head, walk `depth` commits and mark the boundary
+    for (_refname, tip_oid) in remote_heads {
+        let mut oid = *tip_oid;
+        for _ in 0..depth.saturating_sub(1) {
+            match odb.read(&oid) {
+                Ok(obj) if obj.kind == ObjectKind::Commit => {
+                    match parse_commit(&obj.data) {
+                        Ok(c) => {
+                            if c.parents.is_empty() {
+                                break;
+                            }
+                            oid = c.parents[0];
+                        }
+                        Err(_) => break,
+                    }
+                }
+                _ => break,
+            }
+        }
+        shallow_set.insert(oid.to_string());
+    }
+
+    let mut entries: Vec<&str> = shallow_set.iter().map(|s| s.as_str()).collect();
+    entries.sort();
+    let content = entries.join("\n") + "\n";
+    fs::write(&shallow_path, content).context("writing shallow file")?;
     Ok(())
 }
 
