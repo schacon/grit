@@ -240,7 +240,7 @@ test_expect_success 'checkout-index nonexistent file fails' '
 	test -s err
 '
 
-test_expect_failure 'checkout-index -q suppresses errors on missing' '
+test_expect_success 'checkout-index -q suppresses errors on missing' '
 	cd repo &&
 	grit checkout-index -q no-such-file 2>err &&
 	test_must_be_empty err

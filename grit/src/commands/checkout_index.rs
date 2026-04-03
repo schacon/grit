@@ -102,6 +102,9 @@ pub fn run(args: Args) -> Result<()> {
             let repo_path = resolve_repo_path(&work_tree, &cwd, &input_path)?;
             let path_bytes = path_to_bytes(&repo_path);
             if index.get(&path_bytes, target_stage).is_none() {
+                if args.quiet {
+                    continue;
+                }
                 bail!("'{}' not in index", input_path.display());
             }
             selected_paths.push(path_bytes);
@@ -111,6 +114,9 @@ pub fn run(args: Args) -> Result<()> {
             let repo_path = resolve_repo_path(&work_tree, &cwd, input_path)?;
             let path_bytes = path_to_bytes(&repo_path);
             if index.get(&path_bytes, target_stage).is_none() {
+                if args.quiet {
+                    continue;
+                }
                 bail!("'{}' not in index", input_path.display());
             }
             selected_paths.push(path_bytes);
