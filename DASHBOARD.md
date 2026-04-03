@@ -2,7 +2,7 @@
 
 ## Test Results
 
-**15,897 / 16,705 upstream test cases ported (95%)**
+**27,660 / 28,049 individual test cases passing (98.6%)**
 
 - 826 / 888 upstream test files ported
 - 14,240 additional grit-specific tests
