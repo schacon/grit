@@ -99,7 +99,12 @@ fn list_tree(
         // Apply path filter
         if !args.paths.is_empty() {
             let matches = args.paths.iter().any(|p| {
+                let has_trailing_slash = p.ends_with('/');
                 let ps = p.strip_suffix('/').unwrap_or(p.as_str());
+                // Trailing-slash pathspec only matches trees, not blobs
+                if has_trailing_slash && !is_tree && full_name == ps {
+                    return false;
+                }
                 full_name == ps
                     || full_name.starts_with(&format!("{ps}/"))
                     || ps.starts_with(&format!("{full_name}/"))
