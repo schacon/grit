@@ -164,6 +164,18 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Rotate the output to start at the named file.
+    #[arg(long = "rotate-to")]
+    pub rotate_to: Option<String>,
+
+    /// Skip output until the named file.
+    #[arg(long = "skip-to")]
+    pub skip_to: Option<String>,
+
+    /// Order files according to the given orderfile.
+    #[arg(short = 'O')]
+    pub order_file: Option<String>,
+
     /// Colorize the output. Values: always, never, auto.
     #[arg(long = "color", value_name = "WHEN", default_missing_value = "always", num_args = 0..=1)]
     pub color: Option<String>,

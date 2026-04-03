@@ -49,11 +49,11 @@ test_expect_failure 'orderfile using option (-O) (not implemented)' '
 	test_cmp expect_1 actual
 '
 
-test_expect_failure 'diff --rotate-to (not implemented)' '
+test_expect_success 'diff --rotate-to' '
 	git diff --rotate-to=b.c --name-only HEAD~1 HEAD >actual
 '
 
-test_expect_failure 'diff --skip-to (not implemented)' '
+test_expect_success 'diff --skip-to' '
 	git diff --skip-to=b.c --name-only HEAD~1 HEAD >actual
 '
 
