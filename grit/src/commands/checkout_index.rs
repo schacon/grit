@@ -2,6 +2,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::objects::ObjectKind;
 use std::io::{self, BufRead};
 use std::path::Component;
@@ -211,7 +213,16 @@ fn checkout_entry(
             .map_err(|_| anyhow::anyhow!("symlink target is not UTF-8"))?;
         std::os::unix::fs::symlink(&target, &abs_path)?;
     } else {
-        std::fs::write(&abs_path, &obj.data)?;
+        // Apply CRLF / smudge conversion
+        let data = {
+            let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+            let conv = crlf::ConversionConfig::from_config(&config);
+            let attrs = crlf::load_gitattributes(work_tree);
+            let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
+            let oid_hex = format!("{}", entry.oid);
+            crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex))
+        };
+        std::fs::write(&abs_path, &data)?;
 
         // Set executable bit if needed
         if entry.mode == MODE_EXECUTABLE {

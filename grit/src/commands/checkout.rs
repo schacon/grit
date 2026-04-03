@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
@@ -119,7 +120,11 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Handle "checkout HEAD" — no-op when on a branch (don't detach)
+    // But with -f, force-reset the working tree
     if target == "HEAD" && !args.detach {
+        if args.force {
+            return force_reset_to_head(&repo);
+        }
         return Ok(());
     }
 
@@ -981,7 +986,19 @@ fn write_blob_to_worktree(
         bail!("cannot checkout non-blob at '{rel_path}'");
     }
 
-    write_to_worktree(work_tree, rel_path, &obj.data, mode)
+    // Apply CRLF / smudge conversion for checkout
+    let data = if mode != MODE_SYMLINK {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let conv = crlf::ConversionConfig::from_config(&config);
+        let attrs = crlf::load_gitattributes(work_tree);
+        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+        let oid_hex = format!("{oid}");
+        crlf::convert_to_worktree(&obj.data, rel_path, &conv, &file_attrs, Some(&oid_hex))
+    } else {
+        obj.data
+    };
+
+    write_to_worktree(work_tree, rel_path, &data, mode)
 }
 
 /// Write data to a working tree file, handling symlinks and executable bits.

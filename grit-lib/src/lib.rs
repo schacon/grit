@@ -17,6 +17,7 @@
 
 pub mod check_ref_format;
 pub mod config;
+pub mod crlf;
 pub mod diff;
 pub mod error;
 pub mod fmt_merge_msg;
