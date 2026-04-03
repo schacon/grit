@@ -160,7 +160,7 @@ pub fn run(args: Args) -> Result<()> {
         // directory), fall through to the add logic instead.  A directory
         // at the path means the original file was replaced, so remove.
         if args.remove {
-            let file_exists = abs_path.exists() && !abs_path.is_dir();
+            let file_exists = match std::fs::symlink_metadata(&abs_path) { Ok(m) => !m.is_dir(), Err(_) => false, };
             if !args.add || !file_exists {
                 if !index.remove(&rel_bytes) && !args.ignore_missing {
                     let file_missing = !abs_path.exists();
