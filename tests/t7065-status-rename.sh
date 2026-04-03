@@ -37,23 +37,15 @@ test_expect_success 'git mv renames file in index' '
 	! grep "^alpha.txt$" ../actual
 '
 
-test_expect_success 'status shows delete and add after git mv (porcelain)' '
+test_expect_success 'status shows rename after git mv (porcelain)' '
 	cd repo &&
 	git status --porcelain >../actual &&
-	grep "^D  alpha.txt" ../actual &&
-	grep "^A  alpha-renamed.txt" ../actual
+	grep "^R" ../actual
 '
 
-test_expect_success 'status shows delete and add after git mv (short)' '
+test_expect_success 'status shows rename after git mv (short)' '
 	cd repo &&
 	git status --short >../actual &&
-	grep "D  alpha.txt" ../actual &&
-	grep "A  alpha-renamed.txt" ../actual
-'
-
-test_expect_failure 'status detects rename after git mv (R prefix)' '
-	cd repo &&
-	git status --porcelain >../actual &&
 	grep "^R" ../actual
 '
 
@@ -80,14 +72,7 @@ test_expect_success 'git mv file into subdirectory' '
 	! grep "^beta.txt$" ../actual
 '
 
-test_expect_success 'status after cross-directory mv shows D and A' '
-	cd repo &&
-	git status --porcelain >../actual &&
-	grep "^D  beta.txt" ../actual &&
-	grep "^A  doc/beta.txt" ../actual
-'
-
-test_expect_failure 'status detects cross-directory rename' '
+test_expect_success 'status detects cross-directory rename' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	grep "^R" ../actual
@@ -108,11 +93,10 @@ test_expect_success 'git mv file out of subdirectory' '
 	! grep "^src/one.c$" ../actual
 '
 
-test_expect_success 'status shows D+A for directory extraction' '
+test_expect_success 'status shows rename for directory extraction' '
 	cd repo &&
 	git status --porcelain >../actual &&
-	grep "^D  src/one.c" ../actual &&
-	grep "^A  one.c" ../actual
+	grep "^R" ../actual
 '
 
 test_expect_success 'commit directory extraction' '
@@ -132,14 +116,7 @@ test_expect_success 'manual rename: copy content, rm old, add new' '
 	! grep "^gamma.txt$" ../actual
 '
 
-test_expect_success 'status after manual rename shows D and A' '
-	cd repo &&
-	git status --porcelain >../actual &&
-	grep "^D  gamma.txt" ../actual &&
-	grep "^A  gamma-new.txt" ../actual
-'
-
-test_expect_failure 'status detects manual rename as R' '
+test_expect_success 'status detects manual rename as R' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	grep "^R" ../actual
@@ -159,14 +136,7 @@ test_expect_success 'git mv then modify the renamed file' '
 	git add doc/README.md
 '
 
-test_expect_success 'status shows D for old and M/A for new with modification' '
-	cd repo &&
-	git status --porcelain >../actual &&
-	grep "D  doc/readme.md" ../actual &&
-	grep "doc/README.md" ../actual
-'
-
-test_expect_failure 'status detects rename with modification' '
+test_expect_success 'status detects rename with modification' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	grep "^R" ../actual
@@ -195,18 +165,7 @@ test_expect_success 'batch git mv three files' '
 	git mv c.txt c-new.txt
 '
 
-test_expect_success 'status shows three D+A pairs' '
-	cd repo &&
-	git status --porcelain >../actual &&
-	grep "^D  a.txt" ../actual &&
-	grep "^A  a-new.txt" ../actual &&
-	grep "^D  b.txt" ../actual &&
-	grep "^A  b-new.txt" ../actual &&
-	grep "^D  c.txt" ../actual &&
-	grep "^A  c-new.txt" ../actual
-'
-
-test_expect_failure 'status shows three renames with R prefix' '
+test_expect_success 'status shows three renames with R prefix' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	count=$(grep -c "^R" ../actual) &&
@@ -232,8 +191,7 @@ test_expect_success 'rename back to original name' '
 	cd repo &&
 	git mv a-new.txt a.txt &&
 	git status --porcelain >../actual &&
-	grep "^D  a-new.txt" ../actual &&
-	grep "^A  a.txt" ../actual
+	grep "^R" ../actual
 '
 
 test_expect_success 'commit rename-back' '
