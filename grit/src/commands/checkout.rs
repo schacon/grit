@@ -1006,6 +1006,12 @@ fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
 
 /// Resolve a pathspec to a repository-relative path.
 fn resolve_pathspec(spec: &str, work_tree: &Path, cwd: &Path) -> String {
+    // Handle :/ prefix (repo root)
+    if spec == ":/" || spec.starts_with(":/") {
+        let rest = &spec[2..];
+        return rest.to_owned();
+    }
+
     let candidate = std::path::PathBuf::from(spec);
     let abs = if candidate.is_absolute() {
         candidate
@@ -1013,11 +1019,30 @@ fn resolve_pathspec(spec: &str, work_tree: &Path, cwd: &Path) -> String {
         cwd.join(&candidate)
     };
 
-    if let Ok(rel) = abs.strip_prefix(work_tree) {
+    // Normalize the path (resolve .. and . components) without requiring
+    // the path to exist on disk (unlike canonicalize).
+    let normalized = normalize_path(&abs);
+
+    if let Ok(rel) = normalized.strip_prefix(work_tree) {
         rel.to_string_lossy().into_owned()
     } else {
         spec.to_owned()
     }
+}
+
+/// Normalize a path by resolving `.` and `..` components lexically.
+fn normalize_path(path: &Path) -> std::path::PathBuf {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                components.pop();
+            }
+            std::path::Component::CurDir => {}
+            c => components.push(c),
+        }
+    }
+    components.iter().collect()
 }
 
 /// Write reflog entries for a checkout operation.
