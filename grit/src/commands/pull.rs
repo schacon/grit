@@ -84,8 +84,11 @@ pub fn run(args: Args) -> Result<()> {
         prune: false,
         prune_tags: false,
         deepen: None,
+        depth: None,
         shallow_since: None,
         shallow_exclude: None,
+        refetch: false,
+        output: None,
         quiet: args.quiet,
     };
     super::fetch::run(fetch_args)?;
