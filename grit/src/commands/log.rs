@@ -894,6 +894,11 @@ fn apply_format_string(
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.author, date_format));
                         }
+                        Some('t') => {
+                            chars.next();
+                            // %at — author timestamp (unix)
+                            result.push_str(&format!("{}", extract_timestamp(&info.author)));
+                        }
                         Some('i') => {
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.author, Some("iso")));
@@ -919,6 +924,11 @@ fn apply_format_string(
                         Some('d') => {
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.committer, date_format));
+                        }
+                        Some('t') => {
+                            chars.next();
+                            // %ct — committer timestamp (unix)
+                            result.push_str(&format!("{}", extract_timestamp(&info.committer)));
                         }
                         Some('i') => {
                             chars.next();
