@@ -157,6 +157,26 @@ pub fn load_gitattributes(work_tree: &Path) -> Vec<AttrRule> {
     rules
 }
 
+/// Load .gitattributes from the index (for use during checkout when
+/// the worktree file may not yet exist).
+pub fn load_gitattributes_from_index(
+    index: &crate::index::Index,
+    odb: &crate::odb::Odb,
+) -> Vec<AttrRule> {
+    let mut rules = Vec::new();
+
+    // Look for .gitattributes in the index (stage 0)
+    if let Some(entry) = index.get(b".gitattributes", 0) {
+        if let Ok(obj) = odb.read(&entry.oid) {
+            if let Ok(content) = String::from_utf8(obj.data) {
+                parse_gitattributes(&content, &mut rules);
+            }
+        }
+    }
+
+    rules
+}
+
 fn parse_gitattributes(content: &str, rules: &mut Vec<AttrRule>) {
     for line in content.lines() {
         let line = line.trim();

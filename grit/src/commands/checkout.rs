@@ -971,7 +971,13 @@ fn write_blob_to_worktree(
     let data = if mode != MODE_SYMLINK {
         let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
         let conv = crlf::ConversionConfig::from_config(&config);
-        let attrs = crlf::load_gitattributes(work_tree);
+        let mut attrs = crlf::load_gitattributes(work_tree);
+        if attrs.is_empty() {
+            // Try loading from the index (during checkout when worktree may not have .gitattributes yet)
+            if let Ok(idx) = Index::load(&repo.index_path()) {
+                attrs = crlf::load_gitattributes_from_index(&idx, &repo.odb);
+            }
+        }
         let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
         let oid_hex = format!("{oid}");
         crlf::convert_to_worktree(&obj.data, rel_path, &conv, &file_attrs, Some(&oid_hex))

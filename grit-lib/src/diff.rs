@@ -406,6 +406,14 @@ pub fn diff_index_to_worktree(
     index: &Index,
     work_tree: &Path,
 ) -> Result<Vec<DiffEntry>> {
+    use crate::config::ConfigSet;
+    use crate::crlf;
+
+    let git_dir = work_tree.join(".git");
+    let config = ConfigSet::load(Some(&git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = crlf::load_gitattributes(work_tree);
+
     let mut result = Vec::new();
 
     for ie in &index.entries {
@@ -424,7 +432,8 @@ pub fn diff_index_to_worktree(
                 }
 
                 // Stat differs — hash the file to check actual content
-                let worktree_oid = hash_worktree_file(odb, &file_path, &meta)?;
+                let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
+                let worktree_oid = hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
                 let worktree_mode = mode_from_metadata(&meta);
 
                 if worktree_oid != ie.oid || worktree_mode != ie.mode {
@@ -493,13 +502,23 @@ pub fn stat_matches(ie: &IndexEntry, meta: &fs::Metadata) -> bool {
 }
 
 /// Hash a working tree file as a blob to get its OID.
-fn hash_worktree_file(_odb: &Odb, path: &Path, meta: &fs::Metadata) -> Result<ObjectId> {
+fn hash_worktree_file(
+    _odb: &Odb,
+    path: &Path,
+    meta: &fs::Metadata,
+    conv: &crate::crlf::ConversionConfig,
+    file_attrs: &crate::crlf::FileAttrs,
+    rel_path: &str,
+) -> Result<ObjectId> {
     let data = if meta.file_type().is_symlink() {
         // For symlinks, hash the target path
         let target = fs::read_link(path)?;
         target.to_string_lossy().into_owned().into_bytes()
     } else {
-        fs::read(path)?
+        let raw = fs::read(path)?;
+        // Apply clean conversion (CRLF→LF) so hash matches index blob
+        crate::crlf::convert_to_git(&raw, rel_path, conv, file_attrs)
+            .unwrap_or(raw)
     };
 
     Ok(Odb::hash_object_data(ObjectKind::Blob, &data))
@@ -538,6 +557,14 @@ pub fn diff_tree_to_worktree(
     work_tree: &Path,
     index: &Index,
 ) -> Result<Vec<DiffEntry>> {
+    use crate::config::ConfigSet;
+    use crate::crlf;
+
+    let git_dir = work_tree.join(".git");
+    let config = ConfigSet::load(Some(&git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = crlf::load_gitattributes(work_tree);
+
     // Flatten the tree into a BTreeMap keyed by path
     let tree_flat = match tree_oid {
         Some(oid) => flatten_tree(odb, oid, "")?,
@@ -587,7 +614,8 @@ pub fn diff_tree_to_worktree(
                 }
 
                 // Stat or content differs — hash the file
-                let wt_oid = hash_worktree_file(odb, &file_path, meta)?;
+                let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
+                let wt_oid = hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
                 let wt_mode = mode_from_metadata(meta);
                 if wt_oid != te.oid || wt_mode != te.mode {
                     result.push(DiffEntry {
@@ -617,7 +645,8 @@ pub fn diff_tree_to_worktree(
             }
             (None, Some(ref meta)) => {
                 // In index but not in tree, and exists in worktree
-                let wt_oid = hash_worktree_file(odb, &file_path, meta)?;
+                let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
+                let wt_oid = hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
                 let wt_mode = mode_from_metadata(meta);
                 result.push(DiffEntry {
                     status: DiffStatus::Added,

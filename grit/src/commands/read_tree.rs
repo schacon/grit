@@ -543,7 +543,11 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
             // Apply CRLF / smudge conversion
             let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
             let conv = crlf::ConversionConfig::from_config(&config);
-            let attrs = crlf::load_gitattributes(&work_tree);
+            // Load attrs from worktree first, fall back to index
+            let mut attrs = crlf::load_gitattributes(&work_tree);
+            if attrs.is_empty() {
+                attrs = crlf::load_gitattributes_from_index(new_index, &repo.odb);
+            }
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
             let oid_hex = format!("{}", entry.oid);
             let data = crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex));
