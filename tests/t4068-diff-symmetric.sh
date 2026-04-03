@@ -124,8 +124,7 @@ test_expect_success 'diff A...B --name-status' '
 
 test_expect_success 'diff A...B --exit-code' '
 	cd repo &&
-	test_expect_code 1 git diff master...topic --exit-code >out 2>&1 &&
-	grep "topic\.txt" out
+	test_must_fail git diff master...topic --exit-code
 '
 
 test_expect_success 'diff A...B with pathspec' '

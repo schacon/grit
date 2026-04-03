@@ -39,25 +39,29 @@ test_expect_success 'setup reference tree' '
 	git update-index --add COPYING rezrov &&
 	tree=$(git write-tree) &&
 	echo $tree &&
+	echo $tree >.tree_oid &&
 	sed -e "s/HOWEVER/However/" <COPYING >COPYING.1 &&
 	sed -e "s/GPL/G.P.L/g" <COPYING >COPYING.2
 '
 
-test_expect_failure 'validate output from rename/copy detection (#1) (not implemented)' '
+test_expect_success 'validate output from rename/copy detection (#1)' '
+	tree=$(cat .tree_oid) &&
 	rm -f COPYING &&
 	git update-index --add --remove COPYING COPYING.1 COPYING.2 &&
 	git diff-index -C $tree >current &&
 	test -s current
 '
 
-test_expect_failure 'validate output from rename/copy detection (#2) (not implemented)' '
+test_expect_success 'validate output from rename/copy detection (#2)' '
+	tree=$(cat .tree_oid) &&
 	mv COPYING.2 COPYING &&
 	git update-index --add --remove COPYING COPYING.1 COPYING.2 &&
 	git diff-index -C $tree >current &&
 	test -s current
 '
 
-test_expect_failure 'validate output from rename/copy detection (#3) (not implemented)' '
+test_expect_success 'validate output from rename/copy detection (#3)' '
+	tree=$(cat .tree_oid) &&
 	COPYING_test_data >COPYING &&
 	git update-index --add --remove COPYING COPYING.1 &&
 	git diff-index -C --find-copies-harder $tree >current &&

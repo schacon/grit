@@ -437,7 +437,7 @@ pub fn entry_from_stat(
     mode: u32,
 ) -> Result<IndexEntry> {
     use std::os::unix::fs::MetadataExt;
-    let meta = fs::metadata(path)?;
+    let meta = fs::symlink_metadata(path)?;
     Ok(entry_from_metadata(&meta, rel_path, oid, mode))
 }
 

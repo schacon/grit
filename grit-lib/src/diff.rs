@@ -761,6 +761,145 @@ pub fn detect_renames(odb: &Odb, entries: Vec<DiffEntry>, threshold: u32) -> Vec
     result
 }
 
+
+/// Detect copies among diff entries.
+///
+/// This first runs rename detection (pairing Deleted+Added), then for any
+/// remaining Added entries, looks for copy sources.
+///
+/// - `find_copies_harder` = false: only Modified entries are copy source candidates.
+/// - `find_copies_harder` = true: also examine unmodified files from `source_tree_entries`.
+///
+/// `source_tree_entries` should be a list of (path, mode, oid) from the source tree;
+/// used when `find_copies_harder` is true to consider unmodified files as copy sources.
+pub fn detect_copies(
+    odb: &Odb,
+    entries: Vec<DiffEntry>,
+    threshold: u32,
+    find_copies_harder: bool,
+    source_tree_entries: &[(String, String, ObjectId)],
+) -> Vec<DiffEntry> {
+    // First, run rename detection to pair Delete+Add.
+    let entries = detect_renames(odb, entries, threshold);
+
+    // Split into added (remaining) and others.
+    let mut added: Vec<DiffEntry> = Vec::new();
+    let mut others: Vec<DiffEntry> = Vec::new();
+
+    for entry in entries {
+        match entry.status {
+            DiffStatus::Added => added.push(entry),
+            _ => others.push(entry),
+        }
+    }
+
+    if added.is_empty() {
+        return others;
+    }
+
+    // Build copy source candidates.
+    let mut sources: Vec<(String, ObjectId)> = Vec::new();
+
+    // Modified files are always candidates for -C.
+    for entry in &others {
+        if entry.status == DiffStatus::Modified {
+            if let Some(ref old_path) = entry.old_path {
+                sources.push((old_path.clone(), entry.old_oid));
+            }
+        }
+    }
+
+    // With find_copies_harder, also add all source tree entries.
+    if find_copies_harder {
+        for (path, _mode, oid) in source_tree_entries {
+            if !sources.iter().any(|(p, _)| p == path) {
+                sources.push((path.clone(), *oid));
+            }
+        }
+    }
+
+    if sources.is_empty() {
+        let mut result = others;
+        result.extend(added);
+        result.sort_by(|a, b| a.path().cmp(b.path()));
+        return result;
+    }
+
+    // Read content for sources.
+    let source_contents: Vec<Option<Vec<u8>>> = sources
+        .iter()
+        .map(|(_, oid)| odb.read(oid).ok().map(|obj| obj.data))
+        .collect();
+
+    // Read content for added blobs.
+    let added_contents: Vec<Option<Vec<u8>>> = added
+        .iter()
+        .map(|a| odb.read(&a.new_oid).ok().map(|obj| obj.data))
+        .collect();
+
+    // Build score matrix.
+    let mut scores: Vec<(u32, usize, usize)> = Vec::new();
+    for (si, (_, src_oid)) in sources.iter().enumerate() {
+        for (ai, add) in added.iter().enumerate() {
+            if *src_oid == add.new_oid {
+                scores.push((100, si, ai));
+                continue;
+            }
+            let score = match (&source_contents[si], &added_contents[ai]) {
+                (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
+                _ => 0,
+            };
+            if score >= threshold {
+                scores.push((score, si, ai));
+            }
+        }
+    }
+
+    // Sort by score descending.
+    scores.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let mut used_added = vec![false; added.len()];
+    let mut copies: Vec<DiffEntry> = Vec::new();
+
+    for (score, si, ai) in &scores {
+        if used_added[*ai] {
+            continue;
+        }
+        used_added[*ai] = true;
+
+        let (ref src_path, _) = sources[*si];
+        let add = &added[*ai];
+
+        let src_mode = source_tree_entries
+            .iter()
+            .find(|(p, _, _)| p == src_path)
+            .map(|(_, m, _)| m.clone())
+            .unwrap_or_else(|| add.old_mode.clone());
+
+        copies.push(DiffEntry {
+            status: DiffStatus::Copied,
+            old_path: Some(src_path.clone()),
+            new_path: add.new_path.clone(),
+            old_mode: src_mode,
+            new_mode: add.new_mode.clone(),
+            old_oid: sources[*si].1,
+            new_oid: add.new_oid,
+            score: Some(*score),
+        });
+    }
+
+    let mut result = others;
+    result.extend(copies);
+    for (i, entry) in added.into_iter().enumerate() {
+        if !used_added[i] {
+            result.push(entry);
+        }
+    }
+
+    result.sort_by(|a, b| a.path().cmp(b.path()));
+    result
+}
+
 /// Format a rename pair using Git's compact path format.
 ///
 /// Examples:

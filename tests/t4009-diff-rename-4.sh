@@ -38,7 +38,8 @@ test_expect_success 'prepare reference tree' '
 	echo frotz >rezrov &&
 	git update-index --add COPYING rezrov &&
 	tree=$(git write-tree) &&
-	echo $tree
+	echo $tree &&
+	echo $tree >.tree_oid
 '
 
 test_expect_success 'prepare work tree' '
@@ -48,7 +49,8 @@ test_expect_success 'prepare work tree' '
 	git update-index --add --remove COPYING COPYING.1 COPYING.2
 '
 
-test_expect_failure 'validate output from rename/copy detection (#1) (not implemented)' '
+test_expect_success 'validate output from rename/copy detection (#1)' '
+	tree=$(cat .tree_oid) &&
 	git diff-index -z -C $tree >current &&
 	test -s current
 '
@@ -58,7 +60,8 @@ test_expect_success 'prepare work tree again' '
 	git update-index --add --remove COPYING COPYING.1 COPYING.2
 '
 
-test_expect_failure 'validate output from rename/copy detection (#2) (not implemented)' '
+test_expect_success 'validate output from rename/copy detection (#2)' '
+	tree=$(cat .tree_oid) &&
 	git diff-index -z -C $tree >current &&
 	test -s current
 '
@@ -68,7 +71,8 @@ test_expect_success 'prepare work tree once again' '
 	git update-index --add --remove COPYING COPYING.1
 '
 
-test_expect_failure 'validate output from rename/copy detection (#3) (not implemented)' '
+test_expect_success 'validate output from rename/copy detection (#3)' '
+	tree=$(cat .tree_oid) &&
 	git diff-index -z -C --find-copies-harder $tree >current &&
 	test -s current
 '
