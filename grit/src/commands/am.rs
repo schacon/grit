@@ -1434,7 +1434,7 @@ fn parse_stgit_patch(input: &str) -> Result<Vec<MboxPatch>> {
     let mut body_lines = Vec::new();
     let mut diff_lines = Vec::new();
     let mut in_diff = false;
-    let mut in_headers = false;
+    let mut in_headers;
     let mut past_separator = false;
 
     // First non-blank line is the subject

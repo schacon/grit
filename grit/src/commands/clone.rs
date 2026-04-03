@@ -571,6 +571,7 @@ fn copy_refs_as_remote(
 }
 
 /// Recursively copy ref files from src to dst.
+#[allow(dead_code)]
 fn copy_refs_recursive(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
