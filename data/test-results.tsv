@@ -129,100 +129,100 @@ t0000-basic::cleanup-happened	t0000-basic	cleanup happened		pass
 t0000-basic::tests-clean-up-even-after-a-failure	t0000-basic	tests clean up even after a failure		pass
 t0000-basic::failure-to-clean-up-causes-the-test-to-fail	t0000-basic	failure to clean up causes the test to fail		pass
 t0000-basic::tests-clean-up-even-after-a-failure-2	t0000-basic	tests clean up even after a failure		pass
-t0001-init::plain	t0001-init	plain	init	pass
-t0001-init::plain-nested-in-bare	t0001-init	plain nested in bare	init	pass
-t0001-init::plain-through-aliased-command-outside-any-git-repo	t0001-init	plain through aliased command, outside any git repo	init	pass
-t0001-init::plain-nested-through-aliased-command	t0001-init	plain nested through aliased command	init	pass
-t0001-init::plain-nested-in-bare-through-aliased-command	t0001-init	plain nested in bare through aliased command	init	pass
-t0001-init::no-extra-git-on-alias-scripts	t0001-init	No extra GIT_* on alias scripts	init	pass
-t0001-init::plain-with-git-work-tree	t0001-init	plain with GIT_WORK_TREE	init	pass
-t0001-init::plain-bare	t0001-init	plain bare	init	pass
-t0001-init::plain-bare-with-git-work-tree	t0001-init	plain bare with GIT_WORK_TREE	init	pass
-t0001-init::git-dir-bare	t0001-init	GIT_DIR bare	init	pass
-t0001-init::init-bare	t0001-init	init --bare	init	pass
-t0001-init::git-dir-non-bare	t0001-init	GIT_DIR non-bare	init	pass
-t0001-init::git-dir-git-work-tree-1	t0001-init	GIT_DIR & GIT_WORK_TREE (1)	init	pass
-t0001-init::git-dir-git-work-tree-2	t0001-init	GIT_DIR & GIT_WORK_TREE (2)	init	pass
-t0001-init::reinit	t0001-init	reinit	init	pass
-t0001-init::init-with-template	t0001-init	init with --template	init	pass
-t0001-init::init-with-template-blank	t0001-init	init with --template (blank)	init	pass
-t0001-init::init-with-init-templatedir-set	t0001-init	init with init.templatedir set	init	pass
-t0001-init::init-with-init-templatedir-using-expansion	t0001-init	init with init.templatedir using ~ expansion	init	pass
-t0001-init::init-bare-shared-overrides-system-global-config	t0001-init	init --bare/--shared overrides system/global config	init	pass
-t0001-init::init-honors-global-core-sharedrepository	t0001-init	init honors global core.sharedRepository	init	pass
-t0001-init::init-allows-insanely-long-template	t0001-init	init allows insanely long --template	init	pass
-t0001-init::init-creates-a-new-directory	t0001-init	init creates a new directory	init	pass
-t0001-init::init-creates-a-new-bare-directory	t0001-init	init creates a new bare directory	init	pass
-t0001-init::init-recreates-a-directory	t0001-init	init recreates a directory	init	pass
-t0001-init::init-recreates-a-new-bare-directory	t0001-init	init recreates a new bare directory	init	pass
-t0001-init::init-creates-a-new-deep-directory	t0001-init	init creates a new deep directory	init	pass
-t0001-init::init-creates-a-new-deep-directory-umask-vs-shared	t0001-init	init creates a new deep directory (umask vs. shared)	init	pass
-t0001-init::init-notices-eexist-1	t0001-init	init notices EEXIST (1)	init	pass
-t0001-init::init-notices-eexist-2	t0001-init	init notices EEXIST (2)	init	pass
-t0001-init::init-notices-eperm	t0001-init	init notices EPERM	init	pass
-t0001-init::init-creates-a-new-bare-directory-with-global-bare	t0001-init	init creates a new bare directory with global --bare	init	pass
-t0001-init::init-prefers-command-line-to-git-dir	t0001-init	init prefers command line to GIT_DIR	init	pass
-t0001-init::init-with-separate-gitdir	t0001-init	init with separate gitdir	init	pass
-t0001-init::explicit-bare-separate-git-dir-incompatible	t0001-init	explicit bare & --separate-git-dir incompatible	init	pass
-t0001-init::implicit-bare-separate-git-dir-incompatible	t0001-init	implicit bare & --separate-git-dir incompatible	init	pass
-t0001-init::bare-separate-git-dir-incompatible-within-worktree	t0001-init	bare & --separate-git-dir incompatible within worktree	init	pass
-t0001-init::init-in-long-base-path	t0001-init	init in long base path	init	pass
-t0001-init::init-in-long-restricted-base-path	t0001-init	init in long restricted base path	init	pass
-t0001-init::re-init-on-git-file	t0001-init	re-init on .git file	init	pass
-t0001-init::re-init-to-update-git-link	t0001-init	re-init to update git link	init	pass
-t0001-init::re-init-to-move-gitdir	t0001-init	re-init to move gitdir	init	pass
-t0001-init::re-init-to-move-gitdir-symlink	t0001-init	re-init to move gitdir symlink	init	pass
-t0001-init::re-init-to-move-gitdir-with-linked-worktrees-absolute	t0001-init	re-init to move gitdir with linked worktrees (absolute)	init	pass
-t0001-init::re-init-to-move-gitdir-within-linked-worktree-absolute	t0001-init	re-init to move gitdir within linked worktree (absolute)	init	pass
-t0001-init::re-init-to-move-gitdir-with-linked-worktrees-relative	t0001-init	re-init to move gitdir with linked worktrees (relative)	init	pass
-t0001-init::re-init-to-move-gitdir-within-linked-worktree-relative	t0001-init	re-init to move gitdir within linked worktree (relative)	init	pass
-t0001-init::git-hidden	t0001-init	.git hidden	init	pass
-t0001-init::bare-git-dir-not-hidden	t0001-init	bare git dir not hidden	init	pass
-t0001-init::remote-init-from-does-not-use-config-from-cwd	t0001-init	remote init from does not use config from cwd	init	pass
-t0001-init::re-init-from-a-linked-worktree	t0001-init	re-init from a linked worktree	init	pass
-t0001-init::init-honors-git-default-hash	t0001-init	init honors GIT_DEFAULT_HASH	init	pass
-t0001-init::init-honors-object-format	t0001-init	init honors --object-format	init	pass
-t0001-init::init-honors-init-defaultobjectformat	t0001-init	init honors init.defaultObjectFormat	init	pass
-t0001-init::init-warns-about-invalid-init-defaultobjectformat	t0001-init	init warns about invalid init.defaultObjectFormat	init	pass
-t0001-init::object-format-overrides-git-default-hash	t0001-init	--object-format overrides GIT_DEFAULT_HASH	init	pass
-t0001-init::git-default-hash-overrides-init-defaultobjectformat	t0001-init	GIT_DEFAULT_HASH overrides init.defaultObjectFormat	init	pass
-t0001-init::extensions-objectformat-is-not-allowed-with-repo-version-0	t0001-init	extensions.objectFormat is not allowed with repo version 0	init	pass
-t0001-init::init-rejects-attempts-to-initialize-with-different-hash	t0001-init	init rejects attempts to initialize with different hash	init	pass
-t0001-init::extensions-refstorage-is-not-allowed-with-repo-version-0	t0001-init	extensions.refStorage is not allowed with repo version 0	init	pass
-t0001-init::extensions-refstorage-with-files-backend	t0001-init	extensions.refStorage with files backend	init	pass
-t0001-init::extensions-refstorage-with-unknown-backend	t0001-init	extensions.refStorage with unknown backend	init	pass
-t0001-init::init-with-git-default-ref-format-garbage	t0001-init	init with GIT_DEFAULT_REF_FORMAT=garbage	init	pass
-t0001-init::init-warns-about-invalid-init-defaultrefformat	t0001-init	init warns about invalid init.defaultRefFormat	init	pass
-t0001-init::default-ref-format	t0001-init	default ref format	init	pass
-t0001-init::init-with-ref-format-garbage	t0001-init	init with --ref-format=garbage	init	pass
-t0001-init::core-hidedotfiles-false	t0001-init	core.hidedotfiles = false	init	pass
-t0001-init::redirect-std-handles	t0001-init	redirect std handles	init	pass
-t0001-init::initial-branch	t0001-init	--initial-branch	init	pass
-t0001-init::overridden-default-initial-branch-name-config	t0001-init	overridden default initial branch name (config)	init	pass
-t0001-init::advice-on-unconfigured-init-defaultbranch	t0001-init	advice on unconfigured init.defaultBranch	init	pass
-t0001-init::advice-on-unconfigured-init-defaultbranch-disabled	t0001-init	advice on unconfigured init.defaultBranch disabled	init	pass
-t0001-init::default-branch-name	t0001-init	default branch name	init	pass
-t0001-init::overridden-default-main-branch-name-env	t0001-init	overridden default main branch name (env)	init	pass
-t0001-init::invalid-default-branch-name	t0001-init	invalid default branch name	init	pass
-t0001-init::branch-m-with-the-initial-branch	t0001-init	branch -m with the initial branch	init	pass
-t0001-init::init-with-includeif-onbranch-condition	t0001-init	init with includeIf.onbranch condition	init	pass
-t0001-init::init-with-includeif-onbranch-condition-with-existing-directory	t0001-init	init with includeIf.onbranch condition with existing directory	init	pass
-t0001-init::re-init-with-includeif-onbranch-condition	t0001-init	re-init with includeIf.onbranch condition	init	pass
-t0001-init::re-init-skips-non-matching-includeif-onbranch	t0001-init	re-init skips non-matching includeIf.onbranch	init	pass
-t0001-init::re-init-reads-matching-includeif-onbranch	t0001-init	re-init reads matching includeIf.onbranch	init	pass
-t0001-init::reinit-repository-with-git-default-hash-hash-does-not-change-format	t0001-init	reinit repository with GIT_DEFAULT_HASH=$hash does not change format	init	pass
-t0001-init::init-with-git-default-ref-format-format	t0001-init	init with GIT_DEFAULT_REF_FORMAT=$format	init	pass
-t0001-init::init-with-ref-format-format	t0001-init	init with --ref-format=$format	init	pass
-t0001-init::init-with-init-defaultrefformat-format	t0001-init	init with init.defaultRefFormat=$format	init	pass
-t0001-init::ref-format-format-overrides-git-default-ref-format	t0001-init	--ref-format=$format overrides GIT_DEFAULT_REF_FORMAT	init	pass
-t0001-init::reinit-repository-with-git-default-ref-format-format-does-not-change-format	t0001-init	reinit repository with GIT_DEFAULT_REF_FORMAT=$format does not change format	init	pass
-t0001-init::ref-format-overrides-git-default-ref-format	t0001-init	--ref-format= overrides GIT_DEFAULT_REF_FORMAT	init	pass
-t0001-init::git-default-ref-format-overrides-init-defaultrefformat	t0001-init	GIT_DEFAULT_REF_FORMAT= overrides init.defaultRefFormat	init	pass
-t0001-init::init-with-feature-experimental-true	t0001-init	init with feature.experimental=true	init	pass
-t0001-init::init-defaultrefformat-overrides-feature-experimental-true	t0001-init	init.defaultRefFormat overrides feature.experimental=true	init	pass
-t0001-init::git-default-ref-format-overrides-feature-experimental-true	t0001-init	GIT_DEFAULT_REF_FORMAT= overrides feature.experimental=true	init	pass
-t0001-init::re-init-with-same-format-from-format	t0001-init	re-init with same format ($from_format)	init	pass
-t0001-init::re-init-with-different-format-fails-from-format-to-format	t0001-init	re-init with different format fails ($from_format -> $to_format)	init	pass
+t0001-init::plain	t0001-init	plain	init	partial
+t0001-init::plain-nested-in-bare	t0001-init	plain nested in bare	init	partial
+t0001-init::plain-through-aliased-command-outside-any-git-repo	t0001-init	plain through aliased command, outside any git repo	init	partial
+t0001-init::plain-nested-through-aliased-command	t0001-init	plain nested through aliased command	init	partial
+t0001-init::plain-nested-in-bare-through-aliased-command	t0001-init	plain nested in bare through aliased command	init	partial
+t0001-init::no-extra-git-on-alias-scripts	t0001-init	No extra GIT_* on alias scripts	init	partial
+t0001-init::plain-with-git-work-tree	t0001-init	plain with GIT_WORK_TREE	init	partial
+t0001-init::plain-bare	t0001-init	plain bare	init	partial
+t0001-init::plain-bare-with-git-work-tree	t0001-init	plain bare with GIT_WORK_TREE	init	partial
+t0001-init::git-dir-bare	t0001-init	GIT_DIR bare	init	partial
+t0001-init::init-bare	t0001-init	init --bare	init	partial
+t0001-init::git-dir-non-bare	t0001-init	GIT_DIR non-bare	init	partial
+t0001-init::git-dir-git-work-tree-1	t0001-init	GIT_DIR & GIT_WORK_TREE (1)	init	partial
+t0001-init::git-dir-git-work-tree-2	t0001-init	GIT_DIR & GIT_WORK_TREE (2)	init	partial
+t0001-init::reinit	t0001-init	reinit	init	partial
+t0001-init::init-with-template	t0001-init	init with --template	init	partial
+t0001-init::init-with-template-blank	t0001-init	init with --template (blank)	init	partial
+t0001-init::init-with-init-templatedir-set	t0001-init	init with init.templatedir set	init	partial
+t0001-init::init-with-init-templatedir-using-expansion	t0001-init	init with init.templatedir using ~ expansion	init	partial
+t0001-init::init-bare-shared-overrides-system-global-config	t0001-init	init --bare/--shared overrides system/global config	init	partial
+t0001-init::init-honors-global-core-sharedrepository	t0001-init	init honors global core.sharedRepository	init	partial
+t0001-init::init-allows-insanely-long-template	t0001-init	init allows insanely long --template	init	partial
+t0001-init::init-creates-a-new-directory	t0001-init	init creates a new directory	init	partial
+t0001-init::init-creates-a-new-bare-directory	t0001-init	init creates a new bare directory	init	partial
+t0001-init::init-recreates-a-directory	t0001-init	init recreates a directory	init	partial
+t0001-init::init-recreates-a-new-bare-directory	t0001-init	init recreates a new bare directory	init	partial
+t0001-init::init-creates-a-new-deep-directory	t0001-init	init creates a new deep directory	init	partial
+t0001-init::init-creates-a-new-deep-directory-umask-vs-shared	t0001-init	init creates a new deep directory (umask vs. shared)	init	partial
+t0001-init::init-notices-eexist-1	t0001-init	init notices EEXIST (1)	init	partial
+t0001-init::init-notices-eexist-2	t0001-init	init notices EEXIST (2)	init	partial
+t0001-init::init-notices-eperm	t0001-init	init notices EPERM	init	partial
+t0001-init::init-creates-a-new-bare-directory-with-global-bare	t0001-init	init creates a new bare directory with global --bare	init	partial
+t0001-init::init-prefers-command-line-to-git-dir	t0001-init	init prefers command line to GIT_DIR	init	partial
+t0001-init::init-with-separate-gitdir	t0001-init	init with separate gitdir	init	partial
+t0001-init::explicit-bare-separate-git-dir-incompatible	t0001-init	explicit bare & --separate-git-dir incompatible	init	partial
+t0001-init::implicit-bare-separate-git-dir-incompatible	t0001-init	implicit bare & --separate-git-dir incompatible	init	partial
+t0001-init::bare-separate-git-dir-incompatible-within-worktree	t0001-init	bare & --separate-git-dir incompatible within worktree	init	partial
+t0001-init::init-in-long-base-path	t0001-init	init in long base path	init	partial
+t0001-init::init-in-long-restricted-base-path	t0001-init	init in long restricted base path	init	partial
+t0001-init::re-init-on-git-file	t0001-init	re-init on .git file	init	partial
+t0001-init::re-init-to-update-git-link	t0001-init	re-init to update git link	init	partial
+t0001-init::re-init-to-move-gitdir	t0001-init	re-init to move gitdir	init	partial
+t0001-init::re-init-to-move-gitdir-symlink	t0001-init	re-init to move gitdir symlink	init	partial
+t0001-init::re-init-to-move-gitdir-with-linked-worktrees-absolute	t0001-init	re-init to move gitdir with linked worktrees (absolute)	init	partial
+t0001-init::re-init-to-move-gitdir-within-linked-worktree-absolute	t0001-init	re-init to move gitdir within linked worktree (absolute)	init	partial
+t0001-init::re-init-to-move-gitdir-with-linked-worktrees-relative	t0001-init	re-init to move gitdir with linked worktrees (relative)	init	partial
+t0001-init::re-init-to-move-gitdir-within-linked-worktree-relative	t0001-init	re-init to move gitdir within linked worktree (relative)	init	partial
+t0001-init::git-hidden	t0001-init	.git hidden	init	partial
+t0001-init::bare-git-dir-not-hidden	t0001-init	bare git dir not hidden	init	partial
+t0001-init::remote-init-from-does-not-use-config-from-cwd	t0001-init	remote init from does not use config from cwd	init	partial
+t0001-init::re-init-from-a-linked-worktree	t0001-init	re-init from a linked worktree	init	partial
+t0001-init::init-honors-git-default-hash	t0001-init	init honors GIT_DEFAULT_HASH	init	partial
+t0001-init::init-honors-object-format	t0001-init	init honors --object-format	init	partial
+t0001-init::init-honors-init-defaultobjectformat	t0001-init	init honors init.defaultObjectFormat	init	partial
+t0001-init::init-warns-about-invalid-init-defaultobjectformat	t0001-init	init warns about invalid init.defaultObjectFormat	init	partial
+t0001-init::object-format-overrides-git-default-hash	t0001-init	--object-format overrides GIT_DEFAULT_HASH	init	partial
+t0001-init::git-default-hash-overrides-init-defaultobjectformat	t0001-init	GIT_DEFAULT_HASH overrides init.defaultObjectFormat	init	partial
+t0001-init::extensions-objectformat-is-not-allowed-with-repo-version-0	t0001-init	extensions.objectFormat is not allowed with repo version 0	init	partial
+t0001-init::init-rejects-attempts-to-initialize-with-different-hash	t0001-init	init rejects attempts to initialize with different hash	init	partial
+t0001-init::extensions-refstorage-is-not-allowed-with-repo-version-0	t0001-init	extensions.refStorage is not allowed with repo version 0	init	partial
+t0001-init::extensions-refstorage-with-files-backend	t0001-init	extensions.refStorage with files backend	init	partial
+t0001-init::extensions-refstorage-with-unknown-backend	t0001-init	extensions.refStorage with unknown backend	init	partial
+t0001-init::init-with-git-default-ref-format-garbage	t0001-init	init with GIT_DEFAULT_REF_FORMAT=garbage	init	partial
+t0001-init::init-warns-about-invalid-init-defaultrefformat	t0001-init	init warns about invalid init.defaultRefFormat	init	partial
+t0001-init::default-ref-format	t0001-init	default ref format	init	partial
+t0001-init::init-with-ref-format-garbage	t0001-init	init with --ref-format=garbage	init	partial
+t0001-init::core-hidedotfiles-false	t0001-init	core.hidedotfiles = false	init	partial
+t0001-init::redirect-std-handles	t0001-init	redirect std handles	init	partial
+t0001-init::initial-branch	t0001-init	--initial-branch	init	partial
+t0001-init::overridden-default-initial-branch-name-config	t0001-init	overridden default initial branch name (config)	init	partial
+t0001-init::advice-on-unconfigured-init-defaultbranch	t0001-init	advice on unconfigured init.defaultBranch	init	partial
+t0001-init::advice-on-unconfigured-init-defaultbranch-disabled	t0001-init	advice on unconfigured init.defaultBranch disabled	init	partial
+t0001-init::default-branch-name	t0001-init	default branch name	init	partial
+t0001-init::overridden-default-main-branch-name-env	t0001-init	overridden default main branch name (env)	init	partial
+t0001-init::invalid-default-branch-name	t0001-init	invalid default branch name	init	partial
+t0001-init::branch-m-with-the-initial-branch	t0001-init	branch -m with the initial branch	init	partial
+t0001-init::init-with-includeif-onbranch-condition	t0001-init	init with includeIf.onbranch condition	init	partial
+t0001-init::init-with-includeif-onbranch-condition-with-existing-directory	t0001-init	init with includeIf.onbranch condition with existing directory	init	partial
+t0001-init::re-init-with-includeif-onbranch-condition	t0001-init	re-init with includeIf.onbranch condition	init	partial
+t0001-init::re-init-skips-non-matching-includeif-onbranch	t0001-init	re-init skips non-matching includeIf.onbranch	init	partial
+t0001-init::re-init-reads-matching-includeif-onbranch	t0001-init	re-init reads matching includeIf.onbranch	init	partial
+t0001-init::reinit-repository-with-git-default-hash-hash-does-not-change-format	t0001-init	reinit repository with GIT_DEFAULT_HASH=$hash does not change format	init	partial
+t0001-init::init-with-git-default-ref-format-format	t0001-init	init with GIT_DEFAULT_REF_FORMAT=$format	init	partial
+t0001-init::init-with-ref-format-format	t0001-init	init with --ref-format=$format	init	partial
+t0001-init::init-with-init-defaultrefformat-format	t0001-init	init with init.defaultRefFormat=$format	init	partial
+t0001-init::ref-format-format-overrides-git-default-ref-format	t0001-init	--ref-format=$format overrides GIT_DEFAULT_REF_FORMAT	init	partial
+t0001-init::reinit-repository-with-git-default-ref-format-format-does-not-change-format	t0001-init	reinit repository with GIT_DEFAULT_REF_FORMAT=$format does not change format	init	partial
+t0001-init::ref-format-overrides-git-default-ref-format	t0001-init	--ref-format= overrides GIT_DEFAULT_REF_FORMAT	init	partial
+t0001-init::git-default-ref-format-overrides-init-defaultrefformat	t0001-init	GIT_DEFAULT_REF_FORMAT= overrides init.defaultRefFormat	init	partial
+t0001-init::init-with-feature-experimental-true	t0001-init	init with feature.experimental=true	init	partial
+t0001-init::init-defaultrefformat-overrides-feature-experimental-true	t0001-init	init.defaultRefFormat overrides feature.experimental=true	init	partial
+t0001-init::git-default-ref-format-overrides-feature-experimental-true	t0001-init	GIT_DEFAULT_REF_FORMAT= overrides feature.experimental=true	init	partial
+t0001-init::re-init-with-same-format-from-format	t0001-init	re-init with same format ($from_format)	init	partial
+t0001-init::re-init-with-different-format-fails-from-format-to-format	t0001-init	re-init with different format fails ($from_format -> $to_format)	init	partial
 t0002-gitfile::initial-setup	t0002-gitfile	initial setup		pass
 t0002-gitfile::bad-setup-invalid-git-file-format	t0002-gitfile	bad setup: invalid .git file format	rev-parse	pass
 t0002-gitfile::bad-setup-invalid-git-file-path	t0002-gitfile	bad setup: invalid .git file path	rev-parse	pass
@@ -882,11 +882,11 @@ t0067-parse_pathspec_file::no-trailing-delimiter	t0067-parse_pathspec_file	no tr
 t0067-parse_pathspec_file::crlf-delimiters	t0067-parse_pathspec_file	CRLF delimiters		pass
 t0067-parse_pathspec_file::quotes	t0067-parse_pathspec_file	quotes		pass
 t0067-parse_pathspec_file::pathspec-file-nul-takes-quotes-literally	t0067-parse_pathspec_file	--pathspec-file-nul takes quotes literally		pass
-t0068-for-each-repo::run-based-on-configured-value	t0068-for-each-repo	run based on configured value	for-each-repo	pass
-t0068-for-each-repo::do-nothing-on-empty-config	t0068-for-each-repo	do nothing on empty config	for-each-repo	pass
-t0068-for-each-repo::error-on-bad-config-keys	t0068-for-each-repo	error on bad config keys	for-each-repo	pass
-t0068-for-each-repo::error-on-null-value-for-config-keys	t0068-for-each-repo	error on NULL value for config keys	for-each-repo	pass
-t0068-for-each-repo::keep-going	t0068-for-each-repo	--keep-going	for-each-repo	pass
+t0068-for-each-repo::run-based-on-configured-value	t0068-for-each-repo	run based on configured value	for-each-repo	partial
+t0068-for-each-repo::do-nothing-on-empty-config	t0068-for-each-repo	do nothing on empty config	for-each-repo	partial
+t0068-for-each-repo::error-on-bad-config-keys	t0068-for-each-repo	error on bad config keys	for-each-repo	partial
+t0068-for-each-repo::error-on-null-value-for-config-keys	t0068-for-each-repo	error on NULL value for config keys	for-each-repo	partial
+t0068-for-each-repo::keep-going	t0068-for-each-repo	--keep-going	for-each-repo	partial
 t0070-fundamental::mktemp-to-nonexistent-directory-prints-filename	t0070-fundamental	mktemp to nonexistent directory prints filename		pass
 t0070-fundamental::mktemp-to-unwritable-directory-prints-filename	t0070-fundamental	mktemp to unwritable directory prints filename		pass
 t0070-fundamental::git-mkstemps-mode-does-not-fail-if-fd-0-is-not-open	t0070-fundamental	git_mkstemps_mode does not fail if fd 0 is not open	commit	pass
@@ -926,19 +926,19 @@ t0090-cache-tree::merge-maintains-cache-tree	t0090-cache-tree	merge maintains ca
 t0090-cache-tree::partial-commit-gives-cache-tree	t0090-cache-tree	partial commit gives cache-tree	add	partial
 t0090-cache-tree::no-phantom-error-when-switching-trees	t0090-cache-tree	no phantom error when switching trees	add	partial
 t0090-cache-tree::switching-trees-does-not-invalidate-shared-index	t0090-cache-tree	switching trees does not invalidate shared index	add	partial
-t0091-bugreport::create-a-report	t0091-bugreport	create a report		pass
-t0091-bugreport::report-contains-wanted-template-before-first-section	t0091-bugreport	report contains wanted template (before first section)		pass
-t0091-bugreport::sanity-check-system-info-section	t0091-bugreport	sanity check "System Info" section	version	pass
-t0091-bugreport::dies-if-file-with-same-name-as-report-already-exists	t0091-bugreport	dies if file with same name as report already exists		pass
-t0091-bugreport::output-directory-puts-the-report-in-the-provided-dir	t0091-bugreport	--output-directory puts the report in the provided dir		pass
-t0091-bugreport::incorrect-arguments-abort-with-usage	t0091-bugreport	incorrect arguments abort with usage		pass
-t0091-bugreport::incorrect-positional-arguments-abort-with-usage-and-hint	t0091-bugreport	incorrect positional arguments abort with usage and hint		pass
-t0091-bugreport::runs-outside-of-a-git-dir	t0091-bugreport	runs outside of a git dir		pass
-t0091-bugreport::can-create-leading-directories-outside-of-a-git-dir	t0091-bugreport	can create leading directories outside of a git dir		pass
-t0091-bugreport::indicates-populated-hooks	t0091-bugreport	indicates populated hooks		pass
-t0091-bugreport::diagnose-creates-diagnostics-zip-archive	t0091-bugreport	--diagnose creates diagnostics zip archive		pass
-t0091-bugreport::diagnose-stats-excludes-git-dir-contents	t0091-bugreport	--diagnose=stats excludes .git dir contents		pass
-t0091-bugreport::diagnose-all-includes-git-dir-contents	t0091-bugreport	--diagnose=all includes .git dir contents		pass
+t0091-bugreport::create-a-report	t0091-bugreport	create a report		partial
+t0091-bugreport::report-contains-wanted-template-before-first-section	t0091-bugreport	report contains wanted template (before first section)		partial
+t0091-bugreport::sanity-check-system-info-section	t0091-bugreport	sanity check "System Info" section	version	partial
+t0091-bugreport::dies-if-file-with-same-name-as-report-already-exists	t0091-bugreport	dies if file with same name as report already exists		partial
+t0091-bugreport::output-directory-puts-the-report-in-the-provided-dir	t0091-bugreport	--output-directory puts the report in the provided dir		partial
+t0091-bugreport::incorrect-arguments-abort-with-usage	t0091-bugreport	incorrect arguments abort with usage		partial
+t0091-bugreport::incorrect-positional-arguments-abort-with-usage-and-hint	t0091-bugreport	incorrect positional arguments abort with usage and hint		partial
+t0091-bugreport::runs-outside-of-a-git-dir	t0091-bugreport	runs outside of a git dir		partial
+t0091-bugreport::can-create-leading-directories-outside-of-a-git-dir	t0091-bugreport	can create leading directories outside of a git dir		partial
+t0091-bugreport::indicates-populated-hooks	t0091-bugreport	indicates populated hooks		partial
+t0091-bugreport::diagnose-creates-diagnostics-zip-archive	t0091-bugreport	--diagnose creates diagnostics zip archive		partial
+t0091-bugreport::diagnose-stats-excludes-git-dir-contents	t0091-bugreport	--diagnose=stats excludes .git dir contents		partial
+t0091-bugreport::diagnose-all-includes-git-dir-contents	t0091-bugreport	--diagnose=all includes .git dir contents		partial
 t0092-diagnose::creates-diagnostics-zip-archive	t0092-diagnose	creates diagnostics zip archive	diagnose	pass
 t0092-diagnose::counts-loose-objects	t0092-diagnose	counts loose objects	diagnose	pass
 t0092-diagnose::mode-stats-excludes-git-dir-contents	t0092-diagnose	--mode=stats excludes .git dir contents	diagnose	pass
@@ -3070,8 +3070,8 @@ t1503-rev-parse-verify::use-default	t1503-rev-parse-verify	use --default	rev-par
 t1503-rev-parse-verify::main-n-for-various-n	t1503-rev-parse-verify	main@{n} for various n	rev-parse	pass
 t1503-rev-parse-verify::options-can-appear-after-verify	t1503-rev-parse-verify	options can appear after --verify	rev-parse	pass
 t1503-rev-parse-verify::verify-respects-end-of-options	t1503-rev-parse-verify	verify respects --end-of-options	rev-parse	pass
-t1504-ceiling-dirs::1-git-rev-parse-show-prefix-is-2	t1504-ceiling-dirs	$1: git rev-parse --show-prefix is '$2'	rev-parse	pass
-t1504-ceiling-dirs::1-prefix	t1504-ceiling-dirs	$1: prefix	rev-parse	pass
+t1504-ceiling-dirs::1-git-rev-parse-show-prefix-is-2	t1504-ceiling-dirs	$1: git rev-parse --show-prefix is '$2'	rev-parse	partial
+t1504-ceiling-dirs::1-prefix	t1504-ceiling-dirs	$1: prefix	rev-parse	partial
 t1505-rev-parse-last::setup	t1505-rev-parse-last	setup	rev-parse	pass
 t1505-rev-parse-last::1-works	t1505-rev-parse-last	@{-1} works	rev-parse	pass
 t1505-rev-parse-last::1-2-works	t1505-rev-parse-last	@{-1}~2 works	rev-parse	pass
@@ -3109,35 +3109,35 @@ t1506-rev-parse-diagnosis::escaped-char-does-not-trigger-wildcard-rule	t1506-rev
 t1506-rev-parse-diagnosis::arg-after-dashdash-not-interpreted-as-option	t1506-rev-parse-diagnosis	arg after dashdash not interpreted as option	rev-parse	pass
 t1506-rev-parse-diagnosis::arg-after-end-of-options-not-interpreted-as-option	t1506-rev-parse-diagnosis	arg after end-of-options not interpreted as option	rev-parse	pass
 t1506-rev-parse-diagnosis::end-of-options-still-allows	t1506-rev-parse-diagnosis	end-of-options still allows --	rev-parse	pass
-t1507-rev-parse-upstream::setup	t1507-rev-parse-upstream	setup	rev-parse	pass
-t1507-rev-parse-upstream::upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{upstream} resolves to correct full name	rev-parse	pass
-t1507-rev-parse-upstream::u-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{u} resolves to correct full name	rev-parse	pass
-t1507-rev-parse-upstream::my-side-upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	my-side@{upstream} resolves to correct full name	rev-parse	pass
-t1507-rev-parse-upstream::upstream-of-branch-with-in-middle	t1507-rev-parse-upstream	upstream of branch with @ in middle	rev-parse	pass
-t1507-rev-parse-upstream::upstream-of-branch-with-at-start	t1507-rev-parse-upstream	upstream of branch with @ at start	rev-parse	pass
-t1507-rev-parse-upstream::upstream-of-branch-with-at-end	t1507-rev-parse-upstream	upstream of branch with @ at end	rev-parse	pass
-t1507-rev-parse-upstream::refs-heads-my-side-upstream-does-not-resolve-to-my-side-upstream	t1507-rev-parse-upstream	refs/heads/my-side@{upstream} does not resolve to my-side{upstream}	rev-parse	pass
-t1507-rev-parse-upstream::my-side-u-resolves-to-correct-commit	t1507-rev-parse-upstream	my-side@{u} resolves to correct commit	rev-parse	pass
-t1507-rev-parse-upstream::not-tracking-u-fails	t1507-rev-parse-upstream	not-tracking@{u} fails	rev-parse	pass
-t1507-rev-parse-upstream::branch-u-1-resolves-correctly	t1507-rev-parse-upstream	<branch>@{u}@{1} resolves correctly	rev-parse	pass
-t1507-rev-parse-upstream::u-without-specifying-branch-fails-on-a-detached-head	t1507-rev-parse-upstream	@{u} without specifying branch fails on a detached HEAD	rev-parse	pass
-t1507-rev-parse-upstream::checkout-b-new-my-side-u-forks-from-the-same	t1507-rev-parse-upstream	checkout -b new my-side@{u} forks from the same	rev-parse	pass
-t1507-rev-parse-upstream::merge-my-side-u-records-the-correct-name	t1507-rev-parse-upstream	merge my-side@{u} records the correct name	rev-parse	pass
-t1507-rev-parse-upstream::branch-d-other-u	t1507-rev-parse-upstream	branch -d other@{u}	rev-parse	pass
-t1507-rev-parse-upstream::checkout-other-u	t1507-rev-parse-upstream	checkout other@{u}	rev-parse	pass
-t1507-rev-parse-upstream::branch-u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	branch@{u} works when tracking a local branch	rev-parse	pass
-t1507-rev-parse-upstream::branch-u-error-message-when-no-upstream	t1507-rev-parse-upstream	branch@{u} error message when no upstream	rev-parse	pass
-t1507-rev-parse-upstream::u-error-message-when-no-upstream	t1507-rev-parse-upstream	@{u} error message when no upstream	rev-parse	pass
-t1507-rev-parse-upstream::u-silent-error-when-no-upstream	t1507-rev-parse-upstream	@{u} silent error when no upstream	rev-parse	pass
-t1507-rev-parse-upstream::branch-u-error-message-with-misspelt-branch	t1507-rev-parse-upstream	branch@{u} error message with misspelt branch	rev-parse	pass
-t1507-rev-parse-upstream::u-error-message-when-not-on-a-branch	t1507-rev-parse-upstream	@{u} error message when not on a branch	rev-parse	pass
-t1507-rev-parse-upstream::branch-u-error-message-if-upstream-branch-not-fetched	t1507-rev-parse-upstream	branch@{u} error message if upstream branch not fetched	rev-parse	pass
-t1507-rev-parse-upstream::pull-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	pull works when tracking a local branch	rev-parse	pass
-t1507-rev-parse-upstream::u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	@{u} works when tracking a local branch	rev-parse	pass
-t1507-rev-parse-upstream::log-g-other-u	t1507-rev-parse-upstream	log -g other@{u}	rev-parse	pass
-t1507-rev-parse-upstream::log-g-other-u-now	t1507-rev-parse-upstream	log -g other@{u}@{now}	rev-parse	pass
-t1507-rev-parse-upstream::reflog-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{reflog}-parsing does not look beyond colon	rev-parse	pass
-t1507-rev-parse-upstream::upstream-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{upstream}-parsing does not look beyond colon	rev-parse	pass
+t1507-rev-parse-upstream::setup	t1507-rev-parse-upstream	setup	rev-parse	partial
+t1507-rev-parse-upstream::upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{upstream} resolves to correct full name	rev-parse	partial
+t1507-rev-parse-upstream::u-resolves-to-correct-full-name	t1507-rev-parse-upstream	@{u} resolves to correct full name	rev-parse	partial
+t1507-rev-parse-upstream::my-side-upstream-resolves-to-correct-full-name	t1507-rev-parse-upstream	my-side@{upstream} resolves to correct full name	rev-parse	partial
+t1507-rev-parse-upstream::upstream-of-branch-with-in-middle	t1507-rev-parse-upstream	upstream of branch with @ in middle	rev-parse	partial
+t1507-rev-parse-upstream::upstream-of-branch-with-at-start	t1507-rev-parse-upstream	upstream of branch with @ at start	rev-parse	partial
+t1507-rev-parse-upstream::upstream-of-branch-with-at-end	t1507-rev-parse-upstream	upstream of branch with @ at end	rev-parse	partial
+t1507-rev-parse-upstream::refs-heads-my-side-upstream-does-not-resolve-to-my-side-upstream	t1507-rev-parse-upstream	refs/heads/my-side@{upstream} does not resolve to my-side{upstream}	rev-parse	partial
+t1507-rev-parse-upstream::my-side-u-resolves-to-correct-commit	t1507-rev-parse-upstream	my-side@{u} resolves to correct commit	rev-parse	partial
+t1507-rev-parse-upstream::not-tracking-u-fails	t1507-rev-parse-upstream	not-tracking@{u} fails	rev-parse	partial
+t1507-rev-parse-upstream::branch-u-1-resolves-correctly	t1507-rev-parse-upstream	<branch>@{u}@{1} resolves correctly	rev-parse	partial
+t1507-rev-parse-upstream::u-without-specifying-branch-fails-on-a-detached-head	t1507-rev-parse-upstream	@{u} without specifying branch fails on a detached HEAD	rev-parse	partial
+t1507-rev-parse-upstream::checkout-b-new-my-side-u-forks-from-the-same	t1507-rev-parse-upstream	checkout -b new my-side@{u} forks from the same	rev-parse	partial
+t1507-rev-parse-upstream::merge-my-side-u-records-the-correct-name	t1507-rev-parse-upstream	merge my-side@{u} records the correct name	rev-parse	partial
+t1507-rev-parse-upstream::branch-d-other-u	t1507-rev-parse-upstream	branch -d other@{u}	rev-parse	partial
+t1507-rev-parse-upstream::checkout-other-u	t1507-rev-parse-upstream	checkout other@{u}	rev-parse	partial
+t1507-rev-parse-upstream::branch-u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	branch@{u} works when tracking a local branch	rev-parse	partial
+t1507-rev-parse-upstream::branch-u-error-message-when-no-upstream	t1507-rev-parse-upstream	branch@{u} error message when no upstream	rev-parse	partial
+t1507-rev-parse-upstream::u-error-message-when-no-upstream	t1507-rev-parse-upstream	@{u} error message when no upstream	rev-parse	partial
+t1507-rev-parse-upstream::u-silent-error-when-no-upstream	t1507-rev-parse-upstream	@{u} silent error when no upstream	rev-parse	partial
+t1507-rev-parse-upstream::branch-u-error-message-with-misspelt-branch	t1507-rev-parse-upstream	branch@{u} error message with misspelt branch	rev-parse	partial
+t1507-rev-parse-upstream::u-error-message-when-not-on-a-branch	t1507-rev-parse-upstream	@{u} error message when not on a branch	rev-parse	partial
+t1507-rev-parse-upstream::branch-u-error-message-if-upstream-branch-not-fetched	t1507-rev-parse-upstream	branch@{u} error message if upstream branch not fetched	rev-parse	partial
+t1507-rev-parse-upstream::pull-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	pull works when tracking a local branch	rev-parse	partial
+t1507-rev-parse-upstream::u-works-when-tracking-a-local-branch	t1507-rev-parse-upstream	@{u} works when tracking a local branch	rev-parse	partial
+t1507-rev-parse-upstream::log-g-other-u	t1507-rev-parse-upstream	log -g other@{u}	rev-parse	partial
+t1507-rev-parse-upstream::log-g-other-u-now	t1507-rev-parse-upstream	log -g other@{u}@{now}	rev-parse	partial
+t1507-rev-parse-upstream::reflog-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{reflog}-parsing does not look beyond colon	rev-parse	partial
+t1507-rev-parse-upstream::upstream-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{upstream}-parsing does not look beyond colon	rev-parse	partial
 t1508-at-combinations::setup	t1508-at-combinations	setup	branch	pass
 t1508-at-combinations::switch-to-old-branch	t1508-at-combinations	switch to old-branch	checkout	pass
 t1508-at-combinations::create-path-with	t1508-at-combinations	create path with @	add	pass
@@ -3170,61 +3170,61 @@ t1509-root-work-tree::cleanup-root	t1509-root-work-tree	cleanup root		pass
 t1509-root-work-tree::1-gitdir	t1509-root-work-tree	$1: gitdir		pass
 t1509-root-work-tree::1-worktree	t1509-root-work-tree	$1: worktree		pass
 t1509-root-work-tree::1-prefix	t1509-root-work-tree	$1: prefix		pass
-t1510-repo-setup::0-nonbare-repo-no-explicit-configuration	t1510-repo-setup	#0: nonbare repo, no explicit configuration		pass
-t1510-repo-setup::1-git-work-tree-without-explicit-git-dir-is-accepted	t1510-repo-setup	#1: GIT_WORK_TREE without explicit GIT_DIR is accepted		pass
-t1510-repo-setup::2-worktree-defaults-to-cwd-with-explicit-git-dir	t1510-repo-setup	#2: worktree defaults to cwd with explicit GIT_DIR		pass
-t1510-repo-setup::2b-relative-git-dir	t1510-repo-setup	#2b: relative GIT_DIR		pass
-t1510-repo-setup::3-setup	t1510-repo-setup	#3: setup		pass
-t1510-repo-setup::4-core-worktree-without-git-dir-set-is-accepted	t1510-repo-setup	#4: core.worktree without GIT_DIR set is accepted		pass
-t1510-repo-setup::5-core-worktree-git-work-tree-is-accepted	t1510-repo-setup	#5: core.worktree + GIT_WORK_TREE is accepted		pass
-t1510-repo-setup::6-setting-git-dir-brings-core-worktree-to-life	t1510-repo-setup	#6: setting GIT_DIR brings core.worktree to life		pass
-t1510-repo-setup::6b-git-dir-set-core-worktree-relative	t1510-repo-setup	#6b: GIT_DIR set, core.worktree relative		pass
-t1510-repo-setup::6c-git-dir-set-core-worktree-wt-absolute	t1510-repo-setup	#6c: GIT_DIR set, core.worktree=../wt (absolute)		pass
-t1510-repo-setup::6d-git-dir-set-core-worktree-wt-relative	t1510-repo-setup	#6d: GIT_DIR set, core.worktree=../wt (relative)		pass
-t1510-repo-setup::6e-git-dir-set-core-worktree-absolute	t1510-repo-setup	#6e: GIT_DIR set, core.worktree=../.. (absolute)		pass
-t1510-repo-setup::6f-git-dir-set-core-worktree-relative	t1510-repo-setup	#6f: GIT_DIR set, core.worktree=../.. (relative)		pass
-t1510-repo-setup::7-setup	t1510-repo-setup	#7: setup		pass
-t1510-repo-setup::8-gitfile-easy-case	t1510-repo-setup	#8: gitfile, easy case		pass
-t1510-repo-setup::9-git-work-tree-accepted-with-gitfile	t1510-repo-setup	#9: GIT_WORK_TREE accepted with gitfile		pass
-t1510-repo-setup::10-git-dir-can-point-to-gitfile	t1510-repo-setup	#10: GIT_DIR can point to gitfile		pass
-t1510-repo-setup::10b-relative-git-dir-can-point-to-gitfile	t1510-repo-setup	#10b: relative GIT_DIR can point to gitfile		pass
-t1510-repo-setup::11-setup	t1510-repo-setup	#11: setup		pass
-t1510-repo-setup::12-core-worktree-with-gitfile-is-accepted	t1510-repo-setup	#12: core.worktree with gitfile is accepted		pass
-t1510-repo-setup::13-core-worktree-git-work-tree-accepted-with-gitfile	t1510-repo-setup	#13: core.worktree+GIT_WORK_TREE accepted (with gitfile)		pass
-t1510-repo-setup::14-core-worktree-with-git-dir-pointing-to-gitfile	t1510-repo-setup	#14: core.worktree with GIT_DIR pointing to gitfile		pass
-t1510-repo-setup::14b-core-worktree-is-relative-to-actual-git-dir	t1510-repo-setup	#14b: core.worktree is relative to actual git dir		pass
-t1510-repo-setup::15-setup	t1510-repo-setup	#15: setup		pass
-t1510-repo-setup::16a-implicitly-bare-repo-cwd-inside-git-dir	t1510-repo-setup	#16a: implicitly bare repo (cwd inside .git dir)		pass
-t1510-repo-setup::16b-bare-git-cwd-inside-git-dir	t1510-repo-setup	#16b: bare .git (cwd inside .git dir)		pass
-t1510-repo-setup::16c-bare-git-has-no-worktree	t1510-repo-setup	#16c: bare .git has no worktree		pass
-t1510-repo-setup::16d-bareness-preserved-across-alias	t1510-repo-setup	#16d: bareness preserved across alias	config	pass
-t1510-repo-setup::16e-bareness-preserved-by-bare	t1510-repo-setup	#16e: bareness preserved by --bare	status	pass
-t1510-repo-setup::17-git-work-tree-without-explicit-git-dir-is-accepted-bare-case	t1510-repo-setup	#17: GIT_WORK_TREE without explicit GIT_DIR is accepted (bare case)		pass
-t1510-repo-setup::18-bare-git-named-by-git-dir-has-no-worktree	t1510-repo-setup	#18: bare .git named by GIT_DIR has no worktree		pass
-t1510-repo-setup::19-setup	t1510-repo-setup	#19: setup		pass
-t1510-repo-setup::20a-core-worktree-without-git-dir-accepted-inside-git	t1510-repo-setup	#20a: core.worktree without GIT_DIR accepted (inside .git)		pass
-t1510-repo-setup::20b-c-core-worktree-and-core-bare-conflict	t1510-repo-setup	#20b/c: core.worktree and core.bare conflict	status	pass
-t1510-repo-setup::20d-core-worktree-and-core-bare-ok-when-working-tree-not-needed	t1510-repo-setup	#20d: core.worktree and core.bare OK when working tree not needed	config	pass
-t1510-repo-setup::21-setup-core-worktree-warns-before-overriding-core-bare	t1510-repo-setup	#21: setup, core.worktree warns before overriding core.bare	status	pass
-t1510-repo-setup::22a-core-worktree-git-dir-git-dir	t1510-repo-setup	#22a: core.worktree = GIT_DIR = .git dir		pass
-t1510-repo-setup::22b-core-worktree-child-of-git-git-dir-git	t1510-repo-setup	#22b: core.worktree child of .git, GIT_DIR=.git		pass
-t1510-repo-setup::22c-core-worktree-git-git-dir-git	t1510-repo-setup	#22c: core.worktree = .git/.., GIT_DIR=.git		pass
-t1510-repo-setup::22-2-core-worktree-and-core-bare-conflict	t1510-repo-setup	#22.2: core.worktree and core.bare conflict	status	pass
-t1510-repo-setup::23-setup	t1510-repo-setup	#23: setup		pass
-t1510-repo-setup::24-bare-repo-has-no-worktree-gitfile-case	t1510-repo-setup	#24: bare repo has no worktree (gitfile case)		pass
-t1510-repo-setup::25-git-work-tree-accepted-if-git-dir-unset-bare-gitfile-case	t1510-repo-setup	#25: GIT_WORK_TREE accepted if GIT_DIR unset (bare gitfile case)		pass
-t1510-repo-setup::26-bare-repo-has-no-worktree-git-dir-gitfile-case	t1510-repo-setup	#26: bare repo has no worktree (GIT_DIR -> gitfile case)		pass
-t1510-repo-setup::27-setup	t1510-repo-setup	#27: setup		pass
-t1510-repo-setup::28-core-worktree-and-core-bare-conflict-gitfile-case	t1510-repo-setup	#28: core.worktree and core.bare conflict (gitfile case)	status	pass
-t1510-repo-setup::29-setup	t1510-repo-setup	#29: setup	status	pass
-t1510-repo-setup::30-core-worktree-and-core-bare-conflict-gitfile-version	t1510-repo-setup	#30: core.worktree and core.bare conflict (gitfile version)		pass
-t1510-repo-setup::31-setup	t1510-repo-setup	#31: setup		pass
-t1510-repo-setup::n-explicit-git-work-tree-and-git-dir-at-toplevel	t1510-repo-setup	#$N: explicit GIT_WORK_TREE and GIT_DIR at toplevel		pass
-t1510-repo-setup::n-explicit-git-work-tree-and-git-dir-in-subdir	t1510-repo-setup	#$N: explicit GIT_WORK_TREE and GIT_DIR in subdir		pass
-t1510-repo-setup::n-explicit-git-work-tree-from-parent-of-worktree	t1510-repo-setup	#$N: explicit GIT_WORK_TREE from parent of worktree		pass
-t1510-repo-setup::n-explicit-git-work-tree-from-nephew-of-worktree	t1510-repo-setup	#$N: explicit GIT_WORK_TREE from nephew of worktree		pass
-t1510-repo-setup::n-chdir-to-toplevel-uses-worktree-not-git-dir	t1510-repo-setup	#$N: chdir_to_toplevel uses worktree, not git dir		pass
-t1510-repo-setup::n-chdir-to-toplevel-uses-worktree-from-subdir	t1510-repo-setup	#$N: chdir_to_toplevel uses worktree (from subdir)		pass
+t1510-repo-setup::0-nonbare-repo-no-explicit-configuration	t1510-repo-setup	#0: nonbare repo, no explicit configuration		partial
+t1510-repo-setup::1-git-work-tree-without-explicit-git-dir-is-accepted	t1510-repo-setup	#1: GIT_WORK_TREE without explicit GIT_DIR is accepted		partial
+t1510-repo-setup::2-worktree-defaults-to-cwd-with-explicit-git-dir	t1510-repo-setup	#2: worktree defaults to cwd with explicit GIT_DIR		partial
+t1510-repo-setup::2b-relative-git-dir	t1510-repo-setup	#2b: relative GIT_DIR		partial
+t1510-repo-setup::3-setup	t1510-repo-setup	#3: setup		partial
+t1510-repo-setup::4-core-worktree-without-git-dir-set-is-accepted	t1510-repo-setup	#4: core.worktree without GIT_DIR set is accepted		partial
+t1510-repo-setup::5-core-worktree-git-work-tree-is-accepted	t1510-repo-setup	#5: core.worktree + GIT_WORK_TREE is accepted		partial
+t1510-repo-setup::6-setting-git-dir-brings-core-worktree-to-life	t1510-repo-setup	#6: setting GIT_DIR brings core.worktree to life		partial
+t1510-repo-setup::6b-git-dir-set-core-worktree-relative	t1510-repo-setup	#6b: GIT_DIR set, core.worktree relative		partial
+t1510-repo-setup::6c-git-dir-set-core-worktree-wt-absolute	t1510-repo-setup	#6c: GIT_DIR set, core.worktree=../wt (absolute)		partial
+t1510-repo-setup::6d-git-dir-set-core-worktree-wt-relative	t1510-repo-setup	#6d: GIT_DIR set, core.worktree=../wt (relative)		partial
+t1510-repo-setup::6e-git-dir-set-core-worktree-absolute	t1510-repo-setup	#6e: GIT_DIR set, core.worktree=../.. (absolute)		partial
+t1510-repo-setup::6f-git-dir-set-core-worktree-relative	t1510-repo-setup	#6f: GIT_DIR set, core.worktree=../.. (relative)		partial
+t1510-repo-setup::7-setup	t1510-repo-setup	#7: setup		partial
+t1510-repo-setup::8-gitfile-easy-case	t1510-repo-setup	#8: gitfile, easy case		partial
+t1510-repo-setup::9-git-work-tree-accepted-with-gitfile	t1510-repo-setup	#9: GIT_WORK_TREE accepted with gitfile		partial
+t1510-repo-setup::10-git-dir-can-point-to-gitfile	t1510-repo-setup	#10: GIT_DIR can point to gitfile		partial
+t1510-repo-setup::10b-relative-git-dir-can-point-to-gitfile	t1510-repo-setup	#10b: relative GIT_DIR can point to gitfile		partial
+t1510-repo-setup::11-setup	t1510-repo-setup	#11: setup		partial
+t1510-repo-setup::12-core-worktree-with-gitfile-is-accepted	t1510-repo-setup	#12: core.worktree with gitfile is accepted		partial
+t1510-repo-setup::13-core-worktree-git-work-tree-accepted-with-gitfile	t1510-repo-setup	#13: core.worktree+GIT_WORK_TREE accepted (with gitfile)		partial
+t1510-repo-setup::14-core-worktree-with-git-dir-pointing-to-gitfile	t1510-repo-setup	#14: core.worktree with GIT_DIR pointing to gitfile		partial
+t1510-repo-setup::14b-core-worktree-is-relative-to-actual-git-dir	t1510-repo-setup	#14b: core.worktree is relative to actual git dir		partial
+t1510-repo-setup::15-setup	t1510-repo-setup	#15: setup		partial
+t1510-repo-setup::16a-implicitly-bare-repo-cwd-inside-git-dir	t1510-repo-setup	#16a: implicitly bare repo (cwd inside .git dir)		partial
+t1510-repo-setup::16b-bare-git-cwd-inside-git-dir	t1510-repo-setup	#16b: bare .git (cwd inside .git dir)		partial
+t1510-repo-setup::16c-bare-git-has-no-worktree	t1510-repo-setup	#16c: bare .git has no worktree		partial
+t1510-repo-setup::16d-bareness-preserved-across-alias	t1510-repo-setup	#16d: bareness preserved across alias	config	partial
+t1510-repo-setup::16e-bareness-preserved-by-bare	t1510-repo-setup	#16e: bareness preserved by --bare	status	partial
+t1510-repo-setup::17-git-work-tree-without-explicit-git-dir-is-accepted-bare-case	t1510-repo-setup	#17: GIT_WORK_TREE without explicit GIT_DIR is accepted (bare case)		partial
+t1510-repo-setup::18-bare-git-named-by-git-dir-has-no-worktree	t1510-repo-setup	#18: bare .git named by GIT_DIR has no worktree		partial
+t1510-repo-setup::19-setup	t1510-repo-setup	#19: setup		partial
+t1510-repo-setup::20a-core-worktree-without-git-dir-accepted-inside-git	t1510-repo-setup	#20a: core.worktree without GIT_DIR accepted (inside .git)		partial
+t1510-repo-setup::20b-c-core-worktree-and-core-bare-conflict	t1510-repo-setup	#20b/c: core.worktree and core.bare conflict	status	partial
+t1510-repo-setup::20d-core-worktree-and-core-bare-ok-when-working-tree-not-needed	t1510-repo-setup	#20d: core.worktree and core.bare OK when working tree not needed	config	partial
+t1510-repo-setup::21-setup-core-worktree-warns-before-overriding-core-bare	t1510-repo-setup	#21: setup, core.worktree warns before overriding core.bare	status	partial
+t1510-repo-setup::22a-core-worktree-git-dir-git-dir	t1510-repo-setup	#22a: core.worktree = GIT_DIR = .git dir		partial
+t1510-repo-setup::22b-core-worktree-child-of-git-git-dir-git	t1510-repo-setup	#22b: core.worktree child of .git, GIT_DIR=.git		partial
+t1510-repo-setup::22c-core-worktree-git-git-dir-git	t1510-repo-setup	#22c: core.worktree = .git/.., GIT_DIR=.git		partial
+t1510-repo-setup::22-2-core-worktree-and-core-bare-conflict	t1510-repo-setup	#22.2: core.worktree and core.bare conflict	status	partial
+t1510-repo-setup::23-setup	t1510-repo-setup	#23: setup		partial
+t1510-repo-setup::24-bare-repo-has-no-worktree-gitfile-case	t1510-repo-setup	#24: bare repo has no worktree (gitfile case)		partial
+t1510-repo-setup::25-git-work-tree-accepted-if-git-dir-unset-bare-gitfile-case	t1510-repo-setup	#25: GIT_WORK_TREE accepted if GIT_DIR unset (bare gitfile case)		partial
+t1510-repo-setup::26-bare-repo-has-no-worktree-git-dir-gitfile-case	t1510-repo-setup	#26: bare repo has no worktree (GIT_DIR -> gitfile case)		partial
+t1510-repo-setup::27-setup	t1510-repo-setup	#27: setup		partial
+t1510-repo-setup::28-core-worktree-and-core-bare-conflict-gitfile-case	t1510-repo-setup	#28: core.worktree and core.bare conflict (gitfile case)	status	partial
+t1510-repo-setup::29-setup	t1510-repo-setup	#29: setup	status	partial
+t1510-repo-setup::30-core-worktree-and-core-bare-conflict-gitfile-version	t1510-repo-setup	#30: core.worktree and core.bare conflict (gitfile version)		partial
+t1510-repo-setup::31-setup	t1510-repo-setup	#31: setup		partial
+t1510-repo-setup::n-explicit-git-work-tree-and-git-dir-at-toplevel	t1510-repo-setup	#$N: explicit GIT_WORK_TREE and GIT_DIR at toplevel		partial
+t1510-repo-setup::n-explicit-git-work-tree-and-git-dir-in-subdir	t1510-repo-setup	#$N: explicit GIT_WORK_TREE and GIT_DIR in subdir		partial
+t1510-repo-setup::n-explicit-git-work-tree-from-parent-of-worktree	t1510-repo-setup	#$N: explicit GIT_WORK_TREE from parent of worktree		partial
+t1510-repo-setup::n-explicit-git-work-tree-from-nephew-of-worktree	t1510-repo-setup	#$N: explicit GIT_WORK_TREE from nephew of worktree		partial
+t1510-repo-setup::n-chdir-to-toplevel-uses-worktree-not-git-dir	t1510-repo-setup	#$N: chdir_to_toplevel uses worktree, not git dir		partial
+t1510-repo-setup::n-chdir-to-toplevel-uses-worktree-from-subdir	t1510-repo-setup	#$N: chdir_to_toplevel uses worktree (from subdir)		partial
 t1511-rev-parse-caret::setup	t1511-rev-parse-caret	setup	rev-parse	pass
 t1511-rev-parse-caret::ref-non-existent	t1511-rev-parse-caret	ref^{non-existent}	rev-parse	pass
 t1511-rev-parse-caret::ref	t1511-rev-parse-caret	ref^{}	rev-parse	pass
@@ -3242,41 +3242,41 @@ t1511-rev-parse-caret::ref-5	t1511-rev-parse-caret	ref^{/!-.}	rev-parse	pass
 t1511-rev-parse-caret::ref-non-existent-3	t1511-rev-parse-caret	ref^{/!-non-existent}	rev-parse	pass
 t1511-rev-parse-caret::ref-changed	t1511-rev-parse-caret	ref^{/!-Changed}	rev-parse	pass
 t1511-rev-parse-caret::ref-exp-3	t1511-rev-parse-caret	ref^{/!-!Exp}	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguous-blob-output	t1512-rev-parse-disambiguation	ambiguous blob output	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguous-loose-bad-object-parsed-as-obj-bad	t1512-rev-parse-disambiguation	ambiguous loose bad object parsed as OBJ_BAD	rev-parse	pass
-t1512-rev-parse-disambiguation::ambigous-zlib-corrupt-loose-blob	t1512-rev-parse-disambiguation	ambigous zlib corrupt loose blob	rev-parse	pass
-t1512-rev-parse-disambiguation::blob-and-tree	t1512-rev-parse-disambiguation	blob and tree	rev-parse	pass
-t1512-rev-parse-disambiguation::warn-ambiguity-when-no-candidate-matches-type-hint	t1512-rev-parse-disambiguation	warn ambiguity when no candidate matches type hint	rev-parse	pass
-t1512-rev-parse-disambiguation::disambiguate-tree-ish	t1512-rev-parse-disambiguation	disambiguate tree-ish	rev-parse	pass
-t1512-rev-parse-disambiguation::disambiguate-blob	t1512-rev-parse-disambiguation	disambiguate blob	rev-parse	pass
-t1512-rev-parse-disambiguation::disambiguate-tree	t1512-rev-parse-disambiguation	disambiguate tree	rev-parse	pass
-t1512-rev-parse-disambiguation::first-commit	t1512-rev-parse-disambiguation	first commit	rev-parse	pass
-t1512-rev-parse-disambiguation::disambiguate-commit-ish	t1512-rev-parse-disambiguation	disambiguate commit-ish	rev-parse	pass
-t1512-rev-parse-disambiguation::disambiguate-commit	t1512-rev-parse-disambiguation	disambiguate commit	rev-parse	pass
-t1512-rev-parse-disambiguation::log-name1-name2-takes-only-commit-ishes-on-both-ends	t1512-rev-parse-disambiguation	log name1..name2 takes only commit-ishes on both ends	rev-parse	pass
-t1512-rev-parse-disambiguation::rev-parse-name1-name2-takes-only-commit-ishes-on-both-ends	t1512-rev-parse-disambiguation	rev-parse name1..name2 takes only commit-ishes on both ends	rev-parse	pass
-t1512-rev-parse-disambiguation::git-log-takes-only-commit-ish	t1512-rev-parse-disambiguation	git log takes only commit-ish	rev-parse	pass
-t1512-rev-parse-disambiguation::git-reset-takes-only-commit-ish	t1512-rev-parse-disambiguation	git reset takes only commit-ish	rev-parse	pass
-t1512-rev-parse-disambiguation::first-tag	t1512-rev-parse-disambiguation	first tag	rev-parse	pass
-t1512-rev-parse-disambiguation::parse-describe-name	t1512-rev-parse-disambiguation	parse describe name	rev-parse	pass
-t1512-rev-parse-disambiguation::more-history	t1512-rev-parse-disambiguation	more history	rev-parse	pass
-t1512-rev-parse-disambiguation::parse-describe-name-not-ignoring-ambiguity	t1512-rev-parse-disambiguation	parse describe name not ignoring ambiguity	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguous-commit-ish	t1512-rev-parse-disambiguation	ambiguous commit-ish	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguous-tags-peel-to-treeish	t1512-rev-parse-disambiguation	ambiguous tags peel to treeish	rev-parse	pass
-t1512-rev-parse-disambiguation::rev-parse-disambiguate	t1512-rev-parse-disambiguation	rev-parse --disambiguate	rev-parse	pass
-t1512-rev-parse-disambiguation::rev-parse-disambiguate-drops-duplicates	t1512-rev-parse-disambiguation	rev-parse --disambiguate drops duplicates	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguous-40-hex-ref	t1512-rev-parse-disambiguation	ambiguous 40-hex ref	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguous-short-sha1-ref	t1512-rev-parse-disambiguation	ambiguous short sha1 ref	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-raw	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (raw)	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-treeish	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (treeish)	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-peel	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (peel)	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguity-hints	t1512-rev-parse-disambiguation	ambiguity hints	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguity-hints-respect-type	t1512-rev-parse-disambiguation	ambiguity hints respect type	rev-parse	pass
-t1512-rev-parse-disambiguation::failed-type-selector-still-shows-hint	t1512-rev-parse-disambiguation	failed type-selector still shows hint	rev-parse	pass
-t1512-rev-parse-disambiguation::core-disambiguate-config-can-prefer-types	t1512-rev-parse-disambiguation	core.disambiguate config can prefer types	rev-parse	pass
-t1512-rev-parse-disambiguation::core-disambiguate-does-not-override-context	t1512-rev-parse-disambiguation	core.disambiguate does not override context	rev-parse	pass
-t1512-rev-parse-disambiguation::ambiguous-commits-are-printed-by-type-first-then-hash-order	t1512-rev-parse-disambiguation	ambiguous commits are printed by type first, then hash order	rev-parse	pass
-t1512-rev-parse-disambiguation::cat-file-batch-and-batch-check-show-ambiguous	t1512-rev-parse-disambiguation	cat-file --batch and --batch-check show ambiguous	rev-parse	pass
+t1512-rev-parse-disambiguation::ambiguous-blob-output	t1512-rev-parse-disambiguation	ambiguous blob output	rev-parse	partial
+t1512-rev-parse-disambiguation::ambiguous-loose-bad-object-parsed-as-obj-bad	t1512-rev-parse-disambiguation	ambiguous loose bad object parsed as OBJ_BAD	rev-parse	partial
+t1512-rev-parse-disambiguation::ambigous-zlib-corrupt-loose-blob	t1512-rev-parse-disambiguation	ambigous zlib corrupt loose blob	rev-parse	partial
+t1512-rev-parse-disambiguation::blob-and-tree	t1512-rev-parse-disambiguation	blob and tree	rev-parse	partial
+t1512-rev-parse-disambiguation::warn-ambiguity-when-no-candidate-matches-type-hint	t1512-rev-parse-disambiguation	warn ambiguity when no candidate matches type hint	rev-parse	partial
+t1512-rev-parse-disambiguation::disambiguate-tree-ish	t1512-rev-parse-disambiguation	disambiguate tree-ish	rev-parse	partial
+t1512-rev-parse-disambiguation::disambiguate-blob	t1512-rev-parse-disambiguation	disambiguate blob	rev-parse	partial
+t1512-rev-parse-disambiguation::disambiguate-tree	t1512-rev-parse-disambiguation	disambiguate tree	rev-parse	partial
+t1512-rev-parse-disambiguation::first-commit	t1512-rev-parse-disambiguation	first commit	rev-parse	partial
+t1512-rev-parse-disambiguation::disambiguate-commit-ish	t1512-rev-parse-disambiguation	disambiguate commit-ish	rev-parse	partial
+t1512-rev-parse-disambiguation::disambiguate-commit	t1512-rev-parse-disambiguation	disambiguate commit	rev-parse	partial
+t1512-rev-parse-disambiguation::log-name1-name2-takes-only-commit-ishes-on-both-ends	t1512-rev-parse-disambiguation	log name1..name2 takes only commit-ishes on both ends	rev-parse	partial
+t1512-rev-parse-disambiguation::rev-parse-name1-name2-takes-only-commit-ishes-on-both-ends	t1512-rev-parse-disambiguation	rev-parse name1..name2 takes only commit-ishes on both ends	rev-parse	partial
+t1512-rev-parse-disambiguation::git-log-takes-only-commit-ish	t1512-rev-parse-disambiguation	git log takes only commit-ish	rev-parse	partial
+t1512-rev-parse-disambiguation::git-reset-takes-only-commit-ish	t1512-rev-parse-disambiguation	git reset takes only commit-ish	rev-parse	partial
+t1512-rev-parse-disambiguation::first-tag	t1512-rev-parse-disambiguation	first tag	rev-parse	partial
+t1512-rev-parse-disambiguation::parse-describe-name	t1512-rev-parse-disambiguation	parse describe name	rev-parse	partial
+t1512-rev-parse-disambiguation::more-history	t1512-rev-parse-disambiguation	more history	rev-parse	partial
+t1512-rev-parse-disambiguation::parse-describe-name-not-ignoring-ambiguity	t1512-rev-parse-disambiguation	parse describe name not ignoring ambiguity	rev-parse	partial
+t1512-rev-parse-disambiguation::ambiguous-commit-ish	t1512-rev-parse-disambiguation	ambiguous commit-ish	rev-parse	partial
+t1512-rev-parse-disambiguation::ambiguous-tags-peel-to-treeish	t1512-rev-parse-disambiguation	ambiguous tags peel to treeish	rev-parse	partial
+t1512-rev-parse-disambiguation::rev-parse-disambiguate	t1512-rev-parse-disambiguation	rev-parse --disambiguate	rev-parse	partial
+t1512-rev-parse-disambiguation::rev-parse-disambiguate-drops-duplicates	t1512-rev-parse-disambiguation	rev-parse --disambiguate drops duplicates	rev-parse	partial
+t1512-rev-parse-disambiguation::ambiguous-40-hex-ref	t1512-rev-parse-disambiguation	ambiguous 40-hex ref	rev-parse	partial
+t1512-rev-parse-disambiguation::ambiguous-short-sha1-ref	t1512-rev-parse-disambiguation	ambiguous short sha1 ref	rev-parse	partial
+t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-raw	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (raw)	rev-parse	partial
+t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-treeish	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (treeish)	rev-parse	partial
+t1512-rev-parse-disambiguation::ambiguity-errors-are-not-repeated-peel	t1512-rev-parse-disambiguation	ambiguity errors are not repeated (peel)	rev-parse	partial
+t1512-rev-parse-disambiguation::ambiguity-hints	t1512-rev-parse-disambiguation	ambiguity hints	rev-parse	partial
+t1512-rev-parse-disambiguation::ambiguity-hints-respect-type	t1512-rev-parse-disambiguation	ambiguity hints respect type	rev-parse	partial
+t1512-rev-parse-disambiguation::failed-type-selector-still-shows-hint	t1512-rev-parse-disambiguation	failed type-selector still shows hint	rev-parse	partial
+t1512-rev-parse-disambiguation::core-disambiguate-config-can-prefer-types	t1512-rev-parse-disambiguation	core.disambiguate config can prefer types	rev-parse	partial
+t1512-rev-parse-disambiguation::core-disambiguate-does-not-override-context	t1512-rev-parse-disambiguation	core.disambiguate does not override context	rev-parse	partial
+t1512-rev-parse-disambiguation::ambiguous-commits-are-printed-by-type-first-then-hash-order	t1512-rev-parse-disambiguation	ambiguous commits are printed by type first, then hash order	rev-parse	partial
+t1512-rev-parse-disambiguation::cat-file-batch-and-batch-check-show-ambiguous	t1512-rev-parse-disambiguation	cat-file --batch and --batch-check show ambiguous	rev-parse	partial
 t1513-rev-parse-prefix::setup	t1513-rev-parse-prefix	setup	rev-parse	pass
 t1513-rev-parse-prefix::empty-prefix-file	t1513-rev-parse-prefix	empty prefix -- file	rev-parse	pass
 t1513-rev-parse-prefix::valid-prefix-file	t1513-rev-parse-prefix	valid prefix -- file	rev-parse	pass
@@ -3297,10 +3297,10 @@ t1514-rev-parse-push::push-with-default-matching	t1514-rev-parse-push	@{push} wi
 t1514-rev-parse-push::push-with-pushremote-defined	t1514-rev-parse-push	@{push} with pushremote defined	rev-parse	pass
 t1514-rev-parse-push::push-with-push-refspecs	t1514-rev-parse-push	@{push} with push refspecs	rev-parse	pass
 t1514-rev-parse-push::resolving-push-fails-with-a-detached-head	t1514-rev-parse-push	resolving @{push} fails with a detached HEAD	rev-parse	pass
-t1515-rev-parse-outside-repo::set-up-non-repo-directory	t1515-rev-parse-outside-repo	set up non-repo directory	rev-parse	pass
-t1515-rev-parse-outside-repo::rev-parse-sq-quote	t1515-rev-parse-outside-repo	rev-parse --sq-quote	rev-parse	pass
-t1515-rev-parse-outside-repo::rev-parse-local-env-vars	t1515-rev-parse-outside-repo	rev-parse --local-env-vars	rev-parse	pass
-t1515-rev-parse-outside-repo::rev-parse-resolve-git-dir	t1515-rev-parse-outside-repo	rev-parse --resolve-git-dir	rev-parse	pass
+t1515-rev-parse-outside-repo::set-up-non-repo-directory	t1515-rev-parse-outside-repo	set up non-repo directory	rev-parse	partial
+t1515-rev-parse-outside-repo::rev-parse-sq-quote	t1515-rev-parse-outside-repo	rev-parse --sq-quote	rev-parse	partial
+t1515-rev-parse-outside-repo::rev-parse-local-env-vars	t1515-rev-parse-outside-repo	rev-parse --local-env-vars	rev-parse	partial
+t1515-rev-parse-outside-repo::rev-parse-resolve-git-dir	t1515-rev-parse-outside-repo	rev-parse --resolve-git-dir	rev-parse	partial
 t1517-outside-repo::set-up-a-non-repo-directory-and-test-file	t1517-outside-repo	set up a non-repo directory and test file	add	pass
 t1517-outside-repo::compute-a-patch-id-outside-repository-uses-sha-1	t1517-outside-repo	compute a patch-id outside repository (uses SHA-1)	patch-id	pass
 t1517-outside-repo::hash-object-outside-repository-uses-sha-1	t1517-outside-repo	hash-object outside repository (uses SHA-1)	hash-object	pass
@@ -7989,92 +7989,92 @@ t4140-apply-ita::apply-deletion-patch-to-ita-path-index	t4140-apply-ita	apply de
 t4140-apply-ita::apply-creation-patch-to-existing-index-with-n	t4140-apply-ita	apply creation patch to existing index with -N	apply	pass
 t4140-apply-ita::apply-complex-patch-with-n	t4140-apply-ita	apply complex patch with -N	apply	pass
 t4141-apply-too-large::git-apply-rejects-patches-that-are-too-large	t4141-apply-too-large	git apply rejects patches that are too large	apply	pass
-t4150-am::setup-messages	t4150-am	setup: messages	am	pass
-t4150-am::am-applies-patch-correctly	t4150-am	am applies patch correctly	am	pass
-t4150-am::am-fails-if-index-is-dirty	t4150-am	am fails if index is dirty	am	pass
-t4150-am::am-applies-patch-e-mail-not-in-a-mbox	t4150-am	am applies patch e-mail not in a mbox	am	pass
-t4150-am::am-applies-patch-e-mail-not-in-a-mbox-with-crlf	t4150-am	am applies patch e-mail not in a mbox with CRLF	am	pass
-t4150-am::am-applies-patch-e-mail-with-preceding-whitespace	t4150-am	am applies patch e-mail with preceding whitespace	am	pass
-t4150-am::am-applies-stgit-patch	t4150-am	am applies stgit patch	am	pass
-t4150-am::am-patch-format-stgit-applies-stgit-patch	t4150-am	am --patch-format=stgit applies stgit patch	am	pass
-t4150-am::am-applies-stgit-series	t4150-am	am applies stgit series	am	pass
-t4150-am::am-applies-hg-patch	t4150-am	am applies hg patch	am	pass
-t4150-am::am-patch-format-hg-applies-hg-patch	t4150-am	am --patch-format=hg applies hg patch	am	pass
-t4150-am::am-with-applypatch-msg-hook	t4150-am	am with applypatch-msg hook	am	pass
-t4150-am::am-with-failing-applypatch-msg-hook	t4150-am	am with failing applypatch-msg hook	am	pass
-t4150-am::am-with-failing-applypatch-msg-hook-no-verify	t4150-am	am with failing applypatch-msg hook (no verify)	am	pass
-t4150-am::am-with-pre-applypatch-hook	t4150-am	am with pre-applypatch hook	am	pass
-t4150-am::am-with-failing-pre-applypatch-hook	t4150-am	am with failing pre-applypatch hook	am	pass
-t4150-am::am-with-failing-pre-applypatch-hook-no-verify	t4150-am	am with failing pre-applypatch hook (no verify)	am	pass
-t4150-am::am-with-post-applypatch-hook	t4150-am	am with post-applypatch hook	am	pass
-t4150-am::am-with-failing-post-applypatch-hook	t4150-am	am with failing post-applypatch hook	am	pass
-t4150-am::am-scissors-cuts-the-message-at-the-scissors-line	t4150-am	am --scissors cuts the message at the scissors line	am	pass
-t4150-am::am-no-scissors-overrides-mailinfo-scissors	t4150-am	am --no-scissors overrides mailinfo.scissors	am	pass
-t4150-am::setup-new-author-and-committer	t4150-am	setup: new author and committer	am	pass
-t4150-am::am-changes-committer-and-keeps-author	t4150-am	am changes committer and keeps author	am	pass
-t4150-am::am-signoff-adds-signed-off-by-line	t4150-am	am --signoff adds Signed-off-by: line	am	pass
-t4150-am::am-stays-in-branch	t4150-am	am stays in branch	am	pass
-t4150-am::am-signoff-does-not-add-signed-off-by-line-if-already-there	t4150-am	am --signoff does not add Signed-off-by: line if already there	am	pass
-t4150-am::am-signoff-adds-signed-off-by-if-another-author-is-preset	t4150-am	am --signoff adds Signed-off-by: if another author is preset	am	pass
-t4150-am::am-signoff-duplicates-signed-off-by-if-it-is-not-the-last-one	t4150-am	am --signoff duplicates Signed-off-by: if it is not the last one	am	pass
-t4150-am::am-without-keep-removes-re-and-patch-stuff	t4150-am	am without --keep removes Re: and [PATCH] stuff	am	pass
-t4150-am::am-keep-really-keeps-the-subject	t4150-am	am --keep really keeps the subject	am	pass
-t4150-am::am-keep-non-patch-really-keeps-the-non-patch-part	t4150-am	am --keep-non-patch really keeps the non-patch part	am	pass
-t4150-am::setup-am-3	t4150-am	setup am -3	am	pass
-t4150-am::am-3-falls-back-to-3-way-merge	t4150-am	am -3 falls back to 3-way merge	am	pass
-t4150-am::am-3-p0-can-read-no-prefix-patch	t4150-am	am -3 -p0 can read --no-prefix patch	am	pass
-t4150-am::am-with-config-am-threeway-falls-back-to-3-way-merge	t4150-am	am with config am.threeWay falls back to 3-way merge	am	pass
-t4150-am::am-with-config-am-threeway-overridden-by-no-3way	t4150-am	am with config am.threeWay overridden by --no-3way	am	pass
-t4150-am::am-can-rename-a-file	t4150-am	am can rename a file	am	pass
-t4150-am::am-3-can-rename-a-file	t4150-am	am -3 can rename a file	am	pass
-t4150-am::am-3-can-rename-a-file-after-falling-back-to-3-way-merge	t4150-am	am -3 can rename a file after falling back to 3-way merge	am	pass
-t4150-am::am-3-q-is-quiet	t4150-am	am -3 -q is quiet	am	pass
-t4150-am::am-pauses-on-conflict	t4150-am	am pauses on conflict	am	pass
-t4150-am::am-show-current-patch	t4150-am	am --show-current-patch	am	pass
-t4150-am::am-show-current-patch-raw	t4150-am	am --show-current-patch=raw	am	pass
-t4150-am::am-show-current-patch-diff	t4150-am	am --show-current-patch=diff	am	pass
-t4150-am::am-accepts-repeated-show-current-patch	t4150-am	am accepts repeated --show-current-patch	am	pass
-t4150-am::am-detects-incompatible-show-current-patch	t4150-am	am detects incompatible --show-current-patch	am	pass
-t4150-am::am-skip-works	t4150-am	am --skip works	am	pass
-t4150-am::am-abort-removes-a-stray-directory	t4150-am	am --abort removes a stray directory	am	pass
-t4150-am::am-refuses-patches-when-paused	t4150-am	am refuses patches when paused	am	pass
-t4150-am::am-resolved-works	t4150-am	am --resolved works	am	pass
-t4150-am::am-resolved-fails-if-index-has-no-changes	t4150-am	am --resolved fails if index has no changes	am	pass
-t4150-am::am-resolved-fails-if-index-has-unmerged-entries	t4150-am	am --resolved fails if index has unmerged entries	am	pass
-t4150-am::am-takes-patches-from-a-pine-mailbox	t4150-am	am takes patches from a Pine mailbox	am	pass
-t4150-am::am-fails-on-mail-without-patch	t4150-am	am fails on mail without patch	am	pass
-t4150-am::am-fails-on-empty-patch	t4150-am	am fails on empty patch	am	pass
-t4150-am::am-works-from-stdin-in-subdirectory	t4150-am	am works from stdin in subdirectory	am	pass
-t4150-am::am-works-from-file-relative-path-given-in-subdirectory	t4150-am	am works from file (relative path given) in subdirectory	am	pass
-t4150-am::am-works-from-file-absolute-path-given-in-subdirectory	t4150-am	am works from file (absolute path given) in subdirectory	am	pass
-t4150-am::am-committer-date-is-author-date	t4150-am	am --committer-date-is-author-date	am	pass
-t4150-am::am-without-committer-date-is-author-date	t4150-am	am without --committer-date-is-author-date	am	pass
-t4150-am::am-ignore-date	t4150-am	am --ignore-date	am	pass
-t4150-am::am-into-an-unborn-branch	t4150-am	am into an unborn branch	am	pass
-t4150-am::am-newline-in-subject	t4150-am	am newline in subject	am	pass
-t4150-am::am-q-is-quiet	t4150-am	am -q is quiet	am	pass
-t4150-am::am-empty-file-does-not-infloop	t4150-am	am empty-file does not infloop	am	pass
-t4150-am::am-message-id-really-adds-the-message-id	t4150-am	am --message-id really adds the message id	am	pass
-t4150-am::am-messageid-really-adds-the-message-id	t4150-am	am.messageid really adds the message id	am	pass
-t4150-am::am-message-id-s-signs-off-after-the-message-id	t4150-am	am --message-id -s signs off after the message id	am	pass
-t4150-am::am-3-works-with-rerere	t4150-am	am -3 works with rerere	am	pass
-t4150-am::am-s-unexpected-trailer-block	t4150-am	am -s unexpected trailer block	am	pass
-t4150-am::am-patch-format-mboxrd-handles-mboxrd	t4150-am	am --patch-format=mboxrd handles mboxrd	am	pass
-t4150-am::am-works-with-multi-line-in-body-headers	t4150-am	am works with multi-line in-body headers	am	pass
-t4150-am::am-quit-keeps-head-where-it-is	t4150-am	am --quit keeps HEAD where it is	am	pass
-t4150-am::am-and-gitattibutes	t4150-am	am and .gitattibutes	am	pass
-t4150-am::apply-binary-blob-in-partial-clone	t4150-am	apply binary blob in partial clone	am	pass
-t4150-am::an-empty-input-file-is-error-regardless-of-empty-option	t4150-am	an empty input file is error regardless of --empty option	am	pass
-t4150-am::invalid-when-passing-the-empty-option-alone	t4150-am	invalid when passing the --empty option alone	am	pass
-t4150-am::a-message-without-a-patch-is-an-error-default	t4150-am	a message without a patch is an error (default)	am	pass
-t4150-am::a-message-without-a-patch-is-an-error-where-an-explicit-empty-stop-is-given	t4150-am	a message without a patch is an error where an explicit "--empty=stop" is given	am	pass
-t4150-am::a-message-without-a-patch-will-be-skipped-when-empty-drop-is-given	t4150-am	a message without a patch will be skipped when "--empty=drop" is given	am	pass
-t4150-am::record-as-an-empty-commit-when-meeting-e-mail-message-that-lacks-a-patch	t4150-am	record as an empty commit when meeting e-mail message that lacks a patch	am	pass
-t4150-am::skip-an-empty-patch-in-the-middle-of-an-am-session	t4150-am	skip an empty patch in the middle of an am session	am	pass
-t4150-am::record-an-empty-patch-as-an-empty-commit-in-the-middle-of-an-am-session	t4150-am	record an empty patch as an empty commit in the middle of an am session	am	pass
-t4150-am::create-an-non-empty-commit-when-the-index-is-changed-though-allow-empty-is-given	t4150-am	create an non-empty commit when the index IS changed though "--allow-empty" is given	am	pass
-t4150-am::cannot-create-empty-commits-when-there-is-a-clean-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is a clean index due to merge conflicts	am	pass
-t4150-am::cannot-create-empty-commits-when-there-is-unmerged-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is unmerged index due to merge conflicts	am	pass
+t4150-am::setup-messages	t4150-am	setup: messages	am	not_ported
+t4150-am::am-applies-patch-correctly	t4150-am	am applies patch correctly	am	not_ported
+t4150-am::am-fails-if-index-is-dirty	t4150-am	am fails if index is dirty	am	not_ported
+t4150-am::am-applies-patch-e-mail-not-in-a-mbox	t4150-am	am applies patch e-mail not in a mbox	am	not_ported
+t4150-am::am-applies-patch-e-mail-not-in-a-mbox-with-crlf	t4150-am	am applies patch e-mail not in a mbox with CRLF	am	not_ported
+t4150-am::am-applies-patch-e-mail-with-preceding-whitespace	t4150-am	am applies patch e-mail with preceding whitespace	am	not_ported
+t4150-am::am-applies-stgit-patch	t4150-am	am applies stgit patch	am	not_ported
+t4150-am::am-patch-format-stgit-applies-stgit-patch	t4150-am	am --patch-format=stgit applies stgit patch	am	not_ported
+t4150-am::am-applies-stgit-series	t4150-am	am applies stgit series	am	not_ported
+t4150-am::am-applies-hg-patch	t4150-am	am applies hg patch	am	not_ported
+t4150-am::am-patch-format-hg-applies-hg-patch	t4150-am	am --patch-format=hg applies hg patch	am	not_ported
+t4150-am::am-with-applypatch-msg-hook	t4150-am	am with applypatch-msg hook	am	not_ported
+t4150-am::am-with-failing-applypatch-msg-hook	t4150-am	am with failing applypatch-msg hook	am	not_ported
+t4150-am::am-with-failing-applypatch-msg-hook-no-verify	t4150-am	am with failing applypatch-msg hook (no verify)	am	not_ported
+t4150-am::am-with-pre-applypatch-hook	t4150-am	am with pre-applypatch hook	am	not_ported
+t4150-am::am-with-failing-pre-applypatch-hook	t4150-am	am with failing pre-applypatch hook	am	not_ported
+t4150-am::am-with-failing-pre-applypatch-hook-no-verify	t4150-am	am with failing pre-applypatch hook (no verify)	am	not_ported
+t4150-am::am-with-post-applypatch-hook	t4150-am	am with post-applypatch hook	am	not_ported
+t4150-am::am-with-failing-post-applypatch-hook	t4150-am	am with failing post-applypatch hook	am	not_ported
+t4150-am::am-scissors-cuts-the-message-at-the-scissors-line	t4150-am	am --scissors cuts the message at the scissors line	am	not_ported
+t4150-am::am-no-scissors-overrides-mailinfo-scissors	t4150-am	am --no-scissors overrides mailinfo.scissors	am	not_ported
+t4150-am::setup-new-author-and-committer	t4150-am	setup: new author and committer	am	not_ported
+t4150-am::am-changes-committer-and-keeps-author	t4150-am	am changes committer and keeps author	am	not_ported
+t4150-am::am-signoff-adds-signed-off-by-line	t4150-am	am --signoff adds Signed-off-by: line	am	not_ported
+t4150-am::am-stays-in-branch	t4150-am	am stays in branch	am	not_ported
+t4150-am::am-signoff-does-not-add-signed-off-by-line-if-already-there	t4150-am	am --signoff does not add Signed-off-by: line if already there	am	not_ported
+t4150-am::am-signoff-adds-signed-off-by-if-another-author-is-preset	t4150-am	am --signoff adds Signed-off-by: if another author is preset	am	not_ported
+t4150-am::am-signoff-duplicates-signed-off-by-if-it-is-not-the-last-one	t4150-am	am --signoff duplicates Signed-off-by: if it is not the last one	am	not_ported
+t4150-am::am-without-keep-removes-re-and-patch-stuff	t4150-am	am without --keep removes Re: and [PATCH] stuff	am	not_ported
+t4150-am::am-keep-really-keeps-the-subject	t4150-am	am --keep really keeps the subject	am	not_ported
+t4150-am::am-keep-non-patch-really-keeps-the-non-patch-part	t4150-am	am --keep-non-patch really keeps the non-patch part	am	not_ported
+t4150-am::setup-am-3	t4150-am	setup am -3	am	not_ported
+t4150-am::am-3-falls-back-to-3-way-merge	t4150-am	am -3 falls back to 3-way merge	am	not_ported
+t4150-am::am-3-p0-can-read-no-prefix-patch	t4150-am	am -3 -p0 can read --no-prefix patch	am	not_ported
+t4150-am::am-with-config-am-threeway-falls-back-to-3-way-merge	t4150-am	am with config am.threeWay falls back to 3-way merge	am	not_ported
+t4150-am::am-with-config-am-threeway-overridden-by-no-3way	t4150-am	am with config am.threeWay overridden by --no-3way	am	not_ported
+t4150-am::am-can-rename-a-file	t4150-am	am can rename a file	am	not_ported
+t4150-am::am-3-can-rename-a-file	t4150-am	am -3 can rename a file	am	not_ported
+t4150-am::am-3-can-rename-a-file-after-falling-back-to-3-way-merge	t4150-am	am -3 can rename a file after falling back to 3-way merge	am	not_ported
+t4150-am::am-3-q-is-quiet	t4150-am	am -3 -q is quiet	am	not_ported
+t4150-am::am-pauses-on-conflict	t4150-am	am pauses on conflict	am	not_ported
+t4150-am::am-show-current-patch	t4150-am	am --show-current-patch	am	not_ported
+t4150-am::am-show-current-patch-raw	t4150-am	am --show-current-patch=raw	am	not_ported
+t4150-am::am-show-current-patch-diff	t4150-am	am --show-current-patch=diff	am	not_ported
+t4150-am::am-accepts-repeated-show-current-patch	t4150-am	am accepts repeated --show-current-patch	am	not_ported
+t4150-am::am-detects-incompatible-show-current-patch	t4150-am	am detects incompatible --show-current-patch	am	not_ported
+t4150-am::am-skip-works	t4150-am	am --skip works	am	not_ported
+t4150-am::am-abort-removes-a-stray-directory	t4150-am	am --abort removes a stray directory	am	not_ported
+t4150-am::am-refuses-patches-when-paused	t4150-am	am refuses patches when paused	am	not_ported
+t4150-am::am-resolved-works	t4150-am	am --resolved works	am	not_ported
+t4150-am::am-resolved-fails-if-index-has-no-changes	t4150-am	am --resolved fails if index has no changes	am	not_ported
+t4150-am::am-resolved-fails-if-index-has-unmerged-entries	t4150-am	am --resolved fails if index has unmerged entries	am	not_ported
+t4150-am::am-takes-patches-from-a-pine-mailbox	t4150-am	am takes patches from a Pine mailbox	am	not_ported
+t4150-am::am-fails-on-mail-without-patch	t4150-am	am fails on mail without patch	am	not_ported
+t4150-am::am-fails-on-empty-patch	t4150-am	am fails on empty patch	am	not_ported
+t4150-am::am-works-from-stdin-in-subdirectory	t4150-am	am works from stdin in subdirectory	am	not_ported
+t4150-am::am-works-from-file-relative-path-given-in-subdirectory	t4150-am	am works from file (relative path given) in subdirectory	am	not_ported
+t4150-am::am-works-from-file-absolute-path-given-in-subdirectory	t4150-am	am works from file (absolute path given) in subdirectory	am	not_ported
+t4150-am::am-committer-date-is-author-date	t4150-am	am --committer-date-is-author-date	am	not_ported
+t4150-am::am-without-committer-date-is-author-date	t4150-am	am without --committer-date-is-author-date	am	not_ported
+t4150-am::am-ignore-date	t4150-am	am --ignore-date	am	not_ported
+t4150-am::am-into-an-unborn-branch	t4150-am	am into an unborn branch	am	not_ported
+t4150-am::am-newline-in-subject	t4150-am	am newline in subject	am	not_ported
+t4150-am::am-q-is-quiet	t4150-am	am -q is quiet	am	not_ported
+t4150-am::am-empty-file-does-not-infloop	t4150-am	am empty-file does not infloop	am	not_ported
+t4150-am::am-message-id-really-adds-the-message-id	t4150-am	am --message-id really adds the message id	am	not_ported
+t4150-am::am-messageid-really-adds-the-message-id	t4150-am	am.messageid really adds the message id	am	not_ported
+t4150-am::am-message-id-s-signs-off-after-the-message-id	t4150-am	am --message-id -s signs off after the message id	am	not_ported
+t4150-am::am-3-works-with-rerere	t4150-am	am -3 works with rerere	am	not_ported
+t4150-am::am-s-unexpected-trailer-block	t4150-am	am -s unexpected trailer block	am	not_ported
+t4150-am::am-patch-format-mboxrd-handles-mboxrd	t4150-am	am --patch-format=mboxrd handles mboxrd	am	not_ported
+t4150-am::am-works-with-multi-line-in-body-headers	t4150-am	am works with multi-line in-body headers	am	not_ported
+t4150-am::am-quit-keeps-head-where-it-is	t4150-am	am --quit keeps HEAD where it is	am	not_ported
+t4150-am::am-and-gitattibutes	t4150-am	am and .gitattibutes	am	not_ported
+t4150-am::apply-binary-blob-in-partial-clone	t4150-am	apply binary blob in partial clone	am	not_ported
+t4150-am::an-empty-input-file-is-error-regardless-of-empty-option	t4150-am	an empty input file is error regardless of --empty option	am	not_ported
+t4150-am::invalid-when-passing-the-empty-option-alone	t4150-am	invalid when passing the --empty option alone	am	not_ported
+t4150-am::a-message-without-a-patch-is-an-error-default	t4150-am	a message without a patch is an error (default)	am	not_ported
+t4150-am::a-message-without-a-patch-is-an-error-where-an-explicit-empty-stop-is-given	t4150-am	a message without a patch is an error where an explicit "--empty=stop" is given	am	not_ported
+t4150-am::a-message-without-a-patch-will-be-skipped-when-empty-drop-is-given	t4150-am	a message without a patch will be skipped when "--empty=drop" is given	am	not_ported
+t4150-am::record-as-an-empty-commit-when-meeting-e-mail-message-that-lacks-a-patch	t4150-am	record as an empty commit when meeting e-mail message that lacks a patch	am	not_ported
+t4150-am::skip-an-empty-patch-in-the-middle-of-an-am-session	t4150-am	skip an empty patch in the middle of an am session	am	not_ported
+t4150-am::record-an-empty-patch-as-an-empty-commit-in-the-middle-of-an-am-session	t4150-am	record an empty patch as an empty commit in the middle of an am session	am	not_ported
+t4150-am::create-an-non-empty-commit-when-the-index-is-changed-though-allow-empty-is-given	t4150-am	create an non-empty commit when the index IS changed though "--allow-empty" is given	am	not_ported
+t4150-am::cannot-create-empty-commits-when-there-is-a-clean-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is a clean index due to merge conflicts	am	not_ported
+t4150-am::cannot-create-empty-commits-when-there-is-unmerged-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is unmerged index due to merge conflicts	am	not_ported
 t4151-am-abort::am-3-skip-removes-otherfile-4	t4151-am-abort	am -3 --skip removes otherfile-4	am	pass
 t4151-am-abort::am-3-abort-removes-otherfile-4	t4151-am-abort	am -3 --abort removes otherfile-4	am	pass
 t4151-am-abort::am-abort-will-keep-the-local-commits-intact	t4151-am-abort	am --abort will keep the local commits intact	am	pass
@@ -8319,80 +8319,80 @@ t4202-log::set-up-commits-with-different-authors	t4202-log	set up commits with d
 t4202-log::log-invert-grep-grep-author	t4202-log	log --invert-grep --grep --author	log	pass
 t4202-log::log-noop-opt-without-grep-is-a-noop	t4202-log	log $noop_opt without --grep is a NOOP	log	pass
 t4202-log::cmd-understands-grep-patterntype-like-log	t4202-log	$cmd: understands grep.patternType, like 'log'	log	pass
-t4203-mailmap::setup-commits-and-contacts-file	t4203-mailmap	setup commits and contacts file		pass
-t4203-mailmap::check-mailmap-no-arguments	t4203-mailmap	check-mailmap no arguments	check-mailmap	pass
-t4203-mailmap::check-mailmap-arguments	t4203-mailmap	check-mailmap arguments	check-mailmap	pass
-t4203-mailmap::check-mailmap-stdin	t4203-mailmap	check-mailmap --stdin	check-mailmap	pass
-t4203-mailmap::check-mailmap-stdin-arguments-no-mapping	t4203-mailmap	check-mailmap --stdin arguments: no mapping	check-mailmap	pass
-t4203-mailmap::check-mailmap-stdin-arguments-mapping	t4203-mailmap	check-mailmap --stdin arguments: mapping	check-mailmap	pass
-t4203-mailmap::check-mailmap-simple-address-mapping	t4203-mailmap	check-mailmap simple address: mapping	check-mailmap	pass
-t4203-mailmap::check-mailmap-stdin-simple-address-mapping	t4203-mailmap	check-mailmap --stdin simple address: mapping	check-mailmap	pass
-t4203-mailmap::check-mailmap-simple-address-no-mapping	t4203-mailmap	check-mailmap simple address: no mapping	check-mailmap	pass
-t4203-mailmap::check-mailmap-stdin-simple-address-no-mapping	t4203-mailmap	check-mailmap --stdin simple address: no mapping	check-mailmap	pass
-t4203-mailmap::check-mailmap-name-and-address-mapping	t4203-mailmap	check-mailmap name and address: mapping	check-mailmap	pass
-t4203-mailmap::no-mailmap	t4203-mailmap	No mailmap	shortlog	pass
-t4203-mailmap::setup-default-mailmap	t4203-mailmap	setup default .mailmap		pass
-t4203-mailmap::test-default-mailmap	t4203-mailmap	test default .mailmap	shortlog	pass
-t4203-mailmap::mailmap-file-set	t4203-mailmap	mailmap.file set	clone	pass
-t4203-mailmap::mailmap-file-override	t4203-mailmap	mailmap.file override	shortlog	pass
-t4203-mailmap::mailmap-file-non-existent	t4203-mailmap	mailmap.file non-existent	shortlog	pass
-t4203-mailmap::name-entry-after-email-entry	t4203-mailmap	name entry after email entry	shortlog	pass
-t4203-mailmap::name-entry-after-email-entry-case-insensitive	t4203-mailmap	name entry after email entry, case-insensitive	shortlog	pass
-t4203-mailmap::no-mailmap-files-but-configured	t4203-mailmap	No mailmap files, but configured	shortlog	pass
-t4203-mailmap::setup-mailmap-blob-tests	t4203-mailmap	setup mailmap blob tests	add	pass
-t4203-mailmap::mailmap-blob-set	t4203-mailmap	mailmap.blob set	shortlog	pass
-t4203-mailmap::mailmap-blob-overrides-mailmap	t4203-mailmap	mailmap.blob overrides .mailmap	shortlog	pass
-t4203-mailmap::mailmap-file-overrides-mailmap-blob	t4203-mailmap	mailmap.file overrides mailmap.blob		pass
-t4203-mailmap::mailmap-file-can-be-missing	t4203-mailmap	mailmap.file can be missing	shortlog	pass
-t4203-mailmap::mailmap-blob-can-be-missing	t4203-mailmap	mailmap.blob can be missing	shortlog	pass
-t4203-mailmap::mailmap-blob-might-be-the-wrong-type	t4203-mailmap	mailmap.blob might be the wrong type	shortlog	pass
-t4203-mailmap::mailmap-blob-defaults-to-off-in-non-bare-repo	t4203-mailmap	mailmap.blob defaults to off in non-bare repo	init	pass
-t4203-mailmap::mailmap-blob-defaults-to-head-mailmap-in-bare-repo	t4203-mailmap	mailmap.blob defaults to HEAD:.mailmap in bare repo	clone	pass
-t4203-mailmap::mailmap-blob-can-handle-blobs-without-trailing-newline	t4203-mailmap	mailmap.blob can handle blobs without trailing newline	shortlog	pass
-t4203-mailmap::single-character-name	t4203-mailmap	single-character name	shortlog	pass
-t4203-mailmap::preserve-canonical-email-case	t4203-mailmap	preserve canonical email case	shortlog	pass
-t4203-mailmap::gitmailmap-5-example-output-setup	t4203-mailmap	gitmailmap(5) example output: setup		pass
-t4203-mailmap::gitmailmap-5-example-output-example-1	t4203-mailmap	gitmailmap(5) example output: example #1	log	pass
-t4203-mailmap::gitmailmap-5-example-output-example-2	t4203-mailmap	gitmailmap(5) example output: example #2	log	pass
-t4203-mailmap::gitmailmap-5-example-output-example-3	t4203-mailmap	gitmailmap(5) example output: example #3	log	pass
-t4203-mailmap::shortlog-output-complex-mapping	t4203-mailmap	Shortlog output (complex mapping)	shortlog	pass
-t4203-mailmap::log-output-complex-mapping	t4203-mailmap	Log output (complex mapping)	log	pass
-t4203-mailmap::log-output-local-part-email-address	t4203-mailmap	Log output (local-part email address)	log	pass
-t4203-mailmap::log-output-with-use-mailmap	t4203-mailmap	Log output with --use-mailmap	log	pass
-t4203-mailmap::log-output-with-log-mailmap	t4203-mailmap	Log output with log.mailmap	log	pass
-t4203-mailmap::log-mailmap-false-disables-mailmap	t4203-mailmap	log.mailmap=false disables mailmap	log	pass
-t4203-mailmap::no-use-mailmap-disables-mailmap	t4203-mailmap	--no-use-mailmap disables mailmap	log	pass
-t4203-mailmap::grep-author-with-use-mailmap	t4203-mailmap	Grep author with --use-mailmap	log	pass
-t4203-mailmap::grep-author-with-log-mailmap	t4203-mailmap	Grep author with log.mailmap	log	pass
-t4203-mailmap::log-mailmap-is-true-by-default-these-days	t4203-mailmap	log.mailmap is true by default these days	log	pass
-t4203-mailmap::only-grep-replaced-author-with-use-mailmap	t4203-mailmap	Only grep replaced author with --use-mailmap	log	pass
-t4203-mailmap::blame-porcelain-output-complex-mapping	t4203-mailmap	Blame --porcelain output (complex mapping)	blame	pass
-t4203-mailmap::blame-output-complex-mapping	t4203-mailmap	Blame output (complex mapping)	blame	pass
-t4203-mailmap::commit-author-honors-mailmap	t4203-mailmap	commit --author honors mailmap	commit	pass
-t4203-mailmap::comment-syntax-setup	t4203-mailmap	comment syntax: setup	log	pass
-t4203-mailmap::whitespace-syntax-setup	t4203-mailmap	whitespace syntax: setup	log	pass
-t4203-mailmap::empty-syntax-setup	t4203-mailmap	empty syntax: setup	log	pass
-t4203-mailmap::set-up-mailmap-location-tests	t4203-mailmap	set up mailmap location tests	init	pass
-t4203-mailmap::bare-repo-with-work-tree-finds-mailmap-at-top-level	t4203-mailmap	bare repo with --work-tree finds mailmap at top-level		pass
-t4203-mailmap::bare-repo-does-not-look-in-current-directory	t4203-mailmap	bare repo does not look in current directory	log	pass
-t4203-mailmap::non-git-shortlog-respects-mailmap-in-current-dir	t4203-mailmap	non-git shortlog respects mailmap in current dir	shortlog	pass
-t4203-mailmap::shortlog-on-stdin-respects-mailmap-from-repo	t4203-mailmap	shortlog on stdin respects mailmap from repo	shortlog	pass
-t4203-mailmap::find-top-level-mailmap-from-subdir	t4203-mailmap	find top-level mailmap from subdir	clone	pass
-t4203-mailmap::set-up-symlink-tests	t4203-mailmap	set up symlink tests	commit	pass
-t4203-mailmap::symlinks-respected-in-mailmap-file	t4203-mailmap	symlinks respected in mailmap.file	log	pass
-t4203-mailmap::symlinks-respected-in-non-repo-shortlog	t4203-mailmap	symlinks respected in non-repo shortlog	log	pass
-t4203-mailmap::symlinks-not-respected-in-tree	t4203-mailmap	symlinks not respected in-tree	log	pass
-t4203-mailmap::prepare-for-cat-file-mailmap	t4203-mailmap	prepare for cat-file --mailmap	commit	pass
-t4203-mailmap::no-use-mailmap-disables-mailmap-in-cat-file	t4203-mailmap	--no-use-mailmap disables mailmap in cat-file	cat-file	pass
-t4203-mailmap::use-mailmap-enables-mailmap-in-cat-file	t4203-mailmap	--use-mailmap enables mailmap in cat-file	cat-file	pass
-t4203-mailmap::no-mailmap-disables-mailmap-in-cat-file-for-annotated-tag-objects	t4203-mailmap	--no-mailmap disables mailmap in cat-file for annotated tag objects	cat-file	pass
-t4203-mailmap::mailmap-enables-mailmap-in-cat-file-for-annotated-tag-objects	t4203-mailmap	--mailmap enables mailmap in cat-file for annotated tag objects	cat-file	pass
-t4203-mailmap::git-cat-file-s-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file -s returns correct size with --use-mailmap	cat-file	pass
-t4203-mailmap::git-cat-file-s-returns-correct-size-with-use-mailmap-for-tag-objects	t4203-mailmap	git cat-file -s returns correct size with --use-mailmap for tag objects	cat-file	pass
-t4203-mailmap::git-cat-file-batch-check-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file --batch-check returns correct size with --use-mailmap	cat-file	pass
-t4203-mailmap::git-cat-file-batch-command-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file --batch-command returns correct size with --use-mailmap	cat-file	pass
-t4203-mailmap::git-cat-file-mailmap-works-with-different-author-and-committer	t4203-mailmap	git cat-file --mailmap works with different author and committer	cat-file	pass
-t4203-mailmap::git-cat-file-mailmap-maps-both-author-and-committer-when-both-need-mapping	t4203-mailmap	git cat-file --mailmap maps both author and committer when both need mapping	cat-file	pass
+t4203-mailmap::setup-commits-and-contacts-file	t4203-mailmap	setup commits and contacts file		not_ported
+t4203-mailmap::check-mailmap-no-arguments	t4203-mailmap	check-mailmap no arguments	check-mailmap	not_ported
+t4203-mailmap::check-mailmap-arguments	t4203-mailmap	check-mailmap arguments	check-mailmap	not_ported
+t4203-mailmap::check-mailmap-stdin	t4203-mailmap	check-mailmap --stdin	check-mailmap	not_ported
+t4203-mailmap::check-mailmap-stdin-arguments-no-mapping	t4203-mailmap	check-mailmap --stdin arguments: no mapping	check-mailmap	not_ported
+t4203-mailmap::check-mailmap-stdin-arguments-mapping	t4203-mailmap	check-mailmap --stdin arguments: mapping	check-mailmap	not_ported
+t4203-mailmap::check-mailmap-simple-address-mapping	t4203-mailmap	check-mailmap simple address: mapping	check-mailmap	not_ported
+t4203-mailmap::check-mailmap-stdin-simple-address-mapping	t4203-mailmap	check-mailmap --stdin simple address: mapping	check-mailmap	not_ported
+t4203-mailmap::check-mailmap-simple-address-no-mapping	t4203-mailmap	check-mailmap simple address: no mapping	check-mailmap	not_ported
+t4203-mailmap::check-mailmap-stdin-simple-address-no-mapping	t4203-mailmap	check-mailmap --stdin simple address: no mapping	check-mailmap	not_ported
+t4203-mailmap::check-mailmap-name-and-address-mapping	t4203-mailmap	check-mailmap name and address: mapping	check-mailmap	not_ported
+t4203-mailmap::no-mailmap	t4203-mailmap	No mailmap	shortlog	not_ported
+t4203-mailmap::setup-default-mailmap	t4203-mailmap	setup default .mailmap		not_ported
+t4203-mailmap::test-default-mailmap	t4203-mailmap	test default .mailmap	shortlog	not_ported
+t4203-mailmap::mailmap-file-set	t4203-mailmap	mailmap.file set	clone	not_ported
+t4203-mailmap::mailmap-file-override	t4203-mailmap	mailmap.file override	shortlog	not_ported
+t4203-mailmap::mailmap-file-non-existent	t4203-mailmap	mailmap.file non-existent	shortlog	not_ported
+t4203-mailmap::name-entry-after-email-entry	t4203-mailmap	name entry after email entry	shortlog	not_ported
+t4203-mailmap::name-entry-after-email-entry-case-insensitive	t4203-mailmap	name entry after email entry, case-insensitive	shortlog	not_ported
+t4203-mailmap::no-mailmap-files-but-configured	t4203-mailmap	No mailmap files, but configured	shortlog	not_ported
+t4203-mailmap::setup-mailmap-blob-tests	t4203-mailmap	setup mailmap blob tests	add	not_ported
+t4203-mailmap::mailmap-blob-set	t4203-mailmap	mailmap.blob set	shortlog	not_ported
+t4203-mailmap::mailmap-blob-overrides-mailmap	t4203-mailmap	mailmap.blob overrides .mailmap	shortlog	not_ported
+t4203-mailmap::mailmap-file-overrides-mailmap-blob	t4203-mailmap	mailmap.file overrides mailmap.blob		not_ported
+t4203-mailmap::mailmap-file-can-be-missing	t4203-mailmap	mailmap.file can be missing	shortlog	not_ported
+t4203-mailmap::mailmap-blob-can-be-missing	t4203-mailmap	mailmap.blob can be missing	shortlog	not_ported
+t4203-mailmap::mailmap-blob-might-be-the-wrong-type	t4203-mailmap	mailmap.blob might be the wrong type	shortlog	not_ported
+t4203-mailmap::mailmap-blob-defaults-to-off-in-non-bare-repo	t4203-mailmap	mailmap.blob defaults to off in non-bare repo	init	not_ported
+t4203-mailmap::mailmap-blob-defaults-to-head-mailmap-in-bare-repo	t4203-mailmap	mailmap.blob defaults to HEAD:.mailmap in bare repo	clone	not_ported
+t4203-mailmap::mailmap-blob-can-handle-blobs-without-trailing-newline	t4203-mailmap	mailmap.blob can handle blobs without trailing newline	shortlog	not_ported
+t4203-mailmap::single-character-name	t4203-mailmap	single-character name	shortlog	not_ported
+t4203-mailmap::preserve-canonical-email-case	t4203-mailmap	preserve canonical email case	shortlog	not_ported
+t4203-mailmap::gitmailmap-5-example-output-setup	t4203-mailmap	gitmailmap(5) example output: setup		not_ported
+t4203-mailmap::gitmailmap-5-example-output-example-1	t4203-mailmap	gitmailmap(5) example output: example #1	log	not_ported
+t4203-mailmap::gitmailmap-5-example-output-example-2	t4203-mailmap	gitmailmap(5) example output: example #2	log	not_ported
+t4203-mailmap::gitmailmap-5-example-output-example-3	t4203-mailmap	gitmailmap(5) example output: example #3	log	not_ported
+t4203-mailmap::shortlog-output-complex-mapping	t4203-mailmap	Shortlog output (complex mapping)	shortlog	not_ported
+t4203-mailmap::log-output-complex-mapping	t4203-mailmap	Log output (complex mapping)	log	not_ported
+t4203-mailmap::log-output-local-part-email-address	t4203-mailmap	Log output (local-part email address)	log	not_ported
+t4203-mailmap::log-output-with-use-mailmap	t4203-mailmap	Log output with --use-mailmap	log	not_ported
+t4203-mailmap::log-output-with-log-mailmap	t4203-mailmap	Log output with log.mailmap	log	not_ported
+t4203-mailmap::log-mailmap-false-disables-mailmap	t4203-mailmap	log.mailmap=false disables mailmap	log	not_ported
+t4203-mailmap::no-use-mailmap-disables-mailmap	t4203-mailmap	--no-use-mailmap disables mailmap	log	not_ported
+t4203-mailmap::grep-author-with-use-mailmap	t4203-mailmap	Grep author with --use-mailmap	log	not_ported
+t4203-mailmap::grep-author-with-log-mailmap	t4203-mailmap	Grep author with log.mailmap	log	not_ported
+t4203-mailmap::log-mailmap-is-true-by-default-these-days	t4203-mailmap	log.mailmap is true by default these days	log	not_ported
+t4203-mailmap::only-grep-replaced-author-with-use-mailmap	t4203-mailmap	Only grep replaced author with --use-mailmap	log	not_ported
+t4203-mailmap::blame-porcelain-output-complex-mapping	t4203-mailmap	Blame --porcelain output (complex mapping)	blame	not_ported
+t4203-mailmap::blame-output-complex-mapping	t4203-mailmap	Blame output (complex mapping)	blame	not_ported
+t4203-mailmap::commit-author-honors-mailmap	t4203-mailmap	commit --author honors mailmap	commit	not_ported
+t4203-mailmap::comment-syntax-setup	t4203-mailmap	comment syntax: setup	log	not_ported
+t4203-mailmap::whitespace-syntax-setup	t4203-mailmap	whitespace syntax: setup	log	not_ported
+t4203-mailmap::empty-syntax-setup	t4203-mailmap	empty syntax: setup	log	not_ported
+t4203-mailmap::set-up-mailmap-location-tests	t4203-mailmap	set up mailmap location tests	init	not_ported
+t4203-mailmap::bare-repo-with-work-tree-finds-mailmap-at-top-level	t4203-mailmap	bare repo with --work-tree finds mailmap at top-level		not_ported
+t4203-mailmap::bare-repo-does-not-look-in-current-directory	t4203-mailmap	bare repo does not look in current directory	log	not_ported
+t4203-mailmap::non-git-shortlog-respects-mailmap-in-current-dir	t4203-mailmap	non-git shortlog respects mailmap in current dir	shortlog	not_ported
+t4203-mailmap::shortlog-on-stdin-respects-mailmap-from-repo	t4203-mailmap	shortlog on stdin respects mailmap from repo	shortlog	not_ported
+t4203-mailmap::find-top-level-mailmap-from-subdir	t4203-mailmap	find top-level mailmap from subdir	clone	not_ported
+t4203-mailmap::set-up-symlink-tests	t4203-mailmap	set up symlink tests	commit	not_ported
+t4203-mailmap::symlinks-respected-in-mailmap-file	t4203-mailmap	symlinks respected in mailmap.file	log	not_ported
+t4203-mailmap::symlinks-respected-in-non-repo-shortlog	t4203-mailmap	symlinks respected in non-repo shortlog	log	not_ported
+t4203-mailmap::symlinks-not-respected-in-tree	t4203-mailmap	symlinks not respected in-tree	log	not_ported
+t4203-mailmap::prepare-for-cat-file-mailmap	t4203-mailmap	prepare for cat-file --mailmap	commit	not_ported
+t4203-mailmap::no-use-mailmap-disables-mailmap-in-cat-file	t4203-mailmap	--no-use-mailmap disables mailmap in cat-file	cat-file	not_ported
+t4203-mailmap::use-mailmap-enables-mailmap-in-cat-file	t4203-mailmap	--use-mailmap enables mailmap in cat-file	cat-file	not_ported
+t4203-mailmap::no-mailmap-disables-mailmap-in-cat-file-for-annotated-tag-objects	t4203-mailmap	--no-mailmap disables mailmap in cat-file for annotated tag objects	cat-file	not_ported
+t4203-mailmap::mailmap-enables-mailmap-in-cat-file-for-annotated-tag-objects	t4203-mailmap	--mailmap enables mailmap in cat-file for annotated tag objects	cat-file	not_ported
+t4203-mailmap::git-cat-file-s-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file -s returns correct size with --use-mailmap	cat-file	not_ported
+t4203-mailmap::git-cat-file-s-returns-correct-size-with-use-mailmap-for-tag-objects	t4203-mailmap	git cat-file -s returns correct size with --use-mailmap for tag objects	cat-file	not_ported
+t4203-mailmap::git-cat-file-batch-check-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file --batch-check returns correct size with --use-mailmap	cat-file	not_ported
+t4203-mailmap::git-cat-file-batch-command-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file --batch-command returns correct size with --use-mailmap	cat-file	not_ported
+t4203-mailmap::git-cat-file-mailmap-works-with-different-author-and-committer	t4203-mailmap	git cat-file --mailmap works with different author and committer	cat-file	not_ported
+t4203-mailmap::git-cat-file-mailmap-maps-both-author-and-committer-when-both-need-mapping	t4203-mailmap	git cat-file --mailmap maps both author and committer when both need mapping	cat-file	not_ported
 t4204-patch-id::setup	t4204-patch-id	setup	patch-id	pass
 t4204-patch-id::patch-id-output-is-well-formed	t4204-patch-id	patch-id output is well-formed	patch-id	pass
 t4204-patch-id::patch-id-detects-equality	t4204-patch-id	patch-id detects equality	patch-id	pass
@@ -14926,25 +14926,25 @@ t7506-status-submodule::setup-superproject-with-modified-file-in-nested-submodul
 t7506-status-submodule::status-with-added-file-in-nested-submodule-porcelain	t7506-status-submodule	status with added file in nested submodule (porcelain)	status	pass
 t7506-status-submodule::status-with-added-file-in-nested-submodule-porcelain-2	t7506-status-submodule	status with added file in nested submodule (porcelain=2)	status	pass
 t7506-status-submodule::status-with-added-file-in-nested-submodule-short	t7506-status-submodule	status with added file in nested submodule (short)	status	pass
-t7507-commit-verbose::setup	t7507-commit-verbose	setup	commit	pass
-t7507-commit-verbose::initial-commit-shows-verbose-diff	t7507-commit-verbose	initial commit shows verbose diff	commit	pass
-t7507-commit-verbose::second-commit	t7507-commit-verbose	second commit	commit	pass
-t7507-commit-verbose::verbose-diff-is-stripped-out	t7507-commit-verbose	verbose diff is stripped out	commit	pass
-t7507-commit-verbose::verbose-diff-is-stripped-out-mnemonicprefix	t7507-commit-verbose	verbose diff is stripped out (mnemonicprefix)	commit	pass
-t7507-commit-verbose::diff-in-message-is-retained-without-v	t7507-commit-verbose	diff in message is retained without -v	commit	pass
-t7507-commit-verbose::diff-in-message-is-retained-with-v	t7507-commit-verbose	diff in message is retained with -v	commit	pass
-t7507-commit-verbose::submodule-log-is-stripped-out-too-with-v	t7507-commit-verbose	submodule log is stripped out too with -v	commit	pass
-t7507-commit-verbose::verbose-diff-is-stripped-out-with-set-core-commentchar	t7507-commit-verbose	verbose diff is stripped out with set core.commentChar	commit	pass
-t7507-commit-verbose::verbose-diff-is-stripped-with-multi-byte-comment-char	t7507-commit-verbose	verbose diff is stripped with multi-byte comment char	commit	pass
-t7507-commit-verbose::status-does-not-verbose-without-verbose	t7507-commit-verbose	status does not verbose without --verbose	commit	pass
-t7507-commit-verbose::setup-v-v	t7507-commit-verbose	setup -v -v	commit	pass
-t7507-commit-verbose::commit-verbose-i-and-verbose-omitted	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	pass
-t7507-commit-verbose::commit-verbose-i-and-verbose-omitted-2	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	pass
-t7507-commit-verbose::commit-verbose-i-and-verbose-omitted-3	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	pass
-t7507-commit-verbose::commit-verbose-i-and-verbose	t7507-commit-verbose	commit.verbose=$i and --verbose	commit	pass
-t7507-commit-verbose::commit-verbose-i-and-no-verbose	t7507-commit-verbose	commit.verbose=$i and --no-verbose	commit	pass
-t7507-commit-verbose::commit-verbose-i-and-v-v	t7507-commit-verbose	commit.verbose=$i and -v -v	commit	pass
-t7507-commit-verbose::status-ignores-commit-verbose-true	t7507-commit-verbose	status ignores commit.verbose=true	commit	pass
+t7507-commit-verbose::setup	t7507-commit-verbose	setup	commit	partial
+t7507-commit-verbose::initial-commit-shows-verbose-diff	t7507-commit-verbose	initial commit shows verbose diff	commit	partial
+t7507-commit-verbose::second-commit	t7507-commit-verbose	second commit	commit	partial
+t7507-commit-verbose::verbose-diff-is-stripped-out	t7507-commit-verbose	verbose diff is stripped out	commit	partial
+t7507-commit-verbose::verbose-diff-is-stripped-out-mnemonicprefix	t7507-commit-verbose	verbose diff is stripped out (mnemonicprefix)	commit	partial
+t7507-commit-verbose::diff-in-message-is-retained-without-v	t7507-commit-verbose	diff in message is retained without -v	commit	partial
+t7507-commit-verbose::diff-in-message-is-retained-with-v	t7507-commit-verbose	diff in message is retained with -v	commit	partial
+t7507-commit-verbose::submodule-log-is-stripped-out-too-with-v	t7507-commit-verbose	submodule log is stripped out too with -v	commit	partial
+t7507-commit-verbose::verbose-diff-is-stripped-out-with-set-core-commentchar	t7507-commit-verbose	verbose diff is stripped out with set core.commentChar	commit	partial
+t7507-commit-verbose::verbose-diff-is-stripped-with-multi-byte-comment-char	t7507-commit-verbose	verbose diff is stripped with multi-byte comment char	commit	partial
+t7507-commit-verbose::status-does-not-verbose-without-verbose	t7507-commit-verbose	status does not verbose without --verbose	commit	partial
+t7507-commit-verbose::setup-v-v	t7507-commit-verbose	setup -v -v	commit	partial
+t7507-commit-verbose::commit-verbose-i-and-verbose-omitted	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	partial
+t7507-commit-verbose::commit-verbose-i-and-verbose-omitted-2	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	partial
+t7507-commit-verbose::commit-verbose-i-and-verbose-omitted-3	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	partial
+t7507-commit-verbose::commit-verbose-i-and-verbose	t7507-commit-verbose	commit.verbose=$i and --verbose	commit	partial
+t7507-commit-verbose::commit-verbose-i-and-no-verbose	t7507-commit-verbose	commit.verbose=$i and --no-verbose	commit	partial
+t7507-commit-verbose::commit-verbose-i-and-v-v	t7507-commit-verbose	commit.verbose=$i and -v -v	commit	partial
+t7507-commit-verbose::status-ignores-commit-verbose-true	t7507-commit-verbose	status ignores commit.verbose=true	commit	partial
 t7508-status::status-h-in-broken-repository	t7508-status	status -h in broken repository	status	pass
 t7508-status::commit-h-in-broken-repository	t7508-status	commit -h in broken repository	status	pass
 t7508-status::create-upstream-branch	t7508-status	create upstream branch	status	pass
