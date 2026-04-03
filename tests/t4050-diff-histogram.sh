@@ -14,7 +14,7 @@ yet implemented in grit, so every case is marked test_expect_failure.'
 # does not support yet.  We stub out the most representative cases
 # so the file is ready to flip once the features land.
 
-test_expect_failure 'histogram diff: simple file comparison (not implemented)' '
+test_expect_success 'histogram diff: simple file comparison' '
 	cat >file1 <<-\EOF &&
 	line1
 	line2
@@ -25,10 +25,11 @@ test_expect_failure 'histogram diff: simple file comparison (not implemented)' '
 	changed
 	line3
 	EOF
-	git diff --no-index --histogram file1 file2
+	test_expect_code 1 git diff --no-index --histogram file1 file2 >out &&
+	test -s out
 '
 
-test_expect_failure 'histogram diff: unique line handling (not implemented)' '
+test_expect_success 'histogram diff: unique line handling' '
 	cat >file1 <<-\EOF &&
 	a
 	b
@@ -39,7 +40,8 @@ test_expect_failure 'histogram diff: unique line handling (not implemented)' '
 	d
 	c
 	EOF
-	git diff --no-index --histogram file1 file2
+	test_expect_code 1 git diff --no-index --histogram file1 file2 >out &&
+	test -s out
 '
 
 test_done

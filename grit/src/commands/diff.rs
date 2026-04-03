@@ -176,6 +176,22 @@ pub struct Args {
     #[arg(short = 'O')]
     pub order_file: Option<String>,
 
+    /// Use the histogram diff algorithm.
+    #[arg(long = "histogram")]
+    pub histogram: bool,
+
+    /// Use the patience diff algorithm.
+    #[arg(long = "patience")]
+    pub patience: bool,
+
+    /// Use the minimal diff algorithm.
+    #[arg(long = "minimal")]
+    pub minimal: bool,
+
+    /// Select a diff algorithm (myers, minimal, patience, histogram).
+    #[arg(long = "diff-algorithm")]
+    pub diff_algorithm: Option<String>,
+
     /// Colorize the output. Values: always, never, auto.
     #[arg(long = "color", value_name = "WHEN", default_missing_value = "always", num_args = 0..=1)]
     pub color: Option<String>,
