@@ -1312,3 +1312,4 @@ tests/t7011-skip-worktree-reading.sh
 tests/t7012-skip-worktree-writing.sh
 tests/t7031-verify-tag-signed-ssh.sh
 tests/t7060-wtstatus.sh
+tests/t7061-wtstatus-ignore.sh
