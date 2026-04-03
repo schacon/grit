@@ -44,9 +44,9 @@ test_expect_failure '--raw --relative=subdir/ (not implemented)' '
 	grep "file2" actual
 '
 
-test_expect_failure '--relative from subdir (not implemented)' '
+test_expect_success '--relative from subdir' '
 	cd repo/subdir &&
-	git diff -p --relative HEAD^^ >actual &&
+	git diff -p --relative HEAD^ >actual &&
 	grep "file2" actual
 '
 
@@ -56,9 +56,9 @@ test_expect_success '--no-relative' '
 	grep "subdir/file2" actual
 '
 
-test_expect_failure 'config diff.relative (not implemented)' '
+test_expect_success 'config diff.relative' '
 	cd repo/subdir &&
-	git -c diff.relative=true diff -p HEAD^^ >actual &&
+	git -c diff.relative=true diff -p HEAD^ >actual &&
 	grep "file2" actual
 '
 

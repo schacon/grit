@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, DiffStatus};
+use grit_lib::diff::{detect_renames, diff_index_to_tree, diff_index_to_worktree, DiffStatus};
 use grit_lib::error::Error;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::Index;
@@ -74,7 +74,9 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     // Diff: staged (index vs HEAD tree)
-    let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
+    let staged_raw = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
+    // Detect renames among staged entries (delete+add → rename at 50% threshold)
+    let staged = detect_renames(&repo.odb, staged_raw, 50);
 
     // Diff: unstaged (worktree vs index)
     let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
@@ -208,10 +210,23 @@ fn format_short(
     let mut unstaged_map: std::collections::HashMap<String, char> =
         std::collections::HashMap::new();
 
+    // Track rename pairs: old_path -> (status_char, display_string)
+    let mut staged_renames: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
+
     for entry in staged {
-        let path = entry.path().to_owned();
-        staged_map.insert(path.clone(), entry.status.letter());
-        paths.insert(path);
+        if entry.status == DiffStatus::Renamed {
+            let old = entry.old_path.as_deref().unwrap_or("").to_owned();
+            let new = entry.new_path.as_deref().unwrap_or("").to_owned();
+            let display = format!("{old} -> {new}");
+            staged_map.insert(new.clone(), 'R');
+            staged_renames.insert(new.clone(), (old, display));
+            paths.insert(new);
+        } else {
+            let path = entry.path().to_owned();
+            staged_map.insert(path.clone(), entry.status.letter());
+            paths.insert(path);
+        }
     }
 
     for entry in unstaged {
@@ -223,7 +238,11 @@ fn format_short(
     for path in &paths {
         let x = staged_map.get(path).copied().unwrap_or(' ');
         let y = unstaged_map.get(path).copied().unwrap_or(' ');
-        write!(out, "{x}{y} {path}{terminator}")?;
+        if let Some((_old, display)) = staged_renames.get(path) {
+            write!(out, "{x}{y} {display}{terminator}")?;
+        } else {
+            write!(out, "{x}{y} {path}{terminator}")?;
+        }
     }
 
     for path in untracked {
