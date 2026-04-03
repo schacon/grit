@@ -140,6 +140,10 @@ pub struct Args {
     #[arg(long = "diff-filter")]
     pub diff_filter: Option<String>,
 
+    /// Only show commits that add or remove the given object.
+    #[arg(long = "find-object")]
+    pub find_object: Option<String>,
+
     /// Pathspecs (after --).
     #[arg(last = true)]
     pub pathspecs: Vec<String>,
@@ -269,6 +273,22 @@ pub fn run(args: Args) -> Result<()> {
                 match commit_has_diff_status(&repo.odb, info, &filter_chars) {
                     Ok(has) => has,
                     Err(_) => true, // include on error
+                }
+            })
+            .collect::<Vec<_>>()
+    } else {
+        commits
+    };
+
+    // Apply --find-object: only show commits that introduce or remove the given object
+    let commits = if let Some(ref find_obj_rev) = args.find_object {
+        let find_oid = resolve_revision(&repo, find_obj_rev)?;
+        commits
+            .into_iter()
+            .filter(|(_oid, info)| {
+                match commit_has_object(&repo.odb, info, &find_oid) {
+                    Ok(has) => has,
+                    Err(_) => false,
                 }
             })
             .collect::<Vec<_>>()
@@ -1689,6 +1709,29 @@ fn commit_has_diff_status(
     for entry in &entries {
         let letter = entry.status.letter();
         if filter_chars.contains(&letter) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Check whether a commit's diff introduces or removes a specific object.
+fn commit_has_object(
+    odb: &Odb,
+    info: &CommitInfo,
+    target: &ObjectId,
+) -> Result<bool> {
+    let parent_tree = if let Some(parent) = info.parents.first() {
+        let pobj = odb.read(parent)?;
+        let pc = parse_commit(&pobj.data)?;
+        Some(pc.tree)
+    } else {
+        None
+    };
+
+    let entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
+    for entry in &entries {
+        if entry.old_oid == *target || entry.new_oid == *target {
             return Ok(true);
         }
     }

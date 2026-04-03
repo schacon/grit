@@ -423,7 +423,7 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 
     if let Some((treeish, path)) = split_treeish_spec(spec) {
-        let root_oid = resolve_base(repo, treeish)?;
+        let root_oid = resolve_revision(repo, treeish)?;
         return resolve_treeish_path(repo, root_oid, path);
     }
 
