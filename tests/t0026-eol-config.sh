@@ -1,0 +1,73 @@
+#!/bin/sh
+
+test_description='CRLF conversion via eol config'
+
+cd "$(dirname "$0")" || exit 1
+. ./test-lib.sh
+
+has_cr() {
+	tr '\015' Q <"$1" | grep Q >/dev/null
+}
+
+test_expect_success 'setup' '
+	git init &&
+	git config core.autocrlf false &&
+	echo "one text" > .gitattributes &&
+	test_write_lines Hello world how are you >one &&
+	test_write_lines I am very very fine thank you >two &&
+	git add . &&
+	git commit -m initial &&
+	one=$(git rev-parse HEAD:one) &&
+	two=$(git rev-parse HEAD:two) &&
+	echo "$one" >.one_oid &&
+	echo "$two" >.two_oid &&
+	echo happy.
+'
+
+test_expect_success 'eol=lf puts LFs in normalized file' '
+	rm -f .gitattributes tmp one two &&
+	git config core.eol lf &&
+	git read-tree --reset -u HEAD &&
+	! has_cr one &&
+	! has_cr two &&
+	onediff=$(git diff one) &&
+	twodiff=$(git diff two) &&
+	test -z "$onediff" && test -z "$twodiff"
+'
+
+test_expect_failure 'eol=crlf puts CRLFs in normalized file' '
+	rm -f .gitattributes tmp one two &&
+	git config core.eol crlf &&
+	git read-tree --reset -u HEAD &&
+	has_cr one &&
+	! has_cr two &&
+	onediff=$(git diff one) &&
+	twodiff=$(git diff two) &&
+	test -z "$onediff" && test -z "$twodiff"
+'
+
+test_expect_failure 'autocrlf=true overrides eol=lf' '
+	rm -f .gitattributes tmp one two &&
+	git config core.eol lf &&
+	git config core.autocrlf true &&
+	git read-tree --reset -u HEAD &&
+	has_cr one &&
+	has_cr two &&
+	onediff=$(git diff one) &&
+	twodiff=$(git diff two) &&
+	test -z "$onediff" && test -z "$twodiff"
+'
+
+test_expect_failure 'autocrlf=true overrides unset eol' '
+	rm -f .gitattributes tmp one two &&
+	git config --unset-all core.eol &&
+	git config core.autocrlf true &&
+	git read-tree --reset -u HEAD &&
+	has_cr one &&
+	has_cr two &&
+	onediff=$(git diff one) &&
+	twodiff=$(git diff two) &&
+	test -z "$onediff" && test -z "$twodiff"
+'
+
+test_done

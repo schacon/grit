@@ -1,21 +1,27 @@
 #!/bin/sh
 
-test_description='Test detached HEAD operations'
+test_description='Test reflog interaction with detached HEAD'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
+cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com"
-'
+# grit does not yet support log -g (reflog walk).
+# We test checkout between branches and detached HEAD states,
+# then mark reflog walk tests as expected failures.
 
 test_expect_success 'setup' '
-	git commit --allow-empty -m initial &&
+	git init &&
+	git config user.name "Test" &&
+	git config user.email "test@test.com" &&
+	echo initial >file &&
+	git add file &&
+	git commit -m initial &&
 	git branch side &&
-	git commit --allow-empty -m second
+	echo second >file &&
+	git add file &&
+	git commit -m second
 '
 
 test_expect_success 'switch to branch' '
@@ -25,17 +31,34 @@ test_expect_success 'switch to branch' '
 	test_cmp expect actual
 '
 
-test_expect_success 'detach to self' '
+test_expect_success 'detach to other commit' '
 	git checkout main &&
-	git checkout main^0 &&
+	MAIN_OID=$(git rev-parse main) &&
+	git checkout "$MAIN_OID" &&
 	test_must_fail git symbolic-ref HEAD
 '
 
-test_expect_success 'attach to branch from detached' '
+test_expect_success 'attach back to branch' '
 	git checkout side &&
 	echo refs/heads/side >expect &&
 	git symbolic-ref HEAD >actual &&
 	test_cmp expect actual
+'
+
+test_expect_failure 'baseline reflog walk' '
+	git checkout main &&
+	git rev-parse main main^ >expect &&
+	git log -g --format=%H >actual &&
+	test_cmp expect actual
+'
+
+test_expect_failure 'switch to branch reflog' '
+	git checkout side &&
+	git log -g --format=%H >actual &&
+	head -1 actual >first &&
+	SIDE_OID=$(git rev-parse side) &&
+	echo "$SIDE_OID" >expect &&
+	test_cmp expect first
 '
 
 test_done
