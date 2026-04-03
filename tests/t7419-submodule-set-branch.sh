@@ -33,7 +33,7 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'submodule set-branch' '
+test_expect_success 'submodule set-branch' '
 	cd super &&
 	git submodule set-branch --branch main sub
 '

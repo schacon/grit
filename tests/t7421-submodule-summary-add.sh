@@ -35,7 +35,7 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'submodule summary output for initialized submodule' '
+test_expect_success 'submodule summary output for initialized submodule' '
 	cd super &&
 	"$REAL_GIT" submodule add "$TRASH_DIRECTORY/sm" my-subm &&
 	"$REAL_GIT" commit -m "add submodule" &&

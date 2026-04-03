@@ -34,7 +34,7 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'submodule summary basic usage' '
+test_expect_success 'submodule summary basic usage' '
 	cd main-repo &&
 	"$REAL_GIT" -c protocol.file.allow=always submodule add ../sm1 sm1 &&
 	"$REAL_GIT" commit -m "add submodule" &&

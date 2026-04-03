@@ -33,7 +33,7 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'submodule absorbgitdirs' '
+test_expect_success 'submodule absorbgitdirs' '
 	cd super &&
 	git submodule absorbgitdirs
 '

@@ -33,7 +33,7 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'submodule sync updates url' '
+test_expect_success 'submodule sync updates url' '
 	cd super &&
 	git submodule sync
 '
