@@ -397,6 +397,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 s if s.starts_with("--color-moved") => {
                     args.color_moved = Some("default".to_owned());
                 }
+                s if s.starts_with("-O") && s.len() > 2 => {
+                    args.order_file = Some(s[2..].to_owned());
+                }
                 _ => { extra_revs.push(r.clone()); continue; }
             }
         } else {
@@ -641,6 +644,9 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         entries
     };
+
+    // Apply orderfile sorting (-O <file> or diff.orderFile config)
+    let entries = apply_orderfile(entries, &args.order_file, &repo.git_dir)?;
 
     let has_diff = !entries.is_empty();
 
@@ -1533,6 +1539,90 @@ fn write_shortstat(
 }
 
 /// Get the terminal width, defaulting to 80 if unavailable.
+/// Apply orderfile sorting: entries matching earlier patterns come first.
+/// Patterns are simple glob patterns (fnmatch-style) read from the given file.
+fn apply_orderfile(
+    mut entries: Vec<DiffEntry>,
+    order_file: &Option<String>,
+    git_dir: &Path,
+) -> Result<Vec<DiffEntry>> {
+    let path = match order_file {
+        Some(p) => Some(p.clone()),
+        None => {
+            // Check diff.orderFile config
+            use grit_lib::config::ConfigSet;
+            let cfg = ConfigSet::load(Some(git_dir), false)
+                .unwrap_or_else(|_| ConfigSet::new());
+            cfg.get("diff.orderFile")
+        }
+    };
+    let path = match path {
+        Some(p) if !p.is_empty() => p,
+        _ => return Ok(entries),
+    };
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return Ok(entries), // silently ignore missing orderfile
+    };
+    let patterns: Vec<&str> = content.lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    if patterns.is_empty() {
+        return Ok(entries);
+    }
+    // Assign a sort key to each entry: index of the first matching pattern,
+    // or patterns.len() for non-matching entries (they go last).
+    let sort_key = |e: &DiffEntry| -> usize {
+        let path = e.path();
+        for (i, pat) in patterns.iter().enumerate() {
+            if orderfile_match(pat, path) {
+                return i;
+            }
+        }
+        patterns.len()
+    };
+    entries.sort_by_key(sort_key);
+    Ok(entries)
+}
+
+/// Simple glob matching for orderfile patterns.
+/// Supports `*` as a wildcard matching any substring.
+fn orderfile_match(pattern: &str, path: &str) -> bool {
+    // If pattern has no '/', match against just the filename
+    let name = if !pattern.contains('/') {
+        path.rsplit('/').next().unwrap_or(path)
+    } else {
+        path
+    };
+    glob_match(pattern, name)
+}
+
+/// Simple glob match: `*` matches any number of chars, `?` matches one char.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let txt: Vec<char> = text.chars().collect();
+    glob_match_inner(&pat, &txt)
+}
+
+fn glob_match_inner(pat: &[char], txt: &[char]) -> bool {
+    match (pat.first(), txt.first()) {
+        (None, None) => true,
+        (Some(&'*'), _) => {
+            // Try matching rest of pattern at every position
+            for i in 0..=txt.len() {
+                if glob_match_inner(&pat[1..], &txt[i..]) {
+                    return true;
+                }
+            }
+            false
+        }
+        (Some(&'?'), Some(_)) => glob_match_inner(&pat[1..], &txt[1..]),
+        (Some(&a), Some(&b)) if a == b => glob_match_inner(&pat[1..], &txt[1..]),
+        _ => false,
+    }
+}
+
 fn terminal_width() -> usize {
     // Try COLUMNS env var first
     if let Ok(cols) = std::env::var("COLUMNS") {

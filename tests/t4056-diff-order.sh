@@ -33,7 +33,7 @@ test_expect_success 'no order (=tree object order)' '
 	test_cmp expect_none actual
 '
 
-test_expect_failure 'orderfile using option (-O) (not implemented)' '
+test_expect_success 'orderfile using option (-O)' '
 	cat >order_file_1 <<-\EOF &&
 	*Makefile
 	*.txt
