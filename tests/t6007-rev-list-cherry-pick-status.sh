@@ -112,12 +112,12 @@ test_expect_success 'rev-list --cherry-pick with --count' '
 	test $(cat actual) -ge 1
 '
 
-test_expect_failure 'rev-list --no-merges filters merge commits' '
+test_expect_success 'rev-list --no-merges filters merge commits' '
 	git rev-list --no-merges left >actual &&
 	test_line_count = 3 actual
 '
 
-test_expect_failure 'rev-list --merges shows only merge commits' '
+test_expect_success 'rev-list --merges shows only merge commits' '
 	git rev-list --merges left >actual &&
 	test_line_count = 0 actual
 '
