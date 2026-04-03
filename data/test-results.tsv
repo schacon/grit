@@ -904,28 +904,28 @@ t0081-find-pack::setup	t0081-find-pack	setup		pass
 t0081-find-pack::repack-everything-into-a-single-packfile	t0081-find-pack	repack everything into a single packfile	repack	pass
 t0081-find-pack::add-more-packfiles	t0081-find-pack	add more packfiles	pack-objects	pass
 t0081-find-pack::add-more-commits-as-loose-objects	t0081-find-pack	add more commits (as loose objects)		pass
-t0090-cache-tree::initial-commit-has-cache-tree	t0090-cache-tree	initial commit has cache-tree		pass
-t0090-cache-tree::read-tree-head-establishes-cache-tree	t0090-cache-tree	read-tree HEAD establishes cache-tree	read-tree	pass
-t0090-cache-tree::git-add-invalidates-cache-tree	t0090-cache-tree	git-add invalidates cache-tree	add	pass
-t0090-cache-tree::git-add-in-subdir-invalidates-cache-tree	t0090-cache-tree	git-add in subdir invalidates cache-tree	add	pass
-t0090-cache-tree::git-add-in-subdir-does-not-invalidate-sibling-cache-tree	t0090-cache-tree	git-add in subdir does not invalidate sibling cache-tree	add	pass
-t0090-cache-tree::update-index-invalidates-cache-tree	t0090-cache-tree	update-index invalidates cache-tree	read-tree	pass
-t0090-cache-tree::write-tree-establishes-cache-tree	t0090-cache-tree	write-tree establishes cache-tree	write-tree	pass
-t0090-cache-tree::test-tool-scrap-cache-tree-works	t0090-cache-tree	test-tool scrap-cache-tree works	read-tree	pass
-t0090-cache-tree::second-commit-has-cache-tree	t0090-cache-tree	second commit has cache-tree		pass
-t0090-cache-tree::commit-interactive-gives-cache-tree-on-partial-commit	t0090-cache-tree	commit --interactive gives cache-tree on partial commit	add	pass
-t0090-cache-tree::commit-p-with-shrinking-cache-tree	t0090-cache-tree	commit -p with shrinking cache-tree	add	pass
-t0090-cache-tree::commit-in-child-dir-has-cache-tree	t0090-cache-tree	commit in child dir has cache-tree	add	pass
-t0090-cache-tree::reset-hard-gives-cache-tree	t0090-cache-tree	reset --hard gives cache-tree	reset	pass
-t0090-cache-tree::reset-hard-without-index-gives-cache-tree	t0090-cache-tree	reset --hard without index gives cache-tree	clean	pass
-t0090-cache-tree::checkout-gives-cache-tree	t0090-cache-tree	checkout gives cache-tree	checkout	pass
-t0090-cache-tree::checkout-b-gives-cache-tree	t0090-cache-tree	checkout -b gives cache-tree	checkout	pass
-t0090-cache-tree::checkout-b-gives-cache-tree-2	t0090-cache-tree	checkout -B gives cache-tree	checkout	pass
-t0090-cache-tree::merge-ff-only-maintains-cache-tree	t0090-cache-tree	merge --ff-only maintains cache-tree	checkout	pass
-t0090-cache-tree::merge-maintains-cache-tree	t0090-cache-tree	merge maintains cache-tree	checkout	pass
-t0090-cache-tree::partial-commit-gives-cache-tree	t0090-cache-tree	partial commit gives cache-tree	add	pass
-t0090-cache-tree::no-phantom-error-when-switching-trees	t0090-cache-tree	no phantom error when switching trees	add	pass
-t0090-cache-tree::switching-trees-does-not-invalidate-shared-index	t0090-cache-tree	switching trees does not invalidate shared index	add	pass
+t0090-cache-tree::initial-commit-has-cache-tree	t0090-cache-tree	initial commit has cache-tree		partial
+t0090-cache-tree::read-tree-head-establishes-cache-tree	t0090-cache-tree	read-tree HEAD establishes cache-tree	read-tree	partial
+t0090-cache-tree::git-add-invalidates-cache-tree	t0090-cache-tree	git-add invalidates cache-tree	add	partial
+t0090-cache-tree::git-add-in-subdir-invalidates-cache-tree	t0090-cache-tree	git-add in subdir invalidates cache-tree	add	partial
+t0090-cache-tree::git-add-in-subdir-does-not-invalidate-sibling-cache-tree	t0090-cache-tree	git-add in subdir does not invalidate sibling cache-tree	add	partial
+t0090-cache-tree::update-index-invalidates-cache-tree	t0090-cache-tree	update-index invalidates cache-tree	read-tree	partial
+t0090-cache-tree::write-tree-establishes-cache-tree	t0090-cache-tree	write-tree establishes cache-tree	write-tree	partial
+t0090-cache-tree::test-tool-scrap-cache-tree-works	t0090-cache-tree	test-tool scrap-cache-tree works	read-tree	partial
+t0090-cache-tree::second-commit-has-cache-tree	t0090-cache-tree	second commit has cache-tree		partial
+t0090-cache-tree::commit-interactive-gives-cache-tree-on-partial-commit	t0090-cache-tree	commit --interactive gives cache-tree on partial commit	add	partial
+t0090-cache-tree::commit-p-with-shrinking-cache-tree	t0090-cache-tree	commit -p with shrinking cache-tree	add	partial
+t0090-cache-tree::commit-in-child-dir-has-cache-tree	t0090-cache-tree	commit in child dir has cache-tree	add	partial
+t0090-cache-tree::reset-hard-gives-cache-tree	t0090-cache-tree	reset --hard gives cache-tree	reset	partial
+t0090-cache-tree::reset-hard-without-index-gives-cache-tree	t0090-cache-tree	reset --hard without index gives cache-tree	clean	partial
+t0090-cache-tree::checkout-gives-cache-tree	t0090-cache-tree	checkout gives cache-tree	checkout	partial
+t0090-cache-tree::checkout-b-gives-cache-tree	t0090-cache-tree	checkout -b gives cache-tree	checkout	partial
+t0090-cache-tree::checkout-b-gives-cache-tree-2	t0090-cache-tree	checkout -B gives cache-tree	checkout	partial
+t0090-cache-tree::merge-ff-only-maintains-cache-tree	t0090-cache-tree	merge --ff-only maintains cache-tree	checkout	partial
+t0090-cache-tree::merge-maintains-cache-tree	t0090-cache-tree	merge maintains cache-tree	checkout	partial
+t0090-cache-tree::partial-commit-gives-cache-tree	t0090-cache-tree	partial commit gives cache-tree	add	partial
+t0090-cache-tree::no-phantom-error-when-switching-trees	t0090-cache-tree	no phantom error when switching trees	add	partial
+t0090-cache-tree::switching-trees-does-not-invalidate-shared-index	t0090-cache-tree	switching trees does not invalidate shared index	add	partial
 t0091-bugreport::create-a-report	t0091-bugreport	create a report		pass
 t0091-bugreport::report-contains-wanted-template-before-first-section	t0091-bugreport	report contains wanted template (before first section)		pass
 t0091-bugreport::sanity-check-system-info-section	t0091-bugreport	sanity check "System Info" section	version	pass
@@ -954,12 +954,12 @@ t0095-bloom::compute-bloom-key-for-test-string-2	t0095-bloom	compute bloom key f
 t0095-bloom::get-bloom-filters-for-commit-with-no-changes	t0095-bloom	get bloom filters for commit with no changes	commit	pass
 t0095-bloom::get-bloom-filter-for-commit-with-10-changes	t0095-bloom	get bloom filter for commit with 10 changes	add	pass
 t0095-bloom::get-bloom-filter-for-commit-with-513-changes	t0095-bloom	get bloom filter for commit with 513 changes	add	pass
-t0100-previous::branch-d-1	t0100-previous	branch -d @{-1}	branch	partial
-t0100-previous::branch-d-12-when-there-is-not-enough-switches-yet	t0100-previous	branch -d @{-12} when there is not enough switches yet	branch	partial
-t0100-previous::merge-1	t0100-previous	merge @{-1}	branch	partial
-t0100-previous::merge-1-1	t0100-previous	merge @{-1}~1	cat-file	partial
-t0100-previous::merge-100-before-checking-out-that-many-branches-yet	t0100-previous	merge @{-100} before checking out that many branches yet	branch	partial
-t0100-previous::log-g-1	t0100-previous	log -g @{-1}	checkout	partial
+t0100-previous::branch-d-1	t0100-previous	branch -d @{-1}	branch	pass
+t0100-previous::branch-d-12-when-there-is-not-enough-switches-yet	t0100-previous	branch -d @{-12} when there is not enough switches yet	branch	pass
+t0100-previous::merge-1	t0100-previous	merge @{-1}	branch	pass
+t0100-previous::merge-1-1	t0100-previous	merge @{-1}~1	cat-file	pass
+t0100-previous::merge-100-before-checking-out-that-many-branches-yet	t0100-previous	merge @{-100} before checking out that many branches yet	branch	pass
+t0100-previous::log-g-1	t0100-previous	log -g @{-1}	checkout	pass
 t0101-at-syntax::setup	t0101-at-syntax	setup		pass
 t0101-at-syntax::0-shows-current	t0101-at-syntax	@{0} shows current		pass
 t0101-at-syntax::1-shows-old	t0101-at-syntax	@{1} shows old		pass
@@ -1454,123 +1454,123 @@ t1005-read-tree-reset::two-way-reset-should-remove-remnants-too	t1005-read-tree-
 t1005-read-tree-reset::porcelain-reset-should-remove-remnants-too	t1005-read-tree-reset	Porcelain reset should remove remnants too	read-tree	pass
 t1005-read-tree-reset::porcelain-checkout-f-should-remove-remnants-too	t1005-read-tree-reset	Porcelain checkout -f should remove remnants too	read-tree	pass
 t1005-read-tree-reset::porcelain-checkout-f-head-should-remove-remnants-too	t1005-read-tree-reset	Porcelain checkout -f HEAD should remove remnants too	read-tree	pass
-t1006-cat-file::batch-check-with-objectmode	t1006-cat-file	--batch-check with %(objectmode)	cat-file	partial
-t1006-cat-file::compat-setup	t1006-cat-file	compat setup	cat-file	partial
-t1006-cat-file::setup-part-2	t1006-cat-file	setup part 2	cat-file	partial
-t1006-cat-file::batch-command-buffer-with-flush-for-blob-info	t1006-cat-file	--batch-command --buffer with flush for blob info	cat-file	partial
-t1006-cat-file::batch-command-buffer-without-flush-for-blob-info	t1006-cat-file	--batch-command --buffer without flush for blob info	cat-file	partial
-t1006-cat-file::batch-check-without-rest-considers-whole-line	t1006-cat-file	--batch-check without %(rest) considers whole line	cat-file	partial
-t1006-cat-file::empty-batch-check-notices-missing-object	t1006-cat-file	empty --batch-check notices missing object	cat-file	partial
-t1006-cat-file::batch-with-multiple-oids-gives-correct-format	t1006-cat-file	--batch with multiple oids gives correct format	cat-file	partial
-t1006-cat-file::batch-z-with-multiple-oids-gives-correct-format	t1006-cat-file	--batch, -z with multiple oids gives correct format	cat-file	partial
-t1006-cat-file::batch-z-with-multiple-oids-gives-correct-format-2	t1006-cat-file	--batch, -Z with multiple oids gives correct format	cat-file	partial
-t1006-cat-file::batch-command-with-multiple-info-calls-gives-correct-format	t1006-cat-file	--batch-command with multiple info calls gives correct format	cat-file	partial
-t1006-cat-file::batch-command-with-multiple-command-calls-gives-correct-format	t1006-cat-file	--batch-command with multiple command calls gives correct format	cat-file	partial
-t1006-cat-file::setup-with-newline-in-input	t1006-cat-file	setup with newline in input	cat-file	partial
-t1006-cat-file::batch-check-z-with-newline-in-input	t1006-cat-file	--batch-check, -z with newline in input	cat-file	partial
-t1006-cat-file::batch-check-z-with-newline-in-input-2	t1006-cat-file	--batch-check, -Z with newline in input	cat-file	partial
-t1006-cat-file::setup-with-curly-braches-in-input	t1006-cat-file	setup with curly braches in input	cat-file	partial
-t1006-cat-file::object-reference-with-curly-brace	t1006-cat-file	object reference with curly brace	cat-file	partial
-t1006-cat-file::object-reference-with-at-sign	t1006-cat-file	object reference with at-sign	cat-file	partial
-t1006-cat-file::setup-with-commit-with-colon	t1006-cat-file	setup with commit with colon	cat-file	partial
-t1006-cat-file::object-reference-via-commit-text-search	t1006-cat-file	object reference via commit text search	cat-file	partial
-t1006-cat-file::setup-blobs-which-are-likely-to-delta	t1006-cat-file	setup blobs which are likely to delta	cat-file	partial
-t1006-cat-file::confirm-that-neither-loose-blob-is-a-delta	t1006-cat-file	confirm that neither loose blob is a delta	cat-file	partial
-t1006-cat-file::deltabase-reports-packed-delta-bases	t1006-cat-file	%(deltabase) reports packed delta bases	cat-file	partial
-t1006-cat-file::setup-bogus-data	t1006-cat-file	setup bogus data	cat-file	partial
-t1006-cat-file::e-is-ok-with-a-broken-object	t1006-cat-file	-e is OK with a broken object	cat-file	partial
-t1006-cat-file::type-hash-does-not-work-with-objects-of-broken-types	t1006-cat-file	<type> <hash> does not work with objects of broken types	cat-file	partial
-t1006-cat-file::broken-types-combined-with-batch-and-batch-check	t1006-cat-file	broken types combined with --batch and --batch-check	cat-file	partial
-t1006-cat-file::clean-up-broken-objects	t1006-cat-file	clean up broken objects	cat-file	partial
-t1006-cat-file::cat-file-t-and-s-on-corrupt-loose-object	t1006-cat-file	cat-file -t and -s on corrupt loose object	cat-file	partial
-t1006-cat-file::object-reading-handles-zlib-dictionary	t1006-cat-file	object reading handles zlib dictionary	cat-file	partial
-t1006-cat-file::prep-for-symlink-tests	t1006-cat-file	prep for symlink tests	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-non-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for non-links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-in-repo-same-dir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for in-repo, same-dir links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-in-repo-links-to-dirs	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for in-repo, links to dirs	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-broken-in-repo-same-dir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for broken in-repo, same-dir links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-z-works-for-broken-in-repo-same-dir-lin	t1006-cat-file	git cat-file --batch-check --follow-symlinks -Z works for broken in-repo, same-dir links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-same-dir-links-to-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for same-dir links-to-links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-parent-dir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for parent-dir links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-z-works-for-parent-dir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks -Z works for parent-dir links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for .. links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-links-2	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for ../.. links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-dir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for dir/ links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-dir-subdir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for dir/subdir links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-dir-subdir-links-2	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for dir ->subdir links	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-out-of-repo-symlinks	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for out-of-repo symlinks	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-out-of-repo-symlinks-in-dirs	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for out-of-repo symlinks in dirs	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-out-of-repo-symlinks-in-subdi	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for out-of-repo symlinks in subdirs	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-symlinks-with-internal	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for symlinks with internal ..	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlink-breaks-loops	t1006-cat-file	git cat-file --batch-check --follow-symlink breaks loops	cat-file	partial
-t1006-cat-file::git-cat-file-batch-check-follow-symlink-z-breaks-loops	t1006-cat-file	git cat-file --batch-check --follow-symlink -Z breaks loops	cat-file	partial
-t1006-cat-file::git-cat-file-batch-follow-symlink-returns-correct-sha-and-mode	t1006-cat-file	git cat-file --batch --follow-symlink returns correct sha and mode	cat-file	partial
-t1006-cat-file::cat-file-batch-all-objects-shows-all-objects	t1006-cat-file	cat-file --batch-all-objects shows all objects	cat-file	partial
-t1006-cat-file::cat-file-unordered-works	t1006-cat-file	cat-file --unordered works	cat-file	partial
-t1006-cat-file::set-up-object-list-for-batch-all-objects-tests	t1006-cat-file	set up object list for --batch-all-objects tests	cat-file	partial
-t1006-cat-file::cat-file-batch-objectname-with-batch-all-objects-will-work	t1006-cat-file	cat-file --batch="%(objectname)" with --batch-all-objects will work	cat-file	partial
-t1006-cat-file::cat-file-batch-rest-with-batch-all-objects-will-work	t1006-cat-file	cat-file --batch="%(rest)" with --batch-all-objects will work	cat-file	partial
-t1006-cat-file::cat-file-batch-batman-with-batch-all-objects-will-work	t1006-cat-file	cat-file --batch="batman" with --batch-all-objects will work	cat-file	partial
-t1006-cat-file::cat-file-objectsize-disk-with-batch-all-objects	t1006-cat-file	cat-file %(objectsize:disk) with --batch-all-objects	cat-file	partial
-t1006-cat-file::set-up-replacement-object	t1006-cat-file	set up replacement object	cat-file	partial
-t1006-cat-file::cat-file-batch-respects-replace-objects	t1006-cat-file	cat-file --batch respects replace objects	cat-file	partial
-t1006-cat-file::cat-file-batch-check-respects-replace-objects	t1006-cat-file	cat-file --batch-check respects replace objects	cat-file	partial
-t1006-cat-file::batch-check-with-a-submodule	t1006-cat-file	batch-check with a submodule	cat-file	partial
-t1006-cat-file::batch-check-with-a-submodule-object-exists	t1006-cat-file	batch-check with a submodule, object exists	cat-file	partial
-t1006-cat-file::cat-file-batch-all-objects-batch-ignores-replace	t1006-cat-file	cat-file --batch-all-objects --batch ignores replace	cat-file	partial
-t1006-cat-file::cat-file-batch-all-objects-batch-check-ignores-replace	t1006-cat-file	cat-file --batch-all-objects --batch-check ignores replace	cat-file	partial
-t1006-cat-file::batch-command-empty-command	t1006-cat-file	batch-command empty command	cat-file	partial
-t1006-cat-file::batch-command-whitespace-before-command	t1006-cat-file	batch-command whitespace before command	cat-file	partial
-t1006-cat-file::batch-command-unknown-command	t1006-cat-file	batch-command unknown command	cat-file	partial
-t1006-cat-file::batch-command-missing-arguments	t1006-cat-file	batch-command missing arguments	cat-file	partial
-t1006-cat-file::batch-command-flush-with-arguments	t1006-cat-file	batch-command flush with arguments	cat-file	partial
-t1006-cat-file::batch-command-flush-without-buffer	t1006-cat-file	batch-command flush without --buffer	cat-file	partial
-t1006-cat-file::setup-for-objects-filter	t1006-cat-file	setup for objects filter	cat-file	partial
-t1006-cat-file::objects-filter-with-unknown-option	t1006-cat-file	objects filter with unknown option	cat-file	partial
-t1006-cat-file::objects-filter-disabled	t1006-cat-file	objects filter: disabled	cat-file	partial
-t1006-cat-file::usage-cmdmode-switches	t1006-cat-file	usage: cmdmode $switches	cat-file	partial
-t1006-cat-file::usage-incompatible-options-path-with-opt	t1006-cat-file	usage: incompatible options: --path with $opt	cat-file	partial
-t1006-cat-file::usage-opt-requires-another-option	t1006-cat-file	usage: $opt requires another option	cat-file	partial
-t1006-cat-file::usage-opt-requires-another-option-2	t1006-cat-file	usage: $opt requires another option	cat-file	partial
-t1006-cat-file::usage-incompatible-options-opt-and-opt2	t1006-cat-file	usage: incompatible options: $opt and $opt2	cat-file	partial
-t1006-cat-file::usage-too-many-arguments-opt-args	t1006-cat-file	usage: too many arguments: $opt $args	cat-file	partial
-t1006-cat-file::usage-incompatible-arguments-opt-with-batch-option-opt2	t1006-cat-file	usage: incompatible arguments: $opt with batch option $opt2	cat-file	partial
-t1006-cat-file::usage-bad-option-combination-opt-without-batch-mode	t1006-cat-file	usage: bad option combination: $opt without batch mode	cat-file	partial
-t1006-cat-file::type-exists	t1006-cat-file	$type exists	cat-file	partial
-t1006-cat-file::type-of-type-is-correct	t1006-cat-file	Type of $type is correct	cat-file	partial
-t1006-cat-file::size-of-type-is-correct	t1006-cat-file	Size of $type is correct	cat-file	partial
-t1006-cat-file::content-of-type-is-correct	t1006-cat-file	Content of $type is correct	cat-file	partial
-t1006-cat-file::pretty-content-of-type-is-correct	t1006-cat-file	Pretty content of $type is correct	cat-file	partial
-t1006-cat-file::batch-output-of-type-is-correct	t1006-cat-file	--batch output of $type is correct	cat-file	partial
-t1006-cat-file::batch-check-output-of-type-is-correct	t1006-cat-file	--batch-check output of $type is correct	cat-file	partial
-t1006-cat-file::batch-command-opt-output-of-type-content-is-correct	t1006-cat-file	--batch-command $opt output of $type content is correct	cat-file	partial
-t1006-cat-file::batch-command-opt-output-of-type-info-is-correct	t1006-cat-file	--batch-command $opt output of $type info is correct	cat-file	partial
-t1006-cat-file::custom-batch-check-format	t1006-cat-file	custom --batch-check format	cat-file	partial
-t1006-cat-file::custom-batch-command-format	t1006-cat-file	custom --batch-command format	cat-file	partial
-t1006-cat-file::batch-without-type-type	t1006-cat-file	--batch without type ($type)	cat-file	partial
-t1006-cat-file::batch-without-size-type	t1006-cat-file	--batch without size ($type)	cat-file	partial
-t1006-cat-file::setup-part-1	t1006-cat-file	setup part 1	cat-file	partial
-t1006-cat-file::reach-a-blob-from-a-tag-pointing-to-it	t1006-cat-file	Reach a blob from a tag pointing to it	cat-file	partial
-t1006-cat-file::passing-opt-with-batch-fails	t1006-cat-file	Passing -$opt with --$batch fails	cat-file	partial
-t1006-cat-file::passing-batch-with-opt-fails	t1006-cat-file	Passing --$batch with -$opt fails	cat-file	partial
-t1006-cat-file::passing-type-with-batch-fails	t1006-cat-file	Passing <type> with --$batch fails	cat-file	partial
-t1006-cat-file::passing-batch-with-type-fails	t1006-cat-file	Passing --$batch with <type> fails	cat-file	partial
-t1006-cat-file::passing-oid-with-batch-fails	t1006-cat-file	Passing oid with --$batch fails	cat-file	partial
-t1006-cat-file::passing-opt-with-follow-symlinks-fails	t1006-cat-file	Passing -$opt with --follow-symlinks fails	cat-file	partial
-t1006-cat-file::batch-check-for-a-non-existent-named-object	t1006-cat-file	--batch-check for a non-existent named object	cat-file	partial
-t1006-cat-file::batch-check-for-a-non-existent-hash	t1006-cat-file	--batch-check for a non-existent hash	cat-file	partial
-t1006-cat-file::batch-for-an-existent-and-a-non-existent-hash	t1006-cat-file	--batch for an existent and a non-existent hash	cat-file	partial
-t1006-cat-file::batch-check-for-an-empty-line	t1006-cat-file	--batch-check for an empty line	cat-file	partial
-t1006-cat-file::batch-check-with-multiple-oids-gives-correct-format	t1006-cat-file	--batch-check with multiple oids gives correct format	cat-file	partial
-t1006-cat-file::batch-check-z-with-multiple-oids-gives-correct-format	t1006-cat-file	--batch-check, -z with multiple oids gives correct format	cat-file	partial
-t1006-cat-file::batch-check-z-with-multiple-oids-gives-correct-format-2	t1006-cat-file	--batch-check, -Z with multiple oids gives correct format	cat-file	partial
-t1006-cat-file::cat-file-arg1-error-on-bogus-short-oid	t1006-cat-file	cat-file $arg1 error on bogus short OID	cat-file	partial
-t1006-cat-file::cat-file-arg1-error-on-bogus-full-oid	t1006-cat-file	cat-file $arg1 error on bogus full OID	cat-file	partial
-t1006-cat-file::cat-file-arg1-error-on-missing-short-oid	t1006-cat-file	cat-file $arg1 error on missing short OID	cat-file	partial
-t1006-cat-file::cat-file-arg1-error-on-missing-full-oid	t1006-cat-file	cat-file $arg1 error on missing full OID	cat-file	partial
-t1006-cat-file::objects-filter-with-unsupported-option-option	t1006-cat-file	objects filter with unsupported option $option	cat-file	partial
-t1006-cat-file::objects-filter-filter	t1006-cat-file	objects filter: $filter	cat-file	partial
-t1006-cat-file::objects-filter-prints-excluded-objects-filter	t1006-cat-file	objects filter prints excluded objects: $filter	cat-file	partial
+t1006-cat-file::batch-check-with-objectmode	t1006-cat-file	--batch-check with %(objectmode)	cat-file	pass
+t1006-cat-file::compat-setup	t1006-cat-file	compat setup	cat-file	pass
+t1006-cat-file::setup-part-2	t1006-cat-file	setup part 2	cat-file	pass
+t1006-cat-file::batch-command-buffer-with-flush-for-blob-info	t1006-cat-file	--batch-command --buffer with flush for blob info	cat-file	pass
+t1006-cat-file::batch-command-buffer-without-flush-for-blob-info	t1006-cat-file	--batch-command --buffer without flush for blob info	cat-file	pass
+t1006-cat-file::batch-check-without-rest-considers-whole-line	t1006-cat-file	--batch-check without %(rest) considers whole line	cat-file	pass
+t1006-cat-file::empty-batch-check-notices-missing-object	t1006-cat-file	empty --batch-check notices missing object	cat-file	pass
+t1006-cat-file::batch-with-multiple-oids-gives-correct-format	t1006-cat-file	--batch with multiple oids gives correct format	cat-file	pass
+t1006-cat-file::batch-z-with-multiple-oids-gives-correct-format	t1006-cat-file	--batch, -z with multiple oids gives correct format	cat-file	pass
+t1006-cat-file::batch-z-with-multiple-oids-gives-correct-format-2	t1006-cat-file	--batch, -Z with multiple oids gives correct format	cat-file	pass
+t1006-cat-file::batch-command-with-multiple-info-calls-gives-correct-format	t1006-cat-file	--batch-command with multiple info calls gives correct format	cat-file	pass
+t1006-cat-file::batch-command-with-multiple-command-calls-gives-correct-format	t1006-cat-file	--batch-command with multiple command calls gives correct format	cat-file	pass
+t1006-cat-file::setup-with-newline-in-input	t1006-cat-file	setup with newline in input	cat-file	pass
+t1006-cat-file::batch-check-z-with-newline-in-input	t1006-cat-file	--batch-check, -z with newline in input	cat-file	pass
+t1006-cat-file::batch-check-z-with-newline-in-input-2	t1006-cat-file	--batch-check, -Z with newline in input	cat-file	pass
+t1006-cat-file::setup-with-curly-braches-in-input	t1006-cat-file	setup with curly braches in input	cat-file	pass
+t1006-cat-file::object-reference-with-curly-brace	t1006-cat-file	object reference with curly brace	cat-file	pass
+t1006-cat-file::object-reference-with-at-sign	t1006-cat-file	object reference with at-sign	cat-file	pass
+t1006-cat-file::setup-with-commit-with-colon	t1006-cat-file	setup with commit with colon	cat-file	pass
+t1006-cat-file::object-reference-via-commit-text-search	t1006-cat-file	object reference via commit text search	cat-file	pass
+t1006-cat-file::setup-blobs-which-are-likely-to-delta	t1006-cat-file	setup blobs which are likely to delta	cat-file	pass
+t1006-cat-file::confirm-that-neither-loose-blob-is-a-delta	t1006-cat-file	confirm that neither loose blob is a delta	cat-file	pass
+t1006-cat-file::deltabase-reports-packed-delta-bases	t1006-cat-file	%(deltabase) reports packed delta bases	cat-file	pass
+t1006-cat-file::setup-bogus-data	t1006-cat-file	setup bogus data	cat-file	pass
+t1006-cat-file::e-is-ok-with-a-broken-object	t1006-cat-file	-e is OK with a broken object	cat-file	pass
+t1006-cat-file::type-hash-does-not-work-with-objects-of-broken-types	t1006-cat-file	<type> <hash> does not work with objects of broken types	cat-file	pass
+t1006-cat-file::broken-types-combined-with-batch-and-batch-check	t1006-cat-file	broken types combined with --batch and --batch-check	cat-file	pass
+t1006-cat-file::clean-up-broken-objects	t1006-cat-file	clean up broken objects	cat-file	pass
+t1006-cat-file::cat-file-t-and-s-on-corrupt-loose-object	t1006-cat-file	cat-file -t and -s on corrupt loose object	cat-file	pass
+t1006-cat-file::object-reading-handles-zlib-dictionary	t1006-cat-file	object reading handles zlib dictionary	cat-file	pass
+t1006-cat-file::prep-for-symlink-tests	t1006-cat-file	prep for symlink tests	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-non-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for non-links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-in-repo-same-dir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for in-repo, same-dir links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-in-repo-links-to-dirs	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for in-repo, links to dirs	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-broken-in-repo-same-dir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for broken in-repo, same-dir links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-z-works-for-broken-in-repo-same-dir-lin	t1006-cat-file	git cat-file --batch-check --follow-symlinks -Z works for broken in-repo, same-dir links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-same-dir-links-to-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for same-dir links-to-links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-parent-dir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for parent-dir links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-z-works-for-parent-dir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks -Z works for parent-dir links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for .. links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-links-2	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for ../.. links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-dir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for dir/ links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-dir-subdir-links	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for dir/subdir links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-dir-subdir-links-2	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for dir ->subdir links	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-out-of-repo-symlinks	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for out-of-repo symlinks	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-out-of-repo-symlinks-in-dirs	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for out-of-repo symlinks in dirs	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-out-of-repo-symlinks-in-subdi	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for out-of-repo symlinks in subdirs	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlinks-works-for-symlinks-with-internal	t1006-cat-file	git cat-file --batch-check --follow-symlinks works for symlinks with internal ..	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlink-breaks-loops	t1006-cat-file	git cat-file --batch-check --follow-symlink breaks loops	cat-file	pass
+t1006-cat-file::git-cat-file-batch-check-follow-symlink-z-breaks-loops	t1006-cat-file	git cat-file --batch-check --follow-symlink -Z breaks loops	cat-file	pass
+t1006-cat-file::git-cat-file-batch-follow-symlink-returns-correct-sha-and-mode	t1006-cat-file	git cat-file --batch --follow-symlink returns correct sha and mode	cat-file	pass
+t1006-cat-file::cat-file-batch-all-objects-shows-all-objects	t1006-cat-file	cat-file --batch-all-objects shows all objects	cat-file	pass
+t1006-cat-file::cat-file-unordered-works	t1006-cat-file	cat-file --unordered works	cat-file	pass
+t1006-cat-file::set-up-object-list-for-batch-all-objects-tests	t1006-cat-file	set up object list for --batch-all-objects tests	cat-file	pass
+t1006-cat-file::cat-file-batch-objectname-with-batch-all-objects-will-work	t1006-cat-file	cat-file --batch="%(objectname)" with --batch-all-objects will work	cat-file	pass
+t1006-cat-file::cat-file-batch-rest-with-batch-all-objects-will-work	t1006-cat-file	cat-file --batch="%(rest)" with --batch-all-objects will work	cat-file	pass
+t1006-cat-file::cat-file-batch-batman-with-batch-all-objects-will-work	t1006-cat-file	cat-file --batch="batman" with --batch-all-objects will work	cat-file	pass
+t1006-cat-file::cat-file-objectsize-disk-with-batch-all-objects	t1006-cat-file	cat-file %(objectsize:disk) with --batch-all-objects	cat-file	pass
+t1006-cat-file::set-up-replacement-object	t1006-cat-file	set up replacement object	cat-file	pass
+t1006-cat-file::cat-file-batch-respects-replace-objects	t1006-cat-file	cat-file --batch respects replace objects	cat-file	pass
+t1006-cat-file::cat-file-batch-check-respects-replace-objects	t1006-cat-file	cat-file --batch-check respects replace objects	cat-file	pass
+t1006-cat-file::batch-check-with-a-submodule	t1006-cat-file	batch-check with a submodule	cat-file	pass
+t1006-cat-file::batch-check-with-a-submodule-object-exists	t1006-cat-file	batch-check with a submodule, object exists	cat-file	pass
+t1006-cat-file::cat-file-batch-all-objects-batch-ignores-replace	t1006-cat-file	cat-file --batch-all-objects --batch ignores replace	cat-file	pass
+t1006-cat-file::cat-file-batch-all-objects-batch-check-ignores-replace	t1006-cat-file	cat-file --batch-all-objects --batch-check ignores replace	cat-file	pass
+t1006-cat-file::batch-command-empty-command	t1006-cat-file	batch-command empty command	cat-file	pass
+t1006-cat-file::batch-command-whitespace-before-command	t1006-cat-file	batch-command whitespace before command	cat-file	pass
+t1006-cat-file::batch-command-unknown-command	t1006-cat-file	batch-command unknown command	cat-file	pass
+t1006-cat-file::batch-command-missing-arguments	t1006-cat-file	batch-command missing arguments	cat-file	pass
+t1006-cat-file::batch-command-flush-with-arguments	t1006-cat-file	batch-command flush with arguments	cat-file	pass
+t1006-cat-file::batch-command-flush-without-buffer	t1006-cat-file	batch-command flush without --buffer	cat-file	pass
+t1006-cat-file::setup-for-objects-filter	t1006-cat-file	setup for objects filter	cat-file	pass
+t1006-cat-file::objects-filter-with-unknown-option	t1006-cat-file	objects filter with unknown option	cat-file	pass
+t1006-cat-file::objects-filter-disabled	t1006-cat-file	objects filter: disabled	cat-file	pass
+t1006-cat-file::usage-cmdmode-switches	t1006-cat-file	usage: cmdmode $switches	cat-file	pass
+t1006-cat-file::usage-incompatible-options-path-with-opt	t1006-cat-file	usage: incompatible options: --path with $opt	cat-file	pass
+t1006-cat-file::usage-opt-requires-another-option	t1006-cat-file	usage: $opt requires another option	cat-file	pass
+t1006-cat-file::usage-opt-requires-another-option-2	t1006-cat-file	usage: $opt requires another option	cat-file	pass
+t1006-cat-file::usage-incompatible-options-opt-and-opt2	t1006-cat-file	usage: incompatible options: $opt and $opt2	cat-file	pass
+t1006-cat-file::usage-too-many-arguments-opt-args	t1006-cat-file	usage: too many arguments: $opt $args	cat-file	pass
+t1006-cat-file::usage-incompatible-arguments-opt-with-batch-option-opt2	t1006-cat-file	usage: incompatible arguments: $opt with batch option $opt2	cat-file	pass
+t1006-cat-file::usage-bad-option-combination-opt-without-batch-mode	t1006-cat-file	usage: bad option combination: $opt without batch mode	cat-file	pass
+t1006-cat-file::type-exists	t1006-cat-file	$type exists	cat-file	pass
+t1006-cat-file::type-of-type-is-correct	t1006-cat-file	Type of $type is correct	cat-file	pass
+t1006-cat-file::size-of-type-is-correct	t1006-cat-file	Size of $type is correct	cat-file	pass
+t1006-cat-file::content-of-type-is-correct	t1006-cat-file	Content of $type is correct	cat-file	pass
+t1006-cat-file::pretty-content-of-type-is-correct	t1006-cat-file	Pretty content of $type is correct	cat-file	pass
+t1006-cat-file::batch-output-of-type-is-correct	t1006-cat-file	--batch output of $type is correct	cat-file	pass
+t1006-cat-file::batch-check-output-of-type-is-correct	t1006-cat-file	--batch-check output of $type is correct	cat-file	pass
+t1006-cat-file::batch-command-opt-output-of-type-content-is-correct	t1006-cat-file	--batch-command $opt output of $type content is correct	cat-file	pass
+t1006-cat-file::batch-command-opt-output-of-type-info-is-correct	t1006-cat-file	--batch-command $opt output of $type info is correct	cat-file	pass
+t1006-cat-file::custom-batch-check-format	t1006-cat-file	custom --batch-check format	cat-file	pass
+t1006-cat-file::custom-batch-command-format	t1006-cat-file	custom --batch-command format	cat-file	pass
+t1006-cat-file::batch-without-type-type	t1006-cat-file	--batch without type ($type)	cat-file	pass
+t1006-cat-file::batch-without-size-type	t1006-cat-file	--batch without size ($type)	cat-file	pass
+t1006-cat-file::setup-part-1	t1006-cat-file	setup part 1	cat-file	pass
+t1006-cat-file::reach-a-blob-from-a-tag-pointing-to-it	t1006-cat-file	Reach a blob from a tag pointing to it	cat-file	pass
+t1006-cat-file::passing-opt-with-batch-fails	t1006-cat-file	Passing -$opt with --$batch fails	cat-file	pass
+t1006-cat-file::passing-batch-with-opt-fails	t1006-cat-file	Passing --$batch with -$opt fails	cat-file	pass
+t1006-cat-file::passing-type-with-batch-fails	t1006-cat-file	Passing <type> with --$batch fails	cat-file	pass
+t1006-cat-file::passing-batch-with-type-fails	t1006-cat-file	Passing --$batch with <type> fails	cat-file	pass
+t1006-cat-file::passing-oid-with-batch-fails	t1006-cat-file	Passing oid with --$batch fails	cat-file	pass
+t1006-cat-file::passing-opt-with-follow-symlinks-fails	t1006-cat-file	Passing -$opt with --follow-symlinks fails	cat-file	pass
+t1006-cat-file::batch-check-for-a-non-existent-named-object	t1006-cat-file	--batch-check for a non-existent named object	cat-file	pass
+t1006-cat-file::batch-check-for-a-non-existent-hash	t1006-cat-file	--batch-check for a non-existent hash	cat-file	pass
+t1006-cat-file::batch-for-an-existent-and-a-non-existent-hash	t1006-cat-file	--batch for an existent and a non-existent hash	cat-file	pass
+t1006-cat-file::batch-check-for-an-empty-line	t1006-cat-file	--batch-check for an empty line	cat-file	pass
+t1006-cat-file::batch-check-with-multiple-oids-gives-correct-format	t1006-cat-file	--batch-check with multiple oids gives correct format	cat-file	pass
+t1006-cat-file::batch-check-z-with-multiple-oids-gives-correct-format	t1006-cat-file	--batch-check, -z with multiple oids gives correct format	cat-file	pass
+t1006-cat-file::batch-check-z-with-multiple-oids-gives-correct-format-2	t1006-cat-file	--batch-check, -Z with multiple oids gives correct format	cat-file	pass
+t1006-cat-file::cat-file-arg1-error-on-bogus-short-oid	t1006-cat-file	cat-file $arg1 error on bogus short OID	cat-file	pass
+t1006-cat-file::cat-file-arg1-error-on-bogus-full-oid	t1006-cat-file	cat-file $arg1 error on bogus full OID	cat-file	pass
+t1006-cat-file::cat-file-arg1-error-on-missing-short-oid	t1006-cat-file	cat-file $arg1 error on missing short OID	cat-file	pass
+t1006-cat-file::cat-file-arg1-error-on-missing-full-oid	t1006-cat-file	cat-file $arg1 error on missing full OID	cat-file	pass
+t1006-cat-file::objects-filter-with-unsupported-option-option	t1006-cat-file	objects filter with unsupported option $option	cat-file	pass
+t1006-cat-file::objects-filter-filter	t1006-cat-file	objects filter: $filter	cat-file	pass
+t1006-cat-file::objects-filter-prints-excluded-objects-filter	t1006-cat-file	objects filter prints excluded objects: $filter	cat-file	pass
 t1007-hash-object::blob-does-not-exist-in-database	t1007-hash-object	blob does not exist in database	hash-object	partial
 t1007-hash-object::blob-exists-in-database	t1007-hash-object	blob exists in database	hash-object	partial
 t1007-hash-object::setup	t1007-hash-object	setup	hash-object	partial
@@ -1612,39 +1612,39 @@ t1010-mktree::ls-tree-output-in-wrong-order-given-to-mktree-2	t1010-mktree	ls-tr
 t1010-mktree::allow-missing-object-with-missing	t1010-mktree	allow missing object with --missing	mktree	pass
 t1010-mktree::mktree-refuses-to-read-ls-tree-r-output-1	t1010-mktree	mktree refuses to read ls-tree -r output (1)	mktree	pass
 t1010-mktree::mktree-refuses-to-read-ls-tree-r-output-2	t1010-mktree	mktree refuses to read ls-tree -r output (2)	mktree	pass
-t1011-read-tree-sparse-checkout::setup	t1011-read-tree-sparse-checkout	setup	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-without-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree without .git/info/sparse-checkout	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-with-git-info-sparse-checkout-but-disabled	t1011-read-tree-sparse-checkout	read-tree with .git/info/sparse-checkout but disabled	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-no-sparse-checkout-with-empty-git-info-sparse-checkout-and-enabled	t1011-read-tree-sparse-checkout	read-tree --no-sparse-checkout with empty .git/info/sparse-checkout and enabled	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-with-empty-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree with empty .git/info/sparse-checkout	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-with-trailing-slash	t1011-read-tree-sparse-checkout	match directories with trailing slash	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-without-trailing-slash	t1011-read-tree-sparse-checkout	match directories without trailing slash	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns	t1011-read-tree-sparse-checkout	match directories with negated patterns	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns-2	t1011-read-tree-sparse-checkout	match directories with negated patterns (2)	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directory-pattern	t1011-read-tree-sparse-checkout	match directory pattern	read-tree	partial
-t1011-read-tree-sparse-checkout::checkout-area-changes	t1011-read-tree-sparse-checkout	checkout area changes	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-updates-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, absent case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-non-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, non-sparse	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, sparse	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-updates-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, dirty case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-removes-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree removes worktree, dirty case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, absent case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, dirty case	read-tree	partial
-t1011-read-tree-sparse-checkout::index-removal-and-worktree-narrowing-at-the-same-time	t1011-read-tree-sparse-checkout	index removal and worktree narrowing at the same time	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-reset-removes-outside-worktree	t1011-read-tree-sparse-checkout	read-tree --reset removes outside worktree	read-tree	partial
-t1011-read-tree-sparse-checkout::print-warnings-when-some-worktree-updates-disabled	t1011-read-tree-sparse-checkout	print warnings when some worktree updates disabled	read-tree	partial
-t1011-read-tree-sparse-checkout::checkout-without-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout without --ignore-skip-worktree-bits	read-tree	partial
-t1011-read-tree-sparse-checkout::checkout-with-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout with --ignore-skip-worktree-bits	read-tree	partial
+t1011-read-tree-sparse-checkout::setup	t1011-read-tree-sparse-checkout	setup	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-without-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree without .git/info/sparse-checkout	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-with-git-info-sparse-checkout-but-disabled	t1011-read-tree-sparse-checkout	read-tree with .git/info/sparse-checkout but disabled	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-no-sparse-checkout-with-empty-git-info-sparse-checkout-and-enabled	t1011-read-tree-sparse-checkout	read-tree --no-sparse-checkout with empty .git/info/sparse-checkout and enabled	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-with-empty-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree with empty .git/info/sparse-checkout	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-with-trailing-slash	t1011-read-tree-sparse-checkout	match directories with trailing slash	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-without-trailing-slash	t1011-read-tree-sparse-checkout	match directories without trailing slash	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns	t1011-read-tree-sparse-checkout	match directories with negated patterns	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns-2	t1011-read-tree-sparse-checkout	match directories with negated patterns (2)	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directory-pattern	t1011-read-tree-sparse-checkout	match directory pattern	read-tree	pass
+t1011-read-tree-sparse-checkout::checkout-area-changes	t1011-read-tree-sparse-checkout	checkout area changes	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-updates-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, absent case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-non-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, non-sparse	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, sparse	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-updates-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, dirty case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-removes-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree removes worktree, dirty case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, absent case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, dirty case	read-tree	pass
+t1011-read-tree-sparse-checkout::index-removal-and-worktree-narrowing-at-the-same-time	t1011-read-tree-sparse-checkout	index removal and worktree narrowing at the same time	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-reset-removes-outside-worktree	t1011-read-tree-sparse-checkout	read-tree --reset removes outside worktree	read-tree	pass
+t1011-read-tree-sparse-checkout::print-warnings-when-some-worktree-updates-disabled	t1011-read-tree-sparse-checkout	print warnings when some worktree updates disabled	read-tree	pass
+t1011-read-tree-sparse-checkout::checkout-without-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout without --ignore-skip-worktree-bits	read-tree	pass
+t1011-read-tree-sparse-checkout::checkout-with-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout with --ignore-skip-worktree-bits	read-tree	pass
 t1012-read-tree-df::3-way-1	t1012-read-tree-df	3-way (1)	read-tree	pass
 t1012-read-tree-df::3-way-2	t1012-read-tree-df	3-way (2)	read-tree	pass
 t1012-read-tree-df::3-way-3	t1012-read-tree-df	3-way (3)	read-tree	pass
 t1012-read-tree-df::2-way-1	t1012-read-tree-df	2-way (1)	read-tree	pass
-t1014-read-tree-confusing::create-base-tree	t1014-read-tree-confusing	create base tree	read-tree	partial
-t1014-read-tree-confusing::enable-core-protecthfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectHFS for rejection tests	read-tree	partial
-t1014-read-tree-confusing::enable-core-protectntfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectNTFS for rejection tests	read-tree	partial
-t1014-read-tree-confusing::utf-8-paths-allowed-with-core-protecthfs-off	t1014-read-tree-confusing	utf-8 paths allowed with core.protectHFS off	read-tree	partial
-t1014-read-tree-confusing::reject-pretty-at-end-of-path	t1014-read-tree-confusing	reject $pretty at end of path	read-tree	partial
-t1014-read-tree-confusing::reject-pretty-as-subtree	t1014-read-tree-confusing	reject $pretty as subtree	read-tree	partial
+t1014-read-tree-confusing::create-base-tree	t1014-read-tree-confusing	create base tree	read-tree	pass
+t1014-read-tree-confusing::enable-core-protecthfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectHFS for rejection tests	read-tree	pass
+t1014-read-tree-confusing::enable-core-protectntfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectNTFS for rejection tests	read-tree	pass
+t1014-read-tree-confusing::utf-8-paths-allowed-with-core-protecthfs-off	t1014-read-tree-confusing	utf-8 paths allowed with core.protectHFS off	read-tree	pass
+t1014-read-tree-confusing::reject-pretty-at-end-of-path	t1014-read-tree-confusing	reject $pretty at end of path	read-tree	pass
+t1014-read-tree-confusing::reject-pretty-as-subtree	t1014-read-tree-confusing	reject $pretty as subtree	read-tree	pass
 t1015-read-index-unmerged::setup-modify-delete-directory-file-conflict	t1015-read-index-unmerged	setup modify/delete + directory/file conflict	add	pass
 t1015-read-index-unmerged::read-tree-reset-cleans-unmerged-entries	t1015-read-index-unmerged	read-tree --reset cleans unmerged entries	checkout	pass
 t1015-read-index-unmerged::one-reset-hard-cleans-unmerged-entries	t1015-read-index-unmerged	One reset --hard cleans unmerged entries	checkout	pass
@@ -3462,14 +3462,14 @@ t2006-checkout-index-basic::checkout-index-temp-correctly-reports-error-for-subm
 t2007-checkout-symlink::switch-from-symlink-to-dir	t2007-checkout-symlink	switch from symlink to dir	checkout	pass
 t2007-checkout-symlink::remove-temporary-directories-switch-to-main	t2007-checkout-symlink	Remove temporary directories & switch to main	checkout	pass
 t2007-checkout-symlink::switch-from-dir-to-symlink	t2007-checkout-symlink	switch from dir to symlink	checkout	pass
-t2008-checkout-subdir::remove-and-restore-with-relative-path	t2008-checkout-subdir	remove and restore with relative path	checkout	partial
-t2008-checkout-subdir::checkout-with-empty-prefix	t2008-checkout-subdir	checkout with empty prefix	checkout	partial
-t2008-checkout-subdir::checkout-with-simple-prefix	t2008-checkout-subdir	checkout with simple prefix	checkout	partial
-t2008-checkout-subdir::checkout-with-complex-relative-path	t2008-checkout-subdir	checkout with complex relative path	checkout	partial
-t2008-checkout-subdir::relative-path-outside-tree-should-fail	t2008-checkout-subdir	relative path outside tree should fail	checkout	partial
-t2008-checkout-subdir::incorrect-relative-path-to-file-should-fail-1	t2008-checkout-subdir	incorrect relative path to file should fail (1)	checkout	partial
-t2008-checkout-subdir::incorrect-relative-path-should-fail-2	t2008-checkout-subdir	incorrect relative path should fail (2)	checkout	partial
-t2008-checkout-subdir::incorrect-relative-path-should-fail-3	t2008-checkout-subdir	incorrect relative path should fail (3)	checkout	partial
+t2008-checkout-subdir::remove-and-restore-with-relative-path	t2008-checkout-subdir	remove and restore with relative path	checkout	pass
+t2008-checkout-subdir::checkout-with-empty-prefix	t2008-checkout-subdir	checkout with empty prefix	checkout	pass
+t2008-checkout-subdir::checkout-with-simple-prefix	t2008-checkout-subdir	checkout with simple prefix	checkout	pass
+t2008-checkout-subdir::checkout-with-complex-relative-path	t2008-checkout-subdir	checkout with complex relative path	checkout	pass
+t2008-checkout-subdir::relative-path-outside-tree-should-fail	t2008-checkout-subdir	relative path outside tree should fail	checkout	pass
+t2008-checkout-subdir::incorrect-relative-path-to-file-should-fail-1	t2008-checkout-subdir	incorrect relative path to file should fail (1)	checkout	pass
+t2008-checkout-subdir::incorrect-relative-path-should-fail-2	t2008-checkout-subdir	incorrect relative path should fail (2)	checkout	pass
+t2008-checkout-subdir::incorrect-relative-path-should-fail-3	t2008-checkout-subdir	incorrect relative path should fail (3)	checkout	pass
 t2009-checkout-statinfo::setup	t2009-checkout-statinfo	setup	checkout	partial
 t2009-checkout-statinfo::branch-switching	t2009-checkout-statinfo	branch switching	checkout	partial
 t2009-checkout-statinfo::path-checkout	t2009-checkout-statinfo	path checkout	checkout	partial
@@ -3593,31 +3593,31 @@ t2019-checkout-ambiguous-ref::checkout-vague-ref-succeeds	t2019-checkout-ambiguo
 t2019-checkout-ambiguous-ref::checkout-produces-ambiguity-warning-2	t2019-checkout-ambiguous-ref	checkout produces ambiguity warning	checkout	pass
 t2019-checkout-ambiguous-ref::checkout-chooses-branch-over-tag-2	t2019-checkout-ambiguous-ref	checkout chooses branch over tag	checkout	pass
 t2019-checkout-ambiguous-ref::checkout-reports-switch-to-branch-2	t2019-checkout-ambiguous-ref	checkout reports switch to branch	checkout	pass
-t2020-checkout-detach::setup	t2020-checkout-detach	setup	checkout	partial
-t2020-checkout-detach::checkout-branch-does-not-detach	t2020-checkout-detach	checkout branch does not detach	checkout	partial
-t2020-checkout-detach::checkout-tag-detaches	t2020-checkout-detach	checkout tag detaches	checkout	partial
-t2020-checkout-detach::checkout-branch-by-full-name-detaches	t2020-checkout-detach	checkout branch by full name detaches	checkout	partial
-t2020-checkout-detach::checkout-non-ref-detaches	t2020-checkout-detach	checkout non-ref detaches	checkout	partial
-t2020-checkout-detach::checkout-ref-0-detaches	t2020-checkout-detach	checkout ref^0 detaches	checkout	partial
-t2020-checkout-detach::checkout-detach-detaches	t2020-checkout-detach	checkout --detach detaches	checkout	partial
-t2020-checkout-detach::checkout-detach-without-branch-name	t2020-checkout-detach	checkout --detach without branch name	checkout	partial
-t2020-checkout-detach::checkout-detach-errors-out-for-non-commit	t2020-checkout-detach	checkout --detach errors out for non-commit	checkout	partial
-t2020-checkout-detach::checkout-detach-errors-out-for-extra-argument	t2020-checkout-detach	checkout --detach errors out for extra argument	checkout	partial
-t2020-checkout-detach::checkout-detached-and-b-are-incompatible	t2020-checkout-detach	checkout --detached and -b are incompatible	checkout	partial
-t2020-checkout-detach::checkout-detach-moves-head	t2020-checkout-detach	checkout --detach moves HEAD	checkout	partial
-t2020-checkout-detach::checkout-warns-on-orphan-commits	t2020-checkout-detach	checkout warns on orphan commits	checkout	partial
-t2020-checkout-detach::checkout-warns-on-orphan-commits-output	t2020-checkout-detach	checkout warns on orphan commits: output	checkout	partial
-t2020-checkout-detach::checkout-warns-orphaning-1-of-2-commits	t2020-checkout-detach	checkout warns orphaning 1 of 2 commits	checkout	partial
-t2020-checkout-detach::checkout-warns-orphaning-1-of-2-commits-output	t2020-checkout-detach	checkout warns orphaning 1 of 2 commits: output	checkout	partial
-t2020-checkout-detach::checkout-does-not-warn-leaving-ref-tip	t2020-checkout-detach	checkout does not warn leaving ref tip	checkout	partial
-t2020-checkout-detach::checkout-does-not-warn-leaving-ref-tip-2	t2020-checkout-detach	checkout does not warn leaving ref tip	checkout	partial
-t2020-checkout-detach::checkout-does-not-warn-leaving-reachable-commit	t2020-checkout-detach	checkout does not warn leaving reachable commit	checkout	partial
-t2020-checkout-detach::checkout-does-not-warn-leaving-reachable-commit-2	t2020-checkout-detach	checkout does not warn leaving reachable commit	checkout	partial
-t2020-checkout-detach::tracking-count-is-accurate-after-orphan-check	t2020-checkout-detach	tracking count is accurate after orphan check	checkout	partial
-t2020-checkout-detach::no-advice-given-for-explicit-detached-head-state	t2020-checkout-detach	no advice given for explicit detached head state	checkout	partial
-t2020-checkout-detach::describe-detached-head-prints-no-sha-1-ellipsis-when-not-asked-to	t2020-checkout-detach	describe_detached_head prints no SHA-1 ellipsis when not asked to	checkout	partial
-t2020-checkout-detach::describe-detached-head-does-print-sha-1-ellipsis-when-asked-to	t2020-checkout-detach	describe_detached_head does print SHA-1 ellipsis when asked to	checkout	partial
-t2020-checkout-detach::checkout-opt-no-op-don-t-detach	t2020-checkout-detach	checkout $opt no-op/don't detach	checkout	partial
+t2020-checkout-detach::setup	t2020-checkout-detach	setup	checkout	pass
+t2020-checkout-detach::checkout-branch-does-not-detach	t2020-checkout-detach	checkout branch does not detach	checkout	pass
+t2020-checkout-detach::checkout-tag-detaches	t2020-checkout-detach	checkout tag detaches	checkout	pass
+t2020-checkout-detach::checkout-branch-by-full-name-detaches	t2020-checkout-detach	checkout branch by full name detaches	checkout	pass
+t2020-checkout-detach::checkout-non-ref-detaches	t2020-checkout-detach	checkout non-ref detaches	checkout	pass
+t2020-checkout-detach::checkout-ref-0-detaches	t2020-checkout-detach	checkout ref^0 detaches	checkout	pass
+t2020-checkout-detach::checkout-detach-detaches	t2020-checkout-detach	checkout --detach detaches	checkout	pass
+t2020-checkout-detach::checkout-detach-without-branch-name	t2020-checkout-detach	checkout --detach without branch name	checkout	pass
+t2020-checkout-detach::checkout-detach-errors-out-for-non-commit	t2020-checkout-detach	checkout --detach errors out for non-commit	checkout	pass
+t2020-checkout-detach::checkout-detach-errors-out-for-extra-argument	t2020-checkout-detach	checkout --detach errors out for extra argument	checkout	pass
+t2020-checkout-detach::checkout-detached-and-b-are-incompatible	t2020-checkout-detach	checkout --detached and -b are incompatible	checkout	pass
+t2020-checkout-detach::checkout-detach-moves-head	t2020-checkout-detach	checkout --detach moves HEAD	checkout	pass
+t2020-checkout-detach::checkout-warns-on-orphan-commits	t2020-checkout-detach	checkout warns on orphan commits	checkout	pass
+t2020-checkout-detach::checkout-warns-on-orphan-commits-output	t2020-checkout-detach	checkout warns on orphan commits: output	checkout	pass
+t2020-checkout-detach::checkout-warns-orphaning-1-of-2-commits	t2020-checkout-detach	checkout warns orphaning 1 of 2 commits	checkout	pass
+t2020-checkout-detach::checkout-warns-orphaning-1-of-2-commits-output	t2020-checkout-detach	checkout warns orphaning 1 of 2 commits: output	checkout	pass
+t2020-checkout-detach::checkout-does-not-warn-leaving-ref-tip	t2020-checkout-detach	checkout does not warn leaving ref tip	checkout	pass
+t2020-checkout-detach::checkout-does-not-warn-leaving-ref-tip-2	t2020-checkout-detach	checkout does not warn leaving ref tip	checkout	pass
+t2020-checkout-detach::checkout-does-not-warn-leaving-reachable-commit	t2020-checkout-detach	checkout does not warn leaving reachable commit	checkout	pass
+t2020-checkout-detach::checkout-does-not-warn-leaving-reachable-commit-2	t2020-checkout-detach	checkout does not warn leaving reachable commit	checkout	pass
+t2020-checkout-detach::tracking-count-is-accurate-after-orphan-check	t2020-checkout-detach	tracking count is accurate after orphan check	checkout	pass
+t2020-checkout-detach::no-advice-given-for-explicit-detached-head-state	t2020-checkout-detach	no advice given for explicit detached head state	checkout	pass
+t2020-checkout-detach::describe-detached-head-prints-no-sha-1-ellipsis-when-not-asked-to	t2020-checkout-detach	describe_detached_head prints no SHA-1 ellipsis when not asked to	checkout	pass
+t2020-checkout-detach::describe-detached-head-does-print-sha-1-ellipsis-when-asked-to	t2020-checkout-detach	describe_detached_head does print SHA-1 ellipsis when asked to	checkout	pass
+t2020-checkout-detach::checkout-opt-no-op-don-t-detach	t2020-checkout-detach	checkout $opt no-op/don't detach	checkout	pass
 t2021-checkout-overwrite::setup	t2021-checkout-overwrite	setup	checkout	partial
 t2021-checkout-overwrite::create-a-commit-where-dir-a-b-changed-to-file	t2021-checkout-overwrite	create a commit where dir a/b changed to file	checkout	partial
 t2021-checkout-overwrite::checkout-commit-with-dir-must-not-remove-untracked-a-b	t2021-checkout-overwrite	checkout commit with dir must not remove untracked a/b	checkout	partial
@@ -3627,10 +3627,10 @@ t2021-checkout-overwrite::the-symlink-remained	t2021-checkout-overwrite	the syml
 t2021-checkout-overwrite::cleanup-after-previous-symlink-tests	t2021-checkout-overwrite	cleanup after previous symlink tests	checkout	partial
 t2021-checkout-overwrite::checkout-f-must-not-follow-symlinks-when-removing-entries	t2021-checkout-overwrite	checkout -f must not follow symlinks when removing entries	checkout	partial
 t2021-checkout-overwrite::checkout-overwrite-ignore-should-succeed-if-only-ignored-files-in-the-way	t2021-checkout-overwrite	checkout --overwrite-ignore should succeed if only ignored files in the way	checkout	partial
-t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	partial
-t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	partial
-t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	partial
-t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	partial
+t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	pass
+t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	pass
+t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	pass
+t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	pass
 t2023-checkout-m::git-merge-main	t2023-checkout-m	git merge main	checkout	pass
 t2023-checkout-m::m-restores-2-way-conflicted-resolved-file	t2023-checkout-m	-m restores 2-way conflicted+resolved file	checkout	pass
 t2023-checkout-m::m-restores-3-way-conflicted-resolved-file	t2023-checkout-m	-m restores 3-way conflicted+resolved file	checkout	pass
@@ -4291,30 +4291,30 @@ t3070-wildmatch::match-function-via-ls-files-match-pattern-text	t3070-wildmatch	
 t3070-wildmatch::match-function-via-ls-files-no-match-pattern-text	t3070-wildmatch	$match_function (via ls-files): no match '$pattern' '$text'		pass
 t3070-wildmatch::panic-test-framework-error-unknown-matches-value-match-expect-2	t3070-wildmatch	PANIC: Test framework error. Unknown matches value $match_expect		pass
 t3070-wildmatch::setup-match-file-test-for-text	t3070-wildmatch	setup match file test for $text	add	pass
-t3101-ls-tree-dirname::setup	t3101-ls-tree-dirname	setup	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-plain	t3101-ls-tree-dirname	ls-tree plain	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-recursive	t3101-ls-tree-dirname	ls-tree recursive	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-filter-1-txt	t3101-ls-tree-dirname	ls-tree filter 1.txt	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-filter-path1-b-c-1-txt	t3101-ls-tree-dirname	ls-tree filter path1/b/c/1.txt	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-filter-all-1-txt-files	t3101-ls-tree-dirname	ls-tree filter all 1.txt files	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-filter-directories	t3101-ls-tree-dirname	ls-tree filter directories	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-filter-odd-names	t3101-ls-tree-dirname	ls-tree filter odd names	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-filter-missing-files-and-extra-slashes	t3101-ls-tree-dirname	ls-tree filter missing files and extra slashes	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-filter-is-leading-path-match	t3101-ls-tree-dirname	ls-tree filter is leading path match	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-full-name	t3101-ls-tree-dirname	ls-tree --full-name	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-no-full-name	t3101-ls-tree-dirname	ls-tree --no-full-name	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-full-tree	t3101-ls-tree-dirname	ls-tree --full-tree	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-full-tree-r	t3101-ls-tree-dirname	ls-tree --full-tree -r	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-abbrev-5	t3101-ls-tree-dirname	ls-tree --abbrev=5	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-opt	t3101-ls-tree-dirname	ls-tree $opt	ls-tree	pass
-t3101-ls-tree-dirname::ls-tree-opt-r	t3101-ls-tree-dirname	ls-tree $opt -r	ls-tree	pass
+t3101-ls-tree-dirname::setup	t3101-ls-tree-dirname	setup	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-plain	t3101-ls-tree-dirname	ls-tree plain	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-recursive	t3101-ls-tree-dirname	ls-tree recursive	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-filter-1-txt	t3101-ls-tree-dirname	ls-tree filter 1.txt	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-filter-path1-b-c-1-txt	t3101-ls-tree-dirname	ls-tree filter path1/b/c/1.txt	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-filter-all-1-txt-files	t3101-ls-tree-dirname	ls-tree filter all 1.txt files	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-filter-directories	t3101-ls-tree-dirname	ls-tree filter directories	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-filter-odd-names	t3101-ls-tree-dirname	ls-tree filter odd names	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-filter-missing-files-and-extra-slashes	t3101-ls-tree-dirname	ls-tree filter missing files and extra slashes	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-filter-is-leading-path-match	t3101-ls-tree-dirname	ls-tree filter is leading path match	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-full-name	t3101-ls-tree-dirname	ls-tree --full-name	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-no-full-name	t3101-ls-tree-dirname	ls-tree --no-full-name	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-full-tree	t3101-ls-tree-dirname	ls-tree --full-tree	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-full-tree-r	t3101-ls-tree-dirname	ls-tree --full-tree -r	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-abbrev-5	t3101-ls-tree-dirname	ls-tree --abbrev=5	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-opt	t3101-ls-tree-dirname	ls-tree $opt	ls-tree	partial
+t3101-ls-tree-dirname::ls-tree-opt-r	t3101-ls-tree-dirname	ls-tree $opt -r	ls-tree	partial
 t3102-ls-tree-wildcards::setup	t3102-ls-tree-wildcards	setup	ls-tree	pass
 t3102-ls-tree-wildcards::ls-tree-a-a-matches-literally	t3102-ls-tree-wildcards	ls-tree a[a] matches literally	ls-tree	pass
 t3102-ls-tree-wildcards::ls-tree-outside-prefix	t3102-ls-tree-wildcards	ls-tree outside prefix	ls-tree	pass
-t3103-ls-tree-misc::setup	t3103-ls-tree-misc	setup	ls-tree	pass
-t3103-ls-tree-misc::ls-tree-fails-with-non-zero-exit-code-on-broken-tree	t3103-ls-tree-misc	ls-tree fails with non-zero exit code on broken tree	ls-tree	pass
-t3103-ls-tree-misc::usage-incompatible-options-opts	t3103-ls-tree-misc	usage: incompatible options: $opts	ls-tree	pass
-t3103-ls-tree-misc::usage-incompatible-options-one-opt-and-format	t3103-ls-tree-misc	usage: incompatible options: $one_opt and --format	ls-tree	pass
+t3103-ls-tree-misc::setup	t3103-ls-tree-misc	setup	ls-tree	partial
+t3103-ls-tree-misc::ls-tree-fails-with-non-zero-exit-code-on-broken-tree	t3103-ls-tree-misc	ls-tree fails with non-zero exit code on broken tree	ls-tree	partial
+t3103-ls-tree-misc::usage-incompatible-options-opts	t3103-ls-tree-misc	usage: incompatible options: $opts	ls-tree	partial
+t3103-ls-tree-misc::usage-incompatible-options-one-opt-and-format	t3103-ls-tree-misc	usage: incompatible options: $one_opt and --format	ls-tree	partial
 t3104-ls-tree-format::ls-tree-format-usage	t3104-ls-tree-format	ls-tree --format usage	ls-tree	pass
 t3104-ls-tree-format::setup	t3104-ls-tree-format	setup	ls-tree	pass
 t3104-ls-tree-format::ls-tree-format-format-is-like-options-opts-fmtopts	t3104-ls-tree-format	ls-tree '--format=<$format>' is like options '$opts $fmtopts'	ls-tree	pass
@@ -4327,173 +4327,173 @@ t3105-ls-tree-output::setup-head-short-variables	t3105-ls-tree-output	setup: HEA
 t3105-ls-tree-output::ls-tree-opts-mode-mode-output	t3105-ls-tree-output	'ls-tree $opts${mode:+ $mode}' output	ls-tree	pass
 t3105-ls-tree-output::ls-tree-opts-mode-mode-output-via-subdir-fails	t3105-ls-tree-output	'ls-tree $opts${mode:+ $mode}' output (via subdir, fails)	ls-tree	pass
 t3105-ls-tree-output::ls-tree-opts-mode-mode-output-via-subdir	t3105-ls-tree-output	'ls-tree $opts${mode:+ $mode}' output (via subdir)	ls-tree	pass
-t3200-branch::prepare-a-trivial-repository	t3200-branch	prepare a trivial repository	branch	partial
-t3200-branch::git-branch-help-should-not-have-created-a-bogus-branch	t3200-branch	git branch --help should not have created a bogus branch	branch	partial
-t3200-branch::branch-h-in-broken-repository	t3200-branch	branch -h in broken repository	branch	partial
-t3200-branch::git-branch-abc-should-create-a-branch	t3200-branch	git branch abc should create a branch	branch	partial
-t3200-branch::git-branch-abc-should-fail-when-abc-exists	t3200-branch	git branch abc should fail when abc exists	branch	partial
-t3200-branch::git-branch-force-abc-should-fail-when-abc-is-checked-out	t3200-branch	git branch --force abc should fail when abc is checked out	branch	partial
-t3200-branch::git-branch-force-abc-should-succeed-when-abc-exists	t3200-branch	git branch --force abc should succeed when abc exists	branch	partial
-t3200-branch::git-branch-a-b-c-should-create-a-branch	t3200-branch	git branch a/b/c should create a branch	branch	partial
-t3200-branch::git-branch-mb-main-should-create-a-branch	t3200-branch	git branch mb main... should create a branch	branch	partial
-t3200-branch::git-branch-head-should-fail	t3200-branch	git branch HEAD should fail	branch	partial
-t3200-branch::git-branch-create-reflog-d-e-f-should-create-a-branch-and-a-log	t3200-branch	git branch --create-reflog d/e/f should create a branch and a log	branch	partial
-t3200-branch::git-branch-d-d-e-f-should-delete-a-branch-and-a-log	t3200-branch	git branch -d d/e/f should delete a branch and a log	branch	partial
-t3200-branch::git-branch-j-k-should-work-after-branch-j-has-been-deleted	t3200-branch	git branch j/k should work after branch j has been deleted	branch	partial
-t3200-branch::git-branch-l-should-work-after-branch-l-m-has-been-deleted	t3200-branch	git branch l should work after branch l/m has been deleted	branch	partial
-t3200-branch::git-branch-m-dumps-usage	t3200-branch	git branch -m dumps usage	branch	partial
-t3200-branch::git-branch-m-m-broken-symref-should-work	t3200-branch	git branch -m m broken_symref should work	branch	partial
-t3200-branch::git-branch-m-m-m-m-should-work	t3200-branch	git branch -m m m/m should work	branch	partial
-t3200-branch::git-branch-m-n-n-n-should-work	t3200-branch	git branch -m n/n n should work	branch	partial
-t3200-branch::git-branch-m-bbb-should-rename-checked-out-branch	t3200-branch	git branch -m bbb should rename checked out branch	branch	partial
-t3200-branch::renaming-checked-out-branch-works-with-d-f-conflict	t3200-branch	renaming checked out branch works with d/f conflict	branch	partial
-t3200-branch::git-branch-m-o-o-o-should-fail-when-o-p-exists	t3200-branch	git branch -m o/o o should fail when o/p exists	branch	partial
-t3200-branch::git-branch-m-o-q-o-p-should-fail-when-o-p-exists	t3200-branch	git branch -m o/q o/p should fail when o/p exists	branch	partial
-t3200-branch::git-branch-m-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -M o/q o/p should work when o/p exists	branch	partial
-t3200-branch::git-branch-m-f-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -m -f o/q o/p should work when o/p exists	branch	partial
-t3200-branch::git-branch-m-q-r-q-should-fail-when-r-exists	t3200-branch	git branch -m q r/q should fail when r exists	branch	partial
-t3200-branch::git-branch-m-foo-bar-should-fail-when-bar-is-checked-out	t3200-branch	git branch -M foo bar should fail when bar is checked out	branch	partial
-t3200-branch::git-branch-m-foo-bar-should-fail-when-bar-is-checked-out-in-worktree	t3200-branch	git branch -M foo bar should fail when bar is checked out in worktree	branch	partial
-t3200-branch::git-branch-m-baz-bam-should-succeed-when-baz-is-checked-out	t3200-branch	git branch -M baz bam should succeed when baz is checked out	branch	partial
-t3200-branch::git-branch-m-baz-bam-should-add-entries-to-head-reflog	t3200-branch	git branch -M baz bam should add entries to HEAD reflog	branch	partial
-t3200-branch::git-branch-m-should-leave-orphaned-head-alone	t3200-branch	git branch -M should leave orphaned HEAD alone	branch	partial
-t3200-branch::resulting-reflog-can-be-shown-by-log-g	t3200-branch	resulting reflog can be shown by log -g	branch	partial
-t3200-branch::git-branch-m-baz-bam-should-succeed-when-baz-is-checked-out-as-linked-working-tr	t3200-branch	git branch -M baz bam should succeed when baz is checked out as linked working tree	branch	partial
-t3200-branch::git-branch-m-fails-if-updating-any-linked-working-tree-fails	t3200-branch	git branch -M fails if updating any linked working tree fails	branch	partial
-t3200-branch::git-branch-m-baz-bam-should-succeed-within-a-worktree-in-which-baz-is-checked-ou	t3200-branch	git branch -M baz bam should succeed within a worktree in which baz is checked out	branch	partial
-t3200-branch::git-branch-m-main-should-work-when-main-is-checked-out	t3200-branch	git branch -M main should work when main is checked out	branch	partial
-t3200-branch::git-branch-m-main-main-should-work-when-main-is-checked-out	t3200-branch	git branch -M main main should work when main is checked out	branch	partial
-t3200-branch::git-branch-m-topic-topic-should-work-when-main-is-checked-out	t3200-branch	git branch -M topic topic should work when main is checked out	branch	partial
-t3200-branch::git-branch-m-and-c-fail-on-detached-head	t3200-branch	git branch -M and -C fail on detached HEAD	branch	partial
-t3200-branch::git-branch-m-should-work-with-orphan-branches	t3200-branch	git branch -m should work with orphan branches	branch	partial
-t3200-branch::git-branch-d-on-orphan-head-merged	t3200-branch	git branch -d on orphan HEAD (merged)	branch	partial
-t3200-branch::git-branch-d-on-orphan-head-merged-graph	t3200-branch	git branch -d on orphan HEAD (merged, graph)	branch	partial
-t3200-branch::git-branch-d-on-orphan-head-unmerged	t3200-branch	git branch -d on orphan HEAD (unmerged)	branch	partial
-t3200-branch::git-branch-d-on-orphan-head-unmerged-graph	t3200-branch	git branch -d on orphan HEAD (unmerged, graph)	branch	partial
-t3200-branch::git-branch-v-d-t-should-work	t3200-branch	git branch -v -d t should work	branch	partial
-t3200-branch::git-branch-v-m-t-s-should-work	t3200-branch	git branch -v -m t s should work	branch	partial
-t3200-branch::git-branch-m-d-t-s-should-fail	t3200-branch	git branch -m -d t s should fail	branch	partial
-t3200-branch::git-branch-list-d-t-should-fail	t3200-branch	git branch --list -d t should fail	branch	partial
-t3200-branch::deleting-checked-out-branch-from-repo-that-is-a-submodule	t3200-branch	deleting checked-out branch from repo that is a submodule	branch	partial
-t3200-branch::bare-main-worktree-has-head-at-branch-deleted-by-secondary-worktree	t3200-branch	bare main worktree has HEAD at branch deleted by secondary worktree	branch	partial
-t3200-branch::secondary-worktrees-recognize-core-bare-true-in-main-config-worktree	t3200-branch	secondary worktrees recognize core.bare=true in main config.worktree	branch	partial
-t3200-branch::git-branch-list-v-with-abbrev	t3200-branch	git branch --list -v with --abbrev	branch	partial
-t3200-branch::git-branch-column	t3200-branch	git branch --column	branch	partial
-t3200-branch::git-branch-column-with-an-extremely-long-branch-name	t3200-branch	git branch --column with an extremely long branch name	branch	partial
-t3200-branch::git-branch-with-column	t3200-branch	git branch with column.*	branch	partial
-t3200-branch::git-branch-column-v-should-fail	t3200-branch	git branch --column -v should fail	branch	partial
-t3200-branch::git-branch-v-with-column-ui-ignored	t3200-branch	git branch -v with column.ui ignored	branch	partial
-t3200-branch::git-branch-m-q-q2-without-config-should-succeed	t3200-branch	git branch -m q q2 without config should succeed	branch	partial
-t3200-branch::git-branch-m-s-s-s-should-work-when-s-t-is-deleted	t3200-branch	git branch -m s/s s should work when s/t is deleted	branch	partial
-t3200-branch::config-information-was-renamed-too	t3200-branch	config information was renamed, too	branch	partial
-t3200-branch::git-branch-m-correctly-renames-multiple-config-sections	t3200-branch	git branch -m correctly renames multiple config sections	branch	partial
-t3200-branch::git-branch-c-dumps-usage	t3200-branch	git branch -c dumps usage	branch	partial
-t3200-branch::git-branch-copy-dumps-usage	t3200-branch	git branch --copy dumps usage	branch	partial
-t3200-branch::git-branch-c-d-e-should-work	t3200-branch	git branch -c d e should work	branch	partial
-t3200-branch::git-branch-copy-is-a-synonym-for-c	t3200-branch	git branch --copy is a synonym for -c	branch	partial
-t3200-branch::git-branch-c-ee-ef-should-copy-ee-to-create-branch-ef	t3200-branch	git branch -c ee ef should copy ee to create branch ef	branch	partial
-t3200-branch::git-branch-c-f-f-g-g-should-work	t3200-branch	git branch -c f/f g/g should work	branch	partial
-t3200-branch::git-branch-c-m2-m2-should-work	t3200-branch	git branch -c m2 m2 should work	branch	partial
-t3200-branch::git-branch-c-zz-zz-zz-should-fail	t3200-branch	git branch -c zz zz/zz should fail	branch	partial
-t3200-branch::git-branch-c-b-b-b-should-fail	t3200-branch	git branch -c b/b b should fail	branch	partial
-t3200-branch::git-branch-c-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -C o/q o/p should work when o/p exists	branch	partial
-t3200-branch::git-branch-c-f-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -c -f o/q o/p should work when o/p exists	branch	partial
-t3200-branch::git-branch-c-qq-rr-qq-should-fail-when-rr-exists	t3200-branch	git branch -c qq rr/qq should fail when rr exists	branch	partial
-t3200-branch::git-branch-c-b1-b2-should-fail-when-b2-is-checked-out	t3200-branch	git branch -C b1 b2 should fail when b2 is checked out	branch	partial
-t3200-branch::git-branch-c-c1-c2-should-succeed-when-c1-is-checked-out	t3200-branch	git branch -C c1 c2 should succeed when c1 is checked out	branch	partial
-t3200-branch::git-branch-c-c1-c2-should-never-touch-head	t3200-branch	git branch -C c1 c2 should never touch HEAD	branch	partial
-t3200-branch::git-branch-c-main-should-work-when-main-is-checked-out	t3200-branch	git branch -C main should work when main is checked out	branch	partial
-t3200-branch::git-branch-c-main-main-should-work-when-main-is-checked-out	t3200-branch	git branch -C main main should work when main is checked out	branch	partial
-t3200-branch::git-branch-c-main5-main5-should-work-when-main-is-checked-out	t3200-branch	git branch -C main5 main5 should work when main is checked out	branch	partial
-t3200-branch::git-branch-c-ab-cd-should-overwrite-existing-config-for-cd	t3200-branch	git branch -C ab cd should overwrite existing config for cd	branch	partial
-t3200-branch::git-branch-c-correctly-copies-multiple-config-sections	t3200-branch	git branch -c correctly copies multiple config sections	branch	partial
-t3200-branch::deleting-a-symref	t3200-branch	deleting a symref	branch	partial
-t3200-branch::deleting-a-dangling-symref	t3200-branch	deleting a dangling symref	branch	partial
-t3200-branch::deleting-a-self-referential-symref	t3200-branch	deleting a self-referential symref	branch	partial
-t3200-branch::renaming-a-symref-is-not-allowed	t3200-branch	renaming a symref is not allowed	branch	partial
-t3200-branch::test-tracking-setup-via-track	t3200-branch	test tracking setup via --track	branch	partial
-t3200-branch::test-tracking-setup-non-wildcard-matching	t3200-branch	test tracking setup (non-wildcard, matching)	branch	partial
-t3200-branch::tracking-setup-fails-on-non-matching-refspec	t3200-branch	tracking setup fails on non-matching refspec	branch	partial
-t3200-branch::test-tracking-setup-via-config	t3200-branch	test tracking setup via config	branch	partial
-t3200-branch::test-overriding-tracking-setup-via-no-track	t3200-branch	test overriding tracking setup via --no-track	branch	partial
-t3200-branch::no-tracking-without-fetch-entries	t3200-branch	no tracking without .fetch entries	branch	partial
-t3200-branch::test-tracking-setup-via-track-but-deeper	t3200-branch	test tracking setup via --track but deeper	branch	partial
-t3200-branch::test-deleting-branch-deletes-branch-config	t3200-branch	test deleting branch deletes branch config	branch	partial
-t3200-branch::test-deleting-branch-without-config	t3200-branch	test deleting branch without config	branch	partial
-t3200-branch::deleting-currently-checked-out-branch-fails	t3200-branch	deleting currently checked out branch fails	branch	partial
-t3200-branch::deleting-in-use-branch-fails	t3200-branch	deleting in-use branch fails	branch	partial
-t3200-branch::test-track-without-fetch-entries	t3200-branch	test --track without .fetch entries	branch	partial
-t3200-branch::branch-from-non-branch-head-w-autosetupmerge-always	t3200-branch	branch from non-branch HEAD w/autosetupmerge=always	branch	partial
-t3200-branch::branch-from-non-branch-head-w-track-causes-failure	t3200-branch	branch from non-branch HEAD w/--track causes failure	branch	partial
-t3200-branch::branch-from-tag-w-track-causes-failure	t3200-branch	branch from tag w/--track causes failure	branch	partial
-t3200-branch::simple-tracking-works-when-remote-branch-name-matches	t3200-branch	simple tracking works when remote branch name matches	branch	partial
-t3200-branch::simple-tracking-skips-when-remote-branch-name-does-not-match	t3200-branch	simple tracking skips when remote branch name does not match	branch	partial
-t3200-branch::simple-tracking-skips-when-remote-ref-is-not-a-branch	t3200-branch	simple tracking skips when remote ref is not a branch	branch	partial
-t3200-branch::set-upstream-to-fails-on-multiple-branches	t3200-branch	--set-upstream-to fails on multiple branches	branch	partial
-t3200-branch::set-upstream-to-fails-on-detached-head	t3200-branch	--set-upstream-to fails on detached HEAD	branch	partial
-t3200-branch::set-upstream-to-fails-on-a-missing-dst-branch	t3200-branch	--set-upstream-to fails on a missing dst branch	branch	partial
-t3200-branch::set-upstream-to-fails-on-a-missing-src-branch	t3200-branch	--set-upstream-to fails on a missing src branch	branch	partial
-t3200-branch::set-upstream-to-fails-on-a-non-ref	t3200-branch	--set-upstream-to fails on a non-ref	branch	partial
-t3200-branch::set-upstream-to-fails-on-locked-config	t3200-branch	--set-upstream-to fails on locked config	branch	partial
-t3200-branch::use-set-upstream-to-modify-head	t3200-branch	use --set-upstream-to modify HEAD	branch	partial
-t3200-branch::use-set-upstream-to-modify-a-particular-branch	t3200-branch	use --set-upstream-to modify a particular branch	branch	partial
-t3200-branch::unset-upstream-should-fail-if-given-a-non-existent-branch	t3200-branch	--unset-upstream should fail if given a non-existent branch	branch	partial
-t3200-branch::unset-upstream-should-fail-if-config-is-locked	t3200-branch	--unset-upstream should fail if config is locked	branch	partial
-t3200-branch::test-unset-upstream-on-head	t3200-branch	test --unset-upstream on HEAD	branch	partial
-t3200-branch::unset-upstream-should-fail-on-multiple-branches	t3200-branch	--unset-upstream should fail on multiple branches	branch	partial
-t3200-branch::unset-upstream-should-fail-on-detached-head	t3200-branch	--unset-upstream should fail on detached HEAD	branch	partial
-t3200-branch::test-unset-upstream-on-a-particular-branch	t3200-branch	test --unset-upstream on a particular branch	branch	partial
-t3200-branch::disabled-option-set-upstream-fails	t3200-branch	disabled option --set-upstream fails	branch	partial
-t3200-branch::set-upstream-to-notices-an-error-to-set-branch-as-own-upstream	t3200-branch	--set-upstream-to notices an error to set branch as own upstream	branch	partial
-t3200-branch::git-checkout-b-g-h-i-l-should-create-a-branch-and-a-log	t3200-branch	git checkout -b g/h/i -l should create a branch and a log	branch	partial
-t3200-branch::checkout-b-makes-reflog-by-default	t3200-branch	checkout -b makes reflog by default	branch	partial
-t3200-branch::checkout-b-does-not-make-reflog-when-core-logallrefupdates-false	t3200-branch	checkout -b does not make reflog when core.logAllRefUpdates = false	branch	partial
-t3200-branch::checkout-b-with-l-makes-reflog-when-core-logallrefupdates-false	t3200-branch	checkout -b with -l makes reflog when core.logAllRefUpdates = false	branch	partial
-t3200-branch::avoid-ambiguous-track-and-advise	t3200-branch	avoid ambiguous track and advise	branch	partial
-t3200-branch::autosetuprebase-local-on-a-tracked-local-branch	t3200-branch	autosetuprebase local on a tracked local branch	branch	partial
-t3200-branch::autosetuprebase-always-on-a-tracked-local-branch	t3200-branch	autosetuprebase always on a tracked local branch	branch	partial
-t3200-branch::autosetuprebase-remote-on-a-tracked-local-branch	t3200-branch	autosetuprebase remote on a tracked local branch	branch	partial
-t3200-branch::autosetuprebase-never-on-a-tracked-local-branch	t3200-branch	autosetuprebase never on a tracked local branch	branch	partial
-t3200-branch::autosetuprebase-local-on-a-tracked-remote-branch	t3200-branch	autosetuprebase local on a tracked remote branch	branch	partial
-t3200-branch::autosetuprebase-never-on-a-tracked-remote-branch	t3200-branch	autosetuprebase never on a tracked remote branch	branch	partial
-t3200-branch::autosetuprebase-remote-on-a-tracked-remote-branch	t3200-branch	autosetuprebase remote on a tracked remote branch	branch	partial
-t3200-branch::autosetuprebase-always-on-a-tracked-remote-branch	t3200-branch	autosetuprebase always on a tracked remote branch	branch	partial
-t3200-branch::autosetuprebase-unconfigured-on-a-tracked-remote-branch	t3200-branch	autosetuprebase unconfigured on a tracked remote branch	branch	partial
-t3200-branch::autosetuprebase-unconfigured-on-a-tracked-local-branch	t3200-branch	autosetuprebase unconfigured on a tracked local branch	branch	partial
-t3200-branch::autosetuprebase-unconfigured-on-untracked-local-branch	t3200-branch	autosetuprebase unconfigured on untracked local branch	branch	partial
-t3200-branch::autosetuprebase-unconfigured-on-untracked-remote-branch	t3200-branch	autosetuprebase unconfigured on untracked remote branch	branch	partial
-t3200-branch::autosetuprebase-never-on-an-untracked-local-branch	t3200-branch	autosetuprebase never on an untracked local branch	branch	partial
-t3200-branch::autosetuprebase-local-on-an-untracked-local-branch	t3200-branch	autosetuprebase local on an untracked local branch	branch	partial
-t3200-branch::autosetuprebase-remote-on-an-untracked-local-branch	t3200-branch	autosetuprebase remote on an untracked local branch	branch	partial
-t3200-branch::autosetuprebase-always-on-an-untracked-local-branch	t3200-branch	autosetuprebase always on an untracked local branch	branch	partial
-t3200-branch::autosetuprebase-never-on-an-untracked-remote-branch	t3200-branch	autosetuprebase never on an untracked remote branch	branch	partial
-t3200-branch::autosetuprebase-local-on-an-untracked-remote-branch	t3200-branch	autosetuprebase local on an untracked remote branch	branch	partial
-t3200-branch::autosetuprebase-remote-on-an-untracked-remote-branch	t3200-branch	autosetuprebase remote on an untracked remote branch	branch	partial
-t3200-branch::autosetuprebase-always-on-an-untracked-remote-branch	t3200-branch	autosetuprebase always on an untracked remote branch	branch	partial
-t3200-branch::autosetuprebase-always-on-detached-head	t3200-branch	autosetuprebase always on detached HEAD	branch	partial
-t3200-branch::detect-misconfigured-autosetuprebase-bad-value	t3200-branch	detect misconfigured autosetuprebase (bad value)	branch	partial
-t3200-branch::detect-misconfigured-autosetuprebase-no-value	t3200-branch	detect misconfigured autosetuprebase (no value)	branch	partial
-t3200-branch::attempt-to-delete-a-branch-without-base-and-unmerged-to-head	t3200-branch	attempt to delete a branch without base and unmerged to HEAD	branch	partial
-t3200-branch::attempt-to-delete-a-branch-merged-to-its-base	t3200-branch	attempt to delete a branch merged to its base	branch	partial
-t3200-branch::attempt-to-delete-a-branch-merged-to-its-base-2	t3200-branch	attempt to delete a branch merged to its base	branch	partial
-t3200-branch::branch-delete-force-removes-dangling-branch	t3200-branch	branch --delete --force removes dangling branch	branch	partial
-t3200-branch::use-edit-description	t3200-branch	use --edit-description	branch	partial
-t3200-branch::detect-typo-in-branch-name-when-using-edit-description	t3200-branch	detect typo in branch name when using --edit-description	branch	partial
-t3200-branch::refuse-edit-description-on-unborn-branch-for-now	t3200-branch	refuse --edit-description on unborn branch for now	branch	partial
-t3200-branch::merged-catches-invalid-object-names	t3200-branch	--merged catches invalid object names	branch	partial
-t3200-branch::list-during-rebase	t3200-branch	--list during rebase	branch	partial
-t3200-branch::list-during-rebase-from-detached-head	t3200-branch	--list during rebase from detached HEAD	branch	partial
-t3200-branch::tracking-with-unexpected-fetch-refspec	t3200-branch	tracking with unexpected .fetch refspec	branch	partial
-t3200-branch::configured-committerdate-sort	t3200-branch	configured committerdate sort	branch	partial
-t3200-branch::option-override-configured-sort	t3200-branch	option override configured sort	branch	partial
-t3200-branch::no-sort-cancels-config-sort-keys	t3200-branch	--no-sort cancels config sort keys	branch	partial
-t3200-branch::no-sort-cancels-command-line-sort-keys	t3200-branch	--no-sort cancels command line sort keys	branch	partial
-t3200-branch::no-sort-without-subsequent-sort-prints-expected-branches	t3200-branch	--no-sort without subsequent --sort prints expected branches	branch	partial
-t3200-branch::invalid-sort-parameter-in-configuration	t3200-branch	invalid sort parameter in configuration	branch	partial
-t3200-branch::tracking-info-copied-with-track-inherit	t3200-branch	tracking info copied with --track=inherit	branch	partial
-t3200-branch::tracking-info-copied-with-autosetupmerge-inherit	t3200-branch	tracking info copied with autoSetupMerge=inherit	branch	partial
-t3200-branch::track-overrides-branch-autosetupmerge	t3200-branch	--track overrides branch.autoSetupMerge	branch	partial
-t3200-branch::errors-if-given-a-bad-branch-name	t3200-branch	errors if given a bad branch name	branch	partial
+t3200-branch::prepare-a-trivial-repository	t3200-branch	prepare a trivial repository	branch	pass
+t3200-branch::git-branch-help-should-not-have-created-a-bogus-branch	t3200-branch	git branch --help should not have created a bogus branch	branch	pass
+t3200-branch::branch-h-in-broken-repository	t3200-branch	branch -h in broken repository	branch	pass
+t3200-branch::git-branch-abc-should-create-a-branch	t3200-branch	git branch abc should create a branch	branch	pass
+t3200-branch::git-branch-abc-should-fail-when-abc-exists	t3200-branch	git branch abc should fail when abc exists	branch	pass
+t3200-branch::git-branch-force-abc-should-fail-when-abc-is-checked-out	t3200-branch	git branch --force abc should fail when abc is checked out	branch	pass
+t3200-branch::git-branch-force-abc-should-succeed-when-abc-exists	t3200-branch	git branch --force abc should succeed when abc exists	branch	pass
+t3200-branch::git-branch-a-b-c-should-create-a-branch	t3200-branch	git branch a/b/c should create a branch	branch	pass
+t3200-branch::git-branch-mb-main-should-create-a-branch	t3200-branch	git branch mb main... should create a branch	branch	pass
+t3200-branch::git-branch-head-should-fail	t3200-branch	git branch HEAD should fail	branch	pass
+t3200-branch::git-branch-create-reflog-d-e-f-should-create-a-branch-and-a-log	t3200-branch	git branch --create-reflog d/e/f should create a branch and a log	branch	pass
+t3200-branch::git-branch-d-d-e-f-should-delete-a-branch-and-a-log	t3200-branch	git branch -d d/e/f should delete a branch and a log	branch	pass
+t3200-branch::git-branch-j-k-should-work-after-branch-j-has-been-deleted	t3200-branch	git branch j/k should work after branch j has been deleted	branch	pass
+t3200-branch::git-branch-l-should-work-after-branch-l-m-has-been-deleted	t3200-branch	git branch l should work after branch l/m has been deleted	branch	pass
+t3200-branch::git-branch-m-dumps-usage	t3200-branch	git branch -m dumps usage	branch	pass
+t3200-branch::git-branch-m-m-broken-symref-should-work	t3200-branch	git branch -m m broken_symref should work	branch	pass
+t3200-branch::git-branch-m-m-m-m-should-work	t3200-branch	git branch -m m m/m should work	branch	pass
+t3200-branch::git-branch-m-n-n-n-should-work	t3200-branch	git branch -m n/n n should work	branch	pass
+t3200-branch::git-branch-m-bbb-should-rename-checked-out-branch	t3200-branch	git branch -m bbb should rename checked out branch	branch	pass
+t3200-branch::renaming-checked-out-branch-works-with-d-f-conflict	t3200-branch	renaming checked out branch works with d/f conflict	branch	pass
+t3200-branch::git-branch-m-o-o-o-should-fail-when-o-p-exists	t3200-branch	git branch -m o/o o should fail when o/p exists	branch	pass
+t3200-branch::git-branch-m-o-q-o-p-should-fail-when-o-p-exists	t3200-branch	git branch -m o/q o/p should fail when o/p exists	branch	pass
+t3200-branch::git-branch-m-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -M o/q o/p should work when o/p exists	branch	pass
+t3200-branch::git-branch-m-f-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -m -f o/q o/p should work when o/p exists	branch	pass
+t3200-branch::git-branch-m-q-r-q-should-fail-when-r-exists	t3200-branch	git branch -m q r/q should fail when r exists	branch	pass
+t3200-branch::git-branch-m-foo-bar-should-fail-when-bar-is-checked-out	t3200-branch	git branch -M foo bar should fail when bar is checked out	branch	pass
+t3200-branch::git-branch-m-foo-bar-should-fail-when-bar-is-checked-out-in-worktree	t3200-branch	git branch -M foo bar should fail when bar is checked out in worktree	branch	pass
+t3200-branch::git-branch-m-baz-bam-should-succeed-when-baz-is-checked-out	t3200-branch	git branch -M baz bam should succeed when baz is checked out	branch	pass
+t3200-branch::git-branch-m-baz-bam-should-add-entries-to-head-reflog	t3200-branch	git branch -M baz bam should add entries to HEAD reflog	branch	pass
+t3200-branch::git-branch-m-should-leave-orphaned-head-alone	t3200-branch	git branch -M should leave orphaned HEAD alone	branch	pass
+t3200-branch::resulting-reflog-can-be-shown-by-log-g	t3200-branch	resulting reflog can be shown by log -g	branch	pass
+t3200-branch::git-branch-m-baz-bam-should-succeed-when-baz-is-checked-out-as-linked-working-tr	t3200-branch	git branch -M baz bam should succeed when baz is checked out as linked working tree	branch	pass
+t3200-branch::git-branch-m-fails-if-updating-any-linked-working-tree-fails	t3200-branch	git branch -M fails if updating any linked working tree fails	branch	pass
+t3200-branch::git-branch-m-baz-bam-should-succeed-within-a-worktree-in-which-baz-is-checked-ou	t3200-branch	git branch -M baz bam should succeed within a worktree in which baz is checked out	branch	pass
+t3200-branch::git-branch-m-main-should-work-when-main-is-checked-out	t3200-branch	git branch -M main should work when main is checked out	branch	pass
+t3200-branch::git-branch-m-main-main-should-work-when-main-is-checked-out	t3200-branch	git branch -M main main should work when main is checked out	branch	pass
+t3200-branch::git-branch-m-topic-topic-should-work-when-main-is-checked-out	t3200-branch	git branch -M topic topic should work when main is checked out	branch	pass
+t3200-branch::git-branch-m-and-c-fail-on-detached-head	t3200-branch	git branch -M and -C fail on detached HEAD	branch	pass
+t3200-branch::git-branch-m-should-work-with-orphan-branches	t3200-branch	git branch -m should work with orphan branches	branch	pass
+t3200-branch::git-branch-d-on-orphan-head-merged	t3200-branch	git branch -d on orphan HEAD (merged)	branch	pass
+t3200-branch::git-branch-d-on-orphan-head-merged-graph	t3200-branch	git branch -d on orphan HEAD (merged, graph)	branch	pass
+t3200-branch::git-branch-d-on-orphan-head-unmerged	t3200-branch	git branch -d on orphan HEAD (unmerged)	branch	pass
+t3200-branch::git-branch-d-on-orphan-head-unmerged-graph	t3200-branch	git branch -d on orphan HEAD (unmerged, graph)	branch	pass
+t3200-branch::git-branch-v-d-t-should-work	t3200-branch	git branch -v -d t should work	branch	pass
+t3200-branch::git-branch-v-m-t-s-should-work	t3200-branch	git branch -v -m t s should work	branch	pass
+t3200-branch::git-branch-m-d-t-s-should-fail	t3200-branch	git branch -m -d t s should fail	branch	pass
+t3200-branch::git-branch-list-d-t-should-fail	t3200-branch	git branch --list -d t should fail	branch	pass
+t3200-branch::deleting-checked-out-branch-from-repo-that-is-a-submodule	t3200-branch	deleting checked-out branch from repo that is a submodule	branch	pass
+t3200-branch::bare-main-worktree-has-head-at-branch-deleted-by-secondary-worktree	t3200-branch	bare main worktree has HEAD at branch deleted by secondary worktree	branch	pass
+t3200-branch::secondary-worktrees-recognize-core-bare-true-in-main-config-worktree	t3200-branch	secondary worktrees recognize core.bare=true in main config.worktree	branch	pass
+t3200-branch::git-branch-list-v-with-abbrev	t3200-branch	git branch --list -v with --abbrev	branch	pass
+t3200-branch::git-branch-column	t3200-branch	git branch --column	branch	pass
+t3200-branch::git-branch-column-with-an-extremely-long-branch-name	t3200-branch	git branch --column with an extremely long branch name	branch	pass
+t3200-branch::git-branch-with-column	t3200-branch	git branch with column.*	branch	pass
+t3200-branch::git-branch-column-v-should-fail	t3200-branch	git branch --column -v should fail	branch	pass
+t3200-branch::git-branch-v-with-column-ui-ignored	t3200-branch	git branch -v with column.ui ignored	branch	pass
+t3200-branch::git-branch-m-q-q2-without-config-should-succeed	t3200-branch	git branch -m q q2 without config should succeed	branch	pass
+t3200-branch::git-branch-m-s-s-s-should-work-when-s-t-is-deleted	t3200-branch	git branch -m s/s s should work when s/t is deleted	branch	pass
+t3200-branch::config-information-was-renamed-too	t3200-branch	config information was renamed, too	branch	pass
+t3200-branch::git-branch-m-correctly-renames-multiple-config-sections	t3200-branch	git branch -m correctly renames multiple config sections	branch	pass
+t3200-branch::git-branch-c-dumps-usage	t3200-branch	git branch -c dumps usage	branch	pass
+t3200-branch::git-branch-copy-dumps-usage	t3200-branch	git branch --copy dumps usage	branch	pass
+t3200-branch::git-branch-c-d-e-should-work	t3200-branch	git branch -c d e should work	branch	pass
+t3200-branch::git-branch-copy-is-a-synonym-for-c	t3200-branch	git branch --copy is a synonym for -c	branch	pass
+t3200-branch::git-branch-c-ee-ef-should-copy-ee-to-create-branch-ef	t3200-branch	git branch -c ee ef should copy ee to create branch ef	branch	pass
+t3200-branch::git-branch-c-f-f-g-g-should-work	t3200-branch	git branch -c f/f g/g should work	branch	pass
+t3200-branch::git-branch-c-m2-m2-should-work	t3200-branch	git branch -c m2 m2 should work	branch	pass
+t3200-branch::git-branch-c-zz-zz-zz-should-fail	t3200-branch	git branch -c zz zz/zz should fail	branch	pass
+t3200-branch::git-branch-c-b-b-b-should-fail	t3200-branch	git branch -c b/b b should fail	branch	pass
+t3200-branch::git-branch-c-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -C o/q o/p should work when o/p exists	branch	pass
+t3200-branch::git-branch-c-f-o-q-o-p-should-work-when-o-p-exists	t3200-branch	git branch -c -f o/q o/p should work when o/p exists	branch	pass
+t3200-branch::git-branch-c-qq-rr-qq-should-fail-when-rr-exists	t3200-branch	git branch -c qq rr/qq should fail when rr exists	branch	pass
+t3200-branch::git-branch-c-b1-b2-should-fail-when-b2-is-checked-out	t3200-branch	git branch -C b1 b2 should fail when b2 is checked out	branch	pass
+t3200-branch::git-branch-c-c1-c2-should-succeed-when-c1-is-checked-out	t3200-branch	git branch -C c1 c2 should succeed when c1 is checked out	branch	pass
+t3200-branch::git-branch-c-c1-c2-should-never-touch-head	t3200-branch	git branch -C c1 c2 should never touch HEAD	branch	pass
+t3200-branch::git-branch-c-main-should-work-when-main-is-checked-out	t3200-branch	git branch -C main should work when main is checked out	branch	pass
+t3200-branch::git-branch-c-main-main-should-work-when-main-is-checked-out	t3200-branch	git branch -C main main should work when main is checked out	branch	pass
+t3200-branch::git-branch-c-main5-main5-should-work-when-main-is-checked-out	t3200-branch	git branch -C main5 main5 should work when main is checked out	branch	pass
+t3200-branch::git-branch-c-ab-cd-should-overwrite-existing-config-for-cd	t3200-branch	git branch -C ab cd should overwrite existing config for cd	branch	pass
+t3200-branch::git-branch-c-correctly-copies-multiple-config-sections	t3200-branch	git branch -c correctly copies multiple config sections	branch	pass
+t3200-branch::deleting-a-symref	t3200-branch	deleting a symref	branch	pass
+t3200-branch::deleting-a-dangling-symref	t3200-branch	deleting a dangling symref	branch	pass
+t3200-branch::deleting-a-self-referential-symref	t3200-branch	deleting a self-referential symref	branch	pass
+t3200-branch::renaming-a-symref-is-not-allowed	t3200-branch	renaming a symref is not allowed	branch	pass
+t3200-branch::test-tracking-setup-via-track	t3200-branch	test tracking setup via --track	branch	pass
+t3200-branch::test-tracking-setup-non-wildcard-matching	t3200-branch	test tracking setup (non-wildcard, matching)	branch	pass
+t3200-branch::tracking-setup-fails-on-non-matching-refspec	t3200-branch	tracking setup fails on non-matching refspec	branch	pass
+t3200-branch::test-tracking-setup-via-config	t3200-branch	test tracking setup via config	branch	pass
+t3200-branch::test-overriding-tracking-setup-via-no-track	t3200-branch	test overriding tracking setup via --no-track	branch	pass
+t3200-branch::no-tracking-without-fetch-entries	t3200-branch	no tracking without .fetch entries	branch	pass
+t3200-branch::test-tracking-setup-via-track-but-deeper	t3200-branch	test tracking setup via --track but deeper	branch	pass
+t3200-branch::test-deleting-branch-deletes-branch-config	t3200-branch	test deleting branch deletes branch config	branch	pass
+t3200-branch::test-deleting-branch-without-config	t3200-branch	test deleting branch without config	branch	pass
+t3200-branch::deleting-currently-checked-out-branch-fails	t3200-branch	deleting currently checked out branch fails	branch	pass
+t3200-branch::deleting-in-use-branch-fails	t3200-branch	deleting in-use branch fails	branch	pass
+t3200-branch::test-track-without-fetch-entries	t3200-branch	test --track without .fetch entries	branch	pass
+t3200-branch::branch-from-non-branch-head-w-autosetupmerge-always	t3200-branch	branch from non-branch HEAD w/autosetupmerge=always	branch	pass
+t3200-branch::branch-from-non-branch-head-w-track-causes-failure	t3200-branch	branch from non-branch HEAD w/--track causes failure	branch	pass
+t3200-branch::branch-from-tag-w-track-causes-failure	t3200-branch	branch from tag w/--track causes failure	branch	pass
+t3200-branch::simple-tracking-works-when-remote-branch-name-matches	t3200-branch	simple tracking works when remote branch name matches	branch	pass
+t3200-branch::simple-tracking-skips-when-remote-branch-name-does-not-match	t3200-branch	simple tracking skips when remote branch name does not match	branch	pass
+t3200-branch::simple-tracking-skips-when-remote-ref-is-not-a-branch	t3200-branch	simple tracking skips when remote ref is not a branch	branch	pass
+t3200-branch::set-upstream-to-fails-on-multiple-branches	t3200-branch	--set-upstream-to fails on multiple branches	branch	pass
+t3200-branch::set-upstream-to-fails-on-detached-head	t3200-branch	--set-upstream-to fails on detached HEAD	branch	pass
+t3200-branch::set-upstream-to-fails-on-a-missing-dst-branch	t3200-branch	--set-upstream-to fails on a missing dst branch	branch	pass
+t3200-branch::set-upstream-to-fails-on-a-missing-src-branch	t3200-branch	--set-upstream-to fails on a missing src branch	branch	pass
+t3200-branch::set-upstream-to-fails-on-a-non-ref	t3200-branch	--set-upstream-to fails on a non-ref	branch	pass
+t3200-branch::set-upstream-to-fails-on-locked-config	t3200-branch	--set-upstream-to fails on locked config	branch	pass
+t3200-branch::use-set-upstream-to-modify-head	t3200-branch	use --set-upstream-to modify HEAD	branch	pass
+t3200-branch::use-set-upstream-to-modify-a-particular-branch	t3200-branch	use --set-upstream-to modify a particular branch	branch	pass
+t3200-branch::unset-upstream-should-fail-if-given-a-non-existent-branch	t3200-branch	--unset-upstream should fail if given a non-existent branch	branch	pass
+t3200-branch::unset-upstream-should-fail-if-config-is-locked	t3200-branch	--unset-upstream should fail if config is locked	branch	pass
+t3200-branch::test-unset-upstream-on-head	t3200-branch	test --unset-upstream on HEAD	branch	pass
+t3200-branch::unset-upstream-should-fail-on-multiple-branches	t3200-branch	--unset-upstream should fail on multiple branches	branch	pass
+t3200-branch::unset-upstream-should-fail-on-detached-head	t3200-branch	--unset-upstream should fail on detached HEAD	branch	pass
+t3200-branch::test-unset-upstream-on-a-particular-branch	t3200-branch	test --unset-upstream on a particular branch	branch	pass
+t3200-branch::disabled-option-set-upstream-fails	t3200-branch	disabled option --set-upstream fails	branch	pass
+t3200-branch::set-upstream-to-notices-an-error-to-set-branch-as-own-upstream	t3200-branch	--set-upstream-to notices an error to set branch as own upstream	branch	pass
+t3200-branch::git-checkout-b-g-h-i-l-should-create-a-branch-and-a-log	t3200-branch	git checkout -b g/h/i -l should create a branch and a log	branch	pass
+t3200-branch::checkout-b-makes-reflog-by-default	t3200-branch	checkout -b makes reflog by default	branch	pass
+t3200-branch::checkout-b-does-not-make-reflog-when-core-logallrefupdates-false	t3200-branch	checkout -b does not make reflog when core.logAllRefUpdates = false	branch	pass
+t3200-branch::checkout-b-with-l-makes-reflog-when-core-logallrefupdates-false	t3200-branch	checkout -b with -l makes reflog when core.logAllRefUpdates = false	branch	pass
+t3200-branch::avoid-ambiguous-track-and-advise	t3200-branch	avoid ambiguous track and advise	branch	pass
+t3200-branch::autosetuprebase-local-on-a-tracked-local-branch	t3200-branch	autosetuprebase local on a tracked local branch	branch	pass
+t3200-branch::autosetuprebase-always-on-a-tracked-local-branch	t3200-branch	autosetuprebase always on a tracked local branch	branch	pass
+t3200-branch::autosetuprebase-remote-on-a-tracked-local-branch	t3200-branch	autosetuprebase remote on a tracked local branch	branch	pass
+t3200-branch::autosetuprebase-never-on-a-tracked-local-branch	t3200-branch	autosetuprebase never on a tracked local branch	branch	pass
+t3200-branch::autosetuprebase-local-on-a-tracked-remote-branch	t3200-branch	autosetuprebase local on a tracked remote branch	branch	pass
+t3200-branch::autosetuprebase-never-on-a-tracked-remote-branch	t3200-branch	autosetuprebase never on a tracked remote branch	branch	pass
+t3200-branch::autosetuprebase-remote-on-a-tracked-remote-branch	t3200-branch	autosetuprebase remote on a tracked remote branch	branch	pass
+t3200-branch::autosetuprebase-always-on-a-tracked-remote-branch	t3200-branch	autosetuprebase always on a tracked remote branch	branch	pass
+t3200-branch::autosetuprebase-unconfigured-on-a-tracked-remote-branch	t3200-branch	autosetuprebase unconfigured on a tracked remote branch	branch	pass
+t3200-branch::autosetuprebase-unconfigured-on-a-tracked-local-branch	t3200-branch	autosetuprebase unconfigured on a tracked local branch	branch	pass
+t3200-branch::autosetuprebase-unconfigured-on-untracked-local-branch	t3200-branch	autosetuprebase unconfigured on untracked local branch	branch	pass
+t3200-branch::autosetuprebase-unconfigured-on-untracked-remote-branch	t3200-branch	autosetuprebase unconfigured on untracked remote branch	branch	pass
+t3200-branch::autosetuprebase-never-on-an-untracked-local-branch	t3200-branch	autosetuprebase never on an untracked local branch	branch	pass
+t3200-branch::autosetuprebase-local-on-an-untracked-local-branch	t3200-branch	autosetuprebase local on an untracked local branch	branch	pass
+t3200-branch::autosetuprebase-remote-on-an-untracked-local-branch	t3200-branch	autosetuprebase remote on an untracked local branch	branch	pass
+t3200-branch::autosetuprebase-always-on-an-untracked-local-branch	t3200-branch	autosetuprebase always on an untracked local branch	branch	pass
+t3200-branch::autosetuprebase-never-on-an-untracked-remote-branch	t3200-branch	autosetuprebase never on an untracked remote branch	branch	pass
+t3200-branch::autosetuprebase-local-on-an-untracked-remote-branch	t3200-branch	autosetuprebase local on an untracked remote branch	branch	pass
+t3200-branch::autosetuprebase-remote-on-an-untracked-remote-branch	t3200-branch	autosetuprebase remote on an untracked remote branch	branch	pass
+t3200-branch::autosetuprebase-always-on-an-untracked-remote-branch	t3200-branch	autosetuprebase always on an untracked remote branch	branch	pass
+t3200-branch::autosetuprebase-always-on-detached-head	t3200-branch	autosetuprebase always on detached HEAD	branch	pass
+t3200-branch::detect-misconfigured-autosetuprebase-bad-value	t3200-branch	detect misconfigured autosetuprebase (bad value)	branch	pass
+t3200-branch::detect-misconfigured-autosetuprebase-no-value	t3200-branch	detect misconfigured autosetuprebase (no value)	branch	pass
+t3200-branch::attempt-to-delete-a-branch-without-base-and-unmerged-to-head	t3200-branch	attempt to delete a branch without base and unmerged to HEAD	branch	pass
+t3200-branch::attempt-to-delete-a-branch-merged-to-its-base	t3200-branch	attempt to delete a branch merged to its base	branch	pass
+t3200-branch::attempt-to-delete-a-branch-merged-to-its-base-2	t3200-branch	attempt to delete a branch merged to its base	branch	pass
+t3200-branch::branch-delete-force-removes-dangling-branch	t3200-branch	branch --delete --force removes dangling branch	branch	pass
+t3200-branch::use-edit-description	t3200-branch	use --edit-description	branch	pass
+t3200-branch::detect-typo-in-branch-name-when-using-edit-description	t3200-branch	detect typo in branch name when using --edit-description	branch	pass
+t3200-branch::refuse-edit-description-on-unborn-branch-for-now	t3200-branch	refuse --edit-description on unborn branch for now	branch	pass
+t3200-branch::merged-catches-invalid-object-names	t3200-branch	--merged catches invalid object names	branch	pass
+t3200-branch::list-during-rebase	t3200-branch	--list during rebase	branch	pass
+t3200-branch::list-during-rebase-from-detached-head	t3200-branch	--list during rebase from detached HEAD	branch	pass
+t3200-branch::tracking-with-unexpected-fetch-refspec	t3200-branch	tracking with unexpected .fetch refspec	branch	pass
+t3200-branch::configured-committerdate-sort	t3200-branch	configured committerdate sort	branch	pass
+t3200-branch::option-override-configured-sort	t3200-branch	option override configured sort	branch	pass
+t3200-branch::no-sort-cancels-config-sort-keys	t3200-branch	--no-sort cancels config sort keys	branch	pass
+t3200-branch::no-sort-cancels-command-line-sort-keys	t3200-branch	--no-sort cancels command line sort keys	branch	pass
+t3200-branch::no-sort-without-subsequent-sort-prints-expected-branches	t3200-branch	--no-sort without subsequent --sort prints expected branches	branch	pass
+t3200-branch::invalid-sort-parameter-in-configuration	t3200-branch	invalid sort parameter in configuration	branch	pass
+t3200-branch::tracking-info-copied-with-track-inherit	t3200-branch	tracking info copied with --track=inherit	branch	pass
+t3200-branch::tracking-info-copied-with-autosetupmerge-inherit	t3200-branch	tracking info copied with autoSetupMerge=inherit	branch	pass
+t3200-branch::track-overrides-branch-autosetupmerge	t3200-branch	--track overrides branch.autoSetupMerge	branch	pass
+t3200-branch::errors-if-given-a-bad-branch-name	t3200-branch	errors if given a bad branch name	branch	pass
 t3201-branch-contains::branch-contains-main	t3201-branch-contains	branch --contains=main	branch	pass
 t3201-branch-contains::branch-contains-main-2	t3201-branch-contains	branch --contains main	branch	pass
 t3201-branch-contains::branch-no-contains-main	t3201-branch-contains	branch --no-contains=main	branch	pass
@@ -9817,8 +9817,8 @@ t5500-fetch-pack::fetch-pack-diag-url-p-h-r-3	t5500-fetch-pack	fetch-pack --diag
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-4	t5500-fetch-pack	fetch-pack --diag-url $p://$h/~$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-h-r	t5500-fetch-pack	fetch-pack --diag-url ./$h:$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-5	t5500-fetch-pack	fetch-pack --diag-url ./$p:$h/~$r	fetch-pack	pass
-t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	partial
-t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	partial
+t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	pass
+t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	pass
 t5502-quickfetch::clone-without-alternate	t5502-quickfetch	clone without alternate	count-objects	pass
 t5502-quickfetch::further-commits-in-the-original	t5502-quickfetch	further commits in the original	commit	pass
 t5502-quickfetch::copy-commit-and-tree-but-not-blob-by-hand	t5502-quickfetch	copy commit and tree but not blob by hand	count-objects	pass
@@ -12416,27 +12416,27 @@ t6120-describe::always-with-no-refs-falls-back-to-commit-hash	t6120-describe	--a
 t6120-describe::exact-match-does-not-show-always-fallback	t6120-describe	--exact-match does not show --always fallback	describe	pass
 t6120-describe::avoid-being-fooled-by-describe-like-filename	t6120-describe	avoid being fooled by describe-like filename	describe	pass
 t6120-describe::do-not-be-fooled-by-invalid-describe-format	t6120-describe	do not be fooled by invalid describe format 	describe	pass
-t6130-pathspec-noglob::create-commits-with-glob-characters	t6130-pathspec-noglob	create commits with glob characters	commit	partial
-t6130-pathspec-noglob::vanilla-pathspec-matches-literally	t6130-pathspec-noglob	vanilla pathspec matches literally	log	partial
-t6130-pathspec-noglob::star-pathspec-globs	t6130-pathspec-noglob	star pathspec globs	log	partial
-t6130-pathspec-noglob::star-pathspec-globs-2	t6130-pathspec-noglob	star pathspec globs	log	partial
-t6130-pathspec-noglob::bracket-pathspec-globs-and-matches-literal-brackets	t6130-pathspec-noglob	bracket pathspec globs and matches literal brackets	log	partial
-t6130-pathspec-noglob::bracket-pathspec-globs-and-matches-literal-brackets-2	t6130-pathspec-noglob	bracket pathspec globs and matches literal brackets	log	partial
-t6130-pathspec-noglob::no-glob-option-matches-literally-vanilla	t6130-pathspec-noglob	no-glob option matches literally (vanilla)		partial
-t6130-pathspec-noglob::no-glob-option-matches-literally-vanilla-2	t6130-pathspec-noglob	no-glob option matches literally (vanilla)	log	partial
-t6130-pathspec-noglob::no-glob-option-matches-literally-star	t6130-pathspec-noglob	no-glob option matches literally (star)		partial
-t6130-pathspec-noglob::no-glob-option-matches-literally-star-2	t6130-pathspec-noglob	no-glob option matches literally (star)	log	partial
-t6130-pathspec-noglob::no-glob-option-matches-literally-bracket	t6130-pathspec-noglob	no-glob option matches literally (bracket)		partial
-t6130-pathspec-noglob::no-glob-option-matches-literally-bracket-2	t6130-pathspec-noglob	no-glob option matches literally (bracket)	log	partial
-t6130-pathspec-noglob::no-glob-option-disables-literal	t6130-pathspec-noglob	no-glob option disables :(literal)		partial
-t6130-pathspec-noglob::no-glob-environment-variable-works	t6130-pathspec-noglob	no-glob environment variable works	log	partial
-t6130-pathspec-noglob::blame-takes-global-pathspec-flags	t6130-pathspec-noglob	blame takes global pathspec flags		partial
-t6130-pathspec-noglob::setup-xxx-bar	t6130-pathspec-noglob	setup xxx/bar		partial
-t6130-pathspec-noglob::works-with-glob	t6130-pathspec-noglob	**/ works with :(glob)	log	partial
-t6130-pathspec-noglob::does-not-work-with-noglob-pathspecs	t6130-pathspec-noglob	**/ does not work with --noglob-pathspecs		partial
-t6130-pathspec-noglob::works-with-glob-and-noglob-pathspecs	t6130-pathspec-noglob	**/ works with :(glob) and --noglob-pathspecs		partial
-t6130-pathspec-noglob::works-with-glob-pathspecs	t6130-pathspec-noglob	**/ works with --glob-pathspecs		partial
-t6130-pathspec-noglob::does-not-work-with-literal-and-glob-pathspecs	t6130-pathspec-noglob	**/ does not work with :(literal) and --glob-pathspecs		partial
+t6130-pathspec-noglob::create-commits-with-glob-characters	t6130-pathspec-noglob	create commits with glob characters	commit	pass
+t6130-pathspec-noglob::vanilla-pathspec-matches-literally	t6130-pathspec-noglob	vanilla pathspec matches literally	log	pass
+t6130-pathspec-noglob::star-pathspec-globs	t6130-pathspec-noglob	star pathspec globs	log	pass
+t6130-pathspec-noglob::star-pathspec-globs-2	t6130-pathspec-noglob	star pathspec globs	log	pass
+t6130-pathspec-noglob::bracket-pathspec-globs-and-matches-literal-brackets	t6130-pathspec-noglob	bracket pathspec globs and matches literal brackets	log	pass
+t6130-pathspec-noglob::bracket-pathspec-globs-and-matches-literal-brackets-2	t6130-pathspec-noglob	bracket pathspec globs and matches literal brackets	log	pass
+t6130-pathspec-noglob::no-glob-option-matches-literally-vanilla	t6130-pathspec-noglob	no-glob option matches literally (vanilla)		pass
+t6130-pathspec-noglob::no-glob-option-matches-literally-vanilla-2	t6130-pathspec-noglob	no-glob option matches literally (vanilla)	log	pass
+t6130-pathspec-noglob::no-glob-option-matches-literally-star	t6130-pathspec-noglob	no-glob option matches literally (star)		pass
+t6130-pathspec-noglob::no-glob-option-matches-literally-star-2	t6130-pathspec-noglob	no-glob option matches literally (star)	log	pass
+t6130-pathspec-noglob::no-glob-option-matches-literally-bracket	t6130-pathspec-noglob	no-glob option matches literally (bracket)		pass
+t6130-pathspec-noglob::no-glob-option-matches-literally-bracket-2	t6130-pathspec-noglob	no-glob option matches literally (bracket)	log	pass
+t6130-pathspec-noglob::no-glob-option-disables-literal	t6130-pathspec-noglob	no-glob option disables :(literal)		pass
+t6130-pathspec-noglob::no-glob-environment-variable-works	t6130-pathspec-noglob	no-glob environment variable works	log	pass
+t6130-pathspec-noglob::blame-takes-global-pathspec-flags	t6130-pathspec-noglob	blame takes global pathspec flags		pass
+t6130-pathspec-noglob::setup-xxx-bar	t6130-pathspec-noglob	setup xxx/bar		pass
+t6130-pathspec-noglob::works-with-glob	t6130-pathspec-noglob	**/ works with :(glob)	log	pass
+t6130-pathspec-noglob::does-not-work-with-noglob-pathspecs	t6130-pathspec-noglob	**/ does not work with --noglob-pathspecs		pass
+t6130-pathspec-noglob::works-with-glob-and-noglob-pathspecs	t6130-pathspec-noglob	**/ works with :(glob) and --noglob-pathspecs		pass
+t6130-pathspec-noglob::works-with-glob-pathspecs	t6130-pathspec-noglob	**/ works with --glob-pathspecs		pass
+t6130-pathspec-noglob::does-not-work-with-literal-and-glob-pathspecs	t6130-pathspec-noglob	**/ does not work with :(literal) and --glob-pathspecs		pass
 t6131-pathspec-icase::create-commits-with-glob-characters	t6131-pathspec-icase	create commits with glob characters		pass
 t6131-pathspec-icase::tree-entry-interesting-matches-bar	t6131-pathspec-icase	tree_entry_interesting matches bar	log	pass
 t6131-pathspec-icase::tree-entry-interesting-matches-icase-bar	t6131-pathspec-icase	tree_entry_interesting matches :(icase)bar	log	pass
@@ -13829,64 +13829,64 @@ t7061-wtstatus-ignore::status-ignored-tracked-directory-with-uncommitted-file-in
 t7061-wtstatus-ignore::status-ignored-tracked-directory-with-uncommitted-file-in-tracked-subdir-with-ig-2	t7061-wtstatus-ignore	status ignored tracked directory with uncommitted file in tracked subdir with --ignore -u	status	pass
 t7061-wtstatus-ignore::status-ignores-submodule-in-excluded-directory	t7061-wtstatus-ignore	status ignores submodule in excluded directory	init	pass
 t7062-wtstatus-ignorecase::status-with-hash-collisions	t7062-wtstatus-ignorecase	status with hash collisions	add	pass
-t7063-status-untracked-cache::core-untrackedcache-is-unset	t7063-status-untracked-cache	core.untrackedCache is unset	status	partial
-t7063-status-untracked-cache::setup	t7063-status-untracked-cache	setup	status	partial
-t7063-status-untracked-cache::untracked-cache-is-empty	t7063-status-untracked-cache	untracked cache is empty	status	partial
-t7063-status-untracked-cache::status-first-time-empty-cache	t7063-status-untracked-cache	status first time (empty cache)	status	partial
-t7063-status-untracked-cache::untracked-cache-after-first-status	t7063-status-untracked-cache	untracked cache after first status	status	partial
-t7063-status-untracked-cache::status-second-time-fully-populated-cache	t7063-status-untracked-cache	status second time (fully populated cache)	status	partial
-t7063-status-untracked-cache::untracked-cache-after-second-status	t7063-status-untracked-cache	untracked cache after second status	status	partial
-t7063-status-untracked-cache::untracked-cache-is-bypassed-with-uall	t7063-status-untracked-cache	untracked cache is bypassed with -uall	status	partial
-t7063-status-untracked-cache::untracked-cache-remains-after-bypass	t7063-status-untracked-cache	untracked cache remains after bypass	status	partial
-t7063-status-untracked-cache::if-uall-is-configured-untracked-cache-gets-populated-by-default	t7063-status-untracked-cache	if -uall is configured, untracked cache gets populated by default	status	partial
-t7063-status-untracked-cache::if-uall-was-configured-untracked-cache-is-populated	t7063-status-untracked-cache	if -uall was configured, untracked cache is populated	status	partial
-t7063-status-untracked-cache::if-uall-is-configured-untracked-cache-is-used-by-default	t7063-status-untracked-cache	if -uall is configured, untracked cache is used by default	status	partial
-t7063-status-untracked-cache::if-uall-is-configured-untracked-cache-is-bypassed-with-unormal	t7063-status-untracked-cache	if -uall is configured, untracked cache is bypassed with -unormal	status	partial
-t7063-status-untracked-cache::repopulate-untracked-cache-for-unormal	t7063-status-untracked-cache	repopulate untracked cache for -unormal	status	partial
-t7063-status-untracked-cache::modify-in-root-directory-one-dir-invalidation	t7063-status-untracked-cache	modify in root directory, one dir invalidation	status	partial
-t7063-status-untracked-cache::verify-untracked-cache-dump	t7063-status-untracked-cache	verify untracked cache dump	status	partial
-t7063-status-untracked-cache::new-gitignore-invalidates-recursively	t7063-status-untracked-cache	new .gitignore invalidates recursively	status	partial
-t7063-status-untracked-cache::verify-untracked-cache-dump-2	t7063-status-untracked-cache	verify untracked cache dump	status	partial
-t7063-status-untracked-cache::new-info-exclude-invalidates-everything	t7063-status-untracked-cache	new info/exclude invalidates everything	status	partial
-t7063-status-untracked-cache::verify-untracked-cache-dump-3	t7063-status-untracked-cache	verify untracked cache dump	status	partial
-t7063-status-untracked-cache::move-two-from-tracked-to-untracked	t7063-status-untracked-cache	move two from tracked to untracked	status	partial
-t7063-status-untracked-cache::status-after-the-move	t7063-status-untracked-cache	status after the move	status	partial
-t7063-status-untracked-cache::verify-untracked-cache-dump-4	t7063-status-untracked-cache	verify untracked cache dump	status	partial
-t7063-status-untracked-cache::move-two-from-untracked-to-tracked	t7063-status-untracked-cache	move two from untracked to tracked	status	partial
-t7063-status-untracked-cache::status-after-the-move-2	t7063-status-untracked-cache	status after the move	status	partial
-t7063-status-untracked-cache::verify-untracked-cache-dump-5	t7063-status-untracked-cache	verify untracked cache dump	status	partial
-t7063-status-untracked-cache::set-up-for-sparse-checkout-testing	t7063-status-untracked-cache	set up for sparse checkout testing	status	partial
-t7063-status-untracked-cache::status-after-commit	t7063-status-untracked-cache	status after commit	status	partial
-t7063-status-untracked-cache::untracked-cache-correct-after-commit	t7063-status-untracked-cache	untracked cache correct after commit	status	partial
-t7063-status-untracked-cache::set-up-sparse-checkout	t7063-status-untracked-cache	set up sparse checkout	status	partial
-t7063-status-untracked-cache::create-modify-files-some-of-which-are-gitignored	t7063-status-untracked-cache	create/modify files, some of which are gitignored	status	partial
-t7063-status-untracked-cache::test-sparse-status-with-untracked-cache	t7063-status-untracked-cache	test sparse status with untracked cache	status	partial
-t7063-status-untracked-cache::untracked-cache-correct-after-status	t7063-status-untracked-cache	untracked cache correct after status	status	partial
-t7063-status-untracked-cache::test-sparse-status-again-with-untracked-cache	t7063-status-untracked-cache	test sparse status again with untracked cache	status	partial
-t7063-status-untracked-cache::set-up-for-test-of-subdir-and-sparse-checkouts	t7063-status-untracked-cache	set up for test of subdir and sparse checkouts	status	partial
-t7063-status-untracked-cache::test-sparse-status-with-untracked-cache-and-subdir	t7063-status-untracked-cache	test sparse status with untracked cache and subdir	status	partial
-t7063-status-untracked-cache::verify-untracked-cache-dump-sparse-subdirs	t7063-status-untracked-cache	verify untracked cache dump (sparse/subdirs)	status	partial
-t7063-status-untracked-cache::test-sparse-status-again-with-untracked-cache-and-subdir	t7063-status-untracked-cache	test sparse status again with untracked cache and subdir	status	partial
-t7063-status-untracked-cache::move-entry-in-subdir-from-untracked-to-cached	t7063-status-untracked-cache	move entry in subdir from untracked to cached	status	partial
-t7063-status-untracked-cache::move-entry-in-subdir-from-cached-to-untracked	t7063-status-untracked-cache	move entry in subdir from cached to untracked	status	partial
-t7063-status-untracked-cache::no-untracked-cache-removes-the-cache	t7063-status-untracked-cache	--no-untracked-cache removes the cache	status	partial
-t7063-status-untracked-cache::git-status-does-not-change-anything	t7063-status-untracked-cache	git status does not change anything	status	partial
-t7063-status-untracked-cache::setting-core-untrackedcache-to-true-and-using-git-status-creates-the-cache	t7063-status-untracked-cache	setting core.untrackedCache to true and using git status creates the cache	status	partial
-t7063-status-untracked-cache::using-no-untracked-cache-does-not-fail-when-core-untrackedcache-is-true	t7063-status-untracked-cache	using --no-untracked-cache does not fail when core.untrackedCache is true	status	partial
-t7063-status-untracked-cache::setting-core-untrackedcache-to-false-and-using-git-status-removes-the-cache	t7063-status-untracked-cache	setting core.untrackedCache to false and using git status removes the cache	status	partial
-t7063-status-untracked-cache::using-untracked-cache-does-not-fail-when-core-untrackedcache-is-false	t7063-status-untracked-cache	using --untracked-cache does not fail when core.untrackedCache is false	status	partial
-t7063-status-untracked-cache::setting-core-untrackedcache-to-keep	t7063-status-untracked-cache	setting core.untrackedCache to keep	status	partial
-t7063-status-untracked-cache::test-ident-field-is-working	t7063-status-untracked-cache	test ident field is working	status	partial
-t7063-status-untracked-cache::untracked-cache-survives-a-checkout	t7063-status-untracked-cache	untracked cache survives a checkout	status	partial
-t7063-status-untracked-cache::untracked-cache-survives-a-commit	t7063-status-untracked-cache	untracked cache survives a commit	status	partial
-t7063-status-untracked-cache::teardown-worktree	t7063-status-untracked-cache	teardown worktree	status	partial
-t7063-status-untracked-cache::setup-worktree-for-symlink-test	t7063-status-untracked-cache	setup worktree for symlink test	status	partial
-t7063-status-untracked-cache::status-after-symlink-replacement-should-be-clean-with-uc-true	t7063-status-untracked-cache	"status" after symlink replacement should be clean with UC=true	status	partial
-t7063-status-untracked-cache::status-after-symlink-replacement-should-be-clean-with-uc-false	t7063-status-untracked-cache	"status" after symlink replacement should be clean with UC=false	status	partial
-t7063-status-untracked-cache::setup-worktree-for-non-symlink-test	t7063-status-untracked-cache	setup worktree for non-symlink test	status	partial
-t7063-status-untracked-cache::status-after-file-replacement-should-be-clean-with-uc-true	t7063-status-untracked-cache	"status" after file replacement should be clean with UC=true	status	partial
-t7063-status-untracked-cache::status-after-file-replacement-should-be-clean-with-uc-false	t7063-status-untracked-cache	"status" after file replacement should be clean with UC=false	status	partial
-t7063-status-untracked-cache::empty-repo-no-index-and-core-untrackedcache	t7063-status-untracked-cache	empty repo (no index) and core.untrackedCache	status	partial
+t7063-status-untracked-cache::core-untrackedcache-is-unset	t7063-status-untracked-cache	core.untrackedCache is unset	status	pass
+t7063-status-untracked-cache::setup	t7063-status-untracked-cache	setup	status	pass
+t7063-status-untracked-cache::untracked-cache-is-empty	t7063-status-untracked-cache	untracked cache is empty	status	pass
+t7063-status-untracked-cache::status-first-time-empty-cache	t7063-status-untracked-cache	status first time (empty cache)	status	pass
+t7063-status-untracked-cache::untracked-cache-after-first-status	t7063-status-untracked-cache	untracked cache after first status	status	pass
+t7063-status-untracked-cache::status-second-time-fully-populated-cache	t7063-status-untracked-cache	status second time (fully populated cache)	status	pass
+t7063-status-untracked-cache::untracked-cache-after-second-status	t7063-status-untracked-cache	untracked cache after second status	status	pass
+t7063-status-untracked-cache::untracked-cache-is-bypassed-with-uall	t7063-status-untracked-cache	untracked cache is bypassed with -uall	status	pass
+t7063-status-untracked-cache::untracked-cache-remains-after-bypass	t7063-status-untracked-cache	untracked cache remains after bypass	status	pass
+t7063-status-untracked-cache::if-uall-is-configured-untracked-cache-gets-populated-by-default	t7063-status-untracked-cache	if -uall is configured, untracked cache gets populated by default	status	pass
+t7063-status-untracked-cache::if-uall-was-configured-untracked-cache-is-populated	t7063-status-untracked-cache	if -uall was configured, untracked cache is populated	status	pass
+t7063-status-untracked-cache::if-uall-is-configured-untracked-cache-is-used-by-default	t7063-status-untracked-cache	if -uall is configured, untracked cache is used by default	status	pass
+t7063-status-untracked-cache::if-uall-is-configured-untracked-cache-is-bypassed-with-unormal	t7063-status-untracked-cache	if -uall is configured, untracked cache is bypassed with -unormal	status	pass
+t7063-status-untracked-cache::repopulate-untracked-cache-for-unormal	t7063-status-untracked-cache	repopulate untracked cache for -unormal	status	pass
+t7063-status-untracked-cache::modify-in-root-directory-one-dir-invalidation	t7063-status-untracked-cache	modify in root directory, one dir invalidation	status	pass
+t7063-status-untracked-cache::verify-untracked-cache-dump	t7063-status-untracked-cache	verify untracked cache dump	status	pass
+t7063-status-untracked-cache::new-gitignore-invalidates-recursively	t7063-status-untracked-cache	new .gitignore invalidates recursively	status	pass
+t7063-status-untracked-cache::verify-untracked-cache-dump-2	t7063-status-untracked-cache	verify untracked cache dump	status	pass
+t7063-status-untracked-cache::new-info-exclude-invalidates-everything	t7063-status-untracked-cache	new info/exclude invalidates everything	status	pass
+t7063-status-untracked-cache::verify-untracked-cache-dump-3	t7063-status-untracked-cache	verify untracked cache dump	status	pass
+t7063-status-untracked-cache::move-two-from-tracked-to-untracked	t7063-status-untracked-cache	move two from tracked to untracked	status	pass
+t7063-status-untracked-cache::status-after-the-move	t7063-status-untracked-cache	status after the move	status	pass
+t7063-status-untracked-cache::verify-untracked-cache-dump-4	t7063-status-untracked-cache	verify untracked cache dump	status	pass
+t7063-status-untracked-cache::move-two-from-untracked-to-tracked	t7063-status-untracked-cache	move two from untracked to tracked	status	pass
+t7063-status-untracked-cache::status-after-the-move-2	t7063-status-untracked-cache	status after the move	status	pass
+t7063-status-untracked-cache::verify-untracked-cache-dump-5	t7063-status-untracked-cache	verify untracked cache dump	status	pass
+t7063-status-untracked-cache::set-up-for-sparse-checkout-testing	t7063-status-untracked-cache	set up for sparse checkout testing	status	pass
+t7063-status-untracked-cache::status-after-commit	t7063-status-untracked-cache	status after commit	status	pass
+t7063-status-untracked-cache::untracked-cache-correct-after-commit	t7063-status-untracked-cache	untracked cache correct after commit	status	pass
+t7063-status-untracked-cache::set-up-sparse-checkout	t7063-status-untracked-cache	set up sparse checkout	status	pass
+t7063-status-untracked-cache::create-modify-files-some-of-which-are-gitignored	t7063-status-untracked-cache	create/modify files, some of which are gitignored	status	pass
+t7063-status-untracked-cache::test-sparse-status-with-untracked-cache	t7063-status-untracked-cache	test sparse status with untracked cache	status	pass
+t7063-status-untracked-cache::untracked-cache-correct-after-status	t7063-status-untracked-cache	untracked cache correct after status	status	pass
+t7063-status-untracked-cache::test-sparse-status-again-with-untracked-cache	t7063-status-untracked-cache	test sparse status again with untracked cache	status	pass
+t7063-status-untracked-cache::set-up-for-test-of-subdir-and-sparse-checkouts	t7063-status-untracked-cache	set up for test of subdir and sparse checkouts	status	pass
+t7063-status-untracked-cache::test-sparse-status-with-untracked-cache-and-subdir	t7063-status-untracked-cache	test sparse status with untracked cache and subdir	status	pass
+t7063-status-untracked-cache::verify-untracked-cache-dump-sparse-subdirs	t7063-status-untracked-cache	verify untracked cache dump (sparse/subdirs)	status	pass
+t7063-status-untracked-cache::test-sparse-status-again-with-untracked-cache-and-subdir	t7063-status-untracked-cache	test sparse status again with untracked cache and subdir	status	pass
+t7063-status-untracked-cache::move-entry-in-subdir-from-untracked-to-cached	t7063-status-untracked-cache	move entry in subdir from untracked to cached	status	pass
+t7063-status-untracked-cache::move-entry-in-subdir-from-cached-to-untracked	t7063-status-untracked-cache	move entry in subdir from cached to untracked	status	pass
+t7063-status-untracked-cache::no-untracked-cache-removes-the-cache	t7063-status-untracked-cache	--no-untracked-cache removes the cache	status	pass
+t7063-status-untracked-cache::git-status-does-not-change-anything	t7063-status-untracked-cache	git status does not change anything	status	pass
+t7063-status-untracked-cache::setting-core-untrackedcache-to-true-and-using-git-status-creates-the-cache	t7063-status-untracked-cache	setting core.untrackedCache to true and using git status creates the cache	status	pass
+t7063-status-untracked-cache::using-no-untracked-cache-does-not-fail-when-core-untrackedcache-is-true	t7063-status-untracked-cache	using --no-untracked-cache does not fail when core.untrackedCache is true	status	pass
+t7063-status-untracked-cache::setting-core-untrackedcache-to-false-and-using-git-status-removes-the-cache	t7063-status-untracked-cache	setting core.untrackedCache to false and using git status removes the cache	status	pass
+t7063-status-untracked-cache::using-untracked-cache-does-not-fail-when-core-untrackedcache-is-false	t7063-status-untracked-cache	using --untracked-cache does not fail when core.untrackedCache is false	status	pass
+t7063-status-untracked-cache::setting-core-untrackedcache-to-keep	t7063-status-untracked-cache	setting core.untrackedCache to keep	status	pass
+t7063-status-untracked-cache::test-ident-field-is-working	t7063-status-untracked-cache	test ident field is working	status	pass
+t7063-status-untracked-cache::untracked-cache-survives-a-checkout	t7063-status-untracked-cache	untracked cache survives a checkout	status	pass
+t7063-status-untracked-cache::untracked-cache-survives-a-commit	t7063-status-untracked-cache	untracked cache survives a commit	status	pass
+t7063-status-untracked-cache::teardown-worktree	t7063-status-untracked-cache	teardown worktree	status	pass
+t7063-status-untracked-cache::setup-worktree-for-symlink-test	t7063-status-untracked-cache	setup worktree for symlink test	status	pass
+t7063-status-untracked-cache::status-after-symlink-replacement-should-be-clean-with-uc-true	t7063-status-untracked-cache	"status" after symlink replacement should be clean with UC=true	status	pass
+t7063-status-untracked-cache::status-after-symlink-replacement-should-be-clean-with-uc-false	t7063-status-untracked-cache	"status" after symlink replacement should be clean with UC=false	status	pass
+t7063-status-untracked-cache::setup-worktree-for-non-symlink-test	t7063-status-untracked-cache	setup worktree for non-symlink test	status	pass
+t7063-status-untracked-cache::status-after-file-replacement-should-be-clean-with-uc-true	t7063-status-untracked-cache	"status" after file replacement should be clean with UC=true	status	pass
+t7063-status-untracked-cache::status-after-file-replacement-should-be-clean-with-uc-false	t7063-status-untracked-cache	"status" after file replacement should be clean with UC=false	status	pass
+t7063-status-untracked-cache::empty-repo-no-index-and-core-untrackedcache	t7063-status-untracked-cache	empty repo (no index) and core.untrackedCache	status	pass
 t7064-wtstatus-pv2::before-initial-commit-nothing-added-only-untracked	t7064-wtstatus-pv2	before initial commit, nothing added, only untracked	status	pass
 t7064-wtstatus-pv2::before-initial-commit-things-added	t7064-wtstatus-pv2	before initial commit, things added	add	pass
 t7064-wtstatus-pv2::before-initial-commit-things-added-z	t7064-wtstatus-pv2	before initial commit, things added (-z)	status	pass
@@ -14029,51 +14029,51 @@ t7113-post-index-change-hook::setup	t7113-post-index-change-hook	setup	add	pass
 t7113-post-index-change-hook::test-status-add-commit-others-trigger-hook-without-flags-set	t7113-post-index-change-hook	test status, add, commit, others trigger hook without flags set	add	pass
 t7113-post-index-change-hook::test-checkout-and-reset-trigger-the-hook	t7113-post-index-change-hook	test checkout and reset trigger the hook	checkout	pass
 t7113-post-index-change-hook::test-reset-mixed-and-update-index-triggers-the-hook	t7113-post-index-change-hook	test reset --mixed and update-index triggers the hook	hash-object	pass
-t7201-co::checkout-from-non-existing-branch	t7201-co	checkout from non-existing branch	checkout	partial
-t7201-co::checkout-with-dirty-tree-without-m	t7201-co	checkout with dirty tree without -m	checkout	partial
-t7201-co::checkout-with-unrelated-dirty-tree-without-m	t7201-co	checkout with unrelated dirty tree without -m	checkout	partial
-t7201-co::checkout-m-with-dirty-tree	t7201-co	checkout -m with dirty tree	checkout	partial
-t7201-co::checkout-m-with-dirty-tree-renamed	t7201-co	checkout -m with dirty tree, renamed	checkout	partial
-t7201-co::checkout-m-with-merge-conflict	t7201-co	checkout -m with merge conflict	checkout	partial
-t7201-co::format-of-merge-conflict-from-checkout-m	t7201-co	format of merge conflict from checkout -m	checkout	partial
-t7201-co::checkout-merge-conflict-diff3-branch	t7201-co	checkout --merge --conflict=diff3 <branch>	checkout	partial
-t7201-co::switch-to-another-branch-while-carrying-a-deletion	t7201-co	switch to another branch while carrying a deletion	checkout	partial
-t7201-co::checkout-to-detach-head-with-advice-declined	t7201-co	checkout to detach HEAD (with advice declined)	checkout	partial
-t7201-co::checkout-to-detach-head	t7201-co	checkout to detach HEAD	checkout	partial
-t7201-co::checkout-to-detach-head-with-branchname	t7201-co	checkout to detach HEAD with branchname^	checkout	partial
-t7201-co::checkout-to-detach-head-with-message	t7201-co	checkout to detach HEAD with :/message	checkout	partial
-t7201-co::checkout-to-detach-head-with-head-0	t7201-co	checkout to detach HEAD with HEAD^0	checkout	partial
-t7201-co::checkout-with-ambiguous-tag-branch-names	t7201-co	checkout with ambiguous tag/branch names	branch	partial
-t7201-co::checkout-with-ambiguous-tag-branch-names-2	t7201-co	checkout with ambiguous tag/branch names	branch	partial
-t7201-co::switch-branches-while-in-subdirectory	t7201-co	switch branches while in subdirectory	checkout	partial
-t7201-co::checkout-specific-path-while-in-subdirectory	t7201-co	checkout specific path while in subdirectory	add	partial
-t7201-co::checkout-w-track-sets-up-tracking	t7201-co	checkout w/--track sets up tracking	checkout	partial
-t7201-co::checkout-w-autosetupmerge-always-sets-up-tracking	t7201-co	checkout w/autosetupmerge=always sets up tracking	checkout	partial
-t7201-co::checkout-w-track-from-non-branch-head-fails	t7201-co	checkout w/--track from non-branch HEAD fails	checkout	partial
-t7201-co::checkout-w-track-from-tag-fails	t7201-co	checkout w/--track from tag fails	checkout	partial
-t7201-co::detach-a-symbolic-link-head	t7201-co	detach a symbolic link HEAD	checkout	partial
-t7201-co::checkout-with-track-fakes-a-sensible-b-name	t7201-co	checkout with --track fakes a sensible -b <name>	branch	partial
-t7201-co::checkout-with-track-but-without-b-fails-with-too-short-tracked-name	t7201-co	checkout with --track, but without -b, fails with too short tracked name	checkout	partial
-t7201-co::checkout-an-unmerged-path-should-fail	t7201-co	checkout an unmerged path should fail	checkout	partial
-t7201-co::checkout-with-an-unmerged-path-can-be-ignored	t7201-co	checkout with an unmerged path can be ignored	checkout	partial
-t7201-co::checkout-unmerged-stage	t7201-co	checkout unmerged stage	checkout	partial
-t7201-co::checkout-ours-is-incompatible-with-switching	t7201-co	checkout --ours is incompatible with switching	checkout	partial
-t7201-co::checkout-path-with-merge-from-tree-ish-is-a-no-no	t7201-co	checkout path with --merge from tree-ish is a no-no	checkout	partial
-t7201-co::checkout-with-merge	t7201-co	checkout with --merge	checkout	partial
-t7201-co::checkout-m-works-after-mistaken-resolution	t7201-co	checkout -m works after (mistaken) resolution	add	partial
-t7201-co::checkout-m-works-after-mistaken-resolution-to-remove	t7201-co	checkout -m works after (mistaken) resolution to remove	checkout	partial
-t7201-co::checkout-with-merge-in-diff3-m-style	t7201-co	checkout with --merge, in diff3 -m style	checkout	partial
-t7201-co::checkout-conflict-merge-overriding-config	t7201-co	checkout --conflict=merge, overriding config	checkout	partial
-t7201-co::checkout-conflict-diff3	t7201-co	checkout --conflict=diff3	checkout	partial
-t7201-co::checkout-conflict-diff3-no-conflict-does-not-merge	t7201-co	checkout --conflict=diff3 --no-conflict does not merge	checkout	partial
-t7201-co::checkout-conflict-diff3-no-merge-does-not-merge	t7201-co	checkout --conflict=diff3 --no-merge does not merge	checkout	partial
-t7201-co::checkout-no-merge-conflict-diff3-does-merge	t7201-co	checkout --no-merge --conflict=diff3 does merge	checkout	partial
-t7201-co::checkout-merge-conflict-diff3-no-conflict-does-merge	t7201-co	checkout --merge --conflict=diff3 --no-conflict does merge	checkout	partial
-t7201-co::checkout-with-invalid-conflict-style	t7201-co	checkout with invalid conflict style	checkout	partial
-t7201-co::failing-checkout-b-should-not-break-working-tree	t7201-co	failing checkout -b should not break working tree	checkout	partial
-t7201-co::switch-out-of-non-branch	t7201-co	switch out of non-branch	checkout	partial
-t7201-co::custom-merge-driver-with-checkout-m	t7201-co	custom merge driver with checkout -m	add	partial
-t7201-co::tracking-info-copied-with-autosetupmerge-inherit	t7201-co	tracking info copied with autoSetupMerge=inherit	checkout	partial
+t7201-co::checkout-from-non-existing-branch	t7201-co	checkout from non-existing branch	checkout	pass
+t7201-co::checkout-with-dirty-tree-without-m	t7201-co	checkout with dirty tree without -m	checkout	pass
+t7201-co::checkout-with-unrelated-dirty-tree-without-m	t7201-co	checkout with unrelated dirty tree without -m	checkout	pass
+t7201-co::checkout-m-with-dirty-tree	t7201-co	checkout -m with dirty tree	checkout	pass
+t7201-co::checkout-m-with-dirty-tree-renamed	t7201-co	checkout -m with dirty tree, renamed	checkout	pass
+t7201-co::checkout-m-with-merge-conflict	t7201-co	checkout -m with merge conflict	checkout	pass
+t7201-co::format-of-merge-conflict-from-checkout-m	t7201-co	format of merge conflict from checkout -m	checkout	pass
+t7201-co::checkout-merge-conflict-diff3-branch	t7201-co	checkout --merge --conflict=diff3 <branch>	checkout	pass
+t7201-co::switch-to-another-branch-while-carrying-a-deletion	t7201-co	switch to another branch while carrying a deletion	checkout	pass
+t7201-co::checkout-to-detach-head-with-advice-declined	t7201-co	checkout to detach HEAD (with advice declined)	checkout	pass
+t7201-co::checkout-to-detach-head	t7201-co	checkout to detach HEAD	checkout	pass
+t7201-co::checkout-to-detach-head-with-branchname	t7201-co	checkout to detach HEAD with branchname^	checkout	pass
+t7201-co::checkout-to-detach-head-with-message	t7201-co	checkout to detach HEAD with :/message	checkout	pass
+t7201-co::checkout-to-detach-head-with-head-0	t7201-co	checkout to detach HEAD with HEAD^0	checkout	pass
+t7201-co::checkout-with-ambiguous-tag-branch-names	t7201-co	checkout with ambiguous tag/branch names	branch	pass
+t7201-co::checkout-with-ambiguous-tag-branch-names-2	t7201-co	checkout with ambiguous tag/branch names	branch	pass
+t7201-co::switch-branches-while-in-subdirectory	t7201-co	switch branches while in subdirectory	checkout	pass
+t7201-co::checkout-specific-path-while-in-subdirectory	t7201-co	checkout specific path while in subdirectory	add	pass
+t7201-co::checkout-w-track-sets-up-tracking	t7201-co	checkout w/--track sets up tracking	checkout	pass
+t7201-co::checkout-w-autosetupmerge-always-sets-up-tracking	t7201-co	checkout w/autosetupmerge=always sets up tracking	checkout	pass
+t7201-co::checkout-w-track-from-non-branch-head-fails	t7201-co	checkout w/--track from non-branch HEAD fails	checkout	pass
+t7201-co::checkout-w-track-from-tag-fails	t7201-co	checkout w/--track from tag fails	checkout	pass
+t7201-co::detach-a-symbolic-link-head	t7201-co	detach a symbolic link HEAD	checkout	pass
+t7201-co::checkout-with-track-fakes-a-sensible-b-name	t7201-co	checkout with --track fakes a sensible -b <name>	branch	pass
+t7201-co::checkout-with-track-but-without-b-fails-with-too-short-tracked-name	t7201-co	checkout with --track, but without -b, fails with too short tracked name	checkout	pass
+t7201-co::checkout-an-unmerged-path-should-fail	t7201-co	checkout an unmerged path should fail	checkout	pass
+t7201-co::checkout-with-an-unmerged-path-can-be-ignored	t7201-co	checkout with an unmerged path can be ignored	checkout	pass
+t7201-co::checkout-unmerged-stage	t7201-co	checkout unmerged stage	checkout	pass
+t7201-co::checkout-ours-is-incompatible-with-switching	t7201-co	checkout --ours is incompatible with switching	checkout	pass
+t7201-co::checkout-path-with-merge-from-tree-ish-is-a-no-no	t7201-co	checkout path with --merge from tree-ish is a no-no	checkout	pass
+t7201-co::checkout-with-merge	t7201-co	checkout with --merge	checkout	pass
+t7201-co::checkout-m-works-after-mistaken-resolution	t7201-co	checkout -m works after (mistaken) resolution	add	pass
+t7201-co::checkout-m-works-after-mistaken-resolution-to-remove	t7201-co	checkout -m works after (mistaken) resolution to remove	checkout	pass
+t7201-co::checkout-with-merge-in-diff3-m-style	t7201-co	checkout with --merge, in diff3 -m style	checkout	pass
+t7201-co::checkout-conflict-merge-overriding-config	t7201-co	checkout --conflict=merge, overriding config	checkout	pass
+t7201-co::checkout-conflict-diff3	t7201-co	checkout --conflict=diff3	checkout	pass
+t7201-co::checkout-conflict-diff3-no-conflict-does-not-merge	t7201-co	checkout --conflict=diff3 --no-conflict does not merge	checkout	pass
+t7201-co::checkout-conflict-diff3-no-merge-does-not-merge	t7201-co	checkout --conflict=diff3 --no-merge does not merge	checkout	pass
+t7201-co::checkout-no-merge-conflict-diff3-does-merge	t7201-co	checkout --no-merge --conflict=diff3 does merge	checkout	pass
+t7201-co::checkout-merge-conflict-diff3-no-conflict-does-merge	t7201-co	checkout --merge --conflict=diff3 --no-conflict does merge	checkout	pass
+t7201-co::checkout-with-invalid-conflict-style	t7201-co	checkout with invalid conflict style	checkout	pass
+t7201-co::failing-checkout-b-should-not-break-working-tree	t7201-co	failing checkout -b should not break working tree	checkout	pass
+t7201-co::switch-out-of-non-branch	t7201-co	switch out of non-branch	checkout	pass
+t7201-co::custom-merge-driver-with-checkout-m	t7201-co	custom merge driver with checkout -m	add	pass
+t7201-co::tracking-info-copied-with-autosetupmerge-inherit	t7201-co	tracking info copied with autoSetupMerge=inherit	checkout	pass
 t7300-clean::setup	t7300-clean	setup	clean	pass
 t7300-clean::git-clean-with-skip-worktree-gitignore	t7300-clean	git clean with skip-worktree .gitignore	clean	pass
 t7300-clean::git-clean	t7300-clean	git clean	clean	pass
@@ -14389,29 +14389,29 @@ t7406-submodule-update::submodule-update-recursive-skip-submodules-with-strategy
 t7406-submodule-update::commit-with-staged-submodule-change	t7406-submodule-update	commit with staged submodule change	submodule	pass
 t7406-submodule-update::commit-with-staged-submodule-change-with-ignoresubmodules-dirty	t7406-submodule-update	commit with staged submodule change with ignoreSubmodules dirty	submodule	pass
 t7406-submodule-update::commit-with-staged-submodule-change-with-ignoresubmodules-all	t7406-submodule-update	commit with staged submodule change with ignoreSubmodules all	submodule	pass
-t7407-submodule-foreach::setup-a-submodule-tree	t7407-submodule-foreach	setup a submodule tree	submodule	partial
-t7407-submodule-foreach::test-basic-submodule-foreach-usage	t7407-submodule-foreach	test basic "submodule foreach" usage	submodule	partial
-t7407-submodule-foreach::test-submodule-foreach-from-subdirectory	t7407-submodule-foreach	test "submodule foreach" from subdirectory	submodule	partial
-t7407-submodule-foreach::setup-nested-submodules	t7407-submodule-foreach	setup nested submodules	submodule	partial
-t7407-submodule-foreach::use-submodule-foreach-to-checkout-2nd-level-submodule	t7407-submodule-foreach	use "submodule foreach" to checkout 2nd level submodule	submodule	partial
-t7407-submodule-foreach::usage-foreach-not-an-option	t7407-submodule-foreach	usage: foreach -- --not-an-option	submodule	partial
-t7407-submodule-foreach::use-foreach-recursive-to-checkout-all-submodules	t7407-submodule-foreach	use "foreach --recursive" to checkout all submodules	submodule	partial
-t7407-submodule-foreach::test-messages-from-foreach-recursive	t7407-submodule-foreach	test messages from "foreach --recursive"	submodule	partial
-t7407-submodule-foreach::test-messages-from-foreach-recursive-from-subdirectory	t7407-submodule-foreach	test messages from "foreach --recursive" from subdirectory	submodule	partial
-t7407-submodule-foreach::test-submodule-foreach-recursive-from-subdirectory	t7407-submodule-foreach	test "submodule foreach --recursive" from subdirectory	submodule	partial
-t7407-submodule-foreach::test-foreach-quiet-recursive	t7407-submodule-foreach	test "foreach --quiet --recursive"	submodule	partial
-t7407-submodule-foreach::use-update-recursive-to-checkout-all-submodules	t7407-submodule-foreach	use "update --recursive" to checkout all submodules	submodule	partial
-t7407-submodule-foreach::test-status-recursive	t7407-submodule-foreach	test "status --recursive"	submodule	partial
-t7407-submodule-foreach::ensure-status-cached-recursive-preserves-the-cached-flag	t7407-submodule-foreach	ensure "status --cached --recursive" preserves the --cached flag	submodule	partial
-t7407-submodule-foreach::test-status-recursive-from-sub-directory	t7407-submodule-foreach	test "status --recursive" from sub directory	submodule	partial
-t7407-submodule-foreach::use-git-clone-recursive-to-checkout-all-submodules	t7407-submodule-foreach	use "git clone --recursive" to checkout all submodules	submodule	partial
-t7407-submodule-foreach::test-update-recursive-with-a-flag-with-spaces	t7407-submodule-foreach	test "update --recursive" with a flag with spaces	submodule	partial
-t7407-submodule-foreach::use-update-recursive-nested1-to-checkout-all-submodules-rooted-in-nested1	t7407-submodule-foreach	use "update --recursive nested1" to checkout all submodules rooted in nested1	submodule	partial
-t7407-submodule-foreach::command-passed-to-foreach-retains-notion-of-stdin	t7407-submodule-foreach	command passed to foreach retains notion of stdin	submodule	partial
-t7407-submodule-foreach::command-passed-to-foreach-recursive-retains-notion-of-stdin	t7407-submodule-foreach	command passed to foreach --recursive retains notion of stdin	submodule	partial
-t7407-submodule-foreach::multi-argument-command-passed-to-foreach-is-not-shell-evaluated-twice	t7407-submodule-foreach	multi-argument command passed to foreach is not shell-evaluated twice	submodule	partial
-t7407-submodule-foreach::option-like-arguments-passed-to-foreach-commands-are-not-lost	t7407-submodule-foreach	option-like arguments passed to foreach commands are not lost	submodule	partial
-t7407-submodule-foreach::option-like-arguments-passed-to-foreach-recurse-correctly	t7407-submodule-foreach	option-like arguments passed to foreach recurse correctly	submodule	partial
+t7407-submodule-foreach::setup-a-submodule-tree	t7407-submodule-foreach	setup a submodule tree	submodule	pass
+t7407-submodule-foreach::test-basic-submodule-foreach-usage	t7407-submodule-foreach	test basic "submodule foreach" usage	submodule	pass
+t7407-submodule-foreach::test-submodule-foreach-from-subdirectory	t7407-submodule-foreach	test "submodule foreach" from subdirectory	submodule	pass
+t7407-submodule-foreach::setup-nested-submodules	t7407-submodule-foreach	setup nested submodules	submodule	pass
+t7407-submodule-foreach::use-submodule-foreach-to-checkout-2nd-level-submodule	t7407-submodule-foreach	use "submodule foreach" to checkout 2nd level submodule	submodule	pass
+t7407-submodule-foreach::usage-foreach-not-an-option	t7407-submodule-foreach	usage: foreach -- --not-an-option	submodule	pass
+t7407-submodule-foreach::use-foreach-recursive-to-checkout-all-submodules	t7407-submodule-foreach	use "foreach --recursive" to checkout all submodules	submodule	pass
+t7407-submodule-foreach::test-messages-from-foreach-recursive	t7407-submodule-foreach	test messages from "foreach --recursive"	submodule	pass
+t7407-submodule-foreach::test-messages-from-foreach-recursive-from-subdirectory	t7407-submodule-foreach	test messages from "foreach --recursive" from subdirectory	submodule	pass
+t7407-submodule-foreach::test-submodule-foreach-recursive-from-subdirectory	t7407-submodule-foreach	test "submodule foreach --recursive" from subdirectory	submodule	pass
+t7407-submodule-foreach::test-foreach-quiet-recursive	t7407-submodule-foreach	test "foreach --quiet --recursive"	submodule	pass
+t7407-submodule-foreach::use-update-recursive-to-checkout-all-submodules	t7407-submodule-foreach	use "update --recursive" to checkout all submodules	submodule	pass
+t7407-submodule-foreach::test-status-recursive	t7407-submodule-foreach	test "status --recursive"	submodule	pass
+t7407-submodule-foreach::ensure-status-cached-recursive-preserves-the-cached-flag	t7407-submodule-foreach	ensure "status --cached --recursive" preserves the --cached flag	submodule	pass
+t7407-submodule-foreach::test-status-recursive-from-sub-directory	t7407-submodule-foreach	test "status --recursive" from sub directory	submodule	pass
+t7407-submodule-foreach::use-git-clone-recursive-to-checkout-all-submodules	t7407-submodule-foreach	use "git clone --recursive" to checkout all submodules	submodule	pass
+t7407-submodule-foreach::test-update-recursive-with-a-flag-with-spaces	t7407-submodule-foreach	test "update --recursive" with a flag with spaces	submodule	pass
+t7407-submodule-foreach::use-update-recursive-nested1-to-checkout-all-submodules-rooted-in-nested1	t7407-submodule-foreach	use "update --recursive nested1" to checkout all submodules rooted in nested1	submodule	pass
+t7407-submodule-foreach::command-passed-to-foreach-retains-notion-of-stdin	t7407-submodule-foreach	command passed to foreach retains notion of stdin	submodule	pass
+t7407-submodule-foreach::command-passed-to-foreach-recursive-retains-notion-of-stdin	t7407-submodule-foreach	command passed to foreach --recursive retains notion of stdin	submodule	pass
+t7407-submodule-foreach::multi-argument-command-passed-to-foreach-is-not-shell-evaluated-twice	t7407-submodule-foreach	multi-argument command passed to foreach is not shell-evaluated twice	submodule	pass
+t7407-submodule-foreach::option-like-arguments-passed-to-foreach-commands-are-not-lost	t7407-submodule-foreach	option-like arguments passed to foreach commands are not lost	submodule	pass
+t7407-submodule-foreach::option-like-arguments-passed-to-foreach-recurse-correctly	t7407-submodule-foreach	option-like arguments passed to foreach recurse correctly	submodule	pass
 t7408-submodule-reference::setup	t7408-submodule-reference	setup	submodule	pass
 t7408-submodule-reference::preparing-first-repository	t7408-submodule-reference	preparing first repository	submodule	pass
 t7408-submodule-reference::preparing-second-repository	t7408-submodule-reference	preparing second repository	submodule	pass
@@ -14945,128 +14945,128 @@ t7507-commit-verbose::commit-verbose-i-and-verbose	t7507-commit-verbose	commit.v
 t7507-commit-verbose::commit-verbose-i-and-no-verbose	t7507-commit-verbose	commit.verbose=$i and --no-verbose	commit	pass
 t7507-commit-verbose::commit-verbose-i-and-v-v	t7507-commit-verbose	commit.verbose=$i and -v -v	commit	pass
 t7507-commit-verbose::status-ignores-commit-verbose-true	t7507-commit-verbose	status ignores commit.verbose=true	commit	pass
-t7508-status::status-h-in-broken-repository	t7508-status	status -h in broken repository	status	partial
-t7508-status::commit-h-in-broken-repository	t7508-status	commit -h in broken repository	status	partial
-t7508-status::create-upstream-branch	t7508-status	create upstream branch	status	partial
-t7508-status::setup	t7508-status	setup	status	partial
-t7508-status::status-1	t7508-status	status (1)	status	partial
-t7508-status::status-column	t7508-status	status --column	status	partial
-t7508-status::status-column-status-displaycommentprefix-false	t7508-status	status --column status.displayCommentPrefix=false	status	partial
-t7508-status::status-with-status-displaycommentprefix-true	t7508-status	status with status.displayCommentPrefix=true	status	partial
-t7508-status::status-with-status-displaycommentprefix-false	t7508-status	status with status.displayCommentPrefix=false	status	partial
-t7508-status::status-v	t7508-status	status -v	status	partial
-t7508-status::status-v-v	t7508-status	status -v -v	status	partial
-t7508-status::setup-fake-editor	t7508-status	setup fake editor	status	partial
-t7508-status::commit-ignores-status-displaycommentprefix-false-in-commit-editmsg	t7508-status	commit ignores status.displayCommentPrefix=false in COMMIT_EDITMSG	status	partial
-t7508-status::status-advice-statushints-false	t7508-status	status (advice.statusHints false)	status	partial
-t7508-status::status-s	t7508-status	status -s	status	partial
-t7508-status::status-with-gitignore	t7508-status	status with gitignore	status	partial
-t7508-status::status-with-gitignore-nothing-untracked	t7508-status	status with gitignore (nothing untracked)	status	partial
-t7508-status::status-s-b	t7508-status	status -s -b	status	partial
-t7508-status::status-s-z-b	t7508-status	status -s -z -b	status	partial
-t7508-status::setup-dir3	t7508-status	setup dir3	status	partial
-t7508-status::status-uno	t7508-status	status -uno	status	partial
-t7508-status::status-uno-advice-statushints-false	t7508-status	status -uno (advice.statusHints false)	status	partial
-t7508-status::status-s-uno	t7508-status	status -s -uno	status	partial
-t7508-status::status-s-status-showuntrackedfiles-no	t7508-status	status -s (status.showUntrackedFiles no)	status	partial
-t7508-status::status-unormal	t7508-status	status -unormal	status	partial
-t7508-status::status-s-unormal	t7508-status	status -s -unormal	status	partial
-t7508-status::status-s-status-showuntrackedfiles-normal	t7508-status	status -s (status.showUntrackedFiles normal)	status	partial
-t7508-status::status-uall	t7508-status	status -uall	status	partial
-t7508-status::status-status-showuntrackedfiles-all	t7508-status	status (status.showUntrackedFiles all)	status	partial
-t7508-status::teardown-dir3	t7508-status	teardown dir3	status	partial
-t7508-status::status-s-uall	t7508-status	status -s -uall	status	partial
-t7508-status::status-s-status-showuntrackedfiles-all	t7508-status	status -s (status.showUntrackedFiles all)	status	partial
-t7508-status::status-with-relative-paths	t7508-status	status with relative paths	status	partial
-t7508-status::status-s-with-relative-paths	t7508-status	status -s with relative paths	status	partial
-t7508-status::status-porcelain-ignores-relative-paths-setting	t7508-status	status --porcelain ignores relative paths setting	status	partial
-t7508-status::setup-unique-colors	t7508-status	setup unique colors	status	partial
-t7508-status::status-with-color-ui	t7508-status	status with color.ui	status	partial
-t7508-status::status-with-color-status	t7508-status	status with color.status	status	partial
-t7508-status::status-s-with-color-ui	t7508-status	status -s with color.ui	status	partial
-t7508-status::status-s-with-color-status	t7508-status	status -s with color.status	status	partial
-t7508-status::status-s-keeps-colors-with-z	t7508-status	status -s keeps colors with -z	status	partial
-t7508-status::status-s-b-with-color-status	t7508-status	status -s -b with color.status	status	partial
-t7508-status::status-porcelain-ignores-color-ui	t7508-status	status --porcelain ignores color.ui	status	partial
-t7508-status::status-porcelain-ignores-color-status	t7508-status	status --porcelain ignores color.status	status	partial
-t7508-status::status-porcelain-respects-b	t7508-status	status --porcelain respects -b	status	partial
-t7508-status::status-without-relative-paths	t7508-status	status without relative paths	status	partial
-t7508-status::status-s-without-relative-paths	t7508-status	status -s without relative paths	status	partial
-t7508-status::status-s-without-relative-paths-2	t7508-status	status -s without relative paths	status	partial
-t7508-status::dry-run-of-partial-commit-excluding-new-file-in-index	t7508-status	dry-run of partial commit excluding new file in index	status	partial
-t7508-status::status-refreshes-the-index	t7508-status	status refreshes the index	status	partial
-t7508-status::status-shows-detached-head-properly-after-checking-out-non-local-upstream-branch	t7508-status	status shows detached HEAD properly after checking out non-local upstream branch	status	partial
-t7508-status::setup-status-submodule-summary	t7508-status	setup status submodule summary	status	partial
-t7508-status::status-submodule-summary-is-disabled-by-default	t7508-status	status submodule summary is disabled by default	status	partial
-t7508-status::status-untracked-files-all-does-not-show-submodule	t7508-status	status --untracked-files=all does not show submodule	status	partial
-t7508-status::status-s-submodule-summary-is-disabled-by-default	t7508-status	status -s submodule summary is disabled by default	status	partial
-t7508-status::status-s-untracked-files-all-does-not-show-submodule	t7508-status	status -s --untracked-files=all does not show submodule	status	partial
-t7508-status::status-submodule-summary	t7508-status	status submodule summary	status	partial
-t7508-status::status-submodule-summary-with-status-displaycommentprefix-false	t7508-status	status submodule summary with status.displayCommentPrefix=false	status	partial
-t7508-status::commit-with-submodule-summary-ignores-status-displaycommentprefix	t7508-status	commit with submodule summary ignores status.displayCommentPrefix	status	partial
-t7508-status::status-s-submodule-summary	t7508-status	status -s submodule summary	status	partial
-t7508-status::status-submodule-summary-clean-submodule-commit	t7508-status	status submodule summary (clean submodule): commit	status	partial
-t7508-status::status-s-submodule-summary-clean-submodule	t7508-status	status -s submodule summary (clean submodule)	status	partial
-t7508-status::status-z-implies-porcelain	t7508-status	status -z implies porcelain	status	partial
-t7508-status::commit-dry-run-submodule-summary-amend	t7508-status	commit --dry-run submodule summary (--amend)	status	partial
-t7508-status::status-succeeds-in-a-read-only-repository	t7508-status	status succeeds in a read-only repository	status	partial
-t7508-status::ignore-submodules-untracked-suppresses-submodules-with-untracked-content	t7508-status	--ignore-submodules=untracked suppresses submodules with untracked content	status	partial
-t7508-status::gitmodules-ignore-untracked-suppresses-submodules-with-untracked-content	t7508-status	.gitmodules ignore=untracked suppresses submodules with untracked content	status	partial
-t7508-status::git-config-ignore-untracked-suppresses-submodules-with-untracked-content	t7508-status	.git/config ignore=untracked suppresses submodules with untracked content	status	partial
-t7508-status::ignore-submodules-dirty-suppresses-submodules-with-untracked-content	t7508-status	--ignore-submodules=dirty suppresses submodules with untracked content	status	partial
-t7508-status::gitmodules-ignore-dirty-suppresses-submodules-with-untracked-content	t7508-status	.gitmodules ignore=dirty suppresses submodules with untracked content	status	partial
-t7508-status::git-config-ignore-dirty-suppresses-submodules-with-untracked-content	t7508-status	.git/config ignore=dirty suppresses submodules with untracked content	status	partial
-t7508-status::ignore-submodules-dirty-suppresses-submodules-with-modified-content	t7508-status	--ignore-submodules=dirty suppresses submodules with modified content	status	partial
-t7508-status::gitmodules-ignore-dirty-suppresses-submodules-with-modified-content	t7508-status	.gitmodules ignore=dirty suppresses submodules with modified content	status	partial
-t7508-status::git-config-ignore-dirty-suppresses-submodules-with-modified-content	t7508-status	.git/config ignore=dirty suppresses submodules with modified content	status	partial
-t7508-status::gitmodules-ignore-all-suppresses-unstaged-submodule-summary	t7508-status	.gitmodules ignore=all suppresses unstaged submodule summary	status	partial
-t7508-status::git-config-ignore-all-suppresses-unstaged-submodule-summary	t7508-status	.git/config ignore=all suppresses unstaged submodule summary	status	partial
-t7508-status::setup-of-test-environment	t7508-status	setup of test environment	status	partial
-t7508-status::status-short-true-same-as-s	t7508-status	"status.short=true" same as "-s"	status	partial
-t7508-status::status-short-true-weaker-than-no-short	t7508-status	"status.short=true" weaker than "--no-short"	status	partial
-t7508-status::status-short-false-same-as-no-short	t7508-status	"status.short=false" same as "--no-short"	status	partial
-t7508-status::status-short-false-weaker-than-s	t7508-status	"status.short=false" weaker than "-s"	status	partial
-t7508-status::status-branch-true-same-as-b	t7508-status	"status.branch=true" same as "-b"	status	partial
-t7508-status::status-branch-true-different-from-no-branch	t7508-status	"status.branch=true" different from "--no-branch"	status	partial
-t7508-status::status-branch-true-weaker-than-no-branch	t7508-status	"status.branch=true" weaker than "--no-branch"	status	partial
-t7508-status::status-branch-true-weaker-than-porcelain	t7508-status	"status.branch=true" weaker than "--porcelain"	status	partial
-t7508-status::status-branch-false-same-as-no-branch	t7508-status	"status.branch=false" same as "--no-branch"	status	partial
-t7508-status::status-branch-false-weaker-than-b	t7508-status	"status.branch=false" weaker than "-b"	status	partial
-t7508-status::restore-default-test-environment	t7508-status	Restore default test environment	status	partial
-t7508-status::git-commit-will-commit-a-staged-but-ignored-submodule	t7508-status	git commit will commit a staged but ignored submodule	status	partial
-t7508-status::git-commit-dry-run-will-show-a-staged-but-ignored-submodule	t7508-status	git commit --dry-run will show a staged but ignored submodule	status	partial
-t7508-status::git-commit-m-will-commit-a-staged-but-ignored-submodule	t7508-status	git commit -m will commit a staged but ignored submodule	status	partial
-t7508-status::show-stash-info-with-show-stash	t7508-status	show stash info with "--show-stash"	status	partial
-t7508-status::no-stash-info-with-show-stash-no-show-stash	t7508-status	no stash info with "--show-stash --no-show-stash"	status	partial
-t7508-status::status-showstash-false-weaker-than-show-stash	t7508-status	"status.showStash=false" weaker than "--show-stash"	status	partial
-t7508-status::status-showstash-true-weaker-than-no-show-stash	t7508-status	"status.showStash=true" weaker than "--no-show-stash"	status	partial
-t7508-status::no-additional-info-if-no-stash-entries	t7508-status	no additional info if no stash entries	status	partial
-t7508-status::no-commits-yet-should-be-noted-in-status-output	t7508-status	"No commits yet" should be noted in status output	status	partial
-t7508-status::no-commits-yet-should-not-be-noted-in-status-output	t7508-status	"No commits yet" should not be noted in status output	status	partial
-t7508-status::initial-commit-should-be-noted-in-commit-template	t7508-status	"Initial commit" should be noted in commit template	status	partial
-t7508-status::initial-commit-should-not-be-noted-in-commit-template	t7508-status	"Initial commit" should not be noted in commit template	status	partial
-t7508-status::no-optional-locks-prevents-index-update	t7508-status	--no-optional-locks prevents index update	status	partial
-t7508-status::racy-timestamps-will-be-fixed-for-clean-worktree	t7508-status	racy timestamps will be fixed for clean worktree	status	partial
-t7508-status::racy-timestamps-will-be-fixed-for-dirty-worktree	t7508-status	racy timestamps will be fixed for dirty worktree	status	partial
-t7508-status::setup-slow-status-advice	t7508-status	setup slow status advice	status	partial
-t7508-status::slow-status-advice-when-core-untrackedcache-and-fsmonitor-are-unset	t7508-status	slow status advice when core.untrackedCache and fsmonitor are unset	status	partial
-t7508-status::slow-status-advice-when-core-untrackedcache-true-but-not-fsmonitor	t7508-status	slow status advice when core.untrackedCache true, but not fsmonitor	status	partial
-t7508-status::slow-status-advice-when-core-untrackedcache-true-and-fsmonitor	t7508-status	slow status advice when core.untrackedCache true, and fsmonitor	status	partial
-t7508-status::status-does-not-re-read-unchanged-4-or-8-gib-file	t7508-status	status does not re-read unchanged 4 or 8 GiB file	status	partial
-t7508-status::status-status-showuntrackedfiles-no	t7508-status	status (status.showUntrackedFiles $no)	status	partial
-t7508-status::status-status-showuntrackedfiles-normal	t7508-status	status (status.showUntrackedFiles $normal)	status	partial
-t7508-status::ignore-submodules-untracked-doesn-t-suppress-submodules-with-modified-content	t7508-status	--ignore-submodules=untracked doesn't suppress submodules with modified content	status	partial
-t7508-status::gitmodules-ignore-untracked-doesn-t-suppress-submodules-with-modified-content	t7508-status	.gitmodules ignore=untracked doesn't suppress submodules with modified content	status	partial
-t7508-status::git-config-ignore-untracked-doesn-t-suppress-submodules-with-modified-content	t7508-status	.git/config ignore=untracked doesn't suppress submodules with modified content	status	partial
-t7508-status::ignore-submodules-untracked-doesn-t-suppress-submodule-summary	t7508-status	--ignore-submodules=untracked doesn't suppress submodule summary	status	partial
-t7508-status::gitmodules-ignore-untracked-doesn-t-suppress-submodule-summary	t7508-status	.gitmodules ignore=untracked doesn't suppress submodule summary	status	partial
-t7508-status::git-config-ignore-untracked-doesn-t-suppress-submodule-summary	t7508-status	.git/config ignore=untracked doesn't suppress submodule summary	status	partial
-t7508-status::ignore-submodules-dirty-doesn-t-suppress-submodule-summary	t7508-status	--ignore-submodules=dirty doesn't suppress submodule summary	status	partial
-t7508-status::gitmodules-ignore-dirty-doesn-t-suppress-submodule-summary	t7508-status	.gitmodules ignore=dirty doesn't suppress submodule summary	status	partial
-t7508-status::git-config-ignore-dirty-doesn-t-suppress-submodule-summary	t7508-status	.git/config ignore=dirty doesn't suppress submodule summary	status	partial
-t7508-status::status-core-commentchar-with-submodule-summary	t7508-status	status (core.commentchar with submodule summary)	status	partial
-t7508-status::status-core-commentchar-with-two-chars-with-submodule-summary	t7508-status	status (core.commentchar with two chars with submodule summary)	status	partial
-t7508-status::ignore-submodules-all-suppresses-submodule-summary	t7508-status	--ignore-submodules=all suppresses submodule summary	status	partial
+t7508-status::status-h-in-broken-repository	t7508-status	status -h in broken repository	status	pass
+t7508-status::commit-h-in-broken-repository	t7508-status	commit -h in broken repository	status	pass
+t7508-status::create-upstream-branch	t7508-status	create upstream branch	status	pass
+t7508-status::setup	t7508-status	setup	status	pass
+t7508-status::status-1	t7508-status	status (1)	status	pass
+t7508-status::status-column	t7508-status	status --column	status	pass
+t7508-status::status-column-status-displaycommentprefix-false	t7508-status	status --column status.displayCommentPrefix=false	status	pass
+t7508-status::status-with-status-displaycommentprefix-true	t7508-status	status with status.displayCommentPrefix=true	status	pass
+t7508-status::status-with-status-displaycommentprefix-false	t7508-status	status with status.displayCommentPrefix=false	status	pass
+t7508-status::status-v	t7508-status	status -v	status	pass
+t7508-status::status-v-v	t7508-status	status -v -v	status	pass
+t7508-status::setup-fake-editor	t7508-status	setup fake editor	status	pass
+t7508-status::commit-ignores-status-displaycommentprefix-false-in-commit-editmsg	t7508-status	commit ignores status.displayCommentPrefix=false in COMMIT_EDITMSG	status	pass
+t7508-status::status-advice-statushints-false	t7508-status	status (advice.statusHints false)	status	pass
+t7508-status::status-s	t7508-status	status -s	status	pass
+t7508-status::status-with-gitignore	t7508-status	status with gitignore	status	pass
+t7508-status::status-with-gitignore-nothing-untracked	t7508-status	status with gitignore (nothing untracked)	status	pass
+t7508-status::status-s-b	t7508-status	status -s -b	status	pass
+t7508-status::status-s-z-b	t7508-status	status -s -z -b	status	pass
+t7508-status::setup-dir3	t7508-status	setup dir3	status	pass
+t7508-status::status-uno	t7508-status	status -uno	status	pass
+t7508-status::status-uno-advice-statushints-false	t7508-status	status -uno (advice.statusHints false)	status	pass
+t7508-status::status-s-uno	t7508-status	status -s -uno	status	pass
+t7508-status::status-s-status-showuntrackedfiles-no	t7508-status	status -s (status.showUntrackedFiles no)	status	pass
+t7508-status::status-unormal	t7508-status	status -unormal	status	pass
+t7508-status::status-s-unormal	t7508-status	status -s -unormal	status	pass
+t7508-status::status-s-status-showuntrackedfiles-normal	t7508-status	status -s (status.showUntrackedFiles normal)	status	pass
+t7508-status::status-uall	t7508-status	status -uall	status	pass
+t7508-status::status-status-showuntrackedfiles-all	t7508-status	status (status.showUntrackedFiles all)	status	pass
+t7508-status::teardown-dir3	t7508-status	teardown dir3	status	pass
+t7508-status::status-s-uall	t7508-status	status -s -uall	status	pass
+t7508-status::status-s-status-showuntrackedfiles-all	t7508-status	status -s (status.showUntrackedFiles all)	status	pass
+t7508-status::status-with-relative-paths	t7508-status	status with relative paths	status	pass
+t7508-status::status-s-with-relative-paths	t7508-status	status -s with relative paths	status	pass
+t7508-status::status-porcelain-ignores-relative-paths-setting	t7508-status	status --porcelain ignores relative paths setting	status	pass
+t7508-status::setup-unique-colors	t7508-status	setup unique colors	status	pass
+t7508-status::status-with-color-ui	t7508-status	status with color.ui	status	pass
+t7508-status::status-with-color-status	t7508-status	status with color.status	status	pass
+t7508-status::status-s-with-color-ui	t7508-status	status -s with color.ui	status	pass
+t7508-status::status-s-with-color-status	t7508-status	status -s with color.status	status	pass
+t7508-status::status-s-keeps-colors-with-z	t7508-status	status -s keeps colors with -z	status	pass
+t7508-status::status-s-b-with-color-status	t7508-status	status -s -b with color.status	status	pass
+t7508-status::status-porcelain-ignores-color-ui	t7508-status	status --porcelain ignores color.ui	status	pass
+t7508-status::status-porcelain-ignores-color-status	t7508-status	status --porcelain ignores color.status	status	pass
+t7508-status::status-porcelain-respects-b	t7508-status	status --porcelain respects -b	status	pass
+t7508-status::status-without-relative-paths	t7508-status	status without relative paths	status	pass
+t7508-status::status-s-without-relative-paths	t7508-status	status -s without relative paths	status	pass
+t7508-status::status-s-without-relative-paths-2	t7508-status	status -s without relative paths	status	pass
+t7508-status::dry-run-of-partial-commit-excluding-new-file-in-index	t7508-status	dry-run of partial commit excluding new file in index	status	pass
+t7508-status::status-refreshes-the-index	t7508-status	status refreshes the index	status	pass
+t7508-status::status-shows-detached-head-properly-after-checking-out-non-local-upstream-branch	t7508-status	status shows detached HEAD properly after checking out non-local upstream branch	status	pass
+t7508-status::setup-status-submodule-summary	t7508-status	setup status submodule summary	status	pass
+t7508-status::status-submodule-summary-is-disabled-by-default	t7508-status	status submodule summary is disabled by default	status	pass
+t7508-status::status-untracked-files-all-does-not-show-submodule	t7508-status	status --untracked-files=all does not show submodule	status	pass
+t7508-status::status-s-submodule-summary-is-disabled-by-default	t7508-status	status -s submodule summary is disabled by default	status	pass
+t7508-status::status-s-untracked-files-all-does-not-show-submodule	t7508-status	status -s --untracked-files=all does not show submodule	status	pass
+t7508-status::status-submodule-summary	t7508-status	status submodule summary	status	pass
+t7508-status::status-submodule-summary-with-status-displaycommentprefix-false	t7508-status	status submodule summary with status.displayCommentPrefix=false	status	pass
+t7508-status::commit-with-submodule-summary-ignores-status-displaycommentprefix	t7508-status	commit with submodule summary ignores status.displayCommentPrefix	status	pass
+t7508-status::status-s-submodule-summary	t7508-status	status -s submodule summary	status	pass
+t7508-status::status-submodule-summary-clean-submodule-commit	t7508-status	status submodule summary (clean submodule): commit	status	pass
+t7508-status::status-s-submodule-summary-clean-submodule	t7508-status	status -s submodule summary (clean submodule)	status	pass
+t7508-status::status-z-implies-porcelain	t7508-status	status -z implies porcelain	status	pass
+t7508-status::commit-dry-run-submodule-summary-amend	t7508-status	commit --dry-run submodule summary (--amend)	status	pass
+t7508-status::status-succeeds-in-a-read-only-repository	t7508-status	status succeeds in a read-only repository	status	pass
+t7508-status::ignore-submodules-untracked-suppresses-submodules-with-untracked-content	t7508-status	--ignore-submodules=untracked suppresses submodules with untracked content	status	pass
+t7508-status::gitmodules-ignore-untracked-suppresses-submodules-with-untracked-content	t7508-status	.gitmodules ignore=untracked suppresses submodules with untracked content	status	pass
+t7508-status::git-config-ignore-untracked-suppresses-submodules-with-untracked-content	t7508-status	.git/config ignore=untracked suppresses submodules with untracked content	status	pass
+t7508-status::ignore-submodules-dirty-suppresses-submodules-with-untracked-content	t7508-status	--ignore-submodules=dirty suppresses submodules with untracked content	status	pass
+t7508-status::gitmodules-ignore-dirty-suppresses-submodules-with-untracked-content	t7508-status	.gitmodules ignore=dirty suppresses submodules with untracked content	status	pass
+t7508-status::git-config-ignore-dirty-suppresses-submodules-with-untracked-content	t7508-status	.git/config ignore=dirty suppresses submodules with untracked content	status	pass
+t7508-status::ignore-submodules-dirty-suppresses-submodules-with-modified-content	t7508-status	--ignore-submodules=dirty suppresses submodules with modified content	status	pass
+t7508-status::gitmodules-ignore-dirty-suppresses-submodules-with-modified-content	t7508-status	.gitmodules ignore=dirty suppresses submodules with modified content	status	pass
+t7508-status::git-config-ignore-dirty-suppresses-submodules-with-modified-content	t7508-status	.git/config ignore=dirty suppresses submodules with modified content	status	pass
+t7508-status::gitmodules-ignore-all-suppresses-unstaged-submodule-summary	t7508-status	.gitmodules ignore=all suppresses unstaged submodule summary	status	pass
+t7508-status::git-config-ignore-all-suppresses-unstaged-submodule-summary	t7508-status	.git/config ignore=all suppresses unstaged submodule summary	status	pass
+t7508-status::setup-of-test-environment	t7508-status	setup of test environment	status	pass
+t7508-status::status-short-true-same-as-s	t7508-status	"status.short=true" same as "-s"	status	pass
+t7508-status::status-short-true-weaker-than-no-short	t7508-status	"status.short=true" weaker than "--no-short"	status	pass
+t7508-status::status-short-false-same-as-no-short	t7508-status	"status.short=false" same as "--no-short"	status	pass
+t7508-status::status-short-false-weaker-than-s	t7508-status	"status.short=false" weaker than "-s"	status	pass
+t7508-status::status-branch-true-same-as-b	t7508-status	"status.branch=true" same as "-b"	status	pass
+t7508-status::status-branch-true-different-from-no-branch	t7508-status	"status.branch=true" different from "--no-branch"	status	pass
+t7508-status::status-branch-true-weaker-than-no-branch	t7508-status	"status.branch=true" weaker than "--no-branch"	status	pass
+t7508-status::status-branch-true-weaker-than-porcelain	t7508-status	"status.branch=true" weaker than "--porcelain"	status	pass
+t7508-status::status-branch-false-same-as-no-branch	t7508-status	"status.branch=false" same as "--no-branch"	status	pass
+t7508-status::status-branch-false-weaker-than-b	t7508-status	"status.branch=false" weaker than "-b"	status	pass
+t7508-status::restore-default-test-environment	t7508-status	Restore default test environment	status	pass
+t7508-status::git-commit-will-commit-a-staged-but-ignored-submodule	t7508-status	git commit will commit a staged but ignored submodule	status	pass
+t7508-status::git-commit-dry-run-will-show-a-staged-but-ignored-submodule	t7508-status	git commit --dry-run will show a staged but ignored submodule	status	pass
+t7508-status::git-commit-m-will-commit-a-staged-but-ignored-submodule	t7508-status	git commit -m will commit a staged but ignored submodule	status	pass
+t7508-status::show-stash-info-with-show-stash	t7508-status	show stash info with "--show-stash"	status	pass
+t7508-status::no-stash-info-with-show-stash-no-show-stash	t7508-status	no stash info with "--show-stash --no-show-stash"	status	pass
+t7508-status::status-showstash-false-weaker-than-show-stash	t7508-status	"status.showStash=false" weaker than "--show-stash"	status	pass
+t7508-status::status-showstash-true-weaker-than-no-show-stash	t7508-status	"status.showStash=true" weaker than "--no-show-stash"	status	pass
+t7508-status::no-additional-info-if-no-stash-entries	t7508-status	no additional info if no stash entries	status	pass
+t7508-status::no-commits-yet-should-be-noted-in-status-output	t7508-status	"No commits yet" should be noted in status output	status	pass
+t7508-status::no-commits-yet-should-not-be-noted-in-status-output	t7508-status	"No commits yet" should not be noted in status output	status	pass
+t7508-status::initial-commit-should-be-noted-in-commit-template	t7508-status	"Initial commit" should be noted in commit template	status	pass
+t7508-status::initial-commit-should-not-be-noted-in-commit-template	t7508-status	"Initial commit" should not be noted in commit template	status	pass
+t7508-status::no-optional-locks-prevents-index-update	t7508-status	--no-optional-locks prevents index update	status	pass
+t7508-status::racy-timestamps-will-be-fixed-for-clean-worktree	t7508-status	racy timestamps will be fixed for clean worktree	status	pass
+t7508-status::racy-timestamps-will-be-fixed-for-dirty-worktree	t7508-status	racy timestamps will be fixed for dirty worktree	status	pass
+t7508-status::setup-slow-status-advice	t7508-status	setup slow status advice	status	pass
+t7508-status::slow-status-advice-when-core-untrackedcache-and-fsmonitor-are-unset	t7508-status	slow status advice when core.untrackedCache and fsmonitor are unset	status	pass
+t7508-status::slow-status-advice-when-core-untrackedcache-true-but-not-fsmonitor	t7508-status	slow status advice when core.untrackedCache true, but not fsmonitor	status	pass
+t7508-status::slow-status-advice-when-core-untrackedcache-true-and-fsmonitor	t7508-status	slow status advice when core.untrackedCache true, and fsmonitor	status	pass
+t7508-status::status-does-not-re-read-unchanged-4-or-8-gib-file	t7508-status	status does not re-read unchanged 4 or 8 GiB file	status	pass
+t7508-status::status-status-showuntrackedfiles-no	t7508-status	status (status.showUntrackedFiles $no)	status	pass
+t7508-status::status-status-showuntrackedfiles-normal	t7508-status	status (status.showUntrackedFiles $normal)	status	pass
+t7508-status::ignore-submodules-untracked-doesn-t-suppress-submodules-with-modified-content	t7508-status	--ignore-submodules=untracked doesn't suppress submodules with modified content	status	pass
+t7508-status::gitmodules-ignore-untracked-doesn-t-suppress-submodules-with-modified-content	t7508-status	.gitmodules ignore=untracked doesn't suppress submodules with modified content	status	pass
+t7508-status::git-config-ignore-untracked-doesn-t-suppress-submodules-with-modified-content	t7508-status	.git/config ignore=untracked doesn't suppress submodules with modified content	status	pass
+t7508-status::ignore-submodules-untracked-doesn-t-suppress-submodule-summary	t7508-status	--ignore-submodules=untracked doesn't suppress submodule summary	status	pass
+t7508-status::gitmodules-ignore-untracked-doesn-t-suppress-submodule-summary	t7508-status	.gitmodules ignore=untracked doesn't suppress submodule summary	status	pass
+t7508-status::git-config-ignore-untracked-doesn-t-suppress-submodule-summary	t7508-status	.git/config ignore=untracked doesn't suppress submodule summary	status	pass
+t7508-status::ignore-submodules-dirty-doesn-t-suppress-submodule-summary	t7508-status	--ignore-submodules=dirty doesn't suppress submodule summary	status	pass
+t7508-status::gitmodules-ignore-dirty-doesn-t-suppress-submodule-summary	t7508-status	.gitmodules ignore=dirty doesn't suppress submodule summary	status	pass
+t7508-status::git-config-ignore-dirty-doesn-t-suppress-submodule-summary	t7508-status	.git/config ignore=dirty doesn't suppress submodule summary	status	pass
+t7508-status::status-core-commentchar-with-submodule-summary	t7508-status	status (core.commentchar with submodule summary)	status	pass
+t7508-status::status-core-commentchar-with-two-chars-with-submodule-summary	t7508-status	status (core.commentchar with two chars with submodule summary)	status	pass
+t7508-status::ignore-submodules-all-suppresses-submodule-summary	t7508-status	--ignore-submodules=all suppresses submodule summary	status	pass
 t7509-commit-authorship::c-option-copies-authorship-and-message	t7509-commit-authorship	-C option copies authorship and message	commit	partial
 t7509-commit-authorship::c-option-copies-only-the-message-with-reset-author	t7509-commit-authorship	-C option copies only the message with --reset-author	commit	partial
 t7509-commit-authorship::c-option-copies-authorship-and-message-2	t7509-commit-authorship	-c option copies authorship and message	commit	partial
