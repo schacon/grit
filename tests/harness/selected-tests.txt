@@ -858,3 +858,4 @@ t7811-grep-open.sh
 t7812-grep-icase-non-ascii.sh
 t7813-grep-icase-iso.sh
 t7816-grep-binary-pattern.sh
+t7817-grep-sparse-checkout.sh
