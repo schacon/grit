@@ -210,6 +210,42 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             }
 
             patches.push(fp);
+        } else if lines[i].starts_with("--- ") && i + 1 < lines.len() && lines[i + 1].starts_with("+++ ") {
+            // Bare unified diff without "diff --git" header
+            let mut fp = FilePatch {
+                old_path: None,
+                new_path: None,
+                old_mode: None,
+                new_mode: None,
+                is_new: false,
+                is_deleted: false,
+                is_rename: false,
+                hunks: Vec::new(),
+            };
+
+            let old_p = &lines[i]["--- ".len()..];
+            fp.old_path = Some(strip_ab_prefix(old_p));
+            i += 1;
+            let new_p = &lines[i]["+++ ".len()..];
+            fp.new_path = Some(strip_ab_prefix(new_p));
+            i += 1;
+
+            // Check for /dev/null
+            if fp.old_path.as_deref() == Some("/dev/null") {
+                fp.is_new = true;
+            }
+            if fp.new_path.as_deref() == Some("/dev/null") {
+                fp.is_deleted = true;
+            }
+
+            // Parse hunks
+            while i < lines.len() && lines[i].starts_with("@@ ") {
+                let (hunk, next_i) = parse_hunk(&lines, i)?;
+                fp.hunks.push(hunk);
+                i = next_i;
+            }
+
+            patches.push(fp);
         } else {
             i += 1;
         }
@@ -463,32 +499,29 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
         return Ok(String::new());
     }
 
-    // Check if the last hunk has a no-newline marker for the new side
+    // Check if the last hunk has a no-newline marker for the new side.
+    // The new side ends without newline if the last line that contributes
+    // to the new side (Add or Context) is immediately followed by NoNewline.
     let ends_no_newline = hunks.last().map_or(false, |h| {
-        // Walk backwards through the last hunk's lines to find the trailing state.
-        // If the last meaningful line is an Add followed by NoNewline, no trailing newline.
-        let mut last_was_add = false;
-        let mut saw_no_newline_after_add = false;
+        let mut last_was_new_side = false; // true if last meaningful line goes to new side
+        let mut saw_no_newline = false;
         for hl in &h.lines {
             match hl {
-                HunkLine::Add(_) => {
-                    last_was_add = true;
-                    saw_no_newline_after_add = false;
+                HunkLine::Add(_) | HunkLine::Context(_) => {
+                    last_was_new_side = true;
+                    saw_no_newline = false;
                 }
-                HunkLine::NoNewline if last_was_add => {
-                    saw_no_newline_after_add = true;
+                HunkLine::NoNewline if last_was_new_side => {
+                    saw_no_newline = true;
                 }
                 HunkLine::Remove(_) => {
-                    last_was_add = false;
-                }
-                HunkLine::Context(_) => {
-                    last_was_add = false;
-                    saw_no_newline_after_add = false;
+                    last_was_new_side = false;
+                    saw_no_newline = false;
                 }
                 _ => {}
             }
         }
-        saw_no_newline_after_add
+        saw_no_newline
     });
 
     let mut out = result.join("\n");
@@ -642,8 +675,15 @@ pub fn run(args: Args) -> Result<()> {
     } else {
         let mut buf = String::new();
         for path in &args.patches {
-            let content =
-                fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+            let content = if path.as_os_str() == "-" {
+                let mut s = String::new();
+                io::stdin()
+                    .read_to_string(&mut s)
+                    .context("failed to read patch from stdin")?;
+                s
+            } else {
+                fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?
+            };
             buf.push_str(&content);
             if !content.ends_with('\n') {
                 buf.push('\n');

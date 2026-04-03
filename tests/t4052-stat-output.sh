@@ -52,7 +52,9 @@ test_expect_failure "diff --stat=60: stat width limits output (--stat=N not impl
 test_expect_failure "diff --stat with stat-name-width config (not implemented)" '
 	git -c diff.statNameWidth=30 diff --stat HEAD^ HEAD >output &&
 	grep " | " output >actual &&
-	test -s actual
+	# Verify the name was actually truncated to ~30 chars
+	awk -F"|" "{print length(\$1)}" actual >widths &&
+	test "$(cat widths)" -le 32
 '
 
 test_expect_success 'preparation for big change' '
