@@ -139,7 +139,7 @@ test_expect_failure 'diff --stat-name-width limits name width (not implemented)'
 	test -f out
 '
 
-test_expect_failure 'diff --shortstat shows only summary (not implemented)' '
+test_expect_success 'diff --shortstat shows only summary (not implemented)' '
 	cd repo &&
 	echo "A" >file1.txt &&
 	git diff --shortstat >out &&

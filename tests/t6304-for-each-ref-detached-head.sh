@@ -86,7 +86,7 @@ test_expect_success 'for-each-ref %(objectname) on detached HEAD' '
 	grep "feature $first" actual
 '
 
-test_expect_failure '%(HEAD) marks the current branch' '
+test_expect_success '%(HEAD) marks the current branch' '
 	cd repo &&
 	git checkout master 2>/dev/null &&
 	git for-each-ref --format="%(HEAD) %(refname:short)" refs/heads/ >actual &&
@@ -94,7 +94,7 @@ test_expect_failure '%(HEAD) marks the current branch' '
 	grep "^  other$" actual
 '
 
-test_expect_failure '%(HEAD) shows no star on detached HEAD' '
+test_expect_success '%(HEAD) shows no star on detached HEAD' '
 	cd repo &&
 	third=$(cat ../oid_third) &&
 	echo "$third" >.git/HEAD &&
@@ -121,7 +121,7 @@ test_expect_success 'for-each-ref with tags on detached HEAD' '
 	grep "refs/tags/v1.0" actual
 '
 
-test_expect_failure '%(objectname:short) shows abbreviated hash' '
+test_expect_success '%(objectname:short) shows abbreviated hash' '
 	cd repo &&
 	git for-each-ref --format="%(objectname:short)" refs/heads/ >actual &&
 	count=$(wc -l <actual | tr -d " ") &&

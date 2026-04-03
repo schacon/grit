@@ -35,7 +35,7 @@ test_expect_success 'init with -b sets branch name' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'init.defaultBranch config sets default branch' '
+test_expect_success 'init.defaultBranch config sets default branch' '
 	git config --global init.defaultBranch main &&
 	git init config-branch-repo &&
 	cat config-branch-repo/.git/HEAD >actual &&
@@ -130,7 +130,7 @@ test_expect_success 'bare repo with -b flag' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'bare repo with init.defaultBranch' '
+test_expect_success 'bare repo with init.defaultBranch' '
 	git config --global init.defaultBranch production &&
 	git init --bare bare-config-repo &&
 	cat bare-config-repo/HEAD >actual &&
@@ -194,7 +194,7 @@ test_expect_success 'non-bare repo config has bare = false or unset' '
 	test_must_fail git -C desc-repo config core.bare
 '
 
-test_expect_failure 'init with different defaultBranch values' '
+test_expect_success 'init with different defaultBranch values' '
 	git config --global init.defaultBranch desarrollo &&
 	git init spanish-repo &&
 	cat spanish-repo/.git/HEAD >actual &&

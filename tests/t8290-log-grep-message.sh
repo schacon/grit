@@ -73,32 +73,32 @@ test_expect_success 'log -n3 --format=%s returns exactly 3 messages' '
 # Section 2: --grep filtering (not yet implemented)
 ###########################################################################
 
-test_expect_failure 'log --grep=feat shows feature commits' '
+test_expect_success 'log --grep=feat shows feature commits' '
 	cd repo &&
 	git log --grep=feat --format="%s" >actual &&
 	test $(wc -l <actual) -eq 3 &&
 	grep "feat:" actual
 '
 
-test_expect_failure 'log --grep=fix shows bug fix commits' '
+test_expect_success 'log --grep=fix shows bug fix commits' '
 	cd repo &&
 	git log --grep=fix --format="%s" >actual &&
 	test $(wc -l <actual) -eq 3
 '
 
-test_expect_failure 'log --grep=docs shows documentation commits' '
+test_expect_success 'log --grep=docs shows documentation commits' '
 	cd repo &&
 	git log --grep=docs --format="%s" >actual &&
 	test $(wc -l <actual) -eq 1
 '
 
-test_expect_failure 'log --grep with substring match' '
+test_expect_success 'log --grep with substring match' '
 	cd repo &&
 	git log --grep="add" --format="%s" >actual &&
 	test $(wc -l <actual) -eq 3
 '
 
-test_expect_failure 'log --grep with exact phrase' '
+test_expect_success 'log --grep with exact phrase' '
 	cd repo &&
 	git log --grep="off-by-one" --format="%s" >actual &&
 	test $(wc -l <actual) -eq 1
@@ -111,25 +111,25 @@ test_expect_failure 'log --grep is case-insensitive by default' '
 	test_cmp lower upper
 '
 
-test_expect_failure 'log --grep with no match produces empty output' '
+test_expect_success 'log --grep with no match produces empty output' '
 	cd repo &&
 	git log --grep=nonexistent --format="%s" >actual &&
 	test_must_be_empty actual
 '
 
-test_expect_failure 'log --grep combined with -n' '
+test_expect_success 'log --grep combined with -n' '
 	cd repo &&
 	git log --grep=feat -n1 --format="%s" >actual &&
 	test $(wc -l <actual) -eq 1
 '
 
-test_expect_failure 'log --grep combined with --oneline' '
+test_expect_success 'log --grep combined with --oneline' '
 	cd repo &&
 	git log --grep=fix --oneline >actual &&
 	test $(wc -l <actual) -eq 3
 '
 
-test_expect_failure 'log --grep combined with --reverse' '
+test_expect_success 'log --grep combined with --reverse' '
 	cd repo &&
 	git log --grep=feat --reverse --format="%s" >actual &&
 	head -1 actual >first &&
@@ -137,7 +137,7 @@ test_expect_failure 'log --grep combined with --reverse' '
 	test_cmp expect first
 '
 
-test_expect_failure 'log --grep with regex pattern' '
+test_expect_success 'log --grep with regex pattern' '
 	cd repo &&
 	git log --grep="add.*system" --format="%s" >actual &&
 	test $(wc -l <actual) -eq 1
@@ -219,7 +219,7 @@ test_expect_success 'count commits matching pattern via grep' '
 # Section 5: Edge cases
 ###########################################################################
 
-test_expect_failure 'log --grep on empty repository produces no output' '
+test_expect_success 'log --grep on empty repository produces no output' '
 	git init empty-repo &&
 	cd empty-repo &&
 	git log --grep=anything --format="%s" >actual 2>/dev/null &&
