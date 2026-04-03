@@ -254,9 +254,8 @@ test_expect_success 'log --author on empty repository produces no output' '
 test_expect_success 'log on single commit shows correct author' '
 	git init single-repo &&
 	cd single-repo &&
-	git config user.name "Solo Author" &&
-	git config user.email "solo@example.com" &&
-	git commit --allow-empty -m "only commit" &&
+	GIT_AUTHOR_NAME="Solo Author" GIT_AUTHOR_EMAIL="solo@example.com" \
+		git commit --allow-empty -m "only commit" &&
 	git log --format="%an" >actual &&
 	echo "Solo Author" >expect &&
 	test_cmp expect actual
