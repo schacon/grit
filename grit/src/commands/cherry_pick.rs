@@ -8,7 +8,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -23,6 +23,13 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
+
+/// Result of a three-way merge: the index plus any conflict content for working tree.
+struct MergeResult {
+    index: Index,
+    /// For conflicted paths, the merged content with conflict markers (OID of blob).
+    conflict_content: BTreeMap<Vec<u8>, ObjectId>,
+}
 
 /// Arguments for `grit cherry-pick`.
 #[derive(Debug, ClapArgs)]
@@ -55,12 +62,34 @@ pub struct Args {
     /// Abort an in-progress cherry-pick.
     #[arg(long = "abort")]
     pub abort: bool,
+
+    /// Skip the current commit and continue.
+    #[arg(long = "skip")]
+    pub skip: bool,
+
+    /// Quit the cherry-pick sequence, keeping current changes.
+    #[arg(long = "quit")]
+    pub quit: bool,
+
+    /// Fast-forward if possible.
+    #[arg(long = "ff")]
+    pub ff: bool,
+
+    /// Allow empty commits (already-applied content).
+    #[arg(long = "allow-empty")]
+    pub allow_empty: bool,
 }
 
 /// Run the `cherry-pick` command.
 pub fn run(args: Args) -> Result<()> {
     if args.abort {
         return do_abort();
+    }
+    if args.skip {
+        return do_skip(&args);
+    }
+    if args.quit {
+        return do_quit();
     }
     if args.r#continue {
         return do_continue(&args);
@@ -89,10 +118,42 @@ fn do_cherry_pick(args: Args) -> Result<()> {
     // Expand all commit specs (including A..B ranges) into a list of OIDs.
     let commit_oids = expand_commit_specs(&repo, &args.commits)?;
 
-    for commit_oid in &commit_oids {
-        cherry_pick_one_commit(&repo, *commit_oid, &args)?;
+    if commit_oids.is_empty() {
+        bail!("empty commit set passed");
     }
 
+    // For multi-commit operations, save ORIG_HEAD
+    if commit_oids.len() > 1 && !args.no_commit {
+        save_orig_head(&repo)?;
+    }
+
+    run_commit_sequence(&repo, &commit_oids, &args)
+}
+
+/// Run a sequence of cherry-pick commits, saving sequencer state on conflict.
+fn run_commit_sequence(repo: &Repository, oids: &[ObjectId], args: &Args) -> Result<()> {
+    let git_dir = &repo.git_dir;
+
+    for (i, commit_oid) in oids.iter().enumerate() {
+        let remaining = &oids[i + 1..];
+        match cherry_pick_one_commit(repo, *commit_oid, args) {
+            Ok(()) => {}
+            Err(e) => {
+                let err_msg = format!("{e}");
+                if err_msg.contains("CONFLICT_EXIT") {
+                    // Conflict occurred — save remaining commits in sequencer
+                    if !remaining.is_empty() {
+                        save_sequencer_state(git_dir, remaining, args)?;
+                    }
+                    std::process::exit(1);
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    // Clean up sequencer state on success
+    cleanup_sequencer_state(git_dir);
     Ok(())
 }
 
@@ -101,14 +162,11 @@ fn expand_commit_specs(repo: &Repository, specs: &[String]) -> Result<Vec<Object
     let mut oids = Vec::new();
     for spec in specs {
         if let Some((lhs, rhs)) = spec.split_once("..") {
-            // A..B: pick all commits reachable from B but not from A,
-            // in chronological order (oldest first).
             let exclude_oid = resolve_revision(repo, lhs)
                 .with_context(|| format!("bad revision '{lhs}'"))?;
             let include_oid = resolve_revision(repo, rhs)
                 .with_context(|| format!("bad revision '{rhs}'"))?;
 
-            // Walk from include_oid back to exclude_oid
             let range_oids = walk_commit_range(repo, exclude_oid, include_oid)?;
             oids.extend(range_oids);
         } else {
@@ -193,37 +251,76 @@ fn cherry_pick_one_commit(
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree_oid = head_commit.tree;
 
-    // Three-way merge: base=parent_tree, ours=HEAD_tree, theirs=commit_tree
+    // Check for fast-forward possibility
+    if args.ff && commit.parents.len() == 1 && commit.parents[0] == head_oid {
+        update_head(git_dir, &head, &commit_oid)?;
+        let entries = tree_to_index_entries(repo, &commit_tree_oid, "")?;
+        let old_index = load_index(repo)?;
+        let mut new_index = Index::new();
+        new_index.entries = entries;
+        new_index.sort();
+        new_index.write(&repo.index_path()).context("writing index")?;
+        if let Some(wt) = &repo.work_tree {
+            checkout_merged_index(repo, wt, &old_index, &new_index, &BTreeMap::new())?;
+        }
+
+        let short = &commit_oid.to_hex()[..7];
+        let branch = branch_name(&head);
+        let first_line = commit.message.lines().next().unwrap_or("");
+        eprintln!("[{branch} {short}] {first_line}");
+        return Ok(());
+    }
+
+    // Three-way merge
     let base_entries = tree_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);
-    let ours_entries = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
+
+    // For --no-commit mode, use current index as "ours" (may differ from HEAD
+    // when multiple commits are being picked without committing).
+    let ours_entries = if args.no_commit {
+        let cur_index = load_index(repo)?;
+        // If the index has only stage-0 entries and differs from HEAD tree,
+        // use the index entries as ours.
+        let stage0: Vec<IndexEntry> = cur_index.entries.into_iter().filter(|e| e.stage() == 0).collect();
+        if !stage0.is_empty() {
+            tree_to_map(stage0)
+        } else {
+            tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?)
+        }
+    } else {
+        tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?)
+    };
     let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
 
-    let merged_index = three_way_merge_with_content(
+    let merge_result = three_way_merge_with_content(
         repo,
         &base_entries,
         &ours_entries,
         &theirs_entries,
     )?;
 
-    let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0);
+    let has_conflicts = merge_result.index.entries.iter().any(|e| e.stage() != 0);
+
+    // Check for empty cherry-pick (tree unchanged from HEAD)
+    if !has_conflicts && !args.allow_empty {
+        let new_tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
+        if new_tree_oid == head_tree_oid {
+            bail!("The previous cherry-pick is now empty, possibly due to conflict resolution.\nIf you wish to commit it anyway, use --allow-empty.");
+        }
+    }
 
     let old_index = load_index(repo)?;
-
-    let index_path = repo.index_path();
-    merged_index.write(&index_path).context("writing index")?;
+    merge_result.index.write(&repo.index_path()).context("writing index")?;
 
     let work_tree = repo
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot cherry-pick in a bare repository"))?;
-    checkout_merged_index(repo, work_tree, &old_index, &merged_index)?;
+    checkout_merged_index(repo, work_tree, &old_index, &merge_result.index, &merge_result.conflict_content)?;
 
     // Build the cherry-pick message.
     let mut msg = commit.message.clone();
     if args.append_source {
-        // Append "(cherry picked from commit <sha>)" line
         let trailer = format!("\n(cherry picked from commit {})\n", commit_oid.to_hex());
-        // Remove trailing newline, add trailer, add newline back
         let trimmed = msg.trim_end().to_owned();
         msg = format!("{trimmed}{trailer}");
     }
@@ -232,7 +329,6 @@ fn cherry_pick_one_commit(
     }
 
     if has_conflicts {
-        // Write CHERRY_PICK_HEAD and MERGE_MSG for conflict resolution.
         fs::write(
             git_dir.join("CHERRY_PICK_HEAD"),
             format!("{}\n", commit_oid.to_hex()),
@@ -247,35 +343,32 @@ fn cherry_pick_one_commit(
              hint: with 'git add <paths>' or 'git rm <paths>'\n\
              hint: and commit the result with 'git cherry-pick --continue'"
         );
-        std::process::exit(1);
+        bail!("CONFLICT_EXIT");
     }
 
     if args.no_commit {
-        // Stage the result but don't commit.
-        // Write CHERRY_PICK_HEAD so the user knows what was picked.
-        fs::write(
-            git_dir.join("CHERRY_PICK_HEAD"),
-            format!("{}\n", commit_oid.to_hex()),
-        )?;
         return Ok(());
     }
 
     // Create the cherry-pick commit (preserving original author).
-    create_cherry_pick_commit(repo, &head, &merged_index, &msg, &commit)?;
+    create_cherry_pick_commit(repo, &head, &merge_result.index, &msg, &commit)?;
 
-    // Print summary.
     let new_head = resolve_head(git_dir)?;
     let new_oid = new_head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
     let short = &new_oid.to_hex()[..7];
-    let branch = match &head {
-        HeadState::Branch { short_name, .. } => short_name.as_str(),
-        HeadState::Detached { .. } => "HEAD detached",
-        HeadState::Invalid => "unknown",
-    };
+    let branch = branch_name(&head);
     let first_line = msg.lines().next().unwrap_or("");
     eprintln!("[{branch} {short}] {first_line}");
 
     Ok(())
+}
+
+fn branch_name(head: &HeadState) -> &str {
+    match head {
+        HeadState::Branch { short_name, .. } => short_name.as_str(),
+        HeadState::Detached { .. } => "HEAD detached",
+        HeadState::Invalid => "unknown",
+    }
 }
 
 // ── --continue ──────────────────────────────────────────────────────
@@ -302,13 +395,11 @@ fn do_continue(args: &Args) -> Result<()> {
     let cp_obj = repo.odb.read(&cp_oid)?;
     let cp_commit = parse_commit(&cp_obj.data)?;
 
-    // Read saved message or construct one.
     let mut msg = match fs::read_to_string(git_dir.join("MERGE_MSG")) {
         Ok(m) => m,
         Err(_) => cp_commit.message.clone(),
     };
 
-    // Apply -x and --signoff if given on --continue
     if args.append_source {
         let trailer = format!("\n(cherry picked from commit {})\n", cp_oid.to_hex());
         let trimmed = msg.trim_end().to_owned();
@@ -321,19 +412,20 @@ fn do_continue(args: &Args) -> Result<()> {
     let head = resolve_head(git_dir)?;
     create_cherry_pick_commit(&repo, &head, &index, &msg, &cp_commit)?;
 
-    // Cleanup state files.
-    cleanup_cherry_pick_state(git_dir);
-
     let new_head = resolve_head(git_dir)?;
     let new_oid = new_head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
     let short = &new_oid.to_hex()[..7];
-    let branch = match &head {
-        HeadState::Branch { short_name, .. } => short_name.as_str(),
-        HeadState::Detached { .. } => "HEAD detached",
-        HeadState::Invalid => "unknown",
-    };
+    let branch = branch_name(&head);
     let first_line = msg.lines().next().unwrap_or("");
     eprintln!("[{branch} {short}] {first_line}");
+
+    // Now process remaining sequencer items
+    let remaining = load_sequencer_todo(git_dir);
+    cleanup_cherry_pick_state(git_dir);
+
+    if !remaining.is_empty() {
+        run_commit_sequence(&repo, &remaining, args)?;
+    }
 
     Ok(())
 }
@@ -348,26 +440,162 @@ fn do_abort() -> Result<()> {
         bail!("error: no cherry-pick in progress");
     }
 
-    // Restore HEAD tree to index and working tree.
+    // Restore HEAD to ORIG_HEAD if available, otherwise use current HEAD tree
+    let restore_oid = if let Ok(orig) = fs::read_to_string(git_dir.join("ORIG_HEAD")) {
+        Some(ObjectId::from_hex(orig.trim())?)
+    } else {
+        None
+    };
+
+    let head = resolve_head(git_dir)?;
+    let target_oid = restore_oid.as_ref().or_else(|| head.oid());
+
+    if let Some(oid) = target_oid {
+        let obj = repo.odb.read(oid)?;
+        let commit = parse_commit(&obj.data)?;
+        let entries = tree_to_index_entries(&repo, &commit.tree, "")?;
+        let old_idx = load_index(&repo)?;
+        let mut index = Index::new();
+        index.entries = entries;
+        index.sort();
+        index.write(&repo.index_path())?;
+
+        if let Some(wt) = &repo.work_tree {
+            checkout_merged_index(&repo, wt, &old_idx, &index, &BTreeMap::new())?;
+        }
+
+        if let Some(orig_oid) = &restore_oid {
+            update_head(git_dir, &head, orig_oid)?;
+        }
+    }
+
+    cleanup_cherry_pick_state(git_dir);
+    cleanup_sequencer_state(git_dir);
+    let _ = fs::remove_file(git_dir.join("ORIG_HEAD"));
+    Ok(())
+}
+
+// ── --skip ──────────────────────────────────────────────────────────
+
+fn do_skip(args: &Args) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+
+    if !git_dir.join("CHERRY_PICK_HEAD").exists() {
+        bail!("error: no cherry-pick in progress");
+    }
+
+    // Restore HEAD tree to index and working tree (undo the conflict)
     let head = resolve_head(git_dir)?;
     if let Some(head_oid) = head.oid() {
         let obj = repo.odb.read(head_oid)?;
         let commit = parse_commit(&obj.data)?;
         let entries = tree_to_index_entries(&repo, &commit.tree, "")?;
-        let mut index = Index::new();
-        index.entries = entries;
-        index.sort();
-        let index_path = repo.index_path();
-        index.write(&index_path)?;
+        let old_index = load_index(&repo)?;
+        let mut new_index = Index::new();
+        new_index.entries = entries;
+        new_index.sort();
+        new_index.write(&repo.index_path())?;
 
         if let Some(wt) = &repo.work_tree {
-            let old_idx = load_index(&repo)?;
-            checkout_merged_index(&repo, wt, &old_idx, &index)?;
+            checkout_merged_index(&repo, wt, &old_index, &new_index, &BTreeMap::new())?;
         }
     }
 
+    // Load remaining sequencer items and continue
+    let remaining = load_sequencer_todo(git_dir);
     cleanup_cherry_pick_state(git_dir);
+
+    if !remaining.is_empty() {
+        run_commit_sequence(&repo, &remaining, args)?;
+    } else {
+        cleanup_sequencer_state(git_dir);
+    }
+
     Ok(())
+}
+
+// ── --quit ──────────────────────────────────────────────────────────
+
+fn do_quit() -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+
+    if !git_dir.join("CHERRY_PICK_HEAD").exists() {
+        bail!("error: no cherry-pick in progress");
+    }
+
+    cleanup_cherry_pick_state(git_dir);
+    cleanup_sequencer_state(git_dir);
+    Ok(())
+}
+
+// ── Sequencer state management ──────────────────────────────────────
+
+fn save_orig_head(repo: &Repository) -> Result<()> {
+    let git_dir = &repo.git_dir;
+    let head = resolve_head(git_dir)?;
+    if let Some(oid) = head.oid() {
+        fs::write(git_dir.join("ORIG_HEAD"), format!("{}\n", oid.to_hex()))?;
+    }
+    Ok(())
+}
+
+fn save_sequencer_state(git_dir: &Path, remaining: &[ObjectId], args: &Args) -> Result<()> {
+    let seq_dir = git_dir.join("sequencer");
+    fs::create_dir_all(&seq_dir)?;
+
+    let mut todo = String::new();
+    for oid in remaining {
+        todo.push_str(&format!("pick {}\n", oid.to_hex()));
+    }
+    fs::write(seq_dir.join("todo"), &todo)?;
+
+    let mut opts = String::new();
+    if args.append_source {
+        opts.push_str("append_source\n");
+    }
+    if args.no_commit {
+        opts.push_str("no_commit\n");
+    }
+    if args.signoff {
+        opts.push_str("signoff\n");
+    }
+    if let Some(m) = args.mainline {
+        opts.push_str(&format!("mainline {m}\n"));
+    }
+    if !opts.is_empty() {
+        fs::write(seq_dir.join("opts"), &opts)?;
+    }
+
+    Ok(())
+}
+
+fn load_sequencer_todo(git_dir: &Path) -> Vec<ObjectId> {
+    let todo_path = git_dir.join("sequencer").join("todo");
+    match fs::read_to_string(&todo_path) {
+        Ok(content) => {
+            let mut oids = Vec::new();
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some(hex) = line.strip_prefix("pick ") {
+                    if let Ok(oid) = ObjectId::from_hex(hex.trim()) {
+                        oids.push(oid);
+                    }
+                }
+            }
+            oids
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+fn cleanup_sequencer_state(git_dir: &Path) {
+    let seq_dir = git_dir.join("sequencer");
+    let _ = fs::remove_dir_all(&seq_dir);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -404,7 +632,6 @@ fn create_cherry_pick_commit(
     let config = ConfigSet::load(Some(git_dir), true)?;
     let now = time::OffsetDateTime::now_utc();
 
-    // Cherry-pick preserves the original author.
     let author = original_commit.author.clone();
     let committer = resolve_committer_ident(&config, now)?;
 
@@ -421,8 +648,6 @@ fn create_cherry_pick_commit(
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
     update_head(git_dir, head, &commit_oid)?;
-
-    // Clean up cherry-pick state.
     cleanup_cherry_pick_state(git_dir);
 
     Ok(())
@@ -462,7 +687,6 @@ fn append_signoff(msg: &str, git_dir: &Path) -> Result<String> {
 
     let signoff_line = format!("Signed-off-by: {name} <{email}>");
 
-    // Don't add duplicate signoff
     if msg.contains(&signoff_line) {
         return Ok(msg.to_owned());
     }
@@ -554,22 +778,19 @@ fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
 }
 
 /// Three-way merge with content-level merging.
-///
-/// base   = parent_tree (state before the commit)
-/// ours   = HEAD_tree (current state)
-/// theirs = commit_tree (the commit being cherry-picked)
 fn three_way_merge_with_content(
     repo: &Repository,
     base: &HashMap<Vec<u8>, IndexEntry>,
     ours: &HashMap<Vec<u8>, IndexEntry>,
     theirs: &HashMap<Vec<u8>, IndexEntry>,
-) -> Result<Index> {
+) -> Result<MergeResult> {
     let mut all_paths = BTreeSet::new();
     all_paths.extend(base.keys().cloned());
     all_paths.extend(ours.keys().cloned());
     all_paths.extend(theirs.keys().cloned());
 
     let mut out = Index::new();
+    let mut conflict_content = BTreeMap::new();
 
     for path in all_paths {
         let b = base.get(&path);
@@ -577,71 +798,54 @@ fn three_way_merge_with_content(
         let t = theirs.get(&path);
 
         match (b, o, t) {
-            // Both sides same → take ours
             (_, Some(oe), Some(te)) if same_blob(oe, te) => {
                 out.entries.push(oe.clone());
             }
-            // Base == ours, only theirs changed → take theirs
             (Some(be), Some(oe), Some(te)) if same_blob(be, oe) => {
                 out.entries.push(te.clone());
             }
-            // Base == theirs, only ours changed → take ours
             (Some(be), Some(oe), Some(te)) if same_blob(be, te) => {
                 out.entries.push(oe.clone());
             }
-            // All three differ → try content merge
             (Some(be), Some(oe), Some(te)) => {
-                content_merge_or_conflict(repo, &mut out, &path, be, oe, te)?;
+                content_merge_or_conflict(repo, &mut out, &mut conflict_content, &path, be, oe, te)?;
             }
-            // Added only in ours
             (None, Some(oe), None) => {
                 out.entries.push(oe.clone());
             }
-            // Added only in theirs
             (None, None, Some(te)) => {
                 out.entries.push(te.clone());
             }
-            // Added in both with same content
             (None, Some(oe), Some(te)) if same_blob(oe, te) => {
                 out.entries.push(oe.clone());
             }
-            // Added in both with different content → conflict
             (None, Some(oe), Some(te)) => {
                 stage_entry(&mut out, oe, 2);
                 stage_entry(&mut out, te, 3);
             }
-            // Deleted by both
             (Some(_), None, None) => {}
-            // Deleted by theirs, unchanged in ours (base == ours)
-            (Some(be), Some(oe), None) if same_blob(be, oe) => {
-                // theirs deleted it → delete
-            }
-            // Deleted by ours, unchanged in theirs (base == theirs)
-            (Some(be), None, Some(te)) if same_blob(be, te) => {
-                // ours deleted it → delete
-            }
-            // Deleted by theirs, modified in ours → conflict
+            (Some(be), Some(oe), None) if same_blob(be, oe) => {}
+            (Some(be), None, Some(te)) if same_blob(be, te) => {}
             (Some(be), Some(oe), None) => {
                 stage_entry(&mut out, be, 1);
                 stage_entry(&mut out, oe, 2);
             }
-            // Deleted by ours, modified in theirs → conflict
             (Some(be), None, Some(te)) => {
                 stage_entry(&mut out, be, 1);
                 stage_entry(&mut out, te, 3);
             }
-            // Nothing
             (None, None, None) => {}
         }
     }
 
     out.sort();
-    Ok(out)
+    Ok(MergeResult { index: out, conflict_content })
 }
 
 fn content_merge_or_conflict(
     repo: &Repository,
     index: &mut Index,
+    conflict_content: &mut BTreeMap<Vec<u8>, ObjectId>,
     path: &[u8],
     base: &IndexEntry,
     ours: &IndexEntry,
@@ -677,6 +881,10 @@ fn content_merge_or_conflict(
     let result = merge(&input)?;
 
     if result.conflicts > 0 {
+        // Store the conflict-marker content blob for working tree checkout
+        let conflict_oid = repo.odb.write(ObjectKind::Blob, &result.content)?;
+        conflict_content.insert(path.to_vec(), conflict_oid);
+
         stage_entry(index, base, 1);
         stage_entry(index, ours, 2);
         stage_entry(index, theirs, 3);
@@ -698,6 +906,7 @@ fn checkout_merged_index(
     work_tree: &Path,
     old_index: &Index,
     index: &Index,
+    conflict_content: &BTreeMap<Vec<u8>, ObjectId>,
 ) -> Result<()> {
     let new_paths: HashSet<Vec<u8>> = index.entries.iter().map(|e| e.path.clone()).collect();
 
@@ -721,7 +930,14 @@ fn checkout_merged_index(
             write_entry_to_worktree(repo, &abs_path, entry)?;
             written.insert(entry.path.clone());
         } else if entry.stage() == 2 && !written.contains(&entry.path) {
-            write_entry_to_worktree(repo, &abs_path, entry)?;
+            // For conflicts, prefer writing conflict-marker content if available
+            if let Some(marker_oid) = conflict_content.get(&entry.path) {
+                let mut marker_entry = entry.clone();
+                marker_entry.oid = *marker_oid;
+                write_entry_to_worktree(repo, &abs_path, &marker_entry)?;
+            } else {
+                write_entry_to_worktree(repo, &abs_path, entry)?;
+            }
             written.insert(entry.path.clone());
         }
     }
