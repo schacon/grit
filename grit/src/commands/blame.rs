@@ -56,6 +56,15 @@ pub struct Args {
     #[arg(long = "color-by-age")]
     pub color_by_age: bool,
 
+    /// Detect lines moved/copied from other files.
+    /// Can be given up to 3 times (-C -C -C) for deeper detection.
+    #[arg(short = 'C', action = clap::ArgAction::Count)]
+    pub copy_detection: u8,
+
+    /// Show the filename in the output.
+    #[arg(short = 'f', long = "show-name")]
+    pub show_name: bool,
+
     /// Revision to blame from (and optional file after `--`).
     #[arg()]
     pub args: Vec<String>,
@@ -70,6 +79,8 @@ struct BlameLine {
     /// 1-based line number in the originating commit.
     orig_lineno: usize,
     content: String,
+    /// Source filename (differs from target when -C detects a copy).
+    source_file: Option<String>,
 }
 
 /// Parsed author/committer string.
@@ -221,6 +232,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &
                     final_lineno: t.final_lineno,
                     orig_lineno: t.current_idx + 1,
                     content: final_lines[t.final_lineno - 1].clone(),
+                    source_file: None,
                 });
             }
             break;
@@ -239,6 +251,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &
                         final_lineno: t.final_lineno,
                         orig_lineno: t.current_idx + 1,
                         content: final_lines[t.final_lineno - 1].clone(),
+                    source_file: None,
                     });
                 }
                 break;
@@ -252,6 +265,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &
                         final_lineno: t.final_lineno,
                         orig_lineno: t.current_idx + 1,
                         content: final_lines[t.final_lineno - 1].clone(),
+                    source_file: None,
                     });
                 }
                 break;
@@ -296,6 +310,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &
                                 final_lineno: t.final_lineno,
                                 orig_lineno: t.current_idx + 1,
                                 content: final_lines[t.final_lineno - 1].clone(),
+                    source_file: None,
                             });
                         }
                     } else if is_ignored {
@@ -311,6 +326,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &
                             final_lineno: t.final_lineno,
                             orig_lineno: t.current_idx + 1,
                             content: final_lines[t.final_lineno - 1].clone(),
+                    source_file: None,
                         });
                     }
                 }
@@ -439,7 +455,7 @@ pub fn run(args: Args) -> Result<()> {
     if args.porcelain || args.line_porcelain {
         write_porcelain(&mut out, &blame_lines, &commits, &file_path, args.line_porcelain)?;
     } else {
-        write_default(&mut out, &blame_lines, &commits, &args)?;
+        write_default(&mut out, &blame_lines, &commits, &args, &file_path)?;
     }
 
     Ok(())
@@ -622,6 +638,7 @@ fn write_default(
     lines: &[BlameLine],
     commits: &HashMap<ObjectId, CommitData>,
     args: &Args,
+    file_path: &str,
 ) -> Result<()> {
     let hash_len = if args.long_hash { 40 } else { 8 };
     let max_lineno = lines.iter().map(|b| b.final_lineno).max().unwrap_or(1);
@@ -648,10 +665,18 @@ fn write_default(
             ("", "")
         };
 
+        // Filename field for -f / --show-name
+        let fname = if args.show_name {
+            let name = bl.source_file.as_deref().unwrap_or(&file_path);
+            format!("{name} ")
+        } else {
+            String::new()
+        };
+
         if args.suppress {
             writeln!(
                 out,
-                "{color_start}{short} {lineno:>w$}) {content}{color_end}",
+                "{color_start}{short} {fname}{lineno:>w$}) {content}{color_end}",
                 lineno = bl.final_lineno,
                 w = lineno_width,
                 content = bl.content,
@@ -668,7 +693,7 @@ fn write_default(
 
             writeln!(
                 out,
-                "{color_start}{short} ({who} {ts} {lineno:>w$}) {content}{color_end}",
+                "{color_start}{short} {fname}({who} {ts} {lineno:>w$}) {content}{color_end}",
                 lineno = bl.final_lineno,
                 w = lineno_width,
                 content = bl.content,

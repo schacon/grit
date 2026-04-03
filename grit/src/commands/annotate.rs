@@ -37,6 +37,12 @@ pub struct Args {
     #[arg(long = "color-by-age")]
     pub color_by_age: bool,
 
+    #[arg(short = 'C', action = clap::ArgAction::Count)]
+    pub copy_detection: u8,
+
+    #[arg(short = 'f', long = "show-name")]
+    pub show_name: bool,
+
     #[arg()]
     pub args: Vec<String>,
 }
@@ -54,6 +60,8 @@ pub fn run(args: Args) -> Result<()> {
         ignore_revs_file: args.ignore_revs_file,
         color_lines: args.color_lines,
         color_by_age: args.color_by_age,
+        copy_detection: args.copy_detection,
+        show_name: args.show_name,
         args: args.args,
     })
 }
