@@ -11,6 +11,10 @@ test_expect_success 'setup: create repo with commits' '
 	cd repo &&
 	git config user.name "Test" &&
 	git config user.email "test@test.com" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "initial" >file &&
 	git add file &&
 	git commit -m "initial" &&

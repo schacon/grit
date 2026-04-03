@@ -8,6 +8,10 @@ cd "$(dirname "$0")" || exit 1
 test_expect_success 'setup linear history' '
 	grit init repo && cd repo &&
 	git config user.email "bob@example.com" && git config user.name "Bob" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo a >a.txt && grit add a.txt && grit commit -m "commit-A" &&
 	echo b >b.txt && grit add b.txt && grit commit -m "commit-B" &&
 	echo c >c.txt && grit add c.txt && grit commit -m "commit-C" &&

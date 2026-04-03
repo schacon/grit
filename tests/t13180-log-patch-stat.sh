@@ -8,6 +8,10 @@ cd "$(dirname "$0")" || exit 1
 test_expect_success 'setup' '
 	grit init repo && cd repo &&
 	git config user.email "t@t.com" && git config user.name "T" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo first >file.txt && grit add file.txt && grit commit -m "first commit" &&
 	echo second >file2.txt && grit add file2.txt && grit commit -m "second commit" &&
 	echo third >file3.txt && grit add file3.txt && grit commit -m "third commit" &&
