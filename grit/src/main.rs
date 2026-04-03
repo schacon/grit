@@ -227,19 +227,6 @@ fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     result
 }
 
-/// Preprocess diff arguments: expand `-U<N>` to `-U <N>` for clap.
-fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
-    let mut result = Vec::new();
-    for arg in rest {
-        if arg.starts_with("-U") && arg.len() > 2 && arg[2..].chars().all(|c| c.is_ascii_digit()) {
-            result.push("-U".to_string());
-            result.push(arg[2..].to_string());
-        } else {
-            result.push(arg.clone());
-        }
-    }
-    result
-}
 
 /// Dispatch to the appropriate command handler.
 ///
