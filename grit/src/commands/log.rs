@@ -49,11 +49,11 @@ pub struct Args {
     pub graph: bool,
 
     /// Decorate refs.
-    #[arg(long = "decorate")]
+    #[arg(long = "decorate", overrides_with = "no_decorate")]
     pub decorate: Option<Option<String>>,
 
     /// Do not decorate refs.
-    #[arg(long = "no-decorate")]
+    #[arg(long = "no-decorate", overrides_with = "decorate")]
     pub no_decorate: bool,
 
     /// Skip this many commits.
