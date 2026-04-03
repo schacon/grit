@@ -113,9 +113,10 @@ test_tick () {
 	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
 }
 
-# Allow tests to use $HOME
+# Allow tests to use $HOME — isolate from real user config
 HOME="$TRASH_DIRECTORY"
-export HOME
+XDG_CONFIG_HOME="$TRASH_DIRECTORY/.config"
+export HOME XDG_CONFIG_HOME
 
 # Prevent tests from discovering enclosing repositories
 GIT_CEILING_DIRECTORIES="$(dirname "$TRASH_DIRECTORY")"
