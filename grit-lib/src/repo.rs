@@ -172,6 +172,22 @@ impl Repository {
 fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
     let dot_git = dir.join(".git");
 
+    // Check for special file types (FIFO, socket, etc.) — reject them
+    // instead of walking up to a parent repository.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        if let Ok(meta) = fs::symlink_metadata(&dot_git) {
+            let ft = meta.file_type();
+            if ft.is_fifo() || ft.is_socket() || ft.is_block_device() || ft.is_char_device() {
+                return Err(Error::NotARepository(format!(
+                    ".git exists but is not a valid file or directory: {}",
+                    dot_git.display()
+                )));
+            }
+        }
+    }
+
     if dot_git.is_file() {
         // gitfile indirection: file contains "gitdir: <path>"
         let content =
@@ -182,8 +198,34 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
     }
 
     if dot_git.is_dir() {
-        let repo = Repository::open(&dot_git, Some(dir))?;
-        return Ok(Some(repo));
+        // If .git is a symlink to a directory, resolve the symlink target
+        // for validation but keep the original .git path for user-facing output
+        // (matches real git behavior: `rev-parse --git-dir` shows `.git`).
+        let open_path = if dot_git.is_symlink() {
+            // Resolve the symlink target for validation
+            dot_git.read_link().unwrap_or_else(|_| dot_git.clone())
+        } else {
+            dot_git.clone()
+        };
+        // Try to open; if the directory is empty or invalid, continue
+        // walking up (e.g. an empty .git/ directory should be ignored).
+        match Repository::open(&open_path, Some(dir)) {
+            Ok(mut repo) => {
+                // Restore the original path so rev-parse shows .git not the
+                // resolved symlink target.
+                if dot_git.is_symlink() {
+                    let abs_dot_git = if dot_git.is_absolute() {
+                        dot_git
+                    } else {
+                        dir.join(".git")
+                    };
+                    repo.git_dir = abs_dot_git;
+                }
+                return Ok(Some(repo));
+            }
+            Err(Error::NotARepository(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        }
     }
 
     // Check if `dir` itself is a bare repo (has objects/ and HEAD directly)
