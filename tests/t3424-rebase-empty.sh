@@ -42,7 +42,8 @@ test_expect_success 'rebase does not leave state laying around' '
 	test_path_is_missing .git/MERGE_MSG
 '
 
-test_expect_failure 'rebase updates branch ref' '
+test_expect_success 'rebase updates branch ref' '
+	git checkout localmods &&
 	git branch -f testing localmods &&
 	git checkout testing &&
 	old=$(git rev-parse HEAD) &&
