@@ -662,13 +662,25 @@ fn cmd_add(
 }
 
 fn cmd_edit(file_path: &Path) -> Result<()> {
-    let editor = std::env::var("GIT_EDITOR")
-        .or_else(|_| std::env::var("VISUAL"))
-        .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".to_owned());
+    // Resolve editor: GIT_EDITOR env → core.editor config → VISUAL env → EDITOR env → vi
+    let git_dir = resolve_git_dir();
+    let config = ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
 
-    let status = std::process::Command::new(&editor)
-        .arg(file_path)
+    let editor = std::env::var("GIT_EDITOR")
+        .ok()
+        .or_else(|| config.get("core.editor"))
+        .or_else(|| std::env::var("VISUAL").ok())
+        .or_else(|| std::env::var("EDITOR").ok())
+        .unwrap_or_else(|| "vi".to_owned());
+
+    // Use shell to handle editors that include arguments/redirections
+    // (matches Git's launch_editor behavior)
+    let file_str = file_path.display().to_string();
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{} \"$@\"", editor))
+        .arg("--")
+        .arg(&file_str)
         .status()
         .with_context(|| format!("failed to launch editor '{editor}'"))?;
 

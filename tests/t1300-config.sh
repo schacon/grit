@@ -3511,4 +3511,63 @@ test_expect_success '--get-color with default returns ANSI' '
 	test -s actual
 '
 
+# ── --edit tests ────────────────────────────────────────────────────────────
+
+test_expect_success 'git config edit subcommand works' '
+	cd repo &&
+	cat >../fake-editor.sh <<-\EDITOR &&
+	#!/bin/sh
+	echo "[test]" > "$1"
+	echo "	value = yes" >> "$1"
+	EDITOR
+	chmod +x ../fake-editor.sh &&
+	git config -f ../tmp-edit test.value no &&
+	echo test.value=yes >expect &&
+	GIT_EDITOR=../fake-editor.sh git config -f ../tmp-edit edit &&
+	git config --list -f ../tmp-edit >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git config edit respects core.editor' '
+	cd repo &&
+	git config -f ../tmp-edit2 test.value no &&
+	echo test.value=yes >expect &&
+	git config core.editor ../fake-editor.sh &&
+	git config -f ../tmp-edit2 edit &&
+	git config --list -f ../tmp-edit2 >actual &&
+	test_cmp expect actual &&
+	git config --unset core.editor
+'
+
+# ── urlmatch with more specific URLs ────────────────────────────────────
+
+test_expect_success 'urlmatch favors more specific URLs' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[http "https://example.com"]
+		sslVerify = true
+	[http "https://example.com/deep/path"]
+		sslVerify = false
+	EOF
+	echo true >expect &&
+	git config --bool --get-urlmatch http.sslVerify https://example.com >actual &&
+	test_cmp expect actual &&
+	echo false >expect &&
+	git config --bool --get-urlmatch http.sslVerify https://example.com/deep/path/file >actual &&
+	test_cmp expect actual
+'
+
+# ── unset-all removes section if empty ───────────────────────────────
+
+test_expect_success '--unset-all removes section if empty and uncommented' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[section]
+	key = value1
+	key = value2
+	EOF
+	git config --unset-all section.key &&
+	test_line_count = 0 .git/config
+'
+
 test_done

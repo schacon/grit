@@ -682,6 +682,9 @@ impl ConfigFile {
         }
 
         if count > 0 {
+            // Remove empty section headers (sections with no remaining entries and no comments)
+            self.remove_empty_section_headers();
+
             let content = self.raw_lines.join("\n");
             let reparsed = Self::parse(&self.path, &content, self.scope)?;
             self.entries = reparsed.entries;
@@ -800,19 +803,74 @@ impl ConfigFile {
     }
 
     /// Write the (possibly modified) config back to disk.
+    /// Remove section headers that have no remaining entries or comments.
+    fn remove_empty_section_headers(&mut self) {
+        let section_re = regex::Regex::new(r"^\s*\[").unwrap();
+        let comment_re = regex::Regex::new(r"^\s*(#|;)").unwrap();
+
+        let mut to_remove: Vec<usize> = Vec::new();
+        let len = self.raw_lines.len();
+
+        for i in 0..len {
+            let line = &self.raw_lines[i];
+            if !section_re.is_match(line) {
+                continue;
+            }
+            // Check if this section header is followed only by blank lines,
+            // comments, or another section header (or end of file).
+            let mut has_entries = false;
+            for j in (i + 1)..len {
+                let next = self.raw_lines[j].trim();
+                if next.is_empty() {
+                    continue;
+                }
+                if section_re.is_match(&self.raw_lines[j]) {
+                    break;
+                }
+                if comment_re.is_match(&self.raw_lines[j]) {
+                    // Has comments — keep the section
+                    has_entries = true;
+                    break;
+                }
+                // Has a key-value entry
+                has_entries = true;
+                break;
+            }
+            if !has_entries {
+                to_remove.push(i);
+            }
+        }
+
+        // Remove in reverse to preserve indices
+        for &idx in to_remove.iter().rev() {
+            self.raw_lines.remove(idx);
+        }
+
+        // Also remove trailing blank lines
+        while self.raw_lines.last().map_or(false, |l| l.trim().is_empty()) {
+            self.raw_lines.pop();
+        }
+    }
+
     ///
     /// # Errors
     ///
     /// Returns [`Error::Io`] on write failure.
     pub fn write(&self) -> Result<()> {
         let content = self.raw_lines.join("\n");
-        // Ensure trailing newline
-        let content = if content.ends_with('\n') {
-            content
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            // Write empty file if no content
+            fs::write(&self.path, "")?;
         } else {
-            format!("{content}\n")
-        };
-        fs::write(&self.path, content)?;
+            // Ensure trailing newline
+            let content = if content.ends_with('\n') {
+                content
+            } else {
+                format!("{content}\n")
+            };
+            fs::write(&self.path, content)?;
+        }
         Ok(())
     }
 
