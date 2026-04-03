@@ -22,7 +22,7 @@ test_expect_success 'setup' '
 	git add file3
 '
 
-test_expect_failure 'lost and found something' '
+test_expect_success 'lost and found something' '
 	git rev-parse HEAD >lost-commit &&
 	git rev-parse :file3 >lost-other &&
 	test_tick &&

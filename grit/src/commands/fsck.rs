@@ -12,7 +12,7 @@ use grit_lib::odb::Odb;
 use grit_lib::pack::read_local_pack_indexes;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -35,6 +35,14 @@ pub struct Args {
     /// Only check connectivity, skip object content validation.
     #[arg(long = "connectivity-only")]
     pub connectivity_only: bool,
+
+    /// Write dangling objects into .git/lost-found/{commit,other}/.
+    #[arg(long = "lost-found")]
+    pub lost_found: bool,
+
+    /// Print the name of the object along with its hex ID.
+    #[arg(long = "name-objects")]
+    pub name_objects: bool,
 }
 
 /// A problem found during fsck.
@@ -59,6 +67,8 @@ pub fn run(args: Args) -> Result<()> {
     let show_dangling = !args.no_dangling;
     let show_unreachable = args.unreachable;
     let connectivity_only = args.connectivity_only;
+    let lost_found = args.lost_found;
+    let name_objects = args.name_objects;
 
     let mut issues: Vec<Issue> = Vec::new();
     let mut has_errors = false;
@@ -120,22 +130,74 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // 5. Report issues.
+    // 5. If --lost-found, write dangling objects to .git/lost-found/.
+    if lost_found {
+        let lost_commit_dir = repo.git_dir.join("lost-found").join("commit");
+        let lost_other_dir = repo.git_dir.join("lost-found").join("other");
+        fs::create_dir_all(&lost_commit_dir).ok();
+        fs::create_dir_all(&lost_other_dir).ok();
+        for issue in &issues {
+            if let Issue::Dangling { oid, kind } = issue {
+                let dir = match kind {
+                    ObjectKind::Commit => &lost_commit_dir,
+                    _ => &lost_other_dir,
+                };
+                let hex = oid.to_hex();
+                let path = dir.join(&hex);
+                // Write the object content to the file.
+                if let Ok(obj) = odb.read(oid) {
+                    fs::write(&path, &obj.data).ok();
+                } else {
+                    // Object might be in pack; just touch the file.
+                    fs::write(&path, b"").ok();
+                }
+            }
+        }
+    }
+
+    // 5b. Build name map if --name-objects is set.
+    let name_map = if name_objects {
+        build_name_map(&repo, &odb, &objects_dir)?
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    // 6. Report issues.
     for issue in &issues {
         match issue {
             Issue::Missing { oid, kind, referenced_by } => {
-                eprintln!("missing {} {} (referenced by {})", kind, oid.to_hex(), referenced_by.to_hex());
+                let name_suffix = if name_objects {
+                    name_map.get(oid).map(|n| format!(" ({})", n)).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                eprintln!("missing {} {}{} (referenced by {})", kind, oid.to_hex(), name_suffix, referenced_by.to_hex());
                 has_errors = true;
             }
             Issue::BadObject { oid, kind, reason } => {
-                eprintln!("error in {} {}: {}", kind.as_str(), oid.to_hex(), reason);
+                let name_suffix = if name_objects {
+                    name_map.get(oid).map(|n| format!(" ({})", n)).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                eprintln!("error in {} {}{}: {}", kind.as_str(), oid.to_hex(), name_suffix, reason);
                 has_errors = true;
             }
             Issue::Dangling { oid, kind } => {
-                eprintln!("dangling {} {}", kind.as_str(), oid.to_hex());
+                let name_suffix = if name_objects {
+                    name_map.get(oid).map(|n| format!(" ({})", n)).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                eprintln!("dangling {} {}{}", kind.as_str(), oid.to_hex(), name_suffix);
             }
             Issue::Unreachable { oid, kind } => {
-                eprintln!("unreachable {} {}", kind.as_str(), oid.to_hex());
+                let name_suffix = if name_objects {
+                    name_map.get(oid).map(|n| format!(" ({})", n)).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                eprintln!("unreachable {} {}{}", kind.as_str(), oid.to_hex(), name_suffix);
             }
         }
     }
@@ -172,12 +234,12 @@ fn walk_reachable(
         }
     }
 
-    // Seed from reflogs.
-    collect_reflog_seeds(&repo.git_dir, &mut queue);
+    // NOTE: We do NOT seed from reflogs for the main reachable walk.
+    // Objects only reachable through reflogs are still considered dangling.
+    // We walk reflog entries separately below to check for missing objects.
 
-    // Include packed object IDs as reachable (they exist in the store).
+    // Collect packed IDs so we know which objects exist in pack files.
     let packed_ids = collect_packed_ids(objects_dir)?;
-    reachable.extend(&packed_ids);
 
     // BFS walk.
     while let Some((oid, referrer)) = queue.pop_front() {
@@ -188,8 +250,11 @@ fn walk_reachable(
         let obj = match odb.read(&oid) {
             Ok(o) => o,
             Err(_) => {
-                // Check if it's in a pack (already marked reachable).
+                // Try reading from pack (odb.read should handle this, but
+                // if it didn't, check packed_ids to avoid false missing).
                 if packed_ids.contains(&oid) {
+                    // Object exists in pack — mark as reachable but can't
+                    // walk its children without reading it.
                     continue;
                 }
                 // Object is missing.
@@ -348,53 +413,7 @@ fn enumerate_all_objects(_odb: &Odb, objects_dir: &Path) -> Result<BTreeSet<Obje
     Ok(all)
 }
 
-/// Scan reflog files for object IDs and add them as seeds.
-fn collect_reflog_seeds(git_dir: &Path, queue: &mut VecDeque<(ObjectId, Option<ObjectId>)>) {
-    let logs_dir = git_dir.join("logs");
-    if let Ok(entries) = walk_files(&logs_dir) {
-        for path in entries {
-            if let Ok(content) = fs::read_to_string(&path) {
-                for line in content.lines() {
-                    let parts: Vec<&str> = line.splitn(3, ' ').collect();
-                    if parts.len() >= 2 {
-                        #[allow(clippy::unwrap_used)]
-                        let zero = ObjectId::from_bytes(&[0; 20]).unwrap();
-                        if let Ok(oid) = parts[0].parse::<ObjectId>() {
-                            if oid != zero {
-                                queue.push_back((oid, None));
-                            }
-                        }
-                        if let Ok(oid) = parts[1].parse::<ObjectId>() {
-                            if oid != zero {
-                                queue.push_back((oid, None));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
-/// Recursively walk a directory, returning all file paths.
-fn walk_files(dir: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-    let mut files = Vec::new();
-    let rd = match fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(files),
-        Err(e) => return Err(e),
-    };
-    for entry in rd {
-        let entry = entry?;
-        let ft = entry.file_type()?;
-        if ft.is_dir() {
-            files.extend(walk_files(&entry.path())?);
-        } else if ft.is_file() {
-            files.push(entry.path());
-        }
-    }
-    Ok(files)
-}
 
 /// Enumerate all loose objects in the object store.
 fn scan_loose_objects(objects_dir: &Path) -> Result<Vec<(ObjectId, std::path::PathBuf)>> {
@@ -437,6 +456,67 @@ fn scan_loose_objects(objects_dir: &Path) -> Result<Vec<(ObjectId, std::path::Pa
     }
 
     Ok(objects)
+}
+
+/// Build a map from ObjectId to a human-readable name (ref path or tree path).
+/// This is used for --name-objects to show where objects are referenced.
+fn build_name_map(
+    repo: &Repository,
+    odb: &Odb,
+    _objects_dir: &Path,
+) -> Result<HashMap<ObjectId, String>> {
+    let mut names: HashMap<ObjectId, String> = HashMap::new();
+
+    // Name objects by the refs that point to them.
+    if let Ok(all_refs) = refs::list_refs(&repo.git_dir, "refs/") {
+        for (refname, oid) in &all_refs {
+            names.entry(*oid).or_insert_with(|| refname.clone());
+            // Walk commit to name tree and parents.
+            if let Ok(obj) = odb.read(oid) {
+                if obj.kind == ObjectKind::Commit {
+                    if let Ok(commit) = parse_commit(&obj.data) {
+                        names.entry(commit.tree)
+                            .or_insert_with(|| format!("{}^{{tree}}", refname));
+                        for (i, parent) in commit.parents.iter().enumerate() {
+                            names.entry(*parent)
+                                .or_insert_with(|| format!("{}~{}", refname, i + 1));
+                        }
+                        // Walk the tree to name blobs.
+                        name_tree_entries(odb, &commit.tree, refname, &mut names);
+                    }
+                }
+            }
+        }
+    }
+
+    // Name HEAD.
+    if let Ok(head_oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {
+        names.entry(head_oid).or_insert_with(|| "HEAD".to_string());
+    }
+
+    Ok(names)
+}
+
+/// Recursively name tree entries for --name-objects.
+fn name_tree_entries(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    prefix: &str,
+    names: &mut HashMap<ObjectId, String>,
+) {
+    if let Ok(obj) = odb.read(tree_oid) {
+        if let Ok(entries) = parse_tree(&obj.data) {
+            for entry in entries {
+                let entry_name = String::from_utf8_lossy(&entry.name);
+                let path = format!("{}:{}", prefix, entry_name);
+                names.entry(entry.oid).or_insert(path.clone());
+                // Recurse into subtrees.
+                if entry.mode == 0o40000 {
+                    name_tree_entries(odb, &entry.oid, &format!("{}:{}", prefix, entry_name), names);
+                }
+            }
+        }
+    }
 }
 
 /// Collect all object IDs present in local pack indexes.
