@@ -3557,6 +3557,21 @@ test_expect_success 'urlmatch favors more specific URLs' '
 	test_cmp expect actual
 '
 
+test_expect_success 'urlmatch with --show-scope' '
+	cd repo &&
+	cat >.git/config <<-\EOF &&
+	[http "https://weak.example.com"]
+		sslVerify = false
+		cookieFile = /tmp/cookie.txt
+	EOF
+	cat >expect <<-EOF &&
+	local	http.cookiefile /tmp/cookie.txt
+	local	http.sslverify false
+	EOF
+	git config --show-scope --get-urlmatch HTTP https://weak.example.com >actual &&
+	test_cmp expect actual
+'
+
 # ── unset-all removes section if empty ───────────────────────────────
 
 test_expect_success '--unset-all removes section if empty and uncommented' '

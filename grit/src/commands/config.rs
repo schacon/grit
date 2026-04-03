@@ -717,12 +717,14 @@ fn cmd_get_urlmatch(args: &Args, key: &str, url: &str, git_dir: Option<&Path>) -
         if entries.is_empty() {
             std::process::exit(1);
         }
-        for (var_key, val) in &entries {
+        for (var_key, val, scope) in &entries {
             let val = format_typed_value(args, val)?;
-            if args.show_scope {
-                // TODO: show scope prefix
-            }
-            print!("{var_key} {val}{terminator}");
+            let prefix = if args.show_scope {
+                format!("{}\t", scope)
+            } else {
+                String::new()
+            };
+            print!("{prefix}{var_key} {val}{terminator}");
         }
     }
     Ok(())

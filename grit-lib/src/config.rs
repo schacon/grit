@@ -1336,9 +1336,9 @@ pub fn get_urlmatch_all_in_section(
     entries: &[ConfigEntry],
     section: &str,
     url: &str,
-) -> Vec<(String, String)> {
+) -> Vec<(String, String, ConfigScope)> {
     let section_lower = section.to_lowercase();
-    let mut matches: Vec<(String, usize, String, String)> = Vec::new();
+    let mut matches: Vec<(String, usize, String, String, ConfigScope)> = Vec::new();
 
     for entry in entries {
         let key = &entry.key;
@@ -1350,25 +1350,25 @@ pub fn get_urlmatch_all_in_section(
         let val = entry.value.as_deref().unwrap_or("true");
         if first_dot == last_dot {
             let canonical = format!("{}.{}", section_lower, entry_variable);
-            matches.push((entry_variable.to_lowercase(), 0, val.to_owned(), canonical));
+            matches.push((entry_variable.to_lowercase(), 0, val.to_owned(), canonical, entry.scope));
         } else {
             let subsection = &key[first_dot + 1..last_dot];
             if url_matches(subsection, url) {
                 let canonical = format!("{}.{}", section_lower, entry_variable);
-                matches.push((entry_variable.to_lowercase(), subsection.len(), val.to_owned(), canonical));
+                matches.push((entry_variable.to_lowercase(), subsection.len(), val.to_owned(), canonical, entry.scope));
             }
         }
     }
 
-    let mut best: std::collections::BTreeMap<String, (usize, String, String)> =
+    let mut best: std::collections::BTreeMap<String, (usize, String, String, ConfigScope)> =
         std::collections::BTreeMap::new();
-    for (var, specificity, val, canonical) in matches {
-        let entry = best.entry(var).or_insert((0, String::new(), String::new()));
+    for (var, specificity, val, canonical, scope) in matches {
+        let entry = best.entry(var).or_insert((0, String::new(), String::new(), scope));
         if specificity >= entry.0 {
-            *entry = (specificity, val, canonical);
+            *entry = (specificity, val, canonical, scope);
         }
     }
-    best.into_values().map(|(_, val, canonical)| (canonical, val)).collect()
+    best.into_values().map(|(_, val, canonical, scope)| (canonical, val, scope)).collect()
 }
 
 /// Parse a Git path value (expand `~/` to home directory).
