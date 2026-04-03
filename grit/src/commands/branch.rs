@@ -672,6 +672,14 @@ fn create_branch(
         bail!("A branch named '{name}' already exists.");
     }
 
+    // Cannot force-update the current branch
+    if args.force {
+        let current = head.branch_name().unwrap_or("");
+        if name == current {
+            bail!("Cannot force update the current branch.");
+        }
+    }
+
     let oid = match start_point {
         Some(rev) => resolve_revision(repo, rev)?,
         None => *head
