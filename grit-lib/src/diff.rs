@@ -432,8 +432,9 @@ pub fn diff_index_to_worktree(
                     });
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // File deleted from working tree
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound
+                || e.raw_os_error() == Some(20) /* ENOTDIR */ => {
+                // File deleted from working tree (or parent replaced by a file)
                 result.push(DiffEntry {
                     status: DiffStatus::Deleted,
                     old_path: Some(path_str_ref.to_owned()),
