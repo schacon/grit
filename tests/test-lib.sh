@@ -226,6 +226,51 @@ test_decode_color () {
 OID_REGEX='[0-9a-f]{40,}'
 export OID_REGEX
 
+# test_oid helpers — support SHA-1 only for now
+test_oid () {
+	case "$1" in
+	numeric) echo "1234567890123456789012345678901234567890" ;;
+	oid_version) echo "1" ;;
+	rawsz) echo "20" ;;
+	hexsz) echo "40" ;;
+	*) echo "unknown-oid" ;;
+	esac
+}
+
+test_oid_cache () {
+	# consume and ignore stdin
+	cat >/dev/null
+}
+
+# test_ln_s_add TARGET LINK — create symlink and git add
+test_ln_s_add () {
+	ln -s "$1" "$2" &&
+	git add "$2"
+}
+
+# test_cmp_rev REV1 REV2
+test_cmp_rev () {
+	local r1 r2
+	r1=$(git rev-parse --verify "$1") &&
+	r2=$(git rev-parse --verify "$2") &&
+	if test "$r1" = "$r2"
+	then
+		return 0
+	else
+		echo >&2 "test_cmp_rev: $1 ($r1) != $2 ($r2)"
+		return 1
+	fi
+}
+
+# test_unconfig KEY...
+test_unconfig () {
+	while test $# -gt 0; do
+		git config --unset-all "$1" 2>/dev/null
+		shift
+	done
+	return 0
+}
+
 nongit () {
 	local tmpdir
 	tmpdir=$(mktemp -d) &&
