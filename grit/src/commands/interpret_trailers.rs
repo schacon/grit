@@ -259,6 +259,66 @@ fn process_message(input: &str, args: &Args) -> String {
         return out;
     }
 
+    // Determine placement, if-exists, if-missing from args.
+    let placement = args.placement.as_deref().unwrap_or("end");
+    let if_exists_action = args.if_exists.as_deref().unwrap_or("addIfDifferent");
+    let if_missing_action = args.if_missing.as_deref().unwrap_or("add");
+
+    // Filter new trailers based on --if-exists and --if-missing.
+    let mut trailers_to_add: Vec<Trailer> = Vec::new();
+    for new_t in &new_trailers {
+        if args.trim_empty && new_t.value.is_empty() {
+            continue;
+        }
+
+        let key_lower = new_t.key.to_lowercase();
+        let existing_with_same_key: Vec<&Trailer> = existing_trailers
+            .iter()
+            .filter(|t| t.key.to_lowercase() == key_lower)
+            .collect();
+
+        if !existing_with_same_key.is_empty() {
+            // Trailer with this key already exists — apply --if-exists.
+            match if_exists_action {
+                "addIfDifferentNeighbor" | "addIfDifferent" => {
+                    let dominated = existing_with_same_key
+                        .iter()
+                        .any(|t| t.value == new_t.value);
+                    if !dominated {
+                        trailers_to_add.push(new_t.clone());
+                    }
+                }
+                "add" => {
+                    trailers_to_add.push(new_t.clone());
+                }
+                "replace" => {
+                    // Remove existing trailers with matching key, add replacement.
+                    existing_trailers.retain(|t| t.key.to_lowercase() != key_lower);
+                    trailers_to_add.push(new_t.clone());
+                }
+                "donothing" => {
+                    // Do nothing — skip this trailer.
+                }
+                _ => {
+                    trailers_to_add.push(new_t.clone());
+                }
+            }
+        } else {
+            // Trailer with this key doesn't exist — apply --if-missing.
+            match if_missing_action {
+                "add" => {
+                    trailers_to_add.push(new_t.clone());
+                }
+                "donothing" => {
+                    // Don't add.
+                }
+                _ => {
+                    trailers_to_add.push(new_t.clone());
+                }
+            }
+        }
+    }
+
     // Reconstruct message with trailers added.
     let mut out = String::new();
 
@@ -273,19 +333,40 @@ fn process_message(input: &str, args: &Args) -> String {
         out.push('\n');
     }
 
-    // Existing trailers.
-    for t in &existing_trailers {
-        out.push_str(&t.format());
-        out.push('\n');
-    }
-
-    // New trailers.
-    for t in &new_trailers {
-        if args.trim_empty && t.value.is_empty() {
-            continue;
+    // Combine existing + new trailers respecting --where placement.
+    match placement {
+        "start" => {
+            for t in &trailers_to_add {
+                out.push_str(&t.format());
+                out.push('\n');
+            }
+            for t in &existing_trailers {
+                out.push_str(&t.format());
+                out.push('\n');
+            }
         }
-        out.push_str(&t.format());
-        out.push('\n');
+        "before" => {
+            // Insert new trailers before existing ones.
+            for t in &trailers_to_add {
+                out.push_str(&t.format());
+                out.push('\n');
+            }
+            for t in &existing_trailers {
+                out.push_str(&t.format());
+                out.push('\n');
+            }
+        }
+        "after" | "end" | _ => {
+            // Append new trailers after existing ones (default).
+            for t in &existing_trailers {
+                out.push_str(&t.format());
+                out.push('\n');
+            }
+            for t in &trailers_to_add {
+                out.push_str(&t.format());
+                out.push('\n');
+            }
+        }
     }
 
     out
