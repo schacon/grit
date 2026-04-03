@@ -122,9 +122,9 @@ test_expect_success 'diff A...B --name-status' '
 	grep "topic\.txt" out
 '
 
-test_expect_failure 'diff A...B --exit-code (not implemented)' '
+test_expect_success 'diff A...B --exit-code' '
 	cd repo &&
-	git diff master...topic --exit-code >out 2>&1 &&
+	test_expect_code 1 git diff master...topic --exit-code >out 2>&1 &&
 	grep "topic\.txt" out
 '
 
