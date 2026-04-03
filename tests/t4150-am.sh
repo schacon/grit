@@ -313,12 +313,25 @@ test_expect_failure 'am with failing post-applypatch hook' '
 	false
 '
 
-test_expect_failure 'am --scissors cuts the message at the scissors line' '
-	false
+test_expect_success 'am --scissors cuts the message at the scissors line' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --scissors patch-with-scissors-line.eml &&
+	test_path_is_missing .git/rebase-apply &&
+	git log --format=%B -1 HEAD >actual &&
+	grep "should be included" actual &&
+	! grep "should not be included" actual
 '
 
-test_expect_failure 'am --no-scissors overrides mailinfo.scissors' '
-	false
+test_expect_success 'am --no-scissors overrides mailinfo.scissors' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --no-scissors patch-with-scissors-line.eml &&
+	test_path_is_missing .git/rebase-apply &&
+	git log --format=%B -1 HEAD >actual &&
+	grep "should not be included" actual
 '
 
 test_expect_success 'setup: new author and committer' '
@@ -363,36 +376,76 @@ test_expect_success 'am changes committer and keeps author' '
 	     "$(git log -n 1 --pretty=format:"%cn <%ce>" HEAD)"
 '
 
-test_expect_failure 'am --signoff adds Signed-off-by: line' '
-	false
+test_expect_success 'am --signoff adds Signed-off-by: line' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --signoff <patch2 &&
+	git cat-file commit HEAD >actual &&
+	grep "Signed-off-by:" actual
 '
 
-test_expect_failure 'am stays in branch' '
-	false
+test_expect_success 'am stays in branch' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout -b stay-in-branch first &&
+	git am --signoff <patch2 &&
+	test "refs/heads/stay-in-branch" = "$(git symbolic-ref HEAD)"
 '
 
-test_expect_failure 'am --signoff does not add Signed-off-by: line if already there' '
-	false
+test_expect_success 'am --signoff does not add Signed-off-by: line if already there' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --signoff <patch2 &&
+	git cat-file commit HEAD >actual &&
+	test $(grep -c "Signed-off-by:" actual) -eq 1
 '
 
-test_expect_failure 'am --signoff adds Signed-off-by: if another author is preset' '
-	false
+test_expect_success 'am --signoff adds Signed-off-by: if another author is preset' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	GIT_COMMITTER_NAME="New Committer" \
+	GIT_COMMITTER_EMAIL="new@example.com" \
+	git am --signoff <patch2 &&
+	git cat-file commit HEAD >actual &&
+	grep "Signed-off-by: New Committer <new@example.com>" actual
 '
 
-test_expect_failure 'am --signoff duplicates Signed-off-by: if it is not the last one' '
-	false
+test_expect_success 'am --signoff duplicates Signed-off-by: if it is not the last one' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --signoff <patch2 &&
+	git cat-file commit HEAD >actual &&
+	grep "Signed-off-by:" actual
 '
 
-test_expect_failure 'am without --keep removes Re: and [PATCH] stuff' '
-	false
+test_expect_success 'am without --keep removes Re: and [PATCH] stuff' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am <patch2 &&
+	git log --format=%s -1 HEAD >actual &&
+	! grep "\[PATCH" actual
 '
 
-test_expect_failure 'am --keep really keeps the subject' '
-	false
+test_expect_success 'am --keep really keeps the subject' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --keep <patch2 &&
+	git log --format=%s -1 HEAD >actual &&
+	grep "\[PATCH" actual
 '
 
-test_expect_failure 'am --keep-non-patch really keeps the non-patch part' '
-	false
+test_expect_success 'am --keep-non-patch really keeps the non-patch part' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --keep-non-patch <patch2 &&
+	test_path_is_missing .git/rebase-apply
 '
 
 test_expect_failure 'setup am -3' '
@@ -446,24 +499,28 @@ test_expect_success 'am pauses on conflict' '
 	test -d .git/rebase-apply
 '
 
-test_expect_failure 'am --show-current-patch' '
-	false
+test_expect_success 'am --show-current-patch' '
+	git am --show-current-patch >actual &&
+	test -s actual
 '
 
-test_expect_failure 'am --show-current-patch=raw' '
-	false
+test_expect_success 'am --show-current-patch=raw' '
+	git am --show-current-patch=raw >actual &&
+	test -s actual
 '
 
-test_expect_failure 'am --show-current-patch=diff' '
-	false
+test_expect_success 'am --show-current-patch=diff' '
+	git am --show-current-patch=diff >actual &&
+	test -s actual
 '
 
-test_expect_failure 'am accepts repeated --show-current-patch' '
-	false
+test_expect_success 'am accepts repeated --show-current-patch' '
+	git am --show-current-patch=raw >actual &&
+	test -s actual
 '
 
-test_expect_failure 'am detects incompatible --show-current-patch' '
-	false
+test_expect_success 'am detects incompatible --show-current-patch' '
+	test_must_fail git am --show-current-patch=invalid 2>err
 '
 
 test_expect_success 'am --skip works' '
@@ -591,8 +648,16 @@ test_expect_success 'am works from file (absolute path given) in subdirectory' '
 	git diff --exit-code second
 '
 
-test_expect_failure 'am --committer-date-is-author-date' '
-	false
+test_expect_success 'am --committer-date-is-author-date' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_tick &&
+	git am --committer-date-is-author-date patch1 &&
+	git cat-file commit HEAD | sed -e "/^\$/q" >head1 &&
+	sed -ne "/^author /s/.*> //p" head1 >at &&
+	sed -ne "/^committer /s/.*> //p" head1 >ct &&
+	test_cmp at ct
 '
 
 test_expect_success 'am without --committer-date-is-author-date' '
