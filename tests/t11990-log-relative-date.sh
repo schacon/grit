@@ -58,6 +58,10 @@ test_expect_success 'format %cd for second commit' '
 
 test_expect_success 'setup third commit with timezone offset' '
     (cd repo &&
+     sane_unset GIT_AUTHOR_NAME &&
+     sane_unset GIT_AUTHOR_EMAIL &&
+     sane_unset GIT_COMMITTER_NAME &&
+     sane_unset GIT_COMMITTER_EMAIL &&
      echo foo >file3.txt &&
      grit add file3.txt &&
      GIT_AUTHOR_DATE="1700300000 +0500" GIT_COMMITTER_DATE="1700300000 -0300" \
