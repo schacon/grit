@@ -13,7 +13,7 @@ test_expect_success 'setup' '
 	git commit -m one
 '
 
-test_expect_failure 'clone -c sets config in cloned repo' '
+test_expect_success 'clone -c sets config in cloned repo' '
 	rm -rf child &&
 	git clone -c core.foo=bar . child &&
 	echo bar >expect &&
@@ -21,7 +21,7 @@ test_expect_failure 'clone -c sets config in cloned repo' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'clone -c can set multi-keys' '
+test_expect_success 'clone -c can set multi-keys' '
 	rm -rf child &&
 	git clone -c core.foo=bar -c core.foo=baz . child &&
 	test_write_lines bar baz >expect &&
@@ -29,7 +29,7 @@ test_expect_failure 'clone -c can set multi-keys' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'clone -c without a value is boolean true' '
+test_expect_success 'clone -c without a value is boolean true' '
 	rm -rf child &&
 	git clone -c core.foo . child &&
 	echo true >expect &&

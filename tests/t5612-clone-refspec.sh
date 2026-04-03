@@ -32,7 +32,7 @@ test_expect_success 'default clone has correct refspec' '
 	)
 '
 
-test_expect_failure 'clone --single-branch with default HEAD' '
+test_expect_success 'clone --single-branch with default HEAD' '
 	rm -rf dir_main &&
 	git clone --single-branch . dir_main &&
 	(
@@ -43,7 +43,7 @@ test_expect_failure 'clone --single-branch with default HEAD' '
 	)
 '
 
-test_expect_failure 'clone --single-branch --branch side' '
+test_expect_success 'clone --single-branch --branch side' '
 	rm -rf dir_side &&
 	git clone --single-branch --branch side . dir_side &&
 	(

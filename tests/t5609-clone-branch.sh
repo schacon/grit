@@ -51,7 +51,7 @@ test_expect_success 'clone -b sets up tracking' '
 	)
 '
 
-test_expect_failure 'clone -b does not munge remotes/origin/HEAD' '
+test_expect_success 'clone -b does not munge remotes/origin/HEAD' '
 	(cd clone-two &&
 	 echo refs/remotes/origin/main >expect &&
 	 git symbolic-ref refs/remotes/origin/HEAD >actual &&
