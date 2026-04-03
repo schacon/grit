@@ -104,7 +104,7 @@ test_expect_success 'checkout -b preserves mergeable changes' '
 # ---------------------------------------------------------------------------
 # checkout -f -b discards mergeable changes
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout -f -b discards mergeable changes' '
+test_expect_success 'checkout -f -b discards mergeable changes' '
 	cd repo &&
 	echo newfile >file2 &&
 	git add file2 &&
@@ -128,7 +128,7 @@ test_expect_success 'checkout -b to an existing branch fails' '
 # ---------------------------------------------------------------------------
 # checkout -B resets existing branch to HEAD
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout -B resets existing branch to HEAD' '
+test_expect_success 'checkout -B resets existing branch to HEAD' '
 	cd repo &&
 	HEAD1=$(cat ../head1) &&
 	HEAD2=$(cat ../head2) &&
@@ -146,7 +146,7 @@ test_expect_failure 'checkout -B resets existing branch to HEAD' '
 # ---------------------------------------------------------------------------
 # checkout -B to existing branch with explicit ref
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout -B to existing branch with explicit ref' '
+test_expect_success 'checkout -B to existing branch with explicit ref' '
 	cd repo &&
 	HEAD1=$(cat ../head1) &&
 	git branch branch2 &&
@@ -161,7 +161,7 @@ test_expect_failure 'checkout -B to existing branch with explicit ref' '
 # ---------------------------------------------------------------------------
 # checkout -B from detached HEAD
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout -B from detached HEAD resets branch' '
+test_expect_success 'checkout -B from detached HEAD resets branch' '
 	cd repo &&
 	HEAD1=$(cat ../head1) &&
 	HEAD2=$(cat ../head2) &&
@@ -181,7 +181,7 @@ test_expect_failure 'checkout -B from detached HEAD resets branch' '
 # ---------------------------------------------------------------------------
 # checkout -B with unmergeable changes fails
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout -B with unmergeable changes fails' '
+test_expect_success 'checkout -B with unmergeable changes fails' '
 	cd repo &&
 	HEAD1=$(cat ../head1) &&
 	git branch branch2 &&
@@ -194,7 +194,7 @@ test_expect_failure 'checkout -B with unmergeable changes fails' '
 # ---------------------------------------------------------------------------
 # checkout -f -B discards unmergeable changes
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout -f -B discards unmergeable changes' '
+test_expect_success 'checkout -f -B discards unmergeable changes' '
 	cd repo &&
 	HEAD1=$(cat ../head1) &&
 	git branch branch2 &&
@@ -211,7 +211,7 @@ test_expect_failure 'checkout -f -B discards unmergeable changes' '
 # ---------------------------------------------------------------------------
 # checkout -B to the current branch works
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout -B to the current branch works' '
+test_expect_success 'checkout -B to the current branch works' '
 	cd repo &&
 	HEAD1=$(cat ../head1) &&
 	git checkout -B branch1-scratch &&
@@ -237,7 +237,7 @@ test_expect_success 'checkout -b rejects invalid start point' '
 # ---------------------------------------------------------------------------
 # checkout -b rejects extra path argument
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout -b rejects extra path argument' '
+test_expect_success 'checkout -b rejects extra path argument' '
 	cd repo &&
 	test_must_fail git checkout -b branch5 branch1 file1 2>err &&
 	test -s err
@@ -246,7 +246,7 @@ test_expect_failure 'checkout -b rejects extra path argument' '
 # ---------------------------------------------------------------------------
 # checkout -b with --track sets upstream
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout -b --track sets upstream config' '
+test_expect_success 'checkout -b --track sets upstream config' '
 	cd repo &&
 	git checkout -b tracked-branch --track branch1 &&
 	test "$(git config branch.tracked-branch.merge)" = "refs/heads/branch1" &&
@@ -335,7 +335,7 @@ test_expect_success 'checkout -b preserves untracked files' '
 # ---------------------------------------------------------------------------
 # checkout -f -B discards mergeable changes
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout -f -B discards mergeable changes' '
+test_expect_success 'checkout -f -B discards mergeable changes' '
 	cd repo &&
 	echo newfile >file2 &&
 	git add file2 &&
