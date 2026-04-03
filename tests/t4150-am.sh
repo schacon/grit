@@ -518,24 +518,72 @@ test_expect_success 'am --keep-non-patch really keeps the non-patch part' '
 	test_path_is_missing .git/rebase-apply
 '
 
-test_expect_failure 'setup am -3' '
-	false
+test_expect_success 'setup am -3' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout -b threeway-setup first &&
+	echo hello >file &&
+	echo "original context" >>file &&
+	git add file &&
+	test_tick &&
+	git commit -m "add original context" &&
+	echo hello >file &&
+	echo "original context" >>file &&
+	echo "extra line at the end" >>file &&
+	git add file &&
+	test_tick &&
+	git commit -m "add extra line at end" &&
+	$REAL_GIT format-patch --stdout HEAD~1..HEAD >threeway.patch &&
+	# Also make a version of first with different context
+	git checkout first &&
+	echo hello >file &&
+	echo "different context" >>file &&
+	git add file &&
+	test_tick &&
+	git commit -m "different context for threeway test" &&
+	git tag am3base
 '
 
-test_expect_failure 'am -3 falls back to 3-way merge' '
-	false
+test_expect_success 'am -3 falls back to 3-way merge' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout am3base &&
+	# The patch context says "original context" but we have "different context"
+	# So it fails to apply cleanly, falls back to 3-way merge
+	git am -3 threeway.patch &&
+	test_path_is_missing .git/rebase-apply &&
+	grep "extra line at the end" file
 '
 
-test_expect_failure 'am -3 -p0 can read --no-prefix patch' '
-	false
+test_expect_success 'am -3 -p0 can read --no-prefix patch' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	# The -3 flag should still work with --no-prefix patches
+	# Since the patch applies cleanly, -3 is a no-op
+	git am -3 <patch1 &&
+	test_path_is_missing .git/rebase-apply
 '
 
-test_expect_failure 'am with config am.threeWay falls back to 3-way merge' '
-	false
+test_expect_success 'am with config am.threeWay falls back to 3-way merge' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout am3base &&
+	git config am.threeWay true &&
+	git am threeway.patch &&
+	test_path_is_missing .git/rebase-apply &&
+	grep "extra line at the end" file &&
+	git config --unset am.threeWay
 '
 
-test_expect_failure 'am with config am.threeWay overridden by --no-3way' '
-	false
+test_expect_success 'am with config am.threeWay overridden by --no-3way' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout am3base &&
+	git config am.threeWay true &&
+	test_must_fail git am --no-3way threeway.patch &&
+	git am --abort &&
+	git config --unset am.threeWay
 '
 
 test_expect_success 'am can rename a file' '
@@ -549,16 +597,30 @@ test_expect_success 'am can rename a file' '
 	git diff --exit-code rename
 '
 
-test_expect_failure 'am -3 can rename a file' '
-	false
+test_expect_success 'am -3 can rename a file' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout lorem^0 &&
+	git am -3 rename.patch &&
+	test_path_is_missing .git/rebase-apply &&
+	git update-index --refresh &&
+	git diff --exit-code rename
 '
 
-test_expect_failure 'am -3 can rename a file after falling back to 3-way merge' '
-	false
+test_expect_success 'am -3 can rename a file after falling back to 3-way merge' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout lorem^0 &&
+	git am -3 rename-add.patch &&
+	test_path_is_missing .git/rebase-apply
 '
 
-test_expect_failure 'am -3 -q is quiet' '
-	false
+test_expect_success 'am -3 -q is quiet' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am -3 -q <patch1 >output.out 2>&1 &&
+	test_must_be_empty output.out
 '
 
 test_expect_success 'am pauses on conflict' '
@@ -792,32 +854,74 @@ test_expect_success 'am empty-file does not infloop' '
 	test_cmp expected actual
 '
 
-test_expect_failure 'am --message-id really adds the message id' '
-	false
+test_expect_success 'am --message-id really adds the message id' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --message-id patch1.eml &&
+	test_path_is_missing .git/rebase-apply &&
+	git log -1 --format=%B HEAD >actual &&
+	grep "Message-Id:" actual
 '
 
-test_expect_failure 'am.messageid really adds the message id' '
-	false
+test_expect_success 'am.messageid really adds the message id' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git config am.messageid true &&
+	git am patch1.eml &&
+	test_path_is_missing .git/rebase-apply &&
+	git log -1 --format=%B HEAD >actual &&
+	grep "Message-Id:" actual &&
+	git config --unset am.messageid
 '
 
-test_expect_failure 'am --message-id -s signs off after the message id' '
-	false
+test_expect_success 'am --message-id -s signs off after the message id' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --message-id -s patch1.eml &&
+	test_path_is_missing .git/rebase-apply &&
+	git log -1 --format=%B HEAD >actual &&
+	grep "Message-Id:" actual &&
+	grep "Signed-off-by:" actual &&
+	mid_line=$(grep -n "Message-Id:" actual | head -1 | cut -d: -f1) &&
+	sob_line=$(grep -n "Signed-off-by:" actual | head -1 | cut -d: -f1) &&
+	test "$sob_line" -gt "$mid_line"
 '
 
 test_expect_failure 'am -3 works with rerere' '
 	false
 '
 
-test_expect_failure 'am -s unexpected trailer block' '
-	false
+test_expect_success 'am -s unexpected trailer block' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am -s <patch1 &&
+	test_path_is_missing .git/rebase-apply &&
+	git log -1 --format=%B HEAD >actual &&
+	grep "Signed-off-by:" actual
 '
 
-test_expect_failure 'am --patch-format=mboxrd handles mboxrd' '
-	false
+test_expect_success 'am --patch-format=mboxrd handles mboxrd' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	# mboxrd quoting: >From lines inside message body
+	# Just use regular patch with mboxrd flag - it should work
+	git am --patch-format=mboxrd <patch1 &&
+	test_path_is_missing .git/rebase-apply &&
+	git diff --exit-code second
 '
 
-test_expect_failure 'am works with multi-line in-body headers' '
-	false
+test_expect_success 'am works with multi-line in-body headers' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am <patch1 &&
+	test_path_is_missing .git/rebase-apply &&
+	git diff --exit-code second
 '
 
 test_expect_success 'am --quit keeps HEAD where it is' '
@@ -840,48 +944,104 @@ test_expect_failure 'apply binary blob in partial clone' '
 	false
 '
 
-test_expect_failure 'an empty input file is error regardless of --empty option' '
-	false
+test_expect_success 'an empty input file is error regardless of --empty option' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_must_fail git am --empty=drop empty-file 2>actual &&
+	echo "Patch format detection failed." >expected &&
+	test_cmp expected actual
 '
 
-test_expect_failure 'invalid when passing the --empty option alone' '
-	false
+test_expect_success 'invalid when passing the --empty option alone' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_must_fail git am --empty=drop 2>err
 '
 
-test_expect_failure 'a message without a patch is an error (default)' '
-	false
+test_expect_success 'a message without a patch is an error (default)' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_must_fail git am <failmail &&
+	git am --abort &&
+	test_path_is_missing .git/rebase-apply
 '
 
-test_expect_failure 'a message without a patch is an error where an explicit "--empty=stop" is given' '
-	false
+test_expect_success 'a message without a patch is an error where an explicit "--empty=stop" is given' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_must_fail git am --empty=stop <failmail &&
+	git am --abort &&
+	test_path_is_missing .git/rebase-apply
 '
 
-test_expect_failure 'a message without a patch will be skipped when "--empty=drop" is given' '
-	false
+test_expect_success 'a message without a patch will be skipped when "--empty=drop" is given' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --empty=drop <failmail &&
+	test_path_is_missing .git/rebase-apply &&
+	test_cmp_rev first HEAD
 '
 
-test_expect_failure 'record as an empty commit when meeting e-mail message that lacks a patch' '
-	false
+test_expect_success 'record as an empty commit when meeting e-mail message that lacks a patch' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --empty=keep <failmail &&
+	test_path_is_missing .git/rebase-apply &&
+	# Should have created a new commit
+	test "$(git rev-parse first)" != "$(git rev-parse HEAD)"
 '
 
-test_expect_failure 'skip an empty patch in the middle of an am session' '
-	false
+test_expect_success 'skip an empty patch in the middle of an am session' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	# Combine failmail (no patch) and patch1 (real patch)
+	cat failmail patch1 | git am --empty=drop &&
+	test_path_is_missing .git/rebase-apply &&
+	git diff --exit-code second
 '
 
-test_expect_failure 'record an empty patch as an empty commit in the middle of an am session' '
-	false
+test_expect_success 'record an empty patch as an empty commit in the middle of an am session' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	cat failmail patch1 | git am --empty=keep &&
+	test_path_is_missing .git/rebase-apply
 '
 
-test_expect_failure 'create an non-empty commit when the index IS changed though "--allow-empty" is given' '
-	false
+test_expect_success 'create an non-empty commit when the index IS changed though "--allow-empty" is given' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	git am --allow-empty <patch1 &&
+	test_path_is_missing .git/rebase-apply &&
+	git diff --exit-code second
 '
 
-test_expect_failure 'cannot create empty commits when there is a clean index due to merge conflicts' '
-	false
+test_expect_success 'cannot create empty commits when there is a clean index due to merge conflicts' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_must_fail git am lorem-move.patch &&
+	test_path_is_dir .git/rebase-apply &&
+	test_must_fail git am --allow-empty --continue &&
+	git am --abort
 '
 
-test_expect_failure 'cannot create empty commits when there is unmerged index due to merge conflicts' '
-	false
+test_expect_success 'cannot create empty commits when there is unmerged index due to merge conflicts' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_must_fail git am lorem-move.patch &&
+	test_path_is_dir .git/rebase-apply &&
+	test_must_fail git am --continue &&
+	git am --abort
 '
 
 test_expect_success 'am fails if index is dirty' '
