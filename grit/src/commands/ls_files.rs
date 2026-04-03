@@ -342,6 +342,10 @@ impl Pathspec {
         match self {
             Pathspec::Literal(spec) => path == spec.as_slice() || path.starts_with(spec),
             Pathspec::Glob(pattern) => {
+                // Try literal match first (for files with glob chars in names)
+                if path == pattern.as_bytes() {
+                    return true;
+                }
                 let path_str = String::from_utf8_lossy(path);
                 glob_match(pattern, &path_str)
             }
