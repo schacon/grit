@@ -42,7 +42,7 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'submodule update --init from clone' '
+test_expect_success 'submodule update --init from clone' '
 	"$REAL_GIT" clone super super-clone &&
 	(
 		cd super-clone &&

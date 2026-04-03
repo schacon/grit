@@ -54,7 +54,7 @@ test_expect_success 'submodule init configures URLs' '
 	)
 '
 
-test_expect_failure 'submodule update checks out correct commits' '
+test_expect_success 'submodule update checks out correct commits' '
 	cd super-clone &&
 	git submodule update --init &&
 	test -f submodule/a &&
