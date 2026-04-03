@@ -40,6 +40,10 @@ pub struct Args {
     #[arg(short = 'f', long = "force")]
     pub force: bool,
 
+    /// Suppress feedback messages.
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Remaining positional arguments: `[<branch|commit>] [--] [<paths>...]`
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub rest: Vec<String>,
