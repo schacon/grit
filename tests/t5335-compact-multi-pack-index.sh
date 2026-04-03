@@ -6,10 +6,11 @@ test_description='compact multi-pack-index'
 
 test_expect_success 'setup' '
 	git init &&
-	test_commit base
+	test_commit base &&
+	git repack -a
 '
 
-test_expect_failure 'write midx' '
+test_expect_success 'write midx' '
 	git multi-pack-index write
 '
 
