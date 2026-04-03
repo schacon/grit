@@ -116,7 +116,7 @@ test_expect_success 'cat-file -p shows tagger' '
 	cd repo &&
 	grit cat-file -p v2.0 >actual &&
 	grep "tagger" actual &&
-	grep "Test" actual
+	grep "C O Mitter" actual
 '
 
 test_expect_success 'create annotated tag with -m implies -a' '
