@@ -89,6 +89,12 @@ pub struct RevListOptions {
     pub symmetric_left: Option<ObjectId>,
     /// Symmetric-diff right OID (set by caller when A...B is used).
     pub symmetric_right: Option<ObjectId>,
+    /// Path filters (files after `--`).
+    pub paths: Vec<String>,
+    /// Show full history (don't simplify) for path-limited walks.
+    pub full_history: bool,
+    /// Sparse mode: don't prune non-matching commits.
+    pub sparse: bool,
 }
 
 impl Default for RevListOptions {
@@ -118,6 +124,9 @@ impl Default for RevListOptions {
             max_parents: None,
             symmetric_left: None,
             symmetric_right: None,
+            paths: Vec::new(),
+            full_history: false,
+            sparse: false,
         }
     }
 }
@@ -206,6 +215,14 @@ pub fn rev_list(
         OrderingMode::Default => sort_by_commit_date_desc(&mut graph, &included)?,
         OrderingMode::Topo | OrderingMode::Date => topo_sort(&mut graph, &included)?,
     };
+
+    // Path filtering: keep only commits that modify given paths
+    if !options.paths.is_empty() && !options.sparse {
+        let paths = &options.paths;
+        ordered.retain(|oid| {
+            commit_touches_paths(repo, &mut graph, *oid, paths).unwrap_or(false)
+        });
+    }
 
     // Left-right classification for symmetric diffs
     let mut left_right_map = HashMap::new();
@@ -493,6 +510,37 @@ fn limit_to_ancestry(
     }
     selected.retain(|oid| keep.contains(oid));
     Ok(())
+}
+
+/// Check if a commit modifies any of the given paths compared to its first parent.
+fn commit_touches_paths(
+    repo: &Repository,
+    graph: &mut CommitGraph<'_>,
+    oid: ObjectId,
+    paths: &[String],
+) -> Result<bool> {
+    let commit = load_commit(repo, oid)?;
+    let parents = graph.parents_of(oid)?;
+    let parent_tree = if let Some(&parent) = parents.first() {
+        Some(load_commit(repo, parent)?.tree)
+    } else {
+        None
+    };
+    let commit_entries = flatten_tree(repo, commit.tree, "")?;
+    let commit_map: HashMap<String, ObjectId> = commit_entries.into_iter().collect();
+    let parent_map: HashMap<String, ObjectId> = if let Some(pt) = parent_tree {
+        flatten_tree(repo, pt, "")?.into_iter().collect()
+    } else {
+        HashMap::new()
+    };
+    for path in paths {
+        let c_oid = commit_map.get(path.as_str());
+        let p_oid = parent_map.get(path.as_str());
+        if c_oid != p_oid {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::CommitData> {

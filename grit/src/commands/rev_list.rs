@@ -25,12 +25,19 @@ pub fn run(args: Args) -> Result<()> {
     let mut revision_specs = Vec::new();
     let mut read_stdin = false;
     let mut end_of_options = false;
+    let mut path_mode = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
         let arg = &args.args[i];
         if !end_of_options && arg == "--" {
             end_of_options = true;
+            path_mode = true;
+            i += 1;
+            continue;
+        }
+        if path_mode {
+            options.paths.push(arg.clone());
             i += 1;
             continue;
         }
@@ -53,6 +60,10 @@ pub fn run(args: Args) -> Result<()> {
                 "--no-object-names" => options.no_object_names = true,
                 "--object-names" => options.no_object_names = false,
                 "--boundary" => options.boundary = true,
+                "--full-history" => options.full_history = true,
+                "--sparse" => options.sparse = true,
+                "--dense" => { /* default behavior, no-op */ }
+                "--simplify-merges" => { /* accepted but not fully implemented */ }
                 "--left-right" => options.left_right = true,
                 "--left-only" => options.left_only = true,
                 "--right-only" => options.right_only = true,
