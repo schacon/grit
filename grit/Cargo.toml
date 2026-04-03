@@ -14,7 +14,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-grit-lib = { path = "../grit-lib" }
+grit-lib = { version = "0.1.0", path = "../grit-lib" }
 anyhow.workspace = true
 clap.workspace = true
 time.workspace = true
