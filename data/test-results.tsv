@@ -12008,24 +12008,24 @@ t6020-bundle-misc::list-heads-outside-of-a-repository	t6020-bundle-misc	list-hea
 t6020-bundle-misc::usage-git-bundle-cmd-needs-an-argument	t6020-bundle-misc	usage: git bundle $cmd needs an argument	bundle	pass
 t6020-bundle-misc::filtered-bundle-filter	t6020-bundle-misc	filtered bundle: $filter	bundle	pass
 t6020-bundle-misc::list-heads-with-bundle-using-hash	t6020-bundle-misc	list-heads with bundle using $hash	bundle	pass
-t6021-rev-list-exclude-hidden::setup	t6021-rev-list-exclude-hidden	setup	rev-list	pass
-t6021-rev-list-exclude-hidden::invalid-section	t6021-rev-list-exclude-hidden	invalid section	rev-list	pass
-t6021-rev-list-exclude-hidden::section-passed-multiple-times	t6021-rev-list-exclude-hidden	$section: passed multiple times	rev-list	pass
-t6021-rev-list-exclude-hidden::section-without-hiddenrefs	t6021-rev-list-exclude-hidden	$section: without hiddenRefs	rev-list	pass
-t6021-rev-list-exclude-hidden::section-hidden-via-transfer-hiderefs	t6021-rev-list-exclude-hidden	$section: hidden via transfer.hideRefs	rev-list	pass
-t6021-rev-list-exclude-hidden::section-hidden-via-section-hiderefs	t6021-rev-list-exclude-hidden	$section: hidden via $section.hideRefs	rev-list	pass
-t6021-rev-list-exclude-hidden::section-respects-both-transfer-hiderefs-and-section-hiderefs	t6021-rev-list-exclude-hidden	$section: respects both transfer.hideRefs and $section.hideRefs	rev-list	pass
-t6021-rev-list-exclude-hidden::section-negation-without-hidden-refs-marks-everything-as-uninteresting	t6021-rev-list-exclude-hidden	$section: negation without hidden refs marks everything as uninteresting	rev-list	pass
-t6021-rev-list-exclude-hidden::section-negation-with-hidden-refs-marks-them-as-interesting	t6021-rev-list-exclude-hidden	$section: negation with hidden refs marks them as interesting	rev-list	pass
-t6021-rev-list-exclude-hidden::section-hidden-refs-and-excludes-work-together	t6021-rev-list-exclude-hidden	$section: hidden refs and excludes work together	rev-list	pass
-t6021-rev-list-exclude-hidden::section-excluded-hidden-refs-get-reset	t6021-rev-list-exclude-hidden	$section: excluded hidden refs get reset	rev-list	pass
-t6021-rev-list-exclude-hidden::section-excluded-hidden-refs-can-be-used-with-multiple-pseudo-refs	t6021-rev-list-exclude-hidden	$section: excluded hidden refs can be used with multiple pseudo-refs	rev-list	pass
-t6021-rev-list-exclude-hidden::section-works-with-glob	t6021-rev-list-exclude-hidden	$section: works with --glob	rev-list	pass
-t6021-rev-list-exclude-hidden::section-operates-on-stripped-refs-by-default	t6021-rev-list-exclude-hidden	$section: operates on stripped refs by default	rev-list	pass
-t6021-rev-list-exclude-hidden::section-does-not-hide-namespace-by-default	t6021-rev-list-exclude-hidden	$section: does not hide namespace by default	rev-list	pass
-t6021-rev-list-exclude-hidden::section-can-operate-on-unstripped-refs	t6021-rev-list-exclude-hidden	$section: can operate on unstripped refs	rev-list	pass
-t6021-rev-list-exclude-hidden::section-fails-with-pseudoopt	t6021-rev-list-exclude-hidden	$section: fails with --$pseudoopt	rev-list	pass
-t6021-rev-list-exclude-hidden::section-fails-with-pseudoopt-pattern	t6021-rev-list-exclude-hidden	$section: fails with --$pseudoopt=pattern	rev-list	pass
+t6021-rev-list-exclude-hidden::setup	t6021-rev-list-exclude-hidden	setup	rev-list	partial
+t6021-rev-list-exclude-hidden::invalid-section	t6021-rev-list-exclude-hidden	invalid section	rev-list	partial
+t6021-rev-list-exclude-hidden::section-passed-multiple-times	t6021-rev-list-exclude-hidden	$section: passed multiple times	rev-list	partial
+t6021-rev-list-exclude-hidden::section-without-hiddenrefs	t6021-rev-list-exclude-hidden	$section: without hiddenRefs	rev-list	partial
+t6021-rev-list-exclude-hidden::section-hidden-via-transfer-hiderefs	t6021-rev-list-exclude-hidden	$section: hidden via transfer.hideRefs	rev-list	partial
+t6021-rev-list-exclude-hidden::section-hidden-via-section-hiderefs	t6021-rev-list-exclude-hidden	$section: hidden via $section.hideRefs	rev-list	partial
+t6021-rev-list-exclude-hidden::section-respects-both-transfer-hiderefs-and-section-hiderefs	t6021-rev-list-exclude-hidden	$section: respects both transfer.hideRefs and $section.hideRefs	rev-list	partial
+t6021-rev-list-exclude-hidden::section-negation-without-hidden-refs-marks-everything-as-uninteresting	t6021-rev-list-exclude-hidden	$section: negation without hidden refs marks everything as uninteresting	rev-list	partial
+t6021-rev-list-exclude-hidden::section-negation-with-hidden-refs-marks-them-as-interesting	t6021-rev-list-exclude-hidden	$section: negation with hidden refs marks them as interesting	rev-list	partial
+t6021-rev-list-exclude-hidden::section-hidden-refs-and-excludes-work-together	t6021-rev-list-exclude-hidden	$section: hidden refs and excludes work together	rev-list	partial
+t6021-rev-list-exclude-hidden::section-excluded-hidden-refs-get-reset	t6021-rev-list-exclude-hidden	$section: excluded hidden refs get reset	rev-list	partial
+t6021-rev-list-exclude-hidden::section-excluded-hidden-refs-can-be-used-with-multiple-pseudo-refs	t6021-rev-list-exclude-hidden	$section: excluded hidden refs can be used with multiple pseudo-refs	rev-list	partial
+t6021-rev-list-exclude-hidden::section-works-with-glob	t6021-rev-list-exclude-hidden	$section: works with --glob	rev-list	partial
+t6021-rev-list-exclude-hidden::section-operates-on-stripped-refs-by-default	t6021-rev-list-exclude-hidden	$section: operates on stripped refs by default	rev-list	partial
+t6021-rev-list-exclude-hidden::section-does-not-hide-namespace-by-default	t6021-rev-list-exclude-hidden	$section: does not hide namespace by default	rev-list	partial
+t6021-rev-list-exclude-hidden::section-can-operate-on-unstripped-refs	t6021-rev-list-exclude-hidden	$section: can operate on unstripped refs	rev-list	partial
+t6021-rev-list-exclude-hidden::section-fails-with-pseudoopt	t6021-rev-list-exclude-hidden	$section: fails with --$pseudoopt	rev-list	partial
+t6021-rev-list-exclude-hidden::section-fails-with-pseudoopt-pattern	t6021-rev-list-exclude-hidden	$section: fails with --$pseudoopt=pattern	rev-list	partial
 t6022-rev-list-missing::create-repository-and-alternate-directory	t6022-rev-list-missing	create repository and alternate directory	rev-list	pass
 t6022-rev-list-missing::rev-list-missing-error-fails-with-missing-object-obj	t6022-rev-list-missing	rev-list --missing=error fails with missing object $obj	rev-list	pass
 t6022-rev-list-missing::rev-list-missing-action-with-missing-obj	t6022-rev-list-missing	rev-list --missing=$action with missing $obj	rev-list	pass
