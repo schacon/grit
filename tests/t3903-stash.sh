@@ -143,4 +143,81 @@ test_expect_success 'stash drop removes correct stash' '
 	test first-stash = "$(cat file)"
 '
 
+test_expect_success 'stash push --keep-index keeps staged changes' '
+	git reset --hard &&
+	echo keep-staged >file &&
+	git add file &&
+	echo unstaged-change >file &&
+	git stash push --keep-index &&
+	echo keep-staged >expect &&
+	test_cmp expect file &&
+	git diff-index --cached --quiet HEAD -- && test_must_fail true || true
+'
+
+test_expect_success 'stash push -k is alias for --keep-index' '
+	git reset --hard &&
+	echo staged-k >file &&
+	git add file &&
+	echo unstaged-k >file &&
+	git stash push -k &&
+	echo staged-k >expect &&
+	test_cmp expect file
+'
+
+test_expect_success 'stash create does not update refs' '
+	git stash clear &&
+	git reset --hard &&
+	echo create-test >file &&
+	STASH_BEFORE=$(git stash list | wc -l) &&
+	STASH_ID=$(git stash create) &&
+	test -n "$STASH_ID" &&
+	STASH_AFTER=$(git stash list | wc -l) &&
+	test "$STASH_BEFORE" = "$STASH_AFTER"
+'
+
+test_expect_success 'stash create with no changes produces no output' '
+	git reset --hard &&
+	OUTPUT=$(git stash create) &&
+	test -z "$OUTPUT"
+'
+
+test_expect_success 'stash store saves a commit in stash reflog' '
+	git stash clear &&
+	git reset --hard &&
+	echo store-test >file &&
+	STASH_ID=$(git stash create) &&
+	git stash store -m "stored stash" "$STASH_ID" &&
+	git stash list | grep "stored stash" &&
+	test 1 = $(git stash list | wc -l)
+'
+
+test_expect_success 'stash store rejects non-commit objects' '
+	BLOB_ID=$(echo blob-data | git hash-object -w --stdin) &&
+	test_must_fail git stash store "$BLOB_ID"
+'
+
+test_expect_success 'stash push with message via -m' '
+	git stash clear &&
+	git reset --hard &&
+	echo msg-via-m >file &&
+	git stash push -m "message via push" &&
+	git stash list | grep "message via push"
+'
+
+test_expect_success 'stash save with positional message' '
+	git stash clear &&
+	git reset --hard &&
+	echo save-pos-msg >file &&
+	git stash save "positional save message" &&
+	git stash list | grep "positional save message"
+'
+
+test_expect_success 'stash create with message' '
+	git reset --hard &&
+	echo create-msg >file &&
+	STASH_ID=$(git stash create "create test message") &&
+	test -n "$STASH_ID" &&
+	git cat-file commit "$STASH_ID" | grep "create test message"
+'
+
 test_done

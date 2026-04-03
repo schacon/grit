@@ -100,4 +100,31 @@ test_expect_success 'git clean -q quiet mode' '
 	test_must_be_empty output
 '
 
+test_expect_success 'git clean -f -d removes nested untracked directories' '
+	cd clean-repo &&
+	mkdir -p nested/deep/dir &&
+	touch nested/deep/dir/file.txt &&
+	git clean -f -d &&
+	test_path_is_missing nested
+'
+
+test_expect_success 'git clean -x -d removes ignored files and directories' '
+	cd clean-repo &&
+	mkdir -p build/output &&
+	touch build/output/result.o &&
+	touch extra.o &&
+	git clean -x -d &&
+	test_path_is_missing build &&
+	test_path_is_missing extra.o
+'
+
+test_expect_success 'nested bare repositories should be cleaned with -f -d' '
+	cd clean-repo &&
+	rm -fr strange_bare &&
+	mkdir strange_bare &&
+	git init --bare strange_bare/.git &&
+	git clean -f -d &&
+	test_path_is_missing strange_bare
+'
+
 test_done
