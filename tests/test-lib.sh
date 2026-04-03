@@ -242,6 +242,55 @@ test_oid_cache () {
 	cat >/dev/null
 }
 
+# CR/LF helpers
+q_to_nul () {
+	tr 'Q' '\000'
+}
+
+q_to_cr () {
+	tr Q '\015'
+}
+
+q_to_tab () {
+	tr Q '\011'
+}
+
+append_cr () {
+	sed -e 's/$/Q/' | tr Q '\015'
+}
+
+remove_cr () {
+	tr '\015' Q | sed -e 's/Q$//'
+}
+
+# test_dir_is_empty DIR
+test_dir_is_empty () {
+	test_path_is_dir "$1" &&
+	if test -n "$(ls -a1 "$1" | grep -E -v '^\.\.$|^\.$')"
+	then
+		echo "Directory '$1' is not empty, it contains:"
+		ls -la "$1"
+		return 1
+	fi
+}
+
+# test_bool_env VAR DEFAULT
+test_bool_env () {
+	local val="$(eval echo \$$1)"
+	if test -z "$val"
+	then
+		val="$2"
+	fi
+	case "$val" in
+	true|yes|1) return 0 ;;
+	false|no|0) return 1 ;;
+	*) return 1 ;;
+	esac
+}
+
+# skip_all — set by tests that want to skip everything
+skip_all=""
+
 # test_ln_s_add TARGET LINK — create symlink and git add
 test_ln_s_add () {
 	ln -s "$1" "$2" &&
@@ -491,9 +540,52 @@ test_expect_success () {
 }
 
 test_expect_failure () {
-	local description="$1"
-	local commands="$2"
+	local prereq=""
+	local description
+	local commands
+	if test $# -eq 3
+	then
+		prereq="$1"
+		description="$2"
+		commands="$3"
+	elif test $# -eq 2
+	then
+		description="$1"
+		commands="$2"
+	else
+		echo >&2 "BUG: test_expect_failure requires 2 or 3 arguments, got $#"
+		return 1
+	fi
 	test_count=$(($test_count + 1))
+
+	# Check prerequisites (comma-separated)
+	if test -n "$prereq"
+	then
+		local _all_met=1
+		local _save_IFS="$IFS"
+		IFS=','
+		for _p in $prereq
+		do
+			if ! test_have_prereq "$_p"
+			then
+				_all_met=0
+				break
+			fi
+		done
+		IFS="$_save_IFS"
+		if test "$_all_met" = 0
+		then
+			test_pass=$(($test_pass + 1))
+			test_skip=$(($test_skip + 1))
+			if test -n "$TEST_VERBOSE"
+			then
+				printf '%sok %d - %s # SKIP (missing prereq %s)%s\n' "$YELLOW" "$test_count" "$description" "$prereq" "$RESET"
+			else
+				printf 's'
+			fi
+			return 0
+		fi
+	fi
 
 	(
 		set -e

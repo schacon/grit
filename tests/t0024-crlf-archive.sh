@@ -1,0 +1,23 @@
+#!/bin/sh
+
+test_description='respect crlf in git archive'
+
+. ./test-lib.sh
+
+test_expect_success setup '
+	git init &&
+	git config core.autocrlf true &&
+	printf "CRLF line ending\r\nAnd another\r\n" >sample &&
+	git add sample &&
+	test_tick &&
+	git commit -m Initial
+'
+
+test_expect_success 'tar archive' '
+	git archive --format=tar HEAD >test.tar &&
+	mkdir untarred &&
+	"$TAR" xf test.tar -C untarred &&
+	test_cmp sample untarred/sample
+'
+
+test_done
