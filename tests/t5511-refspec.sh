@@ -31,7 +31,7 @@ test_expect_success 'can remove remote section' '
 	test_must_fail git config remote.frotz.url
 '
 
-test_expect_failure 'ls-remote with named remote' '
+test_expect_success 'ls-remote with named remote' '
 	git config remote.frotz.url "." &&
 	git config remote.frotz.fetch "+refs/heads/*:refs/remotes/frotz/*" &&
 	git ls-remote frotz

@@ -212,14 +212,14 @@ test_expect_success 'commit --amend does not create new commit hash' '
 
 # ── --signoff ────────────────────────────────────────────────────────────────
 
-test_expect_failure 'commit --signoff adds Signed-off-by trailer' '
+test_expect_success 'commit --signoff adds Signed-off-by trailer' '
 	cd repo &&
 	echo signoff1 >file &&
 	git add file &&
 	test_tick &&
 	git commit --signoff -m "signed commit" &&
 	git log -n1 --format="%B" >actual &&
-	grep "Signed-off-by: A U Thor <author@example.com>" actual
+	grep "Signed-off-by: C O Mitter <committer@example.com>" actual
 '
 
 test_expect_success 'commit -s flag is accepted' '
@@ -249,7 +249,7 @@ test_expect_success 'commit --author overrides author' '
 test_expect_success 'commit --author does not affect committer' '
 	cd repo &&
 	git log -n1 --format="%cn <%ce>" >actual &&
-	echo "A U Thor <author@example.com>" >expect &&
+	echo "C O Mitter <committer@example.com>" >expect &&
 	test_cmp expect actual
 '
 

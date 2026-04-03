@@ -227,7 +227,7 @@ test_expect_success 'no-merged master returns empty (all merged in linear)' '
 	test_must_be_empty actual
 '
 
-test_expect_failure 'merged old returns only old and diverge (not master/mid)' '
+test_expect_success 'merged old returns only old and diverge (not master/mid)' '
 	cd repo &&
 	grit for-each-ref --merged old --format="%(refname)" refs/heads/ >actual &&
 	test_line_count = 2 actual &&
@@ -241,7 +241,7 @@ test_expect_failure 'merged old returns only old and diverge (not master/mid)' '
 # Section 6: --contains (expected failures — not yet implemented)
 ###########################################################################
 
-test_expect_failure 'contains C1 returns all branches (C1 is ancestor of all)' '
+test_expect_success 'contains C1 returns all branches (C1 is ancestor of all)' '
 	cd repo &&
 	C1=$(cat .c1) &&
 	grit for-each-ref --contains $C1 --format="%(refname)" refs/heads/ >actual &&

@@ -215,8 +215,17 @@ fn parse_args(args: Vec<String>) -> Result<Options> {
             continue;
         }
         if arg == "--merged" {
-            opts.merged = Some(None);
             i += 1;
+            if let Some(value) = args.get(i) {
+                if !value.starts_with('-') {
+                    opts.merged = Some(Some(value.clone()));
+                    i += 1;
+                } else {
+                    opts.merged = Some(None);
+                }
+            } else {
+                opts.merged = Some(None);
+            }
             continue;
         }
         if let Some(value) = arg.strip_prefix("--no-merged=") {
@@ -225,8 +234,17 @@ fn parse_args(args: Vec<String>) -> Result<Options> {
             continue;
         }
         if arg == "--no-merged" {
-            opts.no_merged = Some(None);
             i += 1;
+            if let Some(value) = args.get(i) {
+                if !value.starts_with('-') {
+                    opts.no_merged = Some(Some(value.clone()));
+                    i += 1;
+                } else {
+                    opts.no_merged = Some(None);
+                }
+            } else {
+                opts.no_merged = Some(None);
+            }
             continue;
         }
         if let Some(value) = arg.strip_prefix("--contains=") {
@@ -235,8 +253,17 @@ fn parse_args(args: Vec<String>) -> Result<Options> {
             continue;
         }
         if arg == "--contains" {
-            opts.contains = Some(None);
             i += 1;
+            if let Some(value) = args.get(i) {
+                if !value.starts_with('-') {
+                    opts.contains = Some(Some(value.clone()));
+                    i += 1;
+                } else {
+                    opts.contains = Some(None);
+                }
+            } else {
+                opts.contains = Some(None);
+            }
             continue;
         }
         if let Some(value) = arg.strip_prefix("--no-contains=") {
@@ -245,8 +272,17 @@ fn parse_args(args: Vec<String>) -> Result<Options> {
             continue;
         }
         if arg == "--no-contains" {
-            opts.no_contains = Some(None);
             i += 1;
+            if let Some(value) = args.get(i) {
+                if !value.starts_with('-') {
+                    opts.no_contains = Some(Some(value.clone()));
+                    i += 1;
+                } else {
+                    opts.no_contains = Some(None);
+                }
+            } else {
+                opts.no_contains = Some(None);
+            }
             continue;
         }
         if arg.starts_with('-') {

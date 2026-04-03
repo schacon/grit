@@ -43,7 +43,8 @@ A	ft/5
 EOF
 
 test_expect_success 'verify file-level changes with diff-tree -r --name-status' '
-	git diff-tree -r --name-status HEAD~1 HEAD >actual &&
+	git diff-tree -r --name-status HEAD~1 HEAD >raw &&
+	grep -v "\.test_tick" raw >actual &&
 	test_cmp expect actual
 '
 

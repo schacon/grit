@@ -112,6 +112,22 @@ pub struct Args {
     #[arg(long = "raw")]
     pub raw: bool,
 
+    /// Show log for all refs.
+    #[arg(long = "all")]
+    pub all: bool,
+
+    /// Show which ref led to each commit.
+    #[arg(long = "source")]
+    pub source: bool,
+
+    /// Follow file renames (single file only).
+    #[arg(long = "follow")]
+    pub follow: bool,
+
+    /// Filter by change type (A=added, M=modified, D=deleted, R=renamed, C=copied).
+    #[arg(long = "diff-filter")]
+    pub diff_filter: Option<String>,
+
     /// Pathspecs (after --).
     #[arg(last = true)]
     pub pathspecs: Vec<String>,
@@ -127,7 +143,9 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Determine starting points
-    let start_oids = if args.revisions.is_empty() {
+    let start_oids = if args.all {
+        collect_all_ref_oids(&repo.git_dir)?
+    } else if args.revisions.is_empty() {
         let head = resolve_head(&repo.git_dir)?;
         match head.oid() {
             Some(oid) => vec![*oid],
@@ -177,10 +195,11 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     // Walk commits
+    let effective_pathspecs = if args.follow { &[][..] } else { &args.pathspecs[..] };
     let commits = walk_commits(
         &repo.odb,
         &start_oids,
-        args.max_count,
+        if args.follow { None } else { args.max_count }, // follow needs full walk for rename tracking
         args.skip,
         args.first_parent,
         author_re.as_ref(),
@@ -188,8 +207,31 @@ pub fn run(args: Args) -> Result<()> {
         grep_re.as_ref(),
         args.no_merges,
         args.merges,
-        &args.pathspecs,
+        effective_pathspecs,
     )?;
+
+    // Apply --follow: filter commits and track renames
+    let commits = if args.follow && !args.pathspecs.is_empty() {
+        follow_filter(&repo.odb, commits, &args.pathspecs[0], args.max_count)?
+    } else {
+        commits
+    };
+
+    // Apply --diff-filter
+    let commits = if let Some(ref filter) = args.diff_filter {
+        let filter_chars: Vec<char> = filter.chars().collect();
+        commits
+            .into_iter()
+            .filter(|(_oid, info)| {
+                match commit_has_diff_status(&repo.odb, info, &filter_chars) {
+                    Ok(has) => has,
+                    Err(_) => true, // include on error
+                }
+            })
+            .collect::<Vec<_>>()
+    } else {
+        commits
+    };
 
     let commits = if args.reverse {
         commits.into_iter().rev().collect::<Vec<_>>()
@@ -1262,4 +1304,176 @@ fn log_read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> 
     };
 
     Ok((old_content, new_content))
+}
+
+/// Collect all commit OIDs from all refs (branches, tags, etc.) for --all.
+fn collect_all_ref_oids(git_dir: &std::path::Path) -> Result<Vec<ObjectId>> {
+    use std::fs;
+    let mut oids = Vec::new();
+    let mut seen = HashSet::new();
+
+    // Reftable backend
+    if grit_lib::reftable::is_reftable_repo(git_dir) {
+        if let Ok(refs) = grit_lib::reftable::reftable_list_refs(git_dir, "refs/") {
+            for (_name, oid) in refs {
+                if seen.insert(oid) {
+                    oids.push(oid);
+                }
+            }
+        }
+        return Ok(oids);
+    }
+
+    // Loose refs
+    collect_oids_from_dir(git_dir, &git_dir.join("refs"), &mut oids, &mut seen)?;
+
+    // Packed refs
+    let packed_path = git_dir.join("packed-refs");
+    if let Ok(text) = fs::read_to_string(packed_path) {
+        for line in text.lines() {
+            if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
+                continue;
+            }
+            if let Some(hex) = line.split_whitespace().next() {
+                if let Ok(oid) = hex.parse::<ObjectId>() {
+                    if seen.insert(oid) {
+                        oids.push(oid);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(oids)
+}
+
+fn collect_oids_from_dir(
+    git_dir: &std::path::Path,
+    dir: &std::path::Path,
+    oids: &mut Vec<ObjectId>,
+    seen: &mut HashSet<ObjectId>,
+) -> Result<()> {
+    use std::fs;
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            collect_oids_from_dir(git_dir, &entry.path(), oids, seen)?;
+        } else if ft.is_file() {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                let raw = content.trim();
+                if raw.starts_with("ref: ") {
+                    // Symbolic ref — resolve it
+                    let target = &raw[5..];
+                    if let Ok(oid) = grit_lib::refs::resolve_ref(git_dir, target) {
+                        if seen.insert(oid) {
+                            oids.push(oid);
+                        }
+                    }
+                } else if let Ok(oid) = raw.parse::<ObjectId>() {
+                    if seen.insert(oid) {
+                        oids.push(oid);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Check if a commit has any changes matching the specified diff-filter status letters.
+fn commit_has_diff_status(
+    odb: &Odb,
+    info: &CommitInfo,
+    filter_chars: &[char],
+) -> Result<bool> {
+    let parent_tree = if let Some(parent) = info.parents.first() {
+        let pobj = odb.read(parent)?;
+        let pc = parse_commit(&pobj.data)?;
+        Some(pc.tree)
+    } else {
+        None
+    };
+
+    let entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
+    for entry in &entries {
+        let letter = entry.status.letter();
+        if filter_chars.contains(&letter) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Filter commits by following a file across renames.
+/// Returns only commits that touch the tracked file, updating the path
+/// when renames are detected.
+fn follow_filter(
+    odb: &Odb,
+    commits: Vec<(ObjectId, CommitInfo)>,
+    initial_path: &str,
+    max_count: Option<usize>,
+) -> Result<Vec<(ObjectId, CommitInfo)>> {
+    use grit_lib::diff::detect_renames;
+
+    let mut tracked_path = initial_path.to_string();
+    let mut result = Vec::new();
+
+    for (oid, info) in commits {
+        let parent_tree = if let Some(parent) = info.parents.first() {
+            let pobj = odb.read(parent)?;
+            let pc = parse_commit(&pobj.data)?;
+            Some(pc.tree)
+        } else {
+            None
+        };
+
+        let raw_entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
+        let entries = detect_renames(odb, raw_entries, 50);
+
+        let mut touches = false;
+        for entry in &entries {
+            match entry.status {
+                DiffStatus::Renamed => {
+                    // Check if the new path matches our tracked path
+                    if let Some(new_path) = entry.new_path.as_deref() {
+                        if new_path == tracked_path {
+                            touches = true;
+                            // Update tracked path to the old name for older commits
+                            if let Some(old_path) = entry.old_path.as_deref() {
+                                tracked_path = old_path.to_string();
+                            }
+                        }
+                    }
+                    // Also check old path
+                    if let Some(old_path) = entry.old_path.as_deref() {
+                        if old_path == tracked_path {
+                            touches = true;
+                        }
+                    }
+                }
+                _ => {
+                    let path = entry.path();
+                    if path == tracked_path {
+                        touches = true;
+                    }
+                }
+            }
+        }
+
+        if touches {
+            result.push((oid, info));
+            if let Some(max) = max_count {
+                if result.len() >= max {
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
