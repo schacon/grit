@@ -7,7 +7,7 @@ The last test uses git show --anchored which also needs plumbing support.'
 
 . ./test-lib.sh
 
-test_expect_failure '--anchored (not implemented: needs --no-index)' '
+test_expect_success '--anchored' '
 	printf "a\nb\nc\n" >pre &&
 	printf "c\na\nb\n" >post &&
 	test_expect_code 1 git diff --no-index pre post >diff &&
@@ -18,7 +18,7 @@ test_expect_failure '--anchored (not implemented: needs --no-index)' '
 	grep "^+a" diff
 '
 
-test_expect_failure '--anchored multiple (not implemented: needs --no-index)' '
+test_expect_success '--anchored multiple' '
 	printf "a\nb\nc\nd\ne\nf\n" >pre &&
 	printf "c\na\nb\nf\nd\ne\n" >post &&
 	test_expect_code 1 git diff --no-index --anchored=c pre post >diff &&
@@ -31,7 +31,7 @@ test_expect_failure '--anchored multiple (not implemented: needs --no-index)' '
 	grep "^+d" diff
 '
 
-test_expect_success '--anchored with nonexistent line has no effect (not implemented)' '
+test_expect_success '--anchored with nonexistent line has no effect' '
 	printf "a\nb\nc\n" >pre &&
 	printf "c\na\nb\n" >post &&
 	test_expect_code 1 git diff --no-index --anchored=x pre post >diff &&
@@ -39,7 +39,7 @@ test_expect_success '--anchored with nonexistent line has no effect (not impleme
 	grep "^+c" diff
 '
 
-test_expect_success '--anchored with non-unique line has no effect (not implemented)' '
+test_expect_success '--anchored with non-unique line has no effect' '
 	printf "a\nb\nc\nd\ne\nc\n" >pre &&
 	printf "c\na\nb\nc\nd\ne\n" >post &&
 	test_expect_code 1 git diff --no-index --anchored=c pre post >diff &&
@@ -47,7 +47,7 @@ test_expect_success '--anchored with non-unique line has no effect (not implemen
 	grep "^+c" diff
 '
 
-test_expect_failure 'diff still produced with impossible multiple --anchored (not implemented)' '
+test_expect_success 'diff still produced with impossible multiple --anchored' '
 	printf "a\nb\nc\n" >pre &&
 	printf "c\na\nb\n" >post &&
 	test_expect_code 1 git diff --no-index --anchored=a --anchored=c pre post >diff &&
@@ -57,7 +57,7 @@ test_expect_failure 'diff still produced with impossible multiple --anchored (no
 	diff expected_post post
 '
 
-test_expect_failure 'later algorithm arguments override earlier ones (not implemented)' '
+test_expect_success 'later algorithm arguments override earlier ones' '
 	printf "a\nb\nc\n" >pre &&
 	printf "c\na\nb\n" >post &&
 	test_expect_code 1 git diff --no-index --patience --anchored=c pre post >diff &&
@@ -65,7 +65,11 @@ test_expect_failure 'later algorithm arguments override earlier ones (not implem
 	grep "^+a" diff
 '
 
-test_expect_failure '--anchored works with other commands like git show (not implemented)' '
+test_expect_success '--anchored works with other commands like git show' '
+	git init show-test &&
+	cd show-test &&
+	git config user.name "Test" &&
+	git config user.email "test@test" &&
 	printf "a\nb\nc\n" >file &&
 	git add file &&
 	git commit -m foo &&
