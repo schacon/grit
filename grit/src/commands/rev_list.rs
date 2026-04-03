@@ -120,6 +120,17 @@ pub fn run(args: Args) -> Result<()> {
                         revision_specs.push(oid.to_hex());
                     }
                 }
+                "--glob" => {
+                    // Detached option: next arg is the pattern.
+                    i += 1;
+                    if let Some(next) = args.args.get(i) {
+                        let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, next)
+                            .context("failed to list glob refs")?;
+                        for (_, oid) in matching {
+                            revision_specs.push(oid.to_hex());
+                        }
+                    }
+                }
                 "--branches" => {
                     let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")
                         .context("failed to list branch refs")?;

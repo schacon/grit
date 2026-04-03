@@ -78,13 +78,13 @@ test_expect_success 'rev-parse --glob=heads/subspace' '
 
 '
 
-test_expect_failure 'rev-parse accepts --glob as detached option' '
+test_expect_success 'rev-parse accepts --glob as detached option' '
 
 	compare rev-parse "subspace/one subspace/two" "--glob heads/subspace"
 
 '
 
-test_expect_failure 'rev-parse is not confused by option-like glob' '
+test_expect_success 'rev-parse is not confused by option-like glob' '
 
 	compare rev-parse "main" "--glob --symbolic main"
 

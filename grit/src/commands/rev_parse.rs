@@ -131,6 +131,28 @@ pub fn run(args: Args) -> Result<()> {
                         println!("{oid}");
                     }
                 }
+            } else if let Some(pattern) = arg.strip_prefix("--glob=") {
+                if let Some(current) = discover_optional(None)? {
+                    let full = normalize_glob_pattern(pattern);
+                    let matching = grit_lib::refs::list_refs_glob(&current.git_dir, &full)
+                        .context("failed to list refs")?;
+                    for (_, oid) in matching {
+                        println!("{oid}");
+                    }
+                }
+            } else if arg == "--glob" {
+                // Detached option: next arg is the pattern.
+                i += 1;
+                if let Some(pattern) = args.args.get(i) {
+                    if let Some(current) = discover_optional(None)? {
+                        let full = normalize_glob_pattern(pattern);
+                        let matching = grit_lib::refs::list_refs_glob(&current.git_dir, &full)
+                            .context("failed to list refs")?;
+                        for (_, oid) in matching {
+                            println!("{oid}");
+                        }
+                    }
+                }
             } else if arg == "--remotes" {
                 if let Some(current) = discover_optional(None)? {
                     let matching = grit_lib::refs::list_refs(&current.git_dir, "refs/remotes/")
@@ -433,4 +455,19 @@ fn normalize_slash_path(path: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+/// Normalize a --glob pattern: prepend refs/ if needed, append /* if no glob chars.
+fn normalize_glob_pattern(pattern: &str) -> String {
+    let full = if pattern.starts_with("refs/") {
+        pattern.to_owned()
+    } else {
+        format!("refs/{pattern}")
+    };
+    // If no glob characters, treat as prefix pattern by appending /*
+    if !full.contains('*') && !full.contains('?') && !full.contains('[') {
+        format!("{full}/*")
+    } else {
+        full
+    }
 }
