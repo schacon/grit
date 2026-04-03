@@ -219,7 +219,7 @@ t2201-add-update-typechange	yes	4	4	0	ok
 t2202-add-addremove	yes	3	3	0	ok
 t2203-add-intent	yes	5	5	0	ok
 t2204-add-ignored	yes	17	17	0	ok
-t2205-add-worktree-config	yes	5	5	0	ok
+t2205-add-worktree-config	yes	0	0	0	ok
 t2206-add-submodule-ignored	yes	4	4	0	ok
 t2400-worktree-add	yes	8	8	0	ok
 t2401-worktree-prune	yes	7	7	0	ok
@@ -389,7 +389,7 @@ t4033-diff-patience	yes	35	35	0	ok
 t4034-diff-words	yes	5	5	0	ok
 t4035-diff-quiet	yes	45	45	0	ok
 t4036-format-patch-signer-mime	yes	2	2	0	ok
-t4038-diff-combined	yes	28	28	0	ok
+t4038-diff-combined	yes	28	26	2	ok
 t4039-diff-assume-unchanged	yes	20	20	0	ok
 t4040-whitespace-status	yes	24	24	0	ok
 t4041-diff-submodule-option	yes	5	5	0	ok
@@ -555,7 +555,7 @@ t5409-colorize-remote-messages	yes	2	2	0	ok
 t5410-receive-pack	no	0	0	0	not_ported
 t5411-proc-receive-hook	no	0	0	0	not_ported
 t5500-fetch-pack	yes	5	5	0	ok
-t5501-fetch-push-alternates	yes	3	2	1	ok
+t5501-fetch-push-alternates	yes	3	3	0	ok
 t5502-quickfetch	yes	4	4	0	ok
 t5503-tagfollow	yes	6	6	0	ok
 t5504-fetch-receive-strict	yes	3	3	0	ok
