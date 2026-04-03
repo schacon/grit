@@ -979,3 +979,4 @@ t3413-rebase-hook.sh
 t3206-range-diff.sh
 t3405-rebase-malformed.sh
 t3402-rebase-merge.sh
+t3406-rebase-message.sh
