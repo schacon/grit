@@ -50,7 +50,7 @@ test_expect_success 'stripspace outside repository' '
 	rm -rf "$tmpdir"
 '
 
-test_expect_failure 'apply a patch outside repository' '
+test_expect_success 'apply a patch outside repository' '
 	git init patch-test &&
 	(
 		cd patch-test &&
@@ -62,13 +62,14 @@ test_expect_failure 'apply a patch outside repository' '
 		printf "one\ntwo\nthree\nfour\nfive\n" >nums &&
 		git diff >sample.patch
 	) &&
+	patch_abs="$(cd patch-test && pwd)/sample.patch" &&
 	tmpdir=$(mktemp -d) &&
 	cp patch-test/nums.old "$tmpdir/nums" &&
 	(
 		cd "$tmpdir" &&
 		GIT_CEILING_DIRECTORIES="$tmpdir" &&
 		export GIT_CEILING_DIRECTORIES &&
-		git apply ../patch-test/sample.patch
+		git apply "$patch_abs"
 	) &&
 	test_cmp patch-test/nums "$tmpdir/nums" &&
 	rm -rf "$tmpdir"

@@ -10,7 +10,7 @@ test_expect_success 'setup' '
 	git init
 '
 
-test_expect_failure 'GIT_TRACE2_PERF produces output' '
+test_expect_success 'GIT_TRACE2_PERF produces output' '
 	GIT_TRACE2_PERF="$(pwd)/trace.perf" git version >out &&
 	test_path_is_file trace.perf &&
 	test_file_not_empty trace.perf
