@@ -252,7 +252,15 @@ fn do_am(args: Args) -> Result<()> {
     }
 
     // Apply patches
-    let three_way = if args.no_three_way { false } else { args.three_way };
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let three_way = if args.no_three_way {
+        false
+    } else if args.three_way {
+        true
+    } else {
+        config.get("am.threeWay").or_else(|| config.get("am.threeway")).map(|v| v == "true").unwrap_or(false)
+    };
+    let message_id = args.message_id || config.get("am.messageid").map(|v| v == "true").unwrap_or(false);
     let opts = AmOptions {
         quiet: args.quiet,
         three_way,
@@ -263,7 +271,7 @@ fn do_am(args: Args) -> Result<()> {
         scissors: args.scissors,
         no_scissors: args.no_scissors,
         committer_date_is_author_date: args.committer_date_is_author_date,
-        message_id: args.message_id,
+        message_id,
         empty: args.empty.unwrap_or_else(|| "stop".to_string()),
         allow_empty: args.allow_empty,
     };
@@ -321,7 +329,15 @@ fn do_am_stdin(args: Args) -> Result<()> {
         fs::write(&patch_file, serialized)?;
     }
 
-    let three_way = if args.no_three_way { false } else { args.three_way };
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let three_way = if args.no_three_way {
+        false
+    } else if args.three_way {
+        true
+    } else {
+        config.get("am.threeWay").or_else(|| config.get("am.threeway")).map(|v| v == "true").unwrap_or(false)
+    };
+    let message_id = args.message_id || config.get("am.messageid").map(|v| v == "true").unwrap_or(false);
     let opts = AmOptions {
         quiet: args.quiet,
         three_way,
@@ -332,7 +348,7 @@ fn do_am_stdin(args: Args) -> Result<()> {
         scissors: args.scissors,
         no_scissors: args.no_scissors,
         committer_date_is_author_date: args.committer_date_is_author_date,
-        message_id: args.message_id,
+        message_id,
         empty: args.empty.unwrap_or_else(|| "stop".to_string()),
         allow_empty: args.allow_empty,
     };
@@ -1528,7 +1544,7 @@ fn parse_mbox_with_opts(input: &str, keep: bool, keep_non_patch: bool, scissors:
                 break;
             }
             // If we haven't found any "From " line yet and we see headers, treat as raw patch
-            if !found_from && (line.starts_with("From:") || line.starts_with("Subject:") || line.starts_with("Date:")) {
+            if !found_from && (line.starts_with("From:") || line.starts_with("Subject:") || line.starts_with("Date:") || line.starts_with("Message-ID:") || line.starts_with("Message-Id:") || line.starts_with("X-")) {
                 found_from = true;
                 break;
             }
