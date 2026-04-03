@@ -160,6 +160,21 @@ struct ArgsWrapper<T: Args> {
 }
 
 /// Parse a command's clap Args from the remaining arguments.
+/// Expand `-<N>` shorthand (e.g. `-1`, `-5`) to `--max-count=<N>` so that
+/// clap can parse it.  Git allows `git log -3` as a shorthand for
+/// `git log --max-count=3`.
+fn expand_dash_number_args(rest: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(rest.len());
+    for arg in rest {
+        if arg.len() >= 2 && arg.starts_with('-') && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+            out.push(format!("--max-count={}", &arg[1..]));
+        } else {
+            out.push(arg.clone());
+        }
+    }
+    out
+}
+
 fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
     let mut argv = vec![format!("grit {subcmd}")];
     argv.extend(rest.iter().cloned());
@@ -259,7 +274,10 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "init" => commands::init::run(parse_cmd_args(subcmd, rest), opts.bare),
         "interpret-trailers" => commands::interpret_trailers::run(parse_cmd_args(subcmd, rest)),
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
-        "log" => commands::log::run(parse_cmd_args(subcmd, rest)),
+        "log" => {
+            let rest = expand_dash_number_args(rest);
+            commands::log::run(parse_cmd_args(subcmd, &rest))
+        }
         "ls-files" => commands::ls_files::run(parse_cmd_args(subcmd, rest)),
         "ls-remote" => commands::ls_remote::run(parse_cmd_args(subcmd, rest)),
         "ls-tree" => commands::ls_tree::run(parse_cmd_args(subcmd, rest)),

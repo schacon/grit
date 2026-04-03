@@ -155,7 +155,7 @@ test_expect_success 'log --max-count=1 works same as -n 1' '
 	test_line_count = 1 out
 '
 
-test_expect_failure 'log -n 0 shows no commits (grit shows 1)' '
+test_expect_success 'log -n 0 shows no commits' '
 	cd repo &&
 	git log --oneline -n 0 >out &&
 	test_must_be_empty out
