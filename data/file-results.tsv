@@ -89,14 +89,14 @@ t1002-read-tree-m-u-2way	yes	21	21	0	ok
 t1003-read-tree-prefix	yes	5	5	0	ok
 t1004-read-tree-m-u-wf	yes	13	13	0	ok
 t1005-read-tree-reset	yes	5	5	0	ok
-t1006-cat-file	yes	119	119	0	ok
+t1006-cat-file	yes	119	118	1	ok
 t1007-hash-object	yes	38	31	7	ok
 t1008-read-tree-overlay	yes	3	3	0	ok
 t1009-read-tree-new-index	yes	5	5	0	ok
 t1010-mktree	yes	17	17	0	ok
-t1011-read-tree-sparse-checkout	yes	8	8	0	ok
+t1011-read-tree-sparse-checkout	yes	8	7	1	ok
 t1012-read-tree-df	yes	14	14	0	ok
-t1014-read-tree-confusing	yes	11	11	0	ok
+t1014-read-tree-confusing	yes	11	3	8	ok
 t1015-read-index-unmerged	yes	23	23	0	ok
 t1016-compatObjectFormat	yes	1	1	0	ok
 t1020-subdirectory	yes	11	11	0	ok
@@ -254,7 +254,7 @@ t3102-ls-tree-wildcards	yes	6	6	0	ok
 t3103-ls-tree-misc	yes	24	24	0	ok
 t3104-ls-tree-format	yes	5	5	0	ok
 t3105-ls-tree-output	yes	9	9	0	ok
-t3200-branch	yes	270	270	0	ok
+t3200-branch	yes	270	269	1	ok
 t3201-branch-contains	yes	30	30	0	ok
 t3202-show-branch	yes	3	3	0	ok
 t3203-branch-output	yes	30	30	0	ok
@@ -555,7 +555,7 @@ t5409-colorize-remote-messages	yes	2	2	0	ok
 t5410-receive-pack	no	0	0	0	not_ported
 t5411-proc-receive-hook	no	0	0	0	not_ported
 t5500-fetch-pack	yes	5	5	0	ok
-t5501-fetch-push-alternates	yes	3	3	0	ok
+t5501-fetch-push-alternates	yes	3	2	1	ok
 t5502-quickfetch	yes	4	4	0	ok
 t5503-tagfollow	yes	6	6	0	ok
 t5504-fetch-receive-strict	yes	3	3	0	ok
@@ -788,7 +788,7 @@ t7401-submodule-summary	yes	2	2	0	ok
 t7402-submodule-rebase	yes	2	2	0	ok
 t7403-submodule-sync	yes	2	2	0	ok
 t7406-submodule-update	yes	5	5	0	ok
-t7407-submodule-foreach	yes	6	6	0	ok
+t7407-submodule-foreach	yes	6	5	1	ok
 t7408-submodule-reference	yes	2	2	0	ok
 t7409-submodule-detached-work-tree	yes	2	2	0	ok
 t7411-submodule-config	yes	4	4	0	ok
