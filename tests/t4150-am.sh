@@ -281,36 +281,106 @@ test_expect_failure 'am --patch-format=hg applies hg patch' '
 	false
 '
 
-test_expect_failure 'am with applypatch-msg hook' '
-	false
+test_expect_success 'am with applypatch-msg hook' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_hook applypatch-msg <<-\EOF &&
+	echo "hook ran" >"$(git rev-parse --git-dir)/apply-hook-ran"
+	EOF
+	git am <patch1 &&
+	test_path_is_missing .git/rebase-apply &&
+	test -f .git/apply-hook-ran &&
+	rm -f .git/apply-hook-ran &&
+	rm -f .git/hooks/applypatch-msg
 '
 
-test_expect_failure 'am with failing applypatch-msg hook' '
-	false
+test_expect_success 'am with failing applypatch-msg hook' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_hook applypatch-msg <<-\EOF &&
+	exit 1
+	EOF
+	test_must_fail git am <patch1 &&
+	rm -f .git/hooks/applypatch-msg &&
+	git am --abort
 '
 
-test_expect_failure 'am with failing applypatch-msg hook (no verify)' '
-	false
+test_expect_success 'am with failing applypatch-msg hook (no verify)' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_hook applypatch-msg <<-\EOF &&
+	exit 1
+	EOF
+	git am --no-verify <patch1 &&
+	test_path_is_missing .git/rebase-apply &&
+	rm -f .git/hooks/applypatch-msg
 '
 
-test_expect_failure 'am with pre-applypatch hook' '
-	false
+test_expect_success 'am with pre-applypatch hook' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_hook pre-applypatch <<-\EOF &&
+	echo "pre-hook ran" >"$(git rev-parse --git-dir)/pre-hook-ran"
+	EOF
+	git am <patch1 &&
+	test_path_is_missing .git/rebase-apply &&
+	test -f .git/pre-hook-ran &&
+	rm -f .git/pre-hook-ran &&
+	rm -f .git/hooks/pre-applypatch
 '
 
-test_expect_failure 'am with failing pre-applypatch hook' '
-	false
+test_expect_success 'am with failing pre-applypatch hook' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_hook pre-applypatch <<-\EOF &&
+	exit 1
+	EOF
+	test_must_fail git am <patch1 &&
+	rm -f .git/hooks/pre-applypatch &&
+	git am --abort
 '
 
-test_expect_failure 'am with failing pre-applypatch hook (no verify)' '
-	false
+test_expect_success 'am with failing pre-applypatch hook (no verify)' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_hook pre-applypatch <<-\EOF &&
+	exit 1
+	EOF
+	git am --no-verify <patch1 &&
+	test_path_is_missing .git/rebase-apply &&
+	rm -f .git/hooks/pre-applypatch
 '
 
-test_expect_failure 'am with post-applypatch hook' '
-	false
+test_expect_success 'am with post-applypatch hook' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_hook post-applypatch <<-\EOF &&
+	echo "post-hook ran" >"$(git rev-parse --git-dir)/post-hook-ran"
+	EOF
+	git am <patch1 &&
+	test_path_is_missing .git/rebase-apply &&
+	test -f .git/post-hook-ran &&
+	rm -f .git/post-hook-ran &&
+	rm -f .git/hooks/post-applypatch
 '
 
-test_expect_failure 'am with failing post-applypatch hook' '
-	false
+test_expect_success 'am with failing post-applypatch hook' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_hook post-applypatch <<-\EOF &&
+	exit 1
+	EOF
+	git am <patch1 &&
+	test_path_is_missing .git/rebase-apply &&
+	rm -f .git/hooks/post-applypatch
 '
 
 test_expect_success 'am --scissors cuts the message at the scissors line' '
@@ -566,20 +636,26 @@ test_expect_success 'am --resolved works' '
 	test_cmp expected another
 '
 
-test_expect_failure 'am --resolved fails if index has no changes' '
+test_expect_success 'am --resolved fails if index has no changes' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout lorem2^^ &&
+	git checkout first &&
 	test_must_fail git am lorem-move.patch &&
 	test_path_is_dir .git/rebase-apply &&
-	test_cmp_rev lorem2^^ HEAD &&
+	test_cmp_rev first HEAD &&
 	test_must_fail git am --continue &&
 	test_path_is_dir .git/rebase-apply &&
-	test_cmp_rev lorem2^^ HEAD
+	test_cmp_rev first HEAD
 '
 
-test_expect_failure 'am --resolved fails if index has unmerged entries' '
-	false
+test_expect_success 'am --resolved fails if index has unmerged entries' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_must_fail git am lorem-move.patch &&
+	test_path_is_dir .git/rebase-apply &&
+	test_must_fail git am --continue 2>err &&
+	git am --abort
 '
 
 test_expect_success 'am takes patches from a Pine mailbox' '
