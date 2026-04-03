@@ -9,7 +9,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
+    count_changes, diff_trees, diff_trees_with_tree_entries, format_raw, format_stat_line,
+    unified_diff, DiffEntry, DiffStatus,
 };
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -51,6 +52,8 @@ struct Options {
     pathspecs: Vec<String>,
     /// Recurse into sub-trees (`-r`).
     recursive: bool,
+    /// Show tree entries in output (`-t`, implies `-r`).
+    show_trees: bool,
     /// Show root commit as diff against empty tree (`--root`).
     root: bool,
     /// Read OIDs from stdin (`--stdin`).
@@ -77,6 +80,7 @@ impl Default for Options {
             objects: Vec::new(),
             pathspecs: Vec::new(),
             recursive: false,
+            show_trees: false,
             root: false,
             stdin_mode: false,
             no_commit_id: false,
@@ -108,7 +112,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
                 "-r" => opts.recursive = true,
-                "-t" => opts.recursive = true, // -t implies -r
+                "-t" => {
+                    opts.recursive = true;
+                    opts.show_trees = true;
+                }
                 "--root" => opts.root = true,
                 "--stdin" => opts.stdin_mode = true,
                 "--no-commit-id" => opts.no_commit_id = true,
@@ -201,7 +208,7 @@ pub fn run(args: Args) -> Result<()> {
 fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<()> {
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
-    let entries = diff_maybe_recursive(&repo.odb, Some(&oid1), Some(&oid2), opts.recursive)?;
+    let entries = diff_maybe_recursive(&repo.odb, Some(&oid1), Some(&oid2), opts.recursive, opts.show_trees)?;
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
     print_diff(out, &repo.odb, &filtered, opts)
 }
@@ -220,7 +227,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
             if commit.parents.is_empty() {
                 if opts.root {
                     let entries =
-                        diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive)?;
+                        diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_trees)?;
                     let filtered = filter_pathspecs(entries, &opts.pathspecs);
                     print_diff(out, &repo.odb, &filtered, opts)?;
                 }
@@ -232,6 +239,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     Some(&parent_tree),
                     Some(&commit.tree),
                     opts.recursive,
+                    opts.show_trees,
                 )?;
                 let filtered = filter_pathspecs(entries, &opts.pathspecs);
                 print_diff(out, &repo.odb, &filtered, opts)?;
@@ -343,7 +351,7 @@ fn process_stdin_commit(
     if parent_oids.is_empty() {
         if opts.root {
             let entries =
-                diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive)?;
+                diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_trees)?;
             let filtered = filter_pathspecs(entries, &opts.pathspecs);
             print_diff(out, &repo.odb, &filtered, opts)?;
         }
@@ -354,6 +362,7 @@ fn process_stdin_commit(
             Some(&parent_tree),
             Some(&commit.tree),
             opts.recursive,
+            opts.show_trees,
         )?;
         let filtered = filter_pathspecs(entries, &opts.pathspecs);
         print_diff(out, &repo.odb, &filtered, opts)?;
@@ -381,7 +390,7 @@ fn process_stdin_two_trees(
     // Print both tree OIDs.
     writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
 
-    let entries = diff_maybe_recursive(&repo.odb, Some(oid1), Some(&oid2), opts.recursive)?;
+    let entries = diff_maybe_recursive(&repo.odb, Some(oid1), Some(&oid2), opts.recursive, opts.show_trees)?;
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
     print_diff(out, &repo.odb, &filtered, opts)
 }
@@ -389,13 +398,17 @@ fn process_stdin_two_trees(
 // ── Diff helpers ─────────────────────────────────────────────────────
 
 /// Compute the diff, recursing into sub-trees only when `recursive` is set.
+/// When `show_trees` is true, also emit DiffEntry for tree objects.
 fn diff_maybe_recursive(
     odb: &Odb,
     old_tree: Option<&ObjectId>,
     new_tree: Option<&ObjectId>,
     recursive: bool,
+    show_trees: bool,
 ) -> Result<Vec<DiffEntry>> {
-    if recursive {
+    if show_trees {
+        diff_trees_with_tree_entries(odb, old_tree, new_tree, "").map_err(Into::into)
+    } else if recursive {
         diff_trees(odb, old_tree, new_tree, "").map_err(Into::into)
     } else {
         diff_trees_toplevel(odb, old_tree, new_tree)
