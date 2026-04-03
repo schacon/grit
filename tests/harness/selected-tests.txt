@@ -1143,3 +1143,7 @@ tests/t4043-diff-rename-binary.sh
 tests/t4020-diff-external.sh
 tests/t4024-diff-optimize-common.sh
 tests/t4027-diff-submodule.sh
+tests/t4028-format-patch-mime-headers.sh
+tests/t4036-format-patch-signer-mime.sh
+tests/t4066-diff-emit-delay.sh
+tests/t4057-diff-combined-paths.sh
