@@ -1283,11 +1283,11 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
 
             if i < lines.len() && lines[i].starts_with("--- ") {
                 let old_p = &lines[i]["--- ".len()..];
-                fp.old_path = Some(strip_ab_prefix(old_p));
+                fp.old_path = Some(old_p.to_string());
                 i += 1;
                 if i < lines.len() && lines[i].starts_with("+++ ") {
                     let new_p = &lines[i]["+++ ".len()..];
-                    fp.new_path = Some(strip_ab_prefix(new_p));
+                    fp.new_path = Some(new_p.to_string());
                     i += 1;
                 }
             }
@@ -1308,19 +1308,20 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
 }
 
 fn split_diff_git_paths(s: &str) -> Option<(String, String)> {
+    // Keep raw paths (with a/ b/ prefix) so -p<n> stripping works correctly.
     if let Some(pos) = s.find(" b/") {
         let a = &s[..pos];
         let b = &s[pos + 1..];
-        return Some((strip_ab_prefix(a), strip_ab_prefix(b)));
+        return Some((a.to_string(), b.to_string()));
     }
     if s.starts_with("a/") {
         if let Some(pos) = s.find(" /dev/null") {
             let a = &s[..pos];
-            return Some((strip_ab_prefix(a), "/dev/null".to_string()));
+            return Some((a.to_string(), "/dev/null".to_string()));
         }
     }
     if let Some(b) = s.strip_prefix("/dev/null ") {
-        return Some(("/dev/null".to_string(), strip_ab_prefix(b)));
+        return Some(("/dev/null".to_string(), b.to_string()));
     }
     None
 }
