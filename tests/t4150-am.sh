@@ -636,20 +636,26 @@ test_expect_success 'am --resolved works' '
 	test_cmp expected another
 '
 
-test_expect_failure 'am --resolved fails if index has no changes' '
+test_expect_success 'am --resolved fails if index has no changes' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout lorem2^^ &&
+	git checkout first &&
 	test_must_fail git am lorem-move.patch &&
 	test_path_is_dir .git/rebase-apply &&
-	test_cmp_rev lorem2^^ HEAD &&
+	test_cmp_rev first HEAD &&
 	test_must_fail git am --continue &&
 	test_path_is_dir .git/rebase-apply &&
-	test_cmp_rev lorem2^^ HEAD
+	test_cmp_rev first HEAD
 '
 
-test_expect_failure 'am --resolved fails if index has unmerged entries' '
-	false
+test_expect_success 'am --resolved fails if index has unmerged entries' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_must_fail git am lorem-move.patch &&
+	test_path_is_dir .git/rebase-apply &&
+	test_must_fail git am --continue 2>err &&
+	git am --abort
 '
 
 test_expect_success 'am takes patches from a Pine mailbox' '
