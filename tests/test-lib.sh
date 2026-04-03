@@ -82,17 +82,33 @@ EOF
 exec "$GUST_BIN" "\$@"
 EOF
 	chmod +x "$TRASH_DIRECTORY/.bin/grit"
-	# Prepend .bin to PATH so every subshell sees 'git' → grit
+	# Prepend .bin to PATH so every subshell sees 'git' -> grit
 	export PATH="$TRASH_DIRECTORY/.bin:$PATH"
 	# cd into trash so each test starts with a clean cwd
 	cd "$TRASH_DIRECTORY" || exit 1
+	# initialise a git repo like upstream test-lib does
+	"$GUST_BIN" init -q || exit 1
 }
 
-setup_trash
-
-# Allow tests to use $HOME
+# Allow tests to use $HOME (set before setup_trash so git config works)
 HOME="$TRASH_DIRECTORY"
 export HOME
+
+# Default author/committer identity for tests
+GIT_AUTHOR_NAME="Test Author"
+GIT_AUTHOR_EMAIL="test@example.com"
+GIT_COMMITTER_NAME="Test Committer"
+GIT_COMMITTER_EMAIL="test@example.com"
+export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+
+# GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME support (before init)
+if test -n "$GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME"
+then
+	mkdir -p "$TRASH_DIRECTORY"
+	HOME="$TRASH_DIRECTORY" "$GUST_BIN" config --global init.defaultBranch "$GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME"
+fi
+
+setup_trash
 
 # Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"
@@ -102,22 +118,70 @@ else
 	GIT_QUIET=
 fi
 
+# Common constants
+ZERO_OID=0000000000000000000000000000000000000000
+SQ="'"
+LF='
+'
+export ZERO_OID SQ LF
+
 # ── helpers used by test bodies ──────────────────────────────────────────────
+
+test_write_lines () {
+	printf '%s\n' "$@"
+}
+
+test_grep () {
+	local negate=""
+	if test "$1" = "!"
+	then
+		negate="!"
+		shift
+	fi
+	if test "$1" = "-e"
+	then
+		shift
+	fi
+	if test -n "$negate"
+	then
+		! grep "$@"
+	else
+		grep "$@"
+	fi
+}
+
+test_config () {
+	git config "$1" "$2" &&
+	test_when_finished "git config --unset '$1'"
+}
 
 test_path_is_file () { test -f "$1"; }
 test_path_is_dir  () { test -d "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
 
-# test_line_count OP N FILE — assert wc -l $FILE $OP $N (e.g., = 1)
+# test_line_count OP N FILE
 test_line_count () {
 	local op="$1" count="$2" file="$3"
 	local actual
 	actual=$(wc -l <"$file")
-	test "$actual" "$op" "$count"
+	actual=$(echo "$actual" | tr -d ' ')
+	if test "$actual" "$op" "$count"
+	then
+		return 0
+	else
+		echo >&2 "test_line_count: expected $count lines ($op), got $actual in '$file'"
+		return 1
+	fi
 }
 
-# test_must_be_empty FILE — assert FILE has zero bytes
-test_must_be_empty () { test ! -s "$1"; }
+test_must_be_empty () {
+	if test -s "$1"
+	then
+		echo >&2 "test_must_be_empty: file '$1' is not empty"
+		return 1
+	fi
+	return 0
+}
 
 test_have_prereq () {
 	case "$1" in
@@ -211,30 +275,13 @@ test_expect_failure () {
 }
 
 test_when_finished () {
-	# Register a command to run when the current test's subshell exits.
-	# Since each test_expect_success body runs in its own subshell, an EXIT
-	# trap is the right hook.  Multiple calls accumulate.
 	_twf_cmd="${_twf_cmd:+${_twf_cmd}; }$*"
 	trap 'eval "$_twf_cmd"' EXIT
 }
 
-test_must_be_empty () {
-	if test -s "$1"
-	then
-		echo "file '$1' is not empty"
-		cat "$1"
-		return 1
-	fi
-}
-
 test_must_fail () {
 	set +e
-	if test "${TEST_HIDE_EXPECTED_FAIL_STDERR:-0}" = "1" && test -t 2
-	then
-		"$@" 2>/dev/null
-	else
-		"$@"
-	fi
+	"$@"
 	status=$?
 	set -e
 	test $status -ne 0
@@ -252,32 +299,6 @@ test_expect_code () {
 		return 0
 	else
 		echo >&2 "test_expect_code: expected exit code $expected_code, got $actual_code from: $*"
-		return 1
-	fi
-}
-
-test_must_be_empty () {
-	if test -s "$1"
-	then
-		echo >&2 "test_must_be_empty: file '$1' is not empty"
-		return 1
-	fi
-	return 0
-}
-
-test_line_count () {
-	local op="$1"
-	local count="$2"
-	local file="$3"
-	local actual
-	actual=$(wc -l <"$file")
-	# trim whitespace
-	actual=$(echo "$actual" | tr -d ' ')
-	if test "$actual" "$op" "$count"
-	then
-		return 0
-	else
-		echo >&2 "test_line_count: expected $count lines ($op), got $actual in '$file'"
 		return 1
 	fi
 }
