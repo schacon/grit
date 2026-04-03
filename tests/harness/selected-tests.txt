@@ -982,3 +982,7 @@ t3402-rebase-merge.sh
 t3406-rebase-message.sh
 t3407-rebase-abort.sh
 t3404-rebase-interactive.sh
+t3303-notes-subtrees.sh
+t3304-notes-mixed.sh
+t3305-notes-fanout.sh
+t3306-notes-prune.sh
