@@ -160,15 +160,20 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
     } else {
-        // No command specified — show general usage
-        let exe = std::env::current_exe().unwrap_or_else(|_| "grit".into());
-        let status = std::process::Command::new(&exe).arg("--help").status();
-        match status {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                writeln!(io::stderr(), "error: {e}")?;
-                std::process::exit(1);
-            }
+        // No command specified — show general usage directly
+        writeln!(out, "usage: grit <command> [<args>]")?;
+        writeln!(out)?;
+        writeln!(out, "These are common grit commands:")?;
+        writeln!(out)?;
+        writeln!(out, "Commands:")?;
+        for cmd in ALL_COMMANDS {
+            writeln!(out, "   {cmd}")?;
         }
+        writeln!(out)?;
+        writeln!(
+            out,
+            "See 'grit help <command>' or 'grit <command> --help' for more information."
+        )?;
+        Ok(())
     }
 }
