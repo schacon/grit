@@ -195,10 +195,11 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     // Walk commits
+    let effective_pathspecs = if args.follow { &[][..] } else { &args.pathspecs[..] };
     let commits = walk_commits(
         &repo.odb,
         &start_oids,
-        args.max_count,
+        if args.follow { None } else { args.max_count }, // follow needs full walk for rename tracking
         args.skip,
         args.first_parent,
         author_re.as_ref(),
@@ -206,8 +207,15 @@ pub fn run(args: Args) -> Result<()> {
         grep_re.as_ref(),
         args.no_merges,
         args.merges,
-        &args.pathspecs,
+        effective_pathspecs,
     )?;
+
+    // Apply --follow: filter commits and track renames
+    let commits = if args.follow && !args.pathspecs.is_empty() {
+        follow_filter(&repo.odb, commits, &args.pathspecs[0], args.max_count)?
+    } else {
+        commits
+    };
 
     // Apply --diff-filter
     let commits = if let Some(ref filter) = args.diff_filter {
@@ -1399,4 +1407,73 @@ fn commit_has_diff_status(
         }
     }
     Ok(false)
+}
+
+/// Filter commits by following a file across renames.
+/// Returns only commits that touch the tracked file, updating the path
+/// when renames are detected.
+fn follow_filter(
+    odb: &Odb,
+    commits: Vec<(ObjectId, CommitInfo)>,
+    initial_path: &str,
+    max_count: Option<usize>,
+) -> Result<Vec<(ObjectId, CommitInfo)>> {
+    use grit_lib::diff::detect_renames;
+
+    let mut tracked_path = initial_path.to_string();
+    let mut result = Vec::new();
+
+    for (oid, info) in commits {
+        let parent_tree = if let Some(parent) = info.parents.first() {
+            let pobj = odb.read(parent)?;
+            let pc = parse_commit(&pobj.data)?;
+            Some(pc.tree)
+        } else {
+            None
+        };
+
+        let raw_entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
+        let entries = detect_renames(odb, raw_entries, 50);
+
+        let mut touches = false;
+        for entry in &entries {
+            match entry.status {
+                DiffStatus::Renamed => {
+                    // Check if the new path matches our tracked path
+                    if let Some(new_path) = entry.new_path.as_deref() {
+                        if new_path == tracked_path {
+                            touches = true;
+                            // Update tracked path to the old name for older commits
+                            if let Some(old_path) = entry.old_path.as_deref() {
+                                tracked_path = old_path.to_string();
+                            }
+                        }
+                    }
+                    // Also check old path
+                    if let Some(old_path) = entry.old_path.as_deref() {
+                        if old_path == tracked_path {
+                            touches = true;
+                        }
+                    }
+                }
+                _ => {
+                    let path = entry.path();
+                    if path == tracked_path {
+                        touches = true;
+                    }
+                }
+            }
+        }
+
+        if touches {
+            result.push((oid, info));
+            if let Some(max) = max_count {
+                if result.len() >= max {
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
