@@ -111,6 +111,10 @@ pub fn run(args: Args) -> Result<()> {
 
     // Case: checkout -B <name> [<start_point>] (force create/reset)
     if let Some(ref force_branch_name) = args.force_branch {
+        // -B takes at most one positional arg (start point)
+        if !paths.is_empty() || args.rest.len() > 1 {
+            bail!("too many arguments for -B");
+        }
         let result = force_create_and_switch_branch(&repo, force_branch_name, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
             maybe_setup_tracking(&repo, force_branch_name, target.as_deref(), args.track)?;
@@ -120,6 +124,10 @@ pub fn run(args: Args) -> Result<()> {
 
     // Case 1: checkout -b <new_branch> [<start_point>]
     if let Some(ref new_branch_name) = args.new_branch {
+        // -b takes at most one positional arg (start point)
+        if !paths.is_empty() || args.rest.len() > 1 {
+            bail!("too many arguments for -b");
+        }
         let result = create_and_switch_branch(&repo, new_branch_name, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
             maybe_setup_tracking(&repo, new_branch_name, target.as_deref(), args.track)?;
@@ -320,8 +328,8 @@ fn create_and_switch_branch(
     let head = resolve_head(&repo.git_dir)?;
     let target_tree = commit_to_tree(repo, &start_oid)?;
 
-    // Update working tree if start point differs from current HEAD
-    if head.oid() != Some(&start_oid) {
+    // Update working tree if start point differs from current HEAD, or if force
+    if head.oid() != Some(&start_oid) || force {
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
 
@@ -356,6 +364,7 @@ fn force_create_and_switch_branch(
     force: bool,
 ) -> Result<()> {
     let branch_ref = format!("refs/heads/{name}");
+    let branch_existed = refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok();
 
     // Resolve start point (default: HEAD)
     let start_oid = match start {
@@ -372,10 +381,20 @@ fn force_create_and_switch_branch(
     let head = resolve_head(&repo.git_dir)?;
     let target_tree = commit_to_tree(repo, &start_oid)?;
 
-    // Update working tree if start point differs from current HEAD
-    if head.oid() != Some(&start_oid) {
+    // Update working tree if start point differs from current HEAD, or if force
+    if head.oid() != Some(&start_oid) || force {
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
+
+    // Write reflog before updating refs
+    let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let from_desc = match &head {
+        HeadState::Branch { short_name, .. } => short_name.clone(),
+        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+        HeadState::Invalid => "unknown".to_string(),
+    };
+    let msg = format!("checkout: moving from {} to {}", from_desc, name);
+    write_checkout_reflog(repo, &head, &old_oid, &start_oid, &msg);
 
     // Create or overwrite the branch ref
     refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
@@ -386,8 +405,11 @@ fn force_create_and_switch_branch(
         format!("ref: {branch_ref}\n"),
     )?;
 
-    // Message depends on whether branch existed
-    checkout_eprintln!("Switched to and reset branch '{}'", name);
+    if branch_existed {
+        checkout_eprintln!("Switched to and reset branch '{}'", name);
+    } else {
+        checkout_eprintln!("Switched to a new branch '{}'", name);
+    }
     Ok(())
 }
 
@@ -544,6 +566,56 @@ fn switch_to_tree(
     // Dirty worktree safety check (unless forced)
     if !force {
         check_dirty_worktree(repo, &old_index, &new_index, &work_tree, _head)?;
+
+        // Preserve staged changes: entries in old_index that differ from the
+        // HEAD tree and don't conflict with the new tree should be carried
+        // through the branch switch.
+        let new_paths: HashSet<Vec<u8>> = new_index.entries.iter()
+            .filter(|e| e.stage() == 0)
+            .map(|e| e.path.clone())
+            .collect();
+
+        let head_tree_oid_map: HashMap<Vec<u8>, ObjectId> = (|| -> Result<HashMap<Vec<u8>, ObjectId>> {
+            let head_oid = _head.oid().ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+            let head_tree = commit_to_tree(repo, head_oid)?;
+            let entries = tree_to_flat_entries(repo, &head_tree, "")?;
+            Ok(entries.into_iter().map(|e| (e.path.clone(), e.oid)).collect())
+        })().unwrap_or_default();
+
+        for old_entry in &old_index.entries {
+            if old_entry.stage() != 0 { continue; }
+
+            let in_head = head_tree_oid_map.get(&old_entry.path);
+            let is_staged = match in_head {
+                Some(hoid) => hoid != &old_entry.oid,
+                None => true,
+            };
+            if !is_staged {
+                continue; // index matches HEAD, nothing special to preserve
+            }
+
+            if new_paths.contains(&old_entry.path) {
+                // The target tree has this file. Check if the target version
+                // matches the HEAD version (non-conflicting staged change).
+                let target_entry = new_index.entries.iter()
+                    .find(|e| e.stage() == 0 && e.path == old_entry.path);
+                let target_matches_head = match (target_entry, in_head) {
+                    (Some(te), Some(hoid)) => te.oid == *hoid,
+                    _ => false,
+                };
+                if target_matches_head {
+                    // Non-conflicting: the target has the same as HEAD.
+                    // Preserve the staged version in the new index.
+                    new_index.add_or_replace(old_entry.clone());
+                }
+                // If target differs from HEAD, that's a real conflict
+                // (already caught by check_dirty_worktree).
+            } else {
+                // File not in target tree: preserve staged change.
+                new_index.add_or_replace(old_entry.clone());
+            }
+        }
+        new_index.sort();
     }
 
     // Perform the actual working tree update
@@ -647,22 +719,42 @@ fn check_dirty_worktree(
                 }
                 // Check if the target also changes this file
                 // Check if the staged content differs from the target.
-                // If the staged content matches the target, there's no data loss.
+                // A real conflict exists only when:
+                // 1. The file is staged (index ≠ HEAD) — checked above
+                // 2. The target also changes the file (target ≠ HEAD)
+                // 3. The staged content differs from the target (index ≠ target)
                 let new_entry = new_map.get(path_bytes.as_slice());
+
+                // If staged content matches the target, no data loss.
                 let staged_matches_target = match new_entry {
                     Some(ne) => ne.oid == old_entry.oid,
-                    None => false, // target deletes the file, staged content would be lost
+                    None => false,
                 };
                 if staged_matches_target {
-                    continue; // safe: staged content is exactly what the target has
+                    continue;
                 }
+
+                // Check if the target actually changes this file from HEAD
                 let target_changes = match (head_oid, new_entry) {
                     (Some(hoid), Some(ne)) => ne.oid != *hoid,
-                    (Some(_), None) => true,  // target deletes it
-                    (None, Some(_)) => true,  // both add it
-                    (None, None) => false,
+                    (Some(_), None) => true,  // target removes the file
+                    (None, Some(_)) => true,  // target adds a file we also added
+                    (None, None) => false,    // neither HEAD nor target have it
                 };
-                if target_changes {
+                if !target_changes {
+                    continue; // target doesn't touch this file, staged change is safe
+                }
+
+                // Both staged and target change the file from HEAD.
+                // If the target removes the file but we have staged changes,
+                // git allows this (file is preserved in index/worktree).
+                // Only block if target adds/changes to different content.
+                if new_entry.is_none() && head_oid.is_some() {
+                    continue; // target removes, but our staged version can be carried
+                }
+
+                // Real conflict: both staged and target change the file differently.
+                if true {
                     staged_conflicts.push(String::from_utf8_lossy(path_bytes).into_owned());
                 }
             }
@@ -1202,10 +1294,14 @@ fn checkout_index_to_worktree(
             continue;
         }
 
-        // Skip unchanged entries (same OID and mode)
+        // Skip unchanged entries (same OID and mode) — but only if file exists
         if let Some(old_entry) = old_map.get(entry.path.as_slice()) {
             if old_entry.oid == entry.oid && old_entry.mode == entry.mode {
-                continue;
+                let abs_path = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+                if abs_path.exists() || abs_path.is_symlink() {
+                    continue;
+                }
+                // File was deleted from worktree, restore it
             }
         }
 
