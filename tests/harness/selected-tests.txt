@@ -992,3 +992,12 @@ t3310-notes-merge-manual-resolve.sh
 t3311-notes-merge-fanout.sh
 t3320-notes-merge-worktrees.sh
 t3321-notes-stripspace.sh
+t3010-ls-files-killed-modified.sh
+t3011-common-prefixes-and-directory-traversal.sh
+t3040-subprojects-basic.sh
+t3050-subprojects-fetch.sh
+t3207-branch-submodule.sh
+t3302-notes-index-expensive.sh
+t3401-rebase-and-am-rename.sh
+t3412-rebase-root.sh
+t3415-rebase-autosquash.sh
