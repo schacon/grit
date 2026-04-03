@@ -136,7 +136,7 @@ test_expect_success 'restore state after rm test' '
 # Section 5: write-tree --prefix (known stack overflow bug in grit)
 ###########################################################################
 
-test_expect_failure 'write-tree --prefix for subdirectory' '
+test_expect_success 'write-tree --prefix for subdirectory' '
 	cd repo &&
 	tree=$(grit write-tree --prefix sub/) &&
 	grit cat-file -t "$tree" >actual &&
@@ -144,7 +144,7 @@ test_expect_failure 'write-tree --prefix for subdirectory' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'write-tree --prefix matches git --prefix' '
+test_expect_success 'write-tree --prefix matches git --prefix' '
 	cd repo &&
 	grit_tree=$(grit write-tree --prefix sub/) &&
 	git_tree=$("$REAL_GIT" write-tree --prefix sub/) &&

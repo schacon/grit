@@ -74,7 +74,7 @@ test_expect_failure 'apply a patch outside repository' '
 	rm -rf "$tmpdir"
 '
 
-test_expect_failure 'diff --no-index outside repository' '
+test_expect_success 'diff --no-index outside repository' '
 	echo one >one &&
 	echo two >two &&
 	tmpdir=$(mktemp -d) &&

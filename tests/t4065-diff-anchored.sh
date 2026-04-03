@@ -31,7 +31,7 @@ test_expect_failure '--anchored multiple (not implemented: needs --no-index)' '
 	grep "^+d" diff
 '
 
-test_expect_failure '--anchored with nonexistent line has no effect (not implemented)' '
+test_expect_success '--anchored with nonexistent line has no effect (not implemented)' '
 	printf "a\nb\nc\n" >pre &&
 	printf "c\na\nb\n" >post &&
 	test_expect_code 1 git diff --no-index --anchored=x pre post >diff &&
@@ -39,7 +39,7 @@ test_expect_failure '--anchored with nonexistent line has no effect (not impleme
 	grep "^+c" diff
 '
 
-test_expect_failure '--anchored with non-unique line has no effect (not implemented)' '
+test_expect_success '--anchored with non-unique line has no effect (not implemented)' '
 	printf "a\nb\nc\nd\ne\nc\n" >pre &&
 	printf "c\na\nb\nc\nd\ne\n" >post &&
 	test_expect_code 1 git diff --no-index --anchored=c pre post >diff &&

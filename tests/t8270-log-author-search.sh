@@ -90,7 +90,7 @@ test_expect_success 'log --format=%H with author produces valid OIDs' '
 # Section 2: --author filtering (not yet implemented — test_expect_failure)
 ###########################################################################
 
-test_expect_failure 'log --author=Alice shows only commits by Alice' '
+test_expect_success 'log --author=Alice shows only commits by Alice' '
 	cd repo &&
 	git log --author=Alice --format="%an" >actual &&
 	test $(wc -l <actual) -eq 3 &&
@@ -98,7 +98,7 @@ test_expect_failure 'log --author=Alice shows only commits by Alice' '
 	! grep "Charlie" actual
 '
 
-test_expect_failure 'log --author=Bob shows only commits by Bob' '
+test_expect_success 'log --author=Bob shows only commits by Bob' '
 	cd repo &&
 	git log --author=Bob --format="%an" >actual &&
 	test $(wc -l <actual) -eq 1 &&
@@ -106,7 +106,7 @@ test_expect_failure 'log --author=Bob shows only commits by Bob' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'log --author matches by email address' '
+test_expect_success 'log --author matches by email address' '
 	cd repo &&
 	git log --author=charlie@example.com --format="%an" >actual &&
 	test $(wc -l <actual) -eq 1 &&
@@ -114,14 +114,14 @@ test_expect_failure 'log --author matches by email address' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'log --author with partial name match' '
+test_expect_success 'log --author with partial name match' '
 	cd repo &&
 	git log --author=Anderson --format="%an" >actual &&
 	test $(wc -l <actual) -eq 2 &&
 	grep "Alice Anderson" actual
 '
 
-test_expect_failure 'log --author with partial email match' '
+test_expect_success 'log --author with partial email match' '
 	cd repo &&
 	git log --author=alice --format="%ae" >actual &&
 	test $(wc -l <actual) -eq 3
@@ -134,25 +134,25 @@ test_expect_failure 'log --author is case-insensitive by default' '
 	test_cmp actual_lower actual_upper
 '
 
-test_expect_failure 'log --author with no match produces empty output' '
+test_expect_success 'log --author with no match produces empty output' '
 	cd repo &&
 	git log --author=Nonexistent --format="%an" >actual &&
 	test_must_be_empty actual
 '
 
-test_expect_failure 'log --author combined with -n limits results' '
+test_expect_success 'log --author combined with -n limits results' '
 	cd repo &&
 	git log --author=Alice -n1 --format="%an" >actual &&
 	test $(wc -l <actual) -eq 1
 '
 
-test_expect_failure 'log --author combined with --oneline' '
+test_expect_success 'log --author combined with --oneline' '
 	cd repo &&
 	git log --author=Bob --oneline >actual &&
 	test $(wc -l <actual) -eq 1
 '
 
-test_expect_failure 'log --author combined with --reverse' '
+test_expect_success 'log --author combined with --reverse' '
 	cd repo &&
 	git log --author=Alice --reverse --format="%s" >actual &&
 	head -1 actual >first &&
@@ -238,13 +238,13 @@ test_expect_success 'author and committer are distinct for each commit' '
 # Section 5: Edge cases
 ###########################################################################
 
-test_expect_failure 'log --author with regex metacharacters' '
+test_expect_success 'log --author with regex metacharacters' '
 	cd repo &&
 	git log --author="Alice.*Anderson" --format="%an" >actual &&
 	test $(wc -l <actual) -eq 2
 '
 
-test_expect_failure 'log --author on empty repository produces no output' '
+test_expect_success 'log --author on empty repository produces no output' '
 	git init empty-repo &&
 	cd empty-repo &&
 	git log --author=Anyone --format="%an" >actual 2>/dev/null &&

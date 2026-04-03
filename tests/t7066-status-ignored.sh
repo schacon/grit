@@ -48,39 +48,39 @@ test_expect_success 'create ignored and untracked files' '
 
 # ── Basic status should not show ignored files ──────────────────────────────
 
-test_expect_failure 'status does not show *.o files (ignored by pattern)' '
+test_expect_success 'status does not show *.o files (ignored by pattern)' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	! grep "main.o" ../actual &&
 	! grep "util.o" ../actual
 '
 
-test_expect_failure 'status does not show *.a files (ignored by pattern)' '
+test_expect_success 'status does not show *.a files (ignored by pattern)' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	! grep "lib.a" ../actual
 '
 
-test_expect_failure 'status does not show build/ directory (ignored)' '
+test_expect_success 'status does not show build/ directory (ignored)' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	! grep "build/" ../actual
 '
 
-test_expect_failure 'status does not show tmp/ directory (ignored)' '
+test_expect_success 'status does not show tmp/ directory (ignored)' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	! grep "tmp/" ../actual
 '
 
-test_expect_failure 'status does not show *.log files (ignored)' '
+test_expect_success 'status does not show *.log files (ignored)' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	! grep "error.log" ../actual &&
 	! grep "debug.log" ../actual
 '
 
-test_expect_failure 'status shows only non-ignored untracked files' '
+test_expect_success 'status shows only non-ignored untracked files' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	grep "?? TODO" ../actual &&
@@ -91,32 +91,32 @@ test_expect_failure 'status shows only non-ignored untracked files' '
 
 # ── status --ignored should show ignored files ──────────────────────────────
 
-test_expect_failure 'status --ignored shows *.o in ignored section' '
+test_expect_success 'status --ignored shows *.o in ignored section' '
 	cd repo &&
 	git status --porcelain --ignored >../actual &&
 	grep "!! main.o" ../actual &&
 	grep "!! util.o" ../actual
 '
 
-test_expect_failure 'status --ignored shows *.a in ignored section' '
+test_expect_success 'status --ignored shows *.a in ignored section' '
 	cd repo &&
 	git status --porcelain --ignored >../actual &&
 	grep "!! lib.a" ../actual
 '
 
-test_expect_failure 'status --ignored shows build/ in ignored section' '
+test_expect_success 'status --ignored shows build/ in ignored section' '
 	cd repo &&
 	git status --porcelain --ignored >../actual &&
 	grep "!! build/" ../actual
 '
 
-test_expect_failure 'status --ignored shows tmp/ in ignored section' '
+test_expect_success 'status --ignored shows tmp/ in ignored section' '
 	cd repo &&
 	git status --porcelain --ignored >../actual &&
 	grep "!! tmp/" ../actual
 '
 
-test_expect_failure 'status --ignored shows *.log in ignored section' '
+test_expect_success 'status --ignored shows *.log in ignored section' '
 	cd repo &&
 	git status --porcelain --ignored >../actual &&
 	grep "!! error.log" ../actual &&
@@ -142,13 +142,13 @@ test_expect_success 'setup: nested .gitignore' '
 	git commit -m "add src with nested gitignore"
 '
 
-test_expect_failure 'status does not show *.tmp in src (nested gitignore)' '
+test_expect_success 'status does not show *.tmp in src (nested gitignore)' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	! grep "scratch.tmp" ../actual
 '
 
-test_expect_failure 'status --ignored shows *.tmp in src' '
+test_expect_success 'status --ignored shows *.tmp in src' '
 	cd repo &&
 	git status --porcelain --ignored >../actual &&
 	grep "!! src/scratch.tmp" ../actual
@@ -177,7 +177,7 @@ test_expect_success 'status shows important.log as untracked' '
 	grep "important.log" ../actual
 '
 
-test_expect_failure 'status still hides non-negated *.log files' '
+test_expect_success 'status still hides non-negated *.log files' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	! grep "error.log" ../actual &&
@@ -277,14 +277,14 @@ test_expect_success 'setup: gitignore with comments and blank lines' '
 	git commit -m "gitignore with comments"
 '
 
-test_expect_failure 'status still ignores *.o with comments in gitignore' '
+test_expect_success 'status still ignores *.o with comments in gitignore' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	! grep "main.o" ../actual &&
 	! grep "util.o" ../actual
 '
 
-test_expect_failure 'status still ignores build/ with comments in gitignore' '
+test_expect_success 'status still ignores build/ with comments in gitignore' '
 	cd repo &&
 	git status --porcelain >../actual &&
 	! grep "build/" ../actual

@@ -133,7 +133,7 @@ test_expect_success 'ls-files -z entry count matches' '
 # Section 5: --others (untracked) — grit currently returns all files
 ###########################################################################
 
-test_expect_failure 'ls-files --others shows only untracked files' '
+test_expect_success 'ls-files --others shows only untracked files' '
 	cd repo &&
 	echo "untracked" >untracked.txt &&
 	grit ls-files --others >actual &&
@@ -141,14 +141,14 @@ test_expect_failure 'ls-files --others shows only untracked files' '
 	! grep "a.txt" actual
 '
 
-test_expect_failure 'ls-files --others matches git' '
+test_expect_success 'ls-files --others matches git' '
 	cd repo &&
 	grit ls-files --others >grit_out &&
 	"$REAL_GIT" ls-files --others >git_out &&
 	test_cmp git_out grit_out
 '
 
-test_expect_failure 'ls-files --others includes untracked file (grit bug)' '
+test_expect_success 'ls-files --others includes untracked file (grit bug)' '
 	cd repo &&
 	echo "untracked" >untracked.txt &&
 	grit ls-files --others >actual &&
@@ -159,7 +159,7 @@ test_expect_failure 'ls-files --others includes untracked file (grit bug)' '
 # Section 6: --modified (grit currently lists all files, not just modified)
 ###########################################################################
 
-test_expect_failure 'ls-files --modified on clean repo is empty' '
+test_expect_success 'ls-files --modified on clean repo is empty' '
 	cd repo &&
 	grit ls-files --modified >actual &&
 	test_must_be_empty actual
@@ -188,7 +188,7 @@ test_expect_success 'restore a.txt after modified test' '
 # Section 7: --deleted (grit currently lists all files, not just deleted)
 ###########################################################################
 
-test_expect_failure 'ls-files --deleted on clean repo is empty' '
+test_expect_success 'ls-files --deleted on clean repo is empty' '
 	cd repo &&
 	grit ls-files --deleted >actual &&
 	test_must_be_empty actual
@@ -328,7 +328,7 @@ test_expect_success 'ls-files -z --stage with pathspec' '
 	cmp grit_out git_out
 '
 
-test_expect_failure 'ls-files --others with pathspec matches git' '
+test_expect_success 'ls-files --others with pathspec matches git' '
 	cd repo &&
 	echo "extra" >sub/extra.txt &&
 	grit ls-files --others sub/ >grit_out &&

@@ -152,7 +152,7 @@ test_expect_success 'commit -q suppresses output' '
 # ── -s (signoff) ────────────────────────────────────────────────────────────
 
 # NOTE: grit -s/--signoff does not currently add the trailer
-test_expect_failure 'commit -s adds Signed-off-by trailer' '
+test_expect_success 'commit -s adds Signed-off-by trailer' '
 	cd verbose-repo &&
 	echo "change11" >file.txt &&
 	git add file.txt &&

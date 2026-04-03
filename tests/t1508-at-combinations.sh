@@ -96,7 +96,7 @@ test_expect_success 'switch to main and verify HEAD' '
 	test_cmp expect actual
 '
 
-test_expect_failure '@{1} shows previous reflog entry' '
+test_expect_success '@{1} shows previous reflog entry' '
 	git rev-parse "@{1}" >actual 2>&1 &&
 	test -n "$(cat actual)"
 '
@@ -107,7 +107,7 @@ test_expect_failure '@{-1} refers to previous branch' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'HEAD@{1} shows previous HEAD' '
+test_expect_success 'HEAD@{1} shows previous HEAD' '
 	git rev-parse "HEAD@{1}" >actual 2>&1 &&
 	test -n "$(cat actual)"
 '

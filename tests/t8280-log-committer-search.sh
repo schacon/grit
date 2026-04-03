@@ -93,13 +93,13 @@ test_expect_success 'committer differs from author when explicitly set' '
 # Section 2: --committer filtering (not yet implemented)
 ###########################################################################
 
-test_expect_failure 'log --committer=Dana shows commits by Dana' '
+test_expect_success 'log --committer=Dana shows commits by Dana' '
 	cd repo &&
 	git log --committer=Dana --format="%cn" >actual &&
 	test $(wc -l <actual) -eq 3
 '
 
-test_expect_failure 'log --committer=Eve shows one commit' '
+test_expect_success 'log --committer=Eve shows one commit' '
 	cd repo &&
 	git log --committer=Eve --format="%cn" >actual &&
 	test $(wc -l <actual) -eq 1 &&
@@ -107,7 +107,7 @@ test_expect_failure 'log --committer=Eve shows one commit' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'log --committer matches email address' '
+test_expect_success 'log --committer matches email address' '
 	cd repo &&
 	git log --committer=frank@corp.example.com --format="%cn" >actual &&
 	test $(wc -l <actual) -eq 1 &&
@@ -115,13 +115,13 @@ test_expect_failure 'log --committer matches email address' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'log --committer with partial name match' '
+test_expect_success 'log --committer with partial name match' '
 	cd repo &&
 	git log --committer=Developer --format="%cn" >actual &&
 	test $(wc -l <actual) -eq 2
 '
 
-test_expect_failure 'log --committer matches email domain' '
+test_expect_success 'log --committer matches email domain' '
 	cd repo &&
 	git log --committer=corp.example.com --format="%cn" >actual &&
 	test $(wc -l <actual) -eq 1
@@ -134,25 +134,25 @@ test_expect_failure 'log --committer is case-insensitive' '
 	test_cmp lower upper
 '
 
-test_expect_failure 'log --committer with no match produces empty output' '
+test_expect_success 'log --committer with no match produces empty output' '
 	cd repo &&
 	git log --committer=Nobody --format="%cn" >actual &&
 	test_must_be_empty actual
 '
 
-test_expect_failure 'log --committer combined with -n limits results' '
+test_expect_success 'log --committer combined with -n limits results' '
 	cd repo &&
 	git log --committer=Dana -n1 --format="%cn" >actual &&
 	test $(wc -l <actual) -eq 1
 '
 
-test_expect_failure 'log --committer combined with --oneline' '
+test_expect_success 'log --committer combined with --oneline' '
 	cd repo &&
 	git log --committer=Eve --oneline >actual &&
 	test $(wc -l <actual) -eq 1
 '
 
-test_expect_failure 'log --committer combined with --reverse' '
+test_expect_success 'log --committer combined with --reverse' '
 	cd repo &&
 	git log --committer=Dana --reverse --format="%s" >actual &&
 	head -1 actual >first &&
@@ -160,7 +160,7 @@ test_expect_failure 'log --committer combined with --reverse' '
 	test_cmp expect first
 '
 
-test_expect_failure 'log --committer combined with --skip' '
+test_expect_success 'log --committer combined with --skip' '
 	cd repo &&
 	git log --committer=Dana --skip=1 --format="%cn" >actual &&
 	test $(wc -l <actual) -eq 2
@@ -238,7 +238,7 @@ test_expect_success 'committer count matches total commits' '
 # Section 5: Edge cases
 ###########################################################################
 
-test_expect_failure 'log --committer with regex metacharacters' '
+test_expect_success 'log --committer with regex metacharacters' '
 	cd repo &&
 	git log --committer="Dana.*" --format="%cn" >actual &&
 	test $(wc -l <actual) -eq 3
