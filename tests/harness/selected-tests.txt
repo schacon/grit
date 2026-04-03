@@ -1137,3 +1137,4 @@ tests/t1515-rev-parse-outside-repo.sh
 tests/t1517-outside-repo.sh
 tests/t4014-format-patch.sh
 tests/t4021-format-patch-numbered.sh
+tests/t1800-hook.sh
