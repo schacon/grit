@@ -80,7 +80,7 @@ pub fn run(args: Args) -> Result<()> {
                     .get(i)
                     .ok_or_else(|| anyhow::anyhow!("--git-path requires an argument"))?;
                 if let Some(current) = discover_optional(None)? {
-                    let resolved = current.git_dir.join(path_arg);
+                    let resolved = resolve_git_path(&current.git_dir, path_arg);
                     println!("{}", resolved.display());
                 } else {
                     bail!("not a git repository");
@@ -485,6 +485,27 @@ fn sq_quote_str(s: &str) -> String {
     }
     out.push('\'');
     out
+}
+
+/// Resolve a `--git-path` argument, respecting `core.hooksPath` for
+/// paths starting with `hooks/`.
+fn resolve_git_path(git_dir: &std::path::Path, path_arg: &str) -> std::path::PathBuf {
+    // For hooks/ paths, respect core.hooksPath
+    if path_arg == "hooks" || path_arg.starts_with("hooks/") {
+        if let Ok(cfg) = grit_lib::config::ConfigSet::load(Some(git_dir), false) {
+            if let Some(hooks_path) = cfg.get("core.hooksPath") {
+                if !hooks_path.is_empty() {
+                    let hooks_dir = std::path::Path::new(&hooks_path);
+                    if path_arg == "hooks" {
+                        return hooks_dir.to_path_buf();
+                    } else if let Some(rest) = path_arg.strip_prefix("hooks/") {
+                        return hooks_dir.join(rest);
+                    }
+                }
+            }
+        }
+    }
+    git_dir.join(path_arg)
 }
 
 fn normalize_slash_path(path: &str) -> String {
