@@ -15,6 +15,10 @@ test_expect_success 'setup: create repo with commits including dual identity' '
 	cd repo &&
 	grit config user.email "alice@example.com" &&
 	grit config user.name "Alice Author" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "first" >file.txt &&
 	grit add file.txt &&
 	test_tick &&
@@ -259,6 +263,8 @@ test_expect_success 'second commit has original author' '
 
 test_expect_success 'second commit has original committer' '
 	cd repo &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	grit log --format="%cn" --skip 1 -n 1 >actual &&
 	echo "Alice Author" >expect &&
 	test_cmp expect actual

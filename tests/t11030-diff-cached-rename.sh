@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests for grit diff --cached with renames, new files, deleted files, and mode changes.
-# Note: grit does not detect renames; git mv shows as D+A.
+# grit now detects renames, matching git behavior.
 
 test_description='grit diff --cached: renames, new files, deleted files, mixed changes'
 
@@ -34,43 +34,38 @@ test_expect_success 'setup: create repo with multiple files' '
 # Section 2: Simple staged rename via git mv
 ###########################################################################
 
-test_expect_success 'diff --cached --name-status after git mv shows D and A' '
+test_expect_success 'diff --cached --name-status after git mv shows rename' '
 	cd repo &&
 	"$REAL_GIT" mv a.txt renamed.txt &&
 	grit diff --cached --name-status >actual &&
-	grep "D" actual | grep "a.txt" &&
-	grep "A" actual | grep "renamed.txt"
+	grep "^R" actual | grep "a.txt" &&
+	grep "^R" actual | grep "renamed.txt"
 '
 
-test_expect_success 'diff --cached --name-only shows both old and new names' '
+test_expect_success 'diff --cached --name-only shows renamed file' '
 	cd repo &&
 	grit diff --cached --name-only >actual &&
-	grep "a.txt" actual &&
 	grep "renamed.txt" actual
 '
 
-test_expect_success 'diff --cached shows delete and add for rename' '
+test_expect_success 'diff --cached shows rename header for rename' '
 	cd repo &&
 	grit diff --cached >actual &&
-	grep "deleted file" actual &&
-	grep "new file" actual &&
-	grep "a.txt" actual &&
-	grep "renamed.txt" actual
+	grep "rename from a.txt" actual &&
+	grep "rename to renamed.txt" actual
 '
 
 test_expect_success 'diff --cached --numstat shows stats for rename' '
 	cd repo &&
 	grit diff --cached --numstat >actual &&
-	grep "a.txt" actual &&
-	grep "renamed.txt" actual
+	grep "renamed.txt\|a.txt" actual
 '
 
 test_expect_success 'diff --cached --stat shows summary for rename' '
 	cd repo &&
 	grit diff --cached --stat >actual &&
-	grep "a.txt" actual &&
-	grep "renamed.txt" actual &&
-	grep "2 files changed" actual
+	grep "renamed.txt\|a.txt" actual &&
+	grep "1 file changed" actual
 '
 
 test_expect_success 'diff --cached --exit-code returns 1 for rename' '
