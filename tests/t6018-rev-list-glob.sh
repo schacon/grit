@@ -41,13 +41,13 @@ test_expect_failure 'rev-list --glob=refs/heads/topic/* lists matching branch co
 	test_cmp expect.sorted actual.sorted
 '
 
-test_expect_failure 'rev-list --glob=refs/tags/* lists all tags' '
+test_expect_success 'rev-list --glob=refs/tags/* lists all tags' '
 	cd repo &&
 	git rev-list --glob="refs/tags/*" >actual &&
 	test $(wc -l <actual | tr -d " ") -ge 3
 '
 
-test_expect_failure 'rev-parse --branches=topic/* resolves topic branches' '
+test_expect_success 'rev-parse --branches=topic/* resolves topic branches' '
 	cd repo &&
 	git rev-parse --branches="topic/*" >actual &&
 	git rev-parse topic/one >expect &&
@@ -57,21 +57,21 @@ test_expect_failure 'rev-parse --branches=topic/* resolves topic branches' '
 	test_cmp expect.sorted actual.sorted
 '
 
-test_expect_failure 'rev-parse --branches (no pattern) resolves all branches' '
+test_expect_success 'rev-parse --branches (no pattern) resolves all branches' '
 	cd repo &&
 	git rev-parse --branches >actual &&
 	count=$(wc -l <actual | tr -d " ") &&
 	test "$count" -ge 4
 '
 
-test_expect_failure 'rev-parse --tags resolves all tags' '
+test_expect_success 'rev-parse --tags resolves all tags' '
 	cd repo &&
 	git rev-parse --tags >actual &&
 	count=$(wc -l <actual | tr -d " ") &&
 	test "$count" -ge 3
 '
 
-test_expect_failure 'rev-parse --tags=v* resolves matching tags' '
+test_expect_success 'rev-parse --tags=v* resolves matching tags' '
 	cd repo &&
 	git rev-parse --tags="v*" >actual &&
 	git rev-parse v1.0 >expect &&
@@ -81,14 +81,14 @@ test_expect_failure 'rev-parse --tags=v* resolves matching tags' '
 	test_cmp expect.sorted actual.sorted
 '
 
-test_expect_failure 'rev-parse --remotes resolves all remote refs' '
+test_expect_success 'rev-parse --remotes resolves all remote refs' '
 	cd repo &&
 	git rev-parse --remotes >actual &&
 	count=$(wc -l <actual | tr -d " ") &&
 	test "$count" -ge 2
 '
 
-test_expect_failure 'rev-parse --remotes=origin/* resolves matching remotes' '
+test_expect_success 'rev-parse --remotes=origin/* resolves matching remotes' '
 	cd repo &&
 	git rev-parse --remotes="origin/*" >actual &&
 	git rev-parse topic/one >expect &&
@@ -98,21 +98,21 @@ test_expect_failure 'rev-parse --remotes=origin/* resolves matching remotes' '
 	test_cmp expect.sorted actual.sorted
 '
 
-test_expect_failure 'rev-list --branches lists commits reachable from all branches' '
+test_expect_success 'rev-list --branches lists commits reachable from all branches' '
 	cd repo &&
 	git rev-list --branches >actual &&
 	count=$(wc -l <actual | tr -d " ") &&
 	test "$count" -ge 4
 '
 
-test_expect_failure 'rev-list --tags lists commits reachable from all tags' '
+test_expect_success 'rev-list --tags lists commits reachable from all tags' '
 	cd repo &&
 	git rev-list --tags >actual &&
 	count=$(wc -l <actual | tr -d " ") &&
 	test "$count" -ge 1
 '
 
-test_expect_failure 'rev-list --remotes lists commits reachable from remotes' '
+test_expect_success 'rev-list --remotes lists commits reachable from remotes' '
 	cd repo &&
 	git rev-list --remotes >actual &&
 	count=$(wc -l <actual | tr -d " ") &&

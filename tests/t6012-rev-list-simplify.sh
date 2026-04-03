@@ -104,47 +104,47 @@ test_expect_success 'rev-list --count with --all' '
 	test $(cat actual) -ge 8
 '
 
-test_expect_failure 'rev-list -- path limits to path-touching commits' '
+test_expect_success 'rev-list -- path limits to path-touching commits' '
 	git rev-list H -- file >actual &&
 	# Commits touching file: A, C, H
 	test_line_count = 3 actual
 '
 
-test_expect_failure 'rev-list -- other limits to other-touching commits' '
+test_expect_success 'rev-list -- other limits to other-touching commits' '
 	git rev-list H -- other >actual &&
 	# Commits touching other: B, D
 	test_line_count = 2 actual
 '
 
-test_expect_failure 'rev-list -- topic-file limits to topic-file commits' '
+test_expect_success 'rev-list -- topic-file limits to topic-file commits' '
 	git rev-list H -- topic-file >actual &&
 	# Commits touching topic-file: F, G (and possibly E merge)
 	test $(wc -l <actual) -ge 2
 '
 
-test_expect_failure 'rev-list with range and path' '
+test_expect_success 'rev-list with range and path' '
 	git rev-list B..H -- file >actual &&
 	# C and H touch file after B
 	test_line_count = 2 actual
 '
 
-test_expect_failure 'rev-list --full-history shows all path-relevant commits' '
+test_expect_success 'rev-list --full-history shows all path-relevant commits' '
 	git rev-list --full-history H -- file >actual &&
 	test $(wc -l <actual) -ge 3
 '
 
-test_expect_failure 'rev-list --full-history --simplify-merges with path' '
+test_expect_success 'rev-list --full-history --simplify-merges with path' '
 	git rev-list --full-history --simplify-merges H -- file >actual &&
 	test $(wc -l <actual) -ge 1
 '
 
-test_expect_failure 'rev-list --sparse shows all commits despite path' '
+test_expect_success 'rev-list --sparse shows all commits despite path' '
 	git rev-list --sparse H -- file >actual &&
 	# sparse does not prune non-matching commits
 	test $(wc -l <actual) -ge 5
 '
 
-test_expect_failure 'rev-list --dense with path (default behavior)' '
+test_expect_success 'rev-list --dense with path (default behavior)' '
 	git rev-list --dense H -- file >actual &&
 	# dense is the default path simplification
 	test $(wc -l <actual) -ge 1
@@ -198,7 +198,7 @@ test_expect_success 'rev-list --all --count includes feature branches' '
 	test $(cat actual) -ge 10
 '
 
-test_expect_failure 'rev-list --simplify-merges removes unnecessary merges' '
+test_expect_success 'rev-list --simplify-merges removes unnecessary merges' '
 	git rev-list --simplify-merges H -- file >actual &&
 	test $(wc -l <actual) -ge 1
 '

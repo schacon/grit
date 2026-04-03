@@ -25,12 +25,19 @@ pub fn run(args: Args) -> Result<()> {
     let mut revision_specs = Vec::new();
     let mut read_stdin = false;
     let mut end_of_options = false;
+    let mut path_mode = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
         let arg = &args.args[i];
         if !end_of_options && arg == "--" {
             end_of_options = true;
+            path_mode = true;
+            i += 1;
+            continue;
+        }
+        if path_mode {
+            options.paths.push(arg.clone());
             i += 1;
             continue;
         }
@@ -53,6 +60,10 @@ pub fn run(args: Args) -> Result<()> {
                 "--no-object-names" => options.no_object_names = true,
                 "--object-names" => options.no_object_names = false,
                 "--boundary" => options.boundary = true,
+                "--full-history" => options.full_history = true,
+                "--sparse" => options.sparse = true,
+                "--dense" => { /* default behavior, no-op */ }
+                "--simplify-merges" => { /* accepted but not fully implemented */ }
                 "--left-right" => options.left_right = true,
                 "--left-only" => options.left_only = true,
                 "--right-only" => options.right_only = true,
@@ -100,6 +111,62 @@ pub fn run(args: Args) -> Result<()> {
                     && arg[1..].chars().all(|ch| ch.is_ascii_digit()) =>
                 {
                     options.max_count = Some(parse_non_negative(&arg[1..], "-<n>")?);
+                }
+                _ if arg.starts_with("--glob=") => {
+                    let pattern = arg.trim_start_matches("--glob=");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, pattern)
+                        .context("failed to list glob refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                "--branches" => {
+                    let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")
+                        .context("failed to list branch refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                _ if arg.starts_with("--branches=") => {
+                    let pattern = arg.trim_start_matches("--branches=");
+                    let full_pattern = format!("refs/heads/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
+                        .context("failed to list branch refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                "--tags" => {
+                    let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/tags/")
+                        .context("failed to list tag refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                _ if arg.starts_with("--tags=") => {
+                    let pattern = arg.trim_start_matches("--tags=");
+                    let full_pattern = format!("refs/tags/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
+                        .context("failed to list tag refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                "--remotes" => {
+                    let matching = grit_lib::refs::list_refs(&repo.git_dir, "refs/remotes/")
+                        .context("failed to list remote refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
+                }
+                _ if arg.starts_with("--remotes=") => {
+                    let pattern = arg.trim_start_matches("--remotes=");
+                    let full_pattern = format!("refs/remotes/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full_pattern)
+                        .context("failed to list remote refs")?;
+                    for (_, oid) in matching {
+                        revision_specs.push(oid.to_hex());
+                    }
                 }
                 _ if arg.starts_with("--min-parents=") => {
                     let value = arg.trim_start_matches("--min-parents=");
@@ -170,21 +237,31 @@ pub fn run(args: Args) -> Result<()> {
         for base in bases {
             negative_specs.push(base.to_hex());
         }
-        // For left-right, mark which side each commit belongs to
-        if options.left_right || options.left_only || options.right_only || options.cherry_mark || options.cherry_pick {
-            // The left_right computation is handled in rev_list itself
-        }
+        // Pass symmetric OIDs to rev_list for left-right classification
+        options.symmetric_left = Some(lhs_oid);
+        options.symmetric_right = Some(rhs_oid);
     }
 
     let result =
         rev_list(&repo, &positive_specs, &negative_specs, &options).context("rev-list failed")?;
 
     if options.count {
-        let mut total = result.commits.len();
-        if options.objects {
-            total += result.objects.len();
+        if options.left_right {
+            let left_count = result.commits.iter()
+                .filter(|oid| result.left_right_map.get(oid) == Some(&true))
+                .count();
+            let right_count = result.commits.iter()
+                .filter(|oid| result.left_right_map.get(oid) == Some(&false))
+                .count();
+            let both_count = result.commits.len() - left_count - right_count;
+            println!("{left_count}\t{right_count}\t{both_count}");
+        } else {
+            let mut total = result.commits.len();
+            if options.objects {
+                total += result.objects.len();
+            }
+            println!("{total}");
         }
-        println!("{total}");
         return Ok(());
     }
     if options.quiet {

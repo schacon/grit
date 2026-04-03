@@ -71,7 +71,7 @@ test_expect_success 'rev-list double exclusion from base' '
 	test_line_count = 2 actual
 '
 
-test_expect_failure 'rev-list --left-right shows direction markers' '
+test_expect_success 'rev-list --left-right shows direction markers' '
 	git rev-list --left-right left...right >actual &&
 	grep "^<" actual >left-only &&
 	grep "^>" actual >right-only &&
@@ -79,7 +79,7 @@ test_expect_failure 'rev-list --left-right shows direction markers' '
 	test_line_count = 2 right-only
 '
 
-test_expect_failure 'rev-list --left-right count with --count' '
+test_expect_success 'rev-list --left-right count with --count' '
 	git rev-list --left-right --count left...right >actual &&
 	echo "2	2	0" >expect &&
 	test_cmp expect actual
@@ -100,7 +100,7 @@ test_expect_success 'rev-list --cherry is shorthand for --cherry-mark --right-on
 	test $(wc -l <actual) -ge 1
 '
 
-test_expect_failure 'rev-list --left-right with simple base...left range' '
+test_expect_success 'rev-list --left-right with simple base...left range' '
 	git rev-list --left-right base...left >actual &&
 	grep "^>" actual >right-side &&
 	test_line_count = 2 right-side &&
@@ -158,7 +158,7 @@ test_expect_success 'rev-list --count with --first-parent' '
 	test $(cat actual) = 4
 '
 
-test_expect_failure 'rev-list --left-right --count symmetric' '
+test_expect_success 'rev-list --left-right --count symmetric' '
 	git rev-list --left-right --count left-2...right >actual &&
 	test $(echo $(cat actual) | wc -w) -ge 2
 '

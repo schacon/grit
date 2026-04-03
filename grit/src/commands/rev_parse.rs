@@ -87,6 +87,57 @@ pub fn run(args: Args) -> Result<()> {
                 default_rev = Some(value.to_owned());
             } else if arg == "--end-of-options" {
                 end_of_options = true;
+            } else if arg == "--branches" {
+                if let Some(current) = discover_optional(None)? {
+                    let matching = grit_lib::refs::list_refs(&current.git_dir, "refs/heads/")
+                        .context("failed to list branch refs")?;
+                    for (_, oid) in matching {
+                        println!("{oid}");
+                    }
+                }
+            } else if let Some(pattern) = arg.strip_prefix("--branches=") {
+                if let Some(current) = discover_optional(None)? {
+                    let full = format!("refs/heads/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&current.git_dir, &full)
+                        .context("failed to list branch refs")?;
+                    for (_, oid) in matching {
+                        println!("{oid}");
+                    }
+                }
+            } else if arg == "--tags" {
+                if let Some(current) = discover_optional(None)? {
+                    let matching = grit_lib::refs::list_refs(&current.git_dir, "refs/tags/")
+                        .context("failed to list tag refs")?;
+                    for (_, oid) in matching {
+                        println!("{oid}");
+                    }
+                }
+            } else if let Some(pattern) = arg.strip_prefix("--tags=") {
+                if let Some(current) = discover_optional(None)? {
+                    let full = format!("refs/tags/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&current.git_dir, &full)
+                        .context("failed to list tag refs")?;
+                    for (_, oid) in matching {
+                        println!("{oid}");
+                    }
+                }
+            } else if arg == "--remotes" {
+                if let Some(current) = discover_optional(None)? {
+                    let matching = grit_lib::refs::list_refs(&current.git_dir, "refs/remotes/")
+                        .context("failed to list remote refs")?;
+                    for (_, oid) in matching {
+                        println!("{oid}");
+                    }
+                }
+            } else if let Some(pattern) = arg.strip_prefix("--remotes=") {
+                if let Some(current) = discover_optional(None)? {
+                    let full = format!("refs/remotes/{pattern}");
+                    let matching = grit_lib::refs::list_refs_glob(&current.git_dir, &full)
+                        .context("failed to list remote refs")?;
+                    for (_, oid) in matching {
+                        println!("{oid}");
+                    }
+                }
             } else {
                 bail!("unsupported option: {arg}");
             }

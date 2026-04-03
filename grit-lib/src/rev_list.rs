@@ -85,6 +85,16 @@ pub struct RevListOptions {
     pub min_parents: Option<usize>,
     /// Maximum number of parents a commit may have to be included.
     pub max_parents: Option<usize>,
+    /// Symmetric-diff left OID (set by caller when A...B is used).
+    pub symmetric_left: Option<ObjectId>,
+    /// Symmetric-diff right OID (set by caller when A...B is used).
+    pub symmetric_right: Option<ObjectId>,
+    /// Path filters (files after `--`).
+    pub paths: Vec<String>,
+    /// Show full history (don't simplify) for path-limited walks.
+    pub full_history: bool,
+    /// Sparse mode: don't prune non-matching commits.
+    pub sparse: bool,
 }
 
 impl Default for RevListOptions {
@@ -112,6 +122,11 @@ impl Default for RevListOptions {
             cherry_pick: false,
             min_parents: None,
             max_parents: None,
+            symmetric_left: None,
+            symmetric_right: None,
+            paths: Vec::new(),
+            full_history: false,
+            sparse: false,
         }
     }
 }
@@ -201,6 +216,73 @@ pub fn rev_list(
         OrderingMode::Topo | OrderingMode::Date => topo_sort(&mut graph, &included)?,
     };
 
+    // Path filtering: keep only commits that modify given paths
+    if !options.paths.is_empty() && !options.sparse {
+        let paths = &options.paths;
+        ordered.retain(|oid| {
+            commit_touches_paths(repo, &mut graph, *oid, paths).unwrap_or(false)
+        });
+    }
+
+    // Left-right classification for symmetric diffs
+    let mut left_right_map = HashMap::new();
+    if options.left_right || options.left_only || options.right_only || options.cherry_mark || options.cherry_pick {
+        if let (Some(left_oid), Some(right_oid)) = (options.symmetric_left, options.symmetric_right) {
+            let left_closure = walk_closure(&mut graph, &[left_oid])?;
+            let right_closure = walk_closure(&mut graph, &[right_oid])?;
+            for &oid in &ordered {
+                let in_left = left_closure.contains(&oid);
+                let in_right = right_closure.contains(&oid);
+                if in_left && !in_right {
+                    left_right_map.insert(oid, true);
+                } else if in_right && !in_left {
+                    left_right_map.insert(oid, false);
+                } else {
+                    left_right_map.insert(oid, false);
+                }
+            }
+        }
+    }
+
+    // Cherry-pick / cherry-mark: compute patch-ids and find equivalents
+    let mut cherry_equivalent = HashSet::new();
+    if options.cherry_pick || options.cherry_mark {
+        let patch_ids = compute_patch_ids(repo, &mut graph, &ordered)?;
+        let left_commits: Vec<_> = ordered.iter().filter(|o| left_right_map.get(o) == Some(&true)).copied().collect();
+        let right_commits: Vec<_> = ordered.iter().filter(|o| left_right_map.get(o) == Some(&false)).copied().collect();
+        let left_patches: HashMap<&str, ObjectId> = left_commits.iter()
+            .filter_map(|o| patch_ids.get(o).map(|p| (p.as_str(), *o)))
+            .collect();
+        let right_patches: HashMap<&str, ObjectId> = right_commits.iter()
+            .filter_map(|o| patch_ids.get(o).map(|p| (p.as_str(), *o)))
+            .collect();
+        for (&pid, &oid) in &left_patches {
+            if !pid.is_empty() && right_patches.contains_key(pid) {
+                cherry_equivalent.insert(oid);
+                cherry_equivalent.insert(right_patches[pid]);
+            }
+        }
+        for (&pid, &oid) in &right_patches {
+            if !pid.is_empty() && left_patches.contains_key(pid) {
+                cherry_equivalent.insert(oid);
+                cherry_equivalent.insert(left_patches[pid]);
+            }
+        }
+    }
+
+    // Filter left-only / right-only
+    if options.left_only {
+        ordered.retain(|oid| left_right_map.get(oid) == Some(&true));
+    }
+    if options.right_only {
+        ordered.retain(|oid| left_right_map.get(oid) == Some(&false));
+    }
+
+    // Cherry-pick: remove equivalent commits
+    if options.cherry_pick {
+        ordered.retain(|oid| !cherry_equivalent.contains(oid));
+    }
+
     if options.skip > 0 {
         ordered = ordered.into_iter().skip(options.skip).collect();
     }
@@ -211,12 +293,19 @@ pub fn rev_list(
         ordered.reverse();
     }
 
+    // Collect reachable objects if --objects
+    let objects = if options.objects {
+        collect_reachable_objects(repo, &mut graph, &ordered)?
+    } else {
+        Vec::new()
+    };
+
     Ok(RevListResult {
         commits: ordered,
-        objects: Vec::new(),
+        objects,
         boundary_commits: Vec::new(),
-        left_right_map: HashMap::new(),
-        cherry_equivalent: HashSet::new(),
+        left_right_map,
+        cherry_equivalent,
     })
 }
 
@@ -421,6 +510,37 @@ fn limit_to_ancestry(
     }
     selected.retain(|oid| keep.contains(oid));
     Ok(())
+}
+
+/// Check if a commit modifies any of the given paths compared to its first parent.
+fn commit_touches_paths(
+    repo: &Repository,
+    graph: &mut CommitGraph<'_>,
+    oid: ObjectId,
+    paths: &[String],
+) -> Result<bool> {
+    let commit = load_commit(repo, oid)?;
+    let parents = graph.parents_of(oid)?;
+    let parent_tree = if let Some(&parent) = parents.first() {
+        Some(load_commit(repo, parent)?.tree)
+    } else {
+        None
+    };
+    let commit_entries = flatten_tree(repo, commit.tree, "")?;
+    let commit_map: HashMap<String, ObjectId> = commit_entries.into_iter().collect();
+    let parent_map: HashMap<String, ObjectId> = if let Some(pt) = parent_tree {
+        flatten_tree(repo, pt, "")?.into_iter().collect()
+    } else {
+        HashMap::new()
+    };
+    for path in paths {
+        let c_oid = commit_map.get(path.as_str());
+        let p_oid = parent_map.get(path.as_str());
+        if c_oid != p_oid {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::CommitData> {
