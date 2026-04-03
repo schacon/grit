@@ -459,85 +459,85 @@ t0019-json-writer::inline-object-with-no-members	t0019-json-writer	inline object
 t0019-json-writer::inline-array-with-no-members	t0019-json-writer	inline array with no members		pass
 t0019-json-writer::larger-empty-example	t0019-json-writer	larger empty example		pass
 t0019-json-writer::parse-json-using-perl	t0019-json-writer	parse JSON using Perl		pass
-t0020-crlf::safecrlf-autocrlf-input-all-crlf	t0020-crlf	safecrlf: autocrlf=input, all CRLF	add	pass
-t0020-crlf::safecrlf-autocrlf-input-mixed-lf-crlf	t0020-crlf	safecrlf: autocrlf=input, mixed LF/CRLF	add	pass
-t0020-crlf::safecrlf-autocrlf-true-all-lf	t0020-crlf	safecrlf: autocrlf=true, all LF	add	pass
-t0020-crlf::safecrlf-autocrlf-true-mixed-lf-crlf	t0020-crlf	safecrlf: autocrlf=true mixed LF/CRLF	add	pass
-t0020-crlf::safecrlf-print-warning-only-once	t0020-crlf	safecrlf: print warning only once	add	pass
-t0020-crlf::safecrlf-git-diff-demotes-safecrlf-true-to-warn	t0020-crlf	safecrlf: git diff demotes safecrlf=true to warn	config	pass
-t0020-crlf::safecrlf-no-warning-with-safecrlf-false	t0020-crlf	safecrlf: no warning with safecrlf=false	add	pass
-t0020-crlf::switch-off-autocrlf-safecrlf-reset-head	t0020-crlf	switch off autocrlf, safecrlf, reset HEAD	config	pass
-t0020-crlf::update-with-autocrlf-input	t0020-crlf	update with autocrlf=input	config	pass
-t0020-crlf::update-with-autocrlf-true	t0020-crlf	update with autocrlf=true	config	pass
-t0020-crlf::checkout-with-autocrlf-true	t0020-crlf	checkout with autocrlf=true	config	pass
-t0020-crlf::checkout-with-autocrlf-input	t0020-crlf	checkout with autocrlf=input	config	pass
-t0020-crlf::apply-patch-autocrlf-input	t0020-crlf	apply patch (autocrlf=input)	apply	pass
-t0020-crlf::apply-patch-cached-autocrlf-input	t0020-crlf	apply patch --cached (autocrlf=input)	apply	pass
-t0020-crlf::apply-patch-index-autocrlf-input	t0020-crlf	apply patch --index (autocrlf=input)	apply	pass
-t0020-crlf::apply-patch-autocrlf-true	t0020-crlf	apply patch (autocrlf=true)	apply	pass
-t0020-crlf::apply-patch-cached-autocrlf-true	t0020-crlf	apply patch --cached (autocrlf=true)	apply	pass
-t0020-crlf::apply-patch-index-autocrlf-true	t0020-crlf	apply patch --index (autocrlf=true)	apply	pass
-t0020-crlf::gitattributes-says-two-is-binary	t0020-crlf	.gitattributes says two is binary	config	pass
-t0020-crlf::gitattributes-says-two-is-input	t0020-crlf	.gitattributes says two is input	read-tree	pass
-t0020-crlf::gitattributes-says-two-and-three-are-text	t0020-crlf	.gitattributes says two and three are text	read-tree	pass
-t0020-crlf::in-tree-gitattributes-1	t0020-crlf	in-tree .gitattributes (1)	add	pass
-t0020-crlf::in-tree-gitattributes-2	t0020-crlf	in-tree .gitattributes (2)	checkout-index	pass
-t0020-crlf::in-tree-gitattributes-3	t0020-crlf	in-tree .gitattributes (3)	checkout-index	pass
-t0020-crlf::in-tree-gitattributes-4	t0020-crlf	in-tree .gitattributes (4)	checkout-index	pass
-t0020-crlf::checkout-with-existing-gitattributes	t0020-crlf	checkout with existing .gitattributes	add	pass
-t0020-crlf::checkout-when-deleting-gitattributes	t0020-crlf	checkout when deleting .gitattributes	add	pass
-t0020-crlf::invalid-gitattributes-must-not-crash	t0020-crlf	invalid .gitattributes (must not crash)	diff	pass
-t0020-crlf::setting-up-for-new-autocrlf-tests	t0020-crlf	setting up for new autocrlf tests	add	pass
-t0020-crlf::report-no-change-after-setting-autocrlf	t0020-crlf	report no change after setting autocrlf	config	pass
-t0020-crlf::files-are-clean-after-checkout	t0020-crlf	files are clean after checkout	checkout	pass
-t0020-crlf::lf-only-file-gets-crlf-with-autocrlf	t0020-crlf	LF only file gets CRLF with autocrlf		pass
-t0020-crlf::mixed-file-is-still-mixed-with-autocrlf	t0020-crlf	Mixed file is still mixed with autocrlf		pass
-t0020-crlf::crlf-only-file-has-crlf-with-autocrlf	t0020-crlf	CRLF only file has CRLF with autocrlf		pass
-t0020-crlf::new-crlf-file-gets-lf-in-repo	t0020-crlf	New CRLF file gets LF in repo	add	pass
-t0021-conversion::filter-shell-escaped-filenames	t0021-conversion	filter shell-escaped filenames		pass
-t0021-conversion::required-filter-should-filter-data	t0021-conversion	required filter should filter data	add	pass
-t0021-conversion::required-filter-smudge-failure	t0021-conversion	required filter smudge failure	add	pass
-t0021-conversion::required-filter-clean-failure	t0021-conversion	required filter clean failure	add	pass
-t0021-conversion::required-filter-with-absent-clean-field	t0021-conversion	required filter with absent clean field	add	pass
-t0021-conversion::required-filter-with-absent-smudge-field	t0021-conversion	required filter with absent smudge field	add	pass
-t0021-conversion::filtering-large-input-to-small-output-should-use-little-memory	t0021-conversion	filtering large input to small output should use little memory	add	pass
-t0021-conversion::filter-that-does-not-read-is-fine	t0021-conversion	filter that does not read is fine	add	pass
-t0021-conversion::filter-large-file	t0021-conversion	filter large file	add	pass
-t0021-conversion::disable-filter-with-empty-override	t0021-conversion	disable filter with empty override	add	pass
-t0021-conversion::diff-does-not-reuse-worktree-files-that-need-cleaning	t0021-conversion	diff does not reuse worktree files that need cleaning	diff-tree	pass
-t0021-conversion::required-process-filter-should-filter-data	t0021-conversion	required process filter should filter data	add	pass
-t0021-conversion::required-process-filter-should-filter-data-for-various-subcommands	t0021-conversion	required process filter should filter data for various subcommands		pass
-t0021-conversion::required-process-filter-takes-precedence	t0021-conversion	required process filter takes precedence	init	pass
-t0021-conversion::required-process-filter-should-be-used-only-for-clean-operation-only	t0021-conversion	required process filter should be used only for "clean" operation only	init	pass
-t0021-conversion::required-process-filter-should-process-multiple-packets	t0021-conversion	required process filter should process multiple packets	hash-object	pass
-t0021-conversion::required-process-filter-with-clean-error-should-fail	t0021-conversion	required process filter with clean error should fail	add	pass
-t0021-conversion::process-filter-should-restart-after-unexpected-write-failure	t0021-conversion	process filter should restart after unexpected write failure	add	pass
-t0021-conversion::process-filter-should-not-be-restarted-if-it-signals-an-error	t0021-conversion	process filter should not be restarted if it signals an error	add	pass
-t0021-conversion::process-filter-abort-stops-processing-of-all-further-files	t0021-conversion	process filter abort stops processing of all further files	add	pass
-t0021-conversion::invalid-process-filter-must-fail-and-not-hang	t0021-conversion	invalid process filter must fail (and not hang!)	add	pass
-t0021-conversion::delayed-checkout-in-process-filter	t0021-conversion	delayed checkout in process filter	add	pass
-t0021-conversion::missing-file-in-delayed-checkout	t0021-conversion	missing file in delayed checkout	add	pass
-t0021-conversion::invalid-file-in-delayed-checkout	t0021-conversion	invalid file in delayed checkout	add	pass
-t0021-conversion::setup-for-progress-tests	t0021-conversion	setup for progress tests	add	pass
-t0021-conversion::delayed-checkout-correctly-reports-the-number-of-updated-entries	t0021-conversion	delayed checkout correctly reports the number of updated entries	add	pass
-t0021-conversion::filter-clean-empty-file	t0021-conversion	filter: clean empty file	add	pass
-t0021-conversion::filter-smudge-empty-file	t0021-conversion	filter: smudge empty file	add	pass
-t0021-conversion::delayed-checkout-shows-progress-by-default-on-tty-mode-checkout	t0021-conversion	delayed checkout shows progress by default on tty ($mode checkout)	checkout	pass
-t0021-conversion::delayed-checkout-omits-progress-on-non-tty-mode-checkout	t0021-conversion	delayed checkout omits progress on non-tty ($mode checkout)	checkout	pass
-t0021-conversion::delayed-checkout-omits-progress-with-quiet-mode-checkout	t0021-conversion	delayed checkout omits progress with --quiet ($mode checkout)	checkout	pass
-t0021-conversion::delayed-checkout-honors-no-progress-mode-checkout	t0021-conversion	delayed checkout honors --[no]-progress ($mode checkout)	checkout	pass
-t0022-crlf-rename::diff-m	t0022-crlf-rename	diff -M	diff-tree	pass
+t0020-crlf::safecrlf-autocrlf-input-all-crlf	t0020-crlf	safecrlf: autocrlf=input, all CRLF	add	partial
+t0020-crlf::safecrlf-autocrlf-input-mixed-lf-crlf	t0020-crlf	safecrlf: autocrlf=input, mixed LF/CRLF	add	partial
+t0020-crlf::safecrlf-autocrlf-true-all-lf	t0020-crlf	safecrlf: autocrlf=true, all LF	add	partial
+t0020-crlf::safecrlf-autocrlf-true-mixed-lf-crlf	t0020-crlf	safecrlf: autocrlf=true mixed LF/CRLF	add	partial
+t0020-crlf::safecrlf-print-warning-only-once	t0020-crlf	safecrlf: print warning only once	add	partial
+t0020-crlf::safecrlf-git-diff-demotes-safecrlf-true-to-warn	t0020-crlf	safecrlf: git diff demotes safecrlf=true to warn	config	partial
+t0020-crlf::safecrlf-no-warning-with-safecrlf-false	t0020-crlf	safecrlf: no warning with safecrlf=false	add	partial
+t0020-crlf::switch-off-autocrlf-safecrlf-reset-head	t0020-crlf	switch off autocrlf, safecrlf, reset HEAD	config	partial
+t0020-crlf::update-with-autocrlf-input	t0020-crlf	update with autocrlf=input	config	partial
+t0020-crlf::update-with-autocrlf-true	t0020-crlf	update with autocrlf=true	config	partial
+t0020-crlf::checkout-with-autocrlf-true	t0020-crlf	checkout with autocrlf=true	config	partial
+t0020-crlf::checkout-with-autocrlf-input	t0020-crlf	checkout with autocrlf=input	config	partial
+t0020-crlf::apply-patch-autocrlf-input	t0020-crlf	apply patch (autocrlf=input)	apply	partial
+t0020-crlf::apply-patch-cached-autocrlf-input	t0020-crlf	apply patch --cached (autocrlf=input)	apply	partial
+t0020-crlf::apply-patch-index-autocrlf-input	t0020-crlf	apply patch --index (autocrlf=input)	apply	partial
+t0020-crlf::apply-patch-autocrlf-true	t0020-crlf	apply patch (autocrlf=true)	apply	partial
+t0020-crlf::apply-patch-cached-autocrlf-true	t0020-crlf	apply patch --cached (autocrlf=true)	apply	partial
+t0020-crlf::apply-patch-index-autocrlf-true	t0020-crlf	apply patch --index (autocrlf=true)	apply	partial
+t0020-crlf::gitattributes-says-two-is-binary	t0020-crlf	.gitattributes says two is binary	config	partial
+t0020-crlf::gitattributes-says-two-is-input	t0020-crlf	.gitattributes says two is input	read-tree	partial
+t0020-crlf::gitattributes-says-two-and-three-are-text	t0020-crlf	.gitattributes says two and three are text	read-tree	partial
+t0020-crlf::in-tree-gitattributes-1	t0020-crlf	in-tree .gitattributes (1)	add	partial
+t0020-crlf::in-tree-gitattributes-2	t0020-crlf	in-tree .gitattributes (2)	checkout-index	partial
+t0020-crlf::in-tree-gitattributes-3	t0020-crlf	in-tree .gitattributes (3)	checkout-index	partial
+t0020-crlf::in-tree-gitattributes-4	t0020-crlf	in-tree .gitattributes (4)	checkout-index	partial
+t0020-crlf::checkout-with-existing-gitattributes	t0020-crlf	checkout with existing .gitattributes	add	partial
+t0020-crlf::checkout-when-deleting-gitattributes	t0020-crlf	checkout when deleting .gitattributes	add	partial
+t0020-crlf::invalid-gitattributes-must-not-crash	t0020-crlf	invalid .gitattributes (must not crash)	diff	partial
+t0020-crlf::setting-up-for-new-autocrlf-tests	t0020-crlf	setting up for new autocrlf tests	add	partial
+t0020-crlf::report-no-change-after-setting-autocrlf	t0020-crlf	report no change after setting autocrlf	config	partial
+t0020-crlf::files-are-clean-after-checkout	t0020-crlf	files are clean after checkout	checkout	partial
+t0020-crlf::lf-only-file-gets-crlf-with-autocrlf	t0020-crlf	LF only file gets CRLF with autocrlf		partial
+t0020-crlf::mixed-file-is-still-mixed-with-autocrlf	t0020-crlf	Mixed file is still mixed with autocrlf		partial
+t0020-crlf::crlf-only-file-has-crlf-with-autocrlf	t0020-crlf	CRLF only file has CRLF with autocrlf		partial
+t0020-crlf::new-crlf-file-gets-lf-in-repo	t0020-crlf	New CRLF file gets LF in repo	add	partial
+t0021-conversion::filter-shell-escaped-filenames	t0021-conversion	filter shell-escaped filenames		partial
+t0021-conversion::required-filter-should-filter-data	t0021-conversion	required filter should filter data	add	partial
+t0021-conversion::required-filter-smudge-failure	t0021-conversion	required filter smudge failure	add	partial
+t0021-conversion::required-filter-clean-failure	t0021-conversion	required filter clean failure	add	partial
+t0021-conversion::required-filter-with-absent-clean-field	t0021-conversion	required filter with absent clean field	add	partial
+t0021-conversion::required-filter-with-absent-smudge-field	t0021-conversion	required filter with absent smudge field	add	partial
+t0021-conversion::filtering-large-input-to-small-output-should-use-little-memory	t0021-conversion	filtering large input to small output should use little memory	add	partial
+t0021-conversion::filter-that-does-not-read-is-fine	t0021-conversion	filter that does not read is fine	add	partial
+t0021-conversion::filter-large-file	t0021-conversion	filter large file	add	partial
+t0021-conversion::disable-filter-with-empty-override	t0021-conversion	disable filter with empty override	add	partial
+t0021-conversion::diff-does-not-reuse-worktree-files-that-need-cleaning	t0021-conversion	diff does not reuse worktree files that need cleaning	diff-tree	partial
+t0021-conversion::required-process-filter-should-filter-data	t0021-conversion	required process filter should filter data	add	partial
+t0021-conversion::required-process-filter-should-filter-data-for-various-subcommands	t0021-conversion	required process filter should filter data for various subcommands		partial
+t0021-conversion::required-process-filter-takes-precedence	t0021-conversion	required process filter takes precedence	init	partial
+t0021-conversion::required-process-filter-should-be-used-only-for-clean-operation-only	t0021-conversion	required process filter should be used only for "clean" operation only	init	partial
+t0021-conversion::required-process-filter-should-process-multiple-packets	t0021-conversion	required process filter should process multiple packets	hash-object	partial
+t0021-conversion::required-process-filter-with-clean-error-should-fail	t0021-conversion	required process filter with clean error should fail	add	partial
+t0021-conversion::process-filter-should-restart-after-unexpected-write-failure	t0021-conversion	process filter should restart after unexpected write failure	add	partial
+t0021-conversion::process-filter-should-not-be-restarted-if-it-signals-an-error	t0021-conversion	process filter should not be restarted if it signals an error	add	partial
+t0021-conversion::process-filter-abort-stops-processing-of-all-further-files	t0021-conversion	process filter abort stops processing of all further files	add	partial
+t0021-conversion::invalid-process-filter-must-fail-and-not-hang	t0021-conversion	invalid process filter must fail (and not hang!)	add	partial
+t0021-conversion::delayed-checkout-in-process-filter	t0021-conversion	delayed checkout in process filter	add	partial
+t0021-conversion::missing-file-in-delayed-checkout	t0021-conversion	missing file in delayed checkout	add	partial
+t0021-conversion::invalid-file-in-delayed-checkout	t0021-conversion	invalid file in delayed checkout	add	partial
+t0021-conversion::setup-for-progress-tests	t0021-conversion	setup for progress tests	add	partial
+t0021-conversion::delayed-checkout-correctly-reports-the-number-of-updated-entries	t0021-conversion	delayed checkout correctly reports the number of updated entries	add	partial
+t0021-conversion::filter-clean-empty-file	t0021-conversion	filter: clean empty file	add	partial
+t0021-conversion::filter-smudge-empty-file	t0021-conversion	filter: smudge empty file	add	partial
+t0021-conversion::delayed-checkout-shows-progress-by-default-on-tty-mode-checkout	t0021-conversion	delayed checkout shows progress by default on tty ($mode checkout)	checkout	partial
+t0021-conversion::delayed-checkout-omits-progress-on-non-tty-mode-checkout	t0021-conversion	delayed checkout omits progress on non-tty ($mode checkout)	checkout	partial
+t0021-conversion::delayed-checkout-omits-progress-with-quiet-mode-checkout	t0021-conversion	delayed checkout omits progress with --quiet ($mode checkout)	checkout	partial
+t0021-conversion::delayed-checkout-honors-no-progress-mode-checkout	t0021-conversion	delayed checkout honors --[no]-progress ($mode checkout)	checkout	partial
+t0022-crlf-rename::diff-m	t0022-crlf-rename	diff -M	diff-tree	partial
 t0023-crlf-am::setup	t0023-crlf-am	setup	add	pass
 t0023-crlf-am::am	t0023-crlf-am	am	am	pass
 t0024-crlf-archive::tar-archive	t0024-crlf-archive	tar archive	archive	pass
 t0024-crlf-archive::zip-archive	t0024-crlf-archive	zip archive	archive	pass
-t0025-crlf-renormalize::renormalize-crlf-in-repo	t0025-crlf-renormalize	renormalize CRLF in repo	add	pass
-t0025-crlf-renormalize::ignore-errors-not-mistaken-for-renormalize	t0025-crlf-renormalize	ignore-errors not mistaken for renormalize	add	pass
-t0026-eol-config::eol-lf-puts-lfs-in-normalized-file	t0026-eol-config	eol=lf puts LFs in normalized file	config	pass
-t0026-eol-config::eol-crlf-puts-crlfs-in-normalized-file	t0026-eol-config	eol=crlf puts CRLFs in normalized file	config	pass
-t0026-eol-config::autocrlf-true-overrides-eol-lf	t0026-eol-config	autocrlf=true overrides eol=lf	config	pass
-t0026-eol-config::autocrlf-true-overrides-unset-eol	t0026-eol-config	autocrlf=true overrides unset eol	config	pass
-t0026-eol-config::eol-native-is-crlf	t0026-eol-config	eol native is crlf	add	pass
+t0025-crlf-renormalize::renormalize-crlf-in-repo	t0025-crlf-renormalize	renormalize CRLF in repo	add	partial
+t0025-crlf-renormalize::ignore-errors-not-mistaken-for-renormalize	t0025-crlf-renormalize	ignore-errors not mistaken for renormalize	add	partial
+t0026-eol-config::eol-lf-puts-lfs-in-normalized-file	t0026-eol-config	eol=lf puts LFs in normalized file	config	partial
+t0026-eol-config::eol-crlf-puts-crlfs-in-normalized-file	t0026-eol-config	eol=crlf puts CRLFs in normalized file	config	partial
+t0026-eol-config::autocrlf-true-overrides-eol-lf	t0026-eol-config	autocrlf=true overrides eol=lf	config	partial
+t0026-eol-config::autocrlf-true-overrides-unset-eol	t0026-eol-config	autocrlf=true overrides unset eol	config	partial
+t0026-eol-config::eol-native-is-crlf	t0026-eol-config	eol native is crlf	add	partial
 t0027-auto-crlf::setup-commit-nno-files	t0027-auto-crlf	setup commit NNO files	add	pass
 t0027-auto-crlf::setup-commit-file-with-mixed-eol	t0027-auto-crlf	setup commit file with mixed EOL	add	pass
 t0027-auto-crlf::ls-files-eol-o-text-binary	t0027-auto-crlf	ls-files --eol -o Text/Binary	ls-files	pass
@@ -1635,10 +1635,10 @@ t1011-read-tree-sparse-checkout::read-tree-reset-removes-outside-worktree	t1011-
 t1011-read-tree-sparse-checkout::print-warnings-when-some-worktree-updates-disabled	t1011-read-tree-sparse-checkout	print warnings when some worktree updates disabled	read-tree	pass
 t1011-read-tree-sparse-checkout::checkout-without-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout without --ignore-skip-worktree-bits	read-tree	pass
 t1011-read-tree-sparse-checkout::checkout-with-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout with --ignore-skip-worktree-bits	read-tree	pass
-t1012-read-tree-df::3-way-1	t1012-read-tree-df	3-way (1)	read-tree	pass
-t1012-read-tree-df::3-way-2	t1012-read-tree-df	3-way (2)	read-tree	pass
-t1012-read-tree-df::3-way-3	t1012-read-tree-df	3-way (3)	read-tree	pass
-t1012-read-tree-df::2-way-1	t1012-read-tree-df	2-way (1)	read-tree	pass
+t1012-read-tree-df::3-way-1	t1012-read-tree-df	3-way (1)	read-tree	partial
+t1012-read-tree-df::3-way-2	t1012-read-tree-df	3-way (2)	read-tree	partial
+t1012-read-tree-df::3-way-3	t1012-read-tree-df	3-way (3)	read-tree	partial
+t1012-read-tree-df::2-way-1	t1012-read-tree-df	2-way (1)	read-tree	partial
 t1014-read-tree-confusing::create-base-tree	t1014-read-tree-confusing	create base tree	read-tree	pass
 t1014-read-tree-confusing::enable-core-protecthfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectHFS for rejection tests	read-tree	pass
 t1014-read-tree-confusing::enable-core-protectntfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectNTFS for rejection tests	read-tree	pass
@@ -1692,16 +1692,16 @@ t1050-large::zip-archiving-store-only	t1050-large	zip archiving, store only	arch
 t1050-large::zip-archiving-deflate	t1050-large	zip archiving, deflate	archive	pass
 t1050-large::fsck-large-blobs	t1050-large	fsck large blobs	fsck	pass
 t1050-large::add-with-config	t1050-large	add with $config		pass
-t1051-large-conversion::setup-input-tests	t1051-large-conversion	setup input tests	config	pass
-t1051-large-conversion::autocrlf-true-converts-on-input	t1051-large-conversion	autocrlf=true converts on input		pass
-t1051-large-conversion::eol-crlf-converts-on-input	t1051-large-conversion	eol=crlf converts on input		pass
-t1051-large-conversion::ident-converts-on-input	t1051-large-conversion	ident converts on input		pass
-t1051-large-conversion::user-defined-filters-convert-on-input	t1051-large-conversion	user-defined filters convert on input		pass
-t1051-large-conversion::setup-output-tests	t1051-large-conversion	setup output tests	add	pass
-t1051-large-conversion::autocrlf-true-converts-on-output	t1051-large-conversion	autocrlf=true converts on output		pass
-t1051-large-conversion::eol-crlf-converts-on-output	t1051-large-conversion	eol=crlf converts on output		pass
-t1051-large-conversion::user-defined-filters-convert-on-output	t1051-large-conversion	user-defined filters convert on output		pass
-t1051-large-conversion::ident-converts-on-output	t1051-large-conversion	ident converts on output	checkout	pass
+t1051-large-conversion::setup-input-tests	t1051-large-conversion	setup input tests	config	partial
+t1051-large-conversion::autocrlf-true-converts-on-input	t1051-large-conversion	autocrlf=true converts on input		partial
+t1051-large-conversion::eol-crlf-converts-on-input	t1051-large-conversion	eol=crlf converts on input		partial
+t1051-large-conversion::ident-converts-on-input	t1051-large-conversion	ident converts on input		partial
+t1051-large-conversion::user-defined-filters-convert-on-input	t1051-large-conversion	user-defined filters convert on input		partial
+t1051-large-conversion::setup-output-tests	t1051-large-conversion	setup output tests	add	partial
+t1051-large-conversion::autocrlf-true-converts-on-output	t1051-large-conversion	autocrlf=true converts on output		partial
+t1051-large-conversion::eol-crlf-converts-on-output	t1051-large-conversion	eol=crlf converts on output		partial
+t1051-large-conversion::user-defined-filters-convert-on-output	t1051-large-conversion	user-defined filters convert on output		partial
+t1051-large-conversion::ident-converts-on-output	t1051-large-conversion	ident converts on output	checkout	partial
 t1060-object-corruption::setup-corrupt-repo	t1060-object-corruption	setup corrupt repo	init	pass
 t1060-object-corruption::setup-repo-with-missing-object	t1060-object-corruption	setup repo with missing object	init	pass
 t1060-object-corruption::setup-repo-with-misnamed-object	t1060-object-corruption	setup repo with misnamed object	hash-object	pass
@@ -8790,63 +8790,63 @@ t4301-merge-tree-write-tree::error-out-on-missing-tree-objects	t4301-merge-tree-
 t4301-merge-tree-write-tree::error-out-on-missing-blob-objects	t4301-merge-tree-write-tree	error out on missing blob objects	merge-tree	pass
 t4301-merge-tree-write-tree::error-out-on-missing-commits-as-well	t4301-merge-tree-write-tree	error out on missing commits as well	merge-tree	pass
 t4301-merge-tree-write-tree::usage-trivial-merge-is-incompatible-with-opt	t4301-merge-tree-write-tree	usage: --trivial-merge is incompatible with $opt	merge-tree	pass
-t5000-tar-tree::extract-tar-archive	t5000-tar-tree	 extract tar archive		pass
-t5000-tar-tree::interpret-pax-headers	t5000-tar-tree	 interpret pax headers		pass
-t5000-tar-tree::validate-filenames	t5000-tar-tree	 validate filenames		pass
-t5000-tar-tree::validate-file-contents	t5000-tar-tree	 validate file contents		pass
-t5000-tar-tree::setup	t5000-tar-tree	setup		pass
-t5000-tar-tree::list-notices-extra-parameters	t5000-tar-tree	--list notices extra parameters	archive	pass
-t5000-tar-tree::end-of-options-is-correctly-eaten	t5000-tar-tree	end-of-options is correctly eaten	archive	pass
-t5000-tar-tree::populate-workdir	t5000-tar-tree	populate workdir	add	pass
-t5000-tar-tree::add-files-to-repository	t5000-tar-tree	add files to repository	add	pass
-t5000-tar-tree::setup-export-subst	t5000-tar-tree	setup export-subst	log	pass
-t5000-tar-tree::create-bare-clone	t5000-tar-tree	create bare clone	clone	pass
-t5000-tar-tree::remove-ignored-file	t5000-tar-tree	remove ignored file		pass
-t5000-tar-tree::git-archive	t5000-tar-tree	git archive	archive	pass
-t5000-tar-tree::git-archive-mtime	t5000-tar-tree	git archive --mtime	archive	pass
-t5000-tar-tree::git-archive-prefix-prefix	t5000-tar-tree	git archive --prefix=prefix/	archive	pass
-t5000-tar-tree::git-archive-prefix-olde	t5000-tar-tree	git-archive --prefix=olde-	archive	pass
-t5000-tar-tree::git-archive-add-file	t5000-tar-tree	git archive --add-file	archive	pass
-t5000-tar-tree::git-archive-add-file-twice	t5000-tar-tree	git archive --add-file twice	archive	pass
-t5000-tar-tree::git-archive-on-large-files	t5000-tar-tree	git archive on large files	archive	pass
-t5000-tar-tree::git-archive-in-a-bare-repo	t5000-tar-tree	git archive in a bare repo	archive	pass
-t5000-tar-tree::git-archive-vs-the-same-in-a-bare-repo	t5000-tar-tree	git archive vs. the same in a bare repo		pass
-t5000-tar-tree::git-archive-with-output	t5000-tar-tree	git archive with --output	archive	pass
-t5000-tar-tree::git-archive-remote	t5000-tar-tree	git archive --remote	archive	pass
-t5000-tar-tree::git-archive-remote-with-configured-remote	t5000-tar-tree	git archive --remote with configured remote	archive	pass
-t5000-tar-tree::git-get-tar-commit-id	t5000-tar-tree	git get-tar-commit-id	get-tar-commit-id	pass
-t5000-tar-tree::git-archive-with-output-override-inferred-format	t5000-tar-tree	git archive with --output, override inferred format	archive	pass
-t5000-tar-tree::git-archive-with-output-and-remote-creates-tgz	t5000-tar-tree	git archive with --output and --remote creates .tgz	archive	pass
-t5000-tar-tree::git-archive-list-outside-of-a-git-repo	t5000-tar-tree	git archive --list outside of a git repo	archive	pass
-t5000-tar-tree::git-archive-remote-outside-of-a-git-repo	t5000-tar-tree	git archive --remote outside of a git repo	archive	pass
-t5000-tar-tree::clients-cannot-access-unreachable-commits	t5000-tar-tree	clients cannot access unreachable commits	archive	pass
-t5000-tar-tree::upload-archive-can-allow-unreachable-commits	t5000-tar-tree	upload-archive can allow unreachable commits	archive	pass
-t5000-tar-tree::setup-tar-filters	t5000-tar-tree	setup tar filters	config	pass
-t5000-tar-tree::archive-list-mentions-user-filter	t5000-tar-tree	archive --list mentions user filter	archive	pass
-t5000-tar-tree::archive-list-shows-only-enabled-remote-filters	t5000-tar-tree	archive --list shows only enabled remote filters	archive	pass
-t5000-tar-tree::invoke-tar-filter-by-format	t5000-tar-tree	invoke tar filter by format	archive	pass
-t5000-tar-tree::invoke-tar-filter-by-extension	t5000-tar-tree	invoke tar filter by extension	archive	pass
-t5000-tar-tree::default-output-format-remains-tar	t5000-tar-tree	default output format remains tar	archive	pass
-t5000-tar-tree::extension-matching-requires-dot	t5000-tar-tree	extension matching requires dot	archive	pass
-t5000-tar-tree::only-enabled-filters-are-available-remotely	t5000-tar-tree	only enabled filters are available remotely	archive	pass
-t5000-tar-tree::invalid-filter-is-reported-only-once	t5000-tar-tree	invalid filter is reported only once	archive	pass
-t5000-tar-tree::git-archive-format-tgz	t5000-tar-tree	git archive --format=tgz	archive	pass
-t5000-tar-tree::git-archive-format-tar-gz	t5000-tar-tree	git archive --format=tar.gz	archive	pass
-t5000-tar-tree::infer-tgz-from-tgz-filename	t5000-tar-tree	infer tgz from .tgz filename	archive	pass
-t5000-tar-tree::infer-tgz-from-tar-gz-filename	t5000-tar-tree	infer tgz from .tar.gz filename	archive	pass
-t5000-tar-tree::extract-tgz-file	t5000-tar-tree	extract tgz file		pass
-t5000-tar-tree::remote-tar-gz-is-allowed-by-default	t5000-tar-tree	remote tar.gz is allowed by default	archive	pass
-t5000-tar-tree::remote-tar-gz-can-be-disabled	t5000-tar-tree	remote tar.gz can be disabled	archive	pass
-t5000-tar-tree::git-archive-format-tgz-external-gzip	t5000-tar-tree	git archive --format=tgz (external gzip)	archive	pass
-t5000-tar-tree::git-archive-format-tar-gz-external-gzip	t5000-tar-tree	git archive --format=tar.gz (external gzip)	archive	pass
-t5000-tar-tree::extract-tgz-file-external-gzip	t5000-tar-tree	extract tgz file (external gzip)		pass
-t5000-tar-tree::archive-and-glob	t5000-tar-tree	archive and :(glob)	archive	pass
-t5000-tar-tree::catch-non-matching-pathspec	t5000-tar-tree	catch non-matching pathspec	archive	pass
-t5000-tar-tree::reject-paths-outside-the-current-directory	t5000-tar-tree	reject paths outside the current directory	archive	pass
-t5000-tar-tree::allow-pathspecs-that-resolve-to-the-current-directory	t5000-tar-tree	allow pathspecs that resolve to the current directory	archive	pass
-t5000-tar-tree::attr-pathspec-in-bare-repo	t5000-tar-tree	attr pathspec in bare repo	archive	pass
-t5000-tar-tree::validate-extra-file-path-in-archive	t5000-tar-tree	 validate extra file $path_in_archive		pass
-t5000-tar-tree::validate-mtime-of-path-in-archive	t5000-tar-tree	 validate mtime of $path_in_archive		pass
+t5000-tar-tree::extract-tar-archive	t5000-tar-tree	 extract tar archive		partial
+t5000-tar-tree::interpret-pax-headers	t5000-tar-tree	 interpret pax headers		partial
+t5000-tar-tree::validate-filenames	t5000-tar-tree	 validate filenames		partial
+t5000-tar-tree::validate-file-contents	t5000-tar-tree	 validate file contents		partial
+t5000-tar-tree::setup	t5000-tar-tree	setup		partial
+t5000-tar-tree::list-notices-extra-parameters	t5000-tar-tree	--list notices extra parameters	archive	partial
+t5000-tar-tree::end-of-options-is-correctly-eaten	t5000-tar-tree	end-of-options is correctly eaten	archive	partial
+t5000-tar-tree::populate-workdir	t5000-tar-tree	populate workdir	add	partial
+t5000-tar-tree::add-files-to-repository	t5000-tar-tree	add files to repository	add	partial
+t5000-tar-tree::setup-export-subst	t5000-tar-tree	setup export-subst	log	partial
+t5000-tar-tree::create-bare-clone	t5000-tar-tree	create bare clone	clone	partial
+t5000-tar-tree::remove-ignored-file	t5000-tar-tree	remove ignored file		partial
+t5000-tar-tree::git-archive	t5000-tar-tree	git archive	archive	partial
+t5000-tar-tree::git-archive-mtime	t5000-tar-tree	git archive --mtime	archive	partial
+t5000-tar-tree::git-archive-prefix-prefix	t5000-tar-tree	git archive --prefix=prefix/	archive	partial
+t5000-tar-tree::git-archive-prefix-olde	t5000-tar-tree	git-archive --prefix=olde-	archive	partial
+t5000-tar-tree::git-archive-add-file	t5000-tar-tree	git archive --add-file	archive	partial
+t5000-tar-tree::git-archive-add-file-twice	t5000-tar-tree	git archive --add-file twice	archive	partial
+t5000-tar-tree::git-archive-on-large-files	t5000-tar-tree	git archive on large files	archive	partial
+t5000-tar-tree::git-archive-in-a-bare-repo	t5000-tar-tree	git archive in a bare repo	archive	partial
+t5000-tar-tree::git-archive-vs-the-same-in-a-bare-repo	t5000-tar-tree	git archive vs. the same in a bare repo		partial
+t5000-tar-tree::git-archive-with-output	t5000-tar-tree	git archive with --output	archive	partial
+t5000-tar-tree::git-archive-remote	t5000-tar-tree	git archive --remote	archive	partial
+t5000-tar-tree::git-archive-remote-with-configured-remote	t5000-tar-tree	git archive --remote with configured remote	archive	partial
+t5000-tar-tree::git-get-tar-commit-id	t5000-tar-tree	git get-tar-commit-id	get-tar-commit-id	partial
+t5000-tar-tree::git-archive-with-output-override-inferred-format	t5000-tar-tree	git archive with --output, override inferred format	archive	partial
+t5000-tar-tree::git-archive-with-output-and-remote-creates-tgz	t5000-tar-tree	git archive with --output and --remote creates .tgz	archive	partial
+t5000-tar-tree::git-archive-list-outside-of-a-git-repo	t5000-tar-tree	git archive --list outside of a git repo	archive	partial
+t5000-tar-tree::git-archive-remote-outside-of-a-git-repo	t5000-tar-tree	git archive --remote outside of a git repo	archive	partial
+t5000-tar-tree::clients-cannot-access-unreachable-commits	t5000-tar-tree	clients cannot access unreachable commits	archive	partial
+t5000-tar-tree::upload-archive-can-allow-unreachable-commits	t5000-tar-tree	upload-archive can allow unreachable commits	archive	partial
+t5000-tar-tree::setup-tar-filters	t5000-tar-tree	setup tar filters	config	partial
+t5000-tar-tree::archive-list-mentions-user-filter	t5000-tar-tree	archive --list mentions user filter	archive	partial
+t5000-tar-tree::archive-list-shows-only-enabled-remote-filters	t5000-tar-tree	archive --list shows only enabled remote filters	archive	partial
+t5000-tar-tree::invoke-tar-filter-by-format	t5000-tar-tree	invoke tar filter by format	archive	partial
+t5000-tar-tree::invoke-tar-filter-by-extension	t5000-tar-tree	invoke tar filter by extension	archive	partial
+t5000-tar-tree::default-output-format-remains-tar	t5000-tar-tree	default output format remains tar	archive	partial
+t5000-tar-tree::extension-matching-requires-dot	t5000-tar-tree	extension matching requires dot	archive	partial
+t5000-tar-tree::only-enabled-filters-are-available-remotely	t5000-tar-tree	only enabled filters are available remotely	archive	partial
+t5000-tar-tree::invalid-filter-is-reported-only-once	t5000-tar-tree	invalid filter is reported only once	archive	partial
+t5000-tar-tree::git-archive-format-tgz	t5000-tar-tree	git archive --format=tgz	archive	partial
+t5000-tar-tree::git-archive-format-tar-gz	t5000-tar-tree	git archive --format=tar.gz	archive	partial
+t5000-tar-tree::infer-tgz-from-tgz-filename	t5000-tar-tree	infer tgz from .tgz filename	archive	partial
+t5000-tar-tree::infer-tgz-from-tar-gz-filename	t5000-tar-tree	infer tgz from .tar.gz filename	archive	partial
+t5000-tar-tree::extract-tgz-file	t5000-tar-tree	extract tgz file		partial
+t5000-tar-tree::remote-tar-gz-is-allowed-by-default	t5000-tar-tree	remote tar.gz is allowed by default	archive	partial
+t5000-tar-tree::remote-tar-gz-can-be-disabled	t5000-tar-tree	remote tar.gz can be disabled	archive	partial
+t5000-tar-tree::git-archive-format-tgz-external-gzip	t5000-tar-tree	git archive --format=tgz (external gzip)	archive	partial
+t5000-tar-tree::git-archive-format-tar-gz-external-gzip	t5000-tar-tree	git archive --format=tar.gz (external gzip)	archive	partial
+t5000-tar-tree::extract-tgz-file-external-gzip	t5000-tar-tree	extract tgz file (external gzip)		partial
+t5000-tar-tree::archive-and-glob	t5000-tar-tree	archive and :(glob)	archive	partial
+t5000-tar-tree::catch-non-matching-pathspec	t5000-tar-tree	catch non-matching pathspec	archive	partial
+t5000-tar-tree::reject-paths-outside-the-current-directory	t5000-tar-tree	reject paths outside the current directory	archive	partial
+t5000-tar-tree::allow-pathspecs-that-resolve-to-the-current-directory	t5000-tar-tree	allow pathspecs that resolve to the current directory	archive	partial
+t5000-tar-tree::attr-pathspec-in-bare-repo	t5000-tar-tree	attr pathspec in bare repo	archive	partial
+t5000-tar-tree::validate-extra-file-path-in-archive	t5000-tar-tree	 validate extra file $path_in_archive		partial
+t5000-tar-tree::validate-mtime-of-path-in-archive	t5000-tar-tree	 validate mtime of $path_in_archive		partial
 t5001-archive-attr::setup	t5001-archive-attr	setup	archive	pass
 t5001-archive-attr::git-archive	t5001-archive-attr	git archive	archive	pass
 t5001-archive-attr::git-archive-with-pathspec	t5001-archive-attr	git archive with pathspec	archive	pass
@@ -9709,17 +9709,17 @@ t5408-send-pack-stdin::cmdline-refs-with-multiple-duplicates	t5408-send-pack-std
 t5408-send-pack-stdin::stdin-refs-come-after-cmdline	t5408-send-pack-stdin	--stdin refs come after cmdline	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-cmdline	t5408-send-pack-stdin	refspecs and --mirror do not mix (cmdline)	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-stdin	t5408-send-pack-stdin	refspecs and --mirror do not mix (stdin)	send-pack	pass
-t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	pass
-t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	pass
-t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	pass
-t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	pass
-t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	pass
-t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	pass
-t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	pass
-t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	pass
-t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	pass
-t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	pass
-t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	pass
+t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	partial
+t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	partial
+t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	partial
+t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	partial
+t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	partial
+t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	partial
+t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	partial
+t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	partial
+t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	partial
+t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	partial
+t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	partial
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	not_ported
@@ -10119,7 +10119,7 @@ t5510-fetch::fetch-head-is-updated-even-if-ref-updates-fail	t5510-fetch	FETCH_HE
 t5510-fetch::upstream-tracking-info-is-added-with-set-upstream	t5510-fetch	upstream tracking info is added with --set-upstream	fetch	pass
 t5510-fetch::upstream-tracking-info-is-added-even-with-conflicts	t5510-fetch	upstream tracking info is added even with conflicts	fetch	pass
 t5510-fetch::head-is-updated-even-with-conflicts	t5510-fetch	HEAD is updated even with conflicts	fetch	pass
-t5511-refspec::title	t5511-refspec	$title		partial
+t5511-refspec::title	t5511-refspec	$title		pass
 t5512-ls-remote::set-up-fake-upload-pack	t5512-ls-remote	set up fake upload-pack	ls-remote	pass
 t5512-ls-remote::dies-when-no-remote-found	t5512-ls-remote	dies when no remote found	ls-remote	pass
 t5512-ls-remote::ls-remote-tags-git	t5512-ls-remote	ls-remote --tags .git	ls-remote	pass
@@ -13693,23 +13693,23 @@ t7006-pager::git-discards-pager-non-zero-exit-without-sigpipe	t7006-pager	git di
 t7006-pager::git-errors-when-asked-to-execute-nonexisting-pager	t7006-pager	git errors when asked to execute nonexisting pager	log	pass
 t7006-pager::git-returns-sigpipe-on-propagated-signals-from-pager	t7006-pager	git returns SIGPIPE on propagated signals from pager	log	pass
 t7006-pager::non-existent-pager-doesnt-cause-crash	t7006-pager	non-existent pager doesnt cause crash	show	pass
-t7007-show::showing-a-tag-that-point-at-a-missing-object	t7007-show	showing a tag that point at a missing object	show	pass
-t7007-show::set-up-a-bit-of-history	t7007-show	set up a bit of history	show	pass
-t7007-show::showing-two-commits	t7007-show	showing two commits	show	pass
-t7007-show::showing-a-tree	t7007-show	showing a tree	show	pass
-t7007-show::showing-two-trees	t7007-show	showing two trees	show	pass
-t7007-show::showing-a-trees-is-not-recursive	t7007-show	showing a trees is not recursive	show	pass
-t7007-show::showing-a-range-walks-linear	t7007-show	showing a range walks (linear)	show	pass
-t7007-show::showing-a-range-walks-y-shape-first	t7007-show	showing a range walks (Y shape, ^ first)	show	pass
-t7007-show::showing-a-range-walks-y-shape-last	t7007-show	showing a range walks (Y shape, ^ last)	show	pass
-t7007-show::showing-with-n-walks	t7007-show	showing with -N walks	show	pass
-t7007-show::showing-annotated-tag	t7007-show	showing annotated tag	show	pass
-t7007-show::showing-annotated-tag-plus-commit	t7007-show	showing annotated tag plus commit	show	pass
-t7007-show::showing-range	t7007-show	showing range	show	pass
-t7007-show::s-suppresses-diff	t7007-show	-s suppresses diff	show	pass
-t7007-show::quiet-suppresses-diff	t7007-show	--quiet suppresses diff	show	pass
-t7007-show::show-graph-is-forbidden	t7007-show	show --graph is forbidden	show	pass
-t7007-show::show-unmerged-index	t7007-show	show unmerged index	show	pass
+t7007-show::showing-a-tag-that-point-at-a-missing-object	t7007-show	showing a tag that point at a missing object	show	partial
+t7007-show::set-up-a-bit-of-history	t7007-show	set up a bit of history	show	partial
+t7007-show::showing-two-commits	t7007-show	showing two commits	show	partial
+t7007-show::showing-a-tree	t7007-show	showing a tree	show	partial
+t7007-show::showing-two-trees	t7007-show	showing two trees	show	partial
+t7007-show::showing-a-trees-is-not-recursive	t7007-show	showing a trees is not recursive	show	partial
+t7007-show::showing-a-range-walks-linear	t7007-show	showing a range walks (linear)	show	partial
+t7007-show::showing-a-range-walks-y-shape-first	t7007-show	showing a range walks (Y shape, ^ first)	show	partial
+t7007-show::showing-a-range-walks-y-shape-last	t7007-show	showing a range walks (Y shape, ^ last)	show	partial
+t7007-show::showing-with-n-walks	t7007-show	showing with -N walks	show	partial
+t7007-show::showing-annotated-tag	t7007-show	showing annotated tag	show	partial
+t7007-show::showing-annotated-tag-plus-commit	t7007-show	showing annotated tag plus commit	show	partial
+t7007-show::showing-range	t7007-show	showing range	show	partial
+t7007-show::s-suppresses-diff	t7007-show	-s suppresses diff	show	partial
+t7007-show::quiet-suppresses-diff	t7007-show	--quiet suppresses diff	show	partial
+t7007-show::show-graph-is-forbidden	t7007-show	show --graph is forbidden	show	partial
+t7007-show::show-unmerged-index	t7007-show	show unmerged index	show	partial
 t7008-filter-branch-null-sha1::setup-base-commits	t7008-filter-branch-null-sha1	setup: base commits	filter-branch	pass
 t7008-filter-branch-null-sha1::setup-a-commit-with-a-bogus-null-sha1-in-the-tree	t7008-filter-branch-null-sha1	setup: a commit with a bogus null sha1 in the tree	filter-branch	pass
 t7008-filter-branch-null-sha1::setup-bring-head-and-index-in-sync	t7008-filter-branch-null-sha1	setup: bring HEAD and index in sync	filter-branch	pass
@@ -13757,22 +13757,22 @@ t7012-skip-worktree-writing::git-clean-absent-case	t7012-skip-worktree-writing	g
 t7012-skip-worktree-writing::git-clean-dirty-case	t7012-skip-worktree-writing	git-clean, dirty case	clean	pass
 t7012-skip-worktree-writing::ignore-skip-worktree-entries-leaves-worktree-alone	t7012-skip-worktree-writing	--ignore-skip-worktree-entries leaves worktree alone	diff-index	pass
 t7012-skip-worktree-writing::stash-restore-in-sparse-checkout	t7012-skip-worktree-writing	stash restore in sparse checkout	add	pass
-t7030-verify-tag::verify-tag-does-not-crash-with-h	t7030-verify-tag	verify-tag does not crash with -h	verify-tag	partial
-t7030-verify-tag::create-signed-tags	t7030-verify-tag	create signed tags	verify-tag	partial
-t7030-verify-tag::create-signed-tags-x509	t7030-verify-tag	create signed tags x509 	verify-tag	partial
-t7030-verify-tag::verify-and-show-signatures	t7030-verify-tag	verify and show signatures	verify-tag	partial
-t7030-verify-tag::verify-and-show-signatures-x509	t7030-verify-tag	verify and show signatures x509	verify-tag	partial
-t7030-verify-tag::verify-and-show-signatures-x509-with-low-mintrustlevel	t7030-verify-tag	verify and show signatures x509 with low minTrustLevel	verify-tag	partial
-t7030-verify-tag::verify-and-show-signatures-x509-with-matching-mintrustlevel	t7030-verify-tag	verify and show signatures x509 with matching minTrustLevel	verify-tag	partial
-t7030-verify-tag::verify-and-show-signatures-x509-with-high-mintrustlevel	t7030-verify-tag	verify and show signatures x509 with high minTrustLevel	verify-tag	partial
-t7030-verify-tag::detect-fudged-signature	t7030-verify-tag	detect fudged signature	verify-tag	partial
-t7030-verify-tag::verify-signatures-with-raw	t7030-verify-tag	verify signatures with --raw	verify-tag	partial
-t7030-verify-tag::verify-signatures-with-raw-x509	t7030-verify-tag	verify signatures with --raw x509	verify-tag	partial
-t7030-verify-tag::verify-multiple-tags	t7030-verify-tag	verify multiple tags	verify-tag	partial
-t7030-verify-tag::verify-multiple-tags-x509	t7030-verify-tag	verify multiple tags x509	verify-tag	partial
-t7030-verify-tag::verifying-tag-with-format	t7030-verify-tag	verifying tag with --format	verify-tag	partial
-t7030-verify-tag::verifying-tag-with-format-rest-must-fail	t7030-verify-tag	verifying tag with --format="%(rest)" must fail	verify-tag	partial
-t7030-verify-tag::verifying-a-forged-tag-with-format-should-fail-silently	t7030-verify-tag	verifying a forged tag with --format should fail silently	verify-tag	partial
+t7030-verify-tag::verify-tag-does-not-crash-with-h	t7030-verify-tag	verify-tag does not crash with -h	verify-tag	pass
+t7030-verify-tag::create-signed-tags	t7030-verify-tag	create signed tags	verify-tag	pass
+t7030-verify-tag::create-signed-tags-x509	t7030-verify-tag	create signed tags x509 	verify-tag	pass
+t7030-verify-tag::verify-and-show-signatures	t7030-verify-tag	verify and show signatures	verify-tag	pass
+t7030-verify-tag::verify-and-show-signatures-x509	t7030-verify-tag	verify and show signatures x509	verify-tag	pass
+t7030-verify-tag::verify-and-show-signatures-x509-with-low-mintrustlevel	t7030-verify-tag	verify and show signatures x509 with low minTrustLevel	verify-tag	pass
+t7030-verify-tag::verify-and-show-signatures-x509-with-matching-mintrustlevel	t7030-verify-tag	verify and show signatures x509 with matching minTrustLevel	verify-tag	pass
+t7030-verify-tag::verify-and-show-signatures-x509-with-high-mintrustlevel	t7030-verify-tag	verify and show signatures x509 with high minTrustLevel	verify-tag	pass
+t7030-verify-tag::detect-fudged-signature	t7030-verify-tag	detect fudged signature	verify-tag	pass
+t7030-verify-tag::verify-signatures-with-raw	t7030-verify-tag	verify signatures with --raw	verify-tag	pass
+t7030-verify-tag::verify-signatures-with-raw-x509	t7030-verify-tag	verify signatures with --raw x509	verify-tag	pass
+t7030-verify-tag::verify-multiple-tags	t7030-verify-tag	verify multiple tags	verify-tag	pass
+t7030-verify-tag::verify-multiple-tags-x509	t7030-verify-tag	verify multiple tags x509	verify-tag	pass
+t7030-verify-tag::verifying-tag-with-format	t7030-verify-tag	verifying tag with --format	verify-tag	pass
+t7030-verify-tag::verifying-tag-with-format-rest-must-fail	t7030-verify-tag	verifying tag with --format="%(rest)" must fail	verify-tag	pass
+t7030-verify-tag::verifying-a-forged-tag-with-format-should-fail-silently	t7030-verify-tag	verifying a forged tag with --format should fail silently	verify-tag	pass
 t7031-verify-tag-signed-ssh::create-signed-tags-ssh	t7031-verify-tag-signed-ssh	create signed tags ssh	verify-tag	pass
 t7031-verify-tag-signed-ssh::create-signed-tags-with-keys-having-defined-lifetimes	t7031-verify-tag-signed-ssh	create signed tags with keys having defined lifetimes	verify-tag	pass
 t7031-verify-tag-signed-ssh::verify-and-show-ssh-signatures	t7031-verify-tag-signed-ssh	verify and show ssh signatures	verify-tag	pass
@@ -14478,24 +14478,24 @@ t7414-submodule-mistakes::git-add-on-embedded-repository-warns	t7414-submodule-m
 t7414-submodule-mistakes::no-warn-embedded-repo-suppresses-warning	t7414-submodule-mistakes	--no-warn-embedded-repo suppresses warning	submodule	pass
 t7414-submodule-mistakes::no-warning-when-updating-entry	t7414-submodule-mistakes	no warning when updating entry	submodule	pass
 t7414-submodule-mistakes::submodule-add-does-not-warn	t7414-submodule-mistakes	submodule add does not warn	submodule	pass
-t7416-submodule-dash-url::setup	t7416-submodule-dash-url	setup	submodule	pass
-t7416-submodule-dash-url::create-submodule-with-protected-dash-in-url	t7416-submodule-dash-url	create submodule with protected dash in url	submodule	pass
-t7416-submodule-dash-url::clone-can-recurse-submodule	t7416-submodule-dash-url	clone can recurse submodule	submodule	pass
-t7416-submodule-dash-url::fsck-accepts-protected-dash	t7416-submodule-dash-url	fsck accepts protected dash	submodule	pass
-t7416-submodule-dash-url::remove-protection-from-gitmodules-url	t7416-submodule-dash-url	remove ./ protection from .gitmodules url	submodule	pass
-t7416-submodule-dash-url::clone-rejects-unprotected-dash	t7416-submodule-dash-url	clone rejects unprotected dash	submodule	pass
-t7416-submodule-dash-url::fsck-rejects-unprotected-dash	t7416-submodule-dash-url	fsck rejects unprotected dash	submodule	pass
-t7416-submodule-dash-url::trailing-backslash-is-handled-correctly	t7416-submodule-dash-url	trailing backslash is handled correctly	submodule	pass
-t7416-submodule-dash-url::fsck-rejects-missing-url-scheme	t7416-submodule-dash-url	fsck rejects missing URL scheme	submodule	pass
-t7416-submodule-dash-url::fsck-rejects-relative-url-resolving-to-missing-scheme	t7416-submodule-dash-url	fsck rejects relative URL resolving to missing scheme	submodule	pass
-t7416-submodule-dash-url::fsck-rejects-empty-url-scheme	t7416-submodule-dash-url	fsck rejects empty URL scheme	submodule	pass
-t7416-submodule-dash-url::fsck-rejects-relative-url-resolving-to-empty-scheme	t7416-submodule-dash-url	fsck rejects relative URL resolving to empty scheme	submodule	pass
-t7416-submodule-dash-url::fsck-rejects-empty-hostname	t7416-submodule-dash-url	fsck rejects empty hostname	submodule	pass
-t7416-submodule-dash-url::fsck-rejects-relative-url-that-produced-empty-hostname	t7416-submodule-dash-url	fsck rejects relative url that produced empty hostname	submodule	pass
-t7416-submodule-dash-url::fsck-permits-embedded-newline-with-unrecognized-scheme	t7416-submodule-dash-url	fsck permits embedded newline with unrecognized scheme	submodule	pass
-t7416-submodule-dash-url::fsck-rejects-embedded-newline-in-url	t7416-submodule-dash-url	fsck rejects embedded newline in url	submodule	pass
-t7416-submodule-dash-url::fsck-rejects-embedded-newline-in-relative-url	t7416-submodule-dash-url	fsck rejects embedded newline in relative url	submodule	pass
-t7416-submodule-dash-url::fsck-rejects-embedded-newline-in-git-url	t7416-submodule-dash-url	fsck rejects embedded newline in git url	submodule	pass
+t7416-submodule-dash-url::setup	t7416-submodule-dash-url	setup	submodule	partial
+t7416-submodule-dash-url::create-submodule-with-protected-dash-in-url	t7416-submodule-dash-url	create submodule with protected dash in url	submodule	partial
+t7416-submodule-dash-url::clone-can-recurse-submodule	t7416-submodule-dash-url	clone can recurse submodule	submodule	partial
+t7416-submodule-dash-url::fsck-accepts-protected-dash	t7416-submodule-dash-url	fsck accepts protected dash	submodule	partial
+t7416-submodule-dash-url::remove-protection-from-gitmodules-url	t7416-submodule-dash-url	remove ./ protection from .gitmodules url	submodule	partial
+t7416-submodule-dash-url::clone-rejects-unprotected-dash	t7416-submodule-dash-url	clone rejects unprotected dash	submodule	partial
+t7416-submodule-dash-url::fsck-rejects-unprotected-dash	t7416-submodule-dash-url	fsck rejects unprotected dash	submodule	partial
+t7416-submodule-dash-url::trailing-backslash-is-handled-correctly	t7416-submodule-dash-url	trailing backslash is handled correctly	submodule	partial
+t7416-submodule-dash-url::fsck-rejects-missing-url-scheme	t7416-submodule-dash-url	fsck rejects missing URL scheme	submodule	partial
+t7416-submodule-dash-url::fsck-rejects-relative-url-resolving-to-missing-scheme	t7416-submodule-dash-url	fsck rejects relative URL resolving to missing scheme	submodule	partial
+t7416-submodule-dash-url::fsck-rejects-empty-url-scheme	t7416-submodule-dash-url	fsck rejects empty URL scheme	submodule	partial
+t7416-submodule-dash-url::fsck-rejects-relative-url-resolving-to-empty-scheme	t7416-submodule-dash-url	fsck rejects relative URL resolving to empty scheme	submodule	partial
+t7416-submodule-dash-url::fsck-rejects-empty-hostname	t7416-submodule-dash-url	fsck rejects empty hostname	submodule	partial
+t7416-submodule-dash-url::fsck-rejects-relative-url-that-produced-empty-hostname	t7416-submodule-dash-url	fsck rejects relative url that produced empty hostname	submodule	partial
+t7416-submodule-dash-url::fsck-permits-embedded-newline-with-unrecognized-scheme	t7416-submodule-dash-url	fsck permits embedded newline with unrecognized scheme	submodule	partial
+t7416-submodule-dash-url::fsck-rejects-embedded-newline-in-url	t7416-submodule-dash-url	fsck rejects embedded newline in url	submodule	partial
+t7416-submodule-dash-url::fsck-rejects-embedded-newline-in-relative-url	t7416-submodule-dash-url	fsck rejects embedded newline in relative url	submodule	partial
+t7416-submodule-dash-url::fsck-rejects-embedded-newline-in-git-url	t7416-submodule-dash-url	fsck rejects embedded newline in git url	submodule	partial
 t7417-submodule-path-url::setup	t7417-submodule-path-url	setup	submodule	pass
 t7417-submodule-path-url::create-submodule-with-dash-in-path	t7417-submodule-path-url	create submodule with dash in path	submodule	pass
 t7417-submodule-path-url::clone-rejects-unprotected-dash	t7417-submodule-path-url	clone rejects unprotected dash	submodule	pass
@@ -15067,18 +15067,18 @@ t7508-status::git-config-ignore-dirty-doesn-t-suppress-submodule-summary	t7508-s
 t7508-status::status-core-commentchar-with-submodule-summary	t7508-status	status (core.commentchar with submodule summary)	status	pass
 t7508-status::status-core-commentchar-with-two-chars-with-submodule-summary	t7508-status	status (core.commentchar with two chars with submodule summary)	status	pass
 t7508-status::ignore-submodules-all-suppresses-submodule-summary	t7508-status	--ignore-submodules=all suppresses submodule summary	status	pass
-t7509-commit-authorship::c-option-copies-authorship-and-message	t7509-commit-authorship	-C option copies authorship and message	commit	partial
-t7509-commit-authorship::c-option-copies-only-the-message-with-reset-author	t7509-commit-authorship	-C option copies only the message with --reset-author	commit	partial
-t7509-commit-authorship::c-option-copies-authorship-and-message-2	t7509-commit-authorship	-c option copies authorship and message	commit	partial
-t7509-commit-authorship::c-option-copies-only-the-message-with-reset-author-2	t7509-commit-authorship	-c option copies only the message with --reset-author	commit	partial
-t7509-commit-authorship::amend-option-copies-authorship	t7509-commit-authorship	--amend option copies authorship	commit	partial
-t7509-commit-authorship::amend-option-with-empty-author	t7509-commit-authorship	--amend option with empty author	commit	partial
-t7509-commit-authorship::amend-option-with-missing-author	t7509-commit-authorship	--amend option with missing author	commit	partial
-t7509-commit-authorship::reset-author-makes-the-commit-ours-even-with-amend-option	t7509-commit-authorship	--reset-author makes the commit ours even with --amend option	commit	partial
-t7509-commit-authorship::reset-author-and-author-are-mutually-exclusive	t7509-commit-authorship	--reset-author and --author are mutually exclusive	commit	partial
-t7509-commit-authorship::reset-author-should-be-rejected-without-c-c-amend	t7509-commit-authorship	--reset-author should be rejected without -c/-C/--amend	commit	partial
-t7509-commit-authorship::commit-respects-cherry-pick-head-and-merge-msg	t7509-commit-authorship	commit respects CHERRY_PICK_HEAD and MERGE_MSG	commit	partial
-t7509-commit-authorship::reset-author-with-cherry-pick-head	t7509-commit-authorship	--reset-author with CHERRY_PICK_HEAD	commit	partial
+t7509-commit-authorship::c-option-copies-authorship-and-message	t7509-commit-authorship	-C option copies authorship and message	commit	pass
+t7509-commit-authorship::c-option-copies-only-the-message-with-reset-author	t7509-commit-authorship	-C option copies only the message with --reset-author	commit	pass
+t7509-commit-authorship::c-option-copies-authorship-and-message-2	t7509-commit-authorship	-c option copies authorship and message	commit	pass
+t7509-commit-authorship::c-option-copies-only-the-message-with-reset-author-2	t7509-commit-authorship	-c option copies only the message with --reset-author	commit	pass
+t7509-commit-authorship::amend-option-copies-authorship	t7509-commit-authorship	--amend option copies authorship	commit	pass
+t7509-commit-authorship::amend-option-with-empty-author	t7509-commit-authorship	--amend option with empty author	commit	pass
+t7509-commit-authorship::amend-option-with-missing-author	t7509-commit-authorship	--amend option with missing author	commit	pass
+t7509-commit-authorship::reset-author-makes-the-commit-ours-even-with-amend-option	t7509-commit-authorship	--reset-author makes the commit ours even with --amend option	commit	pass
+t7509-commit-authorship::reset-author-and-author-are-mutually-exclusive	t7509-commit-authorship	--reset-author and --author are mutually exclusive	commit	pass
+t7509-commit-authorship::reset-author-should-be-rejected-without-c-c-amend	t7509-commit-authorship	--reset-author should be rejected without -c/-C/--amend	commit	pass
+t7509-commit-authorship::commit-respects-cherry-pick-head-and-merge-msg	t7509-commit-authorship	commit respects CHERRY_PICK_HEAD and MERGE_MSG	commit	pass
+t7509-commit-authorship::reset-author-with-cherry-pick-head	t7509-commit-authorship	--reset-author with CHERRY_PICK_HEAD	commit	pass
 t7510-signed-commit::verify-commit-does-not-crash-with-h	t7510-signed-commit	verify-commit does not crash with -h	verify-commit	pass
 t7510-signed-commit::create-signed-commits	t7510-signed-commit	create signed commits	add	pass
 t7510-signed-commit::verify-and-show-signatures	t7510-signed-commit	verify and show signatures	show	pass
