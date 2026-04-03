@@ -240,20 +240,20 @@ test_expect_success 'setup: modify for diff pathspec tests' '
 	echo "diffmod" >>src/lib/one.c
 '
 
-test_expect_failure 'diff with -- pathspec restricts output' '
+test_expect_success 'diff with -- pathspec restricts output' '
 	cd repo &&
 	git diff --name-only -- src/ >../actual &&
 	test_line_count = 1 ../actual &&
 	grep "src/lib/one.c" ../actual
 '
 
-test_expect_failure 'log with -- pathspec restricts commits' '
+test_expect_success 'log with -- pathspec restricts commits' '
 	cd repo &&
 	git log --oneline -- src/ >../actual &&
 	test_line_count = 3 ../actual
 '
 
-test_expect_failure 'log with -- file pathspec' '
+test_expect_success 'log with -- file pathspec' '
 	cd repo &&
 	git log --oneline -- config.yml >../actual &&
 	test_line_count = 1 ../actual

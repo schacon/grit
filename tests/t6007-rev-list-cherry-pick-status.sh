@@ -85,17 +85,17 @@ test_expect_failure 'rev-list --left-right count with --count' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'rev-list --cherry-pick filters equivalent commits' '
+test_expect_success 'rev-list --cherry-pick filters equivalent commits' '
 	git rev-list --cherry-pick left...right >actual &&
 	test_line_count = 4 actual
 '
 
-test_expect_failure 'rev-list --cherry-mark marks equivalent commits' '
+test_expect_success 'rev-list --cherry-mark marks equivalent commits' '
 	git rev-list --cherry-mark left...right >actual &&
 	test $(wc -l <actual) -ge 1
 '
 
-test_expect_failure 'rev-list --cherry is shorthand for --cherry-mark --right-only --no-merges' '
+test_expect_success 'rev-list --cherry is shorthand for --cherry-mark --right-only --no-merges' '
 	git rev-list --cherry left...right >actual &&
 	test $(wc -l <actual) -ge 1
 '
@@ -107,7 +107,7 @@ test_expect_failure 'rev-list --left-right with simple base...left range' '
 	! grep "^<" actual
 '
 
-test_expect_failure 'rev-list --cherry-pick with --count' '
+test_expect_success 'rev-list --cherry-pick with --count' '
 	git rev-list --cherry-pick --count left...right >actual &&
 	test $(cat actual) -ge 1
 '

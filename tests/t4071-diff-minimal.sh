@@ -7,7 +7,7 @@ is implemented in grit yet.'
 
 . ./test-lib.sh
 
-test_expect_failure 'minimal diff should not mark changes between changed lines (not implemented)' '
+test_expect_success 'minimal diff should not mark changes between changed lines (not implemented)' '
 	test_write_lines x x x x >pre &&
 	test_write_lines x x x A B C D x E F G >post &&
 	test_expect_code 1 git diff --no-index --minimal pre post >diff &&

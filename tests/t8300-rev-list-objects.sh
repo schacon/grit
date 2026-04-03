@@ -258,7 +258,7 @@ test_expect_failure 'rev-list --objects includes tree OIDs' '
 	grep "$tree_oid" actual
 '
 
-test_expect_failure 'rev-list --objects-edge marks boundary objects' '
+test_expect_success 'rev-list --objects-edge marks boundary objects' '
 	cd repo &&
 	git rev-list --objects-edge HEAD~2..HEAD >actual &&
 	test $(wc -l <actual) -gt 0

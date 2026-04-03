@@ -114,7 +114,7 @@ test_expect_success '--git-dir with log' '
 
 # ── Double-dash separator ────────────────────────────────────────────────────
 
-test_expect_failure 'diff uses -- to separate revisions from paths (not yet supported)' '
+test_expect_success 'diff uses -- to separate revisions from paths (not yet supported)' '
 	cd repo &&
 	echo "modified" >file.txt &&
 	git diff -- file.txt >out &&
@@ -122,7 +122,7 @@ test_expect_failure 'diff uses -- to separate revisions from paths (not yet supp
 	git checkout -- file.txt
 '
 
-test_expect_failure 'log uses -- for path limiting (not yet supported)' '
+test_expect_success 'log uses -- for path limiting (not yet supported)' '
 	cd repo &&
 	git log --oneline -- file.txt >out &&
 	grep "initial" out
