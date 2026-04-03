@@ -109,4 +109,37 @@ test_expect_success 'check replace ref format' '
 	git rev-parse --verify "refs/replace/$HASH2"
 '
 
+test_expect_success 'replace --graft rewrites parents' '
+	cd repo &&
+	HASH3=$(cat ../hash3) &&
+	HASH1=$(cat ../hash1) &&
+	# Remove existing replace refs first
+	git replace -d $HASH2 2>/dev/null || true &&
+	# Graft hash3 to have hash1 as sole parent (skipping hash2)
+	git replace --graft $HASH3 $HASH1 &&
+	git replace -l >output &&
+	grep "$HASH3" output
+'
+
+test_expect_success 'replace --graft with no parents makes root commit' '
+	cd repo &&
+	HASH3=$(cat ../hash3) &&
+	# Force overwrite the existing graft
+	git replace -f --graft $HASH3 &&
+	# The replacement commit should exist
+	git rev-parse --verify "refs/replace/$HASH3"
+'
+
+test_expect_success 'cat-file shows replacement content' '
+	cd repo &&
+	HASH1=$(cat ../hash1) &&
+	# HASH1 has no replace ref yet; create one with modified author
+	GIT_NO_REPLACE_OBJECTS=1 git cat-file commit $HASH1 >orig &&
+	sed -e "s/A U Thor/Replaced Author/" <orig >replaced &&
+	NEWHASH=$(git hash-object -t commit -w replaced) &&
+	git replace $HASH1 $NEWHASH &&
+	git cat-file commit $HASH1 >actual &&
+	grep "Replaced Author" actual
+'
+
 test_done

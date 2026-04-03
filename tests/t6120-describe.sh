@@ -112,4 +112,36 @@ test_expect_success 'describe with --candidates' '
 	test -s raw
 '
 
+test_expect_success 'describe --dirty appends suffix when dirty' '
+	cd repo &&
+	echo dirty-change >>file &&
+	git describe --dirty >actual &&
+	grep -- "-dirty$" actual &&
+	git checkout -- file
+'
+
+test_expect_success 'describe --dirty shows no suffix when clean' '
+	cd repo &&
+	git describe --dirty >actual &&
+	! grep -- "-dirty" actual
+'
+
+test_expect_success 'describe --dirty=.mod uses custom suffix' '
+	cd repo &&
+	echo dirty-change >>file &&
+	git describe --dirty=.mod >actual &&
+	grep "\.mod$" actual &&
+	git checkout -- file
+'
+
+test_expect_success 'describe --all uses branch names' '
+	cd repo &&
+	git checkout -b side-branch &&
+	echo six >file && git add file &&
+	test_tick && git commit -m sixth &&
+	git describe --all >raw &&
+	grep "heads/side-branch" raw &&
+	git checkout main
+'
+
 test_done

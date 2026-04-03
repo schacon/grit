@@ -156,7 +156,7 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     let oid = resolve_object(&repo, obj_str)?;
-    let obj = repo.odb.read(&oid)?;
+    let obj = repo.read_replaced(&oid)?;
 
     if args.exists {
         return Ok(());
@@ -261,7 +261,7 @@ fn print_batch_entry(
         Err(_) => {
             writeln!(out, "{obj_str} missing")?;
         }
-        Ok(oid) => match repo.odb.read(&oid) {
+        Ok(oid) => match repo.read_replaced(&oid) {
             Err(_) => {
                 writeln!(out, "{obj_str} missing")?;
             }
