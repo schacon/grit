@@ -104,6 +104,9 @@ pub fn run(args: Args) -> Result<()> {
     // Parse rest into (target, paths) handling `--` separator
     let (target, paths) = split_target_and_paths(&args.rest, has_separator);
 
+    // Resolve @{-N} in start point if present
+    let target = target.map(|t| resolve_at_minus(&repo, &t).unwrap_or(t));
+
     // Case: checkout --orphan <name>
     if let Some(ref orphan_name) = args.orphan {
         return create_orphan_branch(&repo, orphan_name);
@@ -163,12 +166,31 @@ pub fn run(args: Args) -> Result<()> {
         }
     };
 
+    // Handle @{-N} syntax: Nth previously checked out branch
+    if target.starts_with("@{-") && target.ends_with('}') {
+        if let Ok(n) = target[3..target.len()-1].parse::<usize>() {
+            let prev = resolve_nth_previous_branch(&repo, n)?;
+            let branch_ref = format!("refs/heads/{prev}");
+            if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+                return switch_branch(&repo, &prev, &branch_ref, args.force);
+            }
+            if let Ok(oid) = resolve_to_commit(&repo, &prev) {
+                return detach_head(&repo, &oid, args.force);
+            }
+            bail!("error: previous branch '{}' not found", prev);
+        }
+    }
+
     // Handle "checkout -" — switch to previous branch via reflog
     if target == "-" {
         let prev = resolve_previous_branch(&repo)?;
         let branch_ref = format!("refs/heads/{prev}");
         if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
             return switch_branch(&repo, &prev, &branch_ref, args.force);
+        }
+        // Not a branch — try as a commit (detached HEAD)
+        if let Ok(oid) = resolve_to_commit(&repo, &prev) {
+            return detach_head(&repo, &oid, args.force);
         }
         bail!("error: previous branch '{}' not found", prev);
     }
@@ -1460,15 +1482,38 @@ fn normalize_path(path: &Path) -> std::path::PathBuf {
 /// Write reflog entries for a checkout operation.
 /// Resolve the previous branch from the HEAD reflog.
 /// Looks for the most recent "checkout: moving from X to Y" entry and returns X.
+/// Resolve `@{-N}` syntax to a branch name, returning the original string if not applicable.
+fn resolve_at_minus(repo: &Repository, spec: &str) -> Result<String> {
+    if spec.starts_with("@{-") && spec.ends_with('}') {
+        if let Ok(n) = spec[3..spec.len()-1].parse::<usize>() {
+            return resolve_nth_previous_branch(repo, n);
+        }
+    }
+    Ok(spec.to_string())
+}
+
 fn resolve_previous_branch(repo: &Repository) -> Result<String> {
+    resolve_nth_previous_branch(repo, 1)
+}
+
+/// Resolve the Nth previously checked out branch from the HEAD reflog.
+fn resolve_nth_previous_branch(repo: &Repository, n: usize) -> Result<String> {
     let reflog_path = repo.git_dir.join("logs/HEAD");
     let content = std::fs::read_to_string(&reflog_path)
         .context("cannot read HEAD reflog")?;
+    let mut seen = Vec::new();
     for line in content.lines().rev() {
         if let Some(msg_start) = line.find("checkout: moving from ") {
             let rest = &line[msg_start + "checkout: moving from ".len()..];
             if let Some(to_idx) = rest.find(" to ") {
-                return Ok(rest[..to_idx].to_string());
+                let from = &rest[..to_idx];
+                // Only add if not already the most recently seen
+                if seen.last().map_or(true, |last: &String| last != from) {
+                    seen.push(from.to_string());
+                }
+                if seen.len() >= n {
+                    return Ok(seen[n - 1].clone());
+                }
             }
         }
     }
