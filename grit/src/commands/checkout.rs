@@ -197,6 +197,13 @@ fn switch_branch(repo: &Repository, branch_name: &str, branch_ref: &str, force: 
     if let HeadState::Branch { ref refname, .. } = head {
         if refname == branch_ref {
             eprintln!("Already on '{}'", branch_name);
+            if force {
+                // Force mode: reset working tree to match the branch
+                let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
+                    .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
+                let target_tree = commit_to_tree(repo, &target_oid)?;
+                return force_reset_to_tree(repo, &target_tree);
+            }
             return Ok(());
         }
     }
@@ -356,6 +363,35 @@ fn create_orphan_branch(repo: &Repository, name: &str) -> Result<()> {
 }
 
 /// Force-reset working tree to HEAD (`checkout -f` with no arguments).
+/// Force-reset the working tree and index to match a given tree object.
+fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> {
+    let work_tree = match &repo.work_tree {
+        Some(p) => p.clone(),
+        None => bail!("this operation must be run in a work tree"),
+    };
+
+    let old_index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+    let new_entries = tree_to_flat_entries(repo, target_tree, "")?;
+    let mut new_index = Index::new();
+    new_index.entries = new_entries;
+    new_index.sort();
+
+    // Remove files that are in old index but not in new
+    checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree)?;
+
+    // Force-write every entry to the worktree
+    for entry in &new_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+        write_blob_to_worktree(repo, &work_tree, &path_str, &entry.oid, entry.mode)?;
+    }
+
+    new_index.write(&repo.index_path()).context("writing index")?;
+    Ok(())
+}
+
 fn force_reset_to_head(repo: &Repository) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
     let head_oid = match head.oid() {
