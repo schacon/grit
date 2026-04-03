@@ -975,3 +975,4 @@ test-lib.sh
 t3408-rebase-multi-line.sh
 t3307-notes-man.sh
 t3301-notes.sh
+t3413-rebase-hook.sh
