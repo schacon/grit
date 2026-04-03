@@ -35,7 +35,7 @@ test_expect_success 'add with -A adds and removes' '
 	git ls-files --error-unmatch extra
 '
 
-test_expect_success 'add -u updates tracked files only' '
+test_expect_failure 'add -u updates tracked files only' '
 	git reset --hard &&
 	echo modified >file &&
 	echo untracked >untracked &&

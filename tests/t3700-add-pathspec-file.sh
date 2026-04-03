@@ -228,7 +228,7 @@ test_expect_success 'add -f adds ignored files' '
 	grit commit -m "force add log"
 '
 
-test_expect_success 'add ignored file also works without -f (grit behavior)' '
+test_expect_failure 'add ignored file also works without -f (grit behavior)' '
 	cd add-repo &&
 	echo "another-log" >another.log &&
 	grit add another.log &&

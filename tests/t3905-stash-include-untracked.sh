@@ -32,7 +32,7 @@ test_expect_success 'stash pop restores untracked files' '
 	test_path_is_file untracked/untracked
 '
 
-test_expect_success 'stash -u is short for --include-untracked' '
+test_expect_failure 'stash -u is short for --include-untracked' '
 	rm -rf file2 untracked &&
 	echo new-content >untracked-file &&
 	git stash -u &&

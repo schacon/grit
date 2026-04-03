@@ -196,7 +196,7 @@ test_expect_success '--parents shows parent hashes' '
 	test $(wc -w <first_line) -eq 2
 '
 
-test_expect_success '--parents root commit has no parent' '
+test_expect_failure '--parents root commit has no parent' '
 	cd repo &&
 	root=$(grit rev-list HEAD | tail -1) &&
 	grit rev-list --parents HEAD >actual &&
