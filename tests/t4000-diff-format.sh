@@ -342,20 +342,20 @@ test_expect_success 'setup deletion repo' '
     git update-index --add victim.txt keeper.txt &&
     c1=$(make_commit "with two files") &&
     printf "%s\n" "$c1" >../del_c1 &&
-    git update-index --remove victim.txt &&
     rm -f victim.txt &&
+    git update-index --remove victim.txt &&
     c2=$(make_commit "delete victim" "$c1") &&
     printf "%s\n" "$c2" >../del_c2
 '
 
-test_expect_failure 'diff --name-status shows D for deleted file (tree-to-tree delete/add detection)' '
+test_expect_success 'diff --name-status shows D for deleted file (tree-to-tree delete/add detection)' '
     cd delrepo &&
     c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
     git diff --name-status "$c1" "$c2" >out &&
     grep "^D	victim.txt" out
 '
 
-test_expect_failure 'diff --name-only shows deleted file (tree-to-tree delete/add detection)' '
+test_expect_success 'diff --name-only shows deleted file (tree-to-tree delete/add detection)' '
     cd delrepo &&
     c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
     git diff --name-only "$c1" "$c2" >out &&
@@ -363,7 +363,7 @@ test_expect_failure 'diff --name-only shows deleted file (tree-to-tree delete/ad
     ! grep "keeper.txt" out
 '
 
-test_expect_failure 'diff --stat shows deleted file (tree-to-tree delete/add detection)' '
+test_expect_success 'diff --stat shows deleted file (tree-to-tree delete/add detection)' '
     cd delrepo &&
     c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
     git diff --stat "$c1" "$c2" >out &&
@@ -371,7 +371,7 @@ test_expect_failure 'diff --stat shows deleted file (tree-to-tree delete/add det
     grep "changed" out
 '
 
-test_expect_failure 'diff unified shows deleted file mode header (tree-to-tree delete/add detection)' '
+test_expect_success 'diff unified shows deleted file mode header (tree-to-tree delete/add detection)' '
     cd delrepo &&
     c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
     git diff "$c1" "$c2" >out &&
@@ -382,7 +382,7 @@ test_expect_failure 'diff unified shows deleted file mode header (tree-to-tree d
 # Part 7: diff with added files
 # ===========================================================================
 
-test_expect_failure 'diff unified shows new file mode header for additions (tree-to-tree delete/add detection)' '
+test_expect_success 'diff unified shows new file mode header for additions (tree-to-tree delete/add detection)' '
     cd delrepo &&
     c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
     git diff "$c2" "$c1" >out &&
@@ -462,8 +462,8 @@ test_expect_success 'setup add-del-mod repo' '
     git update-index --add kept.txt doomed.txt modified.txt &&
     c1=$(make_commit "initial") &&
     printf "%s\n" "$c1" >../adm_c1 &&
-    git update-index --remove doomed.txt &&
     rm -f doomed.txt &&
+    git update-index --remove doomed.txt &&
     printf "changed\n" >modified.txt &&
     git update-index modified.txt &&
     printf "new\n" >added.txt &&
@@ -479,7 +479,7 @@ test_expect_success 'diff --name-only lists added file' '
     grep "added.txt" out
 '
 
-test_expect_failure 'diff --name-only lists deleted file (tree-to-tree delete/add detection)' '
+test_expect_success 'diff --name-only lists deleted file (tree-to-tree delete/add detection)' '
     cd admrepo &&
     c1=$(cat ../adm_c1) && c2=$(cat ../adm_c2) &&
     git diff --name-only "$c1" "$c2" >out &&
@@ -508,7 +508,7 @@ test_expect_success 'diff --name-status shows A for added' '
     grep "added.txt" out
 '
 
-test_expect_failure 'diff --name-status shows D for deleted (tree-to-tree delete/add detection)' '
+test_expect_success 'diff --name-status shows D for deleted (tree-to-tree delete/add detection)' '
     cd admrepo &&
     c1=$(cat ../adm_c1) && c2=$(cat ../adm_c2) &&
     git diff --name-status "$c1" "$c2" >out &&
