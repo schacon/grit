@@ -34,21 +34,21 @@ test_expect_success 'create embedded repository' '
 	)
 '
 
-test_expect_failure 'git-add on embedded repository warns' '
+test_expect_success 'git-add on embedded repository warns' '
 	cd main-repo &&
 	git add embed 2>stderr &&
 	test_grep warning stderr &&
 	git rm --cached -f embed
 '
 
-test_expect_failure '--no-warn-embedded-repo suppresses warning' '
+test_expect_success '--no-warn-embedded-repo suppresses warning' '
 	cd main-repo &&
 	git add --no-warn-embedded-repo embed 2>stderr &&
 	test_grep ! warning stderr &&
 	git rm --cached -f embed
 '
 
-test_expect_failure 'no warning when updating entry' '
+test_expect_success 'no warning when updating entry' '
 	cd main-repo &&
 	git add embed &&
 	(cd embed && "$REAL_GIT" commit --allow-empty -m two) &&

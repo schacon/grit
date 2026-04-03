@@ -81,6 +81,10 @@ pub struct Args {
     /// Suppress warning for non-existent pathspecs (with --refresh).
     #[arg(long = "ignore-missing")]
     pub ignore_missing: bool,
+
+    /// Suppress warning for adding an embedded repository.
+    #[arg(long = "no-warn-embedded-repo")]
+    pub no_warn_embedded_repo: bool,
 }
 
 /// Run the `add` command.
@@ -444,6 +448,14 @@ fn add_path(
         .map(|m| m.file_type().is_dir())
         .unwrap_or(false);
     if is_real_dir {
+        // Check for embedded repository (directory with its own .git)
+        let embedded_git = abs_path.join(".git");
+        if embedded_git.exists() {
+            // This is an embedded repository — stage as a gitlink (160000)
+            return stage_gitlink(odb, index, work_tree, path, &abs_path, args)
+                .map_err(AddPathError::IoError);
+        }
+
         let mut paths = Vec::new();
         walk_directory(&abs_path, work_tree, &mut paths, repo, ignore_matcher, args.force)?;
         for rel_path in &paths {
@@ -473,6 +485,93 @@ fn add_path(
         }
         stage_file(odb, index, work_tree, path, &abs_path, args, add_cfg)
             .map_err(AddPathError::IoError)?;
+    }
+
+    Ok(())
+}
+
+/// Stage an embedded repository as a gitlink (mode 160000) in the index.
+///
+/// Reads the HEAD of the embedded repo to get the commit OID, and warns
+/// (unless `--no-warn-embedded-repo` is set) that a bare `git add` of an
+/// embedded repo is probably a mistake.
+fn stage_gitlink(
+    _odb: &Odb,
+    index: &mut Index,
+    work_tree: &Path,
+    rel_path: &str,
+    abs_path: &Path,
+    args: &Args,
+) -> Result<()> {
+    // Read the embedded repo's HEAD to get the commit OID
+    let embedded_head_path = abs_path.join(".git/HEAD");
+    let head_content = fs::read_to_string(&embedded_head_path)
+        .with_context(|| format!("cannot read HEAD of embedded repo '{}'", rel_path))?;
+    let head_trimmed = head_content.trim();
+
+    // Resolve the HEAD
+    let oid_hex = if let Some(refname) = head_trimmed.strip_prefix("ref: ") {
+        let ref_path = abs_path.join(".git").join(refname);
+        fs::read_to_string(&ref_path)
+            .with_context(|| format!("cannot resolve ref '{}' in embedded repo '{}'", refname, rel_path))?
+            .trim()
+            .to_string()
+    } else {
+        head_trimmed.to_string()
+    };
+
+    let oid = ObjectId::from_hex(&oid_hex)
+        .with_context(|| format!("invalid HEAD OID in embedded repo '{}'", rel_path))?;
+
+    // Check whether this entry is already tracked as a gitlink in the index
+    let already_tracked = index.get(rel_path.as_bytes(), 0)
+        .map(|e| e.mode == 0o160000)
+        .unwrap_or(false);
+
+    // Warn about embedded repository unless suppressed
+    if !args.no_warn_embedded_repo && !already_tracked {
+        eprintln!("warning: adding embedded git repository: {}", rel_path);
+        eprintln!("hint: You've added another git repository inside your current repository.");
+        eprintln!("hint: Clones of the outer repository will not contain the contents of");
+        eprintln!("hint: the embedded repository and will not know how to obtain it.");
+        eprintln!("hint: If you meant to add a submodule, use:");
+        eprintln!("hint: ");
+        eprintln!("hint: \tgit submodule add <url> {}", rel_path);
+        eprintln!("hint: ");
+        eprintln!("hint: If you added this path by mistake, you can remove it from the");
+        eprintln!("hint: index with:");
+        eprintln!("hint: ");
+        eprintln!("hint: \tgit rm --cached {}", rel_path);
+        eprintln!("hint: ");
+        eprintln!("hint: See \"git help submodule\" for more information.");
+    }
+
+    if args.dry_run {
+        eprintln!("add '{}'", rel_path);
+        return Ok(());
+    }
+
+    let meta = fs::metadata(abs_path)?;
+    let entry = IndexEntry {
+        ctime_sec: meta.ctime() as u32,
+        ctime_nsec: meta.ctime_nsec() as u32,
+        mtime_sec: meta.mtime() as u32,
+        mtime_nsec: meta.mtime_nsec() as u32,
+        dev: meta.dev() as u32,
+        ino: meta.ino() as u32,
+        mode: 0o160000, // gitlink mode
+        uid: meta.uid(),
+        gid: meta.gid(),
+        size: 0,
+        oid,
+        flags: rel_path.len().min(0xFFF) as u16,
+        flags_extended: None,
+        path: rel_path.as_bytes().to_vec(),
+    };
+    index.add_or_replace(entry);
+
+    if args.verbose {
+        eprintln!("add '{}'", rel_path);
     }
 
     Ok(())

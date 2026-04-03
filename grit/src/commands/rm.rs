@@ -129,16 +129,24 @@ pub fn run(args: Args) -> Result<()> {
             bail!("pathspec '{}' did not match any files", pathspec);
         }
 
-        // Require -r for directories.
+        // Require -r for directories (but not gitlinks, which are single entries).
         if !args.recursive {
-            for m in &matches {
-                if Path::new(m) != Path::new(&rel) {
+            // Check if this is a gitlink entry (mode 160000)
+            let is_gitlink = matches.len() == 1
+                && matches[0] == rel
+                && index.get(rel.as_bytes(), 0)
+                    .map(|e| e.mode == 0o160000)
+                    .unwrap_or(false);
+            if !is_gitlink {
+                for m in &matches {
+                    if Path::new(m) != Path::new(&rel) {
+                        bail!("not removing '{}' recursively without -r", pathspec);
+                    }
+                }
+                let abs_path = work_tree.join(&rel);
+                if abs_path.is_dir() && !matches.is_empty() {
                     bail!("not removing '{}' recursively without -r", pathspec);
                 }
-            }
-            let abs_path = work_tree.join(&rel);
-            if abs_path.is_dir() && !matches.is_empty() {
-                bail!("not removing '{}' recursively without -r", pathspec);
             }
         }
 
