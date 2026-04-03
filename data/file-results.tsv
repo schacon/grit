@@ -181,7 +181,7 @@ t2007-checkout-symlink	no	0	0	0	not_ported
 t2008-checkout-subdir	yes	22	12	10	ok
 t2009-checkout-statinfo	yes	25	20	5	ok
 t2010-checkout-ambiguous	yes	7	5	2	ok
-t2011-checkout-invalid-head	yes	24	20	4	ok
+t2011-checkout-invalid-head	yes	24	19	5	ok
 t2012-checkout-last	yes	25	6	19	ok
 t2013-checkout-submodule	no	0	0	0	not_ported
 t2014-checkout-switch	yes	24	7	17	ok
