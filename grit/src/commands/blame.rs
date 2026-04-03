@@ -350,7 +350,8 @@ pub fn run(args: Args) -> Result<()> {
 
     // Apply line range filter
     if let Some(ref range) = args.line_range {
-        let (start, end) = parse_line_range(range, blame_lines.len())?;
+        let line_contents: Vec<&str> = blame_lines.iter().map(|b| b.content.as_str()).collect();
+        let (start, end) = parse_line_range(range, &blame_lines, &line_contents)?;
         blame_lines.retain(|b| b.final_lineno >= start && b.final_lineno <= end);
     }
 
@@ -386,18 +387,69 @@ fn parse_blame_args(args: &[String]) -> Result<(Option<String>, String)> {
     }
 }
 
-fn parse_line_range(range: &str, total: usize) -> Result<(usize, usize)> {
-    let parts: Vec<&str> = range.split(',').collect();
+fn parse_line_range(range: &str, blame_lines: &[BlameLine], _line_contents: &[&str]) -> Result<(usize, usize)> {
+    let total = blame_lines.len();
+    // Find the max final_lineno for $ handling
+    let max_lineno = blame_lines.iter().map(|b| b.final_lineno).max().unwrap_or(total);
+
+    let parts: Vec<&str> = range.splitn(2, ',').collect();
     if parts.len() != 2 {
         bail!("invalid line range: expected start,end");
     }
-    let start: usize = parts[0].parse().context("invalid start line")?;
-    let end: usize = if parts[1] == "$" {
-        total
-    } else {
-        parts[1].parse().context("invalid end line")?
-    };
-    Ok((start, end))
+
+    let start = parse_line_spec(parts[0], blame_lines, None)?;
+    let end = parse_line_spec(parts[1], blame_lines, Some(start))?;
+
+    Ok((start, end.min(max_lineno)))
+}
+
+/// Parse a single line-range endpoint.
+/// `relative_to` is `Some(start)` when parsing the end portion (to support `+N`).
+fn parse_line_spec(spec: &str, blame_lines: &[BlameLine], relative_to: Option<usize>) -> Result<usize> {
+    let max_lineno = blame_lines.iter().map(|b| b.final_lineno).max().unwrap_or(0);
+
+    if spec == "$" {
+        return Ok(max_lineno);
+    }
+
+    // +N means "relative offset from start"
+    if let Some(offset_str) = spec.strip_prefix('+') {
+        let offset: usize = offset_str.parse().context("invalid +N offset")?;
+        let base = relative_to.unwrap_or(1);
+        // git semantics: -L N,+M means lines N through N+M-1
+        return Ok(base + offset - 1);
+    }
+
+    // -N means "relative negative offset from start"
+    if let Some(offset_str) = spec.strip_prefix('-') {
+        if let Ok(offset) = offset_str.parse::<usize>() {
+            let base = relative_to.unwrap_or(1);
+            return Ok(base.saturating_sub(offset).max(1));
+        }
+    }
+
+    // /regex/ — find first line matching the pattern
+    if spec.starts_with('/') && spec.ends_with('/') && spec.len() > 2 {
+        let pattern = &spec[1..spec.len() - 1];
+        let search_start = relative_to.unwrap_or(0);
+        for bl in blame_lines {
+            if bl.final_lineno > search_start && bl.content.contains(pattern) {
+                return Ok(bl.final_lineno);
+            }
+        }
+        // If nothing found searching forward, search from beginning
+        if search_start > 0 {
+            for bl in blame_lines {
+                if bl.content.contains(pattern) {
+                    return Ok(bl.final_lineno);
+                }
+            }
+        }
+        bail!("no line matching pattern: {pattern}");
+    }
+
+    // Plain number
+    spec.parse().context("invalid line number")
 }
 
 fn write_porcelain(
