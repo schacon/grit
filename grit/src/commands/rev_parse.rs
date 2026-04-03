@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::rev_parse::{
     abbreviate_object_id, discover_optional, is_inside_git_dir, is_inside_work_tree,
-    resolve_revision, show_prefix, to_relative_path,
+    resolve_revision, show_prefix, symbolic_full_name, to_relative_path,
 };
 use std::env;
 
@@ -28,7 +28,9 @@ pub fn run(args: Args) -> Result<()> {
     let mut show_is_bare = false;
     let mut show_toplevel = false;
     let mut show_prefix_flag = false;
+    let mut show_cdup = false;
     let mut show_git_dir = false;
+    let mut show_symbolic_full_name = false;
     let mut prefix: Option<String> = None;
     let mut default_rev: Option<String> = None;
     let mut revisions = Vec::new();
@@ -60,6 +62,10 @@ pub fn run(args: Args) -> Result<()> {
                 show_toplevel = true;
             } else if arg == "--show-prefix" {
                 show_prefix_flag = true;
+            } else if arg == "--show-cdup" {
+                show_cdup = true;
+            } else if arg == "--symbolic-full-name" {
+                show_symbolic_full_name = true;
             } else if arg == "--git-dir" {
                 show_git_dir = true;
             } else if arg == "--prefix" {
@@ -206,6 +212,20 @@ pub fn run(args: Args) -> Result<()> {
         };
         println!("{}", show_prefix(current, &cwd));
     }
+    if show_cdup {
+        let Some(current) = repo.as_ref() else {
+            bail!("not a git repository (or any of the parent directories)");
+        };
+        let prefix = show_prefix(current, &cwd);
+        if prefix.is_empty() {
+            println!();
+        } else {
+            // Count the number of path components and emit that many "../"
+            let depth = prefix.trim_end_matches('/').matches('/').count() + 1;
+            let cdup: String = "../".repeat(depth);
+            println!("{cdup}");
+        }
+    }
     if show_git_dir {
         let Some(current) = repo.as_ref() else {
             bail!("not a git repository (or any of the parent directories)");
@@ -246,6 +266,13 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     for rev in revisions {
+        if show_symbolic_full_name {
+            if let Some(full) = symbolic_full_name(current, &rev) {
+                println!("{full}");
+                continue;
+            }
+            // If symbolic resolution fails, fall through to OID resolution
+        }
         let rewritten = rewrite_tree_path_spec(&rev, prefix.as_deref());
         if let Ok(oid) = resolve_revision(current, &rewritten) {
             println!("{oid}");

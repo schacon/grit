@@ -113,8 +113,21 @@ impl Repository {
             cwd.join(start)
         };
 
+        // Parse GIT_CEILING_DIRECTORIES — colon-separated list of absolute
+        // directory paths that limit upward repository discovery.
+        let ceiling_dirs = parse_ceiling_directories();
+
         let mut current = start.as_path();
+        let mut first = true;
         loop {
+            // On the first iteration we always check the starting directory.
+            // On subsequent iterations, check whether this parent directory is
+            // blocked by a ceiling entry before probing for .git.
+            if !first && is_ceiling_blocked(current, &ceiling_dirs) {
+                break;
+            }
+            first = false;
+
             if let Some(repo) = try_open_at(current)? {
                 return Ok(repo);
             }
@@ -285,4 +298,62 @@ fn copy_template(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Parse `GIT_CEILING_DIRECTORIES` into a list of canonical absolute paths.
+///
+/// The variable is colon-separated (`:`) on Unix.  Empty entries and
+/// non-absolute paths are silently skipped, matching Git's behaviour.
+fn parse_ceiling_directories() -> Vec<PathBuf> {
+    let raw = match env::var("GIT_CEILING_DIRECTORIES") {
+        Ok(val) => val,
+        Err(_) => return Vec::new(),
+    };
+    if raw.is_empty() {
+        return Vec::new();
+    }
+    raw.split(':')
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| {
+            let p = PathBuf::from(s);
+            if !p.is_absolute() {
+                return None;
+            }
+            // Canonicalize to resolve symlinks; fall back to the raw path
+            // (with trailing slashes stripped) when the directory doesn't exist.
+            Some(p.canonicalize().unwrap_or_else(|_| {
+                // Strip trailing slashes for consistent comparison
+                let s = s.trim_end_matches('/');
+                PathBuf::from(s)
+            }))
+        })
+        .collect()
+}
+
+/// Check whether `dir` is blocked by any ceiling directory.
+///
+/// A ceiling directory `C` prevents looking at `C` itself and any of its
+/// ancestors during the upward walk.  Directories strictly below `C` are
+/// not blocked — i.e. if `dir` is a child of `C`, the walk may still look
+/// there.
+///
+/// In path terms: `dir` is blocked when the ceiling IS `dir` or IS a
+/// descendant of `dir` (meaning `ceil.starts_with(dir)`).
+fn is_ceiling_blocked(dir: &Path, ceilings: &[PathBuf]) -> bool {
+    if ceilings.is_empty() {
+        return false;
+    }
+    // Canonicalize `dir` for reliable comparison; if it fails (e.g. the path
+    // doesn't exist) fall back to the raw path.
+    let canon = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    for ceil in ceilings {
+        // Block when the walk has reached exactly the ceiling directory.
+        // Git's semantics: the ceiling prevents looking at the ceiling
+        // itself and anything above it.  Since we walk upward, once we hit
+        // the ceiling we stop.
+        if canon == *ceil {
+            return true;
+        }
+    }
+    false
 }

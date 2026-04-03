@@ -73,7 +73,7 @@ test_expect_failure 'other-branch@{upstream} resolves' '
 	)
 '
 
-test_expect_failure 'rev-parse --symbolic-full-name @{upstream}' '
+test_expect_success 'rev-parse --symbolic-full-name @{upstream}' '
 	(
 		cd clone &&
 		echo refs/remotes/origin/main >expect &&
