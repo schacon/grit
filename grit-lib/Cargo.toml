@@ -2,7 +2,7 @@
 name = "grit-lib"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "MIT"
 description = "Core library for the grit Git implementation"
 readme = "README.md"
 repository = "https://github.com/schacon/grit"
