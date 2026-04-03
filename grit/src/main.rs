@@ -24,6 +24,8 @@ fn main() {
         let _ = trace2_write_event(path, "version", env!("CARGO_PKG_VERSION"));
         let cmd_line: Vec<String> = std::env::args().collect();
         let _ = trace2_write_event(path, "start", &cmd_line.join(" "));
+        let ancestry = get_process_ancestry();
+        let _ = trace2_write_event(path, "cmd_ancestry", &format!("ancestry:[{}]", ancestry.join(" ")));
     }
     if let Some(ref path) = trace2_perf_path {
         let cmd_line: Vec<String> = std::env::args().collect();
@@ -73,6 +75,36 @@ fn main() {
     }
 
     std::process::exit(exit_code);
+}
+
+/// Get process ancestry by walking parent PIDs on Linux.
+fn get_process_ancestry() -> Vec<String> {
+    let mut result = Vec::new();
+    #[cfg(target_os = "linux")]
+    {
+        let mut pid = std::process::id();
+        // Walk up to 10 ancestors
+        for _ in 0..10 {
+            if let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
+                let name = status.lines()
+                    .find(|l| l.starts_with("Name:"))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("unknown")
+                    .to_string();
+                let ppid = status.lines()
+                    .find(|l| l.starts_with("PPid:"))
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(0);
+                result.push(name);
+                if ppid <= 1 { break; }
+                pid = ppid;
+            } else {
+                break;
+            }
+        }
+    }
+    result
 }
 
 /// Write a trace2 normal-format event to the trace file.

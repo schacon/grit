@@ -397,6 +397,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 s if s.starts_with("--color-moved") => {
                     args.color_moved = Some("default".to_owned());
                 }
+                s if s.starts_with("-O") && s.len() > 2 => {
+                    args.order_file = Some(s[2..].to_string());
+                }
                 _ => { extra_revs.push(r.clone()); continue; }
             }
         } else {
@@ -638,6 +641,13 @@ pub fn run(mut args: Args) -> Result<()> {
         } else {
             entries
         }
+    } else {
+        entries
+    };
+
+    // Apply orderfile sorting if specified
+    let entries = if let Some(ref order_path) = args.order_file {
+        apply_orderfile(entries, order_path)
     } else {
         entries
     };
@@ -946,6 +956,75 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Apply an orderfile to sort diff entries.
+///
+/// The orderfile contains one pattern per line. Files matching the first
+/// pattern come first, then files matching the second, etc. Files not
+/// matching any pattern come last in their original order.
+fn apply_orderfile(mut entries: Vec<DiffEntry>, order_path: &str) -> Vec<DiffEntry> {
+    let patterns: Vec<String> = match std::fs::read_to_string(order_path) {
+        Ok(content) => content
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect(),
+        Err(_) => return entries,
+    };
+
+    // Assign a sort key to each entry based on which pattern it matches first
+    let sort_key = |entry: &DiffEntry| -> usize {
+        let path = entry.new_path.as_ref().or(entry.old_path.as_ref()).cloned().unwrap_or_default();
+        for (i, pat) in patterns.iter().enumerate() {
+            if orderfile_pattern_matches(pat, &path) {
+                return i;
+            }
+        }
+        patterns.len() // unmatched files go last
+    };
+
+    entries.sort_by_key(|e| sort_key(e));
+    entries
+}
+
+/// Check if an orderfile pattern matches a path.
+/// Supports basic glob patterns: `*` matches any sequence, `?` matches one char.
+fn orderfile_pattern_matches(pattern: &str, path: &str) -> bool {
+    // Simple glob matching: just check if the pattern matches the filename or full path
+    let name = path.rsplit('/').next().unwrap_or(path);
+    glob_match(pattern, name) || glob_match(pattern, path)
+}
+
+/// Basic glob matching (supports `*` and `?`).
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let mut pi = 0;
+    let mut ti = 0;
+    let pb = pattern.as_bytes();
+    let tb = text.as_bytes();
+    let mut star_pi = usize::MAX;
+    let mut star_ti = 0;
+
+    while ti < tb.len() {
+        if pi < pb.len() && (pb[pi] == b'?' || pb[pi] == tb[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pb.len() && pb[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if star_pi != usize::MAX {
+            pi = star_pi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+    while pi < pb.len() && pb[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pb.len()
 }
 
 /// If `--` is present, everything before is revisions, everything after is paths.
