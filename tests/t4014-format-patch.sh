@@ -88,4 +88,48 @@ test_expect_success 'format-patch patch body contains diff' '
 	grep "^diff --git" patch-body
 '
 
+test_expect_success 'format-patch with A..B range' '
+	cd repo &&
+	git format-patch --stdout main..side >patch-range &&
+	grep "^From " patch-range >from-range &&
+	test_line_count = 3 from-range
+'
+
+test_expect_success 'format-patch A..B produces correct subjects' '
+	cd repo &&
+	git format-patch --stdout main..side >patch-range2 &&
+	grep "^Subject: \[PATCH 1/3\]" patch-range2 &&
+	grep "^Subject: \[PATCH 2/3\]" patch-range2 &&
+	grep "^Subject: \[PATCH 3/3\]" patch-range2
+'
+
+test_expect_success 'format-patch --root formats from root commit' '
+	cd repo &&
+	git checkout main &&
+	git format-patch --root --stdout HEAD >patch-root &&
+	grep "^Subject: \[PATCH\] Initial" patch-root
+'
+
+test_expect_success 'format-patch --cover-letter generates cover letter' '
+	cd repo &&
+	git checkout side &&
+	git format-patch --cover-letter --stdout HEAD~2 >patch-cover &&
+	grep "^Subject: \[PATCH 0/2\]" patch-cover &&
+	grep "^Subject: \[PATCH 1/2\]" patch-cover &&
+	grep "^Subject: \[PATCH 2/2\]" patch-cover
+'
+
+test_expect_success 'format-patch --no-numbered suppresses numbering' '
+	cd repo &&
+	git format-patch --no-numbered --stdout HEAD~2 >patch-nonum &&
+	cnt=$(grep "^Subject: \[PATCH\]" patch-nonum | wc -l) &&
+	test "$cnt" = "2"
+'
+
+test_expect_success 'format-patch --start-number adjusts numbering' '
+	cd repo &&
+	git format-patch --start-number 5 --numbered --stdout HEAD~1 >patch-startnum &&
+	grep "^Subject: \[PATCH 5/5\]" patch-startnum
+'
+
 test_done
