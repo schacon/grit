@@ -612,7 +612,7 @@ test_expect_success '%b is empty for most recent bodyless commit' '
 test_expect_success '%b shows body of second commit via --skip' '
 	cd repo &&
 	git log --format="%b" --skip=2 -n 1 >actual_body2 &&
-	printf "This is the body of the second commit.\nIt has multiple lines.\n" >expected_body2 &&
+	printf "This is the body of the second commit.\nIt has multiple lines.\n\n" >expected_body2 &&
 	test_cmp expected_body2 actual_body2
 '
 
@@ -709,7 +709,7 @@ test_expect_success 'format with all basic placeholders combined' '
 	tree_s=$(git rev-parse --short HEAD^{tree}) &&
 	parent=$(git rev-parse HEAD~1) &&
 	parent_s=$(git rev-parse --short HEAD~1) &&
-	expected="$hash $abbrev $tree $tree_s $parent $parent_s Test User test@example.com Test User test@example.com" &&
+	expected="$hash $abbrev $tree $tree_s $parent $parent_s A U Thor author@example.com C O Mitter committer@example.com" &&
 	out=$(git log --format="%H %h %T %t %P %p %an %ae %cn %ce" -n 1) &&
 	test "$out" = "$expected"
 '
