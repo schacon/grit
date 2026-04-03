@@ -315,18 +315,25 @@ fn create_and_switch_branch(
     }
 
     // Resolve start point (default: HEAD)
+    let head = resolve_head(&repo.git_dir)?;
     let start_oid = match start {
         Some(s) => resolve_to_commit(repo, s)?,
         None => {
-            let head = resolve_head(&repo.git_dir)?;
             match head.oid() {
                 Some(oid) => *oid,
-                None => bail!("cannot create branch '{}': HEAD does not point to a commit", name),
+                None => {
+                    // Unborn branch: just switch HEAD to the new branch name
+                    std::fs::write(
+                        repo.git_dir.join("HEAD"),
+                        format!("ref: {branch_ref}\n"),
+                    )?;
+                    checkout_eprintln!("Switched to a new branch '{}'", name);
+                    return Ok(());
+                }
             }
         }
     };
 
-    let head = resolve_head(&repo.git_dir)?;
     let target_tree = commit_to_tree(repo, &start_oid)?;
 
     // Update working tree if start point differs from current HEAD, or if force
