@@ -1,9 +1,10 @@
 [package]
-name = "grit"
+name = "grit-rs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Gust: a Git plumbing reimplementation in Rust"
+description = "A Git implementation in Rust"
+repository = "https://github.com/schacon/grit"
 
 [[bin]]
 name = "grit"

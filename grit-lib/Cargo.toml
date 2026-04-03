@@ -3,7 +3,8 @@ name = "grit-lib"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Core library for the Gust Git reimplementation"
+description = "Core library for the grit Git implementation"
+repository = "https://github.com/schacon/grit"
 
 [lints]
 workspace = true
