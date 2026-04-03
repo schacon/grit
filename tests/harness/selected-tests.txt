@@ -1138,3 +1138,5 @@ tests/t1517-outside-repo.sh
 tests/t4014-format-patch.sh
 tests/t4021-format-patch-numbered.sh
 tests/t1800-hook.sh
+tests/t1601-index-bogus.sh
+tests/t4043-diff-rename-binary.sh
