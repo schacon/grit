@@ -64,7 +64,7 @@ A	ft
 A	ft/5
 EOF
 
-test_expect_failure 'diff-tree -r -t includes tree entries (not implemented)' '
+test_expect_failure 'diff-tree -r -t includes tree entries (test_tick file leaks into commit)' '
 	git diff-tree -r -t --name-status HEAD~1 HEAD >actual &&
 	test_cmp expect_full actual
 '

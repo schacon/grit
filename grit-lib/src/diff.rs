@@ -288,6 +288,193 @@ fn emit_added(
     Ok(())
 }
 
+// ── Tree-to-tree diff with -t flag ──────────────────────────────────
+
+/// Like `diff_trees`, but also emits entries for tree objects themselves
+/// (used by `diff-tree -t`). Tree entries are emitted *before* their
+/// recursive contents.
+pub fn diff_trees_with_tree_entries(
+    odb: &Odb,
+    old_tree_oid: Option<&ObjectId>,
+    new_tree_oid: Option<&ObjectId>,
+    prefix: &str,
+) -> Result<Vec<DiffEntry>> {
+    let old_entries = match old_tree_oid {
+        Some(oid) => read_tree(odb, oid)?,
+        None => Vec::new(),
+    };
+    let new_entries = match new_tree_oid {
+        Some(oid) => read_tree(odb, oid)?,
+        None => Vec::new(),
+    };
+
+    let mut result = Vec::new();
+    diff_tree_entries_with_trees(odb, &old_entries, &new_entries, prefix, &mut result)?;
+    Ok(result)
+}
+
+/// Compare two sorted lists of tree entries, recursing into subtrees,
+/// and also emitting DiffEntry for tree objects themselves.
+fn diff_tree_entries_with_trees(
+    odb: &Odb,
+    old: &[TreeEntry],
+    new: &[TreeEntry],
+    prefix: &str,
+    result: &mut Vec<DiffEntry>,
+) -> Result<()> {
+    let mut oi = 0;
+    let mut ni = 0;
+
+    while oi < old.len() || ni < new.len() {
+        match (old.get(oi), new.get(ni)) {
+            (Some(o), Some(n)) => {
+                let cmp = crate::objects::tree_entry_cmp(
+                    &o.name,
+                    is_tree_mode(o.mode),
+                    &n.name,
+                    is_tree_mode(n.mode),
+                );
+                match cmp {
+                    std::cmp::Ordering::Less => {
+                        emit_deleted_with_trees(odb, o, prefix, result)?;
+                        oi += 1;
+                    }
+                    std::cmp::Ordering::Greater => {
+                        emit_added_with_trees(odb, n, prefix, result)?;
+                        ni += 1;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        if o.oid != n.oid || o.mode != n.mode {
+                            let name_str = String::from_utf8_lossy(&o.name);
+                            let path = format_path(prefix, &name_str);
+                            if is_tree_mode(o.mode) && is_tree_mode(n.mode) {
+                                // Emit tree entry itself
+                                result.push(DiffEntry {
+                                    status: DiffStatus::Modified,
+                                    old_path: Some(path.clone()),
+                                    new_path: Some(path.clone()),
+                                    old_mode: format_mode(o.mode),
+                                    new_mode: format_mode(n.mode),
+                                    old_oid: o.oid,
+                                    new_oid: n.oid,
+                                });
+                                // Then recurse
+                                let nested = diff_trees_with_tree_entries(odb, Some(&o.oid), Some(&n.oid), &path)?;
+                                result.extend(nested);
+                            } else if is_tree_mode(o.mode) && !is_tree_mode(n.mode) {
+                                emit_deleted_with_trees(odb, o, prefix, result)?;
+                                emit_added_with_trees(odb, n, prefix, result)?;
+                            } else if !is_tree_mode(o.mode) && is_tree_mode(n.mode) {
+                                emit_deleted_with_trees(odb, o, prefix, result)?;
+                                emit_added_with_trees(odb, n, prefix, result)?;
+                            } else {
+                                result.push(DiffEntry {
+                                    status: if o.mode != n.mode && o.oid == n.oid {
+                                        DiffStatus::TypeChanged
+                                    } else {
+                                        DiffStatus::Modified
+                                    },
+                                    old_path: Some(path.clone()),
+                                    new_path: Some(path),
+                                    old_mode: format_mode(o.mode),
+                                    new_mode: format_mode(n.mode),
+                                    old_oid: o.oid,
+                                    new_oid: n.oid,
+                                });
+                            }
+                        }
+                        oi += 1;
+                        ni += 1;
+                    }
+                }
+            }
+            (Some(o), None) => {
+                emit_deleted_with_trees(odb, o, prefix, result)?;
+                oi += 1;
+            }
+            (None, Some(n)) => {
+                emit_added_with_trees(odb, n, prefix, result)?;
+                ni += 1;
+            }
+            (None, None) => break,
+        }
+    }
+
+    Ok(())
+}
+
+fn emit_deleted_with_trees(
+    odb: &Odb,
+    entry: &TreeEntry,
+    prefix: &str,
+    result: &mut Vec<DiffEntry>,
+) -> Result<()> {
+    let name_str = String::from_utf8_lossy(&entry.name);
+    let path = format_path(prefix, &name_str);
+    if is_tree_mode(entry.mode) {
+        // Emit tree entry itself
+        result.push(DiffEntry {
+            status: DiffStatus::Deleted,
+            old_path: Some(path.clone()),
+            new_path: None,
+            old_mode: format_mode(entry.mode),
+            new_mode: "000000".to_owned(),
+            old_oid: entry.oid,
+            new_oid: zero_oid(),
+        });
+        // Then recurse
+        let nested = diff_trees_with_tree_entries(odb, Some(&entry.oid), None, &path)?;
+        result.extend(nested);
+    } else {
+        result.push(DiffEntry {
+            status: DiffStatus::Deleted,
+            old_path: Some(path.clone()),
+            new_path: None,
+            old_mode: format_mode(entry.mode),
+            new_mode: "000000".to_owned(),
+            old_oid: entry.oid,
+            new_oid: zero_oid(),
+        });
+    }
+    Ok(())
+}
+
+fn emit_added_with_trees(
+    odb: &Odb,
+    entry: &TreeEntry,
+    prefix: &str,
+    result: &mut Vec<DiffEntry>,
+) -> Result<()> {
+    let name_str = String::from_utf8_lossy(&entry.name);
+    let path = format_path(prefix, &name_str);
+    if is_tree_mode(entry.mode) {
+        // Emit tree entry itself
+        result.push(DiffEntry {
+            status: DiffStatus::Added,
+            old_path: None,
+            new_path: Some(path.clone()),
+            old_mode: "000000".to_owned(),
+            new_mode: format_mode(entry.mode),
+            old_oid: zero_oid(),
+            new_oid: entry.oid,
+        });
+        // Then recurse
+        let nested = diff_trees_with_tree_entries(odb, None, Some(&entry.oid), &path)?;
+        result.extend(nested);
+    } else {
+        result.push(DiffEntry {
+            status: DiffStatus::Added,
+            old_path: None,
+            new_path: Some(path),
+            old_mode: "000000".to_owned(),
+            new_mode: format_mode(entry.mode),
+            old_oid: zero_oid(),
+            new_oid: entry.oid,
+        });
+    }
+    Ok(())
+}
+
 // ── Index-to-tree diff (staged changes) ─────────────────────────────
 
 /// Compare the index against a tree (usually HEAD's tree).
