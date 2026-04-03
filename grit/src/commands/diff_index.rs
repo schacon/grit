@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::stat_matches;
+use grit_lib::diff::{detect_renames, stat_matches, DiffEntry, DiffStatus, zero_oid};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -52,13 +52,53 @@ pub fn run(args: Args) -> Result<()> {
         diff_tree_vs_worktree(&repo, &tree_map, &index_map, &index, options.match_missing)?
     };
 
+    // Convert to DiffEntry for rename detection and output.
+    let diff_entries: Vec<DiffEntry> = changes
+        .iter()
+        .map(|c| raw_change_to_diff_entry(c))
+        .collect();
+
+    let diff_entries = if let Some(threshold) = options.find_renames {
+        detect_renames(&repo.odb, diff_entries, threshold)
+    } else {
+        diff_entries
+    };
+
     if !options.quiet {
-        for change in &changes {
-            println!("{}", render_raw(change, &repo, options.abbrev)?);
+        if options.patch {
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            for entry in &diff_entries {
+                write_patch_entry(&mut out, &repo.odb, entry)?;
+            }
+        } else if options.name_status {
+            for entry in &diff_entries {
+                match (entry.status, entry.score) {
+                    (DiffStatus::Renamed, Some(s)) => {
+                        println!("R{:03}\t{}\t{}",
+                            s,
+                            entry.old_path.as_deref().unwrap_or(""),
+                            entry.new_path.as_deref().unwrap_or(""));
+                    }
+                    (DiffStatus::Copied, Some(s)) => {
+                        println!("C{:03}\t{}\t{}",
+                            s,
+                            entry.old_path.as_deref().unwrap_or(""),
+                            entry.new_path.as_deref().unwrap_or(""));
+                    }
+                    _ => {
+                        println!("{}\t{}", entry.status.letter(), entry.path());
+                    }
+                }
+            }
+        } else {
+            for entry in &diff_entries {
+                println!("{}", render_raw_diff_entry(entry, &repo, options.abbrev)?);
+            }
         }
     }
 
-    if (options.exit_code || options.quiet) && !changes.is_empty() {
+    if (options.exit_code || options.quiet) && !diff_entries.is_empty() {
         std::process::exit(1);
     }
     Ok(())
@@ -73,6 +113,9 @@ struct Options {
     quiet: bool,
     exit_code: bool,
     abbrev: Option<usize>,
+    find_renames: Option<u32>,
+    patch: bool,
+    name_status: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,6 +150,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut tree_ish: Option<String> = None;
     let mut pathspecs = Vec::new();
     let mut end_of_options = false;
+    let mut find_renames: Option<u32> = None;
+    let mut patch = false;
+    let mut name_status = false;
 
     let mut idx = 0usize;
     while idx < argv.len() {
@@ -124,8 +170,41 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "--exit-code" => exit_code = true,
                 "--raw" => {}
                 "--abbrev" => abbrev = Some(7),
-                "-p" | "--patch" => {
-                    bail!("patch output is not implemented for `grit diff-index`")
+                "-p" | "--patch" | "-u" => {
+                    patch = true;
+                }
+                "--name-status" => {
+                    name_status = true;
+                }
+                "-M" | "--find-renames" => {
+                    find_renames = Some(50);
+                }
+                "--no-renames" => {
+                    find_renames = None;
+                }
+                _ if arg.starts_with("-M") => {
+                    let val = &arg[2..];
+                    let pct = if val.ends_with('%') {
+                        val[..val.len()-1].parse::<u32>().unwrap_or(50)
+                    } else {
+                        val.parse::<u32>().unwrap_or(50)
+                    };
+                    find_renames = Some(pct);
+                }
+                _ if arg.starts_with("--find-renames=") => {
+                    let val = &arg["--find-renames=".len()..];
+                    let pct = if val.ends_with('%') {
+                        val[..val.len()-1].parse::<u32>().unwrap_or(50)
+                    } else {
+                        val.parse::<u32>().unwrap_or(50)
+                    };
+                    find_renames = Some(pct);
+                }
+                _ if arg.starts_with("-l") && arg[2..].parse::<usize>().is_ok() => {
+                    // rename limit - accept and ignore for now
+                }
+                "-r" => {
+                    // recursive - default behavior for diff-index
                 }
                 _ if arg.starts_with("--abbrev=") => {
                     let value = arg.trim_start_matches("--abbrev=");
@@ -160,6 +239,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         quiet,
         exit_code,
         abbrev,
+        find_renames,
+        patch,
+        name_status,
     })
 }
 
@@ -417,4 +499,163 @@ fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
         return Ok(cwd.join(path));
     }
     Ok(repo.index_path())
+}
+
+/// Convert a RawChange to a DiffEntry for rename detection.
+fn raw_change_to_diff_entry(change: &RawChange) -> DiffEntry {
+    let status = match change.status {
+        'A' => DiffStatus::Added,
+        'D' => DiffStatus::Deleted,
+        'M' => DiffStatus::Modified,
+        'R' => DiffStatus::Renamed,
+        'C' => DiffStatus::Copied,
+        'T' => DiffStatus::TypeChanged,
+        _ => DiffStatus::Modified,
+    };
+
+    let old_mode = change.old.map_or(0, |s| s.mode);
+    let new_mode = change.new.map_or(0, |s| s.mode);
+
+    DiffEntry {
+        status,
+        old_path: if change.status == 'A' { None } else { Some(change.path.clone()) },
+        new_path: if change.status == 'D' { None } else { Some(change.path.clone()) },
+        old_mode: format!("{old_mode:06o}"),
+        new_mode: format!("{new_mode:06o}"),
+        old_oid: change.old.map_or_else(zero_oid, |s| s.oid),
+        new_oid: change.new.map_or_else(zero_oid, |s| s.oid),
+        score: None,
+    }
+}
+
+/// Render a DiffEntry in raw format.
+fn render_raw_diff_entry(entry: &DiffEntry, repo: &Repository, abbrev: Option<usize>) -> Result<String> {
+    let width = abbrev.unwrap_or(40).clamp(4, 40);
+
+    let old_oid = if entry.old_oid == zero_oid() {
+        "0".repeat(width)
+    } else {
+        match abbrev {
+            Some(min_len) => abbreviate_object_id(repo, entry.old_oid, min_len)?,
+            None => entry.old_oid.to_hex(),
+        }
+    };
+    let new_oid = if entry.new_oid == zero_oid() {
+        "0".repeat(width)
+    } else {
+        match abbrev {
+            Some(min_len) => abbreviate_object_id(repo, entry.new_oid, min_len)?,
+            None => entry.new_oid.to_hex(),
+        }
+    };
+
+    let status_str = match (entry.status, entry.score) {
+        (DiffStatus::Renamed, Some(s)) => format!("R{:03}", s),
+        (DiffStatus::Copied, Some(s)) => format!("C{:03}", s),
+        _ => entry.status.letter().to_string(),
+    };
+
+    let path = match entry.status {
+        DiffStatus::Renamed | DiffStatus::Copied => {
+            format!(
+                "{}\t{}",
+                entry.old_path.as_deref().unwrap_or(""),
+                entry.new_path.as_deref().unwrap_or("")
+            )
+        }
+        _ => entry.path().to_owned(),
+    };
+
+    Ok(format!(
+        ":{} {} {} {} {}\t{}",
+        entry.old_mode, entry.new_mode, old_oid, new_oid, status_str, path
+    ))
+}
+
+/// Write a unified-diff block for one entry (diff-index -p).
+fn write_patch_entry(
+    out: &mut impl std::io::Write,
+    odb: &Odb,
+    entry: &DiffEntry,
+) -> Result<()> {
+    use grit_lib::diff::unified_diff;
+
+    let old_path = entry
+        .old_path
+        .as_deref()
+        .unwrap_or(entry.new_path.as_deref().unwrap_or(""));
+    let new_path = entry
+        .new_path
+        .as_deref()
+        .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
+
+    writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
+
+    match entry.status {
+        DiffStatus::Added => {
+            writeln!(out, "new file mode {}", entry.new_mode)?;
+            writeln!(out, "index {}..{}",
+                &entry.old_oid.to_hex()[..7],
+                &entry.new_oid.to_hex()[..7])?;
+        }
+        DiffStatus::Deleted => {
+            writeln!(out, "deleted file mode {}", entry.old_mode)?;
+            writeln!(out, "index {}..{}",
+                &entry.old_oid.to_hex()[..7],
+                &entry.new_oid.to_hex()[..7])?;
+        }
+        DiffStatus::Modified => {
+            if entry.old_mode == entry.new_mode {
+                writeln!(out, "index {}..{} {}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7],
+                    entry.old_mode)?;
+            } else {
+                writeln!(out, "old mode {}", entry.old_mode)?;
+                writeln!(out, "new mode {}", entry.new_mode)?;
+                writeln!(out, "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7])?;
+            }
+        }
+        DiffStatus::Renamed => {
+            let sim = entry.score.unwrap_or(100);
+            writeln!(out, "similarity index {sim}%")?;
+            writeln!(out, "rename from {old_path}")?;
+            writeln!(out, "rename to {new_path}")?;
+            if entry.old_oid != entry.new_oid {
+                writeln!(out, "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7])?;
+            }
+        }
+        _ => {}
+    }
+
+    let z = zero_oid();
+    let old_content = if entry.old_oid == z {
+        String::new()
+    } else {
+        match odb.read(&entry.old_oid) {
+            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
+            Err(_) => String::new(),
+        }
+    };
+    let new_content = if entry.new_oid == z {
+        String::new()
+    } else {
+        match odb.read(&entry.new_oid) {
+            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
+            Err(_) => String::new(),
+        }
+    };
+
+    let display_old = if entry.status == DiffStatus::Added { "/dev/null" } else { old_path };
+    let display_new = if entry.status == DiffStatus::Deleted { "/dev/null" } else { new_path };
+
+    let context_lines = 3;
+    let patch = unified_diff(&old_content, &new_content, display_old, display_new, context_lines);
+    write!(out, "{patch}")?;
+
+    Ok(())
 }

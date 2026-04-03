@@ -15,8 +15,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    count_changes, diff_index_to_tree, diff_index_to_worktree, diff_tree_to_worktree, diff_trees,
-    unified_diff, zero_oid, DiffEntry, DiffStatus,
+    count_changes, detect_renames, diff_index_to_tree, diff_index_to_worktree,
+    diff_tree_to_worktree, diff_trees, unified_diff, zero_oid, DiffEntry, DiffStatus,
 };
 use grit_lib::error::Error;
 use grit_lib::index::Index;
@@ -135,6 +135,10 @@ pub struct Args {
     /// Show the names and status of changed files.
     #[arg(long = "name-status")]
     pub name_status: bool,
+
+    /// Show a condensed summary of extended header info (renames, mode changes).
+    #[arg(long = "summary")]
+    pub summary: bool,
 
     /// Exit with status 1 if there are differences, 0 otherwise.
     #[arg(long = "exit-code")]
@@ -291,6 +295,33 @@ pub fn run(args: Args) -> Result<()> {
         entries
     };
 
+    // Apply rename detection if requested (explicit -M flag or diff.renames config).
+    let rename_threshold: Option<u32> = if let Some(ref threshold_str) = args.find_renames {
+        Some(threshold_str.parse().unwrap_or(50))
+    } else {
+        // Check diff.renames config.
+        use grit_lib::config::ConfigSet;
+        let config = ConfigSet::load(Some(&repo.git_dir), false)
+            .unwrap_or_else(|_| ConfigSet::new());
+        match config.get("diff.renames") {
+            Some(val) => {
+                let val_lower = val.to_lowercase();
+                match val_lower.as_str() {
+                    "false" | "no" | "0" => None,
+                    "true" | "yes" | "1" | "" => Some(50),
+                    "copies" | "copy" => Some(50), // -C mode, treat as renames for now
+                    _ => None,
+                }
+            }
+            None => None, // Git defaults to true in newer versions, but be conservative
+        }
+    };
+    let entries = if let Some(threshold) = rename_threshold {
+        detect_renames(&repo.odb, entries, threshold)
+    } else {
+        entries
+    };
+
     let has_diff = !entries.is_empty();
 
     // Determine color mode
@@ -312,12 +343,17 @@ pub fn run(args: Args) -> Result<()> {
             write_shortstat(&mut out, &entries, &repo.odb, wt_for_content)?;
         } else if args.stat {
             write_stat(&mut out, &entries, &repo.odb, wt_for_content)?;
+            if args.summary {
+                write_diff_summary(&mut out, &entries)?;
+            }
         } else if args.numstat {
             write_numstat(&mut out, &entries, &repo.odb, wt_for_content)?;
         } else if args.name_only {
             write_name_only(&mut out, &entries)?;
         } else if args.name_status {
             write_name_status(&mut out, &entries)?;
+        } else if args.summary && !args.stat {
+            write_diff_summary(&mut out, &entries)?;
         } else {
             write_patch(
                 &mut out,
@@ -657,14 +693,26 @@ fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -
             }
         }
         DiffStatus::Renamed => {
-            writeln!(out, "{b}similarity index 100%{r}")?;
+            let sim = entry.score.unwrap_or(100);
+            writeln!(out, "{b}similarity index {sim}%{r}")?;
             writeln!(out, "{b}rename from {old_path}{r}")?;
             writeln!(out, "{b}rename to {new_path}{r}")?;
+            if entry.old_oid != entry.new_oid {
+                let old_abbrev = &entry.old_oid.to_hex()[..7];
+                let new_abbrev = &entry.new_oid.to_hex()[..7];
+                writeln!(out, "{b}index {old_abbrev}..{new_abbrev}{r}")?;
+            }
         }
         DiffStatus::Copied => {
-            writeln!(out, "{b}similarity index 100%{r}")?;
+            let sim = entry.score.unwrap_or(100);
+            writeln!(out, "{b}similarity index {sim}%{r}")?;
             writeln!(out, "{b}copy from {old_path}{r}")?;
             writeln!(out, "{b}copy to {new_path}{r}")?;
+            if entry.old_oid != entry.new_oid {
+                let old_abbrev = &entry.old_oid.to_hex()[..7];
+                let new_abbrev = &entry.new_oid.to_hex()[..7];
+                writeln!(out, "{b}index {old_abbrev}..{new_abbrev}{r}")?;
+            }
         }
         DiffStatus::TypeChanged => {
             writeln!(out, "{b}old mode {}{r}", entry.old_mode)?;
@@ -1070,7 +1118,19 @@ fn write_stat(
         return Ok(());
     }
 
-    let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
+    // Build display paths (compact rename format for renames).
+    let display_paths: Vec<String> = entries
+        .iter()
+        .map(|e| match e.status {
+            DiffStatus::Renamed | DiffStatus::Copied => {
+                let old = e.old_path.as_deref().unwrap_or("");
+                let new = e.new_path.as_deref().unwrap_or("");
+                grit_lib::diff::format_rename_path(old, new)
+            }
+            _ => e.path().to_owned(),
+        })
+        .collect();
+    let max_path_len = display_paths.iter().map(|p| p.len()).max().unwrap_or(0);
 
     // Collect per-file stats first so we can compute the count column width
     let mut file_stats: Vec<(&str, usize, usize)> = Vec::new();
@@ -1078,11 +1138,11 @@ fn write_stat(
     let mut total_del = 0usize;
     let mut files_changed = 0usize;
 
-    for entry in entries {
+    for (i, entry) in entries.iter().enumerate() {
         let old_content = read_content(odb, &entry.old_oid, None, entry.path());
         let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
         let (ins, del) = count_changes(&old_content, &new_content);
-        file_stats.push((entry.path(), ins, del));
+        file_stats.push((&display_paths[i], ins, del));
         total_ins += ins;
         total_del += del;
         files_changed += 1;
@@ -1152,6 +1212,37 @@ fn write_numstat(
 }
 
 /// Write only the names of changed files.
+/// Write `--summary` output for rename/copy/mode-change entries.
+fn write_diff_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
+    use grit_lib::diff::format_rename_path;
+    for entry in entries {
+        match entry.status {
+            DiffStatus::Renamed => {
+                let old = entry.old_path.as_deref().unwrap_or("");
+                let new = entry.new_path.as_deref().unwrap_or("");
+                let compact = format_rename_path(old, new);
+                let sim = entry.score.unwrap_or(100);
+                writeln!(out, " rename {compact} ({sim}%)")?;
+            }
+            DiffStatus::Copied => {
+                let old = entry.old_path.as_deref().unwrap_or("");
+                let new = entry.new_path.as_deref().unwrap_or("");
+                let compact = format_rename_path(old, new);
+                let sim = entry.score.unwrap_or(100);
+                writeln!(out, " copy {compact} ({sim}%)")?;
+            }
+            DiffStatus::Added => {
+                writeln!(out, " create mode {} {}", entry.new_mode, entry.path())?;
+            }
+            DiffStatus::Deleted => {
+                writeln!(out, " delete mode {} {}", entry.old_mode, entry.path())?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn write_name_only(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
     for entry in entries {
         writeln!(out, "{}", entry.path())?;
@@ -1165,17 +1256,21 @@ fn write_name_status(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> 
     for entry in entries {
         match entry.status {
             DiffStatus::Renamed => {
+                let s = entry.score.unwrap_or(100);
                 writeln!(
                     out,
-                    "R100\t{}\t{}",
+                    "R{:03}\t{}\t{}",
+                    s,
                     entry.old_path.as_deref().unwrap_or(""),
                     entry.new_path.as_deref().unwrap_or("")
                 )?;
             }
             DiffStatus::Copied => {
+                let s = entry.score.unwrap_or(100);
                 writeln!(
                     out,
-                    "C100\t{}\t{}",
+                    "C{:03}\t{}\t{}",
+                    s,
                     entry.old_path.as_deref().unwrap_or(""),
                     entry.new_path.as_deref().unwrap_or("")
                 )?;
