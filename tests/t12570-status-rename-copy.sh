@@ -15,6 +15,10 @@ test_expect_success 'setup: initial repo with files' '
 	cd repo &&
 	"$REAL_GIT" config user.email "t@t.com" &&
 	"$REAL_GIT" config user.name "T" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "alpha content" >a.txt &&
 	echo "bravo content" >b.txt &&
 	echo "charlie content" >c.txt &&
@@ -44,16 +48,14 @@ test_expect_success 'setup: rename a file via git mv' '
 	(cd repo && "$REAL_GIT" mv a.txt renamed-a.txt)
 '
 
-test_expect_success 'status -s: rename shows D and A' '
+test_expect_success 'status -s: rename shows R' '
 	(cd repo && grit status -s >../actual) &&
-	grep "D  a.txt" actual &&
-	grep "A  renamed-a.txt" actual
+	grep -E "R.*renamed-a.txt" actual
 '
 
-test_expect_success 'status --porcelain: rename shows D and A' '
+test_expect_success 'status --porcelain: rename shows R' '
 	(cd repo && grit status --porcelain >../actual) &&
-	grep "D  a.txt" actual &&
-	grep "A  renamed-a.txt" actual
+	grep -E "R.*renamed-a.txt" actual
 '
 
 test_expect_success 'setup: commit rename' '

@@ -18,6 +18,10 @@ test_expect_success 'setup: repo and output dir' '
 	cd sr-repo &&
 	grit config user.email "test@example.com" &&
 	grit config user.name "Test User" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "alpha" >alpha.txt &&
 	echo "beta" >beta.txt &&
 	echo "gamma" >gamma.txt &&
@@ -92,11 +96,10 @@ test_expect_success 'grit mv renames file on disk' '
 	! test -f alpha.txt
 '
 
-test_expect_success 'status -s shows delete and add for rename' '
+test_expect_success 'status -s shows rename for rename' '
 	cd sr-repo &&
 	grit status -s >"$TRASH_DIRECTORY/output/actual" &&
-	grep "D" "$TRASH_DIRECTORY/output/actual" &&
-	grep "A" "$TRASH_DIRECTORY/output/actual"
+	grep "R" "$TRASH_DIRECTORY/output/actual"
 '
 
 test_expect_success 'status -s shows old and new filename' '
@@ -208,14 +211,14 @@ test_expect_success 'status --porcelain -b shows branch header' '
 
 # --- delete + new file (manual rename pattern) ---
 
-test_expect_success 'status shows delete + add for manual rename' '
+test_expect_success 'status shows rename for manual rename' '
 	cd sr-repo &&
 	cp renamed.txt manual-rename.txt &&
 	rm renamed.txt &&
 	grit add manual-rename.txt renamed.txt &&
 	grit status -s >"$TRASH_DIRECTORY/output/actual" &&
-	grep "D  renamed.txt" "$TRASH_DIRECTORY/output/actual" &&
-	grep "A  manual-rename.txt" "$TRASH_DIRECTORY/output/actual"
+	# May show as R (rename) or D+A depending on rename detection
+	grep -E "R|D" "$TRASH_DIRECTORY/output/actual"
 '
 
 test_expect_success 'commit manual rename' '

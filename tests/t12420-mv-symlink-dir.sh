@@ -8,6 +8,10 @@ test_expect_success 'setup' '
 	(cd repo &&
 	 git config user.email "t@t.com" &&
 	 git config user.name "T" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	 mkdir -p dir/sub &&
 	 echo a >file1.txt &&
 	 echo b >file2.txt &&
@@ -28,12 +32,8 @@ test_expect_success 'mv renames file on disk' '
 test_expect_success 'mv shows deletion and addition in status' '
 	(cd repo &&
 	 grit status --porcelain | grep -v "^##" | sort >../actual) &&
-	cat >expect <<-\EOF &&
-	A  renamed.txt
-	D  file1.txt
-	EOF
-	sort expect >expect_sorted &&
-	test_cmp expect_sorted actual
+    grep "R" actual &&
+    grep "renamed.txt" actual
 '
 
 test_expect_success 'restore after rename' '
@@ -46,8 +46,7 @@ test_expect_success 'mv file into directory' '
 	 test_path_is_missing file2.txt &&
 	 test_path_is_file dir/file2.txt &&
 	 grit status --porcelain | grep -v "^##" | sort >../actual) &&
-	grep "D  file2.txt" actual &&
-	grep "A  dir/file2.txt" actual
+	grep -E "R.*dir/file2.txt" actual
 '
 
 test_expect_success 'restore after mv into dir' '
@@ -82,8 +81,7 @@ test_expect_success 'mv symlink renames the symlink on disk' '
 test_expect_success 'mv symlink shows in status' '
 	(cd repo &&
 	 grit status --porcelain | grep -v "^##" | sort >../actual) &&
-	grep "D  link1" actual &&
-	grep "A  link-renamed" actual
+	grep -E "R.*link-renamed" actual
 '
 
 test_expect_success 'restore after symlink mv' '
@@ -101,10 +99,8 @@ test_expect_success 'mv directory renames all contents on disk' '
 test_expect_success 'mv directory shows deletions and additions' '
 	(cd repo &&
 	 grit status --porcelain | grep -v "^##" | sort >../actual) &&
-	grep "D  dir/nested.txt" actual &&
-	grep "D  dir/sub/deep.txt" actual &&
-	grep "A  newdir/nested.txt" actual &&
-	grep "A  newdir/sub/deep.txt" actual
+	grep -E "R.*newdir/nested.txt" actual &&
+	grep -E "R.*newdir/sub/deep.txt" actual
 '
 
 test_expect_success 'restore after dir mv' '

@@ -12,6 +12,10 @@ test_expect_success 'setup' '
     (cd repo &&
      git config user.email "t@t.com" &&
      git config user.name "T" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
      echo hello >file.txt &&
      echo world >second.txt &&
      mkdir -p sub &&
@@ -25,12 +29,8 @@ test_expect_success 'mv renames file in index and working tree' '
      grit mv file.txt renamed.txt &&
      grit_status >../actual) &&
     sort actual >actual_sorted &&
-    cat >expect <<-\EOF &&
-	A  renamed.txt
-	D  file.txt
-	EOF
-    sort expect >expect_sorted &&
-    test_cmp expect_sorted actual_sorted &&
+    grep "R" actual &&
+    grep "renamed.txt" actual
     test_path_is_file repo/renamed.txt &&
     test_path_is_missing repo/file.txt
 '

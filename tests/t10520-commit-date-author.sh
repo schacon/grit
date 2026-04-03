@@ -13,6 +13,10 @@ test_expect_success 'setup: init repo' '
 	cd repo &&
 	grit config user.email "test@example.com" &&
 	grit config user.name "Test User" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "initial" >file.txt &&
 	grit add file.txt &&
 	test_tick &&
@@ -23,6 +27,8 @@ test_expect_success 'setup: init repo' '
 
 test_expect_success 'commit --author overrides author name' '
 	cd repo &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "author test" >author.txt &&
 	grit add author.txt &&
 	test_tick &&

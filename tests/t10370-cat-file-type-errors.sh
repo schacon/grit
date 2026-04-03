@@ -244,7 +244,7 @@ test_expect_success 'cat-file -s second commit is larger than first (has parent)
 	test "$size2" -gt "$size1"
 '
 
-test_expect_success 'cat-file -e accepts short OID on command line' '
+test_expect_success 'cat-file -e accepts abbreviated OID on command line' '
 	cd repo &&
 	blob=$(cat ../blob_oid) &&
 	short=$(echo "$blob" | cut -c1-7) &&

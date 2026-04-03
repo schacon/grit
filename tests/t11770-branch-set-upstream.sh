@@ -11,6 +11,10 @@ test_expect_success 'setup: create repo with commits' '
 	cd repo &&
 	git config user.name "Test" &&
 	git config user.email "test@test.com" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "initial" >file &&
 	git add file &&
 	git commit -m "initial" &&
@@ -126,7 +130,7 @@ test_expect_success 'branch -M force renames' '
 '
 
 test_expect_success 'branch -c copies branch' '
-	git -C "$R" branch -c copied renamed &&
+	git -C "$R" branch -c renamed copied &&
 	git -C "$R" rev-parse copied >actual &&
 	git -C "$R" rev-parse renamed >expect &&
 	test_cmp expect actual

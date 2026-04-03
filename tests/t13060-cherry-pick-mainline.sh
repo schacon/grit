@@ -13,6 +13,10 @@ test_expect_success 'setup repository with merge commit' '
 	cd repo &&
 	$REAL_GIT config user.email "t@t.com" &&
 	$REAL_GIT config user.name "T" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo base >file.txt &&
 	$REAL_GIT add file.txt &&
 	$REAL_GIT commit -m "initial" &&

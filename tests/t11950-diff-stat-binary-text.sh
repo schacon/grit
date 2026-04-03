@@ -8,6 +8,10 @@ test_expect_success 'setup' '
 	(cd repo &&
 		git config user.email "t@t.com" &&
 		git config user.name "T" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 		printf "line1\nline2\nline3\n" >text.txt &&
 		grit add text.txt &&
 		grit commit -m "initial text"

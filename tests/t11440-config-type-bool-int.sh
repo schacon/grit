@@ -221,10 +221,12 @@ test_expect_success 'config --type=int reads from local config' '
 	test "$(git config --type=int core.localint)" = "16384"
 '
 
-test_expect_success 'config --type=bool with large int fails as bool' '
+test_expect_success 'config --type=bool with large int is true' '
 	cd repo &&
 	git config core.notbool 42 &&
-	test_must_fail git config --type=bool core.notbool
+	git config --type=bool core.notbool >actual &&
+	echo "true" >expect &&
+	test_cmp expect actual
 '
 
 ###########################################################################

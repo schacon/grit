@@ -12,6 +12,10 @@ test_expect_success 'setup repository' '
 	cd repo &&
 	grit config user.email "test@example.com" &&
 	grit config user.name "Test User" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "first" >file.txt &&
 	grit add file.txt &&
 	test_tick &&
@@ -55,6 +59,8 @@ test_expect_success 'amend still single commit' '
 
 test_expect_success 'commit --author overrides author in cat-file' '
 	cd repo &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "new" >new.txt &&
 	grit add new.txt &&
 	test_tick &&

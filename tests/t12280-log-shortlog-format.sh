@@ -7,6 +7,10 @@ test_expect_success 'setup' '
     grit init repo && cd repo &&
     git config user.email "alice@example.com" &&
     git config user.name "Alice Smith" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
     echo one >file.txt &&
     grit add file.txt &&
     GIT_AUTHOR_DATE="1700000000 +0000" GIT_COMMITTER_DATE="1700000000 +0000" \

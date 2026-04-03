@@ -12,6 +12,10 @@ test_expect_success 'setup repository with diverging branches' '
 	cd repo &&
 	git config user.email "test@example.com" &&
 	git config user.name "Test User" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo "base" >file.txt &&
 	echo "shared" >shared.txt &&
 	grit add . &&
@@ -116,6 +120,8 @@ test_expect_success 'cherry-pick -x preserves original message too' '
 
 test_expect_success 'cherry-pick --signoff adds Signed-off-by line' '
 	cd repo &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	SIDE_C3=$(cat "$TRASH_DIRECTORY/oid_side_c3") &&
 	grit cherry-pick --signoff "$SIDE_C3" &&
 	grit cat-file -p HEAD >commit_msg &&

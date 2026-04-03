@@ -15,6 +15,10 @@ test_expect_success 'setup: init repo for env tests' '
 	cd repo &&
 	git config user.name "Test User" &&
 	git config user.email "test@example.com" &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	echo hello >file.txt &&
 	git add file.txt &&
 	git commit -m "initial"
@@ -141,6 +145,8 @@ test_expect_success 'GIT_AUTHOR_NAME overrides author name in commit' '
 	cd repo &&
 	echo "author-test" >author-test.txt &&
 	git add author-test.txt &&
+	sane_unset GIT_COMMITTER_NAME &&
+	sane_unset GIT_COMMITTER_EMAIL &&
 	GIT_AUTHOR_NAME="Custom Author" \
 	GIT_AUTHOR_EMAIL="custom@example.com" \
 	git commit -m "custom author commit" &&
@@ -181,6 +187,8 @@ test_expect_success 'GIT_COMMITTER_NAME overrides committer name' '
 	cd repo &&
 	echo "committer-test" >committer-test.txt &&
 	git add committer-test.txt &&
+	sane_unset GIT_AUTHOR_NAME &&
+	sane_unset GIT_AUTHOR_EMAIL &&
 	GIT_COMMITTER_NAME="Custom Committer" \
 	GIT_COMMITTER_EMAIL="committer@example.com" \
 	git commit -m "custom committer commit" &&
