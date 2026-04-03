@@ -22,59 +22,56 @@ test_expect_success 'enable core.protectNTFS for rejection tests' '
 	git config core.protectNTFS true
 '
 
-# grit does not yet implement path validation for confusing paths in read-tree
-# so all rejection tests are expected failures
-
-test_expect_failure 'reject . at end of path' '
+test_expect_success 'reject . at end of path' '
 	blob=$(cat .blob_oid) &&
 	printf "100644 blob %s\t.\n" "$blob" >treeinput &&
 	bogus=$(git mktree <treeinput) &&
 	test_must_fail git read-tree $bogus
 '
 
-test_expect_failure 'reject .. at end of path' '
+test_expect_success 'reject .. at end of path' '
 	blob=$(cat .blob_oid) &&
 	printf "100644 blob %s\t..\n" "$blob" >treeinput &&
 	bogus=$(git mktree <treeinput) &&
 	test_must_fail git read-tree $bogus
 '
 
-test_expect_failure 'reject .git at end of path' '
+test_expect_success 'reject .git at end of path' '
 	blob=$(cat .blob_oid) &&
 	printf "100644 blob %s\t.git\n" "$blob" >treeinput &&
 	bogus=$(git mktree <treeinput) &&
 	test_must_fail git read-tree $bogus
 '
 
-test_expect_failure 'reject .GIT at end of path' '
+test_expect_success 'reject .GIT at end of path' '
 	blob=$(cat .blob_oid) &&
 	printf "100644 blob %s\t.GIT\n" "$blob" >treeinput &&
 	bogus=$(git mktree <treeinput) &&
 	test_must_fail git read-tree $bogus
 '
 
-test_expect_failure 'reject git~1 at end of path' '
+test_expect_success 'reject git~1 at end of path' '
 	blob=$(cat .blob_oid) &&
 	printf "100644 blob %s\tgit~1\n" "$blob" >treeinput &&
 	bogus=$(git mktree <treeinput) &&
 	test_must_fail git read-tree $bogus
 '
 
-test_expect_failure 'reject . as subtree' '
+test_expect_success 'reject . as subtree' '
 	tree=$(cat .tree_oid) &&
 	printf "040000 tree %s\t.\n" "$tree" >treeinput &&
 	bogus=$(git mktree <treeinput) &&
 	test_must_fail git read-tree $bogus
 '
 
-test_expect_failure 'reject .. as subtree' '
+test_expect_success 'reject .. as subtree' '
 	tree=$(cat .tree_oid) &&
 	printf "040000 tree %s\t..\n" "$tree" >treeinput &&
 	bogus=$(git mktree <treeinput) &&
 	test_must_fail git read-tree $bogus
 '
 
-test_expect_failure 'reject .git as subtree' '
+test_expect_success 'reject .git as subtree' '
 	tree=$(cat .tree_oid) &&
 	printf "040000 tree %s\t.git\n" "$tree" >treeinput &&
 	bogus=$(git mktree <treeinput) &&

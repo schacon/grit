@@ -5,6 +5,7 @@ use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as GustError;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
@@ -38,10 +39,76 @@ pub struct Args {
     pub trees: Vec<String>,
 }
 
+/// Path protection settings from core.protectHFS / core.protectNTFS.
+#[derive(Clone, Copy)]
+struct PathProtection {
+    protect_hfs: bool,
+    protect_ntfs: bool,
+}
+
+impl PathProtection {
+    fn load(git_dir: &Path) -> Self {
+        let config = ConfigSet::load(Some(git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+        let protect_hfs = config
+            .get("core.protectHFS")
+            .map(|v| v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let protect_ntfs = config
+            .get("core.protectNTFS")
+            .map(|v| v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        Self {
+            protect_hfs,
+            protect_ntfs,
+        }
+    }
+}
+
+/// Check whether a single path component (file or directory name) is
+/// forbidden.  Returns `Err` with a message when the name is rejected.
+fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
+    // Always reject "." and ".."
+    if name == b"." {
+        bail!("invalid path '.'");
+    }
+    if name == b".." {
+        bail!("invalid path '..'");
+    }
+
+    // Always reject ".git" (exact lowercase — matches C git's verify_dotfile)
+    if name == b".git" {
+        bail!("invalid path '.git'");
+    }
+
+    // HFS / NTFS case-insensitive ".git" check
+    if prot.protect_hfs || prot.protect_ntfs {
+        if name.len() == 4 && name[0] == b'.' {
+            let rest = &name[1..];
+            if rest.eq_ignore_ascii_case(b"git") {
+                bail!(
+                    "invalid path '{}'",
+                    String::from_utf8_lossy(name)
+                );
+            }
+        }
+    }
+
+    // NTFS short-name check: "git~1" (case-insensitive)
+    if prot.protect_ntfs && name.eq_ignore_ascii_case(b"git~1") {
+        bail!(
+            "invalid path '{}'",
+            String::from_utf8_lossy(name)
+        );
+    }
+
+    Ok(())
+}
+
 /// Run `grit read-tree`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let index_path = effective_index_path(&repo)?;
+    let prot = PathProtection::load(&repo.git_dir);
 
     let tree_oids: Vec<ObjectId> = args
         .trees
@@ -72,7 +139,7 @@ pub fn run(args: Args) -> Result<()> {
         // Reset mode is a hard replacement by the final tree argument.
         let old_index = load_index_for_read_tree(&index_path).context("loading index")?;
         let mut new_index = Index::new();
-        new_index.entries = tree_to_index_entries(&repo, &tree_oids[tree_oids.len() - 1], "")?;
+        new_index.entries = tree_to_index_entries(&repo, &tree_oids[tree_oids.len() - 1], "", prot)?;
         new_index.sort();
         if args.update {
             checkout_index_entries(&repo, &old_index, &new_index)?;
@@ -85,18 +152,18 @@ pub fn run(args: Args) -> Result<()> {
     let mut new_index = old_index.clone();
 
     if let Some(prefix) = &args.prefix {
-        read_tree_into_index_prefixed(&repo, &tree_oids[0], prefix, &mut new_index)?;
+        read_tree_into_index_prefixed(&repo, &tree_oids[0], prefix, &mut new_index, prot)?;
     } else if !args.merge {
         if tree_oids.len() == 1 {
             // Replace index with one tree.
             new_index = Index::new();
-            new_index.entries = tree_to_index_entries(&repo, &tree_oids[0], "")?;
+            new_index.entries = tree_to_index_entries(&repo, &tree_oids[0], "", prot)?;
             new_index.sort();
         } else {
             // Multi-tree overlay: later trees override earlier trees by path.
             new_index = Index::new();
             for oid in &tree_oids {
-                for e in tree_to_index_entries(&repo, oid, "")? {
+                for e in tree_to_index_entries(&repo, oid, "", prot)? {
                     add_or_replace_with_df_cleanup(&mut new_index, e);
                 }
             }
@@ -105,19 +172,19 @@ pub fn run(args: Args) -> Result<()> {
         match tree_oids.len() {
             1 => {
                 // `-m` with one tree acts like a carry-forward overlay.
-                for e in tree_to_index_entries(&repo, &tree_oids[0], "")? {
+                for e in tree_to_index_entries(&repo, &tree_oids[0], "", prot)? {
                     add_or_replace_with_df_cleanup(&mut new_index, e);
                 }
             }
             2 => {
-                let old_tree = tree_to_map(tree_to_index_entries(&repo, &tree_oids[0], "")?);
-                let new_tree = tree_to_map(tree_to_index_entries(&repo, &tree_oids[1], "")?);
+                let old_tree = tree_to_map(tree_to_index_entries(&repo, &tree_oids[0], "", prot)?);
+                let new_tree = tree_to_map(tree_to_index_entries(&repo, &tree_oids[1], "", prot)?);
                 new_index = two_way_merge(&old_index, &old_tree, &new_tree)?;
             }
             3 => {
-                let base = tree_to_map(tree_to_index_entries(&repo, &tree_oids[0], "")?);
-                let ours = tree_to_map(tree_to_index_entries(&repo, &tree_oids[1], "")?);
-                let theirs = tree_to_map(tree_to_index_entries(&repo, &tree_oids[2], "")?);
+                let base = tree_to_map(tree_to_index_entries(&repo, &tree_oids[0], "", prot)?);
+                let ours = tree_to_map(tree_to_index_entries(&repo, &tree_oids[1], "", prot)?);
+                let theirs = tree_to_map(tree_to_index_entries(&repo, &tree_oids[2], "", prot)?);
                 new_index = three_way_merge(&old_index, &base, &ours, &theirs);
             }
             _ => unreachable!("tree count validated above"),
@@ -137,6 +204,7 @@ fn tree_to_index_entries(
     repo: &Repository,
     oid: &ObjectId,
     prefix: &str,
+    prot: PathProtection,
 ) -> Result<Vec<IndexEntry>> {
     let obj = repo.odb.read(oid)?;
     if obj.kind != ObjectKind::Tree {
@@ -146,6 +214,8 @@ fn tree_to_index_entries(
     let mut result = Vec::new();
 
     for te in entries {
+        verify_path_component(&te.name, prot)?;
+
         let name = String::from_utf8_lossy(&te.name).into_owned();
         let path = if prefix.is_empty() {
             name.clone()
@@ -155,7 +225,7 @@ fn tree_to_index_entries(
 
         if te.mode == 0o040000 {
             // Sub-tree: recurse
-            let sub = tree_to_index_entries(repo, &te.oid, &path)?;
+            let sub = tree_to_index_entries(repo, &te.oid, &path, prot)?;
             result.extend(sub);
         } else {
             let path_bytes = path.into_bytes();
@@ -186,10 +256,11 @@ fn read_tree_into_index_prefixed(
     oid: &ObjectId,
     prefix: &str,
     index: &mut Index,
+    prot: PathProtection,
 ) -> Result<()> {
     // Strip trailing slash from prefix for storage
     let prefix = prefix.trim_end_matches('/');
-    let entries = tree_to_index_entries(repo, oid, prefix)?;
+    let entries = tree_to_index_entries(repo, oid, prefix, prot)?;
     for e in entries {
         add_or_replace_with_df_cleanup(index, e);
     }
