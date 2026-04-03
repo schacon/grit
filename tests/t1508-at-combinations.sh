@@ -101,7 +101,7 @@ test_expect_success '@{1} shows previous reflog entry' '
 	test -n "$(cat actual)"
 '
 
-test_expect_failure '@{-1} refers to previous branch' '
+test_expect_success '@{-1} refers to previous branch' '
 	git rev-parse --symbolic-full-name "@{-1}" >actual &&
 	echo refs/heads/new-branch >expect &&
 	test_cmp expect actual
