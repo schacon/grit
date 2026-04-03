@@ -4191,8 +4191,8 @@ t3005-ls-files-relative::prepare	t3005-ls-files-relative	prepare	ls-files	partia
 t3005-ls-files-relative::ls-files-with-mixed-levels	t3005-ls-files-relative	ls-files with mixed levels	ls-files	partial
 t3005-ls-files-relative::ls-files-c	t3005-ls-files-relative	ls-files -c	ls-files	partial
 t3005-ls-files-relative::ls-files-o	t3005-ls-files-relative	ls-files -o	ls-files	partial
-t3006-ls-files-long::overly-long-path-by-itself-is-not-a-problem	t3006-ls-files-long	overly-long path by itself is not a problem	ls-files	pass
-t3006-ls-files-long::overly-long-path-does-not-replace-another-by-mistake	t3006-ls-files-long	overly-long path does not replace another by mistake	ls-files	pass
+t3006-ls-files-long::overly-long-path-by-itself-is-not-a-problem	t3006-ls-files-long	overly-long path by itself is not a problem	ls-files	partial
+t3006-ls-files-long::overly-long-path-does-not-replace-another-by-mistake	t3006-ls-files-long	overly-long path does not replace another by mistake	ls-files	partial
 t3007-ls-files-recurse-submodules::setup-directory-structure-and-submodules	t3007-ls-files-recurse-submodules	setup directory structure and submodules	ls-files	pass
 t3007-ls-files-recurse-submodules::ls-files-correctly-outputs-files-in-submodule	t3007-ls-files-recurse-submodules	ls-files correctly outputs files in submodule	ls-files	pass
 t3007-ls-files-recurse-submodules::stage	t3007-ls-files-recurse-submodules	--stage	ls-files	pass
@@ -6433,17 +6433,17 @@ t3920-crlf-messages::setup-refs-with-commit-and-tag-messages-using-crlf	t3920-cr
 t3920-crlf-messages::branch-verbose-works-with-messages-using-crlf	t3920-crlf-messages	branch: --verbose works with messages using CRLF	branch	pass
 t3920-crlf-messages::log-oneline-works-with-messages-using-crlf	t3920-crlf-messages	log: --oneline works with messages using CRLF	log	pass
 t3920-crlf-messages::command-format-atom-works-with-messages-using-crlf	t3920-crlf-messages	${command}: --format='%${atom}' works with messages using CRLF		pass
-t4000-diff-format::update-index-add-two-files-with-and-without-x	t4000-diff-format	update-index --add two files with and without +x.	diff	partial
-t4000-diff-format::git-diff-files-p-after-editing-work-tree	t4000-diff-format	git diff-files -p after editing work tree.	diff	partial
-t4000-diff-format::validate-git-diff-files-p-output	t4000-diff-format	validate git diff-files -p output.	diff	partial
-t4000-diff-format::git-diff-files-s-after-editing-work-tree	t4000-diff-format	git diff-files -s after editing work tree	diff	partial
-t4000-diff-format::git-diff-files-no-patch-as-synonym-for-s	t4000-diff-format	git diff-files --no-patch as synonym for -s	diff	partial
-t4000-diff-format::git-diff-files-no-patch-patch-shows-the-patch	t4000-diff-format	git diff-files --no-patch --patch shows the patch	diff	partial
-t4000-diff-format::git-diff-files-no-patch-patch-with-raw-shows-the-patch-and-raw-data	t4000-diff-format	git diff-files --no-patch --patch-with-raw shows the patch and raw data	diff	partial
-t4000-diff-format::git-diff-files-patch-no-patch-does-not-show-the-patch	t4000-diff-format	git diff-files --patch --no-patch does not show the patch	diff	partial
-t4000-diff-format::no-patch-in-git-diff-files-no-patch-format-is-a-no-op	t4000-diff-format	--no-patch in 'git diff-files --no-patch --$format' is a no-op	diff	partial
-t4000-diff-format::no-patch-clears-all-previous-ones	t4000-diff-format	--no-patch clears all previous ones	diff	partial
-t4000-diff-format::no-patch-in-git-diff-no-patch-format-is-a-no-op	t4000-diff-format	--no-patch in 'git diff --no-patch --$format' is a no-op	diff	partial
+t4000-diff-format::update-index-add-two-files-with-and-without-x	t4000-diff-format	update-index --add two files with and without +x.	diff	pass
+t4000-diff-format::git-diff-files-p-after-editing-work-tree	t4000-diff-format	git diff-files -p after editing work tree.	diff	pass
+t4000-diff-format::validate-git-diff-files-p-output	t4000-diff-format	validate git diff-files -p output.	diff	pass
+t4000-diff-format::git-diff-files-s-after-editing-work-tree	t4000-diff-format	git diff-files -s after editing work tree	diff	pass
+t4000-diff-format::git-diff-files-no-patch-as-synonym-for-s	t4000-diff-format	git diff-files --no-patch as synonym for -s	diff	pass
+t4000-diff-format::git-diff-files-no-patch-patch-shows-the-patch	t4000-diff-format	git diff-files --no-patch --patch shows the patch	diff	pass
+t4000-diff-format::git-diff-files-no-patch-patch-with-raw-shows-the-patch-and-raw-data	t4000-diff-format	git diff-files --no-patch --patch-with-raw shows the patch and raw data	diff	pass
+t4000-diff-format::git-diff-files-patch-no-patch-does-not-show-the-patch	t4000-diff-format	git diff-files --patch --no-patch does not show the patch	diff	pass
+t4000-diff-format::no-patch-in-git-diff-files-no-patch-format-is-a-no-op	t4000-diff-format	--no-patch in 'git diff-files --no-patch --$format' is a no-op	diff	pass
+t4000-diff-format::no-patch-clears-all-previous-ones	t4000-diff-format	--no-patch clears all previous ones	diff	pass
+t4000-diff-format::no-patch-in-git-diff-no-patch-format-is-a-no-op	t4000-diff-format	--no-patch in 'git diff --no-patch --$format' is a no-op	diff	pass
 t4001-diff-rename::setup	t4001-diff-rename	setup	diff	pass
 t4001-diff-rename::test-diff-renames-true	t4001-diff-rename	test diff.renames=true	diff	pass
 t4001-diff-rename::test-diff-renames-false	t4001-diff-rename	test diff.renames=false	diff	pass
@@ -6804,110 +6804,110 @@ t4014-format-patch::format-noprefix-false	t4014-format-patch	format.noprefix=fal
 t4014-format-patch::format-patch-default-prefix-overrides-format-noprefix	t4014-format-patch	format-patch --default-prefix overrides format.noprefix	format-patch	pass
 t4014-format-patch::errors-on-format-noprefix-which-is-not-boolean	t4014-format-patch	errors on format.noprefix which is not boolean	format-patch	pass
 t4014-format-patch::format-patch-doesn-t-consider-merge-commits	t4014-format-patch	format-patch doesn't consider merge commits	format-patch	pass
-t4015-diff-whitespace::another-test-without-options	t4015-diff-whitespace	another test, without options	diff	partial
-t4015-diff-whitespace::ignore-blank-lines-only-new-lines	t4015-diff-whitespace	ignore-blank-lines: only new lines	diff	partial
-t4015-diff-whitespace::ignore-blank-lines-only-new-lines-with-space	t4015-diff-whitespace	ignore-blank-lines: only new lines with space	diff	partial
-t4015-diff-whitespace::ignore-blank-lines-after-change	t4015-diff-whitespace	ignore-blank-lines: after change	diff	partial
-t4015-diff-whitespace::ignore-blank-lines-before-change	t4015-diff-whitespace	ignore-blank-lines: before change	diff	partial
-t4015-diff-whitespace::ignore-blank-lines-between-changes	t4015-diff-whitespace	ignore-blank-lines: between changes	diff	partial
-t4015-diff-whitespace::ignore-blank-lines-between-changes-with-interhunkctx	t4015-diff-whitespace	ignore-blank-lines: between changes (with interhunkctx)	diff	partial
-t4015-diff-whitespace::ignore-blank-lines-scattered-spaces	t4015-diff-whitespace	ignore-blank-lines: scattered spaces	diff	partial
-t4015-diff-whitespace::ignore-blank-lines-spaces-coalesce	t4015-diff-whitespace	ignore-blank-lines: spaces coalesce	diff	partial
-t4015-diff-whitespace::ignore-blank-lines-mix-changes-and-blank-lines	t4015-diff-whitespace	ignore-blank-lines: mix changes and blank lines	diff	partial
-t4015-diff-whitespace::check-mixed-spaces-and-tabs-in-indent	t4015-diff-whitespace	check mixed spaces and tabs in indent	diff	partial
-t4015-diff-whitespace::check-mixed-tabs-and-spaces-in-indent	t4015-diff-whitespace	check mixed tabs and spaces in indent	diff	partial
-t4015-diff-whitespace::check-with-no-whitespace-errors	t4015-diff-whitespace	check with no whitespace errors	diff	partial
-t4015-diff-whitespace::check-with-trailing-whitespace	t4015-diff-whitespace	check with trailing whitespace	diff	partial
-t4015-diff-whitespace::check-with-space-before-tab-in-indent	t4015-diff-whitespace	check with space before tab in indent	diff	partial
-t4015-diff-whitespace::check-and-exit-code-are-not-exclusive	t4015-diff-whitespace	--check and --exit-code are not exclusive	diff	partial
-t4015-diff-whitespace::check-and-quiet-are-not-exclusive	t4015-diff-whitespace	--check and --quiet are not exclusive	diff	partial
-t4015-diff-whitespace::w-and-exit-code-interact-sensibly	t4015-diff-whitespace	-w and --exit-code interact sensibly	diff	partial
-t4015-diff-whitespace::i-and-exit-code-interact-sensibly	t4015-diff-whitespace	-I and --exit-code interact sensibly	diff	partial
-t4015-diff-whitespace::check-staged-with-no-whitespace-errors	t4015-diff-whitespace	check staged with no whitespace errors	diff	partial
-t4015-diff-whitespace::check-staged-with-trailing-whitespace	t4015-diff-whitespace	check staged with trailing whitespace	diff	partial
-t4015-diff-whitespace::check-staged-with-space-before-tab-in-indent	t4015-diff-whitespace	check staged with space before tab in indent	diff	partial
-t4015-diff-whitespace::check-with-no-whitespace-errors-diff-index	t4015-diff-whitespace	check with no whitespace errors (diff-index)	diff	partial
-t4015-diff-whitespace::check-with-trailing-whitespace-diff-index	t4015-diff-whitespace	check with trailing whitespace (diff-index)	diff	partial
-t4015-diff-whitespace::check-with-space-before-tab-in-indent-diff-index	t4015-diff-whitespace	check with space before tab in indent (diff-index)	diff	partial
-t4015-diff-whitespace::check-staged-with-no-whitespace-errors-diff-index	t4015-diff-whitespace	check staged with no whitespace errors (diff-index)	diff	partial
-t4015-diff-whitespace::check-staged-with-trailing-whitespace-diff-index	t4015-diff-whitespace	check staged with trailing whitespace (diff-index)	diff	partial
-t4015-diff-whitespace::check-staged-with-space-before-tab-in-indent-diff-index	t4015-diff-whitespace	check staged with space before tab in indent (diff-index)	diff	partial
-t4015-diff-whitespace::check-with-no-whitespace-errors-diff-tree	t4015-diff-whitespace	check with no whitespace errors (diff-tree)	diff	partial
-t4015-diff-whitespace::check-with-trailing-whitespace-diff-tree	t4015-diff-whitespace	check with trailing whitespace (diff-tree)	diff	partial
-t4015-diff-whitespace::check-with-space-before-tab-in-indent-diff-tree	t4015-diff-whitespace	check with space before tab in indent (diff-tree)	diff	partial
-t4015-diff-whitespace::check-with-ignored-trailing-whitespace-attr-diff-tree	t4015-diff-whitespace	check with ignored trailing whitespace attr (diff-tree)	diff	partial
-t4015-diff-whitespace::check-trailing-whitespace-trailing-space-off	t4015-diff-whitespace	check trailing whitespace (trailing-space: off)	diff	partial
-t4015-diff-whitespace::check-trailing-whitespace-trailing-space-on	t4015-diff-whitespace	check trailing whitespace (trailing-space: on)	diff	partial
-t4015-diff-whitespace::check-space-before-tab-in-indent-space-before-tab-off	t4015-diff-whitespace	check space before tab in indent (space-before-tab: off)	diff	partial
-t4015-diff-whitespace::check-space-before-tab-in-indent-space-before-tab-on	t4015-diff-whitespace	check space before tab in indent (space-before-tab: on)	diff	partial
-t4015-diff-whitespace::check-spaces-as-indentation-indent-with-non-tab-off	t4015-diff-whitespace	check spaces as indentation (indent-with-non-tab: off)	diff	partial
-t4015-diff-whitespace::check-spaces-as-indentation-indent-with-non-tab-on	t4015-diff-whitespace	check spaces as indentation (indent-with-non-tab: on)	diff	partial
-t4015-diff-whitespace::ditto-but-tabwidth-9	t4015-diff-whitespace	ditto, but tabwidth=9	diff	partial
-t4015-diff-whitespace::check-tabs-and-spaces-as-indentation-indent-with-non-tab-on	t4015-diff-whitespace	check tabs and spaces as indentation (indent-with-non-tab: on)	diff	partial
-t4015-diff-whitespace::ditto-but-tabwidth-10	t4015-diff-whitespace	ditto, but tabwidth=10	diff	partial
-t4015-diff-whitespace::ditto-but-tabwidth-20	t4015-diff-whitespace	ditto, but tabwidth=20	diff	partial
-t4015-diff-whitespace::check-tabs-as-indentation-tab-in-indent-off	t4015-diff-whitespace	check tabs as indentation (tab-in-indent: off)	diff	partial
-t4015-diff-whitespace::check-tabs-as-indentation-tab-in-indent-on	t4015-diff-whitespace	check tabs as indentation (tab-in-indent: on)	diff	partial
-t4015-diff-whitespace::check-tabs-and-spaces-as-indentation-tab-in-indent-on	t4015-diff-whitespace	check tabs and spaces as indentation (tab-in-indent: on)	diff	partial
-t4015-diff-whitespace::ditto-but-tabwidth-1-must-be-irrelevant	t4015-diff-whitespace	ditto, but tabwidth=1 (must be irrelevant)	diff	partial
-t4015-diff-whitespace::check-tab-in-indent-and-indent-with-non-tab-conflict	t4015-diff-whitespace	check tab-in-indent and indent-with-non-tab conflict	diff	partial
-t4015-diff-whitespace::check-tab-in-indent-excluded-from-wildcard-whitespace-attribute	t4015-diff-whitespace	check tab-in-indent excluded from wildcard whitespace attribute	diff	partial
-t4015-diff-whitespace::line-numbers-in-check-output-are-correct	t4015-diff-whitespace	line numbers in --check output are correct	diff	partial
-t4015-diff-whitespace::checkdiff-detects-new-trailing-blank-lines-1	t4015-diff-whitespace	checkdiff detects new trailing blank lines (1)	diff	partial
-t4015-diff-whitespace::checkdiff-detects-new-trailing-blank-lines-2	t4015-diff-whitespace	checkdiff detects new trailing blank lines (2)	diff	partial
-t4015-diff-whitespace::checkdiff-allows-new-blank-lines	t4015-diff-whitespace	checkdiff allows new blank lines	diff	partial
-t4015-diff-whitespace::whitespace-only-changes-not-reported-diff	t4015-diff-whitespace	whitespace-only changes not reported (diff)	diff	partial
-t4015-diff-whitespace::whitespace-only-changes-not-reported-diffstat	t4015-diff-whitespace	whitespace-only changes not reported (diffstat)	diff	partial
-t4015-diff-whitespace::whitespace-changes-with-modification-reported-diffstat	t4015-diff-whitespace	whitespace changes with modification reported (diffstat)	diff	partial
-t4015-diff-whitespace::whitespace-only-changes-reported-across-renames-diffstat	t4015-diff-whitespace	whitespace-only changes reported across renames (diffstat)	diff	partial
-t4015-diff-whitespace::whitespace-only-changes-reported-across-renames	t4015-diff-whitespace	whitespace-only changes reported across renames	diff	partial
-t4015-diff-whitespace::rename-empty	t4015-diff-whitespace	rename empty	diff	partial
-t4015-diff-whitespace::combined-diff-with-autocrlf-conversion	t4015-diff-whitespace	combined diff with autocrlf conversion	diff	partial
-t4015-diff-whitespace::setup-diff-colors	t4015-diff-whitespace	setup diff colors	diff	partial
-t4015-diff-whitespace::diff-that-introduces-a-line-with-only-tabs	t4015-diff-whitespace	diff that introduces a line with only tabs	diff	partial
-t4015-diff-whitespace::diff-that-introduces-and-removes-ws-breakages	t4015-diff-whitespace	diff that introduces and removes ws breakages	diff	partial
-t4015-diff-whitespace::ws-error-highlight-test-setup	t4015-diff-whitespace	ws-error-highlight test setup	diff	partial
-t4015-diff-whitespace::test-ws-error-highlight-option	t4015-diff-whitespace	test --ws-error-highlight option	diff	partial
-t4015-diff-whitespace::test-diff-wserrorhighlight-config	t4015-diff-whitespace	test diff.wsErrorHighlight config	diff	partial
-t4015-diff-whitespace::option-overrides-diff-wserrorhighlight	t4015-diff-whitespace	option overrides diff.wsErrorHighlight	diff	partial
-t4015-diff-whitespace::detect-moved-code-complete-file	t4015-diff-whitespace	detect moved code, complete file	diff	partial
-t4015-diff-whitespace::color-moved-with-no-ext-diff	t4015-diff-whitespace	--color-moved with --no-ext-diff	diff	partial
-t4015-diff-whitespace::detect-malicious-moved-code-inside-file	t4015-diff-whitespace	detect malicious moved code, inside file	diff	partial
-t4015-diff-whitespace::plain-moved-code-inside-file	t4015-diff-whitespace	plain moved code, inside file	diff	partial
-t4015-diff-whitespace::detect-blocks-of-moved-code	t4015-diff-whitespace	detect blocks of moved code	diff	partial
-t4015-diff-whitespace::detect-permutations-inside-moved-code-dimmed-zebra	t4015-diff-whitespace	detect permutations inside moved code -- dimmed-zebra	diff	partial
-t4015-diff-whitespace::zebra-alternate-color-is-only-used-when-necessary	t4015-diff-whitespace	zebra alternate color is only used when necessary	diff	partial
-t4015-diff-whitespace::short-lines-of-opposite-sign-do-not-get-marked-as-moved	t4015-diff-whitespace	short lines of opposite sign do not get marked as moved	diff	partial
-t4015-diff-whitespace::cmd-option-assumes-configured-colored-moved	t4015-diff-whitespace	cmd option assumes configured colored-moved	diff	partial
-t4015-diff-whitespace::no-effect-on-diff-from-color-moved-with-word-diff	t4015-diff-whitespace	no effect on diff from --color-moved with --word-diff	diff	partial
-t4015-diff-whitespace::no-effect-on-show-from-color-moved-with-word-diff	t4015-diff-whitespace	no effect on show from --color-moved with --word-diff	diff	partial
-t4015-diff-whitespace::set-up-whitespace-tests	t4015-diff-whitespace	set up whitespace tests	diff	partial
-t4015-diff-whitespace::move-detection-ignoring-whitespace	t4015-diff-whitespace	move detection ignoring whitespace 	diff	partial
-t4015-diff-whitespace::move-detection-ignoring-whitespace-changes	t4015-diff-whitespace	move detection ignoring whitespace changes	diff	partial
-t4015-diff-whitespace::move-detection-ignoring-whitespace-at-eol	t4015-diff-whitespace	move detection ignoring whitespace at eol	diff	partial
-t4015-diff-whitespace::clean-up-whitespace-test-colors	t4015-diff-whitespace	clean up whitespace-test colors	diff	partial
-t4015-diff-whitespace::color-moved-block-at-end-of-diff-output-respects-min-alnum-count	t4015-diff-whitespace	--color-moved block at end of diff output respects MIN_ALNUM_COUNT	diff	partial
-t4015-diff-whitespace::color-moved-respects-min-alnum-count	t4015-diff-whitespace	--color-moved respects MIN_ALNUM_COUNT	diff	partial
-t4015-diff-whitespace::color-moved-treats-adjacent-blocks-as-separate-for-min-alnum-count	t4015-diff-whitespace	--color-moved treats adjacent blocks as separate for MIN_ALNUM_COUNT	diff	partial
-t4015-diff-whitespace::color-moved-rewinds-for-min-alnum-count	t4015-diff-whitespace	--color-moved rewinds for MIN_ALNUM_COUNT	diff	partial
-t4015-diff-whitespace::move-detection-with-submodules	t4015-diff-whitespace	move detection with submodules	diff	partial
-t4015-diff-whitespace::only-move-detection-ignores-white-spaces	t4015-diff-whitespace	only move detection ignores white spaces	diff	partial
-t4015-diff-whitespace::compare-whitespace-delta-across-moved-blocks	t4015-diff-whitespace	compare whitespace delta across moved blocks	diff	partial
-t4015-diff-whitespace::bogus-settings-in-move-detection-erroring-out	t4015-diff-whitespace	bogus settings in move detection erroring out	diff	partial
-t4015-diff-whitespace::compare-whitespace-delta-incompatible-with-other-space-options	t4015-diff-whitespace	compare whitespace delta incompatible with other space options	diff	partial
-t4015-diff-whitespace::compare-mixed-whitespace-delta-across-moved-blocks	t4015-diff-whitespace	compare mixed whitespace delta across moved blocks	diff	partial
-t4015-diff-whitespace::combine-ignore-blank-lines-with-function-context	t4015-diff-whitespace	combine --ignore-blank-lines with --function-context	diff	partial
-t4015-diff-whitespace::combine-ignore-blank-lines-with-function-context-2	t4015-diff-whitespace	combine --ignore-blank-lines with --function-context 2	diff	partial
-t4015-diff-whitespace::status-with-opts-different	t4015-diff-whitespace	status with $opts (different)	diff	partial
-t4015-diff-whitespace::status-with-opts-mode-differs	t4015-diff-whitespace	status with $opts (mode differs)	diff	partial
-t4015-diff-whitespace::status-with-opts-removing-an-empty-file	t4015-diff-whitespace	status with $opts (removing an empty file)	diff	partial
-t4015-diff-whitespace::status-with-opts-different-but-equivalent	t4015-diff-whitespace	status with $opts (different but equivalent)	diff	partial
-t4015-diff-whitespace::incomplete-line-in-both-pre-and-post-image-context	t4015-diff-whitespace	incomplete line in both pre- and post-image context	diff	partial
-t4015-diff-whitespace::incomplete-lines-on-both-pre-and-post-image	t4015-diff-whitespace	incomplete lines on both pre- and post-image	diff	partial
-t4015-diff-whitespace::fix-incomplete-line-in-pre-image	t4015-diff-whitespace	fix incomplete line in pre-image	diff	partial
-t4015-diff-whitespace::new-incomplete-line-in-post-image	t4015-diff-whitespace	new incomplete line in post-image	diff	partial
-t4015-diff-whitespace::incomplete-line-error-is-disabled-for-symlinks	t4015-diff-whitespace	incomplete-line error is disabled for symlinks	diff	partial
-t4015-diff-whitespace::ray-lehtiniemi-s-example	t4015-diff-whitespace	Ray Lehtiniemi's example	diff	partial
+t4015-diff-whitespace::another-test-without-options	t4015-diff-whitespace	another test, without options	diff	pass
+t4015-diff-whitespace::ignore-blank-lines-only-new-lines	t4015-diff-whitespace	ignore-blank-lines: only new lines	diff	pass
+t4015-diff-whitespace::ignore-blank-lines-only-new-lines-with-space	t4015-diff-whitespace	ignore-blank-lines: only new lines with space	diff	pass
+t4015-diff-whitespace::ignore-blank-lines-after-change	t4015-diff-whitespace	ignore-blank-lines: after change	diff	pass
+t4015-diff-whitespace::ignore-blank-lines-before-change	t4015-diff-whitespace	ignore-blank-lines: before change	diff	pass
+t4015-diff-whitespace::ignore-blank-lines-between-changes	t4015-diff-whitespace	ignore-blank-lines: between changes	diff	pass
+t4015-diff-whitespace::ignore-blank-lines-between-changes-with-interhunkctx	t4015-diff-whitespace	ignore-blank-lines: between changes (with interhunkctx)	diff	pass
+t4015-diff-whitespace::ignore-blank-lines-scattered-spaces	t4015-diff-whitespace	ignore-blank-lines: scattered spaces	diff	pass
+t4015-diff-whitespace::ignore-blank-lines-spaces-coalesce	t4015-diff-whitespace	ignore-blank-lines: spaces coalesce	diff	pass
+t4015-diff-whitespace::ignore-blank-lines-mix-changes-and-blank-lines	t4015-diff-whitespace	ignore-blank-lines: mix changes and blank lines	diff	pass
+t4015-diff-whitespace::check-mixed-spaces-and-tabs-in-indent	t4015-diff-whitespace	check mixed spaces and tabs in indent	diff	pass
+t4015-diff-whitespace::check-mixed-tabs-and-spaces-in-indent	t4015-diff-whitespace	check mixed tabs and spaces in indent	diff	pass
+t4015-diff-whitespace::check-with-no-whitespace-errors	t4015-diff-whitespace	check with no whitespace errors	diff	pass
+t4015-diff-whitespace::check-with-trailing-whitespace	t4015-diff-whitespace	check with trailing whitespace	diff	pass
+t4015-diff-whitespace::check-with-space-before-tab-in-indent	t4015-diff-whitespace	check with space before tab in indent	diff	pass
+t4015-diff-whitespace::check-and-exit-code-are-not-exclusive	t4015-diff-whitespace	--check and --exit-code are not exclusive	diff	pass
+t4015-diff-whitespace::check-and-quiet-are-not-exclusive	t4015-diff-whitespace	--check and --quiet are not exclusive	diff	pass
+t4015-diff-whitespace::w-and-exit-code-interact-sensibly	t4015-diff-whitespace	-w and --exit-code interact sensibly	diff	pass
+t4015-diff-whitespace::i-and-exit-code-interact-sensibly	t4015-diff-whitespace	-I and --exit-code interact sensibly	diff	pass
+t4015-diff-whitespace::check-staged-with-no-whitespace-errors	t4015-diff-whitespace	check staged with no whitespace errors	diff	pass
+t4015-diff-whitespace::check-staged-with-trailing-whitespace	t4015-diff-whitespace	check staged with trailing whitespace	diff	pass
+t4015-diff-whitespace::check-staged-with-space-before-tab-in-indent	t4015-diff-whitespace	check staged with space before tab in indent	diff	pass
+t4015-diff-whitespace::check-with-no-whitespace-errors-diff-index	t4015-diff-whitespace	check with no whitespace errors (diff-index)	diff	pass
+t4015-diff-whitespace::check-with-trailing-whitespace-diff-index	t4015-diff-whitespace	check with trailing whitespace (diff-index)	diff	pass
+t4015-diff-whitespace::check-with-space-before-tab-in-indent-diff-index	t4015-diff-whitespace	check with space before tab in indent (diff-index)	diff	pass
+t4015-diff-whitespace::check-staged-with-no-whitespace-errors-diff-index	t4015-diff-whitespace	check staged with no whitespace errors (diff-index)	diff	pass
+t4015-diff-whitespace::check-staged-with-trailing-whitespace-diff-index	t4015-diff-whitespace	check staged with trailing whitespace (diff-index)	diff	pass
+t4015-diff-whitespace::check-staged-with-space-before-tab-in-indent-diff-index	t4015-diff-whitespace	check staged with space before tab in indent (diff-index)	diff	pass
+t4015-diff-whitespace::check-with-no-whitespace-errors-diff-tree	t4015-diff-whitespace	check with no whitespace errors (diff-tree)	diff	pass
+t4015-diff-whitespace::check-with-trailing-whitespace-diff-tree	t4015-diff-whitespace	check with trailing whitespace (diff-tree)	diff	pass
+t4015-diff-whitespace::check-with-space-before-tab-in-indent-diff-tree	t4015-diff-whitespace	check with space before tab in indent (diff-tree)	diff	pass
+t4015-diff-whitespace::check-with-ignored-trailing-whitespace-attr-diff-tree	t4015-diff-whitespace	check with ignored trailing whitespace attr (diff-tree)	diff	pass
+t4015-diff-whitespace::check-trailing-whitespace-trailing-space-off	t4015-diff-whitespace	check trailing whitespace (trailing-space: off)	diff	pass
+t4015-diff-whitespace::check-trailing-whitespace-trailing-space-on	t4015-diff-whitespace	check trailing whitespace (trailing-space: on)	diff	pass
+t4015-diff-whitespace::check-space-before-tab-in-indent-space-before-tab-off	t4015-diff-whitespace	check space before tab in indent (space-before-tab: off)	diff	pass
+t4015-diff-whitespace::check-space-before-tab-in-indent-space-before-tab-on	t4015-diff-whitespace	check space before tab in indent (space-before-tab: on)	diff	pass
+t4015-diff-whitespace::check-spaces-as-indentation-indent-with-non-tab-off	t4015-diff-whitespace	check spaces as indentation (indent-with-non-tab: off)	diff	pass
+t4015-diff-whitespace::check-spaces-as-indentation-indent-with-non-tab-on	t4015-diff-whitespace	check spaces as indentation (indent-with-non-tab: on)	diff	pass
+t4015-diff-whitespace::ditto-but-tabwidth-9	t4015-diff-whitespace	ditto, but tabwidth=9	diff	pass
+t4015-diff-whitespace::check-tabs-and-spaces-as-indentation-indent-with-non-tab-on	t4015-diff-whitespace	check tabs and spaces as indentation (indent-with-non-tab: on)	diff	pass
+t4015-diff-whitespace::ditto-but-tabwidth-10	t4015-diff-whitespace	ditto, but tabwidth=10	diff	pass
+t4015-diff-whitespace::ditto-but-tabwidth-20	t4015-diff-whitespace	ditto, but tabwidth=20	diff	pass
+t4015-diff-whitespace::check-tabs-as-indentation-tab-in-indent-off	t4015-diff-whitespace	check tabs as indentation (tab-in-indent: off)	diff	pass
+t4015-diff-whitespace::check-tabs-as-indentation-tab-in-indent-on	t4015-diff-whitespace	check tabs as indentation (tab-in-indent: on)	diff	pass
+t4015-diff-whitespace::check-tabs-and-spaces-as-indentation-tab-in-indent-on	t4015-diff-whitespace	check tabs and spaces as indentation (tab-in-indent: on)	diff	pass
+t4015-diff-whitespace::ditto-but-tabwidth-1-must-be-irrelevant	t4015-diff-whitespace	ditto, but tabwidth=1 (must be irrelevant)	diff	pass
+t4015-diff-whitespace::check-tab-in-indent-and-indent-with-non-tab-conflict	t4015-diff-whitespace	check tab-in-indent and indent-with-non-tab conflict	diff	pass
+t4015-diff-whitespace::check-tab-in-indent-excluded-from-wildcard-whitespace-attribute	t4015-diff-whitespace	check tab-in-indent excluded from wildcard whitespace attribute	diff	pass
+t4015-diff-whitespace::line-numbers-in-check-output-are-correct	t4015-diff-whitespace	line numbers in --check output are correct	diff	pass
+t4015-diff-whitespace::checkdiff-detects-new-trailing-blank-lines-1	t4015-diff-whitespace	checkdiff detects new trailing blank lines (1)	diff	pass
+t4015-diff-whitespace::checkdiff-detects-new-trailing-blank-lines-2	t4015-diff-whitespace	checkdiff detects new trailing blank lines (2)	diff	pass
+t4015-diff-whitespace::checkdiff-allows-new-blank-lines	t4015-diff-whitespace	checkdiff allows new blank lines	diff	pass
+t4015-diff-whitespace::whitespace-only-changes-not-reported-diff	t4015-diff-whitespace	whitespace-only changes not reported (diff)	diff	pass
+t4015-diff-whitespace::whitespace-only-changes-not-reported-diffstat	t4015-diff-whitespace	whitespace-only changes not reported (diffstat)	diff	pass
+t4015-diff-whitespace::whitespace-changes-with-modification-reported-diffstat	t4015-diff-whitespace	whitespace changes with modification reported (diffstat)	diff	pass
+t4015-diff-whitespace::whitespace-only-changes-reported-across-renames-diffstat	t4015-diff-whitespace	whitespace-only changes reported across renames (diffstat)	diff	pass
+t4015-diff-whitespace::whitespace-only-changes-reported-across-renames	t4015-diff-whitespace	whitespace-only changes reported across renames	diff	pass
+t4015-diff-whitespace::rename-empty	t4015-diff-whitespace	rename empty	diff	pass
+t4015-diff-whitespace::combined-diff-with-autocrlf-conversion	t4015-diff-whitespace	combined diff with autocrlf conversion	diff	pass
+t4015-diff-whitespace::setup-diff-colors	t4015-diff-whitespace	setup diff colors	diff	pass
+t4015-diff-whitespace::diff-that-introduces-a-line-with-only-tabs	t4015-diff-whitespace	diff that introduces a line with only tabs	diff	pass
+t4015-diff-whitespace::diff-that-introduces-and-removes-ws-breakages	t4015-diff-whitespace	diff that introduces and removes ws breakages	diff	pass
+t4015-diff-whitespace::ws-error-highlight-test-setup	t4015-diff-whitespace	ws-error-highlight test setup	diff	pass
+t4015-diff-whitespace::test-ws-error-highlight-option	t4015-diff-whitespace	test --ws-error-highlight option	diff	pass
+t4015-diff-whitespace::test-diff-wserrorhighlight-config	t4015-diff-whitespace	test diff.wsErrorHighlight config	diff	pass
+t4015-diff-whitespace::option-overrides-diff-wserrorhighlight	t4015-diff-whitespace	option overrides diff.wsErrorHighlight	diff	pass
+t4015-diff-whitespace::detect-moved-code-complete-file	t4015-diff-whitespace	detect moved code, complete file	diff	pass
+t4015-diff-whitespace::color-moved-with-no-ext-diff	t4015-diff-whitespace	--color-moved with --no-ext-diff	diff	pass
+t4015-diff-whitespace::detect-malicious-moved-code-inside-file	t4015-diff-whitespace	detect malicious moved code, inside file	diff	pass
+t4015-diff-whitespace::plain-moved-code-inside-file	t4015-diff-whitespace	plain moved code, inside file	diff	pass
+t4015-diff-whitespace::detect-blocks-of-moved-code	t4015-diff-whitespace	detect blocks of moved code	diff	pass
+t4015-diff-whitespace::detect-permutations-inside-moved-code-dimmed-zebra	t4015-diff-whitespace	detect permutations inside moved code -- dimmed-zebra	diff	pass
+t4015-diff-whitespace::zebra-alternate-color-is-only-used-when-necessary	t4015-diff-whitespace	zebra alternate color is only used when necessary	diff	pass
+t4015-diff-whitespace::short-lines-of-opposite-sign-do-not-get-marked-as-moved	t4015-diff-whitespace	short lines of opposite sign do not get marked as moved	diff	pass
+t4015-diff-whitespace::cmd-option-assumes-configured-colored-moved	t4015-diff-whitespace	cmd option assumes configured colored-moved	diff	pass
+t4015-diff-whitespace::no-effect-on-diff-from-color-moved-with-word-diff	t4015-diff-whitespace	no effect on diff from --color-moved with --word-diff	diff	pass
+t4015-diff-whitespace::no-effect-on-show-from-color-moved-with-word-diff	t4015-diff-whitespace	no effect on show from --color-moved with --word-diff	diff	pass
+t4015-diff-whitespace::set-up-whitespace-tests	t4015-diff-whitespace	set up whitespace tests	diff	pass
+t4015-diff-whitespace::move-detection-ignoring-whitespace	t4015-diff-whitespace	move detection ignoring whitespace 	diff	pass
+t4015-diff-whitespace::move-detection-ignoring-whitespace-changes	t4015-diff-whitespace	move detection ignoring whitespace changes	diff	pass
+t4015-diff-whitespace::move-detection-ignoring-whitespace-at-eol	t4015-diff-whitespace	move detection ignoring whitespace at eol	diff	pass
+t4015-diff-whitespace::clean-up-whitespace-test-colors	t4015-diff-whitespace	clean up whitespace-test colors	diff	pass
+t4015-diff-whitespace::color-moved-block-at-end-of-diff-output-respects-min-alnum-count	t4015-diff-whitespace	--color-moved block at end of diff output respects MIN_ALNUM_COUNT	diff	pass
+t4015-diff-whitespace::color-moved-respects-min-alnum-count	t4015-diff-whitespace	--color-moved respects MIN_ALNUM_COUNT	diff	pass
+t4015-diff-whitespace::color-moved-treats-adjacent-blocks-as-separate-for-min-alnum-count	t4015-diff-whitespace	--color-moved treats adjacent blocks as separate for MIN_ALNUM_COUNT	diff	pass
+t4015-diff-whitespace::color-moved-rewinds-for-min-alnum-count	t4015-diff-whitespace	--color-moved rewinds for MIN_ALNUM_COUNT	diff	pass
+t4015-diff-whitespace::move-detection-with-submodules	t4015-diff-whitespace	move detection with submodules	diff	pass
+t4015-diff-whitespace::only-move-detection-ignores-white-spaces	t4015-diff-whitespace	only move detection ignores white spaces	diff	pass
+t4015-diff-whitespace::compare-whitespace-delta-across-moved-blocks	t4015-diff-whitespace	compare whitespace delta across moved blocks	diff	pass
+t4015-diff-whitespace::bogus-settings-in-move-detection-erroring-out	t4015-diff-whitespace	bogus settings in move detection erroring out	diff	pass
+t4015-diff-whitespace::compare-whitespace-delta-incompatible-with-other-space-options	t4015-diff-whitespace	compare whitespace delta incompatible with other space options	diff	pass
+t4015-diff-whitespace::compare-mixed-whitespace-delta-across-moved-blocks	t4015-diff-whitespace	compare mixed whitespace delta across moved blocks	diff	pass
+t4015-diff-whitespace::combine-ignore-blank-lines-with-function-context	t4015-diff-whitespace	combine --ignore-blank-lines with --function-context	diff	pass
+t4015-diff-whitespace::combine-ignore-blank-lines-with-function-context-2	t4015-diff-whitespace	combine --ignore-blank-lines with --function-context 2	diff	pass
+t4015-diff-whitespace::status-with-opts-different	t4015-diff-whitespace	status with $opts (different)	diff	pass
+t4015-diff-whitespace::status-with-opts-mode-differs	t4015-diff-whitespace	status with $opts (mode differs)	diff	pass
+t4015-diff-whitespace::status-with-opts-removing-an-empty-file	t4015-diff-whitespace	status with $opts (removing an empty file)	diff	pass
+t4015-diff-whitespace::status-with-opts-different-but-equivalent	t4015-diff-whitespace	status with $opts (different but equivalent)	diff	pass
+t4015-diff-whitespace::incomplete-line-in-both-pre-and-post-image-context	t4015-diff-whitespace	incomplete line in both pre- and post-image context	diff	pass
+t4015-diff-whitespace::incomplete-lines-on-both-pre-and-post-image	t4015-diff-whitespace	incomplete lines on both pre- and post-image	diff	pass
+t4015-diff-whitespace::fix-incomplete-line-in-pre-image	t4015-diff-whitespace	fix incomplete line in pre-image	diff	pass
+t4015-diff-whitespace::new-incomplete-line-in-post-image	t4015-diff-whitespace	new incomplete line in post-image	diff	pass
+t4015-diff-whitespace::incomplete-line-error-is-disabled-for-symlinks	t4015-diff-whitespace	incomplete-line error is disabled for symlinks	diff	pass
+t4015-diff-whitespace::ray-lehtiniemi-s-example	t4015-diff-whitespace	Ray Lehtiniemi's example	diff	pass
 t4016-diff-quote::setup-expected-files	t4016-diff-quote	setup expected files	diff	pass
 t4016-diff-quote::git-diff-summary-m-head	t4016-diff-quote	git diff --summary -M HEAD	diff	pass
 t4016-diff-quote::git-diff-numstat-m-head	t4016-diff-quote	git diff --numstat -M HEAD	diff	pass
@@ -7110,9 +7110,9 @@ t4031-diff-rewrite-binary::rewrite-diff-numstat-shows-binary-changes	t4031-diff-
 t4031-diff-rewrite-binary::diff-stat-counts-binary-rewrite-as-0-lines	t4031-diff-rewrite-binary	diff --stat counts binary rewrite as 0 lines	diff	pass
 t4031-diff-rewrite-binary::setup-textconv	t4031-diff-rewrite-binary	setup textconv	diff	pass
 t4031-diff-rewrite-binary::rewrite-diff-respects-textconv	t4031-diff-rewrite-binary	rewrite diff respects textconv	diff	pass
-t4032-diff-inter-hunk-context::diff-interhunkcontext-invalid	t4032-diff-inter-hunk-context	diff.interHunkContext invalid	diff	partial
-t4032-diff-inter-hunk-context::label-count-hunks-hunks	t4032-diff-inter-hunk-context	$label: count hunks ($hunks)	diff	partial
-t4032-diff-inter-hunk-context::label-check-output	t4032-diff-inter-hunk-context	$label: check output	diff	partial
+t4032-diff-inter-hunk-context::diff-interhunkcontext-invalid	t4032-diff-inter-hunk-context	diff.interHunkContext invalid	diff	pass
+t4032-diff-inter-hunk-context::label-count-hunks-hunks	t4032-diff-inter-hunk-context	$label: count hunks ($hunks)	diff	pass
+t4032-diff-inter-hunk-context::label-check-output	t4032-diff-inter-hunk-context	$label: check output	diff	pass
 t4033-diff-patience::ignore-space-at-eol-with-a-single-appended-character	t4033-diff-patience	--ignore-space-at-eol with a single appended character	diff	pass
 t4034-diff-words::set-up-pre-and-post-with-runs-of-whitespace	t4034-diff-words	set up pre and post with runs of whitespace	diff	pass
 t4034-diff-words::word-diff-with-runs-of-whitespace	t4034-diff-words	word diff with runs of whitespace	diff	pass
@@ -7460,16 +7460,16 @@ t4054-diff-bogus-tree::patch-fails-due-to-bogus-sha1-modification	t4054-diff-bog
 t4054-diff-bogus-tree::patch-fails-due-to-bogus-sha1-other-direction	t4054-diff-bogus-tree	patch fails due to bogus sha1 (other direction)	diff	pass
 t4054-diff-bogus-tree::patch-fails-due-to-bogus-sha1-reverse	t4054-diff-bogus-tree	patch fails due to bogus sha1 (reverse)	diff	pass
 t4054-diff-bogus-tree::patch-fails-due-to-bogus-sha1-index	t4054-diff-bogus-tree	patch fails due to bogus sha1 (index)	diff	pass
-t4055-diff-context::setup	t4055-diff-context	setup	diff	partial
-t4055-diff-context::the-default-number-of-context-lines-is-3	t4055-diff-context	the default number of context lines is 3	diff	partial
-t4055-diff-context::diff-context-honored-by-log	t4055-diff-context	diff.context honored by "log"	diff	partial
-t4055-diff-context::the-u-option-overrides-diff-context	t4055-diff-context	The -U option overrides diff.context	diff	partial
-t4055-diff-context::diff-context-honored-by-diff	t4055-diff-context	diff.context honored by "diff"	diff	partial
-t4055-diff-context::plumbing-not-affected	t4055-diff-context	plumbing not affected	diff	partial
-t4055-diff-context::non-integer-config-parsing	t4055-diff-context	non-integer config parsing	diff	partial
-t4055-diff-context::negative-integer-config-parsing	t4055-diff-context	negative integer config parsing	diff	partial
-t4055-diff-context::u0-is-valid-so-is-diff-context-0	t4055-diff-context	-U0 is valid, so is diff.context=0	diff	partial
-t4055-diff-context::u2147483647-works	t4055-diff-context	-U2147483647 works	diff	partial
+t4055-diff-context::setup	t4055-diff-context	setup	diff	pass
+t4055-diff-context::the-default-number-of-context-lines-is-3	t4055-diff-context	the default number of context lines is 3	diff	pass
+t4055-diff-context::diff-context-honored-by-log	t4055-diff-context	diff.context honored by "log"	diff	pass
+t4055-diff-context::the-u-option-overrides-diff-context	t4055-diff-context	The -U option overrides diff.context	diff	pass
+t4055-diff-context::diff-context-honored-by-diff	t4055-diff-context	diff.context honored by "diff"	diff	pass
+t4055-diff-context::plumbing-not-affected	t4055-diff-context	plumbing not affected	diff	pass
+t4055-diff-context::non-integer-config-parsing	t4055-diff-context	non-integer config parsing	diff	pass
+t4055-diff-context::negative-integer-config-parsing	t4055-diff-context	negative integer config parsing	diff	pass
+t4055-diff-context::u0-is-valid-so-is-diff-context-0	t4055-diff-context	-U0 is valid, so is diff.context=0	diff	pass
+t4055-diff-context::u2147483647-works	t4055-diff-context	-U2147483647 works	diff	pass
 t4056-diff-order::setup	t4056-diff-order	setup	diff	pass
 t4056-diff-order::missing-orderfile	t4056-diff-order	missing orderfile	diff	pass
 t4056-diff-order::unreadable-orderfile	t4056-diff-order	unreadable orderfile	diff	pass
@@ -7989,92 +7989,92 @@ t4140-apply-ita::apply-deletion-patch-to-ita-path-index	t4140-apply-ita	apply de
 t4140-apply-ita::apply-creation-patch-to-existing-index-with-n	t4140-apply-ita	apply creation patch to existing index with -N	apply	pass
 t4140-apply-ita::apply-complex-patch-with-n	t4140-apply-ita	apply complex patch with -N	apply	pass
 t4141-apply-too-large::git-apply-rejects-patches-that-are-too-large	t4141-apply-too-large	git apply rejects patches that are too large	apply	pass
-t4150-am::setup-messages	t4150-am	setup: messages	am	partial
-t4150-am::am-applies-patch-correctly	t4150-am	am applies patch correctly	am	partial
-t4150-am::am-fails-if-index-is-dirty	t4150-am	am fails if index is dirty	am	partial
-t4150-am::am-applies-patch-e-mail-not-in-a-mbox	t4150-am	am applies patch e-mail not in a mbox	am	partial
-t4150-am::am-applies-patch-e-mail-not-in-a-mbox-with-crlf	t4150-am	am applies patch e-mail not in a mbox with CRLF	am	partial
-t4150-am::am-applies-patch-e-mail-with-preceding-whitespace	t4150-am	am applies patch e-mail with preceding whitespace	am	partial
-t4150-am::am-applies-stgit-patch	t4150-am	am applies stgit patch	am	partial
-t4150-am::am-patch-format-stgit-applies-stgit-patch	t4150-am	am --patch-format=stgit applies stgit patch	am	partial
-t4150-am::am-applies-stgit-series	t4150-am	am applies stgit series	am	partial
-t4150-am::am-applies-hg-patch	t4150-am	am applies hg patch	am	partial
-t4150-am::am-patch-format-hg-applies-hg-patch	t4150-am	am --patch-format=hg applies hg patch	am	partial
-t4150-am::am-with-applypatch-msg-hook	t4150-am	am with applypatch-msg hook	am	partial
-t4150-am::am-with-failing-applypatch-msg-hook	t4150-am	am with failing applypatch-msg hook	am	partial
-t4150-am::am-with-failing-applypatch-msg-hook-no-verify	t4150-am	am with failing applypatch-msg hook (no verify)	am	partial
-t4150-am::am-with-pre-applypatch-hook	t4150-am	am with pre-applypatch hook	am	partial
-t4150-am::am-with-failing-pre-applypatch-hook	t4150-am	am with failing pre-applypatch hook	am	partial
-t4150-am::am-with-failing-pre-applypatch-hook-no-verify	t4150-am	am with failing pre-applypatch hook (no verify)	am	partial
-t4150-am::am-with-post-applypatch-hook	t4150-am	am with post-applypatch hook	am	partial
-t4150-am::am-with-failing-post-applypatch-hook	t4150-am	am with failing post-applypatch hook	am	partial
-t4150-am::am-scissors-cuts-the-message-at-the-scissors-line	t4150-am	am --scissors cuts the message at the scissors line	am	partial
-t4150-am::am-no-scissors-overrides-mailinfo-scissors	t4150-am	am --no-scissors overrides mailinfo.scissors	am	partial
-t4150-am::setup-new-author-and-committer	t4150-am	setup: new author and committer	am	partial
-t4150-am::am-changes-committer-and-keeps-author	t4150-am	am changes committer and keeps author	am	partial
-t4150-am::am-signoff-adds-signed-off-by-line	t4150-am	am --signoff adds Signed-off-by: line	am	partial
-t4150-am::am-stays-in-branch	t4150-am	am stays in branch	am	partial
-t4150-am::am-signoff-does-not-add-signed-off-by-line-if-already-there	t4150-am	am --signoff does not add Signed-off-by: line if already there	am	partial
-t4150-am::am-signoff-adds-signed-off-by-if-another-author-is-preset	t4150-am	am --signoff adds Signed-off-by: if another author is preset	am	partial
-t4150-am::am-signoff-duplicates-signed-off-by-if-it-is-not-the-last-one	t4150-am	am --signoff duplicates Signed-off-by: if it is not the last one	am	partial
-t4150-am::am-without-keep-removes-re-and-patch-stuff	t4150-am	am without --keep removes Re: and [PATCH] stuff	am	partial
-t4150-am::am-keep-really-keeps-the-subject	t4150-am	am --keep really keeps the subject	am	partial
-t4150-am::am-keep-non-patch-really-keeps-the-non-patch-part	t4150-am	am --keep-non-patch really keeps the non-patch part	am	partial
-t4150-am::setup-am-3	t4150-am	setup am -3	am	partial
-t4150-am::am-3-falls-back-to-3-way-merge	t4150-am	am -3 falls back to 3-way merge	am	partial
-t4150-am::am-3-p0-can-read-no-prefix-patch	t4150-am	am -3 -p0 can read --no-prefix patch	am	partial
-t4150-am::am-with-config-am-threeway-falls-back-to-3-way-merge	t4150-am	am with config am.threeWay falls back to 3-way merge	am	partial
-t4150-am::am-with-config-am-threeway-overridden-by-no-3way	t4150-am	am with config am.threeWay overridden by --no-3way	am	partial
-t4150-am::am-can-rename-a-file	t4150-am	am can rename a file	am	partial
-t4150-am::am-3-can-rename-a-file	t4150-am	am -3 can rename a file	am	partial
-t4150-am::am-3-can-rename-a-file-after-falling-back-to-3-way-merge	t4150-am	am -3 can rename a file after falling back to 3-way merge	am	partial
-t4150-am::am-3-q-is-quiet	t4150-am	am -3 -q is quiet	am	partial
-t4150-am::am-pauses-on-conflict	t4150-am	am pauses on conflict	am	partial
-t4150-am::am-show-current-patch	t4150-am	am --show-current-patch	am	partial
-t4150-am::am-show-current-patch-raw	t4150-am	am --show-current-patch=raw	am	partial
-t4150-am::am-show-current-patch-diff	t4150-am	am --show-current-patch=diff	am	partial
-t4150-am::am-accepts-repeated-show-current-patch	t4150-am	am accepts repeated --show-current-patch	am	partial
-t4150-am::am-detects-incompatible-show-current-patch	t4150-am	am detects incompatible --show-current-patch	am	partial
-t4150-am::am-skip-works	t4150-am	am --skip works	am	partial
-t4150-am::am-abort-removes-a-stray-directory	t4150-am	am --abort removes a stray directory	am	partial
-t4150-am::am-refuses-patches-when-paused	t4150-am	am refuses patches when paused	am	partial
-t4150-am::am-resolved-works	t4150-am	am --resolved works	am	partial
-t4150-am::am-resolved-fails-if-index-has-no-changes	t4150-am	am --resolved fails if index has no changes	am	partial
-t4150-am::am-resolved-fails-if-index-has-unmerged-entries	t4150-am	am --resolved fails if index has unmerged entries	am	partial
-t4150-am::am-takes-patches-from-a-pine-mailbox	t4150-am	am takes patches from a Pine mailbox	am	partial
-t4150-am::am-fails-on-mail-without-patch	t4150-am	am fails on mail without patch	am	partial
-t4150-am::am-fails-on-empty-patch	t4150-am	am fails on empty patch	am	partial
-t4150-am::am-works-from-stdin-in-subdirectory	t4150-am	am works from stdin in subdirectory	am	partial
-t4150-am::am-works-from-file-relative-path-given-in-subdirectory	t4150-am	am works from file (relative path given) in subdirectory	am	partial
-t4150-am::am-works-from-file-absolute-path-given-in-subdirectory	t4150-am	am works from file (absolute path given) in subdirectory	am	partial
-t4150-am::am-committer-date-is-author-date	t4150-am	am --committer-date-is-author-date	am	partial
-t4150-am::am-without-committer-date-is-author-date	t4150-am	am without --committer-date-is-author-date	am	partial
-t4150-am::am-ignore-date	t4150-am	am --ignore-date	am	partial
-t4150-am::am-into-an-unborn-branch	t4150-am	am into an unborn branch	am	partial
-t4150-am::am-newline-in-subject	t4150-am	am newline in subject	am	partial
-t4150-am::am-q-is-quiet	t4150-am	am -q is quiet	am	partial
-t4150-am::am-empty-file-does-not-infloop	t4150-am	am empty-file does not infloop	am	partial
-t4150-am::am-message-id-really-adds-the-message-id	t4150-am	am --message-id really adds the message id	am	partial
-t4150-am::am-messageid-really-adds-the-message-id	t4150-am	am.messageid really adds the message id	am	partial
-t4150-am::am-message-id-s-signs-off-after-the-message-id	t4150-am	am --message-id -s signs off after the message id	am	partial
-t4150-am::am-3-works-with-rerere	t4150-am	am -3 works with rerere	am	partial
-t4150-am::am-s-unexpected-trailer-block	t4150-am	am -s unexpected trailer block	am	partial
-t4150-am::am-patch-format-mboxrd-handles-mboxrd	t4150-am	am --patch-format=mboxrd handles mboxrd	am	partial
-t4150-am::am-works-with-multi-line-in-body-headers	t4150-am	am works with multi-line in-body headers	am	partial
-t4150-am::am-quit-keeps-head-where-it-is	t4150-am	am --quit keeps HEAD where it is	am	partial
-t4150-am::am-and-gitattibutes	t4150-am	am and .gitattibutes	am	partial
-t4150-am::apply-binary-blob-in-partial-clone	t4150-am	apply binary blob in partial clone	am	partial
-t4150-am::an-empty-input-file-is-error-regardless-of-empty-option	t4150-am	an empty input file is error regardless of --empty option	am	partial
-t4150-am::invalid-when-passing-the-empty-option-alone	t4150-am	invalid when passing the --empty option alone	am	partial
-t4150-am::a-message-without-a-patch-is-an-error-default	t4150-am	a message without a patch is an error (default)	am	partial
-t4150-am::a-message-without-a-patch-is-an-error-where-an-explicit-empty-stop-is-given	t4150-am	a message without a patch is an error where an explicit "--empty=stop" is given	am	partial
-t4150-am::a-message-without-a-patch-will-be-skipped-when-empty-drop-is-given	t4150-am	a message without a patch will be skipped when "--empty=drop" is given	am	partial
-t4150-am::record-as-an-empty-commit-when-meeting-e-mail-message-that-lacks-a-patch	t4150-am	record as an empty commit when meeting e-mail message that lacks a patch	am	partial
-t4150-am::skip-an-empty-patch-in-the-middle-of-an-am-session	t4150-am	skip an empty patch in the middle of an am session	am	partial
-t4150-am::record-an-empty-patch-as-an-empty-commit-in-the-middle-of-an-am-session	t4150-am	record an empty patch as an empty commit in the middle of an am session	am	partial
-t4150-am::create-an-non-empty-commit-when-the-index-is-changed-though-allow-empty-is-given	t4150-am	create an non-empty commit when the index IS changed though "--allow-empty" is given	am	partial
-t4150-am::cannot-create-empty-commits-when-there-is-a-clean-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is a clean index due to merge conflicts	am	partial
-t4150-am::cannot-create-empty-commits-when-there-is-unmerged-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is unmerged index due to merge conflicts	am	partial
+t4150-am::setup-messages	t4150-am	setup: messages	am	pass
+t4150-am::am-applies-patch-correctly	t4150-am	am applies patch correctly	am	pass
+t4150-am::am-fails-if-index-is-dirty	t4150-am	am fails if index is dirty	am	pass
+t4150-am::am-applies-patch-e-mail-not-in-a-mbox	t4150-am	am applies patch e-mail not in a mbox	am	pass
+t4150-am::am-applies-patch-e-mail-not-in-a-mbox-with-crlf	t4150-am	am applies patch e-mail not in a mbox with CRLF	am	pass
+t4150-am::am-applies-patch-e-mail-with-preceding-whitespace	t4150-am	am applies patch e-mail with preceding whitespace	am	pass
+t4150-am::am-applies-stgit-patch	t4150-am	am applies stgit patch	am	pass
+t4150-am::am-patch-format-stgit-applies-stgit-patch	t4150-am	am --patch-format=stgit applies stgit patch	am	pass
+t4150-am::am-applies-stgit-series	t4150-am	am applies stgit series	am	pass
+t4150-am::am-applies-hg-patch	t4150-am	am applies hg patch	am	pass
+t4150-am::am-patch-format-hg-applies-hg-patch	t4150-am	am --patch-format=hg applies hg patch	am	pass
+t4150-am::am-with-applypatch-msg-hook	t4150-am	am with applypatch-msg hook	am	pass
+t4150-am::am-with-failing-applypatch-msg-hook	t4150-am	am with failing applypatch-msg hook	am	pass
+t4150-am::am-with-failing-applypatch-msg-hook-no-verify	t4150-am	am with failing applypatch-msg hook (no verify)	am	pass
+t4150-am::am-with-pre-applypatch-hook	t4150-am	am with pre-applypatch hook	am	pass
+t4150-am::am-with-failing-pre-applypatch-hook	t4150-am	am with failing pre-applypatch hook	am	pass
+t4150-am::am-with-failing-pre-applypatch-hook-no-verify	t4150-am	am with failing pre-applypatch hook (no verify)	am	pass
+t4150-am::am-with-post-applypatch-hook	t4150-am	am with post-applypatch hook	am	pass
+t4150-am::am-with-failing-post-applypatch-hook	t4150-am	am with failing post-applypatch hook	am	pass
+t4150-am::am-scissors-cuts-the-message-at-the-scissors-line	t4150-am	am --scissors cuts the message at the scissors line	am	pass
+t4150-am::am-no-scissors-overrides-mailinfo-scissors	t4150-am	am --no-scissors overrides mailinfo.scissors	am	pass
+t4150-am::setup-new-author-and-committer	t4150-am	setup: new author and committer	am	pass
+t4150-am::am-changes-committer-and-keeps-author	t4150-am	am changes committer and keeps author	am	pass
+t4150-am::am-signoff-adds-signed-off-by-line	t4150-am	am --signoff adds Signed-off-by: line	am	pass
+t4150-am::am-stays-in-branch	t4150-am	am stays in branch	am	pass
+t4150-am::am-signoff-does-not-add-signed-off-by-line-if-already-there	t4150-am	am --signoff does not add Signed-off-by: line if already there	am	pass
+t4150-am::am-signoff-adds-signed-off-by-if-another-author-is-preset	t4150-am	am --signoff adds Signed-off-by: if another author is preset	am	pass
+t4150-am::am-signoff-duplicates-signed-off-by-if-it-is-not-the-last-one	t4150-am	am --signoff duplicates Signed-off-by: if it is not the last one	am	pass
+t4150-am::am-without-keep-removes-re-and-patch-stuff	t4150-am	am without --keep removes Re: and [PATCH] stuff	am	pass
+t4150-am::am-keep-really-keeps-the-subject	t4150-am	am --keep really keeps the subject	am	pass
+t4150-am::am-keep-non-patch-really-keeps-the-non-patch-part	t4150-am	am --keep-non-patch really keeps the non-patch part	am	pass
+t4150-am::setup-am-3	t4150-am	setup am -3	am	pass
+t4150-am::am-3-falls-back-to-3-way-merge	t4150-am	am -3 falls back to 3-way merge	am	pass
+t4150-am::am-3-p0-can-read-no-prefix-patch	t4150-am	am -3 -p0 can read --no-prefix patch	am	pass
+t4150-am::am-with-config-am-threeway-falls-back-to-3-way-merge	t4150-am	am with config am.threeWay falls back to 3-way merge	am	pass
+t4150-am::am-with-config-am-threeway-overridden-by-no-3way	t4150-am	am with config am.threeWay overridden by --no-3way	am	pass
+t4150-am::am-can-rename-a-file	t4150-am	am can rename a file	am	pass
+t4150-am::am-3-can-rename-a-file	t4150-am	am -3 can rename a file	am	pass
+t4150-am::am-3-can-rename-a-file-after-falling-back-to-3-way-merge	t4150-am	am -3 can rename a file after falling back to 3-way merge	am	pass
+t4150-am::am-3-q-is-quiet	t4150-am	am -3 -q is quiet	am	pass
+t4150-am::am-pauses-on-conflict	t4150-am	am pauses on conflict	am	pass
+t4150-am::am-show-current-patch	t4150-am	am --show-current-patch	am	pass
+t4150-am::am-show-current-patch-raw	t4150-am	am --show-current-patch=raw	am	pass
+t4150-am::am-show-current-patch-diff	t4150-am	am --show-current-patch=diff	am	pass
+t4150-am::am-accepts-repeated-show-current-patch	t4150-am	am accepts repeated --show-current-patch	am	pass
+t4150-am::am-detects-incompatible-show-current-patch	t4150-am	am detects incompatible --show-current-patch	am	pass
+t4150-am::am-skip-works	t4150-am	am --skip works	am	pass
+t4150-am::am-abort-removes-a-stray-directory	t4150-am	am --abort removes a stray directory	am	pass
+t4150-am::am-refuses-patches-when-paused	t4150-am	am refuses patches when paused	am	pass
+t4150-am::am-resolved-works	t4150-am	am --resolved works	am	pass
+t4150-am::am-resolved-fails-if-index-has-no-changes	t4150-am	am --resolved fails if index has no changes	am	pass
+t4150-am::am-resolved-fails-if-index-has-unmerged-entries	t4150-am	am --resolved fails if index has unmerged entries	am	pass
+t4150-am::am-takes-patches-from-a-pine-mailbox	t4150-am	am takes patches from a Pine mailbox	am	pass
+t4150-am::am-fails-on-mail-without-patch	t4150-am	am fails on mail without patch	am	pass
+t4150-am::am-fails-on-empty-patch	t4150-am	am fails on empty patch	am	pass
+t4150-am::am-works-from-stdin-in-subdirectory	t4150-am	am works from stdin in subdirectory	am	pass
+t4150-am::am-works-from-file-relative-path-given-in-subdirectory	t4150-am	am works from file (relative path given) in subdirectory	am	pass
+t4150-am::am-works-from-file-absolute-path-given-in-subdirectory	t4150-am	am works from file (absolute path given) in subdirectory	am	pass
+t4150-am::am-committer-date-is-author-date	t4150-am	am --committer-date-is-author-date	am	pass
+t4150-am::am-without-committer-date-is-author-date	t4150-am	am without --committer-date-is-author-date	am	pass
+t4150-am::am-ignore-date	t4150-am	am --ignore-date	am	pass
+t4150-am::am-into-an-unborn-branch	t4150-am	am into an unborn branch	am	pass
+t4150-am::am-newline-in-subject	t4150-am	am newline in subject	am	pass
+t4150-am::am-q-is-quiet	t4150-am	am -q is quiet	am	pass
+t4150-am::am-empty-file-does-not-infloop	t4150-am	am empty-file does not infloop	am	pass
+t4150-am::am-message-id-really-adds-the-message-id	t4150-am	am --message-id really adds the message id	am	pass
+t4150-am::am-messageid-really-adds-the-message-id	t4150-am	am.messageid really adds the message id	am	pass
+t4150-am::am-message-id-s-signs-off-after-the-message-id	t4150-am	am --message-id -s signs off after the message id	am	pass
+t4150-am::am-3-works-with-rerere	t4150-am	am -3 works with rerere	am	pass
+t4150-am::am-s-unexpected-trailer-block	t4150-am	am -s unexpected trailer block	am	pass
+t4150-am::am-patch-format-mboxrd-handles-mboxrd	t4150-am	am --patch-format=mboxrd handles mboxrd	am	pass
+t4150-am::am-works-with-multi-line-in-body-headers	t4150-am	am works with multi-line in-body headers	am	pass
+t4150-am::am-quit-keeps-head-where-it-is	t4150-am	am --quit keeps HEAD where it is	am	pass
+t4150-am::am-and-gitattibutes	t4150-am	am and .gitattibutes	am	pass
+t4150-am::apply-binary-blob-in-partial-clone	t4150-am	apply binary blob in partial clone	am	pass
+t4150-am::an-empty-input-file-is-error-regardless-of-empty-option	t4150-am	an empty input file is error regardless of --empty option	am	pass
+t4150-am::invalid-when-passing-the-empty-option-alone	t4150-am	invalid when passing the --empty option alone	am	pass
+t4150-am::a-message-without-a-patch-is-an-error-default	t4150-am	a message without a patch is an error (default)	am	pass
+t4150-am::a-message-without-a-patch-is-an-error-where-an-explicit-empty-stop-is-given	t4150-am	a message without a patch is an error where an explicit "--empty=stop" is given	am	pass
+t4150-am::a-message-without-a-patch-will-be-skipped-when-empty-drop-is-given	t4150-am	a message without a patch will be skipped when "--empty=drop" is given	am	pass
+t4150-am::record-as-an-empty-commit-when-meeting-e-mail-message-that-lacks-a-patch	t4150-am	record as an empty commit when meeting e-mail message that lacks a patch	am	pass
+t4150-am::skip-an-empty-patch-in-the-middle-of-an-am-session	t4150-am	skip an empty patch in the middle of an am session	am	pass
+t4150-am::record-an-empty-patch-as-an-empty-commit-in-the-middle-of-an-am-session	t4150-am	record an empty patch as an empty commit in the middle of an am session	am	pass
+t4150-am::create-an-non-empty-commit-when-the-index-is-changed-though-allow-empty-is-given	t4150-am	create an non-empty commit when the index IS changed though "--allow-empty" is given	am	pass
+t4150-am::cannot-create-empty-commits-when-there-is-a-clean-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is a clean index due to merge conflicts	am	pass
+t4150-am::cannot-create-empty-commits-when-there-is-unmerged-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is unmerged index due to merge conflicts	am	pass
 t4151-am-abort::am-3-skip-removes-otherfile-4	t4151-am-abort	am -3 --skip removes otherfile-4	am	pass
 t4151-am-abort::am-3-abort-removes-otherfile-4	t4151-am-abort	am -3 --abort removes otherfile-4	am	pass
 t4151-am-abort::am-abort-will-keep-the-local-commits-intact	t4151-am-abort	am --abort will keep the local commits intact	am	pass
@@ -8319,80 +8319,80 @@ t4202-log::set-up-commits-with-different-authors	t4202-log	set up commits with d
 t4202-log::log-invert-grep-grep-author	t4202-log	log --invert-grep --grep --author	log	pass
 t4202-log::log-noop-opt-without-grep-is-a-noop	t4202-log	log $noop_opt without --grep is a NOOP	log	pass
 t4202-log::cmd-understands-grep-patterntype-like-log	t4202-log	$cmd: understands grep.patternType, like 'log'	log	pass
-t4203-mailmap::setup-commits-and-contacts-file	t4203-mailmap	setup commits and contacts file		partial
-t4203-mailmap::check-mailmap-no-arguments	t4203-mailmap	check-mailmap no arguments	check-mailmap	partial
-t4203-mailmap::check-mailmap-arguments	t4203-mailmap	check-mailmap arguments	check-mailmap	partial
-t4203-mailmap::check-mailmap-stdin	t4203-mailmap	check-mailmap --stdin	check-mailmap	partial
-t4203-mailmap::check-mailmap-stdin-arguments-no-mapping	t4203-mailmap	check-mailmap --stdin arguments: no mapping	check-mailmap	partial
-t4203-mailmap::check-mailmap-stdin-arguments-mapping	t4203-mailmap	check-mailmap --stdin arguments: mapping	check-mailmap	partial
-t4203-mailmap::check-mailmap-simple-address-mapping	t4203-mailmap	check-mailmap simple address: mapping	check-mailmap	partial
-t4203-mailmap::check-mailmap-stdin-simple-address-mapping	t4203-mailmap	check-mailmap --stdin simple address: mapping	check-mailmap	partial
-t4203-mailmap::check-mailmap-simple-address-no-mapping	t4203-mailmap	check-mailmap simple address: no mapping	check-mailmap	partial
-t4203-mailmap::check-mailmap-stdin-simple-address-no-mapping	t4203-mailmap	check-mailmap --stdin simple address: no mapping	check-mailmap	partial
-t4203-mailmap::check-mailmap-name-and-address-mapping	t4203-mailmap	check-mailmap name and address: mapping	check-mailmap	partial
-t4203-mailmap::no-mailmap	t4203-mailmap	No mailmap	shortlog	partial
-t4203-mailmap::setup-default-mailmap	t4203-mailmap	setup default .mailmap		partial
-t4203-mailmap::test-default-mailmap	t4203-mailmap	test default .mailmap	shortlog	partial
-t4203-mailmap::mailmap-file-set	t4203-mailmap	mailmap.file set	clone	partial
-t4203-mailmap::mailmap-file-override	t4203-mailmap	mailmap.file override	shortlog	partial
-t4203-mailmap::mailmap-file-non-existent	t4203-mailmap	mailmap.file non-existent	shortlog	partial
-t4203-mailmap::name-entry-after-email-entry	t4203-mailmap	name entry after email entry	shortlog	partial
-t4203-mailmap::name-entry-after-email-entry-case-insensitive	t4203-mailmap	name entry after email entry, case-insensitive	shortlog	partial
-t4203-mailmap::no-mailmap-files-but-configured	t4203-mailmap	No mailmap files, but configured	shortlog	partial
-t4203-mailmap::setup-mailmap-blob-tests	t4203-mailmap	setup mailmap blob tests	add	partial
-t4203-mailmap::mailmap-blob-set	t4203-mailmap	mailmap.blob set	shortlog	partial
-t4203-mailmap::mailmap-blob-overrides-mailmap	t4203-mailmap	mailmap.blob overrides .mailmap	shortlog	partial
-t4203-mailmap::mailmap-file-overrides-mailmap-blob	t4203-mailmap	mailmap.file overrides mailmap.blob		partial
-t4203-mailmap::mailmap-file-can-be-missing	t4203-mailmap	mailmap.file can be missing	shortlog	partial
-t4203-mailmap::mailmap-blob-can-be-missing	t4203-mailmap	mailmap.blob can be missing	shortlog	partial
-t4203-mailmap::mailmap-blob-might-be-the-wrong-type	t4203-mailmap	mailmap.blob might be the wrong type	shortlog	partial
-t4203-mailmap::mailmap-blob-defaults-to-off-in-non-bare-repo	t4203-mailmap	mailmap.blob defaults to off in non-bare repo	init	partial
-t4203-mailmap::mailmap-blob-defaults-to-head-mailmap-in-bare-repo	t4203-mailmap	mailmap.blob defaults to HEAD:.mailmap in bare repo	clone	partial
-t4203-mailmap::mailmap-blob-can-handle-blobs-without-trailing-newline	t4203-mailmap	mailmap.blob can handle blobs without trailing newline	shortlog	partial
-t4203-mailmap::single-character-name	t4203-mailmap	single-character name	shortlog	partial
-t4203-mailmap::preserve-canonical-email-case	t4203-mailmap	preserve canonical email case	shortlog	partial
-t4203-mailmap::gitmailmap-5-example-output-setup	t4203-mailmap	gitmailmap(5) example output: setup		partial
-t4203-mailmap::gitmailmap-5-example-output-example-1	t4203-mailmap	gitmailmap(5) example output: example #1	log	partial
-t4203-mailmap::gitmailmap-5-example-output-example-2	t4203-mailmap	gitmailmap(5) example output: example #2	log	partial
-t4203-mailmap::gitmailmap-5-example-output-example-3	t4203-mailmap	gitmailmap(5) example output: example #3	log	partial
-t4203-mailmap::shortlog-output-complex-mapping	t4203-mailmap	Shortlog output (complex mapping)	shortlog	partial
-t4203-mailmap::log-output-complex-mapping	t4203-mailmap	Log output (complex mapping)	log	partial
-t4203-mailmap::log-output-local-part-email-address	t4203-mailmap	Log output (local-part email address)	log	partial
-t4203-mailmap::log-output-with-use-mailmap	t4203-mailmap	Log output with --use-mailmap	log	partial
-t4203-mailmap::log-output-with-log-mailmap	t4203-mailmap	Log output with log.mailmap	log	partial
-t4203-mailmap::log-mailmap-false-disables-mailmap	t4203-mailmap	log.mailmap=false disables mailmap	log	partial
-t4203-mailmap::no-use-mailmap-disables-mailmap	t4203-mailmap	--no-use-mailmap disables mailmap	log	partial
-t4203-mailmap::grep-author-with-use-mailmap	t4203-mailmap	Grep author with --use-mailmap	log	partial
-t4203-mailmap::grep-author-with-log-mailmap	t4203-mailmap	Grep author with log.mailmap	log	partial
-t4203-mailmap::log-mailmap-is-true-by-default-these-days	t4203-mailmap	log.mailmap is true by default these days	log	partial
-t4203-mailmap::only-grep-replaced-author-with-use-mailmap	t4203-mailmap	Only grep replaced author with --use-mailmap	log	partial
-t4203-mailmap::blame-porcelain-output-complex-mapping	t4203-mailmap	Blame --porcelain output (complex mapping)	blame	partial
-t4203-mailmap::blame-output-complex-mapping	t4203-mailmap	Blame output (complex mapping)	blame	partial
-t4203-mailmap::commit-author-honors-mailmap	t4203-mailmap	commit --author honors mailmap	commit	partial
-t4203-mailmap::comment-syntax-setup	t4203-mailmap	comment syntax: setup	log	partial
-t4203-mailmap::whitespace-syntax-setup	t4203-mailmap	whitespace syntax: setup	log	partial
-t4203-mailmap::empty-syntax-setup	t4203-mailmap	empty syntax: setup	log	partial
-t4203-mailmap::set-up-mailmap-location-tests	t4203-mailmap	set up mailmap location tests	init	partial
-t4203-mailmap::bare-repo-with-work-tree-finds-mailmap-at-top-level	t4203-mailmap	bare repo with --work-tree finds mailmap at top-level		partial
-t4203-mailmap::bare-repo-does-not-look-in-current-directory	t4203-mailmap	bare repo does not look in current directory	log	partial
-t4203-mailmap::non-git-shortlog-respects-mailmap-in-current-dir	t4203-mailmap	non-git shortlog respects mailmap in current dir	shortlog	partial
-t4203-mailmap::shortlog-on-stdin-respects-mailmap-from-repo	t4203-mailmap	shortlog on stdin respects mailmap from repo	shortlog	partial
-t4203-mailmap::find-top-level-mailmap-from-subdir	t4203-mailmap	find top-level mailmap from subdir	clone	partial
-t4203-mailmap::set-up-symlink-tests	t4203-mailmap	set up symlink tests	commit	partial
-t4203-mailmap::symlinks-respected-in-mailmap-file	t4203-mailmap	symlinks respected in mailmap.file	log	partial
-t4203-mailmap::symlinks-respected-in-non-repo-shortlog	t4203-mailmap	symlinks respected in non-repo shortlog	log	partial
-t4203-mailmap::symlinks-not-respected-in-tree	t4203-mailmap	symlinks not respected in-tree	log	partial
-t4203-mailmap::prepare-for-cat-file-mailmap	t4203-mailmap	prepare for cat-file --mailmap	commit	partial
-t4203-mailmap::no-use-mailmap-disables-mailmap-in-cat-file	t4203-mailmap	--no-use-mailmap disables mailmap in cat-file	cat-file	partial
-t4203-mailmap::use-mailmap-enables-mailmap-in-cat-file	t4203-mailmap	--use-mailmap enables mailmap in cat-file	cat-file	partial
-t4203-mailmap::no-mailmap-disables-mailmap-in-cat-file-for-annotated-tag-objects	t4203-mailmap	--no-mailmap disables mailmap in cat-file for annotated tag objects	cat-file	partial
-t4203-mailmap::mailmap-enables-mailmap-in-cat-file-for-annotated-tag-objects	t4203-mailmap	--mailmap enables mailmap in cat-file for annotated tag objects	cat-file	partial
-t4203-mailmap::git-cat-file-s-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file -s returns correct size with --use-mailmap	cat-file	partial
-t4203-mailmap::git-cat-file-s-returns-correct-size-with-use-mailmap-for-tag-objects	t4203-mailmap	git cat-file -s returns correct size with --use-mailmap for tag objects	cat-file	partial
-t4203-mailmap::git-cat-file-batch-check-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file --batch-check returns correct size with --use-mailmap	cat-file	partial
-t4203-mailmap::git-cat-file-batch-command-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file --batch-command returns correct size with --use-mailmap	cat-file	partial
-t4203-mailmap::git-cat-file-mailmap-works-with-different-author-and-committer	t4203-mailmap	git cat-file --mailmap works with different author and committer	cat-file	partial
-t4203-mailmap::git-cat-file-mailmap-maps-both-author-and-committer-when-both-need-mapping	t4203-mailmap	git cat-file --mailmap maps both author and committer when both need mapping	cat-file	partial
+t4203-mailmap::setup-commits-and-contacts-file	t4203-mailmap	setup commits and contacts file		pass
+t4203-mailmap::check-mailmap-no-arguments	t4203-mailmap	check-mailmap no arguments	check-mailmap	pass
+t4203-mailmap::check-mailmap-arguments	t4203-mailmap	check-mailmap arguments	check-mailmap	pass
+t4203-mailmap::check-mailmap-stdin	t4203-mailmap	check-mailmap --stdin	check-mailmap	pass
+t4203-mailmap::check-mailmap-stdin-arguments-no-mapping	t4203-mailmap	check-mailmap --stdin arguments: no mapping	check-mailmap	pass
+t4203-mailmap::check-mailmap-stdin-arguments-mapping	t4203-mailmap	check-mailmap --stdin arguments: mapping	check-mailmap	pass
+t4203-mailmap::check-mailmap-simple-address-mapping	t4203-mailmap	check-mailmap simple address: mapping	check-mailmap	pass
+t4203-mailmap::check-mailmap-stdin-simple-address-mapping	t4203-mailmap	check-mailmap --stdin simple address: mapping	check-mailmap	pass
+t4203-mailmap::check-mailmap-simple-address-no-mapping	t4203-mailmap	check-mailmap simple address: no mapping	check-mailmap	pass
+t4203-mailmap::check-mailmap-stdin-simple-address-no-mapping	t4203-mailmap	check-mailmap --stdin simple address: no mapping	check-mailmap	pass
+t4203-mailmap::check-mailmap-name-and-address-mapping	t4203-mailmap	check-mailmap name and address: mapping	check-mailmap	pass
+t4203-mailmap::no-mailmap	t4203-mailmap	No mailmap	shortlog	pass
+t4203-mailmap::setup-default-mailmap	t4203-mailmap	setup default .mailmap		pass
+t4203-mailmap::test-default-mailmap	t4203-mailmap	test default .mailmap	shortlog	pass
+t4203-mailmap::mailmap-file-set	t4203-mailmap	mailmap.file set	clone	pass
+t4203-mailmap::mailmap-file-override	t4203-mailmap	mailmap.file override	shortlog	pass
+t4203-mailmap::mailmap-file-non-existent	t4203-mailmap	mailmap.file non-existent	shortlog	pass
+t4203-mailmap::name-entry-after-email-entry	t4203-mailmap	name entry after email entry	shortlog	pass
+t4203-mailmap::name-entry-after-email-entry-case-insensitive	t4203-mailmap	name entry after email entry, case-insensitive	shortlog	pass
+t4203-mailmap::no-mailmap-files-but-configured	t4203-mailmap	No mailmap files, but configured	shortlog	pass
+t4203-mailmap::setup-mailmap-blob-tests	t4203-mailmap	setup mailmap blob tests	add	pass
+t4203-mailmap::mailmap-blob-set	t4203-mailmap	mailmap.blob set	shortlog	pass
+t4203-mailmap::mailmap-blob-overrides-mailmap	t4203-mailmap	mailmap.blob overrides .mailmap	shortlog	pass
+t4203-mailmap::mailmap-file-overrides-mailmap-blob	t4203-mailmap	mailmap.file overrides mailmap.blob		pass
+t4203-mailmap::mailmap-file-can-be-missing	t4203-mailmap	mailmap.file can be missing	shortlog	pass
+t4203-mailmap::mailmap-blob-can-be-missing	t4203-mailmap	mailmap.blob can be missing	shortlog	pass
+t4203-mailmap::mailmap-blob-might-be-the-wrong-type	t4203-mailmap	mailmap.blob might be the wrong type	shortlog	pass
+t4203-mailmap::mailmap-blob-defaults-to-off-in-non-bare-repo	t4203-mailmap	mailmap.blob defaults to off in non-bare repo	init	pass
+t4203-mailmap::mailmap-blob-defaults-to-head-mailmap-in-bare-repo	t4203-mailmap	mailmap.blob defaults to HEAD:.mailmap in bare repo	clone	pass
+t4203-mailmap::mailmap-blob-can-handle-blobs-without-trailing-newline	t4203-mailmap	mailmap.blob can handle blobs without trailing newline	shortlog	pass
+t4203-mailmap::single-character-name	t4203-mailmap	single-character name	shortlog	pass
+t4203-mailmap::preserve-canonical-email-case	t4203-mailmap	preserve canonical email case	shortlog	pass
+t4203-mailmap::gitmailmap-5-example-output-setup	t4203-mailmap	gitmailmap(5) example output: setup		pass
+t4203-mailmap::gitmailmap-5-example-output-example-1	t4203-mailmap	gitmailmap(5) example output: example #1	log	pass
+t4203-mailmap::gitmailmap-5-example-output-example-2	t4203-mailmap	gitmailmap(5) example output: example #2	log	pass
+t4203-mailmap::gitmailmap-5-example-output-example-3	t4203-mailmap	gitmailmap(5) example output: example #3	log	pass
+t4203-mailmap::shortlog-output-complex-mapping	t4203-mailmap	Shortlog output (complex mapping)	shortlog	pass
+t4203-mailmap::log-output-complex-mapping	t4203-mailmap	Log output (complex mapping)	log	pass
+t4203-mailmap::log-output-local-part-email-address	t4203-mailmap	Log output (local-part email address)	log	pass
+t4203-mailmap::log-output-with-use-mailmap	t4203-mailmap	Log output with --use-mailmap	log	pass
+t4203-mailmap::log-output-with-log-mailmap	t4203-mailmap	Log output with log.mailmap	log	pass
+t4203-mailmap::log-mailmap-false-disables-mailmap	t4203-mailmap	log.mailmap=false disables mailmap	log	pass
+t4203-mailmap::no-use-mailmap-disables-mailmap	t4203-mailmap	--no-use-mailmap disables mailmap	log	pass
+t4203-mailmap::grep-author-with-use-mailmap	t4203-mailmap	Grep author with --use-mailmap	log	pass
+t4203-mailmap::grep-author-with-log-mailmap	t4203-mailmap	Grep author with log.mailmap	log	pass
+t4203-mailmap::log-mailmap-is-true-by-default-these-days	t4203-mailmap	log.mailmap is true by default these days	log	pass
+t4203-mailmap::only-grep-replaced-author-with-use-mailmap	t4203-mailmap	Only grep replaced author with --use-mailmap	log	pass
+t4203-mailmap::blame-porcelain-output-complex-mapping	t4203-mailmap	Blame --porcelain output (complex mapping)	blame	pass
+t4203-mailmap::blame-output-complex-mapping	t4203-mailmap	Blame output (complex mapping)	blame	pass
+t4203-mailmap::commit-author-honors-mailmap	t4203-mailmap	commit --author honors mailmap	commit	pass
+t4203-mailmap::comment-syntax-setup	t4203-mailmap	comment syntax: setup	log	pass
+t4203-mailmap::whitespace-syntax-setup	t4203-mailmap	whitespace syntax: setup	log	pass
+t4203-mailmap::empty-syntax-setup	t4203-mailmap	empty syntax: setup	log	pass
+t4203-mailmap::set-up-mailmap-location-tests	t4203-mailmap	set up mailmap location tests	init	pass
+t4203-mailmap::bare-repo-with-work-tree-finds-mailmap-at-top-level	t4203-mailmap	bare repo with --work-tree finds mailmap at top-level		pass
+t4203-mailmap::bare-repo-does-not-look-in-current-directory	t4203-mailmap	bare repo does not look in current directory	log	pass
+t4203-mailmap::non-git-shortlog-respects-mailmap-in-current-dir	t4203-mailmap	non-git shortlog respects mailmap in current dir	shortlog	pass
+t4203-mailmap::shortlog-on-stdin-respects-mailmap-from-repo	t4203-mailmap	shortlog on stdin respects mailmap from repo	shortlog	pass
+t4203-mailmap::find-top-level-mailmap-from-subdir	t4203-mailmap	find top-level mailmap from subdir	clone	pass
+t4203-mailmap::set-up-symlink-tests	t4203-mailmap	set up symlink tests	commit	pass
+t4203-mailmap::symlinks-respected-in-mailmap-file	t4203-mailmap	symlinks respected in mailmap.file	log	pass
+t4203-mailmap::symlinks-respected-in-non-repo-shortlog	t4203-mailmap	symlinks respected in non-repo shortlog	log	pass
+t4203-mailmap::symlinks-not-respected-in-tree	t4203-mailmap	symlinks not respected in-tree	log	pass
+t4203-mailmap::prepare-for-cat-file-mailmap	t4203-mailmap	prepare for cat-file --mailmap	commit	pass
+t4203-mailmap::no-use-mailmap-disables-mailmap-in-cat-file	t4203-mailmap	--no-use-mailmap disables mailmap in cat-file	cat-file	pass
+t4203-mailmap::use-mailmap-enables-mailmap-in-cat-file	t4203-mailmap	--use-mailmap enables mailmap in cat-file	cat-file	pass
+t4203-mailmap::no-mailmap-disables-mailmap-in-cat-file-for-annotated-tag-objects	t4203-mailmap	--no-mailmap disables mailmap in cat-file for annotated tag objects	cat-file	pass
+t4203-mailmap::mailmap-enables-mailmap-in-cat-file-for-annotated-tag-objects	t4203-mailmap	--mailmap enables mailmap in cat-file for annotated tag objects	cat-file	pass
+t4203-mailmap::git-cat-file-s-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file -s returns correct size with --use-mailmap	cat-file	pass
+t4203-mailmap::git-cat-file-s-returns-correct-size-with-use-mailmap-for-tag-objects	t4203-mailmap	git cat-file -s returns correct size with --use-mailmap for tag objects	cat-file	pass
+t4203-mailmap::git-cat-file-batch-check-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file --batch-check returns correct size with --use-mailmap	cat-file	pass
+t4203-mailmap::git-cat-file-batch-command-returns-correct-size-with-use-mailmap	t4203-mailmap	git cat-file --batch-command returns correct size with --use-mailmap	cat-file	pass
+t4203-mailmap::git-cat-file-mailmap-works-with-different-author-and-committer	t4203-mailmap	git cat-file --mailmap works with different author and committer	cat-file	pass
+t4203-mailmap::git-cat-file-mailmap-maps-both-author-and-committer-when-both-need-mapping	t4203-mailmap	git cat-file --mailmap maps both author and committer when both need mapping	cat-file	pass
 t4204-patch-id::setup	t4204-patch-id	setup	patch-id	pass
 t4204-patch-id::patch-id-output-is-well-formed	t4204-patch-id	patch-id output is well-formed	patch-id	pass
 t4204-patch-id::patch-id-detects-equality	t4204-patch-id	patch-id detects equality	patch-id	pass
@@ -8418,118 +8418,118 @@ t4204-patch-id::patch-id-respects-config-from-subdir	t4204-patch-id	patch-id res
 t4204-patch-id::patch-id-handles-no-nl-at-eof-markers	t4204-patch-id	patch-id handles no-nl-at-eof markers	patch-id	pass
 t4204-patch-id::patch-id-handles-diffs-with-one-line-of-before-after	t4204-patch-id	patch-id handles diffs with one line of before/after	patch-id	pass
 t4204-patch-id::patch-id-without-repository	t4204-patch-id	patch-id without repository	patch-id	pass
-t4205-log-pretty-formats::set-up-basic-repos	t4205-log-pretty-formats	set up basic repos	log	partial
-t4205-log-pretty-formats::alias-builtin-format	t4205-log-pretty-formats	alias builtin format	log	partial
-t4205-log-pretty-formats::alias-masking-builtin-format	t4205-log-pretty-formats	alias masking builtin format	log	partial
-t4205-log-pretty-formats::alias-user-defined-format	t4205-log-pretty-formats	alias user-defined format	log	partial
-t4205-log-pretty-formats::alias-user-defined-format-is-matched-case-insensitively	t4205-log-pretty-formats	alias user-defined format is matched case-insensitively	log	partial
-t4205-log-pretty-formats::alias-user-defined-tformat-with-s-iso8859-1-encoding	t4205-log-pretty-formats	alias user-defined tformat with %s (ISO8859-1 encoding)	log	partial
-t4205-log-pretty-formats::alias-user-defined-tformat-with-s-utf-8-encoding	t4205-log-pretty-formats	alias user-defined tformat with %s (utf-8 encoding)	log	partial
-t4205-log-pretty-formats::alias-user-defined-tformat	t4205-log-pretty-formats	alias user-defined tformat	log	partial
-t4205-log-pretty-formats::alias-non-existent-format	t4205-log-pretty-formats	alias non-existent format	log	partial
-t4205-log-pretty-formats::alias-of-an-alias	t4205-log-pretty-formats	alias of an alias	log	partial
-t4205-log-pretty-formats::alias-masking-an-alias	t4205-log-pretty-formats	alias masking an alias	log	partial
-t4205-log-pretty-formats::alias-loop	t4205-log-pretty-formats	alias loop	log	partial
-t4205-log-pretty-formats::nul-separation	t4205-log-pretty-formats	NUL separation	log	partial
-t4205-log-pretty-formats::nul-termination	t4205-log-pretty-formats	NUL termination	log	partial
-t4205-log-pretty-formats::nul-separation-with-stat	t4205-log-pretty-formats	NUL separation with --stat	log	partial
-t4205-log-pretty-formats::nul-termination-with-reflog-pretty-oneline	t4205-log-pretty-formats	NUL termination with --reflog --pretty=oneline	log	partial
-t4205-log-pretty-formats::setup-more-commits	t4205-log-pretty-formats	setup more commits	log	partial
-t4205-log-pretty-formats::left-alignment-formatting	t4205-log-pretty-formats	left alignment formatting	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-at-the-nth-column	t4205-log-pretty-formats	left alignment formatting at the nth column	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-at-the-nth-column-2	t4205-log-pretty-formats	left alignment formatting at the nth column	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-at-the-nth-column-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting at the nth column. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-with-no-padding	t4205-log-pretty-formats	left alignment formatting with no padding	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-with-no-padding-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting with no padding. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-with-trunc	t4205-log-pretty-formats	left alignment formatting with trunc	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-with-trunc-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting with trunc. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-with-ltrunc	t4205-log-pretty-formats	left alignment formatting with ltrunc	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-with-ltrunc-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting with ltrunc. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-with-mtrunc	t4205-log-pretty-formats	left alignment formatting with mtrunc	log	partial
-t4205-log-pretty-formats::left-alignment-formatting-with-mtrunc-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting with mtrunc. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::right-alignment-formatting	t4205-log-pretty-formats	right alignment formatting	log	partial
-t4205-log-pretty-formats::right-alignment-formatting-i18n-logoutputencoding	t4205-log-pretty-formats	right alignment formatting. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::right-alignment-formatting-at-the-nth-column	t4205-log-pretty-formats	right alignment formatting at the nth column	log	partial
-t4205-log-pretty-formats::right-alignment-formatting-at-the-nth-column-2	t4205-log-pretty-formats	right alignment formatting at the nth column	log	partial
-t4205-log-pretty-formats::right-alignment-formatting-at-the-nth-column-i18n-logoutputencoding	t4205-log-pretty-formats	right alignment formatting at the nth column. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::right-alignment-formatting-at-the-nth-column-with-graph-i18n-logoutputencoding	t4205-log-pretty-formats	right alignment formatting at the nth column with --graph. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::right-alignment-formatting-with-no-padding	t4205-log-pretty-formats	right alignment formatting with no padding	log	partial
-t4205-log-pretty-formats::right-alignment-formatting-with-no-padding-and-with-graph	t4205-log-pretty-formats	right alignment formatting with no padding and with --graph	log	partial
-t4205-log-pretty-formats::right-alignment-formatting-with-no-padding-i18n-logoutputencoding	t4205-log-pretty-formats	right alignment formatting with no padding. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::center-alignment-formatting	t4205-log-pretty-formats	center alignment formatting	log	partial
-t4205-log-pretty-formats::center-alignment-formatting-i18n-logoutputencoding	t4205-log-pretty-formats	center alignment formatting. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::center-alignment-formatting-at-the-nth-column	t4205-log-pretty-formats	center alignment formatting at the nth column	log	partial
-t4205-log-pretty-formats::center-alignment-formatting-at-the-nth-column-2	t4205-log-pretty-formats	center alignment formatting at the nth column	log	partial
-t4205-log-pretty-formats::center-alignment-formatting-at-the-nth-column-i18n-logoutputencoding	t4205-log-pretty-formats	center alignment formatting at the nth column. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::center-alignment-formatting-with-no-padding	t4205-log-pretty-formats	center alignment formatting with no padding	log	partial
-t4205-log-pretty-formats::center-alignment-formatting-with-no-padding-i18n-logoutputencoding	t4205-log-pretty-formats	center alignment formatting with no padding. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::left-right-alignment-formatting-with-stealing	t4205-log-pretty-formats	left/right alignment formatting with stealing	log	partial
-t4205-log-pretty-formats::left-right-alignment-formatting-with-stealing-i18n-logoutputencoding	t4205-log-pretty-formats	left/right alignment formatting with stealing. i18n.logOutputEncoding	log	partial
-t4205-log-pretty-formats::strbuf-utf8-replace-not-producing-nul	t4205-log-pretty-formats	strbuf_utf8_replace() not producing NUL	log	partial
-t4205-log-pretty-formats::date-iso-strict-ad-cd-is-the-same-as-ai-ci	t4205-log-pretty-formats	--date=iso-strict %ad%cd is the same as %aI%cI	log	partial
-t4205-log-pretty-formats::date-short-ad-cd-is-the-same-as-as-cs	t4205-log-pretty-formats	--date=short %ad%cd is the same as %as%cs	log	partial
-t4205-log-pretty-formats::date-human-ad-cd-is-the-same-as-ah-ch	t4205-log-pretty-formats	--date=human %ad%cd is the same as %ah%ch	log	partial
-t4205-log-pretty-formats::set-up-log-decoration-tests	t4205-log-pretty-formats	set up log decoration tests	log	partial
-t4205-log-pretty-formats::log-decoration-properly-follows-tag-chain	t4205-log-pretty-formats	log decoration properly follows tag chain	log	partial
-t4205-log-pretty-formats::clean-log-decoration	t4205-log-pretty-formats	clean log decoration	log	partial
-t4205-log-pretty-formats::pretty-format-decorate	t4205-log-pretty-formats	pretty format %decorate	log	partial
-t4205-log-pretty-formats::set-up-trailer-tests	t4205-log-pretty-formats	set up trailer tests	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-shows-trailers	t4205-log-pretty-formats	pretty format %(trailers) shows trailers	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-enables-no-options	t4205-log-pretty-formats	pretty format %(trailers:) enables no options	log	partial
-t4205-log-pretty-formats::trailers-only-shows-only-key-value-trailers	t4205-log-pretty-formats	%(trailers:only) shows only "key: value" trailers	log	partial
-t4205-log-pretty-formats::trailers-only-yes-shows-only-key-value-trailers	t4205-log-pretty-formats	%(trailers:only=yes) shows only "key: value" trailers	log	partial
-t4205-log-pretty-formats::trailers-only-no-shows-all-trailers	t4205-log-pretty-formats	%(trailers:only=no) shows all trailers	log	partial
-t4205-log-pretty-formats::trailers-only-no-only-true-shows-only-key-value-trailers	t4205-log-pretty-formats	%(trailers:only=no,only=true) shows only "key: value" trailers	log	partial
-t4205-log-pretty-formats::trailers-unfold-unfolds-trailers	t4205-log-pretty-formats	%(trailers:unfold) unfolds trailers	log	partial
-t4205-log-pretty-formats::only-and-unfold-work-together	t4205-log-pretty-formats	:only and :unfold work together	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-key-foo-shows-that-trailer	t4205-log-pretty-formats	pretty format %(trailers:key=foo) shows that trailer	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-key-foo-is-case-insensitive	t4205-log-pretty-formats	pretty format %(trailers:key=foo) is case insensitive	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-key-foo-trailing-colon-also-works	t4205-log-pretty-formats	pretty format %(trailers:key=foo:) trailing colon also works	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-key-foo-multiple-keys	t4205-log-pretty-formats	pretty format %(trailers:key=foo) multiple keys	log	partial
-t4205-log-pretty-formats::trailers-key-nonexistent-becomes-empty	t4205-log-pretty-formats	%(trailers:key=nonexistent) becomes empty	log	partial
-t4205-log-pretty-formats::trailers-key-foo-handles-multiple-lines-even-if-folded	t4205-log-pretty-formats	%(trailers:key=foo) handles multiple lines even if folded	log	partial
-t4205-log-pretty-formats::trailers-key-foo-unfold-properly-unfolds	t4205-log-pretty-formats	%(trailers:key=foo,unfold) properly unfolds	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-key-foo-only-no-also-includes-nontrailer-lines	t4205-log-pretty-formats	pretty format %(trailers:key=foo,only=no) also includes nontrailer lines	log	partial
-t4205-log-pretty-formats::trailers-key-without-value-is-error	t4205-log-pretty-formats	%(trailers:key) without value is error	log	partial
-t4205-log-pretty-formats::trailers-keyonly-shows-only-keys	t4205-log-pretty-formats	%(trailers:keyonly) shows only keys	log	partial
-t4205-log-pretty-formats::trailers-key-foo-keyonly-shows-only-key	t4205-log-pretty-formats	%(trailers:key=foo,keyonly) shows only key	log	partial
-t4205-log-pretty-formats::trailers-key-foo-valueonly-shows-only-value	t4205-log-pretty-formats	%(trailers:key=foo,valueonly) shows only value	log	partial
-t4205-log-pretty-formats::trailers-valueonly-shows-only-values	t4205-log-pretty-formats	%(trailers:valueonly) shows only values	log	partial
-t4205-log-pretty-formats::trailers-key-foo-keyonly-valueonly-shows-nothing	t4205-log-pretty-formats	%(trailers:key=foo,keyonly,valueonly) shows nothing	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-separator-changes-separator	t4205-log-pretty-formats	pretty format %(trailers:separator) changes separator	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-separator-x-unfold-changes-separator	t4205-log-pretty-formats	pretty format %(trailers:separator=X,unfold) changes separator	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-key-value-separator-changes-key-value-separator	t4205-log-pretty-formats	pretty format %(trailers:key_value_separator) changes key-value separator	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-key-value-separator-unfold-changes-key-value-separator	t4205-log-pretty-formats	pretty format %(trailers:key_value_separator,unfold) changes key-value separator	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-separator-key-value-separator-changes-both-separators	t4205-log-pretty-formats	pretty format %(trailers:separator,key_value_separator) changes both separators	log	partial
-t4205-log-pretty-formats::pretty-format-trailers-combining-separator-key-keyonly-valueonly	t4205-log-pretty-formats	pretty format %(trailers) combining separator/key/keyonly/valueonly	log	partial
-t4205-log-pretty-formats::trailer-parsing-not-fooled-by-line	t4205-log-pretty-formats	trailer parsing not fooled by --- line	log	partial
-t4205-log-pretty-formats::set-up-s-tests	t4205-log-pretty-formats	set up %S tests	log	partial
-t4205-log-pretty-formats::log-format-s-paints-branch-names	t4205-log-pretty-formats	log --format=%S paints branch names	log	partial
-t4205-log-pretty-formats::log-format-s-paints-tag-names	t4205-log-pretty-formats	log --format=%S paints tag names	log	partial
-t4205-log-pretty-formats::log-format-s-paints-symmetric-ranges	t4205-log-pretty-formats	log --format=%S paints symmetric ranges	log	partial
-t4205-log-pretty-formats::s-in-git-log-format-works-with-other-placeholders-part-1	t4205-log-pretty-formats	%S in git log --format works with other placeholders (part 1)	log	partial
-t4205-log-pretty-formats::s-in-git-log-format-works-with-other-placeholders-part-2	t4205-log-pretty-formats	%S in git log --format works with other placeholders (part 2)	log	partial
-t4205-log-pretty-formats::setup-more-commits-for-s-with-bisect	t4205-log-pretty-formats	setup more commits for %S with --bisect	log	partial
-t4205-log-pretty-formats::s-with-bisect-labels-commits-with-refs-bisect-bad-ref	t4205-log-pretty-formats	%S with --bisect labels commits with refs/bisect/bad ref	log	partial
-t4205-log-pretty-formats::log-pretty-reference	t4205-log-pretty-formats	log --pretty=reference	log	partial
-t4205-log-pretty-formats::log-pretty-reference-with-log-date-is-overridden-by-short-date	t4205-log-pretty-formats	log --pretty=reference with log.date is overridden by short date	log	partial
-t4205-log-pretty-formats::log-pretty-reference-with-explicit-date-overrides-short-date	t4205-log-pretty-formats	log --pretty=reference with explicit date overrides short date	log	partial
-t4205-log-pretty-formats::log-pretty-reference-is-never-unabbreviated	t4205-log-pretty-formats	log --pretty=reference is never unabbreviated	log	partial
-t4205-log-pretty-formats::log-pretty-reference-is-never-decorated	t4205-log-pretty-formats	log --pretty=reference is never decorated	log	partial
-t4205-log-pretty-formats::log-pretty-reference-does-not-output-reflog-info	t4205-log-pretty-formats	log --pretty=reference does not output reflog info	log	partial
-t4205-log-pretty-formats::log-pretty-reference-is-colored-appropriately	t4205-log-pretty-formats	log --pretty=reference is colored appropriately	log	partial
-t4205-log-pretty-formats::describe-vs-git-describe	t4205-log-pretty-formats	%(describe) vs git describe	log	partial
-t4205-log-pretty-formats::describe-match-vs-git-describe-match	t4205-log-pretty-formats	%(describe:match=...) vs git describe --match ...	log	partial
-t4205-log-pretty-formats::describe-exclude-vs-git-describe-exclude	t4205-log-pretty-formats	%(describe:exclude=...) vs git describe --exclude ...	log	partial
-t4205-log-pretty-formats::describe-tags-vs-git-describe-tags	t4205-log-pretty-formats	%(describe:tags) vs git describe --tags	log	partial
-t4205-log-pretty-formats::describe-abbrev-vs-git-describe-abbrev	t4205-log-pretty-formats	%(describe:abbrev=...) vs git describe --abbrev=...	log	partial
-t4205-log-pretty-formats::log-pretty-with-space-stealing	t4205-log-pretty-formats	log --pretty with space stealing	log	partial
-t4205-log-pretty-formats::log-pretty-with-invalid-padding-format	t4205-log-pretty-formats	log --pretty with invalid padding format	log	partial
-t4205-log-pretty-formats::log-pretty-with-magical-wrapping-directives	t4205-log-pretty-formats	log --pretty with magical wrapping directives	log	partial
-t4205-log-pretty-formats::log-pretty-with-padding-and-preceding-control-chars	t4205-log-pretty-formats	log --pretty with padding and preceding control chars	log	partial
-t4205-log-pretty-formats::log-pretty-truncation-with-control-chars	t4205-log-pretty-formats	log --pretty truncation with control chars	log	partial
-t4205-log-pretty-formats::nul-termination-with-reflog-pretty-p	t4205-log-pretty-formats	NUL termination with --reflog --pretty=$p	log	partial
+t4205-log-pretty-formats::set-up-basic-repos	t4205-log-pretty-formats	set up basic repos	log	pass
+t4205-log-pretty-formats::alias-builtin-format	t4205-log-pretty-formats	alias builtin format	log	pass
+t4205-log-pretty-formats::alias-masking-builtin-format	t4205-log-pretty-formats	alias masking builtin format	log	pass
+t4205-log-pretty-formats::alias-user-defined-format	t4205-log-pretty-formats	alias user-defined format	log	pass
+t4205-log-pretty-formats::alias-user-defined-format-is-matched-case-insensitively	t4205-log-pretty-formats	alias user-defined format is matched case-insensitively	log	pass
+t4205-log-pretty-formats::alias-user-defined-tformat-with-s-iso8859-1-encoding	t4205-log-pretty-formats	alias user-defined tformat with %s (ISO8859-1 encoding)	log	pass
+t4205-log-pretty-formats::alias-user-defined-tformat-with-s-utf-8-encoding	t4205-log-pretty-formats	alias user-defined tformat with %s (utf-8 encoding)	log	pass
+t4205-log-pretty-formats::alias-user-defined-tformat	t4205-log-pretty-formats	alias user-defined tformat	log	pass
+t4205-log-pretty-formats::alias-non-existent-format	t4205-log-pretty-formats	alias non-existent format	log	pass
+t4205-log-pretty-formats::alias-of-an-alias	t4205-log-pretty-formats	alias of an alias	log	pass
+t4205-log-pretty-formats::alias-masking-an-alias	t4205-log-pretty-formats	alias masking an alias	log	pass
+t4205-log-pretty-formats::alias-loop	t4205-log-pretty-formats	alias loop	log	pass
+t4205-log-pretty-formats::nul-separation	t4205-log-pretty-formats	NUL separation	log	pass
+t4205-log-pretty-formats::nul-termination	t4205-log-pretty-formats	NUL termination	log	pass
+t4205-log-pretty-formats::nul-separation-with-stat	t4205-log-pretty-formats	NUL separation with --stat	log	pass
+t4205-log-pretty-formats::nul-termination-with-reflog-pretty-oneline	t4205-log-pretty-formats	NUL termination with --reflog --pretty=oneline	log	pass
+t4205-log-pretty-formats::setup-more-commits	t4205-log-pretty-formats	setup more commits	log	pass
+t4205-log-pretty-formats::left-alignment-formatting	t4205-log-pretty-formats	left alignment formatting	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-at-the-nth-column	t4205-log-pretty-formats	left alignment formatting at the nth column	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-at-the-nth-column-2	t4205-log-pretty-formats	left alignment formatting at the nth column	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-at-the-nth-column-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting at the nth column. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-with-no-padding	t4205-log-pretty-formats	left alignment formatting with no padding	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-with-no-padding-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting with no padding. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-with-trunc	t4205-log-pretty-formats	left alignment formatting with trunc	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-with-trunc-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting with trunc. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-with-ltrunc	t4205-log-pretty-formats	left alignment formatting with ltrunc	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-with-ltrunc-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting with ltrunc. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-with-mtrunc	t4205-log-pretty-formats	left alignment formatting with mtrunc	log	pass
+t4205-log-pretty-formats::left-alignment-formatting-with-mtrunc-i18n-logoutputencoding	t4205-log-pretty-formats	left alignment formatting with mtrunc. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::right-alignment-formatting	t4205-log-pretty-formats	right alignment formatting	log	pass
+t4205-log-pretty-formats::right-alignment-formatting-i18n-logoutputencoding	t4205-log-pretty-formats	right alignment formatting. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::right-alignment-formatting-at-the-nth-column	t4205-log-pretty-formats	right alignment formatting at the nth column	log	pass
+t4205-log-pretty-formats::right-alignment-formatting-at-the-nth-column-2	t4205-log-pretty-formats	right alignment formatting at the nth column	log	pass
+t4205-log-pretty-formats::right-alignment-formatting-at-the-nth-column-i18n-logoutputencoding	t4205-log-pretty-formats	right alignment formatting at the nth column. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::right-alignment-formatting-at-the-nth-column-with-graph-i18n-logoutputencoding	t4205-log-pretty-formats	right alignment formatting at the nth column with --graph. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::right-alignment-formatting-with-no-padding	t4205-log-pretty-formats	right alignment formatting with no padding	log	pass
+t4205-log-pretty-formats::right-alignment-formatting-with-no-padding-and-with-graph	t4205-log-pretty-formats	right alignment formatting with no padding and with --graph	log	pass
+t4205-log-pretty-formats::right-alignment-formatting-with-no-padding-i18n-logoutputencoding	t4205-log-pretty-formats	right alignment formatting with no padding. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::center-alignment-formatting	t4205-log-pretty-formats	center alignment formatting	log	pass
+t4205-log-pretty-formats::center-alignment-formatting-i18n-logoutputencoding	t4205-log-pretty-formats	center alignment formatting. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::center-alignment-formatting-at-the-nth-column	t4205-log-pretty-formats	center alignment formatting at the nth column	log	pass
+t4205-log-pretty-formats::center-alignment-formatting-at-the-nth-column-2	t4205-log-pretty-formats	center alignment formatting at the nth column	log	pass
+t4205-log-pretty-formats::center-alignment-formatting-at-the-nth-column-i18n-logoutputencoding	t4205-log-pretty-formats	center alignment formatting at the nth column. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::center-alignment-formatting-with-no-padding	t4205-log-pretty-formats	center alignment formatting with no padding	log	pass
+t4205-log-pretty-formats::center-alignment-formatting-with-no-padding-i18n-logoutputencoding	t4205-log-pretty-formats	center alignment formatting with no padding. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::left-right-alignment-formatting-with-stealing	t4205-log-pretty-formats	left/right alignment formatting with stealing	log	pass
+t4205-log-pretty-formats::left-right-alignment-formatting-with-stealing-i18n-logoutputencoding	t4205-log-pretty-formats	left/right alignment formatting with stealing. i18n.logOutputEncoding	log	pass
+t4205-log-pretty-formats::strbuf-utf8-replace-not-producing-nul	t4205-log-pretty-formats	strbuf_utf8_replace() not producing NUL	log	pass
+t4205-log-pretty-formats::date-iso-strict-ad-cd-is-the-same-as-ai-ci	t4205-log-pretty-formats	--date=iso-strict %ad%cd is the same as %aI%cI	log	pass
+t4205-log-pretty-formats::date-short-ad-cd-is-the-same-as-as-cs	t4205-log-pretty-formats	--date=short %ad%cd is the same as %as%cs	log	pass
+t4205-log-pretty-formats::date-human-ad-cd-is-the-same-as-ah-ch	t4205-log-pretty-formats	--date=human %ad%cd is the same as %ah%ch	log	pass
+t4205-log-pretty-formats::set-up-log-decoration-tests	t4205-log-pretty-formats	set up log decoration tests	log	pass
+t4205-log-pretty-formats::log-decoration-properly-follows-tag-chain	t4205-log-pretty-formats	log decoration properly follows tag chain	log	pass
+t4205-log-pretty-formats::clean-log-decoration	t4205-log-pretty-formats	clean log decoration	log	pass
+t4205-log-pretty-formats::pretty-format-decorate	t4205-log-pretty-formats	pretty format %decorate	log	pass
+t4205-log-pretty-formats::set-up-trailer-tests	t4205-log-pretty-formats	set up trailer tests	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-shows-trailers	t4205-log-pretty-formats	pretty format %(trailers) shows trailers	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-enables-no-options	t4205-log-pretty-formats	pretty format %(trailers:) enables no options	log	pass
+t4205-log-pretty-formats::trailers-only-shows-only-key-value-trailers	t4205-log-pretty-formats	%(trailers:only) shows only "key: value" trailers	log	pass
+t4205-log-pretty-formats::trailers-only-yes-shows-only-key-value-trailers	t4205-log-pretty-formats	%(trailers:only=yes) shows only "key: value" trailers	log	pass
+t4205-log-pretty-formats::trailers-only-no-shows-all-trailers	t4205-log-pretty-formats	%(trailers:only=no) shows all trailers	log	pass
+t4205-log-pretty-formats::trailers-only-no-only-true-shows-only-key-value-trailers	t4205-log-pretty-formats	%(trailers:only=no,only=true) shows only "key: value" trailers	log	pass
+t4205-log-pretty-formats::trailers-unfold-unfolds-trailers	t4205-log-pretty-formats	%(trailers:unfold) unfolds trailers	log	pass
+t4205-log-pretty-formats::only-and-unfold-work-together	t4205-log-pretty-formats	:only and :unfold work together	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-key-foo-shows-that-trailer	t4205-log-pretty-formats	pretty format %(trailers:key=foo) shows that trailer	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-key-foo-is-case-insensitive	t4205-log-pretty-formats	pretty format %(trailers:key=foo) is case insensitive	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-key-foo-trailing-colon-also-works	t4205-log-pretty-formats	pretty format %(trailers:key=foo:) trailing colon also works	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-key-foo-multiple-keys	t4205-log-pretty-formats	pretty format %(trailers:key=foo) multiple keys	log	pass
+t4205-log-pretty-formats::trailers-key-nonexistent-becomes-empty	t4205-log-pretty-formats	%(trailers:key=nonexistent) becomes empty	log	pass
+t4205-log-pretty-formats::trailers-key-foo-handles-multiple-lines-even-if-folded	t4205-log-pretty-formats	%(trailers:key=foo) handles multiple lines even if folded	log	pass
+t4205-log-pretty-formats::trailers-key-foo-unfold-properly-unfolds	t4205-log-pretty-formats	%(trailers:key=foo,unfold) properly unfolds	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-key-foo-only-no-also-includes-nontrailer-lines	t4205-log-pretty-formats	pretty format %(trailers:key=foo,only=no) also includes nontrailer lines	log	pass
+t4205-log-pretty-formats::trailers-key-without-value-is-error	t4205-log-pretty-formats	%(trailers:key) without value is error	log	pass
+t4205-log-pretty-formats::trailers-keyonly-shows-only-keys	t4205-log-pretty-formats	%(trailers:keyonly) shows only keys	log	pass
+t4205-log-pretty-formats::trailers-key-foo-keyonly-shows-only-key	t4205-log-pretty-formats	%(trailers:key=foo,keyonly) shows only key	log	pass
+t4205-log-pretty-formats::trailers-key-foo-valueonly-shows-only-value	t4205-log-pretty-formats	%(trailers:key=foo,valueonly) shows only value	log	pass
+t4205-log-pretty-formats::trailers-valueonly-shows-only-values	t4205-log-pretty-formats	%(trailers:valueonly) shows only values	log	pass
+t4205-log-pretty-formats::trailers-key-foo-keyonly-valueonly-shows-nothing	t4205-log-pretty-formats	%(trailers:key=foo,keyonly,valueonly) shows nothing	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-separator-changes-separator	t4205-log-pretty-formats	pretty format %(trailers:separator) changes separator	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-separator-x-unfold-changes-separator	t4205-log-pretty-formats	pretty format %(trailers:separator=X,unfold) changes separator	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-key-value-separator-changes-key-value-separator	t4205-log-pretty-formats	pretty format %(trailers:key_value_separator) changes key-value separator	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-key-value-separator-unfold-changes-key-value-separator	t4205-log-pretty-formats	pretty format %(trailers:key_value_separator,unfold) changes key-value separator	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-separator-key-value-separator-changes-both-separators	t4205-log-pretty-formats	pretty format %(trailers:separator,key_value_separator) changes both separators	log	pass
+t4205-log-pretty-formats::pretty-format-trailers-combining-separator-key-keyonly-valueonly	t4205-log-pretty-formats	pretty format %(trailers) combining separator/key/keyonly/valueonly	log	pass
+t4205-log-pretty-formats::trailer-parsing-not-fooled-by-line	t4205-log-pretty-formats	trailer parsing not fooled by --- line	log	pass
+t4205-log-pretty-formats::set-up-s-tests	t4205-log-pretty-formats	set up %S tests	log	pass
+t4205-log-pretty-formats::log-format-s-paints-branch-names	t4205-log-pretty-formats	log --format=%S paints branch names	log	pass
+t4205-log-pretty-formats::log-format-s-paints-tag-names	t4205-log-pretty-formats	log --format=%S paints tag names	log	pass
+t4205-log-pretty-formats::log-format-s-paints-symmetric-ranges	t4205-log-pretty-formats	log --format=%S paints symmetric ranges	log	pass
+t4205-log-pretty-formats::s-in-git-log-format-works-with-other-placeholders-part-1	t4205-log-pretty-formats	%S in git log --format works with other placeholders (part 1)	log	pass
+t4205-log-pretty-formats::s-in-git-log-format-works-with-other-placeholders-part-2	t4205-log-pretty-formats	%S in git log --format works with other placeholders (part 2)	log	pass
+t4205-log-pretty-formats::setup-more-commits-for-s-with-bisect	t4205-log-pretty-formats	setup more commits for %S with --bisect	log	pass
+t4205-log-pretty-formats::s-with-bisect-labels-commits-with-refs-bisect-bad-ref	t4205-log-pretty-formats	%S with --bisect labels commits with refs/bisect/bad ref	log	pass
+t4205-log-pretty-formats::log-pretty-reference	t4205-log-pretty-formats	log --pretty=reference	log	pass
+t4205-log-pretty-formats::log-pretty-reference-with-log-date-is-overridden-by-short-date	t4205-log-pretty-formats	log --pretty=reference with log.date is overridden by short date	log	pass
+t4205-log-pretty-formats::log-pretty-reference-with-explicit-date-overrides-short-date	t4205-log-pretty-formats	log --pretty=reference with explicit date overrides short date	log	pass
+t4205-log-pretty-formats::log-pretty-reference-is-never-unabbreviated	t4205-log-pretty-formats	log --pretty=reference is never unabbreviated	log	pass
+t4205-log-pretty-formats::log-pretty-reference-is-never-decorated	t4205-log-pretty-formats	log --pretty=reference is never decorated	log	pass
+t4205-log-pretty-formats::log-pretty-reference-does-not-output-reflog-info	t4205-log-pretty-formats	log --pretty=reference does not output reflog info	log	pass
+t4205-log-pretty-formats::log-pretty-reference-is-colored-appropriately	t4205-log-pretty-formats	log --pretty=reference is colored appropriately	log	pass
+t4205-log-pretty-formats::describe-vs-git-describe	t4205-log-pretty-formats	%(describe) vs git describe	log	pass
+t4205-log-pretty-formats::describe-match-vs-git-describe-match	t4205-log-pretty-formats	%(describe:match=...) vs git describe --match ...	log	pass
+t4205-log-pretty-formats::describe-exclude-vs-git-describe-exclude	t4205-log-pretty-formats	%(describe:exclude=...) vs git describe --exclude ...	log	pass
+t4205-log-pretty-formats::describe-tags-vs-git-describe-tags	t4205-log-pretty-formats	%(describe:tags) vs git describe --tags	log	pass
+t4205-log-pretty-formats::describe-abbrev-vs-git-describe-abbrev	t4205-log-pretty-formats	%(describe:abbrev=...) vs git describe --abbrev=...	log	pass
+t4205-log-pretty-formats::log-pretty-with-space-stealing	t4205-log-pretty-formats	log --pretty with space stealing	log	pass
+t4205-log-pretty-formats::log-pretty-with-invalid-padding-format	t4205-log-pretty-formats	log --pretty with invalid padding format	log	pass
+t4205-log-pretty-formats::log-pretty-with-magical-wrapping-directives	t4205-log-pretty-formats	log --pretty with magical wrapping directives	log	pass
+t4205-log-pretty-formats::log-pretty-with-padding-and-preceding-control-chars	t4205-log-pretty-formats	log --pretty with padding and preceding control chars	log	pass
+t4205-log-pretty-formats::log-pretty-truncation-with-control-chars	t4205-log-pretty-formats	log --pretty truncation with control chars	log	pass
+t4205-log-pretty-formats::nul-termination-with-reflog-pretty-p	t4205-log-pretty-formats	NUL termination with --reflog --pretty=$p	log	pass
 t4206-log-follow-harder-copies::add-a-file-path0-and-commit	t4206-log-follow-harder-copies	add a file path0 and commit.	log	pass
 t4206-log-follow-harder-copies::change-path0	t4206-log-follow-harder-copies	Change path0.	log	pass
 t4206-log-follow-harder-copies::copy-path0-to-path1	t4206-log-follow-harder-copies	copy path0 to path1.	log	pass
@@ -8579,11 +8579,11 @@ t4209-log-pickaxe::log-g-looks-into-binary-files-with-textconv-filter	t4209-log-
 t4209-log-pickaxe::log-s-looks-into-binary-files	t4209-log-pickaxe	log -S looks into binary files	log	partial
 t4209-log-pickaxe::log-s-pickaxe-regex-looks-into-binary-files	t4209-log-pickaxe	log -S --pickaxe-regex looks into binary files	log	partial
 t4209-log-pickaxe::log-kind-rest-rest-match	t4209-log-pickaxe	log $kind${rest:+ $rest} ($match)	log	partial
-t4210-log-i18n::create-commits-in-different-encodings	t4210-log-i18n	create commits in different encodings	log	partial
-t4210-log-i18n::log-grep-searches-in-log-output-encoding-utf8	t4210-log-i18n	log --grep searches in log output encoding (utf8)	log	partial
-t4210-log-i18n::log-grep-searches-in-log-output-encoding-latin1	t4210-log-i18n	log --grep searches in log output encoding (latin1)	log	partial
-t4210-log-i18n::log-grep-does-not-find-non-reencoded-values-utf8	t4210-log-i18n	log --grep does not find non-reencoded values (utf8)	log	partial
-t4210-log-i18n::log-grep-does-not-find-non-reencoded-values-latin1	t4210-log-i18n	log --grep does not find non-reencoded values (latin1)	log	partial
+t4210-log-i18n::create-commits-in-different-encodings	t4210-log-i18n	create commits in different encodings	log	pass
+t4210-log-i18n::log-grep-searches-in-log-output-encoding-utf8	t4210-log-i18n	log --grep searches in log output encoding (utf8)	log	pass
+t4210-log-i18n::log-grep-searches-in-log-output-encoding-latin1	t4210-log-i18n	log --grep searches in log output encoding (latin1)	log	pass
+t4210-log-i18n::log-grep-does-not-find-non-reencoded-values-utf8	t4210-log-i18n	log --grep does not find non-reencoded values (utf8)	log	pass
+t4210-log-i18n::log-grep-does-not-find-non-reencoded-values-latin1	t4210-log-i18n	log --grep does not find non-reencoded values (latin1)	log	pass
 t4211-line-log::setup-import-history	t4211-line-log	setup (import history)	fast-import	pass
 t4211-line-log::basic-command-line-parsing	t4211-line-log	basic command line parsing	log	pass
 t4211-line-log::l-x-x-nlines	t4211-line-log	-L X (X == nlines)	log	pass

@@ -1,22 +1,22 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
-add	Main Porcelain	yes	813	665	145	81.7
-am	Main Porcelain	yes	162	148	0	91.5
+add	Main Porcelain	yes	813	665	145	81.8
+am	Main Porcelain	yes	162	162	0	100.0
 archive	Main Porcelain	yes	102	101	1	99.0
 bisect	Main Porcelain	yes	107	96	11	89.7
 branch	Main Porcelain	yes	399	378	17	94.7
 checkout	Main Porcelain	yes	567	387	99	68.2
 cherry-pick	Main Porcelain	yes	193	160	2	83.0
 clean	Main Porcelain	yes	90	90	0	100.0
-clone	Main Porcelain	yes	519	363	155	69.9
-commit	Main Porcelain	yes	435	353	79	81.2
+clone	Main Porcelain	yes	519	363	155	70.0
+commit	Main Porcelain	yes	435	354	79	81.4
 describe	Main Porcelain	yes	59	59	0	100.0
-diff	Main Porcelain	yes	983	942	5	95.9
+diff	Main Porcelain	yes	983	959	5	97.6
 fetch	Main Porcelain	yes	465	376	89	80.9
 format-patch	Main Porcelain	yes	231	231	0	100.0
 gc	Main Porcelain	yes	38	37	1	97.4
 grep	Main Porcelain	yes	264	264	0	100.0
-init	Main Porcelain	yes	293	245	46	83.5
-log	Main Porcelain	yes	594	509	69	85.8
+init	Main Porcelain	yes	293	245	46	83.7
+log	Main Porcelain	yes	594	520	69	87.6
 merge	Main Porcelain	yes	658	648	10	98.5
 mv	Main Porcelain	yes	77	77	0	100.0
 notes	Main Porcelain	yes	308	308	0	100.0
@@ -28,7 +28,7 @@ reset	Main Porcelain	yes	152	123	29	80.9
 restore	Main Porcelain	yes	41	40	1	97.6
 revert	Main Porcelain	yes	22	22	0	100.0
 rm	Main Porcelain	yes	103	99	4	96.1
-shortlog	Main Porcelain	yes	50	24	0	48.0
+shortlog	Main Porcelain	yes	50	29	0	57.3
 show	Main Porcelain	yes	32	29	3	90.6
 stash	Main Porcelain	yes	207	205	2	99.0
 status	Main Porcelain	yes	361	357	1	98.8
@@ -37,7 +37,7 @@ switch	Main Porcelain	yes	40	16	24	40.0
 tag	Main Porcelain	yes	231	229	0	99.2
 worktree	Main Porcelain	yes	237	234	3	98.7
 annotate	Ancillary Porcelain	yes	1	1	0	100.0
-blame	Ancillary Porcelain	yes	102	101	0	99.5
+blame	Ancillary Porcelain	yes	102	102	0	100.0
 bundle	Ancillary Porcelain	yes	44	31	13	70.5
 cherry	Ancillary Porcelain	yes	4	4	0	100.0
 config	Ancillary Porcelain	yes	657	528	126	80.4
@@ -68,10 +68,10 @@ verify-tag	Ancillary Porcelain	yes	30	29	0	98.2
 version	Ancillary Porcelain	yes	8	6	2	75.0
 whatchanged	Ancillary Porcelain	yes	1	1	0	100.0
 apply	Plumbing	yes	300	298	2	99.3
-cat-file	Plumbing	yes	265	237	25	89.3
+cat-file	Plumbing	yes	265	239	25	90.3
 check-attr	Plumbing	yes	26	25	0	96.8
 check-ignore	Plumbing	yes	11	11	0	100.0
-check-mailmap	Plumbing	yes	10	7	0	74.1
+check-mailmap	Plumbing	yes	10	10	0	100.0
 check-ref-format	Plumbing	yes	6	6	0	100.0
 checkout-index	Plumbing	yes	13	13	0	100.0
 column	Plumbing	yes	15	0	15	0.0
