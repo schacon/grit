@@ -208,7 +208,7 @@ test_expect_success 'gitignore setup' '
      grit commit -m "add gitignore" &&
      echo "ignored" >test.log &&
      grit status --porcelain >../actual) &&
-    grep "test.log" actual
+    ! grep "test.log" actual
 '
 
 test_expect_success 'untracked-files=no hides untracked including ignored' '

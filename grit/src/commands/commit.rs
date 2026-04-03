@@ -285,6 +285,68 @@ pub fn run(args: Args) -> Result<()> {
         } else {
             eprintln!("[{branch} {short_oid}] {first_line}");
         }
+
+        // Print diff stat summary line
+        let parent_tree = if commit_data.parents.is_empty() {
+            None
+        } else {
+            let parent_obj = repo.odb.read(&commit_data.parents[0])?;
+            let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
+            Some(parent_commit.tree)
+        };
+        if let Ok(diff_entries) = grit_lib::diff::diff_trees(
+            &repo.odb,
+            parent_tree.as_ref(),
+            Some(&commit_data.tree),
+            "",
+        ) {
+            let zero_oid = ObjectId::from_bytes(&[0u8; 20]).unwrap();
+            let mut total_files = 0usize;
+            let mut total_ins = 0usize;
+            let mut total_del = 0usize;
+            for entry in &diff_entries {
+                total_files += 1;
+                let old_content = if entry.old_oid == zero_oid {
+                    String::new()
+                } else {
+                    repo.odb.read(&entry.old_oid)
+                        .map(|o| String::from_utf8_lossy(&o.data).into_owned())
+                        .unwrap_or_default()
+                };
+                let new_content = if entry.new_oid == zero_oid {
+                    String::new()
+                } else {
+                    repo.odb.read(&entry.new_oid)
+                        .map(|o| String::from_utf8_lossy(&o.data).into_owned())
+                        .unwrap_or_default()
+                };
+                let (a, d) = grit_lib::diff::count_changes(&old_content, &new_content);
+                total_ins += a;
+                total_del += d;
+            }
+            if total_files > 0 {
+                let mut summary = format!(
+                    " {} file{} changed",
+                    total_files,
+                    if total_files == 1 { "" } else { "s" }
+                );
+                if total_ins > 0 {
+                    summary.push_str(&format!(
+                        ", {} insertion{}(+)",
+                        total_ins,
+                        if total_ins == 1 { "" } else { "s" }
+                    ));
+                }
+                if total_del > 0 {
+                    summary.push_str(&format!(
+                        ", {} deletion{}(-)",
+                        total_del,
+                        if total_del == 1 { "" } else { "s" }
+                    ));
+                }
+                eprintln!("{summary}");
+            }
+        }
     }
 
     Ok(())
