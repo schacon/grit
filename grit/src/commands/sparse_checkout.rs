@@ -91,6 +91,16 @@ fn cmd_set(repo: &Repository, patterns: &[String]) -> Result<()> {
 
 /// List the current sparse checkout patterns.
 fn cmd_list(repo: &Repository) -> Result<()> {
+    // Check if sparse checkout is actually enabled
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)?;
+    let sparse_enabled = config
+        .get("core.sparseCheckout")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    if !sparse_enabled {
+        anyhow::bail!("this worktree is not sparse");
+    }
+
     let sc_path = sparse_checkout_path(repo);
     if !sc_path.exists() {
         // No sparse checkout file — nothing to list

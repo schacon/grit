@@ -11,7 +11,7 @@ test_expect_success 'setup' '
 	git init
 '
 
-test_expect_failure 'credential-cache daemon (requires unix sockets)' '
+test_expect_success 'credential-cache daemon (requires unix sockets)' '
 	git credential-cache --timeout=60 exit
 '
 

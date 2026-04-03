@@ -949,7 +949,10 @@ fn resolve_config_file(args: &Args, git_dir: Option<&Path>) -> Result<(ConfigSco
         return Ok((ConfigScope::Local, path.clone()));
     }
     if args.system {
-        return Ok((ConfigScope::System, PathBuf::from("/etc/gitconfig")));
+        let path = std::env::var("GIT_CONFIG_SYSTEM")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/etc/gitconfig"));
+        return Ok((ConfigScope::System, path));
     }
     if args.global {
         let path = global_config_path()
@@ -983,7 +986,10 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
 
     if args.system {
         let mut set = ConfigSet::new();
-        if let Some(f) = ConfigFile::from_path(Path::new("/etc/gitconfig"), ConfigScope::System)? {
+        let system_path = std::env::var("GIT_CONFIG_SYSTEM")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/etc/gitconfig"));
+        if let Some(f) = ConfigFile::from_path(&system_path, ConfigScope::System)? {
             set.merge(&f);
         }
         return Ok(set);

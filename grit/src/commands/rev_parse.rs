@@ -80,7 +80,24 @@ pub fn run(args: Args) -> Result<()> {
                     .get(i)
                     .ok_or_else(|| anyhow::anyhow!("--git-path requires an argument"))?;
                 if let Some(current) = discover_optional(None)? {
-                    let resolved = current.git_dir.join(path_arg);
+                    // If the path starts with "hooks/", respect core.hooksPath
+                    let resolved = if path_arg == "hooks" || path_arg.starts_with("hooks/") {
+                        let config = grit_lib::config::ConfigSet::load(Some(&current.git_dir), true)?;
+                        if let Some(hooks_path) = config.get("core.hooksPath") {
+                            let hooks_dir = std::path::Path::new(&hooks_path);
+                            if path_arg == "hooks" {
+                                hooks_dir.to_path_buf()
+                            } else {
+                                // Strip "hooks/" prefix and append remainder
+                                let remainder = &path_arg["hooks/".len()..];
+                                hooks_dir.join(remainder)
+                            }
+                        } else {
+                            current.git_dir.join(path_arg)
+                        }
+                    } else {
+                        current.git_dir.join(path_arg)
+                    };
                     println!("{}", resolved.display());
                 } else {
                     bail!("not a git repository");

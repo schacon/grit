@@ -1042,9 +1042,12 @@ impl ConfigSet {
         let mut set = Self::new();
 
         // System config
-        if include_system {
+        if include_system && std::env::var("GIT_CONFIG_NOSYSTEM").is_err() {
+            let system_path = std::env::var("GIT_CONFIG_SYSTEM")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("/etc/gitconfig"));
             if let Ok(Some(f)) =
-                ConfigFile::from_path(Path::new("/etc/gitconfig"), ConfigScope::System)
+                ConfigFile::from_path(&system_path, ConfigScope::System)
             {
                 Self::merge_with_includes(&mut set, &f, true)?;
             }

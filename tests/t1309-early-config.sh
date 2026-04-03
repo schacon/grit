@@ -96,7 +96,7 @@ test_expect_success 'GIT_CONFIG_GLOBAL with empty string disables global' '
 '
 
 # GIT_CONFIG_SYSTEM
-test_expect_failure 'GIT_CONFIG_SYSTEM overrides system config' '
+test_expect_success 'GIT_CONFIG_SYSTEM overrides system config' '
 	cat >system.cfg <<-\EOF &&
 	[systemtest]
 		setting = from-system-env
