@@ -54,9 +54,9 @@ test_expect_success 'branch -d deletes merged branch' '
 	! grep -w "merged-branch" actual
 '
 
-test_expect_success 'branch -d deletes unmerged branch' '
+test_expect_success 'branch -D force-deletes unmerged branch' '
 	cd repo &&
-	grit branch -d unmerged-branch &&
+	grit branch -D unmerged-branch &&
 	grit branch -l >actual &&
 	! grep "unmerged-branch" actual
 '

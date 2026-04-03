@@ -125,13 +125,13 @@ test_expect_success 'format %s shows subject line' '
 test_expect_success 'format %an shows author name' '
 	cd repo &&
 	grit log --format="%an" -n 1 >out &&
-	grep "^Alice Author$" out
+	grep "^A U Thor$" out
 '
 
 test_expect_success 'format %ae shows author email' '
 	cd repo &&
 	grit log --format="%ae" -n 1 >out &&
-	grep "^alice@example.com$" out
+	grep "^author@example.com$" out
 '
 
 test_expect_success 'format %h %s produces oneline-like output' '

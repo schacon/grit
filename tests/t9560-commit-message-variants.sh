@@ -216,7 +216,7 @@ test_expect_success 'commit --author overrides author identity' '
 test_expect_success 'committer is still original user after --author' '
 	cd repo &&
 	grit cat-file -p HEAD >actual &&
-	grep "committer Test User" actual
+	grep "committer C O Mitter" actual
 '
 
 ###########################################################################
