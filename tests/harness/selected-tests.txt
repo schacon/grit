@@ -1299,3 +1299,4 @@ tests/t6421-merge-partial-clone.sh
 tests/t6422-merge-rename-corner-cases.sh
 tests/t6423-merge-rename-directories.sh
 tests/t6424-merge-unrelated-index-changes.sh
+tests/t6425-merge-rename-delete.sh
