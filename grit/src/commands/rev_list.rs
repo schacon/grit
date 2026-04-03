@@ -170,21 +170,31 @@ pub fn run(args: Args) -> Result<()> {
         for base in bases {
             negative_specs.push(base.to_hex());
         }
-        // For left-right, mark which side each commit belongs to
-        if options.left_right || options.left_only || options.right_only || options.cherry_mark || options.cherry_pick {
-            // The left_right computation is handled in rev_list itself
-        }
+        // Pass symmetric OIDs to rev_list for left-right classification
+        options.symmetric_left = Some(lhs_oid);
+        options.symmetric_right = Some(rhs_oid);
     }
 
     let result =
         rev_list(&repo, &positive_specs, &negative_specs, &options).context("rev-list failed")?;
 
     if options.count {
-        let mut total = result.commits.len();
-        if options.objects {
-            total += result.objects.len();
+        if options.left_right {
+            let left_count = result.commits.iter()
+                .filter(|oid| result.left_right_map.get(oid) == Some(&true))
+                .count();
+            let right_count = result.commits.iter()
+                .filter(|oid| result.left_right_map.get(oid) == Some(&false))
+                .count();
+            let both_count = result.commits.len() - left_count - right_count;
+            println!("{left_count}\t{right_count}\t{both_count}");
+        } else {
+            let mut total = result.commits.len();
+            if options.objects {
+                total += result.objects.len();
+            }
+            println!("{total}");
         }
-        println!("{total}");
         return Ok(());
     }
     if options.quiet {
