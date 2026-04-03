@@ -203,7 +203,7 @@ test_expect_success 'checkout --no-overlay <sha> -- . works' '
 # ---------------------------------------------------------------------------
 # --no-overlay with pathspec that matches nothing on source
 # ---------------------------------------------------------------------------
-test_expect_failure 'checkout --no-overlay with glob pathspec' '
+test_expect_success 'checkout --no-overlay with glob pathspec' '
 	cd repo &&
 	echo "extra-m1" >m1.log &&
 	echo "extra-m2" >m2.log &&

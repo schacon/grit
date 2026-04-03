@@ -881,6 +881,23 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String], no_
                 let rel = resolve_pathspec(path_str, work_tree, &cwd);
                 let path_bytes = rel.as_bytes();
 
+                // Handle glob pathspecs
+                if is_glob_pattern(&rel) {
+                    let mut matched = false;
+                    for ie in &index.entries {
+                        if ie.stage() != 0 { continue; }
+                        let p = String::from_utf8_lossy(&ie.path).to_string();
+                        if glob_matches(&rel, &p) {
+                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode)?;
+                            matched = true;
+                        }
+                    }
+                    if !matched {
+                        bail!("error: pathspec '{}' did not match any file(s) known to git", path_str);
+                    }
+                    continue;
+                }
+
                 // Handle directory pathspecs (including "." for repo root)
                 let is_root = rel.is_empty() || rel == ".";
                 if is_root {
@@ -922,6 +939,58 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String], no_
 
             for path_str in paths {
                 let rel = resolve_pathspec(path_str, work_tree, &cwd);
+
+                // Handle glob pathspecs
+                if is_glob_pattern(&rel) {
+                    let flat = tree_to_flat_entries(repo, &tree_oid, "")?;
+                    let source_paths: HashSet<Vec<u8>> = flat.iter()
+                        .filter(|e| {
+                            let p = String::from_utf8_lossy(&e.path);
+                            glob_matches(&rel, &p)
+                        })
+                        .map(|e| e.path.clone())
+                        .collect();
+                    let mut matched = false;
+                    for flat_entry in &flat {
+                        let entry_path = String::from_utf8_lossy(&flat_entry.path).to_string();
+                        if !glob_matches(&rel, &entry_path) {
+                            continue;
+                        }
+                        write_blob_to_worktree(repo, work_tree, &entry_path, &flat_entry.oid, flat_entry.mode)?;
+                        index.add_or_replace(flat_entry.clone());
+                        index_modified = true;
+                        matched = true;
+                    }
+                    if no_overlay {
+                        let to_remove: Vec<Vec<u8>> = index.entries.iter()
+                            .filter(|e| e.stage() == 0)
+                            .filter(|e| {
+                                let p = String::from_utf8_lossy(&e.path);
+                                glob_matches(&rel, &p)
+                            })
+                            .filter(|e| !source_paths.contains(&e.path))
+                            .map(|e| e.path.clone())
+                            .collect();
+                        for path in &to_remove {
+                            let p = String::from_utf8_lossy(path);
+                            let abs = work_tree.join(p.as_ref());
+                            let _ = std::fs::remove_file(&abs);
+                            remove_empty_parent_dirs(work_tree, &abs);
+                        }
+                        index.entries.retain(|e| {
+                            if e.stage() != 0 { return true; }
+                            !to_remove.contains(&e.path)
+                        });
+                        if !to_remove.is_empty() {
+                            index_modified = true;
+                        }
+                        matched = matched || !to_remove.is_empty();
+                    }
+                    if !matched {
+                        bail!("error: pathspec '{}' did not match any file(s) known to git", path_str);
+                    }
+                    continue;
+                }
 
                 // Check if this is a directory prefix or empty ("."/root)
                 let is_dir_prefix = rel.is_empty() || {
@@ -1436,6 +1505,99 @@ fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
             Err(_) => break,
         }
     }
+}
+
+/// Check if a pathspec contains glob characters.
+fn is_glob_pattern(spec: &str) -> bool {
+    spec.contains('*') || spec.contains('?') || spec.contains('[')
+}
+
+/// Match a path against a simple glob pattern.
+/// Supports `*` (any chars except `/`), `?` (any single char except `/`),
+/// and character classes `[abc]`.
+fn glob_matches(pattern: &str, path: &str) -> bool {
+    glob_matches_inner(pattern.as_bytes(), path.as_bytes())
+}
+
+fn glob_matches_inner(pattern: &[u8], path: &[u8]) -> bool {
+    let mut pi = 0; // pattern index
+    let mut si = 0; // string index
+    let mut star_pi = usize::MAX;
+    let mut star_si = 0;
+
+    while si < path.len() {
+        if pi < pattern.len() && pattern[pi] == b'?' && path[si] != b'/' {
+            pi += 1;
+            si += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'*' {
+            if pi + 1 < pattern.len() && pattern[pi + 1] == b'*' {
+                // "**" matches everything including '/'
+                // For simplicity, try matching rest of pattern at every position
+                let rest = &pattern[pi + 2..];
+                // Skip optional '/' after **
+                let rest = if !rest.is_empty() && rest[0] == b'/' { &rest[1..] } else { rest };
+                for i in si..=path.len() {
+                    if glob_matches_inner(rest, &path[i..]) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            star_pi = pi;
+            star_si = si;
+            pi += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'[' {
+            // Character class
+            pi += 1;
+            let negate = pi < pattern.len() && (pattern[pi] == b'!' || pattern[pi] == b'^');
+            if negate { pi += 1; }
+            let mut found = false;
+            let ch = path[si];
+            while pi < pattern.len() && pattern[pi] != b']' {
+                if pi + 2 < pattern.len() && pattern[pi + 1] == b'-' {
+                    if ch >= pattern[pi] && ch <= pattern[pi + 2] {
+                        found = true;
+                    }
+                    pi += 3;
+                } else {
+                    if ch == pattern[pi] {
+                        found = true;
+                    }
+                    pi += 1;
+                }
+            }
+            if pi < pattern.len() { pi += 1; } // skip ']'
+            if found == negate {
+                // Mismatch in character class
+                if star_pi != usize::MAX {
+                    pi = star_pi + 1;
+                    star_si += 1;
+                    si = star_si;
+                } else {
+                    return false;
+                }
+            } else {
+                si += 1;
+            }
+        } else if pi < pattern.len() && pattern[pi] == path[si] {
+            pi += 1;
+            si += 1;
+        } else if star_pi != usize::MAX && path[si] != b'/' {
+            // Backtrack: '*' matches one more character (but not '/')
+            pi = star_pi + 1;
+            star_si += 1;
+            si = star_si;
+        } else {
+            return false;
+        }
+    }
+
+    // Consume trailing '*' or '**' in pattern
+    while pi < pattern.len() && pattern[pi] == b'*' {
+        pi += 1;
+    }
+
+    pi == pattern.len()
 }
 
 /// Resolve a pathspec to a repository-relative path.
