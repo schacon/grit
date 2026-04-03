@@ -783,12 +783,15 @@ t5304-prune-packed.sh
 t5304-prune.sh
 t5310-pack-bitmaps.sh
 t5351-unpack-large-objects.sh
+t5400-send-pack.sh
 t5401-update-hooks.sh
 t5402-post-merge-hook.sh
 t5403-post-checkout-hook.sh
 t5404-tracking-branches.sh
 t5405-send-pack-rewind.sh
+t5408-send-pack-stdin.sh
 t5500-fetch-pack.sh
+t5502-quickfetch.sh
 t5503-tagfollow.sh
 t5504-fetch-receive-strict.sh
 t5505-remote.sh
@@ -816,6 +819,9 @@ t5528-push-default.sh
 t5529-push-errors.sh
 t5530-upload-pack-error.sh
 t5531-deep-nested-push.sh
+t5536-fetch-conflicts.sh
+t5546-receive-limits.sh
+t5553-set-upstream.sh
 t5601-clone.sh
 t5606-clone-options.sh
 t5610-clone-detached.sh
@@ -1165,9 +1171,3 @@ tests/t1512-rev-parse-disambiguation.sh
 tests/t1514-rev-parse-push.sh
 tests/t1515-rev-parse-outside-repo.sh
 tests/t1517-outside-repo.sh
-t5400-send-pack.sh
-t5408-send-pack-stdin.sh
-t5502-quickfetch.sh
-t5536-fetch-conflicts.sh
-t5546-receive-limits.sh
-t5553-set-upstream.sh
