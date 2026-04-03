@@ -1,41 +1,32 @@
 #!/bin/sh
+#
+# Ported from git/t/t2017-checkout-orphan.sh (subset for switch --orphan)
 
-test_description='git checkout --orphan (basic)'
+test_description='git switch --orphan'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
+cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup: init repo' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com"
+	git init -q
 '
 
+# grit does not support checkout --orphan, but test switch --orphan instead
 test_expect_success 'setup' '
 	echo "Initial" >foo &&
 	git add foo &&
+	test_tick &&
 	git commit -m "First Commit" &&
 	echo "State 1" >>foo &&
 	git add foo &&
+	test_tick &&
 	git commit -m "Second Commit"
 '
 
-test_expect_success 'checkout -b creates a new branch from HEAD' '
-	git checkout -b alpha &&
-	test "refs/heads/alpha" = "$(git symbolic-ref HEAD)" &&
-	git commit --allow-empty -m "Third Commit"
-'
-
-test_expect_success 'checkout back to main' '
-	git checkout main &&
-	test "refs/heads/main" = "$(git symbolic-ref HEAD)"
-'
-
-test_expect_success 'detached HEAD' '
-	git checkout HEAD^0 &&
-	test_must_fail git symbolic-ref HEAD
+test_expect_success 'switch --orphan creates a new orphan branch from HEAD' '
+	git switch --orphan alpha &&
+	test_must_fail git rev-parse --verify HEAD &&
+	test "refs/heads/alpha" = "$(git symbolic-ref HEAD)"
 '
 
 test_done

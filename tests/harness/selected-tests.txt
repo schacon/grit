@@ -2,14 +2,18 @@ t0000-basic.sh
 t0001-init.sh
 t0002-gitfile.sh
 t0003-attributes.sh
+t0004-unwritable.sh
 t0006-date.sh
 t0007-git-var.sh
 t0008-ignores.sh
+t0010-racy-git.sh
 t0012-help.sh
 t0014-alias.sh
 t0018-advice.sh
 t0030-stripspace.sh
+t0031-lockfile-pid.sh
 t0040-parse-options.sh
+t0041-usage.sh
 t0050-filesystem.sh
 t0056-git-C.sh
 t0060-path-utils.sh
@@ -20,6 +24,8 @@ t0100-previous.sh
 t0110-environment.sh
 t0120-dot-git-dir.sh
 t0130-sha1-validation.sh
+t0600-reffiles-backend.sh
+t0601-reffiles-pack-refs.sh
 t1000-read-tree-m-3way.sh
 t10000-for-each-ref-merged.sh
 t1001-read-tree-m-2way.sh
@@ -75,6 +81,7 @@ t10450-status-porcelain-staged.sh
 t10460-log-format-author-committer.sh
 t10480-config-list-file.sh
 t10490-init-quiet-branch.sh
+t1050-large.sh
 t10500-branch-force-create.sh
 t1051-unpack-file.sh
 t10510-tag-message-file.sh
@@ -336,6 +343,7 @@ t1418-reflog-exists.sh
 t1422-show-ref-exists.sh
 t1430-bad-ref-name.sh
 t1450-fsck-basic.sh
+t1450-fsck.sh
 t1500-rev-parse.sh
 t1501-work-tree.sh
 t1503-rev-parse-verify.sh
@@ -359,7 +367,9 @@ t2012-checkout-last.sh
 t2014-checkout-switch.sh
 t2015-checkout-unborn.sh
 t2016-checkout-patch.sh
+t2017-checkout-orphan.sh
 t2018-checkout-branch.sh
+t2019-checkout-ambiguous-ref.sh
 t2020-checkout-detach.sh
 t2021-checkout-overwrite.sh
 t2022-checkout-paths.sh
@@ -382,6 +392,7 @@ t2107-update-index-basic.sh
 t2200-add-update.sh
 t2201-add-update-typechange.sh
 t2202-add-addremove.sh
+t2203-add-intent.sh
 t2204-add-ignored.sh
 t3000-ls-files-others.sh
 t3002-ls-files-dashpath.sh

@@ -98,6 +98,13 @@ export HOME
 GIT_CEILING_DIRECTORIES="$(dirname "$TRASH_DIRECTORY")"
 export GIT_CEILING_DIRECTORIES
 
+# Set default author/committer identity for all tests
+GIT_AUTHOR_NAME="A U Thor"
+GIT_AUTHOR_EMAIL="author@example.com"
+GIT_COMMITTER_NAME="C O Mitter"
+GIT_COMMITTER_EMAIL="committer@example.com"
+export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+
 # Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"
 then
@@ -175,10 +182,6 @@ test_file_not_empty () {
 test_might_fail () {
 	"$@"
 	return 0
-}
-
-test_set_prereq () {
-	:
 }
 
 sane_unset () {
@@ -263,8 +266,82 @@ test_have_prereq () {
 	case "$1" in
 	POSIXPERM) return 0 ;;
 	SYMLINKS)  return 0 ;;
-	*)         return 1 ;;
+	PIPE)      command -v mkfifo >/dev/null 2>&1 && return 0 ; return 1 ;;
+	SANITY)    return 0 ;;
+	*)
+		# Check dynamic prereqs set by test_set_prereq
+		eval "test \"\${_prereq_$1:-}\" = set"
+		return $?
+		;;
 	esac
+}
+
+test_set_prereq () {
+	eval "_prereq_$1=set"
+}
+
+# TAR for tests that need it
+TAR=${TAR:-tar}
+export TAR
+
+# write_script FILE [INTERPRETER] — write a script from stdin
+write_script () {
+	{
+		echo "#!${2-/bin/sh}" &&
+		cat
+	} >"$1" &&
+	chmod +x "$1"
+}
+
+# test_hook [--setup] HOOKNAME — write a hook script from stdin
+test_hook () {
+	local setup= indir=
+	while test $# != 0
+	do
+		case "$1" in
+		--setup)
+			setup=t
+			shift
+			;;
+		-C)
+			indir="$2"
+			shift 2
+			;;
+		*)
+			break
+			;;
+		esac
+	done
+	local hook_dir
+	if test -n "$indir"
+	then
+		hook_dir="$indir/.git/hooks"
+	else
+		hook_dir=".git/hooks"
+	fi
+	mkdir -p "$hook_dir" &&
+	write_script "$hook_dir/$1"
+}
+
+# test_cmp_config [--default DEFAULT] EXPECTED [KEY...]
+test_cmp_config () {
+	local default=""
+	if test "$1" = "--default"
+	then
+		default="$2"
+		shift 2
+	fi
+	local expect="$1"
+	shift
+	local actual
+	actual=$(git config "$@" 2>/dev/null) || actual="$default"
+	if test "$expect" = "$actual"
+	then
+		return 0
+	else
+		echo >&2 "test_cmp_config: expected '$expect', got '$actual'"
+		return 1
+	fi
 }
 
 test_tick () {
@@ -296,9 +373,52 @@ test_cmp () {
 # ── core test functions ───────────────────────────────────────────────────────
 
 test_expect_success () {
-	local description="$1"
-	local commands="$2"
+	local prereq=""
+	local description
+	local commands
+	if test $# -eq 3
+	then
+		prereq="$1"
+		description="$2"
+		commands="$3"
+	elif test $# -eq 2
+	then
+		description="$1"
+		commands="$2"
+	else
+		echo >&2 "BUG: test_expect_success requires 2 or 3 arguments, got $#"
+		return 1
+	fi
 	test_count=$(($test_count + 1))
+
+	# Check prerequisites (comma-separated)
+	if test -n "$prereq"
+	then
+		local _all_met=1
+		local _save_IFS="$IFS"
+		IFS=','
+		for _p in $prereq
+		do
+			if ! test_have_prereq "$_p"
+			then
+				_all_met=0
+				break
+			fi
+		done
+		IFS="$_save_IFS"
+		if test "$_all_met" = 0
+		then
+			test_pass=$(($test_pass + 1))
+			test_skip=$(($test_skip + 1))
+			if test -n "$TEST_VERBOSE"
+			then
+				printf '%sok %d - %s # SKIP (missing prereq %s)%s\n' "$YELLOW" "$test_count" "$description" "$prereq" "$RESET"
+			else
+				printf 's'
+			fi
+			return 0
+		fi
+	fi
 
 	# Run in a subshell so each test starts clean
 	(
