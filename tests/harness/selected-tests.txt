@@ -1311,3 +1311,4 @@ tests/t7002-mv-sparse-checkout.sh
 tests/t7011-skip-worktree-reading.sh
 tests/t7012-skip-worktree-writing.sh
 tests/t7031-verify-tag-signed-ssh.sh
+tests/t7060-wtstatus.sh
