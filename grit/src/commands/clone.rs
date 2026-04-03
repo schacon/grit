@@ -60,6 +60,18 @@ pub struct Args {
     /// Don't clone any tags.
     #[arg(long)]
     pub no_tags: bool,
+
+    /// Recurse into submodules after cloning.
+    #[arg(long = "recurse-submodules", alias = "recursive")]
+    pub recurse_submodules: bool,
+
+    /// Use remote-tracking branch for submodules.
+    #[arg(long = "remote-submodules")]
+    pub remote_submodules: bool,
+
+    /// Use shallow submodule clones.
+    #[arg(long = "shallow-submodules")]
+    pub shallow_submodules: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -251,7 +263,127 @@ pub fn run(args: Args) -> Result<()> {
         eprintln!("done.");
     }
 
+    // Recurse into submodules if requested
+    if args.recurse_submodules && !args.bare {
+        if let Some(ref wt) = dest.work_tree {
+            clone_submodules(wt, &dest, args.quiet)
+                .context("cloning submodules")?;
+        }
+    }
+
     Ok(())
+}
+
+/// Clone submodules listed in .gitmodules.
+///
+/// Reads `.gitmodules` from the work tree, resolves each submodule's URL
+/// (relative paths are resolved against the parent repo's remote URL),
+/// and uses the system `git` to clone each submodule.
+fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<()> {
+    let gitmodules_path = work_tree.join(".gitmodules");
+    if !gitmodules_path.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&gitmodules_path)
+        .context("reading .gitmodules")?;
+
+    // Simple parser for .gitmodules
+    let mut submodules: Vec<(String, String)> = Vec::new(); // (path, url)
+    let mut current_path: Option<String> = None;
+    let mut current_url: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            // Flush previous
+            if let (Some(p), Some(u)) = (current_path.take(), current_url.take()) {
+                submodules.push((p, u));
+            }
+            continue;
+        }
+        if let Some(val) = trimmed.strip_prefix("path = ").or_else(|| trimmed.strip_prefix("path=")) {
+            current_path = Some(val.trim().to_string());
+        }
+        if let Some(val) = trimmed.strip_prefix("url = ").or_else(|| trimmed.strip_prefix("url=")) {
+            current_url = Some(val.trim().to_string());
+        }
+    }
+    if let (Some(p), Some(u)) = (current_path.take(), current_url.take()) {
+        submodules.push((p, u));
+    }
+
+    // Get the parent's remote URL to resolve relative submodule URLs
+    let parent_url = {
+        let config_path = repo.git_dir.join("config");
+        let config_content = fs::read_to_string(&config_path).unwrap_or_default();
+        extract_remote_url(&config_content, "origin")
+    };
+
+    let git_bin = std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string());
+
+    for (path, url) in &submodules {
+        let sub_dest = work_tree.join(path);
+
+        // Resolve relative URLs
+        let resolved_url = if url.starts_with("./") || url.starts_with("../") {
+            if let Some(ref parent) = parent_url {
+                let base = PathBuf::from(parent);
+                let resolved = base.parent().unwrap_or(&base).join(url);
+                resolved.to_string_lossy().to_string()
+            } else {
+                url.clone()
+            }
+        } else {
+            url.clone()
+        };
+
+        if !quiet {
+            eprintln!("Cloning into '{}'...", sub_dest.display());
+        }
+
+        // Remove the placeholder directory if it exists
+        if sub_dest.exists() {
+            let _ = fs::remove_dir_all(&sub_dest);
+        }
+
+        let mut cmd = std::process::Command::new(&git_bin);
+        cmd.arg("clone")
+            .arg("-c").arg("protocol.file.allow=always")
+            .arg(&resolved_url)
+            .arg(&sub_dest);
+        if quiet {
+            cmd.arg("-q");
+        }
+
+        let status = cmd.status()
+            .with_context(|| format!("failed to clone submodule '{}'", path))?;
+
+        if !status.success() {
+            eprintln!("warning: failed to clone submodule '{}'", path);
+        }
+    }
+
+    Ok(())
+}
+
+/// Extract a remote URL from config content.
+fn extract_remote_url(config: &str, remote_name: &str) -> Option<String> {
+    let section = format!("[remote \"{}\"]", remote_name);
+    let mut in_section = false;
+    for line in config.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed.starts_with(&section);
+            continue;
+        }
+        if in_section {
+            if let Some(val) = trimmed.strip_prefix("url = ").or_else(|| trimmed.strip_prefix("url=")) {
+                return Some(val.trim().to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Resolve a revision string (ref, OID, HEAD) in the source repository.
@@ -666,7 +798,12 @@ fn checkout_tree(
         let full_path = work_tree.join(&path);
 
         let is_tree = (entry.mode & 0o170000) == 0o040000;
-        if is_tree {
+        let is_gitlink = entry.mode == 0o160000;
+        if is_gitlink {
+            // Gitlink (submodule) — skip during checkout; the submodule
+            // directory will be populated by `git submodule update` later.
+            continue;
+        } else if is_tree {
             fs::create_dir_all(&full_path)?;
             checkout_tree(odb, &entry.oid, work_tree, &path)?;
         } else {
@@ -730,8 +867,28 @@ fn add_tree_to_index(
         };
 
         let is_tree = (entry.mode & 0o170000) == 0o040000;
+        let is_gitlink = entry.mode == 0o160000;
         if is_tree {
             add_tree_to_index(odb, &entry.oid, &path, index, work_tree)?;
+        } else if is_gitlink {
+            // Gitlink (submodule) — add to index with mode 160000 and
+            // the commit OID, but no stat info (not checked out).
+            index.add_or_replace(grit_lib::index::IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: 0o160000,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: entry.oid,
+                flags: path.len().min(0xFFF) as u16,
+                flags_extended: None,
+                path: path.as_bytes().to_vec(),
+            });
         } else {
             // Get file stat info from the working tree if available
             let (ctime_sec, ctime_nsec, mtime_sec, mtime_nsec, dev, ino, uid, gid, size) =

@@ -39,18 +39,18 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'clone super repo - grit checkout fails on submodule gitlinks' '
+test_expect_success 'clone super repo - grit checkout fails on submodule gitlinks' '
 	git clone super clone1 &&
 	test -f clone1/file &&
 	test_path_is_missing clone1/sub/file
 '
 
-test_expect_failure 'clone with --recurse-submodules' '
+test_expect_success 'clone with --recurse-submodules' '
 	git clone --recurse-submodules super clone2 &&
 	test -f clone2/sub/file
 '
 
-test_expect_failure 'clone with --recurse-submodules --remote-submodules' '
+test_expect_success 'clone with --recurse-submodules --remote-submodules' '
 	git clone --recurse-submodules --remote-submodules super clone3 &&
 	test -f clone3/sub/file
 '
