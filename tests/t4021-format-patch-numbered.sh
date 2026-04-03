@@ -37,6 +37,11 @@ test_no_numbered() {
 	test_num_no_numbered $1 2
 }
 
+test_single_cover_letter_numbered() {
+	grep "^Subject: \[PATCH 0/1\]" $1 &&
+	grep "^Subject: \[PATCH 1/1\]" $1
+}
+
 test_single_numbered() {
 	grep "^Subject: \[PATCH 1/1\]" $1
 }
@@ -82,6 +87,38 @@ test_expect_success 'format.numbered = auto && single patch' '
 	cd repo &&
 	git format-patch --stdout HEAD^ > patch6 &&
 	test_single_no_numbered patch6
+'
+
+test_expect_success 'format.numbered && --no-numbered' '
+	cd repo &&
+	git config format.numbered true &&
+	git format-patch --no-numbered --stdout HEAD~2 >patch4 &&
+	test_no_numbered patch4
+'
+
+test_expect_success 'format.numbered = auto && --no-numbered' '
+	cd repo &&
+	git config format.numbered auto &&
+	git format-patch --no-numbered --stdout HEAD~2 > patch7 &&
+	test_no_numbered patch7
+'
+
+test_expect_success '--start-number && --numbered' '
+	cd repo &&
+	git format-patch --start-number 3 --numbered --stdout HEAD~1 > patch8 &&
+	grep "^Subject: \[PATCH 3/3\]" patch8
+'
+
+test_expect_success 'single patch with cover-letter defaults to numbers' '
+	cd repo &&
+	git format-patch --cover-letter --stdout HEAD~1 >patch9.single &&
+	test_single_cover_letter_numbered patch9.single
+'
+
+test_expect_success 'Use --no-numbered and --cover-letter single patch' '
+	cd repo &&
+	git format-patch --no-numbered --stdout --cover-letter HEAD~1 >patch10 &&
+	test_no_numbered patch10
 '
 
 test_done
