@@ -176,7 +176,24 @@ pub fn run(args: Args) -> Result<()> {
     // Resolve author and committer
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let now = OffsetDateTime::now_utc();
-    let author = resolve_author(&args, &config, now)?;
+
+    // When amending, preserve original author unless explicitly overridden
+    let amend_author = if args.amend && args.author.is_none() && args.reuse_message.is_none() {
+        if let Some(head_oid) = head.oid() {
+            let obj = repo.odb.read(head_oid)?;
+            let commit = grit_lib::objects::parse_commit(&obj.data)?;
+            Some(commit.author)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let author = if let Some(preserved) = amend_author {
+        preserved
+    } else {
+        resolve_author(&args, &config, now)?
+    };
     let committer = resolve_committer(&config, now)?;
 
     // Append Signed-off-by trailer if --signoff

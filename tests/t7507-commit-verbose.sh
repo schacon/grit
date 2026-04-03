@@ -112,7 +112,7 @@ test_expect_success 'commit --amend changes last commit message' '
 '
 
 # NOTE: grit --amend does not currently preserve the original author
-test_expect_failure 'commit --amend preserves author from amended commit' '
+test_expect_success 'commit --amend preserves author from amended commit' '
 	cd verbose-repo &&
 	echo "change8" >file.txt &&
 	git add file.txt &&
