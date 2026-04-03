@@ -438,7 +438,12 @@ fn add_path(
         return Err(AddPathError::Other(anyhow::anyhow!("pathspec '{}' did not match any files", path)));
     }
 
-    if abs_path.is_dir() {
+    // Use symlink_metadata so symlinks to directories are staged as
+    // symlinks, not traversed.
+    let is_real_dir = fs::symlink_metadata(&abs_path)
+        .map(|m| m.file_type().is_dir())
+        .unwrap_or(false);
+    if is_real_dir {
         let mut paths = Vec::new();
         walk_directory(&abs_path, work_tree, &mut paths, repo, ignore_matcher, args.force)?;
         for rel_path in &paths {
@@ -614,7 +619,15 @@ fn walk_directory(
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
-        let is_dir = path.is_dir();
+        // Use symlink_metadata to detect symlinks *before* following them.
+        // A symlink to a directory should be stored as a symlink blob,
+        // not traversed into.
+        let ft = match fs::symlink_metadata(&path) {
+            Ok(m) => m.file_type(),
+            Err(_) => continue,
+        };
+        let is_symlink = ft.is_symlink();
+        let is_dir = !is_symlink && ft.is_dir();
 
         // Check if ignored
         if !force {
