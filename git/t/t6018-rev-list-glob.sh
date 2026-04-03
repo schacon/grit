@@ -409,7 +409,7 @@ test_expect_success 'shortlog accepts --glob/--tags/--remotes' '
 
 '
 
-test_expect_failure 'shortlog accepts --glob as detached option' '
+test_expect_success 'shortlog accepts --glob as detached option' '
 
 	compare shortlog \
 	  "main other/three someref subspace-x subspace/one subspace/two" \
@@ -417,7 +417,7 @@ test_expect_failure 'shortlog accepts --glob as detached option' '
 
 '
 
-test_expect_failure 'shortlog --glob is not confused by option-like argument' '
+test_expect_success 'shortlog --glob is not confused by option-like argument' '
 
 	compare shortlog main "--glob -e main"
 

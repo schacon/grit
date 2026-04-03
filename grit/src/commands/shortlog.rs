@@ -98,7 +98,35 @@ pub fn run(args: Args) -> Result<()> {
 fn collect_from_repo(args: &Args) -> Result<Vec<(String, String)>> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    let start_oids = if args.revisions.is_empty() {
+    // Pre-process revisions: expand --glob and --glob=<pattern>
+    let mut expanded_revs = Vec::new();
+    let mut i = 0;
+    while i < args.revisions.len() {
+        let rev = &args.revisions[i];
+        if let Some(pattern) = rev.strip_prefix("--glob=") {
+            let full = normalize_shortlog_glob(pattern);
+            let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full)
+                .unwrap_or_default();
+            for (_, oid) in matching {
+                expanded_revs.push(oid.to_hex());
+            }
+        } else if rev == "--glob" {
+            i += 1;
+            if let Some(pattern) = args.revisions.get(i) {
+                let full = normalize_shortlog_glob(pattern);
+                let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full)
+                    .unwrap_or_default();
+                for (_, oid) in matching {
+                    expanded_revs.push(oid.to_hex());
+                }
+            }
+        } else {
+            expanded_revs.push(rev.clone());
+        }
+        i += 1;
+    }
+
+    let start_oids = if expanded_revs.is_empty() {
         let head = resolve_head(&repo.git_dir)?;
         match head.oid() {
             Some(oid) => vec![*oid],
@@ -106,7 +134,7 @@ fn collect_from_repo(args: &Args) -> Result<Vec<(String, String)>> {
         }
     } else {
         let mut oids = Vec::new();
-        for rev in &args.revisions {
+        for rev in &expanded_revs {
             let oid = resolve_revision(&repo, rev)?;
             oids.push(oid);
         }
@@ -407,4 +435,17 @@ fn resolve_revision(repo: &Repository, rev: &str) -> Result<ObjectId> {
     }
 
     anyhow::bail!("unknown revision '{rev}'");
+}
+
+fn normalize_shortlog_glob(pattern: &str) -> String {
+    let full = if pattern.starts_with("refs/") {
+        pattern.to_owned()
+    } else {
+        format!("refs/{pattern}")
+    };
+    if !full.contains('*') && !full.contains('?') && !full.contains('[') {
+        format!("{full}/*")
+    } else {
+        full
+    }
 }
