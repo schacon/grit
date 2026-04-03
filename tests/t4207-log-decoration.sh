@@ -41,7 +41,7 @@ test_expect_success 'decorations include lightweight tag' '
 	grep "lightweight-tag" out
 '
 
-test_expect_failure 'decorations include annotated tag (not yet shown)' '
+test_expect_success 'decorations include annotated tag (not yet shown)' '
 	cd repo &&
 	git log --oneline -n 1 >out &&
 	grep "annotated-tag" out

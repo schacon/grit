@@ -996,14 +996,72 @@ fn collect_decorations(
     }
 
     if full {
-        collect_refs_from_dir(&repo.git_dir.join("refs/heads"), "refs/heads/", "refs/heads/", &mut map)?;
-        collect_refs_from_dir(&repo.git_dir.join("refs/tags"), "refs/tags/", "tag: refs/tags/", &mut map)?;
+        collect_refs_from_dir(&repo.git_dir.join("refs/heads"), "refs/heads/", "refs/heads/", &mut map, None)?;
+        collect_refs_from_dir(&repo.git_dir.join("refs/tags"), "refs/tags/", "tag: refs/tags/", &mut map, Some(&repo.odb))?;
     } else {
-        collect_refs_from_dir(&repo.git_dir.join("refs/heads"), "refs/heads/", "", &mut map)?;
-        collect_refs_from_dir(&repo.git_dir.join("refs/tags"), "refs/tags/", "tag: ", &mut map)?;
+        collect_refs_from_dir(&repo.git_dir.join("refs/heads"), "refs/heads/", "", &mut map, None)?;
+        collect_refs_from_dir(&repo.git_dir.join("refs/tags"), "refs/tags/", "tag: ", &mut map, Some(&repo.odb))?;
+    }
+
+    // Also check packed-refs for tags
+    let packed_path = repo.git_dir.join("packed-refs");
+    if let Ok(content) = std::fs::read_to_string(&packed_path) {
+        for line in content.lines() {
+            if line.starts_with('#') || line.starts_with('^') {
+                continue;
+            }
+            let mut parts = line.splitn(2, ' ');
+            let hash = parts.next().unwrap_or("");
+            let refname = parts.next().unwrap_or("").trim();
+            if hash.len() != 40 {
+                continue;
+            }
+            if let Some(tag_name) = refname.strip_prefix("refs/tags/") {
+                let label = if full {
+                    format!("tag: refs/tags/{tag_name}")
+                } else {
+                    format!("tag: {tag_name}")
+                };
+                // Peel annotated tags to commit
+                let target_hex = peel_to_commit_hex(&repo.odb, hash);
+                map.entry(target_hex).or_default().push(label);
+            } else if let Some(branch_name) = refname.strip_prefix("refs/heads/") {
+                let label = if full {
+                    format!("refs/heads/{branch_name}")
+                } else {
+                    branch_name.to_string()
+                };
+                map.entry(hash.to_owned()).or_default().push(label);
+            }
+        }
     }
 
     Ok(map)
+}
+
+/// Peel an OID (as hex string) through tag objects to find the underlying commit hex.
+fn peel_to_commit_hex(odb: &grit_lib::odb::Odb, hex: &str) -> String {
+    let Ok(oid) = hex.parse::<grit_lib::objects::ObjectId>() else {
+        return hex.to_owned();
+    };
+    let mut current = oid;
+    for _ in 0..20 {
+        let Ok(obj) = odb.read(&current) else {
+            return hex.to_owned();
+        };
+        match obj.kind {
+            grit_lib::objects::ObjectKind::Commit => return current.to_hex(),
+            grit_lib::objects::ObjectKind::Tag => {
+                if let Ok(tag) = grit_lib::objects::parse_tag(&obj.data) {
+                    current = tag.object;
+                } else {
+                    return hex.to_owned();
+                }
+            }
+            _ => return hex.to_owned(),
+        }
+    }
+    hex.to_owned()
 }
 
 /// Recursively collect refs from a directory.
@@ -1012,6 +1070,7 @@ fn collect_refs_from_dir(
     strip_prefix: &str,
     display_prefix: &str,
     map: &mut std::collections::HashMap<String, Vec<String>>,
+    odb: Option<&grit_lib::odb::Odb>,
 ) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -1022,7 +1081,7 @@ fn collect_refs_from_dir(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_refs_from_dir(&path, strip_prefix, display_prefix, map)?;
+            collect_refs_from_dir(&path, strip_prefix, display_prefix, map, odb)?;
         } else if let Ok(content) = std::fs::read_to_string(&path) {
             let hex = content.trim();
             let full_ref = path.to_string_lossy();
@@ -1030,7 +1089,13 @@ fn collect_refs_from_dir(
             if let Some(idx) = full_ref.find(strip_prefix) {
                 let name = &full_ref[idx + strip_prefix.len()..];
                 let label = format!("{display_prefix}{name}");
-                map.entry(hex.to_owned()).or_default().push(label);
+                // For tags, peel annotated tag objects to their commit
+                let target_hex = if let Some(odb) = odb {
+                    peel_to_commit_hex(odb, hex)
+                } else {
+                    hex.to_owned()
+                };
+                map.entry(target_hex).or_default().push(label);
             }
         }
     }
