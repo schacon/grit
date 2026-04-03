@@ -185,7 +185,7 @@ test_expect_success 'add and commit the helper file' '
 
 # ── Empty untracked directory ────────────────────────────────────────────────
 
-test_expect_failure 'empty untracked directory is not shown' '
+test_expect_success 'empty untracked directory is not shown' '
 	cd repo &&
 	mkdir -p emptydir &&
 	git status --porcelain >../actual &&

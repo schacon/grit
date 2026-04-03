@@ -438,7 +438,13 @@ fn walk_for_untracked(
                 if has_tracked {
                     walk_for_untracked(&path, work_tree, tracked, out, show_all)?;
                 } else {
-                    out.push(format!("{rel}/"));
+                    // Check if dir has any files (recursively);
+                    // empty directories are not shown by git.
+                    let mut sub = Vec::new();
+                    walk_for_untracked(&path, work_tree, tracked, &mut sub, false)?;
+                    if !sub.is_empty() {
+                        out.push(format!("{rel}/"));
+                    }
                 }
             }
         } else if !tracked.contains(&rel) {
