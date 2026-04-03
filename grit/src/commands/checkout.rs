@@ -49,6 +49,26 @@ pub struct Args {
     #[arg(long = "detach", short = 'd', conflicts_with_all = ["new_branch", "force_branch", "orphan"])]
     pub detach: bool,
 
+    /// Set up tracking (upstream) configuration for the new branch.
+    #[arg(long = "track", short = 't', action = clap::ArgAction::SetTrue)]
+    pub track: bool,
+
+    /// Do not set up tracking configuration.
+    #[arg(long = "no-track")]
+    pub no_track: bool,
+
+    /// Do not keep files that are not in the source tree (path mode).
+    #[arg(long = "no-overlay")]
+    pub no_overlay: bool,
+
+    /// Keep overlay behaviour (default, for explicitness).
+    #[arg(long = "overlay")]
+    pub overlay: bool,
+
+    /// Merge local modifications when switching branches.
+    #[arg(short = 'm', long = "merge")]
+    pub merge: bool,
+
     /// Remaining positional arguments: `[<branch|commit>] [--] [<paths>...]`
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub rest: Vec<String>,
@@ -91,17 +111,25 @@ pub fn run(args: Args) -> Result<()> {
 
     // Case: checkout -B <name> [<start_point>] (force create/reset)
     if let Some(ref force_branch_name) = args.force_branch {
-        return force_create_and_switch_branch(&repo, force_branch_name, target.as_deref(), args.force);
+        let result = force_create_and_switch_branch(&repo, force_branch_name, target.as_deref(), args.force);
+        if result.is_ok() && !args.no_track {
+            maybe_setup_tracking(&repo, force_branch_name, target.as_deref(), args.track)?;
+        }
+        return result;
     }
 
     // Case 1: checkout -b <new_branch> [<start_point>]
     if let Some(ref new_branch_name) = args.new_branch {
-        return create_and_switch_branch(&repo, new_branch_name, target.as_deref(), args.force);
+        let result = create_and_switch_branch(&repo, new_branch_name, target.as_deref(), args.force);
+        if result.is_ok() && !args.no_track {
+            maybe_setup_tracking(&repo, new_branch_name, target.as_deref(), args.track)?;
+        }
+        return result;
     }
 
     // Case 2: checkout [<tree-ish>] -- <paths>  (path restore)
     if !paths.is_empty() {
-        return checkout_paths(&repo, target.as_deref(), &paths);
+        return checkout_paths(&repo, target.as_deref(), &paths, args.no_overlay);
     }
 
     // Case: checkout -f (no args) — force reset working tree to HEAD
@@ -171,7 +199,7 @@ pub fn run(args: Args) -> Result<()> {
             // Fallback: try as a pathspec (git checkout <file> without --).
             // If the target looks like a tracked file, restore it from HEAD.
             let paths = vec![target.clone()];
-            match checkout_paths(&repo, None, &paths) {
+            match checkout_paths(&repo, None, &paths, false) {
                 Ok(()) => Ok(()),
                 Err(_) => bail!("pathspec '{}' did not match any file(s) known to git", target),
             }
@@ -515,7 +543,7 @@ fn switch_to_tree(
 
     // Dirty worktree safety check (unless forced)
     if !force {
-        check_dirty_worktree(repo, &old_index, &new_index, &work_tree)?;
+        check_dirty_worktree(repo, &old_index, &new_index, &work_tree, _head)?;
     }
 
     // Perform the actual working tree update
@@ -534,6 +562,7 @@ fn check_dirty_worktree(
     old_index: &Index,
     new_index: &Index,
     work_tree: &std::path::Path,
+    head_state: &HeadState,
 ) -> Result<()> {
     // Build maps for quick lookup
     let new_map: HashMap<&[u8], &IndexEntry> = new_index
@@ -586,6 +615,101 @@ fn check_dirty_worktree(
         bail!("{}", msg);
     }
 
+    // Check for staged changes that would be lost.
+    // A "staged change" means the index entry differs from the HEAD tree.
+    // If the target also changes that same file, the checkout must be refused.
+    // We need the HEAD tree to detect this.
+    {
+        // Try to build a map of HEAD tree entries for comparison
+        let head_tree_map: HashMap<Vec<u8>, ObjectId> = (|| -> Result<HashMap<Vec<u8>, ObjectId>> {
+            let head_oid = head_state.oid().ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+            let head_tree = commit_to_tree(repo, head_oid)?;
+            let entries = tree_to_flat_entries(repo, &head_tree, "")?;
+            Ok(entries.into_iter().map(|e| (e.path.clone(), e.oid)).collect())
+        })()
+        .unwrap_or_default();
+
+        if !head_tree_map.is_empty() {
+            let mut staged_conflicts = Vec::new();
+            for old_entry in &old_index.entries {
+                if old_entry.stage() != 0 {
+                    continue;
+                }
+                let path_bytes = &old_entry.path;
+                // Check if index differs from HEAD (i.e., file is staged)
+                let head_oid = head_tree_map.get(path_bytes);
+                let is_staged = match head_oid {
+                    Some(hoid) => hoid != &old_entry.oid,
+                    None => true, // new file in index = staged addition
+                };
+                if !is_staged {
+                    continue;
+                }
+                // Check if the target also changes this file
+                // Check if the staged content differs from the target.
+                // If the staged content matches the target, there's no data loss.
+                let new_entry = new_map.get(path_bytes.as_slice());
+                let staged_matches_target = match new_entry {
+                    Some(ne) => ne.oid == old_entry.oid,
+                    None => false, // target deletes the file, staged content would be lost
+                };
+                if staged_matches_target {
+                    continue; // safe: staged content is exactly what the target has
+                }
+                let target_changes = match (head_oid, new_entry) {
+                    (Some(hoid), Some(ne)) => ne.oid != *hoid,
+                    (Some(_), None) => true,  // target deletes it
+                    (None, Some(_)) => true,  // both add it
+                    (None, None) => false,
+                };
+                if target_changes {
+                    staged_conflicts.push(String::from_utf8_lossy(path_bytes).into_owned());
+                }
+            }
+            if !staged_conflicts.is_empty() {
+                let mut msg = String::from("error: Your local changes to the following files would be overwritten by checkout:\n");
+                for path in &staged_conflicts {
+                    msg.push_str(&format!("\t{}\n", path));
+                }
+                msg.push_str("Please commit your changes or stash them before you switch branches.\nAborting");
+                bail!("{}", msg);
+            }
+        }
+    }
+
+    // Check for untracked files that would be overwritten by new entries
+    let old_paths: HashSet<&[u8]> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.as_slice())
+        .collect();
+
+    let mut untracked_conflicts = Vec::new();
+    for new_entry in &new_index.entries {
+        if new_entry.stage() != 0 {
+            continue;
+        }
+        // If this path is not in the old index, it's a new file from the target.
+        // Check if an untracked file exists at that path.
+        if !old_paths.contains(new_entry.path.as_slice()) {
+            let rel_path = String::from_utf8_lossy(&new_entry.path);
+            let abs_path = work_tree.join(rel_path.as_ref());
+            if abs_path.exists() || abs_path.is_symlink() {
+                untracked_conflicts.push(rel_path.into_owned());
+            }
+        }
+    }
+
+    if !untracked_conflicts.is_empty() {
+        let mut msg = String::from("error: The following untracked working tree files would be overwritten by checkout:\n");
+        for path in &untracked_conflicts {
+            msg.push_str(&format!("\t{}\n", path));
+        }
+        msg.push_str("Please move or remove them before you switch branches.\nAborting");
+        bail!("{}", msg);
+    }
+
     Ok(())
 }
 
@@ -618,7 +742,7 @@ fn is_worktree_dirty(repo: &Repository, entry: &IndexEntry, abs_path: &std::path
 // ---------------------------------------------------------------------------
 
 /// Checkout specific paths from the index or a tree-ish.
-fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String]) -> Result<()> {
+fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String], no_overlay: bool) -> Result<()> {
     let work_tree = repo
         .work_tree
         .as_deref()
@@ -698,6 +822,10 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String]) -> 
                     } else {
                         format!("{}/", rel)
                     };
+                    let source_paths: HashSet<Vec<u8>> = flat.iter()
+                        .filter(|e| prefix.is_empty() || String::from_utf8_lossy(&e.path).starts_with(&prefix))
+                        .map(|e| e.path.clone())
+                        .collect();
                     let mut matched = false;
                     for flat_entry in &flat {
                         let entry_path = String::from_utf8_lossy(&flat_entry.path).to_string();
@@ -709,7 +837,37 @@ fn checkout_paths(repo: &Repository, source: Option<&str>, paths: &[String]) -> 
                         index_modified = true;
                         matched = true;
                     }
-                    if !matched {
+                    // In no-overlay mode, remove index entries that match the
+                    // pathspec but are NOT in the source tree.
+                    if no_overlay {
+                        let to_remove: Vec<Vec<u8>> = index.entries.iter()
+                            .filter(|e| e.stage() == 0)
+                            .filter(|e| {
+                                if prefix.is_empty() {
+                                    true
+                                } else {
+                                    String::from_utf8_lossy(&e.path).starts_with(&prefix)
+                                }
+                            })
+                            .filter(|e| !source_paths.contains(&e.path))
+                            .map(|e| e.path.clone())
+                            .collect();
+                        for path in &to_remove {
+                            let p = String::from_utf8_lossy(path);
+                            let abs = work_tree.join(p.as_ref());
+                            let _ = std::fs::remove_file(&abs);
+                            remove_empty_parent_dirs(work_tree, &abs);
+                        }
+                        index.entries.retain(|e| {
+                            if e.stage() != 0 { return true; }
+                            !to_remove.contains(&e.path)
+                        });
+                        if !to_remove.is_empty() {
+                            index_modified = true;
+                        }
+                        matched = matched || !to_remove.is_empty();
+                    }
+                    if !matched && source_paths.is_empty() {
                         bail!("error: pathspec '{}' did not match any file(s) known to git", path_str);
                     }
                 } else {
@@ -804,6 +962,64 @@ fn print_detached_head_message(repo: &Repository, oid: &ObjectId) -> Result<()> 
     }
 
     checkout_eprintln!("HEAD is now at {} {}", abbrev, subject);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tracking (upstream) configuration
+// ---------------------------------------------------------------------------
+
+/// Set up tracking configuration for a newly created branch.
+///
+/// With `--track`, sets `branch.<name>.remote` and `branch.<name>.merge`.
+/// Also respects `branch.autoSetupMerge` config.
+fn maybe_setup_tracking(
+    repo: &Repository,
+    branch_name: &str,
+    start_point: Option<&str>,
+    explicit_track: bool,
+) -> Result<()> {
+    let start = match start_point {
+        Some(s) => s,
+        None => return Ok(()), // no start point → nothing to track
+    };
+
+    // Check if auto-setup is enabled
+    if !explicit_track {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let auto = config.get("branch.autoSetupMerge").unwrap_or_default();
+        match auto.as_str() {
+            "always" => {} // proceed
+            "false" | "never" => return Ok(()),
+            _ => {
+                // Default ("true"): only auto-track remote branches
+                // For local branches, only track if --track was explicit
+                // Since we don't have remote tracking branches yet, this
+                // means we only track local branches with explicit --track
+                return Ok(());
+            }
+        }
+    }
+
+    // Check if start_point is a local branch
+    let start_ref = format!("refs/heads/{start}");
+    if refs::resolve_ref(&repo.git_dir, &start_ref).is_ok() {
+        // Set up tracking for a local branch
+        let config_path = repo.git_dir.join("config");
+        let mut config_content = std::fs::read_to_string(&config_path).unwrap_or_default();
+
+        let section = format!(
+            "\n[branch \"{}\"]\
+            \n\tremote = .\
+            \n\tmerge = {}\n",
+            branch_name, start_ref
+        );
+        config_content.push_str(&section);
+        std::fs::write(&config_path, config_content)?;
+
+        checkout_eprintln!("branch '{}' set up to track '{}'.", branch_name, start);
+    }
+
     Ok(())
 }
 
