@@ -192,6 +192,14 @@ pub struct Args {
     #[arg(long = "diff-algorithm")]
     pub diff_algorithm: Option<String>,
 
+    /// Enable indent heuristic (default in modern git).
+    #[arg(long = "indent-heuristic")]
+    pub indent_heuristic: bool,
+
+    /// Disable indent heuristic.
+    #[arg(long = "no-indent-heuristic")]
+    pub no_indent_heuristic: bool,
+
     /// Colorize the output. Values: always, never, auto.
     #[arg(long = "color", value_name = "WHEN", default_missing_value = "always", num_args = 0..=1)]
     pub color: Option<String>,

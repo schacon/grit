@@ -78,12 +78,12 @@ test_expect_success 'diff: functions output between old and new' '
 	grep "foo()" out
 '
 
-test_expect_failure 'diff: --indent-heuristic (not implemented)' '
+test_expect_success 'diff: --indent-heuristic' '
 	git diff --indent-heuristic old new -- spaces.txt >out &&
 	test -s out
 '
 
-test_expect_failure 'diff: --no-indent-heuristic (not implemented)' '
+test_expect_success 'diff: --no-indent-heuristic' '
 	git diff --no-indent-heuristic old new -- spaces.txt >out &&
 	test -s out
 '
