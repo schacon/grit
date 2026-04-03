@@ -11305,13 +11305,13 @@ t5607-clone-bundle::cloning-bundle-suppresses-default-branch-name-advice	t5607-c
 t5608-clone-2gb::setup	t5608-clone-2gb	setup	clone	not_ported
 t5608-clone-2gb::clone-bare	t5608-clone-2gb	clone - bare	clone	not_ported
 t5608-clone-2gb::clone-with-worktree-file-protocol	t5608-clone-2gb	clone - with worktree, file:// protocol	clone	not_ported
-t5609-clone-branch::setup	t5609-clone-branch	setup	clone	partial
-t5609-clone-branch::vanilla-clone-chooses-head	t5609-clone-branch	vanilla clone chooses HEAD	clone	partial
-t5609-clone-branch::clone-b-chooses-specified-branch	t5609-clone-branch	clone -b chooses specified branch	clone	partial
-t5609-clone-branch::clone-b-sets-up-tracking	t5609-clone-branch	clone -b sets up tracking	clone	partial
-t5609-clone-branch::clone-b-does-not-munge-remotes-origin-head	t5609-clone-branch	clone -b does not munge remotes/origin/HEAD	clone	partial
-t5609-clone-branch::clone-b-with-bogus-branch	t5609-clone-branch	clone -b with bogus branch	clone	partial
-t5609-clone-branch::clone-b-not-allowed-with-empty-repos	t5609-clone-branch	clone -b not allowed with empty repos	clone	partial
+t5609-clone-branch::setup	t5609-clone-branch	setup	clone	pass
+t5609-clone-branch::vanilla-clone-chooses-head	t5609-clone-branch	vanilla clone chooses HEAD	clone	pass
+t5609-clone-branch::clone-b-chooses-specified-branch	t5609-clone-branch	clone -b chooses specified branch	clone	pass
+t5609-clone-branch::clone-b-sets-up-tracking	t5609-clone-branch	clone -b sets up tracking	clone	pass
+t5609-clone-branch::clone-b-does-not-munge-remotes-origin-head	t5609-clone-branch	clone -b does not munge remotes/origin/HEAD	clone	pass
+t5609-clone-branch::clone-b-with-bogus-branch	t5609-clone-branch	clone -b with bogus branch	clone	pass
+t5609-clone-branch::clone-b-not-allowed-with-empty-repos	t5609-clone-branch	clone -b not allowed with empty repos	clone	pass
 t5610-clone-detached::setup	t5610-clone-detached	setup	clone	pass
 t5610-clone-detached::clone-repo-detached-head-points-to-branch	t5610-clone-detached	clone repo (detached HEAD points to branch)	clone	pass
 t5610-clone-detached::cloned-head-matches	t5610-clone-detached	cloned HEAD matches	clone	pass
@@ -11324,32 +11324,32 @@ t5610-clone-detached::cloned-head-is-detached-2	t5610-clone-detached	cloned HEAD
 t5610-clone-detached::clone-repo-orphan-detached-head	t5610-clone-detached	clone repo (orphan detached HEAD)	clone	pass
 t5610-clone-detached::cloned-head-matches-4	t5610-clone-detached	cloned HEAD matches	clone	pass
 t5610-clone-detached::cloned-head-is-detached-3	t5610-clone-detached	cloned HEAD is detached	clone	pass
-t5611-clone-config::clone-c-sets-config-in-cloned-repo	t5611-clone-config	clone -c sets config in cloned repo	clone	partial
-t5611-clone-config::clone-c-can-set-multi-keys	t5611-clone-config	clone -c can set multi-keys	clone	partial
-t5611-clone-config::clone-c-can-set-multi-keys-including-some-empty	t5611-clone-config	clone -c can set multi-keys, including some empty	clone	partial
-t5611-clone-config::clone-c-without-a-value-is-boolean-true	t5611-clone-config	clone -c without a value is boolean true	clone	partial
-t5611-clone-config::clone-c-config-is-available-during-clone	t5611-clone-config	clone -c config is available during clone	clone	partial
-t5611-clone-config::clone-c-remote-origin-fetch-refspec-works	t5611-clone-config	clone -c remote.origin.fetch=<refspec> works	clone	partial
-t5611-clone-config::git-c-remote-origin-fetch-refspec-clone-works	t5611-clone-config	git -c remote.origin.fetch=<refspec> clone works	clone	partial
-t5611-clone-config::clone-c-remote-remote-fetch-refspec-origin-name	t5611-clone-config	clone -c remote.<remote>.fetch=<refspec> --origin=<name>	clone	partial
-t5611-clone-config::set-up-shallow-repository	t5611-clone-config	set up shallow repository	clone	partial
-t5611-clone-config::clone-rejectshallow-true-should-reject-cloning-shallow-repo	t5611-clone-config	clone.rejectshallow=true should reject cloning shallow repo	clone	partial
-t5611-clone-config::option-no-reject-shallow-override-clone-rejectshallow-config	t5611-clone-config	option --[no-]reject-shallow override clone.rejectshallow config	clone	partial
-t5611-clone-config::clone-rejectshallow-true-should-succeed-cloning-normal-repo	t5611-clone-config	clone.rejectshallow=true should succeed cloning normal repo	clone	partial
-t5611-clone-config::clone-c-core-hidedotfiles	t5611-clone-config	clone -c core.hideDotFiles	clone	partial
-t5612-clone-refspec::setup	t5612-clone-refspec	setup	clone	partial
-t5612-clone-refspec::by-default-all-branches-will-be-kept-updated	t5612-clone-refspec	by default all branches will be kept updated	clone	partial
-t5612-clone-refspec::by-default-no-tags-will-be-kept-updated	t5612-clone-refspec	by default no tags will be kept updated	clone	partial
-t5612-clone-refspec::clone-with-no-tags	t5612-clone-refspec	clone with --no-tags	clone	partial
-t5612-clone-refspec::single-branch-while-head-pointing-at-main	t5612-clone-refspec	--single-branch while HEAD pointing at main	clone	partial
-t5612-clone-refspec::single-branch-while-head-pointing-at-main-and-no-tags	t5612-clone-refspec	--single-branch while HEAD pointing at main and --no-tags	clone	partial
-t5612-clone-refspec::single-branch-while-head-pointing-at-side	t5612-clone-refspec	--single-branch while HEAD pointing at side	clone	partial
-t5612-clone-refspec::single-branch-with-explicit-branch-side	t5612-clone-refspec	--single-branch with explicit --branch side	clone	partial
-t5612-clone-refspec::single-branch-with-explicit-branch-with-tag-fetches-updated-tag	t5612-clone-refspec	--single-branch with explicit --branch with tag fetches updated tag	clone	partial
-t5612-clone-refspec::single-branch-with-explicit-branch-with-tag-fetches-updated-tag-despite-no-tags	t5612-clone-refspec	--single-branch with explicit --branch with tag fetches updated tag despite --no-tags	clone	partial
-t5612-clone-refspec::single-branch-with-mirror	t5612-clone-refspec	--single-branch with --mirror	clone	partial
-t5612-clone-refspec::single-branch-with-explicit-branch-and-mirror	t5612-clone-refspec	--single-branch with explicit --branch and --mirror	clone	partial
-t5612-clone-refspec::single-branch-with-detached	t5612-clone-refspec	--single-branch with detached	clone	partial
+t5611-clone-config::clone-c-sets-config-in-cloned-repo	t5611-clone-config	clone -c sets config in cloned repo	clone	pass
+t5611-clone-config::clone-c-can-set-multi-keys	t5611-clone-config	clone -c can set multi-keys	clone	pass
+t5611-clone-config::clone-c-can-set-multi-keys-including-some-empty	t5611-clone-config	clone -c can set multi-keys, including some empty	clone	pass
+t5611-clone-config::clone-c-without-a-value-is-boolean-true	t5611-clone-config	clone -c without a value is boolean true	clone	pass
+t5611-clone-config::clone-c-config-is-available-during-clone	t5611-clone-config	clone -c config is available during clone	clone	pass
+t5611-clone-config::clone-c-remote-origin-fetch-refspec-works	t5611-clone-config	clone -c remote.origin.fetch=<refspec> works	clone	pass
+t5611-clone-config::git-c-remote-origin-fetch-refspec-clone-works	t5611-clone-config	git -c remote.origin.fetch=<refspec> clone works	clone	pass
+t5611-clone-config::clone-c-remote-remote-fetch-refspec-origin-name	t5611-clone-config	clone -c remote.<remote>.fetch=<refspec> --origin=<name>	clone	pass
+t5611-clone-config::set-up-shallow-repository	t5611-clone-config	set up shallow repository	clone	pass
+t5611-clone-config::clone-rejectshallow-true-should-reject-cloning-shallow-repo	t5611-clone-config	clone.rejectshallow=true should reject cloning shallow repo	clone	pass
+t5611-clone-config::option-no-reject-shallow-override-clone-rejectshallow-config	t5611-clone-config	option --[no-]reject-shallow override clone.rejectshallow config	clone	pass
+t5611-clone-config::clone-rejectshallow-true-should-succeed-cloning-normal-repo	t5611-clone-config	clone.rejectshallow=true should succeed cloning normal repo	clone	pass
+t5611-clone-config::clone-c-core-hidedotfiles	t5611-clone-config	clone -c core.hideDotFiles	clone	pass
+t5612-clone-refspec::setup	t5612-clone-refspec	setup	clone	pass
+t5612-clone-refspec::by-default-all-branches-will-be-kept-updated	t5612-clone-refspec	by default all branches will be kept updated	clone	pass
+t5612-clone-refspec::by-default-no-tags-will-be-kept-updated	t5612-clone-refspec	by default no tags will be kept updated	clone	pass
+t5612-clone-refspec::clone-with-no-tags	t5612-clone-refspec	clone with --no-tags	clone	pass
+t5612-clone-refspec::single-branch-while-head-pointing-at-main	t5612-clone-refspec	--single-branch while HEAD pointing at main	clone	pass
+t5612-clone-refspec::single-branch-while-head-pointing-at-main-and-no-tags	t5612-clone-refspec	--single-branch while HEAD pointing at main and --no-tags	clone	pass
+t5612-clone-refspec::single-branch-while-head-pointing-at-side	t5612-clone-refspec	--single-branch while HEAD pointing at side	clone	pass
+t5612-clone-refspec::single-branch-with-explicit-branch-side	t5612-clone-refspec	--single-branch with explicit --branch side	clone	pass
+t5612-clone-refspec::single-branch-with-explicit-branch-with-tag-fetches-updated-tag	t5612-clone-refspec	--single-branch with explicit --branch with tag fetches updated tag	clone	pass
+t5612-clone-refspec::single-branch-with-explicit-branch-with-tag-fetches-updated-tag-despite-no-tags	t5612-clone-refspec	--single-branch with explicit --branch with tag fetches updated tag despite --no-tags	clone	pass
+t5612-clone-refspec::single-branch-with-mirror	t5612-clone-refspec	--single-branch with --mirror	clone	pass
+t5612-clone-refspec::single-branch-with-explicit-branch-and-mirror	t5612-clone-refspec	--single-branch with explicit --branch and --mirror	clone	pass
+t5612-clone-refspec::single-branch-with-detached	t5612-clone-refspec	--single-branch with detached	clone	pass
 t5613-info-alternate::preparing-first-repository	t5613-info-alternate	preparing first repository	add	pass
 t5613-info-alternate::preparing-second-repository	t5613-info-alternate	preparing second repository	add	pass
 t5613-info-alternate::preparing-third-repository	t5613-info-alternate	preparing third repository	add	pass
@@ -11443,8 +11443,8 @@ t5618-alternate-refs::rev-list-alternate-refs	t5618-alternate-refs	rev-list --al
 t5618-alternate-refs::rev-list-not-alternate-refs	t5618-alternate-refs	rev-list --not --alternate-refs	rev-list	pass
 t5618-alternate-refs::limiting-with-alternaterefsprefixes	t5618-alternate-refs	limiting with alternateRefsPrefixes	rev-list	pass
 t5618-alternate-refs::log-source-shows-alternate-marker	t5618-alternate-refs	log --source shows .alternate marker	log	pass
-t5619-clone-local-ambiguous-transport::setup	t5619-clone-local-ambiguous-transport	setup	clone	partial
-t5619-clone-local-ambiguous-transport::ambiguous-transport-does-not-lead-to-arbitrary-file-inclusion	t5619-clone-local-ambiguous-transport	ambiguous transport does not lead to arbitrary file-inclusion	clone	partial
+t5619-clone-local-ambiguous-transport::setup	t5619-clone-local-ambiguous-transport	setup	clone	pass
+t5619-clone-local-ambiguous-transport::ambiguous-transport-does-not-lead-to-arbitrary-file-inclusion	t5619-clone-local-ambiguous-transport	ambiguous transport does not lead to arbitrary file-inclusion	clone	pass
 t5620-backfill::setup-repo-for-object-creation	t5620-backfill	setup repo for object creation	backfill	pass
 t5620-backfill::setup-bare-clone-for-server	t5620-backfill	setup bare clone for server	backfill	pass
 t5620-backfill::do-partial-clone-1-backfill-gets-all-objects	t5620-backfill	do partial clone 1, backfill gets all objects	backfill	pass
