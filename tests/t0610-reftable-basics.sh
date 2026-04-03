@@ -17,7 +17,7 @@ test_expect_success 'init: reftable flag accepted' '
 	git init --ref-format=reftable repo
 '
 
-test_expect_failure 'init: creates reftable directory structure' '
+test_expect_success 'init: creates reftable directory structure' '
 	rm -rf repo &&
 	git init --ref-format=reftable repo &&
 	test_path_is_dir repo/.git/reftable &&
@@ -30,7 +30,7 @@ test_expect_success 'init: reinitializing reftable backend succeeds' '
 	git init --ref-format=reftable repo
 '
 
-test_expect_failure 'init: reinitializing files with reftable backend fails' '
+test_expect_success 'init: reinitializing files with reftable backend fails' '
 	rm -rf repo &&
 	git init --ref-format=files repo &&
 	test_must_fail git init --ref-format=reftable repo
@@ -51,7 +51,7 @@ test_expect_success 'clone: can clone reftable repository' '
 	test_path_is_file clone/file
 '
 
-test_expect_failure 'show-ref-format reports reftable' '
+test_expect_success 'show-ref-format reports reftable' '
 	rm -rf repo &&
 	git init --ref-format=reftable repo &&
 	echo reftable >expect &&

@@ -19,7 +19,7 @@ test_expect_success 'setup reftable repo' '
 	)
 '
 
-test_expect_failure 'no errors on a well-formed reftable repository' '
+test_expect_success 'no errors on a well-formed reftable repository' '
 	(
 		cd repo &&
 		git refs verify 2>err &&
@@ -27,7 +27,7 @@ test_expect_failure 'no errors on a well-formed reftable repository' '
 	)
 '
 
-test_expect_failure 'invalid symref gets reported' '
+test_expect_success 'invalid symref gets reported' '
 	rm -rf repo2 &&
 	git init repo2 &&
 	(

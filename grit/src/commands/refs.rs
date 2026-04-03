@@ -95,7 +95,6 @@ fn verify_refs(repo: &Repository) -> Result<()> {
         std::process::exit(1);
     }
 
-    eprintln!("ref database verified");
     Ok(())
 }
 
@@ -109,12 +108,26 @@ fn verify_refs_dir(repo: &Repository, dir: &Path) -> Result<usize> {
         } else if path.is_file() {
             let content = fs::read_to_string(&path)
                 .with_context(|| format!("reading ref {}", path.display()))?;
-            let hex = content.trim();
-            if hex.len() >= 40 {
-                if let Ok(oid) = grit_lib::objects::ObjectId::from_hex(hex) {
+            let trimmed = content.trim();
+            if let Some(target) = trimmed.strip_prefix("ref: ") {
+                // Validate symbolic ref target
+                if grit_lib::check_ref_format::check_refname_format(
+                    target,
+                    &grit_lib::check_ref_format::RefNameOptions {
+                        allow_onelevel: false,
+                        refspec_pattern: false,
+                        normalize: false,
+                    },
+                ).is_err() {
+                    let name = path.strip_prefix(&repo.git_dir).unwrap_or(&path);
+                    eprintln!("error: {} points to invalid ref target '{}'", name.display(), target);
+                    errors += 1;
+                }
+            } else if trimmed.len() >= 40 {
+                if let Ok(oid) = grit_lib::objects::ObjectId::from_hex(trimmed) {
                     if !repo.odb.exists(&oid) {
                         let name = path.strip_prefix(&repo.git_dir).unwrap_or(&path);
-                        eprintln!("error: {} points to missing object {hex}", name.display());
+                        eprintln!("error: {} points to missing object {trimmed}", name.display());
                         errors += 1;
                     }
                 }

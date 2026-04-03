@@ -32,6 +32,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut show_git_dir = false;
     let mut show_absolute_git_dir = false;
     let mut show_symbolic_full_name = false;
+    let mut show_ref_format = false;
     let mut prefix: Option<String> = None;
     let mut default_rev: Option<String> = None;
     let mut revisions = Vec::new();
@@ -170,6 +171,8 @@ pub fn run(args: Args) -> Result<()> {
                         println!("{oid}");
                     }
                 }
+            } else if arg == "--show-ref-format" {
+                show_ref_format = true;
             } else if arg == "--sq-quote" {
                 sq_quote = true;
             } else if arg == "--local-env-vars" {
@@ -310,6 +313,34 @@ pub fn run(args: Args) -> Result<()> {
             bail!("not a git repository (or any of the parent directories)");
         };
         println!("{}", current.git_dir.display());
+    }
+    if show_ref_format {
+        let Some(current) = repo.as_ref() else {
+            bail!("not a git repository (or any of the parent directories)");
+        };
+        let config_path = current.git_dir.join("config");
+        let format = if let Ok(content) = std::fs::read_to_string(&config_path) {
+            let mut in_ext = false;
+            let mut found = String::from("files");
+            for line in content.lines() {
+                let t = line.trim();
+                if t.starts_with('[') {
+                    in_ext = t.eq_ignore_ascii_case("[extensions]");
+                    continue;
+                }
+                if in_ext {
+                    if let Some((k, v)) = t.split_once('=') {
+                        if k.trim().eq_ignore_ascii_case("refstorage") {
+                            found = v.trim().to_lowercase();
+                        }
+                    }
+                }
+            }
+            found
+        } else {
+            "files".to_string()
+        };
+        println!("{format}");
     }
 
     if !verify && revisions.is_empty() && forced_paths.is_empty() {
