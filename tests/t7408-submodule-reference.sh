@@ -33,7 +33,7 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'clone with --recurse-submodules and --reference' '
+test_expect_success 'clone with --recurse-submodules and --reference' '
 	git clone --recurse-submodules --reference super super clone-ref &&
 	test -f clone-ref/sub/file
 '
