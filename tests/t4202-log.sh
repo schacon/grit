@@ -121,7 +121,7 @@ test_expect_success 'log --reverse reverses order' '
 
 test_expect_success 'log --format=%H shows full hashes' '
 	cd repo &&
-	git log --format="format:%H" >actual &&
+	git log --format="tformat:%H" >actual &&
 	test_line_count = 6 actual &&
 	head -1 actual >first_hash &&
 	test "$(wc -c <first_hash)" -gt 39
@@ -129,36 +129,36 @@ test_expect_success 'log --format=%H shows full hashes' '
 
 test_expect_success 'log --format=%s shows subjects' '
 	cd repo &&
-	git log -n 1 --format="format:%s" >actual &&
+	git log -n 1 --format="tformat:%s" >actual &&
 	echo "sixth" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log --format=%an shows author name' '
 	cd repo &&
-	git log -n 1 --format="format:%an" >actual &&
+	git log -n 1 --format="tformat:%an" >actual &&
 	echo "A U Thor" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log --format=%ae shows author email' '
 	cd repo &&
-	git log -n 1 --format="format:%ae" >actual &&
+	git log -n 1 --format="tformat:%ae" >actual &&
 	echo "author@example.com" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log --format=%cn shows committer name' '
 	cd repo &&
-	git log -n 1 --format="format:%cn" >actual &&
-	echo "A U Thor" >expected &&
+	git log -n 1 --format="tformat:%cn" >actual &&
+	echo "C O Mitter" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log --format=%ce shows committer email' '
 	cd repo &&
-	git log -n 1 --format="format:%ce" >actual &&
-	echo "author@example.com" >expected &&
+	git log -n 1 --format="tformat:%ce" >actual &&
+	echo "committer@example.com" >expected &&
 	test_cmp expected actual
 '
 
@@ -195,7 +195,7 @@ test_expect_success 'log --skip with -n' '
 
 test_expect_success 'log --format=%T shows tree hash' '
 	cd repo &&
-	git log -n 1 --format="format:%T" >actual &&
+	git log -n 1 --format="tformat:%T" >actual &&
 	tree=$(git rev-parse HEAD^{tree}) &&
 	echo "$tree" >expected &&
 	test_cmp expected actual
@@ -203,7 +203,7 @@ test_expect_success 'log --format=%T shows tree hash' '
 
 test_expect_success 'log --format=%t shows short tree hash' '
 	cd repo &&
-	git log -n 1 --format="format:%t" >actual &&
+	git log -n 1 --format="tformat:%t" >actual &&
 	tree=$(git rev-parse HEAD^{tree}) &&
 	short_tree=$(echo "$tree" | cut -c1-7) &&
 	echo "$short_tree" >expected &&
@@ -212,7 +212,7 @@ test_expect_success 'log --format=%t shows short tree hash' '
 
 test_expect_success 'log --format=%P shows parent hash' '
 	cd repo &&
-	git log -n 1 --format="format:%P" >actual &&
+	git log -n 1 --format="tformat:%P" >actual &&
 	parent=$(git rev-parse HEAD~1) &&
 	echo "$parent" >expected &&
 	test_cmp expected actual
@@ -220,7 +220,7 @@ test_expect_success 'log --format=%P shows parent hash' '
 
 test_expect_success 'log --format=%p shows short parent hash' '
 	cd repo &&
-	git log -n 1 --format="format:%p" >actual &&
+	git log -n 1 --format="tformat:%p" >actual &&
 	parent=$(git rev-parse HEAD~1) &&
 	short_parent=$(echo "$parent" | cut -c1-7) &&
 	echo "$short_parent" >expected &&
@@ -231,7 +231,7 @@ test_expect_success 'log --format=%H%n%h for top commit' '
 	cd repo &&
 	head1=$(git rev-parse HEAD) &&
 	head1_short=$(git rev-parse --short HEAD) &&
-	git log -n 1 --format="format:%H
+	git log -n 1 --format="tformat:%H
 %h" >actual &&
 	cat >expected <<-EOF &&
 	$head1
@@ -242,20 +242,20 @@ test_expect_success 'log --format=%H%n%h for top commit' '
 
 test_expect_success 'log --format=%% produces literal %' '
 	cd repo &&
-	git log -n 1 --format="format:%%h" >actual &&
+	git log -n 1 --format="tformat:%%h" >actual &&
 	echo "%h" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log --format=%ad shows author date' '
 	cd repo &&
-	git log -n 1 --format="format:%ad" >actual &&
+	git log -n 1 --format="tformat:%ad" >actual &&
 	test -n "$(cat actual)"
 '
 
 test_expect_success 'log --format=%cd shows committer date' '
 	cd repo &&
-	git log -n 1 --format="format:%cd" >actual &&
+	git log -n 1 --format="tformat:%cd" >actual &&
 	test -n "$(cat actual)"
 '
 
@@ -308,28 +308,28 @@ test_expect_success 'log decoration shows branch name' '
 
 test_expect_success 'log with branch as revision' '
 	cd repo &&
-	git log -n 1 --format="format:%s" master >actual &&
+	git log -n 1 --format="tformat:%s" master >actual &&
 	echo "sixth" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log with tag as revision' '
 	cd repo &&
-	git log -n 1 --format="format:%s" v1.0 >actual &&
+	git log -n 1 --format="tformat:%s" v1.0 >actual &&
 	echo "sixth" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log with old tag shows correct commit' '
 	cd repo &&
-	git log -n 1 --format="format:%s" v0.1 >actual &&
+	git log -n 1 --format="tformat:%s" v0.1 >actual &&
 	echo "initial" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log format with multiple placeholders on one line' '
 	cd repo &&
-	git log -n 1 --format="format:%h %s" >actual &&
+	git log -n 1 --format="tformat:%h %s" >actual &&
 	short=$(git rev-parse --short HEAD) &&
 	echo "$short sixth" >expected &&
 	test_cmp expected actual
@@ -337,14 +337,14 @@ test_expect_success 'log format with multiple placeholders on one line' '
 
 test_expect_success 'log format with literal text around placeholders' '
 	cd repo &&
-	git log -n 1 --format="format:Author: %an <%ae>" >actual &&
+	git log -n 1 --format="tformat:Author: %an <%ae>" >actual &&
 	echo "Author: A U Thor <author@example.com>" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log --reverse shows oldest first' '
 	cd repo &&
-	git log --reverse --format="format:%s" >actual &&
+	git log --reverse --format="tformat:%s" >actual &&
 	head -1 actual >first &&
 	echo "initial" >expected &&
 	test_cmp expected first
@@ -359,15 +359,15 @@ test_expect_success 'log --skip=0 is same as no skip' '
 
 test_expect_success 'log format %an|%ae' '
 	cd repo &&
-	git log -n 1 --format="format:%an|%ae" >actual &&
+	git log -n 1 --format="tformat:%an|%ae" >actual &&
 	echo "A U Thor|author@example.com" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log format %cn|%ce' '
 	cd repo &&
-	git log -n 1 --format="format:%cn|%ce" >actual &&
-	echo "A U Thor|author@example.com" >expected &&
+	git log -n 1 --format="tformat:%cn|%ce" >actual &&
+	echo "C O Mitter|committer@example.com" >expected &&
 	test_cmp expected actual
 '
 
@@ -404,14 +404,14 @@ test_expect_success 'log --oneline --reverse' '
 
 test_expect_success 'log --format=%h matches rev-parse --short' '
 	cd repo &&
-	git log -n 1 --format="format:%h" >actual &&
+	git log -n 1 --format="tformat:%h" >actual &&
 	git rev-parse --short HEAD >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log --format=%H matches rev-parse' '
 	cd repo &&
-	git log -n 1 --format="format:%H" >actual &&
+	git log -n 1 --format="tformat:%H" >actual &&
 	git rev-parse HEAD >expected &&
 	test_cmp expected actual
 '
@@ -424,7 +424,7 @@ test_expect_success 'log --graph flag accepted' '
 
 test_expect_success 'log --format=%T matches tree of commit' '
 	cd repo &&
-	git log -n 1 --format="format:%T" >actual &&
+	git log -n 1 --format="tformat:%T" >actual &&
 	tree=$(git rev-parse HEAD^{tree}) &&
 	echo "$tree" >expected &&
 	test_cmp expected actual
@@ -462,7 +462,7 @@ test_expect_success 'setup merge history using plumbing' '
 
 test_expect_success 'log shows merge commit' '
 	cd repo &&
-	git log -n 1 --format="format:%s" >actual &&
+	git log -n 1 --format="tformat:%s" >actual &&
 	echo "Merge branch side" >expected &&
 	test_cmp expected actual
 '
@@ -476,13 +476,13 @@ test_expect_success 'log --first-parent skips side branch commits' '
 
 test_expect_success 'log --format=%P for merge shows two parents' '
 	cd repo &&
-	git log -n 1 --format="format:%P" >actual &&
+	git log -n 1 --format="tformat:%P" >actual &&
 	test "$(wc -w <actual)" -eq 2
 '
 
 test_expect_success 'log --format=%p for merge shows short parents' '
 	cd repo &&
-	git log -n 1 --format="format:%p" >actual &&
+	git log -n 1 --format="tformat:%p" >actual &&
 	test "$(wc -w <actual)" -eq 2
 '
 
@@ -497,7 +497,7 @@ test_expect_success 'log shows all commits including merged' '
 
 test_expect_success 'log --format=%H %s combined' '
 	cd repo &&
-	git log -n 1 --format="format:%H %s" >actual &&
+	git log -n 1 --format="tformat:%H %s" >actual &&
 	full=$(git rev-parse HEAD) &&
 	echo "$full Merge branch side" >expected &&
 	test_cmp expected actual
@@ -535,20 +535,20 @@ test_expect_success 'log --skip larger than total shows nothing' '
 
 test_expect_success 'log --format=%ad is non-empty' '
 	cd repo &&
-	git log -n 1 --format="format:%ad" >actual &&
+	git log -n 1 --format="tformat:%ad" >actual &&
 	test -s actual
 '
 
 test_expect_success 'log --format=%cd is non-empty' '
 	cd repo &&
-	git log -n 1 --format="format:%cd" >actual &&
+	git log -n 1 --format="tformat:%cd" >actual &&
 	test -s actual
 '
 
 test_expect_success 'log shows consistent hash across formats' '
 	cd repo &&
 	short_from_oneline=$(git log -n 1 --oneline --no-decorate | awk "{print \$1}") &&
-	short_from_format=$(git log -n 1 --format="format:%h") &&
+	short_from_format=$(git log -n 1 --format="tformat:%h") &&
 	echo "$short_from_format" >expected &&
 	echo "$short_from_oneline" >actual &&
 	test_cmp expected actual
@@ -556,7 +556,7 @@ test_expect_success 'log shows consistent hash across formats' '
 
 test_expect_success 'log multiple commits format consistency' '
 	cd repo &&
-	git log --format="format:%h %s" --first-parent >actual &&
+	git log --format="tformat:%h %s" --first-parent >actual &&
 	while IFS= read -r line; do
 		echo "$line" | grep "^[0-9a-f]* ." || return 1
 	done <actual
@@ -573,7 +573,7 @@ test_expect_success 'log --decorate then --no-decorate (last wins)' '
 
 test_expect_success 'log with tag as rev shows tag commit' '
 	cd repo &&
-	git log -n 1 --format="format:%s" v0.1 >actual &&
+	git log -n 1 --format="tformat:%s" v0.1 >actual &&
 	echo "initial" >expected &&
 	test_cmp expected actual
 '
@@ -587,14 +587,14 @@ test_expect_success 'log -n 1 from tag shows fewer' '
 
 test_expect_success 'log from a specific branch ref' '
 	cd repo &&
-	git log -n 1 --format="format:%s" side >actual &&
+	git log -n 1 --format="tformat:%s" side >actual &&
 	echo "side-2" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log -n 2 from side branch' '
 	cd repo &&
-	git log -n 2 --format="format:%s" side >actual &&
+	git log -n 2 --format="tformat:%s" side >actual &&
 	head -1 actual >first &&
 	echo "side-2" >expected &&
 	test_cmp expected first
@@ -689,14 +689,14 @@ Second body line." &&
 
 test_expect_success 'log --format=%s shows only subject of multi-line message' '
 	cd repo &&
-	git log -n 1 --format="format:%s" body-commit >actual &&
+	git log -n 1 --format="tformat:%s" body-commit >actual &&
 	echo "subject line" >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'log --format=%b shows body of multi-line message' '
 	cd repo &&
-	git log -n 1 --format="format:%b" body-commit >actual &&
+	git log -n 1 --format="tformat:%b" body-commit >actual &&
 	grep "This is the body." actual &&
 	grep "Second body line." actual
 '
@@ -708,7 +708,7 @@ test_expect_success 'log --format=%b shows body of multi-line message' '
 
 test_expect_success 'log --format with %n produces newline' '
 	cd repo &&
-	git log -n 1 --format="format:A%nB" >actual &&
+	git log -n 1 --format="tformat:A%nB" >actual &&
 	test_line_count = 2 actual &&
 	head -1 actual >first &&
 	echo "A" >expected &&
@@ -719,7 +719,7 @@ test_expect_success 'log --format with %n produces newline' '
 
 test_expect_success 'log --reverse --first-parent' '
 	cd repo &&
-	git log --reverse --first-parent --format="format:%s" >actual &&
+	git log --reverse --first-parent --format="tformat:%s" >actual &&
 	head -1 actual >first &&
 	echo "initial" >expected &&
 	test_cmp expected first
@@ -810,9 +810,9 @@ test_expect_success 'log --pretty=%s works same as --format=%s' '
 
 test_expect_success 'log --format with multiple %% escapes' '
 	cd repo &&
-	git log -n 1 --format="format:%%h is %h and %%s is %s" >actual &&
+	git log -n 1 --format="tformat:%%h is %h and %%s is %s" >actual &&
 	short=$(git rev-parse --short HEAD) &&
-	subj=$(git log -n 1 --format="format:%s") &&
+	subj=$(git log -n 1 --format="tformat:%s") &&
 	echo "%h is $short and %s is $subj" >expected &&
 	test_cmp expected actual
 '
@@ -848,7 +848,7 @@ test_expect_success 'log --decorate shows branch name' '
 
 test_expect_success 'log --format=%T for every commit is 40 hex chars' '
 	cd repo &&
-	git log --format="format:%T" >actual &&
+	git log --format="tformat:%T" >actual &&
 	while IFS= read -r line; do
 		test "$(echo \"$line\" | wc -c)" -ge 40 || return 1
 	done <actual
@@ -877,7 +877,7 @@ test_expect_success 'log --oneline matches --format short-hash + subject' '
 	cd repo &&
 	git log --oneline --no-decorate -n 1 >oneline_out &&
 	short=$(git rev-parse --short HEAD) &&
-	subj=$(git log -n 1 --format="format:%s") &&
+	subj=$(git log -n 1 --format="tformat:%s") &&
 	echo "$short $subj" >expected &&
 	test_cmp expected oneline_out
 '
@@ -889,7 +889,7 @@ test_expect_success 'log --oneline matches --format short-hash + subject' '
 
 test_expect_success 'log with tag name as revision' '
 	cd repo &&
-	git log -n 1 --format="format:%H" v0.1 >actual &&
+	git log -n 1 --format="tformat:%H" v0.1 >actual &&
 	git rev-parse v0.1 >expected &&
 	test_cmp expected actual
 '
@@ -1077,14 +1077,14 @@ test_expect_success 'rev-list with ^exclusion excludes ancestors' '
 test_expect_success 'log --format=%T is consistent with cat-file' '
 	cd repo &&
 	head_hash=$(git rev-parse HEAD) &&
-	tree_from_log=$(git log -n 1 --format="format:%T") &&
+	tree_from_log=$(git log -n 1 --format="tformat:%T") &&
 	tree_from_cat=$(git cat-file -p "$head_hash" | grep "^tree " | cut -d" " -f2) &&
 	test "$tree_from_log" = "$tree_from_cat"
 '
 
 test_expect_success 'log --format=%P is consistent with cat-file for merge' '
 	cd repo &&
-	parents_from_log=$(git log -n 1 --format="format:%P") &&
+	parents_from_log=$(git log -n 1 --format="tformat:%P") &&
 	parents_from_cat=$(git cat-file -p HEAD | grep "^parent " | cut -d" " -f2 | tr "\n" " " | sed "s/ $//") &&
 	test "$parents_from_log" = "$parents_from_cat"
 '
@@ -1206,8 +1206,8 @@ test_expect_success 'log --pretty=%H equals --format=%H' '
 
 test_expect_success 'log --format=%t is prefix of %T' '
 	cd repo &&
-	git log -n 1 --format="format:%T" >full &&
-	git log -n 1 --format="format:%t" >short &&
+	git log -n 1 --format="tformat:%T" >full &&
+	git log -n 1 --format="tformat:%t" >short &&
 	prefix=$(cat short) &&
 	grep "^$prefix" full
 '
@@ -1360,7 +1360,7 @@ test_expect_success 'log --skip with --first-parent reduces output' '
 test_expect_success 'log tformat: and format: produce same output in grit' '
 	cd repo &&
 	git log --first-parent --format="tformat:%H" >tfmt &&
-	git log --first-parent --format="format:%H" >fmt &&
+	git log --first-parent --format="tformat:%H" >fmt &&
 	test_cmp tfmt fmt
 '
 
