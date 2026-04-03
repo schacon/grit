@@ -1295,3 +1295,4 @@ tests/t6416-recursive-corner-cases.sh
 tests/t6417-merge-ours-theirs.sh
 tests/t6418-merge-text-auto.sh
 tests/t6419-merge-ignorecase.sh
+tests/t6421-merge-partial-clone.sh
