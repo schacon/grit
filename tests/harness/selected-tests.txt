@@ -849,3 +849,4 @@ t7519-status-fsmonitor.sh
 t7520-ignored-hook-warning.sh
 t7526-commit-pathspec-file.sh
 t7527-builtin-fsmonitor.sh
+t7528-signed-commit-ssh.sh
