@@ -973,3 +973,8 @@ t9910-tag-pattern-glob.sh
 t9920-commit-tree-author-env.sh
 test-lib.sh
 t3907-stash-show-config.sh
+t3902-quoted.sh
+t3422-rebase-incompatible-options.sh
+t3438-rebase-broken-files.sh
+t3433-rebase-across-mode-change.sh
+t3503-cherry-pick-root.sh
