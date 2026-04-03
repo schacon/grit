@@ -52,6 +52,8 @@ struct Options {
     pathspecs: Vec<String>,
     /// Recurse into sub-trees (`-r`).
     recursive: bool,
+    /// Show tree entries alongside blob entries (`-t`, implies `-r`).
+    show_tree: bool,
     /// Show root commit as diff against empty tree (`--root`).
     root: bool,
     /// Read OIDs from stdin (`--stdin`).
@@ -82,6 +84,7 @@ impl Default for Options {
             objects: Vec::new(),
             pathspecs: Vec::new(),
             recursive: false,
+            show_tree: false,
             root: false,
             stdin_mode: false,
             no_commit_id: false,
@@ -115,7 +118,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
                 "-r" => opts.recursive = true,
-                "-t" => opts.recursive = true, // -t implies -r
+                "-t" => { opts.recursive = true; opts.show_tree = true; }
                 "--root" => opts.root = true,
                 "--stdin" => opts.stdin_mode = true,
                 "--no-commit-id" => opts.no_commit_id = true,
@@ -235,7 +238,7 @@ pub fn run(args: Args) -> Result<()> {
 fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<()> {
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
-    let entries = diff_maybe_recursive(&repo.odb, Some(&oid1), Some(&oid2), opts.recursive)?;
+    let entries = diff_maybe_recursive(&repo.odb, Some(&oid1), Some(&oid2), opts.recursive, opts.show_tree)?;
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
     print_diff(out, &repo.odb, &filtered, opts)
 }
@@ -254,7 +257,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
             if commit.parents.is_empty() {
                 if opts.root {
                     let entries =
-                        diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive)?;
+                        diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_tree)?;
                     let filtered = filter_pathspecs(entries, &opts.pathspecs);
                     print_diff(out, &repo.odb, &filtered, opts)?;
                 }
@@ -265,7 +268,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     &repo.odb,
                     Some(&parent_tree),
                     Some(&commit.tree),
-                    opts.recursive,
+                    opts.recursive, opts.show_tree,
                 )?;
                 let filtered = filter_pathspecs(entries, &opts.pathspecs);
                 print_diff(out, &repo.odb, &filtered, opts)?;
@@ -377,7 +380,7 @@ fn process_stdin_commit(
     if parent_oids.is_empty() {
         if opts.root {
             let entries =
-                diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive)?;
+                diff_maybe_recursive(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_tree)?;
             let filtered = filter_pathspecs(entries, &opts.pathspecs);
             print_diff(out, &repo.odb, &filtered, opts)?;
         }
@@ -387,7 +390,7 @@ fn process_stdin_commit(
             &repo.odb,
             Some(&parent_tree),
             Some(&commit.tree),
-            opts.recursive,
+            opts.recursive, opts.show_tree,
         )?;
         let filtered = filter_pathspecs(entries, &opts.pathspecs);
         print_diff(out, &repo.odb, &filtered, opts)?;
@@ -415,7 +418,7 @@ fn process_stdin_two_trees(
     // Print both tree OIDs.
     writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
 
-    let entries = diff_maybe_recursive(&repo.odb, Some(oid1), Some(&oid2), opts.recursive)?;
+    let entries = diff_maybe_recursive(&repo.odb, Some(oid1), Some(&oid2), opts.recursive, opts.show_tree)?;
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
     print_diff(out, &repo.odb, &filtered, opts)
 }
@@ -428,12 +431,228 @@ fn diff_maybe_recursive(
     old_tree: Option<&ObjectId>,
     new_tree: Option<&ObjectId>,
     recursive: bool,
+    show_tree: bool,
 ) -> Result<Vec<DiffEntry>> {
-    if recursive {
+    if show_tree {
+        diff_trees_with_tree_entries(odb, old_tree, new_tree, "")
+    } else if recursive {
         diff_trees(odb, old_tree, new_tree, "").map_err(Into::into)
     } else {
         diff_trees_toplevel(odb, old_tree, new_tree)
     }
+}
+
+/// Recursive diff that also emits tree (directory) entries (`-t` flag).
+///
+/// For each tree that differs (added, deleted, or modified), a DiffEntry
+/// with mode 040000 is emitted *before* the recursive contents.
+fn diff_trees_with_tree_entries(
+    odb: &Odb,
+    old_tree_oid: Option<&ObjectId>,
+    new_tree_oid: Option<&ObjectId>,
+    prefix: &str,
+) -> Result<Vec<DiffEntry>> {
+    use grit_lib::objects::parse_tree;
+    let zero = grit_lib::diff::zero_oid();
+
+    let old_entries = match old_tree_oid {
+        Some(oid) => {
+            let obj = odb.read(oid).context("reading old tree")?;
+            parse_tree(&obj.data).context("parsing old tree")?
+        }
+        None => Vec::new(),
+    };
+    let new_entries = match new_tree_oid {
+        Some(oid) => {
+            let obj = odb.read(oid).context("reading new tree")?;
+            parse_tree(&obj.data).context("parsing new tree")?
+        }
+        None => Vec::new(),
+    };
+
+    let mut result = Vec::new();
+    let mut oi = 0usize;
+    let mut ni = 0usize;
+    let is_tree = |mode: u32| mode == 0o040000;
+    let fmt_mode = |mode: u32| format!("{:06o}", mode);
+    let mk_path = |name: &[u8]| -> String {
+        let n = String::from_utf8_lossy(name);
+        if prefix.is_empty() { n.into_owned() } else { format!("{prefix}/{n}") }
+    };
+
+    while oi < old_entries.len() || ni < new_entries.len() {
+        match (old_entries.get(oi), new_entries.get(ni)) {
+            (Some(o), Some(n)) => {
+                let cmp = grit_lib::objects::tree_entry_cmp(
+                    &o.name, is_tree(o.mode), &n.name, is_tree(n.mode),
+                );
+                match cmp {
+                    std::cmp::Ordering::Less => {
+                        let path = mk_path(&o.name);
+                        if is_tree(o.mode) {
+                            result.push(DiffEntry {
+                                status: DiffStatus::Deleted,
+                                old_path: Some(path.clone()), new_path: None,
+                                old_mode: fmt_mode(o.mode), new_mode: "000000".into(),
+                                old_oid: o.oid, new_oid: zero,
+                                score: None,
+                            });
+                            let sub = diff_trees_with_tree_entries(odb, Some(&o.oid), None, &path)?;
+                            result.extend(sub);
+                        } else {
+                            result.push(DiffEntry {
+                                status: DiffStatus::Deleted,
+                                old_path: Some(path), new_path: None,
+                                old_mode: fmt_mode(o.mode), new_mode: "000000".into(),
+                                old_oid: o.oid, new_oid: zero,
+                                score: None,
+                            });
+                        }
+                        oi += 1;
+                    }
+                    std::cmp::Ordering::Greater => {
+                        let path = mk_path(&n.name);
+                        if is_tree(n.mode) {
+                            result.push(DiffEntry {
+                                status: DiffStatus::Added,
+                                old_path: None, new_path: Some(path.clone()),
+                                old_mode: "000000".into(), new_mode: fmt_mode(n.mode),
+                                old_oid: zero, new_oid: n.oid,
+                                score: None,
+                            });
+                            let sub = diff_trees_with_tree_entries(odb, None, Some(&n.oid), &path)?;
+                            result.extend(sub);
+                        } else {
+                            result.push(DiffEntry {
+                                status: DiffStatus::Added,
+                                old_path: None, new_path: Some(path),
+                                old_mode: "000000".into(), new_mode: fmt_mode(n.mode),
+                                old_oid: zero, new_oid: n.oid,
+                                score: None,
+                            });
+                        }
+                        ni += 1;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        if o.oid != n.oid || o.mode != n.mode {
+                            let path = mk_path(&o.name);
+                            if is_tree(o.mode) && is_tree(n.mode) {
+                                // Both trees, modified
+                                result.push(DiffEntry {
+                                    status: DiffStatus::Modified,
+                                    old_path: Some(path.clone()), new_path: Some(path.clone()),
+                                    old_mode: fmt_mode(o.mode), new_mode: fmt_mode(n.mode),
+                                    old_oid: o.oid, new_oid: n.oid,
+                                    score: None,
+                                });
+                                let sub = diff_trees_with_tree_entries(odb, Some(&o.oid), Some(&n.oid), &path)?;
+                                result.extend(sub);
+                            } else if is_tree(o.mode) && !is_tree(n.mode) {
+                                // tree → blob
+                                result.push(DiffEntry {
+                                    status: DiffStatus::Deleted,
+                                    old_path: Some(path.clone()), new_path: None,
+                                    old_mode: fmt_mode(o.mode), new_mode: "000000".into(),
+                                    old_oid: o.oid, new_oid: zero,
+                                    score: None,
+                                });
+                                let sub = diff_trees_with_tree_entries(odb, Some(&o.oid), None, &path)?;
+                                result.extend(sub);
+                                result.push(DiffEntry {
+                                    status: DiffStatus::Added,
+                                    old_path: None, new_path: Some(path),
+                                    old_mode: "000000".into(), new_mode: fmt_mode(n.mode),
+                                    old_oid: zero, new_oid: n.oid,
+                                    score: None,
+                                });
+                            } else if !is_tree(o.mode) && is_tree(n.mode) {
+                                // blob → tree
+                                result.push(DiffEntry {
+                                    status: DiffStatus::Deleted,
+                                    old_path: Some(path.clone()), new_path: None,
+                                    old_mode: fmt_mode(o.mode), new_mode: "000000".into(),
+                                    old_oid: o.oid, new_oid: zero,
+                                    score: None,
+                                });
+                                result.push(DiffEntry {
+                                    status: DiffStatus::Added,
+                                    old_path: None, new_path: Some(path.clone()),
+                                    old_mode: "000000".into(), new_mode: fmt_mode(n.mode),
+                                    old_oid: zero, new_oid: n.oid,
+                                    score: None,
+                                });
+                                let sub = diff_trees_with_tree_entries(odb, None, Some(&n.oid), &path)?;
+                                result.extend(sub);
+                            } else {
+                                // Both blobs, modified
+                                result.push(DiffEntry {
+                                    status: if o.mode != n.mode && o.oid == n.oid {
+                                        DiffStatus::TypeChanged
+                                    } else {
+                                        DiffStatus::Modified
+                                    },
+                                    old_path: Some(path.clone()), new_path: Some(path),
+                                    old_mode: fmt_mode(o.mode), new_mode: fmt_mode(n.mode),
+                                    old_oid: o.oid, new_oid: n.oid,
+                                    score: None,
+                                });
+                            }
+                        }
+                        oi += 1;
+                        ni += 1;
+                    }
+                }
+            }
+            (Some(o), None) => {
+                let path = mk_path(&o.name);
+                if is_tree(o.mode) {
+                    result.push(DiffEntry {
+                        status: DiffStatus::Deleted,
+                        old_path: Some(path.clone()), new_path: None,
+                        old_mode: fmt_mode(o.mode), new_mode: "000000".into(),
+                        old_oid: o.oid, new_oid: zero,
+                        score: None,
+                    });
+                    let sub = diff_trees_with_tree_entries(odb, Some(&o.oid), None, &path)?;
+                    result.extend(sub);
+                } else {
+                    result.push(DiffEntry {
+                        status: DiffStatus::Deleted,
+                        old_path: Some(path), new_path: None,
+                        old_mode: fmt_mode(o.mode), new_mode: "000000".into(),
+                        old_oid: o.oid, new_oid: zero,
+                        score: None,
+                    });
+                }
+                oi += 1;
+            }
+            (None, Some(n)) => {
+                let path = mk_path(&n.name);
+                if is_tree(n.mode) {
+                    result.push(DiffEntry {
+                        status: DiffStatus::Added,
+                        old_path: None, new_path: Some(path.clone()),
+                        old_mode: "000000".into(), new_mode: fmt_mode(n.mode),
+                        old_oid: zero, new_oid: n.oid,
+                        score: None,
+                    });
+                    let sub = diff_trees_with_tree_entries(odb, None, Some(&n.oid), &path)?;
+                    result.extend(sub);
+                } else {
+                    result.push(DiffEntry {
+                        status: DiffStatus::Added,
+                        old_path: None, new_path: Some(path),
+                        old_mode: "000000".into(), new_mode: fmt_mode(n.mode),
+                        old_oid: zero, new_oid: n.oid,
+                        score: None,
+                    });
+                }
+                ni += 1;
+            }
+            (None, None) => break,
+        }
+    }
+    Ok(result)
 }
 
 /// Non-recursive tree diff: only top-level entries.
