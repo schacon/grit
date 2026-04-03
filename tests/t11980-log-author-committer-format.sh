@@ -16,25 +16,25 @@ test_expect_success 'setup' '
 
 test_expect_success 'format %an shows author name' '
     (cd repo && grit log -n1 --format="%an" >../actual) &&
-    echo "T" >expect &&
+    echo "A U Thor" >expect &&
     test_cmp expect actual
 '
 
 test_expect_success 'format %ae shows author email' '
     (cd repo && grit log -n1 --format="%ae" >../actual) &&
-    echo "t@t.com" >expect &&
+    echo "author@example.com" >expect &&
     test_cmp expect actual
 '
 
 test_expect_success 'format %cn shows committer name' '
     (cd repo && grit log -n1 --format="%cn" >../actual) &&
-    echo "T" >expect &&
+    echo "C O Mitter" >expect &&
     test_cmp expect actual
 '
 
 test_expect_success 'format %ce shows committer email' '
     (cd repo && grit log -n1 --format="%ce" >../actual) &&
-    echo "t@t.com" >expect &&
+    echo "committer@example.com" >expect &&
     test_cmp expect actual
 '
 
@@ -174,7 +174,7 @@ test_expect_success 'multi-line format with author and committer' '
 
 test_expect_success 'format over multiple commits' '
     (cd repo && grit log --format="%an" >../actual) &&
-    printf "Alice\nT\n" >expect &&
+    printf "Alice\nA U Thor\n" >expect &&
     test_cmp expect actual
 '
 
@@ -196,13 +196,13 @@ test_expect_success 'setup third commit with yet another author' '
 
 test_expect_success 'format author names across three commits' '
     (cd repo && grit log --format="%an" >../actual) &&
-    printf "Charlie\nAlice\nT\n" >expect &&
+    printf "Charlie\nAlice\nA U Thor\n" >expect &&
     test_cmp expect actual
 '
 
 test_expect_success 'format committer names across three commits' '
     (cd repo && grit log --format="%cn" >../actual) &&
-    printf "Charlie\nBob\nT\n" >expect &&
+    printf "Charlie\nBob\nC O Mitter\n" >expect &&
     test_cmp expect actual
 '
 
@@ -214,13 +214,13 @@ test_expect_success 'format with -n2 shows only two commits' '
 
 test_expect_success 'format with --skip=1 skips first commit' '
     (cd repo && grit log --skip=1 --format="%an" >../actual) &&
-    printf "Alice\nT\n" >expect &&
+    printf "Alice\nA U Thor\n" >expect &&
     test_cmp expect actual
 '
 
 test_expect_success 'format with --reverse shows oldest first' '
     (cd repo && grit log --reverse --format="%an" >../actual) &&
-    printf "T\nAlice\nCharlie\n" >expect &&
+    printf "A U Thor\nAlice\nCharlie\n" >expect &&
     test_cmp expect actual
 '
 
