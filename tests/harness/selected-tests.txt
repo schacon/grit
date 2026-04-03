@@ -846,3 +846,4 @@ t3425-rebase-topology-merges.sh
 t3427-rebase-subtree.sh
 t3428-rebase-signoff.sh
 t3429-rebase-edit-todo.sh
+t3430-rebase-merges.sh
