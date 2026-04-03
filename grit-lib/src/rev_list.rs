@@ -27,6 +27,126 @@ pub enum OutputMode {
     Format(String),
 }
 
+/// Object filter specification for `--filter=`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObjectFilter {
+    /// `blob:none` — omit all blobs.
+    BlobNone,
+    /// `blob:limit=<n>` — omit blobs larger than `n` bytes.
+    BlobLimit(u64),
+    /// `tree:<depth>` — omit trees deeper than `depth`.
+    TreeDepth(u64),
+    /// `combine:<filter>+<filter>+…` — apply multiple filters.
+    Combine(Vec<ObjectFilter>),
+}
+
+impl ObjectFilter {
+    /// Parse a `--filter=<spec>` value.
+    pub fn parse(spec: &str) -> std::result::Result<Self, String> {
+        if spec == "blob:none" {
+            return Ok(ObjectFilter::BlobNone);
+        }
+        if let Some(rest) = spec.strip_prefix("blob:limit=") {
+            let bytes = parse_size_suffix(rest)
+                .ok_or_else(|| format!("invalid blob:limit value: {rest}"))?;
+            return Ok(ObjectFilter::BlobLimit(bytes));
+        }
+        if let Some(rest) = spec.strip_prefix("tree:") {
+            let depth: u64 = rest
+                .parse()
+                .map_err(|_| format!("invalid tree depth: {rest}"))?;
+            return Ok(ObjectFilter::TreeDepth(depth));
+        }
+        if let Some(rest) = spec.strip_prefix("combine:") {
+            let parts = split_combine(rest);
+            let mut filters = Vec::new();
+            for part in parts {
+                filters.push(ObjectFilter::parse(&part)?);
+            }
+            return Ok(ObjectFilter::Combine(filters));
+        }
+        Err(format!("unsupported filter spec: {spec}"))
+    }
+
+    /// Check if a blob should be included given its size.
+    pub fn includes_blob(&self, size: u64) -> bool {
+        match self {
+            ObjectFilter::BlobNone => false,
+            ObjectFilter::BlobLimit(limit) => size <= *limit,
+            ObjectFilter::TreeDepth(_) => true,
+            ObjectFilter::Combine(filters) => {
+                filters.iter().all(|f| f.includes_blob(size))
+            }
+        }
+    }
+
+    /// Check if a tree at given depth should be included.
+    pub fn includes_tree(&self, depth: u64) -> bool {
+        match self {
+            ObjectFilter::BlobNone => true,
+            ObjectFilter::BlobLimit(_) => true,
+            ObjectFilter::TreeDepth(max_depth) => depth < *max_depth,
+            ObjectFilter::Combine(filters) => {
+                filters.iter().all(|f| f.includes_tree(depth))
+            }
+        }
+    }
+}
+
+/// Parse a size with optional k/m/g suffix.
+fn parse_size_suffix(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (num_str, multiplier) = match s.as_bytes().last()? {
+        b'k' | b'K' => (&s[..s.len() - 1], 1024u64),
+        b'm' | b'M' => (&s[..s.len() - 1], 1024 * 1024),
+        b'g' | b'G' => (&s[..s.len() - 1], 1024 * 1024 * 1024),
+        _ => (s, 1u64),
+    };
+    let num: u64 = num_str.parse().ok()?;
+    Some(num * multiplier)
+}
+
+/// Split a combine filter spec on `+`, handling URL encoding.
+fn split_combine(spec: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut chars = spec.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '+' {
+            if !current.is_empty() {
+                parts.push(url_decode(&current));
+                current.clear();
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        parts.push(url_decode(&current));
+    }
+    parts
+}
+
+/// Simple URL percent-decoding.
+fn url_decode(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            let hi = chars.next().unwrap_or('0');
+            let lo = chars.next().unwrap_or('0');
+            let byte = u8::from_str_radix(&format!("{hi}{lo}"), 16).unwrap_or(b'?');
+            result.push(byte as char);
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 /// Ordering mode for commit output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderingMode {
@@ -95,6 +215,10 @@ pub struct RevListOptions {
     pub full_history: bool,
     /// Sparse mode: don't prune non-matching commits.
     pub sparse: bool,
+    /// Object filter for `--filter=<spec>`.
+    pub filter: Option<ObjectFilter>,
+    /// Print omitted objects prefixed with `~`.
+    pub filter_print_omitted: bool,
 }
 
 impl Default for RevListOptions {
@@ -127,6 +251,8 @@ impl Default for RevListOptions {
             paths: Vec::new(),
             full_history: false,
             sparse: false,
+            filter: None,
+            filter_print_omitted: false,
         }
     }
 }
@@ -139,6 +265,8 @@ pub struct RevListResult {
     /// Reachable non-commit objects when `--objects` is active.
     /// Each entry is `(oid, optional_path)`.
     pub objects: Vec<(ObjectId, String)>,
+    /// Objects omitted by `--filter` (for `--filter-print-omitted`).
+    pub omitted_objects: Vec<ObjectId>,
     /// Boundary commits (excluded parents shown with `-` prefix).
     pub boundary_commits: Vec<ObjectId>,
     /// For `--left-right`: mapping commit OID -> true=left, false=right.
@@ -294,15 +422,16 @@ pub fn rev_list(
     }
 
     // Collect reachable objects if --objects
-    let objects = if options.objects {
-        collect_reachable_objects(repo, &mut graph, &ordered)?
+    let (objects, omitted_objects) = if options.objects {
+        collect_reachable_objects(repo, &mut graph, &ordered, options.filter.as_ref())?
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
 
     Ok(RevListResult {
         commits: ordered,
         objects,
+        omitted_objects,
         boundary_commits: Vec::new(),
         left_right_map,
         cherry_equivalent,
@@ -745,33 +874,47 @@ pub fn split_symmetric_diff(token: &str) -> Option<(String, String)> {
 }
 
 /// Collect all reachable non-commit objects (trees and blobs) from a set of commits.
+/// Returns (included, omitted) object lists.
 #[allow(dead_code)]
 fn collect_reachable_objects(
     repo: &Repository,
     _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
-) -> Result<Vec<(ObjectId, String)>> {
+    filter: Option<&ObjectFilter>,
+) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>)> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
+    let mut omitted = Vec::new();
     for &commit_oid in commits {
         let commit = load_commit(repo, commit_oid)?;
-        collect_tree_objects(repo, commit.tree, "", &mut seen, &mut result)?;
+        collect_tree_objects_filtered(
+            repo, commit.tree, "", 0, &mut seen, &mut result, &mut omitted, filter,
+        )?;
     }
-    Ok(result)
+    Ok((result, omitted))
 }
 
 #[allow(dead_code)]
-fn collect_tree_objects(
+fn collect_tree_objects_filtered(
     repo: &Repository,
     tree_oid: ObjectId,
     prefix: &str,
+    depth: u64,
     seen: &mut HashSet<ObjectId>,
     result: &mut Vec<(ObjectId, String)>,
+    omitted: &mut Vec<ObjectId>,
+    filter: Option<&ObjectFilter>,
 ) -> Result<()> {
     if !seen.insert(tree_oid) {
         return Ok(());
     }
-    result.push((tree_oid, prefix.to_owned()));
+    // Check if this tree passes the filter
+    let tree_included = filter.map_or(true, |f| f.includes_tree(depth));
+    if tree_included {
+        result.push((tree_oid, prefix.to_owned()));
+    } else {
+        omitted.push(tree_oid);
+    }
     let object = repo.odb.read(&tree_oid)?;
     if object.kind != ObjectKind::Tree {
         return Ok(());
@@ -790,12 +933,29 @@ fn collect_tree_objects(
         let child_obj = repo.odb.read(&entry.oid)?;
         match child_obj.kind {
             ObjectKind::Tree => {
-                result.push((entry.oid, path.clone()));
+                // Recurse into subtrees; the filter check happens at the recursive call
                 seen.remove(&entry.oid);
-                collect_tree_objects(repo, entry.oid, &path, seen, result)?;
+                collect_tree_objects_filtered(
+                    repo,
+                    entry.oid,
+                    &path,
+                    depth + 1,
+                    seen,
+                    result,
+                    omitted,
+                    filter,
+                )?;
             }
             _ => {
-                result.push((entry.oid, path));
+                // Blob: check filter
+                let blob_included = filter.map_or(true, |f| {
+                    f.includes_blob(child_obj.data.len() as u64)
+                });
+                if blob_included {
+                    result.push((entry.oid, path));
+                } else {
+                    omitted.push(entry.oid);
+                }
             }
         }
     }

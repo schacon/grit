@@ -71,26 +71,26 @@ test_expect_success 'rev-list --objects --all' '
 '
 
 # --filter tests (all unsupported in grit)
-test_expect_failure 'rev-list --filter=blob:none omits blobs' '
+test_expect_success 'rev-list --filter=blob:none omits blobs' '
 	git rev-list --objects --filter=blob:none HEAD >actual &&
 	# Should list commits and trees but no blobs
 	! grep "small.txt" actual &&
 	! grep "large.bin" actual
 '
 
-test_expect_failure 'rev-list --filter=blob:none still lists commits' '
+test_expect_success 'rev-list --filter=blob:none still lists commits' '
 	git rev-list --objects --filter=blob:none HEAD >actual &&
 	COMMIT=$(git rev-parse HEAD) &&
 	grep "$COMMIT" actual
 '
 
-test_expect_failure 'rev-list --filter=tree:0 omits trees' '
+test_expect_success 'rev-list --filter=tree:0 omits trees' '
 	git rev-list --objects --filter=tree:0 HEAD >actual &&
 	# Should not list any tree objects
 	! grep "	$" actual
 '
 
-test_expect_failure 'rev-list --filter=blob:limit=100 omits large blobs' '
+test_expect_success 'rev-list --filter=blob:limit=100 omits large blobs' '
 	git rev-list --objects --filter=blob:limit=100 HEAD >actual &&
 	# large.bin is >100 bytes so should be filtered
 	! grep "large.bin" actual &&
@@ -98,29 +98,29 @@ test_expect_failure 'rev-list --filter=blob:limit=100 omits large blobs' '
 	grep "small.txt" actual
 '
 
-test_expect_failure 'rev-list --filter=blob:limit=1k keeps small files' '
+test_expect_success 'rev-list --filter=blob:limit=1k keeps small files' '
 	git rev-list --objects --filter=blob:limit=1k HEAD >actual &&
 	grep "small.txt" actual
 '
 
-test_expect_failure 'rev-list --filter=blob:limit=1k omits large files' '
+test_expect_success 'rev-list --filter=blob:limit=1k omits large files' '
 	git rev-list --objects --filter=blob:limit=1k HEAD >actual &&
 	! grep "large.bin" actual
 '
 
-test_expect_failure 'rev-list --filter=combine:blob:none+tree:0 omits both' '
+test_expect_success 'rev-list --filter=combine:blob:none+tree:0 omits both' '
 	git rev-list --objects --filter=combine:blob:none+tree:0 HEAD >actual &&
 	# Should only list commit objects
 	git rev-list HEAD >commits-only &&
 	test_line_count = $(wc -l <commits-only | tr -d " ") actual
 '
 
-test_expect_failure 'rev-list --filter with --count' '
+test_expect_success 'rev-list --filter with --count' '
 	git rev-list --filter=blob:none --count HEAD >actual &&
 	test $(cat actual) -ge 1
 '
 
-test_expect_failure 'rev-list --objects --filter=blob:none with range' '
+test_expect_success 'rev-list --objects --filter=blob:none with range' '
 	git rev-list --objects --filter=blob:none first..HEAD >actual &&
 	test $(wc -l <actual) -ge 1
 '
