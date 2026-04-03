@@ -49,12 +49,28 @@ pub struct Args {
     pub graph: bool,
 
     /// Decorate refs.
-    #[arg(long = "decorate")]
+    #[arg(long = "decorate", overrides_with = "no_decorate")]
     pub decorate: Option<Option<String>>,
 
     /// Do not decorate refs.
-    #[arg(long = "no-decorate")]
+    #[arg(long = "no-decorate", overrides_with = "decorate")]
     pub no_decorate: bool,
+
+    /// Do not walk the commit graph — show given commits only.
+    #[arg(long = "no-walk")]
+    pub no_walk: bool,
+
+    /// Show which ref led to each commit (with --all).
+    #[arg(long = "source")]
+    pub source: bool,
+
+    /// Only show commits on the ancestry path between endpoints.
+    #[arg(long = "ancestry-path")]
+    pub ancestry_path: bool,
+
+    /// Only show commits that are decorated (have refs).
+    #[arg(long = "simplify-by-decoration")]
+    pub simplify_by_decoration: bool,
 
     /// Skip this many commits.
     #[arg(long = "skip")]
@@ -116,10 +132,6 @@ pub struct Args {
     #[arg(long = "all")]
     pub all: bool,
 
-    /// Show which ref led to each commit.
-    #[arg(long = "source")]
-    pub source: bool,
-
     /// Follow file renames (single file only).
     #[arg(long = "follow")]
     pub follow: bool,
@@ -142,6 +154,11 @@ pub fn run(args: Args) -> Result<()> {
         return run_reflog_walk(&repo, &args);
     }
 
+    // Handle --no-walk: show given commits without walking parents
+    if args.no_walk {
+        return run_no_walk(&repo, &args);
+    }
+
     // Determine starting points
     let start_oids = if args.all {
         collect_all_ref_oids(&repo.git_dir)?
@@ -158,6 +175,13 @@ pub fn run(args: Args) -> Result<()> {
             oids.push(oid);
         }
         oids
+    };
+
+    // Build source map for --source
+    let source_map: std::collections::HashMap<ObjectId, String> = if args.source && args.all {
+        build_source_map(&repo.odb, &repo.git_dir, args.first_parent)?
+    } else {
+        std::collections::HashMap::new()
     };
 
     // Compile filter regexes
@@ -233,6 +257,21 @@ pub fn run(args: Args) -> Result<()> {
         commits
     };
 
+    // Apply --simplify-by-decoration: only show commits with decorations
+    let commits = if args.simplify_by_decoration {
+        match &decorations {
+            Some(dec_map) => {
+                commits
+                    .into_iter()
+                    .filter(|(oid, _)| dec_map.contains_key(&oid.to_hex()))
+                    .collect::<Vec<_>>()
+            }
+            None => commits,
+        }
+    } else {
+        commits
+    };
+
     let commits = if args.reverse {
         commits.into_iter().rev().collect::<Vec<_>>()
     } else {
@@ -255,10 +294,95 @@ pub fn run(args: Args) -> Result<()> {
         if is_format_separator && i > 0 {
             writeln!(out)?;
         }
+        // Show --source annotation if available
+        if args.source {
+            if let Some(src) = source_map.get(oid) {
+                let short_src = src
+                    .strip_prefix("refs/heads/")
+                    .or_else(|| src.strip_prefix("refs/tags/"))
+                    .or_else(|| src.strip_prefix("refs/remotes/"))
+                    .unwrap_or(src);
+                write!(out, "{}\t", short_src)?;
+            }
+        }
         format_commit(&mut out, oid, commit_data, &args, decorations.as_ref())?;
 
         if show_diff {
             write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Run `--no-walk` mode: show the given commits without walking their parents.
+fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
+    let mut oids = Vec::new();
+    if args.revisions.is_empty() {
+        let head = resolve_head(&repo.git_dir)?;
+        if let Some(oid) = head.oid() {
+            oids.push(*oid);
+        }
+    } else {
+        for rev in &args.revisions {
+            let oid = resolve_revision(repo, rev)?;
+            oids.push(oid);
+        }
+    }
+
+    let decorate_full = match &args.decorate {
+        Some(Some(s)) if s == "full" => true,
+        _ => false,
+    };
+    let decorations = if args.no_decorate {
+        None
+    } else {
+        Some(collect_decorations(repo, decorate_full)?)
+    };
+
+    let mut commits = Vec::new();
+    for oid in oids {
+        let obj = repo.odb.read(&oid)?;
+        let commit = parse_commit(&obj.data)?;
+        let info = CommitInfo {
+            tree: commit.tree,
+            parents: commit.parents.clone(),
+            author: commit.author.clone(),
+            committer: commit.committer.clone(),
+            message: commit.message.clone(),
+        };
+        commits.push((oid, info));
+    }
+
+    // Sort by committer timestamp descending (same as regular log)
+    commits.sort_by(|a, b| {
+        let ts_a = extract_timestamp(&a.1.committer);
+        let ts_b = extract_timestamp(&b.1.committer);
+        ts_b.cmp(&ts_a)
+    });
+
+    if args.reverse {
+        commits.reverse();
+    }
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    let is_format_separator = args
+        .format
+        .as_deref()
+        .map(|f| f.starts_with("format:"))
+        .unwrap_or(false);
+
+    let show_diff = args.patch || args.patch_u || args.stat || args.name_only || args.name_status || args.raw;
+
+    for (i, (oid, commit_data)) in commits.iter().enumerate() {
+        if is_format_separator && i > 0 {
+            writeln!(out)?;
+        }
+        format_commit(&mut out, oid, commit_data, args, decorations.as_ref())?;
+        if show_diff {
+            write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
         }
     }
 
@@ -770,6 +894,11 @@ fn apply_format_string(
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.author, date_format));
                         }
+                        Some('t') => {
+                            chars.next();
+                            // %at — author timestamp (unix)
+                            result.push_str(&format!("{}", extract_timestamp(&info.author)));
+                        }
                         Some('i') => {
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.author, Some("iso")));
@@ -777,6 +906,11 @@ fn apply_format_string(
                         Some('I') => {
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.author, Some("iso-strict")));
+                        }
+                        Some('r') => {
+                            chars.next();
+                            // %ar — author relative date
+                            result.push_str(&format_date_with_mode(&info.author, Some("relative")));
                         }
                         _ => result.push_str("%a"),
                     }
@@ -796,6 +930,11 @@ fn apply_format_string(
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.committer, date_format));
                         }
+                        Some('t') => {
+                            chars.next();
+                            // %ct — committer timestamp (unix)
+                            result.push_str(&format!("{}", extract_timestamp(&info.committer)));
+                        }
                         Some('i') => {
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.committer, Some("iso")));
@@ -803,6 +942,11 @@ fn apply_format_string(
                         Some('I') => {
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.committer, Some("iso-strict")));
+                        }
+                        Some('r') => {
+                            chars.next();
+                            // %cr — committer relative date
+                            result.push_str(&format_date_with_mode(&info.committer, Some("relative")));
                         }
                         _ => result.push_str("%c"),
                     }
@@ -969,19 +1113,107 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
         Some("raw") => {
             format!("{ts} {offset_str}")
         }
-        _ => {
-            // Default Git date format
-            let dt = time::OffsetDateTime::from_unix_timestamp(ts)
-                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-            let format = time::format_description::parse(
-                "[weekday repr:short] [month repr:short] [day] [hour]:[minute]:[second] [year]",
-            );
-            if let Ok(fmt) = format {
-                if let Ok(formatted) = dt.format(&fmt) {
-                    return format!("{formatted} {offset_str}");
-                }
+        Some("relative") => {
+            // Show relative time like "2 hours ago", "3 days ago"
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let diff = now - ts;
+            if diff < 0 {
+                "in the future".to_owned()
+            } else if diff < 60 {
+                format!("{} seconds ago", diff)
+            } else if diff < 3600 {
+                let m = diff / 60;
+                if m == 1 { "1 minute ago".to_owned() } else { format!("{m} minutes ago") }
+            } else if diff < 86400 {
+                let h = diff / 3600;
+                if h == 1 { "1 hour ago".to_owned() } else { format!("{h} hours ago") }
+            } else if diff < 86400 * 30 {
+                let d = diff / 86400;
+                if d == 1 { "1 day ago".to_owned() } else { format!("{d} days ago") }
+            } else if diff < 86400 * 365 {
+                let months = diff / (86400 * 30);
+                if months == 1 { "1 month ago".to_owned() } else { format!("{months} months ago") }
+            } else {
+                let years = diff / (86400 * 365);
+                if years == 1 { "1 year ago".to_owned() } else { format!("{years} years ago") }
             }
-            format!("{ts_str} {offset_str}")
+        }
+        Some("rfc") | Some("rfc2822") => {
+            // RFC 2822: Thu, 07 Apr 2005 22:13:13 +0200
+            let adjusted = ts + tz_offset_secs;
+            let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+            let weekday = match dt.weekday() {
+                time::Weekday::Monday => "Mon",
+                time::Weekday::Tuesday => "Tue",
+                time::Weekday::Wednesday => "Wed",
+                time::Weekday::Thursday => "Thu",
+                time::Weekday::Friday => "Fri",
+                time::Weekday::Saturday => "Sat",
+                time::Weekday::Sunday => "Sun",
+            };
+            let month = match dt.month() {
+                time::Month::January => "Jan",
+                time::Month::February => "Feb",
+                time::Month::March => "Mar",
+                time::Month::April => "Apr",
+                time::Month::May => "May",
+                time::Month::June => "Jun",
+                time::Month::July => "Jul",
+                time::Month::August => "Aug",
+                time::Month::September => "Sep",
+                time::Month::October => "Oct",
+                time::Month::November => "Nov",
+                time::Month::December => "Dec",
+            };
+            format!(
+                "{}, {} {} {} {:02}:{:02}:{:02} {}",
+                weekday, dt.day(), month, dt.year(),
+                dt.hour(), dt.minute(), dt.second(),
+                offset_str
+            )
+        }
+        Some("unix") => {
+            format!("{ts}")
+        }
+        _ => {
+            // Default Git date format: "Thu Apr  7 15:13:13 2005 -0700"
+            // Note: day is right-justified in a 2-char field (space-padded)
+            let adjusted = ts + tz_offset_secs;
+            let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+            let weekday = match dt.weekday() {
+                time::Weekday::Monday => "Mon",
+                time::Weekday::Tuesday => "Tue",
+                time::Weekday::Wednesday => "Wed",
+                time::Weekday::Thursday => "Thu",
+                time::Weekday::Friday => "Fri",
+                time::Weekday::Saturday => "Sat",
+                time::Weekday::Sunday => "Sun",
+            };
+            let month = match dt.month() {
+                time::Month::January => "Jan",
+                time::Month::February => "Feb",
+                time::Month::March => "Mar",
+                time::Month::April => "Apr",
+                time::Month::May => "May",
+                time::Month::June => "Jun",
+                time::Month::July => "Jul",
+                time::Month::August => "Aug",
+                time::Month::September => "Sep",
+                time::Month::October => "Oct",
+                time::Month::November => "Nov",
+                time::Month::December => "Dec",
+            };
+            format!(
+                "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
+                weekday, month, dt.day(),
+                dt.hour(), dt.minute(), dt.second(),
+                dt.year(), offset_str
+            )
         }
     }
 }
@@ -1020,11 +1252,11 @@ fn collect_decorations(
     }
 
     if full {
-        collect_refs_from_dir(&repo.git_dir.join("refs/heads"), "refs/heads/", "refs/heads/", &mut map)?;
-        collect_refs_from_dir(&repo.git_dir.join("refs/tags"), "refs/tags/", "tag: refs/tags/", &mut map)?;
+        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/heads"), "refs/heads/", "refs/heads/", &mut map)?;
+        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/tags"), "refs/tags/", "tag: refs/tags/", &mut map)?;
     } else {
-        collect_refs_from_dir(&repo.git_dir.join("refs/heads"), "refs/heads/", "", &mut map)?;
-        collect_refs_from_dir(&repo.git_dir.join("refs/tags"), "refs/tags/", "tag: ", &mut map)?;
+        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/heads"), "refs/heads/", "", &mut map)?;
+        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/tags"), "refs/tags/", "tag: ", &mut map)?;
     }
 
     Ok(map)
@@ -1032,6 +1264,7 @@ fn collect_decorations(
 
 /// Recursively collect refs from a directory.
 fn collect_refs_from_dir(
+    odb: &Odb,
     dir: &std::path::Path,
     strip_prefix: &str,
     display_prefix: &str,
@@ -1046,20 +1279,46 @@ fn collect_refs_from_dir(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_refs_from_dir(&path, strip_prefix, display_prefix, map)?;
+            collect_refs_from_dir(odb, &path, strip_prefix, display_prefix, map)?;
         } else if let Ok(content) = std::fs::read_to_string(&path) {
             let hex = content.trim();
             let full_ref = path.to_string_lossy();
-            // Extract the ref name after the git_dir prefix
             if let Some(idx) = full_ref.find(strip_prefix) {
                 let name = &full_ref[idx + strip_prefix.len()..];
                 let label = format!("{display_prefix}{name}");
-                map.entry(hex.to_owned()).or_default().push(label);
+                // Dereference annotated tags to the commit they point at
+                let resolved_hex = if display_prefix.contains("tag") {
+                    peel_to_commit_hex(odb, hex).unwrap_or_else(|| hex.to_owned())
+                } else {
+                    hex.to_owned()
+                };
+                map.entry(resolved_hex).or_default().push(label);
             }
         }
     }
 
     Ok(())
+}
+
+/// Peel an object (possibly a tag) down to a commit and return its hex.
+fn peel_to_commit_hex(odb: &Odb, hex: &str) -> Option<String> {
+    use grit_lib::objects::ObjectKind;
+    let oid: ObjectId = hex.parse().ok()?;
+    let obj = odb.read(&oid).ok()?;
+    match obj.kind {
+        ObjectKind::Commit => Some(hex.to_owned()),
+        ObjectKind::Tag => {
+            let text = std::str::from_utf8(&obj.data).ok()?;
+            for line in text.lines() {
+                if let Some(target) = line.strip_prefix("object ") {
+                    let target_hex = target.trim();
+                    return peel_to_commit_hex(odb, target_hex);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 /// Format decoration string for a commit (with parentheses).
@@ -1484,4 +1743,116 @@ fn follow_filter(
     }
 
     Ok(result)
+}
+
+/// Build a map from commit OID → source ref name for --source.
+/// For each ref, walk its commit ancestry and record the first ref that reaches each commit.
+fn build_source_map(
+    odb: &Odb,
+    git_dir: &std::path::Path,
+    first_parent: bool,
+) -> Result<std::collections::HashMap<ObjectId, String>> {
+    let mut source_map: std::collections::HashMap<ObjectId, String> = std::collections::HashMap::new();
+
+    // Collect refs with names
+    let refs = collect_all_refs_with_names(git_dir)?;
+
+    for (oid, ref_name) in &refs {
+        let mut queue = vec![*oid];
+        let mut visited = HashSet::new();
+        while let Some(commit_oid) = queue.pop() {
+            if !visited.insert(commit_oid) {
+                continue;
+            }
+            source_map.entry(commit_oid).or_insert_with(|| ref_name.clone());
+            if let Ok(obj) = odb.read(&commit_oid) {
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    if first_parent {
+                        if let Some(p) = commit.parents.first() {
+                            queue.push(*p);
+                        }
+                    } else {
+                        for p in &commit.parents {
+                            if !visited.contains(p) {
+                                queue.push(*p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(source_map)
+}
+
+/// Collect all refs with their names from the repository.
+fn collect_all_refs_with_names(
+    git_dir: &std::path::Path,
+) -> Result<Vec<(ObjectId, String)>> {
+    let mut refs = Vec::new();
+
+    // HEAD
+    let head = resolve_head(git_dir)?;
+    if let Some(oid) = head.oid() {
+        refs.push((*oid, "HEAD".to_string()));
+    }
+
+    // Loose refs
+    collect_named_refs_from_dir(git_dir, &git_dir.join("refs"), &mut refs)?;
+
+    // Packed refs
+    let packed_path = git_dir.join("packed-refs");
+    if let Ok(text) = std::fs::read_to_string(packed_path) {
+        for line in text.lines() {
+            if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = line.splitn(2, ' ').collect();
+            if parts.len() == 2 {
+                if let Ok(oid) = parts[0].parse::<ObjectId>() {
+                    refs.push((oid, parts[1].to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(refs)
+}
+
+/// Recursively collect refs with their full names from a directory.
+fn collect_named_refs_from_dir(
+    git_dir: &std::path::Path,
+    dir: &std::path::Path,
+    refs: &mut Vec<(ObjectId, String)>,
+) -> Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_named_refs_from_dir(git_dir, &path, refs)?;
+        } else if let Ok(content) = std::fs::read_to_string(&path) {
+            let raw = content.trim();
+            if raw.starts_with("ref: ") {
+                // Symbolic ref — resolve
+                let target = &raw[5..];
+                if let Ok(oid) = grit_lib::refs::resolve_ref(git_dir, target) {
+                    let full_path = path.to_string_lossy();
+                    if let Some(idx) = full_path.find("refs/") {
+                        refs.push((oid, full_path[idx..].to_string()));
+                    }
+                }
+            } else if let Ok(oid) = raw.parse::<ObjectId>() {
+                let full_path = path.to_string_lossy();
+                if let Some(idx) = full_path.find("refs/") {
+                    refs.push((oid, full_path[idx..].to_string()));
+                }
+            }
+        }
+    }
+    Ok(())
 }
