@@ -156,7 +156,9 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     let path = git_dir.join(refname);
     match fs::remove_file(&path) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            Err(Error::InvalidRef(format!("cannot delete '{refname}': not found")))
+        }
         Err(e) => Err(Error::Io(e)),
     }
 }

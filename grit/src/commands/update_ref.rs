@@ -78,6 +78,16 @@ pub fn run(args: Args) -> Result<()> {
 
     let old_oid = resolve_ref(&repo.git_dir, &target_refname).unwrap_or_else(|_| zero_oid());
 
+    // Zero OID means delete
+    if new_oid == zero_oid() {
+        run_ref_transaction_hook(&repo, &old_oid, &new_oid, &target_refname)?;
+        delete_ref(&repo.git_dir, &target_refname).context("deleting ref")?;
+        if let Some(msg) = &args.log_message {
+            let _ = append_reflog(&repo.git_dir, &target_refname, &old_oid, &new_oid, "grit <grit> 0 +0000", msg);
+        }
+        return Ok(());
+    }
+
     // Run reference-transaction hook
     run_ref_transaction_hook(&repo, &old_oid, &new_oid, &target_refname)?;
 

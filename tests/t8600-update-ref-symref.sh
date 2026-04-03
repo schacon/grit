@@ -109,7 +109,7 @@ test_expect_success 'update-ref -d with correct old value succeeds' '
 	test_must_fail grit rev-parse to-delete2 2>err
 '
 
-test_expect_failure 'update-ref -d nonexistent ref should fail' '
+test_expect_success 'update-ref -d nonexistent ref should fail' '
 	cd repo &&
 	test_must_fail grit update-ref -d refs/heads/does-not-exist 2>err
 '
@@ -264,7 +264,7 @@ test_expect_success 'update-ref -m with update' '
 # Section 6: Edge cases
 ###########################################################################
 
-test_expect_failure 'update-ref with zero OID should delete ref' '
+test_expect_success 'update-ref with zero OID should delete ref' '
 	cd repo &&
 	C1=$(cat .c1) &&
 	grit update-ref refs/heads/zero-test $C1 &&
