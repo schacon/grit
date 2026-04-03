@@ -461,11 +461,29 @@ fn write_porcelain(
 ) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
 
-    for bl in lines {
+    // Pre-compute group counts: for each position, how many consecutive lines
+    // share the same oid starting from the first occurrence in the group.
+    let mut group_counts: Vec<Option<usize>> = vec![None; lines.len()];
+    let mut i = 0;
+    while i < lines.len() {
+        let oid = lines[i].oid;
+        let start = i;
+        while i < lines.len() && lines[i].oid == oid {
+            i += 1;
+        }
+        group_counts[start] = Some(i - start);
+    }
+
+    for (idx, bl) in lines.iter().enumerate() {
         let hex = bl.oid.to_hex();
         let first = seen.insert(bl.oid);
 
-        writeln!(out, "{hex} {} {} 1", bl.orig_lineno, bl.final_lineno)?;
+        // Header line: hash orig_lineno final_lineno [group_count]
+        if let Some(count) = group_counts[idx] {
+            writeln!(out, "{hex} {} {} {count}", bl.orig_lineno, bl.final_lineno)?;
+        } else {
+            writeln!(out, "{hex} {} {}", bl.orig_lineno, bl.final_lineno)?;
+        }
 
         if first || line_porcelain {
             let commit = &commits[&bl.oid];
@@ -480,8 +498,20 @@ fn write_porcelain(
             writeln!(out, "committer-mail <{}>", committer.email)?;
             writeln!(out, "committer-time {}", committer.timestamp)?;
             writeln!(out, "committer-tz {}", committer.tz)?;
-            let summary = commit.message.lines().next().unwrap_or("");
+            // Summary: first non-blank line of the commit message
+            let summary = commit.message.lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("");
             writeln!(out, "summary {summary}")?;
+            // Previous commit (parent) if not a root commit
+            if !commit.parents.is_empty() {
+                let parent_hex = commit.parents[0].to_hex();
+                writeln!(out, "previous {parent_hex} {filename}")?;
+            }
+            // Boundary: root commit has no parents
+            if commit.parents.is_empty() {
+                writeln!(out, "boundary")?;
+            }
             writeln!(out, "filename {filename}")?;
         }
 
