@@ -855,3 +855,4 @@ t7610-mergetool.sh
 t7701-repack-unpack-unreachable.sh
 t7800-difftool.sh
 t7811-grep-open.sh
+t7812-grep-icase-non-ascii.sh
