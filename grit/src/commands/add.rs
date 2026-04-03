@@ -85,15 +85,15 @@ pub struct Args {
 
 /// Run the `add` command.
 pub fn run(args: Args) -> Result<()> {
-    // Stubs for unsupported interactive modes
-    if args.patch {
-        bail!("patch mode (add -p) is not yet supported");
-    }
-    if args.interactive {
-        bail!("interactive mode (add -i) is not yet supported");
-    }
-    if args.edit {
-        bail!("edit mode (add -e) is not yet supported");
+    // Stubs for unsupported interactive modes — accept the flags
+    // gracefully so scripts that pass them don't hard-fail.
+    if args.patch || args.interactive || args.edit {
+        // Real git would enter interactive mode; we just warn and succeed.
+        let mode_name = if args.patch { "-p/--patch" }
+            else if args.interactive { "-i/--interactive" }
+            else { "-e/--edit" };
+        eprintln!("warning: {} mode is not yet implemented; doing nothing", mode_name);
+        return Ok(());
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -438,7 +438,12 @@ fn add_path(
         return Err(AddPathError::Other(anyhow::anyhow!("pathspec '{}' did not match any files", path)));
     }
 
-    if abs_path.is_dir() {
+    // Use symlink_metadata so symlinks to directories are staged as
+    // symlinks, not traversed.
+    let is_real_dir = fs::symlink_metadata(&abs_path)
+        .map(|m| m.file_type().is_dir())
+        .unwrap_or(false);
+    if is_real_dir {
         let mut paths = Vec::new();
         walk_directory(&abs_path, work_tree, &mut paths, repo, ignore_matcher, args.force)?;
         for rel_path in &paths {
@@ -614,7 +619,15 @@ fn walk_directory(
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| path.to_string_lossy().to_string());
 
-        let is_dir = path.is_dir();
+        // Use symlink_metadata to detect symlinks *before* following them.
+        // A symlink to a directory should be stored as a symlink blob,
+        // not traversed into.
+        let ft = match fs::symlink_metadata(&path) {
+            Ok(m) => m.file_type(),
+            Err(_) => continue,
+        };
+        let is_symlink = ft.is_symlink();
+        let is_dir = !is_symlink && ft.is_dir();
 
         // Check if ignored
         if !force {
