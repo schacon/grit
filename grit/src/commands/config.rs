@@ -287,7 +287,7 @@ pub fn run(args: Args) -> Result<()> {
             all: false,
             regexp: false,
             show_names: false,
-            default: None,
+            default: args.default_value.clone(),
             url: None,
         };
         return cmd_get(&args, &get_args, git_dir.as_deref());
@@ -299,7 +299,7 @@ pub fn run(args: Args) -> Result<()> {
             all: true,
             regexp: false,
             show_names: false,
-            default: None,
+            default: args.default_value.clone(),
             url: None,
         };
         return cmd_get(&args, &get_args, git_dir.as_deref());
@@ -311,7 +311,7 @@ pub fn run(args: Args) -> Result<()> {
             all: true,
             regexp: true,
             show_names: true,
-            default: None,
+            default: args.default_value.clone(),
             url: None,
         };
         return cmd_get(&args, &get_args, git_dir.as_deref());
@@ -381,7 +381,7 @@ pub fn run(args: Args) -> Result<()> {
                 all: false,
                 regexp: false,
                 show_names: false,
-                default: None,
+                default: args.default_value.clone(),
             url: None,
             };
             cmd_get(&args, &get_args, git_dir.as_deref())
