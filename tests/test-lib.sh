@@ -94,6 +94,10 @@ setup_trash
 HOME="$TRASH_DIRECTORY"
 export HOME
 
+# Prevent tests from discovering enclosing repositories
+GIT_CEILING_DIRECTORIES="$(dirname "$TRASH_DIRECTORY")"
+export GIT_CEILING_DIRECTORIES
+
 # Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"
 then
@@ -175,6 +179,66 @@ test_might_fail () {
 
 test_set_prereq () {
 	:
+}
+
+sane_unset () {
+	while test $# -gt 0; do
+		unset "$1" 2>/dev/null
+		shift
+	done
+}
+
+test_seq () {
+	local i="$1" end="${2:-}"
+	if test -z "$end"; then
+		end=$i
+		i=1
+	fi
+	while test "$i" -le "$end"; do
+		echo "$i"
+		i=$(($i + 1))
+	done
+}
+
+test_cmp_bin () {
+	cmp "$@"
+}
+
+test_decode_color () {
+	sed \
+		-e 's/\x1b\[1m/<BOLD>/g' \
+		-e 's/\x1b\[7m/<REVERSE>/g' \
+		-e 's/\x1b\[30m/<BLACK>/g' \
+		-e 's/\x1b\[31m/<RED>/g' \
+		-e 's/\x1b\[32m/<GREEN>/g' \
+		-e 's/\x1b\[33m/<YELLOW>/g' \
+		-e 's/\x1b\[34m/<BLUE>/g' \
+		-e 's/\x1b\[35m/<MAGENTA>/g' \
+		-e 's/\x1b\[36m/<CYAN>/g' \
+		-e 's/\x1b\[m/<RESET>/g' \
+		-e 's/\x1b\[0m/<RESET>/g' \
+		-e 's/\x1b\[[0-9;]*m//g'
+}
+
+OID_REGEX='[0-9a-f]{40,}'
+export OID_REGEX
+
+nongit () {
+	local tmpdir
+	tmpdir=$(mktemp -d) &&
+	(
+		cd "$tmpdir" &&
+		GIT_CEILING_DIRECTORIES="$tmpdir" &&
+		export GIT_CEILING_DIRECTORIES &&
+		"$@"
+	)
+	local rc=$?
+	rm -rf "$tmpdir"
+	return $rc
+}
+
+test_i18ngrep () {
+	test_grep "$@"
 }
 
 # test_line_count OP N FILE — assert wc -l $FILE $OP $N (e.g., = 1)
