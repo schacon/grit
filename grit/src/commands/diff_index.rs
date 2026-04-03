@@ -1,17 +1,22 @@
 //! `grit diff-index` command.
+//!
+//! Compare a tree (usually a commit's tree) against the index or the working tree.
+//!
+//! Output formats: raw (default), unified patch (`-p`), `--stat`, `--numstat`,
+//! `--name-only`, `--name-status`.
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::stat_matches;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK};
-use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::diff::{
+    count_changes, diff_index_to_tree, diff_tree_to_worktree,
+    format_raw, unified_diff, zero_oid, DiffEntry, DiffStatus,
+};
+use grit_lib::index::Index;
+use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::PermissionsExt;
+use grit_lib::rev_parse::resolve_revision;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit diff-index`.
@@ -22,46 +27,15 @@ pub struct Args {
     pub args: Vec<String>,
 }
 
-/// Run `grit diff-index`.
-pub fn run(args: Args) -> Result<()> {
-    let options = parse_options(&args.args)?;
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let tree_oid = resolve_tree_ish(&repo, &options.tree_ish)?;
-
-    let mut tree_map = BTreeMap::new();
-    collect_tree_entries(&repo, &tree_oid, "", &mut tree_map)?;
-
-    let index_path = effective_index_path(&repo)?;
-    let index = Index::load(&index_path).context("loading index")?;
-    let mut index_map = BTreeMap::new();
-    for entry in &index.entries {
-        if entry.stage() != 0 {
-            continue;
-        }
-        if let Ok(path) = String::from_utf8(entry.path.clone()) {
-            if matches_pathspec(&path, &options.pathspecs) {
-                index_map.insert(path, Snapshot::from_index_entry(entry.mode, entry.oid));
-            }
-        }
-    }
-    tree_map.retain(|path, _| matches_pathspec(path, &options.pathspecs));
-
-    let changes = if options.cached {
-        diff_tree_vs_index(&tree_map, &index_map)
-    } else {
-        diff_tree_vs_worktree(&repo, &tree_map, &index_map, &index, options.match_missing)?
-    };
-
-    if !options.quiet {
-        for change in &changes {
-            println!("{}", render_raw(change, &repo, options.abbrev)?);
-        }
-    }
-
-    if (options.exit_code || options.quiet) && !changes.is_empty() {
-        std::process::exit(1);
-    }
-    Ok(())
+/// Output format for diff-index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputFormat {
+    Raw,
+    Patch,
+    Stat,
+    NumStat,
+    NameOnly,
+    NameStatus,
 }
 
 #[derive(Debug, Clone)]
@@ -73,29 +47,8 @@ struct Options {
     quiet: bool,
     exit_code: bool,
     abbrev: Option<usize>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Snapshot {
-    mode: u32,
-    oid: ObjectId,
-}
-
-impl Snapshot {
-    fn from_index_entry(mode: u32, oid: ObjectId) -> Self {
-        Self {
-            mode: canonicalize_mode(mode),
-            oid,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct RawChange {
-    path: String,
-    status: char,
-    old: Option<Snapshot>,
-    new: Option<Snapshot>,
+    format: OutputFormat,
+    context_lines: usize,
 }
 
 fn parse_options(argv: &[String]) -> Result<Options> {
@@ -107,6 +60,8 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut tree_ish: Option<String> = None;
     let mut pathspecs = Vec::new();
     let mut end_of_options = false;
+    let mut format = OutputFormat::Raw;
+    let mut context_lines: usize = 3;
 
     let mut idx = 0usize;
     while idx < argv.len() {
@@ -122,17 +77,35 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-m" => match_missing = true,
                 "--quiet" => quiet = true,
                 "--exit-code" => exit_code = true,
-                "--raw" => {}
+                "--raw" => format = OutputFormat::Raw,
+                "-p" | "-u" | "--patch" => format = OutputFormat::Patch,
+                "--stat" => format = OutputFormat::Stat,
+                "--numstat" => format = OutputFormat::NumStat,
+                "--name-only" => format = OutputFormat::NameOnly,
+                "--name-status" => format = OutputFormat::NameStatus,
                 "--abbrev" => abbrev = Some(7),
-                "-p" | "--patch" => {
-                    bail!("patch output is not implemented for `grit diff-index`")
-                }
                 _ if arg.starts_with("--abbrev=") => {
                     let value = arg.trim_start_matches("--abbrev=");
                     let parsed = value
                         .parse::<usize>()
                         .with_context(|| format!("invalid --abbrev value: `{value}`"))?;
                     abbrev = Some(parsed);
+                }
+                _ if arg.starts_with("-U") => {
+                    let val = &arg[2..];
+                    if val.is_empty() {
+                        idx += 1;
+                        let next = argv
+                            .get(idx)
+                            .ok_or_else(|| anyhow::anyhow!("-U requires an argument"))?;
+                        context_lines = next
+                            .parse()
+                            .with_context(|| format!("invalid -U value: `{next}`"))?;
+                    } else {
+                        context_lines = val
+                            .parse()
+                            .with_context(|| format!("invalid -U value: `{val}`"))?;
+                    }
                 }
                 _ => bail!("unsupported option: {arg}"),
             }
@@ -149,7 +122,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     }
 
     let Some(tree_ish) = tree_ish else {
-        bail!("usage: grit diff-index [-m] [--cached] [--raw] [--quiet] [--exit-code] [--abbrev[=<n>]] <tree-ish> [<path>...]");
+        bail!("usage: grit diff-index [-m] [--cached] [--raw] [-p] [--quiet] [--exit-code] [--abbrev[=<n>]] <tree-ish> [<path>...]");
     };
 
     Ok(Options {
@@ -160,23 +133,115 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         quiet,
         exit_code,
         abbrev,
+        format,
+        context_lines,
     })
 }
 
-/// Resolve a revision to a tree OID without redundantly reading the tree object.
-/// Returns the tree OID which can be passed directly to collect_tree_entries.
-fn resolve_tree_ish(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    let mut oid = resolve_revision(repo, spec)?;
-    // Peel commits to get their tree OID without reading the tree itself.
-    // The tree will be read later by collect_tree_entries.
+/// Run `grit diff-index`.
+pub fn run(args: Args) -> Result<()> {
+    let options = parse_options(&args.args)?;
+    let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Resolve the tree-ish to a tree OID
+    let tree_oid = resolve_to_tree(&repo, &options.tree_ish)?;
+
+    // Load the index
+    let index_path = effective_index_path(&repo)?;
+    let index = Index::load(&index_path).context("loading index")?;
+
+    // Compute diff entries using the library functions
+    let entries = if options.cached {
+        // --cached: compare tree vs index
+        diff_index_to_tree(&repo.odb, &index, Some(&tree_oid))?
+    } else {
+        // Default: compare tree vs working tree (via index)
+        let work_tree = repo.work_tree.as_deref()
+            .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+        diff_tree_to_worktree(&repo.odb, Some(&tree_oid), work_tree, &index)?
+    };
+
+    // For non-cached mode, git diff-index shows 0{40} for the worktree side
+    let entries = if !options.cached {
+        entries.into_iter().map(|mut e| {
+            if e.status != DiffStatus::Deleted {
+                e.new_oid = zero_oid();
+            }
+            e
+        }).collect()
+    } else {
+        entries
+    };
+
+    // Filter by pathspecs
+    let entries = filter_pathspecs(entries, &options.pathspecs);
+
+    // Filter out missing worktree files if -m is set and not --cached
+    let entries = if options.match_missing && !options.cached {
+        entries.into_iter().filter(|e| {
+            // -m: suppress entries where the worktree file is missing
+            // (i.e. status is Deleted and the file was tracked)
+            e.status != DiffStatus::Deleted
+        }).collect()
+    } else {
+        entries
+    };
+
+    if !options.quiet {
+        let stdout = io::stdout();
+        let mut out = stdout.lock();
+
+        match options.format {
+            OutputFormat::Raw => {
+                for entry in &entries {
+                    if let Some(abbrev) = options.abbrev {
+                        writeln!(out, "{}", format_raw_with_abbrev(entry, abbrev))?;
+                    } else {
+                        writeln!(out, "{}", format_raw(entry))?;
+                    }
+                }
+            }
+            OutputFormat::Patch => {
+                write_patch(&mut out, &entries, &repo.odb, options.context_lines,
+                    if options.cached { None } else { repo.work_tree.as_deref() })?;
+            }
+            OutputFormat::Stat => {
+                write_stat(&mut out, &entries, &repo.odb,
+                    if options.cached { None } else { repo.work_tree.as_deref() })?;
+            }
+            OutputFormat::NumStat => {
+                write_numstat(&mut out, &entries, &repo.odb,
+                    if options.cached { None } else { repo.work_tree.as_deref() })?;
+            }
+            OutputFormat::NameOnly => {
+                for entry in &entries {
+                    writeln!(out, "{}", entry.path())?;
+                }
+            }
+            OutputFormat::NameStatus => {
+                for entry in &entries {
+                    writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
+                }
+            }
+        }
+    }
+
+    if (options.exit_code || options.quiet) && !entries.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Resolve a revision to a tree OID, peeling commits.
+fn resolve_to_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    let oid = resolve_revision(repo, spec)
+        .with_context(|| format!("unknown revision: '{spec}'"))?;
     loop {
         let obj = repo.odb.read(&oid)?;
         match obj.kind {
             ObjectKind::Tree => return Ok(oid),
             ObjectKind::Commit => {
                 let commit = parse_commit(&obj.data)?;
-                // Return the tree OID directly — don't read/verify the tree
-                // object here, collect_tree_entries will do that.
                 return Ok(commit.tree);
             }
             _ => bail!("object '{}' does not name a tree", oid),
@@ -184,227 +249,192 @@ fn resolve_tree_ish(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 }
 
-fn collect_tree_entries(
-    repo: &Repository,
-    tree_oid: &ObjectId,
-    prefix: &str,
-    out: &mut BTreeMap<String, Snapshot>,
-) -> Result<()> {
-    let obj = repo.odb.read(tree_oid)?;
-    if obj.kind != ObjectKind::Tree {
-        bail!("expected tree object");
+/// Format a raw diff entry with abbreviated OIDs (no trailing `...`), matching git behavior.
+fn format_raw_with_abbrev(entry: &DiffEntry, abbrev_len: usize) -> String {
+    let old_hex = entry.old_oid.to_hex();
+    let new_hex = entry.new_oid.to_hex();
+    let old_abbrev = &old_hex[..abbrev_len.min(old_hex.len())];
+    let new_abbrev = &new_hex[..abbrev_len.min(new_hex.len())];
+    let path = entry.path();
+    format!(
+        ":{} {} {} {} {}\t{}",
+        entry.old_mode, entry.new_mode, old_abbrev, new_abbrev, entry.status.letter(), path
+    )
+}
+
+/// Filter diff entries by pathspecs.
+fn filter_pathspecs(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEntry> {
+    if pathspecs.is_empty() {
+        return entries;
     }
-    for entry in parse_tree(&obj.data)? {
-        let name = String::from_utf8(entry.name)
-            .map_err(|_| anyhow::anyhow!("tree contains non-UTF-8 path"))?;
-        let path = if prefix.is_empty() {
-            name
-        } else {
-            format!("{prefix}/{name}")
-        };
-        if entry.mode == 0o040000 {
-            collect_tree_entries(repo, &entry.oid, &path, out)?;
-        } else {
-            out.insert(path, Snapshot::from_index_entry(entry.mode, entry.oid));
+    entries
+        .into_iter()
+        .filter(|e| {
+            let path = e.path();
+            pathspecs.iter().any(|spec| {
+                if let Some(prefix) = spec.strip_suffix('/') {
+                    path == prefix || path.starts_with(&format!("{prefix}/"))
+                } else {
+                    path == spec || path.starts_with(&format!("{spec}/"))
+                }
+            })
+        })
+        .collect()
+}
+
+/// Read content for a blob, falling back to the working tree.
+fn read_content(odb: &Odb, oid: &ObjectId, work_tree: Option<&Path>, path: &str) -> String {
+    let raw = read_content_raw(odb, oid, work_tree, path);
+    String::from_utf8_lossy(&raw).into_owned()
+}
+
+fn read_content_raw(odb: &Odb, oid: &ObjectId, work_tree: Option<&Path>, path: &str) -> Vec<u8> {
+    if *oid == zero_oid() {
+        return Vec::new();
+    }
+    if let Ok(obj) = odb.read(oid) {
+        return obj.data;
+    }
+    if let Some(wt) = work_tree {
+        if path != "/dev/null" {
+            if let Ok(data) = std::fs::read(wt.join(path)) {
+                return data;
+            }
         }
+    }
+    Vec::new()
+}
+
+/// Check if content appears to be binary.
+fn is_binary(data: &[u8]) -> bool {
+    let check_len = data.len().min(8192);
+    data[..check_len].contains(&0)
+}
+
+/// Write unified patch output for diff entries.
+fn write_patch(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    odb: &Odb,
+    context_lines: usize,
+    work_tree: Option<&Path>,
+) -> Result<()> {
+    for entry in entries {
+        let old_path = entry.old_path.as_deref().unwrap_or(entry.new_path.as_deref().unwrap_or(""));
+        let new_path = entry.new_path.as_deref().unwrap_or(entry.old_path.as_deref().unwrap_or(""));
+
+        writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
+
+        match entry.status {
+            DiffStatus::Added => {
+                writeln!(out, "new file mode {}", entry.new_mode)?;
+                writeln!(out, "index {}..{}", &entry.old_oid.to_hex()[..7], &entry.new_oid.to_hex()[..7])?;
+            }
+            DiffStatus::Deleted => {
+                writeln!(out, "deleted file mode {}", entry.old_mode)?;
+                writeln!(out, "index {}..{}", &entry.old_oid.to_hex()[..7], &entry.new_oid.to_hex()[..7])?;
+            }
+            DiffStatus::Modified => {
+                if entry.old_mode != entry.new_mode {
+                    writeln!(out, "old mode {}", entry.old_mode)?;
+                    writeln!(out, "new mode {}", entry.new_mode)?;
+                }
+                if entry.old_mode == entry.new_mode {
+                    writeln!(out, "index {}..{} {}", &entry.old_oid.to_hex()[..7], &entry.new_oid.to_hex()[..7], entry.old_mode)?;
+                } else {
+                    writeln!(out, "index {}..{}", &entry.old_oid.to_hex()[..7], &entry.new_oid.to_hex()[..7])?;
+                }
+            }
+            DiffStatus::Renamed => {
+                writeln!(out, "similarity index 100%")?;
+                writeln!(out, "rename from {old_path}")?;
+                writeln!(out, "rename to {new_path}")?;
+            }
+            DiffStatus::Copied => {
+                writeln!(out, "similarity index 100%")?;
+                writeln!(out, "copy from {old_path}")?;
+                writeln!(out, "copy to {new_path}")?;
+            }
+            DiffStatus::TypeChanged => {
+                writeln!(out, "old mode {}", entry.old_mode)?;
+                writeln!(out, "new mode {}", entry.new_mode)?;
+            }
+            DiffStatus::Unmerged => {}
+        }
+
+        let old_raw = read_content_raw(odb, &entry.old_oid, None, old_path);
+        let new_raw = read_content_raw(odb, &entry.new_oid, work_tree, new_path);
+
+        if is_binary(&old_raw) || is_binary(&new_raw) {
+            writeln!(out, "Binary files a/{old_path} and b/{new_path} differ")?;
+            continue;
+        }
+
+        let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+        let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+
+        let display_old = if entry.status == DiffStatus::Added { "/dev/null" } else { old_path };
+        let display_new = if entry.status == DiffStatus::Deleted { "/dev/null" } else { new_path };
+
+        let patch = unified_diff(&old_content, &new_content, display_old, display_new, context_lines);
+        write!(out, "{patch}")?;
     }
     Ok(())
 }
 
-fn diff_tree_vs_index(
-    tree_map: &BTreeMap<String, Snapshot>,
-    index_map: &BTreeMap<String, Snapshot>,
-) -> Vec<RawChange> {
-    let mut all_paths = BTreeSet::new();
-    all_paths.extend(tree_map.keys().cloned());
-    all_paths.extend(index_map.keys().cloned());
-
-    let mut changes = Vec::new();
-    for path in all_paths {
-        let old = tree_map.get(&path).copied();
-        let new = index_map.get(&path).copied();
-        match (old, new) {
-            (Some(old), Some(new)) if old == new => {}
-            (Some(old), Some(new)) => changes.push(RawChange {
-                path,
-                status: 'M',
-                old: Some(old),
-                new: Some(new),
-            }),
-            (Some(old), None) => changes.push(RawChange {
-                path,
-                status: 'D',
-                old: Some(old),
-                new: None,
-            }),
-            (None, Some(new)) => changes.push(RawChange {
-                path,
-                status: 'A',
-                old: None,
-                new: Some(new),
-            }),
-            (None, None) => {}
-        }
+/// Write --stat output.
+fn write_stat(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    odb: &Odb,
+    work_tree: Option<&Path>,
+) -> Result<()> {
+    if entries.is_empty() {
+        return Ok(());
     }
-    changes
+
+    let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+
+    for entry in entries {
+        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
+        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
+        let (ins, del) = count_changes(&old_content, &new_content);
+        total_ins += ins;
+        total_del += del;
+        let total = ins + del;
+        let plus = "+".repeat(ins.min(50));
+        let minus = "-".repeat(del.min(50));
+        writeln!(out, " {:<width$} | {:>4} {plus}{minus}", entry.path(), total, width = max_path_len)?;
+    }
+
+    let n = entries.len();
+    let mut summary = format!(" {} file{} changed", n, if n == 1 { "" } else { "s" });
+    if total_ins > 0 {
+        summary.push_str(&format!(", {} insertion{}(+)", total_ins, if total_ins == 1 { "" } else { "s" }));
+    }
+    if total_del > 0 {
+        summary.push_str(&format!(", {} deletion{}(-)", total_del, if total_del == 1 { "" } else { "s" }));
+    }
+    writeln!(out, "{summary}")?;
+    Ok(())
 }
 
-fn diff_tree_vs_worktree(
-    repo: &Repository,
-    tree_map: &BTreeMap<String, Snapshot>,
-    index_map: &BTreeMap<String, Snapshot>,
-    index: &Index,
-    match_missing: bool,
-) -> Result<Vec<RawChange>> {
-    let Some(work_tree) = &repo.work_tree else {
-        bail!("this operation must be run in a work tree");
-    };
-
-    // Build a lookup from path → index entry for stat cache checks
-    let index_entries: BTreeMap<&[u8], &IndexEntry> = index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| (e.path.as_slice(), e))
-        .collect();
-
-    let mut merged = BTreeMap::new();
-    for change in diff_tree_vs_index(tree_map, index_map) {
-        merged.insert(change.path.clone(), change);
+/// Write --numstat output.
+fn write_numstat(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    odb: &Odb,
+    work_tree: Option<&Path>,
+) -> Result<()> {
+    for entry in entries {
+        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
+        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
+        let (ins, del) = count_changes(&old_content, &new_content);
+        writeln!(out, "{ins}\t{del}\t{}", entry.path())?;
     }
-
-    for (path, index_snapshot) in index_map {
-        let abs = work_tree.join(path);
-
-        // Fast path: use stat cache to skip unchanged files
-        let meta = match fs::symlink_metadata(&abs) {
-            Ok(m) => m,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                if match_missing {
-                    continue;
-                }
-                let old = tree_map.get(path).copied().or(Some(*index_snapshot));
-                merged.insert(
-                    path.clone(),
-                    RawChange {
-                        path: path.clone(),
-                        status: 'D',
-                        old,
-                        new: None,
-                    },
-                );
-                continue;
-            }
-            Err(e) => return Err(e.into()),
-        };
-
-        // Check stat cache — if stat matches index entry, file is unchanged
-        if let Some(ie) = index_entries.get(path.as_bytes()) {
-            if stat_matches(ie, &meta) {
-                continue; // Fast path: stat data matches, skip hashing
-            }
-        }
-
-        // Stat differs — must read and hash the file
-        match read_worktree_snapshot_from_meta(repo, &abs, &meta)? {
-            Some(worktree_snapshot) => {
-                if worktree_snapshot != *index_snapshot {
-                    let old = tree_map.get(path).copied();
-                    merged.insert(
-                        path.clone(),
-                        RawChange {
-                            path: path.clone(),
-                            status: 'M',
-                            old,
-                            new: None,
-                        },
-                    );
-                }
-            }
-            None => {
-                // Not a regular file or symlink — treat as missing
-            }
-        }
-    }
-
-    Ok(merged.into_values().collect())
-}
-
-fn read_worktree_snapshot_from_meta(_repo: &Repository, abs_path: &Path, metadata: &fs::Metadata) -> Result<Option<Snapshot>> {
-    if metadata.file_type().is_symlink() {
-        let target = fs::read_link(abs_path)?;
-        let oid = Odb::hash_object_data(ObjectKind::Blob, target.as_os_str().as_bytes());
-        return Ok(Some(Snapshot {
-            mode: MODE_SYMLINK,
-            oid,
-        }));
-    }
-
-    if metadata.file_type().is_file() {
-        let mode = canonicalize_mode(metadata.permissions().mode());
-        let data = fs::read(abs_path)?;
-        let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
-        return Ok(Some(Snapshot { mode, oid }));
-    }
-
-    Ok(None)
-}
-
-fn canonicalize_mode(raw_mode: u32) -> u32 {
-    match raw_mode & 0o170000 {
-        0o120000 => MODE_SYMLINK,
-        0o160000 => MODE_GITLINK,
-        0o100000 => {
-            if raw_mode & 0o111 != 0 {
-                MODE_EXECUTABLE
-            } else {
-                MODE_REGULAR
-            }
-        }
-        _ => MODE_REGULAR,
-    }
-}
-
-fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
-    if pathspecs.is_empty() {
-        return true;
-    }
-    pathspecs.iter().any(|spec| {
-        if let Some(prefix) = spec.strip_suffix('/') {
-            path == prefix || path.starts_with(&format!("{prefix}/"))
-        } else {
-            path == spec || path.starts_with(&format!("{spec}/"))
-        }
-    })
-}
-
-fn render_raw(change: &RawChange, repo: &Repository, abbrev: Option<usize>) -> Result<String> {
-    let old_mode = change.old.map_or(0, |s| s.mode);
-    let new_mode = change.new.map_or(0, |s| s.mode);
-    let width = abbrev.unwrap_or(40).clamp(4, 40);
-
-    let old_oid = format_oid(change.old.map(|s| s.oid), repo, abbrev, width)?;
-    let new_oid = format_oid(change.new.map(|s| s.oid), repo, abbrev, width)?;
-
-    Ok(format!(
-        ":{old_mode:06o} {new_mode:06o} {old_oid} {new_oid} {}\t{}",
-        change.status, change.path
-    ))
-}
-
-fn format_oid(
-    oid: Option<ObjectId>,
-    repo: &Repository,
-    abbrev: Option<usize>,
-    width: usize,
-) -> Result<String> {
-    let Some(oid) = oid else {
-        return Ok("0".repeat(width));
-    };
-    match abbrev {
-        Some(min_len) => abbreviate_object_id(repo, oid, min_len).map_err(Into::into),
-        None => Ok(oid.to_hex()),
-    }
+    Ok(())
 }
 
 fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
