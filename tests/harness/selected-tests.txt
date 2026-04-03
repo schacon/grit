@@ -12,6 +12,7 @@ t0014-alias.sh
 t0018-advice.sh
 t0030-stripspace.sh
 t0031-lockfile-pid.sh
+t0033-safe-directory.sh
 t0040-parse-options.sh
 t0041-usage.sh
 t0050-filesystem.sh
@@ -373,6 +374,7 @@ t2019-checkout-ambiguous-ref.sh
 t2020-checkout-detach.sh
 t2021-checkout-overwrite.sh
 t2022-checkout-paths.sh
+t2024-checkout-dwim.sh
 t2025-checkout-no-overlay.sh
 t2030-checkout-index-basic.sh
 t2031-checkout-index-symlink.sh
