@@ -121,6 +121,7 @@ pub fn run(args: Args) -> Result<()> {
             abort: false,
             continue_merge: false,
             strategy: None,
+            strategy_option: Vec::new(),
             quiet: args.quiet,
         };
         super::merge::run(merge_args)

@@ -61,6 +61,10 @@ pub struct Args {
     #[arg(short = 's', long = "strategy")]
     pub strategy: Option<String>,
 
+    /// Strategy-specific option (e.g. ours, theirs).
+    #[arg(short = 'X', long = "strategy-option")]
+    pub strategy_option: Vec<String>,
+
     /// Suppress output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
@@ -101,6 +105,16 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    // Parse -X strategy options
+    let mut favor = MergeFavor::None;
+    for xopt in &args.strategy_option {
+        match xopt.as_str() {
+            "ours" => favor = MergeFavor::Ours,
+            "theirs" => favor = MergeFavor::Theirs,
+            other => bail!("unknown strategy option: -X {other}"),
+        }
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
     let head = resolve_head(&repo.git_dir)?;
     let head_oid = match head.oid() {
@@ -113,7 +127,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // Octopus merge: if multiple commits, merge them sequentially
     if args.commits.len() > 1 {
-        return do_octopus_merge(&repo, &head, head_oid, &args);
+        return do_octopus_merge(&repo, &head, head_oid, &args, favor);
     }
 
     // Resolve merge target
@@ -136,7 +150,7 @@ pub fn run(args: Args) -> Result<()> {
     if is_ancestor(&repo, head_oid, merge_oid)? {
         if args.no_ff {
             // Force a merge commit even though we could fast-forward
-            return do_real_merge(&repo, &head, head_oid, merge_oid, &args);
+            return do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor);
         }
         return do_fast_forward(&repo, &head, head_oid, merge_oid, &args);
     }
@@ -154,7 +168,7 @@ pub fn run(args: Args) -> Result<()> {
         bail!("Not possible to fast-forward, aborting.");
     }
 
-    do_real_merge(&repo, &head, head_oid, merge_oid, &args)
+    do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor)
 }
 
 /// Handle merge when HEAD is unborn — just set HEAD to merge target.
@@ -239,6 +253,7 @@ fn do_real_merge(
     head_oid: ObjectId,
     merge_oid: ObjectId,
     args: &Args,
+    favor: MergeFavor,
 ) -> Result<()> {
     // Find merge base
     let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;
@@ -265,7 +280,7 @@ fn do_real_merge(
 
     // Merge trees
     let merge_result =
-        merge_trees(repo, &base_entries, &ours_entries, &theirs_entries, head, &args.commits[0])?;
+        merge_trees(repo, &base_entries, &ours_entries, &theirs_entries, head, &args.commits[0], favor)?;
 
     // Write index
     merge_result.index.write(&repo.index_path())?;
@@ -367,6 +382,7 @@ fn do_octopus_merge(
     head: &HeadState,
     head_oid: ObjectId,
     args: &Args,
+    favor: MergeFavor,
 ) -> Result<()> {
     // Resolve all merge targets
     let mut merge_oids = Vec::new();
@@ -406,6 +422,7 @@ fn do_octopus_merge(
             &theirs_entries,
             head,
             &args.commits[i],
+            favor,
         )?;
 
         if merge_result.has_conflicts {
@@ -763,6 +780,7 @@ fn merge_trees(
     theirs: &HashMap<Vec<u8>, IndexEntry>,
     head: &HeadState,
     their_name: &str,
+    favor: MergeFavor,
 ) -> Result<MergeResult> {
     let mut all_paths = BTreeSet::new();
     all_paths.extend(base.keys().cloned());
@@ -813,7 +831,7 @@ fn merge_trees(
             // All three differ — content-level merge
             (Some(be), Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
-                match try_content_merge(repo, be, oe, te, ours_label, their_name)? {
+                match try_content_merge(repo, be, oe, te, ours_label, their_name, favor)? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
                         entry.oid = merged_oid;
@@ -836,30 +854,52 @@ fn merge_trees(
                 if be.oid == te.oid && be.mode == te.mode {
                     // Theirs didn't change it, ours deleted → clean delete
                 } else {
-                    // Theirs modified, ours deleted → conflict
-                    let path_str = String::from_utf8_lossy(path).to_string();
-                    has_conflicts = true;
-                    stage_entry(&mut index, be, 1);
-                    stage_entry(&mut index, te, 3);
-                    conflict_descriptions.push(("modify/delete".to_string(), path_str));
+                    match favor {
+                        MergeFavor::Ours => {
+                            // -X ours: keep our decision (delete)
+                        }
+                        MergeFavor::Theirs => {
+                            // -X theirs: keep their version
+                            index.entries.push(te.clone());
+                        }
+                        _ => {
+                            // Theirs modified, ours deleted → conflict
+                            let path_str = String::from_utf8_lossy(path).to_string();
+                            has_conflicts = true;
+                            stage_entry(&mut index, be, 1);
+                            stage_entry(&mut index, te, 3);
+                            conflict_descriptions.push(("modify/delete".to_string(), path_str));
+                        }
+                    }
                 }
             }
             (Some(be), Some(oe), None) => {
                 if be.oid == oe.oid && be.mode == oe.mode {
                     // Ours didn't change it, theirs deleted → clean delete
                 } else {
-                    // Ours modified, theirs deleted → conflict
-                    let path_str = String::from_utf8_lossy(path).to_string();
-                    has_conflicts = true;
-                    stage_entry(&mut index, be, 1);
-                    stage_entry(&mut index, oe, 2);
-                    conflict_descriptions.push(("modify/delete".to_string(), path_str));
+                    match favor {
+                        MergeFavor::Ours => {
+                            // -X ours: keep our version
+                            index.entries.push(oe.clone());
+                        }
+                        MergeFavor::Theirs => {
+                            // -X theirs: keep their decision (delete)
+                        }
+                        _ => {
+                            // Ours modified, theirs deleted → conflict
+                            let path_str = String::from_utf8_lossy(path).to_string();
+                            has_conflicts = true;
+                            stage_entry(&mut index, be, 1);
+                            stage_entry(&mut index, oe, 2);
+                            conflict_descriptions.push(("modify/delete".to_string(), path_str));
+                        }
+                    }
                 }
             }
             // Both added different content — try content merge with empty base
             (None, Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
-                match try_content_merge_add_add(repo, oe, te, ours_label, their_name)? {
+                match try_content_merge_add_add(repo, oe, te, ours_label, their_name, favor)? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
                         entry.oid = merged_oid;
@@ -905,6 +945,7 @@ fn try_content_merge(
     theirs: &IndexEntry,
     ours_label: &str,
     theirs_label: &str,
+    favor: MergeFavor,
 ) -> Result<ContentMergeResult> {
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
@@ -926,7 +967,7 @@ fn try_content_merge(
         label_ours: ours_label,
         label_base: "base",
         label_theirs: theirs_label,
-        favor: MergeFavor::None,
+        favor,
         style: ConflictStyle::Merge,
         marker_size: 7,
     };
@@ -949,6 +990,7 @@ fn try_content_merge_add_add(
     theirs: &IndexEntry,
     ours_label: &str,
     theirs_label: &str,
+    favor: MergeFavor,
 ) -> Result<ContentMergeResult> {
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
@@ -964,7 +1006,7 @@ fn try_content_merge_add_add(
         label_ours: ours_label,
         label_base: "base",
         label_theirs: theirs_label,
-        favor: MergeFavor::None,
+        favor,
         style: ConflictStyle::Merge,
         marker_size: 7,
     };
