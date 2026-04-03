@@ -206,7 +206,7 @@ pub struct Args {
     pub anchored: Vec<String>,
 
     /// Show relative paths from the given subdirectory.
-    #[arg(long = "relative")]
+    #[arg(long = "relative", num_args = 0..=1, default_missing_value = "", require_equals = true)]
     pub relative: Option<Option<String>>,
 
     /// Disable --relative.
@@ -408,6 +408,100 @@ pub fn run(mut args: Args) -> Result<()> {
     };
     let entries = if let Some(threshold) = rename_threshold {
         detect_renames(&repo.odb, entries, threshold)
+    } else {
+        entries
+    };
+
+    // Apply --relative path prefix stripping.
+    let entries = if !args.no_relative {
+        let prefix = match &args.relative {
+            Some(Some(p)) if !p.is_empty() => {
+                // --relative=<path> — use the given prefix
+                let mut pfx = p.clone();
+                if !pfx.ends_with('/') {
+                    pfx.push('/');
+                }
+                Some(pfx)
+            }
+            Some(_) => {
+                // bare --relative — infer from CWD relative to work tree
+                if let Some(wt) = work_tree {
+                    if let Ok(cwd) = std::env::current_dir() {
+                        if let Ok(rel) = cwd.strip_prefix(wt) {
+                            let s = rel.to_string_lossy().to_string();
+                            if s.is_empty() {
+                                None
+                            } else {
+                                Some(format!("{s}/"))
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            None => {
+                // Check diff.relative config
+                use grit_lib::config::ConfigSet;
+                let config = ConfigSet::load(Some(&repo.git_dir), false)
+                    .unwrap_or_else(|_| ConfigSet::new());
+                match config.get("diff.relative") {
+                    Some(val) if matches!(val.to_lowercase().as_str(), "true" | "yes" | "1") => {
+                        // Infer from CWD
+                        if let Some(wt) = work_tree {
+                            if let Ok(cwd) = std::env::current_dir() {
+                                if let Ok(rel) = cwd.strip_prefix(wt) {
+                                    let s = rel.to_string_lossy().to_string();
+                                    if s.is_empty() {
+                                        None
+                                    } else {
+                                        Some(format!("{s}/"))
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            }
+        };
+        if let Some(ref pfx) = prefix {
+            entries
+                .into_iter()
+                .filter_map(|mut e| {
+                    // Filter: at least one path must be under the prefix
+                    let old_match = e.old_path.as_ref().map_or(false, |p| p.starts_with(pfx.as_str()));
+                    let new_match = e.new_path.as_ref().map_or(false, |p| p.starts_with(pfx.as_str()));
+                    if !old_match && !new_match {
+                        return None;
+                    }
+                    // Strip prefix from paths
+                    if let Some(ref mut p) = e.old_path {
+                        if let Some(stripped) = p.strip_prefix(pfx.as_str()) {
+                            *p = stripped.to_owned();
+                        }
+                    }
+                    if let Some(ref mut p) = e.new_path {
+                        if let Some(stripped) = p.strip_prefix(pfx.as_str()) {
+                            *p = stripped.to_owned();
+                        }
+                    }
+                    Some(e)
+                })
+                .collect()
+        } else {
+            entries
+        }
     } else {
         entries
     };
