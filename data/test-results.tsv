@@ -1246,79 +1246,79 @@ t0602-reffiles-fsck::packed-ref-without-sorted-trait-should-not-be-checked	t0602
 t0602-reffiles-fsck::no-references-option-should-apply-to-fsck	t0602-reffiles-fsck	--[no-]references option should apply to fsck	fsck	pass
 t0602-reffiles-fsck::complains-about-broken-root-ref	t0602-reffiles-fsck	complains about broken root ref	init	pass
 t0602-reffiles-fsck::complains-about-broken-root-ref-in-worktree	t0602-reffiles-fsck	complains about broken root ref in worktree	init	pass
-t0610-reftable-basics::pack-refs-does-not-crash-with-h	t0610-reftable-basics	pack-refs does not crash with -h	pack-refs	pass
-t0610-reftable-basics::init-creates-basic-reftable-structures	t0610-reftable-basics	init: creates basic reftable structures	init	pass
-t0610-reftable-basics::init-sha256-object-format-via-environment-variable	t0610-reftable-basics	init: sha256 object format via environment variable	init	pass
-t0610-reftable-basics::init-sha256-object-format-via-option	t0610-reftable-basics	init: sha256 object format via option	init	pass
-t0610-reftable-basics::init-reinitializing-reftable-backend-succeeds	t0610-reftable-basics	init: reinitializing reftable backend succeeds	for-each-ref	pass
-t0610-reftable-basics::init-reinitializing-files-with-reftable-backend-fails	t0610-reftable-basics	init: reinitializing files with reftable backend fails	init	pass
-t0610-reftable-basics::init-reinitializing-reftable-with-files-backend-fails	t0610-reftable-basics	init: reinitializing reftable with files backend fails	init	pass
-t0610-reftable-basics::clone-can-clone-reftable-repository	t0610-reftable-basics	clone: can clone reftable repository	clone	pass
-t0610-reftable-basics::clone-can-clone-reffiles-into-reftable-repository	t0610-reftable-basics	clone: can clone reffiles into reftable repository	clone	pass
-t0610-reftable-basics::clone-can-clone-reftable-into-reffiles-repository	t0610-reftable-basics	clone: can clone reftable into reffiles repository	clone	pass
-t0610-reftable-basics::ref-transaction-corrupted-tables-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables cause failure	init	pass
-t0610-reftable-basics::ref-transaction-corrupted-tables-list-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables.list cause failure	init	pass
-t0610-reftable-basics::ref-transaction-refuses-to-write-ref-causing-f-d-conflict	t0610-reftable-basics	ref transaction: refuses to write ref causing F/D conflict	init	pass
-t0610-reftable-basics::ref-transaction-deleting-ref-with-invalid-name-fails	t0610-reftable-basics	ref transaction: deleting ref with invalid name fails	init	pass
-t0610-reftable-basics::ref-transaction-can-skip-object-id-verification	t0610-reftable-basics	ref transaction: can skip object ID verification	init	pass
-t0610-reftable-basics::ref-transaction-updating-same-ref-multiple-times-fails	t0610-reftable-basics	ref transaction: updating same ref multiple times fails	init	pass
-t0610-reftable-basics::ref-transaction-can-delete-symbolic-self-reference-with-git-symbolic-ref-1	t0610-reftable-basics	ref transaction: can delete symbolic self-reference with git-symbolic-ref(1)	init	pass
-t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-without-no-deref-fails	t0610-reftable-basics	ref transaction: deleting symbolic self-reference without --no-deref fails	init	pass
-t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-with-no-deref-succeeds	t0610-reftable-basics	ref transaction: deleting symbolic self-reference with --no-deref succeeds	init	pass
-t0610-reftable-basics::ref-transaction-creating-symbolic-ref-fails-with-f-d-conflict	t0610-reftable-basics	ref transaction: creating symbolic ref fails with F/D conflict	init	pass
-t0610-reftable-basics::ref-transaction-ref-deletion	t0610-reftable-basics	ref transaction: ref deletion	init	pass
-t0610-reftable-basics::ref-transaction-writes-cause-auto-compaction	t0610-reftable-basics	ref transaction: writes cause auto-compaction	init	pass
-t0610-reftable-basics::ref-transaction-env-var-disables-compaction	t0610-reftable-basics	ref transaction: env var disables compaction	init	pass
-t0610-reftable-basics::ref-transaction-alternating-table-sizes-are-compacted	t0610-reftable-basics	ref transaction: alternating table sizes are compacted	branch	pass
-t0610-reftable-basics::ref-transaction-writes-are-synced	t0610-reftable-basics	ref transaction: writes are synced	init	pass
-t0610-reftable-basics::ref-transaction-empty-transaction-in-empty-repo	t0610-reftable-basics	ref transaction: empty transaction in empty repo	init	pass
-t0610-reftable-basics::ref-transaction-fails-gracefully-when-auto-compaction-fails	t0610-reftable-basics	ref transaction: fails gracefully when auto compaction fails	branch	pass
-t0610-reftable-basics::ref-transaction-timeout-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: timeout acquiring tables.list lock	init	pass
-t0610-reftable-basics::ref-transaction-retry-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: retry acquiring tables.list lock	init	pass
-t0610-reftable-basics::ref-transaction-many-concurrent-writers	t0610-reftable-basics	ref transaction: many concurrent writers	config	pass
-t0610-reftable-basics::pack-refs-compacts-tables	t0610-reftable-basics	pack-refs: compacts tables	init	pass
-t0610-reftable-basics::pack-refs-compaction-raises-locking-errors	t0610-reftable-basics	pack-refs: compaction raises locking errors	init	pass
-t0610-reftable-basics::pack-refs-prunes-stale-tables	t0610-reftable-basics	pack-refs: prunes stale tables	init	pass
-t0610-reftable-basics::pack-refs-does-not-prune-non-table-files	t0610-reftable-basics	pack-refs: does not prune non-table files	init	pass
-t0610-reftable-basics::packed-refs-writes-are-synced	t0610-reftable-basics	packed-refs: writes are synced	init	pass
-t0610-reftable-basics::ref-iterator-bogus-names-are-flagged	t0610-reftable-basics	ref iterator: bogus names are flagged	init	pass
-t0610-reftable-basics::ref-iterator-missing-object-ids-are-not-flagged	t0610-reftable-basics	ref iterator: missing object IDs are not flagged	init	pass
-t0610-reftable-basics::basic-commit-and-list-refs	t0610-reftable-basics	basic: commit and list refs	for-each-ref	pass
-t0610-reftable-basics::basic-can-write-large-commit-message	t0610-reftable-basics	basic: can write large commit message	commit	pass
-t0610-reftable-basics::basic-show-ref-fails-with-empty-repository	t0610-reftable-basics	basic: show-ref fails with empty repository	init	pass
-t0610-reftable-basics::basic-can-check-out-unborn-branch	t0610-reftable-basics	basic: can check out unborn branch	checkout	pass
-t0610-reftable-basics::basic-peeled-tags-are-stored	t0610-reftable-basics	basic: peeled tags are stored	init	pass
-t0610-reftable-basics::basic-for-each-ref-can-print-symrefs	t0610-reftable-basics	basic: for-each-ref can print symrefs	branch	pass
-t0610-reftable-basics::basic-notes	t0610-reftable-basics	basic: notes	init	pass
-t0610-reftable-basics::basic-stash	t0610-reftable-basics	basic: stash	init	pass
-t0610-reftable-basics::basic-cherry-pick	t0610-reftable-basics	basic: cherry-pick	branch	pass
-t0610-reftable-basics::basic-rebase	t0610-reftable-basics	basic: rebase	branch	pass
-t0610-reftable-basics::reflog-can-delete-separate-reflog-entries	t0610-reftable-basics	reflog: can delete separate reflog entries	init	pass
-t0610-reftable-basics::reflog-can-switch-to-previous-branch	t0610-reftable-basics	reflog: can switch to previous branch	checkout	pass
-t0610-reftable-basics::reflog-copying-branch-writes-reflog-entry	t0610-reftable-basics	reflog: copying branch writes reflog entry	branch	pass
-t0610-reftable-basics::reflog-renaming-branch-writes-reflog-entry	t0610-reftable-basics	reflog: renaming branch writes reflog entry	branch	pass
-t0610-reftable-basics::reflog-can-store-empty-logs	t0610-reftable-basics	reflog: can store empty logs	init	pass
-t0610-reftable-basics::reflog-expiry-empties-reflog	t0610-reftable-basics	reflog: expiry empties reflog	checkout	pass
-t0610-reftable-basics::reflog-can-be-deleted	t0610-reftable-basics	reflog: can be deleted	init	pass
-t0610-reftable-basics::reflog-garbage-collection-deletes-reflog-entries	t0610-reftable-basics	reflog: garbage collection deletes reflog entries	gc	pass
-t0610-reftable-basics::reflog-updates-via-head-update-head-reflog	t0610-reftable-basics	reflog: updates via HEAD update HEAD reflog	checkout	pass
-t0610-reftable-basics::branch-copying-branch-with-d-f-conflict	t0610-reftable-basics	branch: copying branch with D/F conflict	branch	pass
-t0610-reftable-basics::branch-moving-branch-with-d-f-conflict	t0610-reftable-basics	branch: moving branch with D/F conflict	branch	pass
-t0610-reftable-basics::worktree-adding-worktree-creates-separate-stack	t0610-reftable-basics	worktree: adding worktree creates separate stack	init	pass
-t0610-reftable-basics::worktree-pack-refs-in-main-repo-packs-main-refs	t0610-reftable-basics	worktree: pack-refs in main repo packs main refs	init	pass
-t0610-reftable-basics::worktree-pack-refs-in-worktree-packs-worktree-refs	t0610-reftable-basics	worktree: pack-refs in worktree packs worktree refs	init	pass
-t0610-reftable-basics::worktree-creating-shared-ref-updates-main-stack	t0610-reftable-basics	worktree: creating shared ref updates main stack	init	pass
-t0610-reftable-basics::worktree-creating-per-worktree-ref-updates-worktree-stack	t0610-reftable-basics	worktree: creating per-worktree ref updates worktree stack	init	pass
-t0610-reftable-basics::worktree-creating-per-worktree-ref-from-main-repo	t0610-reftable-basics	worktree: creating per-worktree ref from main repo	init	pass
-t0610-reftable-basics::worktree-creating-per-worktree-ref-from-second-worktree	t0610-reftable-basics	worktree: creating per-worktree ref from second worktree	init	pass
-t0610-reftable-basics::worktree-can-create-shared-and-per-worktree-ref-in-one-transaction	t0610-reftable-basics	worktree: can create shared and per-worktree ref in one transaction	init	pass
-t0610-reftable-basics::worktree-can-access-common-refs	t0610-reftable-basics	worktree: can access common refs	branch	pass
-t0610-reftable-basics::worktree-adds-worktree-with-detached-head	t0610-reftable-basics	worktree: adds worktree with detached HEAD	init	pass
-t0610-reftable-basics::fetch-accessing-fetch-head-special-ref-works	t0610-reftable-basics	fetch: accessing FETCH_HEAD special ref works	fetch	pass
-t0610-reftable-basics::writes-do-not-persist-peeled-value-for-invalid-tags	t0610-reftable-basics	writes do not persist peeled value for invalid tags	cat-file	pass
-t0610-reftable-basics::init-honors-shared-shared-with-umask-umask	t0610-reftable-basics	init: honors --shared=$shared with umask $umask	init	pass
-t0610-reftable-basics::pack-refs-honors-shared-shared-with-umask-umask	t0610-reftable-basics	pack-refs: honors --shared=$shared with umask $umask	init	pass
-t0610-reftable-basics::command-auto-compaction	t0610-reftable-basics	$command: auto compaction	branch	pass
+t0610-reftable-basics::pack-refs-does-not-crash-with-h	t0610-reftable-basics	pack-refs does not crash with -h	pack-refs	partial
+t0610-reftable-basics::init-creates-basic-reftable-structures	t0610-reftable-basics	init: creates basic reftable structures	init	partial
+t0610-reftable-basics::init-sha256-object-format-via-environment-variable	t0610-reftable-basics	init: sha256 object format via environment variable	init	partial
+t0610-reftable-basics::init-sha256-object-format-via-option	t0610-reftable-basics	init: sha256 object format via option	init	partial
+t0610-reftable-basics::init-reinitializing-reftable-backend-succeeds	t0610-reftable-basics	init: reinitializing reftable backend succeeds	for-each-ref	partial
+t0610-reftable-basics::init-reinitializing-files-with-reftable-backend-fails	t0610-reftable-basics	init: reinitializing files with reftable backend fails	init	partial
+t0610-reftable-basics::init-reinitializing-reftable-with-files-backend-fails	t0610-reftable-basics	init: reinitializing reftable with files backend fails	init	partial
+t0610-reftable-basics::clone-can-clone-reftable-repository	t0610-reftable-basics	clone: can clone reftable repository	clone	partial
+t0610-reftable-basics::clone-can-clone-reffiles-into-reftable-repository	t0610-reftable-basics	clone: can clone reffiles into reftable repository	clone	partial
+t0610-reftable-basics::clone-can-clone-reftable-into-reffiles-repository	t0610-reftable-basics	clone: can clone reftable into reffiles repository	clone	partial
+t0610-reftable-basics::ref-transaction-corrupted-tables-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables cause failure	init	partial
+t0610-reftable-basics::ref-transaction-corrupted-tables-list-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables.list cause failure	init	partial
+t0610-reftable-basics::ref-transaction-refuses-to-write-ref-causing-f-d-conflict	t0610-reftable-basics	ref transaction: refuses to write ref causing F/D conflict	init	partial
+t0610-reftable-basics::ref-transaction-deleting-ref-with-invalid-name-fails	t0610-reftable-basics	ref transaction: deleting ref with invalid name fails	init	partial
+t0610-reftable-basics::ref-transaction-can-skip-object-id-verification	t0610-reftable-basics	ref transaction: can skip object ID verification	init	partial
+t0610-reftable-basics::ref-transaction-updating-same-ref-multiple-times-fails	t0610-reftable-basics	ref transaction: updating same ref multiple times fails	init	partial
+t0610-reftable-basics::ref-transaction-can-delete-symbolic-self-reference-with-git-symbolic-ref-1	t0610-reftable-basics	ref transaction: can delete symbolic self-reference with git-symbolic-ref(1)	init	partial
+t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-without-no-deref-fails	t0610-reftable-basics	ref transaction: deleting symbolic self-reference without --no-deref fails	init	partial
+t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-with-no-deref-succeeds	t0610-reftable-basics	ref transaction: deleting symbolic self-reference with --no-deref succeeds	init	partial
+t0610-reftable-basics::ref-transaction-creating-symbolic-ref-fails-with-f-d-conflict	t0610-reftable-basics	ref transaction: creating symbolic ref fails with F/D conflict	init	partial
+t0610-reftable-basics::ref-transaction-ref-deletion	t0610-reftable-basics	ref transaction: ref deletion	init	partial
+t0610-reftable-basics::ref-transaction-writes-cause-auto-compaction	t0610-reftable-basics	ref transaction: writes cause auto-compaction	init	partial
+t0610-reftable-basics::ref-transaction-env-var-disables-compaction	t0610-reftable-basics	ref transaction: env var disables compaction	init	partial
+t0610-reftable-basics::ref-transaction-alternating-table-sizes-are-compacted	t0610-reftable-basics	ref transaction: alternating table sizes are compacted	branch	partial
+t0610-reftable-basics::ref-transaction-writes-are-synced	t0610-reftable-basics	ref transaction: writes are synced	init	partial
+t0610-reftable-basics::ref-transaction-empty-transaction-in-empty-repo	t0610-reftable-basics	ref transaction: empty transaction in empty repo	init	partial
+t0610-reftable-basics::ref-transaction-fails-gracefully-when-auto-compaction-fails	t0610-reftable-basics	ref transaction: fails gracefully when auto compaction fails	branch	partial
+t0610-reftable-basics::ref-transaction-timeout-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: timeout acquiring tables.list lock	init	partial
+t0610-reftable-basics::ref-transaction-retry-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: retry acquiring tables.list lock	init	partial
+t0610-reftable-basics::ref-transaction-many-concurrent-writers	t0610-reftable-basics	ref transaction: many concurrent writers	config	partial
+t0610-reftable-basics::pack-refs-compacts-tables	t0610-reftable-basics	pack-refs: compacts tables	init	partial
+t0610-reftable-basics::pack-refs-compaction-raises-locking-errors	t0610-reftable-basics	pack-refs: compaction raises locking errors	init	partial
+t0610-reftable-basics::pack-refs-prunes-stale-tables	t0610-reftable-basics	pack-refs: prunes stale tables	init	partial
+t0610-reftable-basics::pack-refs-does-not-prune-non-table-files	t0610-reftable-basics	pack-refs: does not prune non-table files	init	partial
+t0610-reftable-basics::packed-refs-writes-are-synced	t0610-reftable-basics	packed-refs: writes are synced	init	partial
+t0610-reftable-basics::ref-iterator-bogus-names-are-flagged	t0610-reftable-basics	ref iterator: bogus names are flagged	init	partial
+t0610-reftable-basics::ref-iterator-missing-object-ids-are-not-flagged	t0610-reftable-basics	ref iterator: missing object IDs are not flagged	init	partial
+t0610-reftable-basics::basic-commit-and-list-refs	t0610-reftable-basics	basic: commit and list refs	for-each-ref	partial
+t0610-reftable-basics::basic-can-write-large-commit-message	t0610-reftable-basics	basic: can write large commit message	commit	partial
+t0610-reftable-basics::basic-show-ref-fails-with-empty-repository	t0610-reftable-basics	basic: show-ref fails with empty repository	init	partial
+t0610-reftable-basics::basic-can-check-out-unborn-branch	t0610-reftable-basics	basic: can check out unborn branch	checkout	partial
+t0610-reftable-basics::basic-peeled-tags-are-stored	t0610-reftable-basics	basic: peeled tags are stored	init	partial
+t0610-reftable-basics::basic-for-each-ref-can-print-symrefs	t0610-reftable-basics	basic: for-each-ref can print symrefs	branch	partial
+t0610-reftable-basics::basic-notes	t0610-reftable-basics	basic: notes	init	partial
+t0610-reftable-basics::basic-stash	t0610-reftable-basics	basic: stash	init	partial
+t0610-reftable-basics::basic-cherry-pick	t0610-reftable-basics	basic: cherry-pick	branch	partial
+t0610-reftable-basics::basic-rebase	t0610-reftable-basics	basic: rebase	branch	partial
+t0610-reftable-basics::reflog-can-delete-separate-reflog-entries	t0610-reftable-basics	reflog: can delete separate reflog entries	init	partial
+t0610-reftable-basics::reflog-can-switch-to-previous-branch	t0610-reftable-basics	reflog: can switch to previous branch	checkout	partial
+t0610-reftable-basics::reflog-copying-branch-writes-reflog-entry	t0610-reftable-basics	reflog: copying branch writes reflog entry	branch	partial
+t0610-reftable-basics::reflog-renaming-branch-writes-reflog-entry	t0610-reftable-basics	reflog: renaming branch writes reflog entry	branch	partial
+t0610-reftable-basics::reflog-can-store-empty-logs	t0610-reftable-basics	reflog: can store empty logs	init	partial
+t0610-reftable-basics::reflog-expiry-empties-reflog	t0610-reftable-basics	reflog: expiry empties reflog	checkout	partial
+t0610-reftable-basics::reflog-can-be-deleted	t0610-reftable-basics	reflog: can be deleted	init	partial
+t0610-reftable-basics::reflog-garbage-collection-deletes-reflog-entries	t0610-reftable-basics	reflog: garbage collection deletes reflog entries	gc	partial
+t0610-reftable-basics::reflog-updates-via-head-update-head-reflog	t0610-reftable-basics	reflog: updates via HEAD update HEAD reflog	checkout	partial
+t0610-reftable-basics::branch-copying-branch-with-d-f-conflict	t0610-reftable-basics	branch: copying branch with D/F conflict	branch	partial
+t0610-reftable-basics::branch-moving-branch-with-d-f-conflict	t0610-reftable-basics	branch: moving branch with D/F conflict	branch	partial
+t0610-reftable-basics::worktree-adding-worktree-creates-separate-stack	t0610-reftable-basics	worktree: adding worktree creates separate stack	init	partial
+t0610-reftable-basics::worktree-pack-refs-in-main-repo-packs-main-refs	t0610-reftable-basics	worktree: pack-refs in main repo packs main refs	init	partial
+t0610-reftable-basics::worktree-pack-refs-in-worktree-packs-worktree-refs	t0610-reftable-basics	worktree: pack-refs in worktree packs worktree refs	init	partial
+t0610-reftable-basics::worktree-creating-shared-ref-updates-main-stack	t0610-reftable-basics	worktree: creating shared ref updates main stack	init	partial
+t0610-reftable-basics::worktree-creating-per-worktree-ref-updates-worktree-stack	t0610-reftable-basics	worktree: creating per-worktree ref updates worktree stack	init	partial
+t0610-reftable-basics::worktree-creating-per-worktree-ref-from-main-repo	t0610-reftable-basics	worktree: creating per-worktree ref from main repo	init	partial
+t0610-reftable-basics::worktree-creating-per-worktree-ref-from-second-worktree	t0610-reftable-basics	worktree: creating per-worktree ref from second worktree	init	partial
+t0610-reftable-basics::worktree-can-create-shared-and-per-worktree-ref-in-one-transaction	t0610-reftable-basics	worktree: can create shared and per-worktree ref in one transaction	init	partial
+t0610-reftable-basics::worktree-can-access-common-refs	t0610-reftable-basics	worktree: can access common refs	branch	partial
+t0610-reftable-basics::worktree-adds-worktree-with-detached-head	t0610-reftable-basics	worktree: adds worktree with detached HEAD	init	partial
+t0610-reftable-basics::fetch-accessing-fetch-head-special-ref-works	t0610-reftable-basics	fetch: accessing FETCH_HEAD special ref works	fetch	partial
+t0610-reftable-basics::writes-do-not-persist-peeled-value-for-invalid-tags	t0610-reftable-basics	writes do not persist peeled value for invalid tags	cat-file	partial
+t0610-reftable-basics::init-honors-shared-shared-with-umask-umask	t0610-reftable-basics	init: honors --shared=$shared with umask $umask	init	partial
+t0610-reftable-basics::pack-refs-honors-shared-shared-with-umask-umask	t0610-reftable-basics	pack-refs: honors --shared=$shared with umask $umask	init	partial
+t0610-reftable-basics::command-auto-compaction	t0610-reftable-basics	$command: auto compaction	branch	partial
 t0611-reftable-httpd::serving-ls-remote	t0611-reftable-httpd	serving ls-remote	init	pass
 t0612-reftable-jgit-compatibility::cgit-repository-can-be-read-by-jgit	t0612-reftable-jgit-compatibility	CGit repository can be read by JGit	init	pass
 t0612-reftable-jgit-compatibility::jgit-repository-can-be-read-by-cgit	t0612-reftable-jgit-compatibility	JGit repository can be read by CGit	reflog	pass
@@ -1335,10 +1335,10 @@ t0613-reftable-write-options::restart-interval-at-every-single-record	t0613-reft
 t0613-reftable-write-options::restart-interval-exceeding-maximum-supported-interval	t0613-reftable-write-options	restart interval exceeding maximum supported interval	init	pass
 t0613-reftable-write-options::object-index-gets-written-by-default-with-ref-index	t0613-reftable-write-options	object index gets written by default with ref index	pack-refs	pass
 t0613-reftable-write-options::object-index-can-be-disabled	t0613-reftable-write-options	object index can be disabled	pack-refs	pass
-t0614-reftable-fsck::worktree-stacks-can-be-verified	t0614-reftable-fsck	worktree stacks can be verified	init	pass
-t0614-reftable-fsck::invalid-symref-gets-reported	t0614-reftable-fsck	invalid symref gets reported	init	pass
-t0614-reftable-fsck::no-errors-reported-on-a-well-formed-repository	t0614-reftable-fsck	no errors reported on a well formed repository	commit	pass
-t0614-reftable-fsck::table-name-table-name-should-be-checked	t0614-reftable-fsck	table name $TABLE_NAME should be checked	commit	pass
+t0614-reftable-fsck::worktree-stacks-can-be-verified	t0614-reftable-fsck	worktree stacks can be verified	init	partial
+t0614-reftable-fsck::invalid-symref-gets-reported	t0614-reftable-fsck	invalid symref gets reported	init	partial
+t0614-reftable-fsck::no-errors-reported-on-a-well-formed-repository	t0614-reftable-fsck	no errors reported on a well formed repository	commit	partial
+t0614-reftable-fsck::table-name-table-name-should-be-checked	t0614-reftable-fsck	table name $TABLE_NAME should be checked	commit	partial
 t1000-read-tree-m-3way::3-way-merge-with-git-read-tree-m-empty-cache	t1000-read-tree-m-3way	3-way merge with git read-tree -m, empty cache	read-tree	pass
 t1000-read-tree-m-3way::3-way-merge-with-git-read-tree-m-match-h	t1000-read-tree-m-3way	3-way merge with git read-tree -m, match H	read-tree	pass
 t1000-read-tree-m-3way::1-must-not-have-an-entry-not-in-a	t1000-read-tree-m-3way	1 - must not have an entry not in A.	read-tree	pass
@@ -7082,7 +7082,7 @@ t4027-diff-submodule::combined-with-submodule	t4027-diff-submodule	combined (wit
 t4028-format-patch-mime-headers::create-commit-with-utf-8-body	t4028-format-patch-mime-headers	create commit with utf-8 body	format-patch	pass
 t4028-format-patch-mime-headers::patch-has-mime-headers	t4028-format-patch-mime-headers	patch has mime headers	format-patch	pass
 t4028-format-patch-mime-headers::patch-has-mime-and-extra-headers	t4028-format-patch-mime-headers	patch has mime and extra headers	format-patch	pass
-t4029-diff-trailing-space::test-description	t4029-diff-trailing-space	$test_description	diff	pass
+t4029-diff-trailing-space::test-description	t4029-diff-trailing-space	$test_description	diff	partial
 t4030-diff-textconv::setup-binary-file-with-history	t4030-diff-textconv	setup binary file with history	diff	pass
 t4030-diff-textconv::file-is-considered-binary-by-porcelain	t4030-diff-textconv	file is considered binary by porcelain	diff	pass
 t4030-diff-textconv::file-is-considered-binary-by-plumbing	t4030-diff-textconv	file is considered binary by plumbing	diff	pass
@@ -7168,30 +7168,30 @@ t4036-format-patch-signer-mime::format-normally	t4036-format-patch-signer-mime	f
 t4036-format-patch-signer-mime::format-with-signoff-without-funny-signer-name	t4036-format-patch-signer-mime	format with signoff without funny signer name	format-patch	pass
 t4036-format-patch-signer-mime::format-with-non-ascii-signer-name	t4036-format-patch-signer-mime	format with non ASCII signer name	format-patch	pass
 t4036-format-patch-signer-mime::attach-and-signoff-do-not-duplicate-mime-headers	t4036-format-patch-signer-mime	attach and signoff do not duplicate mime headers	format-patch	pass
-t4038-diff-combined::check-combined-output-1	t4038-diff-combined	check combined output (1)	diff	pass
-t4038-diff-combined::check-combined-output-1-with-git-diff-rev	t4038-diff-combined	check combined output (1) with git diff <rev>^!	diff	pass
-t4038-diff-combined::check-combined-output-2	t4038-diff-combined	check combined output (2)	diff	pass
-t4038-diff-combined::check-combined-output-2-with-git-diff-rev	t4038-diff-combined	check combined output (2) with git diff <rev>^!	diff	pass
-t4038-diff-combined::diagnose-truncated-file	t4038-diff-combined	diagnose truncated file	diff	pass
-t4038-diff-combined::setup-for-cc-raw	t4038-diff-combined	setup for --cc --raw	diff	pass
-t4038-diff-combined::check-cc-raw-with-four-trees	t4038-diff-combined	check --cc --raw with four trees	diff	pass
-t4038-diff-combined::check-cc-raw-with-forty-trees	t4038-diff-combined	check --cc --raw with forty trees	diff	pass
-t4038-diff-combined::setup-combined-ignore-spaces	t4038-diff-combined	setup combined ignore spaces	diff	pass
-t4038-diff-combined::check-combined-output-no-ignore-space	t4038-diff-combined	check combined output (no ignore space)	diff	pass
-t4038-diff-combined::check-combined-output-ignore-space-at-eol	t4038-diff-combined	check combined output (ignore space at eol)	diff	pass
-t4038-diff-combined::check-combined-output-ignore-space-change	t4038-diff-combined	check combined output (ignore space change)	diff	pass
-t4038-diff-combined::check-combined-output-ignore-all-spaces	t4038-diff-combined	check combined output (ignore all spaces)	diff	pass
-t4038-diff-combined::combine-diff-coalesce-simple	t4038-diff-combined	combine diff coalesce simple	diff	pass
-t4038-diff-combined::combine-diff-coalesce-tricky	t4038-diff-combined	combine diff coalesce tricky	diff	pass
-t4038-diff-combined::combine-diff-missing-delete-bug	t4038-diff-combined	combine diff missing delete bug	diff	pass
-t4038-diff-combined::combine-diff-gets-tree-sorting-right	t4038-diff-combined	combine diff gets tree sorting right	diff	pass
-t4038-diff-combined::setup-for-combined-all-paths	t4038-diff-combined	setup for --combined-all-paths	diff	pass
-t4038-diff-combined::combined-all-paths-and-raw	t4038-diff-combined	--combined-all-paths and --raw	diff	pass
-t4038-diff-combined::combined-all-paths-and-cc	t4038-diff-combined	--combined-all-paths and --cc	diff	pass
-t4038-diff-combined::setup-for-combined-all-paths-with-funny-names	t4038-diff-combined	setup for --combined-all-paths with funny names	diff	pass
-t4038-diff-combined::combined-all-paths-and-raw-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw and funny names	diff	pass
-t4038-diff-combined::combined-all-paths-and-raw-and-z-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw -and -z and funny names	diff	pass
-t4038-diff-combined::combined-all-paths-and-cc-and-funny-names	t4038-diff-combined	--combined-all-paths and --cc and funny names	diff	pass
+t4038-diff-combined::check-combined-output-1	t4038-diff-combined	check combined output (1)	diff	partial
+t4038-diff-combined::check-combined-output-1-with-git-diff-rev	t4038-diff-combined	check combined output (1) with git diff <rev>^!	diff	partial
+t4038-diff-combined::check-combined-output-2	t4038-diff-combined	check combined output (2)	diff	partial
+t4038-diff-combined::check-combined-output-2-with-git-diff-rev	t4038-diff-combined	check combined output (2) with git diff <rev>^!	diff	partial
+t4038-diff-combined::diagnose-truncated-file	t4038-diff-combined	diagnose truncated file	diff	partial
+t4038-diff-combined::setup-for-cc-raw	t4038-diff-combined	setup for --cc --raw	diff	partial
+t4038-diff-combined::check-cc-raw-with-four-trees	t4038-diff-combined	check --cc --raw with four trees	diff	partial
+t4038-diff-combined::check-cc-raw-with-forty-trees	t4038-diff-combined	check --cc --raw with forty trees	diff	partial
+t4038-diff-combined::setup-combined-ignore-spaces	t4038-diff-combined	setup combined ignore spaces	diff	partial
+t4038-diff-combined::check-combined-output-no-ignore-space	t4038-diff-combined	check combined output (no ignore space)	diff	partial
+t4038-diff-combined::check-combined-output-ignore-space-at-eol	t4038-diff-combined	check combined output (ignore space at eol)	diff	partial
+t4038-diff-combined::check-combined-output-ignore-space-change	t4038-diff-combined	check combined output (ignore space change)	diff	partial
+t4038-diff-combined::check-combined-output-ignore-all-spaces	t4038-diff-combined	check combined output (ignore all spaces)	diff	partial
+t4038-diff-combined::combine-diff-coalesce-simple	t4038-diff-combined	combine diff coalesce simple	diff	partial
+t4038-diff-combined::combine-diff-coalesce-tricky	t4038-diff-combined	combine diff coalesce tricky	diff	partial
+t4038-diff-combined::combine-diff-missing-delete-bug	t4038-diff-combined	combine diff missing delete bug	diff	partial
+t4038-diff-combined::combine-diff-gets-tree-sorting-right	t4038-diff-combined	combine diff gets tree sorting right	diff	partial
+t4038-diff-combined::setup-for-combined-all-paths	t4038-diff-combined	setup for --combined-all-paths	diff	partial
+t4038-diff-combined::combined-all-paths-and-raw	t4038-diff-combined	--combined-all-paths and --raw	diff	partial
+t4038-diff-combined::combined-all-paths-and-cc	t4038-diff-combined	--combined-all-paths and --cc	diff	partial
+t4038-diff-combined::setup-for-combined-all-paths-with-funny-names	t4038-diff-combined	setup for --combined-all-paths with funny names	diff	partial
+t4038-diff-combined::combined-all-paths-and-raw-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw and funny names	diff	partial
+t4038-diff-combined::combined-all-paths-and-raw-and-z-and-funny-names	t4038-diff-combined	--combined-all-paths and --raw -and -z and funny names	diff	partial
+t4038-diff-combined::combined-all-paths-and-cc-and-funny-names	t4038-diff-combined	--combined-all-paths and --cc and funny names	diff	partial
 t4039-diff-assume-unchanged::setup	t4039-diff-assume-unchanged	setup	diff	pass
 t4039-diff-assume-unchanged::diff-index-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-index does not examine assume-unchanged entries	diff	pass
 t4039-diff-assume-unchanged::diff-files-does-not-examine-assume-unchanged-entries	t4039-diff-assume-unchanged	diff-files does not examine assume-unchanged entries	diff	pass
@@ -9709,17 +9709,17 @@ t5408-send-pack-stdin::cmdline-refs-with-multiple-duplicates	t5408-send-pack-std
 t5408-send-pack-stdin::stdin-refs-come-after-cmdline	t5408-send-pack-stdin	--stdin refs come after cmdline	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-cmdline	t5408-send-pack-stdin	refspecs and --mirror do not mix (cmdline)	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-stdin	t5408-send-pack-stdin	refspecs and --mirror do not mix (stdin)	send-pack	pass
-t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	pass
-t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	pass
-t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	pass
-t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	pass
-t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	pass
-t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	pass
-t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	pass
-t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	pass
-t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	pass
-t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	pass
-t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	pass
+t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	partial
+t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	partial
+t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	partial
+t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	partial
+t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	partial
+t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	partial
+t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	partial
+t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	partial
+t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	partial
+t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	partial
+t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	partial
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	not_ported
@@ -9817,8 +9817,8 @@ t5500-fetch-pack::fetch-pack-diag-url-p-h-r-3	t5500-fetch-pack	fetch-pack --diag
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-4	t5500-fetch-pack	fetch-pack --diag-url $p://$h/~$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-h-r	t5500-fetch-pack	fetch-pack --diag-url ./$h:$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-5	t5500-fetch-pack	fetch-pack --diag-url ./$p:$h/~$r	fetch-pack	pass
-t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	pass
-t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	pass
+t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	partial
+t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	partial
 t5502-quickfetch::clone-without-alternate	t5502-quickfetch	clone without alternate	count-objects	pass
 t5502-quickfetch::further-commits-in-the-original	t5502-quickfetch	further commits in the original	commit	pass
 t5502-quickfetch::copy-commit-and-tree-but-not-blob-by-hand	t5502-quickfetch	copy commit and tree but not blob by hand	count-objects	pass

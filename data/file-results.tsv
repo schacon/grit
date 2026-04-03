@@ -78,11 +78,11 @@ t0450-txt-doc-vs-help	yes	1	1	0	ok
 t0500-progress-display	yes	2	2	0	ok
 t0600-reffiles-backend	yes	3	3	0	ok
 t0602-reffiles-fsck	yes	4	4	0	ok
-t0610-reftable-basics	yes	11	11	0	ok
+t0610-reftable-basics	yes	11	8	3	ok
 t0611-reftable-httpd	yes	1	1	0	ok
 t0612-reftable-jgit-compatibility	yes	2	2	0	ok
 t0613-reftable-write-options	yes	3	3	0	ok
-t0614-reftable-fsck	yes	3	3	0	ok
+t0614-reftable-fsck	yes	3	1	2	ok
 t1000-read-tree-m-3way	yes	9	9	0	ok
 t1001-read-tree-m-2way	yes	26	26	0	ok
 t1002-read-tree-m-u-2way	yes	21	21	0	ok
@@ -381,7 +381,7 @@ t4025-hunk-header	yes	3	2	1	ok
 t4026-color	yes	5	5	0	ok
 t4027-diff-submodule	yes	5	5	0	ok
 t4028-format-patch-mime-headers	yes	3	3	0	ok
-t4029-diff-trailing-space	yes	5	5	0	ok
+t4029-diff-trailing-space	yes	5	4	1	ok
 t4030-diff-textconv	yes	20	20	0	ok
 t4031-diff-rewrite-binary	yes	29	28	1	ok
 t4032-diff-inter-hunk-context	yes	32	32	0	ok
@@ -389,7 +389,7 @@ t4033-diff-patience	yes	35	35	0	ok
 t4034-diff-words	yes	5	5	0	ok
 t4035-diff-quiet	yes	45	45	0	ok
 t4036-format-patch-signer-mime	yes	2	2	0	ok
-t4038-diff-combined	yes	28	28	0	ok
+t4038-diff-combined	yes	28	26	2	ok
 t4039-diff-assume-unchanged	yes	20	20	0	ok
 t4040-whitespace-status	yes	24	24	0	ok
 t4041-diff-submodule-option	yes	5	5	0	ok
@@ -551,11 +551,11 @@ t5405-send-pack-rewind	yes	3	3	0	ok
 t5406-remote-rejects	yes	3	3	0	ok
 t5407-post-rewrite-hook	yes	3	3	0	ok
 t5408-send-pack-stdin	yes	2	2	0	ok
-t5409-colorize-remote-messages	yes	2	2	0	ok
+t5409-colorize-remote-messages	yes	2	1	1	ok
 t5410-receive-pack	no	0	0	0	not_ported
 t5411-proc-receive-hook	no	0	0	0	not_ported
 t5500-fetch-pack	yes	5	5	0	ok
-t5501-fetch-push-alternates	yes	3	3	0	ok
+t5501-fetch-push-alternates	yes	3	2	1	ok
 t5502-quickfetch	yes	4	4	0	ok
 t5503-tagfollow	yes	6	6	0	ok
 t5504-fetch-receive-strict	yes	3	3	0	ok
