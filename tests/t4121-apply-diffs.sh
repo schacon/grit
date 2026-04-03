@@ -8,12 +8,20 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 test_expect_success 'setup: init repo' '
 	git init -q &&
-	git config user.name "Test User" &&
+	git config user.name "Test" &&
 	git config user.email "test@example.com"
 '
 
+echo '1
+2
+3
+4
+5
+6
+7
+8' >file
+
 test_expect_success 'setup' '
-	test_write_lines 1 2 3 4 5 6 7 8 >file &&
 	git add file &&
 	git commit -q -m 1 &&
 	git checkout -b test &&
@@ -28,7 +36,7 @@ test_expect_success 'setup' '
 '
 
 test_expect_success 'check if contextually independent diffs for the same file apply' '
-	(git diff test~2 test~1 && git diff test~1 test) | git apply
+	( git diff test~2 test~1 && git diff test~1 test~0 )| git apply
 '
 
 test_done

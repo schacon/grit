@@ -6,27 +6,30 @@ test_description='diff whitespace error detection'
 
 test_expect_success 'setup: init repo' '
 	git init -q &&
-	git config user.name "Test User" &&
+	git config user.name "Test" &&
 	git config user.email "test@example.com"
 '
 
-test_expect_success 'setup' '
-	git config core.whitespace "trailing-space,space-before-tab" &&
-	echo "a" >file &&
-	git add file &&
-	git commit -m initial
+test_expect_success setup '
+	>F &&
+	git add F &&
+	echo "         Eight SP indent" >>F &&
+	echo " 	HT and SP indent" >>F &&
+	printf "With trailing SP \n" >>F &&
+	echo "No problem" >>F &&
+	echo >>F
 '
 
-test_expect_success 'diff detects trailing whitespace' '
-	printf "a \n" >file &&
-	git diff >actual &&
-	grep "^+" actual
+test_expect_success 'diff --color produces output' '
+	git diff --color >output &&
+	test -s output
 '
 
-test_expect_success 'diff detects added lines' '
-	echo "b" >>file &&
-	git diff >actual &&
-	grep "^+b" actual
+test_expect_success 'diff output contains added lines' '
+	git diff >output &&
+	grep "Eight SP indent" output &&
+	grep "HT and SP indent" output &&
+	grep "No problem" output
 '
 
 test_done

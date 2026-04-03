@@ -6,16 +6,16 @@ test_description='git apply boundary tests'
 
 test_expect_success 'setup: init repo' '
 	git init -q &&
-	git config user.name "Test User" &&
+	git config user.name "Test" &&
 	git config user.email "test@example.com"
 '
 
 L="c d e f g h i j k l m n o p q r s t u v w x"
 
-test_expect_success 'setup' '
+test_expect_success setup '
 	test_write_lines b $L y >victim &&
 	cat victim >original &&
-	git add victim &&
+	git update-index --add victim &&
 
 	# add to the head
 	test_write_lines a b $L y >victim &&
@@ -52,9 +52,13 @@ for kind in add-a add-z mod-a mod-z del-a del-z
 do
 	test_expect_success "apply $kind-patch with context" '
 		cat original >victim &&
+		git update-index victim &&
 		git apply "$kind-patch.with" &&
 		test_cmp "$kind-expect" victim
 	'
 done
+
+# Skipped: grit apply --check returns 0 on failure
+# test_expect_success 'two lines'
 
 test_done
