@@ -36,7 +36,7 @@ t0031-lockfile-pid	yes	2	2	0	ok
 t0033-safe-directory	yes	4	4	0	ok
 t0034-root-safe-directory	yes	1	1	0	ok
 t0035-safe-bare-repository	yes	4	4	0	ok
-t0040-parse-options	yes	32	26	6	ok
+t0040-parse-options	yes	32	28	4	ok
 t0041-usage	yes	9	9	0	ok
 t0050-filesystem	yes	30	30	0	ok
 t0051-windows-named-pipe	yes	2	2	0	ok
@@ -156,7 +156,7 @@ t1504-ceiling-dirs	yes	37	37	0	ok
 t1505-rev-parse-last	yes	35	35	0	ok
 t1506-rev-parse-diagnosis	yes	8	8	0	ok
 t1507-rev-parse-upstream	yes	8	8	0	ok
-t1508-at-combinations	yes	14	12	2	ok
+t1508-at-combinations	yes	14	14	0	ok
 t1509-root-work-tree	yes	3	3	0	ok
 t1510-repo-setup	yes	36	36	0	ok
 t1511-rev-parse-caret	yes	30	30	0	ok
@@ -164,7 +164,7 @@ t1512-rev-parse-disambiguation	yes	10	10	0	ok
 t1513-rev-parse-prefix	yes	20	20	0	ok
 t1514-rev-parse-push	yes	6	6	0	ok
 t1515-rev-parse-outside-repo	yes	4	4	0	ok
-t1517-outside-repo	yes	6	5	1	ok
+t1517-outside-repo	yes	6	6	0	ok
 t1600-index	yes	5	5	0	ok
 t1601-index-bogus	yes	2	2	0	ok
 t1700-split-index	yes	3	3	0	ok
@@ -421,7 +421,7 @@ t4067-diff-partial-clone	yes	4	4	0	ok
 t4068-diff-symmetric-merge-base	yes	5	5	0	ok
 t4069-remerge-diff	yes	3	3	0	ok
 t4070-diff-pairs	yes	4	4	0	ok
-t4071-diff-minimal	yes	1	0	1	ok
+t4071-diff-minimal	yes	1	1	0	ok
 t4072-diff-max-depth	yes	5	5	0	ok
 t4073-diff-stat-name-width	yes	5	5	0	ok
 t4074-diff-shifted-matched-group	yes	4	4	0	ok
@@ -472,10 +472,10 @@ t4152-am-subjects	yes	5	5	0	ok
 t4153-am-resume-override-opts	yes	4	4	0	ok
 t4200-rerere	yes	6	6	0	ok
 t4201-shortlog	yes	3	1	2	ok
-t4202-log	yes	289	258	31	ok
+t4202-log	yes	289	289	0	ok
 t4203-mailmap	yes	27	20	7	ok
 t4204-patch-id	yes	24	24	0	ok
-t4205-log-pretty-formats	yes	132	113	19	ok
+t4205-log-pretty-formats	yes	132	127	5	ok
 t4206-log-follow-harder-copies	yes	7	7	0	ok
 t4207-log-decoration-colors	yes	2	2	0	ok
 t4208-log-magic-pathspec	yes	5	5	0	ok
@@ -758,7 +758,7 @@ t7003-filter-branch	yes	3	3	0	ok
 t7004-tag	yes	357	354	3	ok
 t7005-editor	yes	2	2	0	ok
 t7006-pager	yes	21	21	0	ok
-t7007-show	yes	92	86	6	ok
+t7007-show	yes	92	92	0	ok
 t7008-filter-branch-null-sha1	yes	4	4	0	ok
 t7010-setup	yes	31	31	0	ok
 t7011-skip-worktree-reading	yes	7	7	0	ok
@@ -814,7 +814,7 @@ t7503-pre-commit-and-pre-merge-commit-hooks	yes	3	3	0	ok
 t7504-commit-msg-hook	yes	3	3	0	ok
 t7505-prepare-commit-msg-hook	yes	5	5	0	ok
 t7506-status-submodule	yes	5	5	0	ok
-t7507-commit-verbose	yes	13	12	1	ok
+t7507-commit-verbose	yes	13	13	0	ok
 t7508-status	yes	214	212	2	ok
 t7509-commit-authorship	yes	22	21	1	ok
 t7510-signed-commit	yes	7	7	0	ok

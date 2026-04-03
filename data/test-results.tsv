@@ -3138,11 +3138,11 @@ t1507-rev-parse-upstream::log-g-other-u	t1507-rev-parse-upstream	log -g other@{u
 t1507-rev-parse-upstream::log-g-other-u-now	t1507-rev-parse-upstream	log -g other@{u}@{now}	rev-parse	pass
 t1507-rev-parse-upstream::reflog-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{reflog}-parsing does not look beyond colon	rev-parse	pass
 t1507-rev-parse-upstream::upstream-parsing-does-not-look-beyond-colon	t1507-rev-parse-upstream	@{upstream}-parsing does not look beyond colon	rev-parse	pass
-t1508-at-combinations::setup	t1508-at-combinations	setup	branch	partial
-t1508-at-combinations::switch-to-old-branch	t1508-at-combinations	switch to old-branch	checkout	partial
-t1508-at-combinations::create-path-with	t1508-at-combinations	create path with @	add	partial
-t1508-at-combinations::1-works-with-only-one-reflog-entry	t1508-at-combinations	@{1} works with only one reflog entry	checkout	partial
-t1508-at-combinations::0-works-with-empty-reflog	t1508-at-combinations	@{0} works with empty reflog	checkout	partial
+t1508-at-combinations::setup	t1508-at-combinations	setup	branch	pass
+t1508-at-combinations::switch-to-old-branch	t1508-at-combinations	switch to old-branch	checkout	pass
+t1508-at-combinations::create-path-with	t1508-at-combinations	create path with @	add	pass
+t1508-at-combinations::1-works-with-only-one-reflog-entry	t1508-at-combinations	@{1} works with only one reflog entry	checkout	pass
+t1508-at-combinations::0-works-with-empty-reflog	t1508-at-combinations	@{0} works with empty reflog	checkout	pass
 t1509-root-work-tree::add-relative	t1509-root-work-tree	add relative	add	pass
 t1509-root-work-tree::add-absolute	t1509-root-work-tree	add absolute	add	pass
 t1509-root-work-tree::add-relative-2	t1509-root-work-tree	add relative	add	pass
@@ -3301,17 +3301,17 @@ t1515-rev-parse-outside-repo::set-up-non-repo-directory	t1515-rev-parse-outside-
 t1515-rev-parse-outside-repo::rev-parse-sq-quote	t1515-rev-parse-outside-repo	rev-parse --sq-quote	rev-parse	pass
 t1515-rev-parse-outside-repo::rev-parse-local-env-vars	t1515-rev-parse-outside-repo	rev-parse --local-env-vars	rev-parse	pass
 t1515-rev-parse-outside-repo::rev-parse-resolve-git-dir	t1515-rev-parse-outside-repo	rev-parse --resolve-git-dir	rev-parse	pass
-t1517-outside-repo::set-up-a-non-repo-directory-and-test-file	t1517-outside-repo	set up a non-repo directory and test file	add	partial
-t1517-outside-repo::compute-a-patch-id-outside-repository-uses-sha-1	t1517-outside-repo	compute a patch-id outside repository (uses SHA-1)	patch-id	partial
-t1517-outside-repo::hash-object-outside-repository-uses-sha-1	t1517-outside-repo	hash-object outside repository (uses SHA-1)	hash-object	partial
-t1517-outside-repo::apply-a-patch-outside-repository	t1517-outside-repo	apply a patch outside repository	apply	partial
-t1517-outside-repo::grep-outside-repository	t1517-outside-repo	grep outside repository	grep	partial
-t1517-outside-repo::imap-send-outside-repository	t1517-outside-repo	imap-send outside repository	imap-send	partial
-t1517-outside-repo::check-ref-format-outside-repository	t1517-outside-repo	check-ref-format outside repository	check-ref-format	partial
-t1517-outside-repo::diff-outside-repository	t1517-outside-repo	diff outside repository	diff	partial
-t1517-outside-repo::stripspace-outside-repository	t1517-outside-repo	stripspace outside repository	stripspace	partial
-t1517-outside-repo::remote-http-outside-repository	t1517-outside-repo	remote-http outside repository		partial
-t1517-outside-repo::fmt-merge-msg-does-not-crash-with-h	t1517-outside-repo	fmt-merge-msg does not crash with -h	fmt-merge-msg	partial
+t1517-outside-repo::set-up-a-non-repo-directory-and-test-file	t1517-outside-repo	set up a non-repo directory and test file	add	pass
+t1517-outside-repo::compute-a-patch-id-outside-repository-uses-sha-1	t1517-outside-repo	compute a patch-id outside repository (uses SHA-1)	patch-id	pass
+t1517-outside-repo::hash-object-outside-repository-uses-sha-1	t1517-outside-repo	hash-object outside repository (uses SHA-1)	hash-object	pass
+t1517-outside-repo::apply-a-patch-outside-repository	t1517-outside-repo	apply a patch outside repository	apply	pass
+t1517-outside-repo::grep-outside-repository	t1517-outside-repo	grep outside repository	grep	pass
+t1517-outside-repo::imap-send-outside-repository	t1517-outside-repo	imap-send outside repository	imap-send	pass
+t1517-outside-repo::check-ref-format-outside-repository	t1517-outside-repo	check-ref-format outside repository	check-ref-format	pass
+t1517-outside-repo::diff-outside-repository	t1517-outside-repo	diff outside repository	diff	pass
+t1517-outside-repo::stripspace-outside-repository	t1517-outside-repo	stripspace outside repository	stripspace	pass
+t1517-outside-repo::remote-http-outside-repository	t1517-outside-repo	remote-http outside repository		pass
+t1517-outside-repo::fmt-merge-msg-does-not-crash-with-h	t1517-outside-repo	fmt-merge-msg does not crash with -h	fmt-merge-msg	pass
 t1600-index::setup	t1600-index	setup		pass
 t1600-index::bogus-git-index-version-issues-warning	t1600-index	bogus GIT_INDEX_VERSION issues warning	add	pass
 t1600-index::out-of-bounds-git-index-version-issues-warning	t1600-index	out of bounds GIT_INDEX_VERSION issues warning	add	pass
@@ -7691,7 +7691,7 @@ t4070-diff-pairs::diff-pairs-does-not-support-normal-raw-diff-input	t4070-diff-p
 t4070-diff-pairs::diff-pairs-does-not-support-tree-objects-as-input	t4070-diff-pairs	diff-pairs does not support tree objects as input	diff	pass
 t4070-diff-pairs::diff-pairs-does-not-support-pathspec-arguments	t4070-diff-pairs	diff-pairs does not support pathspec arguments	diff	pass
 t4070-diff-pairs::diff-pairs-explicit-queue-flush	t4070-diff-pairs	diff-pairs explicit queue flush	diff	pass
-t4071-diff-minimal::minimal-diff-should-not-mark-changes-between-changed-lines	t4071-diff-minimal	minimal diff should not mark changes between changed lines	diff	partial
+t4071-diff-minimal::minimal-diff-should-not-mark-changes-between-changed-lines	t4071-diff-minimal	minimal diff should not mark changes between changed lines	diff	pass
 t4072-diff-max-depth::setup	t4072-diff-max-depth	setup	diff	pass
 t4072-diff-max-depth::max-depth-is-disallowed-with-wildcard-pathspecs	t4072-diff-max-depth	--max-depth is disallowed with wildcard pathspecs	diff	pass
 t4072-diff-max-depth::find-shortest-path-within-embedded-pathspecs	t4072-diff-max-depth	find shortest path within embedded pathspecs	diff	pass
@@ -8175,150 +8175,150 @@ t4201-shortlog::set-up-option-selection-tests	t4201-shortlog	set up option selec
 t4201-shortlog::no-group-resets-group-list-to-author	t4201-shortlog	--no-group resets group list to author	shortlog	partial
 t4201-shortlog::no-group-resets-trailer-list	t4201-shortlog	--no-group resets trailer list	shortlog	partial
 t4201-shortlog::stdin-with-multiple-groups-reports-error	t4201-shortlog	stdin with multiple groups reports error	shortlog	partial
-t4202-log::pretty	t4202-log	pretty	log	partial
-t4202-log::pretty-tformat	t4202-log	pretty (tformat)	log	partial
-t4202-log::pretty-shortcut	t4202-log	pretty (shortcut)	log	partial
-t4202-log::format	t4202-log	format	log	partial
-t4202-log::format-w-11-1-2	t4202-log	format %w(11,1,2)	log	partial
-t4202-log::format-w-1-2	t4202-log	format %w(,1,2)	log	partial
-t4202-log::oneline	t4202-log	oneline	log	partial
-t4202-log::diff-filter-a	t4202-log	diff-filter=A	log	partial
-t4202-log::diff-filter-m	t4202-log	diff-filter=M	log	partial
-t4202-log::diff-filter-d	t4202-log	diff-filter=D	log	partial
-t4202-log::all-negative-filter	t4202-log	all-negative filter	log	partial
-t4202-log::diff-filter-r	t4202-log	diff-filter=R	log	partial
-t4202-log::multiple-diff-filter-bits	t4202-log	multiple --diff-filter bits	log	partial
-t4202-log::diff-filter-c	t4202-log	diff-filter=C	log	partial
-t4202-log::git-log-follow	t4202-log	git log --follow	log	partial
-t4202-log::git-config-log-follow-works-like-follow	t4202-log	git config log.follow works like --follow	log	partial
-t4202-log::git-config-log-follow-does-not-die-with-multiple-paths	t4202-log	git config log.follow does not die with multiple paths	log	partial
-t4202-log::git-config-log-follow-does-not-die-with-no-paths	t4202-log	git config log.follow does not die with no paths	log	partial
-t4202-log::git-log-follow-rejects-unsupported-pathspec-magic	t4202-log	git log --follow rejects unsupported pathspec magic	log	partial
-t4202-log::log-follow-disabled-with-unsupported-pathspec-magic	t4202-log	log.follow disabled with unsupported pathspec magic	log	partial
-t4202-log::git-config-log-follow-is-overridden-by-no-follow	t4202-log	git config log.follow is overridden by --no-follow	log	partial
-t4202-log::git-log-no-walk-commits-sorts-by-commit-time	t4202-log	git log --no-walk <commits> sorts by commit time	log	partial
-t4202-log::git-log-no-walk-sorted-commits-sorts-by-commit-time	t4202-log	git log --no-walk=sorted <commits> sorts by commit time	log	partial
-t4202-log::git-log-line-prefix-no-walk-commits-sorts-by-commit-time	t4202-log	git log --line-prefix="=== " --no-walk <commits> sorts by commit time	log	partial
-t4202-log::git-log-no-walk-unsorted-commits-leaves-list-of-commits-as-given	t4202-log	git log --no-walk=unsorted <commits> leaves list of commits as given	log	partial
-t4202-log::git-show-commits-leaves-list-of-commits-as-given	t4202-log	git show <commits> leaves list of commits as given	log	partial
-t4202-log::setup-case-sensitivity-tests	t4202-log	setup case sensitivity tests	log	partial
-t4202-log::log-grep	t4202-log	log --grep	log	partial
-t4202-log::log-invert-grep-grep	t4202-log	log --invert-grep --grep	log	partial
-t4202-log::log-invert-grep-grep-i	t4202-log	log --invert-grep --grep -i	log	partial
-t4202-log::log-grep-option-parsing	t4202-log	log --grep option parsing	log	partial
-t4202-log::log-i-grep	t4202-log	log -i --grep	log	partial
-t4202-log::log-grep-i	t4202-log	log --grep -i	log	partial
-t4202-log::log-f-e-grep-ere-uses-ere	t4202-log	log -F -E --grep=<ere> uses ere	log	partial
-t4202-log::log-f-e-perl-regexp-grep-pcre-uses-pcre	t4202-log	log -F -E --perl-regexp --grep=<pcre> uses PCRE	log	partial
-t4202-log::log-with-grep-patterntype-configuration	t4202-log	log with grep.patternType configuration	log	partial
-t4202-log::log-with-grep-patterntype-configuration-and-command-line	t4202-log	log with grep.patternType configuration and command line	log	partial
-t4202-log::log-with-various-grep-patterntype-configurations-command-lines	t4202-log	log with various grep.patternType configurations & command-lines	log	partial
-t4202-log::log-author	t4202-log	log --author	log	partial
-t4202-log::log-committer	t4202-log	log --committer	log	partial
-t4202-log::log-i-grep-with-color	t4202-log	log -i --grep with color	log	partial
-t4202-log::c-color-grep-selected-log-grep	t4202-log	-c color.grep.selected log --grep	log	partial
-t4202-log::c-color-grep-matchselected-log-grep	t4202-log	-c color.grep.matchSelected log --grep	log	partial
-t4202-log::simple-log-graph	t4202-log	simple log --graph	log	partial
-t4202-log::simple-log-graph-line-prefix-123	t4202-log	simple log --graph --line-prefix="123 "	log	partial
-t4202-log::set-up-merge-history	t4202-log	set up merge history	log	partial
-t4202-log::log-graph-with-merge	t4202-log	log --graph with merge	log	partial
-t4202-log::log-graph-line-prefix-with-merge	t4202-log	log --graph --line-prefix="| | | " with merge	log	partial
-t4202-log::log-graph-with-merge-with-log-graphcolors	t4202-log	log --graph with merge with log.graphColors	log	partial
-t4202-log::log-raw-graph-m-with-merge	t4202-log	log --raw --graph -m with merge	log	partial
-t4202-log::diff-tree-graph	t4202-log	diff-tree --graph	log	partial
-t4202-log::log-graph-with-full-output	t4202-log	log --graph with full output	log	partial
-t4202-log::set-up-more-tangled-history	t4202-log	set up more tangled history	log	partial
-t4202-log::log-graph-with-merge-2	t4202-log	log --graph with merge	log	partial
-t4202-log::log-decorate-configuration	t4202-log	log.decorate configuration	log	partial
-t4202-log::parse-log-excludedecoration-with-no-value	t4202-log	parse log.excludeDecoration with no value	log	partial
-t4202-log::decorate-refs-with-glob	t4202-log	decorate-refs with glob	log	partial
-t4202-log::decorate-refs-without-globs	t4202-log	decorate-refs without globs	log	partial
-t4202-log::multiple-decorate-refs	t4202-log	multiple decorate-refs	log	partial
-t4202-log::decorate-refs-exclude-with-glob	t4202-log	decorate-refs-exclude with glob	log	partial
-t4202-log::decorate-refs-exclude-without-globs	t4202-log	decorate-refs-exclude without globs	log	partial
-t4202-log::multiple-decorate-refs-exclude	t4202-log	multiple decorate-refs-exclude	log	partial
-t4202-log::decorate-refs-and-decorate-refs-exclude	t4202-log	decorate-refs and decorate-refs-exclude	log	partial
-t4202-log::deocrate-refs-and-log-excludedecoration	t4202-log	deocrate-refs and log.excludeDecoration	log	partial
-t4202-log::decorate-refs-exclude-and-simplify-by-decoration	t4202-log	decorate-refs-exclude and simplify-by-decoration	log	partial
-t4202-log::decorate-refs-with-implied-decorate-from-format	t4202-log	decorate-refs with implied decorate from format	log	partial
-t4202-log::implied-decorate-does-not-override-option	t4202-log	implied decorate does not override option	log	partial
-t4202-log::decorate-refs-and-simplify-by-decoration-without-output	t4202-log	decorate-refs and simplify-by-decoration without output	log	partial
-t4202-log::decorate-refs-exclude-head	t4202-log	decorate-refs-exclude HEAD	log	partial
-t4202-log::decorate-refs-focus-from-default	t4202-log	decorate-refs focus from default	log	partial
-t4202-log::clear-decorations-overrides-defaults	t4202-log	--clear-decorations overrides defaults	log	partial
-t4202-log::clear-decorations-clears-previous-exclusions	t4202-log	--clear-decorations clears previous exclusions	log	partial
-t4202-log::log-decorate-config-parsing	t4202-log	log.decorate config parsing	log	partial
-t4202-log::log-output-on-a-tty	t4202-log	log output on a TTY	log	partial
-t4202-log::reflog-is-expected-format	t4202-log	reflog is expected format	log	partial
-t4202-log::whatchanged-is-expected-format	t4202-log	whatchanged is expected format	log	partial
-t4202-log::log-abbrevcommit-configuration	t4202-log	log.abbrevCommit configuration	log	partial
-t4202-log::abbrev-commit-with-core-abbrev-false	t4202-log	--abbrev-commit with core.abbrev=false	log	partial
-t4202-log::abbrev-commit-with-no-abbrev	t4202-log	--abbrev-commit with --no-abbrev	log	partial
-t4202-log::abbrev-commit-with-core-abbrev-9000	t4202-log	--abbrev-commit with core.abbrev=9000	log	partial
-t4202-log::abbrev-commit-with-abbrev-9000	t4202-log	--abbrev-commit with --abbrev=9000	log	partial
-t4202-log::show-added-path-under-follow-m	t4202-log	show added path under "--follow -M"	log	partial
-t4202-log::git-log-c-follow	t4202-log	git log -c --follow	log	partial
-t4202-log::log-graph-with-diff-and-stats	t4202-log	log --graph with diff and stats	log	partial
-t4202-log::log-line-prefix-graph-with-diff-and-stats	t4202-log	log --line-prefix="*** " --graph with diff and stats	log	partial
-t4202-log::log-graph-with-name-status	t4202-log	log --graph with --name-status	log	partial
-t4202-log::log-graph-with-name-only	t4202-log	log --graph with --name-only	log	partial
-t4202-log::no-graph-countermands-graph	t4202-log	--no-graph countermands --graph	log	partial
-t4202-log::graph-countermands-no-graph	t4202-log	--graph countermands --no-graph	log	partial
-t4202-log::no-graph-does-not-unset-topo-order	t4202-log	--no-graph does not unset --topo-order	log	partial
-t4202-log::no-graph-does-not-unset-parents	t4202-log	--no-graph does not unset --parents	log	partial
-t4202-log::reverse-and-graph-conflict	t4202-log	--reverse and --graph conflict	log	partial
-t4202-log::reverse-graph-no-graph-works	t4202-log	--reverse --graph --no-graph works	log	partial
-t4202-log::show-linear-break-and-graph-conflict	t4202-log	--show-linear-break and --graph conflict	log	partial
-t4202-log::show-linear-break-graph-no-graph-works	t4202-log	--show-linear-break --graph --no-graph works	log	partial
-t4202-log::no-walk-and-graph-conflict	t4202-log	--no-walk and --graph conflict	log	partial
-t4202-log::no-walk-graph-no-graph-works	t4202-log	--no-walk --graph --no-graph works	log	partial
-t4202-log::walk-reflogs-and-graph-conflict	t4202-log	--walk-reflogs and --graph conflict	log	partial
-t4202-log::walk-reflogs-graph-no-graph-works	t4202-log	--walk-reflogs --graph --no-graph works	log	partial
-t4202-log::dotdot-is-a-parent-directory	t4202-log	dotdot is a parent directory	log	partial
-t4202-log::setup-signed-branch	t4202-log	setup signed branch	log	partial
-t4202-log::setup-signed-branch-with-subkey	t4202-log	setup signed branch with subkey	log	partial
-t4202-log::setup-signed-branch-x509	t4202-log	setup signed branch x509	log	partial
-t4202-log::setup-sshkey-signed-branch	t4202-log	setup sshkey signed branch	log	partial
-t4202-log::create-signed-commits-with-keys-having-defined-lifetimes	t4202-log	create signed commits with keys having defined lifetimes	log	partial
-t4202-log::log-x509-fingerprint	t4202-log	log x509 fingerprint	log	partial
-t4202-log::log-openpgp-fingerprint	t4202-log	log OpenPGP fingerprint	log	partial
-t4202-log::log-ssh-key-fingerprint	t4202-log	log ssh key fingerprint	log	partial
-t4202-log::log-graph-show-signature	t4202-log	log --graph --show-signature	log	partial
-t4202-log::log-graph-show-signature-x509	t4202-log	log --graph --show-signature x509	log	partial
-t4202-log::log-graph-show-signature-ssh	t4202-log	log --graph --show-signature ssh	log	partial
-t4202-log::log-shows-failure-on-expired-signature-key	t4202-log	log shows failure on expired signature key	log	partial
-t4202-log::log-shows-failure-on-not-yet-valid-signature-key	t4202-log	log shows failure on not yet valid signature key	log	partial
-t4202-log::log-show-success-with-commit-date-and-key-validity-matching	t4202-log	log show success with commit date and key validity matching	log	partial
-t4202-log::log-shows-failure-with-commit-date-outside-of-key-validity	t4202-log	log shows failure with commit date outside of key validity	log	partial
-t4202-log::log-graph-show-signature-for-merged-tag	t4202-log	log --graph --show-signature for merged tag	log	partial
-t4202-log::log-graph-show-signature-for-merged-tag-in-shallow-clone	t4202-log	log --graph --show-signature for merged tag in shallow clone	log	partial
-t4202-log::log-graph-show-signature-for-merged-tag-with-missing-key	t4202-log	log --graph --show-signature for merged tag with missing key	log	partial
-t4202-log::log-graph-show-signature-for-merged-tag-with-bad-signature	t4202-log	log --graph --show-signature for merged tag with bad signature	log	partial
-t4202-log::log-show-signature-for-merged-tag-with-gpg-failure	t4202-log	log --show-signature for merged tag with GPG failure	log	partial
-t4202-log::log-graph-show-signature-for-merged-tag-x509	t4202-log	log --graph --show-signature for merged tag x509	log	partial
-t4202-log::log-graph-show-signature-for-merged-tag-x509-missing-key	t4202-log	log --graph --show-signature for merged tag x509 missing key	log	partial
-t4202-log::log-graph-show-signature-for-merged-tag-x509-bad-signature	t4202-log	log --graph --show-signature for merged tag x509 bad signature	log	partial
-t4202-log::no-show-signature-overrides-show-signature	t4202-log	--no-show-signature overrides --show-signature	log	partial
-t4202-log::log-showsignature-true-behaves-like-show-signature	t4202-log	log.showsignature=true behaves like --show-signature	log	partial
-t4202-log::no-show-signature-overrides-log-showsignature-true	t4202-log	--no-show-signature overrides log.showsignature=true	log	partial
-t4202-log::show-signature-overrides-log-showsignature-false	t4202-log	--show-signature overrides log.showsignature=false	log	partial
-t4202-log::log-graph-no-walk-is-forbidden	t4202-log	log --graph --no-walk is forbidden	log	partial
-t4202-log::log-on-empty-repo-fails	t4202-log	log on empty repo fails	log	partial
-t4202-log::log-does-not-default-to-head-when-rev-input-is-given	t4202-log	log does not default to HEAD when rev input is given	log	partial
-t4202-log::do-not-default-to-head-with-ignored-object-on-cmdline	t4202-log	do not default to HEAD with ignored object on cmdline	log	partial
-t4202-log::do-not-default-to-head-with-ignored-object-on-stdin	t4202-log	do not default to HEAD with ignored object on stdin	log	partial
-t4202-log::set-up-source-tests	t4202-log	set up --source tests	log	partial
-t4202-log::log-source-paints-branch-names	t4202-log	log --source paints branch names	log	partial
-t4202-log::log-source-paints-tag-names	t4202-log	log --source paints tag names	log	partial
-t4202-log::log-source-paints-symmetric-ranges	t4202-log	log --source paints symmetric ranges	log	partial
-t4202-log::exclude-promisor-objects-does-not-bug-crash	t4202-log	--exclude-promisor-objects does not BUG-crash	log	partial
-t4202-log::log-decorate-includes-all-levels-of-tag-annotated-tags	t4202-log	log --decorate includes all levels of tag annotated tags	log	partial
-t4202-log::log-decorate-does-not-include-things-outside-filter	t4202-log	log --decorate does not include things outside filter	log	partial
-t4202-log::log-end-of-options	t4202-log	log --end-of-options	log	partial
-t4202-log::set-up-commits-with-different-authors	t4202-log	set up commits with different authors	log	partial
-t4202-log::log-invert-grep-grep-author	t4202-log	log --invert-grep --grep --author	log	partial
-t4202-log::log-noop-opt-without-grep-is-a-noop	t4202-log	log $noop_opt without --grep is a NOOP	log	partial
-t4202-log::cmd-understands-grep-patterntype-like-log	t4202-log	$cmd: understands grep.patternType, like 'log'	log	partial
+t4202-log::pretty	t4202-log	pretty	log	pass
+t4202-log::pretty-tformat	t4202-log	pretty (tformat)	log	pass
+t4202-log::pretty-shortcut	t4202-log	pretty (shortcut)	log	pass
+t4202-log::format	t4202-log	format	log	pass
+t4202-log::format-w-11-1-2	t4202-log	format %w(11,1,2)	log	pass
+t4202-log::format-w-1-2	t4202-log	format %w(,1,2)	log	pass
+t4202-log::oneline	t4202-log	oneline	log	pass
+t4202-log::diff-filter-a	t4202-log	diff-filter=A	log	pass
+t4202-log::diff-filter-m	t4202-log	diff-filter=M	log	pass
+t4202-log::diff-filter-d	t4202-log	diff-filter=D	log	pass
+t4202-log::all-negative-filter	t4202-log	all-negative filter	log	pass
+t4202-log::diff-filter-r	t4202-log	diff-filter=R	log	pass
+t4202-log::multiple-diff-filter-bits	t4202-log	multiple --diff-filter bits	log	pass
+t4202-log::diff-filter-c	t4202-log	diff-filter=C	log	pass
+t4202-log::git-log-follow	t4202-log	git log --follow	log	pass
+t4202-log::git-config-log-follow-works-like-follow	t4202-log	git config log.follow works like --follow	log	pass
+t4202-log::git-config-log-follow-does-not-die-with-multiple-paths	t4202-log	git config log.follow does not die with multiple paths	log	pass
+t4202-log::git-config-log-follow-does-not-die-with-no-paths	t4202-log	git config log.follow does not die with no paths	log	pass
+t4202-log::git-log-follow-rejects-unsupported-pathspec-magic	t4202-log	git log --follow rejects unsupported pathspec magic	log	pass
+t4202-log::log-follow-disabled-with-unsupported-pathspec-magic	t4202-log	log.follow disabled with unsupported pathspec magic	log	pass
+t4202-log::git-config-log-follow-is-overridden-by-no-follow	t4202-log	git config log.follow is overridden by --no-follow	log	pass
+t4202-log::git-log-no-walk-commits-sorts-by-commit-time	t4202-log	git log --no-walk <commits> sorts by commit time	log	pass
+t4202-log::git-log-no-walk-sorted-commits-sorts-by-commit-time	t4202-log	git log --no-walk=sorted <commits> sorts by commit time	log	pass
+t4202-log::git-log-line-prefix-no-walk-commits-sorts-by-commit-time	t4202-log	git log --line-prefix="=== " --no-walk <commits> sorts by commit time	log	pass
+t4202-log::git-log-no-walk-unsorted-commits-leaves-list-of-commits-as-given	t4202-log	git log --no-walk=unsorted <commits> leaves list of commits as given	log	pass
+t4202-log::git-show-commits-leaves-list-of-commits-as-given	t4202-log	git show <commits> leaves list of commits as given	log	pass
+t4202-log::setup-case-sensitivity-tests	t4202-log	setup case sensitivity tests	log	pass
+t4202-log::log-grep	t4202-log	log --grep	log	pass
+t4202-log::log-invert-grep-grep	t4202-log	log --invert-grep --grep	log	pass
+t4202-log::log-invert-grep-grep-i	t4202-log	log --invert-grep --grep -i	log	pass
+t4202-log::log-grep-option-parsing	t4202-log	log --grep option parsing	log	pass
+t4202-log::log-i-grep	t4202-log	log -i --grep	log	pass
+t4202-log::log-grep-i	t4202-log	log --grep -i	log	pass
+t4202-log::log-f-e-grep-ere-uses-ere	t4202-log	log -F -E --grep=<ere> uses ere	log	pass
+t4202-log::log-f-e-perl-regexp-grep-pcre-uses-pcre	t4202-log	log -F -E --perl-regexp --grep=<pcre> uses PCRE	log	pass
+t4202-log::log-with-grep-patterntype-configuration	t4202-log	log with grep.patternType configuration	log	pass
+t4202-log::log-with-grep-patterntype-configuration-and-command-line	t4202-log	log with grep.patternType configuration and command line	log	pass
+t4202-log::log-with-various-grep-patterntype-configurations-command-lines	t4202-log	log with various grep.patternType configurations & command-lines	log	pass
+t4202-log::log-author	t4202-log	log --author	log	pass
+t4202-log::log-committer	t4202-log	log --committer	log	pass
+t4202-log::log-i-grep-with-color	t4202-log	log -i --grep with color	log	pass
+t4202-log::c-color-grep-selected-log-grep	t4202-log	-c color.grep.selected log --grep	log	pass
+t4202-log::c-color-grep-matchselected-log-grep	t4202-log	-c color.grep.matchSelected log --grep	log	pass
+t4202-log::simple-log-graph	t4202-log	simple log --graph	log	pass
+t4202-log::simple-log-graph-line-prefix-123	t4202-log	simple log --graph --line-prefix="123 "	log	pass
+t4202-log::set-up-merge-history	t4202-log	set up merge history	log	pass
+t4202-log::log-graph-with-merge	t4202-log	log --graph with merge	log	pass
+t4202-log::log-graph-line-prefix-with-merge	t4202-log	log --graph --line-prefix="| | | " with merge	log	pass
+t4202-log::log-graph-with-merge-with-log-graphcolors	t4202-log	log --graph with merge with log.graphColors	log	pass
+t4202-log::log-raw-graph-m-with-merge	t4202-log	log --raw --graph -m with merge	log	pass
+t4202-log::diff-tree-graph	t4202-log	diff-tree --graph	log	pass
+t4202-log::log-graph-with-full-output	t4202-log	log --graph with full output	log	pass
+t4202-log::set-up-more-tangled-history	t4202-log	set up more tangled history	log	pass
+t4202-log::log-graph-with-merge-2	t4202-log	log --graph with merge	log	pass
+t4202-log::log-decorate-configuration	t4202-log	log.decorate configuration	log	pass
+t4202-log::parse-log-excludedecoration-with-no-value	t4202-log	parse log.excludeDecoration with no value	log	pass
+t4202-log::decorate-refs-with-glob	t4202-log	decorate-refs with glob	log	pass
+t4202-log::decorate-refs-without-globs	t4202-log	decorate-refs without globs	log	pass
+t4202-log::multiple-decorate-refs	t4202-log	multiple decorate-refs	log	pass
+t4202-log::decorate-refs-exclude-with-glob	t4202-log	decorate-refs-exclude with glob	log	pass
+t4202-log::decorate-refs-exclude-without-globs	t4202-log	decorate-refs-exclude without globs	log	pass
+t4202-log::multiple-decorate-refs-exclude	t4202-log	multiple decorate-refs-exclude	log	pass
+t4202-log::decorate-refs-and-decorate-refs-exclude	t4202-log	decorate-refs and decorate-refs-exclude	log	pass
+t4202-log::deocrate-refs-and-log-excludedecoration	t4202-log	deocrate-refs and log.excludeDecoration	log	pass
+t4202-log::decorate-refs-exclude-and-simplify-by-decoration	t4202-log	decorate-refs-exclude and simplify-by-decoration	log	pass
+t4202-log::decorate-refs-with-implied-decorate-from-format	t4202-log	decorate-refs with implied decorate from format	log	pass
+t4202-log::implied-decorate-does-not-override-option	t4202-log	implied decorate does not override option	log	pass
+t4202-log::decorate-refs-and-simplify-by-decoration-without-output	t4202-log	decorate-refs and simplify-by-decoration without output	log	pass
+t4202-log::decorate-refs-exclude-head	t4202-log	decorate-refs-exclude HEAD	log	pass
+t4202-log::decorate-refs-focus-from-default	t4202-log	decorate-refs focus from default	log	pass
+t4202-log::clear-decorations-overrides-defaults	t4202-log	--clear-decorations overrides defaults	log	pass
+t4202-log::clear-decorations-clears-previous-exclusions	t4202-log	--clear-decorations clears previous exclusions	log	pass
+t4202-log::log-decorate-config-parsing	t4202-log	log.decorate config parsing	log	pass
+t4202-log::log-output-on-a-tty	t4202-log	log output on a TTY	log	pass
+t4202-log::reflog-is-expected-format	t4202-log	reflog is expected format	log	pass
+t4202-log::whatchanged-is-expected-format	t4202-log	whatchanged is expected format	log	pass
+t4202-log::log-abbrevcommit-configuration	t4202-log	log.abbrevCommit configuration	log	pass
+t4202-log::abbrev-commit-with-core-abbrev-false	t4202-log	--abbrev-commit with core.abbrev=false	log	pass
+t4202-log::abbrev-commit-with-no-abbrev	t4202-log	--abbrev-commit with --no-abbrev	log	pass
+t4202-log::abbrev-commit-with-core-abbrev-9000	t4202-log	--abbrev-commit with core.abbrev=9000	log	pass
+t4202-log::abbrev-commit-with-abbrev-9000	t4202-log	--abbrev-commit with --abbrev=9000	log	pass
+t4202-log::show-added-path-under-follow-m	t4202-log	show added path under "--follow -M"	log	pass
+t4202-log::git-log-c-follow	t4202-log	git log -c --follow	log	pass
+t4202-log::log-graph-with-diff-and-stats	t4202-log	log --graph with diff and stats	log	pass
+t4202-log::log-line-prefix-graph-with-diff-and-stats	t4202-log	log --line-prefix="*** " --graph with diff and stats	log	pass
+t4202-log::log-graph-with-name-status	t4202-log	log --graph with --name-status	log	pass
+t4202-log::log-graph-with-name-only	t4202-log	log --graph with --name-only	log	pass
+t4202-log::no-graph-countermands-graph	t4202-log	--no-graph countermands --graph	log	pass
+t4202-log::graph-countermands-no-graph	t4202-log	--graph countermands --no-graph	log	pass
+t4202-log::no-graph-does-not-unset-topo-order	t4202-log	--no-graph does not unset --topo-order	log	pass
+t4202-log::no-graph-does-not-unset-parents	t4202-log	--no-graph does not unset --parents	log	pass
+t4202-log::reverse-and-graph-conflict	t4202-log	--reverse and --graph conflict	log	pass
+t4202-log::reverse-graph-no-graph-works	t4202-log	--reverse --graph --no-graph works	log	pass
+t4202-log::show-linear-break-and-graph-conflict	t4202-log	--show-linear-break and --graph conflict	log	pass
+t4202-log::show-linear-break-graph-no-graph-works	t4202-log	--show-linear-break --graph --no-graph works	log	pass
+t4202-log::no-walk-and-graph-conflict	t4202-log	--no-walk and --graph conflict	log	pass
+t4202-log::no-walk-graph-no-graph-works	t4202-log	--no-walk --graph --no-graph works	log	pass
+t4202-log::walk-reflogs-and-graph-conflict	t4202-log	--walk-reflogs and --graph conflict	log	pass
+t4202-log::walk-reflogs-graph-no-graph-works	t4202-log	--walk-reflogs --graph --no-graph works	log	pass
+t4202-log::dotdot-is-a-parent-directory	t4202-log	dotdot is a parent directory	log	pass
+t4202-log::setup-signed-branch	t4202-log	setup signed branch	log	pass
+t4202-log::setup-signed-branch-with-subkey	t4202-log	setup signed branch with subkey	log	pass
+t4202-log::setup-signed-branch-x509	t4202-log	setup signed branch x509	log	pass
+t4202-log::setup-sshkey-signed-branch	t4202-log	setup sshkey signed branch	log	pass
+t4202-log::create-signed-commits-with-keys-having-defined-lifetimes	t4202-log	create signed commits with keys having defined lifetimes	log	pass
+t4202-log::log-x509-fingerprint	t4202-log	log x509 fingerprint	log	pass
+t4202-log::log-openpgp-fingerprint	t4202-log	log OpenPGP fingerprint	log	pass
+t4202-log::log-ssh-key-fingerprint	t4202-log	log ssh key fingerprint	log	pass
+t4202-log::log-graph-show-signature	t4202-log	log --graph --show-signature	log	pass
+t4202-log::log-graph-show-signature-x509	t4202-log	log --graph --show-signature x509	log	pass
+t4202-log::log-graph-show-signature-ssh	t4202-log	log --graph --show-signature ssh	log	pass
+t4202-log::log-shows-failure-on-expired-signature-key	t4202-log	log shows failure on expired signature key	log	pass
+t4202-log::log-shows-failure-on-not-yet-valid-signature-key	t4202-log	log shows failure on not yet valid signature key	log	pass
+t4202-log::log-show-success-with-commit-date-and-key-validity-matching	t4202-log	log show success with commit date and key validity matching	log	pass
+t4202-log::log-shows-failure-with-commit-date-outside-of-key-validity	t4202-log	log shows failure with commit date outside of key validity	log	pass
+t4202-log::log-graph-show-signature-for-merged-tag	t4202-log	log --graph --show-signature for merged tag	log	pass
+t4202-log::log-graph-show-signature-for-merged-tag-in-shallow-clone	t4202-log	log --graph --show-signature for merged tag in shallow clone	log	pass
+t4202-log::log-graph-show-signature-for-merged-tag-with-missing-key	t4202-log	log --graph --show-signature for merged tag with missing key	log	pass
+t4202-log::log-graph-show-signature-for-merged-tag-with-bad-signature	t4202-log	log --graph --show-signature for merged tag with bad signature	log	pass
+t4202-log::log-show-signature-for-merged-tag-with-gpg-failure	t4202-log	log --show-signature for merged tag with GPG failure	log	pass
+t4202-log::log-graph-show-signature-for-merged-tag-x509	t4202-log	log --graph --show-signature for merged tag x509	log	pass
+t4202-log::log-graph-show-signature-for-merged-tag-x509-missing-key	t4202-log	log --graph --show-signature for merged tag x509 missing key	log	pass
+t4202-log::log-graph-show-signature-for-merged-tag-x509-bad-signature	t4202-log	log --graph --show-signature for merged tag x509 bad signature	log	pass
+t4202-log::no-show-signature-overrides-show-signature	t4202-log	--no-show-signature overrides --show-signature	log	pass
+t4202-log::log-showsignature-true-behaves-like-show-signature	t4202-log	log.showsignature=true behaves like --show-signature	log	pass
+t4202-log::no-show-signature-overrides-log-showsignature-true	t4202-log	--no-show-signature overrides log.showsignature=true	log	pass
+t4202-log::show-signature-overrides-log-showsignature-false	t4202-log	--show-signature overrides log.showsignature=false	log	pass
+t4202-log::log-graph-no-walk-is-forbidden	t4202-log	log --graph --no-walk is forbidden	log	pass
+t4202-log::log-on-empty-repo-fails	t4202-log	log on empty repo fails	log	pass
+t4202-log::log-does-not-default-to-head-when-rev-input-is-given	t4202-log	log does not default to HEAD when rev input is given	log	pass
+t4202-log::do-not-default-to-head-with-ignored-object-on-cmdline	t4202-log	do not default to HEAD with ignored object on cmdline	log	pass
+t4202-log::do-not-default-to-head-with-ignored-object-on-stdin	t4202-log	do not default to HEAD with ignored object on stdin	log	pass
+t4202-log::set-up-source-tests	t4202-log	set up --source tests	log	pass
+t4202-log::log-source-paints-branch-names	t4202-log	log --source paints branch names	log	pass
+t4202-log::log-source-paints-tag-names	t4202-log	log --source paints tag names	log	pass
+t4202-log::log-source-paints-symmetric-ranges	t4202-log	log --source paints symmetric ranges	log	pass
+t4202-log::exclude-promisor-objects-does-not-bug-crash	t4202-log	--exclude-promisor-objects does not BUG-crash	log	pass
+t4202-log::log-decorate-includes-all-levels-of-tag-annotated-tags	t4202-log	log --decorate includes all levels of tag annotated tags	log	pass
+t4202-log::log-decorate-does-not-include-things-outside-filter	t4202-log	log --decorate does not include things outside filter	log	pass
+t4202-log::log-end-of-options	t4202-log	log --end-of-options	log	pass
+t4202-log::set-up-commits-with-different-authors	t4202-log	set up commits with different authors	log	pass
+t4202-log::log-invert-grep-grep-author	t4202-log	log --invert-grep --grep --author	log	pass
+t4202-log::log-noop-opt-without-grep-is-a-noop	t4202-log	log $noop_opt without --grep is a NOOP	log	pass
+t4202-log::cmd-understands-grep-patterntype-like-log	t4202-log	$cmd: understands grep.patternType, like 'log'	log	pass
 t4203-mailmap::setup-commits-and-contacts-file	t4203-mailmap	setup commits and contacts file		partial
 t4203-mailmap::check-mailmap-no-arguments	t4203-mailmap	check-mailmap no arguments	check-mailmap	partial
 t4203-mailmap::check-mailmap-arguments	t4203-mailmap	check-mailmap arguments	check-mailmap	partial
@@ -13693,23 +13693,23 @@ t7006-pager::git-discards-pager-non-zero-exit-without-sigpipe	t7006-pager	git di
 t7006-pager::git-errors-when-asked-to-execute-nonexisting-pager	t7006-pager	git errors when asked to execute nonexisting pager	log	pass
 t7006-pager::git-returns-sigpipe-on-propagated-signals-from-pager	t7006-pager	git returns SIGPIPE on propagated signals from pager	log	pass
 t7006-pager::non-existent-pager-doesnt-cause-crash	t7006-pager	non-existent pager doesnt cause crash	show	pass
-t7007-show::showing-a-tag-that-point-at-a-missing-object	t7007-show	showing a tag that point at a missing object	show	partial
-t7007-show::set-up-a-bit-of-history	t7007-show	set up a bit of history	show	partial
-t7007-show::showing-two-commits	t7007-show	showing two commits	show	partial
-t7007-show::showing-a-tree	t7007-show	showing a tree	show	partial
-t7007-show::showing-two-trees	t7007-show	showing two trees	show	partial
-t7007-show::showing-a-trees-is-not-recursive	t7007-show	showing a trees is not recursive	show	partial
-t7007-show::showing-a-range-walks-linear	t7007-show	showing a range walks (linear)	show	partial
-t7007-show::showing-a-range-walks-y-shape-first	t7007-show	showing a range walks (Y shape, ^ first)	show	partial
-t7007-show::showing-a-range-walks-y-shape-last	t7007-show	showing a range walks (Y shape, ^ last)	show	partial
-t7007-show::showing-with-n-walks	t7007-show	showing with -N walks	show	partial
-t7007-show::showing-annotated-tag	t7007-show	showing annotated tag	show	partial
-t7007-show::showing-annotated-tag-plus-commit	t7007-show	showing annotated tag plus commit	show	partial
-t7007-show::showing-range	t7007-show	showing range	show	partial
-t7007-show::s-suppresses-diff	t7007-show	-s suppresses diff	show	partial
-t7007-show::quiet-suppresses-diff	t7007-show	--quiet suppresses diff	show	partial
-t7007-show::show-graph-is-forbidden	t7007-show	show --graph is forbidden	show	partial
-t7007-show::show-unmerged-index	t7007-show	show unmerged index	show	partial
+t7007-show::showing-a-tag-that-point-at-a-missing-object	t7007-show	showing a tag that point at a missing object	show	pass
+t7007-show::set-up-a-bit-of-history	t7007-show	set up a bit of history	show	pass
+t7007-show::showing-two-commits	t7007-show	showing two commits	show	pass
+t7007-show::showing-a-tree	t7007-show	showing a tree	show	pass
+t7007-show::showing-two-trees	t7007-show	showing two trees	show	pass
+t7007-show::showing-a-trees-is-not-recursive	t7007-show	showing a trees is not recursive	show	pass
+t7007-show::showing-a-range-walks-linear	t7007-show	showing a range walks (linear)	show	pass
+t7007-show::showing-a-range-walks-y-shape-first	t7007-show	showing a range walks (Y shape, ^ first)	show	pass
+t7007-show::showing-a-range-walks-y-shape-last	t7007-show	showing a range walks (Y shape, ^ last)	show	pass
+t7007-show::showing-with-n-walks	t7007-show	showing with -N walks	show	pass
+t7007-show::showing-annotated-tag	t7007-show	showing annotated tag	show	pass
+t7007-show::showing-annotated-tag-plus-commit	t7007-show	showing annotated tag plus commit	show	pass
+t7007-show::showing-range	t7007-show	showing range	show	pass
+t7007-show::s-suppresses-diff	t7007-show	-s suppresses diff	show	pass
+t7007-show::quiet-suppresses-diff	t7007-show	--quiet suppresses diff	show	pass
+t7007-show::show-graph-is-forbidden	t7007-show	show --graph is forbidden	show	pass
+t7007-show::show-unmerged-index	t7007-show	show unmerged index	show	pass
 t7008-filter-branch-null-sha1::setup-base-commits	t7008-filter-branch-null-sha1	setup: base commits	filter-branch	pass
 t7008-filter-branch-null-sha1::setup-a-commit-with-a-bogus-null-sha1-in-the-tree	t7008-filter-branch-null-sha1	setup: a commit with a bogus null sha1 in the tree	filter-branch	pass
 t7008-filter-branch-null-sha1::setup-bring-head-and-index-in-sync	t7008-filter-branch-null-sha1	setup: bring HEAD and index in sync	filter-branch	pass
@@ -14926,25 +14926,25 @@ t7506-status-submodule::setup-superproject-with-modified-file-in-nested-submodul
 t7506-status-submodule::status-with-added-file-in-nested-submodule-porcelain	t7506-status-submodule	status with added file in nested submodule (porcelain)	status	pass
 t7506-status-submodule::status-with-added-file-in-nested-submodule-porcelain-2	t7506-status-submodule	status with added file in nested submodule (porcelain=2)	status	pass
 t7506-status-submodule::status-with-added-file-in-nested-submodule-short	t7506-status-submodule	status with added file in nested submodule (short)	status	pass
-t7507-commit-verbose::setup	t7507-commit-verbose	setup	commit	partial
-t7507-commit-verbose::initial-commit-shows-verbose-diff	t7507-commit-verbose	initial commit shows verbose diff	commit	partial
-t7507-commit-verbose::second-commit	t7507-commit-verbose	second commit	commit	partial
-t7507-commit-verbose::verbose-diff-is-stripped-out	t7507-commit-verbose	verbose diff is stripped out	commit	partial
-t7507-commit-verbose::verbose-diff-is-stripped-out-mnemonicprefix	t7507-commit-verbose	verbose diff is stripped out (mnemonicprefix)	commit	partial
-t7507-commit-verbose::diff-in-message-is-retained-without-v	t7507-commit-verbose	diff in message is retained without -v	commit	partial
-t7507-commit-verbose::diff-in-message-is-retained-with-v	t7507-commit-verbose	diff in message is retained with -v	commit	partial
-t7507-commit-verbose::submodule-log-is-stripped-out-too-with-v	t7507-commit-verbose	submodule log is stripped out too with -v	commit	partial
-t7507-commit-verbose::verbose-diff-is-stripped-out-with-set-core-commentchar	t7507-commit-verbose	verbose diff is stripped out with set core.commentChar	commit	partial
-t7507-commit-verbose::verbose-diff-is-stripped-with-multi-byte-comment-char	t7507-commit-verbose	verbose diff is stripped with multi-byte comment char	commit	partial
-t7507-commit-verbose::status-does-not-verbose-without-verbose	t7507-commit-verbose	status does not verbose without --verbose	commit	partial
-t7507-commit-verbose::setup-v-v	t7507-commit-verbose	setup -v -v	commit	partial
-t7507-commit-verbose::commit-verbose-i-and-verbose-omitted	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	partial
-t7507-commit-verbose::commit-verbose-i-and-verbose-omitted-2	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	partial
-t7507-commit-verbose::commit-verbose-i-and-verbose-omitted-3	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	partial
-t7507-commit-verbose::commit-verbose-i-and-verbose	t7507-commit-verbose	commit.verbose=$i and --verbose	commit	partial
-t7507-commit-verbose::commit-verbose-i-and-no-verbose	t7507-commit-verbose	commit.verbose=$i and --no-verbose	commit	partial
-t7507-commit-verbose::commit-verbose-i-and-v-v	t7507-commit-verbose	commit.verbose=$i and -v -v	commit	partial
-t7507-commit-verbose::status-ignores-commit-verbose-true	t7507-commit-verbose	status ignores commit.verbose=true	commit	partial
+t7507-commit-verbose::setup	t7507-commit-verbose	setup	commit	pass
+t7507-commit-verbose::initial-commit-shows-verbose-diff	t7507-commit-verbose	initial commit shows verbose diff	commit	pass
+t7507-commit-verbose::second-commit	t7507-commit-verbose	second commit	commit	pass
+t7507-commit-verbose::verbose-diff-is-stripped-out	t7507-commit-verbose	verbose diff is stripped out	commit	pass
+t7507-commit-verbose::verbose-diff-is-stripped-out-mnemonicprefix	t7507-commit-verbose	verbose diff is stripped out (mnemonicprefix)	commit	pass
+t7507-commit-verbose::diff-in-message-is-retained-without-v	t7507-commit-verbose	diff in message is retained without -v	commit	pass
+t7507-commit-verbose::diff-in-message-is-retained-with-v	t7507-commit-verbose	diff in message is retained with -v	commit	pass
+t7507-commit-verbose::submodule-log-is-stripped-out-too-with-v	t7507-commit-verbose	submodule log is stripped out too with -v	commit	pass
+t7507-commit-verbose::verbose-diff-is-stripped-out-with-set-core-commentchar	t7507-commit-verbose	verbose diff is stripped out with set core.commentChar	commit	pass
+t7507-commit-verbose::verbose-diff-is-stripped-with-multi-byte-comment-char	t7507-commit-verbose	verbose diff is stripped with multi-byte comment char	commit	pass
+t7507-commit-verbose::status-does-not-verbose-without-verbose	t7507-commit-verbose	status does not verbose without --verbose	commit	pass
+t7507-commit-verbose::setup-v-v	t7507-commit-verbose	setup -v -v	commit	pass
+t7507-commit-verbose::commit-verbose-i-and-verbose-omitted	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	pass
+t7507-commit-verbose::commit-verbose-i-and-verbose-omitted-2	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	pass
+t7507-commit-verbose::commit-verbose-i-and-verbose-omitted-3	t7507-commit-verbose	commit.verbose=$i and --verbose omitted	commit	pass
+t7507-commit-verbose::commit-verbose-i-and-verbose	t7507-commit-verbose	commit.verbose=$i and --verbose	commit	pass
+t7507-commit-verbose::commit-verbose-i-and-no-verbose	t7507-commit-verbose	commit.verbose=$i and --no-verbose	commit	pass
+t7507-commit-verbose::commit-verbose-i-and-v-v	t7507-commit-verbose	commit.verbose=$i and -v -v	commit	pass
+t7507-commit-verbose::status-ignores-commit-verbose-true	t7507-commit-verbose	status ignores commit.verbose=true	commit	pass
 t7508-status::status-h-in-broken-repository	t7508-status	status -h in broken repository	status	partial
 t7508-status::commit-h-in-broken-repository	t7508-status	commit -h in broken repository	status	partial
 t7508-status::create-upstream-branch	t7508-status	create upstream branch	status	partial

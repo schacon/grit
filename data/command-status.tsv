@@ -1,22 +1,22 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
-add	Main Porcelain	yes	813	664	145	81.7
+add	Main Porcelain	yes	813	665	145	81.7
 am	Main Porcelain	yes	162	148	0	91.5
 archive	Main Porcelain	yes	102	101	1	99.0
 bisect	Main Porcelain	yes	107	96	11	89.7
 branch	Main Porcelain	yes	399	378	17	94.7
-checkout	Main Porcelain	yes	567	386	99	68.1
+checkout	Main Porcelain	yes	567	387	99	68.2
 cherry-pick	Main Porcelain	yes	193	160	2	83.0
 clean	Main Porcelain	yes	90	90	0	100.0
 clone	Main Porcelain	yes	519	363	155	69.9
-commit	Main Porcelain	yes	435	352	79	80.8
+commit	Main Porcelain	yes	435	353	79	81.2
 describe	Main Porcelain	yes	59	59	0	100.0
-diff	Main Porcelain	yes	983	941	5	95.7
+diff	Main Porcelain	yes	983	942	5	95.9
 fetch	Main Porcelain	yes	465	376	89	80.9
 format-patch	Main Porcelain	yes	231	231	0	100.0
 gc	Main Porcelain	yes	38	37	1	97.4
-grep	Main Porcelain	yes	264	264	0	99.9
+grep	Main Porcelain	yes	264	264	0	100.0
 init	Main Porcelain	yes	293	245	46	83.5
-log	Main Porcelain	yes	594	482	69	81.2
+log	Main Porcelain	yes	594	509	69	85.8
 merge	Main Porcelain	yes	658	648	10	98.5
 mv	Main Porcelain	yes	77	77	0	100.0
 notes	Main Porcelain	yes	308	308	0	100.0
@@ -29,7 +29,7 @@ restore	Main Porcelain	yes	41	40	1	97.6
 revert	Main Porcelain	yes	22	22	0	100.0
 rm	Main Porcelain	yes	103	99	4	96.1
 shortlog	Main Porcelain	yes	50	24	0	48.0
-show	Main Porcelain	yes	32	28	3	87.2
+show	Main Porcelain	yes	32	29	3	90.6
 stash	Main Porcelain	yes	207	205	2	99.0
 status	Main Porcelain	yes	361	357	1	98.8
 submodule	Main Porcelain	yes	478	456	22	95.4
@@ -72,7 +72,7 @@ cat-file	Plumbing	yes	265	237	25	89.3
 check-attr	Plumbing	yes	26	25	0	96.8
 check-ignore	Plumbing	yes	11	11	0	100.0
 check-mailmap	Plumbing	yes	10	7	0	74.1
-check-ref-format	Plumbing	yes	6	6	0	97.2
+check-ref-format	Plumbing	yes	6	6	0	100.0
 checkout-index	Plumbing	yes	13	13	0	100.0
 column	Plumbing	yes	15	0	15	0.0
 commit-graph	Plumbing	yes	94	94	0	100.0
@@ -85,11 +85,11 @@ diff-files	Plumbing	yes	11	11	0	99.4
 diff-index	Plumbing	yes	20	20	0	100.0
 diff-tree	Plumbing	yes	8	8	0	100.0
 fetch-pack	Plumbing	yes	92	92	0	100.0
-fmt-merge-msg	Plumbing	yes	37	37	0	99.5
+fmt-merge-msg	Plumbing	yes	37	37	0	100.0
 for-each-ref	Plumbing	yes	90	88	2	97.8
 for-each-repo	Plumbing	yes	5	5	0	100.0
 get-tar-commit-id	Plumbing	yes	1	1	0	100.0
-hash-object	Plumbing	yes	56	47	3	84.1
+hash-object	Plumbing	yes	56	47	3	84.4
 hook	Plumbing	yes	41	41	0	100.0
 http-backend	Plumbing	yes	18	0	18	0.0
 index-pack	Plumbing	yes	39	39	0	100.0
@@ -109,7 +109,7 @@ multi-pack-index	Plumbing	yes	102	102	0	100.0
 name-rev	Plumbing	yes	0	0	0	0.0
 pack-objects	Plumbing	yes	120	113	7	94.2
 pack-redundant	Plumbing	yes	18	18	0	100.0
-patch-id	Plumbing	yes	26	26	0	99.4
+patch-id	Plumbing	yes	26	26	0	100.0
 prune-packed	Plumbing	yes	0	0	0	0.0
 read-tree	Plumbing	yes	165	161	0	97.4
 receive-pack	Plumbing	yes	7	0	7	0.0
@@ -119,7 +119,7 @@ rev-parse	Plumbing	yes	350	304	46	86.9
 send-pack	Plumbing	yes	28	28	0	100.0
 show-index	Plumbing	yes	1	1	0	100.0
 show-ref	Plumbing	yes	14	14	0	100.0
-stripspace	Plumbing	yes	31	31	0	99.5
+stripspace	Plumbing	yes	31	31	0	100.0
 symbolic-ref	Plumbing	yes	34	31	3	91.2
 unpack-file	Plumbing	yes	0	0	0	0.0
 unpack-objects	Plumbing	yes	3	3	0	100.0

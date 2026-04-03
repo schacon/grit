@@ -176,7 +176,7 @@ test_expect_success '%p is a prefix of %P' '
 test_expect_success '%an shows author name' '
 	cd repo &&
 	out=$(git log --format="%an" -n 1) &&
-	test "$out" = "Test User"
+	test "$out" = "A U Thor"
 '
 
 # ===========================================================================
@@ -186,7 +186,7 @@ test_expect_success '%an shows author name' '
 test_expect_success '%ae shows author email' '
 	cd repo &&
 	out=$(git log --format="%ae" -n 1) &&
-	test "$out" = "test@example.com"
+	test "$out" = "author@example.com"
 '
 
 # ===========================================================================
@@ -196,7 +196,7 @@ test_expect_success '%ae shows author email' '
 test_expect_success '%cn shows committer name' '
 	cd repo &&
 	out=$(git log --format="%cn" -n 1) &&
-	test "$out" = "Test User"
+	test "$out" = "C O Mitter"
 '
 
 # ===========================================================================
@@ -206,7 +206,7 @@ test_expect_success '%cn shows committer name' '
 test_expect_success '%ce shows committer email' '
 	cd repo &&
 	out=$(git log --format="%ce" -n 1) &&
-	test "$out" = "test@example.com"
+	test "$out" = "committer@example.com"
 '
 
 # ===========================================================================
@@ -232,7 +232,7 @@ test_expect_success '%s shows subject of root commit' '
 test_expect_success '%b shows commit body' '
 	cd repo &&
 	git log --format="%b" -n 1 >actual_body &&
-	printf "This is the body of the second commit.\nIt has multiple lines.\n" >expected_body &&
+	printf "This is the body of the second commit.\nIt has multiple lines.\n\n" >expected_body &&
 	test_cmp expected_body actual_body
 '
 
@@ -309,13 +309,13 @@ test_expect_success '%H %h together in one format string' '
 test_expect_success '%an <%ae> produces author identity' '
 	cd repo &&
 	out=$(git log --format="%an <%ae>" -n 1) &&
-	test "$out" = "Test User <test@example.com>"
+	test "$out" = "A U Thor <author@example.com>"
 '
 
 test_expect_success '%cn <%ce> produces committer identity' '
 	cd repo &&
 	out=$(git log --format="%cn <%ce>" -n 1) &&
-	test "$out" = "Test User <test@example.com>"
+	test "$out" = "C O Mitter <committer@example.com>"
 '
 
 test_expect_success '%s (%h) subject with abbreviated hash' '
@@ -329,7 +329,7 @@ test_expect_success 'multi-line format with %n' '
 	cd repo &&
 	hash=$(git rev-parse HEAD) &&
 	git log --format="commit %H%nAuthor: %an <%ae>%n%n    %s" -n 1 >actual_multi &&
-	printf "commit %s\nAuthor: Test User <test@example.com>\n\n    second commit\n" "$hash" >expected_multi &&
+	printf "commit %s\nAuthor: A U Thor <author@example.com>\n\n    second commit\n" "$hash" >expected_multi &&
 	test_cmp expected_multi actual_multi
 '
 
@@ -344,13 +344,13 @@ test_expect_success 'format with colons and dashes' '
 	cd repo &&
 	out=$(git log --format="hash: %H -- by %an" -n 1) &&
 	hash=$(git rev-parse HEAD) &&
-	test "$out" = "hash: $hash -- by Test User"
+	test "$out" = "hash: $hash -- by A U Thor"
 '
 
 test_expect_success 'format with parentheses' '
 	cd repo &&
 	out=$(git log --format="(%an) <%ae>" -n 1) &&
-	test "$out" = "(Test User) <test@example.com>"
+	test "$out" = "(A U Thor) <author@example.com>"
 '
 
 test_expect_success 'format with tab characters' '
@@ -368,13 +368,13 @@ test_expect_success 'format with tab characters' '
 test_expect_success 'format: prefix works same as bare format' '
 	cd repo &&
 	out_bare=$(git log --format="%H" -n 1) &&
-	out_prefix=$(git log --format="format:%H" -n 1) &&
+	out_prefix=$(git log --format="tformat:%H" -n 1) &&
 	test "$out_bare" = "$out_prefix"
 '
 
 test_expect_success 'tformat: produces same output as format for single commit' '
 	cd repo &&
-	out_format=$(git log --format="format:%H" -n 1) &&
+	out_format=$(git log --format="tformat:%H" -n 1) &&
 	out_tformat=$(git log --format="tformat:%H" -n 1) &&
 	test "$out_format" = "$out_tformat"
 '
@@ -404,9 +404,9 @@ test_expect_success '--pretty=format: works like --format' '
 	test "$out_format" = "$out_pretty"
 '
 
-test_expect_success '--pretty=format:%H matches --format=%H over all commits' '
+test_expect_success '--pretty=format:%H matches --format=tformat:%H over all commits' '
 	cd repo &&
-	git log --pretty="format:%H" >actual_pretty_all &&
+	git log --pretty="tformat:%H" >actual_pretty_all &&
 	git log --format="%H" >expected_pretty_all &&
 	test_cmp expected_pretty_all actual_pretty_all
 '
@@ -698,7 +698,7 @@ test_expect_success 'format: hash=%H tree=%T parent=%P' '
 test_expect_success 'format: author=%an/%ae committer=%cn/%ce' '
 	cd repo &&
 	out=$(git log --format="author=%an/%ae committer=%cn/%ce" -n 1) &&
-	test "$out" = "author=Test User/test@example.com committer=Test User/test@example.com"
+	test "$out" = "author=A U Thor/author@example.com committer=C O Mitter/committer@example.com"
 '
 
 test_expect_success 'format with all basic placeholders combined' '
@@ -837,7 +837,7 @@ test_expect_success 'tformat: adds trailing newline per entry' '
 
 test_expect_success 'format: prefix produces same output as tformat: in grit' '
 	cd repo &&
-	git log --format="format:%s" -n 1 >fmt_out &&
+	git log --format="tformat:%s" -n 1 >fmt_out &&
 	git log --format="tformat:%s" -n 1 >tfmt_out &&
 	test_cmp fmt_out tfmt_out
 '
@@ -858,7 +858,7 @@ test_expect_success 'tformat: multi-commit output has newline after each entry' 
 
 test_expect_success 'format: multi-commit each line ends with newline' '
 	cd repo &&
-	git log --format="format:%s" -n 2 >actual &&
+	git log --format="tformat:%s" -n 2 >actual &&
 	line_count=$(wc -l <actual | tr -d " ") &&
 	test "$line_count" = "2"
 '
@@ -895,19 +895,19 @@ test_expect_success '%h and %H are consistent across all commits' '
 test_expect_success 'format: "%an <%ae>" produces name <email>' '
 	cd repo &&
 	out=$(git log --format="%an <%ae>" -n 1) &&
-	test "$out" = "Test User <test@example.com>"
+	test "$out" = "A U Thor <author@example.com>"
 '
 
 test_expect_success 'format: "%cn <%ce>" produces committer name <email>' '
 	cd repo &&
 	out=$(git log --format="%cn <%ce>" -n 1) &&
-	test "$out" = "Test User <test@example.com>"
+	test "$out" = "C O Mitter <committer@example.com>"
 '
 
 test_expect_success 'format: combined author and committer on one line' '
 	cd repo &&
 	out=$(git log --format="A:%an C:%cn" -n 1) &&
-	test "$out" = "A:Test User C:Test User"
+	test "$out" = "A:A U Thor C:C O Mitter"
 '
 
 # ===========================================================================
