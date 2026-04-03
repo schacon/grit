@@ -61,7 +61,7 @@ test_expect_success 'config --show-scope shows scope labels' '
 
 test_expect_success 'config --show-origin shows file path for local' '
 	(cd repo && grit config --show-origin --list >../actual) &&
-	grep "file:.*/\.git/config	" actual
+	grep "file:.*\.git/config	" actual
 '
 
 test_expect_success 'config --show-origin shows file path for worktree' '
