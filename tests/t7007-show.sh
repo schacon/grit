@@ -149,7 +149,7 @@ test_expect_success 'show with format=%an shows author name' '
 	cd repo &&
 	git show --format="format:%an" >actual &&
 	head -1 actual >first &&
-	echo "Test User" >expected &&
+	echo "A U Thor" >expected &&
 	test_cmp expected first
 '
 
@@ -157,7 +157,7 @@ test_expect_success 'show with format=%ae shows author email' '
 	cd repo &&
 	git show --format="format:%ae" >actual &&
 	head -1 actual >first &&
-	echo "test@test.com" >expected &&
+	echo "author@example.com" >expected &&
 	test_cmp expected first
 '
 
@@ -247,7 +247,7 @@ test_expect_success 'show --format=%cn shows committer name' '
 	cd repo &&
 	git show --format="format:%cn" >actual &&
 	head -1 actual >first &&
-	echo "Test User" >expected &&
+	echo "C O Mitter" >expected &&
 	test_cmp expected first
 '
 
@@ -255,7 +255,7 @@ test_expect_success 'show --format=%ce shows committer email' '
 	cd repo &&
 	git show --format="format:%ce" >actual &&
 	head -1 actual >first &&
-	echo "test@test.com" >expected &&
+	echo "committer@example.com" >expected &&
 	test_cmp expected first
 '
 
@@ -408,7 +408,7 @@ test_expect_success 'show multiple format placeholders %an <%ae>' '
 	cd repo &&
 	git show --format="format:%an <%ae>" >actual &&
 	head -1 actual >first &&
-	echo "Test User <test@test.com>" >expected &&
+	echo "A U Thor <author@example.com>" >expected &&
 	test_cmp expected first
 '
 
@@ -564,7 +564,7 @@ test_expect_success 'show --format=%H on annotated tag shows tag target hash' '
 test_expect_success 'show --format=%an on annotated tag' '
 	cd repo &&
 	git show --format="format:%an" v1.0 >actual &&
-	grep "Test User" actual
+	grep "A U Thor" actual
 '
 
 test_expect_success 'show --quiet on annotated tag shows tag info' '
