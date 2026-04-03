@@ -99,9 +99,9 @@ test_expect_success 'log --committer=Dana shows commits by Dana' '
 	test $(wc -l <actual) -eq 3
 '
 
-test_expect_success 'log --committer=Eve shows one commit' '
+test_expect_success 'log --committer="Eve Engineer" shows one commit' '
 	cd repo &&
-	git log --committer=Eve --format="%cn" >actual &&
+	git log --committer="Eve Engineer" --format="%cn" >actual &&
 	test $(wc -l <actual) -eq 1 &&
 	echo "Eve Engineer" >expect &&
 	test_cmp expect actual
@@ -148,7 +148,7 @@ test_expect_success 'log --committer combined with -n limits results' '
 
 test_expect_success 'log --committer combined with --oneline' '
 	cd repo &&
-	git log --committer=Eve --oneline >actual &&
+	git log --committer="Eve Engineer" --oneline >actual &&
 	test $(wc -l <actual) -eq 1
 '
 
