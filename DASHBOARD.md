@@ -2,11 +2,14 @@
 
 ## Test Results
 
-**27,660 / 28,049 individual test cases passing (98.6%)**
+**27,716 / 27,994 individual test cases passing (99.0%)**
 
-- 826 / 888 upstream test files ported
-- 14,240 additional grit-specific tests
-- 99.9% pass rate across all ported tests
+- 1,375 test files (upstream ports + grit-specific)
+- 23,531 test_expect_success all passing (0 unexpected failures)
+- 278 test_expect_failure remaining (known gaps needing grit code fixes)
+- 267 skipped (missing prereqs)
+
+*Last recount: 2026-04-03 12:58 UTC*
 
 ### Coverage by Area
 
@@ -44,5 +47,21 @@
 | `t5558-clone-bundle-uri.sh` | 37 | test fetching bundles with --bundle-uri |
 | `t9402-git-cvsserver-refs.sh` | 37 | git-cvsserver and git refspecs
  |
+
+### Remaining test_expect_failure (278 total)
+
+| File | Count | Area |
+|------|------:|------|
+| t4150-am.sh | 44 | `am` command |
+| t1307-config-blob.sh | 15 | `config --blob` |
+| t6112-rev-list-filters-objects.sh | 9 | rev-list object filters |
+| t4068-diff-symmetric.sh | 6 | diff symmetric ranges |
+| t4065-diff-anchored.sh | 5 | diff anchored algorithm |
+| t7065-status-rename.sh | 5 | status rename detection |
+| t0020-crlf.sh | 5 | CRLF handling |
+| t7414-submodule-mistakes.sh | 4 | submodule edge cases |
+| t4052-stat-output.sh | 4 | diff stat formatting |
+| t4004-diff-rename-symlink.sh | 4 | diff rename + symlinks |
+| (168 more across 80+ files) | 177 | various |
 
 Run `bash tests/harness/run-all-count.sh` to verify pass rates.
