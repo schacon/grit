@@ -10,6 +10,7 @@ use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, DiffEntry, Diff
 use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
+use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
@@ -191,7 +192,39 @@ pub fn run(args: Args) -> Result<()> {
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
     // Update HEAD
+    let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     update_head(&repo.git_dir, &head, &commit_oid)?;
+
+    // Write reflog entries
+    {
+        let msg = if head.is_unborn() {
+            format!("commit (initial): {}", commit_data.message.lines().next().unwrap_or(""))
+        } else if args.amend {
+            format!("commit (amend): {}", commit_data.message.lines().next().unwrap_or(""))
+        } else {
+            format!("commit: {}", commit_data.message.lines().next().unwrap_or(""))
+        };
+        // Write to HEAD reflog
+        let _ = append_reflog(
+            &repo.git_dir,
+            "HEAD",
+            &old_oid,
+            &commit_oid,
+            &commit_data.committer,
+            &msg,
+        );
+        // Write to branch reflog if on a branch
+        if let HeadState::Branch { refname, .. } = &head {
+            let _ = append_reflog(
+                &repo.git_dir,
+                refname,
+                &old_oid,
+                &commit_oid,
+                &commit_data.committer,
+                &msg,
+            );
+        }
+    }
 
     // Clean up merge state files if present
     cleanup_merge_state(&repo.git_dir);
