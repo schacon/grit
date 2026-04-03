@@ -109,7 +109,7 @@ test_expect_success 'annotated tag content includes tagger' '
 	cd repo &&
 	grit cat-file -p v2.0 >actual &&
 	grep "tagger" actual &&
-	grep "Test User" actual
+	grep "C O Mitter" actual
 '
 
 test_expect_success 'annotated tag at specific commit' '
