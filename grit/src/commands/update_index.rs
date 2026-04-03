@@ -137,25 +137,20 @@ pub fn run(args: Args) -> Result<()> {
         let rel_bytes = path_to_bytes(&rel_path)?;
 
         if args.force_remove {
-            if !index.remove(&rel_bytes) && !args.ignore_missing {
-                bail!("'{}' is not in the index", input_path.display());
-            }
+            // --force-remove silently succeeds even if the entry is absent
+            index.remove(&rel_bytes);
             continue;
         }
 
-        // --remove (without --force-remove): remove from index only if the
-        // path does not exist on disk as a regular file or symlink.  When
-        // --add is also given, files that *do* exist as regular files should
-        // fall through to the add logic below.  A directory at the path
-        // means the original file was replaced by a directory, so the old
-        // index entry must be removed.
+        // --remove: remove the path from the index.  When --add is also
+        // given and the file exists as a regular file/symlink (not a
+        // directory), fall through to the add logic instead.  A directory
+        // at the path means the original file was replaced, so remove.
         if args.remove {
-            let dominated_by_dir = abs_path.is_dir();
-            let file_missing = !abs_path.exists();
-            if file_missing || dominated_by_dir {
+            let file_exists = abs_path.exists() && !abs_path.is_dir();
+            if !args.add || !file_exists {
                 if !index.remove(&rel_bytes) && !args.ignore_missing {
-                    // If path is absent and not in index, it's an error
-                    // unless --ignore-missing
+                    let file_missing = !abs_path.exists();
                     if file_missing {
                         bail!("'{}' is not in the index", input_path.display());
                     }
