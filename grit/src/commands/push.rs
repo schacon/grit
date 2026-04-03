@@ -6,6 +6,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
@@ -92,23 +93,42 @@ pub fn run(args: Args) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
     let current_branch = head.branch_name().map(|s| s.to_owned());
 
-    // Determine remote name
-    let remote_name_owned: String = if let Some(ref r) = args.remote {
-        r.clone()
-    } else if let Some(ref branch) = current_branch {
-        config
-            .get(&format!("branch.{branch}.remote"))
-            .unwrap_or_else(|| "origin".to_owned())
+    // Determine remote name and URL.
+    // If the remote argument looks like a path (contains '/' or starts with '.'),
+    // use it directly as the URL instead of looking it up in config.
+    let remote_name_owned: String;
+    let url: String;
+    let _is_path_remote: bool;
+
+    if let Some(ref r) = args.remote {
+        if r.contains('/') || r.starts_with('.') {
+            // Path-based remote: use directly as URL
+            _is_path_remote = true;
+            remote_name_owned = r.clone();
+            url = r.clone();
+        } else {
+            _is_path_remote = false;
+            remote_name_owned = r.clone();
+            let url_key = format!("remote.{}.url", remote_name_owned);
+            url = config
+                .get(&url_key)
+                .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
+        }
     } else {
-        "origin".to_owned()
+        _is_path_remote = false;
+        remote_name_owned = if let Some(ref branch) = current_branch {
+            config
+                .get(&format!("branch.{branch}.remote"))
+                .unwrap_or_else(|| "origin".to_owned())
+        } else {
+            "origin".to_owned()
+        };
+        let url_key = format!("remote.{}.url", remote_name_owned);
+        url = config
+            .get(&url_key)
+            .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
     };
     let remote_name = remote_name_owned.as_str();
-
-    // Get remote URL
-    let url_key = format!("remote.{remote_name}.url");
-    let url = config
-        .get(&url_key)
-        .with_context(|| format!("remote '{remote_name}' not found"))?;
 
     let remote_path = if let Some(stripped) = url.strip_prefix("file://") {
         PathBuf::from(stripped)
@@ -320,7 +340,6 @@ pub fn run(args: Args) -> Result<()> {
 
     // Run pre-push hook
     {
-        use grit_lib::hooks::{run_hook, HookResult};
         let zero_oid = "0".repeat(40);
         let mut hook_lines = Vec::new();
         for update in &updates {
@@ -382,15 +401,39 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Apply ref updates
+    // Apply ref updates, running remote-side hooks first
     if !args.quiet && !args.porcelain {
         println!("To {url}");
     }
 
     // Track results for atomic rollback on failure
     let mut applied_updates: Vec<(&RefUpdate, Option<ObjectId>)> = Vec::new();
+    let mut rejected: Vec<(&RefUpdate, String)> = Vec::new();
+    let zero_oid_str = "0".repeat(40);
 
     for update in &updates {
+        // Run the remote's `update` hook: update <refname> <old-oid> <new-oid>
+        if !args.dry_run {
+            let old_hex = update
+                .old_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
+            let new_hex = update
+                .new_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
+            let hook_result = run_hook(
+                &remote_repo,
+                "update",
+                &[&update.remote_ref, &old_hex, &new_hex],
+                None,
+            );
+            if let HookResult::Failed(_code) = hook_result {
+                rejected.push((update, "hook declined".to_string()));
+                continue;
+            }
+        }
+
         let result = apply_ref_update(
             &repo,
             &remote_repo,
@@ -425,6 +468,35 @@ pub fn run(args: Args) -> Result<()> {
                 return Err(e);
             }
         }
+    }
+
+    // Report rejected refs to stderr
+    if !rejected.is_empty() {
+        for (update, reason) in &rejected {
+            let src_short = update
+                .local_ref
+                .as_deref()
+                .and_then(|r| r.strip_prefix("refs/heads/"))
+                .or_else(|| {
+                    update
+                        .local_ref
+                        .as_deref()
+                        .and_then(|r| r.strip_prefix("refs/tags/"))
+                })
+                .unwrap_or(
+                    update.local_ref.as_deref().unwrap_or("(delete)"),
+                );
+            let dst_short = update
+                .remote_ref
+                .strip_prefix("refs/heads/")
+                .or_else(|| update.remote_ref.strip_prefix("refs/tags/"))
+                .unwrap_or(&update.remote_ref);
+            eprintln!(
+                " ! [remote rejected] {} -> {} ({})",
+                src_short, dst_short, reason
+            );
+        }
+        bail!("failed to push some refs to '{url}'");
     }
 
     // Set upstream tracking if requested

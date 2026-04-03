@@ -518,6 +518,14 @@ fn add_path(
 ) -> std::result::Result<(), AddPathError> {
     let abs_path = work_tree.join(path);
 
+    // Refuse to add a path that traverses through a symbolic link.
+    if check_symlink_in_path(work_tree, Path::new(path)).is_some() {
+        return Err(AddPathError::Other(anyhow::anyhow!(
+            "'{}' is beyond a symbolic link",
+            path
+        )));
+    }
+
     if !abs_path.exists() {
         let path_bytes = path.as_bytes();
         // Check if it's an index entry that needs to be removed
@@ -865,6 +873,25 @@ fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
         .strip_prefix(&wt_canon)
         .ok()
         .map(|p| p.to_string_lossy().to_string())
+}
+
+/// Walk the parent components of `rel_path` (relative to `work_tree`) and
+/// return `Some(prefix)` if any of them is a symbolic link.  Only *parent*
+/// components are checked — the final path component itself may be a symlink.
+fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<PathBuf> {
+    let mut accumulated = PathBuf::new();
+    let components: Vec<_> = rel_path.components().collect();
+    // Check all components except the last one (the file itself).
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        accumulated.push(component);
+        let abs = work_tree.join(&accumulated);
+        if let Ok(meta) = fs::symlink_metadata(&abs) {
+            if meta.file_type().is_symlink() {
+                return Some(accumulated);
+            }
+        }
+    }
+    None
 }
 
 /// Resolve a pathspec relative to the prefix (cwd within worktree).

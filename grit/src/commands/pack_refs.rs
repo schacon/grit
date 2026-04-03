@@ -32,12 +32,13 @@ pub fn run(args: Args) -> Result<()> {
 
     // Collect all loose refs under refs/
     let refs = list_refs(git_dir, "refs/").context("failed to list refs")?;
-    if refs.is_empty() {
-        return Ok(());
-    }
 
     // Read existing packed-refs to merge with
     let mut packed = read_existing_packed_refs(git_dir)?;
+
+    if refs.is_empty() && packed.is_empty() {
+        return Ok(());
+    }
 
     // Add/update with loose refs
     for (refname, oid) in &refs {
@@ -51,7 +52,7 @@ pub fn run(args: Args) -> Result<()> {
         );
     }
 
-    // Write packed-refs
+    // Write packed-refs (always rewrite to normalize header)
     write_packed_refs(git_dir, &packed).context("failed to write packed-refs")?;
 
     // Prune loose refs unless --no-prune

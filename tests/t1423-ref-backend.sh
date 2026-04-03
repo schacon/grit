@@ -20,7 +20,7 @@ test_expect_success 'setup basic repo' '
 	)
 '
 
-test_expect_failure 'refs list via alternate backend URI (config)' '
+test_expect_success 'refs list via alternate backend URI (config)' '
 	(
 		cd repo &&
 		git config set extensions.refStorage "files" &&
@@ -29,7 +29,7 @@ test_expect_failure 'refs list via alternate backend URI (config)' '
 	)
 '
 
-test_expect_failure 'refs list via alternate backend URI (env)' '
+test_expect_success 'refs list via alternate backend URI (env)' '
 	(
 		cd repo &&
 		GIT_REFERENCE_BACKEND="files" git refs list >actual &&

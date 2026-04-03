@@ -9,6 +9,7 @@ use clap::{Args as ClapArgs, Subcommand};
 use std::fs;
 use std::path::Path;
 
+use grit_lib::config::ConfigSet;
 use grit_lib::repo::Repository;
 
 /// Arguments for `grit refs`.
@@ -28,6 +29,8 @@ pub enum RefsAction {
         #[arg(long = "ref-format")]
         ref_format: String,
     },
+    /// List all refs.
+    List,
 }
 
 /// Run `grit refs`.
@@ -37,13 +40,25 @@ pub fn run(args: Args) -> Result<()> {
     match args.action {
         RefsAction::Verify => verify_refs(&repo),
         RefsAction::Migrate { ref_format } => migrate_refs(&repo, &ref_format),
+        RefsAction::List => list_refs(&repo),
     }
+}
+
+/// Determine the fsck.badRefName severity from config.
+/// Returns `true` if badRefName is downgraded to a warning (not an error).
+fn bad_ref_name_is_warn(git_dir: &Path) -> bool {
+    ConfigSet::load(Some(git_dir), true)
+        .ok()
+        .and_then(|cfg| cfg.get("fsck.badRefName"))
+        .map(|v| v.eq_ignore_ascii_case("warn"))
+        .unwrap_or(false)
 }
 
 /// Verify that all refs in the repository point to valid objects.
 fn verify_refs(repo: &Repository) -> Result<()> {
     let refs_dir = repo.git_dir.join("refs");
     let mut errors = 0;
+    let warn_only = bad_ref_name_is_warn(&repo.git_dir);
 
     // Check HEAD
     let head_path = repo.git_dir.join("HEAD");
@@ -68,7 +83,7 @@ fn verify_refs(repo: &Repository) -> Result<()> {
 
     // Walk refs directory
     if refs_dir.is_dir() {
-        errors += verify_refs_dir(repo, &refs_dir)?;
+        errors += verify_refs_dir(repo, &refs_dir, warn_only)?;
     }
 
     // Check packed-refs
@@ -98,14 +113,39 @@ fn verify_refs(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
-fn verify_refs_dir(repo: &Repository, dir: &Path) -> Result<usize> {
+fn verify_refs_dir(repo: &Repository, dir: &Path, warn_only: bool) -> Result<usize> {
     let mut errors = 0;
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            errors += verify_refs_dir(repo, &path)?;
+            errors += verify_refs_dir(repo, &path, warn_only)?;
         } else if path.is_file() {
+            // Derive the ref name relative to .git/ (e.g. "refs/heads/main")
+            let refname = path
+                .strip_prefix(&repo.git_dir)
+                .unwrap_or(&path)
+                .to_string_lossy();
+
+            // Validate the ref name
+            if grit_lib::check_ref_format::check_refname_format(
+                &refname,
+                &grit_lib::check_ref_format::RefNameOptions {
+                    allow_onelevel: false,
+                    refspec_pattern: false,
+                    normalize: false,
+                },
+            )
+            .is_err()
+            {
+                if warn_only {
+                    eprintln!("warning: badRefName: {refname}");
+                } else {
+                    eprintln!("error: badRefName: {refname}");
+                    errors += 1;
+                }
+            }
+
             let content = fs::read_to_string(&path)
                 .with_context(|| format!("reading ref {}", path.display()))?;
             let trimmed = content.trim();
@@ -135,6 +175,21 @@ fn verify_refs_dir(repo: &Repository, dir: &Path) -> Result<usize> {
         }
     }
     Ok(errors)
+}
+
+fn list_refs(repo: &Repository) -> Result<()> {
+    // Resolve HEAD
+    if let Ok(oid) = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD") {
+        println!("{} HEAD", oid);
+    }
+
+    // List all refs under refs/
+    let refs = grit_lib::refs::list_refs(&repo.git_dir, "refs/")?;
+    for (refname, oid) in refs {
+        println!("{} {}", oid, refname);
+    }
+
+    Ok(())
 }
 
 fn migrate_refs(_repo: &Repository, ref_format: &str) -> Result<()> {

@@ -28,7 +28,7 @@ test_expect_success 'ls-files -t shows status prefix for tracked files' '
 	grep "^H sub/added" result
 '
 
-test_expect_failure 'read-tree with empty sparse-checkout hides all files' '
+test_expect_success 'read-tree with empty sparse-checkout hides all files' '
 	git config core.sparsecheckout true &&
 	mkdir -p .git/info &&
 	echo >.git/info/sparse-checkout &&
@@ -38,7 +38,7 @@ test_expect_failure 'read-tree with empty sparse-checkout hides all files' '
 	test_path_is_missing init.t
 '
 
-test_expect_failure 'read-tree with sparse-checkout pattern selects files' '
+test_expect_success 'read-tree with sparse-checkout pattern selects files' '
 	echo "sub/" >.git/info/sparse-checkout &&
 	git read-tree -m -u HEAD &&
 	git ls-files -t >result &&

@@ -115,12 +115,12 @@ test_expect_success 'truncated tag: object+type+tag ok but missing tagger' '
 '
 
 # Test truncated tree (binary format)
-test_expect_failure 'truncated tree: short hash' '
+test_expect_success 'truncated tree: short hash' '
 	printf "100644 foo\0\1\1\1\1" >input &&
 	test_must_fail git hash-object -t tree input
 '
 
-test_expect_failure 'truncated tree: missing nul' '
+test_expect_success 'truncated tree: missing nul' '
 	printf "100644 a long filename, or a hash with missing nul?" >input &&
 	test_must_fail git hash-object -t tree input
 '

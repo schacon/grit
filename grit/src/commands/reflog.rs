@@ -11,11 +11,12 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 
+use grit_lib::config::ConfigSet;
 use grit_lib::objects::ObjectId;
 use grit_lib::reflog::{
     delete_reflog_entries, expire_reflog, read_reflog, reflog_exists,
 };
-use grit_lib::refs::resolve_ref;
+use grit_lib::refs::{append_reflog, resolve_ref};
 use grit_lib::repo::Repository;
 
 /// Arguments for `grit reflog`.
@@ -44,6 +45,8 @@ pub enum ReflogCommand {
     Delete(DeleteArgs),
     /// Check whether a ref has a reflog.
     Exists(ExistsArgs),
+    /// Manually write a reflog entry.
+    Write(WriteArgs),
 }
 
 /// Arguments for `reflog show`.
@@ -102,6 +105,22 @@ pub struct ExistsArgs {
     pub refname: String,
 }
 
+/// Arguments for `reflog write`.
+#[derive(Debug, ClapArgs)]
+#[command(
+    override_usage = "git reflog write <refname> <old-oid> <new-oid> <message>"
+)]
+pub struct WriteArgs {
+    /// Reference name.
+    pub refname: String,
+    /// Previous object ID.
+    pub old_oid: String,
+    /// New object ID.
+    pub new_oid: String,
+    /// Log message.
+    pub message: String,
+}
+
 /// Run `grit reflog`.
 pub fn run(args: Args) -> Result<()> {
     match args.command {
@@ -109,6 +128,7 @@ pub fn run(args: Args) -> Result<()> {
         Some(ReflogCommand::Expire(expire_args)) => run_expire(expire_args),
         Some(ReflogCommand::Delete(delete_args)) => run_delete(delete_args),
         Some(ReflogCommand::Exists(exists_args)) => run_exists(exists_args),
+        Some(ReflogCommand::Write(write_args)) => run_write(write_args),
         None => {
             // Default to show
             let refname = args.default_ref.unwrap_or_else(|| "HEAD".to_string());
@@ -262,6 +282,60 @@ fn run_exists(args: ExistsArgs) -> Result<()> {
     } else {
         std::process::exit(1);
     }
+}
+
+fn run_write(args: WriteArgs) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Validate refname: reject spaces, control characters, and other invalid chars.
+    if args.refname.contains(' ')
+        || args.refname.contains('\t')
+        || args.refname.contains("..")
+        || args.refname.contains("\\")
+        || args.refname.ends_with('.')
+        || args.refname.ends_with('/')
+        || args.refname.contains("@{")
+        || args.refname.is_empty()
+    {
+        bail!("invalid refname: '{}'", args.refname);
+    }
+
+    let old_oid: ObjectId = args
+        .old_oid
+        .parse()
+        .context("invalid old object ID")?;
+    let new_oid: ObjectId = args
+        .new_oid
+        .parse()
+        .context("invalid new object ID")?;
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let name = std::env::var("GIT_COMMITTER_NAME")
+        .ok()
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.name")))
+        .unwrap_or_else(|| "Unknown".to_owned());
+    let email = std::env::var("GIT_COMMITTER_EMAIL")
+        .ok()
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
+        .unwrap_or_default();
+    let now = time::OffsetDateTime::now_utc();
+    let epoch = now.unix_timestamp();
+    let offset = now.offset();
+    let hours = offset.whole_hours();
+    let minutes = offset.minutes_past_hour().unsigned_abs();
+    let identity = format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}");
+
+    append_reflog(
+        &repo.git_dir,
+        &args.refname,
+        &old_oid,
+        &new_oid,
+        &identity,
+        &args.message,
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    Ok(())
 }
 
 /// Resolve a user-provided ref to the actual refname used in reflog paths.

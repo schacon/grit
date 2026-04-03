@@ -5,15 +5,14 @@ test_description='Manually write reflog entries'
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# grit does not yet support 'reflog write' subcommand or test-tool ref-store.
-# All tests are expected failures.
+# Tests for 'reflog write' subcommand.
 
-test_expect_failure 'reflog write requires correct arguments' '
+test_expect_success 'reflog write requires correct arguments' '
 	git init repo &&
 	(
 		cd repo &&
 		test_must_fail git reflog write 2>err &&
-		test_grep "usage" err
+		test_grep "Usage" err
 	)
 '
 
@@ -26,7 +25,7 @@ test_expect_success 'reflog write rejects invalid refname (grit rejects all refl
 	)
 '
 
-test_expect_failure 'simple reflog write' '
+test_expect_success 'simple reflog write' '
 	git init repo3 &&
 	(
 		cd repo3 &&

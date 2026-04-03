@@ -29,7 +29,7 @@ test_expect_success setup '
 	)
 '
 
-test_expect_failure 'push to a sibling clone' '
+test_expect_success 'push to a sibling clone' '
 	git clone original receiver &&
 	(
 		cd one &&
@@ -37,7 +37,7 @@ test_expect_failure 'push to a sibling clone' '
 	)
 '
 
-test_expect_failure 'fetch from a sibling clone' '
+test_expect_success 'fetch from a sibling clone' '
 	git clone original fetcher &&
 	(
 		cd fetcher &&

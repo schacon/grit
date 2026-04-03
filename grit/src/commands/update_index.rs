@@ -149,6 +149,15 @@ pub fn run(args: Args) -> Result<()> {
         let (rel_path, abs_path) = resolve_repo_path(work_tree, &cwd, &input_path)?;
         let rel_bytes = path_to_bytes(&rel_path)?;
 
+        // Refuse to add a path that traverses through a symbolic link.
+        // Check every *parent* component of the repo-relative path.
+        if check_symlink_in_path(work_tree, &rel_path).is_some() {
+            bail!(
+                "'{}' is beyond a symbolic link",
+                input_path.display()
+            );
+        }
+
         if args.force_remove {
             // --force-remove silently succeeds even if the entry is absent
             index.remove(&rel_bytes);
@@ -395,6 +404,25 @@ fn resolve_repo_path(
         )
     })?;
     Ok((rel.to_path_buf(), work_tree.join(rel)))
+}
+
+/// Walk the parent components of `rel_path` (relative to `work_tree`) and
+/// return `Some(prefix)` if any of them is a symbolic link.  Only *parent*
+/// components are checked — the final path component itself may be a symlink.
+fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<PathBuf> {
+    let mut accumulated = PathBuf::new();
+    let components: Vec<_> = rel_path.components().collect();
+    // Check all components except the last one (the file itself).
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        accumulated.push(component);
+        let abs = work_tree.join(&accumulated);
+        if let Ok(meta) = std::fs::symlink_metadata(&abs) {
+            if meta.file_type().is_symlink() {
+                return Some(accumulated);
+            }
+        }
+    }
+    None
 }
 
 fn normalize_path(path: &Path) -> PathBuf {

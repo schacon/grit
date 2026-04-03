@@ -40,7 +40,7 @@ test_expect_success 'do not create packed-refs file gratuitously' '
 	test_path_is_missing .git/packed-refs
 '
 
-test_expect_failure 'check that marking the packed-refs file works' '
+test_expect_success 'check that marking the packed-refs file works' '
 	git for-each-ref >expected &&
 	git pack-refs --all &&
 	mark_packed_refs &&
@@ -80,7 +80,7 @@ test_expect_success 'leave packed-refs untouched on verify of packed' '
 	check_packed_refs_marked
 '
 
-test_expect_failure 'touch packed-refs on delete of packed' '
+test_expect_success 'touch packed-refs on delete of packed' '
 	A=$(cat A_oid) &&
 	git update-ref refs/heads/packed-delete $A &&
 	git pack-refs --all &&

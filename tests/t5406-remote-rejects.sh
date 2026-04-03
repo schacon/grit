@@ -20,11 +20,11 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'push reports error' '
+test_expect_success 'push reports error' '
 	(cd child && test_must_fail git push 2>stderr)
 '
 
-test_expect_failure 'individual ref reports error' '
+test_expect_success 'individual ref reports error' '
 	(cd child && grep rejected stderr)
 '
 
