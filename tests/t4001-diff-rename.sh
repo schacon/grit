@@ -1,10 +1,10 @@
 #!/bin/sh
 
-test_description='grit diff with renames (without -M rename detection)
+test_description='grit diff with renames
 
-Tests how grit reports file renames. Without -M support, renames appear
-as a deletion of the old path and addition of the new path. Tests cover
-pure renames, rename+modify, rename via staging, and across commits.'
+Tests how grit reports file renames. With rename detection, renames
+appear as R status with similarity. Tests cover pure renames,
+rename+modify, rename via staging, and across commits.'
 
 . ./test-lib.sh
 
@@ -34,49 +34,47 @@ test_expect_success 'pure rename: git mv then commit' '
 	$REAL_GIT commit -m "rename"
 '
 
-test_expect_success 'diff between commits shows old file deleted' '
+test_expect_success 'diff between commits shows rename status' '
 	cd rename-repo &&
 	grit diff --name-status HEAD~1 HEAD >actual &&
-	grep "^D" actual | grep "original.txt"
+	grep "^R" actual | grep "original.txt" | grep "renamed.txt"
 '
 
-test_expect_success 'diff between commits shows new file added' '
+test_expect_success 'diff between commits shows 100% similarity' '
 	cd rename-repo &&
 	grit diff --name-status HEAD~1 HEAD >actual &&
-	grep "^A" actual | grep "renamed.txt"
+	grep "^R100" actual
 '
 
-test_expect_success 'diff patch shows deleted file mode for original' '
+test_expect_success 'diff patch shows rename from/to' '
 	cd rename-repo &&
 	grit diff HEAD~1 HEAD >actual &&
-	grep "^deleted file mode" actual
+	grep "^rename from original.txt" actual &&
+	grep "^rename to renamed.txt" actual
 '
 
-test_expect_success 'diff patch shows new file mode for renamed' '
+test_expect_success 'diff patch shows similarity index' '
 	cd rename-repo &&
 	grit diff HEAD~1 HEAD >actual &&
-	grep "^new file mode" actual
+	grep "^similarity index" actual
 '
 
-test_expect_success 'diff --name-only lists both files' '
+test_expect_success 'diff --name-only lists new name' '
 	cd rename-repo &&
 	grit diff --name-only HEAD~1 HEAD >actual &&
-	grep "original.txt" actual &&
 	grep "renamed.txt" actual
 '
 
-test_expect_success 'diff --stat shows both files' '
+test_expect_success 'diff --stat shows rename arrow' '
 	cd rename-repo &&
 	grit diff --stat HEAD~1 HEAD >actual &&
-	grep "original.txt" actual &&
-	grep "renamed.txt" actual
+	grep "original.txt => renamed.txt" actual
 '
 
-test_expect_success 'diff --numstat shows deletions for original and additions for renamed' '
+test_expect_success 'diff --numstat shows zero additions/deletions for pure rename' '
 	cd rename-repo &&
 	grit diff --numstat HEAD~1 HEAD >actual &&
-	grep "original.txt" actual &&
-	grep "renamed.txt" actual
+	grep "^0	0	renamed.txt" actual
 '
 
 # ============================================================
@@ -92,16 +90,16 @@ test_expect_success 'setup rename with modification' '
 	$REAL_GIT commit -m "rename+modify"
 '
 
-test_expect_success 'rename+modify: old file shows as deleted' '
+test_expect_success 'rename+modify: shows rename status' '
 	cd rename-repo &&
 	grit diff --name-status HEAD~1 HEAD >actual &&
-	grep "^D" actual | grep "renamed.txt"
+	grep "^R" actual | grep "newname.txt"
 '
 
-test_expect_success 'rename+modify: new file shows as added' '
+test_expect_success 'rename+modify: similarity is less than 100%' '
 	cd rename-repo &&
 	grit diff --name-status HEAD~1 HEAD >actual &&
-	grep "^A" actual | grep "newname.txt"
+	grep "^R" actual | grep -v "R100"
 '
 
 test_expect_success 'rename+modify: patch shows content in new file' '
@@ -120,30 +118,23 @@ test_expect_success 'setup staged rename' '
 	true
 '
 
-test_expect_success 'diff --cached shows staged rename as D+A' '
+test_expect_success 'diff --cached shows staged rename' '
 	cd rename-repo &&
 	grit diff --cached --name-status >actual &&
-	grep "^D" actual | grep "newname.txt" &&
-	grep "^A" actual | grep "staged.txt"
+	grep "^R" actual | grep "newname.txt" | grep "staged.txt"
 '
 
-test_expect_success 'diff --cached patch shows deletion header for old' '
+test_expect_success 'diff --cached patch shows a/ and b/ paths' '
 	cd rename-repo &&
 	grit diff --cached >actual &&
-	grep -- "--- a/newname.txt" actual
+	grep -- "--- a/newname.txt" actual &&
+	grep -- "+++ b/staged.txt" actual
 '
 
-test_expect_success 'diff --cached patch shows addition header for new' '
-	cd rename-repo &&
-	grit diff --cached >actual &&
-	grep "+++ b/staged.txt" actual
-'
-
-test_expect_success 'diff --cached --stat shows both files' '
+test_expect_success 'diff --cached --stat shows rename arrow' '
 	cd rename-repo &&
 	grit diff --cached --stat >actual &&
-	grep "newname.txt" actual &&
-	grep "staged.txt" actual
+	grep "newname.txt => staged.txt" actual
 '
 
 test_expect_success 'commit staged rename' '
@@ -168,32 +159,24 @@ test_expect_success 'setup multiple renames' '
 	$REAL_GIT commit -m "rename abc to xyz"
 '
 
-test_expect_success 'multiple renames: all old files show as deleted' '
+test_expect_success 'multiple renames: all show as R status' '
 	cd rename-repo &&
 	grit diff --name-status HEAD~1 HEAD >actual &&
-	grep "^D.*a.txt" actual &&
-	grep "^D.*b.txt" actual &&
-	grep "^D.*c.txt" actual
+	grep "^R.*a.txt.*x.txt" actual &&
+	grep "^R.*b.txt.*y.txt" actual &&
+	grep "^R.*c.txt.*z.txt" actual
 '
 
-test_expect_success 'multiple renames: all new files show as added' '
-	cd rename-repo &&
-	grit diff --name-status HEAD~1 HEAD >actual &&
-	grep "^A.*x.txt" actual &&
-	grep "^A.*y.txt" actual &&
-	grep "^A.*z.txt" actual
-'
-
-test_expect_success 'multiple renames: --name-only lists 6 files' '
+test_expect_success 'multiple renames: --name-only lists 3 new names' '
 	cd rename-repo &&
 	grit diff --name-only HEAD~1 HEAD >actual &&
-	test_line_count = 6 actual
+	test_line_count = 3 actual
 '
 
-test_expect_success 'multiple renames: numstat has 6 lines' '
+test_expect_success 'multiple renames: numstat has 3 lines' '
 	cd rename-repo &&
 	grit diff --numstat HEAD~1 HEAD >actual &&
-	test_line_count = 6 actual
+	test_line_count = 3 actual
 '
 
 # ============================================================
@@ -207,11 +190,10 @@ test_expect_success 'rename into subdirectory' '
 	$REAL_GIT commit -m "move to subdir"
 '
 
-test_expect_success 'rename to subdir shows correct paths' '
+test_expect_success 'rename to subdir shows rename status' '
 	cd rename-repo &&
 	grit diff --name-status HEAD~1 HEAD >actual &&
-	grep "^D.*staged.txt" actual &&
-	grep "^A.*subdir/moved.txt" actual
+	grep "^R.*staged.txt.*subdir/moved.txt" actual
 '
 
 test_expect_success 'rename to subdir: patch has correct a/ and b/ paths' '
