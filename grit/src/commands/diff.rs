@@ -759,6 +759,11 @@ fn run_no_index(args: &Args) -> Result<()> {
     let path_a = Path::new(paths[0].as_str());
     let path_b = Path::new(paths[1].as_str());
 
+    // If both are directories, diff all files recursively
+    if path_a.is_dir() && path_b.is_dir() {
+        return run_no_index_dirs(args, path_a, path_b);
+    }
+
     let data_a = std::fs::read(path_a)
         .with_context(|| format!("could not read '{}'", paths[0]))?;
     let data_b = std::fs::read(path_b)
@@ -864,6 +869,97 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
     std::process::exit(1);
+}
+
+/// Run `diff --no-index` between two directories: walk both, collect relative
+/// paths, and produce unified diff output for each differing file.
+fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
+    use std::collections::BTreeSet;
+    fn collect_files(base: &Path, rel: &Path, out: &mut BTreeSet<String>) -> Result<()> {
+        let full = base.join(rel);
+        if full.is_dir() {
+            let mut entries: Vec<_> = std::fs::read_dir(&full)?
+                .filter_map(|e| e.ok())
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
+                collect_files(base, &rel.join(entry.file_name()), out)?;
+            }
+        } else if full.is_file() {
+            out.insert(rel.to_string_lossy().into_owned());
+        }
+        Ok(())
+    }
+    let mut files_a = BTreeSet::new();
+    let mut files_b = BTreeSet::new();
+    collect_files(dir_a, Path::new(""), &mut files_a)?;
+    collect_files(dir_b, Path::new(""), &mut files_b)?;
+
+    let all_files: BTreeSet<_> = files_a.union(&files_b).cloned().collect();
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let mut has_diff = false;
+    let context_lines = args.unified.unwrap_or(3);
+
+    let use_color = match args.color.as_deref() {
+        Some("always") => true,
+        Some("never") => false,
+        Some("auto") | None => io::stdout().is_terminal(),
+        Some(_) => false,
+    };
+
+    for rel in &all_files {
+        let fa = dir_a.join(rel);
+        let fb = dir_b.join(rel);
+        let data_a = if fa.is_file() { std::fs::read(&fa).unwrap_or_default() } else { Vec::new() };
+        let data_b = if fb.is_file() { std::fs::read(&fb).unwrap_or_default() } else { Vec::new() };
+        if data_a == data_b {
+            continue;
+        }
+        has_diff = true;
+        let label_a = format!("{}/{}", dir_a.display(), rel);
+        let label_b = format!("{}/{}", dir_b.display(), rel);
+
+        if args.name_only {
+            writeln!(out, "{label_b}")?;
+            continue;
+        }
+        if args.name_status {
+            let status = if !fa.is_file() { "A" } else if !fb.is_file() { "D" } else { "M" };
+            writeln!(out, "{status}\t{label_b}")?;
+            continue;
+        }
+        if args.numstat {
+            let text_a = String::from_utf8_lossy(&data_a);
+            let text_b = String::from_utf8_lossy(&data_b);
+            let (ins, del) = count_changes(&text_a, &text_b);
+            writeln!(out, "{}\t{}\t{}", ins, del, label_b)?;
+            continue;
+        }
+
+        let text_a = String::from_utf8_lossy(&data_a);
+        let text_b = String::from_utf8_lossy(&data_b);
+        let diff_output = unified_diff(&text_a, &text_b, &label_a, &label_b, context_lines);
+        if use_color {
+            for line in diff_output.lines() {
+                if line.starts_with("@@") {
+                    writeln!(out, "{CYAN}{line}{RESET}")?;
+                } else if line.starts_with('+') && !line.starts_with("+++") {
+                    writeln!(out, "{GREEN}{line}{RESET}")?;
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    writeln!(out, "{RED}{line}{RESET}")?;
+                } else {
+                    writeln!(out, "{line}")?;
+                }
+            }
+        } else {
+            write!(out, "{diff_output}")?;
+        }
+    }
+    if has_diff {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// If `--` is present, everything before is revisions, everything after is paths.

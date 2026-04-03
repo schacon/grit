@@ -54,7 +54,7 @@ test_expect_success 'diff --no-index with /dev/null (new file)' '
 	grep "new\.txt" out
 '
 
-test_expect_failure 'diff --no-index between directories' '
+test_expect_success 'diff --no-index between directories' '
 	mkdir -p dir1 dir2 &&
 	echo "a" >dir1/f.txt &&
 	echo "b" >dir2/f.txt &&
