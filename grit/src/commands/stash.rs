@@ -79,6 +79,9 @@ pub enum StashCommand {
         /// Only stash staged changes.
         #[arg(short = 'S', long = "staged")]
         staged: bool,
+        /// Interactive patch mode (select hunks to stash).
+        #[arg(short = 'p', long = "patch")]
+        patch: bool,
         /// Quiet mode.
         #[arg(short = 'q', long = "quiet")]
         quiet: bool,
@@ -205,9 +208,13 @@ pub fn run(args: Args) -> Result<()> {
             no_keep_index,
             include_untracked,
             staged,
+            patch,
             quiet,
             pathspec,
         }) => {
+            if patch {
+                bail!("interactive patch mode (stash push -p) is not yet implemented");
+            }
             let msg = message.or(args.message);
             let ki = keep_index || args.keep_index;
             let iu = include_untracked || args.include_untracked;
@@ -1845,7 +1852,8 @@ fn create_worktree_tree(
                     entry.mode = mode_from_metadata(&meta);
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound
+                || e.raw_os_error() == Some(20) /* ENOTDIR */ => {
                 entry.oid = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
             }
             Err(e) => return Err(e.into()),
@@ -1932,10 +1940,15 @@ fn reset_to_head(repo: &Repository, head_oid: &ObjectId, work_tree: &Path) -> Re
     let tree_entries = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
     let new_index = build_index_from_tree(&repo.odb, &tree_entries)?;
 
+    // First pass: remove worktree files that are not in HEAD tree
+    // (handles type changes like file→directory)
+    let head_paths: BTreeSet<String> = tree_entries.iter().map(|e| e.path.clone()).collect();
+    remove_worktree_extras(work_tree, work_tree, &head_paths)?;
+
     for entry in &tree_entries {
         let file_path = work_tree.join(&entry.path);
         if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent)?;
+            ensure_directory(parent, work_tree)?;
         }
         let blob = repo.odb.read(&entry.oid)?;
         if entry.mode == MODE_SYMLINK {
@@ -1982,6 +1995,65 @@ fn mode_from_metadata(meta: &std::fs::Metadata) -> u32 {
             0o100644
         }
     }
+}
+
+/// Ensure a path is a directory, removing any conflicting file in the way.
+fn ensure_directory(dir: &Path, work_tree: &Path) -> Result<()> {
+    // Walk from work_tree down to dir, checking each component
+    if dir.is_dir() {
+        return Ok(());
+    }
+    // Some ancestor might be a file — remove it
+    let rel = dir.strip_prefix(work_tree).unwrap_or(dir);
+    let mut current = work_tree.to_path_buf();
+    for component in rel.components() {
+        current.push(component);
+        if current.exists() && !current.is_dir() {
+            // A file is blocking where we need a directory
+            fs::remove_file(&current)?;
+        }
+    }
+    fs::create_dir_all(dir)?;
+    Ok(())
+}
+
+/// Remove worktree files/dirs that are not in the target tree set.
+/// This handles type changes (e.g., a file `dir` that should become directory `dir/`).
+fn remove_worktree_extras(dir: &Path, work_tree: &Path, target_paths: &BTreeSet<String>) -> Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".git" {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(work_tree)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| name);
+
+        if path.is_dir() {
+            // Check if any target path starts with this dir prefix
+            let prefix = format!("{rel}/");
+            if target_paths.iter().any(|t| t.starts_with(&prefix)) {
+                // Recurse — directory is needed
+                remove_worktree_extras(&path, work_tree, target_paths)?;
+            }
+            // Don't remove untracked dirs here — only clean up conflicts
+        } else {
+            // Check if this file path conflicts with a needed directory
+            let prefix = format!("{rel}/");
+            if target_paths.iter().any(|t| t.starts_with(&prefix)) {
+                // File exists where a directory is needed — remove it
+                fs::remove_file(&path)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Remove empty parent directories up to (but not including) the work tree root.
