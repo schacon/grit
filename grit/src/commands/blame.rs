@@ -48,6 +48,14 @@ pub struct Args {
     #[arg(long = "ignore-revs-file")]
     pub ignore_revs_file: Vec<String>,
 
+    /// Color lines from the same commit in alternating colors.
+    #[arg(long = "color-lines")]
+    pub color_lines: bool,
+
+    /// Color lines by age of the commit.
+    #[arg(long = "color-by-age")]
+    pub color_by_age: bool,
+
     /// Revision to blame from (and optional file after `--`).
     #[arg()]
     pub args: Vec<String>,
@@ -582,6 +590,33 @@ fn write_porcelain(
     Ok(())
 }
 
+/// ANSI color codes.
+const RESET: &str = "\x1b[0m";
+const YELLOW: &str = "\x1b[33m";
+const BLUE: &str = "\x1b[34m";
+const CYAN: &str = "\x1b[36m";
+const WHITE: &str = "\x1b[37m";
+
+/// Classify a commit's age for --color-by-age.
+fn age_color(timestamp: i64) -> &'static str {
+    // Use a rough "now" based on the system clock
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let age_secs = now - timestamp;
+    let one_month = 30 * 24 * 3600;
+    let one_year = 365 * 24 * 3600;
+
+    if age_secs < one_month {
+        CYAN
+    } else if age_secs < one_year {
+        WHITE
+    } else {
+        BLUE
+    }
+}
+
 fn write_default(
     out: &mut impl Write,
     lines: &[BlameLine],
@@ -591,15 +626,32 @@ fn write_default(
     let hash_len = if args.long_hash { 40 } else { 8 };
     let max_lineno = lines.iter().map(|b| b.final_lineno).max().unwrap_or(1);
     let lineno_width = format!("{max_lineno}").len();
+    let use_color = args.color_lines || args.color_by_age;
+
+    let mut prev_oid: Option<ObjectId> = None;
 
     for bl in lines {
         let hex = bl.oid.to_hex();
         let short = &hex[..hash_len.min(hex.len())];
 
+        // Determine color prefix/suffix
+        let (color_start, color_end) = if args.color_by_age {
+            let commit = &commits[&bl.oid];
+            let ai = parse_author_field(&commit.author);
+            (age_color(ai.timestamp), RESET)
+        } else if args.color_lines && prev_oid == Some(bl.oid) {
+            // Repeated (contiguous) commit — highlight
+            (YELLOW, RESET)
+        } else if use_color {
+            ("", "")
+        } else {
+            ("", "")
+        };
+
         if args.suppress {
             writeln!(
                 out,
-                "{short} {lineno:>w$}) {content}",
+                "{color_start}{short} {lineno:>w$}) {content}{color_end}",
                 lineno = bl.final_lineno,
                 w = lineno_width,
                 content = bl.content,
@@ -616,12 +668,14 @@ fn write_default(
 
             writeln!(
                 out,
-                "{short} ({who} {ts} {lineno:>w$}) {content}",
+                "{color_start}{short} ({who} {ts} {lineno:>w$}) {content}{color_end}",
                 lineno = bl.final_lineno,
                 w = lineno_width,
                 content = bl.content,
             )?;
         }
+
+        prev_oid = Some(bl.oid);
     }
 
     Ok(())
