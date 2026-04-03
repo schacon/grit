@@ -75,6 +75,39 @@ pub enum NotesSubcommand {
         #[arg()]
         object: Option<String>,
     },
+    /// Copy the note from one object to another.
+    Copy {
+        /// Overwrite an existing note on the target.
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+
+        /// Source object.
+        #[arg()]
+        from: String,
+
+        /// Target object.
+        #[arg()]
+        to: String,
+    },
+    /// Merge notes refs (no-op placeholder).
+    Merge {
+        /// Notes ref to merge from.
+        #[arg()]
+        source_ref: Option<String>,
+    },
+    /// Remove notes for non-existent objects.
+    Prune {
+        /// Only report what would be done.
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+
+        /// Report pruned entries.
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Print the current notes ref.
+    #[command(name = "get-ref")]
+    GetRef,
 }
 
 /// Run the `notes` command.
@@ -100,6 +133,19 @@ pub fn run(args: Args) -> Result<()> {
         }
         Some(NotesSubcommand::Append { message, object }) => {
             append_note(&repo, &notes_ref, object.as_deref(), message)
+        }
+        Some(NotesSubcommand::Copy { force, from, to }) => {
+            copy_note(&repo, &notes_ref, &from, &to, force)
+        }
+        Some(NotesSubcommand::Merge { source_ref }) => {
+            merge_notes(&repo, &notes_ref, source_ref.as_deref())
+        }
+        Some(NotesSubcommand::Prune { dry_run, verbose }) => {
+            prune_notes(&repo, &notes_ref, dry_run, verbose)
+        }
+        Some(NotesSubcommand::GetRef) => {
+            println!("{}", notes_ref);
+            Ok(())
         }
     }
 }
@@ -387,6 +433,155 @@ fn append_note(
         &entries,
         "Notes added by 'git notes append'",
     )?;
+
+    Ok(())
+}
+
+/// Copy a note from one object to another.
+fn copy_note(
+    repo: &Repository,
+    notes_ref: &str,
+    from: &str,
+    to: &str,
+    force: bool,
+) -> Result<()> {
+    let from_oid = resolve_object(repo, Some(from))?;
+    let to_oid = resolve_object(repo, Some(to))?;
+    let from_hex = from_oid.to_hex();
+    let to_hex = to_oid.to_hex();
+
+    let mut entries = read_notes_tree(repo, notes_ref)?;
+
+    // Find the source note
+    let source_entry = entries
+        .iter()
+        .find(|e| String::from_utf8_lossy(&e.name) == from_hex)
+        .ok_or_else(|| anyhow::anyhow!("missing notes on source object {from_hex}"))?;
+    let note_blob_oid = source_entry.oid;
+
+    // Check if target already has a note
+    if entries.iter().any(|e| String::from_utf8_lossy(&e.name) == to_hex) {
+        if !force {
+            bail!(
+                "Cannot copy notes. Found existing notes for object {}. Use '-f' to overwrite existing notes",
+                to_hex
+            );
+        }
+        entries.retain(|e| String::from_utf8_lossy(&e.name) != to_hex);
+    }
+
+    entries.push(TreeEntry {
+        mode: 0o100644,
+        name: to_hex.as_bytes().to_vec(),
+        oid: note_blob_oid,
+    });
+
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+    write_notes_commit(
+        repo,
+        notes_ref,
+        &entries,
+        "Notes added by 'git notes copy'",
+    )?;
+
+    Ok(())
+}
+
+/// Merge notes refs. This is a simplified implementation that copies
+/// non-conflicting notes from the source ref into the target ref.
+fn merge_notes(
+    repo: &Repository,
+    notes_ref: &str,
+    source_ref: Option<&str>,
+) -> Result<()> {
+    let src = source_ref.ok_or_else(|| anyhow::anyhow!("must specify a notes ref to merge from"))?;
+
+    // Try the ref as-is first, then with refs/notes/ prefix
+    let src_entries = if let Ok(entries) = read_notes_tree(repo, src) {
+        if !entries.is_empty() {
+            entries
+        } else if !src.starts_with("refs/") {
+            let full_src = format!("refs/notes/{}", src);
+            read_notes_tree(repo, &full_src)?
+        } else {
+            entries
+        }
+    } else if !src.starts_with("refs/") {
+        let full_src = format!("refs/notes/{}", src);
+        read_notes_tree(repo, &full_src)?
+    } else {
+        bail!("notes ref '{}' not found", src);
+    };
+    let mut dst_entries = read_notes_tree(repo, notes_ref)?;
+
+    let dst_names: std::collections::HashSet<Vec<u8>> =
+        dst_entries.iter().map(|e| e.name.clone()).collect();
+
+    let mut added = 0usize;
+    for entry in &src_entries {
+        if !dst_names.contains(&entry.name) {
+            dst_entries.push(TreeEntry {
+                mode: entry.mode,
+                name: entry.name.clone(),
+                oid: entry.oid,
+            });
+            added += 1;
+        }
+    }
+
+    if added > 0 {
+        dst_entries.sort_by(|a, b| a.name.cmp(&b.name));
+        write_notes_commit(
+            repo,
+            notes_ref,
+            &dst_entries,
+            &format!("notes: Merged notes from {src}"),
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Prune notes for objects that no longer exist in the object database.
+fn prune_notes(
+    repo: &Repository,
+    notes_ref: &str,
+    dry_run: bool,
+    verbose: bool,
+) -> Result<()> {
+    let entries = read_notes_tree(repo, notes_ref)?;
+    let mut kept = Vec::new();
+    let mut pruned = false;
+
+    for entry in &entries {
+        let name = String::from_utf8_lossy(&entry.name);
+        // The note name is the hex OID of the annotated object
+        let obj_exists = if let Ok(oid) = ObjectId::from_hex(&name) {
+            repo.odb.read(&oid).is_ok()
+        } else {
+            // Non-hex name — keep it
+            true
+        };
+
+        if obj_exists {
+            kept.push(entry.clone());
+        } else {
+            pruned = true;
+            if verbose || dry_run {
+                eprintln!("Removing notes for non-existent object {}", name);
+            }
+        }
+    }
+
+    if pruned && !dry_run {
+        write_notes_commit(
+            repo,
+            notes_ref,
+            &kept,
+            "Notes removed by 'git notes prune'",
+        )?;
+    }
 
     Ok(())
 }

@@ -28,8 +28,12 @@ pub enum WorktreeCommand {
     Add(AddArgs),
     /// List linked working trees.
     List(ListArgs),
+    /// Move a working tree to a new location.
+    Move(MoveArgs),
     /// Remove a working tree.
     Remove(RemoveArgs),
+    /// Repair worktree administrative files.
+    Repair(RepairArgs),
     /// Remove stale worktree administrative files.
     Prune(PruneArgs),
     /// Prevent a working tree from being pruned.
@@ -98,6 +102,25 @@ pub struct LockArgs {
 }
 
 #[derive(Debug, ClapArgs)]
+pub struct MoveArgs {
+    /// Current path of the worktree.
+    pub source: PathBuf,
+
+    /// New path for the worktree.
+    pub destination: PathBuf,
+
+    /// Force move even if worktree is locked.
+    #[arg(short, long)]
+    pub force: bool,
+}
+
+#[derive(Debug, ClapArgs)]
+pub struct RepairArgs {
+    /// Paths to repair (defaults to all linked worktrees).
+    pub paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, ClapArgs)]
 pub struct UnlockArgs {
     /// Path of the worktree to unlock.
     pub path: PathBuf,
@@ -107,7 +130,9 @@ pub fn run(args: Args) -> Result<()> {
     match args.command {
         WorktreeCommand::Add(a) => cmd_add(a),
         WorktreeCommand::List(a) => cmd_list(a),
+        WorktreeCommand::Move(a) => cmd_move(a),
         WorktreeCommand::Remove(a) => cmd_remove(a),
+        WorktreeCommand::Repair(a) => cmd_repair(a),
         WorktreeCommand::Prune(a) => cmd_prune(a),
         WorktreeCommand::Lock(a) => cmd_lock(a),
         WorktreeCommand::Unlock(a) => cmd_unlock(a),
@@ -610,6 +635,151 @@ fn cmd_prune(args: PruneArgs) -> Result<()> {
         if !args.dry_run {
             fs::remove_dir_all(&admin)
                 .with_context(|| format!("cannot remove '{}'", admin.display()))?;
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// worktree move
+// ---------------------------------------------------------------------------
+
+fn cmd_move(args: MoveArgs) -> Result<()> {
+    let repo = Repository::discover(None)?;
+    let common = common_dir(&repo.git_dir)?;
+    let worktrees_dir = common.join("worktrees");
+
+    let src_path = if args.source.is_absolute() {
+        args.source.clone()
+    } else {
+        std::env::current_dir()?.join(&args.source)
+    };
+    let src_path = src_path.canonicalize().unwrap_or(src_path);
+
+    // Find the admin entry for the source worktree
+    let wt_name = find_worktree_name(&worktrees_dir, &src_path)?;
+    let admin = worktrees_dir.join(&wt_name);
+
+    // Check for lock
+    if admin.join("locked").exists() && !args.force {
+        bail!(
+            "worktree '{}' is locked; use --force to move it anyway",
+            src_path.display()
+        );
+    }
+
+    // Determine the destination absolute path
+    let dst_path = if args.destination.is_absolute() {
+        args.destination.clone()
+    } else {
+        std::env::current_dir()?.join(&args.destination)
+    };
+
+    if dst_path.exists() {
+        bail!("target '{}' already exists", dst_path.display());
+    }
+
+    // Move the working tree directory
+    fs::rename(&src_path, &dst_path)
+        .with_context(|| format!("cannot move '{}' to '{}'", src_path.display(), dst_path.display()))?;
+
+    let dst_path = dst_path.canonicalize().unwrap_or(dst_path);
+
+    // Update the gitdir file in the admin dir to point to the new location
+    let new_gitdir_content = format!("{}\n", dst_path.join(".git").display());
+    fs::write(admin.join("gitdir"), &new_gitdir_content)?;
+
+    // Update the .git file in the moved worktree (it should still point to the same admin dir)
+    let dotgit_content = format!("gitdir: {}\n", admin.display());
+    fs::write(dst_path.join(".git"), &dotgit_content)?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// worktree repair
+// ---------------------------------------------------------------------------
+
+fn cmd_repair(args: RepairArgs) -> Result<()> {
+    let repo = Repository::discover(None)?;
+    let common = common_dir(&repo.git_dir)?;
+    let worktrees_dir = common.join("worktrees");
+
+    if !worktrees_dir.is_dir() {
+        return Ok(());
+    }
+
+    // If specific paths were given, only repair those; otherwise repair all.
+    let entries_to_repair: Vec<String> = if args.paths.is_empty() {
+        // All linked worktrees
+        fs::read_dir(&worktrees_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect()
+    } else {
+        // Find matching admin entries for the given paths
+        let mut names = Vec::new();
+        for p in &args.paths {
+            let abs = if p.is_absolute() {
+                p.clone()
+            } else {
+                std::env::current_dir()?.join(p)
+            };
+            let abs = abs.canonicalize().unwrap_or(abs);
+            match find_worktree_name(&worktrees_dir, &abs) {
+                Ok(name) => names.push(name),
+                Err(e) => eprintln!("warning: {}", e),
+            }
+        }
+        names
+    };
+
+    for name in &entries_to_repair {
+        let admin = worktrees_dir.join(name);
+        let gitdir_file = admin.join("gitdir");
+
+        if !gitdir_file.exists() {
+            continue;
+        }
+
+        let raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
+        let recorded = PathBuf::from(raw.trim());
+        // gitdir points to <worktree>/.git
+        let wt_dotgit = &recorded;
+        let wt_path = recorded.parent().unwrap_or(&recorded);
+
+        // Repair 1: If the worktree .git file exists, make sure it points back to admin
+        if wt_dotgit.exists() {
+            let dotgit_content = fs::read_to_string(wt_dotgit).unwrap_or_default();
+            let expected_prefix = "gitdir: ";
+            if let Some(current_target) = dotgit_content.trim().strip_prefix(expected_prefix) {
+                let current_path = PathBuf::from(current_target);
+                let admin_canonical = admin.canonicalize().unwrap_or_else(|_| admin.clone());
+                let current_canonical = current_path.canonicalize().unwrap_or(current_path.clone());
+                if current_canonical != admin_canonical {
+                    // Fix the .git file
+                    let fixed = format!("gitdir: {}\n", admin.display());
+                    fs::write(wt_dotgit, &fixed)?;
+                    eprintln!(
+                        "repair: {}: repaired gitfile to point to {}",
+                        wt_path.display(),
+                        admin.display()
+                    );
+                }
+            }
+        }
+
+        // Repair 2: Verify gitdir file in admin points to an existing location
+        if !wt_dotgit.exists() && wt_path.exists() {
+            // The worktree exists but .git file is missing — recreate it
+            let dotgit_content = format!("gitdir: {}\n", admin.display());
+            fs::write(wt_path.join(".git"), &dotgit_content)?;
+            eprintln!(
+                "repair: {}: recreated gitfile",
+                wt_path.display()
+            );
         }
     }
 

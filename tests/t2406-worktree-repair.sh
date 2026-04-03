@@ -39,4 +39,16 @@ test_expect_success 'locked worktree not pruned' '
 	test_path_is_missing .git/worktrees/wt3
 '
 
+test_expect_success 'repair succeeds with no linked worktrees' '
+	git worktree repair
+'
+
+test_expect_success 'repair succeeds with valid linked worktrees' '
+	git worktree add --detach wt4 &&
+	git worktree repair &&
+	git worktree list >out &&
+	test_grep wt4 out &&
+	git worktree remove wt4
+'
+
 test_done
