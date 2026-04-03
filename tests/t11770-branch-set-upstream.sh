@@ -130,7 +130,7 @@ test_expect_success 'branch -M force renames' '
 '
 
 test_expect_success 'branch -c copies branch' '
-	git -C "$R" branch -c copied renamed &&
+	git -C "$R" branch -c renamed copied &&
 	git -C "$R" rev-parse copied >actual &&
 	git -C "$R" rev-parse renamed >expect &&
 	test_cmp expect actual

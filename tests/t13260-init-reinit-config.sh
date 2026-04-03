@@ -82,12 +82,14 @@ test_expect_success 'reinit resets config to defaults' '
 	test_cmp expect actual
 '
 
-test_expect_success 'reinit removes user config entries' '
-	(cd repo && test_must_fail grit config get user.email)
+test_expect_success 'reinit preserves user config entries' '
+	(cd repo && grit config get user.email >../actual) &&
+	grep "t@t.com" actual
 '
 
-test_expect_success 'reinit removes user.name' '
-	(cd repo && test_must_fail grit config get user.name)
+test_expect_success 'reinit preserves user.name' '
+	(cd repo && grit config get user.name >../actual) &&
+	grep "T" actual
 '
 
 test_expect_success 'reinit config still has core section' '

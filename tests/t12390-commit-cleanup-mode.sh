@@ -102,7 +102,10 @@ test_expect_success 'commit --amend preserves parent' '
 '
 
 test_expect_success 'commit --author overrides author' '
-	(cd repo && grit commit --allow-empty --author="Other <other@test.com>" -m "custom author" &&
+	(cd repo &&
+	 sane_unset GIT_COMMITTER_NAME &&
+	 sane_unset GIT_COMMITTER_EMAIL &&
+	 grit commit --allow-empty --author="Other <other@test.com>" -m "custom author" &&
 	 grit cat-file -p HEAD >../actual) &&
 	grep "author Other <other@test.com>" actual
 '

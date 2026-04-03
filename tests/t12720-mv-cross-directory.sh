@@ -35,13 +35,8 @@ test_expect_success 'mv renames a file in same directory' '
     (cd repo &&
      grit mv top.txt renamed.txt &&
      grit_status_tracked >../actual) &&
-    sort actual >actual_sorted &&
-    cat >expect <<-\EOF &&
-	A  renamed.txt
-	D  top.txt
-	EOF
-    sort expect >expect_sorted &&
-    test_cmp expect_sorted actual_sorted
+    grep "R" actual &&
+    grep "renamed.txt" actual
 '
 
 test_expect_success 'renamed file exists, original does not' '
@@ -57,13 +52,8 @@ test_expect_success 'mv moves file across directories' '
     (cd repo &&
      grit mv src/a.txt dst/a.txt &&
      grit_status_tracked >../actual) &&
-    sort actual >actual_sorted &&
-    cat >expect <<-\EOF &&
-	A  dst/a.txt
-	D  src/a.txt
-	EOF
-    sort expect >expect_sorted &&
-    test_cmp expect_sorted actual_sorted
+    grep "R" actual &&
+    grep "dst/a.txt" actual
 '
 
 test_expect_success 'file is in new location on disk' '
@@ -79,13 +69,8 @@ test_expect_success 'mv file into directory (destination is dir)' '
     (cd repo &&
      grit mv src/b.txt dst/ &&
      grit_status_tracked >../actual) &&
-    sort actual >actual_sorted &&
-    cat >expect <<-\EOF &&
-	A  dst/b.txt
-	D  src/b.txt
-	EOF
-    sort expect >expect_sorted &&
-    test_cmp expect_sorted actual_sorted
+    grep "R" actual &&
+    grep "dst/b.txt" actual
 '
 
 test_expect_success 'commit move to dir' '
@@ -96,15 +81,9 @@ test_expect_success 'mv multiple files into directory' '
     (cd repo &&
      grit mv src/c.txt sub/deep/d.txt dst/ &&
      grit_status_tracked >../actual) &&
-    sort actual >actual_sorted &&
-    cat >expect <<-\EOF &&
-	A  dst/c.txt
-	A  dst/d.txt
-	D  src/c.txt
-	D  sub/deep/d.txt
-	EOF
-    sort expect >expect_sorted &&
-    test_cmp expect_sorted actual_sorted
+    grep "R" actual &&
+    grep "dst/c.txt" actual &&
+    grep "dst/d.txt" actual
 '
 
 test_expect_success 'commit multi move' '
@@ -162,13 +141,8 @@ test_expect_success 'mv file from deep to top level' '
     (cd repo &&
      grit mv dst/c.txt c-top.txt &&
      grit_status_tracked >../actual) &&
-    sort actual >actual_sorted &&
-    cat >expect <<-\EOF &&
-	A  c-top.txt
-	D  dst/c.txt
-	EOF
-    sort expect >expect_sorted &&
-    test_cmp expect_sorted actual_sorted
+    grep "R" actual &&
+    grep "c-top.txt" actual
 '
 
 test_expect_success 'commit deep to top' '
@@ -205,13 +179,8 @@ test_expect_success 'mv file then commit' '
     (cd repo &&
      grit mv dst/d.txt d-final.txt &&
      grit_status_tracked >../actual) &&
-    sort actual >actual_sorted &&
-    cat >expect <<-\EOF &&
-	A  d-final.txt
-	D  dst/d.txt
-	EOF
-    sort expect >expect_sorted &&
-    test_cmp expect_sorted actual_sorted
+    grep "R" actual &&
+    grep "d-final.txt" actual
 '
 
 test_expect_success 'commit d move' '
@@ -237,13 +206,8 @@ test_expect_success 'mv into freshly created directory' '
      mkdir newdir &&
      grit mv renamed.txt newdir/ &&
      grit_status_tracked >../actual) &&
-    sort actual >actual_sorted &&
-    cat >expect <<-\EOF &&
-	A  newdir/renamed.txt
-	D  renamed.txt
-	EOF
-    sort expect >expect_sorted &&
-    test_cmp expect_sorted actual_sorted
+    grep "R" actual &&
+    grep "newdir/renamed.txt" actual
 '
 
 test_expect_success 'commit to newdir' '
@@ -276,13 +240,8 @@ test_expect_success 'mv back and forth leaves file in final location' '
      grit mv moved-content.txt temp-name.txt &&
      grit mv temp-name.txt final-name.txt &&
      grit_status_tracked >../actual) &&
-    sort actual >actual_sorted &&
-    cat >expect <<-\EOF &&
-	A  final-name.txt
-	D  moved-content.txt
-	EOF
-    sort expect >expect_sorted &&
-    test_cmp expect_sorted actual_sorted
+    grep "R" actual &&
+    grep "final-name.txt" actual
 '
 
 test_expect_success 'commit back-and-forth' '

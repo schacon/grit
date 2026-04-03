@@ -133,6 +133,8 @@ test_expect_success 'cleanup untracked file' '
 
 test_expect_success 'commit --author overrides author' '
     (cd repo &&
+     sane_unset GIT_COMMITTER_NAME &&
+     sane_unset GIT_COMMITTER_EMAIL &&
      echo author_test >>file.txt &&
      grit add file.txt &&
      grit commit --author="Other Person <other@test.com>" -m "custom author") &&

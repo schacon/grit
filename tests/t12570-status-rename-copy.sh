@@ -48,16 +48,14 @@ test_expect_success 'setup: rename a file via git mv' '
 	(cd repo && "$REAL_GIT" mv a.txt renamed-a.txt)
 '
 
-test_expect_success 'status -s: rename shows D and A' '
+test_expect_success 'status -s: rename shows R' '
 	(cd repo && grit status -s >../actual) &&
-	grep -E "(D|R).*a.txt" actual &&
-	grep "A  renamed-a.txt" actual
+	grep -E "R.*renamed-a.txt" actual
 '
 
-test_expect_success 'status --porcelain: rename shows D and A' '
+test_expect_success 'status --porcelain: rename shows R' '
 	(cd repo && grit status --porcelain >../actual) &&
-	grep -E "(D|R).*a.txt" actual &&
-	grep "A  renamed-a.txt" actual
+	grep -E "R.*renamed-a.txt" actual
 '
 
 test_expect_success 'setup: commit rename' '
