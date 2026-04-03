@@ -307,7 +307,7 @@ pub fn rev_list(
         return Err(Error::InvalidRef("no revisions specified".to_owned()));
     }
 
-    let mut included = walk_closure(&mut graph, &include)?;
+    let (mut included, discovery_order) = walk_closure_ordered(&mut graph, &include)?;
     let excluded = walk_closure(&mut graph, &exclude)?;
     included.retain(|oid| !excluded.contains(oid));
 
@@ -340,7 +340,7 @@ pub fn rev_list(
     }
 
     let mut ordered = match options.ordering {
-        OrderingMode::Default => sort_by_commit_date_desc(&mut graph, &included)?,
+        OrderingMode::Default => sort_by_commit_date_desc(&mut graph, &included, &discovery_order)?,
         OrderingMode::Topo | OrderingMode::Date => topo_sort(&mut graph, &included)?,
     };
 
@@ -534,7 +534,14 @@ fn all_ref_tips(repo: &Repository) -> Result<Vec<ObjectId>> {
 }
 
 fn walk_closure(graph: &mut CommitGraph<'_>, starts: &[ObjectId]) -> Result<HashSet<ObjectId>> {
+    let (seen, _) = walk_closure_ordered(graph, starts)?;
+    Ok(seen)
+}
+
+/// BFS walk that returns both the set and the discovery order.
+fn walk_closure_ordered(graph: &mut CommitGraph<'_>, starts: &[ObjectId]) -> Result<(HashSet<ObjectId>, Vec<ObjectId>)> {
     let mut seen = HashSet::new();
+    let mut order = Vec::new();
     let mut queue = VecDeque::new();
     for &start in starts {
         queue.push_back(start);
@@ -543,24 +550,37 @@ fn walk_closure(graph: &mut CommitGraph<'_>, starts: &[ObjectId]) -> Result<Hash
         if !seen.insert(oid) {
             continue;
         }
+        order.push(oid);
         for parent in graph.parents_of(oid)? {
             queue.push_back(parent);
         }
     }
-    Ok(seen)
+    Ok((seen, order))
 }
 
 fn sort_by_commit_date_desc(
     graph: &mut CommitGraph<'_>,
     selected: &HashSet<ObjectId>,
+    discovery_order: &[ObjectId],
 ) -> Result<Vec<ObjectId>> {
-    let mut out = selected.iter().copied().collect::<Vec<_>>();
-    out.sort_by(
-        |a, b| match graph.committer_time(*b).cmp(&graph.committer_time(*a)) {
-            Ordering::Equal => b.cmp(a),
+    // Build a map from OID to BFS discovery index for stable tiebreaking
+    let disc_idx: HashMap<ObjectId, usize> = discovery_order
+        .iter()
+        .enumerate()
+        .map(|(i, oid)| (*oid, i))
+        .collect();
+    let mut out: Vec<ObjectId> = selected.iter().copied().collect();
+    out.sort_by(|a, b| {
+        match graph.committer_time(*b).cmp(&graph.committer_time(*a)) {
+            Ordering::Equal => {
+                // Preserve BFS discovery order as tiebreaker
+                let da = disc_idx.get(a).copied().unwrap_or(usize::MAX);
+                let db = disc_idx.get(b).copied().unwrap_or(usize::MAX);
+                da.cmp(&db)
+            }
             other => other,
-        },
-    );
+        }
+    });
     Ok(out)
 }
 
