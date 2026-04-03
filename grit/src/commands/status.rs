@@ -8,7 +8,8 @@ use grit_lib::diff::{detect_renames, diff_index_to_tree, diff_index_to_worktree,
 use grit_lib::error::Error;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::Index;
-use grit_lib::objects::parse_commit;
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
 use std::collections::BTreeSet;
@@ -43,6 +44,14 @@ pub struct Args {
     /// Terminate entries with NUL.
     #[arg(short = 'z')]
     pub null_terminated: bool,
+
+    /// Show ahead/behind counts relative to upstream tracking branch (default).
+    #[arg(long = "ahead-behind", overrides_with = "no_ahead_behind")]
+    pub ahead_behind: bool,
+
+    /// Suppress ahead/behind counts.
+    #[arg(long = "no-ahead-behind")]
+    pub no_ahead_behind: bool,
 }
 
 /// Run the `status` command.
@@ -101,6 +110,7 @@ pub fn run(args: Args) -> Result<()> {
             &mut out,
             &args,
             &head,
+            &repo,
             &staged,
             &unstaged,
             &untracked,
@@ -110,6 +120,8 @@ pub fn run(args: Args) -> Result<()> {
         format_long(
             &mut out,
             &head,
+            &repo,
+            &args,
             &in_progress,
             &staged,
             &unstaged,
@@ -191,6 +203,7 @@ fn format_short(
     out: &mut impl Write,
     args: &Args,
     head: &HeadState,
+    repo: &Repository,
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
@@ -201,6 +214,19 @@ fn format_short(
     if args.branch || args.porcelain {
         let branch = head.branch_name().unwrap_or("HEAD (no branch)");
         write!(out, "## {branch}")?;
+        if !args.no_ahead_behind {
+            if let Some(branch_name) = head.branch_name() {
+                if let Ok(Some((upstream, ahead, behind))) = compute_ahead_behind(repo, branch_name) {
+                    write!(out, "...{upstream}")?;
+                    if ahead > 0 || behind > 0 {
+                        let mut parts = Vec::new();
+                        if ahead > 0 { parts.push(format!("ahead {ahead}")); }
+                        if behind > 0 { parts.push(format!("behind {behind}")); }
+                        write!(out, " [{}]", parts.join(", "))?;
+                    }
+                }
+            }
+        }
         write!(out, "{terminator}")?;
     }
 
@@ -260,6 +286,8 @@ fn format_short(
 fn format_long(
     out: &mut impl Write,
     head: &HeadState,
+    repo: &Repository,
+    args: &Args,
     in_progress: &[grit_lib::state::InProgressOperation],
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
@@ -274,6 +302,20 @@ fn format_long(
             ..
         } => {
             writeln!(out, "On branch {short_name}")?;
+            if !args.no_ahead_behind {
+                if let Ok(Some((upstream, ahead, behind))) = compute_ahead_behind(repo, short_name) {
+                    if ahead > 0 && behind > 0 {
+                        writeln!(out, "Your branch and '{}' have diverged,", upstream)?;
+                        writeln!(out, "and have {} and {} different commits each, respectively.", ahead, behind)?;
+                    } else if ahead > 0 {
+                        writeln!(out, "Your branch is ahead of '{}' by {} commit{}.", upstream, ahead, if ahead == 1 { "" } else { "s" })?;
+                    } else if behind > 0 {
+                        writeln!(out, "Your branch is behind '{}' by {} commit{}, and can be fast-forwarded.", upstream, behind, if behind == 1 { "" } else { "s" })?;
+                    } else {
+                        writeln!(out, "Your branch is up to date with '{}'.", upstream)?;
+                    }
+                }
+            }
         }
         HeadState::Branch {
             short_name,
@@ -490,4 +532,85 @@ fn walk_for_untracked(
     }
 
     Ok(())
+}
+
+/// Compute ahead/behind counts for the current branch relative to its upstream.
+fn compute_ahead_behind(
+    repo: &Repository,
+    branch_name: &str,
+) -> Result<Option<(String, usize, usize)>> {
+    let config_path = repo.git_dir.join("config");
+    let config_file = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+    let mut config = ConfigSet::new();
+    config.merge(&config_file);
+
+    let merge_key = format!("branch.{branch_name}.merge");
+    let remote_key = format!("branch.{branch_name}.remote");
+
+    let merge = match config.get(&merge_key) {
+        Some(m) => m,
+        None => return Ok(None),
+    };
+    let remote = config.get(&remote_key).unwrap_or_else(|| "origin".to_string());
+
+    let upstream_branch = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
+    let upstream_display = format!("{remote}/{upstream_branch}");
+
+    // Resolve upstream OID
+    let upstream_ref = format!("refs/remotes/{remote}/{upstream_branch}");
+    let upstream_oid = match resolve_ref_to_oid(&repo.git_dir, &upstream_ref) {
+        Some(oid) => oid,
+        None => return Ok(Some((upstream_display, 0, 0))), // gone
+    };
+
+    // Resolve local OID
+    let local_ref = format!("refs/heads/{branch_name}");
+    let local_oid = match resolve_ref_to_oid(&repo.git_dir, &local_ref) {
+        Some(oid) => oid,
+        None => return Ok(None),
+    };
+
+    if local_oid == upstream_oid {
+        return Ok(Some((upstream_display, 0, 0)));
+    }
+
+    // Count ahead/behind using ancestor closure
+    let local_ancestors = collect_ancestors_set(repo, local_oid)?;
+    let upstream_ancestors = collect_ancestors_set(repo, upstream_oid)?;
+
+    let ahead = local_ancestors.iter().filter(|oid| !upstream_ancestors.contains(oid)).count();
+    let behind = upstream_ancestors.iter().filter(|oid| !local_ancestors.contains(oid)).count();
+
+    Ok(Some((upstream_display, ahead, behind)))
+}
+
+fn resolve_ref_to_oid(git_dir: &Path, refname: &str) -> Option<ObjectId> {
+    grit_lib::refs::resolve_ref(git_dir, refname).ok()
+}
+
+fn collect_ancestors_set(
+    repo: &Repository,
+    start: ObjectId,
+) -> Result<std::collections::HashSet<ObjectId>> {
+    use std::collections::HashSet;
+    let mut visited = HashSet::new();
+    let mut queue = vec![start];
+    while let Some(oid) = queue.pop() {
+        if !visited.insert(oid) {
+            continue;
+        }
+        if let Ok(obj) = repo.odb.read(&oid) {
+            if let Ok(commit) = parse_commit(&obj.data) {
+                for parent in &commit.parents {
+                    if !visited.contains(parent) {
+                        queue.push(*parent);
+                    }
+                }
+            }
+        }
+    }
+    Ok(visited)
 }
