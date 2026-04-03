@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Core library for the grit Git implementation"
+readme = "README.md"
 repository = "https://github.com/schacon/grit"
 
 [lints]

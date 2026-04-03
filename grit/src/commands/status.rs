@@ -372,8 +372,6 @@ fn format_long(
     if !ignored_files.is_empty() {
         if has_section {
             // blank line already printed after previous section
-        } else {
-            has_section = true;
         }
         writeln!(out, "Ignored files:")?;
         writeln!(

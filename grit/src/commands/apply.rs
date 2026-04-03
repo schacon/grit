@@ -280,17 +280,6 @@ fn split_diff_git_paths(s: &str) -> Option<(String, String)> {
     None
 }
 
-/// Strip the leading `a/` or `b/` prefix. Returns /dev/null as-is.
-fn strip_ab_prefix(p: &str) -> String {
-    if p == "/dev/null" {
-        return p.to_string();
-    }
-    if p.starts_with("a/") || p.starts_with("b/") {
-        return p[2..].to_string();
-    }
-    p.to_string()
-}
-
 /// Parse a single hunk starting at line `i` (which should be an `@@` line).
 fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
     let header = lines[start];

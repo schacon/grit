@@ -764,16 +764,6 @@ fn run_no_index(args: &Args) -> Result<()> {
     std::process::exit(1);
 }
 
-/// Count added and removed lines between two sets of lines.
-fn count_added_removed(old: &[&str], new: &[&str]) -> (usize, usize) {
-    use std::collections::HashSet;
-    let old_set: HashSet<&&str> = old.iter().collect();
-    let new_set: HashSet<&&str> = new.iter().collect();
-    let dels = old.iter().filter(|l| !new_set.contains(l)).count();
-    let adds = new.iter().filter(|l| !old_set.contains(l)).count();
-    (adds, dels)
-}
-
 /// If `--` is present, everything before is revisions, everything after is paths.
 /// Otherwise, we try each arg: if it exists as a file, treat it (and all
 /// subsequent args) as paths rather than revisions.

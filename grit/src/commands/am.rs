@@ -11,7 +11,6 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
@@ -141,10 +140,6 @@ struct AmOptions {
     three_way: bool,
     no_verify: bool,
     signoff: bool,
-    keep: bool,
-    keep_non_patch: bool,
-    scissors: bool,
-    no_scissors: bool,
     committer_date_is_author_date: bool,
     ignore_date: bool,
     message_id: bool,
@@ -278,10 +273,6 @@ fn do_am(args: Args) -> Result<()> {
         three_way,
         no_verify: args.no_verify,
         signoff: args.signoff,
-        keep: args.keep,
-        keep_non_patch: args.keep_non_patch,
-        scissors: args.scissors,
-        no_scissors: args.no_scissors,
         committer_date_is_author_date: args.committer_date_is_author_date,
         ignore_date: args.ignore_date,
         message_id,
@@ -356,10 +347,6 @@ fn do_am_stdin(args: Args) -> Result<()> {
         three_way,
         no_verify: args.no_verify,
         signoff: args.signoff,
-        keep: args.keep,
-        keep_non_patch: args.keep_non_patch,
-        scissors: args.scissors,
-        no_scissors: args.no_scissors,
         committer_date_is_author_date: args.committer_date_is_author_date,
         ignore_date: args.ignore_date,
         message_id,
@@ -958,113 +945,6 @@ fn stage_affected_files(repo: &Repository, affected_paths: &[String]) -> Result<
     Ok(())
 }
 
-/// Stage all working tree changes to the index.
-fn stage_all_changes(repo: &Repository) -> Result<()> {
-    let work_tree = repo
-        .work_tree
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("no work tree"))?;
-
-    let mut index = load_index(repo)?;
-
-    // Walk the working tree and update index
-    // For simplicity, we re-read all tracked files + discover new ones
-    let mut worktree_files = HashSet::new();
-    collect_files(work_tree, work_tree, &mut worktree_files)?;
-
-    // Remove entries for files that no longer exist
-    index.entries.retain(|e| {
-        let path = String::from_utf8_lossy(&e.path).into_owned();
-        let abs = work_tree.join(&path);
-        if !abs.exists() && !abs.is_symlink() {
-            false
-        } else {
-            true
-        }
-    });
-
-    // Update/add entries for existing files
-    for rel_path in &worktree_files {
-        let abs = work_tree.join(rel_path);
-        if abs.is_dir() {
-            continue;
-        }
-
-        let content = fs::read(&abs)?;
-        let oid = repo.odb.write(ObjectKind::Blob, &content)?;
-        let metadata = fs::metadata(&abs)?;
-
-        let mode = {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let perms = metadata.permissions().mode();
-                if perms & 0o111 != 0 {
-                    0o100755u32
-                } else {
-                    0o100644u32
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                0o100644u32
-            }
-        };
-
-        let path_bytes = rel_path.as_bytes().to_vec();
-        let size = content.len() as u32;
-
-        let entry = grit_lib::index::IndexEntry {
-            ctime_sec: 0,
-            ctime_nsec: 0,
-            mtime_sec: 0,
-            mtime_nsec: 0,
-            dev: 0,
-            ino: 0,
-            mode,
-            uid: 0,
-            gid: 0,
-            size,
-            oid,
-            flags: (path_bytes.len().min(0xFFF)) as u16,
-            flags_extended: None,
-            path: path_bytes,
-        };
-        index.add_or_replace(entry);
-    }
-
-    index.sort();
-    index.write(&repo.index_path())?;
-    Ok(())
-}
-
-/// Recursively collect relative file paths from a directory.
-fn collect_files(root: &Path, dir: &Path, out: &mut HashSet<String>) -> Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-
-        // Skip .git directory
-        if name_str == ".git" {
-            continue;
-        }
-
-        if path.is_dir() {
-            collect_files(root, &path, out)?;
-        } else {
-            let rel = path.strip_prefix(root)
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            if !rel.is_empty() {
-                out.insert(rel);
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Create a commit from the current index using the patch metadata.
 fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch, opts: &AmOptions) -> Result<()> {
     let git_dir = &repo.git_dir;
@@ -1422,10 +1302,6 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
         three_way: false,
         no_verify: false,
         signoff: false,
-        keep: false,
-        keep_non_patch: false,
-        scissors: false,
-        no_scissors: false,
         committer_date_is_author_date: false,
         ignore_date: false,
         message_id: false,
@@ -1767,23 +1643,16 @@ fn parse_patches(input: &str, format: Option<&str>, keep: bool, keep_non_patch: 
 
 // ── Mbox parsing ────────────────────────────────────────────────────
 
-/// Parse an mbox file into individual patches.
-fn parse_mbox(input: &str) -> Result<Vec<MboxPatch>> {
-    parse_mbox_with_opts(input, false, false, false, false)
-}
-
 /// Unquote mboxrd format: lines starting with >From (or >>From, etc.) are unquoted.
 /// In mboxrd, "From " lines inside messages are escaped by prepending ">".
 fn unquote_mboxrd(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut in_body = false;
-    let mut seen_blank_after_headers = false;
 
     for line in input.lines() {
         if line.starts_with("From ") && line.len() > 5 {
             // mbox separator - reset state
             in_body = false;
-            seen_blank_after_headers = false;
             result.push_str(line);
             result.push('\n');
             continue;
@@ -1791,7 +1660,6 @@ fn unquote_mboxrd(input: &str) -> String {
 
         if !in_body {
             if line.is_empty() {
-                seen_blank_after_headers = true;
                 in_body = true;
             }
             result.push_str(line);
@@ -2032,18 +1900,6 @@ fn strip_patch_prefix_keep_non_patch(subject: &str) -> String {
         }
     }
     subject.to_string()
-}
-
-/// Apply scissors: find the scissors line in body and keep only content below it.
-/// Returns the new body text (may be empty).
-fn apply_scissors(body: &str) -> String {
-    for (i, line) in body.lines().enumerate() {
-        if is_scissors_line(line.trim()) {
-            let remaining: Vec<&str> = body.lines().skip(i + 1).collect();
-            return remaining.join("\n").trim().to_string();
-        }
-    }
-    body.to_string()
 }
 
 /// Apply scissors to the full message (subject + body), replacing subject if needed.
@@ -2445,16 +2301,6 @@ fn split_diff_git_paths(s: &str) -> Option<(String, String)> {
         return Some(("/dev/null".to_string(), b.to_string()));
     }
     None
-}
-
-fn strip_ab_prefix(p: &str) -> String {
-    if p == "/dev/null" {
-        return p.to_string();
-    }
-    if p.starts_with("a/") || p.starts_with("b/") {
-        return p[2..].to_string();
-    }
-    p.to_string()
 }
 
 fn strip_components(path: &str, n: usize) -> String {

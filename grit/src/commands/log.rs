@@ -307,7 +307,7 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
             writeln!(out, "{}", line)?;
         } else if args.oneline {
             let abbrev = &entry.new_oid.to_hex()[..7];
-            let subject = commit_data.message.lines().next().unwrap_or("");
+            let _subject = commit_data.message.lines().next().unwrap_or("");
             writeln!(out, "{} {}@{{{}}}: {}", abbrev, display_name, i, entry.message)?;
         } else {
             // Full format with Reflog headers

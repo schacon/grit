@@ -240,7 +240,6 @@ fn fetch_remote(
             let will_prune = existing.iter().any(|(r, _)| !updated_refs.contains(r));
             if will_prune {
                 eprintln!("From {url}");
-                has_updates = true;
             }
         }
         prune_stale_refs(git_dir, &dst_prefix, &updated_refs, remote_name, args.quiet)?;

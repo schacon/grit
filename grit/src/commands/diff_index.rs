@@ -303,7 +303,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
 /// Resolve a revision to a tree OID without redundantly reading the tree object.
 /// Returns the tree OID which can be passed directly to collect_tree_entries.
 fn resolve_tree_ish(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    let mut oid = resolve_revision(repo, spec)?;
+    let oid = resolve_revision(repo, spec)?;
     // Peel commits to get their tree OID without reading the tree itself.
     // The tree will be read later by collect_tree_entries.
     loop {
@@ -513,35 +513,6 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
             path == spec || path.starts_with(&format!("{spec}/"))
         }
     })
-}
-
-fn render_raw(change: &RawChange, repo: &Repository, abbrev: Option<usize>) -> Result<String> {
-    let old_mode = change.old.map_or(0, |s| s.mode);
-    let new_mode = change.new.map_or(0, |s| s.mode);
-    let width = abbrev.unwrap_or(40).clamp(4, 40);
-
-    let old_oid = format_oid(change.old.map(|s| s.oid), repo, abbrev, width)?;
-    let new_oid = format_oid(change.new.map(|s| s.oid), repo, abbrev, width)?;
-
-    Ok(format!(
-        ":{old_mode:06o} {new_mode:06o} {old_oid} {new_oid} {}\t{}",
-        change.status, change.path
-    ))
-}
-
-fn format_oid(
-    oid: Option<ObjectId>,
-    repo: &Repository,
-    abbrev: Option<usize>,
-    width: usize,
-) -> Result<String> {
-    let Some(oid) = oid else {
-        return Ok("0".repeat(width));
-    };
-    match abbrev {
-        Some(min_len) => abbreviate_object_id(repo, oid, min_len).map_err(Into::into),
-        None => Ok(oid.to_hex()),
-    }
 }
 
 fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
