@@ -45,6 +45,10 @@ pub struct Args {
     #[arg(long)]
     pub check: bool,
 
+    /// Apply to both the working tree and the index.
+    #[arg(long)]
+    pub index: bool,
+
     /// Apply the patch in reverse.
     #[arg(short = 'R', long = "reverse")]
     pub reverse: bool,
@@ -193,11 +197,11 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             // Parse ---/+++ headers if present
             if i < lines.len() && lines[i].starts_with("--- ") {
                 let old_p = &lines[i]["--- ".len()..];
-                fp.old_path = Some(strip_ab_prefix(old_p));
+                fp.old_path = Some(old_p.to_string());
                 i += 1;
                 if i < lines.len() && lines[i].starts_with("+++ ") {
                     let new_p = &lines[i]["+++ ".len()..];
-                    fp.new_path = Some(strip_ab_prefix(new_p));
+                    fp.new_path = Some(new_p.to_string());
                     i += 1;
                 }
             }
@@ -224,10 +228,10 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             };
 
             let old_p = &lines[i]["--- ".len()..];
-            fp.old_path = Some(strip_ab_prefix(old_p));
+            fp.old_path = Some(old_p.to_string());
             i += 1;
             let new_p = &lines[i]["+++ ".len()..];
-            fp.new_path = Some(strip_ab_prefix(new_p));
+            fp.new_path = Some(new_p.to_string());
             i += 1;
 
             // Check for /dev/null
@@ -257,21 +261,21 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
 /// Split "a/path b/path" from `diff --git` line. Handles spaces in paths
 /// by scanning for ` b/` boundary. Falls back if that fails.
 fn split_diff_git_paths(s: &str) -> Option<(String, String)> {
-    // Try "a/X b/X" — find " b/" as separator
+    // Keep raw paths (with a/ b/ prefix) so -p<n> stripping works correctly.
     if let Some(pos) = s.find(" b/") {
         let a = &s[..pos];
         let b = &s[pos + 1..];
-        return Some((strip_ab_prefix(a), strip_ab_prefix(b)));
+        return Some((a.to_string(), b.to_string()));
     }
     // Also handle /dev/null cases
     if s.starts_with("a/") {
         if let Some(pos) = s.find(" /dev/null") {
             let a = &s[..pos];
-            return Some((strip_ab_prefix(a), "/dev/null".to_string()));
+            return Some((a.to_string(), "/dev/null".to_string()));
         }
     }
     if let Some(b) = s.strip_prefix("/dev/null ") {
-        return Some(("/dev/null".to_string(), strip_ab_prefix(b)));
+        return Some(("/dev/null".to_string(), b.to_string()));
     }
     None
 }
@@ -718,6 +722,9 @@ pub fn run(args: Args) -> Result<()> {
         apply_to_index(&patches, &args)?;
     } else if args.check {
         check_patches(&patches, &args)?;
+    } else if args.index {
+        apply_to_worktree(&patches, &args)?;
+        apply_to_index(&patches, &args)?;
     } else {
         apply_to_worktree(&patches, &args)?;
     }
