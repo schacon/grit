@@ -1314,3 +1314,4 @@ tests/t7031-verify-tag-signed-ssh.sh
 tests/t7060-wtstatus.sh
 tests/t7061-wtstatus-ignore.sh
 tests/t7062-wtstatus-ignorecase.sh
+tests/t7064-wtstatus-pv2.sh
