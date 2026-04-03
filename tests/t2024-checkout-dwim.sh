@@ -38,4 +38,31 @@ test_expect_success 'checkout of existing local branch works' '
 	test_cmp expect actual
 '
 
+test_expect_success 'checkout -B creates new branch' '
+	git checkout master &&
+	git checkout -B newbranch &&
+	echo refs/heads/newbranch >expect &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'checkout -B resets existing branch' '
+	git checkout master &&
+	git checkout -B newbranch &&
+	echo refs/heads/newbranch >expect &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'checkout -f resets working tree' '
+	git checkout master &&
+	echo clean >my_main.t &&
+	git add my_main.t &&
+	git commit -m "clean state" &&
+	echo dirty >my_main.t &&
+	git checkout -f &&
+	echo clean >expect &&
+	test_cmp expect my_main.t
+'
+
 test_done

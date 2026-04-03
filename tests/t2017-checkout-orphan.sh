@@ -29,4 +29,17 @@ test_expect_success 'switch --orphan creates a new orphan branch from HEAD' '
 	test "refs/heads/alpha" = "$(git symbolic-ref HEAD)"
 '
 
+test_expect_success 'checkout --orphan creates a new orphan branch' '
+	git checkout master &&
+	git checkout --orphan beta &&
+	test_must_fail git rev-parse --verify HEAD &&
+	test "refs/heads/beta" = "$(git symbolic-ref HEAD)"
+'
+
+test_expect_success 'checkout --orphan fails if branch already exists' '
+	git checkout master &&
+	test_must_fail git checkout --orphan master 2>err &&
+	grep "already exists" err
+'
+
 test_done
