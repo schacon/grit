@@ -649,6 +649,30 @@ fn is_binary(data: &[u8]) -> bool {
 }
 
 /// Write a `diff --git` header plus index/mode lines.
+/// Find function context for a hunk header (same logic as grit-lib).
+fn find_func_context(header: &str, old_lines: &[&str]) -> Option<String> {
+    let at_pos = header.find('-')?;
+    let rest = &header[at_pos + 1..];
+    let comma_or_space = rest.find(|c: char| c == ',' || c == ' ')?;
+    let start_str = &rest[..comma_or_space];
+    let start_line: usize = start_str.parse().ok()?;
+    if start_line <= 1 {
+        return None;
+    }
+    let search_end = (start_line - 1).min(old_lines.len());
+    for i in (0..search_end).rev() {
+        let line = old_lines[i];
+        if !line.is_empty() {
+            let first = line.as_bytes()[0];
+            if first != b' ' && first != b'\t' {
+                let truncated = if line.len() > 40 { &line[..40] } else { line };
+                return Some(truncated.to_owned());
+            }
+        }
+    }
+    None
+}
+
 fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -> Result<()> {
     let old_path = entry
         .old_path
@@ -846,12 +870,16 @@ fn word_diff_output(
         .context_radius(context_lines)
         .iter_hunks()
     {
-        // Write the hunk header
+        // Write the hunk header with function context.
         let hunk_str = format!("{hunk}");
-        // Extract the @@ line
         if let Some(header_end) = hunk_str.find('\n') {
             let header = &hunk_str[..header_end];
             output.push_str(header);
+            // Add function context (like Git does).
+            if let Some(func) = find_func_context(header, &old_lines) {
+                output.push(' ');
+                output.push_str(&func);
+            }
             output.push('\n');
         }
 
@@ -885,10 +913,16 @@ fn word_diff_output(
         .context_radius(context_lines)
         .iter_hunks()
     {
-        // Write hunk header
+        // Write hunk header with function context.
         let hunk_str = format!("{hunk}");
         if let Some(header_end) = hunk_str.find('\n') {
-            output.push_str(&hunk_str[..header_end]);
+            let header = &hunk_str[..header_end];
+            output.push_str(header);
+            let old_lines_for_ctx: Vec<&str> = old_content.lines().collect();
+            if let Some(func) = find_func_context(header, &old_lines_for_ctx) {
+                output.push(' ');
+                output.push_str(&func);
+            }
             output.push('\n');
         }
 
