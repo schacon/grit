@@ -34,6 +34,14 @@ pub struct Args {
     #[arg(long)]
     pub all: bool,
 
+    /// Read pack filenames from stdin instead of object IDs.
+    #[arg(long = "stdin-packs")]
+    pub stdin_packs: bool,
+
+    /// Use OFS_DELTA (delta-base-offset) format in pack output.
+    #[arg(long = "delta-base-offset")]
+    pub delta_base_offset: bool,
+
     /// Hash algorithm (accepted for compat).
     #[arg(long = "object-format")]
     pub object_format: Option<String>,
@@ -136,20 +144,67 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<Vec<ObjectId>> {
     if args.revs {
         // Read revision specs from stdin — for simplicity, treat each line as a
         // ref/rev that we resolve, then walk its reachable objects.
+        // Lines starting with '^' exclude objects reachable from that ref.
         let stdin = io::stdin();
+        let mut exclude = BTreeSet::new();
         for line in stdin.lock().lines() {
             let line = line?;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            // Try to resolve as an OID first, then as a ref.
-            if let Ok(oid) = ObjectId::from_hex(trimmed) {
-                walk_reachable(repo, &oid, &mut oids)?;
+            if let Some(neg_ref) = trimmed.strip_prefix('^') {
+                // Exclusion: walk reachable from this ref and exclude them.
+                let oid = if let Ok(oid) = ObjectId::from_hex(neg_ref) {
+                    oid
+                } else {
+                    resolve_ref(repo, neg_ref)?
+                };
+                walk_reachable(repo, &oid, &mut exclude)?;
             } else {
-                // Try to resolve the ref.
-                let resolved = resolve_ref(repo, trimmed)?;
-                walk_reachable(repo, &resolved, &mut oids)?;
+                // Inclusion: walk reachable from this ref.
+                let oid = if let Ok(oid) = ObjectId::from_hex(trimmed) {
+                    oid
+                } else {
+                    resolve_ref(repo, trimmed)?
+                };
+                walk_reachable(repo, &oid, &mut oids)?;
+            }
+        }
+        // Remove excluded objects.
+        for oid in &exclude {
+            oids.remove(oid);
+        }
+    } else if args.stdin_packs {
+        // Read pack filenames from stdin and include all objects in those packs.
+        let stdin = io::stdin();
+        let pack_dir = repo.odb.objects_dir().join("pack");
+        for line in stdin.lock().lines() {
+            let line = line?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            // The input can be a bare name like "pack-<hash>" or full path.
+            let idx_path = if trimmed.contains('/') || trimmed.contains('\\') {
+                std::path::PathBuf::from(trimmed)
+            } else {
+                pack_dir.join(format!("{}.idx", trimmed))
+            };
+            // If given a .pack, convert to .idx
+            let idx_path = if idx_path.extension().map_or(false, |e| e == "pack") {
+                idx_path.with_extension("idx")
+            } else {
+                idx_path
+            };
+            if idx_path.exists() {
+                let idx = grit_lib::pack::read_pack_index(&idx_path)
+                    .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", idx_path.display()))?;
+                for entry in idx.entries {
+                    oids.insert(entry.oid);
+                }
+            } else {
+                bail!("pack index not found: {}", idx_path.display());
             }
         }
     } else if !args.all {
