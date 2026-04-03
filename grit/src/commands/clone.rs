@@ -40,10 +40,28 @@ pub struct Args {
     /// Be quiet — suppress progress messages.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
+
+    /// Set a configuration variable in the newly-created repository.
+    #[arg(short = 'c', value_name = "KEY=VALUE", action = clap::ArgAction::Append)]
+    pub config: Vec<String>,
+
+    /// Clone only the history leading to the tip of a single branch.
+    #[arg(long)]
+    pub single_branch: bool,
+
+    /// Don't clone any tags.
+    #[arg(long)]
+    pub no_tags: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
-    let source_path = PathBuf::from(&args.repository);
+    // Strip file:// prefix if present
+    let repo_path_str = if let Some(stripped) = args.repository.strip_prefix("file://") {
+        stripped.to_string()
+    } else {
+        args.repository.clone()
+    };
+    let source_path = PathBuf::from(&repo_path_str);
 
     // Open the source repository
     let source = open_source_repo(&source_path)
@@ -83,7 +101,9 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Determine the initial branch from source HEAD
+    // Determine the source repo's actual HEAD branch (for origin/HEAD)
+    let source_head_branch = determine_head_branch(&source.git_dir, None)?;
+    // Determine which branch to checkout (user override or source HEAD)
     let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
     let initial_branch = head_branch.as_deref().unwrap_or("master");
 
@@ -118,12 +138,27 @@ pub fn run(args: Args) -> Result<()> {
         }
     } else {
         // Non-bare clone: copy refs as remote-tracking refs
-        copy_refs_as_remote(&source.git_dir, &dest.git_dir, remote_name)
+        copy_refs_as_remote(&source.git_dir, &dest.git_dir, remote_name, args.no_tags)
             .context("copying refs")?;
 
         // Set up remote "origin" in config
-        setup_origin_remote(&dest.git_dir, &source_path, remote_name)
+        let refspec = if args.single_branch {
+            let branch = head_branch.as_deref().unwrap_or("master");
+            format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
+        } else {
+            format!("+refs/heads/*:refs/remotes/{remote_name}/*")
+        };
+        setup_origin_remote(&dest.git_dir, &source_path, remote_name, &refspec)
             .context("setting up origin remote")?;
+
+        // Set refs/remotes/origin/HEAD to point to the source's default branch
+        if let Some(ref branch) = source_head_branch {
+            let origin_head_path = dest.git_dir.join("refs/remotes").join(remote_name).join("HEAD");
+            if let Some(parent) = origin_head_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&origin_head_path, format!("ref: refs/remotes/{remote_name}/{branch}\n"))?;
+        }
 
         // Set HEAD to the chosen branch if it exists in remote refs
         if let Some(ref branch) = head_branch {
@@ -160,6 +195,23 @@ pub fn run(args: Args) -> Result<()> {
         if let Ok(head_content) = fs::read_to_string(dest.git_dir.join("refs/heads").join(head_branch.as_deref().unwrap_or("master"))) {
             fs::write(&shallow_path, head_content.trim())?;
         }
+    }
+
+    // Apply -c config values
+    if !args.config.is_empty() {
+        apply_clone_config(&dest.git_dir, &args.config)
+            .context("applying -c config")?;
+    }
+
+    // Handle --no-tags: set remote.origin.tagOpt
+    if args.no_tags {
+        let config_path = dest.git_dir.join("config");
+        let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+            Some(c) => c,
+            None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+        };
+        config.set(&format!("remote.{remote_name}.tagOpt"), "--no-tags")?;
+        config.write().context("writing config")?;
     }
 
     // Checkout working tree unless --bare or --no-checkout
@@ -264,6 +316,7 @@ fn copy_refs_as_remote(
     src_git_dir: &Path,
     dst_git_dir: &Path,
     remote_name: &str,
+    no_tags: bool,
 ) -> Result<()> {
     let src_refs_heads = src_git_dir.join("refs/heads");
     let dst_remotes = dst_git_dir.join("refs/remotes").join(remote_name);
@@ -273,11 +326,13 @@ fn copy_refs_as_remote(
         copy_refs_recursive(&src_refs_heads, &dst_remotes)?;
     }
 
-    // Copy refs/tags/* → refs/tags/* (tags are shared)
-    let src_tags = src_git_dir.join("refs/tags");
-    let dst_tags = dst_git_dir.join("refs/tags");
-    if src_tags.is_dir() {
-        copy_refs_recursive(&src_tags, &dst_tags)?;
+    // Copy refs/tags/* → refs/tags/* (tags are shared), unless --no-tags
+    if !no_tags {
+        let src_tags = src_git_dir.join("refs/tags");
+        let dst_tags = dst_git_dir.join("refs/tags");
+        if src_tags.is_dir() {
+            copy_refs_recursive(&src_tags, &dst_tags)?;
+        }
     }
 
     // Also handle packed-refs if present
@@ -301,7 +356,7 @@ fn copy_refs_as_remote(
                 if !dst_ref.exists() {
                     fs::write(&dst_ref, format!("{oid}\n"))?;
                 }
-            } else if refname.starts_with("refs/tags/") {
+            } else if !no_tags && refname.starts_with("refs/tags/") {
                 let dst_ref = dst_git_dir.join(refname);
                 if let Some(parent) = dst_ref.parent() {
                     fs::create_dir_all(parent)?;
@@ -383,6 +438,7 @@ fn setup_origin_remote(
     git_dir: &Path,
     source_path: &Path,
     remote_name: &str,
+    refspec: &str,
 ) -> Result<()> {
     let config_path = git_dir.join("config");
     let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
@@ -398,7 +454,7 @@ fn setup_origin_remote(
     config.set(&format!("remote.{remote_name}.url"), &url)?;
     config.set(
         &format!("remote.{remote_name}.fetch"),
-        &format!("+refs/heads/*:refs/remotes/{remote_name}/*"),
+        refspec,
     )?;
     config.write().context("writing config")?;
 
@@ -425,6 +481,28 @@ fn setup_origin_remote_bare(
     config.set(&format!("remote.{remote_name}.url"), &url)?;
     config.write().context("writing config")?;
 
+    Ok(())
+}
+
+/// Apply -c config key=value pairs to the cloned repository.
+fn apply_clone_config(git_dir: &Path, configs: &[String]) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+
+    for entry in configs {
+        if let Some((key, value)) = entry.split_once('=') {
+            // Use add_value so repeated keys produce multi-valued entries
+            config.add_value(key.trim(), value.trim())?;
+        } else {
+            // No '=' means boolean true
+            config.add_value(entry.trim(), "true")?;
+        }
+    }
+
+    config.write().context("writing config")?;
     Ok(())
 }
 
