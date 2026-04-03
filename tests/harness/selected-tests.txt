@@ -863,3 +863,4 @@ t7900-maintenance.sh
 t7901-stash-resolve-merge.sh
 t8001-annotate.sh
 t8003-blame-corner-cases.sh
+t8004-blame-with-conflicts.sh
