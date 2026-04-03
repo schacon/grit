@@ -20,19 +20,19 @@ test_expect_success 'setup' '
 	git commit -m one
 '
 
-test_expect_failure '-p --relative=subdir/ (not implemented)' '
+test_expect_success '-p --relative=subdir/' '
 	cd repo &&
 	git diff -p --relative=subdir/ HEAD^ >actual &&
 	grep "file2" actual
 '
 
-test_expect_failure '--numstat --relative=subdir/ (not implemented)' '
+test_expect_success '--numstat --relative=subdir/' '
 	cd repo &&
 	git diff --numstat --relative=subdir/ HEAD^ >actual &&
 	grep "file2" actual
 '
 
-test_expect_failure '--stat --relative=subdir/ (not implemented)' '
+test_expect_success '--stat --relative=subdir/' '
 	cd repo &&
 	git diff --stat --relative=subdir/ HEAD^ >actual &&
 	grep "file2" actual
@@ -50,7 +50,7 @@ test_expect_failure '--relative from subdir (not implemented)' '
 	grep "file2" actual
 '
 
-test_expect_failure '--no-relative (not implemented)' '
+test_expect_success '--no-relative' '
 	cd repo &&
 	git diff -p --no-relative HEAD^ >actual &&
 	grep "subdir/file2" actual

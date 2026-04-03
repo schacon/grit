@@ -200,6 +200,18 @@ pub struct Args {
     #[arg(long = "no-indent-heuristic")]
     pub no_indent_heuristic: bool,
 
+    /// Anchor the diff on the given text (can be repeated).
+    #[arg(long = "anchored")]
+    pub anchored: Vec<String>,
+
+    /// Show relative paths from the given subdirectory.
+    #[arg(long = "relative")]
+    pub relative: Option<Option<String>>,
+
+    /// Disable --relative.
+    #[arg(long = "no-relative")]
+    pub no_relative: bool,
+
     /// Colorize the output. Values: always, never, auto.
     #[arg(long = "color", value_name = "WHEN", default_missing_value = "always", num_args = 0..=1)]
     pub color: Option<String>,
