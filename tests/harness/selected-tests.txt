@@ -1165,3 +1165,9 @@ tests/t1512-rev-parse-disambiguation.sh
 tests/t1514-rev-parse-push.sh
 tests/t1515-rev-parse-outside-repo.sh
 tests/t1517-outside-repo.sh
+t5400-send-pack.sh
+t5408-send-pack-stdin.sh
+t5502-quickfetch.sh
+t5536-fetch-conflicts.sh
+t5546-receive-limits.sh
+t5553-set-upstream.sh
