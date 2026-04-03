@@ -254,6 +254,9 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
         if repo.git_dir.join("CHERRY_PICK_HEAD").exists() {
             bail!("Cannot do a soft reset in the middle of a cherry-pick.");
         }
+        if repo.git_dir.join("REVERT_HEAD").exists() {
+            bail!("Cannot do a soft reset in the middle of a revert.");
+        }
         let index_path = repo.index_path();
         let index = Index::load(&index_path).context("loading index")?;
         if index.entries.iter().any(|e| e.stage() != 0) {
@@ -288,6 +291,7 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
         let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MSG"));
         let _ = std::fs::remove_file(repo.git_dir.join("MERGE_MODE"));
         let _ = std::fs::remove_file(repo.git_dir.join("CHERRY_PICK_HEAD"));
+        let _ = std::fs::remove_file(repo.git_dir.join("REVERT_HEAD"));
     }
 
     if mode == ResetMode::Soft {
