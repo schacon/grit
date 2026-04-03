@@ -28,52 +28,49 @@ test_expect_success 'setup repository with config files committed' '
 	git tag with-config
 '
 
-# grit does not support --blob
-test_expect_failure 'config --blob reads from HEAD:path' '
+test_expect_success 'config --blob reads from HEAD:path' '
 	git config --blob HEAD:.my-config section.key >actual &&
 	echo "value" >expect &&
 	test_cmp expect actual
 '
 
-test_expect_failure 'config --blob reads number value' '
+test_expect_success 'config --blob reads number value' '
 	git config --blob HEAD:.my-config section.number >actual &&
 	echo "42" >expect &&
 	test_cmp expect actual
 '
 
-test_expect_failure 'config --blob reads boolean value' '
+test_expect_success 'config --blob reads boolean value' '
 	git config --blob HEAD:.my-config section.flag >actual &&
 	echo "true" >expect &&
 	test_cmp expect actual
 '
 
-test_expect_failure 'config --blob reads from other section' '
+test_expect_success 'config --blob reads from other section' '
 	git config --blob HEAD:.my-config other.name >actual &&
 	echo "test-name" >expect &&
 	test_cmp expect actual
 '
 
-test_expect_failure 'config --blob with tag ref' '
+test_expect_success 'config --blob with tag ref' '
 	git config --blob with-config:.my-config section.key >actual &&
 	echo "value" >expect &&
 	test_cmp expect actual
 '
 
-test_expect_failure 'config --blob with raw SHA' '
+test_expect_success 'config --blob with raw SHA' '
 	BLOB=$(git rev-parse HEAD:.my-config) &&
 	git config --blob $BLOB section.key >actual &&
 	echo "value" >expect &&
 	test_cmp expect actual
 '
 
-test_expect_failure 'config --blob fails for missing key' '
-	git config --blob HEAD:.my-config section.nonexistent &&
-	test $? -ne 0
+test_expect_success 'config --blob fails for missing key' '
+	test_must_fail git config --blob HEAD:.my-config section.nonexistent
 '
 
-test_expect_failure 'config --blob fails for missing blob' '
-	git config --blob HEAD:nonexistent section.key &&
-	test $? -ne 0
+test_expect_success 'config --blob fails for missing blob' '
+	test_must_fail git config --blob HEAD:nonexistent section.key
 '
 
 # Update the config file and commit again
@@ -93,25 +90,25 @@ test_expect_success 'setup second version of config' '
 	git tag updated-config
 '
 
-test_expect_failure 'config --blob reads updated value from HEAD' '
+test_expect_success 'config --blob reads updated value from HEAD' '
 	git config --blob HEAD:.my-config section.key >actual &&
 	echo "updated-value" >expect &&
 	test_cmp expect actual
 '
 
-test_expect_failure 'config --blob reads old value from old commit' '
+test_expect_success 'config --blob reads old value from old commit' '
 	git config --blob with-config:.my-config section.key >actual &&
 	echo "value" >expect &&
 	test_cmp expect actual
 '
 
-test_expect_failure 'config --blob reads new key from HEAD' '
+test_expect_success 'config --blob reads new key from HEAD' '
 	git config --blob HEAD:.my-config section.newkey >actual &&
 	echo "added" >expect &&
 	test_cmp expect actual
 '
 
-test_expect_failure 'config --blob with --list shows all entries' '
+test_expect_success 'config --blob with --list shows all entries' '
 	git config --blob HEAD:.my-config --list >actual &&
 	grep "section.key=updated-value" actual &&
 	grep "section.number=99" actual &&
@@ -163,19 +160,17 @@ test_expect_success 'config list with GIT_CONFIG shows file entries' '
 	grep "custom.setting=hello" actual
 '
 
-test_expect_failure 'config --blob with --get-regexp' '
+test_expect_success 'config --blob with --get-regexp' '
 	git config --blob HEAD:.my-config --get-regexp "section\." >actual &&
 	test $(wc -l <actual) -ge 3
 '
 
-test_expect_failure 'config --blob nonexistent ref fails' '
-	git config --blob nonexistent-ref:.my-config section.key &&
-	test $? -ne 0
+test_expect_success 'config --blob nonexistent ref fails' '
+	test_must_fail git config --blob nonexistent-ref:.my-config section.key
 '
 
-test_expect_failure 'config --blob with tree (not blob) fails' '
-	git config --blob HEAD: section.key &&
-	test $? -ne 0
+test_expect_success 'config --blob with tree (not blob) fails' '
+	test_must_fail git config --blob HEAD: section.key
 '
 
 test_done

@@ -6,6 +6,9 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{parse_bool, parse_i64, parse_path, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::objects::ObjectKind;
+use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit config`.
@@ -38,6 +41,10 @@ pub struct Args {
     /// Use the given config file.
     #[arg(short = 'f', long = "file")]
     pub file: Option<PathBuf>,
+
+    /// Read config from a blob object (e.g. HEAD:.gitmodules).
+    #[arg(long = "blob", value_name = "BLOB_ISH")]
+    pub blob: Option<String>,
 
     // ── Legacy action flags ──
     /// Get the value for a given key (legacy).
@@ -232,6 +239,11 @@ pub struct EditArgs {}
 
 /// Run the `config` command.
 pub fn run(args: Args) -> Result<()> {
+    // If --blob is given, read config from the blob and handle read-only ops
+    if let Some(ref blob_spec) = args.blob {
+        return cmd_blob(&args, blob_spec);
+    }
+
     // Resolve which file to operate on
     let git_dir = resolve_git_dir();
     let (scope, file_path) = resolve_config_file(&args, git_dir.as_deref())?;
@@ -613,6 +625,162 @@ fn cmd_edit(file_path: &Path) -> Result<()> {
         bail!("editor exited with status {}", status);
     }
     Ok(())
+}
+
+/// Handle `--blob=<blob-ish>` — read config from a blob object (read-only).
+fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let oid = resolve_revision(&repo, blob_spec)
+        .map_err(|_| anyhow::anyhow!("unable to resolve spec '{}' to a blob", blob_spec))?;
+    let obj = repo.odb.read(&oid)
+        .map_err(|_| anyhow::anyhow!("unable to read object {}", oid))?;
+    if obj.kind != ObjectKind::Blob {
+        bail!("object {} is a {}, not a blob", oid, match obj.kind {
+            ObjectKind::Tree => "tree",
+            ObjectKind::Commit => "commit",
+            ObjectKind::Tag => "tag",
+            _ => "unknown",
+        });
+    }
+    let content = String::from_utf8(obj.data)
+        .context("blob is not valid UTF-8")?;
+    let blob_path = std::path::Path::new("<blob>");
+    let config_file = ConfigFile::parse(blob_path, &content, ConfigScope::Command)?;
+    let mut config = ConfigSet::new();
+    config.merge(&config_file);
+
+    let terminator = if args.null_terminated { '\0' } else { '\n' };
+
+    // --list
+    if args.list {
+        for entry in config.entries() {
+            let val = entry.value.as_deref().unwrap_or("true");
+            if args.name_only {
+                print!("{}{}", entry.key, terminator);
+            } else {
+                print!("{}={}{}", entry.key, val, terminator);
+            }
+        }
+        return Ok(());
+    }
+
+    // --get-regexp
+    if let Some(ref pattern) = args.get_regexp {
+        let matches = config.get_regexp(pattern)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        if matches.is_empty() {
+            std::process::exit(1);
+        }
+        for entry in matches {
+            let val = entry.value.as_deref().unwrap_or("true");
+            let val = format_typed_value(args, val)?;
+            if args.name_only {
+                print!("{}{}", entry.key, terminator);
+            } else {
+                print!("{} {}{}", entry.key, val, terminator);
+            }
+        }
+        return Ok(());
+    }
+
+    // --get
+    if let Some(ref key) = args.get_key {
+        match config.get(key) {
+            Some(val) => {
+                let val = format_typed_value(args, &val)?;
+                print!("{val}{terminator}");
+                return Ok(());
+            }
+            None => std::process::exit(1),
+        }
+    }
+
+    // --get-all
+    if let Some(ref key) = args.get_all_key {
+        let values = config.get_all(key);
+        if values.is_empty() {
+            std::process::exit(1);
+        }
+        for val in values {
+            let val = format_typed_value(args, &val)?;
+            print!("{val}{terminator}");
+        }
+        return Ok(());
+    }
+
+    // Positional: `git config --blob=X key`
+    if args.positional.len() == 1 {
+        match config.get(&args.positional[0]) {
+            Some(val) => {
+                let val = format_typed_value(args, &val)?;
+                print!("{val}{terminator}");
+                return Ok(());
+            }
+            None => std::process::exit(1),
+        }
+    }
+
+    if args.positional.is_empty() && args.subcommand.is_none() {
+        bail!("--blob requires a key or --list");
+    }
+
+    // Handle subcommands (get/list) with blob
+    if let Some(ref sub) = args.subcommand {
+        match sub {
+            ConfigSubcommand::Get(get_args) => {
+                if get_args.regexp {
+                    let matches = config.get_regexp(&get_args.key)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                    if matches.is_empty() {
+                        std::process::exit(1);
+                    }
+                    for entry in matches {
+                        let val = entry.value.as_deref().unwrap_or("true");
+                        let val = format_typed_value(args, val)?;
+                        if get_args.show_names {
+                            print!("{} {}{}", entry.key, val, terminator);
+                        } else {
+                            print!("{}{}", val, terminator);
+                        }
+                    }
+                    return Ok(());
+                }
+                if get_args.all {
+                    let values = config.get_all(&get_args.key);
+                    if values.is_empty() {
+                        std::process::exit(1);
+                    }
+                    for val in values {
+                        let val = format_typed_value(args, &val)?;
+                        print!("{val}{terminator}");
+                    }
+                    return Ok(());
+                }
+                match config.get(&get_args.key) {
+                    Some(val) => {
+                        let val = format_typed_value(args, &val)?;
+                        print!("{val}{terminator}");
+                        Ok(())
+                    }
+                    None => std::process::exit(1),
+                }
+            }
+            ConfigSubcommand::List(_) => {
+                for entry in config.entries() {
+                    let val = entry.value.as_deref().unwrap_or("true");
+                    if args.name_only {
+                        print!("{}{}", entry.key, terminator);
+                    } else {
+                        print!("{}={}{}", entry.key, val, terminator);
+                    }
+                }
+                Ok(())
+            }
+            _ => bail!("--blob is read-only; cannot set/unset/edit"),
+        }
+    } else {
+        bail!("--blob requires a key or --list");
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
