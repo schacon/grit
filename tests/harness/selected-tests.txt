@@ -861,3 +861,4 @@ t3511-cherry-pick-x.sh
 t3512-cherry-pick-submodule.sh
 t3900-i18n-commit.sh
 t3901-i18n-patch.sh
+t3908-stash-in-worktree.sh
