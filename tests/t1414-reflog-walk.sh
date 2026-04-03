@@ -17,17 +17,17 @@ test_expect_success 'setup' '
 	test_commit three
 '
 
-test_expect_failure 'reflog show works on branch (reflog not written for commits)' '
+test_expect_success 'reflog show works on branch (reflog not written for commits)' '
 	git reflog show side >actual &&
 	test_line_count -ge 1 actual
 '
 
-test_expect_failure 'reflog walk with log -g (not supported)' '
+test_expect_success 'reflog walk with log -g (supported)' '
 	git log -g --format="%gd %gs" >actual &&
 	test_line_count -ge 3 actual
 '
 
-test_expect_failure 'reflog walk with --walk-reflogs (not supported)' '
+test_expect_success 'reflog walk with --walk-reflogs (supported)' '
 	git log --walk-reflogs --format="%gd %gs" >actual &&
 	test_line_count -ge 3 actual
 '

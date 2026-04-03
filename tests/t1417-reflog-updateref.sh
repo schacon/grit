@@ -15,30 +15,35 @@ test_expect_success 'setup' '
 		git config user.name "Test" &&
 		git config user.email "test@test.com" &&
 		echo A >file && git add file && git commit -m A &&
+		A_OID=$(git rev-parse HEAD) &&
 		echo B >file && git add file && git commit -m B &&
-		echo C >file && git add file && git commit -m C
+		B_OID=$(git rev-parse HEAD) &&
+		echo C >file && git add file && git commit -m C &&
+		C_OID=$(git rev-parse HEAD)
 	)
 '
 
-test_expect_failure 'reflog delete --updateref HEAD@{0}' '
+test_expect_success 'reflog delete --updateref HEAD@{0}' '
 	cp -R repo copy &&
 	(
 		cd copy &&
+		C_OID=$(git rev-parse HEAD) &&
 		git reset --hard HEAD~ &&
 		git reflog delete --updateref HEAD@{0} &&
-		git rev-parse B >expect &&
+		echo "$C_OID" >expect &&
 		git rev-parse HEAD >actual &&
 		test_cmp expect actual
 	)
 '
 
-test_expect_failure 'reflog delete --updateref HEAD@{1}' '
+test_expect_success 'reflog delete --updateref HEAD@{1}' '
 	cp -R repo copy2 &&
 	(
 		cd copy2 &&
 		git reset --hard HEAD~ &&
+		B_OID=$(git rev-parse HEAD) &&
 		git reflog delete --updateref HEAD@{1} &&
-		git rev-parse B >expect &&
+		echo "$B_OID" >expect &&
 		git rev-parse HEAD >actual &&
 		test_cmp expect actual
 	)
