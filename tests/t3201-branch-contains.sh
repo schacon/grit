@@ -2,9 +2,7 @@
 # Tests for 'grit branch --contains' and '--no-contains'.
 # Ported from git/t/t3201-branch-contains.sh
 #
-# NOTE: grit accepts --contains/--no-contains/--merged/--no-merged flags
-# but filtering is not yet fully implemented (all branches are returned).
-# Tests that verify correct filtering use test_expect_failure.
+# grit now implements --contains/--no-contains/--merged/--no-merged filtering.
 
 test_description='grit branch --contains / --no-contains'
 
@@ -44,7 +42,7 @@ test_expect_success 'branch --contains initial lists master' '
 	grep "master" actual
 '
 
-test_expect_failure 'branch --contains second excludes at-initial' '
+test_expect_success 'branch --contains second excludes at-initial' '
 	cd repo &&
 	git branch --contains second >actual &&
 	! grep "at-initial" actual &&
@@ -53,7 +51,7 @@ test_expect_failure 'branch --contains second excludes at-initial' '
 	grep "master" actual
 '
 
-test_expect_failure 'branch --contains third excludes earlier branches' '
+test_expect_success 'branch --contains third excludes earlier branches' '
 	cd repo &&
 	git branch --contains third >actual &&
 	! grep "at-initial" actual &&
@@ -73,13 +71,13 @@ test_expect_success 'branch --no-contains runs without error' '
 	git branch --no-contains third >actual
 '
 
-test_expect_failure 'branch --no-contains initial returns empty' '
+test_expect_success 'branch --no-contains initial returns empty' '
 	cd repo &&
 	git branch --no-contains initial >actual &&
 	test_must_be_empty actual
 '
 
-test_expect_failure 'branch --no-contains third lists earlier branches only' '
+test_expect_success 'branch --no-contains third lists earlier branches only' '
 	cd repo &&
 	git branch --no-contains third >actual &&
 	grep "at-initial" actual &&
@@ -108,7 +106,7 @@ test_expect_success 'branch --contains second includes both forks' '
 	grep "fork-b" actual
 '
 
-test_expect_failure 'branch --contains fork-a excludes fork-b' '
+test_expect_success 'branch --contains fork-a excludes fork-b' '
 	cd repo &&
 	git branch --contains fork-a >actual &&
 	grep "fork-a" actual &&
@@ -122,7 +120,7 @@ test_expect_success 'branch --merged runs without error' '
 	grep "master" actual
 '
 
-test_expect_failure 'branch --merged master excludes unmerged forks' '
+test_expect_success 'branch --merged master excludes unmerged forks' '
 	cd repo &&
 	git branch --merged master >actual &&
 	grep "at-initial" actual &&
@@ -137,7 +135,7 @@ test_expect_success 'branch --no-merged runs without error' '
 	git branch --no-merged master >actual
 '
 
-test_expect_failure 'branch --no-merged master lists only forks' '
+test_expect_success 'branch --no-merged master lists only forks' '
 	cd repo &&
 	git branch --no-merged master >actual &&
 	grep "fork-a" actual &&
@@ -146,7 +144,7 @@ test_expect_failure 'branch --no-merged master lists only forks' '
 	! grep "at-second" actual
 '
 
-test_expect_failure 'branch --merged second excludes later branches' '
+test_expect_success 'branch --merged second excludes later branches' '
 	cd repo &&
 	git branch --merged second >actual &&
 	grep "at-initial" actual &&
@@ -174,7 +172,7 @@ test_expect_success 'branch --contains with short SHA works' '
 	grep "master" actual
 '
 
-test_expect_failure 'branch --contains invalid ref fails' '
+test_expect_success 'branch --contains invalid ref fails' '
 	cd repo &&
 	test_must_fail git branch --contains does-not-exist
 '
