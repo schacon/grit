@@ -55,7 +55,7 @@ test_expect_success 'read-tree can reset to HEAD' '
 	grep "init.t" result
 '
 
-test_expect_failure 'read-tree can resolve tags' '
+test_expect_success 'read-tree can resolve tags' '
 	git tag testtag &&
 	git read-tree -m -u testtag &&
 	git ls-files --stage >result &&

@@ -511,6 +511,10 @@ fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
     if let Ok(oid) = resolve_ref(&repo.git_dir, &as_branch) {
         return peel_to_tree(repo, oid);
     }
+    let as_tag = format!("refs/tags/{s}");
+    if let Ok(oid) = resolve_ref(&repo.git_dir, &as_tag) {
+        return peel_to_tree(repo, oid);
+    }
     bail!("not a valid tree-ish: '{s}'")
 }
 
