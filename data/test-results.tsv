@@ -1378,35 +1378,35 @@ t1000-read-tree-m-3way::15-must-match-a-in-o-a-b-o-a-o-b-case	t1000-read-tree-m-
 t1000-read-tree-m-3way::15-must-match-a-in-o-a-b-o-a-o-b-case-2	t1000-read-tree-m-3way	15 - must match A in O && A && B && O==A && O==B case	read-tree	pass
 t1000-read-tree-m-3way::15-fail-must-match-a-in-o-a-b-o-a-o-b-case	t1000-read-tree-m-3way	15 (fail) - must match A in O && A && B && O==A && O==B case	read-tree	pass
 t1000-read-tree-m-3way::16-a-matches-in-one-and-b-matches-in-another	t1000-read-tree-m-3way	16 - A matches in one and B matches in another.	read-tree	pass
-t1001-read-tree-m-2way::setup	t1001-read-tree-m-2way	setup	read-tree	not_ported
-t1001-read-tree-m-2way::1-2-3-no-carry-forward	t1001-read-tree-m-2way	1, 2, 3 - no carry forward	read-tree	not_ported
-t1001-read-tree-m-2way::4-carry-forward-local-addition	t1001-read-tree-m-2way	4 - carry forward local addition.	read-tree	not_ported
-t1001-read-tree-m-2way::5-carry-forward-local-addition	t1001-read-tree-m-2way	5 - carry forward local addition.	read-tree	not_ported
-t1001-read-tree-m-2way::6-local-addition-already-has-the-same	t1001-read-tree-m-2way	6 - local addition already has the same.	read-tree	not_ported
-t1001-read-tree-m-2way::7-local-addition-already-has-the-same	t1001-read-tree-m-2way	7 - local addition already has the same.	read-tree	not_ported
-t1001-read-tree-m-2way::8-conflicting-addition	t1001-read-tree-m-2way	8 - conflicting addition.	read-tree	not_ported
-t1001-read-tree-m-2way::9-conflicting-addition	t1001-read-tree-m-2way	9 - conflicting addition.	read-tree	not_ported
-t1001-read-tree-m-2way::10-path-removed	t1001-read-tree-m-2way	10 - path removed.	read-tree	not_ported
-t1001-read-tree-m-2way::11-dirty-path-removed	t1001-read-tree-m-2way	11 - dirty path removed.	read-tree	not_ported
-t1001-read-tree-m-2way::12-unmatching-local-changes-being-removed	t1001-read-tree-m-2way	12 - unmatching local changes being removed.	read-tree	not_ported
-t1001-read-tree-m-2way::13-unmatching-local-changes-being-removed	t1001-read-tree-m-2way	13 - unmatching local changes being removed.	read-tree	not_ported
-t1001-read-tree-m-2way::14-unchanged-in-two-heads	t1001-read-tree-m-2way	14 - unchanged in two heads.	read-tree	not_ported
-t1001-read-tree-m-2way::15-unchanged-in-two-heads	t1001-read-tree-m-2way	15 - unchanged in two heads.	read-tree	not_ported
-t1001-read-tree-m-2way::16-conflicting-local-change	t1001-read-tree-m-2way	16 - conflicting local change.	read-tree	not_ported
-t1001-read-tree-m-2way::17-conflicting-local-change	t1001-read-tree-m-2way	17 - conflicting local change.	read-tree	not_ported
-t1001-read-tree-m-2way::18-local-change-already-having-a-good-result	t1001-read-tree-m-2way	18 - local change already having a good result.	read-tree	not_ported
-t1001-read-tree-m-2way::19-local-change-already-having-a-good-result-further-modified	t1001-read-tree-m-2way	19 - local change already having a good result, further modified.	read-tree	not_ported
-t1001-read-tree-m-2way::20-no-local-change-use-new-tree	t1001-read-tree-m-2way	20 - no local change, use new tree.	read-tree	not_ported
-t1001-read-tree-m-2way::21-no-local-change-dirty-cache	t1001-read-tree-m-2way	21 - no local change, dirty cache.	read-tree	not_ported
-t1001-read-tree-m-2way::22-local-change-cache-updated	t1001-read-tree-m-2way	22 - local change cache updated.	read-tree	not_ported
-t1001-read-tree-m-2way::df-vs-df-df-case-setup	t1001-read-tree-m-2way	DF vs DF/DF case setup.	read-tree	not_ported
-t1001-read-tree-m-2way::df-vs-df-df-case-test	t1001-read-tree-m-2way	DF vs DF/DF case test.	read-tree	not_ported
-t1001-read-tree-m-2way::a-b-untracked-vs-a-case-setup	t1001-read-tree-m-2way	a/b (untracked) vs a case setup.	read-tree	not_ported
-t1001-read-tree-m-2way::a-b-untracked-vs-a-plus-c-d-case-test	t1001-read-tree-m-2way	a/b (untracked) vs a, plus c/d case test.	read-tree	not_ported
-t1001-read-tree-m-2way::read-tree-supports-the-super-prefix	t1001-read-tree-m-2way	read-tree supports the super-prefix	read-tree	not_ported
-t1001-read-tree-m-2way::a-b-vs-a-plus-c-d-case-setup	t1001-read-tree-m-2way	a/b vs a, plus c/d case setup.	read-tree	not_ported
-t1001-read-tree-m-2way::a-b-vs-a-plus-c-d-case-test	t1001-read-tree-m-2way	a/b vs a, plus c/d case test.	read-tree	not_ported
-t1001-read-tree-m-2way::m-references-the-correct-modified-tree	t1001-read-tree-m-2way	-m references the correct modified tree	read-tree	not_ported
+t1001-read-tree-m-2way::setup	t1001-read-tree-m-2way	setup	read-tree	pass
+t1001-read-tree-m-2way::1-2-3-no-carry-forward	t1001-read-tree-m-2way	1, 2, 3 - no carry forward	read-tree	pass
+t1001-read-tree-m-2way::4-carry-forward-local-addition	t1001-read-tree-m-2way	4 - carry forward local addition.	read-tree	pass
+t1001-read-tree-m-2way::5-carry-forward-local-addition	t1001-read-tree-m-2way	5 - carry forward local addition.	read-tree	pass
+t1001-read-tree-m-2way::6-local-addition-already-has-the-same	t1001-read-tree-m-2way	6 - local addition already has the same.	read-tree	pass
+t1001-read-tree-m-2way::7-local-addition-already-has-the-same	t1001-read-tree-m-2way	7 - local addition already has the same.	read-tree	pass
+t1001-read-tree-m-2way::8-conflicting-addition	t1001-read-tree-m-2way	8 - conflicting addition.	read-tree	pass
+t1001-read-tree-m-2way::9-conflicting-addition	t1001-read-tree-m-2way	9 - conflicting addition.	read-tree	pass
+t1001-read-tree-m-2way::10-path-removed	t1001-read-tree-m-2way	10 - path removed.	read-tree	pass
+t1001-read-tree-m-2way::11-dirty-path-removed	t1001-read-tree-m-2way	11 - dirty path removed.	read-tree	pass
+t1001-read-tree-m-2way::12-unmatching-local-changes-being-removed	t1001-read-tree-m-2way	12 - unmatching local changes being removed.	read-tree	pass
+t1001-read-tree-m-2way::13-unmatching-local-changes-being-removed	t1001-read-tree-m-2way	13 - unmatching local changes being removed.	read-tree	pass
+t1001-read-tree-m-2way::14-unchanged-in-two-heads	t1001-read-tree-m-2way	14 - unchanged in two heads.	read-tree	pass
+t1001-read-tree-m-2way::15-unchanged-in-two-heads	t1001-read-tree-m-2way	15 - unchanged in two heads.	read-tree	pass
+t1001-read-tree-m-2way::16-conflicting-local-change	t1001-read-tree-m-2way	16 - conflicting local change.	read-tree	pass
+t1001-read-tree-m-2way::17-conflicting-local-change	t1001-read-tree-m-2way	17 - conflicting local change.	read-tree	pass
+t1001-read-tree-m-2way::18-local-change-already-having-a-good-result	t1001-read-tree-m-2way	18 - local change already having a good result.	read-tree	pass
+t1001-read-tree-m-2way::19-local-change-already-having-a-good-result-further-modified	t1001-read-tree-m-2way	19 - local change already having a good result, further modified.	read-tree	pass
+t1001-read-tree-m-2way::20-no-local-change-use-new-tree	t1001-read-tree-m-2way	20 - no local change, use new tree.	read-tree	pass
+t1001-read-tree-m-2way::21-no-local-change-dirty-cache	t1001-read-tree-m-2way	21 - no local change, dirty cache.	read-tree	pass
+t1001-read-tree-m-2way::22-local-change-cache-updated	t1001-read-tree-m-2way	22 - local change cache updated.	read-tree	pass
+t1001-read-tree-m-2way::df-vs-df-df-case-setup	t1001-read-tree-m-2way	DF vs DF/DF case setup.	read-tree	pass
+t1001-read-tree-m-2way::df-vs-df-df-case-test	t1001-read-tree-m-2way	DF vs DF/DF case test.	read-tree	pass
+t1001-read-tree-m-2way::a-b-untracked-vs-a-case-setup	t1001-read-tree-m-2way	a/b (untracked) vs a case setup.	read-tree	pass
+t1001-read-tree-m-2way::a-b-untracked-vs-a-plus-c-d-case-test	t1001-read-tree-m-2way	a/b (untracked) vs a, plus c/d case test.	read-tree	pass
+t1001-read-tree-m-2way::read-tree-supports-the-super-prefix	t1001-read-tree-m-2way	read-tree supports the super-prefix	read-tree	pass
+t1001-read-tree-m-2way::a-b-vs-a-plus-c-d-case-setup	t1001-read-tree-m-2way	a/b vs a, plus c/d case setup.	read-tree	pass
+t1001-read-tree-m-2way::a-b-vs-a-plus-c-d-case-test	t1001-read-tree-m-2way	a/b vs a, plus c/d case test.	read-tree	pass
+t1001-read-tree-m-2way::m-references-the-correct-modified-tree	t1001-read-tree-m-2way	-m references the correct modified tree	read-tree	pass
 t1002-read-tree-m-u-2way::1-2-3-no-carry-forward	t1002-read-tree-m-u-2way	1, 2, 3 - no carry forward	read-tree	pass
 t1002-read-tree-m-u-2way::4-carry-forward-local-addition	t1002-read-tree-m-u-2way	4 - carry forward local addition.	read-tree	pass
 t1002-read-tree-m-u-2way::5-carry-forward-local-addition	t1002-read-tree-m-u-2way	5 - carry forward local addition.	read-tree	pass
