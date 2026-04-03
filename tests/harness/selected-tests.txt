@@ -1139,3 +1139,4 @@ t5400-send-pack.sh
 t5408-send-pack-stdin.sh
 t5502-quickfetch.sh
 t5536-fetch-conflicts.sh
+t5546-receive-limits.sh
