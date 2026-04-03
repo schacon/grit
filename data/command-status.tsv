@@ -1,16 +1,16 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
-add	Main Porcelain	yes	813	657	145	80.8
+add	Main Porcelain	yes	813	656	145	80.7
 am	Main Porcelain	yes	162	136	0	84.1
-archive	Main Porcelain	yes	102	101	1	99.0
+archive	Main Porcelain	yes	102	97	1	94.7
 bisect	Main Porcelain	yes	107	96	11	89.7
 branch	Main Porcelain	yes	399	371	17	92.9
-checkout	Main Porcelain	yes	567	365	99	64.3
+checkout	Main Porcelain	yes	567	364	99	64.3
 cherry-pick	Main Porcelain	yes	193	136	2	70.5
 clean	Main Porcelain	yes	90	90	0	100.0
 clone	Main Porcelain	yes	519	363	155	69.9
 commit	Main Porcelain	yes	435	349	79	80.3
 describe	Main Porcelain	yes	59	59	0	100.0
-diff	Main Porcelain	yes	983	929	5	94.5
+diff	Main Porcelain	yes	983	925	5	94.1
 fetch	Main Porcelain	yes	465	376	89	80.9
 format-patch	Main Porcelain	yes	231	231	0	100.0
 gc	Main Porcelain	yes	38	37	1	97.4
@@ -40,7 +40,7 @@ annotate	Ancillary Porcelain	yes	1	1	0	100.0
 blame	Ancillary Porcelain	yes	102	101	0	99.5
 bundle	Ancillary Porcelain	yes	44	31	13	70.5
 cherry	Ancillary Porcelain	yes	4	4	0	100.0
-config	Ancillary Porcelain	yes	657	526	126	80.0
+config	Ancillary Porcelain	yes	657	525	126	80.0
 count-objects	Ancillary Porcelain	yes	9	9	0	100.0
 diagnose	Ancillary Porcelain	yes	4	4	0	100.0
 difftool	Ancillary Porcelain	yes	61	61	0	100.0
@@ -88,7 +88,7 @@ fetch-pack	Plumbing	yes	92	92	0	100.0
 fmt-merge-msg	Plumbing	yes	37	37	0	100.0
 for-each-ref	Plumbing	yes	90	88	2	97.8
 for-each-repo	Plumbing	yes	5	5	0	100.0
-get-tar-commit-id	Plumbing	yes	1	1	0	100.0
+get-tar-commit-id	Plumbing	yes	1	1	0	88.9
 hash-object	Plumbing	yes	56	47	3	84.4
 hook	Plumbing	yes	41	41	0	100.0
 http-backend	Plumbing	yes	18	0	18	0.0

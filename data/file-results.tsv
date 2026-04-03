@@ -36,7 +36,7 @@ t0031-lockfile-pid	yes	2	2	0	ok
 t0033-safe-directory	yes	4	4	0	ok
 t0034-root-safe-directory	yes	1	1	0	ok
 t0035-safe-bare-repository	yes	4	4	0	ok
-t0040-parse-options	yes	32	26	6	ok
+t0040-parse-options	yes	0	0	0	timeout
 t0041-usage	yes	9	9	0	ok
 t0050-filesystem	yes	30	30	0	ok
 t0051-windows-named-pipe	yes	2	2	0	ok
@@ -181,7 +181,7 @@ t2007-checkout-symlink	yes	4	4	0	ok
 t2008-checkout-subdir	yes	22	12	10	ok
 t2009-checkout-statinfo	yes	25	20	5	ok
 t2010-checkout-ambiguous	yes	7	5	2	ok
-t2011-checkout-invalid-head	yes	24	20	4	ok
+t2011-checkout-invalid-head	yes	24	19	5	ok
 t2012-checkout-last	yes	25	6	19	ok
 t2013-checkout-submodule	yes	3	3	0	ok
 t2014-checkout-switch	yes	24	7	17	ok
@@ -403,7 +403,7 @@ t4048-diff-combined-binary	yes	4	4	0	ok
 t4049-diff-stat-count	yes	15	14	1	ok
 t4051-diff-function-context	yes	5	5	0	ok
 t4052-stat-output	yes	8	8	0	ok
-t4053-diff-no-index	yes	10	4	6	ok
+t4053-diff-no-index	yes	10	3	7	ok
 t4054-diff-bogus-tree	yes	8	8	0	ok
 t4055-diff-context	yes	25	7	18	ok
 t4056-diff-order	yes	5	5	0	ok
@@ -497,7 +497,7 @@ t4257-am-interactive	yes	4	2	2	ok
 t4258-am-quoted-cr	yes	4	3	1	ok
 t4300-merge-tree	yes	27	27	0	ok
 t4301-merge-tree-write-tree	yes	4	4	0	ok
-t5000-tar-tree	yes	9	9	0	ok
+t5000-tar-tree	yes	9	8	1	ok
 t5001-archive-attr	yes	6	6	0	ok
 t5002-archive-attr-pattern	yes	5	5	0	ok
 t5003-archive-zip	yes	6	6	0	ok
