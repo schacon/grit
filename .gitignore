@@ -7,3 +7,6 @@ tests/bare-repo/
 tests/fresh/
 tests/empty-np/
 bench/.scratch
+tests/actual
+tests/expect
+tests/trash/
