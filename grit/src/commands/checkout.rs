@@ -44,6 +44,10 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Detach HEAD at the named commit (even if it is a branch).
+    #[arg(long = "detach", short = 'd', conflicts_with_all = ["new_branch", "force_branch", "orphan"])]
+    pub detach: bool,
+
     /// Remaining positional arguments: `[<branch|commit>] [--] [<paths>...]`
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub rest: Vec<String>,
@@ -90,8 +94,46 @@ pub fn run(args: Args) -> Result<()> {
     // Case 4: checkout <branch-or-commit>
     let target = match target {
         Some(t) => t,
-        None => bail!("you must specify a branch, commit, or paths to checkout"),
+        None => {
+            if args.detach {
+                // `checkout --detach` with no target: detach at current HEAD
+                match resolve_head(&repo.git_dir)? {
+                    HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => {
+                        return detach_head(&repo, &oid, args.force);
+                    }
+                    _ => bail!("cannot detach HEAD on unborn branch"),
+                }
+            }
+            bail!("you must specify a branch, commit, or paths to checkout")
+        }
     };
+
+    // Handle "checkout -" — switch to previous branch via reflog
+    if target == "-" {
+        let prev = resolve_previous_branch(&repo)?;
+        let branch_ref = format!("refs/heads/{prev}");
+        if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+            return switch_branch(&repo, &prev, &branch_ref, args.force);
+        }
+        bail!("error: previous branch '{}' not found", prev);
+    }
+
+    // Handle "checkout HEAD" — no-op when on a branch (don't detach)
+    if target == "HEAD" && !args.detach {
+        return Ok(());
+    }
+
+    // If --detach, force detached HEAD even for branch names
+    if args.detach {
+        // --detach takes at most one argument
+        if args.rest.len() > 1 {
+            bail!("--detach does not take a path argument");
+        }
+        match resolve_to_commit(&repo, &target) {
+            Ok(oid) => return detach_head(&repo, &oid, args.force),
+            Err(e) => bail!("cannot detach HEAD at '{}': {}", target, e),
+        }
+    }
 
     // Try as a branch first
     let branch_ref = format!("refs/heads/{target}");
@@ -162,10 +204,15 @@ fn switch_branch(repo: &Repository, branch_name: &str, branch_ref: &str, force: 
     let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
         .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
 
-    let target_tree = commit_to_tree(repo, &target_oid)?;
+    // If target commit is the same as current HEAD, just re-attach
+    // without touching the working tree or index (preserves dirty state).
+    let already_at_target = head.oid().map_or(false, |h| h == &target_oid);
+    if !already_at_target {
+        let target_tree = commit_to_tree(repo, &target_oid)?;
 
-    // Update working tree and index
-    switch_to_tree(repo, &head, &target_tree, force)?;
+        // Update working tree and index
+        switch_to_tree(repo, &head, &target_tree, force)?;
+    }
 
     // Write reflog entries before updating HEAD
     let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
@@ -357,10 +404,14 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
 /// Detach HEAD at a specific commit.
 fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
-    let target_tree = commit_to_tree(repo, oid)?;
 
-    // Update working tree
-    switch_to_tree(repo, &head, &target_tree, force)?;
+    // If already at this commit, just update HEAD without touching tree/index.
+    let already_at_target = head.oid().map_or(false, |h| h == oid);
+    if !already_at_target {
+        let target_tree = commit_to_tree(repo, oid)?;
+        // Update working tree
+        switch_to_tree(repo, &head, &target_tree, force)?;
+    }
 
     // Write reflog entries
     let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
@@ -930,6 +981,23 @@ fn resolve_pathspec(spec: &str, work_tree: &Path, cwd: &Path) -> String {
 }
 
 /// Write reflog entries for a checkout operation.
+/// Resolve the previous branch from the HEAD reflog.
+/// Looks for the most recent "checkout: moving from X to Y" entry and returns X.
+fn resolve_previous_branch(repo: &Repository) -> Result<String> {
+    let reflog_path = repo.git_dir.join("logs/HEAD");
+    let content = std::fs::read_to_string(&reflog_path)
+        .context("cannot read HEAD reflog")?;
+    for line in content.lines().rev() {
+        if let Some(msg_start) = line.find("checkout: moving from ") {
+            let rest = &line[msg_start + "checkout: moving from ".len()..];
+            if let Some(to_idx) = rest.find(" to ") {
+                return Ok(rest[..to_idx].to_string());
+            }
+        }
+    }
+    bail!("no previous branch found in reflog")
+}
+
 fn write_checkout_reflog(
     repo: &Repository,
     head: &HeadState,
