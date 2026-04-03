@@ -854,3 +854,4 @@ t7602-merge-octopus-many.sh
 t7610-mergetool.sh
 t7701-repack-unpack-unreachable.sh
 t7800-difftool.sh
+t7811-grep-open.sh
