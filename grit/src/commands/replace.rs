@@ -7,7 +7,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, ValueEnum};
 
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::refs::{delete_ref, list_refs, resolve_ref, write_ref};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
@@ -40,6 +40,21 @@ pub struct Args {
     /// Format for listing: short, medium, long.
     #[arg(long = "format", default_value = "short")]
     pub format: ListFormat,
+
+    /// Create a graft replacement: rewrite a commit's parents.
+    /// Usage: replace --graft <commit> [<parent>...]
+    #[arg(short = 'g', long = "graft")]
+    pub graft: bool,
+
+    /// Edit an existing object and create a replacement.
+    /// Opens the object content in $GIT_EDITOR / $EDITOR, then
+    /// stores the edited result and creates a replace ref.
+    #[arg(short = 'e', long = "edit")]
+    pub edit: bool,
+
+    /// Additional positional args (parents for --graft).
+    #[arg(trailing_var_arg = true)]
+    pub extra: Vec<String>,
 }
 
 /// Format used when listing replace refs.
@@ -57,6 +72,32 @@ pub fn run(args: Args) -> Result<()> {
     // Delete mode: -d <object>...
     if args.delete {
         return delete_replace_refs(&repo, &args);
+    }
+
+    // Graft mode: --graft <commit> [<parent>...]
+    if args.graft {
+        let commit_str = args
+            .object
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("commit argument required for --graft"))?;
+        // Collect parents: replacement (if given) + extra args
+        let mut parent_strs: Vec<&str> = Vec::new();
+        if let Some(ref r) = args.replacement {
+            parent_strs.push(r.as_str());
+        }
+        for e in &args.extra {
+            parent_strs.push(e.as_str());
+        }
+        return create_graft(&repo, commit_str, &parent_strs, args.force);
+    }
+
+    // Edit mode: --edit <object>
+    if args.edit {
+        let object_str = args
+            .object
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("object argument required for --edit"))?;
+        return edit_and_replace(&repo, object_str, args.force);
     }
 
     // List mode: no positional args, or -l [pattern]
@@ -164,6 +205,138 @@ fn list_replace_refs(repo: &Repository, pattern: Option<&str>, format: &ListForm
         }
     }
 
+    Ok(())
+}
+
+/// Create a graft replacement: rewrite a commit with new parents.
+///
+/// Reads the original commit, replaces its parent lines, writes the new
+/// commit object, and creates `refs/replace/<original>` pointing to it.
+fn create_graft(
+    repo: &Repository,
+    commit_str: &str,
+    parent_strs: &[&str],
+    force: bool,
+) -> Result<()> {
+    let commit_oid = resolve_revision(repo, commit_str)
+        .with_context(|| format!("Failed to resolve '{commit_str}'"))?;
+
+    // Read the commit
+    let obj = repo
+        .odb
+        .read(&commit_oid)
+        .with_context(|| format!("object {} not found", commit_oid.to_hex()))?;
+    if obj.kind != ObjectKind::Commit {
+        bail!("'{}' is not a commit", commit_str);
+    }
+
+    let commit = parse_commit(&obj.data).context("parsing commit")?;
+
+    // Resolve new parents
+    let mut new_parents: Vec<ObjectId> = Vec::new();
+    for p in parent_strs {
+        let pid = resolve_revision(repo, p)
+            .with_context(|| format!("Failed to resolve parent '{p}'"))?;
+        new_parents.push(pid);
+    }
+
+    // Rebuild the commit object with new parents
+    let mut new_data = String::new();
+    new_data.push_str(&format!("tree {}\n", commit.tree.to_hex()));
+    for parent in &new_parents {
+        new_data.push_str(&format!("parent {}\n", parent.to_hex()));
+    }
+    new_data.push_str(&format!("author {}\n", commit.author));
+    new_data.push_str(&format!("committer {}\n", commit.committer));
+    if let Some(ref enc) = commit.encoding {
+        new_data.push_str(&format!("encoding {}\n", enc));
+    }
+    new_data.push('\n');
+    new_data.push_str(&commit.message);
+    new_data.push('\n');
+
+    let new_oid = repo
+        .odb
+        .write(ObjectKind::Commit, new_data.as_bytes())
+        .context("writing replacement commit")?;
+
+    if new_oid == commit_oid {
+        bail!(
+            "new commit is the same as the old one: '{}'",
+            commit_oid.to_hex()
+        );
+    }
+
+    let refname = format!("refs/replace/{}", commit_oid.to_hex());
+    if !force && resolve_ref(&repo.git_dir, &refname).is_ok() {
+        bail!(
+            "replace ref '{}' already exists; use -f to force",
+            commit_oid.to_hex()
+        );
+    }
+
+    write_ref(&repo.git_dir, &refname, &new_oid).context("writing replace ref")?;
+    Ok(())
+}
+
+/// Edit an object and create a replacement.
+///
+/// Writes the raw object data to a temp file, opens `$GIT_EDITOR` / `$EDITOR`,
+/// then stores the (possibly modified) result and creates a replace ref.
+fn edit_and_replace(repo: &Repository, object_str: &str, force: bool) -> Result<()> {
+    let oid = resolve_revision(repo, object_str)
+        .with_context(|| format!("Failed to resolve '{object_str}'"))?;
+
+    let obj = repo
+        .odb
+        .read(&oid)
+        .with_context(|| format!("object {} not found", oid.to_hex()))?;
+
+    // Write object content to temp file
+    let tmp_dir = std::env::temp_dir();
+    let tmp_path = tmp_dir.join(format!("grit-replace-{}.txt", oid.to_hex()));
+    std::fs::write(&tmp_path, &obj.data).context("writing temp file")?;
+
+    // Launch editor
+    let editor = std::env::var("GIT_EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_string());
+
+    let status = std::process::Command::new(&editor)
+        .arg(&tmp_path)
+        .status()
+        .with_context(|| format!("failed to launch editor '{editor}'"))?;
+
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp_path);
+        bail!("editor returned non-zero exit status");
+    }
+
+    // Read back edited content
+    let new_data = std::fs::read(&tmp_path).context("reading edited file")?;
+    let _ = std::fs::remove_file(&tmp_path);
+
+    // Write the new object
+    let new_oid = repo
+        .odb
+        .write(obj.kind, &new_data)
+        .context("writing replacement object")?;
+
+    if new_oid == oid {
+        eprintln!("Object unchanged, no replacement created.");
+        return Ok(());
+    }
+
+    let refname = format!("refs/replace/{}", oid.to_hex());
+    if !force && resolve_ref(&repo.git_dir, &refname).is_ok() {
+        bail!(
+            "replace ref '{}' already exists; use -f to force",
+            oid.to_hex()
+        );
+    }
+
+    write_ref(&repo.git_dir, &refname, &new_oid).context("writing replace ref")?;
     Ok(())
 }
 
