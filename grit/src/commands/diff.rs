@@ -594,6 +594,16 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let word_diff = args.word_diff.is_some() || args.color_words;
 
+    // Check diff.suppressBlankEmpty config
+    let suppress_blank_empty = {
+        use grit_lib::config::ConfigSet;
+        let config = ConfigSet::load(Some(&repo.git_dir), false)
+            .unwrap_or_else(|_| ConfigSet::new());
+        config.get("diff.suppressBlankEmpty")
+            .map(|v| v == "true")
+            .unwrap_or(false)
+    };
+
     if !args.quiet {
         let context_lines = args.unified.unwrap_or(3);
         if args.shortstat {
@@ -622,6 +632,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 use_color,
                 word_diff,
                 wt_for_content,
+                suppress_blank_empty,
             )?;
         }
     }
@@ -1019,6 +1030,7 @@ fn write_patch(
     use_color: bool,
     word_diff: bool,
     work_tree: Option<&Path>,
+    suppress_blank_empty: bool,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
@@ -1063,6 +1075,7 @@ fn write_patch(
                 display_new,
                 context_lines,
             );
+            let patch = if suppress_blank_empty { strip_blank_context_trailing_space(&patch) } else { patch };
             if use_color {
                 write_colored_patch(out, &patch)?;
             } else {
@@ -1076,6 +1089,7 @@ fn write_patch(
                 display_new,
                 context_lines,
             );
+            let patch = if suppress_blank_empty { strip_blank_context_trailing_space(&patch) } else { patch };
 
             if use_color {
                 write_colored_patch(out, &patch)?;
@@ -1085,6 +1099,22 @@ fn write_patch(
         }
     }
     Ok(())
+}
+
+/// Strip trailing space from blank context lines in unified diff output.
+///
+/// When `diff.suppressBlankEmpty` is true, context lines that consist of
+/// only a single space (empty context line) should become truly empty lines.
+fn strip_blank_context_trailing_space(patch: &str) -> String {
+    let mut result = String::with_capacity(patch.len());
+    for line in patch.split_inclusive('\n') {
+        if line == " \n" {
+            result.push('\n');
+        } else {
+            result.push_str(line);
+        }
+    }
+    result
 }
 
 /// Write a unified diff patch with ANSI color codes.

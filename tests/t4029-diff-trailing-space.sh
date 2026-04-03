@@ -27,7 +27,7 @@ test_expect_success 'diff output with default config' '
 	grep -q "^+y" actual
 '
 
-test_expect_failure 'diff.suppressBlankEmpty=true suppresses trailing space (not implemented)' '
+test_expect_success 'diff.suppressBlankEmpty=true suppresses trailing space' '
 	git config --bool diff.suppressBlankEmpty true &&
 	git diff f > actual &&
 	sed -n "6p" actual | grep -q "^$"
