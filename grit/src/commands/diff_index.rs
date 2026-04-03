@@ -3,6 +3,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{detect_renames, stat_matches, DiffEntry, DiffStatus, zero_oid};
+use std::io::Write;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -92,8 +93,18 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
         } else {
+            let terminator = if options.nul_terminated { "\0" } else { "\n" };
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
             for entry in &diff_entries {
-                println!("{}", render_raw_diff_entry(entry, &repo, options.abbrev)?);
+                let line = render_raw_diff_entry(entry, &repo, options.abbrev)?;
+                if options.nul_terminated {
+                    // In -z mode, the colon-prefixed status line ends with NUL,
+                    // then path(s) follow separated/terminated by NUL
+                    write!(out, "{}{}", line, terminator)?;
+                } else {
+                    writeln!(out, "{}", line)?;
+                }
             }
         }
     }
@@ -116,6 +127,7 @@ struct Options {
     find_renames: Option<u32>,
     patch: bool,
     name_status: bool,
+    nul_terminated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,6 +165,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut find_renames: Option<u32> = None;
     let mut patch = false;
     let mut name_status = false;
+    let mut nul_terminated = false;
 
     let mut idx = 0usize;
     while idx < argv.len() {
@@ -206,6 +219,15 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-r" => {
                     // recursive - default behavior for diff-index
                 }
+                "-z" => {
+                    nul_terminated = true;
+                }
+                "-C" | "--find-copies" | "--find-copies-harder" => {
+                    // Copy detection: treat like rename detection for now
+                    if find_renames.is_none() {
+                        find_renames = Some(50);
+                    }
+                }
                 _ if arg.starts_with("--abbrev=") => {
                     let value = arg.trim_start_matches("--abbrev=");
                     let parsed = value
@@ -242,6 +264,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         find_renames,
         patch,
         name_status,
+        nul_terminated,
     })
 }
 
