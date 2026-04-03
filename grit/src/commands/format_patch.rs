@@ -20,6 +20,7 @@ use std::path::PathBuf;
 pub struct Args {
     /// Revision or count. Use a commit ref (e.g. `HEAD~3`) to generate patches
     /// for all commits since that ref, or a negative number (`-3`) for last N commits.
+    /// Supports `A..B` range syntax.
     #[arg(allow_hyphen_values = true)]
     pub revision: Option<String>,
 
@@ -30,6 +31,22 @@ pub struct Args {
     /// Add `[PATCH n/m]` numbering to subjects.
     #[arg(short = 'n', long = "numbered")]
     pub numbered: bool,
+
+    /// Suppress `[PATCH n/m]` numbering.
+    #[arg(short = 'N', long = "no-numbered")]
+    pub no_numbered: bool,
+
+    /// Start numbering patches at <n> instead of 1.
+    #[arg(long = "start-number", value_name = "N", default_value_t = 1)]
+    pub start_number: usize,
+
+    /// Generate a cover letter as patch 0.
+    #[arg(long = "cover-letter")]
+    pub cover_letter: bool,
+
+    /// Format all commits from root (instead of since a revision).
+    #[arg(long = "root")]
+    pub root: bool,
 
     /// Custom subject prefix (default: "PATCH").
     #[arg(long = "subject-prefix", value_name = "PREFIX")]
@@ -45,7 +62,11 @@ pub fn run(args: Args) -> Result<()> {
 
     // Determine the list of commits to format
     let revision = args.revision.as_deref().unwrap_or("-1");
-    let commits = collect_commits(&repo, revision)?;
+    let commits = if args.root {
+        collect_root_commits(&repo, revision)?
+    } else {
+        collect_commits(&repo, revision)?
+    };
 
     if commits.is_empty() {
         return Ok(());
@@ -53,6 +74,24 @@ pub fn run(args: Args) -> Result<()> {
 
     let total = commits.len();
     let prefix = args.subject_prefix.as_deref().unwrap_or("PATCH");
+
+    // Determine whether to number patches.
+    // --no-numbered (-N) forces no numbering.
+    // --numbered (-n) forces numbering.
+    // --cover-letter forces numbering (unless --no-numbered is also given).
+    // Otherwise: number if total > 1.
+    let use_numbering = if args.no_numbered {
+        false
+    } else if args.numbered || args.cover_letter {
+        true
+    } else {
+        total > 1
+    };
+
+    // start_number adjusts the displayed patch number
+    let start = args.start_number;
+    // When using --start-number, total is adjusted so last patch = start + total - 1
+    let display_total = if start != 1 { start + total - 1 } else { total };
 
     // Ensure output directory exists
     let out_dir = if let Some(ref dir) = args.output_directory {
@@ -65,13 +104,33 @@ pub fn run(args: Args) -> Result<()> {
 
     let stdout_handle = io::stdout();
 
+    // If --cover-letter, emit a cover letter first (patch 0/N)
+    if args.cover_letter {
+        let cover_subject = if use_numbering {
+            format!("[{prefix} 0/{display_total}] *** SUBJECT HERE ***")
+        } else {
+            format!("[{prefix}] *** SUBJECT HERE ***")
+        };
+        let cover = format_cover_letter(&repo, &commits, &cover_subject)?;
+        if args.stdout {
+            let mut out = stdout_handle.lock();
+            write!(out, "{cover}")?;
+        } else {
+            let filename = "0000-cover-letter.patch".to_string();
+            let path = out_dir.join(&filename);
+            std::fs::write(&path, &cover)
+                .with_context(|| format!("cannot write cover letter '{}'", path.display()))?;
+            println!("{}", path.display());
+        }
+    }
+
     for (idx, (oid, commit)) in commits.iter().enumerate() {
-        let patch_num = idx + 1;
+        let patch_num = start + idx;
         let subject_line = commit.message.lines().next().unwrap_or("");
 
         // Build the subject with optional numbering
-        let subject = if args.numbered || total > 1 {
-            format!("[{prefix} {patch_num}/{total}] {subject_line}")
+        let subject = if use_numbering {
+            format!("[{prefix} {patch_num}/{display_total}] {subject_line}")
         } else {
             format!("[{prefix}] {subject_line}")
         };
@@ -115,6 +174,13 @@ fn collect_commits(
         }
     }
 
+    // Check for A..B range syntax
+    if let Some(dotdot) = revision.find("..") {
+        let left = &revision[..dotdot];
+        let right = &revision[dotdot + 2..];
+        return collect_range_commits(repo, left, right);
+    }
+
     // Otherwise treat as a "since" revision — all commits after it up to HEAD
     let since_oid = resolve_revision(repo, revision)
         .with_context(|| format!("unknown revision '{revision}'"))?;
@@ -139,6 +205,73 @@ fn collect_commits(
     }
 
     // Reverse so oldest is first (patch order)
+    commits.reverse();
+    Ok(commits)
+}
+
+/// Collect commits in the range A..B (commits reachable from B but not from A).
+fn collect_range_commits(
+    repo: &Repository,
+    left: &str,
+    right: &str,
+) -> Result<Vec<(ObjectId, CommitData)>> {
+    let since_oid = resolve_revision(repo, left)
+        .with_context(|| format!("unknown revision '{left}'"))?;
+    let until_oid = resolve_revision(repo, right)
+        .with_context(|| format!("unknown revision '{right}'"))?;
+
+    let mut commits = Vec::new();
+    let mut current = until_oid;
+
+    loop {
+        if current == since_oid {
+            break;
+        }
+        let obj = repo.odb.read(&current).context("reading commit")?;
+        let commit = parse_commit(&obj.data).context("parsing commit")?;
+        let parent = commit.parents.first().copied();
+        commits.push((current, commit));
+        match parent {
+            Some(p) => current = p,
+            None => break,
+        }
+    }
+
+    commits.reverse();
+    Ok(commits)
+}
+
+/// Collect all commits from root up to the given revision (for --root).
+fn collect_root_commits(
+    repo: &Repository,
+    revision: &str,
+) -> Result<Vec<(ObjectId, CommitData)>> {
+    // If revision is a negative count, just use that
+    if let Some(count_str) = revision.strip_prefix('-') {
+        if let Ok(count) = count_str.parse::<usize>() {
+            return collect_last_n_commits(repo, count);
+        }
+    }
+
+    // Resolve the target
+    let target_oid = resolve_revision(repo, revision)
+        .with_context(|| format!("unknown revision '{revision}'"))?;
+
+    // Walk all the way back to root
+    let mut commits = Vec::new();
+    let mut current = target_oid;
+
+    loop {
+        let obj = repo.odb.read(&current).context("reading commit")?;
+        let commit = parse_commit(&obj.data).context("parsing commit")?;
+        let parent = commit.parents.first().copied();
+        commits.push((current, commit));
+        match parent {
+            Some(p) => current = p,
+            None => break,
+        }
+    }
+
     commits.reverse();
     Ok(commits)
 }
@@ -174,6 +307,110 @@ fn resolve_head_oid(repo: &Repository) -> Result<ObjectId> {
     head.oid()
         .copied()
         .ok_or_else(|| anyhow::anyhow!("HEAD is unborn"))
+}
+
+/// Generate a cover letter for a patch series.
+fn format_cover_letter(
+    repo: &Repository,
+    commits: &[(ObjectId, CommitData)],
+    subject: &str,
+) -> Result<String> {
+    let mut out = String::new();
+
+    // Use the last commit's info for From/Date
+    let (last_oid, last_commit) = commits.last().expect("non-empty commits");
+
+    out.push_str(&format!("From {} Mon Sep 17 00:00:00 2001\n", last_oid.to_hex()));
+
+    let author_display = format_ident(&last_commit.author);
+    out.push_str(&format!("From: {author_display}\n"));
+
+    let date = format_date_rfc2822(&last_commit.author);
+    out.push_str(&format!("Date: {date}\n"));
+
+    out.push_str(&format!("Subject: {subject}\n"));
+    out.push('\n');
+    out.push_str("*** BLURB HERE ***\n");
+    out.push('\n');
+
+    // Shortlog
+    for (_oid, commit) in commits {
+        let first_line = commit.message.lines().next().unwrap_or("");
+        let author_name = if let Some(bracket) = commit.author.find('<') {
+            commit.author[..bracket].trim()
+        } else {
+            &commit.author
+        };
+        out.push_str(&format!("  {author_name} ({}):\n", 1));
+        out.push_str(&format!("    {first_line}\n"));
+        out.push('\n');
+    }
+
+    // Diffstat across all commits
+    let first_parent_tree = commits.first().and_then(|(_oid, commit)| {
+        commit.parents.first().and_then(|parent_oid| {
+            repo.odb.read(parent_oid)
+                .ok()
+                .and_then(|obj| parse_commit(&obj.data).ok())
+                .map(|c| c.tree)
+        })
+    });
+    let last_tree = &last_commit.tree;
+
+    let diff_entries = diff_trees(&repo.odb, first_parent_tree.as_ref(), Some(last_tree), "")
+        .context("computing diff for cover letter")?;
+
+    let mut total_ins = 0;
+    let mut total_del = 0;
+    let mut max_path_len = 0;
+    let mut stat_lines = Vec::new();
+
+    for entry in &diff_entries {
+        let path = entry.path().to_owned();
+        if path.len() > max_path_len {
+            max_path_len = path.len();
+        }
+        let old_content = read_blob_content(&repo.odb, &entry.old_oid);
+        let new_content = read_blob_content(&repo.odb, &entry.new_oid);
+        let (ins, del) = grit_lib::diff::count_changes(&old_content, &new_content);
+        total_ins += ins;
+        total_del += del;
+        stat_lines.push(grit_lib::diff::format_stat_line(&path, ins, del, max_path_len));
+    }
+
+    for line in &stat_lines {
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    let files_changed = diff_entries.len();
+    out.push_str(&format!(
+        " {} file{} changed",
+        files_changed,
+        if files_changed == 1 { "" } else { "s" }
+    ));
+    if total_ins > 0 {
+        out.push_str(&format!(
+            ", {} insertion{}(+)",
+            total_ins,
+            if total_ins == 1 { "" } else { "s" }
+        ));
+    }
+    if total_del > 0 {
+        out.push_str(&format!(
+            ", {} deletion{}(-)",
+            total_del,
+            if total_del == 1 { "" } else { "s" }
+        ));
+    }
+    out.push('\n');
+    out.push('\n');
+
+    out.push_str("-- \n");
+    out.push_str("grit\n");
+    out.push('\n');
+
+    Ok(out)
 }
 
 /// Format a single commit as an email-style patch.
