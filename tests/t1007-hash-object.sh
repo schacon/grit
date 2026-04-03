@@ -57,28 +57,34 @@ test_expect_success 'hash a file' '
 '
 
 test_expect_success 'hash from stdin' '
+	cd test &&
 	test "$example_oid" = "$(grit hash-object --stdin <example)"
 '
 
 test_expect_success 'hash a file and write to database' '
+	cd test &&
 	test "$hello_oid" = "$(grit hash-object -w hello)"
 '
 
 test_expect_success 'written blob exists in database' '
+	cd test &&
 	grit cat-file "$hello_oid" >/dev/null
 '
 
 test_expect_success 'hash from stdin and write to database (-w --stdin)' '
+	cd test &&
 	test "$example_oid" = "$(grit hash-object -w --stdin <example)" &&
 	grit cat-file "$example_oid" >/dev/null
 '
 
 test_expect_success 'hash from stdin and write to database (--stdin -w)' '
+	cd test &&
 	test "$example_oid" = "$(grit hash-object --stdin -w <example)" &&
 	grit cat-file "$example_oid" >/dev/null
 '
 
 test_expect_success '--stdin file1 reads stdin first, then file1' '
+	cd test &&
 	echo foo >file1 &&
 	obname0=$(echo bar | grit hash-object --stdin) &&
 	obname1=$(grit hash-object file1) &&
@@ -89,6 +95,7 @@ test_expect_success '--stdin file1 reads stdin first, then file1' '
 '
 
 test_expect_success 'hash two files with names on stdin' '
+	cd test &&
 	printf "hello\nexample" >paths &&
 	{
 		echo "$hello_oid" &&
@@ -99,6 +106,7 @@ test_expect_success 'hash two files with names on stdin' '
 '
 
 test_expect_success 'hash two files with names on stdin and write to database (--stdin-paths -w)' '
+	cd test &&
 	printf "hello\nexample" | grit hash-object --stdin-paths -w >actual &&
 	{
 		echo "$hello_oid" &&
@@ -110,6 +118,7 @@ test_expect_success 'hash two files with names on stdin and write to database (-
 '
 
 test_expect_success 'hash two files with names on stdin and write to database (-w --stdin-paths)' '
+	cd test &&
 	printf "hello\nexample" | grit hash-object -w --stdin-paths >actual &&
 	{
 		echo "$hello_oid" &&
@@ -141,7 +150,10 @@ test_expect_success '--literally still rejects non-standard types' '
 '
 
 test_expect_success 'hash a file without -w does not write to database' '
-	setup_repo &&
+	rm -rf no-write-repo &&
+	grit init --quiet no-write-repo &&
+	cd no-write-repo &&
+	echo_without_newline "Hello World" >hello &&
 	test "$hello_oid" = "$(grit hash-object hello)" &&
 	test_must_fail grit cat-file blob "$hello_oid"
 '
@@ -150,6 +162,7 @@ test_expect_success 'hash a file without -w does not write to database' '
 # test_expect_success 'hash from stdin without -w does not write to database'
 
 test_expect_success 'hash a file and write to database, then blob exists' '
+	cd test &&
 	test "$hello_oid" = "$(grit hash-object -w hello)" &&
 	grit cat-file blob "$hello_oid" >/dev/null
 '
