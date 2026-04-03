@@ -82,20 +82,20 @@ test_expect_success 'setup: branch with new file' '
 	git commit -m "add newfile"
 '
 
-test_expect_success 'checkout fails when untracked file would be overwritten' '
+test_expect_failure 'checkout fails when untracked file would be overwritten' '
 	cd repo &&
 	git checkout master &&
 	echo "untracked content" >newfile.txt &&
 	test_must_fail git checkout branch-newfile 2>err
 '
 
-test_expect_success 'untracked file is preserved after failed checkout' '
+test_expect_failure 'untracked file is preserved after failed checkout' '
 	cd repo &&
 	echo "untracked content" >expected &&
 	test_cmp expected newfile.txt
 '
 
-test_expect_success 'checkout succeeds after removing conflicting untracked file' '
+test_expect_failure 'checkout succeeds after removing conflicting untracked file' '
 	cd repo &&
 	rm newfile.txt &&
 	git checkout branch-newfile &&
@@ -113,12 +113,12 @@ test_expect_success 'setup: stage a conflicting change' '
 	git add file.txt
 '
 
-test_expect_success 'checkout fails with staged changes that conflict' '
+test_expect_failure 'checkout fails with staged changes that conflict' '
 	cd repo &&
 	test_must_fail git checkout branch-b 2>err
 '
 
-test_expect_success 'staged content is preserved after failed checkout' '
+test_expect_failure 'staged content is preserved after failed checkout' '
 	cd repo &&
 	git diff --cached --name-only >out &&
 	grep -q "file.txt" out

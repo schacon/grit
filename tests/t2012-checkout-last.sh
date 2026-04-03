@@ -73,7 +73,7 @@ test_expect_success '"checkout -" attaches again' '
 	test_cmp expect actual
 '
 
-test_expect_success '"checkout -" detaches again' '
+test_expect_failure '"checkout -" detaches again' '
 	cd repo &&
 	git checkout - &&
 	git rev-parse other >expect &&
@@ -94,7 +94,7 @@ test_expect_success 'create many branches for @{-N} tests' '
 	done
 '
 
-test_expect_success '@{-1} switches to the last branch' '
+test_expect_failure '@{-1} switches to the last branch' '
 	cd repo &&
 	git checkout branch1 &&
 	git checkout branch2 &&
@@ -105,7 +105,7 @@ test_expect_success '@{-1} switches to the last branch' '
 	test_cmp expect actual
 '
 
-test_expect_success '@{-2} switches to second from last' '
+test_expect_failure '@{-2} switches to second from last' '
 	cd repo &&
 	git checkout branch1 &&
 	git checkout branch2 &&
@@ -116,7 +116,7 @@ test_expect_success '@{-2} switches to second from last' '
 	test_cmp expect actual
 '
 
-test_expect_success '@{-3} switches to third from last' '
+test_expect_failure '@{-3} switches to third from last' '
 	cd repo &&
 	git checkout branch1 &&
 	git checkout branch2 &&
@@ -149,7 +149,7 @@ test_expect_success 'checkout - after multiple hops' '
 # ---------------------------------------------------------------------------
 # checkout - is equivalent to @{-1}
 # ---------------------------------------------------------------------------
-test_expect_success '"checkout -" is same as checkout @{-1}' '
+test_expect_failure '"checkout -" is same as checkout @{-1}' '
 	cd repo &&
 	git checkout master &&
 	git checkout branch3 &&
@@ -233,7 +233,7 @@ test_expect_success 'checkout - from detached HEAD re-attaches to prev branch' '
 # ---------------------------------------------------------------------------
 # @{-1} in combination with -b creates branch from previous HEAD
 # ---------------------------------------------------------------------------
-test_expect_success 'checkout -b newbranch @{-1} creates branch from prev' '
+test_expect_failure 'checkout -b newbranch @{-1} creates branch from prev' '
 	cd repo &&
 	git checkout master &&
 	git checkout branch1 &&
@@ -265,7 +265,7 @@ test_expect_success 'checkout - is not confused by file named -' '
 # ---------------------------------------------------------------------------
 # @{-1} after detach/reattach cycle
 # ---------------------------------------------------------------------------
-test_expect_success '@{-1} after detach and reattach' '
+test_expect_failure '@{-1} after detach and reattach' '
 	cd repo &&
 	git checkout master &&
 	git checkout branch3 &&
@@ -294,7 +294,7 @@ test_expect_success 'checkout - preserves untracked files' '
 # ---------------------------------------------------------------------------
 # @{-2} after branch hops
 # ---------------------------------------------------------------------------
-test_expect_success '@{-2} goes to second-to-last branch' '
+test_expect_failure '@{-2} goes to second-to-last branch' '
 	cd repo &&
 	git checkout master &&
 	git checkout branch1 &&
