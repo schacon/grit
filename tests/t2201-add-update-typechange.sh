@@ -4,6 +4,8 @@ test_description='more git add -u (typechange scenarios)'
 
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success setup '
 	>xyzzy &&
 	_empty=$(git hash-object --stdin <xyzzy) &&

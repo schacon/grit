@@ -4,6 +4,8 @@ test_description='update-index with options'
 
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success 'basics: need --add when adding' '
 	>one &&
 	test_must_fail git update-index one &&

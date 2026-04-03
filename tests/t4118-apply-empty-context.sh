@@ -2,6 +2,8 @@
 test_description='git apply with new style GNU diff with empty context'
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success setup '
 	test_write_lines "" "" A B C "" >file1 &&
 	cat file1 >file1.orig &&

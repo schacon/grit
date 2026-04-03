@@ -2,6 +2,8 @@
 test_description='applying patch with mode bits'
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success setup '
 	echo original >file &&
 	git add file &&

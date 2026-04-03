@@ -8,6 +8,8 @@ test_description='config get with default values'
 
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success 'config get returns default when key missing' '
 	echo fallback >expect &&
 	git config get --default=fallback nonexistent.key >actual &&

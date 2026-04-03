@@ -4,6 +4,8 @@ test_description='git command aliasing (basic tests only)'
 
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 # Note: grit does not yet support aliases.
 # These tests verify basic config alias storage and retrieval.
 

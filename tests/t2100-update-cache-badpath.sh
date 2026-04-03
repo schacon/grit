@@ -9,6 +9,8 @@ test_description='git update-index basic path tests'
 
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success 'git update-index --add adds files to index' '
 	date >path0 &&
 	date >path1 &&

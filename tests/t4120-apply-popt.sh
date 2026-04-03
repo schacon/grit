@@ -2,6 +2,8 @@
 test_description='git apply -p handling.'
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success setup '
 	mkdir sub &&
 	echo A >sub/file1 &&

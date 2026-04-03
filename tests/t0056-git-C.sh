@@ -4,6 +4,8 @@ test_description='"-C <path>" option and its effects on other path-related optio
 
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success '"git -C <path>" runs git from the directory <path>' '
 	test_create_repo dir1 &&
 	echo 1 >dir1/a.txt &&

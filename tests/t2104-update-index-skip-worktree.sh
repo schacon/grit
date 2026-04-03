@@ -9,6 +9,8 @@ test_description='skip-worktree bit test'
 
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success 'setup' '
 	mkdir sub &&
 	touch ./1 ./2 sub/1 sub/2 &&

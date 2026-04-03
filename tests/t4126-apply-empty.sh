@@ -2,6 +2,8 @@
 test_description='apply empty'
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success setup '
 	>empty &&
 	git add empty &&

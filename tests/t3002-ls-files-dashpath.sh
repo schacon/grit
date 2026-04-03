@@ -7,6 +7,8 @@ test_description='git ls-files test (-- to terminate the path list).'
 
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success 'setup' '
 	echo frotz >path0 &&
 	echo frotz >./-foo &&

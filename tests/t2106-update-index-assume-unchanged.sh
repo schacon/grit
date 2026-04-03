@@ -4,6 +4,8 @@ test_description='git update-index --assume-unchanged test'
 
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success 'setup' '
 	: >file &&
 	git add file &&

@@ -4,6 +4,8 @@ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_tick
 
 test_expect_success 'setup: initial commit' '

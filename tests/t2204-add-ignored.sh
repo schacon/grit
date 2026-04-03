@@ -4,6 +4,8 @@ test_description='giving ignored paths to git add'
 
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success setup '
 	mkdir sub dir dir/sub &&
 	echo sub >.gitignore &&

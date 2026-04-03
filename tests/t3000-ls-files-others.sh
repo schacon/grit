@@ -7,6 +7,8 @@ test_description='basic tests for ls-files --others'
 
 . ./test-lib.sh
 
+test_expect_success 'setup: init repo' 'git init -q'
+
 test_expect_success 'setup' '
 	date >path0 &&
 	date >path1 &&
