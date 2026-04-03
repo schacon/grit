@@ -1246,79 +1246,79 @@ t0602-reffiles-fsck::packed-ref-without-sorted-trait-should-not-be-checked	t0602
 t0602-reffiles-fsck::no-references-option-should-apply-to-fsck	t0602-reffiles-fsck	--[no-]references option should apply to fsck	fsck	pass
 t0602-reffiles-fsck::complains-about-broken-root-ref	t0602-reffiles-fsck	complains about broken root ref	init	pass
 t0602-reffiles-fsck::complains-about-broken-root-ref-in-worktree	t0602-reffiles-fsck	complains about broken root ref in worktree	init	pass
-t0610-reftable-basics::pack-refs-does-not-crash-with-h	t0610-reftable-basics	pack-refs does not crash with -h	pack-refs	partial
-t0610-reftable-basics::init-creates-basic-reftable-structures	t0610-reftable-basics	init: creates basic reftable structures	init	partial
-t0610-reftable-basics::init-sha256-object-format-via-environment-variable	t0610-reftable-basics	init: sha256 object format via environment variable	init	partial
-t0610-reftable-basics::init-sha256-object-format-via-option	t0610-reftable-basics	init: sha256 object format via option	init	partial
-t0610-reftable-basics::init-reinitializing-reftable-backend-succeeds	t0610-reftable-basics	init: reinitializing reftable backend succeeds	for-each-ref	partial
-t0610-reftable-basics::init-reinitializing-files-with-reftable-backend-fails	t0610-reftable-basics	init: reinitializing files with reftable backend fails	init	partial
-t0610-reftable-basics::init-reinitializing-reftable-with-files-backend-fails	t0610-reftable-basics	init: reinitializing reftable with files backend fails	init	partial
-t0610-reftable-basics::clone-can-clone-reftable-repository	t0610-reftable-basics	clone: can clone reftable repository	clone	partial
-t0610-reftable-basics::clone-can-clone-reffiles-into-reftable-repository	t0610-reftable-basics	clone: can clone reffiles into reftable repository	clone	partial
-t0610-reftable-basics::clone-can-clone-reftable-into-reffiles-repository	t0610-reftable-basics	clone: can clone reftable into reffiles repository	clone	partial
-t0610-reftable-basics::ref-transaction-corrupted-tables-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables cause failure	init	partial
-t0610-reftable-basics::ref-transaction-corrupted-tables-list-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables.list cause failure	init	partial
-t0610-reftable-basics::ref-transaction-refuses-to-write-ref-causing-f-d-conflict	t0610-reftable-basics	ref transaction: refuses to write ref causing F/D conflict	init	partial
-t0610-reftable-basics::ref-transaction-deleting-ref-with-invalid-name-fails	t0610-reftable-basics	ref transaction: deleting ref with invalid name fails	init	partial
-t0610-reftable-basics::ref-transaction-can-skip-object-id-verification	t0610-reftable-basics	ref transaction: can skip object ID verification	init	partial
-t0610-reftable-basics::ref-transaction-updating-same-ref-multiple-times-fails	t0610-reftable-basics	ref transaction: updating same ref multiple times fails	init	partial
-t0610-reftable-basics::ref-transaction-can-delete-symbolic-self-reference-with-git-symbolic-ref-1	t0610-reftable-basics	ref transaction: can delete symbolic self-reference with git-symbolic-ref(1)	init	partial
-t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-without-no-deref-fails	t0610-reftable-basics	ref transaction: deleting symbolic self-reference without --no-deref fails	init	partial
-t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-with-no-deref-succeeds	t0610-reftable-basics	ref transaction: deleting symbolic self-reference with --no-deref succeeds	init	partial
-t0610-reftable-basics::ref-transaction-creating-symbolic-ref-fails-with-f-d-conflict	t0610-reftable-basics	ref transaction: creating symbolic ref fails with F/D conflict	init	partial
-t0610-reftable-basics::ref-transaction-ref-deletion	t0610-reftable-basics	ref transaction: ref deletion	init	partial
-t0610-reftable-basics::ref-transaction-writes-cause-auto-compaction	t0610-reftable-basics	ref transaction: writes cause auto-compaction	init	partial
-t0610-reftable-basics::ref-transaction-env-var-disables-compaction	t0610-reftable-basics	ref transaction: env var disables compaction	init	partial
-t0610-reftable-basics::ref-transaction-alternating-table-sizes-are-compacted	t0610-reftable-basics	ref transaction: alternating table sizes are compacted	branch	partial
-t0610-reftable-basics::ref-transaction-writes-are-synced	t0610-reftable-basics	ref transaction: writes are synced	init	partial
-t0610-reftable-basics::ref-transaction-empty-transaction-in-empty-repo	t0610-reftable-basics	ref transaction: empty transaction in empty repo	init	partial
-t0610-reftable-basics::ref-transaction-fails-gracefully-when-auto-compaction-fails	t0610-reftable-basics	ref transaction: fails gracefully when auto compaction fails	branch	partial
-t0610-reftable-basics::ref-transaction-timeout-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: timeout acquiring tables.list lock	init	partial
-t0610-reftable-basics::ref-transaction-retry-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: retry acquiring tables.list lock	init	partial
-t0610-reftable-basics::ref-transaction-many-concurrent-writers	t0610-reftable-basics	ref transaction: many concurrent writers	config	partial
-t0610-reftable-basics::pack-refs-compacts-tables	t0610-reftable-basics	pack-refs: compacts tables	init	partial
-t0610-reftable-basics::pack-refs-compaction-raises-locking-errors	t0610-reftable-basics	pack-refs: compaction raises locking errors	init	partial
-t0610-reftable-basics::pack-refs-prunes-stale-tables	t0610-reftable-basics	pack-refs: prunes stale tables	init	partial
-t0610-reftable-basics::pack-refs-does-not-prune-non-table-files	t0610-reftable-basics	pack-refs: does not prune non-table files	init	partial
-t0610-reftable-basics::packed-refs-writes-are-synced	t0610-reftable-basics	packed-refs: writes are synced	init	partial
-t0610-reftable-basics::ref-iterator-bogus-names-are-flagged	t0610-reftable-basics	ref iterator: bogus names are flagged	init	partial
-t0610-reftable-basics::ref-iterator-missing-object-ids-are-not-flagged	t0610-reftable-basics	ref iterator: missing object IDs are not flagged	init	partial
-t0610-reftable-basics::basic-commit-and-list-refs	t0610-reftable-basics	basic: commit and list refs	for-each-ref	partial
-t0610-reftable-basics::basic-can-write-large-commit-message	t0610-reftable-basics	basic: can write large commit message	commit	partial
-t0610-reftable-basics::basic-show-ref-fails-with-empty-repository	t0610-reftable-basics	basic: show-ref fails with empty repository	init	partial
-t0610-reftable-basics::basic-can-check-out-unborn-branch	t0610-reftable-basics	basic: can check out unborn branch	checkout	partial
-t0610-reftable-basics::basic-peeled-tags-are-stored	t0610-reftable-basics	basic: peeled tags are stored	init	partial
-t0610-reftable-basics::basic-for-each-ref-can-print-symrefs	t0610-reftable-basics	basic: for-each-ref can print symrefs	branch	partial
-t0610-reftable-basics::basic-notes	t0610-reftable-basics	basic: notes	init	partial
-t0610-reftable-basics::basic-stash	t0610-reftable-basics	basic: stash	init	partial
-t0610-reftable-basics::basic-cherry-pick	t0610-reftable-basics	basic: cherry-pick	branch	partial
-t0610-reftable-basics::basic-rebase	t0610-reftable-basics	basic: rebase	branch	partial
-t0610-reftable-basics::reflog-can-delete-separate-reflog-entries	t0610-reftable-basics	reflog: can delete separate reflog entries	init	partial
-t0610-reftable-basics::reflog-can-switch-to-previous-branch	t0610-reftable-basics	reflog: can switch to previous branch	checkout	partial
-t0610-reftable-basics::reflog-copying-branch-writes-reflog-entry	t0610-reftable-basics	reflog: copying branch writes reflog entry	branch	partial
-t0610-reftable-basics::reflog-renaming-branch-writes-reflog-entry	t0610-reftable-basics	reflog: renaming branch writes reflog entry	branch	partial
-t0610-reftable-basics::reflog-can-store-empty-logs	t0610-reftable-basics	reflog: can store empty logs	init	partial
-t0610-reftable-basics::reflog-expiry-empties-reflog	t0610-reftable-basics	reflog: expiry empties reflog	checkout	partial
-t0610-reftable-basics::reflog-can-be-deleted	t0610-reftable-basics	reflog: can be deleted	init	partial
-t0610-reftable-basics::reflog-garbage-collection-deletes-reflog-entries	t0610-reftable-basics	reflog: garbage collection deletes reflog entries	gc	partial
-t0610-reftable-basics::reflog-updates-via-head-update-head-reflog	t0610-reftable-basics	reflog: updates via HEAD update HEAD reflog	checkout	partial
-t0610-reftable-basics::branch-copying-branch-with-d-f-conflict	t0610-reftable-basics	branch: copying branch with D/F conflict	branch	partial
-t0610-reftable-basics::branch-moving-branch-with-d-f-conflict	t0610-reftable-basics	branch: moving branch with D/F conflict	branch	partial
-t0610-reftable-basics::worktree-adding-worktree-creates-separate-stack	t0610-reftable-basics	worktree: adding worktree creates separate stack	init	partial
-t0610-reftable-basics::worktree-pack-refs-in-main-repo-packs-main-refs	t0610-reftable-basics	worktree: pack-refs in main repo packs main refs	init	partial
-t0610-reftable-basics::worktree-pack-refs-in-worktree-packs-worktree-refs	t0610-reftable-basics	worktree: pack-refs in worktree packs worktree refs	init	partial
-t0610-reftable-basics::worktree-creating-shared-ref-updates-main-stack	t0610-reftable-basics	worktree: creating shared ref updates main stack	init	partial
-t0610-reftable-basics::worktree-creating-per-worktree-ref-updates-worktree-stack	t0610-reftable-basics	worktree: creating per-worktree ref updates worktree stack	init	partial
-t0610-reftable-basics::worktree-creating-per-worktree-ref-from-main-repo	t0610-reftable-basics	worktree: creating per-worktree ref from main repo	init	partial
-t0610-reftable-basics::worktree-creating-per-worktree-ref-from-second-worktree	t0610-reftable-basics	worktree: creating per-worktree ref from second worktree	init	partial
-t0610-reftable-basics::worktree-can-create-shared-and-per-worktree-ref-in-one-transaction	t0610-reftable-basics	worktree: can create shared and per-worktree ref in one transaction	init	partial
-t0610-reftable-basics::worktree-can-access-common-refs	t0610-reftable-basics	worktree: can access common refs	branch	partial
-t0610-reftable-basics::worktree-adds-worktree-with-detached-head	t0610-reftable-basics	worktree: adds worktree with detached HEAD	init	partial
-t0610-reftable-basics::fetch-accessing-fetch-head-special-ref-works	t0610-reftable-basics	fetch: accessing FETCH_HEAD special ref works	fetch	partial
-t0610-reftable-basics::writes-do-not-persist-peeled-value-for-invalid-tags	t0610-reftable-basics	writes do not persist peeled value for invalid tags	cat-file	partial
-t0610-reftable-basics::init-honors-shared-shared-with-umask-umask	t0610-reftable-basics	init: honors --shared=$shared with umask $umask	init	partial
-t0610-reftable-basics::pack-refs-honors-shared-shared-with-umask-umask	t0610-reftable-basics	pack-refs: honors --shared=$shared with umask $umask	init	partial
-t0610-reftable-basics::command-auto-compaction	t0610-reftable-basics	$command: auto compaction	branch	partial
+t0610-reftable-basics::pack-refs-does-not-crash-with-h	t0610-reftable-basics	pack-refs does not crash with -h	pack-refs	pass
+t0610-reftable-basics::init-creates-basic-reftable-structures	t0610-reftable-basics	init: creates basic reftable structures	init	pass
+t0610-reftable-basics::init-sha256-object-format-via-environment-variable	t0610-reftable-basics	init: sha256 object format via environment variable	init	pass
+t0610-reftable-basics::init-sha256-object-format-via-option	t0610-reftable-basics	init: sha256 object format via option	init	pass
+t0610-reftable-basics::init-reinitializing-reftable-backend-succeeds	t0610-reftable-basics	init: reinitializing reftable backend succeeds	for-each-ref	pass
+t0610-reftable-basics::init-reinitializing-files-with-reftable-backend-fails	t0610-reftable-basics	init: reinitializing files with reftable backend fails	init	pass
+t0610-reftable-basics::init-reinitializing-reftable-with-files-backend-fails	t0610-reftable-basics	init: reinitializing reftable with files backend fails	init	pass
+t0610-reftable-basics::clone-can-clone-reftable-repository	t0610-reftable-basics	clone: can clone reftable repository	clone	pass
+t0610-reftable-basics::clone-can-clone-reffiles-into-reftable-repository	t0610-reftable-basics	clone: can clone reffiles into reftable repository	clone	pass
+t0610-reftable-basics::clone-can-clone-reftable-into-reffiles-repository	t0610-reftable-basics	clone: can clone reftable into reffiles repository	clone	pass
+t0610-reftable-basics::ref-transaction-corrupted-tables-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables cause failure	init	pass
+t0610-reftable-basics::ref-transaction-corrupted-tables-list-cause-failure	t0610-reftable-basics	ref transaction: corrupted tables.list cause failure	init	pass
+t0610-reftable-basics::ref-transaction-refuses-to-write-ref-causing-f-d-conflict	t0610-reftable-basics	ref transaction: refuses to write ref causing F/D conflict	init	pass
+t0610-reftable-basics::ref-transaction-deleting-ref-with-invalid-name-fails	t0610-reftable-basics	ref transaction: deleting ref with invalid name fails	init	pass
+t0610-reftable-basics::ref-transaction-can-skip-object-id-verification	t0610-reftable-basics	ref transaction: can skip object ID verification	init	pass
+t0610-reftable-basics::ref-transaction-updating-same-ref-multiple-times-fails	t0610-reftable-basics	ref transaction: updating same ref multiple times fails	init	pass
+t0610-reftable-basics::ref-transaction-can-delete-symbolic-self-reference-with-git-symbolic-ref-1	t0610-reftable-basics	ref transaction: can delete symbolic self-reference with git-symbolic-ref(1)	init	pass
+t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-without-no-deref-fails	t0610-reftable-basics	ref transaction: deleting symbolic self-reference without --no-deref fails	init	pass
+t0610-reftable-basics::ref-transaction-deleting-symbolic-self-reference-with-no-deref-succeeds	t0610-reftable-basics	ref transaction: deleting symbolic self-reference with --no-deref succeeds	init	pass
+t0610-reftable-basics::ref-transaction-creating-symbolic-ref-fails-with-f-d-conflict	t0610-reftable-basics	ref transaction: creating symbolic ref fails with F/D conflict	init	pass
+t0610-reftable-basics::ref-transaction-ref-deletion	t0610-reftable-basics	ref transaction: ref deletion	init	pass
+t0610-reftable-basics::ref-transaction-writes-cause-auto-compaction	t0610-reftable-basics	ref transaction: writes cause auto-compaction	init	pass
+t0610-reftable-basics::ref-transaction-env-var-disables-compaction	t0610-reftable-basics	ref transaction: env var disables compaction	init	pass
+t0610-reftable-basics::ref-transaction-alternating-table-sizes-are-compacted	t0610-reftable-basics	ref transaction: alternating table sizes are compacted	branch	pass
+t0610-reftable-basics::ref-transaction-writes-are-synced	t0610-reftable-basics	ref transaction: writes are synced	init	pass
+t0610-reftable-basics::ref-transaction-empty-transaction-in-empty-repo	t0610-reftable-basics	ref transaction: empty transaction in empty repo	init	pass
+t0610-reftable-basics::ref-transaction-fails-gracefully-when-auto-compaction-fails	t0610-reftable-basics	ref transaction: fails gracefully when auto compaction fails	branch	pass
+t0610-reftable-basics::ref-transaction-timeout-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: timeout acquiring tables.list lock	init	pass
+t0610-reftable-basics::ref-transaction-retry-acquiring-tables-list-lock	t0610-reftable-basics	ref transaction: retry acquiring tables.list lock	init	pass
+t0610-reftable-basics::ref-transaction-many-concurrent-writers	t0610-reftable-basics	ref transaction: many concurrent writers	config	pass
+t0610-reftable-basics::pack-refs-compacts-tables	t0610-reftable-basics	pack-refs: compacts tables	init	pass
+t0610-reftable-basics::pack-refs-compaction-raises-locking-errors	t0610-reftable-basics	pack-refs: compaction raises locking errors	init	pass
+t0610-reftable-basics::pack-refs-prunes-stale-tables	t0610-reftable-basics	pack-refs: prunes stale tables	init	pass
+t0610-reftable-basics::pack-refs-does-not-prune-non-table-files	t0610-reftable-basics	pack-refs: does not prune non-table files	init	pass
+t0610-reftable-basics::packed-refs-writes-are-synced	t0610-reftable-basics	packed-refs: writes are synced	init	pass
+t0610-reftable-basics::ref-iterator-bogus-names-are-flagged	t0610-reftable-basics	ref iterator: bogus names are flagged	init	pass
+t0610-reftable-basics::ref-iterator-missing-object-ids-are-not-flagged	t0610-reftable-basics	ref iterator: missing object IDs are not flagged	init	pass
+t0610-reftable-basics::basic-commit-and-list-refs	t0610-reftable-basics	basic: commit and list refs	for-each-ref	pass
+t0610-reftable-basics::basic-can-write-large-commit-message	t0610-reftable-basics	basic: can write large commit message	commit	pass
+t0610-reftable-basics::basic-show-ref-fails-with-empty-repository	t0610-reftable-basics	basic: show-ref fails with empty repository	init	pass
+t0610-reftable-basics::basic-can-check-out-unborn-branch	t0610-reftable-basics	basic: can check out unborn branch	checkout	pass
+t0610-reftable-basics::basic-peeled-tags-are-stored	t0610-reftable-basics	basic: peeled tags are stored	init	pass
+t0610-reftable-basics::basic-for-each-ref-can-print-symrefs	t0610-reftable-basics	basic: for-each-ref can print symrefs	branch	pass
+t0610-reftable-basics::basic-notes	t0610-reftable-basics	basic: notes	init	pass
+t0610-reftable-basics::basic-stash	t0610-reftable-basics	basic: stash	init	pass
+t0610-reftable-basics::basic-cherry-pick	t0610-reftable-basics	basic: cherry-pick	branch	pass
+t0610-reftable-basics::basic-rebase	t0610-reftable-basics	basic: rebase	branch	pass
+t0610-reftable-basics::reflog-can-delete-separate-reflog-entries	t0610-reftable-basics	reflog: can delete separate reflog entries	init	pass
+t0610-reftable-basics::reflog-can-switch-to-previous-branch	t0610-reftable-basics	reflog: can switch to previous branch	checkout	pass
+t0610-reftable-basics::reflog-copying-branch-writes-reflog-entry	t0610-reftable-basics	reflog: copying branch writes reflog entry	branch	pass
+t0610-reftable-basics::reflog-renaming-branch-writes-reflog-entry	t0610-reftable-basics	reflog: renaming branch writes reflog entry	branch	pass
+t0610-reftable-basics::reflog-can-store-empty-logs	t0610-reftable-basics	reflog: can store empty logs	init	pass
+t0610-reftable-basics::reflog-expiry-empties-reflog	t0610-reftable-basics	reflog: expiry empties reflog	checkout	pass
+t0610-reftable-basics::reflog-can-be-deleted	t0610-reftable-basics	reflog: can be deleted	init	pass
+t0610-reftable-basics::reflog-garbage-collection-deletes-reflog-entries	t0610-reftable-basics	reflog: garbage collection deletes reflog entries	gc	pass
+t0610-reftable-basics::reflog-updates-via-head-update-head-reflog	t0610-reftable-basics	reflog: updates via HEAD update HEAD reflog	checkout	pass
+t0610-reftable-basics::branch-copying-branch-with-d-f-conflict	t0610-reftable-basics	branch: copying branch with D/F conflict	branch	pass
+t0610-reftable-basics::branch-moving-branch-with-d-f-conflict	t0610-reftable-basics	branch: moving branch with D/F conflict	branch	pass
+t0610-reftable-basics::worktree-adding-worktree-creates-separate-stack	t0610-reftable-basics	worktree: adding worktree creates separate stack	init	pass
+t0610-reftable-basics::worktree-pack-refs-in-main-repo-packs-main-refs	t0610-reftable-basics	worktree: pack-refs in main repo packs main refs	init	pass
+t0610-reftable-basics::worktree-pack-refs-in-worktree-packs-worktree-refs	t0610-reftable-basics	worktree: pack-refs in worktree packs worktree refs	init	pass
+t0610-reftable-basics::worktree-creating-shared-ref-updates-main-stack	t0610-reftable-basics	worktree: creating shared ref updates main stack	init	pass
+t0610-reftable-basics::worktree-creating-per-worktree-ref-updates-worktree-stack	t0610-reftable-basics	worktree: creating per-worktree ref updates worktree stack	init	pass
+t0610-reftable-basics::worktree-creating-per-worktree-ref-from-main-repo	t0610-reftable-basics	worktree: creating per-worktree ref from main repo	init	pass
+t0610-reftable-basics::worktree-creating-per-worktree-ref-from-second-worktree	t0610-reftable-basics	worktree: creating per-worktree ref from second worktree	init	pass
+t0610-reftable-basics::worktree-can-create-shared-and-per-worktree-ref-in-one-transaction	t0610-reftable-basics	worktree: can create shared and per-worktree ref in one transaction	init	pass
+t0610-reftable-basics::worktree-can-access-common-refs	t0610-reftable-basics	worktree: can access common refs	branch	pass
+t0610-reftable-basics::worktree-adds-worktree-with-detached-head	t0610-reftable-basics	worktree: adds worktree with detached HEAD	init	pass
+t0610-reftable-basics::fetch-accessing-fetch-head-special-ref-works	t0610-reftable-basics	fetch: accessing FETCH_HEAD special ref works	fetch	pass
+t0610-reftable-basics::writes-do-not-persist-peeled-value-for-invalid-tags	t0610-reftable-basics	writes do not persist peeled value for invalid tags	cat-file	pass
+t0610-reftable-basics::init-honors-shared-shared-with-umask-umask	t0610-reftable-basics	init: honors --shared=$shared with umask $umask	init	pass
+t0610-reftable-basics::pack-refs-honors-shared-shared-with-umask-umask	t0610-reftable-basics	pack-refs: honors --shared=$shared with umask $umask	init	pass
+t0610-reftable-basics::command-auto-compaction	t0610-reftable-basics	$command: auto compaction	branch	pass
 t0611-reftable-httpd::serving-ls-remote	t0611-reftable-httpd	serving ls-remote	init	pass
 t0612-reftable-jgit-compatibility::cgit-repository-can-be-read-by-jgit	t0612-reftable-jgit-compatibility	CGit repository can be read by JGit	init	pass
 t0612-reftable-jgit-compatibility::jgit-repository-can-be-read-by-cgit	t0612-reftable-jgit-compatibility	JGit repository can be read by CGit	reflog	pass
@@ -1335,10 +1335,10 @@ t0613-reftable-write-options::restart-interval-at-every-single-record	t0613-reft
 t0613-reftable-write-options::restart-interval-exceeding-maximum-supported-interval	t0613-reftable-write-options	restart interval exceeding maximum supported interval	init	pass
 t0613-reftable-write-options::object-index-gets-written-by-default-with-ref-index	t0613-reftable-write-options	object index gets written by default with ref index	pack-refs	pass
 t0613-reftable-write-options::object-index-can-be-disabled	t0613-reftable-write-options	object index can be disabled	pack-refs	pass
-t0614-reftable-fsck::worktree-stacks-can-be-verified	t0614-reftable-fsck	worktree stacks can be verified	init	partial
-t0614-reftable-fsck::invalid-symref-gets-reported	t0614-reftable-fsck	invalid symref gets reported	init	partial
-t0614-reftable-fsck::no-errors-reported-on-a-well-formed-repository	t0614-reftable-fsck	no errors reported on a well formed repository	commit	partial
-t0614-reftable-fsck::table-name-table-name-should-be-checked	t0614-reftable-fsck	table name $TABLE_NAME should be checked	commit	partial
+t0614-reftable-fsck::worktree-stacks-can-be-verified	t0614-reftable-fsck	worktree stacks can be verified	init	pass
+t0614-reftable-fsck::invalid-symref-gets-reported	t0614-reftable-fsck	invalid symref gets reported	init	pass
+t0614-reftable-fsck::no-errors-reported-on-a-well-formed-repository	t0614-reftable-fsck	no errors reported on a well formed repository	commit	pass
+t0614-reftable-fsck::table-name-table-name-should-be-checked	t0614-reftable-fsck	table name $TABLE_NAME should be checked	commit	pass
 t1000-read-tree-m-3way::3-way-merge-with-git-read-tree-m-empty-cache	t1000-read-tree-m-3way	3-way merge with git read-tree -m, empty cache	read-tree	pass
 t1000-read-tree-m-3way::3-way-merge-with-git-read-tree-m-match-h	t1000-read-tree-m-3way	3-way merge with git read-tree -m, match H	read-tree	pass
 t1000-read-tree-m-3way::1-must-not-have-an-entry-not-in-a	t1000-read-tree-m-3way	1 - must not have an entry not in A.	read-tree	pass
@@ -5673,44 +5673,44 @@ t3506-cherry-pick-ff::cherry-pick-with-ff-a-merge-2	t3506-cherry-pick-ff	cherry 
 t3506-cherry-pick-ff::cherry-pick-a-merge-relative-to-nonexistent-parent-with-ff-should-fail	t3506-cherry-pick-ff	cherry pick a merge relative to nonexistent parent with --ff should fail	cherry-pick	pass
 t3506-cherry-pick-ff::cherry-pick-a-root-commit-with-ff	t3506-cherry-pick-ff	cherry pick a root commit with --ff	cherry-pick	pass
 t3506-cherry-pick-ff::cherry-pick-ff-on-unborn-branch	t3506-cherry-pick-ff	cherry-pick --ff on unborn branch	cherry-pick	pass
-t3507-cherry-pick-conflict::failed-cherry-pick-does-not-advance-head	t3507-cherry-pick-conflict	failed cherry-pick does not advance HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::advice-from-failed-cherry-pick	t3507-cherry-pick-conflict	advice from failed cherry-pick	cherry-pick	partial
-t3507-cherry-pick-conflict::advice-from-failed-cherry-pick-no-commit	t3507-cherry-pick-conflict	advice from failed cherry-pick --no-commit	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-cherry-pick-sets-cherry-pick-head	t3507-cherry-pick-conflict	failed cherry-pick sets CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::successful-cherry-pick-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	successful cherry-pick does not set CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::cherry-pick-no-commit-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick --no-commit does not set CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::cherry-pick-w-dirty-tree-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick w/dirty tree does not set CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::git-cherry-pick-help-suppresses-cherry-pick-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP suppresses CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::git-reset-clears-cherry-pick-head	t3507-cherry-pick-conflict	git reset clears CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	failed commit does not clear CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::cancelled-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	cancelled commit does not clear CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::successful-commit-clears-cherry-pick-head	t3507-cherry-pick-conflict	successful commit clears CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::partial-commit-of-cherry-pick-fails	t3507-cherry-pick-conflict	partial commit of cherry-pick fails	cherry-pick	partial
-t3507-cherry-pick-conflict::commit-amend-of-cherry-pick-fails	t3507-cherry-pick-conflict	commit --amend of cherry-pick fails	cherry-pick	partial
-t3507-cherry-pick-conflict::successful-final-commit-clears-cherry-pick-state	t3507-cherry-pick-conflict	successful final commit clears cherry-pick state	cherry-pick	partial
-t3507-cherry-pick-conflict::reset-after-final-pick-clears-cherry-pick-state	t3507-cherry-pick-conflict	reset after final pick clears cherry-pick state	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-cherry-pick-produces-dirty-index	t3507-cherry-pick-conflict	failed cherry-pick produces dirty index	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-cherry-pick-registers-participants-in-index	t3507-cherry-pick-conflict	failed cherry-pick registers participants in index	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-cherry-pick-describes-conflict-in-work-tree	t3507-cherry-pick-conflict	failed cherry-pick describes conflict in work tree	cherry-pick	partial
-t3507-cherry-pick-conflict::diff3-m-style	t3507-cherry-pick-conflict	diff3 -m style	cherry-pick	partial
-t3507-cherry-pick-conflict::revert-also-handles-conflicts-sanely	t3507-cherry-pick-conflict	revert also handles conflicts sanely	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-revert-sets-revert-head	t3507-cherry-pick-conflict	failed revert sets REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::successful-revert-does-not-set-revert-head	t3507-cherry-pick-conflict	successful revert does not set REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::revert-no-commit-sets-revert-head	t3507-cherry-pick-conflict	revert --no-commit sets REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::revert-w-dirty-tree-does-not-set-revert-head	t3507-cherry-pick-conflict	revert w/dirty tree does not set REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::git-cherry-pick-help-does-not-suppress-revert-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP does not suppress REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::git-reset-clears-revert-head	t3507-cherry-pick-conflict	git reset clears REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-commit-does-not-clear-revert-head	t3507-cherry-pick-conflict	failed commit does not clear REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::successful-final-commit-clears-revert-state	t3507-cherry-pick-conflict	successful final commit clears revert state	cherry-pick	partial
-t3507-cherry-pick-conflict::reset-after-final-pick-clears-revert-state	t3507-cherry-pick-conflict	reset after final pick clears revert state	cherry-pick	partial
-t3507-cherry-pick-conflict::revert-conflict-diff3-m-style	t3507-cherry-pick-conflict	revert conflict, diff3 -m style	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-cherry-pick-does-not-forget-s	t3507-cherry-pick-conflict	failed cherry-pick does not forget -s	cherry-pick	partial
-t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-does-not-add-duplicated-s	t3507-cherry-pick-conflict	commit after failed cherry-pick does not add duplicated -s	cherry-pick	partial
-t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-adds-s-at-the-right-place	t3507-cherry-pick-conflict	commit after failed cherry-pick adds -s at the right place	cherry-pick	partial
-t3507-cherry-pick-conflict::commit-amend-s-places-the-sign-off-at-the-right-place	t3507-cherry-pick-conflict	commit --amend -s places the sign-off at the right place	cherry-pick	partial
-t3507-cherry-pick-conflict::cherry-pick-preserves-sparse-checkout	t3507-cherry-pick-conflict	cherry-pick preserves sparse-checkout	cherry-pick	partial
-t3507-cherry-pick-conflict::cherry-pick-continue-remembers-keep-redundant-commits	t3507-cherry-pick-conflict	cherry-pick --continue remembers --keep-redundant-commits	cherry-pick	partial
-t3507-cherry-pick-conflict::cherry-pick-continue-remembers-allow-empty-and-allow-empty-message	t3507-cherry-pick-conflict	cherry-pick --continue remembers --allow-empty and --allow-empty-message	cherry-pick	partial
+t3507-cherry-pick-conflict::failed-cherry-pick-does-not-advance-head	t3507-cherry-pick-conflict	failed cherry-pick does not advance HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::advice-from-failed-cherry-pick	t3507-cherry-pick-conflict	advice from failed cherry-pick	cherry-pick	pass
+t3507-cherry-pick-conflict::advice-from-failed-cherry-pick-no-commit	t3507-cherry-pick-conflict	advice from failed cherry-pick --no-commit	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-cherry-pick-sets-cherry-pick-head	t3507-cherry-pick-conflict	failed cherry-pick sets CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::successful-cherry-pick-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	successful cherry-pick does not set CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::cherry-pick-no-commit-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick --no-commit does not set CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::cherry-pick-w-dirty-tree-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick w/dirty tree does not set CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::git-cherry-pick-help-suppresses-cherry-pick-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP suppresses CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::git-reset-clears-cherry-pick-head	t3507-cherry-pick-conflict	git reset clears CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	failed commit does not clear CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::cancelled-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	cancelled commit does not clear CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::successful-commit-clears-cherry-pick-head	t3507-cherry-pick-conflict	successful commit clears CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::partial-commit-of-cherry-pick-fails	t3507-cherry-pick-conflict	partial commit of cherry-pick fails	cherry-pick	pass
+t3507-cherry-pick-conflict::commit-amend-of-cherry-pick-fails	t3507-cherry-pick-conflict	commit --amend of cherry-pick fails	cherry-pick	pass
+t3507-cherry-pick-conflict::successful-final-commit-clears-cherry-pick-state	t3507-cherry-pick-conflict	successful final commit clears cherry-pick state	cherry-pick	pass
+t3507-cherry-pick-conflict::reset-after-final-pick-clears-cherry-pick-state	t3507-cherry-pick-conflict	reset after final pick clears cherry-pick state	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-cherry-pick-produces-dirty-index	t3507-cherry-pick-conflict	failed cherry-pick produces dirty index	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-cherry-pick-registers-participants-in-index	t3507-cherry-pick-conflict	failed cherry-pick registers participants in index	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-cherry-pick-describes-conflict-in-work-tree	t3507-cherry-pick-conflict	failed cherry-pick describes conflict in work tree	cherry-pick	pass
+t3507-cherry-pick-conflict::diff3-m-style	t3507-cherry-pick-conflict	diff3 -m style	cherry-pick	pass
+t3507-cherry-pick-conflict::revert-also-handles-conflicts-sanely	t3507-cherry-pick-conflict	revert also handles conflicts sanely	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-revert-sets-revert-head	t3507-cherry-pick-conflict	failed revert sets REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::successful-revert-does-not-set-revert-head	t3507-cherry-pick-conflict	successful revert does not set REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::revert-no-commit-sets-revert-head	t3507-cherry-pick-conflict	revert --no-commit sets REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::revert-w-dirty-tree-does-not-set-revert-head	t3507-cherry-pick-conflict	revert w/dirty tree does not set REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::git-cherry-pick-help-does-not-suppress-revert-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP does not suppress REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::git-reset-clears-revert-head	t3507-cherry-pick-conflict	git reset clears REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-commit-does-not-clear-revert-head	t3507-cherry-pick-conflict	failed commit does not clear REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::successful-final-commit-clears-revert-state	t3507-cherry-pick-conflict	successful final commit clears revert state	cherry-pick	pass
+t3507-cherry-pick-conflict::reset-after-final-pick-clears-revert-state	t3507-cherry-pick-conflict	reset after final pick clears revert state	cherry-pick	pass
+t3507-cherry-pick-conflict::revert-conflict-diff3-m-style	t3507-cherry-pick-conflict	revert conflict, diff3 -m style	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-cherry-pick-does-not-forget-s	t3507-cherry-pick-conflict	failed cherry-pick does not forget -s	cherry-pick	pass
+t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-does-not-add-duplicated-s	t3507-cherry-pick-conflict	commit after failed cherry-pick does not add duplicated -s	cherry-pick	pass
+t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-adds-s-at-the-right-place	t3507-cherry-pick-conflict	commit after failed cherry-pick adds -s at the right place	cherry-pick	pass
+t3507-cherry-pick-conflict::commit-amend-s-places-the-sign-off-at-the-right-place	t3507-cherry-pick-conflict	commit --amend -s places the sign-off at the right place	cherry-pick	pass
+t3507-cherry-pick-conflict::cherry-pick-preserves-sparse-checkout	t3507-cherry-pick-conflict	cherry-pick preserves sparse-checkout	cherry-pick	pass
+t3507-cherry-pick-conflict::cherry-pick-continue-remembers-keep-redundant-commits	t3507-cherry-pick-conflict	cherry-pick --continue remembers --keep-redundant-commits	cherry-pick	pass
+t3507-cherry-pick-conflict::cherry-pick-continue-remembers-allow-empty-and-allow-empty-message	t3507-cherry-pick-conflict	cherry-pick --continue remembers --allow-empty and --allow-empty-message	cherry-pick	pass
 t3508-cherry-pick-many-commits::cherry-pick-first-fourth-works	t3508-cherry-pick-many-commits	cherry-pick first..fourth works	cherry-pick	pass
 t3508-cherry-pick-many-commits::cherry-pick-three-one-two-works	t3508-cherry-pick-many-commits	cherry-pick three one two works	cherry-pick	pass
 t3508-cherry-pick-many-commits::cherry-pick-three-one-two-fails	t3508-cherry-pick-many-commits	cherry-pick three one two: fails	cherry-pick	pass
@@ -5733,57 +5733,57 @@ t3509-cherry-pick-merge-df::cherry-pick-succeeds-with-was-a-dir-file-was-a-dir-r
 t3509-cherry-pick-merge-df::setup-rename-with-file-on-one-side-matching-different-dirname-on-other	t3509-cherry-pick-merge-df	Setup rename with file on one side matching different dirname on other	cherry-pick	pass
 t3509-cherry-pick-merge-df::cherry-pick-with-rename-to-different-d-f-conflict-succeeds-resolve	t3509-cherry-pick-merge-df	Cherry-pick with rename to different D/F conflict succeeds (resolve)	cherry-pick	pass
 t3509-cherry-pick-merge-df::cherry-pick-with-rename-to-different-d-f-conflict-succeeds-recursive	t3509-cherry-pick-merge-df	Cherry-pick with rename to different D/F conflict succeeds (recursive)	cherry-pick	pass
-t3510-cherry-pick-sequence::cherry-pick-persists-data-on-failure	t3510-cherry-pick-sequence	cherry-pick persists data on failure	cherry-pick	partial
-t3510-cherry-pick-sequence::cherry-pick-mid-cherry-pick-sequence	t3510-cherry-pick-sequence	cherry-pick mid-cherry-pick-sequence	cherry-pick	partial
-t3510-cherry-pick-sequence::cherry-pick-persists-opts-correctly	t3510-cherry-pick-sequence	cherry-pick persists opts correctly	cherry-pick	partial
-t3510-cherry-pick-sequence::cherry-pick-persists-empty-stop-correctly	t3510-cherry-pick-sequence	cherry-pick persists --empty=stop correctly	cherry-pick	partial
-t3510-cherry-pick-sequence::cherry-pick-persists-empty-drop-correctly	t3510-cherry-pick-sequence	cherry-pick persists --empty=drop correctly	cherry-pick	partial
-t3510-cherry-pick-sequence::cherry-pick-persists-empty-keep-correctly	t3510-cherry-pick-sequence	cherry-pick persists --empty=keep correctly	cherry-pick	partial
-t3510-cherry-pick-sequence::revert-persists-opts-correctly	t3510-cherry-pick-sequence	revert persists opts correctly	cherry-pick	partial
-t3510-cherry-pick-sequence::cherry-pick-cleans-up-sequencer-state-upon-success	t3510-cherry-pick-sequence	cherry-pick cleans up sequencer state upon success	cherry-pick	partial
-t3510-cherry-pick-sequence::cherry-pick-skip-requires-cherry-pick-in-progress	t3510-cherry-pick-sequence	cherry-pick --skip requires cherry-pick in progress	cherry-pick	partial
-t3510-cherry-pick-sequence::revert-skip-requires-revert-in-progress	t3510-cherry-pick-sequence	revert --skip requires revert in progress	cherry-pick	partial
-t3510-cherry-pick-sequence::cherry-pick-skip-to-skip-commit	t3510-cherry-pick-sequence	cherry-pick --skip to skip commit	cherry-pick	partial
-t3510-cherry-pick-sequence::revert-skip-to-skip-commit	t3510-cherry-pick-sequence	revert --skip to skip commit	cherry-pick	partial
-t3510-cherry-pick-sequence::skip-empty-commit	t3510-cherry-pick-sequence	skip "empty" commit	cherry-pick	partial
-t3510-cherry-pick-sequence::skip-a-commit-and-check-if-rest-of-sequence-is-correct	t3510-cherry-pick-sequence	skip a commit and check if rest of sequence is correct	cherry-pick	partial
-t3510-cherry-pick-sequence::check-advice-when-we-move-head-by-committing	t3510-cherry-pick-sequence	check advice when we move HEAD by committing	cherry-pick	partial
-t3510-cherry-pick-sequence::selectively-advise-skip-while-launching-another-sequence	t3510-cherry-pick-sequence	selectively advise --skip while launching another sequence	cherry-pick	partial
-t3510-cherry-pick-sequence::allow-skipping-commit-but-not-abort-for-a-new-history	t3510-cherry-pick-sequence	allow skipping commit but not abort for a new history	cherry-pick	partial
-t3510-cherry-pick-sequence::allow-skipping-stopped-cherry-pick-because-of-untracked-file-modifications	t3510-cherry-pick-sequence	allow skipping stopped cherry-pick because of untracked file modifications	cherry-pick	partial
-t3510-cherry-pick-sequence::quit-does-not-complain-when-no-cherry-pick-is-in-progress	t3510-cherry-pick-sequence	--quit does not complain when no cherry-pick is in progress	cherry-pick	partial
-t3510-cherry-pick-sequence::abort-requires-cherry-pick-in-progress	t3510-cherry-pick-sequence	--abort requires cherry-pick in progress	cherry-pick	partial
-t3510-cherry-pick-sequence::quit-cleans-up-sequencer-state	t3510-cherry-pick-sequence	--quit cleans up sequencer state	cherry-pick	partial
-t3510-cherry-pick-sequence::quit-keeps-head-and-conflicted-index-intact	t3510-cherry-pick-sequence	--quit keeps HEAD and conflicted index intact	cherry-pick	partial
-t3510-cherry-pick-sequence::abort-to-cancel-multiple-cherry-pick	t3510-cherry-pick-sequence	--abort to cancel multiple cherry-pick	cherry-pick	partial
-t3510-cherry-pick-sequence::abort-to-cancel-single-cherry-pick	t3510-cherry-pick-sequence	--abort to cancel single cherry-pick	cherry-pick	partial
-t3510-cherry-pick-sequence::abort-does-not-unsafely-change-head	t3510-cherry-pick-sequence	--abort does not unsafely change HEAD	cherry-pick	partial
-t3510-cherry-pick-sequence::cherry-pick-abort-to-cancel-multiple-revert	t3510-cherry-pick-sequence	cherry-pick --abort to cancel multiple revert	cherry-pick	partial
-t3510-cherry-pick-sequence::revert-abort-works-too	t3510-cherry-pick-sequence	revert --abort works, too	cherry-pick	partial
-t3510-cherry-pick-sequence::abort-to-cancel-single-revert	t3510-cherry-pick-sequence	--abort to cancel single revert	cherry-pick	partial
-t3510-cherry-pick-sequence::abort-keeps-unrelated-change-easy-case	t3510-cherry-pick-sequence	--abort keeps unrelated change, easy case	cherry-pick	partial
-t3510-cherry-pick-sequence::abort-refuses-to-clobber-unrelated-change-harder-case	t3510-cherry-pick-sequence	--abort refuses to clobber unrelated change, harder case	cherry-pick	partial
-t3510-cherry-pick-sequence::cherry-pick-still-writes-sequencer-state-when-one-commit-is-left	t3510-cherry-pick-sequence	cherry-pick still writes sequencer state when one commit is left	cherry-pick	partial
-t3510-cherry-pick-sequence::abort-after-last-commit-in-sequence	t3510-cherry-pick-sequence	--abort after last commit in sequence	cherry-pick	partial
-t3510-cherry-pick-sequence::cherry-pick-does-not-implicitly-stomp-an-existing-operation	t3510-cherry-pick-sequence	cherry-pick does not implicitly stomp an existing operation	cherry-pick	partial
-t3510-cherry-pick-sequence::continue-complains-when-no-cherry-pick-is-in-progress	t3510-cherry-pick-sequence	--continue complains when no cherry-pick is in progress	cherry-pick	partial
-t3510-cherry-pick-sequence::continue-complains-when-there-are-unresolved-conflicts	t3510-cherry-pick-sequence	--continue complains when there are unresolved conflicts	cherry-pick	partial
-t3510-cherry-pick-sequence::continue-of-single-cherry-pick	t3510-cherry-pick-sequence	--continue of single cherry-pick	cherry-pick	partial
-t3510-cherry-pick-sequence::continue-of-single-revert	t3510-cherry-pick-sequence	--continue of single revert	cherry-pick	partial
-t3510-cherry-pick-sequence::continue-after-resolving-conflicts	t3510-cherry-pick-sequence	--continue after resolving conflicts	cherry-pick	partial
-t3510-cherry-pick-sequence::continue-after-resolving-conflicts-and-committing	t3510-cherry-pick-sequence	--continue after resolving conflicts and committing	cherry-pick	partial
-t3510-cherry-pick-sequence::continue-asks-for-help-after-resolving-patch-to-nil	t3510-cherry-pick-sequence	--continue asks for help after resolving patch to nil	cherry-pick	partial
-t3510-cherry-pick-sequence::follow-advice-and-skip-nil-patch	t3510-cherry-pick-sequence	follow advice and skip nil patch	cherry-pick	partial
-t3510-cherry-pick-sequence::continue-respects-opts	t3510-cherry-pick-sequence	--continue respects opts	cherry-pick	partial
-t3510-cherry-pick-sequence::continue-of-single-pick-respects-x	t3510-cherry-pick-sequence	--continue of single-pick respects -x	cherry-pick	partial
-t3510-cherry-pick-sequence::continue-respects-x-in-first-commit-in-multi-pick	t3510-cherry-pick-sequence	--continue respects -x in first commit in multi-pick	cherry-pick	partial
-t3510-cherry-pick-sequence::malformed-instruction-sheet-1	t3510-cherry-pick-sequence	malformed instruction sheet 1	cherry-pick	partial
-t3510-cherry-pick-sequence::malformed-instruction-sheet-2	t3510-cherry-pick-sequence	malformed instruction sheet 2	cherry-pick	partial
-t3510-cherry-pick-sequence::empty-commit-set-no-commits-to-walk	t3510-cherry-pick-sequence	empty commit set (no commits to walk)	cherry-pick	partial
-t3510-cherry-pick-sequence::empty-commit-set-culled-during-walk	t3510-cherry-pick-sequence	empty commit set (culled during walk)	cherry-pick	partial
-t3510-cherry-pick-sequence::malformed-instruction-sheet-3	t3510-cherry-pick-sequence	malformed instruction sheet 3	cherry-pick	partial
-t3510-cherry-pick-sequence::instruction-sheet-fat-fingers-version	t3510-cherry-pick-sequence	instruction sheet, fat-fingers version	cherry-pick	partial
-t3510-cherry-pick-sequence::commit-descriptions-in-insn-sheet-are-optional	t3510-cherry-pick-sequence	commit descriptions in insn sheet are optional	cherry-pick	partial
+t3510-cherry-pick-sequence::cherry-pick-persists-data-on-failure	t3510-cherry-pick-sequence	cherry-pick persists data on failure	cherry-pick	pass
+t3510-cherry-pick-sequence::cherry-pick-mid-cherry-pick-sequence	t3510-cherry-pick-sequence	cherry-pick mid-cherry-pick-sequence	cherry-pick	pass
+t3510-cherry-pick-sequence::cherry-pick-persists-opts-correctly	t3510-cherry-pick-sequence	cherry-pick persists opts correctly	cherry-pick	pass
+t3510-cherry-pick-sequence::cherry-pick-persists-empty-stop-correctly	t3510-cherry-pick-sequence	cherry-pick persists --empty=stop correctly	cherry-pick	pass
+t3510-cherry-pick-sequence::cherry-pick-persists-empty-drop-correctly	t3510-cherry-pick-sequence	cherry-pick persists --empty=drop correctly	cherry-pick	pass
+t3510-cherry-pick-sequence::cherry-pick-persists-empty-keep-correctly	t3510-cherry-pick-sequence	cherry-pick persists --empty=keep correctly	cherry-pick	pass
+t3510-cherry-pick-sequence::revert-persists-opts-correctly	t3510-cherry-pick-sequence	revert persists opts correctly	cherry-pick	pass
+t3510-cherry-pick-sequence::cherry-pick-cleans-up-sequencer-state-upon-success	t3510-cherry-pick-sequence	cherry-pick cleans up sequencer state upon success	cherry-pick	pass
+t3510-cherry-pick-sequence::cherry-pick-skip-requires-cherry-pick-in-progress	t3510-cherry-pick-sequence	cherry-pick --skip requires cherry-pick in progress	cherry-pick	pass
+t3510-cherry-pick-sequence::revert-skip-requires-revert-in-progress	t3510-cherry-pick-sequence	revert --skip requires revert in progress	cherry-pick	pass
+t3510-cherry-pick-sequence::cherry-pick-skip-to-skip-commit	t3510-cherry-pick-sequence	cherry-pick --skip to skip commit	cherry-pick	pass
+t3510-cherry-pick-sequence::revert-skip-to-skip-commit	t3510-cherry-pick-sequence	revert --skip to skip commit	cherry-pick	pass
+t3510-cherry-pick-sequence::skip-empty-commit	t3510-cherry-pick-sequence	skip "empty" commit	cherry-pick	pass
+t3510-cherry-pick-sequence::skip-a-commit-and-check-if-rest-of-sequence-is-correct	t3510-cherry-pick-sequence	skip a commit and check if rest of sequence is correct	cherry-pick	pass
+t3510-cherry-pick-sequence::check-advice-when-we-move-head-by-committing	t3510-cherry-pick-sequence	check advice when we move HEAD by committing	cherry-pick	pass
+t3510-cherry-pick-sequence::selectively-advise-skip-while-launching-another-sequence	t3510-cherry-pick-sequence	selectively advise --skip while launching another sequence	cherry-pick	pass
+t3510-cherry-pick-sequence::allow-skipping-commit-but-not-abort-for-a-new-history	t3510-cherry-pick-sequence	allow skipping commit but not abort for a new history	cherry-pick	pass
+t3510-cherry-pick-sequence::allow-skipping-stopped-cherry-pick-because-of-untracked-file-modifications	t3510-cherry-pick-sequence	allow skipping stopped cherry-pick because of untracked file modifications	cherry-pick	pass
+t3510-cherry-pick-sequence::quit-does-not-complain-when-no-cherry-pick-is-in-progress	t3510-cherry-pick-sequence	--quit does not complain when no cherry-pick is in progress	cherry-pick	pass
+t3510-cherry-pick-sequence::abort-requires-cherry-pick-in-progress	t3510-cherry-pick-sequence	--abort requires cherry-pick in progress	cherry-pick	pass
+t3510-cherry-pick-sequence::quit-cleans-up-sequencer-state	t3510-cherry-pick-sequence	--quit cleans up sequencer state	cherry-pick	pass
+t3510-cherry-pick-sequence::quit-keeps-head-and-conflicted-index-intact	t3510-cherry-pick-sequence	--quit keeps HEAD and conflicted index intact	cherry-pick	pass
+t3510-cherry-pick-sequence::abort-to-cancel-multiple-cherry-pick	t3510-cherry-pick-sequence	--abort to cancel multiple cherry-pick	cherry-pick	pass
+t3510-cherry-pick-sequence::abort-to-cancel-single-cherry-pick	t3510-cherry-pick-sequence	--abort to cancel single cherry-pick	cherry-pick	pass
+t3510-cherry-pick-sequence::abort-does-not-unsafely-change-head	t3510-cherry-pick-sequence	--abort does not unsafely change HEAD	cherry-pick	pass
+t3510-cherry-pick-sequence::cherry-pick-abort-to-cancel-multiple-revert	t3510-cherry-pick-sequence	cherry-pick --abort to cancel multiple revert	cherry-pick	pass
+t3510-cherry-pick-sequence::revert-abort-works-too	t3510-cherry-pick-sequence	revert --abort works, too	cherry-pick	pass
+t3510-cherry-pick-sequence::abort-to-cancel-single-revert	t3510-cherry-pick-sequence	--abort to cancel single revert	cherry-pick	pass
+t3510-cherry-pick-sequence::abort-keeps-unrelated-change-easy-case	t3510-cherry-pick-sequence	--abort keeps unrelated change, easy case	cherry-pick	pass
+t3510-cherry-pick-sequence::abort-refuses-to-clobber-unrelated-change-harder-case	t3510-cherry-pick-sequence	--abort refuses to clobber unrelated change, harder case	cherry-pick	pass
+t3510-cherry-pick-sequence::cherry-pick-still-writes-sequencer-state-when-one-commit-is-left	t3510-cherry-pick-sequence	cherry-pick still writes sequencer state when one commit is left	cherry-pick	pass
+t3510-cherry-pick-sequence::abort-after-last-commit-in-sequence	t3510-cherry-pick-sequence	--abort after last commit in sequence	cherry-pick	pass
+t3510-cherry-pick-sequence::cherry-pick-does-not-implicitly-stomp-an-existing-operation	t3510-cherry-pick-sequence	cherry-pick does not implicitly stomp an existing operation	cherry-pick	pass
+t3510-cherry-pick-sequence::continue-complains-when-no-cherry-pick-is-in-progress	t3510-cherry-pick-sequence	--continue complains when no cherry-pick is in progress	cherry-pick	pass
+t3510-cherry-pick-sequence::continue-complains-when-there-are-unresolved-conflicts	t3510-cherry-pick-sequence	--continue complains when there are unresolved conflicts	cherry-pick	pass
+t3510-cherry-pick-sequence::continue-of-single-cherry-pick	t3510-cherry-pick-sequence	--continue of single cherry-pick	cherry-pick	pass
+t3510-cherry-pick-sequence::continue-of-single-revert	t3510-cherry-pick-sequence	--continue of single revert	cherry-pick	pass
+t3510-cherry-pick-sequence::continue-after-resolving-conflicts	t3510-cherry-pick-sequence	--continue after resolving conflicts	cherry-pick	pass
+t3510-cherry-pick-sequence::continue-after-resolving-conflicts-and-committing	t3510-cherry-pick-sequence	--continue after resolving conflicts and committing	cherry-pick	pass
+t3510-cherry-pick-sequence::continue-asks-for-help-after-resolving-patch-to-nil	t3510-cherry-pick-sequence	--continue asks for help after resolving patch to nil	cherry-pick	pass
+t3510-cherry-pick-sequence::follow-advice-and-skip-nil-patch	t3510-cherry-pick-sequence	follow advice and skip nil patch	cherry-pick	pass
+t3510-cherry-pick-sequence::continue-respects-opts	t3510-cherry-pick-sequence	--continue respects opts	cherry-pick	pass
+t3510-cherry-pick-sequence::continue-of-single-pick-respects-x	t3510-cherry-pick-sequence	--continue of single-pick respects -x	cherry-pick	pass
+t3510-cherry-pick-sequence::continue-respects-x-in-first-commit-in-multi-pick	t3510-cherry-pick-sequence	--continue respects -x in first commit in multi-pick	cherry-pick	pass
+t3510-cherry-pick-sequence::malformed-instruction-sheet-1	t3510-cherry-pick-sequence	malformed instruction sheet 1	cherry-pick	pass
+t3510-cherry-pick-sequence::malformed-instruction-sheet-2	t3510-cherry-pick-sequence	malformed instruction sheet 2	cherry-pick	pass
+t3510-cherry-pick-sequence::empty-commit-set-no-commits-to-walk	t3510-cherry-pick-sequence	empty commit set (no commits to walk)	cherry-pick	pass
+t3510-cherry-pick-sequence::empty-commit-set-culled-during-walk	t3510-cherry-pick-sequence	empty commit set (culled during walk)	cherry-pick	pass
+t3510-cherry-pick-sequence::malformed-instruction-sheet-3	t3510-cherry-pick-sequence	malformed instruction sheet 3	cherry-pick	pass
+t3510-cherry-pick-sequence::instruction-sheet-fat-fingers-version	t3510-cherry-pick-sequence	instruction sheet, fat-fingers version	cherry-pick	pass
+t3510-cherry-pick-sequence::commit-descriptions-in-insn-sheet-are-optional	t3510-cherry-pick-sequence	commit descriptions in insn sheet are optional	cherry-pick	pass
 t3511-cherry-pick-x::cherry-pick-x-inserts-blank-line-after-one-line-subject	t3511-cherry-pick-x	cherry-pick -x inserts blank line after one line subject	cherry-pick	pass
 t3511-cherry-pick-x::cherry-pick-s-inserts-blank-line-after-one-line-subject	t3511-cherry-pick-x	cherry-pick -s inserts blank line after one line subject	cherry-pick	pass
 t3511-cherry-pick-x::cherry-pick-s-inserts-blank-line-after-non-conforming-footer	t3511-cherry-pick-x	cherry-pick -s inserts blank line after non-conforming footer	cherry-pick	pass
@@ -6488,10 +6488,10 @@ t4003-diff-rename-1::prepare-work-tree-again	t4003-diff-rename-1	prepare work tr
 t4003-diff-rename-1::validate-output-from-rename-copy-detection-2	t4003-diff-rename-1	validate output from rename/copy detection (#2)	diff	pass
 t4003-diff-rename-1::prepare-work-tree-once-again	t4003-diff-rename-1	prepare work tree once again	diff	pass
 t4003-diff-rename-1::validate-output-from-rename-copy-detection-3	t4003-diff-rename-1	validate output from rename/copy detection (#3)	diff	pass
-t4004-diff-rename-symlink::prepare-reference-tree	t4004-diff-rename-symlink	prepare reference tree	diff	partial
-t4004-diff-rename-symlink::prepare-work-tree	t4004-diff-rename-symlink	prepare work tree	diff	partial
-t4004-diff-rename-symlink::setup-diff-output	t4004-diff-rename-symlink	setup diff output	diff	partial
-t4004-diff-rename-symlink::validate-diff-output	t4004-diff-rename-symlink	validate diff output	diff	partial
+t4004-diff-rename-symlink::prepare-reference-tree	t4004-diff-rename-symlink	prepare reference tree	diff	pass
+t4004-diff-rename-symlink::prepare-work-tree	t4004-diff-rename-symlink	prepare work tree	diff	pass
+t4004-diff-rename-symlink::setup-diff-output	t4004-diff-rename-symlink	setup diff output	diff	pass
+t4004-diff-rename-symlink::validate-diff-output	t4004-diff-rename-symlink	validate diff output	diff	pass
 t4005-diff-rename-2::setup-reference-tree	t4005-diff-rename-2	setup reference tree	diff	pass
 t4005-diff-rename-2::validate-output-from-rename-copy-detection-1	t4005-diff-rename-2	validate output from rename/copy detection (#1)	diff	pass
 t4005-diff-rename-2::validate-output-from-rename-copy-detection-2	t4005-diff-rename-2	validate output from rename/copy detection (#2)	diff	pass
@@ -7082,7 +7082,7 @@ t4027-diff-submodule::combined-with-submodule	t4027-diff-submodule	combined (wit
 t4028-format-patch-mime-headers::create-commit-with-utf-8-body	t4028-format-patch-mime-headers	create commit with utf-8 body	format-patch	pass
 t4028-format-patch-mime-headers::patch-has-mime-headers	t4028-format-patch-mime-headers	patch has mime headers	format-patch	pass
 t4028-format-patch-mime-headers::patch-has-mime-and-extra-headers	t4028-format-patch-mime-headers	patch has mime and extra headers	format-patch	pass
-t4029-diff-trailing-space::test-description	t4029-diff-trailing-space	$test_description	diff	partial
+t4029-diff-trailing-space::test-description	t4029-diff-trailing-space	$test_description	diff	pass
 t4030-diff-textconv::setup-binary-file-with-history	t4030-diff-textconv	setup binary file with history	diff	pass
 t4030-diff-textconv::file-is-considered-binary-by-porcelain	t4030-diff-textconv	file is considered binary by porcelain	diff	pass
 t4030-diff-textconv::file-is-considered-binary-by-plumbing	t4030-diff-textconv	file is considered binary by plumbing	diff	pass
@@ -7266,17 +7266,17 @@ t4043-diff-rename-binary::move-the-files-into-a-sub-directory	t4043-diff-rename-
 t4043-diff-rename-binary::git-show-c-c-report-renames	t4043-diff-rename-binary	git show -C -C report renames	diff	pass
 t4044-diff-index-unique-abbrev::setup	t4044-diff-index-unique-abbrev	setup	diff-index	pass
 t4044-diff-index-unique-abbrev::diff-does-not-produce-ambiguous-index-line	t4044-diff-index-unique-abbrev	diff does not produce ambiguous index line	diff-index	pass
-t4045-diff-relative::setup	t4045-diff-relative	setup	diff	partial
-t4045-diff-relative::external-diff-with-relative	t4045-diff-relative	external diff with --relative	diff	partial
-t4045-diff-relative::setup-diff-relative-unmerged	t4045-diff-relative	setup diff --relative unmerged	diff	partial
-t4045-diff-relative::diff-relative-without-change-in-subdir	t4045-diff-relative	diff --relative without change in subdir	diff	partial
-t4045-diff-relative::diff-relative-name-only-with-change-in-subdir	t4045-diff-relative	diff --relative --name-only with change in subdir	diff	partial
-t4045-diff-relative::p	t4045-diff-relative	-p $*	diff	partial
-t4045-diff-relative::numstat	t4045-diff-relative	--numstat $*	diff	partial
-t4045-diff-relative::stat	t4045-diff-relative	--stat $*	diff	partial
-t4045-diff-relative::raw	t4045-diff-relative	--raw $*	diff	partial
-t4045-diff-relative::config-diff-relative-relative-opt-p	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	partial
-t4045-diff-relative::config-diff-relative-relative-opt-p-2	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	partial
+t4045-diff-relative::setup	t4045-diff-relative	setup	diff	pass
+t4045-diff-relative::external-diff-with-relative	t4045-diff-relative	external diff with --relative	diff	pass
+t4045-diff-relative::setup-diff-relative-unmerged	t4045-diff-relative	setup diff --relative unmerged	diff	pass
+t4045-diff-relative::diff-relative-without-change-in-subdir	t4045-diff-relative	diff --relative without change in subdir	diff	pass
+t4045-diff-relative::diff-relative-name-only-with-change-in-subdir	t4045-diff-relative	diff --relative --name-only with change in subdir	diff	pass
+t4045-diff-relative::p	t4045-diff-relative	-p $*	diff	pass
+t4045-diff-relative::numstat	t4045-diff-relative	--numstat $*	diff	pass
+t4045-diff-relative::stat	t4045-diff-relative	--stat $*	diff	pass
+t4045-diff-relative::raw	t4045-diff-relative	--raw $*	diff	pass
+t4045-diff-relative::config-diff-relative-relative-opt-p	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	pass
+t4045-diff-relative::config-diff-relative-relative-opt-p-2	t4045-diff-relative	config diff.relative $relative_opt -p $*	diff	pass
 t4046-diff-unmerged::diff-files-0	t4046-diff-unmerged	diff-files -0	diff	pass
 t4046-diff-unmerged::diff-files-1	t4046-diff-unmerged	diff-files -1	diff	pass
 t4046-diff-unmerged::diff-files-2	t4046-diff-unmerged	diff-files -2	diff	pass
@@ -7989,92 +7989,92 @@ t4140-apply-ita::apply-deletion-patch-to-ita-path-index	t4140-apply-ita	apply de
 t4140-apply-ita::apply-creation-patch-to-existing-index-with-n	t4140-apply-ita	apply creation patch to existing index with -N	apply	pass
 t4140-apply-ita::apply-complex-patch-with-n	t4140-apply-ita	apply complex patch with -N	apply	pass
 t4141-apply-too-large::git-apply-rejects-patches-that-are-too-large	t4141-apply-too-large	git apply rejects patches that are too large	apply	pass
-t4150-am::setup-messages	t4150-am	setup: messages	am	partial
-t4150-am::am-applies-patch-correctly	t4150-am	am applies patch correctly	am	partial
-t4150-am::am-fails-if-index-is-dirty	t4150-am	am fails if index is dirty	am	partial
-t4150-am::am-applies-patch-e-mail-not-in-a-mbox	t4150-am	am applies patch e-mail not in a mbox	am	partial
-t4150-am::am-applies-patch-e-mail-not-in-a-mbox-with-crlf	t4150-am	am applies patch e-mail not in a mbox with CRLF	am	partial
-t4150-am::am-applies-patch-e-mail-with-preceding-whitespace	t4150-am	am applies patch e-mail with preceding whitespace	am	partial
-t4150-am::am-applies-stgit-patch	t4150-am	am applies stgit patch	am	partial
-t4150-am::am-patch-format-stgit-applies-stgit-patch	t4150-am	am --patch-format=stgit applies stgit patch	am	partial
-t4150-am::am-applies-stgit-series	t4150-am	am applies stgit series	am	partial
-t4150-am::am-applies-hg-patch	t4150-am	am applies hg patch	am	partial
-t4150-am::am-patch-format-hg-applies-hg-patch	t4150-am	am --patch-format=hg applies hg patch	am	partial
-t4150-am::am-with-applypatch-msg-hook	t4150-am	am with applypatch-msg hook	am	partial
-t4150-am::am-with-failing-applypatch-msg-hook	t4150-am	am with failing applypatch-msg hook	am	partial
-t4150-am::am-with-failing-applypatch-msg-hook-no-verify	t4150-am	am with failing applypatch-msg hook (no verify)	am	partial
-t4150-am::am-with-pre-applypatch-hook	t4150-am	am with pre-applypatch hook	am	partial
-t4150-am::am-with-failing-pre-applypatch-hook	t4150-am	am with failing pre-applypatch hook	am	partial
-t4150-am::am-with-failing-pre-applypatch-hook-no-verify	t4150-am	am with failing pre-applypatch hook (no verify)	am	partial
-t4150-am::am-with-post-applypatch-hook	t4150-am	am with post-applypatch hook	am	partial
-t4150-am::am-with-failing-post-applypatch-hook	t4150-am	am with failing post-applypatch hook	am	partial
-t4150-am::am-scissors-cuts-the-message-at-the-scissors-line	t4150-am	am --scissors cuts the message at the scissors line	am	partial
-t4150-am::am-no-scissors-overrides-mailinfo-scissors	t4150-am	am --no-scissors overrides mailinfo.scissors	am	partial
-t4150-am::setup-new-author-and-committer	t4150-am	setup: new author and committer	am	partial
-t4150-am::am-changes-committer-and-keeps-author	t4150-am	am changes committer and keeps author	am	partial
-t4150-am::am-signoff-adds-signed-off-by-line	t4150-am	am --signoff adds Signed-off-by: line	am	partial
-t4150-am::am-stays-in-branch	t4150-am	am stays in branch	am	partial
-t4150-am::am-signoff-does-not-add-signed-off-by-line-if-already-there	t4150-am	am --signoff does not add Signed-off-by: line if already there	am	partial
-t4150-am::am-signoff-adds-signed-off-by-if-another-author-is-preset	t4150-am	am --signoff adds Signed-off-by: if another author is preset	am	partial
-t4150-am::am-signoff-duplicates-signed-off-by-if-it-is-not-the-last-one	t4150-am	am --signoff duplicates Signed-off-by: if it is not the last one	am	partial
-t4150-am::am-without-keep-removes-re-and-patch-stuff	t4150-am	am without --keep removes Re: and [PATCH] stuff	am	partial
-t4150-am::am-keep-really-keeps-the-subject	t4150-am	am --keep really keeps the subject	am	partial
-t4150-am::am-keep-non-patch-really-keeps-the-non-patch-part	t4150-am	am --keep-non-patch really keeps the non-patch part	am	partial
-t4150-am::setup-am-3	t4150-am	setup am -3	am	partial
-t4150-am::am-3-falls-back-to-3-way-merge	t4150-am	am -3 falls back to 3-way merge	am	partial
-t4150-am::am-3-p0-can-read-no-prefix-patch	t4150-am	am -3 -p0 can read --no-prefix patch	am	partial
-t4150-am::am-with-config-am-threeway-falls-back-to-3-way-merge	t4150-am	am with config am.threeWay falls back to 3-way merge	am	partial
-t4150-am::am-with-config-am-threeway-overridden-by-no-3way	t4150-am	am with config am.threeWay overridden by --no-3way	am	partial
-t4150-am::am-can-rename-a-file	t4150-am	am can rename a file	am	partial
-t4150-am::am-3-can-rename-a-file	t4150-am	am -3 can rename a file	am	partial
-t4150-am::am-3-can-rename-a-file-after-falling-back-to-3-way-merge	t4150-am	am -3 can rename a file after falling back to 3-way merge	am	partial
-t4150-am::am-3-q-is-quiet	t4150-am	am -3 -q is quiet	am	partial
-t4150-am::am-pauses-on-conflict	t4150-am	am pauses on conflict	am	partial
-t4150-am::am-show-current-patch	t4150-am	am --show-current-patch	am	partial
-t4150-am::am-show-current-patch-raw	t4150-am	am --show-current-patch=raw	am	partial
-t4150-am::am-show-current-patch-diff	t4150-am	am --show-current-patch=diff	am	partial
-t4150-am::am-accepts-repeated-show-current-patch	t4150-am	am accepts repeated --show-current-patch	am	partial
-t4150-am::am-detects-incompatible-show-current-patch	t4150-am	am detects incompatible --show-current-patch	am	partial
-t4150-am::am-skip-works	t4150-am	am --skip works	am	partial
-t4150-am::am-abort-removes-a-stray-directory	t4150-am	am --abort removes a stray directory	am	partial
-t4150-am::am-refuses-patches-when-paused	t4150-am	am refuses patches when paused	am	partial
-t4150-am::am-resolved-works	t4150-am	am --resolved works	am	partial
-t4150-am::am-resolved-fails-if-index-has-no-changes	t4150-am	am --resolved fails if index has no changes	am	partial
-t4150-am::am-resolved-fails-if-index-has-unmerged-entries	t4150-am	am --resolved fails if index has unmerged entries	am	partial
-t4150-am::am-takes-patches-from-a-pine-mailbox	t4150-am	am takes patches from a Pine mailbox	am	partial
-t4150-am::am-fails-on-mail-without-patch	t4150-am	am fails on mail without patch	am	partial
-t4150-am::am-fails-on-empty-patch	t4150-am	am fails on empty patch	am	partial
-t4150-am::am-works-from-stdin-in-subdirectory	t4150-am	am works from stdin in subdirectory	am	partial
-t4150-am::am-works-from-file-relative-path-given-in-subdirectory	t4150-am	am works from file (relative path given) in subdirectory	am	partial
-t4150-am::am-works-from-file-absolute-path-given-in-subdirectory	t4150-am	am works from file (absolute path given) in subdirectory	am	partial
-t4150-am::am-committer-date-is-author-date	t4150-am	am --committer-date-is-author-date	am	partial
-t4150-am::am-without-committer-date-is-author-date	t4150-am	am without --committer-date-is-author-date	am	partial
-t4150-am::am-ignore-date	t4150-am	am --ignore-date	am	partial
-t4150-am::am-into-an-unborn-branch	t4150-am	am into an unborn branch	am	partial
-t4150-am::am-newline-in-subject	t4150-am	am newline in subject	am	partial
-t4150-am::am-q-is-quiet	t4150-am	am -q is quiet	am	partial
-t4150-am::am-empty-file-does-not-infloop	t4150-am	am empty-file does not infloop	am	partial
-t4150-am::am-message-id-really-adds-the-message-id	t4150-am	am --message-id really adds the message id	am	partial
-t4150-am::am-messageid-really-adds-the-message-id	t4150-am	am.messageid really adds the message id	am	partial
-t4150-am::am-message-id-s-signs-off-after-the-message-id	t4150-am	am --message-id -s signs off after the message id	am	partial
-t4150-am::am-3-works-with-rerere	t4150-am	am -3 works with rerere	am	partial
-t4150-am::am-s-unexpected-trailer-block	t4150-am	am -s unexpected trailer block	am	partial
-t4150-am::am-patch-format-mboxrd-handles-mboxrd	t4150-am	am --patch-format=mboxrd handles mboxrd	am	partial
-t4150-am::am-works-with-multi-line-in-body-headers	t4150-am	am works with multi-line in-body headers	am	partial
-t4150-am::am-quit-keeps-head-where-it-is	t4150-am	am --quit keeps HEAD where it is	am	partial
-t4150-am::am-and-gitattibutes	t4150-am	am and .gitattibutes	am	partial
-t4150-am::apply-binary-blob-in-partial-clone	t4150-am	apply binary blob in partial clone	am	partial
-t4150-am::an-empty-input-file-is-error-regardless-of-empty-option	t4150-am	an empty input file is error regardless of --empty option	am	partial
-t4150-am::invalid-when-passing-the-empty-option-alone	t4150-am	invalid when passing the --empty option alone	am	partial
-t4150-am::a-message-without-a-patch-is-an-error-default	t4150-am	a message without a patch is an error (default)	am	partial
-t4150-am::a-message-without-a-patch-is-an-error-where-an-explicit-empty-stop-is-given	t4150-am	a message without a patch is an error where an explicit "--empty=stop" is given	am	partial
-t4150-am::a-message-without-a-patch-will-be-skipped-when-empty-drop-is-given	t4150-am	a message without a patch will be skipped when "--empty=drop" is given	am	partial
-t4150-am::record-as-an-empty-commit-when-meeting-e-mail-message-that-lacks-a-patch	t4150-am	record as an empty commit when meeting e-mail message that lacks a patch	am	partial
-t4150-am::skip-an-empty-patch-in-the-middle-of-an-am-session	t4150-am	skip an empty patch in the middle of an am session	am	partial
-t4150-am::record-an-empty-patch-as-an-empty-commit-in-the-middle-of-an-am-session	t4150-am	record an empty patch as an empty commit in the middle of an am session	am	partial
-t4150-am::create-an-non-empty-commit-when-the-index-is-changed-though-allow-empty-is-given	t4150-am	create an non-empty commit when the index IS changed though "--allow-empty" is given	am	partial
-t4150-am::cannot-create-empty-commits-when-there-is-a-clean-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is a clean index due to merge conflicts	am	partial
-t4150-am::cannot-create-empty-commits-when-there-is-unmerged-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is unmerged index due to merge conflicts	am	partial
+t4150-am::setup-messages	t4150-am	setup: messages	am	pass
+t4150-am::am-applies-patch-correctly	t4150-am	am applies patch correctly	am	pass
+t4150-am::am-fails-if-index-is-dirty	t4150-am	am fails if index is dirty	am	pass
+t4150-am::am-applies-patch-e-mail-not-in-a-mbox	t4150-am	am applies patch e-mail not in a mbox	am	pass
+t4150-am::am-applies-patch-e-mail-not-in-a-mbox-with-crlf	t4150-am	am applies patch e-mail not in a mbox with CRLF	am	pass
+t4150-am::am-applies-patch-e-mail-with-preceding-whitespace	t4150-am	am applies patch e-mail with preceding whitespace	am	pass
+t4150-am::am-applies-stgit-patch	t4150-am	am applies stgit patch	am	pass
+t4150-am::am-patch-format-stgit-applies-stgit-patch	t4150-am	am --patch-format=stgit applies stgit patch	am	pass
+t4150-am::am-applies-stgit-series	t4150-am	am applies stgit series	am	pass
+t4150-am::am-applies-hg-patch	t4150-am	am applies hg patch	am	pass
+t4150-am::am-patch-format-hg-applies-hg-patch	t4150-am	am --patch-format=hg applies hg patch	am	pass
+t4150-am::am-with-applypatch-msg-hook	t4150-am	am with applypatch-msg hook	am	pass
+t4150-am::am-with-failing-applypatch-msg-hook	t4150-am	am with failing applypatch-msg hook	am	pass
+t4150-am::am-with-failing-applypatch-msg-hook-no-verify	t4150-am	am with failing applypatch-msg hook (no verify)	am	pass
+t4150-am::am-with-pre-applypatch-hook	t4150-am	am with pre-applypatch hook	am	pass
+t4150-am::am-with-failing-pre-applypatch-hook	t4150-am	am with failing pre-applypatch hook	am	pass
+t4150-am::am-with-failing-pre-applypatch-hook-no-verify	t4150-am	am with failing pre-applypatch hook (no verify)	am	pass
+t4150-am::am-with-post-applypatch-hook	t4150-am	am with post-applypatch hook	am	pass
+t4150-am::am-with-failing-post-applypatch-hook	t4150-am	am with failing post-applypatch hook	am	pass
+t4150-am::am-scissors-cuts-the-message-at-the-scissors-line	t4150-am	am --scissors cuts the message at the scissors line	am	pass
+t4150-am::am-no-scissors-overrides-mailinfo-scissors	t4150-am	am --no-scissors overrides mailinfo.scissors	am	pass
+t4150-am::setup-new-author-and-committer	t4150-am	setup: new author and committer	am	pass
+t4150-am::am-changes-committer-and-keeps-author	t4150-am	am changes committer and keeps author	am	pass
+t4150-am::am-signoff-adds-signed-off-by-line	t4150-am	am --signoff adds Signed-off-by: line	am	pass
+t4150-am::am-stays-in-branch	t4150-am	am stays in branch	am	pass
+t4150-am::am-signoff-does-not-add-signed-off-by-line-if-already-there	t4150-am	am --signoff does not add Signed-off-by: line if already there	am	pass
+t4150-am::am-signoff-adds-signed-off-by-if-another-author-is-preset	t4150-am	am --signoff adds Signed-off-by: if another author is preset	am	pass
+t4150-am::am-signoff-duplicates-signed-off-by-if-it-is-not-the-last-one	t4150-am	am --signoff duplicates Signed-off-by: if it is not the last one	am	pass
+t4150-am::am-without-keep-removes-re-and-patch-stuff	t4150-am	am without --keep removes Re: and [PATCH] stuff	am	pass
+t4150-am::am-keep-really-keeps-the-subject	t4150-am	am --keep really keeps the subject	am	pass
+t4150-am::am-keep-non-patch-really-keeps-the-non-patch-part	t4150-am	am --keep-non-patch really keeps the non-patch part	am	pass
+t4150-am::setup-am-3	t4150-am	setup am -3	am	pass
+t4150-am::am-3-falls-back-to-3-way-merge	t4150-am	am -3 falls back to 3-way merge	am	pass
+t4150-am::am-3-p0-can-read-no-prefix-patch	t4150-am	am -3 -p0 can read --no-prefix patch	am	pass
+t4150-am::am-with-config-am-threeway-falls-back-to-3-way-merge	t4150-am	am with config am.threeWay falls back to 3-way merge	am	pass
+t4150-am::am-with-config-am-threeway-overridden-by-no-3way	t4150-am	am with config am.threeWay overridden by --no-3way	am	pass
+t4150-am::am-can-rename-a-file	t4150-am	am can rename a file	am	pass
+t4150-am::am-3-can-rename-a-file	t4150-am	am -3 can rename a file	am	pass
+t4150-am::am-3-can-rename-a-file-after-falling-back-to-3-way-merge	t4150-am	am -3 can rename a file after falling back to 3-way merge	am	pass
+t4150-am::am-3-q-is-quiet	t4150-am	am -3 -q is quiet	am	pass
+t4150-am::am-pauses-on-conflict	t4150-am	am pauses on conflict	am	pass
+t4150-am::am-show-current-patch	t4150-am	am --show-current-patch	am	pass
+t4150-am::am-show-current-patch-raw	t4150-am	am --show-current-patch=raw	am	pass
+t4150-am::am-show-current-patch-diff	t4150-am	am --show-current-patch=diff	am	pass
+t4150-am::am-accepts-repeated-show-current-patch	t4150-am	am accepts repeated --show-current-patch	am	pass
+t4150-am::am-detects-incompatible-show-current-patch	t4150-am	am detects incompatible --show-current-patch	am	pass
+t4150-am::am-skip-works	t4150-am	am --skip works	am	pass
+t4150-am::am-abort-removes-a-stray-directory	t4150-am	am --abort removes a stray directory	am	pass
+t4150-am::am-refuses-patches-when-paused	t4150-am	am refuses patches when paused	am	pass
+t4150-am::am-resolved-works	t4150-am	am --resolved works	am	pass
+t4150-am::am-resolved-fails-if-index-has-no-changes	t4150-am	am --resolved fails if index has no changes	am	pass
+t4150-am::am-resolved-fails-if-index-has-unmerged-entries	t4150-am	am --resolved fails if index has unmerged entries	am	pass
+t4150-am::am-takes-patches-from-a-pine-mailbox	t4150-am	am takes patches from a Pine mailbox	am	pass
+t4150-am::am-fails-on-mail-without-patch	t4150-am	am fails on mail without patch	am	pass
+t4150-am::am-fails-on-empty-patch	t4150-am	am fails on empty patch	am	pass
+t4150-am::am-works-from-stdin-in-subdirectory	t4150-am	am works from stdin in subdirectory	am	pass
+t4150-am::am-works-from-file-relative-path-given-in-subdirectory	t4150-am	am works from file (relative path given) in subdirectory	am	pass
+t4150-am::am-works-from-file-absolute-path-given-in-subdirectory	t4150-am	am works from file (absolute path given) in subdirectory	am	pass
+t4150-am::am-committer-date-is-author-date	t4150-am	am --committer-date-is-author-date	am	pass
+t4150-am::am-without-committer-date-is-author-date	t4150-am	am without --committer-date-is-author-date	am	pass
+t4150-am::am-ignore-date	t4150-am	am --ignore-date	am	pass
+t4150-am::am-into-an-unborn-branch	t4150-am	am into an unborn branch	am	pass
+t4150-am::am-newline-in-subject	t4150-am	am newline in subject	am	pass
+t4150-am::am-q-is-quiet	t4150-am	am -q is quiet	am	pass
+t4150-am::am-empty-file-does-not-infloop	t4150-am	am empty-file does not infloop	am	pass
+t4150-am::am-message-id-really-adds-the-message-id	t4150-am	am --message-id really adds the message id	am	pass
+t4150-am::am-messageid-really-adds-the-message-id	t4150-am	am.messageid really adds the message id	am	pass
+t4150-am::am-message-id-s-signs-off-after-the-message-id	t4150-am	am --message-id -s signs off after the message id	am	pass
+t4150-am::am-3-works-with-rerere	t4150-am	am -3 works with rerere	am	pass
+t4150-am::am-s-unexpected-trailer-block	t4150-am	am -s unexpected trailer block	am	pass
+t4150-am::am-patch-format-mboxrd-handles-mboxrd	t4150-am	am --patch-format=mboxrd handles mboxrd	am	pass
+t4150-am::am-works-with-multi-line-in-body-headers	t4150-am	am works with multi-line in-body headers	am	pass
+t4150-am::am-quit-keeps-head-where-it-is	t4150-am	am --quit keeps HEAD where it is	am	pass
+t4150-am::am-and-gitattibutes	t4150-am	am and .gitattibutes	am	pass
+t4150-am::apply-binary-blob-in-partial-clone	t4150-am	apply binary blob in partial clone	am	pass
+t4150-am::an-empty-input-file-is-error-regardless-of-empty-option	t4150-am	an empty input file is error regardless of --empty option	am	pass
+t4150-am::invalid-when-passing-the-empty-option-alone	t4150-am	invalid when passing the --empty option alone	am	pass
+t4150-am::a-message-without-a-patch-is-an-error-default	t4150-am	a message without a patch is an error (default)	am	pass
+t4150-am::a-message-without-a-patch-is-an-error-where-an-explicit-empty-stop-is-given	t4150-am	a message without a patch is an error where an explicit "--empty=stop" is given	am	pass
+t4150-am::a-message-without-a-patch-will-be-skipped-when-empty-drop-is-given	t4150-am	a message without a patch will be skipped when "--empty=drop" is given	am	pass
+t4150-am::record-as-an-empty-commit-when-meeting-e-mail-message-that-lacks-a-patch	t4150-am	record as an empty commit when meeting e-mail message that lacks a patch	am	pass
+t4150-am::skip-an-empty-patch-in-the-middle-of-an-am-session	t4150-am	skip an empty patch in the middle of an am session	am	pass
+t4150-am::record-an-empty-patch-as-an-empty-commit-in-the-middle-of-an-am-session	t4150-am	record an empty patch as an empty commit in the middle of an am session	am	pass
+t4150-am::create-an-non-empty-commit-when-the-index-is-changed-though-allow-empty-is-given	t4150-am	create an non-empty commit when the index IS changed though "--allow-empty" is given	am	pass
+t4150-am::cannot-create-empty-commits-when-there-is-a-clean-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is a clean index due to merge conflicts	am	pass
+t4150-am::cannot-create-empty-commits-when-there-is-unmerged-index-due-to-merge-conflicts	t4150-am	cannot create empty commits when there is unmerged index due to merge conflicts	am	pass
 t4151-am-abort::am-3-skip-removes-otherfile-4	t4151-am-abort	am -3 --skip removes otherfile-4	am	pass
 t4151-am-abort::am-3-abort-removes-otherfile-4	t4151-am-abort	am -3 --abort removes otherfile-4	am	pass
 t4151-am-abort::am-abort-will-keep-the-local-commits-intact	t4151-am-abort	am --abort will keep the local commits intact	am	pass
@@ -13971,8 +13971,8 @@ t7103-reset-bare::merge-reset-is-not-allowed-in-bare	t7103-reset-bare	"merge" re
 t7103-reset-bare::keep-reset-is-not-allowed-in-bare	t7103-reset-bare	"keep" reset is not allowed in bare	reset	pass
 t7103-reset-bare::mixed-reset-is-not-allowed-in-bare	t7103-reset-bare	"mixed" reset is not allowed in bare	reset	pass
 t7103-reset-bare::soft-reset-is-allowed-in-bare	t7103-reset-bare	"soft" reset is allowed in bare	reset	pass
-t7104-reset-hard::reset-hard-should-restore-unmerged-ones	t7104-reset-hard	reset --hard should restore unmerged ones	reset	partial
-t7104-reset-hard::reset-hard-did-not-corrupt-index-or-cache-tree	t7104-reset-hard	reset --hard did not corrupt index or cache-tree	reset	partial
+t7104-reset-hard::reset-hard-should-restore-unmerged-ones	t7104-reset-hard	reset --hard should restore unmerged ones	reset	pass
+t7104-reset-hard::reset-hard-did-not-corrupt-index-or-cache-tree	t7104-reset-hard	reset --hard did not corrupt index or cache-tree	reset	pass
 t7105-reset-patch::setup	t7105-reset-patch	setup	reset	pass
 t7105-reset-patch::saying-n-does-nothing	t7105-reset-patch	saying "n" does nothing	reset	pass
 t7105-reset-patch::git-reset-p-head	t7105-reset-patch	git reset -p HEAD^	reset	pass
@@ -15320,8 +15320,8 @@ t7521-ignored-mode::verify-status-behavior-on-ignored-directory-containing-track
 t7521-ignored-mode::verify-behavior-of-status-with-ignored-no	t7521-ignored-mode	Verify behavior of status with --ignored=no	clean	pass
 t7521-ignored-mode::verify-behavior-of-status-with-ignored-traditional-and-untracked-files-all	t7521-ignored-mode	Verify behavior of status with --ignored=traditional and --untracked-files=all	clean	pass
 t7521-ignored-mode::verify-behavior-of-status-with-ignored-traditional-and-untracked-files-normal	t7521-ignored-mode	Verify behavior of status with --ignored=traditional and --untracked-files=normal	clean	pass
-t7524-commit-summary::setup	t7524-commit-summary	setup	commit	pass
-t7524-commit-summary::commit-summary-ignores-rewrites	t7524-commit-summary	commit summary ignores rewrites	commit	pass
+t7524-commit-summary::setup	t7524-commit-summary	setup	commit	partial
+t7524-commit-summary::commit-summary-ignores-rewrites	t7524-commit-summary	commit summary ignores rewrites	commit	partial
 t7525-status-rename::setup	t7525-status-rename	setup	status	pass
 t7525-status-rename::status-no-options	t7525-status-rename	status no-options	status	pass
 t7525-status-rename::status-no-renames	t7525-status-rename	status --no-renames	status	pass

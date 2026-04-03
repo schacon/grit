@@ -78,11 +78,11 @@ t0450-txt-doc-vs-help	yes	1	1	0	ok
 t0500-progress-display	yes	2	2	0	ok
 t0600-reffiles-backend	yes	3	3	0	ok
 t0602-reffiles-fsck	yes	4	4	0	ok
-t0610-reftable-basics	yes	11	8	3	ok
+t0610-reftable-basics	yes	11	11	0	ok
 t0611-reftable-httpd	yes	1	1	0	ok
 t0612-reftable-jgit-compatibility	yes	2	2	0	ok
 t0613-reftable-write-options	yes	3	3	0	ok
-t0614-reftable-fsck	yes	3	1	2	ok
+t0614-reftable-fsck	yes	3	3	0	ok
 t1000-read-tree-m-3way	yes	9	9	0	ok
 t1001-read-tree-m-2way	yes	26	26	0	ok
 t1002-read-tree-m-u-2way	yes	21	21	0	ok
@@ -323,10 +323,10 @@ t3503-cherry-pick-root	yes	5	5	0	ok
 t3504-cherry-pick-rerere	yes	5	5	0	ok
 t3505-cherry-pick-empty	yes	5	5	0	ok
 t3506-cherry-pick-ff	yes	5	5	0	ok
-t3507-cherry-pick-conflict	yes	20	15	5	ok
+t3507-cherry-pick-conflict	yes	20	20	0	ok
 t3508-cherry-pick-many-commits	yes	4	4	0	ok
 t3509-cherry-pick-merge-df	yes	4	4	0	ok
-t3510-cherry-pick-sequence	yes	24	14	10	ok
+t3510-cherry-pick-sequence	yes	24	24	0	ok
 t3511-cherry-pick-x	yes	8	8	0	ok
 t3512-cherry-pick-submodule	yes	4	4	0	ok
 t3514-cherry-pick-revert-gpg	yes	5	5	0	ok
@@ -357,7 +357,7 @@ t4000-diff-format	yes	65	65	0	ok
 t4001-diff-rename	yes	29	15	14	ok
 t4002-diff-basic	yes	33	33	0	ok
 t4003-diff-rename-1	yes	7	7	0	ok
-t4004-diff-rename-symlink	yes	4	0	4	ok
+t4004-diff-rename-symlink	yes	4	4	0	ok
 t4005-diff-rename-2	yes	4	4	0	ok
 t4006-diff-mode	yes	21	21	0	ok
 t4007-rename-3	yes	26	16	10	ok
@@ -381,7 +381,7 @@ t4025-hunk-header	yes	3	2	1	ok
 t4026-color	yes	5	5	0	ok
 t4027-diff-submodule	yes	5	5	0	ok
 t4028-format-patch-mime-headers	yes	3	3	0	ok
-t4029-diff-trailing-space	yes	5	4	1	ok
+t4029-diff-trailing-space	yes	5	5	0	ok
 t4030-diff-textconv	yes	20	20	0	ok
 t4031-diff-rewrite-binary	yes	29	28	1	ok
 t4032-diff-inter-hunk-context	yes	32	32	0	ok
@@ -396,7 +396,7 @@ t4041-diff-submodule-option	yes	5	5	0	ok
 t4042-diff-textconv-caching	yes	3	3	0	ok
 t4043-diff-rename-binary	yes	5	5	0	ok
 t4044-diff-index-unique-abbrev	yes	10	10	0	ok
-t4045-diff-relative	yes	8	7	1	ok
+t4045-diff-relative	yes	8	8	0	ok
 t4046-diff-unmerged	yes	29	29	0	ok
 t4047-diff-dirstat	yes	7	7	0	ok
 t4048-diff-combined-binary	yes	4	4	0	ok
@@ -466,7 +466,7 @@ t4138-apply-ws-expansion	yes	4	4	0	ok
 t4139-apply-escape	yes	5	5	0	ok
 t4140-apply-ita	yes	4	4	0	ok
 t4141-apply-too-large	yes	4	4	0	ok
-t4150-am	yes	87	83	4	ok
+t4150-am	yes	87	87	0	ok
 t4151-am-abort	yes	8	8	0	ok
 t4152-am-subjects	yes	5	5	0	ok
 t4153-am-resume-override-opts	yes	4	4	0	ok
@@ -773,7 +773,7 @@ t7064-wtstatus-pv2	yes	9	9	0	ok
 t7101-reset-empty-subdirs	yes	15	15	0	ok
 t7102-reset	yes	85	85	0	ok
 t7103-reset-bare	yes	23	23	0	ok
-t7104-reset-hard	yes	25	22	3	ok
+t7104-reset-hard	yes	25	25	0	ok
 t7105-reset-patch	yes	5	5	0	ok
 t7106-reset-unborn-branch	yes	11	11	0	ok
 t7107-reset-pathspec-file	yes	4	4	0	ok
@@ -829,7 +829,7 @@ t7518-ident-corner-cases	yes	2	2	0	ok
 t7519-status-fsmonitor	yes	7	7	0	ok
 t7520-ignored-hook-warning	yes	5	5	0	ok
 t7521-ignored-mode	yes	3	3	0	ok
-t7524-commit-summary	yes	3	3	0	ok
+t7524-commit-summary	yes	3	0	3	ok
 t7525-status-rename	yes	3	3	0	ok
 t7526-commit-pathspec-file	yes	6	6	0	ok
 t7527-builtin-fsmonitor	yes	9	9	0	ok
