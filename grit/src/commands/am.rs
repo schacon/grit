@@ -113,6 +113,10 @@ pub struct Args {
     /// Disable three-way merge fallback.
     #[arg(long = "no-3way")]
     pub no_three_way: bool,
+
+    /// Use the current timestamp as author date instead of the patch's date.
+    #[arg(long = "ignore-date")]
+    pub ignore_date: bool,
 }
 
 /// A parsed patch from an mbox message.
@@ -142,6 +146,7 @@ struct AmOptions {
     scissors: bool,
     no_scissors: bool,
     committer_date_is_author_date: bool,
+    ignore_date: bool,
     message_id: bool,
     empty: String,
     allow_empty: bool,
@@ -209,13 +214,20 @@ fn do_am(args: Args) -> Result<()> {
     let scissors = args.scissors;
     let no_scissors = args.no_scissors;
 
-    // Read and parse all mbox files
+    // Read and parse all mbox/patch files
     let mut all_patches = Vec::new();
+    let format_override = args.patch_format.as_deref();
     for mbox_path in &args.mbox {
         let content = fs::read_to_string(mbox_path)
             .with_context(|| format!("cannot read mbox file '{mbox_path}'"))?;
-        let mut patches = parse_mbox_with_opts(&content, keep, keep_non_patch, scissors, no_scissors)?;
-        all_patches.append(&mut patches);
+        // Check for stgit series file first (auto-detect or explicit)
+        if is_stgit_series(&content) {
+            let mut patches = parse_stgit_series(mbox_path)?;
+            all_patches.append(&mut patches);
+        } else {
+            let mut patches = parse_patches(&content, format_override, keep, keep_non_patch, scissors, no_scissors)?;
+            all_patches.append(&mut patches);
+        }
     }
 
     if all_patches.is_empty() {
@@ -271,6 +283,7 @@ fn do_am(args: Args) -> Result<()> {
         scissors: args.scissors,
         no_scissors: args.no_scissors,
         committer_date_is_author_date: args.committer_date_is_author_date,
+        ignore_date: args.ignore_date,
         message_id,
         empty: args.empty.unwrap_or_else(|| "stop".to_string()),
         allow_empty: args.allow_empty,
@@ -298,7 +311,7 @@ fn do_am_stdin(args: Args) -> Result<()> {
         );
     }
 
-    let all_patches = parse_mbox_with_opts(&input, args.keep, args.keep_non_patch, args.scissors, args.no_scissors)?;
+    let all_patches = parse_patches(&input, args.patch_format.as_deref(), args.keep, args.keep_non_patch, args.scissors, args.no_scissors)?;
     if all_patches.is_empty() {
         eprintln!("Patch format detection failed."); std::process::exit(128);
     }
@@ -348,6 +361,7 @@ fn do_am_stdin(args: Args) -> Result<()> {
         scissors: args.scissors,
         no_scissors: args.no_scissors,
         committer_date_is_author_date: args.committer_date_is_author_date,
+        ignore_date: args.ignore_date,
         message_id,
         empty: args.empty.unwrap_or_else(|| "stop".to_string()),
         allow_empty: args.allow_empty,
@@ -1067,7 +1081,16 @@ fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch, opts: &
     let committer = resolve_identity(&config, "COMMITTER")?;
 
     // Build author ident from patch metadata
-    let author_ident = if !patch.author.is_empty() && !patch.date.is_empty() {
+    let author_ident = if opts.ignore_date {
+        // --ignore-date: use author name/email from patch but current time with +0000
+        let epoch = now.unix_timestamp();
+        if !patch.author.is_empty() {
+            format!("{} {} +0000", patch.author, epoch)
+        } else {
+            let (cname, cemail) = &committer;
+            format!("{cname} <{cemail}> {epoch} +0000")
+        }
+    } else if !patch.author.is_empty() && !patch.date.is_empty() {
         format!("{} {}", patch.author, patch.date)
     } else if !patch.author.is_empty() {
         let epoch = now.unix_timestamp();
@@ -1386,6 +1409,7 @@ fn save_am_options(state_dir: &Path, opts: &AmOptions) -> Result<()> {
     if opts.quiet { out.push_str("quiet\n"); }
     if opts.message_id { out.push_str("message-id\n"); }
     if opts.allow_empty { out.push_str("allow-empty\n"); }
+    if opts.ignore_date { out.push_str("ignore-date\n"); }
     out.push_str(&format!("empty={}\n", opts.empty));
     fs::write(state_dir.join("options"), out)?;
     Ok(())
@@ -1403,6 +1427,7 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
         scissors: false,
         no_scissors: false,
         committer_date_is_author_date: false,
+        ignore_date: false,
         message_id: false,
         empty: "stop".to_string(),
         allow_empty: false,
@@ -1415,6 +1440,7 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
             "quiet" => opts.quiet = true,
             "message-id" => opts.message_id = true,
             "allow-empty" => opts.allow_empty = true,
+            "ignore-date" => opts.ignore_date = true,
             l if l.starts_with("empty=") => opts.empty = l[6..].to_string(),
             _ => {}
         }
@@ -1463,6 +1489,280 @@ fn cleanup_am_state(git_dir: &Path) {
         let _ = fs::remove_dir_all(&state_dir);
     }
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+}
+
+// ── Patch format detection and alternate format parsing ─────────────
+
+/// Detect the patch format from file content.
+fn detect_patch_format(input: &str) -> &'static str {
+    let trimmed = input.trim_start();
+    if trimmed.starts_with("# HG changeset patch") {
+        return "hg";
+    }
+    // stgit format: first non-blank line is the subject (not a header),
+    // followed by From:/Date: headers
+    let mut lines = trimmed.lines();
+    if let Some(first) = lines.next() {
+        // Skip blanks after first line
+        let mut peeked = lines.clone();
+        // Look at lines 2-5 for From:/Date: pattern typical of stgit
+        for _ in 0..5 {
+            if let Some(l) = peeked.next() {
+                let lt = l.trim();
+                if lt.is_empty() {
+                    continue;
+                }
+                if lt.starts_with("From:") || lt.starts_with("Date:") {
+                    // Looks like stgit if first line isn't a standard mbox header
+                    if !first.starts_with("From ") && !first.starts_with("From:") &&
+                       !first.starts_with("Subject:") && !first.starts_with("Date:") &&
+                       !first.starts_with("Message-ID:") && !first.starts_with("X-") {
+                        return "stgit";
+                    }
+                }
+                break;
+            }
+        }
+    }
+    "mbox"
+}
+
+/// Detect if a file is an stgit series file.
+/// A series file has the specific comment "# This series applies on GIT commit"
+/// followed by filenames.
+fn is_stgit_series(input: &str) -> bool {
+    let mut has_series_header = false;
+    let mut has_from_or_date = false;
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("# This series applies on GIT commit") {
+            has_series_header = true;
+        }
+        if trimmed.starts_with("From:") || trimmed.starts_with("Date:") {
+            has_from_or_date = true;
+        }
+    }
+    // It's a series file if it has the series header and no From:/Date: headers
+    has_series_header && !has_from_or_date
+}
+
+/// Parse an stgit-format patch into an MboxPatch.
+fn parse_stgit_patch(input: &str) -> Result<Vec<MboxPatch>> {
+    let mut lines = input.lines();
+    let mut subject = String::new();
+    let mut author = String::new();
+    let mut date = String::new();
+    let mut body_lines = Vec::new();
+    let mut diff_lines = Vec::new();
+    let mut in_diff = false;
+    let mut in_headers = false;
+    let mut past_separator = false;
+
+    // First non-blank line is the subject
+    for line in lines.by_ref() {
+        if !line.trim().is_empty() {
+            subject = line.trim().to_string();
+            break;
+        }
+    }
+
+    // Next lines are headers (From:, Date:) until blank line
+    in_headers = true;
+    for line in lines.by_ref() {
+        if in_headers {
+            if line.trim().is_empty() {
+                in_headers = false;
+                continue;
+            }
+            if let Some(val) = line.strip_prefix("From:") {
+                author = val.trim().to_string();
+                continue;
+            }
+            if let Some(val) = line.strip_prefix("Date:") {
+                date = val.trim().to_string();
+                continue;
+            }
+            // Not a header — must be body
+            in_headers = false;
+            body_lines.push(line);
+            continue;
+        }
+
+        if !in_diff {
+            if line == "---" {
+                past_separator = true;
+                continue;
+            }
+            if past_separator && line.starts_with("diff --git ") {
+                in_diff = true;
+                diff_lines.push(line);
+                continue;
+            }
+            if past_separator {
+                // Skip diffstat lines between --- and diff --git
+                continue;
+            }
+            if line.starts_with("diff --git ") {
+                in_diff = true;
+                diff_lines.push(line);
+                continue;
+            }
+            body_lines.push(line);
+        } else {
+            if line == "-- " {
+                break;
+            }
+            diff_lines.push(line);
+        }
+    }
+
+    let author_ident = parse_author_ident(&author, &date);
+    let body = body_lines.join("\n").trim().to_string();
+    let message = if body.is_empty() {
+        format!("{}\n", subject)
+    } else {
+        format!("{}\n\n{}\n", subject, body)
+    };
+    let mut diff = diff_lines.join("\n");
+    if !diff.is_empty() {
+        diff.push('\n');
+    }
+
+    Ok(vec![MboxPatch {
+        author: author_ident.0,
+        date: author_ident.1,
+        message,
+        diff,
+        message_id: String::new(),
+    }])
+}
+
+/// Parse an stgit series file: read the series, then parse each referenced patch.
+fn parse_stgit_series(series_path: &str) -> Result<Vec<MboxPatch>> {
+    let content = fs::read_to_string(series_path)
+        .with_context(|| format!("cannot read series file '{series_path}'"))?;
+    let series_dir = std::path::Path::new(series_path)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+
+    let mut patches = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let patch_path = series_dir.join(trimmed);
+        let patch_content = fs::read_to_string(&patch_path)
+            .with_context(|| format!("cannot read patch '{}'", patch_path.display()))?;
+        let mut parsed = parse_stgit_patch(&patch_content)?;
+        patches.append(&mut parsed);
+    }
+    Ok(patches)
+}
+
+/// Parse an hg (Mercurial) format patch into an MboxPatch.
+fn parse_hg_patch(input: &str) -> Result<Vec<MboxPatch>> {
+    let mut lines = input.lines();
+    let mut author = String::new();
+    let mut date = String::new();
+    let mut body_lines = Vec::new();
+    let mut diff_lines = Vec::new();
+    let mut in_diff = false;
+
+    // Parse HG headers (lines starting with #)
+    for line in lines.by_ref() {
+        let trimmed = line.trim();
+        if trimmed == "# HG changeset patch" {
+            continue;
+        }
+        if let Some(val) = trimmed.strip_prefix("# User ") {
+            author = val.to_string();
+            continue;
+        }
+        if let Some(val) = trimmed.strip_prefix("# Date ") {
+            // HG date format: "epoch offset" where offset is seconds west of UTC
+            // Convert to git format: "epoch +/-HHMM"
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            if parts.len() >= 2 {
+                if let (Ok(epoch), Ok(offset_secs)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
+                    // HG offset is seconds west of UTC (positive = west)
+                    // Git offset is +/-HHMM (positive = east)
+                    let git_offset_secs = -offset_secs;
+                    let sign = if git_offset_secs >= 0 { '+' } else { '-' };
+                    let abs_secs = git_offset_secs.unsigned_abs();
+                    let hours = abs_secs / 3600;
+                    let mins = (abs_secs % 3600) / 60;
+                    date = format!("{} {}{:02}{:02}", epoch, sign, hours, mins);
+                } else {
+                    date = val.to_string();
+                }
+            } else {
+                date = val.to_string();
+            }
+            continue;
+        }
+        if trimmed.starts_with("# ") || trimmed == "#" {
+            // Skip other HG headers (Node ID, Parent, etc.)
+            continue;
+        }
+        // First non-header line — this is the start of the body
+        body_lines.push(line);
+        break;
+    }
+
+    // Parse remaining body + diff
+    for line in lines {
+        if !in_diff {
+            if line.starts_with("diff --git ") || line.starts_with("diff -r ") {
+                in_diff = true;
+                diff_lines.push(line);
+                continue;
+            }
+            body_lines.push(line);
+        } else {
+            diff_lines.push(line);
+        }
+    }
+
+    let author_ident = parse_author_ident(&author, &date);
+    let body = body_lines.join("\n").trim().to_string();
+    // For HG patches, the first line of the body is the subject
+    let (subject, rest) = if let Some(idx) = body.find('\n') {
+        (body[..idx].to_string(), body[idx+1..].trim().to_string())
+    } else {
+        (body.clone(), String::new())
+    };
+
+    let message = if rest.is_empty() {
+        format!("{}\n", subject)
+    } else {
+        format!("{}\n\n{}\n", subject, rest)
+    };
+    let mut diff = diff_lines.join("\n");
+    if !diff.is_empty() {
+        diff.push('\n');
+    }
+
+    Ok(vec![MboxPatch {
+        author: author_ident.0,
+        date: author_ident.1,
+        message,
+        diff,
+        message_id: String::new(),
+    }])
+}
+
+/// Parse patches from input, auto-detecting or using the specified format.
+fn parse_patches(input: &str, format: Option<&str>, keep: bool, keep_non_patch: bool, scissors: bool, no_scissors: bool) -> Result<Vec<MboxPatch>> {
+    let fmt = format.unwrap_or_else(|| detect_patch_format(input));
+    match fmt {
+        "stgit" => parse_stgit_patch(input),
+        "hg" => parse_hg_patch(input),
+        _ => parse_mbox_with_opts(input, keep, keep_non_patch, scissors, no_scissors),
+    }
 }
 
 // ── Mbox parsing ────────────────────────────────────────────────────
