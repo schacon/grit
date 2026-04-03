@@ -268,7 +268,7 @@ def run_ported_tests():
         return (base, total, pass_n, fail_n, 'ok')
 
     print(f"Running {len(test_files)} ported test files...")
-    with ThreadPoolExecutor(max_workers=16) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(run_one, f): f for f in test_files}
         done = 0
         for future in as_completed(futures):
