@@ -5,6 +5,9 @@ test_description='diff -r -t shows directory additions and deletions'
 . ./test-lib.sh
 
 test_expect_success setup '
+	git init &&
+	git config user.email test@test.com &&
+	git config user.name "Test User" &&
 	mkdir dc dr dt &&
 	>dc/1 &&
 	>dr/2 &&
@@ -15,7 +18,6 @@ test_expect_success setup '
 	git add . &&
 	test_tick &&
 	git commit -m initial &&
-
 	rm -fr dt dr ft fr &&
 	mkdir da ft &&
 	for p in dc/1 da/4 dt ft/5 fc
@@ -27,9 +29,6 @@ test_expect_success setup '
 	test_tick &&
 	git commit -m second
 '
-
-# grit diff-tree -r -t does not yet emit tree-object entries (A da, M dc, etc.)
-# so we test just the file-level output with -r --name-status
 
 cat >expect <<\EOF
 A	da/4
@@ -48,7 +47,6 @@ test_expect_success 'verify file-level changes with diff-tree -r --name-status' 
 	test_cmp expect actual
 '
 
-# Full -r -t output includes tree entries that grit does not yet emit
 cat >expect_full <<\EOF
 A	da
 A	da/4

@@ -7,7 +7,6 @@ test_description='Same rename detection as t4003 but testing diff-raw -z.'
 
 . ./test-lib.sh
 
-# lib-diff helpers inline (simplified)
 COPYING_test_data () {
 	cat <<\EOF
 
@@ -32,6 +31,9 @@ EOF
 }
 
 test_expect_success 'prepare reference tree' '
+	git init &&
+	git config user.email test@test.com &&
+	git config user.name "Test User" &&
 	COPYING_test_data >COPYING &&
 	echo frotz >rezrov &&
 	git update-index --add COPYING rezrov &&
@@ -46,7 +48,6 @@ test_expect_success 'prepare work tree' '
 	git update-index --add --remove COPYING COPYING.1 COPYING.2
 '
 
-# diff-index -z -C requires rename/copy detection which grit does not support
 test_expect_failure 'validate output from rename/copy detection (#1) (not implemented)' '
 	git diff-index -z -C $tree >current &&
 	test -s current

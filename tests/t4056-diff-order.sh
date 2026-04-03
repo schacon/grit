@@ -14,10 +14,12 @@ create_files () {
 }
 
 test_expect_success 'setup' '
+	git init &&
+	git config user.email test@test.com &&
+	git config user.name "Test User" &&
 	mkdir c &&
 	create_files 1 &&
 	create_files 2 &&
-
 	cat >expect_none <<-\EOF
 	a.h
 	b.c
@@ -30,8 +32,6 @@ test_expect_success 'no order (=tree object order)' '
 	git diff --name-only HEAD~1 HEAD >actual &&
 	test_cmp expect_none actual
 '
-
-# -O, --rotate-to, --skip-to are not implemented in grit
 
 test_expect_failure 'orderfile using option (-O) (not implemented)' '
 	cat >order_file_1 <<-\EOF &&

@@ -5,18 +5,18 @@ test_description='test finding specific blobs in the revision walking'
 . ./test-lib.sh
 
 test_expect_success 'setup' '
+	git init &&
+	git config user.email test@test.com &&
+	git config user.name "Test User" &&
 	git commit --allow-empty -m "empty initial commit" &&
-
 	echo "Hello, world!" >greeting &&
 	git add greeting &&
 	git commit -m "add the greeting blob" &&
-
 	echo asdf >unrelated &&
 	git add unrelated &&
 	git commit -m "unrelated history"
 '
 
-# --find-object is not implemented in grit log
 test_expect_failure 'find the greeting blob (not implemented)' '
 	git log --format=%s --find-object=HEAD~1:greeting >actual &&
 	cat >expect <<-EOF &&

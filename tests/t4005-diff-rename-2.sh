@@ -7,7 +7,6 @@ test_description='Same rename detection as t4003 but testing diff-raw.'
 
 . ./test-lib.sh
 
-# lib-diff helpers inline (simplified)
 COPYING_test_data () {
 	cat <<\EOF
 
@@ -32,6 +31,9 @@ EOF
 }
 
 test_expect_success 'setup reference tree' '
+	git init &&
+	git config user.email test@test.com &&
+	git config user.name "Test User" &&
 	COPYING_test_data >COPYING &&
 	echo frotz >rezrov &&
 	git update-index --add COPYING rezrov &&

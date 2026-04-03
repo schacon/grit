@@ -5,6 +5,9 @@ test_description='git-diff check diffstat filepaths length when containing UTF-8
 . ./test-lib.sh
 
 test_expect_success 'setup' '
+	git init &&
+	git config user.email test@test.com &&
+	git config user.name "Test User" &&
 	git config core.quotePath off &&
 	git commit -m "Initial commit" --allow-empty &&
 	mkdir -p "d你好" &&
@@ -18,7 +21,6 @@ test_expect_success 'diff --stat shows output for UTF-8 paths' '
 	grep "f再见" out
 '
 
-# --stat-name-width is not implemented in grit
 test_expect_failure 'test name-width long enough for filepath (not implemented)' '
 	git diff --stat --stat-name-width=12 HEAD~1 HEAD >out &&
 	grep "d你好/f再见 |" out

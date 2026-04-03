@@ -3,13 +3,10 @@
 # Copyright (c) 2005 Junio C Hamano
 #
 
-test_description='More rename detection
-
-'
+test_description='More rename detection'
 
 . ./test-lib.sh
 
-# lib-diff helpers inline (simplified)
 COPYING_test_data () {
 	cat <<\EOF
 
@@ -34,6 +31,9 @@ EOF
 }
 
 test_expect_success 'prepare reference tree' '
+	git init &&
+	git config user.email test@test.com &&
+	git config user.name "Test User" &&
 	COPYING_test_data >COPYING &&
 	echo frotz >rezrov &&
 	git update-index --add COPYING rezrov &&
@@ -48,7 +48,6 @@ test_expect_success 'prepare work tree' '
 	git update-index --add --remove COPYING COPYING.1 COPYING.2
 '
 
-# diff-index -C -p requires rename/copy detection which grit does not support
 test_expect_failure 'validate output from rename/copy detection (#1) (not implemented)' '
 	GIT_DIFF_OPTS=--unified=0 git diff-index -C -p $tree >current &&
 	test -s current

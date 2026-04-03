@@ -5,6 +5,9 @@ test_description='Test diff indent heuristic.'
 . ./test-lib.sh
 
 test_expect_success 'prepare' '
+	git init &&
+	git config user.email test@test.com &&
+	git config user.name "Test User" &&
 	cat <<-\EOF >spaces.txt &&
 	1
 	2
@@ -14,7 +17,6 @@ test_expect_success 'prepare' '
 	3
 	4
 	EOF
-
 	cat <<-\EOF >functions.c &&
 	1
 	2
@@ -26,12 +28,10 @@ test_expect_success 'prepare' '
 	3
 	4
 	EOF
-
 	git add spaces.txt functions.c &&
 	test_tick &&
 	git commit -m initial &&
 	git branch old &&
-
 	cat <<-\EOF >spaces.txt &&
 	1
 	2
@@ -44,7 +44,6 @@ test_expect_success 'prepare' '
 	3
 	4
 	EOF
-
 	cat <<-\EOF >functions.c &&
 	1
 	2
@@ -61,7 +60,6 @@ test_expect_success 'prepare' '
 	3
 	4
 	EOF
-
 	git add spaces.txt functions.c &&
 	test_tick &&
 	git commit -m second &&
@@ -80,7 +78,6 @@ test_expect_success 'diff: functions output between old and new' '
 	grep "foo()" out
 '
 
-# --indent-heuristic, --no-indent-heuristic are not implemented
 test_expect_failure 'diff: --indent-heuristic (not implemented)' '
 	git diff --indent-heuristic old new -- spaces.txt >out &&
 	test -s out
