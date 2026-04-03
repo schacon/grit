@@ -907,14 +907,13 @@ test_expect_success 'diff --cached handles file with special chars in content' '
 # ---------------------------------------------------------------------------
 # Diff with file renamed via rm+add (no rename detection)
 # ---------------------------------------------------------------------------
-test_expect_success 'diff --cached after manual rename shows add+delete' '
+test_expect_success 'diff --cached after manual rename shows rename' '
 	cd repo &&
 	cp file2 file2-renamed &&
 	git rm file2 &&
 	git add file2-renamed &&
 	git diff --cached --name-status >output &&
-	grep "^D" output | grep "file2" &&
-	grep "^A" output | grep "file2-renamed" &&
+	grep "^R.*file2.*file2-renamed" output &&
 	git checkout HEAD -- file2 &&
 	git reset HEAD -- file2-renamed &&
 	rm -f file2-renamed
