@@ -33,7 +33,7 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'submodule set-url' '
+test_expect_success 'submodule set-url' '
 	cd super &&
 	git submodule set-url sub /some/new/url
 '
