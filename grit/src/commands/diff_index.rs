@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::{detect_renames, stat_matches, DiffEntry, DiffStatus, zero_oid};
+use grit_lib::diff::{detect_copies, detect_renames, stat_matches, DiffEntry, DiffStatus, zero_oid};
 use std::io::Write;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
@@ -59,7 +59,21 @@ pub fn run(args: Args) -> Result<()> {
         .map(|c| raw_change_to_diff_entry(c))
         .collect();
 
-    let diff_entries = if let Some(threshold) = options.find_renames {
+    let diff_entries = if options.find_copies {
+        let threshold = options.find_renames.unwrap_or(50);
+        // Build source tree entries for copy detection.
+        let source_tree_entries: Vec<(String, String, ObjectId)> = tree_map
+            .iter()
+            .map(|(path, snap)| (path.clone(), format!("{:06o}", snap.mode), snap.oid))
+            .collect();
+        detect_copies(
+            &repo.odb,
+            diff_entries,
+            threshold,
+            options.find_copies_harder,
+            &source_tree_entries,
+        )
+    } else if let Some(threshold) = options.find_renames {
         detect_renames(&repo.odb, diff_entries, threshold)
     } else {
         diff_entries
@@ -125,6 +139,8 @@ struct Options {
     exit_code: bool,
     abbrev: Option<usize>,
     find_renames: Option<u32>,
+    find_copies: bool,
+    find_copies_harder: bool,
     patch: bool,
     name_status: bool,
     nul_terminated: bool,
@@ -163,6 +179,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut pathspecs = Vec::new();
     let mut end_of_options = false;
     let mut find_renames: Option<u32> = None;
+    let mut find_copies = false;
+    let mut find_copies_harder = false;
+    let mut c_count = 0u32;
     let mut patch = false;
     let mut name_status = false;
     let mut nul_terminated = false;
@@ -222,8 +241,19 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-z" => {
                     nul_terminated = true;
                 }
-                "-C" | "--find-copies" | "--find-copies-harder" => {
-                    // Copy detection: treat like rename detection for now
+                "-C" | "--find-copies" => {
+                    c_count += 1;
+                    find_copies = true;
+                    if c_count >= 2 {
+                        find_copies_harder = true;
+                    }
+                    if find_renames.is_none() {
+                        find_renames = Some(50);
+                    }
+                }
+                "--find-copies-harder" => {
+                    find_copies = true;
+                    find_copies_harder = true;
                     if find_renames.is_none() {
                         find_renames = Some(50);
                     }
@@ -262,6 +292,8 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         exit_code,
         abbrev,
         find_renames,
+        find_copies,
+        find_copies_harder,
         patch,
         name_status,
         nul_terminated,
@@ -646,6 +678,17 @@ fn write_patch_entry(
             writeln!(out, "similarity index {sim}%")?;
             writeln!(out, "rename from {old_path}")?;
             writeln!(out, "rename to {new_path}")?;
+            if entry.old_oid != entry.new_oid {
+                writeln!(out, "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7])?;
+            }
+        }
+        DiffStatus::Copied => {
+            let sim = entry.score.unwrap_or(100);
+            writeln!(out, "similarity index {sim}%")?;
+            writeln!(out, "copy from {old_path}")?;
+            writeln!(out, "copy to {new_path}")?;
             if entry.old_oid != entry.new_oid {
                 writeln!(out, "index {}..{}",
                     &entry.old_oid.to_hex()[..7],
