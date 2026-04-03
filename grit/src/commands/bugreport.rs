@@ -3,7 +3,7 @@
 //! Collects system info (grit version, OS, shell, config) and writes
 //! it to a timestamped file in the current directory.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::repo::Repository;
@@ -108,6 +108,11 @@ pub fn run(args: Args) -> Result<()> {
             .as_secs();
         format!("git-bugreport-{now}.txt")
     };
+
+    let path = std::path::Path::new(&filename);
+    if path.exists() {
+        bail!("fatal: file '{}' already exists", filename);
+    }
 
     fs::write(&filename, &report)
         .with_context(|| format!("failed to write bug report to {filename}"))?;

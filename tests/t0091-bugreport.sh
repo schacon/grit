@@ -35,7 +35,7 @@ test_expect_success 'create a report with custom output path' '
 	test_file_not_empty custom-report.txt
 '
 
-test_expect_failure 'dies if file with same name already exists' '
+test_expect_success 'dies if file with same name already exists' '
 	test_when_finished rm -f existing-report.txt &&
 	>existing-report.txt &&
 	test_must_fail git bugreport -o existing-report.txt
