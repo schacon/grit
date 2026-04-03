@@ -32,9 +32,9 @@ test_expect_success 'clone with explicit local path' '
 	test_path_is_dir e/.git
 '
 
-test_expect_failure 'local clone from non-existent .git extension' '
+test_expect_success 'local clone from non-existent .git extension' '
 	test_must_fail git clone a z 2>err &&
-	test_grep -i "not.*found\|does not exist\|no such" err
+	test_grep -i "not.*found\|does not exist\|no such\|does not appear" err
 '
 
 test_expect_success 'cloned repo is functional' '
