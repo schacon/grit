@@ -661,7 +661,7 @@ test_expect_success 'annotated tag stores tagger information' '
 	cd repo &&
 	git tag -m "tagger test" tagger-test-tag &&
 	git cat-file tag tagger-test-tag >actual &&
-	grep "^tagger Test User <test@example.com>" actual
+	grep "^tagger C O Mitter <committer@example.com>" actual
 '
 
 test_expect_success 'tag -l with exact name matches only that tag' '
@@ -1328,7 +1328,7 @@ test_expect_success 'annotated tag stores correct tag name' '
 
 test_expect_success 'annotated tag stores tagger information' '
 	cd ann-inspect-repo &&
-	git cat-file tag ann1 | grep "^tagger Test User <test@example.com>"
+	git cat-file tag ann1 | grep "^tagger C O Mitter <committer@example.com>"
 '
 
 test_expect_success 'annotated tag stores message' '
