@@ -82,6 +82,10 @@ pub struct Args {
     #[arg(short = 'U', long = "unified", value_name = "N")]
     pub unified: Option<usize>,
 
+    /// Compare two paths outside of a git repository.
+    #[arg(long = "no-index")]
+    pub no_index: bool,
+
     /// Commits or paths. Use `--` to separate revisions from paths.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
@@ -89,6 +93,11 @@ pub struct Args {
 
 /// Run the `diff` command.
 pub fn run(args: Args) -> Result<()> {
+    // --no-index: compare two files/directories directly, no repository needed.
+    if args.no_index {
+        return run_no_index(&args);
+    }
+
     let (revs, paths) = parse_rev_and_paths(&args.args);
 
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -195,6 +204,193 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Run `diff --no-index` — compare two files (or directories) without a repo.
+fn run_no_index(args: &Args) -> Result<()> {
+    // Collect positional args (skip "--" if present)
+    let positional: Vec<&str> = args
+        .args
+        .iter()
+        .filter(|a| a.as_str() != "--")
+        .map(|s| s.as_str())
+        .collect();
+
+    if positional.len() != 2 {
+        bail!("usage: git diff --no-index <path1> <path2>");
+    }
+
+    let path_a = Path::new(positional[0]);
+    let path_b = Path::new(positional[1]);
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    let use_color = match args.color.as_deref() {
+        Some("always") => true,
+        Some("never") => false,
+        Some("auto") | None => io::stdout().is_terminal(),
+        Some(_) => false,
+    };
+
+    let context_lines = args.unified.unwrap_or(3);
+    let has_diff;
+
+    if path_a.is_dir() && path_b.is_dir() {
+        has_diff = diff_no_index_dirs(&mut out, path_a, path_b, args, context_lines, use_color)?;
+    } else {
+        has_diff = diff_no_index_files(&mut out, path_a, path_b, args, context_lines, use_color)?;
+    }
+
+    if (args.exit_code || args.quiet) && has_diff {
+        std::process::exit(1);
+    }
+    if has_diff && !args.exit_code && !args.quiet {
+        // git diff --no-index exits 1 when there are differences
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// Diff two files for --no-index mode. Returns true if there are differences.
+fn diff_no_index_files(
+    out: &mut impl Write,
+    path_a: &Path,
+    path_b: &Path,
+    args: &Args,
+    context_lines: usize,
+    use_color: bool,
+) -> Result<bool> {
+    let name_a = path_a.to_string_lossy();
+    let name_b = path_b.to_string_lossy();
+
+    let content_a = if name_a == "/dev/null" {
+        String::new()
+    } else {
+        std::fs::read_to_string(path_a)
+            .with_context(|| format!("could not read '{}'", name_a))?
+    };
+    let content_b = if name_b == "/dev/null" {
+        String::new()
+    } else {
+        std::fs::read_to_string(path_b)
+            .with_context(|| format!("could not read '{}'", name_b))?
+    };
+
+    if content_a == content_b {
+        return Ok(false);
+    }
+
+    if args.quiet {
+        return Ok(true);
+    }
+
+    if args.name_only {
+        writeln!(out, "{}", name_b)?;
+        return Ok(true);
+    }
+
+    if args.name_status {
+        if name_a == "/dev/null" {
+            writeln!(out, "A\t{}", name_b)?;
+        } else if name_b == "/dev/null" {
+            writeln!(out, "D\t{}", name_a)?;
+        } else {
+            writeln!(out, "M\t{}", name_b)?;
+        }
+        return Ok(true);
+    }
+
+    if args.stat || args.shortstat || args.numstat {
+        let adds = content_b.lines().count();
+        let dels = content_a.lines().count();
+        if args.numstat {
+            writeln!(out, "{}\t{}\t{}", adds, dels, name_b)?;
+        } else if args.shortstat {
+            writeln!(out, " 1 file changed, {} insertions(+), {} deletions(-)", adds, dels)?;
+        } else {
+            // --stat
+            writeln!(out, " {} | {}", name_b, adds + dels)?;
+            writeln!(out, " 1 file changed, {} insertions(+), {} deletions(-)", adds, dels)?;
+        }
+        return Ok(true);
+    }
+
+    // Write unified diff header
+    writeln!(out, "diff --git a/{} b/{}", name_a, name_b)?;
+    if name_a == "/dev/null" {
+        writeln!(out, "new file mode 100644")?;
+    }
+
+    let patch = unified_diff(&content_a, &content_b, &name_a, &name_b, context_lines);
+    if use_color {
+        for line in patch.lines() {
+            if line.starts_with('+') && !line.starts_with("+++") {
+                writeln!(out, "{GREEN}{line}{RESET}")?;
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                writeln!(out, "{RED}{line}{RESET}")?;
+            } else if line.starts_with("@@") {
+                writeln!(out, "{CYAN}{line}{RESET}")?;
+            } else {
+                writeln!(out, "{line}")?;
+            }
+        }
+    } else {
+        write!(out, "{patch}")?;
+    }
+
+    Ok(true)
+}
+
+/// Diff two directories for --no-index mode.
+fn diff_no_index_dirs(
+    out: &mut impl Write,
+    dir_a: &Path,
+    dir_b: &Path,
+    args: &Args,
+    context_lines: usize,
+    use_color: bool,
+) -> Result<bool> {
+    use std::collections::BTreeSet;
+
+    fn collect_files(dir: &Path, prefix: &str, out: &mut BTreeSet<String>) -> Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let name = if prefix.is_empty() {
+                entry.file_name().to_string_lossy().to_string()
+            } else {
+                format!("{}/{}", prefix, entry.file_name().to_string_lossy())
+            };
+            if path.is_dir() {
+                collect_files(&path, &name, out)?;
+            } else {
+                out.insert(name);
+            }
+        }
+        Ok(())
+    }
+
+    let mut files_a = BTreeSet::new();
+    let mut files_b = BTreeSet::new();
+    collect_files(dir_a, "", &mut files_a)?;
+    collect_files(dir_b, "", &mut files_b)?;
+
+    let all_files: BTreeSet<_> = files_a.union(&files_b).cloned().collect();
+    let mut any_diff = false;
+
+    for file in &all_files {
+        let fa = dir_a.join(file);
+        let fb = dir_b.join(file);
+        let pa = if files_a.contains(file) { fa.as_path() } else { Path::new("/dev/null") };
+        let pb = if files_b.contains(file) { fb.as_path() } else { Path::new("/dev/null") };
+        if diff_no_index_files(out, pa, pb, args, context_lines, use_color)? {
+            any_diff = true;
+        }
+    }
+
+    Ok(any_diff)
 }
 
 /// Split args on `--` to separate revisions from paths.
