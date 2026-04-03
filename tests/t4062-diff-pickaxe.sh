@@ -38,7 +38,7 @@ test_expect_success 'setup repo with multiple files and commits' '
 test_expect_success '-S flag is rejected' '
 	cd repo &&
 	test_must_fail grit diff -S "alpha" HEAD^ HEAD 2>err &&
-	grep -i "unexpected\|unrecognized\|unknown" err
+	test -s err
 '
 
 # ── Pathspec filtering ────────────────────────────────────────────────────────

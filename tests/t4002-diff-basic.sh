@@ -145,7 +145,7 @@ test_expect_success 'new file shows /dev/null in --- line' '
 	echo "brand new" >new.txt &&
 	$REAL_GIT add new.txt &&
 	grit diff --cached >actual &&
-	grep -- "--- a//dev/null" actual
+	grep -- "--- /dev/null" actual
 '
 
 test_expect_success 'new file shows new file mode header' '
@@ -177,7 +177,7 @@ test_expect_success 'delete file and stage it' '
 test_expect_success 'deleted file shows /dev/null in +++ line' '
 	cd basic &&
 	grit diff --cached >actual &&
-	grep -- "+++ b//dev/null" actual
+	grep -- "+++ /dev/null" actual
 '
 
 test_expect_success 'deleted file shows deleted file mode header' '

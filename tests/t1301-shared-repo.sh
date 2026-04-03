@@ -6,10 +6,9 @@ test_description='grit shared repository (core.sharedRepository) config'
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'init --shared is not yet supported' '
-	test_must_fail grit init --shared=group shared-repo 2>stderr &&
-	# Should error on unknown flag
-	test -s stderr
+test_expect_success 'init --shared=group creates a repo' '
+	grit init --shared=group shared-repo &&
+	test -d shared-repo/.git
 '
 
 test_expect_success 'setup repo and set core.sharedRepository via config' '

@@ -380,12 +380,12 @@ test_expect_success '--get-regexp with no match returns error' '
 
 test_expect_success 'config set multiple keys in same section' '
 	cd repo &&
-	git config set multi_sec.k1 "v1" &&
-	git config set multi_sec.k2 "v2" &&
-	git config set multi_sec.k3 "v3" &&
-	git config get multi_sec.k1 >actual1 &&
-	git config get multi_sec.k2 >actual2 &&
-	git config get multi_sec.k3 >actual3 &&
+	git config set multisec.k1 "v1" &&
+	git config set multisec.k2 "v2" &&
+	git config set multisec.k3 "v3" &&
+	git config get multisec.k1 >actual1 &&
+	git config get multisec.k2 >actual2 &&
+	git config get multisec.k3 >actual3 &&
 	echo "v1" >exp1 && echo "v2" >exp2 && echo "v3" >exp3 &&
 	test_cmp exp1 actual1 &&
 	test_cmp exp2 actual2 &&

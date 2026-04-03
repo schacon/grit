@@ -959,8 +959,8 @@ test_expect_success 'setup repo with file deletion' '
 	git update-index --add doomed.txt kept.txt &&
 	c1=$(make_commit "two files") &&
 	printf "%s\n" "$c1" >../del_c1 &&
-	git update-index --remove doomed.txt &&
 	rm -f doomed.txt &&
+	git update-index --remove doomed.txt &&
 	c2=$(make_commit "delete one" "$c1") &&
 	printf "%s\n" "$c2" >../del_c2
 '

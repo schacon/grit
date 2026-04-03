@@ -493,10 +493,10 @@ test_expect_success 'add -f stages an ignored file' '
 	git ls-files --error-unmatch test.ign
 '
 
-test_expect_success 'add of ignored file without -f still works in grit' '
+test_expect_success 'add of ignored file with -f works' '
 	cd repo &&
 	echo data2 >add_ign2.ign &&
-	grit add add_ign2.ign &&
+	grit add -f add_ign2.ign &&
 	git ls-files --error-unmatch add_ign2.ign
 '
 
@@ -618,13 +618,13 @@ test_expect_success 'add -A stages new files' '
 	git ls-files --error-unmatch add_a_new.txt
 '
 
-test_expect_success 'add stages file even when matching gitignore' '
+test_expect_success 'add stages file even when matching gitignore with -f' '
 	cd repo &&
 	git commit -m "add new" 2>/dev/null &&
 	echo "*.ignored" >.gitignore &&
 	git add .gitignore && git commit -m "gitignore" 2>/dev/null &&
 	echo ignored >test.ignored &&
-	grit add test.ignored &&
+	grit add -f test.ignored &&
 	git ls-files --stage test.ignored >actual &&
 	test -s actual &&
 	git reset HEAD test.ignored 2>/dev/null &&

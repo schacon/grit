@@ -17,13 +17,13 @@ test_expect_success 'shortlog -sn' '
 	cd repo &&
 	git shortlog -sn HEAD >actual &&
 	grep "3" actual &&
-	grep "Test Author" actual
+	grep "A U Thor" actual
 '
 
 test_expect_success 'shortlog groups by author' '
 	cd repo &&
 	git shortlog HEAD >actual &&
-	grep "Test Author" actual
+	grep "A U Thor" actual
 '
 
 test_done

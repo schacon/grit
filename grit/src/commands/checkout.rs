@@ -98,7 +98,15 @@ pub fn run(args: Args) -> Result<()> {
     // Try as a commit (detached HEAD)
     match resolve_to_commit(&repo, &target) {
         Ok(oid) => detach_head(&repo, &oid, args.force),
-        Err(_) => bail!("pathspec '{}' did not match any file(s) known to git", target),
+        Err(_) => {
+            // Fallback: try as a pathspec (git checkout <file> without --).
+            // If the target looks like a tracked file, restore it from HEAD.
+            let paths = vec![target.clone()];
+            match checkout_paths(&repo, None, &paths) {
+                Ok(()) => Ok(()),
+                Err(_) => bail!("pathspec '{}' did not match any file(s) known to git", target),
+            }
+        }
     }
 }
 

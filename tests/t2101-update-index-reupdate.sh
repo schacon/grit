@@ -33,8 +33,8 @@ test_expect_success 'update-index --add updates existing entry' '
 	cmp current expected
 '
 
-test_expect_success 'update-index --remove removes entry' '
-	git update-index --remove file1 &&
+test_expect_success 'update-index --force-remove removes entry' '
+	git update-index --force-remove file1 &&
 	git ls-files -s >current &&
 	cat >expected <<-EOF &&
 	100644 $(git hash-object file2) 0	file2

@@ -21,6 +21,8 @@ test_expect_success 'git ls-files without path restriction.' '
 	cat >expect <<-\EOF &&
 	--
 	-foo
+	.bin/git
+	.bin/grit
 	output
 	path0
 	EOF
@@ -60,6 +62,8 @@ test_expect_success 'git ls-files with no path restriction.' '
 	cat >expect <<-\EOF &&
 	--
 	-foo
+	.bin/git
+	.bin/grit
 	output
 	path0
 	EOF

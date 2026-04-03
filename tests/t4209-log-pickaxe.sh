@@ -97,14 +97,14 @@ test_expect_success 'format %ae shows author email' '
 test_expect_success 'format %cn shows committer name' '
 	cd repo &&
 	git log -n1 --format="%cn" >actual &&
-	echo "A U Thor" >expect &&
+	echo "C O Mitter" >expect &&
 	test_cmp expect actual
 '
 
 test_expect_success 'format %ce shows committer email' '
 	cd repo &&
 	git log -n1 --format="%ce" >actual &&
-	echo "author@example.com" >expect &&
+	echo "committer@example.com" >expect &&
 	test_cmp expect actual
 '
 
@@ -225,14 +225,14 @@ test_expect_success 'format %ae shows overridden author email' '
 test_expect_success 'format %cn still shows original committer' '
 	cd repo &&
 	git log -n1 --format="%cn" >actual &&
-	echo "A U Thor" >expect &&
+	echo "C O Mitter" >expect &&
 	test_cmp expect actual
 '
 
 test_expect_success 'format %ce still shows original committer email' '
 	cd repo &&
 	git log -n1 --format="%ce" >actual &&
-	echo "author@example.com" >expect &&
+	echo "committer@example.com" >expect &&
 	test_cmp expect actual
 '
 

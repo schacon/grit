@@ -133,10 +133,10 @@ test_expect_success '.gitattributes stores set/unset/value/unspecified forms' '
 
 # ── check-attr is not supported ──────────────────────────────────────────────
 
-test_expect_success 'check-attr command is not yet implemented' '
+test_expect_success 'check-attr returns unspecified for unset attribute' '
 	cd attr-repo &&
-	test_must_fail git check-attr text file.txt 2>err &&
-	grep -i "unrecognized\|unknown\|not.*found" err
+	git check-attr text file.txt >out &&
+	grep "unspecified" out
 '
 
 # ── .gitattributes survives across branches ──────────────────────────────────

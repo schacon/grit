@@ -12,6 +12,7 @@ test_expect_success setup '
 		echo will-remove
 	) >expect &&
 	(
+		echo .bin &&
 		echo actual &&
 		echo expect &&
 		echo ignored

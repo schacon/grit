@@ -65,7 +65,7 @@ test_expect_success 'log --format=%an shows author name' '
 	cd repo &&
 	grit log --format="%an" >actual &&
 	head -1 actual >first &&
-	echo "Test Author" >expect &&
+	echo "A U Thor" >expect &&
 	test_cmp expect first
 '
 
