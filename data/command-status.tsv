@@ -34,7 +34,7 @@ stash	Main Porcelain	yes	207	203	4	98.1
 status	Main Porcelain	yes	361	313	31	86.6
 submodule	Main Porcelain	yes	478	157	321	32.8
 switch	Main Porcelain	yes	40	16	24	40.0
-tag	Main Porcelain	yes	231	227	1	98.3
+tag	Main Porcelain	yes	231	228	1	98.8
 worktree	Main Porcelain	yes	237	234	3	98.7
 annotate	Ancillary Porcelain	yes	1	1	0	100.0
 blame	Ancillary Porcelain	yes	102	39	62	38.7
@@ -86,7 +86,7 @@ diff-index	Plumbing	yes	20	14	6	70.0
 diff-tree	Plumbing	yes	8	6	2	75.0
 fetch-pack	Plumbing	yes	92	92	0	100.0
 fmt-merge-msg	Plumbing	yes	37	37	0	100.0
-for-each-ref	Plumbing	yes	90	87	3	96.7
+for-each-ref	Plumbing	yes	90	86	3	95.6
 for-each-repo	Plumbing	yes	5	5	0	100.0
 get-tar-commit-id	Plumbing	yes	1	1	0	100.0
 hash-object	Plumbing	yes	56	42	8	75.5

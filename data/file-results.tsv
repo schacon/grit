@@ -708,7 +708,7 @@ t6135-pathspec-with-attrs	no	0	0	0	not_ported
 t6136-pathspec-in-bare	no	0	0	0	not_ported
 t6137-pathspec-wildcards-literal	no	0	0	0	not_ported
 t6200-fmt-merge-msg	yes	5	5	0	ok
-t6300-for-each-ref	yes	276	276	0	ok
+t6300-for-each-ref	yes	276	3	273	ok
 t6301-for-each-ref-errors	yes	5	5	0	ok
 t6302-for-each-ref-filter	yes	51	51	0	ok
 t6400-merge-df	no	0	0	0	not_ported
@@ -755,7 +755,7 @@ t6700-tree-depth	no	0	0	0	not_ported
 t7001-mv	yes	115	115	0	ok
 t7002-mv-sparse-checkout	no	0	0	0	not_ported
 t7003-filter-branch	yes	3	3	0	ok
-t7004-tag	yes	357	352	5	ok
+t7004-tag	yes	357	354	3	ok
 t7005-editor	yes	2	2	0	ok
 t7006-pager	yes	21	21	0	ok
 t7007-show	yes	92	86	6	ok

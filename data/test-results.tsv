@@ -12587,7 +12587,7 @@ t6200-fmt-merge-msg::merge-msg-lots-of-commits	t6200-fmt-merge-msg	merge-msg lot
 t6200-fmt-merge-msg::merge-msg-with-merging-an-annotated-tag	t6200-fmt-merge-msg	merge-msg with "merging" an annotated tag	fmt-merge-msg	pass
 t6200-fmt-merge-msg::merge-into-name-name	t6200-fmt-merge-msg	merge --into-name=<name>	fmt-merge-msg	pass
 t6200-fmt-merge-msg::merge-suppressdest-configuration	t6200-fmt-merge-msg	merge.suppressDest configuration	fmt-merge-msg	pass
-t6300-for-each-ref::for-each-ref-does-not-crash-with-h	t6300-for-each-ref	for-each-ref does not crash with -h	for-each-ref	pass
+t6300-for-each-ref::for-each-ref-does-not-crash-with-h	t6300-for-each-ref	for-each-ref does not crash with -h	for-each-ref	partial
 t6301-for-each-ref-errors::broken-refs-are-reported-correctly	t6301-for-each-ref-errors	Broken refs are reported correctly	for-each-ref	pass
 t6301-for-each-ref-errors::null-sha1-refs-are-reported-correctly	t6301-for-each-ref-errors	NULL_SHA1 refs are reported correctly	for-each-ref	pass
 t6301-for-each-ref-errors::missing-objects-are-reported-correctly	t6301-for-each-ref-errors	Missing objects are reported correctly	for-each-ref	pass
