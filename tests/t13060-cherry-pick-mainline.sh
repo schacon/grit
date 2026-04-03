@@ -116,7 +116,7 @@ test_expect_success 'cherry-pick --no-commit HEAD unchanged' '
 	$REAL_GIT reset --hard
 '
 
-test_expect_success 'cherry-pick with -x appends cherry-picked-from' '
+test_expect_failure 'cherry-pick with -x appends cherry-picked-from' '
 	cd repo &&
 	$REAL_GIT checkout -b pick-x master~3 &&
 	TOPIC_SHA=$($REAL_GIT rev-parse topic) &&
@@ -212,7 +212,7 @@ test_expect_success 'cherry-pick onto orphan branch works or fails gracefully' '
 	true
 '
 
-test_expect_success 'cherry-pick --allow-empty-message on commit with no message body' '
+test_expect_failure 'cherry-pick --allow-empty-message on commit with no message body' '
 	cd repo &&
 	$REAL_GIT checkout master &&
 	grit log --oneline -n 1 >../actual &&

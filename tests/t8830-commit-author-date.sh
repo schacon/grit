@@ -99,13 +99,13 @@ test_expect_success 'GIT_AUTHOR_DATE overrides author date' '
 	GIT_COMMITTER_DATE="1112911993 +0000" \
 	git commit -m "dated commit" &&
 	git log --format="%ai" -n 1 >out &&
-	grep "1112911993" out
+	grep "2005-04-07" out
 '
 
 test_expect_success 'GIT_COMMITTER_DATE overrides committer date' '
 	cd author-repo &&
 	git log --format="%ci" -n 1 >out &&
-	grep "1112911993" out
+	grep "2005-04-07" out
 '
 
 # -- commit --date flag --------------------------------------------------------
@@ -116,7 +116,7 @@ test_expect_success 'commit --date overrides author date' '
 	git add date-flag.txt &&
 	git commit --date="1234567890 +0000" -m "date flag commit" &&
 	git log --format="%ai" -n 1 >out &&
-	grep "1234567890" out
+	grep "2009-02-13" out
 '
 
 # -- multiple commits and ordering ---------------------------------------------
