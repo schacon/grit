@@ -132,6 +132,14 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
 
+        // --modified: only show entries that differ from worktree
+        if args.modified && !show_cached {
+            let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
+            if !is_modified(entry, &full) {
+                continue;
+            }
+        }
+
         let tag = if args.show_tag {
             Some(status_tag(entry))
         } else {
@@ -153,7 +161,7 @@ pub fn run(args: Args) -> Result<()> {
                 name
             )?;
             out.write_all(&[term])?;
-        } else if show_cached || args.deleted {
+        } else if show_cached || args.deleted || args.modified {
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(display);
             if let Some(t) = tag {
@@ -314,6 +322,33 @@ fn normalize_path(path: &std::path::Path) -> PathBuf {
 fn path_to_bytes(path: &std::path::Path) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
     path.as_os_str().as_bytes().to_vec()
+}
+
+/// Check whether an index entry's file has been modified on disk.
+fn is_modified(entry: &IndexEntry, path: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(_) => return true, // file missing = modified (or deleted)
+    };
+
+    // Quick stat comparison (same heuristic as git: size and mtime)
+    if entry.size != 0 && meta.len() as u32 != entry.size {
+        return true;
+    }
+
+    // Compare mtime seconds (and nanoseconds if available)
+    let mtime_sec = meta.mtime() as u32;
+    let mtime_nsec = meta.mtime_nsec() as u32;
+    if mtime_sec != entry.mtime_sec {
+        return true;
+    }
+    if entry.mtime_nsec != 0 && mtime_nsec != entry.mtime_nsec {
+        return true;
+    }
+
+    false
 }
 
 /// Return the status tag character for an index entry (used by `-t`).

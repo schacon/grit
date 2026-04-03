@@ -172,7 +172,7 @@ test_expect_success 'ls-files --modified includes modified tracked file' '
 	grep "a.txt" actual
 '
 
-test_expect_failure 'ls-files --modified matches git' '
+test_expect_success 'ls-files --modified matches git' '
 	cd repo &&
 	grit ls-files --modified >grit_out &&
 	"$REAL_GIT" ls-files --modified >git_out &&

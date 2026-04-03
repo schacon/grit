@@ -151,7 +151,7 @@ test_expect_success 'ls-files -d shows deleted tracked files' '
 	echo "tracked" >tracked.txt
 '
 
-test_expect_failure 'ls-files -m shows modified tracked files' '
+test_expect_success 'ls-files -m shows modified tracked files' '
 	cd repo &&
 	echo "changed content" >tracked.txt &&
 	git ls-files -m >actual &&
