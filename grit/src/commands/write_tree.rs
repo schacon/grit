@@ -53,9 +53,14 @@ pub fn write_tree_from_index(
         .filter(|e| e.stage() == 0 && e.path.starts_with(prefix_bytes))
         .collect();
 
-    // Verify all referenced objects exist (unless --missing-ok)
+    // Verify all referenced objects exist (unless --missing-ok).
+    // Skip gitlink entries (mode 160000) — their OIDs reference commits
+    // in submodule repositories, not the parent ODB.
     if !missing_ok {
         for entry in &entries {
+            if entry.mode == 0o160000 {
+                continue; // gitlink: submodule commit, not in our ODB
+            }
             if odb.read(&entry.oid).is_err() {
                 let path = String::from_utf8_lossy(&entry.path);
                 anyhow::bail!("invalid object {} '{}'", entry.oid.to_hex(), path);

@@ -21,7 +21,7 @@
 
 use std::fs;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::index::{Index, IndexEntry};
@@ -423,6 +423,28 @@ pub fn diff_index_to_worktree(
         // Use str slice directly to avoid allocation for path joining;
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
+
+        // Gitlink entries (submodules) are directories — compare HEAD commit.
+        if ie.mode == 0o160000 {
+            let sub_dir = work_tree.join(path_str_ref);
+            let sub_head_oid = read_submodule_head(&sub_dir);
+            if sub_head_oid.as_ref() != Some(&ie.oid) {
+                let path_owned = path_str_ref.to_owned();
+                let new_oid = sub_head_oid.unwrap_or_else(zero_oid);
+                result.push(DiffEntry {
+                    status: DiffStatus::Modified,
+                    old_path: Some(path_owned.clone()),
+                    new_path: Some(path_owned),
+                    old_mode: format_mode(ie.mode),
+                    new_mode: format_mode(ie.mode),
+                    old_oid: ie.oid,
+                    new_oid,
+                    score: None,
+                });
+            }
+            continue;
+        }
+
         let file_path = work_tree.join(path_str_ref);
         match fs::symlink_metadata(&file_path) {
             Ok(meta) => {
@@ -595,6 +617,31 @@ pub fn diff_tree_to_worktree(
 
     for path in &all_paths {
         let tree_entry = tree_map.get(path.as_str());
+
+        // Gitlink entries (submodules) — compare HEAD commit, not file content.
+        let is_gitlink = tree_entry.map_or(false, |te| te.mode == 0o160000)
+            || index_entries.get(path.as_bytes()).map_or(false, |ie| ie.mode == 0o160000);
+        if is_gitlink {
+            if let Some(te) = tree_entry {
+                let sub_dir = work_tree.join(path);
+                let sub_head = read_submodule_head(&sub_dir);
+                if sub_head.as_ref() != Some(&te.oid) {
+                    let new_oid = sub_head.unwrap_or_else(zero_oid);
+                    result.push(DiffEntry {
+                        status: DiffStatus::Modified,
+                        old_path: Some(path.clone()),
+                        new_path: Some(path.clone()),
+                        old_mode: format_mode(te.mode),
+                        new_mode: format_mode(te.mode),
+                        old_oid: te.oid,
+                        new_oid,
+                        score: None,
+                    });
+                }
+            }
+            continue;
+        }
+
         let file_path = work_tree.join(path);
 
         let wt_meta = match fs::symlink_metadata(&file_path) {
@@ -1571,4 +1618,35 @@ fn format_path(prefix: &str, name: &str) -> String {
 /// Format a numeric mode as a zero-padded octal string.
 fn format_mode(mode: u32) -> String {
     format!("{mode:06o}")
+}
+
+/// Read the HEAD commit OID from a submodule directory.
+/// Returns `None` if the submodule dir doesn't exist or has no HEAD.
+fn read_submodule_head(sub_dir: &Path) -> Option<ObjectId> {
+
+    // Also handle gitfile: .git is a file containing "gitdir: <path>"
+    let git_dir = if sub_dir.join(".git").is_file() {
+        let content = fs::read_to_string(sub_dir.join(".git")).ok()?;
+        let gitdir = content.lines().find_map(|l| l.strip_prefix("gitdir: "))?.trim().to_owned();
+        if Path::new(&gitdir).is_absolute() {
+            PathBuf::from(gitdir)
+        } else {
+            sub_dir.join(gitdir)
+        }
+    } else if sub_dir.join(".git").is_dir() {
+        sub_dir.join(".git")
+    } else {
+        return None;
+    };
+    let head_content = fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head_content = head_content.trim();
+    if let Some(refname) = head_content.strip_prefix("ref: ") {
+        // Symbolic ref — resolve it
+        let ref_path = git_dir.join(refname);
+        let oid_hex = fs::read_to_string(&ref_path).ok()?;
+        ObjectId::from_hex(oid_hex.trim()).ok()
+    } else {
+        // Detached HEAD — direct OID
+        ObjectId::from_hex(head_content).ok()
+    }
 }

@@ -23,14 +23,14 @@ test_expect_success 'setup superproject and submodule' '
 	git commit -m "first"
 '
 
-test_expect_failure 'add submodule to superproject' '
+test_expect_success 'add submodule to superproject' '
 	cd super &&
 	git add sub &&
 	test_tick &&
 	git commit -m "add sub"
 '
 
-test_expect_failure 'change in submodule detected by diff' '
+test_expect_success 'change in submodule detected by diff' '
 	cd super &&
 	cd sub &&
 	echo second >content &&
@@ -42,7 +42,7 @@ test_expect_failure 'change in submodule detected by diff' '
 	test -s actual
 '
 
-test_expect_failure 'diff --stat shows submodule change' '
+test_expect_success 'diff --stat shows submodule change' '
 	cd super &&
 	git diff --stat >actual &&
 	test -s actual
