@@ -843,3 +843,4 @@ t9920-commit-tree-author-env.sh
 test-lib.sh
 t7510-signed-commit.sh
 t7513-interpret-trailers.sh
+t7514-commit-patch.sh
