@@ -146,7 +146,7 @@ test_expect_success 'cached diff with nested directory additions' '
 
 test_expect_success 'cached diff a/b prefix for nested paths' '
     (cd repo && grit diff --cached >../actual) &&
-    grep "^--- a//dev/null$" actual &&
+    grep "^--- /dev/null$" actual &&
     grep "^+++ b/sub/deep/nested.txt$" actual
 '
 

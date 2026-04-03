@@ -350,7 +350,7 @@ test_expect_success 'setup file deletion commit' '
 	git update-index --add extra.txt &&
 	commit_extra=$(make_commit "add extra.txt" "$c3") &&
 	printf "%s\n" "$commit_extra" >../commit_extra &&
-	git update-index --remove extra.txt &&
+	git update-index --force-remove extra.txt &&
 	rm -f extra.txt &&
 	commit_del=$(make_commit "delete extra.txt" "$commit_extra") &&
 	printf "%s\n" "$commit_del" >../commit_del
@@ -756,7 +756,7 @@ test_expect_success 'setup rename test: commit file then remove+add renamed copy
 	commit_rsrc=$(make_commit "add rename source" "$c2") &&
 	printf "%s\n" "$commit_rsrc" >../commit_rsrc &&
 	cp rename_src.txt rename_dst.txt &&
-	git update-index --remove rename_src.txt &&
+	git update-index --force-remove rename_src.txt &&
 	git update-index --add rename_dst.txt &&
 	commit_rdst=$(make_commit "rename file" "$commit_rsrc") &&
 	printf "%s\n" "$commit_rdst" >../commit_rdst
@@ -956,7 +956,7 @@ test_expect_success 'diff-tree -p shows 100755 mode for executable' '
 test_expect_success 'setup deletion' '
 	cd repo &&
 	cexec=$(cat ../commit_exec) &&
-	git update-index --remove binary.dat &&
+	git update-index --force-remove binary.dat &&
 	rm -f binary.dat &&
 	commit_del=$(make_commit "delete binary" "$cexec") &&
 	printf "%s\n" "$commit_del" >../commit_del
