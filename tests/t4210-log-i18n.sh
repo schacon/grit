@@ -6,6 +6,9 @@ test_description='grit log with i18n and encoding'
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
+# Unset test harness author/committer vars so git config values are used
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+
 test_expect_success 'setup repo with UTF-8 commit messages' '
 	git init repo &&
 	cd repo &&
