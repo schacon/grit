@@ -14,7 +14,7 @@ cd "$(dirname "$0")" || exit 1
 
 # --- HTTP transport not available in grit ---
 
-test_expect_failure 'noop negotiator does not emit any "have"' '
+test_expect_success 'noop negotiator does not emit any "have"' '
 	false
 '
 

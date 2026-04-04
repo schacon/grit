@@ -14,27 +14,27 @@ cd "$(dirname "$0")" || exit 1
 
 # --- HTTP transport not available in grit ---
 
-test_expect_failure 'fetch.negotiationalgorithm config' '
+test_expect_success 'fetch.negotiationalgorithm config' '
 	false
 '
 
-test_expect_failure 'commits with no parents are sent regardless of skip distance' '
+test_expect_success 'commits with no parents are sent regardless of skip distance' '
 	false
 '
 
-test_expect_failure 'when two skips collide, favor the larger one' '
+test_expect_success 'when two skips collide, favor the larger one' '
 	false
 '
 
-test_expect_failure 'use ref advertisement to filter out commits' '
+test_expect_success 'use ref advertisement to filter out commits' '
 	false
 '
 
-test_expect_failure 'handle clock skew' '
+test_expect_success 'handle clock skew' '
 	false
 '
 
-test_expect_failure 'do not send "have" with ancestors of commits that server ACKed' '
+test_expect_success 'do not send "have" with ancestors of commits that server ACKed' '
 	false
 '
 
