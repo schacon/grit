@@ -164,21 +164,24 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
 
-        // --remove: remove the path from the index.  When --add is also
-        // given and the file exists as a regular file/symlink (not a
-        // directory), fall through to the add logic instead.  A directory
-        // at the path means the original file was replaced, so remove.
+        // --remove: if the file doesn't exist on disk (or is a directory
+        // that replaced it), remove the entry from the index.  If the file
+        // *does* exist on disk, fall through to the normal update/add logic
+        // so the index entry gets refreshed.
         if args.remove {
-            let file_exists = match std::fs::symlink_metadata(&abs_path) { Ok(m) => !m.is_dir(), Err(_) => false, };
-            if !args.add || !file_exists {
+            let file_exists = match std::fs::symlink_metadata(&abs_path) {
+                Ok(m) => !m.is_dir(),
+                Err(_) => false,
+            };
+            if !file_exists {
                 if !index.remove(&rel_bytes) && !args.ignore_missing {
-                    let file_missing = !abs_path.exists();
-                    if file_missing {
-                        bail!("'{}' is not in the index", input_path.display());
-                    }
+                    // Entry wasn't in the index — only error if the file is
+                    // truly gone (not just a directory replacement).
+                    bail!("'{}' is not in the index", input_path.display());
                 }
                 continue;
             }
+            // File exists on disk — fall through to update it in the index.
         }
 
         if args.assume_unchanged {
