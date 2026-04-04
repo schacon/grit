@@ -94,11 +94,7 @@ EOF
 exec "$GUST_BIN" "\$@"
 EOF
 	chmod +x "$TRASH_DIRECTORY/.bin/grit"
-	# Prevent .bin from being accidentally tracked by 'git add .'
-	# Without this, autocrlf=true can corrupt the wrapper scripts
-	# with CRLF line-endings and break the shebang.
-	echo "/.bin" >"$TRASH_DIRECTORY/.gitignore"
-	echo "*" >"$TRASH_DIRECTORY/.bin/.gitignore"
+	# Note: .bin/ protection is handled via .git/info/exclude in grit init
 	# Prepend .bin to PATH so every subshell sees 'git' → grit
 PATH="$TEST_DIRECTORY:$PATH"
 	export PATH="$TRASH_DIRECTORY/.bin:$PATH"

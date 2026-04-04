@@ -287,9 +287,8 @@ pub fn run(args: Args) -> Result<()> {
         || !args.exclude.is_empty()
         || !args.exclude_from.is_empty()
         || args.exclude_per_directory.is_some();
-    // Load standard ignores for --exclude-standard, --ignored, or --others
-    // (--others implicitly applies gitignore to hide ignored files)
-    let use_standard_ignores = args.exclude_standard || args.ignored || args.others;
+    // Load standard ignores for --exclude-standard or --ignored
+    let use_standard_ignores = args.exclude_standard || args.ignored;
     let mut matcher = if use_standard_ignores {
         Some(IgnoreMatcher::from_repository(&repo).unwrap_or_default())
     } else {
