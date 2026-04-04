@@ -457,6 +457,10 @@ test_have_prereq () {
 	SYMLINKS)  return 0 ;;
 	PIPE)      command -v mkfifo >/dev/null 2>&1 && return 0 ; return 1 ;;
 	SANITY)    return 0 ;;
+	FUNNYNAMES) return 0 ;;
+	FILEMODE)  return 0 ;;
+	COLON_DIR) return 0 ;;
+	BSLASHPSPEC) return 0 ;;
 	MINGW)     return 1 ;;  # Not on Windows
 	CYGWIN)    return 1 ;;  # Not on Cygwin
 	PERL)      command -v perl >/dev/null 2>&1 && return 0 ; return 1 ;;
