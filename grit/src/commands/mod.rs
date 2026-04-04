@@ -144,5 +144,7 @@ pub mod http_fetch;
 pub mod http_push;
 pub mod last_modified;
 pub mod repo;
+pub mod scalar;
+pub mod send_email;
 pub mod sh_i18n;
 pub mod sh_setup;
