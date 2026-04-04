@@ -17,14 +17,16 @@ test_expect_success 'setup' '
 	test_commit initial
 '
 
-# grit does not support proc-receive hook
-test_expect_failure 'standard git push without proc-receive' '
+test_expect_success 'push to bare repo works' '
 	git init --bare upstream.git &&
 	git push ./upstream.git main &&
 	git --git-dir=upstream.git rev-parse main >expect &&
 	git rev-parse main >actual &&
-	test_cmp expect actual &&
-	# Setup proc-receive hook
+	test_cmp expect actual
+'
+
+# grit does not support proc-receive hook
+test_expect_failure 'proc-receive hook rejects push to refs/for/*' '
 	mkdir -p upstream.git/hooks &&
 	write_script upstream.git/hooks/proc-receive <<-\EOF &&
 	printf >&2 "# proc-receive hook\n"
