@@ -129,6 +129,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut out = stdout.lock();
 
     let term = if args.null_terminated { b'\0' } else { b'\n' };
+    let use_nul = args.null_terminated;
 
     // Determine which mode to use
     let show_cached = args.cached
@@ -247,6 +248,7 @@ pub fn run(args: Args) -> Result<()> {
         } else if show_stage {
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(display);
+            let qname = maybe_quote(&name, use_nul);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
             }
@@ -256,16 +258,17 @@ pub fn run(args: Args) -> Result<()> {
                 entry.mode,
                 entry.oid,
                 entry.stage(),
-                name
+                qname
             )?;
             out.write_all(&[term])?;
         } else if show_cached || args.deleted || args.modified {
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(display);
+            let qname = maybe_quote(&name, use_nul);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
             }
-            write!(out, "{name}")?;
+            write!(out, "{qname}")?;
             out.write_all(&[term])?;
         }
     }
@@ -374,10 +377,11 @@ pub fn run(args: Args) -> Result<()> {
 
         for display in &output_paths {
             let name = String::from_utf8_lossy(display);
+            let qname = maybe_quote(&name, use_nul);
             if args.show_tag {
-                write!(out, "? {name}")?;
+                write!(out, "? {qname}")?;
             } else {
-                write!(out, "{name}")?;
+                write!(out, "{qname}")?;
             }
             out.write_all(&[term])?;
         }
@@ -765,6 +769,37 @@ fn describe_eol(data: &[u8]) -> String {
         (true, false) => "crlf".to_string(),
         (false, true) => "lf".to_string(),
         (false, false) => "".to_string(),
+    }
+}
+
+/// Quote a path name with C-style escaping if it contains special characters.
+/// When `use_nul` is true (i.e. -z mode), no quoting is done.
+fn maybe_quote(name: &str, use_nul: bool) -> String {
+    if use_nul {
+        return name.to_owned();
+    }
+    let mut out = String::with_capacity(name.len() + 2);
+    let mut needs_quotes = false;
+    for ch in name.chars() {
+        match ch {
+            '"' => { out.push_str("\\\""); needs_quotes = true; }
+            '\\' => { out.push_str("\\\\"); needs_quotes = true; }
+            '\t' => { out.push_str("\\t"); needs_quotes = true; }
+            '\n' => { out.push_str("\\n"); needs_quotes = true; }
+            '\r' => { out.push_str("\\r"); needs_quotes = true; }
+            c if c.is_control() || (c as u32) >= 0x80 => {
+                for b in c.to_string().bytes() {
+                    out.push_str(&format!("\\{:03o}", b));
+                }
+                needs_quotes = true;
+            }
+            c => out.push(c),
+        }
+    }
+    if needs_quotes {
+        format!("\"{out}\"")
+    } else {
+        out
     }
 }
 
