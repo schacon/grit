@@ -101,6 +101,11 @@ fn read_config_value(key: &str, git_dir: Option<&Path>) -> Option<String> {
     None
 }
 
+/// Public helper: check GIT_CONFIG_PARAMETERS for a specific key.
+pub fn check_config_param(key: &str) -> Option<String> {
+    check_git_config_env(key)
+}
+
 /// Check GIT_CONFIG_COUNT / GIT_CONFIG_KEY_N / GIT_CONFIG_VALUE_N env vars,
 /// and also GIT_CONFIG_PARAMETERS (the format used by `git -c key=value`).
 fn check_git_config_env(key: &str) -> Option<String> {

@@ -377,6 +377,30 @@ fn preprocess_log_args(rest: &[String]) -> Vec<String> {
 }
 
 /// Levenshtein edit distance between two strings.
+/// Read the `help.autocorrect` config setting.
+/// Returns None if not set, or Some(value) where value is the config string.
+fn get_autocorrect_setting() -> Option<String> {
+    // Check GIT_CONFIG_PARAMETERS first (set by -c)
+    if let Some(val) = protocol::check_config_param("help.autocorrect") {
+        return Some(val);
+    }
+    // Try to discover git dir and load config
+    let git_dir = std::env::var("GIT_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            grit_lib::repo::Repository::discover(None)
+                .ok()
+                .map(|r| r.git_dir)
+        });
+    if let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) {
+        if let Some(val) = config.get("help.autocorrect") {
+            return Some(val);
+        }
+    }
+    None
+}
+
 fn strsim_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
@@ -587,13 +611,35 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 .copied()
                 .collect();
             suggestions.sort();
-            if suggestions.is_empty() {
-                bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nunrecognized subcommand");
-            } else {
-                let similar = suggestions.join("\n\t");
-                bail!(
-                    "grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
-                );
+
+            // Check help.autocorrect config
+            let autocorrect = get_autocorrect_setting();
+
+            match autocorrect.as_deref() {
+                Some("never") => {
+                    // With never, just say it's not a command, no suggestions
+                    bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.");
+                }
+                Some("immediate") | Some("-1") if suggestions.len() == 1 => {
+                    // Auto-run the single matching command
+                    let corrected = suggestions[0].to_owned();
+                    eprintln!(
+                        "WARNING: You called a grit command named '{subcmd}', which does not exist."
+                    );
+                    eprintln!("Auto-correcting to 'grit {corrected}'");
+                    return dispatch(&corrected, rest, opts);
+                }
+                _ => {
+                    // Default: show suggestions
+                    if suggestions.is_empty() {
+                        bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nunrecognized subcommand");
+                    } else {
+                        let similar = suggestions.join("\n\t");
+                        bail!(
+                            "grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
+                        );
+                    }
+                }
             }
         }
     }
