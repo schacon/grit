@@ -100,6 +100,7 @@ EOF
 	echo "/.bin" >"$TRASH_DIRECTORY/.gitignore"
 	echo "*" >"$TRASH_DIRECTORY/.bin/.gitignore"
 	# Prepend .bin to PATH so every subshell sees 'git' → grit
+PATH="$TEST_DIRECTORY:$PATH"
 	export PATH="$TRASH_DIRECTORY/.bin:$PATH"
 	# cd into trash so each test starts with a clean cwd
 	cd "$TRASH_DIRECTORY" || exit 1

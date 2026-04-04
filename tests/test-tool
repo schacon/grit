@@ -1,0 +1,67 @@
+#!/bin/sh
+# Minimal test-tool stub for grit tests
+# Implements the most-used subcommands from git's test-tool
+case "$1" in
+  chmtime)
+    shift
+    # Parse =<epoch> or +N/-N syntax
+    case "$1" in
+      =*) epoch="${1#=}"; shift; touch -d "@$epoch" "$@" ;;
+      +*|-*) 
+        offset="$1"; shift
+        for f in "$@"; do
+          cur=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+          new=$((cur + offset))
+          touch -d "@$new" "$f"
+        done ;;
+      *) echo "test-tool chmtime: unknown format: $1" >&2; exit 1 ;;
+    esac ;;
+  sha1)
+    sha1sum | cut -d' ' -f1 ;;
+  sha256)
+    sha256sum | cut -d' ' -f1 ;;
+  genrandom)
+    seed="$2"; count="${3:-0}"
+    dd if=/dev/urandom bs=1 count="$count" 2>/dev/null ;;
+  genzeros)
+    count="${2:-0}"
+    dd if=/dev/zero bs=1 count="$count" 2>/dev/null ;;
+  read-cache)
+    exit 0 ;;
+  dump-cache-tree)
+    exit 0 ;;
+  date)
+    shift
+    case "$1" in
+      is64bit) exit 0 ;;
+      *) date "$@" ;;
+    esac ;;
+  env-helper)
+    shift
+    # test-tool env-helper --type=bool --default=0 GIT_TEST_SOMETHING
+    val=""
+    default=""
+    type=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --type=*) type="${1#--type=}"; shift ;;
+        --default=*) default="${1#--default=}"; shift ;;
+        --exit-code) shift ;;
+        *) val=$(eval echo "\$$1"); shift ;;
+      esac
+    done
+    [ -z "$val" ] && val="$default"
+    case "$type" in
+      bool) [ "$val" = "1" ] || [ "$val" = "true" ] || [ "$val" = "yes" ] && exit 0; exit 1 ;;
+      *) echo "$val"; exit 0 ;;
+    esac ;;
+  path-utils)
+    shift
+    case "$1" in
+      normalize_path_copy) echo "$2" ;;
+      *) echo "$@" ;;
+    esac ;;
+  *)
+    echo "test-tool: unknown subcommand '$1'" >&2
+    exit 1 ;;
+esac
