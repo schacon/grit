@@ -68,6 +68,14 @@ pub struct Args {
     /// Suppress output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
+
+    /// Suppress editor launch for the merge commit message.
+    #[arg(long = "no-edit")]
+    pub no_edit: bool,
+
+    /// Open editor for the merge commit message (default for non-automated merges).
+    #[arg(long = "edit", short = 'e')]
+    pub edit: bool,
 }
 
 /// Run the `merge` command.
@@ -357,6 +365,7 @@ fn do_real_merge(
         committer,
         encoding: None,
         message: msg,
+    raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -501,6 +510,7 @@ fn do_octopus_merge(
         committer,
         encoding: None,
         message: msg,
+    raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -574,6 +584,7 @@ fn do_strategy_ours(
         committer,
         encoding: None,
         message: msg,
+    raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -741,6 +752,7 @@ fn merge_continue(message: Option<String>) -> Result<()> {
         committer,
         encoding: None,
         message: msg.clone(),
+    raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);

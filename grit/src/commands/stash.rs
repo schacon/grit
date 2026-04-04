@@ -460,6 +460,7 @@ fn do_push_pathspec(
         committer: identity.clone(),
         encoding: None,
         message: format!("index on {}", branch_description(head)),
+        raw_message: None,
     };
     let index_commit_bytes = serialize_commit(&index_commit_data);
     let index_commit_oid = repo.odb.write(ObjectKind::Commit, &index_commit_bytes)?;
@@ -477,6 +478,7 @@ fn do_push_pathspec(
         committer: identity.clone(),
         encoding: None,
         message: stash_msg.clone(),
+    raw_message: None,
     };
     let stash_bytes = serialize_commit(&stash_commit);
     let stash_oid = repo.odb.write(ObjectKind::Commit, &stash_bytes)?;
@@ -591,6 +593,7 @@ fn do_push_staged(
         committer: identity.clone(),
         encoding: None,
         message: format!("index on {}", branch_description(head)),
+        raw_message: None,
     };
     let index_commit_bytes = serialize_commit(&index_commit_data);
     let index_commit_oid = repo.odb.write(ObjectKind::Commit, &index_commit_bytes)?;
@@ -606,6 +609,7 @@ fn do_push_staged(
         committer: identity.clone(),
         encoding: None,
         message: stash_msg.clone(),
+    raw_message: None,
     };
     let stash_bytes = serialize_commit(&stash_commit);
     let stash_oid = repo.odb.write(ObjectKind::Commit, &stash_bytes)?;
@@ -1401,6 +1405,7 @@ fn create_stash_commit(
         committer: identity.clone(),
         encoding: None,
         message: format!("index on {}", branch_description(head)),
+        raw_message: None,
     };
     let index_commit_bytes = serialize_commit(&index_commit_data);
     let index_commit_oid = repo.odb.write(ObjectKind::Commit, &index_commit_bytes)?;
@@ -1415,6 +1420,7 @@ fn create_stash_commit(
             committer: identity.clone(),
             encoding: None,
             message: format!("untracked files on {}", branch_description(head)),
+            raw_message: None,
         };
         let ut_bytes = serialize_commit(&ut_commit);
         Some(repo.odb.write(ObjectKind::Commit, &ut_bytes)?)
@@ -1439,6 +1445,7 @@ fn create_stash_commit(
         committer: identity.clone(),
         encoding: None,
         message: stash_msg,
+    raw_message: None,
     };
     let stash_bytes = serialize_commit(&stash_commit);
     let stash_oid = repo.odb.write(ObjectKind::Commit, &stash_bytes)?;

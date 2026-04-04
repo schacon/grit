@@ -37,14 +37,6 @@ pub struct Args {
     /// Suppress output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
-
-    /// Recurse into submodules (accepted but not yet implemented).
-    #[arg(long = "recurse-submodules", num_args = 0..=1, default_missing_value = "yes", require_equals = true)]
-    pub recurse_submodules: Option<String>,
-
-    /// Do not recurse into submodules.
-    #[arg(long = "no-recurse-submodules", hide = true)]
-    pub no_recurse_submodules: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -100,9 +92,9 @@ pub fn run(args: Args) -> Result<()> {
         output: None,
         quiet: args.quiet,
         jobs: None,
+        porcelain: false,
         no_show_forced_updates: false,
         show_forced_updates: false,
-        porcelain: false,
     };
     super::fetch::run(fetch_args)?;
 
@@ -136,6 +128,8 @@ pub fn run(args: Args) -> Result<()> {
             strategy: None,
             strategy_option: Vec::new(),
             quiet: args.quiet,
+            no_edit: true,
+            edit: false,
         };
         super::merge::run(merge_args)
     }

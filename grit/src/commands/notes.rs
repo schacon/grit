@@ -217,6 +217,7 @@ fn write_notes_commit(
         committer: ident,
         encoding: None,
         message: message.to_owned(),
+    raw_message: None,
     };
 
     let commit_data = serialize_commit(&commit);
