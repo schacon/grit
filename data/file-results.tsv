@@ -611,7 +611,7 @@ t5562-http-backend-content-length	yes	16	16	0	ok
 t5563-simple-http-auth	yes	17	17	0	ok
 t5564-http-proxy	yes	7	7	0	ok
 t5565-push-multiple	yes	2	2	0	ok
-t5570-git-daemon	yes	25	25	0	ok
+t5570-git-daemon	yes	25	22	3	ok
 t5571-pre-push-hook	yes	5	4	1	ok
 t5572-pull-submodule	yes	4	4	0	ok
 t5573-pull-verify-signatures	yes	3	3	0	ok

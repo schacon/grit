@@ -10996,31 +10996,31 @@ t5564-http-proxy::clone-via-unix-socket	t5564-http-proxy	clone via Unix socket	c
 t5564-http-proxy::unix-socket-requires-socks	t5564-http-proxy	Unix socket requires socks*:	clone	pass
 t5564-http-proxy::unix-socket-requires-localhost	t5564-http-proxy	Unix socket requires localhost	clone	pass
 t5565-push-multiple::push-to-group	t5565-push-multiple	push to group	push	pass
-t5570-git-daemon::daemon-rejects-invalid-init-timeout-values	t5570-git-daemon	daemon rejects invalid --init-timeout values	daemon	pass
-t5570-git-daemon::daemon-rejects-invalid-timeout-values	t5570-git-daemon	daemon rejects invalid --timeout values	daemon	pass
-t5570-git-daemon::daemon-rejects-invalid-max-connections-values	t5570-git-daemon	daemon rejects invalid --max-connections values	daemon	pass
-t5570-git-daemon::setup-repository	t5570-git-daemon	setup repository	daemon	pass
-t5570-git-daemon::create-git-accessible-bare-repository	t5570-git-daemon	create git-accessible bare repository	daemon	pass
-t5570-git-daemon::clone-git-repository	t5570-git-daemon	clone git repository	daemon	pass
-t5570-git-daemon::fetch-changes-via-git-protocol	t5570-git-daemon	fetch changes via git protocol	daemon	pass
-t5570-git-daemon::no-op-fetch-v-stderr-is-as-expected	t5570-git-daemon	no-op fetch -v stderr is as expected	daemon	pass
-t5570-git-daemon::no-op-fetch-without-v-is-quiet	t5570-git-daemon	no-op fetch without "-v" is quiet	daemon	pass
-t5570-git-daemon::remote-detects-correct-head	t5570-git-daemon	remote detects correct HEAD	daemon	pass
-t5570-git-daemon::prepare-pack-objects	t5570-git-daemon	prepare pack objects	daemon	pass
-t5570-git-daemon::fetch-notices-corrupt-pack	t5570-git-daemon	fetch notices corrupt pack	daemon	pass
-t5570-git-daemon::fetch-notices-corrupt-idx	t5570-git-daemon	fetch notices corrupt idx	daemon	pass
-t5570-git-daemon::client-refuses-to-ask-for-repo-with-newline	t5570-git-daemon	client refuses to ask for repo with newline	daemon	pass
-t5570-git-daemon::clone-non-existent	t5570-git-daemon	clone non-existent	daemon	pass
-t5570-git-daemon::push-disabled	t5570-git-daemon	push disabled	daemon	pass
-t5570-git-daemon::read-access-denied	t5570-git-daemon	read access denied	daemon	pass
-t5570-git-daemon::not-exported	t5570-git-daemon	not exported	daemon	pass
-t5570-git-daemon::clone-non-existent-2	t5570-git-daemon	clone non-existent	daemon	pass
-t5570-git-daemon::push-disabled-2	t5570-git-daemon	push disabled	daemon	pass
-t5570-git-daemon::read-access-denied-2	t5570-git-daemon	read access denied	daemon	pass
-t5570-git-daemon::not-exported-2	t5570-git-daemon	not exported	daemon	pass
-t5570-git-daemon::access-repo-via-interpolated-hostname	t5570-git-daemon	access repo via interpolated hostname	daemon	pass
-t5570-git-daemon::hostname-cannot-break-out-of-directory	t5570-git-daemon	hostname cannot break out of directory	daemon	pass
-t5570-git-daemon::hostname-interpolation-works-after-lf-stripping	t5570-git-daemon	hostname interpolation works after LF-stripping	daemon	pass
+t5570-git-daemon::daemon-rejects-invalid-init-timeout-values	t5570-git-daemon	daemon rejects invalid --init-timeout values	daemon	partial
+t5570-git-daemon::daemon-rejects-invalid-timeout-values	t5570-git-daemon	daemon rejects invalid --timeout values	daemon	partial
+t5570-git-daemon::daemon-rejects-invalid-max-connections-values	t5570-git-daemon	daemon rejects invalid --max-connections values	daemon	partial
+t5570-git-daemon::setup-repository	t5570-git-daemon	setup repository	daemon	partial
+t5570-git-daemon::create-git-accessible-bare-repository	t5570-git-daemon	create git-accessible bare repository	daemon	partial
+t5570-git-daemon::clone-git-repository	t5570-git-daemon	clone git repository	daemon	partial
+t5570-git-daemon::fetch-changes-via-git-protocol	t5570-git-daemon	fetch changes via git protocol	daemon	partial
+t5570-git-daemon::no-op-fetch-v-stderr-is-as-expected	t5570-git-daemon	no-op fetch -v stderr is as expected	daemon	partial
+t5570-git-daemon::no-op-fetch-without-v-is-quiet	t5570-git-daemon	no-op fetch without "-v" is quiet	daemon	partial
+t5570-git-daemon::remote-detects-correct-head	t5570-git-daemon	remote detects correct HEAD	daemon	partial
+t5570-git-daemon::prepare-pack-objects	t5570-git-daemon	prepare pack objects	daemon	partial
+t5570-git-daemon::fetch-notices-corrupt-pack	t5570-git-daemon	fetch notices corrupt pack	daemon	partial
+t5570-git-daemon::fetch-notices-corrupt-idx	t5570-git-daemon	fetch notices corrupt idx	daemon	partial
+t5570-git-daemon::client-refuses-to-ask-for-repo-with-newline	t5570-git-daemon	client refuses to ask for repo with newline	daemon	partial
+t5570-git-daemon::clone-non-existent	t5570-git-daemon	clone non-existent	daemon	partial
+t5570-git-daemon::push-disabled	t5570-git-daemon	push disabled	daemon	partial
+t5570-git-daemon::read-access-denied	t5570-git-daemon	read access denied	daemon	partial
+t5570-git-daemon::not-exported	t5570-git-daemon	not exported	daemon	partial
+t5570-git-daemon::clone-non-existent-2	t5570-git-daemon	clone non-existent	daemon	partial
+t5570-git-daemon::push-disabled-2	t5570-git-daemon	push disabled	daemon	partial
+t5570-git-daemon::read-access-denied-2	t5570-git-daemon	read access denied	daemon	partial
+t5570-git-daemon::not-exported-2	t5570-git-daemon	not exported	daemon	partial
+t5570-git-daemon::access-repo-via-interpolated-hostname	t5570-git-daemon	access repo via interpolated hostname	daemon	partial
+t5570-git-daemon::hostname-cannot-break-out-of-directory	t5570-git-daemon	hostname cannot break out of directory	daemon	partial
+t5570-git-daemon::hostname-interpolation-works-after-lf-stripping	t5570-git-daemon	hostname interpolation works after LF-stripping	daemon	partial
 t5571-pre-push-hook::setup	t5571-pre-push-hook	setup	config	partial
 t5571-pre-push-hook::push-with-failing-hook	t5571-pre-push-hook	push with failing hook	push	partial
 t5571-pre-push-hook::no-verify-bypasses-hook	t5571-pre-push-hook	--no-verify bypasses hook	push	partial
