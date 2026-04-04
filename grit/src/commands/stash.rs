@@ -47,9 +47,21 @@ pub struct Args {
     #[arg(short = 'k', long = "keep-index", global = true)]
     pub keep_index: bool,
 
+    /// Revert keep-index (default behavior).
+    #[arg(long = "no-keep-index", global = true)]
+    pub no_keep_index: bool,
+
     /// Also stash untracked files.
     #[arg(short = 'u', long = "include-untracked", global = true)]
     pub include_untracked: bool,
+
+    /// Only stash staged changes.
+    #[arg(short = 'S', long = "staged", global = true)]
+    pub staged: bool,
+
+    /// Interactive patch mode.
+    #[arg(short = 'p', long = "patch", global = true)]
+    pub patch: bool,
 
     /// Quiet mode — suppress output messages.
     #[arg(short = 'q', long = "quiet", global = true)]
@@ -195,9 +207,9 @@ pub fn run(args: Args) -> Result<()> {
             do_push(PushOpts {
                 message: args.message,
                 keep_index: args.keep_index,
-                no_keep_index: false,
+                no_keep_index: args.no_keep_index,
                 include_untracked: args.include_untracked,
-                staged: false,
+                staged: args.staged,
                 quiet: args.quiet,
                 pathspec: args.pathspec,
             })
