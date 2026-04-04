@@ -216,7 +216,7 @@ fn write_notes_commit(
         author: ident.clone(),
         committer: ident,
         encoding: None,
-        message: message.to_owned(),
+        message: if message.ends_with('\n') { message.to_owned() } else { format!("{message}\n") },
     raw_message: None,
     };
 

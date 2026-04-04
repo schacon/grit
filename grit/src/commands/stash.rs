@@ -471,7 +471,7 @@ fn do_push_pathspec(
         author: identity.clone(),
         committer: identity.clone(),
         encoding: None,
-        message: format!("index on {}", branch_description(head)),
+        message: format!("index on {}\n", branch_description(head)),
         raw_message: None,
     };
     let index_commit_bytes = serialize_commit(&index_commit_data);
@@ -604,7 +604,7 @@ fn do_push_staged(
         author: identity.clone(),
         committer: identity.clone(),
         encoding: None,
-        message: format!("index on {}", branch_description(head)),
+        message: format!("index on {}\n", branch_description(head)),
         raw_message: None,
     };
     let index_commit_bytes = serialize_commit(&index_commit_data);
@@ -1595,7 +1595,7 @@ fn create_stash_commit(
         author: identity.clone(),
         committer: identity.clone(),
         encoding: None,
-        message: format!("index on {}", branch_description(head)),
+        message: format!("index on {}\n", branch_description(head)),
         raw_message: None,
     };
     let index_commit_bytes = serialize_commit(&index_commit_data);
@@ -1610,7 +1610,7 @@ fn create_stash_commit(
             author: identity.clone(),
             committer: identity.clone(),
             encoding: None,
-            message: format!("untracked files on {}", branch_description(head)),
+            message: format!("untracked files on {}\n", branch_description(head)),
         raw_message: None,
         };
         let ut_bytes = serialize_commit(&ut_commit);
@@ -1647,8 +1647,8 @@ fn create_stash_commit(
 /// Generate the stash save message (used as commit message).
 fn stash_save_msg(head: &HeadState, message: Option<&str>) -> String {
     match message {
-        Some(msg) => format!("On {}: {msg}", branch_short_name(head)),
-        None => format!("WIP on {}", branch_description(head)),
+        Some(msg) => format!("On {}: {msg}\n", branch_short_name(head)),
+        None => format!("WIP on {}\n", branch_description(head)),
     }
 }
 
