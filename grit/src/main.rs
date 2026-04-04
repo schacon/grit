@@ -386,6 +386,13 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
             }
         }
         opts.push("--".to_string());
+        // Also list subcommands (used by completion for commands like reflog, config)
+        for sub in cmd.get_subcommands() {
+            let name = sub.get_name().to_string();
+            if name != "help" {
+                opts.push(name);
+            }
+        }
         opts
     }
 

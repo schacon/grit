@@ -3071,7 +3071,7 @@ test_expect_failure 'git config set - variable name - __git_compute_second_level
 	EOF
 '
 
-test_expect_failure 'git config set - value' '
+test_expect_success 'git config set - value' '
 	test_completion "git config set color.pager " <<-\EOF
 	false Z
 	true Z
@@ -3122,7 +3122,7 @@ test_expect_success 'git clone --config= - value' '
 	EOF
 '
 
-test_expect_failure 'git reflog show' '
+test_expect_success 'git reflog show' '
 	test_when_finished "git checkout - && git branch -d shown" &&
 	git checkout -b shown &&
 	test_completion "git reflog sho" <<-\EOF &&
