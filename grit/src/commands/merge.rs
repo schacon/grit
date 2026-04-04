@@ -10,6 +10,7 @@ use std::fs;
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
+use grit_lib::diff::{count_changes, diff_trees, DiffEntry};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
@@ -306,12 +307,19 @@ fn do_fast_forward(
     new_index.write(&repo.index_path())?;
 
     if !args.quiet {
-        eprintln!(
+        println!(
             "Updating {}..{}",
             &head_oid.to_hex()[..7],
             &merge_oid.to_hex()[..7]
         );
-        eprintln!("Fast-forward");
+        println!("Fast-forward");
+
+        // Show diffstat
+        let old_tree = commit_tree(repo, head_oid)?;
+        let new_tree = commit_tree(repo, merge_oid)?;
+        if let Ok(diff_entries) = diff_trees(&repo.odb, Some(&old_tree), Some(&new_tree), "") {
+            print_diffstat(repo, &diff_entries);
+        }
     }
     Ok(())
 }
@@ -1119,6 +1127,100 @@ fn commit_tree(repo: &Repository, commit_oid: ObjectId) -> Result<ObjectId> {
     let obj = repo.odb.read(&commit_oid)?;
     let commit = parse_commit(&obj.data)?;
     Ok(commit.tree)
+}
+
+/// Print a diffstat summary for merge output.
+fn print_diffstat(repo: &Repository, entries: &[DiffEntry]) {
+    if entries.is_empty() {
+        return;
+    }
+
+    struct StatEntry {
+        path: String,
+        insertions: usize,
+        deletions: usize,
+        is_new: bool,
+        is_deleted: bool,
+        new_mode: Option<u32>,
+    }
+
+    let mut stats: Vec<StatEntry> = Vec::new();
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+
+    for entry in entries {
+        let path = entry.new_path.as_deref()
+            .or(entry.old_path.as_deref())
+            .unwrap_or("unknown");
+        let is_new = entry.old_oid == grit_lib::diff::zero_oid();
+        let is_deleted = entry.new_oid == grit_lib::diff::zero_oid();
+
+        // Read blob contents to compute changes
+        let old_content = if !is_new {
+            repo.odb.read(&entry.old_oid).ok().map(|o| String::from_utf8_lossy(&o.data).to_string())
+        } else {
+            None
+        };
+        let new_content = if !is_deleted {
+            repo.odb.read(&entry.new_oid).ok().map(|o| String::from_utf8_lossy(&o.data).to_string())
+        } else {
+            None
+        };
+
+        let (ins, del) = count_changes(
+            old_content.as_deref().unwrap_or(""),
+            new_content.as_deref().unwrap_or(""),
+        );
+
+        total_ins += ins;
+        total_del += del;
+
+        let mode_num = u32::from_str_radix(&entry.new_mode, 8).unwrap_or(0o100644);
+        stats.push(StatEntry {
+            path: path.to_owned(),
+            insertions: ins,
+            deletions: del,
+            is_new,
+            is_deleted,
+            new_mode: if is_new { Some(mode_num) } else { None },
+        });
+    }
+
+    let max_path_len = stats.iter().map(|s| s.path.len()).max().unwrap_or(0);
+    let max_change = stats.iter().map(|s| s.insertions + s.deletions).max().unwrap_or(0);
+    let count_width = if max_change == 0 { 1 } else { format!("{}", max_change).len() };
+
+    for s in &stats {
+        let total = s.insertions + s.deletions;
+        let plus = "+".repeat(s.insertions.min(50));
+        let minus = "-".repeat(s.deletions.min(50));
+        println!(" {:<width$} | {:>cw$} {}{}", s.path, total, plus, minus,
+            width = max_path_len, cw = count_width);
+    }
+
+    // Summary line
+    let files_changed = stats.len();
+    let mut parts = Vec::new();
+    parts.push(format!("{} file{} changed", files_changed, if files_changed != 1 { "s" } else { "" }));
+    if total_ins > 0 {
+        parts.push(format!("{} insertion{}", total_ins, if total_ins != 1 { "s(+)" } else { "(+)" }));
+    }
+    if total_del > 0 {
+        parts.push(format!("{} deletion{}", total_del, if total_del != 1 { "s(-)" } else { "(-)" }));
+    }
+    println!(" {}", parts.join(", "));
+
+    // Show create/delete mode notices
+    for s in &stats {
+        if s.is_new {
+            if let Some(mode) = s.new_mode {
+                println!(" create mode {:06o} {}", mode, s.path);
+            }
+        }
+        if s.is_deleted {
+            println!(" delete mode 100644 {}", s.path);
+        }
+    }
 }
 
 /// Recursively flatten a tree into index entries.
