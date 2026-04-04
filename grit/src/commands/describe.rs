@@ -310,10 +310,13 @@ fn build_ref_map(
     }
 
     for (refname, oid) in &all_tags {
-        let short_name = refname
-            .strip_prefix("refs/tags/")
-            .unwrap_or(refname)
-            .to_string();
+        // When --all is active, preserve the `tags/` prefix (strip only `refs/`)
+        // to match git's behavior. Otherwise, strip `refs/tags/` entirely.
+        let short_name = if use_all_refs {
+            refname.strip_prefix("refs/").unwrap_or(refname).to_string()
+        } else {
+            refname.strip_prefix("refs/tags/").unwrap_or(refname).to_string()
+        };
 
         // Filter by glob patterns
         if !patterns.is_empty()

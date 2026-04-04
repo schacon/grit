@@ -115,7 +115,7 @@ test_expect_success 'prompt - describe detached head - contains' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - describe detached head - branch' '
+test_expect_success 'prompt - describe detached head - branch' '
 	printf " ((tags/t2~1))" >expected &&
 	git checkout b1^ &&
 	test_when_finished "git checkout main" &&
