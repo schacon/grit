@@ -35,7 +35,7 @@ test_expect_success 'basic clone of src' '
 	test -f clone1/file.4.txt
 '
 
-test_expect_failure 'partial clone with --filter=blob:none' '
+test_expect_success 'partial clone with --filter=blob:none' '
 	git clone --filter=blob:none src clone-partial &&
 	test -d clone-partial/.git
 '

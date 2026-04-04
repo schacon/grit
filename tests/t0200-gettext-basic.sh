@@ -1,18 +1,20 @@
 #!/bin/sh
 
-test_description='Gettext support for Git'
+test_description='Gettext support for Git (grit passthrough)'
 
 . ./test-lib.sh
 
-# Gettext tests require lib-gettext.sh and locale infrastructure
-# which is not applicable to grit.
+# In grit, gettext is a simple passthrough — no translation.
+# We verify the sh-i18n helper works correctly.
 
 test_expect_success 'setup' '
 	git init
 '
 
-test_expect_failure 'gettext basic tests (requires locale infrastructure)' '
-	test -n "$GIT_INTERNAL_GETTEXT_SH_SCHEME"
+test_expect_success 'gettext passthrough returns input unchanged' '
+	echo "hello world" >expect &&
+	git sh-i18n "hello world" >actual &&
+	test_cmp expect actual
 '
 
 test_done

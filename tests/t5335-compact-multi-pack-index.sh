@@ -14,7 +14,7 @@ test_expect_success 'write midx' '
 	git multi-pack-index write
 '
 
-test_expect_failure 'compact midx' '
+test_expect_success 'compact midx' '
 	git multi-pack-index write --incremental &&
 	git multi-pack-index write --incremental &&
 	git multi-pack-index compact
