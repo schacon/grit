@@ -13,6 +13,7 @@
 //! differences.
 
 use anyhow::{bail, Context, Result};
+use unicode_width::UnicodeWidthStr;
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
     anchored_unified_diff, count_changes, detect_renames, diff_index_to_tree, diff_index_to_worktree,
@@ -1778,11 +1779,14 @@ fn format_stat_line_git(
     };
     let plus = "+".repeat(plus_count);
     let minus = "-".repeat(minus_count);
+    // Pad path to max_path_len display columns (not bytes)
+    let path_display_width = UnicodeWidthStr::width(path);
+    let padding = max_path_len.saturating_sub(path_display_width);
     format!(
-        " {:<width$} | {:>cw$} {plus}{minus}",
+        " {}{} | {:>cw$} {plus}{minus}",
         path,
+        " ".repeat(padding),
         total,
-        width = max_path_len,
         cw = count_width,
     )
 }
@@ -1813,7 +1817,7 @@ fn write_stat(
             _ => e.path().to_owned(),
         })
         .collect();
-    let max_path_len = display_paths.iter().map(|p| p.len()).max().unwrap_or(0);
+    let max_path_len = display_paths.iter().map(|p| UnicodeWidthStr::width(p.as_str())).max().unwrap_or(0);
 
     // Collect per-file stats first so we can compute the count column width
     let mut file_stats: Vec<(&str, usize, usize)> = Vec::new();
@@ -1862,16 +1866,24 @@ fn write_stat(
         &file_stats
     };
     for (path, ins, del) in display_stats {
-        // Truncate path if it exceeds max_path_len (from stat_name_width or stat_width)
-        let display_path: std::borrow::Cow<str> = if path.len() > max_path_len {
-            // Git truncates with "..." prefix, being careful with char boundaries
-            let suffix_len = max_path_len.saturating_sub(3);
-            // Walk backwards from end to find suffix_len bytes on a char boundary
-            let mut start = path.len().saturating_sub(suffix_len);
-            while start < path.len() && !path.is_char_boundary(start) {
-                start += 1;
+        // Truncate path if its display width exceeds max_path_len
+        let path_width = UnicodeWidthStr::width(*path);
+        let display_path: std::borrow::Cow<str> = if path_width > max_path_len {
+            // Git truncates with "..." prefix, keeping as much of the suffix as fits
+            let target_suffix_width = max_path_len.saturating_sub(3);
+            // Walk from the end, accumulating display width
+            let mut width_acc = 0usize;
+            let mut cut_idx = path.len();
+            for (idx, ch) in path.char_indices().rev() {
+                let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                if width_acc + cw > target_suffix_width {
+                    break;
+                }
+                width_acc += cw;
+                cut_idx = idx;
             }
-            std::borrow::Cow::Owned(format!("...{}", &path[start..]))
+            let suffix = &path[cut_idx..];
+            std::borrow::Cow::Owned(format!("...{}", suffix))
         } else {
             std::borrow::Cow::Borrowed(*path)
         };

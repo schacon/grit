@@ -21,12 +21,12 @@ test_expect_success 'diff --stat shows output for UTF-8 paths' '
 	grep "f再见" out
 '
 
-test_expect_failure 'test name-width long enough for filepath (not implemented)' '
+test_expect_success 'test name-width long enough for filepath' '
 	git diff --stat --stat-name-width=12 HEAD~1 HEAD >out &&
 	grep "d你好/f再见 |" out
 '
 
-test_expect_failure 'test name-width not long enough for dir name (not implemented)' '
+test_expect_success 'test name-width not long enough for dir name' '
 	git diff --stat --stat-name-width=10 HEAD~1 HEAD >out &&
 	grep ".../f再见  |" out
 '
