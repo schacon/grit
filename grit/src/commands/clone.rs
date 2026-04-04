@@ -305,12 +305,10 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Handle shallow depth config (informational only, not actual shallow)
-    if let Some(_depth) = args.depth {
-        let shallow_path = dest.git_dir.join("shallow");
-        // Write the current HEAD as the shallow boundary
-        if let Ok(head_content) = fs::read_to_string(dest.git_dir.join("refs/heads").join(head_branch.as_deref().unwrap_or("master"))) {
-            fs::write(&shallow_path, head_content.trim())?;
+    // Handle shallow depth — write .git/shallow with boundary commits
+    if let Some(depth) = args.depth {
+        if depth > 0 {
+            write_shallow_boundary(&dest, depth)?;
         }
     }
 
@@ -602,6 +600,49 @@ fn write_alternates(
 
     let content = lines.join("\n") + "\n";
     fs::write(dst_info.join("alternates"), content)?;
+
+    Ok(())
+}
+
+/// Walk from HEAD to determine shallow boundary commits and write `.git/shallow`.
+fn write_shallow_boundary(repo: &Repository, depth: usize) -> Result<()> {
+    use grit_lib::objects::{parse_commit, ObjectKind};
+
+    let head_oid = match grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD") {
+        Ok(oid) => oid,
+        Err(_) => return Ok(()),
+    };
+
+    // BFS: HEAD is depth 1, its parent depth 2, etc.
+    let mut boundary = Vec::new();
+    let mut queue = std::collections::VecDeque::new();
+    let mut visited = std::collections::HashSet::new();
+    queue.push_back((head_oid, 1usize));
+    visited.insert(head_oid);
+
+    while let Some((oid, d)) = queue.pop_front() {
+        if d == depth {
+            boundary.push(oid);
+            continue;
+        }
+        if let Ok(obj) = repo.odb.read(&oid) {
+            if obj.kind == ObjectKind::Commit {
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    for parent in &commit.parents {
+                        if visited.insert(*parent) {
+                            queue.push_back((*parent, d + 1));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !boundary.is_empty() {
+        let shallow_path = repo.git_dir.join("shallow");
+        let content: Vec<String> = boundary.iter().map(|oid| oid.to_hex()).collect();
+        fs::write(&shallow_path, content.join("\n") + "\n")?;
+    }
 
     Ok(())
 }

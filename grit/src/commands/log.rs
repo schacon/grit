@@ -16,6 +16,7 @@ use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
 use std::collections::HashSet;
 use std::io::{self, Write};
+use std::path::Path;
 
 /// Arguments for `grit log`.
 #[derive(Debug, ClapArgs)]
@@ -253,6 +254,7 @@ pub fn run(args: Args) -> Result<()> {
     let effective_pathspecs = if args.follow { &[][..] } else { &args.pathspecs[..] };
     let commits = walk_commits(
         &repo.odb,
+        &repo.git_dir,
         &start_oids,
         if args.follow { None } else { args.max_count }, // follow needs full walk for rename tracking
         args.skip,
@@ -634,6 +636,7 @@ struct CommitInfo {
 /// Walk the commit graph in reverse chronological order.
 fn walk_commits(
     odb: &Odb,
+    git_dir: &Path,
     start: &[ObjectId],
     max_count: Option<usize>,
     skip: Option<usize>,
@@ -649,6 +652,8 @@ fn walk_commits(
     if max_count == Some(0) {
         return Ok(Vec::new());
     }
+
+    let shallow_boundaries = load_shallow_boundaries(git_dir);
 
     let mut visited = HashSet::new();
     let mut queue: Vec<ObjectId> = start.to_vec();
@@ -672,15 +677,18 @@ fn walk_commits(
             message: commit.message.clone(),
         };
 
-        // Add parents to queue before filtering (we always walk)
-        if first_parent {
-            if let Some(parent) = commit.parents.first() {
-                queue.push(*parent);
-            }
-        } else {
-            for parent in commit.parents.iter().rev() {
-                if !visited.contains(parent) {
+        // Add parents to queue before filtering (we always walk).
+        // Shallow boundary commits have their parents cut off.
+        if !shallow_boundaries.contains(&oid) {
+            if first_parent {
+                if let Some(parent) = commit.parents.first() {
                     queue.push(*parent);
+                }
+            } else {
+                for parent in commit.parents.iter().rev() {
+                    if !visited.contains(parent) {
+                        queue.push(*parent);
+                    }
                 }
             }
         }
@@ -1939,4 +1947,21 @@ fn parse_abbrev(abbrev: &Option<String>) -> usize {
         Some(val) => val.parse::<usize>().unwrap_or(7),
         None => 7,
     }
+}
+
+/// Load shallow boundary commit OIDs from `.git/shallow`.
+fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
+    let shallow_path = git_dir.join("shallow");
+    let mut set = HashSet::new();
+    if let Ok(contents) = std::fs::read_to_string(&shallow_path) {
+        for line in contents.lines() {
+            let line = line.trim();
+            if !line.is_empty() {
+                if let Ok(oid) = line.parse::<ObjectId>() {
+                    set.insert(oid);
+                }
+            }
+        }
+    }
+    set
 }
