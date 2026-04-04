@@ -95,9 +95,15 @@ pub fn run(args: Args) -> Result<()> {
             "octopus" => {
                 // Octopus is handled separately when multiple commits are given.
             }
-            "ours" => {
+            "ours" | "subtree" => {
                 // "ours" strategy: keep our tree, just make a merge commit.
+                // "subtree" strategy: variant of recursive.
                 // We handle this specially below.
+            }
+            "help" => {
+                eprintln!("Could not find merge strategy 'help'.");
+                eprintln!("Available strategies are: octopus ours recursive resolve subtree.");
+                std::process::exit(1);
             }
             other => {
                 bail!("Could not find merge strategy '{}'", other);

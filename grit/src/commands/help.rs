@@ -9,6 +9,9 @@ use std::io::{self, Write};
 /// Config variable names for completion (from `git help --config-for-completion`).
 const CONFIG_VARS_FOR_COMPLETION: &str = include_str!("config_vars.txt");
 
+/// Config section names for completion (from `git help --config-sections-for-completion`).
+const CONFIG_SECTIONS_FOR_COMPLETION: &str = include_str!("config_sections.txt");
+
 /// Arguments for `grit help`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Display help information")]
@@ -24,6 +27,10 @@ pub struct Args {
     /// List all config variable names.
     #[arg(long = "config", hide = true)]
     pub config_list: bool,
+
+    /// List config section names for completion.
+    #[arg(long = "config-sections-for-completion", hide = true)]
+    pub config_sections_for_completion: bool,
 
     /// Command to show help for.
     pub command: Option<String>,
@@ -131,6 +138,11 @@ pub fn run(args: Args) -> Result<()> {
 
     if args.config_for_completion || args.config_list {
         print!("{}", CONFIG_VARS_FOR_COMPLETION);
+        return Ok(());
+    }
+
+    if args.config_sections_for_completion {
+        print!("{}", CONFIG_SECTIONS_FOR_COMPLETION);
         return Ok(());
     }
 

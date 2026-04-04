@@ -528,6 +528,7 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
 /// - list-all: all commands (porcelain + plumbing)
 /// - config: commands from completion.commands config
 fn print_list_cmds(categories: &str) {
+    let mut parseopt_mode = false;
     let mainporcelain = [
         "add", "am", "archive", "bisect", "branch", "bundle", "checkout",
         "cherry-pick", "clean", "clone", "commit", "describe", "diff",
@@ -545,7 +546,8 @@ fn print_list_cmds(categories: &str) {
         "cat-file", "check-attr", "check-ignore", "check-ref-format",
         "checkout-index", "commit-graph", "commit-tree", "count-objects",
         "diff-files", "diff-index", "diff-tree", "for-each-ref",
-        "hash-object", "index-pack", "ls-files", "ls-remote", "ls-tree",
+        "get-tar-commit-id", "hash-object", "index-pack",
+        "ls-files", "ls-remote", "ls-tree",
         "merge-base", "merge-file", "mktag", "mktree", "multi-pack-index",
         "name-rev", "pack-objects", "pack-refs", "read-tree", "rev-list",
         "rev-parse", "show-ref", "symbolic-ref", "update-index",
@@ -563,13 +565,16 @@ fn print_list_cmds(categories: &str) {
                 result.extend_from_slice(&complete);
                 result.extend_from_slice(&plumbing);
             }
-            "others" | "alias" | "nohelpers" => {
-                // others = non-builtin commands (we don't have these)
+            "others" => {
+                // Non-built-in commands like gitk
+                result.push("gitk");
+            }
+            "alias" | "nohelpers" => {
                 // alias = git aliases (handled by config, could list them)
                 // nohelpers = filter out helper programs
-                // For now, these are no-ops
             }
             "parseopt" => {
+                parseopt_mode = true;
                 // Commands that support --git-completion-helper
                 let parseopt_cmds = [
                     "add", "am", "apply", "bisect", "blame", "branch",
@@ -617,8 +622,13 @@ fn print_list_cmds(categories: &str) {
         }
     }
 
-    for cmd in &result {
-        println!("{cmd}");
+    if parseopt_mode {
+        // parseopt outputs all commands on a single space-separated line
+        println!("{}", result.iter().map(|s| s.as_ref()).collect::<Vec<&str>>().join(" "));
+    } else {
+        for cmd in &result {
+            println!("{cmd}");
+        }
     }
 }
 

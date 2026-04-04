@@ -23,23 +23,23 @@ pub struct Args {
 
     // ── File location flags ──
     /// Use the system-wide config file.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub system: bool,
 
     /// Use the global (per-user) config file.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub global: bool,
 
     /// Use the repository-local config file.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub local: bool,
 
     /// Use the per-worktree config file.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub worktree: bool,
 
     /// Use the given config file.
-    #[arg(short = 'f', long = "file")]
+    #[arg(short = 'f', long = "file", global = true)]
     pub file: Option<PathBuf>,
 
     /// Read config from a blob object (e.g. HEAD:.gitmodules).

@@ -3005,7 +3005,7 @@ test_expect_success 'git config subcommand options' '
 	EOF
 '
 
-test_expect_failure 'git config get' '
+test_expect_success 'git config get' '
 	test_when_finished "rm -f cfgfile" &&
 	git config set --file cfgfile foo.bar baz &&
 	test_completion "git config get --file cfgfile foo." <<-\EOF
@@ -3013,14 +3013,14 @@ test_expect_failure 'git config get' '
 	EOF
 '
 
-test_expect_failure 'git config set - section' '
+test_expect_success 'git config set - section' '
 	test_completion "git config set br" <<-\EOF
 	branch.Z
 	browser.Z
 	EOF
 '
 
-test_expect_failure 'git config set - section include, includeIf' '
+test_expect_success 'git config set - section include, includeIf' '
 	test_completion "git config set inclu" <<-\EOF
 	include.Z
 	includeIf.Z
@@ -3078,7 +3078,7 @@ test_expect_success 'git config set - value' '
 	EOF
 '
 
-test_expect_failure 'git -c - section' '
+test_expect_success 'git -c - section' '
 	test_completion "git -c br" <<-\EOF
 	branch.Z
 	browser.Z
@@ -3100,7 +3100,7 @@ test_expect_success 'git -c - value' '
 	EOF
 '
 
-test_expect_failure 'git clone --config= - section' '
+test_expect_success 'git clone --config= - section' '
 	test_completion "git clone --config=br" <<-\EOF
 	branch.Z
 	browser.Z
@@ -3199,7 +3199,7 @@ test_expect_success 'plumbing commands are excluded without GIT_COMPLETION_SHOW_
 	)
 '
 
-test_expect_failure 'all commands are shown with GIT_COMPLETION_SHOW_ALL_COMMANDS (also main non-builtin)' '
+test_expect_success 'all commands are shown with GIT_COMPLETION_SHOW_ALL_COMMANDS (also main non-builtin)' '
 	(
 		. "$TEST_DIRECTORY/contrib/completion/git-completion.bash" &&
 		GIT_COMPLETION_SHOW_ALL_COMMANDS=1 &&
