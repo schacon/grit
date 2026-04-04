@@ -328,6 +328,41 @@ fn push_to_url(
                 continue;
             }
 
+            // Handle glob refspecs (e.g. refs/remotes/*:refs/remotes/*)
+            if src.contains('*') {
+                let (force_flag, src_clean) = if spec.starts_with('+') {
+                    (true, &src[..]) // '+' already stripped by parse_refspec? no.
+                } else {
+                    (false, src.as_str())
+                };
+                let _ = force_flag;
+                let local_refs = refs::list_refs(&repo.git_dir, "refs/")?;
+                for (refname, local_oid) in &local_refs {
+                    if let Some(matched) = match_glob(src_clean, refname) {
+                        // Check if this is a symbolic ref
+                        if let Ok(Some(_target)) = refs::read_symbolic_ref(&repo.git_dir, refname) {
+                            // Skip symbolic refs from normal updates; handle below
+                            continue;
+                        }
+                        let remote_ref = dst.replacen('*', matched, 1);
+                        let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
+                        if old_oid.as_ref() == Some(local_oid) {
+                            continue;
+                        }
+                        updates.push(RefUpdate {
+                            local_ref: Some(refname.clone()),
+                            remote_ref,
+                            old_oid,
+                            new_oid: Some(*local_oid),
+                            expected_oid: None,
+                        });
+                    }
+                }
+                // Copy symbolic refs matching the glob pattern
+                copy_symrefs_push(&repo.git_dir, &remote_repo.git_dir, src_clean, &dst)?;
+                continue;
+            }
+
             // Resolve HEAD to its target ref
             let resolved_src = if src == "HEAD" {
                 match grit_lib::state::resolve_head(&repo.git_dir) {
@@ -847,6 +882,57 @@ fn parse_force_with_lease(val: &str) -> ForceWithLease {
     } else {
         ForceWithLease::Ref(val.to_owned())
     }
+}
+
+/// Copy symbolic refs that match a glob pattern from local to remote.
+fn copy_symrefs_push(
+    local_git_dir: &Path,
+    remote_git_dir: &Path,
+    src_pattern: &str,
+    dst_pattern: &str,
+) -> Result<()> {
+    let refs_dir = local_git_dir.join("refs");
+    if !refs_dir.is_dir() {
+        return Ok(());
+    }
+    walk_refs_for_symrefs(&refs_dir, "refs", &mut |refname, path| {
+        if let Some(matched) = match_glob(src_pattern, &refname) {
+            let content = fs::read_to_string(path)?;
+            let content = content.trim();
+            if let Some(target) = content.strip_prefix("ref: ") {
+                let remote_ref = dst_pattern.replacen('*', matched, 1);
+                let remote_path = remote_git_dir.join(remote_ref.replace('/', std::path::MAIN_SEPARATOR_STR));
+                if let Some(parent) = remote_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&remote_path, format!("ref: {target}\n"))?;
+            }
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+fn walk_refs_for_symrefs(
+    dir: &Path,
+    prefix: &str,
+    cb: &mut dyn FnMut(String, &Path) -> Result<()>,
+) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let refname = format!("{prefix}/{name_str}");
+        if entry.file_type()?.is_dir() {
+            walk_refs_for_symrefs(&entry.path(), &refname, cb)?;
+        } else {
+            cb(refname, &entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 /// Match a glob pattern (e.g. "refs/heads/*") against a ref name.

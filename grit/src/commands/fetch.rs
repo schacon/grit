@@ -213,6 +213,52 @@ fn fetch_remote(
                 (spec_clean.to_owned(), String::new())
             };
 
+            // Handle glob refspecs (e.g. refs/remotes/*:refs/remotes/*)
+            if src.contains('*') {
+                let remote_all_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
+                for (refname, remote_oid) in &remote_all_refs {
+                    if let Some(matched) = match_glob_pattern(&src, refname) {
+                        let local_ref = dst.replacen('*', matched, 1);
+                        let old_oid = read_ref_oid(git_dir, &local_ref);
+                        if old_oid.as_ref() == Some(remote_oid) {
+                            continue;
+                        }
+
+                        if !has_updates && !args.quiet {
+                            eprintln!("From {url}");
+                            has_updates = true;
+                        }
+
+                        refs::write_ref(git_dir, &local_ref, remote_oid)
+                            .with_context(|| format!("updating ref {local_ref}"))?;
+
+                        if !args.quiet {
+                            let short = local_ref.strip_prefix("refs/heads/")
+                                .or_else(|| local_ref.strip_prefix("refs/tags/"))
+                                .unwrap_or(&local_ref);
+                            let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                            match old_oid {
+                                None => eprintln!(" * [new branch]      {branch:<17} -> {short}"),
+                                Some(old) => eprintln!(
+                                    "   {}..{}  {branch:<17} -> {short}",
+                                    &old.to_string()[..7], &remote_oid.to_string()[..7],
+                                ),
+                            }
+                        }
+
+                        // Build FETCH_HEAD entry
+                        let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                        fetch_head_entries.push(format!(
+                            "{}\tnot-for-merge\tbranch '{}' of {url}",
+                            remote_oid, branch,
+                        ));
+                    }
+                }
+                // Also copy symbolic refs for the matched pattern
+                copy_symrefs(&remote_repo.git_dir, git_dir, &src, &dst)?;
+                continue;
+            }
+
             // Normalize source: if it doesn't start with refs/, assume refs/heads/
             let remote_ref = if src.starts_with("refs/") {
                 src.clone()
@@ -694,6 +740,78 @@ fn match_refspec_pattern(src_pattern: &str, dst_pattern: &str, refname: &str) ->
         return Some(dst_pattern.to_owned());
     }
     None
+}
+
+/// Match a glob pattern against a ref name, returning the matched wildcard portion.
+fn match_glob_pattern<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
+    if let Some(star_pos) = pattern.find('*') {
+        let prefix = &pattern[..star_pos];
+        let suffix = &pattern[star_pos + 1..];
+        if refname.starts_with(prefix) && refname.ends_with(suffix)
+            && refname.len() >= prefix.len() + suffix.len()
+        {
+            Some(&refname[prefix.len()..refname.len() - suffix.len()])
+        } else {
+            None
+        }
+    } else if pattern == refname {
+        Some(refname)
+    } else {
+        None
+    }
+}
+
+/// Copy symbolic refs that match a glob pattern from remote to local.
+fn copy_symrefs(
+    remote_git_dir: &Path,
+    local_git_dir: &Path,
+    src_pattern: &str,
+    dst_pattern: &str,
+) -> Result<()> {
+    // Walk the remote refs directory for symbolic refs
+    let refs_dir = remote_git_dir.join("refs");
+    if !refs_dir.is_dir() {
+        return Ok(());
+    }
+    for_each_ref_file(&refs_dir, "refs", &mut |refname, path| {
+        if let Some(matched) = match_glob_pattern(src_pattern, &refname) {
+            let content = fs::read_to_string(path)?;
+            let content = content.trim();
+            if let Some(target) = content.strip_prefix("ref: ") {
+                // It's a symbolic ref — write it locally
+                let local_ref = dst_pattern.replacen('*', matched, 1);
+                let local_path = local_git_dir.join(local_ref.replace('/', std::path::MAIN_SEPARATOR_STR));
+                if let Some(parent) = local_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&local_path, format!("ref: {target}\n"))?;
+            }
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+fn for_each_ref_file(
+    dir: &Path,
+    prefix: &str,
+    cb: &mut dyn FnMut(String, &Path) -> Result<()>,
+) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let refname = format!("{prefix}/{name_str}");
+        if entry.file_type()?.is_dir() {
+            for_each_ref_file(&entry.path(), &refname, cb)?;
+        } else {
+            cb(refname, &entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 /// Collect all configured remote names.
