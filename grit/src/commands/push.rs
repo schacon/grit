@@ -134,6 +134,9 @@ pub fn run(args: Args) -> Result<()> {
     };
     let remote_name = remote_name_owned.as_str();
 
+    // Check protocol.file.allow before local push
+    crate::protocol::check_protocol_allowed("file", Some(&repo.git_dir))?;
+
     let remote_path = if let Some(stripped) = url.strip_prefix("file://") {
         PathBuf::from(stripped)
     } else {

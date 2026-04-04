@@ -125,6 +125,9 @@ fn fetch_remote(
             .with_context(|| format!("remote '{remote_name}' not found; no such remote"))?
     };
 
+    // Check protocol.file.allow before local fetch
+    crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
+
     // Strip file:// prefix if present
     let remote_path = if let Some(stripped) = url.strip_prefix("file://") {
         PathBuf::from(stripped)

@@ -117,6 +117,9 @@ pub fn run(args: Args) -> Result<()> {
         return run_bundle_clone(args);
     }
 
+    // Check protocol.file.allow before local clone
+    crate::protocol::check_protocol_allowed("file", None)?;
+
     // Strip file:// prefix if present
     let repo_path_str = if let Some(stripped) = args.repository.strip_prefix("file://") {
         stripped.to_string()

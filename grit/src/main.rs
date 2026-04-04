@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 mod commands;
 pub mod pathspec;
+pub mod protocol;
 
 fn main() {
     let start = std::time::Instant::now();

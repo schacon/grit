@@ -17,25 +17,25 @@ test_expect_success 'setup' '
 	(cd remote && test_commit one)
 '
 
-test_expect_failure 'clone denied with protocol.file.allow=never' '
+test_expect_success 'clone denied with protocol.file.allow=never' '
 	test_must_fail git -c protocol.file.allow=never clone remote clone-denied 2>err &&
 	grep -i "not allowed" err
 '
 
-test_expect_failure 'fetch denied with protocol.file.allow=never' '
+test_expect_success 'fetch denied with protocol.file.allow=never' '
 	git clone remote clone-for-fetch &&
 	test_must_fail git -C clone-for-fetch -c protocol.file.allow=never fetch 2>err &&
 	grep -i "not allowed" err
 '
 
-test_expect_failure 'push denied with protocol.file.allow=never' '
+test_expect_success 'push denied with protocol.file.allow=never' '
 	git clone remote clone-for-push &&
 	(cd clone-for-push && test_commit two) &&
 	test_must_fail git -C clone-for-push -c protocol.file.allow=never push 2>err &&
 	grep -i "not allowed" err
 '
 
-test_expect_failure 'clone denied with GIT_ALLOW_PROTOCOL excluding file' '
+test_expect_success 'clone denied with GIT_ALLOW_PROTOCOL excluding file' '
 	GIT_ALLOW_PROTOCOL=https test_must_fail git clone remote clone-denied-env 2>err &&
 	grep -i "not allowed" err
 '
