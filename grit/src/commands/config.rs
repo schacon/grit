@@ -137,6 +137,10 @@ pub struct Args {
     #[arg(long = "default", value_name = "VALUE")]
     pub default_value: Option<String>,
 
+    /// Only match exact values (instead of treating value as regex).
+    #[arg(long = "fixed-value")]
+    pub fixed_value: bool,
+
     // ── URL match flags ──
     /// Get the best-matching value for the given URL.
     #[arg(long = "get-urlmatch", value_name = "KEY", num_args = 1)]
@@ -264,7 +268,7 @@ pub fn run(args: Args) -> Result<()> {
     // Handle subcommands first
     if let Some(ref sub) = args.subcommand {
         return match sub {
-            ConfigSubcommand::Get(get_args) => cmd_get(&args, get_args, git_dir.as_deref()),
+            ConfigSubcommand::Get(get_args) => cmd_get(&args, get_args, git_dir.as_deref(), None),
             ConfigSubcommand::Set(set_args) => cmd_set(&args, set_args, scope, &file_path, None),
             ConfigSubcommand::Unset(unset_args) => cmd_unset(&args, unset_args, scope, &file_path, None),
             ConfigSubcommand::List(_) => cmd_list(&args, git_dir.as_deref()),
@@ -282,6 +286,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if let Some(ref key) = args.get_key {
+        let value_pattern = if args.fixed_value { args.positional.first().map(|s| s.as_str()) } else { None };
         let get_args = GetArgs {
             key: key.clone(),
             all: false,
@@ -290,10 +295,11 @@ pub fn run(args: Args) -> Result<()> {
             default: args.default_value.clone(),
             url: None,
         };
-        return cmd_get(&args, &get_args, git_dir.as_deref());
+        return cmd_get(&args, &get_args, git_dir.as_deref(), value_pattern);
     }
 
     if let Some(ref key) = args.get_all_key {
+        let value_pattern = if args.fixed_value { args.positional.first().map(|s| s.as_str()) } else { None };
         let get_args = GetArgs {
             key: key.clone(),
             all: true,
@@ -302,7 +308,7 @@ pub fn run(args: Args) -> Result<()> {
             default: args.default_value.clone(),
             url: None,
         };
-        return cmd_get(&args, &get_args, git_dir.as_deref());
+        return cmd_get(&args, &get_args, git_dir.as_deref(), value_pattern);
     }
 
     if let Some(ref pattern) = args.get_regexp {
@@ -314,7 +320,7 @@ pub fn run(args: Args) -> Result<()> {
             default: args.default_value.clone(),
             url: None,
         };
-        return cmd_get(&args, &get_args, git_dir.as_deref());
+        return cmd_get(&args, &get_args, git_dir.as_deref(), None);
     }
 
     if let Some(ref key) = args.get_urlmatch_key {
@@ -384,7 +390,7 @@ pub fn run(args: Args) -> Result<()> {
                 default: args.default_value.clone(),
             url: None,
             };
-            cmd_get(&args, &get_args, git_dir.as_deref())
+            cmd_get(&args, &get_args, git_dir.as_deref(), None)
         }
         2 => {
             // Legacy set: `git config key value`
@@ -421,7 +427,7 @@ pub fn run(args: Args) -> Result<()> {
 
 // ── Subcommand implementations ──────────────────────────────────────
 
-fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()> {
+fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>, value_pattern: Option<&str>) -> Result<()> {
     let config = load_config(args, git_dir)?;
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
@@ -471,7 +477,11 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()
     }
 
     if get_args.all {
-        let values = config.get_all(&get_args.key);
+        let mut values = config.get_all(&get_args.key);
+        // Apply --fixed-value filter
+        if let Some(pattern) = value_pattern {
+            values.retain(|v| v == pattern);
+        }
         if values.is_empty() {
             if let Some(ref default) = get_args.default {
                 let val = format_typed_value(args, default)?;
@@ -489,6 +499,17 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>) -> Result<()
 
     match config.get(&get_args.key) {
         Some(val) => {
+            // Apply --fixed-value filter
+            if let Some(pattern) = value_pattern {
+                if val != pattern {
+                    if let Some(ref default) = get_args.default {
+                        let d = format_typed_value(args, default)?;
+                        print!("{d}{terminator}");
+                        return Ok(());
+                    }
+                    std::process::exit(1);
+                }
+            }
             let val = format_typed_value(args, &val)?;
             print!("{val}{terminator}");
             Ok(())

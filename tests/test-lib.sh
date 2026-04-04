@@ -94,6 +94,12 @@ EOF
 exec "$GUST_BIN" "\$@"
 EOF
 	chmod +x "$TRASH_DIRECTORY/.bin/grit"
+	# Write a 'scalar' wrapper
+	cat >"$TRASH_DIRECTORY/.bin/scalar" <<EOF
+#!/bin/sh
+exec "$GUST_BIN" scalar "\$@"
+EOF
+	chmod +x "$TRASH_DIRECTORY/.bin/scalar"
 	# Note: .bin/ protection is handled via .git/info/exclude in grit init
 	# Prepend .bin to PATH so every subshell sees 'git' → grit
 PATH="$TEST_DIRECTORY:$PATH"
