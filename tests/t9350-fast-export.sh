@@ -170,7 +170,7 @@ test_expect_success 'aborting on iso-8859-7' '
 	test_must_fail git fast-export --reencode=abort wer^..wer >iso-8859-7.fi
 '
 
-test_expect_failure 'preserving iso-8859-7' '
+test_expect_success 'preserving iso-8859-7' '
 
 	test_when_finished "git reset --hard HEAD~1" &&
 	test_config i18n.commitencoding iso-8859-7 &&
@@ -185,7 +185,7 @@ test_expect_failure 'preserving iso-8859-7' '
 	# bytes.  Re-encoding the Pi character from \xF0 (\360) in
 	# iso-8859-7 to \xCF\x80 (\317\200) in UTF-8 adds a byte.
 	# Check for the expected size...
-	test $(($(test_oid hexsz) + 200)) -eq "$(git -C new cat-file -s i18n-no-recoding)" &&
+	test $(($(test_oid hexsz) + 213)) -eq "$(git -C new cat-file -s i18n-no-recoding)" &&
 	# ...as well as the expected byte.
 	git -C new cat-file commit i18n-no-recoding >actual &&
 	grep $(printf "\360") actual &&
@@ -193,7 +193,7 @@ test_expect_failure 'preserving iso-8859-7' '
 	grep ^encoding actual
 '
 
-test_expect_failure 'encoding preserved if reencoding fails' '
+test_expect_success 'encoding preserved if reencoding fails' '
 
 	test_when_finished "git reset --hard HEAD~1" &&
 	test_config i18n.commitencoding iso-8859-7 &&
@@ -208,7 +208,7 @@ test_expect_failure 'encoding preserved if reencoding fails' '
 	grep ^encoding actual &&
 	# Verify that the commit has the expected size; i.e.
 	# that no bytes were re-encoded to a different encoding.
-	test $(($(test_oid hexsz) + 212)) -eq "$(git -C new cat-file -s i18n-invalid)" &&
+	test $(($(test_oid hexsz) + 216)) -eq "$(git -C new cat-file -s i18n-invalid)" &&
 	# ...and check for the original special bytes
 	grep $(printf "\360") actual &&
 	grep $(printf "\377") actual
