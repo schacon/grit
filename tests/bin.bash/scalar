@@ -1,2 +1,0 @@
-#!/bin/sh
-exec "/home/hasi/grit-worktrees/batch-GO/target/release/grit" scalar "$@"

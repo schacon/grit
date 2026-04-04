@@ -12,3 +12,16 @@ tests/expect
 tests/trash/
 scripts/subscripts/__pycache__
 tests/grit
+tests/bin.*/
+tests/*.patch
+tests/before
+tests/current-sparse-entries
+tests/dump.expect
+tests/dump_uall.expect
+tests/other_worktree/
+tests/status.actual
+tests/status.expect
+tests/status.iuc
+tests/status_uall.expect
+tests/trace.output
+tests/repo.git/
