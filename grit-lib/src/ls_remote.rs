@@ -134,11 +134,44 @@ fn pattern_matches(refname: &str, patterns: &[String]) -> bool {
         return true;
     }
     patterns.iter().any(|pat| {
-        refname == pat
-            || refname
-                .strip_suffix(pat.as_str())
-                .is_some_and(|prefix| prefix.ends_with('/'))
+        if pat.contains('*') || pat.contains('?') {
+            // Glob-style matching: '*' matches any sequence, '?' matches one char
+            glob_match(pat, refname)
+        } else {
+            refname == pat
+                || refname
+                    .strip_suffix(pat.as_str())
+                    .is_some_and(|prefix| prefix.ends_with('/'))
+        }
     })
+}
+
+/// Simple glob matching supporting `*` (any sequence) and `?` (single char).
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let txt: Vec<char> = text.chars().collect();
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star_pi, mut star_ti) = (usize::MAX, 0);
+    while ti < txt.len() {
+        if pi < pat.len() && (pat[pi] == '?' || pat[pi] == txt[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pat.len() && pat[pi] == '*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if star_pi != usize::MAX {
+            pi = star_pi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+    while pi < pat.len() && pat[pi] == '*' {
+        pi += 1;
+    }
+    pi == pat.len()
 }
 
 /// Recursively collect all loose refs under `path` into `out`.

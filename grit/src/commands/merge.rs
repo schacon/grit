@@ -87,6 +87,13 @@ pub fn run(args: Args) -> Result<()> {
         return merge_continue(args.message);
     }
 
+    // Handle -s help early (before commit check)
+    if args.strategy.as_deref() == Some("help") {
+        eprintln!("Could not find merge strategy 'help'.");
+        eprintln!("Available strategies are: octopus ours recursive resolve subtree.");
+        std::process::exit(1);
+    }
+
     if args.commits.is_empty() {
         bail!("nothing to merge — please specify a branch or commit");
     }
@@ -103,10 +110,12 @@ pub fn run(args: Args) -> Result<()> {
             "octopus" => {
                 // Octopus is handled separately when multiple commits are given.
             }
-            "ours" => {
+            "ours" | "subtree" => {
                 // "ours" strategy: keep our tree, just make a merge commit.
+                // "subtree" strategy: variant of recursive.
                 // We handle this specially below.
             }
+            // "help" is handled above before the commit check
             other => {
                 bail!("Could not find merge strategy '{}'", other);
             }

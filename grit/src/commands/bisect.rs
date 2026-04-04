@@ -52,7 +52,7 @@ pub fn run(args: Args) -> Result<()> {
         "reset" => cmd_reset(rest),
         "log" => cmd_log(),
         "run" => cmd_run(rest),
-        "terms" => cmd_terms(),
+        "terms" => cmd_terms(rest),
         "replay" => cmd_replay(rest),
         "help" => {
             println!("usage: git bisect [start|bad|good|skip|reset|log|run|terms|replay]");
@@ -73,6 +73,53 @@ fn cmd_start(args: &[String]) -> Result<()> {
     // If already bisecting, clean up first.
     if git_dir.join("BISECT_LOG").exists() {
         clean_bisect_state(git_dir)?;
+    }
+
+    // Parse options from args
+    let mut term_new = String::from("bad");
+    let mut term_old = String::from("good");
+    let mut no_checkout = false;
+    let mut first_parent = false;
+    let mut positional = Vec::new();
+    let mut past_double_dash = false;
+
+    for arg in args {
+        if past_double_dash {
+            // After --, args are pathspecs (not supported yet, just skip)
+            continue;
+        }
+        if arg == "--" {
+            past_double_dash = true;
+            continue;
+        }
+        if let Some(val) = arg.strip_prefix("--term-new=") {
+            term_new = val.to_string();
+        } else if let Some(val) = arg.strip_prefix("--term-bad=") {
+            term_new = val.to_string();
+        } else if let Some(val) = arg.strip_prefix("--term-old=") {
+            term_old = val.to_string();
+        } else if let Some(val) = arg.strip_prefix("--term-good=") {
+            term_old = val.to_string();
+        } else if arg == "--no-checkout" {
+            no_checkout = true;
+        } else if arg == "--first-parent" {
+            first_parent = true;
+        } else if !arg.starts_with('-') {
+            positional.push(arg.clone());
+        }
+    }
+
+    // Write BISECT_TERMS file with custom term names
+    fs::write(
+        git_dir.join("BISECT_TERMS"),
+        format!("{term_new}\n{term_old}\n"),
+    )?;
+
+    if no_checkout {
+        fs::write(git_dir.join("BISECT_HEAD"), "")?;
+    }
+    if first_parent {
+        fs::write(git_dir.join("BISECT_FIRST_PARENT"), "")?;
     }
 
     // Save the branch/commit we started from so reset can restore it.
@@ -97,10 +144,10 @@ fn cmd_start(args: &[String]) -> Result<()> {
         .truncate(true)
         .open(git_dir.join("BISECT_LOG"))?;
 
-    // Parse optional <bad> [<good>...] from args.
-    if !args.is_empty() {
+    // Parse optional <bad> [<good>...] from positional args.
+    if !positional.is_empty() {
         // First arg is bad.
-        let bad_rev = &args[0];
+        let bad_rev = &positional[0];
         let bad_oid = resolve_revision(&repo, bad_rev)
             .with_context(|| format!("bad revision: {bad_rev}"))?;
         refs::write_ref(git_dir, "refs/bisect/bad", &bad_oid)?;
@@ -108,7 +155,7 @@ fn cmd_start(args: &[String]) -> Result<()> {
         writeln!(log_file, "git bisect bad {bad_oid}")?;
 
         // Remaining args are good.
-        for good_rev in &args[1..] {
+        for good_rev in &positional[1..] {
             let good_oid = resolve_revision(&repo, good_rev)
                 .with_context(|| format!("good revision: {good_rev}"))?;
             let ref_name = format!("refs/bisect/good-{good_oid}");
@@ -349,12 +396,23 @@ fn cmd_run(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn cmd_terms() -> Result<()> {
+fn cmd_terms(args: &[String]) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
     // Read custom terms if they exist, otherwise use defaults.
     let (term_bad, term_good) = read_bisect_terms(git_dir);
+
+    // Support --term-bad and --term-good flags for completion script
+    if args.iter().any(|a| a == "--term-bad" || a == "--term-new") {
+        println!("{term_bad}");
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--term-good" || a == "--term-old") {
+        println!("{term_good}");
+        return Ok(());
+    }
+
     println!("Your current terms are {} for the old state and {} for the new state.", term_good, term_bad);
     Ok(())
 }
@@ -688,6 +746,9 @@ fn clean_bisect_state(git_dir: &Path) -> Result<()> {
         "BISECT_START",
         "BISECT_EXPECTED_REV",
         "BISECT_NAMES",
+        "BISECT_TERMS",
+        "BISECT_HEAD",
+        "BISECT_FIRST_PARENT",
     ] {
         let _ = fs::remove_file(git_dir.join(name));
     }

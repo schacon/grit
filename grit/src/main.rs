@@ -374,7 +374,8 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
         let cmd = Command::new("grit")
             .flatten_help(false);
         let cmd = T::augment_args(cmd);
-        let mut opts = Vec::new();
+        let mut positive = Vec::new();
+        let mut negative = Vec::new();
         for arg in cmd.get_arguments() {
             if arg.get_id() == "help" || arg.get_id() == "version" {
                 continue;
@@ -384,18 +385,37 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
                 continue;
             }
             if let Some(long) = arg.get_long() {
-                opts.push(format!("--{long}"));
+                let hidden = arg.is_hide_set();
+                // Check if this option takes a value
+                let takes_value = match arg.get_action() {
+                    clap::ArgAction::Set | clap::ArgAction::Append => true,
+                    _ => arg.get_num_args().map_or(false, |r| r.min_values() > 0),
+                };
+                let suffix = if takes_value { "=" } else { "" };
+                if hidden {
+                    // Hidden args go to negative section only
+                    negative.push(format!("--{long}{suffix}"));
+                } else if long.starts_with("no-") {
+                    // Explicit non-hidden --no-* args go in positive list
+                    // (user-facing options like --no-guess)
+                    positive.push(format!("--{long}{suffix}"));
+                } else {
+                    positive.push(format!("--{long}{suffix}"));
+                    // Auto-generate --no- variant for the negative list
+                    negative.push(format!("--no-{long}"));
+                }
                 // Add aliases (only with --git-completion-helper-all)
                 if show_all {
                     if let Some(aliases) = arg.get_aliases() {
                         for alias in aliases {
-                            opts.push(format!("--{alias}"));
+                            if alias.starts_with("no-") {
+                                negative.push(format!("--{alias}{suffix}"));
+                            } else {
+                                positive.push(format!("--{alias}{suffix}"));
+                                negative.push(format!("--no-{alias}"));
+                            }
                         }
                     }
-                }
-                // Add --no- variant unless it already starts with no-
-                if !long.starts_with("no-") {
-                    opts.push(format!("--no-{long}"));
                 }
             }
         }
@@ -409,9 +429,17 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
         }
 
         if subcmds.is_empty() {
-            // No subcommands: return options + --
-            opts.push("--".to_string());
-            opts
+            let mut result = positive;
+            // Only separate positive/negative with `--` sentinel when
+            // there are enough options to warrant it. For small
+            // commands, include --no-* variants inline (matching git).
+            if negative.len() > 3 {
+                result.push("--".to_string());
+                result.extend(negative);
+            } else {
+                result.extend(negative);
+            }
+            result
         } else {
             // Has subcommands: return ONLY subcommands.
             // Options come from 'git <cmd> <subcmd> --git-completion-helper'.
@@ -474,6 +502,7 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
         "rev-parse" => extract_options::<commands::rev_parse::Args>(show_all),
         "revert" => extract_options::<commands::revert::Args>(show_all),
         "rm" => extract_options::<commands::rm::Args>(show_all),
+        "send-email" => extract_options::<commands::send_email::Args>(show_all),
         "show" => extract_options::<commands::show::Args>(show_all),
         "show-ref" => extract_options::<commands::show_ref::Args>(show_all),
         "sparse-checkout" => extract_options::<commands::sparse_checkout::Args>(show_all),
@@ -486,6 +515,7 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
         "update-index" => extract_options::<commands::update_index::Args>(show_all),
         "update-ref" => extract_options::<commands::update_ref::Args>(show_all),
         "worktree" => extract_options::<commands::worktree::Args>(show_all),
+        "version" => extract_options::<commands::version::Args>(show_all),
         _ => Vec::new(),
     };
 
@@ -501,6 +531,7 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
 /// - list-all: all commands (porcelain + plumbing)
 /// - config: commands from completion.commands config
 fn print_list_cmds(categories: &str) {
+    let mut parseopt_mode = false;
     let mainporcelain = [
         "add", "am", "archive", "bisect", "branch", "bundle", "checkout",
         "cherry-pick", "clean", "clone", "commit", "describe", "diff",
@@ -518,7 +549,8 @@ fn print_list_cmds(categories: &str) {
         "cat-file", "check-attr", "check-ignore", "check-ref-format",
         "checkout-index", "commit-graph", "commit-tree", "count-objects",
         "diff-files", "diff-index", "diff-tree", "for-each-ref",
-        "hash-object", "index-pack", "ls-files", "ls-remote", "ls-tree",
+        "get-tar-commit-id", "hash-object", "index-pack",
+        "ls-files", "ls-remote", "ls-tree",
         "merge-base", "merge-file", "mktag", "mktree", "multi-pack-index",
         "name-rev", "pack-objects", "pack-refs", "read-tree", "rev-list",
         "rev-parse", "show-ref", "symbolic-ref", "update-index",
@@ -536,11 +568,41 @@ fn print_list_cmds(categories: &str) {
                 result.extend_from_slice(&complete);
                 result.extend_from_slice(&plumbing);
             }
-            "others" | "alias" | "nohelpers" => {
-                // others = non-builtin commands (we don't have these)
+            "others" => {
+                // Non-built-in commands like gitk
+                result.push("gitk");
+            }
+            "alias" | "nohelpers" => {
                 // alias = git aliases (handled by config, could list them)
                 // nohelpers = filter out helper programs
-                // For now, these are no-ops
+            }
+            "parseopt" => {
+                parseopt_mode = true;
+                // Commands that support --git-completion-helper
+                let parseopt_cmds = [
+                    "add", "am", "apply", "bisect", "blame", "branch",
+                    "cat-file", "check-ignore", "checkout", "cherry-pick",
+                    "clean", "clone", "commit", "config", "describe",
+                    "diff", "fetch", "for-each-ref", "format-patch",
+                    "fsck", "gc", "grep", "init", "log", "ls-files",
+                    "ls-remote", "ls-tree", "merge", "merge-base", "mv",
+                    "notes", "pull", "push", "rebase", "reflog", "remote",
+                    "reset", "restore", "rev-list", "rev-parse", "revert",
+                    "rm", "send-email", "show", "show-ref",
+                    "sparse-checkout", "stash", "status", "submodule",
+                    "switch", "symbolic-ref", "tag", "update-index",
+                    "update-ref", "version", "worktree",
+                ];
+                result.extend_from_slice(&parseopt_cmds);
+            }
+            "list-guide" => {
+                let guides = [
+                    "core-tutorial", "credentials", "cvs-migration",
+                    "diffcore", "everyday", "faq", "glossary",
+                    "namespaces", "remote-helpers", "submodules",
+                    "tutorial", "tutorial-2", "workflows",
+                ];
+                result.extend_from_slice(&guides);
             }
             "config" => {
                 // Check completion.commands config for additions/removals
@@ -563,8 +625,13 @@ fn print_list_cmds(categories: &str) {
         }
     }
 
-    for cmd in &result {
-        println!("{cmd}");
+    if parseopt_mode {
+        // parseopt outputs all commands on a single space-separated line
+        println!("{}", result.iter().map(|s| s.as_ref()).collect::<Vec<&str>>().join(" "));
+    } else {
+        for cmd in &result {
+            println!("{cmd}");
+        }
     }
 }
 

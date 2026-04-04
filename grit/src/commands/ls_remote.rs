@@ -98,14 +98,25 @@ pub fn run(args: Args) -> Result<()> {
 ///
 /// Returns an error when neither location looks like a valid git repository.
 fn open_local_repo(path: &Path) -> Result<Repository> {
+    // Strip file:// URL scheme if present
+    let effective_path = {
+        let s = path.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix("file://") {
+            PathBuf::from(stripped)
+        } else {
+            path.to_path_buf()
+        }
+    };
+    let path = &effective_path;
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
     }
     let git_dir = path.join(".git");
     Repository::open(&git_dir, Some(path)).with_context(|| {
         format!(
-            "'{}' does not appear to be a git repository",
-            path.display()
+            "'{}' does not appear to be a git repository: {}",
+            path.display(),
+            "not a git repository (or any of the parent directories)"
         )
     })
 }
@@ -113,21 +124,18 @@ fn open_local_repo(path: &Path) -> Result<Repository> {
 /// If the repository argument matches a configured remote name, resolve to its URL.
 /// Otherwise return the original path.
 fn resolve_remote_or_path(path: &Path) -> PathBuf {
-    // Only try remote resolution if path doesn't contain path separators
-    // and doesn't already exist as a filesystem path
     let path_str = path.to_string_lossy();
-    if path.exists() || path_str.contains('/') || path_str.contains('\\') {
-        return path.to_path_buf();
-    }
 
-    // Try to discover a repo and check config
-    if let Ok(repo) = Repository::discover(None) {
-        let config_path = repo.git_dir.join("config");
-        if let Ok(content) = std::fs::read_to_string(&config_path) {
-            let _key = format!("remote.{}.url", path_str);
-            // Simple config parsing: look for [remote "name"] section and url key
-            if let Some(url) = parse_remote_url(&content, &path_str) {
-                return PathBuf::from(url);
+    // Try remote resolution first for simple names (no path separators).
+    // Remote config takes precedence over filesystem directories with the
+    // same name, matching git's behaviour.
+    if !path_str.contains('/') && !path_str.contains('\\') {
+        if let Ok(repo) = Repository::discover(None) {
+            let config_path = repo.git_dir.join("config");
+            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                if let Some(url) = parse_remote_url(&content, &path_str) {
+                    return PathBuf::from(url);
+                }
             }
         }
     }

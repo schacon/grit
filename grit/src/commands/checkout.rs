@@ -38,7 +38,7 @@ pub struct Args {
     pub orphan: Option<String>,
 
     /// Force: discard local changes.
-    #[arg(short = 'f', long = "force")]
+    #[arg(short = 'f', long = "force", hide = true)]
     pub force: bool,
 
     /// Suppress feedback messages.
@@ -54,11 +54,11 @@ pub struct Args {
     pub track: bool,
 
     /// Do not set up tracking configuration.
-    #[arg(long = "no-track")]
+    #[arg(long = "no-track", hide = true)]
     pub no_track: bool,
 
     /// Do not keep files that are not in the source tree (path mode).
-    #[arg(long = "no-overlay")]
+    #[arg(long = "no-overlay", hide = true)]
     pub no_overlay: bool,
 
     /// Keep overlay behaviour (default, for explicitness).
@@ -72,6 +72,62 @@ pub struct Args {
     /// Merge local modifications when switching branches.
     #[arg(short = 'm', long = "merge")]
     pub merge: bool,
+
+    /// Check out their version for unmerged files.
+    #[arg(long = "ours")]
+    pub ours: bool,
+
+    /// Check out our version for unmerged files.
+    #[arg(long = "theirs")]
+    pub theirs: bool,
+
+    /// Conflict style (merge or diff3).
+    #[arg(long = "conflict")]
+    pub conflict: Option<String>,
+
+    /// Lines of context for --patch.
+    #[arg(long = "unified", short = 'U')]
+    pub unified: Option<usize>,
+
+    /// Maximum number of context lines between diff hunks.
+    #[arg(long = "inter-hunk-context")]
+    pub inter_hunk_context: Option<usize>,
+
+    /// Do not fail on entries with skip-worktree bit set.
+    #[arg(long = "ignore-skip-worktree-bits")]
+    pub ignore_skip_worktree_bits: bool,
+
+    /// Do not check if another worktree has it checked out.
+    #[arg(long = "ignore-other-worktrees")]
+    pub ignore_other_worktrees: bool,
+
+    /// Recurse into submodules.
+    #[arg(long = "recurse-submodules")]
+    pub recurse_submodules: bool,
+
+    /// Auto-advance to next conflict.
+    #[arg(long = "auto-advance")]
+    pub auto_advance: bool,
+
+    /// Display progress.
+    #[arg(long = "progress")]
+    pub progress: bool,
+
+    /// Guess branch name from remote tracking branches (default).
+    #[arg(long = "guess")]
+    pub guess: bool,
+
+    /// Do not guess branch name from remote tracking branches.
+    #[arg(long = "no-guess")]
+    pub no_guess: bool,
+
+    /// NUL-terminated pathspec from file.
+    #[arg(long = "pathspec-file-nul")]
+    pub pathspec_file_nul: bool,
+
+    /// Read pathspec from file.
+    #[arg(long = "pathspec-from-file")]
+    pub pathspec_from_file: Option<String>,
 
     /// Remaining positional arguments: `[<branch|commit>] [--] [<paths>...]`
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]

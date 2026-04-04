@@ -23,23 +23,23 @@ pub struct Args {
 
     // ── File location flags ──
     /// Use the system-wide config file.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub system: bool,
 
     /// Use the global (per-user) config file.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub global: bool,
 
     /// Use the repository-local config file.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub local: bool,
 
     /// Use the per-worktree config file.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub worktree: bool,
 
     /// Use the given config file.
-    #[arg(short = 'f', long = "file")]
+    #[arg(short = 'f', long = "file", global = true)]
     pub file: Option<PathBuf>,
 
     /// Read config from a blob object (e.g. HEAD:.gitmodules).
@@ -238,7 +238,19 @@ pub struct UnsetArgs {
 
 /// Arguments for `grit config list`.
 #[derive(Debug, ClapArgs)]
-pub struct ListArgs {}
+pub struct ListArgs {
+    /// Show only names, not values.
+    #[arg(long = "name-only")]
+    pub name_only: bool,
+
+    /// Show config file path.
+    #[arg(long = "show-origin")]
+    pub show_origin: bool,
+
+    /// Show config scope.
+    #[arg(long = "show-scope")]
+    pub show_scope: bool,
+}
 
 /// Arguments for `grit config rename-section`.
 #[derive(Debug, ClapArgs)]
@@ -279,7 +291,17 @@ pub fn run(args: Args) -> Result<()> {
             ConfigSubcommand::Get(get_args) => cmd_get(&args, get_args, git_dir.as_deref(), None),
             ConfigSubcommand::Set(set_args) => cmd_set(&args, set_args, scope, &file_path, None),
             ConfigSubcommand::Unset(unset_args) => cmd_unset(&args, unset_args, scope, &file_path, None),
-            ConfigSubcommand::List(_) => cmd_list(&args, git_dir.as_deref()),
+            ConfigSubcommand::List(list_args) => {
+                // Merge list-level flags into top-level args
+                let mut merged = Args {
+                    name_only: args.name_only || list_args.name_only,
+                    show_origin: args.show_origin || list_args.show_origin,
+                    show_scope: args.show_scope || list_args.show_scope,
+                    ..args
+                };
+                merged.subcommand = None; // avoid borrow issues
+                cmd_list(&merged, git_dir.as_deref())
+            }
             ConfigSubcommand::RenameSection(rs) => {
                 cmd_rename_section(scope, &file_path, &rs.old_name, &rs.new_name)
             }

@@ -805,7 +805,7 @@ test_expect_success '__git_refs - configured remote - with slash' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_refs - configured remote - full refs' '
+test_expect_success '__git_refs - configured remote - full refs' '
 	cat >expected <<-EOF &&
 	HEAD
 	refs/heads/branch-in-other
@@ -835,7 +835,7 @@ test_expect_success '__git_refs - configured remote - repo given on the command 
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_refs - configured remote - full refs - repo given on the command line' '
+test_expect_success '__git_refs - configured remote - full refs - repo given on the command line' '
 	cat >expected <<-EOF &&
 	HEAD
 	refs/heads/branch-in-other
@@ -867,7 +867,7 @@ test_expect_success '__git_refs - configured remote - remote name matches a dire
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_refs - URL remote' '
+test_expect_success '__git_refs - URL remote' '
 	cat >expected <<-EOF &&
 	HEAD
 	branch-in-other
@@ -881,7 +881,7 @@ test_expect_failure '__git_refs - URL remote' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_refs - URL remote - full refs' '
+test_expect_success '__git_refs - URL remote - full refs' '
 	cat >expected <<-EOF &&
 	HEAD
 	refs/heads/branch-in-other
@@ -1125,7 +1125,7 @@ test_expect_success '__git_refs - only matching refs - configured remote' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_refs - only matching refs - remote - full refs' '
+test_expect_success '__git_refs - only matching refs - remote - full refs' '
 	cat >expected <<-EOF &&
 	refs/heads/main-in-other
 	refs/heads/matching/branch-in-other
@@ -1364,7 +1364,7 @@ test_expect_success '__git_complete_fetch_refspecs - prefix' '
 	test_cmp expected out
 '
 
-test_expect_failure '__git_complete_fetch_refspecs - fully qualified' '
+test_expect_success '__git_complete_fetch_refspecs - fully qualified' '
 	sed -e "s/Z$//" >expected <<-EOF &&
 	refs/heads/branch-in-other:refs/heads/branch-in-other Z
 	refs/heads/main-in-other:refs/heads/main-in-other Z
@@ -1378,7 +1378,7 @@ test_expect_failure '__git_complete_fetch_refspecs - fully qualified' '
 	test_cmp expected out
 '
 
-test_expect_failure '__git_complete_fetch_refspecs - fully qualified & prefix' '
+test_expect_success '__git_complete_fetch_refspecs - fully qualified & prefix' '
 	sed -e "s/Z$//" >expected <<-EOF &&
 	+refs/heads/branch-in-other:refs/heads/branch-in-other Z
 	+refs/heads/main-in-other:refs/heads/main-in-other Z
@@ -1392,7 +1392,7 @@ test_expect_failure '__git_complete_fetch_refspecs - fully qualified & prefix' '
 	test_cmp expected out
 '
 
-test_expect_failure '__git_complete_worktree_paths' '
+test_expect_success '__git_complete_worktree_paths' '
 	test_when_finished "git worktree remove other_wt" &&
 	git worktree add --orphan other_wt &&
 	run_completion "git worktree remove " &&
@@ -1408,7 +1408,7 @@ test_expect_success '__git_complete_worktree_paths - not a git repository' '
 	)
 '
 
-test_expect_failure '__git_complete_worktree_paths with -C' '
+test_expect_success '__git_complete_worktree_paths with -C' '
 	test_when_finished "git -C otherrepo worktree remove otherrepo_wt" &&
 	git -C otherrepo worktree add --orphan otherrepo_wt &&
 	run_completion "git -C otherrepo worktree remove " &&
@@ -1480,14 +1480,14 @@ test_expect_success 'git bisect - start subcommand arguments after double-dash a
 	)
 '
 
-test_expect_failure 'setup for git-bisect tests requiring ongoing bisection' '
+test_expect_success 'setup for git-bisect tests requiring ongoing bisection' '
 	(
 		cd git-bisect &&
 		git bisect start --term-new=custom_new --term-old=custom_old final initial
 	)
 '
 
-test_expect_failure 'git-bisect - when bisecting all subcommands are candidates' '
+test_expect_success 'git-bisect - when bisecting all subcommands are candidates' '
 	(
 		cd git-bisect &&
 		test_completion "git bisect " <<-\EOF
@@ -1850,7 +1850,7 @@ test_expect_failure 'cone mode sparse-checkout completes directory names' '
 	)
 '
 
-test_expect_failure 'cone mode sparse-checkout completes directory names with spaces and accents' '
+test_expect_success 'cone mode sparse-checkout completes directory names with spaces and accents' '
 	# reset sparse-checkout
 	git -C sparse-checkout sparse-checkout disable &&
 	(
@@ -2598,7 +2598,7 @@ test_expect_success 'double dash "git" itself' '
 	EOF
 '
 
-test_expect_failure 'double dash "git checkout"' '
+test_expect_success 'double dash "git checkout"' '
 	test_completion "git checkout --" <<-\EOF
 	--quiet Z
 	--detach Z
@@ -2663,7 +2663,7 @@ test_expect_success 'general options plus command' '
 	test_completion "git --namespace name/space check" "checkout "
 '
 
-test_expect_failure 'git --help completion' '
+test_expect_success 'git --help completion' '
 	test_completion "git --help ad" "add " &&
 	test_completion "git --help core" "core-tutorial "
 '
@@ -2735,7 +2735,7 @@ test_expect_success 'show completes all refs' '
 	EOF
 '
 
-test_expect_failure '<ref>: completes paths' '
+test_expect_success '<ref>: completes paths' '
 	test_completion "git show mytag:f" <<-\EOF
 	file1Z
 	file2Z
@@ -2933,7 +2933,7 @@ test_expect_success 'completion used <cmd> completion for alias: !f() { : <cmd>;
 	EOF
 '
 
-test_expect_failure 'completion without explicit _git_xxx function' '
+test_expect_success 'completion without explicit _git_xxx function' '
 	test_completion "git version --" <<-\EOF
 	--build-options Z
 	--no-build-options Z
@@ -3005,7 +3005,7 @@ test_expect_success 'git config subcommand options' '
 	EOF
 '
 
-test_expect_failure 'git config get' '
+test_expect_success 'git config get' '
 	test_when_finished "rm -f cfgfile" &&
 	git config set --file cfgfile foo.bar baz &&
 	test_completion "git config get --file cfgfile foo." <<-\EOF
@@ -3013,21 +3013,21 @@ test_expect_failure 'git config get' '
 	EOF
 '
 
-test_expect_failure 'git config set - section' '
+test_expect_success 'git config set - section' '
 	test_completion "git config set br" <<-\EOF
 	branch.Z
 	browser.Z
 	EOF
 '
 
-test_expect_failure 'git config set - section include, includeIf' '
+test_expect_success 'git config set - section include, includeIf' '
 	test_completion "git config set inclu" <<-\EOF
 	include.Z
 	includeIf.Z
 	EOF
 '
 
-test_expect_failure 'git config set - variable name' '
+test_expect_success 'git config set - variable name' '
 	test_completion "git config set log.d" <<-\EOF
 	log.date Z
 	log.decorate Z
@@ -3035,19 +3035,19 @@ test_expect_failure 'git config set - variable name' '
 	EOF
 '
 
-test_expect_failure 'git config set - variable name include' '
+test_expect_success 'git config set - variable name include' '
 	test_completion "git config set include.p" <<-\EOF
 	include.path Z
 	EOF
 '
 
-test_expect_failure 'setup for git config submodule tests' '
+test_expect_success 'setup for git config submodule tests' '
 	test_create_repo sub &&
 	test_commit -C sub initial &&
 	git submodule add ./sub
 '
 
-test_expect_failure 'git config set - variable name - submodule and __git_compute_first_level_config_vars_for_section' '
+test_expect_success 'git config set - variable name - submodule and __git_compute_first_level_config_vars_for_section' '
 	test_completion "git config set submodule." <<-\EOF
 	submodule.active Z
 	submodule.alternateErrorStrategy Z
@@ -3078,14 +3078,14 @@ test_expect_success 'git config set - value' '
 	EOF
 '
 
-test_expect_failure 'git -c - section' '
+test_expect_success 'git -c - section' '
 	test_completion "git -c br" <<-\EOF
 	branch.Z
 	browser.Z
 	EOF
 '
 
-test_expect_failure 'git -c - variable name' '
+test_expect_success 'git -c - variable name' '
 	test_completion "git -c log.d" <<-\EOF
 	log.date=Z
 	log.decorate=Z
@@ -3100,14 +3100,14 @@ test_expect_success 'git -c - value' '
 	EOF
 '
 
-test_expect_failure 'git clone --config= - section' '
+test_expect_success 'git clone --config= - section' '
 	test_completion "git clone --config=br" <<-\EOF
 	branch.Z
 	browser.Z
 	EOF
 '
 
-test_expect_failure 'git clone --config= - variable name' '
+test_expect_success 'git clone --config= - variable name' '
 	test_completion "git clone --config=log.d" <<-\EOF
 	log.date=Z
 	log.decorate=Z
@@ -3151,7 +3151,7 @@ test_expect_success 'sourcing the completion script clears cached commands' '
 	)
 '
 
-test_expect_failure 'sourcing the completion script clears cached merge strategies' '
+test_expect_success 'sourcing the completion script clears cached merge strategies' '
 	(
 		__git_compute_merge_strategies &&
 		test -n "$__git_merge_strategies" &&
@@ -3199,7 +3199,7 @@ test_expect_success 'plumbing commands are excluded without GIT_COMPLETION_SHOW_
 	)
 '
 
-test_expect_failure 'all commands are shown with GIT_COMPLETION_SHOW_ALL_COMMANDS (also main non-builtin)' '
+test_expect_success 'all commands are shown with GIT_COMPLETION_SHOW_ALL_COMMANDS (also main non-builtin)' '
 	(
 		. "$TEST_DIRECTORY/contrib/completion/git-completion.bash" &&
 		GIT_COMPLETION_SHOW_ALL_COMMANDS=1 &&

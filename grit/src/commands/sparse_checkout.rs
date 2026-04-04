@@ -25,6 +25,10 @@ pub enum SparseCheckoutSubcommand {
     Init,
     /// Set sparse checkout patterns.
     Set(SetArgs),
+    /// Add patterns to sparse checkout.
+    Add(AddArgs),
+    /// Reapply sparse checkout patterns.
+    Reapply,
     /// List current sparse checkout patterns.
     List,
     /// Disable sparse checkout.
@@ -33,7 +37,21 @@ pub enum SparseCheckoutSubcommand {
 
 #[derive(Debug, ClapArgs)]
 pub struct SetArgs {
+    /// Use cone mode (directory-based) sparse checkout.
+    #[arg(long)]
+    pub cone: bool,
+
+    /// Use non-cone mode (pattern-based) sparse checkout.
+    #[arg(long = "no-cone", hide = true)]
+    pub no_cone: bool,
+
     /// Patterns to include in sparse checkout.
+    pub patterns: Vec<String>,
+}
+
+#[derive(Debug, ClapArgs)]
+pub struct AddArgs {
+    /// Patterns to add to sparse checkout.
     #[arg(required = true)]
     pub patterns: Vec<String>,
 }
@@ -44,7 +62,12 @@ pub fn run(args: Args) -> Result<()> {
 
     match args.subcommand {
         SparseCheckoutSubcommand::Init => cmd_init(&repo),
-        SparseCheckoutSubcommand::Set(set_args) => cmd_set(&repo, &set_args.patterns),
+        SparseCheckoutSubcommand::Set(set_args) => {
+            let cone = set_args.cone || !set_args.no_cone;
+            cmd_set(&repo, &set_args.patterns, cone)
+        }
+        SparseCheckoutSubcommand::Add(add_args) => cmd_add(&repo, &add_args.patterns),
+        SparseCheckoutSubcommand::Reapply => cmd_reapply(&repo),
         SparseCheckoutSubcommand::List => cmd_list(&repo),
         SparseCheckoutSubcommand::Disable => cmd_disable(&repo),
     }
@@ -70,9 +93,12 @@ fn cmd_init(repo: &Repository) -> Result<()> {
 }
 
 /// Set the sparse checkout patterns, replacing any existing ones.
-fn cmd_set(repo: &Repository, patterns: &[String]) -> Result<()> {
+fn cmd_set(repo: &Repository, patterns: &[String], cone: bool) -> Result<()> {
     // Ensure sparse checkout is enabled
     set_sparse_config(repo, true)?;
+
+    // Set cone mode config
+    set_cone_config(repo, cone)?;
 
     let sc_path = sparse_checkout_path(repo);
     if let Some(parent) = sc_path.parent() {
@@ -283,5 +309,67 @@ fn set_sparse_config(repo: &Repository, enable: bool) -> Result<()> {
     let value = if enable { "true" } else { "false" };
     config.set("core.sparseCheckout", value)?;
     config.write().context("writing repo config")?;
+    Ok(())
+}
+
+/// Set `core.sparseCheckoutCone` in the local repo config.
+fn set_cone_config(repo: &Repository, cone: bool) -> Result<()> {
+    let config_path = repo.git_dir.join("config");
+    let mut config = if config_path.exists() {
+        let content =
+            fs::read_to_string(&config_path).context("reading repo config")?;
+        ConfigFile::parse(&config_path, &content, ConfigScope::Local)?
+    } else {
+        ConfigFile::parse(&config_path, "", ConfigScope::Local)?
+    };
+
+    let value = if cone { "true" } else { "false" };
+    config.set("core.sparseCheckoutCone", value)?;
+    config.write().context("writing repo config")?;
+    Ok(())
+}
+
+fn cmd_add(repo: &Repository, patterns: &[String]) -> Result<()> {
+    // Read existing patterns
+    let sc_path = sparse_checkout_path(repo);
+    let mut existing = if sc_path.exists() {
+        fs::read_to_string(&sc_path)
+            .context("reading sparse-checkout file")?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    // Add new patterns
+    for pat in patterns {
+        if !existing.contains(pat) {
+            existing.push(pat.clone());
+        }
+    }
+
+    // Write back and apply
+    let content: String = existing.iter().map(|p| format!("{p}\n")).collect();
+    if let Some(parent) = sc_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&sc_path, &content)?;
+    apply_sparse_patterns(repo, &existing)?;
+    Ok(())
+}
+
+fn cmd_reapply(repo: &Repository) -> Result<()> {
+    let sc_path = sparse_checkout_path(repo);
+    if !sc_path.exists() {
+        anyhow::bail!("sparse-checkout is not initialized");
+    }
+    let patterns: Vec<String> = fs::read_to_string(&sc_path)?
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect();
+    apply_sparse_patterns(repo, &patterns)?;
     Ok(())
 }
