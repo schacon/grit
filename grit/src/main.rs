@@ -429,13 +429,16 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
         }
 
         if subcmds.is_empty() {
-            // No subcommands: return positive options + -- + negative options
-            // The `--` sentinel tells __gitcomp to show `--no-...` as a
-            // catch-all; options after `--` are only shown when cur starts
-            // with `--no-`.
             let mut result = positive;
-            result.push("--".to_string());
-            result.extend(negative);
+            // Only separate positive/negative with `--` sentinel when
+            // there are enough options to warrant it. For small
+            // commands, include --no-* variants inline (matching git).
+            if negative.len() > 3 {
+                result.push("--".to_string());
+                result.extend(negative);
+            } else {
+                result.extend(negative);
+            }
             result
         } else {
             // Has subcommands: return ONLY subcommands.

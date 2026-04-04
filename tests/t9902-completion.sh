@@ -2933,7 +2933,7 @@ test_expect_success 'completion used <cmd> completion for alias: !f() { : <cmd>;
 	EOF
 '
 
-test_expect_failure 'completion without explicit _git_xxx function' '
+test_expect_success 'completion without explicit _git_xxx function' '
 	test_completion "git version --" <<-\EOF
 	--build-options Z
 	--no-build-options Z
@@ -3151,7 +3151,7 @@ test_expect_success 'sourcing the completion script clears cached commands' '
 	)
 '
 
-test_expect_failure 'sourcing the completion script clears cached merge strategies' '
+test_expect_success 'sourcing the completion script clears cached merge strategies' '
 	(
 		__git_compute_merge_strategies &&
 		test -n "$__git_merge_strategies" &&

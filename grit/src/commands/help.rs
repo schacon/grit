@@ -12,6 +12,9 @@ const CONFIG_VARS_FOR_COMPLETION: &str = include_str!("config_vars.txt");
 /// Config section names for completion (from `git help --config-sections-for-completion`).
 const CONFIG_SECTIONS_FOR_COMPLETION: &str = include_str!("config_sections.txt");
 
+/// Full config variable names with placeholders (from `git help --config`).
+const CONFIG_VARS_ALL: &str = include_str!("config_vars_all.txt");
+
 /// Arguments for `grit help`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Display help information")]
@@ -136,8 +139,13 @@ pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    if args.config_for_completion || args.config_list {
+    if args.config_for_completion {
         print!("{}", CONFIG_VARS_FOR_COMPLETION);
+        return Ok(());
+    }
+
+    if args.config_list {
+        print!("{}", CONFIG_VARS_ALL);
         return Ok(());
     }
 
