@@ -70,6 +70,10 @@ pub struct Args {
     /// Case-insensitive sort for -l listing.
     #[arg(short = 'i', long = "ignore-case")]
     pub ignore_case: bool,
+
+    /// Create a reflog for the tag.
+    #[arg(long = "create-reflog")]
+    pub create_reflog: bool,
 }
 
 /// Run the `tag` command.
@@ -321,7 +325,14 @@ fn list_tags(
 
     // Filter by pattern
     if !patterns.is_empty() {
-        tags.retain(|(name, _)| patterns.iter().any(|pat| glob_matches(pat, name)));
+        if ignore_case {
+            tags.retain(|(name, _)| {
+                let lower_name = name.to_lowercase();
+                patterns.iter().any(|pat| glob_matches(&pat.to_lowercase(), &lower_name))
+            });
+        } else {
+            tags.retain(|(name, _)| patterns.iter().any(|pat| glob_matches(pat, name)));
+        }
     }
 
     // Sort
