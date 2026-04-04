@@ -12,7 +12,7 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_failure 'clone with bundle-uri over file://' '
+test_expect_success 'clone with bundle-uri over file://' '
 	test_create_repo server &&
 	(cd server && test_commit one) &&
 	GIT_TRACE_PACKET=1 git -c protocol.version=2 -c transfer.bundleURI=true \
@@ -20,7 +20,7 @@ test_expect_failure 'clone with bundle-uri over file://' '
 	grep "bundle-uri" trace
 '
 
-test_expect_failure 'fetch with bundle-uri over file://' '
+test_expect_success 'fetch with bundle-uri over file://' '
 	false
 '
 

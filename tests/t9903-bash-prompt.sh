@@ -174,7 +174,7 @@ test_expect_success 'prompt - inside bare repository' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - interactive rebase' '
+test_expect_success 'prompt - interactive rebase' '
 	printf " (b1|REBASE 2/3)" >expected &&
 	write_script fake_editor.sh <<-\EOF &&
 		echo "exec echo" >"$1"
@@ -571,7 +571,7 @@ test_expect_success 'prompt - bash color pc mode - detached head' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - dirty status indicator - dirty worktree' '
+test_expect_success 'prompt - bash color pc mode - dirty status indicator - dirty worktree' '
 	printf "BEFORE: (${c_green}\${__git_ps1_branch_name}${c_clear} ${c_red}*${c_clear}):AFTER\\nmain" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
