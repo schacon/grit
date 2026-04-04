@@ -1709,16 +1709,36 @@ fn parse_stash_index(stash_ref: Option<&str>) -> Result<usize> {
 
 /// Resolve a stash reference to an ObjectId.
 fn resolve_stash_ref(repo: &Repository, stash_ref: Option<&str>) -> Result<ObjectId> {
-    let index = parse_stash_index(stash_ref)?;
-    let entries = read_reflog(&repo.git_dir, "refs/stash")?;
-    if entries.is_empty() {
-        bail!("No stash entries");
-    }
-    // Entries are oldest-first in the file, newest-first for stash@{0}
-    let rev_index = entries.len().checked_sub(1 + index);
-    match rev_index {
-        Some(i) => Ok(entries[i].new_oid),
-        None => bail!("stash@{{{index}}} does not exist"),
+    // Try to parse as a stash index first
+    match parse_stash_index(stash_ref) {
+        Ok(index) => {
+            let entries = read_reflog(&repo.git_dir, "refs/stash")?;
+            if entries.is_empty() {
+                bail!("No stash entries");
+            }
+            // Entries are oldest-first in the file, newest-first for stash@{0}
+            let rev_index = entries.len().checked_sub(1 + index);
+            match rev_index {
+                Some(i) => Ok(entries[i].new_oid),
+                None => bail!("stash@{{{index}}} does not exist"),
+            }
+        }
+        Err(_) => {
+            // Try as a raw SHA hash
+            if let Some(s) = stash_ref {
+                if let Ok(oid) = ObjectId::from_hex(s) {
+                    // Verify it's a valid object
+                    if repo.odb.read(&oid).is_ok() {
+                        return Ok(oid);
+                    }
+                }
+                // Try as a revision (e.g. a ref name)
+                if let Ok(oid) = grit_lib::rev_parse::resolve_revision(repo, s) {
+                    return Ok(oid);
+                }
+            }
+            bail!("No stash entries");
+        }
     }
 }
 

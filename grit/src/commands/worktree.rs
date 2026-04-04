@@ -225,6 +225,24 @@ fn resolve_commitish(repo: &Repository, spec: &str) -> Result<ObjectId> {
 // ---------------------------------------------------------------------------
 
 fn cmd_add(args: AddArgs) -> Result<()> {
+    // Validate mutually exclusive options
+    {
+        let mut exclusive = Vec::new();
+        if args.new_branch.is_some() { exclusive.push("-b"); }
+        if args.force_new_branch.is_some() { exclusive.push("-B"); }
+        if args.detach { exclusive.push("--detach"); }
+        if args.orphan { exclusive.push("--orphan"); }
+        if exclusive.len() > 1 {
+            bail!("options '{}' and '{}' cannot be used together", exclusive[0], exclusive[1]);
+        }
+        if args.orphan && args.no_checkout {
+            bail!("options '--orphan' and '--no-checkout' cannot be used together");
+        }
+        if args.reason.is_some() && !args.lock {
+            bail!("--reason requires --lock");
+        }
+    }
+
     let repo = Repository::discover(None)?;
     let common = common_dir(&repo.git_dir)?;
     let worktrees_dir = common.join("worktrees");
@@ -235,6 +253,21 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     } else {
         std::env::current_dir()?.join(&args.path)
     };
+
+    // Check if path exists and is non-empty
+    if wt_path.exists() {
+        let is_empty = wt_path.is_dir()
+            && fs::read_dir(&wt_path)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(false);
+        if !is_empty {
+            bail!(
+                "'{path}' already exists",
+                path = wt_path.display()
+            );
+        }
+    }
+
     let wt_path = wt_path.canonicalize().unwrap_or_else(|_| {
         // Path may not exist yet; create it then canonicalize
         let _ = fs::create_dir_all(&wt_path);
@@ -297,7 +330,12 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     // `worktree add <path> <branch>` — if <branch> exists as a ref, check it out;
     //   otherwise create a new branch from HEAD.
     // `worktree add -b <new> <path>` — always create a new branch from HEAD.
-    let (branch_name, commit_oid) = if let Some(ref new_b) = args.new_branch {
+    let (branch_name, commit_oid) = if let Some(ref new_b) = args.force_new_branch {
+        // -B: create or reset branch
+        let oid = head_oid
+            .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
+        (new_b.clone(), oid)
+    } else if let Some(ref new_b) = args.new_branch {
         let oid = head_oid
             .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
         (new_b.clone(), oid)
