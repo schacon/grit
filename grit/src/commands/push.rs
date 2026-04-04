@@ -79,6 +79,10 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Skip the pre-push hook.
+    #[arg(long = "no-verify")]
+    pub no_verify: bool,
+
     /// Check, on-demand, or no recursion into submodules.
     #[arg(long = "recurse-submodules")]
     pub recurse_submodules: Option<String>,
@@ -398,8 +402,8 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Run pre-push hook
-    {
+    // Run pre-push hook (unless --no-verify)
+    if !args.no_verify {
         let zero_oid = "0".repeat(40);
         let mut hook_lines = Vec::new();
         for update in &updates {

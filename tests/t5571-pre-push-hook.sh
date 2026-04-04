@@ -40,7 +40,7 @@ test_expect_success 'push with failing hook' '
 '
 
 # grit does not support --no-verify for push
-test_expect_failure '--no-verify bypasses hook' '
+test_expect_success '--no-verify bypasses hook' '
 	git push --no-verify parent1 HEAD &&
 	test_path_is_missing actual
 '
