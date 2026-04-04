@@ -31,7 +31,7 @@ rm	Main Porcelain	yes	97	97	0	100.0
 shortlog	Main Porcelain	yes	32	32	0	100.0
 show	Main Porcelain	yes	27	27	0	100.0
 stash	Main Porcelain	yes	204	204	0	100.0
-status	Main Porcelain	yes	474	421	0	88.8
+status	Main Porcelain	yes	474	411	0	86.7
 submodule	Main Porcelain	yes	476	476	0	100.0
 switch	Main Porcelain	yes	16	16	0	100.0
 tag	Main Porcelain	yes	213	213	0	100.0
@@ -51,7 +51,7 @@ fast-import	Ancillary Porcelain	yes	262	55	204	21.0
 filter-branch	Ancillary Porcelain	yes	54	54	0	100.0
 fsck	Ancillary Porcelain	yes	106	106	0	100.0
 gitweb	Ancillary Porcelain	no	47	47	0	100.0
-help	Ancillary Porcelain	yes	310	167	0	53.9
+help	Ancillary Porcelain	yes	310	166	0	53.6
 imap-send	Ancillary Porcelain	no	0	0	0	0.0
 maintenance	Ancillary Porcelain	yes	70	70	0	100.0
 merge-tree	Ancillary Porcelain	yes	54	54	0	100.0

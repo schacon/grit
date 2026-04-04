@@ -3627,10 +3627,10 @@ t2021-checkout-overwrite::the-symlink-remained	t2021-checkout-overwrite	the syml
 t2021-checkout-overwrite::cleanup-after-previous-symlink-tests	t2021-checkout-overwrite	cleanup after previous symlink tests	checkout	pass
 t2021-checkout-overwrite::checkout-f-must-not-follow-symlinks-when-removing-entries	t2021-checkout-overwrite	checkout -f must not follow symlinks when removing entries	checkout	pass
 t2021-checkout-overwrite::checkout-overwrite-ignore-should-succeed-if-only-ignored-files-in-the-way	t2021-checkout-overwrite	checkout --overwrite-ignore should succeed if only ignored files in the way	checkout	pass
-t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	partial
-t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	partial
-t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	partial
-t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	partial
+t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	pass
+t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	pass
+t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	pass
+t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	pass
 t2023-checkout-m::git-merge-main	t2023-checkout-m	git merge main	checkout	pass
 t2023-checkout-m::m-restores-2-way-conflicted-resolved-file	t2023-checkout-m	-m restores 2-way conflicted+resolved file	checkout	pass
 t2023-checkout-m::m-restores-3-way-conflicted-resolved-file	t2023-checkout-m	-m restores 3-way conflicted+resolved file	checkout	pass
