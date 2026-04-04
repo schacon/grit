@@ -117,6 +117,7 @@ pub fn run(args: Args) -> Result<()> {
             exec: None,
             merge: false,
             apply: false,
+            no_ff: false,
         };
         super::rebase::run(rebase_args)
     } else {

@@ -69,6 +69,10 @@ pub struct Args {
     #[arg(long = "apply")]
     pub apply: bool,
 
+    /// Force rebase even if the current branch is up to date.
+    #[arg(long = "no-ff", alias = "force-rebase")]
+    pub no_ff: bool,
+
     /// Branch to rebase (checkout first, then rebase onto upstream).
     #[arg(value_name = "BRANCH")]
     pub branch: Option<String>,
@@ -101,9 +105,26 @@ pub fn run(mut args: Args) -> Result<()> {
         args.branch = None;
     }
 
-    let upstream = args.upstream.as_deref().unwrap_or("HEAD");
-    if upstream == "HEAD" && args.onto.is_none() {
-        bail!("usage: grit rebase <upstream> or grit rebase --onto <newbase> <upstream>");
+    // If no upstream specified and no --onto, try to find the upstream tracking branch.
+    if args.upstream.is_none() && args.onto.is_none() {
+        let repo = Repository::discover(None).context("not a git repository")?;
+        let head = resolve_head(&repo.git_dir)?;
+        let branch_name = match &head {
+            HeadState::Branch { short_name, .. } => short_name.clone(),
+            _ => bail!("no upstream configured for the current branch"),
+        };
+        // Try to resolve @{upstream}
+        match resolve_revision(&repo, &format!("{}@{{upstream}}", branch_name)) {
+            Ok(_) => {
+                args.upstream = Some(format!("{}@{{upstream}}", branch_name));
+            }
+            Err(_) => {
+                bail!(
+                    "There is no tracking information for the current branch.\n\
+                     Please specify which branch you want to rebase against."
+                );
+            }
+        }
     }
 
     do_rebase(args)
@@ -166,16 +187,18 @@ fn do_rebase(args: Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("cannot rebase: HEAD is unborn"))?
         .to_owned();
 
-    // Check if already up to date
-    if head_oid == onto_oid {
-        eprintln!("Current branch is up to date.");
-        return Ok(());
+    // Check if already up to date (skip if --no-ff forces replay)
+    if !args.no_ff {
+        if head_oid == onto_oid {
+            eprintln!("Current branch is up to date.");
+            return Ok(());
+        }
     }
 
     // Collect commits to replay: walk from HEAD back, stopping when we hit upstream_oid
     let commits = collect_commits_to_replay(&repo, head_oid, upstream_oid)?;
 
-    if commits.is_empty() {
+    if commits.is_empty() && !args.no_ff {
         eprintln!("Current branch is up to date.");
         return Ok(());
     }
