@@ -115,12 +115,15 @@ pub fn run(args: Args) -> Result<()> {
     if args.rebase.is_some() {
         let rebase_args = super::rebase::Args {
             upstream: Some(tracking_ref),
+            branch: None,
             onto: None,
             interactive: false,
             r#continue: false,
             abort: false,
             skip: false,
             exec: None,
+            merge: false,
+            apply: false,
         };
         super::rebase::run(rebase_args)
     } else {

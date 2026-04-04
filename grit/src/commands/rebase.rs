@@ -60,6 +60,20 @@ pub struct Args {
     /// Run a shell command after each commit is applied.
     #[arg(short = 'x', long = "exec")]
     pub exec: Option<String>,
+
+    /// Use the merge backend for rebasing (default, accepted for compatibility).
+    #[arg(long = "merge", short = 'm')]
+    pub merge: bool,
+
+    /// Use the apply backend for rebasing (accepted for compatibility).
+    #[arg(long = "apply")]
+    pub apply: bool,
+
+    /// Branch to rebase (checkout first, then rebase onto upstream).
+    /// Not exposed via CLI; used internally by pull --rebase.
+    #[arg(skip)]
+    #[allow(dead_code)]
+    pub branch: Option<String>,
 }
 
 /// Run the `rebase` command.

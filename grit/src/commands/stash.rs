@@ -1023,7 +1023,11 @@ fn do_apply(stash_ref: Option<String>, _drop_after: bool, index: bool, quiet: bo
 
     let stash_oid = resolve_stash_ref(&repo, stash_ref.as_deref())?;
 
-    apply_stash_impl(&repo, &work_tree, &stash_oid, index, quiet)?;
+    let had_conflicts = apply_stash_impl(&repo, &work_tree, &stash_oid, index, quiet)?;
+
+    if had_conflicts {
+        bail!("Merge conflict in stash apply");
+    }
 
     Ok(())
 }
@@ -1125,7 +1129,29 @@ fn apply_stash_impl(
         .map(|e| (e.path.clone(), e))
         .collect();
 
-    // Apply working tree changes
+    // Determine if HEAD has moved since the stash was created
+    let current_head = resolve_head(&repo.git_dir)?;
+    let current_head_oid = current_head.oid().copied();
+    let head_moved = current_head_oid.as_ref() != Some(head_at_stash);
+
+    // Build current HEAD tree map for three-way merge
+    let current_tree_map: BTreeMap<String, grit_lib::objects::ObjectId> = if head_moved {
+        if let Some(ref head_oid) = current_head_oid {
+            let head_obj = repo.odb.read(head_oid)?;
+            let head_commit = parse_commit(&head_obj.data)?;
+            let entries = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
+            entries.iter().map(|e| (e.path.clone(), e.oid)).collect()
+        } else {
+            BTreeMap::new()
+        }
+    } else {
+        BTreeMap::new()
+    };
+
+    let mut has_conflicts = false;
+    let mut new_index = current_index.clone();
+
+    // Apply working tree changes (with three-way merge when HEAD has moved)
     for (path, change) in &wt_changes {
         let file_path = work_tree.join(path);
         match change {
@@ -1133,17 +1159,69 @@ fn apply_stash_impl(
                 if let Some(parent) = file_path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                let blob = repo.odb.read(&entry.oid)?;
+                let stash_blob = repo.odb.read(&entry.oid)?;
+
                 if entry.mode == MODE_SYMLINK {
-                    let target = String::from_utf8(blob.data)
+                    let target = String::from_utf8(stash_blob.data)
                         .map_err(|_| anyhow::anyhow!("symlink target is not UTF-8"))?;
                     if file_path.exists() || file_path.symlink_metadata().is_ok() {
                         let _ = fs::remove_file(&file_path);
                     }
                     #[cfg(unix)]
                     std::os::unix::fs::symlink(&target, &file_path)?;
+                } else if head_moved {
+                    // Three-way merge: base (head_at_stash), ours (current HEAD), theirs (stash)
+                    let base_content = base_map.get(path)
+                        .and_then(|e| repo.odb.read(&e.oid).ok())
+                        .map(|o| o.data)
+                        .unwrap_or_default();
+                    let ours_content = current_tree_map.get(path)
+                        .and_then(|oid| repo.odb.read(oid).ok())
+                        .map(|o| o.data)
+                        .unwrap_or_default();
+                    let theirs_content = stash_blob.data;
+
+                    // If ours == base, no conflict (only stash changed this file)
+                    if ours_content == base_content {
+                        fs::write(&file_path, &theirs_content)?;
+                    } else if ours_content == theirs_content {
+                        // Both changed the same way, no conflict
+                        fs::write(&file_path, &ours_content)?;
+                    } else {
+                        // Both sides changed differently — try content merge
+                        use grit_lib::merge_file::{merge, MergeInput, MergeFavor, ConflictStyle};
+                        let input = MergeInput {
+                            base: &base_content,
+                            ours: &ours_content,
+                            theirs: &theirs_content,
+                            label_ours: "Updated upstream",
+                            label_base: "Stashed changes",
+                            label_theirs: "Stashed changes",
+                            favor: MergeFavor::None,
+                            style: ConflictStyle::Merge,
+                            marker_size: 7,
+                        };
+                        let output = merge(&input)?;
+                        fs::write(&file_path, &output.content)?;
+                        if output.conflicts > 0 {
+                            has_conflicts = true;
+                            // Write conflict stages to index
+                            let path_bytes = path.as_bytes();
+                            // Remove existing stage-0 entry
+                            new_index.entries.retain(|e| e.path != path_bytes || e.stage() != 0);
+                            // Add stage entries
+                            if let Some(base_entry) = base_map.get(path) {
+                                add_stage_entry(&mut new_index, path_bytes, &base_entry.oid, base_entry.mode, 1);
+                            }
+                            if let Some(ours_oid) = current_tree_map.get(path) {
+                                let mode = current_index.get(path_bytes, 0).map(|e| e.mode).unwrap_or(0o100644);
+                                add_stage_entry(&mut new_index, path_bytes, ours_oid, mode, 2);
+                            }
+                            add_stage_entry(&mut new_index, path_bytes, &entry.oid, entry.mode, 3);
+                        }
+                    }
                 } else {
-                    fs::write(&file_path, &blob.data)?;
+                    fs::write(&file_path, &stash_blob.data)?;
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
@@ -1165,7 +1243,6 @@ fn apply_stash_impl(
     }
 
     // Update the index
-    let mut new_index = current_index.clone();
 
     if restore_index {
         // --index: restore the index to the stash's index state for changed files
@@ -1208,6 +1285,9 @@ fn apply_stash_impl(
     }
     // else: no --index, keep the current index as-is
 
+    if has_conflicts {
+        new_index.sort();
+    }
     new_index.write(&repo.index_path())?;
 
     // Apply untracked files if present (3rd parent)
@@ -1226,7 +1306,35 @@ fn apply_stash_impl(
         }
     }
 
-    Ok(false)
+    Ok(has_conflicts)
+}
+
+/// Helper to add a staged entry at a specific stage to the index.
+fn add_stage_entry(
+    index: &mut Index,
+    path: &[u8],
+    oid: &grit_lib::objects::ObjectId,
+    mode: u32,
+    stage: u16,
+) {
+    let name_len = path.len().min(0xFFF) as u16;
+    let flags = (stage << 12) | name_len;
+    index.entries.push(IndexEntry {
+        ctime_sec: 0,
+        ctime_nsec: 0,
+        mtime_sec: 0,
+        mtime_nsec: 0,
+        dev: 0,
+        ino: 0,
+        mode,
+        uid: 0,
+        gid: 0,
+        size: 0,
+        oid: *oid,
+        flags,
+        flags_extended: None,
+        path: path.to_vec(),
+    });
 }
 
 // ---------------------------------------------------------------------------

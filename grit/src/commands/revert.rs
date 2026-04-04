@@ -83,11 +83,71 @@ fn do_revert(args: Args) -> Result<()> {
         );
     }
 
+    // Save ORIG_HEAD before starting the revert sequence
+    let head = resolve_head(git_dir)?;
+    if let Some(head_oid) = head.oid() {
+        let _ = fs::write(git_dir.join("ORIG_HEAD"), format!("{}\n", head_oid.to_hex()));
+    }
+
     // Expand commit specs (including A..B ranges) into a list of specs
     let expanded = expand_revert_specs(&repo, &args.commits)?;
 
-    for spec in &expanded {
-        revert_one_commit(&repo, spec, args.mainline, args.no_commit)?;
+    // If multiple commits, set up sequencer state
+    if expanded.len() > 1 {
+        let seq_dir = git_dir.join("sequencer");
+        let _ = fs::create_dir_all(&seq_dir);
+        // Write todo with remaining commits
+        let mut todo_entries: Vec<String> = Vec::new();
+        for spec in &expanded {
+            let oid = resolve_revision(&repo, spec)
+                .with_context(|| format!("bad revision '{spec}'"))?;
+            let obj = repo.odb.read(&oid)?;
+            let commit = parse_commit(&obj.data)?;
+            let subject = commit.message.lines().next().unwrap_or("");
+            todo_entries.push(format!("revert {} {}", &oid.to_hex()[..7], subject));
+        }
+        fs::write(seq_dir.join("todo"), todo_entries.join("\n") + "\n")?;
+    }
+
+    for (i, spec) in expanded.iter().enumerate() {
+        match revert_one_commit(&repo, spec, args.mainline, args.no_commit) {
+            Ok(()) => {
+                // Update sequencer todo: remove the completed entry
+                if expanded.len() > 1 {
+                    let seq_dir = git_dir.join("sequencer");
+                    let todo_path = seq_dir.join("todo");
+                    if let Ok(content) = fs::read_to_string(&todo_path) {
+                        let remaining: Vec<&str> = content.lines().skip(1).collect();
+                        if remaining.is_empty() {
+                            // All done, clean up sequencer
+                            let _ = fs::remove_dir_all(&seq_dir);
+                        } else {
+                            let _ = fs::write(&todo_path, remaining.join("\n") + "\n");
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                // If there are remaining commits, keep the sequencer todo
+                if expanded.len() > 1 && i < expanded.len() - 1 {
+                    let seq_dir = git_dir.join("sequencer");
+                    let todo_path = seq_dir.join("todo");
+                    if let Ok(content) = fs::read_to_string(&todo_path) {
+                        // Keep only remaining (unprocessed) entries
+                        let remaining: Vec<&str> = content.lines().skip(i + 1).collect();
+                        if !remaining.is_empty() {
+                            let _ = fs::write(&todo_path, remaining.join("\n") + "\n");
+                        }
+                    }
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    // Clean up sequencer if all commits were processed
+    if expanded.len() > 1 {
+        let _ = fs::remove_dir_all(git_dir.join("sequencer"));
     }
 
     Ok(())
@@ -213,6 +273,22 @@ fn revert_one_commit(
 
     // Check for conflicts (any entry with stage != 0).
     let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0);
+
+    // Check if the revert produces an empty commit (no changes).
+    if !has_conflicts {
+        let merged_tree = write_tree_from_index(&repo.odb, &merged_index, "")?;
+        if merged_tree == head_tree_oid {
+            eprintln!(
+                "error: The previous revert is now empty, possibly due to conflict resolution."
+            );
+            // Write REVERT_HEAD so the sequencer knows the state
+            fs::write(
+                git_dir.join("REVERT_HEAD"),
+                format!("{}\n", commit_oid.to_hex()),
+            )?;
+            std::process::exit(1);
+        }
+    }
 
     // Load old index BEFORE writing new one (needed for worktree cleanup).
     let old_index = load_index(repo)?;
@@ -346,16 +422,28 @@ fn do_abort() -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    if !git_dir.join("REVERT_HEAD").exists() {
+    if !git_dir.join("REVERT_HEAD").exists()
+        && !git_dir.join("sequencer").join("todo").exists()
+    {
         bail!("error: no revert in progress");
     }
 
-    // Restore HEAD tree to index and working tree.
+    // Restore HEAD to ORIG_HEAD if available, otherwise use current HEAD tree.
+    let restore_oid = if let Ok(orig) = fs::read_to_string(git_dir.join("ORIG_HEAD")) {
+        use grit_lib::objects::ObjectId;
+        Some(ObjectId::from_hex(orig.trim())?)
+    } else {
+        None
+    };
+
     let head = resolve_head(git_dir)?;
-    if let Some(head_oid) = head.oid() {
-        let obj = repo.odb.read(head_oid)?;
+    let target_oid = restore_oid.as_ref().or_else(|| head.oid());
+
+    if let Some(oid) = target_oid {
+        let obj = repo.odb.read(oid)?;
         let commit = parse_commit(&obj.data)?;
         let entries = tree_to_index_entries(&repo, &commit.tree, "")?;
+        let old_idx = load_index(&repo)?;
         let mut index = Index::new();
         index.entries = entries;
         index.sort();
@@ -363,12 +451,26 @@ fn do_abort() -> Result<()> {
         index.write(&index_path)?;
 
         if let Some(wt) = &repo.work_tree {
-            let old_idx = load_index(&repo)?;
             checkout_merged_index(&repo, wt, &old_idx, &index)?;
+        }
+
+        // Move HEAD back to ORIG_HEAD
+        if let Some(ref orig_oid) = restore_oid {
+            match &head {
+                HeadState::Branch { refname, .. } => {
+                    let ref_path = git_dir.join(refname);
+                    let _ = fs::write(&ref_path, format!("{}\n", orig_oid.to_hex()));
+                }
+                HeadState::Detached { .. } => {
+                    let _ = fs::write(git_dir.join("HEAD"), format!("{}\n", orig_oid.to_hex()));
+                }
+                HeadState::Invalid => {}
+            }
         }
     }
 
     cleanup_revert_state(git_dir);
+    let _ = fs::remove_file(git_dir.join("ORIG_HEAD"));
     Ok(())
 }
 
@@ -377,6 +479,7 @@ fn do_abort() -> Result<()> {
 fn cleanup_revert_state(git_dir: &Path) {
     let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+    let _ = fs::remove_dir_all(git_dir.join("sequencer"));
 }
 
 fn load_index(repo: &Repository) -> Result<Index> {
