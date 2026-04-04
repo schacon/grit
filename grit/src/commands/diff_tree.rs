@@ -1083,12 +1083,9 @@ fn write_commit_header(
             let name_email = &author[..=date_start];
             let timestamp_tz = author[date_start + 1..].trim();
             writeln!(out, "Author: {name_email}")?;
-            // Format the date
-            if let Some((ts_str, tz_str)) = timestamp_tz.split_once(' ') {
-                if let Ok(ts) = ts_str.parse::<i64>() {
-                    let formatted = format_commit_date(ts, tz_str);
-                    writeln!(out, "Date:   {formatted}")?;
-                }
+            // Try to parse the date
+            if let Some(formatted) = format_author_date(timestamp_tz) {
+                writeln!(out, "Date:   {formatted}")?;
             }
         } else {
             writeln!(out, "Author: {author}")?;
@@ -1155,6 +1152,43 @@ fn format_commit_date(timestamp: i64, tz: &str) -> String {
         }
     }
     format!("{timestamp} {tz}")
+}
+
+/// Parse an author date field and format it for pretty printing.
+/// Handles both "<unix_ts> <tz>" and "YYYY-MM-DD HH:MM:SS <tz>" formats.
+fn format_author_date(date_str: &str) -> Option<String> {
+    if date_str.is_empty() {
+        return None;
+    }
+    // Try "<unix_ts> <tz>" first
+    let parts: Vec<&str> = date_str.splitn(2, ' ').collect();
+    if parts.len() == 2 {
+        if let Ok(ts) = parts[0].parse::<i64>() {
+            return Some(format_commit_date(ts, parts[1]));
+        }
+    }
+    // Try "YYYY-MM-DD HH:MM:SS <tz>" format
+    // Split from the end to find the timezone
+    let parts: Vec<&str> = date_str.rsplitn(2, ' ').collect();
+    if parts.len() == 2 {
+        let tz = parts[0];
+        let datetime = parts[1];
+        // Try to parse as ISO-ish datetime
+        let tz_secs = parse_tz_offset_secs(tz);
+        if let Ok(offset) = time::UtcOffset::from_whole_seconds(tz_secs) {
+            // Try YYYY-MM-DD HH:MM:SS
+            let ymd_hms = time::format_description::parse(
+                "[year]-[month]-[day] [hour]:[minute]:[second]"
+            ).ok()?;
+            if let Ok(naive) = time::PrimitiveDateTime::parse(datetime, &ymd_hms) {
+                let dt = naive.assume_offset(offset);
+                let ts = dt.unix_timestamp();
+                return Some(format_commit_date(ts, tz));
+            }
+        }
+    }
+    // Fallback: just return the raw string
+    Some(date_str.to_owned())
 }
 
 fn parse_tz_offset_secs(tz: &str) -> i32 {
