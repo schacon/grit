@@ -25,8 +25,9 @@ pub struct Args {
     pub dry_run: bool,
 
     /// Required to actually remove files (unless clean.requireForce is false).
-    #[arg(short = 'f', long = "force")]
-    pub force: bool,
+    /// Pass twice (-ff) to also remove nested git repositories.
+    #[arg(short = 'f', long = "force", action = clap::ArgAction::Count)]
+    pub force: u8,
 
     /// Also remove untracked directories.
     #[arg(short = 'd')]
@@ -67,7 +68,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // Check force requirement: unless dry-run or clean.requireForce=false,
     // -f/--force is mandatory.
-    if !args.dry_run && !args.force && !args.interactive {
+    if !args.dry_run && args.force == 0 && !args.interactive {
         let require_force = check_require_force(&repo);
         if require_force {
             bail!(
