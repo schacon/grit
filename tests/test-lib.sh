@@ -756,10 +756,16 @@ test_expect_success () {
 		set -e
 		eval "$1"
 	}
+	_twf_cmd=""
 	_test_eval_inner "$commands" 2>&1 || _test_eval_result=$?
 	local result=$_test_eval_result
 	# Ensure errexit is off at top level
 	set +e
+	# Run test_when_finished cleanup commands
+	if test -n "$_twf_cmd"; then
+		eval "$_twf_cmd" 2>&1 || true
+		_twf_cmd=""
+	fi
 	cd "$_old_cwd" 2>/dev/null || true
 
 	if test $result -eq 0
@@ -882,12 +888,10 @@ test_export () {
 }
 
 test_when_finished () {
-	# Register a command to run when the current test's subshell exits.
-	# Since each test_expect_success body runs in its own subshell, an EXIT
-	# trap is the right hook.  Multiple calls accumulate in LIFO order
-	# (matching git's real test-lib), so later registrations run first.
+	# Register a command to run after the current test body completes.
+	# Multiple calls accumulate in LIFO order (matching git's real test-lib),
+	# so later registrations run first.
 	_twf_cmd="$*${_twf_cmd:+; $_twf_cmd}"
-	trap 'eval "$_twf_cmd"' EXIT
 }
 
 test_must_be_empty () {
