@@ -59,6 +59,26 @@ pub struct ShowArgs {
     /// Maximum number of entries to show.
     #[arg(short = 'n', long = "max-count")]
     pub max_count: Option<usize>,
+
+    /// Don't abbreviate commit hashes.
+    #[arg(long = "no-abbrev-commit")]
+    pub no_abbrev_commit: bool,
+
+    /// Abbreviate commit hashes.
+    #[arg(long = "abbrev-commit")]
+    pub abbrev_commit: bool,
+
+    /// Format string.
+    #[arg(long = "format")]
+    pub format: Option<String>,
+
+    /// Date format.
+    #[arg(long = "date")]
+    pub date: Option<String>,
+
+    /// Walk reflogs instead of ancestry.
+    #[arg(short = 'g', long = "walk-reflogs")]
+    pub walk_reflogs: bool,
 }
 
 /// Arguments for `reflog expire`.
@@ -135,6 +155,11 @@ pub fn run(args: Args) -> Result<()> {
             run_show(ShowArgs {
                 refname,
                 max_count: args.max_count,
+                no_abbrev_commit: false,
+                abbrev_commit: false,
+                format: None,
+                date: None,
+                walk_reflogs: false,
             })
         }
     }
@@ -160,8 +185,12 @@ fn run_show(args: ShowArgs) -> Result<()> {
         if i >= max {
             break;
         }
-        let abbrev = abbreviate_oid(&entry.new_oid, 7);
-        println!("{abbrev} {display_name}@{{{i}}}: {}", entry.message);
+        let oid_str = if args.no_abbrev_commit {
+            entry.new_oid.to_hex()
+        } else {
+            abbreviate_oid(&entry.new_oid, 7)
+        };
+        println!("{oid_str} {display_name}@{{{i}}}: {}", entry.message);
     }
 
     Ok(())
