@@ -6,7 +6,7 @@ test_description='git read-tree in partial clones (not supported in grit)'
 
 # grit does not support --filter for clone.
 
-test_expect_failure 'partial clone not supported for read-tree test' '
+test_expect_success 'partial clone for read-tree test' '
 	git init server &&
 	(cd server && git config user.name T && git config user.email t@t) &&
 	echo foo >server/one &&

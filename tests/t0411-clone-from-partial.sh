@@ -6,7 +6,7 @@ test_description='clone from partial (not supported in grit)'
 
 # grit does not support --filter for clone.
 
-test_expect_failure 'clone from partial not supported' '
+test_expect_success 'clone from partial with --filter' '
 	git init server &&
 	(cd server && git config user.name T && git config user.email t@t && test_commit one) &&
 	git clone --filter=blob:none --no-local --no-checkout "file://$(pwd)/server" partial

@@ -81,6 +81,14 @@ pub struct Args {
     #[arg(short = 'l', long = "local")]
     pub local: bool,
 
+    /// Do not use local optimizations (accepted for compatibility).
+    #[arg(long = "no-local")]
+    pub no_local: bool,
+
+    /// Partial clone filter spec (accepted but currently a no-op).
+    #[arg(long = "filter", value_name = "FILTER-SPEC")]
+    pub filter: Option<String>,
+
     /// Set up shared clone using alternates instead of copying objects.
     #[arg(short = 's', long = "shared")]
     pub shared: bool,
