@@ -18,9 +18,9 @@ use std::io::{self, Write};
 #[derive(Debug, ClapArgs)]
 #[command(about = "Show various types of objects (commits, trees, blobs, tags)")]
 pub struct Args {
-    /// Object to show (commit, tree, blob, or tag). Defaults to HEAD.
+    /// Object(s) to show (commit, tree, blob, or tag). Defaults to HEAD.
     #[arg()]
-    pub object: Option<String>,
+    pub objects: Vec<String>,
 
     /// Show only one line per commit (short hash + subject).
     #[arg(long = "oneline")]
@@ -71,27 +71,38 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    let spec = args.object.as_deref().unwrap_or("HEAD");
-    let oid = resolve_revision(&repo, spec)
-        .with_context(|| format!("unknown revision or path: '{spec}'"))?;
-
-    let obj = repo.odb.read(&oid).context("reading object")?;
+    let specs: Vec<&str> = if args.objects.is_empty() {
+        vec!["HEAD"]
+    } else {
+        // Split on -- to separate objects from pathspecs
+        args.objects.iter().map(|s| s.as_str()).collect()
+    };
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    match obj.kind {
-        ObjectKind::Commit => {
-            show_commit(&mut out, &repo.odb, &oid, &obj.data, &args)?;
+    for spec in &specs {
+        if *spec == "--" {
+            break;
         }
-        ObjectKind::Tag => {
-            show_tag(&mut out, &repo.odb, &obj.data, &args)?;
-        }
-        ObjectKind::Tree => {
-            show_tree(&mut out, &obj.data)?;
-        }
-        ObjectKind::Blob => {
-            out.write_all(&obj.data)?;
+        let oid = resolve_revision(&repo, spec)
+            .with_context(|| format!("unknown revision or path: '{spec}'"))?;
+
+        let obj = repo.odb.read(&oid).context("reading object")?;
+
+        match obj.kind {
+            ObjectKind::Commit => {
+                show_commit(&mut out, &repo.odb, &oid, &obj.data, &args)?;
+            }
+            ObjectKind::Tag => {
+                show_tag(&mut out, &repo.odb, &obj.data, &args)?;
+            }
+            ObjectKind::Tree => {
+                show_tree(&mut out, &obj.data)?;
+            }
+            ObjectKind::Blob => {
+                out.write_all(&obj.data)?;
+            }
         }
     }
 

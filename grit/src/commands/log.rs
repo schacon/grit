@@ -62,8 +62,8 @@ pub struct Args {
     pub no_decorate: bool,
 
     /// Do not walk the commit graph — show given commits only.
-    #[arg(long = "no-walk")]
-    pub no_walk: bool,
+    #[arg(long = "no-walk", default_missing_value = "sorted", num_args = 0..=1, require_equals = true)]
+    pub no_walk: Option<String>,
 
     /// Show which ref led to each commit (with --all).
     #[arg(long = "source")]
@@ -276,7 +276,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Handle --no-walk: show given commits without walking parents
-    if args.no_walk {
+    if args.no_walk.is_some() {
         return run_no_walk(&repo, &args);
     }
 
