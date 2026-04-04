@@ -145,6 +145,9 @@ pub enum StashCommand {
         /// Also restore the index state.
         #[arg(long = "index")]
         index: bool,
+        /// Do not restore the index state.
+        #[arg(long = "no-index")]
+        no_index: bool,
         /// Quiet mode.
         #[arg(short = 'q', long = "quiet")]
         quiet: bool,
@@ -156,6 +159,9 @@ pub enum StashCommand {
         /// Also restore the index state.
         #[arg(long = "index")]
         index: bool,
+        /// Do not restore the index state.
+        #[arg(long = "no-index")]
+        no_index: bool,
         /// Quiet mode.
         #[arg(short = 'q', long = "quiet")]
         quiet: bool,
@@ -275,11 +281,11 @@ pub fn run(args: Args) -> Result<()> {
             let stash_ref = show_args.iter().find(|a| !a.starts_with('-')).cloned();
             do_show(stash_ref, patch)
         }
-        Some(StashCommand::Pop { index, quiet, stash }) => {
+        Some(StashCommand::Pop { index, no_index: _, quiet, stash }) => {
             let q = quiet || args.quiet;
             do_pop(stash, index, q)
         }
-        Some(StashCommand::Apply { index, quiet, stash }) => {
+        Some(StashCommand::Apply { index, no_index: _, quiet, stash }) => {
             let q = quiet || args.quiet;
             do_apply(stash, false, index, q)
         }
@@ -1452,7 +1458,7 @@ fn do_branch(branch_name: String, stash_ref: Option<String>) -> Result<()> {
     // Check if the branch already exists
     let branch_ref = format!("refs/heads/{branch_name}");
     if resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        bail!("a]branch named '{branch_name}' already exists");
+        bail!("a branch named '{branch_name}' already exists");
     }
 
     // Create the branch at the stash's parent commit
