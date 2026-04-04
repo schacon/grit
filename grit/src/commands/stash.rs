@@ -1167,12 +1167,50 @@ fn apply_stash_impl(
     let mut has_conflicts = false;
     let mut new_index = current_index.clone();
 
+    // Pre-check: detect type conflicts where the stash wants to place a FILE
+    // at a path that is currently a DIRECTORY in the worktree, or vice-versa.
+    // We must check BEFORE removing anything (deletions below may clear dirs).
+    for (path, change) in &wt_changes {
+        if let Some(_) = change {
+            let file_path = work_tree.join(path);
+            if file_path.is_dir() {
+                // A file from the stash conflicts with a directory in the worktree.
+                // Mark as conflicted and remove the directory so we can write the file.
+                has_conflicts = true;
+                let _ = fs::remove_dir_all(&file_path);
+            }
+        }
+    }
+
+    // First pass: process deletions (None entries) before additions to avoid
+    // type conflicts (e.g., trying to write a file where a directory exists).
+    for (path, change) in &wt_changes {
+        if change.is_some() {
+            continue;
+        }
+        let file_path = work_tree.join(path);
+        let _ = fs::remove_file(&file_path);
+        if let Some(parent) = file_path.parent() {
+            remove_empty_dirs(parent, work_tree);
+        }
+    }
+
     // Apply working tree changes (with three-way merge when HEAD has moved)
     for (path, change) in &wt_changes {
         let file_path = work_tree.join(path);
         match change {
             Some(entry) => {
                 if let Some(parent) = file_path.parent() {
+                    // If a component of the parent is a file, remove it first
+                    let mut cur = work_tree.to_path_buf();
+                    if let Ok(rel) = file_path.parent().unwrap_or(work_tree).strip_prefix(work_tree) {
+                        for comp in rel.components() {
+                            cur.push(comp);
+                            if cur.exists() && !cur.is_dir() {
+                                let _ = fs::remove_file(&cur);
+                            }
+                        }
+                    }
                     fs::create_dir_all(parent)?;
                 }
                 let stash_blob = repo.odb.read(&entry.oid)?;
@@ -1298,8 +1336,41 @@ fn apply_stash_impl(
         // Handle files added in the index but not in base
         // (already covered above)
         new_index.sort();
+    } else {
+        // Without --index: apply staged changes from the stash's index to the
+        // current index.  Only files that were staged in the stash (differ
+        // between stash's base and stash's index) are added to the current
+        // index.  Deletions staged in the stash are also removed.
+        for (path, idx_entry) in &idx_map {
+            let base_oid = base_map.get(path).map(|e| &e.oid);
+            if base_oid != Some(&idx_entry.oid) {
+                // This file was staged in the stash (different from base)
+                let path_bytes = path.as_bytes();
+                let new_entry = IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode: idx_entry.mode,
+                    uid: 0,
+                    gid: 0,
+                    size: 0,
+                    oid: idx_entry.oid,
+                    flags: path_bytes.len().min(0xFFF) as u16,
+                    flags_extended: None,
+                    path: path_bytes.to_vec(),
+                };
+                new_index.stage_file(new_entry);
+            }
+        }
+        // Note: staged deletions from the stash (files in base but not in
+        // stash's index) are intentionally NOT removed from the current index.
+        // The working tree reflects the deletion, but the index keeps the file
+        // tracked — `git status` will show it as "deleted" (unstaged).
+        new_index.sort();
     }
-    // else: no --index, keep the current index as-is
 
     if has_conflicts {
         new_index.sort();
@@ -1993,6 +2064,37 @@ fn create_worktree_tree(
 ) -> Result<ObjectId> {
     let mut temp_index = index.clone();
 
+    // Collect directory prefixes that are implied by the index (e.g. if the index
+    // has `dir/file`, then `dir` is an implied directory component).
+    // If a REGULAR FILE exists at one of these implied directory paths, we need
+    // to capture it in the stash working-tree (type-change detection).
+    let mut implied_dirs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for entry in &index.entries {
+        if entry.stage() != 0 { continue; }
+        let path_str = String::from_utf8_lossy(&entry.path).to_string();
+        let mut comps = path_str.splitn(2, '/'); 
+        if let Some(first) = comps.next() {
+            if comps.next().is_some() {
+                // There's a / in the path -> first is a directory component
+                implied_dirs.insert(first.to_string());
+                // Also check deeper paths like a/b/c -> a/b
+                let path_path = std::path::Path::new(&path_str);
+                let mut prefix = String::new();
+                let parts: Vec<_> = path_path.components().collect();
+                for (i, comp) in parts.iter().enumerate() {
+                    if i + 1 < parts.len() {
+                        if !prefix.is_empty() { prefix.push('/'); }
+                        prefix.push_str(&comp.as_os_str().to_string_lossy());
+                        implied_dirs.insert(prefix.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // Additional entries for type-changed paths (directory became file).
+    let mut extra_entries: Vec<IndexEntry> = Vec::new();
+
     for entry in &mut temp_index.entries {
         if entry.stage() != 0 {
             continue;
@@ -2007,6 +2109,13 @@ fn create_worktree_tree(
                     let oid = odb.write(ObjectKind::Blob, &target_bytes)?;
                     entry.oid = oid;
                     entry.mode = MODE_SYMLINK;
+                } else if meta.is_dir() {
+                    // A directory exists where the index expects a file.
+                    // The stash can't represent the current directory contents
+                    // via this index entry — mark as deleted (zero OID).
+                    // The actual directory files will be captured separately
+                    // if they are in the index under subdirs.
+                    entry.oid = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
                 } else {
                     let data = fs::read(&file_path)?;
                     let oid = odb.write(ObjectKind::Blob, &data)?;
@@ -2016,16 +2125,145 @@ fn create_worktree_tree(
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound
                 || e.raw_os_error() == Some(20) /* ENOTDIR */ => {
-                entry.oid = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
+                // File not found OR path component is not a directory.
+                // Check if a file exists at a parent path (type change: dir->file).
+                // Walk up the path to find which component is now a file.
+                let path_path = std::path::Path::new(&path_str);
+                let parts: Vec<_> = path_path.components().collect();
+                let mut found_file_at_dir = false;
+                let mut cur = String::new();
+                for (i, comp) in parts.iter().enumerate() {
+                    if i > 0 { cur.push('/'); }
+                    cur.push_str(&comp.as_os_str().to_string_lossy());
+                    if i + 1 < parts.len() {
+                        // This is a directory component - check if it's a file
+                        let cur_path = work_tree.join(&cur);
+                        if let Ok(m) = fs::symlink_metadata(&cur_path) {
+                            if !m.is_dir() {
+                                // A file exists where a directory is expected
+                                // Only add if not already handled
+                                found_file_at_dir = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if !found_file_at_dir {
+                    entry.oid = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
+                } else {
+                    entry.oid = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
+                }
             }
             Err(e) => return Err(e.into()),
         }
     }
 
+    // Add extra entries for files that exist where directories were expected.
+    for dir_prefix in &implied_dirs {
+        let dir_path = work_tree.join(dir_prefix);
+        if let Ok(meta) = fs::symlink_metadata(&dir_path) {
+            if !meta.is_dir() && !meta.is_symlink() {
+                // A regular file exists where the index expects a directory.
+                // Capture it so the stash records the type change.
+                if let Ok(data) = fs::read(&dir_path) {
+                    let oid = odb.write(ObjectKind::Blob, &data)?;
+                    let path_bytes = dir_prefix.as_bytes();
+                    let flags = path_bytes.len().min(0xFFF) as u16;
+                    extra_entries.push(IndexEntry {
+                        ctime_sec: 0,
+                        ctime_nsec: 0,
+                        mtime_sec: 0,
+                        mtime_nsec: 0,
+                        dev: 0,
+                        ino: 0,
+                        mode: mode_from_metadata(&meta),
+                        uid: 0,
+                        gid: 0,
+                        size: 0,
+                        oid,
+                        flags,
+                        flags_extended: None,
+                        path: path_bytes.to_vec(),
+                    });
+                }
+            }
+        }
+    }
+
+    // Also capture directories that replaced indexed files (file→directory type change).
+    // Walk all index entries. If entry path X has no '/'
+    // and the working tree has a DIRECTORY at X, capture all regular files
+    // under X/ as extra stash entries.
+    for entry in &index.entries {
+        if entry.stage() != 0 { continue; }
+        let path_str = String::from_utf8_lossy(&entry.path).to_string();
+        // Only look at top-level files (no slash in path)
+        // Actually check any depth: if the working tree has a dir where index has file
+        let file_path = work_tree.join(&path_str);
+        if file_path.is_dir() {
+            // Capture all files under this directory
+            capture_dir_as_entries(odb, work_tree, &path_str, &file_path, &mut extra_entries)?;
+        }
+    }
+
+    for e in extra_entries {
+        temp_index.add_or_replace(e);
+    }
+
     let zero = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
     temp_index.entries.retain(|e| e.oid != zero);
+    temp_index.sort();
 
     write_tree_from_index(odb, &temp_index, "").map_err(Into::into)
+}
+
+/// Recursively capture all files under `dir_path` as stash index entries.
+fn capture_dir_as_entries(
+    odb: &grit_lib::odb::Odb,
+    work_tree: &Path,
+    prefix: &str,
+    dir_path: &Path,
+    extra: &mut Vec<IndexEntry>,
+) -> anyhow::Result<()> {
+    let entries = match std::fs::read_dir(dir_path) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let rel_path = format!("{prefix}/{name_str}");
+        let abs_path = entry.path();
+        let meta = match std::fs::symlink_metadata(&abs_path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.is_dir() {
+            capture_dir_as_entries(odb, work_tree, &rel_path, &abs_path, extra)?;
+        } else if meta.is_file() {
+            if let Ok(data) = std::fs::read(&abs_path) {
+                let oid = odb.write(grit_lib::objects::ObjectKind::Blob, &data)?;
+                let path_bytes = rel_path.as_bytes();
+                extra.push(IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode: mode_from_metadata(&meta),
+                    uid: 0,
+                    gid: 0,
+                    size: 0,
+                    oid,
+                    flags: path_bytes.len().min(0xFFF) as u16,
+                    flags_extended: None,
+                    path: path_bytes.to_vec(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Build an Index from a flattened tree.
@@ -2122,6 +2360,10 @@ fn reset_to_head(repo: &Repository, head_oid: &ObjectId, work_tree: &Path) -> Re
             #[cfg(unix)]
             std::os::unix::fs::symlink(&target, &file_path)?;
         } else {
+            // If the path is a directory, remove it first (type change: dir→file).
+            if file_path.is_dir() {
+                fs::remove_dir_all(&file_path)?;
+            }
             fs::write(&file_path, &blob.data)?;
             #[cfg(unix)]
             {

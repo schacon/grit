@@ -12,6 +12,7 @@ use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 
 /// Arguments for `grit read-tree`.
 #[derive(Debug, ClapArgs)]
@@ -747,6 +748,10 @@ fn load_index_for_read_tree(path: &Path) -> Result<Index> {
 }
 
 fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
+    // First, try resolve_revision which handles HEAD^, HEAD~N, @{-1}, etc.
+    if let Ok(oid) = resolve_revision(repo, s) {
+        return peel_to_tree(repo, oid);
+    }
     if let Ok(oid) = s.parse::<ObjectId>() {
         return peel_to_tree(repo, oid);
     }

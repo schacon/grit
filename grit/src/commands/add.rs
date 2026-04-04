@@ -849,7 +849,9 @@ fn stage_file(
     let oid = odb.write(ObjectKind::Blob, &data)?;
     let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
-    index.add_or_replace(entry);
+    // Use stage_file which also clears conflict stages (1, 2, 3) for the same
+    // path — this is how `git add` resolves merge/cherry-pick conflicts.
+    index.stage_file(entry);
 
     if args.verbose {
         eprintln!("add '{rel_path}'");

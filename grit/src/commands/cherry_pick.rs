@@ -100,7 +100,7 @@ pub fn run(args: Args) -> Result<()> {
         return do_quit();
     }
     if args.r#continue {
-        return do_continue(&args);
+        return do_continue(args);
     }
     if args.commits.is_empty() {
         bail!("nothing to cherry-pick; specify at least one commit");
@@ -341,15 +341,19 @@ fn cherry_pick_one_commit(
         let trimmed = msg.trim_end().to_owned();
         msg = format!("{trimmed}{trailer}\n");
     }
-    if args.signoff {
-        msg = append_signoff(&msg, git_dir)?;
-    }
-
+    // Note: signoff is NOT added to MERGE_MSG here.  When there is a conflict,
+    // the user may manually `git commit` to resolve it, which reads MERGE_MSG.
+    // Signoff should only be added by `cherry-pick --continue` (which re-reads
+    // the opts from the sequencer), not by a manual commit that the user makes
+    // without explicitly requesting signoff.
     if has_conflicts {
         fs::write(
             git_dir.join("CHERRY_PICK_HEAD"),
             format!("{}\n", commit_oid.to_hex()),
         )?;
+        // Write MERGE_MSG without signoff: signoff is only added by
+        // `cherry-pick --continue` (which re-reads sequencer opts),
+        // not by a bare `git commit` that the user makes manually.
         fs::write(git_dir.join("MERGE_MSG"), &msg)?;
 
         let short_oid = &commit_oid.to_hex()[..7];
@@ -365,6 +369,12 @@ fn cherry_pick_one_commit(
 
     if args.no_commit {
         return Ok(());
+    }
+
+    // Add signoff for the non-conflict case (the conflict case skips signoff in
+    // MERGE_MSG so that manual `git commit` does not unexpectedly add it).
+    if args.signoff {
+        msg = append_signoff(&msg, git_dir)?;
     }
 
     // Create the cherry-pick commit (preserving original author).
@@ -390,12 +400,34 @@ fn branch_name(head: &HeadState) -> &str {
 
 // ── --continue ──────────────────────────────────────────────────────
 
-fn do_continue(args: &Args) -> Result<()> {
+fn do_continue(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    if !git_dir.join("CHERRY_PICK_HEAD").exists() {
+    // Merge sequencer opts into args so flags from the original cherry-pick
+    // (e.g. --signoff) are re-applied when continuing.
+    merge_sequencer_opts(git_dir, &mut args);
+    let args = &args;
+
+    let has_cherry_pick_head = git_dir.join("CHERRY_PICK_HEAD").exists();
+    let sequencer_todo_exists = git_dir.join("sequencer").join("todo").exists();
+
+    if !has_cherry_pick_head && !sequencer_todo_exists {
         bail!("error: no cherry-pick in progress");
+    }
+
+    // If CHERRY_PICK_HEAD is missing but the sequencer has remaining items,
+    // the user manually committed the conflicting step.  Just process the
+    // remaining sequencer items.
+    if !has_cherry_pick_head && sequencer_todo_exists {
+        let remaining = load_sequencer_todo(git_dir);
+        // Clean up the sequencer now; run_commit_sequence will re-save state
+        // if it encounters another conflict.
+        cleanup_sequencer_state(git_dir);
+        if !remaining.is_empty() {
+            run_commit_sequence(&repo, &remaining, args)?;
+        }
+        return Ok(());
     }
 
     let index = load_index(&repo)?;
@@ -422,9 +454,10 @@ fn do_continue(args: &Args) -> Result<()> {
         let trimmed = msg.trim_end().to_owned();
         msg = format!("{trimmed}{trailer}\n");
     }
-    if args.signoff {
-        msg = append_signoff(&msg, git_dir)?;
-    }
+    // Note: signoff is intentionally NOT added to the conflict-resolution
+    // commit.  The user is the author of the resolution; signoff should only
+    // propagate automatically to subsequent (non-conflicting) cherry-picks
+    // in the sequence (handled by run_commit_sequence below).
 
     let head = resolve_head(git_dir)?;
     create_cherry_pick_commit(&repo, &head, &index, &msg, &cp_commit)?;
@@ -442,6 +475,8 @@ fn do_continue(args: &Args) -> Result<()> {
 
     if !remaining.is_empty() {
         run_commit_sequence(&repo, &remaining, args)?;
+    } else {
+        cleanup_sequencer_state(git_dir);
     }
 
     Ok(())
@@ -541,7 +576,8 @@ fn do_quit() -> Result<()> {
     let git_dir = &repo.git_dir;
 
     if !git_dir.join("CHERRY_PICK_HEAD").exists() {
-        bail!("error: no cherry-pick in progress");
+        // git exits 0 silently when there is no cherry-pick in progress
+        return Ok(());
     }
 
     cleanup_cherry_pick_state(git_dir);
@@ -588,6 +624,31 @@ fn save_sequencer_state(git_dir: &Path, remaining: &[ObjectId], args: &Args) -> 
     }
 
     Ok(())
+}
+
+/// Load the sequencer opts and merge them into the provided args.
+/// This allows `--continue` to re-apply flags from the original cherry-pick.
+fn merge_sequencer_opts(git_dir: &Path, args: &mut Args) {
+    let opts_path = git_dir.join("sequencer").join("opts");
+    let content = match fs::read_to_string(&opts_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    for line in content.lines() {
+        let line = line.trim();
+        match line {
+            "signoff" => args.signoff = true,
+            "append_source" => args.append_source = true,
+            "no_commit" => args.no_commit = true,
+            _ => {
+                if let Some(n) = line.strip_prefix("mainline ") {
+                    if let Ok(m) = n.trim().parse::<usize>() {
+                        args.mainline = Some(m);
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn load_sequencer_todo(git_dir: &Path) -> Vec<ObjectId> {
@@ -791,6 +852,29 @@ fn same_blob(a: &IndexEntry, b: &IndexEntry) -> bool {
     a.oid == b.oid && a.mode == b.mode
 }
 
+/// Check if two blobs have the same content modulo a trailing newline.
+/// Returns true if the contents are equal after stripping a single trailing `\n`
+/// from both sides (or if both are already equal).
+fn same_blob_content_modulo_trailing_newline(repo: &Repository, a: &IndexEntry, b: &IndexEntry) -> bool {
+    if a.mode != b.mode {
+        return false;
+    }
+    if a.oid == b.oid {
+        return true;
+    }
+    let a_data = match repo.odb.read(&a.oid) {
+        Ok(obj) => obj.data,
+        Err(_) => return false,
+    };
+    let b_data = match repo.odb.read(&b.oid) {
+        Ok(obj) => obj.data,
+        Err(_) => return false,
+    };
+    let a_stripped = a_data.strip_suffix(b"\n").unwrap_or(&a_data);
+    let b_stripped = b_data.strip_suffix(b"\n").unwrap_or(&b_data);
+    a_stripped == b_stripped
+}
+
 fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
     let mut e = src.clone();
     e.flags = (e.flags & 0x0FFF) | ((stage as u16) << 12);
@@ -839,6 +923,16 @@ fn three_way_merge_with_content(
             }
             (Some(be), Some(oe), Some(te)) if same_blob(be, te) => {
                 out.entries.push(oe.clone());
+            }
+            // If base and ours differ only in trailing newline (and ours == base
+            // content), treat as "base unchanged on our side" and take theirs.
+            // This handles the common case where a manual conflict resolution
+            // adds/removes a trailing newline without changing content.
+            (Some(be), Some(oe), Some(te))
+                if !same_blob(be, te)
+                    && same_blob_content_modulo_trailing_newline(repo, be, oe) =>
+            {
+                out.entries.push(te.clone());
             }
             (Some(be), Some(oe), Some(te)) => {
                 content_merge_or_conflict(repo, &mut out, &mut conflict_content, &path, be, oe, te, favor)?;

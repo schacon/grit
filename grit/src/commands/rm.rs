@@ -91,6 +91,12 @@ pub fn run(args: Args) -> Result<()> {
     for pathspec in &args.pathspec {
         let rel = resolve_rel(pathspec, work_tree)?;
 
+        // Refuse to rm through a symlinked leading path component.
+        // e.g. if `d` is a symlink to `e`, `git rm d/f` should fail.
+        if check_symlink_in_path(work_tree, Path::new(&rel)).is_some() {
+            bail!("'{}' is beyond a symbolic link", rel);
+        }
+
         // If pathspec has trailing slash, it must be a directory
         if pathspec.ends_with('/') {
             let abs_path = work_tree.join(&rel);
@@ -434,4 +440,22 @@ fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
 
     // Fallback: already relative to worktree root.
     Ok(pathspec_clean.to_owned())
+}
+
+/// Walk the parent components of `rel_path` (relative to `work_tree`) and
+/// return `Some(prefix)` if any of them is a symbolic link.  Only *parent*
+/// components are checked — the final path component itself may be a symlink.
+fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<std::path::PathBuf> {
+    let mut accumulated = std::path::PathBuf::new();
+    let components: Vec<_> = rel_path.components().collect();
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        accumulated.push(component);
+        let abs = work_tree.join(&accumulated);
+        if let Ok(meta) = fs::symlink_metadata(&abs) {
+            if meta.file_type().is_symlink() {
+                return Some(accumulated);
+            }
+        }
+    }
+    None
 }

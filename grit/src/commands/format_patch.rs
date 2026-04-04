@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::diff::{diff_trees, unified_diff, zero_oid};
 use grit_lib::objects::{parse_commit, CommitData, ObjectId};
 use grit_lib::odb::Odb;
@@ -106,10 +107,11 @@ pub struct Args {
 }
 
 /// Extra headers/options computed from args, passed into formatting functions.
-struct PatchOptions<'a> {
-    in_reply_to: Option<&'a str>,
-    cc: &'a [String],
-    to: &'a [String],
+struct PatchOptions {
+    in_reply_to: Option<String>,
+    cc: Vec<String>,
+    to: Vec<String>,
+    extra_headers: Vec<String>,
     signoff: bool,
     attach: bool,
     inline: bool,
@@ -119,6 +121,9 @@ struct PatchOptions<'a> {
 
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Load git configuration for format.* keys
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
 
     // Determine the list of commits to format
     let revision = args.revision.as_deref().unwrap_or("-1");
@@ -156,10 +161,48 @@ pub fn run(args: Args) -> Result<()> {
         None
     };
 
+    // Build merged To/Cc lists from config + command line.
+    // format.to / format.cc are single-valued; format.headers is multi-valued
+    // and can contain arbitrary "Header: value" lines.
+    let mut to_list: Vec<String> = Vec::new();
+    let mut cc_list: Vec<String> = Vec::new();
+    let mut extra_headers: Vec<String> = Vec::new();
+
+    // Read format.headers from config (multi-value)
+    for h in config.get_all("format.headers") {
+        let h = h.trim_end_matches('\n').to_string();
+        if h.is_empty() {
+            continue;
+        }
+        if let Some(val) = h.strip_prefix("To:") {
+            to_list.push(val.trim().to_string());
+        } else if let Some(val) = h.strip_prefix("Cc:") {
+            cc_list.push(val.trim().to_string());
+        } else {
+            extra_headers.push(h);
+        }
+    }
+
+    // Read format.to and format.cc from config
+    if let Some(to) = config.get("format.to") {
+        to_list.push(to);
+    }
+    if let Some(cc) = config.get("format.cc") {
+        cc_list.push(cc);
+    }
+
+    // Append command-line --to and --cc
+    to_list.extend(args.to.iter().cloned());
+    cc_list.extend(args.cc.iter().cloned());
+
+    // Append --add-header
+    extra_headers.extend(args.add_header.iter().cloned());
+
     let opts = PatchOptions {
-        in_reply_to: args.in_reply_to.as_deref(),
-        cc: &args.cc,
-        to: &args.to,
+        in_reply_to: args.in_reply_to.clone(),
+        cc: cc_list,
+        to: to_list,
+        extra_headers,
         signoff: args.signoff,
         attach: args.attach,
         inline: args.inline,
@@ -505,7 +548,7 @@ fn format_single_patch(
     oid: &ObjectId,
     commit: &CommitData,
     subject: &str,
-    opts: &PatchOptions<'_>,
+    opts: &PatchOptions,
     include_base: bool,
 ) -> Result<String> {
     let mut out = String::new();
@@ -598,19 +641,34 @@ fn format_single_patch(
     out.push_str(&format!("Subject: {subject}\n"));
 
     // In-Reply-To / References headers
-    if let Some(msg_id) = opts.in_reply_to {
+    if let Some(ref msg_id) = opts.in_reply_to {
         out.push_str(&format!("In-Reply-To: {msg_id}\n"));
         out.push_str(&format!("References: {msg_id}\n"));
     }
 
-    // Cc headers
-    for cc in opts.cc {
-        out.push_str(&format!("Cc: {cc}\n"));
+    // Extra headers from --add-header and format.headers (excluding To/Cc)
+    for h in &opts.extra_headers {
+        let h = h.trim_end_matches('\n');
+        if !h.is_empty() {
+            out.push_str(h);
+            out.push('\n');
+        }
     }
 
-    // To headers
-    for to in opts.to {
-        out.push_str(&format!("To: {to}\n"));
+    // Cc headers — emit as a single folded header if multiple
+    if !opts.cc.is_empty() {
+        let encoded: Vec<String> = opts.cc.iter()
+            .map(|a| encode_email_address(a))
+            .collect();
+        write_folded_header(&mut out, "Cc", &encoded);
+    }
+
+    // To headers — emit as a single folded header if multiple
+    if !opts.to.is_empty() {
+        let encoded: Vec<String> = opts.to.iter()
+            .map(|a| encode_email_address(a))
+            .collect();
+        write_folded_header(&mut out, "To", &encoded);
     }
 
     // MIME headers for --attach / --inline
@@ -793,6 +851,91 @@ fn format_ident(ident: &str) -> String {
         }
     }
     ident.to_owned()
+}
+
+/// Encode an email address for use in email headers.
+///
+/// Rules:
+/// - If the display name contains non-ASCII chars → RFC 2047 encode it
+/// - If the display name contains RFC 822 special chars (like `.`) → quote it
+/// - Otherwise → use as-is
+fn encode_email_address(addr: &str) -> String {
+    // Parse "Display Name <email@example.com>" form
+    if let (Some(lt), Some(gt)) = (addr.rfind('<'), addr.rfind('>')) {
+        if lt < gt {
+            let name = addr[..lt].trim();
+            let email_part = &addr[lt..=gt]; // "<email>"
+            if name.is_empty() {
+                return addr.to_string();
+            }
+            let encoded_name = encode_display_name(name);
+            return format!("{encoded_name} {email_part}");
+        }
+    }
+    // No angle brackets — return as-is
+    addr.to_string()
+}
+
+/// Encode a display name portion of an email address.
+///
+/// - Non-ASCII → RFC 2047 UTF-8 quoted-printable
+/// - Contains RFC 822 specials → RFC 822 quoted string
+/// - Otherwise → plain
+fn encode_display_name(name: &str) -> String {
+    // Check for non-ASCII
+    if name.bytes().any(|b| b > 0x7f) {
+        return rfc2047_encode(name);
+    }
+    // RFC 822 specials that require quoting
+    // Specials are: ( ) < > [ ] : ; @ \ , . "
+    let specials = |c: char| matches!(c, '(' | ')' | '<' | '>' | '[' | ']' | ':' | ';' | '@' | '\\' | ',' | '.' | '"');
+    if name.chars().any(specials) {
+        // Quote the name
+        let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
+        return format!("\"{escaped}\"");
+    }
+    name.to_string()
+}
+
+/// RFC 2047 UTF-8 quoted-printable encoding for an email display name.
+fn rfc2047_encode(name: &str) -> String {
+    let mut encoded = String::new();
+    for byte in name.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => {
+                encoded.push(*byte as char);
+            }
+            b' ' => {
+                encoded.push_str("=20");
+            }
+            _ => {
+                encoded.push_str(&format!("={:02X}", byte));
+            }
+        }
+    }
+    format!("=?UTF-8?q?{encoded}?=")
+}
+
+/// Write a folded email header with multiple values.
+///
+/// Emits:
+/// ```
+/// HeaderName: value1,
+///  value2
+/// ```
+fn write_folded_header(out: &mut String, name: &str, values: &[String]) {
+    if values.is_empty() {
+        return;
+    }
+    out.push_str(name);
+    out.push_str(": ");
+    for (i, val) in values.iter().enumerate() {
+        if i > 0 {
+            out.push_str(",\n ");
+        }
+        out.push_str(val);
+    }
+    out.push('\n');
 }
 
 /// Extract date from identity string and format as RFC 2822-like.

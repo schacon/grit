@@ -105,11 +105,17 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
     let mut content: Vec<u8> = Vec::new();
     let mut conflicts = 0usize;
 
-    for hunk in hunks {
+    for hunk in &hunks {
         match hunk {
             Hunk::Unchanged(lines) | Hunk::OnlyOurs(lines) | Hunk::OnlyTheirs(lines) => {
+                // If previous content ended without a newline and this hunk
+                // adds more content, insert a newline separator to avoid
+                // merging lines together (handles missing-LF at EOF case).
+                if !content.is_empty() && !content.ends_with(b"\n") && !lines.is_empty() {
+                    content.push(b'\n');
+                }
                 for line in lines {
-                    content.extend_from_slice(&line);
+                    content.extend_from_slice(line);
                 }
             }
             Hunk::Conflict { base, ours, theirs } => {
@@ -125,7 +131,7 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                         }
                     }
                     MergeFavor::Union => {
-                        for line in &ours {
+                        for line in ours {
                             content.extend_from_slice(line);
                         }
                         // If the ours portion doesn't end with \n and theirs is
@@ -137,7 +143,7 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                         {
                             content.push(b'\n');
                         }
-                        for line in &theirs {
+                        for line in theirs {
                             content.extend_from_slice(line);
                         }
                     }

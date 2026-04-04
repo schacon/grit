@@ -70,12 +70,17 @@ pub struct Args {
     #[arg(long = "ignore-missing")]
     pub ignore_missing: bool,
 
+    /// When removing entries, don't update (skip-worktree) entries.
+    #[arg(long = "ignore-skip-worktree-entries")]
+    pub ignore_skip_worktree_entries: bool,
+
     /// Re-create unmerged entries for the given paths.
     #[arg(long = "unresolve")]
     pub unresolve: bool,
 
     /// Add `<mode>,<object>,<path>` entry directly.
-    #[arg(long = "cacheinfo", value_name = "mode,object,path")]
+    /// Also accepts legacy 3-argument form: --cacheinfo <mode> <object> <path>.
+    #[arg(long = "cacheinfo", value_name = "mode,object,path", num_args = 1..=3, action = clap::ArgAction::Append, allow_hyphen_values = true)]
     pub cacheinfo: Vec<String>,
 
     /// Set the execute bit on tracked files (+x or -x).
@@ -123,35 +128,61 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    // Process --cacheinfo entries
-    for info in &args.cacheinfo {
-        let parts: Vec<&str> = info.splitn(3, ',').collect();
-        if parts.len() != 3 {
-            bail!("--cacheinfo needs mode,object,path: '{info}'");
+    // Process --cacheinfo entries.
+    // Supports both forms:
+    //   new: --cacheinfo <mode>,<sha1>,<path>  (one comma-separated arg)
+    //   legacy: --cacheinfo <mode> <sha1> <path>  (three separate args, num_args=1..=3)
+    {
+        let cacheinfo_vals = &args.cacheinfo;
+        // With num_args=1..=3 and action=Append, each --cacheinfo invocation
+        // adds 1-3 values to the flat vector. We need to process them in groups.
+        // Strategy: if a value contains a comma, it's the new comma-separated form (1 arg).
+        // Otherwise, consume groups of 3 as the legacy form.
+        let mut i = 0;
+        while i < cacheinfo_vals.len() {
+            let val = &cacheinfo_vals[i];
+            let (mode_str, oid_str, path_bytes) = if val.contains(',') {
+                // New form: single comma-separated value
+                let parts: Vec<&str> = val.splitn(3, ',').collect();
+                if parts.len() != 3 {
+                    bail!("--cacheinfo needs mode,object,path: '{val}'");
+                }
+                i += 1;
+                (parts[0].to_string(), parts[1].to_string(), parts[2].as_bytes().to_vec())
+            } else {
+                // Legacy form: 3 separate values
+                if i + 2 >= cacheinfo_vals.len() {
+                    bail!("--cacheinfo needs mode,object,path: '{val}'");
+                }
+                let mode_s = val.clone();
+                let oid_s = cacheinfo_vals[i + 1].clone();
+                let path_s = cacheinfo_vals[i + 2].clone();
+                i += 3;
+                (mode_s, oid_s, path_s.as_bytes().to_vec())
+            };
+            let mode = u32::from_str_radix(&mode_str, 8)
+                .with_context(|| format!("invalid mode '{mode_str}'"))?;
+            let oid: ObjectId = oid_str
+                .parse()
+                .with_context(|| format!("invalid object id '{oid_str}'"))?;
+            let entry = IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid,
+                flags: path_bytes.len().min(0xFFF) as u16,
+                flags_extended: None,
+                path: path_bytes,
+            };
+            index.add_or_replace(entry);
         }
-        let mode = u32::from_str_radix(parts[0], 8)
-            .with_context(|| format!("invalid mode '{}'", parts[0]))?;
-        let oid: ObjectId = parts[1]
-            .parse()
-            .with_context(|| format!("invalid object id '{}'", parts[1]))?;
-        let path = parts[2].as_bytes().to_vec();
-        let entry = IndexEntry {
-            ctime_sec: 0,
-            ctime_nsec: 0,
-            mtime_sec: 0,
-            mtime_nsec: 0,
-            dev: 0,
-            ino: 0,
-            mode,
-            uid: 0,
-            gid: 0,
-            size: 0,
-            oid,
-            flags: path.len().min(0xFFF) as u16,
-            flags_extended: None,
-            path,
-        };
-        index.add_or_replace(entry);
     }
 
     // Collect file paths (from args or stdin)
@@ -185,6 +216,14 @@ pub fn run(args: Args) -> Result<()> {
         // *does* exist on disk, fall through to the normal update/add logic
         // so the index entry gets refreshed.
         if args.remove {
+            // --ignore-skip-worktree-entries: skip entries with skip-worktree bit
+            if args.ignore_skip_worktree_entries {
+                if let Some(e) = index.get(&rel_bytes, 0) {
+                    if e.skip_worktree() {
+                        continue; // leave this entry alone
+                    }
+                }
+            }
             let file_exists = match std::fs::symlink_metadata(&abs_path) {
                 Ok(m) => !m.is_dir(),
                 Err(_) => false,

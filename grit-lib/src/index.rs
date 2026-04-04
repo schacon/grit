@@ -309,6 +309,17 @@ impl Index {
         }
     }
 
+    /// Stage a file at stage 0, removing any conflict stage entries (1, 2, 3)
+    /// for the same path. This is the correct behavior for `git add` on a
+    /// conflicted file during merge/cherry-pick resolution.
+    pub fn stage_file(&mut self, entry: IndexEntry) {
+        let path = entry.path.clone();
+        // Remove conflict stages first
+        self.entries.retain(|e| e.path != path || e.stage() == 0);
+        // Then add/replace stage-0 entry
+        self.add_or_replace(entry);
+    }
+
     /// Remove all entries matching the given path (all stages).
     ///
     /// Returns `true` if at least one entry was removed.
