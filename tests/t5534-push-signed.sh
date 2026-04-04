@@ -25,7 +25,7 @@ test_expect_success 'push --signed fails gracefully' '
 '
 
 # grit does not support push certificate verification
-test_expect_failure 'push --signed=if-asked push certificate' '
+test_expect_success 'push --signed=if-asked push certificate' '
 	git init --bare dst2.git &&
 	git push --signed=if-asked ./dst2.git main
 '

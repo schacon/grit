@@ -91,6 +91,14 @@ pub struct Args {
     /// Check, on-demand, or no recursion into submodules.
     #[arg(long = "recurse-submodules")]
     pub recurse_submodules: Option<String>,
+
+    /// GPG sign the push (accepted but not yet implemented).
+    #[arg(long = "signed", num_args = 0..=1, default_missing_value = "true", require_equals = true)]
+    pub signed: Option<String>,
+
+    /// Disable GPG signing.
+    #[arg(long = "no-signed", hide = true)]
+    pub no_signed: bool,
 }
 
 /// Parse `--force-with-lease` value to determine expected OID for a given remote ref.
@@ -191,6 +199,13 @@ pub fn run(args: Args) -> Result<()> {
     if push_all && args.mirror {
         bail!("--all and --mirror cannot be used together");
     }
+    // Handle --signed: reject unless if-asked (no GPG implementation)
+    if let Some(ref signed_val) = args.signed {
+        if signed_val != "if-asked" {
+            bail!("push certificate signing is not supported");
+        }
+    }
+
     if push_all && args.tags {
         bail!("--all and --tags cannot be used together");
     }
