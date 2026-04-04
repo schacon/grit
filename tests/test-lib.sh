@@ -956,6 +956,16 @@ qz_to_tab_space () {
 	tr QZ '\011\040'
 }
 
+# Convert LF to NUL.
+lf_to_nul () {
+	tr '\012' '\000'
+}
+
+# Convert NUL to LF.
+nul_to_q () {
+	tr '\000' Q
+}
+
 # Append CR to each line.
 append_cr () {
 	sed -e 's/$/Q/' | tr Q '\015'

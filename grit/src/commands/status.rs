@@ -25,9 +25,9 @@ pub struct Args {
     #[arg(short = 's', long = "short")]
     pub short: bool,
 
-    /// Give output in the porcelain v1 format.
-    #[arg(long = "porcelain")]
-    pub porcelain: bool,
+    /// Give output in the porcelain format (v1 or v2).
+    #[arg(long = "porcelain", value_name = "VERSION", num_args = 0..=1, default_missing_value = "v1")]
+    pub porcelain: Option<String>,
 
     /// Show the branch name.
     #[arg(short = 'b', long = "branch")]
@@ -129,7 +129,7 @@ pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    if args.short || args.porcelain {
+    if args.short || args.porcelain.is_some() {
         format_short(
             &mut out,
             &args,
