@@ -258,6 +258,22 @@ pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
         }
     }
 
+    // Handle A...B (symmetric difference / merge-base)
+    if let Some(idx) = spec.find("...") {
+        let left = &spec[..idx];
+        let right = &spec[idx + 3..];
+        if !left.is_empty() && !right.is_empty() {
+            let left_oid = resolve_revision(repo, left)?;
+            let right_oid = resolve_revision(repo, right)?;
+            let bases = crate::merge_base::merge_bases_first_vs_rest(
+                repo, left_oid, &[right_oid],
+            )?;
+            return bases.into_iter().next().ok_or_else(|| {
+                Error::ObjectNotFound(format!("no merge base for '{spec}'"))
+            });
+        }
+    }
+
     let (base_with_nav, peel) = parse_peel_suffix(spec);
     let (base, nav_steps) = parse_nav_steps(base_with_nav);
     let mut oid = resolve_base(repo, base)?;
