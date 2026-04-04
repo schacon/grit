@@ -694,22 +694,64 @@ fn commit_touches_paths(
 
 fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::CommitData> {
     let object = repo.odb.read(&oid)?;
-    if object.kind != ObjectKind::Commit {
-        return Err(Error::CorruptObject(format!(
+    match object.kind {
+        ObjectKind::Commit => parse_commit(&object.data),
+        ObjectKind::Tag => {
+            // Peel tag to commit
+            let target = peel_tag_to_commit(repo, &object.data, &oid)?;
+            let inner = repo.odb.read(&target)?;
+            if inner.kind != ObjectKind::Commit {
+                return Err(Error::CorruptObject(format!(
+                    "tag {oid} does not point to a commit"
+                )));
+            }
+            parse_commit(&inner.data)
+        }
+        _ => Err(Error::CorruptObject(format!(
             "object {oid} is not a commit"
-        )));
+        ))),
     }
-    parse_commit(&object.data)
+}
+
+/// Peel a tag object to find the commit it (eventually) points to.
+fn peel_tag_to_commit(repo: &Repository, data: &[u8], tag_oid: &ObjectId) -> Result<ObjectId> {
+    // Parse the "object <hex>" line from the tag body.
+    let header = std::str::from_utf8(data).unwrap_or("");
+    let target_hex = header
+        .lines()
+        .find(|l| l.starts_with("object "))
+        .and_then(|l| l.strip_prefix("object "))
+        .ok_or_else(|| Error::CorruptObject(format!("malformed tag {tag_oid}")))?;
+    let target: ObjectId = target_hex.trim().parse().map_err(|_| {
+        Error::CorruptObject(format!("bad object id in tag {tag_oid}"))
+    })?;
+    // Recursively peel nested tags
+    let inner = repo.odb.read(&target)?;
+    if inner.kind == ObjectKind::Tag {
+        return peel_tag_to_commit(repo, &inner.data, &target);
+    }
+    Ok(target)
 }
 
 fn ensure_commit(repo: &Repository, oid: ObjectId) -> Result<()> {
     let object = repo.odb.read(&oid)?;
-    if object.kind != ObjectKind::Commit {
-        return Err(Error::CorruptObject(format!(
+    match object.kind {
+        ObjectKind::Commit => Ok(()),
+        ObjectKind::Tag => {
+            // Peel to check the tag ultimately points to a commit
+            let target = peel_tag_to_commit(repo, &object.data, &oid)?;
+            let inner = repo.odb.read(&target)?;
+            if inner.kind != ObjectKind::Commit {
+                return Err(Error::CorruptObject(format!(
+                    "tag {oid} does not point to a commit"
+                )));
+            }
+            Ok(())
+        }
+        _ => Err(Error::CorruptObject(format!(
             "object {oid} is not a commit"
-        )));
+        ))),
     }
-    Ok(())
 }
 
 fn parse_signature_time(sig: &str) -> i64 {

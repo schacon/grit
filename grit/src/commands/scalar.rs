@@ -232,6 +232,7 @@ fn cmd_clone(args: &[String]) -> Result<()> {
     let mut single_branch = false;
     let mut no_tags = false;
     let mut no_src = false;
+    let mut no_maintenance = false;
     let mut extra_args: Vec<String> = Vec::new();
 
     let mut iter = args.iter();
@@ -240,6 +241,7 @@ fn cmd_clone(args: &[String]) -> Result<()> {
             "--single-branch" => single_branch = true,
             "--no-tags" => no_tags = true,
             "--no-src" => no_src = true,
+            "--no-maintenance" => no_maintenance = true,
             "--branch" | "-b" => {
                 if let Some(b) = iter.next() {
                     extra_args.push("--branch".to_string());
@@ -309,17 +311,19 @@ fn cmd_clone(args: &[String]) -> Result<()> {
     // Now configure the repo
     set_scalar_config(&repo_dir)?;
 
-    // Register for maintenance
-    let abs_repo = repo_dir
-        .canonicalize()
-        .unwrap_or_else(|_| std::env::current_dir().unwrap().join(&repo_dir));
-    register_repo(&abs_repo.display().to_string())?;
+    // Register for maintenance (unless --no-maintenance)
+    if !no_maintenance {
+        let abs_repo = repo_dir
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::current_dir().unwrap().join(&repo_dir));
+        register_repo(&abs_repo.display().to_string())?;
 
-    // Start maintenance
-    let _ = Command::new(&git)
-        .args(["maintenance", "start"])
-        .current_dir(&repo_dir)
-        .status();
+        // Start maintenance
+        let _ = Command::new(&git)
+            .args(["maintenance", "start"])
+            .current_dir(&repo_dir)
+            .status();
+    }
 
     Ok(())
 }

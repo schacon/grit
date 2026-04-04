@@ -222,6 +222,11 @@ test_config () {
 	git config "$key" "$val"
 }
 
+test_config_global () {
+	local key="$1" val="$2"
+	git config --global "$key" "$val"
+}
+
 test_file_not_empty () {
 	if ! test -s "$1"
 	then
@@ -413,25 +418,14 @@ test_line_count () {
 test_must_be_empty () { test ! -s "$1"; }
 
 test_have_prereq () {
-	local _p="$1"
-	# Handle negation: !PREREQ means "PREREQ is NOT set"
-	if test "${_p#!}" != "$_p"; then
-		local _neg="${_p#!}"
-		! test_have_prereq "$_neg"
-		return $?
-	fi
-	case "$_p" in
+	case "$1" in
 	POSIXPERM) return 0 ;;
 	SYMLINKS)  return 0 ;;
 	PIPE)      command -v mkfifo >/dev/null 2>&1 && return 0 ; return 1 ;;
 	SANITY)    return 0 ;;
-	MINGW)     return 1 ;;  # Not on Windows
-	CYGWIN)    return 1 ;;  # Not on Cygwin
-	PERL)      command -v perl >/dev/null 2>&1 && return 0 ; return 1 ;;
 	*)
 		# Check dynamic prereqs set by test_set_prereq
-		local _var="_prereq_${_p}"
-		eval "test \"\${${_var}:-}\" = set"
+		eval "test \"\${_prereq_$1:-}\" = set"
 		return $?
 		;;
 	esac
@@ -476,13 +470,7 @@ test_hook () {
 	local hook_dir
 	if test -n "$indir"
 	then
-		if test -d "$indir/.git"
-		then
-			hook_dir="$indir/.git/hooks"
-		else
-			# bare repo
-			hook_dir="$indir/hooks"
-		fi
+		hook_dir="$indir/.git/hooks"
 	else
 		hook_dir=".git/hooks"
 	fi
@@ -512,32 +500,35 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=yes message= file= contents=
+	local indir=
 	while test $# != 0
 	do
 		case "$1" in
-		--notick) notick=yes; shift ;;
-		--signoff) signoff="$1"; shift ;;
-		--no-tag) tag=; shift ;;
-		-C) indir="$2"; shift 2 ;;
-		*) break ;;
+		-C)
+			indir="$2"
+			shift
+			;;
+		*)
+			break
+			;;
 		esac
+		shift
 	done
-	message="${1:?test_commit}" && shift
-	file="${1:-$message.t}" && shift || true
-	contents="${1:-$message}" && shift || true
-	(
-		test -n "$indir" && cd "$indir"
-		printf '%s' "$contents" >"$file" &&
-		git add "$file" &&
-		if test -z "$notick"; then
-			test_tick
-		fi &&
-		git commit -q ${signoff:+$signoff} -m "$message" &&
-		if test -n "$tag"; then
-			git tag "$message"
-		fi
-	)
+	local file="$1.t"
+	if test -n "$indir"
+	then
+		printf '%s' "${2-$1}" >"$indir/$file"
+		git -C "$indir" add "$file"
+		test_tick
+		git -C "$indir" commit -q -m "$1"
+		git -C "$indir" tag "$1"
+	else
+		printf '%s' "${2-$1}" >"$file"
+		git add "$file"
+		test_tick
+		git commit -q -m "$1"
+		git tag "$1"
+	fi
 }
 
 # Evaluate $2 and check $1 == stdout.
@@ -595,7 +586,8 @@ test_expect_success () {
 		fi
 	fi
 
-	# Run in a subshell so each test starts clean
+	# Run in a subshell so each test starts clean.
+	# Variables set in tests do NOT persist to later tests (by design).
 	(
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1

@@ -469,9 +469,9 @@ fn cmd_update(args: UpdateArgs) -> Result<()> {
             output: None,
             quiet: false,
             jobs: None,
-            porcelain: false,
             no_show_forced_updates: false,
             show_forced_updates: false,
+            porcelain: false,
         };
         super::fetch::run(fetch_args)?;
     }

@@ -43,6 +43,14 @@ pub struct Args {
     /// Print the name of the object along with its hex ID.
     #[arg(long = "name-objects")]
     pub name_objects: bool,
+
+    /// Suppress progress output.
+    #[arg(long = "no-progress")]
+    pub no_progress: bool,
+
+    /// Show progress output (default).
+    #[arg(long = "progress", hide = true)]
+    pub progress: bool,
 }
 
 /// A problem found during fsck.

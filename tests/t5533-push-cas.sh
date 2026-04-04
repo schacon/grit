@@ -26,6 +26,10 @@ test_expect_success setup '
 	test_commit C
 '
 
+<<<<<<< HEAD
+=======
+# grit --force-with-lease is a boolean flag only, not --force-with-lease=ref:val
+>>>>>>> test/batch-FA
 test_expect_success 'push to update (protected)' '
 	setup_srcdst_basic &&
 	(
@@ -63,6 +67,10 @@ test_expect_success 'push to update (allowed)' '
 	test_cmp expect actual
 '
 
+<<<<<<< HEAD
+=======
+# grit --force-with-lease does not support =ref:val syntax
+>>>>>>> test/batch-FA
 test_expect_success 'push to update (allowed, tracking)' '
 	setup_srcdst_basic &&
 	(

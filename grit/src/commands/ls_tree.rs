@@ -285,5 +285,9 @@ fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
     if let Ok(oid) = resolve_ref(&repo.git_dir, &as_branch) {
         return Ok(oid);
     }
+    // Try full revision parsing (handles main^, HEAD~2, etc.)
+    if let Ok(oid) = grit_lib::rev_parse::resolve_revision(repo, s) {
+        return Ok(oid);
+    }
     bail!("not a valid tree-ish: '{s}'")
 }
