@@ -75,7 +75,7 @@ pub struct Args {
     pub no_ff: bool,
 
     /// Keep the base of the branch (rebase onto the merge-base of upstream and branch).
-    #[arg(long = "keep-base")]
+    #[arg(long = "keep-base", action = clap::ArgAction::SetTrue)]
     pub keep_base: bool,
 
     /// Use the fork-point algorithm to find the merge base.
