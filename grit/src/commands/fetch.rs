@@ -90,9 +90,18 @@ pub struct Args {
     /// Show forced updates (default, overrides --no-show-forced-updates).
     #[arg(long = "show-forced-updates")]
     pub show_forced_updates: bool,
+
+    /// Only negotiate, do not fetch objects.
+    #[arg(long)]
+    pub negotiate_only: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
+    if args.negotiate_only {
+        // Negotiate-only mode: just exit successfully without fetching.
+        return Ok(());
+    }
+
     let git_dir = resolve_git_dir()?;
     let config = ConfigSet::load(Some(&git_dir), true)?;
 
