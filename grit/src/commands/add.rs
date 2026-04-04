@@ -206,7 +206,10 @@ pub fn run(mut args: Args) -> Result<()> {
         let mut had_ignored = false;
         for pathspec in &args.pathspec {
             let resolved = resolve_pathspec(pathspec, work_tree, prefix.as_deref());
-            match add_path(odb, &mut index, work_tree, &resolved, &args, &repo, &mut ignore_matcher, &add_cfg) {
+            // Expand glob patterns (e.g. "file?.t", "*.c") against the working tree.
+            let expanded = expand_glob_pathspec(&resolved, work_tree);
+            for resolved in &expanded {
+            match add_path(odb, &mut index, work_tree, resolved, &args, &repo, &mut ignore_matcher, &add_cfg) {
                 Ok(()) => {}
                 Err(AddPathError::Ignored(msg)) => {
                     eprintln!("{msg}");
@@ -231,6 +234,7 @@ pub fn run(mut args: Args) -> Result<()> {
                     }
                 }
             }
+            } // end expanded loop
         }
 
         if had_ignored {
@@ -951,6 +955,109 @@ fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> 
             combined.to_string_lossy().to_string()
         }
         _ => pathspec.to_owned(),
+    }
+}
+
+/// Check whether a string contains glob metacharacters.
+fn has_glob_chars(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+/// Simple glob pattern matching against a single path component name.
+fn glob_matches(pattern: &str, name: &str) -> bool {
+    glob_match_inner(pattern.as_bytes(), name.as_bytes())
+}
+
+fn glob_match_inner(pat: &[u8], text: &[u8]) -> bool {
+    let mut pi = 0;
+    let mut ti = 0;
+    let mut star_pi = usize::MAX;
+    let mut star_ti = 0;
+    while ti < text.len() {
+        if pi < pat.len() && (pat[pi] == b'?' || pat[pi] == text[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pat.len() && pat[pi] == b'[' {
+            // bracket expression
+            if let Some(end) = pat[pi..].iter().position(|&b| b == b']') {
+                let inside = &pat[pi + 1..pi + end];
+                let matches_bracket = inside.contains(&text[ti]);
+                if matches_bracket {
+                    pi = pi + end + 1;
+                    ti += 1;
+                } else if star_pi != usize::MAX {
+                    pi = star_pi + 1;
+                    star_ti += 1;
+                    ti = star_ti;
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        } else if pi < pat.len() && pat[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if star_pi != usize::MAX {
+            pi = star_pi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
+}
+
+/// Expand a pathspec containing glob characters against the working tree.
+///
+/// If the pathspec does not contain glob characters, returns it unchanged.
+/// Otherwise, matches it against files/dirs in the working tree directory.
+fn expand_glob_pathspec(pathspec: &str, work_tree: &Path) -> Vec<String> {
+    if !has_glob_chars(pathspec) {
+        return vec![pathspec.to_owned()];
+    }
+
+    // Split into directory prefix and glob pattern.
+    // e.g. "dir/file?.t" -> dir_prefix="dir", pattern="file?.t"
+    let (dir_prefix, pattern) = if let Some(slash_pos) = pathspec.rfind('/') {
+        (&pathspec[..slash_pos], &pathspec[slash_pos + 1..])
+    } else {
+        ("", pathspec)
+    };
+
+    let search_dir = if dir_prefix.is_empty() {
+        work_tree.to_owned()
+    } else {
+        work_tree.join(dir_prefix)
+    };
+
+    let mut matches = Vec::new();
+    if let Ok(entries) = fs::read_dir(&search_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if glob_matches(pattern, &name_str) {
+                let rel = if dir_prefix.is_empty() {
+                    name_str.to_string()
+                } else {
+                    format!("{dir_prefix}/{name_str}")
+                };
+                matches.push(rel);
+            }
+        }
+    }
+
+    if matches.is_empty() {
+        // No matches — return original pathspec so add_path gives a proper error.
+        vec![pathspec.to_owned()]
+    } else {
+        matches.sort();
+        matches
     }
 }
 
