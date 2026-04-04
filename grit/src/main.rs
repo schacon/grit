@@ -350,7 +350,16 @@ fn run() -> Result<()> {
     // Handle --git-completion-helper / --git-completion-helper-all
     if rest.iter().any(|a| a == "--git-completion-helper" || a == "--git-completion-helper-all") {
         let show_all = rest.iter().any(|a| a == "--git-completion-helper-all");
-        return print_completion_helper(&subcmd, show_all);
+        // Check if there's a sub-subcommand (e.g., 'config get --git-completion-helper')
+        let sub_subcmd: Option<&str> = rest.iter()
+            .find(|a| !a.starts_with('-'))
+            .map(|s| s.as_str());
+        let key = if let Some(sub) = sub_subcmd {
+            format!("{}_{}", subcmd, sub)
+        } else {
+            subcmd.clone()
+        };
+        return print_completion_helper(&key, show_all);
     }
 
     dispatch(&subcmd, &rest, &opts)
@@ -428,6 +437,15 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
         "clone" => extract_options::<commands::clone::Args>(show_all),
         "commit" => extract_options::<commands::commit::Args>(show_all),
         "config" => extract_options::<commands::config::Args>(show_all),
+        "config_get" => extract_options::<commands::config::GetArgs>(show_all),
+        "config_set" => extract_options::<commands::config::SetArgs>(show_all),
+        "config_unset" => extract_options::<commands::config::UnsetArgs>(show_all),
+        "config_list" => extract_options::<commands::config::ListArgs>(show_all),
+        "config_edit" => extract_options::<commands::config::EditArgs>(show_all),
+        "reflog_show" => extract_options::<commands::reflog::ShowArgs>(show_all),
+        "reflog_expire" => extract_options::<commands::reflog::ExpireArgs>(show_all),
+        "reflog_delete" => extract_options::<commands::reflog::DeleteArgs>(show_all),
+        "reflog_exists" => extract_options::<commands::reflog::ExistsArgs>(show_all),
         "describe" => extract_options::<commands::describe::Args>(show_all),
         "diff" => extract_options::<commands::diff::Args>(show_all),
         "fetch" => extract_options::<commands::fetch::Args>(show_all),

@@ -202,6 +202,14 @@ pub struct GetArgs {
     /// Match config against a URL.
     #[arg(long = "url")]
     pub url: Option<String>,
+
+    /// Show origin file and scope for each entry.
+    #[arg(long = "show-origin")]
+    pub show_origin: bool,
+
+    /// Show scope for each entry.
+    #[arg(long = "show-scope")]
+    pub show_scope: bool,
 }
 
 /// Arguments for `grit config set`.
@@ -294,6 +302,8 @@ pub fn run(args: Args) -> Result<()> {
             show_names: false,
             default: args.default_value.clone(),
             url: None,
+            show_origin: false,
+            show_scope: false,
         };
         return cmd_get(&args, &get_args, git_dir.as_deref(), value_pattern);
     }
@@ -307,6 +317,8 @@ pub fn run(args: Args) -> Result<()> {
             show_names: false,
             default: args.default_value.clone(),
             url: None,
+            show_origin: false,
+            show_scope: false,
         };
         return cmd_get(&args, &get_args, git_dir.as_deref(), value_pattern);
     }
@@ -319,6 +331,8 @@ pub fn run(args: Args) -> Result<()> {
             show_names: true,
             default: args.default_value.clone(),
             url: None,
+            show_origin: false,
+            show_scope: false,
         };
         return cmd_get(&args, &get_args, git_dir.as_deref(), None);
     }
@@ -389,7 +403,9 @@ pub fn run(args: Args) -> Result<()> {
                 show_names: false,
                 default: args.default_value.clone(),
             url: None,
-            };
+                show_origin: false,
+            show_scope: false,
+        };
             cmd_get(&args, &get_args, git_dir.as_deref(), None)
         }
         2 => {

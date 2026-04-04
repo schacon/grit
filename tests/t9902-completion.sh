@@ -2997,7 +2997,7 @@ test_expect_success 'git config subcommand' '
 	EOF
 '
 
-test_expect_failure 'git config subcommand options' '
+test_expect_success 'git config subcommand options' '
 	test_completion "git config get --show-" <<-\EOF
 	--show-names Z
 	--show-origin Z
