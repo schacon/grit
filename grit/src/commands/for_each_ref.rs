@@ -581,6 +581,12 @@ fn atom_value(
     atom: &str,
     head_branch: &Option<String>,
 ) -> Result<String, FormatError> {
+    // Handle deref atoms: %(* objectname), %(*objecttype), etc.
+    // These dereference the pointed-to object (peel tags).
+    if let Some(deref_atom) = atom.strip_prefix('*') {
+        return deref_atom_value(repo, entry, deref_atom, head_branch);
+    }
+
     // Handle atoms with modifiers (e.g. "authordate:short")
     let (base, modifier) = if let Some(pos) = atom.find(':') {
         (&atom[..pos], Some(&atom[pos + 1..]))
@@ -684,6 +690,40 @@ fn atom_value(
             "unsupported format atom: {atom}"
         ))),
     }
+}
+
+/// Handle deref atoms like %(*objectname), %(*objecttype), %(*subject), etc.
+/// If the ref points to a tag, peel to the target object and evaluate the atom.
+/// If the ref does not point to a tag, return an empty string.
+fn deref_atom_value(
+    repo: &Repository,
+    entry: &RefEntry,
+    atom: &str,
+    head_branch: &Option<String>,
+) -> Result<String, FormatError> {
+    use grit_lib::objects::ObjectKind;
+    // Read the object to check if it's a tag
+    let object = read_object(repo, entry)?;
+    if object.kind != ObjectKind::Tag {
+        return Ok(String::new());
+    }
+    // Parse the tag to find the target object
+    let text = std::str::from_utf8(&object.data)
+        .map_err(|_| FormatError::Other(format!("tag {} has invalid UTF-8", entry.oid)))?;
+    let target_oid_str = text
+        .lines()
+        .find_map(|line| line.strip_prefix("object "))
+        .ok_or_else(|| FormatError::Other(format!("tag {} has no object header", entry.oid)))?;
+    let target_oid: grit_lib::objects::ObjectId = target_oid_str.trim().parse()
+        .map_err(|_| FormatError::Other(format!("tag {} has invalid object id", entry.oid)))?;
+
+    // Create a synthetic entry for the target object
+    let deref_entry = RefEntry {
+        name: entry.name.clone(),
+        oid: target_oid,
+    };
+    // Evaluate the atom against the dereferenced entry
+    atom_value(repo, &deref_entry, atom, head_branch)
 }
 
 fn subject_for_oid(
