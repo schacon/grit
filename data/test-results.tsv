@@ -3627,10 +3627,10 @@ t2021-checkout-overwrite::the-symlink-remained	t2021-checkout-overwrite	the syml
 t2021-checkout-overwrite::cleanup-after-previous-symlink-tests	t2021-checkout-overwrite	cleanup after previous symlink tests	checkout	pass
 t2021-checkout-overwrite::checkout-f-must-not-follow-symlinks-when-removing-entries	t2021-checkout-overwrite	checkout -f must not follow symlinks when removing entries	checkout	pass
 t2021-checkout-overwrite::checkout-overwrite-ignore-should-succeed-if-only-ignored-files-in-the-way	t2021-checkout-overwrite	checkout --overwrite-ignore should succeed if only ignored files in the way	checkout	pass
-t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	pass
-t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	pass
-t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	pass
-t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	pass
+t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	partial
+t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	partial
+t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	partial
+t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	partial
 t2023-checkout-m::git-merge-main	t2023-checkout-m	git merge main	checkout	pass
 t2023-checkout-m::m-restores-2-way-conflicted-resolved-file	t2023-checkout-m	-m restores 2-way conflicted+resolved file	checkout	pass
 t2023-checkout-m::m-restores-3-way-conflicted-resolved-file	t2023-checkout-m	-m restores 3-way conflicted+resolved file	checkout	pass
@@ -5362,29 +5362,29 @@ t3419-rebase-patch-id::detect-upstream-patch-modechange	t3419-rebase-patch-id	de
 t3419-rebase-patch-id::do-not-drop-patch	t3419-rebase-patch-id	do not drop patch	rebase	pass
 t3419-rebase-patch-id::do-not-drop-patch-binary	t3419-rebase-patch-id	do not drop patch binary	rebase	pass
 t3419-rebase-patch-id::do-not-drop-patch-modechange	t3419-rebase-patch-id	do not drop patch modechange	rebase	pass
-t3420-rebase-autostash::abort-rebase-i-with-autostash	t3420-rebase-autostash	abort rebase -i with --autostash	rebase	partial
-t3420-rebase-autostash::restore-autostash-on-editor-failure	t3420-rebase-autostash	restore autostash on editor failure	rebase	partial
-t3420-rebase-autostash::autostash-is-saved-on-editor-failure-with-conflict	t3420-rebase-autostash	autostash is saved on editor failure with conflict	rebase	partial
-t3420-rebase-autostash::autostash-with-dirty-submodules	t3420-rebase-autostash	autostash with dirty submodules	rebase	partial
-t3420-rebase-autostash::branch-is-left-alone-when-possible	t3420-rebase-autostash	branch is left alone when possible	rebase	partial
-t3420-rebase-autostash::never-change-active-branch	t3420-rebase-autostash	never change active branch	rebase	partial
-t3420-rebase-autostash::autostash-commit-is-marked-as-reachable	t3420-rebase-autostash	autostash commit is marked as reachable	rebase	partial
-t3420-rebase-autostash::rebase-type-restore-autostash-when-pre-rebase-hook-fails	t3420-rebase-autostash	rebase$type: restore autostash when pre-rebase hook fails	rebase	partial
-t3420-rebase-autostash::rebase-type-restore-autostash-when-checkout-onto-fails	t3420-rebase-autostash	rebase$type: restore autostash when checkout onto fails	rebase	partial
-t3420-rebase-autostash::rebase-type-restore-autostash-when-branch-checkout-fails	t3420-rebase-autostash	rebase$type: restore autostash when branch checkout fails	rebase	partial
-t3420-rebase-autostash::rebase-type-dirty-worktree-no-autostash	t3420-rebase-autostash	rebase$type: dirty worktree, --no-autostash	rebase	partial
-t3420-rebase-autostash::rebase-type-dirty-worktree-non-conflicting-rebase	t3420-rebase-autostash	rebase$type: dirty worktree, non-conflicting rebase	rebase	partial
-t3420-rebase-autostash::rebase-type-autostash-check-output	t3420-rebase-autostash	rebase$type --autostash: check output	rebase	partial
-t3420-rebase-autostash::rebase-type-dirty-index-non-conflicting-rebase	t3420-rebase-autostash	rebase$type: dirty index, non-conflicting rebase	rebase	partial
-t3420-rebase-autostash::rebase-type-conflicting-rebase	t3420-rebase-autostash	rebase$type: conflicting rebase	rebase	partial
-t3420-rebase-autostash::rebase-type-continue	t3420-rebase-autostash	rebase$type: --continue	rebase	partial
-t3420-rebase-autostash::rebase-type-skip	t3420-rebase-autostash	rebase$type: --skip	rebase	partial
-t3420-rebase-autostash::rebase-type-abort	t3420-rebase-autostash	rebase$type: --abort	rebase	partial
-t3420-rebase-autostash::rebase-type-quit	t3420-rebase-autostash	rebase$type: --quit	rebase	partial
-t3420-rebase-autostash::rebase-type-non-conflicting-rebase-conflicting-stash	t3420-rebase-autostash	rebase$type: non-conflicting rebase, conflicting stash	rebase	partial
-t3420-rebase-autostash::rebase-type-check-output-with-conflicting-stash	t3420-rebase-autostash	rebase$type: check output with conflicting stash	rebase	partial
-t3420-rebase-autostash::rebase-fast-forward-rebase	t3420-rebase-autostash	rebase: fast-forward rebase	rebase	partial
-t3420-rebase-autostash::rebase-noop-rebase	t3420-rebase-autostash	rebase: noop rebase	rebase	partial
+t3420-rebase-autostash::abort-rebase-i-with-autostash	t3420-rebase-autostash	abort rebase -i with --autostash	rebase	pass
+t3420-rebase-autostash::restore-autostash-on-editor-failure	t3420-rebase-autostash	restore autostash on editor failure	rebase	pass
+t3420-rebase-autostash::autostash-is-saved-on-editor-failure-with-conflict	t3420-rebase-autostash	autostash is saved on editor failure with conflict	rebase	pass
+t3420-rebase-autostash::autostash-with-dirty-submodules	t3420-rebase-autostash	autostash with dirty submodules	rebase	pass
+t3420-rebase-autostash::branch-is-left-alone-when-possible	t3420-rebase-autostash	branch is left alone when possible	rebase	pass
+t3420-rebase-autostash::never-change-active-branch	t3420-rebase-autostash	never change active branch	rebase	pass
+t3420-rebase-autostash::autostash-commit-is-marked-as-reachable	t3420-rebase-autostash	autostash commit is marked as reachable	rebase	pass
+t3420-rebase-autostash::rebase-type-restore-autostash-when-pre-rebase-hook-fails	t3420-rebase-autostash	rebase$type: restore autostash when pre-rebase hook fails	rebase	pass
+t3420-rebase-autostash::rebase-type-restore-autostash-when-checkout-onto-fails	t3420-rebase-autostash	rebase$type: restore autostash when checkout onto fails	rebase	pass
+t3420-rebase-autostash::rebase-type-restore-autostash-when-branch-checkout-fails	t3420-rebase-autostash	rebase$type: restore autostash when branch checkout fails	rebase	pass
+t3420-rebase-autostash::rebase-type-dirty-worktree-no-autostash	t3420-rebase-autostash	rebase$type: dirty worktree, --no-autostash	rebase	pass
+t3420-rebase-autostash::rebase-type-dirty-worktree-non-conflicting-rebase	t3420-rebase-autostash	rebase$type: dirty worktree, non-conflicting rebase	rebase	pass
+t3420-rebase-autostash::rebase-type-autostash-check-output	t3420-rebase-autostash	rebase$type --autostash: check output	rebase	pass
+t3420-rebase-autostash::rebase-type-dirty-index-non-conflicting-rebase	t3420-rebase-autostash	rebase$type: dirty index, non-conflicting rebase	rebase	pass
+t3420-rebase-autostash::rebase-type-conflicting-rebase	t3420-rebase-autostash	rebase$type: conflicting rebase	rebase	pass
+t3420-rebase-autostash::rebase-type-continue	t3420-rebase-autostash	rebase$type: --continue	rebase	pass
+t3420-rebase-autostash::rebase-type-skip	t3420-rebase-autostash	rebase$type: --skip	rebase	pass
+t3420-rebase-autostash::rebase-type-abort	t3420-rebase-autostash	rebase$type: --abort	rebase	pass
+t3420-rebase-autostash::rebase-type-quit	t3420-rebase-autostash	rebase$type: --quit	rebase	pass
+t3420-rebase-autostash::rebase-type-non-conflicting-rebase-conflicting-stash	t3420-rebase-autostash	rebase$type: non-conflicting rebase, conflicting stash	rebase	pass
+t3420-rebase-autostash::rebase-type-check-output-with-conflicting-stash	t3420-rebase-autostash	rebase$type: check output with conflicting stash	rebase	pass
+t3420-rebase-autostash::rebase-fast-forward-rebase	t3420-rebase-autostash	rebase: fast-forward rebase	rebase	pass
+t3420-rebase-autostash::rebase-noop-rebase	t3420-rebase-autostash	rebase: noop rebase	rebase	pass
 t3421-rebase-topology-linear::setup	t3421-rebase-topology-linear	setup	rebase	pass
 t3421-rebase-topology-linear::setup-branches-and-remote-tracking	t3421-rebase-topology-linear	setup branches and remote tracking	rebase	pass
 t3421-rebase-topology-linear::setup-of-linear-history-for-range-selection-tests	t3421-rebase-topology-linear	setup of linear history for range selection tests	rebase	pass
@@ -11021,17 +11021,17 @@ t5570-git-daemon::not-exported-2	t5570-git-daemon	not exported	daemon	pass
 t5570-git-daemon::access-repo-via-interpolated-hostname	t5570-git-daemon	access repo via interpolated hostname	daemon	pass
 t5570-git-daemon::hostname-cannot-break-out-of-directory	t5570-git-daemon	hostname cannot break out of directory	daemon	pass
 t5570-git-daemon::hostname-interpolation-works-after-lf-stripping	t5570-git-daemon	hostname interpolation works after LF-stripping	daemon	pass
-t5571-pre-push-hook::setup	t5571-pre-push-hook	setup	config	pass
-t5571-pre-push-hook::push-with-failing-hook	t5571-pre-push-hook	push with failing hook	push	pass
-t5571-pre-push-hook::no-verify-bypasses-hook	t5571-pre-push-hook	--no-verify bypasses hook	push	pass
-t5571-pre-push-hook::push-with-hook	t5571-pre-push-hook	push with hook	push	pass
-t5571-pre-push-hook::add-a-branch	t5571-pre-push-hook	add a branch	checkout	pass
-t5571-pre-push-hook::push-to-default	t5571-pre-push-hook	push to default	push	pass
-t5571-pre-push-hook::push-non-branches	t5571-pre-push-hook	push non-branches	push	pass
-t5571-pre-push-hook::push-delete	t5571-pre-push-hook	push delete	push	pass
-t5571-pre-push-hook::push-to-url	t5571-pre-push-hook	push to URL	push	pass
-t5571-pre-push-hook::set-up-many-ref-tests	t5571-pre-push-hook	set up many-ref tests	update-ref	pass
-t5571-pre-push-hook::sigpipe-does-not-cause-pre-push-hook-failure	t5571-pre-push-hook	sigpipe does not cause pre-push hook failure	push	pass
+t5571-pre-push-hook::setup	t5571-pre-push-hook	setup	config	partial
+t5571-pre-push-hook::push-with-failing-hook	t5571-pre-push-hook	push with failing hook	push	partial
+t5571-pre-push-hook::no-verify-bypasses-hook	t5571-pre-push-hook	--no-verify bypasses hook	push	partial
+t5571-pre-push-hook::push-with-hook	t5571-pre-push-hook	push with hook	push	partial
+t5571-pre-push-hook::add-a-branch	t5571-pre-push-hook	add a branch	checkout	partial
+t5571-pre-push-hook::push-to-default	t5571-pre-push-hook	push to default	push	partial
+t5571-pre-push-hook::push-non-branches	t5571-pre-push-hook	push non-branches	push	partial
+t5571-pre-push-hook::push-delete	t5571-pre-push-hook	push delete	push	partial
+t5571-pre-push-hook::push-to-url	t5571-pre-push-hook	push to URL	push	partial
+t5571-pre-push-hook::set-up-many-ref-tests	t5571-pre-push-hook	set up many-ref tests	update-ref	partial
+t5571-pre-push-hook::sigpipe-does-not-cause-pre-push-hook-failure	t5571-pre-push-hook	sigpipe does not cause pre-push hook failure	push	partial
 t5572-pull-submodule::setup	t5572-pull-submodule	setup	pull	pass
 t5572-pull-submodule::pull-recurse-submodule-setup	t5572-pull-submodule	pull --recurse-submodule setup	pull	pass
 t5572-pull-submodule::recursive-pull-updates-working-tree	t5572-pull-submodule	recursive pull updates working tree	pull	pass
@@ -11095,14 +11095,14 @@ t5582-fetch-negative-refspec::push-prune-with-negative-refspec-apply-to-the-dest
 t5582-fetch-negative-refspec::fetch-prune-with-negative-refspec	t5582-fetch-negative-refspec	fetch --prune with negative refspec	fetch	pass
 t5582-fetch-negative-refspec::push-with-matching-and-negative-refspec	t5582-fetch-negative-refspec	push with matching : and negative refspec	fetch	pass
 t5582-fetch-negative-refspec::push-with-matching-and-negative-refspec-2	t5582-fetch-negative-refspec	push with matching +: and negative refspec	fetch	pass
-t5583-push-branches::setup-bare-remote	t5583-push-branches	setup bare remote	push	pass
-t5583-push-branches::setup-different-types-of-references	t5583-push-branches	setup different types of references	push	pass
-t5583-push-branches::all-and-branches-have-the-same-behavior	t5583-push-branches	--all and --branches have the same behavior	push	pass
-t5583-push-branches::all-or-branches-can-not-be-combined-with-refspecs	t5583-push-branches	--all or --branches can not be combined with refspecs	push	pass
-t5583-push-branches::all-or-branches-can-not-be-combined-with-mirror	t5583-push-branches	--all or --branches can not be combined with --mirror	push	pass
-t5583-push-branches::all-or-branches-can-not-be-combined-with-tags	t5583-push-branches	--all or --branches can not be combined with --tags	push	pass
-t5583-push-branches::all-or-branches-can-not-be-combined-with-delete	t5583-push-branches	--all or --branches can not be combined with --delete	push	pass
-t5583-push-branches::all-or-branches-combines-with-follow-tags-have-same-behavior	t5583-push-branches	--all or --branches combines with --follow-tags have same behavior	push	pass
+t5583-push-branches::setup-bare-remote	t5583-push-branches	setup bare remote	push	partial
+t5583-push-branches::setup-different-types-of-references	t5583-push-branches	setup different types of references	push	partial
+t5583-push-branches::all-and-branches-have-the-same-behavior	t5583-push-branches	--all and --branches have the same behavior	push	partial
+t5583-push-branches::all-or-branches-can-not-be-combined-with-refspecs	t5583-push-branches	--all or --branches can not be combined with refspecs	push	partial
+t5583-push-branches::all-or-branches-can-not-be-combined-with-mirror	t5583-push-branches	--all or --branches can not be combined with --mirror	push	partial
+t5583-push-branches::all-or-branches-can-not-be-combined-with-tags	t5583-push-branches	--all or --branches can not be combined with --tags	push	partial
+t5583-push-branches::all-or-branches-can-not-be-combined-with-delete	t5583-push-branches	--all or --branches can not be combined with --delete	push	partial
+t5583-push-branches::all-or-branches-combines-with-follow-tags-have-same-behavior	t5583-push-branches	--all or --branches combines with --follow-tags have same behavior	push	partial
 t5600-clone-fail-cleanup::clone-of-non-existent-source-should-fail	t5600-clone-fail-cleanup	clone of non-existent source should fail	clone	pass
 t5600-clone-fail-cleanup::failed-clone-should-not-leave-a-directory	t5600-clone-fail-cleanup	failed clone should not leave a directory	clone	pass
 t5600-clone-fail-cleanup::create-a-repo-to-clone	t5600-clone-fail-cleanup	create a repo to clone	clone	pass
@@ -11242,29 +11242,29 @@ t5604-clone-reference::clone-a-repo-with-garbage-in-objects	t5604-clone-referenc
 t5604-clone-reference::setup-repo-with-manually-symlinked-or-unknown-files-at-objects	t5604-clone-reference	setup repo with manually symlinked or unknown files at objects/	clone	pass
 t5604-clone-reference::clone-repo-with-symlinked-or-unknown-files-at-objects	t5604-clone-reference	clone repo with symlinked or unknown files at objects/	clone	pass
 t5604-clone-reference::clone-repo-with-symlinked-objects-directory	t5604-clone-reference	clone repo with symlinked objects directory	clone	pass
-t5605-clone-local::preparing-origin-repository	t5605-clone-local	preparing origin repository	clone	pass
-t5605-clone-local::local-clone-without-git-suffix	t5605-clone-local	local clone without .git suffix	clone	pass
-t5605-clone-local::local-clone-with-git-suffix	t5605-clone-local	local clone with .git suffix	clone	pass
-t5605-clone-local::local-clone-from-x	t5605-clone-local	local clone from x	clone	pass
-t5605-clone-local::local-clone-from-x-git-that-does-not-exist	t5605-clone-local	local clone from x.git that does not exist	clone	pass
-t5605-clone-local::with-no-hardlinks-local-will-make-a-copy	t5605-clone-local	With -no-hardlinks, local will make a copy	clone	pass
-t5605-clone-local::even-without-l-local-will-make-a-hardlink	t5605-clone-local	Even without -l, local will make a hardlink	clone	pass
-t5605-clone-local::local-clone-of-repo-with-nonexistent-ref-in-head	t5605-clone-local	local clone of repo with nonexistent ref in HEAD	clone	pass
-t5605-clone-local::bundle-clone-without-bundle-suffix	t5605-clone-local	bundle clone without .bundle suffix	clone	pass
-t5605-clone-local::bundle-clone-with-bundle-suffix	t5605-clone-local	bundle clone with .bundle suffix	clone	pass
-t5605-clone-local::bundle-clone-from-b4	t5605-clone-local	bundle clone from b4	clone	pass
-t5605-clone-local::bundle-clone-from-b4-bundle-that-does-not-exist	t5605-clone-local	bundle clone from b4.bundle that does not exist	clone	pass
-t5605-clone-local::bundle-clone-with-nonexistent-head-match-default	t5605-clone-local	bundle clone with nonexistent HEAD (match default)	clone	pass
-t5605-clone-local::bundle-clone-with-nonexistent-head-no-match-default	t5605-clone-local	bundle clone with nonexistent HEAD (no match default)	clone	pass
-t5605-clone-local::clone-empty-repository	t5605-clone-local	clone empty repository	clone	pass
-t5605-clone-local::clone-empty-repository-and-then-push-should-not-segfault	t5605-clone-local	clone empty repository, and then push should not segfault.	clone	pass
-t5605-clone-local::cloning-non-existent-directory-fails	t5605-clone-local	cloning non-existent directory fails	clone	pass
-t5605-clone-local::cloning-non-git-directory-fails	t5605-clone-local	cloning non-git directory fails	clone	pass
-t5605-clone-local::cloning-file-does-not-hardlink	t5605-clone-local	cloning file:// does not hardlink	clone	pass
-t5605-clone-local::cloning-a-local-path-with-no-local-does-not-hardlink	t5605-clone-local	cloning a local path with --no-local does not hardlink	clone	pass
-t5605-clone-local::cloning-a-local-path-with-no-local-from-a-different-user-succeeds	t5605-clone-local	cloning a local path with --no-local from a different user succeeds	clone	pass
-t5605-clone-local::cloning-locally-respects-u-for-fetching-refs	t5605-clone-local	cloning locally respects "-u" for fetching refs	clone	pass
-t5605-clone-local::local-clone-from-repo-with-corrupt-refs-fails-gracefully	t5605-clone-local	local clone from repo with corrupt refs fails gracefully	clone	pass
+t5605-clone-local::preparing-origin-repository	t5605-clone-local	preparing origin repository	clone	partial
+t5605-clone-local::local-clone-without-git-suffix	t5605-clone-local	local clone without .git suffix	clone	partial
+t5605-clone-local::local-clone-with-git-suffix	t5605-clone-local	local clone with .git suffix	clone	partial
+t5605-clone-local::local-clone-from-x	t5605-clone-local	local clone from x	clone	partial
+t5605-clone-local::local-clone-from-x-git-that-does-not-exist	t5605-clone-local	local clone from x.git that does not exist	clone	partial
+t5605-clone-local::with-no-hardlinks-local-will-make-a-copy	t5605-clone-local	With -no-hardlinks, local will make a copy	clone	partial
+t5605-clone-local::even-without-l-local-will-make-a-hardlink	t5605-clone-local	Even without -l, local will make a hardlink	clone	partial
+t5605-clone-local::local-clone-of-repo-with-nonexistent-ref-in-head	t5605-clone-local	local clone of repo with nonexistent ref in HEAD	clone	partial
+t5605-clone-local::bundle-clone-without-bundle-suffix	t5605-clone-local	bundle clone without .bundle suffix	clone	partial
+t5605-clone-local::bundle-clone-with-bundle-suffix	t5605-clone-local	bundle clone with .bundle suffix	clone	partial
+t5605-clone-local::bundle-clone-from-b4	t5605-clone-local	bundle clone from b4	clone	partial
+t5605-clone-local::bundle-clone-from-b4-bundle-that-does-not-exist	t5605-clone-local	bundle clone from b4.bundle that does not exist	clone	partial
+t5605-clone-local::bundle-clone-with-nonexistent-head-match-default	t5605-clone-local	bundle clone with nonexistent HEAD (match default)	clone	partial
+t5605-clone-local::bundle-clone-with-nonexistent-head-no-match-default	t5605-clone-local	bundle clone with nonexistent HEAD (no match default)	clone	partial
+t5605-clone-local::clone-empty-repository	t5605-clone-local	clone empty repository	clone	partial
+t5605-clone-local::clone-empty-repository-and-then-push-should-not-segfault	t5605-clone-local	clone empty repository, and then push should not segfault.	clone	partial
+t5605-clone-local::cloning-non-existent-directory-fails	t5605-clone-local	cloning non-existent directory fails	clone	partial
+t5605-clone-local::cloning-non-git-directory-fails	t5605-clone-local	cloning non-git directory fails	clone	partial
+t5605-clone-local::cloning-file-does-not-hardlink	t5605-clone-local	cloning file:// does not hardlink	clone	partial
+t5605-clone-local::cloning-a-local-path-with-no-local-does-not-hardlink	t5605-clone-local	cloning a local path with --no-local does not hardlink	clone	partial
+t5605-clone-local::cloning-a-local-path-with-no-local-from-a-different-user-succeeds	t5605-clone-local	cloning a local path with --no-local from a different user succeeds	clone	partial
+t5605-clone-local::cloning-locally-respects-u-for-fetching-refs	t5605-clone-local	cloning locally respects "-u" for fetching refs	clone	partial
+t5605-clone-local::local-clone-from-repo-with-corrupt-refs-fails-gracefully	t5605-clone-local	local clone from repo with corrupt refs fails gracefully	clone	partial
 t5606-clone-options::setup	t5606-clone-options	setup	clone	pass
 t5606-clone-options::submodule-stickyrecursiveclone-flag-manipulates-submodule-recurse-value	t5606-clone-options	submodule.stickyRecursiveClone flag manipulates submodule.recurse value	clone	pass
 t5606-clone-options::clone-o	t5606-clone-options	clone -o	clone	pass
@@ -11712,35 +11712,35 @@ t5802-connect-helper::update-backfilled-tag-without-primary-transfer	t5802-conne
 t5802-connect-helper::set-up-fake-git-daemon	t5802-connect-helper	set up fake git-daemon	daemon	pass
 t5802-connect-helper::ext-command-can-connect-to-git-daemon-no-vhost	t5802-connect-helper	ext command can connect to git daemon (no vhost)	clone	pass
 t5802-connect-helper::ext-command-can-connect-to-git-daemon-vhost	t5802-connect-helper	ext command can connect to git daemon (vhost)	clone	pass
-t5810-proto-disable-local::setup-repository-to-clone	t5810-proto-disable-local	setup repository to clone	fetch	pass
-t5810-proto-disable-local::setup-repo-with-dash	t5810-proto-disable-local	setup repo with dash	fetch	pass
-t5810-proto-disable-local::repo-names-starting-with-dash-are-rejected	t5810-proto-disable-local	repo names starting with dash are rejected	fetch	pass
-t5810-proto-disable-local::full-paths-still-work	t5810-proto-disable-local	full paths still work	fetch	pass
-t5811-proto-disable-git::create-git-accessible-repo	t5811-proto-disable-git	create git-accessible repo	config	pass
-t5812-proto-disable-http::create-git-accessible-repo	t5812-proto-disable-http	create git-accessible repo	fetch	pass
-t5812-proto-disable-http::http-s-transport-respects-git-allow-protocol	t5812-proto-disable-http	http(s) transport respects GIT_ALLOW_PROTOCOL	fetch	pass
-t5812-proto-disable-http::curl-limits-redirects	t5812-proto-disable-http	curl limits redirects	fetch	pass
-t5812-proto-disable-http::http-can-be-limited-to-from-user	t5812-proto-disable-http	http can be limited to from-user	fetch	pass
-t5813-proto-disable-ssh::setup-repository-to-clone	t5813-proto-disable-ssh	setup repository to clone	init	pass
-t5813-proto-disable-ssh::hostnames-starting-with-dash-are-rejected	t5813-proto-disable-ssh	hostnames starting with dash are rejected	clone	pass
-t5813-proto-disable-ssh::setup-repo-with-dash	t5813-proto-disable-ssh	setup repo with dash	init	pass
-t5813-proto-disable-ssh::repo-names-starting-with-dash-are-rejected	t5813-proto-disable-ssh	repo names starting with dash are rejected	clone	pass
-t5813-proto-disable-ssh::full-paths-still-work	t5813-proto-disable-ssh	full paths still work	clone	pass
-t5814-proto-disable-ext::setup-repository-to-clone	t5814-proto-disable-ext	setup repository to clone	init	pass
-t5815-submodule-protos::setup-repository-with-submodules	t5815-submodule-protos	setup repository with submodules	submodule	pass
-t5815-submodule-protos::clone-with-recurse-submodules-fails	t5815-submodule-protos	clone with recurse-submodules fails	submodule	pass
-t5815-submodule-protos::setup-individual-updates	t5815-submodule-protos	setup individual updates	submodule	pass
-t5815-submodule-protos::update-of-ssh-allowed	t5815-submodule-protos	update of ssh allowed	submodule	pass
-t5815-submodule-protos::update-of-ext-not-allowed	t5815-submodule-protos	update of ext not allowed	submodule	pass
-t5815-submodule-protos::user-can-filter-protocols-with-git-allow-protocol	t5815-submodule-protos	user can filter protocols with GIT_ALLOW_PROTOCOL	submodule	pass
-t5900-repo-selection::find-git-dir-in-worktree	t5900-repo-selection	find .git dir in worktree	init	pass
-t5900-repo-selection::automagically-add-git-suffix	t5900-repo-selection	automagically add .git suffix	init	pass
-t5900-repo-selection::automagically-add-git-suffix-to-worktree	t5900-repo-selection	automagically add .git suffix to worktree	init	pass
-t5900-repo-selection::prefer-worktree-foo-over-bare-foo-git	t5900-repo-selection	prefer worktree foo over bare foo.git	init	pass
-t5900-repo-selection::prefer-bare-foo-over-bare-foo-git	t5900-repo-selection	prefer bare foo over bare foo.git	init	pass
-t5900-repo-selection::disambiguate-with-full-foo-git	t5900-repo-selection	disambiguate with full foo.git	init	pass
-t5900-repo-selection::we-are-not-fooled-by-non-git-foo-directory	t5900-repo-selection	we are not fooled by non-git foo directory	init	pass
-t5900-repo-selection::prefer-inner-git-over-outer-bare	t5900-repo-selection	prefer inner .git over outer bare	init	pass
+t5810-proto-disable-local::setup-repository-to-clone	t5810-proto-disable-local	setup repository to clone	fetch	partial
+t5810-proto-disable-local::setup-repo-with-dash	t5810-proto-disable-local	setup repo with dash	fetch	partial
+t5810-proto-disable-local::repo-names-starting-with-dash-are-rejected	t5810-proto-disable-local	repo names starting with dash are rejected	fetch	partial
+t5810-proto-disable-local::full-paths-still-work	t5810-proto-disable-local	full paths still work	fetch	partial
+t5811-proto-disable-git::create-git-accessible-repo	t5811-proto-disable-git	create git-accessible repo	config	partial
+t5812-proto-disable-http::create-git-accessible-repo	t5812-proto-disable-http	create git-accessible repo	fetch	partial
+t5812-proto-disable-http::http-s-transport-respects-git-allow-protocol	t5812-proto-disable-http	http(s) transport respects GIT_ALLOW_PROTOCOL	fetch	partial
+t5812-proto-disable-http::curl-limits-redirects	t5812-proto-disable-http	curl limits redirects	fetch	partial
+t5812-proto-disable-http::http-can-be-limited-to-from-user	t5812-proto-disable-http	http can be limited to from-user	fetch	partial
+t5813-proto-disable-ssh::setup-repository-to-clone	t5813-proto-disable-ssh	setup repository to clone	init	partial
+t5813-proto-disable-ssh::hostnames-starting-with-dash-are-rejected	t5813-proto-disable-ssh	hostnames starting with dash are rejected	clone	partial
+t5813-proto-disable-ssh::setup-repo-with-dash	t5813-proto-disable-ssh	setup repo with dash	init	partial
+t5813-proto-disable-ssh::repo-names-starting-with-dash-are-rejected	t5813-proto-disable-ssh	repo names starting with dash are rejected	clone	partial
+t5813-proto-disable-ssh::full-paths-still-work	t5813-proto-disable-ssh	full paths still work	clone	partial
+t5814-proto-disable-ext::setup-repository-to-clone	t5814-proto-disable-ext	setup repository to clone	init	partial
+t5815-submodule-protos::setup-repository-with-submodules	t5815-submodule-protos	setup repository with submodules	submodule	partial
+t5815-submodule-protos::clone-with-recurse-submodules-fails	t5815-submodule-protos	clone with recurse-submodules fails	submodule	partial
+t5815-submodule-protos::setup-individual-updates	t5815-submodule-protos	setup individual updates	submodule	partial
+t5815-submodule-protos::update-of-ssh-allowed	t5815-submodule-protos	update of ssh allowed	submodule	partial
+t5815-submodule-protos::update-of-ext-not-allowed	t5815-submodule-protos	update of ext not allowed	submodule	partial
+t5815-submodule-protos::user-can-filter-protocols-with-git-allow-protocol	t5815-submodule-protos	user can filter protocols with GIT_ALLOW_PROTOCOL	submodule	partial
+t5900-repo-selection::find-git-dir-in-worktree	t5900-repo-selection	find .git dir in worktree	init	partial
+t5900-repo-selection::automagically-add-git-suffix	t5900-repo-selection	automagically add .git suffix	init	partial
+t5900-repo-selection::automagically-add-git-suffix-to-worktree	t5900-repo-selection	automagically add .git suffix to worktree	init	partial
+t5900-repo-selection::prefer-worktree-foo-over-bare-foo-git	t5900-repo-selection	prefer worktree foo over bare foo.git	init	partial
+t5900-repo-selection::prefer-bare-foo-over-bare-foo-git	t5900-repo-selection	prefer bare foo over bare foo.git	init	partial
+t5900-repo-selection::disambiguate-with-full-foo-git	t5900-repo-selection	disambiguate with full foo.git	init	partial
+t5900-repo-selection::we-are-not-fooled-by-non-git-foo-directory	t5900-repo-selection	we are not fooled by non-git foo directory	init	partial
+t5900-repo-selection::prefer-inner-git-over-outer-bare	t5900-repo-selection	prefer inner .git over outer bare	init	partial
 t6000-rev-list-misc::rev-list-objects-heeds-pathspecs	t6000-rev-list-misc	rev-list --objects heeds pathspecs	rev-list	pass
 t6000-rev-list-misc::rev-list-objects-with-pathspecs-and-deeper-paths	t6000-rev-list-misc	rev-list --objects with pathspecs and deeper paths	rev-list	pass
 t6000-rev-list-misc::rev-list-objects-with-pathspecs-and-copied-files	t6000-rev-list-misc	rev-list --objects with pathspecs and copied files	rev-list	pass
@@ -14575,21 +14575,21 @@ t7425-submodule-gitdir-path-extension::disabling-extensions-submodulepathconfig-
 t7425-submodule-gitdir-path-extension::verify-case-folding-conflicts-are-correctly-encoded	t7425-submodule-gitdir-path-extension	verify case-folding conflicts are correctly encoded	submodule	pass
 t7425-submodule-gitdir-path-extension::verify-hashing-conflict-resolution-as-a-last-resort	t7425-submodule-gitdir-path-extension	verify hashing conflict resolution as a last resort	submodule	pass
 t7425-submodule-gitdir-path-extension::submodule-gitdir-conflicts-with-previously-encoded-name-local-config	t7425-submodule-gitdir-path-extension	submodule gitdir conflicts with previously encoded name (local config)	submodule	pass
-t7426-submodule-get-default-remote::setup	t7426-submodule-get-default-remote	setup	submodule	not_ported
-t7426-submodule-get-default-remote::setup-repositories	t7426-submodule-get-default-remote	setup repositories	submodule	not_ported
-t7426-submodule-get-default-remote::get-default-remote-returns-origin-for-initialized-submodule	t7426-submodule-get-default-remote	get-default-remote returns origin for initialized submodule	submodule	not_ported
-t7426-submodule-get-default-remote::get-default-remote-works-from-subdirectory	t7426-submodule-get-default-remote	get-default-remote works from subdirectory	submodule	not_ported
-t7426-submodule-get-default-remote::get-default-remote-fails-with-non-existent-path	t7426-submodule-get-default-remote	get-default-remote fails with non-existent path	submodule	not_ported
-t7426-submodule-get-default-remote::get-default-remote-fails-with-non-submodule-path	t7426-submodule-get-default-remote	get-default-remote fails with non-submodule path	submodule	not_ported
-t7426-submodule-get-default-remote::get-default-remote-fails-without-path-argument	t7426-submodule-get-default-remote	get-default-remote fails without path argument	submodule	not_ported
-t7426-submodule-get-default-remote::get-default-remote-fails-with-too-many-arguments	t7426-submodule-get-default-remote	get-default-remote fails with too many arguments	submodule	not_ported
-t7426-submodule-get-default-remote::setup-submodule-with-non-origin-default-remote-name	t7426-submodule-get-default-remote	setup submodule with non-origin default remote name	submodule	not_ported
-t7426-submodule-get-default-remote::get-default-remote-returns-non-origin-remote-name	t7426-submodule-get-default-remote	get-default-remote returns non-origin remote name	submodule	not_ported
-t7426-submodule-get-default-remote::get-default-remote-handles-submodule-with-multiple-remotes	t7426-submodule-get-default-remote	get-default-remote handles submodule with multiple remotes	submodule	not_ported
-t7426-submodule-get-default-remote::get-default-remote-handles-submodule-with-multiple-remotes-and-none-are-origin	t7426-submodule-get-default-remote	get-default-remote handles submodule with multiple remotes and none are origin	submodule	not_ported
-t7426-submodule-get-default-remote::setup-nested-submodule-with-non-origin-remote	t7426-submodule-get-default-remote	setup nested submodule with non-origin remote	submodule	not_ported
-t7426-submodule-get-default-remote::get-default-remote-works-with-nested-submodule	t7426-submodule-get-default-remote	get-default-remote works with nested submodule	submodule	not_ported
-t7426-submodule-get-default-remote::get-default-remote-works-with-submodule-that-has-no-remotes	t7426-submodule-get-default-remote	get-default-remote works with submodule that has no remotes	submodule	not_ported
+t7426-submodule-get-default-remote::setup	t7426-submodule-get-default-remote	setup	submodule	pass
+t7426-submodule-get-default-remote::setup-repositories	t7426-submodule-get-default-remote	setup repositories	submodule	pass
+t7426-submodule-get-default-remote::get-default-remote-returns-origin-for-initialized-submodule	t7426-submodule-get-default-remote	get-default-remote returns origin for initialized submodule	submodule	pass
+t7426-submodule-get-default-remote::get-default-remote-works-from-subdirectory	t7426-submodule-get-default-remote	get-default-remote works from subdirectory	submodule	pass
+t7426-submodule-get-default-remote::get-default-remote-fails-with-non-existent-path	t7426-submodule-get-default-remote	get-default-remote fails with non-existent path	submodule	pass
+t7426-submodule-get-default-remote::get-default-remote-fails-with-non-submodule-path	t7426-submodule-get-default-remote	get-default-remote fails with non-submodule path	submodule	pass
+t7426-submodule-get-default-remote::get-default-remote-fails-without-path-argument	t7426-submodule-get-default-remote	get-default-remote fails without path argument	submodule	pass
+t7426-submodule-get-default-remote::get-default-remote-fails-with-too-many-arguments	t7426-submodule-get-default-remote	get-default-remote fails with too many arguments	submodule	pass
+t7426-submodule-get-default-remote::setup-submodule-with-non-origin-default-remote-name	t7426-submodule-get-default-remote	setup submodule with non-origin default remote name	submodule	pass
+t7426-submodule-get-default-remote::get-default-remote-returns-non-origin-remote-name	t7426-submodule-get-default-remote	get-default-remote returns non-origin remote name	submodule	pass
+t7426-submodule-get-default-remote::get-default-remote-handles-submodule-with-multiple-remotes	t7426-submodule-get-default-remote	get-default-remote handles submodule with multiple remotes	submodule	pass
+t7426-submodule-get-default-remote::get-default-remote-handles-submodule-with-multiple-remotes-and-none-are-origin	t7426-submodule-get-default-remote	get-default-remote handles submodule with multiple remotes and none are origin	submodule	pass
+t7426-submodule-get-default-remote::setup-nested-submodule-with-non-origin-remote	t7426-submodule-get-default-remote	setup nested submodule with non-origin remote	submodule	pass
+t7426-submodule-get-default-remote::get-default-remote-works-with-nested-submodule	t7426-submodule-get-default-remote	get-default-remote works with nested submodule	submodule	pass
+t7426-submodule-get-default-remote::get-default-remote-works-with-submodule-that-has-no-remotes	t7426-submodule-get-default-remote	get-default-remote works with submodule that has no remotes	submodule	pass
 t7450-bad-git-dotfiles::setup	t7450-bad-git-dotfiles	setup	init	pass
 t7450-bad-git-dotfiles::check-names	t7450-bad-git-dotfiles	check names	init	pass
 t7450-bad-git-dotfiles::check-urls	t7450-bad-git-dotfiles	check urls	init	pass
@@ -16314,26 +16314,26 @@ t8020-last-modified::cannot-run-last-modified-on-two-commits	t8020-last-modified
 t8020-last-modified::last-modified-complains-about-unknown-arguments	t8020-last-modified	last-modified complains about unknown arguments	status	pass
 t8020-last-modified::last-modified-expects-commit-ish	t8020-last-modified	last-modified expects commit-ish	status	pass
 t9001-send-email::dump-aliases-must-be-used-alone	t9001-send-email	--dump-aliases must be used alone	send-email	pass
-t9002-column::setup	t9002-column	setup	column	pass
-t9002-column::never	t9002-column	never	column	pass
-t9002-column::always	t9002-column	always	column	pass
-t9002-column::nl	t9002-column	--nl	column	pass
-t9002-column::80-columns	t9002-column	80 columns	column	pass
-t9002-column::width-1	t9002-column	width = 1	column	pass
-t9002-column::20-columns	t9002-column	20 columns	column	pass
-t9002-column::20-columns-nodense	t9002-column	20 columns, nodense	column	pass
-t9002-column::20-columns-dense	t9002-column	20 columns, dense	column	pass
-t9002-column::20-columns-padding-2	t9002-column	20 columns, padding 2	column	pass
-t9002-column::20-columns-indented	t9002-column	20 columns, indented	column	pass
-t9002-column::20-columns-row-first	t9002-column	20 columns, row first	column	pass
-t9002-column::20-columns-row-first-nodense	t9002-column	20 columns, row first, nodense	column	pass
-t9002-column::20-columns-row-first-dense	t9002-column	20 columns, row first, dense	column	pass
-t9002-column::padding-must-be-non-negative	t9002-column	padding must be non-negative	column	pass
-t9003-help-autocorrect::setup	t9003-help-autocorrect	setup	help	pass
-t9003-help-autocorrect::autocorrect-showing-candidates	t9003-help-autocorrect	autocorrect showing candidates	help	pass
-t9003-help-autocorrect::autocorrect-running-commands	t9003-help-autocorrect	autocorrect running commands	help	pass
-t9003-help-autocorrect::autocorrect-can-be-declined-altogether	t9003-help-autocorrect	autocorrect can be declined altogether	help	pass
-t9003-help-autocorrect::autocorrect-works-in-work-tree-created-from-bare-repo	t9003-help-autocorrect	autocorrect works in work tree created from bare repo	help	pass
+t9002-column::setup	t9002-column	setup	column	partial
+t9002-column::never	t9002-column	never	column	partial
+t9002-column::always	t9002-column	always	column	partial
+t9002-column::nl	t9002-column	--nl	column	partial
+t9002-column::80-columns	t9002-column	80 columns	column	partial
+t9002-column::width-1	t9002-column	width = 1	column	partial
+t9002-column::20-columns	t9002-column	20 columns	column	partial
+t9002-column::20-columns-nodense	t9002-column	20 columns, nodense	column	partial
+t9002-column::20-columns-dense	t9002-column	20 columns, dense	column	partial
+t9002-column::20-columns-padding-2	t9002-column	20 columns, padding 2	column	partial
+t9002-column::20-columns-indented	t9002-column	20 columns, indented	column	partial
+t9002-column::20-columns-row-first	t9002-column	20 columns, row first	column	partial
+t9002-column::20-columns-row-first-nodense	t9002-column	20 columns, row first, nodense	column	partial
+t9002-column::20-columns-row-first-dense	t9002-column	20 columns, row first, dense	column	partial
+t9002-column::padding-must-be-non-negative	t9002-column	padding must be non-negative	column	partial
+t9003-help-autocorrect::setup	t9003-help-autocorrect	setup	help	partial
+t9003-help-autocorrect::autocorrect-showing-candidates	t9003-help-autocorrect	autocorrect showing candidates	help	partial
+t9003-help-autocorrect::autocorrect-running-commands	t9003-help-autocorrect	autocorrect running commands	help	partial
+t9003-help-autocorrect::autocorrect-can-be-declined-altogether	t9003-help-autocorrect	autocorrect can be declined altogether	help	partial
+t9003-help-autocorrect::autocorrect-works-in-work-tree-created-from-bare-repo	t9003-help-autocorrect	autocorrect works in work tree created from bare repo	help	partial
 t9100-git-svn-basic::git-svn-version-works-anywhere	t9100-git-svn-basic	git svn --version works anywhere	svn	pass
 t9100-git-svn-basic::git-svn-help-works-anywhere	t9100-git-svn-basic	git svn help works anywhere	svn	pass
 t9100-git-svn-basic::import-an-svn-revision-into-git	t9100-git-svn-basic	import an SVN revision into git	svn	pass
