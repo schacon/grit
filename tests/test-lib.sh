@@ -219,7 +219,8 @@ test_write_lines () {
 
 test_config () {
 	local key="$1" val="$2"
-	git config "$key" "$val"
+	git config "$key" "$val" &&
+	test_when_finished "git config --unset '$key'"
 }
 
 test_file_not_empty () {

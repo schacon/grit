@@ -559,7 +559,7 @@ test_expect_success 'prompt - bash color pc mode - branch name' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - detached head' '
+test_expect_success 'prompt - bash color pc mode - detached head' '
 	printf "BEFORE: (${c_red}\${__git_ps1_branch_name}${c_clear}):AFTER\\n(%s...)" $(git log -1 --format="%h" b1^) >expected &&
 	git checkout b1^ &&
 	test_when_finished "git checkout main" &&
