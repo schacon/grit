@@ -76,10 +76,38 @@ pub struct Args {
     /// Suppress optional lock on the index.
     #[arg(long = "no-optional-locks")]
     pub no_optional_locks: bool,
+
+    /// Show staged diff (use twice for unstaged diff too).
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
+    /// Show stash info.
+    #[arg(long = "show-stash")]
+    pub show_stash: bool,
+
+    /// Don't show stash info.
+    #[arg(long = "no-show-stash")]
+    pub no_show_stash: bool,
+
+    /// Ignore submodule changes.
+    #[arg(long = "ignore-submodules", value_name = "WHEN", num_args = 0..=1, default_missing_value = "all")]
+    pub ignore_submodules: Option<String>,
+
+    /// NUL-terminated output (implies porcelain).
+    #[arg(long = "no-renames")]
+    pub no_renames: bool,
+
+    /// Pathspec arguments.
+    #[arg(last = true)]
+    pub pathspec: Vec<String>,
 }
 
 /// Run the `status` command.
 pub fn run(mut args: Args) -> Result<()> {
+    // -z implies porcelain
+    if args.null_terminated && args.porcelain.is_none() {
+        args.porcelain = Some("v1".to_string());
+    }
     // In porcelain mode, always show the branch header.
     if args.porcelain.is_some() {
         args.branch = true;
@@ -92,6 +120,34 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let head = resolve_head(&repo.git_dir)?;
     let in_progress = detect_in_progress(&repo.git_dir);
+
+    // Load full config for status.displayCommentPrefix and advice.statusHints
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+
+    // Apply config-based overrides for status options
+    if let Some(val) = config.get("status.showUntrackedFiles") {
+        // Config only applies when the user didn't explicitly pass -u
+        if args.untracked == "normal" {
+            args.untracked = val;
+        }
+    }
+    if let Some(val) = config.get("status.short") {
+        if !args.short && (val == "true" || val == "yes" || val == "on" || val == "1") {
+            args.short = true;
+        }
+    }
+    if let Some(val) = config.get("status.branch") {
+        if !args.branch && (val == "true" || val == "yes" || val == "on" || val == "1") {
+            args.branch = true;
+        }
+    }
+
+    // Normalize untracked-files values: "false"/"0" → "no", "true"/"1" → "normal"
+    let untracked_mode = match args.untracked.as_str() {
+        "no" | "false" | "0" => "no",
+        "all" => "all",
+        _ => "normal",
+    };
 
     // Load index
     let index = match Index::load(&repo.index_path()) {
@@ -119,8 +175,9 @@ pub fn run(mut args: Args) -> Result<()> {
     let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
 
     // Untracked and ignored files
-    let show_all_untracked = args.untracked == "all";
-    let (untracked, ignored_files) = if args.untracked != "no" {
+    let show_all_untracked = untracked_mode == "all";
+    let hide_untracked = untracked_mode == "no";
+    let (untracked, ignored_files) = if !hide_untracked {
         collect_untracked_and_ignored(&repo, &index, work_tree, args.ignored, show_all_untracked)?
     } else if args.ignored {
         // Even with -u no, --ignored should show ignored files
@@ -149,13 +206,42 @@ pub fn run(mut args: Args) -> Result<()> {
             &mut out,
             &head,
             &repo,
+            &config,
             &args,
             &in_progress,
             &staged,
             &unstaged,
             &untracked,
             &ignored_files,
+            hide_untracked,
         )?;
+
+        // -v: append cached diff; -vv: also append working tree diff
+        if args.verbose >= 1 {
+            drop(out);
+            let exe = std::env::current_exe().unwrap_or_else(|_| "grit".into());
+            let mut cmd = std::process::Command::new(&exe);
+            cmd.arg("diff").arg("--cached");
+            let output = cmd.output();
+            if let Ok(o) = output {
+                let stdout2 = io::stdout();
+                let mut out2 = stdout2.lock();
+                out2.write_all(&o.stdout)?;
+            }
+
+            if args.verbose >= 2 {
+                let stdout3 = io::stdout();
+                let mut out3 = stdout3.lock();
+                writeln!(out3, "--------------------------------------------------")?;
+                writeln!(out3, "Changes not staged for commit:")?;
+                let mut cmd2 = std::process::Command::new(&exe);
+                cmd2.arg("diff");
+                let output2 = cmd2.output();
+                if let Ok(o) = output2 {
+                    out3.write_all(&o.stdout)?;
+                }
+            }
+        }
     }
 
     Ok(())
@@ -310,18 +396,51 @@ fn format_short(
     Ok(())
 }
 
+/// Helper: write a line with optional comment prefix.
+/// Git's comment prefix behavior:
+///   "# text" for normal text, "#" for empty lines, "#\tfile" for tab-indented lines.
+fn cpw(out: &mut impl Write, prefix: &str, line: &str) -> Result<()> {
+    if prefix.is_empty() {
+        writeln!(out, "{line}")?;
+    } else if line.is_empty() {
+        // Empty line: just "#" with no trailing space
+        writeln!(out, "{}", prefix.trim_end())?;
+    } else if line.starts_with('\t') {
+        // Tab-indented: "#\tfile" (no space between # and tab)
+        writeln!(out, "{}{line}", prefix.trim_end())?;
+    } else {
+        writeln!(out, "{prefix}{line}")?;
+    }
+    Ok(())
+}
+
 /// Long format (default).
 fn format_long(
     out: &mut impl Write,
     head: &HeadState,
     repo: &Repository,
+    config: &ConfigSet,
     args: &Args,
     in_progress: &[grit_lib::state::InProgressOperation],
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
     ignored_files: &[String],
+    hide_untracked: bool,
 ) -> Result<()> {
+    // Determine comment prefix
+    let comment_prefix = match config.get("status.displayCommentPrefix") {
+        Some(v) if v == "true" || v == "yes" || v == "on" || v == "1" => "# ",
+        _ => "",
+    };
+    let cp = comment_prefix;
+
+    // Determine if hints should be shown
+    let show_hints = match config.get("advice.statusHints") {
+        Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
+        _ => true,
+    };
+
     // Branch info
     match head {
         HeadState::Branch {
@@ -329,18 +448,31 @@ fn format_long(
             oid: Some(_),
             ..
         } => {
-            writeln!(out, "On branch {short_name}")?;
+            cpw(out, cp, &format!("On branch {short_name}"))?;
             if !args.no_ahead_behind {
                 if let Ok(Some((upstream, ahead, behind))) = compute_ahead_behind(repo, short_name) {
                     if ahead > 0 && behind > 0 {
-                        writeln!(out, "Your branch and '{}' have diverged,", upstream)?;
-                        writeln!(out, "and have {} and {} different commits each, respectively.", ahead, behind)?;
+                        cpw(out, cp, &format!("Your branch and '{}' have diverged,", upstream))?;
+                        cpw(out, cp, &format!("and have {} and {} different commits each, respectively.", ahead, behind))?;
+                        if show_hints {
+                            cpw(out, cp, "  (use \"git pull\" if you want to integrate the remote branch with yours)")?;
+                        }
+                        cpw(out, cp, "")?;
                     } else if ahead > 0 {
-                        writeln!(out, "Your branch is ahead of '{}' by {} commit{}.", upstream, ahead, if ahead == 1 { "" } else { "s" })?;
+                        cpw(out, cp, &format!("Your branch is ahead of '{}' by {} commit{}.", upstream, ahead, if ahead == 1 { "" } else { "s" }))?;
+                        if show_hints {
+                            cpw(out, cp, "  (use \"git push\" to publish your local commits)")?;
+                        }
+                        cpw(out, cp, "")?;
                     } else if behind > 0 {
-                        writeln!(out, "Your branch is behind '{}' by {} commit{}, and can be fast-forwarded.", upstream, behind, if behind == 1 { "" } else { "s" })?;
+                        cpw(out, cp, &format!("Your branch is behind '{}' by {} commit{}, and can be fast-forwarded.", upstream, behind, if behind == 1 { "" } else { "s" }))?;
+                        if show_hints {
+                            cpw(out, cp, "  (use \"git pull\" to update your local branch)")?;
+                        }
+                        cpw(out, cp, "")?;
                     } else {
-                        writeln!(out, "Your branch is up to date with '{}'.", upstream)?;
+                        cpw(out, cp, &format!("Your branch is up to date with '{}'.", upstream))?;
+                        cpw(out, cp, "")?;
                     }
                 }
             }
@@ -350,24 +482,25 @@ fn format_long(
             oid: None,
             ..
         } => {
-            writeln!(out, "On branch {short_name}")?;
-            writeln!(out)?;
-            writeln!(out, "No commits yet")?;
+            cpw(out, cp, &format!("On branch {short_name}"))?;
+            cpw(out, cp, "")?;
+            cpw(out, cp, "No commits yet")?;
+            cpw(out, cp, "")?;
         }
         HeadState::Detached { oid } => {
             let short = &oid.to_hex()[..7];
-            writeln!(out, "HEAD detached at {short}")?;
+            cpw(out, cp, &format!("HEAD detached at {short}"))?;
         }
         HeadState::Invalid => {
-            writeln!(out, "Not currently on any branch.")?;
+            cpw(out, cp, "Not currently on any branch.")?;
         }
     }
 
     // In-progress operations
     for op in in_progress {
-        writeln!(out)?;
-        writeln!(out, "You are currently {}.", op.description())?;
-        writeln!(out, "  ({})", op.hint())?;
+        cpw(out, cp, "")?;
+        cpw(out, cp, &format!("You are currently {}.", op.description()))?;
+        cpw(out, cp, &format!("  ({})", op.hint()))?;
     }
 
     // Track whether we've printed any section (to know if we need a separator)
@@ -376,8 +509,14 @@ fn format_long(
     // Staged changes
     if !staged.is_empty() {
         has_section = true;
-        writeln!(out, "Changes to be committed:")?;
-        writeln!(out, "  (use \"git restore --staged <file>...\" to unstage)")?;
+        cpw(out, cp, "Changes to be committed:")?;
+        if show_hints {
+            if head.oid().is_some() {
+                cpw(out, cp, "  (use \"git restore --staged <file>...\" to unstage)")?;
+            } else {
+                cpw(out, cp, "  (use \"git rm --cached <file>...\" to unstage)")?;
+            }
+        }
         for entry in staged {
             let label = match entry.status {
                 DiffStatus::Added => "new file",
@@ -387,9 +526,9 @@ fn format_long(
                 DiffStatus::TypeChanged => "typechange",
                 _ => "changed",
             };
-            writeln!(out, "\t{label}:   {}", entry.path())?;
+            cpw(out, cp, &format!("\t{label}:   {}", entry.path()))?;
         }
-        writeln!(out)?;
+        cpw(out, cp, "")?;
     }
 
     // Unstaged changes
@@ -399,15 +538,11 @@ fn format_long(
         } else {
             has_section = true;
         }
-        writeln!(out, "Changes not staged for commit:")?;
-        writeln!(
-            out,
-            "  (use \"git add <file>...\" to update what will be committed)"
-        )?;
-        writeln!(
-            out,
-            "  (use \"git restore <file>...\" to discard changes in working directory)"
-        )?;
+        cpw(out, cp, "Changes not staged for commit:")?;
+        if show_hints {
+            cpw(out, cp, "  (use \"git add <file>...\" to update what will be committed)")?;
+            cpw(out, cp, "  (use \"git restore <file>...\" to discard changes in working directory)")?;
+        }
         for entry in unstaged {
             let label = match entry.status {
                 DiffStatus::Deleted => "deleted",
@@ -415,9 +550,9 @@ fn format_long(
                 DiffStatus::TypeChanged => "typechange",
                 _ => "changed",
             };
-            writeln!(out, "\t{label}:   {}", entry.path())?;
+            cpw(out, cp, &format!("\t{label}:   {}", entry.path()))?;
         }
-        writeln!(out)?;
+        cpw(out, cp, "")?;
     }
 
     // Untracked files
@@ -427,15 +562,14 @@ fn format_long(
         } else {
             has_section = true;
         }
-        writeln!(out, "Untracked files:")?;
-        writeln!(
-            out,
-            "  (use \"git add <file>...\" to include in what will be committed)"
-        )?;
-        for path in untracked {
-            writeln!(out, "\t{path}")?;
+        cpw(out, cp, "Untracked files:")?;
+        if show_hints {
+            cpw(out, cp, "  (use \"git add <file>...\" to include in what will be committed)")?;
         }
-        writeln!(out)?;
+        for path in untracked {
+            cpw(out, cp, &format!("\t{path}"))?;
+        }
+        cpw(out, cp, "")?;
     }
 
     // Ignored files
@@ -443,44 +577,42 @@ fn format_long(
         if has_section {
             // blank line already printed after previous section
         }
-        writeln!(out, "Ignored files:")?;
-        writeln!(
-            out,
-            "  (use \"git add -f <file>...\" to include in what will be committed)"
-        )?;
-        for path in ignored_files {
-            writeln!(out, "\t{path}")?;
+        cpw(out, cp, "Ignored files:")?;
+        if show_hints {
+            cpw(out, cp, "  (use \"git add -f <file>...\" to include in what will be committed)")?;
         }
-        writeln!(out)?;
+        for path in ignored_files {
+            cpw(out, cp, &format!("\t{path}"))?;
+        }
+        cpw(out, cp, "")?;
+    }
+
+    // "Untracked files not listed" message when -uno is used
+    if hide_untracked {
+        if show_hints {
+            cpw(out, cp, "Untracked files not listed (use -u option to show untracked files)")?;
+        } else {
+            cpw(out, cp, "Untracked files not listed")?;
+        }
     }
 
     // Footer messages
     if staged.is_empty() && unstaged.is_empty() && untracked.is_empty() {
-        if !ignored_files.is_empty() {
-            writeln!(
-                out,
-                "nothing to commit but untracked files present (use \"git add\" to track)"
-            )?;
+        if hide_untracked {
+            // When hiding untracked, don't say "working tree clean"
+        } else if !ignored_files.is_empty() {
+            cpw(out, cp, "nothing to commit but untracked files present (use \"git add\" to track)")?;
         } else {
-            writeln!(out, "nothing to commit, working tree clean")?;
+            cpw(out, cp, "nothing to commit, working tree clean")?;
         }
     } else if !staged.is_empty() && unstaged.is_empty() && untracked.is_empty() {
         // Only staged changes — no footer needed (git doesn't print one)
     } else if staged.is_empty() && !unstaged.is_empty() && untracked.is_empty() {
-        writeln!(
-            out,
-            "no changes added to commit (use \"git add\" and/or \"git commit -a\")"
-        )?;
+        cpw(out, cp, "no changes added to commit (use \"git add\" and/or \"git commit -a\")")?;
     } else if staged.is_empty() && unstaged.is_empty() && !untracked.is_empty() {
-        writeln!(
-            out,
-            "nothing added to commit but untracked files present (use \"git add\" to track)"
-        )?;
+        cpw(out, cp, "nothing added to commit but untracked files present (use \"git add\" to track)")?;
     } else if staged.is_empty() {
-        writeln!(
-            out,
-            "no changes added to commit (use \"git add\" and/or \"git commit -a\")"
-        )?;
+        cpw(out, cp, "no changes added to commit (use \"git add\" and/or \"git commit -a\")")?;
     }
 
     Ok(())
