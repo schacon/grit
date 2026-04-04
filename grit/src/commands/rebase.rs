@@ -24,6 +24,7 @@ use grit_lib::merge_file::{merge, MergeInput};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
+use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
@@ -218,8 +219,27 @@ fn do_rebase(args: Args) -> Result<()> {
     // Collect commits to replay: walk from HEAD back, stopping when we hit upstream_oid
     let commits = collect_commits_to_replay(&repo, head_oid, upstream_oid)?;
 
-    if commits.is_empty() && !args.no_ff {
-        eprintln!("Current branch is up to date.");
+    if commits.is_empty() {
+        if !args.no_ff {
+            eprintln!("Current branch is up to date.");
+            return Ok(());
+        }
+        // --no-ff with no commits: record rebase completion in reflog
+        let _head_name = match &head {
+            HeadState::Branch { refname, .. } => refname.clone(),
+            _ => "detached HEAD".to_string(),
+        };
+        // Write reflog entry for the rebase
+        if let HeadState::Branch { refname, .. } = &head {
+            let msg = format!("rebase (no-ff): checkout {}", onto_oid.to_hex());
+            let ident = "grit <grit> 0 +0000";
+            let _ = append_reflog(
+                git_dir, refname, &head_oid, &head_oid, ident, &msg,
+            );
+            let _ = append_reflog(
+                git_dir, "HEAD", &head_oid, &head_oid, ident, &msg,
+            );
+        }
         return Ok(());
     }
 
