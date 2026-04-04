@@ -24,6 +24,7 @@ test_expect_success 'setup: expected output' '
 	cat >expected1 <<-\EOF &&
 	.bin/git
 	.bin/grit
+	.bin/scalar
 	expected1
 	expected2
 	output

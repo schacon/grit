@@ -72,7 +72,7 @@ test_expect_success 'update-ref with old value verification' '
 
 test_expect_success 'delete ref with old value' '
 	OID=$(git rev-parse test-branch) &&
-	git checkout main &&
+	git checkout -f main &&
 	git update-ref -d refs/heads/test-branch "$OID" &&
 	test_must_fail git rev-parse refs/heads/test-branch --
 '

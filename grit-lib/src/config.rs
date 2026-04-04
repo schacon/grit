@@ -559,13 +559,22 @@ impl ConfigFile {
             return self.set(key, value);
         }
 
-        // Update only the last matching entry's value, keeping all others intact
+        // Update the last matching entry with the new value, remove all others
         let last_match = *matching_indices.last().unwrap();
 
         // Update the last matching entry's line with the new value
         let last_line_idx = self.entries[last_match].line - 1;
         self.raw_lines[last_line_idx] = format!("\t{} = {}", var_lower, escape_value(value));
         self.entries[last_match].value = Some(value.to_owned());
+
+        // Remove all other matching entries (iterate in reverse to preserve indices)
+        for &idx in matching_indices.iter().rev() {
+            if idx == last_match {
+                continue;
+            }
+            let line_idx = self.entries[idx].line - 1;
+            self.raw_lines.remove(line_idx);
+        }
 
         // Re-parse after modifications
         let content = self.raw_lines.join("\n");

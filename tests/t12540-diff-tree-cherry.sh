@@ -191,10 +191,17 @@ test_expect_success 'cherry -v: matches git' '
 
 # ---- cherry after cherry-picking ----
 
+test_expect_success 'setup: advance master so cherry-pick creates a new commit' '
+	(cd repo &&
+	 "$REAL_GIT" checkout master &&
+	 echo "master-only" >master-only.txt &&
+	 "$REAL_GIT" add master-only.txt &&
+	 "$REAL_GIT" commit -m "master diverges")
+'
+
 test_expect_success 'setup: cherry-pick one commit to master' '
 	(cd repo &&
 	 feature_first=$("$REAL_GIT" rev-list master..feature | tail -1) &&
-	 "$REAL_GIT" checkout master &&
 	 "$REAL_GIT" cherry-pick "$feature_first")
 '
 

@@ -613,9 +613,13 @@ fn cmd_unset(
                     std::process::exit(5);
                 }
             } else {
-                // --unset (single or multi): remove all matching entries
+                // --unset (single): fail if multiple values exist
                 let count = cfg.count(&unset_args.key)?;
                 if count == 0 {
+                    std::process::exit(5);
+                }
+                if count > 1 {
+                    eprintln!("warning: {}: has multiple values", unset_args.key);
                     std::process::exit(5);
                 }
                 let removed = cfg.unset_matching(&unset_args.key, None)?;
@@ -1099,7 +1103,7 @@ fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
 
     if args.type_bool || type_name == Some("bool") {
         match parse_bool(val) {
-            Ok(_) => return Ok(val.to_owned()),
+            Ok(b) => return Ok(if b { "true" } else { "false" }.to_owned()),
             Err(e) => bail!("{}", e),
         }
     }

@@ -23,6 +23,7 @@ test_expect_success 'git ls-files without path restriction.' '
 	-foo
 	.bin/git
 	.bin/grit
+	.bin/scalar
 	output
 	path0
 	EOF
@@ -64,6 +65,7 @@ test_expect_success 'git ls-files with no path restriction.' '
 	-foo
 	.bin/git
 	.bin/grit
+	.bin/scalar
 	output
 	path0
 	EOF
