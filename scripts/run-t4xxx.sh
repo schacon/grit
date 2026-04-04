@@ -3,7 +3,7 @@
 set -eu
 
 REPO=/home/hasi/grit-GG
-GRIT_BIN=$REPO/target/debug/grit
+GRIT_BIN=$REPO/target/release/grit
 RESULTS=/tmp/grit-t4xxx-results
 WORKDIR=/tmp/grit-t4xxx-workdir
 
@@ -50,7 +50,7 @@ X=''
 GIT_TEST_TEMPLATE_DIR='$WORKDIR/templates/blt'
 GIT_TEST_GITPERLLIB=''
 GIT_TEST_CMP_USE_COPIED_CONTEXT=
-GIT_TEST_INDEX_VERSION=2
+GIT_TEST_INDEX_VERSION=4
 EOF
 
 cat > "$WORKDIR/t/helper/test-tool" <<'TOOL'
