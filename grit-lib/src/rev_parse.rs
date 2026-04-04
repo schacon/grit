@@ -250,6 +250,14 @@ fn parse_branch_tracking(config: &str, branch: &str) -> Option<(String, String)>
 /// Returns [`Error::ObjectNotFound`] or [`Error::InvalidRef`] when resolution
 /// fails.
 pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    // Handle `:/message` early — it can contain any characters so must
+    // not be confused with peel/nav syntax.
+    if let Some(pattern) = spec.strip_prefix(":/") {
+        if !pattern.is_empty() {
+            return resolve_commit_message_search(repo, pattern);
+        }
+    }
+
     let (base_with_nav, peel) = parse_peel_suffix(spec);
     let (base, nav_steps) = parse_nav_steps(base_with_nav);
     let mut oid = resolve_base(repo, base)?;
@@ -778,4 +786,52 @@ fn component_to_text(component: Component<'_>) -> Option<String> {
 
 fn os_to_string(text: &OsStr) -> String {
     text.to_string_lossy().into_owned()
+}
+
+/// Search commit messages from HEAD backwards for a commit whose message
+/// contains `pattern`.  Returns the first matching commit OID.
+fn resolve_commit_message_search(
+    repo: &crate::repo::Repository,
+    pattern: &str,
+) -> Result<ObjectId> {
+    use crate::state::resolve_head;
+    let head = resolve_head(&repo.git_dir).map_err(|_| Error::ObjectNotFound(format!(":/{pattern}")))?;
+    let start_oid = match head.oid() {
+        Some(oid) => *oid,
+        None => return Err(Error::ObjectNotFound(format!(":/{pattern}"))),
+    };
+
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(start_oid);
+    visited.insert(start_oid);
+
+    while let Some(oid) = queue.pop_front() {
+        let obj = match repo.odb.read(&oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        // Skip non-commit objects
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = match parse_commit(&obj.data) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // Check if message contains pattern
+        if commit.message.contains(pattern) {
+            return Ok(oid);
+        }
+
+        // Enqueue parents
+        for parent in &commit.parents {
+            if visited.insert(*parent) {
+                queue.push_back(*parent);
+            }
+        }
+    }
+
+    Err(Error::ObjectNotFound(format!(":/{pattern}")))
 }
