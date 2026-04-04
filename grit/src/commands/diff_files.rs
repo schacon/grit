@@ -153,15 +153,17 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         }
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
-                "--raw" => format = OutputFormat::Raw,
-                "-p" | "--patch" | "-u" => format = OutputFormat::Patch,
-                "--stat" => format = OutputFormat::Stat,
-                "--numstat" => format = OutputFormat::NumStat,
-                "--name-only" => format = OutputFormat::NameOnly,
-                "--name-status" => format = OutputFormat::NameStatus,
+                "--raw" => { format = OutputFormat::Raw; suppress_diff = false; }
+                "-p" | "--patch" | "-u" => { format = OutputFormat::Patch; suppress_diff = false; }
+                "--stat" => { format = OutputFormat::Stat; suppress_diff = false; }
+                "--numstat" => { format = OutputFormat::NumStat; suppress_diff = false; }
+                "--name-only" => { format = OutputFormat::NameOnly; suppress_diff = false; }
+                "--name-status" => { format = OutputFormat::NameStatus; suppress_diff = false; }
                 "--exit-code" => exit_code = true,
                 "-q" | "--quiet" => quiet = true,
                 "-s" | "--no-patch" => suppress_diff = true,
+                "--patch-with-raw" => { format = OutputFormat::Patch; suppress_diff = false; } // TODO: also show raw
+                "--patch-with-stat" => { format = OutputFormat::Patch; suppress_diff = false; } // TODO: also show stat
                 "-0" => stage = 0,
                 "-1" => stage = 1,
                 "-2" => stage = 2,
@@ -174,6 +176,12 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         .with_context(|| format!("invalid --abbrev value: `{value}`"))?;
                     abbrev = Some(parsed);
                 }
+                // Silently accept diff options we don't fully implement yet
+                "-w" | "--ignore-all-space" | "-b" | "--ignore-space-change"
+                | "--ignore-space-at-eol" | "--ignore-blank-lines"
+                | "--diff-filter" | "--full-index" | "--no-ext-diff" => {}
+                _ if arg.starts_with("--diff-filter=") || arg.starts_with("-G")
+                    || arg.starts_with("-S") || arg.starts_with("-O") => {}
                 _ => bail!("unsupported option: {arg}"),
             }
             idx += 1;
@@ -442,17 +450,27 @@ fn print_patch(change: &Change, repo: &Repository, work_tree: &Path) -> Result<(
         format!("b/{path}")
     };
 
-    println!(
-        "diff --git a/{path} b/{path}\n--- {old_label}\n+++ {new_label}{}",
-        if old_content == new_content {
-            String::new()
-        } else {
-            let patch = unified_diff(&old_content, &new_content, path, path, 3);
-            // unified_diff already includes the --- / +++ lines; strip them.
-            let body: String = patch.lines().skip(2).map(|l| format!("\n{l}")).collect();
-            body
-        }
-    );
+    // Build mode header lines
+    let mut header = format!("diff --git a/{path} b/{path}");
+    if change.status == 'D' {
+        header.push_str(&format!("\ndeleted file mode {:06o}", change.old_mode));
+    } else if change.status == 'A' {
+        header.push_str(&format!("\nnew file mode {:06o}", change.new_mode));
+    } else if change.old_mode != change.new_mode {
+        header.push_str(&format!("\nold mode {:06o}\nnew mode {:06o}", change.old_mode, change.new_mode));
+    }
+
+    if old_content == new_content && change.old_mode != change.new_mode {
+        // Mode-only change, no content diff needed
+        println!("{header}");
+    } else if old_content != new_content {
+        let patch = unified_diff(&old_content, &new_content, path, path, 3);
+        // unified_diff already includes the --- / +++ lines; strip them.
+        let body: String = patch.lines().skip(2).map(|l| format!("\n{l}")).collect();
+        println!("{header}\n--- {old_label}\n+++ {new_label}{body}");
+    } else {
+        println!("{header}\n--- {old_label}\n+++ {new_label}");
+    }
     Ok(())
 }
 
