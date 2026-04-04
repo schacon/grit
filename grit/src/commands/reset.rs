@@ -312,7 +312,7 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
     if mode == ResetMode::Hard || mode == ResetMode::Keep {
         // Hard/Keep: also update working tree.
         if repo.work_tree.is_some() {
-            checkout_index_to_worktree(repo, &old_index, &new_index)?;
+            checkout_index_to_worktree(repo, &old_index, &mut new_index)?;
         }
         if !quiet {
             print_head_message(repo, &target_oid)?;
@@ -627,7 +627,7 @@ fn tree_to_flat_entries(
 fn checkout_index_to_worktree(
     repo: &Repository,
     old_index: &Index,
-    new_index: &Index,
+    new_index: &mut Index,
 ) -> Result<()> {
     let work_tree = match &repo.work_tree {
         Some(p) => p.clone(),
@@ -660,7 +660,7 @@ fn checkout_index_to_worktree(
     }
 
     // Write all stage-0 entries from the new index.
-    for entry in &new_index.entries {
+    for entry in &mut new_index.entries {
         if entry.stage() != 0 {
             continue;
         }
@@ -698,6 +698,22 @@ fn checkout_index_to_worktree(
                 perms.set_mode(0o755);
                 std::fs::set_permissions(&abs_path, perms)?;
             }
+        }
+
+        // Refresh stat data in the index entry so that subsequent
+        // `stat_matches` calls see up-to-date values (prevents
+        // spurious re-staging by `git add`).
+        if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
+            use std::os::unix::fs::MetadataExt;
+            entry.ctime_sec = meta.ctime() as u32;
+            entry.ctime_nsec = meta.ctime_nsec() as u32;
+            entry.mtime_sec = meta.mtime() as u32;
+            entry.mtime_nsec = meta.mtime_nsec() as u32;
+            entry.dev = meta.dev() as u32;
+            entry.ino = meta.ino() as u32;
+            entry.uid = meta.uid();
+            entry.gid = meta.gid();
+            entry.size = meta.len() as u32;
         }
     }
 
