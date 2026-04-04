@@ -1,55 +1,35 @@
 #!/bin/sh
-# Ported subset from git/t/t1008-read-tree-overlay.sh.
 
-test_description='grit read-tree multi-tree overlay without merge'
+test_description='test multi-tree read-tree without merging'
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-read-tree.sh
 
-test_expect_success 'setup three trees and refs' '
-	grit init repo &&
-	cd repo &&
+test_expect_success setup '
 	echo one >a &&
-	grit update-index --add a &&
-	tree_initial=$(grit write-tree) &&
-	commit_initial=$(echo initial | grit commit-tree "$tree_initial") &&
-	grit update-ref refs/heads/initial "$commit_initial" &&
+	git add a &&
+	git commit -m initial &&
+	git tag initial &&
 	echo two >b &&
-	grit update-index --add b &&
-	tree_main=$(grit write-tree) &&
-	commit_main=$(echo main | grit commit-tree "$tree_main" -p "$commit_initial") &&
-	grit update-ref refs/heads/main "$commit_main" &&
+	git add b &&
+	git commit -m second &&
+	git checkout -b side initial &&
 	echo three >a &&
-	rm -f b &&
 	mkdir b &&
 	echo four >b/c &&
-	grit update-index --force-remove b &&
-	grit update-index --add a b/c &&
-	tree_side=$(grit write-tree) &&
-	commit_side=$(echo side | grit commit-tree "$tree_side" -p "$commit_initial") &&
-	grit update-ref refs/heads/side "$commit_side"
+	git add b/c &&
+	git commit -m third
 '
 
-test_expect_success 'overlay initial main side yields expected paths' '
-	cd repo &&
-	rm -f .git/index &&
-	grit read-tree initial main side &&
-	grit ls-files >actual &&
-	cat >expect <<-\EOF &&
-	a
-	b/c
-	EOF
-	test_cmp expect actual
-'
-
-
-test_expect_success 'single-tree read-tree into fresh index has just one file' '
-	cd repo &&
-	rm -f .git/index &&
-	grit read-tree initial &&
-	grit ls-files >actual &&
-	echo a >expect &&
+test_expect_success 'multi-read' '
+	read_tree_must_succeed initial main side &&
+	test_write_lines a b/c >expect &&
+	git ls-files >actual &&
 	test_cmp expect actual
 '
 
 test_done
+

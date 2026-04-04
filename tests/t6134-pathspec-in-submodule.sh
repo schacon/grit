@@ -1,38 +1,32 @@
 #!/bin/sh
-#
-# Ported from git/t/t6134-pathspec-in-submodule.sh
-# Tests for pathspec handling in submodules
-#
 
 test_description='test case exclude pathspec'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-REAL_GIT="/usr/bin/git"
-
 test_expect_success 'setup a submodule' '
-	git init main-repo &&
-	cd main-repo &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo content >file &&
-	git add file &&
-	git commit -m initial &&
 	test_create_repo pretzel &&
 	: >pretzel/a &&
-	"$REAL_GIT" -C pretzel add a &&
-	"$REAL_GIT" -C pretzel commit -m "add a file" -- a &&
-	"$REAL_GIT" -c protocol.file.allow=always submodule add ./pretzel sub &&
-	"$REAL_GIT" commit -a -m "add submodule" &&
-	"$REAL_GIT" submodule deinit --all
+	git -C pretzel add a &&
+	git -C pretzel commit -m "add a file" -- a &&
+	git -c protocol.file.allow=always submodule add ./pretzel sub &&
+	git commit -a -m "add submodule" &&
+	git submodule deinit --all
 '
 
+cat <<EOF >expect
+fatal: Pathspec 'sub/a' is in submodule 'sub'
+EOF
+
 test_expect_success 'error message for path inside submodule' '
-	cd main-repo &&
 	echo a >sub/a &&
 	test_must_fail git add sub/a 2>actual &&
-	grep "in submodule" actual
+	test_cmp expect actual
+'
+
+test_expect_success 'error message for path inside submodule from within submodule' '
+	test_must_fail git -C sub add . 2>actual &&
+	test_grep "in unpopulated submodule" actual
 '
 
 test_done

@@ -1,267 +1,213 @@
 #!/bin/sh
-# Tests for tag verification (without GPG): tag creation, structure,
-# cat-file inspection, mktag validation, and tag properties.
 
-test_description='tag verification (basic checks, no GPG)'
+test_description='signed tag tests'
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY/lib-gpg.sh"
 
-# ── Setup ────────────────────────────────────────────────────────────────────
-
-test_expect_success 'setup repository with commits' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Tag Tester" &&
-	git config user.email "tag@test.com" &&
-	echo "first" >file.txt &&
-	git add file.txt &&
-	git commit -m "first commit" &&
-	echo "second" >>file.txt &&
-	git add file.txt &&
-	git commit -m "second commit"
+test_expect_success GPG 'verify-tag does not crash with -h' '
+	test_expect_code 129 git verify-tag -h >usage &&
+	test_grep "[Uu]sage: git verify-tag " usage &&
+	test_expect_code 129 nongit git verify-tag -h >usage &&
+	test_grep "[Uu]sage: git verify-tag " usage
 '
 
-# ── Lightweight tag structure ───────────────────────────────────────────────
+test_expect_success GPG 'create signed tags' '
+	echo 1 >file && git add file &&
+	test_tick && git commit -m initial &&
+	git tag -s -m initial initial &&
+	git branch side &&
 
-test_expect_success 'lightweight tag points directly to commit' '
-	cd repo &&
-	git tag v1.0 &&
-	tag_oid=$(git rev-parse v1.0) &&
-	head_oid=$(git rev-parse HEAD) &&
-	test "$tag_oid" = "$head_oid"
+	echo 2 >file && test_tick && git commit -a -m second &&
+	git tag -s -m second second &&
+
+	git checkout side &&
+	echo 3 >elif && git add elif &&
+	test_tick && git commit -m "third on side" &&
+
+	git checkout main &&
+	test_tick && git merge -S side &&
+	git tag -s -m merge merge &&
+
+	echo 4 >file && test_tick && git commit -a -S -m "fourth unsigned" &&
+	git tag -a -m fourth-unsigned fourth-unsigned &&
+
+	test_tick && git commit --amend -S -m "fourth signed" &&
+	git tag -s -m fourth fourth-signed &&
+
+	echo 5 >file && test_tick && git commit -a -m "fifth" &&
+	git tag fifth-unsigned &&
+
+	git config commit.gpgsign true &&
+	echo 6 >file && test_tick && git commit -a -m "sixth" &&
+	git tag -a -m sixth sixth-unsigned &&
+
+	test_tick && git rebase -f HEAD^^ && git tag -s -m 6th sixth-signed HEAD^ &&
+	git tag -m seventh -s seventh-signed &&
+
+	echo 8 >file && test_tick && git commit -a -m eighth &&
+	git tag -uB7227189 -m eighth eighth-signed-alt
 '
 
-test_expect_success 'lightweight tag type via rev-parse is commit' '
-	cd repo &&
-	type=$(git cat-file -t v1.0) &&
-	test "$type" = "commit"
+test_expect_success GPGSM 'create signed tags x509 ' '
+	test_config gpg.format x509 &&
+	test_config user.signingkey $GIT_COMMITTER_EMAIL &&
+	echo 9 >file && test_tick && git commit -a -m "ninth gpgsm-signed" &&
+	git tag -s -m ninth ninth-signed-x509
 '
 
-test_expect_success 'show-ref lists lightweight tag' '
-	cd repo &&
-	git show-ref --verify refs/tags/v1.0 >actual &&
-	test_line_count = 1 actual
+test_expect_success GPG 'verify and show signatures' '
+	(
+		for tag in initial second merge fourth-signed sixth-signed seventh-signed
+		do
+			git verify-tag $tag 2>actual &&
+			grep "Good signature from" actual &&
+			! grep "BAD signature from" actual &&
+			echo $tag OK || exit 1
+		done
+	) &&
+	(
+		for tag in fourth-unsigned fifth-unsigned sixth-unsigned
+		do
+			test_must_fail git verify-tag $tag 2>actual &&
+			! grep "Good signature from" actual &&
+			! grep "BAD signature from" actual &&
+			echo $tag OK || exit 1
+		done
+	) &&
+	(
+		for tag in eighth-signed-alt
+		do
+			git verify-tag $tag 2>actual &&
+			grep "Good signature from" actual &&
+			! grep "BAD signature from" actual &&
+			grep "not certified" actual &&
+			echo $tag OK || exit 1
+		done
+	)
 '
 
-test_expect_success 'show-ref OID matches HEAD for lightweight tag' '
-	cd repo &&
-	ref_oid=$(git show-ref --verify refs/tags/v1.0 | cut -d" " -f1) &&
-	head_oid=$(git rev-parse HEAD) &&
-	test "$ref_oid" = "$head_oid"
+test_expect_success GPGSM 'verify and show signatures x509' '
+	git verify-tag ninth-signed-x509 2>actual &&
+	grep "Good signature from" actual &&
+	! grep "BAD signature from" actual &&
+	echo ninth-signed-x509 OK
 '
 
-# ── Annotated tag structure ─────────────────────────────────────────────────
-
-test_expect_success 'annotated tag creates a tag object' '
-	cd repo &&
-	git tag -a -m "Release 2.0" v2.0 &&
-	type=$(git cat-file -t v2.0) &&
-	test "$type" = "tag"
+test_expect_success GPGSM 'verify and show signatures x509 with low minTrustLevel' '
+	test_config gpg.minTrustLevel undefined &&
+	git verify-tag ninth-signed-x509 2>actual &&
+	grep "Good signature from" actual &&
+	! grep "BAD signature from" actual &&
+	echo ninth-signed-x509 OK
 '
 
-test_expect_success 'annotated tag object has correct object field' '
-	cd repo &&
-	git cat-file tag v2.0 >raw &&
-	head_oid=$(git rev-parse HEAD) &&
-	grep "^object $head_oid$" raw
+test_expect_success GPGSM 'verify and show signatures x509 with matching minTrustLevel' '
+	test_config gpg.minTrustLevel fully &&
+	git verify-tag ninth-signed-x509 2>actual &&
+	grep "Good signature from" actual &&
+	! grep "BAD signature from" actual &&
+	echo ninth-signed-x509 OK
 '
 
-test_expect_success 'annotated tag object has type commit' '
-	cd repo &&
-	git cat-file tag v2.0 >raw &&
-	grep "^type commit$" raw
+test_expect_success GPGSM 'verify and show signatures x509 with high minTrustLevel' '
+	test_config gpg.minTrustLevel ultimate &&
+	test_must_fail git verify-tag ninth-signed-x509 2>actual &&
+	grep "Good signature from" actual &&
+	! grep "BAD signature from" actual &&
+	echo ninth-signed-x509 OK
 '
 
-test_expect_success 'annotated tag object has tag name' '
-	cd repo &&
-	git cat-file tag v2.0 >raw &&
-	grep "^tag v2.0$" raw
+test_expect_success GPG 'detect fudged signature' '
+	git cat-file tag seventh-signed >raw &&
+	sed -e "/^tag / s/seventh/7th-forged/" raw >forged1 &&
+	git hash-object -w -t tag forged1 >forged1.tag &&
+	test_must_fail git verify-tag $(cat forged1.tag) 2>actual1 &&
+	grep "BAD signature from" actual1 &&
+	! grep "Good signature from" actual1
 '
 
-test_expect_success 'annotated tag object has tagger line' '
-	cd repo &&
-	git cat-file tag v2.0 >raw &&
-	grep "^tagger C O Mitter <committer@example.com>" raw
+test_expect_success GPG 'verify signatures with --raw' '
+	(
+		for tag in initial second merge fourth-signed sixth-signed seventh-signed
+		do
+			git verify-tag --raw $tag 2>actual &&
+			grep "GOODSIG" actual &&
+			! grep "BADSIG" actual &&
+			echo $tag OK || exit 1
+		done
+	) &&
+	(
+		for tag in fourth-unsigned fifth-unsigned sixth-unsigned
+		do
+			test_must_fail git verify-tag --raw $tag 2>actual &&
+			! grep "GOODSIG" actual &&
+			! grep "BADSIG" actual &&
+			echo $tag OK || exit 1
+		done
+	) &&
+	(
+		for tag in eighth-signed-alt
+		do
+			git verify-tag --raw $tag 2>actual &&
+			grep "GOODSIG" actual &&
+			! grep "BADSIG" actual &&
+			grep "TRUST_UNDEFINED" actual &&
+			echo $tag OK || exit 1
+		done
+	)
 '
 
-test_expect_success 'annotated tag object has message' '
-	cd repo &&
-	git cat-file tag v2.0 >raw &&
-	grep "Release 2.0" raw
+test_expect_success GPGSM 'verify signatures with --raw x509' '
+	git verify-tag --raw ninth-signed-x509 2>actual &&
+	grep "GOODSIG" actual &&
+	! grep "BADSIG" actual &&
+	echo ninth-signed-x509 OK
 '
 
-test_expect_success 'cat-file -s on annotated tag returns nonzero size' '
-	cd repo &&
-	size=$(git cat-file -s v2.0) &&
-	test "$size" -gt 0
+test_expect_success GPG 'verify multiple tags' '
+	tags="fourth-signed sixth-signed seventh-signed" &&
+	for i in $tags
+	do
+		git verify-tag -v --raw $i || return 1
+	done >expect.stdout 2>expect.stderr.1 &&
+	grep "^.GNUPG:." <expect.stderr.1 >expect.stderr &&
+	git verify-tag -v --raw $tags >actual.stdout 2>actual.stderr.1 &&
+	grep "^.GNUPG:." <actual.stderr.1 >actual.stderr &&
+	test_cmp expect.stdout actual.stdout &&
+	test_cmp expect.stderr actual.stderr
 '
 
-# ── Tag on specific commit ─────────────────────────────────────────────────
-
-test_expect_success 'tag on specific earlier commit' '
-	cd repo &&
-	first_oid=$(git rev-parse HEAD~1) &&
-	git tag v0.1 "$first_oid" &&
-	tag_oid=$(git rev-parse v0.1) &&
-	test "$tag_oid" = "$first_oid"
+test_expect_success GPGSM 'verify multiple tags x509' '
+	tags="seventh-signed ninth-signed-x509" &&
+	for i in $tags
+	do
+		git verify-tag -v --raw $i || return 1
+	done >expect.stdout 2>expect.stderr.1 &&
+	grep "^.GNUPG:." <expect.stderr.1 >expect.stderr &&
+	git verify-tag -v --raw $tags >actual.stdout 2>actual.stderr.1 &&
+	grep "^.GNUPG:." <actual.stderr.1 >actual.stderr &&
+	test_cmp expect.stdout actual.stdout &&
+	test_cmp expect.stderr actual.stderr
 '
 
-test_expect_success 'annotated tag on earlier commit references correct object' '
-	cd repo &&
-	first_oid=$(git rev-parse HEAD~1) &&
-	git tag -a -m "Old release" v0.1a "$first_oid" &&
-	git cat-file tag v0.1a >raw &&
-	grep "^object $first_oid$" raw
-'
-
-# ── mktag validates tag structure ───────────────────────────────────────────
-
-test_expect_success 'mktag accepts well-formed tag' '
-	cd repo &&
-	head_oid=$(git rev-parse HEAD) &&
-	cat >tag-input <<-EOF &&
-	object $head_oid
-	type commit
-	tag test-mktag
-	tagger Test <test@test.com> 1234567890 +0000
-
-	mktag test message
+test_expect_success GPG 'verifying tag with --format' '
+	cat >expect <<-\EOF &&
+	tagname : fourth-signed
 	EOF
-	oid=$(git mktag <tag-input) &&
-	test -n "$oid" &&
-	type=$(git cat-file -t "$oid") &&
-	test "$type" = "tag"
-'
-
-test_expect_success 'mktag rejects missing object line' '
-	cd repo &&
-	cat >bad-tag <<-EOF &&
-	type commit
-	tag bad-tag
-	tagger Test <test@test.com> 1234567890 +0000
-
-	bad
-	EOF
-	test_must_fail git mktag <bad-tag
-'
-
-test_expect_success 'mktag rejects missing type line' '
-	cd repo &&
-	head_oid=$(git rev-parse HEAD) &&
-	cat >bad-tag <<-EOF &&
-	object $head_oid
-	tag bad-tag
-	tagger Test <test@test.com> 1234567890 +0000
-
-	bad
-	EOF
-	test_must_fail git mktag <bad-tag
-'
-
-test_expect_success 'mktag rejects missing tag name' '
-	cd repo &&
-	head_oid=$(git rev-parse HEAD) &&
-	cat >bad-tag <<-EOF &&
-	object $head_oid
-	type commit
-	tagger Test <test@test.com> 1234567890 +0000
-
-	bad
-	EOF
-	test_must_fail git mktag <bad-tag
-'
-
-test_expect_success 'mktag rejects invalid object hash' '
-	cd repo &&
-	cat >bad-tag <<-EOF &&
-	object 0000000000000000000000000000000000000000
-	type commit
-	tag bad-hash
-	tagger Test <test@test.com> 1234567890 +0000
-
-	bad hash
-	EOF
-	test_must_fail git mktag <bad-tag
-'
-
-# ── Tag deletion ────────────────────────────────────────────────────────────
-
-test_expect_success 'delete lightweight tag' '
-	cd repo &&
-	git tag delete-me &&
-	git tag -d delete-me &&
-	! git show-ref --verify refs/tags/delete-me 2>/dev/null
-'
-
-test_expect_success 'delete annotated tag' '
-	cd repo &&
-	git tag -a -m "will delete" delete-anno &&
-	git tag -d delete-anno &&
-	! git show-ref --verify refs/tags/delete-anno 2>/dev/null
-'
-
-# ── Tag listing and filtering ──────────────────────────────────────────────
-
-test_expect_success 'tag -l lists all tags' '
-	cd repo &&
-	git tag -l >actual &&
-	grep v1.0 actual &&
-	grep v2.0 actual &&
-	grep v0.1 actual
-'
-
-test_expect_success 'tag -l with pattern filters' '
-	cd repo &&
-	git tag -l "v1*" >actual &&
-	echo "v1.0" >expect &&
+	git verify-tag --format="tagname : %(tag)" "fourth-signed" >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'tag -l with v2* pattern' '
-	cd repo &&
-	git tag -l "v2*" >actual &&
-	echo "v2.0" >expect &&
-	test_cmp expect actual
+test_expect_success GPG 'verifying tag with --format="%(rest)" must fail' '
+	test_must_fail git verify-tag --format="%(rest)" "fourth-signed"
 '
 
-# ── Tag force overwrite ────────────────────────────────────────────────────
-
-test_expect_success 'tag -f overwrites existing lightweight tag' '
-	cd repo &&
-	first_oid=$(git rev-parse HEAD~1) &&
-	git tag -f v1.0 "$first_oid" &&
-	tag_oid=$(git rev-parse v1.0) &&
-	test "$tag_oid" = "$first_oid"
-'
-
-test_expect_success 'creating duplicate tag without -f fails' '
-	cd repo &&
-	test_must_fail git tag v2.0
-'
-
-# ── show on tag ─────────────────────────────────────────────────────────────
-
-test_expect_success 'show on annotated tag displays tag info' '
-	cd repo &&
-	git show v2.0 >actual &&
-	grep "tag v2.0" actual &&
-	grep "Release 2.0" actual
-'
-
-test_expect_success 'show on lightweight tag displays commit' '
-	cd repo &&
-	git show v0.1 >actual &&
-	grep "commit" actual
-'
-
-# ── Tag with -n shows annotation lines ──────────────────────────────────────
-
-test_expect_success 'tag -n lists tags with annotation' '
-	cd repo &&
-	git tag -n >actual &&
-	grep "v2.0" actual &&
-	grep "Release 2.0" actual
+test_expect_success GPG 'verifying a forged tag with --format should fail silently' '
+	test_must_fail git verify-tag --format="tagname : %(tag)" $(cat forged1.tag) >actual-forged &&
+	test_must_be_empty actual-forged
 '
 
 test_done

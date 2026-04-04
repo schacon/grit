@@ -1,160 +1,197 @@
 #!/bin/sh
-# Tests for diff with duplicate entries in trees.
 
-test_description='grit diff with duplicate tree entries'
+# NOTICE:
+#   This testsuite does a number of diffs and checks that the output match.
+#   However, it is a "garbage in, garbage out" situation; the trees have
+#   duplicate entries for individual paths, and it results in diffs that do
+#   not make much sense.  As such, it is not clear that the diffs are
+#   "correct".  The primary purpose of these tests was to verify that
+#   diff-tree does not segfault, but there is perhaps some value in ensuring
+#   that the diff output isn't wildly unreasonable.
 
-cd "$(dirname "$0")" || exit 1
+test_description='test tree diff when trees have duplicate entries'
+
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init repo &&
-	cd repo
+if ! test_have_prereq PERL_TEST_HELPERS
+then
+	skip_all='skipping diff duplicates tests; Perl not available'
+	test_done
+fi
+
+# make_tree_entry <mode> <mode> <sha1>
+#
+# We have to rely on perl here because not all printfs understand
+# hex escapes (only octal), and xxd is not portable.
+make_tree_entry () {
+	printf '%s %s\0' "$1" "$2" &&
+	perl -e 'print chr(hex($_)) for ($ARGV[0] =~ /../g)' "$3"
+}
+
+# Like git-mktree, but without all of the pesky sanity checking.
+# Arguments come in groups of three, each group specifying a single
+# tree entry (see make_tree_entry above).
+make_tree () {
+	while test $# -gt 2; do
+		make_tree_entry "$1" "$2" "$3"
+		shift; shift; shift
+	done |
+	git hash-object --literally -w -t tree --stdin
+}
+
+# this is kind of a convoluted setup, but matches
+# a real-world case. Each tree contains four entries
+# for the given path, one with one sha1, and three with
+# the other. The first tree has them split across
+# two subtrees (which are themselves duplicate entries in
+# the root tree), and the second has them all in a single subtree.
+test_expect_success 'create trees with duplicate entries' '
+	blob_one=$(echo one | git hash-object -w --stdin) &&
+	blob_two=$(echo two | git hash-object -w --stdin) &&
+	inner_one_a=$(make_tree \
+		100644 inner $blob_one
+	) &&
+	inner_one_b=$(make_tree \
+		100644 inner $blob_two \
+		100644 inner $blob_two \
+		100644 inner $blob_two
+	) &&
+	outer_one=$(make_tree \
+		040000 outer $inner_one_a \
+		040000 outer $inner_one_b
+	) &&
+	inner_two=$(make_tree \
+		100644 inner $blob_one \
+		100644 inner $blob_two \
+		100644 inner $blob_two \
+		100644 inner $blob_two
+	) &&
+	outer_two=$(make_tree \
+		040000 outer $inner_two
+	) &&
+	git tag one $outer_one &&
+	git tag two $outer_two
 '
 
-test_expect_success 'mktree allows duplicate entries' '
-	cd repo &&
-	oid_a=$(echo "content a" | git hash-object -w --stdin) &&
-	oid_b=$(echo "content b" | git hash-object -w --stdin) &&
-	tree=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_b" | git mktree) &&
-	test -n "$tree"
+test_expect_success 'create tree without duplicate entries' '
+	blob_one=$(echo one | git hash-object -w --stdin) &&
+	outer_three=$(make_tree \
+		100644 renamed $blob_one
+	) &&
+	git tag three $outer_three
 '
 
-test_expect_success 'ls-tree shows both duplicate entries' '
-	cd repo &&
-	oid_a=$(echo "content a" | git hash-object -w --stdin) &&
-	oid_b=$(echo "content b" | git hash-object -w --stdin) &&
-	tree=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_b" | git mktree) &&
-	git ls-tree $tree >actual &&
-	test $(wc -l <actual) -eq 2
-'
-
-test_expect_success 'diff-tree: normal tree vs duplicate-entry tree' '
-	cd repo &&
-	oid_a=$(echo "content a" | git hash-object -w --stdin) &&
-	oid_b=$(echo "content b" | git hash-object -w --stdin) &&
-	tree_norm=$(printf "100644 blob %s\tfile\n" "$oid_a" | git mktree) &&
-	tree_dup=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_b" | git mktree) &&
-	git diff-tree $tree_norm $tree_dup >actual &&
-	test -n "$(cat actual)"
-'
-
-test_expect_success 'diff-tree: duplicate tree vs itself is empty' '
-	cd repo &&
-	oid_a=$(echo "content a" | git hash-object -w --stdin) &&
-	oid_b=$(echo "content b" | git hash-object -w --stdin) &&
-	tree_dup=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_b" | git mktree) &&
-	git diff-tree $tree_dup $tree_dup >actual &&
-	test_must_fail test -s actual
-'
-
-test_expect_success 'diff-tree -p: normal vs duplicate shows patch' '
-	cd repo &&
-	oid_a=$(echo "content a" | git hash-object -w --stdin) &&
-	oid_b=$(echo "content b" | git hash-object -w --stdin) &&
-	tree_norm=$(printf "100644 blob %s\tfile\n" "$oid_a" | git mktree) &&
-	tree_dup=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_b" | git mktree) &&
-	git diff-tree -p $tree_norm $tree_dup >actual &&
-	grep "diff --git" actual
-'
-
-test_expect_success 'read-tree loads duplicate entries into index' '
-	cd repo &&
-	oid_a=$(echo "content a" | git hash-object -w --stdin) &&
-	oid_b=$(echo "content b" | git hash-object -w --stdin) &&
-	tree_dup=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_b" | git mktree) &&
-	git read-tree $tree_dup &&
-	git ls-files --stage file >actual &&
-	test $(wc -l <actual) -eq 2
-'
-
-test_expect_success 'cat-file -p shows both entries in duplicate tree' '
-	cd repo &&
-	oid_a=$(echo "content a" | git hash-object -w --stdin) &&
-	oid_b=$(echo "content b" | git hash-object -w --stdin) &&
-	tree_dup=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_b" | git mktree) &&
-	git cat-file -p $tree_dup >actual &&
-	test $(wc -l <actual) -eq 2
-'
-
-test_expect_success 'diff-tree between two different duplicate trees' '
-	cd repo &&
-	oid_a=$(echo "content a" | git hash-object -w --stdin) &&
-	oid_b=$(echo "content b" | git hash-object -w --stdin) &&
-	oid_c=$(echo "content c" | git hash-object -w --stdin) &&
-	tree1=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_b" | git mktree) &&
-	tree2=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_c" | git mktree) &&
-	git diff-tree $tree1 $tree2 >actual &&
-	test -n "$(cat actual)"
-'
-
-test_expect_success 'duplicate entry tree has valid object type' '
-	cd repo &&
-	oid_a=$(echo "aa" | git hash-object -w --stdin) &&
-	oid_b=$(echo "bb" | git hash-object -w --stdin) &&
-	tree=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_b" | git mktree) &&
-	echo tree >expect &&
-	git cat-file -t $tree >actual &&
+test_expect_success 'diff-tree between duplicate trees' '
+	# See NOTICE at top of file
+	{
+		printf ":000000 100644 $ZERO_OID $blob_two A\touter/inner\n" &&
+		printf ":000000 100644 $ZERO_OID $blob_two A\touter/inner\n" &&
+		printf ":000000 100644 $ZERO_OID $blob_two A\touter/inner\n" &&
+		printf ":100644 000000 $blob_two $ZERO_OID D\touter/inner\n" &&
+		printf ":100644 000000 $blob_two $ZERO_OID D\touter/inner\n" &&
+		printf ":100644 000000 $blob_two $ZERO_OID D\touter/inner\n"
+	} >expect &&
+	git diff-tree -r --no-abbrev one two >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'duplicate entry tree with different modes' '
-	cd repo &&
-	oid=$(echo "data" | git hash-object -w --stdin) &&
-	tree=$(printf "100644 blob %s\tfile\n100755 blob %s\tfile\n" "$oid" "$oid" | git mktree) &&
-	git ls-tree $tree >actual &&
-	grep "100644" actual &&
-	grep "100755" actual
+test_expect_success 'diff-tree with renames' '
+	# See NOTICE at top of file.
+	git diff-tree -M -r --no-abbrev one two >actual &&
+	test_must_be_empty actual
 '
 
-test_expect_success 'tree with three duplicate-name entries' '
-	cd repo &&
-	oid_a=$(echo "a" | git hash-object -w --stdin) &&
-	oid_b=$(echo "b" | git hash-object -w --stdin) &&
-	oid_c=$(echo "c" | git hash-object -w --stdin) &&
-	tree=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n100644 blob %s\tfile\n" \
-		"$oid_a" "$oid_b" "$oid_c" | git mktree) &&
-	git ls-tree $tree >actual &&
-	test $(wc -l <actual) -eq 3
+test_expect_success 'diff-tree FROM duplicate tree' '
+	# See NOTICE at top of file.
+	{
+		printf ":100644 000000 $blob_one $ZERO_OID D\touter/inner\n" &&
+		printf ":100644 000000 $blob_two $ZERO_OID D\touter/inner\n" &&
+		printf ":100644 000000 $blob_two $ZERO_OID D\touter/inner\n" &&
+		printf ":100644 000000 $blob_two $ZERO_OID D\touter/inner\n" &&
+		printf ":000000 100644 $ZERO_OID $blob_one A\trenamed\n"
+	} >expect &&
+	git diff-tree -r --no-abbrev one three >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'diff-tree: empty tree vs duplicate-entry tree' '
-	cd repo &&
-	empty_tree=$(printf "" | git mktree) &&
-	oid_a=$(echo "a" | git hash-object -w --stdin) &&
-	oid_b=$(echo "b" | git hash-object -w --stdin) &&
-	tree_dup=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_b" | git mktree) &&
-	git diff-tree $empty_tree $tree_dup >actual &&
-	test -n "$(cat actual)"
+test_expect_success 'diff-tree FROM duplicate tree, with renames' '
+	# See NOTICE at top of file.
+	{
+		printf ":100644 000000 $blob_two $ZERO_OID D\touter/inner\n" &&
+		printf ":100644 000000 $blob_two $ZERO_OID D\touter/inner\n" &&
+		printf ":100644 000000 $blob_two $ZERO_OID D\touter/inner\n" &&
+		printf ":100644 100644 $blob_one $blob_one R100\touter/inner\trenamed\n"
+	} >expect &&
+	git diff-tree -M -r --no-abbrev one three >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'diff-tree: duplicate-entry tree vs empty tree' '
-	cd repo &&
-	empty_tree=$(printf "" | git mktree) &&
-	oid_a=$(echo "a" | git hash-object -w --stdin) &&
-	oid_b=$(echo "b" | git hash-object -w --stdin) &&
-	tree_dup=$(printf "100644 blob %s\tfile\n100644 blob %s\tfile\n" "$oid_a" "$oid_b" | git mktree) &&
-	git diff-tree $tree_dup $empty_tree >actual &&
-	test -n "$(cat actual)"
+test_expect_success 'create a few commits' '
+	git commit-tree -m "Duplicate Entries" two^{tree} >commit_id &&
+	git branch base $(cat commit_id) &&
+
+	git commit-tree -p $(cat commit_id) -m "Just one" three^{tree} >up &&
+	git branch update $(cat up) &&
+
+	git commit-tree -p $(cat up) -m "Back to weird" two^{tree} >final &&
+	git branch final $(cat final) &&
+
+	rm commit_id up final
 '
 
-test_expect_success 'duplicate entries with mixed blob and tree' '
-	cd repo &&
-	oid=$(echo "sub" | git hash-object -w --stdin) &&
-	subtree=$(printf "100644 blob %s\tx\n" "$oid" | git mktree) &&
-	tree=$(printf "100644 blob %s\tname\n040000 tree %s\tname\n" "$oid" "$subtree" | git mktree) &&
-	git ls-tree $tree >actual &&
-	test $(wc -l <actual) -eq 2
+test_expect_success 'git read-tree does not segfault' '
+	test_must_fail git read-tree --reset base 2>err &&
+	test_grep "error: corrupted cache-tree has entries not present in index" err
 '
 
-test_expect_success 'normal tree with unique entries for comparison' '
-	cd repo &&
-	oid_a=$(echo "ua" | git hash-object -w --stdin) &&
-	oid_b=$(echo "ub" | git hash-object -w --stdin) &&
-	tree=$(printf "100644 blob %s\tfile_a\n100644 blob %s\tfile_b\n" "$oid_a" "$oid_b" | git mktree) &&
-	git ls-tree $tree >actual &&
-	test $(wc -l <actual) -eq 2 &&
-	grep "file_a" actual &&
-	grep "file_b" actual
+test_expect_success 'reset --hard does not segfault' '
+	git checkout base &&
+	test_must_fail git reset --hard 2>err &&
+	test_grep "error: corrupted cache-tree has entries not present in index" err
+'
+
+test_expect_success 'git diff HEAD does not segfault' '
+	git checkout base &&
+	GIT_TEST_CHECK_CACHE_TREE=false &&
+	git reset --hard &&
+	test_must_fail git diff HEAD 2>err &&
+	test_grep "error: corrupted cache-tree has entries not present in index" err
+'
+
+test_expect_failure 'can switch to another branch when status is empty' '
+	git clean -ffdqx &&
+	git status --porcelain -uno >actual &&
+	test_must_be_empty actual &&
+	git checkout update
+'
+
+test_expect_success 'forcibly switch to another branch, verify status empty' '
+	git checkout -f update &&
+	git status --porcelain -uno >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'fast-forward from non-duplicate entries to duplicate' '
+	git merge final
+'
+
+test_expect_failure 'clean status, switch branches, status still clean' '
+	git status --porcelain -uno >actual &&
+	test_must_be_empty actual &&
+	git checkout base &&
+	git status --porcelain -uno >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'switch to base branch and force status to be clean' '
+	git checkout base &&
+	GIT_TEST_CHECK_CACHE_TREE=false git reset --hard &&
+	git status --porcelain -uno >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_failure 'fast-forward from duplicate entries to non-duplicate' '
+	git merge update
 '
 
 test_done

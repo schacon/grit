@@ -1,51 +1,73 @@
 #!/bin/sh
-# Ported from git/t/t9003-help-autocorrect.sh
-# Tests for help.autocorrect configuration
 
 test_description='help.autocorrect finding a match'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup' '
-	git init repo &&
-	cd repo &&
-	git commit --allow-empty -m "a single log entry"
+	# An alias
+	git config alias.lgf "log --format=%s --first-parent" &&
+
+	# A random user-defined command
+	write_script git-distimdistim <<-EOF &&
+		echo distimdistim was called
+	EOF
+
+	PATH="$PATH:." &&
+	export PATH &&
+
+	git commit --allow-empty -m "a single log entry" &&
+
+	# Sanity check
+	git lgf >actual &&
+	echo "a single log entry" >expect &&
+	test_cmp expect actual &&
+
+	git distimdistim >actual &&
+	echo "distimdistim was called" >expect &&
+	test_cmp expect actual
 '
 
-test_expect_success 'typo shows similar command' '
-	cd repo &&
-	test_must_fail git stauts 2>actual &&
-	grep "status" actual
-'
+for show in false no off 0 show
+do
+	test_expect_success 'autocorrect showing candidates' '
+		git config help.autocorrect $show &&
 
-test_expect_success 'autocorrect=0 shows candidates' '
-	cd repo &&
-	git config help.autocorrect 0 &&
-	test_must_fail git stauts 2>actual &&
-	grep "status" actual
-'
+		test_must_fail git lfg 2>actual &&
+		grep "^	lgf" actual &&
 
-test_expect_success 'autocorrect=immediate runs command' '
-	cd repo &&
-	git config help.autocorrect immediate &&
-	git stauts >actual 2>&1
-'
+		test_must_fail git distimdist 2>actual &&
+		grep "^	distimdistim" actual
+	'
+done
 
-test_expect_success 'autocorrect=-1 runs command immediately' '
-	cd repo &&
-	git config help.autocorrect -1 &&
-	git stauts >actual 2>&1
-'
+for immediate in -1 immediate
+do
+	test_expect_success 'autocorrect running commands' '
+		git config help.autocorrect $immediate &&
 
-test_expect_success 'autocorrect=never declines altogether' '
-	cd repo &&
+		git lfg >actual &&
+		echo "a single log entry" >expect &&
+		test_cmp expect actual &&
+
+		git distimdist >actual &&
+		echo "distimdistim was called" >expect &&
+		test_cmp expect actual
+	'
+done
+
+test_expect_success 'autocorrect can be declined altogether' '
 	git config help.autocorrect never &&
-	test_must_fail git stauts 2>actual &&
-	grep "is not a.*command" actual
+
+	test_must_fail git lfg 2>actual &&
+	grep "is not a git command" actual &&
+	test_line_count = 1 actual
+'
+
+test_expect_success 'autocorrect works in work tree created from bare repo' '
+	git clone --bare . bare.git &&
+	git -C bare.git worktree add ../worktree &&
+	git -C worktree -c help.autocorrect=immediate status
 '
 
 test_done

@@ -1,98 +1,152 @@
 #!/bin/sh
-# Test per-repo user.email/user.name configuration
+#
+# Copyright (c) 2016 Dan Aloni
+# Copyright (c) 2016 Jeff King
+#
 
-test_description='grit per-repo user.email and user.name config'
+test_description='per-repo forced setting of email address'
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-test_expect_success 'setup repo' '
-	grit init repo &&
-	cd repo
+test_expect_success 'setup a likely user.useConfigOnly use case' '
+	# we want to make sure a reflog is written, since that needs
+	# a non-strict ident. So be sure we have an actual commit.
+	test_commit foo &&
+
+	sane_unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL &&
+	git config user.name "test" &&
+	git config --global user.useConfigOnly true
 '
 
-test_expect_success 'set per-repo user.email' '
-	cd repo &&
-	grit config user.email "local@example.com" &&
-	grit config user.email >actual &&
-	echo "local@example.com" >expect &&
-	test_cmp expect actual
+test_expect_success 'fails committing if clone email is not set' '
+	test_must_fail git commit --allow-empty -m msg
 '
 
-test_expect_success 'set per-repo user.name' '
-	cd repo &&
-	grit config user.name "Local User" &&
-	grit config user.name >actual &&
-	echo "Local User" >expect &&
-	test_cmp expect actual
+test_expect_success 'fails committing if clone email is not set, but EMAIL set' '
+	test_must_fail env EMAIL=test@fail.com git commit --allow-empty -m msg
 '
 
-test_expect_success 'config is written to .git/config' '
-	cd repo &&
-	grep "local@example.com" .git/config &&
-	grep "Local User" .git/config
+test_expect_success 'succeeds committing if clone email is set' '
+	test_config user.email "test@ok.com" &&
+	git commit --allow-empty -m msg
 '
 
-test_expect_success 'commit uses per-repo identity' '
-	cd repo &&
-	echo "content" >file.txt &&
-	grit add file.txt &&
-	(
-		unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
-		grit commit -m "test commit"
-	) &&
-	grit log --format="%ae" >actual_email &&
-	echo "local@example.com" >expect &&
-	test_cmp expect actual_email &&
-	grit log --format="%an" >actual_name &&
-	echo "Local User" >expect &&
-	test_cmp expect actual_name
+test_expect_success 'succeeds cloning if global email is not set' '
+	git clone . clone
 '
 
-test_expect_success 'different repos can have different identities' '
-	grit init repo2 &&
-	cd repo2 &&
-	grit config user.email "other@example.com" &&
-	grit config user.name "Other User" &&
-	echo "data" >file.txt &&
-	grit add file.txt &&
-	(
-		unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
-		grit commit -m "other commit"
-	) &&
-	grit log --format="%ae" >actual_email &&
-	echo "other@example.com" >expect &&
-	test_cmp expect actual_email &&
-	grit log --format="%an" >actual_name &&
-	echo "Other User" >expect &&
-	test_cmp expect actual_name
+test_expect_success 'set up rebase scenarios' '
+	# temporarily enable an actual ident for this setup
+	test_config user.email foo@example.com &&
+	test_commit new &&
+	git branch side-without-commit HEAD^ &&
+	git checkout -b side-with-commit HEAD^ &&
+	test_commit side
 '
 
-test_expect_success 'changing config updates subsequent commits' '
-	cd repo &&
-	grit config user.email "updated@example.com" &&
-	grit config user.name "Updated User" &&
-	echo "more" >>file.txt &&
-	grit add file.txt &&
-	(
-		unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
-		grit commit -m "updated identity commit"
-	) &&
-	grit log -n1 --format="%ae" >actual_email &&
-	echo "updated@example.com" >expect &&
-	test_cmp expect actual_email
+test_expect_success 'fast-forward rebase does not care about ident' '
+	git checkout -B tmp side-without-commit &&
+	git rebase main
 '
 
-test_expect_success 'commit without user config fails' '
-	grit init no-config &&
-	cd no-config &&
-	echo "x" >f.txt &&
-	grit add f.txt &&
-	(
-		unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
-		test_must_fail grit commit -m "should fail" 2>stderr
-	) &&
-	grep -i "tell me who you are\|user.email\|user.name" stderr
+test_expect_success 'non-fast-forward rebase refuses to write commits' '
+	test_when_finished "git rebase --abort || true" &&
+	git checkout -B tmp side-with-commit &&
+	test_must_fail git rebase main
+'
+
+test_expect_success 'fast-forward rebase does not care about ident (interactive)' '
+	git checkout -B tmp side-without-commit &&
+	git rebase -i main
+'
+
+test_expect_success 'non-fast-forward rebase refuses to write commits (interactive)' '
+	test_when_finished "git rebase --abort || true" &&
+	git checkout -B tmp side-with-commit &&
+	test_must_fail git rebase -i main
+'
+
+test_expect_success 'noop interactive rebase does not care about ident' '
+	git checkout -B tmp side-with-commit &&
+	git rebase -i HEAD^
+'
+
+test_expect_success 'author.name overrides user.name' '
+	test_config user.name user &&
+	test_config user.email user@example.com &&
+	test_config author.name author &&
+	test_commit author-name-override-user &&
+	echo author user@example.com > expected-author &&
+	echo user user@example.com > expected-committer &&
+	git log --format="%an %ae" -1 > actual-author &&
+	git log --format="%cn %ce" -1 > actual-committer &&
+	test_cmp expected-author actual-author &&
+	test_cmp expected-committer actual-committer
+'
+
+test_expect_success 'author.email overrides user.email' '
+	test_config user.name user &&
+	test_config user.email user@example.com &&
+	test_config author.email author@example.com &&
+	test_commit author-email-override-user &&
+	echo user author@example.com > expected-author &&
+	echo user user@example.com > expected-committer &&
+	git log --format="%an %ae" -1 > actual-author &&
+	git log --format="%cn %ce" -1 > actual-committer &&
+	test_cmp expected-author actual-author &&
+	test_cmp expected-committer actual-committer
+'
+
+test_expect_success 'committer.name overrides user.name' '
+	test_config user.name user &&
+	test_config user.email user@example.com &&
+	test_config committer.name committer &&
+	test_commit committer-name-override-user &&
+	echo user user@example.com > expected-author &&
+	echo committer user@example.com > expected-committer &&
+	git log --format="%an %ae" -1 > actual-author &&
+	git log --format="%cn %ce" -1 > actual-committer &&
+	test_cmp expected-author actual-author &&
+	test_cmp expected-committer actual-committer
+'
+
+test_expect_success 'committer.email overrides user.email' '
+	test_config user.name user &&
+	test_config user.email user@example.com &&
+	test_config committer.email committer@example.com &&
+	test_commit committer-email-override-user &&
+	echo user user@example.com > expected-author &&
+	echo user committer@example.com > expected-committer &&
+	git log --format="%an %ae" -1 > actual-author &&
+	git log --format="%cn %ce" -1 > actual-committer &&
+	test_cmp expected-author actual-author &&
+	test_cmp expected-committer actual-committer
+'
+
+test_expect_success 'author and committer environment variables override config settings' '
+	test_config user.name user &&
+	test_config user.email user@example.com &&
+	test_config author.name author &&
+	test_config author.email author@example.com &&
+	test_config committer.name committer &&
+	test_config committer.email committer@example.com &&
+	GIT_AUTHOR_NAME=env_author && export GIT_AUTHOR_NAME &&
+	GIT_AUTHOR_EMAIL=env_author@example.com && export GIT_AUTHOR_EMAIL &&
+	GIT_COMMITTER_NAME=env_commit && export GIT_COMMITTER_NAME &&
+	GIT_COMMITTER_EMAIL=env_commit@example.com && export GIT_COMMITTER_EMAIL &&
+	test_commit env-override-conf &&
+	echo env_author env_author@example.com > expected-author &&
+	echo env_commit env_commit@example.com > expected-committer &&
+	git log --format="%an %ae" -1 > actual-author &&
+	git log --format="%cn %ce" -1 > actual-committer &&
+	sane_unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL &&
+	sane_unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL &&
+	test_cmp expected-author actual-author &&
+	test_cmp expected-committer actual-committer
 '
 
 test_done

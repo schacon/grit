@@ -1,25 +1,37 @@
 #!/bin/sh
 #
-# Ported from git/t/t1311-config-optional.sh
-# Tests config get --default behavior.
-# Note: :(optional) paths and --show-scope not implemented in grit.
+# Copyright (c) 2025 Google LLC
+#
 
-test_description='config get with default values'
+test_description=':(optional) paths'
 
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+test_expect_success 'var=:(optional)path-exists' '
+	test_config a.path ":(optional)path-exists" &&
+	>path-exists &&
+	echo path-exists >expect &&
 
-test_expect_success 'config get returns default when key missing' '
-	echo fallback >expect &&
-	git config get --default=fallback nonexistent.key >actual &&
+	git config get --path a.path >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'config get returns actual value when key present' '
-	git config set test.key "realval" &&
-	echo realval >expect &&
-	git config get --default=fallback test.key >actual &&
+test_expect_success 'missing optional value is ignored' '
+	test_config a.path ":(optional)no-such-path" &&
+	# Using --show-scope ensures we skip writing not only the value
+	# but also any meta-information about the ignored key.
+	test_must_fail git config get --show-scope --path a.path >actual &&
+	test_line_count = 0 actual
+'
+
+test_expect_success 'missing optional value is ignored in multi-value config' '
+	test_when_finished "git config unset --all a.path" &&
+	git config set --append a.path ":(optional)path-exists" &&
+	git config set --append a.path ":(optional)no-such-path" &&
+	>path-exists &&
+	echo path-exists >expect &&
+
+	git config --get --path a.path >actual &&
 	test_cmp expect actual
 '
 

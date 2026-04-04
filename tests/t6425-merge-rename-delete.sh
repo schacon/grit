@@ -6,13 +6,7 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init &&
-	git config user.name "Test" &&
-	git config user.email "test@test.com"
-'
-
-test_expect_success 'rename/delete merge produces a merge commit' '
+test_expect_success 'rename/delete' '
 	echo foo >A &&
 	git add A &&
 	git commit -m "initial" &&
@@ -25,9 +19,9 @@ test_expect_success 'rename/delete merge produces a merge commit' '
 	git rm A &&
 	git commit -m "delete" &&
 
-	git merge rename &&
-	git log --oneline >log_output &&
-	head -1 log_output | grep -i "merge"
+	test_must_fail git merge --strategy=recursive rename >output &&
+	test_grep "CONFLICT (rename/delete): A.* renamed .*to B.* in rename" output &&
+	test_grep "CONFLICT (rename/delete): A.*deleted in HEAD." output
 '
 
 test_done

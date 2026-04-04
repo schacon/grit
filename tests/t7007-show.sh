@@ -1,711 +1,194 @@
 #!/bin/sh
-# Ported from git/t/t7007-show.sh
-# Tests for 'grit show'.
 
-test_description='grit show'
+test_description='git show'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup repository with commits and tags' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com" &&
-	echo "first" >file.txt &&
-	git add file.txt &&
-	GIT_AUTHOR_DATE="1000000000 +0000" GIT_COMMITTER_DATE="1000000000 +0000" \
-		git commit -m "first commit" 2>/dev/null &&
-	echo "second" >>file.txt &&
-	git add file.txt &&
-	GIT_AUTHOR_DATE="1000000100 +0000" GIT_COMMITTER_DATE="1000000100 +0000" \
-		git commit -m "second commit" 2>/dev/null
+test_expect_success setup '
+	echo hello world >foo &&
+	H=$(git hash-object -w foo) &&
+	git tag -a foo-tag -m "Tags $H" $H &&
+	HH=$(expr "$H" : "\(..\)") &&
+	H38=$(expr "$H" : "..\(.*\)") &&
+	rm -f .git/objects/$HH/$H38
 '
 
-test_expect_success 'show HEAD shows commit header' '
-	cd repo &&
-	git show >actual &&
-	grep "^commit " actual &&
-	grep "^Author:" actual &&
-	grep "^Date:" actual &&
-	grep "second commit" actual
+test_expect_success 'showing a tag that point at a missing object' '
+	test_must_fail git --no-pager show foo-tag
 '
 
-test_expect_success 'show HEAD shows diff' '
-	cd repo &&
-	git show >actual &&
-	grep "^diff --git" actual
+test_expect_success 'set up a bit of history' '
+	test_commit main1 &&
+	test_commit main2 &&
+	test_commit main3 &&
+	git tag -m "annotated tag" annotated &&
+	git checkout -b side HEAD^^ &&
+	test_commit side2 &&
+	test_commit side3 &&
+	test_merge merge main3
 '
 
-test_expect_success 'show <commit> shows that commit' '
-	cd repo &&
-	FIRST=$(git log --format="%H" | tail -1) &&
-	git show "$FIRST" >actual &&
-	grep "first commit" actual
+test_expect_success 'showing two commits' '
+	cat >expect <<-EOF &&
+	commit $(git rev-parse main2)
+	commit $(git rev-parse main3)
+	EOF
+	git show main2 main3 >actual &&
+	grep ^commit actual >actual.filtered &&
+	test_cmp expect actual.filtered
 '
 
-test_expect_success 'show --oneline shows short hash and subject' '
-	cd repo &&
-	git show --oneline >actual &&
-	head -1 actual >first_line &&
-	grep "second commit" first_line &&
-	test "$(wc -w <first_line)" -ge 2
-'
+test_expect_success 'showing a tree' '
+	cat >expected <<-EOF &&
+	tree main1:
 
-test_expect_success 'show --quiet suppresses diff' '
-	cd repo &&
-	git show --quiet >actual &&
-	grep "^commit " actual &&
-	! grep "^diff --git" actual
-'
-
-test_expect_success 'show shows blob contents' '
-	cd repo &&
-	BLOB=$(git rev-parse HEAD:file.txt) &&
-	git show "$BLOB" >actual &&
-	grep "first" actual
-'
-
-test_expect_success 'show shows tree listing' '
-	cd repo &&
-	TREE=$(git cat-file -p HEAD | grep "^tree " | awk "{print \$2}") &&
-	git show "$TREE" >actual &&
-	grep "file.txt" actual
-'
-
-test_expect_success 'show annotated tag shows tag then commit' '
-	cd repo &&
-	GIT_COMMITTER_DATE="1000000200 +0000" \
-		git tag -a v1.0 -m "version 1.0" &&
-	git show v1.0 >actual &&
-	grep "tag v1.0" actual &&
-	grep "version 1.0" actual &&
-	grep "^commit " actual
-'
-
-test_expect_success 'show lightweight tag shows the commit' '
-	cd repo &&
-	git tag v0.9 &&
-	git show v0.9 >actual &&
-	grep "^commit " actual
-'
-
-test_expect_success 'show --format=%s shows subject' '
-	cd repo &&
-	git show --format="format:%s" >actual &&
-	head -1 actual >first &&
-	echo "second commit" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show first commit has no diff header parent (root commit diff)' '
-	cd repo &&
-	FIRST=$(git log --format="%H" | tail -1) &&
-	git show "$FIRST" >actual &&
-	grep "^diff --git" actual &&
-	grep "first commit" actual
-'
-
-# ---- Wave 5: more show tests ported from upstream ----
-
-test_expect_success 'show --quiet suppresses diff for annotated tag' '
-	cd repo &&
-	git show --quiet v1.0 >actual &&
-	! grep "^diff --git" actual &&
-	grep "tag v1.0" actual
-'
-
-test_expect_success 'show HEAD^ shows first commit' '
-	cd repo &&
-	git show HEAD^ >actual &&
-	grep "first commit" actual
-'
-
-test_expect_success 'show HEAD~1 also shows first commit' '
-	cd repo &&
-	git show HEAD~1 >actual &&
-	grep "first commit" actual
-'
-
-test_expect_success 'show with format=%H shows full hash' '
-	cd repo &&
-	HASH=$(git rev-parse HEAD) &&
-	git show --format="format:%H" >actual &&
-	head -1 actual >first &&
-	echo "$HASH" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show with format=%h shows abbreviated hash' '
-	cd repo &&
-	git show --format="format:%h" >actual &&
-	head -1 actual >first &&
-	HASH=$(git rev-parse --short HEAD) &&
-	echo "$HASH" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show with format=%an shows author name' '
-	cd repo &&
-	git show --format="format:%an" >actual &&
-	head -1 actual >first &&
-	echo "A U Thor" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show with format=%ae shows author email' '
-	cd repo &&
-	git show --format="format:%ae" >actual &&
-	head -1 actual >first &&
-	echo "author@example.com" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show blob by content shows file content' '
-	cd repo &&
-	BLOB=$(git rev-parse HEAD:file.txt) &&
-	git show "$BLOB" >actual &&
-	grep "first" actual &&
-	grep "second" actual
-'
-
-test_expect_success 'show tree shows entries' '
-	cd repo &&
-	TREE=$(git rev-parse HEAD^{tree}) &&
-	git show "$TREE" >actual &&
-	grep "file.txt" actual
-'
-
-test_expect_success 'show with explicit HEAD works' '
-	cd repo &&
-	git show HEAD >actual &&
-	grep "second commit" actual
-'
-
-test_expect_success 'show --oneline has short hash prefix' '
-	cd repo &&
-	HASH=$(git rev-parse --short HEAD) &&
-	git show --oneline >actual &&
-	head -1 actual >first &&
-	grep "$HASH" first
-'
-
-test_expect_success 'show commit with diff includes a/ and b/ prefixes' '
-	cd repo &&
-	git show HEAD >actual &&
-	grep "^--- a/file.txt" actual &&
-	grep "^+++ b/file.txt" actual
-'
-
-test_expect_success 'show nonexistent object fails' '
-	cd repo &&
-	test_must_fail git show deadbeefdeadbeefdeadbeefdeadbeefdeadbeef 2>/dev/null
-'
-
-test_expect_success 'show with --unified=0 shows no context' '
-	cd repo &&
-	git show -U0 >actual &&
-	! grep "^@@.*,.*@@" actual || grep "^@@.*-.*,0" actual || true
-'
-
-test_expect_success 'show --format=%P shows parent hash' '
-	cd repo &&
-	PARENT=$(git rev-parse HEAD^) &&
-	git show --format="format:%P" >actual &&
-	head -1 actual >first &&
-	echo "$PARENT" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show root commit has empty parent in format' '
-	cd repo &&
-	FIRST=$(git log --format="%H" | tail -1) &&
-	git show --format="format:%P" "$FIRST" >actual &&
-	head -1 actual >first &&
-	echo "" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show --format=%T shows tree hash' '
-	cd repo &&
-	TREE=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
-	git show --format="format:%T" >actual &&
-	head -1 actual >first &&
-	echo "$TREE" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show annotated tag shows tagger' '
-	cd repo &&
-	git show v1.0 >actual &&
-	grep "Tagger:" actual || grep "tagger" actual
-'
-
-# ---- Wave 8: more show tests ----
-
-test_expect_success 'show --format=%cn shows committer name' '
-	cd repo &&
-	git show --format="format:%cn" >actual &&
-	head -1 actual >first &&
-	echo "C O Mitter" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show --format=%ce shows committer email' '
-	cd repo &&
-	git show --format="format:%ce" >actual &&
-	head -1 actual >first &&
-	echo "committer@example.com" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show --pretty=format is alias for --format' '
-	cd repo &&
-	git show --pretty="format:%s" >actual &&
-	head -1 actual >first &&
-	echo "second commit" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show --format=%p shows abbreviated parent hash' '
-	cd repo &&
-	PARENT=$(git rev-parse --short HEAD^) &&
-	git show --format="format:%p" >actual &&
-	head -1 actual >first &&
-	echo "$PARENT" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show --format=%t shows abbreviated tree hash' '
-	cd repo &&
-	TREE=$(git rev-parse --short HEAD^{tree}) &&
-	git show --format="format:%t" >actual &&
-	head -1 actual >first &&
-	echo "$TREE" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show --format=%ad shows author date' '
-	cd repo &&
-	git show --format="format:%ad" >actual &&
-	head -1 actual >first &&
-	grep "2001" first
-'
-
-# ---- Batch: more show format and object tests ----
-
-test_expect_success 'show --format=%cd shows committer date' '
-	cd repo &&
-	git show --format="format:%cd" >actual &&
-	head -1 actual >first &&
-	grep "2001" first
-'
-
-test_expect_success 'show --format with multiple placeholders' '
-	cd repo &&
-	git show --format="format:%h %s" >actual &&
-	head -1 actual >first &&
-	HASH=$(git rev-parse --short HEAD) &&
-	echo "$HASH second commit" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show -U0 produces diff with zero context' '
-	cd repo &&
-	git show -U0 HEAD >actual &&
-	grep "^diff --git" actual &&
-	grep "^+second" actual
-'
-
-test_expect_success 'show tree by HEAD^{tree} syntax' '
-	cd repo &&
-	git show HEAD^{tree} >actual &&
-	grep "file.txt" actual
-'
-
-test_expect_success 'show annotated tag with --oneline is concise' '
-	cd repo &&
-	git show --oneline v1.0 >actual &&
-	grep "v1.0" actual
-'
-
-test_expect_success 'show --format=%s on first commit' '
-	cd repo &&
-	FIRST=$(git log --format="%H" | tail -1) &&
-	git show --format="format:%s" "$FIRST" >actual &&
-	head -1 actual >first &&
-	echo "first commit" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show --quiet on blob still shows content' '
-	cd repo &&
-	BLOB=$(git rev-parse HEAD:file.txt) &&
-	git show --quiet "$BLOB" >actual &&
-	grep "first" actual
-'
-
-test_expect_success 'show --format=%H on first commit matches rev-parse' '
-	cd repo &&
-	FIRST=$(git rev-parse HEAD~1) &&
-	git show --format="format:%H" "$FIRST" >actual &&
-	head -1 actual >first &&
-	echo "$FIRST" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show tag by hash shows tag info' '
-	cd repo &&
-	TAGHASH=$(git rev-parse v1.0) &&
-	git show "$TAGHASH" >actual &&
-	grep "tag v1.0" actual
-'
-
-test_expect_success 'show --oneline on first commit' '
-	cd repo &&
-	FIRST=$(git log --format="%H" | tail -1) &&
-	SHORT=$(git rev-parse --short "$FIRST") &&
-	git show --oneline "$FIRST" >actual &&
-	head -1 actual >first_line &&
-	grep "$SHORT" first_line &&
-	grep "first commit" first_line
-'
-
-test_expect_success 'show diff includes index line' '
-	cd repo &&
-	git show HEAD >actual &&
-	grep "^index " actual
-'
-
-test_expect_success 'show --format=%s with annotated tag shows tag subject' '
-	cd repo &&
-	git show --format="format:%s" v1.0 >actual &&
-	grep "version 1.0" actual
-'
-
-test_expect_success 'show --format=oneline produces one-line output' '
-	cd repo &&
-	git show --format=oneline HEAD >actual &&
-	head -1 actual >first_line &&
-	grep "second commit" first_line
-'
-
-test_expect_success 'show HEAD:file.txt shows file content directly' '
-	cd repo &&
-	git show HEAD:file.txt >actual &&
-	grep "first" actual &&
-	grep "second" actual
-'
-
-test_expect_success 'show HEAD~1 shows diff for first commit' '
-	cd repo &&
-	git show HEAD~1 >actual &&
-	grep "first commit" actual &&
-	grep "^diff --git" actual
-'
-
-test_expect_success 'show multiple format placeholders %an <%ae>' '
-	cd repo &&
-	git show --format="format:%an <%ae>" >actual &&
-	head -1 actual >first &&
-	echo "A U Thor <author@example.com>" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'show --quiet --format=%H shows only hash' '
-	cd repo &&
-	HASH=$(git rev-parse HEAD) &&
-	git show --quiet --format="format:%H" >actual &&
-	echo "$HASH" >expected &&
+	main1.t
+	EOF
+	git show main1: >actual &&
 	test_cmp expected actual
 '
 
-test_expect_success 'show with explicit commit hash' '
-	cd repo &&
-	HASH=$(git rev-parse HEAD) &&
-	git show "$HASH" >actual &&
-	grep "second commit" actual &&
-	grep "^diff --git" actual
-'
+test_expect_success 'showing two trees' '
+	cat >expected <<-EOF &&
+	tree main1^{tree}
 
-test_expect_success 'show --format=%ci shows committer date' '
-	cd repo &&
-	git show --format="format:%ci" --quiet >actual &&
-	test -s actual
-'
+	main1.t
 
-test_expect_success 'show HEAD:file.txt shows file content directly' '
-	cd repo &&
-	printf "first\nsecond\n" >expected &&
-	git show HEAD:file.txt >actual &&
+	tree main2^{tree}
+
+	main1.t
+	main2.t
+	EOF
+	git show main1^{tree} main2^{tree} >actual &&
 	test_cmp expected actual
 '
 
-test_expect_success 'show tree by HEAD^{tree} syntax' '
-	cd repo &&
-	git show HEAD^{tree} >actual &&
-	grep "file.txt" actual
-'
+test_expect_success 'showing a trees is not recursive' '
+	git worktree add not-recursive main1 &&
+	mkdir not-recursive/a &&
+	test_commit -C not-recursive a/file &&
+	cat >expected <<-EOF &&
+	tree HEAD^{tree}
 
-test_expect_success 'show --format=%d shows decoration' '
-	cd repo &&
-	git show --format="format:%d" --quiet >actual &&
-	test -s actual
-'
-
-test_expect_success 'show annotated tag shows both tag and commit info' '
-	cd repo &&
-	git show v1.0 >actual &&
-	grep "tag v1.0" actual &&
-	grep "second commit" actual
-'
-
-# ---------------------------------------------------------------------------
-# Additional tests: format variations and edge cases
-# ---------------------------------------------------------------------------
-test_expect_success 'show --format=%b shows commit body' '
-	cd repo &&
-	git show --format="format:%s%n%b" --quiet >actual &&
-	grep "second commit" actual
-'
-
-test_expect_success 'show --quiet on root commit shows header only' '
-	cd repo &&
-	git show --quiet HEAD~1 >actual &&
-	! grep "^diff" actual &&
-	grep "first commit" actual
-'
-
-test_expect_success 'show --unified=3 produces context lines' '
-	cd repo &&
-	git show --unified=3 HEAD >actual &&
-	grep "^@@" actual
-'
-
-test_expect_success 'show --format=%s on annotated tag shows tag subject' '
-	cd repo &&
-	git show --format="format:%s" v1.0 >actual &&
-	grep "version 1.0" actual
-'
-
-test_expect_success 'show blob by hash shows content' '
-	cd repo &&
-	blob=$(git rev-parse HEAD:file.txt) &&
-	git show $blob >actual &&
-	grep "first" actual &&
-	grep "second" actual
-'
-
-# ===========================================================================
-# Setup: merge commit for show tests
-# ===========================================================================
-
-test_expect_success 'setup: create branch and merge commit' '
-	cd repo &&
-	/usr/bin/git checkout -b feature HEAD~1 &&
-	echo "feature content" >feature.txt &&
-	git add feature.txt &&
-	GIT_AUTHOR_DATE="1000000300 +0000" GIT_COMMITTER_DATE="1000000300 +0000" \
-		git commit -m "feature branch work" &&
-	/usr/bin/git checkout master &&
-	GIT_AUTHOR_DATE="1000000400 +0000" GIT_COMMITTER_DATE="1000000400 +0000" \
-		/usr/bin/git merge feature -m "merge feature branch" --no-edit
-'
-
-# ===========================================================================
-# show on merge commits
-# ===========================================================================
-
-test_expect_success 'show merge commit displays Merge: line' '
-	cd repo &&
-	git show HEAD >actual &&
-	grep -i "merge" actual
-'
-
-test_expect_success 'show --format=%P on merge shows two parents' '
-	cd repo &&
-	parents=$(git show --format="format:%P" --quiet HEAD) &&
-	count=$(echo "$parents" | head -1 | wc -w | tr -d " ") &&
-	test "$count" = "2"
-'
-
-test_expect_success 'show --format=%s on merge shows merge subject' '
-	cd repo &&
-	git show --format="format:%s" --quiet HEAD >actual &&
-	head -1 actual >first &&
-	grep "merge feature branch" first
-'
-
-test_expect_success 'show --quiet on merge suppresses diff' '
-	cd repo &&
-	git show --quiet HEAD >actual &&
-	! grep "^diff --git" actual
-'
-
-test_expect_success 'show --oneline on merge commit' '
-	cd repo &&
-	git show --oneline HEAD >actual &&
-	head -1 actual >first &&
-	grep "merge feature branch" first
-'
-
-# ===========================================================================
-# show --format on annotated tags (deeper)
-# ===========================================================================
-
-test_expect_success 'show --format=%H on annotated tag shows tag target hash' '
-	cd repo &&
-	git show --format="format:%H" v1.0 >actual &&
-	# Should include the tagged commit hash
-	head -1 actual >first &&
-	test -n "$(cat first)"
-'
-
-test_expect_success 'show --format=%an on annotated tag' '
-	cd repo &&
-	git show --format="format:%an" v1.0 >actual &&
-	grep "A U Thor" actual
-'
-
-test_expect_success 'show --quiet on annotated tag shows tag info' '
-	cd repo &&
-	git show --quiet v1.0 >actual &&
-	grep "tag v1.0" actual &&
-	! grep "^diff --git" actual
-'
-
-# ===========================================================================
-# show with multiple objects (if supported, otherwise single-object edge cases)
-# ===========================================================================
-
-test_expect_success 'show commit^:file.txt shows parent file content' '
-	cd repo &&
-	PARENT=$(git rev-parse HEAD^) &&
-	git show "$PARENT":file.txt >actual &&
-	grep "first" actual
-'
-
-test_expect_success 'show --format=%H --quiet gives clean hash output' '
-	cd repo &&
-	HASH=$(git rev-parse HEAD) &&
-	git show --format="format:%H" --quiet >actual &&
-	echo "$HASH" >expected &&
+	a/
+	main1.t
+	EOF
+	git -C not-recursive show HEAD^{tree} >actual &&
 	test_cmp expected actual
 '
 
-test_expect_success 'show --format with literal text and placeholder' '
-	cd repo &&
-	git show --format="format:commit=%H" --quiet >actual &&
-	head -1 actual >first &&
-	grep "^commit=" first &&
-	len=$(printf "%s" "$(sed "s/^commit=//" first)" | wc -c | tr -d " ") &&
-	test "$len" = "40"
+test_expect_success 'showing a range walks (linear)' '
+	cat >expect <<-EOF &&
+	commit $(git rev-parse main3)
+	commit $(git rev-parse main2)
+	EOF
+	git show main1..main3 >actual &&
+	grep ^commit actual >actual.filtered &&
+	test_cmp expect actual.filtered
 '
 
-test_expect_success 'show --format=%h %s on annotated tag' '
-	cd repo &&
-	git show --format="format:%h %s" v1.0 >actual &&
-	grep "version 1.0" actual
+test_expect_success 'showing a range walks (Y shape, ^ first)' '
+	cat >expect <<-EOF &&
+	commit $(git rev-parse main3)
+	commit $(git rev-parse main2)
+	EOF
+	git show ^side3 main3 >actual &&
+	grep ^commit actual >actual.filtered &&
+	test_cmp expect actual.filtered
 '
 
-test_expect_success 'show merge commit format %p shows abbreviated parents' '
-	cd repo &&
-	abbr_parents=$(git show --format="format:%p" --quiet HEAD) &&
-	count=$(echo "$abbr_parents" | head -1 | wc -w | tr -d " ") &&
-	test "$count" = "2"
+test_expect_success 'showing a range walks (Y shape, ^ last)' '
+	cat >expect <<-EOF &&
+	commit $(git rev-parse main3)
+	commit $(git rev-parse main2)
+	EOF
+	git show main3 ^side3 >actual &&
+	grep ^commit actual >actual.filtered &&
+	test_cmp expect actual.filtered
 '
 
-# === additional deepening tests ===
-
-test_expect_success 'show HEAD shows commit info' '
-	cd repo &&
-	grit show HEAD >actual &&
-	grep "commit" actual
+test_expect_success 'showing with -N walks' '
+	cat >expect <<-EOF &&
+	commit $(git rev-parse main3)
+	commit $(git rev-parse main2)
+	EOF
+	git show -2 main3 >actual &&
+	grep ^commit actual >actual.filtered &&
+	test_cmp expect actual.filtered
 '
 
-test_expect_success 'show with commit hash works' '
-	cd repo &&
-	hash=$(grit rev-parse HEAD~2) &&
-	grit show "$hash" >actual &&
-	test -s actual
+test_expect_success 'showing annotated tag' '
+	cat >expect <<-EOF &&
+	tag annotated
+	commit $(git rev-parse annotated^{commit})
+	EOF
+	git show annotated >actual &&
+	grep -E "^(commit|tag)" actual >actual.filtered &&
+	test_cmp expect actual.filtered
 '
 
-test_expect_success 'show --format=%T gives tree hash' '
-	cd repo &&
-	grit show --format="format:%T" --quiet HEAD~2 >actual &&
-	len=$(wc -c <actual | tr -d " ") &&
-	test "$len" -ge 40
+test_expect_success 'showing annotated tag plus commit' '
+	cat >expect <<-EOF &&
+	tag annotated
+	commit $(git rev-parse annotated^{commit})
+	commit $(git rev-parse side3)
+	EOF
+	git show annotated side3 >actual &&
+	grep -E "^(commit|tag)" actual >actual.filtered &&
+	test_cmp expect actual.filtered
 '
 
-test_expect_success 'show --format=%an gives author name' '
-	cd repo &&
-	grit show --format="format:%an" --quiet >actual &&
-	test -s actual
+test_expect_success 'showing range' '
+	cat >expect <<-EOF &&
+	commit $(git rev-parse main3)
+	commit $(git rev-parse main2)
+	EOF
+	git show ^side3 annotated >actual &&
+	grep -E "^(commit|tag)" actual >actual.filtered &&
+	test_cmp expect actual.filtered
 '
 
-test_expect_success 'show --format=%ae gives author email' '
-	cd repo &&
-	grit show --format="format:%ae" --quiet >actual &&
-	grep "@" actual
+test_expect_success '-s suppresses diff' '
+	cat >expect <<-\EOF &&
+	merge
+	main3
+	EOF
+	git show -s --format=%s merge main3 >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'show --format=%cn gives committer name' '
-	cd repo &&
-	grit show --format="format:%cn" --quiet >actual &&
-	test -s actual
+test_expect_success '--quiet suppresses diff' '
+	echo main3 >expect &&
+	git show --quiet --format=%s main3 >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'show --format=%s gives subject line' '
-	cd repo &&
-	git commit --allow-empty -m "subject line test" 2>/dev/null &&
-	grit show --format="format:%s" --quiet >actual &&
-	grep "subject line test" actual
+test_expect_success 'show --graph is forbidden' '
+  test_must_fail git show --graph HEAD
 '
 
-test_expect_success 'show --format=%P gives full parent hashes' '
-	cd repo &&
-	grit show --format="format:%P" --quiet HEAD >actual &&
-	parent=$(cat actual | head -1 | awk "{print \$1}") &&
-	len=${#parent} &&
-	test "$len" -eq 40
-'
+test_expect_success 'show unmerged index' '
+	git reset --hard &&
 
-test_expect_success 'show --format=%t gives abbreviated tree' '
-	cd repo &&
-	grit show --format="format:%t" --quiet >actual &&
-	len=$(wc -c <actual | tr -d " ") &&
-	test "$len" -ge 7
-'
+	git switch -C base &&
+	echo "base" >conflicting &&
+	git add conflicting &&
+	git commit -m "base" &&
 
-test_expect_success 'show --format=%ce gives committer email' '
-	cd repo &&
-	grit show --format="format:%ce" --quiet >actual &&
-	grep "@" actual
-'
+	git branch hello &&
+	git branch goodbye &&
 
-test_expect_success 'show blob by hash shows content' '
-	cd repo &&
-	blob=$(git hash-object file.txt) &&
-	grit show "$blob" >actual &&
-	test -s actual
-'
+	git switch hello &&
+	echo "hello" >conflicting &&
+	git commit -am "hello" &&
 
-test_expect_success 'show --quiet suppresses diff output' '
-	cd repo &&
-	grit show --quiet >actual &&
-	! grep "^diff" actual
-'
+	git switch goodbye &&
+	echo "goodbye" >conflicting &&
+	git commit -am "goodbye" &&
 
-test_expect_success 'show tag by name shows tag info' '
-	cd repo &&
-	grit show v1.0 >actual &&
-	grep "v1.0" actual
-'
-
-test_expect_success 'show --format with multiple placeholders' '
-	cd repo &&
-	grit show --format="format:%h %s" --quiet >actual &&
-	test -s actual
+	git switch hello &&
+	test_must_fail git merge goodbye &&
+	git show --merge HEAD
 '
 
 test_done

@@ -1,47 +1,46 @@
 #!/bin/sh
 
-test_description='rev-parse --show-toplevel from subdirectories'
+test_description='cd_to_toplevel'
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
-	echo content >file &&
-	git add file &&
-	git commit -m initial &&
-	mkdir -p sub/dir
-'
+EXEC_PATH="$(git --exec-path)"
+test_have_prereq !MINGW ||
+case "$EXEC_PATH" in
+[A-Za-z]:/*)
+	EXEC_PATH="/${EXEC_PATH%%:*}${EXEC_PATH#?:}"
+	;;
+esac
 
-test_expect_success 'rev-parse --show-toplevel from top' '
-	echo "$(pwd)" >expect &&
-	git rev-parse --show-toplevel >actual &&
-	test_cmp expect actual
-'
+test_cd_to_toplevel () {
+	test_expect_success $3 "$2" '
+		(
+			cd '"'$1'"' &&
+			PATH="$EXEC_PATH:$PATH" &&
+			. git-sh-setup &&
+			cd_to_toplevel &&
+			[ "$(pwd -P)" = "$TOPLEVEL" ]
+		)
+	'
+}
 
-test_expect_success 'rev-parse --show-toplevel from subdir' '
-	echo "$(pwd)" >expect &&
-	(
-		cd sub/dir &&
-		git rev-parse --show-toplevel >../../actual
-	) &&
-	test_cmp expect actual
-'
+TOPLEVEL="$(pwd -P)/repo"
+mkdir -p repo/sub/dir
+mv .git repo/
+SUBDIRECTORY_OK=1
 
-test_expect_success 'rev-parse --git-dir from top' '
-	echo .git >expect &&
-	git rev-parse --git-dir >actual &&
-	test_cmp expect actual
-'
+test_cd_to_toplevel repo 'at physical root'
 
-test_expect_success 'rev-parse --git-dir from subdir' '
-	(
-		cd sub/dir &&
-		git rev-parse --git-dir >../../actual
-	) &&
-	echo ../../.git >expect &&
-	test_cmp expect actual
-'
+test_cd_to_toplevel repo/sub/dir 'at physical subdir'
+
+ln -s repo symrepo 2>/dev/null
+test_cd_to_toplevel symrepo 'at symbolic root' SYMLINKS
+
+ln -s repo/sub/dir subdir-link 2>/dev/null
+test_cd_to_toplevel subdir-link 'at symbolic subdir' SYMLINKS
+
+cd repo
+ln -s sub/dir internal-link 2>/dev/null
+test_cd_to_toplevel internal-link 'at internal symbolic subdir' SYMLINKS
 
 test_done

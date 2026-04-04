@@ -1,174 +1,133 @@
 #!/bin/sh
-test_description='grit diff binary file handling'
+#
+# Copyright (c) 2006 Junio C Hamano
+#
+
+test_description='Binary diff and apply
+'
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com" &&
-	printf "hello\nworld\n" >text.txt &&
-	printf "\x00\x01\x02\x03binary-content" >bin.dat &&
-	git add text.txt bin.dat &&
-	git commit -m "initial"
+cat >expect.binary-numstat <<\EOF
+1	1	a
+-	-	b
+1	1	c
+-	-	d
+EOF
+
+test_expect_success 'prepare repository' '
+	echo AIT >a && echo BIT >b && echo CIT >c && echo DIT >d &&
+	git update-index --add a b c d &&
+	echo git >a &&
+	cat "$TEST_DIRECTORY"/test-binary-1.png >b &&
+	echo git >c &&
+	cat b b >d
 '
 
-test_expect_success 'diff detects binary file change' '
-	cd repo &&
-	printf "\x00\x01\x02\x04changed-binary" >bin.dat &&
-	git diff >out &&
-	grep "bin\.dat" out
+cat > expected <<\EOF
+ a |    2 +-
+ b |  Bin
+ c |    2 +-
+ d |  Bin
+ 4 files changed, 2 insertions(+), 2 deletions(-)
+EOF
+test_expect_success 'apply --stat output for binary file change' '
+	git diff >diff &&
+	git apply --stat --summary <diff >current &&
+	test_cmp expected current
 '
 
-test_expect_success 'diff --stat shows binary file' '
-	cd repo &&
-	printf "\x00\x01\x02\x04changed-binary" >bin.dat &&
-	git diff --stat >out &&
-	grep "bin\.dat" out
+test_expect_success 'diff --shortstat output for binary file change' '
+	tail -n 1 expected >expect &&
+	git diff --shortstat >current &&
+	test_cmp expect current
 '
 
-test_expect_success 'diff --name-only lists binary file' '
-	cd repo &&
-	printf "\x00\x01\x02\x04changed-binary" >bin.dat &&
-	git diff --name-only >out &&
-	grep "bin\.dat" out
+test_expect_success 'diff --shortstat output for binary file change only' '
+	echo " 1 file changed, 0 insertions(+), 0 deletions(-)" >expected &&
+	git diff --shortstat -- b >current &&
+	test_cmp expected current
 '
 
-test_expect_success 'diff --name-status shows M for modified binary' '
-	cd repo &&
-	printf "\x00\x01\x02\x04changed-binary" >bin.dat &&
-	git diff --name-status >out &&
-	grep "bin\.dat" out
+test_expect_success 'apply --numstat notices binary file change' '
+	git diff >diff &&
+	git apply --numstat <diff >current &&
+	test_cmp expect.binary-numstat current
 '
 
-test_expect_success 'diff --numstat shows binary file' '
-	cd repo &&
-	printf "\x00\x01\x02\x04changed-binary" >bin.dat &&
-	git diff --numstat >out &&
-	grep "bin\.dat" out
+test_expect_success 'apply --numstat understands diff --binary format' '
+	git diff --binary >diff &&
+	git apply --numstat <diff >current &&
+	test_cmp expect.binary-numstat current
 '
 
-test_expect_success 'diff --exit-code detects binary change' '
-	cd repo &&
-	printf "\x00\x01\x02\x04changed-binary" >bin.dat &&
-	test_must_fail git diff --exit-code
+# apply needs to be able to skip the binary material correctly
+# in order to report the line number of a corrupt patch.
+test_expect_success 'apply detecting corrupt patch correctly' '
+	git diff >output &&
+	sed -e "s/-CIT/xCIT/" <output >broken &&
+	test_must_fail git apply --stat --summary broken 2>detected &&
+	detected=$(cat detected) &&
+	detected=$(expr "$detected" : "error.*broken:\\([0-9]*\\)\$") &&
+	detected=$(sed -ne "${detected}p" broken) &&
+	test "$detected" = xCIT
 '
 
-test_expect_success 'diff --quiet detects binary change' '
-	cd repo &&
-	printf "\x00\x01\x02\x04changed-binary" >bin.dat &&
-	test_must_fail git diff --quiet
+test_expect_success 'apply detecting corrupt patch correctly' '
+	git diff --binary | sed -e "s/-CIT/xCIT/" >broken &&
+	test_must_fail git apply --stat --summary broken 2>detected &&
+	detected=$(cat detected) &&
+	detected=$(expr "$detected" : "error.*broken:\\([0-9]*\\)\$") &&
+	detected=$(sed -ne "${detected}p" broken) &&
+	test "$detected" = xCIT
 '
 
-test_expect_success 'diff shows both text and binary changes' '
-	cd repo &&
-	printf "\x00\x01\x02\x04changed-binary" >bin.dat &&
-	echo "modified" >text.txt &&
-	git diff --name-only >out &&
-	grep "bin\.dat" out &&
-	grep "text\.txt" out
+test_expect_success 'initial commit' 'git commit -a -m initial'
+
+# Try removal (b), modification (d), and creation (e).
+test_expect_success 'diff-index with --binary' '
+	echo AIT >a && mv b e && echo CIT >c && cat e >d &&
+	git update-index --add --remove a b c d e &&
+	tree0=$(git write-tree) &&
+	git diff --cached --binary >current &&
+	git apply --stat --summary current
 '
 
-test_expect_success 'diff between commits with binary change' '
-	cd repo &&
-	printf "\x00\x01\x02\x04changed-binary" >bin.dat &&
-	echo "modified" >text.txt &&
-	git add . &&
-	git commit -m "modify binary" &&
-	c1=$(git rev-parse HEAD~1) &&
-	c2=$(git rev-parse HEAD) &&
-	git diff-tree -r "$c1" "$c2" >out &&
-	grep "bin\.dat" out &&
-	grep "text\.txt" out
+test_expect_success 'apply binary patch' '
+	git reset --hard &&
+	git apply --binary --index <current &&
+	tree1=$(git write-tree) &&
+	test "$tree1" = "$tree0"
 '
 
-test_expect_success 'diff-tree --name-status for binary change' '
-	cd repo &&
-	c1=$(git rev-parse HEAD~1) &&
-	c2=$(git rev-parse HEAD) &&
-	git diff-tree -r --name-status "$c1" "$c2" >out &&
-	grep "bin\.dat" out
+test_expect_success 'diff --no-index with binary creation' '
+	echo Q | q_to_nul >binary &&
+	# hide error code from diff, which just indicates differences
+	test_might_fail git diff --binary --no-index /dev/null binary >current &&
+	rm binary &&
+	git apply --binary <current &&
+	echo Q >expected &&
+	nul_to_q <binary >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'diff for newly added binary file' '
-	cd repo &&
-	printf "\xff\xfe\xfd" >new-bin.dat &&
-	git add new-bin.dat &&
-	git diff --cached >out &&
-	grep "new-bin\.dat" out
-'
+cat >expect <<EOF
+ binfilë  |   Bin 0 -> 1026 bytes
+ tëxtfilë | 10000 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+EOF
 
-test_expect_success 'diff for deleted binary file' '
-	cd repo &&
-	git commit -m "add new-bin" &&
-	git rm new-bin.dat &&
-	git diff --cached >out &&
-	grep "new-bin\.dat" out
-'
-
-# --- additional binary tests ---
-
-test_expect_success 'diff --cached --name-status for deleted binary shows D' '
-	cd repo &&
-	git diff --cached --name-status >out &&
-	grep "^D" out &&
-	grep "new-bin\.dat" out &&
-	git checkout HEAD -- new-bin.dat
-'
-
-test_expect_success 'diff between commits with added binary shows new file' '
-	cd repo &&
-	c1=$(git rev-parse HEAD~2) &&
-	c2=$(git rev-parse HEAD~1) &&
-	git diff --name-status "$c1" "$c2" >out &&
-	grep "bin\.dat" out
-'
-
-test_expect_success 'diff --stat between commits with binary shows Bin marker' '
-	cd repo &&
-	c1=$(git rev-parse HEAD~2) &&
-	c2=$(git rev-parse HEAD~1) &&
-	git diff --stat "$c1" "$c2" >out &&
-	grep "Bin\|bin\.dat" out
-'
-
-test_expect_success 'diff --numstat binary shows dashes for add/del counts' '
-	cd repo &&
-	c1=$(git rev-parse HEAD~2) &&
-	c2=$(git rev-parse HEAD~1) &&
-	git diff --numstat "$c1" "$c2" >out &&
-	grep "bin\.dat" out
-'
-
-test_expect_success 'diff for binary file shows Binary files differ message' '
-	cd repo &&
-	printf "\x00modified-again" >bin.dat &&
-	git diff >out &&
-	grep -i "binary" out
-'
-
-test_expect_success 'diff --exit-code detects binary modification' '
-	cd repo &&
-	printf "\x00modified-again" >bin.dat &&
-	test_must_fail git diff --exit-code
-'
-
-test_expect_success 'diff --quiet detects binary modification' '
-	cd repo &&
-	printf "\x00modified-again" >bin.dat &&
-	test_must_fail git diff --quiet &&
-	git checkout -- bin.dat
-'
-
-test_expect_success 'diff shows text change alongside binary as separate entries' '
-	cd repo &&
-	printf "\x00new-bin" >bin.dat &&
-	echo "new text" >text.txt &&
-	git diff --name-only >out &&
-	grep "bin\.dat" out &&
-	grep "text\.txt" out &&
-	git checkout -- bin.dat text.txt
+test_expect_success 'diff --stat with binary files and big change count' '
+	printf "\01\00%1024d" 1 >binfilë &&
+	git add binfilë &&
+	i=0 &&
+	while test $i -lt 10000; do
+		echo $i &&
+		i=$(($i + 1)) || return 1
+	done >tëxtfilë &&
+	git add tëxtfilë &&
+	git -c core.quotepath=false diff --cached --stat binfilë tëxtfilë >output &&
+	grep " | " output >actual &&
+	test_cmp expect actual
 '
 
 test_done

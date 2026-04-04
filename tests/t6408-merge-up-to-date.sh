@@ -2,14 +2,9 @@
 
 test_description='merge fast-forward and up to date'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success setup '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test" &&
-	git config user.email "test@test" &&
 	>file &&
 	git add file &&
 	test_tick &&
@@ -29,31 +24,66 @@ test_expect_success setup '
 	git tag c2
 '
 
-test_expect_success 'merge up-to-date (already contains merged commit)' '
-	cd repo &&
+test_expect_success 'merge -s recursive up-to-date' '
+
 	git reset --hard c1 &&
 	test_tick &&
-	git merge c0 &&
+	git merge -s recursive c0 &&
 	expect=$(git rev-parse c1) &&
 	current=$(git rev-parse HEAD) &&
 	test "$expect" = "$current"
+
 '
 
-test_expect_success 'merge fast-forward' '
-	cd repo &&
+test_expect_success 'merge -s recursive fast-forward' '
+
 	git reset --hard c0 &&
 	test_tick &&
-	git merge c1 &&
+	git merge -s recursive c1 &&
 	expect=$(git rev-parse c1) &&
 	current=$(git rev-parse HEAD) &&
 	test "$expect" = "$current"
+
 '
 
-test_expect_success 'merge already up-to-date message' '
-	cd repo &&
-	git reset --hard c2 &&
+test_expect_success 'merge -s ours up-to-date' '
+
+	git reset --hard c1 &&
 	test_tick &&
-	git merge c1 2>err &&
+	git merge -s ours c0 &&
+	expect=$(git rev-parse c1) &&
+	current=$(git rev-parse HEAD) &&
+	test "$expect" = "$current"
+
+'
+
+test_expect_success 'merge -s ours fast-forward' '
+
+	git reset --hard c0 &&
+	test_tick &&
+	git merge -s ours c1 &&
+	expect=$(git rev-parse c0^{tree}) &&
+	current=$(git rev-parse HEAD^{tree}) &&
+	test "$expect" = "$current"
+
+'
+
+test_expect_success 'merge -s subtree up-to-date' '
+
+	git reset --hard c1 &&
+	test_tick &&
+	git merge -s subtree c0 &&
+	expect=$(git rev-parse c1) &&
+	current=$(git rev-parse HEAD) &&
+	test "$expect" = "$current"
+
+'
+
+test_expect_success 'merge fast-forward octopus' '
+
+	git reset --hard c0 &&
+	test_tick &&
+	git merge c1 c2 &&
 	expect=$(git rev-parse c2) &&
 	current=$(git rev-parse HEAD) &&
 	test "$expect" = "$current"

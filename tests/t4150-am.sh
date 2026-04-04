@@ -7,43 +7,6 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-# Use real git for setup operations that need features grit doesn't have yet
-REAL_GIT=/usr/bin/git
-
-# ── extra helpers not in our test-lib ────────────────────────────────
-
-test_cmp_rev () {
-	local a b
-	a=$(git rev-parse "$1") &&
-	b=$(git rev-parse "$2") &&
-	test "$a" = "$b"
-}
-
-qz_to_tab_space () {
-	tr Q '\t'
-}
-
-append_cr () {
-	sed -e 's/$/\r/'
-}
-
-test_hook () {
-	local hook_name="$1"
-	mkdir -p .git/hooks &&
-	cat > ".git/hooks/$hook_name" &&
-	chmod +x ".git/hooks/$hook_name"
-}
-
-# ── init repo ────────────────────────────────────────────────────────
-
-test_expect_success 'init repo for am tests' '
-	git init &&
-	git config user.name "C O Mitter" &&
-	git config user.email "committer@example.com"
-'
-
-# ── setup: messages ──────────────────────────────────────────────────
-
 test_expect_success 'setup: messages' '
 	cat >msg <<-\EOF &&
 	second
@@ -147,33 +110,6 @@ test_expect_success setup '
 		git format-patch --stdout first | sed -e "1d"
 	} > patch1.eml &&
 	{
-		sed -ne "1p" msg &&
-		echo &&
-		echo "From: $GIT_AUTHOR_NAME <$GIT_AUTHOR_EMAIL>" &&
-		echo "Date: $GIT_AUTHOR_DATE" &&
-		echo &&
-		sed -e "1,2d" msg &&
-		echo "---" &&
-		git diff-tree --no-commit-id --stat -p second
-	} >patch1-stgit.eml &&
-	mkdir -p stgit-series &&
-	cp patch1-stgit.eml stgit-series/patch &&
-	{
-		echo "# This series applies on GIT commit $(git rev-parse first)" &&
-		echo "patch"
-	} >stgit-series/series &&
-	{
-		echo "# HG changeset patch" &&
-		echo "# User $GIT_AUTHOR_NAME <$GIT_AUTHOR_EMAIL>" &&
-		echo "# Date $test_tick 25200" &&
-		echo "#      $(git show --pretty="%aD" -s second)" &&
-		echo "# Node ID 0000000000000000000000000000000000000000" &&
-		echo "# Parent  0000000000000000000000000000000000000000" &&
-		cat msg &&
-		echo &&
-		git diff-tree --no-commit-id -p second
-	} >patch1-hg.eml &&
-	{
 		echo "X-Fake-Field: Line One" &&
 		echo "X-Fake-Field: Line Two" &&
 		echo "X-Fake-Field: Line Three" &&
@@ -186,6 +122,34 @@ test_expect_success setup '
 		echo "X-Fake-Field: Line Three" &&
 		git format-patch --stdout first | sed -e "1d"
 	} > patch1-ws.eml &&
+	{
+		sed -ne "1p" msg &&
+		echo &&
+		echo "From: $GIT_AUTHOR_NAME <$GIT_AUTHOR_EMAIL>" &&
+		echo "Date: $GIT_AUTHOR_DATE" &&
+		echo &&
+		sed -e "1,2d" msg &&
+		echo "---" &&
+		git diff-tree --no-commit-id --stat -p second
+	} >patch1-stgit.eml &&
+	mkdir stgit-series &&
+	cp patch1-stgit.eml stgit-series/patch &&
+	{
+		echo "# This series applies on GIT commit $(git rev-parse first)" &&
+		echo "patch"
+	} >stgit-series/series &&
+	{
+		echo "# HG changeset patch" &&
+		echo "# User $GIT_AUTHOR_NAME <$GIT_AUTHOR_EMAIL>" &&
+		echo "# Date $test_tick 25200" &&
+		echo "#      $(git show --pretty="%aD" -s second)" &&
+		echo "# Node ID $ZERO_OID" &&
+		echo "# Parent  $ZERO_OID" &&
+		cat msg &&
+		echo &&
+		git diff-tree --no-commit-id -p second
+	} >patch1-hg.eml &&
+
 
 	echo file >file &&
 	git add file &&
@@ -197,7 +161,7 @@ test_expect_success setup '
 	git add file &&
 	git commit -F msg-with-scissors-line &&
 	git tag expected-for-no-scissors &&
-	$REAL_GIT format-patch --stdout expected-for-no-scissors^ >patch-with-scissors-line.eml &&
+	git format-patch --stdout expected-for-no-scissors^ >patch-with-scissors-line.eml &&
 	git reset --hard HEAD^ &&
 
 	sed -n -e "3,\$p" msg >file &&
@@ -218,25 +182,25 @@ test_expect_success setup '
 	test_tick &&
 	git commit -m "added another file" &&
 
-	$REAL_GIT format-patch --stdout main >lorem-move.patch &&
-	$REAL_GIT format-patch --no-prefix --stdout main >lorem-zero.patch &&
+	git format-patch --stdout main >lorem-move.patch &&
+	git format-patch --no-prefix --stdout main >lorem-zero.patch &&
 
 	git checkout -b rename &&
 	git mv file renamed &&
 	git commit -m "renamed a file" &&
 
-	$REAL_GIT format-patch -M --stdout lorem >rename.patch &&
+	git format-patch -M --stdout lorem >rename.patch &&
 
 	git reset --soft lorem^ &&
 	git commit -m "renamed a file and added another" &&
 
-	$REAL_GIT format-patch -M --stdout lorem^ >rename-add.patch &&
+	git format-patch -M --stdout lorem^ >rename-add.patch &&
 
 	git checkout -b empty-commit &&
 	git commit -m "empty commit" --allow-empty &&
 
 	: >empty.patch &&
-	$REAL_GIT format-patch --always --stdout empty-commit^ >empty-commit.patch &&
+	git format-patch --always --stdout empty-commit^ >empty-commit.patch &&
 
 	# reset time
 	sane_unset test_tick &&
@@ -253,6 +217,18 @@ test_expect_success 'am applies patch correctly' '
 	git diff --exit-code second &&
 	test "$(git rev-parse second)" = "$(git rev-parse HEAD)" &&
 	test "$(git rev-parse second^)" = "$(git rev-parse HEAD^)"
+'
+
+test_expect_success 'am fails if index is dirty' '
+	test_when_finished "rm -f dirtyfile" &&
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	echo dirtyfile >dirtyfile &&
+	git add dirtyfile &&
+	test_must_fail git am patch1 &&
+	test_path_is_dir .git/rebase-apply &&
+	test_cmp_rev first HEAD
 '
 
 test_expect_success 'am applies patch e-mail not in a mbox' '
@@ -290,47 +266,52 @@ test_expect_success 'am applies patch e-mail with preceding whitespace' '
 
 test_expect_success 'am applies stgit patch' '
 	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
+	git checkout -f first &&
 	git am patch1-stgit.eml &&
 	test_path_is_missing .git/rebase-apply &&
-	git diff --exit-code second
+	git diff --exit-code second &&
+	test_cmp_rev second HEAD &&
+	test_cmp_rev second^ HEAD^
 '
 
 test_expect_success 'am --patch-format=stgit applies stgit patch' '
 	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
+	git checkout -f first &&
 	git am --patch-format=stgit <patch1-stgit.eml &&
 	test_path_is_missing .git/rebase-apply &&
-	git diff --exit-code second
+	git diff --exit-code second &&
+	test_cmp_rev second HEAD &&
+	test_cmp_rev second^ HEAD^
 '
 
 test_expect_success 'am applies stgit series' '
 	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
+	git checkout -f first &&
 	git am stgit-series/series &&
 	test_path_is_missing .git/rebase-apply &&
-	git diff --exit-code second
+	git diff --exit-code second &&
+	test_cmp_rev second HEAD &&
+	test_cmp_rev second^ HEAD^
 '
 
 test_expect_success 'am applies hg patch' '
 	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
+	git checkout -f first &&
 	git am patch1-hg.eml &&
 	test_path_is_missing .git/rebase-apply &&
-	git diff --exit-code second
+	git diff --exit-code second &&
+	test_cmp_rev second HEAD &&
+	test_cmp_rev second^ HEAD^
 '
 
 test_expect_success 'am --patch-format=hg applies hg patch' '
 	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
+	git checkout -f first &&
 	git am --patch-format=hg <patch1-hg.eml &&
 	test_path_is_missing .git/rebase-apply &&
-	git diff --exit-code second
+	git diff --exit-code second &&
+	test_cmp_rev second HEAD &&
+	test_cmp_rev second^ HEAD^
 '
 
 test_expect_success 'am with applypatch-msg hook' '
@@ -338,13 +319,17 @@ test_expect_success 'am with applypatch-msg hook' '
 	git reset --hard &&
 	git checkout first &&
 	test_hook applypatch-msg <<-\EOF &&
-	echo "hook ran" >"$(git rev-parse --git-dir)/apply-hook-ran"
+	cat "$1" >actual-msg &&
+	echo hook-message >"$1"
 	EOF
-	git am <patch1 &&
+	git am patch1 &&
 	test_path_is_missing .git/rebase-apply &&
-	test -f .git/apply-hook-ran &&
-	rm -f .git/apply-hook-ran &&
-	rm -f .git/hooks/applypatch-msg
+	git diff --exit-code second &&
+	echo hook-message >expected &&
+	git log -1 --format=format:%B >actual &&
+	test_cmp expected actual &&
+	git log -1 --format=format:%B second >expected &&
+	test_cmp expected actual-msg
 '
 
 test_expect_success 'am with failing applypatch-msg hook' '
@@ -354,9 +339,10 @@ test_expect_success 'am with failing applypatch-msg hook' '
 	test_hook applypatch-msg <<-\EOF &&
 	exit 1
 	EOF
-	test_must_fail git am <patch1 &&
-	rm -f .git/hooks/applypatch-msg &&
-	git am --abort
+	test_must_fail git am patch1 &&
+	test_path_is_dir .git/rebase-apply &&
+	git diff --exit-code first &&
+	test_cmp_rev first HEAD
 '
 
 test_expect_success 'am with failing applypatch-msg hook (no verify)' '
@@ -364,11 +350,14 @@ test_expect_success 'am with failing applypatch-msg hook (no verify)' '
 	git reset --hard &&
 	git checkout first &&
 	test_hook applypatch-msg <<-\EOF &&
+	echo hook-message >"$1"
 	exit 1
 	EOF
-	git am --no-verify <patch1 &&
+	git am --no-verify patch1 &&
 	test_path_is_missing .git/rebase-apply &&
-	rm -f .git/hooks/applypatch-msg
+	git diff --exit-code second &&
+	git log -1 --format=format:%B >actual &&
+	test_cmp msg actual
 '
 
 test_expect_success 'am with pre-applypatch hook' '
@@ -376,13 +365,15 @@ test_expect_success 'am with pre-applypatch hook' '
 	git reset --hard &&
 	git checkout first &&
 	test_hook pre-applypatch <<-\EOF &&
-	echo "pre-hook ran" >"$(git rev-parse --git-dir)/pre-hook-ran"
+	git diff first >diff.actual
+	exit 0
 	EOF
-	git am <patch1 &&
+	git am patch1 &&
 	test_path_is_missing .git/rebase-apply &&
-	test -f .git/pre-hook-ran &&
-	rm -f .git/pre-hook-ran &&
-	rm -f .git/hooks/pre-applypatch
+	git diff --exit-code second &&
+	test_cmp_rev second HEAD &&
+	git diff first..second >diff.expected &&
+	test_cmp diff.expected diff.actual
 '
 
 test_expect_success 'am with failing pre-applypatch hook' '
@@ -392,21 +383,27 @@ test_expect_success 'am with failing pre-applypatch hook' '
 	test_hook pre-applypatch <<-\EOF &&
 	exit 1
 	EOF
-	test_must_fail git am <patch1 &&
-	rm -f .git/hooks/pre-applypatch &&
-	git am --abort
+	test_must_fail git am patch1 &&
+	test_path_is_dir .git/rebase-apply &&
+	git diff --exit-code second &&
+	test_cmp_rev first HEAD
 '
 
 test_expect_success 'am with failing pre-applypatch hook (no verify)' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
 	git checkout first &&
+	touch empty-file &&
 	test_hook pre-applypatch <<-\EOF &&
+	rm empty-file
 	exit 1
 	EOF
-	git am --no-verify <patch1 &&
+	git am --no-verify patch1 &&
 	test_path_is_missing .git/rebase-apply &&
-	rm -f .git/hooks/pre-applypatch
+	test_path_is_file empty-file &&
+	git diff --exit-code second &&
+	git log -1 --format=format:%B >actual &&
+	test_cmp msg actual
 '
 
 test_expect_success 'am with post-applypatch hook' '
@@ -414,13 +411,17 @@ test_expect_success 'am with post-applypatch hook' '
 	git reset --hard &&
 	git checkout first &&
 	test_hook post-applypatch <<-\EOF &&
-	echo "post-hook ran" >"$(git rev-parse --git-dir)/post-hook-ran"
+	git rev-parse HEAD >head.actual
+	git diff second >diff.actual
+	exit 0
 	EOF
-	git am <patch1 &&
+	git am patch1 &&
 	test_path_is_missing .git/rebase-apply &&
-	test -f .git/post-hook-ran &&
-	rm -f .git/post-hook-ran &&
-	rm -f .git/hooks/post-applypatch
+	test_cmp_rev second HEAD &&
+	git rev-parse second >head.expected &&
+	test_cmp head.expected head.actual &&
+	git diff second >diff.expected &&
+	test_cmp diff.expected diff.actual
 '
 
 test_expect_success 'am with failing post-applypatch hook' '
@@ -428,32 +429,36 @@ test_expect_success 'am with failing post-applypatch hook' '
 	git reset --hard &&
 	git checkout first &&
 	test_hook post-applypatch <<-\EOF &&
+	git rev-parse HEAD >head.actual
 	exit 1
 	EOF
-	git am <patch1 &&
+	git am patch1 &&
 	test_path_is_missing .git/rebase-apply &&
-	rm -f .git/hooks/post-applypatch
+	git diff --exit-code second &&
+	test_cmp_rev second HEAD &&
+	git rev-parse second >head.expected &&
+	test_cmp head.expected head.actual
 '
 
 test_expect_success 'am --scissors cuts the message at the scissors line' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
+	git checkout second &&
 	git am --scissors patch-with-scissors-line.eml &&
 	test_path_is_missing .git/rebase-apply &&
-	git log --format=%B -1 HEAD >actual &&
-	grep "should be included" actual &&
-	! grep "should not be included" actual
+	git diff --exit-code expected-for-scissors &&
+	test_cmp_rev expected-for-scissors HEAD
 '
 
 test_expect_success 'am --no-scissors overrides mailinfo.scissors' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
+	git checkout second &&
+	test_config mailinfo.scissors true &&
 	git am --no-scissors patch-with-scissors-line.eml &&
 	test_path_is_missing .git/rebase-apply &&
-	git log --format=%B -1 HEAD >actual &&
-	grep "should not be included" actual
+	git diff --exit-code expected-for-no-scissors &&
+	test_cmp_rev expected-for-no-scissors HEAD
 '
 
 test_expect_success 'setup: new author and committer' '
@@ -461,14 +466,7 @@ test_expect_success 'setup: new author and committer' '
 	GIT_AUTHOR_EMAIL="a.thor@example.com" &&
 	GIT_COMMITTER_NAME="Co M Miter" &&
 	GIT_COMMITTER_EMAIL="c.miter@example.com" &&
-	export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL &&
-	cat > "$TRASH_DIRECTORY/.test_env" <<-ENVEOF
-	GIT_AUTHOR_NAME="Another Thor"
-	GIT_AUTHOR_EMAIL="a.thor@example.com"
-	GIT_COMMITTER_NAME="Co M Miter"
-	GIT_COMMITTER_EMAIL="c.miter@example.com"
 	export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
-	ENVEOF
 '
 
 compare () {
@@ -482,160 +480,165 @@ test_expect_success 'am changes committer and keeps author' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
 	git checkout first &&
-	GIT_AUTHOR_NAME="Another Thor" &&
-	GIT_AUTHOR_EMAIL="a.thor@example.com" &&
-	GIT_COMMITTER_NAME="Co M Miter" &&
-	GIT_COMMITTER_EMAIL="c.miter@example.com" &&
-	export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL &&
 	git am patch2 &&
 	test_path_is_missing .git/rebase-apply &&
 	test "$(git rev-parse main^^)" = "$(git rev-parse HEAD^^)" &&
-	git diff --exit-code main HEAD &&
-	git diff --exit-code main^ HEAD^ &&
+	git diff --exit-code main..HEAD &&
+	git diff --exit-code main^..HEAD^ &&
 	compare author main HEAD &&
 	compare author main^ HEAD^ &&
 	test "$GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL>" = \
-	     "$(git log -n 1 --pretty=format:"%cn <%ce>" HEAD)"
+	     "$(git log -1 --pretty=format:"%cn <%ce>" HEAD)"
 '
 
 test_expect_success 'am --signoff adds Signed-off-by: line' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
+	git checkout -b topic_2 first &&
 	git am --signoff <patch2 &&
-	git cat-file commit HEAD >actual &&
-	grep "Signed-off-by:" actual
+	{
+		printf "third\n\nSigned-off-by: %s <%s>\n\n" \
+			"$GIT_COMMITTER_NAME" "$GIT_COMMITTER_EMAIL" &&
+		cat msg &&
+		printf "Signed-off-by: %s <%s>\n\n" \
+			"$GIT_COMMITTER_NAME" "$GIT_COMMITTER_EMAIL"
+	} >expected-log &&
+	git log --pretty=%B -2 HEAD >actual &&
+	test_cmp expected-log actual
 '
 
 test_expect_success 'am stays in branch' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout -b stay-in-branch first &&
-	git am --signoff <patch2 &&
-	test "refs/heads/stay-in-branch" = "$(git symbolic-ref HEAD)"
+	echo refs/heads/topic_2 >expected &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expected actual
 '
 
 test_expect_success 'am --signoff does not add Signed-off-by: line if already there' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	git am --signoff <patch2 &&
-	git cat-file commit HEAD >actual &&
-	test $(grep -c "Signed-off-by:" actual) -eq 1
+	git format-patch --stdout first >patch3 &&
+	git reset --hard first &&
+	git am --signoff <patch3 &&
+	git log --pretty=%B -2 HEAD >actual &&
+	test_cmp expected-log actual
 '
 
 test_expect_success 'am --signoff adds Signed-off-by: if another author is preset' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	GIT_COMMITTER_NAME="New Committer" \
-	GIT_COMMITTER_EMAIL="new@example.com" \
-	git am --signoff <patch2 &&
-	git cat-file commit HEAD >actual &&
-	grep "Signed-off-by: New Committer <new@example.com>" actual
+	NAME="A N Other" &&
+	EMAIL="a.n.other@example.com" &&
+	{
+		printf "third\n\nSigned-off-by: %s <%s>\nSigned-off-by: %s <%s>\n\n" \
+			"$GIT_COMMITTER_NAME" "$GIT_COMMITTER_EMAIL" \
+			"$NAME" "$EMAIL" &&
+		cat msg &&
+		printf "Signed-off-by: %s <%s>\nSigned-off-by: %s <%s>\n\n" \
+			"$GIT_COMMITTER_NAME" "$GIT_COMMITTER_EMAIL" \
+			"$NAME" "$EMAIL"
+	} >expected-log &&
+	git reset --hard first &&
+	GIT_COMMITTER_NAME="$NAME" GIT_COMMITTER_EMAIL="$EMAIL" \
+		git am --signoff <patch3 &&
+	git log --pretty=%B -2 HEAD >actual &&
+	test_cmp expected-log actual
 '
 
 test_expect_success 'am --signoff duplicates Signed-off-by: if it is not the last one' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	git am --signoff <patch2 &&
-	git cat-file commit HEAD >actual &&
-	grep "Signed-off-by:" actual
+	NAME="A N Other" &&
+	EMAIL="a.n.other@example.com" &&
+	{
+		printf "third\n\nSigned-off-by: %s <%s>\n\
+Signed-off-by: %s <%s>\nSigned-off-by: %s <%s>\n\n" \
+			"$GIT_COMMITTER_NAME" "$GIT_COMMITTER_EMAIL" \
+			"$NAME" "$EMAIL" \
+			"$GIT_COMMITTER_NAME" "$GIT_COMMITTER_EMAIL" &&
+		cat msg &&
+		printf "Signed-off-by: %s <%s>\nSigned-off-by: %s <%s>\n\
+Signed-off-by: %s <%s>\n\n" \
+			"$GIT_COMMITTER_NAME" "$GIT_COMMITTER_EMAIL" \
+			"$NAME" "$EMAIL" \
+			"$GIT_COMMITTER_NAME" "$GIT_COMMITTER_EMAIL"
+	} >expected-log &&
+	git format-patch --stdout first >patch3 &&
+	git reset --hard first &&
+	git am --signoff <patch3 &&
+	git log --pretty=%B -2 HEAD >actual &&
+	test_cmp expected-log actual
 '
 
 test_expect_success 'am without --keep removes Re: and [PATCH] stuff' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	git am <patch2 &&
-	git log --format=%s -1 HEAD >actual &&
-	! grep "\[PATCH" actual
+	git format-patch --stdout HEAD^ >tmp &&
+	sed -e "/^Subject/ s,\[PATCH,Re: Re: Re: & 1/5 v2] [foo," tmp >patch4 &&
+	git reset --hard HEAD^ &&
+	git am <patch4 &&
+	git rev-parse HEAD >expected &&
+	git rev-parse topic_2 >actual &&
+	test_cmp expected actual
 '
 
 test_expect_success 'am --keep really keeps the subject' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
-	git am --keep <patch2 &&
-	git log --format=%s -1 HEAD >actual &&
-	grep "\[PATCH" actual
+	git checkout HEAD^ &&
+	git am --keep patch4 &&
+	test_path_is_missing .git/rebase-apply &&
+	git cat-file commit HEAD >actual &&
+	grep "Re: Re: Re: \[PATCH 1/5 v2\] \[foo\] third" actual
 '
 
 test_expect_success 'am --keep-non-patch really keeps the non-patch part' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
-	git am --keep-non-patch <patch2 &&
-	test_path_is_missing .git/rebase-apply
+	git checkout HEAD^ &&
+	git am --keep-non-patch patch4 &&
+	test_path_is_missing .git/rebase-apply &&
+	git cat-file commit HEAD >actual &&
+	grep "^\[foo\] third" actual
 '
 
 test_expect_success 'setup am -3' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout -b threeway-setup first &&
-	echo hello >file &&
-	echo "original context" >>file &&
+	git checkout -b base3way topic_2 &&
+	sed -n -e "3,\$p" msg >file &&
+	head -n 9 msg >>file &&
 	git add file &&
 	test_tick &&
-	git commit -m "add original context" &&
-	echo hello >file &&
-	echo "original context" >>file &&
-	echo "extra line at the end" >>file &&
-	git add file &&
-	test_tick &&
-	git commit -m "add extra line at end" &&
-	$REAL_GIT format-patch --stdout HEAD~1..HEAD >threeway.patch &&
-	# Also make a version of first with different context
-	git checkout first &&
-	echo hello >file &&
-	echo "different context" >>file &&
-	git add file &&
-	test_tick &&
-	git commit -m "different context for threeway test" &&
-	git tag am3base
+	git commit -m "copied stuff"
 '
 
 test_expect_success 'am -3 falls back to 3-way merge' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout am3base &&
-	# The patch context says "original context" but we have "different context"
-	# So it fails to apply cleanly, falls back to 3-way merge
-	git am -3 threeway.patch &&
+	git checkout -b lorem2 base3way &&
+	git am -3 lorem-move.patch &&
 	test_path_is_missing .git/rebase-apply &&
-	grep "extra line at the end" file
+	git diff --exit-code lorem
 '
 
 test_expect_success 'am -3 -p0 can read --no-prefix patch' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
-	# The -3 flag should still work with --no-prefix patches
-	# Since the patch applies cleanly, -3 is a no-op
-	git am -3 <patch1 &&
-	test_path_is_missing .git/rebase-apply
+	git checkout -b lorem3 base3way &&
+	git am -3 -p0 lorem-zero.patch &&
+	test_path_is_missing .git/rebase-apply &&
+	git diff --exit-code lorem
 '
 
 test_expect_success 'am with config am.threeWay falls back to 3-way merge' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout am3base &&
-	git config am.threeWay true &&
-	git am threeway.patch &&
+	git checkout -b lorem4 base3way &&
+	test_config am.threeWay 1 &&
+	git am lorem-move.patch &&
 	test_path_is_missing .git/rebase-apply &&
-	grep "extra line at the end" file &&
-	git config --unset am.threeWay
+	git diff --exit-code lorem
 '
 
 test_expect_success 'am with config am.threeWay overridden by --no-3way' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout am3base &&
-	git config am.threeWay true &&
-	test_must_fail git am --no-3way threeway.patch &&
-	git am --abort &&
-	git config --unset am.threeWay
+	git checkout -b lorem5 base3way &&
+	test_config am.threeWay 1 &&
+	test_must_fail git am --no-3way lorem-move.patch &&
+	test_path_is_dir .git/rebase-apply
 '
 
 test_expect_success 'am can rename a file' '
@@ -650,6 +653,7 @@ test_expect_success 'am can rename a file' '
 '
 
 test_expect_success 'am -3 can rename a file' '
+	grep "^rename from" rename.patch &&
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
 	git checkout lorem^0 &&
@@ -660,64 +664,67 @@ test_expect_success 'am -3 can rename a file' '
 '
 
 test_expect_success 'am -3 can rename a file after falling back to 3-way merge' '
+	grep "^rename from" rename-add.patch &&
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
 	git checkout lorem^0 &&
 	git am -3 rename-add.patch &&
-	test_path_is_missing .git/rebase-apply
+	test_path_is_missing .git/rebase-apply &&
+	git update-index --refresh &&
+	git diff --exit-code rename
 '
 
 test_expect_success 'am -3 -q is quiet' '
 	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	git am -3 -q <patch1 >output.out 2>&1 &&
+	git checkout -f lorem2 &&
+	git reset base3way --hard &&
+	git am -3 -q lorem-move.patch >output.out 2>&1 &&
 	test_must_be_empty output.out
 '
 
 test_expect_success 'am pauses on conflict' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
+	git checkout lorem2^^ &&
 	test_must_fail git am lorem-move.patch &&
 	test -d .git/rebase-apply
 '
 
 test_expect_success 'am --show-current-patch' '
-	git am --show-current-patch >actual &&
-	test -s actual
+	git am --show-current-patch >actual.patch &&
+	test_cmp .git/rebase-apply/0001 actual.patch
 '
 
 test_expect_success 'am --show-current-patch=raw' '
-	git am --show-current-patch=raw >actual &&
-	test -s actual
+	git am --show-current-patch=raw >actual.patch &&
+	test_cmp .git/rebase-apply/0001 actual.patch
 '
 
 test_expect_success 'am --show-current-patch=diff' '
-	git am --show-current-patch=diff >actual &&
-	test -s actual
+	git am --show-current-patch=diff >actual.patch &&
+	test_cmp .git/rebase-apply/patch actual.patch
 '
 
 test_expect_success 'am accepts repeated --show-current-patch' '
-	git am --show-current-patch=raw >actual &&
-	test -s actual
+	git am --show-current-patch --show-current-patch=raw >actual.patch &&
+	test_cmp .git/rebase-apply/0001 actual.patch
 '
 
 test_expect_success 'am detects incompatible --show-current-patch' '
-	test_must_fail git am --show-current-patch=invalid 2>err
+	test_must_fail git am --show-current-patch=raw --show-current-patch=diff &&
+	test_must_fail git am --show-current-patch --show-current-patch=diff
 '
 
 test_expect_success 'am --skip works' '
 	echo goodbye >expected &&
 	git am --skip &&
 	test_path_is_missing .git/rebase-apply &&
-	git diff --exit-code first -- file &&
+	git diff --exit-code lorem2^^ -- file &&
 	test_cmp expected another
 '
 
 test_expect_success 'am --abort removes a stray directory' '
-	mkdir -p .git/rebase-apply &&
-	touch .git/rebase-apply/applying &&
+	mkdir .git/rebase-apply &&
 	git am --abort &&
 	test_path_is_missing .git/rebase-apply
 '
@@ -725,27 +732,27 @@ test_expect_success 'am --abort removes a stray directory' '
 test_expect_success 'am refuses patches when paused' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
+	git checkout lorem2^^ &&
 
 	test_must_fail git am lorem-move.patch &&
 	test_path_is_dir .git/rebase-apply &&
-	test_cmp_rev first HEAD &&
+	test_cmp_rev lorem2^^ HEAD &&
 
 	test_must_fail git am <lorem-move.patch &&
 	test_path_is_dir .git/rebase-apply &&
-	test_cmp_rev first HEAD
+	test_cmp_rev lorem2^^ HEAD
 '
 
 test_expect_success 'am --resolved works' '
 	echo goodbye >expected &&
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
+	git checkout lorem2^^ &&
 	test_must_fail git am lorem-move.patch &&
 	test -d .git/rebase-apply &&
 	echo resolved >>file &&
 	git add file &&
-	git am --continue &&
+	git am --resolved &&
 	test_path_is_missing .git/rebase-apply &&
 	test_cmp expected another
 '
@@ -753,23 +760,26 @@ test_expect_success 'am --resolved works' '
 test_expect_success 'am --resolved fails if index has no changes' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
+	git checkout lorem2^^ &&
 	test_must_fail git am lorem-move.patch &&
 	test_path_is_dir .git/rebase-apply &&
-	test_cmp_rev first HEAD &&
-	test_must_fail git am --continue &&
+	test_cmp_rev lorem2^^ HEAD &&
+	test_must_fail git am --resolved &&
 	test_path_is_dir .git/rebase-apply &&
-	test_cmp_rev first HEAD
+	test_cmp_rev lorem2^^ HEAD
 '
 
 test_expect_success 'am --resolved fails if index has unmerged entries' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
-	test_must_fail git am lorem-move.patch &&
+	git checkout second &&
+	test_must_fail git am -3 lorem-move.patch &&
 	test_path_is_dir .git/rebase-apply &&
-	test_must_fail git am --continue 2>err &&
-	git am --abort
+	test_cmp_rev second HEAD &&
+	test_must_fail git am --resolved >err &&
+	test_path_is_dir .git/rebase-apply &&
+	test_cmp_rev second HEAD &&
+	test_grep "still have unmerged paths" err
 '
 
 test_expect_success 'am takes patches from a Pine mailbox' '
@@ -778,7 +788,7 @@ test_expect_success 'am takes patches from a Pine mailbox' '
 	git checkout first &&
 	cat pine patch1 | git am &&
 	test_path_is_missing .git/rebase-apply &&
-	git diff --exit-code main^ HEAD
+	git diff --exit-code main^..HEAD
 '
 
 test_expect_success 'am fails on mail without patch' '
@@ -862,13 +872,17 @@ test_expect_success 'am without --committer-date-is-author-date' '
 	! test_cmp at ct
 '
 
+# This checks for +0000 because TZ is set to UTC and that should
+# show up when the current time is used. The date in message is set
+# by test_tick that uses -0700 timezone; if this feature does not
+# work, we will see that instead of +0000.
 test_expect_success 'am --ignore-date' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
 	git checkout first &&
 	test_tick &&
 	git am --ignore-date patch1 &&
-	git cat-file commit HEAD | sed -e "/^$/q" >head1 &&
+	git cat-file commit HEAD | sed -e "/^\$/q" >head1 &&
 	sed -ne "/^author /s/.*> //p" head1 >at &&
 	grep "+0000" at
 '
@@ -879,12 +893,10 @@ test_expect_success 'am into an unborn branch' '
 	git reset --hard &&
 	rm -fr subdir &&
 	mkdir subdir &&
-	$REAL_GIT format-patch --numbered-files -o subdir -1 first &&
+	git format-patch --numbered-files -o subdir -1 first &&
 	(
 		cd subdir &&
 		git init &&
-		git config user.name "Test User" &&
-		git config user.email "test@example.com" &&
 		git am 1
 	) &&
 	(
@@ -892,6 +904,16 @@ test_expect_success 'am into an unborn branch' '
 		git rev-parse HEAD^{tree} >../actual
 	) &&
 	test_cmp expected actual
+'
+
+test_expect_success 'am newline in subject' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	test_tick &&
+	sed -e "s/second/second \\\n foo/" patch1 >patchnl &&
+	git am <patchnl >output.out 2>&1 &&
+	test_grep "^Applying: second \\\n foo$" output.out
 '
 
 test_expect_success 'am -q is quiet' '
@@ -909,277 +931,352 @@ test_expect_success 'am empty-file does not infloop' '
 	touch empty-file &&
 	test_tick &&
 	test_must_fail git am empty-file 2>actual &&
-	echo "Patch format detection failed." >expected &&
+	echo Patch format detection failed. >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'am --message-id really adds the message id' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
+	git checkout HEAD^ &&
 	git am --message-id patch1.eml &&
 	test_path_is_missing .git/rebase-apply &&
-	git log -1 --format=%B HEAD >actual &&
-	grep "Message-Id:" actual
+	git cat-file commit HEAD | tail -n1 >actual &&
+	grep Message-ID patch1.eml >expected &&
+	test_cmp expected actual
 '
 
 test_expect_success 'am.messageid really adds the message id' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
-	git config am.messageid true &&
+	git checkout HEAD^ &&
+	test_config am.messageid true &&
 	git am patch1.eml &&
 	test_path_is_missing .git/rebase-apply &&
-	git log -1 --format=%B HEAD >actual &&
-	grep "Message-Id:" actual &&
-	git config --unset am.messageid
+	git cat-file commit HEAD | tail -n1 >actual &&
+	grep Message-ID patch1.eml >expected &&
+	test_cmp expected actual
 '
 
 test_expect_success 'am --message-id -s signs off after the message id' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
-	git am --message-id -s patch1.eml &&
+	git checkout HEAD^ &&
+	git am -s --message-id patch1.eml &&
 	test_path_is_missing .git/rebase-apply &&
-	git log -1 --format=%B HEAD >actual &&
-	grep "Message-Id:" actual &&
-	grep "Signed-off-by:" actual &&
-	mid_line=$(grep -n "Message-Id:" actual | head -1 | cut -d: -f1) &&
-	sob_line=$(grep -n "Signed-off-by:" actual | head -1 | cut -d: -f1) &&
-	test "$sob_line" -gt "$mid_line"
+	git cat-file commit HEAD | tail -n2 | head -n1 >actual &&
+	grep Message-ID patch1.eml >expected &&
+	test_cmp expected actual
 '
 
 test_expect_success 'am -3 works with rerere' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
 
-	# make a patch: base->change on file "rfile"
-	echo base >rfile &&
-	git add rfile &&
-	git commit -m r-base &&
-	git tag r-base &&
-	echo changed >rfile &&
-	git add rfile &&
-	git commit -m r-change &&
-	git format-patch -1 --stdout >single.patch &&
+	# make patches one->two and two->three...
+	test_commit one file &&
+	test_commit two file &&
+	test_commit three file &&
+	git format-patch -2 --stdout >seq.patch &&
 
-	# create a conflicting situation
-	git reset --hard r-base &&
-	echo other >rfile &&
-	git add rfile &&
-	git commit -m r-other &&
-	git tag r-other &&
+	# and create a situation that conflicts...
+	git reset --hard one &&
+	test_commit other file &&
 
-	# enable rerere
-	git config rerere.enabled true &&
+	# enable rerere...
+	test_config rerere.enabled true &&
+	test_when_finished "rm -rf .git/rr-cache" &&
 
-	# apply — conflicts, rerere records preimage
-	test_must_fail git am -3 single.patch &&
-	test -d .git/rr-cache &&
-
-	# resolve and continue — rerere records postimage
-	echo resolved >rfile &&
-	git add rfile &&
+	# ...and apply. Our resolution is to skip the first
+	# patch, and the rerere the second one.
+	test_must_fail git am -3 seq.patch &&
+	test_must_fail git am --skip &&
+	echo resolved >file &&
+	git add file &&
 	git am --resolved &&
 
-	# now reset and try again — rerere should replay
-	git reset --hard r-other &&
-	test_must_fail git am -3 single.patch &&
+	# now apply again, and confirm that rerere engaged (we still
+	# expect failure from am because rerere does not auto-commit
+	# for us).
+	git reset --hard other &&
+	test_must_fail git am -3 seq.patch &&
+	test_must_fail git am --skip &&
 	echo resolved >expect &&
-	test_cmp expect rfile
+	test_cmp expect file
 '
 
 test_expect_success 'am -s unexpected trailer block' '
 	rm -fr .git/rebase-apply &&
 	git reset --hard &&
-	git checkout first &&
-	git am -s <patch1 &&
-	test_path_is_missing .git/rebase-apply &&
-	git log -1 --format=%B HEAD >actual &&
-	grep "Signed-off-by:" actual
+	echo signed >file &&
+	git add file &&
+	cat >msg <<-EOF &&
+	subject here
+
+	Signed-off-by: $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL>
+	[jc: tweaked log message]
+	Signed-off-by: J C H <j@c.h>
+	EOF
+	git commit -F msg &&
+	git cat-file commit HEAD | sed -e "1,/^$/d" >original &&
+	git format-patch --stdout -1 >patch &&
+
+	git reset --hard HEAD^ &&
+	git am -s patch &&
+	(
+		cat original &&
+		echo "Signed-off-by: $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL>"
+	) >expect &&
+	git cat-file commit HEAD | sed -e "1,/^$/d" >actual &&
+	test_cmp expect actual &&
+
+	cat >msg <<-\EOF &&
+	subject here
+
+	We make sure that there is a blank line between the log
+	message proper and Signed-off-by: line added.
+	EOF
+	git reset HEAD^ &&
+	git commit -F msg file &&
+	git cat-file commit HEAD | sed -e "1,/^$/d" >original &&
+	git format-patch --stdout -1 >patch &&
+
+	git reset --hard HEAD^ &&
+	git am -s patch &&
+
+	(
+		cat original &&
+		echo &&
+		echo "Signed-off-by: $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL>"
+	) >expect &&
+	git cat-file commit HEAD | sed -e "1,/^$/d" >actual &&
+	test_cmp expect actual
 '
 
 test_expect_success 'am --patch-format=mboxrd handles mboxrd' '
 	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	# mboxrd quoting: >From lines inside message body
-	# Just use regular patch with mboxrd flag - it should work
-	git am --patch-format=mboxrd <patch1 &&
-	test_path_is_missing .git/rebase-apply &&
-	git diff --exit-code second
+	git checkout -f first &&
+	echo mboxrd >>file &&
+	git add file &&
+	cat >msg <<-\INPUT_END &&
+	mboxrd should escape the body
+
+	From could trip up a loose mbox parser
+	>From extra escape for reversibility
+	INPUT_END
+	git commit -F msg &&
+	git -c format.mboxrd format-patch --stdout -1 >mboxrd1 &&
+	grep "^>From could trip up a loose mbox parser" mboxrd1 &&
+	git checkout -f first &&
+	git am --patch-format=mboxrd mboxrd1 &&
+	git cat-file commit HEAD | tail -n4 >out &&
+	test_cmp msg out
 '
 
 test_expect_success 'am works with multi-line in-body headers' '
+	FORTY="String that has a length of more than forty characters" &&
+	LONG="$FORTY $FORTY" &&
 	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	git am <patch1 &&
-	test_path_is_missing .git/rebase-apply &&
-	git diff --exit-code second
+	git checkout -f first &&
+	echo one >> file &&
+	git commit -am "$LONG
+
+    Body test" --author="$LONG <long@example.com>" &&
+	git format-patch --stdout -1 >patch &&
+	# bump from, date, and subject down to in-body header
+	awk "
+		/^From:/{
+			print \"From: x <x@example.com>\";
+			print \"Date: Sat, 1 Jan 2000 00:00:00 +0000\";
+			print \"Subject: x\n\";
+		}; 1
+	" <patch >msg &&
+	git checkout HEAD^ &&
+	git am msg &&
+	# Ensure that the author and full message are present
+	git cat-file commit HEAD | grep "^author.*long@example.com" &&
+	git cat-file commit HEAD | grep "^$LONG$"
 '
 
 test_expect_success 'am --quit keeps HEAD where it is' '
-	mkdir -p .git/rebase-apply &&
-	touch .git/rebase-apply/applying &&
+	mkdir .git/rebase-apply &&
 	>.git/rebase-apply/last &&
 	>.git/rebase-apply/next &&
+	git rev-parse HEAD^ >.git/ORIG_HEAD &&
 	git rev-parse HEAD >expected &&
-	git am --abort &&
+	git am --quit &&
 	test_path_is_missing .git/rebase-apply &&
 	git rev-parse HEAD >actual &&
 	test_cmp expected actual
 '
 
 test_expect_success 'am and .gitattibutes' '
-	# Test that am works with a .gitattributes file present
-	test_create_repo attr-repo &&
+	test_create_repo attributes &&
 	(
-		cd attr-repo &&
-		echo "*.txt text" >.gitattributes &&
+		cd attributes &&
+		test_commit init &&
+		git config filter.test.clean "sed -e '\''s/smudged/clean/g'\''" &&
+		git config filter.test.smudge "sed -e '\''s/clean/smudged/g'\''" &&
+
+		test_commit second &&
+		git checkout -b test HEAD^ &&
+
+		echo "*.txt filter=test conflict-marker-size=10" >.gitattributes &&
 		git add .gitattributes &&
-		git commit -m "add gitattributes" &&
-		git tag base &&
-		echo hello >a.txt &&
+		test_commit third &&
+
+		echo "This text is smudged." >a.txt &&
 		git add a.txt &&
-		git commit -m "add a.txt" &&
-		git format-patch -1 --stdout >../attrs.patch
-	) &&
-	(
-		cd attr-repo &&
-		git reset --hard base &&
-		git am ../attrs.patch &&
-		test -f a.txt &&
-		grep hello a.txt
+		test_commit fourth &&
+
+		git checkout -b removal HEAD^ &&
+		git rm .gitattributes &&
+		git add -u &&
+		test_commit fifth &&
+		git cherry-pick test &&
+
+		git checkout -b conflict third &&
+		echo "This text is different." >a.txt &&
+		git add a.txt &&
+		test_commit sixth &&
+
+		git checkout test &&
+		git format-patch --stdout main..HEAD >patches &&
+		git reset --hard main &&
+		git am patches &&
+		grep "smudged" a.txt &&
+
+		git checkout removal &&
+		git reset --hard &&
+		git format-patch --stdout main..HEAD >patches &&
+		git reset --hard main &&
+		git am patches &&
+		grep "clean" a.txt &&
+
+		git checkout conflict &&
+		git reset --hard &&
+		git format-patch --stdout main..HEAD >patches &&
+		git reset --hard fourth &&
+		test_must_fail git am -3 patches &&
+		grep "<<<<<<<<<<" a.txt
 	)
 '
 
-test_expect_success 'apply binary patch' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	printf "\000" >binary &&
+test_expect_success 'apply binary blob in partial clone' '
+	printf "\\000" >binary &&
 	git add binary &&
 	git commit -m "binary blob" &&
-	git format-patch --stdout -1 >binpatch &&
-	git reset --hard HEAD^ &&
-	git am binpatch &&
-	test_path_is_missing .git/rebase-apply &&
-	test -f binary
+	git format-patch --stdout -m HEAD^ >patch &&
+
+	test_create_repo server &&
+	test_config -C server uploadpack.allowfilter 1 &&
+	test_config -C server uploadpack.allowanysha1inwant 1 &&
+	git clone --filter=blob:none "file://$(pwd)/server" client &&
+	test_when_finished "rm -rf client" &&
+
+	# Exercise to make sure that it works
+	git -C client am ../patch
 '
 
 test_expect_success 'an empty input file is error regardless of --empty option' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	test_must_fail git am --empty=drop empty-file 2>actual &&
+	test_when_finished "git am --abort || :" &&
+	test_must_fail git am --empty=drop empty.patch 2>actual &&
 	echo "Patch format detection failed." >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'invalid when passing the --empty option alone' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	test_must_fail git am --empty=drop 2>err
+	test_when_finished "git am --abort || :" &&
+	git checkout empty-commit^ &&
+	test_must_fail git am --empty empty-commit.patch 2>err &&
+	echo "error: invalid value for '\''--empty'\'': '\''empty-commit.patch'\''" >expected &&
+	test_cmp expected err
 '
 
 test_expect_success 'a message without a patch is an error (default)' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	test_must_fail git am <failmail &&
-	git am --abort &&
-	test_path_is_missing .git/rebase-apply
+	test_when_finished "git am --abort || :" &&
+	test_must_fail git am empty-commit.patch >err &&
+	grep "Patch is empty" err
 '
 
 test_expect_success 'a message without a patch is an error where an explicit "--empty=stop" is given' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	test_must_fail git am --empty=stop <failmail &&
-	git am --abort &&
-	test_path_is_missing .git/rebase-apply
+	test_when_finished "git am --abort || :" &&
+	test_must_fail git am --empty=stop empty-commit.patch >err &&
+	grep "Patch is empty." err
 '
 
 test_expect_success 'a message without a patch will be skipped when "--empty=drop" is given' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	git am --empty=drop <failmail &&
-	test_path_is_missing .git/rebase-apply &&
-	test_cmp_rev first HEAD
+	git am --empty=drop empty-commit.patch >output &&
+	git rev-parse empty-commit^ >expected &&
+	git rev-parse HEAD >actual &&
+	test_cmp expected actual &&
+	grep "Skipping: empty commit" output
 '
 
 test_expect_success 'record as an empty commit when meeting e-mail message that lacks a patch' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	git am --empty=keep <failmail &&
+	git am --empty=keep empty-commit.patch >output &&
 	test_path_is_missing .git/rebase-apply &&
-	# Should have created a new commit
-	test "$(git rev-parse first)" != "$(git rev-parse HEAD)"
+	git show empty-commit --format="%B" >expected &&
+	git show HEAD --format="%B" >actual &&
+	grep -f actual expected &&
+	grep "Creating an empty commit: empty commit" output
 '
 
 test_expect_success 'skip an empty patch in the middle of an am session' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	# Combine failmail (no patch) and patch1 (real patch)
-	cat failmail patch1 | git am --empty=drop &&
+	git checkout empty-commit^ &&
+	test_must_fail git am empty-commit.patch >out 2>err &&
+	grep "Patch is empty." out &&
+	grep "To record the empty patch as an empty commit, run \"git am --allow-empty\"." err &&
+	git am --skip &&
 	test_path_is_missing .git/rebase-apply &&
-	git diff --exit-code second
+	git rev-parse empty-commit^ >expected &&
+	git rev-parse HEAD >actual &&
+	test_cmp expected actual
 '
 
 test_expect_success 'record an empty patch as an empty commit in the middle of an am session' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	cat failmail patch1 | git am --empty=keep &&
-	test_path_is_missing .git/rebase-apply
+	git checkout empty-commit^ &&
+	test_must_fail git am empty-commit.patch >out 2>err &&
+	grep "Patch is empty." out &&
+	grep "To record the empty patch as an empty commit, run \"git am --allow-empty\"." err &&
+	git am --allow-empty >output &&
+	grep "No changes - recorded it as an empty commit." output &&
+	test_path_is_missing .git/rebase-apply &&
+	git show empty-commit --format="%B" >expected &&
+	git show HEAD --format="%B" >actual &&
+	grep -f actual expected
 '
 
 test_expect_success 'create an non-empty commit when the index IS changed though "--allow-empty" is given' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	git am --allow-empty <patch1 &&
-	test_path_is_missing .git/rebase-apply &&
-	git diff --exit-code second
+	git checkout empty-commit^ &&
+	test_must_fail git am empty-commit.patch >err &&
+	: >empty-file &&
+	git add empty-file &&
+	git am --allow-empty &&
+	git show empty-commit --format="%B" >expected &&
+	git show HEAD --format="%B" >actual &&
+	grep -f actual expected &&
+	git diff HEAD^..HEAD --name-only
 '
 
 test_expect_success 'cannot create empty commits when there is a clean index due to merge conflicts' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	test_must_fail git am lorem-move.patch &&
-	test_path_is_dir .git/rebase-apply &&
-	test_must_fail git am --allow-empty --continue &&
-	git am --abort
+	test_when_finished "git am --abort || :" &&
+	git rev-parse HEAD >expected &&
+	test_must_fail git am seq.patch &&
+	test_must_fail git am --allow-empty >err &&
+	! grep "To record the empty patch as an empty commit, run \"git am --allow-empty\"." err &&
+	git rev-parse HEAD >actual &&
+	test_cmp actual expected
 '
 
 test_expect_success 'cannot create empty commits when there is unmerged index due to merge conflicts' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	test_must_fail git am lorem-move.patch &&
-	test_path_is_dir .git/rebase-apply &&
-	test_must_fail git am --continue &&
-	git am --abort
-'
-
-test_expect_success 'am fails if index is dirty' '
-	rm -fr .git/rebase-apply &&
-	git reset --hard &&
-	git checkout first &&
-	echo dirtyfile >dirtyfile &&
-	git add dirtyfile &&
-	test_must_fail git am patch1 &&
-	test_path_is_dir .git/rebase-apply &&
-	test_cmp_rev first HEAD &&
-	rm -f dirtyfile &&
-	git am --abort
+	test_when_finished "git am --abort || :" &&
+	git rev-parse HEAD >expected &&
+	test_must_fail git am -3 seq.patch &&
+	test_must_fail git am --allow-empty >err &&
+	! grep "To record the empty patch as an empty commit, run \"git am --allow-empty\"." err &&
+	git rev-parse HEAD >actual &&
+	test_cmp actual expected
 '
 
 test_done

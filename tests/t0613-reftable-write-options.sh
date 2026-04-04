@@ -2,88 +2,279 @@
 
 test_description='reftable write options'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+GIT_TEST_DEFAULT_REF_FORMAT=reftable
+export GIT_TEST_DEFAULT_REF_FORMAT
+# Disable auto-compaction for all tests as we explicitly control repacking of
+# refs.
+GIT_TEST_REFTABLE_AUTOCOMPACTION=false
+export GIT_TEST_REFTABLE_AUTOCOMPACTION
+# Block sizes depend on the hash function, so we force SHA1 here.
+GIT_TEST_DEFAULT_HASH=sha1
+export GIT_TEST_DEFAULT_HASH
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# Test default reftable write behavior: a commit in a reftable repo
-# should produce reftable files (not loose ref files).
+# Block sizes depend on the actual refs we write, so, for tests
+# that check block size, we force the initial branch name to be "master".
+init_repo () {
+	git init --initial-branch master repo
+}
 
 test_expect_success 'default write options' '
-	rm -rf repo &&
-	git init --ref-format=reftable repo &&
+	test_when_finished "rm -rf repo" &&
+	init_repo &&
 	(
 		cd repo &&
-		git config user.name "Test" &&
-		git config user.email "test@test.com" &&
-		echo content >file &&
-		git add file &&
-		git commit -m initial &&
-
-		# Reftable files should exist
-		test_path_is_dir .git/reftable &&
-		test_path_is_file .git/reftable/tables.list &&
-		test "$(wc -l <.git/reftable/tables.list)" -gt 0 &&
-
-		# No loose ref files should exist for heads
-		test_must_fail test -f .git/refs/heads/main &&
-
-		# The ref should be resolvable through reftable
-		git rev-parse HEAD &&
-		git rev-parse refs/heads/main
+		test_commit initial &&
+		git pack-refs &&
+		cat >expect <<-EOF &&
+		header:
+		  block_size: 4096
+		ref:
+		  - length: 129
+		    restarts: 2
+		log:
+		  - length: 262
+		    restarts: 2
+		EOF
+		test-tool dump-reftable -b .git/reftable/*.ref >actual &&
+		test_cmp expect actual
 	)
 '
-
-# When core.logAllRefUpdates is false, reftable writes should not include
-# log blocks.
 
 test_expect_success 'disabled reflog writes no log blocks' '
-	rm -rf repo &&
-	git init --ref-format=reftable repo &&
+	test_config_global core.logAllRefUpdates false &&
+	test_when_finished "rm -rf repo" &&
+	init_repo &&
 	(
 		cd repo &&
-		git config user.name "Test" &&
-		git config user.email "test@test.com" &&
-		git config core.logAllRefUpdates false &&
-		echo content >file &&
-		git add file &&
-		git commit -m initial &&
-
-		# The ref should still work
-		git rev-parse HEAD &&
-
-		# Reftable tables should exist
-		test "$(wc -l <.git/reftable/tables.list)" -gt 0
+		test_commit initial &&
+		git pack-refs &&
+		cat >expect <<-EOF &&
+		header:
+		  block_size: 4096
+		ref:
+		  - length: 129
+		    restarts: 2
+		EOF
+		test-tool dump-reftable -b .git/reftable/*.ref >actual &&
+		test_cmp expect actual
 	)
 '
 
-# The [reftable] blockSize option should be respected in written tables.
-
-test_expect_success 'block-size option' '
-	rm -rf repo &&
-	git init --ref-format=reftable repo &&
+test_expect_success 'many refs results in multiple blocks' '
+	test_when_finished "rm -rf repo" &&
+	init_repo &&
 	(
 		cd repo &&
-		git config user.name "Test" &&
-		git config user.email "test@test.com" &&
-		git config reftable.blockSize 512 &&
-		echo content >file &&
-		git add file &&
-		git commit -m initial &&
+		test_commit initial &&
+		test_seq -f "update refs/heads/branch-%d HEAD" 200 |
+		git update-ref --stdin &&
+		git pack-refs &&
 
-		# Verify ref is accessible
-		git rev-parse HEAD &&
-		git rev-parse refs/heads/main &&
+		cat >expect <<-EOF &&
+		header:
+		  block_size: 4096
+		ref:
+		  - length: 4049
+		    restarts: 11
+		  - length: 1136
+		    restarts: 3
+		log:
+		  - length: 4041
+		    restarts: 4
+		  - length: 4015
+		    restarts: 3
+		  - length: 4014
+		    restarts: 3
+		  - length: 4012
+		    restarts: 3
+		  - length: 3289
+		    restarts: 3
+		idx:
+		  - length: 103
+		    restarts: 1
+		EOF
+		test-tool dump-reftable -b .git/reftable/*.ref >actual &&
+		test_cmp expect actual
+	)
+'
 
-		# The reftable files should exist and be functional
-		test_path_is_file .git/reftable/tables.list &&
-		test "$(wc -l <.git/reftable/tables.list)" -gt 0 &&
+test_expect_success 'tiny block size leads to error' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		test_commit initial &&
+		cat >expect <<-EOF &&
+		error: unable to compact stack: entry too large
+		EOF
+		test_must_fail git -c reftable.blockSize=50 pack-refs 2>err &&
+		test_cmp expect err
+	)
+'
 
-		# Additional operations should work with custom block size
-		git update-ref refs/heads/feature HEAD &&
-		git rev-parse refs/heads/feature
+test_expect_success 'small block size leads to multiple ref blocks' '
+	test_config_global core.logAllRefUpdates false &&
+	test_when_finished "rm -rf repo" &&
+	init_repo &&
+	(
+		cd repo &&
+		test_commit A &&
+		test_commit B &&
+		git -c reftable.blockSize=100 pack-refs &&
+
+		cat >expect <<-EOF &&
+		header:
+		  block_size: 100
+		ref:
+		  - length: 53
+		    restarts: 1
+		  - length: 74
+		    restarts: 1
+		  - length: 38
+		    restarts: 1
+		EOF
+		test-tool dump-reftable -b .git/reftable/*.ref >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'small block size fails with large reflog message' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		test_commit A &&
+		test-tool genzeros 500 | tr "\000" "a" >logmsg &&
+		cat >expect <<-EOF &&
+		fatal: update_ref failed for ref ${SQ}refs/heads/logme${SQ}: reftable: transaction failure: entry too large
+		EOF
+		test_must_fail git -c reftable.blockSize=100 \
+			update-ref -m "$(cat logmsg)" refs/heads/logme HEAD 2>err &&
+		test_cmp expect err
+	)
+'
+
+test_expect_success 'block size exceeding maximum supported size' '
+	test_config_global core.logAllRefUpdates false &&
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		test_commit A &&
+		test_commit B &&
+		cat >expect <<-EOF &&
+		fatal: reftable block size cannot exceed 16MB
+		EOF
+		test_must_fail git -c reftable.blockSize=16777216 pack-refs 2>err &&
+		test_cmp expect err
+	)
+'
+
+test_expect_success 'restart interval at every single record' '
+	test_when_finished "rm -rf repo" &&
+	init_repo &&
+	(
+		cd repo &&
+		test_commit initial &&
+		test_seq -f "update refs/heads/branch-%d HEAD" 10 |
+		git update-ref --stdin &&
+		git -c reftable.restartInterval=1 pack-refs &&
+
+		cat >expect <<-EOF &&
+		header:
+		  block_size: 4096
+		ref:
+		  - length: 566
+		    restarts: 13
+		log:
+		  - length: 1393
+		    restarts: 12
+		EOF
+		test-tool dump-reftable -b .git/reftable/*.ref >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'restart interval exceeding maximum supported interval' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		test_commit initial &&
+		cat >expect <<-EOF &&
+		fatal: reftable block size cannot exceed 65535
+		EOF
+		test_must_fail git -c reftable.restartInterval=65536 pack-refs 2>err &&
+		test_cmp expect err
+	)
+'
+
+test_expect_success 'object index gets written by default with ref index' '
+	test_config_global core.logAllRefUpdates false &&
+	test_when_finished "rm -rf repo" &&
+	init_repo &&
+	(
+		cd repo &&
+		test_commit initial &&
+		test_seq -f "update refs/heads/branch-%d HEAD" 5 |
+		git update-ref --stdin &&
+		git -c reftable.blockSize=100 pack-refs &&
+
+		cat >expect <<-EOF &&
+		header:
+		  block_size: 100
+		ref:
+		  - length: 53
+		    restarts: 1
+		  - length: 95
+		    restarts: 1
+		  - length: 71
+		    restarts: 1
+		  - length: 80
+		    restarts: 1
+		idx:
+		  - length: 55
+		    restarts: 2
+		obj:
+		  - length: 11
+		    restarts: 1
+		EOF
+		test-tool dump-reftable -b .git/reftable/*.ref >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'object index can be disabled' '
+	test_config_global core.logAllRefUpdates false &&
+	test_when_finished "rm -rf repo" &&
+	init_repo &&
+	(
+		cd repo &&
+		test_commit initial &&
+		test_seq -f "update refs/heads/branch-%d HEAD" 5 |
+		git update-ref --stdin &&
+		git -c reftable.blockSize=100 -c reftable.indexObjects=false pack-refs &&
+
+		cat >expect <<-EOF &&
+		header:
+		  block_size: 100
+		ref:
+		  - length: 53
+		    restarts: 1
+		  - length: 95
+		    restarts: 1
+		  - length: 71
+		    restarts: 1
+		  - length: 80
+		    restarts: 1
+		idx:
+		  - length: 55
+		    restarts: 2
+		EOF
+		test-tool dump-reftable -b .git/reftable/*.ref >actual &&
+		test_cmp expect actual
 	)
 '
 

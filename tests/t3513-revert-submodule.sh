@@ -1,60 +1,35 @@
 #!/bin/sh
 
-test_description='revert basic tests'
+test_description='revert can handle submodules'
 
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-submodule-update.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
+# Create a revert that moves from HEAD (including any test modifications to
+# the work tree) to $1 by first checking out $1 and reverting it. Reverting
+# the revert is the transition we test for. We tar the current work tree
+# first so we can restore the work tree test setup after doing the checkout
+# and revert.  We test here that the restored work tree content is identical
+# to that at the beginning. The last revert is then tested by the framework.
+git_revert () {
+	git status -su >expect &&
+	ls -1pR * >>expect &&
+	"$TAR" cf "$TRASH_DIRECTORY/tmp.tar" * &&
+	may_only_be_test_must_fail "$2" &&
+	$2 git checkout "$1" &&
+	if test -n "$2"
+	then
+		return
+	fi &&
+	git revert HEAD &&
+	rm -rf * &&
+	"$TAR" xf "$TRASH_DIRECTORY/tmp.tar" &&
+	git status -su >actual &&
+	ls -1pR * >>actual &&
+	test_cmp expect actual &&
+	git revert HEAD
+}
 
-	echo initial >file &&
-	git add file &&
-	test_tick &&
-	git commit -m initial &&
-	git tag initial &&
-
-	echo changed >file &&
-	git add file &&
-	test_tick &&
-	git commit -m changed &&
-	git tag changed &&
-
-	echo more >file2 &&
-	git add file2 &&
-	test_tick &&
-	git commit -m "add file2" &&
-	git tag added
-'
-
-test_expect_success 'revert undoes a commit' '
-	git revert changed &&
-	echo initial >expect &&
-	test_cmp expect file
-'
-
-test_expect_success 'revert with --no-commit stages changes' '
-	git reset --hard added &&
-	git revert --no-commit added &&
-	test_path_is_missing file2 &&
-	git revert --abort || git reset --hard
-'
-
-test_expect_success 'revert creates proper message' '
-	git reset --hard added &&
-	git revert added &&
-	git log --format=%s --max-count=1 >actual &&
-	grep "Revert" actual
-'
-
-test_expect_success 'revert detects conflict' '
-	git reset --hard added &&
-	echo conflict >file &&
-	git add file &&
-	test_tick &&
-	git commit -m conflict &&
-	test_must_fail git revert changed
-'
+test_submodule_switch_func "git_revert"
 
 test_done

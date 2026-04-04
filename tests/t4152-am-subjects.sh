@@ -2,49 +2,77 @@
 
 test_description='test subject preservation with format-patch | am'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
+make_patches() {
+	type=$1
+	subject=$2
+	test_expect_success "create patches with $type subject" '
+		git reset --hard baseline &&
+		echo $type >file &&
+		git commit -a -m "$subject" &&
+		git format-patch -1 --stdout >$type.patch &&
+		git format-patch -1 --stdout -k >$type-k.patch
+	'
+}
+
+check_subject() {
+	git reset --hard baseline &&
+	git am $2 $1.patch &&
+	git log -1 --pretty=format:%B >actual &&
+	test_cmp expect actual
+}
+
 test_expect_success 'setup baseline commit' '
-	git init repo && cd repo &&
-	echo base >file &&
-	git add file &&
-	git commit -m "baseline" &&
-	git tag baseline
+	test_commit baseline file
 '
 
-test_expect_success 'create patch with short subject' '
-	cd repo &&
-	git reset --hard baseline &&
-	echo short >file &&
-	git commit -a -m "short subject" &&
-	git format-patch -1 --stdout >short.patch
-'
+SHORT_SUBJECT='short subject'
+make_patches short "$SHORT_SUBJECT"
 
+LONG_SUBJECT1='this is a long subject that is virtually guaranteed'
+LONG_SUBJECT2='to require wrapping via format-patch if it is all'
+LONG_SUBJECT3='going to appear on a single line'
+LONG_SUBJECT="$LONG_SUBJECT1 $LONG_SUBJECT2 $LONG_SUBJECT3"
+make_patches long "$LONG_SUBJECT"
+
+MULTILINE_SUBJECT="$LONG_SUBJECT1
+$LONG_SUBJECT2
+$LONG_SUBJECT3"
+make_patches multiline "$MULTILINE_SUBJECT"
+
+echo "$SHORT_SUBJECT" >expect
 test_expect_success 'short subject preserved (format-patch | am)' '
-	cd repo &&
-	git reset --hard baseline &&
-	git am short.patch &&
-	git log -n 1 --format=%s >actual &&
-	echo "short subject" >expect &&
-	test_cmp expect actual
+	check_subject short
+'
+test_expect_success 'short subject preserved (format-patch -k | am)' '
+	check_subject short-k
+'
+test_expect_success 'short subject preserved (format-patch -k | am -k)' '
+	check_subject short-k -k
 '
 
-test_expect_success 'create patch with long subject' '
-	cd repo &&
-	git reset --hard baseline &&
-	echo long >file &&
-	git commit -a -m "this is a long subject that is virtually guaranteed to require wrapping via format-patch if it is all going to appear on a single line" &&
-	git format-patch -1 --stdout >long.patch
-'
-
+echo "$LONG_SUBJECT" >expect
 test_expect_success 'long subject preserved (format-patch | am)' '
-	cd repo &&
-	git reset --hard baseline &&
-	git am long.patch &&
-	git log -n 1 --format=%s >actual &&
-	echo "this is a long subject that is virtually guaranteed to require wrapping via format-patch if it is all going to appear on a single line" >expect &&
-	test_cmp expect actual
+	check_subject long
+'
+test_expect_success 'long subject preserved (format-patch -k | am)' '
+	check_subject long-k
+'
+test_expect_success 'long subject preserved (format-patch -k | am -k)' '
+	check_subject long-k -k
+'
+
+echo "$LONG_SUBJECT" >expect
+test_expect_success 'multiline subject unwrapped (format-patch | am)' '
+	check_subject multiline
+'
+test_expect_success 'multiline subject unwrapped (format-patch -k | am)' '
+	check_subject multiline-k
+'
+echo "$MULTILINE_SUBJECT" >expect
+test_expect_success 'multiline subject preserved (format-patch -k | am -k)' '
+	check_subject multiline-k -k
 '
 
 test_done

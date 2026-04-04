@@ -10,26 +10,43 @@ then
 fi
 
 test_expect_success 'setup' '
-	git init &&
+
 	git config pack.compression 0 &&
 	git config pack.depth 0 &&
-	# Create a moderately large repo
+	blobsize=$((100*1024*1024)) &&
+	blobcount=$((2*1024*1024*1024/$blobsize+1)) &&
 	i=1 &&
-	while test $i -le 10
-	do
-		dd if=/dev/zero bs=1024 count=1024 2>/dev/null | tr "\\0" "x" >largefile_$i &&
-		git add largefile_$i &&
-		git commit -m "large file $i" || exit
-		i=$(($i + 1))
-	done
+	(while test $i -le $blobcount
+	 do
+		printf "Generating blob $i/$blobcount\r" >&2 &&
+		printf "blob\nmark :$i\ndata $blobsize\n" &&
+		#test-tool genrandom $i $blobsize &&
+		printf "%-${blobsize}s" $i &&
+		echo "M 100644 :$i $i" >> commit &&
+		i=$(($i+1)) ||
+		echo $? > exit-status
+	 done &&
+	 echo "commit refs/heads/main" &&
+	 echo "author A U Thor <author@email.com> 123456789 +0000" &&
+	 echo "committer C O Mitter <committer@email.com> 123456789 +0000" &&
+	 echo "data 5" &&
+	 echo ">2gb" &&
+	 cat commit) |
+	git fast-import --big-file-threshold=2 &&
+	test ! -f exit-status
+
 '
 
 test_expect_success 'clone - bare' '
+
 	git clone --bare --no-hardlinks . clone-bare
+
 '
 
-test_expect_success 'clone - with worktree' '
-	git clone . clone-wt
+test_expect_success 'clone - with worktree, file:// protocol' '
+
+	git clone "file://$(pwd)" clone-wt
+
 '
 
 test_done

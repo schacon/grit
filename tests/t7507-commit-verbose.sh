@@ -1,164 +1,169 @@
 #!/bin/sh
-#
-# t7507-commit-verbose.sh — commit -v (verbose) and related editor behavior
-#
-# Note: grit does not yet support commit -v. We test that it is properly
-# rejected and verify related commit message behaviors that do work.
-#
 
-test_description='commit verbose mode and message handling'
+test_description='verbose commit template'
+
 . ./test-lib.sh
 
-# ── setup ────────────────────────────────────────────────────────────────────
+write_script "check-for-diff" <<\EOF &&
+grep '^diff --git' "$1" >out
+exit 0
+EOF
+test_set_editor "$PWD/check-for-diff"
 
-test_expect_success 'setup: init repo with config' '
-	git init verbose-repo &&
-	cd verbose-repo &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
-	echo "initial" >file.txt &&
-	git add file.txt &&
-	git commit -m "initial commit"
+cat >message <<'EOF'
+subject
+
+body
+EOF
+
+test_expect_success 'setup' '
+	echo content >file &&
+	git add file &&
+	git commit -F message
 '
 
-# ── commit -v is not yet supported ──────────────────────────────────────────
-
-test_expect_success 'commit -v is rejected (not yet implemented)' '
-	cd verbose-repo &&
-	echo "change1" >file.txt &&
-	git add file.txt &&
-	test_must_fail git commit -v -m "verbose attempt" 2>err &&
-	grep -i "unexpected\|unrecognized\|unknown" err
+test_expect_success 'initial commit shows verbose diff' '
+	git commit --amend -v &&
+	test_line_count = 1 out
 '
 
-# ── -m message ───────────────────────────────────────────────────────────────
-
-test_expect_success 'commit -m creates commit with correct message' '
-	cd verbose-repo &&
-	echo "change2" >file.txt &&
-	git add file.txt &&
-	git commit -m "a specific message" &&
-	git log --format="%s" -n 1 >actual &&
-	echo "a specific message" >expect &&
-	test_cmp expect actual
+test_expect_success 'second commit' '
+	echo content modified >file &&
+	git add file &&
+	git commit -F message
 '
 
-test_expect_success 'commit -m with multi-word message' '
-	cd verbose-repo &&
-	echo "change3" >file.txt &&
-	git add file.txt &&
-	git commit -m "this is a longer commit message with spaces" &&
-	git log --format="%s" -n 1 >actual &&
-	echo "this is a longer commit message with spaces" >expect &&
-	test_cmp expect actual
+check_message() {
+	git log -1 --pretty=format:%s%n%n%b >actual &&
+	test_cmp "$1" actual
+}
+
+test_expect_success 'verbose diff is stripped out' '
+	git commit --amend -v &&
+	check_message message &&
+	test_line_count = 1 out
 '
 
-# ── -F file message ─────────────────────────────────────────────────────────
-
-test_expect_success 'commit -F reads message from file' '
-	cd verbose-repo &&
-	echo "change4" >file.txt &&
-	git add file.txt &&
-	echo "message from file" >msg.txt &&
-	git commit -F msg.txt &&
-	git log --format="%s" -n 1 >actual &&
-	echo "message from file" >expect &&
-	test_cmp expect actual
+test_expect_success 'verbose diff is stripped out (mnemonicprefix)' '
+	git config diff.mnemonicprefix true &&
+	git commit --amend -v &&
+	check_message message &&
+	test_line_count = 1 out
 '
 
-test_expect_success 'commit -F with multi-line message' '
-	cd verbose-repo &&
-	echo "change5" >file.txt &&
-	git add file.txt &&
-	printf "subject line\n\nbody paragraph" >msg.txt &&
-	git commit -F msg.txt &&
-	git log --format="%s" -n 1 >actual &&
-	echo "subject line" >expect &&
-	test_cmp expect actual &&
-	git log --format="%b" -n 1 >actual-body &&
-	grep "body paragraph" actual-body
+cat >diff <<'EOF'
+This is an example commit message that contains a diff.
+
+diff --git c/file i/file
+new file mode 100644
+index 0000000..f95c11d
+--- /dev/null
++++ i/file
+@@ -0,0 +1 @@
++this is some content
+EOF
+
+test_expect_success 'diff in message is retained without -v' '
+	git commit --amend -F diff &&
+	check_message diff
 '
 
-# ── --allow-empty ────────────────────────────────────────────────────────────
-
-test_expect_success 'commit --allow-empty works' '
-	cd verbose-repo &&
-	git commit --allow-empty -m "empty commit" &&
-	git log --format="%s" -n 1 >actual &&
-	echo "empty commit" >expect &&
-	test_cmp expect actual
+test_expect_success 'diff in message is retained with -v' '
+	git commit --amend -F diff -v &&
+	check_message diff
 '
 
-# ── --allow-empty-message ────────────────────────────────────────────────────
-
-test_expect_success 'commit --allow-empty-message with empty -m succeeds' '
-	cd verbose-repo &&
-	echo "change6" >file.txt &&
-	git add file.txt &&
-	git commit --allow-empty-message -m ""
+test_expect_success 'submodule log is stripped out too with -v' '
+	git config diff.submodule log &&
+	test_config_global protocol.file.allow always &&
+	git submodule add ./. sub &&
+	git commit -m "sub added" &&
+	(
+		cd sub &&
+		echo "more" >>file &&
+		git commit -a -m "submodule commit"
+	) &&
+	(
+		GIT_EDITOR=cat &&
+		export GIT_EDITOR &&
+		test_must_fail git commit -a -v 2>err
+	) &&
+	test_grep "Aborting commit due to empty commit message." err
 '
 
-# ── --amend ──────────────────────────────────────────────────────────────────
-
-test_expect_success 'commit --amend changes last commit message' '
-	cd verbose-repo &&
-	echo "change7" >file.txt &&
-	git add file.txt &&
-	git commit -m "original message" &&
-	git commit --amend -m "amended message" &&
-	git log --format="%s" -n 1 >actual &&
-	echo "amended message" >expect &&
-	test_cmp expect actual
+test_expect_success 'verbose diff is stripped out with set core.commentChar' '
+	(
+		GIT_EDITOR=cat &&
+		export GIT_EDITOR &&
+		test_must_fail git -c core.commentchar=";" commit -a -v 2>err
+	) &&
+	test_grep "Aborting commit due to empty commit message." err
 '
 
-# NOTE: grit --amend does not currently preserve the original author
-test_expect_success 'commit --amend preserves author from amended commit' '
-	cd verbose-repo &&
-	echo "change8" >file.txt &&
-	git add file.txt &&
-	GIT_AUTHOR_NAME="Original Author" \
-	GIT_AUTHOR_EMAIL="orig@example.com" \
-	git commit -m "by original author" &&
-	git commit --amend -m "amended but same author" &&
-	git log --format="%an <%ae>" -n 1 >actual &&
-	echo "Original Author <orig@example.com>" >expect &&
-	test_cmp expect actual
+test_expect_success 'verbose diff is stripped with multi-byte comment char' '
+	(
+		GIT_EDITOR=cat &&
+		export GIT_EDITOR &&
+		test_must_fail git -c core.commentchar="foo>" commit -a -v >out 2>err
+	) &&
+	grep "^foo> " out &&
+	test_grep "Aborting commit due to empty commit message." err
 '
 
-# ── -a (commit all tracked) ─────────────────────────────────────────────────
-
-test_expect_success 'commit -a stages modified tracked files' '
-	cd verbose-repo &&
-	echo "change9" >file.txt &&
-	git add file.txt &&
-	git commit -m "baseline for -a test" &&
-	echo "modified" >file.txt &&
-	git commit -a -m "commit with -a" &&
-	git log --format="%s" -n 1 >actual &&
-	echo "commit with -a" >expect &&
-	test_cmp expect actual
+test_expect_success 'status does not verbose without --verbose' '
+	git status >actual &&
+	! grep "^diff --git" actual
 '
 
-# ── -q (quiet) ───────────────────────────────────────────────────────────────
-
-test_expect_success 'commit -q suppresses output' '
-	cd verbose-repo &&
-	echo "change10" >file.txt &&
-	git add file.txt &&
-	git commit -q -m "quiet commit" >stdout 2>&1 &&
-	test_must_be_empty stdout
+test_expect_success 'setup -v -v' '
+	echo dirty >file
 '
 
-# ── -s (signoff) ────────────────────────────────────────────────────────────
+for i in true 1
+do
+	test_expect_success "commit.verbose=$i and --verbose omitted" "
+		git -c commit.verbose=$i commit --amend &&
+		test_line_count = 1 out
+	"
+done
 
-# NOTE: grit -s/--signoff does not currently add the trailer
-test_expect_success 'commit -s adds Signed-off-by trailer' '
-	cd verbose-repo &&
-	echo "change11" >file.txt &&
-	git add file.txt &&
-	git commit -s -m "signoff commit" &&
-	git cat-file -p HEAD >commit-obj &&
-	grep "Signed-off-by:" commit-obj
+for i in false -2 -1 0
+do
+	test_expect_success "commit.verbose=$i and --verbose omitted" "
+		git -c commit.verbose=$i commit --amend &&
+		test_line_count = 0 out
+	"
+done
+
+for i in 2 3
+do
+	test_expect_success "commit.verbose=$i and --verbose omitted" "
+		git -c commit.verbose=$i commit --amend &&
+		test_line_count = 2 out
+	"
+done
+
+for i in true false -2 -1 0 1 2 3
+do
+	test_expect_success "commit.verbose=$i and --verbose" "
+		git -c commit.verbose=$i commit --amend --verbose &&
+		test_line_count = 1 out
+	"
+
+	test_expect_success "commit.verbose=$i and --no-verbose" "
+		git -c commit.verbose=$i commit --amend --no-verbose &&
+		test_line_count = 0 out
+	"
+
+	test_expect_success "commit.verbose=$i and -v -v" "
+		git -c commit.verbose=$i commit --amend -v -v &&
+		test_line_count = 2 out
+	"
+done
+
+test_expect_success "status ignores commit.verbose=true" '
+	git -c commit.verbose=true status >actual &&
+	! grep "^diff --git actual"
 '
 
 test_done

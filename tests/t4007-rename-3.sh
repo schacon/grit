@@ -1,220 +1,122 @@
 #!/bin/sh
+#
+# Copyright (c) 2005 Junio C Hamano
+#
 
-test_description='grit diff with renames across 3+ commits
+test_description='Rename interaction with pathspec.
 
-Tests diff behavior when files are renamed across multiple commits,
-including chains of renames, renames with modifications at each step,
-and diffing non-adjacent commits where a file has been renamed multiple
-times. With rename detection, renames appear as R status entries.'
+'
 
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-diff.sh ;# test-lib chdir's into trash
 
-REAL_GIT=/usr/bin/git
-
-# ============================================================
-# Setup: chain of renames across 4 commits
-# ============================================================
-
-test_expect_success 'setup repo with initial files' '
-	$REAL_GIT init rename3 &&
-	cd rename3 &&
-	$REAL_GIT config user.name "Test" &&
-	$REAL_GIT config user.email "test@test.com" &&
-	printf "line1\nline2\nline3\nline4\nline5\n" >alpha.txt &&
-	echo "constant" >stable.txt &&
-	$REAL_GIT add alpha.txt stable.txt &&
-	$REAL_GIT commit -m "C1: initial"
+test_expect_success 'prepare reference tree' '
+	mkdir path0 path1 &&
+	COPYING_test_data >path0/COPYING &&
+	git update-index --add path0/COPYING &&
+	tree=$(git write-tree) &&
+	blob=$(git rev-parse :path0/COPYING)
 '
 
-test_expect_success 'C2: rename alpha -> beta' '
-	cd rename3 &&
-	$REAL_GIT mv alpha.txt beta.txt &&
-	$REAL_GIT commit -m "C2: rename alpha to beta"
+test_expect_success 'prepare work tree' '
+	cp path0/COPYING path1/COPYING &&
+	git update-index --add --remove path0/COPYING path1/COPYING
 '
 
-test_expect_success 'C3: rename beta -> gamma with modification' '
-	cd rename3 &&
-	$REAL_GIT mv beta.txt gamma.txt &&
-	printf "line1\nLINE2\nline3\nline4\nline5\n" >gamma.txt &&
-	$REAL_GIT add gamma.txt &&
-	$REAL_GIT commit -m "C3: rename beta to gamma + modify"
+# In the tree, there is only path0/COPYING.  In the cache, path0 and
+# path1 both have COPYING and the latter is a copy of path0/COPYING.
+# Comparing the full tree with cache should tell us so.
+
+cat >expected <<EOF
+:100644 100644 $blob $blob C100	path0/COPYING	path1/COPYING
+EOF
+
+test_expect_success 'copy detection' '
+	git diff-index -C --find-copies-harder $tree >current &&
+	compare_diff_raw current expected
 '
 
-test_expect_success 'C4: rename gamma -> delta' '
-	cd rename3 &&
-	$REAL_GIT mv gamma.txt delta.txt &&
-	$REAL_GIT commit -m "C4: rename gamma to delta"
+test_expect_success 'copy detection, cached' '
+	git diff-index -C --find-copies-harder --cached $tree >current &&
+	compare_diff_raw current expected
 '
 
-# ============================================================
-# Adjacent commit diffs
-# ============================================================
-
-test_expect_success 'C1->C2: rename alpha to beta' '
-	cd rename3 &&
-	grit diff --name-status HEAD~3 HEAD~2 >actual &&
-	grep "^R.*alpha.txt.*beta.txt" actual
+test_expect_success 'exit code of quiet copy detection' '
+	test_expect_code 1 \
+	git diff --quiet --cached --find-copies-harder $tree
 '
 
-test_expect_success 'C2->C3: rename beta to gamma' '
-	cd rename3 &&
-	grit diff --name-status HEAD~2 HEAD~1 >actual &&
-	grep "^R.*beta.txt.*gamma.txt" actual
+test_expect_success 'exit code of quiet copy detection with --no-ext-diff' '
+	test_expect_code 1 \
+	git diff --quiet --cached --find-copies-harder --no-ext-diff $tree
 '
 
-test_expect_success 'C3->C4: rename gamma to delta' '
-	cd rename3 &&
-	grit diff --name-status HEAD~1 HEAD >actual &&
-	grep "^R.*gamma.txt.*delta.txt" actual
+# In the tree, there is only path0/COPYING.  In the cache, path0 and
+# path1 both have COPYING and the latter is a copy of path0/COPYING.
+# However when we say we care only about path1, we should just see
+# path1/COPYING suddenly appearing from nowhere, not detected as
+# a copy from path0/COPYING.
+
+cat >expected <<EOF
+:000000 100644 $ZERO_OID $blob A	path1/COPYING
+EOF
+
+test_expect_success 'copy, limited to a subtree' '
+	git diff-index -C --find-copies-harder $tree path1 >current &&
+	compare_diff_raw current expected
 '
 
-# ============================================================
-# Non-adjacent commit diffs (spanning multiple renames)
-# ============================================================
-
-test_expect_success 'C1->C3: rename alpha to gamma' '
-	cd rename3 &&
-	grit diff --name-status HEAD~3 HEAD~1 >actual &&
-	grep "^R.*alpha.txt.*gamma.txt" actual
+test_expect_success 'tweak work tree' '
+	rm -f path0/COPYING
 '
 
-test_expect_success 'C1->C4: rename alpha to delta' '
-	cd rename3 &&
-	grit diff --name-status HEAD~3 HEAD >actual &&
-	grep "^R.*alpha.txt.*delta.txt" actual
+cat >expected <<EOF
+:100644 100644 $blob $blob C100	path1/COPYING	path0/COPYING
+EOF
+
+# The cache has path0/COPYING and path1/COPYING, the working tree only
+# path1/COPYING.  This is a deletion -- we don't treat deduplication
+# specially.  In reverse it should be detected as a copy, though.
+test_expect_success 'copy detection, files to index' '
+	git diff-files -C --find-copies-harder -R >current &&
+	compare_diff_raw current expected
 '
 
-test_expect_success 'C1->C4: no intermediate names appear' '
-	cd rename3 &&
-	grit diff --name-only HEAD~3 HEAD >actual &&
-	! grep "beta.txt" actual &&
-	! grep "gamma.txt" actual
+test_expect_success 'copy detection, files to preloaded index' '
+	GIT_TEST_PRELOAD_INDEX=1 \
+	git diff-files -C --find-copies-harder -R >current &&
+	compare_diff_raw current expected
 '
 
-test_expect_success 'C2->C4: rename beta to delta' '
-	cd rename3 &&
-	grit diff --name-status HEAD~2 HEAD >actual &&
-	grep "^R.*beta.txt.*delta.txt" actual
+test_expect_success 'tweak index' '
+	git update-index --remove path0/COPYING
+'
+# In the tree, there is only path0/COPYING.  In the cache, path0 does
+# not have COPYING anymore and path1 has COPYING which is a copy of
+# path0/COPYING.  Showing the full tree with cache should tell us about
+# the rename.
+
+cat >expected <<EOF
+:100644 100644 $blob $blob R100	path0/COPYING	path1/COPYING
+EOF
+
+test_expect_success 'rename detection' '
+	git diff-index -C --find-copies-harder $tree >current &&
+	compare_diff_raw current expected
 '
 
-# ============================================================
-# Stable file should not appear in diffs
-# ============================================================
+# In the tree, there is only path0/COPYING.  In the cache, path0 does
+# not have COPYING anymore and path1 has COPYING which is a copy of
+# path0/COPYING.  When we say we care only about path1, we should just
+# see path1/COPYING appearing from nowhere.
 
-test_expect_success 'stable.txt does not appear in C1->C4 diff' '
-	cd rename3 &&
-	grit diff --name-only HEAD~3 HEAD >actual &&
-	! grep "stable.txt" actual
-'
+cat >expected <<EOF
+:000000 100644 $ZERO_OID $blob A	path1/COPYING
+EOF
 
-# ============================================================
-# Full patch output across renames
-# ============================================================
-
-test_expect_success 'C1->C4 patch shows rename from/to' '
-	cd rename3 &&
-	grit diff HEAD~3 HEAD >actual &&
-	grep "^rename from alpha.txt" actual &&
-	grep "^rename to delta.txt" actual
-'
-
-test_expect_success 'C1->C4 patch shows diff header' '
-	cd rename3 &&
-	grit diff HEAD~3 HEAD >actual &&
-	grep "^diff --git" actual
-'
-
-test_expect_success 'C1->C4 patch includes the modification made in C3' '
-	cd rename3 &&
-	grit diff HEAD~3 HEAD >actual &&
-	grep "+LINE2" actual
-'
-
-test_expect_success 'C1->C4 --stat shows rename arrow' '
-	cd rename3 &&
-	grit diff --stat HEAD~3 HEAD >actual &&
-	grep "alpha.txt.*=>.*delta.txt" actual
-'
-
-test_expect_success 'C1->C4 --numstat shows delta' '
-	cd rename3 &&
-	grit diff --numstat HEAD~3 HEAD >actual &&
-	grep "delta.txt" actual
-'
-
-# ============================================================
-# Rename + add new file with old name
-# ============================================================
-
-test_expect_success 'C5: add new file with a previously-used name' '
-	cd rename3 &&
-	echo "I am new alpha" >alpha.txt &&
-	$REAL_GIT add alpha.txt &&
-	$REAL_GIT commit -m "C5: new alpha.txt"
-'
-
-test_expect_success 'C1->C5: both old and new alpha.txt in diff' '
-	cd rename3 &&
-	grit diff --name-status HEAD~4 HEAD >actual &&
-	grep "alpha.txt" actual
-'
-
-test_expect_success 'C4->C5: new alpha.txt is added' '
-	cd rename3 &&
-	grit diff --name-status HEAD~1 HEAD >actual &&
-	grep "^A.*alpha.txt" actual
-'
-
-# ============================================================
-# Diff-tree plumbing across renames
-# ============================================================
-
-test_expect_success 'diff-tree -r C1 C4 shows D and A' '
-	cd rename3 &&
-	grit diff-tree -r HEAD~4 HEAD~1 >actual &&
-	grep "D	alpha.txt" actual &&
-	grep "A	delta.txt" actual
-'
-
-test_expect_success 'diff-tree -r C1 C4 preserves OIDs' '
-	cd rename3 &&
-	grit diff-tree -r HEAD~4 HEAD~1 >actual &&
-	grep "[0-9a-f]\{40\}" actual
-'
-
-# ============================================================
-# Rename to/from subdirectories across commits
-# ============================================================
-
-test_expect_success 'setup subdir rename chain' '
-	cd rename3 &&
-	mkdir -p sub1 sub2 &&
-	echo "traveler" >sub1/file.txt &&
-	$REAL_GIT add sub1/file.txt &&
-	$REAL_GIT commit -m "C6: file in sub1" &&
-	$REAL_GIT mv sub1/file.txt sub2/file.txt &&
-	$REAL_GIT commit -m "C7: move to sub2" &&
-	$REAL_GIT mv sub2/file.txt file-top.txt &&
-	$REAL_GIT commit -m "C8: move to top level"
-'
-
-test_expect_success 'C6->C8: rename sub1/file.txt to file-top.txt' '
-	cd rename3 &&
-	grit diff --name-status HEAD~2 HEAD >actual &&
-	grep "^R.*sub1/file.txt.*file-top.txt" actual
-'
-
-test_expect_success 'C6->C8: no intermediate sub2/file.txt' '
-	cd rename3 &&
-	grit diff --name-only HEAD~2 HEAD >actual &&
-	! grep "sub2/file.txt" actual
-'
-
-test_expect_success 'C6->C8 patch has rename headers' '
-	cd rename3 &&
-	grit diff HEAD~2 HEAD >actual &&
-	grep "rename from" actual &&
-	grep "rename to" actual
+test_expect_success 'rename, limited to a subtree' '
+	git diff-index -C --find-copies-harder $tree path1 >current &&
+	compare_diff_raw current expected
 '
 
 test_done

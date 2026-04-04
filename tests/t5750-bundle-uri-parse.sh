@@ -1,20 +1,9 @@
 #!/bin/sh
-#
-# Upstream: t5750-bundle-uri-parse.sh
-# Tests for bundle-uri configuration parsing.
-# All tests require 'test-tool bundle-uri' (a C test helper) which grit
-# does not provide, so all are test_expect_success with real bodies.
-#
 
-test_description='bundle-uri parse tests'
+test_description="Test bundle-uri bundle_uri_parse_line()"
 
-cd "$(dirname "$0")" || exit 1
+TEST_NO_CREATE_REPO=1
 . ./test-lib.sh
-
-# Helper used by upstream — normalize config output for comparison
-test_cmp_config_output () {
-	test_cmp "$1" "$2"
-}
 
 test_expect_success 'bundle_uri_parse_line() just URIs' '
 	cat >in <<-\EOF &&
@@ -71,6 +60,23 @@ test_expect_success 'bundle_uri_parse_line(): relative URIs and parent paths' '
 	bundle.three.uri=../../bundle.bdl
 	EOF
 
+	cat >expect <<-\EOF &&
+	[bundle]
+		version = 1
+		mode = all
+	[bundle "one"]
+		uri = <uri>/bundle.bdl
+	[bundle "two"]
+		uri = bundle.bdl
+	[bundle "three"]
+		uri = <uri>/../bundle.bdl
+	EOF
+
+	# TODO: We would prefer if parsing a bundle list would not cause
+	# a die() and instead would give a warning and allow the rest of
+	# a Git command to continue. This test_must_fail is necessary for
+	# now until the interface for relative_url() allows for reporting
+	# an error instead of die()ing.
 	test_must_fail test-tool bundle-uri parse-key-values in >actual 2>err &&
 	grep "fatal: cannot strip one component off url" err
 '
@@ -81,6 +87,13 @@ test_expect_success 'bundle_uri_parse_line() parsing edge cases: empty key or va
 	bogus-key=
 	EOF
 
+	cat >err.expect <<-EOF &&
+	error: bundle-uri: line has empty key or value
+	error: bad line: '\''=bogus-value'\''
+	error: bundle-uri: line has empty key or value
+	error: bad line: '\''bogus-key='\''
+	EOF
+
 	cat >expect <<-\EOF &&
 	[bundle]
 		version = 1
@@ -88,6 +101,7 @@ test_expect_success 'bundle_uri_parse_line() parsing edge cases: empty key or va
 	EOF
 
 	test_must_fail test-tool bundle-uri parse-key-values in >actual 2>err &&
+	test_cmp err.expect err &&
 	test_cmp_config_output expect actual
 '
 
@@ -100,6 +114,14 @@ test_expect_success 'bundle_uri_parse_line() parsing edge cases: empty lines' '
 	bundle.three.uri=file:///usr/share/git/bundle.bdl
 	EOF
 
+	cat >err.expect <<-\EOF &&
+	error: bundle-uri: got an empty line
+	error: bad line: '\'''\''
+	error: bundle-uri: got an empty line
+	error: bad line: '\'''\''
+	EOF
+
+	# We fail, but try to continue parsing regardless
 	cat >expect <<-\EOF &&
 	[bundle]
 		version = 1
@@ -113,6 +135,7 @@ test_expect_success 'bundle_uri_parse_line() parsing edge cases: empty lines' '
 	EOF
 
 	test_must_fail test-tool bundle-uri parse-key-values in >actual 2>err &&
+	test_cmp err.expect err &&
 	test_cmp_config_output expect actual
 '
 
@@ -124,6 +147,11 @@ test_expect_success 'bundle_uri_parse_line() parsing edge cases: duplicate lines
 	bundle.three.uri=file:///usr/share/git/bundle.bdl
 	EOF
 
+	cat >err.expect <<-\EOF &&
+	error: bad line: '\''bundle.one.uri=https://example.com/bundle-2.bdl'\''
+	EOF
+
+	# We fail, but try to continue parsing regardless
 	cat >expect <<-\EOF &&
 	[bundle]
 		version = 1
@@ -137,6 +165,7 @@ test_expect_success 'bundle_uri_parse_line() parsing edge cases: duplicate lines
 	EOF
 
 	test_must_fail test-tool bundle-uri parse-key-values in >actual 2>err &&
+	test_cmp err.expect err &&
 	test_cmp_config_output expect actual
 '
 
@@ -193,6 +222,10 @@ test_expect_success 'parse config format edge cases: empty key or value' '
 	= bogus-value
 	EOF
 
+	cat >err1 <<-EOF &&
+	error: bad config line 1 in file in1
+	EOF
+
 	cat >expect <<-\EOF &&
 	[bundle]
 		version = 1
@@ -200,6 +233,19 @@ test_expect_success 'parse config format edge cases: empty key or value' '
 	EOF
 
 	test_must_fail test-tool bundle-uri parse-config in1 >actual 2>err &&
+	test_cmp err1 err &&
+	test_cmp_config_output expect actual &&
+
+	cat >in2 <<-\EOF &&
+	bogus-key =
+	EOF
+
+	cat >err2 <<-EOF &&
+	error: bad config line 1 in file in2
+	EOF
+
+	test_must_fail test-tool bundle-uri parse-config in2 >actual 2>err &&
+	test_cmp err2 err &&
 	test_cmp_config_output expect actual
 '
 
@@ -237,7 +283,7 @@ test_expect_success 'parse config format edge cases: creationToken heuristic' '
 	EOF
 
 	test-tool bundle-uri parse-config expect >actual 2>err &&
-	grep "could not parse bundle list key creationToken" err
+	grep "could not parse bundle list key creationToken with value '\''bogus'\''" err
 '
 
 test_expect_success 'parse config format: bundle with missing uri' '
@@ -250,7 +296,7 @@ test_expect_success 'parse config format: bundle with missing uri' '
 	EOF
 
 	test_must_fail test-tool bundle-uri parse-config input 2>err &&
-	grep "bundle .missing-uri. has no uri" err
+	grep "bundle '\''missing-uri'\'' has no uri" err
 '
 
 test_expect_success 'parse config format: bundle with url instead of uri' '
@@ -263,7 +309,7 @@ test_expect_success 'parse config format: bundle with url instead of uri' '
 	EOF
 
 	test_must_fail test-tool bundle-uri parse-config input 2>err &&
-	grep "bundle .typo. has no uri" err
+	grep "bundle '\''typo'\'' has no uri" err
 '
 
 test_done

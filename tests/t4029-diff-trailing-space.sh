@@ -6,47 +6,39 @@ test_description='diff honors config option, diff.suppressBlankEmpty'
 
 . ./test-lib.sh
 
-shorten () {
-	printf "%.7s" "$1"
-}
+cat <<\EOF >expected ||
+diff --git a/f b/f
+index 5f6a263..8cb8bae 100644
+--- a/f
++++ b/f
+@@ -1,2 +1,2 @@
 
-test_expect_success 'setup' '
-	git init &&
-	git config user.email test@test.com &&
-	git config user.name "Test User" &&
+-x
++y
+EOF
+exit 1
+
+test_expect_success "$test_description" '
 	printf "\nx\n" > f &&
+	before=$(git hash-object f) &&
+	before=$(git rev-parse --short $before) &&
 	git add f &&
-	git commit -q -m "." &&
-	printf "\ny\n" > f
-'
-
-test_expect_success 'diff output with default config' '
-	git diff f > actual &&
-	grep -q "^diff --git a/f b/f" actual &&
-	grep -q "^-x" actual &&
-	grep -q "^+y" actual
-'
-
-test_expect_success 'diff.suppressBlankEmpty=true suppresses trailing space' '
+	git commit -q -m. f &&
+	printf "\ny\n" > f &&
+	after=$(git hash-object f) &&
+	after=$(git rev-parse --short $after) &&
+	sed -e "s/^index .*/index $before..$after 100644/" expected >exp &&
 	git config --bool diff.suppressBlankEmpty true &&
 	git diff f > actual &&
-	sed -n "6p" actual | grep -q "^$"
-'
-
-test_expect_success 'diff.suppressBlankEmpty=false retains trailing space' '
+	test_cmp exp actual &&
+	sed "s/^\$/ /" exp >exp.munged &&
+	mv exp.munged exp &&
 	git config --bool diff.suppressBlankEmpty false &&
 	git diff f > actual &&
-	grep -q "^diff --git a/f b/f" actual &&
-	grep -q "^-x" actual &&
-	grep -q "^+y" actual
-'
-
-test_expect_success 'diff with unset suppressBlankEmpty' '
+	test_cmp exp actual &&
 	git config --bool --unset diff.suppressBlankEmpty &&
 	git diff f > actual &&
-	grep -q "^diff --git a/f b/f" actual &&
-	grep -q "^-x" actual &&
-	grep -q "^+y" actual
+	test_cmp exp actual
 '
 
 test_done

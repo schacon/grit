@@ -1,244 +1,267 @@
 #!/bin/sh
-# Tests for 'grit branch --contains' and '--no-contains'.
-# Ported from git/t/t3201-branch-contains.sh
-#
-# grit now implements --contains/--no-contains/--merged/--no-merged filtering.
 
-test_description='grit branch --contains / --no-contains'
+test_description='branch --contains <commit>, --no-contains <commit> --merged, and --no-merged'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: linear history with branches' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo base >file &&
+test_expect_success setup '
+
+	>file &&
 	git add file &&
-	git commit -m "initial" &&
-	git tag initial &&
-	echo second >file &&
-	git add file &&
-	git commit -m "second" &&
-	git tag second &&
-	echo third >file &&
-	git add file &&
-	git commit -m "third" &&
-	git tag third &&
-	git branch at-initial initial &&
-	git branch at-second second &&
-	git branch at-third third
+	test_tick &&
+	git commit -m initial &&
+	git branch -M main &&
+	git branch side &&
+
+	echo 1 >file &&
+	test_tick &&
+	git commit -a -m "second on main" &&
+
+	git checkout side &&
+	echo 1 >file &&
+	test_tick &&
+	git commit -a -m "second on side" &&
+
+	git merge main
+
 '
 
-test_expect_success 'branch --contains runs without error' '
-	cd repo &&
-	git branch --contains initial >actual
+test_expect_success 'branch --contains=main' '
+
+	git branch --contains=main >actual &&
+	{
+		echo "  main" && echo "* side"
+	} >expect &&
+	test_cmp expect actual
+
 '
 
-test_expect_success 'branch --contains initial lists master' '
-	cd repo &&
-	git branch --contains initial >actual &&
-	grep "master" actual
+test_expect_success 'branch --contains main' '
+
+	git branch --contains main >actual &&
+	{
+		echo "  main" && echo "* side"
+	} >expect &&
+	test_cmp expect actual
+
 '
 
-test_expect_success 'branch --contains second excludes at-initial' '
-	cd repo &&
-	git branch --contains second >actual &&
-	! grep "at-initial" actual &&
-	grep "at-second" actual &&
-	grep "at-third" actual &&
-	grep "master" actual
-'
+test_expect_success 'branch --no-contains=main' '
 
-test_expect_success 'branch --contains third excludes earlier branches' '
-	cd repo &&
-	git branch --contains third >actual &&
-	! grep "at-initial" actual &&
-	! grep "at-second" actual &&
-	grep "at-third" actual &&
-	grep "master" actual
-'
-
-test_expect_success 'branch --contains HEAD runs without error' '
-	cd repo &&
-	git branch --contains HEAD >actual &&
-	grep "master" actual
-'
-
-test_expect_success 'branch --no-contains runs without error' '
-	cd repo &&
-	git branch --no-contains third >actual
-'
-
-test_expect_success 'branch --no-contains initial returns empty' '
-	cd repo &&
-	git branch --no-contains initial >actual &&
+	git branch --no-contains=main >actual &&
 	test_must_be_empty actual
+
 '
 
-test_expect_success 'branch --no-contains third lists earlier branches only' '
-	cd repo &&
-	git branch --no-contains third >actual &&
-	grep "at-initial" actual &&
-	grep "at-second" actual &&
-	! grep "at-third" actual &&
-	! grep "master" actual
+test_expect_success 'branch --no-contains main' '
+
+	git branch --no-contains main >actual &&
+	test_must_be_empty actual
+
 '
 
-test_expect_success 'setup: forked topology' '
-	cd repo &&
-	git checkout -b fork-a second &&
-	echo fork-a >fork &&
-	git add fork &&
-	git commit -m "fork-a" &&
-	git checkout master &&
-	git checkout -b fork-b second &&
-	echo fork-b >fork &&
-	git add fork &&
-	git commit -m "fork-b"
+test_expect_success 'branch --contains=side' '
+
+	git branch --contains=side >actual &&
+	{
+		echo "* side"
+	} >expect &&
+	test_cmp expect actual
+
 '
 
-test_expect_success 'branch --contains second includes both forks' '
-	cd repo &&
-	git branch --contains second >actual &&
-	grep "fork-a" actual &&
-	grep "fork-b" actual
+test_expect_success 'branch --no-contains=side' '
+
+	git branch --no-contains=side >actual &&
+	{
+		echo "  main"
+	} >expect &&
+	test_cmp expect actual
+
 '
 
-test_expect_success 'branch --contains fork-a excludes fork-b' '
-	cd repo &&
-	git branch --contains fork-a >actual &&
-	grep "fork-a" actual &&
-	! grep "fork-b" actual
+test_expect_success 'branch --contains with pattern implies --list' '
+
+	git branch --contains=main main >actual &&
+	{
+		echo "  main"
+	} >expect &&
+	test_cmp expect actual
+
 '
 
-test_expect_success 'branch --merged runs without error' '
-	cd repo &&
-	git checkout master &&
-	git branch --merged master >actual &&
-	grep "master" actual
+test_expect_success 'branch --no-contains with pattern implies --list' '
+
+	git branch --no-contains=main main >actual &&
+	test_must_be_empty actual
+
 '
 
-test_expect_success 'branch --merged master excludes unmerged forks' '
-	cd repo &&
-	git branch --merged master >actual &&
-	grep "at-initial" actual &&
-	grep "at-second" actual &&
-	grep "at-third" actual &&
-	! grep "fork-a" actual &&
-	! grep "fork-b" actual
+test_expect_success 'side: branch --merged' '
+
+	git branch --merged >actual &&
+	{
+		echo "  main" &&
+		echo "* side"
+	} >expect &&
+	test_cmp expect actual
+
 '
 
-test_expect_success 'branch --no-merged runs without error' '
-	cd repo &&
-	git branch --no-merged master >actual
+test_expect_success 'branch --merged with pattern implies --list' '
+
+	git branch --merged=side main >actual &&
+	{
+		echo "  main"
+	} >expect &&
+	test_cmp expect actual
+
 '
 
-test_expect_success 'branch --no-merged master lists only forks' '
-	cd repo &&
-	git branch --no-merged master >actual &&
-	grep "fork-a" actual &&
-	grep "fork-b" actual &&
-	! grep "at-initial" actual &&
-	! grep "at-second" actual
+test_expect_success 'side: branch --no-merged' '
+
+	git branch --no-merged >actual &&
+	test_must_be_empty actual
+
 '
 
-test_expect_success 'branch --merged second excludes later branches' '
-	cd repo &&
-	git branch --merged second >actual &&
-	grep "at-initial" actual &&
-	grep "at-second" actual &&
-	! grep "at-third" actual
+test_expect_success 'main: branch --merged' '
+
+	git checkout main &&
+	git branch --merged >actual &&
+	{
+		echo "* main"
+	} >expect &&
+	test_cmp expect actual
+
 '
 
-test_expect_success 'branch --contains with tag name works' '
-	cd repo &&
-	git branch --contains initial >actual &&
-	grep "master" actual
+test_expect_success 'main: branch --no-merged' '
+
+	git branch --no-merged >actual &&
+	{
+		echo "  side"
+	} >expect &&
+	test_cmp expect actual
+
 '
 
-test_expect_success 'branch --contains with full SHA works' '
-	cd repo &&
-	SHA=$(git rev-parse initial) &&
-	git branch --contains "$SHA" >actual &&
-	grep "master" actual
+test_expect_success 'branch --no-merged with pattern implies --list' '
+
+	git branch --no-merged=main main >actual &&
+	test_must_be_empty actual
+
 '
 
-test_expect_success 'branch --contains with short SHA works' '
-	cd repo &&
-	SHA=$(git rev-parse --short initial) &&
-	git branch --contains "$SHA" >actual &&
-	grep "master" actual
+test_expect_success 'implicit --list conflicts with modification options' '
+
+	test_must_fail git branch --contains=main -d &&
+	test_must_fail git branch --contains=main -m foo &&
+	test_must_fail git branch --no-contains=main -d &&
+	test_must_fail git branch --no-contains=main -m foo
+
 '
 
-test_expect_success 'branch --contains invalid ref fails' '
-	cd repo &&
-	test_must_fail git branch --contains does-not-exist
+test_expect_success 'Assert that --contains only works on commits, not trees & blobs' '
+	test_must_fail git branch --contains main^{tree} &&
+	blob=$(git hash-object -w --stdin <<-\EOF
+	Some blob
+	EOF
+	) &&
+	test_must_fail git branch --contains $blob &&
+	test_must_fail git branch --no-contains $blob
 '
 
-# ── branch --merged/--no-merged with tags ─────────────────────────────────
-
-test_expect_success 'branch --merged with tag name runs' '
-	cd repo &&
-	git checkout master &&
-	git branch --merged initial >actual &&
-	grep "master" actual || true
+test_expect_success 'multiple branch --contains' '
+	git checkout -b side2 main &&
+	>feature &&
+	git add feature &&
+	git commit -m "add feature" &&
+	git checkout -b next main &&
+	git merge side &&
+	git branch --contains side --contains side2 >actual &&
+	cat >expect <<-\EOF &&
+	* next
+	  side
+	  side2
+	EOF
+	test_cmp expect actual
 '
 
-test_expect_success 'branch --no-merged with tag name runs' '
-	cd repo &&
-	git branch --no-merged initial >actual
+test_expect_success 'multiple branch --merged' '
+	git branch --merged next --merged main >actual &&
+	cat >expect <<-\EOF &&
+	  main
+	* next
+	  side
+	EOF
+	test_cmp expect actual
 '
 
-# ── branch listing with --contains after merge ────────────────────────────
-
-test_expect_success 'branch --contains HEAD includes current branch' '
-	cd repo &&
-	git checkout master &&
-	git branch --contains HEAD >actual &&
-	grep "master" actual
+test_expect_success 'multiple branch --no-contains' '
+	git branch --no-contains side --no-contains side2 >actual &&
+	cat >expect <<-\EOF &&
+	  main
+	EOF
+	test_cmp expect actual
 '
 
-test_expect_success 'branch --contains with abbreviated ref' '
-	cd repo &&
-	short=$(git rev-parse --short HEAD) &&
-	git branch --contains "$short" >actual &&
-	grep "master" actual
+test_expect_success 'multiple branch --no-merged' '
+	git branch --no-merged next --no-merged main >actual &&
+	cat >expect <<-\EOF &&
+	  side2
+	EOF
+	test_cmp expect actual
 '
 
-# ── branches with slashes in names ────────────────────────────────────────
-
-test_expect_success 'setup: branch with slash in name' '
-	cd repo &&
-	git branch feature/slash-test
+test_expect_success 'branch --contains combined with --no-contains' '
+	git checkout -b seen main &&
+	git merge side &&
+	git merge side2 &&
+	git branch --contains side --no-contains side2 >actual &&
+	cat >expect <<-\EOF &&
+	  next
+	  side
+	EOF
+	test_cmp expect actual
 '
 
-test_expect_success 'branch --contains lists branch with slash' '
-	cd repo &&
-	git branch --contains HEAD >actual &&
-	grep "feature/slash-test" actual
+test_expect_success 'branch --merged combined with --no-merged' '
+	git branch --merged seen --no-merged next >actual &&
+	cat >expect <<-\EOF &&
+	* seen
+	  side2
+	EOF
+	test_cmp expect actual
 '
 
-test_expect_success 'branch --merged lists branch with slash' '
-	cd repo &&
-	git branch --merged master >actual &&
-	grep "feature/slash-test" actual
-'
-
-test_expect_success 'branch --no-contains HEAD returns empty or no current' '
-	cd repo &&
-	git branch --no-contains HEAD >actual &&
-	! grep "^\* " actual || true
-'
-
-# ── branch --contains with multiple matching refs ────────────────────────
-
-test_expect_success 'branch --contains lists many branches' '
-	cd repo &&
-	git branch --contains initial >actual &&
-	line_count=$(wc -l <actual) &&
-	test "$line_count" -ge 2
+# We want to set up a case where the walk for the tracking info
+# of one branch crosses the tip of another branch (and make sure
+# that the latter walk does not mess up our flag to see if it was
+# merged).
+#
+# Here "topic" tracks "main" with one extra commit, and "zzz" points to the
+# same tip as main The name "zzz" must come alphabetically after "topic"
+# as we process them in that order.
+test_expect_success 'branch --merged with --verbose' '
+	git branch --track topic main &&
+	git branch zzz topic &&
+	git checkout topic &&
+	test_commit foo &&
+	git branch --merged topic >actual &&
+	cat >expect <<-\EOF &&
+	  main
+	* topic
+	  zzz
+	EOF
+	test_cmp expect actual &&
+	git branch --verbose --merged topic >actual &&
+	cat >expect <<-EOF &&
+	  main  $(git rev-parse --short main) second on main
+	* topic $(git rev-parse --short topic ) [ahead 1] foo
+	  zzz   $(git rev-parse --short zzz   ) second on main
+	EOF
+	test_cmp expect actual
 '
 
 test_done

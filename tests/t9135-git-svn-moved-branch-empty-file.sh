@@ -1,13 +1,20 @@
 #!/bin/sh
-#
-# Upstream: t9135-git-svn-moved-branch-empty-file.sh
-# Requires Subversion — ported as test_expect_failure stubs.
-#
 
 test_description='test moved svn branch with missing empty files'
 
-cd "$(dirname "$0")" || exit 1
-. ./test-lib.sh
+. ./lib-git-svn.sh
+test_expect_success 'load svn dumpfile'  '
+	svnadmin load "$rawsvnrepo" < "${TEST_DIRECTORY}/t9135/svn.dump"
+	'
 
-skip_all='Subversion not available in grit'
+test_expect_success 'clone using git svn' 'git svn clone -s "$svnrepo" x'
+
+test_expect_success 'test that b1 exists and is empty' '
+	(
+		cd x &&
+		git reset --hard origin/branch-c &&
+		test_must_be_empty b1
+	)
+	'
+
 test_done

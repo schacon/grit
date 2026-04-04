@@ -1,219 +1,266 @@
 #!/bin/sh
-# Ported subset from git/t/t6000-rev-list-misc.sh.
 
-test_description='miscellaneous rev-list walk options'
+test_description='miscellaneous rev-list tests'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-GIT_COMMITTER_EMAIL=git@comm.iter.xz
-GIT_COMMITTER_NAME='C O Mmiter'
-GIT_AUTHOR_NAME='A U Thor'
-GIT_AUTHOR_EMAIL=git@au.thor.xz
-export GIT_COMMITTER_EMAIL GIT_COMMITTER_NAME GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
-
-M=1130000000
-Z=+0000
-export M Z
-
-doit () {
-	OFFSET=$1 &&
-	NAME=$2 &&
-	shift 2 &&
-	PARENTS= &&
-	for P
-	do
-		PARENTS="$PARENTS -p $P"
-	done &&
-	GIT_COMMITTER_DATE="$(($M + $OFFSET)) $Z" &&
-	GIT_AUTHOR_DATE="$GIT_COMMITTER_DATE" &&
-	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE &&
-	commit=$(echo "$NAME" | git commit-tree "$(git write-tree)" $PARENTS) &&
-	echo "$commit"
-}
-
-test_expect_success 'setup graph with merge' '
-	grit init repo &&
-	cd repo &&
-	base=$(doit 1 A) &&
-	c_tip=$(doit 2 C "$base") &&
-	d_tip=$(doit 3 D "$base") &&
-	m_tip=$(doit 4 M "$d_tip" "$c_tip") &&
-	e_tip=$(doit 5 E "$m_tip") &&
-	git update-ref refs/tags/base "$base" &&
-	git update-ref refs/tags/c "$c_tip" &&
-	git update-ref refs/tags/d "$d_tip" &&
-	git update-ref refs/tags/e "$e_tip" &&
-	git update-ref refs/heads/master "$e_tip"
+test_expect_success setup '
+	echo content1 >wanted_file &&
+	echo content2 >unwanted_file &&
+	git add wanted_file unwanted_file &&
+	test_tick &&
+	git commit -m one
 '
 
-test_expect_success '--first-parent ignores merged side commits' '
-	cd repo &&
-	c_tip=$(git rev-parse c) &&
-	git rev-list base..e >all &&
-	git rev-list --first-parent base..e >fp &&
-	grep -q "$c_tip" all &&
-	! grep -q "$c_tip" fp
+test_expect_success 'rev-list --objects heeds pathspecs' '
+	git rev-list --objects HEAD -- wanted_file >output &&
+	grep wanted_file output &&
+	! grep unwanted_file output
 '
 
-test_expect_success '--ancestry-path=<commit> limits to that path' '
-	cd repo &&
-	c_tip=$(git rev-parse c) &&
-	d_tip=$(git rev-parse d) &&
-	e_tip=$(git rev-parse e) &&
-	git rev-list --ancestry-path=d base..e >actual &&
-	grep -q "$d_tip" actual &&
-	grep -q "$e_tip" actual &&
-	! grep -q "$c_tip" actual
+test_expect_success 'rev-list --objects with pathspecs and deeper paths' '
+	mkdir foo &&
+	>foo/file &&
+	git add foo/file &&
+	test_tick &&
+	git commit -m two &&
+
+	git rev-list --objects HEAD -- foo >output &&
+	grep foo/file output &&
+
+	git rev-list --objects HEAD -- foo/file >output &&
+	grep foo/file output &&
+	! grep unwanted_file output
 '
 
-test_expect_success '--simplify-by-decoration keeps tagged commits in walk' '
-	cd repo &&
-	c_tip=$(git rev-parse c) &&
-	git update-ref refs/tags/keep-c "$c_tip" &&
-	git rev-list base..e >full &&
-	git rev-list --simplify-by-decoration base..e >simple &&
-	grep -q "$c_tip" simple &&
-	lines_full=$(wc -l <full | tr -d " ") &&
-	lines_simple=$(wc -l <simple | tr -d " ") &&
-	test "$lines_simple" -lt "$lines_full"
+test_expect_success 'rev-list --objects with pathspecs and copied files' '
+	git checkout --orphan junio-testcase &&
+	git rm -rf . &&
+
+	mkdir two &&
+	echo frotz >one &&
+	cp one two/three &&
+	git add one two/three &&
+	test_tick &&
+	git commit -m that &&
+
+	ONE=$(git rev-parse HEAD:one) &&
+	git rev-list --objects HEAD two >output &&
+	grep "$ONE two/three" output &&
+	! grep one output
+'
+
+test_expect_success 'rev-list --objects --no-object-names has no space/names' '
+	git rev-list --objects --no-object-names HEAD >output &&
+	! grep wanted_file output &&
+	! grep unwanted_file output &&
+	! grep " " output
+'
+
+test_expect_success 'rev-list --objects --no-object-names works with cat-file' '
+	git rev-list --objects --no-object-names --all >list-output &&
+	git cat-file --batch-check <list-output >cat-output &&
+	! grep missing cat-output
+'
+
+test_expect_success '--no-object-names and --object-names are last-one-wins' '
+	git rev-list --objects --no-object-names --object-names --all >output &&
+	grep wanted_file output &&
+	git rev-list --objects --object-names --no-object-names --all >output &&
+	! grep wanted_file output
 '
 
 test_expect_success 'rev-list A..B and rev-list ^A B are the same' '
-	cd repo &&
-	git rev-list ^base e >expect &&
-	git rev-list base..e >actual &&
+	test_tick &&
+	git commit --allow-empty -m another &&
+	git tag -a -m "annotated" v1.0 &&
+	git rev-list --objects ^v1.0^ v1.0 >expect &&
+	git rev-list --objects v1.0^..v1.0 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'propagate uninteresting flag down correctly' '
+	git rev-list --objects ^HEAD^{tree} HEAD^{tree} >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'symleft flag bit is propagated down from tag' '
+	git log --format="%m %s" --left-right v1.0...main >actual &&
+	cat >expect <<-\EOF &&
+	< another
+	< that
+	> two
+	> one
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-list can show index objects' '
+	# Of the blobs and trees in the index, note:
+	#
+	#   - we do not show two/three, because it is the
+	#     same blob as "one", and we show objects only once
+	#
+	#   - we do show the tree "two", because it has a valid cache tree
+	#     from the last commit
+	#
+	#   - we do not show the root tree; since we updated the index, it
+	#     does not have a valid cache tree
+	#
+	echo only-in-index >only-in-index &&
+	test_when_finished "git reset --hard" &&
+	rev1=$(git rev-parse HEAD:one) &&
+	rev2=$(git rev-parse HEAD:two) &&
+	revi=$(git hash-object only-in-index) &&
+	cat >expect <<-EOF &&
+	$rev1 one
+	$revi only-in-index
+	$rev2 two
+	EOF
+	git add only-in-index &&
+	git rev-list --objects --indexed-objects >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-list can negate index objects' '
+	git rev-parse HEAD >expect &&
+	git rev-list -1 --objects HEAD --not --indexed-objects >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--bisect and --first-parent can be combined' '
+	git rev-list --bisect --first-parent HEAD
+'
+
+test_expect_success '--header shows a NUL after each commit' '
+	# We know that there is no Q in the true payload; names and
+	# addresses of the authors and the committers do not have
+	# any, and object names or header names do not, either.
+	git rev-list --header --max-count=2 HEAD |
+	nul_to_q |
+	grep "^Q" >actual &&
+	cat >expect <<-EOF &&
+	Q$(git rev-parse HEAD~1)
+	Q
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-list --end-of-options' '
+	git update-ref refs/heads/--output=yikes HEAD &&
+	git rev-list --end-of-options --output=yikes >actual &&
+	test_path_is_missing yikes &&
+	git rev-list HEAD >expect &&
 	test_cmp expect actual
 '
 
 test_expect_success 'rev-list --count' '
-	cd repo &&
-	count=$(git rev-list --count master) &&
-	git rev-list master >actual &&
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$count" = "$lines"
+	count=$(git rev-list --count HEAD) &&
+	git rev-list HEAD >actual &&
+	test_line_count = $count actual
 '
 
-# --- New tests ---
-
-test_expect_success '--max-count limits output' '
-	cd repo &&
-	git rev-list --max-count=2 master >actual &&
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$lines" = "2"
+test_expect_success 'rev-list --count --objects' '
+	count=$(git rev-list --count --objects HEAD) &&
+	git rev-list --objects HEAD >actual &&
+	test_line_count = $count actual
 '
 
-test_expect_success '--max-count=0 gives empty output' '
-	cd repo &&
-	git rev-list --max-count=0 master >actual &&
-	test_must_be_empty actual
+test_expect_success 'rev-list --unpacked' '
+	git repack -ad &&
+	test_commit unpacked &&
+
+	git rev-list --objects --no-object-names unpacked^.. >expect.raw &&
+	sort expect.raw >expect &&
+
+	git rev-list --all --objects --unpacked --no-object-names >actual.raw &&
+	sort actual.raw >actual &&
+
+	test_cmp expect actual
 '
 
-test_expect_success '--skip=1 removes first entry' '
-	cd repo &&
-	git rev-list master >full &&
-	git rev-list --skip=1 master >skipped &&
-	tail -n +2 full >expect &&
-	test_cmp expect skipped
+test_expect_success 'rev-list one-sided unrelated symmetric diff' '
+	test_tick &&
+	git commit --allow-empty -m xyz &&
+	git branch cmp &&
+	git rebase --force-rebase --root &&
+
+	git rev-list --left-only  HEAD...cmp >head &&
+	git rev-list --right-only HEAD...cmp >cmp  &&
+
+	sort head >head.sorted &&
+	sort cmp >cmp.sorted &&
+	comm -12 head.sorted cmp.sorted >actual &&
+	test_line_count = 0 actual
 '
 
-test_expect_success '--skip and --max-count combined' '
-	cd repo &&
-	git rev-list --skip=1 --max-count=2 master >actual &&
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$lines" = "2"
+test_expect_success 'rev-list -z' '
+	test_when_finished rm -rf repo &&
+
+	git init repo &&
+	test_commit -C repo 1 &&
+	test_commit -C repo 2 &&
+
+	oid1=$(git -C repo rev-parse HEAD~) &&
+	oid2=$(git -C repo rev-parse HEAD) &&
+
+	printf "%s\0%s\0" "$oid2" "$oid1" >expect &&
+	git -C repo rev-list -z HEAD >actual &&
+
+	test_cmp expect actual
 '
 
-test_expect_success '--reverse reverses output' '
-	cd repo &&
-	git rev-list master >forward &&
-	git rev-list --reverse master >reversed &&
-	awk "{ lines[NR] = \$0 } END { for (i = NR; i >= 1; i--) print lines[i] }" forward >expect &&
-	test_cmp expect reversed
+test_expect_success 'rev-list -z --objects' '
+	test_when_finished rm -rf repo &&
+
+	git init repo &&
+	test_commit -C repo 1 &&
+	test_commit -C repo 2 &&
+
+	oid1=$(git -C repo rev-parse HEAD:1.t) &&
+	oid2=$(git -C repo rev-parse HEAD:2.t) &&
+	path1=1.t &&
+	path2=2.t &&
+
+	printf "%s\0path=%s\0%s\0path=%s\0" "$oid1" "$path1" "$oid2" "$path2" \
+		>expect &&
+	git -C repo rev-list -z --objects HEAD:1.t HEAD:2.t >actual &&
+
+	test_cmp expect actual
 '
 
-test_expect_success '--count with range' '
-	cd repo &&
-	count=$(git rev-list --count base..e) &&
-	git rev-list base..e >actual &&
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$count" = "$lines"
+test_expect_success 'rev-list -z --boundary' '
+	test_when_finished rm -rf repo &&
+
+	git init repo &&
+	test_commit -C repo 1 &&
+	test_commit -C repo 2 &&
+
+	oid1=$(git -C repo rev-parse HEAD~) &&
+	oid2=$(git -C repo rev-parse HEAD) &&
+
+	printf "%s\0%s\0boundary=yes\0" "$oid2" "$oid1" >expect &&
+	git -C repo rev-list -z --boundary HEAD~.. >actual &&
+
+	test_cmp expect actual
 '
 
-test_expect_success '--first-parent with --count' '
-	cd repo &&
-	count=$(git rev-list --first-parent --count master) &&
-	git rev-list --first-parent master >actual &&
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$count" = "$lines"
-'
+test_expect_success 'rev-list --boundary incompatible with --maximal-only' '
+	test_when_finished rm -rf repo &&
 
-test_expect_success '--topo-order lists all commits' '
-	cd repo &&
-	git rev-list master >default_order &&
-	git rev-list --topo-order master >topo_order &&
-	sort default_order >sorted1 &&
-	sort topo_order >sorted2 &&
-	test_cmp sorted1 sorted2
-'
+	git init repo &&
+	test_commit -C repo 1 &&
+	test_commit -C repo 2 &&
 
-test_expect_success '--date-order lists all commits' '
-	cd repo &&
-	git rev-list master >default_order &&
-	git rev-list --date-order master >date_order &&
-	sort default_order >sorted1 &&
-	sort date_order >sorted2 &&
-	test_cmp sorted1 sorted2
-'
+	oid1=$(git -C repo rev-parse HEAD~) &&
+	oid2=$(git -C repo rev-parse HEAD) &&
 
-test_expect_success '--quiet produces no output' '
-	cd repo &&
-	git rev-list --quiet master >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success '--first-parent reduces count vs full walk' '
-	cd repo &&
-	git rev-list master >full &&
-	git rev-list --first-parent master >fp &&
-	lines_full=$(wc -l <full | tr -d " ") &&
-	lines_fp=$(wc -l <fp | tr -d " ") &&
-	test "$lines_fp" -le "$lines_full"
-'
-
-test_expect_success '--parents shows parent hashes' '
-	cd repo &&
-	git rev-list --parents --max-count=1 master >actual &&
-	# should have at least 2 hashes (commit + parent)
-	words=$(wc -w <actual | tr -d " ") &&
-	test "$words" -ge 2
-'
-
-test_expect_success 'range A..B excludes A and ancestors' '
-	cd repo &&
-	base_oid=$(git rev-parse base) &&
-	git rev-list base..e >actual &&
-	! grep -q "$base_oid" actual
-'
-
-test_expect_success '^A B same as A..B' '
-	cd repo &&
-	git rev-list base..e >range &&
-	git rev-list ^base e >caret &&
-	test_cmp range caret
-'
-
-test_expect_success '--ancestry-path filters to path descendants' '
-	cd repo &&
-	d_tip=$(git rev-parse d) &&
-	git rev-list --ancestry-path=d base..e >actual &&
-	grep -q "$d_tip" actual
-'
-
-test_expect_success '--max-count=-1 returns all' '
-	cd repo &&
-	git rev-list master >all &&
-	git rev-list --max-count=-1 master >neg_one &&
-	test_cmp all neg_one
+	test_must_fail git -C repo rev-list --boundary --maximal-only \
+		HEAD~1..HEAD 2>err &&
+	test_grep "cannot be used together" err
 '
 
 test_done

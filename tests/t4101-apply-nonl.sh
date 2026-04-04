@@ -3,7 +3,9 @@
 # Copyright (c) 2005 Junio C Hamano
 #
 
-test_description='git apply should handle files with incomplete lines.'
+test_description='git apply should handle files with incomplete lines.
+
+'
 
 . ./test-lib.sh
 

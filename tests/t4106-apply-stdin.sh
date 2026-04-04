@@ -2,15 +2,12 @@
 
 test_description='git apply --numstat - <patch'
 
+
 . ./test-lib.sh
 
 test_expect_success setup '
-	git init &&
-	git config user.email test@test.com &&
-	git config user.name "Test User" &&
 	echo hello >text &&
 	git add text &&
-	git commit -q -m initial &&
 	echo goodbye >text &&
 	git diff >patch
 '

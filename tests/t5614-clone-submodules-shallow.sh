@@ -1,51 +1,130 @@
 #!/bin/sh
-#
-# Ported from git/t/t5614-clone-submodules-shallow.sh
-# Tests for cloning submodules with --shallow-submodules
-# Note: grit clone does not support --recurse-submodules
-#
 
-test_description='clone with --shallow-submodules'
+test_description='Test shallow cloning of repos with submodules'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-REAL_GIT="/usr/bin/git"
+pwd=$(pwd)
 
 test_expect_success 'setup' '
-	"$REAL_GIT" config --global protocol.file.allow always &&
-	"$REAL_GIT" init sub &&
+	git checkout -b main &&
+	test_commit commit1 &&
+	test_commit commit2 &&
+	mkdir sub &&
 	(
 		cd sub &&
-		"$REAL_GIT" config user.email "test@example.com" &&
-		"$REAL_GIT" config user.name "Test User" &&
-		echo sub >file &&
-		"$REAL_GIT" add file &&
-		"$REAL_GIT" commit -m "sub initial" &&
-		echo sub2 >>file &&
-		"$REAL_GIT" commit -am "sub second"
+		git init &&
+		test_commit subcommit1 &&
+		test_commit subcommit2 &&
+		test_commit subcommit3
 	) &&
-	"$REAL_GIT" init super &&
+	git submodule add "file://$pwd/sub" sub &&
+	git commit -m "add submodule"
+'
+
+test_expect_success 'nonshallow clone implies nonshallow submodule' '
+	test_when_finished "rm -rf super_clone" &&
+	test_config_global protocol.file.allow always &&
+	git clone --recurse-submodules "file://$pwd/." super_clone &&
+	git -C super_clone log --oneline >lines &&
+	test_line_count = 3 lines &&
+	git -C super_clone/sub log --oneline >lines &&
+	test_line_count = 3 lines
+'
+
+test_expect_success 'shallow clone with shallow submodule' '
+	test_when_finished "rm -rf super_clone" &&
+	test_config_global protocol.file.allow always &&
+	git clone --recurse-submodules --depth 2 --shallow-submodules "file://$pwd/." super_clone &&
+	git -C super_clone log --oneline >lines &&
+	test_line_count = 2 lines &&
+	git -C super_clone/sub log --oneline >lines &&
+	test_line_count = 1 lines
+'
+
+test_expect_success 'shallow clone does not imply shallow submodule' '
+	test_when_finished "rm -rf super_clone" &&
+	test_config_global protocol.file.allow always &&
+	git clone --recurse-submodules --depth 2 "file://$pwd/." super_clone &&
+	git -C super_clone log --oneline >lines &&
+	test_line_count = 2 lines &&
+	git -C super_clone/sub log --oneline >lines &&
+	test_line_count = 3 lines
+'
+
+test_expect_success 'shallow clone with non shallow submodule' '
+	test_when_finished "rm -rf super_clone" &&
+	test_config_global protocol.file.allow always &&
+	git clone --recurse-submodules --depth 2 --no-shallow-submodules "file://$pwd/." super_clone &&
+	git -C super_clone log --oneline >lines &&
+	test_line_count = 2 lines &&
+	git -C super_clone/sub log --oneline >lines &&
+	test_line_count = 3 lines
+'
+
+test_expect_success 'non shallow clone with shallow submodule' '
+	test_when_finished "rm -rf super_clone" &&
+	test_config_global protocol.file.allow always &&
+	git clone --recurse-submodules --no-local --shallow-submodules "file://$pwd/." super_clone &&
+	git -C super_clone log --oneline >lines &&
+	test_line_count = 3 lines &&
+	git -C super_clone/sub log --oneline >lines &&
+	test_line_count = 1 lines
+'
+
+test_expect_success 'clone follows shallow recommendation' '
+	test_when_finished "rm -rf super_clone" &&
+	test_config_global protocol.file.allow always &&
+	git config -f .gitmodules submodule.sub.shallow true &&
+	git add .gitmodules &&
+	git commit -m "recommend shallow for sub" &&
+	git clone --recurse-submodules --no-local "file://$pwd/." super_clone &&
 	(
-		cd super &&
-		"$REAL_GIT" config user.email "test@example.com" &&
-		"$REAL_GIT" config user.name "Test User" &&
-		echo super >file &&
-		"$REAL_GIT" add file &&
-		"$REAL_GIT" commit -m "super initial" &&
-		"$REAL_GIT" submodule add "$TRASH_DIRECTORY/sub" sub &&
-		"$REAL_GIT" commit -m "add submodule"
+		cd super_clone &&
+		git log --oneline >lines &&
+		test_line_count = 4 lines
+	) &&
+	(
+		cd super_clone/sub &&
+		git log --oneline >lines &&
+		test_line_count = 1 lines
 	)
 '
 
-test_expect_success 'clone with --recurse-submodules' '
-	git clone --recurse-submodules super clone1 &&
-	test -f clone1/sub/file
+test_expect_success 'get unshallow recommended shallow submodule' '
+	test_when_finished "rm -rf super_clone" &&
+	test_config_global protocol.file.allow always &&
+	git clone --no-local "file://$pwd/." super_clone &&
+	(
+		cd super_clone &&
+		git submodule update --init --no-recommend-shallow &&
+		git log --oneline >lines &&
+		test_line_count = 4 lines
+	) &&
+	(
+		cd super_clone/sub &&
+		git log --oneline >lines &&
+		test_line_count = 3 lines
+	)
 '
 
-test_expect_success 'basic clone of super repo (grit fails on submodule gitlink during checkout)' '
-	git clone super clone2 &&
-	test -f clone2/file
+test_expect_success 'clone follows non shallow recommendation' '
+	test_when_finished "rm -rf super_clone" &&
+	test_config_global protocol.file.allow always &&
+	git config -f .gitmodules submodule.sub.shallow false &&
+	git add .gitmodules &&
+	git commit -m "recommend non shallow for sub" &&
+	git clone --recurse-submodules --no-local "file://$pwd/." super_clone &&
+	(
+		cd super_clone &&
+		git log --oneline >lines &&
+		test_line_count = 5 lines
+	) &&
+	(
+		cd super_clone/sub &&
+		git log --oneline >lines &&
+		test_line_count = 3 lines
+	)
 '
 
 test_done

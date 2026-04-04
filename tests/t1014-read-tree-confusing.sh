@@ -2,16 +2,14 @@
 
 test_description='check that read-tree rejects confusing paths'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'create base tree' '
-	git init &&
 	echo content >file &&
 	git add file &&
 	git commit -m base &&
-	git rev-parse HEAD:file >.blob_oid &&
-	git rev-parse HEAD^{tree} >.tree_oid
+	blob=$(git rev-parse HEAD:file) &&
+	tree=$(git rev-parse HEAD^{tree})
 '
 
 test_expect_success 'enable core.protectHFS for rejection tests' '
@@ -22,60 +20,45 @@ test_expect_success 'enable core.protectNTFS for rejection tests' '
 	git config core.protectNTFS true
 '
 
-test_expect_success 'reject . at end of path' '
-	blob=$(cat .blob_oid) &&
-	printf "100644 blob %s\t.\n" "$blob" >treeinput &&
-	bogus=$(git mktree <treeinput) &&
-	test_must_fail git read-tree $bogus
-'
+while read path pretty; do
+	: ${pretty:=$path}
+	case "$path" in
+	*SPACE)
+		path="${path%SPACE} "
+		;;
+	esac
+	test_expect_success "reject $pretty at end of path" '
+		printf "100644 blob %s\t%s" "$blob" "$path" >tree &&
+		bogus=$(git mktree <tree) &&
+		test_must_fail git read-tree $bogus
+	'
 
-test_expect_success 'reject .. at end of path' '
-	blob=$(cat .blob_oid) &&
-	printf "100644 blob %s\t..\n" "$blob" >treeinput &&
-	bogus=$(git mktree <treeinput) &&
-	test_must_fail git read-tree $bogus
-'
+	test_expect_success "reject $pretty as subtree" '
+		printf "040000 tree %s\t%s" "$tree" "$path" >tree &&
+		bogus=$(git mktree <tree) &&
+		test_must_fail git read-tree $bogus
+	'
+done <<-EOF
+.
+..
+.git
+.GIT
+${u200c}.Git {u200c}.Git
+.gI${u200c}T .gI{u200c}T
+.GiT${u200c} .GiT{u200c}
+git~1
+.git.SPACE .git.{space}
+.\\\\.GIT\\\\foobar backslashes
+.git\\\\foobar backslashes2
+.git...:alternate-stream
+EOF
 
-test_expect_success 'reject .git at end of path' '
-	blob=$(cat .blob_oid) &&
-	printf "100644 blob %s\t.git\n" "$blob" >treeinput &&
-	bogus=$(git mktree <treeinput) &&
-	test_must_fail git read-tree $bogus
-'
-
-test_expect_success 'reject .GIT at end of path' '
-	blob=$(cat .blob_oid) &&
-	printf "100644 blob %s\t.GIT\n" "$blob" >treeinput &&
-	bogus=$(git mktree <treeinput) &&
-	test_must_fail git read-tree $bogus
-'
-
-test_expect_success 'reject git~1 at end of path' '
-	blob=$(cat .blob_oid) &&
-	printf "100644 blob %s\tgit~1\n" "$blob" >treeinput &&
-	bogus=$(git mktree <treeinput) &&
-	test_must_fail git read-tree $bogus
-'
-
-test_expect_success 'reject . as subtree' '
-	tree=$(cat .tree_oid) &&
-	printf "040000 tree %s\t.\n" "$tree" >treeinput &&
-	bogus=$(git mktree <treeinput) &&
-	test_must_fail git read-tree $bogus
-'
-
-test_expect_success 'reject .. as subtree' '
-	tree=$(cat .tree_oid) &&
-	printf "040000 tree %s\t..\n" "$tree" >treeinput &&
-	bogus=$(git mktree <treeinput) &&
-	test_must_fail git read-tree $bogus
-'
-
-test_expect_success 'reject .git as subtree' '
-	tree=$(cat .tree_oid) &&
-	printf "040000 tree %s\t.git\n" "$tree" >treeinput &&
-	bogus=$(git mktree <treeinput) &&
-	test_must_fail git read-tree $bogus
+test_expect_success 'utf-8 paths allowed with core.protectHFS off' '
+	test_when_finished "git read-tree HEAD" &&
+	test_config core.protectHFS false &&
+	printf "100644 blob %s\t%s" "$blob" ".gi${u200c}t" >tree &&
+	ok=$(git mktree <tree) &&
+	git read-tree $ok
 '
 
 test_done

@@ -4,49 +4,43 @@ test_description='apply a patch that is larger than the preimage'
 
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' '
-	git init -q &&
-	git config user.name "Test" &&
-	git config user.email "test@example.com"
-'
+cat >F  <<\EOF
+1
+2
+3
+4
+5
+6
+7
+8
+999999
+A
+B
+C
+D
+E
+F
+G
+H
+I
+J
 
-test_expect_success 'setup file with many lines' '
-	cat >F <<-\EOF &&
-	1
-	2
-	3
-	4
-	5
-	6
-	7
-	8
-	999999
-	A
-	B
-	C
-	D
-	E
-	F
-	G
-	H
-	I
-	J
+EOF
 
-	EOF
+test_expect_success setup '
+
 	git add F &&
-	git commit -m "add F"
-'
-
-test_expect_success 'generate patch and modify file' '
 	mv F G &&
 	sed -e "s/1/11/" -e "s/999999/9/" -e "s/H/HH/" <G >F &&
 	git diff >patch &&
-	test -s patch
+	sed -e "/^\$/d" <G >F &&
+	git add F
+
 '
 
-test_expect_success 'patch stat shows changes' '
-	git apply --stat patch >output &&
-	grep "F" output
+test_expect_success 'apply should fail gracefully' '
+	test_must_fail git apply --index patch &&
+	test_path_is_missing .git/index.lock
 '
 
 test_done

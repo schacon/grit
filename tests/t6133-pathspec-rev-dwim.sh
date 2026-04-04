@@ -2,33 +2,48 @@
 
 test_description='test dwim of revs versus pathspecs in revision parser'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test" &&
-	git config user.email "test@test" &&
-	test_commit base
+	test_commit base &&
+	echo content >"br[ack]ets" &&
+	git add . &&
+	test_tick &&
+	git commit -m brackets
 '
 
-test_expect_success 'log with pathspec on tracked file' '
-	cd repo &&
-	git log --oneline -- base.t >actual &&
-	test_line_count = 1 actual
+test_expect_success 'non-rev wildcard dwims to pathspec' '
+	git log -- "*.t" >expect &&
+	git log    "*.t" >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'log with no-match pathspec is empty' '
-	cd repo &&
-	git log --oneline -- nonexistent >actual &&
-	test_must_be_empty actual
+test_expect_success 'tree:path with metacharacters dwims to rev' '
+	git show "HEAD:br[ack]ets" -- >expect &&
+	git show "HEAD:br[ack]ets"    >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'rev-parse resolves HEAD' '
-	cd repo &&
-	git rev-parse HEAD >actual &&
-	test -s actual
+test_expect_success '^{foo} with metacharacters dwims to rev' '
+	git log "HEAD^{/b.*}" -- >expect &&
+	git log "HEAD^{/b.*}"    >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '@{foo} with metacharacters dwims to rev' '
+	git log "HEAD@{now [or thereabouts]}" -- >expect &&
+	git log "HEAD@{now [or thereabouts]}"    >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success ':/*.t from a subdir dwims to a pathspec' '
+	mkdir subdir &&
+	(
+		cd subdir &&
+		git log -- ":/*.t" >expect &&
+		git log    ":/*.t" >actual &&
+		test_cmp expect actual
+	)
 '
 
 test_done

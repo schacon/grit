@@ -1,251 +1,381 @@
 #!/bin/sh
-# Tests for 'grit merge-file' — three-way file merge.
-# (merge-tree is not implemented; merge-file provides three-way file merging.)
+#
+# Copyright (c) 2010 Will Palmer
+#
 
-test_description='grit merge-file'
+test_description='git merge-tree'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# ── Clean merge (no conflicts) ───────────────────────────────────────────────
+test_expect_success setup '
+	test_commit "initial" "initial-file" "initial"
+'
 
-test_expect_success 'setup clean merge files' '
-	cat >base.txt <<-\EOF &&
-	line 1
-	line 2
-	line 3
-	line 4
-	line 5
+test_expect_success 'file add A, !B' '
+	git reset --hard initial &&
+	test_commit "add-a-not-b" "ONE" "AAA" &&
+	git merge-tree initial initial add-a-not-b >actual &&
+	cat >expected <<EXPECTED &&
+added in remote
+  their  100644 $(git rev-parse HEAD:ONE) ONE
+@@ -0,0 +1 @@
++AAA
+EXPECTED
+
+	test_cmp expected actual
+'
+
+test_expect_success 'file add !A, B' '
+	git reset --hard initial &&
+	test_commit "add-not-a-b" "ONE" "AAA" &&
+	git merge-tree initial add-not-a-b initial >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'file add A, B (same)' '
+	git reset --hard initial &&
+	test_commit "add-a-b-same-A" "ONE" "AAA" &&
+	git reset --hard initial &&
+	test_commit "add-a-b-same-B" "ONE" "AAA" &&
+	git merge-tree initial add-a-b-same-A add-a-b-same-B >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'file add A, B (different)' '
+	git reset --hard initial &&
+	test_commit "add-a-b-diff-A" "ONE" "AAA" &&
+	git reset --hard initial &&
+	test_commit "add-a-b-diff-B" "ONE" "BBB" &&
+	git merge-tree initial add-a-b-diff-A add-a-b-diff-B >actual &&
+	cat >expected <<EXPECTED &&
+added in both
+  our    100644 $(git rev-parse add-a-b-diff-A:ONE) ONE
+  their  100644 $(git rev-parse add-a-b-diff-B:ONE) ONE
+@@ -1 +1,5 @@
++<<<<<<< .our
+ AAA
++=======
++BBB
++>>>>>>> .their
+EXPECTED
+
+	test_cmp expected actual
+'
+
+test_expect_success 'file change A, !B' '
+	git reset --hard initial &&
+	test_commit "change-a-not-b" "initial-file" "BBB" &&
+	git merge-tree initial change-a-not-b initial >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'file change !A, B' '
+	git reset --hard initial &&
+	test_commit "change-not-a-b" "initial-file" "BBB" &&
+	git merge-tree initial initial change-not-a-b >actual &&
+	cat >expected <<EXPECTED &&
+merged
+  result 100644 $(git rev-parse change-a-not-b:initial-file) initial-file
+  our    100644 $(git rev-parse initial:initial-file       ) initial-file
+@@ -1 +1 @@
+-initial
++BBB
+EXPECTED
+
+	test_cmp expected actual
+'
+
+test_expect_success '3-way merge with --attr-source' '
+	test_when_finished rm -rf 3-way &&
+	git init 3-way &&
+	(
+		cd 3-way &&
+		test_commit initial file1 foo &&
+		base=$(git rev-parse HEAD) &&
+		git checkout -b brancha &&
+		echo bar >>file1 &&
+		git commit -am "adding bar" &&
+		source=$(git rev-parse HEAD) &&
+		git checkout @{-1} &&
+		git checkout -b branchb &&
+		echo baz >>file1 &&
+		git commit -am "adding baz" &&
+		merge=$(git rev-parse HEAD) &&
+		git checkout -b gitattributes &&
+		test_commit "gitattributes" .gitattributes "file1 merge=union" &&
+		git checkout @{-1} &&
+		tree=$(git --attr-source=gitattributes merge-tree --write-tree \
+		--merge-base "$base" --end-of-options "$source" "$merge") &&
+		test_write_lines foo bar baz >expect &&
+		git cat-file -p "$tree:file1" >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'file change A, B (same)' '
+	git reset --hard initial &&
+	test_commit "change-a-b-same-A" "initial-file" "AAA" &&
+	git reset --hard initial &&
+	test_commit "change-a-b-same-B" "initial-file" "AAA" &&
+	git merge-tree initial change-a-b-same-A change-a-b-same-B >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'file change A, B (different)' '
+	git reset --hard initial &&
+	test_commit "change-a-b-diff-A" "initial-file" "AAA" &&
+	git reset --hard initial &&
+	test_commit "change-a-b-diff-B" "initial-file" "BBB" &&
+	git merge-tree initial change-a-b-diff-A change-a-b-diff-B >actual &&
+	cat >expected <<EXPECTED &&
+changed in both
+  base   100644 $(git rev-parse initial:initial-file          ) initial-file
+  our    100644 $(git rev-parse change-a-b-diff-A:initial-file) initial-file
+  their  100644 $(git rev-parse change-a-b-diff-B:initial-file) initial-file
+@@ -1 +1,5 @@
++<<<<<<< .our
+ AAA
++=======
++BBB
++>>>>>>> .their
+EXPECTED
+
+	test_cmp expected actual
+'
+
+test_expect_success 'file change A, B (mixed)' '
+	git reset --hard initial &&
+	test_commit "change-a-b-mix-base" "ONE" "
+AAA
+AAA
+AAA
+AAA
+AAA
+AAA
+AAA
+AAA
+AAA
+AAA
+AAA
+AAA
+AAA
+AAA
+AAA" &&
+	test_commit "change-a-b-mix-A" "ONE" \
+		"$(sed -e "1{s/AAA/BBB/;}" -e "10{s/AAA/BBB/;}" <ONE)" &&
+	git reset --hard change-a-b-mix-base &&
+	test_commit "change-a-b-mix-B" "ONE" \
+		"$(sed -e "1{s/AAA/BBB/;}" -e "10{s/AAA/CCC/;}" <ONE)" &&
+	git merge-tree change-a-b-mix-base change-a-b-mix-A change-a-b-mix-B \
+		>actual &&
+
+	cat >expected <<EXPECTED &&
+changed in both
+  base   100644 $(git rev-parse change-a-b-mix-base:ONE) ONE
+  our    100644 $(git rev-parse change-a-b-mix-A:ONE   ) ONE
+  their  100644 $(git rev-parse change-a-b-mix-B:ONE   ) ONE
+@@ -7,7 +7,11 @@
+ AAA
+ AAA
+ AAA
++<<<<<<< .our
+ BBB
++=======
++CCC
++>>>>>>> .their
+ AAA
+ AAA
+ AAA
+EXPECTED
+
+	test_cmp expected actual
+'
+
+test_expect_success 'file remove A, !B' '
+	git reset --hard initial &&
+	test_commit "rm-a-not-b-base" "ONE" "AAA" &&
+	git rm ONE &&
+	git commit -m "rm-a-not-b" &&
+	git tag "rm-a-not-b" &&
+	git merge-tree rm-a-not-b-base rm-a-not-b rm-a-not-b-base >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'file remove !A, B' '
+	git reset --hard initial &&
+	test_commit "rm-not-a-b-base" "ONE" "AAA" &&
+	git rm ONE &&
+	git commit -m "rm-not-a-b" &&
+	git tag "rm-not-a-b" &&
+	git merge-tree rm-a-not-b-base rm-a-not-b-base rm-a-not-b >actual &&
+	cat >expected <<EXPECTED &&
+removed in remote
+  base   100644 $(git rev-parse rm-a-not-b-base:ONE) ONE
+  our    100644 $(git rev-parse rm-a-not-b-base:ONE) ONE
+@@ -1 +0,0 @@
+-AAA
+EXPECTED
+
+	test_cmp expected actual
+'
+
+test_expect_success 'file remove A, B (same)' '
+	git reset --hard initial &&
+	test_commit "rm-a-b-base" "ONE" "AAA" &&
+	git rm ONE &&
+	git commit -m "rm-a-b" &&
+	git tag "rm-a-b" &&
+	git merge-tree rm-a-b-base rm-a-b rm-a-b >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'file change A, remove B' '
+	git reset --hard initial &&
+	test_commit "change-a-rm-b-base" "ONE" "AAA" &&
+	test_commit "change-a-rm-b-A" "ONE" "BBB" &&
+	git reset --hard change-a-rm-b-base &&
+	git rm ONE &&
+	git commit -m "change-a-rm-b-B" &&
+	git tag "change-a-rm-b-B" &&
+	git merge-tree change-a-rm-b-base change-a-rm-b-A change-a-rm-b-B \
+		>actual &&
+	cat >expected <<EXPECTED &&
+removed in remote
+  base   100644 $(git rev-parse change-a-rm-b-base:ONE) ONE
+  our    100644 $(git rev-parse change-a-rm-b-A:ONE   ) ONE
+@@ -1 +0,0 @@
+-BBB
+EXPECTED
+
+	test_cmp expected actual
+'
+
+test_expect_success 'file remove A, change B' '
+	git reset --hard initial &&
+	test_commit "rm-a-change-b-base" "ONE" "AAA" &&
+
+	git rm ONE &&
+	git commit -m "rm-a-change-b-A" &&
+	git tag "rm-a-change-b-A" &&
+	git reset --hard rm-a-change-b-base &&
+	test_commit "rm-a-change-b-B" "ONE" "BBB" &&
+	git merge-tree rm-a-change-b-base rm-a-change-b-A rm-a-change-b-B \
+		>actual &&
+	cat >expected <<EXPECTED &&
+removed in local
+  base   100644 $(git rev-parse rm-a-change-b-base:ONE) ONE
+  their  100644 $(git rev-parse rm-a-change-b-B:ONE   ) ONE
+EXPECTED
+	test_cmp expected actual
+'
+
+test_expect_success 'tree add A, B (same)' '
+	git reset --hard initial &&
+	mkdir sub &&
+	test_commit "add sub/file" "sub/file" "file" add-tree-A &&
+	git merge-tree initial add-tree-A add-tree-A >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'tree add A, B (different)' '
+	git reset --hard initial &&
+	mkdir sub &&
+	test_commit "add sub/file" "sub/file" "AAA" add-tree-a-b-A &&
+	git reset --hard initial &&
+	mkdir sub &&
+	test_commit "add sub/file" "sub/file" "BBB" add-tree-a-b-B &&
+	git merge-tree initial add-tree-a-b-A add-tree-a-b-B >actual &&
+	cat >expect <<-EOF &&
+	added in both
+	  our    100644 $(git rev-parse add-tree-a-b-A:sub/file) sub/file
+	  their  100644 $(git rev-parse add-tree-a-b-B:sub/file) sub/file
+	@@ -1 +1,5 @@
+	+<<<<<<< .our
+	 AAA
+	+=======
+	+BBB
+	+>>>>>>> .their
 	EOF
-	cp base.txt ours.txt &&
-	cp base.txt theirs.txt &&
-	# ours changes line 1
-	sed -i "s/line 1/line 1 modified by ours/" ours.txt &&
-	# theirs changes line 5
-	sed -i "s/line 5/line 5 modified by theirs/" theirs.txt
+	test_cmp expect actual
 '
 
-test_expect_success 'merge-file with no conflicts succeeds (exit 0)' '
-	cp ours.txt current.txt &&
-	git merge-file current.txt base.txt theirs.txt &&
-	grep "line 1 modified by ours" current.txt &&
-	grep "line 5 modified by theirs" current.txt
-'
-
-test_expect_success 'merge-file -p sends result to stdout' '
-	cp ours.txt current2.txt &&
-	git merge-file -p current2.txt base.txt theirs.txt >merged &&
-	grep "line 1 modified by ours" merged &&
-	grep "line 5 modified by theirs" merged
-'
-
-test_expect_success 'merge-file -p does not modify input file' '
-	cp ours.txt current3.txt &&
-	git merge-file -p current3.txt base.txt theirs.txt >merged &&
-	test_cmp ours.txt current3.txt
-'
-
-test_expect_success 'clean merge preserves unchanged lines' '
-	cp ours.txt current4.txt &&
-	git merge-file current4.txt base.txt theirs.txt &&
-	grep "line 2" current4.txt &&
-	grep "line 3" current4.txt &&
-	grep "line 4" current4.txt
-'
-
-# ── Conflicting merge ───────────────────────────────────────────────────────
-
-test_expect_success 'setup conflicting files' '
-	printf "line 1\nline 2\nline 3\n" >base_c.txt &&
-	printf "line 1\nline 2 ours\nline 3\n" >ours_c.txt &&
-	printf "line 1\nline 2 theirs\nline 3\n" >theirs_c.txt
-'
-
-test_expect_success 'merge-file with conflicts returns nonzero' '
-	cp ours_c.txt conflict.txt &&
-	test_must_fail git merge-file conflict.txt base_c.txt theirs_c.txt
-'
-
-test_expect_success 'conflicted output contains conflict markers' '
-	cp ours_c.txt conflict2.txt &&
-	test_must_fail git merge-file conflict2.txt base_c.txt theirs_c.txt &&
-	grep "<<<<<<" conflict2.txt &&
-	grep ">>>>>>" conflict2.txt
-'
-
-test_expect_success 'conflicted output has both versions' '
-	cp ours_c.txt conflict3.txt &&
-	test_must_fail git merge-file conflict3.txt base_c.txt theirs_c.txt &&
-	grep "line 2 ours" conflict3.txt &&
-	grep "line 2 theirs" conflict3.txt
-'
-
-test_expect_success 'merge-file -p with conflict sends to stdout' '
-	cp ours_c.txt conflict4.txt &&
-	test_must_fail git merge-file -p conflict4.txt base_c.txt theirs_c.txt >merged_c &&
-	grep "<<<<<<" merged_c &&
-	grep ">>>>>>" merged_c
-'
-
-# ── --ours / --theirs / --union ──────────────────────────────────────────────
-
-test_expect_success 'merge-file --ours resolves with our version' '
-	cp ours_c.txt resolve_ours.txt &&
-	git merge-file --ours resolve_ours.txt base_c.txt theirs_c.txt &&
-	grep "line 2 ours" resolve_ours.txt &&
-	! grep "line 2 theirs" resolve_ours.txt
-'
-
-test_expect_success 'merge-file --theirs resolves with their version' '
-	cp ours_c.txt resolve_theirs.txt &&
-	git merge-file --theirs resolve_theirs.txt base_c.txt theirs_c.txt &&
-	grep "line 2 theirs" resolve_theirs.txt &&
-	! grep "line 2 ours" resolve_theirs.txt
-'
-
-test_expect_success 'merge-file --union includes both without markers' '
-	cp ours_c.txt resolve_union.txt &&
-	git merge-file --union resolve_union.txt base_c.txt theirs_c.txt &&
-	! grep "<<<<<<" resolve_union.txt &&
-	grep "line 2 ours" resolve_union.txt &&
-	grep "line 2 theirs" resolve_union.txt
-'
-
-# ── --diff3 ──────────────────────────────────────────────────────────────────
-
-test_expect_success 'merge-file --diff3 shows base version in conflicts' '
-	cp ours_c.txt diff3.txt &&
-	test_must_fail git merge-file --diff3 diff3.txt base_c.txt theirs_c.txt &&
-	grep "|||||||" diff3.txt &&
-	grep "line 2$" diff3.txt
-'
-
-# ── --zdiff3 ─────────────────────────────────────────────────────────────────
-
-test_expect_success 'merge-file --zdiff3 produces valid output' '
-	cp ours_c.txt zdiff3.txt &&
-	test_must_fail git merge-file --zdiff3 zdiff3.txt base_c.txt theirs_c.txt &&
-	grep "<<<<<<" zdiff3.txt &&
-	grep ">>>>>>" zdiff3.txt
-'
-
-# ── Labels (-L) ──────────────────────────────────────────────────────────────
-
-test_expect_success 'merge-file -L sets custom conflict labels' '
-	cp ours_c.txt labeled.txt &&
-	test_must_fail git merge-file -L "OURS" -L "BASE" -L "THEIRS" labeled.txt base_c.txt theirs_c.txt &&
-	grep "<<<<<<< OURS" labeled.txt &&
-	grep ">>>>>>> THEIRS" labeled.txt
-'
-
-test_expect_success 'merge-file --diff3 -L shows base label' '
-	cp ours_c.txt labeled_diff3.txt &&
-	test_must_fail git merge-file --diff3 -L "OURS" -L "BASE" -L "THEIRS" labeled_diff3.txt base_c.txt theirs_c.txt &&
-	grep "||||||| BASE" labeled_diff3.txt
-'
-
-# ── --marker-size ────────────────────────────────────────────────────────────
-
-test_expect_success 'merge-file --marker-size changes marker length' '
-	cp ours_c.txt marker.txt &&
-	test_must_fail git merge-file --marker-size 10 marker.txt base_c.txt theirs_c.txt &&
-	grep "<<<<<<<<<< " marker.txt &&
-	grep ">>>>>>>>>> " marker.txt
-'
-
-# ── --quiet ──────────────────────────────────────────────────────────────────
-
-test_expect_success 'merge-file -q suppresses warnings on conflict' '
-	cp ours_c.txt quiet.txt &&
-	test_must_fail git merge-file -q quiet.txt base_c.txt theirs_c.txt 2>stderr &&
-	test_must_be_empty stderr
-'
-
-# ── Identical files (trivial merge) ─────────────────────────────────────────
-
-test_expect_success 'merge-file with identical files succeeds' '
-	echo "same content" >same1.txt &&
-	echo "same content" >same2.txt &&
-	echo "same content" >same3.txt &&
-	git merge-file same1.txt same2.txt same3.txt &&
-	echo "same content" >expect &&
-	test_cmp expect same1.txt
-'
-
-test_expect_success 'merge-file with all-empty files succeeds' '
-	>empty1.txt &&
-	>empty2.txt &&
-	>empty3.txt &&
-	git merge-file empty1.txt empty2.txt empty3.txt &&
-	test_must_be_empty empty1.txt
-'
-
-# ── Multi-line complex merge ─────────────────────────────────────────────────
-
-test_expect_success 'setup complex merge files' '
-	printf "alpha\nbravo\ncharlie\ndelta\necho\nfoxtrot\ngolf\nhotel\n" >base_complex.txt &&
-	printf "alpha\nbravo MODIFIED\ncharlie\ndelta\necho\nfoxtrot\ngolf\nhotel\n" >ours_complex.txt &&
-	printf "alpha\nbravo\ncharlie\ndelta\necho\nfoxtrot MODIFIED\ngolf\nhotel\n" >theirs_complex.txt
-'
-
-test_expect_success 'complex merge with no conflicts combines changes' '
-	cp ours_complex.txt result.txt &&
-	git merge-file result.txt base_complex.txt theirs_complex.txt &&
-	grep "bravo MODIFIED" result.txt &&
-	grep "foxtrot MODIFIED" result.txt
-'
-
-test_expect_success 'complex merge preserves unchanged lines' '
-	cp ours_complex.txt result2.txt &&
-	git merge-file result2.txt base_complex.txt theirs_complex.txt &&
-	grep "alpha" result2.txt &&
-	grep "charlie" result2.txt &&
-	grep "delta" result2.txt &&
-	grep "echo" result2.txt &&
-	grep "golf" result2.txt &&
-	grep "hotel" result2.txt
-'
-
-test_expect_success 'merge-file with addition on one side' '
-	cat >base_add.txt <<-\EOF &&
-	line A
-	line B
+test_expect_success 'tree unchanged A, removed B' '
+	git reset --hard initial &&
+	mkdir sub &&
+	test_commit "add sub/file" "sub/file" "AAA" tree-remove-b-initial &&
+	git rm sub/file &&
+	test_tick &&
+	git commit -m "remove sub/file" &&
+	git tag tree-remove-b-B &&
+	git merge-tree tree-remove-b-initial tree-remove-b-initial tree-remove-b-B >actual &&
+	cat >expect <<-EOF &&
+	removed in remote
+	  base   100644 $(git rev-parse tree-remove-b-initial:sub/file) sub/file
+	  our    100644 $(git rev-parse tree-remove-b-initial:sub/file) sub/file
+	@@ -1 +0,0 @@
+	-AAA
 	EOF
-	cat >ours_add.txt <<-\EOF &&
-	line A
-	line B
-	line C added by ours
-	EOF
-	cp base_add.txt theirs_add.txt &&
-	cp ours_add.txt result_add.txt &&
-	git merge-file result_add.txt base_add.txt theirs_add.txt &&
-	grep "line C added by ours" result_add.txt
+	test_cmp expect actual
 '
 
-test_expect_success 'merge-file with deletion on one side' '
-	cat >base_del.txt <<-\EOF &&
-	line X
-	line Y
-	line Z
+test_expect_success 'turn file to tree' '
+	git reset --hard initial &&
+	rm initial-file &&
+	mkdir initial-file &&
+	test_commit "turn-file-to-tree" "initial-file/ONE" "CCC" &&
+	git merge-tree initial initial turn-file-to-tree >actual &&
+	cat >expect <<-EOF &&
+	added in remote
+	  their  100644 $(git rev-parse turn-file-to-tree:initial-file/ONE) initial-file/ONE
+	@@ -0,0 +1 @@
+	+CCC
+	removed in remote
+	  base   100644 $(git rev-parse initial:initial-file) initial-file
+	  our    100644 $(git rev-parse initial:initial-file) initial-file
+	@@ -1 +0,0 @@
+	-initial
 	EOF
-	cat >ours_del.txt <<-\EOF &&
-	line X
-	line Z
-	EOF
-	cp base_del.txt theirs_del.txt &&
-	cp ours_del.txt result_del.txt &&
-	git merge-file result_del.txt base_del.txt theirs_del.txt &&
-	! grep "line Y" result_del.txt &&
-	grep "line X" result_del.txt &&
-	grep "line Z" result_del.txt
+	test_cmp expect actual
 '
 
-# ── Missing files ────────────────────────────────────────────────────────────
+test_expect_success 'turn tree to file' '
+	git reset --hard initial &&
+	mkdir dir &&
+	test_commit "add-tree" "dir/path" "AAA" &&
+	test_commit "add-another-tree" "dir/another" "BBB" &&
+	rm -fr dir &&
+	test_commit "make-file" "dir" "CCC" &&
+	git merge-tree add-tree add-another-tree make-file >actual &&
+	cat >expect <<-EOF &&
+	removed in remote
+	  base   100644 $(git rev-parse add-tree:dir/path) dir/path
+	  our    100644 $(git rev-parse add-tree:dir/path) dir/path
+	@@ -1 +0,0 @@
+	-AAA
+	added in remote
+	  their  100644 $(git rev-parse make-file:dir) dir
+	@@ -0,0 +1 @@
+	+CCC
+	EOF
+	test_cmp expect actual
+'
 
-test_expect_success 'merge-file with nonexistent file fails' '
-	echo "content" >exists.txt &&
-	test_must_fail git merge-file exists.txt nonexistent.txt exists.txt 2>err &&
-	test -s err
+test_expect_success 'merge-tree respects core.useReplaceRefs=false' '
+	test_commit merge-to &&
+	test_commit valid base &&
+	git reset --hard HEAD^ &&
+	test_commit malicious base &&
+
+	test_when_finished "git replace -d $(git rev-parse valid^0)" &&
+	git replace valid^0 malicious^0 &&
+
+	tree=$(git -c core.useReplaceRefs=true merge-tree --write-tree merge-to valid) &&
+	merged=$(git cat-file -p $tree:base) &&
+	test malicious = $merged &&
+
+	tree=$(git -c core.useReplaceRefs=false merge-tree --write-tree merge-to valid) &&
+	merged=$(git cat-file -p $tree:base) &&
+	test valid = $merged
 '
 
 test_done

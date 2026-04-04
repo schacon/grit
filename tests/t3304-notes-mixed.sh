@@ -1,64 +1,209 @@
 #!/bin/sh
 
-test_description='Test notes with mixed operations'
+test_description='Test notes trees that also contain non-notes'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	test_commit A &&
-	test_commit B &&
-	test_commit C &&
-	test_commit D
+number_of_commits=100
+
+start_note_commit () {
+	test_tick &&
+	cat <<INPUT_END
+commit refs/notes/commits
+committer $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> $GIT_COMMITTER_DATE
+data <<COMMIT
+notes
+COMMIT
+
+from refs/notes/commits^0
+deleteall
+INPUT_END
+
+}
+
+verify_notes () {
+	git log | grep "^    " > output &&
+	i=$number_of_commits &&
+	while [ $i -gt 0 ]; do
+		echo "    commit #$i" &&
+		echo "    note for commit #$i" &&
+		i=$(($i-1));
+	done > expect &&
+	test_cmp expect output
+}
+
+test_expect_success "setup: create a couple of commits" '
+
+	test_tick &&
+	cat <<INPUT_END >input &&
+commit refs/heads/main
+committer $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> $GIT_COMMITTER_DATE
+data <<COMMIT
+commit #1
+COMMIT
+
+M 644 inline file
+data <<EOF
+file in commit #1
+EOF
+
+INPUT_END
+
+	test_tick &&
+	cat <<INPUT_END >>input &&
+commit refs/heads/main
+committer $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> $GIT_COMMITTER_DATE
+data <<COMMIT
+commit #2
+COMMIT
+
+M 644 inline file
+data <<EOF
+file in commit #2
+EOF
+
+INPUT_END
+	git fast-import --quiet <input
 '
 
-test_expect_success 'add notes to multiple commits' '
-	git notes add -m "note A" A &&
-	git notes add -m "note B" B &&
-	git notes add -m "note C" C
+test_expect_success "create a notes tree with both notes and non-notes" '
+
+	commit1=$(git rev-parse refs/heads/main^) &&
+	commit2=$(git rev-parse refs/heads/main) &&
+	test_tick &&
+	cat <<INPUT_END >input &&
+commit refs/notes/commits
+committer $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> $GIT_COMMITTER_DATE
+data <<COMMIT
+notes commit #1
+COMMIT
+
+N inline $commit1
+data <<EOF
+note for commit #1
+EOF
+
+N inline $commit2
+data <<EOF
+note for commit #2
+EOF
+
+INPUT_END
+	test_tick &&
+	cat <<INPUT_END >>input &&
+commit refs/notes/commits
+committer $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> $GIT_COMMITTER_DATE
+data <<COMMIT
+notes commit #2
+COMMIT
+
+M 644 inline foobar/non-note.txt
+data <<EOF
+A non-note in a notes tree
+EOF
+
+N inline $commit2
+data <<EOF
+edited note for commit #2
+EOF
+
+INPUT_END
+	test_tick &&
+	cat <<INPUT_END >>input &&
+commit refs/notes/commits
+committer $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> $GIT_COMMITTER_DATE
+data <<COMMIT
+notes commit #3
+COMMIT
+
+N inline $commit1
+data <<EOF
+edited note for commit #1
+EOF
+
+M 644 inline deadbeef
+data <<EOF
+non-note with SHA1-like name
+EOF
+
+M 644 inline de/adbeef
+data <<EOF
+another non-note with SHA1-like name
+EOF
+
+M 644 inline de/adbeefdeadbeefdeadbeefdeadbeefdeadbeef
+data <<EOF
+This is actually a valid note, albeit to a non-existing object.
+It is needed in order to trigger the "mishandling" of the dead/beef non-note.
+EOF
+
+M 644 inline dead/beef
+data <<EOF
+yet another non-note with SHA1-like name
+EOF
+
+INPUT_END
+	git fast-import --quiet <input &&
+	git config core.notesRef refs/notes/commits
 '
 
-test_expect_success 'verify each note' '
-	echo "note A" >expect && git notes show A >actual && test_cmp expect actual &&
-	echo "note B" >expect && git notes show B >actual && test_cmp expect actual &&
-	echo "note C" >expect && git notes show C >actual && test_cmp expect actual
-'
+cat >expect <<EXPECT_END
+    commit #2
+    edited note for commit #2
+    commit #1
+    edited note for commit #1
+EXPECT_END
 
-test_expect_success 'no note on D' '
-	test_must_fail git notes show D
-'
+test_expect_success "verify contents of notes" '
 
-test_expect_success 'list shows 3 notes' '
-	git notes list >actual &&
-	test_line_count = 3 actual
-'
-
-test_expect_success 'remove note from B' '
-	git notes remove B &&
-	test_must_fail git notes show B
-'
-
-test_expect_success 'list shows 2 notes after removal' '
-	git notes list >actual &&
-	test_line_count = 2 actual
-'
-
-test_expect_success 'append to note on A' '
-	git notes append -m "extra for A" A &&
-	cat >expect <<-\EOF &&
-	note A
-
-	extra for A
-	EOF
-	git notes show A >actual &&
+	git log | grep "^    " > actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'overwrite note on C with force' '
-	git notes add -f -m "new note C" C &&
-	echo "new note C" >expect &&
-	git notes show C >actual &&
-	test_cmp expect actual
+cat >expect_nn1 <<EXPECT_END
+A non-note in a notes tree
+EXPECT_END
+cat >expect_nn2 <<EXPECT_END
+non-note with SHA1-like name
+EXPECT_END
+cat >expect_nn3 <<EXPECT_END
+another non-note with SHA1-like name
+EXPECT_END
+cat >expect_nn4 <<EXPECT_END
+yet another non-note with SHA1-like name
+EXPECT_END
+
+test_expect_success "verify contents of non-notes" '
+
+	git cat-file -p refs/notes/commits:foobar/non-note.txt > actual_nn1 &&
+	test_cmp expect_nn1 actual_nn1 &&
+	git cat-file -p refs/notes/commits:deadbeef > actual_nn2 &&
+	test_cmp expect_nn2 actual_nn2 &&
+	git cat-file -p refs/notes/commits:de/adbeef > actual_nn3 &&
+	test_cmp expect_nn3 actual_nn3 &&
+	git cat-file -p refs/notes/commits:dead/beef > actual_nn4 &&
+	test_cmp expect_nn4 actual_nn4
+'
+
+test_expect_success "git-notes preserves non-notes" '
+
+	test_tick &&
+	git notes add -f -m "foo bar"
+'
+
+test_expect_success "verify contents of non-notes after git-notes" '
+
+	git cat-file -p refs/notes/commits:foobar/non-note.txt > actual_nn1 &&
+	test_cmp expect_nn1 actual_nn1 &&
+	git cat-file -p refs/notes/commits:deadbeef > actual_nn2 &&
+	test_cmp expect_nn2 actual_nn2 &&
+	git cat-file -p refs/notes/commits:de/adbeef > actual_nn3 &&
+	test_cmp expect_nn3 actual_nn3 &&
+	git cat-file -p refs/notes/commits:dead/beef > actual_nn4 &&
+	test_cmp expect_nn4 actual_nn4
 '
 
 test_done

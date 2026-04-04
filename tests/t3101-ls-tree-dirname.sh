@@ -1,188 +1,241 @@
 #!/bin/sh
-# Tests for ls-tree with directory names and the -d flag.
+#
+# Copyright (c) 2005 Junio C Hamano
+# Copyright (c) 2005 Robert Fitzsimons
+#
 
-test_description='ls-tree directory name handling and -d flag'
+test_description='git ls-tree directory and filenames handling.
 
-cd "$(dirname "$0")" || exit 1
+This test runs git ls-tree with the following in a tree.
+
+    1.txt              - a file
+    2.txt              - a file
+    path0/a/b/c/1.txt  - a file in a directory
+    path1/b/c/1.txt    - a file in a directory
+    path2/1.txt        - a file in a directory
+    path3/1.txt        - a file in a directory
+    path3/2.txt        - a file in a directory
+
+Test the handling of multiple directories which have matching file
+entries.  Also test odd filename and missing entries handling.
+'
+
 . ./test-lib.sh
 
-# ── Setup ──────────────────────────────────────────────────────────────
-
-test_expect_success 'setup repo with nested dirs' '
-	grit init repo &&
-	cd repo &&
-	git config user.email "t@t.com" &&
-	git config user.name "T" &&
-	mkdir -p a/b/c &&
-	mkdir -p d/e &&
-	mkdir -p f &&
-	echo "file-root" >root.txt &&
-	echo "file-a" >a/file-a.txt &&
-	echo "file-b" >a/b/file-b.txt &&
-	echo "file-c" >a/b/c/file-c.txt &&
-	echo "file-d" >d/file-d.txt &&
-	echo "file-e" >d/e/file-e.txt &&
-	echo "file-f" >f/file-f.txt &&
-	grit add . &&
-	grit commit -m "initial commit"
+test_expect_success 'setup' '
+	echo 111 >1.txt &&
+	echo 222 >2.txt &&
+	mkdir path0 path0/a path0/a/b path0/a/b/c &&
+	echo 111 >path0/a/b/c/1.txt &&
+	mkdir path1 path1/b path1/b/c &&
+	echo 111 >path1/b/c/1.txt &&
+	mkdir path2 &&
+	echo 111 >path2/1.txt &&
+	mkdir path3 &&
+	echo 111 >path3/1.txt &&
+	echo 222 >path3/2.txt &&
+	find *.txt path* \( -type f -o -type l \) -print |
+	xargs git update-index --add &&
+	tree=$(git write-tree) &&
+	echo $tree
 '
 
-# ── -d flag: show only tree entries ────────────────────────────────────
+test_output () {
+	sed -e "s/ $OID_REGEX	/ X	/" <current >check &&
+	test_cmp expected check
+}
 
-test_expect_success 'ls-tree -d shows only top-level trees' '
-	cd repo &&
-	grit ls-tree -d HEAD >actual &&
-	grep "^040000 tree" actual &&
-	! grep "^100644 blob" actual
+test_expect_success 'ls-tree plain' '
+	git ls-tree $tree >current &&
+	cat >expected <<\EOF &&
+100644 blob X	1.txt
+100644 blob X	2.txt
+040000 tree X	path0
+040000 tree X	path1
+040000 tree X	path2
+040000 tree X	path3
+EOF
+	test_output
 '
 
-test_expect_success 'ls-tree -d lists correct directory names' '
-	cd repo &&
-	grit ls-tree -d HEAD >actual &&
-	grep "	a$" actual &&
-	grep "	d$" actual &&
-	grep "	f$" actual
+# Recursive does not show tree nodes anymore...
+test_expect_success 'ls-tree recursive' '
+	git ls-tree -r $tree >current &&
+	cat >expected <<\EOF &&
+100644 blob X	1.txt
+100644 blob X	2.txt
+100644 blob X	path0/a/b/c/1.txt
+100644 blob X	path1/b/c/1.txt
+100644 blob X	path2/1.txt
+100644 blob X	path3/1.txt
+100644 blob X	path3/2.txt
+EOF
+	test_output
 '
 
-test_expect_success 'ls-tree -d does not show root blobs' '
-	cd repo &&
-	grit ls-tree -d HEAD >actual &&
-	! grep "root.txt" actual
+test_expect_success 'ls-tree filter 1.txt' '
+	git ls-tree $tree 1.txt >current &&
+	cat >expected <<\EOF &&
+100644 blob X	1.txt
+EOF
+	test_output
 '
 
-test_expect_success 'ls-tree -d count matches number of top-level dirs' '
-	cd repo &&
-	grit ls-tree -d HEAD >actual &&
-	test_line_count = 3 actual
+test_expect_success 'ls-tree filter path1/b/c/1.txt' '
+	git ls-tree $tree path1/b/c/1.txt >current &&
+	cat >expected <<\EOF &&
+100644 blob X	path1/b/c/1.txt
+EOF
+	test_output
 '
 
-# ── -d combined with -r ────────────────────────────────────────────────
-
-test_expect_success 'ls-tree -d -r shows no entries (only trees filtered but -r recurses into blobs)' '
-	cd repo &&
-	grit ls-tree -d -r HEAD >actual &&
-	test_line_count = 0 actual
+test_expect_success 'ls-tree filter all 1.txt files' '
+	git ls-tree $tree 1.txt path0/a/b/c/1.txt \
+		path1/b/c/1.txt path2/1.txt path3/1.txt >current &&
+	cat >expected <<\EOF &&
+100644 blob X	1.txt
+100644 blob X	path0/a/b/c/1.txt
+100644 blob X	path1/b/c/1.txt
+100644 blob X	path2/1.txt
+100644 blob X	path3/1.txt
+EOF
+	test_output
 '
 
-# ── Without -d: default shows trees + blobs at top level ──────────────
-
-test_expect_success 'ls-tree HEAD shows both blobs and trees at top level' '
-	cd repo &&
-	grit ls-tree HEAD >actual &&
-	grep "blob" actual &&
-	grep "tree" actual
+# I am not so sure about this one after ls-tree doing pathspec match.
+# Having both path0/a and path0/a/b/c makes path0/a redundant, and
+# it behaves as if path0/a/b/c, path1/b/c, path2 and path3 are specified.
+test_expect_success 'ls-tree filter directories' '
+	git ls-tree $tree path3 path2 path0/a/b/c path1/b/c path0/a >current &&
+	cat >expected <<\EOF &&
+040000 tree X	path0/a/b/c
+040000 tree X	path1/b/c
+040000 tree X	path2
+040000 tree X	path3
+EOF
+	test_output
 '
 
-test_expect_success 'ls-tree HEAD top level has 4 entries (3 dirs + 1 file)' '
-	cd repo &&
-	grit ls-tree HEAD >actual &&
-	test_line_count = 4 actual
+# Again, duplicates are filtered away so this is equivalent to
+# having 1.txt and path3
+test_expect_success 'ls-tree filter odd names' '
+	git ls-tree $tree 1.txt ./1.txt .//1.txt \
+		path3/1.txt path3/./1.txt path3 path3// >current &&
+	cat >expected <<\EOF &&
+100644 blob X	1.txt
+100644 blob X	path3/1.txt
+100644 blob X	path3/2.txt
+EOF
+	test_output
 '
 
-# ── Directory as path argument ─────────────────────────────────────────
-
-test_expect_success 'ls-tree HEAD a shows tree entry for a' '
-	cd repo &&
-	grit ls-tree HEAD a >actual &&
-	grep "	a$" actual &&
-	test_line_count = 1 actual
+test_expect_success 'ls-tree filter missing files and extra slashes' '
+	git ls-tree $tree 1.txt/ abc.txt \
+		path3//23.txt path3/2.txt/// >current &&
+	>expected &&
+	test_output
 '
 
-test_expect_success 'ls-tree HEAD with nonexistent dir produces no output' '
-	cd repo &&
-	grit ls-tree HEAD nonexistent >actual &&
-	test_line_count = 0 actual
+test_expect_success 'ls-tree filter is leading path match' '
+	git ls-tree $tree pa path3/a >current &&
+	>expected &&
+	test_output
 '
 
-# ── -d with path filter ───────────────────────────────────────────────
-
-test_expect_success 'ls-tree -d HEAD a shows the tree for a' '
-	cd repo &&
-	grit ls-tree -d HEAD a >actual &&
-	grep "	a$" actual &&
-	test_line_count = 1 actual
+test_expect_success 'ls-tree --full-name' '
+	(
+		cd path0 &&
+		git ls-tree --full-name $tree a
+	) >current &&
+	cat >expected <<\EOF &&
+040000 tree X	path0/a
+EOF
+	test_output
 '
 
-test_expect_success 'ls-tree -d HEAD root.txt shows nothing (blob filtered)' '
-	cd repo &&
-	grit ls-tree -d HEAD root.txt >actual &&
-	test_line_count = 0 actual
+test_expect_success 'ls-tree --no-full-name' '
+	git -C path0 ls-tree --no-full-name $tree a >current &&
+	cat >expected <<-EOF &&
+	040000 tree X	a
+	EOF
+	test_output
 '
 
-# ── -d with --name-only ───────────────────────────────────────────────
-
-test_expect_success 'ls-tree -d --name-only shows only directory names' '
-	cd repo &&
-	grit ls-tree -d --name-only HEAD >actual &&
-	echo "a" >expect &&
-	echo "d" >>expect &&
-	echo "f" >>expect &&
-	test_cmp expect actual
+test_expect_success 'ls-tree --full-tree' '
+	(
+		cd path1/b/c &&
+		git ls-tree --full-tree $tree
+	) >current &&
+	cat >expected <<\EOF &&
+100644 blob X	1.txt
+100644 blob X	2.txt
+040000 tree X	path0
+040000 tree X	path1
+040000 tree X	path2
+040000 tree X	path3
+EOF
+	test_output
 '
 
-# ── Multiple dirs at same depth ───────────────────────────────────────
-
-test_expect_success 'setup repo with several peer dirs' '
-	grit init multi-repo &&
-	cd multi-repo &&
-	git config user.email "t@t.com" &&
-	git config user.name "T" &&
-	mkdir alpha beta gamma &&
-	echo x >alpha/x.txt &&
-	echo y >beta/y.txt &&
-	echo z >gamma/z.txt &&
-	grit add . &&
-	grit commit -m "peer dirs"
+test_expect_success 'ls-tree --full-tree -r' '
+	(
+		cd path3/ &&
+		git ls-tree --full-tree -r $tree
+	) >current &&
+	cat >expected <<\EOF &&
+100644 blob X	1.txt
+100644 blob X	2.txt
+100644 blob X	path0/a/b/c/1.txt
+100644 blob X	path1/b/c/1.txt
+100644 blob X	path2/1.txt
+100644 blob X	path3/1.txt
+100644 blob X	path3/2.txt
+EOF
+	test_output
 '
 
-test_expect_success 'ls-tree -d shows all peer dirs' '
-	cd multi-repo &&
-	grit ls-tree -d HEAD >actual &&
-	test_line_count = 3 actual &&
-	grep "	alpha$" actual &&
-	grep "	beta$" actual &&
-	grep "	gamma$" actual
+test_expect_success 'ls-tree --abbrev=5' '
+	git ls-tree --abbrev=5 $tree >current &&
+	sed -e "s/ $_x05[0-9a-f]*	/ X	/" <current >check &&
+	cat >expected <<\EOF &&
+100644 blob X	1.txt
+100644 blob X	2.txt
+040000 tree X	path0
+040000 tree X	path1
+040000 tree X	path2
+040000 tree X	path3
+EOF
+	test_cmp expected check
 '
 
-test_expect_success 'ls-tree -d HEAD alpha lists just alpha' '
-	cd multi-repo &&
-	grit ls-tree -d HEAD alpha >actual &&
-	test_line_count = 1 actual
-'
+for opt in --name-only --name-status
+do
+	test_expect_success "ls-tree $opt" '
+		git ls-tree $opt $tree >current &&
+		cat >expected <<-\EOF &&
+		1.txt
+		2.txt
+		path0
+		path1
+		path2
+		path3
+		EOF
+		test_output
+	'
 
-# ── Empty tree behaviour ─────────────────────────────────────────────
-
-test_expect_success 'setup repo with only a file (no dirs)' '
-	grit init no-dirs &&
-	cd no-dirs &&
-	git config user.email "t@t.com" &&
-	git config user.name "T" &&
-	echo only >only.txt &&
-	grit add only.txt &&
-	grit commit -m "no dirs"
-'
-
-test_expect_success 'ls-tree -d on tree with no subdirs gives empty output' '
-	cd no-dirs &&
-	grit ls-tree -d HEAD >actual &&
-	test_line_count = 0 actual
-'
-
-test_expect_success 'ls-tree (no -d) still shows the blob' '
-	cd no-dirs &&
-	grit ls-tree HEAD >actual &&
-	test_line_count = 1 actual &&
-	grep "only.txt" actual
-'
-
-# ── Deeply nested: -d doesn't recurse ────────────────────────────────
-
-test_expect_success 'ls-tree -d on deep nesting shows only top-level tree' '
-	cd repo &&
-	grit ls-tree -d HEAD >actual &&
-	! grep "a/b" actual &&
-	! grep "a/b/c" actual &&
-	! grep "d/e" actual
-'
+	test_expect_success "ls-tree $opt -r" '
+		git ls-tree $opt -r $tree >current &&
+		cat >expected <<-\EOF &&
+		1.txt
+		2.txt
+		path0/a/b/c/1.txt
+		path1/b/c/1.txt
+		path2/1.txt
+		path3/1.txt
+		path3/2.txt
+		EOF
+		test_output
+	'
+done
 
 test_done

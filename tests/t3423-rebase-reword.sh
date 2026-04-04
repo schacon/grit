@@ -4,41 +4,45 @@ test_description='git rebase interactive with rewording'
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
+. "$TEST_DIRECTORY"/lib-rebase.sh
 
-	echo base >file &&
-	git add file &&
-	test_tick &&
-	git commit -m base &&
-	git tag base &&
+test_expect_success 'setup' '
+	test_commit main file-1 test &&
 
 	git checkout -b stuff &&
-	echo feature-a >file2 &&
-	git add file2 &&
-	test_tick &&
-	git commit -m feature_a &&
 
-	echo feature-b >file3 &&
-	git add file3 &&
-	test_tick &&
-	git commit -m feature_b &&
-	git tag stuff-end
+	test_commit feature_a file-2 aaa &&
+	test_commit feature_b file-2 ddd
 '
 
-test_expect_success 'interactive rebase -i produces todo list' '
-	git checkout stuff &&
-	GIT_SEQUENCE_EDITOR="cat" git rebase -i base >todo 2>&1 &&
-	grep "pick" todo || true
+test_expect_success 'reword without issues functions as intended' '
+	test_when_finished "reset_rebase" &&
+
+	git checkout stuff^0 &&
+
+	set_fake_editor &&
+	FAKE_LINES="pick 1 reword 2" FAKE_COMMIT_MESSAGE="feature_b_reworded" \
+		git rebase -i -v main &&
+
+	test "$(git log -1 --format=%B)" = "feature_b_reworded" &&
+	test $(git rev-list --count HEAD) = 3
 '
 
-test_expect_success 'basic rebase onto base works' '
-	git checkout -b rebase-test stuff-end &&
-	git rebase base &&
-	test_path_is_file file2 &&
-	test_path_is_file file3
+test_expect_success 'reword after a conflict preserves commit' '
+	test_when_finished "reset_rebase" &&
+
+	git checkout stuff^0 &&
+
+	set_fake_editor &&
+	test_must_fail env FAKE_LINES="reword 2" \
+		git rebase -i -v main &&
+
+	git checkout --theirs file-2 &&
+	git add file-2 &&
+	FAKE_COMMIT_MESSAGE="feature_b_reworded" git rebase --continue &&
+
+	test "$(git log -1 --format=%B)" = "feature_b_reworded" &&
+	test $(git rev-list --count HEAD) = 2
 '
 
 test_done

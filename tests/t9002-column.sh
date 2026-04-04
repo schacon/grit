@@ -1,10 +1,6 @@
 #!/bin/sh
-# Ported from git/t/t9002-column.sh
-# Tests for 'git column' command
 
 test_description='git column'
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup' '
@@ -24,11 +20,11 @@ EOF
 '
 
 test_expect_success 'never' '
-	git column --mode=never <lista >actual &&
+	git column --indent=Z --mode=never <lista >actual &&
 	test_cmp lista actual
 '
 
-test_expect_success 'always (plain mode)' '
+test_expect_success 'always' '
 	cat >expected <<\EOF &&
 Zone
 Ztwo
@@ -46,94 +42,7 @@ EOF
 	test_cmp expected actual
 '
 
-test_expect_success '80 columns' '
-	cat >expected <<\EOF &&
-one    two    three  four   five   six    seven  eight  nine   ten    eleven
-EOF
-	git column --mode=column --width=80 <lista >actual &&
-	test_cmp expected actual
-'
-
-test_expect_success 'width = 1' '
-	git column --mode=column --width=1 <lista >actual &&
-	test_cmp lista actual
-'
-
-test_expect_success '20 columns' '
-	cat >expected <<\EOF &&
-one    seven
-two    eight
-three  nine
-four   ten
-five   eleven
-six
-EOF
-	git column --mode=column --width=20 <lista >actual &&
-	test_cmp expected actual
-'
-
-test_expect_success '20 columns, padding 2' '
-	cat >expected <<\EOF &&
-one     seven
-two     eight
-three   nine
-four    ten
-five    eleven
-six
-EOF
-	git column --mode=column --width=20 --padding 2 <lista >actual &&
-	test_cmp expected actual
-'
-
-test_expect_success '20 columns, row first' '
-	cat >expected <<\EOF &&
-one    two
-three  four
-five   six
-seven  eight
-nine   ten
-eleven
-EOF
-	git column --mode=row --width=20 <lista | sed "s/ *$//" >actual &&
-	test_cmp expected actual
-'
-
-test_expect_success '20 columns, dense' '
-	cat >expected <<\EOF &&
-one   five  nine
-two   six   ten
-three seven eleven
-four  eight
-EOF
-	git column --mode=column,dense --width=20 <lista >actual &&
-	test_cmp expected actual
-'
-
-test_expect_success '20 columns, nodense' '
-	cat >expected <<\EOF &&
-one    seven
-two    eight
-three  nine
-four   ten
-five   eleven
-six
-EOF
-	git column --mode=column,nodense --width=20 <lista >actual &&
-	test_cmp expected actual
-'
-
-test_expect_success '20 columns, row first, dense' '
-	cat >expected <<\EOF &&
-one   two    three
-four  five   six
-seven eight  nine
-ten   eleven
-EOF
-	git column --mode=row,dense --width=20 <lista >actual &&
-	test_cmp expected actual
-'
-
-test_expect_success '--nl option' '
+test_expect_success '--nl' '
 	cat >expected <<\EOF &&
 oneZ
 twoZ
@@ -151,9 +60,150 @@ EOF
 	test_cmp expected actual
 '
 
-test_expect_success 'negative padding rejected' '
-	test_must_fail git column --mode=column --padding=-1 <lista 2>err &&
-	grep "non-negative" err
+test_expect_success '80 columns' '
+	cat >expected <<\EOF &&
+one    two    three  four   five   six    seven  eight  nine   ten    eleven
+EOF
+	COLUMNS=80 git column --mode=column <lista >actual &&
+	test_cmp expected actual
+'
+
+cat >expected <<\EOF
+one
+two
+three
+four
+five
+six
+seven
+eight
+nine
+ten
+eleven
+EOF
+
+test_expect_success COLUMNS_CAN_BE_1 'COLUMNS = 1' '
+	COLUMNS=1 git column --mode=column <lista >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'width = 1' '
+	git column --mode=column --width=1 <lista >actual &&
+	test_cmp expected actual
+'
+
+COLUMNS=20
+export COLUMNS
+
+test_expect_success '20 columns' '
+	cat >expected <<\EOF &&
+one    seven
+two    eight
+three  nine
+four   ten
+five   eleven
+six
+EOF
+	git column --mode=column <lista >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '20 columns, nodense' '
+	cat >expected <<\EOF &&
+one    seven
+two    eight
+three  nine
+four   ten
+five   eleven
+six
+EOF
+	git column --mode=column,nodense < lista > actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '20 columns, dense' '
+	cat >expected <<\EOF &&
+one   five  nine
+two   six   ten
+three seven eleven
+four  eight
+EOF
+	git column --mode=column,dense < lista > actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '20 columns, padding 2' '
+	cat >expected <<\EOF &&
+one     seven
+two     eight
+three   nine
+four    ten
+five    eleven
+six
+EOF
+	git column --mode=column --padding 2 <lista >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '20 columns, indented' '
+	cat >expected <<\EOF &&
+  one    seven
+  two    eight
+  three  nine
+  four   ten
+  five   eleven
+  six
+EOF
+	git column --mode=column --indent="  " <lista >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '20 columns, row first' '
+	cat >expected <<\EOF &&
+one    two
+three  four
+five   six
+seven  eight
+nine   ten
+eleven
+EOF
+	git column --mode=row <lista >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '20 columns, row first, nodense' '
+	cat >expected <<\EOF &&
+one    two
+three  four
+five   six
+seven  eight
+nine   ten
+eleven
+EOF
+	git column --mode=row,nodense <lista >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success '20 columns, row first, dense' '
+	cat >expected <<\EOF &&
+one   two    three
+four  five   six
+seven eight  nine
+ten   eleven
+EOF
+	git column --mode=row,dense <lista >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'padding must be non-negative' '
+	cat >input <<\EOF &&
+1 2 3 4 5 6
+EOF
+	cat >expected <<\EOF &&
+fatal: --padding must be non-negative
+EOF
+	test_must_fail git column --mode=column --padding=-1 <input >actual 2>&1 &&
+	test_cmp expected actual
 '
 
 test_done

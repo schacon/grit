@@ -1,16 +1,17 @@
 #!/bin/sh
-# Ported from git/t/t5518-fetch-exit-status.sh
+#
+# Copyright (c) 2008 Dmitry V. Levin
+#
 
 test_description='fetch exit status test'
 
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success setup '
-	git init -q &&
+
 	>file &&
 	git add file &&
 	git commit -m initial &&
@@ -24,8 +25,16 @@ test_expect_success setup '
 	git commit -a -m next
 '
 
-test_expect_success 'non-fast-forward fetch fails' '
+test_expect_success 'non-fast-forward fetch' '
+
 	test_must_fail git fetch . main:side
+
+'
+
+test_expect_success 'forced update' '
+
+	git fetch . +main:side
+
 '
 
 test_done

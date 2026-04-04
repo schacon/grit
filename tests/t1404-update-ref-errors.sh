@@ -1,358 +1,395 @@
 #!/bin/sh
-# Ported from git/t/t1404-update-ref-errors.sh (harness-compatible subset).
 
-test_description='grit update-ref error handling'
+test_description='Test git update-ref error handling'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-C=3333333333333333333333333333333333333333
-D=4444444444444444444444444444444444444444
-E=5555555555555555555555555555555555555555
+# Create some references, perhaps run pack-refs --all, then try to
+# create some more references. Ensure that the second creation fails
+# with the correct error message.
+# Usage: test_update_rejected <before> <pack> <create> <error>
+#   <before> is a ws-separated list of refs to create before the test
+#   <pack> (true or false) tells whether to pack the refs before the test
+#   <create> is a list of variables to attempt creating
+#   <error> is a string to look for in the stderr of update-ref.
+# All references are created in the namespace specified by the current
+# value of $prefix.
+test_update_rejected () {
+	before="$1" &&
+	pack="$2" &&
+	create="$3" &&
+	error="$4" &&
+	printf "create $prefix/%s $C\n" $before |
+	git update-ref --stdin &&
+	git for-each-ref $prefix >unchanged &&
+	if $pack
+	then
+		git pack-refs --all
+	fi &&
+	printf "create $prefix/%s $C\n" $create >input &&
+	test_must_fail git update-ref --stdin <input 2>output.err &&
+	test_grep -F "$error" output.err &&
+	git for-each-ref $prefix >actual &&
+	test_cmp unchanged actual
+}
 
-test_expect_success 'setup repository' '
-	grit init repo &&
-	cd repo
-'
+# Test adding and deleting D/F-conflicting references in a single
+# transaction.
+df_test() {
+	prefix="$1"
+	pack=: symadd=false symdel=false add_del=false addref= delref=
+	shift
+	while test $# -gt 0
+	do
+		case "$1" in
+		--pack)
+			pack="git pack-refs --all"
+			shift
+			;;
+		--sym-add)
+			# Perform the add via a symbolic reference
+			symadd=true
+			shift
+			;;
+		--sym-del)
+			# Perform the del via a symbolic reference
+			symdel=true
+			shift
+			;;
+		--del-add)
+			# Delete first reference then add second
+			add_del=false
+			delref="$prefix/r/$2"
+			addref="$prefix/r/$3"
+			shift 3
+			;;
+		--add-del)
+			# Add first reference then delete second
+			add_del=true
+			addref="$prefix/r/$2"
+			delref="$prefix/r/$3"
+			shift 3
+			;;
+		*)
+			echo 1>&2 "Extra args to df_test: $*"
+			return 1
+			;;
+		esac
+	done
+	git update-ref "$delref" $C &&
+	if $symadd
+	then
+		addname="$prefix/s/symadd" &&
+		git symbolic-ref "$addname" "$addref"
+	else
+		addname="$addref"
+	fi &&
+	if $symdel
+	then
+		delname="$prefix/s/symdel" &&
+		git symbolic-ref "$delname" "$delref"
+	else
+		delname="$delref"
+	fi &&
+	$pack &&
+	if $add_del
+	then
+		printf "%s\n" "create $addname $D" "delete $delname"
+	else
+		printf "%s\n" "delete $delname" "create $addname $D"
+	fi >commands &&
+	test_must_fail git update-ref --stdin <commands 2>output.err &&
+	grep -E "fatal:( cannot lock ref '$addname':)? '$delref' exists; cannot create '$addref'" output.err &&
+	printf "%s\n" "$C $delref" >expected-refs &&
+	git for-each-ref --format="%(objectname) %(refname)" $prefix/r >actual-refs &&
+	test_cmp expected-refs actual-refs
+}
 
-# === D/F (directory/file) conflict tests ===
+test_expect_success 'setup' - <<\EOT
 
-test_expect_success 'existing loose ref blocks creating deeper ref' '
-	cd repo &&
-	grit update-ref refs/errors/c "$C" &&
-	test_must_fail grit update-ref refs/errors/c/x "$D" &&
-	echo "$C" >expect &&
-	cat .git/refs/errors/c >actual &&
-	test_cmp expect actual
-'
+	git commit --allow-empty -m Initial &&
+	C=$(git rev-parse HEAD) &&
+	git commit --allow-empty -m Second &&
+	D=$(git rev-parse HEAD) &&
+	git commit --allow-empty -m Third &&
+	E=$(git rev-parse HEAD)
+EOT
 
-test_expect_success 'existing deeper ref blocks creating parent ref' '
-	cd repo &&
-	grit update-ref refs/errors/d/e "$C" &&
-	test_must_fail grit update-ref refs/errors/d "$D" &&
-	echo "$C" >expect &&
-	cat .git/refs/errors/d/e >actual &&
-	test_cmp expect actual
-'
+test_expect_success 'existing loose ref is a simple prefix of new' - <<\EOT
 
-test_expect_success 'existing loose ref is a deeper prefix of new' '
-	cd repo &&
-	grit update-ref refs/deep/c "$C" &&
-	test_must_fail grit update-ref refs/deep/c/x/y "$D" &&
-	echo "$C" >expect &&
-	cat .git/refs/deep/c >actual &&
-	test_cmp expect actual
-'
+	prefix=refs/1l &&
+	test_update_rejected "a c e" false "b c/x d" \
+		"'$prefix/c' exists; cannot create '$prefix/c/x'"
 
-test_expect_success 'existing deeper ref blocks creating shallow ref' '
-	cd repo &&
-	grit update-ref refs/deep2/c/x/y "$C" &&
-	test_must_fail grit update-ref refs/deep2/c "$D" &&
-	echo "$C" >expect &&
-	cat .git/refs/deep2/c/x/y >actual &&
-	test_cmp expect actual
-'
+EOT
 
-# === --stdin mode error handling ===
+test_expect_success 'existing packed ref is a simple prefix of new' - <<\EOT
 
-test_expect_success 'missing old-value blocks update in --stdin mode' '
-	cd repo &&
-	echo "update refs/errors/missing $E $D" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin &&
-	test_path_is_missing .git/refs/errors/missing
-'
+	prefix=refs/1p &&
+	test_update_rejected "a c e" true "b c/x d" \
+		"'$prefix/c' exists; cannot create '$prefix/c/x'"
 
-test_expect_success 'incorrect old-value blocks update in --stdin mode' '
-	cd repo &&
-	grit update-ref refs/errors/existing "$C" &&
-	echo "update refs/errors/existing $E $D" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin &&
-	echo "$C" >expect &&
-	cat .git/refs/errors/existing >actual &&
-	test_cmp expect actual
-'
+EOT
 
-test_expect_success 'existing ref blocks create in --stdin mode' '
-	cd repo &&
-	echo "create refs/errors/existing $E" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin &&
-	echo "$C" >expect &&
-	cat .git/refs/errors/existing >actual &&
-	test_cmp expect actual
-'
+test_expect_success 'existing loose ref is a deeper prefix of new' - <<\EOT
 
-test_expect_success 'incorrect old-value blocks delete in --stdin mode' '
-	cd repo &&
-	echo "delete refs/errors/existing $D" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin &&
-	echo "$C" >expect &&
-	cat .git/refs/errors/existing >actual &&
-	test_cmp expect actual
-'
+	prefix=refs/2l &&
+	test_update_rejected "a c e" false "b c/x/y d" \
+		"'$prefix/c' exists; cannot create '$prefix/c/x/y'"
 
-# === Error handling with real objects ===
+EOT
 
-test_expect_success 'setup real repo for error tests' '
-	grit init errrepo &&
-	cd errrepo &&
-	echo a > file && grit add file &&
-	GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="t@t" \
-	GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="t@t" \
-	grit commit -m "first" &&
-	echo b > file && grit add file &&
-	GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="t@t" \
-	GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="t@t" \
-	grit commit -m "second" &&
-	echo c > file && grit add file &&
-	GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="t@t" \
-	GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="t@t" \
-	grit commit -m "third"
-'
+test_expect_success 'existing packed ref is a deeper prefix of new' - <<\EOT
 
-test_expect_success 'missing old value blocks update (real objects)' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RD=$(grit rev-parse HEAD~1) &&
-	RE=$(grit rev-parse HEAD) &&
-	printf "update refs/missing-update/foo $RE $RD\n" |
-	test_must_fail grit update-ref --stdin 2>output.err &&
-	grep "refs/missing-update/foo" output.err
-'
+	prefix=refs/2p &&
+	test_update_rejected "a c e" true "b c/x/y d" \
+		"'$prefix/c' exists; cannot create '$prefix/c/x/y'"
 
-test_expect_success 'incorrect old value blocks update (real objects)' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RD=$(grit rev-parse HEAD~1) &&
-	RE=$(grit rev-parse HEAD) &&
-	grit update-ref refs/incorrect-update/foo "$RC" &&
-	printf "update refs/incorrect-update/foo $RE $RD\n" |
-	test_must_fail grit update-ref --stdin 2>output.err &&
-	grep "refs/incorrect-update/foo" output.err
-'
+EOT
 
-test_expect_success 'existing old value blocks create (real objects)' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RE=$(grit rev-parse HEAD) &&
-	grit update-ref refs/existing-create/foo "$RC" &&
-	printf "create refs/existing-create/foo $RE\n" |
-	test_must_fail grit update-ref --stdin 2>output.err &&
-	grep "refs/existing-create/foo" output.err
-'
+test_expect_success 'new ref is a simple prefix of existing loose' - <<\EOT
 
-test_expect_success 'incorrect old value blocks delete (real objects)' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RD=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/incorrect-delete/foo "$RC" &&
-	printf "delete refs/incorrect-delete/foo $RD\n" |
-	test_must_fail grit update-ref --stdin 2>output.err &&
-	grep "refs/incorrect-delete/foo" output.err
-'
+	prefix=refs/3l &&
+	test_update_rejected "a c/x e" false "b c d" \
+		"'$prefix/c/x' exists; cannot create '$prefix/c'"
 
-# === Indirect (via symbolic ref) error handling ===
+EOT
 
-test_expect_success 'missing old value blocks indirect update' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RD=$(grit rev-parse HEAD~1) &&
-	RE=$(grit rev-parse HEAD) &&
-	grit symbolic-ref refs/missing-indirect-update/symref refs/missing-indirect-update/foo &&
-	printf "update refs/missing-indirect-update/symref $RE $RD\n" |
-	test_must_fail grit update-ref --stdin 2>output.err &&
-	grep "refs/missing-indirect-update" output.err
-'
+test_expect_success 'new ref is a simple prefix of existing packed' - <<\EOT
 
-test_expect_success 'incorrect old value blocks indirect update' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RD=$(grit rev-parse HEAD~1) &&
-	RE=$(grit rev-parse HEAD) &&
-	grit symbolic-ref refs/incorrect-indirect-update/symref refs/incorrect-indirect-update/foo &&
-	grit update-ref refs/incorrect-indirect-update/foo "$RC" &&
-	printf "update refs/incorrect-indirect-update/symref $RE $RD\n" |
-	test_must_fail grit update-ref --stdin 2>output.err &&
-	grep "refs/incorrect-indirect-update" output.err
-'
+	prefix=refs/3p &&
+	test_update_rejected "a c/x e" true "b c d" \
+		"'$prefix/c/x' exists; cannot create '$prefix/c'"
 
-test_expect_success 'existing old value blocks indirect create' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RE=$(grit rev-parse HEAD) &&
-	grit symbolic-ref refs/existing-indirect-create/symref refs/existing-indirect-create/foo &&
-	grit update-ref refs/existing-indirect-create/foo "$RC" &&
-	printf "create refs/existing-indirect-create/symref $RE\n" |
-	test_must_fail grit update-ref --stdin 2>output.err &&
-	grep "refs/existing-indirect-create" output.err
-'
+EOT
 
-test_expect_success 'incorrect old value blocks indirect delete' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RD=$(grit rev-parse HEAD~1) &&
-	grit symbolic-ref refs/incorrect-indirect-delete/symref refs/incorrect-indirect-delete/foo &&
-	grit update-ref refs/incorrect-indirect-delete/foo "$RC" &&
-	printf "delete refs/incorrect-indirect-delete/symref $RD\n" |
-	test_must_fail grit update-ref --stdin 2>output.err &&
-	grep "refs/incorrect-indirect-delete" output.err
-'
+test_expect_success 'new ref is a deeper prefix of existing loose' - <<\EOT
 
-# === D/F conflicts with real objects ===
+	prefix=refs/4l &&
+	test_update_rejected "a c/x/y e" false "b c d" \
+		"'$prefix/c/x/y' exists; cannot create '$prefix/c'"
 
-test_expect_success 'D/F conflict: existing simple prefix blocks deeper (real objects)' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	grit update-ref refs/df1/a "$RC" &&
-	grit update-ref refs/df1/c "$RC" &&
-	grit update-ref refs/df1/e "$RC" &&
-	test_must_fail grit update-ref refs/df1/c/x "$RC"
-'
+EOT
 
-test_expect_success 'D/F conflict: existing deeper ref blocks simple prefix (real objects)' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	grit update-ref refs/df2/c/x "$RC" &&
-	test_must_fail grit update-ref refs/df2/c "$RC"
-'
+test_expect_success 'new ref is a deeper prefix of existing packed' - <<\EOT
 
-test_expect_success 'D/F conflict: deeper prefix blocks even deeper (real objects)' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	grit update-ref refs/df3/c "$RC" &&
-	test_must_fail grit update-ref refs/df3/c/x/y "$RC"
-'
+	prefix=refs/4p &&
+	test_update_rejected "a c/x/y e" true "b c d" \
+		"'$prefix/c/x/y' exists; cannot create '$prefix/c'"
 
-test_expect_success 'D/F conflict: deep ref blocks shallow ref (real objects)' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	grit update-ref refs/df4/c/x/y "$RC" &&
-	test_must_fail grit update-ref refs/df4/c "$RC"
-'
+EOT
 
-# === Stdin D/F conflict in batch ===
+test_expect_success 'one new ref is a simple prefix of another' - <<\EOT
 
-test_expect_success 'D/F conflict in stdin batch fails' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	grit update-ref refs/df5/a "$RC" &&
-	cat >stdin <<-EOF &&
-	create refs/df5/a/child $RC
+	prefix=refs/5 &&
+	test_update_rejected "a e" false "b c c/x d" \
+		"cannot process '$prefix/c' and '$prefix/c/x' at the same time"
+
+EOT
+
+test_expect_success 'D/F conflict prevents add long + delete short' - <<\EOT
+	df_test refs/df-al-ds --add-del foo/bar foo
+EOT
+
+test_expect_success 'D/F conflict prevents add short + delete long' - <<\EOT
+	df_test refs/df-as-dl --add-del foo foo/bar
+EOT
+
+test_expect_success 'D/F conflict prevents delete long + add short' - <<\EOT
+	df_test refs/df-dl-as --del-add foo/bar foo
+EOT
+
+test_expect_success 'D/F conflict prevents delete short + add long' - <<\EOT
+	df_test refs/df-ds-al --del-add foo foo/bar
+EOT
+
+test_expect_success 'D/F conflict prevents add long + delete short packed' - <<\EOT
+	df_test refs/df-al-dsp --pack --add-del foo/bar foo
+EOT
+
+test_expect_success 'D/F conflict prevents add short + delete long packed' - <<\EOT
+	df_test refs/df-as-dlp --pack --add-del foo foo/bar
+EOT
+
+test_expect_success 'D/F conflict prevents delete long packed + add short' - <<\EOT
+	df_test refs/df-dlp-as --pack --del-add foo/bar foo
+EOT
+
+test_expect_success 'D/F conflict prevents delete short packed + add long' - <<\EOT
+	df_test refs/df-dsp-al --pack --del-add foo foo/bar
+EOT
+
+# Try some combinations involving symbolic refs...
+
+test_expect_success 'D/F conflict prevents indirect add long + delete short' - <<\EOT
+	df_test refs/df-ial-ds --sym-add --add-del foo/bar foo
+EOT
+
+test_expect_success 'D/F conflict prevents indirect add long + indirect delete short' - <<\EOT
+	df_test refs/df-ial-ids --sym-add --sym-del --add-del foo/bar foo
+EOT
+
+test_expect_success 'D/F conflict prevents indirect add short + indirect delete long' - <<\EOT
+	df_test refs/df-ias-idl --sym-add --sym-del --add-del foo foo/bar
+EOT
+
+test_expect_success 'D/F conflict prevents indirect delete long + indirect add short' - <<\EOT
+	df_test refs/df-idl-ias --sym-add --sym-del --del-add foo/bar foo
+EOT
+
+test_expect_success 'D/F conflict prevents indirect add long + delete short packed' - <<\EOT
+	df_test refs/df-ial-dsp --sym-add --pack --add-del foo/bar foo
+EOT
+
+test_expect_success 'D/F conflict prevents indirect add long + indirect delete short packed' - <<\EOT
+	df_test refs/df-ial-idsp --sym-add --sym-del --pack --add-del foo/bar foo
+EOT
+
+test_expect_success 'D/F conflict prevents add long + indirect delete short packed' - <<\EOT
+	df_test refs/df-al-idsp --sym-del --pack --add-del foo/bar foo
+EOT
+
+test_expect_success 'D/F conflict prevents indirect delete long packed + indirect add short' - <<\EOT
+	df_test refs/df-idlp-ias --sym-add --sym-del --pack --del-add foo/bar foo
+EOT
+
+# Test various errors when reading the old values of references...
+
+test_expect_success 'missing old value blocks update' - <<\EOT
+	prefix=refs/missing-update &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/foo': unable to resolve reference '$prefix/foo'
 	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	grep -i "directory\|not a directory\|conflict" err
-'
+	printf "%s\n" "update $prefix/foo $E $D" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
 
-# === Transaction atomicity for errors ===
-
-test_expect_success 'wrong old-value in transaction blocks commit' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RD=$(grit rev-parse HEAD~1) &&
-	RE=$(grit rev-parse HEAD) &&
-	grit update-ref refs/atom/a "$RC" &&
-	cat >stdin <<-EOF &&
-	start
-	update refs/atom/a $RE $RD
-	commit
+test_expect_success 'incorrect old value blocks update' - <<\EOT
+	prefix=refs/incorrect-update &&
+	git update-ref $prefix/foo $C &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/foo': is at $C but expected $D
 	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$RC" >expect &&
-	grit rev-parse refs/atom/a >actual &&
-	test_cmp expect actual
-'
+	printf "%s\n" "update $prefix/foo $E $D" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
 
-test_expect_success 'create existing ref in transaction fails' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RE=$(grit rev-parse HEAD) &&
-	grit update-ref refs/atom/b "$RC" &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/atom/b $RE
-	commit
+test_expect_success 'existing old value blocks create' - <<\EOT
+	prefix=refs/existing-create &&
+	git update-ref $prefix/foo $C &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/foo': reference already exists
 	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$RC" >expect &&
-	grit rev-parse refs/atom/b >actual &&
-	test_cmp expect actual
-'
+	printf "%s\n" "create $prefix/foo $E" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
 
-test_expect_success 'delete with wrong old-value in transaction fails' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RD=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/atom/c "$RC" &&
-	cat >stdin <<-EOF &&
-	start
-	delete refs/atom/c $RD
-	commit
+test_expect_success 'incorrect old value blocks delete' - <<\EOT
+	prefix=refs/incorrect-delete &&
+	git update-ref $prefix/foo $C &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/foo': is at $C but expected $D
 	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$RC" >expect &&
-	grit rev-parse refs/atom/c >actual &&
-	test_cmp expect actual
-'
+	printf "%s\n" "delete $prefix/foo $D" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
 
-# === Verify failure in transaction ===
-
-test_expect_success 'verify failure blocks transaction' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	RD=$(grit rev-parse HEAD~1) &&
-	RE=$(grit rev-parse HEAD) &&
-	grit update-ref refs/atom/d "$RC" &&
-	cat >stdin <<-EOF &&
-	start
-	verify refs/atom/d $RD
-	update refs/atom/d $RE $RC
-	commit
+test_expect_success 'missing old value blocks indirect update' - <<\EOT
+	prefix=refs/missing-indirect-update &&
+	git symbolic-ref $prefix/symref $prefix/foo &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/symref': unable to resolve reference '$prefix/foo'
 	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$RC" >expect &&
-	grit rev-parse refs/atom/d >actual &&
-	test_cmp expect actual
-'
+	printf "%s\n" "update $prefix/symref $E $D" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
 
-# === Mixed operations with errors ===
+test_expect_success 'incorrect old value blocks indirect update' - <<\EOT
+	prefix=refs/incorrect-indirect-update &&
+	git symbolic-ref $prefix/symref $prefix/foo &&
+	git update-ref $prefix/foo $C &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/symref': is at $C but expected $D
+	EOF
+	printf "%s\n" "update $prefix/symref $E $D" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
 
-test_expect_success 'bad OID in create is rejected' '
-	cd errrepo &&
-	echo "create refs/bad/oid does-not-exist" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	grep "does-not-exist" err &&
-	test_must_fail grit rev-parse --verify -q refs/bad/oid
-'
+test_expect_success 'existing old value blocks indirect create' - <<\EOT
+	prefix=refs/existing-indirect-create &&
+	git symbolic-ref $prefix/symref $prefix/foo &&
+	git update-ref $prefix/foo $C &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/symref': reference already exists
+	EOF
+	printf "%s\n" "create $prefix/symref $E" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
 
-test_expect_success 'bad OID in update old-value is rejected' '
-	cd errrepo &&
-	echo "update refs/bad/old $C does-not-exist" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	grep "does-not-exist" err
-'
+test_expect_success 'incorrect old value blocks indirect delete' - <<\EOT
+	prefix=refs/incorrect-indirect-delete &&
+	git symbolic-ref $prefix/symref $prefix/foo &&
+	git update-ref $prefix/foo $C &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/symref': is at $C but expected $D
+	EOF
+	printf "%s\n" "delete $prefix/symref $D" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
 
-test_expect_success 'update non-existent ref without old-value succeeds' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	grit update-ref -d refs/noexist/ref 2>/dev/null || true &&
-	echo "update refs/noexist/ref $RC" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$RC" >expect &&
-	grit rev-parse refs/noexist/ref >actual &&
-	test_cmp expect actual
-'
+test_expect_success 'missing old value blocks indirect no-deref update' - <<\EOT
+	prefix=refs/missing-noderef-update &&
+	git symbolic-ref $prefix/symref $prefix/foo &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/symref': reference is missing but expected $D
+	EOF
+	printf "%s\n" "option no-deref" "update $prefix/symref $E $D" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
 
-test_expect_success 'delete non-existent ref fails with old-value' '
-	cd errrepo &&
-	RC=$(grit rev-parse HEAD~2) &&
-	echo "delete refs/nonexist/del $RC" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err
-'
+test_expect_success 'incorrect old value blocks indirect no-deref update' - <<\EOT
+	prefix=refs/incorrect-noderef-update &&
+	git symbolic-ref $prefix/symref $prefix/foo &&
+	git update-ref $prefix/foo $C &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/symref': is at $C but expected $D
+	EOF
+	printf "%s\n" "option no-deref" "update $prefix/symref $E $D" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
 
-test_expect_success 'delete non-existent ref without old-value succeeds silently' '
-	cd errrepo &&
-	grit update-ref -d refs/nonexist/del2 2>/dev/null || true &&
-	echo "delete refs/nonexist/del2" >stdin &&
-	grit update-ref --stdin <stdin
-'
+test_expect_success 'existing old value blocks indirect no-deref create' - <<\EOT
+	prefix=refs/existing-noderef-create &&
+	git symbolic-ref $prefix/symref $prefix/foo &&
+	git update-ref $prefix/foo $C &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/symref': reference already exists
+	EOF
+	printf "%s\n" "option no-deref" "create $prefix/symref $E" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
+
+test_expect_success 'incorrect old value blocks indirect no-deref delete' - <<\EOT
+	prefix=refs/incorrect-noderef-delete &&
+	git symbolic-ref $prefix/symref $prefix/foo &&
+	git update-ref $prefix/foo $C &&
+	cat >expected <<-EOF &&
+	fatal: cannot lock ref '$prefix/symref': is at $C but expected $D
+	EOF
+	printf "%s\n" "option no-deref" "delete $prefix/symref $D" |
+	test_must_fail git update-ref --stdin 2>output.err &&
+	test_cmp expected output.err
+EOT
 
 test_done

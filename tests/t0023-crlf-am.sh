@@ -25,17 +25,20 @@ index 0000000000000000000000000000000000000000..5716ca5987cbf97d6bb54920bea6adde
 EOF
 
 test_expect_success 'setup' '
-	git init &&
+
 	git config core.autocrlf true &&
 	echo foo >bar &&
 	git add bar &&
 	test_tick &&
 	git commit -m initial
+
 '
 
 test_expect_success 'am' '
+
 	git am -3 <patchfile &&
 	git diff-files --name-status --exit-code
+
 '
 
 test_done

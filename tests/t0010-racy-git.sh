@@ -1,15 +1,8 @@
 #!/bin/sh
-#
-# Ported from git/t/t0010-racy-git.sh
 
 test_description='racy GIT'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
-
-test_expect_success 'setup: init repo' '
-	git init -q
-'
 
 # This test can give false success if your machine is sufficiently
 # slow or your trial happened to happen on second boundary.

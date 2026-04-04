@@ -1,42 +1,32 @@
 #!/bin/sh
 
-test_description='Test merge state after operations'
+test_description="Test that merge state is as expected after failed merge"
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 . ./test-lib.sh
 
-REAL_GIT=/usr/bin/git
+test_expect_success 'Ensure we restore original state if no merge strategy handles it' '
+	test_commit --no-tag "Initial" base base &&
 
-test_expect_success 'setup' '
-	$REAL_GIT init merge-state &&
-	cd merge-state &&
-	$REAL_GIT config user.name "Test" &&
-	$REAL_GIT config user.email "test@test.com" &&
+	for b in branch1 branch2 branch3
+	do
+		git checkout -b $b main &&
+		test_commit --no-tag "Change on $b" base $b || return 1
+	done &&
 
-	echo base >base &&
-	$REAL_GIT add base &&
-	$REAL_GIT commit -m "Initial" &&
+	git checkout branch1 &&
+	# This is a merge that octopus cannot handle.  Note, that it does not
+	# just hit conflicts, it completely fails and says that it cannot
+	# handle this type of merge.
+	test_expect_code 2 git merge branch2 branch3 >output 2>&1 &&
+	grep "fatal: merge program failed" output &&
+	grep "Should not be doing an octopus" output &&
 
-	for b in branch1 branch2 branch3; do
-		$REAL_GIT checkout -b $b master &&
-		echo "change on $b" >base &&
-		$REAL_GIT add base &&
-		$REAL_GIT commit -m "Change on $b" || return 1
-	done
-'
-
-test_expect_success 'verify state is clean after failed octopus merge' '
-	cd merge-state &&
-	$REAL_GIT checkout branch1 &&
-	test_must_fail $REAL_GIT merge branch2 branch3 2>&1 &&
-	$REAL_GIT diff --exit-code --name-status &&
+	# Make sure we did not leave stray changes around when no appropriate
+	# merge strategy was found
+	git diff --exit-code --name-status &&
 	test_path_is_missing .git/MERGE_HEAD
-'
-
-test_expect_success 'grit can read the repo state' '
-	cd merge-state &&
-	git log --oneline >output &&
-	test -s output
 '
 
 test_done

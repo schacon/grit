@@ -1,172 +1,170 @@
 #!/bin/sh
-# Ported from git/t/t3600-rm.sh
-# Tests for 'grit rm'.
+#
+# Copyright (c) 2006 Carl D. Worth
+#
 
-test_description='grit rm'
+test_description='Test of the various options to git rm.'
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-test_expect_success 'setup repository' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com"
-'
-
-test_expect_success 'setup initial files' '
-	cd repo &&
-	echo foo >foo &&
-	echo bar >bar &&
-	echo baz >baz &&
-	touch -- -q &&
-	git add -- foo bar baz -q &&
+# Setup some files to be removed, some with funny characters
+test_expect_success 'Initialize test directory' '
+	touch -- foo bar baz "space embedded" -q &&
+	git add -- foo bar baz "space embedded" -q &&
 	git commit -m "add normal files"
 '
 
-test_expect_success 'pre-check: foo is in index' '
-	cd repo &&
+test_expect_success FUNNYNAMES 'add files with funny names' '
+	touch -- "tab	embedded" "newline${LF}embedded" &&
+	git add -- "tab	embedded" "newline${LF}embedded" &&
+	git commit -m "add files with tabs and newlines"
+'
+
+test_expect_success 'Pre-check that foo exists and is in index before git rm foo' '
+	test_path_is_file foo &&
 	git ls-files --error-unmatch foo
 '
 
-test_expect_success 'git rm --cached foo removes foo from index only' '
-	cd repo &&
-	git rm --cached foo &&
-	test_path_is_file foo &&
-	test_must_fail git ls-files --error-unmatch foo
+test_expect_success 'Test that git rm foo succeeds' '
+	git rm --cached foo
 '
 
-test_expect_success 'git rm --cached foo succeeds if index matches file' '
-	cd repo &&
+test_expect_success 'Test that git rm --cached foo succeeds if the index matches the file' '
 	echo content >foo &&
 	git add foo &&
-	git rm --cached foo &&
-	test_path_is_file foo
+	git rm --cached foo
 '
 
-test_expect_success 'git rm --cached foo succeeds if index matches HEAD but file differs' '
-	cd repo &&
+test_expect_success 'Test that git rm --cached foo succeeds if the index matches the file' '
 	echo content >foo &&
 	git add foo &&
-	git commit -m "foo content" &&
+	git commit -m foo &&
 	echo "other content" >foo &&
-	git rm --cached foo &&
-	test_path_is_file foo &&
-	test_must_fail git ls-files --error-unmatch foo
+	git rm --cached foo
 '
 
-test_expect_success 'git rm --cached foo fails if index matches neither file nor HEAD' '
-	cd repo &&
-	echo newcontent >foo &&
+test_expect_success 'Test that git rm --cached foo fails if the index matches neither the file nor HEAD' '
+	echo content >foo &&
 	git add foo &&
-	git commit -m "foo newcontent" &&
+	git commit -m foo --allow-empty &&
 	echo "other content" >foo &&
 	git add foo &&
 	echo "yet another content" >foo &&
 	test_must_fail git rm --cached foo
 '
 
-test_expect_success 'git rm --cached -f foo works when --cached alone does not' '
-	cd repo &&
+test_expect_success 'Test that git rm --cached -f foo works in case where --cached only did not' '
+	echo content >foo &&
+	git add foo &&
+	git commit -m foo --allow-empty &&
+	echo "other content" >foo &&
+	git add foo &&
+	echo "yet another content" >foo &&
 	git rm --cached -f foo
 '
 
-test_expect_success 'post-check: foo exists but not in index' '
-	cd repo &&
+test_expect_success 'Post-check that foo exists but is not in index after git rm foo' '
 	test_path_is_file foo &&
 	test_must_fail git ls-files --error-unmatch foo
 '
 
-test_expect_success 'pre-check: bar is in index' '
-	cd repo &&
+test_expect_success 'Pre-check that bar exists and is in index before "git rm bar"' '
+	test_path_is_file bar &&
 	git ls-files --error-unmatch bar
 '
 
-test_expect_success 'git rm bar removes bar from index and worktree' '
-	cd repo &&
+test_expect_success 'Test that "git rm bar" succeeds' '
 	git rm bar
 '
 
-test_expect_success 'post-check: bar is gone from index and worktree' '
-	cd repo &&
+test_expect_success 'Post-check that bar does not exist and is not in index after "git rm -f bar"' '
 	test_path_is_missing bar &&
 	test_must_fail git ls-files --error-unmatch bar
 '
 
 test_expect_success 'Test that "git rm -- -q" succeeds (remove a file that looks like an option)' '
-	cd repo &&
 	git rm -- -q
 '
 
-test_expect_success '"rm" output line printed' '
-	cd repo &&
+test_expect_success FUNNYNAMES 'Test that "git rm -f" succeeds with embedded space, tab, or newline characters.' '
+	git rm -f "space embedded" "tab	embedded" "newline${LF}embedded"
+'
+
+test_expect_success SANITY 'Test that "git rm -f" fails if its rm fails' '
+	test_when_finished "chmod 775 ." &&
+	chmod a-w . &&
+	test_must_fail git rm -f baz
+'
+
+test_expect_success 'When the rm in "git rm -f" fails, it should not remove the file from the index' '
+	git ls-files --error-unmatch baz
+'
+
+test_expect_success 'Remove nonexistent file with --ignore-unmatch' '
+	git rm --ignore-unmatch nonexistent
+'
+
+test_expect_success '"rm" command printed' '
 	echo frotz >test-file &&
 	git add test-file &&
 	git commit -m "add file for rm test" &&
 	git rm test-file >rm-output.raw &&
 	grep "^rm " rm-output.raw >rm-output &&
-	test_line_count = 1 rm-output
+	test_line_count = 1 rm-output &&
+	rm -f test-file rm-output.raw rm-output &&
+	git commit -m "remove file from rm test"
 '
 
-test_expect_success '"rm" output suppressed with --quiet' '
-	cd repo &&
-	echo frotz2 >test-file2 &&
-	git add test-file2 &&
-	git commit -m "add file2 for rm --quiet test" &&
-	git rm --quiet test-file2 >rm-output &&
-	test_must_be_empty rm-output
+test_expect_success '"rm" command suppressed with --quiet' '
+	echo frotz >test-file &&
+	git add test-file &&
+	git commit -m "add file for rm --quiet test" &&
+	git rm --quiet test-file >rm-output &&
+	test_must_be_empty rm-output &&
+	rm -f test-file rm-output &&
+	git commit -m "remove file from rm --quiet test"
 '
 
-test_expect_success 'Remove nonexistent file with --ignore-unmatch' '
-	cd repo &&
-	git rm --ignore-unmatch nonexistent
-'
-
-test_expect_success 're-add foo and baz' '
-	cd repo &&
+# Now, failure cases.
+test_expect_success 'Re-add foo and baz' '
 	git add foo baz &&
 	git ls-files --error-unmatch foo baz
 '
 
-test_expect_success 'modified foo -- rm should refuse' '
-	cd repo &&
-	echo modified >>foo &&
+test_expect_success 'Modify foo -- rm should refuse' '
+	echo >>foo &&
 	test_must_fail git rm foo baz &&
 	test_path_is_file foo &&
 	test_path_is_file baz &&
 	git ls-files --error-unmatch foo baz
 '
 
-test_expect_success 'modified foo -- rm -f should work' '
-	cd repo &&
+test_expect_success 'Modified foo -- rm -f should work' '
 	git rm -f foo baz &&
 	test_path_is_missing foo &&
 	test_path_is_missing baz &&
 	test_must_fail git ls-files --error-unmatch foo &&
-	test_must_fail git ls-files --error-unmatch baz
+	test_must_fail git ls-files --error-unmatch bar
 '
 
 test_expect_success 'Re-add foo and baz for HEAD tests' '
-	cd repo &&
 	echo frotz >foo &&
-	echo baz_content >baz &&
-	git add foo baz &&
-	git commit -m "re-add foo and baz" &&
-	echo new_frotz >foo &&
+	git checkout HEAD -- baz &&
 	git add foo baz &&
 	git ls-files --error-unmatch foo baz
 '
 
 test_expect_success 'foo is different in index from HEAD -- rm should refuse' '
-	cd repo &&
 	test_must_fail git rm foo baz &&
 	test_path_is_file foo &&
 	test_path_is_file baz &&
 	git ls-files --error-unmatch foo baz
 '
 
-test_expect_success 'but with -f it should work' '
-	cd repo &&
+test_expect_success 'but with -f it should work.' '
 	git rm -f foo baz &&
 	test_path_is_missing foo &&
 	test_path_is_missing baz &&
@@ -175,7 +173,6 @@ test_expect_success 'but with -f it should work' '
 '
 
 test_expect_success 'refuse to remove cached empty file with modifications' '
-	cd repo &&
 	>empty &&
 	git add empty &&
 	echo content >empty &&
@@ -183,243 +180,102 @@ test_expect_success 'refuse to remove cached empty file with modifications' '
 '
 
 test_expect_success 'remove intent-to-add file without --force' '
-	cd repo &&
 	echo content >intent-to-add &&
 	git add -N intent-to-add &&
-	git rm --cached intent-to-add &&
-	test_must_fail git ls-files --error-unmatch intent-to-add
+	git rm --cached intent-to-add
 '
 
-test_expect_success 'recursive test setup' '
-	cd repo &&
+test_expect_success 'Recursive test setup' '
 	mkdir -p frotz &&
 	echo qfwfq >frotz/nitfol &&
 	git add frotz &&
 	git commit -m "subdir test"
 '
 
-test_expect_success 'recursive without -r fails' '
-	cd repo &&
+test_expect_success 'Recursive without -r fails' '
 	test_must_fail git rm frotz &&
 	test_path_is_dir frotz &&
 	test_path_is_file frotz/nitfol
 '
 
 test_expect_success 'Recursive with -r but dirty' '
-	cd repo &&
 	echo qfwfq >>frotz/nitfol &&
 	test_must_fail git rm -r frotz &&
 	test_path_is_dir frotz &&
 	test_path_is_file frotz/nitfol
 '
 
-test_expect_success 'recursive with -r -f' '
-	cd repo &&
+test_expect_success 'Recursive with -r -f' '
 	git rm -f -r frotz &&
-	test_path_is_missing frotz/nitfol
+	test_path_is_missing frotz/nitfol &&
+	test_path_is_missing frotz
 '
 
-test_expect_success 'remove nonexistent file returns nonzero' '
-	cd repo &&
+test_expect_success 'Remove nonexistent file returns nonzero exit status' '
 	test_must_fail git rm nonexistent
 '
 
-test_expect_success 'remove nonexistent file with --ignore-unmatch succeeds' '
-	cd repo &&
-	git rm --ignore-unmatch nonexistent
+test_expect_success 'Call "rm" from outside the work tree' '
+	mkdir repo &&
+	(
+		cd repo &&
+		git init &&
+		echo something >somefile &&
+		git add somefile &&
+		git commit -m "add a file" &&
+		(
+			cd .. &&
+			git --git-dir=repo/.git --work-tree=repo rm somefile
+		) &&
+		test_must_fail git ls-files --error-unmatch somefile
+	)
 '
 
-test_expect_success 'rm --dry-run does not remove file or update index' '
-	cd repo &&
-	echo dryrun >dryrun_file &&
-	git add dryrun_file &&
-	git commit -m "add dryrun_file" &&
-	git rm -n dryrun_file &&
-	git ls-files --error-unmatch dryrun_file &&
-	test_path_is_file dryrun_file
+test_expect_success 'refresh index before checking if it is up-to-date' '
+	git reset --hard &&
+	test-tool chmtime -86400 frotz/nitfol &&
+	git rm frotz/nitfol &&
+	test_path_is_missing frotz/nitfol
 '
 
-test_expect_success 'rm --dry-run output shows what would be removed' '
-	cd repo &&
-	git rm -n dryrun_file >output &&
-	grep "rm " output
+choke_git_rm_setup() {
+	git reset -q --hard &&
+	test_when_finished "rm -f .git/index.lock && git reset -q --hard" &&
+	i=0 &&
+	hash=$(test_oid deadbeef) &&
+	while test $i -lt 12000
+	do
+		echo "100644 $hash 0	some-file-$i"
+		i=$(( $i + 1 ))
+	done | git update-index --index-info
+}
+
+test_expect_success 'choking "git rm" should not let it die with cruft (induce SIGPIPE)' '
+	choke_git_rm_setup &&
+	# git command is intentionally placed upstream of pipe to induce SIGPIPE
+	git rm -n "some-file-*" | : &&
+	test_path_is_missing .git/index.lock
 '
 
-test_expect_success 'rm --quiet with --dry-run' '
-	cd repo &&
-	git rm -n --quiet dryrun_file >output &&
-	test_must_be_empty output
+
+test_expect_success !MINGW 'choking "git rm" should not let it die with cruft (induce and check SIGPIPE)' '
+	choke_git_rm_setup &&
+	OUT=$( ((trap "" PIPE && git rm -n "some-file-*"; echo $? 1>&3) | :) 3>&1 ) &&
+	test_match_signal 13 "$OUT" &&
+	test_path_is_missing .git/index.lock
 '
 
-test_expect_success 'rm of multiple files' '
-	cd repo &&
-	echo a >multi_a &&
-	echo b >multi_b &&
-	echo c >multi_c &&
-	git add multi_a multi_b multi_c &&
-	git commit -m "add multi files" &&
-	git rm multi_a multi_b multi_c &&
-	test_path_is_missing multi_a &&
-	test_path_is_missing multi_b &&
-	test_path_is_missing multi_c &&
-	test_must_fail git ls-files --error-unmatch multi_a &&
-	test_must_fail git ls-files --error-unmatch multi_b &&
-	test_must_fail git ls-files --error-unmatch multi_c
+test_expect_success 'Resolving by removal is not a warning-worthy event' '
+	git reset -q --hard &&
+	test_when_finished "rm -f .git/index.lock msg && git reset -q --hard" &&
+	blob=$(echo blob | git hash-object -w --stdin) &&
+	printf "100644 $blob %d\tblob\n" 1 2 3 | git update-index --index-info &&
+	git rm blob >msg 2>&1 &&
+	test_grep ! "needs merge" msg &&
+	test_must_fail git ls-files -s --error-unmatch blob
 '
-
-test_expect_success 'rm --cached of multiple files' '
-	cd repo &&
-	echo x >cached_a &&
-	echo y >cached_b &&
-	git add cached_a cached_b &&
-	git rm --cached cached_a cached_b &&
-	test_path_is_file cached_a &&
-	test_path_is_file cached_b &&
-	test_must_fail git ls-files --error-unmatch cached_a &&
-	test_must_fail git ls-files --error-unmatch cached_b
-'
-
-test_expect_success 'rm -f of locally modified file' '
-	cd repo &&
-	echo original >force_mod &&
-	git add force_mod &&
-	git commit -m "add force_mod" &&
-	echo changed >force_mod &&
-	git rm -f force_mod &&
-	test_path_is_missing force_mod &&
-	test_must_fail git ls-files --error-unmatch force_mod
-'
-
-test_expect_success 'rm of file with staged changes refuses without -f' '
-	cd repo &&
-	echo staged >staged_file &&
-	git add staged_file &&
-	git commit -m "add staged_file" &&
-	echo new_staged >staged_file &&
-	git add staged_file &&
-	test_must_fail git rm staged_file &&
-	test_path_is_file staged_file &&
-	git ls-files --error-unmatch staged_file
-'
-
-test_expect_success 'rm -f of file with staged changes works' '
-	cd repo &&
-	git rm -f staged_file &&
-	test_path_is_missing staged_file &&
-	test_must_fail git ls-files --error-unmatch staged_file
-'
-
-test_expect_success 'rm --cached on newly added file' '
-	cd repo &&
-	echo brand_new >brand_new_file &&
-	git add brand_new_file &&
-	git rm --cached brand_new_file &&
-	test_path_is_file brand_new_file &&
-	test_must_fail git ls-files --error-unmatch brand_new_file
-'
-
-test_expect_success 'rm -r on nested directories' '
-	cd repo &&
-	mkdir -p nest/sub/deep &&
-	echo content >nest/sub/deep/file &&
-	echo content2 >nest/sub/file2 &&
-	git add nest &&
-	git commit -m "nested dirs" &&
-	git rm -r nest &&
-	test_must_fail git ls-files --error-unmatch nest/sub/deep/file &&
-	test_must_fail git ls-files --error-unmatch nest/sub/file2
-'
-
-test_expect_success 'rm -r --cached preserves working tree' '
-	cd repo &&
-	mkdir -p keep_dir &&
-	echo keep >keep_dir/file &&
-	git add keep_dir &&
-	git rm -r --cached keep_dir &&
-	test_path_is_file keep_dir/file &&
-	test_must_fail git ls-files --error-unmatch keep_dir/file
-'
-
-test_expect_success 'rm refuses to delete directory without -r' '
-	cd repo &&
-	mkdir -p refusedir &&
-	echo content >refusedir/file &&
-	git add refusedir &&
-	git commit -m "add refusedir" &&
-	test_must_fail git rm refusedir &&
-	test_path_is_file refusedir/file &&
-	git ls-files --error-unmatch refusedir/file
-'
-
-test_expect_success 'rm -r --force removes dirty directory' '
-	cd repo &&
-	echo dirty >>refusedir/file &&
-	git rm -r -f refusedir &&
-	test_must_fail git ls-files --error-unmatch refusedir/file
-'
-
-test_expect_success 'rm --ignore-unmatch with mixed existing and non-existing' '
-	cd repo &&
-	echo exists >exists_file &&
-	git add exists_file &&
-	git commit -m "add exists_file" &&
-	git rm --ignore-unmatch exists_file nonexistent_file &&
-	test_must_fail git ls-files --error-unmatch exists_file
-'
-
-test_expect_success 'rm empty string should fail' '
-	cd repo &&
-	test_must_fail git rm -rf ""
-'
-
-test_expect_success 'rm of file with staged content different from both file and HEAD' '
-	cd repo &&
-	echo v1 >tristate &&
-	git add tristate &&
-	git commit -m "tristate v1" &&
-	echo v2 >tristate &&
-	git add tristate &&
-	echo v3 >tristate &&
-	test_must_fail git rm tristate &&
-	test_path_is_file tristate &&
-	git ls-files --error-unmatch tristate
-'
-
-test_expect_success 'rm -f overrides tristate refusal' '
-	cd repo &&
-	git rm -f tristate &&
-	test_path_is_missing tristate &&
-	test_must_fail git ls-files --error-unmatch tristate
-'
-
-test_expect_success 'rm --cached of file with local modifications succeeds when index matches HEAD' '
-	cd repo &&
-	echo cached_mod_content >cached_mod &&
-	git add cached_mod &&
-	git commit -m "add cached_mod" &&
-	echo modified_local >cached_mod &&
-	git rm --cached cached_mod &&
-	test_path_is_file cached_mod &&
-	test_must_fail git ls-files --error-unmatch cached_mod
-'
-
-test_expect_success 'rm output shows each removed file' '
-	cd repo &&
-	echo out1 >out1 &&
-	echo out2 >out2 &&
-	git add out1 out2 &&
-	git commit -m "add out files" &&
-	git rm out1 out2 >output &&
-	grep "rm .out1." output &&
-	grep "rm .out2." output
-'
-
-# ---------------------------------------------------------------------------
-# Additional tests ported from git/t/t3600-rm.sh
-# ---------------------------------------------------------------------------
 
 test_expect_success 'rm removes subdirectories recursively' '
-	cd repo &&
 	mkdir -p dir/subdir/subsubdir &&
 	echo content >dir/subdir/subsubdir/file &&
 	git add dir/subdir/subsubdir/file &&
@@ -427,1082 +283,621 @@ test_expect_success 'rm removes subdirectories recursively' '
 	test_path_is_missing dir
 '
 
+cat >expect <<EOF
+M  .gitmodules
+D  submod
+EOF
+
+cat >expect.modified <<EOF
+ M submod
+EOF
+
+cat >expect.modified_inside <<EOF
+ m submod
+EOF
+
+cat >expect.modified_untracked <<EOF
+ ? submod
+EOF
+
+cat >expect.cached <<EOF
+D  submod
+EOF
+
+cat >expect.both_deleted<<EOF
+D  .gitmodules
+D  submod
+EOF
+
+test_expect_success 'rm removes empty submodules from work tree' '
+	mkdir submod &&
+	hash=$(git rev-parse HEAD) &&
+	git update-index --add --cacheinfo 160000 "$hash" submod &&
+	git config -f .gitmodules submodule.sub.url ./. &&
+	git config -f .gitmodules submodule.sub.path submod &&
+	git submodule init &&
+	git add .gitmodules &&
+	git commit -m "add submodule" &&
+	git rm submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual &&
+	test_must_fail git config -f .gitmodules submodule.sub.url &&
+	test_must_fail git config -f .gitmodules submodule.sub.path
+'
+
+test_expect_success 'rm removes removed submodule from index and .gitmodules' '
+	git reset --hard &&
+	git -c protocol.file.allow=always submodule update &&
+	rm -rf submod &&
+	git rm submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual &&
+	test_must_fail git config -f .gitmodules submodule.sub.url &&
+	test_must_fail git config -f .gitmodules submodule.sub.path
+'
+
+test_expect_success 'rm removes work tree of unmodified submodules' '
+	git reset --hard &&
+	git submodule update &&
+	git rm submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual &&
+	test_must_fail git config -f .gitmodules submodule.sub.url &&
+	test_must_fail git config -f .gitmodules submodule.sub.path
+'
+
+test_expect_success 'rm removes a submodule with a trailing /' '
+	git reset --hard &&
+	git submodule update &&
+	git rm submod/ &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual
+'
+
 test_expect_success 'rm fails when given a file with a trailing /' '
-	cd repo &&
-	>emptyfile &&
-	git add emptyfile &&
-	test_must_fail git rm emptyfile/
+	test_must_fail git rm empty/
 '
 
 test_expect_success 'rm succeeds when given a directory with a trailing /' '
-	cd repo &&
-	mkdir -p frotz2 &&
-	echo qfwfq >frotz2/nitfol &&
-	git add frotz2 &&
-	git commit -m "add frotz2" &&
-	git rm -r frotz2/
+	git rm -r frotz/
 '
 
-test_expect_success 'rm file with local modification shows error' '
-	cd repo &&
+test_expect_success 'rm of a populated submodule with different HEAD fails unless forced' '
 	git reset --hard &&
+	git submodule update &&
+	git -C submod checkout HEAD^ &&
+	test_must_fail git rm submod &&
+	test_path_is_dir submod &&
+	test_path_is_file submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect.modified actual &&
+	git rm -f submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual &&
+	test_must_fail git config -f .gitmodules submodule.sub.url &&
+	test_must_fail git config -f .gitmodules submodule.sub.path
+'
+
+test_expect_success 'rm --cached leaves work tree of populated submodules and .gitmodules alone' '
+	git reset --hard &&
+	git submodule update &&
+	git rm --cached submod &&
+	test_path_is_dir submod &&
+	test_path_is_file submod/.git &&
+	git status -s -uno >actual &&
+	test_cmp expect.cached actual &&
+	git config -f .gitmodules submodule.sub.url &&
+	git config -f .gitmodules submodule.sub.path
+'
+
+test_expect_success 'rm --dry-run does not touch the submodule or .gitmodules' '
+	git reset --hard &&
+	git submodule update &&
+	git rm -n submod &&
+	test_path_is_file submod/.git &&
+	git diff-index --exit-code HEAD
+'
+
+test_expect_success 'rm does not complain when no .gitmodules file is found' '
+	git reset --hard &&
+	git submodule update &&
+	git rm .gitmodules &&
+	git rm submod >actual 2>actual.err &&
+	test_must_be_empty actual.err &&
+	test_path_is_missing submod &&
+	test_path_is_missing submod/.git &&
+	git status -s -uno >actual &&
+	test_cmp expect.both_deleted actual
+'
+
+test_expect_success 'rm will error out on a modified .gitmodules file unless staged' '
+	git reset --hard &&
+	git submodule update &&
+	git config -f .gitmodules foo.bar true &&
+	test_must_fail git rm submod >actual 2>actual.err &&
+	test_file_not_empty actual.err &&
+	test_path_is_dir submod &&
+	test_path_is_file submod/.git &&
+	git diff-files --quiet -- submod &&
+	git add .gitmodules &&
+	git rm submod >actual 2>actual.err &&
+	test_must_be_empty actual.err &&
+	test_path_is_missing submod &&
+	test_path_is_missing submod/.git &&
+	git status -s -uno >actual &&
+	test_cmp expect actual
+'
+test_expect_success 'rm will not error out on .gitmodules file with zero stat data' '
+	git reset --hard &&
+	git submodule update &&
+	git read-tree HEAD &&
+	git rm submod &&
+	test_path_is_missing submod
+'
+
+test_expect_success 'rm issues a warning when section is not found in .gitmodules' '
+	git reset --hard &&
+	git submodule update &&
+	git config -f .gitmodules --remove-section submodule.sub &&
+	git add .gitmodules &&
+	echo "warning: Could not find section in .gitmodules where path=submod" >expect.err &&
+	git rm submod >actual 2>actual.err &&
+	test_cmp expect.err actual.err &&
+	test_path_is_missing submod &&
+	test_path_is_missing submod/.git &&
+	git status -s -uno >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm of a populated submodule with modifications fails unless forced' '
+	git reset --hard &&
+	git submodule update &&
+	echo X >submod/empty &&
+	test_must_fail git rm submod &&
+	test_path_is_dir submod &&
+	test_path_is_file submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect.modified_inside actual &&
+	git rm -f submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm of a populated submodule with untracked files fails unless forced' '
+	git reset --hard &&
+	git submodule update &&
+	echo X >submod/untracked &&
+	test_must_fail git rm submod &&
+	test_path_is_dir submod &&
+	test_path_is_file submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect.modified_untracked actual &&
+	git rm -f submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'setup submodule conflict' '
+	git reset --hard &&
+	git submodule update &&
+	git checkout -b branch1 &&
+	echo 1 >nitfol &&
+	git add nitfol &&
+	git commit -m "added nitfol 1" &&
+	git checkout -b branch2 main &&
+	echo 2 >nitfol &&
+	git add nitfol &&
+	git commit -m "added nitfol 2" &&
+	git checkout -b conflict1 main &&
+	git -C submod fetch &&
+	git -C submod checkout branch1 &&
+	git add submod &&
+	git commit -m "submod 1" &&
+	git checkout -b conflict2 main &&
+	git -C submod checkout branch2 &&
+	git add submod &&
+	git commit -m "submod 2"
+'
+
+cat >expect.conflict <<EOF
+UU submod
+EOF
+
+test_expect_success 'rm removes work tree of unmodified conflicted submodule' '
+	git checkout conflict1 &&
+	git reset --hard &&
+	git submodule update &&
+	test_must_fail git merge conflict2 &&
+	git rm submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm of a conflicted populated submodule with different HEAD fails unless forced' '
+	git checkout conflict1 &&
+	git reset --hard &&
+	git submodule update &&
+	git -C submod checkout HEAD^ &&
+	test_must_fail git merge conflict2 &&
+	test_must_fail git rm submod &&
+	test_path_is_dir submod &&
+	test_path_is_file submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect.conflict actual &&
+	git rm -f submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual &&
+	test_must_fail git config -f .gitmodules submodule.sub.url &&
+	test_must_fail git config -f .gitmodules submodule.sub.path
+'
+
+test_expect_success 'rm of a conflicted populated submodule with modifications fails unless forced' '
+	git checkout conflict1 &&
+	git reset --hard &&
+	git submodule update &&
+	echo X >submod/empty &&
+	test_must_fail git merge conflict2 &&
+	test_must_fail git rm submod &&
+	test_path_is_dir submod &&
+	test_path_is_file submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect.conflict actual &&
+	git rm -f submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual &&
+	test_must_fail git config -f .gitmodules submodule.sub.url &&
+	test_must_fail git config -f .gitmodules submodule.sub.path
+'
+
+test_expect_success 'rm of a conflicted populated submodule with untracked files fails unless forced' '
+	git checkout conflict1 &&
+	git reset --hard &&
+	git submodule update &&
+	echo X >submod/untracked &&
+	test_must_fail git merge conflict2 &&
+	test_must_fail git rm submod &&
+	test_path_is_dir submod &&
+	test_path_is_file submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect.conflict actual &&
+	git rm -f submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm of a conflicted populated submodule with a .git directory fails even when forced' '
+	git checkout conflict1 &&
+	git reset --hard &&
+	git submodule update &&
+	(
+		cd submod &&
+		rm .git &&
+		cp -R ../.git/modules/sub .git &&
+		GIT_WORK_TREE=. git config --unset core.worktree
+	) &&
+	test_must_fail git merge conflict2 &&
+	test_must_fail git rm submod &&
+	test_path_is_dir submod &&
+	test_path_is_dir submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect.conflict actual &&
+	test_must_fail git rm -f submod &&
+	test_path_is_dir submod &&
+	test_path_is_dir submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect.conflict actual &&
+	git merge --abort &&
+	rm -rf submod
+'
+
+test_expect_success 'rm of a conflicted unpopulated submodule succeeds' '
+	git checkout conflict1 &&
+	git reset --hard &&
+	test_must_fail git merge conflict2 &&
+	git rm submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm of a populated submodule with a .git directory migrates git dir' '
+	git checkout -f main &&
+	git reset --hard &&
+	git submodule update &&
+	(
+		cd submod &&
+		rm .git &&
+		cp -R ../.git/modules/sub .git &&
+		GIT_WORK_TREE=. git config --unset core.worktree &&
+		rm -r ../.git/modules/sub
+	) &&
+	git rm submod 2>output.err &&
+	test_path_is_missing submod &&
+	test_path_is_missing submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_file_not_empty actual &&
+	test_grep Migrating output.err
+'
+
+cat >expect.deepmodified <<EOF
+ M submod/subsubmod
+EOF
+
+test_expect_success 'setup subsubmodule' '
+	test_config_global protocol.file.allow always &&
+	git reset --hard &&
+	git submodule update &&
+	(
+		cd submod &&
+		hash=$(git rev-parse HEAD) &&
+		git update-index --add --cacheinfo 160000 "$hash" subsubmod &&
+		git config -f .gitmodules submodule.sub.url ../. &&
+		git config -f .gitmodules submodule.sub.path subsubmod &&
+		git submodule init &&
+		git add .gitmodules &&
+		git commit -m "add subsubmodule" &&
+		git submodule update subsubmod
+	) &&
+	git commit -a -m "added deep submodule"
+'
+
+test_expect_success 'rm recursively removes work tree of unmodified submodules' '
+	git rm submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm of a populated nested submodule with different nested HEAD fails unless forced' '
+	git reset --hard &&
+	git submodule update --recursive &&
+	git -C submod/subsubmod checkout HEAD^ &&
+	test_must_fail git rm submod &&
+	test_path_is_dir submod &&
+	test_path_is_file submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect.modified_inside actual &&
+	git rm -f submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm of a populated nested submodule with nested modifications fails unless forced' '
+	git reset --hard &&
+	git submodule update --recursive &&
+	echo X >submod/subsubmod/empty &&
+	test_must_fail git rm submod &&
+	test_path_is_dir submod &&
+	test_path_is_file submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect.modified_inside actual &&
+	git rm -f submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm of a populated nested submodule with nested untracked files fails unless forced' '
+	git reset --hard &&
+	git submodule update --recursive &&
+	echo X >submod/subsubmod/untracked &&
+	test_must_fail git rm submod &&
+	test_path_is_dir submod &&
+	test_path_is_file submod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect.modified_untracked actual &&
+	git rm -f submod &&
+	test_path_is_missing submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success "rm absorbs submodule's nested .git directory" '
+	git reset --hard &&
+	git submodule update --recursive &&
+	(
+		cd submod/subsubmod &&
+		rm .git &&
+		mv ../../.git/modules/sub/modules/sub .git &&
+		GIT_WORK_TREE=. git config --unset core.worktree
+	) &&
+	git rm submod 2>output.err &&
+	test_path_is_missing submod &&
+	test_path_is_missing submod/subsubmod/.git &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_file_not_empty actual &&
+	test_grep Migrating output.err
+'
+
+test_expect_success 'checking out a commit after submodule removal needs manual updates' '
+	git commit -m "submodule removal" submod .gitmodules &&
+	git checkout HEAD^ &&
+	git submodule update &&
+	git checkout -q HEAD^ &&
+	git checkout -q main 2>actual &&
+	test_grep "^warning: unable to rmdir '\''submod'\'':" actual &&
+	git status -s submod >actual &&
+	echo "?? submod/" >expected &&
+	test_cmp expected actual &&
+	rm -rf submod &&
+	git status -s -uno --ignore-submodules=none >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'rm of d/f when d has become a non-directory' '
+	rm -rf d &&
+	mkdir d &&
+	>d/f &&
+	git add d &&
+	rm -rf d &&
+	>d &&
+	git rm d/f &&
+	test_must_fail git rev-parse --verify :d/f &&
+	test_path_is_file d
+'
+
+test_expect_success SYMLINKS 'rm of d/f when d has become a dangling symlink' '
+	rm -rf d &&
+	mkdir d &&
+	>d/f &&
+	git add d &&
+	rm -rf d &&
+	ln -s nonexistent d &&
+	git rm d/f &&
+	test_must_fail git rev-parse --verify :d/f &&
+	test -h d &&
+	test_path_is_missing d
+'
+
+test_expect_success 'rm of file when it has become a directory' '
+	rm -rf d &&
+	>d &&
+	git add d &&
+	rm -f d &&
+	mkdir d &&
+	>d/f &&
+	test_must_fail git rm d &&
+	git rev-parse --verify :d &&
+	test_path_is_file d/f
+'
+
+test_expect_success SYMLINKS 'rm across a symlinked leading path (no index)' '
+	rm -rf d e &&
+	mkdir e &&
+	echo content >e/f &&
+	ln -s e d &&
+	git add -A e d &&
+	git commit -m "symlink d to e, e/f exists" &&
+	test_must_fail git rm d/f &&
+	git rev-parse --verify :d &&
+	git rev-parse --verify :e/f &&
+	test -h d &&
+	test_path_is_file e/f
+'
+
+test_expect_failure SYMLINKS 'rm across a symlinked leading path (w/ index)' '
+	rm -rf d e &&
+	mkdir d &&
+	echo content >d/f &&
+	git add -A e d &&
+	git commit -m "d/f exists" &&
+	mv d e &&
+	ln -s e d &&
+	test_must_fail git rm d/f &&
+	git rev-parse --verify :d/f &&
+	test -h d &&
+	test_path_is_file e/f
+'
+
+test_expect_success 'setup for testing rm messages' '
 	>bar.txt &&
 	>foo.txt &&
-	git add bar.txt foo.txt &&
-	git commit -m "testing rm msg" &&
-	echo content3 >foo.txt &&
-	test_must_fail git rm foo.txt 2>actual &&
-	grep -i "local modifications" actual
+	git add bar.txt foo.txt
 '
 
-test_expect_success 'rm file with changes in the index shows error' '
-	cd repo &&
+test_expect_success 'rm files with different staged content' '
+	cat >expect <<-\EOF &&
+	error: the following files have staged content different from both the
+	file and the HEAD:
+	    bar.txt
+	    foo.txt
+	(use -f to force removal)
+	EOF
+	echo content1 >foo.txt &&
+	echo content1 >bar.txt &&
+	test_must_fail git rm foo.txt bar.txt 2>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm files with different staged content without hints' '
+	cat >expect <<-\EOF &&
+	error: the following files have staged content different from both the
+	file and the HEAD:
+	    bar.txt
+	    foo.txt
+	EOF
+	echo content2 >foo.txt &&
+	echo content2 >bar.txt &&
+	test_must_fail git -c advice.rmhints=false rm foo.txt bar.txt 2>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm file with local modification' '
+	cat >expect <<-\EOF &&
+	error: the following file has local modifications:
+	    foo.txt
+	(use --cached to keep the file, or -f to force removal)
+	EOF
+	git commit -m "testing rm 3" &&
+	echo content3 >foo.txt &&
+	test_must_fail git rm foo.txt 2>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm file with local modification without hints' '
+	cat >expect <<-\EOF &&
+	error: the following file has local modifications:
+	    bar.txt
+	EOF
+	echo content4 >bar.txt &&
+	test_must_fail git -c advice.rmhints=false rm bar.txt 2>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rm file with changes in the index' '
+	cat >expect <<-\EOF &&
+	error: the following file has changes staged in the index:
+	    foo.txt
+	(use --cached to keep the file, or -f to force removal)
+	EOF
 	git reset --hard &&
 	echo content5 >foo.txt &&
 	git add foo.txt &&
 	test_must_fail git rm foo.txt 2>actual &&
-	grep "foo.txt" actual
+	test_cmp expect actual
 '
 
-test_expect_success 'rm files with different staged content shows error' '
-	cd repo &&
-	git reset --hard &&
-	>bar2.txt &&
-	>foo2.txt &&
-	git add bar2.txt foo2.txt &&
-	echo content1 >foo2.txt &&
-	echo content1 >bar2.txt &&
-	test_must_fail git rm foo2.txt bar2.txt 2>actual &&
-	grep "bar2.txt" actual &&
-	grep "foo2.txt" actual
+test_expect_success 'rm file with changes in the index without hints' '
+	cat >expect <<-\EOF &&
+	error: the following file has changes staged in the index:
+	    foo.txt
+	EOF
+	test_must_fail git -c advice.rmhints=false rm foo.txt 2>actual &&
+	test_cmp expect actual
 '
 
 test_expect_success 'rm files with two different errors' '
-	cd repo &&
-	git reset --hard &&
+	cat >expect <<-\EOF &&
+	error: the following file has staged content different from both the
+	file and the HEAD:
+	    foo1.txt
+	(use -f to force removal)
+	error: the following file has changes staged in the index:
+	    bar1.txt
+	(use --cached to keep the file, or -f to force removal)
+	EOF
 	echo content >foo1.txt &&
 	git add foo1.txt &&
 	echo content6 >foo1.txt &&
 	echo content6 >bar1.txt &&
 	git add bar1.txt &&
 	test_must_fail git rm bar1.txt foo1.txt 2>actual &&
-	grep "bar1.txt" actual &&
-	grep "foo1.txt" actual
+	test_cmp expect actual
 '
 
-test_expect_success 'rm -r cleans up empty parent dirs' '
-	cd repo &&
-	git reset --hard &&
-	mkdir -p x/y/z &&
-	echo content >x/y/z/file &&
-	git add x &&
-	git commit -m "add nested" &&
-	git rm -r x &&
-	test_path_is_missing x
-'
-
-test_expect_success 'rm --cached then re-add works' '
-	cd repo &&
-	echo content >readd &&
-	git add readd &&
-	git rm --cached readd &&
-	test_must_fail git ls-files --error-unmatch readd &&
-	git add readd &&
-	git ls-files --error-unmatch readd
-'
-
-test_expect_success 'rm on file with leading dash' '
-	cd repo &&
-	echo data >-dashfile &&
-	git add -- -dashfile &&
-	git commit -m "add dashfile" &&
-	git rm -- -dashfile &&
-	test_must_fail git ls-files --error-unmatch -- -dashfile
-'
-
-test_expect_success 'rm --quiet --dry-run produces no output' '
-	cd repo &&
-	echo qdr >qdr_file &&
-	git add qdr_file &&
-	git commit -m "add qdr" &&
-	git rm -n --quiet qdr_file >output &&
-	test_must_be_empty output
-'
-
-test_expect_success 'rm followed by commit works' '
-	cd repo &&
-	echo to_commit_rm >commit_rm_file &&
-	git add commit_rm_file &&
-	git commit -m "add commit_rm_file" &&
-	git rm commit_rm_file &&
-	git commit -m "remove commit_rm_file" &&
-	test_must_fail git ls-files --error-unmatch commit_rm_file &&
-	test_path_is_missing commit_rm_file
-'
-
-test_expect_success 'rm -r --dry-run on directory' '
-	cd repo &&
-	mkdir -p drydir &&
-	echo a >drydir/a &&
-	echo b >drydir/b &&
-	git add drydir &&
-	git commit -m "add drydir" &&
-	git rm -r -n drydir >output &&
-	grep "drydir/a" output &&
-	grep "drydir/b" output &&
-	test_path_is_dir drydir &&
-	git ls-files --error-unmatch drydir/a
-'
-
-test_expect_success 'rm --ignore-unmatch with already removed file' '
-	cd repo &&
-	echo temp >already_gone &&
-	git add already_gone &&
-	git commit -m "add already_gone" &&
-	rm already_gone &&
-	git rm --ignore-unmatch already_gone &&
-	test_must_fail git ls-files --error-unmatch already_gone
-'
-
-test_expect_success 'When rm fails on a file, other files stay in index' '
-	cd repo &&
-	git reset --hard &&
-	echo a >keep1 &&
-	echo b >keep2 &&
-	git add keep1 keep2 &&
-	git commit -m "add keep files" &&
-	echo modified >keep1 &&
-	echo modified >keep2 &&
-	git add keep1 &&
-	echo extra_mod >keep1 &&
-	test_must_fail git rm keep1 keep2 &&
-	git ls-files --error-unmatch keep1 &&
-	git ls-files --error-unmatch keep2
-'
-
-test_expect_success 'rm --cached with pathspec matching multiple fresh files' '
-	cd repo &&
-	git reset --hard &&
-	echo a >multi_rm_a &&
-	echo b >multi_rm_b &&
-	echo c >multi_rm_c &&
-	git add multi_rm_a multi_rm_b multi_rm_c &&
-	git rm --cached multi_rm_a multi_rm_b multi_rm_c &&
-	test_path_is_file multi_rm_a &&
-	test_path_is_file multi_rm_b &&
-	test_path_is_file multi_rm_c &&
-	test_must_fail git ls-files --error-unmatch multi_rm_a
-'
-
-test_expect_success 'rm on file only in index (never committed)' '
-	cd repo &&
-	echo new_staged >only_staged &&
-	git add only_staged &&
-	git rm -f only_staged &&
-	test_must_fail git ls-files --error-unmatch only_staged
-'
-
-test_expect_success 'rm --dry-run with multiple files shows all' '
-	cd repo &&
-	echo a >dry1 &&
-	echo b >dry2 &&
-	git add dry1 dry2 &&
-	git commit -m "add dry files" &&
-	git rm -n dry1 dry2 >output &&
-	grep "dry1" output &&
-	grep "dry2" output &&
-	git ls-files --error-unmatch dry1 &&
-	git ls-files --error-unmatch dry2
-'
-
-test_expect_success 'rm of tracked file shows in status' '
-	cd repo &&
-	git rm dry1 &&
-	git status --porcelain >actual &&
-	grep "D  dry1" actual
-'
-
-# ---------------------------------------------------------------------------
-# Additional rm tests
-# ---------------------------------------------------------------------------
-
-test_expect_success 'rm -r removes directory recursively' '
-	cd repo &&
-	mkdir -p rmdir_test &&
-	echo a >rmdir_test/a &&
-	echo b >rmdir_test/b &&
-	git add rmdir_test &&
-	git commit -m "add rmdir_test" &&
-	git rm -r rmdir_test &&
-	! test -d rmdir_test &&
-	test_must_fail git ls-files --error-unmatch rmdir_test/a &&
-	test_must_fail git ls-files --error-unmatch rmdir_test/b
-'
-
-test_expect_success 'rm -r --cached on directory keeps worktree' '
-	cd repo &&
-	mkdir -p cached_dir &&
-	echo a >cached_dir/a &&
-	echo b >cached_dir/b &&
-	git add cached_dir &&
-	git commit -m "add cached_dir" &&
-	git rm -r --cached cached_dir &&
-	test_path_is_file cached_dir/a &&
-	test_path_is_file cached_dir/b &&
-	test_must_fail git ls-files --error-unmatch cached_dir/a &&
-	test_must_fail git ls-files --error-unmatch cached_dir/b
-'
-
-test_expect_success 'rm --ignore-unmatch succeeds on nonexistent file' '
-	cd repo &&
-	git rm --ignore-unmatch does_not_exist
-'
-
-test_expect_success 'rm -q suppresses output' '
-	cd repo &&
-	echo suppress >suppress_file &&
-	git add suppress_file &&
-	git commit -m "add suppress_file" &&
-	git rm -q suppress_file >output 2>&1 &&
-	test_must_be_empty output
-'
-
-test_expect_success 'rm multiple files at once' '
-	cd repo &&
-	echo a >multi_a &&
-	echo b >multi_b &&
-	echo c >multi_c &&
-	git add multi_a multi_b multi_c &&
-	git commit -m "add multi files" &&
-	git rm multi_a multi_b multi_c &&
-	! test -f multi_a &&
-	! test -f multi_b &&
-	! test -f multi_c
-'
-
-test_expect_success 'rm --cached on staged but uncommitted file' '
-	cd repo &&
-	echo new >rm_new_staged &&
-	git add rm_new_staged &&
-	git rm --cached rm_new_staged &&
-	test_path_is_file rm_new_staged &&
-	test_must_fail git ls-files --error-unmatch rm_new_staged
-'
-
-test_expect_success 'rm --cached with modified worktree keeps file' '
-	cd repo &&
-	echo original >rm_cached_mod &&
-	git add rm_cached_mod &&
-	git commit -m "add rm_cached_mod" &&
-	echo modified >rm_cached_mod &&
-	git rm --cached rm_cached_mod &&
-	test_path_is_file rm_cached_mod &&
-	test_must_fail git ls-files --error-unmatch rm_cached_mod
-'
-
-test_expect_success 'rm -f removes even with local modifications' '
-	cd repo &&
-	echo original >rm_force_file &&
-	git add rm_force_file &&
-	git commit -m "add rm_force_file" &&
-	echo modified >rm_force_file &&
-	git rm -f rm_force_file &&
-	! test -f rm_force_file
-'
-
-test_expect_success 'rm file with spaces in name' '
-	cd repo &&
-	echo x >"a space file" &&
-	git add "a space file" &&
-	git commit -m "add spaced file" &&
-	git rm "a space file" &&
-	! test -f "a space file" &&
-	test_must_fail git ls-files --error-unmatch "a space file"
-'
-
-test_expect_success 'rm file in subdirectory' '
-	cd repo &&
-	mkdir -p rm_sub &&
-	echo x >rm_sub/file &&
-	git add rm_sub/file &&
-	git commit -m "add rm_sub/file" &&
-	git rm rm_sub/file &&
-	! test -f rm_sub/file &&
-	test_must_fail git ls-files --error-unmatch rm_sub/file
-'
-
-test_expect_success 'rm deeply nested file' '
-	cd repo &&
-	mkdir -p deep/nest/dir &&
-	echo x >deep/nest/dir/file &&
-	git add deep/nest/dir/file &&
-	git commit -m "add deep file" &&
-	git rm deep/nest/dir/file &&
-	! test -f deep/nest/dir/file &&
-	test_must_fail git ls-files --error-unmatch deep/nest/dir/file
-'
-
-test_expect_success 'rm -r on nested directories' '
-	cd repo &&
-	mkdir -p nested/sub/deep &&
-	echo a >nested/sub/deep/f &&
-	echo b >nested/sub/g &&
-	git add nested &&
-	git commit -m "add nested" &&
-	git rm -r nested &&
-	! test -d nested &&
-	test_must_fail git ls-files --error-unmatch nested/sub/deep/f &&
-	test_must_fail git ls-files --error-unmatch nested/sub/g
-'
-
-test_expect_success 'rm --dry-run --cached does not remove' '
-	cd repo &&
-	echo x >drycache &&
-	git add drycache &&
-	git commit -m "add drycache" &&
-	git rm --dry-run --cached drycache &&
-	git ls-files --error-unmatch drycache &&
-	test_path_is_file drycache
-'
-
-test_expect_success 'rm -rf on directory with local modifications' '
-	cd repo &&
-	mkdir -p rfdir &&
-	echo x >rfdir/f &&
-	git add rfdir &&
-	git commit -m "add rfdir" &&
-	echo y >rfdir/f &&
-	git rm -rf rfdir &&
-	! test -d rfdir
-'
-
-test_expect_success 'rm shows removed file names in output' '
-	cd repo &&
-	echo x >show_rm &&
-	git add show_rm &&
-	git commit -m "add show_rm" &&
-	git rm show_rm >output 2>&1 &&
-	grep "show_rm" output
-'
-
-test_expect_success 'rm -q -r suppresses output' '
-	cd repo &&
-	mkdir -p qr_dir &&
-	echo a >qr_dir/f1 &&
-	echo b >qr_dir/f2 &&
-	git add qr_dir &&
-	git commit -m "add qr_dir" &&
-	git rm -q -r qr_dir >output 2>&1 &&
-	test_must_be_empty output
-'
-
-test_expect_success 'rm -f --cached removes from index with staged changes' '
-	cd repo &&
-	echo x >f_cached_f &&
-	git add f_cached_f &&
-	git commit -m "add f_cached_f" &&
-	echo y >f_cached_f &&
-	git add f_cached_f &&
-	git rm -f --cached f_cached_f &&
-	test_path_is_file f_cached_f &&
-	test_must_fail git ls-files --error-unmatch f_cached_f
-'
-
-test_expect_success 'rm file then re-add it' '
-	cd repo &&
-	echo x >readd_file &&
-	git add readd_file &&
-	git commit -m "add readd_file" &&
-	git rm readd_file &&
-	! test -f readd_file &&
-	echo x >readd_file &&
-	git add readd_file &&
-	git ls-files --error-unmatch readd_file
-'
-
-test_expect_success 'rm --ignore-unmatch combined with valid file' '
-	cd repo &&
-	echo x >igvalid &&
-	git add igvalid &&
-	git commit -m "add igvalid" &&
-	git rm --ignore-unmatch igvalid nonexistent &&
-	! test -f igvalid
-'
-
-test_expect_success 'rm --cached preserves exact worktree content' '
-	cd repo &&
-	echo "original content" >preserve_file &&
-	git add preserve_file &&
-	git commit -m "add preserve_file" &&
-	echo "modified content" >preserve_file &&
-	git add preserve_file &&
-	git rm --cached preserve_file &&
-	test "$(cat preserve_file)" = "modified content"
-'
-
-test_expect_success 'rm --cached then commit shows deletion' '
-	cd repo &&
-	echo x >del_commit &&
-	git add del_commit &&
-	git commit -m "add del_commit" &&
-	git rm --cached del_commit &&
-	git diff --cached --name-only >actual &&
-	grep "del_commit" actual &&
-	git commit -m "remove del_commit" &&
-	test_must_fail git ls-files --error-unmatch del_commit
-'
-
-test_expect_success 'rm multiple from different directories' '
-	cd repo &&
-	mkdir -p dir_a dir_b &&
-	echo x >dir_a/f &&
-	echo y >dir_b/g &&
-	git add dir_a dir_b &&
-	git commit -m "add multi dir files" &&
-	git rm dir_a/f dir_b/g &&
-	! test -f dir_a/f &&
-	! test -f dir_b/g
-'
-
-test_expect_success 'rm --cached multiple files at once' '
-	cd repo &&
-	echo a >cm1 &&
-	echo b >cm2 &&
-	echo c >cm3 &&
-	git add cm1 cm2 cm3 &&
-	git commit -m "add cm files" &&
-	git rm --cached cm1 cm2 cm3 &&
-	test_path_is_file cm1 &&
-	test_path_is_file cm2 &&
-	test_path_is_file cm3 &&
-	test -z "$(git ls-files cm1 cm2 cm3)"
-'
-
-test_expect_success 'rm -r --dry-run -q combination suppresses all output' '
-	cd repo &&
-	mkdir -p dryqdir &&
-	echo x >dryqdir/f &&
-	git add dryqdir &&
-	git commit -m "add dryqdir" &&
-	git rm -r --dry-run -q dryqdir >output 2>&1 &&
-	test_must_be_empty output &&
-	test_path_is_file dryqdir/f
-'
-
-test_expect_success 'rm file with special characters (underscore, numbers)' '
-	cd repo &&
-	echo x >file_123.txt &&
-	git add file_123.txt &&
-	git commit -m "add file_123.txt" &&
-	git rm file_123.txt &&
-	! test -f file_123.txt
-'
-
-test_expect_success 'rm -r on single-file directory' '
-	cd repo &&
-	mkdir -p singledir &&
-	echo x >singledir/only &&
-	git add singledir &&
-	git commit -m "add singledir" &&
-	git rm -r singledir &&
-	! test -d singledir &&
-	test_must_fail git ls-files --error-unmatch singledir/only
-'
-
-test_expect_success 'rm --cached -r on deeply nested tree' '
-	cd repo &&
-	mkdir -p deep_cached/sub/inner &&
-	echo a >deep_cached/sub/inner/f &&
-	echo b >deep_cached/sub/g &&
-	git add deep_cached &&
-	git commit -m "add deep_cached" &&
-	git rm --cached -r deep_cached &&
-	test_path_is_file deep_cached/sub/inner/f &&
-	test_path_is_file deep_cached/sub/g &&
-	test -z "$(git ls-files deep_cached)"
-'
-
-test_expect_success 'rm multiple with --ignore-unmatch' '
-	cd repo &&
-	echo x >igm_file &&
-	git add igm_file &&
-	git commit -m "add igm_file" &&
-	git rm --ignore-unmatch igm_file noexist1 noexist2 &&
-	! test -f igm_file
-'
-
-test_expect_success 'rm -- with dash-prefixed filename' '
-	cd repo &&
-	echo x >"-dashfile" &&
-	git add -- -dashfile &&
-	git commit -m "add dashfile" &&
-	git rm -- -dashfile &&
-	! test -e "-dashfile" &&
-	test_must_fail git ls-files --error-unmatch -- -dashfile
-'
-
-test_expect_success 'rm file only in index (never committed)' '
-	cd repo &&
-	echo x >only_index &&
-	git add only_index &&
-	git rm --cached only_index &&
-	test_path_is_file only_index &&
-	test_must_fail git ls-files --error-unmatch only_index
-'
-
-test_expect_success 'rm -r --dry-run on directory preserves everything' '
-	cd repo &&
-	mkdir -p dryrdir &&
-	echo a >dryrdir/a &&
-	echo b >dryrdir/b &&
-	git add dryrdir &&
-	git commit -m "add dryrdir" &&
-	git rm -n -r dryrdir &&
-	test_path_is_file dryrdir/a &&
-	test_path_is_file dryrdir/b &&
-	git ls-files --error-unmatch dryrdir/a &&
-	git ls-files --error-unmatch dryrdir/b
-'
-
-test_expect_success 'rm status shows deletion in porcelain' '
-	cd repo &&
-	echo x >stat_rm &&
-	git add stat_rm &&
-	git commit -m "add stat_rm" &&
-	git rm stat_rm &&
-	git status --porcelain >actual &&
-	grep "D  stat_rm" actual
-'
-
-test_expect_success 'rm --dry-run refuses file with staged changes' '
-	cd repo &&
-	echo x >drystaged &&
-	git add drystaged &&
-	git commit -m "add drystaged" &&
-	echo y >drystaged &&
-	git add drystaged &&
-	test_must_fail git rm --dry-run drystaged &&
-	git ls-files --error-unmatch drystaged &&
-	test_path_is_file drystaged
-'
-
-test_expect_success 'rm -f on file with staged and worktree changes' '
-	cd repo &&
-	echo x >force_both &&
-	git add force_both &&
-	git commit -m "add force_both" &&
-	echo y >force_both &&
-	git add force_both &&
-	echo z >force_both &&
-	git rm -f force_both &&
-	! test -f force_both &&
-	test_must_fail git ls-files --error-unmatch force_both
-'
-
-test_expect_success 'rm --cached followed by add restores index entry' '
-	cd repo &&
-	echo x >rm_readd &&
-	git add rm_readd &&
-	git commit -m "add rm_readd" &&
-	git rm --cached rm_readd &&
-	test_must_fail git ls-files --error-unmatch rm_readd &&
-	git add rm_readd &&
-	git ls-files --error-unmatch rm_readd
-'
-
-test_expect_success 'rm -r then verify index is clean' '
-	cd repo &&
-	mkdir -p cleandir &&
-	echo a >cleandir/f1 &&
-	echo b >cleandir/f2 &&
-	echo c >cleandir/f3 &&
-	git add cleandir &&
-	git commit -m "add cleandir" &&
-	git rm -r cleandir &&
-	git diff --cached --name-only >actual &&
-	grep "cleandir/f1" actual &&
-	grep "cleandir/f2" actual &&
-	grep "cleandir/f3" actual
-'
-
-# === rm with leading directory name ===
-
-test_expect_success 'rm -r with leading directory removes all contents' '
-	cd repo &&
-	mkdir -p leaddir/sub &&
-	echo a >leaddir/file1 &&
-	echo b >leaddir/sub/file2 &&
-	git add leaddir &&
-	git commit -m "add leaddir" &&
-	grit rm -r leaddir &&
-	test_must_fail git ls-files --error-unmatch leaddir/file1 &&
-	test_must_fail git ls-files --error-unmatch leaddir/sub/file2 &&
-	test_path_is_missing leaddir
-'
-
-test_expect_success 'rm -r with leading directory removes worktree files' '
-	cd repo &&
-	mkdir -p rmwt/nested &&
-	echo x >rmwt/a &&
-	echo y >rmwt/nested/b &&
-	git add rmwt &&
-	git commit -m "add rmwt" &&
-	grit rm -r rmwt &&
-	! test -f rmwt/a &&
-	! test -f rmwt/nested/b
-'
-
-test_expect_success 'rm without -r on directory fails' '
-	cd repo &&
-	mkdir -p norflag &&
-	echo z >norflag/z &&
-	git add norflag &&
-	git commit -m "add norflag" &&
-	test_must_fail grit rm norflag
-'
-
-# === rm --dry-run preserves files and index ===
-
-test_expect_success 'rm --dry-run does not remove worktree file' '
-	cd repo &&
-	echo drykeep >drykeep &&
-	git add drykeep &&
-	git commit -m "add drykeep" &&
-	grit rm --dry-run drykeep &&
-	test_path_is_file drykeep &&
-	git ls-files --error-unmatch drykeep
-'
-
-test_expect_success 'rm --dry-run does not update the index' '
-	cd repo &&
-	echo dryidx >dryidx &&
-	git add dryidx &&
-	git commit -m "add dryidx" &&
-	grit rm -n dryidx &&
-	git ls-files --error-unmatch dryidx &&
-	git diff --cached --name-only >actual &&
-	! grep dryidx actual
-'
-
-# === rm with intent-to-add entry ===
-
-test_expect_success 'rm of intent-to-add entry removes it from index' '
-	cd repo &&
-	echo ita >ita_rm &&
-	grit add -N ita_rm &&
-	git ls-files ita_rm >before &&
-	test -s before &&
-	grit rm --cached ita_rm &&
-	test_must_fail git ls-files --error-unmatch ita_rm
-'
-
-test_expect_success 'rm -r --dry-run on directory with multiple levels shows all' '
-	cd repo &&
-	mkdir -p drytree/a/b &&
-	echo 1 >drytree/x &&
-	echo 2 >drytree/a/y &&
-	echo 3 >drytree/a/b/z &&
-	git add drytree &&
-	git commit -m "add drytree" &&
-	grit rm -r --dry-run drytree >output &&
-	grep "drytree/x" output &&
-	grep "drytree/a/y" output &&
-	grep "drytree/a/b/z" output &&
-	test_path_is_file drytree/x &&
-	git ls-files --error-unmatch drytree/x
-'
-
-# ---------------------------------------------------------------------------
-# Additional rm coverage
-# ---------------------------------------------------------------------------
-test_expect_success 'rm --cached leaves working tree file' '
-	cd repo &&
-	echo "keep" >keep_rm.txt &&
-	git add keep_rm.txt &&
-	git commit -m "add keep" &&
-	grit rm --cached keep_rm.txt &&
-	test_path_is_file keep_rm.txt &&
-	test_must_fail git ls-files --error-unmatch keep_rm.txt
-'
-
-test_expect_success 'rm removes file from index and working tree' '
-	cd repo &&
-	echo "gone" >gone_rm.txt &&
-	git add gone_rm.txt &&
-	git commit -m "add gone" &&
-	grit rm gone_rm.txt &&
-	! test -f gone_rm.txt &&
-	test_must_fail git ls-files --error-unmatch gone_rm.txt
-'
-
-test_expect_success 'rm on untracked file fails' '
-	cd repo &&
-	echo "untracked" >untracked_rm.txt &&
-	test_must_fail grit rm untracked_rm.txt 2>/dev/null
-'
-
-test_expect_success 'rm --dry-run does not remove file' '
-	cd repo &&
-	echo "dry" >dry_rm.txt &&
-	git add dry_rm.txt &&
-	git commit -m "add dry" &&
-	grit rm --dry-run dry_rm.txt &&
-	test_path_is_file dry_rm.txt &&
-	git ls-files --error-unmatch dry_rm.txt
-'
-
-test_expect_success 'rm multiple files at once' '
-	cd repo &&
-	echo a >multi_a.txt && echo b >multi_b.txt &&
-	git add multi_a.txt multi_b.txt &&
-	git commit -m "add multi" &&
-	grit rm multi_a.txt multi_b.txt &&
-	test_must_fail git ls-files --error-unmatch multi_a.txt &&
-	test_must_fail git ls-files --error-unmatch multi_b.txt
-'
-
-test_expect_success 'rm -r removes directory recursively' '
-	cd repo &&
-	mkdir -p rmdir_test/sub &&
-	echo 1 >rmdir_test/f1.txt &&
-	echo 2 >rmdir_test/sub/f2.txt &&
-	git add rmdir_test &&
-	git commit -m "add rmdir" &&
-	grit rm -r rmdir_test &&
-	test_must_fail git ls-files --error-unmatch rmdir_test/f1.txt &&
-	test_must_fail git ls-files --error-unmatch rmdir_test/sub/f2.txt
-'
-
-test_expect_success 'rm --cached on newly added file removes from index' '
-	cd repo &&
-	echo "new" >new_cached.txt &&
-	git add new_cached.txt &&
-	grit rm --cached new_cached.txt &&
-	test_must_fail git ls-files --error-unmatch new_cached.txt &&
-	test_path_is_file new_cached.txt
-'
-
-test_expect_success 'rm on file with spaces in name' '
-	cd repo &&
-	echo "spaces" >"file with spaces.txt" &&
-	git add "file with spaces.txt" &&
-	git commit -m "spaces" &&
-	grit rm "file with spaces.txt" &&
-	test_must_fail git ls-files --error-unmatch "file with spaces.txt"
-'
-
-test_expect_success 'rm -f forces removal of modified file' '
-	cd repo &&
-	echo "base" >force_rm.txt &&
-	git add force_rm.txt &&
-	git commit -m "add force" &&
-	echo "modified" >>force_rm.txt &&
-	grit rm -f force_rm.txt &&
-	! test -f force_rm.txt
-'
-
-test_expect_success 'rm --cached -r removes directory from index only' '
-	cd repo &&
-	mkdir -p cached_dir &&
-	echo x >cached_dir/x.txt &&
-	git add cached_dir &&
-	git commit -m "add cached_dir" &&
-	grit rm --cached -r cached_dir &&
-	test_path_is_file cached_dir/x.txt &&
-	test_must_fail git ls-files --error-unmatch cached_dir/x.txt
-'
-
-test_expect_success 'rm nonexistent file fails' '
-	cd repo &&
-	test_must_fail grit rm does_not_exist.txt 2>/dev/null
-'
-
-test_expect_success 'rm after rename removes new name' '
-	cd repo &&
-	echo ren >ren_src.txt &&
-	git add ren_src.txt &&
-	git commit -m "add ren" &&
-	git mv ren_src.txt ren_dst.txt &&
-	git commit -m "rename" &&
-	grit rm ren_dst.txt &&
-	test_must_fail git ls-files --error-unmatch ren_dst.txt
-'
-
-# === additional deepening tests ===
-
-test_expect_success 'rm multiple files in one command' '
-	cd repo &&
-	echo a >rm_multi_a.txt && echo b >rm_multi_b.txt &&
-	git add rm_multi_a.txt rm_multi_b.txt &&
-	git commit -m "add multi rm" &&
-	grit rm rm_multi_a.txt rm_multi_b.txt &&
-	! test -f rm_multi_a.txt &&
-	! test -f rm_multi_b.txt
-'
-
-test_expect_success 'rm --cached leaves working tree file' '
-	cd repo &&
-	echo cached >rm_cached2.txt &&
-	git add rm_cached2.txt &&
-	git commit -m "add cached2" &&
-	grit rm --cached rm_cached2.txt &&
-	test_path_is_file rm_cached2.txt &&
-	test_must_fail git ls-files --error-unmatch rm_cached2.txt &&
-	rm -f rm_cached2.txt
-'
-
-test_expect_success 'rm file in subdirectory' '
-	cd repo &&
-	mkdir -p rm_sub &&
-	echo sub >rm_sub/file.txt &&
-	git add rm_sub/file.txt &&
-	git commit -m "add rm_sub" &&
-	grit rm rm_sub/file.txt &&
-	! test -f rm_sub/file.txt
-'
-
-test_expect_success 'rm -r removes directory recursively' '
-	cd repo &&
-	mkdir -p rm_dir_r &&
-	echo x >rm_dir_r/x.txt && echo y >rm_dir_r/y.txt &&
-	git add rm_dir_r &&
-	git commit -m "add rm_dir_r" &&
-	grit rm -r rm_dir_r &&
-	! test -f rm_dir_r/x.txt &&
-	! test -f rm_dir_r/y.txt
-'
-
-test_expect_success 'rm --dry-run does not actually remove file' '
-	cd repo &&
-	echo dry >rm_dry.txt &&
-	git add rm_dry.txt &&
-	git commit -m "add dry" &&
-	grit rm --dry-run rm_dry.txt &&
-	test_path_is_file rm_dry.txt &&
-	git ls-files --error-unmatch rm_dry.txt
-'
-
-test_expect_success 'rm of untracked file fails' '
-	cd repo &&
-	echo untracked >rm_untracked.txt &&
-	test_must_fail grit rm rm_untracked.txt 2>/dev/null &&
-	rm -f rm_untracked.txt
-'
-
-test_expect_success 'rm updates index (status shows deletion staged)' '
-	cd repo &&
-	echo idx >rm_idx.txt &&
-	git add rm_idx.txt &&
-	git commit -m "add idx" &&
-	grit rm rm_idx.txt &&
-	git status -s >../actual &&
-	grep "^D  rm_idx.txt" ../actual &&
-	git commit -m "committed rm" 2>/dev/null
-'
-
-test_expect_success 'rm --cached of newly added file unstages it' '
-	cd repo &&
-	echo new >rm_new_staged.txt &&
-	git add rm_new_staged.txt &&
-	grit rm --cached rm_new_staged.txt &&
-	test_must_fail git ls-files --error-unmatch rm_new_staged.txt &&
-	test_path_is_file rm_new_staged.txt &&
-	rm -f rm_new_staged.txt
-'
-
-test_expect_success 'rm -f removes modified staged file' '
-	cd repo &&
-	echo base >rm_force_mod.txt &&
-	git add rm_force_mod.txt &&
-	git commit -m "add force mod" &&
-	echo changed >rm_force_mod.txt &&
-	git add rm_force_mod.txt &&
-	grit rm -f rm_force_mod.txt &&
-	! test -f rm_force_mod.txt
-'
-
-test_expect_success 'rm of file with spaces in name' '
-	cd repo &&
-	echo sp >"rm space file.txt" &&
-	git add "rm space file.txt" &&
-	git commit -m "add space file" &&
-	grit rm "rm space file.txt" &&
-	! test -f "rm space file.txt"
-'
-
-test_expect_success 'rm --cached -r on nested dir preserves working tree' '
-	cd repo &&
-	mkdir -p rm_nest/inner &&
-	echo a >rm_nest/inner/a.txt &&
-	git add rm_nest &&
-	git commit -m "add nest" &&
-	grit rm --cached -r rm_nest &&
-	test_path_is_file rm_nest/inner/a.txt &&
-	test_must_fail git ls-files --error-unmatch rm_nest/inner/a.txt &&
-	rm -rf rm_nest
-'
-
-test_expect_success 'rm then re-add same file works' '
-	cd repo &&
-	echo readd >rm_readd.txt &&
-	git add rm_readd.txt &&
-	git commit -m "add readd" &&
-	grit rm rm_readd.txt &&
-	git commit -m "rm readd" 2>/dev/null &&
-	echo readd2 >rm_readd.txt &&
-	git add rm_readd.txt &&
-	git ls-files --error-unmatch rm_readd.txt &&
-	git checkout -- rm_readd.txt 2>/dev/null && git reset HEAD rm_readd.txt 2>/dev/null &&
-	rm -f rm_readd.txt
-'
-
-test_expect_success 'rm -r --cached with mixed tracked and untracked' '
-	cd repo &&
-	mkdir -p rm_mixed &&
-	echo tracked >rm_mixed/tracked.txt &&
-	git add rm_mixed/tracked.txt &&
-	git commit -m "add mixed tracked" &&
-	echo untracked >rm_mixed/untracked.txt &&
-	grit rm --cached -r rm_mixed &&
-	test_path_is_file rm_mixed/tracked.txt &&
-	test_path_is_file rm_mixed/untracked.txt &&
-	rm -rf rm_mixed
-'
-
-test_expect_success 'rm removes file from working tree' '
-	cd repo &&
-	echo rmwt >rm_wt.txt &&
-	git add rm_wt.txt && git commit -m "add rm_wt" &&
-	grit rm rm_wt.txt &&
-	test_path_is_missing rm_wt.txt
-'
-
-test_expect_success 'rm removes file from index' '
-	cd repo &&
-	echo rmidx >rm_idx.txt &&
-	git add rm_idx.txt && git commit -m "add rm_idx" &&
-	grit rm rm_idx.txt &&
-	! git ls-files --error-unmatch rm_idx.txt 2>/dev/null
-'
-
-test_expect_success 'rm --cached keeps file in working tree' '
-	cd repo &&
-	echo rmcached >rm_cached2.txt &&
-	git add rm_cached2.txt && git commit -m "add cached2" &&
-	grit rm --cached rm_cached2.txt &&
-	test_path_is_file rm_cached2.txt &&
-	! git ls-files --error-unmatch rm_cached2.txt 2>/dev/null &&
-	rm -f rm_cached2.txt
-'
-
-test_expect_success 'rm nonexistent file fails' '
-	cd repo &&
-	test_must_fail grit rm does_not_exist.txt 2>/dev/null
-'
-
-test_expect_success 'rm untracked file fails' '
-	cd repo &&
-	echo untrk >rm_untrk.txt &&
-	test_must_fail grit rm rm_untrk.txt 2>/dev/null &&
-	rm -f rm_untrk.txt
-'
-
-test_expect_success 'rm -f removes even with local modifications' '
-	cd repo &&
-	echo orig >rm_force.txt &&
-	git add rm_force.txt && git commit -m "add force" &&
-	echo modified >rm_force.txt &&
-	grit rm -f rm_force.txt &&
-	test_path_is_missing rm_force.txt
-'
-
-test_expect_success 'rm multiple files at once' '
-	cd repo &&
-	echo m1 >rm_m1.txt &&
-	echo m2 >rm_m2.txt &&
-	git add rm_m1.txt rm_m2.txt && git commit -m "add multi" &&
-	grit rm rm_m1.txt rm_m2.txt &&
-	test_path_is_missing rm_m1.txt &&
-	test_path_is_missing rm_m2.txt
-'
-
-test_expect_success 'rm -r removes directory recursively' '
-	cd repo &&
-	mkdir -p rm_dir/sub &&
-	echo d1 >rm_dir/a.txt &&
-	echo d2 >rm_dir/sub/b.txt &&
-	git add rm_dir && git commit -m "add dir" &&
-	grit rm -r rm_dir &&
-	test_path_is_missing rm_dir/a.txt &&
-	test_path_is_missing rm_dir/sub/b.txt
-'
-
-test_expect_success 'rm --cached -r removes directory from index only' '
-	cd repo &&
-	mkdir -p rm_cdir &&
-	echo cd1 >rm_cdir/x.txt &&
-	git add rm_cdir && git commit -m "add cdir" &&
-	grit rm --cached -r rm_cdir &&
-	test_path_is_file rm_cdir/x.txt &&
-	! git ls-files --error-unmatch rm_cdir/x.txt 2>/dev/null &&
-	rm -rf rm_cdir
-'
-
-test_expect_success 'rm stages the deletion' '
-	cd repo &&
-	echo staged_del >rm_staged.txt &&
-	git add rm_staged.txt && git commit -m "add staged" &&
-	grit rm rm_staged.txt &&
-	grit status -s >../actual &&
-	grep "^D" ../actual
-'
-
-test_expect_success 'rm with modified file without -f fails' '
-	cd repo &&
-	echo orig_nof >rm_nof.txt &&
-	git add rm_nof.txt && git commit -m "add nof" &&
-	echo changed >rm_nof.txt &&
-	test_must_fail grit rm rm_nof.txt 2>/dev/null &&
-	git checkout -- rm_nof.txt 2>/dev/null &&
-	rm -f rm_nof.txt
-'
-
-test_expect_success 'rm file with spaces in name' '
-	cd repo &&
-	echo sp >"rm space file.txt" &&
-	git add "rm space file.txt" && git commit -m "add space rm" &&
-	grit rm "rm space file.txt" &&
-	test_path_is_missing "rm space file.txt"
-'
-
-test_expect_success 'rm does not remove untracked files in directory' '
-	cd repo &&
-	mkdir -p rm_keep &&
-	echo tracked >rm_keep/t.txt &&
-	git add rm_keep/t.txt && git commit -m "add keep" &&
-	echo untracked >rm_keep/u.txt &&
-	grit rm rm_keep/t.txt &&
-	test_path_is_file rm_keep/u.txt &&
-	rm -rf rm_keep
-'
-
-test_expect_success 'rm --dry-run does not remove file' '
-	cd repo &&
-	echo dry >rm_dry.txt &&
-	git add rm_dry.txt && git commit -m "add dry" &&
-	grit rm --dry-run rm_dry.txt &&
-	test_path_is_file rm_dry.txt &&
-	git ls-files --error-unmatch rm_dry.txt &&
-	rm -f rm_dry.txt
-'
-
-test_expect_success 'rm then commit results in file missing from tree' '
-	cd repo &&
-	echo rmtree >rm_tree_chk.txt &&
-	git add rm_tree_chk.txt && git commit -m "add tree chk" &&
-	grit rm rm_tree_chk.txt &&
-	git commit -m "rm tree chk" 2>/dev/null &&
-	! grit ls-tree -r HEAD --name-only | grep rm_tree_chk
+test_expect_success 'rm empty string should fail' '
+	test_must_fail git rm -rf ""
 '
 
 test_done

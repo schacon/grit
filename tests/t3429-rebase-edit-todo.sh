@@ -1,65 +1,90 @@
 #!/bin/sh
-# Ported from git/t/t3429-rebase-edit-todo.sh
-# Tests for basic rebase functionality
 
-test_description='git rebase basic operations'
+test_description='rebase should reread the todo file if an exec modifies it'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-rebase.sh
 
 test_expect_success 'setup' '
-	git init &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com" &&
-	echo base >file &&
-	git add file &&
-	git commit -m "A" &&
-	git tag A &&
-	echo B >file &&
-	git add file &&
-	git commit -m "B" &&
-	git tag B &&
-	echo C >file &&
-	git add file &&
-	git commit -m "C" &&
-	git tag C &&
-	git checkout -b side A &&
-	echo D >other &&
-	git add other &&
-	git commit -m "D" &&
-	git tag D &&
-	echo E >other2 &&
-	git add other2 &&
-	git commit -m "E" &&
-	git tag E
+	test_commit first file &&
+	test_commit second file &&
+	test_commit third file
 '
 
-test_expect_success 'rebase side onto master' '
-	git checkout side &&
-	git rebase master &&
-	git log --format=%s -n4 >actual &&
-	test_write_lines E D C B >expect &&
+test_expect_success 'rebase exec modifies rebase-todo' '
+	todo=.git/rebase-merge/git-rebase-todo &&
+	git rebase HEAD~1 -x "echo exec touch F >>$todo" &&
+	test -e F
+'
+
+test_expect_success 'rebase exec with an empty list does not exec anything' '
+	git rebase HEAD -x "true" 2>output &&
+	! grep "Executing: true" output
+'
+
+test_expect_success 'loose object cache vs re-reading todo list' '
+	GIT_REBASE_TODO=.git/rebase-merge/git-rebase-todo &&
+	export GIT_REBASE_TODO &&
+	write_script append-todo.sh <<-\EOS &&
+	# For values 5 and 6, this yields SHA-1s with the same first two digits
+	echo "pick $(git rev-parse --short \
+		$(printf "%s\\n" \
+			"tree $EMPTY_TREE" \
+			"author A U Thor <author@example.org> $1 +0000" \
+			"committer A U Thor <author@example.org> $1 +0000" \
+			"" \
+			"$1" |
+		  git hash-object -t commit -w --stdin))" >>$GIT_REBASE_TODO
+
+	shift
+	test -z "$*" ||
+	echo "exec $0 $*" >>$GIT_REBASE_TODO
+	EOS
+
+	git rebase HEAD -x "./append-todo.sh 5 6"
+'
+
+test_expect_success 'todo is re-read after reword and squash' '
+	write_script reword-editor.sh <<-\EOS &&
+	GIT_SEQUENCE_EDITOR="echo \"exec echo $(cat file) >>actual\" >>" \
+		git rebase --edit-todo
+	EOS
+
+	test_write_lines first third >expected &&
+	set_fake_editor &&
+	GIT_SEQUENCE_EDITOR="$EDITOR" FAKE_LINES="reword 1 squash 2 fixup 3" \
+		GIT_EDITOR=./reword-editor.sh git rebase -i --root third &&
+	test_cmp expected actual
+'
+
+test_expect_success 're-reading todo doesnt interfere with revert --edit' '
+	git reset --hard third &&
+
+	git revert --edit third second &&
+
+	cat >expect <<-\EOF &&
+	Revert "second"
+	Revert "third"
+	third
+	second
+	first
+	EOF
+	git log --format="%s" >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'rebase is no-op when already up to date' '
-	git checkout master &&
-	oldhead=$(git rev-parse HEAD) &&
-	git rebase master &&
-	newhead=$(git rev-parse HEAD) &&
-	test "$oldhead" = "$newhead"
-'
+test_expect_success 're-reading todo doesnt interfere with cherry-pick --edit' '
+	git reset --hard first &&
 
-test_expect_success 'rebase --abort works during conflict' '
-	git checkout -b conflict-test A &&
-	echo conflict >file &&
-	git add file &&
-	git commit -m "conflict with B" &&
-	old=$(git rev-parse HEAD) &&
-	test_must_fail git rebase master &&
-	git rebase --abort &&
-	new=$(git rev-parse HEAD) &&
-	test "$old" = "$new"
+	git cherry-pick --edit second third &&
+
+	cat >expect <<-\EOF &&
+	third
+	second
+	first
+	EOF
+	git log --format="%s" >actual &&
+	test_cmp expect actual
 '
 
 test_done

@@ -5,76 +5,121 @@ test_description='test main ref store api'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# grit does not have test-tool ref-store. We test the public API via
-# regular git commands instead.
+RUN="test-tool ref-store main"
+
 
 test_expect_success 'setup' '
-	git init &&
-	git config user.name "Test" &&
-	git config user.email "test@test.com" &&
-	echo content >file &&
-	git add file &&
-	git commit -m one &&
-	git rev-parse HEAD >.head_oid
+	test_commit one
 '
 
-test_expect_success 'create symbolic ref' '
-	git symbolic-ref FOO refs/heads/main &&
+test_expect_success 'create_symref(FOO, refs/heads/main)' '
+	$RUN create-symref FOO refs/heads/main nothing &&
 	echo refs/heads/main >expected &&
 	git symbolic-ref FOO >actual &&
 	test_cmp expected actual
 '
 
-test_expect_success 'delete ref via update-ref -d' '
+test_expect_success 'delete_refs(FOO, refs/tags/new-tag)' '
 	git tag -a -m new-tag new-tag HEAD &&
+	git rev-parse FOO -- &&
 	git rev-parse refs/tags/new-tag -- &&
-	git update-ref -d refs/tags/new-tag &&
+	m=$(git rev-parse main) &&
+	$RUN delete-refs REF_NO_DEREF nothing FOO refs/tags/new-tag &&
+	test_must_fail git rev-parse --symbolic-full-name FOO &&
+	test_must_fail git rev-parse FOO -- &&
 	test_must_fail git rev-parse refs/tags/new-tag --
 '
 
-test_expect_success 'for-each-ref lists refs' '
-	git for-each-ref --format="%(refname)" refs/heads/ >actual &&
-	grep main actual
+test_expect_success 'rename_refs(main, new-main)' '
+	git rev-parse main >expected &&
+	$RUN rename-ref refs/heads/main refs/heads/new-main &&
+	git rev-parse new-main >actual &&
+	test_cmp expected actual &&
+	test_commit recreate-main
 '
 
-test_expect_success 'for-each-ref is sorted' '
-	git branch zebra &&
-	git branch alpha &&
-	git for-each-ref --format="%(refname)" refs/heads/ >actual &&
-	sort actual >expected &&
+test_expect_success 'for_each_ref(refs/heads/)' '
+	$RUN for-each-ref refs/heads/ | cut -d" " -f 2- >actual &&
+	cat >expected <<-\EOF &&
+	main 0x0
+	new-main 0x0
+	EOF
 	test_cmp expected actual
 '
 
-test_expect_success 'symbolic-ref HEAD resolves' '
-	echo refs/heads/main >expected &&
-	git symbolic-ref HEAD >actual &&
+test_expect_success 'for_each_ref() is sorted' '
+	$RUN for-each-ref refs/heads/ | cut -d" " -f 2- >actual &&
+	sort actual > expected &&
 	test_cmp expected actual
 '
 
-test_expect_success 'update-ref with old value verification' '
-	git checkout -b test-branch &&
-	echo change >file &&
-	git add file &&
-	git commit -m "change" &&
-	OLD=$(git rev-parse test-branch) &&
-	echo newer >file &&
-	git add file &&
-	git commit -m "newer" &&
-	NEW=$(git rev-parse test-branch) &&
-	git update-ref refs/heads/test-branch "$OLD" "$NEW" &&
-	echo "$OLD" >expected &&
-	git rev-parse refs/heads/test-branch >actual &&
+test_expect_success 'resolve_ref(new-main)' '
+	SHA1=`git rev-parse new-main` &&
+	echo "$SHA1 refs/heads/new-main 0x0" >expected &&
+	$RUN resolve-ref refs/heads/new-main 0 >actual &&
 	test_cmp expected actual
 '
 
-test_expect_success 'delete ref with old value' '
-	OID=$(git rev-parse test-branch) &&
-	git checkout -f main &&
-	git update-ref -d refs/heads/test-branch "$OID" &&
-	test_must_fail git rev-parse refs/heads/test-branch --
+test_expect_success 'verify_ref(new-main)' '
+	$RUN verify-ref refs/heads/new-main
+'
+
+test_expect_success 'for_each_reflog()' '
+	$RUN for-each-reflog >actual &&
+	cat >expected <<-\EOF &&
+	HEAD
+	refs/heads/main
+	refs/heads/new-main
+	EOF
+	test_cmp expected actual
+'
+
+test_expect_success 'for_each_reflog_ent()' '
+	$RUN for-each-reflog-ent HEAD >actual &&
+	head -n1 actual | grep one &&
+	tail -n1 actual | grep recreate-main
+'
+
+test_expect_success 'for_each_reflog_ent_reverse()' '
+	$RUN for-each-reflog-ent-reverse HEAD >actual &&
+	head -n1 actual | grep recreate-main &&
+	tail -n1 actual | grep one
+'
+
+test_expect_success 'reflog_exists(HEAD)' '
+	$RUN reflog-exists HEAD
+'
+
+test_expect_success 'delete_reflog(HEAD)' '
+	$RUN delete-reflog HEAD &&
+	test_must_fail git reflog exists HEAD
+'
+
+test_expect_success 'create-reflog(HEAD)' '
+	$RUN create-reflog HEAD &&
+	git reflog exists HEAD
+'
+
+test_expect_success 'delete_ref(refs/heads/foo)' '
+	git checkout -b foo &&
+	FOO_SHA1=`git rev-parse foo` &&
+	git checkout --detach &&
+	test_commit bar-commit &&
+	git checkout -b bar &&
+	BAR_SHA1=`git rev-parse bar` &&
+	$RUN update-ref updating refs/heads/foo $BAR_SHA1 $FOO_SHA1 0 &&
+	echo $BAR_SHA1 >expected &&
+	git rev-parse refs/heads/foo >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'delete_ref(refs/heads/foo)' '
+	SHA1=`git rev-parse foo` &&
+	git checkout --detach &&
+	$RUN delete-ref msg refs/heads/foo $SHA1 0 &&
+	test_must_fail git rev-parse refs/heads/foo --
 '
 
 test_done

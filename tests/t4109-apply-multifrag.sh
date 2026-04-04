@@ -6,6 +6,7 @@
 
 test_description='git apply test patches with multiple fragments.'
 
+
 . ./test-lib.sh
 
 cp "$TEST_DIRECTORY/t4109/patch1.patch" .
@@ -29,5 +30,7 @@ test_expect_success 'git apply (3)' '
 	git apply patch1.patch patch4.patch &&
 	test_cmp "$TEST_DIRECTORY/t4109/expect-3" main.c
 '
+mv main.c main.c.git
 
 test_done
+

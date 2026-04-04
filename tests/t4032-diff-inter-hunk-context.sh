@@ -1,287 +1,117 @@
 #!/bin/sh
-#
-# Tests for diff inter-hunk context merging.
-# When two changed regions are close enough that their context lines
-# overlap, they should be merged into a single hunk. Varying -U values
-# control whether hunks stay separate or merge.
 
-test_description='grit diff — inter-hunk context merging'
+test_description='diff hunk fusing'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# ---------------------------------------------------------------------------
-# Helper: generate a file with N lines ("line1" … "lineN")
-# ---------------------------------------------------------------------------
-gen_lines () {
-	local n=$1
-	local i=1
-	while test $i -le $n; do
-		echo "line$i"
-		i=$(($i + 1))
+f() {
+	echo $1
+	i=1
+	while test $i -le $2
+	do
+		echo $i
+		i=$(expr $i + 1)
 	done
+	echo $3
 }
 
-# ---------------------------------------------------------------------------
-# Setup: each scenario creates a tag pair (before/after) on a branch
-# ---------------------------------------------------------------------------
-test_expect_success 'setup repo' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
-	gen_lines 40 >file.txt &&
-	git add file.txt &&
-	git commit -m "initial"
-'
+t() {
+	use_config=
+	git config --unset diff.interHunkContext
 
-# --- Scenario 1: two changes far apart (lines 5 and 35) ---
-test_expect_success 'scenario 1: commit with changes at lines 5 and 35' '
-	cd repo &&
-	git tag sc1-before &&
-	gen_lines 40 | sed "s/^line5$/MOD5/" | sed "s/^line35$/MOD35/" >file.txt &&
-	git add file.txt &&
-	git commit -m "sc1" &&
-	git tag sc1-after
-'
+	case $# in
+	4) hunks=$4; cmd="diff -U$3";;
+	5) hunks=$5; cmd="diff -U$3 --inter-hunk-context=$4";;
+	6) hunks=$5; cmd="diff -U$3"; git config diff.interHunkContext $4; use_config="(diff.interHunkContext=$4) ";;
+	esac
+	label="$use_config$cmd, $1 common $2"
+	file=f$1
+	expected=expected.$file.$3.$hunks
 
-test_expect_success 'sc1: diff -U3 shows two separate hunks' '
-	cd repo &&
-	git diff -U3 sc1-before sc1-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 2
-'
+	if ! test -f $file
+	then
+		f A $1 B >$file
+		git add $file
+		git commit -q -m. $file
+		f X $1 Y >$file
+	fi
 
-test_expect_success 'sc1: diff -U0 shows two separate hunks' '
-	cd repo &&
-	git diff -U0 sc1-before sc1-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 2
-'
+	test_expect_success "$label: count hunks ($hunks)" "
+		test $(git $cmd $file | grep '^@@ ' | wc -l) = $hunks
+	"
 
-test_expect_success 'sc1: diff -U0 hunks are minimal' '
-	cd repo &&
-	git diff -U0 sc1-before sc1-after >out &&
-	grep "^-line5$" out &&
-	grep "^+MOD5$" out &&
-	grep "^-line35$" out &&
-	grep "^+MOD35$" out
-'
+	test -f $expected &&
+	test_expect_success "$label: check output" "
+		git $cmd $file | grep -v '^index ' >actual &&
+		test_cmp $expected actual
+	"
+}
 
-test_expect_success 'sc1: diff -U20 merges into one hunk' '
-	cd repo &&
-	git diff -U20 sc1-before sc1-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 1
-'
+cat <<EOF >expected.f1.0.1 || exit 1
+diff --git a/f1 b/f1
+--- a/f1
++++ b/f1
+@@ -1,3 +1,3 @@
+-A
++X
+ 1
+-B
++Y
+EOF
 
-test_expect_success 'sc1: merged hunk contains both changes' '
-	cd repo &&
-	git diff -U20 sc1-before sc1-after >out &&
-	grep "MOD5" out &&
-	grep "MOD35" out
-'
+cat <<EOF >expected.f1.0.2 || exit 1
+diff --git a/f1 b/f1
+--- a/f1
++++ b/f1
+@@ -1 +1 @@
+-A
++X
+@@ -3 +3 @@ A
+-B
++Y
+EOF
 
-# --- Scenario 2: changes 4 lines apart (10 and 14) — U3 merges ---
-test_expect_success 'scenario 2: reset and commit with lines 10 and 14 changed' '
-	cd repo &&
-	git reset --hard sc1-before &&
-	git tag sc2-before &&
-	gen_lines 40 | sed "s/^line10$/NEAR10/" | sed "s/^line14$/NEAR14/" >file.txt &&
-	git add file.txt &&
-	git commit -m "sc2" &&
-	git tag sc2-after
-'
+# common lines	ctx	intrctx	hunks
+t 1 line	0		2
+t 1 line	0	0	2
+t 1 line	0	1	1
+t 1 line	0	2	1
+t 1 line	1		1
 
-test_expect_success 'sc2: diff -U3 merges nearby hunks into one' '
-	cd repo &&
-	git diff -U3 sc2-before sc2-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 1
-'
+t 2 lines	0		2
+t 2 lines	0	0	2
+t 2 lines	0	1	2
+t 2 lines	0	2	1
+t 2 lines	1		1
 
-test_expect_success 'sc2: merged hunk contains both changes' '
-	cd repo &&
-	git diff -U3 sc2-before sc2-after >out &&
-	grep "NEAR10" out &&
-	grep "NEAR14" out
-'
+t 3 lines	1		2
+t 3 lines	1	0	2
+t 3 lines	1	1	1
+t 3 lines	1	2	1
 
-test_expect_success 'sc2: diff -U0 keeps them as two hunks' '
-	cd repo &&
-	git diff -U0 sc2-before sc2-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 2
-'
+t 9 lines	3		2
+t 9 lines	3	2	2
+t 9 lines	3	3	1
 
-test_expect_success 'sc2: diff -U1 keeps two hunks (gap=3 > 2*1)' '
-	cd repo &&
-	git diff -U1 sc2-before sc2-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 2
-'
+#					use diff.interHunkContext?
+t 1 line	0	0	2	config
+t 1 line	0	1	1	config
+t 1 line	0	2	1	config
+t 9 lines	3	3	1	config
+t 2 lines	0	0	2	config
+t 2 lines	0	1	2	config
+t 2 lines	0	2	1	config
+t 3 lines	1	0	2	config
+t 3 lines	1	1	1	config
+t 3 lines	1	2	1	config
+t 9 lines	3	2	2	config
+t 9 lines	3	3	1	config
 
-# --- Scenario 3: consecutive lines (15 and 16) ---
-test_expect_success 'scenario 3: change consecutive lines 15 and 16' '
-	cd repo &&
-	git reset --hard sc1-before &&
-	git tag sc3-before &&
-	gen_lines 40 | sed "s/^line15$/ADJ15/" | sed "s/^line16$/ADJ16/" >file.txt &&
-	git add file.txt &&
-	git commit -m "sc3" &&
-	git tag sc3-after
-'
-
-test_expect_success 'sc3: diff -U0 shows one hunk for consecutive changes' '
-	cd repo &&
-	git diff -U0 sc3-before sc3-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 1
-'
-
-test_expect_success 'sc3: diff -U3 shows one hunk' '
-	cd repo &&
-	git diff -U3 sc3-before sc3-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 1
-'
-
-test_expect_success 'sc3: both adjacent changes appear in diff' '
-	cd repo &&
-	git diff sc3-before sc3-after >out &&
-	grep "ADJ15" out &&
-	grep "ADJ16" out
-'
-
-# --- Scenario 4: three changes far apart (5, 20, 35) ---
-test_expect_success 'scenario 4: three changes at lines 5, 20, 35' '
-	cd repo &&
-	git reset --hard sc1-before &&
-	git tag sc4-before &&
-	gen_lines 40 | sed "s/^line5$/TRI5/" | sed "s/^line20$/TRI20/" | sed "s/^line35$/TRI35/" >file.txt &&
-	git add file.txt &&
-	git commit -m "sc4" &&
-	git tag sc4-after
-'
-
-test_expect_success 'sc4: diff -U3 shows three separate hunks' '
-	cd repo &&
-	git diff -U3 sc4-before sc4-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 3
-'
-
-test_expect_success 'sc4: all three changes present' '
-	cd repo &&
-	git diff -U3 sc4-before sc4-after >out &&
-	grep "TRI5" out &&
-	grep "TRI20" out &&
-	grep "TRI35" out
-'
-
-test_expect_success 'sc4: diff -U10 merges into fewer hunks' '
-	cd repo &&
-	git diff -U10 sc4-before sc4-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -le 2
-'
-
-test_expect_success 'sc4: diff -U20 merges all into one' '
-	cd repo &&
-	git diff -U20 sc4-before sc4-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 1
-'
-
-# --- Scenario 5: boundary changes (first and last lines) ---
-test_expect_success 'scenario 5: modify first and last lines' '
-	cd repo &&
-	git reset --hard sc1-before &&
-	git tag sc5-before &&
-	gen_lines 40 | sed "s/^line1$/FIRST/" | sed "s/^line40$/LAST/" >file.txt &&
-	git add file.txt &&
-	git commit -m "sc5" &&
-	git tag sc5-after
-'
-
-test_expect_success 'sc5: diff -U3 at boundaries shows two hunks' '
-	cd repo &&
-	git diff -U3 sc5-before sc5-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 2
-'
-
-test_expect_success 'sc5: diff -U100 merges boundary hunks' '
-	cd repo &&
-	git diff -U100 sc5-before sc5-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 1
-'
-
-# --- Scenario 6: --stat and --numstat unaffected by context ---
-test_expect_success 'sc1: diff --stat shows correct summary' '
-	cd repo &&
-	git diff --stat sc1-before sc1-after >out &&
-	grep "file.txt" out
-'
-
-test_expect_success 'sc1: diff --numstat shows correct counts' '
-	cd repo &&
-	git diff --numstat sc1-before sc1-after >out &&
-	grep "file.txt" out
-'
-
-# --- Scenario 7: cached diff with context ---
-test_expect_success 'scenario 7: staged changes at 8 and 32' '
-	cd repo &&
-	git reset --hard sc1-before &&
-	gen_lines 40 | sed "s/^line8$/STAGED8/" | sed "s/^line32$/STAGED32/" >file.txt &&
-	git add file.txt
-'
-
-test_expect_success 'sc7: diff --cached -U3 shows two hunks' '
-	cd repo &&
-	git diff --cached -U3 >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 2
-'
-
-test_expect_success 'sc7: diff --cached -U15 merges hunks' '
-	cd repo &&
-	git diff --cached -U15 >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 1
-'
-
-# --- Scenario 8: two files, independent hunks ---
-test_expect_success 'scenario 8: two separate files' '
-	cd repo &&
-	git reset --hard sc1-before &&
-	gen_lines 20 >a.txt &&
-	gen_lines 20 >b.txt &&
-	git add a.txt b.txt &&
-	git commit -m "two files" &&
-	git tag sc8-before &&
-
-	sed "s/^line3$/AMOD3/" a.txt >a.tmp && mv a.tmp a.txt &&
-	sed "s/^line7$/BMOD7/" b.txt >b.tmp && mv b.tmp b.txt &&
-	git add a.txt b.txt &&
-	git commit -m "modify each" &&
-	git tag sc8-after
-'
-
-test_expect_success 'sc8: diff -U3 shows one hunk per file' '
-	cd repo &&
-	git diff -U3 sc8-before sc8-after >out &&
-	count=$(grep -c "^@@" out) &&
-	test "$count" -eq 2
-'
-
-test_expect_success 'sc8: both file headers present' '
-	cd repo &&
-	git diff sc8-before sc8-after >out &&
-	grep "^--- a/a.txt" out &&
-	grep "^--- a/b.txt" out
+test_expect_success 'diff.interHunkContext invalid' '
+	git config diff.interHunkContext asdf &&
+	test_must_fail git diff &&
+	git config diff.interHunkContext -1 &&
+	test_must_fail git diff
 '
 
 test_done

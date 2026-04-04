@@ -1,32 +1,19 @@
 #!/bin/sh
-# Ported from upstream git t7813-grep-icase-iso.sh
 
-test_description='grep icase with various encodings'
+test_description='grep icase on non-English locales'
 
-cd "$(dirname "$0")" || exit 1
-. ./test-lib.sh
+. ./lib-gettext.sh
 
-test_expect_success 'setup' '
-	git init grep-iso &&
-	cd grep-iso &&
-	git config user.name "Test" &&
-	git config user.email "test@test.com" &&
-	printf "TILRAUN: Hello World!\n" >file &&
+test_expect_success GETTEXT_ISO_LOCALE 'setup' '
+	printf "TILRAUN: Halló Heimur!" >file &&
 	git add file &&
-	test_tick &&
-	git commit -m initial
+	LC_ALL="$is_IS_iso_locale" &&
+	export LC_ALL
 '
 
-test_expect_success 'grep basic case-insensitive' '
-	cd grep-iso &&
-	git grep -i "hello" >actual &&
-	grep "Hello" actual
-'
-
-test_expect_success 'grep case-sensitive' '
-	cd grep-iso &&
-	git grep "TILRAUN" >actual &&
-	test $(wc -l <actual) -eq 1
+test_expect_success GETTEXT_ISO_LOCALE,PCRE 'grep pcre string' '
+	git grep --perl-regexp -i "TILRAUN: H.lló Heimur!" &&
+	git grep --perl-regexp -i "TILRAUN: H.LLÓ HEIMUR!"
 '
 
 test_done

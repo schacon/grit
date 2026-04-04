@@ -1,41 +1,40 @@
 #!/bin/sh
+
 test_description='git log with filter options limiting the output'
-cd "$(dirname "$0")" || exit 1
+
 . ./test-lib.sh
 
 test_expect_success 'setup test' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
+	git init &&
 	echo a >file &&
 	git add file &&
-	git commit -m init &&
+	GIT_COMMITTER_DATE="2021-02-01 00:00" git commit -m init &&
 	echo a >>file &&
 	git add file &&
-	git commit -m first &&
+	GIT_COMMITTER_DATE="2022-02-01 00:00" git commit -m first &&
 	echo a >>file &&
 	git add file &&
-	git commit -m second &&
+	GIT_COMMITTER_DATE="2021-03-01 00:00" git commit -m second &&
 	echo a >>file &&
 	git add file &&
-	git commit -m third
+	GIT_COMMITTER_DATE="2022-03-01 00:00" git commit -m third
 '
 
-test_expect_success 'git log --max-count limits output' '
-	cd repo &&
-	git log --max-count=2 --format=%s >actual &&
+test_expect_success 'git log --since-as-filter=...' '
+	git log --since-as-filter="2022-01-01" --format=%s >actual &&
 	cat >expect <<-\EOF &&
 	third
-	second
+	first
 	EOF
 	test_cmp expect actual
 '
 
-test_expect_success 'git log -n limits output' '
-	cd repo &&
-	git log -n 1 --format=%s >actual &&
-	echo third >expect &&
+test_expect_success 'git log --children --since-as-filter=...' '
+	git log --children --since-as-filter="2022-01-01" --format=%s >actual &&
+	cat >expect <<-\EOF &&
+	third
+	first
+	EOF
 	test_cmp expect actual
 '
 

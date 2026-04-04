@@ -1,223 +1,446 @@
 #!/bin/sh
-# Test wildcard/glob pattern matching via check-ignore and ls-files.
-# Exercises fnmatch/wildmatch logic in grit's gitignore implementation.
 
-test_description='wildcard/glob pattern matching (wildmatch)'
+test_description='wildmatch tests'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# ── Setup ──────────────────────────────────────────────────────────────────────
+should_create_test_file() {
+	file=$1
 
-test_expect_success 'setup repo with assorted files' '
-	grit init repo &&
-	cd repo &&
-	git config user.email "t@t.com" &&
-	git config user.name "T" &&
-	mkdir -p dir/sub dir2 build/out logs &&
-	touch file.c file.h file.o file.log &&
-	touch dir/a.c dir/b.o dir/sub/deep.log &&
-	touch dir2/readme.md dir2/notes.txt &&
-	touch build/out/result.bin build/Makefile &&
-	touch logs/app.log logs/app.log.1
-'
+	case $file in
+	# `touch .` will succeed but obviously not do what we intend
+	# here.
+	".")
+		return 1
+		;;
+	# We cannot create a file with an empty filename.
+	"")
+		return 1
+		;;
+	# The tests that are testing that e.g. foo//bar is matched by
+	# foo/*/bar can't be tested on filesystems since there's no
+	# way we're getting a double slash.
+	*//*)
+		return 1
+		;;
+	# When testing the difference between foo/bar and foo/bar/ we
+	# can't test the latter.
+	*/)
+		return 1
+		;;
+	# On Windows, \ in paths is silently converted to /, which
+	# would result in the "touch" below working, but the test
+	# itself failing. See 6fd1106aa4 ("t3700: Skip a test with
+	# backslashes in pathspec", 2009-03-13) for prior art and
+	# details.
+	*\\*)
+		if ! test_have_prereq BSLASHPSPEC
+		then
+			return 1
+		fi
+		# NOTE: The ;;& bash extension is not portable, so
+		# this test needs to be at the end of the pattern
+		# list.
+		#
+		# If we want to add more conditional returns we either
+		# need a new case statement, or turn this whole thing
+		# into a series of "if" tests.
+		;;
+	esac
 
-# ── Star wildcard (*) ─────────────────────────────────────────────────────────
 
-test_expect_success '*.o matches .o files in root' '
-	cd repo &&
-	echo "*.o" >.gitignore &&
-	grit check-ignore file.o
-'
+	# On Windows proper (i.e. not Cygwin) many file names which
+	# under Cygwin would be emulated don't work.
+	if test_have_prereq MINGW
+	then
+		case $file in
+		" ")
+			# Files called " " are forbidden on Windows
+			return 1
+			;;
+		*\<*|*\>*|*:*|*\"*|*\|*|*\?*|*\**)
+			# Files with various special characters aren't
+			# allowed on Windows. Sourced from
+			# https://stackoverflow.com/a/31976060
+			return 1
+			;;
+		esac
+	fi
 
-test_expect_success '*.o does not match .c files' '
-	cd repo &&
-	echo "*.o" >.gitignore &&
-	test_must_fail grit check-ignore file.c
-'
+	return 0
+}
 
-test_expect_success '*.o matches .o in subdirectory' '
-	cd repo &&
-	echo "*.o" >.gitignore &&
-	grit check-ignore dir/b.o
-'
+match_with_function() {
+	text=$1
+	pattern=$2
+	match_expect=$3
+	match_function=$4
 
-test_expect_success '*.log matches log files everywhere' '
-	cd repo &&
-	echo "*.log" >.gitignore &&
-	grit check-ignore file.log &&
-	grit check-ignore dir/sub/deep.log &&
-	grit check-ignore logs/app.log
-'
+	if test "$match_expect" = 1
+	then
+		test_expect_success "$match_function: match '$text' '$pattern'" "
+			test-tool wildmatch $match_function '$text' '$pattern'
+		"
+	elif test "$match_expect" = 0
+	then
+		test_expect_success "$match_function: no match '$text' '$pattern'" "
+			test_must_fail test-tool wildmatch $match_function '$text' '$pattern'
+		"
+	else
+		test_expect_success "PANIC: Test framework error. Unknown matches value $match_expect" 'false'
+	fi
 
-# ── Question mark (?) ─────────────────────────────────────────────────────────
+}
 
-test_expect_success '?.c matches single-char .c filenames' '
-	cd repo &&
-	echo "?.c" >.gitignore &&
-	grit check-ignore dir/a.c
-'
+match_with_ls_files() {
+	text=$1
+	pattern=$2
+	match_expect=$3
+	match_function=$4
+	ls_files_args=$5
 
-test_expect_success '?.c does not match multi-char names' '
-	cd repo &&
-	echo "?.c" >.gitignore &&
-	test_must_fail grit check-ignore file.c
-'
+	match_stdout_stderr_cmp="
+		tr -d '\0' <actual.raw >actual &&
+		test_must_be_empty actual.err &&
+		test_cmp expect actual"
 
-test_expect_success 'file.? matches single-char extensions' '
-	cd repo &&
-	echo "file.?" >.gitignore &&
-	grit check-ignore file.c &&
-	grit check-ignore file.h &&
-	grit check-ignore file.o
-'
+	if test "$match_expect" = 'E'
+	then
+		if test -e .git/created_test_file
+		then
+			test_expect_success EXPENSIVE_ON_WINDOWS "$match_function (via ls-files): match dies on '$pattern' '$text'" "
+				printf '%s' '$text' >expect &&
+				test_must_fail git$ls_files_args ls-files -z -- '$pattern'
+			"
+		else
+			test_expect_failure EXPENSIVE_ON_WINDOWS "$match_function (via ls-files): match skip '$pattern' '$text'" 'false'
+		fi
+	elif test "$match_expect" = 1
+	then
+		if test -e .git/created_test_file
+		then
+			test_expect_success EXPENSIVE_ON_WINDOWS "$match_function (via ls-files): match '$pattern' '$text'" "
+				printf '%s' '$text' >expect &&
+				git$ls_files_args ls-files -z -- '$pattern' >actual.raw 2>actual.err &&
+				$match_stdout_stderr_cmp
+			"
+		else
+			test_expect_failure EXPENSIVE_ON_WINDOWS "$match_function (via ls-files): match skip '$pattern' '$text'" 'false'
+		fi
+	elif test "$match_expect" = 0
+	then
+		if test -e .git/created_test_file
+		then
+			test_expect_success EXPENSIVE_ON_WINDOWS "$match_function (via ls-files): no match '$pattern' '$text'" "
+				>expect &&
+				git$ls_files_args ls-files -z -- '$pattern' >actual.raw 2>actual.err &&
+				$match_stdout_stderr_cmp
+			"
+		else
+			test_expect_failure EXPENSIVE_ON_WINDOWS "$match_function (via ls-files): no match skip '$pattern' '$text'" 'false'
+		fi
+	else
+		test_expect_success "PANIC: Test framework error. Unknown matches value $match_expect" 'false'
+	fi
+}
 
-test_expect_success 'file.? does not match multi-char extensions' '
-	cd repo &&
-	echo "file.?" >.gitignore &&
-	test_must_fail grit check-ignore file.log
-'
+match() {
+	if test "$#" = 6
+	then
+		# When test-tool wildmatch and git ls-files produce the same
+		# result.
+		match_glob=$1
+		match_file_glob=$match_glob
+		match_iglob=$2
+		match_file_iglob=$match_iglob
+		match_pathmatch=$3
+		match_file_pathmatch=$match_pathmatch
+		match_pathmatchi=$4
+		match_file_pathmatchi=$match_pathmatchi
+		text=$5
+		pattern=$6
+	elif test "$#" = 10
+	then
+		match_glob=$1
+		match_iglob=$2
+		match_pathmatch=$3
+		match_pathmatchi=$4
+		match_file_glob=$5
+		match_file_iglob=$6
+		match_file_pathmatch=$7
+		match_file_pathmatchi=$8
+		text=$9
+		pattern=${10}
+	fi
 
-# ── Double-star (**) ──────────────────────────────────────────────────────────
+	test_expect_success EXPENSIVE_ON_WINDOWS 'cleanup after previous file test' '
+		if test -e .git/created_test_file
+		then
+			git reset &&
+			git clean -df
+		fi
+	'
 
-test_expect_success 'build/** matches everything under build/' '
-	cd repo &&
-	echo "build/**" >.gitignore &&
-	grit check-ignore build/out/result.bin &&
-	grit check-ignore build/Makefile
-'
+	printf '%s' "$text" >.git/expected_test_file
 
-test_expect_success '**/deep.log matches deep.log in any directory' '
-	cd repo &&
-	echo "**/deep.log" >.gitignore &&
-	grit check-ignore dir/sub/deep.log
-'
+	test_expect_success EXPENSIVE_ON_WINDOWS "setup match file test for $text" '
+		file=$(cat .git/expected_test_file) &&
+		if should_create_test_file "$file"
+		then
+			dirs=${file%/*} &&
+			if test "$file" != "$dirs"
+			then
+				mkdir -p -- "$dirs" &&
+				touch -- "./$text"
+			else
+				touch -- "./$file"
+			fi &&
+			git add -A &&
+			printf "%s" "$file" >.git/created_test_file
+		elif test -e .git/created_test_file
+		then
+			rm .git/created_test_file
+		fi
+	'
 
-test_expect_success '**/*.log matches .log in subdirectories' '
-	cd repo &&
-	echo "**/*.log" >.gitignore &&
-	grit check-ignore dir/sub/deep.log &&
-	grit check-ignore logs/app.log
-'
+	# $1: Case sensitive glob match: test-tool wildmatch & ls-files
+	match_with_function "$text" "$pattern" $match_glob "wildmatch"
+	match_with_ls_files "$text" "$pattern" $match_file_glob "wildmatch" " --glob-pathspecs"
 
-# ── Directory pattern (trailing /) ────────────────────────────────────────────
+	# $2: Case insensitive glob match: test-tool wildmatch & ls-files
+	match_with_function "$text" "$pattern" $match_iglob "iwildmatch"
+	match_with_ls_files "$text" "$pattern" $match_file_iglob "iwildmatch" " --glob-pathspecs --icase-pathspecs"
 
-test_expect_success 'dir/ matches directory' '
-	cd repo &&
-	echo "dir/" >.gitignore &&
-	grit check-ignore dir/a.c
-'
+	# $3: Case sensitive path match: test-tool wildmatch & ls-files
+	match_with_function "$text" "$pattern" $match_pathmatch "pathmatch"
+	match_with_ls_files "$text" "$pattern" $match_file_pathmatch "pathmatch" ""
 
-test_expect_success 'logs/ matches logs directory' '
-	cd repo &&
-	echo "logs/" >.gitignore &&
-	grit check-ignore logs/app.log
-'
+	# $4: Case insensitive path match: test-tool wildmatch & ls-files
+	match_with_function "$text" "$pattern" $match_pathmatchi "ipathmatch"
+	match_with_ls_files "$text" "$pattern" $match_file_pathmatchi "ipathmatch" " --icase-pathspecs"
+}
 
-# ── Negation (!) ──────────────────────────────────────────────────────────────
+# Basic wildmatch features
+match 1 1 1 1 foo foo
+match 0 0 0 0 foo bar
+match 1 1 1 1 '' ""
+match 1 1 1 1 foo '???'
+match 0 0 0 0 foo '??'
+match 1 1 1 1 foo '*'
+match 1 1 1 1 foo 'f*'
+match 0 0 0 0 foo '*f'
+match 1 1 1 1 foo '*foo*'
+match 1 1 1 1 foobar '*ob*a*r*'
+match 1 1 1 1 aaaaaaabababab '*ab'
+match 1 1 1 1 'foo*' 'foo\*'
+match 0 0 0 0 foobar 'foo\*bar'
+match 1 1 1 1 'f\oo' 'f\\oo'
+match 0 0 0 0 \
+      1 1 1 1 'foo\' 'foo\'
+match 1 1 1 1 ball '*[al]?'
+match 0 0 0 0 ten '[ten]'
+match 1 1 1 1 ten '**[!te]'
+match 0 0 0 0 ten '**[!ten]'
+match 1 1 1 1 ten 't[a-g]n'
+match 0 0 0 0 ten 't[!a-g]n'
+match 1 1 1 1 ton 't[!a-g]n'
+match 1 1 1 1 ton 't[^a-g]n'
+match 1 1 1 1 'a]b' 'a[]]b'
+match 1 1 1 1 a-b 'a[]-]b'
+match 1 1 1 1 'a]b' 'a[]-]b'
+match 0 0 0 0 aab 'a[]-]b'
+match 1 1 1 1 aab 'a[]a-]b'
+match 1 1 1 1 ']' ']'
 
-test_expect_success 'negation re-includes a previously excluded file' '
-	cd repo &&
-	printf "*.log\n!app.log\n" >.gitignore &&
-	grit check-ignore file.log &&
-	test_must_fail grit check-ignore logs/app.log
-'
+# Extended slash-matching features
+match 0 0 1 1 'foo/baz/bar' 'foo*bar'
+match 0 0 1 1 'foo/baz/bar' 'foo**bar'
+match 1 1 1 1 'foobazbar' 'foo**bar'
+match 1 1 1 1 'foo/baz/bar' 'foo/**/bar'
+match 1 1 0 0 'foo/baz/bar' 'foo/**/**/bar'
+match 1 1 1 1 'foo/b/a/z/bar' 'foo/**/bar'
+match 1 1 1 1 'foo/b/a/z/bar' 'foo/**/**/bar'
+match 1 1 0 0 'foo/bar' 'foo/**/bar'
+match 1 1 0 0 'foo/bar' 'foo/**/**/bar'
+match 0 0 1 1 'foo/bar' 'foo?bar'
+match 0 0 1 1 'foo/bar' 'foo[/]bar'
+match 0 0 1 1 'foo/bar' 'foo[^a-z]bar'
+match 0 0 1 1 'foo/bar' 'f[^eiu][^eiu][^eiu][^eiu][^eiu]r'
+match 1 1 1 1 'foo-bar' 'f[^eiu][^eiu][^eiu][^eiu][^eiu]r'
+match 1 1 0 0 'foo' '**/foo'
+match 1 1 1 1 'XXX/foo' '**/foo'
+match 1 1 1 1 'bar/baz/foo' '**/foo'
+match 0 0 1 1 'bar/baz/foo' '*/foo'
+match 0 0 1 1 'foo/bar/baz' '**/bar*'
+match 1 1 1 1 'deep/foo/bar/baz' '**/bar/*'
+match 0 0 1 1 'deep/foo/bar/baz/' '**/bar/*'
+match 1 1 1 1 'deep/foo/bar/baz/' '**/bar/**'
+match 0 0 0 0 'deep/foo/bar' '**/bar/*'
+match 1 1 1 1 'deep/foo/bar/' '**/bar/**'
+match 0 0 1 1 'foo/bar/baz' '**/bar**'
+match 1 1 1 1 'foo/bar/baz/x' '*/bar/**'
+match 0 0 1 1 'deep/foo/bar/baz/x' '*/bar/**'
+match 1 1 1 1 'deep/foo/bar/baz/x' '**/bar/*/*'
 
-test_expect_success '-v shows negation pattern' '
-	cd repo &&
-	printf "*.log\n!app.log\n" >.gitignore &&
-	grit check-ignore -v logs/app.log >out 2>&1 &&
-	grep "!app.log" out
-'
+# Various additional tests
+match 0 0 0 0 'acrt' 'a[c-c]st'
+match 1 1 1 1 'acrt' 'a[c-c]rt'
+match 0 0 0 0 ']' '[!]-]'
+match 1 1 1 1 'a' '[!]-]'
+match 0 0 0 0 '' '\'
+match 0 0 0 0 \
+      1 1 1 1 '\' '\'
+match 0 0 0 0 'XXX/\' '*/\'
+match 1 1 1 1 'XXX/\' '*/\\'
+match 1 1 1 1 'foo' 'foo'
+match 1 1 1 1 '@foo' '@foo'
+match 0 0 0 0 'foo' '@foo'
+match 1 1 1 1 '[ab]' '\[ab]'
+match 1 1 1 1 '[ab]' '[[]ab]'
+match 1 1 1 1 '[ab]' '[[:]ab]'
+match 0 0 0 0 '[ab]' '[[::]ab]'
+match 1 1 1 1 '[ab]' '[[:digit]ab]'
+match 1 1 1 1 '[ab]' '[\[:]ab]'
+match 1 1 1 1 '?a?b' '\??\?b'
+match 1 1 1 1 'abc' '\a\b\c'
+match 0 0 0 0 \
+      E E E E 'foo' ''
+match 1 1 1 1 'foo/bar/baz/to' '**/t[o]'
 
-# ── Anchored patterns (leading /) ────────────────────────────────────────────
+# Character class tests
+match 1 1 1 1 'a1B' '[[:alpha:]][[:digit:]][[:upper:]]'
+match 0 1 0 1 'a' '[[:digit:][:upper:][:space:]]'
+match 1 1 1 1 'A' '[[:digit:][:upper:][:space:]]'
+match 1 1 1 1 '1' '[[:digit:][:upper:][:space:]]'
+match 0 0 0 0 '1' '[[:digit:][:upper:][:spaci:]]'
+match 1 1 1 1 ' ' '[[:digit:][:upper:][:space:]]'
+match 0 0 0 0 '.' '[[:digit:][:upper:][:space:]]'
+match 1 1 1 1 '.' '[[:digit:][:punct:][:space:]]'
+match 1 1 1 1 '5' '[[:xdigit:]]'
+match 1 1 1 1 'f' '[[:xdigit:]]'
+match 1 1 1 1 'D' '[[:xdigit:]]'
+match 1 1 1 1 '_' '[[:alnum:][:alpha:][:blank:][:cntrl:][:digit:][:graph:][:lower:][:print:][:punct:][:space:][:upper:][:xdigit:]]'
+match 1 1 1 1 '.' '[^[:alnum:][:alpha:][:blank:][:cntrl:][:digit:][:lower:][:space:][:upper:][:xdigit:]]'
+match 1 1 1 1 '5' '[a-c[:digit:]x-z]'
+match 1 1 1 1 'b' '[a-c[:digit:]x-z]'
+match 1 1 1 1 'y' '[a-c[:digit:]x-z]'
+match 0 0 0 0 'q' '[a-c[:digit:]x-z]'
 
-test_expect_success '/file.o only matches in root' '
-	cd repo &&
-	echo "/file.o" >.gitignore &&
-	grit check-ignore file.o &&
-	test_must_fail grit check-ignore dir/b.o
-'
+# Additional tests, including some malformed wildmatch patterns
+match 1 1 1 1 ']' '[\\-^]'
+match 0 0 0 0 '[' '[\\-^]'
+match 1 1 1 1 '-' '[\-_]'
+match 1 1 1 1 ']' '[\]]'
+match 0 0 0 0 '\]' '[\]]'
+match 0 0 0 0 '\' '[\]]'
+match 0 0 0 0 'ab' 'a[]b'
+match 0 0 0 0 \
+      1 1 1 1 'a[]b' 'a[]b'
+match 0 0 0 0 \
+      1 1 1 1 'ab[' 'ab['
+match 0 0 0 0 'ab' '[!'
+match 0 0 0 0 'ab' '[-'
+match 1 1 1 1 '-' '[-]'
+match 0 0 0 0 '-' '[a-'
+match 0 0 0 0 '-' '[!a-'
+match 1 1 1 1 '-' '[--A]'
+match 1 1 1 1 '5' '[--A]'
+match 1 1 1 1 ' ' '[ --]'
+match 1 1 1 1 '$' '[ --]'
+match 1 1 1 1 '-' '[ --]'
+match 0 0 0 0 '0' '[ --]'
+match 1 1 1 1 '-' '[---]'
+match 1 1 1 1 '-' '[------]'
+match 0 0 0 0 'j' '[a-e-n]'
+match 1 1 1 1 '-' '[a-e-n]'
+match 1 1 1 1 'a' '[!------]'
+match 0 0 0 0 '[' '[]-a]'
+match 1 1 1 1 '^' '[]-a]'
+match 0 0 0 0 '^' '[!]-a]'
+match 1 1 1 1 '[' '[!]-a]'
+match 1 1 1 1 '^' '[a^bc]'
+match 1 1 1 1 '-b]' '[a-]b]'
+match 0 0 0 0 '\' '[\]'
+match 1 1 1 1 '\' '[\\]'
+match 0 0 0 0 '\' '[!\\]'
+match 1 1 1 1 'G' '[A-\\]'
+match 0 0 0 0 'aaabbb' 'b*a'
+match 0 0 0 0 'aabcaa' '*ba*'
+match 1 1 1 1 ',' '[,]'
+match 1 1 1 1 ',' '[\\,]'
+match 1 1 1 1 '\' '[\\,]'
+match 1 1 1 1 '-' '[,-.]'
+match 0 0 0 0 '+' '[,-.]'
+match 0 0 0 0 '-.]' '[,-.]'
+match 1 1 1 1 '2' '[\1-\3]'
+match 1 1 1 1 '3' '[\1-\3]'
+match 0 0 0 0 '4' '[\1-\3]'
+match 1 1 1 1 '\' '[[-\]]'
+match 1 1 1 1 '[' '[[-\]]'
+match 1 1 1 1 ']' '[[-\]]'
+match 0 0 0 0 '-' '[[-\]]'
 
-test_expect_success '/dir/ matches only top-level dir' '
-	cd repo &&
-	echo "/dir/" >.gitignore &&
-	grit check-ignore dir/a.c
-'
+# Test recursion
+match 1 1 1 1 '-adobe-courier-bold-o-normal--12-120-75-75-m-70-iso8859-1' '-*-*-*-*-*-*-12-*-*-*-m-*-*-*'
+match 0 0 0 0 '-adobe-courier-bold-o-normal--12-120-75-75-X-70-iso8859-1' '-*-*-*-*-*-*-12-*-*-*-m-*-*-*'
+match 0 0 0 0 '-adobe-courier-bold-o-normal--12-120-75-75-/-70-iso8859-1' '-*-*-*-*-*-*-12-*-*-*-m-*-*-*'
+match 1 1 1 1 'XXX/adobe/courier/bold/o/normal//12/120/75/75/m/70/iso8859/1' 'XXX/*/*/*/*/*/*/12/*/*/*/m/*/*/*'
+match 0 0 0 0 'XXX/adobe/courier/bold/o/normal//12/120/75/75/X/70/iso8859/1' 'XXX/*/*/*/*/*/*/12/*/*/*/m/*/*/*'
+match 1 1 1 1 'abcd/abcdefg/abcdefghijk/abcdefghijklmnop.txt' '**/*a*b*g*n*t'
+match 0 0 0 0 'abcd/abcdefg/abcdefghijk/abcdefghijklmnop.txtz' '**/*a*b*g*n*t'
+match 0 0 0 0 foo '*/*/*'
+match 0 0 0 0 foo/bar '*/*/*'
+match 1 1 1 1 foo/bba/arr '*/*/*'
+match 0 0 1 1 foo/bb/aa/rr '*/*/*'
+match 1 1 1 1 foo/bb/aa/rr '**/**/**'
+match 1 1 1 1 abcXdefXghi '*X*i'
+match 0 0 1 1 ab/cXd/efXg/hi '*X*i'
+match 1 1 1 1 ab/cXd/efXg/hi '*/*X*/*/*i'
+match 1 1 1 1 ab/cXd/efXg/hi '**/*X*/**/*i'
 
-# ── Verbose output (-v) ──────────────────────────────────────────────────────
+# Extra pathmatch tests
+match 0 0 0 0 foo fo
+match 1 1 1 1 foo/bar foo/bar
+match 1 1 1 1 foo/bar 'foo/*'
+match 0 0 1 1 foo/bba/arr 'foo/*'
+match 1 1 1 1 foo/bba/arr 'foo/**'
+match 0 0 1 1 foo/bba/arr 'foo*'
+match 0 0 1 1 \
+      1 1 1 1 foo/bba/arr 'foo**'
+match 0 0 1 1 foo/bba/arr 'foo/*arr'
+match 0 0 1 1 foo/bba/arr 'foo/**arr'
+match 0 0 0 0 foo/bba/arr 'foo/*z'
+match 0 0 0 0 foo/bba/arr 'foo/**z'
+match 0 0 1 1 foo/bar 'foo?bar'
+match 0 0 1 1 foo/bar 'foo[/]bar'
+match 0 0 1 1 foo/bar 'foo[^a-z]bar'
+match 0 0 1 1 ab/cXd/efXg/hi '*Xg*i'
 
-test_expect_success '-v shows source file, line, and pattern' '
-	cd repo &&
-	printf "*.o\n*.log\n" >.gitignore &&
-	grit check-ignore -v file.o >out &&
-	grep ".gitignore:1:" out &&
-	grit check-ignore -v file.log >out2 &&
-	grep ".gitignore:2:" out2
-'
+# Extra case-sensitivity tests
+match 0 1 0 1 'a' '[A-Z]'
+match 1 1 1 1 'A' '[A-Z]'
+match 0 1 0 1 'A' '[a-z]'
+match 1 1 1 1 'a' '[a-z]'
+match 0 1 0 1 'a' '[[:upper:]]'
+match 1 1 1 1 'A' '[[:upper:]]'
+match 0 1 0 1 'A' '[[:lower:]]'
+match 1 1 1 1 'a' '[[:lower:]]'
+match 0 1 0 1 'A' '[B-Za]'
+match 1 1 1 1 'a' '[B-Za]'
+match 0 1 0 1 'A' '[B-a]'
+match 1 1 1 1 'a' '[B-a]'
+match 0 1 0 1 'z' '[Z-y]'
+match 1 1 1 1 'Z' '[Z-y]'
 
-test_expect_success '-v output includes the matching pattern' '
-	cd repo &&
-	echo "build/**" >.gitignore &&
-	grit check-ignore -v build/Makefile >out &&
-	grep "build/\*\*" out
-'
-
-# ── Multiple patterns ────────────────────────────────────────────────────────
-
-test_expect_success 'multiple patterns in .gitignore all work' '
-	cd repo &&
-	printf "*.o\n*.log\nbuild/\n" >.gitignore &&
-	grit check-ignore file.o &&
-	grit check-ignore file.log &&
-	grit check-ignore build/Makefile
-'
-
-test_expect_success 'blank lines and comments are ignored' '
-	cd repo &&
-	printf "# comment\n\n*.o\n  \n# another\n*.log\n" >.gitignore &&
-	grit check-ignore file.o &&
-	grit check-ignore file.log
-'
-
-# ── ls-files integration ─────────────────────────────────────────────────────
-
-test_expect_success 'ls-files excludes ignored files after add' '
-	cd repo &&
-	echo "*.o" >.gitignore &&
-	grit add .gitignore file.c file.h &&
-	grit ls-files >out &&
-	grep "file.c" out &&
-	grep "file.h" out &&
-	! grep "file.o" out
-'
-
-test_expect_success 'ls-files -o --exclude-standard shows untracked non-ignored' '
-	cd repo &&
-	echo "*.o" >.gitignore &&
-	grit ls-files -o --exclude-standard >out 2>&1 || true &&
-	! grep "file.o" out
-'
-
-# ── Edge cases ────────────────────────────────────────────────────────────────
-
-test_expect_success 'pattern with no wildcard matches exact name' '
-	cd repo &&
-	echo "file.log" >.gitignore &&
-	grit check-ignore file.log &&
-	test_must_fail grit check-ignore file.log.1
-'
-
-test_expect_success 'literal filename with hash is matched' '
-	cd repo &&
-	printf "#comment\n" >ignorefile &&
-	test_must_fail grit check-ignore "#comment"
-'
-
-test_expect_success 'pattern *.log.* matches compound extensions' '
-	cd repo &&
-	echo "*.log.*" >.gitignore &&
-	grit check-ignore logs/app.log.1
+test_expect_success 'matching does not exhibit exponential behavior' '
+	{
+		test-tool wildmatch wildmatch \
+			aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab \
+			"*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a" &
+		pid=$!
+	} &&
+	sleep 2 &&
+	! kill $!
 '
 
 test_done

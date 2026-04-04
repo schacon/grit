@@ -1,278 +1,281 @@
 #!/bin/sh
-# Cache-tree: write-tree performance, tree reuse, index/tree consistency.
 
-test_description='grit cache-tree and write-tree reuse'
+test_description="Test whether cache-tree is properly updated
 
-cd "$(dirname "$0")" || exit 1
-. ./test-lib.sh
+Tests whether various commands properly update and/or rewrite the
+cache-tree extension.
+"
 
-test_expect_success 'setup repo with files' '
-	grit init repo &&
-	cd repo &&
-	grit config user.email "author@example.com" &&
-	grit config user.name "A U Thor" &&
-	echo "a" >a.txt &&
-	echo "b" >b.txt &&
-	mkdir -p dir &&
-	echo "c" >dir/c.txt &&
-	grit add a.txt b.txt dir/c.txt &&
-	test_tick &&
-	grit commit -m "initial"
+ . ./test-lib.sh
+
+cmp_cache_tree () {
+	test-tool dump-cache-tree | sed -e '/#(ref)/d' >actual &&
+	sed "s/$OID_REGEX/SHA/" <actual >filtered &&
+	test_cmp "$1" filtered &&
+	rm filtered
+}
+
+# We don't bother with actually checking the SHA1:
+# test-tool dump-cache-tree already verifies that all existing data is
+# correct.
+generate_expected_cache_tree () {
+	pathspec="$1" &&
+	dir="$2${2:+/}" &&
+	git ls-tree --name-only HEAD -- "$pathspec" >files &&
+	git ls-tree --name-only -d HEAD -- "$pathspec" >subtrees &&
+	printf "SHA %s (%d entries, %d subtrees)\n" "$dir" $(wc -l <files) $(wc -l <subtrees) &&
+	while read subtree
+	do
+		generate_expected_cache_tree "$pathspec/$subtree/" "$subtree" || return 1
+	done <subtrees
+}
+
+test_cache_tree () {
+	generate_expected_cache_tree "." >expect &&
+	cmp_cache_tree expect &&
+	rm expect actual files subtrees &&
+	git status --porcelain -- ':!status' ':!expected.status' >status &&
+	if test -n "$1"
+	then
+		test_cmp "$1" status
+	else
+		test_must_be_empty status
+	fi
+}
+
+test_invalid_cache_tree () {
+	printf "invalid                                  %s ()\n" "" "$@" >expect &&
+	test-tool dump-cache-tree |
+	sed -n -e "s/[0-9]* subtrees//" -e '/#(ref)/d' -e '/^invalid /p' >actual &&
+	test_cmp expect actual
+}
+
+test_no_cache_tree () {
+	>expect &&
+	cmp_cache_tree expect
+}
+
+test_expect_success 'initial commit has cache-tree' '
+	test_commit foo &&
+	test_cache_tree
 '
 
-test_expect_success 'write-tree returns same OID as HEAD tree' '
-	cd repo &&
-	tree=$(grit write-tree) &&
-	head_tree=$(grit rev-parse HEAD^{tree}) &&
-	test "$tree" = "$head_tree"
+test_expect_success 'read-tree HEAD establishes cache-tree' '
+	git read-tree HEAD &&
+	test_cache_tree
 '
 
-test_expect_success 'repeated write-tree returns identical OID' '
-	cd repo &&
-	tree1=$(grit write-tree) &&
-	tree2=$(grit write-tree) &&
-	test "$tree1" = "$tree2"
+test_expect_success 'git-add invalidates cache-tree' '
+	test_when_finished "git reset --hard; git read-tree HEAD" &&
+	echo "I changed this file" >foo &&
+	git add foo &&
+	test_invalid_cache_tree
 '
 
-test_expect_success 'write-tree after no-op update-index is stable' '
-	cd repo &&
-	tree_before=$(grit write-tree) &&
-	grit update-index --refresh &&
-	tree_after=$(grit write-tree) &&
-	test "$tree_before" = "$tree_after"
+test_expect_success 'git-add in subdir invalidates cache-tree' '
+	test_when_finished "git reset --hard; git read-tree HEAD" &&
+	mkdir dirx &&
+	echo "I changed this file" >dirx/foo &&
+	git add dirx/foo &&
+	test_invalid_cache_tree
 '
 
-test_expect_success 'write-tree changes after modifying a file' '
-	cd repo &&
-	tree_before=$(grit write-tree) &&
-	echo "modified" >a.txt &&
-	grit update-index --add a.txt &&
-	tree_after=$(grit write-tree) &&
-	test "$tree_before" != "$tree_after"
-'
-
-test_expect_success 'write-tree after restoring original content returns original tree' '
-	cd repo &&
-	original_tree=$(grit rev-parse HEAD^{tree}) &&
-	echo "a" >a.txt &&
-	grit update-index --add a.txt &&
-	restored_tree=$(grit write-tree) &&
-	test "$original_tree" = "$restored_tree"
-'
-
-test_expect_success 'write-tree after adding new file differs' '
-	cd repo &&
-	tree_before=$(grit write-tree) &&
-	echo "new" >new.txt &&
-	grit update-index --add new.txt &&
-	tree_after=$(grit write-tree) &&
-	test "$tree_before" != "$tree_after"
-'
-
-test_expect_success 'write-tree after removing added file returns to original' '
-	cd repo &&
-	tree_before=$(grit write-tree) &&
-	grit update-index --force-remove new.txt &&
-	tree_after=$(grit write-tree) &&
-	original=$(grit rev-parse HEAD^{tree}) &&
-	test "$tree_after" = "$original"
-'
-
-test_expect_success 'write-tree after only subdir change has different root but same sibling subtree' '
-	cd repo &&
-	tree_before=$(grit write-tree) &&
-	grit ls-tree "$tree_before" >entries_before &&
-	echo "modified c" >dir/c.txt &&
-	grit update-index --add dir/c.txt &&
-	tree_after=$(grit write-tree) &&
-	test "$tree_before" != "$tree_after" &&
-	grit ls-tree "$tree_after" >entries_after &&
-	blob_a_before=$(awk "\$4==\"a.txt\" {print \$3}" entries_before) &&
-	blob_a_after=$(awk "\$4==\"a.txt\" {print \$3}" entries_after) &&
-	test "$blob_a_before" = "$blob_a_after"
-'
-
-test_expect_success 'restore dir/c.txt to original' '
-	cd repo &&
-	echo "c" >dir/c.txt &&
-	grit update-index --add dir/c.txt
-'
-
-test_expect_success 'write-tree with many files' '
-	cd repo &&
-	mkdir -p many &&
-	for i in $(seq 1 50); do
-		echo "file $i" >many/f$i.txt
-	done &&
-	grit add many/ &&
-	tree=$(grit write-tree) &&
-	grit ls-tree "$tree" many >entries &&
-	test_line_count = 1 entries &&
-	many_oid=$(awk "{print \$3}" entries) &&
-	grit ls-tree "$many_oid" >many_entries &&
-	test_line_count = 50 many_entries
-'
-
-test_expect_success 'write-tree is idempotent with many files' '
-	cd repo &&
-	tree1=$(grit write-tree) &&
-	tree2=$(grit write-tree) &&
-	test "$tree1" = "$tree2"
-'
-
-test_expect_success 'modifying one of many files only changes root and parent subtree' '
-	cd repo &&
-	tree_before=$(grit write-tree) &&
-	echo "modified" >many/f25.txt &&
-	grit update-index --add many/f25.txt &&
-	tree_after=$(grit write-tree) &&
-	test "$tree_before" != "$tree_after" &&
-	grit ls-tree "$tree_before" >before &&
-	grit ls-tree "$tree_after" >after &&
-	dir_before=$(awk "\$4==\"dir\" {print \$3}" before) &&
-	dir_after=$(awk "\$4==\"dir\" {print \$3}" after) &&
-	test "$dir_before" = "$dir_after"
-'
-
-test_expect_success 'write-tree after read-tree reset matches' '
-	cd repo &&
-	head_tree=$(grit rev-parse HEAD^{tree}) &&
-	grit read-tree --reset "$head_tree" &&
-	tree=$(grit write-tree) &&
-	test "$tree" = "$head_tree"
-'
-
-test_expect_success 'commit with many files for further tests' '
-	cd repo &&
-	grit add many/ a.txt b.txt dir/c.txt &&
-	test_tick &&
-	grit commit -m "with many"
-'
-
-test_expect_success 'write-tree after read-tree of another commit' '
-	cd repo &&
-	second_tree=$(grit rev-parse HEAD^{tree}) &&
-	first_tree=$(grit rev-parse HEAD~1^{tree}) &&
-	grit read-tree --reset "$first_tree" &&
-	tree=$(grit write-tree) &&
-	test "$tree" = "$first_tree" &&
-	grit read-tree --reset "$second_tree" &&
-	tree=$(grit write-tree) &&
-	test "$tree" = "$second_tree"
-'
-
-test_expect_success 'fresh index write-tree matches after re-adding all files' '
-	cd repo &&
-	expected=$(grit rev-parse HEAD^{tree}) &&
-	rm -f .git/index &&
-	grit add a.txt b.txt dir/c.txt many/ &&
-	actual=$(grit write-tree) &&
-	test "$expected" = "$actual"
-'
-
-test_expect_success 'write-tree with nested directories' '
-	cd repo &&
-	mkdir -p deep/a/b/c &&
-	echo "leaf" >deep/a/b/c/leaf.txt &&
-	grit add deep/ &&
-	tree=$(grit write-tree) &&
-	grit ls-tree -r "$tree" deep >actual &&
-	grep "deep/a/b/c/leaf.txt" actual
-'
-
-test_expect_success 'write-tree after removing directory entries' '
-	cd repo &&
-	tree_with=$(grit write-tree) &&
-	grit update-index --force-remove deep/a/b/c/leaf.txt &&
-	tree_without=$(grit write-tree) &&
-	test "$tree_with" != "$tree_without" &&
-	grit ls-tree -r "$tree_without" >entries &&
-	! grep "deep" entries
-'
-
-test_expect_success 'empty subdirectory does not appear in tree' '
-	cd repo &&
-	mkdir -p emptydir &&
-	tree=$(grit write-tree) &&
-	grit ls-tree "$tree" >entries &&
-	! grep "emptydir" entries
-'
-
-test_expect_success 'write-tree with only executables' '
-	cd repo &&
-	rm -f .git/index &&
-	echo "#!/bin/sh" >exec1.sh &&
-	echo "#!/bin/sh" >exec2.sh &&
-	chmod +x exec1.sh exec2.sh &&
-	grit update-index --add exec1.sh exec2.sh &&
-	tree=$(grit write-tree) &&
-	grit ls-tree "$tree" >entries &&
-	test_line_count = 2 entries &&
-	grep "100755" entries
-'
-
-test_expect_success 'write-tree preserves file modes' '
-	cd repo &&
-	grit ls-tree "$(grit write-tree)" >entries &&
-	mode1=$(awk "\$4==\"exec1.sh\" {print \$1}" entries) &&
-	test "$mode1" = "100755"
-'
-
-test_expect_success 'write-tree after chmod change reflects new mode' '
-	cd repo &&
-	rm -f .git/index &&
-	chmod 644 exec1.sh &&
-	grit update-index --add exec1.sh exec2.sh &&
-	tree=$(grit write-tree) &&
-	grit ls-tree "$tree" >entries &&
-	mode1=$(awk "\$4==\"exec1.sh\" {print \$1}" entries) &&
-	test "$mode1" = "100644"
-'
-
-test_expect_success 'large tree with 200 entries' '
-	cd repo &&
-	rm -f .git/index &&
-	for i in $(seq 1 200); do
-		echo "content $i" >file_$i.txt
-	done &&
-	grit add file_*.txt &&
-	tree=$(grit write-tree) &&
-	grit ls-tree "$tree" >entries &&
-	test_line_count = 200 entries
-'
-
-test_expect_success 'write-tree and ls-tree roundtrip for large tree' '
-	cd repo &&
-	tree=$(grit write-tree) &&
-	grit ls-tree "$tree" >ls_out &&
-	grit mktree <ls_out >mktree_sha &&
-	test "$tree" = "$(cat mktree_sha)"
-'
-
-test_expect_success 'write-tree after index-info load' '
-	cd repo &&
-	rm -f .git/index &&
-	blob=$(echo "hello" | grit hash-object -w --stdin) &&
-	grit update-index --index-info <<-EOF &&
-	100644 $blob 0	loaded.txt
+test_expect_success 'git-add in subdir does not invalidate sibling cache-tree' '
+	git tag no-children &&
+	test_when_finished "git reset --hard no-children; git read-tree HEAD" &&
+	mkdir dir1 dir2 &&
+	test_commit dir1/a &&
+	test_commit dir2/b &&
+	echo "I changed this file" >dir1/a &&
+	test_when_finished "rm before" &&
+	cat >before <<-\EOF &&
+	SHA  (3 entries, 2 subtrees)
+	SHA dir1/ (1 entries, 0 subtrees)
+	SHA dir2/ (1 entries, 0 subtrees)
 	EOF
-	tree=$(grit write-tree) &&
-	grit ls-tree "$tree" >actual &&
-	grep "loaded.txt" actual
+	cmp_cache_tree before &&
+	echo "I changed this file" >dir1/a &&
+	git add dir1/a &&
+	cat >expect <<-\EOF &&
+	invalid                                   (2 subtrees)
+	invalid                                  dir1/ (0 subtrees)
+	SHA dir2/ (1 entries, 0 subtrees)
+	EOF
+	cmp_cache_tree expect
 '
 
-test_expect_success 'write-tree speed: 200 files completes in reasonable time' '
-	cd repo &&
+test_expect_success 'update-index invalidates cache-tree' '
+	test_when_finished "git reset --hard; git read-tree HEAD" &&
+	echo "I changed this file" >foo &&
+	git update-index --add foo &&
+	test_invalid_cache_tree
+'
+
+test_expect_success 'write-tree establishes cache-tree' '
+	test-tool scrap-cache-tree &&
+	git write-tree &&
+	test_cache_tree
+'
+
+test_expect_success 'test-tool scrap-cache-tree works' '
+	git read-tree HEAD &&
+	test-tool scrap-cache-tree &&
+	test_no_cache_tree
+'
+
+test_expect_success 'second commit has cache-tree' '
+	test_commit bar &&
+	test_cache_tree
+'
+
+test_expect_success 'commit --interactive gives cache-tree on partial commit' '
+	test_when_finished "git reset --hard" &&
+	cat <<-\EOT >foo.c &&
+	int foo()
+	{
+		return 42;
+	}
+	int bar()
+	{
+		return 42;
+	}
+	EOT
+	git add foo.c &&
+	test_invalid_cache_tree &&
+	git commit -m "add a file" &&
+	test_cache_tree &&
+	cat <<-\EOT >foo.c &&
+	int foo()
+	{
+		return 43;
+	}
+	int bar()
+	{
+		return 44;
+	}
+	EOT
+	test_write_lines p 1 "" s n y q |
+	git commit --interactive -m foo &&
+	cat <<-\EOF >expected.status &&
+	 M foo.c
+	EOF
+	test_cache_tree expected.status
+'
+
+test_expect_success 'commit -p with shrinking cache-tree' '
+	mkdir -p deep/very-long-subdir &&
+	echo content >deep/very-long-subdir/file &&
+	git add deep &&
+	git commit -m add &&
+	git rm -r deep &&
+
+	before=$(wc -c <.git/index) &&
+	git commit -m delete -p &&
+	after=$(wc -c <.git/index) &&
+
+	# double check that the index shrank
+	test $before -gt $after &&
+
+	# and that our index was not corrupted
+	git fsck
+'
+
+test_expect_success 'commit in child dir has cache-tree' '
+	mkdir dir &&
+	>dir/child.t &&
+	git add dir/child.t &&
+	git commit -m dir/child.t &&
+	test_cache_tree
+'
+
+test_expect_success 'reset --hard gives cache-tree' '
+	test-tool scrap-cache-tree &&
+	git reset --hard &&
+	test_cache_tree
+'
+
+test_expect_success 'reset --hard without index gives cache-tree' '
 	rm -f .git/index &&
-	for i in $(seq 1 200); do
-		echo "content $i" >speed_$i.txt
-	done &&
-	grit add speed_*.txt &&
-	start=$(date +%s) &&
-	grit write-tree >/dev/null &&
-	end=$(date +%s) &&
-	elapsed=$((end - start)) &&
-	test "$elapsed" -lt 10
+	git clean -fd &&
+	git reset --hard &&
+	test_cache_tree
+'
+
+test_expect_success 'checkout gives cache-tree' '
+	git tag current &&
+	git checkout HEAD^ &&
+	test_cache_tree
+'
+
+test_expect_success 'checkout -b gives cache-tree' '
+	git checkout current &&
+	git checkout -b prev HEAD^ &&
+	test_cache_tree
+'
+
+test_expect_success 'checkout -B gives cache-tree' '
+	git checkout current &&
+	git checkout -B prev HEAD^ &&
+	test_cache_tree
+'
+
+test_expect_success 'merge --ff-only maintains cache-tree' '
+	git checkout current &&
+	git checkout -b changes &&
+	test_commit llamas &&
+	test_commit pachyderm &&
+	test_cache_tree &&
+	git checkout current &&
+	test_cache_tree &&
+	git merge --ff-only changes &&
+	test_cache_tree
+'
+
+test_expect_success 'merge maintains cache-tree' '
+	git checkout current &&
+	git checkout -b changes2 &&
+	test_commit alpacas &&
+	test_cache_tree &&
+	git checkout current &&
+	test_commit struthio &&
+	test_cache_tree &&
+	git merge changes2 &&
+	test_cache_tree
+'
+
+test_expect_success 'partial commit gives cache-tree' '
+	git checkout -b partial no-children &&
+	test_commit one &&
+	test_commit two &&
+	echo "some change" >one.t &&
+	git add one.t &&
+	echo "some other change" >two.t &&
+	git commit two.t -m partial &&
+	cat <<-\EOF >expected.status &&
+	M  one.t
+	EOF
+	test_cache_tree expected.status
+'
+
+test_expect_success 'no phantom error when switching trees' '
+	mkdir newdir &&
+	>newdir/one &&
+	git add newdir/one &&
+	git checkout 2>errors &&
+	test_must_be_empty errors
+'
+
+test_expect_success 'switching trees does not invalidate shared index' '
+	(
+		sane_unset GIT_TEST_SPLIT_INDEX &&
+		git update-index --split-index &&
+		>split &&
+		git add split &&
+		test-tool dump-split-index .git/index | grep -v ^own >before &&
+		git commit -m "as-is" &&
+		test-tool dump-split-index .git/index | grep -v ^own >after &&
+		test_cmp before after
+	)
 '
 
 test_done

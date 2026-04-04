@@ -1,309 +1,95 @@
 #!/bin/sh
-#
-# Tests for 'checkout $tree -- $paths' — checking out specific paths from commits.
-# Adapted from git/t/t2022-checkout-paths.sh
 
 test_description='checkout $tree -- $paths'
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# ---------------------------------------------------------------------------
-# Setup: two branches with different directory contents
-# ---------------------------------------------------------------------------
-test_expect_success 'setup' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
-
+test_expect_success setup '
 	mkdir dir &&
-	echo master-main >dir/main &&
+	>dir/main &&
 	echo common >dir/common &&
 	git add dir/main dir/common &&
-	git commit -m "master has dir/main" &&
-	git rev-parse HEAD >../master_oid &&
-
+	test_tick && git commit -m "main has dir/main" &&
 	git checkout -b next &&
-	git rm dir/main &&
+	git mv dir/main dir/next0 &&
 	echo next >dir/next1 &&
 	git add dir &&
-	git commit -m "next has dir/next but not dir/main" &&
-	git rev-parse HEAD >../next_oid
+	test_tick && git commit -m "next has dir/next but not dir/main"
 '
 
-# ---------------------------------------------------------------------------
-# Checking out paths from another branch brings in files
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout branch -- dir brings in files from that branch' '
-	cd repo &&
+test_expect_success 'checking out paths out of a tree does not clobber unrelated paths' '
+	git checkout next &&
+	git reset --hard &&
+	rm dir/next0 &&
+	cat dir/common >expect.common &&
+	echo modified >expect.next1 &&
+	cat expect.next1 >dir/next1 &&
+	echo untracked >expect.next2 &&
+	cat expect.next2 >dir/next2 &&
+
+	git checkout main dir &&
+
+	test_cmp expect.common dir/common &&
+	test_path_is_file dir/main &&
+	git diff --exit-code main dir/main &&
+
+	test_path_is_missing dir/next0 &&
+	test_cmp expect.next1 dir/next1 &&
+	test_path_is_file dir/next2 &&
+	test_must_fail git ls-files --error-unmatch dir/next2 &&
+	test_cmp expect.next2 dir/next2
+'
+
+test_expect_success 'do not touch unmerged entries matching $path but not in $tree' '
 	git checkout next &&
 	git reset --hard &&
 
-	git checkout master -- dir &&
+	cat dir/common >expect.common &&
+	EMPTY_SHA1=$(git hash-object -w --stdin </dev/null) &&
+	git rm dir/next0 &&
+	cat >expect.next0 <<-EOF &&
+	100644 $EMPTY_SHA1 1	dir/next0
+	100644 $EMPTY_SHA1 2	dir/next0
+	EOF
+	git update-index --index-info <expect.next0 &&
 
-	test -f dir/main &&
-	echo master-main >expect &&
-	test_cmp expect dir/main &&
-	echo common >expect_common &&
-	test_cmp expect_common dir/common
+	git checkout main dir &&
+
+	test_cmp expect.common dir/common &&
+	test_path_is_file dir/main &&
+	git diff --exit-code main dir/main &&
+	git ls-files -s dir/next0 >actual.next0 &&
+	test_cmp expect.next0 actual.next0
 '
 
-# ---------------------------------------------------------------------------
-# checkout HEAD -- file restores file content
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout HEAD -- file restores content' '
-	cd repo &&
-	git checkout master &&
+test_expect_success 'do not touch files that are already up-to-date' '
 	git reset --hard &&
-
-	echo modified >dir/main &&
-	git checkout HEAD -- dir/main &&
-	echo master-main >expect &&
-	test_cmp expect dir/main
+	echo one >file1 &&
+	echo two >file2 &&
+	git add file1 file2 &&
+	git commit -m base &&
+	echo modified >file1 &&
+	test-tool chmtime =1000000000 file2 &&
+	git update-index -q --refresh &&
+	git checkout HEAD -- file1 file2 &&
+	echo one >expect &&
+	test_cmp expect file1 &&
+	echo "1000000000" >expect &&
+	test-tool chmtime --get file2 >actual &&
+	test_cmp expect actual
 '
 
-# ---------------------------------------------------------------------------
-# checkout <commit> -- path from an older commit
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout <commit> -- path restores older version' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-	echo "second version" >dir/main &&
-	git commit -a -m "update dir/main" &&
-
-	master_oid=$(cat ../master_oid) &&
-	git checkout "$master_oid" -- dir/main &&
-	echo master-main >expect &&
-	test_cmp expect dir/main
-'
-
-# ---------------------------------------------------------------------------
-# checkout from tree stages the file
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout <tree> -- path stages the file' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-
-	git checkout next -- dir/next1 &&
-	git diff --cached --name-only >staged &&
-	grep "dir/next1" staged
-'
-
-# ---------------------------------------------------------------------------
-# checkout -- path does not move HEAD
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout <tree> -- path does not move HEAD' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-	before=$(git rev-parse HEAD) &&
-	git checkout next -- dir/next1 &&
-	after=$(git rev-parse HEAD) &&
-	test "$before" = "$after"
-'
-
-# ---------------------------------------------------------------------------
-# checkout -- path preserves unrelated working tree changes
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout -- path preserves unrelated working tree changes' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-
-	echo local-change >dir/common &&
-	git checkout next -- dir/next1 &&
-	echo local-change >expect &&
-	test_cmp expect dir/common
-'
-
-# ---------------------------------------------------------------------------
-# checkout HEAD -- path on unmodified file is a no-op
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout HEAD -- on clean file is a no-op' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-	git checkout HEAD -- dir/main &&
-	git diff --exit-code &&
+test_expect_success 'checkout HEAD adds deleted intent-to-add file back to index' '
+	echo "nonempty" >nonempty &&
+	>empty &&
+	git add nonempty empty &&
+	git commit -m "create files to be deleted" &&
+	git rm --cached nonempty empty &&
+	git add -N nonempty empty &&
+	git checkout HEAD nonempty empty &&
 	git diff --cached --exit-code
-'
-
-# ---------------------------------------------------------------------------
-# checkout -- multiple paths
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout -- multiple paths at once' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-
-	# Save current HEAD content for comparison
-	cat dir/main >saved_main &&
-	cat dir/common >saved_common &&
-
-	echo mod1 >dir/main &&
-	echo mod2 >dir/common &&
-	git checkout HEAD -- dir/main dir/common &&
-	test_cmp saved_main dir/main &&
-	test_cmp saved_common dir/common
-'
-
-# ---------------------------------------------------------------------------
-# checkout branch -- path adds file that does not exist on current branch
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout from other branch adds missing file' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-
-	test_path_is_missing dir/next1 &&
-	git checkout next -- dir/next1 &&
-	test -f dir/next1 &&
-	echo next >expect &&
-	test_cmp expect dir/next1
-'
-
-# ---------------------------------------------------------------------------
-# checkout path that does not exist in tree fails
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout nonexistent path from tree fails' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-	test_must_fail git checkout HEAD -- nonexistent 2>err &&
-	test -s err
-'
-
-# ---------------------------------------------------------------------------
-# checkout -- path with directory argument
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout HEAD -- dir restores entire directory' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-
-	# Save current HEAD content for comparison
-	cat dir/main >saved_main &&
-	cat dir/common >saved_common &&
-
-	echo changed >dir/main &&
-	echo changed >dir/common &&
-	git checkout HEAD -- dir &&
-	test_cmp saved_main dir/main &&
-	test_cmp saved_common dir/common
-'
-
-# ---------------------------------------------------------------------------
-# checkout -- path with wildcard/glob
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout -- "dir/*" restores all files in dir' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-	cat dir/main >saved_main &&
-	cat dir/common >saved_common &&
-	echo globbed >dir/main &&
-	echo globbed >dir/common &&
-	git checkout HEAD -- "dir/main" "dir/common" &&
-	test_cmp saved_main dir/main &&
-	test_cmp saved_common dir/common
-'
-
-# ---------------------------------------------------------------------------
-# checkout path from branch does not affect HEAD
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout path from branch does not change branch' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-	before_branch=$(git symbolic-ref --short HEAD) &&
-	git checkout next -- dir/next1 &&
-	after_branch=$(git symbolic-ref --short HEAD) &&
-	test "$before_branch" = "$after_branch"
-'
-
-# ---------------------------------------------------------------------------
-# checkout path from index restores staged version
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout -- path restores from index (staged version)' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-	echo staged-version >dir/main &&
-	git add dir/main &&
-	echo worktree-version >dir/main &&
-	git checkout -- dir/main &&
-	echo staged-version >expect &&
-	test_cmp expect dir/main &&
-	git reset --hard
-'
-
-# ---------------------------------------------------------------------------
-# checkout <commit> -- . restores everything from that commit
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout <commit> -- . restores entire tree from commit' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-	master_oid=$(cat ../master_oid) &&
-	git checkout "$master_oid" -- . &&
-	echo master-main >expect &&
-	test_cmp expect dir/main
-'
-
-# ---------------------------------------------------------------------------
-# checkout path stages the result
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout <branch> -- path stages result in index' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-	git checkout next -- dir/next1 &&
-	git diff --cached --name-only >staged &&
-	grep dir/next1 staged &&
-	git reset --hard
-'
-
-# ---------------------------------------------------------------------------
-# checkout path to file that was deleted on current branch
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout path from branch restores deleted file' '
-	cd repo &&
-	git checkout next &&
-	git reset --hard $(cat ../next_oid) &&
-	test_path_is_missing dir/main &&
-	git checkout master -- dir/main &&
-	test -f dir/main &&
-	git checkout master
-'
-
-# ---------------------------------------------------------------------------
-# checkout -- with only separator and no path fails
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout HEAD -- . is a no-op on clean tree' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-	before=$(git rev-parse HEAD) &&
-	git checkout HEAD -- . &&
-	after=$(git rev-parse HEAD) &&
-	test "$before" = "$after"
-'
-
-# ---------------------------------------------------------------------------
-# checkout path overwrites untracked file when target has that path
-# ---------------------------------------------------------------------------
-test_expect_success 'checkout path overwrites untracked file if target has it' '
-	cd repo &&
-	git checkout master &&
-	git reset --hard &&
-	git checkout next -- dir/next1 &&
-	test -f dir/next1 &&
-	echo next >expect &&
-	test_cmp expect dir/next1 &&
-	git reset --hard
 '
 
 test_done

@@ -1,35 +1,63 @@
 #!/bin/sh
 
-test_description='update-index refresh tests'
+test_description='update-index refresh tests related to racy timestamps'
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
+reset_files () {
 	echo content >file &&
 	echo content >other &&
+	test_set_magic_mtime file &&
+	test_set_magic_mtime other
+}
+
+update_assert_changed () {
+	test_set_magic_mtime .git/index &&
+	test_might_fail git update-index "$1" &&
+	! test_is_magic_mtime .git/index
+}
+
+test_expect_success 'setup' '
+	reset_files &&
+	# we are calling reset_files() a couple of times during tests;
+	# test-tool chmtime does not change the ctime; to not weaken
+	# or even break our tests, disable ctime-checks entirely
+	git config core.trustctime false &&
 	git add file other &&
 	git commit -m "initial import"
 '
 
-test_expect_success 'update-index --refresh with clean worktree' '
+test_expect_success '--refresh has no racy timestamps to fix' '
+	reset_files &&
+	# set the index time far enough to the future;
+	# it must be at least 3 seconds for VFAT
+	test_set_magic_mtime .git/index +60 &&
 	git update-index --refresh &&
-	git diff-files --quiet
+	test_is_magic_mtime .git/index +60
 '
 
-test_expect_success 'update-index --refresh detects changes' '
-	echo modified >file &&
-	test_must_fail git diff-files --quiet &&
-	echo content >file &&
-	git update-index --refresh &&
-	git diff-files --quiet
+test_expect_success '--refresh should fix racy timestamp' '
+	reset_files &&
+	update_assert_changed --refresh
 '
 
-test_expect_success 'update-index --really-refresh forces restat' '
-	git update-index --really-refresh &&
-	git diff-files --quiet
+test_expect_success '--really-refresh should fix racy timestamp' '
+	reset_files &&
+	update_assert_changed --really-refresh
+'
+
+test_expect_success '--refresh should fix racy timestamp if other file needs update' '
+	reset_files &&
+	echo content2 >other &&
+	test_set_magic_mtime other &&
+	update_assert_changed --refresh
+'
+
+test_expect_success '--refresh should fix racy timestamp if racy file needs update' '
+	reset_files &&
+	echo content2 >file &&
+	test_set_magic_mtime file &&
+	update_assert_changed --refresh
 '
 
 test_done

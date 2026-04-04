@@ -1,64 +1,165 @@
 #!/bin/sh
 
-test_description='git archive with various tree structures'
+test_description='git archive attribute tests'
 
-cd "$(dirname "$0")" || exit 1
+TEST_CREATE_REPO_NO_TEMPLATE=1
 . ./test-lib.sh
 
+SUBSTFORMAT='%H (%h)%n'
+
+test_expect_exists() {
+	test_expect_${2:-success} " $1 exists" "test -e $1"
+}
+
+test_expect_missing() {
+	test_expect_${2:-success} " $1 does not exist" "test ! -e $1"
+}
+
+extract_tar_to_dir () {
+	(mkdir "$1" && cd "$1" && "$TAR" xf -) <"$1.tar"
+}
+
 test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
+	echo ignored >ignored &&
+	mkdir .git/info &&
+	echo ignored export-ignore >>.git/info/attributes &&
+	git add ignored &&
 
-	echo "content" >included.txt &&
-	echo "more" >another.txt &&
+	echo ignored by tree >ignored-by-tree &&
+	echo ignored-by-tree export-ignore >.gitattributes &&
+	mkdir ignored-by-tree.d &&
+	>ignored-by-tree.d/file &&
+	echo ignored-by-tree.d export-ignore >>.gitattributes &&
+	git add ignored-by-tree ignored-by-tree.d .gitattributes &&
+
 	mkdir subdir &&
-	echo "sub content" >subdir/file.txt &&
-	mkdir subdir/deeper &&
-	echo "deep content" >subdir/deeper/deep.txt &&
-	git add included.txt another.txt subdir &&
-	test_tick &&
-	git commit -m initial
+	>subdir/included &&
+	>subdir/ignored-by-subtree &&
+	>subdir/ignored-by-tree &&
+	echo ignored-by-subtree export-ignore >subdir/.gitattributes &&
+	git add subdir &&
+
+	echo ignored by worktree >ignored-by-worktree &&
+	echo ignored-by-worktree export-ignore >.gitattributes &&
+	git add ignored-by-worktree &&
+
+	mkdir excluded-by-pathspec.d &&
+	>excluded-by-pathspec.d/file &&
+	git add excluded-by-pathspec.d &&
+
+	printf "A\$Format:%s\$O" "$SUBSTFORMAT" >nosubstfile &&
+	printf "A\$Format:%s\$O" "$SUBSTFORMAT" >substfile1 &&
+	printf "A not substituted O" >substfile2 &&
+	echo "substfile?" export-subst >>.git/info/attributes &&
+	git add nosubstfile substfile1 substfile2 &&
+
+	git commit -m. &&
+
+	git clone --template= --bare . bare &&
+	mkdir bare/info &&
+	cp .git/info/attributes bare/info/attributes
 '
 
-test_expect_success 'archive includes all tracked files' '
-	git archive HEAD >all.tar &&
-	mkdir -p all-extract &&
-	(cd all-extract && tar xf ../all.tar) &&
-	test_path_is_file all-extract/included.txt &&
-	test_path_is_file all-extract/another.txt &&
-	test_path_is_file all-extract/subdir/file.txt &&
-	test_path_is_file all-extract/subdir/deeper/deep.txt
+test_expect_success 'git archive' '
+	git archive HEAD >archive.tar &&
+	(mkdir archive && cd archive && "$TAR" xf -) <archive.tar
 '
 
-test_expect_success 'archive with prefix adds directory prefix' '
-	git archive --prefix=myproject/ HEAD >prefix.tar &&
-	mkdir -p prefix-extract &&
-	(cd prefix-extract && tar xf ../prefix.tar) &&
-	test_path_is_file prefix-extract/myproject/included.txt &&
-	test_path_is_file prefix-extract/myproject/subdir/file.txt
+test_expect_missing	archive/ignored
+test_expect_missing	archive/ignored-by-tree
+test_expect_missing	archive/ignored-by-tree.d
+test_expect_missing	archive/ignored-by-tree.d/file
+test_expect_exists	archive/ignored-by-worktree
+test_expect_exists	archive/excluded-by-pathspec.d
+test_expect_exists	archive/excluded-by-pathspec.d/file
+
+test_expect_success 'git archive with pathspec' '
+	git archive HEAD ":!excluded-by-pathspec.d" >archive-pathspec.tar &&
+	extract_tar_to_dir archive-pathspec
 '
 
-test_expect_success 'archive of specific path' '
-	git archive HEAD -- subdir >subdir.tar &&
-	mkdir -p subdir-extract &&
-	(cd subdir-extract && tar xf ../subdir.tar) &&
-	test_path_is_file subdir-extract/subdir/file.txt &&
-	test_path_is_missing subdir-extract/included.txt
+test_expect_missing	archive-pathspec/ignored
+test_expect_missing	archive-pathspec/ignored-by-tree
+test_expect_missing	archive-pathspec/ignored-by-tree.d
+test_expect_missing	archive-pathspec/ignored-by-tree.d/file
+test_expect_exists	archive-pathspec/ignored-by-worktree
+test_expect_missing	archive-pathspec/excluded-by-pathspec.d
+test_expect_missing	archive-pathspec/excluded-by-pathspec.d/file
+
+test_expect_success 'git archive with wildcard pathspec' '
+	git archive HEAD ":!excluded-by-p*" >archive-pathspec-wildcard.tar &&
+	extract_tar_to_dir archive-pathspec-wildcard
 '
 
-test_expect_success 'archive preserves file content' '
-	git archive HEAD >content.tar &&
-	mkdir -p content-extract &&
-	(cd content-extract && tar xf ../content.tar) &&
-	test_cmp included.txt content-extract/included.txt &&
-	test_cmp subdir/file.txt content-extract/subdir/file.txt
+test_expect_missing	archive-pathspec-wildcard/ignored
+test_expect_missing	archive-pathspec-wildcard/ignored-by-tree
+test_expect_missing	archive-pathspec-wildcard/ignored-by-tree.d
+test_expect_missing	archive-pathspec-wildcard/ignored-by-tree.d/file
+test_expect_exists	archive-pathspec-wildcard/ignored-by-worktree
+test_expect_missing	archive-pathspec-wildcard/excluded-by-pathspec.d
+test_expect_missing	archive-pathspec-wildcard/excluded-by-pathspec.d/file
+
+test_expect_success 'git -C subdir archive' '
+	git -C subdir archive HEAD >archive-subdir.tar &&
+	extract_tar_to_dir archive-subdir
 '
 
-test_expect_success 'archive of tree hash works' '
-	tree=$(git rev-parse HEAD^{tree}) &&
-	git archive $tree >tree.tar &&
-	test -s tree.tar
+test_expect_exists	archive-subdir/included
+test_expect_missing	archive-subdir/ignored-by-subtree
+test_expect_missing	archive-subdir/ignored-by-tree
+
+test_expect_success 'git archive with worktree attributes' '
+	git archive --worktree-attributes HEAD >worktree.tar &&
+	(mkdir worktree && cd worktree && "$TAR" xf -) <worktree.tar
+'
+
+test_expect_missing	worktree/ignored
+test_expect_exists	worktree/ignored-by-tree
+test_expect_missing	worktree/ignored-by-worktree
+
+test_expect_success 'git archive --worktree-attributes option' '
+	git archive --worktree-attributes --worktree-attributes HEAD >worktree.tar &&
+	(mkdir worktree2 && cd worktree2 && "$TAR" xf -) <worktree.tar
+'
+
+test_expect_missing	worktree2/ignored
+test_expect_exists	worktree2/ignored-by-tree
+test_expect_missing	worktree2/ignored-by-worktree
+
+test_expect_success 'git archive vs. bare' '
+	(cd bare && git archive HEAD) >bare-archive.tar &&
+	test_cmp_bin archive.tar bare-archive.tar
+'
+
+test_expect_success 'git archive with worktree attributes, bare' '
+	(cd bare &&
+	git -c attr.tree=HEAD archive --worktree-attributes HEAD) >bare-worktree.tar &&
+	(mkdir bare-worktree && cd bare-worktree && "$TAR" xf -) <bare-worktree.tar
+'
+
+test_expect_missing	bare-worktree/ignored
+test_expect_missing	bare-worktree/ignored-by-tree
+test_expect_exists	bare-worktree/ignored-by-worktree
+
+test_expect_success 'export-subst' '
+	git log "--pretty=format:A${SUBSTFORMAT}O" HEAD >substfile1.expected &&
+	test_cmp nosubstfile archive/nosubstfile &&
+	test_cmp substfile1.expected archive/substfile1 &&
+	test_cmp substfile2 archive/substfile2
+'
+
+test_expect_success 'export-subst expands %(describe) once' '
+	echo "\$Format:%(describe)\$" >substfile3 &&
+	echo "\$Format:%(describe)\$" >>substfile3 &&
+	echo "\$Format:%(describe)${LF}%(describe)\$" >substfile4 &&
+	git add substfile[34] &&
+	git commit -m export-subst-describe &&
+	git tag -m export-subst-describe export-subst-describe &&
+	git archive HEAD >archive-describe.tar &&
+	extract_tar_to_dir archive-describe &&
+	desc=$(git describe) &&
+	grep -F "$desc" archive-describe/substfile[34] >substituted &&
+	test_line_count = 1 substituted
 '
 
 test_done

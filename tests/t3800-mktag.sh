@@ -1,77 +1,132 @@
 #!/bin/sh
-# Tests for 'grit mktag'.
-# Ported from git/t/t3800-mktag.sh
 #
-# Note: tests that require `test-tool ref-store`, `git for-each-ref
-# --format="%(*objectname)"`, or `git fast-export` are skipped — those
-# depend on Git internals not yet ported.
+#
 
-test_description='grit mktag: tag object validate and create'
+test_description='git mktag: tag object verify test'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 ###########################################################
-# Initialize repository at script level so $head is available
-# for top-level tag.sig heredocs.
+# check the tag.sig file, expecting verify_tag() to fail,
+# and checking that the error message matches the pattern
+# given in the expect.pat file.
 
-git init .
-git config user.name "Test User"
-git config user.email "test@example.com"
-test_commit A
-test_commit B
-head=$(git rev-parse --verify HEAD)
-head_parent=$(git rev-parse --verify HEAD~)
-tree=$(git rev-parse "HEAD^{tree}")
-blob=$(git rev-parse --verify HEAD:B.t)
-export head head_parent tree blob
+check_verify_failure () {
+	subject=$1 &&
+	message=$2 &&
+	shift 2 &&
 
-###########################################################
-# check_verify_failure SUBJECT [--no-strict] [--fsck-obj-ok]
-#
-# Expects 'tag.sig' in TRASH_DIRECTORY to be a file that mktag rejects.
-# --no-strict: strict mode fails, non-strict mode succeeds.
-# (no --no-strict): both strict and non-strict fail.
-# --fsck-obj-ok: ignored (test-tool not yet ported).
-
-check_verify_failure() {
-	subject=$1
-	shift
-
-	no_strict=
-	while test $# != 0; do
+	no_strict= &&
+	fsck_obj_ok= &&
+	no_strict= &&
+	while test $# != 0
+	do
 		case "$1" in
-		--no-strict)   no_strict=yes ;;
-		--fsck-obj-ok) ;; # ignored
-		esac
+		--no-strict)
+			no_strict=yes
+			;;
+		--fsck-obj-ok)
+			fsck_obj_ok=yes
+			;;
+		esac &&
 		shift
-	done
+	done &&
 
-	test_expect_success "fail in strict mode: $subject" '
-		test_must_fail git mktag <tag.sig
+	test_expect_success "fail with [--[no-]strict]: $subject" '
+		test_must_fail git mktag <tag.sig 2>err &&
+		if test -z "$no_strict"
+		then
+			test_must_fail git mktag <tag.sig 2>err2 &&
+			test_cmp err err2
+		else
+			git mktag --no-strict <tag.sig
+		fi
 	'
 
-	if test -n "$no_strict"; then
-		test_expect_success "succeed with --no-strict: $subject" '
-			git mktag --no-strict <tag.sig
-		'
-	else
-		test_expect_success "fail with --no-strict too: $subject" '
-			test_must_fail git mktag --no-strict <tag.sig
-		'
-	fi
+	test_expect_success "setup: $subject" '
+		tag_ref=refs/tags/bad_tag &&
+
+		# Reset any leftover state from the last $subject
+		rm -rf bad-tag &&
+
+		git init --bare bad-tag &&
+		bad_tag=$(git -C bad-tag hash-object -t tag -w --stdin --literally <tag.sig)
+	'
+
+	test_expect_success "hash-object & fsck unreachable: $subject" '
+		if test -n "$fsck_obj_ok"
+		then
+			git -C bad-tag fsck
+		else
+			test_must_fail git -C bad-tag fsck
+		fi
+	'
+
+	test_expect_success "update-ref & fsck reachable: $subject" '
+		# Make sure the earlier test created it for us
+		git rev-parse "$bad_tag" &&
+
+		# The update-ref of the bad content will fail, do it
+		# anyway to see if it segfaults
+		test_might_fail git -C bad-tag update-ref "$tag_ref" "$bad_tag" &&
+
+		# Manually create the broken, we cannot do it with
+		# update-ref
+		test-tool -C bad-tag ref-store main delete-refs 0 msg "$tag_ref" &&
+		test-tool -C bad-tag ref-store main update-ref msg "$tag_ref" $bad_tag $ZERO_OID REF_SKIP_OID_VERIFICATION &&
+
+		# Unlike fsck-ing unreachable content above, this
+		# will always fail.
+		test_must_fail git -C bad-tag fsck
+	'
+
+	test_expect_success "for-each-ref: $subject" '
+		# Make sure the earlier test created it for us
+		git rev-parse "$bad_tag" &&
+
+		test-tool -C bad-tag ref-store main delete-refs 0 msg "$tag_ref" &&
+		test-tool -C bad-tag ref-store main update-ref msg "$tag_ref" $bad_tag $ZERO_OID REF_SKIP_OID_VERIFICATION &&
+
+		printf "%s tag\t%s\n" "$bad_tag" "$tag_ref" >expected &&
+		git -C bad-tag for-each-ref "$tag_ref" >actual &&
+		test_cmp expected actual &&
+
+		test_must_fail git -C bad-tag for-each-ref --format="%(*objectname)"
+	'
+
+	test_expect_success "fast-export & fast-import: $subject" '
+		# Make sure the earlier test created it for us
+		git rev-parse "$bad_tag" &&
+
+		test_must_fail git -C bad-tag fast-export --all &&
+		test_must_fail git -C bad-tag fast-export "$bad_tag"
+	'
 }
 
 test_expect_mktag_success() {
 	test_expect_success "$1" '
 		git hash-object -t tag -w --stdin <tag.sig >expected &&
+		git fsck --strict &&
+
 		git mktag <tag.sig >hash &&
-		test_cmp expected hash
+		test_cmp expected hash &&
+		test_when_finished "git update-ref -d refs/tags/mytag $(cat hash)" &&
+		git update-ref refs/tags/mytag $(cat hash) $(test_oid zero) &&
+		git fsck --strict
 	'
 }
 
 ###########################################################
-# basic usage
+# first create a commit, so we have a valid object/type
+# for the tag.
+test_expect_success 'setup' '
+	test_commit A &&
+	test_commit B &&
+	head=$(git rev-parse --verify HEAD) &&
+	head_parent=$(git rev-parse --verify HEAD~) &&
+	tree=$(git rev-parse HEAD^{tree}) &&
+	blob=$(git rev-parse --verify HEAD:B.t)
+'
 
 test_expect_success 'basic usage' '
 	cat >tag.sig <<-EOF &&
@@ -81,23 +136,21 @@ test_expect_success 'basic usage' '
 	tagger T A Gger <tagger@example.com> 1206478233 -0500
 	EOF
 	git mktag <tag.sig &&
-	git mktag --no-strict <tag.sig
+	git mktag --end-of-options <tag.sig &&
+	test_expect_code 129 git mktag --unknown-option
 '
 
-test_expect_success 'unknown option is rejected' '
-	test_must_fail git mktag --unknown-option 2>/dev/null
-'
-
-###########################################################
+############################################################
 #  1. length check
 
 cat >tag.sig <<EOF
 too short for a tag
 EOF
 
-check_verify_failure 'Tag object length check'
+check_verify_failure 'Tag object length check' \
+	'^error:.* missingObject:' 'strict'
 
-###########################################################
+############################################################
 #  2. object line label check
 
 cat >tag.sig <<EOF
@@ -108,22 +161,22 @@ tagger . <> 0 +0000
 
 EOF
 
-check_verify_failure '"object" line label check'
+check_verify_failure '"object" line label check' '^error:.* missingObject:'
 
-###########################################################
+############################################################
 #  3. object line hash check
 
 cat >tag.sig <<EOF
-object $(echo "$head" | tr 0-9a-f z)
+object $(echo $head | tr 0-9a-f z)
 type tag
 tag mytag
 tagger . <> 0 +0000
 
 EOF
 
-check_verify_failure '"object" line hash check'
+check_verify_failure '"object" line check' '^error:.* badObjectSha1:'
 
-###########################################################
+############################################################
 #  4. type line label check
 
 cat >tag.sig <<EOF
@@ -134,17 +187,18 @@ tagger . <> 0 +0000
 
 EOF
 
-check_verify_failure '"type" line label check'
+check_verify_failure '"type" line label check' '^error:.* missingTypeEntry:'
 
-###########################################################
-#  5. type line eol check (no trailing newline on type line)
+############################################################
+#  5. type line eol check
 
-printf 'object %s\ntype tagsssssssssssssssssssssssssssssss' "$head" >tag.sig
+echo "object $head" >tag.sig
+printf "type tagsssssssssssssssssssssssssssssss" >>tag.sig
 
-check_verify_failure '"type" line eol check'
+check_verify_failure '"type" line eol check' '^error:.* unterminatedHeader:'
 
-###########################################################
-#  6. tag line label check
+############################################################
+#  6. tag line label check #1
 
 cat >tag.sig <<EOF
 object $head
@@ -154,21 +208,11 @@ tagger . <> 0 +0000
 
 EOF
 
-check_verify_failure '"tag" line label check'
+check_verify_failure '"tag" line label check #1' \
+	'^error:.* missingTagEntry:'
 
-###########################################################
-#  7. type line type-name invalid
-
-cat >tag.sig <<EOF
-object $head
-type taggggggggggggggggggggggggggggggg
-tag mytag
-EOF
-
-check_verify_failure '"type" line type-name length check'
-
-###########################################################
-#  8. tag line label check #2 (empty tag name)
+############################################################
+#  7. tag line label check #2
 
 cat >tag.sig <<EOF
 object $head
@@ -176,20 +220,34 @@ type taggggggggggggggggggggggggggggggg
 tag
 EOF
 
-check_verify_failure '"tag" line label check #2 (empty tag name)'
+check_verify_failure '"tag" line label check #2' \
+	'^error:.* badType:'
 
-###########################################################
-#  9. verify object (hash/type) checks
+############################################################
+#  8. type line type-name length check
 
 cat >tag.sig <<EOF
-object 0000000000000000000000000000000000000001
+object $head
+type taggggggggggggggggggggggggggggggg
+tag mytag
+EOF
+
+check_verify_failure '"type" line type-name length check' \
+	'^error:.* badType:'
+
+############################################################
+#  9. verify object (hash/type) check
+
+cat >tag.sig <<EOF
+object $(test_oid deadbeef)
 type tag
 tag mytag
 tagger . <> 0 +0000
 
 EOF
 
-check_verify_failure 'verify object -- correct type, nonexisting object' \
+check_verify_failure 'verify object (hash/type) check -- correct type, nonexisting object' \
+	'^fatal: could not read tagged object' \
 	--fsck-obj-ok
 
 cat >tag.sig <<EOF
@@ -200,17 +258,19 @@ tagger . <> 0 +0000
 
 EOF
 
-check_verify_failure 'verify object -- made-up type, valid object'
+check_verify_failure 'verify object (hash/type) check -- made-up type, valid object' \
+	'^error:.* badType:'
 
 cat >tag.sig <<EOF
-object 0000000000000000000000000000000000000001
+object $(test_oid deadbeef)
 type tagggg
 tag mytag
 tagger . <> 0 +0000
 
 EOF
 
-check_verify_failure 'verify object -- made-up type, nonexisting object'
+check_verify_failure 'verify object (hash/type) check -- made-up type, nonexisting object' \
+	'^error:.* badType:'
 
 cat >tag.sig <<EOF
 object $head
@@ -220,21 +280,58 @@ tagger . <> 0 +0000
 
 EOF
 
-check_verify_failure 'verify object -- mismatched type, valid object' \
+check_verify_failure 'verify object (hash/type) check -- mismatched type, valid object' \
+	'^fatal: object.*tagged as.*tree.*but is.*commit' \
 	--fsck-obj-ok
 
-###########################################################
-# 10. verify tag-name check (tab in name)
+############################################################
+#  9.5. verify object (hash/type) check -- replacement
 
-printf 'object %s\ntype commit\ntag my\ttag\ntagger . <> 0 +0000\n\n' \
-	"$head" >tag.sig
+test_expect_success 'setup replacement of commit -> commit and tree -> blob' '
+	git replace $head_parent $head &&
+	git replace -f $tree $blob
+'
 
-check_verify_failure 'verify tag-name check (tab in name)' \
+cat >tag.sig <<EOF
+object $head_parent
+type commit
+tag mytag
+tagger . <> 0 +0000
+
+EOF
+
+test_expect_mktag_success 'tag to a commit replaced by another commit'
+
+cat >tag.sig <<EOF
+object $tree
+type tree
+tag mytag
+tagger . <> 0 +0000
+
+EOF
+
+check_verify_failure 'verify object (hash/type) check -- mismatched type, valid object' \
+	'^fatal: object.*tagged as.*tree.*but is.*blob' \
+	--fsck-obj-ok
+
+############################################################
+# 10. verify tag-name check
+
+cat >tag.sig <<EOF
+object $head
+type commit
+tag my	tag
+tagger . <> 0 +0000
+
+EOF
+
+check_verify_failure 'verify tag-name check' \
+	'^error:.* badTagName:' \
 	--no-strict \
 	--fsck-obj-ok
 
-###########################################################
-# 11. tagger line missing
+############################################################
+# 11. tagger line label check #1
 
 cat >tag.sig <<EOF
 object $head
@@ -244,12 +341,13 @@ tag mytag
 This is filler
 EOF
 
-check_verify_failure '"tagger" line label check (missing)' \
+check_verify_failure '"tagger" line label check #1' \
+	'^error:.* missingTaggerEntry:' \
 	--no-strict \
 	--fsck-obj-ok
 
-###########################################################
-# 12. tagger line with no value
+############################################################
+# 12. tagger line label check #2
 
 cat >tag.sig <<EOF
 object $head
@@ -260,12 +358,13 @@ tagger
 This is filler
 EOF
 
-check_verify_failure '"tagger" line label check (empty value)' \
+check_verify_failure '"tagger" line label check #2' \
+	'^error:.* missingTaggerEntry:' \
 	--no-strict \
 	--fsck-obj-ok
 
-###########################################################
-# 13. allow missing tag author name
+############################################################
+# 13. allow missing tag author name like fsck
 
 cat >tag.sig <<EOF
 object $head
@@ -278,17 +377,24 @@ EOF
 
 test_expect_mktag_success 'allow missing tag author name'
 
-###########################################################
-# 14. disallow malformed tagger (unclosed email angle bracket)
+############################################################
+# 14. disallow missing tag author name
 
-printf 'object %s\ntype commit\ntag mytag\ntagger T A Gger <\n> 0 +0000\n\n' \
-	"$head" >tag.sig
+cat >tag.sig <<EOF
+object $head
+type commit
+tag mytag
+tagger T A Gger <
+ > 0 +0000
+
+EOF
 
 check_verify_failure 'disallow malformed tagger' \
+	'^error:.* badEmail:' \
 	--no-strict \
 	--fsck-obj-ok
 
-###########################################################
+############################################################
 # 15. allow empty tag email
 
 cat >tag.sig <<EOF
@@ -301,8 +407,8 @@ EOF
 
 test_expect_mktag_success 'allow empty tag email'
 
-###########################################################
-# 16. allow spaces in tag email
+############################################################
+# 16. allow spaces in tag email like fsck
 
 cat >tag.sig <<EOF
 object $head
@@ -314,16 +420,22 @@ EOF
 
 test_expect_mktag_success 'allow spaces in tag email like fsck'
 
-###########################################################
+############################################################
 # 17. disallow missing tag timestamp
 
-printf 'object %s\ntype commit\ntag mytag\ntagger T A Gger <tagger@example.com>  \n\n' \
-	"$head" >tag.sig
+tr '_' ' ' >tag.sig <<EOF
+object $head
+type commit
+tag mytag
+tagger T A Gger <tagger@example.com>__
 
-check_verify_failure 'disallow missing tag timestamp'
+EOF
 
-###########################################################
-# 18. detect invalid tag timestamp (human-readable date)
+check_verify_failure 'disallow missing tag timestamp' \
+	'^error:.* badDate:'
+
+############################################################
+# 18. detect invalid tag timestamp1
 
 cat >tag.sig <<EOF
 object $head
@@ -333,10 +445,11 @@ tagger T A Gger <tagger@example.com> Tue Mar 25 15:47:44 2008
 
 EOF
 
-check_verify_failure 'detect invalid tag timestamp1'
+check_verify_failure 'detect invalid tag timestamp1' \
+	'^error:.* badDate:'
 
-###########################################################
-# 19. detect invalid tag timestamp (ISO 8601)
+############################################################
+# 19. detect invalid tag timestamp2
 
 cat >tag.sig <<EOF
 object $head
@@ -346,10 +459,11 @@ tagger T A Gger <tagger@example.com> 2008-03-31T12:20:15-0500
 
 EOF
 
-check_verify_failure 'detect invalid tag timestamp2'
+check_verify_failure 'detect invalid tag timestamp2' \
+	'^error:.* badDate:'
 
-###########################################################
-# 20. detect invalid tag timezone (word)
+############################################################
+# 20. detect invalid tag timezone1
 
 cat >tag.sig <<EOF
 object $head
@@ -359,10 +473,11 @@ tagger T A Gger <tagger@example.com> 1206478233 GMT
 
 EOF
 
-check_verify_failure 'detect invalid tag timezone1'
+check_verify_failure 'detect invalid tag timezone1' \
+	'^error:.* badTimezone:'
 
-###########################################################
-# 21. detect invalid tag timezone (spaces inside)
+############################################################
+# 21. detect invalid tag timezone2
 
 cat >tag.sig <<EOF
 object $head
@@ -372,10 +487,11 @@ tagger T A Gger <tagger@example.com> 1206478233 +  30
 
 EOF
 
-check_verify_failure 'detect invalid tag timezone2'
+check_verify_failure 'detect invalid tag timezone2' \
+	'^error:.* badTimezone:'
 
-###########################################################
-# 22. allow out-of-range timezone (no range enforcement)
+############################################################
+# 22. allow invalid tag timezone3 (the maximum is -1200/+1400)
 
 cat >tag.sig <<EOF
 object $head
@@ -385,10 +501,10 @@ tagger T A Gger <tagger@example.com> 1206478233 -1430
 
 EOF
 
-test_expect_mktag_success 'allow out-of-range timezone'
+test_expect_mktag_success 'allow invalid tag timezone'
 
-###########################################################
-# 23. detect extra header entry
+############################################################
+# 23. detect invalid header entry
 
 cat >tag.sig <<EOF
 object $head
@@ -400,39 +516,29 @@ this line should not be here
 EOF
 
 check_verify_failure 'detect invalid header entry' \
+	'^error:.* extraHeaderEntry:' \
 	--no-strict \
 	--fsck-obj-ok
 
-test_expect_success 'extraHeaderEntry: strict fails, no-strict succeeds' '
-	test_must_fail git mktag <tag.sig &&
-	git mktag --no-strict <tag.sig
-'
-
-test_expect_success 'extraHeaderEntry config: error overrides both modes' '
-	git config fsck.extraHeaderEntry error &&
-	test_must_fail git mktag <tag.sig &&
-	test_must_fail git mktag --no-strict <tag.sig &&
-	git config --unset fsck.extraHeaderEntry
-'
-
-test_expect_success 'extraHeaderEntry config: warn allows no-strict' '
-	git config fsck.extraHeaderEntry warn &&
+test_expect_success 'invalid header entry config & fsck' '
 	test_must_fail git mktag <tag.sig &&
 	git mktag --no-strict <tag.sig &&
-	git config --unset fsck.extraHeaderEntry
+
+	test_must_fail git -c fsck.extraHeaderEntry=error mktag <tag.sig &&
+	test_must_fail git -c fsck.extraHeaderEntry=error mktag --no-strict <tag.sig &&
+
+	test_must_fail git -c fsck.extraHeaderEntry=warn mktag <tag.sig &&
+	git -c fsck.extraHeaderEntry=warn mktag --no-strict <tag.sig &&
+
+	git -c fsck.extraHeaderEntry=ignore mktag <tag.sig &&
+	git -c fsck.extraHeaderEntry=ignore mktag --no-strict <tag.sig &&
+
+	git fsck &&
+	git -c fsck.extraHeaderEntry=warn fsck 2>err &&
+	grep "warning .*extraHeaderEntry:" err &&
+	test_must_fail git -c fsck.extraHeaderEntry=error 2>err fsck &&
+	grep "error .* extraHeaderEntry:" err
 '
-
-test_expect_success 'extraHeaderEntry config: ignore allows both modes' '
-	git config fsck.extraHeaderEntry ignore &&
-	git mktag <tag.sig &&
-	git mktag --no-strict <tag.sig &&
-	git config --unset fsck.extraHeaderEntry
-'
-
-
-
-###########################################################
-# Extra newlines / body format
 
 cat >tag.sig <<EOF
 object $head
@@ -454,7 +560,7 @@ tagger T A Gger <tagger@example.com> 1206478233 -0500
 
 EOF
 
-test_expect_mktag_success 'allow a blank line before an empty body'
+test_expect_mktag_success 'allow a blank line before an empty body (1)'
 
 cat >tag.sig <<EOF
 object $head
@@ -463,76 +569,9 @@ tag mytag
 tagger T A Gger <tagger@example.com> 1206478233 -0500
 EOF
 
-test_expect_mktag_success 'allow no blank line before an empty body'
+test_expect_mktag_success 'allow no blank line before an empty body (2)'
 
-###########################################################
-# Tag with blob as target
-
-cat >tag.sig <<EOF
-object $blob
-type blob
-tag myblob
-tagger T A Gger <tagger@example.com> 1206478233 -0500
-
-EOF
-
-test_expect_mktag_success 'create valid tag pointing to blob'
-
-###########################################################
-# Tag with tree as target
-
-cat >tag.sig <<EOF
-object $tree
-type tree
-tag mytree
-tagger T A Gger <tagger@example.com> 1206478233 -0500
-
-EOF
-
-test_expect_mktag_success 'create valid tag pointing to tree'
-
-###########################################################
-# Tag with message body
-
-cat >tag.sig <<EOF
-object $head
-type commit
-tag mytag
-tagger T A Gger <tagger@example.com> 1206478233 -0500
-
-This is a tag message body.
-With multiple lines.
-EOF
-
-test_expect_mktag_success 'create valid tag with message body'
-
-###########################################################
-# Tag with very long tag name
-
-cat >tag.sig <<EOF
-object $head
-type commit
-tag this-is-a-very-long-tag-name-that-should-still-be-accepted-by-mktag
-tagger T A Gger <tagger@example.com> 1206478233 -0500
-
-EOF
-
-test_expect_mktag_success 'create tag with long tag name'
-
-###########################################################
-# Tag with positive timezone
-
-cat >tag.sig <<EOF
-object $head
-type commit
-tag mytag
-tagger T A Gger <tagger@example.com> 1206478233 +0530
-
-EOF
-
-test_expect_mktag_success 'create tag with positive timezone'
-
-###########################################################
+############################################################
 # 24. create valid tag
 
 cat >tag.sig <<EOF

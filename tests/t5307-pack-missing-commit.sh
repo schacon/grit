@@ -4,8 +4,7 @@ test_description='pack should notice missing commit objects'
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init &&
+test_expect_success setup '
 	for i in 1 2 3 4 5
 	do
 		echo "$i" >"file$i" &&
@@ -20,12 +19,16 @@ test_expect_success 'setup' '
 	rm -f ".git/objects/$fanout/$remainder"
 '
 
+test_expect_success 'check corruption' '
+	test_must_fail git fsck
+'
+
 test_expect_success 'rev-list notices corruption (1)' '
-	test_must_fail git rev-list HEAD
+	test_must_fail env GIT_TEST_COMMIT_GRAPH=0 git -c core.commitGraph=false rev-list HEAD
 '
 
 test_expect_success 'rev-list notices corruption (2)' '
-	test_must_fail git rev-list --objects HEAD
+	test_must_fail env GIT_TEST_COMMIT_GRAPH=0 git -c core.commitGraph=false rev-list --objects HEAD
 '
 
 test_expect_success 'pack-objects notices corruption' '

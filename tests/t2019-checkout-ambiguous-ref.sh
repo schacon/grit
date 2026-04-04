@@ -1,54 +1,60 @@
 #!/bin/sh
-#
-# Ported from git/t/t2019-checkout-ambiguous-ref.sh
 
 test_description='checkout handling of ambiguous (branch/tag) refs'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' '
-	git init -q
-'
-
 test_expect_success 'setup ambiguous refs' '
-	echo branch >file &&
-	git add file &&
-	test_tick &&
-	git commit -m branch &&
-	git tag branch &&
+	test_commit branch file &&
 	git branch ambiguity &&
 	git branch vagueness &&
-	echo tag >file &&
-	git add file &&
-	test_tick &&
-	git commit -m tag &&
-	git tag tag &&
-	git tag -f ambiguity HEAD &&
-	echo other >file &&
-	git add file &&
-	test_tick &&
-	git commit -m other &&
-	git tag other
+	test_commit tag file &&
+	git tag ambiguity &&
+	git tag vagueness HEAD:file &&
+	test_commit other file
 '
 
-test_expect_success 'checkout ambiguous ref succeeds and chooses branch' '
-	git checkout ambiguity >output 2>&1 &&
+test_expect_success 'checkout ambiguous ref succeeds' '
+	git checkout ambiguity 2>stderr
+'
+
+test_expect_success 'checkout produces ambiguity warning' '
+	grep "warning.*ambiguous" stderr
+'
+
+test_expect_success 'checkout chooses branch over tag' '
 	echo refs/heads/ambiguity >expect &&
 	git symbolic-ref HEAD >actual &&
 	test_cmp expect actual &&
 	echo branch >expect &&
-	test_cmp expect file &&
-	grep "Switched to branch" output
+	test_cmp expect file
 '
 
-test_expect_success 'checkout vague ref succeeds and chooses branch' '
-	git checkout master >output 2>&1 &&
-	git checkout vagueness >output 2>&1 &&
+test_expect_success 'checkout reports switch to branch' '
+	test_grep "Switched to branch" stderr &&
+	test_grep ! "^HEAD is now at" stderr
+'
+
+test_expect_success 'checkout vague ref succeeds' '
+	git checkout vagueness 2>stderr &&
+	test_set_prereq VAGUENESS_SUCCESS
+'
+
+test_expect_success VAGUENESS_SUCCESS 'checkout produces ambiguity warning' '
+	grep "warning.*ambiguous" stderr
+'
+
+test_expect_success VAGUENESS_SUCCESS 'checkout chooses branch over tag' '
 	echo refs/heads/vagueness >expect &&
 	git symbolic-ref HEAD >actual &&
 	test_cmp expect actual &&
-	grep "Switched to branch" output
+	echo branch >expect &&
+	test_cmp expect file
+'
+
+test_expect_success VAGUENESS_SUCCESS 'checkout reports switch to branch' '
+	test_grep "Switched to branch" stderr &&
+	test_grep ! "^HEAD is now at" stderr
 '
 
 test_done

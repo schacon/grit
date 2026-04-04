@@ -1,8 +1,7 @@
 #!/bin/sh
 
-test_description='send-pack tests'
+test_description='send-pack --stdin tests'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 create_ref () {
@@ -24,7 +23,6 @@ verify_push () {
 }
 
 test_expect_success 'setup refs' '
-	git init &&
 	cat >refs <<-\EOF &&
 	refs/heads/A
 	refs/heads/C
@@ -37,12 +35,68 @@ test_expect_success 'setup refs' '
 	done
 '
 
+# sanity check our setup
 test_expect_success 'refs on cmdline' '
 	clear_remote &&
 	git send-pack remote.git $(cat refs) &&
 	for i in $(cat refs); do
 		verify_push $i || return 1
 	done
+'
+
+test_expect_success 'refs over stdin' '
+	clear_remote &&
+	git send-pack remote.git --stdin <refs &&
+	for i in $(cat refs); do
+		verify_push $i || return 1
+	done
+'
+
+test_expect_success 'stdin lines are full refspecs' '
+	clear_remote &&
+	echo "A:other" >input &&
+	git send-pack remote.git --stdin <input &&
+	verify_push refs/heads/A refs/heads/other
+'
+
+test_expect_success 'stdin mixed with cmdline' '
+	clear_remote &&
+	echo A >input &&
+	git send-pack remote.git --stdin B <input &&
+	verify_push A &&
+	verify_push B
+'
+
+test_expect_success 'cmdline refs written in order' '
+	clear_remote &&
+	test_must_fail git send-pack remote.git A:foo B:foo 2>err &&
+	test_grep "multiple updates for ref ${SQ}refs/heads/foo${SQ} not allowed" err &&
+	test_must_fail git --git-dir=remote.git rev-parse foo
+'
+
+test_expect_success 'cmdline refs with multiple duplicates' '
+	clear_remote &&
+	test_must_fail git send-pack remote.git A:foo B:foo C:foo 2>err &&
+	test_grep "multiple updates for ref ${SQ}refs/heads/foo${SQ} not allowed" err &&
+	test_must_fail git --git-dir=remote.git rev-parse foo
+'
+
+test_expect_success '--stdin refs come after cmdline' '
+	clear_remote &&
+	echo A:foo >input &&
+	test_must_fail git send-pack remote.git --stdin B:foo <input &&
+	test_grep "multiple updates for ref ${SQ}refs/heads/foo${SQ} not allowed" err &&
+	test_must_fail git --git-dir=remote.git rev-parse foo
+'
+
+test_expect_success 'refspecs and --mirror do not mix (cmdline)' '
+	clear_remote &&
+	test_must_fail git send-pack remote.git --mirror $(cat refs)
+'
+
+test_expect_success 'refspecs and --mirror do not mix (stdin)' '
+	clear_remote &&
+	test_must_fail git send-pack remote.git --mirror --stdin <refs
 '
 
 test_done

@@ -1,259 +1,243 @@
 #!/bin/sh
-# Tests for 'grit log' format specifiers and output combinations.
-# (-S pickaxe is not yet implemented; these tests comprehensively cover
-# --format with all supported placeholders and their combinations.)
 
-test_description='grit log format specifiers'
+test_description='log --grep/--author/--regexp-ignore-case/-S/-G'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup repository' '
-	git init repo &&
-	cd repo &&
-	git config user.name "A U Thor" &&
-	git config user.email "author@example.com" &&
+test_log () {
+	expect=$1
+	kind=$2
+	needle=$3
+	shift 3
+	rest=$@
 
-	echo one >file &&
+	case $kind in
+	--*)
+		opt=$kind=$needle
+		;;
+	*)
+		opt=$kind$needle
+		;;
+	esac
+	case $expect in
+	expect_nomatch)
+		match=nomatch
+		;;
+	*)
+		match=match
+		;;
+	esac
+
+	test_expect_success "log $kind${rest:+ $rest} ($match)" "
+		git log $rest $opt --format=%H >actual &&
+		test_cmp $expect actual
+	"
+}
+
+# test -i and --regexp-ignore-case and expect both to behave the same way
+test_log_icase () {
+	test_log $@ --regexp-ignore-case
+	test_log $@ -i
+}
+
+test_expect_success setup '
+	>expect_nomatch &&
+
+	>file &&
 	git add file &&
 	test_tick &&
-	git commit -m "first commit" &&
+	git commit -m initial &&
+	git rev-parse --verify HEAD >expect_initial &&
 
-	echo two >file &&
+	echo Picked >file &&
 	git add file &&
 	test_tick &&
-	git commit -m "second commit" &&
-
-	echo three >file &&
-	git add file &&
-	test_tick &&
-	git commit -m "third commit"
+	git commit --author="Another Person <another@example.com>" -m second &&
+	git rev-parse --verify HEAD >expect_second
 '
 
-# ── Individual format specifiers ─────────────────────────────────────────────
+test_expect_success 'usage' '
+	test_expect_code 129 git log -S 2>err &&
+	test_grep "switch.*requires a value" err &&
 
-test_expect_success 'format %H shows full commit hash (40 hex chars)' '
-	cd repo &&
-	git log -n1 --format="%H" >actual &&
-	test $(wc -c <actual) -ge 40
+	test_expect_code 129 git log -G 2>err &&
+	test_grep "switch.*requires a value" err &&
+
+	test_expect_code 128 git log -Gregex -Sstring 2>err &&
+	grep "cannot be used together" err &&
+
+	test_expect_code 128 git log -Gregex --find-object=HEAD 2>err &&
+	grep "cannot be used together" err &&
+
+	test_expect_code 128 git log -Sstring --find-object=HEAD 2>err &&
+	grep "cannot be used together" err &&
+
+	test_expect_code 128 git log --pickaxe-all --find-object=HEAD 2>err &&
+	grep "cannot be used together" err
 '
 
-test_expect_success 'format %h shows abbreviated hash (7+ chars)' '
-	cd repo &&
-	git log -n1 --format="%h" >actual &&
-	LEN=$(tr -d "\n" <actual | wc -c) &&
-	test "$LEN" -ge 7 &&
-	test "$LEN" -le 40
+test_expect_success 'usage: --pickaxe-regex' '
+	test_expect_code 128 git log -Gregex --pickaxe-regex 2>err &&
+	grep "cannot be used together" err
 '
 
-test_expect_success 'format %T shows tree hash' '
-	cd repo &&
-	git log -n1 --format="%T" >actual &&
-	test $(tr -d "\n" <actual | wc -c) -eq 40
-'
-
-test_expect_success 'format %t shows abbreviated tree hash' '
-	cd repo &&
-	git log -n1 --format="%t" >actual &&
-	LEN=$(tr -d "\n" <actual | wc -c) &&
-	test "$LEN" -ge 7
-'
-
-test_expect_success 'format %P shows parent hash' '
-	cd repo &&
-	git log -n1 --format="%P" >actual &&
-	test $(tr -d "\n" <actual | wc -c) -eq 40
-'
-
-test_expect_success 'format %p shows abbreviated parent hash' '
-	cd repo &&
-	git log -n1 --format="%p" >actual &&
-	LEN=$(tr -d "\n" <actual | wc -c) &&
-	test "$LEN" -ge 7
-'
-
-test_expect_success 'format %P for root commit is empty' '
-	cd repo &&
-	ROOT=$(git rev-list HEAD | tail -1) &&
-	git log -n1 --format="%P" "$ROOT" >root_parent &&
-	# Should be empty or just a newline
-	test $(tr -d "\n" <root_parent | wc -c) -eq 0
-'
-
-test_expect_success 'format %an shows author name' '
-	cd repo &&
-	git log -n1 --format="%an" >actual &&
-	echo "A U Thor" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'format %ae shows author email' '
-	cd repo &&
-	git log -n1 --format="%ae" >actual &&
-	echo "author@example.com" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'format %cn shows committer name' '
-	cd repo &&
-	git log -n1 --format="%cn" >actual &&
-	echo "C O Mitter" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'format %ce shows committer email' '
-	cd repo &&
-	git log -n1 --format="%ce" >actual &&
-	echo "committer@example.com" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'format %s shows subject line' '
-	cd repo &&
-	git log -n1 --format="%s" >actual &&
-	echo "third commit" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'format %n inserts newline' '
-	cd repo &&
-	git log -n1 --format="A%nB" >actual &&
-	test_line_count = 2 actual
-'
-
-# ── Combined format specifiers ───────────────────────────────────────────────
-
-test_expect_success 'format combining hash and subject' '
-	cd repo &&
-	git log -n1 --format="%h %s" >actual &&
-	HASH=$(git rev-parse --short HEAD) &&
-	echo "$HASH third commit" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'format with author name and email' '
-	cd repo &&
-	git log -n1 --format="%an <%ae>" >actual &&
-	echo "A U Thor <author@example.com>" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'format with literal text and placeholders' '
-	cd repo &&
-	git log -n1 --format="commit: %h by %an" >actual &&
-	HASH=$(git rev-parse --short HEAD) &&
-	echo "commit: $HASH by A U Thor" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'format with separator chars' '
-	cd repo &&
-	git log -n1 --format="%h|%an|%ae|%s" >actual &&
-	HASH=$(git rev-parse --short HEAD) &&
-	echo "$HASH|A U Thor|author@example.com|third commit" >expect &&
-	test_cmp expect actual
-'
-
-# ── Format across multiple commits ──────────────────────────────────────────
-
-test_expect_success 'format %s for all commits' '
-	cd repo &&
-	git log --format="%s" >actual &&
+test_expect_success 'usage: --no-pickaxe-regex' '
 	cat >expect <<-\EOF &&
-	third commit
-	second commit
-	first commit
+	fatal: unrecognized argument: --no-pickaxe-regex
 	EOF
+
+	test_expect_code 128 git log -Sstring --no-pickaxe-regex 2>actual &&
+	test_cmp expect actual &&
+
+	test_expect_code 128 git log -Gstring --no-pickaxe-regex 2>err &&
 	test_cmp expect actual
 '
 
-test_expect_success 'format %H for all commits gives unique hashes' '
-	cd repo &&
-	git log --format="%H" >actual &&
-	test_line_count = 3 actual &&
-	sort -u actual >unique &&
-	test_line_count = 3 unique
-'
+test_expect_success 'usage: -G and -S with empty argument' '
+	cat >expect <<-\EOF &&
+	error: -S requires a non-empty argument
+	EOF
 
-test_expect_success 'format %T for all commits gives distinct trees' '
-	cd repo &&
-	git log --format="%T" >actual &&
-	sort -u actual >unique &&
-	test_line_count = 3 unique
-'
+	test_expect_code 129 git log -S "" 2>actual &&
+	test_cmp expect actual &&
 
-test_expect_success 'format %an is same for all commits' '
-	cd repo &&
-	git log --format="%an" >actual &&
-	sort -u actual >unique &&
-	test_line_count = 1 unique
-'
+	cat >expect <<-\EOF &&
+	error: -G requires a non-empty argument
+	EOF
 
-# ── --oneline vs --format ───────────────────────────────────────────────────
-
-test_expect_success 'oneline format matches %h %s with decorate' '
-	cd repo &&
-	git log --oneline --no-decorate >oneline &&
-	git log --format="%h %s" >formatted &&
-	test_cmp oneline formatted
-'
-
-# ── With --author override ──────────────────────────────────────────────────
-
-test_expect_success 'setup commit with different author' '
-	cd repo &&
-	echo four >file &&
-	git add file &&
-	test_tick &&
-	git commit --author="Other Person <other@example.com>" -m "fourth commit"
-'
-
-test_expect_success 'format %an shows overridden author' '
-	cd repo &&
-	git log -n1 --format="%an" >actual &&
-	echo "Other Person" >expect &&
+	test_expect_code 129 git log -G "" 2>actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'format %ae shows overridden author email' '
-	cd repo &&
-	git log -n1 --format="%ae" >actual &&
-	echo "other@example.com" >expect &&
-	test_cmp expect actual
+test_log	expect_initial	--grep initial
+test_log	expect_nomatch	--grep InItial
+test_log_icase	expect_initial	--grep InItial
+test_log_icase	expect_nomatch	--grep initail
+
+test_log	expect_second	--author Person
+test_log	expect_nomatch	--author person
+test_log_icase	expect_second	--author person
+test_log_icase	expect_nomatch	--author spreon
+
+test_log	expect_nomatch	-G picked
+test_log	expect_second	-G Picked
+test_log_icase	expect_nomatch	-G pickle
+test_log_icase	expect_second	-G picked
+
+test_expect_success 'log -G --textconv (missing textconv tool)' '
+	echo "* diff=test" >.gitattributes &&
+	test_must_fail git -c diff.test.textconv=missing log -Gfoo &&
+	rm .gitattributes
 '
 
-test_expect_success 'format %cn still shows original committer' '
-	cd repo &&
-	git log -n1 --format="%cn" >actual &&
-	echo "C O Mitter" >expect &&
-	test_cmp expect actual
+test_expect_success 'log -G --no-textconv (missing textconv tool)' '
+	echo "* diff=test" >.gitattributes &&
+	git -c diff.test.textconv=missing log -Gfoo --no-textconv >actual &&
+	test_cmp expect_nomatch actual &&
+	rm .gitattributes
 '
 
-test_expect_success 'format %ce still shows original committer email' '
-	cd repo &&
-	git log -n1 --format="%ce" >actual &&
-	echo "committer@example.com" >expect &&
-	test_cmp expect actual
+test_log	expect_nomatch	-S picked
+test_log	expect_second	-S Picked
+test_log_icase	expect_second	-S picked
+test_log_icase	expect_nomatch	-S pickle
+
+test_log	expect_nomatch	-S p.cked --pickaxe-regex
+test_log	expect_second	-S P.cked --pickaxe-regex
+test_log_icase	expect_second	-S p.cked --pickaxe-regex
+test_log_icase	expect_nomatch	-S p.ckle --pickaxe-regex
+
+test_expect_success 'log -S --textconv (missing textconv tool)' '
+	echo "* diff=test" >.gitattributes &&
+	test_must_fail git -c diff.test.textconv=missing log -Sfoo &&
+	rm .gitattributes
 '
 
-# ── Empty format string ─────────────────────────────────────────────────────
-
-test_expect_success 'format with empty string produces empty lines' '
-	cd repo &&
-	git log --format="" >actual &&
-	test_line_count = 4 actual &&
-	while read line; do
-		test -z "$line" || return 1
-	done <actual
+test_expect_success 'log -S --no-textconv (missing textconv tool)' '
+	echo "* diff=test" >.gitattributes &&
+	git -c diff.test.textconv=missing log -Sfoo --no-textconv >actual &&
+	test_cmp expect_nomatch actual &&
+	rm .gitattributes
 '
 
-# ── tformat prefix ──────────────────────────────────────────────────────────
+test_expect_success 'setup log -[GS] plain & regex' '
+	test_create_repo GS-plain &&
+	test_commit -C GS-plain --append A data.txt "a" &&
+	test_commit -C GS-plain --append B data.txt "a a" &&
+	test_commit -C GS-plain --append C data.txt "b" &&
+	test_commit -C GS-plain --append D data.txt "[b]" &&
+	test_commit -C GS-plain E data.txt "" &&
 
-test_expect_success 'tformat:%s is same as format:%s for subjects' '
-	cd repo &&
-	git log --format="%s" >fmt &&
-	git log --pretty="tformat:%s" >tfmt &&
-	test_cmp fmt tfmt
+	# We also include E, the deletion commit
+	git -C GS-plain log --grep="[ABE]" >A-to-B-then-E-log &&
+	git -C GS-plain log --grep="[CDE]" >C-to-D-then-E-log &&
+	git -C GS-plain log --grep="[DE]" >D-then-E-log &&
+	git -C GS-plain log >full-log
+'
+
+test_expect_success 'log -G trims diff new/old [-+]' '
+	git -C GS-plain log -G"[+-]a" >log &&
+	test_must_be_empty log &&
+	git -C GS-plain log -G"^a" >log &&
+	test_cmp log A-to-B-then-E-log
+'
+
+test_expect_success 'log -S<pat> is not a regex, but -S<pat> --pickaxe-regex is' '
+	git -C GS-plain log -S"a" >log &&
+	test_cmp log A-to-B-then-E-log &&
+
+	git -C GS-plain log -S"[a]" >log &&
+	test_must_be_empty log &&
+
+	git -C GS-plain log -S"[a]" --pickaxe-regex >log &&
+	test_cmp log A-to-B-then-E-log &&
+
+	git -C GS-plain log -S"[b]" >log &&
+	test_cmp log D-then-E-log &&
+
+	git -C GS-plain log -S"[b]" --pickaxe-regex >log &&
+	test_cmp log C-to-D-then-E-log
+'
+
+test_expect_success 'setup log -[GS] binary & --text' '
+	test_create_repo GS-bin-txt &&
+	test_commit -C GS-bin-txt --printf A data.bin "a\na\0a\n" &&
+	test_commit -C GS-bin-txt --append --printf B data.bin "a\na\0a\n" &&
+	test_commit -C GS-bin-txt C data.bin "" &&
+	git -C GS-bin-txt log >full-log
+'
+
+test_expect_success 'log -G ignores binary files' '
+	git -C GS-bin-txt log -Ga >log &&
+	test_must_be_empty log
+'
+
+test_expect_success 'log -G looks into binary files with -a' '
+	git -C GS-bin-txt log -a -Ga >log &&
+	test_cmp log full-log
+'
+
+test_expect_success 'log -G looks into binary files with textconv filter' '
+	test_when_finished "rm GS-bin-txt/.gitattributes" &&
+	(
+		cd GS-bin-txt &&
+		echo "* diff=bin" >.gitattributes &&
+		git -c diff.bin.textconv=cat log -Ga >../log
+	) &&
+	test_cmp log full-log
+'
+
+test_expect_success 'log -S looks into binary files' '
+	git -C GS-bin-txt log -Sa >log &&
+	test_cmp log full-log
+'
+
+test_expect_success 'log -S --pickaxe-regex looks into binary files' '
+	git -C GS-bin-txt log --pickaxe-regex -Sa >log &&
+	test_cmp log full-log &&
+
+	git -C GS-bin-txt log --pickaxe-regex -S"[a]" >log &&
+	test_cmp log full-log
 '
 
 test_done

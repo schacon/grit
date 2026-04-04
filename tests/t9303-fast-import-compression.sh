@@ -1,20 +1,8 @@
 #!/bin/sh
-#
-# Upstream: t9303-fast-import-compression.sh
-# Ported from git/t/t9303-fast-import-compression.sh for grit.
-#
 
 test_description='compression setting of fast-import utility'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
-
-# Initialize a repo in the trash directory
-git init --quiet
-
-test_file_size () {
-	wc -c <"$1" | tr -d ' '
-}
 
 import_large () {
 	(

@@ -1,39 +1,14 @@
 #!/bin/sh
 #
-# Upstream: t9350-fast-export.sh
-# Ported from git/t/t9350-fast-export.sh for grit.
+# Copyright (c) 2007 Johannes E. Schindelin
 #
 
 test_description='git fast-export'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
-
-# Initialize a repo in the trash directory
-git init --quiet
-
-# Set up GPG if available
-if command -v gpg >/dev/null 2>&1 && test -d /home/hasi/.gnupg-test
-then
-	GNUPGHOME=/home/hasi/.gnupg-test
-	export GNUPGHOME
-	GPG_KEY=F949CA6F7DED01649C901F84B5296A310BC8A4DE
-	test_set_prereq GPG
-fi
-
-# grit is the Rust implementation
-test_set_prereq RUST
-
-# System git — needed for -S (GPG signing) since grit doesn't support it
-SYSTEM_GIT=/usr/bin/git
-
-# Helper: set global config
-test_config_global () {
-	git config --global "$@"
-}
-
+. "$TEST_DIRECTORY/lib-gpg.sh"
 
 test_expect_success 'setup' '
 
@@ -51,19 +26,16 @@ test_expect_success 'setup' '
 	git commit -m second &&
 	echo und > file2 &&
 	test_tick &&
-	git add file2 &&
-	git commit -m third &&
+	git commit -m third file2 &&
 	test_tick &&
 	git tag rein &&
 	git checkout -b wer HEAD^ &&
 	echo lange > file2 &&
 	test_tick &&
-	git add file2 &&
-	git commit -m sitzt &&
+	git commit -m sitzt file2 &&
 	test_tick &&
 	git tag -a -m valentin muss &&
 	ANNOTATED_TAG_COUNT=1 &&
-	test_export ANNOTATED_TAG_COUNT &&
 	git merge -s ours main
 
 '
@@ -116,7 +88,7 @@ test_expect_success 'fast-export main~2..main' '
 
 	git fast-export main~2..main >actual &&
 	sed "s/main/partial/" actual | git -C new fast-import &&
-	test $(git rev-parse --verify main) != $(git -C new rev-parse --verify refs/heads/partial) &&
+	test $MAIN != $(git -C new rev-parse --verify refs/heads/partial) &&
 	git -C new diff --exit-code main partial &&
 	git -C new diff --exit-code main^ partial^ &&
 	test_must_fail git -C new rev-parse partial~2
@@ -129,7 +101,7 @@ test_expect_success 'fast-export --reference-excluded-parents main~2..main' '
 	grep commit.refs/heads/main actual >commit-count &&
 	test_line_count = 2 commit-count &&
 	sed "s/main/rewrite/" actual | git -C new fast-import &&
-	test $(git rev-parse --verify main) = $(git -C new rev-parse --verify refs/heads/rewrite)
+	test $MAIN = $(git -C new rev-parse --verify refs/heads/rewrite)
 '
 
 test_expect_success 'fast-export --show-original-ids' '
@@ -144,8 +116,6 @@ test_expect_success 'fast-export --show-original-ids' '
 
 test_expect_success 'fast-export --show-original-ids | git fast-import' '
 
-	MAIN=$(git rev-parse --verify main) &&
-	MUSS=$(git rev-parse --verify muss) &&
 	git fast-export --show-original-ids main muss | git fast-import --quiet &&
 	test $MAIN = $(git rev-parse --verify refs/heads/main) &&
 	test $MUSS = $(git rev-parse --verify refs/tags/muss)
@@ -157,8 +127,7 @@ test_expect_success ICONV 'reencoding iso-8859-7' '
 	test_config i18n.commitencoding iso-8859-7 &&
 	test_tick &&
 	echo rosten >file &&
-	git add file &&
-	git commit -s -F "$TEST_DIRECTORY/t9350/simple-iso-8859-7-commit-message.txt" &&
+	git commit -s -F "$TEST_DIRECTORY/t9350/simple-iso-8859-7-commit-message.txt" file &&
 	git fast-export --reencode=yes wer^..wer >iso-8859-7.fi &&
 	sed "s/wer/i18n/" iso-8859-7.fi | git -C new fast-import &&
 
@@ -180,8 +149,7 @@ test_expect_success 'aborting on iso-8859-7' '
 	test_when_finished "git reset --hard HEAD~1" &&
 	test_config i18n.commitencoding iso-8859-7 &&
 	echo rosten >file &&
-	git add file &&
-	git commit -s -F "$TEST_DIRECTORY/t9350/simple-iso-8859-7-commit-message.txt" &&
+	git commit -s -F "$TEST_DIRECTORY/t9350/simple-iso-8859-7-commit-message.txt" file &&
 	test_must_fail git fast-export --reencode=abort wer^..wer >iso-8859-7.fi
 '
 
@@ -190,8 +158,7 @@ test_expect_success 'preserving iso-8859-7' '
 	test_when_finished "git reset --hard HEAD~1" &&
 	test_config i18n.commitencoding iso-8859-7 &&
 	echo rosten >file &&
-	git add file &&
-	git commit -s -F "$TEST_DIRECTORY/t9350/simple-iso-8859-7-commit-message.txt" &&
+	git commit -s -F "$TEST_DIRECTORY/t9350/simple-iso-8859-7-commit-message.txt" file &&
 	git fast-export --reencode=no wer^..wer >iso-8859-7.fi &&
 	sed "s/wer/i18n-no-recoding/" iso-8859-7.fi | git -C new fast-import &&
 
@@ -200,7 +167,7 @@ test_expect_success 'preserving iso-8859-7' '
 	# bytes.  Re-encoding the Pi character from \xF0 (\360) in
 	# iso-8859-7 to \xCF\x80 (\317\200) in UTF-8 adds a byte.
 	# Check for the expected size...
-	test $(($(test_oid hexsz) + 213)) -eq "$(git -C new cat-file -s i18n-no-recoding)" &&
+	test $(($(test_oid hexsz) + 200)) -eq "$(git -C new cat-file -s i18n-no-recoding)" &&
 	# ...as well as the expected byte.
 	git -C new cat-file commit i18n-no-recoding >actual &&
 	grep $(printf "\360") actual &&
@@ -213,8 +180,7 @@ test_expect_success 'encoding preserved if reencoding fails' '
 	test_when_finished "git reset --hard HEAD~1" &&
 	test_config i18n.commitencoding iso-8859-7 &&
 	echo rosten >file &&
-	git add file &&
-	git commit -s -F "$TEST_DIRECTORY/t9350/broken-iso-8859-7-commit-message.txt" &&
+	git commit -s -F "$TEST_DIRECTORY/t9350/broken-iso-8859-7-commit-message.txt" file &&
 	git fast-export --reencode=yes wer^..wer >iso-8859-7.fi &&
 	sed "s/wer/i18n-invalid/" iso-8859-7.fi | git -C new fast-import &&
 	git -C new cat-file commit i18n-invalid >actual &&
@@ -223,7 +189,7 @@ test_expect_success 'encoding preserved if reencoding fails' '
 	grep ^encoding actual &&
 	# Verify that the commit has the expected size; i.e.
 	# that no bytes were re-encoded to a different encoding.
-	test $(($(test_oid hexsz) + 216)) -eq "$(git -C new cat-file -s i18n-invalid)" &&
+	test $(($(test_oid hexsz) + 212)) -eq "$(git -C new cat-file -s i18n-invalid)" &&
 	# ...and check for the original special bytes
 	grep $(printf "\360") actual &&
 	grep $(printf "\377") actual
@@ -239,8 +205,7 @@ test_expect_success 'import/export-marks' '
 		--export-marks=tmp-marks HEAD >actual &&
 	test $(grep ^commit actual | wc -l) -eq 0 &&
 	echo change > file &&
-	git add file &&
-	git commit -m "last commit" &&
+	git commit -m "last commit" file &&
 	git fast-export --import-marks=tmp-marks \
 		--export-marks=tmp-marks HEAD >actual &&
 	test $(grep ^commit\  actual | wc -l) -eq 1 &&
@@ -266,8 +231,7 @@ EOF
 test_expect_success 'set up faked signed tag' '
 
 	git fast-import <signed-tag-import &&
-	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1)) &&
-	test_export ANNOTATED_TAG_COUNT
+	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1))
 
 '
 
@@ -315,77 +279,38 @@ test_expect_success 'signed-tags=warn-strip' '
 	test -s err
 '
 
-# ── OpenPGP signed tag tests (real GPG signatures) ──────────────────────────
-
-test_expect_success GPG 'setup OpenPGP signed tag' '
-	git config user.signingkey $GPG_KEY &&
-	$SYSTEM_GIT tag -s -m "OpenPGP signed tag" gpg-signed $(git rev-parse HEAD) &&
-	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1)) &&
-	test_export ANNOTATED_TAG_COUNT
-'
-
-test_expect_success GPG 'signed-tags=abort rejects OpenPGP signed tag' '
-	test_must_fail git fast-export --signed-tags=abort gpg-signed
-'
-
-test_expect_success GPG 'signed-tags=verbatim preserves OpenPGP signature' '
-	git fast-export --signed-tags=verbatim gpg-signed >output &&
-	grep "BEGIN PGP SIGNATURE" output
-'
-
-test_expect_success GPG 'signed-tags=strip removes OpenPGP signature' '
-	git fast-export --signed-tags=strip gpg-signed >output &&
-	! grep "BEGIN PGP SIGNATURE" output
-'
-
-test_expect_success GPG 'signed-tags=warn-verbatim preserves with warning' '
-	git fast-export --signed-tags=warn-verbatim gpg-signed >output 2>err &&
-	grep "BEGIN PGP SIGNATURE" output &&
-	test -s err
-'
-
-test_expect_success GPG 'signed-tags=warn-strip strips with warning' '
-	git fast-export --signed-tags=warn-strip gpg-signed >output 2>err &&
-	! grep "BEGIN PGP SIGNATURE" output &&
-	test -s err
-'
-
-# ── GPGSM / GPGSSH / --signed-commits tests (not available in git 2.43) ───
-
-test_expect_failure GPGSM 'setup X.509 signed tag' '
+test_expect_success GPGSM 'setup X.509 signed tag' '
 	test_config gpg.format x509 &&
 	test_config user.signingkey $GIT_COMMITTER_EMAIL &&
 
 	git tag -s -m "X.509 signed tag" x509-signed $(git rev-parse HEAD) &&
-	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1)) &&
-	test_export ANNOTATED_TAG_COUNT
+	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1))
 '
 
-test_expect_failure GPGSM 'signed-tags=verbatim with X.509' '
+test_expect_success GPGSM 'signed-tags=verbatim with X.509' '
 	git fast-export --signed-tags=verbatim x509-signed > output &&
 	test_grep "SIGNED MESSAGE" output
 '
 
-test_expect_failure GPGSM 'signed-tags=strip with X.509' '
+test_expect_success GPGSM 'signed-tags=strip with X.509' '
 	git fast-export --signed-tags=strip x509-signed > output &&
 	test_grep ! "SIGNED MESSAGE" output
 '
 
-test_expect_failure GPGSSH 'setup SSH signed tag' '
+test_expect_success GPGSSH 'setup SSH signed tag' '
 	test_config gpg.format ssh &&
 	test_config user.signingkey "${GPGSSH_KEY_PRIMARY}" &&
 
 	git tag -s -m "SSH signed tag" ssh-signed $(git rev-parse HEAD) &&
-	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1)) &&
-	test_export ANNOTATED_TAG_COUNT
+	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1))
 '
 
-test_expect_failure GPGSSH 'signed-tags=verbatim with SSH' '
+test_expect_success GPGSSH 'signed-tags=verbatim with SSH' '
 	git fast-export --signed-tags=verbatim ssh-signed > output &&
 	test_grep "SSH SIGNATURE" output
 '
 
-test_expect_failure GPGSSH 'signed-tags=strip with SSH' '
+test_expect_success GPGSSH 'signed-tags=strip with SSH' '
 	git fast-export --signed-tags=strip ssh-signed > output &&
 	test_grep ! "SSH SIGNATURE" output
 '
@@ -399,26 +324,24 @@ test_expect_success GPG 'set up signed commit' '
 	git checkout -f -b commit-signing main &&
 	echo Sign your name >file-sign &&
 	git add file-sign &&
-	git config user.signingkey $GPG_KEY &&
-	$SYSTEM_GIT commit -S -m "signed commit" &&
-	COMMIT_SIGNING=$(git rev-parse --verify commit-signing) &&
-	git checkout -f main
+	git commit -S -m "signed commit" &&
+	COMMIT_SIGNING=$(git rev-parse --verify commit-signing)
 
 '
 
-test_expect_failure GPG,SIGNED_COMMITS 'signed-commits default is same as strip' '
+test_expect_success GPG 'signed-commits default is same as strip' '
 	git fast-export --reencode=no commit-signing >out1 2>err &&
 	git fast-export --reencode=no --signed-commits=strip commit-signing >out2 &&
 	test_cmp out1 out2
 '
 
-test_expect_failure GPG,SIGNED_COMMITS 'signed-commits=abort' '
+test_expect_success GPG 'signed-commits=abort' '
 
 	test_must_fail git fast-export --signed-commits=abort commit-signing
 
 '
 
-test_expect_failure GPG,SIGNED_COMMITS 'signed-commits=verbatim' '
+test_expect_success GPG 'signed-commits=verbatim' '
 
 	git fast-export --signed-commits=verbatim --reencode=no commit-signing >output &&
 	test_grep -E "^gpgsig $GIT_DEFAULT_HASH openpgp" output &&
@@ -429,7 +352,7 @@ test_expect_failure GPG,SIGNED_COMMITS 'signed-commits=verbatim' '
 
 '
 
-test_expect_failure GPG,SIGNED_COMMITS 'signed-commits=warn-verbatim' '
+test_expect_success GPG 'signed-commits=warn-verbatim' '
 
 	git fast-export --signed-commits=warn-verbatim --reencode=no commit-signing >output 2>err &&
 	test_grep -E "^gpgsig $GIT_DEFAULT_HASH openpgp" output &&
@@ -441,7 +364,7 @@ test_expect_failure GPG,SIGNED_COMMITS 'signed-commits=warn-verbatim' '
 
 '
 
-test_expect_failure GPG,SIGNED_COMMITS 'signed-commits=strip' '
+test_expect_success GPG 'signed-commits=strip' '
 
 	git fast-export --signed-commits=strip --reencode=no commit-signing >output &&
 	! grep ^gpgsig output &&
@@ -452,7 +375,7 @@ test_expect_failure GPG,SIGNED_COMMITS 'signed-commits=strip' '
 
 '
 
-test_expect_failure GPG,SIGNED_COMMITS 'signed-commits=warn-strip' '
+test_expect_success GPG 'signed-commits=warn-strip' '
 
 	git fast-export --signed-commits=warn-strip --reencode=no commit-signing >output 2>err &&
 	! grep ^gpgsig output &&
@@ -464,7 +387,7 @@ test_expect_failure GPG,SIGNED_COMMITS 'signed-commits=warn-strip' '
 
 '
 
-test_expect_failure GPGSM 'setup X.509 signed commit' '
+test_expect_success GPGSM 'setup X.509 signed commit' '
 
 	git checkout -b x509-signing main &&
 	test_config gpg.format x509 &&
@@ -477,7 +400,7 @@ test_expect_failure GPGSM 'setup X.509 signed commit' '
 
 '
 
-test_expect_failure GPGSM 'round-trip X.509 signed commit' '
+test_expect_success GPGSM 'round-trip X.509 signed commit' '
 
 	git fast-export --signed-commits=verbatim x509-signing >output &&
 	test_grep -E "^gpgsig $GIT_DEFAULT_HASH x509" output &&
@@ -489,7 +412,7 @@ test_expect_failure GPGSM 'round-trip X.509 signed commit' '
 
 '
 
-test_expect_failure GPGSSH 'setup SSH signed commit' '
+test_expect_success GPGSSH 'setup SSH signed commit' '
 
 	git checkout -b ssh-signing main &&
 	test_config gpg.format ssh &&
@@ -502,7 +425,7 @@ test_expect_failure GPGSSH 'setup SSH signed commit' '
 
 '
 
-test_expect_failure GPGSSH 'round-trip SSH signed commit' '
+test_expect_success GPGSSH 'round-trip SSH signed commit' '
 
 	git fast-export --signed-commits=verbatim ssh-signing >output &&
 	test_grep -E "^gpgsig $GIT_DEFAULT_HASH ssh" output &&
@@ -541,7 +464,7 @@ test_expect_success 'setup submodule' '
 
 '
 
-test_expect_failure 'submodule fast-export | fast-import' '
+test_expect_success 'submodule fast-export | fast-import' '
 
 	test_config_global protocol.file.allow always &&
 	SUBENT1=$(git ls-tree main^ sub) &&
@@ -565,7 +488,7 @@ GIT_COMMITTER_NAME='C O Mitter'; export GIT_COMMITTER_NAME
 
 test_expect_success 'setup copies' '
 
-	git checkout -f -b copy rein &&
+	git checkout -b copy rein &&
 	git mv file file3 &&
 	git commit -m move1 &&
 	test_tick &&
@@ -607,7 +530,6 @@ test_expect_success 'fast-export | fast-import when main is tagged' '
 
 	git tag -m msg last &&
 	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1)) &&
-	test_export ANNOTATED_TAG_COUNT &&
 	git fast-export -C -C --signed-tags=strip --all > output &&
 	test $(grep -c "^tag " output) = $ANNOTATED_TAG_COUNT
 
@@ -624,7 +546,6 @@ test_expect_success 'cope with tagger-less tags' '
 	TAG=$(git hash-object --literally -t tag -w tag-content) &&
 	git update-ref refs/tags/sonnenschein $TAG &&
 	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1)) &&
-	test_export ANNOTATED_TAG_COUNT &&
 	git fast-export -C -C --signed-tags=strip --all > output &&
 	test $(grep -c "^tag " output) = $ANNOTATED_TAG_COUNT &&
 	! grep "Unspecified Tagger" output &&
@@ -747,8 +668,7 @@ test_expect_success 'path limiting with import-marks does not lose unmodified fi
 	git fast-export --export-marks=marks simple -- file > /dev/null &&
 	echo more content >> file &&
 	test_tick &&
-	git add file &&
-	git commit -mnext &&
+	git commit -mnext file &&
 	git fast-export --import-marks=marks simple -- file file0 >actual &&
 	grep file0 actual
 '
@@ -808,8 +728,8 @@ test_expect_success 'tree_tag'        '
 # tags resolve to a tree).  They exist just to make sure we do not
 # abort but instead just warn.
 test_expect_success 'tree_tag-obj'    'git fast-export tree_tag-obj'
-test_expect_failure 'tag-obj_tag'     'git fast-export tag-obj_tag'
-test_expect_failure 'tag-obj_tag-obj' 'git fast-export tag-obj_tag-obj'
+test_expect_success 'tag-obj_tag'     'git fast-export tag-obj_tag'
+test_expect_success 'tag-obj_tag-obj' 'git fast-export tag-obj_tag-obj'
 
 test_expect_success 'handling tags of blobs' '
 	git tag -a -m "Tag of a blob" blobtag $(git rev-parse main:file) &&
@@ -861,7 +781,7 @@ test_expect_success 'directory becomes symlink'        '
 	(cd result && git show main:foo)
 '
 
-test_expect_failure PERL_TEST_HELPERS 'fast-export quotes pathnames' '
+test_expect_success PERL_TEST_HELPERS 'fast-export quotes pathnames' '
 	git init crazy-paths &&
 	test_config -C crazy-paths core.protectNTFS false &&
 	(cd crazy-paths &&
@@ -888,7 +808,7 @@ test_expect_failure PERL_TEST_HELPERS 'fast-export quotes pathnames' '
 	)
 '
 
-test_expect_failure 'test bidirectionality' '
+test_expect_success 'test bidirectionality' '
 	git init marks-test &&
 	git fast-export --export-marks=marks-cur --import-marks-if-exists=marks-cur --branches | \
 	git --git-dir=marks-test/.git fast-import --export-marks=marks-new --import-marks-if-exists=marks-new &&
@@ -1042,7 +962,7 @@ test_expect_success 'fast-export --first-parent outputs all revisions output by 
 	)
 '
 
-test_expect_failure 'fast-export handles --end-of-options' '
+test_expect_success 'fast-export handles --end-of-options' '
 	git update-ref refs/heads/nodash HEAD &&
 	git update-ref refs/heads/--dashes HEAD &&
 	git fast-export --end-of-options nodash >expect &&
@@ -1052,9 +972,7 @@ test_expect_failure 'fast-export handles --end-of-options' '
 	test_cmp expect actual
 '
 
-# These tests require git with --signed-commits and SHA-256 compat object
-# format support, which is not available in git 2.43.  Keep as expected failures.
-test_expect_failure GPG,RUST 'setup a commit with dual signatures on its SHA-1 and SHA-256 formats' '
+test_expect_success GPG,RUST 'setup a commit with dual signatures on its SHA-1 and SHA-256 formats' '
 	# Create a signed SHA-256 commit
 	git init --object-format=sha256 explicit-sha256 &&
 	git -C explicit-sha256 config extensions.compatObjectFormat sha1 &&
@@ -1075,7 +993,7 @@ test_expect_failure GPG,RUST 'setup a commit with dual signatures on its SHA-1 a
 	test_grep -E "^gpgsig-sha256 " out
 '
 
-test_expect_failure GPG,RUST 'export and import of doubly signed commit' '
+test_expect_success GPG,RUST 'export and import of doubly signed commit' '
 	git -C explicit-sha256 fast-export --signed-commits=verbatim dual-signed >output &&
 	test_grep -E "^gpgsig sha1 openpgp" output &&
 	test_grep -E "^gpgsig sha256 openpgp" output &&

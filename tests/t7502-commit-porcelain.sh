@@ -1,712 +1,1031 @@
 #!/bin/sh
-# Ported from git/t/t7502-commit-porcelain.sh (partially)
-# Tests for 'grit commit' porcelain features.
 
-test_description='grit commit porcelain'
+test_description='git commit porcelain-ish'
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init repo &&
-	cd repo &&
-	git config user.name "C O Mitter" &&
-	git config user.email "committer@example.com"
+commit_msg_is () {
+	expect=commit_msg_is.expect
+	actual=commit_msg_is.actual
+
+	printf "%s" "$(git log --pretty=format:%s%b -1)" >$actual &&
+	printf "%s" "$1" >$expect &&
+	test_cmp $expect $actual
+}
+
+# Arguments: [<prefix] [<commit message>] [<commit options>]
+check_summary_oneline() {
+	test_tick &&
+	git commit ${3+"$3"} -m "$2" >raw &&
+	head -n 1 raw >act &&
+
+	# branch name
+	SUMMARY_PREFIX="$(git name-rev --name-only HEAD)" &&
+
+	# append the "special" prefix, like "root-commit", "detached HEAD"
+	if test -n "$1"
+	then
+		SUMMARY_PREFIX="$SUMMARY_PREFIX ($1)"
+	fi
+
+	# abbrev SHA-1
+	SUMMARY_POSTFIX="$(git log -1 --pretty='format:%h')"
+	echo "[$SUMMARY_PREFIX $SUMMARY_POSTFIX] $2" >exp &&
+
+	test_cmp exp act
+}
+
+trailer_commit_base () {
+	echo "fun" >>file &&
+	git add file &&
+	git commit -s --trailer "Signed-off-by=C1 E1 " \
+		--trailer "Helped-by:C2 E2 " \
+		--trailer "Reported-by=C3 E3" \
+		--trailer "Mentored-by:C4 E4" \
+		-m "hello"
+}
+
+test_expect_success 'output summary format' '
+
+	echo new >file1 &&
+	git add file1 &&
+	check_summary_oneline "root-commit" "initial" &&
+
+	echo change >>file1 &&
+	git add file1
 '
 
-# ── basic commit ──────────────────────────────────────────────────────────
+test_expect_success 'output summary format: root-commit' '
+	check_summary_oneline "" "a change"
+'
 
-test_expect_success 'initial commit with -m' '
-	cd repo &&
-	echo content >file.txt &&
-	git add file.txt &&
-	git commit -m "initial commit" 2>stderr &&
-	grep "root-commit" stderr &&
-	git cat-file -t HEAD >actual &&
-	echo "commit" >expected &&
+test_expect_success 'output summary format for commit with an empty diff' '
+
+	check_summary_oneline "" "empty" "--allow-empty"
+'
+
+test_expect_success 'output summary format for merges' '
+
+	git checkout -b recursive-base &&
+	test_commit base file1 &&
+
+	git checkout -b recursive-a recursive-base &&
+	test_commit commit-a file1 &&
+
+	git checkout -b recursive-b recursive-base &&
+	test_commit commit-b file1 &&
+
+	# conflict
+	git checkout recursive-a &&
+	test_must_fail git merge recursive-b &&
+	# resolve the conflict
+	echo commit-a >file1 &&
+	git add file1 &&
+	check_summary_oneline "" "Merge"
+'
+
+output_tests_cleanup() {
+	# this is needed for "do not fire editor in the presence of conflicts"
+	git checkout main &&
+
+	# this is needed for the "partial removal" test to pass
+	git rm file1 &&
+	git commit -m "cleanup"
+}
+
+test_expect_success 'the basics' '
+
+	output_tests_cleanup &&
+
+	echo doing partial >"commit is" &&
+	mkdir not &&
+	echo very much encouraged but we should >not/forbid &&
+	git add "commit is" not &&
+	echo update added "commit is" file >"commit is" &&
+	echo also update another >not/forbid &&
+	test_tick &&
+	git commit -a -m "initial with -a" &&
+
+	git cat-file blob HEAD:"commit is" >current.1 &&
+	git cat-file blob HEAD:not/forbid >current.2 &&
+
+	cmp current.1 "commit is" &&
+	cmp current.2 not/forbid
+
+'
+
+test_expect_success 'partial' '
+
+	echo another >"commit is" &&
+	echo another >not/forbid &&
+	test_tick &&
+	git commit -m "partial commit to handle a file" "commit is" &&
+
+	changed=$(git diff-tree --name-only HEAD^ HEAD) &&
+	test "$changed" = "commit is"
+
+'
+
+test_expect_success 'partial modification in a subdirectory' '
+
+	test_tick &&
+	git commit -m "partial commit to subdirectory" not &&
+
+	changed=$(git diff-tree -r --name-only HEAD^ HEAD) &&
+	test "$changed" = "not/forbid"
+
+'
+
+test_expect_success 'partial removal' '
+
+	git rm not/forbid &&
+	git commit -m "partial commit to remove not/forbid" not &&
+
+	changed=$(git diff-tree -r --name-only HEAD^ HEAD) &&
+	test "$changed" = "not/forbid" &&
+	remain=$(git ls-tree -r --name-only HEAD) &&
+	test "$remain" = "commit is"
+
+'
+
+test_expect_success 'sign off' '
+
+	>positive &&
+	git add positive &&
+	git commit -s -m "thank you" &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -ne "s/Signed-off-by: //p" commit.msg >actual &&
+	git var GIT_COMMITTER_IDENT >ident &&
+	sed -e "s/>.*/>/" ident >expected &&
 	test_cmp expected actual
+
 '
 
-test_expect_success 'commit message stored correctly' '
-	cd repo &&
-	git cat-file -p HEAD >out &&
-	grep "initial commit" out
-'
+test_expect_success 'commit --trailer with "="' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
 
-test_expect_success 'second commit' '
-	cd repo &&
-	echo more >>file.txt &&
-	git add file.txt &&
-	git commit -m "second" 2>stderr &&
-	git cat-file -p HEAD >out &&
-	grep "second" out &&
-	grep "parent" out
-'
-
-# ── -a (commit all tracked changes) ──────────────────────────────────────
-
-test_expect_success 'commit -a stages modified tracked files' '
-	cd repo &&
-	echo modified >>file.txt &&
-	git commit -a -m "auto staged" 2>/dev/null &&
-	git diff --quiet HEAD
-'
-
-test_expect_success 'commit -a stages deleted tracked files' '
-	cd repo &&
-	echo temp >tobedeleted.txt &&
-	git add tobedeleted.txt &&
-	git commit -m "add file to delete" 2>/dev/null &&
-	rm tobedeleted.txt &&
-	git commit -a -m "removed file" 2>/dev/null &&
-	test_must_fail git cat-file -e HEAD:tobedeleted.txt
-'
-
-test_expect_success 'commit -a does not stage untracked files' '
-	cd repo &&
-	echo untracked >newfile.txt &&
-	echo change >>file.txt &&
-	git commit -a -m "only tracked" 2>/dev/null &&
-	git status -s >actual &&
-	grep "?? newfile.txt" actual
-'
-
-# ── --amend ───────────────────────────────────────────────────────────────
-
-test_expect_success '--amend changes commit message' '
-	cd repo &&
-	git commit --amend -m "amended message" 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "amended message" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success '--amend preserves parent' '
-	cd repo &&
-	git log --format="%H" -n 2 >before &&
-	head -1 before >parent_before &&
-	git commit --amend -m "amended again" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep "parent" out >parent_line &&
-	# parent should still be the same commit
-	test_line_count = 1 parent_line
-'
-
-test_expect_success '--amend with staged changes' '
-	cd repo &&
-	echo "amend content" >amend.txt &&
-	git add amend.txt &&
-	git commit -m "before amend" 2>/dev/null &&
-	echo "more amend" >>amend.txt &&
-	git add amend.txt &&
-	git commit --amend -m "after amend" 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "after amend" >expected &&
-	test_cmp expected actual &&
-	git ls-tree HEAD amend.txt >ls_out &&
-	grep "amend.txt" ls_out
-'
-
-# ── --allow-empty ─────────────────────────────────────────────────────────
-
-test_expect_success '--allow-empty creates commit with no changes' '
-	cd repo &&
-	git log --format="%H" -n 1 >before &&
-	git commit --allow-empty -m "empty commit" 2>/dev/null &&
-	git log --format="%H" -n 1 >after &&
-	! test_cmp before after &&
-	git cat-file -p HEAD >out &&
-	grep "empty commit" out
-'
-
-test_expect_success 'commit without --allow-empty fails when nothing staged' '
-	cd repo &&
-	test_must_fail git commit -m "should fail" 2>/dev/null
-'
-
-test_expect_success 'multiple --allow-empty commits' '
-	cd repo &&
-	git commit --allow-empty -m "empty1" 2>/dev/null &&
-	git commit --allow-empty -m "empty2" 2>/dev/null &&
-	git commit --allow-empty -m "empty3" 2>/dev/null &&
-	git log --format="%s" -n 3 >actual &&
-	grep "empty1" actual &&
-	grep "empty2" actual &&
-	grep "empty3" actual
-'
-
-# ── --allow-empty-message ─────────────────────────────────────────────────
-
-test_expect_success '--allow-empty-message creates commit with no message' '
-	cd repo &&
-	echo "empty msg content" >emptymsg.txt &&
-	git add emptymsg.txt &&
-	git commit --allow-empty-message -m "" 2>/dev/null &&
-	git cat-file -t HEAD >actual &&
-	echo "commit" >expected &&
-	test_cmp expected actual
-'
-
-# ── -F (message from file) ───────────────────────────────────────────────
-
-test_expect_success '-F reads message from file' '
-	cd repo &&
-	echo "message from file" >../msg.txt &&
-	echo "file change" >fromfile.txt &&
-	git add fromfile.txt &&
-	git commit -F ../msg.txt 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "message from file" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success '-F - reads message from stdin' '
-	cd repo &&
-	echo "stdin change" >>fromfile.txt &&
-	git add fromfile.txt &&
-	echo "from stdin" | git commit -F - 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "from stdin" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success '-F with multi-line message' '
-	cd repo &&
-	cat >../multiline.txt <<-EOF &&
-	Subject line
-
-	Body paragraph one.
-
-	Body paragraph two.
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
 	EOF
-	echo "multi" >>fromfile.txt &&
-	git add fromfile.txt &&
-	git commit -F ../multiline.txt 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep "Subject line" out &&
-	grep "Body paragraph one" out
-'
-
-# ── --author ──────────────────────────────────────────────────────────────
-
-test_expect_success '--author overrides author' '
-	cd repo &&
-	git commit --allow-empty --author="Other Author <other@example.com>" -m "other author" 2>/dev/null &&
-	git log --format="%an" -n 1 >actual &&
-	echo "Other Author" >expected &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
 	test_cmp expected actual
 '
 
-test_expect_success '--author email is correct' '
-	cd repo &&
-	git log --format="%ae" -n 1 >actual &&
-	echo "other@example.com" >expected &&
+test_expect_success 'commit --trailer with -c and "replace" as ifexists' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
+
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	Helped-by: C3 E3
+	EOF
+	git -c trailer.ifexists="replace" \
+		commit --trailer "Mentored-by: C4 E4" \
+		 --trailer "Helped-by: C3 E3" \
+		--amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d"  commit.msg >actual &&
 	test_cmp expected actual
 '
 
-test_expect_success '--author does not change committer' '
-	cd repo &&
-	git log --format="%cn" -n 1 >actual &&
-	echo "C O Mitter" >expected &&
+test_expect_success 'commit --trailer with -c and "add" as ifexists' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
+
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	EOF
+	git -c trailer.ifexists="add" \
+		commit --trailer "Reported-by: C3 E3" \
+		--trailer "Mentored-by: C4 E4" \
+		--amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d"  commit.msg >actual &&
 	test_cmp expected actual
 '
 
-# ── --date ────────────────────────────────────────────────────────────────
+test_expect_success 'commit --trailer with -c and "donothing" as ifexists' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
 
-test_expect_success '--date overrides author date' '
-	cd repo &&
-	git commit --allow-empty --date="2005-04-07T22:13:13" -m "dated commit" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep "author" out >author_line &&
-	grep "1112911993" author_line || grep "2005" author_line
-'
-
-# ── --signoff ─────────────────────────────────────────────────────────────
-
-test_expect_success '--signoff flag accepted' '
-	cd repo &&
-	git commit --allow-empty --signoff -m "with signoff" 2>/dev/null
-'
-
-# ── -q (quiet) ────────────────────────────────────────────────────────────
-
-test_expect_success '-q suppresses output' '
-	cd repo &&
-	git commit --allow-empty -q -m "quiet commit" >stdout 2>stderr &&
-	test_must_be_empty stdout
-'
-
-# ── commit output format ─────────────────────────────────────────────────
-
-test_expect_success 'commit output shows branch and message' '
-	cd repo &&
-	echo "output test" >output.txt &&
-	git add output.txt &&
-	git commit -m "output check" 2>stderr &&
-	grep "output check" stderr
-'
-
-test_expect_success 'root commit output says root-commit' '
-	git init root_repo &&
-	cd root_repo &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo root >root.txt &&
-	git add root.txt &&
-	git commit -m "the root" 2>stderr &&
-	grep "root-commit" stderr
-'
-
-# ── tree correctness after commit ─────────────────────────────────────────
-
-test_expect_success 'committed tree matches write-tree' '
-	git init tree_repo &&
-	cd tree_repo &&
-	git config user.name T && git config user.email t@t &&
-	echo "content" >treecheck.txt &&
-	git add treecheck.txt &&
-	git write-tree >index_tree &&
-	git commit -m "verify" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	head -1 out | sed "s/^tree //" >committed_tree &&
-	test_cmp index_tree committed_tree
-'
-
-test_expect_success 'commit updates HEAD' '
-	cd repo &&
-	git log --format="%H" -n 1 >before &&
-	echo "new" >update_head.txt &&
-	git add update_head.txt &&
-	git commit -m "update head" 2>/dev/null &&
-	git log --format="%H" -n 1 >after &&
-	! test_cmp before after
-'
-
-# ── commit with only deleted file ─────────────────────────────────────────
-
-test_expect_success 'commit records file deletion' '
-	cd repo &&
-	echo "delete me" >willdie.txt &&
-	git add willdie.txt &&
-	git commit -m "add willdie" 2>/dev/null &&
-	git rm willdie.txt 2>/dev/null &&
-	git commit -m "remove willdie" 2>/dev/null &&
-	git ls-tree HEAD willdie.txt >ls_out &&
-	test_must_be_empty ls_out
-'
-
-# ── multiple files in one commit ──────────────────────────────────────────
-
-test_expect_success 'commit with multiple new files' '
-	cd repo &&
-	echo a >multi_a.txt &&
-	echo b >multi_b.txt &&
-	echo c >multi_c.txt &&
-	git add multi_a.txt multi_b.txt multi_c.txt &&
-	git commit -m "add three files" 2>/dev/null &&
-	git ls-tree HEAD >ls_out &&
-	grep "multi_a.txt" ls_out &&
-	grep "multi_b.txt" ls_out &&
-	grep "multi_c.txt" ls_out
-'
-
-# ── commit in subdirectory ────────────────────────────────────────────────
-
-test_expect_success 'commit from subdirectory' '
-	cd repo &&
-	mkdir -p subdir &&
-	echo "sub content" >subdir/sub.txt &&
-	git add subdir/sub.txt &&
-	cd subdir &&
-	git commit -m "from subdir" 2>/dev/null &&
-	cd .. &&
-	git ls-tree -r HEAD >ls_out &&
-	grep "subdir/sub.txt" ls_out
-'
-
-# ── amend root commit ────────────────────────────────────────────────────
-
-test_expect_success 'amend root commit works' '
-	git init amend_root &&
-	cd amend_root &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo root >root.txt &&
-	git add root.txt &&
-	git commit -m "original root" 2>/dev/null &&
-	git commit --amend -m "amended root" 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "amended root" >expected &&
-	test_cmp expected actual &&
-	git cat-file -p HEAD >out &&
-	! grep "parent" out
-'
-
-# ── commit preserves file modes ───────────────────────────────────────────
-
-test_expect_success 'commit preserves executable bit' '
-	cd repo &&
-	echo "#!/bin/sh" >script.sh &&
-	chmod +x script.sh &&
-	git add script.sh &&
-	git commit -m "executable" 2>/dev/null &&
-	git ls-tree HEAD script.sh >actual &&
-	grep "100755" actual
-'
-
-# ── consecutive commits create proper chain ───────────────────────────────
-
-test_expect_success 'consecutive commits form parent chain' '
-	git init chain_repo &&
-	cd chain_repo &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo a >a.txt && git add a.txt && git commit -m "first" 2>/dev/null &&
-	git log --format="%H" -n 1 >first_hash &&
-	echo b >b.txt && git add b.txt && git commit -m "second" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep "parent $(cat first_hash)" out
-'
-
-# ── commit with long message ─────────────────────────────────────────────
-
-test_expect_success 'commit with very long message' '
-	cd repo &&
-	long_msg=$(printf "x%.0s" $(seq 1 1000)) &&
-	git commit --allow-empty -m "$long_msg" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep "xxxx" out
-'
-
-# ── amend does not duplicate parent ───────────────────────────────────────
-
-test_expect_success 'amend does not add extra parent' '
-	cd repo &&
-	git commit --allow-empty -m "pre-amend" 2>/dev/null &&
-	git commit --amend -m "post-amend" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep -c "^parent" out >count &&
-	echo "1" >expected &&
-	test_cmp expected count
-'
-
-# ── commit after reset ────────────────────────────────────────────────────
-
-test_expect_success 'commit after soft reset' '
-	cd repo &&
-	echo "reset test" >reset.txt &&
-	git add reset.txt &&
-	git commit -m "before reset" 2>/dev/null &&
-	git reset --soft "HEAD^" &&
-	git commit -m "after reset" 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "after reset" >expected &&
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	Reviewed-by: C6 E6
+	EOF
+	git -c trailer.ifexists="donothing" \
+		commit --trailer "Mentored-by: C5 E5" \
+		--trailer "Reviewed-by: C6 E6" \
+		--amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d"  commit.msg >actual &&
 	test_cmp expected actual
 '
 
-# ── commit with multiple -m flags ─────────────────────────────────────────
+test_expect_success 'commit --trailer with -c and "addIfDifferent" as ifexists' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
 
-test_expect_success 'commit with multiple -m flags concatenates messages' '
-	cd repo &&
-	echo "multi-m" >multi_m.txt &&
-	git add multi_m.txt &&
-	git commit -m "first paragraph" -m "second paragraph" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep "first paragraph" out &&
-	grep "second paragraph" out
-'
-
-# ── commit with -c (reuse message) ────────────────────────────────────────
-
-test_expect_success 'commit message from file preserves trailing newline' '
-	cd repo &&
-	printf "trailing newline message\n" >../trail_msg.txt &&
-	echo "trail-content" >trail.txt &&
-	git add trail.txt &&
-	git commit -F ../trail_msg.txt 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "trailing newline message" >expected &&
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	Mentored-by: C5 E5
+	EOF
+	git -c trailer.ifexists="addIfDifferent" \
+		commit --trailer "Reported-by: C3 E3" \
+		--trailer "Mentored-by: C5 E5" \
+		--amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d"  commit.msg >actual &&
 	test_cmp expected actual
 '
 
-# ── commit --only with pathspec ───────────────────────────────────────────
+test_expect_success 'commit --trailer with -c and "addIfDifferentNeighbor" as ifexists' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
 
-test_expect_success 'commit with pathspec commits only named files' '
-	cd repo &&
-	echo "path-a" >path_a.txt &&
-	echo "path-b" >path_b.txt &&
-	git add path_a.txt path_b.txt &&
-	git commit -m "add path files" 2>/dev/null &&
-	echo "changed-a" >>path_a.txt &&
-	echo "changed-b" >>path_b.txt &&
-	git add path_a.txt path_b.txt &&
-	git commit -m "only a" -- path_a.txt 2>/dev/null &&
-	git diff --cached --name-only >staged &&
-	grep "path_b.txt" staged || true
-'
-
-# ── commit message with special characters ────────────────────────────────
-
-test_expect_success 'commit message with quotes' '
-	cd repo &&
-	git commit --allow-empty -m "message with \"quotes\"" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep "quotes" out
-'
-
-test_expect_success 'commit message with newlines via -m' '
-	cd repo &&
-	git commit --allow-empty -m "line one
-
-line three" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep "line one" out &&
-	grep "line three" out
-'
-
-# ── commit --dry-run ──────────────────────────────────────────────────────
-
-test_expect_success 'commit --dry-run does not create commit' '
-	cd repo &&
-	git log --format="%H" -n 1 >before_hash &&
-	echo "dry" >dry.txt &&
-	git add dry.txt &&
-	git commit --dry-run -m "dry run" 2>/dev/null || true &&
-	git log --format="%H" -n 1 >after_hash &&
-	test_cmp before_hash after_hash
-'
-
-# ── commit tree object validity ───────────────────────────────────────────
-
-test_expect_success 'commit tree is a valid tree object' '
-	cd repo &&
-	git commit -m "commit dry" 2>/dev/null &&
-	tree=$(git cat-file -p HEAD | head -1 | awk "{print \$2}") &&
-	git cat-file -t $tree >actual &&
-	echo "tree" >expected &&
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	Reported-by: C3 E3
+	EOF
+	git -c trailer.ifexists="addIfDifferentNeighbor" \
+		commit --trailer "Mentored-by: C4 E4" \
+		--trailer "Reported-by: C3 E3" \
+		--amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d"  commit.msg >actual &&
 	test_cmp expected actual
 '
 
-# ── commit encoding ───────────────────────────────────────────────────────
+test_expect_success 'commit --trailer with -c and "end" as where' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
 
-test_expect_success 'commit message with UTF-8 characters' '
-	cd repo &&
-	git commit --allow-empty -m "café résumé naïve" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep "café" out
-'
-
-test_expect_success 'commit message with unicode emoji' '
-	cd repo &&
-	git commit --allow-empty -m "release 🎉 done" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep "🎉" out
-'
-
-# ── commit --cleanup ──────────────────────────────────────────────────────
-
-test_expect_success 'commit -F with empty body still records subject' '
-	cd repo &&
-	echo "subject only" >../subj_msg.txt &&
-	echo "sub-only" >subonly.txt &&
-	git add subonly.txt &&
-	git commit -F ../subj_msg.txt 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "subject only" >expected &&
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	EOF
+	git -c trailer.where="end" \
+		commit --trailer "Reported-by: C3 E3" \
+		--trailer "Mentored-by: C4 E4" \
+		--amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
 	test_cmp expected actual
 '
 
-# ── amend with --author ───────────────────────────────────────────────────
+test_expect_success 'commit --trailer with -c and "start" as where' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
 
-test_expect_success 'amend with --author changes author' '
-	cd repo &&
-	git commit --allow-empty -m "pre-author-amend" 2>/dev/null &&
-	git commit --amend --author="Amended Author <amended@test.com>" -m "amended with author" 2>/dev/null &&
-	git log --format="%an" -n 1 >actual &&
-	echo "Amended Author" >expected &&
+	Signed-off-by: C1 E1
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	EOF
+	git -c trailer.where="start" \
+		commit --trailer "Signed-off-by: C O Mitter <committer@example.com>" \
+		--trailer "Signed-off-by: C1 E1" \
+		--amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
 	test_cmp expected actual
 '
 
-# ── amend with -a flag ────────────────────────────────────────────────────
+test_expect_success 'commit --trailer with -c and "after" as where' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
 
-test_expect_success 'amend -a stages and amends' '
-	cd repo &&
-	echo "amend-a" >amend_a.txt &&
-	git add amend_a.txt &&
-	git commit -m "before amend-a" 2>/dev/null &&
-	echo "modified" >>amend_a.txt &&
-	git commit --amend -a -m "after amend-a" 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "after amend-a" >expected &&
-	test_cmp expected actual &&
-	git diff --quiet HEAD
-'
-
-# ── commit with --no-verify skips hooks ───────────────────────────────────
-
-test_expect_success 'commit with -a and --amend together' '
-	cd repo &&
-	echo "combo" >combo.txt &&
-	git add combo.txt &&
-	git commit -m "combo initial" 2>/dev/null &&
-	echo "combo modified" >combo.txt &&
-	git commit -a --amend -m "combo amended" 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "combo amended" >expected &&
-	test_cmp expected actual &&
-	git show HEAD:combo.txt >content &&
-	grep "combo modified" content
-'
-
-# ── commit records correct timestamp format ───────────────────────────────
-
-test_expect_success 'commit author line has valid timestamp' '
-	cd repo &&
-	git commit --allow-empty -m "timestamp test" 2>/dev/null &&
-	git cat-file -p HEAD >out &&
-	grep "^author" out | grep -E "[0-9]{10} [+-][0-9]{4}"
-'
-
-test_expect_success 'commit committer line has valid timestamp' '
-	cd repo &&
-	git cat-file -p HEAD >out &&
-	grep "^committer" out | grep -E "[0-9]{10} [+-][0-9]{4}"
-'
-
-# ── commit with renamed file ──────────────────────────────────────────────
-
-test_expect_success 'commit after mv records new path' '
-	cd repo &&
-	echo "rename me" >rename_src.txt &&
-	git add rename_src.txt &&
-	git commit -m "add rename src" 2>/dev/null &&
-	git mv rename_src.txt rename_dst.txt &&
-	git commit -m "rename file" 2>/dev/null &&
-	git ls-tree HEAD rename_dst.txt >ls_out &&
-	grep "rename_dst.txt" ls_out &&
-	git ls-tree HEAD rename_src.txt >ls_out2 &&
-	test_must_be_empty ls_out2
-'
-
-# ── commit updates reflog ─────────────────────────────────────────────────
-
-test_expect_success 'commit shows in log after creation' '
-	cd repo &&
-	git commit --allow-empty -m "log visible" 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "log visible" >expected &&
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	Mentored-by: C5 E5
+	EOF
+	git -c trailer.where="after" \
+		commit --trailer "Mentored-by: C4 E4" \
+		--trailer "Mentored-by: C5 E5" \
+		--amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
 	test_cmp expected actual
 '
 
-test_expect_success 'commit count increments' '
-	cd repo &&
-	git rev-list HEAD --count >before &&
-	git commit --allow-empty -m "count test" 2>/dev/null &&
-	git rev-list HEAD --count >after &&
-	test $(cat after) -gt $(cat before)
-'
+test_expect_success 'commit --trailer with -c and "before" as where' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
 
-# ── commit with only whitespace message body ──────────────────────────────
-
-test_expect_success 'commit --allow-empty with long message' '
-	cd repo &&
-	git commit --allow-empty -m "this is a rather long commit message for testing purposes" 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "this is a rather long commit message for testing purposes" >expected &&
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Reported-by: C3 E3
+	Mentored-by: C2 E2
+	Mentored-by: C3 E3
+	Mentored-by: C4 E4
+	EOF
+	git -c trailer.where="before" \
+		commit --trailer "Mentored-by: C3 E3" \
+		--trailer "Mentored-by: C2 E2" \
+		--amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
 	test_cmp expected actual
 '
 
-test_expect_success 'commit tree object is valid' '
-	cd repo &&
-	tree=$(git log --format="%T" -n 1) &&
-	git cat-file -t $tree >type &&
-	echo "tree" >expected &&
-	test_cmp expected type
+test_expect_success 'commit --trailer with -c and "donothing" as ifmissing' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
+
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	Helped-by: C5 E5
+	EOF
+	git -c trailer.ifmissing="donothing" \
+		commit --trailer "Helped-by: C5 E5" \
+		--trailer "Based-by: C6 E6" \
+		--amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
+	test_cmp expected actual
 '
 
-# ── commit with deleted file ──────────────────────────────────────────────
+test_expect_success 'commit --trailer with -c and "add" as ifmissing' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
 
-test_expect_success 'commit records file deletion' '
-	cd repo &&
-	echo "to delete" >del_me.txt &&
-	git add del_me.txt &&
-	git commit -m "add del_me" 2>/dev/null &&
-	git rm del_me.txt 2>/dev/null &&
-	git commit -m "delete del_me" 2>/dev/null &&
-	git ls-tree HEAD del_me.txt >ls_out &&
-	test_must_be_empty ls_out
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Reported-by: C3 E3
+	Mentored-by: C4 E4
+	Helped-by: C5 E5
+	Based-by: C6 E6
+	EOF
+	git -c trailer.ifmissing="add" \
+		commit --trailer "Helped-by: C5 E5" \
+		--trailer "Based-by: C6 E6" \
+		--amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'commit with multiple new files at once' '
-	cd repo &&
-	echo aa >batch_a.txt &&
-	echo bb >batch_b.txt &&
-	echo cc >batch_c.txt &&
-	git add batch_a.txt batch_b.txt batch_c.txt &&
-	git commit -m "add batch files" 2>/dev/null &&
-	git ls-tree HEAD >tree_out &&
-	grep "batch_a.txt" tree_out &&
-	grep "batch_b.txt" tree_out &&
-	grep "batch_c.txt" tree_out
+test_expect_success 'commit --trailer with -c ack.key ' '
+	echo "fun" >>file1 &&
+	git add file1 &&
+	cat >expected <<-\EOF &&
+		hello
+
+		Acked-by: Peff
+	EOF
+	git -c trailer.ack.key="Acked-by" \
+		commit --trailer "ack = Peff" -m "hello" &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
+	test_cmp expected actual
 '
 
-# ── commit parent chain ──────────────────────────────────────────────────
+test_expect_success 'commit --trailer with -c and ":=#" as separators' '
+	echo "fun" >>file1 &&
+	git add file1 &&
+	cat >expected <<-\EOF &&
+		I hate bug
 
-test_expect_success 'commit parent matches previous HEAD' '
-	cd repo &&
-	prev=$(git rev-parse HEAD) &&
-	git commit --allow-empty -m "parent test" 2>/dev/null &&
-	parent=$(git log --format="%P" -n 1) &&
-	test "$parent" = "$prev"
+		Bug #42
+	EOF
+	git -c trailer.separators=":=#" \
+		-c trailer.bug.key="Bug #" \
+		commit --trailer "bug = 42" -m "I hate bug" &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'root commit has tree but no parent line' '
-	cd repo &&
-	root=$(git rev-list HEAD | tail -1) &&
-	git cat-file -p $root >raw &&
-	grep "^tree" raw &&
-	grep "^author" raw
+test_expect_success 'commit --trailer with -c and command' '
+	trailer_commit_base &&
+	cat >expected <<-\EOF &&
+	hello
+
+	Signed-off-by: C O Mitter <committer@example.com>
+	Signed-off-by: C1 E1
+	Helped-by: C2 E2
+	Mentored-by: C4 E4
+	Reported-by: A U Thor <author@example.com>
+	EOF
+	git -c trailer.report.key="Reported-by: " \
+		-c trailer.report.ifexists="replace" \
+		-c trailer.report.command="NAME=\"\$ARG\"; test -n \"\$NAME\" && \
+		git log --author=\"\$NAME\" -1 --format=\"format:%aN <%aE>\" || true" \
+		commit --trailer "report = author" --amend &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
+	test_cmp expected actual
 '
 
-# ── commit preserves file modes ──────────────────────────────────────────
+test_expect_success 'commit --trailer not confused by --- separator' '
+	cat >msg <<-\EOF &&
+	subject
 
-test_expect_success 'commit preserves executable bit' '
-	cd repo &&
-	echo "#!/bin/sh" >exec_file.sh &&
-	chmod +x exec_file.sh &&
-	git add exec_file.sh &&
-	git commit -m "add executable" 2>/dev/null &&
-	git ls-tree HEAD exec_file.sh >ls_out &&
-	grep "100755" ls_out
+	body with dashes
+	---
+	in it
+	EOF
+	git commit --allow-empty --trailer="my-trailer: value" -F msg &&
+	{
+		cat msg &&
+		echo &&
+		echo "my-trailer: value"
+	} >expected &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'commit after checkout -b on new branch' '
-	cd repo &&
-	git checkout -b commit-branch-test &&
-	git commit --allow-empty -m "on new branch" 2>/dev/null &&
-	branch=$(git symbolic-ref --short HEAD) &&
-	test "$branch" = "commit-branch-test" &&
-	git checkout master
+test_expect_success 'commit --trailer with --verbose' '
+	cat >msg <<-\EOF &&
+	subject
+
+	body
+	EOF
+	GIT_EDITOR=: git commit --edit -F msg --allow-empty \
+		--trailer="my-trailer: value" --verbose &&
+	{
+		cat msg &&
+		echo &&
+		echo "my-trailer: value"
+	} >expected &&
+	git cat-file commit HEAD >commit.msg &&
+	sed -e "1,/^\$/d" commit.msg >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'commit -a stages and commits modified tracked files' '
-	cd repo &&
-	echo "track me" >tracked.txt &&
-	git add tracked.txt &&
-	git commit -m "add tracked" 2>/dev/null &&
-	echo "modified" >>tracked.txt &&
-	git commit -a -m "modify tracked" 2>/dev/null &&
-	git show HEAD:tracked.txt >content &&
-	grep "modified" content
+test_expect_success 'multiple -m' '
+
+	>negative &&
+	git add negative &&
+	git commit -m "one" -m "two" -m "three" &&
+	actual=$(git cat-file commit HEAD >tmp && sed -e "1,/^\$/d" tmp && rm tmp) &&
+	expected=$(test_write_lines "one" "" "two" "" "three") &&
+	test "z$actual" = "z$expected"
+
 '
 
-test_expect_success 'two consecutive empty commits have different hashes' '
-	cd repo &&
-	git commit --allow-empty -m "empty A" 2>/dev/null &&
-	hash_a=$(git rev-parse HEAD) &&
-	git commit --allow-empty -m "empty B" 2>/dev/null &&
-	hash_b=$(git rev-parse HEAD) &&
-	test "$hash_a" != "$hash_b"
+test_expect_success 'verbose' '
+
+	echo minus >negative &&
+	git add negative &&
+	git status -v >raw &&
+	sed -ne "/^diff --git /p" raw >actual &&
+	echo "diff --git a/negative b/negative" >expect &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'verbose respects diff config' '
+
+	test_config diff.noprefix true &&
+	git status -v >actual &&
+	grep "diff --git negative negative" actual
+'
+
+mesg_with_comment_and_newlines='
+# text
+
+'
+
+test_expect_success 'prepare file with comment line and trailing newlines'  '
+	printf "%s" "$mesg_with_comment_and_newlines" >expect
+'
+
+test_expect_success 'cleanup commit messages (verbatim option,-t)' '
+
+	echo >>negative &&
+	git commit --cleanup=verbatim --no-status -t expect -a &&
+	git cat-file -p HEAD >raw &&
+	sed -e "1,/^\$/d" raw >actual &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'cleanup commit messages (verbatim option,-F)' '
+
+	echo >>negative &&
+	git commit --cleanup=verbatim -F expect -a &&
+	git cat-file -p HEAD >raw &&
+	sed -e "1,/^\$/d" raw >actual &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'cleanup commit messages (verbatim option,-m)' '
+
+	echo >>negative &&
+	git commit --cleanup=verbatim -m "$mesg_with_comment_and_newlines" -a &&
+	git cat-file -p HEAD >raw &&
+	sed -e "1,/^\$/d" raw >actual &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'cleanup commit messages (whitespace option,-F)' '
+
+	echo >>negative &&
+	test_write_lines "" "# text" "" >text &&
+	echo "# text" >expect &&
+	git commit --cleanup=whitespace -F text -a &&
+	git cat-file -p HEAD >raw &&
+	sed -e "1,/^\$/d" raw >actual &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'cleanup commit messages (scissors option,-F,-e)' '
+
+	echo >>negative &&
+	cat >text <<-\EOF &&
+
+	# to be kept
+
+	  # ------------------------ >8 ------------------------
+	# to be kept, too
+	# ------------------------ >8 ------------------------
+	to be removed
+	# ------------------------ >8 ------------------------
+	to be removed, too
+	EOF
+
+	cat >expect <<-\EOF &&
+	# to be kept
+
+	  # ------------------------ >8 ------------------------
+	# to be kept, too
+	EOF
+	git commit --cleanup=scissors -e -F text -a &&
+	git cat-file -p HEAD >raw &&
+	sed -e "1,/^\$/d" raw >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'cleanup commit messages (scissors option,-F,-e, scissors on first line)' '
+
+	echo >>negative &&
+	cat >text <<-\EOF &&
+	# ------------------------ >8 ------------------------
+	to be removed
+	EOF
+	git commit --cleanup=scissors -e -F text -a --allow-empty-message &&
+	git cat-file -p HEAD >raw &&
+	sed -e "1,/^\$/d" raw >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'cleanup commit messages (strip option,-F)' '
+
+	echo >>negative &&
+	test_write_lines "" "# text" "sample" "" >text &&
+	echo sample >expect &&
+	git commit --cleanup=strip -F text -a &&
+	git cat-file -p HEAD >raw &&
+	sed -e "1,/^\$/d" raw >actual &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'cleanup commit messages (strip option,-F,-e)' '
+
+	echo >>negative &&
+	test_write_lines "" "sample" "" >text &&
+	git commit -e -F text -a &&
+	head -n 4 .git/COMMIT_EDITMSG >actual
+'
+
+echo "sample
+
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored, and an empty message aborts the commit." >expect
+
+test_expect_success 'cleanup commit messages (strip option,-F,-e): output' '
+	test_cmp expect actual
+'
+
+test_expect_success 'cleanup commit message (fail on invalid cleanup mode option)' '
+	test_must_fail git commit --cleanup=non-existent
+'
+
+test_expect_success 'cleanup commit message (fail on invalid cleanup mode configuration)' '
+	test_must_fail git -c commit.cleanup=non-existent commit
+'
+
+test_expect_success 'cleanup commit message (no config and no option uses default)' '
+	echo content >>file &&
+	git add file &&
+	(
+	  test_set_editor "$TEST_DIRECTORY"/t7500/add-content-and-comment &&
+	  git commit --no-status
+	) &&
+	commit_msg_is "commit message"
+'
+
+test_expect_success 'cleanup commit message (option overrides default)' '
+	echo content >>file &&
+	git add file &&
+	(
+	  test_set_editor "$TEST_DIRECTORY"/t7500/add-content-and-comment &&
+	  git commit --cleanup=whitespace --no-status
+	) &&
+	commit_msg_is "commit message # comment"
+'
+
+test_expect_success 'cleanup commit message (config overrides default)' '
+	echo content >>file &&
+	git add file &&
+	(
+	  test_set_editor "$TEST_DIRECTORY"/t7500/add-content-and-comment &&
+	  git -c commit.cleanup=whitespace commit --no-status
+	) &&
+	commit_msg_is "commit message # comment"
+'
+
+test_expect_success 'cleanup commit message (option overrides config)' '
+	echo content >>file &&
+	git add file &&
+	(
+	  test_set_editor "$TEST_DIRECTORY"/t7500/add-content-and-comment &&
+	  git -c commit.cleanup=whitespace commit --cleanup=default
+	) &&
+	commit_msg_is "commit message"
+'
+
+test_expect_success 'cleanup commit message (default, -m)' '
+	echo content >>file &&
+	git add file &&
+	git commit -m "message #comment " &&
+	commit_msg_is "message #comment"
+'
+
+test_expect_success 'cleanup commit message (whitespace option, -m)' '
+	echo content >>file &&
+	git add file &&
+	git commit --cleanup=whitespace --no-status -m "message #comment " &&
+	commit_msg_is "message #comment"
+'
+
+test_expect_success 'cleanup commit message (whitespace config, -m)' '
+	echo content >>file &&
+	git add file &&
+	git -c commit.cleanup=whitespace commit --no-status -m "message #comment " &&
+	commit_msg_is "message #comment"
+'
+
+test_expect_success 'message shows author when it is not equal to committer' '
+	echo >>negative &&
+	git commit -e -m "sample" -a &&
+	test_grep \
+	  "^# Author: *A U Thor <author@example.com>\$" \
+	  .git/COMMIT_EDITMSG
+'
+
+test_expect_success 'message shows date when it is explicitly set' '
+	git commit --allow-empty -e -m foo --date="2010-01-02T03:04:05" &&
+	test_grep \
+	  "^# Date: *Sat Jan 2 03:04:05 2010 +0000" \
+	  .git/COMMIT_EDITMSG
+'
+
+test_expect_success 'message does not have multiple scissors lines' '
+	git commit --cleanup=scissors -v --allow-empty -e -m foo &&
+	test $(grep -c -e "--- >8 ---" .git/COMMIT_EDITMSG) -eq 1
+'
+
+test_expect_success AUTOIDENT 'message shows committer when it is automatic' '
+
+	echo >>negative &&
+	(
+		sane_unset GIT_COMMITTER_EMAIL &&
+		sane_unset GIT_COMMITTER_NAME &&
+		git commit -e -m "sample" -a
+	) &&
+	# the ident is calculated from the system, so we cannot
+	# check the actual value, only that it is there
+	test_grep "^# Committer: " .git/COMMIT_EDITMSG
+'
+
+write_script .git/FAKE_EDITOR <<EOF
+echo editor started >"$(pwd)/.git/result"
+exit 0
+EOF
+
+test_expect_success !FAIL_PREREQS,!AUTOIDENT 'do not fire editor when committer is bogus' '
+	>.git/result &&
+
+	echo >>negative &&
+	(
+		sane_unset GIT_COMMITTER_EMAIL &&
+		sane_unset GIT_COMMITTER_NAME &&
+		GIT_EDITOR="\"$(pwd)/.git/FAKE_EDITOR\"" &&
+		export GIT_EDITOR &&
+		test_must_fail git commit -e -m sample -a
+	) &&
+	test_must_be_empty .git/result
+'
+
+test_expect_success 'do not fire editor if -m <msg> was given' '
+	echo tick >file &&
+	git add file &&
+	echo "editor not started" >.git/result &&
+	(GIT_EDITOR="\"$(pwd)/.git/FAKE_EDITOR\"" git commit -m tick) &&
+	test "$(cat .git/result)" = "editor not started"
+'
+
+test_expect_success 'do not fire editor if -m "" was given' '
+	echo tock >file &&
+	git add file &&
+	echo "editor not started" >.git/result &&
+	(GIT_EDITOR="\"$(pwd)/.git/FAKE_EDITOR\"" \
+	 git commit -m "" --allow-empty-message) &&
+	test "$(cat .git/result)" = "editor not started"
+'
+
+test_expect_success 'do not fire editor in the presence of conflicts' '
+
+	git clean -f &&
+	echo f >g &&
+	git add g &&
+	git commit -m "add g" &&
+	git branch second &&
+	echo main >g &&
+	echo g >h &&
+	git add g h &&
+	git commit -m "modify g and add h" &&
+	git checkout second &&
+	echo second >g &&
+	git add g &&
+	git commit -m second &&
+	# Must fail due to conflict
+	test_must_fail git cherry-pick -n main &&
+	echo "editor not started" >.git/result &&
+	(
+		GIT_EDITOR="\"$(pwd)/.git/FAKE_EDITOR\"" &&
+		export GIT_EDITOR &&
+		test_must_fail git commit
+	) &&
+	test "$(cat .git/result)" = "editor not started"
+'
+
+write_script .git/FAKE_EDITOR <<EOF
+# kill -TERM command added below.
+EOF
+
+test_expect_success EXECKEEPSPID 'a SIGTERM should break locks' '
+	echo >>negative &&
+	! "$SHELL_PATH" -c '\''
+	  echo kill -TERM $$ >>.git/FAKE_EDITOR
+	  GIT_EDITOR=.git/FAKE_EDITOR
+	  export GIT_EDITOR
+	  exec git commit -a'\'' &&
+	test ! -f .git/index.lock
+'
+
+rm -f .git/MERGE_MSG .git/COMMIT_EDITMSG
+git reset -q --hard
+
+test_expect_success 'Hand committing of a redundant merge removes dups' '
+
+	git rev-parse second main >expect &&
+	test_must_fail git merge second main &&
+	git checkout main g &&
+	EDITOR=: git commit -a &&
+	git cat-file commit HEAD >raw &&
+	sed -n -e "s/^parent //p" -e "/^$/q" raw >actual &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'A single-liner subject with a token plus colon is not a footer' '
+
+	git reset --hard &&
+	git commit -s -m "hello: kitty" --allow-empty &&
+	git cat-file commit HEAD >raw &&
+	sed -e "1,/^$/d" raw >actual &&
+	test_line_count = 3 actual
+
+'
+
+test_expect_success 'commit -s places sob on third line after two empty lines' '
+	git commit -s --allow-empty --allow-empty-message &&
+	cat <<-EOF >expect &&
+
+
+	Signed-off-by: $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL>
+
+	EOF
+	sed -e "/^#/d" -e "s/^:.*//" .git/COMMIT_EDITMSG >actual &&
+	test_cmp expect actual
+'
+
+write_script .git/FAKE_EDITOR <<\EOF
+mv "$1" "$1.orig"
+(
+	echo message
+	cat "$1.orig"
+) >"$1"
+EOF
+
+echo '## Custom template' >template
+
+try_commit () {
+	git reset --hard &&
+	echo >>negative &&
+	GIT_EDITOR=.git/FAKE_EDITOR git commit -a $* $use_template &&
+	case "$use_template" in
+	'')
+		test_grep ! "^## Custom template" .git/COMMIT_EDITMSG ;;
+	*)
+		test_grep "^## Custom template" .git/COMMIT_EDITMSG ;;
+	esac
+}
+
+try_commit_status_combo () {
+
+	test_expect_success 'commit' '
+		try_commit "" &&
+		test_grep "^# Changes to be committed:" .git/COMMIT_EDITMSG
+	'
+
+	test_expect_success 'commit --status' '
+		try_commit --status &&
+		test_grep "^# Changes to be committed:" .git/COMMIT_EDITMSG
+	'
+
+	test_expect_success 'commit --no-status' '
+		try_commit --no-status &&
+		test_grep ! "^# Changes to be committed:" .git/COMMIT_EDITMSG
+	'
+
+	test_expect_success 'commit with commit.status = yes' '
+		test_config commit.status yes &&
+		try_commit "" &&
+		test_grep "^# Changes to be committed:" .git/COMMIT_EDITMSG
+	'
+
+	test_expect_success 'commit with commit.status = no' '
+		test_config commit.status no &&
+		try_commit "" &&
+		test_grep ! "^# Changes to be committed:" .git/COMMIT_EDITMSG
+	'
+
+	test_expect_success 'commit --status with commit.status = yes' '
+		test_config commit.status yes &&
+		try_commit --status &&
+		test_grep "^# Changes to be committed:" .git/COMMIT_EDITMSG
+	'
+
+	test_expect_success 'commit --no-status with commit.status = yes' '
+		test_config commit.status yes &&
+		try_commit --no-status &&
+		test_grep ! "^# Changes to be committed:" .git/COMMIT_EDITMSG
+	'
+
+	test_expect_success 'commit --status with commit.status = no' '
+		test_config commit.status no &&
+		try_commit --status &&
+		test_grep "^# Changes to be committed:" .git/COMMIT_EDITMSG
+	'
+
+	test_expect_success 'commit --no-status with commit.status = no' '
+		test_config commit.status no &&
+		try_commit --no-status &&
+		test_grep ! "^# Changes to be committed:" .git/COMMIT_EDITMSG
+	'
+
+}
+
+try_commit_status_combo
+
+use_template="-t template"
+
+try_commit_status_combo
+
+test_expect_success 'commit --status with custom comment character' '
+	test_config core.commentchar ";" &&
+	try_commit --status &&
+	test_grep "^; Changes to be committed:" .git/COMMIT_EDITMSG
+'
+
+test_expect_success !WITH_BREAKING_CHANGES 'switch core.commentchar' '
+	test_commit "#foo" foo &&
+	cat >config-include <<-\EOF &&
+	[core]
+	    commentString=:
+	    commentString=%
+	    commentChar=auto
+	EOF
+	test_when_finished "rm config-include" &&
+	test_config include.path "$(pwd)/config-include" &&
+	test_config core.commentChar ! &&
+	GIT_EDITOR=.git/FAKE_EDITOR git commit --amend 2>err &&
+	sed -n "s/^hint: *\$//p; s/^hint: //p; s/^warning: //p" err >actual &&
+	cat >expect <<-EOF &&
+	Support for ${SQ}core.commentChar=auto${SQ} is deprecated and will be removed in Git 3.0
+
+	To use the default comment string (#) please run
+
+	    git config unset core.commentChar
+	    git config unset --file ~/config-include --all core.commentString
+	    git config unset --file ~/config-include core.commentChar
+
+	To set a custom comment string please run
+
+	    git config set --file ~/config-include core.commentChar <comment string>
+
+	where ${SQ}<comment string>${SQ} is the string you wish to use.
+	EOF
+	test_cmp expect actual &&
+	test_grep "^; Changes to be committed:" .git/COMMIT_EDITMSG
+'
+
+test_expect_success !WITH_BREAKING_CHANGES 'switch core.commentchar but out of options' '
+	cat >text <<\EOF &&
+# 1
+; 2
+@ 3
+! 4
+$ 5
+% 6
+^ 7
+& 8
+| 9
+: 10
+EOF
+	git commit --amend -F text &&
+	(
+		test_set_editor .git/FAKE_EDITOR &&
+		test_must_fail git -c core.commentChar=auto commit --amend
+	)
+'
+
+test_expect_success WITH_BREAKING_CHANGES 'core.commentChar=auto is rejected' '
+	test_config core.commentChar auto &&
+	test_must_fail git rev-parse --git-dir 2>err &&
+	sed -n "s/^hint: *\$//p; s/^hint: //p; s/^fatal: //p" err >actual &&
+	cat >expect <<-EOF &&
+	Support for ${SQ}core.commentChar=auto${SQ} has been removed in Git 3.0
+
+	To use the default comment string (#) please run
+
+	    git config unset core.commentChar
+
+	To set a custom comment string please run
+
+	    git config set core.commentChar <comment string>
+
+	where ${SQ}<comment string>${SQ} is the string you wish to use.
+	EOF
+	test_cmp expect actual
 '
 
 test_done

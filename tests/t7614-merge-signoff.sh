@@ -1,55 +1,72 @@
 #!/bin/sh
 
-test_description='git merge --signoff'
+test_description='git merge --signoff
 
-cd "$(dirname "$0")" || exit 1
+This test runs git merge --signoff and makes sure that it works.
+'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-REAL_GIT=/usr/bin/git
+# Setup test files
+test_setup() {
+	# Expected commit message after merge --signoff
+	cat >expected-signed <<EOF &&
+Merge branch 'main' into other-branch
 
+Signed-off-by: $(git var GIT_COMMITTER_IDENT | sed -e "s/>.*/>/")
+EOF
+
+	# Expected commit message after merge without --signoff (or with --no-signoff)
+	cat >expected-unsigned <<EOF &&
+Merge branch 'main' into other-branch
+EOF
+
+	# Initial commit and feature branch to merge main into it.
+	git commit --allow-empty -m "Initial empty commit" &&
+	git checkout -b other-branch &&
+	test_commit other-branch file1 1
+}
+
+# Setup repository, files & feature branch
+# This step must be run if You want to test 2,3 or 4
+# Order of 2,3,4 is not important, but 1 must be run before
+# For example `-r 1,4` or `-r 1,4,2 -v` etc
+# But not `-r 2` or `-r 4,3,2,1`
 test_expect_success 'setup' '
-	$REAL_GIT init merge-signoff &&
-	cd merge-signoff &&
-	$REAL_GIT config user.name "C O Mitter" &&
-	$REAL_GIT config user.email "committer@example.com" &&
-
-	$REAL_GIT commit --allow-empty -m "Initial empty commit" &&
-	$REAL_GIT checkout -b other-branch &&
-	echo file1content >file1 &&
-	$REAL_GIT add file1 &&
-	test_tick &&
-	$REAL_GIT commit -m "other-branch"
+	test_setup
 '
 
-test_expect_success 'merge --signoff adds sign-off line' '
-	cd merge-signoff &&
-	$REAL_GIT checkout main 2>/dev/null || $REAL_GIT checkout master &&
-	echo file2content >file2 &&
-	$REAL_GIT add file2 &&
-	test_tick &&
-	$REAL_GIT commit -m "main-branch-2" &&
-	$REAL_GIT merge other-branch --signoff --no-edit &&
-	git cat-file commit HEAD >raw &&
-	sed -e "1,/^$/d" raw >actual &&
-	grep "Signed-off-by:" actual
+# Test with --signoff flag
+test_expect_success 'git merge --signoff adds a sign-off line' '
+	git checkout main &&
+	test_commit main-branch-2 file2 2 &&
+	git checkout other-branch &&
+	git merge main --signoff --no-edit &&
+	git cat-file commit HEAD | sed -e "1,/^\$/d" >actual &&
+	test_cmp expected-signed actual
 '
 
-test_expect_success 'merge without --signoff has no sign-off' '
-	cd merge-signoff &&
-	$REAL_GIT checkout -b no-signoff other-branch &&
-	echo file3content >file3 &&
-	$REAL_GIT add file3 &&
-	test_tick &&
-	$REAL_GIT commit -m "no-signoff" &&
-	$REAL_GIT checkout main 2>/dev/null || $REAL_GIT checkout master &&
-	echo file4content >file4 &&
-	$REAL_GIT add file4 &&
-	test_tick &&
-	$REAL_GIT commit -m "main-branch-3" &&
-	$REAL_GIT merge no-signoff --no-edit &&
-	git cat-file commit HEAD >raw &&
-	sed -e "1,/^$/d" raw >actual &&
-	! grep "Signed-off-by:" actual
+# Test without --signoff flag
+test_expect_success 'git merge does not add a sign-off line' '
+	git checkout main &&
+	test_commit main-branch-3 file3 3 &&
+	git checkout other-branch &&
+	git merge main --no-edit &&
+	git cat-file commit HEAD | sed -e "1,/^\$/d" >actual &&
+	test_cmp expected-unsigned actual
+'
+
+# Test for --no-signoff flag
+test_expect_success 'git merge --no-signoff flag cancels --signoff flag' '
+	git checkout main &&
+	test_commit main-branch-4 file4 4 &&
+	git checkout other-branch &&
+	git merge main --no-edit --signoff --no-signoff &&
+	git cat-file commit HEAD | sed -e "1,/^\$/d" >actual &&
+	test_cmp expected-unsigned actual
 '
 
 test_done

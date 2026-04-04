@@ -1,67 +1,124 @@
 #!/bin/sh
 
-test_description='git rebase basic tests'
+test_description='git rebase --whitespace=fix
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+This test runs git rebase --whitespace=fix and make sure that it works.
+'
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
+# prepare initial revision of "file" with a blank line at the end
+cat >file <<EOF
+a
+b
+c
 
-	echo base >file &&
-	git add file &&
-	test_tick &&
-	git commit -m base &&
-	git tag base &&
+EOF
 
-	git checkout -b feature &&
-	echo feature1 >feature-file &&
-	git add feature-file &&
-	test_tick &&
-	git commit -m feature1 &&
+# expected contents in "file" after rebase
+cat >expect-first <<EOF
+a
+b
+c
+EOF
 
-	echo feature2 >>feature-file &&
-	git add feature-file &&
-	test_tick &&
-	git commit -m feature2 &&
-	git tag feature-end &&
+# prepare second revision of "file"
+cat >second <<EOF
+a
+b
+c
 
-	git checkout main &&
-	echo main-change >main-file &&
-	git add main-file &&
-	test_tick &&
-	git commit -m main-change &&
-	git tag main-end
+d
+e
+f
+
+
+
+
+EOF
+
+# expected contents in second revision after rebase
+cat >expect-second <<EOF
+a
+b
+c
+
+d
+e
+f
+EOF
+
+test_expect_success 'blank line at end of file; extend at end of file' '
+	git commit --allow-empty -m "Initial empty commit" &&
+	git add file && git commit -m first &&
+	mv second file &&
+	git add file && git commit -m second &&
+	git rebase --whitespace=fix HEAD^^ &&
+	git diff --exit-code HEAD^:file expect-first &&
+	test_cmp expect-second file
 '
 
-test_expect_success 'rebase feature onto main' '
-	git checkout feature &&
-	git rebase main &&
-	test_path_is_file main-file &&
-	test_path_is_file feature-file
+# prepare third revision of "file"
+sed -e's/Z//' >third <<EOF
+a
+b
+c
+
+d
+e
+f
+    Z
+ Z
+h
+i
+j
+k
+l
+EOF
+
+sed -e's/ //g' <third >expect-third
+
+test_expect_success 'two blanks line at end of file; extend at end of file' '
+	cp third file && git add file && git commit -m third &&
+	git rebase --whitespace=fix HEAD^^ &&
+	git diff --exit-code HEAD^:file expect-second &&
+	test_cmp expect-third file
 '
 
-test_expect_success 'rebase preserves commit count' '
-	git rev-parse main >main_sha &&
-	git log --oneline feature >all_commits &&
-	git log --oneline $(cat main_sha) >main_commits &&
-	main_count=$(wc -l <main_commits | tr -d " ") &&
-	all_count=$(wc -l <all_commits | tr -d " ") &&
-	test $(( all_count - main_count )) = 2
+test_expect_success 'same, but do not remove trailing spaces' '
+	git config core.whitespace "-blank-at-eol" &&
+	git reset --hard HEAD^ &&
+	cp third file && git add file && git commit -m third &&
+	git rebase --whitespace=fix HEAD^^ &&
+	git diff --exit-code HEAD^:file expect-second &&
+	test_cmp file third
 '
 
-test_expect_success 'rebase result has correct content' '
-	echo main-change >expect &&
-	test_cmp expect main-file &&
-	cat >expect <<-\EOF &&
-	feature1
-	feature2
-	EOF
-	test_cmp expect feature-file
+sed -e's/Z//' >beginning <<EOF
+a
+		    Z
+       Z
+EOF
+
+cat >expect-beginning <<EOF
+a
+
+
+1
+2
+3
+4
+5
+EOF
+
+test_expect_success 'at beginning of file' '
+	git config core.whitespace "blank-at-eol" &&
+	cp beginning file &&
+	git commit -m beginning file &&
+	test_write_lines 1 2 3 4 5 >>file &&
+	git commit -m more file &&
+	git rebase --whitespace=fix HEAD^^ &&
+	test_cmp expect-beginning file
 '
 
 test_done

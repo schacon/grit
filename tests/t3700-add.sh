@@ -1,368 +1,167 @@
 #!/bin/sh
-# Ported from git/t/t3700-add.sh
-# Tests for 'grit add'.
+#
+# Copyright (c) 2006 Carl D. Worth
+#
 
-test_description='grit add'
+test_description='Test of git add, including the -- option.'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup repository' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com"
-'
+. "$TEST_DIRECTORY"/lib-unique-files.sh
+
+# Test the file mode "$1" of the file "$2" in the index.
+test_mode_in_index () {
+	case "$(git ls-files -s "$2")" in
+	"$1 "*"	$2")
+		echo pass
+		;;
+	*)
+		echo fail
+		git ls-files -s "$2"
+		return 1
+		;;
+	esac
+}
 
 test_expect_success 'Test of git add' '
-	cd repo &&
 	touch foo && git add foo
 '
 
+test_expect_success 'Test with no pathspecs' '
+	cat >expect <<-EOF &&
+	Nothing specified, nothing added.
+	hint: Maybe you wanted to say ${SQ}git add .${SQ}?
+	hint: Disable this message with "git config set advice.addEmptyPathspec false"
+	EOF
+	git add 2>actual &&
+	test_cmp expect actual
+'
+
 test_expect_success 'Post-check that foo is in the index' '
-	cd repo &&
 	git ls-files foo >actual &&
-	grep foo actual
+	test_grep foo actual
 '
 
 test_expect_success 'Test that "git add -- -q" works' '
-	cd repo &&
 	touch -- -q && git add -- -q
 '
 
-test_expect_success 'add a single file' '
-	cd repo &&
-	echo "hello" >file1.txt &&
-	git add file1.txt &&
-	git ls-files --stage >actual &&
-	grep "file1.txt" actual
+BATCH_CONFIGURATION='-c core.fsync=loose-object -c core.fsyncmethod=batch'
+
+test_expect_success 'git add: core.fsyncmethod=batch' "
+	test_create_unique_files 2 4 files_base_dir1 &&
+	GIT_TEST_FSYNC=1 git $BATCH_CONFIGURATION add -- ./files_base_dir1/ &&
+	git ls-files --stage files_base_dir1/ |
+	test_parse_ls_files_stage_oids >added_files_oids &&
+
+	# We created 2 subdirs with 4 files each (8 files total) above
+	test_line_count = 8 added_files_oids &&
+	git cat-file --batch-check='%(objectname)' <added_files_oids >added_files_actual &&
+	test_cmp added_files_oids added_files_actual
+"
+
+test_expect_success 'git update-index: core.fsyncmethod=batch' "
+	test_create_unique_files 2 4 files_base_dir2 &&
+	find files_base_dir2 ! -type d -print | xargs git $BATCH_CONFIGURATION update-index --add -- &&
+	git ls-files --stage files_base_dir2 |
+	test_parse_ls_files_stage_oids >added_files2_oids &&
+
+	# We created 2 subdirs with 4 files each (8 files total) above
+	test_line_count = 8 added_files2_oids &&
+	git cat-file --batch-check='%(objectname)' <added_files2_oids >added_files2_actual &&
+	test_cmp added_files2_oids added_files2_actual
+"
+
+test_expect_success \
+	'git add: Test that executable bit is not used if core.filemode=0' \
+	'git config core.filemode 0 &&
+	 echo foo >xfoo1 &&
+	 chmod 755 xfoo1 &&
+	 git add xfoo1 &&
+	 test_mode_in_index 100644 xfoo1'
+
+test_expect_success 'git add: filemode=0 should not get confused by symlink' '
+	rm -f xfoo1 &&
+	test_ln_s_add foo xfoo1 &&
+	test_mode_in_index 120000 xfoo1
 '
 
-test_expect_success 'add multiple files' '
-	cd repo &&
-	echo "world" >file2.txt &&
-	echo "foo" >file3.txt &&
-	git add file2.txt file3.txt &&
-	git ls-files --stage >actual &&
-	grep "file2.txt" actual &&
-	grep "file3.txt" actual
+test_expect_success \
+	'git update-index --add: Test that executable bit is not used...' \
+	'git config core.filemode 0 &&
+	 echo foo >xfoo2 &&
+	 chmod 755 xfoo2 &&
+	 git update-index --add xfoo2 &&
+	 test_mode_in_index 100644 xfoo2'
+
+test_expect_success 'git add: filemode=0 should not get confused by symlink' '
+	rm -f xfoo2 &&
+	test_ln_s_add foo xfoo2 &&
+	test_mode_in_index 120000 xfoo2
 '
 
-test_expect_success 'add all with dot' '
-	cd repo &&
-	echo "new" >file4.txt &&
-	git add . &&
-	git ls-files --stage >actual &&
-	grep "file4.txt" actual
-'
+test_expect_success \
+	'git update-index --add: Test that executable bit is not used...' \
+	'git config core.filemode 0 &&
+	 test_ln_s_add xfoo2 xfoo3 &&	# runs git update-index --add
+	 test_mode_in_index 120000 xfoo3'
 
-test_expect_success 'add files in subdirectory' '
-	cd repo &&
-	mkdir -p subdir &&
-	echo "nested" >subdir/deep.txt &&
-	git add subdir/deep.txt &&
-	git ls-files --stage >actual &&
-	grep "subdir/deep.txt" actual
-'
-
-test_expect_success 'add directory recursively' '
-	cd repo &&
-	mkdir -p dir2 &&
-	echo "a" >dir2/a.txt &&
-	echo "b" >dir2/b.txt &&
-	git add dir2 &&
-	git ls-files --stage >actual &&
-	grep "dir2/a.txt" actual &&
-	grep "dir2/b.txt" actual
-'
-
-test_expect_success 'add updates modified file' '
-	cd repo &&
-	echo "updated" >file1.txt &&
-	git add file1.txt &&
-	git ls-files --stage >actual &&
-	# The OID should have changed
-	grep "file1.txt" actual >line &&
-	! grep "ce013625030ba8dba906f756967f9e9ca394464a" line
-'
-
-test_expect_success 'add -A removes deleted files from index' '
-	cd repo &&
-	rm file3.txt &&
-	git add -A &&
-	git ls-files --stage >actual &&
-	! grep "file3.txt" actual
-'
-
-test_expect_success 'add -u updates tracked files only' '
-	cd repo &&
-	echo "untracked" >untracked.txt &&
-	echo "modified" >file1.txt &&
-	git add -u &&
-	git ls-files --stage >actual &&
-	! grep "untracked.txt" actual &&
-	grep "file1.txt" actual
-'
-
-test_expect_success 'add -v is verbose' '
-	cd repo &&
-	echo "verbosetest" >vfile.txt &&
-	git add -v vfile.txt 2>stderr &&
-	grep "add" stderr
-'
-
-test_expect_success 'add -n dry run does not modify index' '
-	cd repo &&
-	echo "dryrun" >dryfile.txt &&
-	git ls-files --stage >before &&
-	git add -n dryfile.txt 2>/dev/null &&
-	git ls-files --stage >after &&
-	test_cmp before after
-'
-
-test_expect_success 'add nonexistent file fails' '
-	cd repo &&
-	test_must_fail git add nonexistent.txt
-'
-
-test_expect_success '"add non-existent" should fail' '
-	cd repo &&
-	test_must_fail git add non-existent &&
-	git ls-files >actual &&
-	! grep "non-existent" actual
-'
-
-test_expect_success 'check correct prefix detection' '
-	cd repo &&
-	mkdir -p 1/2 1/3 &&
-	echo a >1/2/a &&
-	echo b >1/3/b &&
-	echo c >1/2/c &&
-	git add 1/2/a 1/3/b 1/2/c &&
-	git ls-files --error-unmatch 1/2/a 1/3/b 1/2/c
-'
-
-test_expect_success 'git add -A on empty repo does not error out' '
-	rm -fr empty &&
-	git init empty &&
-	(
-		cd empty &&
-		git add -A . &&
-		git add -A
-	)
-'
-
-test_expect_success '"git add ." in empty repo' '
-	cd repo &&
-	rm -fr empty &&
-	git init empty &&
-	(
-		cd empty &&
-		git add .
-	)
-'
-
-test_expect_success 'git add --dry-run of existing changed file' '
-	cd repo &&
-	git add foo &&
-	git commit -m "commit for dry-run test" &&
-	echo new >>foo &&
-	git add --dry-run foo >actual 2>&1 &&
-	grep "add" actual &&
-	grep "foo" actual
-'
-
-test_expect_success 'git add --dry-run of non-existing file' '
-	cd repo &&
-	test_must_fail git add --dry-run non-existent-file 2>err &&
-	grep "non-existent-file" err
-'
-
-test_expect_success 'add symlink' '
-	cd repo &&
-	echo target >target_file &&
-	ln -s target_file test_symlink &&
-	git add test_symlink &&
-	git ls-files -s test_symlink >actual &&
-	grep "^120000 " actual
-'
-
-test_expect_success 'add intent-to-add file' '
-	cd repo &&
-	echo ita_content >ita_file &&
-	git add -N ita_file &&
-	git ls-files ita_file >actual &&
-	grep "ita_file" actual &&
-	git ls-files --stage ita_file >actual &&
-	grep "0000000000000000000000000000000000000000" actual
-'
-
-test_expect_success 'add -A after intent-to-add stages full content' '
-	cd repo &&
-	git add -A &&
-	git ls-files --stage ita_file >actual &&
-	! grep "0000000000000000000000000000000000000000" actual
-'
-
-test_expect_success 'add files with spaces in name' '
-	cd repo &&
-	echo content >"space file.txt" &&
-	git add "space file.txt" &&
-	git ls-files --error-unmatch "space file.txt"
-'
-
-test_expect_success 'add deeply nested directory structure' '
-	cd repo &&
-	mkdir -p a/b/c/d/e &&
-	echo deep >a/b/c/d/e/file.txt &&
-	git add a/b/c/d/e/file.txt &&
-	git ls-files --error-unmatch a/b/c/d/e/file.txt
-'
-
-test_expect_success 'add -A removes multiple deleted files' '
-	cd repo &&
-	echo del1 >del1.txt &&
-	echo del2 >del2.txt &&
-	echo del3 >del3.txt &&
-	git add del1.txt del2.txt del3.txt &&
-	git commit -m "files to delete" &&
-	rm del1.txt del2.txt del3.txt &&
-	git add -A &&
-	git ls-files >actual &&
-	! grep "del1.txt" actual &&
-	! grep "del2.txt" actual &&
-	! grep "del3.txt" actual
-'
-
-test_expect_success 'add -u does not add untracked files' '
-	cd repo &&
-	echo brand_new >brand_new_file.txt &&
-	git add -u &&
-	git ls-files >actual &&
-	! grep "brand_new_file.txt" actual
-'
-
-test_expect_success 'add -u updates modifications of tracked files' '
-	cd repo &&
-	echo original >tracked_mod.txt &&
-	git add tracked_mod.txt &&
-	git commit -m "add tracked_mod" &&
-	git ls-files --stage tracked_mod.txt >before &&
-	echo modified >tracked_mod.txt &&
-	git add -u &&
-	git ls-files --stage tracked_mod.txt >after &&
-	! test_cmp before after
-'
-
-test_expect_success 'add . picks up new files and modifications' '
-	cd repo &&
-	echo new_via_dot >new_via_dot.txt &&
-	echo modified_again >tracked_mod.txt &&
-	git add . &&
-	git ls-files --error-unmatch new_via_dot.txt &&
-	git ls-files --error-unmatch tracked_mod.txt
-'
-
-test_expect_success 'add with -f forces adding' '
-	cd repo &&
-	echo force_content >force_file.txt &&
-	git add -f force_file.txt &&
-	git ls-files --error-unmatch force_file.txt
-'
-
-test_expect_success 'add multiple directories at once' '
-	cd repo &&
-	mkdir -p dirA dirB dirC &&
-	echo a >dirA/file.txt &&
-	echo b >dirB/file.txt &&
-	echo c >dirC/file.txt &&
-	git add dirA dirB dirC &&
-	git ls-files --error-unmatch dirA/file.txt &&
-	git ls-files --error-unmatch dirB/file.txt &&
-	git ls-files --error-unmatch dirC/file.txt
-'
-
-test_expect_success 'add already tracked file is idempotent' '
-	cd repo &&
-	echo same >idempotent.txt &&
-	git add idempotent.txt &&
-	git ls-files --stage idempotent.txt >before &&
-	git add idempotent.txt &&
-	git ls-files --stage idempotent.txt >after &&
-	test_cmp before after
-'
-
-test_expect_success 'add -v shows all added files' '
-	cd repo &&
-	echo v1 >verbose1.txt &&
-	echo v2 >verbose2.txt &&
-	git add -v verbose1.txt verbose2.txt 2>stderr &&
-	grep "verbose1.txt" stderr &&
-	grep "verbose2.txt" stderr
-'
-
-test_expect_success 'add -n shows what would be added without staging' '
-	cd repo &&
-	echo drynew >drynew.txt &&
-	git ls-files --stage >before &&
-	git add -n drynew.txt 2>/dev/null &&
-	git ls-files --stage >after &&
-	test_cmp before after
-'
-
-test_expect_success 'add . from subdirectory adds relative paths' '
-	cd repo &&
-	mkdir -p subwork &&
-	echo sub1 >subwork/s1.txt &&
-	echo sub2 >subwork/s2.txt &&
-	(
-		cd subwork &&
-		git add .
-	) &&
-	git ls-files --error-unmatch subwork/s1.txt &&
-	git ls-files --error-unmatch subwork/s2.txt
-'
-
-test_expect_success 'add from subdirectory with relative path' '
-	cd repo &&
-	mkdir -p reldir &&
-	echo rel >reldir/rel.txt &&
-	(
-		cd reldir &&
-		git add rel.txt
-	) &&
-	git ls-files --error-unmatch reldir/rel.txt
-'
-
-# ---------------------------------------------------------------------------
-# Additional tests ported from git/t/t3700-add.sh
-# ---------------------------------------------------------------------------
-
-test_expect_success 'add ignored single file with -f' '
-	cd repo &&
+test_expect_success '.gitignore test setup' '
 	echo "*.ig" >.gitignore &&
-	>a.ig &&
-	git add -f a.ig &&
+	mkdir c.if d.ig &&
+	>a.ig && >b.if &&
+	>c.if/c.if && >c.if/c.ig &&
+	>d.ig/d.if && >d.ig/d.ig
+'
+
+test_expect_success '.gitignore is honored' '
+	git add . &&
+	git ls-files >files &&
+	sed -n "/\\.ig/p" <files >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'error out when attempting to add ignored ones without -f' '
+	test_must_fail git add a.?? &&
+	git ls-files >files &&
+	sed -n "/\\.ig/p" <files >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'error out when attempting to add ignored ones without -f' '
+	test_must_fail git add d.?? &&
+	git ls-files >files &&
+	sed -n "/\\.ig/p" <files >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'error out when attempting to add ignored ones but add others' '
+	touch a.if &&
+	test_must_fail git add a.?? &&
+	git ls-files >files &&
+	sed -n "/\\.ig/p" <files >actual &&
+	test_must_be_empty actual &&
+	test_grep a.if files
+'
+
+test_expect_success 'add ignored ones with -f' '
+	git add -f a.?? &&
 	git ls-files --error-unmatch a.ig
 '
 
-test_expect_success 'add ignored dir files with -f using explicit paths' '
-	cd repo &&
-	mkdir -p d.ig &&
-	>d.ig/d.if && >d.ig/d.ig &&
-	git add -f d.ig/d.if d.ig/d.ig &&
+test_expect_success 'add ignored ones with -f' '
+	git add -f d.??/* &&
 	git ls-files --error-unmatch d.ig/d.if d.ig/d.ig
 '
 
-test_expect_success 'add ignored dir with -f' '
-	cd repo &&
+test_expect_success 'add ignored ones with -f' '
 	rm -f .git/index &&
-	git add -f d.ig &&
+	git add -f d.?? &&
 	git ls-files --error-unmatch d.ig/d.if d.ig/d.ig
 '
 
 test_expect_success '.gitignore with subdirectory' '
-	cd repo &&
+
 	rm -f .git/index &&
 	mkdir -p sub/dir &&
 	echo "!dir/a.*" >sub/.gitignore &&
@@ -378,306 +177,414 @@ test_expect_success '.gitignore with subdirectory' '
 	git ls-files --error-unmatch sub/dir/a.ig
 '
 
-test_expect_success 'git add to resolve conflicts on ignored path' '
-	rm -rf conflict_repo &&
-	git init conflict_repo &&
-	cd conflict_repo &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com" &&
-	>normalfile &&
-	git add normalfile &&
-	git commit -m "commit" &&
-	H=$(git rev-parse HEAD:normalfile) &&
-	printf "100644 %s 1\ttrack-this\n" "$H" >idx_input &&
-	printf "100644 %s 3\ttrack-this\n" "$H" >>idx_input &&
-	git update-index --index-info <idx_input &&
-	echo track-this >.gitignore &&
+mkdir 1 1/2 1/3
+touch 1/2/a 1/3/b 1/2/c
+test_expect_success 'check correct prefix detection' '
+	rm -f .git/index &&
+	git add 1/2/a 1/3/b 1/2/c
+'
+
+test_expect_success 'git add with filemode=0, symlinks=0, and unmerged entries' '
+	for s in 1 2 3
+	do
+		echo $s > stage$s &&
+		echo "100755 $(git hash-object -w stage$s) $s	file" &&
+		echo "120000 $(printf $s | git hash-object -w -t blob --stdin) $s	symlink" || return 1
+	done | git update-index --index-info &&
+	git config core.filemode 0 &&
+	git config core.symlinks 0 &&
+	echo new > file &&
+	echo new > symlink &&
+	git add file symlink &&
+	git ls-files --stage >actual &&
+	test_grep "^100755 .* 0	file$" actual &&
+	test_grep "^120000 .* 0	symlink$" actual
+'
+
+test_expect_success 'git add with filemode=0, symlinks=0 prefers stage 2 over stage 1' '
+	git rm --cached -f file symlink &&
+	(
+		echo "100644 $(git hash-object -w stage1) 1	file" &&
+		echo "100755 $(git hash-object -w stage2) 2	file" &&
+		echo "100644 $(printf 1 | git hash-object -w -t blob --stdin) 1	symlink" &&
+		echo "120000 $(printf 2 | git hash-object -w -t blob --stdin) 2	symlink"
+	) | git update-index --index-info &&
+	git config core.filemode 0 &&
+	git config core.symlinks 0 &&
+	echo new > file &&
+	echo new > symlink &&
+	git add file symlink &&
+	git ls-files --stage >actual &&
+	test_grep "^100755 .* 0	file$" actual &&
+	test_grep "^120000 .* 0	symlink$" actual
+'
+
+test_expect_success 'git add --refresh' '
+	>foo && git add foo && git commit -a -m "commit all" &&
+	test -z "$(git diff-index HEAD -- foo)" &&
+	git read-tree HEAD &&
+	case "$(git diff-index HEAD -- foo)" in
+	:100644" "*"M	foo") echo pass;;
+	*) echo fail; false;;
+	esac &&
+	git add --refresh -- foo &&
+	test -z "$(git diff-index HEAD -- foo)"
+'
+
+test_expect_success 'git add --refresh with pathspec' '
+	git reset --hard &&
+	echo >foo && echo >bar && echo >baz &&
+	git add foo bar baz && H=$(git rev-parse :foo) && git rm -f foo &&
+	echo "100644 $H 3	foo" | git update-index --index-info &&
+	test-tool chmtime -60 bar baz &&
+	git add --refresh bar >actual &&
+	test_must_be_empty actual &&
+
+	git diff-files --name-only >actual &&
+	test_grep ! bar actual &&
+	test_grep baz actual
+'
+
+test_expect_success 'git add --refresh correctly reports no match error' "
+	echo \"fatal: pathspec ':(icase)nonexistent' did not match any files\" >expect &&
+	test_must_fail git add --refresh ':(icase)nonexistent' 2>actual &&
+	test_cmp expect actual
+"
+
+test_expect_success POSIXPERM,SANITY 'git add should fail atomically upon an unreadable file' '
+	git reset --hard &&
+	date >foo1 &&
+	date >foo2 &&
+	chmod 0 foo2 &&
+	test_must_fail git add --verbose . &&
+	git ls-files foo1 >actual &&
+	test_grep ! foo1 actual
+'
+
+rm -f foo2
+
+test_expect_success POSIXPERM,SANITY 'git add --ignore-errors' '
+	git reset --hard &&
+	date >foo1 &&
+	date >foo2 &&
+	chmod 0 foo2 &&
+	test_must_fail git add --verbose --ignore-errors . &&
+	git ls-files foo1 >actual &&
+	test_grep foo1 actual
+'
+
+rm -f foo2
+
+test_expect_success POSIXPERM,SANITY 'git add (add.ignore-errors)' '
+	git config add.ignore-errors 1 &&
+	git reset --hard &&
+	date >foo1 &&
+	date >foo2 &&
+	chmod 0 foo2 &&
+	test_must_fail git add --verbose . &&
+	git ls-files foo1 >actual &&
+	test_grep foo1 actual
+'
+rm -f foo2
+
+test_expect_success POSIXPERM,SANITY 'git add (add.ignore-errors = false)' '
+	git config add.ignore-errors 0 &&
+	git reset --hard &&
+	date >foo1 &&
+	date >foo2 &&
+	chmod 0 foo2 &&
+	test_must_fail git add --verbose . &&
+	git ls-files foo1 >actual &&
+	test_grep ! foo1 actual
+'
+rm -f foo2
+
+test_expect_success POSIXPERM,SANITY '--no-ignore-errors overrides config' '
+	git config add.ignore-errors 1 &&
+	git reset --hard &&
+	date >foo1 &&
+	date >foo2 &&
+	chmod 0 foo2 &&
+	test_must_fail git add --verbose --no-ignore-errors . &&
+	git ls-files foo1 >actual &&
+	test_grep ! foo1 actual &&
+	git config add.ignore-errors 0
+'
+rm -f foo2
+
+test_expect_success BSLASHPSPEC "git add 'fo\\[ou\\]bar' ignores foobar" '
+	git reset --hard &&
+	touch fo\[ou\]bar foobar &&
+	git add '\''fo\[ou\]bar'\'' &&
+	git ls-files fo\[ou\]bar >actual &&
+	test_grep -F fo\[ou\]bar actual &&
+	git ls-files foobar >actual &&
+	test_grep ! foobar actual
+'
+
+test_expect_success 'git add to resolve conflicts on otherwise ignored path' '
+	git reset --hard &&
+	H=$(git rev-parse :1/2/a) &&
+	(
+		echo "100644 $H 1	track-this" &&
+		echo "100644 $H 3	track-this"
+	) | git update-index --index-info &&
+	echo track-this >>.gitignore &&
 	echo resolved >track-this &&
 	git add track-this
 '
 
-test_expect_success 'git add -f can add files matching gitignore' '
-	cd repo &&
-	echo "ignore_me" >.gitignore &&
-	>ignore_me &&
-	git add -f ignore_me &&
-	git ls-files --error-unmatch ignore_me
+test_expect_success '"add non-existent" should fail' '
+	test_must_fail git add non-existent &&
+	git ls-files >actual &&
+	test_grep ! "non-existent" actual
 '
 
-test_expect_success 'git add -p is handled' '
-	cd repo &&
-	echo test_content > pfile &&
-	git add pfile &&
-	git commit -m "add pfile" &&
-	echo changed > pfile &&
-	echo q | git add -p 2>/dev/null || true
-'
-
-test_expect_success 'git add from subdirectory with deep pathspec' '
-	cd repo &&
-	mkdir -p deep/sub &&
-	echo hello >deep/sub/file.txt &&
+test_expect_success 'git add -A on empty repo does not error out' '
+	rm -fr empty &&
+	git init empty &&
 	(
-		cd deep &&
-		git add sub/file.txt
-	) &&
-	git ls-files --error-unmatch deep/sub/file.txt
+		cd empty &&
+		git add -A . &&
+		git add -A
+	)
 '
 
-test_expect_success 'git add with no matching files in empty directory' '
-	cd repo &&
-	mkdir -p emptydir &&
-	git add emptydir 2>/dev/null || true
+test_expect_success '"git add ." in empty repo' '
+	rm -fr empty &&
+	git init empty &&
+	(
+		cd empty &&
+		git add .
+	)
+'
+
+test_expect_success '"git add" a embedded repository' '
+	rm -fr outer && git init outer &&
+	(
+		cd outer &&
+		for i in 1 2
+		do
+			name=inner$i &&
+			git init $name &&
+			git -C $name commit --allow-empty -m $name ||
+				return 1
+		done &&
+		git add . 2>actual &&
+		cat >expect <<-EOF &&
+		warning: adding embedded git repository: inner1
+		hint: You${SQ}ve added another git repository inside your current repository.
+		hint: Clones of the outer repository will not contain the contents of
+		hint: the embedded repository and will not know how to obtain it.
+		hint: If you meant to add a submodule, use:
+		hint:
+		hint: 	git submodule add <url> inner1
+		hint:
+		hint: If you added this path by mistake, you can remove it from the
+		hint: index with:
+		hint:
+		hint: 	git rm --cached inner1
+		hint:
+		hint: See "git help submodule" for more information.
+		hint: Disable this message with "git config set advice.addEmbeddedRepo false"
+		warning: adding embedded git repository: inner2
+		EOF
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'error on a repository with no commits' '
+	rm -fr empty &&
+	git init empty &&
+	test_must_fail git add empty >actual 2>&1 &&
+	cat >expect <<-EOF &&
+	error: '"'empty/'"' does not have a commit checked out
+	error: unable to index file '"'empty/'"'
+	fatal: adding files failed
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'git add --dry-run of existing changed file' "
+	echo new >>track-this &&
+	git add --dry-run track-this >actual 2>&1 &&
+	echo \"add 'track-this'\" | test_cmp - actual
+"
+
+test_expect_success 'git add --dry-run of non-existing file' "
+	echo ignored-file >>.gitignore &&
+	test_must_fail git add --dry-run track-this ignored-file >actual 2>&1
+"
+
+test_expect_success 'git add --dry-run of an existing file output' "
+	echo \"fatal: pathspec 'ignored-file' did not match any files\" >expect &&
+	test_cmp expect actual
+"
+
+cat >expect.err <<\EOF
+The following paths are ignored by one of your .gitignore files:
+ignored-file
+hint: Use -f if you really want to add them.
+hint: Disable this message with "git config set advice.addIgnoredFile false"
+EOF
+cat >expect.out <<\EOF
+add 'track-this'
+EOF
+
+test_expect_success 'git add --dry-run --ignore-missing of non-existing file' '
+	test_must_fail git add --dry-run --ignore-missing track-this ignored-file >actual.out 2>actual.err
+'
+
+test_expect_success 'git add --dry-run --ignore-missing of non-existing file output' '
+	test_cmp expect.out actual.out &&
+	test_cmp expect.err actual.err
 '
 
 test_expect_success 'git add --dry-run --interactive should fail' '
-	cd repo &&
 	test_must_fail git add --dry-run --interactive
 '
 
-# === add -u with deleted files ===
-
-test_expect_success 'add -u stages deletion of tracked file' '
-	cd repo &&
-	echo del_me >del_tracked &&
-	git add del_tracked &&
-	git commit -m "add del_tracked" &&
-	rm del_tracked &&
-	grit add -u &&
-	git diff --cached --name-status >actual &&
-	grep "^D.*del_tracked" actual
+test_expect_success 'git add empty string should fail' '
+	test_must_fail git add ""
 '
 
-test_expect_success 'add -u does not stage untracked files' '
-	cd repo &&
-	echo untr >untracked_file_u &&
-	grit add -u &&
-	test_must_fail git ls-files --error-unmatch untracked_file_u
+test_expect_success 'git add --chmod=[+-]x stages correctly' '
+	rm -f foo1 &&
+	echo foo >foo1 &&
+	git add --chmod=+x foo1 &&
+	test_mode_in_index 100755 foo1 &&
+	git add --chmod=-x foo1 &&
+	test_mode_in_index 100644 foo1
 '
 
-test_expect_success 'add -u stages modifications to tracked files' '
-	cd repo &&
-	echo base >mod_tracked &&
-	git add mod_tracked &&
-	git commit -m "add mod_tracked" &&
-	echo changed >mod_tracked &&
-	grit add -u &&
-	git diff --cached --name-only >actual &&
-	grep mod_tracked actual
+test_expect_success POSIXPERM,SYMLINKS 'git add --chmod=+x with symlinks' '
+	git config core.filemode 1 &&
+	git config core.symlinks 1 &&
+	rm -f foo2 &&
+	echo foo >foo2 &&
+	git add --chmod=+x foo2 &&
+	test_mode_in_index 100755 foo2
 '
 
-test_expect_success 'add -u with multiple deleted files' '
-	cd repo &&
-	echo a >multi_del_a &&
-	echo b >multi_del_b &&
-	echo c >multi_del_c &&
-	git add multi_del_a multi_del_b multi_del_c &&
-	git commit -m "add multi_del" &&
-	rm multi_del_a multi_del_b multi_del_c &&
-	grit add -u &&
-	git diff --cached --name-status >actual &&
-	grep "^D.*multi_del_a" actual &&
-	grep "^D.*multi_del_b" actual &&
-	grep "^D.*multi_del_c" actual
+test_expect_success 'git add --chmod=[+-]x changes index with already added file' '
+	rm -f foo3 xfoo3 &&
+	git reset --hard &&
+	echo foo >foo3 &&
+	git add foo3 &&
+	git add --chmod=+x foo3 &&
+	test_mode_in_index 100755 foo3 &&
+	echo foo >xfoo3 &&
+	chmod 755 xfoo3 &&
+	git add xfoo3 &&
+	git add --chmod=-x xfoo3 &&
+	test_mode_in_index 100644 xfoo3
 '
 
-# === add -f overrides .gitignore ===
-
-test_expect_success 'add -f stages an ignored file' '
-	cd repo &&
-	echo "*.ign" >.gitignore &&
-	git add .gitignore &&
-	git commit -m "add gitignore" &&
-	echo data >test.ign &&
-	grit add -f test.ign &&
-	git ls-files --error-unmatch test.ign
+test_expect_success POSIXPERM 'git add --chmod=[+-]x does not change the working tree' '
+	echo foo >foo4 &&
+	git add foo4 &&
+	git add --chmod=+x foo4 &&
+	! test -x foo4
 '
 
-test_expect_success 'add of ignored file with -f works' '
-	cd repo &&
-	echo data2 >add_ign2.ign &&
-	grit add -f add_ign2.ign &&
-	git ls-files --error-unmatch add_ign2.ign
+test_expect_success 'git add --chmod fails with non regular files (but updates the other paths)' '
+	git reset --hard &&
+	test_ln_s_add foo foo3 &&
+	touch foo4 &&
+	test_must_fail git add --chmod=+x foo3 foo4 2>stderr &&
+	test_grep "cannot chmod +x .foo3." stderr &&
+	test_mode_in_index 120000 foo3 &&
+	test_mode_in_index 100755 foo4
 '
 
-test_expect_success 'add -f on multiple ignored files' '
-	cd repo &&
-	echo x >f1.ign &&
-	echo y >f2.ign &&
-	grit add -f f1.ign f2.ign &&
-	git ls-files --error-unmatch f1.ign &&
-	git ls-files --error-unmatch f2.ign
+test_expect_success 'git add --chmod honors --dry-run' '
+	git reset --hard &&
+	echo foo >foo4 &&
+	git add foo4 &&
+	git add --chmod=+x --dry-run foo4 &&
+	test_mode_in_index 100644 foo4
 '
 
-# === add --dry-run ===
-
-test_expect_success 'add --dry-run shows file but does not stage' '
-	cd repo &&
-	echo drynew >dry_new_file &&
-	grit add --dry-run dry_new_file &&
-	test_must_fail git ls-files --error-unmatch dry_new_file
+test_expect_success 'git add --chmod --dry-run reports error for non regular files' '
+	git reset --hard &&
+	test_ln_s_add foo foo4 &&
+	test_must_fail git add --chmod=+x --dry-run foo4 2>stderr &&
+	test_grep "cannot chmod +x .foo4." stderr
 '
 
-test_expect_success 'add -n of modified tracked file does not stage' '
-	cd repo &&
-	echo original >dry_mod &&
-	git add dry_mod &&
-	git commit -m "add dry_mod" &&
-	echo modified >dry_mod &&
-	git diff --cached --name-only >before &&
-	grit add -n dry_mod &&
-	git diff --cached --name-only >after &&
-	test_cmp before after
+test_expect_success 'git add --chmod --dry-run reports error for unmatched pathspec' '
+	test_must_fail git add --chmod=+x --dry-run nonexistent 2>stderr &&
+	test_grep "pathspec .nonexistent. did not match any files" stderr
 '
 
-# === add -v verbose output ===
-
-test_expect_success 'add -v shows added file' '
-	cd repo &&
-	echo verbose_data >verbose_file &&
-	grit add -v verbose_file >output 2>&1 &&
-	grep "verbose_file" output
+test_expect_success 'no file status change if no pathspec is given' '
+	>foo5 &&
+	>foo6 &&
+	git add foo5 foo6 &&
+	git add --chmod=+x &&
+	test_mode_in_index 100644 foo5 &&
+	test_mode_in_index 100644 foo6
 '
 
-# === add with intent-to-add then full add ===
-
-test_expect_success 'add -N creates intent-to-add entry with zero oid' '
-	cd repo &&
-	echo ita_data >ita_full &&
-	grit add -N ita_full &&
-	git ls-files --stage ita_full >actual &&
-	grep "0000000000000000000000000000000000000000" actual
+test_expect_success 'no file status change if no pathspec is given in subdir' '
+	mkdir -p sub &&
+	(
+		cd sub &&
+		>sub-foo1 &&
+		>sub-foo2 &&
+		git add . &&
+		git add --chmod=+x &&
+		test_mode_in_index 100644 sub-foo1 &&
+		test_mode_in_index 100644 sub-foo2
+	)
 '
 
-test_expect_success 'add after intent-to-add stages full content' '
-	cd repo &&
-	grit add ita_full &&
-	git ls-files --stage ita_full >actual &&
-	! grep "0000000000000000000000000000000000000000" actual
+test_expect_success 'all statuses changed in folder if . is given' '
+	git init repo &&
+	(
+		cd repo &&
+		mkdir -p sub/dir &&
+		touch x y z sub/a sub/dir/b &&
+		git add -A &&
+		git add --chmod=+x . &&
+		git ls-files --stage >actual &&
+		test_grep ! ^100644 actual &&
+		git add --chmod=-x . &&
+		git ls-files --stage >actual &&
+		test_grep ! ^100755 actual
+	)
 '
 
-test_expect_success 'add -A stages intent-to-add files fully' '
-	cd repo &&
-	echo ita2 >ita_a_file &&
-	grit add -N ita_a_file &&
-	grit add -A &&
-	git ls-files --stage ita_a_file >actual &&
-	! grep "0000000000000000000000000000000000000000" actual
+test_expect_success 'cannot add a submodule of a different algorithm' '
+	git init --object-format=sha256 sha256 &&
+	(
+		cd sha256 &&
+		test_commit abc &&
+		git init --object-format=sha1 submodule &&
+		test_commit -C submodule def &&
+		test_must_fail git add submodule 2>err &&
+		test_grep "cannot add a submodule of a different hash algorithm" err &&
+		git ls-files --stage >entries &&
+		test_grep ! ^160000 entries
+	) &&
+	git init --object-format=sha1 sha1 &&
+	(
+		cd sha1 &&
+		test_commit abc &&
+		git init --object-format=sha256 submodule &&
+		test_commit -C submodule def &&
+		test_must_fail git add submodule 2>err &&
+		test_grep "cannot add a submodule of a different hash algorithm" err &&
+		git ls-files --stage >entries &&
+		test_grep ! ^160000 entries
+	)
 '
 
-# === additional deepening tests ===
-
-test_expect_success 'add file in subdirectory' '
-	cd repo &&
-	mkdir -p add_sub &&
-	echo subdata >add_sub/file.txt &&
-	grit add add_sub/file.txt &&
-	git ls-files --error-unmatch add_sub/file.txt
-'
-
-test_expect_success 'add multiple files at once' '
-	cd repo &&
-	echo m1 >add_m1.txt && echo m2 >add_m2.txt && echo m3 >add_m3.txt &&
-	grit add add_m1.txt add_m2.txt add_m3.txt &&
-	git ls-files --error-unmatch add_m1.txt &&
-	git ls-files --error-unmatch add_m2.txt &&
-	git ls-files --error-unmatch add_m3.txt
-'
-
-test_expect_success 'add with shell glob pattern' '
-	cd repo &&
-	echo g1 >glob1.g && echo g2 >glob2.g &&
-	grit add *.g &&
-	git ls-files --error-unmatch glob1.g &&
-	git ls-files --error-unmatch glob2.g
-'
-
-test_expect_success 'add updates modified tracked file' '
-	cd repo &&
-	git commit -m "add glob" 2>/dev/null &&
-	echo updated >glob1.g &&
-	grit add glob1.g &&
-	git diff --cached --name-only >staged &&
-	grep glob1.g staged
-'
-
-test_expect_success 'add -A stages deletions' '
-	cd repo &&
-	git commit -m "update glob" 2>/dev/null &&
-	rm -f glob2.g &&
-	grit add -A &&
-	git diff --cached --name-only >staged &&
-	grep "glob2.g" staged
-'
-
-test_expect_success 'add -A stages new files' '
-	cd repo &&
-	git commit -m "del glob" 2>/dev/null &&
-	echo new_a >add_a_new.txt &&
-	grit add -A &&
-	git ls-files --error-unmatch add_a_new.txt
-'
-
-test_expect_success 'add stages file even when matching gitignore with -f' '
-	cd repo &&
-	git commit -m "add new" 2>/dev/null &&
-	echo "*.ignored" >.gitignore &&
-	git add .gitignore && git commit -m "gitignore" 2>/dev/null &&
-	echo ignored >test.ignored &&
-	grit add -f test.ignored &&
-	git ls-files --stage test.ignored >actual &&
-	test -s actual &&
-	git reset HEAD test.ignored 2>/dev/null &&
-	rm -f test.ignored
-'
-
-test_expect_success 'add -f stages ignored files' '
-	cd repo &&
-	echo ignored >force.ignored &&
-	grit add -f force.ignored &&
-	git ls-files --error-unmatch force.ignored
-'
-
-test_expect_success 'add . stages all changes in current dir' '
-	cd repo &&
-	git commit -m "force ignored" 2>/dev/null &&
-	echo dot1 >dot1.txt && echo dot2 >dot2.txt &&
-	grit add . &&
-	git ls-files --error-unmatch dot1.txt &&
-	git ls-files --error-unmatch dot2.txt
-'
-
-test_expect_success 'add empty file creates blob' '
-	cd repo &&
-	git commit -m "dot" 2>/dev/null &&
-	>empty_add.txt &&
-	grit add empty_add.txt &&
-	git ls-files --stage empty_add.txt >actual &&
-	test -s actual
-'
-
-test_expect_success 'add file with spaces in name' '
-	cd repo &&
-	echo sp >"add space file.txt" &&
-	grit add "add space file.txt" &&
-	git ls-files --error-unmatch "add space file.txt"
-'
-
-test_expect_success 'add --dry-run does not stage file' '
-	cd repo &&
-	git commit -m "space" 2>/dev/null &&
-	echo drytest >add_dry.txt &&
-	grit add --dry-run add_dry.txt 2>/dev/null &&
-	git ls-files add_dry.txt >actual &&
-	test_must_be_empty actual &&
-	rm -f add_dry.txt
-'
-
-test_expect_success 'add symlink stages the link' '
-	cd repo &&
-	ln -sf glob1.g add_link &&
-	grit add add_link &&
-	git ls-files --error-unmatch add_link
+test_expect_success CASE_INSENSITIVE_FS 'path is case-insensitive' '
+	path="$(pwd)/BLUB" &&
+	touch "$path" &&
+	downcased="$(echo "$path" | tr A-Z a-z)" &&
+	git add "$downcased"
 '
 
 test_done

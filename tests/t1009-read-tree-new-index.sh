@@ -1,54 +1,28 @@
 #!/bin/sh
-# Ported subset from git/t/t1009-read-tree-new-index.sh.
 
-test_description='grit read-tree with fresh index file'
+test_description='test read-tree into a fresh index file'
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-test_expect_success 'setup commit referenced by main' '
-	grit init repo &&
-	cd repo &&
+test_expect_success setup '
 	echo one >a &&
-	grit update-index --add a &&
-	tree=$(grit write-tree) &&
-	commit=$(echo initial | grit commit-tree "$tree") &&
-	grit update-ref refs/heads/main "$commit"
+	git add a &&
+	git commit -m initial
 '
 
-test_expect_success 'non-existent GIT_INDEX_FILE is created by read-tree' '
-	cd repo &&
+test_expect_success 'non-existent index file' '
 	rm -f new-index &&
-	GIT_INDEX_FILE=new-index grit read-tree main &&
-	test_path_is_file new-index
+	GIT_INDEX_FILE=new-index git read-tree main
 '
 
-test_expect_success 'empty GIT_INDEX_FILE is replaced by read-tree' '
-	cd repo &&
+test_expect_success 'empty index file' '
 	rm -f new-index &&
-	>new-index &&
-	GIT_INDEX_FILE=new-index grit read-tree main &&
-	test_path_is_file new-index
-'
-
-
-test_expect_success 'custom index has expected entry after read-tree' '
-	cd repo &&
-	rm -f verify-index &&
-	GIT_INDEX_FILE=verify-index grit read-tree main &&
-	GIT_INDEX_FILE=verify-index grit ls-files >entries &&
-	echo a >expected &&
-	test_cmp expected entries
-'
-
-test_expect_success 'reading same tree twice into custom index is idempotent' '
-	cd repo &&
-	rm -f idem-index &&
-	GIT_INDEX_FILE=idem-index grit read-tree main &&
-	GIT_INDEX_FILE=idem-index grit ls-files >first &&
-	GIT_INDEX_FILE=idem-index grit read-tree main &&
-	GIT_INDEX_FILE=idem-index grit ls-files >second &&
-	test_cmp first second
+	> new-index &&
+	GIT_INDEX_FILE=new-index git read-tree main
 '
 
 test_done
+

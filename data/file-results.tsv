@@ -318,7 +318,7 @@ t3503-cherry-pick-root	yes	5	5	0	ok	5	5	0
 t3504-cherry-pick-rerere	yes	5	5	0	ok	5	5	0
 t3505-cherry-pick-empty	yes	5	5	0	ok	5	5	0
 t3506-cherry-pick-ff	yes	5	5	0	ok	5	5	0
-t3507-cherry-pick-conflict	yes	27	26	1	ok	26	27	0
+t3507-cherry-pick-conflict	yes	27	27	0	ok	27	27	0
 t3508-cherry-pick-many-commits	yes	4	4	0	ok	4	4	0
 t3509-cherry-pick-merge-df	yes	4	4	0	ok	4	4	0
 t3510-cherry-pick-sequence	yes	24	24	0	ok	24	24	0
@@ -546,11 +546,11 @@ t5405-send-pack-rewind	yes	3	3	0	ok	3	3	0
 t5406-remote-rejects	yes	3	3	0	ok	3	3	0
 t5407-post-rewrite-hook	yes	3	3	0	ok	3	3	0
 t5408-send-pack-stdin	yes	2	2	0	ok	2	2	0
-t5409-colorize-remote-messages	yes	2	1	1	ok	1	2	0
+t5409-colorize-remote-messages	yes	2	2	0	ok	2	2	0
 t5410-receive-pack	yes	5	5	0	ok	5	5	0
 t5411-proc-receive-hook	yes	3	2	1	ok	2	3	0
 t5500-fetch-pack	yes	5	5	0	ok	5	5	0
-t5501-fetch-push-alternates	yes	3	2	1	ok	2	3	0
+t5501-fetch-push-alternates	yes	3	3	0	ok	3	3	0
 t5502-quickfetch	yes	4	4	0	ok	4	4	0
 t5503-tagfollow	yes	6	6	0	ok	6	6	0
 t5504-fetch-receive-strict	yes	3	3	0	ok	3	3	0
@@ -597,7 +597,7 @@ t5546-receive-limits	yes	3	3	0	ok	3	3	0
 t5547-push-quarantine	yes	6	6	0	ok	6	6	0
 t5548-push-porcelain	yes	6	6	0	ok	6	6	0
 t5549-fetch-push-http	yes	0	0	0	ok	0	0	0
-t5550-http-fetch-dumb	yes	13	3	10	ok	3	13	0
+t5550-http-fetch-dumb	yes	12	12	0	ok	12	12	0
 t5551-http-fetch-smart	yes	0	0	0	ok	0	0	0
 t5552-skipping-fetch-negotiator	yes	0	0	0	ok	0	0	0
 t5553-set-upstream	yes	4	4	0	ok	4	4	0
@@ -605,7 +605,7 @@ t5554-noop-fetch-negotiator	yes	0	0	0	ok	0	0	0
 t5555-http-smart-common	yes	0	0	0	ok	0	0	0
 t5557-http-get	yes	0	0	0	ok	0	0	0
 t5558-clone-bundle-uri	yes	0	0	0	ok	0	0	0
-t5560-http-backend-noserver	yes	14	1	13	ok	1	14	0
+t5560-http-backend-noserver	yes	14	14	0	ok	14	14	0
 t5561-http-backend	yes	0	0	0	ok	0	0	0
 t5562-http-backend-content-length	yes	0	0	0	ok	0	0	0
 t5563-simple-http-auth	yes	0	0	0	ok	0	0	0

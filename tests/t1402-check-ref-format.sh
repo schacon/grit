@@ -1,54 +1,48 @@
 #!/bin/sh
-# Tests for 'grit check-ref-format'.
-# Ported from git/t/t1402-check-ref-format.sh
-#
-# Tests that require a live git repository (@{-N} reflog lookups) are omitted.
 
-test_description='grit check-ref-format: validate ref name rules'
+test_description='Test git check-ref-format'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# ── helpers ─────────────────────────────────────────────────────────────────
-
 valid_ref() {
-	local ref="$1" options="${2:-}"
-	local desc
-	desc="ref name '$ref' is valid${options:+ with options $options}"
-	test_expect_success "$desc" "
-		git check-ref-format $options '$ref'
+	prereq=
+	case $1 in
+	[A-Z!]*)
+		prereq=$1
+		shift
+	esac
+	desc="ref name '$1' is valid${2:+ with options $2}"
+	test_expect_success $prereq "$desc" "
+		git check-ref-format $2 '$1'
 	"
 }
-
 invalid_ref() {
-	local ref="$1" options="${2:-}"
-	local desc
-	desc="ref name '$ref' is invalid${options:+ with options $options}"
-	test_expect_success "$desc" "
-		test_must_fail git check-ref-format $options '$ref'
+	prereq=
+	case $1 in
+	[A-Z!]*)
+		prereq=$1
+		shift
+	esac
+	desc="ref name '$1' is invalid${2:+ with options $2}"
+	test_expect_success $prereq "$desc" "
+		test_must_fail git check-ref-format $2 '$1'
 	"
 }
-
-# ── basic validity ────────────────────────────────────────────────────────────
 
 invalid_ref ''
+invalid_ref !MINGW '/'
+invalid_ref !MINGW '/' --allow-onelevel
+invalid_ref !MINGW '/' --normalize
+invalid_ref !MINGW '/' '--allow-onelevel --normalize'
 valid_ref 'foo/bar/baz'
-valid_ref 'foo/bar/baz' '--normalize'
+valid_ref 'foo/bar/baz' --normalize
 invalid_ref 'refs///heads/foo'
-valid_ref 'refs///heads/foo' '--normalize'
+valid_ref 'refs///heads/foo' --normalize
 invalid_ref 'heads/foo/'
+invalid_ref !MINGW '/heads/foo'
+valid_ref !MINGW '/heads/foo' --normalize
 invalid_ref '///heads/foo'
-valid_ref '///heads/foo' '--normalize'
-
-# ── slash-only ref (/) ─────────────────────────────────────────────────────
-
-invalid_ref '/'
-invalid_ref '/' '--allow-onelevel'
-invalid_ref '/' '--normalize'
-invalid_ref '/' '--allow-onelevel --normalize'
-
-# ── dot rules ────────────────────────────────────────────────────────────────
-
+valid_ref '///heads/foo' --normalize
 invalid_ref './foo'
 invalid_ref './foo/bar'
 invalid_ref 'foo/./bar'
@@ -56,368 +50,169 @@ invalid_ref 'foo/bar/.'
 invalid_ref '.refs/foo'
 invalid_ref 'refs/heads/foo.'
 invalid_ref 'heads/foo..bar'
+invalid_ref 'heads/foo?bar'
 valid_ref 'foo./bar'
-
-# ── .lock rules ──────────────────────────────────────────────────────────────
-
 invalid_ref 'heads/foo.lock'
 invalid_ref 'heads///foo.lock'
 invalid_ref 'foo.lock/bar'
 invalid_ref 'foo.lock///bar'
-
-# ── special characters ───────────────────────────────────────────────────────
-
-invalid_ref 'heads/foo?bar'
 valid_ref 'heads/foo@bar'
 invalid_ref 'heads/v@{ation'
 invalid_ref 'heads/foo\bar'
+invalid_ref "$(printf 'heads/foo\t')"
+invalid_ref "$(printf 'heads/foo\177')"
+valid_ref "$(printf 'heads/fu\303\237')"
+valid_ref 'heads/*foo/bar' --refspec-pattern
+valid_ref 'heads/foo*/bar' --refspec-pattern
+valid_ref 'heads/f*o/bar' --refspec-pattern
+invalid_ref 'heads/f*o*/bar' --refspec-pattern
+invalid_ref 'heads/foo*/bar*' --refspec-pattern
 
-# ── control characters ───────────────────────────────────────────────────────
+ref='foo'
+invalid_ref "$ref"
+valid_ref "$ref" --allow-onelevel
+invalid_ref "$ref" --refspec-pattern
+valid_ref "$ref" '--refspec-pattern --allow-onelevel'
+invalid_ref "$ref" --normalize
+valid_ref "$ref" '--allow-onelevel --normalize'
 
-test_expect_success "ref name with TAB is invalid" "
-	test_must_fail git check-ref-format \"\$(printf 'heads/foo\t')\"
-"
+ref='foo/bar'
+valid_ref "$ref"
+valid_ref "$ref" --allow-onelevel
+valid_ref "$ref" --refspec-pattern
+valid_ref "$ref" '--refspec-pattern --allow-onelevel'
+valid_ref "$ref" --normalize
 
-test_expect_success "ref name with DEL is invalid" "
-	test_must_fail git check-ref-format \"\$(printf 'heads/foo\177')\"
-"
+ref='foo/*'
+invalid_ref "$ref"
+invalid_ref "$ref" --allow-onelevel
+valid_ref "$ref" --refspec-pattern
+valid_ref "$ref" '--refspec-pattern --allow-onelevel'
 
-test_expect_success "ref name with high-byte UTF-8 is valid" "
-	git check-ref-format \"\$(printf 'heads/fu\303\237')\"
-"
+ref='*/foo'
+invalid_ref "$ref"
+invalid_ref "$ref" --allow-onelevel
+valid_ref "$ref" --refspec-pattern
+valid_ref "$ref" '--refspec-pattern --allow-onelevel'
+invalid_ref "$ref" --normalize
+valid_ref "$ref" '--refspec-pattern --normalize'
 
-# ── refspec-pattern ──────────────────────────────────────────────────────────
+ref='foo/*/bar'
+invalid_ref "$ref"
+invalid_ref "$ref" --allow-onelevel
+valid_ref "$ref" --refspec-pattern
+valid_ref "$ref" '--refspec-pattern --allow-onelevel'
 
-valid_ref 'heads/*foo/bar' '--refspec-pattern'
-valid_ref 'heads/foo*/bar' '--refspec-pattern'
-valid_ref 'heads/f*o/bar' '--refspec-pattern'
-invalid_ref 'heads/f*o*/bar' '--refspec-pattern'
-invalid_ref 'heads/foo*/bar*' '--refspec-pattern'
+ref='*'
+invalid_ref "$ref"
+invalid_ref "$ref" --allow-onelevel
+invalid_ref "$ref" --refspec-pattern
+valid_ref "$ref" '--refspec-pattern --allow-onelevel'
 
-# ── single-level ref ─────────────────────────────────────────────────────────
+ref='foo/*/*'
+invalid_ref "$ref" --refspec-pattern
+invalid_ref "$ref" '--refspec-pattern --allow-onelevel'
 
-test_expect_success "ref name 'foo' is invalid by default" '
-	test_must_fail git check-ref-format foo
-'
+ref='*/foo/*'
+invalid_ref "$ref" --refspec-pattern
+invalid_ref "$ref" '--refspec-pattern --allow-onelevel'
 
-test_expect_success "ref name 'foo' is valid with --allow-onelevel" '
-	git check-ref-format --allow-onelevel foo
-'
+ref='*/*/foo'
+invalid_ref "$ref" --refspec-pattern
+invalid_ref "$ref" '--refspec-pattern --allow-onelevel'
 
-test_expect_success "ref name 'foo' is invalid with --refspec-pattern alone" '
-	test_must_fail git check-ref-format --refspec-pattern foo
-'
+ref='/foo'
+invalid_ref !MINGW "$ref"
+invalid_ref !MINGW "$ref" --allow-onelevel
+invalid_ref !MINGW "$ref" --refspec-pattern
+invalid_ref !MINGW "$ref" '--refspec-pattern --allow-onelevel'
+invalid_ref !MINGW "$ref" --normalize
+valid_ref !MINGW "$ref" '--allow-onelevel --normalize'
+invalid_ref !MINGW "$ref" '--refspec-pattern --normalize'
+valid_ref !MINGW "$ref" '--refspec-pattern --allow-onelevel --normalize'
 
-test_expect_success "ref name 'foo' is valid with --refspec-pattern --allow-onelevel" '
-	git check-ref-format --refspec-pattern --allow-onelevel foo
-'
+test_expect_success "check-ref-format --branch @{-1}" '
+	T=$(git write-tree) &&
+	sha1=$(echo A | git commit-tree $T) &&
+	git update-ref refs/heads/main $sha1 &&
+	git update-ref refs/remotes/origin/main $sha1 &&
+	git checkout main &&
+	git checkout origin/main &&
+	git checkout main &&
+	refname=$(git check-ref-format --branch @{-1}) &&
+	test "$refname" = "$sha1" &&
+	refname2=$(git check-ref-format --branch @{-2}) &&
+	test "$refname2" = main'
 
-test_expect_success "ref name 'foo' is invalid with --normalize alone" '
-	test_must_fail git check-ref-format --normalize foo
-'
-
-test_expect_success "ref name 'foo' is valid with --allow-onelevel --normalize" '
-	git check-ref-format --allow-onelevel --normalize foo
-'
-
-# ── two-component ref ────────────────────────────────────────────────────────
-
-test_expect_success "ref name 'foo/bar' is valid by default" '
-	git check-ref-format foo/bar
-'
-test_expect_success "ref name 'foo/bar' is valid with --allow-onelevel" '
-	git check-ref-format --allow-onelevel foo/bar
-'
-test_expect_success "ref name 'foo/bar' is valid with --refspec-pattern" '
-	git check-ref-format --refspec-pattern foo/bar
-'
-test_expect_success "ref name 'foo/bar' is valid with --refspec-pattern --allow-onelevel" '
-	git check-ref-format --refspec-pattern --allow-onelevel foo/bar
-'
-test_expect_success "ref name 'foo/bar' is valid with --normalize" '
-	git check-ref-format --normalize foo/bar
-'
-
-# ── wildcard refs ────────────────────────────────────────────────────────────
-
-test_expect_success "ref name 'foo/*' is invalid without --refspec-pattern" '
-	test_must_fail git check-ref-format foo/*
-'
-test_expect_success "ref name 'foo/*' is invalid with --allow-onelevel alone" '
-	test_must_fail git check-ref-format --allow-onelevel foo/*
-'
-test_expect_success "ref name 'foo/*' is valid with --refspec-pattern" '
-	git check-ref-format --refspec-pattern foo/*
-'
-test_expect_success "ref name 'foo/*' is valid with --refspec-pattern --allow-onelevel" '
-	git check-ref-format --refspec-pattern --allow-onelevel foo/*
-'
-
-test_expect_success "ref name '*/foo' is invalid without --refspec-pattern" '
-	test_must_fail git check-ref-format "*/foo"
-'
-test_expect_success "ref name '*/foo' is invalid with --allow-onelevel" '
-	test_must_fail git check-ref-format --allow-onelevel "*/foo"
-'
-test_expect_success "ref name '*/foo' is valid with --refspec-pattern" '
-	git check-ref-format --refspec-pattern "*/foo"
-'
-test_expect_success "ref name '*/foo' is valid with --refspec-pattern --allow-onelevel" '
-	git check-ref-format --refspec-pattern --allow-onelevel "*/foo"
-'
-test_expect_success "ref name '*/foo' is invalid with --normalize without --refspec-pattern" '
-	test_must_fail git check-ref-format --normalize "*/foo"
-'
-test_expect_success "ref name '*/foo' is valid with --refspec-pattern --normalize" '
-	git check-ref-format --refspec-pattern --normalize "*/foo"
+test_expect_success 'check-ref-format --branch -nain' '
+	test_must_fail git check-ref-format --branch -nain >actual &&
+	test_must_be_empty actual
 '
 
-test_expect_success "ref name 'foo/*/bar' is invalid without --refspec-pattern" '
-	test_must_fail git check-ref-format foo/*/bar
-'
-test_expect_success "ref name 'foo/*/bar' is invalid with --allow-onelevel without --refspec-pattern" '
-	test_must_fail git check-ref-format --allow-onelevel foo/*/bar
-'
-test_expect_success "ref name 'foo/*/bar' is valid with --refspec-pattern" '
-	git check-ref-format --refspec-pattern foo/*/bar
-'
-test_expect_success "ref name 'foo/*/bar' is valid with --refspec-pattern --allow-onelevel" '
-	git check-ref-format --refspec-pattern --allow-onelevel foo/*/bar
+test_expect_success 'check-ref-format --branch from subdir' '
+	mkdir subdir &&
+
+	T=$(git write-tree) &&
+	sha1=$(echo A | git commit-tree $T) &&
+	git update-ref refs/heads/main $sha1 &&
+	git update-ref refs/remotes/origin/main $sha1 &&
+	git checkout main &&
+	git checkout origin/main &&
+	git checkout main &&
+	refname=$(
+		cd subdir &&
+		git check-ref-format --branch @{-1}
+	) &&
+	test "$refname" = "$sha1"
 '
 
-test_expect_success "ref name '*' is invalid with --allow-onelevel" '
-	test_must_fail git check-ref-format --allow-onelevel "*"
-'
-test_expect_success "ref name '*' is invalid with --refspec-pattern alone" '
-	test_must_fail git check-ref-format --refspec-pattern "*"
-'
-test_expect_success "ref name '*' is valid with --refspec-pattern --allow-onelevel" '
-	git check-ref-format --refspec-pattern --allow-onelevel "*"
+test_expect_success 'check-ref-format --branch @{-1} from non-repo' '
+	nongit test_must_fail git check-ref-format --branch @{-1} >actual &&
+	test_must_be_empty actual
 '
 
-test_expect_success "ref name 'foo/*/*' is invalid with --refspec-pattern" '
-	test_must_fail git check-ref-format --refspec-pattern foo/*/*
-'
-test_expect_success "ref name 'foo/*/*' is invalid with --refspec-pattern --allow-onelevel" '
-	test_must_fail git check-ref-format --refspec-pattern --allow-onelevel foo/*/*
-'
-
-test_expect_success "ref name '*/foo/*' is invalid with --refspec-pattern" '
-	test_must_fail git check-ref-format --refspec-pattern "*/foo/*"
-'
-test_expect_success "ref name '*/foo/*' is invalid with --refspec-pattern --allow-onelevel" '
-	test_must_fail git check-ref-format --refspec-pattern --allow-onelevel "*/foo/*"
-'
-
-test_expect_success "ref name '*/*/foo' is invalid with --refspec-pattern" '
-	test_must_fail git check-ref-format --refspec-pattern "*/*/foo"
-'
-test_expect_success "ref name '*/*/foo' is invalid with --refspec-pattern --allow-onelevel" '
-	test_must_fail git check-ref-format --refspec-pattern --allow-onelevel "*/*/foo"
-'
-
-# ── /foo ref (Linux-only, upstream uses !MINGW prereq) ───────────────────────
-
-test_expect_success "ref name '/foo' is invalid by default" '
-	test_must_fail git check-ref-format /foo
-'
-test_expect_success "ref name '/foo' is invalid with --allow-onelevel" '
-	test_must_fail git check-ref-format --allow-onelevel /foo
-'
-test_expect_success "ref name '/foo' is invalid with --refspec-pattern" '
-	test_must_fail git check-ref-format --refspec-pattern /foo
-'
-test_expect_success "ref name '/foo' is invalid with --refspec-pattern --allow-onelevel" '
-	test_must_fail git check-ref-format --refspec-pattern --allow-onelevel /foo
-'
-test_expect_success "ref name '/foo' is invalid with --normalize" '
-	test_must_fail git check-ref-format --normalize /foo
-'
-test_expect_success "ref name '/foo' is valid with --allow-onelevel --normalize" '
-	git check-ref-format --allow-onelevel --normalize /foo
-'
-test_expect_success "ref name '/foo' is invalid with --refspec-pattern --normalize" '
-	test_must_fail git check-ref-format --refspec-pattern --normalize /foo
-'
-test_expect_success "ref name '/foo' is valid with --refspec-pattern --allow-onelevel --normalize" '
-	git check-ref-format --refspec-pattern --allow-onelevel --normalize /foo
-'
-
-# ── /heads/foo (Linux-only, upstream uses !MINGW prereq) ────────────────────
-
-test_expect_success "ref name '/heads/foo' is invalid by default" '
-	test_must_fail git check-ref-format /heads/foo
-'
-test_expect_success "ref name '/heads/foo' normalizes to heads/foo" '
-	refname=$(git check-ref-format --normalize /heads/foo) &&
-	test "$refname" = heads/foo
-'
-
-# ── normalize output ─────────────────────────────────────────────────────────
-
-test_expect_success "normalize: 'refs///heads/foo' simplifies to 'refs/heads/foo'" '
-	refname=$(git check-ref-format --normalize refs///heads/foo) &&
-	test "$refname" = refs/heads/foo
-'
-
-test_expect_success "normalize: '///heads/foo' simplifies to 'heads/foo'" '
-	refname=$(git check-ref-format --normalize ///heads/foo) &&
-	test "$refname" = heads/foo
-'
-
-test_expect_success "normalize: '/heads/foo' simplifies to 'heads/foo'" '
-	refname=$(git check-ref-format --normalize /heads/foo) &&
-	test "$refname" = heads/foo
-'
-
-test_expect_success "normalize: 'foo/bar' stays 'foo/bar'" '
-	refname=$(git check-ref-format --normalize foo/bar) &&
-	test "$refname" = foo/bar
-'
-
-test_expect_success "normalize: 'heads/foo' stays 'heads/foo'" '
-	refname=$(git check-ref-format --normalize heads/foo) &&
-	test "$refname" = heads/foo
-'
-
-# ── normalize rejects invalid ────────────────────────────────────────────────
-
-test_expect_success "normalize rejects single-level 'foo'" '
-	test_must_fail git check-ref-format --normalize foo
-'
-
-test_expect_success "normalize rejects 'heads/foo/../bar'" '
-	test_must_fail git check-ref-format --normalize heads/foo/../bar
-'
-
-test_expect_success "normalize rejects 'heads/./foo'" '
-	test_must_fail git check-ref-format --normalize heads/./foo
-'
-
-test_expect_success "normalize rejects backslash 'heads\\foo'" '
-	test_must_fail git check-ref-format --normalize "heads\\foo"
-'
-
-test_expect_success "normalize rejects 'heads/foo.lock'" '
-	test_must_fail git check-ref-format --normalize heads/foo.lock
-'
-
-test_expect_success "normalize rejects 'heads///foo.lock'" '
-	test_must_fail git check-ref-format --normalize "heads///foo.lock"
-'
-
-test_expect_success "normalize rejects 'foo.lock/bar'" '
-	test_must_fail git check-ref-format --normalize foo.lock/bar
-'
-
-test_expect_success "normalize rejects 'foo.lock///bar'" '
-	test_must_fail git check-ref-format --normalize "foo.lock///bar"
-'
-
-test_expect_success "normalize rejects '/foo' (single-level after stripping slash)" '
-	test_must_fail git check-ref-format --normalize /foo
-'
-
-# ── --branch mode ────────────────────────────────────────────────────────────
-
-test_expect_success "check-ref-format --branch rejects -nain (starts with dash)" '
-	test_must_fail git check-ref-format --branch -nain
-'
-
-test_expect_success "check-ref-format --branch accepts plain branch name" '
+test_expect_success 'check-ref-format --branch main from non-repo' '
 	echo main >expect &&
-	git check-ref-format --branch main >actual &&
+	nongit git check-ref-format --branch main >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success "check-ref-format --branch accepts master" '
-	echo master >expect &&
-	git check-ref-format --branch master >actual &&
-	test_cmp expect actual
-'
+valid_ref_normalized() {
+	prereq=
+	case $1 in
+	[A-Z!]*)
+		prereq=$1
+		shift
+	esac
+	test_expect_success $prereq "ref name '$1' simplifies to '$2'" "
+		refname=\$(git check-ref-format --normalize '$1') &&
+		test \"\$refname\" = '$2'
+	"
+}
+invalid_ref_normalized() {
+	prereq=
+	case $1 in
+	[A-Z!]*)
+		prereq=$1
+		shift
+	esac
+	test_expect_success $prereq "check-ref-format --normalize rejects '$1'" "
+		test_must_fail git check-ref-format --normalize '$1'
+	"
+}
 
-# === additional deepening tests ===
-
-test_expect_success "check-ref-format accepts refs/heads/feature" '
-	grit check-ref-format refs/heads/feature
-'
-
-test_expect_success "check-ref-format accepts refs/tags/v1.0" '
-	grit check-ref-format refs/tags/v1.0
-'
-
-test_expect_success "check-ref-format rejects single component" '
-	test_must_fail grit check-ref-format foo
-'
-
-test_expect_success "check-ref-format rejects ref with double dot" '
-	test_must_fail grit check-ref-format refs/heads/foo..bar
-'
-
-test_expect_success "check-ref-format rejects ref ending with dot" '
-	test_must_fail grit check-ref-format refs/heads/foo.
-'
-
-test_expect_success "check-ref-format rejects ref with space" '
-	test_must_fail grit check-ref-format "refs/heads/foo bar"
-'
-
-test_expect_success "check-ref-format rejects ref with tilde" '
-	test_must_fail grit check-ref-format "refs/heads/foo~1"
-'
-
-test_expect_success "check-ref-format rejects ref with caret" '
-	test_must_fail grit check-ref-format "refs/heads/foo^bar"
-'
-
-test_expect_success "check-ref-format rejects ref with colon" '
-	test_must_fail grit check-ref-format "refs/heads/foo:bar"
-'
-
-test_expect_success "check-ref-format rejects ref with backslash" '
-	test_must_fail grit check-ref-format "refs/heads/foo\\bar"
-'
-
-test_expect_success "check-ref-format accepts deeply nested ref" '
-	grit check-ref-format refs/heads/a/b/c/d/e
-'
-
-test_expect_success "check-ref-format rejects ref with @{" '
-	test_must_fail grit check-ref-format "refs/heads/foo@{bar"
-'
-
-test_expect_success "check-ref-format rejects ref starting with dot" '
-	test_must_fail grit check-ref-format refs/heads/.hidden
-'
-
-test_expect_success "check-ref-format rejects ref with consecutive slashes" '
-	test_must_fail grit check-ref-format refs/heads//foo
-'
-
-test_expect_success "check-ref-format --normalize collapses slashes" '
-	echo refs/heads/foo >expect &&
-	grit check-ref-format --normalize refs///heads///foo >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success "check-ref-format rejects ref ending with .lock" '
-	test_must_fail grit check-ref-format refs/heads/foo.lock
-'
-
-test_expect_success "check-ref-format accepts ref with hyphen" '
-	grit check-ref-format refs/heads/my-feature
-'
-
-test_expect_success "check-ref-format accepts ref with underscore" '
-	grit check-ref-format refs/heads/my_feature
-'
-
-test_expect_success "check-ref-format rejects ref with DEL character" '
-	test_must_fail grit check-ref-format "refs/heads/foo$(printf "\177")bar"
-'
-
-test_expect_success "check-ref-format rejects ref with control char" '
-	test_must_fail grit check-ref-format "refs/heads/foo$(printf "\001")bar"
-'
+valid_ref_normalized 'heads/foo' 'heads/foo'
+valid_ref_normalized 'refs///heads/foo' 'refs/heads/foo'
+valid_ref_normalized !MINGW '/heads/foo' 'heads/foo'
+valid_ref_normalized '///heads/foo' 'heads/foo'
+invalid_ref_normalized 'foo'
+invalid_ref_normalized !MINGW '/foo'
+invalid_ref_normalized 'heads/foo/../bar'
+invalid_ref_normalized 'heads/./foo'
+invalid_ref_normalized 'heads\foo'
+invalid_ref_normalized 'heads/foo.lock'
+invalid_ref_normalized 'heads///foo.lock'
+invalid_ref_normalized 'foo.lock/bar'
+invalid_ref_normalized 'foo.lock///bar'
 
 test_done

@@ -1,60 +1,26 @@
 #!/bin/sh
-# Ported from upstream git t8001-annotate.sh
 
 test_description='git annotate'
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
+TEST_CREATE_REPO_NO_TEMPLATE=1
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init annotate-repo &&
-	cd annotate-repo &&
-	git config user.name "A U Thor" &&
-	git config user.email "author@example.com" &&
-	echo "line 1" >file &&
-	echo "line 2" >>file &&
-	git add file &&
-	test_tick &&
-	GIT_AUTHOR_NAME="Author A" git commit -m "first" &&
-	echo "line 3" >>file &&
-	echo "line 4" >>file &&
-	git add file &&
-	test_tick &&
-	GIT_AUTHOR_NAME="Author B" git commit -m "second"
-'
+if ! test_have_prereq PERL_TEST_HELPERS
+then
+	skip_all='skipping annotate tests; Perl not available'
+	test_done
+fi
 
-test_expect_success 'annotate runs' '
-	cd annotate-repo &&
-	git annotate file >actual &&
-	test $(wc -l <actual) -eq 4
-'
-
-test_expect_success 'annotate shows correct authors' '
-	cd annotate-repo &&
-	git annotate file >actual &&
-	grep "Author A" actual &&
-	grep "Author B" actual
-'
-
-test_expect_success 'annotate shows line content' '
-	cd annotate-repo &&
-	git annotate file >actual &&
-	grep "line 1" actual &&
-	grep "line 4" actual
-'
+PROG='git annotate'
+. "$TEST_DIRECTORY"/annotate-tests.sh
 
 test_expect_success 'annotate old revision' '
-	cd annotate-repo &&
-	git annotate HEAD^ -- file >actual &&
-	test $(wc -l <actual) -eq 2 &&
-	grep "Author A" actual
-'
-
-test_expect_success 'annotate --porcelain' '
-	cd annotate-repo &&
-	git annotate --porcelain file >actual &&
-	grep "^author " actual &&
-	grep "^filename " actual
+	git annotate file main >actual &&
+	awk "{ print \$3; }" <actual >authors &&
+	test 2 = $(grep A <authors | wc -l) &&
+	test 2 = $(grep B <authors | wc -l)
 '
 
 test_done

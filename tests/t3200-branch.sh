@@ -1,2260 +1,1720 @@
 #!/bin/sh
-# Tests for 'grit branch'.
-# Ported from git/t/t3200-branch.sh
+#
+# Copyright (c) 2005 Amos Waterland
+#
 
-test_description='grit branch assorted tests'
+test_description='git branch assorted tests'
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-rebase.sh
 
-# ---- Original 26 tests (preserved) ----
-
-test_expect_success 'setup repository' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo "init" >file.txt &&
-	git add file.txt &&
-	git commit -m "initial" 2>/dev/null
+test_expect_success 'prepare a trivial repository' '
+	echo Hello >A &&
+	git update-index --add A &&
+	git commit -m "Initial commit." &&
+	git branch -M main &&
+	echo World >>A &&
+	git update-index --add A &&
+	git commit -m "Second commit." &&
+	HEAD=$(git rev-parse --verify HEAD)
 '
 
-test_expect_success 'list branches shows current' '
-	cd repo &&
-	git branch >actual &&
-	grep "^\* master" actual
+test_expect_success 'git branch --help should not have created a bogus branch' '
+	test_might_fail git branch --man --help </dev/null >/dev/null 2>&1 &&
+	test_ref_missing refs/heads/--help
 '
 
-test_expect_success 'create a branch' '
-	cd repo &&
-	git branch feature &&
-	git branch >actual &&
-	grep "feature" actual
+test_expect_success REFFILES 'branch -h in broken repository' '
+	mkdir broken &&
+	(
+		cd broken &&
+		git init -b main &&
+		>.git/refs/heads/main &&
+		test_expect_code 129 git branch -h >usage 2>&1
+	) &&
+	test_grep "[Uu]sage" broken/usage
 '
-
-test_expect_success '--show-current shows current branch' '
-	cd repo &&
-	git branch --show-current >actual &&
-	echo "master" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'create branch at specific commit' '
-	cd repo &&
-	echo "second" >>file.txt &&
-	git add file.txt &&
-	git commit -m "second" 2>/dev/null &&
-	git branch old-point HEAD~1 2>/dev/null ||
-	git branch old-point master 2>/dev/null
-'
-
-test_expect_success 'delete a branch' '
-	cd repo &&
-	git branch to-delete &&
-	git branch >actual &&
-	grep "to-delete" actual &&
-	git branch -d to-delete 2>/dev/null &&
-	git branch >actual &&
-	! grep "to-delete" actual
-'
-
-test_expect_success 'cannot delete current branch' '
-	cd repo &&
-	! git branch -d master 2>/dev/null
-'
-
-test_expect_success 'rename a branch' '
-	cd repo &&
-	git branch rename-me &&
-	git branch -m rename-me renamed 2>/dev/null &&
-	git branch >actual &&
-	! grep "rename-me" actual &&
-	grep "renamed" actual
-'
-
-test_expect_success 'verbose listing shows commit info' '
-	cd repo &&
-	git branch -v >actual &&
-	grep "master" actual &&
-	grep "second" actual
-'
-
-test_expect_success 'branch --list shows all branches' '
-	cd repo &&
-	git branch --list >actual &&
-	grep "feature" actual &&
-	grep "master" actual &&
-	grep "renamed" actual
-'
-
-test_expect_success 'branch -f overwrites existing branch to new commit' '
-	cd repo &&
-	parent_sha=$(git rev-parse HEAD~1) &&
-	git branch force-target "$parent_sha" &&
-	old_sha=$(git rev-parse force-target) &&
-	test "$old_sha" = "$parent_sha" &&
-	git branch -f force-target HEAD 2>/dev/null &&
-	new_sha=$(git rev-parse force-target) &&
-	head_sha=$(git rev-parse HEAD) &&
-	test "$old_sha" != "$new_sha" &&
-	test "$new_sha" = "$head_sha"
-'
-
-test_expect_success 'branch -D deletes a branch' '
-	cd repo &&
-	git branch to-force-delete &&
-	git branch >actual &&
-	grep "to-force-delete" actual &&
-	git branch -D to-force-delete 2>/dev/null &&
-	git branch >actual &&
-	! grep "to-force-delete" actual
-'
-
-test_expect_success 'branch at tag resolves to same commit' '
-	cd repo &&
-	git tag test-tag HEAD~1 &&
-	git branch at-tag test-tag 2>/dev/null &&
-	tag_sha=$(git rev-parse test-tag) &&
-	branch_sha=$(git rev-parse at-tag) &&
-	test "$tag_sha" = "$branch_sha"
-'
-
-test_expect_success 'branch --contains lists branches containing commit' '
-	cd repo &&
-	git branch --contains HEAD~1 >actual &&
-	grep "master" actual &&
-	grep "feature" actual
-'
-
-test_expect_success 'branch --merged with specific ref lists branches' '
-	cd repo &&
-	git branch --merged master >actual &&
-	grep "feature" actual
-'
-
-test_expect_success 'branch refuses to create duplicate name' '
-	cd repo &&
-	! git branch feature 2>/dev/null
-'
-
-test_expect_success 'delete non-existent branch fails' '
-	cd repo &&
-	! git branch -d no-such-branch 2>/dev/null
-'
-
-test_expect_success 'delete already-deleted branch fails' '
-	cd repo &&
-	git branch temp-branch &&
-	git branch -d temp-branch 2>/dev/null &&
-	! git branch -d temp-branch 2>/dev/null
-'
-
-test_expect_success 'branch at specific SHA points to that commit' '
-	cd repo &&
-	parent_sha=$(git rev-parse HEAD~1) &&
-	git branch at-parent "$parent_sha" 2>/dev/null &&
-	branch_sha=$(git rev-parse at-parent) &&
-	test "$parent_sha" = "$branch_sha"
-'
-
-test_expect_success 'newly created branch appears in listing' '
-	cd repo &&
-	count_before=$(git branch | wc -l) &&
-	git branch counting-test &&
-	count_after=$(git branch | wc -l) &&
-	test "$count_after" -gt "$count_before"
-'
-
-test_expect_success 'branch listing marks only current branch with star' '
-	cd repo &&
-	git branch >actual &&
-	star_count=$(grep "^\*" actual | wc -l) &&
-	test "$star_count" -eq 1 &&
-	grep "^\* master" actual
-'
-
-test_expect_success 'rename branch preserves commit' '
-	cd repo &&
-	parent_sha=$(git rev-parse HEAD~1) &&
-	git branch rename-test2 "$parent_sha" &&
-	old_sha=$(git rev-parse rename-test2) &&
-	git branch -m rename-test2 renamed-test2 2>/dev/null &&
-	new_sha=$(git rev-parse renamed-test2) &&
-	test "$old_sha" = "$new_sha"
-'
-
-test_expect_success 'branch at HEAD equals HEAD sha' '
-	cd repo &&
-	git branch head-test &&
-	head_sha=$(git rev-parse HEAD) &&
-	branch_sha=$(git rev-parse head-test) &&
-	test "$head_sha" = "$branch_sha"
-'
-
-test_expect_success 'branch -v shows abbreviated sha for each branch' '
-	cd repo &&
-	head_short=$(git rev-parse --short HEAD) &&
-	git branch -v >actual &&
-	grep "$head_short" actual
-'
-
-test_expect_success '-D also deletes branch (like -d)' '
-	cd repo &&
-	git branch big-d-test &&
-	git branch >actual &&
-	grep "big-d-test" actual &&
-	git branch -D big-d-test 2>/dev/null &&
-	git branch >actual &&
-	! grep "big-d-test" actual
-'
-
-test_expect_success 'branch -d prints deletion message' '
-	cd repo &&
-	git branch msg-test &&
-	git branch -d msg-test >actual 2>&1 &&
-	grep -i "deleted" actual
-'
-
-# ---- Ported from upstream t3200-branch.sh ----
 
 test_expect_success 'git branch abc should create a branch' '
-	cd repo &&
 	git branch abc &&
-	test -f .git/refs/heads/abc
+	test_ref_exists refs/heads/abc
 '
 
 test_expect_success 'git branch abc should fail when abc exists' '
-	cd repo &&
 	test_must_fail git branch abc
 '
 
-test_expect_success 'git branch a/b/c should create a branch' '
-	cd repo &&
-	git branch a/b/c &&
-	test -f .git/refs/heads/a/b/c
+test_expect_success 'git branch --force abc should fail when abc is checked out' '
+	test_when_finished git switch main &&
+	git switch abc &&
+	test_must_fail git branch --force abc HEAD~1
 '
 
-test_expect_success 'git branch -d d/e/f should delete a branch' '
-	cd repo &&
-	git branch d/e/f &&
-	test -f .git/refs/heads/d/e/f &&
-	git branch -d d/e/f 2>/dev/null &&
-	! test -f .git/refs/heads/d/e/f
+test_expect_success 'git branch --force abc should succeed when abc exists' '
+	git rev-parse HEAD~1 >expect &&
+	git branch --force abc HEAD~1 &&
+	git rev-parse abc >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git branch a/b/c should create a branch' '
+	git branch a/b/c &&
+	test_ref_exists refs/heads/a/b/c
+'
+
+test_expect_success 'git branch mb main... should create a branch' '
+	git branch mb main... &&
+	test_ref_exists refs/heads/mb
+'
+
+test_expect_success 'git branch HEAD should fail' '
+	test_must_fail git branch HEAD
+'
+
+test_expect_success 'git branch --create-reflog d/e/f should create a branch and a log' '
+	GIT_COMMITTER_DATE="2005-05-26 23:30" \
+	git -c core.logallrefupdates=false branch --create-reflog d/e/f &&
+	test_ref_exists refs/heads/d/e/f &&
+	cat >expect <<-EOF &&
+	$HEAD refs/heads/d/e/f@{0}: branch: Created from main
+	EOF
+	git reflog show --no-abbrev-commit refs/heads/d/e/f >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git branch -d d/e/f should delete a branch and a log' '
+	git branch -d d/e/f &&
+	test_ref_missing refs/heads/d/e/f &&
+	test_must_fail git reflog exists refs/heads/d/e/f
 '
 
 test_expect_success 'git branch j/k should work after branch j has been deleted' '
-	cd repo &&
 	git branch j &&
-	git branch -d j 2>/dev/null &&
+	git branch -d j &&
 	git branch j/k
 '
 
+test_expect_success 'git branch l should work after branch l/m has been deleted' '
+	git branch l/m &&
+	git branch -d l/m &&
+	git branch l
+'
+
 test_expect_success 'git branch -m dumps usage' '
-	cd repo &&
-	test_must_fail git branch -m 2>err &&
-	grep -i "branch name required\|new branch name\|usage" err
+	test_expect_code 128 git branch -m 2>err &&
+	test_grep "branch name required" err
+'
+
+test_expect_success 'git branch -m m broken_symref should work' '
+	test_when_finished "git branch -D broken_symref" &&
+	git branch --create-reflog m &&
+	git symbolic-ref refs/heads/broken_symref refs/heads/i_am_broken &&
+	git branch -m m broken_symref &&
+	git reflog exists refs/heads/broken_symref &&
+	test_must_fail git reflog exists refs/heads/i_am_broken
+'
+
+test_expect_success 'git branch -m m m/m should work' '
+	git branch --create-reflog m &&
+	git branch -m m m/m &&
+	git reflog exists refs/heads/m/m
+'
+
+test_expect_success 'git branch -m n/n n should work' '
+	git branch --create-reflog n/n &&
+	git branch -m n/n n &&
+	git reflog exists refs/heads/n
+'
+
+# The topmost entry in reflog for branch bbb is about branch creation.
+# Hence, we compare bbb@{1} (instead of bbb@{0}) with aaa@{0}.
+
+test_expect_success 'git branch -m bbb should rename checked out branch' '
+	test_when_finished git branch -D bbb &&
+	test_when_finished git checkout main &&
+	git checkout -b aaa &&
+	git commit --allow-empty -m "a new commit" &&
+	git rev-parse aaa@{0} >expect &&
+	git branch -m bbb &&
+	git rev-parse bbb@{1} >actual &&
+	test_cmp expect actual &&
+	git symbolic-ref HEAD >actual &&
+	echo refs/heads/bbb >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'renaming checked out branch works with d/f conflict' '
+	test_when_finished "git branch -D foo/bar || git branch -D foo" &&
+	test_when_finished git checkout main &&
+	git checkout -b foo &&
+	git branch -m foo/bar &&
+	git symbolic-ref HEAD >actual &&
+	echo refs/heads/foo/bar >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git branch -m o/o o should fail when o/p exists' '
+	git branch o/o &&
+	git branch o/p &&
+	test_must_fail git branch -m o/o o
+'
+
+test_expect_success 'git branch -m o/q o/p should fail when o/p exists' '
+	git branch o/q &&
+	test_must_fail git branch -m o/q o/p
+'
+
+test_expect_success 'git branch -M o/q o/p should work when o/p exists' '
+	git branch -M o/q o/p
+'
+
+test_expect_success 'git branch -m -f o/q o/p should work when o/p exists' '
+	git branch o/q &&
+	git branch -m -f o/q o/p
+'
+
+test_expect_success 'git branch -m q r/q should fail when r exists' '
+	git branch q &&
+	git branch r &&
+	test_must_fail git branch -m q r/q
+'
+
+test_expect_success 'git branch -M foo bar should fail when bar is checked out' '
+	git branch bar &&
+	git checkout -b foo &&
+	test_must_fail git branch -M bar foo
+'
+
+test_expect_success 'git branch -M foo bar should fail when bar is checked out in worktree' '
+	git branch -f bar &&
+	test_when_finished "git worktree remove wt && git branch -D wt" &&
+	git worktree add wt &&
+	test_must_fail git branch -M bar wt
+'
+
+test_expect_success 'git branch -M baz bam should succeed when baz is checked out' '
+	git checkout -b baz &&
+	git branch bam &&
+	git branch -M baz bam &&
+	test $(git rev-parse --abbrev-ref HEAD) = bam
+'
+
+test_expect_success 'git branch -M baz bam should add entries to HEAD reflog' '
+	git reflog show HEAD >actual &&
+	grep "HEAD@{0}: Branch: renamed refs/heads/baz to refs/heads/bam" actual
+'
+
+test_expect_success 'git branch -M should leave orphaned HEAD alone' '
+	git init -b main orphan &&
+	(
+		cd orphan &&
+		test_commit initial &&
+		git checkout --orphan lonely &&
+		git symbolic-ref HEAD >expect &&
+		echo refs/heads/lonely >actual &&
+		test_cmp expect actual &&
+		test_ref_missing refs/head/lonely &&
+		git branch -M main mistress &&
+		git symbolic-ref HEAD >expect &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'resulting reflog can be shown by log -g' '
+	oid=$(git rev-parse HEAD) &&
+	cat >expect <<-EOF &&
+	HEAD@{0} $oid Branch: renamed refs/heads/baz to refs/heads/bam
+	HEAD@{2} $oid checkout: moving from foo to baz
+	EOF
+	git log -g --format="%gd %H %gs" -2 HEAD >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git branch -M baz bam should succeed when baz is checked out as linked working tree' '
+	git checkout main &&
+	git worktree add -b baz bazdir &&
+	git worktree add -f bazdir2 baz &&
+	git branch -M baz bam &&
+	test $(git -C bazdir rev-parse --abbrev-ref HEAD) = bam &&
+	test $(git -C bazdir2 rev-parse --abbrev-ref HEAD) = bam &&
+	rm -r bazdir bazdir2 &&
+	git worktree prune
+'
+
+test_expect_success REFFILES 'git branch -M fails if updating any linked working tree fails' '
+	git worktree add -b baz bazdir1 &&
+	git worktree add -f bazdir2 baz &&
+	touch .git/worktrees/bazdir1/HEAD.lock &&
+	test_must_fail git branch -M baz bam &&
+	test $(git -C bazdir2 rev-parse --abbrev-ref HEAD) = bam &&
+	git branch -M bam baz &&
+	rm .git/worktrees/bazdir1/HEAD.lock &&
+	touch .git/worktrees/bazdir2/HEAD.lock &&
+	test_must_fail git branch -M baz bam &&
+	test $(git -C bazdir1 rev-parse --abbrev-ref HEAD) = bam &&
+	rm -rf bazdir1 bazdir2 &&
+	git worktree prune
+'
+
+test_expect_success 'git branch -M baz bam should succeed within a worktree in which baz is checked out' '
+	git checkout -b baz &&
+	git worktree add -f bazdir baz &&
+	(
+		cd bazdir &&
+		git branch -M baz bam &&
+		echo bam >expect &&
+		git rev-parse --abbrev-ref HEAD >actual &&
+		test_cmp expect actual
+	) &&
+	echo bam >expect &&
+	git rev-parse --abbrev-ref HEAD >actual &&
+	test_cmp expect actual &&
+	rm -r bazdir &&
+	git worktree prune
+'
+
+test_expect_success 'git branch -M main should work when main is checked out' '
+	git checkout main &&
+	git branch -M main
+'
+
+test_expect_success 'git branch -M main main should work when main is checked out' '
+	git checkout main &&
+	git branch -M main main
+'
+
+test_expect_success 'git branch -M topic topic should work when main is checked out' '
+	git checkout main &&
+	git branch topic &&
+	git branch -M topic topic
+'
+
+test_expect_success 'git branch -M and -C fail on detached HEAD' '
+	git checkout HEAD^{} &&
+	test_when_finished git checkout - &&
+	echo "fatal: cannot rename the current branch while not on any" >expect &&
+	test_must_fail git branch -M must-fail 2>err &&
+	test_cmp expect err &&
+	echo "fatal: cannot copy the current branch while not on any" >expect &&
+	test_must_fail git branch -C must-fail 2>err &&
+	test_cmp expect err
+'
+
+test_expect_success 'git branch -m should work with orphan branches' '
+	test_when_finished git checkout - &&
+	test_when_finished git worktree remove -f wt &&
+	git worktree add wt --detach &&
+	# rename orphan in another worktreee
+	git -C wt checkout --orphan orphan-foo-wt &&
+	git branch -m orphan-foo-wt orphan-bar-wt &&
+	test orphan-bar-wt=$(git -C orphan-worktree branch --show-current) &&
+	# rename orphan in the current worktree
+	git checkout --orphan orphan-foo &&
+	git branch -m orphan-foo orphan-bar &&
+	test orphan-bar=$(git branch --show-current)
+'
+
+test_expect_success 'git branch -d on orphan HEAD (merged)' '
+	test_when_finished git checkout main &&
+	git checkout --orphan orphan &&
+	test_when_finished "rm -rf .git/objects/commit-graph*" &&
+	git commit-graph write --reachable &&
+	git branch --track to-delete main &&
+	git branch -d to-delete
+'
+
+test_expect_success 'git branch -d on orphan HEAD (merged, graph)' '
+	test_when_finished git checkout main &&
+	git checkout --orphan orphan &&
+	git branch --track to-delete main &&
+	git branch -d to-delete
+'
+
+test_expect_success 'git branch -d on orphan HEAD (unmerged)' '
+	test_when_finished git checkout main &&
+	git checkout --orphan orphan &&
+	test_when_finished "git branch -D to-delete" &&
+	git branch to-delete main &&
+	test_must_fail git branch -d to-delete 2>err &&
+	grep "not fully merged" err
+'
+
+test_expect_success 'git branch -d on orphan HEAD (unmerged, graph)' '
+	test_when_finished git checkout main &&
+	git checkout --orphan orphan &&
+	test_when_finished "git branch -D to-delete" &&
+	git branch to-delete main &&
+	test_when_finished "rm -rf .git/objects/commit-graph*" &&
+	git commit-graph write --reachable &&
+	test_must_fail git branch -d to-delete 2>err &&
+	grep "not fully merged" err
 '
 
 test_expect_success 'git branch -v -d t should work' '
-	cd repo &&
 	git branch t &&
-	git rev-parse --verify refs/heads/t >/dev/null &&
-	git branch -v -d t 2>/dev/null &&
+	git rev-parse --verify refs/heads/t &&
+	git branch -v -d t &&
 	test_must_fail git rev-parse --verify refs/heads/t
 '
 
 test_expect_success 'git branch -v -m t s should work' '
-	cd repo &&
 	git branch t &&
-	git rev-parse --verify refs/heads/t >/dev/null &&
-	git branch -v -m t s 2>/dev/null &&
+	git rev-parse --verify refs/heads/t &&
+	git branch -v -m t s &&
 	test_must_fail git rev-parse --verify refs/heads/t &&
-	git rev-parse --verify refs/heads/s >/dev/null &&
-	git branch -d s 2>/dev/null
+	git rev-parse --verify refs/heads/s &&
+	git branch -d s
 '
 
-test_expect_success 'git branch -f overwrites existing branch with explicit sha' '
-	cd repo &&
-	parent_sha=$(git rev-parse HEAD~1) &&
-	head_sha=$(git rev-parse HEAD) &&
-	git branch force-explicit "$parent_sha" &&
-	old=$(git rev-parse force-explicit) &&
-	test "$old" = "$parent_sha" &&
-	git branch -f force-explicit "$head_sha" 2>/dev/null &&
-	new=$(git rev-parse force-explicit) &&
-	test "$new" = "$head_sha" &&
-	git branch -d force-explicit 2>/dev/null
+test_expect_success 'git branch -m -d t s should fail' '
+	git branch t &&
+	git rev-parse refs/heads/t &&
+	test_must_fail git branch -m -d t s &&
+	git branch -d t &&
+	test_must_fail git rev-parse refs/heads/t
 '
 
-test_expect_success 'git branch --force abc should succeed when abc exists' '
-	cd repo &&
-	parent_sha=$(git rev-parse HEAD~1) &&
-	head_sha=$(git rev-parse HEAD) &&
-	git branch force-abc "$parent_sha" &&
-	git branch --force force-abc "$head_sha" 2>/dev/null &&
-	actual=$(git rev-parse force-abc) &&
-	test "$actual" = "$head_sha" &&
-	git branch -d force-abc 2>/dev/null
+test_expect_success 'git branch --list -d t should fail' '
+	git branch t &&
+	git rev-parse refs/heads/t &&
+	test_must_fail git branch --list -d t &&
+	git branch -d t &&
+	test_must_fail git rev-parse refs/heads/t
 '
 
-test_expect_success 'git branch -m renames current branch' '
-	cd repo &&
-	git branch -m master temp-main 2>/dev/null &&
-	git symbolic-ref HEAD >actual &&
-	echo "refs/heads/temp-main" >expect &&
-	test_cmp expect actual &&
-	git branch -m temp-main master 2>/dev/null
+test_expect_success 'deleting checked-out branch from repo that is a submodule' '
+	test_when_finished "rm -rf repo1 repo2" &&
+
+	git init repo1 &&
+	git init repo1/sub &&
+	test_commit -C repo1/sub x &&
+	test_config_global protocol.file.allow always &&
+	git -C repo1 submodule add ./sub &&
+	git -C repo1 commit -m "adding sub" &&
+
+	git clone --recurse-submodules repo1 repo2 &&
+	git -C repo2/sub checkout -b work &&
+	test_must_fail git -C repo2/sub branch -D work
 '
 
-test_expect_success 'git branch -M renames current branch' '
-	cd repo &&
-	git branch -M master temp-main2 2>/dev/null &&
-	git symbolic-ref HEAD >actual &&
-	echo "refs/heads/temp-main2" >expect &&
-	test_cmp expect actual &&
-	git branch -M temp-main2 master 2>/dev/null
+test_expect_success 'bare main worktree has HEAD at branch deleted by secondary worktree' '
+	test_when_finished "rm -rf nonbare base secondary" &&
+
+	git init -b main nonbare &&
+	test_commit -C nonbare x &&
+	git clone --bare nonbare bare &&
+	git -C bare worktree add --detach ../secondary main &&
+	git -C secondary branch -D main
 '
 
-test_expect_success 'rename current branch updates HEAD symref' '
-	cd repo &&
-	git branch -m master newmaster 2>/dev/null &&
-	git branch --show-current >actual &&
-	echo "newmaster" >expect &&
-	test_cmp expect actual &&
-	git branch -m newmaster master 2>/dev/null
+test_expect_success 'secondary worktrees recognize core.bare=true in main config.worktree' '
+	test_when_finished "rm -rf bare_repo non_bare_repo secondary_worktree" &&
+	git init -b main non_bare_repo &&
+	test_commit -C non_bare_repo x &&
+
+	git clone --bare non_bare_repo bare_repo &&
+	git -C bare_repo config extensions.worktreeConfig true &&
+	git -C bare_repo config unset core.bare &&
+	git -C bare_repo config --worktree core.bare true &&
+
+	git -C bare_repo worktree add ../secondary_worktree &&
+	git -C secondary_worktree checkout main
 '
 
-test_expect_success 'rename branch updates ref' '
-	cd repo &&
-	git branch rename-src &&
-	src_sha=$(git rev-parse rename-src) &&
-	git branch -m rename-src rename-dst 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/rename-src &&
-	dst_sha=$(git rev-parse rename-dst) &&
-	test "$src_sha" = "$dst_sha" &&
-	git branch -d rename-dst 2>/dev/null
+test_expect_success 'git branch --list -v with --abbrev' '
+	test_when_finished "git branch -D t" &&
+	git branch t &&
+	git branch -v --list t >actual.default &&
+	git branch -v --list --abbrev t >actual.abbrev &&
+	test_cmp actual.default actual.abbrev &&
+
+	git branch -v --list --no-abbrev t >actual.noabbrev &&
+	git branch -v --list --abbrev=0 t >actual.0abbrev &&
+	git -c core.abbrev=no branch -v --list t >actual.noabbrev-conf &&
+	test_cmp actual.noabbrev actual.0abbrev &&
+	test_cmp actual.noabbrev actual.noabbrev-conf &&
+
+	git branch -v --list --abbrev=36 t >actual.36abbrev &&
+	# how many hexdigits are used?
+	read name objdefault rest <actual.abbrev &&
+	read name obj36 rest <actual.36abbrev &&
+	objfull=$(git rev-parse --verify t) &&
+
+	# are we really getting abbreviations?
+	test "$obj36" != "$objdefault" &&
+	expr "$obj36" : "$objdefault" >/dev/null &&
+	test "$objfull" != "$obj36" &&
+	expr "$objfull" : "$obj36" >/dev/null
+
 '
 
-test_expect_success 'git branch -M o/q o/p should work when o/p exists' '
-	cd repo &&
-	git branch o/q &&
-	git branch o/p &&
-	git branch -M o/q o/p 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/o/q &&
-	git rev-parse --verify refs/heads/o/p >/dev/null &&
-	git branch -d o/p 2>/dev/null
-'
-
-test_expect_success 'branch -D prints deletion message with sha' '
-	cd repo &&
-	git branch del-msg-test &&
-	sha_short=$(git rev-parse --short del-msg-test) &&
-	git branch -D del-msg-test >actual 2>&1 &&
-	grep -i "deleted" actual &&
-	grep "$sha_short" actual
-'
-
-test_expect_success 'branch -d of merged branch succeeds' '
-	cd repo &&
-	git branch merged-br &&
-	git branch -d merged-br 2>/dev/null
-'
-
-test_expect_success 'git branch -q suppresses output on create' '
-	cd repo &&
-	git branch -q quiet-create >out 2>&1 &&
-	test_must_be_empty out &&
-	git branch -d quiet-create 2>/dev/null
-'
-
-test_expect_success 'git branch -q suppresses output on delete' '
-	cd repo &&
-	git branch quiet-del &&
-	git branch -q -d quiet-del >out 2>&1 &&
-	test_must_be_empty out
-'
-
-test_expect_success 'branch -r shows remote-tracking branches (empty)' '
-	cd repo &&
-	git branch -r >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success 'branch -a shows all branches' '
-	cd repo &&
-	git branch -a >actual &&
-	grep "master" actual
-'
-
-# SKIP: HEAD~1 not supported as branch start-point
-# test_expect_success 'branch at HEAD~1 resolves correctly'
-
-# SKIP: branch listing sort order differs
-# test_expect_success 'branch listing is sorted'
-
-test_expect_success 'branch -v includes subject line' '
-	cd repo &&
-	git branch -v >actual &&
-	grep "second" actual
-'
-
-test_expect_success 'branch -v shows all branches with sha and subject' '
-	cd repo &&
-	git branch br-v-test &&
-	git branch -v >actual &&
-	grep "br-v-test" actual &&
-	git branch -d br-v-test 2>/dev/null
-'
-
-test_expect_success 'branch --contains with HEAD shows current branch' '
-	cd repo &&
-	git branch --contains HEAD >actual &&
-	grep "master" actual
-'
-
-test_expect_success 'branch --merged with HEAD shows merged branches' '
-	cd repo &&
-	git branch --merged HEAD >actual &&
-	grep "master" actual
-'
-
-test_expect_success 'deleted branch no longer appears in listing' '
-	cd repo &&
-	git branch to-vanish &&
-	git branch >actual &&
-	grep "to-vanish" actual &&
-	git branch -d to-vanish 2>/dev/null &&
-	git branch >actual &&
-	! grep "to-vanish" actual
-'
-
-test_expect_success 'rename to existing name fails' '
-	cd repo &&
-	git branch ren-a &&
-	git branch ren-b &&
-	test_must_fail git branch -m ren-a ren-b 2>/dev/null &&
-	git rev-parse --verify refs/heads/ren-a >/dev/null &&
-	git branch -d ren-a 2>/dev/null &&
-	git branch -d ren-b 2>/dev/null
-'
-
-test_expect_success 'branch -M force renames to existing name' '
-	cd repo &&
-	git branch ren-c &&
-	git branch ren-d &&
-	c_sha=$(git rev-parse ren-c) &&
-	git branch -M ren-c ren-d 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/ren-c &&
-	d_sha=$(git rev-parse ren-d) &&
-	test "$c_sha" = "$d_sha" &&
-	git branch -d ren-d 2>/dev/null
-'
-
-test_expect_success 'create many branches and list them' '
-	cd repo &&
-	git branch many-a &&
-	git branch many-b &&
-	git branch many-c &&
-	git branch >actual &&
-	grep "many-a" actual &&
-	grep "many-b" actual &&
-	grep "many-c" actual &&
-	git branch -d many-a 2>/dev/null &&
-	git branch -d many-b 2>/dev/null &&
-	git branch -d many-c 2>/dev/null
-'
-
-test_expect_success 'branch -d requires branch name' '
-	cd repo &&
-	test_must_fail git branch -d 2>/dev/null
-'
-
-test_expect_success 'branch names with slashes work' '
-	cd repo &&
-	git branch x/y/z &&
-	git branch >actual &&
-	grep "x/y/z" actual &&
-	git branch -d x/y/z 2>/dev/null
-'
-
-test_expect_success 'branch at tag name resolves tag target' '
-	cd repo &&
-	head_sha=$(git rev-parse HEAD) &&
-	git tag br-tag-test &&
-	git branch br-from-tag br-tag-test &&
-	br_sha=$(git rev-parse br-from-tag) &&
-	test "$head_sha" = "$br_sha" &&
-	git branch -d br-from-tag 2>/dev/null &&
-	git tag -d br-tag-test 2>/dev/null
-'
-
-test_expect_success 'git branch --show-current after rename' '
-	cd repo &&
-	git branch -m master show-cur-test 2>/dev/null &&
-	git branch --show-current >actual &&
-	echo "show-cur-test" >expect &&
-	test_cmp expect actual &&
-	git branch -m show-cur-test master 2>/dev/null
-'
-
-test_expect_success 'branch -v -d outputs deletion info' '
-	cd repo &&
-	git branch vd-info &&
-	git branch -v -d vd-info >actual 2>&1 &&
-	grep -i "deleted" actual
-'
-
-test_expect_success 'git branch -D on non-existent branch fails' '
-	cd repo &&
-	test_must_fail git branch -D nonexistent 2>/dev/null
-'
-
-test_expect_success 'branch from branch resolves correctly' '
-	cd repo &&
-	git branch base-br &&
-	git branch derived-br base-br &&
-	base_sha=$(git rev-parse base-br) &&
-	derived_sha=$(git rev-parse derived-br) &&
-	test "$base_sha" = "$derived_sha" &&
-	git branch -d base-br 2>/dev/null &&
-	git branch -d derived-br 2>/dev/null
-'
-
-test_expect_success 'branch -f on nonexistent branch creates it' '
-	cd repo &&
-	head_sha=$(git rev-parse HEAD) &&
-	git branch -f new-force-br "$head_sha" 2>/dev/null &&
-	git rev-parse --verify refs/heads/new-force-br >/dev/null &&
-	git branch -d new-force-br 2>/dev/null
-'
-
-test_expect_success 'renamed branch can be deleted' '
-	cd repo &&
-	git branch will-rename &&
-	git branch -m will-rename was-renamed 2>/dev/null &&
-	git branch -d was-renamed 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/was-renamed
-'
-
-test_expect_success 'multiple renames preserve identity' '
-	cd repo &&
-	git branch ren-chain &&
-	sha=$(git rev-parse ren-chain) &&
-	git branch -m ren-chain ren-chain-2 2>/dev/null &&
-	git branch -m ren-chain-2 ren-chain-3 2>/dev/null &&
-	final_sha=$(git rev-parse ren-chain-3) &&
-	test "$sha" = "$final_sha" &&
-	git branch -d ren-chain-3 2>/dev/null
-'
-
-test_expect_success 'branch --contains with branch name' '
-	cd repo &&
-	git branch --contains master >actual &&
-	grep "master" actual
-'
-
-test_expect_success 'branch at second parent commit' '
-	cd repo &&
-	parent_sha=$(git rev-parse HEAD~1) &&
-	git branch at-second "$parent_sha" &&
-	actual_sha=$(git rev-parse at-second) &&
-	test "$parent_sha" = "$actual_sha" &&
-	git branch -d at-second 2>/dev/null
-'
-
-test_expect_success 'branch -D force deletes any branch' '
-	cd repo &&
-	git branch force-del-test &&
-	git branch -D force-del-test >actual 2>&1 &&
-	grep -i "deleted" actual &&
-	test_must_fail git rev-parse --verify refs/heads/force-del-test
-'
-
-test_expect_success 'branch -o/q renames with -M override' '
-	cd repo &&
-	git branch oq-src &&
-	git branch oq-dst &&
-	oq_sha=$(git rev-parse oq-src) &&
-	git branch -M oq-src oq-dst 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/oq-src &&
-	actual=$(git rev-parse oq-dst) &&
-	test "$oq_sha" = "$actual" &&
-	git branch -d oq-dst 2>/dev/null
-'
-
-test_expect_success 'branch -m to same name for non-current branch is a no-op' '
-	cd repo &&
-	git branch same-name-test &&
-	git branch -m same-name-test same-name-test &&
-	git rev-parse same-name-test &&
-	git branch -d same-name-test 2>/dev/null
-'
-
-test_expect_success 'branch --show-current on newly created repo' '
-	cd repo &&
-	git branch --show-current >actual &&
-	echo "master" >expect &&
+test_expect_success 'git branch --column' '
+	COLUMNS=81 git branch --column=column >actual &&
+	cat >expect <<-\EOF &&
+	  a/b/c   bam     foo     l     * main    n       o/p     r
+	  abc     bar     j/k     m/m     mb      o/o     q       topic
+	EOF
 	test_cmp expect actual
 '
 
-test_expect_success 'branch -d deletes hierarchical branch' '
-	cd repo &&
-	git branch deep/nested/br &&
-	git branch -d deep/nested/br 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/deep/nested/br
-'
-
-test_expect_success 'create branch from another branch name' '
-	cd repo &&
-	git branch src-branch &&
-	git branch dst-branch src-branch &&
-	src_sha=$(git rev-parse src-branch) &&
-	dst_sha=$(git rev-parse dst-branch) &&
-	test "$src_sha" = "$dst_sha" &&
-	git branch -d src-branch 2>/dev/null &&
-	git branch -d dst-branch 2>/dev/null
-'
-
-test_expect_success 'branch -f updates branch to specified sha' '
-	cd repo &&
-	parent=$(git rev-parse HEAD~1) &&
-	head=$(git rev-parse HEAD) &&
-	git branch update-me "$parent" &&
-	git branch -f update-me "$head" 2>/dev/null &&
-	result=$(git rev-parse update-me) &&
-	test "$result" = "$head" &&
-	git branch -d update-me 2>/dev/null
-'
-
-test_expect_success 'branch with --no-track succeeds' '
-	cd repo &&
-	git branch --no-track notrack-br master &&
-	git rev-parse --verify refs/heads/notrack-br >/dev/null &&
-	git branch -d notrack-br 2>/dev/null
-'
-
-test_expect_success 'deleted branch ref file is removed' '
-	cd repo &&
-	git branch ref-check &&
-	test -f .git/refs/heads/ref-check &&
-	git branch -d ref-check 2>/dev/null &&
-	! test -f .git/refs/heads/ref-check
-'
-
-test_expect_success 'branch -D deletion message includes branch name' '
-	cd repo &&
-	git branch name-check &&
-	git branch -D name-check >actual 2>&1 &&
-	grep "name-check" actual
-'
-
-test_expect_success 'branch name with single slash works' '
-	cd repo &&
-	git branch ns/one &&
-	git branch -v >actual &&
-	grep "ns/one" actual &&
-	git branch -d ns/one 2>/dev/null
-'
-
-test_expect_success 'branch -m from hierarchical to flat' '
-	cd repo &&
-	git branch hier/branch &&
-	git branch -m hier/branch flat-branch 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/hier/branch &&
-	git rev-parse --verify refs/heads/flat-branch >/dev/null &&
-	git branch -d flat-branch 2>/dev/null
-'
-
-test_expect_success 'branch -m from flat to hierarchical' '
-	cd repo &&
-	git branch flat-src &&
-	git branch -m flat-src hier/dst 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/flat-src &&
-	git rev-parse --verify refs/heads/hier/dst >/dev/null &&
-	git branch -d hier/dst 2>/dev/null
-'
-
-test_expect_success 'creating branch at HEAD matches HEAD sha' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	git branch exact-head-test HEAD &&
-	actual=$(git rev-parse exact-head-test) &&
-	test "$head" = "$actual" &&
-	git branch -d exact-head-test 2>/dev/null
-'
-
-# SKIP: branch -f overwrite current branch not rejected
-# test_expect_success 'branch -f cannot overwrite current branch'
-
-test_expect_success 'multiple branches can be created sequentially' '
-	cd repo &&
-	git branch seq-a &&
-	git branch seq-b &&
-	git branch seq-c &&
-	git branch >actual &&
-	grep "seq-a" actual &&
-	grep "seq-b" actual &&
-	grep "seq-c" actual &&
-	git branch -d seq-a 2>/dev/null &&
-	git branch -d seq-b 2>/dev/null &&
-	git branch -d seq-c 2>/dev/null
-'
-
-test_expect_success 'branch --verbose shows sha and subject' '
-	cd repo &&
-	git branch verbose-test &&
-	git branch --verbose >actual &&
-	grep "verbose-test" actual &&
-	head_short=$(git rev-parse --short HEAD) &&
-	grep "$head_short" actual &&
-	git branch -d verbose-test 2>/dev/null
-'
-
-test_expect_success 'branch deletion removes only specified branch' '
-	cd repo &&
-	git branch keep-me &&
-	git branch remove-me &&
-	git branch -d remove-me 2>/dev/null &&
-	git rev-parse --verify refs/heads/keep-me >/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/remove-me &&
-	git branch -d keep-me 2>/dev/null
-'
-
-test_expect_success 'branch -m with hierarchical to hierarchical' '
-	cd repo &&
-	git branch a/x &&
-	git branch -m a/x b/y 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/a/x &&
-	git rev-parse --verify refs/heads/b/y >/dev/null &&
-	git branch -d b/y 2>/dev/null
-'
-
-test_expect_success 'rev-parse --verify on non-existent branch fails' '
-	cd repo &&
-	test_must_fail git rev-parse --verify refs/heads/does-not-exist
-'
-
-test_expect_success 'branch --list shows expected format' '
-	cd repo &&
-	git branch list-fmt &&
-	git branch --list >actual &&
-	grep "list-fmt" actual &&
-	grep "^\*" actual &&
-	git branch -d list-fmt 2>/dev/null
-'
-
-# ---- New tests: batch 1 (delete, force delete, listing) ----
-
-test_expect_success 'branch -d requires branch name argument' '
-	cd repo &&
-	test_must_fail git branch -d 2>err &&
-	test -s err
-'
-
-test_expect_success 'branch -D requires branch name argument' '
-	cd repo &&
-	test_must_fail git branch -D 2>err &&
-	test -s err
-'
-
-test_expect_success 'branch -v -d t should work' '
-	cd repo &&
-	git branch vd-test &&
-	git rev-parse --verify refs/heads/vd-test >/dev/null &&
-	git branch -v -d vd-test 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/vd-test
-'
-
-test_expect_success 'branch -v -m t s should work' '
-	cd repo &&
-	git branch vm-src &&
-	git rev-parse --verify refs/heads/vm-src >/dev/null &&
-	git branch -v -m vm-src vm-dst 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/vm-src &&
-	git rev-parse --verify refs/heads/vm-dst >/dev/null &&
-	git branch -d vm-dst 2>/dev/null
-'
-
-test_expect_success 'branch --list shows star on current branch' '
-	cd repo &&
-	git branch --list >actual &&
-	grep "^\* master" actual
-'
-
-# ---- batch 2: --contains, --no-contains, --merged, --no-merged ----
-
-test_expect_success 'branch --contains HEAD shows current branch' '
-	cd repo &&
-	git branch --contains HEAD >actual &&
-	grep "master" actual
-'
-
-test_expect_success 'branch --no-contains with specific commit' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	git branch --no-contains "$head" >actual 2>&1 ||
-	true
-'
-
-test_expect_success 'branch --merged HEAD includes current branch' '
-	cd repo &&
-	git branch --merged HEAD >actual &&
-	grep "master" actual
-'
-
-test_expect_success 'branch --no-merged HEAD produces output' '
-	cd repo &&
-	git branch --no-merged HEAD >actual 2>&1 ||
-	true
-'
-
-test_expect_success 'branch --contains with tag name' '
-	cd repo &&
-	git tag test-tag-contains HEAD &&
-	git branch --contains test-tag-contains >actual &&
-	grep "master" actual &&
-	git tag -d test-tag-contains 2>/dev/null
-'
-
-# ---- batch 3: force operations ----
-
-test_expect_success 'branch --force can update non-checked-out branch' '
-	cd repo &&
-	parent=$(git rev-parse HEAD~1) &&
-	head=$(git rev-parse HEAD) &&
-	git branch force-co-test "$parent" &&
-	git branch --force force-co-test "$head" 2>/dev/null &&
-	result=$(git rev-parse force-co-test) &&
-	test "$result" = "$head" &&
-	git branch -d force-co-test 2>/dev/null
-'
-
-test_expect_success 'branch --force updates existing branch to new commit' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	parent=$(git rev-parse HEAD~1) &&
-	git branch force-upd "$parent" &&
-	git branch --force force-upd "$head" 2>/dev/null &&
-	result=$(git rev-parse force-upd) &&
-	test "$result" = "$head" &&
-	git branch -d force-upd 2>/dev/null
-'
-
-test_expect_success 'branch -f on branch pointing to old commit updates it' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	parent=$(git rev-parse HEAD~1) &&
-	git branch fupd2 "$parent" &&
-	result1=$(git rev-parse fupd2) &&
-	test "$result1" = "$parent" &&
-	git branch -f fupd2 "$head" 2>/dev/null &&
-	result2=$(git rev-parse fupd2) &&
-	test "$result2" = "$head" &&
-	git branch -d fupd2 2>/dev/null
-'
-
-test_expect_success 'branch -M renames to existing branch name' '
-	cd repo &&
-	git branch mforce-src &&
-	git branch mforce-dst &&
-	src_sha=$(git rev-parse mforce-src) &&
-	git branch -M mforce-src mforce-dst 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/mforce-src &&
-	dst_sha=$(git rev-parse mforce-dst) &&
-	test "$src_sha" = "$dst_sha" &&
-	git branch -d mforce-dst 2>/dev/null
-'
-
-test_expect_success 'branch -M preserves commit when renaming' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	git branch mpres-src &&
-	git branch -M mpres-src mpres-dst 2>/dev/null &&
-	result=$(git rev-parse mpres-dst) &&
-	test "$head" = "$result" &&
-	git branch -d mpres-dst 2>/dev/null
-'
-
-# ---- batch 4: hierarchical branches, D/F conflicts ----
-
-test_expect_success 'git branch j/k should work after branch j has been deleted (new)' '
-	cd repo &&
-	git branch jknew &&
-	git branch -d jknew 2>/dev/null &&
-	git branch jknew/sub &&
-	git rev-parse --verify refs/heads/jknew/sub >/dev/null &&
-	git branch -d jknew/sub 2>/dev/null
-'
-
-test_expect_success 'creating deep hierarchical branch' '
-	cd repo &&
-	git branch very/deep/nested/branch &&
-	git rev-parse --verify refs/heads/very/deep/nested/branch >/dev/null &&
-	git branch -d very/deep/nested/branch 2>/dev/null
-'
-
-test_expect_success 'branch -m between hierarchical namespaces' '
-	cd repo &&
-	git branch ns1/feature &&
-	git branch -m ns1/feature ns2/feature 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/ns1/feature &&
-	git rev-parse --verify refs/heads/ns2/feature >/dev/null &&
-	git branch -d ns2/feature 2>/dev/null
-'
-
-test_expect_success 'branch -m deeper hierarchical rename' '
-	cd repo &&
-	git branch deep/src/br &&
-	git branch -m deep/src/br deep/dst/br 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/deep/src/br &&
-	git rev-parse --verify refs/heads/deep/dst/br >/dev/null &&
-	git branch -d deep/dst/br 2>/dev/null
-'
-
-test_expect_success 'deleting hierarchical branch cleans up' '
-	cd repo &&
-	git branch cleanup/test/br &&
-	git branch -d cleanup/test/br 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/cleanup/test/br
-'
-
-# ---- batch 5: --show-current, create from branch, at sha ----
-
-test_expect_success 'branch --show-current after checkout' '
-	cd repo &&
-	git checkout -b show-cur-test 2>/dev/null &&
-	git branch --show-current >actual &&
-	echo "show-cur-test" >expect &&
-	test_cmp expect actual &&
-	git checkout master 2>/dev/null &&
-	git branch -d show-cur-test 2>/dev/null
-'
-
-test_expect_success 'branch --show-current on master' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	git branch --show-current >actual &&
-	echo "master" >expect &&
+test_expect_success 'git branch --column with an extremely long branch name' '
+	long=this/is/a/part/of/long/branch/name &&
+	long=z$long/$long/$long/$long &&
+	test_when_finished "git branch -d $long" &&
+	git branch $long &&
+	COLUMNS=80 git branch --column=column >actual &&
+	cat >expect <<-EOF &&
+	  a/b/c
+	  abc
+	  bam
+	  bar
+	  foo
+	  j/k
+	  l
+	  m/m
+	* main
+	  mb
+	  n
+	  o/o
+	  o/p
+	  q
+	  r
+	  topic
+	  $long
+	EOF
 	test_cmp expect actual
 '
 
-test_expect_success 'branch from another branch has same SHA' '
-	cd repo &&
-	git branch origin-br &&
-	git branch derived-br origin-br &&
-	sha1=$(git rev-parse origin-br) &&
-	sha2=$(git rev-parse derived-br) &&
-	test "$sha1" = "$sha2" &&
-	git branch -d origin-br derived-br 2>/dev/null
+test_expect_success 'git branch with column.*' '
+	git config column.ui column &&
+	git config column.branch "dense" &&
+	COLUMNS=80 git branch >actual &&
+	git config --unset column.branch &&
+	git config --unset column.ui &&
+	cat >expect <<-\EOF &&
+	  a/b/c   bam   foo   l   * main   n     o/p   r
+	  abc     bar   j/k   m/m   mb     o/o   q     topic
+	EOF
+	test_cmp expect actual
 '
 
-test_expect_success 'branch at specific SHA resolves correctly' '
-	cd repo &&
-	parent=$(git rev-parse HEAD~1) &&
-	git branch sha-test "$parent" &&
-	result=$(git rev-parse sha-test) &&
-	test "$parent" = "$result" &&
-	git branch -d sha-test 2>/dev/null
+test_expect_success 'git branch --column -v should fail' '
+	test_must_fail git branch --column -v
 '
 
-test_expect_success 'branch at HEAD is same as branch with no start-point' '
-	cd repo &&
-	git branch explicit-head HEAD &&
-	git branch implicit-head &&
-	sha1=$(git rev-parse explicit-head) &&
-	sha2=$(git rev-parse implicit-head) &&
-	test "$sha1" = "$sha2" &&
-	git branch -d explicit-head implicit-head 2>/dev/null
+test_expect_success 'git branch -v with column.ui ignored' '
+	git config column.ui column &&
+	COLUMNS=80 git branch -v | cut -c -8 | sed "s/ *$//" >actual &&
+	git config --unset column.ui &&
+	cat >expect <<-\EOF &&
+	  a/b/c
+	  abc
+	  bam
+	  bar
+	  foo
+	  j/k
+	  l
+	  m/m
+	* main
+	  mb
+	  n
+	  o/o
+	  o/p
+	  q
+	  r
+	  topic
+	EOF
+	test_cmp expect actual
 '
 
-# ---- batch 6: -q (quiet), -r (remote), -a (all) ----
-
-test_expect_success 'branch -q create produces no stdout' '
-	cd repo &&
-	git branch -q quiet-test >actual 2>&1 &&
-	test_must_be_empty actual &&
-	git branch -d quiet-test 2>/dev/null
+test_expect_success DEFAULT_REPO_FORMAT 'git branch -m q q2 without config should succeed' '
+	test_when_finished mv .git/config-saved .git/config &&
+	mv .git/config .git/config-saved &&
+	git branch -m q q2 &&
+	git branch -m q2 q
 '
 
-test_expect_success 'branch -q delete produces no stdout' '
-	cd repo &&
-	git branch quiet-del &&
-	git branch -q -d quiet-del >actual 2>&1 &&
+test_expect_success 'git branch -m s/s s should work when s/t is deleted' '
+	git config branch.s/s.dummy Hello &&
+	git branch --create-reflog s/s &&
+	git reflog exists refs/heads/s/s &&
+	git branch --create-reflog s/t &&
+	git reflog exists refs/heads/s/t &&
+	git branch -d s/t &&
+	git branch -m s/s s &&
+	git reflog exists refs/heads/s
+'
+
+test_expect_success 'config information was renamed, too' '
+	test $(git config branch.s.dummy) = Hello &&
+	test_must_fail git config branch.s/s.dummy
+'
+
+test_expect_success 'git branch -m correctly renames multiple config sections' '
+	test_when_finished "git checkout main" &&
+	git checkout -b source main &&
+
+	# Assert that a config file with multiple config sections has
+	# those sections preserved...
+	cat >expect <<-\EOF &&
+	branch.dest.key1=value1
+	some.gar.b=age
+	branch.dest.key2=value2
+	EOF
+	cat >config.branch <<\EOF &&
+;; Note the lack of -\EOF above & mixed indenting here. This is
+;; intentional, we are also testing that the formatting of copied
+;; sections is preserved.
+
+;; Comment for source. Tabs
+[branch "source"]
+	;; Comment for the source value
+	key1 = value1
+;; Comment for some.gar. Spaces
+[some "gar"]
+    ;; Comment for the some.gar value
+    b = age
+;; Comment for source, again. Mixed tabs/spaces.
+[branch "source"]
+    ;; Comment for the source value, again
+	key2 = value2
+EOF
+	cat config.branch >>.git/config &&
+	git branch -m source dest &&
+	git config -f .git/config -l | grep -F -e source -e dest -e some.gar >actual &&
+	test_cmp expect actual &&
+
+	# ...and that the comments for those sections are also
+	# preserved.
+	sed "s/\"source\"/\"dest\"/" config.branch >expect &&
+	sed -n -e "/Note the lack/,\$p" .git/config >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git branch -c dumps usage' '
+	test_expect_code 128 git branch -c 2>err &&
+	test_grep "branch name required" err
+'
+
+test_expect_success 'git branch --copy dumps usage' '
+	test_expect_code 128 git branch --copy 2>err &&
+	test_grep "branch name required" err
+'
+
+test_expect_success 'git branch -c d e should work' '
+	git branch --create-reflog d &&
+	git reflog exists refs/heads/d &&
+	git config branch.d.dummy Hello &&
+	git branch -c d e &&
+	git reflog exists refs/heads/d &&
+	git reflog exists refs/heads/e &&
+	echo Hello >expect &&
+	git config branch.e.dummy >actual &&
+	test_cmp expect actual &&
+	echo Hello >expect &&
+	git config branch.d.dummy >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git branch --copy is a synonym for -c' '
+	git branch --create-reflog copy &&
+	git reflog exists refs/heads/copy &&
+	git config branch.copy.dummy Hello &&
+	git branch --copy copy copy-to &&
+	git reflog exists refs/heads/copy &&
+	git reflog exists refs/heads/copy-to &&
+	echo Hello >expect &&
+	git config branch.copy.dummy >actual &&
+	test_cmp expect actual &&
+	echo Hello >expect &&
+	git config branch.copy-to.dummy >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git branch -c ee ef should copy ee to create branch ef' '
+	git checkout -b ee &&
+	git reflog exists refs/heads/ee &&
+	git config branch.ee.dummy Hello &&
+	git branch -c ee ef &&
+	git reflog exists refs/heads/ee &&
+	git reflog exists refs/heads/ef &&
+	test $(git config branch.ee.dummy) = Hello &&
+	test $(git config branch.ef.dummy) = Hello &&
+	test $(git rev-parse --abbrev-ref HEAD) = ee
+'
+
+test_expect_success 'git branch -c f/f g/g should work' '
+	git branch --create-reflog f/f &&
+	git reflog exists refs/heads/f/f &&
+	git config branch.f/f.dummy Hello &&
+	git branch -c f/f g/g &&
+	git reflog exists refs/heads/f/f &&
+	git reflog exists refs/heads/g/g &&
+	test $(git config branch.f/f.dummy) = Hello &&
+	test $(git config branch.g/g.dummy) = Hello
+'
+
+test_expect_success 'git branch -c m2 m2 should work' '
+	git branch --create-reflog m2 &&
+	git reflog exists refs/heads/m2 &&
+	git config branch.m2.dummy Hello &&
+	git branch -c m2 m2 &&
+	git reflog exists refs/heads/m2 &&
+	test $(git config branch.m2.dummy) = Hello
+'
+
+test_expect_success 'git branch -c zz zz/zz should fail' '
+	git branch --create-reflog zz &&
+	git reflog exists refs/heads/zz &&
+	test_must_fail git branch -c zz zz/zz
+'
+
+test_expect_success 'git branch -c b/b b should fail' '
+	git branch --create-reflog b/b &&
+	test_must_fail git branch -c b/b b
+'
+
+test_expect_success 'git branch -C o/q o/p should work when o/p exists' '
+	git branch --create-reflog o/q &&
+	git reflog exists refs/heads/o/q &&
+	git reflog exists refs/heads/o/p &&
+	git branch -C o/q o/p
+'
+
+test_expect_success 'git branch -c -f o/q o/p should work when o/p exists' '
+	git reflog exists refs/heads/o/q &&
+	git reflog exists refs/heads/o/p &&
+	git branch -c -f o/q o/p
+'
+
+test_expect_success 'git branch -c qq rr/qq should fail when rr exists' '
+	git branch qq &&
+	git branch rr &&
+	test_must_fail git branch -c qq rr/qq
+'
+
+test_expect_success 'git branch -C b1 b2 should fail when b2 is checked out' '
+	git branch b1 &&
+	git checkout -b b2 &&
+	test_must_fail git branch -C b1 b2
+'
+
+test_expect_success 'git branch -C c1 c2 should succeed when c1 is checked out' '
+	git checkout -b c1 &&
+	git branch c2 &&
+	git branch -C c1 c2 &&
+	test $(git rev-parse --abbrev-ref HEAD) = c1
+'
+
+test_expect_success 'git branch -C c1 c2 should never touch HEAD' '
+	msg="Branch: copied refs/heads/c1 to refs/heads/c2" &&
+	git reflog HEAD >actual &&
+	! grep "$msg$" actual
+'
+
+test_expect_success 'git branch -C main should work when main is checked out' '
+	git checkout main &&
+	git branch -C main
+'
+
+test_expect_success 'git branch -C main main should work when main is checked out' '
+	git checkout main &&
+	git branch -C main main
+'
+
+test_expect_success 'git branch -C main5 main5 should work when main is checked out' '
+	git checkout main &&
+	git branch main5 &&
+	git branch -C main5 main5
+'
+
+test_expect_success 'git branch -C ab cd should overwrite existing config for cd' '
+	git branch --create-reflog cd &&
+	git reflog exists refs/heads/cd &&
+	git config branch.cd.dummy CD &&
+	git branch --create-reflog ab &&
+	git reflog exists refs/heads/ab &&
+	git config branch.ab.dummy AB &&
+	git branch -C ab cd &&
+	git reflog exists refs/heads/ab &&
+	git reflog exists refs/heads/cd &&
+	test $(git config branch.ab.dummy) = AB &&
+	test $(git config branch.cd.dummy) = AB
+'
+
+test_expect_success 'git branch -c correctly copies multiple config sections' '
+	FOO=1 &&
+	export FOO &&
+	test_when_finished "git checkout main" &&
+	git checkout -b source2 main &&
+
+	# Assert that a config file with multiple config sections has
+	# those sections preserved...
+	cat >expect <<-\EOF &&
+	branch.source2.key1=value1
+	branch.dest2.key1=value1
+	more.gar.b=age
+	branch.source2.key2=value2
+	branch.dest2.key2=value2
+	EOF
+	cat >config.branch <<\EOF &&
+;; Note the lack of -\EOF above & mixed indenting here. This is
+;; intentional, we are also testing that the formatting of copied
+;; sections is preserved.
+
+;; Comment for source2. Tabs
+[branch "source2"]
+	;; Comment for the source2 value
+	key1 = value1
+;; Comment for more.gar. Spaces
+[more "gar"]
+    ;; Comment for the more.gar value
+    b = age
+;; Comment for source2, again. Mixed tabs/spaces.
+[branch "source2"]
+    ;; Comment for the source2 value, again
+	key2 = value2
+EOF
+	cat config.branch >>.git/config &&
+	git branch -c source2 dest2 &&
+	git config -f .git/config -l | grep -F -e source2 -e dest2 -e more.gar >actual &&
+	test_cmp expect actual &&
+
+	# ...and that the comments and formatting for those sections
+	# is also preserved.
+	cat >expect <<\EOF &&
+;; Comment for source2. Tabs
+[branch "source2"]
+	;; Comment for the source2 value
+	key1 = value1
+;; Comment for more.gar. Spaces
+[branch "dest2"]
+	;; Comment for the source2 value
+	key1 = value1
+;; Comment for more.gar. Spaces
+[more "gar"]
+    ;; Comment for the more.gar value
+    b = age
+;; Comment for source2, again. Mixed tabs/spaces.
+[branch "source2"]
+    ;; Comment for the source2 value, again
+	key2 = value2
+[branch "dest2"]
+    ;; Comment for the source2 value, again
+	key2 = value2
+EOF
+	sed -n -e "/Comment for source2/,\$p" .git/config >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'deleting a symref' '
+	git branch target &&
+	git symbolic-ref refs/heads/symref refs/heads/target &&
+	echo "Deleted branch symref (was refs/heads/target)." >expect &&
+	git branch -d symref >actual &&
+	test_ref_exists refs/heads/target &&
+	test_ref_missing refs/heads/symref &&
+	test_cmp expect actual
+'
+
+test_expect_success 'deleting a dangling symref' '
+	git symbolic-ref refs/heads/dangling-symref nowhere &&
+	git symbolic-ref --no-recurse refs/heads/dangling-symref &&
+	echo "Deleted branch dangling-symref (was nowhere)." >expect &&
+	git branch -d dangling-symref >actual &&
+	test_ref_missing refs/heads/dangling-symref &&
+	test_cmp expect actual
+'
+
+test_expect_success 'deleting a self-referential symref' '
+	git symbolic-ref refs/heads/self-reference refs/heads/self-reference &&
+	test_ref_exists refs/heads/self-reference &&
+	echo "Deleted branch self-reference (was refs/heads/self-reference)." >expect &&
+	git branch -d self-reference >actual &&
+	test_ref_missing refs/heads/self-reference &&
+	test_cmp expect actual
+'
+
+test_expect_success 'renaming a symref is not allowed' '
+	git symbolic-ref refs/heads/topic refs/heads/main &&
+	test_must_fail git branch -m topic new-topic &&
+	git symbolic-ref refs/heads/topic &&
+	test_ref_exists refs/heads/main &&
+	test_ref_missing refs/heads/new-topic
+'
+
+test_expect_success 'test tracking setup via --track' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --track my1 local/main &&
+	test $(git config branch.my1.remote) = local &&
+	test $(git config branch.my1.merge) = refs/heads/main
+'
+
+test_expect_success 'test tracking setup (non-wildcard, matching)' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/main:refs/remotes/local/main &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --track my4 local/main &&
+	test $(git config branch.my4.remote) = local &&
+	test $(git config branch.my4.merge) = refs/heads/main
+'
+
+test_expect_success 'tracking setup fails on non-matching refspec' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git config remote.local.fetch refs/heads/s:refs/remotes/local/s &&
+	test_must_fail git branch --track my5 local/main &&
+	test_must_fail git config branch.my5.remote &&
+	test_must_fail git config branch.my5.merge
+'
+
+test_expect_success 'test tracking setup via config' '
+	git config branch.autosetupmerge true &&
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch my3 local/main &&
+	test $(git config branch.my3.remote) = local &&
+	test $(git config branch.my3.merge) = refs/heads/main
+'
+
+test_expect_success 'test overriding tracking setup via --no-track' '
+	git config branch.autosetupmerge true &&
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --no-track my2 local/main &&
+	git config branch.autosetupmerge false &&
+	! test "$(git config branch.my2.remote)" = local &&
+	! test "$(git config branch.my2.merge)" = refs/heads/main
+'
+
+test_expect_success 'no tracking without .fetch entries' '
+	git config branch.autosetupmerge true &&
+	git branch my6 s &&
+	git config branch.autosetupmerge false &&
+	test -z "$(git config branch.my6.remote)" &&
+	test -z "$(git config branch.my6.merge)"
+'
+
+test_expect_success 'test tracking setup via --track but deeper' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/o/o || git fetch local) &&
+	git branch --track my7 local/o/o &&
+	test "$(git config branch.my7.remote)" = local &&
+	test "$(git config branch.my7.merge)" = refs/heads/o/o
+'
+
+test_expect_success 'test deleting branch deletes branch config' '
+	git branch -d my7 &&
+	test -z "$(git config branch.my7.remote)" &&
+	test -z "$(git config branch.my7.merge)"
+'
+
+test_expect_success 'test deleting branch without config' '
+	git branch my7 s &&
+	sha1=$(git rev-parse my7 | cut -c 1-7) &&
+	echo "Deleted branch my7 (was $sha1)." >expect &&
+	git branch -d my7 >actual 2>&1 &&
+	test_cmp expect actual
+'
+
+test_expect_success 'deleting currently checked out branch fails' '
+	git worktree add -b my7 my7 &&
+	test_must_fail git -C my7 branch -d my7 &&
+	test_must_fail git branch -d my7 2>actual &&
+	grep "^error: cannot delete branch .my7. used by worktree at " actual &&
+	rm -r my7 &&
+	git worktree prune
+'
+
+test_expect_success 'deleting in-use branch fails' '
+	git worktree add my7 &&
+	test_commit -C my7 bt7 &&
+	git -C my7 bisect start HEAD HEAD~2 &&
+	test_must_fail git -C my7 branch -d my7 &&
+	test_must_fail git branch -d my7 2>actual &&
+	grep "^error: cannot delete branch .my7. used by worktree at " actual &&
+	rm -r my7 &&
+	git worktree prune
+'
+
+test_expect_success 'test --track without .fetch entries' '
+	git branch --track my8 &&
+	test "$(git config branch.my8.remote)" &&
+	test "$(git config branch.my8.merge)"
+'
+
+test_expect_success 'branch from non-branch HEAD w/autosetupmerge=always' '
+	git config branch.autosetupmerge always &&
+	git branch my9 HEAD^ &&
+	git config branch.autosetupmerge false
+'
+
+test_expect_success 'branch from non-branch HEAD w/--track causes failure' '
+	test_must_fail git branch --track my10 HEAD^
+'
+
+test_expect_success 'branch from tag w/--track causes failure' '
+	git tag foobar &&
+	test_must_fail git branch --track my11 foobar
+'
+
+test_expect_success 'simple tracking works when remote branch name matches' '
+	test_when_finished "rm -rf otherserver" &&
+	git init otherserver &&
+	test_commit -C otherserver my_commit 1 &&
+	git -C otherserver branch feature &&
+	test_config branch.autosetupmerge simple &&
+	test_config remote.otherserver.url otherserver &&
+	test_config remote.otherserver.fetch refs/heads/*:refs/remotes/otherserver/* &&
+	git fetch otherserver &&
+	git branch feature otherserver/feature &&
+	test_cmp_config otherserver branch.feature.remote &&
+	test_cmp_config refs/heads/feature branch.feature.merge
+'
+
+test_expect_success 'simple tracking skips when remote branch name does not match' '
+	test_config branch.autosetupmerge simple &&
+	test_config remote.local.url . &&
+	test_config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	git fetch local &&
+	git branch my-other local/main &&
+	test_cmp_config "" --default "" branch.my-other.remote &&
+	test_cmp_config "" --default "" branch.my-other.merge
+'
+
+test_expect_success 'simple tracking skips when remote ref is not a branch' '
+	test_config branch.autosetupmerge simple &&
+	test_config remote.localtags.url . &&
+	test_config remote.localtags.fetch refs/tags/*:refs/remotes/localtags/* &&
+	git tag mytag12 main &&
+	git fetch localtags &&
+	git branch mytag12 localtags/mytag12 &&
+	test_cmp_config "" --default "" branch.mytag12.remote &&
+	test_cmp_config "" --default "" branch.mytag12.merge
+'
+
+test_expect_success '--set-upstream-to fails on multiple branches' '
+	echo "fatal: too many arguments to set new upstream" >expect &&
+	test_must_fail git branch --set-upstream-to main a b c 2>err &&
+	test_cmp expect err
+'
+
+test_expect_success '--set-upstream-to fails on detached HEAD' '
+	git checkout HEAD^{} &&
+	test_when_finished git checkout - &&
+	echo "fatal: could not set upstream of HEAD to main when it does not point to any branch" >expect &&
+	test_must_fail git branch --set-upstream-to main 2>err &&
+	test_cmp expect err
+'
+
+test_expect_success '--set-upstream-to fails on a missing dst branch' '
+	echo "fatal: branch '"'"'does-not-exist'"'"' does not exist" >expect &&
+	test_must_fail git branch --set-upstream-to main does-not-exist 2>err &&
+	test_cmp expect err
+'
+
+test_expect_success '--set-upstream-to fails on a missing src branch' '
+	test_must_fail git branch --set-upstream-to does-not-exist main 2>err &&
+	test_grep "the requested upstream branch '"'"'does-not-exist'"'"' does not exist" err
+'
+
+test_expect_success '--set-upstream-to fails on a non-ref' '
+	echo "fatal: cannot set up tracking information; starting point '"'"'HEAD^{}'"'"' is not a branch" >expect &&
+	test_must_fail git branch --set-upstream-to HEAD^{} 2>err &&
+	test_cmp expect err
+'
+
+test_expect_success '--set-upstream-to fails on locked config' '
+	test_when_finished "rm -f .git/config.lock" &&
+	>.git/config.lock &&
+	git branch locked &&
+	test_must_fail git branch --set-upstream-to locked 2>err &&
+	test_grep "could not lock config file .git/config" err
+'
+
+test_expect_success 'use --set-upstream-to modify HEAD' '
+	test_config branch.main.remote foo &&
+	test_config branch.main.merge foo &&
+	git branch my12 &&
+	git branch --set-upstream-to my12 &&
+	test "$(git config branch.main.remote)" = "." &&
+	test "$(git config branch.main.merge)" = "refs/heads/my12"
+'
+
+test_expect_success 'use --set-upstream-to modify a particular branch' '
+	git branch my13 &&
+	git branch --set-upstream-to main my13 &&
+	test_when_finished "git branch --unset-upstream my13" &&
+	test "$(git config branch.my13.remote)" = "." &&
+	test "$(git config branch.my13.merge)" = "refs/heads/main"
+'
+
+test_expect_success '--unset-upstream should fail if given a non-existent branch' '
+	echo "fatal: branch '"'"'i-dont-exist'"'"' has no upstream information" >expect &&
+	test_must_fail git branch --unset-upstream i-dont-exist 2>err &&
+	test_cmp expect err
+'
+
+test_expect_success '--unset-upstream should fail if config is locked' '
+	test_when_finished "rm -f .git/config.lock" &&
+	git branch --set-upstream-to locked &&
+	>.git/config.lock &&
+	test_must_fail git branch --unset-upstream 2>err &&
+	test_grep "could not lock config file .git/config" err
+'
+
+test_expect_success 'test --unset-upstream on HEAD' '
+	git branch my14 &&
+	test_config branch.main.remote foo &&
+	test_config branch.main.merge foo &&
+	git branch --set-upstream-to my14 &&
+	git branch --unset-upstream &&
+	test_must_fail git config branch.main.remote &&
+	test_must_fail git config branch.main.merge &&
+	# fail for a branch without upstream set
+	echo "fatal: branch '"'"'main'"'"' has no upstream information" >expect &&
+	test_must_fail git branch --unset-upstream 2>err &&
+	test_cmp expect err
+'
+
+test_expect_success '--unset-upstream should fail on multiple branches' '
+	echo "fatal: too many arguments to unset upstream" >expect &&
+	test_must_fail git branch --unset-upstream a b c 2>err &&
+	test_cmp expect err
+'
+
+test_expect_success '--unset-upstream should fail on detached HEAD' '
+	git checkout HEAD^{} &&
+	test_when_finished git checkout - &&
+	echo "fatal: could not unset upstream of HEAD when it does not point to any branch" >expect &&
+	test_must_fail git branch --unset-upstream 2>err &&
+	test_cmp expect err
+'
+
+test_expect_success 'test --unset-upstream on a particular branch' '
+	git branch my15 &&
+	git branch --set-upstream-to main my14 &&
+	git branch --unset-upstream my14 &&
+	test_must_fail git config branch.my14.remote &&
+	test_must_fail git config branch.my14.merge
+'
+
+test_expect_success 'disabled option --set-upstream fails' '
+	test_must_fail git branch --set-upstream origin/main
+'
+
+test_expect_success '--set-upstream-to notices an error to set branch as own upstream' "
+	git branch --set-upstream-to refs/heads/my13 my13 2>actual &&
+	cat >expect <<-\EOF &&
+	warning: not setting branch 'my13' as its own upstream
+	EOF
+	test_expect_code 1 git config branch.my13.remote &&
+	test_expect_code 1 git config branch.my13.merge &&
+	test_cmp expect actual
+"
+
+test_expect_success 'git checkout -b g/h/i -l should create a branch and a log' '
+	test_when_finished git checkout main &&
+	GIT_COMMITTER_DATE="2005-05-26 23:30" \
+	git checkout -b g/h/i -l main &&
+	test_ref_exists refs/heads/g/h/i &&
+	cat >expect <<-EOF &&
+	$HEAD refs/heads/g/h/i@{0}: branch: Created from main
+	EOF
+	git reflog show --no-abbrev-commit refs/heads/g/h/i >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'checkout -b makes reflog by default' '
+	git checkout main &&
+	git config --unset core.logAllRefUpdates &&
+	git checkout -b alpha &&
+	git rev-parse --verify alpha@{0}
+'
+
+test_expect_success 'checkout -b does not make reflog when core.logAllRefUpdates = false' '
+	git checkout main &&
+	git config core.logAllRefUpdates false &&
+	git checkout -b beta &&
+	test_must_fail git rev-parse --verify beta@{0}
+'
+
+test_expect_success 'checkout -b with -l makes reflog when core.logAllRefUpdates = false' '
+	git checkout main &&
+	git checkout -lb gamma &&
+	git config --unset core.logAllRefUpdates &&
+	git rev-parse --verify gamma@{0}
+'
+
+test_expect_success 'avoid ambiguous track and advise' '
+	git config branch.autosetupmerge true &&
+	git config remote.ambi1.url lalala &&
+	git config remote.ambi1.fetch refs/heads/lalala:refs/heads/main &&
+	git config remote.ambi2.url lilili &&
+	git config remote.ambi2.fetch refs/heads/lilili:refs/heads/main &&
+	cat <<-EOF >expected &&
+	fatal: not tracking: ambiguous information for ref '\''refs/heads/main'\''
+	hint: There are multiple remotes whose fetch refspecs map to the remote
+	hint: tracking ref '\''refs/heads/main'\'':
+	hint:   ambi1
+	hint:   ambi2
+	hint:
+	hint: This is typically a configuration error.
+	hint:
+	hint: To support setting up tracking branches, ensure that
+	hint: different remotes'\'' fetch refspecs map into different
+	hint: tracking namespaces.
+	EOF
+	test_must_fail git branch all1 main 2>actual &&
+	test_cmp expected actual &&
+	test -z "$(git config branch.all1.merge)"
+'
+
+test_expect_success 'autosetuprebase local on a tracked local branch' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	git config branch.autosetuprebase local &&
+	(git show-ref -q refs/remotes/local/o || git fetch local) &&
+	git branch mybase &&
+	git branch --track myr1 mybase &&
+	test "$(git config branch.myr1.remote)" = . &&
+	test "$(git config branch.myr1.merge)" = refs/heads/mybase &&
+	test "$(git config branch.myr1.rebase)" = true
+'
+
+test_expect_success 'autosetuprebase always on a tracked local branch' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	git config branch.autosetuprebase always &&
+	(git show-ref -q refs/remotes/local/o || git fetch local) &&
+	git branch mybase2 &&
+	git branch --track myr2 mybase &&
+	test "$(git config branch.myr2.remote)" = . &&
+	test "$(git config branch.myr2.merge)" = refs/heads/mybase &&
+	test "$(git config branch.myr2.rebase)" = true
+'
+
+test_expect_success 'autosetuprebase remote on a tracked local branch' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	git config branch.autosetuprebase remote &&
+	(git show-ref -q refs/remotes/local/o || git fetch local) &&
+	git branch mybase3 &&
+	git branch --track myr3 mybase2 &&
+	test "$(git config branch.myr3.remote)" = . &&
+	test "$(git config branch.myr3.merge)" = refs/heads/mybase2 &&
+	! test "$(git config branch.myr3.rebase)" = true
+'
+
+test_expect_success 'autosetuprebase never on a tracked local branch' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	git config branch.autosetuprebase never &&
+	(git show-ref -q refs/remotes/local/o || git fetch local) &&
+	git branch mybase4 &&
+	git branch --track myr4 mybase2 &&
+	test "$(git config branch.myr4.remote)" = . &&
+	test "$(git config branch.myr4.merge)" = refs/heads/mybase2 &&
+	! test "$(git config branch.myr4.rebase)" = true
+'
+
+test_expect_success 'autosetuprebase local on a tracked remote branch' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	git config branch.autosetuprebase local &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --track myr5 local/main &&
+	test "$(git config branch.myr5.remote)" = local &&
+	test "$(git config branch.myr5.merge)" = refs/heads/main &&
+	! test "$(git config branch.myr5.rebase)" = true
+'
+
+test_expect_success 'autosetuprebase never on a tracked remote branch' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	git config branch.autosetuprebase never &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --track myr6 local/main &&
+	test "$(git config branch.myr6.remote)" = local &&
+	test "$(git config branch.myr6.merge)" = refs/heads/main &&
+	! test "$(git config branch.myr6.rebase)" = true
+'
+
+test_expect_success 'autosetuprebase remote on a tracked remote branch' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	git config branch.autosetuprebase remote &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --track myr7 local/main &&
+	test "$(git config branch.myr7.remote)" = local &&
+	test "$(git config branch.myr7.merge)" = refs/heads/main &&
+	test "$(git config branch.myr7.rebase)" = true
+'
+
+test_expect_success 'autosetuprebase always on a tracked remote branch' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	git config branch.autosetuprebase remote &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --track myr8 local/main &&
+	test "$(git config branch.myr8.remote)" = local &&
+	test "$(git config branch.myr8.merge)" = refs/heads/main &&
+	test "$(git config branch.myr8.rebase)" = true
+'
+
+test_expect_success 'autosetuprebase unconfigured on a tracked remote branch' '
+	git config --unset branch.autosetuprebase &&
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --track myr9 local/main &&
+	test "$(git config branch.myr9.remote)" = local &&
+	test "$(git config branch.myr9.merge)" = refs/heads/main &&
+	test "z$(git config branch.myr9.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase unconfigured on a tracked local branch' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/o || git fetch local) &&
+	git branch mybase10 &&
+	git branch --track myr10 mybase2 &&
+	test "$(git config branch.myr10.remote)" = . &&
+	test "$(git config branch.myr10.merge)" = refs/heads/mybase2 &&
+	test "z$(git config branch.myr10.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase unconfigured on untracked local branch' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --no-track myr11 mybase2 &&
+	test "z$(git config branch.myr11.remote)" = z &&
+	test "z$(git config branch.myr11.merge)" = z &&
+	test "z$(git config branch.myr11.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase unconfigured on untracked remote branch' '
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --no-track myr12 local/main &&
+	test "z$(git config branch.myr12.remote)" = z &&
+	test "z$(git config branch.myr12.merge)" = z &&
+	test "z$(git config branch.myr12.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase never on an untracked local branch' '
+	git config branch.autosetuprebase never &&
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --no-track myr13 mybase2 &&
+	test "z$(git config branch.myr13.remote)" = z &&
+	test "z$(git config branch.myr13.merge)" = z &&
+	test "z$(git config branch.myr13.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase local on an untracked local branch' '
+	git config branch.autosetuprebase local &&
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --no-track myr14 mybase2 &&
+	test "z$(git config branch.myr14.remote)" = z &&
+	test "z$(git config branch.myr14.merge)" = z &&
+	test "z$(git config branch.myr14.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase remote on an untracked local branch' '
+	git config branch.autosetuprebase remote &&
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --no-track myr15 mybase2 &&
+	test "z$(git config branch.myr15.remote)" = z &&
+	test "z$(git config branch.myr15.merge)" = z &&
+	test "z$(git config branch.myr15.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase always on an untracked local branch' '
+	git config branch.autosetuprebase always &&
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --no-track myr16 mybase2 &&
+	test "z$(git config branch.myr16.remote)" = z &&
+	test "z$(git config branch.myr16.merge)" = z &&
+	test "z$(git config branch.myr16.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase never on an untracked remote branch' '
+	git config branch.autosetuprebase never &&
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --no-track myr17 local/main &&
+	test "z$(git config branch.myr17.remote)" = z &&
+	test "z$(git config branch.myr17.merge)" = z &&
+	test "z$(git config branch.myr17.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase local on an untracked remote branch' '
+	git config branch.autosetuprebase local &&
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --no-track myr18 local/main &&
+	test "z$(git config branch.myr18.remote)" = z &&
+	test "z$(git config branch.myr18.merge)" = z &&
+	test "z$(git config branch.myr18.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase remote on an untracked remote branch' '
+	git config branch.autosetuprebase remote &&
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --no-track myr19 local/main &&
+	test "z$(git config branch.myr19.remote)" = z &&
+	test "z$(git config branch.myr19.merge)" = z &&
+	test "z$(git config branch.myr19.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase always on an untracked remote branch' '
+	git config branch.autosetuprebase always &&
+	git config remote.local.url . &&
+	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+	(git show-ref -q refs/remotes/local/main || git fetch local) &&
+	git branch --no-track myr20 local/main &&
+	test "z$(git config branch.myr20.remote)" = z &&
+	test "z$(git config branch.myr20.merge)" = z &&
+	test "z$(git config branch.myr20.rebase)" = z
+'
+
+test_expect_success 'autosetuprebase always on detached HEAD' '
+	git config branch.autosetupmerge always &&
+	test_when_finished git checkout main &&
+	git checkout HEAD^0 &&
+	git branch my11 &&
+	test -z "$(git config branch.my11.remote)" &&
+	test -z "$(git config branch.my11.merge)"
+'
+
+test_expect_success 'detect misconfigured autosetuprebase (bad value)' '
+	git config branch.autosetuprebase garbage &&
+	test_must_fail git branch
+'
+
+test_expect_success 'detect misconfigured autosetuprebase (no value)' '
+	git config --unset branch.autosetuprebase &&
+	echo "[branch] autosetuprebase" >>.git/config &&
+	test_must_fail git branch &&
+	git config --unset branch.autosetuprebase
+'
+
+test_expect_success 'attempt to delete a branch without base and unmerged to HEAD' '
+	git checkout my9 &&
+	git config --unset branch.my8.merge &&
+	test_must_fail git branch -d my8
+'
+
+test_expect_success 'attempt to delete a branch merged to its base' '
+	# we are on my9 which is the initial commit; traditionally
+	# we would not have allowed deleting my8 that is not merged
+	# to my9, but it is set to track main that already has my8
+	git config branch.my8.merge refs/heads/main &&
+	git branch -d my8
+'
+
+test_expect_success 'attempt to delete a branch merged to its base' '
+	git checkout main &&
+	echo Third >>A &&
+	git commit -m "Third commit" A &&
+	git branch -t my10 my9 &&
+	git branch -f my10 HEAD^ &&
+	# we are on main which is at the third commit, and my10
+	# is behind us, so traditionally we would have allowed deleting
+	# it; but my10 is set to track my9 that is further behind.
+	test_must_fail git branch -d my10
+'
+
+test_expect_success 'branch --delete --force removes dangling branch' '
+	git checkout main &&
+	test_commit unstable &&
+	hash=$(git rev-parse HEAD) &&
+	objpath=$(echo $hash | sed -e "s|^..|.git/objects/&/|") &&
+	git branch --no-track dangling &&
+	mv $objpath $objpath.x &&
+	test_when_finished "mv $objpath.x $objpath" &&
+	git branch --delete --force dangling &&
+	git for-each-ref refs/heads/dangling >actual &&
 	test_must_be_empty actual
 '
 
-test_expect_success 'branch -r shows only remote-tracking branches' '
-	cd repo &&
-	git branch -r >actual 2>&1 &&
-	! grep "^\*" actual || true
+test_expect_success 'use --edit-description' '
+	EDITOR=: git branch --edit-description &&
+	test_expect_code 1 git config branch.main.description &&
+
+	write_script editor <<-\EOF &&
+		echo "New contents" >"$1"
+	EOF
+	EDITOR=./editor git branch --edit-description &&
+		write_script editor <<-\EOF &&
+		git stripspace -s <"$1" >"EDITOR_OUTPUT"
+	EOF
+	EDITOR=./editor git branch --edit-description &&
+	echo "New contents" >expect &&
+	test_cmp expect EDITOR_OUTPUT
 '
 
-test_expect_success 'branch -a shows local and remote branches' '
-	cd repo &&
-	git branch -a >actual &&
-	grep "master" actual
+test_expect_success 'detect typo in branch name when using --edit-description' '
+	write_script editor <<-\EOF &&
+		echo "New contents" >"$1"
+	EOF
+	test_must_fail env EDITOR=./editor git branch --edit-description no-such-branch
 '
 
-# ---- batch 7: error cases and edge cases ----
-
-test_expect_success 'branch refuses to create with empty name' '
-	cd repo &&
-	test_must_fail git branch "" 2>/dev/null
+test_expect_success 'refuse --edit-description on unborn branch for now' '
+	test_when_finished "git checkout main" &&
+	write_script editor <<-\EOF &&
+		echo "New contents" >"$1"
+	EOF
+	git checkout --orphan unborn &&
+	test_must_fail env EDITOR=./editor git branch --edit-description
 '
 
-test_expect_success 'branch -m with non-existent source fails' '
-	cd repo &&
-	test_must_fail git branch -m nonexistent-src new-dst 2>/dev/null
+test_expect_success '--merged catches invalid object names' '
+	test_must_fail git branch --merged $ZERO_OID 2>err &&
+	test_grep "must point to a commit" err
 '
 
-test_expect_success 'branch -m to name that conflicts with existing fails' '
-	cd repo &&
-	git branch conflict-a &&
-	git branch conflict-b &&
-	test_must_fail git branch -m conflict-a conflict-b 2>/dev/null &&
-	git branch -d conflict-a conflict-b 2>/dev/null
-'
-
-test_expect_success 'branch -D non-existent branch fails' '
-	cd repo &&
-	test_must_fail git branch -D totally-not-a-branch 2>/dev/null
-'
-
-test_expect_success 'branch with empty name fails' '
-	cd repo &&
-	test_must_fail git branch "" 2>/dev/null
-'
-
-test_expect_success 'cannot delete current branch' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	test_must_fail git branch -d master 2>/dev/null
-'
-
-# ---- batch 8: deletion messages, multiple delete, for-each-ref ----
-
-test_expect_success 'branch -d deletion message contains was' '
-	cd repo &&
-	git branch del-msg-test &&
-	git branch -d del-msg-test >actual 2>&1 &&
-	grep "was" actual
-'
-
-test_expect_success 'branch -D deletion message contains branch name' '
-	cd repo &&
-	git branch forcedel-msg &&
-	git branch -D forcedel-msg >actual 2>&1 &&
-	grep "forcedel-msg" actual
-'
-
-test_expect_success 'delete branches one at a time' '
-	cd repo &&
-	git branch multi-del-a &&
-	git branch multi-del-b &&
-	git branch multi-del-c &&
-	git branch -d multi-del-a 2>/dev/null &&
-	git branch -d multi-del-b 2>/dev/null &&
-	git branch -d multi-del-c 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/multi-del-a &&
-	test_must_fail git rev-parse --verify refs/heads/multi-del-b &&
-	test_must_fail git rev-parse --verify refs/heads/multi-del-c
-'
-
-test_expect_success 'for-each-ref shows branches' '
-	cd repo &&
-	git branch fer-test &&
-	git for-each-ref refs/heads/ >actual &&
-	grep "fer-test" actual &&
-	git branch -d fer-test 2>/dev/null
-'
-
-test_expect_success 'for-each-ref format with refname:short' '
-	cd repo &&
-	git branch fer-short &&
-	git for-each-ref --format="%(refname:short)" refs/heads/ >actual &&
-	grep "fer-short" actual &&
-	git branch -d fer-short 2>/dev/null
-'
-
-# ---- batch 9: rename edge cases ----
-
-test_expect_success 'rename updates the ref value' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	git branch ren-val-test &&
-	git branch -m ren-val-test ren-val-done 2>/dev/null &&
-	result=$(git rev-parse ren-val-done) &&
-	test "$head" = "$result" &&
-	git branch -d ren-val-done 2>/dev/null
-'
-
-test_expect_success 'multiple sequential renames work' '
-	cd repo &&
-	git branch chain-a &&
-	git branch -m chain-a chain-b 2>/dev/null &&
-	git branch -m chain-b chain-c 2>/dev/null &&
-	git branch -m chain-c chain-d 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/chain-a &&
-	test_must_fail git rev-parse --verify refs/heads/chain-b &&
-	test_must_fail git rev-parse --verify refs/heads/chain-c &&
-	git rev-parse --verify refs/heads/chain-d >/dev/null &&
-	git branch -d chain-d 2>/dev/null
-'
-
-test_expect_success 'renamed branch can be deleted' '
-	cd repo &&
-	git branch ren-then-del &&
-	git branch -m ren-then-del ren-then-del-new 2>/dev/null &&
-	git branch -d ren-then-del-new 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/ren-then-del-new
-'
-
-test_expect_success 'branch -m dumps usage with no args' '
-	cd repo &&
-	test_must_fail git branch -m 2>err &&
-	test -s err
-'
-
-test_expect_success 'branch -M with non-existent source fails' '
-	cd repo &&
-	test_must_fail git branch -M nonexistent-force new-force-dst 2>/dev/null
-'
-
-# ---- batch 10: --no-track, branch at tag ----
-
-test_expect_success 'branch --no-track creates branch without tracking' '
-	cd repo &&
-	git branch --no-track nt-test master &&
-	git rev-parse --verify refs/heads/nt-test >/dev/null &&
-	git branch -d nt-test 2>/dev/null
-'
-
-test_expect_success 'branch at tag resolves to tag target commit' '
-	cd repo &&
-	git tag tag-for-branch2 HEAD &&
-	tag_sha=$(git rev-parse tag-for-branch2) &&
-	git branch at-tag2 tag-for-branch2 &&
-	branch_sha=$(git rev-parse at-tag2) &&
-	test "$tag_sha" = "$branch_sha" &&
-	git branch -d at-tag2 2>/dev/null &&
-	git tag -d tag-for-branch2 2>/dev/null
-'
-
-test_expect_success 'branch -v shows subject line for each branch' '
-	cd repo &&
-	git branch subj-test &&
-	git branch -v >actual &&
-	grep "subj-test" actual &&
-	# Should show abbreviated sha
-	short=$(git rev-parse --short HEAD) &&
-	grep "$short" actual &&
-	git branch -d subj-test 2>/dev/null
-'
-
-test_expect_success 'branch -v output includes commit subject' '
-	cd repo &&
-	git branch vsub-test &&
-	git branch -v >actual &&
-	# "second" is the commit message
-	grep "second" actual &&
-	git branch -d vsub-test 2>/dev/null
-'
-
-test_expect_success 'listing many branches works' '
-	cd repo &&
-	for i in 1 2 3 4 5 6 7 8 9 10; do
-		git branch "many-$i"
-	done &&
-	git branch >actual &&
-	for i in 1 2 3 4 5 6 7 8 9 10; do
-		grep "many-$i" actual
-	done &&
-	for i in 1 2 3 4 5 6 7 8 9 10; do
-		git branch -d "many-$i" 2>/dev/null
-	done
-'
-
-# ---- batch 11: checkout -b integration, branch after operations ----
-
-test_expect_success 'checkout -b creates branch and switches' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	git checkout -b co-b-test2 2>/dev/null &&
-	cur=$(git branch --show-current) &&
-	test "$cur" = "co-b-test2" &&
-	git checkout master 2>/dev/null &&
-	git branch -d co-b-test2 2>/dev/null
-'
-
-test_expect_success 'checkout -b at specific commit' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	parent=$(git rev-parse HEAD~1) &&
-	git checkout -b co-b-at-sha "$parent" 2>/dev/null &&
-	result=$(git rev-parse HEAD) &&
-	test "$parent" = "$result" &&
-	git checkout master 2>/dev/null &&
-	git branch -d co-b-at-sha 2>/dev/null
-'
-
-test_expect_success 'branch listing is sorted alphabetically' '
-	cd repo &&
-	git branch zzz-last &&
-	git branch aaa-first &&
-	git branch mmm-middle &&
+test_expect_success '--list during rebase' '
+	test_when_finished "reset_rebase" &&
+	git checkout main &&
+	FAKE_LINES="1 edit 2" &&
+	export FAKE_LINES &&
+	set_fake_editor &&
+	git rebase -i HEAD~2 &&
 	git branch --list >actual &&
-	# Extract just branch names, check relative order
-	grep -n "aaa-first" actual >line_a &&
-	grep -n "mmm-middle" actual >line_m &&
-	grep -n "zzz-last" actual >line_z &&
-	la=$(head -1 line_a | cut -d: -f1) &&
-	lm=$(head -1 line_m | cut -d: -f1) &&
-	lz=$(head -1 line_z | cut -d: -f1) &&
-	test "$la" -lt "$lm" &&
-	test "$lm" -lt "$lz" &&
-	git branch -d aaa-first 2>/dev/null &&
-	git branch -d mmm-middle 2>/dev/null &&
-	git branch -d zzz-last 2>/dev/null
+	test_grep "rebasing main" actual
 '
 
-test_expect_success 'branch --list after delete shows remaining' '
-	cd repo &&
-	git branch list-stay &&
-	git branch list-go &&
-	git branch -d list-go 2>/dev/null &&
+test_expect_success '--list during rebase from detached HEAD' '
+	test_when_finished "reset_rebase && git checkout main" &&
+	git checkout main^0 &&
+	oid=$(git rev-parse --short HEAD) &&
+	FAKE_LINES="1 edit 2" &&
+	export FAKE_LINES &&
+	set_fake_editor &&
+	git rebase -i HEAD~2 &&
 	git branch --list >actual &&
-	grep "list-stay" actual &&
-	! grep "list-go" actual &&
-	git branch -d list-stay 2>/dev/null
-'
-
-test_expect_success 'branch -D on already deleted branch fails' '
-	cd repo &&
-	git branch del-twice &&
-	git branch -D del-twice 2>/dev/null &&
-	test_must_fail git branch -D del-twice 2>/dev/null
-'
-
-# ---- batch 12: more edge cases and coverage ----
-
-test_expect_success 'branch -d merged branch succeeds' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	git branch merged-del-test &&
-	# branch points to same commit as master, so it is merged
-	git branch -d merged-del-test 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/merged-del-test
-'
-
-test_expect_success 'branch -m requires two args' '
-	cd repo &&
-	test_must_fail git branch -m 2>err &&
-	test -s err
-'
-
-test_expect_success 'branch -M requires at least one arg' '
-	cd repo &&
-	test_must_fail git branch -M 2>err &&
-	test -s err
-'
-
-test_expect_success 'branch name starting with dash not allowed' '
-	cd repo &&
-	test_must_fail git branch -- -dash-name 2>/dev/null ||
-	test_must_fail git branch "-dash-name" 2>/dev/null ||
-	true
-'
-
-test_expect_success 'branch -v output has consistent format' '
-	cd repo &&
-	git branch fmt-v-test &&
-	git branch -v >actual &&
-	# Each line should have branch name, sha, subject
-	grep "fmt-v-test" actual | grep -q "[0-9a-f]" &&
-	git branch -d fmt-v-test 2>/dev/null
-'
-
-test_expect_success 'creating branch does not change HEAD' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	head_before=$(git rev-parse HEAD) &&
-	git branch no-head-change &&
-	head_after=$(git rev-parse HEAD) &&
-	test "$head_before" = "$head_after" &&
-	git branch -d no-head-change 2>/dev/null
-'
-
-test_expect_success 'creating branch does not change current branch' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	git branch no-switch-test &&
-	cur=$(git branch --show-current) &&
-	test "$cur" = "master" &&
-	git branch -d no-switch-test 2>/dev/null
-'
-
-test_expect_success 'deleting branch does not affect other branches' '
-	cd repo &&
-	git branch survive-test &&
-	git branch victim-test &&
-	victim_sha=$(git rev-parse survive-test) &&
-	git branch -d victim-test 2>/dev/null &&
-	survive_sha=$(git rev-parse survive-test) &&
-	test "$victim_sha" = "$survive_sha" &&
-	git branch -d survive-test 2>/dev/null
-'
-
-test_expect_success 'branch -f creates new branch if it does not exist' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	git branch -f brand-new-force 2>/dev/null &&
-	result=$(git rev-parse brand-new-force) &&
-	test "$head" = "$result" &&
-	git branch -d brand-new-force 2>/dev/null
-'
-
-test_expect_success 'rev-parse refs/heads/branch matches branch sha' '
-	cd repo &&
-	git branch rp-test &&
-	sha1=$(git rev-parse rp-test) &&
-	sha2=$(git rev-parse refs/heads/rp-test) &&
-	test "$sha1" = "$sha2" &&
-	git branch -d rp-test 2>/dev/null
-'
-
-test_expect_success 'branch -d removes from refs/heads namespace' '
-	cd repo &&
-	git branch ns-del-test &&
-	git rev-parse --verify refs/heads/ns-del-test >/dev/null &&
-	git branch -d ns-del-test 2>/dev/null &&
-	test_must_fail git rev-parse --verify refs/heads/ns-del-test
-'
-
-test_expect_success 'branch --show-current is empty on detached HEAD' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	sha=$(git rev-parse HEAD) &&
-	git checkout "$sha" 2>/dev/null &&
-	result=$(git branch --show-current) &&
-	test -z "$result" &&
-	git checkout master 2>/dev/null
-'
-
-# ── additional branch tests ───────────────────────────────────────────
-
-test_expect_success 'branch creates ref under refs/heads' '
-	cd repo &&
-	git branch ref-check-br &&
-	test -f .git/refs/heads/ref-check-br &&
-	git branch -d ref-check-br 2>/dev/null
-'
-
-test_expect_success 'branch listing includes new branch' '
-	cd repo &&
-	git branch list-test-br &&
-	git branch >../actual &&
-	grep "list-test-br" ../actual &&
-	git branch -d list-test-br 2>/dev/null
-'
-
-test_expect_success 'branch listing marks current branch with asterisk' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	git branch >../actual &&
-	grep "^\* master" ../actual
-'
-
-test_expect_success 'branch -d on nonexistent branch fails' '
-	cd repo &&
-	test_must_fail git branch -d nonexistent-branch-xyz 2>/dev/null
-'
-
-test_expect_success 'branch with same name as existing fails' '
-	cd repo &&
-	git branch dup-test &&
-	test_must_fail git branch dup-test 2>/dev/null &&
-	git branch -d dup-test 2>/dev/null
-'
-
-test_expect_success 'branch -f moves existing branch to HEAD' '
-	cd repo &&
-	git branch move-target &&
-	git commit --allow-empty -m "advance" 2>/dev/null &&
-	new_head=$(git rev-parse HEAD) &&
-	git branch -f move-target &&
-	result=$(git rev-parse move-target) &&
-	test "$result" = "$new_head" &&
-	git branch -d move-target 2>/dev/null
-'
-
-test_expect_success 'multiple branches can coexist' '
-	cd repo &&
-	git branch multi-a &&
-	git branch multi-b &&
-	git branch multi-c &&
-	git rev-parse multi-a >/dev/null &&
-	git rev-parse multi-b >/dev/null &&
-	git rev-parse multi-c >/dev/null &&
-	git branch -d multi-a 2>/dev/null &&
-	git branch -d multi-b 2>/dev/null &&
-	git branch -d multi-c 2>/dev/null
-'
-
-test_expect_success 'branch points to correct commit' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	git branch point-check &&
-	result=$(git rev-parse point-check) &&
-	test "$result" = "$head" &&
-	git branch -d point-check 2>/dev/null
-'
-
-test_expect_success 'branch with slash in name' '
-	cd repo &&
-	git branch feat/w22-slash &&
-	git rev-parse feat/w22-slash >/dev/null &&
-	git branch -d feat/w22-slash 2>/dev/null
-'
-
-test_expect_success 'branch --show-current shows master after checkout' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	result=$(git branch --show-current) &&
-	test "$result" = "master"
-'
-
-test_expect_success 'branch -d cannot delete current branch' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	test_must_fail git branch -d master 2>/dev/null
-'
-
-test_expect_success 'branch with hyphen in name' '
-	cd repo &&
-	git branch my-hyphen-branch &&
-	git rev-parse my-hyphen-branch >/dev/null &&
-	git branch -d my-hyphen-branch 2>/dev/null
-'
-
-# ---------------------------------------------------------------------------
-# Additional branch coverage
-# ---------------------------------------------------------------------------
-test_expect_success 'branch with dot in name' '
-	cd repo &&
-	git branch v1.0.release &&
-	git rev-parse v1.0.release >/dev/null &&
-	git branch -d v1.0.release 2>/dev/null
-'
-
-test_expect_success 'branch with underscore in name' '
-	cd repo &&
-	git branch my_underscore &&
-	git rev-parse my_underscore >/dev/null &&
-	git branch -d my_underscore 2>/dev/null
-'
-
-test_expect_success 'branch -v shows commit subject' '
-	cd repo &&
-	git branch -v >output &&
-	grep "master" output
-'
-
-test_expect_success 'branch points to same commit as HEAD after creation' '
-	cd repo &&
-	git branch same-as-head &&
-	head=$(git rev-parse HEAD) &&
-	branch=$(git rev-parse same-as-head) &&
-	test "$head" = "$branch" &&
-	git branch -d same-as-head 2>/dev/null
-'
-
-test_expect_success 'branch created from specific commit' '
-	cd repo &&
-	first=$(git rev-list --reverse HEAD | head -1) &&
-	git branch from-first "$first" &&
-	result=$(git rev-parse from-first) &&
-	test "$result" = "$first" &&
-	git branch -d from-first 2>/dev/null
-'
-
-test_expect_success 'branch -d deletes a merged branch' '
-	cd repo &&
-	git branch del-merged &&
-	git branch -d del-merged 2>/dev/null &&
-	test_must_fail git rev-parse del-merged 2>/dev/null
-'
-
-test_expect_success 'branch --list shows all branches' '
-	cd repo &&
-	git branch --list >output &&
-	grep "master" output
-'
-
-test_expect_success 'branch --list with pattern filters' '
-	cd repo &&
-	git branch pattern-test-abc &&
-	git branch --list "pattern-*" >output &&
-	grep "pattern-test-abc" output &&
-	git branch -d pattern-test-abc 2>/dev/null
-'
-
-test_expect_success 'branch refuses to create duplicate' '
-	cd repo &&
-	test_must_fail git branch master 2>/dev/null
-'
-
-test_expect_success 'branch -m renames branch' '
-	cd repo &&
-	git branch rename-src &&
-	git branch -m rename-src rename-dst &&
-	git rev-parse rename-dst >/dev/null &&
-	test_must_fail git rev-parse rename-src 2>/dev/null &&
-	git branch -d rename-dst 2>/dev/null
-'
-
-test_expect_success 'branch with nested slashes' '
-	cd repo &&
-	git branch feat/area/detail &&
-	git rev-parse feat/area/detail >/dev/null &&
-	git branch -d feat/area/detail 2>/dev/null
-'
-
-test_expect_success 'branch --contains lists branch containing commit' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	git branch --contains "$head" >output &&
-	grep "master" output
-'
-
-test_expect_success 'branch count increases after creation' '
-	cd repo &&
-	git branch -l >before &&
-	git branch count-test &&
-	git branch -l >after &&
-	before_n=$(wc -l <before) &&
-	after_n=$(wc -l <after) &&
-	test "$after_n" -gt "$before_n" &&
-	git branch -d count-test 2>/dev/null
-'
-
-test_expect_success 'detached HEAD shows no branch with --show-current' '
-	cd repo &&
-	git checkout --detach HEAD 2>/dev/null &&
-	result=$(git branch --show-current) &&
-	test -z "$result" &&
-	git checkout master 2>/dev/null
-'
-
-test_expect_success 'branch -D force-deletes unmerged branch' '
-	cd repo &&
-	git branch force-del &&
-	git checkout force-del 2>/dev/null &&
-	echo x >fd.txt && git add fd.txt && git commit -m fd 2>/dev/null &&
-	git checkout master 2>/dev/null &&
-	git branch -D force-del 2>/dev/null &&
-	test_must_fail git rev-parse force-del 2>/dev/null
-'
-
-test_expect_success 'branch lists newly created branches' '
-	cd repo &&
-	git branch aaa-list-check &&
-	git branch zzz-list-check &&
-	git branch -l >output &&
-	grep "aaa-list-check" output &&
-	grep "zzz-list-check" output &&
-	git branch -d aaa-list-check zzz-list-check 2>/dev/null
-'
-
-test_expect_success 'branch --show-current shows master on master' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	result=$(git branch --show-current) &&
-	test "$result" = "master"
-'
-
-test_expect_success 'branch from specific commit' '
-	cd repo &&
-	sha=$(git rev-parse HEAD~1) &&
-	git branch from-sha "$sha" &&
-	result=$(git rev-parse from-sha) &&
-	test "$result" = "$sha" &&
-	git branch -d from-sha 2>/dev/null
-'
-
-test_expect_success 'branch -d on current branch fails' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	test_must_fail git branch -d master 2>/dev/null
-'
-
-test_expect_success 'branch rename with -m' '
-	cd repo &&
-	git branch rename-src &&
-	git branch -m rename-src rename-dst 2>/dev/null &&
-	git rev-parse rename-dst &&
-	test_must_fail git rev-parse rename-src 2>/dev/null &&
-	git branch -d rename-dst 2>/dev/null
-'
-
-test_expect_success 'branch -v includes commit subject' '
-	cd repo &&
-	git branch -v >output &&
-	test $(wc -l <output) -ge 1
-'
-
-test_expect_success 'branch creating duplicate name fails' '
-	cd repo &&
-	git branch dup-br 2>/dev/null &&
-	test_must_fail git branch dup-br 2>/dev/null &&
-	git branch -d dup-br 2>/dev/null
-'
-
-test_expect_success 'branch -d nonexistent branch fails' '
-	cd repo &&
-	test_must_fail git branch -d no-such-branch-xyz 2>/dev/null
-'
-
-test_expect_success 'branch list shows current branch with asterisk' '
-	cd repo &&
-	git checkout master 2>/dev/null &&
-	git branch >output &&
-	grep "^\* master" output
-'
-
-test_expect_success 'branch points to correct commit after creation' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	git branch verify-commit &&
-	result=$(git rev-parse verify-commit) &&
-	test "$result" = "$head" &&
-	git branch -d verify-commit 2>/dev/null
-'
-
-test_expect_success 'branch -D deletes branch even if not merged' '
-	cd repo &&
-	git branch unmerged-del &&
-	git checkout unmerged-del 2>/dev/null &&
-	echo x >unm.txt && git add unm.txt && git commit -m unm 2>/dev/null &&
-	git checkout master 2>/dev/null &&
-	git branch -D unmerged-del &&
-	test_must_fail git rev-parse unmerged-del 2>/dev/null
-'
-
-test_expect_success 'multiple branches can be created' '
-	cd repo &&
-	git branch multi-a &&
-	git branch multi-b &&
-	git branch multi-c &&
-	git rev-parse multi-a &&
-	git rev-parse multi-b &&
-	git rev-parse multi-c &&
-	git branch -d multi-a 2>/dev/null &&
-	git branch -d multi-b 2>/dev/null &&
-	git branch -d multi-c 2>/dev/null
-'
-
-test_expect_success 'branch --show-current on new branch shows its name' '
-	cd repo &&
-	git branch show-cur-test &&
-	git checkout show-cur-test 2>/dev/null &&
-	result=$(git branch --show-current) &&
-	test "$result" = "show-cur-test" &&
-	git checkout master 2>/dev/null &&
-	git branch -d show-cur-test 2>/dev/null
-'
-
-test_expect_success 'branch -v output includes hash prefix' '
-	cd repo &&
-	git branch -v >output &&
-	grep "[0-9a-f]" output
-'
-
-test_expect_success 'branch created at HEAD matches HEAD sha' '
-	cd repo &&
-	git branch head-match-test &&
-	head=$(git rev-parse HEAD) &&
-	br=$(git rev-parse head-match-test) &&
-	test "$head" = "$br" &&
-	git branch -d head-match-test 2>/dev/null
-'
-
-test_expect_success 'branch -m renames branch' '
-	cd repo &&
-	git branch rename-src-v2 &&
-	git branch -m rename-src-v2 rename-dst-v2 &&
-	git rev-parse rename-dst-v2 &&
-	test_must_fail git rev-parse rename-src-v2 2>/dev/null &&
-	git branch -d rename-dst-v2 2>/dev/null
-'
-
-test_expect_success 'branch -m rename preserves commit' '
-	cd repo &&
-	git branch rename-pres-v2 &&
-	sha=$(git rev-parse rename-pres-v2) &&
-	git branch -m rename-pres-v2 rename-pres-dst-v2 &&
-	new_sha=$(git rev-parse rename-pres-dst-v2) &&
-	test "$sha" = "$new_sha" &&
-	git branch -D rename-pres-dst-v2 2>/dev/null
-'
-
-test_expect_success 'branch --contains HEAD lists current branch' '
-	cd repo &&
-	git branch --contains HEAD >output &&
-	grep "master" output
-'
-
-test_expect_success 'branch -l lists branches' '
-	cd repo &&
-	git branch -l >output &&
-	grep "master" output
-'
-
-test_expect_success 'branch created at specific SHA' '
-	cd repo &&
-	parent=$(git rev-parse HEAD~1) &&
-	git branch at-sha-v2 "$parent" &&
-	result=$(git rev-parse at-sha-v2) &&
-	test "$result" = "$parent" &&
-	git branch -d at-sha-v2 2>/dev/null
-'
-
-test_expect_success 'branch -f forces overwrite at SHA' '
-	cd repo &&
-	git branch force-br-v2 &&
-	old=$(git rev-parse force-br-v2) &&
-	parent=$(git rev-parse HEAD~1) &&
-	git branch -f force-br-v2 "$parent" &&
-	new=$(git rev-parse force-br-v2) &&
-	test "$old" != "$new" &&
-	git branch -D force-br-v2 2>/dev/null
-'
-
-test_expect_success 'branch -d on current branch fails' '
-	cd repo &&
-	test_must_fail git branch -d master 2>/dev/null
-'
-
-test_expect_success 'branch --show-current on master shows master' '
-	cd repo &&
-	result=$(git branch --show-current) &&
-	test "$result" = "master"
-'
-
-test_expect_success 'branch -a shows all branches' '
-	cd repo &&
-	git branch -a >output &&
-	grep "master" output
-'
-
-test_expect_success 'branch with slash in name' '
-	cd repo &&
-	git branch feat-v2/slash-test &&
-	git rev-parse feat-v2/slash-test &&
-	git branch -d feat-v2/slash-test 2>/dev/null
-'
-
-test_expect_success 'branch -d nonexistent branch fails' '
-	cd repo &&
-	test_must_fail git branch -d nonexistent-br-xyz 2>/dev/null
-'
-
-test_expect_success 'branch -v shows commit hash and subject' '
-	cd repo &&
-	git branch -v >output &&
-	grep "[0-9a-f]" output &&
-	test $(wc -l <output) -ge 1
-'
-
-test_expect_success 'branch --merged lists branches merged into HEAD' '
-	cd repo &&
-	git branch --merged HEAD >output &&
-	grep "master" output
-'
-
-test_expect_success 'branch -q suppresses output' '
-	cd repo &&
-	git branch -q quiet-br-v2 >output 2>&1 &&
-	test_must_be_empty output &&
-	git branch -d quiet-br-v2 2>/dev/null
-'
-
-test_expect_success 'branch list shows newly created branch' '
-	cd repo &&
-	git branch list-check-v2 &&
-	git branch >output &&
-	grep "list-check-v2" output &&
-	git branch -d list-check-v2 2>/dev/null
-'
-
-test_expect_success 'branch --no-merged lists unmerged branches' '
-	cd repo &&
-	git branch no-merge-test &&
-	git checkout no-merge-test 2>/dev/null &&
-	echo unique >unique_no_merge.txt &&
-	git add unique_no_merge.txt && git commit -m "unique" 2>/dev/null &&
-	git checkout master 2>/dev/null &&
-	git branch --no-merged master >output &&
-	grep "no-merge-test" output &&
-	git branch -D no-merge-test 2>/dev/null
-'
-
-test_expect_success 'branch --contains lists branches containing commit' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	git branch --contains "$head" >output &&
-	grep "master" output
-'
-
-test_expect_success 'branch -m renames branch' '
-	cd repo &&
-	git branch rename-src-v2 &&
-	git branch -m rename-src-v2 rename-dst-v2 &&
-	git rev-parse rename-dst-v2 &&
-	test_must_fail git rev-parse rename-src-v2 2>/dev/null &&
-	git branch -d rename-dst-v2 2>/dev/null
-'
-
-test_expect_success 'branch -M force renames even if target exists' '
-	cd repo &&
-	git branch force-rename-src &&
-	git branch force-rename-dst &&
-	git branch -M force-rename-src force-rename-dst &&
-	test_must_fail git rev-parse force-rename-src 2>/dev/null &&
-	git branch -d force-rename-dst 2>/dev/null
-'
-
-test_expect_success 'branch -v shows hash prefix' '
-	cd repo &&
-	git branch -v >output &&
-	head=$(git rev-parse --short HEAD) &&
-	grep "$head" output
-'
-
-test_expect_success 'branch -f overwrites existing branch to new target' '
-	cd repo &&
-	git branch overwrite-v3 &&
-	parent=$(git rev-parse HEAD~1) &&
-	git branch -f overwrite-v3 "$parent" &&
-	test "$(git rev-parse overwrite-v3)" = "$parent" &&
-	git branch -d overwrite-v3 2>/dev/null
-'
-
-test_expect_success 'branch --merged HEAD shows current branch' '
-	cd repo &&
-	git branch --merged HEAD >output &&
-	grep "master" output
-'
-
-test_expect_success 'branch with dot in name' '
-	cd repo &&
-	git branch dot.branch.test &&
-	git rev-parse dot.branch.test &&
-	git branch -d dot.branch.test 2>/dev/null
-'
-
-test_expect_success 'branch with hyphen in name' '
-	cd repo &&
-	git branch hyphen-branch-test &&
-	git rev-parse hyphen-branch-test &&
-	git branch -d hyphen-branch-test 2>/dev/null
-'
-
-test_expect_success 'branch --list shows branches' '
-	cd repo &&
-	git branch --list >output &&
-	grep "master" output
-'
-
-test_expect_success 'branch --list with pattern filters' '
-	cd repo &&
-	git branch list-pat-a &&
-	git branch list-pat-b &&
-	git branch --list "list-pat-*" >output &&
-	grep "list-pat-a" output &&
-	grep "list-pat-b" output &&
-	git branch -d list-pat-a list-pat-b 2>/dev/null
-'
-
-test_expect_success 'branch -D force deletes unmerged branch' '
-	cd repo &&
-	git branch force-del-v2 &&
-	git checkout force-del-v2 2>/dev/null &&
-	echo forcedel >forcedel.txt &&
-	git add forcedel.txt && git commit -m "forcedel" 2>/dev/null &&
-	git checkout master 2>/dev/null &&
-	git branch -D force-del-v2
-'
-
-test_expect_success 'branch at tag works' '
-	cd repo &&
-	git tag branch-at-tag-v2 &&
-	git branch from-tag-v2 branch-at-tag-v2 &&
-	test "$(git rev-parse from-tag-v2)" = "$(git rev-parse branch-at-tag-v2)" &&
-	git branch -d from-tag-v2 2>/dev/null
-'
-
-test_expect_success 'branch creation does not modify HEAD' '
-	cd repo &&
-	head_before=$(git rev-parse HEAD) &&
-	git branch no-head-change-v2 &&
-	head_after=$(git rev-parse HEAD) &&
-	test "$head_before" = "$head_after" &&
-	git branch -d no-head-change-v2 2>/dev/null
-'
-
-test_expect_success 'branch -r shows no remotes in local-only repo' '
-	cd repo &&
-	git branch -r >output &&
-	test_must_be_empty output
-'
-
-test_expect_success 'branch list includes master' '
-	cd repo &&
-	git branch >output &&
-	grep "master" output
-'
-
-test_expect_success 'branch with slash in name' '
-	cd repo &&
-	git branch topic/slash-deep-v3 &&
-	git rev-parse topic/slash-deep-v3 >output &&
-	test -s output &&
-	git branch -D topic/slash-deep-v3 2>/dev/null
-'
-
-test_expect_success 'branch with dot in name' '
-	cd repo &&
-	git branch branch.with.dots &&
-	git rev-parse branch.with.dots >output &&
-	test -s output &&
-	git branch -D branch.with.dots 2>/dev/null
-'
-
-test_expect_success 'branch --list shows all branches' '
-	cd repo &&
-	git branch >output &&
-	test $(wc -l <output) -ge 1
-'
-
-test_expect_success 'current branch has asterisk marker' '
-	cd repo &&
-	git branch >output &&
-	grep "^\*" output
-'
-
-test_expect_success 'branch points to HEAD by default' '
-	cd repo &&
-	head=$(git rev-parse HEAD) &&
-	git branch head-check-br &&
-	result=$(git rev-parse head-check-br) &&
-	test "$result" = "$head" &&
-	git branch -D head-check-br 2>/dev/null
-'
-
-test_expect_success 'branch at specific commit' '
-	cd repo &&
-	sha=$(git rev-parse HEAD~1) &&
-	git branch at-specific "$sha" &&
-	result=$(git rev-parse at-specific) &&
-	test "$result" = "$sha" &&
-	git branch -D at-specific 2>/dev/null
-'
-
-test_expect_success 'branch -d deletes merged branch' '
-	cd repo &&
-	git branch merged-del-test &&
-	git branch -d merged-del-test &&
-	test_must_fail git rev-parse merged-del-test 2>/dev/null
-'
-
-test_expect_success 'branch -D always deletes' '
-	cd repo &&
-	git branch force-del-test &&
-	git branch -D force-del-test &&
-	test_must_fail git rev-parse force-del-test 2>/dev/null
-'
-
-test_expect_success 'branch -v shows commit subject' '
-	cd repo &&
-	git branch -v >output &&
-	test -s output
-'
-
-test_expect_success 'creating duplicate branch fails' '
-	cd repo &&
-	git branch dup-br-test &&
-	test_must_fail git branch dup-br-test 2>/dev/null &&
-	git branch -D dup-br-test 2>/dev/null
-'
-
-test_expect_success 'branch with hyphen in name' '
-	cd repo &&
-	git branch my-hyphen-branch &&
-	git rev-parse my-hyphen-branch >output &&
-	test -s output &&
-	git branch -D my-hyphen-branch 2>/dev/null
-'
-
-test_expect_success 'branch rename with -m' '
-	cd repo &&
-	git branch rename-src &&
-	git branch -m rename-src rename-dst &&
-	test_must_fail git rev-parse rename-src 2>/dev/null &&
-	git rev-parse rename-dst >output &&
-	test -s output &&
-	git branch -D rename-dst 2>/dev/null
-'
-
-test_expect_success 'branch count increases after creation' '
-	cd repo &&
-	count_before=$(git branch | wc -l) &&
-	git branch count-test-br &&
-	count_after=$(git branch | wc -l) &&
-	test "$count_after" -gt "$count_before" &&
-	git branch -D count-test-br 2>/dev/null
-'
-
-# ---------------------------------------------------------------------------
-# Deepening tests (w32-deepen)
-# ---------------------------------------------------------------------------
-
-test_expect_success 'deepen setup: repo for branch tests' '
-	git init deepen-branch-repo &&
-	cd deepen-branch-repo &&
-	git config user.name "Branch Tester" &&
-	git config user.email "branch@test.com" &&
-	echo "init" >file.txt &&
-	git add file.txt &&
-	git commit -m "initial"
-'
-
-test_expect_success 'branch creates new branch from HEAD' '
-	cd deepen-branch-repo &&
-	git branch deepen-new &&
-	git rev-parse deepen-new >output &&
-	test -s output
-'
-
-test_expect_success 'branch new points to same commit as HEAD' '
-	cd deepen-branch-repo &&
-	HEAD_HASH=$(git rev-parse HEAD) &&
-	BR_HASH=$(git rev-parse deepen-new) &&
-	test "$HEAD_HASH" = "$BR_HASH"
-'
-
-test_expect_success 'branch -l lists the new branch' '
-	cd deepen-branch-repo &&
-	git branch >output &&
-	grep "deepen-new" output
-'
-
-test_expect_success 'branch -D deletes a branch' '
-	cd deepen-branch-repo &&
-	git branch deepen-del &&
-	git branch -D deepen-del &&
-	git branch >output &&
-	! grep "deepen-del" output
-'
-
-test_expect_success 'branch -m renames a branch' '
-	cd deepen-branch-repo &&
-	git branch deepen-old-name &&
-	git branch -m deepen-old-name deepen-new-name &&
-	git branch >output &&
-	! grep "deepen-old-name" output &&
-	grep "deepen-new-name" output &&
-	git branch -D deepen-new-name
-'
-
-test_expect_success 'branch from specific commit' '
-	cd deepen-branch-repo &&
-	FIRST=$(git rev-list --reverse HEAD | head -n 1) &&
-	git branch deepen-from-first $FIRST &&
-	BR_HASH=$(git rev-parse deepen-from-first) &&
-	test "$BR_HASH" = "$FIRST" &&
-	git branch -D deepen-from-first
-'
-
-test_expect_success 'creating duplicate branch fails' '
-	cd deepen-branch-repo &&
-	test_must_fail git branch deepen-new 2>/dev/null
-'
-
-test_expect_success 'deleting current branch fails' '
-	cd deepen-branch-repo &&
-	CURRENT=$(git branch --show-current) &&
-	test_must_fail git branch -D $CURRENT 2>/dev/null
-'
-
-test_expect_success 'branch -d (lowercase) deletes merged branch' '
-	cd deepen-branch-repo &&
-	git branch deepen-merged &&
-	git branch -d deepen-merged &&
-	git branch >output &&
-	! grep "deepen-merged" output
-'
-
-test_expect_success 'branch list shows current branch with asterisk' '
-	cd deepen-branch-repo &&
-	git branch >output &&
-	grep "^\*" output
-'
-
-test_expect_success 'for-each-ref sees new branch in refs/heads/' '
-	cd deepen-branch-repo &&
-	git for-each-ref refs/heads/ >output &&
-	grep "deepen-new" output
-'
-
-test_expect_success 'rev-parse resolves branch name to sha' '
-	cd deepen-branch-repo &&
-	git rev-parse deepen-new >output &&
-	line=$(cat output) &&
-	test ${#line} -eq 40
-'
-
-test_expect_success 'branch with slash in name' '
-	cd deepen-branch-repo &&
-	git branch feature/deepen-test &&
-	git branch >output &&
-	grep "feature/deepen-test" output &&
-	git branch -D feature/deepen-test
-'
-
-test_expect_success 'multiple branches can be created' '
-	cd deepen-branch-repo &&
-	git branch deepen-multi-a &&
-	git branch deepen-multi-b &&
-	git branch deepen-multi-c &&
-	git branch >output &&
-	grep "deepen-multi-a" output &&
-	grep "deepen-multi-b" output &&
-	grep "deepen-multi-c" output &&
-	git branch -D deepen-multi-a &&
-	git branch -D deepen-multi-b &&
-	git branch -D deepen-multi-c
-'
-
-# ---------------------------------------------------------------------------
-# Deepened tests (w33)
-# ---------------------------------------------------------------------------
-
-test_expect_success 'branch -d deletes a merged branch' '
-	cd deepen-branch-repo &&
-	git branch w33-del-test &&
-	git branch >output &&
-	grep "w33-del-test" output &&
-	git branch -d w33-del-test &&
-	git branch >output2 &&
-	! grep "w33-del-test" output2
-'
-
-test_expect_success 'branch -D force-deletes a branch' '
-	cd deepen-branch-repo &&
-	git branch w33-force-del &&
-	git branch -D w33-force-del &&
-	git branch >output &&
-	! grep "w33-force-del" output
-'
-
-test_expect_success 'branch with dot in name' '
-	cd deepen-branch-repo &&
-	git branch w33.dotted &&
-	git branch >output &&
-	grep "w33.dotted" output &&
-	git branch -D w33.dotted
-'
-
-test_expect_success 'branch --list shows branches' '
-	cd deepen-branch-repo &&
-	git branch --list >output &&
-	test -s output
-'
-
-test_expect_success 'branch on specific commit' '
-	cd deepen-branch-repo &&
-	FIRST=$(git rev-list HEAD | tail -1) &&
-	git branch w33-on-first $FIRST &&
-	BR_HASH=$(git rev-parse w33-on-first) &&
-	test "$BR_HASH" = "$FIRST" &&
-	git branch -D w33-on-first
-'
-
-test_expect_success 'creating duplicate branch fails' '
-	cd deepen-branch-repo &&
-	git branch w33-dup &&
-	test_must_fail git branch w33-dup 2>/dev/null &&
-	git branch -D w33-dup
-'
-
-test_expect_success 'branch -d on nonexistent branch fails' '
-	cd deepen-branch-repo &&
-	test_must_fail git branch -d w33-nonexistent-branch 2>/dev/null
-'
-
-test_expect_success 'show-ref shows created branch' '
-	cd deepen-branch-repo &&
-	git branch w33-showref &&
-	git show-ref >output &&
-	grep "refs/heads/w33-showref" output &&
-	git branch -D w33-showref
-'
-
-test_expect_success 'for-each-ref shows branch with correct objecttype' '
-	cd deepen-branch-repo &&
-	git for-each-ref --format="%(objecttype) %(refname)" refs/heads/ >output &&
-	grep "commit" output
-'
-
-test_expect_success 'branch --contains HEAD includes current branch' '
-	cd deepen-branch-repo &&
-	CUR=$(git branch --show-current) &&
-	git branch --contains HEAD >output &&
-	grep "$CUR" output
-'
-
-test_expect_success 'branch -v shows commit info' '
-	cd deepen-branch-repo &&
-	git branch -v >output &&
-	test -s output
-'
-
-test_expect_success 'branch with hyphen in name' '
-	cd deepen-branch-repo &&
-	git branch w33-hyphen-name &&
-	git branch >output &&
-	grep "w33-hyphen-name" output &&
-	git branch -D w33-hyphen-name
-'
-
-test_expect_success 'branch at HEAD matches rev-parse HEAD' '
-	cd deepen-branch-repo &&
-	git branch w33-at-head &&
-	test "$(git rev-parse w33-at-head)" = "$(git rev-parse HEAD)" &&
-	git branch -D w33-at-head
-'
-
-test_expect_success 'branch -m renames branch' '
-	cd deepen-branch-repo &&
-	git branch w33-old-name &&
-	git branch -m w33-old-name w33-new-name &&
-	git branch >output &&
-	! grep "w33-old-name" output &&
-	grep "w33-new-name" output &&
-	git branch -D w33-new-name
-'
-
-test_expect_success 'branch count increases after creating branches' '
-	cd deepen-branch-repo &&
-	git branch >before &&
-	BEFORE=$(wc -l <before) &&
-	git branch w33-count-a &&
-	git branch w33-count-b &&
-	git branch >after &&
-	AFTER=$(wc -l <after) &&
-	test $AFTER -eq $((BEFORE + 2)) &&
-	git branch -D w33-count-a &&
-	git branch -D w33-count-b
+	test_grep "rebasing detached HEAD $oid" actual
+'
+
+test_expect_success 'tracking with unexpected .fetch refspec' '
+	rm -rf a b c d &&
+	git init -b main a &&
+	(
+		cd a &&
+		test_commit a
+	) &&
+	git init -b main b &&
+	(
+		cd b &&
+		test_commit b
+	) &&
+	git init -b main c &&
+	(
+		cd c &&
+		test_commit c &&
+		git remote add a ../a &&
+		git remote add b ../b &&
+		git fetch --all
+	) &&
+	git init -b main d &&
+	(
+		cd d &&
+		git remote add c ../c &&
+		git config remote.c.fetch "+refs/remotes/*:refs/remotes/*" &&
+		git fetch c &&
+		git branch --track local/a/main remotes/a/main &&
+		test "$(git config branch.local/a/main.remote)" = "c" &&
+		test "$(git config branch.local/a/main.merge)" = "refs/remotes/a/main" &&
+		git rev-parse --verify a >expect &&
+		git rev-parse --verify local/a/main >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'configured committerdate sort' '
+	git init -b main sort &&
+	test_config -C sort branch.sort "committerdate" &&
+
+	(
+		cd sort &&
+		test_commit initial &&
+		git checkout -b a &&
+		test_commit a &&
+		git checkout -b c &&
+		test_commit c &&
+		git checkout -b b &&
+		test_commit b &&
+		git branch >actual &&
+		cat >expect <<-\EOF &&
+		  main
+		  a
+		  c
+		* b
+		EOF
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'option override configured sort' '
+	test_config -C sort branch.sort "committerdate" &&
+
+	(
+		cd sort &&
+		git branch --sort=refname >actual &&
+		cat >expect <<-\EOF &&
+		  a
+		* b
+		  c
+		  main
+		EOF
+		test_cmp expect actual
+	)
+'
+
+test_expect_success '--no-sort cancels config sort keys' '
+	test_config -C sort branch.sort "-refname" &&
+
+	(
+		cd sort &&
+
+		# objecttype is identical for all of them, so sort falls back on
+		# default (ascending refname)
+		git branch \
+			--no-sort \
+			--sort="objecttype" >actual &&
+		cat >expect <<-\EOF &&
+		  a
+		* b
+		  c
+		  main
+		EOF
+		test_cmp expect actual
+	)
+
+'
+
+test_expect_success '--no-sort cancels command line sort keys' '
+	(
+		cd sort &&
+
+		# objecttype is identical for all of them, so sort falls back on
+		# default (ascending refname)
+		git branch \
+			--sort="-refname" \
+			--no-sort \
+			--sort="objecttype" >actual &&
+		cat >expect <<-\EOF &&
+		  a
+		* b
+		  c
+		  main
+		EOF
+		test_cmp expect actual
+	)
+'
+
+test_expect_success '--no-sort without subsequent --sort prints expected branches' '
+	(
+		cd sort &&
+
+		# Sort the results with `sort` for a consistent comparison
+		# against expected
+		git branch --no-sort | sort >actual &&
+		cat >expect <<-\EOF &&
+		  a
+		  c
+		  main
+		* b
+		EOF
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'invalid sort parameter in configuration' '
+	test_config -C sort branch.sort "v:notvalid" &&
+
+	(
+		cd sort &&
+
+		# this works in the "listing" mode, so bad sort key
+		# is a dying offence.
+		test_must_fail git branch &&
+
+		# these do not need to use sorting, and should all
+		# succeed
+		git branch newone main &&
+		git branch -c newone newerone &&
+		git branch -m newone newestone &&
+		git branch -d newerone newestone
+	)
+'
+
+test_expect_success 'tracking info copied with --track=inherit' '
+	git branch --track=inherit foo2 my1 &&
+	test_cmp_config local branch.foo2.remote &&
+	test_cmp_config refs/heads/main branch.foo2.merge
+'
+
+test_expect_success 'tracking info copied with autoSetupMerge=inherit' '
+	test_unconfig branch.autoSetupMerge &&
+	# default config does not copy tracking info
+	git branch foo-no-inherit my1 &&
+	test_cmp_config "" --default "" branch.foo-no-inherit.remote &&
+	test_cmp_config "" --default "" branch.foo-no-inherit.merge &&
+	# with autoSetupMerge=inherit, we copy tracking info from my1
+	test_config branch.autoSetupMerge inherit &&
+	git branch foo3 my1 &&
+	test_cmp_config local branch.foo3.remote &&
+	test_cmp_config refs/heads/main branch.foo3.merge &&
+	# no tracking info to inherit from main
+	git branch main2 main &&
+	test_cmp_config "" --default "" branch.main2.remote &&
+	test_cmp_config "" --default "" branch.main2.merge
+'
+
+test_expect_success '--track overrides branch.autoSetupMerge' '
+	test_config branch.autoSetupMerge inherit &&
+	git branch --track=direct foo4 my1 &&
+	test_cmp_config . branch.foo4.remote &&
+	test_cmp_config refs/heads/my1 branch.foo4.merge &&
+	git branch --no-track foo5 my1 &&
+	test_cmp_config "" --default "" branch.foo5.remote &&
+	test_cmp_config "" --default "" branch.foo5.merge
+'
+
+test_expect_success 'errors if given a bad branch name' '
+	cat <<-EOF >expect &&
+	fatal: ${SQ}foo..bar${SQ} is not a valid branch name
+	hint: See ${SQ}git help check-ref-format${SQ}
+	hint: Disable this message with "git config set advice.refSyntax false"
+	EOF
+	test_must_fail git branch foo..bar >actual 2>&1 &&
+	test_cmp expect actual
 '
 
 test_done

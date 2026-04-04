@@ -1,13 +1,51 @@
 #!/bin/sh
 #
-# Upstream: t9154-git-svn-fancy-glob.sh
-# Requires Subversion — ported as test_expect_failure stubs.
+# Copyright (c) 2010 Jay Soffian
 #
 
 test_description='git svn fancy glob test'
 
-cd "$(dirname "$0")" || exit 1
-. ./test-lib.sh
+. ./lib-git-svn.sh
 
-skip_all='Subversion not available in grit'
+test_expect_success 'load svn repo' "
+	svnadmin load -q '$rawsvnrepo' < '$TEST_DIRECTORY/t9154/svn.dump' &&
+	git svn init --minimize-url -T trunk '$svnrepo' &&
+	git svn fetch
+	"
+
+test_expect_success 'add red branch' "
+	git config svn-remote.svn.branches 'branches/{red}:refs/remotes/*' &&
+	git svn fetch &&
+	git rev-parse refs/remotes/red &&
+	test_must_fail git rev-parse refs/remotes/green &&
+	test_must_fail git rev-parse refs/remotes/blue
+	"
+
+test_expect_success 'add gre branch' "
+	git config --file=.git/svn/.metadata --unset svn-remote.svn.branches-maxRev &&
+	git config svn-remote.svn.branches 'branches/{red,gre}:refs/remotes/*' &&
+	git svn fetch &&
+	git rev-parse refs/remotes/red &&
+	test_must_fail git rev-parse refs/remotes/green &&
+	test_must_fail git rev-parse refs/remotes/blue
+	"
+
+test_expect_success 'add green branch' "
+	git config --file=.git/svn/.metadata --unset svn-remote.svn.branches-maxRev &&
+	git config svn-remote.svn.branches 'branches/{red,green}:refs/remotes/*' &&
+	git svn fetch &&
+	git rev-parse refs/remotes/red &&
+	git rev-parse refs/remotes/green &&
+	test_must_fail git rev-parse refs/remotes/blue
+	"
+
+test_expect_success 'add all branches' "
+	git config --file=.git/svn/.metadata --unset svn-remote.svn.branches-maxRev &&
+	git config svn-remote.svn.branches 'branches/*:refs/remotes/*' &&
+	git svn fetch &&
+	git rev-parse refs/remotes/red &&
+	git rev-parse refs/remotes/green &&
+	git rev-parse refs/remotes/blue
+	"
+
 test_done

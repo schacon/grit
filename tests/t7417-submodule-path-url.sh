@@ -1,49 +1,52 @@
 #!/bin/sh
-#
-# Ported from git/t/t7417-submodule-path-url.sh
-# Tests for handling of .gitmodule path with dash
-#
 
 test_description='check handling of .gitmodule path with dash'
-
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-REAL_GIT="/usr/bin/git"
-
 test_expect_success 'setup' '
-	"$REAL_GIT" config --global protocol.file.allow always
+	git config --global protocol.file.allow always
 '
 
 test_expect_success 'create submodule with dash in path' '
-	"$REAL_GIT" init upstream &&
-	(
-		cd upstream &&
-		"$REAL_GIT" config user.email "test@example.com" &&
-		"$REAL_GIT" config user.name "Test User" &&
-		"$REAL_GIT" commit --allow-empty -m base
-	) &&
-	"$REAL_GIT" init main-repo &&
-	(
-		cd main-repo &&
-		"$REAL_GIT" config user.email "test@example.com" &&
-		"$REAL_GIT" config user.name "Test User" &&
-		echo content >file &&
-		"$REAL_GIT" add file &&
-		"$REAL_GIT" commit -m initial &&
-		"$REAL_GIT" submodule add "$TRASH_DIRECTORY/upstream" sub &&
-		"$REAL_GIT" mv sub ./-sub &&
-		"$REAL_GIT" commit -m submodule
-	)
+	git init upstream &&
+	git -C upstream commit --allow-empty -m base &&
+	git submodule add ./upstream sub &&
+	git mv sub ./-sub &&
+	git commit -m submodule
 '
 
-test_expect_success 'submodule status shows submodule with dash path' '
-	cd main-repo &&
-	git submodule status >actual &&
-	test -s actual
+test_expect_success 'clone rejects unprotected dash' '
+	test_when_finished "rm -rf dst" &&
+	git clone --recurse-submodules . dst 2>err &&
+	test_grep ignoring err
+'
+
+test_expect_success 'fsck rejects unprotected dash' '
+	test_when_finished "rm -rf dst" &&
+	git init --bare dst &&
+	git -C dst config transfer.fsckObjects true &&
+	test_must_fail git push dst HEAD 2>err &&
+	grep gitmodulesPath err
+'
+
+test_expect_success MINGW 'submodule paths disallows trailing spaces' '
+	git init super &&
+	test_must_fail git -C super submodule add ../upstream "sub " &&
+
+	: add "sub", then rename "sub" to "sub ", the hard way &&
+	git -C super submodule add ../upstream sub &&
+	tree=$(git -C super write-tree) &&
+	git -C super ls-tree $tree >tree &&
+	sed "s/sub/sub /" <tree >tree.new &&
+	tree=$(git -C super mktree <tree.new) &&
+	commit=$(echo with space | git -C super commit-tree $tree) &&
+	git -C super update-ref refs/heads/main $commit &&
+
+	test_must_fail git clone --recurse-submodules super dst 2>err &&
+	test_grep "sub " err
 '
 
 test_done

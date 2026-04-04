@@ -1,78 +1,138 @@
 #!/bin/sh
-# Test .git file support (gitdir: pointer)
 
-test_description='grit .git file (gitdir: pointer) support'
+test_description='.git file
 
-cd "$(dirname "$0")" || exit 1
+Verify that plumbing commands work when .git is a file
+'
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-test_expect_success 'setup real repo' '
-	grit init real-repo &&
-	cd real-repo &&
-	git config user.name "Test" &&
-	git config user.email "test@test.com" &&
-	echo "content" >file.txt &&
-	grit add file.txt &&
-	grit commit -m "initial"
+objpath() {
+	echo "$1" | sed -e 's|\(..\)|\1/|'
+}
+
+test_expect_success 'initial setup' '
+	REAL="$(pwd)/.real" &&
+	mv .git "$REAL"
 '
 
-test_expect_success 'create linked worktree via .git file' '
-	mkdir linked &&
-	echo "gitdir: $TRASH_DIRECTORY/real-repo/.git" >linked/.git &&
-	test -f linked/.git
+test_expect_success 'bad setup: invalid .git file format' '
+	echo "gitdir $REAL" >.git &&
+	test_must_fail git rev-parse 2>.err &&
+	test_grep "invalid gitfile format" .err
 '
 
-test_expect_success 'rev-parse --git-dir works through .git file' '
-	cd linked &&
-	grit rev-parse --git-dir >actual 2>&1 &&
-	# Should resolve to the real .git directory
-	test -s actual
+test_expect_success 'bad setup: invalid .git file path' '
+	echo "gitdir: $REAL.not" >.git &&
+	test_must_fail git rev-parse 2>.err &&
+	test_grep "not a git repository" .err
 '
 
-test_expect_success 'status works through .git file' '
-	cd linked &&
-	grit status >output 2>&1 &&
-	# Should show master branch
-	grep -i "master\|branch" output
-'
-
-test_expect_success 'log works through .git file' '
-	cd linked &&
-	grit log --oneline >output 2>&1 &&
-	grep "initial" output
-'
-
-test_expect_success 'rev-parse HEAD works through .git file' '
-	cd linked &&
-	grit rev-parse HEAD >actual &&
-	cd $TRASH_DIRECTORY/real-repo &&
-	grit rev-parse HEAD >expect &&
-	test_cmp expect $TRASH_DIRECTORY/linked/actual
-'
-
-test_expect_success 'branch list works through .git file' '
-	cd linked &&
-	grit branch >output &&
-	grep "master" output
-'
-
-test_expect_success 'cat-file works through .git file' '
-	cd linked &&
-	grit cat-file -p HEAD >output &&
-	grep "initial" output
-'
-
-test_expect_success 'ls-files works through .git file' '
-	cd linked &&
-	grit ls-files >actual &&
-	echo "file.txt" >expect &&
+test_expect_success 'final setup + check rev-parse --git-dir' '
+	echo "gitdir: $REAL" >.git &&
+	echo "$REAL" >expect &&
+	git rev-parse --git-dir >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'rev-parse --show-toplevel works through .git file' '
-	cd linked &&
-	grit rev-parse --show-toplevel >actual 2>&1 &&
-	test -s actual
+test_expect_success 'check hash-object' '
+	echo "foo" >bar &&
+	SHA=$(git hash-object -w --stdin <bar) &&
+	test_path_is_file "$REAL/objects/$(objpath $SHA)"
+'
+
+test_expect_success 'check cat-file' '
+	git cat-file blob $SHA >actual &&
+	test_cmp bar actual
+'
+
+test_expect_success 'check update-index' '
+	test_path_is_missing "$REAL/index" &&
+	rm -f "$REAL/objects/$(objpath $SHA)" &&
+	git update-index --add bar &&
+	test_path_is_file "$REAL/index" &&
+	test_path_is_file "$REAL/objects/$(objpath $SHA)"
+'
+
+test_expect_success 'check write-tree' '
+	SHA=$(git write-tree) &&
+	test_path_is_file "$REAL/objects/$(objpath $SHA)"
+'
+
+test_expect_success 'check commit-tree' '
+	SHA=$(echo "commit bar" | git commit-tree $SHA) &&
+	test_path_is_file "$REAL/objects/$(objpath $SHA)"
+'
+
+test_expect_success 'check rev-list' '
+	git update-ref "HEAD" "$SHA" &&
+	git rev-list HEAD >actual &&
+	echo $SHA >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'setup_git_dir twice in subdir' '
+	git init sgd &&
+	(
+		cd sgd &&
+		git config alias.lsfi ls-files &&
+		mv .git .realgit &&
+		echo "gitdir: .realgit" >.git &&
+		mkdir subdir &&
+		cd subdir &&
+		>foo &&
+		git add foo &&
+		git lsfi >actual &&
+		echo foo >expected &&
+		test_cmp expected actual
+	)
+'
+
+test_expect_success 'enter_repo non-strict mode' '
+	test_create_repo enter_repo &&
+	(
+		cd enter_repo &&
+		test_tick &&
+		test_commit foo &&
+		mv .git .realgit &&
+		echo "gitdir: .realgit" >.git
+	) &&
+	head=$(git -C enter_repo rev-parse HEAD) &&
+	git ls-remote enter_repo >actual &&
+	cat >expected <<-EOF &&
+	$head	HEAD
+	$head	refs/heads/main
+	$head	refs/tags/foo
+	EOF
+	test_cmp expected actual
+'
+
+test_expect_success 'enter_repo linked checkout' '
+	(
+		cd enter_repo &&
+		git worktree add  ../foo refs/tags/foo
+	) &&
+	head=$(git -C enter_repo rev-parse HEAD) &&
+	git ls-remote foo >actual &&
+	cat >expected <<-EOF &&
+	$head	HEAD
+	$head	refs/heads/main
+	$head	refs/tags/foo
+	EOF
+	test_cmp expected actual
+'
+
+test_expect_success 'enter_repo strict mode' '
+	head=$(git -C enter_repo rev-parse HEAD) &&
+	git ls-remote --upload-pack="git upload-pack --strict" foo/.git >actual &&
+	cat >expected <<-EOF &&
+	$head	HEAD
+	$head	refs/heads/main
+	$head	refs/tags/foo
+	EOF
+	test_cmp expected actual
 '
 
 test_done

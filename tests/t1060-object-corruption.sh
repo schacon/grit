@@ -1,259 +1,148 @@
 #!/bin/sh
-# Test grit behaviour with corrupted, missing, and malformed objects.
 
-test_description='grit object corruption and error handling'
+test_description='see how we handle various forms of corruption'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-###########################################################################
-# Section 1: Setup
-###########################################################################
+# convert "1234abcd" to ".git/objects/12/34abcd"
+obj_to_file() {
+	echo "$(git rev-parse --git-dir)/objects/$(git rev-parse "$1" | sed 's,..,&/,')"
+}
 
-test_expect_success 'setup base repository' '
-	grit init repo &&
-	cd repo &&
-	git config user.email "test@test.com" &&
-	git config user.name "Test" &&
-	echo "hello world" >file.txt &&
-	grit add file.txt &&
-	grit commit -m "initial commit"
+# Convert byte at offset "$2" of object "$1" into '\0'
+corrupt_byte() {
+	obj_file=$(obj_to_file "$1") &&
+	chmod +w "$obj_file" &&
+	printf '\0' | dd of="$obj_file" bs=1 seek="$2" conv=notrunc
+}
+
+test_expect_success 'setup corrupt repo' '
+	git init bit-error &&
+	(
+		cd bit-error &&
+		test_commit content &&
+		corrupt_byte HEAD:content.t 10
+	) &&
+	git init no-bit-error &&
+	(
+		# distinct commit from bit-error, but containing a
+		# non-corrupted version of the same blob
+		cd no-bit-error &&
+		test_tick &&
+		test_commit content
+	)
 '
 
-###########################################################################
-# Section 2: Missing objects
-###########################################################################
-
-test_expect_success 'cat-file fails on nonexistent object' '
-	cd repo &&
-	test_must_fail grit cat-file -p 0000000000000000000000000000000000000001 2>err &&
-	grep -i "not found" err
+test_expect_success 'setup repo with missing object' '
+	git init missing &&
+	(
+		cd missing &&
+		test_commit content &&
+		rm -f "$(obj_to_file HEAD:content.t)"
+	)
 '
 
-test_expect_success 'cat-file -t fails on nonexistent object' '
-	cd repo &&
-	test_must_fail grit cat-file -t 0000000000000000000000000000000000000001 2>err &&
-	grep -i "not found" err
+test_expect_success 'setup repo with misnamed object' '
+	git init misnamed &&
+	(
+		cd misnamed &&
+		test_commit content &&
+		good=$(obj_to_file HEAD:content.t) &&
+		blob=$(echo corrupt | git hash-object -w --stdin) &&
+		bad=$(obj_to_file $blob) &&
+		rm -f "$good" &&
+		mv "$bad" "$good"
+	)
 '
 
-test_expect_success 'cat-file -s fails on nonexistent object' '
-	cd repo &&
-	test_must_fail grit cat-file -s 0000000000000000000000000000000000000001 2>err &&
-	grep -i "not found" err
+test_expect_success 'streaming a corrupt blob fails' '
+	(
+		cd bit-error &&
+		test_must_fail git cat-file blob HEAD:content.t
+	)
 '
 
-test_expect_success 'cat-file -e fails on nonexistent object' '
-	cd repo &&
-	test_must_fail grit cat-file -e 0000000000000000000000000000000000000001
+test_expect_success 'getting type of a corrupt blob fails' '
+	(
+		cd bit-error &&
+		test_must_fail git cat-file -s HEAD:content.t
+	)
 '
 
-test_expect_success 'cat-file -e succeeds on existing object' '
-	cd repo &&
-	OID=$(grit rev-parse HEAD) &&
-	grit cat-file -e "$OID"
+test_expect_success 'read-tree -u detects bit-errors in blobs' '
+	(
+		cd bit-error &&
+		rm -f content.t &&
+		test_must_fail git read-tree --reset -u HEAD
+	)
 '
 
-###########################################################################
-# Section 3: Corrupted loose objects
-###########################################################################
-
-test_expect_success 'corrupt a loose blob object' '
-	cd repo &&
-	BLOB=$(grit hash-object -w file.txt) &&
-	echo "$BLOB" >blob_oid &&
-	OBJPATH=".git/objects/$(echo $BLOB | cut -c1-2)/$(echo $BLOB | cut -c3-)" &&
-	echo "corrupted-data" >"$OBJPATH"
+test_expect_success 'read-tree -u detects missing objects' '
+	(
+		cd missing &&
+		rm -f content.t &&
+		test_must_fail git read-tree --reset -u HEAD
+	)
 '
 
-test_expect_success 'cat-file -p fails on corrupted blob' '
-	cd repo &&
-	BLOB=$(cat blob_oid) &&
-	test_must_fail grit cat-file -p "$BLOB" 2>err &&
-	grep -i -e "corrupt" -e "zlib" -e "inflate" err
+# We use --bare to make sure that the transport detects it, not the checkout
+# phase.
+test_expect_success 'clone --no-local --bare detects corruption' '
+	test_must_fail git clone --no-local --bare bit-error corrupt-transport
 '
 
-test_expect_success 'cat-file -t fails on corrupted blob' '
-	cd repo &&
-	BLOB=$(cat blob_oid) &&
-	test_must_fail grit cat-file -t "$BLOB" 2>err &&
-	grep -i -e "corrupt" -e "zlib" -e "inflate" err
+test_expect_success 'clone --no-local --bare detects missing object' '
+	test_must_fail git clone --no-local --bare missing missing-transport
 '
 
-test_expect_success 'cat-file -s fails on corrupted blob' '
-	cd repo &&
-	BLOB=$(cat blob_oid) &&
-	test_must_fail grit cat-file -s "$BLOB" 2>err &&
-	grep -i -e "corrupt" -e "zlib" -e "inflate" err
+test_expect_success 'clone --no-local --bare detects misnamed object' '
+	test_must_fail git clone --no-local --bare misnamed misnamed-transport
 '
 
-test_expect_success 'checkout-index fails on corrupted blob' '
-	cd repo &&
-	test_must_fail grit checkout-index --force file.txt 2>err &&
-	grep -i -e "corrupt" -e "zlib" -e "inflate" -e "error" err
+# We do not expect --local to detect corruption at the transport layer,
+# so we are really checking the checkout() code path.
+test_expect_success 'clone --local detects corruption' '
+	test_must_fail git clone --local bit-error corrupt-checkout
 '
 
-###########################################################################
-# Section 4: Re-adding after corruption
-###########################################################################
-
-test_expect_success 'hash-object -w can re-create a corrupted blob' '
-	cd repo &&
-	BLOB_BEFORE=$(cat blob_oid) &&
-	OBJPATH=".git/objects/$(echo $BLOB_BEFORE | cut -c1-2)/$(echo $BLOB_BEFORE | cut -c3-)" &&
-	rm -f "$OBJPATH" &&
-	BLOB_AFTER=$(grit hash-object -w file.txt) &&
-	test "$BLOB_BEFORE" = "$BLOB_AFTER"
+test_expect_success 'error detected during checkout leaves repo intact' '
+	test_path_is_dir corrupt-checkout/.git
 '
 
-test_expect_success 'cat-file works after re-creating blob' '
-	cd repo &&
-	BLOB=$(cat blob_oid) &&
-	grit cat-file -p "$BLOB" >actual &&
-	echo "hello world" >expect &&
-	test_cmp expect actual
+test_expect_success 'clone --local detects missing objects' '
+	test_must_fail git clone --local missing missing-checkout
 '
 
-###########################################################################
-# Section 5: Corrupted commit object
-###########################################################################
-
-test_expect_success 'setup: corrupt commit object' '
-	cd repo &&
-	COMMIT=$(grit rev-parse HEAD) &&
-	echo "$COMMIT" >commit_oid &&
-	OBJPATH=".git/objects/$(echo $COMMIT | cut -c1-2)/$(echo $COMMIT | cut -c3-)" &&
-	cp "$OBJPATH" "$OBJPATH.bak" &&
-	echo "garbage" >"$OBJPATH"
+test_expect_failure 'clone --local detects misnamed objects' '
+	test_must_fail git clone --local misnamed misnamed-checkout
 '
 
-test_expect_success 'cat-file -p fails on corrupted commit' '
-	cd repo &&
-	COMMIT=$(cat commit_oid) &&
-	test_must_fail grit cat-file -p "$COMMIT" 2>err &&
-	grep -i -e "corrupt" -e "zlib" -e "inflate" err
+test_expect_success 'fetch into corrupted repo with index-pack' '
+	cp -R bit-error bit-error-cp &&
+	test_when_finished "rm -rf bit-error-cp" &&
+	(
+		cd bit-error-cp &&
+		test_must_fail git -c transfer.unpackLimit=1 \
+			fetch ../no-bit-error 2>stderr &&
+		test_grep ! -i collision stderr
+	)
 '
 
-test_expect_success 'log fails with corrupted commit' '
-	cd repo &&
-	test_must_fail grit log 2>err &&
-	grep -i -e "corrupt" -e "zlib" -e "inflate" -e "error" err
+test_expect_success 'internal tree objects are not "missing"' '
+	git init missing-empty &&
+	(
+		cd missing-empty &&
+		empty_tree=$(git hash-object -t tree /dev/null) &&
+		commit=$(echo foo | git commit-tree $empty_tree) &&
+		git rev-list --objects $commit
+	)
 '
 
-test_expect_success 'restore corrupted commit' '
-	cd repo &&
-	COMMIT=$(cat commit_oid) &&
-	OBJPATH=".git/objects/$(echo $COMMIT | cut -c1-2)/$(echo $COMMIT | cut -c3-)" &&
-	cp "$OBJPATH.bak" "$OBJPATH"
-'
-
-test_expect_success 'cat-file works after restoring commit' '
-	cd repo &&
-	COMMIT=$(cat commit_oid) &&
-	grit cat-file -t "$COMMIT" >actual &&
-	echo "commit" >expect &&
-	test_cmp expect actual
-'
-
-###########################################################################
-# Section 6: Corrupted tree object
-###########################################################################
-
-test_expect_success 'setup: corrupt tree object' '
-	cd repo &&
-	TREE=$(grit cat-file -p HEAD | grep "^tree " | cut -d" " -f2) &&
-	echo "$TREE" >tree_oid &&
-	OBJPATH=".git/objects/$(echo $TREE | cut -c1-2)/$(echo $TREE | cut -c3-)" &&
-	cp "$OBJPATH" "$OBJPATH.bak" &&
-	echo "trashed" >"$OBJPATH"
-'
-
-test_expect_success 'cat-file -p fails on corrupted tree' '
-	cd repo &&
-	TREE=$(cat tree_oid) &&
-	test_must_fail grit cat-file -p "$TREE" 2>err &&
-	grep -i -e "corrupt" -e "zlib" -e "inflate" err
-'
-
-test_expect_success 'ls-tree fails with corrupted tree' '
-	cd repo &&
-	TREE=$(cat tree_oid) &&
-	test_must_fail grit ls-tree "$TREE" 2>err &&
-	grep -i -e "corrupt" -e "zlib" -e "inflate" -e "error" err
-'
-
-test_expect_success 'restore corrupted tree' '
-	cd repo &&
-	TREE=$(cat tree_oid) &&
-	OBJPATH=".git/objects/$(echo $TREE | cut -c1-2)/$(echo $TREE | cut -c3-)" &&
-	cp "$OBJPATH.bak" "$OBJPATH"
-'
-
-###########################################################################
-# Section 7: Truncated objects
-###########################################################################
-
-test_expect_success 'truncated blob fails gracefully' '
-	cd repo &&
-	echo "new content" >new.txt &&
-	BLOB=$(grit hash-object -w new.txt) &&
-	OBJPATH=".git/objects/$(echo $BLOB | cut -c1-2)/$(echo $BLOB | cut -c3-)" &&
-	dd if="$OBJPATH" of="$OBJPATH.trunc" bs=1 count=2 2>/dev/null &&
-	mv "$OBJPATH.trunc" "$OBJPATH" &&
-	test_must_fail grit cat-file -p "$BLOB" 2>err
-'
-
-test_expect_success 'empty object file fails gracefully' '
-	cd repo &&
-	echo "another" >another.txt &&
-	BLOB=$(grit hash-object -w another.txt) &&
-	OBJPATH=".git/objects/$(echo $BLOB | cut -c1-2)/$(echo $BLOB | cut -c3-)" &&
-	: >"$OBJPATH" &&
-	test_must_fail grit cat-file -p "$BLOB" 2>err
-'
-
-###########################################################################
-# Section 8: Invalid object IDs
-###########################################################################
-
-test_expect_success 'cat-file rejects short hex IDs' '
-	cd repo &&
-	test_must_fail grit cat-file -p abc 2>err
-'
-
-test_expect_success 'cat-file rejects non-hex characters' '
-	cd repo &&
-	test_must_fail grit cat-file -p gggggggggggggggggggggggggggggggggggggggg 2>err
-'
-
-test_expect_success 'rev-parse rejects garbage input' '
-	cd repo &&
-	test_must_fail grit rev-parse not-a-valid-ref 2>err
-'
-
-###########################################################################
-# Section 9: Batch cat-file with missing objects
-###########################################################################
-
-test_expect_success 'cat-file --batch handles missing objects' '
-	cd repo &&
-	echo "0000000000000000000000000000000000000099" |
-	grit cat-file --batch >actual 2>&1 &&
-	grep -i "missing" actual
-'
-
-test_expect_success 'cat-file --batch-check handles missing objects' '
-	cd repo &&
-	echo "0000000000000000000000000000000000000099" |
-	grit cat-file --batch-check >actual 2>&1 &&
-	grep -i "missing" actual
-'
-
-test_expect_success 'cat-file --batch-check with existing object' '
-	cd repo &&
-	OID=$(grit rev-parse HEAD) &&
-	echo "$OID" |
-	grit cat-file --batch-check >actual &&
-	grep "commit" actual
+test_expect_success 'partial clone of corrupted repository' '
+	test_config -C misnamed uploadpack.allowFilter true &&
+	git clone --no-local --no-checkout --filter=blob:none \
+		misnamed corrupt-partial && \
+	test_must_fail git -C corrupt-partial checkout --force
 '
 
 test_done

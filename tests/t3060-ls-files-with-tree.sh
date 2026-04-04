@@ -1,227 +1,105 @@
 #!/bin/sh
-# Tests for ls-files functionality.
-# Upstream git t3060 covers --with-tree; grit doesn't support that flag yet.
-# We test ls-files --cached, --stage, -z, pathspecs, --error-unmatch,
-# --deduplicate, and interaction with index changes.
+#
+# Copyright (c) 2007 Carl D. Worth
+#
 
-test_description='ls-files cached, stage, pathspecs, and flags'
+test_description='git ls-files test (--with-tree).
 
-cd "$(dirname "$0")" || exit 1
+This test runs git ls-files --with-tree and in particular in
+a scenario known to trigger a crash with some versions of git.
+'
+
 . ./test-lib.sh
 
-test_expect_success 'setup ls-files repo' '
-	git init lsf-repo &&
-	cd lsf-repo &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
-	echo "file a" >a.txt &&
-	echo "file b" >b.txt &&
+test_expect_success 'setup' '
+
+	# The bug we are exercising requires a fair number of entries
+	# in a sub-directory so that add_index_entry will trigger a
+	# realloc.
+
+	echo file >expected &&
 	mkdir sub &&
-	echo "file c" >sub/c.txt &&
+	for n in 0 1 2 3 4 5
+	do
+		for m in 0 1 2 3 4 5 6 7 8 9
+		do
+			num=00$n$m &&
+			>sub/file-$num &&
+			echo file-$num >>expected ||
+			return 1
+		done
+	done &&
 	git add . &&
-	test_tick &&
-	git commit -m "initial"
+	git commit -m "add a bunch of files" &&
+
+	# We remove them all so that we will have something to add
+	# back with --with-tree and so that we will definitely be
+	# under the realloc size to trigger the bug.
+	rm -rf sub &&
+	git commit -a -m "remove them all" &&
+
+	# The bug also requires some entry before our directory so that
+	# prune_index will modify the_repository->index.cache
+
+	mkdir a_directory_that_sorts_before_sub &&
+	>a_directory_that_sorts_before_sub/file &&
+	mkdir sub &&
+	>sub/file &&
+	git add .
 '
 
-test_expect_success 'ls-files shows all tracked files' '
-	cd lsf-repo &&
-	git ls-files >actual &&
-	cat >expect <<-\EOF &&
-	a.txt
-	b.txt
-	sub/c.txt
+test_expect_success 'usage' '
+	test_expect_code 128 git ls-files --with-tree=HEAD -u &&
+	test_expect_code 128 git ls-files --with-tree=HEAD -s &&
+	test_expect_code 128 git ls-files --recurse-submodules --with-tree=HEAD
+'
+
+test_expect_success 'git ls-files --with-tree should succeed from subdir' '
+	# We have to run from a sub-directory to trigger prune_index
+	# Then we finally get to run our --with-tree test
+	(
+		cd sub &&
+		git ls-files --with-tree=HEAD~1 >../output
+	)
+'
+
+test_expect_success 'git ls-files --with-tree should add entries from named tree.' '
+	test_cmp expected output
+'
+
+test_expect_success 'no duplicates in --with-tree output' '
+	git ls-files --with-tree=HEAD >actual &&
+	sort -u actual >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'setup: output in a conflict' '
+	test_create_repo conflict &&
+	test_commit -C conflict BASE file &&
+	test_commit -C conflict A file foo &&
+	git -C conflict reset --hard BASE &&
+	test_commit -C conflict B file bar
+'
+
+test_expect_success 'output in a conflict' '
+	test_must_fail git -C conflict merge A B &&
+	cat >expected <<-\EOF &&
+	file
+	file
+	file
+	file
 	EOF
-	test_cmp expect actual
+	git -C conflict ls-files --with-tree=HEAD >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'ls-files --cached is the default' '
-	cd lsf-repo &&
-	git ls-files >default_out &&
-	git ls-files --cached >cached_out &&
-	test_cmp default_out cached_out
-'
-
-test_expect_success 'ls-files --stage shows object info' '
-	cd lsf-repo &&
-	git ls-files --stage >actual &&
-	# Format: mode hash stage<tab>filename
-	grep "^100644 " actual &&
-	grep "	a.txt" actual &&
-	grep "	b.txt" actual &&
-	grep "	sub/c.txt" actual
-'
-
-test_expect_success 'ls-files --stage shows correct mode' '
-	cd lsf-repo &&
-	git ls-files --stage >actual &&
-	# All regular files should be 100644
-	while IFS= read -r line; do
-		mode=$(echo "$line" | cut -d" " -f1)
-		test "$mode" = "100644" || return 1
-	done <actual
-'
-
-test_expect_success 'ls-files --stage shows stage number 0' '
-	cd lsf-repo &&
-	git ls-files --stage >actual &&
-	# Normal files have stage 0
-	grep "0	a.txt" actual
-'
-
-test_expect_success 'ls-files with pathspec restricts output' '
-	cd lsf-repo &&
-	git ls-files sub/ >actual &&
-	echo "sub/c.txt" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'ls-files with file pathspec' '
-	cd lsf-repo &&
-	git ls-files a.txt >actual &&
-	echo "a.txt" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'ls-files with multiple pathspecs' '
-	cd lsf-repo &&
-	git ls-files a.txt b.txt >actual &&
-	cat >expect <<-\EOF &&
-	a.txt
-	b.txt
+test_expect_success 'output with removed .git/index' '
+	cat >expected <<-\EOF &&
+	file
 	EOF
-	test_cmp expect actual
-'
-
-test_expect_success 'ls-files -z uses NUL termination' '
-	cd lsf-repo &&
-	git ls-files -z >actual_raw &&
-	# Should contain NUL bytes
-	tr "\0" "\n" <actual_raw >actual &&
-	grep "a.txt" actual &&
-	grep "b.txt" actual
-'
-
-test_expect_success 'ls-files --error-unmatch with tracked file succeeds' '
-	cd lsf-repo &&
-	git ls-files --error-unmatch a.txt >actual &&
-	echo "a.txt" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'ls-files --error-unmatch with untracked file fails' '
-	cd lsf-repo &&
-	test_must_fail git ls-files --error-unmatch nonexist.txt
-'
-
-test_expect_success 'ls-files --deduplicate shows unique entries' '
-	cd lsf-repo &&
-	git ls-files --deduplicate >actual &&
-	test_line_count = 3 actual
-'
-
-test_expect_success 'ls-files after adding a new file' '
-	cd lsf-repo &&
-	echo "file d" >d.txt &&
-	git add d.txt &&
-	git ls-files >actual &&
-	grep "d.txt" actual &&
-	test_line_count = 4 actual
-'
-
-test_expect_success 'ls-files after committing new file' '
-	cd lsf-repo &&
-	test_tick &&
-	git commit -m "add d" &&
-	git ls-files >actual &&
-	test_line_count = 4 actual
-'
-
-test_expect_success 'ls-files after removing a file from index' '
-	cd lsf-repo &&
-	git rm d.txt &&
-	git ls-files >actual &&
-	! grep "d.txt" actual &&
-	test_line_count = 3 actual
-'
-
-test_expect_success 'ls-files with nested directories' '
-	cd lsf-repo &&
-	test_tick &&
-	git commit -m "rm d" &&
-	mkdir -p deep/nested/dir &&
-	echo "deep file" >deep/nested/dir/deep.txt &&
-	git add deep/ &&
-	test_tick &&
-	git commit -m "add deep" &&
-	git ls-files >actual &&
-	grep "deep/nested/dir/deep.txt" actual
-'
-
-test_expect_success 'ls-files pathspec on nested dir' '
-	cd lsf-repo &&
-	git ls-files deep/ >actual &&
-	echo "deep/nested/dir/deep.txt" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'ls-files pathspec on intermediate dir' '
-	cd lsf-repo &&
-	git ls-files deep/nested/ >actual &&
-	echo "deep/nested/dir/deep.txt" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'ls-files output is sorted' '
-	cd lsf-repo &&
-	git ls-files >actual &&
-	sort actual >sorted &&
-	test_cmp sorted actual
-'
-
-test_expect_success 'ls-files --stage shows hash for each file' '
-	cd lsf-repo &&
-	git ls-files --stage >actual &&
-	while IFS= read -r line; do
-		hash=$(echo "$line" | awk "{print \$2}")
-		# Hash should be 40 hex chars
-		test $(echo "$hash" | wc -c) -ge 40 || return 1
-	done <actual
-'
-
-test_expect_success 'ls-files --stage hash matches cat-file' '
-	cd lsf-repo &&
-	hash=$(git ls-files --stage a.txt | awk "{print \$2}") &&
-	git cat-file -p $hash >actual &&
-	echo "file a" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'ls-files with file in subdirectory pathspec' '
-	cd lsf-repo &&
-	git ls-files sub/c.txt >actual &&
-	echo "sub/c.txt" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'ls-files with nonexistent pathspec shows nothing' '
-	cd lsf-repo &&
-	git ls-files nosuchdir/ >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success 'ls-files -z with pathspec' '
-	cd lsf-repo &&
-	git ls-files -z sub/ >actual_raw &&
-	tr "\0" "\n" <actual_raw >actual &&
-	grep "sub/c.txt" actual
-'
-
-test_expect_success 'ls-files --stage -z uses NUL termination' '
-	cd lsf-repo &&
-	git ls-files --stage -z >actual_raw &&
-	tr "\0" "\n" <actual_raw >actual &&
-	grep "100644" actual &&
-	grep "a.txt" actual
+	rm conflict/.git/index &&
+	git -C conflict ls-files --with-tree=HEAD >actual &&
+	test_cmp expected actual
 '
 
 test_done

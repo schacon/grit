@@ -1,13 +1,13 @@
 #!/bin/sh
+
 test_description='git status and symlinks'
-cd "$(dirname "$0")" || exit 1
+
 . ./test-lib.sh
 
 test_expect_success 'setup' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
+	echo .gitignore >.gitignore &&
+	echo actual >>.gitignore &&
+	echo expect >>.gitignore &&
 	mkdir dir &&
 	echo x >dir/file1 &&
 	echo y >dir/file2 &&
@@ -16,18 +16,28 @@ test_expect_success 'setup' '
 	git tag initial
 '
 
-test_expect_success 'symlink to a directory shows as untracked' '
-	cd repo &&
-	test_when_finished "rm -f symlink" &&
+test_expect_success SYMLINKS 'symlink to a directory' '
+	test_when_finished "rm symlink" &&
 	ln -s dir symlink &&
+	echo "?? symlink" >expect &&
 	git status --porcelain >actual &&
-	grep "?? symlink" actual
+	test_cmp expect actual
 '
 
-test_expect_success 'status is clean after removing symlink' '
-	cd repo &&
+test_expect_success SYMLINKS 'symlink replacing a directory' '
+	test_when_finished "rm -rf copy && git reset --hard initial" &&
+	mkdir copy &&
+	cp dir/file1 copy/file1 &&
+	echo "changed in copy" >copy/file2 &&
+	git add copy &&
+	git commit -m second &&
+	rm -rf copy &&
+	ln -s dir copy &&
+	echo " D copy/file1" >expect &&
+	echo " D copy/file2" >>expect &&
+	echo "?? copy" >>expect &&
 	git status --porcelain >actual &&
-	! grep "symlink" actual
+	test_cmp expect actual
 '
 
 test_done

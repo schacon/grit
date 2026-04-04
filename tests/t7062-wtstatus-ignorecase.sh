@@ -4,12 +4,6 @@ test_description='git-status with core.ignorecase=true'
 
 . ./test-lib.sh
 
-test_expect_success 'setup repo' '
-	git init &&
-	git config user.name "Test" &&
-	git config user.email "test@test.com"
-'
-
 test_expect_success 'status with hash collisions' '
 	# note: "V/", "V/XQANY/" and "WURZAUP/" produce the same hash code
 	# in name-hash.c::hash_name

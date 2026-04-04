@@ -1,56 +1,37 @@
 #!/bin/sh
-# Ported subset from git/t/t1003-read-tree-prefix.sh.
+#
+# Copyright (c) 2006 Junio C Hamano
+#
 
-test_description='grit read-tree --prefix'
+test_description='git read-tree --prefix test.
+'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup source tree' '
-	grit init repo &&
-	cd repo &&
+test_expect_success setup '
 	echo hello >one &&
-	grit update-index --add one &&
-	tree=$(grit write-tree) &&
-	echo "$tree" >../tree_oid
+	git update-index --add one &&
+	tree=$(git write-tree) &&
+	echo tree is $tree
 '
 
-test_expect_success 'read-tree --prefix stages entries under prefix' '
-	cd repo &&
-	rm -f .git/index &&
-	grit read-tree "$(cat ../tree_oid)" &&
-	grit read-tree --prefix=two/ "$(cat ../tree_oid)" &&
-	grit ls-files >actual &&
-	cat >expect <<-\EOF &&
-	one
-	two/one
-	EOF
-	test_cmp expect actual
+echo 'one
+two/one' >expect
+
+test_expect_success 'read-tree --prefix' '
+	git read-tree --prefix=two/ $tree &&
+	git ls-files >actual &&
+	cmp expect actual
 '
 
-test_expect_success 'read-tree --prefix rejects leading slash' '
-	cd repo &&
-	test_must_fail grit read-tree --prefix=/two/ "$(cat ../tree_oid)"
+test_expect_success 'read-tree --prefix with leading slash exits with error' '
+	git rm -rf . &&
+	test_must_fail git read-tree --prefix=/two/ $tree &&
+	git read-tree --prefix=two/ $tree &&
+
+	git rm -rf . &&
+	test_must_fail git read-tree --prefix=/ $tree &&
+	git read-tree --prefix= $tree
 '
-
-
-test_expect_success 'read-tree --prefix adds entries alongside existing ones' '
-	cd repo &&
-	rm -f .git/index &&
-	grit read-tree "$(cat ../tree_oid)" &&
-	grit read-tree --prefix=sub/ "$(cat ../tree_oid)" &&
-	grit ls-files >actual &&
-	cat >expect <<-\EOF &&
-	one
-	sub/one
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_success 'read-tree --prefix=/ rejects root slash' '
-	cd repo &&
-	test_must_fail grit read-tree --prefix=/ "$(cat ../tree_oid)"
-'
-
 
 test_done

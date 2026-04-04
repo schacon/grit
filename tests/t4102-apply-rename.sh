@@ -1,57 +1,58 @@
 #!/bin/sh
+#
+# Copyright (c) 2005 Junio C Hamano
+#
 
-test_description='git apply handling rename patch.'
+test_description='git apply handling copy/rename patch.
+
+'
 
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' '
-	git init -q &&
-	git config user.name "Test" &&
-	git config user.email "test@example.com"
-'
+# setup
 
-test_expect_success setup '
-	echo "This is foo" >foo &&
-	git update-index --add foo
-'
+cat >test-patch <<\EOF
+diff --git a/foo b/bar
+similarity index 47%
+rename from foo
+rename to bar
+--- a/foo
++++ b/bar
+@@ -1 +1 @@
+-This is foo
++This is bar
+EOF
 
-test_expect_success 'apply stat and summary on rename patch' '
-	cat >test-patch <<-\EOF &&
-	diff --git a/foo b/bar
-	similarity index 47%
-	rename from foo
-	rename to bar
-	--- a/foo
-	+++ b/bar
-	@@ -1 +1 @@
-	-This is foo
-	+This is bar
-	EOF
-	git apply --stat test-patch >output &&
-	test -s output &&
-	git apply --summary test-patch >output &&
-	test -s output
-'
+echo 'This is foo' >foo
+chmod +x foo
 
-test_expect_success 'apply simple modification patch' '
-	echo "original content" >testfile &&
-	git add testfile &&
-	git commit -m "add testfile" &&
-	cat >mod-patch <<-\EOF &&
-	diff --git a/testfile b/testfile
-	--- a/testfile
-	+++ b/testfile
-	@@ -1 +1 @@
-	-original content
-	+modified content
-	EOF
-	git apply mod-patch &&
-	grep "modified content" testfile
-'
+test_expect_success setup \
+    'git update-index --add foo'
 
-test_expect_success 'apply reverse modification patch' '
-	git apply -R mod-patch &&
-	grep "original content" testfile
-'
+test_expect_success apply \
+    'git apply --index --stat --summary --apply test-patch'
+
+test_expect_success FILEMODE validate \
+	    'test -f bar && ls -l bar | grep "^-..x......"'
+
+test_expect_success 'apply reverse' \
+    'git apply -R --index --stat --summary --apply test-patch &&
+     test "$(cat foo)" = "This is foo"'
+
+cat >test-patch <<\EOF
+diff --git a/foo b/bar
+similarity index 47%
+copy from foo
+copy to bar
+--- a/foo
++++ b/bar
+@@ -1 +1 @@
+-This is foo
++This is bar
+EOF
+
+test_expect_success 'apply copy' \
+    'git apply --index --stat --summary --apply test-patch &&
+     test "$(cat bar)" = "This is bar" && test "$(cat foo)" = "This is foo"'
 
 test_done

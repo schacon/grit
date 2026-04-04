@@ -1,38 +1,29 @@
 #!/bin/sh
-# Ported subset from git/t/t2005-checkout-index-symlinks.sh
+#
+# Copyright (c) 2007 Johannes Sixt
+#
 
-test_description='grit checkout-index core.symlinks false'
+test_description='git checkout-index on filesystem w/o symlinks test.
 
-cd "$(dirname "$0")" || exit 1
+This tests that git checkout-index creates a symbolic link as a plain
+file if core.symlinks is false.'
+
 . ./test-lib.sh
 
-test_expect_success 'prepare symlink entry with core.symlinks=false' '
-	grit init repo &&
-	cd repo &&
-	cat >.git/config <<-\EOF &&
-[core]
-	repositoryformatversion = 0
-	filemode = true
-	bare = false
-	symlinks = false
-EOF
-	l=$(printf file | grit hash-object -t blob -w --stdin) &&
-	echo "$l" >symlink_oid &&
-	printf "120000 %s\tsymlink\n" "$l" | grit update-index --index-info
-'
+test_expect_success \
+'preparation' '
+git config core.symlinks false &&
+l=$(printf file | git hash-object -t blob -w --stdin) &&
+echo "120000 $l	symlink" | git update-index --index-info'
 
-test_expect_success 'checkout-index writes plain file instead of symlink' '
-	cd repo &&
-	grit checkout-index symlink &&
-	test -f symlink &&
-	! test -L symlink
-'
+test_expect_success \
+'the checked-out symlink must be a file' '
+git checkout-index symlink &&
+test -f symlink'
 
-test_expect_success 'checked out file matches stored blob' '
-	cd repo &&
-	l=$(cat symlink_oid) &&
+test_expect_success 'the file must be the blob we added during the setup' '
 	echo "$l" >expect &&
-	grit hash-object -t blob symlink >actual &&
+	git hash-object -t blob symlink >actual &&
 	test_cmp expect actual
 '
 

@@ -1,64 +1,69 @@
 #!/bin/sh
 
-test_description='stash with untracked files tests'
-
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+test_description='stash can handle submodules'
 
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-submodule-update.sh
 
-test_expect_success 'setup' '
-	mkdir repo &&
-	cd repo &&
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
-
-	echo initial >file &&
-	git add file &&
-	test_tick &&
-	git commit -m initial &&
-	git tag initial
-'
-
-test_expect_success 'stash with --include-untracked saves untracked files' '
-	cd repo &&
-	echo untracked >untracked-file &&
-	git stash push --include-untracked &&
-	test_path_is_missing untracked-file &&
-	git stash pop &&
-	test_path_is_file untracked-file &&
-	rm untracked-file
-'
-
-test_expect_success 'stash push with -u is shorthand for --include-untracked' '
-	cd repo &&
-	echo untracked2 >untracked2 &&
-	git stash push -u &&
-	test_path_is_missing untracked2 &&
-	git stash pop &&
-	test_path_is_file untracked2 &&
-	rm untracked2
-'
-
-test_expect_success 'stash with message' '
-	cd repo &&
-	echo change >file &&
-	git stash push -m "my stash message" &&
-	git stash list >actual &&
-	grep "my stash message" actual &&
-	git stash pop
-'
-
-test_expect_success 'stash branch creates branch from stash' '
-	cd repo &&
-	echo branched >file &&
+git_stash () {
+	git status -su >expect &&
+	ls -1pR * >>expect &&
+	may_only_be_test_must_fail "$2" &&
+	$2 git read-tree -u -m "$1" &&
+	if test -n "$2"
+	then
+		return
+	fi &&
 	git stash &&
-	git stash branch stash-branch &&
-	echo branched >expect &&
-	test_cmp expect file &&
-	git checkout main &&
-	git branch -d stash-branch
+	git status -su >actual &&
+	ls -1pR * >>actual &&
+	test_cmp expect actual &&
+	git stash apply
+}
+
+KNOWN_FAILURE_STASH_DOES_IGNORE_SUBMODULE_CHANGES=1
+KNOWN_FAILURE_CHERRY_PICK_SEES_EMPTY_COMMIT=1
+KNOWN_FAILURE_NOFF_MERGE_DOESNT_CREATE_EMPTY_SUBMODULE_DIR=1
+test_submodule_switch_func "git_stash"
+
+setup_basic () {
+	test_when_finished "rm -rf main sub" &&
+	git init sub &&
+	(
+		cd sub &&
+		test_commit sub_file
+	) &&
+	git init main &&
+	(
+		cd main &&
+		git -c protocol.file.allow=always submodule add ../sub &&
+		test_commit main_file
+	)
+}
+
+test_expect_success 'stash push with submodule.recurse=true preserves dirty submodule worktree' '
+	setup_basic &&
+	(
+		cd main &&
+		git config submodule.recurse true &&
+		echo "x" >main_file.t &&
+		echo "y" >sub/sub_file.t &&
+		git stash push &&
+		test_must_fail git -C sub diff --quiet
+	)
+'
+
+test_expect_success 'stash push and pop with submodule.recurse=true preserves dirty submodule worktree' '
+	setup_basic &&
+	(
+		cd main &&
+		git config submodule.recurse true &&
+		echo "x" >main_file.t &&
+		echo "y" >sub/sub_file.t &&
+		git stash push &&
+		git stash pop &&
+		test_must_fail git -C sub diff --quiet
+	)
 '
 
 test_done

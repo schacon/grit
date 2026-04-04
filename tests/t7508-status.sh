@@ -1,2121 +1,1788 @@
 #!/bin/sh
-# Tests for 'grit status'.
-# Ported from git/t/t7508-status.sh
+#
+# Copyright (c) 2007 Johannes E. Schindelin
+#
 
-test_description='grit status'
+test_description='git status'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-terminal.sh
 
-test_expect_success 'setup repository' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo "init" >file.txt &&
-	git add file.txt &&
-	git commit -m "initial" 2>/dev/null
+test_expect_success 'status -h in broken repository' '
+	git config --global advice.statusuoption false &&
+	mkdir broken &&
+	test_when_finished "rm -fr broken" &&
+	(
+		cd broken &&
+		git init &&
+		echo "[status] showuntrackedfiles = CORRUPT" >>.git/config &&
+		test_expect_code 129 git status -h >usage 2>&1
+	) &&
+	test_grep "[Uu]sage" broken/usage
 '
 
-test_expect_success 'clean status' '
-	cd repo &&
-	git status >../actual &&
-	grep "nothing to commit" ../actual
+test_expect_success 'commit -h in broken repository' '
+	mkdir broken &&
+	test_when_finished "rm -fr broken" &&
+	(
+		cd broken &&
+		git init &&
+		echo "[status] showuntrackedfiles = CORRUPT" >>.git/config &&
+		test_expect_code 129 git commit -h >usage 2>&1
+	) &&
+	test_grep "[Uu]sage" broken/usage
 '
 
-test_expect_success 'status shows branch' '
-	cd repo &&
-	git status >../actual &&
-	grep "On branch master" ../actual
+test_expect_success 'create upstream branch' '
+	git checkout -b upstream &&
+	test_commit upstream1 &&
+	test_commit upstream2 &&
+	# leave the first commit on main as root because several
+	# tests depend on this case; for our upstream we only
+	# care about commit counts anyway, so a totally divergent
+	# history is OK
+	git checkout --orphan main
 '
 
-test_expect_success 'modified file shows as unstaged' '
-	cd repo &&
-	echo "changed" >>file.txt &&
-	git status >../actual &&
-	grep "modified:.*file.txt" ../actual &&
-	grep "Changes not staged for commit" ../actual
-'
-
-test_expect_success 'staged file shows as staged' '
-	cd repo &&
-	git add file.txt &&
-	git status >../actual &&
-	grep "Changes to be committed" ../actual
-'
-
-test_expect_success 'untracked file shows' '
-	cd repo &&
-	echo "new" >untracked.txt &&
-	git status >../actual &&
-	grep "Untracked files" ../actual &&
-	grep "untracked.txt" ../actual
-'
-
-test_expect_success 'short format shows XY codes' '
-	cd repo &&
-	git status -s >../actual &&
-	grep "^M " ../actual &&
-	grep "^??" ../actual
-'
-
-test_expect_success 'porcelain format shows branch header' '
-	cd repo &&
-	git status --porcelain -b >../actual &&
-	grep "^## master" ../actual
-'
-
-test_expect_success 'deleted file shows as deleted' '
-	cd repo &&
-	git commit -m "commit staged" 2>/dev/null &&
-	rm file.txt &&
-	git status -s >../actual &&
-	grep "^ D file.txt" ../actual
-'
-
-# ---- New tests ported from upstream ----
-
-test_expect_success 'setup for more status tests' '
-	cd repo &&
-	git checkout -f master 2>/dev/null &&
-	git reset --hard HEAD 2>/dev/null &&
-	rm -f untracked.txt &&
+test_expect_success 'setup' '
 	: >tracked &&
 	: >modified &&
-	mkdir -p dir1 dir2 &&
+	mkdir dir1 &&
 	: >dir1/tracked &&
 	: >dir1/modified &&
-	git add tracked modified dir1/tracked dir1/modified &&
-	git commit -m "add tracked files" 2>/dev/null &&
-	: >untracked &&
-	: >dir1/untracked &&
-	: >dir2/untracked &&
-	echo 1 >dir1/modified &&
-	echo 2 >dir2/modified &&
-	echo 3 >dir2/added &&
-	git add dir2/added
-'
-
-test_expect_success 'status -s shows correct XY codes for mixed state' '
-	cd repo &&
-	git status -s >../actual &&
-	grep "^ M dir1/modified" ../actual &&
-	grep "^A  dir2/added" ../actual &&
-	grep "^?? untracked" ../actual
-'
-
-test_expect_success 'status -uno hides untracked files' '
-	cd repo &&
-	git status -uno >../actual &&
-	! grep "Untracked files" ../actual &&
-	grep "Changes to be committed" ../actual
-'
-
-test_expect_success 'status -s -uno hides untracked files' '
-	cd repo &&
-	git status -s -uno >../actual &&
-	! grep "^??" ../actual &&
-	grep "^ M dir1/modified" ../actual &&
-	grep "^A  dir2/added" ../actual
-'
-
-test_expect_success 'status -s -b shows branch header' '
-	cd repo &&
-	git status -s -b >../actual &&
-	head -1 ../actual | grep "^## master"
-'
-
-test_expect_success 'status -z uses NUL terminators' '
-	cd repo &&
-	git status -s -z >../actual &&
-	tr "\000" Q <../actual >../actual.q &&
-	grep "Q" ../actual.q
-'
-
-test_expect_success 'status -s -z -b has branch header with NUL' '
-	cd repo &&
-	git status -s -z -b >../actual &&
-	tr "\000" Q <../actual >../actual.q &&
-	grep "^## masterQ" ../actual.q
-'
-
-test_expect_success 'status with multiple staged and unstaged files' '
-	cd repo &&
-	echo "mod tracked" >>tracked &&
-	git add tracked &&
-	git status -s >../actual &&
-	grep "^M  tracked" ../actual &&
-	grep "^ M dir1/modified" ../actual &&
-	grep "^A  dir2/added" ../actual
-'
-
-test_expect_success 'status porcelain includes branch header' '
-	cd repo &&
-	git status --porcelain >../actual_porcelain &&
-	head -1 ../actual_porcelain | grep "^## master" &&
-	git status -s >../actual_short &&
-	! grep "^##" ../actual_short
-'
-
-test_expect_success 'status after committing staged files' '
-	cd repo &&
-	git commit -m "commit tracked and added" 2>/dev/null &&
-	git status -s >../actual &&
-	! grep "^M  tracked" ../actual &&
-	! grep "^A  dir2/added" ../actual &&
-	grep "^ M dir1/modified" ../actual &&
-	grep "^??" ../actual
-'
-
-test_expect_success 'status shows new file as A after git add' '
-	cd repo &&
-	echo "brand new" >brandnew.txt &&
-	git add brandnew.txt &&
-	git status -s >../actual &&
-	grep "^A  brandnew.txt" ../actual
-'
-
-test_expect_success 'status with .gitignore as untracked' '
-	cd repo &&
-	echo "ignoreme" >.gitignore &&
-	git status -s >../actual &&
-	grep "^?? .gitignore" ../actual
-'
-
-test_expect_success 'status with subdirectory shows dir/' '
-	cd repo &&
-	mkdir -p sub/deep &&
-	echo "x" >sub/deep/new.txt &&
-	git status -s >../actual &&
-	grep "^?? sub/" ../actual
-'
-
-test_expect_success 'status in subdirectory still works' '
-	cd repo/dir1 &&
-	git status -s >../../actual &&
-	grep "modified" ../../actual
-'
-
-test_expect_success 'status after removing tracked file' '
-	cd repo &&
-	git add dir1/modified &&
-	git commit -m "commit modified" 2>/dev/null &&
-	rm dir1/modified &&
-	git status -s >../actual &&
-	grep "^ D dir1/modified" ../actual
-'
-
-test_expect_success 'status shows staged delete after git rm' '
-	cd repo &&
-	git rm dir1/modified 2>/dev/null &&
-	git status -s >../actual &&
-	grep "^D  dir1/modified" ../actual
-'
-
-test_expect_success 'status after git rm and re-add' '
-	cd repo &&
-	echo "recreated" >dir1/modified &&
-	git add dir1/modified &&
-	git status -s >../actual &&
-	# Should show as modified (or replaced)
-	grep "dir1/modified" ../actual
-'
-
-test_expect_success 'detached HEAD status' '
-	cd repo &&
-	git commit -m "for detach" --allow-empty 2>/dev/null &&
-	COMMIT=$(git rev-parse HEAD) &&
-	git checkout $COMMIT 2>/dev/null &&
-	git status >../actual &&
-	grep "HEAD detached" ../actual &&
-	git checkout master 2>/dev/null
-'
-
-test_expect_success 'detached HEAD short status shows no branch' '
-	cd repo &&
-	COMMIT=$(git rev-parse HEAD) &&
-	git checkout $COMMIT 2>/dev/null &&
-	git status -s -b >../actual &&
-	head -1 ../actual | grep "HEAD (no branch)" &&
-	git checkout master 2>/dev/null
-'
-
-test_expect_success 'status after commit --allow-empty' '
-	cd repo &&
-	git commit --allow-empty -m "empty" 2>/dev/null &&
-	git status >../actual &&
-	grep "nothing to commit" ../actual ||
-	grep "Untracked files" ../actual
-'
-
-test_expect_success 'status shows both staged and unstaged changes to same file' '
-	cd repo &&
-	echo "first change" >dualmod.txt &&
-	git add dualmod.txt &&
-	git commit -m "add dualmod" 2>/dev/null &&
-	echo "staged change" >dualmod.txt &&
-	git add dualmod.txt &&
-	echo "unstaged change" >dualmod.txt &&
-	git status -s >../actual &&
-	grep "^MM dualmod.txt" ../actual
-'
-
-test_expect_success 'porcelain -b with detached HEAD' '
-	cd repo &&
-	COMMIT=$(git rev-parse HEAD) &&
-	git checkout $COMMIT 2>/dev/null &&
-	git status --porcelain -b >../actual &&
-	head -1 ../actual | grep "^## HEAD (no branch)" &&
-	git checkout master 2>/dev/null
-'
-
-test_expect_success 'status with only staged new files shows to-be-committed' '
-	cd repo &&
-	echo "newstaged" >newstaged.txt &&
-	git add newstaged.txt &&
-	git status >../actual &&
-	grep "Changes to be committed" ../actual &&
-	grep "new file:.*newstaged.txt" ../actual
-'
-
-test_expect_success 'clean status after committing everything' '
-	cd repo &&
-	git add -A &&
-	git commit -m "commit all" 2>/dev/null &&
-	git status >../actual &&
-	grep "nothing to commit" ../actual
-'
-
-# ---- Wave 5: additional tests ported from upstream t7508 ----
-
-# Fresh repo for more controlled testing
-test_expect_success 'setup fresh repo for extended tests' '
-	rm -rf repo2 &&
-	git init repo2 &&
-	cd repo2 &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	: >tracked &&
-	: >modified &&
-	mkdir -p dir1 dir2 &&
+	mkdir dir2 &&
 	: >dir1/tracked &&
 	: >dir1/modified &&
 	git add . &&
-	git commit -m "initial" 2>/dev/null &&
+
+	git status >output &&
+
+	test_tick &&
+	git commit -m initial &&
 	: >untracked &&
 	: >dir1/untracked &&
 	: >dir2/untracked &&
 	echo 1 >dir1/modified &&
 	echo 2 >dir2/modified &&
 	echo 3 >dir2/added &&
-	git add dir2/added
+	git add dir2/added &&
+
+	git branch --set-upstream-to=upstream
 '
 
-# --- short format tests ---
-
-test_expect_success 'status -s (basic)' '
-	cd repo2 &&
-	git status -s >../actual &&
-	grep "^ M dir1/modified" ../actual &&
-	grep "^A  dir2/added" ../actual &&
-	grep "^?? dir1/untracked" ../actual &&
-	grep "^?? dir2/modified" ../actual &&
-	grep "^?? dir2/untracked" ../actual &&
-	grep "^?? untracked" ../actual
+test_expect_success 'status (1)' '
+	test_grep "use \"git rm --cached <file>\.\.\.\" to unstage" output
 '
 
-test_expect_success 'status --short is same as -s' '
-	cd repo2 &&
-	git status --short >../actual_short &&
-	git status -s >../actual_s &&
-	test_cmp ../actual_short ../actual_s
+strip_comments () {
+	tab='	'
+	sed "s/^\# //; s/^\#$//; s/^#$tab/$tab/" <"$1" >"$1".tmp &&
+	rm "$1" && mv "$1".tmp "$1"
+}
+
+cat >.gitignore <<\EOF
+.gitignore
+expect*
+output*
+EOF
+
+test_expect_success 'status --column' '
+	cat >expect <<\EOF &&
+# On branch main
+# Your branch and '\''upstream'\'' have diverged,
+# and have 1 and 2 different commits each, respectively.
+#   (use "git pull" if you want to integrate the remote branch with yours)
+#
+# Changes to be committed:
+#   (use "git restore --staged <file>..." to unstage)
+#	new file:   dir2/added
+#
+# Changes not staged for commit:
+#   (use "git add <file>..." to update what will be committed)
+#   (use "git restore <file>..." to discard changes in working directory)
+#	modified:   dir1/modified
+#
+# Untracked files:
+#   (use "git add <file>..." to include in what will be committed)
+#	dir1/untracked dir2/untracked
+#	dir2/modified  untracked
+#
+EOF
+	COLUMNS=50 git -c status.displayCommentPrefix=true status --column="column dense" >output &&
+	test_cmp expect output
 '
 
-# --- porcelain format tests ---
-
-test_expect_success 'porcelain format always uses full paths' '
-	cd repo2/dir1 &&
-	git status --porcelain >../../actual &&
-	grep "dir1/modified" ../../actual &&
-	grep "dir2/added" ../../actual
+test_expect_success 'status --column status.displayCommentPrefix=false' '
+	strip_comments expect &&
+	COLUMNS=49 git -c status.displayCommentPrefix=false status --column="column dense" >output &&
+	test_cmp expect output
 '
 
-test_expect_success 'porcelain -z uses NUL as line terminator' '
-	cd repo2 &&
-	git status --porcelain -z >../actual_raw &&
-	tr "\000" Q <../actual_raw >../actual &&
-	grep "Q" ../actual &&
-	grep "^## masterQ" ../actual
+cat >expect <<\EOF
+# On branch main
+# Your branch and 'upstream' have diverged,
+# and have 1 and 2 different commits each, respectively.
+#   (use "git pull" if you want to integrate the remote branch with yours)
+#
+# Changes to be committed:
+#   (use "git restore --staged <file>..." to unstage)
+#	new file:   dir2/added
+#
+# Changes not staged for commit:
+#   (use "git add <file>..." to update what will be committed)
+#   (use "git restore <file>..." to discard changes in working directory)
+#	modified:   dir1/modified
+#
+# Untracked files:
+#   (use "git add <file>..." to include in what will be committed)
+#	dir1/untracked
+#	dir2/modified
+#	dir2/untracked
+#	untracked
+#
+EOF
+
+test_expect_success 'status with status.displayCommentPrefix=true' '
+	git -c status.displayCommentPrefix=true status >output &&
+	test_cmp expect output
 '
 
-# --- -b / --branch tests ---
-
-test_expect_success 'status -s without -b has no branch header' '
-	cd repo2 &&
-	git status -s >../actual &&
-	! grep "^##" ../actual
+test_expect_success 'status with status.displayCommentPrefix=false' '
+	strip_comments expect &&
+	git -c status.displayCommentPrefix=false status >output &&
+	test_cmp expect output
 '
 
-test_expect_success 'status -s -b has branch header as first line' '
-	cd repo2 &&
-	git status -s -b >../actual &&
-	head -1 ../actual | grep "^## master$"
+test_expect_success 'status -v' '
+	(cat expect && git diff --cached) >expect-with-v &&
+	git status -v >output &&
+	test_cmp expect-with-v output
 '
 
-test_expect_success 'status -s --branch is same as -s -b' '
-	cd repo2 &&
-	git status -s --branch >../actual_branch &&
-	git status -s -b >../actual_b &&
-	test_cmp ../actual_branch ../actual_b
+test_expect_success 'status -v -v' '
+	(cat expect &&
+	 echo "Changes to be committed:" &&
+	 git -c diff.mnemonicprefix=true diff --cached &&
+	 echo "--------------------------------------------------" &&
+	 echo "Changes not staged for commit:" &&
+	 git -c diff.mnemonicprefix=true diff) >expect-with-v &&
+	git status -v -v >output &&
+	test_cmp expect-with-v output
 '
 
-test_expect_success 'porcelain always has branch header' '
-	cd repo2 &&
-	git status --porcelain >../actual &&
-	head -1 ../actual | grep "^## master$"
+test_expect_success 'setup fake editor' '
+	cat >.git/editor <<-\EOF &&
+	#! /bin/sh
+	cp "$1" output
+EOF
+	chmod 755 .git/editor
 '
 
-# --- -z NUL terminator tests ---
+commit_template_commented () {
+	(
+		EDITOR=.git/editor &&
+		export EDITOR &&
+		# Fails due to empty message
+		test_must_fail git commit
+	) &&
+	! grep '^[^#]' output
+}
 
-test_expect_success 'status -s -z terminates each entry with NUL' '
-	cd repo2 &&
-	git status -s -z >../actual_raw &&
-	# Count NUL bytes — should be at least as many as status lines
-	NUL_COUNT=$(tr -cd "\000" <../actual_raw | wc -c) &&
-	test "$NUL_COUNT" -ge 6
+test_expect_success 'commit ignores status.displayCommentPrefix=false in COMMIT_EDITMSG' '
+	commit_template_commented
 '
 
-test_expect_success 'status -s -z -b terminates branch line with NUL too' '
-	cd repo2 &&
-	git status -s -z -b >../actual_raw &&
-	tr "\000" "\n" <../actual_raw >../actual_lines &&
-	head -1 ../actual_lines | grep "^## master$"
+cat >expect <<\EOF
+On branch main
+Your branch and 'upstream' have diverged,
+and have 1 and 2 different commits each, respectively.
+
+Changes to be committed:
+	new file:   dir2/added
+
+Changes not staged for commit:
+	modified:   dir1/modified
+
+Untracked files:
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	untracked
+
+EOF
+
+test_expect_success 'status (advice.statusHints false)' '
+	test_config advice.statusHints false &&
+	git status >output &&
+	test_cmp expect output
+
 '
 
-test_expect_success 'status -z -s output has no newlines' '
-	cd repo2 &&
-	git status -s -z >../actual_raw &&
-	NEWLINES=$(tr -cd "\n" <../actual_raw | wc -c) &&
-	test "$NEWLINES" -eq 0
+cat >expect <<\EOF
+ M dir1/modified
+A  dir2/added
+?? dir1/untracked
+?? dir2/modified
+?? dir2/untracked
+?? untracked
+EOF
+
+test_expect_success 'status -s' '
+
+	git status -s >output &&
+	test_cmp expect output
+
 '
 
-# --- -uno / untracked files tests ---
+test_expect_success 'status with gitignore' '
+	{
+		echo ".gitignore" &&
+		echo "expect*" &&
+		echo "output" &&
+		echo "untracked"
+	} >.gitignore &&
 
-test_expect_success 'status -uno long format hides untracked section' '
-	cd repo2 &&
-	git status -uno >../actual &&
-	! grep "Untracked files" ../actual &&
-	! grep "untracked" ../actual &&
-	grep "Changes to be committed" ../actual &&
-	grep "new file:.*dir2/added" ../actual
+	cat >expect <<-\EOF &&
+	 M dir1/modified
+	A  dir2/added
+	?? dir2/modified
+	EOF
+	git status -s >output &&
+	test_cmp expect output &&
+
+	cat >expect <<-\EOF &&
+	 M dir1/modified
+	A  dir2/added
+	?? dir2/modified
+	!! .gitignore
+	!! dir1/untracked
+	!! dir2/untracked
+	!! expect
+	!! expect-with-v
+	!! output
+	!! untracked
+	EOF
+	git status -s --ignored >output &&
+	test_cmp expect output &&
+
+	cat >expect <<\EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   dir2/added
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	dir2/modified
+
+Ignored files:
+  (use "git add -f <file>..." to include in what will be committed)
+	.gitignore
+	dir1/untracked
+	dir2/untracked
+	expect
+	expect-with-v
+	output
+	untracked
+
+EOF
+	git status --ignored >output &&
+	test_cmp expect output
 '
 
-test_expect_success 'status -uno long format does not show Untracked files section' '
-	cd repo2 &&
-	git status -uno >../actual &&
-	! grep "^Untracked files:" ../actual
+test_expect_success 'status with gitignore (nothing untracked)' '
+	{
+		echo ".gitignore" &&
+		echo "expect*" &&
+		echo "dir2/modified" &&
+		echo "output" &&
+		echo "untracked"
+	} >.gitignore &&
+
+	cat >expect <<-\EOF &&
+	 M dir1/modified
+	A  dir2/added
+	EOF
+	git status -s >output &&
+	test_cmp expect output &&
+
+	cat >expect <<-\EOF &&
+	 M dir1/modified
+	A  dir2/added
+	!! .gitignore
+	!! dir1/untracked
+	!! dir2/modified
+	!! dir2/untracked
+	!! expect
+	!! expect-with-v
+	!! output
+	!! untracked
+	EOF
+	git status -s --ignored >output &&
+	test_cmp expect output &&
+
+	cat >expect <<\EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   dir2/added
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Ignored files:
+  (use "git add -f <file>..." to include in what will be committed)
+	.gitignore
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	expect
+	expect-with-v
+	output
+	untracked
+
+EOF
+	git status --ignored >output &&
+	test_cmp expect output
 '
 
-test_expect_success 'status -s -uno shows only tracked changes' '
-	cd repo2 &&
-	git status -s -uno >../actual &&
-	! grep "^??" ../actual &&
-	grep "^ M dir1/modified" ../actual &&
-	grep "^A  dir2/added" ../actual
+cat >.gitignore <<\EOF
+.gitignore
+expect*
+output*
+EOF
+
+cat >expect <<\EOF
+## main...upstream [ahead 1, behind 2]
+ M dir1/modified
+A  dir2/added
+?? dir1/untracked
+?? dir2/modified
+?? dir2/untracked
+?? untracked
+EOF
+
+test_expect_success 'status -s -b' '
+
+	git status -s -b >output &&
+	test_cmp expect output
+
 '
 
-test_expect_success 'status --untracked-files=no is same as -uno' '
-	cd repo2 &&
-	git status -s --untracked-files=no >../actual_eq &&
-	git status -s -uno >../actual_uno &&
-	test_cmp ../actual_eq ../actual_uno
+test_expect_success 'status -s -z -b' '
+	tr "\\n" Q <expect >expect.q &&
+	mv expect.q expect &&
+	git status -s -z -b >output &&
+	nul_to_q <output >output.q &&
+	mv output.q output &&
+	test_cmp expect output
 '
 
-test_expect_success 'status -unormal shows directories collapsed' '
-	cd repo2 &&
-	mkdir -p dir3 &&
-	: >dir3/file1 &&
-	: >dir3/file2 &&
-	git status -s -unormal >../actual &&
-	grep "^?? dir3/" ../actual &&
-	! grep "dir3/file1" ../actual &&
-	! grep "dir3/file2" ../actual &&
+test_expect_success 'setup dir3' '
+	mkdir dir3 &&
+	: >dir3/untracked1 &&
+	: >dir3/untracked2
+'
+
+test_expect_success 'status -uno' '
+	cat >expect <<EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   dir2/added
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Untracked files not listed (use -u option to show untracked files)
+EOF
+	git status -uno >output &&
+	test_cmp expect output &&
+	git status -ufalse >output &&
+	test_cmp expect output
+'
+
+for no in no false 0
+do
+	test_expect_success "status (status.showUntrackedFiles $no)" '
+		test_config status.showuntrackedfiles "$no" &&
+		git status >output &&
+		test_cmp expect output
+	'
+done
+
+test_expect_success 'status -uno (advice.statusHints false)' '
+	cat >expect <<EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
+
+Changes to be committed:
+	new file:   dir2/added
+
+Changes not staged for commit:
+	modified:   dir1/modified
+
+Untracked files not listed
+EOF
+	test_config advice.statusHints false &&
+	git status -uno >output &&
+	test_cmp expect output
+'
+
+cat >expect << EOF
+ M dir1/modified
+A  dir2/added
+EOF
+test_expect_success 'status -s -uno' '
+	git status -s -uno >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'status -s (status.showUntrackedFiles no)' '
+	git config status.showuntrackedfiles no &&
+	git status -s >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'status -unormal' '
+	cat >expect <<EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   dir2/added
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	dir3/
+	untracked
+
+EOF
+	git status -unormal >output &&
+	test_cmp expect output &&
+	git status -utrue >output &&
+	test_cmp expect output &&
+	git status -uyes >output &&
+	test_cmp expect output
+'
+
+for normal in normal true 1
+do
+	test_expect_success "status (status.showUntrackedFiles $normal)" '
+		test_config status.showuntrackedfiles $normal &&
+		git status >output &&
+		test_cmp expect output
+	'
+done
+
+cat >expect <<EOF
+ M dir1/modified
+A  dir2/added
+?? dir1/untracked
+?? dir2/modified
+?? dir2/untracked
+?? dir3/
+?? untracked
+EOF
+test_expect_success 'status -s -unormal' '
+	git status -s -unormal >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'status -s (status.showUntrackedFiles normal)' '
+	git config status.showuntrackedfiles normal &&
+	git status -s >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'status -uall' '
+	cat >expect <<EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   dir2/added
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	dir3/untracked1
+	dir3/untracked2
+	untracked
+
+EOF
+	git status -uall >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'status (status.showUntrackedFiles all)' '
+	test_config status.showuntrackedfiles all &&
+	git status >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'teardown dir3' '
 	rm -rf dir3
 '
 
-# --- long format tests ---
-
-test_expect_success 'long format shows "On branch" line' '
-	cd repo2 &&
-	git status >../actual &&
-	head -1 ../actual | grep "^On branch master$"
-'
-
-test_expect_success 'long format sections for staged/unstaged/untracked' '
-	cd repo2 &&
-	git status >../actual &&
-	grep "Changes to be committed" ../actual &&
-	grep "Changes not staged for commit" ../actual &&
-	grep "Untracked files" ../actual
-'
-
-test_expect_success 'long format shows new file hint' '
-	cd repo2 &&
-	git status >../actual &&
-	grep "new file:.*dir2/added" ../actual
-'
-
-test_expect_success 'long format shows modified hint' '
-	cd repo2 &&
-	git status >../actual &&
-	grep "modified:.*dir1/modified" ../actual
-'
-
-test_expect_success 'long format includes restore hint for staged files' '
-	cd repo2 &&
-	git status >../actual &&
-	grep "use \"git restore --staged" ../actual
-'
-
-test_expect_success 'long format includes add hint for unstaged files' '
-	cd repo2 &&
-	git status >../actual &&
-	grep "use \"git add <file>" ../actual
-'
-
-# --- Detached HEAD extended tests ---
-
-test_expect_success 'detached HEAD long format says HEAD detached at' '
-	cd repo2 &&
-	COMMIT=$(git rev-parse HEAD) &&
-	git checkout $COMMIT 2>/dev/null &&
-	git status >../actual &&
-	grep "^HEAD detached at" ../actual &&
-	git checkout master 2>/dev/null
-'
-
-test_expect_success 'detached HEAD short -b shows ## HEAD (no branch)' '
-	cd repo2 &&
-	COMMIT=$(git rev-parse HEAD) &&
-	git checkout $COMMIT 2>/dev/null &&
-	git status -s -b >../actual &&
-	head -1 ../actual | grep "^## HEAD (no branch)$" &&
-	git checkout master 2>/dev/null
-'
-
-test_expect_success 'detached HEAD porcelain shows ## HEAD (no branch)' '
-	cd repo2 &&
-	COMMIT=$(git rev-parse HEAD) &&
-	git checkout $COMMIT 2>/dev/null &&
-	git status --porcelain >../actual &&
-	head -1 ../actual | grep "^## HEAD (no branch)$" &&
-	git checkout master 2>/dev/null
-'
-
-test_expect_success 'detached HEAD status still shows file changes' '
-	cd repo2 &&
-	COMMIT=$(git rev-parse HEAD) &&
-	git checkout $COMMIT 2>/dev/null &&
-	git status -s >../actual &&
-	grep "^ M dir1/modified" ../actual &&
-	grep "^A  dir2/added" ../actual &&
-	git checkout master 2>/dev/null
-'
-
-# --- orphan branch / "No commits yet" tests ---
-
-test_expect_success '"No commits yet" on orphan branch' '
-	cd repo2 &&
-	git checkout --orphan orphan-test 2>/dev/null &&
-	git status >../actual &&
-	grep "No commits yet" ../actual &&
-	git checkout master 2>/dev/null
-'
-
-test_expect_success '"No commits yet" not shown after first commit' '
-	cd repo2 &&
-	git checkout --orphan orphan-with-commit 2>/dev/null &&
-	echo "x" >orphan-file &&
-	git add orphan-file &&
-	git commit -m "first on orphan" 2>/dev/null &&
-	git status >../actual &&
-	! grep "No commits yet" ../actual &&
-	git checkout master 2>/dev/null
-'
-
-test_expect_success 'orphan branch short status shows staged files as A' '
-	cd repo2 &&
-	git checkout --orphan orphan-short 2>/dev/null &&
-	git status -s >../actual &&
-	grep "^A " ../actual &&
-	git checkout master 2>/dev/null
-'
-
-test_expect_success 'orphan branch -b shows branch name' '
-	cd repo2 &&
-	git checkout --orphan orphan-branch-name 2>/dev/null &&
-	git status -s -b >../actual &&
-	head -1 ../actual | grep "^## orphan-branch-name$" &&
-	git checkout master 2>/dev/null
-'
-
-# --- MM / AM / DD status code tests ---
-
-test_expect_success 'AM status: new file staged then modified in worktree' '
-	cd repo2 &&
-	echo "content" >amfile.txt &&
-	git add amfile.txt &&
-	echo "worktree change" >>amfile.txt &&
-	git status -s >../actual &&
-	grep "^AM amfile.txt" ../actual &&
-	git reset HEAD amfile.txt 2>/dev/null &&
-	rm amfile.txt
-'
-
-test_expect_success 'MM status: modified file staged then modified again' '
-	cd repo2 &&
-	echo "stage1" >dir1/modified &&
-	git add dir1/modified &&
-	echo "stage2" >dir1/modified &&
-	git status -s >../actual &&
-	grep "^MM dir1/modified" ../actual
-'
-
-test_expect_success 'M  status: cleanly staged modification' '
-	cd repo2 &&
-	echo "cleanmod" >tracked &&
-	git add tracked &&
-	git status -s >../actual &&
-	grep "^M  tracked" ../actual
-'
-
-test_expect_success ' M status: unstaged modification only' '
-	cd repo2 &&
-	git reset HEAD tracked 2>/dev/null &&
-	git checkout -- tracked 2>/dev/null &&
-	echo "unstaged" >tracked &&
-	git status -s >../actual &&
-	grep "^ M tracked" ../actual &&
-	git checkout -- tracked 2>/dev/null
-'
+cat >expect <<EOF
+ M dir1/modified
+A  dir2/added
+?? dir1/untracked
+?? dir2/modified
+?? dir2/untracked
+?? untracked
+EOF
+test_expect_success 'status -s -uall' '
+	test_unconfig status.showuntrackedfiles &&
+	git status -s -uall >output &&
+	test_cmp expect output
+'
+test_expect_success 'status -s (status.showUntrackedFiles all)' '
+	test_config status.showuntrackedfiles all &&
+	git status -s >output &&
+	rm -rf dir3 &&
+	test_cmp expect output
+'
+
+test_expect_success 'status with relative paths' '
+	cat >expect <<\EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   ../dir2/added
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   modified
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	untracked
+	../dir2/modified
+	../dir2/untracked
+	../untracked
 
-test_expect_success 'D  status: staged delete' '
-	cd repo2 &&
-	echo "todelete" >deleteme.txt &&
-	git add deleteme.txt &&
-	git commit -m "add deleteme" 2>/dev/null &&
-	git rm deleteme.txt 2>/dev/null &&
-	git status -s >../actual &&
-	grep "^D  deleteme.txt" ../actual
-'
+EOF
+	(cd dir1 && git status) >output &&
+	test_cmp expect output
+'
 
-test_expect_success ' D status: unstaged delete' '
-	cd repo2 &&
-	git reset HEAD 2>/dev/null &&
-	git checkout -- deleteme.txt 2>/dev/null &&
-	rm deleteme.txt &&
-	git status -s >../actual &&
-	grep "^ D deleteme.txt" ../actual &&
-	git checkout -- deleteme.txt 2>/dev/null
-'
+cat >expect <<\EOF
+ M modified
+A  ../dir2/added
+?? untracked
+?? ../dir2/modified
+?? ../dir2/untracked
+?? ../untracked
+EOF
+test_expect_success 'status -s with relative paths' '
+
+	(cd dir1 && git status -s) >output &&
+	test_cmp expect output
 
-# --- clean working tree ---
-
-test_expect_success 'nothing to commit shows in long format' '
-	cd repo2 &&
-	git add -A &&
-	git commit -m "clean slate" 2>/dev/null &&
-	git status >../actual &&
-	grep "nothing to commit" ../actual &&
-	grep "working tree clean" ../actual
 '
 
-test_expect_success 'nothing to commit short format is empty' '
-	cd repo2 &&
-	git status -s >../actual &&
-	test_must_be_empty ../actual
-'
+cat >expect <<\EOF
+ M dir1/modified
+A  dir2/added
+?? dir1/untracked
+?? dir2/modified
+?? dir2/untracked
+?? untracked
+EOF
+
+test_expect_success 'status --porcelain ignores relative paths setting' '
+
+	(cd dir1 && git status --porcelain) >output &&
+	test_cmp expect output
 
-test_expect_success 'nothing to commit porcelain has only branch header' '
-	cd repo2 &&
-	git status --porcelain >../actual &&
-	test_line_count = 1 ../actual &&
-	grep "^## master$" ../actual
 '
 
-# --- multiple file states at once ---
-
-test_expect_success 'setup complex state with many file statuses' '
-	cd repo2 &&
-	# Start fresh
-	echo "base" >base.txt &&
-	echo "mod" >tomod.txt &&
-	echo "del" >todel.txt &&
-	mkdir -p subdir &&
-	echo "sub" >subdir/file.txt &&
-	git add . &&
-	git commit -m "complex base" 2>/dev/null &&
-
-	# Create various states
-	echo "modified" >tomod.txt &&                 # unstaged M
-	rm todel.txt &&                                # unstaged D
-	echo "new staged" >newstaged.txt &&            # staged A
-	git add newstaged.txt &&
-	echo "newer" >>newstaged.txt &&                # AM
-	echo "changed base" >base.txt &&
-	git add base.txt &&                            # staged M
-	echo "untracked" >unt.txt                      # untracked
-'
+test_expect_success 'setup unique colors' '
 
-test_expect_success 'all status codes visible in combined output' '
-	cd repo2 &&
-	git status -s >../actual &&
-	grep "^M  base.txt" ../actual &&
-	grep "^AM newstaged.txt" ../actual &&
-	grep "^ D todel.txt" ../actual &&
-	grep "^ M tomod.txt" ../actual &&
-	grep "^?? unt.txt" ../actual
+	git config status.color.untracked blue &&
+	git config status.color.branch green &&
+	git config status.color.localBranch yellow &&
+	git config status.color.remoteBranch cyan
+
 '
 
-test_expect_success 'long format lists all sections with complex state' '
-	cd repo2 &&
-	git status >../actual &&
-	grep "Changes to be committed" ../actual &&
-	grep "Changes not staged for commit" ../actual &&
-	grep "Untracked files" ../actual
-'
+test_expect_success TTY 'status with color.ui' '
+	cat >expect <<\EOF &&
+On branch <GREEN>main<RESET>
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
 
-test_expect_success 'porcelain with complex state has branch then entries' '
-	cd repo2 &&
-	git status --porcelain >../actual &&
-	head -1 ../actual | grep "^## master$" &&
-	grep "^M  base.txt" ../actual &&
-	grep "^AM newstaged.txt" ../actual
-'
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	<GREEN>new file:   dir2/added<RESET>
 
-test_expect_success 'short -z with complex state uses NUL terminators' '
-	cd repo2 &&
-	git status -s -z >../actual_raw &&
-	# Verify no newlines in NUL mode
-	NEWLINES=$(tr -cd "\n" <../actual_raw | wc -c) &&
-	test "$NEWLINES" -eq 0 &&
-	# Verify we can find entries
-	tr "\000" "\n" <../actual_raw >../actual &&
-	grep "^M  base.txt$" ../actual &&
-	grep "^ D todel.txt$" ../actual
-'
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	<RED>modified:   dir1/modified<RESET>
 
-# --- Reset and setup for more tests ---
-
-test_expect_success 'setup: clean up complex state' '
-	cd repo2 &&
-	git reset --hard HEAD 2>/dev/null &&
-	rm -f unt.txt newstaged.txt &&
-	git status -s >../actual &&
-	test_must_be_empty ../actual
-'
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	<BLUE>dir1/untracked<RESET>
+	<BLUE>dir2/modified<RESET>
+	<BLUE>dir2/untracked<RESET>
+	<BLUE>untracked<RESET>
 
-# --- Subdirectory display ---
-
-test_expect_success 'untracked directory shown as dir/' '
-	cd repo2 &&
-	mkdir -p newdir &&
-	echo "a" >newdir/a &&
-	echo "b" >newdir/b &&
-	git status -s >../actual &&
-	grep "^?? newdir/" ../actual &&
-	rm -rf newdir
+EOF
+	test_config color.ui auto &&
+	test_terminal git status | test_decode_color >output &&
+	test_cmp expect output
 '
 
-test_expect_success 'deeply nested untracked dir shown as top-level dir/' '
-	cd repo2 &&
-	mkdir -p deep/nested/path &&
-	echo "x" >deep/nested/path/file &&
-	git status -s >../actual &&
-	grep "^?? deep/" ../actual &&
-	! grep "deep/nested" ../actual &&
-	rm -rf deep
+test_expect_success TTY 'status with color.status' '
+	test_config color.status auto &&
+	test_terminal git status | test_decode_color >output &&
+	test_cmp expect output
 '
 
-# --- -uno in long format ---
-
-test_expect_success 'status -uno long format hides untracked section entirely' '
-	cd repo2 &&
-	echo "ut" >untracked_file &&
-	echo "mod" >>base.txt &&
-	git status -uno >../actual &&
-	! grep "^Untracked files:" ../actual &&
-	! grep "untracked_file" ../actual &&
-	grep "modified:.*base.txt" ../actual &&
-	git checkout -- base.txt 2>/dev/null &&
-	rm -f untracked_file
-'
+cat >expect <<\EOF
+ <RED>M<RESET> dir1/modified
+<GREEN>A<RESET>  dir2/added
+<BLUE>??<RESET> dir1/untracked
+<BLUE>??<RESET> dir2/modified
+<BLUE>??<RESET> dir2/untracked
+<BLUE>??<RESET> untracked
+EOF
 
-# --- many untracked files ---
-
-test_expect_success 'status shows multiple untracked files sorted' '
-	cd repo2 &&
-	echo "a" >aaa.txt &&
-	echo "b" >bbb.txt &&
-	echo "c" >ccc.txt &&
-	git status -s >../actual &&
-	grep "^?? aaa.txt" ../actual &&
-	grep "^?? bbb.txt" ../actual &&
-	grep "^?? ccc.txt" ../actual &&
-	rm -f aaa.txt bbb.txt ccc.txt
-'
+test_expect_success TTY 'status -s with color.ui' '
 
-# --- status after various git operations ---
-
-test_expect_success 'status after git add -A' '
-	cd repo2 &&
-	echo "new1" >new1.txt &&
-	echo "new2" >new2.txt &&
-	rm deleteme.txt &&
-	git add -A &&
-	git status -s >../actual &&
-	grep "^A  new1.txt" ../actual &&
-	grep "^A  new2.txt" ../actual &&
-	grep "^D  deleteme.txt" ../actual
-'
+	git config color.ui auto &&
+	test_terminal git status -s | test_decode_color >output &&
+	test_cmp expect output
 
-test_expect_success 'status after partial commit (dry run check)' '
-	cd repo2 &&
-	git status -s >../actual &&
-	# new1.txt and new2.txt staged, deleteme.txt deleted
-	grep "^A " ../actual &&
-	grep "^D " ../actual
 '
 
-test_expect_success 'status after committing some files' '
-	cd repo2 &&
-	git commit -m "commit new files and delete" 2>/dev/null &&
-	git status >../actual &&
-	grep "nothing to commit" ../actual
-'
+test_expect_success TTY 'status -s with color.status' '
 
-# --- Switch branches and check status ---
-
-test_expect_success 'status on different branch shows correct branch name' '
-	cd repo2 &&
-	git checkout -b feature-branch 2>/dev/null &&
-	git status >../actual &&
-	grep "^On branch feature-branch$" ../actual &&
-	git status -s -b >../actual &&
-	head -1 ../actual | grep "^## feature-branch$" &&
-	git checkout master 2>/dev/null
-'
+	git config --unset color.ui &&
+	git config color.status auto &&
+	test_terminal git status -s | test_decode_color >output &&
+	test_cmp expect output
 
-test_expect_success 'status porcelain shows correct branch after switch' '
-	cd repo2 &&
-	git checkout -b another-branch 2>/dev/null &&
-	git status --porcelain >../actual &&
-	head -1 ../actual | grep "^## another-branch$" &&
-	git checkout master 2>/dev/null
 '
 
-# --- Staged + unstaged changes on different files ---
-
-test_expect_success 'status with staged and unstaged on different files' '
-	cd repo2 &&
-	echo "staged mod" >base.txt &&
-	git add base.txt &&
-	echo "unstaged mod" >tomod.txt &&
-	git status -s >../actual &&
-	grep "^M  base.txt" ../actual &&
-	grep "^ M tomod.txt" ../actual &&
-	git reset HEAD base.txt 2>/dev/null &&
-	git checkout -- base.txt tomod.txt 2>/dev/null
+test_expect_success TTY 'status -s keeps colors with -z' '
+	test_when_finished "rm -f output.*" &&
+	test_terminal git status -s -z >output.raw &&
+	# convert back to newlines to avoid portability issues with
+	# test_decode_color and test_cmp, and to let us use the same expected
+	# output as earlier tests
+	tr "\0" "\n" <output.raw >output.nl &&
+	test_decode_color <output.nl >output &&
+	test_cmp expect output
 '
 
-# --- porcelain from subdirectory ---
-
-test_expect_success 'porcelain from subdirectory shows repo-relative paths' '
-	cd repo2 &&
-	echo "change" >subdir/file.txt &&
-	git status -s >../actual_root &&
-	cd subdir &&
-	git status --porcelain >../../actual_sub &&
-	grep "subdir/file.txt" ../../actual_sub &&
-	cd .. &&
-	git checkout -- subdir/file.txt 2>/dev/null
-'
+cat >expect <<\EOF
+## <YELLOW>main<RESET>...<CYAN>upstream<RESET> [ahead <YELLOW>1<RESET>, behind <CYAN>2<RESET>]
+ <RED>M<RESET> dir1/modified
+<GREEN>A<RESET>  dir2/added
+<BLUE>??<RESET> dir1/untracked
+<BLUE>??<RESET> dir2/modified
+<BLUE>??<RESET> dir2/untracked
+<BLUE>??<RESET> untracked
+EOF
 
-# --- Empty index (brand new repo) ---
-
-test_expect_success 'status in brand new empty repo' '
-	rm -rf emptyrepo &&
-	git init emptyrepo &&
-	cd emptyrepo &&
-	git status >../../actual &&
-	grep "On branch master" ../../actual &&
-	grep "No commits yet" ../../actual &&
-	grep "nothing to commit" ../../actual
-'
+test_expect_success TTY 'status -s -b with color.status' '
 
-test_expect_success 'status -s in empty repo is empty' '
-	cd emptyrepo &&
-	git status -s >../../actual &&
-	test_must_be_empty ../../actual
-'
+	test_terminal git status -s -b | test_decode_color >output &&
+	test_cmp expect output
 
-test_expect_success 'status -s -b in empty repo shows branch' '
-	cd emptyrepo &&
-	git status -s -b >../../actual &&
-	grep "^## master$" ../../actual
 '
 
-test_expect_success 'status in empty repo with untracked file' '
-	cd emptyrepo &&
-	echo "x" >first.txt &&
-	git status -s >../../actual &&
-	grep "^?? first.txt" ../../actual
-'
+cat >expect <<\EOF
+ M dir1/modified
+A  dir2/added
+?? dir1/untracked
+?? dir2/modified
+?? dir2/untracked
+?? untracked
+EOF
 
-test_expect_success 'status in empty repo with staged file' '
-	cd emptyrepo &&
-	git add first.txt &&
-	git status -s >../../actual &&
-	grep "^A  first.txt" ../../actual
-'
+test_expect_success TTY 'status --porcelain ignores color.ui' '
 
-test_expect_success 'status long format in empty repo with staged file' '
-	cd emptyrepo &&
-	git status >../../actual &&
-	grep "No commits yet" ../../actual &&
-	grep "Changes to be committed" ../../actual &&
-	grep "new file:.*first.txt" ../../actual
-'
+	git config --unset color.status &&
+	git config color.ui auto &&
+	test_terminal git status --porcelain | test_decode_color >output &&
+	test_cmp expect output
 
-# --- Executable bit changes (if supported) ---
-
-test_expect_success 'status shows typechange for chmod' '
-	cd repo2 &&
-	chmod +x base.txt &&
-	git status -s >../actual &&
-	# Might show as M if filemode is tracked
-	FILEMODE=$(git config core.filemode) &&
-	if test "$FILEMODE" = "true"
-	then
-		grep "base.txt" ../actual
-	fi &&
-	chmod -x base.txt
 '
 
-# --- Multiple directories with changes ---
-
-test_expect_success 'status with changes across multiple directories' '
-	cd repo2 &&
-	echo "change" >subdir/file.txt &&
-	echo "new" >subdir/new.txt &&
-	git add subdir/new.txt &&
-	git status -s >../actual &&
-	grep "^A  subdir/new.txt" ../actual &&
-	grep "^ M subdir/file.txt" ../actual &&
-	git reset HEAD subdir/new.txt 2>/dev/null &&
-	git checkout -- subdir/file.txt 2>/dev/null &&
-	rm -f subdir/new.txt
-'
+test_expect_success TTY 'status --porcelain ignores color.status' '
 
-# --- status --porcelain -z ---
-
-test_expect_success 'porcelain -z has NUL after branch header' '
-	cd repo2 &&
-	echo "mod" >>base.txt &&
-	git status --porcelain -z >../actual_raw &&
-	tr "\000" Q <../actual_raw >../actual &&
-	grep "^## masterQ" ../actual &&
-	git checkout -- base.txt 2>/dev/null
-'
+	git config --unset color.ui &&
+	git config color.status auto &&
+	test_terminal git status --porcelain | test_decode_color >output &&
+	test_cmp expect output
 
-test_expect_success 'porcelain -z has no newlines' '
-	cd repo2 &&
-	echo "mod" >>base.txt &&
-	git status --porcelain -z >../actual_raw &&
-	NEWLINES=$(tr -cd "\n" <../actual_raw | wc -c) &&
-	test "$NEWLINES" -eq 0 &&
-	git checkout -- base.txt 2>/dev/null
 '
 
-# --- status with only untracked files ---
-
-test_expect_success 'long format with only untracked files shows hint' '
-	cd repo2 &&
-	echo "unt" >only_untracked.txt &&
-	git status >../actual &&
-	grep "Untracked files" ../actual &&
-	grep "only_untracked.txt" ../actual &&
-	grep "nothing added to commit but untracked files present" ../actual ||
-	grep "no changes added to commit" ../actual &&
-	rm -f only_untracked.txt
-'
+# recover unconditionally from color tests
+git config --unset color.status
+git config --unset color.ui
 
-# --- status with only staged files (no unstaged, no untracked) ---
-
-test_expect_success 'long format with only staged changes' '
-	cd repo2 &&
-	echo "staged only" >base.txt &&
-	git add base.txt &&
-	git status >../actual &&
-	grep "Changes to be committed" ../actual &&
-	! grep "Changes not staged for commit" ../actual &&
-	git reset HEAD base.txt 2>/dev/null &&
-	git checkout -- base.txt 2>/dev/null
-'
+test_expect_success 'status --porcelain respects -b' '
 
-# --- Consecutive operations ---
-
-test_expect_success 'status is consistent across repeated calls' '
-	cd repo2 &&
-	echo "x" >consist.txt &&
-	git status -s >../actual1 &&
-	git status -s >../actual2 &&
-	test_cmp ../actual1 ../actual2 &&
-	rm -f consist.txt
-'
+	git status --porcelain -b >output &&
+	{
+		echo "## main...upstream [ahead 1, behind 2]" &&
+		cat expect
+	} >tmp &&
+	mv tmp expect &&
+	test_cmp expect output
 
-# --- git mv and status ---
-
-test_expect_success 'status after git mv shows D and A' '
-	cd repo2 &&
-	git mv base.txt renamed_base.txt &&
-	git status -s >../actual &&
-	grep "^D  base.txt" ../actual || grep "^R  base.txt" ../actual &&
-	grep "renamed_base.txt" ../actual &&
-	git mv renamed_base.txt base.txt
 '
 
-# --- Long running: lots of untracked files ---
-
-test_expect_success 'status handles many untracked files' '
-	cd repo2 &&
-	for i in $(seq 1 20); do
-		echo "$i" >"many_$i.txt"
-	done &&
-	git status -s >../actual &&
-	COUNT=$(grep "^??" ../actual | wc -l) &&
-	test "$COUNT" -ge 20 &&
-	rm -f many_*.txt
-'
 
-# --- porcelain vs short consistency ---
 
-test_expect_success 'porcelain and short show same file statuses' '
-	cd repo2 &&
-	echo "change" >base.txt &&
-	echo "new" >ptest.txt &&
-	git add ptest.txt &&
+test_expect_success 'status without relative paths' '
+	cat >expect <<\EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
 
-	git status --porcelain >../actual_porcelain &&
-	git status -s >../actual_short &&
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   dir2/added
 
-	# Remove the branch header from porcelain
-	grep -v "^##" ../actual_porcelain >../porcelain_entries &&
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
 
-	# They should have the same entries
-	test_cmp ../porcelain_entries ../actual_short &&
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	untracked
 
-	git reset HEAD ptest.txt 2>/dev/null &&
-	git checkout -- base.txt 2>/dev/null &&
-	rm -f ptest.txt
-'
+EOF
+	test_config status.relativePaths false &&
+	(cd dir1 && git status) >output &&
+	test_cmp expect output
 
-# --- status -z -b porcelain ---
-
-test_expect_success 'porcelain -b -z: branch header followed by NUL-separated entries' '
-	cd repo2 &&
-	echo "mod" >base.txt &&
-	echo "ut" >ztest.txt &&
-	git status --porcelain -b -z >../actual_raw &&
-	tr "\000" "\n" <../actual_raw >../actual &&
-	head -1 ../actual | grep "^## master$" &&
-	grep "^ M base.txt$" ../actual &&
-	grep "^?? ztest.txt$" ../actual &&
-	git checkout -- base.txt 2>/dev/null &&
-	rm -f ztest.txt
 '
 
-# --- Freshly checked-out branch with no changes ---
-
-test_expect_success 'clean branch shows nothing to commit' '
-	cd repo2 &&
-	git checkout -b clean-branch 2>/dev/null &&
-	git status -s >../actual &&
-	test_must_be_empty ../actual &&
-	git status >../actual &&
-	grep "nothing to commit" ../actual &&
-	git checkout master 2>/dev/null &&
-	git branch -d clean-branch 2>/dev/null
-'
+cat >expect <<\EOF
+ M dir1/modified
+A  dir2/added
+?? dir1/untracked
+?? dir2/modified
+?? dir2/untracked
+?? untracked
+EOF
 
-# --- status with only deleted files ---
-
-test_expect_success 'status with only deleted files' '
-	cd repo2 &&
-	rm base.txt &&
-	rm tomod.txt &&
-	git status -s >../actual &&
-	grep "^ D base.txt" ../actual &&
-	grep "^ D tomod.txt" ../actual &&
-	git checkout -- base.txt tomod.txt 2>/dev/null
-'
+test_expect_success 'status -s without relative paths' '
 
-# --- status with deleted + untracked ---
-
-test_expect_success 'status with deleted and untracked mixed' '
-	cd repo2 &&
-	rm base.txt &&
-	echo "new" >brand_new.txt &&
-	git status -s >../actual &&
-	grep "^ D base.txt" ../actual &&
-	grep "^?? brand_new.txt" ../actual &&
-	git checkout -- base.txt 2>/dev/null &&
-	rm -f brand_new.txt
-'
+	test_config status.relativePaths false &&
+	(cd dir1 && git status -s) >output &&
+	test_cmp expect output
 
-# --- Verify "no changes added to commit" message ---
-
-test_expect_success 'long format with only unstaged changes shows hint' '
-	cd repo2 &&
-	echo "unstaged" >>base.txt &&
-	git status >../actual &&
-	grep "no changes added to commit" ../actual &&
-	git checkout -- base.txt 2>/dev/null
 '
 
-# --- Test with symbolic links ---
-
-test_expect_success 'status shows symlink as untracked' '
-	cd repo2 &&
-	ln -s base.txt link.txt &&
-	git status -s >../actual &&
-	grep "^?? link.txt" ../actual &&
-	rm -f link.txt
-'
+cat >expect <<\EOF
+ M dir1/modified
+A  dir2/added
+A  "file with spaces"
+?? dir1/untracked
+?? dir2/modified
+?? dir2/untracked
+?? "file with spaces 2"
+?? untracked
+EOF
 
-test_expect_success 'status shows staged symlink as new file' '
-	cd repo2 &&
-	ln -s base.txt link.txt &&
-	git add link.txt &&
-	git status -s >../actual &&
-	grep "^A  link.txt" ../actual &&
-	git reset HEAD link.txt 2>/dev/null &&
-	rm -f link.txt
-'
+test_expect_success 'status -s without relative paths' '
+	test_when_finished "git rm --cached \"file with spaces\"; rm -f file*" &&
+	>"file with spaces" &&
+	>"file with spaces 2" &&
+	>"expect with spaces" &&
+	git add "file with spaces" &&
 
-# --- porcelain should not change with working directory ---
-
-test_expect_success 'porcelain output is same from any subdirectory' '
-	cd repo2 &&
-	echo "change" >>base.txt &&
-	git status --porcelain >../actual_root &&
-	cd subdir &&
-	git status --porcelain >../../actual_sub &&
-	test_cmp ../../actual_root ../../actual_sub &&
-	cd .. &&
-	git checkout -- base.txt 2>/dev/null
-'
+	git status -s >output &&
+	test_cmp expect output &&
 
-# --- Wave 11: final 8 tests ported from upstream t7508 ---
-
-# Ported from upstream: "status -s -z -b" — verify the combined -s -z -b output
-# has a branch header terminated by NUL followed by NUL-terminated entries
-# and contains zero newline characters.
-test_expect_success 'status -s -z -b: branch + entries all NUL-terminated, no newlines' '
-	cd repo2 &&
-	echo "mod" >>base.txt &&
-	echo "ut" >szb_untracked.txt &&
-	git status -s -z -b >../actual_raw &&
-	# Must contain zero newlines
-	NEWLINES=$(tr -cd "\n" <../actual_raw | wc -c) &&
-	test "$NEWLINES" -eq 0 &&
-	# Translate NUL to newline for inspection
-	tr "\000" "\n" <../actual_raw >../actual_lines &&
-	# First line is branch header
-	head -1 ../actual_lines | grep "^## master$" &&
-	# Entries present
-	grep "^ M base.txt$" ../actual_lines &&
-	grep "^?? szb_untracked.txt$" ../actual_lines &&
-	git checkout -- base.txt 2>/dev/null &&
-	rm -f szb_untracked.txt
+	git status -s --ignored >output &&
+	grep "^!! \"expect with spaces\"$" output &&
+	grep -v "^!! " output >output-wo-ignored &&
+	test_cmp expect output-wo-ignored
 '
 
-# Ported from upstream: "status -C" — running grit -C <path> status from
-# outside the repository should produce the same output as running inside.
-test_expect_success 'status -C from outside repo matches inside' '
-	cd repo2 &&
-	echo "change_c" >>base.txt &&
-	git status -s >../actual_inside &&
-	cd / &&
-	git -C "$TRASH_DIRECTORY/repo2" status -s >"$TRASH_DIRECTORY/actual_outside" &&
-	test_cmp "$TRASH_DIRECTORY/actual_inside" "$TRASH_DIRECTORY/actual_outside" &&
-	cd "$TRASH_DIRECTORY/repo2" &&
-	git checkout -- base.txt 2>/dev/null
-'
+test_expect_success 'dry-run of partial commit excluding new file in index' '
+	cat >expect <<EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
 
-# Ported from upstream: "status with relative paths" — running status -s from
-# a subdirectory should still list all changed files.
-test_expect_success 'status -s from subdirectory lists all changes' '
-	cd repo2 &&
-	echo "change_rel" >>base.txt &&
-	echo "ut_rel" >subdir/untracked_rel.txt &&
-	git status -s >../actual_root &&
-	cd subdir &&
-	git status -s >../../actual_sub &&
-	# Both outputs must mention base.txt and the untracked file
-	grep "base.txt" ../../actual_root &&
-	grep "base.txt" ../../actual_sub &&
-	grep "untracked_rel" ../../actual_root &&
-	grep "untracked_rel" ../../actual_sub &&
-	cd .. &&
-	git checkout -- base.txt 2>/dev/null &&
-	rm -f subdir/untracked_rel.txt
-'
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	modified:   dir1/modified
 
-# Ported from upstream: "status -s -b" with diverged-like branch state —
-# verify branch header includes the branch name after switching branches.
-test_expect_success 'status -s -b on feature branch shows correct branch' '
-	cd repo2 &&
-	git checkout -b wave11-feature 2>/dev/null &&
-	echo "feat" >feat.txt &&
-	git add feat.txt &&
-	git status -s -b >../actual &&
-	head -1 ../actual | grep "^## wave11-feature$" &&
-	grep "^A  feat.txt" ../actual &&
-	git reset HEAD feat.txt 2>/dev/null &&
-	rm -f feat.txt &&
-	git checkout master 2>/dev/null &&
-	git branch -D wave11-feature 2>/dev/null
-'
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	dir1/untracked
+	dir2/
+	untracked
 
-# Ported from upstream: "status --porcelain respects -b" — without -b the
-# porcelain branch header should still be present (grit always includes it),
-# and with -b the header should match.
-test_expect_success 'porcelain -b matches porcelain when grit always shows branch' '
-	cd repo2 &&
-	echo "pb" >>base.txt &&
-	git status --porcelain >../actual_no_b &&
-	git status --porcelain -b >../actual_b &&
-	# Both should have the branch header
-	grep "^## master" ../actual_no_b &&
-	grep "^## master" ../actual_b &&
-	# The file entries should be the same
-	grep -v "^##" ../actual_no_b >../entries_no_b &&
-	grep -v "^##" ../actual_b >../entries_b &&
-	test_cmp ../entries_no_b ../entries_b &&
-	git checkout -- base.txt 2>/dev/null
+EOF
+	git commit --dry-run dir1/modified >output &&
+	test_cmp expect output
 '
 
-# Ported from upstream: "status refreshes the index" — running git status
-# should update stat info so that a subsequent diff-files is clean.
+cat >expect <<EOF
+:100644 100644 $EMPTY_BLOB $ZERO_OID M	dir1/modified
+EOF
 test_expect_success 'status refreshes the index' '
-	cd repo2 &&
-	# Touch a tracked file to make stat info stale
-	touch base.txt &&
-	git status >/dev/null &&
-	git diff-files >../diff_output &&
-	test_must_be_empty ../diff_output
-'
-
-# Ported from upstream: "status with executable bit change" — if
-# core.filemode is true, chmod should register as a modification.
-test_expect_success 'status detects filemode change when core.filemode is true' '
-	cd repo2 &&
-	FILEMODE=$(git config core.filemode) &&
-	if test "$FILEMODE" = "true"
-	then
-		chmod +x base.txt &&
-		git status -s >../actual &&
-		grep "base.txt" ../actual &&
-		chmod -x base.txt
-	fi
-'
-
-# Ported from upstream: "status with added and deleted across directories" —
-# exercises simultaneous staged adds and unstaged deletes in different dirs.
-test_expect_success 'status with adds and deletes across directories' '
-	cd repo2 &&
-	echo "new_in_sub" >subdir/added_file.txt &&
-	git add subdir/added_file.txt &&
-	rm tomod.txt &&
-	git status -s >../actual &&
-	grep "^A  subdir/added_file.txt" ../actual &&
-	grep "^ D tomod.txt" ../actual &&
-	git reset HEAD subdir/added_file.txt 2>/dev/null &&
-	git checkout -- tomod.txt 2>/dev/null &&
-	rm -f subdir/added_file.txt
-'
-
-# ── additional status tests ─────────────────────────────────────────────
-
-test_expect_success 'setup repo3 for additional tests' '
-	rm -rf repo3 &&
-	git init repo3 &&
-	cd repo3 &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo "base" >base.txt &&
-	mkdir -p sub &&
-	echo "sub" >sub/file.txt &&
-	git add . &&
-	git commit -m "init" 2>/dev/null
-'
-
-test_expect_success 'status -s clean repo shows nothing' '
-	cd repo3 &&
-	git status -s >../actual &&
-	test_must_be_empty ../actual
-'
-
-test_expect_success 'status --porcelain clean repo has no file entries' '
-	cd repo3 &&
-	git status --porcelain >../actual &&
-	! grep -v "^##" ../actual
-'
-
-test_expect_success 'status -s shows renamed file after mv' '
-	cd repo3 &&
-	git mv base.txt renamed.txt &&
-	git status -s >../actual &&
-	grep "renamed.txt" ../actual &&
-	git mv renamed.txt base.txt
-'
-
-test_expect_success 'status -s shows deleted file' '
-	cd repo3 &&
-	rm sub/file.txt &&
-	git status -s >../actual &&
-	grep "sub/file.txt" ../actual &&
-	git checkout -- sub/file.txt 2>/dev/null
-'
-
-test_expect_success 'status -s shows staged delete with git rm' '
-	cd repo3 &&
-	git rm sub/file.txt 2>/dev/null &&
-	git status -s >../actual &&
-	grep "^D  sub/file.txt" ../actual &&
-	git reset HEAD sub/file.txt 2>/dev/null &&
-	git checkout -- sub/file.txt 2>/dev/null
-'
-
-test_expect_success 'status -s shows both staged and unstaged modification' '
-	cd repo3 &&
-	echo "staged" >base.txt &&
-	git add base.txt &&
-	echo "unstaged" >>base.txt &&
-	git status -s >../actual &&
-	grep "^MM base.txt" ../actual &&
-	git checkout -- base.txt 2>/dev/null &&
-	git reset HEAD base.txt 2>/dev/null
-'
-
-test_expect_success 'status porcelain shows ?? for untracked file' '
-	cd repo3 &&
-	echo "new" >brand-new.txt &&
-	git status --porcelain >../actual &&
-	grep "^?? brand-new.txt" ../actual &&
-	rm brand-new.txt
-'
-
-test_expect_success 'status -s untracked in subdirectory' '
-	cd repo3 &&
-	echo "newsub" >sub/newsub.txt &&
-	git status -s >../actual &&
-	grep "^?? sub/newsub.txt" ../actual &&
-	rm sub/newsub.txt
-'
-
-test_expect_success 'status -s with new untracked directory' '
-	cd repo3 &&
-	mkdir -p newdir &&
-	echo "x" >newdir/x.txt &&
-	git status -s >../actual &&
-	grep "newdir/" ../actual &&
-	rm -rf newdir
-'
-
-test_expect_success 'status long format shows Changes to be committed' '
-	cd repo3 &&
-	echo "stage me" >base.txt &&
-	git add base.txt &&
-	git status >../actual &&
-	grep "Changes to be committed" ../actual &&
-	git reset HEAD base.txt 2>/dev/null &&
-	git checkout -- base.txt 2>/dev/null
-'
-
-test_expect_success 'status long format shows Untracked files section' '
-	cd repo3 &&
-	echo "ut" >ut.txt &&
-	git status >../actual &&
-	grep "Untracked files" ../actual &&
-	rm ut.txt
-'
-
-test_expect_success 'status long format shows Changes not staged' '
-	cd repo3 &&
-	echo "mod" >>base.txt &&
-	git status >../actual &&
-	grep "Changes not staged for commit" ../actual &&
-	git checkout -- base.txt 2>/dev/null
-'
-
-test_expect_success 'status -s shows A for newly added file' '
-	git init repo-add &&
-	cd repo-add &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo "init" >init.txt &&
-	git add init.txt &&
-	git commit -m "init" 2>/dev/null &&
-	echo "new" >new.txt &&
-	git add new.txt &&
-	git status -s >../actual &&
-	grep "^A  new.txt" ../actual
-'
-
-test_expect_success 'status -s shows clean after committing everything' '
-	git init repo-clean &&
-	cd repo-clean &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo "data" >file.txt &&
-	git add file.txt &&
-	git commit -m "all" 2>/dev/null &&
-	git status -s >../actual &&
-	test_must_be_empty ../actual
-'
-
-test_expect_success 'status --porcelain branch header shows master' '
-	cd repo3 &&
-	git status --porcelain -b >../actual &&
-	grep "^## master" ../actual
-'
-
-# ---------------------------------------------------------------------------
-# Additional status coverage
-# ---------------------------------------------------------------------------
-test_expect_success 'status shows untracked file' '
-	git init stat-untracked &&
-	cd stat-untracked &&
-	git config user.name "T" && git config user.email "t@t" &&
-	echo init >i.txt && git add i.txt && git commit -m i 2>/dev/null &&
-	echo x >untracked.txt &&
-	git status -s >../actual &&
-	grep "^?? untracked.txt" ../actual
-'
-
-test_expect_success 'status -s shows M for modified tracked file' '
-	cd stat-untracked &&
-	echo changed >>i.txt &&
-	git status -s >../actual &&
-	grep "^ M i.txt" ../actual
-'
-
-test_expect_success 'status -s shows MM for staged+modified file' '
-	cd stat-untracked &&
-	git add i.txt &&
-	echo more >>i.txt &&
-	git status -s >../actual &&
-	grep "^MM i.txt" ../actual
-'
-
-test_expect_success 'status shows D for deleted tracked file' '
-	cd stat-untracked &&
-	git checkout -- i.txt 2>/dev/null &&
-	git add i.txt && git commit -m fix 2>/dev/null &&
-	rm i.txt &&
-	git status -s >../actual &&
-	grep "^ D i.txt" ../actual
-'
-
-test_expect_success 'status -s shows D+A for manual rename' '
-	cd stat-untracked &&
-	git checkout -- i.txt 2>/dev/null &&
-	git add i.txt && git commit -m restore 2>/dev/null &&
-	git mv i.txt renamed.txt &&
-	git status -s >../actual &&
-	test -s ../actual &&
-	git checkout -- . 2>/dev/null; git reset HEAD 2>/dev/null; true
-'
-
-test_expect_success 'status --porcelain output is machine-parseable' '
-	cd stat-untracked &&
-	git status --porcelain >../actual &&
-	test -s ../actual
-'
-
-test_expect_success 'status with no changes is empty short output' '
-	git init stat-clean &&
-	cd stat-clean &&
-	git config user.name "T" && git config user.email "t@t" &&
-	echo a >a.txt && git add a.txt && git commit -m a 2>/dev/null &&
-	git status -s >../actual &&
-	test_must_be_empty ../actual
-'
-
-test_expect_success 'status -b shows branch in porcelain v1' '
-	cd stat-clean &&
-	git status -s -b >../actual &&
-	grep "^## master" ../actual
-'
-
-test_expect_success 'status shows new file in subdirectory' '
-	cd stat-clean &&
-	mkdir sub &&
-	echo x >sub/f.txt &&
-	git add sub/f.txt &&
-	git status -s >../actual &&
-	grep "^A  sub/f.txt" ../actual &&
-	git commit -m sub 2>/dev/null
-'
-
-test_expect_success 'status --porcelain after adding file shows A' '
-	cd stat-clean &&
-	echo new >cmp.txt && git add cmp.txt &&
-	git status --porcelain >../p1 &&
-	grep "^A" ../p1 &&
-	git reset HEAD cmp.txt 2>/dev/null; rm -f cmp.txt
-'
-
-test_expect_success 'status shows nothing for committed .gitignore' '
-	cd stat-clean &&
-	echo "*.log" >.gitignore &&
-	git add .gitignore && git commit -m ignore 2>/dev/null &&
-	git status -s >../actual &&
-	! grep ".gitignore" ../actual
-'
-
-test_expect_success 'status -s after staging deletion shows D' '
-	cd stat-clean &&
-	echo del >del.txt && git add del.txt && git commit -m del 2>/dev/null &&
-	git rm del.txt 2>/dev/null &&
-	git status -s >../actual &&
-	grep "^D  del.txt" ../actual &&
-	git commit -m rmdel 2>/dev/null
-'
-
-test_expect_success 'status shows multiple untracked files' '
-	cd stat-clean &&
-	echo a >u1.txt && echo b >u2.txt && echo c >u3.txt &&
-	git status -s >../actual &&
-	grep "^?? u1.txt" ../actual &&
-	grep "^?? u2.txt" ../actual &&
-	grep "^?? u3.txt" ../actual
-'
-
-test_expect_success 'status -s after commit --allow-empty is clean' '
-	cd stat-clean &&
-	rm -f u1.txt u2.txt u3.txt &&
-	git add -A 2>/dev/null && git commit --allow-empty -m cleanup 2>/dev/null &&
-	git status -s >../actual &&
-	test_must_be_empty ../actual
-'
-
-# === additional deepening tests ===
-
-test_expect_success 'status --porcelain includes branch header' '
-	cd stat-clean &&
-	grit status --porcelain >../actual &&
-	grep "^##" ../actual
-'
-
-test_expect_success 'status detects renamed file after git mv' '
-	cd stat-clean &&
-	echo rename_me >rename_src.txt &&
-	git add rename_src.txt && git commit -m "add rename_src" 2>/dev/null &&
-	git mv rename_src.txt rename_dst.txt &&
-	grit status -s >../actual &&
-	(grep "R" ../actual || grep "rename_dst" ../actual) &&
-	git commit -m "renamed" 2>/dev/null
-'
-
-test_expect_success 'status shows AM for added then modified file' '
-	cd stat-clean &&
-	echo original >am_file.txt &&
-	git add am_file.txt &&
-	echo changed >>am_file.txt &&
-	grit status -s >../actual &&
-	grep "^AM am_file.txt" ../actual &&
-	git checkout -- am_file.txt 2>/dev/null &&
-	git reset HEAD am_file.txt 2>/dev/null &&
-	rm -f am_file.txt
-'
-
-test_expect_success 'status shows .gitignore changes' '
-	cd stat-clean &&
-	echo "*.ign" >.gitignore &&
-	git add .gitignore && git commit -m "ignore" 2>/dev/null &&
-	echo change >>.gitignore &&
-	grit status -s >../actual &&
-	grep ".gitignore" ../actual &&
-	git checkout -- .gitignore 2>/dev/null
-'
-
-test_expect_success 'status shows untracked directory' '
-	cd stat-clean &&
-	mkdir -p newdir &&
-	echo x >newdir/file &&
-	grit status -s >../actual &&
-	grep "?? newdir/" ../actual &&
-	rm -rf newdir
-'
-
-test_expect_success 'status -s shows MM for staged then modified' '
-	rm -rf mm_repo &&
-	git init mm_repo &&
-	cd mm_repo &&
-	git config user.name T && git config user.email t@t &&
-	echo base >mm_file.txt &&
-	git add mm_file.txt && git commit -m "add mm" 2>/dev/null &&
-	echo staged >mm_file.txt &&
-	git add mm_file.txt &&
-	echo worktree >mm_file.txt &&
-	grit status -s >../mm_actual &&
-	grep "MM" ../mm_actual
-'
-
-test_expect_success 'status on empty repository shows nothing tracked' '
-	rm -rf empty-status-repo &&
-	git init empty-status-repo &&
-	cd empty-status-repo &&
-	grit status -s >../actual &&
-	test_must_be_empty ../actual
-'
-
-test_expect_success 'status --porcelain shows file entries' '
-	cd stat-clean &&
-	echo hdr >hdr_test.txt &&
-	grit status --porcelain >../actual &&
-	grep "hdr_test.txt" ../actual &&
-	rm -f hdr_test.txt
-'
-
-test_expect_success 'status shows staged delete as D with space' '
-	cd stat-clean &&
-	echo todelete >staged_del.txt &&
-	git add staged_del.txt && git commit -m "staged del" 2>/dev/null &&
-	git rm staged_del.txt 2>/dev/null &&
-	grit status -s >../actual &&
-	grep "^D  staged_del.txt" ../actual &&
-	git commit -m "removed staged_del" 2>/dev/null
-'
-
-test_expect_success 'status shows both untracked files' '
-	cd stat-clean &&
-	echo a >filter_a.txt && echo b >filter_b.txt &&
-	grit status -s >../actual &&
-	grep "filter_a.txt" ../actual &&
-	grep "filter_b.txt" ../actual &&
-	rm -f filter_a.txt filter_b.txt
-'
-
-test_expect_success 'status -s shows type change indicator for symlinks' '
-	cd stat-clean &&
-	echo target >link_target.txt &&
-	git add link_target.txt && git commit -m "add target" 2>/dev/null &&
-	ln -sf link_target.txt link_sym.txt &&
-	grit status -s >../actual &&
-	grep "?? link_sym.txt" ../actual &&
-	rm -f link_sym.txt
-'
-
-test_expect_success 'status in subdirectory shows repo-relative paths' '
-	cd stat-clean &&
-	mkdir -p subdir2 &&
-	echo sub >subdir2/sub.txt &&
-	git add subdir2 && git commit -m "add subdir2" 2>/dev/null &&
-	echo changed >subdir2/sub.txt &&
-	grit status -s >../actual &&
-	grep "subdir2/sub.txt" ../actual &&
-	git checkout -- subdir2/sub.txt 2>/dev/null
-'
-
-test_expect_success 'status -s is empty after staging and committing' '
-	cd stat-clean &&
-	echo allclean >allc.txt &&
-	git add allc.txt && git commit -m "all clean" 2>/dev/null &&
-	git status -s >../check_clean &&
-	grit status -s >../actual &&
-	test_must_be_empty ../actual
-'
-
-test_expect_success 'status with multiple staged files shows each' '
-	cd stat-clean &&
-	echo m1 >multi1.txt && echo m2 >multi2.txt && echo m3 >multi3.txt &&
-	git add multi1.txt multi2.txt multi3.txt &&
-	grit status -s >../actual &&
-	grep "^A  multi1.txt" ../actual &&
-	grep "^A  multi2.txt" ../actual &&
-	grep "^A  multi3.txt" ../actual &&
-	git reset HEAD multi1.txt multi2.txt multi3.txt 2>/dev/null &&
-	rm -f multi1.txt multi2.txt multi3.txt
-'
-
-test_expect_success 'status -s after reset --hard is clean' '
-	cd stat-clean &&
-	echo dirty >dirty_reset.txt &&
-	git add dirty_reset.txt && git commit -m "dirty" 2>/dev/null &&
-	echo dirtier >dirty_reset.txt &&
-	git reset --hard HEAD 2>/dev/null &&
-	grit status -s >../actual &&
-	! grep "dirty_reset" ../actual
-'
-
-test_expect_success 'status shows copied file as untracked' '
-	cd stat-clean &&
-	echo copybase >copy_src.txt &&
-	git add copy_src.txt && git commit -m "copy src" 2>/dev/null &&
-	cp copy_src.txt copy_dst.txt &&
-	grit status -s >../actual &&
-	grep "?? copy_dst.txt" ../actual &&
-	rm -f copy_dst.txt
-'
-
-test_expect_success 'status detects modification in nested subdir' '
-	cd stat-clean &&
-	mkdir -p deep/nested &&
-	echo deep >deep/nested/f.txt &&
-	git add deep && git commit -m "deep" 2>/dev/null &&
-	echo changed >deep/nested/f.txt &&
-	grit status -s >../actual &&
-	grep " M deep/nested/f.txt" ../actual &&
-	git checkout -- deep/nested/f.txt 2>/dev/null &&
-	rm -rf deep
-'
-
-test_expect_success 'status --short is alias for -s' '
-	cd stat-clean &&
-	echo shorttest >short_file.txt &&
-	grit status -s >../expect &&
-	grit status --short >../actual &&
-	test_cmp ../expect ../actual &&
-	rm -f short_file.txt
-'
-
-test_expect_success 'status shows deleted file as D' '
-	cd stat-clean &&
-	echo delme >status_del.txt &&
-	git add status_del.txt && git commit -m "add del" 2>/dev/null &&
-	rm status_del.txt &&
-	grit status -s >../actual &&
-	grep "^ D status_del.txt" ../actual &&
-	git checkout -- status_del.txt 2>/dev/null &&
-	rm -f status_del.txt
-'
-
-test_expect_success 'status shows staged deletion as D in first column' '
-	cd stat-clean &&
-	echo delstaged >status_sdel.txt &&
-	git add status_sdel.txt && git commit -m "add sdel" 2>/dev/null &&
-	grit rm status_sdel.txt &&
-	grit status -s >../actual &&
-	grep "^D  status_sdel.txt" ../actual &&
-	git reset HEAD -- status_sdel.txt 2>/dev/null &&
-	git checkout -- status_sdel.txt 2>/dev/null &&
-	rm -f status_sdel.txt
-'
-
-test_expect_success 'status shows AM for added then modified file' '
-	cd stat-clean &&
-	echo first >status_am.txt &&
-	git add status_am.txt &&
-	echo second >status_am.txt &&
-	grit status -s >../actual &&
-	grep "AM status_am.txt" ../actual &&
-	git reset -- status_am.txt 2>/dev/null &&
-	rm -f status_am.txt
-'
-
-test_expect_success 'status with no changes shows clean output' '
-	cd stat-clean &&
-	git reset --hard HEAD 2>/dev/null &&
-	grit status >../actual &&
-	grep -i "clean\|nothing to commit" ../actual
-'
-
-test_expect_success 'status shows untracked directory contents' '
-	cd stat-clean &&
-	mkdir -p status_newdir &&
-	echo one >status_newdir/a.txt &&
-	echo two >status_newdir/b.txt &&
-	grit status -s >../actual &&
-	grep "??" ../actual &&
-	rm -rf status_newdir
-'
-
-test_expect_success 'status -s shows A for newly staged file' '
-	cd stat-clean &&
-	echo newstaged >status_staged.txt &&
-	git add status_staged.txt &&
-	grit status -s >../actual &&
-	grep "^A" ../actual &&
-	git reset -- status_staged.txt 2>/dev/null &&
-	rm -f status_staged.txt
-'
-
-test_expect_success 'status shows renamed file after git mv' '
-	cd stat-clean &&
-	echo rename_s >status_ren.txt &&
-	git add status_ren.txt && git commit -m "add ren" 2>/dev/null &&
-	git mv status_ren.txt status_ren2.txt &&
-	grit status -s >../actual &&
-	grep "status_ren" ../actual &&
-	git reset --hard HEAD 2>/dev/null &&
-	rm -f status_ren.txt status_ren2.txt
-'
-
-test_expect_success 'status shows file in subdirectory' '
-	cd stat-clean &&
-	mkdir -p status_sub &&
-	echo sub >status_sub/file.txt &&
-	git add status_sub && git commit -m "add sub" 2>/dev/null &&
-	echo changed >status_sub/file.txt &&
-	grit status -s >../actual &&
-	grep "status_sub/file.txt" ../actual &&
-	git checkout -- status_sub/file.txt 2>/dev/null &&
-	rm -rf status_sub
-'
-
-test_expect_success 'status --porcelain produces machine-readable output' '
-	cd stat-clean &&
-	echo porc >status_porc.txt &&
-	grit status --porcelain >../actual &&
-	grep "?? status_porc.txt" ../actual &&
-	rm -f status_porc.txt
-'
-
-test_expect_success 'status after adding and removing shows no change' '
-	cd stat-clean &&
-	echo tmp >status_tmp.txt &&
-	git add status_tmp.txt &&
-	git rm -f status_tmp.txt 2>/dev/null &&
-	grit status -s >../actual &&
-	! grep "status_tmp.txt" ../actual
-'
-
-test_expect_success 'status shows M for modified tracked file' '
-	cd stat-clean &&
-	echo original >status_mod.txt &&
-	git add status_mod.txt && git commit -m "add mod" 2>/dev/null &&
-	echo modified >status_mod.txt &&
-	grit status -s >../actual &&
-	grep " M status_mod.txt" ../actual &&
-	git checkout -- status_mod.txt 2>/dev/null &&
-	rm -f status_mod.txt
-'
-
-test_expect_success 'status with multiple untracked files shows all' '
-	cd stat-clean &&
-	echo u1 >status_u1.txt &&
-	echo u2 >status_u2.txt &&
-	echo u3 >status_u3.txt &&
-	grit status -s >../actual &&
-	grep "?? status_u1.txt" ../actual &&
-	grep "?? status_u2.txt" ../actual &&
-	grep "?? status_u3.txt" ../actual &&
-	rm -f status_u1.txt status_u2.txt status_u3.txt
-'
-
-test_expect_success 'status long format includes branch name' '
-	cd stat-clean &&
-	grit status >../actual &&
-	head -5 ../actual | grep -i "branch\|main\|master"
-'
-
-test_expect_success 'status --porcelain output includes XY format' '
-	cd stat-clean &&
-	echo ptest >status_p2.txt &&
-	grit status --porcelain >../actual &&
-	grep "?? status_p2.txt" ../actual &&
-	rm -f status_p2.txt
-'
-
-test_expect_success 'status shows staged and unstaged changes together' '
-	cd stat-clean &&
-	echo orig >status_both.txt &&
-	git add status_both.txt && git commit -m "add both" 2>/dev/null &&
-	echo staged >status_both.txt &&
-	git add status_both.txt &&
-	echo unstaged >status_both.txt &&
-	grit status -s >../actual &&
-	grep "MM status_both.txt" ../actual &&
-	git reset --hard HEAD 2>/dev/null &&
-	rm -f status_both.txt
-'
-
-test_expect_success 'status -s shows A for newly staged file' '
-	cd stat-clean &&
-	echo newstaged >newstaged.txt &&
-	git add newstaged.txt &&
-	grit status -s >../actual &&
-	grep "A.*newstaged.txt" ../actual &&
-	git reset HEAD newstaged.txt 2>/dev/null &&
-	rm -f newstaged.txt
-'
-
-test_expect_success 'status -s shows D for deleted tracked file' '
-	cd stat-clean &&
-	echo deltrack >deltrack.txt &&
-	git add deltrack.txt && git commit -m "add deltrack" 2>/dev/null &&
-	rm -f deltrack.txt &&
-	grit status -s >../actual &&
-	grep "D.*deltrack.txt" ../actual &&
-	git checkout -- deltrack.txt 2>/dev/null
-'
-
-test_expect_success 'status -s shows M for modified tracked file' '
-	cd stat-clean &&
-	echo modtrack >modtrack.txt &&
-	git add modtrack.txt && git commit -m "add modtrack" 2>/dev/null &&
-	echo modified >modtrack.txt &&
-	grit status -s >../actual &&
-	grep "M.*modtrack.txt" ../actual &&
-	git checkout -- modtrack.txt 2>/dev/null
-'
-
-test_expect_success 'status with clean working tree shows nothing in short' '
-	cd stat-clean &&
-	git reset --hard HEAD 2>/dev/null &&
-	grit status -s >../actual &&
-	test_must_be_empty ../actual
-'
-
-test_expect_success 'status in subdirectory works' '
-	cd stat-clean &&
-	mkdir -p subdir &&
-	echo subfile >subdir/subfile.txt &&
-	grit status -s >../actual &&
-	grep "subdir" ../actual &&
-	rm -rf subdir
-'
-
-test_expect_success 'status --porcelain is machine parseable' '
-	cd stat-clean &&
-	echo porcelain >porc.txt &&
-	grit status --porcelain >../actual &&
-	grep "?? porc.txt" ../actual &&
-	rm -f porc.txt
-'
-
-test_expect_success 'status shows renamed file after git mv' '
-	cd stat-clean &&
-	echo rensrc >rensrc.txt &&
-	git add rensrc.txt && git commit -m "add rensrc" 2>/dev/null &&
-	git mv rensrc.txt rendst.txt &&
-	grit status -s >../actual &&
-	grep "rendst.txt" ../actual &&
-	git reset --hard HEAD 2>/dev/null
-'
-
-test_expect_success 'status with multiple untracked files' '
-	cd stat-clean &&
-	echo u1 >untrack1.txt && echo u2 >untrack2.txt &&
-	grit status -s >../actual &&
-	grep "untrack1.txt" ../actual &&
-	grep "untrack2.txt" ../actual &&
-	rm -f untrack1.txt untrack2.txt
-'
-
-test_expect_success 'status shows .gitignore as untracked' '
-	cd stat-clean &&
-	echo "*.log" >.gitignore &&
-	grit status -s >../actual &&
-	grep ".gitignore" ../actual &&
-	rm -f .gitignore
-'
-
-test_expect_success 'status long format includes On branch' '
-	cd stat-clean &&
-	grit status >../actual &&
-	grep -i "on branch\|branch" ../actual
-'
-
-test_expect_success 'status -s empty file shows as untracked' '
-	cd stat-clean &&
-	>empty_status.txt &&
-	grit status -s >../actual &&
-	grep "?? empty_status.txt" ../actual &&
-	rm -f empty_status.txt
-'
-
-test_expect_success 'status after commit shows clean' '
-	cd stat-clean &&
-	git reset --hard HEAD 2>/dev/null &&
-	echo committed_v2 >committed_v2.txt &&
-	git add committed_v2.txt && git commit -m "committed_v2" 2>/dev/null &&
-	grit status -s >../actual &&
-	test_must_be_empty ../actual
-'
-
-test_expect_success 'status shows staged deletion' '
-	cd stat-clean &&
-	echo stgdel >stgdel.txt &&
-	git add stgdel.txt && git commit -m "add stgdel" 2>/dev/null &&
-	git rm stgdel.txt 2>/dev/null &&
-	grit status -s >../actual &&
-	grep "D.*stgdel.txt" ../actual &&
-	git reset --hard HEAD 2>/dev/null
-'
-
-test_expect_success 'status with file in nested directory' '
-	cd stat-clean &&
-	mkdir -p deep/nested/dir &&
-	echo deep >deep/nested/dir/file.txt &&
-	grit status -s >../actual &&
-	grep "deep" ../actual &&
-	rm -rf deep
-'
-
-# ---------------------------------------------------------------------------
-# Deepening tests (w32-deepen)
-# ---------------------------------------------------------------------------
-
-test_expect_success 'deepen setup: fresh repo for status tests' '
-	git init deepen-status-repo &&
-	cd deepen-status-repo &&
-	git config user.name "Status Tester" &&
-	git config user.email "status@test.com" &&
-	echo "base" >base.txt &&
-	git add base.txt &&
-	git commit -m "initial"
-'
-
-test_expect_success 'status -s clean repo is empty' '
-	cd deepen-status-repo &&
-	grit status -s >../actual &&
-	test_must_be_empty ../actual
-'
-
-test_expect_success 'status -s shows ?? for untracked file' '
-	cd deepen-status-repo &&
-	echo "untracked" >untracked.txt &&
-	grit status -s >../actual &&
-	grep "^??" ../actual &&
-	grep "untracked.txt" ../actual &&
-	rm -f untracked.txt
-'
-
-test_expect_success 'status -s shows A for newly staged file' '
-	cd deepen-status-repo &&
-	echo "new file" >newfile.txt &&
-	git add newfile.txt &&
-	grit status -s >../actual &&
-	grep "^A" ../actual &&
-	grep "newfile.txt" ../actual &&
-	git reset HEAD newfile.txt &&
-	rm -f newfile.txt
-'
-
-test_expect_success 'status -s shows M for modified tracked file' '
-	cd deepen-status-repo &&
-	echo "modified" >>base.txt &&
-	grit status -s >../actual &&
-	grep "M" ../actual &&
-	grep "base.txt" ../actual &&
-	git checkout -- base.txt
-'
-
-test_expect_success 'status -s shows D for deleted tracked file' '
-	cd deepen-status-repo &&
-	rm base.txt &&
-	grit status -s >../actual &&
-	grep "D" ../actual &&
-	git checkout -- base.txt
-'
-
-test_expect_success 'status -s with staged and unstaged changes' '
-	cd deepen-status-repo &&
-	echo "staged" >>base.txt &&
-	git add base.txt &&
-	echo "unstaged" >>base.txt &&
-	grit status -s >../actual &&
-	grep "base.txt" ../actual &&
-	git checkout -- base.txt &&
-	git reset HEAD base.txt 2>/dev/null
-'
-
-test_expect_success 'status -s with multiple untracked files' '
-	cd deepen-status-repo &&
-	echo a >ut1.txt &&
-	echo b >ut2.txt &&
-	echo c >ut3.txt &&
-	grit status -s >../actual &&
-	grep "ut1.txt" ../actual &&
-	grep "ut2.txt" ../actual &&
-	grep "ut3.txt" ../actual &&
-	rm -f ut1.txt ut2.txt ut3.txt
-'
-
-test_expect_success 'status after staging shows staged file' '
-	cd deepen-status-repo &&
-	echo "new" >staged-file.txt &&
-	git add staged-file.txt &&
-	grit status -s >../actual &&
-	grep "staged-file.txt" ../actual &&
-	git reset HEAD staged-file.txt &&
-	rm -f staged-file.txt
-'
-
-test_expect_success 'status shows .gitignore as untracked when created' '
-	cd deepen-status-repo &&
-	echo "*.log" >.gitignore &&
-	grit status -s >../actual &&
-	grep ".gitignore" ../actual &&
-	rm -f .gitignore
-'
-
-test_expect_success 'status -s on empty repo with no commits shows staged files' '
-	git init deepen-empty-status &&
-	cd deepen-empty-status &&
-	git config user.name "T" &&
-	git config user.email "t@t" &&
-	echo "first" >first.txt &&
-	git add first.txt &&
-	grit status -s >../actual &&
-	grep "first.txt" ../actual
-'
-
-test_expect_success 'status porcelain format uses two-column codes' '
-	cd deepen-status-repo &&
-	echo "porcelain test" >porcelain.txt &&
-	grit status -s >../actual &&
-	awk "{ if (length(\$0) > 2) ok=1 } END { exit !ok }" ../actual &&
-	rm -f porcelain.txt
-'
-
-test_expect_success 'status -s with untracked directory shows dir entry' '
-	cd deepen-status-repo &&
-	mkdir -p sub/dir &&
-	echo subfile >sub/dir/f.txt &&
-	grit status -s >../actual &&
-	grep "sub" ../actual &&
-	rm -rf sub
-'
-
-test_expect_success 'status reflects staged rename via add+rm' '
-	cd deepen-status-repo &&
-	echo "rename me" >rename-src.txt &&
-	git add rename-src.txt &&
-	git commit -m "add rename src" &&
-	mv rename-src.txt rename-dst.txt &&
-	git add rename-dst.txt &&
-	git rm rename-src.txt 2>/dev/null &&
-	grit status -s >../actual &&
-	test -s ../actual &&
-	git reset --hard HEAD 2>/dev/null
-'
-
-test_expect_success 'status -s after commit is clean' '
-	git init deepen-clean-repo &&
-	cd deepen-clean-repo &&
-	git config user.name "T" &&
-	git config user.email "t@t" &&
-	echo "commit-clean" >cc.txt &&
-	git add cc.txt &&
-	git commit -m "add cc" &&
-	grit status -s >../actual &&
-	test_must_be_empty ../actual
+	touch dir2/added &&
+	git status &&
+	git diff-files >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'status shows detached HEAD properly after checking out non-local upstream branch' '
+	test_when_finished rm -rf upstream downstream actual &&
+
+	test_create_repo upstream &&
+	test_commit -C upstream foo &&
+
+	git clone upstream downstream &&
+	git -C downstream checkout @{u} &&
+	git -C downstream status >actual &&
+	grep -E "HEAD detached at [0-9a-f]+" actual
+'
+
+test_expect_success 'setup status submodule summary' '
+	test_create_repo sm && (
+		cd sm &&
+		>foo &&
+		git add foo &&
+		git commit -m "Add foo"
+	) &&
+	git add sm
+'
+
+test_expect_success 'status submodule summary is disabled by default' '
+	cat >expect <<EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   dir2/added
+	new file:   sm
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	untracked
+
+EOF
+	git status >output &&
+	test_cmp expect output
+'
+
+# we expect the same as the previous test
+test_expect_success 'status --untracked-files=all does not show submodule' '
+	git status --untracked-files=all >output &&
+	test_cmp expect output
+'
+
+cat >expect <<EOF
+ M dir1/modified
+A  dir2/added
+A  sm
+?? dir1/untracked
+?? dir2/modified
+?? dir2/untracked
+?? untracked
+EOF
+test_expect_success 'status -s submodule summary is disabled by default' '
+	git status -s >output &&
+	test_cmp expect output
+'
+
+# we expect the same as the previous test
+test_expect_success 'status -s --untracked-files=all does not show submodule' '
+	git status -s --untracked-files=all >output &&
+	test_cmp expect output
+'
+
+head=$(cd sm && git rev-parse --short=7 --verify HEAD)
+
+test_expect_success 'status submodule summary' '
+	cat >expect <<EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 1 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   dir2/added
+	new file:   sm
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Submodule changes to be committed:
+
+* sm 0000000...$head (1):
+  > Add foo
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	untracked
+
+EOF
+	git config status.submodulesummary 10 &&
+	git status >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'status submodule summary with status.displayCommentPrefix=false' '
+	strip_comments expect &&
+	git -c status.displayCommentPrefix=false status >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'commit with submodule summary ignores status.displayCommentPrefix' '
+	commit_template_commented
+'
+
+cat >expect <<EOF
+ M dir1/modified
+A  dir2/added
+A  sm
+?? dir1/untracked
+?? dir2/modified
+?? dir2/untracked
+?? untracked
+EOF
+test_expect_success 'status -s submodule summary' '
+	git status -s >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'status submodule summary (clean submodule): commit' '
+	cat >expect-status <<EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 2 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	untracked
+
+no changes added to commit (use "git add" and/or "git commit -a")
+EOF
+	sed "/git pull/d" expect-status > expect-commit &&
+	git commit -m "commit submodule" &&
+	git config status.submodulesummary 10 &&
+	test_must_fail git commit --dry-run >output &&
+	test_cmp expect-commit output &&
+	git status >output &&
+	test_cmp expect-status output
+'
+
+cat >expect <<EOF
+ M dir1/modified
+?? dir1/untracked
+?? dir2/modified
+?? dir2/untracked
+?? untracked
+EOF
+test_expect_success 'status -s submodule summary (clean submodule)' '
+	git status -s >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'status -z implies porcelain' '
+	git status --porcelain |
+	tr "\012" "\000" >expect &&
+	git status -z >output &&
+	test_cmp expect output
+'
+
+test_expect_success 'commit --dry-run submodule summary (--amend)' '
+	cat >expect <<EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 2 and 2 different commits each, respectively.
+
+Changes to be committed:
+  (use "git restore --source=HEAD^1 --staged <file>..." to unstage)
+	new file:   dir2/added
+	new file:   sm
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Submodule changes to be committed:
+
+* sm 0000000...$head (1):
+  > Add foo
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	untracked
+
+EOF
+	git config status.submodulesummary 10 &&
+	git commit --dry-run --amend >output &&
+	test_cmp expect output
+'
+
+test_expect_success POSIXPERM,SANITY 'status succeeds in a read-only repository' '
+	test_when_finished "chmod 775 .git" &&
+	(
+		chmod a-w .git &&
+		# make dir1/tracked stat-dirty
+		>dir1/tracked1 && mv -f dir1/tracked1 dir1/tracked &&
+		git status -s >output &&
+		! grep dir1/tracked output &&
+		# make sure "status" succeeded without writing index out
+		git diff-files | grep dir1/tracked
+	)
+'
+
+(cd sm && echo > bar && git add bar && git commit -q -m 'Add bar') && git add sm
+new_head=$(cd sm && git rev-parse --short=7 --verify HEAD)
+touch .gitmodules
+
+test_expect_success '--ignore-submodules=untracked suppresses submodules with untracked content' '
+	cat > expect << EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 2 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	modified:   sm
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Submodule changes to be committed:
+
+* sm $head...$new_head (1):
+  > Add bar
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	.gitmodules
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	untracked
+
+EOF
+	echo modified  sm/untracked &&
+	git status --ignore-submodules=untracked >output &&
+	test_cmp expect output
+'
+
+test_expect_success '.gitmodules ignore=untracked suppresses submodules with untracked content' '
+	test_config diff.ignoreSubmodules dirty &&
+	git status >output &&
+	test_cmp expect output &&
+	git config --add -f .gitmodules submodule.subname.ignore untracked &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success '.git/config ignore=untracked suppresses submodules with untracked content' '
+	git config --add -f .gitmodules submodule.subname.ignore none &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git config --add submodule.subname.ignore untracked &&
+	git config --add submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config --remove-section submodule.subname &&
+	git config --remove-section -f .gitmodules submodule.subname
+'
+
+test_expect_success '--ignore-submodules=dirty suppresses submodules with untracked content' '
+	git status --ignore-submodules=dirty >output &&
+	test_cmp expect output
+'
+
+test_expect_success '.gitmodules ignore=dirty suppresses submodules with untracked content' '
+	test_config diff.ignoreSubmodules dirty &&
+	git status >output &&
+	! test -s actual &&
+	git config --add -f .gitmodules submodule.subname.ignore dirty &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success '.git/config ignore=dirty suppresses submodules with untracked content' '
+	git config --add -f .gitmodules submodule.subname.ignore none &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git config --add submodule.subname.ignore dirty &&
+	git config --add submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config --remove-section submodule.subname &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success '--ignore-submodules=dirty suppresses submodules with modified content' '
+	echo modified >sm/foo &&
+	git status --ignore-submodules=dirty >output &&
+	test_cmp expect output
+'
+
+test_expect_success '.gitmodules ignore=dirty suppresses submodules with modified content' '
+	git config --add -f .gitmodules submodule.subname.ignore dirty &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success '.git/config ignore=dirty suppresses submodules with modified content' '
+	git config --add -f .gitmodules submodule.subname.ignore none &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git config --add submodule.subname.ignore dirty &&
+	git config --add submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config --remove-section submodule.subname &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success "--ignore-submodules=untracked doesn't suppress submodules with modified content" '
+	cat > expect << EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 2 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	modified:   sm
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+  (commit or discard the untracked or modified content in submodules)
+	modified:   dir1/modified
+	modified:   sm (modified content)
+
+Submodule changes to be committed:
+
+* sm $head...$new_head (1):
+  > Add bar
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	.gitmodules
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	untracked
+
+EOF
+	git status --ignore-submodules=untracked > output &&
+	test_cmp expect output
+'
+
+test_expect_success ".gitmodules ignore=untracked doesn't suppress submodules with modified content" '
+	git config --add -f .gitmodules submodule.subname.ignore untracked &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success ".git/config ignore=untracked doesn't suppress submodules with modified content" '
+	git config --add -f .gitmodules submodule.subname.ignore none &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git config --add submodule.subname.ignore untracked &&
+	git config --add submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config --remove-section submodule.subname &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+head2=$(cd sm && git commit -q -m "2nd commit" foo && git rev-parse --short=7 --verify HEAD)
+
+test_expect_success "--ignore-submodules=untracked doesn't suppress submodule summary" '
+	cat > expect << EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 2 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	modified:   sm
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+	modified:   sm (new commits)
+
+Submodule changes to be committed:
+
+* sm $head...$new_head (1):
+  > Add bar
+
+Submodules changed but not updated:
+
+* sm $new_head...$head2 (1):
+  > 2nd commit
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	.gitmodules
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	untracked
+
+EOF
+	git status --ignore-submodules=untracked > output &&
+	test_cmp expect output
+'
+
+test_expect_success ".gitmodules ignore=untracked doesn't suppress submodule summary" '
+	git config --add -f .gitmodules submodule.subname.ignore untracked &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success ".git/config ignore=untracked doesn't suppress submodule summary" '
+	git config --add -f .gitmodules submodule.subname.ignore none &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git config --add submodule.subname.ignore untracked &&
+	git config --add submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config --remove-section submodule.subname &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success "--ignore-submodules=dirty doesn't suppress submodule summary" '
+	git status --ignore-submodules=dirty > output &&
+	test_cmp expect output
+'
+test_expect_success ".gitmodules ignore=dirty doesn't suppress submodule summary" '
+	git config --add -f .gitmodules submodule.subname.ignore dirty &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success ".git/config ignore=dirty doesn't suppress submodule summary" '
+	git config --add -f .gitmodules submodule.subname.ignore none &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git config --add submodule.subname.ignore dirty &&
+	git config --add submodule.subname.path sm &&
+	git status >output &&
+	test_cmp expect output &&
+	git config --remove-section submodule.subname &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+cat > expect << EOF
+; On branch main
+; Your branch and 'upstream' have diverged,
+; and have 2 and 2 different commits each, respectively.
+;   (use "git pull" if you want to integrate the remote branch with yours)
+;
+; Changes to be committed:
+;   (use "git restore --staged <file>..." to unstage)
+;	modified:   sm
+;
+; Changes not staged for commit:
+;   (use "git add <file>..." to update what will be committed)
+;   (use "git restore <file>..." to discard changes in working directory)
+;	modified:   dir1/modified
+;	modified:   sm (new commits)
+;
+; Submodule changes to be committed:
+;
+; * sm $head...$new_head (1):
+;   > Add bar
+;
+; Submodules changed but not updated:
+;
+; * sm $new_head...$head2 (1):
+;   > 2nd commit
+;
+; Untracked files:
+;   (use "git add <file>..." to include in what will be committed)
+;	.gitmodules
+;	dir1/untracked
+;	dir2/modified
+;	dir2/untracked
+;	untracked
+;
+EOF
+
+test_expect_success "status (core.commentchar with submodule summary)" '
+	test_config core.commentchar ";" &&
+	git -c status.displayCommentPrefix=true status >output &&
+	test_cmp expect output
+'
+
+test_expect_success "status (core.commentchar with two chars with submodule summary)" '
+	test_config core.commentchar ";;" &&
+	sed "s/^/;/" <expect >expect.double &&
+	git -c status.displayCommentPrefix=true status >output &&
+	test_cmp expect.double output
+'
+
+test_expect_success "--ignore-submodules=all suppresses submodule summary" '
+	cat > expect << EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 2 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	.gitmodules
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	untracked
+
+no changes added to commit (use "git add" and/or "git commit -a")
+EOF
+	git status --ignore-submodules=all > output &&
+	test_cmp expect output
+'
+
+test_expect_success '.gitmodules ignore=all suppresses unstaged submodule summary' '
+	cat > expect << EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 2 and 2 different commits each, respectively.
+  (use "git pull" if you want to integrate the remote branch with yours)
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	modified:   sm
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	.gitmodules
+	dir1/untracked
+	dir2/modified
+	dir2/untracked
+	untracked
+
+EOF
+	git config --add -f .gitmodules submodule.subname.ignore all &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git status > output &&
+	test_cmp expect output &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success '.git/config ignore=all suppresses unstaged submodule summary' '
+	git config --add -f .gitmodules submodule.subname.ignore none &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git config --add submodule.subname.ignore all &&
+	git config --add submodule.subname.path sm &&
+	git status > output &&
+	test_cmp expect output &&
+	git config --remove-section submodule.subname &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success 'setup of test environment' '
+	git config status.showUntrackedFiles no &&
+	git status -s >expected_short &&
+	git status --no-short >expected_noshort
+'
+
+test_expect_success '"status.short=true" same as "-s"' '
+	git -c status.short=true status >actual &&
+	test_cmp expected_short actual
+'
+
+test_expect_success '"status.short=true" weaker than "--no-short"' '
+	git -c status.short=true status --no-short >actual &&
+	test_cmp expected_noshort actual
+'
+
+test_expect_success '"status.short=false" same as "--no-short"' '
+	git -c status.short=false status >actual &&
+	test_cmp expected_noshort actual
+'
+
+test_expect_success '"status.short=false" weaker than "-s"' '
+	git -c status.short=false status -s >actual &&
+	test_cmp expected_short actual
+'
+
+test_expect_success '"status.branch=true" same as "-b"' '
+	git status -sb >expected_branch &&
+	git -c status.branch=true status -s >actual &&
+	test_cmp expected_branch actual
+'
+
+test_expect_success '"status.branch=true" different from "--no-branch"' '
+	git status -s --no-branch  >expected_nobranch &&
+	git -c status.branch=true status -s >actual &&
+	! test_cmp expected_nobranch actual
+'
+
+test_expect_success '"status.branch=true" weaker than "--no-branch"' '
+	git -c status.branch=true status -s --no-branch >actual &&
+	test_cmp expected_nobranch actual
+'
+
+test_expect_success '"status.branch=true" weaker than "--porcelain"' '
+	git -c status.branch=true status --porcelain >actual &&
+	test_cmp expected_nobranch actual
+'
+
+test_expect_success '"status.branch=false" same as "--no-branch"' '
+	git -c status.branch=false status -s >actual &&
+	test_cmp expected_nobranch actual
+'
+
+test_expect_success '"status.branch=false" weaker than "-b"' '
+	git -c status.branch=false status -sb >actual &&
+	test_cmp expected_branch actual
+'
+
+test_expect_success 'Restore default test environment' '
+	git config --unset status.showUntrackedFiles
+'
+
+test_expect_success 'git commit will commit a staged but ignored submodule' '
+	git config --add -f .gitmodules submodule.subname.ignore all &&
+	git config --add -f .gitmodules submodule.subname.path sm &&
+	git config --add submodule.subname.ignore all &&
+	git status -s --ignore-submodules=dirty >output &&
+	test_grep "^M. sm" output &&
+	GIT_EDITOR="echo hello >>\"\$1\"" &&
+	export GIT_EDITOR &&
+	git commit -uno &&
+	git status -s --ignore-submodules=dirty >output &&
+	test_grep ! "^M. sm" output
+'
+
+test_expect_success 'git commit --dry-run will show a staged but ignored submodule' '
+	git reset HEAD^ &&
+	git add --force sm &&
+	cat >expect << EOF &&
+On branch main
+Your branch and '\''upstream'\'' have diverged,
+and have 2 and 2 different commits each, respectively.
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	modified:   sm
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   dir1/modified
+
+Untracked files not listed (use -u option to show untracked files)
+EOF
+	git commit -uno --dry-run >output &&
+	test_cmp expect output &&
+	git status -s --ignore-submodules=dirty >output &&
+	test_grep "^M. sm" output
+'
+
+test_expect_success 'git commit -m will commit a staged but ignored submodule' '
+	git commit -uno -m message &&
+	git status -s --ignore-submodules=dirty >output &&
+	test_grep ! "^M. sm" output &&
+	git config --remove-section submodule.subname &&
+	git config -f .gitmodules  --remove-section submodule.subname
+'
+
+test_expect_success 'show stash info with "--show-stash"' '
+	git reset --hard &&
+	git stash clear &&
+	echo 1 >file &&
+	git add file &&
+	git stash &&
+	git status >expected_default &&
+	git status --show-stash >expected_with_stash &&
+	test_grep "^Your stash currently has 1 entry$" expected_with_stash
+'
+
+test_expect_success 'no stash info with "--show-stash --no-show-stash"' '
+	git status --show-stash --no-show-stash >expected_without_stash &&
+	test_cmp expected_default expected_without_stash
+'
+
+test_expect_success '"status.showStash=false" weaker than "--show-stash"' '
+	git -c status.showStash=false status --show-stash >actual &&
+	test_cmp expected_with_stash actual
+'
+
+test_expect_success '"status.showStash=true" weaker than "--no-show-stash"' '
+	git -c status.showStash=true status --no-show-stash >actual &&
+	test_cmp expected_without_stash actual
+'
+
+test_expect_success 'no additional info if no stash entries' '
+	git stash clear &&
+	git -c status.showStash=true status >actual &&
+	test_cmp expected_without_stash actual
+'
+
+test_expect_success '"No commits yet" should be noted in status output' '
+	git checkout --orphan empty-branch-1 &&
+	git status >output &&
+	test_grep "No commits yet" output
+'
+
+test_expect_success '"No commits yet" should not be noted in status output' '
+	git checkout --orphan empty-branch-2 &&
+	test_commit test-commit-1 &&
+	git status >output &&
+	test_grep ! "No commits yet" output
+'
+
+test_expect_success '"Initial commit" should be noted in commit template' '
+	git checkout --orphan empty-branch-3 &&
+	touch to_be_committed_1 &&
+	git add to_be_committed_1 &&
+	git commit --dry-run >output &&
+	test_grep "Initial commit" output
+'
+
+test_expect_success '"Initial commit" should not be noted in commit template' '
+	git checkout --orphan empty-branch-4 &&
+	test_commit test-commit-2 &&
+	touch to_be_committed_2 &&
+	git add to_be_committed_2 &&
+	git commit --dry-run >output &&
+	test_grep ! "Initial commit" output
+'
+
+test_expect_success '--no-optional-locks prevents index update' '
+	test_set_magic_mtime .git/index &&
+	git --no-optional-locks status &&
+	test_is_magic_mtime .git/index &&
+	git status &&
+	! test_is_magic_mtime .git/index
+'
+
+test_expect_success 'racy timestamps will be fixed for clean worktree' '
+	echo content >racy-dirty &&
+	echo content >racy-racy &&
+	git add racy* &&
+	git commit -m "racy test files" &&
+	# let status rewrite the index, if necessary; after that we expect
+	# no more index writes unless caused by racy timestamps; note that
+	# timestamps may already be racy now (depending on previous tests)
+	git status &&
+	test_set_magic_mtime .git/index &&
+	git status &&
+	! test_is_magic_mtime .git/index
+'
+
+test_expect_success 'racy timestamps will be fixed for dirty worktree' '
+	echo content2 >racy-dirty &&
+	git status &&
+	test_set_magic_mtime .git/index &&
+	git status &&
+	! test_is_magic_mtime .git/index
+'
+
+test_expect_success 'setup slow status advice' '
+	GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main git init slowstatus &&
+	(
+		cd slowstatus &&
+		cat >.gitignore <<-\EOF &&
+		/actual
+		/expected
+		/out
+		EOF
+		git add .gitignore &&
+		git commit -m "Add .gitignore" &&
+		git config set advice.statusuoption true
+	)
+'
+
+test_expect_success 'slow status advice when core.untrackedCache and fsmonitor are unset' '
+	(
+		cd slowstatus &&
+		git config core.untrackedCache false &&
+		git config core.fsmonitor false &&
+		GIT_TEST_UF_DELAY_WARNING=1 git status >actual &&
+		cat >expected <<-\EOF &&
+		On branch main
+
+		It took 3.25 seconds to enumerate untracked files.
+		See '\''git help status'\'' for information on how to improve this.
+
+		nothing to commit, working tree clean
+		EOF
+		test_cmp expected actual
+	)
+'
+
+test_expect_success 'slow status advice when core.untrackedCache true, but not fsmonitor' '
+	(
+		cd slowstatus &&
+		git config core.untrackedCache true &&
+		git config core.fsmonitor false &&
+		GIT_TEST_UF_DELAY_WARNING=1 git status >actual &&
+		cat >expected <<-\EOF &&
+		On branch main
+
+		It took 3.25 seconds to enumerate untracked files.
+		See '\''git help status'\'' for information on how to improve this.
+
+		nothing to commit, working tree clean
+		EOF
+		test_cmp expected actual
+	)
+'
+
+test_expect_success 'slow status advice when core.untrackedCache true, and fsmonitor' '
+	(
+		cd slowstatus &&
+		git config core.untrackedCache true &&
+		git config core.fsmonitor true &&
+		GIT_TEST_UF_DELAY_WARNING=1 git status >actual &&
+		cat >expected <<-\EOF &&
+		On branch main
+
+		It took 3.25 seconds to enumerate untracked files,
+		but the results were cached, and subsequent runs may be faster.
+		See '\''git help status'\'' for information on how to improve this.
+
+		nothing to commit, working tree clean
+		EOF
+		test_cmp expected actual
+	)
+'
+
+test_expect_success EXPENSIVE 'status does not re-read unchanged 4 or 8 GiB file' '
+	(
+		mkdir large-file &&
+		cd large-file &&
+		# Files are 2 GiB, 4 GiB, and 8 GiB sparse files.
+		test-tool truncate file-a 0x080000000 &&
+		test-tool truncate file-b 0x100000000 &&
+		test-tool truncate file-c 0x200000000 &&
+		# This will be slow.
+		git add file-a file-b file-c &&
+		git commit -m "add large files" &&
+		git diff-index HEAD file-a file-b file-c >actual &&
+		test_must_be_empty actual
+	)
 '
 
 test_done

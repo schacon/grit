@@ -1,134 +1,163 @@
 #!/bin/sh
-# Test --min-parents, --max-parents, --merges, --no-merges for rev-list.
 
-test_description='rev-list parent filtering (--merges, --no-merges, --min/max-parents)'
+test_description='ancestor culling and limiting by parent number'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-GIT_COMMITTER_EMAIL=git@comm.iter.xz
-GIT_COMMITTER_NAME='C O Mmiter'
-GIT_AUTHOR_NAME='A U Thor'
-GIT_AUTHOR_EMAIL=git@au.thor.xz
-export GIT_COMMITTER_EMAIL GIT_COMMITTER_NAME GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
-
-M=1130000000
-Z=+0000
-export M Z
-
-doit () {
-	OFFSET=$1 &&
-	NAME=$2 &&
-	shift 2 &&
-	PARENTS= &&
-	for P
-	do
-		PARENTS="$PARENTS -p $P"
-	done &&
-	GIT_COMMITTER_DATE="$(($M + $OFFSET)) $Z" &&
-	GIT_AUTHOR_DATE="$GIT_COMMITTER_DATE" &&
-	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE &&
-	commit=$(echo "$NAME" | git commit-tree "$(git write-tree)" $PARENTS) &&
-	echo "$commit"
+check_revlist () {
+	rev_list_args="$1" &&
+	shift &&
+	git rev-parse "$@" >expect &&
+	git rev-list $rev_list_args --all >actual &&
+	test_cmp expect actual
 }
 
-# Build a topology:
-#   root -- A -- B -- M (merge of B and C) -- D
-#                \-- C -/
-# root: 0 parents (root commit)
-# A, B, C, D: 1 parent each (normal commits)
-# M: 2 parents (merge commit)
-test_expect_success 'setup merge and linear topology' '
-	grit init repo &&
-	cd repo &&
-	root=$(doit 1 root) &&
-	a=$(doit 2 A "$root") &&
-	b=$(doit 3 B "$a") &&
-	c=$(doit 4 C "$a") &&
-	m=$(doit 5 M "$b" "$c") &&
-	d=$(doit 6 D "$m") &&
-	git update-ref refs/heads/master "$d" &&
-	echo "$root" >../oid_root &&
-	echo "$a" >../oid_a &&
-	echo "$b" >../oid_b &&
-	echo "$c" >../oid_c &&
-	echo "$m" >../oid_m &&
-	echo "$d" >../oid_d
+test_expect_success setup '
+
+	touch file &&
+	git add file &&
+
+	test_commit one &&
+
+	test_tick=$(($test_tick - 2400)) &&
+
+	test_commit two &&
+	test_commit three &&
+	test_commit four &&
+
+	git log --pretty=oneline --abbrev-commit
 '
 
-test_expect_success 'rev-list --parents shows parent OIDs' '
-	cd repo &&
-	m=$(cat ../oid_m) &&
-	b=$(cat ../oid_b) &&
-	c=$(cat ../oid_c) &&
-	git rev-list --parents HEAD >actual &&
-	grep "$m $b $c" actual
+test_expect_success 'one is ancestor of others and should not be shown' '
+
+	git rev-list one --not four >result &&
+	test_must_be_empty result
+
 '
 
-test_expect_success '--merges shows only merge commits' '
-	cd repo &&
-	m=$(cat ../oid_m) &&
-	git rev-list --merges HEAD >actual &&
-	echo "$m" >expect &&
-	test_cmp expect actual
+test_expect_success 'setup roots, merges and octopuses' '
+
+	git checkout --orphan newroot &&
+	test_commit five &&
+	git checkout -b sidebranch two &&
+	test_commit six &&
+	git checkout -b anotherbranch three &&
+	test_commit seven &&
+	git checkout -b yetanotherbranch four &&
+	test_commit eight &&
+	git checkout main &&
+	test_tick &&
+	git merge --allow-unrelated-histories -m normalmerge newroot &&
+	git tag normalmerge &&
+	test_tick &&
+	git merge -m tripus sidebranch anotherbranch &&
+	git tag tripus &&
+	git checkout -b tetrabranch normalmerge &&
+	test_tick &&
+	git merge -m tetrapus sidebranch anotherbranch yetanotherbranch &&
+	git tag tetrapus &&
+	git checkout main
 '
 
-test_expect_success '--no-merges excludes merge commits' '
-	cd repo &&
-	m=$(cat ../oid_m) &&
-	git rev-list --no-merges HEAD >actual &&
-	! grep "$m" actual &&
-	count=$(wc -l <actual | tr -d " ") &&
-	test "$count" = "5"
+test_expect_success 'parse --max-parents & --min-parents' '
+	test_must_fail git rev-list --max-parents=1q HEAD 2>error &&
+	grep "not an integer" error &&
+
+	test_must_fail git rev-list --min-parents=1q HEAD 2>error &&
+	grep "not an integer" error &&
+
+	git rev-list --max-parents=1 --min-parents=1 HEAD &&
+	git rev-list --max-parents=-1 --min-parents=-1 HEAD
 '
 
-test_expect_success '--min-parents=2 selects merges' '
-	cd repo &&
-	m=$(cat ../oid_m) &&
-	git rev-list --min-parents=2 HEAD >actual &&
-	echo "$m" >expect &&
-	test_cmp expect actual
+test_expect_success 'rev-list roots' '
+
+	check_revlist "--max-parents=0" one five
 '
 
-test_expect_success '--max-parents=0 selects root commits' '
-	cd repo &&
-	root=$(cat ../oid_root) &&
-	git rev-list --max-parents=0 HEAD >actual &&
-	echo "$root" >expect &&
-	test_cmp expect actual
+test_expect_success 'rev-list no merges' '
+
+	check_revlist "--max-parents=1" one eight seven six five four three two &&
+	check_revlist "--no-merges" one eight seven six five four three two
 '
 
-test_expect_success '--max-parents=1 excludes merges and includes rest' '
-	cd repo &&
-	m=$(cat ../oid_m) &&
-	git rev-list --max-parents=1 HEAD >actual &&
-	! grep "$m" actual &&
-	count=$(wc -l <actual | tr -d " ") &&
-	test "$count" = "5"
+test_expect_success 'rev-list no octopuses' '
+
+	check_revlist "--max-parents=2" one normalmerge eight seven six five four three two
 '
 
-test_expect_success '--min-parents=1 --max-parents=1 selects single-parent only' '
-	cd repo &&
-	m=$(cat ../oid_m) &&
-	root=$(cat ../oid_root) &&
-	git rev-list --min-parents=1 --max-parents=1 HEAD >actual &&
-	! grep "$m" actual &&
-	! grep "$root" actual &&
-	count=$(wc -l <actual | tr -d " ") &&
-	test "$count" = "4"
+test_expect_success 'rev-list no roots' '
+
+	check_revlist "--min-parents=1" tetrapus tripus normalmerge eight seven six four three two
 '
 
-test_expect_success '--merges --count returns 1' '
-	cd repo &&
-	git rev-list --merges --count HEAD >actual &&
-	echo 1 >expect &&
-	test_cmp expect actual
+test_expect_success 'rev-list merges' '
+
+	check_revlist "--min-parents=2" tetrapus tripus normalmerge &&
+	check_revlist "--merges" tetrapus tripus normalmerge
 '
 
-test_expect_success '--no-merges --count returns 5' '
-	cd repo &&
-	git rev-list --no-merges --count HEAD >actual &&
-	echo 5 >expect &&
-	test_cmp expect actual
+test_expect_success 'rev-list octopus' '
+
+	check_revlist "--min-parents=3" tetrapus tripus
+'
+
+test_expect_success 'rev-list ordinary commits' '
+
+	check_revlist "--min-parents=1 --max-parents=1" eight seven six four three two
+'
+
+test_expect_success 'rev-list --merges --no-merges yields empty set' '
+
+	check_revlist "--min-parents=2 --no-merges" &&
+	check_revlist "--merges --no-merges" &&
+	check_revlist "--no-merges --merges"
+'
+
+test_expect_success 'rev-list override and infinities' '
+
+	check_revlist "--min-parents=2 --max-parents=1 --max-parents=3" tripus normalmerge &&
+	check_revlist "--min-parents=1 --min-parents=2 --max-parents=7" tetrapus tripus normalmerge &&
+	check_revlist "--min-parents=2 --max-parents=8" tetrapus tripus normalmerge &&
+	check_revlist "--min-parents=2 --max-parents=-1" tetrapus tripus normalmerge &&
+	check_revlist "--min-parents=2 --no-max-parents" tetrapus tripus normalmerge &&
+	check_revlist "--max-parents=0 --min-parents=1 --no-min-parents" one five
+'
+
+test_expect_success 'dodecapus' '
+
+	roots= &&
+	for i in 1 2 3 4 5 6 7 8 9 10 11
+	do
+		git checkout -b root$i five &&
+		test_commit $i &&
+		roots="$roots root$i" ||
+		return 1
+	done &&
+	git checkout main &&
+	test_tick &&
+	git merge -m dodecapus $roots &&
+	git tag dodecapus &&
+
+	check_revlist "--min-parents=4" dodecapus tetrapus &&
+	check_revlist "--min-parents=8" dodecapus &&
+	check_revlist "--min-parents=12" dodecapus &&
+	check_revlist "--min-parents=13" &&
+	check_revlist "--min-parents=4 --max-parents=11" tetrapus
+'
+
+test_expect_success 'ancestors with the same commit time' '
+
+	test_tick_keep=$test_tick &&
+	for i in 1 2 3 4 5 6 7 8; do
+		test_tick=$test_tick_keep &&
+		test_commit t$i || return 1
+	done &&
+	git rev-list t1^! --not t$i >result &&
+	test_must_be_empty result
 '
 
 test_done

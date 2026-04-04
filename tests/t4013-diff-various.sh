@@ -1,997 +1,784 @@
 #!/bin/sh
-# Ported subset from git/t/t4013-diff-various.sh for diff-index behavior
-# and various diff formatting patterns.
+#
+# Copyright (c) 2006 Junio C Hamano
+#
 
-test_description='diff-index default vs -m for missing worktree files, plus various diff patterns'
+test_description='Various diff formatting options'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-diff.sh
 
-make_commit () {
-	msg=$1
-	parent=${2-}
-	tree=$(git write-tree) || return 1
-	if test -n "$parent"
-	then
-		commit=$(printf '%s\n' "$msg" | git commit-tree "$tree" -p "$parent") || return 1
-	else
-		commit=$(printf '%s\n' "$msg" | git commit-tree "$tree") || return 1
-	fi
-	git update-ref HEAD "$commit" || return 1
-	printf '%s\n' "$commit"
+if ! test_have_prereq PERL_TEST_HELPERS
+then
+	skip_all='skipping diff various tests; Perl not available'
+	test_done
+fi
+
+test_expect_success setup '
+
+	GIT_AUTHOR_DATE="2006-06-26 00:00:00 +0000" &&
+	GIT_COMMITTER_DATE="2006-06-26 00:00:00 +0000" &&
+	export GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+
+	mkdir dir &&
+	mkdir dir2 &&
+	test_write_lines 1 2 3 >file0 &&
+	test_write_lines A B >dir/sub &&
+	cat file0 >file2 &&
+	git add file0 file2 dir/sub &&
+	git commit -m Initial &&
+
+	git branch initial &&
+	git branch side &&
+
+	GIT_AUTHOR_DATE="2006-06-26 00:01:00 +0000" &&
+	GIT_COMMITTER_DATE="2006-06-26 00:01:00 +0000" &&
+	export GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+
+	test_write_lines 4 5 6 >>file0 &&
+	test_write_lines C D >>dir/sub &&
+	rm -f file2 &&
+	git update-index --remove file0 file2 dir/sub &&
+	git commit -m "Second${LF}${LF}This is the second commit." &&
+
+	GIT_AUTHOR_DATE="2006-06-26 00:02:00 +0000" &&
+	GIT_COMMITTER_DATE="2006-06-26 00:02:00 +0000" &&
+	export GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+
+	test_write_lines A B C >file1 &&
+	git add file1 &&
+	test_write_lines E F >>dir/sub &&
+	git update-index dir/sub &&
+	git commit -m Third &&
+
+	GIT_AUTHOR_DATE="2006-06-26 00:03:00 +0000" &&
+	GIT_COMMITTER_DATE="2006-06-26 00:03:00 +0000" &&
+	export GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+
+	git checkout side &&
+	test_write_lines A B C >>file0 &&
+	test_write_lines 1 2 >>dir/sub &&
+	cat dir/sub >file3 &&
+	git add file3 &&
+	git update-index file0 dir/sub &&
+	git commit -m Side &&
+
+	GIT_AUTHOR_DATE="2006-06-26 00:04:00 +0000" &&
+	GIT_COMMITTER_DATE="2006-06-26 00:04:00 +0000" &&
+	export GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+
+	git checkout main &&
+	git pull -s ours --no-rebase . side &&
+
+	GIT_AUTHOR_DATE="2006-06-26 00:05:00 +0000" &&
+	GIT_COMMITTER_DATE="2006-06-26 00:05:00 +0000" &&
+	export GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+
+	test_write_lines A B C >>file0 &&
+	test_write_lines 1 2 >>dir/sub &&
+	git update-index file0 dir/sub &&
+
+	mkdir dir3 &&
+	cp dir/sub dir3/sub &&
+	test-tool chmtime +1 dir3/sub &&
+
+	git config log.showroot false &&
+	git commit --amend &&
+
+	GIT_AUTHOR_DATE="2006-06-26 00:06:00 +0000" &&
+	GIT_COMMITTER_DATE="2006-06-26 00:06:00 +0000" &&
+	export GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+	git checkout -b rearrange initial &&
+	test_write_lines B A >dir/sub &&
+	git add dir/sub &&
+	git commit -m "Rearranged lines in dir/sub" &&
+	git checkout main &&
+
+	GIT_AUTHOR_DATE="2006-06-26 00:06:00 +0000" &&
+	GIT_COMMITTER_DATE="2006-06-26 00:06:00 +0000" &&
+	export GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+	git checkout -b mode initial &&
+	git update-index --chmod=+x file0 &&
+	git commit -m "update mode" &&
+	git checkout -f main &&
+
+	GIT_AUTHOR_DATE="2006-06-26 00:06:00 +0000" &&
+	GIT_COMMITTER_DATE="2006-06-26 00:06:00 +0000" &&
+	export GIT_AUTHOR_DATE GIT_COMMITTER_DATE &&
+	git checkout -b note initial &&
+	git update-index --chmod=+x file2 &&
+	git commit -m "update mode (file2)" &&
+	git notes add -m "note" &&
+	git checkout -f main &&
+
+	# Same merge as main, but with parents reversed. Hide it in a
+	# pseudo-ref to avoid impacting tests with --all.
+	commit=$(echo reverse |
+		 git commit-tree -p main^2 -p main^1 main^{tree}) &&
+	git update-ref REVERSE $commit &&
+
+	git config diff.renames false &&
+
+	git show-branch
+'
+
+: <<\EOF
+! [initial] Initial
+ * [main] Merge branch 'side'
+  ! [rearrange] Rearranged lines in dir/sub
+   ! [side] Side
+----
+  +  [rearrange] Rearranged lines in dir/sub
+ -   [main] Merge branch 'side'
+ * + [side] Side
+ *   [main^] Third
+ *   [main~2] Second
++*++ [initial] Initial
+EOF
+
+process_diffs () {
+	perl -e '
+		my $oid_length = length($ARGV[0]);
+		my $x40 = "[0-9a-f]{40}";
+		my $xab = "[0-9a-f]{4,16}";
+		my $orx = "[0-9a-f]" x $oid_length;
+
+		sub munge_oid {
+			my ($oid) = @_;
+			my $x;
+
+			return "" unless length $oid;
+
+			if ($oid =~ /^(100644|100755|120000)$/) {
+				return $oid;
+			}
+
+			if ($oid =~ /^0*$/) {
+				$x = "0";
+			} else {
+				$x = "f";
+			}
+
+			if (length($oid) == 40) {
+				return $x x $oid_length;
+			} else {
+				return $x x length($oid);
+			}
+		}
+
+		while (<STDIN>) {
+			s/($orx)/munge_oid($1)/ge;
+			s/From ($x40)( |\))/"From " . munge_oid($1) . $2/ge;
+			s/commit ($x40)($| \(from )($x40?)/"commit " .  munge_oid($1) . $2 . munge_oid($3)/ge;
+			s/\b($x40)( |\.\.|$)/munge_oid($1) . $2/ge;
+			s/^($x40)($| )/munge_oid($1) . $2/e;
+			s/($xab)(\.\.|,| |\.\.\.|$)/munge_oid($1) . $2/ge;
+			print;
+		}
+	' "$ZERO_OID" <"$1"
 }
 
-# ===========================================================================
-# Part 1: diff-index -m behavior (original tests)
-# ===========================================================================
+V=$(git version | sed -e 's/^git version //' -e 's/\./\\./g')
+while read magic cmd
+do
+	case "$magic" in
+	'' | '#'*)
+		continue ;;
+	:noellipses)
+		magic=noellipses
+		label="$magic-$cmd"
+		;;
+	:*)
+		BUG "unknown magic $magic"
+		;;
+	*)
+		cmd="$magic $cmd"
+		magic=
+		label="$cmd"
+		;;
+	esac
 
-test_expect_success 'setup repository with one tracked file' '
-	git init repo &&
-	cd repo &&
-	printf "one\n" >file1 &&
-	git update-index --add file1 &&
-	commit1=$(make_commit initial) &&
-	test -n "$commit1" &&
-	printf "%s\n" "$commit1" >commit1
+	test=$(echo "$label" | sed -e 's|[/ ][/ ]*|_|g')
+	pfx=$(printf "%04d" $test_count)
+	expect="$TEST_DIRECTORY/t4013/diff.$test"
+	actual="$pfx-diff.$test"
+
+	case "$cmd" in
+	whatchanged | whatchanged" "*)
+		prereq=!WITH_BREAKING_CHANGES
+		;;
+	*)
+		prereq=;;
+	esac
+
+	test_expect_success $prereq "git $cmd # magic is ${magic:-(not used)}" '
+		{
+			echo "$ git $cmd"
+
+			case "$cmd" in
+			whatchanged | whatchanged" "*)
+				run="whatchanged --i-still-use-this"
+				run="$run ${cmd#whatchanged}" ;;
+			*)
+				run=$cmd ;;
+			esac &&
+			case "$magic" in
+			"")
+				GIT_PRINT_SHA1_ELLIPSIS=yes git $run ;;
+			noellipses)
+				git $run ;;
+			esac |
+			sed -e "s/^\\(-*\\)$V\\(-*\\)\$/\\1g-i-t--v-e-r-s-i-o-n\2/" \
+			    -e "s/^\\(.*mixed; boundary=\"-*\\)$V\\(-*\\)\"\$/\\1g-i-t--v-e-r-s-i-o-n\2\"/"
+			echo "\$"
+		} >"$actual" &&
+		if test -f "$expect"
+		then
+			process_diffs "$actual" >actual &&
+			process_diffs "$expect" >expect &&
+			case $cmd in
+			*format-patch* | *-stat*)
+				test_cmp expect actual;;
+			*)
+				test_cmp expect actual;;
+			esac &&
+			rm -f "$actual" actual expect
+		else
+			# this is to help developing new tests.
+			cp "$actual" "$expect"
+			false
+		fi
+	'
+done <<\EOF
+diff-tree initial
+diff-tree -r initial
+diff-tree -r --abbrev initial
+diff-tree -r --abbrev=4 initial
+diff-tree --root initial
+diff-tree --root --abbrev initial
+:noellipses diff-tree --root --abbrev initial
+diff-tree --root -r initial
+diff-tree --root -r --abbrev initial
+:noellipses diff-tree --root -r --abbrev initial
+diff-tree --root -r --abbrev=4 initial
+:noellipses diff-tree --root -r --abbrev=4 initial
+diff-tree -p initial
+diff-tree --root -p initial
+diff-tree --root -p --abbrev=10 initial
+diff-tree --root -p --full-index initial
+diff-tree --root -p --full-index --abbrev=10 initial
+diff-tree --patch-with-stat initial
+diff-tree --root --patch-with-stat initial
+diff-tree --patch-with-raw initial
+diff-tree --root --patch-with-raw initial
+
+diff-tree --pretty initial
+diff-tree --pretty --root initial
+diff-tree --pretty -p initial
+diff-tree --pretty --stat initial
+diff-tree --pretty --summary initial
+diff-tree --pretty --stat --summary initial
+diff-tree --pretty --root -p initial
+diff-tree --pretty --root --stat initial
+# improved by Timo's patch
+diff-tree --pretty --root --summary initial
+# improved by Timo's patch
+diff-tree --pretty --root --summary -r initial
+diff-tree --pretty --root --stat --summary initial
+diff-tree --pretty --patch-with-stat initial
+diff-tree --pretty --root --patch-with-stat initial
+diff-tree --pretty --patch-with-raw initial
+diff-tree --pretty --root --patch-with-raw initial
+
+diff-tree --pretty=oneline initial
+diff-tree --pretty=oneline --root initial
+diff-tree --pretty=oneline -p initial
+diff-tree --pretty=oneline --root -p initial
+diff-tree --pretty=oneline --patch-with-stat initial
+# improved by Timo's patch
+diff-tree --pretty=oneline --root --patch-with-stat initial
+diff-tree --pretty=oneline --patch-with-raw initial
+diff-tree --pretty=oneline --root --patch-with-raw initial
+
+diff-tree --pretty side
+diff-tree --pretty -p side
+diff-tree --pretty --patch-with-stat side
+
+diff-tree initial mode
+diff-tree --stat initial mode
+diff-tree --summary initial mode
+
+diff-tree main
+diff-tree -m main
+diff-tree -p main
+diff-tree -p -m main
+diff-tree -c main
+diff-tree -c --abbrev main
+:noellipses diff-tree -c --abbrev main
+diff-tree --cc main
+# stat only should show the diffstat with the first parent
+diff-tree -c --stat main
+diff-tree --cc --stat main
+diff-tree -c --stat --summary main
+diff-tree --cc --stat --summary main
+# stat summary should show the diffstat and summary with the first parent
+diff-tree -c --stat --summary side
+diff-tree --cc --stat --summary side
+diff-tree --cc --shortstat main
+diff-tree --cc --summary REVERSE
+# improved by Timo's patch
+diff-tree --cc --patch-with-stat main
+# improved by Timo's patch
+diff-tree --cc --patch-with-stat --summary main
+# this is correct
+diff-tree --cc --patch-with-stat --summary side
+
+log main
+log -p main
+log --root main
+log --root -p main
+log --patch-with-stat main
+log --root --patch-with-stat main
+log --root --patch-with-stat --summary main
+# improved by Timo's patch
+log --root -c --patch-with-stat --summary main
+# improved by Timo's patch
+log --root --cc --patch-with-stat --summary main
+log --no-diff-merges -p --first-parent main
+log --diff-merges=off -p --first-parent main
+log --first-parent --diff-merges=off -p main
+log -p --first-parent main
+log -p --diff-merges=first-parent main
+log --diff-merges=first-parent main
+log -m -p --first-parent main
+log -m -p main
+log --cc -m -p main
+log -c -m -p main
+log -m --raw main
+log -m --stat main
+log -SF main
+log -S F main
+log -SF -p main
+log -SF main --max-count=0
+log -SF main --max-count=1
+log -SF main --max-count=2
+log -GF main
+log -GF -p main
+log -GF -p --pickaxe-all main
+log -IA -IB -I1 -I2 -p main
+log --decorate --all
+log --decorate=full --all
+log --decorate --clear-decorations --all
+log --decorate=full --clear-decorations --all
+
+rev-list --parents HEAD
+rev-list --children HEAD
+
+whatchanged main
+:noellipses whatchanged main
+whatchanged -p main
+whatchanged --root main
+:noellipses whatchanged --root main
+whatchanged --root -p main
+whatchanged --patch-with-stat main
+whatchanged --root --patch-with-stat main
+whatchanged --root --patch-with-stat --summary main
+# improved by Timo's patch
+whatchanged --root -c --patch-with-stat --summary main
+# improved by Timo's patch
+whatchanged --root --cc --patch-with-stat --summary main
+whatchanged -SF main
+:noellipses whatchanged -SF main
+whatchanged -SF -p main
+
+log --patch-with-stat main -- dir/
+whatchanged --patch-with-stat main -- dir/
+log --patch-with-stat --summary main -- dir/
+whatchanged --patch-with-stat --summary main -- dir/
+
+show initial
+show --root initial
+show side
+show main
+show -c main
+show -m main
+show --first-parent main
+show --stat side
+show --stat --summary side
+show --patch-with-stat side
+show --patch-with-raw side
+:noellipses show --patch-with-raw side
+show --patch-with-stat --summary side
+
+format-patch --stdout initial..side
+format-patch --stdout initial..main^
+format-patch --stdout initial..main
+format-patch --stdout --no-numbered initial..main
+format-patch --stdout --numbered initial..main
+format-patch --attach --stdout initial..side
+format-patch --attach --stdout --suffix=.diff initial..side
+format-patch --attach --stdout initial..main^
+format-patch --attach --stdout initial..main
+format-patch --inline --stdout initial..side
+format-patch --inline --stdout initial..main^
+format-patch --inline --stdout --numbered-files initial..main
+format-patch --inline --stdout initial..main
+format-patch --inline --stdout --subject-prefix=TESTCASE initial..main
+config format.subjectprefix DIFFERENT_PREFIX
+format-patch --inline --stdout initial..main^^
+format-patch --stdout --cover-letter -n initial..main^
+
+diff --abbrev initial..side
+diff -U initial..side
+diff -U1 initial..side
+diff -r initial..side
+diff --stat initial..side
+diff -r --stat initial..side
+diff initial..side
+diff --patch-with-stat initial..side
+diff --patch-with-raw initial..side
+:noellipses diff --patch-with-raw initial..side
+diff --patch-with-stat -r initial..side
+diff --patch-with-raw -r initial..side
+:noellipses diff --patch-with-raw -r initial..side
+diff --name-status dir2 dir
+diff --no-index --name-status dir2 dir
+diff --no-index --name-status -- dir2 dir
+diff --no-index dir dir3
+diff main main^ side
+# Can't use spaces...
+diff --line-prefix=abc main main^ side
+diff --dirstat main~1 main~2
+diff --dirstat initial rearrange
+diff --dirstat-by-file initial rearrange
+diff --dirstat --cc main~1 main
+# No-index --abbrev and --no-abbrev
+diff --raw initial
+:noellipses diff --raw initial
+diff --raw --abbrev=4 initial
+:noellipses diff --raw --abbrev=4 initial
+diff --raw --no-abbrev initial
+diff --no-index --raw dir2 dir
+:noellipses diff --no-index --raw dir2 dir
+diff --no-index --raw --abbrev=4 dir2 dir
+:noellipses diff --no-index --raw --abbrev=4 dir2 dir
+diff --no-index --raw --no-abbrev dir2 dir
+
+diff-tree --pretty --root --stat --compact-summary initial
+diff-tree --pretty -R --root --stat --compact-summary initial
+diff-tree --pretty note
+diff-tree --pretty --notes note
+diff-tree --format=%N note
+diff-tree --stat --compact-summary initial mode
+diff-tree -R --stat --compact-summary initial mode
+EOF
+
+test_expect_success !WITH_BREAKING_CHANGES 'whatchanged needs --i-still-use-this' '
+	test_must_fail git whatchanged >message 2>&1 &&
+	test_grep "nominated for removal" message
 '
 
-test_expect_success 'diff-index reports removed file by default' '
-	cd repo &&
-	commit1=$(cat commit1) &&
+test_expect_success 'log -m matches pure log' '
+	git log main >result &&
+	process_diffs result >expected &&
+	git log -m >result &&
+	process_diffs result >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'log --diff-merges=on matches --diff-merges=separate' '
+	git log -p --diff-merges=separate main >result &&
+	process_diffs result >expected &&
+	git log -p --diff-merges=on main >result &&
+	process_diffs result >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'log --dd matches --diff-merges=1 -p' '
+	git log --diff-merges=1 -p main >result &&
+	process_diffs result >expected &&
+	git log --dd main >result &&
+	process_diffs result >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'deny wrong log.diffMerges config' '
+	test_config log.diffMerges wrong-value &&
+	test_expect_code 128 git log
+'
+
+test_expect_success 'git config log.diffMerges first-parent' '
+	git log -p --diff-merges=first-parent main >result &&
+	process_diffs result >expected &&
+	test_config log.diffMerges first-parent &&
+	git log -p --diff-merges=on main >result &&
+	process_diffs result >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'git config log.diffMerges first-parent vs -m' '
+	git log -p --diff-merges=first-parent main >result &&
+	process_diffs result >expected &&
+	test_config log.diffMerges first-parent &&
+	git log -p -m main >result &&
+	process_diffs result >actual &&
+	test_cmp expected actual
+'
+
+# -m in "git diff-index" means "match missing", that differs
+# from its meaning in "git diff". Let's check it in diff-index.
+# The line in the output for removed file should disappear when
+# we provide -m in diff-index.
+test_expect_success 'git diff-index -m' '
 	rm -f file1 &&
-	git diff-index "$commit1" >without_m &&
-	lines=$(wc -l <without_m) &&
-	test "$lines" -eq 1 &&
-	grep " D	file1$" without_m
+	git diff-index HEAD >without-m &&
+	lines_count=$(wc -l <without-m) &&
+	git diff-index -m HEAD >with-m &&
+	git restore file1 &&
+	test_line_count = $((lines_count - 1)) with-m
+'
+
+test_expect_success 'log -S requires an argument' '
+	test_must_fail git log -S
+'
+
+test_expect_success 'diff --cached on unborn branch' '
+	git symbolic-ref HEAD refs/heads/unborn &&
+	git diff --cached >result &&
+	process_diffs result >actual &&
+	process_diffs "$TEST_DIRECTORY/t4013/diff.diff_--cached" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'diff --cached -- file on unborn branch' '
+	git diff --cached -- file0 >result &&
+	process_diffs result >actual &&
+	process_diffs "$TEST_DIRECTORY/t4013/diff.diff_--cached_--_file0" >expected &&
+	test_cmp expected actual
+'
+test_expect_success 'diff --line-prefix with spaces' '
+	git diff --line-prefix="| | | " --cached -- file0 >result &&
+	process_diffs result >actual &&
+	process_diffs "$TEST_DIRECTORY/t4013/diff.diff_--line-prefix_--cached_--_file0" >expected &&
+	test_cmp expected actual
+'
+
+test_expect_success 'diff-tree --stdin with log formatting' '
+	cat >expect <<-\EOF &&
+	Side
+	Third
+	Second
+	EOF
+	git rev-list main | git diff-tree --stdin --format=%s -s >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'diff-tree --stdin with pathspec' '
+	cat >expect <<-EOF &&
+	Third
+
+	dir/sub
+	Second
+
+	dir/sub
+	EOF
+	git rev-list main^ |
+	git diff-tree -r --stdin --name-only --format=%s dir >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'show A B ... -- <pathspec>' '
+	# side touches dir/sub, file0, and file3
+	# main^ touches dir/sub, and file1
+	# main^^ touches dir/sub, file0, and file2
+	git show --name-only --format="<%s>" side main^ main^^ -- dir >actual &&
+	cat >expect <<-\EOF &&
+	<Side>
+
+	dir/sub
+	<Third>
+
+	dir/sub
+	<Second>
+
+	dir/sub
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'diff -I<regex>: setup' '
+	git checkout main &&
+	test_seq 50 >file0 &&
+	git commit -m "Set up -I<regex> test file" file0 &&
+	test_seq 50 | sed -e "s/13/ten and three/" -e "/7\$/d" >file0 &&
+	echo >>file0
+'
+test_expect_success 'diff -I<regex>' '
+	git diff --ignore-blank-lines -I"ten.*e" -I"^[124-9]" >actual &&
+	cat >expect <<-\EOF &&
+	diff --git a/file0 b/file0
+	--- a/file0
+	+++ b/file0
+	@@ -34,7 +31,6 @@
+	 34
+	 35
+	 36
+	-37
+	 38
+	 39
+	 40
+	EOF
+	compare_diff_patch expect actual
+'
+
+test_expect_success 'diff -I<regex> --stat' '
+	git diff --stat --ignore-blank-lines -I"ten.*e" -I"^[124-9]" >actual &&
+	cat >expect <<-\EOF &&
+	 file0 | 1 -
+	 1 file changed, 1 deletion(-)
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'diff -I<regex>: detect malformed regex' '
+	test_expect_code 129 git diff --ignore-matching-lines="^[124-9" 2>error &&
+	test_grep "invalid regex given to -I: " error
+'
+
+test_expect_success 'diff -I<regex>: ignore matching file' '
+	test_when_finished "git rm -f file1" &&
+	test_seq 50 >file1 &&
+	git add file1 &&
+	test_seq 50 | sed -e "s/13/ten and three/" -e "s/^[124-9].*/& /" >file1 &&
+
+	: >actual &&
+	git diff --raw --ignore-blank-lines -I"ten.*e" -I"^[124-9]" >>actual &&
+	git diff --name-only --ignore-blank-lines -I"ten.*e" -I"^[124-9]" >>actual &&
+	git diff --name-status --ignore-blank-lines -I"ten.*e" -I"^[124-9]" >>actual &&
+	test_grep ! "file1" actual
 '
 
-test_expect_success 'diff-index -m hides missing working-tree file' '
-	cd repo &&
-	commit1=$(cat commit1) &&
-	git diff-index -m "$commit1" >with_m &&
-	lines=$(wc -l <with_m) &&
-	test "$lines" -eq 0
-'
-
-test_expect_success '--cached mode ignores missing working-tree file' '
-	cd repo &&
-	commit1=$(cat commit1) &&
-	git diff-index --cached --exit-code "$commit1"
-'
-
-# ===========================================================================
-# Part 2: Multi-file diff-index tests
-# ===========================================================================
-
-test_expect_success 'setup multi-file repository' '
-	git init repo2 &&
-	cd repo2 &&
-	printf "1\n2\n3\n" >file0 &&
-	printf "A\nB\n" >dir_sub &&
-	git update-index --add file0 dir_sub &&
-	commit1=$(make_commit "Initial") &&
-	printf "%s\n" "$commit1" >commit1 &&
-	printf "1\n2\n3\n4\n5\n6\n" >file0 &&
-	git update-index file0 &&
-	commit2=$(make_commit "Second" "$commit1") &&
-	printf "%s\n" "$commit2" >commit2
-'
-
-test_expect_success 'diff-index worktree mode detects unstaged changes' '
-	cd repo2 &&
-	c2=$(cat commit2) &&
-	printf "modified\n" >file0 &&
-	git diff-index "$c2" >out &&
-	grep "M" out &&
-	grep "file0" out
-'
-
-test_expect_success 'diff-index --quiet returns 1 for differences' '
-	cd repo2 &&
-	c1=$(cat commit1) &&
-	test_must_fail git diff-index --quiet --cached "$c1"
-'
-
-test_expect_success 'diff-index --quiet returns 0 when identical' '
-	cd repo2 &&
-	c2=$(cat commit2) &&
-	git diff-index --quiet --cached "$c2"
-'
-
-test_expect_success 'diff-index raw output shows correct fields' '
-	cd repo2 &&
-	c1=$(cat commit1) &&
-	git diff-index --cached "$c1" >out &&
-	grep "^:" out &&
-	grep "file0" out
-'
-
-test_expect_success 'diff-index --exit-code returns 0 when same' '
-	cd repo2 &&
-	c2=$(cat commit2) &&
-	printf "1\n2\n3\n4\n5\n6\n" >file0 &&
-	git diff-index --exit-code "$c2"
-'
-
-test_expect_success 'diff-index --exit-code returns 1 when different' '
-	cd repo2 &&
-	c1=$(cat commit1) &&
-	test_must_fail git diff-index --exit-code --cached "$c1"
-'
-
-test_expect_success 'diff-index with multiple changed files' '
-	cd repo2 &&
-	c1=$(cat commit1) &&
-	git diff-index --cached "$c1" >out &&
-	lines=$(wc -l <out) &&
-	test "$lines" -ge 1
-'
-
-test_expect_success 'diff-index detects deletion of worktree file' '
-	cd repo2 &&
-	c2=$(cat commit2) &&
-	printf "1\n2\n3\n4\n5\n6\n" >file0 &&
-	git update-index file0 &&
-	rm -f dir_sub &&
-	git diff-index "$c2" >out &&
-	grep "D" out &&
-	grep "dir_sub" out
-'
-
-# ===========================================================================
-# Part 3: diff-index -m with multiple files (from t4013 patterns)
-# ===========================================================================
-
-test_expect_success 'setup repo with multiple tracked files for -m tests' '
-	git init repo_m &&
-	cd repo_m &&
-	printf "one\n" >file1 &&
-	printf "two\n" >file2 &&
-	printf "three\n" >file3 &&
-	git update-index --add file1 file2 file3 &&
-	commit1=$(make_commit "initial 3 files") &&
-	printf "%s\n" "$commit1" >commit1
-'
-
-test_expect_success 'diff-index -m: remove one of several files, only shows remaining diffs' '
-	cd repo_m &&
-	c1=$(cat commit1) &&
-	printf "modified\n" >file2 &&
-	rm -f file3 &&
-	git diff-index "$c1" >without_m &&
-	git diff-index -m "$c1" >with_m &&
-	# without -m should show both file2 (modified worktree) and file3 (deleted)
-	grep "file2" without_m &&
-	grep "file3" without_m &&
-	# with -m should hide file3 (missing worktree) but still show file2
-	grep "file2" with_m &&
-	! grep "file3" with_m
-'
-
-test_expect_success 'diff-index -m: remove all files, output is empty' '
-	cd repo_m &&
-	c1=$(cat commit1) &&
-	rm -f file1 file2 file3 &&
-	git diff-index -m "$c1" >with_m &&
-	test_must_be_empty with_m
-'
-
-test_expect_success 'diff-index: all files missing shows D for each' '
-	cd repo_m &&
-	c1=$(cat commit1) &&
-	rm -f file1 file2 file3 &&
-	git diff-index "$c1" >out &&
-	test_line_count = 3 out &&
-	grep "file1" out &&
-	grep "file2" out &&
-	grep "file3" out
-'
-
-# ===========================================================================
-# Part 4: diff-index raw output field validation
-# ===========================================================================
-
-test_expect_success 'setup clean repo for raw field validation' '
-	git init repo_raw &&
-	cd repo_raw &&
-	printf "content\n" >tracked.txt &&
-	git update-index --add tracked.txt &&
-	commit1=$(make_commit "initial") &&
-	printf "%s\n" "$commit1" >commit1 &&
-	printf "modified content\n" >tracked.txt &&
-	git update-index tracked.txt &&
-	commit2=$(make_commit "modify" "$commit1") &&
-	printf "%s\n" "$commit2" >commit2
-'
-
-test_expect_success 'diff-index raw output has colon-prefixed lines' '
-	cd repo_raw &&
-	c1=$(cat commit1) &&
-	git diff-index --cached "$c1" >out &&
-	grep "^:" out
-'
-
-test_expect_success 'diff-index raw output has 6-digit mode fields' '
-	cd repo_raw &&
-	c1=$(cat commit1) &&
-	git diff-index --cached "$c1" >out &&
-	grep "^:[0-9]\{6\} [0-9]\{6\} " out
-'
-
-test_expect_success 'diff-index raw output OIDs are 40 hex chars' '
-	cd repo_raw &&
-	c1=$(cat commit1) &&
-	git diff-index --cached "$c1" >out &&
-	awk "{print \$3; print \$4}" out >oids &&
-	grep -E "^[0-9a-f]{40}$" oids
-'
-
-test_expect_success 'diff-index raw output status letter matches expected' '
-	cd repo_raw &&
-	c1=$(cat commit1) &&
-	git diff-index --cached "$c1" >out &&
-	grep "M	tracked.txt" out
-'
-
-# ===========================================================================
-# Part 5: diff-tree with various formatting (from t4013 patterns)
-# ===========================================================================
-
-test_expect_success 'setup repo for diff-tree formatting tests' '
-	git init repo_dt &&
-	cd repo_dt &&
-	printf "1\n2\n3\n" >file0 &&
-	printf "A\nB\n" >dir_sub &&
-	git update-index --add file0 dir_sub &&
-	commit1=$(make_commit "Initial") &&
-	printf "%s\n" "$commit1" >commit1 &&
-	printf "1\n2\n3\n4\n5\n6\n" >file0 &&
-	printf "A\nB\nC\nD\n" >dir_sub &&
-	git update-index file0 dir_sub &&
-	commit2=$(make_commit "Second" "$commit1") &&
-	printf "%s\n" "$commit2" >commit2 &&
-	printf "A\nB\nC\n" >file1 &&
-	git update-index --add file1 &&
-	commit3=$(make_commit "Third" "$commit2") &&
-	printf "%s\n" "$commit3" >commit3
-'
-
-test_expect_success 'diff-tree single commit shows raw diff' '
-	cd repo_dt &&
-	c2=$(cat commit2) &&
-	git diff-tree "$c2" >out &&
-	grep "^:" out
-'
-
-test_expect_success 'diff-tree -r single commit lists all changed files' '
-	cd repo_dt &&
-	c2=$(cat commit2) &&
-	git diff-tree -r "$c2" >out &&
-	grep "file0" out &&
-	grep "dir_sub" out
-'
-
-test_expect_success 'diff-tree --name-only shows only filenames' '
-	cd repo_dt &&
-	c2=$(cat commit2) &&
-	git diff-tree -r --name-only "$c2" >out &&
-	grep "^file0$" out &&
-	grep "^dir_sub$" out &&
-	! grep "^:" out
-'
-
-test_expect_success 'diff-tree --name-status shows letter and filename' '
-	cd repo_dt &&
-	c2=$(cat commit2) &&
-	git diff-tree -r --name-status "$c2" >out &&
-	grep "^M	file0" out &&
-	grep "^M	dir_sub" out
-'
-
-test_expect_success 'diff-tree --stat shows diffstat summary' '
-	cd repo_dt &&
-	c2=$(cat commit2) &&
-	git diff-tree -r --stat "$c2" >out &&
-	grep "file0" out &&
-	grep "dir_sub" out &&
-	grep "changed" out
-'
-
-test_expect_success 'diff-tree -p produces unified diff' '
-	cd repo_dt &&
-	c2=$(cat commit2) &&
-	git diff-tree -r -p "$c2" >out &&
-	grep "^diff --git" out &&
-	grep "^---" out &&
-	grep "^+++" out &&
-	grep "^@@" out
-'
-
-test_expect_success 'diff-tree root commit without --root is empty' '
-	cd repo_dt &&
-	c1=$(cat commit1) &&
-	git diff-tree "$c1" >out &&
-	test_must_be_empty out
-'
-
-test_expect_success 'diff-tree root commit with --root shows adds' '
-	cd repo_dt &&
-	c1=$(cat commit1) &&
-	git diff-tree -r --root "$c1" >out &&
-	grep "A	file0" out &&
-	grep "A	dir_sub" out
-'
-
-test_expect_success 'diff-tree --root -p on root commit shows patches' '
-	cd repo_dt &&
-	c1=$(cat commit1) &&
-	git diff-tree -r --root -p "$c1" >out &&
-	grep "^new file mode 100644" out &&
-	grep "^diff --git a/file0 b/file0" out
-'
-
-test_expect_success 'diff-tree two commits directly' '
-	cd repo_dt &&
-	c1=$(cat commit1) &&
-	c3=$(cat commit3) &&
-	git diff-tree -r "$c1" "$c3" >out &&
-	grep "file0" out &&
-	grep "dir_sub" out &&
-	grep "file1" out
-'
-
-test_expect_success 'diff-tree two same commits produces no output' '
-	cd repo_dt &&
-	c2=$(cat commit2) &&
-	git diff-tree "$c2" "$c2" >out &&
-	test_must_be_empty out
-'
-
-# ===========================================================================
-# Part 6: diff-tree --stdin patterns (from t4013)
-# ===========================================================================
-
-test_expect_success 'diff-tree --stdin with log formatting: commit header' '
-	cd repo_dt &&
-	c2=$(cat commit2) &&
-	printf "%s\n" "$c2" | git diff-tree --stdin >out &&
-	head -1 out | grep "^[0-9a-f]\{40\}$"
-'
-
-test_expect_success 'diff-tree --stdin --no-commit-id suppresses header' '
-	cd repo_dt &&
-	c2=$(cat commit2) &&
-	printf "%s\n" "$c2" | git diff-tree --stdin --no-commit-id >out &&
-	! head -1 out | grep "^[0-9a-f]\{40\}$" &&
-	grep "^:" out
-'
-
-test_expect_success 'diff-tree --stdin -v shows commit message' '
-	cd repo_dt &&
-	c2=$(cat commit2) &&
-	printf "%s\n" "$c2" | git diff-tree --stdin -v >out &&
-	grep "Second" out
-'
-
-test_expect_success 'diff-tree --stdin -s suppresses diff output' '
-	cd repo_dt &&
-	c2=$(cat commit2) &&
-	printf "%s\n" "$c2" | git diff-tree --stdin -s >out &&
-	head -1 out | grep "^[0-9a-f]\{40\}$" &&
-	! grep "^:" out
-'
-
-test_expect_success 'diff-tree --stdin with two tree OIDs' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	t1=$(git cat-file -p "$c1" | grep "^tree" | awk "{print \$2}") &&
-	t2=$(git cat-file -p "$c2" | grep "^tree" | awk "{print \$2}") &&
-	printf "%s %s\n" "$t1" "$t2" | git diff-tree --stdin >out &&
-	grep "file0" out
-'
-
-test_expect_success 'diff-tree --stdin processes multiple commits' '
-	cd repo_dt &&
-	c2=$(cat commit2) && c3=$(cat commit3) &&
-	printf "%s\n%s\n" "$c2" "$c3" | git diff-tree --stdin >out &&
-	grep "file0" out &&
-	grep "file1" out
-'
-
-test_expect_success 'diff-tree --stdin with pathspec limits output' '
-	cd repo_dt &&
-	c3=$(cat commit3) &&
-	printf "%s\n" "$c3" | git diff-tree -r --stdin --name-only "$c3" -- file1 >out &&
-	grep "file1" out
-'
-
-# ===========================================================================
-# Part 7: diff --cached patterns (from t4013)
-# ===========================================================================
-
-test_expect_success 'setup repo for diff --cached tests' '
-	git init repo_cached &&
-	cd repo_cached &&
-	printf "initial\n" >file.txt &&
-	git update-index --add file.txt &&
-	commit1=$(make_commit "first") &&
-	printf "%s\n" "$commit1" >commit1
-'
-
-test_expect_success 'diff --cached with no changes is empty' '
-	cd repo_cached &&
-	git diff --cached >out &&
-	test_must_be_empty out
-'
-
-test_expect_success 'diff --cached shows staged additions' '
-	cd repo_cached &&
-	printf "new content\n" >newfile.txt &&
-	git update-index --add newfile.txt &&
-	git diff --cached --name-only >out &&
-	grep "newfile.txt" out
-'
-
-test_expect_success 'diff --cached --stat shows diffstat' '
-	cd repo_cached &&
-	git diff --cached --stat >out &&
-	grep "newfile.txt" out &&
-	grep "changed" out
-'
-
-test_expect_success 'diff --cached --name-status shows A for new file' '
-	cd repo_cached &&
-	git diff --cached --name-status >out &&
-	grep "^A	newfile.txt" out
-'
-
-test_expect_success 'diff --cached --exit-code returns 1 for staged changes' '
-	cd repo_cached &&
-	test_must_fail git diff --cached --exit-code
-'
-
-test_expect_success 'diff --cached --quiet returns 1 for staged changes' '
-	cd repo_cached &&
-	test_must_fail git diff --cached --quiet
-'
-
-test_expect_success 'diff --cached --exit-code returns 0 when index matches HEAD' '
-	cd repo_cached &&
-	c1=$(cat commit1) &&
-	git read-tree "$c1" &&
-	git diff --cached --exit-code
-'
+test_expect_success 'diff -I<regex>: ignore all content changes' '
+	test_when_finished "git rm -f file1 file2 file3" &&
+	: >file1 &&
+	git add file1 &&
+	: >file2 &&
+	git add file2 &&
+	: >file3 &&
+	git add file3 &&
 
-# ===========================================================================
-# Part 8: diff --stat/--numstat/--name-only/--name-status between commits
-# ===========================================================================
-
-test_expect_success 'diff --stat between commits' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff --stat "$c1" "$c2" >actual &&
-	test_line_count -gt 0 actual
-'
-
-test_expect_success 'diff --numstat between commits' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff --numstat "$c1" "$c2" >actual &&
-	test_line_count -gt 0 actual
-'
-
-test_expect_success 'diff --name-only between commits' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff --name-only "$c1" "$c2" >actual &&
-	test_line_count -gt 0 actual
-'
-
-test_expect_success 'diff --name-status between commits' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff --name-status "$c1" "$c2" >actual &&
-	test_line_count -gt 0 actual
-'
-
-test_expect_success 'diff --stat between commits shows file names' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff --stat "$c1" "$c2" >actual &&
-	grep "file0" actual &&
-	grep "dir_sub" actual
-'
-
-test_expect_success 'diff --numstat between commits shows numeric counts' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff --numstat "$c1" "$c2" >actual &&
-	grep "file0" actual &&
-	grep "^[0-9]" actual
-'
-
-test_expect_success 'diff --name-only between commits lists file names only' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff --name-only "$c1" "$c2" >actual &&
-	grep "^file0$" actual &&
-	grep "^dir_sub$" actual
-'
-
-test_expect_success 'diff --name-status between commits shows M status' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff --name-status "$c1" "$c2" >actual &&
-	grep "^M" actual
-'
-
-test_expect_success 'diff --stat summary line shows changed count' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff --stat "$c1" "$c2" >actual &&
-	grep "changed" actual
-'
-
-test_expect_success 'diff --exit-code between different commits returns 1' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	test_must_fail git diff --exit-code "$c1" "$c2"
-'
-
-# ===========================================================================
-# Part 9: diff unified output validation
-# ===========================================================================
-
-test_expect_success 'diff unified output between commits has diff header' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff "$c1" "$c2" >actual &&
-	grep "^diff --git" actual
-'
-
-test_expect_success 'diff unified output between commits has --- and +++' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff "$c1" "$c2" >actual &&
-	grep "^---" actual &&
-	grep "^+++" actual
-'
-
-test_expect_success 'diff unified output between commits has hunk header' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff "$c1" "$c2" >actual &&
-	grep "^@@" actual
-'
-
-test_expect_success 'diff --quiet between different commits returns 1' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	test_must_fail git diff --quiet "$c1" "$c2"
-'
-
-test_expect_success 'diff --quiet between same commits returns 0' '
-	cd repo_dt &&
-	c1=$(cat commit1) &&
-	git diff --quiet "$c1" "$c1"
-'
-
-# ===========================================================================
-# Part 10: diff -U context control between commits
-# ===========================================================================
-
-test_expect_success 'diff -U0 between commits shows no context lines' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff -U0 "$c1" "$c2" >actual &&
-	grep "^@@" actual &&
-	grep "^+" actual
-'
-
-test_expect_success 'diff -U1 between commits reduces context' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c2=$(cat commit2) &&
-	git diff -U1 "$c1" "$c2" >actual &&
-	grep "^@@" actual
-'
-
-# ===========================================================================
-# Part 11: diff with three commits (c1->c2->c3)
-# ===========================================================================
-
-test_expect_success 'diff --name-only across two commits shows all changed files' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c3=$(cat commit3) &&
-	git diff --name-only "$c1" "$c3" >actual &&
-	grep "file0" actual &&
-	grep "dir_sub" actual &&
-	grep "file1" actual
-'
-
-test_expect_success 'diff --name-status across two commits shows status' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c3=$(cat commit3) &&
-	git diff --name-status "$c1" "$c3" >actual &&
-	test_line_count -ge 3 actual
-'
-
-test_expect_success 'diff --stat across two commits shows summary' '
-	cd repo_dt &&
-	c1=$(cat commit1) && c3=$(cat commit3) &&
-	git diff --stat "$c1" "$c3" >actual &&
-	grep "file0" actual &&
-	grep "file1" actual
-'
-
-# ===========================================================================
-# Part 12: diff --cached with modifications
-# ===========================================================================
-
-test_expect_success 'setup repo for diff --cached modification tests' '
-	git init repo_cached2 &&
-	cd repo_cached2 &&
-	printf "original\n" >file.txt &&
-	git update-index --add file.txt &&
-	commit1=$(make_commit "first") &&
-	printf "%s\n" "$commit1" >commit1 &&
-	printf "modified\n" >file.txt &&
-	git update-index file.txt
-'
-
-test_expect_success 'diff --cached --name-only shows modified file' '
-	cd repo_cached2 &&
-	git diff --cached --name-only >out &&
-	grep "file.txt" out
-'
-
-test_expect_success 'diff --cached --name-status shows M for modified file' '
-	cd repo_cached2 &&
-	git diff --cached --name-status >out &&
-	grep "^M" out &&
-	grep "file.txt" out
-'
-
-test_expect_success 'diff --cached --stat shows modified file in summary' '
-	cd repo_cached2 &&
-	git diff --cached --stat >out &&
-	grep "file.txt" out &&
-	grep "changed" out
-'
-
-test_expect_success 'diff --cached --numstat shows counts for modified file' '
-	cd repo_cached2 &&
-	git diff --cached --numstat >out &&
-	grep "file.txt" out &&
-	grep "^[0-9]" out
-'
-
-# ===========================================================================
-# Part 13: diff worktree (unstaged) tests
-# ===========================================================================
-
-test_expect_success 'setup repo for unstaged diff tests' '
-	git init repo_unstaged &&
-	cd repo_unstaged &&
-	printf "line1\nline2\nline3\n" >data.txt &&
-	git update-index --add data.txt &&
-	c1=$(make_commit "base") &&
-	printf "%s\n" "$c1" >commit1 &&
-	printf "line1\nMODIFIED\nline3\n" >data.txt
-'
-
-test_expect_success 'diff (unstaged) shows changes' '
-	cd repo_unstaged &&
-	git diff >out &&
-	grep "^diff --git" out
-'
-
-test_expect_success 'diff --name-only (unstaged) shows modified file' '
-	cd repo_unstaged &&
-	git diff --name-only >out &&
-	grep "^data.txt$" out
-'
-
-test_expect_success 'diff --name-status (unstaged) shows M' '
-	cd repo_unstaged &&
-	git diff --name-status >out &&
-	grep "^M" out
-'
-
-test_expect_success 'diff --stat (unstaged) shows diffstat' '
-	cd repo_unstaged &&
-	git diff --stat >out &&
-	grep "data.txt" out &&
-	grep "changed" out
-'
-
-test_expect_success 'diff --numstat (unstaged) shows numeric counts' '
-	cd repo_unstaged &&
-	git diff --numstat >out &&
-	grep "data.txt" out &&
-	grep "^[0-9]" out
-'
-
-test_expect_success 'diff --exit-code (unstaged) returns 1 for changes' '
-	cd repo_unstaged &&
-	test_must_fail git diff --exit-code
-'
-
-test_expect_success 'diff --quiet (unstaged) returns 1 for changes' '
-	cd repo_unstaged &&
-	test_must_fail git diff --quiet
-'
-
-test_expect_success 'diff --quiet (unstaged) suppresses output' '
-	cd repo_unstaged &&
-	git diff --quiet >out 2>&1 || true &&
-	test_must_be_empty out
-'
-
-test_expect_success 'diff -U0 (unstaged) shows zero context' '
-	cd repo_unstaged &&
-	git diff -U0 >out &&
-	grep "^@@" out
-'
+	rm -f file1 file2 &&
+	mkdir file2 &&
+	echo "A" >file3 &&
+	A_hash=$(git hash-object -w file3) &&
+	echo "B" >file3 &&
+	B_hash=$(git hash-object -w file3) &&
+	cat <<-EOF | git update-index --index-info &&
+	100644 $A_hash 1	file3
+	100644 $B_hash 2	file3
+	EOF
 
-test_expect_success 'diff (unstaged) unified output shows removed line with -' '
-	cd repo_unstaged &&
-	git diff >out &&
-	grep "^-line2" out
-'
-
-# ===========================================================================
-# Part 14: diff with pathspec filtering (commit-to-commit)
-# ===========================================================================
-
-test_expect_success 'setup pathspec repo for diff' '
-	git init repo_pathspec &&
-	cd repo_pathspec &&
-	mkdir sub &&
-	printf "root content\n" >root.txt &&
-	printf "nested content\n" >sub/nested.txt &&
-	git update-index --add root.txt sub/nested.txt &&
-	c1=$(make_commit "initial") &&
-	printf "%s\n" "$c1" >../ps_c1 &&
-	printf "root modified\n" >root.txt &&
-	printf "nested modified\n" >sub/nested.txt &&
-	git update-index root.txt sub/nested.txt &&
-	c2=$(make_commit "modify both" "$c1") &&
-	printf "%s\n" "$c2" >../ps_c2
-'
-
-test_expect_success 'diff with pathspec -- sub shows only sub/' '
-	cd repo_pathspec &&
-	c1=$(cat ../ps_c1) && c2=$(cat ../ps_c2) &&
-	git diff --name-only "$c1" "$c2" -- sub >out &&
-	grep "sub/nested.txt" out &&
-	! grep "root.txt" out
-'
-
-test_expect_success 'diff with pathspec -- root.txt shows only root.txt' '
-	cd repo_pathspec &&
-	c1=$(cat ../ps_c1) && c2=$(cat ../ps_c2) &&
-	git diff --name-only "$c1" "$c2" -- root.txt >out &&
-	grep "root.txt" out &&
-	! grep "nested" out
-'
-
-test_expect_success 'diff with non-matching pathspec is empty' '
-	cd repo_pathspec &&
-	c1=$(cat ../ps_c1) && c2=$(cat ../ps_c2) &&
-	git diff --name-only "$c1" "$c2" -- nonexistent >out &&
-	test_must_be_empty out
-'
-
-test_expect_success 'diff --exit-code with non-matching pathspec returns 0' '
-	cd repo_pathspec &&
-	c1=$(cat ../ps_c1) && c2=$(cat ../ps_c2) &&
-	git diff --exit-code "$c1" "$c2" -- nonexistent
-'
-
-test_expect_success 'diff --stat with pathspec shows only matching file' '
-	cd repo_pathspec &&
-	c1=$(cat ../ps_c1) && c2=$(cat ../ps_c2) &&
-	git diff --stat "$c1" "$c2" -- root.txt >out &&
-	grep "root.txt" out &&
-	! grep "nested" out
-'
-
-# ===========================================================================
-# Part 15: diff with binary files
-# ===========================================================================
-
-test_expect_success 'setup repo with binary file' '
-	git init repo_binary &&
-	cd repo_binary &&
-	printf "text content\n" >text.txt &&
-	git update-index --add text.txt &&
-	c1=$(make_commit "initial text") &&
-	printf "%s\n" "$c1" >../bin_c1 &&
-	printf "\000\001\002\003" >binary.dat &&
-	git update-index --add binary.dat &&
-	c2=$(make_commit "add binary" "$c1") &&
-	printf "%s\n" "$c2" >../bin_c2
-'
-
-test_expect_success 'diff --name-only shows binary file' '
-	cd repo_binary &&
-	c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
-	git diff --name-only "$c1" "$c2" >out &&
-	grep "binary.dat" out
-'
-
-test_expect_success 'diff --name-status shows A for new binary file' '
-	cd repo_binary &&
-	c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
-	git diff --name-status "$c1" "$c2" >out &&
-	grep "A" out &&
-	grep "binary.dat" out
-'
-
-test_expect_success 'diff --stat shows binary file in stats' '
-	cd repo_binary &&
-	c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
-	git diff --stat "$c1" "$c2" >out &&
-	grep "binary.dat" out
-'
+	test_diff_no_content_changes () {
+		git diff $1 --ignore-blank-lines -I".*" >actual &&
+		test_line_count = 3 actual &&
+		test_grep "file1" actual &&
+		test_grep "file2" actual &&
+		test_grep "file3" actual &&
+		test_grep ! "diff --git" actual
+	} &&
+	test_diff_no_content_changes "--raw" &&
+	test_diff_no_content_changes "--name-only" &&
+	test_diff_no_content_changes "--name-status" &&
 
-test_expect_success 'diff shows new file mode for binary' '
-	cd repo_binary &&
-	c1=$(cat ../bin_c1) && c2=$(cat ../bin_c2) &&
-	git diff "$c1" "$c2" >out &&
-	grep "new file mode" out
+	: >actual &&
+	test_must_fail git diff --quiet -I".*" >actual &&
+	test_must_be_empty actual
 '
 
-# ===========================================================================
-# Part 16: diff with executable file permissions
-# ===========================================================================
-
-test_expect_success 'setup repo with executable file' '
-	git init repo_exec &&
-	cd repo_exec &&
-	printf "normal\n" >script.sh &&
-	git update-index --add script.sh &&
-	c1=$(make_commit "normal file") &&
-	printf "%s\n" "$c1" >../exec_c1 &&
-	chmod +x script.sh &&
-	printf "executable\n" >run.sh &&
-	chmod +x run.sh &&
-	git update-index --add run.sh &&
-	c2=$(make_commit "add executable" "$c1") &&
-	printf "%s\n" "$c2" >../exec_c2
-'
-
-test_expect_success 'diff shows executable mode 100755 for new file' '
-	cd repo_exec &&
-	c1=$(cat ../exec_c1) && c2=$(cat ../exec_c2) &&
-	git diff "$c1" "$c2" >out &&
-	grep "new file mode 100755" out
-'
+# check_prefix <patch> <src> <dst>
+# check only lines with paths to avoid dependency on exact oid/contents
+check_prefix () {
+	grep -E '^(diff|---|\+\+\+) ' "$1" >actual.paths &&
+	cat >expect <<-EOF &&
+	diff --git $2 $3
+	--- $2
+	+++ $3
+	EOF
+	test_cmp expect actual.paths
+}
 
-test_expect_success 'diff-tree shows 100755 mode for executable' '
-	cd repo_exec &&
-	c1=$(cat ../exec_c1) && c2=$(cat ../exec_c2) &&
-	git diff-tree -r "$c1" "$c2" >out &&
-	grep "100755" out &&
-	grep "run.sh" out
+test_expect_success 'diff-files does not respect diff.noPrefix' '
+	git -c diff.noPrefix diff-files -p >actual &&
+	check_prefix actual a/file0 b/file0
 '
 
-test_expect_success 'diff --name-status shows A for executable file' '
-	cd repo_exec &&
-	c1=$(cat ../exec_c1) && c2=$(cat ../exec_c2) &&
-	git diff --name-status "$c1" "$c2" >out &&
-	grep "A" out &&
-	grep "run.sh" out
+test_expect_success 'diff-files respects --no-prefix' '
+	git diff-files -p --no-prefix >actual &&
+	check_prefix actual file0 file0
 '
 
-# ===========================================================================
-# Part 17: diff between arbitrary commits (not parent-child)
-# ===========================================================================
-
-test_expect_success 'setup repo with branching history' '
-	git init repo_arb &&
-	cd repo_arb &&
-	printf "base\n" >file.txt &&
-	git update-index --add file.txt &&
-	c1=$(make_commit "base") &&
-	printf "%s\n" "$c1" >../arb_c1 &&
-	printf "version A\n" >file.txt &&
-	git update-index file.txt &&
-	c2=$(make_commit "branch A" "$c1") &&
-	printf "%s\n" "$c2" >../arb_c2 &&
-	printf "version B\n" >file.txt &&
-	git update-index file.txt &&
-	c3=$(make_commit "branch B" "$c1") &&
-	printf "%s\n" "$c3" >../arb_c3
+test_expect_success 'diff respects diff.noPrefix' '
+	git -c diff.noPrefix diff >actual &&
+	check_prefix actual file0 file0
 '
 
-test_expect_success 'diff between non-parent-child commits works' '
-	cd repo_arb &&
-	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
-	git diff "$c2" "$c3" >out &&
-	grep "^diff --git" out &&
-	grep "^-version A" out &&
-	grep "^+version B" out
+test_expect_success 'diff --default-prefix overrides diff.noPrefix' '
+	git -c diff.noPrefix diff --default-prefix >actual &&
+	check_prefix actual a/file0 b/file0
 '
 
-test_expect_success 'diff --name-only between arbitrary commits' '
-	cd repo_arb &&
-	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
-	git diff --name-only "$c2" "$c3" >out &&
-	grep "file.txt" out
+test_expect_success 'diff respects diff.mnemonicPrefix' '
+	git -c diff.mnemonicPrefix diff >actual &&
+	check_prefix actual i/file0 w/file0
 '
 
-test_expect_success 'diff --stat between arbitrary commits' '
-	cd repo_arb &&
-	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
-	git diff --stat "$c2" "$c3" >out &&
-	grep "file.txt" out &&
-	grep "changed" out
+test_expect_success 'diff --default-prefix overrides diff.mnemonicPrefix' '
+	git -c diff.mnemonicPrefix diff --default-prefix >actual &&
+	check_prefix actual a/file0 b/file0
 '
 
-test_expect_success 'diff --numstat between arbitrary commits' '
-	cd repo_arb &&
-	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
-	git diff --numstat "$c2" "$c3" >out &&
-	grep "file.txt" out
+test_expect_success 'diff respects diff.srcPrefix' '
+	git -c diff.srcPrefix=x/ diff >actual &&
+	check_prefix actual x/file0 b/file0
 '
 
-test_expect_success 'diff --exit-code between arbitrary commits returns 1' '
-	cd repo_arb &&
-	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
-	test_must_fail git diff --exit-code "$c2" "$c3"
+test_expect_success 'diff respects diff.dstPrefix' '
+	git -c diff.dstPrefix=y/ diff >actual &&
+	check_prefix actual a/file0 y/file0
 '
 
-test_expect_success 'diff --quiet between arbitrary commits returns 1' '
-	cd repo_arb &&
-	c2=$(cat ../arb_c2) && c3=$(cat ../arb_c3) &&
-	test_must_fail git diff --quiet "$c2" "$c3"
+test_expect_success 'diff --src-prefix overrides diff.srcPrefix' '
+	git -c diff.srcPrefix=y/ diff --src-prefix=z/ >actual &&
+	check_prefix actual z/file0 b/file0
 '
 
-# ===========================================================================
-# Part 18: diff with deleted files between commits
-# ===========================================================================
-
-test_expect_success 'setup repo with file deletion' '
-	git init repo_del &&
-	cd repo_del &&
-	printf "to be deleted\n" >doomed.txt &&
-	printf "survivor\n" >kept.txt &&
-	git update-index --add doomed.txt kept.txt &&
-	c1=$(make_commit "two files") &&
-	printf "%s\n" "$c1" >../del_c1 &&
-	rm -f doomed.txt &&
-	git update-index --remove doomed.txt &&
-	c2=$(make_commit "delete one" "$c1") &&
-	printf "%s\n" "$c2" >../del_c2
+test_expect_success 'diff --dst-prefix overrides diff.dstPrefix' '
+	git -c diff.dstPrefix=y/ diff --dst-prefix=z/ >actual &&
+	check_prefix actual a/file0 z/file0
 '
 
-test_expect_success 'diff shows deleted file mode header' '
-	cd repo_del &&
-	c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
-	git diff "$c1" "$c2" >out &&
-	grep "^deleted file mode" out
+test_expect_success 'diff.{src,dst}Prefix ignored with diff.noPrefix' '
+	git -c diff.dstPrefix=y/ -c diff.srcPrefix=x/ -c diff.noPrefix diff >actual &&
+	check_prefix actual file0 file0
 '
 
-test_expect_success 'diff --name-status shows D for deleted file' '
-	cd repo_del &&
-	c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
-	git diff --name-status "$c1" "$c2" >out &&
-	grep "D" out &&
-	grep "doomed.txt" out
+test_expect_success 'diff.{src,dst}Prefix ignored with diff.mnemonicPrefix' '
+	git -c diff.dstPrefix=x/ -c diff.srcPrefix=y/ -c diff.mnemonicPrefix diff >actual &&
+	check_prefix actual i/file0 w/file0
 '
 
-test_expect_success 'diff pathspec on deleted file shows it' '
-	cd repo_del &&
-	c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
-	git diff --name-only "$c1" "$c2" -- doomed.txt >out &&
-	grep "doomed.txt" out
+test_expect_success 'diff.{src,dst}Prefix ignored with --default-prefix' '
+	git -c diff.dstPrefix=x/ -c diff.srcPrefix=y/ diff --default-prefix >actual &&
+	check_prefix actual a/file0 b/file0
 '
 
-test_expect_success 'diff pathspec on kept file shows nothing' '
-	cd repo_del &&
-	c1=$(cat ../del_c1) && c2=$(cat ../del_c2) &&
-	git diff --name-only "$c1" "$c2" -- kept.txt >out &&
-	test_must_be_empty out
+test_expect_success 'diff --no-renames cannot be abbreviated' '
+	test_expect_code 129 git diff --no-rename >actual 2>error &&
+	test_must_be_empty actual &&
+	grep "invalid option: --no-rename" error
 '
 
 test_done

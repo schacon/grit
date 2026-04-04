@@ -1,19 +1,17 @@
 #!/bin/sh
+#
+# Copyright (c) 2010 Ævar Arnfjörð Bjarmason
+#
 
-test_description='Gettext Perl interface (not applicable to grit)'
+test_description='Perl gettext interface (Git::I18N)'
 
-. ./test-lib.sh
+. ./lib-gettext.sh
+. "$TEST_DIRECTORY"/lib-perl.sh
+skip_all_if_no_Test_More
 
-# Grit does not use Perl for gettext. Verify basic i18n plumbing
-# by checking that grit produces expected English output.
-
-test_expect_success 'setup' '
-	git init
-'
-
-test_expect_success 'grit produces English messages without Perl gettext' '
-	git status >out 2>&1 &&
-	grep -i -e "branch" -e "nothing" -e "commit" out
+test_expect_success 'run t0202/test.pl to test Git::I18N.pm' '
+	"$PERL_PATH" "$TEST_DIRECTORY"/t0202/test.pl 2>stderr &&
+	test_must_be_empty stderr
 '
 
 test_done

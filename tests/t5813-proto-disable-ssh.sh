@@ -1,23 +1,44 @@
 #!/bin/sh
-# Ported from git/t/t5813-proto-disable-ssh.sh
-# Tests for protocol.ssh.allow configuration
 
-test_description='protocol disabling for ssh:// transport'
+test_description='test disabling of git-over-ssh in clone/fetch'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY/lib-proto-disable.sh"
 
-test_expect_success 'clone denied with protocol.ssh.allow=never (ssh:// URL)' '
-	test_must_fail git -c protocol.ssh.allow=never clone ssh://localhost/repo clone-denied-ssh 2>err &&
-	grep -i "not allowed" err
+setup_ssh_wrapper
+
+test_expect_success 'setup repository to clone' '
+	test_commit one &&
+	mkdir remote &&
+	git init --bare remote/repo.git &&
+	git push remote/repo.git HEAD
 '
 
-test_expect_success 'clone denied with protocol.ssh.allow=never (host:path URL)' '
-	test_must_fail git -c protocol.ssh.allow=never clone localhost:/repo clone-denied-scp 2>err &&
-	grep -i "not allowed" err
+test_proto "host:path" ssh "remote:repo.git"
+test_proto "ssh://" ssh "ssh://remote$PWD/remote/repo.git"
+test_proto "git+ssh://" ssh "git+ssh://remote$PWD/remote/repo.git"
+
+# Don't even bother setting up a "-remote" directory, as ssh would generally
+# complain about the bogus option rather than completing our request. Our
+# fake wrapper actually _can_ handle this case, but it's more robust to
+# simply confirm from its output that it did not run at all.
+test_expect_success 'hostnames starting with dash are rejected' '
+	test_must_fail git clone ssh://-remote/repo.git dash-host 2>stderr &&
+	! grep ^ssh: stderr
+'
+
+test_expect_success 'setup repo with dash' '
+	git init --bare remote/-repo.git &&
+	git push remote/-repo.git HEAD
+'
+
+test_expect_success 'repo names starting with dash are rejected' '
+	test_must_fail git clone remote:-repo.git dash-path 2>stderr &&
+	! grep ^ssh: stderr
+'
+
+test_expect_success 'full paths still work' '
+	git clone "remote:$PWD/remote/-repo.git" dash-path
 '
 
 test_done

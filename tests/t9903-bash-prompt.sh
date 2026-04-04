@@ -1,9 +1,6 @@
 #!/bin/sh
 #
-# Upstream: t9903-bash-prompt.sh
-# Ported from git/t/t9903-bash-prompt.sh — tests __git_ps1 from git-prompt.sh.
-# All tests are expected failures until grit supports the flags git-prompt.sh
-# needs (--no-ext-diff, --no-empty-directory, --abbrev, config -z --get-regexp, etc.).
+# Copyright (c) 2012 SZEDER Gábor
 #
 
 test_description='test git-specific bash prompt functions'
@@ -11,10 +8,9 @@ test_description='test git-specific bash prompt functions'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./lib-bash.sh
 
-. "$TEST_DIRECTORY/git-prompt.sh"
+. "$GIT_BUILD_DIR/contrib/completion/git-prompt.sh"
 
 actual="$TRASH_DIRECTORY/actual"
 c_red='\001\e[31m\002'
@@ -22,16 +18,7 @@ c_green='\001\e[32m\002'
 c_lblue='\001\e[1;34m\002'
 c_clear='\001\e[0m\002'
 
-# Helper missing from our test-lib
-test_set_editor () {
-	FAKE_EDITOR="$1"
-	export FAKE_EDITOR
-	EDITOR='"$FAKE_EDITOR"'
-	export EDITOR
-}
-
 test_expect_success 'setup for prompt tests' '
-	git init &&
 	git init otherrepo &&
 	echo 1 >file &&
 	git add file &&
@@ -62,7 +49,7 @@ test_expect_success 'prompt - branch name' '
 	test_cmp expected "$actual"
 '
 
-test_expect_success 'prompt - branch name - symlink symref' '
+test_expect_success SYMLINKS 'prompt - branch name - symlink symref' '
 	printf " (main)" >expected &&
 	test_when_finished "git checkout main" &&
 	test_config core.preferSymlinkRefs true &&
@@ -79,8 +66,8 @@ test_expect_success 'prompt - unborn branch' '
 	test_cmp expected "$actual"
 '
 
-test_expect_success 'prompt - with newline in path' '
-	repo_with_newline="repo
+test_expect_success FUNNYNAMES 'prompt - with newline in path' '
+    repo_with_newline="repo
 with
 newline" &&
 	mkdir "$repo_with_newline" &&

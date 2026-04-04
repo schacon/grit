@@ -1,43 +1,65 @@
 #!/bin/sh
+#
+# Copyright (c) 2007 Johannes Sixt
+#
 
-test_description='merging with symlink-like entries'
+test_description='merging symlinks on filesystem w/o symlink support.
+
+This tests that git merge-recursive writes merge results as plain files
+if core.symlinks is false.'
 
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test" &&
-	git config user.email "test@test" &&
+	git config core.symlinks false &&
 	>file &&
 	git add file &&
 	git commit -m initial &&
-	git branch b-other &&
-	echo main-content >file2 &&
-	git add file2 &&
+	git branch b-symlink &&
+	git branch b-file &&
+	l=$(printf file | git hash-object -t blob -w --stdin) &&
+	echo "120000 $l	symlink" | git update-index --index-info &&
 	git commit -m main &&
-	git checkout b-other &&
-	echo other-content >file3 &&
-	git add file3 &&
-	git commit -m other
+	git checkout b-symlink &&
+	l=$(printf file-different | git hash-object -t blob -w --stdin) &&
+	echo "120000 $l	symlink" | git update-index --index-info &&
+	git commit -m b-symlink &&
+	git checkout b-file &&
+	echo plain-file >symlink &&
+	git add symlink &&
+	git commit -m b-file
 '
 
-test_expect_success 'merge non-overlapping changes' '
-	cd repo &&
+test_expect_success 'merge main into b-symlink, which has a different symbolic link' '
+	git checkout b-symlink &&
+	test_must_fail git merge main
+'
+
+test_expect_success 'the merge result must be a file' '
+	test_path_is_file symlink
+'
+
+test_expect_success 'merge main into b-file, which has a file instead of a symbolic link' '
+	git reset --hard &&
+	git checkout b-file &&
+	test_must_fail git merge main
+'
+
+test_expect_success 'the merge result must be a file' '
+	test_path_is_file symlink
+'
+
+test_expect_success 'merge b-file, which has a file instead of a symbolic link, into main' '
+	git reset --hard &&
 	git checkout main &&
-	git merge b-other &&
-	test_path_is_file file2 &&
-	test_path_is_file file3
+	test_must_fail git merge b-file
 '
 
-test_expect_success 'merge result has all files' '
-	cd repo &&
-	git ls-files -s >output &&
-	test_line_count = 3 output
+test_expect_success 'the merge result must be a file' '
+	test_path_is_file symlink
 '
 
 test_done

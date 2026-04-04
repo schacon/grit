@@ -1,270 +1,370 @@
 #!/bin/sh
-# Tests for 'grit rev-list' — commit enumeration and range queries.
-# (log -L line-range is not yet implemented; these tests cover rev-list
-# which is the underlying commit-walk engine.)
 
-test_description='grit rev-list'
+test_description='test log -L'
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup linear history' '
-	git init repo &&
-	cd repo &&
-	git config user.name "A U Thor" &&
-	git config user.email "author@example.com" &&
-
-	echo one >file &&
-	git add file &&
-	test_tick &&
-	git commit -m "c1" &&
-	git tag v1 &&
-
-	echo two >file &&
-	git add file &&
-	test_tick &&
-	git commit -m "c2" &&
-	git tag v2 &&
-
-	echo three >file &&
-	git add file &&
-	test_tick &&
-	git commit -m "c3" &&
-	git tag v3 &&
-
-	echo four >file &&
-	git add file &&
-	test_tick &&
-	git commit -m "c4" &&
-	git tag v4 &&
-
-	echo five >file &&
-	git add file &&
-	test_tick &&
-	git commit -m "c5" &&
-	git tag v5
+test_expect_success 'setup (import history)' '
+	git fast-import < "$TEST_DIRECTORY"/t4211/history.export &&
+	git reset --hard
 '
 
-# ── Basic listing ────────────────────────────────────────────────────────────
+test_expect_success 'basic command line parsing' '
+	# This may fail due to "no such path a.c in commit", or
+	# "-L is incompatible with pathspec", depending on the
+	# order the error is checked.  Either is acceptable.
+	test_must_fail git log -L1,1:a.c -- a.c &&
 
-test_expect_success 'rev-list HEAD lists all commits' '
-	cd repo &&
-	git rev-list HEAD >actual &&
-	test_line_count = 5 actual
+	# -L requires there is no pathspec
+	test_must_fail git log -L1,1:b.c -- b.c 2>error &&
+	test_grep "cannot be used with pathspec" error &&
+
+	# This would fail because --follow wants a single path, but
+	# we may fail due to incompatibility between -L/--follow in
+	# the future.  Either is acceptable.
+	test_must_fail git log -L1,1:b.c --follow &&
+	test_must_fail git log --follow -L1,1:b.c &&
+
+	# This would fail because -L wants no pathspec, but
+	# we may fail due to incompatibility between -L/--follow in
+	# the future.  Either is acceptable.
+	test_must_fail git log --follow -L1,1:b.c -- b.c
 '
 
-test_expect_success 'rev-list outputs full 40-char hashes' '
-	cd repo &&
-	git rev-list HEAD >actual &&
-	while read hash; do
-		test $(echo "$hash" | wc -c) -eq 41 || return 1
-	done <actual
+canned_test_1 () {
+	test_expect_$1 "$2" "
+		git log $2 >actual &&
+		test_cmp \"\$TEST_DIRECTORY\"/t4211/$(test_oid algo)/expect.$3 actual
+	"
+}
+
+canned_test () {
+	canned_test_1 success "$@"
+}
+canned_test_failure () {
+	canned_test_1 failure "$@"
+}
+
+test_bad_opts () {
+	test_expect_success "invalid args: $1" "
+		test_must_fail git log $1 2>errors &&
+		test_grep '$2' errors
+	"
+}
+
+canned_test "-L 4,12:a.c simple" simple-f
+canned_test "-L 4,+9:a.c simple" simple-f
+canned_test "-L '/long f/,/^}/:a.c' simple" simple-f
+canned_test "-L :f:a.c simple" simple-f-to-main
+
+canned_test "-L '/main/,/^}/:a.c' simple" simple-main
+canned_test "-L :main:a.c simple" simple-main-to-end
+
+canned_test "-L 1,+4:a.c simple" beginning-of-file
+
+canned_test "-L 20:a.c simple" end-of-file
+
+canned_test "-L '/long f/',/^}/:a.c -L /main/,/^}/:a.c simple" two-ranges
+canned_test "-L 24,+1:a.c simple" vanishes-early
+
+canned_test "-M -L '/long f/,/^}/:b.c' move-support" move-support-f
+canned_test "-M -L ':f:b.c' parallel-change" parallel-change-f-to-main
+
+canned_test "-L 4,12:a.c -L :main:a.c simple" multiple
+canned_test "-L 4,18:a.c -L ^:main:a.c simple" multiple-overlapping
+canned_test "-L :main:a.c -L 4,18:a.c simple" multiple-overlapping
+canned_test "-L 4:a.c -L 8,12:a.c simple" multiple-superset
+canned_test "-L 8,12:a.c -L 4:a.c simple" multiple-superset
+
+canned_test "-L 10,16:b.c -L 18,26:b.c main" no-assertion-error
+
+test_bad_opts "-L" "switch.*requires a value"
+test_bad_opts "-L b.c" "argument not .start,end:file"
+test_bad_opts "-L 1:" "argument not .start,end:file"
+test_bad_opts "-L 1:nonexistent" "There is no path"
+test_bad_opts "-L 1:simple" "There is no path"
+test_bad_opts "-L '/foo:b.c'" "argument not .start,end:file"
+test_bad_opts "-L 1000:b.c" "has only.*lines"
+test_bad_opts "-L :b.c" "argument not .start,end:file"
+test_bad_opts "-L :foo:b.c" "no match"
+
+test_expect_success '-L X (X == nlines)' '
+	n=$(wc -l <b.c) &&
+	git log -L $n:b.c
 '
 
-test_expect_success 'rev-list HEAD matches rev-parse HEAD as first entry' '
-	cd repo &&
-	git rev-list HEAD >actual &&
-	head -1 actual >first &&
-	git rev-parse HEAD >expect &&
-	test_cmp expect first
+test_expect_success '-L X (X == nlines + 1)' '
+	n=$(expr $(wc -l <b.c) + 1) &&
+	test_must_fail git log -L $n:b.c
 '
 
-test_expect_success 'rev-list with tag name' '
-	cd repo &&
-	git rev-list v3 >actual &&
-	test_line_count = 3 actual
+test_expect_success '-L X (X == nlines + 2)' '
+	n=$(expr $(wc -l <b.c) + 2) &&
+	test_must_fail git log -L $n:b.c
 '
 
-test_expect_success 'rev-list with tag vs HEAD gives subset' '
-	cd repo &&
-	git rev-list v3 >v3_list &&
-	git rev-list HEAD >head_list &&
-	# v3 commits should be a subset of HEAD commits
-	while read hash; do
-		grep -q "$hash" head_list || return 1
-	done <v3_list
+test_expect_success '-L ,Y (Y == nlines)' '
+	n=$(printf "%d" $(wc -l <b.c)) &&
+	git log -L ,$n:b.c
 '
 
-# ── --count ──────────────────────────────────────────────────────────────────
-
-test_expect_success 'rev-list --count HEAD' '
-	cd repo &&
-	RESULT=$(git rev-list --count HEAD) &&
-	test "$RESULT" = "5"
+test_expect_success '-L ,Y (Y == nlines + 1)' '
+	n=$(expr $(wc -l <b.c) + 1) &&
+	git log -L ,$n:b.c
 '
 
-test_expect_success 'rev-list --count with tag' '
-	cd repo &&
-	RESULT=$(git rev-list --count v3) &&
-	test "$RESULT" = "3"
+test_expect_success '-L ,Y (Y == nlines + 2)' '
+	n=$(expr $(wc -l <b.c) + 2) &&
+	git log -L ,$n:b.c
 '
 
-test_expect_success 'rev-list --count v1 is 1' '
-	cd repo &&
-	RESULT=$(git rev-list --count v1) &&
-	test "$RESULT" = "1"
+test_expect_success '-L with --first-parent and a merge' '
+	git checkout parallel-change &&
+	git log --first-parent -L 1,1:b.c
 '
 
-# ── --max-count / -n ─────────────────────────────────────────────────────────
-
-test_expect_success 'rev-list --max-count=2 limits output' '
-	cd repo &&
-	git rev-list --max-count=2 HEAD >actual &&
-	test_line_count = 2 actual
+test_expect_success '-L with --output' '
+	git checkout parallel-change &&
+	git log --output=log -L :main:b.c >output &&
+	test_must_be_empty output &&
+	test_line_count = 70 log
 '
 
-test_expect_success 'rev-list -n 1 gives single commit' '
-	cd repo &&
-	git rev-list -n 1 HEAD >actual &&
-	test_line_count = 1 actual
+test_expect_success 'range_set_union' '
+	test_seq 500 > c.c &&
+	git add c.c &&
+	git commit -m "many lines" &&
+	test_seq 1000 > c.c &&
+	git add c.c &&
+	git commit -m "modify many lines" &&
+	git log $(for x in $(test_seq 200); do echo -L $((2*x)),+1:c.c || return 1; done)
 '
 
-test_expect_success 'rev-list -n 0 gives no output' '
-	cd repo &&
-	git rev-list -n 0 HEAD >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success 'rev-list -n larger than total gives all' '
-	cd repo &&
-	git rev-list -n 100 HEAD >actual &&
-	test_line_count = 5 actual
-'
-
-# ── --reverse ────────────────────────────────────────────────────────────────
-
-test_expect_success 'rev-list --reverse reverses order' '
-	cd repo &&
-	git rev-list HEAD >normal &&
-	git rev-list --reverse HEAD >reversed &&
-	tail -1 normal >last_normal &&
-	head -1 reversed >first_reversed &&
-	test_cmp last_normal first_reversed
-'
-
-test_expect_success 'rev-list --reverse first is root commit' '
-	cd repo &&
-	git rev-list --reverse HEAD >actual &&
-	head -1 actual >first &&
-	git rev-parse v1 >expect &&
-	test_cmp expect first
-'
-
-test_expect_success 'rev-list --reverse last is HEAD' '
-	cd repo &&
-	git rev-list --reverse HEAD >actual &&
-	tail -1 actual >last &&
-	git rev-parse HEAD >expect &&
-	test_cmp expect last
-'
-
-# ── Range notation (A..B) ───────────────────────────────────────────────────
-
-test_expect_success 'rev-list A..B shows commits in B not in A' '
-	cd repo &&
-	git rev-list v3..v5 >actual &&
-	test_line_count = 2 actual
-'
-
-test_expect_success 'rev-list A..A is empty' '
-	cd repo &&
-	git rev-list v3..v3 >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success 'rev-list v1..HEAD shows all but first' '
-	cd repo &&
-	git rev-list v1..HEAD >actual &&
-	test_line_count = 4 actual
-'
-
-test_expect_success 'rev-list range does not include boundary commit' '
-	cd repo &&
-	V1_HASH=$(git rev-parse v1) &&
-	git rev-list v1..HEAD >actual &&
-	! grep -q "$V1_HASH" actual
-'
-
-test_expect_success 'rev-list v4..v5 gives exactly one commit' '
-	cd repo &&
-	git rev-list v4..v5 >actual &&
-	test_line_count = 1 actual &&
-	V5_HASH=$(git rev-parse v5) &&
-	echo "$V5_HASH" >expect &&
+test_expect_success '-s shows only line-log commits' '
+	git log --format="commit %s" -L1,24:b.c >expect.raw &&
+	grep ^commit expect.raw >expect &&
+	git log --format="commit %s" -L1,24:b.c -s >actual &&
 	test_cmp expect actual
 '
 
-# ── --all ────────────────────────────────────────────────────────────────────
-
-test_expect_success 'rev-list --all lists all reachable commits' '
-	cd repo &&
-	git rev-list --all >actual &&
-	test_line_count = 5 actual
+test_expect_success '-p shows the default patch output' '
+	git log -L1,24:b.c >expect &&
+	git log -L1,24:b.c -p >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'setup side branch for --all test' '
-	cd repo &&
-	HASH_C3=$(git rev-parse v3) &&
-	git branch side "$HASH_C3" &&
-	git checkout side &&
-	echo side >side-file &&
-	git add side-file &&
+test_expect_success '--raw is forbidden' '
+	test_must_fail git log -L1,24:b.c --raw
+'
+
+test_expect_success 'setup for checking fancy rename following' '
+	git checkout --orphan moves-start &&
+	git reset --hard &&
+
+	printf "%s\n"    12 13 14 15      b c d e   >file-1 &&
+	printf "%s\n"    22 23 24 25      B C D E   >file-2 &&
+	git add file-1 file-2 &&
 	test_tick &&
-	git commit -m "side1" &&
-	git checkout master
+	git commit -m "Add file-1 and file-2" &&
+	oid_add_f1_f2=$(git rev-parse --short HEAD) &&
+
+	git checkout -b moves-main &&
+	printf "%s\n" 11 12 13 14 15      b c d e   >file-1 &&
+	git commit -a -m "Modify file-1 on main" &&
+	oid_mod_f1_main=$(git rev-parse --short HEAD) &&
+
+	printf "%s\n" 21 22 23 24 25      B C D E   >file-2 &&
+	git commit -a -m "Modify file-2 on main #1" &&
+	oid_mod_f2_main_1=$(git rev-parse --short HEAD) &&
+
+	git mv file-1 renamed-1 &&
+	git commit -m "Rename file-1 to renamed-1 on main" &&
+
+	printf "%s\n" 11 12 13 14 15      b c d e f >renamed-1 &&
+	git commit -a -m "Modify renamed-1 on main" &&
+	oid_mod_r1_main=$(git rev-parse --short HEAD) &&
+
+	printf "%s\n" 21 22 23 24 25      B C D E F >file-2 &&
+	git commit -a -m "Modify file-2 on main #2" &&
+	oid_mod_f2_main_2=$(git rev-parse --short HEAD) &&
+
+	git checkout -b moves-side moves-start &&
+	printf "%s\n"    12 13 14 15 16   b c d e   >file-1 &&
+	git commit -a -m "Modify file-1 on side #1" &&
+	oid_mod_f1_side_1=$(git rev-parse --short HEAD) &&
+
+	printf "%s\n"    22 23 24 25 26   B C D E   >file-2 &&
+	git commit -a -m "Modify file-2 on side" &&
+	oid_mod_f2_side=$(git rev-parse --short HEAD) &&
+
+	git mv file-2 renamed-2 &&
+	git commit -m "Rename file-2 to renamed-2 on side" &&
+
+	printf "%s\n"    12 13 14 15 16 a b c d e   >file-1 &&
+	git commit -a -m "Modify file-1 on side #2" &&
+	oid_mod_f1_side_2=$(git rev-parse --short HEAD) &&
+
+	printf "%s\n"    22 23 24 25 26 A B C D E   >renamed-2 &&
+	git commit -a -m "Modify renamed-2 on side" &&
+	oid_mod_r2_side=$(git rev-parse --short HEAD) &&
+
+	git checkout moves-main &&
+	git merge moves-side &&
+	oid_merge=$(git rev-parse --short HEAD)
 '
 
-test_expect_success 'rev-list --all includes side branch commits' '
-	cd repo &&
-	git rev-list --all >actual &&
-	test_line_count = 6 actual
+test_expect_success 'fancy rename following #1' '
+	cat >expect <<-EOF &&
+	$oid_merge Merge branch '\''moves-side'\'' into moves-main
+	$oid_mod_f1_side_2 Modify file-1 on side #2
+	$oid_mod_f1_side_1 Modify file-1 on side #1
+	$oid_mod_r1_main Modify renamed-1 on main
+	$oid_mod_f1_main Modify file-1 on main
+	$oid_add_f1_f2 Add file-1 and file-2
+	EOF
+	git log -L1:renamed-1 --oneline --no-patch >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'rev-list HEAD still shows only 5 on master' '
-	cd repo &&
-	git checkout master &&
-	git rev-list HEAD >actual &&
-	test_line_count = 5 actual
+test_expect_success 'fancy rename following #2' '
+	cat >expect <<-EOF &&
+	$oid_merge Merge branch '\''moves-side'\'' into moves-main
+	$oid_mod_r2_side Modify renamed-2 on side
+	$oid_mod_f2_side Modify file-2 on side
+	$oid_mod_f2_main_2 Modify file-2 on main #2
+	$oid_mod_f2_main_1 Modify file-2 on main #1
+	$oid_add_f1_f2 Add file-1 and file-2
+	EOF
+	git log -L1:renamed-2 --oneline --no-patch >actual &&
+	test_cmp expect actual
 '
 
-# ── --count with ranges ─────────────────────────────────────────────────────
+# Create the following linear history, where each commit does what its
+# subject line promises:
+#
+#   * 66c6410 Modify func2() in file.c
+#   * 50834e5 Modify other-file
+#   * fe5851c Modify func1() in file.c
+#   * 8c7c7dd Add other-file
+#   * d5f4417 Add func1() and func2() in file.c
+test_expect_success 'setup for checking line-log and parent oids' '
+	git checkout --orphan parent-oids &&
+	git reset --hard &&
 
-test_expect_success 'rev-list --count with range' '
-	cd repo &&
-	RESULT=$(git rev-list --count v2..v5) &&
-	test "$RESULT" = "3"
+	cat >file.c <<-\EOF &&
+	int func1()
+	{
+	    return F1;
+	}
+
+	int func2()
+	{
+	    return F2;
+	}
+	EOF
+	git add file.c &&
+	test_tick &&
+	first_tick=$test_tick &&
+	git commit -m "Add func1() and func2() in file.c" &&
+
+	echo 1 >other-file &&
+	git add other-file &&
+	test_tick &&
+	git commit -m "Add other-file" &&
+
+	sed -e "s/F1/F1 + 1/" file.c >tmp &&
+	mv tmp file.c &&
+	git commit -a -m "Modify func1() in file.c" &&
+
+	echo 2 >other-file &&
+	git commit -a -m "Modify other-file" &&
+
+	sed -e "s/F2/F2 + 2/" file.c >tmp &&
+	mv tmp file.c &&
+	git commit -a -m "Modify func2() in file.c" &&
+
+	head_oid=$(git rev-parse --short HEAD) &&
+	prev_oid=$(git rev-parse --short HEAD^) &&
+	root_oid=$(git rev-parse --short HEAD~4)
 '
 
-test_expect_success 'rev-list --count A..A is 0' '
-	cd repo &&
-	RESULT=$(git rev-list --count v3..v3) &&
-	test "$RESULT" = "0"
+# Parent oid should be from immediate parent.
+test_expect_success 'parent oids without parent rewriting' '
+	cat >expect <<-EOF &&
+	$head_oid $prev_oid Modify func2() in file.c
+	$root_oid  Add func1() and func2() in file.c
+	EOF
+	git log --format="%h %p %s" --no-patch -L:func2:file.c >actual &&
+	test_cmp expect actual
 '
 
-# ── Verify consistency ──────────────────────────────────────────────────────
-
-test_expect_success 'rev-list output hashes are valid objects' '
-	cd repo &&
-	git rev-list HEAD >hashes &&
-	while read hash; do
-		git cat-file -t "$hash" >type &&
-		echo "commit" >expect &&
-		test_cmp expect type || return 1
-	done <hashes
+# Parent oid should be from the most recent ancestor touching func2(),
+# i.e. in this case from the root commit.
+test_expect_success 'parent oids with parent rewriting' '
+	cat >expect <<-EOF &&
+	$head_oid $root_oid Modify func2() in file.c
+	$root_oid  Add func1() and func2() in file.c
+	EOF
+	git log --format="%h %p %s" --no-patch -L:func2:file.c --parents >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'rev-list order is reverse chronological' '
-	cd repo &&
-	git rev-list HEAD >hashes &&
-	PREV="" &&
-	while read hash; do
-		if test -n "$PREV"; then
-			# Current should be parent of previous or older
-			git cat-file commit "$PREV" >info &&
-			grep -q "$hash" info || true
-		fi
-		PREV="$hash"
-	done <hashes
+test_expect_success 'line-log with --before' '
+	echo $root_oid >expect &&
+	git log --format=%h --no-patch -L:func2:file.c --before=$first_tick >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'setup tests for zero-width regular expressions' '
+	cat >expect <<-EOF
+	Modify func1() in file.c
+	Add func1() and func2() in file.c
+	EOF
+'
+
+test_expect_success 'zero-width regex $ matches any function name' '
+	git log --format="%s" --no-patch "-L:$:file.c" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'zero-width regex ^ matches any function name' '
+	git log --format="%s" --no-patch "-L:^:file.c" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'zero-width regex .* matches any function name' '
+	git log --format="%s" --no-patch "-L:.*:file.c" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'show line-log with graph' '
+	qz_to_tab_space >expect <<-EOF &&
+	* $head_oid Modify func2() in file.c
+	|Z
+	| diff --git a/file.c b/file.c
+	| --- a/file.c
+	| +++ b/file.c
+	| @@ -6,4 +6,4 @@
+	|  int func2()
+	|  {
+	| -    return F2;
+	| +    return F2 + 2;
+	|  }
+	* $root_oid Add func1() and func2() in file.c
+	ZZ
+	  diff --git a/file.c b/file.c
+	  --- /dev/null
+	  +++ b/file.c
+	  @@ -0,0 +6,4 @@
+	  +int func2()
+	  +{
+	  +    return F2;
+	  +}
+	EOF
+	git log --graph --oneline -L:func2:file.c >actual &&
+	test_cmp expect actual
 '
 
 test_done

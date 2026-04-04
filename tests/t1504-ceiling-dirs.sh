@@ -2,308 +2,185 @@
 
 test_description='test GIT_CEILING_DIRECTORIES'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# We need a git repo in the trash directory for the prefix tests to work.
-test_expect_success 'setup' '
-	git init
-'
+test_prefix() {
+	local expect="$2" &&
+	test_expect_success "$1: git rev-parse --show-prefix is '$2'" '
+		echo "$expect" >expect &&
+		git rev-parse --show-prefix >actual &&
+		test_cmp expect actual
+	'
+}
 
-TRASH_ROOT="$TRASH_DIRECTORY"
+test_fail() {
+	test_expect_success "$1: prefix" '
+		test_expect_code 128 git rev-parse --show-prefix
+	'
+}
+
+TRASH_ROOT="$PWD"
 ROOT_PARENT=$(dirname "$TRASH_ROOT")
 
-test_expect_success 'no_ceil: prefix is empty at root' '
-	unset GIT_CEILING_DIRECTORIES &&
-	echo "" >expect &&
-	git rev-parse --show-prefix >actual &&
-	test_cmp expect actual
-'
 
-test_expect_success 'ceil_empty: prefix is empty at root' '
-	GIT_CEILING_DIRECTORIES="" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "" >expect &&
-	git rev-parse --show-prefix >actual &&
-	test_cmp expect actual
-'
+unset GIT_CEILING_DIRECTORIES
+test_prefix no_ceil ""
 
-test_expect_success 'ceil_at_parent: prefix is empty at root' '
-	GIT_CEILING_DIRECTORIES="'"$ROOT_PARENT"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "" >expect &&
-	git rev-parse --show-prefix >actual &&
-	test_cmp expect actual
-'
+export GIT_CEILING_DIRECTORIES
 
-test_expect_success 'ceil_at_parent_slash: prefix is empty at root' '
-	GIT_CEILING_DIRECTORIES="'"$ROOT_PARENT/"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "" >expect &&
-	git rev-parse --show-prefix >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES=""
+test_prefix ceil_empty ""
 
-test_expect_success 'ceil_at_trash: prefix is empty at root' '
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "" >expect &&
-	git rev-parse --show-prefix >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$ROOT_PARENT"
+test_prefix ceil_at_parent ""
 
-test_expect_success 'ceil_at_trash_slash: prefix is empty at root' '
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "" >expect &&
-	git rev-parse --show-prefix >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$ROOT_PARENT/"
+test_prefix ceil_at_parent_slash ""
 
-test_expect_success 'ceil_at_sub: prefix is empty at root' '
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "" >expect &&
-	git rev-parse --show-prefix >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT"
+test_prefix ceil_at_trash ""
 
-test_expect_success 'ceil_at_sub_slash: prefix is empty at root' '
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub/"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "" >expect &&
-	git rev-parse --show-prefix >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/"
+test_prefix ceil_at_trash_slash ""
 
-test_expect_success 'subdir_no_ceil: prefix is sub/dir/' '
-	mkdir -p sub/dir &&
-	unset GIT_CEILING_DIRECTORIES &&
-	echo "sub/dir/" >expect &&
-	(cd sub/dir && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sub"
+test_prefix ceil_at_sub ""
 
-test_expect_success 'subdir_ceil_empty: prefix is sub/dir/' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "sub/dir/" >expect &&
-	(cd sub/dir && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sub/"
+test_prefix ceil_at_sub_slash ""
 
-test_expect_success 'subdir_ceil_at_trash: fails' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
-'
+if test_have_prereq SYMLINKS
+then
+	ln -s sub top
+fi
 
-test_expect_success 'subdir_ceil_at_trash_slash: fails' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
-'
+mkdir -p sub/dir || exit 1
+cd sub/dir || exit 1
 
-test_expect_success 'subdir_ceil_at_sub: fails' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
-'
+unset GIT_CEILING_DIRECTORIES
+test_prefix subdir_no_ceil "sub/dir/"
 
-test_expect_success 'subdir_ceil_at_sub_slash: fails' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub/"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
-'
+export GIT_CEILING_DIRECTORIES
 
-test_expect_success 'subdir_ceil_at_subdir: prefix is sub/dir/' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub/dir"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "sub/dir/" >expect &&
-	(cd sub/dir && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES=""
+test_prefix subdir_ceil_empty "sub/dir/"
 
-test_expect_success 'subdir_ceil_at_subdir_slash: prefix is sub/dir/' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub/dir/"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "sub/dir/" >expect &&
-	(cd sub/dir && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT"
+test_fail subdir_ceil_at_trash
 
-test_expect_success 'subdir_ceil_at_su: prefix is sub/dir/' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/su"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "sub/dir/" >expect &&
-	(cd sub/dir && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/"
+test_fail subdir_ceil_at_trash_slash
 
-test_expect_success 'subdir_ceil_at_su_slash: prefix is sub/dir/' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/su/"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "sub/dir/" >expect &&
-	(cd sub/dir && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sub"
+test_fail subdir_ceil_at_sub
 
-test_expect_success 'subdir_ceil_at_sub_di: prefix is sub/dir/' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub/di"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "sub/dir/" >expect &&
-	(cd sub/dir && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sub/"
+test_fail subdir_ceil_at_sub_slash
 
-test_expect_success 'subdir_ceil_at_subdi: prefix is sub/dir/' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/subdi"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "sub/dir/" >expect &&
-	(cd sub/dir && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+if test_have_prereq SYMLINKS
+then
+	GIT_CEILING_DIRECTORIES="$TRASH_ROOT/top"
+	test_fail subdir_ceil_at_top
+	GIT_CEILING_DIRECTORIES="$TRASH_ROOT/top/"
+	test_fail subdir_ceil_at_top_slash
 
-test_expect_success 'second_of_two: fails' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="/foo:'"$TRASH_ROOT/sub"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
-'
+	GIT_CEILING_DIRECTORIES=":$TRASH_ROOT/top"
+	test_prefix subdir_ceil_at_top_no_resolve "sub/dir/"
+	GIT_CEILING_DIRECTORIES=":$TRASH_ROOT/top/"
+	test_prefix subdir_ceil_at_top_slash_no_resolve "sub/dir/"
+fi
 
-test_expect_success 'first_of_two: fails' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub"':/bar" &&
-	export GIT_CEILING_DIRECTORIES &&
-	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sub/dir"
+test_prefix subdir_ceil_at_subdir "sub/dir/"
 
-test_expect_success 'second_of_three: fails' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="/foo:'"$TRASH_ROOT/sub"':/bar" &&
-	export GIT_CEILING_DIRECTORIES &&
-	(cd sub/dir && test_must_fail git rev-parse --show-prefix)
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sub/dir/"
+test_prefix subdir_ceil_at_subdir_slash "sub/dir/"
 
-test_expect_success 'git_dir_specified: prefix is empty' '
-	mkdir -p sub/dir &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sub"'" &&
-	GIT_DIR="'"$TRASH_ROOT/.git"'" &&
-	export GIT_CEILING_DIRECTORIES GIT_DIR &&
-	echo "" >expect &&
-	(cd sub/dir && git rev-parse --show-prefix) >actual &&
-	unset GIT_DIR &&
-	test_cmp expect actual
-'
 
-test_expect_success 'sd_no_ceil: prefix is s/d/' '
-	mkdir -p s/d &&
-	unset GIT_CEILING_DIRECTORIES &&
-	echo "s/d/" >expect &&
-	(cd s/d && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/su"
+test_prefix subdir_ceil_at_su "sub/dir/"
 
-test_expect_success 'sd_ceil_empty: prefix is s/d/' '
-	mkdir -p s/d &&
-	GIT_CEILING_DIRECTORIES="" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "s/d/" >expect &&
-	(cd s/d && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/su/"
+test_prefix subdir_ceil_at_su_slash "sub/dir/"
 
-test_expect_success 'sd_ceil_at_trash: fails' '
-	mkdir -p s/d &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	(cd s/d && test_must_fail git rev-parse --show-prefix)
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sub/di"
+test_prefix subdir_ceil_at_sub_di "sub/dir/"
 
-test_expect_success 'sd_ceil_at_trash_slash: fails' '
-	mkdir -p s/d &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	(cd s/d && test_must_fail git rev-parse --show-prefix)
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sub/di"
+test_prefix subdir_ceil_at_sub_di_slash "sub/dir/"
 
-test_expect_success 'sd_ceil_at_s: fails' '
-	mkdir -p s/d &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/s"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	(cd s/d && test_must_fail git rev-parse --show-prefix)
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/subdi"
+test_prefix subdir_ceil_at_subdi "sub/dir/"
 
-test_expect_success 'sd_ceil_at_s_slash: fails' '
-	mkdir -p s/d &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/s/"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	(cd s/d && test_must_fail git rev-parse --show-prefix)
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/subdi"
+test_prefix subdir_ceil_at_subdi_slash "sub/dir/"
 
-test_expect_success 'sd_ceil_at_sd: prefix is s/d/' '
-	mkdir -p s/d &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/s/d"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "s/d/" >expect &&
-	(cd s/d && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
 
-test_expect_success 'sd_ceil_at_sd_slash: prefix is s/d/' '
-	mkdir -p s/d &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/s/d/"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "s/d/" >expect &&
-	(cd s/d && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="/foo:$TRASH_ROOT/sub"
+test_fail second_of_two
 
-test_expect_success 'sd_ceil_at_su: prefix is s/d/' '
-	mkdir -p s/d &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/su"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "s/d/" >expect &&
-	(cd s/d && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sub:/bar"
+test_fail first_of_two
 
-test_expect_success 'sd_ceil_at_su_slash: prefix is s/d/' '
-	mkdir -p s/d &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/su/"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "s/d/" >expect &&
-	(cd s/d && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="/foo:$TRASH_ROOT/sub:/bar"
+test_fail second_of_three
 
-test_expect_success 'sd_ceil_at_s_di: prefix is s/d/' '
-	mkdir -p s/d &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/s/di"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "s/d/" >expect &&
-	(cd s/d && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
 
-test_expect_success 'sd_ceil_at_sdi: prefix is s/d/' '
-	mkdir -p s/d &&
-	GIT_CEILING_DIRECTORIES="'"$TRASH_ROOT/sdi"'" &&
-	export GIT_CEILING_DIRECTORIES &&
-	echo "s/d/" >expect &&
-	(cd s/d && git rev-parse --show-prefix) >actual &&
-	test_cmp expect actual
-'
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sub"
+GIT_DIR=../../.git
+export GIT_DIR
+test_prefix git_dir_specified ""
+unset GIT_DIR
+
+
+cd ../.. || exit 1
+mkdir -p s/d || exit 1
+cd s/d || exit 1
+
+unset GIT_CEILING_DIRECTORIES
+test_prefix sd_no_ceil "s/d/"
+
+export GIT_CEILING_DIRECTORIES
+
+GIT_CEILING_DIRECTORIES=""
+test_prefix sd_ceil_empty "s/d/"
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT"
+test_fail sd_ceil_at_trash
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/"
+test_fail sd_ceil_at_trash_slash
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/s"
+test_fail sd_ceil_at_s
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/s/"
+test_fail sd_ceil_at_s_slash
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/s/d"
+test_prefix sd_ceil_at_sd "s/d/"
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/s/d/"
+test_prefix sd_ceil_at_sd_slash "s/d/"
+
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/su"
+test_prefix sd_ceil_at_su "s/d/"
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/su/"
+test_prefix sd_ceil_at_su_slash "s/d/"
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/s/di"
+test_prefix sd_ceil_at_s_di "s/d/"
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/s/di"
+test_prefix sd_ceil_at_s_di_slash "s/d/"
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sdi"
+test_prefix sd_ceil_at_sdi "s/d/"
+
+GIT_CEILING_DIRECTORIES="$TRASH_ROOT/sdi"
+test_prefix sd_ceil_at_sdi_slash "s/d/"
+
 
 test_done

@@ -1,16 +1,7 @@
 #!/bin/sh
-#
-# Upstream: t9302-fast-import-unpack-limit.sh
-# Ported from git/t/t9302-fast-import-unpack-limit.sh for grit.
-#
-
 test_description='test git fast-import unpack limit'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
-
-# Initialize a repo in the trash directory
-git init --quiet
 
 test_expect_success 'create loose objects on import' '
 	test_tick &&

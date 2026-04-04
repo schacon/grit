@@ -1,280 +1,246 @@
 #!/bin/sh
-# Test rev-list ordering, counting, range queries, and history traversal
-# options: --count, --reverse, --max-count, --first-parent, --topo-order,
-# --date-order, commit ranges, and exclusions.
 
-test_description='rev-list ordering, ranges, and history traversal'
+# There's more than one "correct" way to represent the history graphically.
+# These tests depend on the current behavior of the graphing code.  If the
+# graphing code is ever changed to draw the output differently, these tests
+# cases will need to be updated to know about the new layout.
 
-cd "$(dirname "$0")" || exit 1
+test_description='--graph and simplified history'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-log-graph.sh
 
-REAL_GIT=""
-for p in /usr/bin/git /usr/local/bin/git; do
-	if test -x "$p"; then
-		REAL_GIT="$p"
-		break
-	fi
-done
-if test -z "$REAL_GIT"; then
-	echo "SKIP: real git not found" >&2
-	exit 0
-fi
+check_graph () {
+	cat >expect &&
+	lib_test_cmp_graph --format=%s "$@"
+}
 
-test_expect_success 'setup: create linear history' '
-	grit init repo &&
-	cd repo &&
-	git config user.email "test@test.com" &&
-	git config user.name "Test" &&
-	echo "A" >file.txt &&
-	grit add file.txt &&
-	GIT_COMMITTER_DATE="1000000000 +0000" GIT_AUTHOR_DATE="1000000000 +0000" \
-		grit commit -m "commit-A" &&
-	echo "B" >file.txt &&
-	grit add file.txt &&
-	GIT_COMMITTER_DATE="1000000100 +0000" GIT_AUTHOR_DATE="1000000100 +0000" \
-		grit commit -m "commit-B" &&
-	echo "C" >file.txt &&
-	grit add file.txt &&
-	GIT_COMMITTER_DATE="1000000200 +0000" GIT_AUTHOR_DATE="1000000200 +0000" \
-		grit commit -m "commit-C"
+test_expect_success 'set up rev-list --graph test' '
+	# 3 commits on branch A
+	test_commit A1 foo.txt &&
+	test_commit A2 bar.txt &&
+	test_commit A3 bar.txt &&
+	git branch -m main A &&
+
+	# 2 commits on branch B, started from A1
+	git checkout -b B A1 &&
+	test_commit B1 foo.txt &&
+	test_commit B2 abc.txt &&
+
+	# 2 commits on branch C, started from A2
+	git checkout -b C A2 &&
+	test_commit C1 xyz.txt &&
+	test_commit C2 xyz.txt &&
+
+	# Octopus merge B and C into branch A
+	git checkout A &&
+	git merge B C -m A4 &&
+	git tag A4 &&
+
+	test_commit A5 bar.txt &&
+
+	# More commits on C, then merge C into A
+	git checkout C &&
+	test_commit C3 foo.txt &&
+	test_commit C4 bar.txt &&
+	git checkout A &&
+	git merge -s ours C -m A6 &&
+	git tag A6 &&
+
+	test_commit A7 bar.txt
 '
 
-test_expect_success 'rev-list HEAD lists all commits' '
-	cd repo &&
-	grit rev-list HEAD >actual &&
-	test_line_count = 3 actual
+test_expect_success '--graph --all' '
+	check_graph --all <<-\EOF
+	* A7
+	*   A6
+	|\
+	| * C4
+	| * C3
+	* | A5
+	| |
+	|  \
+	*-. | A4
+	|\ \|
+	| | * C2
+	| | * C1
+	| * | B2
+	| * | B1
+	* | | A3
+	| |/
+	|/|
+	* | A2
+	|/
+	* A1
+	EOF
 '
 
-test_expect_success 'rev-list --count HEAD returns 3' '
-	cd repo &&
-	COUNT=$(grit rev-list --count HEAD) &&
-	test "$COUNT" = "3"
+# Make sure the graph_is_interesting() code still realizes
+# that undecorated merges are interesting, even with --simplify-by-decoration
+test_expect_success '--graph --simplify-by-decoration' '
+	git tag -d A4 &&
+	check_graph --all --simplify-by-decoration <<-\EOF
+	* A7
+	*   A6
+	|\
+	| * C4
+	| * C3
+	* | A5
+	| |
+	|  \
+	*-. | A4
+	|\ \|
+	| | * C2
+	| | * C1
+	| * | B2
+	| * | B1
+	* | | A3
+	| |/
+	|/|
+	* | A2
+	|/
+	* A1
+	EOF
 '
 
-test_expect_success 'rev-list --max-count=1 returns one commit' '
-	cd repo &&
-	grit rev-list --max-count=1 HEAD >actual &&
-	test_line_count = 1 actual
+test_expect_success 'setup: get rid of decorations on B' '
+	git tag -d B2 &&
+	git tag -d B1 &&
+	git branch -d B
 '
 
-test_expect_success 'rev-list --max-count=2 returns two commits' '
-	cd repo &&
-	grit rev-list --max-count=2 HEAD >actual &&
-	test_line_count = 2 actual
+# Graph with branch B simplified away
+test_expect_success '--graph --simplify-by-decoration prune branch B' '
+	check_graph --simplify-by-decoration --all <<-\EOF
+	* A7
+	*   A6
+	|\
+	| * C4
+	| * C3
+	* | A5
+	* | A4
+	|\|
+	| * C2
+	| * C1
+	* | A3
+	|/
+	* A2
+	* A1
+	EOF
 '
 
-test_expect_success 'rev-list --max-count=0 returns no commits' '
-	cd repo &&
-	grit rev-list --max-count=0 HEAD >actual &&
-	test_must_be_empty actual
+test_expect_success '--graph --full-history -- bar.txt' '
+	check_graph --full-history --all -- bar.txt <<-\EOF
+	* A7
+	*   A6
+	|\
+	| * C4
+	* | A5
+	* | A4
+	|\|
+	* | A3
+	|/
+	* A2
+	EOF
 '
 
-test_expect_success 'rev-list --reverse reverses output' '
-	cd repo &&
-	grit rev-list HEAD >forward &&
-	grit rev-list --reverse HEAD >backward &&
-	# first of forward = last of backward
-	HEAD_FWD=$(head -1 forward) &&
-	HEAD_BWD=$(tail -1 backward) &&
-	test "$HEAD_FWD" = "$HEAD_BWD" &&
-	# last of forward = first of backward
-	TAIL_FWD=$(tail -1 forward) &&
-	TAIL_BWD=$(head -1 backward) &&
-	test "$TAIL_FWD" = "$TAIL_BWD"
+test_expect_success '--graph --full-history --simplify-merges -- bar.txt' '
+	check_graph --full-history --simplify-merges --all -- bar.txt <<-\EOF
+	* A7
+	*   A6
+	|\
+	| * C4
+	* | A5
+	* | A3
+	|/
+	* A2
+	EOF
 '
 
-test_expect_success 'rev-list --reverse --max-count=2 returns 2 newest reversed' '
-	cd repo &&
-	grit rev-list --reverse --max-count=2 HEAD >actual &&
-	test_line_count = 2 actual &&
-	# --max-count limits first, then --reverse flips
-	grit rev-list --max-count=2 HEAD >fwd &&
-	LAST_FWD=$(tail -1 fwd) &&
-	FIRST_REV=$(head -1 actual) &&
-	test "$LAST_FWD" = "$FIRST_REV"
+test_expect_success '--graph -- bar.txt' '
+	check_graph --all -- bar.txt <<-\EOF
+	* A7
+	* A5
+	* A3
+	| * C4
+	|/
+	* A2
+	EOF
 '
 
-# ── range queries ──
-
-test_expect_success 'rev-list HEAD~1..HEAD returns 1 commit' '
-	cd repo &&
-	grit rev-list HEAD~1..HEAD >actual &&
-	test_line_count = 1 actual
+test_expect_success '--graph --sparse -- bar.txt' '
+	check_graph --sparse --all -- bar.txt <<-\EOF
+	* A7
+	* A6
+	* A5
+	* A4
+	* A3
+	| * C4
+	| * C3
+	| * C2
+	| * C1
+	|/
+	* A2
+	* A1
+	EOF
 '
 
-test_expect_success 'rev-list HEAD~2..HEAD returns 2 commits' '
-	cd repo &&
-	grit rev-list HEAD~2..HEAD >actual &&
-	test_line_count = 2 actual
+test_expect_success '--graph ^C4' '
+	check_graph --all ^C4 <<-\EOF
+	* A7
+	* A6
+	* A5
+	*   A4
+	|\
+	| * B2
+	| * B1
+	* A3
+	EOF
 '
 
-test_expect_success 'rev-list A ^B equivalent to B..A' '
-	cd repo &&
-	grit rev-list HEAD ^HEAD~2 >excl &&
-	grit rev-list HEAD~2..HEAD >range &&
-	test_cmp excl range
+test_expect_success '--graph ^C3' '
+	check_graph --all ^C3 <<-\EOF
+	* A7
+	*   A6
+	|\
+	| * C4
+	* A5
+	*   A4
+	|\
+	| * B2
+	| * B1
+	* A3
+	EOF
 '
 
-test_expect_success 'rev-list with explicit commit OIDs' '
-	cd repo &&
-	A=$(grit rev-list --reverse HEAD | head -1) &&
-	C=$(grit rev-list --max-count=1 HEAD) &&
-	grit rev-list $C ^$A >actual &&
-	test_line_count = 2 actual
-'
-
-# ── branches and merges ──
-
-test_expect_success 'setup: create branch and merge' '
-	cd repo &&
-	"$REAL_GIT" checkout -b side &&
-	echo "side1" >side.txt &&
-	grit add side.txt &&
-	GIT_COMMITTER_DATE="1000000300 +0000" GIT_AUTHOR_DATE="1000000300 +0000" \
-		grit commit -m "side-1" &&
-	echo "side2" >>side.txt &&
-	grit add side.txt &&
-	GIT_COMMITTER_DATE="1000000400 +0000" GIT_AUTHOR_DATE="1000000400 +0000" \
-		grit commit -m "side-2" &&
-	"$REAL_GIT" checkout master &&
-	echo "D" >file.txt &&
-	grit add file.txt &&
-	GIT_COMMITTER_DATE="1000000350 +0000" GIT_AUTHOR_DATE="1000000350 +0000" \
-		grit commit -m "commit-D" &&
-	"$REAL_GIT" merge side --no-edit
-'
-
-test_expect_success 'rev-list HEAD after merge counts all' '
-	cd repo &&
-	COUNT=$(grit rev-list --count HEAD) &&
-	test "$COUNT" -ge 6
-'
-
-test_expect_success 'rev-list --first-parent HEAD after merge' '
-	cd repo &&
-	FP=$(grit rev-list --first-parent --count HEAD) &&
-	ALL=$(grit rev-list --count HEAD) &&
-	test "$FP" -lt "$ALL"
-'
-
-test_expect_success 'rev-list --first-parent does not include side commits' '
-	cd repo &&
-	grit rev-list --first-parent HEAD >fp &&
-	SIDE_TIP=$(grit show-ref --hash refs/heads/side) &&
-	! grep "$SIDE_TIP" fp
-'
-
-test_expect_success 'rev-list --topo-order HEAD' '
-	cd repo &&
-	grit rev-list --topo-order HEAD >topo &&
-	COUNT=$(wc -l <topo | tr -d " ") &&
-	test "$COUNT" -ge 6
-'
-
-test_expect_success 'rev-list --date-order HEAD' '
-	cd repo &&
-	grit rev-list --date-order HEAD >dated &&
-	COUNT=$(wc -l <dated | tr -d " ") &&
-	test "$COUNT" -ge 6
-'
-
-test_expect_success 'topo-order and date-order have same commits but may differ in order' '
-	cd repo &&
-	grit rev-list --topo-order HEAD | sort >topo_sorted &&
-	grit rev-list --date-order HEAD | sort >date_sorted &&
-	test_cmp topo_sorted date_sorted
-'
-
-test_expect_success 'rev-list --count with --first-parent' '
-	cd repo &&
-	FP=$(grit rev-list --first-parent --count HEAD) &&
-	test "$FP" -ge 4 &&
-	test "$FP" -le 6
-'
-
-# ── multiple branches in rev-list ──
-
-test_expect_success 'rev-list side shows side commits' '
-	cd repo &&
-	grit rev-list side >side_list &&
-	COUNT=$(wc -l <side_list | tr -d " ") &&
-	test "$COUNT" = "5"
-'
-
-test_expect_success 'rev-list master ^side shows master-only commits' '
-	cd repo &&
-	grit rev-list master ^side >master_only &&
-	COUNT=$(wc -l <master_only | tr -d " ") &&
-	test "$COUNT" -ge 1
-'
-
-# ── deeper history ──
-
-test_expect_success 'setup: add more history' '
-	cd repo &&
-	for i in 1 2 3 4 5; do
-		echo "extra-$i" >extra-$i.txt &&
-		grit add extra-$i.txt &&
-		grit commit -m "extra-$i" || return 1
-	done
-'
-
-test_expect_success 'rev-list --count increased by 5' '
-	cd repo &&
-	COUNT=$(grit rev-list --count HEAD) &&
-	test "$COUNT" -ge 11
-'
-
-test_expect_success 'rev-list --max-count=3 with deep history' '
-	cd repo &&
-	grit rev-list --max-count=3 HEAD >actual &&
-	test_line_count = 3 actual
-'
-
-test_expect_success 'rev-list --reverse --max-count=1 gives HEAD' '
-	cd repo &&
-	HEAD_OID=$(grit rev-list --max-count=1 HEAD) &&
-	grit rev-list --reverse --max-count=1 HEAD >actual &&
-	FIRST=$(cat actual) &&
-	test "$FIRST" = "$HEAD_OID"
-'
-
-test_expect_success 'rev-list HEAD~5..HEAD returns 5 commits' '
-	cd repo &&
-	grit rev-list HEAD~5..HEAD >actual &&
-	test_line_count = 5 actual
-'
-
-test_expect_success 'rev-list --count HEAD~5..HEAD returns 5' '
-	cd repo &&
-	COUNT=$(grit rev-list --count HEAD~5..HEAD) &&
-	test "$COUNT" = "5"
-'
-
-test_expect_success 'rev-list --reverse HEAD~3..HEAD' '
-	cd repo &&
-	grit rev-list HEAD~3..HEAD >fwd &&
-	grit rev-list --reverse HEAD~3..HEAD >rev &&
-	FWD_FIRST=$(head -1 fwd) &&
-	REV_LAST=$(tail -1 rev) &&
-	test "$FWD_FIRST" = "$REV_LAST"
-'
-
-test_expect_success 'rev-list --topo-order --max-count=3' '
-	cd repo &&
-	grit rev-list --topo-order --max-count=3 HEAD >actual &&
-	test_line_count = 3 actual
-'
-
-test_expect_success 'rev-list with invalid ref fails' '
-	cd repo &&
-	test_must_fail grit rev-list nonexistent-ref
-'
-
-test_expect_success 'rev-list --count with range and --first-parent' '
-	cd repo &&
-	FP=$(grit rev-list --first-parent --count HEAD~3..HEAD) &&
-	test "$FP" = "3"
+# I don't think the ordering of the boundary commits is really
+# that important, but this test depends on it.  If the ordering ever changes
+# in the code, we'll need to update this test.
+test_expect_success '--graph --boundary ^C3' '
+	check_graph --boundary --all ^C3 <<-\EOF
+	* A7
+	*   A6
+	|\
+	| * C4
+	* | A5
+	| |
+	|  \
+	*-. \   A4
+	|\ \ \
+	| * | | B2
+	| * | | B1
+	* | | | A3
+	o | | | A2
+	|/ / /
+	o / / A1
+	 / /
+	| o C3
+	|/
+	o C2
+	EOF
 '
 
 test_done

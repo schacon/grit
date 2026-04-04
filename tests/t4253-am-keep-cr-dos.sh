@@ -1,85 +1,101 @@
 #!/bin/sh
+#
+# Copyright (c) 2010 Stefan-W. Hahn
+#
 
-test_description='git am with DOS line endings'
+test_description='git-am mbox with dos line ending.
 
-cd "$(dirname "$0")" || exit 1
+'
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
+# Three patches which will be added as files with dos line ending.
 
-	echo "initial" >file &&
+cat >file1 <<\EOF
+line 1
+EOF
+
+cat >file1a <<\EOF
+line 1
+line 4
+EOF
+
+cat >file2 <<\EOF
+line 1
+line 2
+EOF
+
+cat >file3 <<\EOF
+line 1
+line 2
+line 3
+EOF
+
+test_expect_success 'setup repository with dos files' '
+	append_cr <file1 >file &&
 	git add file &&
-	test_tick &&
-	git commit -m initial
+	git commit -m Initial &&
+	git tag initial &&
+	append_cr <file2 >file &&
+	git commit -a -m Second &&
+	append_cr <file3 >file &&
+	git commit -a -m Third
 '
 
-test_expect_success 'am applies patch with unix line endings' '
-	cat >unix-patch.mbox <<-\EOF &&
-	From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-	From: Test Author <author@example.com>
-	Date: Thu, 7 Apr 2005 15:13:13 -0700
-	Subject: [PATCH] Unix line endings
-
-	This patch has unix line endings.
-	---
-	 file | 2 +-
-	 1 file changed, 1 insertion(+), 1 deletion(-)
-
-	diff --git a/file b/file
-	--- a/file
-	+++ b/file
-	@@ -1 +1 @@
-	-initial
-	+changed
-	--
-	2.0.0
-
-	EOF
-	git am unix-patch.mbox &&
-	echo "changed" >expect &&
-	test_cmp expect file
+test_expect_success 'am with dos files without --keep-cr' '
+	git checkout -b dosfiles initial &&
+	git format-patch -k initial..main &&
+	test_must_fail git am -k -3 000*.patch &&
+	git am --abort &&
+	rm -rf .git/rebase-apply 000*.patch
 '
 
-test_expect_success 'am preserves commit message' '
-	git log -n 1 --format="%s" >actual &&
-	echo "Unix line endings" >expect &&
-	test_cmp expect actual
+test_expect_success 'am with dos files with --keep-cr' '
+	git checkout -b dosfiles-keep-cr initial &&
+	git format-patch -k --stdout initial..main >output &&
+	git am --keep-cr -k -3 output &&
+	git diff --exit-code main
 '
 
-test_expect_success 'am preserves author info' '
-	git log -n 1 --format="%an" >actual &&
-	echo "Test Author" >expect &&
-	test_cmp expect actual
+test_expect_success 'am with dos files config am.keepcr' '
+	git config am.keepcr 1 &&
+	git checkout -b dosfiles-conf-keepcr initial &&
+	git format-patch -k --stdout initial..main >output &&
+	git am -k -3 output &&
+	git diff --exit-code main
 '
 
-test_expect_success 'am --quiet suppresses output' '
-	cat >quiet-patch.mbox <<-\EOF &&
-	From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-	From: Another Author <another@example.com>
-	Date: Thu, 7 Apr 2005 15:14:13 -0700
-	Subject: [PATCH] Quiet patch
+test_expect_success 'am with dos files config am.keepcr overridden by --no-keep-cr' '
+	git config am.keepcr 1 &&
+	git checkout -b dosfiles-conf-keepcr-override initial &&
+	git format-patch -k initial..main &&
+	test_must_fail git am -k -3 --no-keep-cr 000*.patch &&
+	git am --abort &&
+	rm -rf .git/rebase-apply 000*.patch
+'
 
-	Quiet commit message.
-	---
-	 file | 2 +-
-	 1 file changed, 1 insertion(+), 1 deletion(-)
+test_expect_success 'am with dos files with --keep-cr continue' '
+	git checkout -b dosfiles-keep-cr-continue initial &&
+	git format-patch -k initial..main &&
+	append_cr <file1a >file &&
+	git commit -m "different patch" file &&
+	test_must_fail git am --keep-cr -k -3 000*.patch &&
+	append_cr <file2 >file &&
+	git add file &&
+	git am -3 --resolved &&
+	git diff --exit-code main
+'
 
-	diff --git a/file b/file
-	--- a/file
-	+++ b/file
-	@@ -1 +1 @@
-	-changed
-	+quiet change
-	--
-	2.0.0
-
-	EOF
-	git am -q quiet-patch.mbox &&
-	echo "quiet change" >expect &&
-	test_cmp expect file
+test_expect_success 'am with unix files config am.keepcr overridden by --no-keep-cr' '
+	git config am.keepcr 1 &&
+	git checkout -b unixfiles-conf-keepcr-override initial &&
+	cp -f file1 file &&
+	git commit -m "line ending to unix" file &&
+	git format-patch -k initial..main &&
+	git am -k -3 --no-keep-cr 000*.patch &&
+	git diff --exit-code -w main
 '
 
 test_done

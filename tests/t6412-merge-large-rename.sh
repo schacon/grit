@@ -1,69 +1,106 @@
 #!/bin/sh
 
-test_description='merging with file additions'
+test_description='merging with large rename matrix'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
+count() {
+	i=1
+	while test $i -le $1; do
+		echo $i
+		i=$(($i + 1))
+	done
+}
+
 test_expect_success 'setup (initial)' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test" &&
-	git config user.email "test@test" &&
 	touch file &&
 	git add . &&
 	git commit -m initial &&
 	git tag initial
 '
 
-test_expect_success 'create branches with different files' '
-	cd repo &&
-	git checkout -b feature &&
-	echo feature >feature-file &&
-	git add feature-file &&
-	git commit -m "add feature file" &&
-	git checkout main &&
-	echo main >main-file &&
-	git add main-file &&
-	git commit -m "add main file"
-'
+make_text() {
+	echo $1: $2
+	for i in $(count 20); do
+		echo $1: $i
+	done
+	echo $1: $3
+}
 
-test_expect_success 'merge branches with non-overlapping files' '
-	cd repo &&
-	git merge feature &&
-	test_path_is_file feature-file &&
-	test_path_is_file main-file
+test_rename() {
+	test_expect_success "rename ($1, $2)" '
+	n='$1' &&
+	expect='$2' &&
+	git checkout -f main &&
+	test_might_fail git branch -D test$n &&
+	git reset --hard initial &&
+	for i in $(count $n); do
+		make_text $i initial initial >$i || return 1
+	done &&
+	git add . &&
+	git commit -m add=$n &&
+	for i in $(count $n); do
+		make_text $i changed initial >$i || return 1
+	done &&
+	git commit -a -m change=$n &&
+	git checkout -b test$n HEAD^ &&
+	for i in $(count $n); do
+		git rm $i &&
+		make_text $i initial changed >$i.moved || return 1
+	done &&
+	git add . &&
+	git commit -m change+rename=$n &&
+	case "$expect" in
+		ok) git merge main ;;
+		 *) test_must_fail git merge main ;;
+	esac
+	'
+}
+
+test_rename 5 ok
+
+test_expect_success 'set diff.renamelimit to 4' '
+	git config diff.renamelimit 4
 '
+test_rename 4 ok
+test_rename 5 fail
+
+test_expect_success 'set merge.renamelimit to 5' '
+	git config merge.renamelimit 5
+'
+test_rename 5 ok
+test_rename 6 fail
 
 test_expect_success 'setup large simple rename' '
-	cd repo &&
+	git config --unset merge.renamelimit &&
+	git config --unset diff.renamelimit &&
+
 	git reset --hard initial &&
-	i=1 &&
-	while test $i -le 20; do
-		echo "content $i" >file-$i || return 1
-		i=$(($i + 1))
+	for i in $(count 200); do
+		make_text foo bar baz >$i || return 1
 	done &&
 	git add . &&
 	git commit -m create-files &&
 
 	git branch simple-change &&
-	git checkout -b simple-add &&
-	echo extra >extra-file &&
-	git add extra-file &&
-	git commit -m add-extra &&
+	git checkout -b simple-rename &&
+
+	mkdir builtin &&
+	git mv [0-9]* builtin/ &&
+	git commit -m renamed &&
 
 	git checkout simple-change &&
-	echo change >>file &&
-	git add file &&
-	git commit -m simple-change
+	>unrelated-change &&
+	git add unrelated-change &&
+	git commit -m unrelated-change
 '
 
-test_expect_success 'merge with many files succeeds' '
-	cd repo &&
-	git checkout simple-add &&
-	git merge simple-change
+test_expect_success 'massive simple rename does not spam added files' '
+	sane_unset GIT_MERGE_VERBOSITY &&
+	git merge --no-stat simple-rename | grep -v Removing >output &&
+	test_line_count -lt 5 output
 '
 
 test_done

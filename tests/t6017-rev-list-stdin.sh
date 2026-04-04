@@ -1,155 +1,151 @@
 #!/bin/sh
-# Ported subset from git/t/t6017-rev-list-stdin.sh.
+#
+# Copyright (c) 2009, Junio C Hamano
+#
 
-test_description='rev-list reads revisions from --stdin'
+test_description='log family learns --stdin'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-GIT_COMMITTER_EMAIL=git@comm.iter.xz
-GIT_COMMITTER_NAME='C O Mmiter'
-GIT_AUTHOR_NAME='A U Thor'
-GIT_AUTHOR_EMAIL=git@au.thor.xz
-export GIT_COMMITTER_EMAIL GIT_COMMITTER_NAME GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
-
-M=1130000000
-Z=+0000
-export M Z
-
-doit () {
-	OFFSET=$1 &&
-	NAME=$2 &&
-	shift 2 &&
-	PARENTS= &&
-	for P
+check () {
+	for cmd in rev-list "log --stat"
 	do
-		PARENTS="$PARENTS -p $P"
-	done &&
-	GIT_COMMITTER_DATE="$(($M + $OFFSET)) $Z" &&
-	GIT_AUTHOR_DATE="$GIT_COMMITTER_DATE" &&
-	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE &&
-	commit=$(echo "$NAME" | git commit-tree "$(git write-tree)" $PARENTS) &&
-	echo "$commit"
+		for i in "$@"
+		do
+			printf "%s\n" $i
+		done >input &&
+		test_expect_success "check $cmd $*" '
+			git $cmd $(cat input) >expect &&
+			git $cmd --stdin <input >actual &&
+			sed -e "s/^/input /" input &&
+			sed -e "s/^/output /" expect &&
+			test_cmp expect actual
+		'
+	done
 }
 
-test_expect_success 'setup history' '
-	grit init repo &&
-	cd repo &&
-	c1=$(doit 1 one) &&
-	c2=$(doit 2 two "$c1") &&
-	c3=$(doit 3 three "$c2") &&
-	side=$(doit 4 side "$c2") &&
-	git update-ref refs/heads/master "$c3" &&
-	git update-ref refs/heads/side "$side"
+them='1 2 3 4 5 6 7'
+
+test_expect_success setup '
+	(
+		for i in 0 $them
+		do
+			for j in $them
+			do
+				echo $i.$j >file-$j &&
+				git add file-$j || exit
+			done &&
+			test_tick &&
+			git commit -m $i || exit
+		done &&
+		for i in $them
+		do
+			git checkout -b side-$i main~$i &&
+			echo updated $i >file-$i &&
+			git add file-$i &&
+			test_tick &&
+			git commit -m side-$i || exit
+		done &&
+
+		git update-ref refs/heads/-dashed-branch HEAD
+	)
 '
 
-test_expect_success 'stdin and command-line revisions agree' '
-	cd repo &&
-	printf "%s\n" side ^master >input &&
-	git rev-list side ^master >expect &&
-	git rev-list --stdin <input >actual &&
+check main
+check side-1 ^side-4
+check side-1 ^side-7 --
+check side-1 ^side-7 -- file-1
+check side-1 ^side-7 -- file-2
+check side-3 ^side-4 -- file-3
+check side-3 ^side-2
+check side-3 ^side-2 -- file-1
+check --all
+check --all --not --branches
+check --glob=refs/heads
+check --glob=refs/heads --
+check --glob=refs/heads -- file-1
+check --end-of-options -dashed-branch
+check --all --not refs/heads/main
+
+test_expect_success 'not only --stdin' '
+	cat >expect <<-EOF &&
+	7
+
+	file-1
+	file-2
+	EOF
+	cat >input <<-EOF &&
+	^main^
+	--
+	file-2
+	EOF
+	git log --pretty=tformat:%s --name-only --stdin main -- file-1 \
+		<input >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success '--all accepted from stdin' '
-	cd repo &&
-	printf "%s\n" --all >input &&
-	git rev-list --all >expect &&
-	git rev-list --stdin <input >actual &&
+test_expect_success 'pseudo-opt with missing value' '
+	cat >input <<-EOF &&
+	--glob
+	refs/heads
+	EOF
+
+	cat >expect <<-EOF &&
+	fatal: Option ${SQ}--glob${SQ} requires a value
+	EOF
+
+	test_must_fail git rev-list --stdin <input 2>error &&
+	test_cmp expect error
+'
+
+test_expect_success 'pseudo-opt with invalid value' '
+	cat >input <<-EOF &&
+	--no-walk=garbage
+	EOF
+
+	cat >expect <<-EOF &&
+	error: invalid argument to --no-walk
+	fatal: invalid option ${SQ}--no-walk=garbage${SQ} in --stdin mode
+	EOF
+
+	test_must_fail git rev-list --stdin <input 2>error &&
+	test_cmp expect error
+'
+
+test_expect_success 'unknown option without --end-of-options' '
+	cat >input <<-EOF &&
+	-dashed-branch
+	EOF
+
+	cat >expect <<-EOF &&
+	fatal: invalid option ${SQ}-dashed-branch${SQ} in --stdin mode
+	EOF
+
+	test_must_fail git rev-list --stdin <input 2>error &&
+	test_cmp expect error
+'
+
+test_expect_success '--not on command line does not influence revisions read via --stdin' '
+	cat >input <<-EOF &&
+	refs/heads/main
+	EOF
+	git rev-list refs/heads/main >expect &&
+
+	git rev-list refs/heads/main --not --stdin <input >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'stdin with SHA instead of ref name' '
-	cd repo &&
-	sha=$(git rev-parse master) &&
-	printf "%s\n" "$sha" >input &&
-	git rev-list master >expect &&
-	git rev-list --stdin <input >actual &&
+test_expect_success '--not via stdin does not influence revisions from command line' '
+	cat >input <<-EOF &&
+	--not
+	EOF
+	git rev-list refs/heads/main >expect &&
+
+	git rev-list refs/heads/main --stdin refs/heads/main <input >actual &&
 	test_cmp expect actual
-'
-
-test_expect_success 'stdin with ^ref exclusion' '
-	cd repo &&
-	printf "%s\n" "^master" >input &&
-	git rev-list side ^master >expect &&
-	git rev-list side --stdin <input >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin and cmd-line combine revisions' '
-	cd repo &&
-	printf "%s\n" side >input &&
-	git rev-list master side >expect &&
-	git rev-list master --stdin <input >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin with multiple refs' '
-	cd repo &&
-	printf "%s\n" master side >input &&
-	git rev-list master side >expect &&
-	git rev-list --stdin <input >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin with empty input fails' '
-	cd repo &&
-	printf "" >input &&
-	test_must_fail git rev-list --stdin <input
-'
-
-test_expect_success 'stdin with range notation' '
-	cd repo &&
-	printf "%s\n" "master..side" >input &&
-	git rev-list master..side >expect &&
-	git rev-list --stdin <input >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin combined with --max-count' '
-	cd repo &&
-	printf "%s\n" master >input &&
-	git rev-list --max-count=1 master >expect &&
-	git rev-list --max-count=1 --stdin <input >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin combined with --reverse' '
-	cd repo &&
-	printf "%s\n" master >input &&
-	git rev-list --reverse master >expect &&
-	git rev-list --reverse --stdin <input >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin with ^SHA exclusion by hash' '
-	cd repo &&
-	sha_c2=$(git rev-parse master~1) &&
-	printf "%s\n" "^$sha_c2" >input &&
-	git rev-list master ^"$sha_c2" >expect &&
-	git rev-list master --stdin <input >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin ref and cmd-line exclusion combine' '
-	cd repo &&
-	printf "%s\n" master >input &&
-	git rev-list master ^side >expect &&
-	git rev-list ^side --stdin <input >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin with --count' '
-	cd repo &&
-	printf "%s\n" master >input &&
-	git rev-list --count master >expect &&
-	git rev-list --count --stdin <input >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin with only exclusion and no positive ref fails' '
-	cd repo &&
-	printf "%s\n" "^master" >input &&
-	test_must_fail git rev-list --stdin <input
 '
 
 test_done

@@ -1,44 +1,51 @@
 #!/bin/sh
-# Ported from git/t/t3512-cherry-pick-submodule.sh
-# Cherry-pick basic operations
 
-test_description='cherry-pick basic operations'
+test_description='cherry-pick can handle submodules'
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-submodule-update.sh
 
-test_expect_success 'setup' '
-	git init &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com" &&
-	echo base >file &&
-	git add file &&
-	git commit -m "base" &&
-	git tag base &&
+test_submodule_switch "cherry-pick"
 
-	git checkout -b side &&
-	echo side >file2 &&
-	git add file2 &&
-	git commit -m "add file2" &&
-	git tag side-tag
-'
+test_expect_success 'unrelated submodule/file conflict is ignored' '
+	test_config_global protocol.file.allow always &&
 
-test_expect_success 'cherry-pick from side branch to master' '
-	git checkout master &&
-	git cherry-pick side-tag &&
-	test_path_is_file file2 &&
-	test "$(cat file2)" = "side"
-'
+	test_create_repo sub &&
 
-test_expect_success 'cherry-pick preserves file content' '
-	test "$(cat file)" = "base" &&
-	test "$(cat file2)" = "side"
-'
+	touch sub/file &&
+	git -C sub add file &&
+	git -C sub commit -m "add a file in a submodule" &&
 
-test_expect_success 'cherry-pick creates proper commit' '
-	git log --format=%s -n1 >actual &&
-	echo "add file2" >expect &&
-	test_cmp expect actual
+	test_create_repo a_repo &&
+	(
+		cd a_repo &&
+		>a_file &&
+		git add a_file &&
+		git commit -m "add a file" &&
+
+		git branch test &&
+		git checkout test &&
+
+		mkdir sub &&
+		>sub/content &&
+		git add sub/content &&
+		git commit -m "add a regular folder with name sub" &&
+
+		echo "123" >a_file &&
+		git add a_file &&
+		git commit -m "modify a file" &&
+
+		git checkout main &&
+
+		git submodule add ../sub sub &&
+		git submodule update sub &&
+		git commit -m "add a submodule info folder with name sub" &&
+
+		git cherry-pick test
+	)
 '
 
 test_done

@@ -3,11 +3,17 @@
 # Copyright (c) 2005 Junio C Hamano
 #
 
-test_description='git ls-files test (-- to terminate the path list).'
+test_description='git ls-files test (-- to terminate the path list).
+
+This test runs git ls-files --others with the following on the
+filesystem.
+
+    path0       - a file
+    -foo	- a file with a funny name.
+    --		- another file with a funny name.
+'
 
 . ./test-lib.sh
-
-test_expect_success 'setup: init repo' 'git init -q'
 
 test_expect_success 'setup' '
 	echo frotz >path0 &&
@@ -21,9 +27,6 @@ test_expect_success 'git ls-files without path restriction.' '
 	cat >expect <<-\EOF &&
 	--
 	-foo
-	.bin/git
-	.bin/grit
-	.bin/scalar
 	output
 	path0
 	EOF
@@ -63,13 +66,11 @@ test_expect_success 'git ls-files with no path restriction.' '
 	cat >expect <<-\EOF &&
 	--
 	-foo
-	.bin/git
-	.bin/grit
-	.bin/scalar
 	output
 	path0
 	EOF
 	test_cmp output expect
+
 '
 
 test_done

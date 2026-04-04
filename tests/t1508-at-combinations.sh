@@ -4,112 +4,115 @@ test_description='test various @{X} syntax combinations together'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# grit supports HEAD, HEAD^, HEAD~N, HEAD^{type}, tag, HEAD:path
-# grit does NOT support: @{N}, @{-N}, HEAD@{N}, or local branch -u
+check() {
+	test_expect_${4:-success} "$1 = $3" "
+		echo '$3' >expect &&
+		if test '$2' = 'commit'
+		then
+			git log -1 --format=%s '$1' >actual
+		elif test '$2' = 'ref'
+		then
+			git rev-parse --symbolic-full-name '$1' >actual
+		else
+			git cat-file -p '$1' >actual
+		fi &&
+		test_cmp expect actual
+	"
+}
+
+nonsense() {
+	test_expect_${2:-success} "$1 is nonsensical" "
+		test_must_fail git rev-parse --verify '$1'
+	"
+}
+
+fail() {
+	"$@" failure
+}
 
 test_expect_success 'setup' '
-	git init &&
-	git config user.name "Test" &&
-	git config user.email "test@test.com" &&
-	echo one >file &&
-	git add file &&
-	git commit -m "main-one" &&
-	git tag main-one &&
-	echo two >file &&
-	git add file &&
-	git commit -m "main-two" &&
-	git tag main-two &&
+	test_commit main-one &&
+	test_commit main-two &&
+	git checkout -b upstream-branch &&
+	test_commit upstream-one &&
+	test_commit upstream-two &&
+	if test_have_prereq !MINGW
+	then
+		git checkout -b @/at-test
+	fi &&
+	git checkout -b @@/at-test &&
+	git checkout -b @at-test &&
+	git checkout -b old-branch &&
+	test_commit old-one &&
+	test_commit old-two &&
 	git checkout -b new-branch &&
-	echo three >file &&
-	git add file &&
-	git commit -m "new-one" &&
-	git tag new-one &&
-	echo four >file &&
-	git add file &&
-	git commit -m "new-two" &&
-	git tag new-two
+	test_commit new-one &&
+	test_commit new-two &&
+	git branch -u main old-branch &&
+	git branch -u upstream-branch new-branch
 '
 
-test_expect_success 'HEAD resolves' '
-	git rev-parse HEAD >actual &&
-	git rev-parse new-two >expect &&
-	test_cmp expect actual
+check HEAD ref refs/heads/new-branch
+check "@{1}" commit new-one
+check "HEAD@{1}" commit new-one
+check "@{now}" commit new-two
+check "HEAD@{now}" commit new-two
+check "@{-1}" ref refs/heads/old-branch
+check "@{-1}@{0}" commit old-two
+check "@{-1}@{1}" commit old-one
+check "@{u}" ref refs/heads/upstream-branch
+check "HEAD@{u}" ref refs/heads/upstream-branch
+check "@{u}@{1}" commit upstream-one
+check "@{-1}@{u}" ref refs/heads/main
+check "@{-1}@{u}@{1}" commit main-one
+check "@" commit new-two
+check "@@{u}" ref refs/heads/upstream-branch
+check "@@/at-test" ref refs/heads/@@/at-test
+test_have_prereq MINGW ||
+check "@/at-test" ref refs/heads/@/at-test
+check "@at-test" ref refs/heads/@at-test
+nonsense "@{u}@{-1}"
+nonsense "@{0}@{0}"
+nonsense "@{1}@{u}"
+nonsense "HEAD@{-1}"
+nonsense "@{-1}@{-1}"
+
+# @{N} versus HEAD@{N}
+
+check "HEAD@{3}" commit old-two
+nonsense "@{3}"
+
+test_expect_success 'switch to old-branch' '
+	git checkout old-branch
 '
 
-test_expect_success 'HEAD ref is symbolic' '
-	echo refs/heads/new-branch >expect &&
-	git symbolic-ref HEAD >actual &&
-	test_cmp expect actual
-'
+check HEAD ref refs/heads/old-branch
+check "HEAD@{1}" commit new-two
+check "@{1}" commit old-one
 
-test_expect_success 'HEAD^ works' '
-	git rev-parse HEAD^ >actual &&
-	git rev-parse new-one >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'HEAD~2 works' '
-	git rev-parse HEAD~2 >actual &&
-	git rev-parse main-two >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'HEAD^{tree} works' '
-	git rev-parse HEAD^{tree} >actual &&
-	test -n "$(cat actual)"
-'
-
-test_expect_success 'HEAD^{commit} works' '
-	git rev-parse HEAD^{commit} >actual &&
-	git rev-parse HEAD >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'tag resolves correctly' '
-	git rev-parse main-one >actual &&
-	test -n "$(cat actual)"
-'
-
-test_expect_success 'HEAD:file resolves to blob' '
-	echo four >expect &&
-	git cat-file -p HEAD:file >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'create and access path with @' '
+test_expect_success 'create path with @' '
 	echo content >normal &&
-	echo content >"fun@ny" &&
-	git add normal "fun@ny" &&
-	git commit -m "funny path" &&
-	git cat-file -p HEAD:normal >actual &&
-	echo content >expect &&
-	test_cmp expect actual
+	echo content >fun@ny &&
+	git add normal fun@ny &&
+	git commit -m "funny path"
 '
 
-test_expect_success 'switch to main and verify HEAD' '
-	git checkout main &&
-	git rev-parse HEAD >actual &&
-	git rev-parse main-two >expect &&
-	test_cmp expect actual
+check "@:normal" blob content
+check "@:fun@ny" blob content
+
+test_expect_success '@{1} works with only one reflog entry' '
+	git checkout -B newbranch main &&
+	git reflog expire --expire=now refs/heads/newbranch &&
+	git commit --allow-empty -m "first after expiration" &&
+	test_cmp_rev newbranch~ newbranch@{1}
 '
 
-test_expect_success '@{1} shows previous reflog entry' '
-	git rev-parse "@{1}" >actual 2>&1 &&
-	test -n "$(cat actual)"
-'
-
-test_expect_success '@{-1} refers to previous branch' '
-	git rev-parse --symbolic-full-name "@{-1}" >actual &&
-	echo refs/heads/new-branch >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'HEAD@{1} shows previous HEAD' '
-	git rev-parse "HEAD@{1}" >actual 2>&1 &&
-	test -n "$(cat actual)"
+test_expect_success '@{0} works with empty reflog' '
+	git checkout -B newbranch main &&
+	git reflog expire --expire=now refs/heads/newbranch &&
+	test_cmp_rev newbranch newbranch@{0}
 '
 
 test_done

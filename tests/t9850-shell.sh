@@ -1,16 +1,38 @@
 #!/bin/sh
-#
-# Upstream: t9850-shell.sh
-# Requires git-shell — ported as test_expect_failure stubs.
-#
 
 test_description='git shell tests'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-skip_all='git-shell not available in grit'
+test_expect_success 'shell allows upload-pack' '
+	printf 0000 >input &&
+	git upload-pack . <input >expect &&
+	git shell -c "git-upload-pack $SQ.$SQ" <input >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'shell forbids other commands' '
+	test_must_fail git shell -c "git config foo.bar baz"
+'
+
+test_expect_success 'shell forbids interactive use by default' '
+	test_must_fail git shell
+'
+
+test_expect_success 'shell allows interactive command' '
+	mkdir git-shell-commands &&
+	write_script git-shell-commands/ping <<-\EOF &&
+	echo pong
+	EOF
+	echo pong >expect &&
+	echo ping | git shell >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'shell complains of overlong commands' '
+	test-tool genzeros | tr "\000" "a" |
+	test_must_fail git shell 2>err &&
+	grep "too long" err
+'
+
 test_done

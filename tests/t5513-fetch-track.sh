@@ -5,7 +5,6 @@ test_description='fetch follows remote-tracking branches correctly'
 . ./test-lib.sh
 
 test_expect_success setup '
-	git init &&
 	>file &&
 	git add . &&
 	test_tick &&

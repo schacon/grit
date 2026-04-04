@@ -1,16 +1,23 @@
 #!/bin/sh
-#
-# Upstream: t5554-noop-fetch-negotiator.sh
-# Requires HTTP transport — ported as test_expect_failure stubs.
-#
 
 test_description='test noop fetch negotiator'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-skip_all='HTTP transport not available in grit'
+test_expect_success 'noop negotiator does not emit any "have"' '
+	rm -f trace &&
+
+	test_create_repo server &&
+	test_commit -C server to_fetch &&
+
+	test_create_repo client &&
+	test_commit -C client we_have &&
+
+	test_config -C client fetch.negotiationalgorithm noop &&
+	GIT_TRACE_PACKET="$(pwd)/trace" git -C client fetch "$(pwd)/server" &&
+
+	! grep "fetch> have" trace &&
+	grep "fetch> done" trace
+'
+
 test_done

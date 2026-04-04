@@ -2,13 +2,13 @@
 
 test_description='common tail optimization'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup repo' '
-	git init repo &&
-	cd repo
-'
+z=zzzzzzzz ;# 8
+z="$z$z$z$z$z$z$z$z" ;# 64
+z="$z$z$z$z$z$z$z$z" ;# 512
+z="$z$z$z$z" ;# 2048
+z2047=$(expr "$z" : '.\(.*\)') ; #2047
 
 x=zzzzzzzzzz			;# 10
 y="$x$x$x$x$x$x$x$x$x$x"	;# 100
@@ -123,8 +123,8 @@ EOF
 
 sample='1023 1024 1025 2047 4095'
 
-test_expect_success 'setup' '
-	cd repo &&
+test_expect_success setup '
+
 	for n in $sample
 	do
 		( zs $n && echo a ) >file-a$n &&
@@ -144,13 +144,14 @@ test_expect_success 'setup' '
 	done >expect
 '
 
-test_expect_success 'diff --unified=0' '
-	cd repo &&
+test_expect_success 'diff -U0' '
+
 	for n in $sample
 	do
-		git diff --unified=0 file-?$n || return 1
+		git diff -U0 file-?$n || return 1
 	done | zc >actual &&
 	test_cmp expect actual
+
 '
 
 test_done

@@ -1,63 +1,71 @@
 #!/bin/sh
 
-test_description='git apply with multi-file patches'
+test_description='git apply handling criss-cross rename patch.'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
+create_file() {
+	cnt=0
+	while test $cnt -le 100
+	do
+		cnt=$(($cnt + 1))
+		echo "$2" >> "$1"
+	done
+}
+
 test_expect_success 'setup' '
-	git init repo && cd repo &&
-	echo "file1 content" >file1 &&
-	echo "file2 content" >file2 &&
-	git add file1 file2 &&
-	git commit -m initial
+	# Ensure that file sizes are different, because on Windows
+	# lstat() does not discover inode numbers, and we need
+	# other properties to discover swapped files
+	# (mtime is not always different, either).
+	create_file file1 "some content" &&
+	create_file file2 "some other content" &&
+	create_file file3 "again something else" &&
+	git add file1 file2 file3 &&
+	git commit -m 1
 '
 
-test_expect_success 'apply patch modifying multiple files' '
-	cd repo &&
-	cat >multi.patch <<-\EOF &&
-	diff --git a/file1 b/file1
-	--- a/file1
-	+++ b/file1
-	@@ -1 +1 @@
-	-file1 content
-	+file1 modified
-	diff --git a/file2 b/file2
-	--- a/file2
-	+++ b/file2
-	@@ -1 +1 @@
-	-file2 content
-	+file2 modified
-	EOF
-	git apply multi.patch &&
-	echo "file1 modified" >expect &&
-	test_cmp expect file1 &&
-	echo "file2 modified" >expect &&
-	test_cmp expect file2
+test_expect_success 'criss-cross rename' '
+	mv file1 tmp &&
+	mv file2 file1 &&
+	mv tmp file2 &&
+	cp file1 file1-swapped &&
+	cp file2 file2-swapped
 '
 
-test_expect_success 'apply patch with file creation and modification' '
-	cd repo &&
-	git checkout -- file1 file2 &&
-	cat >mixed.patch <<-\EOF &&
-	diff --git a/file1 b/file1
-	--- a/file1
-	+++ b/file1
-	@@ -1 +1,2 @@
-	 file1 content
-	+extra line
-	diff --git a/newfile b/newfile
-	new file mode 100644
-	--- /dev/null
-	+++ b/newfile
-	@@ -0,0 +1 @@
-	+brand new
-	EOF
-	git apply mixed.patch &&
-	test_write_lines "file1 content" "extra line" >expect &&
-	test_cmp expect file1 &&
-	echo "brand new" >expect &&
-	test_cmp expect newfile
+test_expect_success 'diff -M -B' '
+	git diff -M -B > diff &&
+	git reset --hard
+
+'
+
+test_expect_success 'apply' '
+	git apply diff &&
+	test_cmp file1 file1-swapped &&
+	test_cmp file2 file2-swapped
+'
+
+test_expect_success 'criss-cross rename' '
+	git reset --hard &&
+	mv file1 tmp &&
+	mv file2 file1 &&
+	mv file3 file2 &&
+	mv tmp file3 &&
+	cp file1 file1-swapped &&
+	cp file2 file2-swapped &&
+	cp file3 file3-swapped
+'
+
+test_expect_success 'diff -M -B' '
+	git diff -M -B > diff &&
+	git reset --hard
+'
+
+test_expect_success 'apply' '
+	git apply diff &&
+	test_cmp file1 file1-swapped &&
+	test_cmp file2 file2-swapped &&
+	test_cmp file3 file3-swapped
 '
 
 test_done

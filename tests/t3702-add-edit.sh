@@ -1,59 +1,128 @@
 #!/bin/sh
+#
+# Copyright (c) 2007 Johannes E. Schindelin
+#
 
-test_description='add basic tests'
+test_description='add -e basic tests'
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
 
-	echo initial >file &&
+cat > file << EOF
+LO, praise of the prowess of people-kings
+of spear-armed Danes, in days long sped,
+we have heard, and what honor the athelings won!
+Oft Scyld the Scefing from squadroned foes,
+from many a tribe, the mead-bench tore,
+awing the earls. Since erst he lay
+friendless, a foundling, fate repaid him:
+for he waxed under welkin, in wealth he throve,
+till before him the folk, both far and near,
+who house by the whale-path, heard his mandate,
+gave him gifts:  a good king he!
+EOF
+
+cat > second-part << EOF
+To him an heir was afterward born,
+a son in his halls, whom heaven sent
+to favor the folk, feeling their woe
+that erst they had lacked an earl for leader
+so long a while; the Lord endowed him,
+the Wielder of Wonder, with world's renown.
+EOF
+
+test_expect_success 'setup' '
+
 	git add file &&
 	test_tick &&
-	git commit -m initial
+	git commit -m initial file
+
 '
 
-test_expect_success 'add new file' '
-	echo new >newfile &&
-	git add newfile &&
-	git ls-files --error-unmatch newfile
+cat > expected-patch << EOF
+diff --git a/file b/file
+--- a/file
++++ b/file
+@@ -1,11 +1,6 @@
+-LO, praise of the prowess of people-kings
+-of spear-armed Danes, in days long sped,
+-we have heard, and what honor the athelings won!
+-Oft Scyld the Scefing from squadroned foes,
+-from many a tribe, the mead-bench tore,
+-awing the earls. Since erst he lay
+-friendless, a foundling, fate repaid him:
+-for he waxed under welkin, in wealth he throve,
+-till before him the folk, both far and near,
+-who house by the whale-path, heard his mandate,
+-gave him gifts:  a good king he!
++To him an heir was afterward born,
++a son in his halls, whom heaven sent
++to favor the folk, feeling their woe
++that erst they had lacked an earl for leader
++so long a while; the Lord endowed him,
++the Wielder of Wonder, with world's renown.
+EOF
+
+cat > patch << EOF
+diff --git a/file b/file
+index b9834b5..ef6e94c 100644
+--- a/file
++++ b/file
+@@ -3,1 +3,333 @@ of spear-armed Danes, in days long sped,
+ we have heard, and what honor the athelings won!
++
+ Oft Scyld the Scefing from squadroned foes,
+@@ -2,7 +1,5 @@ awing the earls. Since erst he lay
+ friendless, a foundling, fate repaid him:
++
+ for he waxed under welkin, in wealth he throve,
+EOF
+
+cat > expected << EOF
+diff --git a/file b/file
+--- a/file
++++ b/file
+@@ -1,10 +1,12 @@
+ LO, praise of the prowess of people-kings
+ of spear-armed Danes, in days long sped,
+ we have heard, and what honor the athelings won!
++
+ Oft Scyld the Scefing from squadroned foes,
+ from many a tribe, the mead-bench tore,
+ awing the earls. Since erst he lay
+ friendless, a foundling, fate repaid him:
++
+ for he waxed under welkin, in wealth he throve,
+ till before him the folk, both far and near,
+ who house by the whale-path, heard his mandate,
+EOF
+
+echo "#!$SHELL_PATH" >fake-editor.sh
+cat >> fake-editor.sh <<\EOF
+grep -E -v '^index' "$1" >orig-patch &&
+mv -f patch "$1"
+EOF
+
+test_set_editor "$(pwd)/fake-editor.sh"
+chmod a+x fake-editor.sh
+
+test_expect_success 'add -e' '
+
+	cp second-part file &&
+	git add -e &&
+	test_cmp second-part file &&
+	test_cmp expected-patch orig-patch &&
+	git diff --cached >actual &&
+	grep -v index actual >out &&
+	test_cmp expected out
+
 '
 
-test_expect_success 'add modified file' '
-	echo modified >file &&
-	git add file &&
-	git diff --cached --name-only >actual &&
-	grep file actual
-'
-
-test_expect_success 'add multiple files' '
-	echo a >fileA &&
-	echo b >fileB &&
-	git add fileA fileB &&
-	git ls-files --error-unmatch fileA &&
-	git ls-files --error-unmatch fileB
-'
-
-test_expect_success 'add with dot adds all' '
-	echo c >fileC &&
-	git add . &&
-	git ls-files --error-unmatch fileC
-'
-
-test_expect_success 'add -n is dry run' '
-	echo d >fileD &&
-	git add -n fileD &&
-	test_must_fail git ls-files --error-unmatch fileD
-'
-
-test_expect_success 'add respects .gitignore' '
-	echo "*.ignored" >.gitignore &&
-	echo data >test.ignored &&
-	test_must_fail git add test.ignored 2>err &&
-	test_must_fail git ls-files --error-unmatch test.ignored &&
-	rm .gitignore test.ignored
+test_expect_success 'add -e notices editor failure' '
+	git reset --hard &&
+	echo change >>file &&
+	test_must_fail env GIT_EDITOR=false git add -e &&
+	test_expect_code 1 git diff --exit-code
 '
 
 test_done

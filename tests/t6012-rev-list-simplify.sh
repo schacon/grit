@@ -1,219 +1,288 @@
 #!/bin/sh
-#
-# Tests for rev-list history simplification with paths
 
-test_description='rev-list history simplification'
+test_description='merge simplification'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-GIT_COMMITTER_EMAIL=git@comm.iter.xz
-GIT_COMMITTER_NAME='C O Mmiter'
-GIT_AUTHOR_NAME='A U Thor'
-GIT_AUTHOR_EMAIL=git@au.thor.xz
-export GIT_COMMITTER_EMAIL GIT_COMMITTER_NAME GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
+note () {
+	git tag "$1"
+}
 
-REAL_GIT=$(PATH="/usr/bin:/usr/local/bin:$PATH" command -v git)
+unnote () {
+	test_when_finished "rm -f tmp" &&
+	git name-rev --tags --annotate-stdin >tmp &&
+	sed -e "s|$OID_REGEX (tags/\([^)]*\)) |\1 |g" <tmp
+}
 
 #
-# History:
-#   A(file) -- B(other) -- C(file) -- D(other) -- E(file) (main)
-#               \                                /
-#                F(topic-file) -- G(topic-file)  (topic)
+# Create a test repo with an interesting commit graph:
 #
-test_expect_success 'setup history with path-relevant and irrelevant commits' '
-	git init -b main . &&
-	echo a >file &&
-	git add file &&
-	test_tick &&
-	git commit -m "A: add file" &&
-	git tag A &&
+# A-----B-----G--H--I--K--L
+#  \     \      /     /
+#   \     \    /     /
+#    C--D--E--F     J
+#
+# The commits are laid out from left-to-right starting with
+# the root commit A and terminating at the tip commit L.
+#
+# There are a few places where we adjust the commit date or
+# author date to make the --topo-order, --date-order, and
+# --author-date-order flags produce different output.
 
-	echo b >other &&
-	git add other &&
-	test_tick &&
-	git commit -m "B: add other" &&
-	git tag B &&
+test_expect_success setup '
+	echo "Hi there" >file &&
+	echo "initial" >lost &&
+	git add file lost &&
+	test_tick && git commit -m "Initial file and lost" &&
+	note A &&
 
-	echo c >>file &&
-	git add file &&
-	test_tick &&
-	git commit -m "C: modify file" &&
-	git tag C &&
+	git branch other-branch &&
 
-	echo d >>other &&
-	git add other &&
-	test_tick &&
-	git commit -m "D: modify other" &&
-	git tag D &&
+	git symbolic-ref HEAD refs/heads/unrelated &&
+	git rm -f "*" &&
+	echo "Unrelated branch" >side &&
+	git add side &&
+	test_tick && git commit -m "Side root" &&
+	note J &&
+	git checkout main &&
 
-	git checkout -b topic B &&
-	echo f >topic-file &&
-	git add topic-file &&
-	test_tick &&
-	git commit -m "F: add topic-file" &&
-	git tag F &&
+	echo "Hello" >file &&
+	echo "second" >lost &&
+	git add file lost &&
+	test_tick && GIT_AUTHOR_DATE=$(($test_tick + 120)) git commit -m "Modified file and lost" &&
+	note B &&
 
-	echo g >>topic-file &&
-	git add topic-file &&
+	git checkout other-branch &&
+
+	echo "Hello" >file &&
+	>lost &&
+	git add file lost &&
+	test_tick && git commit -m "Modified the file identically" &&
+	note C &&
+
+	echo "This is a stupid example" >another-file &&
+	git add another-file &&
+	test_tick && git commit -m "Add another file" &&
+	note D &&
+
 	test_tick &&
-	git commit -m "G: modify topic-file" &&
-	git tag G &&
+	test_must_fail git merge -m "merge" main &&
+	>lost && git commit -a -m "merge" &&
+	note E &&
+
+	echo "Yet another" >elif &&
+	git add elif &&
+	test_tick && git commit -m "Irrelevant change" &&
+	note F &&
 
 	git checkout main &&
-	$REAL_GIT merge topic -m "E: merge" &&
-	git tag E &&
+	echo "Yet another" >elif &&
+	git add elif &&
+	test_tick && git commit -m "Another irrelevant change" &&
+	note G &&
 
-	echo e >>file &&
+	test_tick && git merge -m "merge" other-branch &&
+	note H &&
+
+	echo "Final change" >file &&
+	test_tick && git commit -a -m "Final change" &&
+	note I &&
+
+	git checkout main &&
+	test_tick && git merge --allow-unrelated-histories -m "Coolest" unrelated &&
+	note K &&
+
+	echo "Immaterial" >elif &&
+	git add elif &&
+	test_tick && git commit -m "Last" &&
+	note L
+'
+
+FMT='tformat:%P 	%H | %s'
+
+check_outcome () {
+	outcome=$1
+	shift
+	for c in $1
+	do
+		echo "$c"
+	done >expect &&
+	shift &&
+	param="$*" &&
+	test_expect_$outcome "log $param" '
+		git log --pretty="$FMT" --parents $param >out &&
+		unnote >actual <out &&
+		sed -e "s/^.*	\([^ ]*\) .*/\1/" >check <actual &&
+		test_cmp expect check
+	'
+}
+
+check_result () {
+	check_outcome success "$@"
+}
+
+check_result 'L K J I H F E D C G B A' --full-history --topo-order
+check_result 'L K I H G F E D C B J A' --full-history
+check_result 'L K I H G F E D C B J A' --full-history --date-order
+check_result 'L K I H G F E D B C J A' --full-history --author-date-order
+check_result 'K I H E C B A' --full-history -- file
+check_result 'K I H E C B A' --full-history --topo-order -- file
+check_result 'K I H E C B A' --full-history --date-order -- file
+check_result 'K I H E B C A' --full-history --author-date-order -- file
+check_result 'I E C B A' --simplify-merges -- file
+check_result 'I E C B A' --simplify-merges --topo-order -- file
+check_result 'I E C B A' --simplify-merges --date-order -- file
+check_result 'I E B C A' --simplify-merges --author-date-order -- file
+check_result 'I B A' -- file
+check_result 'I B A' --topo-order -- file
+check_result 'I B A' --date-order -- file
+check_result 'I B A' --author-date-order -- file
+check_result 'H' --first-parent -- another-file
+check_result 'H' --first-parent --topo-order -- another-file
+
+check_result 'L K I H G B A' --first-parent L
+check_result 'F E D C' --exclude-first-parent-only F ^L
+check_result '' F ^L
+check_result 'L K I H G J' L ^F
+check_result 'L K I H G B J' --exclude-first-parent-only L ^F
+check_result 'L K I H G B' --exclude-first-parent-only --first-parent L ^F
+
+check_result 'E C B A' --full-history E -- lost
+test_expect_success 'full history simplification without parent' '
+	printf "%s\n" E C B A >expect &&
+	git log --pretty="$FMT" --full-history E -- lost >out &&
+	unnote >actual <out &&
+	sed -e "s/^.*	\([^ ]*\) .*/\1/" >check <actual &&
+	test_cmp expect check
+'
+
+test_expect_success '--full-diff is not affected by --parents' '
+	git log -p --pretty="%H" --full-diff -- file >expected &&
+	git log -p --pretty="%H" --full-diff --parents -- file >actual &&
+	test_cmp expected actual
+'
+
+#
+# Create a new history to demonstrate the value of --show-pulls
+# with respect to the subtleties of simplified history, --full-history,
+# and --simplify-merges.
+#
+#   .-A---M-----C--N---O---P
+#  /     / \  \  \/   /   /
+# I     B   \  R-'`-Z'   /
+#  \   /     \/         /
+#   \ /      /\        /
+#    `---X--'  `---Y--'
+#
+# This example is explained in Documentation/rev-list-options.adoc
+
+test_expect_success 'setup rebuild repo' '
+	rm -rf .git * &&
+	git init &&
+	git switch -c topic &&
+
+	echo base >file &&
 	git add file &&
-	test_tick &&
-	git commit -m "H: modify file again" &&
-	git tag H
+	test_commit I &&
+
+	echo A >file &&
+	git add file &&
+	test_commit A &&
+
+	git switch -c branchB I &&
+	echo B >file &&
+	git add file &&
+	test_commit B &&
+
+	git switch topic &&
+	test_must_fail git merge -m "M" B &&
+	echo A >file &&
+	echo B >>file &&
+	git add file &&
+	git merge --continue &&
+	note M &&
+
+	echo C >other &&
+	git add other &&
+	test_commit C &&
+
+	git switch -c branchX I &&
+	echo X >file &&
+	git add file &&
+	test_commit X &&
+
+	git switch -c branchR M &&
+	git merge -m R -Xtheirs X &&
+	note R &&
+
+	git switch topic &&
+	git merge -m N R &&
+	note N &&
+
+	git switch -c branchY M &&
+	echo Y >y &&
+	git add y &&
+	test_commit Y &&
+
+	git switch -c branchZ C &&
+	echo Z >z &&
+	git add z &&
+	test_commit Z &&
+
+	git switch topic &&
+	git merge -m O Z &&
+	note O &&
+
+	git merge -m P Y &&
+	note P
 '
 
-test_expect_success 'rev-list without path lists all commits' '
-	git rev-list H >actual &&
-	# H E D C G F B A = 8
-	test_line_count = 8 actual
-'
+check_result 'X I' -- file
+check_result 'N R X I' --show-pulls -- file
 
-test_expect_success 'rev-list --simplify-by-decoration lists decorated commits' '
-	git rev-list --simplify-by-decoration --all >actual &&
-	# Should include all tagged/branched commits
-	test $(wc -l <actual) -ge 1
-'
+check_result 'P O N R X M B A I' --full-history --topo-order -- file
+check_result 'N R X M B A I' --simplify-merges --topo-order --show-pulls -- file
+check_result 'R X M B A I' --simplify-merges --topo-order -- file
+check_result 'N M A I' --first-parent -- file
+check_result 'N M A I' --first-parent --show-pulls -- file
 
-test_expect_success 'rev-list --simplify-by-decoration includes HEAD' '
-	git rev-list --simplify-by-decoration HEAD >actual &&
-	HEAD_SHA=$(git rev-parse HEAD) &&
-	grep "$HEAD_SHA" actual
-'
+# --ancestry-path implies --full-history
+check_result 'P O N R M' --topo-order \
+	--ancestry-path A..HEAD -- file
+check_result 'P O N R M' --topo-order \
+	--show-pulls \
+	--ancestry-path A..HEAD -- file
+check_result 'P O N R M' --topo-order \
+	--full-history \
+	--ancestry-path A..HEAD -- file
+check_result 'R M' --topo-order \
+	--simplify-merges \
+	--ancestry-path A..HEAD -- file
+check_result 'N R M' --topo-order \
+	--simplify-merges --show-pulls \
+	--ancestry-path A..HEAD -- file
 
-test_expect_success 'rev-list --simplify-by-decoration includes tags' '
-	git rev-list --simplify-by-decoration --all >actual &&
-	A_SHA=$(git rev-parse A) &&
-	grep "$A_SHA" actual
-'
-
-test_expect_success 'rev-list --all lists commits from all branches' '
-	git rev-list --all >actual &&
-	test $(wc -l <actual) -ge 8
-'
-
-test_expect_success 'rev-list --count with --all' '
-	git rev-list --count --all >actual &&
-	test $(cat actual) -ge 8
-'
-
-test_expect_success 'rev-list -- path limits to path-touching commits' '
-	git rev-list H -- file >actual &&
-	# Commits touching file: A, C, H
-	test_line_count = 3 actual
-'
-
-test_expect_success 'rev-list -- other limits to other-touching commits' '
-	git rev-list H -- other >actual &&
-	# Commits touching other: B, D
-	test_line_count = 2 actual
-'
-
-test_expect_success 'rev-list -- topic-file limits to topic-file commits' '
-	git rev-list H -- topic-file >actual &&
-	# Commits touching topic-file: F, G (and possibly E merge)
-	test $(wc -l <actual) -ge 2
-'
-
-test_expect_success 'rev-list with range and path' '
-	git rev-list B..H -- file >actual &&
-	# C and H touch file after B
-	test_line_count = 2 actual
-'
-
-test_expect_success 'rev-list --full-history shows all path-relevant commits' '
-	git rev-list --full-history H -- file >actual &&
-	test $(wc -l <actual) -ge 3
-'
-
-test_expect_success 'rev-list --full-history --simplify-merges with path' '
-	git rev-list --full-history --simplify-merges H -- file >actual &&
-	test $(wc -l <actual) -ge 1
-'
-
-test_expect_success 'rev-list --sparse shows all commits despite path' '
-	git rev-list --sparse H -- file >actual &&
-	# sparse does not prune non-matching commits
-	test $(wc -l <actual) -ge 5
-'
-
-test_expect_success 'rev-list --dense with path (default behavior)' '
-	git rev-list --dense H -- file >actual &&
-	# dense is the default path simplification
-	test $(wc -l <actual) -ge 1
-'
-
-# Test --simplify-by-decoration with ranges
-test_expect_success 'rev-list --simplify-by-decoration with range' '
-	git rev-list --simplify-by-decoration A..H >actual &&
-	# Should list some decorated commits in range
-	test $(wc -l <actual) -ge 1
-'
-
-# Test ordering with simplification
-test_expect_success 'rev-list --topo-order with --simplify-by-decoration' '
-	git rev-list --topo-order --simplify-by-decoration HEAD >actual &&
-	test $(wc -l <actual) -ge 1
-'
-
-test_expect_success 'rev-list --date-order with --simplify-by-decoration' '
-	git rev-list --date-order --simplify-by-decoration HEAD >actual &&
-	test $(wc -l <actual) -ge 1
-'
-
-# Additional branches for richer decoration testing
-test_expect_success 'setup additional branches' '
-	git checkout -b feature1 C &&
-	echo feat >feat-file &&
-	git add feat-file &&
-	test_tick &&
-	git commit -m "feat1" &&
-	git tag feat1 &&
-
-	git checkout -b feature2 D &&
-	echo feat2 >feat2-file &&
-	git add feat2-file &&
-	test_tick &&
-	git commit -m "feat2" &&
-	git tag feat2
-'
-
-test_expect_success 'rev-list --simplify-by-decoration --all shows all branch tips' '
-	git rev-list --simplify-by-decoration --all >actual &&
-	FEAT1=$(git rev-parse feat1) &&
-	FEAT2=$(git rev-parse feat2) &&
-	grep "$FEAT1" actual &&
-	grep "$FEAT2" actual
-'
-
-test_expect_success 'rev-list --all --count includes feature branches' '
-	git rev-list --count --all >actual &&
-	test $(cat actual) -ge 10
-'
-
-test_expect_success 'rev-list --simplify-merges removes unnecessary merges' '
-	git rev-list --simplify-merges H -- file >actual &&
-	test $(wc -l <actual) -ge 1
-'
-
-test_expect_success 'rev-list --reverse with --simplify-by-decoration' '
-	git rev-list --reverse --simplify-by-decoration HEAD >actual &&
-	head -1 actual >first &&
-	A_SHA=$(git rev-parse A) &&
-	echo "$A_SHA" >expect &&
-	test_cmp expect first
-'
-
-test_expect_success 'rev-list --first-parent with --simplify-by-decoration' '
-	git rev-list --first-parent --simplify-by-decoration main >actual &&
-	test $(wc -l <actual) -ge 1
+test_expect_success 'log --graph --simplify-merges --show-pulls' '
+	cat >expect <<-\EOF &&
+	* N
+	*   R
+	|\  
+	| * X
+	* |   M
+	|\ \  
+	| * | B
+	| |/  
+	* / A
+	|/  
+	* I
+	EOF
+	git log --graph --pretty="%s" \
+		--simplify-merges --show-pulls \
+		-- file >actual &&
+	test_cmp expect actual
 '
 
 test_done

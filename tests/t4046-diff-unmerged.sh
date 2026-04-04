@@ -1,255 +1,108 @@
 #!/bin/sh
 
-test_description='grit diff with unmerged index entries and merge conflicts
-
-Tests diff behavior when the index contains higher-stage entries (unmerged),
-as occurs during merge conflicts. Covers diff, diff --cached, diff-files,
-diff-index, ls-files -u, and name-status during conflict states.'
+test_description='diff with unmerged index entries'
 
 . ./test-lib.sh
 
-REAL_GIT=/usr/bin/git
-
-# ============================================================
-# Setup: create a repo with a merge conflict using real git
-# ============================================================
-
-test_expect_success 'setup base repo with conflicting branches' '
-	$REAL_GIT init unmerged &&
-	cd unmerged &&
-	$REAL_GIT config user.name "Test" &&
-	$REAL_GIT config user.email "test@test.com" &&
-	echo "base content" >file.txt &&
-	echo "no conflict" >safe.txt &&
-	$REAL_GIT add file.txt safe.txt &&
-	$REAL_GIT commit -m "base"
+test_expect_success setup '
+	for i in 0 1 2 3
+	do
+		blob=$(echo $i | git hash-object --stdin) &&
+		eval "blob$i=$blob" &&
+		eval "m$i=\"100644 \$blob$i $i\"" || return 1
+	done &&
+	paths= &&
+	for b in o x
+	do
+		for o in o x
+		do
+			for t in o x
+			do
+				path="$b$o$t" &&
+				if test "$path" != ooo
+				then
+					paths="$paths$path " &&
+					p="	$path" &&
+					case "$b" in x) echo "$m1$p" ;; esac &&
+					case "$o" in x) echo "$m2$p" ;; esac &&
+					case "$t" in x) echo "$m3$p" ;; esac ||
+					return 1
+				fi
+			done
+		done
+	done >ls-files-s.expect &&
+	git update-index --index-info <ls-files-s.expect &&
+	git ls-files -s >ls-files-s.actual &&
+	test_cmp ls-files-s.expect ls-files-s.actual
 '
 
-test_expect_success 'create branch1 with change to file.txt' '
-	cd unmerged &&
-	$REAL_GIT checkout -b branch1 &&
-	echo "branch1 content" >file.txt &&
-	echo "branch1 safe" >safe.txt &&
-	$REAL_GIT add file.txt safe.txt &&
-	$REAL_GIT commit -m "branch1 changes"
+test_expect_success 'diff-files -0' '
+	for path in $paths
+	do
+		>"$path" &&
+		echo ":000000 100644 $ZERO_OID $ZERO_OID U	$path" || return 1
+	done >diff-files-0.expect &&
+	git diff-files -0 >diff-files-0.actual &&
+	test_cmp diff-files-0.expect diff-files-0.actual
 '
 
-test_expect_success 'create branch2 with conflicting change' '
-	cd unmerged &&
-	$REAL_GIT checkout master &&
-	$REAL_GIT checkout -b branch2 &&
-	echo "branch2 content" >file.txt &&
-	echo "branch2 safe" >safe.txt &&
-	$REAL_GIT add file.txt safe.txt &&
-	$REAL_GIT commit -m "branch2 changes"
+test_expect_success 'diff-files -1' '
+	for path in $paths
+	do
+		>"$path" &&
+		echo ":000000 100644 $ZERO_OID $ZERO_OID U	$path" &&
+		case "$path" in
+		x??) echo ":100644 100644 $blob1 $ZERO_OID M	$path"
+		esac || return 1
+	done >diff-files-1.expect &&
+	git diff-files -1 >diff-files-1.actual &&
+	test_cmp diff-files-1.expect diff-files-1.actual
 '
 
-test_expect_success 'merge branch1 into branch2 to create conflict' '
-	cd unmerged &&
-	test_must_fail $REAL_GIT merge branch1
+test_expect_success 'diff-files -2' '
+	for path in $paths
+	do
+		>"$path" &&
+		echo ":000000 100644 $ZERO_OID $ZERO_OID U	$path" &&
+		case "$path" in
+		?x?) echo ":100644 100644 $blob2 $ZERO_OID M	$path"
+		esac || return 1
+	done >diff-files-2.expect &&
+	git diff-files -2 >diff-files-2.actual &&
+	test_cmp diff-files-2.expect diff-files-2.actual &&
+	git diff-files >diff-files-default-2.actual &&
+	test_cmp diff-files-2.expect diff-files-default-2.actual
 '
 
-# ============================================================
-# ls-files -u: verify unmerged entries
-# ============================================================
-
-test_expect_success 'ls-files -u shows stage 1 (base) entry' '
-	cd unmerged &&
-	grit ls-files -u >actual &&
-	grep "	file.txt$" actual | grep "1	" >stage1 &&
-	test_line_count = 1 stage1
+test_expect_success 'diff-files -3' '
+	for path in $paths
+	do
+		>"$path" &&
+		echo ":000000 100644 $ZERO_OID $ZERO_OID U	$path" &&
+		case "$path" in
+		??x) echo ":100644 100644 $blob3 $ZERO_OID M	$path"
+		esac || return 1
+	done >diff-files-3.expect &&
+	git diff-files -3 >diff-files-3.actual &&
+	test_cmp diff-files-3.expect diff-files-3.actual
 '
 
-test_expect_success 'ls-files -u shows stage 2 (ours) entry' '
-	cd unmerged &&
-	grit ls-files -u >actual &&
-	grep "	file.txt$" actual | grep "2	" >stage2 &&
-	test_line_count = 1 stage2
+test_expect_success 'diff --stat' '
+	for path in $paths
+	do
+		echo " $path | Unmerged" || return 1
+	done >diff-stat.expect &&
+	echo " 0 files changed" >>diff-stat.expect &&
+	git diff --cached --stat >diff-stat.actual &&
+	test_cmp diff-stat.expect diff-stat.actual
 '
 
-test_expect_success 'ls-files -u shows stage 3 (theirs) entry' '
-	cd unmerged &&
-	grit ls-files -u >actual &&
-	grep "	file.txt$" actual | grep "3	" >stage3 &&
-	test_line_count = 1 stage3
+test_expect_success 'diff --quiet' '
+	test_expect_code 1 git diff --cached --quiet
 '
 
-test_expect_success 'ls-files -u shows all three stages for conflicted file' '
-	cd unmerged &&
-	grit ls-files -u >actual &&
-	grep "file.txt" actual >conflict_entries &&
-	test_line_count = 3 conflict_entries
-'
-
-test_expect_success 'ls-files -u shows entries for all conflicted files' '
-	cd unmerged &&
-	grit ls-files -u >actual &&
-	grep "file.txt" actual &&
-	grep "safe.txt" actual
-'
-
-# ============================================================
-# diff-files: behavior during conflict
-# ============================================================
-
-test_expect_success 'diff-files shows U status for unmerged file' '
-	cd unmerged &&
-	grit diff-files >actual &&
-	grep "U	file.txt" actual
-'
-
-test_expect_success 'diff-files raw output has zero OIDs for unmerged' '
-	cd unmerged &&
-	grit diff-files >actual &&
-	grep "^:000000 000000 0\{40\} 0\{40\}" actual
-'
-
-test_expect_success 'diff-files lists all conflicted files' '
-	cd unmerged &&
-	grit diff-files >actual &&
-	grep "file.txt" actual &&
-	grep "safe.txt" actual
-'
-
-# ============================================================
-# diff-index: behavior during conflict
-# ============================================================
-
-test_expect_success 'diff-index HEAD shows changes during conflict' '
-	cd unmerged &&
-	grit diff-index HEAD >actual &&
-	test -s actual
-'
-
-test_expect_success 'diff-index HEAD lists file.txt during conflict' '
-	cd unmerged &&
-	grit diff-index HEAD >actual &&
-	grep "file.txt" actual
-'
-
-# ============================================================
-# diff --cached: behavior during conflict
-# ============================================================
-
-test_expect_success 'diff --cached produces output during conflict' '
-	cd unmerged &&
-	grit diff --cached >actual &&
-	test -s actual
-'
-
-test_expect_success 'diff --cached shows deletion during conflict' '
-	cd unmerged &&
-	grit diff --cached >actual &&
-	grep "^deleted file mode\|^---\|^-" actual
-'
-
-# ============================================================
-# Resolve conflict, then verify clean state
-# ============================================================
-
-test_expect_success 'resolve all conflicts' '
-	cd unmerged &&
-	echo "resolved content" >file.txt &&
-	echo "resolved safe" >safe.txt &&
-	$REAL_GIT add file.txt safe.txt
-'
-
-test_expect_success 'ls-files -u is empty after resolving' '
-	cd unmerged &&
-	grit ls-files -u >actual &&
-	! grep "file.txt" actual
-'
-
-test_expect_success 'diff-files is empty after staging resolution' '
-	cd unmerged &&
-	grit diff-files >actual &&
-	test_line_count = 0 actual
-'
-
-test_expect_success 'diff --cached shows resolved changes vs HEAD' '
-	cd unmerged &&
-	grit diff --cached >actual &&
-	grep "resolved content" actual
-'
-
-# ============================================================
-# Multi-file conflict scenario
-# ============================================================
-
-test_expect_success 'setup multi-file conflict' '
-	$REAL_GIT init multi &&
-	cd multi &&
-	$REAL_GIT config user.name "Test" &&
-	$REAL_GIT config user.email "test@test.com" &&
-	echo "a-base" >a.txt &&
-	echo "b-base" >b.txt &&
-	echo "c-base" >c.txt &&
-	$REAL_GIT add a.txt b.txt c.txt &&
-	$REAL_GIT commit -m "base" &&
-	$REAL_GIT checkout -b left &&
-	echo "a-left" >a.txt &&
-	echo "b-left" >b.txt &&
-	$REAL_GIT add a.txt b.txt &&
-	$REAL_GIT commit -m "left" &&
-	$REAL_GIT checkout master &&
-	$REAL_GIT checkout -b right &&
-	echo "a-right" >a.txt &&
-	echo "b-right" >b.txt &&
-	$REAL_GIT add a.txt b.txt &&
-	$REAL_GIT commit -m "right" &&
-	test_must_fail $REAL_GIT merge left
-'
-
-test_expect_success 'ls-files -u shows entries for both conflicted files' '
-	cd multi &&
-	grit ls-files -u >actual &&
-	grep "a.txt" actual &&
-	grep "b.txt" actual
-'
-
-test_expect_success 'ls-files -u does not show non-conflicted c.txt' '
-	cd multi &&
-	grit ls-files -u >actual &&
-	! grep "c.txt" actual
-'
-
-test_expect_success 'ls-files -u shows 6 entries for 2 conflicted files' '
-	cd multi &&
-	grit ls-files -u >actual &&
-	test_line_count = 6 actual
-'
-
-test_expect_success 'diff-files shows U for both conflicted files' '
-	cd multi &&
-	grit diff-files >actual &&
-	grep "U	a.txt" actual &&
-	grep "U	b.txt" actual
-'
-
-test_expect_success 'diff-files does not show clean c.txt' '
-	cd multi &&
-	grit diff-files >actual &&
-	! grep "c.txt" actual
-'
-
-test_expect_success 'partially resolve: fix a.txt but leave b.txt' '
-	cd multi &&
-	echo "a-resolved" >a.txt &&
-	$REAL_GIT add a.txt
-'
-
-test_expect_success 'ls-files -u no longer shows a.txt after partial resolve' '
-	cd multi &&
-	grit ls-files -u >actual &&
-	! grep "a.txt" actual &&
-	grep "b.txt" actual
-'
-
-test_expect_success 'diff-files only shows unresolved b.txt after partial resolve' '
-	cd multi &&
-	grit diff-files >actual &&
-	! grep "a.txt" actual &&
-	grep "U	b.txt" actual
+test_expect_success 'diff --quiet --ignore-all-space' '
+	test_expect_code 1 git diff --cached --quiet --ignore-all-space
 '
 
 test_done

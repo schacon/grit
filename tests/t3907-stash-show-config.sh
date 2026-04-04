@@ -5,51 +5,79 @@ test_description='Test git stash show configuration.'
 . ./test-lib.sh
 
 test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
-	echo 1 >file.t &&
-	git add file.t &&
-	test_tick &&
-	git commit -m "initial"
+	test_commit file
 '
 
-test_expect_success 'stash show with default config shows --stat' '
+# takes three parameters:
+# 1. the stash.showStat value (or "<unset>")
+# 2. the stash.showPatch value (or "<unset>")
+# 3. the diff options of the expected output (or nothing for no output)
+test_stat_and_patch () {
+	if test "<unset>" = "$1"
+	then
+		test_unconfig stash.showStat
+	else
+		test_config stash.showStat "$1"
+	fi &&
+
+	if test "<unset>" = "$2"
+	then
+		test_unconfig stash.showPatch
+	else
+		test_config stash.showPatch "$2"
+	fi &&
+
+	shift 2 &&
 	echo 2 >file.t &&
+	if test $# != 0
+	then
+		git diff "$@" >expect
+	fi &&
 	git stash &&
 	git stash show >actual &&
-	grep "file.t" actual &&
-	grep "|" actual
+
+	if test $# = 0
+	then
+		test_must_be_empty actual
+	else
+		test_cmp expect actual
+	fi
+}
+
+test_expect_success 'showStat unset showPatch unset' '
+	test_stat_and_patch "<unset>" "<unset>" --stat
 '
 
-test_expect_success 'stash show --stat' '
-	git stash show --stat >actual &&
-	grep "file.t" actual &&
-	grep "|" actual
+test_expect_success 'showStat unset showPatch false' '
+	test_stat_and_patch "<unset>" false --stat
 '
 
-test_expect_success 'stash show -p' '
-	git stash show -p >actual &&
-	grep "^diff" actual
+test_expect_success 'showStat unset showPatch true' '
+	test_stat_and_patch "<unset>" true --stat -p
 '
 
-test_expect_success 'stash show with stash ref' '
-	git stash show stash@{0} >actual &&
-	grep "file.t" actual
+test_expect_success 'showStat false showPatch unset' '
+	test_stat_and_patch false "<unset>"
 '
 
-test_expect_success 'stash pop restores changes' '
-	git stash pop &&
-	echo 2 >expect &&
-	test_cmp expect file.t
+test_expect_success 'showStat false showPatch false' '
+	test_stat_and_patch false false
 '
 
-test_expect_success 'stash show -p shows diff output' '
-	echo 3 >file.t &&
-	git stash &&
-	git stash show -p >actual &&
-	grep "^diff" actual &&
-	git stash pop
+test_expect_success 'showStat false showPatch true' '
+	test_stat_and_patch false true -p
+'
+
+test_expect_success 'showStat true showPatch unset' '
+	test_stat_and_patch true "<unset>" --stat
+'
+
+test_expect_success 'showStat true showPatch false' '
+	test_stat_and_patch true false --stat
+'
+
+test_expect_success 'showStat true showPatch true' '
+	test_stat_and_patch true true --stat -p
 '
 
 test_done

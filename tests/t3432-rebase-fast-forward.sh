@@ -1,59 +1,147 @@
 #!/bin/sh
-# Ported from git/t/t3432-rebase-fast-forward.sh
-# Tests for basic rebase fast-forward behavior
+#
+# Copyright (c) 2019 Denton Liu
+#
 
-test_description='basic rebase fast-forward behavior'
+test_description='ensure rebase fast-forwards commits when possible'
 
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com" &&
+test_expect_success setup '
+	# Commit dates are hardcoded to 2005, and the reflog entries will have
+	# a matching timestamp. Maintenance may thus immediately expire
+	# reflogs if it was running.
+	git config set gc.reflogExpire never &&
+	git config set gc.reflogExpireUnreachable never &&
+
 	test_commit A &&
 	test_commit B &&
 	test_commit C &&
 	test_commit D &&
-	git checkout -b side D
+	git checkout -t -b side
 '
 
-test_expect_success 'rebase with no changes is a no-op' '
-	git checkout side &&
-	oldhead=$(git rev-parse HEAD) &&
-	git rebase main &&
-	newhead=$(git rev-parse HEAD) &&
-	test "$oldhead" = "$newhead"
-'
+test_rebase_same_head () {
+	status_n="$1" &&
+	shift &&
+	what_n="$1" &&
+	shift &&
+	cmp_n="$1" &&
+	shift &&
+	status_f="$1" &&
+	shift &&
+	what_f="$1" &&
+	shift &&
+	cmp_f="$1" &&
+	shift &&
+	test_rebase_same_head_ $status_n $what_n $cmp_n 0 " --apply" "$*" &&
+	test_rebase_same_head_ $status_f $what_f $cmp_f 0 " --apply --no-ff" "$*"
+	test_rebase_same_head_ $status_n $what_n $cmp_n 0 " --merge" "$*" &&
+	test_rebase_same_head_ $status_f $what_f $cmp_f 0 " --merge --no-ff" "$*"
+	test_rebase_same_head_ $status_n $what_n $cmp_n 1 " --merge" "$*" &&
+	test_rebase_same_head_ $status_f $what_f $cmp_f 1 " --merge --no-ff" "$*"
+}
 
-test_expect_success 'rebase --onto B B with no changes moves HEAD' '
-	git checkout side &&
-	git reset --hard D &&
-	oldhead=$(git rev-parse HEAD) &&
-	git rebase --onto B B &&
-	newhead=$(git rev-parse HEAD) &&
-	test "$oldhead" != "$newhead" &&
-	git log --format=%s -n2 >actual &&
-	test_write_lines D C >expect &&
-	test_cmp expect actual
-'
+test_rebase_same_head_ () {
+	status="$1" &&
+	shift &&
+	what="$1" &&
+	shift &&
+	cmp="$1" &&
+	shift &&
+	abbreviate="$1" &&
+	shift &&
+	flag="$1"
+	shift &&
+	if test $abbreviate -eq 1
+	then
+		msg="git rebase$flag $* (rebase.abbreviateCommands = true) with $changes is $what with $cmp HEAD"
+	else
+		msg="git rebase$flag $* with $changes is $what with $cmp HEAD"
+	fi &&
+	test_expect_$status "$msg" "
+		if test $abbreviate -eq 1
+		then
+			test_config rebase.abbreviateCommands true
+		fi &&
+		oldhead=\$(git rev-parse HEAD) &&
+		test_when_finished 'git reset --hard \$oldhead' &&
+		git reflog HEAD >expect &&
+		git rebase$flag $* >stdout &&
+		git reflog HEAD >actual &&
+		if test $what = work
+		then
+			old=\$(wc -l <expect) &&
+			test_line_count '-gt' \$old actual
+		elif test $what = noop
+		then
+			test_cmp expect actual
+		fi &&
+		newhead=\$(git rev-parse HEAD) &&
+		if test $cmp = same
+		then
+			test_cmp_rev \$oldhead \$newhead
+		elif test $cmp = diff
+		then
+			test_cmp_rev ! \$oldhead \$newhead
+		fi
+	"
+}
 
-test_expect_success 'add work to side branch' '
-	git checkout side &&
-	git reset --hard D &&
+changes='no changes'
+test_rebase_same_head success noop same success work same
+test_rebase_same_head success noop same success work same main
+test_rebase_same_head success noop same success work diff --onto B B
+test_rebase_same_head success noop same success work diff --onto B... B
+test_rebase_same_head success noop same success work same --onto main... main
+test_rebase_same_head success noop same success work same --keep-base main
+test_rebase_same_head success noop same success work same --keep-base
+test_rebase_same_head success noop same success work same --no-fork-point
+test_rebase_same_head success noop same success work same --keep-base --no-fork-point
+test_rebase_same_head success noop same success work same --fork-point main
+test_rebase_same_head success noop same success work diff --fork-point --onto B B
+test_rebase_same_head success noop same success work diff --fork-point --onto B... B
+test_rebase_same_head success noop same success work same --fork-point --onto main... main
+test_rebase_same_head success noop same success work same --keep-base --keep-base main
+
+test_expect_success 'add work same to side' '
 	test_commit E
 '
 
-test_expect_success 'rebase our changes onto main succeeds' '
-	git checkout side &&
-	git reset --hard E &&
-	git rebase main &&
-	git log --format=%s >actual &&
-	grep E actual &&
-	grep D actual
+changes='our changes'
+test_rebase_same_head success noop same success work same
+test_rebase_same_head success noop same success work same main
+test_rebase_same_head success noop same success work diff --onto B B
+test_rebase_same_head success noop same success work diff --onto B... B
+test_rebase_same_head success noop same success work same --onto main... main
+test_rebase_same_head success noop same success work same --keep-base main
+test_rebase_same_head success noop same success work same --keep-base
+test_rebase_same_head success noop same success work same --no-fork-point
+test_rebase_same_head success noop same success work same --keep-base --no-fork-point
+test_rebase_same_head success noop same success work same --fork-point main
+test_rebase_same_head success noop same success work diff --fork-point --onto B B
+test_rebase_same_head success noop same success work diff --fork-point --onto B... B
+test_rebase_same_head success noop same success work same --fork-point --onto main... main
+test_rebase_same_head success noop same success work same --fork-point --keep-base main
+
+test_expect_success 'add work same to upstream' '
+	git checkout main &&
+	test_commit F &&
+	git checkout side
 '
+
+changes='our and their changes'
+test_rebase_same_head success noop same success work diff --onto B B
+test_rebase_same_head success noop same success work diff --onto B... B
+test_rebase_same_head success noop same success work diff --onto main... main
+test_rebase_same_head success noop same success work diff --keep-base main
+test_rebase_same_head success noop same success work diff --keep-base
+test_rebase_same_head failure work same success work diff --fork-point --onto B B
+test_rebase_same_head failure work same success work diff --fork-point --onto B... B
+test_rebase_same_head success noop same success work diff --fork-point --onto main... main
+test_rebase_same_head success noop same success work diff --fork-point --keep-base main
 
 test_done

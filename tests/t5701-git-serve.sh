@@ -1,29 +1,33 @@
 #!/bin/sh
-#
-# Upstream: t5701-git-serve.sh
-# Tests for protocol v2 server commands.
-# All tests require 'test-tool serve-v2' and 'test-tool pkt-line'
-# (C test helpers) which grit does not provide.
-#
 
 test_description='test protocol v2 server commands'
 
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup to generate files with expected content' '
-	git init &&
 	printf "agent=git/%s" "$(git version | cut -d" " -f3)" >agent_capability &&
+
+	test_oid_cache <<-EOF &&
+	wrong_algo sha1:sha256
+	wrong_algo sha256:sha1
+	EOF
+
+	if test_have_prereq WINDOWS
+	then
+		printf "agent=FAKE\n" >agent_capability
+	else
+		printf -- "-%s\n" $(uname -s | test_redact_non_printables) >>agent_capability
+	fi &&
 	cat >expect.base <<-EOF &&
 	version 2
 	$(cat agent_capability)
 	ls-refs=unborn
 	fetch=shallow wait-for-done
 	server-option
-	object-format=sha1
+	object-format=$(test_oid algo)
 	EOF
 	cat >expect.trailer <<-EOF
 	0000
@@ -32,6 +36,11 @@ test_expect_success 'setup to generate files with expected content' '
 
 test_expect_success 'test capability advertisement' '
 	cat expect.base expect.trailer >expect &&
+
+	if test_have_prereq WINDOWS
+	then
+		GIT_USER_AGENT=FAKE && export GIT_USER_AGENT
+	fi &&
 	GIT_TEST_SIDEBAND_ALL=0 test-tool serve-v2 \
 		--advertise-capabilities >out &&
 	test-tool pkt-line unpack <out >actual &&
@@ -39,11 +48,14 @@ test_expect_success 'test capability advertisement' '
 '
 
 test_expect_success 'stateless-rpc flag does not list capabilities' '
+	# Empty request
 	test-tool pkt-line pack >in <<-EOF &&
 	0000
 	EOF
 	test-tool serve-v2 --stateless-rpc >out <in &&
 	test_must_be_empty out &&
+
+	# EOF
 	test-tool serve-v2 --stateless-rpc >out &&
 	test_must_be_empty out
 '
@@ -60,7 +72,7 @@ test_expect_success 'request invalid capability' '
 test_expect_success 'request with no command' '
 	test-tool pkt-line pack >in <<-EOF &&
 	agent=git/test
-	object-format=sha1
+	object-format=$(test_oid algo)
 	0000
 	EOF
 	test_must_fail test-tool serve-v2 --stateless-rpc 2>err <in &&
@@ -70,7 +82,7 @@ test_expect_success 'request with no command' '
 test_expect_success 'request invalid command' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=foo
-	object-format=sha1
+	object-format=$(test_oid algo)
 	agent=git/test
 	0000
 	EOF
@@ -81,7 +93,7 @@ test_expect_success 'request invalid command' '
 test_expect_success 'request capability as command' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=agent
-	object-format=sha1
+	object-format=$(test_oid algo)
 	0000
 	EOF
 	test_must_fail test-tool serve-v2 --stateless-rpc 2>err <in &&
@@ -91,7 +103,7 @@ test_expect_success 'request capability as command' '
 test_expect_success 'request command as capability' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
-	object-format=sha1
+	object-format=$(test_oid algo)
 	fetch
 	0000
 	EOF
@@ -102,7 +114,7 @@ test_expect_success 'request command as capability' '
 test_expect_success 'requested command is command=value' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs=whatever
-	object-format=sha1
+	object-format=$(test_oid algo)
 	0000
 	EOF
 	test_must_fail test-tool serve-v2 --stateless-rpc 2>err <in &&
@@ -113,13 +125,15 @@ test_expect_success 'wrong object-format' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=fetch
 	agent=git/test
-	object-format=sha256
+	object-format=$(test_oid wrong_algo)
 	0000
 	EOF
 	test_must_fail test-tool serve-v2 --stateless-rpc 2>err <in &&
 	test_grep "mismatched object format" err
 '
 
+# Test the basics of ls-refs
+#
 test_expect_success 'setup some refs and tags' '
 	test_commit one &&
 	git branch dev main &&
@@ -131,7 +145,7 @@ test_expect_success 'setup some refs and tags' '
 test_expect_success 'basics of ls-refs' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
-	object-format=sha1
+	object-format=$(test_oid algo)
 	0000
 	EOF
 
@@ -154,7 +168,7 @@ test_expect_success 'basics of ls-refs' '
 test_expect_success 'ls-refs complains about unknown options' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
-	object-format=sha1
+	object-format=$(test_oid algo)
 	0001
 	no-such-arg
 	0000
@@ -167,7 +181,7 @@ test_expect_success 'ls-refs complains about unknown options' '
 test_expect_success 'basic ref-prefixes' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
-	object-format=sha1
+	object-format=$(test_oid algo)
 	0001
 	ref-prefix refs/heads/main
 	ref-prefix refs/tags/one
@@ -188,7 +202,7 @@ test_expect_success 'basic ref-prefixes' '
 test_expect_success 'refs/heads prefix' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
-	object-format=sha1
+	object-format=$(test_oid algo)
 	0001
 	ref-prefix refs/heads/
 	0000
@@ -207,15 +221,23 @@ test_expect_success 'refs/heads prefix' '
 '
 
 test_expect_success 'ignore very large set of prefixes' '
+	# generate a large number of ref-prefixes that we expect
+	# to match nothing; the value here exceeds TOO_MANY_PREFIXES
+	# from ls-refs.c.
 	{
 		echo command=ls-refs &&
-		echo object-format=sha1 &&
+		echo object-format=$(test_oid algo) &&
 		echo 0001 &&
-		awk "BEGIN { for (i = 1; i <= 65536; i++) print \"ref-prefix refs/heads/\" i }" &&
+		awk "{
+			for (i = 1; i <= 65536; i++)
+				print \"ref-prefix refs/heads/\", \$i
+		}" &&
 		echo 0000
 	} |
 	test-tool pkt-line pack >in &&
 
+	# and then confirm that we see unmatched prefixes anyway (i.e.,
+	# that the prefix was not applied).
 	cat >expect <<-EOF &&
 	$(git rev-parse HEAD) HEAD
 	$(git rev-parse refs/heads/dev) refs/heads/dev
@@ -235,7 +257,7 @@ test_expect_success 'ignore very large set of prefixes' '
 test_expect_success 'peel parameter' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
-	object-format=sha1
+	object-format=$(test_oid algo)
 	0001
 	peel
 	ref-prefix refs/tags/
@@ -257,7 +279,7 @@ test_expect_success 'peel parameter' '
 test_expect_success 'symrefs parameter' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
-	object-format=sha1
+	object-format=$(test_oid algo)
 	0001
 	symrefs
 	ref-prefix refs/heads/
@@ -279,7 +301,7 @@ test_expect_success 'symrefs parameter' '
 test_expect_success 'sending server-options' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
-	object-format=sha1
+	object-format=$(test_oid algo)
 	server-option=hello
 	server-option=world
 	0001
@@ -302,7 +324,7 @@ test_expect_success 'unexpected lines are not allowed in fetch request' '
 
 	test-tool pkt-line pack >in <<-EOF &&
 	command=fetch
-	object-format=sha1
+	object-format=$(test_oid algo)
 	0001
 	this-is-not-a-command
 	0000
@@ -315,12 +337,14 @@ test_expect_success 'unexpected lines are not allowed in fetch request' '
 	grep "unexpected line: .this-is-not-a-command." err
 '
 
+# Test the basics of object-info
+#
 test_expect_success 'basics of object-info' '
 	test_config transfer.advertiseObjectInfo true &&
 
 	test-tool pkt-line pack >in <<-EOF &&
 	command=object-info
-	object-format=sha1
+	object-format=$(test_oid algo)
 	0001
 	size
 	oid $(git rev-parse two:two.t)
@@ -350,6 +374,10 @@ test_expect_success 'test capability advertisement with uploadpack.advertiseBund
 	    expect.extra \
 	    expect.trailer >expect &&
 
+	if test_have_prereq WINDOWS
+	then
+		GIT_USER_AGENT=FAKE && export GIT_USER_AGENT
+	fi &&
 	GIT_TEST_SIDEBAND_ALL=0 test-tool serve-v2 \
 		--advertise-capabilities >out &&
 	test-tool pkt-line unpack <out >actual &&
@@ -362,7 +390,16 @@ test_expect_success 'basics of bundle-uri: dies if not enabled' '
 	0000
 	EOF
 
+	cat >err.expect <<-\EOF &&
+	fatal: invalid command '"'"'bundle-uri'"'"'
+	EOF
+
+	cat >expect <<-\EOF &&
+	ERR serve: invalid command '"'"'bundle-uri'"'"'
+	EOF
+
 	test_must_fail test-tool serve-v2 --stateless-rpc <in >out 2>err.actual &&
+	test_cmp err.expect err.actual &&
 	test_must_be_empty out
 '
 

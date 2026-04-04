@@ -4,10 +4,7 @@ test_description='update-index and add refuse to add beyond symlinks'
 
 . ./test-lib.sh
 
-test_expect_success SYMLINKS 'setup' '
-	git init -q &&
-	git config user.name "Test" &&
-	git config user.email "t@t" &&
+test_expect_success SYMLINKS setup '
 	>a &&
 	mkdir b &&
 	ln -s b c &&
@@ -15,8 +12,7 @@ test_expect_success SYMLINKS 'setup' '
 	git update-index --add a b/d
 '
 
-test_expect_success 'update-index --add beyond symlinks' '
-	test_have_prereq SYMLINKS || return 0 &&
+test_expect_success SYMLINKS 'update-index --add beyond symlinks' '
 	test_must_fail git update-index --add c/d &&
 	cat >expect <<-\EOF &&
 	a
@@ -26,8 +22,7 @@ test_expect_success 'update-index --add beyond symlinks' '
 	test_cmp expect actual
 '
 
-test_expect_success 'add beyond symlinks' '
-	test_have_prereq SYMLINKS || return 0 &&
+test_expect_success SYMLINKS 'add beyond symlinks' '
 	test_must_fail git add c/d &&
 	cat >expect <<-\EOF &&
 	a

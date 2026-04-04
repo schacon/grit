@@ -1,19 +1,26 @@
 #!/bin/sh
 
-test_description='clone and fetch with project files'
+test_description='fetching and pushing project with subproject'
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	echo data >mainfile &&
-	git add mainfile &&
+test_expect_success setup '
 	test_tick &&
-	git commit -m "initial commit"
+	mkdir -p sub && (
+		cd sub &&
+		git init &&
+		>subfile &&
+		git add subfile &&
+		git commit -m "subproject commit #1"
+	) &&
+	>mainfile &&
+	git add sub mainfile &&
+	test_tick &&
+	git commit -m "superproject commit #1"
 '
 
-test_expect_success 'clone works' '
-	git clone . cloned &&
+test_expect_success clone '
+	git clone "file://$(pwd)/.git" cloned &&
 	(git rev-parse HEAD && git ls-files -s) >expected &&
 	(
 		cd cloned &&
@@ -22,17 +29,24 @@ test_expect_success 'clone works' '
 	test_cmp expected actual
 '
 
-test_expect_success 'advance and fetch' '
+test_expect_success advance '
 	echo more >mainfile &&
-	git add mainfile &&
+	git update-index --force-remove sub &&
+	mv sub/.git sub/.git-disabled &&
+	git add sub/subfile mainfile &&
+	mv sub/.git-disabled sub/.git &&
 	test_tick &&
-	git commit -m "second commit" &&
+	git commit -m "superproject commit #2"
+'
+
+test_expect_success fetch '
+	(git rev-parse HEAD && git ls-files -s) >expected &&
 	(
 		cd cloned &&
 		git pull &&
-		echo more >expect &&
-		test_cmp expect mainfile
-	)
+		(git rev-parse HEAD && git ls-files -s) >../actual
+	) &&
+	test_cmp expected actual
 '
 
 test_done

@@ -7,10 +7,6 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 . ./test-lib.sh
 
 test_expect_success 'setup' '
-	git init &&
-	git config user.name "Test" &&
-	git config user.email "test@test.com" &&
-
 	cat >A <<-\EOF &&
 	a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	b bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -75,6 +71,7 @@ test_expect_success 'setup' '
 	git checkout main
 '
 
+# This test broke in 65ac6e9c3f47807cb603af07a6a9e1a43bc119ae
 test_expect_success 'merge white into red (A->B,M->N)' '
 	git checkout -b red-white red &&
 	git merge white &&
@@ -86,7 +83,18 @@ test_expect_success 'merge white into red (A->B,M->N)' '
 	test_path_is_missing M
 '
 
-# Skip: merge blue into white requires rename detection across branches
-# which grit does not yet fully support
+# This test broke in 8371234ecaaf6e14fe3f2082a855eff1bbd79ae9
+test_expect_success 'merge blue into white (A->B, mod A, A untracked)' '
+	git checkout -b white-blue white &&
+	echo dirty >A &&
+	git merge blue &&
+	git write-tree &&
+	test_path_is_file A &&
+	echo dirty >expect &&
+	test_cmp expect A &&
+	test_path_is_file B &&
+	test_path_is_file N &&
+	test_path_is_missing M
+'
 
 test_done

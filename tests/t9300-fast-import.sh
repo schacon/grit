@@ -1,30 +1,14 @@
 #!/bin/sh
 #
-# Upstream: t9300-fast-import.sh
-# Ported from git/t/t9300-fast-import.sh for grit.
+# Copyright (c) 2007 Shawn Pearce
 #
 
 test_description='test git fast-import utility'
-
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 . "$TEST_DIRECTORY"/lib-diff.sh ;# test-lib chdir's into trash
-
-# Initialize a repo in the trash directory (upstream assumes one exists)
-git init --quiet
-
-# Helper: copy exactly N bytes from stdin
-test_copy_bytes () {
-	dd ibs=1 count="$1" 2>/dev/null
-}
-
-# On Linux, ICONV is generally available
-if command -v iconv >/dev/null 2>&1; then
-	test_set_prereq ICONV
-fi
 
 verify_packs () {
 	for p in .git/objects/pack/*.pack
@@ -190,7 +174,7 @@ test_expect_success 'A: verify tag/series-A' '
 
 	An annotated tag without a tagger
 	EOF
-	git cat-file tag refs/tags/series-A >actual &&
+	git cat-file tag tags/series-A >actual &&
 	test_cmp expect actual
 '
 
@@ -202,7 +186,7 @@ test_expect_success 'A: verify tag/series-A-blob' '
 
 	An annotated tag that annotates a blob.
 	EOF
-	git cat-file tag refs/tags/series-A-blob >actual &&
+	git cat-file tag tags/series-A-blob >actual &&
 	test_cmp expect actual
 '
 
@@ -275,8 +259,8 @@ test_expect_success 'A: tag blob by sha1' '
 	EOF
 
 	git fast-import <input &&
-	git cat-file tag refs/tags/series-A-blob-2 >actual &&
-	git cat-file tag refs/tags/series-A-blob-3 >>actual &&
+	git cat-file tag tags/series-A-blob-2 >actual &&
+	git cat-file tag tags/series-A-blob-3 >>actual &&
 	test_cmp expect actual
 '
 
@@ -406,7 +390,7 @@ test_expect_success 'B: accept branch name "TEMP_TAG"' '
 
 	test_when_finished "rm -f .git/TEMP_TAG && git gc --prune=now" &&
 	git fast-import <input &&
-	test "$(git rev-parse TEMP_TAG)" != "$ZERO_OID" &&
+	test $(test-tool ref-store main resolve-ref TEMP_TAG 0 | cut -f1 -d " " ) != "$ZERO_OID" &&
 	test $(git rev-parse main) = $(git rev-parse TEMP_TAG^)
 '
 
@@ -537,7 +521,7 @@ test_expect_success 'B: fail on invalid committer (5)' '
 	test_must_fail git fast-import <input
 '
 
-test_expect_failure 'B: fail on invalid file path of ..' '
+test_expect_success 'B: fail on invalid file path of ..' '
 	cat >input <<-INPUT_END &&
 	blob
 	mark :1
@@ -557,7 +541,7 @@ test_expect_failure 'B: fail on invalid file path of ..' '
 	test_must_fail git fast-import <input
 '
 
-test_expect_failure 'B: fail on invalid file path of .' '
+test_expect_success 'B: fail on invalid file path of .' '
 	cat >input <<-INPUT_END &&
 	blob
 	mark :1
@@ -604,7 +588,7 @@ test_expect_success WINDOWS 'B: fail on invalid file path of C:' '
 	test_must_fail git fast-import <input
 '
 
-test_expect_failure 'B: fail on invalid file path of .git' '
+test_expect_success 'B: fail on invalid file path of .git' '
 	cat >input <<-INPUT_END &&
 	blob
 	mark :1
@@ -624,7 +608,7 @@ test_expect_failure 'B: fail on invalid file path of .git' '
 	test_must_fail git fast-import <input
 '
 
-test_expect_failure 'B: fail on invalid file path of .gitmodules' '
+test_expect_success 'B: fail on invalid file path of .gitmodules' '
 	cat >input <<-INPUT_END &&
 	blob
 	mark :1
@@ -652,7 +636,6 @@ test_expect_success 'C: incremental import create pack from stdin' '
 	newf=$(echo hi newf | git hash-object -w --stdin) &&
 	oldf=$(git rev-parse --verify main:file2) &&
 	thrf=$(git rev-parse --verify main:file3) &&
-	test_export newf oldf thrf &&
 	test_tick &&
 	cat >input <<-INPUT_END &&
 	commit refs/heads/branch
@@ -696,7 +679,6 @@ test_expect_success 'C: verify commit' '
 
 test_expect_success 'C: validate rename result' '
 	zero=$ZERO_OID &&
-	test_export zero &&
 	cat >expect <<-EOF &&
 	:000000 100755 $zero $newf A	file2/newf
 	:100644 100644 $oldf $oldf R100	file2	file2/oldf
@@ -743,7 +725,6 @@ test_expect_success 'D: verify pack' '
 test_expect_success 'D: validate new files added' '
 	f5id=$(echo "$file5_data" | git hash-object --stdin) &&
 	f6id=$(echo "$file6_data" | git hash-object --stdin) &&
-	test_export f5id f6id &&
 	cat >expect <<-EOF &&
 	:000000 100755 $ZERO_OID $f6id A	newdir/exec.sh
 	:000000 100644 $ZERO_OID $f5id A	newdir/interesting
@@ -910,7 +891,6 @@ test_expect_success 'H: verify pack' '
 
 test_expect_success 'H: validate old files removed, new files added' '
 	f4id=$(git rev-parse HEAD:file4) &&
-	test_export f4id &&
 	cat >expect <<-EOF &&
 	:100755 000000 $newf $zero D	file2/newf
 	:100644 000000 $oldf $zero D	file2/oldf
@@ -1445,7 +1425,6 @@ test_expect_success 'N: delete directory by copying' '
 	:000000 100644 OBJID OBJID A	foo/bar/qux
 	EOF
 	empty_tree=$(git mktree </dev/null) &&
-	test_export empty_tree &&
 	cat >input <<-INPUT_END &&
 	commit refs/heads/N-delete
 	committer $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> $GIT_COMMITTER_DATE
@@ -1567,7 +1546,7 @@ test_expect_success 'N: reject foo/ syntax in ls argument' '
 
 for root in '""' ''
 do
-	test_expect_failure "N: copy to root ($root) by id and modify" '
+	test_expect_success "N: copy to root ($root) by id and modify" '
 		echo "hello, world" >expect.foo &&
 		echo hello >expect.bar &&
 		git fast-import <<-SETUP_END &&
@@ -1604,7 +1583,7 @@ do
 		test_cmp expect.bar actual.bar
 	'
 
-	test_expect_failure "N: extract subtree to the root ($root)" '
+	test_expect_success "N: extract subtree to the root ($root)" '
 		branch=$(git rev-parse --verify refs/heads/branch^{tree}) &&
 		cat >input <<-INPUT_END &&
 		commit refs/heads/N9
@@ -1620,7 +1599,7 @@ do
 		git diff --exit-code branch:newdir N9
 	'
 
-	test_expect_failure "N: modify subtree, extract it to the root ($root), and modify again" '
+	test_expect_success "N: modify subtree, extract it to the root ($root), and modify again" '
 		echo hello >expect.baz &&
 		echo hello, world >expect.qux &&
 		git fast-import <<-SETUP_END &&
@@ -1809,7 +1788,7 @@ test_expect_success 'O: progress outputs as requested by input' '
 ### series P (gitlinks)
 ###
 
-test_expect_failure 'P: superproject & submodule mix' '
+test_expect_success 'P: superproject & submodule mix' '
 	cat >input <<-INPUT_END &&
 	blob
 	mark :1
@@ -2541,7 +2520,7 @@ test_expect_success 'R: cat-blob-fd must be a nonnegative integer' '
 	test_must_fail git fast-import --cat-blob-fd=-1 </dev/null
 '
 
-test_expect_success 'R: print old blob' '
+test_expect_success !MINGW 'R: print old blob' '
 	blob=$(echo "yes it can" | git hash-object -w --stdin) &&
 	cat >expect <<-EOF &&
 	${blob} blob 11
@@ -2553,7 +2532,7 @@ test_expect_success 'R: print old blob' '
 	test_cmp expect actual
 '
 
-test_expect_success 'R: in-stream cat-blob-fd not respected' '
+test_expect_success !MINGW 'R: in-stream cat-blob-fd not respected' '
 	echo hello >greeting &&
 	blob=$(git hash-object -w greeting) &&
 	cat >expect <<-EOF &&
@@ -2574,7 +2553,7 @@ test_expect_success 'R: in-stream cat-blob-fd not respected' '
 	test_cmp expect actual.1
 '
 
-test_expect_success 'R: print mark for new blob' '
+test_expect_success !MINGW 'R: print mark for new blob' '
 	echo "effluentish" | git hash-object --stdin >expect &&
 	git fast-import --cat-blob-fd=6 6>actual <<-\EOF &&
 	blob
@@ -2587,7 +2566,7 @@ test_expect_success 'R: print mark for new blob' '
 	test_cmp expect actual
 '
 
-test_expect_success 'R: print new blob' '
+test_expect_success !MINGW 'R: print new blob' '
 	blob=$(echo "yep yep yep" | git hash-object --stdin) &&
 	cat >expect <<-EOF &&
 	${blob} blob 12
@@ -2605,7 +2584,7 @@ test_expect_success 'R: print new blob' '
 	test_cmp expect actual
 '
 
-test_expect_success 'R: print new blob by sha1' '
+test_expect_success !MINGW 'R: print new blob by sha1' '
 	blob=$(echo "a new blob named by sha1" | git hash-object --stdin) &&
 	cat >expect <<-EOF &&
 	${blob} blob 25
@@ -2884,7 +2863,7 @@ test_expect_success 'R: corrupt lines do not mess marks file' '
 ##
 test_expect_success 'R: blob bigger than threshold' '
 	blobsize=$((2*1024*1024 + 53)) &&
-	dd if=/dev/urandom bs=$blobsize count=1 2>/dev/null >expect &&
+	test-tool genrandom bar $blobsize >expect &&
 	cat >input <<-INPUT_END &&
 	commit refs/heads/big-file
 	committer $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> $GIT_COMMITTER_DATE
@@ -3393,11 +3372,9 @@ test_path_space_success 'octal escapes'      '"\150\151\056\143"' 'hi.c'
 # Test a single commit change with an invalid path. Run it with all occurrences
 # of <path> in the grammar against all error kinds.
 #
-# NOTE: These path validation tests require git >= 2.45. Marked as
-# test_expect_failure on git 2.43 where the path checks don't exist.
 test_path_fail () {
 	local change="$1" what="$2" prefix="$3" path="$4" suffix="$5" err_grep="$6"
-	test_expect_failure "S: $change with $what must fail" '
+	test_expect_success "S: $change with $what must fail" '
 		test_must_fail git fast-import <<-EOF 2>err &&
 		blob
 		mark :1
@@ -3778,15 +3755,15 @@ cat >>W-input <<-W_INPUT_END
 	LFsget-mark :1
 	W_INPUT_END
 
-test_expect_success 'W: get-mark & empty orphan commit with no newlines' '
+test_expect_success !MINGW 'W: get-mark & empty orphan commit with no newlines' '
 	sed -e s/LFs// W-input | tr L "\n" | git fast-import
 '
 
-test_expect_success 'W: get-mark & empty orphan commit with one newline' '
+test_expect_success !MINGW 'W: get-mark & empty orphan commit with one newline' '
 	sed -e s/LFs/L/ W-input | tr L "\n" | git fast-import
 '
 
-test_expect_success 'W: get-mark & empty orphan commit with ugly second newline' '
+test_expect_success !MINGW 'W: get-mark & empty orphan commit with ugly second newline' '
 	# Technically, this should fail as it has too many linefeeds
 	# according to the grammar in fast-import.txt.  But, for whatever
 	# reason, it works.  Since using the correct number of newlines
@@ -3796,7 +3773,7 @@ test_expect_success 'W: get-mark & empty orphan commit with ugly second newline'
 	sed -e s/LFs/LL/ W-input | tr L "\n" | git fast-import
 '
 
-test_expect_success 'W: get-mark & empty orphan commit with erroneous third newline' '
+test_expect_success !MINGW 'W: get-mark & empty orphan commit with erroneous third newline' '
 	# ...but do NOT allow more empty lines than that (see previous test).
 	sed -e s/LFs/LLL/ W-input | tr L "\n" | test_must_fail git fast-import
 '
@@ -3805,7 +3782,7 @@ test_expect_success 'W: get-mark & empty orphan commit with erroneous third newl
 ### series X (other new features)
 ###
 
-test_expect_failure ICONV 'X: handling encoding' '
+test_expect_success ICONV 'X: handling encoding' '
 	test_tick &&
 	cat >input <<-INPUT_END &&
 	commit refs/heads/encoding
@@ -3821,9 +3798,10 @@ test_expect_failure ICONV 'X: handling encoding' '
 	git log -1 --format=%B encoding | grep $(printf "\317\200")
 '
 
-test_expect_failure 'X: replace ref that becomes useless is removed' '
+test_expect_success 'X: replace ref that becomes useless is removed' '
 	git init -qb main testrepo &&
-	(cd testrepo &&
+	cd testrepo &&
+	(
 		test_commit test &&
 
 		test_commit msg somename content &&
@@ -3938,11 +3916,11 @@ cat >Y-marks <<\Y_INPUT_END
 :4 ff729f5e62f72c0c3978207d9a80e5f3a65f14d7
 Y_INPUT_END
 
-# SHA-1 only — hardcode expected value
-Ymain_sha1=9afed2f9161ddf416c0a1863b8b0725b00070504
-
 test_expect_success 'Y: setup' '
-	true
+	test_oid_cache <<-EOF
+	Ymain sha1:9afed2f9161ddf416c0a1863b8b0725b00070504
+	Ymain sha256:c0a1010da1df187b2e287654793df01b464bd6f8e3f17fc1481a7dadf84caee3
+	EOF
 '
 
 test_expect_success 'Y: rewrite submodules' '
@@ -3953,7 +3931,7 @@ test_expect_success 'Y: rewrite submodules' '
 		git -C sub2 fast-import --export-marks=../sub2-marks <../Y-sub-input &&
 		git fast-import --rewrite-submodules-from=sub:../Y-marks \
 			--rewrite-submodules-to=sub:sub2-marks <../Y-main-input &&
-		test "$(git rev-parse main)" = "$Ymain_sha1"
+		test "$(git rev-parse main)" = "$(test_oid Ymain)"
 	)
 '
 

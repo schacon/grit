@@ -1,19 +1,13 @@
 #!/bin/sh
 #
-# Upstream: t9301-fast-import-notes.sh
-# Ported from git/t/t9301-fast-import-notes.sh for grit.
+# Copyright (c) 2009 Johan Herland
 #
 
 test_description='test git fast-import of notes objects'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
-
-# Initialize a repo in the trash directory
-git init --quiet
-
 
 
 test_tick

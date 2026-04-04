@@ -1,373 +1,312 @@
 #!/bin/sh
-# Tests for grit prune-packed, verify-pack, and show-index.
-# Ported subset from git/t/t5302-pack-index.sh.
+#
+# Copyright (c) 2007 Nicolas Pitre
+#
 
-test_description='pack index: prune-packed, verify-pack, show-index'
+test_description='pack index with 64-bit offsets and object CRC'
 
 . ./test-lib.sh
 
-REAL_GIT=${REAL_GIT:-/usr/bin/git}
-
-# ---------------------------------------------------------------------------
-# prune-packed basics
-# ---------------------------------------------------------------------------
-
-test_expect_success 'setup: create loose object' '
-	git init repo &&
-	cd repo &&
-	BLOB=$(echo "hello prune" | git hash-object -w --stdin) &&
-	BLOB_FILE=.git/objects/$(echo "$BLOB" | sed "s/^../&\//") &&
-	test_path_is_file "$BLOB_FILE"
-'
-
-test_expect_success 'prune-packed with no packs leaves loose object intact' '
-	cd repo &&
-	BLOB=$(echo "hello prune" | git hash-object --stdin) &&
-	BLOB_FILE=.git/objects/$(echo "$BLOB" | sed "s/^../&\//") &&
-	grit prune-packed &&
-	test_path_is_file "$BLOB_FILE"
-'
-
-test_expect_success 'prune-packed --dry-run with no packs produces no output' '
-	cd repo &&
-	grit prune-packed --dry-run >out &&
-	test_must_be_empty out
-'
-
-test_expect_success 'prune-packed -n is alias for --dry-run' '
-	cd repo &&
-	grit prune-packed -n >out &&
-	test_must_be_empty out
-'
-
-test_expect_success 'prune-packed -q runs without error' '
-	cd repo &&
-	grit prune-packed -q
-'
-
-# ---------------------------------------------------------------------------
-# verify-pack tests
-# ---------------------------------------------------------------------------
-
-test_expect_success 'verify-pack on a valid pack passes' '
-	rm -rf repo_vp &&
-	grit init repo_vp &&
-	cd repo_vp &&
-	echo hello >a.txt &&
-	git add a.txt &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	git commit -m initial &&
-	git repack -a -d &&
-	pack=$(echo .git/objects/pack/*.pack) &&
-	git verify-pack "$pack"
-'
-
-test_expect_success 'verify-pack -v shows object details' '
-	cd repo_vp &&
-	pack=$(echo .git/objects/pack/*.pack) &&
-	git verify-pack -v "$pack" >out &&
-	grep "commit" out &&
-	grep "tree" out &&
-	grep "blob" out
-'
-
-test_expect_success 'verify-pack accepts .idx path' '
-	cd repo_vp &&
-	idx=$(echo .git/objects/pack/*.idx) &&
-	git verify-pack "$idx"
-'
-
-test_expect_success 'verify-pack -s shows stat summary' '
-	cd repo_vp &&
-	pack=$(echo .git/objects/pack/*.pack) &&
-	git verify-pack -s "$pack" >out &&
-	test -s out
-'
-
-test_expect_success 'verify-pack fails on nonexistent file' '
-	cd repo_vp &&
-	test_must_fail git verify-pack nonexistent.pack 2>err
-'
-
-test_expect_success 'verify-pack -v lists all objects in pack' '
-	cd repo_vp &&
-	pack=$(echo .git/objects/pack/*.pack) &&
-	git verify-pack -v "$pack" >out &&
-	obj_count=$(grep -cE "^[0-9a-f]{40}" out) &&
-	test "$obj_count" -ge 3
-'
-
-test_expect_success 'verify-pack -v output includes offset and size' '
-	cd repo_vp &&
-	pack=$(echo .git/objects/pack/*.pack) &&
-	git verify-pack -v "$pack" >out &&
-	grep -E "^[0-9a-f]{40} (commit|tree|blob) [0-9]+ [0-9]+ [0-9]+" out
-'
-
-test_expect_success 'verify-pack on pack with multiple objects' '
-	rm -rf repo_vp2 &&
-	grit init repo_vp2 &&
-	cd repo_vp2 &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo file1 >f1.txt &&
-	echo file2 >f2.txt &&
-	echo file3 >f3.txt &&
-	git add f1.txt f2.txt f3.txt &&
-	git commit -m "three files" &&
-	echo file4 >f4.txt &&
-	git add f4.txt &&
-	git commit -m "four files" &&
-	git repack -a -d &&
-	pack=$(echo .git/objects/pack/*.pack) &&
-	git verify-pack "$pack" &&
-	git verify-pack -v "$pack" >out &&
-	obj_count=$(grep -cE "^[0-9a-f]{40}" out) &&
-	test "$obj_count" -ge 7
-'
-
-test_expect_success 'verify-pack detects truncated pack' '
-	rm -rf repo_vp_trunc &&
-	grit init repo_vp_trunc &&
-	cd repo_vp_trunc &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo content >f.txt &&
-	git add f.txt &&
-	git commit -m initial &&
-	git repack -a -d &&
-	pack=$(echo .git/objects/pack/*.pack) &&
-	cp "$pack" "$pack.bak" &&
-	dd if="$pack" of="$pack.trunc" bs=1 count=20 2>/dev/null &&
-	mv "$pack.trunc" "$pack" &&
-	test_must_fail git verify-pack "$pack" 2>err
-'
-
-# ---------------------------------------------------------------------------
-# show-index tests
-# ---------------------------------------------------------------------------
-
-test_expect_success 'show-index reads valid idx and outputs entries' '
-	rm -rf repo_si &&
-	grit init repo_si &&
-	cd repo_si &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo content >file.txt &&
-	git add file.txt &&
-	git commit -m initial &&
-	git repack -a -d &&
-	idx=$(echo .git/objects/pack/*.idx) &&
-	git show-index <"$idx" >out &&
-	test_line_count -gt 0 out
-'
-
-test_expect_success 'show-index --object-format=sha1 accepted' '
-	cd repo_si &&
-	idx=$(echo .git/objects/pack/*.idx) &&
-	git show-index --object-format=sha1 <"$idx" >out &&
-	test_line_count -gt 0 out
-'
-
-test_expect_success 'show-index --object-format=sha256 rejected' '
-	cd repo_si &&
-	idx=$(echo .git/objects/pack/*.idx) &&
-	test_must_fail git show-index --object-format=sha256 <"$idx"
-'
-
-test_expect_success 'show-index OIDs match verify-pack OIDs' '
-	cd repo_si &&
-	idx=$(echo .git/objects/pack/*.idx) &&
-	"$REAL_GIT" verify-pack -v "$idx" |
-		grep -E "^[0-9a-f]{40}" |
-		awk "{print \$1}" | sort >expected_oids &&
-	git show-index <"$idx" | awk "{print \$2}" | sort >actual_oids &&
-	test_cmp expected_oids actual_oids
-'
-
-test_expect_success 'show-index output format: offset OID CRC' '
-	cd repo_si &&
-	idx=$(echo .git/objects/pack/*.idx) &&
-	git show-index <"$idx" >out &&
-	while read offset oid rest; do
-		test -n "$offset" &&
-		test -n "$oid" &&
-		echo "$oid" | grep -qE "^[0-9a-f]{40}$"
-	done <out
-'
-
-test_expect_success 'show-index entries include valid offsets' '
-	cd repo_si &&
-	idx=$(echo .git/objects/pack/*.idx) &&
-	git show-index <"$idx" | awk "{print \$1}" >offsets &&
-	while read off; do
-		test "$off" -ge 0 || return 1
-	done <offsets
-'
-
-test_expect_success 'show-index count matches verify-pack count' '
-	cd repo_si &&
-	idx=$(echo .git/objects/pack/*.idx) &&
-	si_count=$(git show-index <"$idx" | wc -l | tr -d " ") &&
-	vp_count=$("$REAL_GIT" verify-pack -v "$idx" | grep -cE "^[0-9a-f]{40}") &&
-	test "$si_count" = "$vp_count"
-'
-
-test_expect_success 'show-index with larger pack' '
-	rm -rf repo_si_lg &&
-	grit init repo_si_lg &&
-	cd repo_si_lg &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
+test_expect_success 'setup' '
+	rawsz=$(test_oid rawsz) &&
+	rm -rf .git &&
+	git init &&
+	git config pack.threads 1 &&
 	i=1 &&
-	while test $i -le 20; do
-		echo "content $i" >file_$i.txt &&
-		i=$(($i + 1))
+	while test $i -le 100
+	do
+		iii=$(printf "%03i" $i) &&
+		test-tool genrandom "bar" 200 > wide_delta_$iii &&
+		test-tool genrandom "baz $iii" 50 >> wide_delta_$iii &&
+		test-tool genrandom "foo"$i 100 > deep_delta_$iii &&
+		test-tool genrandom "foo"$(expr $i + 1) 100 >> deep_delta_$iii &&
+		test-tool genrandom "foo"$(expr $i + 2) 100 >> deep_delta_$iii &&
+		echo $iii >file_$iii &&
+		test-tool genrandom "$iii" 8192 >>file_$iii &&
+		git update-index --add file_$iii deep_delta_$iii wide_delta_$iii &&
+		i=$(expr $i + 1) || return 1
 	done &&
-	git add . &&
-	git commit -m "twenty files" &&
-	git repack -a -d &&
-	idx=$(echo .git/objects/pack/*.idx) &&
-	git show-index <"$idx" >out &&
-	si_count=$(wc -l <out | tr -d " ") &&
-	test "$si_count" -ge 22
+	{ echo 101 && test-tool genrandom 100 8192; } >file_101 &&
+	git update-index --add file_101 &&
+	tree=$(git write-tree) &&
+	commit=$(git commit-tree $tree </dev/null) && {
+		echo $tree &&
+		git ls-tree $tree | sed -e "s/.* \\([0-9a-f]*\\)	.*/\\1/"
+	} >obj-list &&
+	git update-ref HEAD $commit
 '
 
-# ---------------------------------------------------------------------------
-# prune-packed with packs
-# ---------------------------------------------------------------------------
-
-test_expect_success 'prune-packed removes loose objects already in pack' '
-	rm -rf repo_pp &&
-	grit init repo_pp &&
-	cd repo_pp &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo "pack me" >f.txt &&
-	git add f.txt &&
-	git commit -m initial &&
-	BLOB=$(git hash-object f.txt) &&
-	BLOB_FILE=.git/objects/$(echo "$BLOB" | sed "s/^../&\//") &&
-	git repack -a &&
-	test_path_is_file "$BLOB_FILE" &&
-	grit prune-packed &&
-	test_path_is_missing "$BLOB_FILE"
+test_expect_success 'pack-objects with index version 1' '
+	pack1=$(git pack-objects --index-version=1 test-1 <obj-list) &&
+	git verify-pack -v "test-1-${pack1}.pack"
 '
 
-test_expect_success 'prune-packed --dry-run lists but does not remove' '
-	rm -rf repo_ppd &&
-	grit init repo_ppd &&
-	cd repo_ppd &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo "dry run me" >f.txt &&
-	git add f.txt &&
-	git commit -m initial &&
-	git repack -a -d &&
-	BLOB=$(echo extra_dry | git hash-object -w --stdin) &&
-	BLOB_FILE=.git/objects/$(echo "$BLOB" | sed "s/^../&\//") &&
-	git repack -a &&
-	test_path_is_file "$BLOB_FILE" &&
-	loose_before=$(git count-objects | sed "s/ .*//") &&
-	grit prune-packed --dry-run >out &&
-	loose_after=$(git count-objects | sed "s/ .*//") &&
-	test "$loose_before" = "$loose_after"
+test_expect_success 'pack-objects with index version 2' '
+	pack2=$(git pack-objects --index-version=2 test-2 <obj-list) &&
+	git verify-pack -v "test-2-${pack2}.pack"
 '
 
-test_expect_success 'prune-packed -n does not remove objects' '
-	cd repo_ppd &&
-	loose_before=$(git count-objects | sed "s/ .*//") &&
-	grit prune-packed -n >out2 &&
-	loose_after=$(git count-objects | sed "s/ .*//") &&
-	test "$loose_before" = "$loose_after"
+test_expect_success 'both packs should be identical' '
+	cmp "test-1-${pack1}.pack" "test-2-${pack2}.pack"
 '
 
-test_expect_success 'prune-packed has no effect when no packs exist' '
-	rm -rf repo_ppnp &&
-	grit init repo_ppnp &&
-	cd repo_ppnp &&
-	BLOB=$(echo "no pack" | git hash-object -w --stdin) &&
-	BLOB_FILE=.git/objects/$(echo "$BLOB" | sed "s/^../&\//") &&
-	grit prune-packed &&
-	test_path_is_file "$BLOB_FILE"
+test_expect_success 'index v1 and index v2 should be different' '
+	! cmp "test-1-${pack1}.idx" "test-2-${pack2}.idx"
 '
 
-test_expect_success 'prune-packed removes all loose objects that are packed' '
-	rm -rf repo_pp_all &&
-	grit init repo_pp_all &&
-	cd repo_pp_all &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo a >a.txt &&
-	echo b >b.txt &&
-	echo c >c.txt &&
-	git add . &&
-	git commit -m "three files" &&
-	loose_before=$(git count-objects | sed "s/ .*//") &&
-	test "$loose_before" -gt 0 &&
-	git repack -a &&
-	grit prune-packed &&
-	test "$(git count-objects)" = "0 objects, 0 kilobytes"
+test_expect_success 'index-pack with index version 1' '
+	git index-pack --index-version=1 -o 1.idx "test-1-${pack1}.pack"
 '
 
-test_expect_success 'prune-packed leaves objects not in any pack' '
-	rm -rf repo_pp_leave &&
-	grit init repo_pp_leave &&
-	cd repo_pp_leave &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo packed >packed.txt &&
-	git add packed.txt &&
-	git commit -m "packed commit" &&
-	git repack -a -d &&
-	EXTRA=$(echo "extra loose" | git hash-object -w --stdin) &&
-	EXTRA_FILE=.git/objects/$(echo "$EXTRA" | sed "s/^../&\//") &&
-	grit prune-packed &&
-	test_path_is_file "$EXTRA_FILE"
+test_expect_success 'index-pack with index version 2' '
+	git index-pack --index-version=2 -o 2.idx "test-1-${pack1}.pack"
 '
 
-test_expect_success 'prune-packed with multiple packs' '
-	rm -rf repo_pp_multi &&
-	grit init repo_pp_multi &&
-	cd repo_pp_multi &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo first >first.txt &&
-	git add first.txt &&
-	git commit -m first &&
-	git repack &&
-	echo second >second.txt &&
-	git add second.txt &&
-	git commit -m second &&
-	git repack &&
-	pack_count=$(ls .git/objects/pack/*.pack 2>/dev/null | wc -l) &&
-	test "$pack_count" -ge 2 &&
-	loose_before=$(git count-objects | sed "s/ .*//") &&
-	grit prune-packed &&
-	loose_after=$(git count-objects | sed "s/ .*//") &&
-	test "$loose_after" -le "$loose_before"
+test_expect_success 'index-pack results should match pack-objects ones' '
+	cmp "test-1-${pack1}.idx" "1.idx" &&
+	cmp "test-2-${pack2}.idx" "2.idx"
 '
 
-test_expect_success 'verify-pack after prune-packed still passes' '
-	cd repo_pp_multi &&
-	for p in .git/objects/pack/*.pack; do
-		git verify-pack "$p" || return 1
+test_expect_success 'index-pack --verify on index version 1' '
+	git index-pack --verify "test-1-${pack1}.pack"
+'
+
+test_expect_success 'index-pack --verify on index version 2' '
+	git index-pack --verify "test-2-${pack2}.pack"
+'
+
+test_expect_success 'pack-objects --index-version=2, is not accepted' '
+	test_must_fail git pack-objects --index-version=2, test-3 <obj-list
+'
+
+test_expect_success 'index v2: force some 64-bit offsets with pack-objects' '
+	pack3=$(git pack-objects --index-version=2,0x40000 test-3 <obj-list)
+'
+
+if msg=$(git verify-pack -v "test-3-${pack3}.pack" 2>&1) ||
+	! (echo "$msg" | grep "pack too large .* off_t")
+then
+	test_set_prereq OFF64_T
+else
+	say "# skipping tests concerning 64-bit offsets"
+fi
+
+test_expect_success OFF64_T 'index v2: verify a pack with some 64-bit offsets' '
+	git verify-pack -v "test-3-${pack3}.pack"
+'
+
+test_expect_success OFF64_T '64-bit offsets: should be different from previous index v2 results' '
+	! cmp "test-2-${pack2}.idx" "test-3-${pack3}.idx"
+'
+
+test_expect_success OFF64_T 'index v2: force some 64-bit offsets with index-pack' '
+	git index-pack --index-version=2,0x40000 -o 3.idx "test-1-${pack1}.pack"
+'
+
+test_expect_success OFF64_T '64-bit offsets: index-pack result should match pack-objects one' '
+	cmp "test-3-${pack3}.idx" "3.idx"
+'
+
+test_expect_success OFF64_T 'index-pack --verify on 64-bit offset v2 (cheat)' '
+	# This cheats by knowing which lower offset should still be encoded
+	# in 64-bit representation.
+	git index-pack --verify --index-version=2,0x40000 "test-3-${pack3}.pack"
+'
+
+test_expect_success OFF64_T 'index-pack --verify on 64-bit offset v2' '
+	git index-pack --verify "test-3-${pack3}.pack"
+'
+
+# returns the object number for given object in given pack index
+index_obj_nr()
+{
+	idx_file=$1
+	object_sha1=$2
+	nr=0
+	git show-index < $idx_file |
+	while read offs sha1 extra
+	do
+	  nr=$(($nr + 1))
+	  test "$sha1" = "$object_sha1" || continue
+	  echo "$(($nr - 1))"
+	  break
 	done
+}
+
+# returns the pack offset for given object as found in given pack index
+index_obj_offset()
+{
+	idx_file=$1
+	object_sha1=$2
+	git show-index < $idx_file | grep $object_sha1 |
+	( read offs extra && echo "$offs" )
+}
+
+test_expect_success '[index v1] 1) stream pack to repository' '
+	git index-pack --index-version=1 --stdin < "test-1-${pack1}.pack" &&
+	git prune-packed &&
+	git count-objects | ( read nr rest && test "$nr" -eq 1 ) &&
+	cmp "test-1-${pack1}.pack" ".git/objects/pack/pack-${pack1}.pack" &&
+	cmp "test-1-${pack1}.idx"	".git/objects/pack/pack-${pack1}.idx"
 '
 
-test_expect_success 'prune-packed and count-objects agree' '
-	rm -rf repo_pp_co &&
-	grit init repo_pp_co &&
-	cd repo_pp_co &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo content >f.txt &&
-	git add f.txt &&
-	git commit -m initial &&
-	git repack -a &&
-	grit prune-packed &&
-	test "$(git count-objects | sed "s/ .*//")" = "0"
+test_expect_success \
+	'[index v1] 2) create a stealth corruption in a delta base reference' '
+	# This test assumes file_101 is a delta smaller than 16 bytes.
+	# It should be against file_100 but we substitute its base for file_099
+	sha1_101=$(git hash-object file_101) &&
+	sha1_099=$(git hash-object file_099) &&
+	offs_101=$(index_obj_offset 1.idx $sha1_101) &&
+	nr_099=$(index_obj_nr 1.idx $sha1_099) &&
+	chmod +w ".git/objects/pack/pack-${pack1}.pack" &&
+	recordsz=$((rawsz + 4)) &&
+	dd of=".git/objects/pack/pack-${pack1}.pack" seek=$(($offs_101 + 1)) \
+	       if=".git/objects/pack/pack-${pack1}.idx" \
+	       skip=$((4 + 256 * 4 + $nr_099 * recordsz)) \
+	       bs=1 count=$rawsz conv=notrunc &&
+	git cat-file blob $sha1_101 > file_101_foo1
+'
+
+test_expect_success \
+	'[index v1] 3) corrupted delta happily returned wrong data' '
+	test -f file_101_foo1 && ! cmp file_101 file_101_foo1
+'
+
+test_expect_success \
+	'[index v1] 4) confirm that the pack is actually corrupted' '
+	test_must_fail git fsck --full $commit
+'
+
+test_expect_success \
+	'[index v1] 5) pack-objects happily reuses corrupted data' '
+	pack4=$(git pack-objects test-4 <obj-list) &&
+	test -f "test-4-${pack4}.pack"
+'
+
+test_expect_success '[index v1] 6) newly created pack is BAD !' '
+	test_must_fail git verify-pack -v "test-4-${pack4}.pack"
+'
+
+test_expect_success '[index v2] 1) stream pack to repository' '
+	rm -f .git/objects/pack/* &&
+	git index-pack --index-version=2 --stdin < "test-1-${pack1}.pack" &&
+	git prune-packed &&
+	git count-objects | ( read nr rest && test "$nr" -eq 1 ) &&
+	cmp "test-1-${pack1}.pack" ".git/objects/pack/pack-${pack1}.pack" &&
+	cmp "test-2-${pack1}.idx"	".git/objects/pack/pack-${pack1}.idx"
+'
+
+test_expect_success \
+	'[index v2] 2) create a stealth corruption in a delta base reference' '
+	# This test assumes file_101 is a delta smaller than 16 bytes.
+	# It should be against file_100 but we substitute its base for file_099
+	sha1_101=$(git hash-object file_101) &&
+	sha1_099=$(git hash-object file_099) &&
+	offs_101=$(index_obj_offset 1.idx $sha1_101) &&
+	nr_099=$(index_obj_nr 1.idx $sha1_099) &&
+	chmod +w ".git/objects/pack/pack-${pack1}.pack" &&
+	dd of=".git/objects/pack/pack-${pack1}.pack" seek=$(($offs_101 + 1)) \
+		if=".git/objects/pack/pack-${pack1}.idx" \
+		skip=$((8 + 256 * 4 + $nr_099 * rawsz)) \
+		bs=1 count=$rawsz conv=notrunc &&
+	git cat-file blob $sha1_101 > file_101_foo2
+'
+
+test_expect_success \
+	'[index v2] 3) corrupted delta happily returned wrong data' '
+	test -f file_101_foo2 && ! cmp file_101 file_101_foo2
+'
+
+test_expect_success \
+	'[index v2] 4) confirm that the pack is actually corrupted' '
+	test_must_fail git fsck --full $commit
+'
+
+test_expect_success \
+	'[index v2] 5) pack-objects refuses to reuse corrupted data' '
+	test_must_fail git pack-objects test-5 <obj-list &&
+	test_must_fail git pack-objects --no-reuse-object test-6 <obj-list
+'
+
+test_expect_success \
+	'[index v2] 6) verify-pack detects CRC mismatch' '
+	rm -f .git/objects/pack/* &&
+	git index-pack --index-version=2 --stdin < "test-1-${pack1}.pack" &&
+	git verify-pack ".git/objects/pack/pack-${pack1}.pack" &&
+	obj=$(git hash-object file_001) &&
+	nr=$(index_obj_nr ".git/objects/pack/pack-${pack1}.idx" $obj) &&
+	chmod +w ".git/objects/pack/pack-${pack1}.idx" &&
+	printf xxxx | dd of=".git/objects/pack/pack-${pack1}.idx" conv=notrunc \
+		bs=1 count=4 seek=$((8 + 256 * 4 + $(wc -l <obj-list) * rawsz + $nr * 4)) &&
+	 ( while read obj
+	   do git cat-file -p $obj >/dev/null || exit 1
+	   done <obj-list ) &&
+	test_must_fail git verify-pack ".git/objects/pack/pack-${pack1}.pack"
+'
+
+test_expect_success 'running index-pack in the object store' '
+	rm -f .git/objects/pack/* &&
+	cp test-1-${pack1}.pack .git/objects/pack/pack-${pack1}.pack &&
+	(
+		cd .git/objects/pack &&
+		git index-pack pack-${pack1}.pack
+	) &&
+	test -f .git/objects/pack/pack-${pack1}.idx
+'
+
+test_expect_success 'index-pack --strict warns upon missing tagger in tag' '
+	sha=$(git rev-parse HEAD) &&
+	cat >wrong-tag <<EOF &&
+object $sha
+type commit
+tag guten tag
+
+This is an invalid tag.
+EOF
+
+	tag=$(git hash-object -t tag -w --stdin --literally <wrong-tag) &&
+	pack1=$(echo $tag $sha | git pack-objects tag-test) &&
+	echo remove tag object &&
+	thirtyeight=${tag#??} &&
+	rm -f .git/objects/${tag%$thirtyeight}/$thirtyeight &&
+	git index-pack --strict tag-test-${pack1}.pack 2>err &&
+	grep "^warning:.* expected .tagger. line" err
+'
+
+test_expect_success 'index-pack --fsck-objects also warns upon missing tagger in tag' '
+	git index-pack --fsck-objects tag-test-${pack1}.pack 2>err &&
+	grep "^warning:.* expected .tagger. line" err
+'
+
+test_expect_success 'index-pack -v --stdin produces progress for both phases' '
+	pack=$(git pack-objects --all pack </dev/null) &&
+	GIT_PROGRESS_DELAY=0 git index-pack -v --stdin <pack-$pack.pack 2>err &&
+	test_grep "Receiving objects" err &&
+	test_grep "Resolving deltas" err
+'
+
+test_expect_success 'too-large packs report the breach' '
+	pack=$(git pack-objects --all pack </dev/null) &&
+	sz="$(test_file_size pack-$pack.pack)" &&
+	test "$sz" -gt 20 &&
+	test_must_fail git index-pack --max-input-size=20 pack-$pack.pack 2>err &&
+	grep "maximum allowed size (20 bytes)" err
+'
+
+# git-index-pack(1) uses the default hash algorithm outside of the repository,
+# and it has no way to tell it otherwise. So we can only run this test with the
+# default hash algorithm, as it would otherwise fail to parse the tree.
+test_expect_success DEFAULT_HASH_ALGORITHM 'index-pack --fsck-objects outside of a repo' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		printf "100644 blob $(test_oid 001)\t.gitattributes\n" >tree &&
+		git mktree --missing <tree >tree-oid &&
+		git pack-objects <tree-oid pack &&
+		test_must_fail nongit git index-pack --fsck-objects "$(pwd)"/pack-*.pack 2>err &&
+		test_grep "cannot perform queued object checks outside of a repository" err
+	)
 '
 
 test_done

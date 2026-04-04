@@ -1,17 +1,13 @@
 #!/bin/sh
-# Ported from git/t/t5410-receive-pack.sh
-# Tests for git receive-pack
 
 test_description='git receive-pack'
 
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup' '
-	git init -q &&
 	test_commit base &&
 	git clone -s --bare . fork &&
 	git checkout -b public/branch main &&
@@ -20,43 +16,85 @@ test_expect_success 'setup' '
 	test_commit private
 '
 
-# The upstream tests for core.alternateRefsCommand and
-# core.alternateRefsPrefixes require depacketize (a git test-tool)
-# and pipe to receive-pack directly. Grit does not support these config
-# options, so skip these tests entirely.
+extract_haves () {
+	depacketize | sed -n 's/^\([^ ][^ ]*\) \.have/\1/p'
+}
 
-test_expect_success 'receive-pack basic connectivity via push' '
-	git init --bare basic-dest.git &&
-	git push ./basic-dest.git main &&
-	commit=$(git rev-parse main) &&
-	git --git-dir=basic-dest.git cat-file -t $commit >actual &&
-	echo commit >expect &&
-	test_cmp expect actual
+test_expect_success 'with core.alternateRefsCommand' '
+	write_script fork/alternate-refs <<-\EOF &&
+		git --git-dir="$1" for-each-ref \
+			--format="%(objectname)" \
+			refs/heads/public/
+	EOF
+	test_config -C fork core.alternateRefsCommand ./alternate-refs &&
+	git rev-parse public/branch >expect &&
+	printf "0000" | git receive-pack fork >actual &&
+	extract_haves <actual >actual.haves &&
+	test_cmp expect actual.haves
 '
 
-test_expect_success 'receive-pack handles multiple branches' '
-	git push ./basic-dest.git public/branch private/branch &&
-	git --git-dir=basic-dest.git rev-parse public/branch >actual_pub &&
-	git rev-parse public/branch >expect_pub &&
-	test_cmp expect_pub actual_pub &&
-	git --git-dir=basic-dest.git rev-parse private/branch >actual_priv &&
-	git rev-parse private/branch >expect_priv &&
-	test_cmp expect_priv actual_priv
+test_expect_success 'with core.alternateRefsPrefixes' '
+	test_config -C fork core.alternateRefsPrefixes "refs/heads/private" &&
+	git rev-parse private/branch >expect &&
+	printf "0000" | git receive-pack fork >actual &&
+	extract_haves <actual >actual.haves &&
+	test_cmp expect actual.haves
 '
 
-test_expect_success 'receive-pack rejects non-fast-forward by default' '
-	git checkout main &&
-	git init --bare strict-dest.git &&
-	git push ./strict-dest.git main &&
-	test_commit advance1 &&
-	git push ./strict-dest.git main &&
-	git reset --hard HEAD^ &&
-	test_commit diverged &&
-	test_must_fail git push ./strict-dest.git main
+# The `tee.exe` shipped in Git for Windows v2.49.0 is known to hang frequently
+# when spawned from `git.exe` and piping its output to `git.exe`. This seems
+# related to MSYS2 runtime bug fixes regarding the signal handling; Let's just
+# skip the tests that need to exercise this when the faulty MSYS2 runtime is
+# detected; The test cases are exercised enough in other matrix jobs of the CI
+# runs.
+test_lazy_prereq TEE_DOES_NOT_HANG '
+	test_have_prereq !MINGW &&
+	case "$(uname -a)" in *3.5.7-463ebcdc.x86_64*) false;; esac
 '
 
-test_expect_success 'receive-pack allows force push' '
-	git push --force ./strict-dest.git main
+test_expect_success TEE_DOES_NOT_HANG \
+	'receive-pack missing objects fails connectivity check' '
+	test_when_finished rm -rf repo remote.git setup.git &&
+
+	git init repo &&
+	git -C repo commit --allow-empty -m 1 &&
+	git clone --bare repo setup.git &&
+	git -C repo commit --allow-empty -m 2 &&
+
+	# Capture git-send-pack(1) output sent to git-receive-pack(1).
+	git -C repo send-pack ../setup.git --all \
+		--receive-pack="tee ${SQ}$(pwd)/out${SQ} | git-receive-pack" &&
+
+	# Replay captured git-send-pack(1) output on new empty repository.
+	git init --bare remote.git &&
+	git receive-pack remote.git <out >actual 2>err &&
+
+	test_grep "missing necessary objects" actual &&
+	test_grep "fatal: Failed to traverse parents" err &&
+	test_must_fail git -C remote.git cat-file -e $(git -C repo rev-parse HEAD)
+'
+
+test_expect_success TEE_DOES_NOT_HANG \
+	'receive-pack missing objects bypasses connectivity check' '
+	test_when_finished rm -rf repo remote.git setup.git &&
+
+	git init repo &&
+	git -C repo commit --allow-empty -m 1 &&
+	git clone --bare repo setup.git &&
+	git -C repo commit --allow-empty -m 2 &&
+
+	# Capture git-send-pack(1) output sent to git-receive-pack(1).
+	git -C repo send-pack ../setup.git --all \
+		--receive-pack="tee ${SQ}$(pwd)/out${SQ} | git-receive-pack" &&
+
+	# Replay captured git-send-pack(1) output on new empty repository.
+	git init --bare remote.git &&
+	git receive-pack --skip-connectivity-check remote.git <out >actual 2>err &&
+
+	test_grep ! "missing necessary objects" actual &&
+	test_must_be_empty err &&
+	git -C remote.git cat-file -e $(git -C repo rev-parse HEAD) &&
+	test_must_fail git -C remote.git rev-list $(git -C repo rev-parse HEAD)
 '
 
 test_done

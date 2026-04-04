@@ -1,423 +1,541 @@
 #!/bin/sh
-# Ported subset from git/t/t0008-ignores.sh.
 
-test_description='grit check-ignore subset'
+test_description=check-ignore
 
-cd "$(dirname "$0")" || exit 1
+TEST_CREATE_REPO_NO_TEMPLATE=1
 . ./test-lib.sh
 
-test_expect_success 'setup repository with ignore sources' '
-	grit init repo &&
-	cd repo &&
-	echo "ref: refs/heads/main" >.git/HEAD &&
-	mkdir -p a/b/ignored-dir .git/info &&
-	cat >.gitignore <<-\EOF &&
-	one
-	ignored-*
-	top-level-dir/
-	EOF
-	cat >a/.gitignore <<-\EOF &&
-	two*
-	*three
-	EOF
-	cat >a/b/.gitignore <<-\EOF &&
-	four
-	five
-	# comment to affect line numbers
-	six
-	ignored-dir/
-	# and blank line below also counts
+init_vars () {
+	global_excludes="global-excludes"
+}
 
-	!on*
-	!two
+enable_global_excludes () {
+	init_vars &&
+	git config core.excludesfile "$global_excludes"
+}
+
+expect_in () {
+	dest="$HOME/expected-$1" text="$2"
+	if test -z "$text"
+	then
+		>"$dest" # avoid newline
+	else
+		echo "$text" >"$dest"
+	fi
+}
+
+expect () {
+	expect_in stdout "$1"
+}
+
+expect_from_stdin () {
+	cat >"$HOME/expected-stdout"
+}
+
+test_stderr () {
+	expected="$1"
+	expect_in stderr "$1" &&
+	test_cmp "$HOME/expected-stderr" "$HOME/stderr"
+}
+
+broken_c_unquote () {
+	sed -e 's/^"//' -e 's/\\//' -e 's/"$//' "$1" | tr '\n' '\0'
+}
+
+broken_c_unquote_verbose () {
+	sed -e 's/	"/	/' -e 's/\\//' -e 's/"$//' "$1" | tr ':\t\n' '\000'
+}
+
+stderr_contains () {
+	regexp="$1"
+	if test_grep "$regexp" "$HOME/stderr"
+	then
+		return 0
+	else
+		echo "didn't find /$regexp/ in $HOME/stderr"
+		cat "$HOME/stderr"
+		return 1
+	fi
+}
+
+stderr_empty_on_success () {
+	expect_code="$1"
+	if test $expect_code = 0
+	then
+		test_stderr ""
+	else
+		# If we expect failure then stderr might or might not be empty
+		# due to --quiet - the caller can check its contents
+		return 0
+	fi
+}
+
+test_check_ignore () {
+	args="$1" expect_code="${2:-0}" global_args="$3"
+
+	init_vars &&
+	rm -f "$HOME/stdout" "$HOME/stderr" "$HOME/cmd" &&
+	echo git $global_args check-ignore $quiet_opt $verbose_opt $non_matching_opt $no_index_opt $args \
+		>"$HOME/cmd" &&
+	echo "$expect_code" >"$HOME/expected-exit-code" &&
+	test_expect_code "$expect_code" \
+		git $global_args check-ignore $quiet_opt $verbose_opt $non_matching_opt $no_index_opt $args \
+		>"$HOME/stdout" 2>"$HOME/stderr" &&
+	test_cmp "$HOME/expected-stdout" "$HOME/stdout" &&
+	stderr_empty_on_success "$expect_code"
+}
+
+# Runs the same code with 4 different levels of output verbosity:
+#
+#   1. with -q / --quiet
+#   2. with default verbosity
+#   3. with -v / --verbose
+#   4. with -v / --verbose, *and* -n / --non-matching
+#
+# expecting success each time.  Takes advantage of the fact that
+# check-ignore --verbose output is the same as normal output except
+# for the extra first column.
+#
+# A parameter is used to determine if the tests are run with the
+# normal case (using the index), or with the --no-index option.
+#
+# Arguments:
+#   - (optional) prereqs for this test, e.g. 'SYMLINKS'
+#   - test name
+#   - output to expect from the fourth verbosity mode (the output
+#     from the other verbosity modes is automatically inferred
+#     from this value)
+#   - code to run (should invoke test_check_ignore)
+#   - index option: --index or --no-index
+test_expect_success_multiple () {
+	prereq=
+	if test $# -eq 5
+	then
+		prereq=$1
+		shift
+	fi
+	if test "$4" = "--index"
+	then
+		no_index_opt=
+	else
+		no_index_opt=$4
+	fi
+	testname="$1" expect_all="$2" code="$3"
+
+	expect_verbose=$( echo "$expect_all" | grep -v '^::	' )
+	expect=$( echo "$expect_verbose" | sed -e 's/.*	//' )
+
+	test_expect_success $prereq "$testname${no_index_opt:+ with $no_index_opt}" '
+		expect "$expect" &&
+		eval "$code"
+	'
+
+	# --quiet is only valid when a single pattern is passed
+	if test $( echo "$expect_all" | wc -l ) = 1
+	then
+		for quiet_opt in '-q' '--quiet'
+		do
+			opts="${no_index_opt:+$no_index_opt }$quiet_opt"
+			test_expect_success $prereq "$testname${opts:+ with $opts}" "
+			expect '' &&
+			$code
+		"
+		done
+		quiet_opt=
+	fi
+
+	for verbose_opt in '-v' '--verbose'
+	do
+		for non_matching_opt in '' '-n' '--non-matching'
+		do
+			if test -n "$non_matching_opt"
+			then
+				my_expect="$expect_all"
+			else
+				my_expect="$expect_verbose"
+			fi
+
+			test_code="
+				expect '$my_expect' &&
+				$code
+			"
+			opts="${no_index_opt:+$no_index_opt }$verbose_opt${non_matching_opt:+ $non_matching_opt}"
+			test_expect_success $prereq "$testname${opts:+ with $opts}" "$test_code"
+		done
+	done
+	verbose_opt=
+	non_matching_opt=
+	no_index_opt=
+}
+
+test_expect_success_multi () {
+	test_expect_success_multiple "$@" "--index"
+}
+
+test_expect_success_no_index_multi () {
+	test_expect_success_multiple "$@" "--no-index"
+}
+
+test_expect_success 'setup' '
+	init_vars &&
+	mkdir -p a/b/ignored-dir a/submodule b &&
+	if test_have_prereq SYMLINKS
+	then
+		ln -s b a/symlink
+	fi &&
+	(
+		cd a/submodule &&
+		git init &&
+		echo a >a &&
+		git add a &&
+		git commit -m"commit in submodule"
+	) &&
+	git add a/submodule &&
+	cat <<-\EOF >.gitignore &&
+		one
+		ignored-*
+		top-level-dir/
 	EOF
-	echo per-repo >.git/info/exclude &&
-	cat >global-excludes <<-\EOF &&
-	globalone
-	!globaltwo
-	globalthree
+	for dir in . a
+	do
+		: >$dir/not-ignored &&
+		: >$dir/ignored-and-untracked &&
+		: >$dir/ignored-but-in-index || return 1
+	done &&
+	git add -f ignored-but-in-index a/ignored-but-in-index &&
+	cat <<-\EOF >a/.gitignore &&
+		two*
+		*three
 	EOF
-	: >ignored-and-untracked &&
-	: >a/ignored-and-untracked &&
-	: >not-ignored &&
-	: >a/not-ignored &&
-	: >ignored-but-in-index &&
-	: >a/ignored-but-in-index &&
-	grit update-index --add ignored-but-in-index a/ignored-but-in-index
+	cat <<-\EOF >a/b/.gitignore &&
+		four
+		five
+		# this comment should affect the line numbers
+		six
+		ignored-dir/
+		# and so should this blank line:
+
+		!on*
+		!two
+	EOF
+	echo "seven" >a/b/ignored-dir/.gitignore &&
+	test -n "$HOME" &&
+	cat <<-\EOF >"$global_excludes" &&
+		globalone
+		!globaltwo
+		globalthree
+	EOF
+	mkdir .git/info &&
+	cat <<-\EOF >.git/info/exclude
+		per-repo
+	EOF
 '
 
 ############################################################################
 #
 # test invalid inputs
 
-test_expect_success 'empty command line fails' '
-	cd repo &&
-	test_must_fail grit check-ignore >out 2>err &&
-	grep "no path specified" err
+test_expect_success_multi '. corner-case' '::	.' '
+	test_check_ignore . 1
 '
 
-test_expect_success '--stdin with extra path fails' '
-	cd repo &&
-	test_must_fail grit check-ignore --stdin foo >out 2>err &&
-	grep "cannot specify pathnames with --stdin" err
+test_expect_success_multi 'empty command line' '' '
+	test_check_ignore "" 128 &&
+	stderr_contains "fatal: no path specified"
 '
 
-test_expect_success '-z without --stdin fails' '
-	cd repo &&
-	test_must_fail grit check-ignore -z >out 2>err &&
-	grep -- "-z only makes sense with --stdin" err
+test_expect_success_multi '--stdin with empty STDIN' '' '
+	test_check_ignore "--stdin" 1 </dev/null &&
+	test_stderr ""
 '
 
-test_expect_success '--stdin -z with superfluous arg fails' '
-	cd repo &&
-	test_must_fail grit check-ignore --stdin -z foo >out 2>err &&
-	grep "cannot specify pathnames with --stdin" err
+test_expect_success '-q with multiple args' '
+	expect "" &&
+	test_check_ignore "-q one two" 128 &&
+	stderr_contains "fatal: --quiet is only valid with a single pathname"
 '
 
-test_expect_success '-z without --stdin and superfluous arg fails' '
-	cd repo &&
-	test_must_fail grit check-ignore -z foo >out 2>err &&
-	grep -- "-z only makes sense with --stdin" err
+test_expect_success '--quiet with multiple args' '
+	expect "" &&
+	test_check_ignore "--quiet one two" 128 &&
+	stderr_contains "fatal: --quiet is only valid with a single pathname"
 '
 
-test_expect_success '. corner-case is not ignored' '
-	cd repo &&
-	test_must_fail grit check-ignore . >actual 2>err &&
-	test ! -s actual
+for verbose_opt in '-v' '--verbose'
+do
+	for quiet_opt in '-q' '--quiet'
+	do
+		test_expect_success "$quiet_opt $verbose_opt" "
+			expect '' &&
+			test_check_ignore '$quiet_opt $verbose_opt foo' 128 &&
+			stderr_contains 'fatal: cannot have both --quiet and --verbose'
+		"
+	done
+done
+
+test_expect_success '--quiet with multiple args' '
+	expect "" &&
+	test_check_ignore "--quiet one two" 128 &&
+	stderr_contains "fatal: --quiet is only valid with a single pathname"
 '
 
-test_expect_success '. corner-case verbose non-matching' '
-	cd repo &&
-	test_expect_code 1 grit check-ignore -v -n . >actual &&
-	echo "::	." >expect &&
-	test_cmp expect actual
+test_expect_success_multi 'erroneous use of --' '' '
+	test_check_ignore "--" 128 &&
+	stderr_contains "fatal: no path specified"
 '
 
-test_expect_success '--stdin with empty STDIN exits 1' '
-	cd repo &&
-	test_must_fail grit check-ignore --stdin </dev/null >actual 2>err &&
-	test ! -s actual
+test_expect_success_multi '--stdin with superfluous arg' '' '
+	test_check_ignore "--stdin foo" 128 &&
+	stderr_contains "fatal: cannot specify pathnames with --stdin"
 '
 
-test_expect_success '-q with multiple args fails' '
-	cd repo &&
-	test_must_fail grit check-ignore -q one two >out 2>err &&
-	grep "only valid with a single pathname" err
+test_expect_success_multi '--stdin -z with superfluous arg' '' '
+	test_check_ignore "--stdin -z foo" 128 &&
+	stderr_contains "fatal: cannot specify pathnames with --stdin"
 '
 
-test_expect_success '--quiet with multiple args fails' '
-	cd repo &&
-	test_must_fail grit check-ignore --quiet one two >out 2>err &&
-	grep "only valid with a single pathname" err
+test_expect_success_multi '-z without --stdin' '' '
+	test_check_ignore "-z" 128 &&
+	stderr_contains "fatal: -z only makes sense with --stdin"
 '
 
-test_expect_success '-q -v conflict fails' '
-	cd repo &&
-	test_must_fail grit check-ignore -q -v foo >out 2>err &&
-	grep "cannot have both --quiet and --verbose" err
+test_expect_success_multi '-z without --stdin and superfluous arg' '' '
+	test_check_ignore "-z foo" 128 &&
+	stderr_contains "fatal: -z only makes sense with --stdin"
 '
 
-test_expect_success '-q --verbose conflict fails' '
-	cd repo &&
-	test_must_fail grit check-ignore -q --verbose foo >out 2>err &&
-	grep "cannot have both --quiet and --verbose" err
-'
-
-test_expect_success '--quiet -v conflict fails' '
-	cd repo &&
-	test_must_fail grit check-ignore --quiet -v foo >out 2>err &&
-	grep "cannot have both --quiet and --verbose" err
-'
-
-test_expect_success '--quiet --verbose conflict fails' '
-	cd repo &&
-	test_must_fail grit check-ignore --quiet --verbose foo >out 2>err &&
-	grep "cannot have both --quiet and --verbose" err
-'
-
-test_expect_success 'erroneous use of -- separator' '
-	cd repo &&
-	test_must_fail grit check-ignore -- >out 2>err &&
-	grep "no path specified" err
-'
-
-test_expect_success 'needs work tree (run from .git dir)' '
-	cd repo/.git &&
-	test_must_fail grit check-ignore foo >out 2>err &&
-	grep "must be run in a work tree" err
+test_expect_success_multi 'needs work tree' '' '
+	(
+		cd .git &&
+		test_check_ignore "foo" 128
+	) &&
+	stderr_contains "fatal: this operation must be run in a work tree"
 '
 
 ############################################################################
 #
 # test standard ignores
 
-test_expect_success 'basic path arguments and verbose output' '
-	cd repo &&
-	grit check-ignore one not-ignored >actual &&
-	echo one >expect &&
-	test_cmp expect actual &&
-	grit check-ignore -v one >actual &&
-	echo ".gitignore:1:one	one" >expect &&
-	test_cmp expect actual
-'
+# First make sure that the presence of a file in the working tree
+# does not impact results, but that the presence of a file in the
+# index does unless the --no-index option is used.
 
-test_expect_success 'tracked paths hidden unless --no-index' '
-	cd repo &&
-	test_must_fail grit check-ignore ignored-but-in-index >actual 2>err &&
-	test ! -s actual &&
-	grit check-ignore --no-index ignored-but-in-index >actual &&
-	echo ignored-but-in-index >expect &&
-	test_cmp expect actual
-'
+for subdir in '' 'a/'
+do
+	if test -z "$subdir"
+	then
+		where="at top-level"
+	else
+		where="in subdir $subdir"
+	fi
 
-test_expect_success 'non-existent file not ignored' '
-	cd repo &&
-	test_must_fail grit check-ignore non-existent >actual 2>err &&
-	test ! -s actual
-'
+	test_expect_success_multi "non-existent file $where not ignored" \
+		"::	${subdir}non-existent" \
+		"test_check_ignore '${subdir}non-existent' 1"
 
-test_expect_success 'non-existent file not ignored (verbose non-matching)' '
-	cd repo &&
-	test_expect_code 1 grit check-ignore -v -n non-existent >actual &&
-	echo "::	non-existent" >expect &&
-	test_cmp expect actual
-'
+	test_expect_success_no_index_multi "non-existent file $where not ignored" \
+		"::	${subdir}non-existent" \
+		"test_check_ignore '${subdir}non-existent' 1"
 
-test_expect_success 'non-existent file in subdir not ignored' '
-	cd repo &&
-	test_must_fail grit check-ignore a/non-existent >actual 2>err &&
-	test ! -s actual
-'
+	test_expect_success_multi "non-existent file $where ignored" \
+		".gitignore:1:one	${subdir}one" \
+		"test_check_ignore '${subdir}one'"
 
-test_expect_success 'non-existent file ignored' '
-	cd repo &&
-	grit check-ignore one >actual &&
-	echo one >expect &&
-	test_cmp expect actual
-'
+	test_expect_success_no_index_multi "non-existent file $where ignored" \
+		".gitignore:1:one	${subdir}one" \
+		"test_check_ignore '${subdir}one'"
 
-test_expect_success 'non-existent file ignored verbose' '
-	cd repo &&
-	grit check-ignore -v one >actual &&
-	echo ".gitignore:1:one	one" >expect &&
-	test_cmp expect actual
-'
+	test_expect_success_multi "existing untracked file $where not ignored" \
+		"::	${subdir}not-ignored" \
+		"test_check_ignore '${subdir}not-ignored' 1"
 
-test_expect_success 'non-existent file in subdir ignored' '
-	cd repo &&
-	grit check-ignore a/one >actual &&
-	echo a/one >expect &&
-	test_cmp expect actual
-'
+	test_expect_success_no_index_multi "existing untracked file $where not ignored" \
+		"::	${subdir}not-ignored" \
+		"test_check_ignore '${subdir}not-ignored' 1"
 
-test_expect_success 'non-existent file in subdir ignored verbose' '
-	cd repo &&
-	grit check-ignore -v a/one >actual &&
-	echo ".gitignore:1:one	a/one" >expect &&
-	test_cmp expect actual
-'
+	test_expect_success_multi "existing tracked file $where not ignored" \
+		"::	${subdir}ignored-but-in-index" \
+		"test_check_ignore '${subdir}ignored-but-in-index' 1"
 
-test_expect_success 'existing untracked file not ignored' '
-	cd repo &&
-	test_must_fail grit check-ignore not-ignored >actual 2>err &&
-	test ! -s actual
-'
+	test_expect_success_no_index_multi "existing tracked file $where shown as ignored" \
+		".gitignore:2:ignored-*	${subdir}ignored-but-in-index" \
+		"test_check_ignore '${subdir}ignored-but-in-index'"
 
-test_expect_success 'existing tracked file not ignored' '
-	cd repo &&
-	test_must_fail grit check-ignore ignored-but-in-index >actual 2>err &&
-	test ! -s actual
-'
+	test_expect_success_multi "existing untracked file $where ignored" \
+		".gitignore:2:ignored-*	${subdir}ignored-and-untracked" \
+		"test_check_ignore '${subdir}ignored-and-untracked'"
 
-test_expect_success 'existing tracked file shown as ignored with --no-index' '
-	cd repo &&
-	grit check-ignore --no-index ignored-but-in-index >actual &&
-	echo ignored-but-in-index >expect &&
-	test_cmp expect actual
-'
+	test_expect_success_no_index_multi "existing untracked file $where ignored" \
+		".gitignore:2:ignored-*	${subdir}ignored-and-untracked" \
+		"test_check_ignore '${subdir}ignored-and-untracked'"
 
-test_expect_success 'existing untracked file ignored' '
-	cd repo &&
-	grit check-ignore ignored-and-untracked >actual &&
-	echo ignored-and-untracked >expect &&
-	test_cmp expect actual
-'
+	test_expect_success_multi "mix of file types $where" \
+"::	${subdir}non-existent
+.gitignore:1:one	${subdir}one
+::	${subdir}not-ignored
+::	${subdir}ignored-but-in-index
+.gitignore:2:ignored-*	${subdir}ignored-and-untracked" \
+		"test_check_ignore '
+			${subdir}non-existent
+			${subdir}one
+			${subdir}not-ignored
+			${subdir}ignored-but-in-index
+			${subdir}ignored-and-untracked'
+		"
 
-test_expect_success 'existing untracked file ignored verbose' '
-	cd repo &&
-	grit check-ignore -v ignored-and-untracked >actual &&
-	echo ".gitignore:2:ignored-*	ignored-and-untracked" >expect &&
-	test_cmp expect actual
-'
+	test_expect_success_no_index_multi "mix of file types $where" \
+"::	${subdir}non-existent
+.gitignore:1:one	${subdir}one
+::	${subdir}not-ignored
+.gitignore:2:ignored-*	${subdir}ignored-but-in-index
+.gitignore:2:ignored-*	${subdir}ignored-and-untracked" \
+		"test_check_ignore '
+			${subdir}non-existent
+			${subdir}one
+			${subdir}not-ignored
+			${subdir}ignored-but-in-index
+			${subdir}ignored-and-untracked'
+		"
+done
 
-test_expect_success 'mix of file types at top-level' '
-	cd repo &&
-	grit check-ignore -v -n \
-		non-existent one not-ignored ignored-but-in-index ignored-and-untracked >actual &&
-	cat >expect <<-\EOF &&
-	::	non-existent
-	.gitignore:1:one	one
-	::	not-ignored
-	::	ignored-but-in-index
-	.gitignore:2:ignored-*	ignored-and-untracked
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_success 'mix of file types in subdir a/' '
-	cd repo &&
-	grit check-ignore -v -n \
-		a/non-existent a/one a/not-ignored a/ignored-but-in-index a/ignored-and-untracked >actual &&
-	cat >expect <<-\EOF &&
-	::	a/non-existent
-	.gitignore:1:one	a/one
-	::	a/not-ignored
-	::	a/ignored-but-in-index
-	.gitignore:2:ignored-*	a/ignored-and-untracked
-	EOF
-	test_cmp expect actual
-'
-
-############################################################################
-#
-# test sub-directory local ignore patterns
+# Having established the above, from now on we mostly test against
+# files which do not exist in the working tree or index.
 
 test_expect_success 'sub-directory local ignore' '
-	cd repo &&
-	grit check-ignore a/3-three a/three-not-this-one >actual &&
-	echo "a/3-three" >expect &&
-	test_cmp expect actual
+	expect "a/3-three" &&
+	test_check_ignore "a/3-three a/three-not-this-one"
 '
 
-test_expect_success 'sub-directory local ignore with --verbose' '
-	cd repo &&
-	grit check-ignore --verbose a/3-three a/three-not-this-one >actual &&
-	echo "a/.gitignore:2:*three	a/3-three" >expect &&
-	test_cmp expect actual
+test_expect_success 'sub-directory local ignore with --verbose'  '
+	expect "a/.gitignore:2:*three	a/3-three" &&
+	test_check_ignore "--verbose a/3-three a/three-not-this-one"
 '
 
 test_expect_success 'local ignore inside a sub-directory' '
-	cd repo/a &&
-	grit check-ignore 3-three three-not-this-one >actual &&
-	echo "3-three" >expect &&
-	test_cmp expect actual
+	expect "3-three" &&
+	(
+		cd a &&
+		test_check_ignore "3-three three-not-this-one"
+	)
 '
-
 test_expect_success 'local ignore inside a sub-directory with --verbose' '
-	cd repo/a &&
-	grit check-ignore --verbose 3-three three-not-this-one >actual &&
-	echo "a/.gitignore:2:*three	3-three" >expect &&
-	test_cmp expect actual
+	expect "a/.gitignore:2:*three	3-three" &&
+	(
+		cd a &&
+		test_check_ignore "--verbose 3-three three-not-this-one"
+	)
 '
-
-############################################################################
-#
-# test nested negation
 
 test_expect_success 'nested include of negated pattern' '
-	cd repo &&
-	test_must_fail grit check-ignore a/b/one >actual 2>err &&
-	test ! -s actual
+	expect "" &&
+	test_check_ignore "a/b/one" 1
 '
 
 test_expect_success 'nested include of negated pattern with -q' '
-	cd repo &&
-	test_must_fail grit check-ignore -q a/b/one >actual 2>err &&
-	test ! -s actual
+	expect "" &&
+	test_check_ignore "-q a/b/one" 1
 '
 
 test_expect_success 'nested include of negated pattern with -v' '
-	cd repo &&
-	grit check-ignore -v a/b/one >actual &&
-	echo "a/b/.gitignore:8:!on*	a/b/one" >expect &&
-	test_cmp expect actual
+	expect "a/b/.gitignore:8:!on*	a/b/one" &&
+	test_check_ignore "-v a/b/one" 0
 '
 
 test_expect_success 'nested include of negated pattern with -v -n' '
-	cd repo &&
-	grit check-ignore -v -n a/b/one >actual &&
-	echo "a/b/.gitignore:8:!on*	a/b/one" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'nested gitignore negation visible with verbose' '
-	cd repo &&
-	test_must_fail grit check-ignore a/b/one >actual 2>err &&
-	test ! -s actual &&
-	grit check-ignore -v a/b/one >actual &&
-	echo "a/b/.gitignore:8:!on*	a/b/one" >expect &&
-	test_cmp expect actual
+	expect "a/b/.gitignore:8:!on*	a/b/one" &&
+	test_check_ignore "-v -n a/b/one" 0
 '
 
 ############################################################################
 #
 # test ignored sub-directories
 
-test_expect_success 'directory pattern applies to directory and descendants' '
-	cd repo &&
-	grit check-ignore a/b/ignored-dir a/b/ignored-dir/file >actual &&
-	cat >expect <<-\EOF &&
-	a/b/ignored-dir
-	a/b/ignored-dir/file
-	EOF
-	test_cmp expect actual &&
-	grit check-ignore -v a/b/ignored-dir/file >actual &&
-	echo "a/b/.gitignore:5:ignored-dir/	a/b/ignored-dir/file" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'ignored sub-directory verbose' '
-	cd repo &&
-	grit check-ignore -v a/b/ignored-dir >actual &&
-	echo "a/b/.gitignore:5:ignored-dir/	a/b/ignored-dir" >expect &&
-	test_cmp expect actual
+test_expect_success_multi 'ignored sub-directory' \
+	'a/b/.gitignore:5:ignored-dir/	a/b/ignored-dir' '
+	test_check_ignore "a/b/ignored-dir"
 '
 
 test_expect_success 'multiple files inside ignored sub-directory' '
-	cd repo &&
-	grit check-ignore a/b/ignored-dir/foo a/b/ignored-dir/twoooo a/b/ignored-dir/seven >actual &&
-	cat >expect <<-\EOF &&
-	a/b/ignored-dir/foo
-	a/b/ignored-dir/twoooo
-	a/b/ignored-dir/seven
+	expect_from_stdin <<-\EOF &&
+		a/b/ignored-dir/foo
+		a/b/ignored-dir/twoooo
+		a/b/ignored-dir/seven
 	EOF
-	test_cmp expect actual
+	test_check_ignore "a/b/ignored-dir/foo a/b/ignored-dir/twoooo a/b/ignored-dir/seven"
 '
 
 test_expect_success 'multiple files inside ignored sub-directory with -v' '
-	cd repo &&
-	grit check-ignore -v a/b/ignored-dir/foo a/b/ignored-dir/twoooo a/b/ignored-dir/seven >actual &&
-	cat >expect <<-\EOF &&
-	a/b/.gitignore:5:ignored-dir/	a/b/ignored-dir/foo
-	a/b/.gitignore:5:ignored-dir/	a/b/ignored-dir/twoooo
-	a/b/.gitignore:5:ignored-dir/	a/b/ignored-dir/seven
+	expect_from_stdin <<-\EOF &&
+		a/b/.gitignore:5:ignored-dir/	a/b/ignored-dir/foo
+		a/b/.gitignore:5:ignored-dir/	a/b/ignored-dir/twoooo
+		a/b/.gitignore:5:ignored-dir/	a/b/ignored-dir/seven
 	EOF
-	test_cmp expect actual
+	test_check_ignore "-v a/b/ignored-dir/foo a/b/ignored-dir/twoooo a/b/ignored-dir/seven"
 '
 
 test_expect_success 'cd to ignored sub-directory' '
-	cd repo/a/b/ignored-dir &&
-	grit check-ignore foo twoooo ../one seven ../../one >actual &&
-	cat >expect <<-\EOF &&
-	foo
-	twoooo
-	seven
-	../../one
+	expect_from_stdin <<-\EOF &&
+		foo
+		twoooo
+		seven
+		../../one
 	EOF
-	test_cmp expect actual
+	(
+		cd a/b/ignored-dir &&
+		test_check_ignore "foo twoooo ../one seven ../../one"
+	)
 '
 
 test_expect_success 'cd to ignored sub-directory with -v' '
-	cd repo/a/b/ignored-dir &&
-	grit check-ignore -v foo twoooo ../one seven ../../one >actual &&
-	cat >expect <<-\EOF &&
-	a/b/.gitignore:5:ignored-dir/	foo
-	a/b/.gitignore:5:ignored-dir/	twoooo
-	a/b/.gitignore:8:!on*	../one
-	a/b/.gitignore:5:ignored-dir/	seven
-	.gitignore:1:one	../../one
+	expect_from_stdin <<-\EOF &&
+		a/b/.gitignore:5:ignored-dir/	foo
+		a/b/.gitignore:5:ignored-dir/	twoooo
+		a/b/.gitignore:8:!on*	../one
+		a/b/.gitignore:5:ignored-dir/	seven
+		.gitignore:1:one	../../one
 	EOF
-	test_cmp expect actual
+	(
+		cd a/b/ignored-dir &&
+		test_check_ignore "-v foo twoooo ../one seven ../../one"
+	)
+'
+
+############################################################################
+#
+# test handling of symlinks
+
+test_expect_success_multi SYMLINKS 'symlink' '::	a/symlink' '
+	test_check_ignore "a/symlink" 1
+'
+
+test_expect_success_multi SYMLINKS 'beyond a symlink' '' '
+	test_check_ignore "a/symlink/foo" 128 &&
+	test_stderr "fatal: pathspec '\''a/symlink/foo'\'' is beyond a symbolic link"
+'
+
+test_expect_success_multi SYMLINKS 'beyond a symlink from subdirectory' '' '
+	(
+		cd a &&
+		test_check_ignore "symlink/foo" 128
+	) &&
+	test_stderr "fatal: pathspec '\''symlink/foo'\'' is beyond a symbolic link"
+'
+
+############################################################################
+#
+# test handling of submodules
+
+test_expect_success_multi 'submodule' '' '
+	test_check_ignore "a/submodule/one" 128 &&
+	test_stderr "fatal: Pathspec '\''a/submodule/one'\'' is in submodule '\''a/submodule'\''"
+'
+
+test_expect_success_multi 'submodule from subdirectory' '' '
+	(
+		cd a &&
+		test_check_ignore "submodule/one" 128
+	) &&
+	test_stderr "fatal: Pathspec '\''submodule/one'\'' is in submodule '\''a/submodule'\''"
 '
 
 ############################################################################
@@ -425,220 +543,273 @@ test_expect_success 'cd to ignored sub-directory with -v' '
 # test handling of global ignore files
 
 test_expect_success 'global ignore not yet enabled' '
-	cd repo &&
-	grit config --unset core.excludesfile 2>/dev/null || true &&
-	grit check-ignore -v globalone per-repo a/globalthree a/per-repo not-ignored a/globaltwo >actual &&
-	cat >expect <<-\EOF &&
-	.git/info/exclude:1:per-repo	per-repo
-	a/.gitignore:2:*three	a/globalthree
-	.git/info/exclude:1:per-repo	a/per-repo
+	expect_from_stdin <<-\EOF &&
+		.git/info/exclude:1:per-repo	per-repo
+		a/.gitignore:2:*three	a/globalthree
+		.git/info/exclude:1:per-repo	a/per-repo
 	EOF
-	test_cmp expect actual
+	test_check_ignore "-v globalone per-repo a/globalthree a/per-repo not-ignored a/globaltwo"
 '
 
 test_expect_success 'global ignore' '
-	cd repo &&
-	grit config core.excludesfile global-excludes &&
-	grit check-ignore globalone per-repo globalthree a/globalthree a/per-repo not-ignored globaltwo >actual &&
-	cat >expect <<-\EOF &&
-	globalone
-	per-repo
-	globalthree
-	a/globalthree
-	a/per-repo
+	enable_global_excludes &&
+	expect_from_stdin <<-\EOF &&
+		globalone
+		per-repo
+		globalthree
+		a/globalthree
+		a/per-repo
 	EOF
-	test_cmp expect actual
+	test_check_ignore "globalone per-repo globalthree a/globalthree a/per-repo not-ignored globaltwo"
 '
 
 test_expect_success 'global ignore with -v' '
-	cd repo &&
-	grit config core.excludesfile global-excludes &&
-	grit check-ignore -v globalone per-repo globalthree a/globalthree a/per-repo not-ignored globaltwo >actual &&
-	cat >expect <<-\EOF &&
-	global-excludes:1:globalone	globalone
-	.git/info/exclude:1:per-repo	per-repo
-	global-excludes:3:globalthree	globalthree
-	a/.gitignore:2:*three	a/globalthree
-	.git/info/exclude:1:per-repo	a/per-repo
-	global-excludes:2:!globaltwo	globaltwo
+	enable_global_excludes &&
+	expect_from_stdin <<-EOF &&
+		$global_excludes:1:globalone	globalone
+		.git/info/exclude:1:per-repo	per-repo
+		$global_excludes:3:globalthree	globalthree
+		a/.gitignore:2:*three	a/globalthree
+		.git/info/exclude:1:per-repo	a/per-repo
+		$global_excludes:2:!globaltwo	globaltwo
 	EOF
-	test_cmp expect actual
+	test_check_ignore "-v globalone per-repo globalthree a/globalthree a/per-repo not-ignored globaltwo"
 '
 
 ############################################################################
 #
 # test --stdin
 
-test_expect_success '--stdin default mode' '
-	cd repo &&
-	grit config core.excludesfile global-excludes &&
-	cat >stdin <<-\EOF &&
+cat <<-\EOF >stdin
 	one
 	not-ignored
+	a/one
+	a/not-ignored
+	a/b/on
+	a/b/one
+	a/b/one one
+	"a/b/one two"
+	"a/b/one\"three"
+	a/b/not-ignored
+	a/b/two
 	a/b/twooo
-	EOF
-	grit check-ignore --stdin <stdin >actual &&
-	cat >expect <<-\EOF &&
+	globaltwo
+	a/globaltwo
+	a/b/globaltwo
+	b/globaltwo
+EOF
+cat <<-\EOF >expected-default
 	one
+	a/one
 	a/b/twooo
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_success '--stdin verbose non-matching mode' '
-	cd repo &&
-	cat >stdin <<-\EOF &&
-	one
-	not-ignored
-	a/b/twooo
-	EOF
-	grit check-ignore --stdin -v -n <stdin >actual &&
-	cat >expect <<-\EOF &&
+EOF
+cat <<-EOF >expected-verbose
 	.gitignore:1:one	one
-	::	not-ignored
+	.gitignore:1:one	a/one
+	a/b/.gitignore:8:!on*	a/b/on
+	a/b/.gitignore:8:!on*	a/b/one
+	a/b/.gitignore:8:!on*	a/b/one one
+	a/b/.gitignore:8:!on*	a/b/one two
+	a/b/.gitignore:8:!on*	"a/b/one\\"three"
+	a/b/.gitignore:9:!two	a/b/two
 	a/.gitignore:1:two*	a/b/twooo
-	EOF
-	test_cmp expect actual
+	$global_excludes:2:!globaltwo	globaltwo
+	$global_excludes:2:!globaltwo	a/globaltwo
+	$global_excludes:2:!globaltwo	a/b/globaltwo
+	$global_excludes:2:!globaltwo	b/globaltwo
+EOF
+
+broken_c_unquote stdin >stdin0
+
+broken_c_unquote expected-default >expected-default0
+
+broken_c_unquote_verbose expected-verbose >expected-verbose0
+
+test_expect_success '--stdin' '
+	expect_from_stdin <expected-default &&
+	test_check_ignore "--stdin" <stdin
 '
 
-test_expect_success '--stdin -z emits NUL-delimited records' '
-	cd repo &&
-	printf "one\0not-ignored\0a/b/twooo\0" >stdin0 &&
-	grit check-ignore --stdin -z <stdin0 >actual0 &&
-	printf "one\0a/b/twooo\0" >expect0 &&
-	test_cmp expect0 actual0 &&
-	grit check-ignore --stdin -z -v <stdin0 >actual0 &&
-	printf ".gitignore\0001\000one\000one\000a/.gitignore\0001\000two*\000a/b/twooo\000" >expect0 &&
-	test_cmp expect0 actual0
+test_expect_success '--stdin -q' '
+	expect "" &&
+	test_check_ignore "-q --stdin" <stdin
 '
 
-test_expect_success '--stdin from subdirectory' '
-	cd repo &&
-	cat >stdinfile <<-\EOF &&
+test_expect_success '--stdin -v' '
+	expect_from_stdin <expected-verbose &&
+	test_check_ignore "-v --stdin" <stdin
+'
+
+for opts in '--stdin -z' '-z --stdin'
+do
+	test_expect_success "$opts" "
+		expect_from_stdin <expected-default0 &&
+		test_check_ignore '$opts' <stdin0
+	"
+
+	test_expect_success "$opts -q" "
+		expect "" &&
+		test_check_ignore '-q $opts' <stdin0
+	"
+
+	test_expect_success "$opts -v" "
+		expect_from_stdin <expected-verbose0 &&
+		test_check_ignore '-v $opts' <stdin0
+	"
+done
+
+cat <<-\EOF >stdin
 	../one
 	../not-ignored
 	one
 	not-ignored
 	b/on
 	b/one
+	b/one one
+	"b/one two"
+	"b/one\"three"
+	b/two
+	b/not-ignored
 	b/twooo
-	EOF
-	(cd a && grit check-ignore --stdin <../stdinfile) >actual &&
-	cat >expect <<-\EOF &&
-	../one
-	one
-	b/twooo
-	EOF
-	test_cmp expect actual
-'
+	../globaltwo
+	globaltwo
+	b/globaltwo
+	../b/globaltwo
+	c/not-ignored
+EOF
+# N.B. we deliberately end STDIN with a non-matching pattern in order
+# to test that the exit code indicates that one or more of the
+# provided paths is ignored - in other words, that it represents an
+# aggregation of all the results, not just the final result.
 
-test_expect_success '--stdin from subdirectory with -v' '
-	cd repo &&
-	cat >stdinfile <<-\EOF &&
-	../one
-	../not-ignored
-	one
-	not-ignored
-	b/on
-	b/one
-	b/twooo
-	EOF
-	(cd a && grit check-ignore --stdin -v <../stdinfile) >actual &&
-	cat >expect <<-\EOF &&
-	.gitignore:1:one	../one
-	.gitignore:1:one	one
-	a/b/.gitignore:8:!on*	b/on
-	a/b/.gitignore:8:!on*	b/one
-	a/.gitignore:1:two*	b/twooo
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_success '--stdin from subdirectory with -v -n' '
-	cd repo &&
-	cat >stdinfile <<-\EOF &&
-	../one
-	../not-ignored
-	one
-	not-ignored
-	b/on
-	b/one
-	b/twooo
-	EOF
-	(cd a && grit check-ignore --stdin -v -n <../stdinfile) >actual &&
-	cat >expect <<-\EOF &&
+cat <<-EOF >expected-all
 	.gitignore:1:one	../one
 	::	../not-ignored
 	.gitignore:1:one	one
 	::	not-ignored
 	a/b/.gitignore:8:!on*	b/on
 	a/b/.gitignore:8:!on*	b/one
+	a/b/.gitignore:8:!on*	b/one one
+	a/b/.gitignore:8:!on*	b/one two
+	a/b/.gitignore:8:!on*	"b/one\\"three"
+	a/b/.gitignore:9:!two	b/two
+	::	b/not-ignored
 	a/.gitignore:1:two*	b/twooo
-	EOF
-	test_cmp expect actual
+	$global_excludes:2:!globaltwo	../globaltwo
+	$global_excludes:2:!globaltwo	globaltwo
+	$global_excludes:2:!globaltwo	b/globaltwo
+	$global_excludes:2:!globaltwo	../b/globaltwo
+	::	c/not-ignored
+EOF
+cat <<-EOF >expected-default
+../one
+one
+b/twooo
+EOF
+grep -v '^::	' expected-all >expected-verbose
+
+broken_c_unquote stdin >stdin0
+
+broken_c_unquote expected-default >expected-default0
+
+broken_c_unquote_verbose expected-verbose >expected-verbose0
+
+test_expect_success '--stdin from subdirectory' '
+	expect_from_stdin <expected-default &&
+	(
+		cd a &&
+		test_check_ignore "--stdin" <../stdin
+	)
 '
 
-############################################################################
-#
-# test info/exclude and core.excludesfile precedence
-
-test_expect_success 'info/exclude and core.excludesfile precedence' '
-	cd repo &&
-	grit check-ignore -v per-repo a/per-repo >actual &&
-	cat >expect <<-\EOF &&
-	.git/info/exclude:1:per-repo	per-repo
-	.git/info/exclude:1:per-repo	a/per-repo
-	EOF
-	test_cmp expect actual &&
-	grit config core.excludesfile global-excludes &&
-	grit check-ignore -v globalone per-repo globalthree a/globalthree globaltwo >actual &&
-	cat >expect <<-\EOF &&
-	global-excludes:1:globalone	globalone
-	.git/info/exclude:1:per-repo	per-repo
-	global-excludes:3:globalthree	globalthree
-	a/.gitignore:2:*three	a/globalthree
-	global-excludes:2:!globaltwo	globaltwo
-	EOF
-	test_cmp expect actual
+test_expect_success '--stdin from subdirectory with -v' '
+	expect_from_stdin <expected-verbose &&
+	(
+		cd a &&
+		test_check_ignore "--stdin -v" <../stdin
+	)
 '
 
-############################################################################
-#
-# test existing file and directory ordering
+test_expect_success '--stdin from subdirectory with -v -n' '
+	expect_from_stdin <expected-all &&
+	(
+		cd a &&
+		test_check_ignore "--stdin -v -n" <../stdin
+	)
+'
+
+for opts in '--stdin -z' '-z --stdin'
+do
+	test_expect_success "$opts from subdirectory" '
+		expect_from_stdin <expected-default0 &&
+		(
+			cd a &&
+			test_check_ignore "'"$opts"'" <../stdin0
+		)
+	'
+
+	test_expect_success "$opts from subdirectory with -v" '
+		expect_from_stdin <expected-verbose0 &&
+		(
+			cd a &&
+			test_check_ignore "'"$opts"' -v" <../stdin0
+		)
+	'
+done
+
+test_expect_success PIPE 'streaming support for --stdin' '
+	mkfifo in out &&
+	(git check-ignore -n -v --stdin <in >out &) &&
+
+	# We cannot just "echo >in" because check-ignore would get EOF
+	# after echo exited; instead we open the descriptor in our
+	# shell, and then echo to the fd. We make sure to close it at
+	# the end, so that the subprocess does get EOF and dies
+	# properly.
+	#
+	# Similarly, we must keep "out" open so that check-ignore does
+	# not ever get SIGPIPE trying to write to us. Not only would that
+	# produce incorrect results, but then there would be no writer on the
+	# other end of the pipe, and we would potentially block forever trying
+	# to open it.
+	exec 9>in &&
+	exec 8<out &&
+	test_when_finished "exec 9>&-" &&
+	test_when_finished "exec 8<&-" &&
+	echo >&9 one &&
+	read response <&8 &&
+	echo "$response" | grep "^\.gitignore:1:one	one" &&
+	echo >&9 two &&
+	read response <&8 &&
+	echo "$response" | grep "^::	two"
+'
 
 test_expect_success 'existing file and directory' '
-	cd repo &&
+	test_when_finished "rm one" &&
+	test_when_finished "rmdir top-level-dir" &&
 	>one &&
-	mkdir -p top-level-dir &&
-	grit check-ignore one top-level-dir >actual &&
+	mkdir top-level-dir &&
+	git check-ignore one top-level-dir >actual &&
 	grep one actual &&
-	grep top-level-dir actual &&
-	rm -f one &&
-	rm -rf top-level-dir
+	grep top-level-dir actual
 '
 
 test_expect_success 'existing directory and file' '
-	cd repo &&
+	test_when_finished "rm one" &&
+	test_when_finished "rmdir top-level-dir" &&
 	>one &&
-	mkdir -p top-level-dir &&
-	grit check-ignore top-level-dir one >actual &&
+	mkdir top-level-dir &&
+	git check-ignore top-level-dir one >actual &&
 	grep one actual &&
-	grep top-level-dir actual &&
-	rm -f one &&
-	rm -rf top-level-dir
+	grep top-level-dir actual
 '
 
-############################################################################
-#
-# test exact prefix matching
-
 test_expect_success 'exact prefix matching (with root)' '
-	cd repo &&
-	rm -rf a &&
+	test_when_finished rm -r a &&
 	mkdir -p a/git a/git-foo &&
 	touch a/git/foo a/git-foo/bar &&
 	echo /git/ >a/.gitignore &&
-	grit check-ignore a/git a/git/foo a/git-foo a/git-foo/bar >actual &&
+	git check-ignore a/git a/git/foo a/git-foo a/git-foo/bar >actual &&
 	cat >expect <<-\EOF &&
 	a/git
 	a/git/foo
@@ -647,12 +818,11 @@ test_expect_success 'exact prefix matching (with root)' '
 '
 
 test_expect_success 'exact prefix matching (without root)' '
-	cd repo &&
-	rm -rf a &&
+	test_when_finished rm -r a &&
 	mkdir -p a/git a/git-foo &&
 	touch a/git/foo a/git-foo/bar &&
 	echo git/ >a/.gitignore &&
-	grit check-ignore a/git a/git/foo a/git-foo a/git-foo/bar >actual &&
+	git check-ignore a/git a/git/foo a/git-foo a/git-foo/bar >actual &&
 	cat >expect <<-\EOF &&
 	a/git
 	a/git/foo
@@ -660,16 +830,28 @@ test_expect_success 'exact prefix matching (without root)' '
 	test_cmp expect actual
 '
 
-############################################################################
-#
-# test ** not confused by leading prefix
+test_expect_success 'directories and ** matches' '
+	cat >.gitignore <<-\EOF &&
+	data/**
+	!data/**/
+	!data/**/*.txt
+	EOF
+	git check-ignore file \
+		data/file data/data1/file1 data/data1/file1.txt \
+		data/data2/file2 data/data2/file2.txt >actual &&
+	cat >expect <<-\EOF &&
+	data/file
+	data/data1/file1
+	data/data2/file2
+	EOF
+	test_cmp expect actual
+'
 
 test_expect_success '** not confused by matching leading prefix' '
-	cd repo &&
 	cat >.gitignore <<-\EOF &&
 	foo**/bar
 	EOF
-	grit check-ignore foobar foo/bar >actual &&
+	git check-ignore foobar foo/bar >actual &&
 	cat >expect <<-\EOF &&
 	foo/bar
 	EOF
@@ -678,566 +860,108 @@ test_expect_success '** not confused by matching leading prefix' '
 
 ############################################################################
 #
-# Additional ignore tests
+# test whitespace handling
 
-test_expect_success 'negation pattern: !lib.a overrides *.a' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.a
-	!lib.a
-	EOF
-	grit check-ignore file.a >actual &&
-	echo file.a >expect &&
+test_expect_success 'trailing whitespace is ignored' '
+	mkdir whitespace &&
+	>whitespace/trailing &&
+	>whitespace/untracked &&
+	echo "whitespace/trailing   " >ignore &&
+	cat >expect <<EOF &&
+whitespace/untracked
+EOF
+	git ls-files -o -X ignore whitespace >actual 2>err &&
 	test_cmp expect actual &&
-	test_must_fail grit check-ignore lib.a
+	test_must_be_empty err
 '
 
-test_expect_success 'negation pattern verbose shows negation rule' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.a
-	!lib.a
+test_expect_success !MINGW 'quoting allows trailing whitespace' '
+	rm -rf whitespace &&
+	mkdir whitespace &&
+	>"whitespace/trailing  " &&
+	>whitespace/untracked &&
+	echo "whitespace/trailing\\ \\ " >ignore &&
+	echo whitespace/untracked >expect &&
+	git ls-files -o -X ignore whitespace >actual 2>err &&
+	test_cmp expect actual &&
+	test_must_be_empty err
+'
+
+test_expect_success !MINGW,!CYGWIN 'correct handling of backslashes' '
+	rm -rf whitespace &&
+	mkdir whitespace &&
+	>"whitespace/trailing 1  " &&
+	>"whitespace/trailing 2 \\\\" &&
+	>"whitespace/trailing 3 \\\\" &&
+	>"whitespace/trailing 4   \\ " &&
+	>"whitespace/trailing 5 \\ \\ " &&
+	>"whitespace/trailing 6 \\a\\" &&
+	>whitespace/untracked &&
+	sed -e "s/Z$//" >ignore <<-\EOF &&
+	whitespace/trailing 1 \    Z
+	whitespace/trailing 2 \\\\Z
+	whitespace/trailing 3 \\\\ Z
+	whitespace/trailing 4   \\\    Z
+	whitespace/trailing 5 \\ \\\   Z
+	whitespace/trailing 6 \\a\\Z
 	EOF
-	grit check-ignore -v lib.a >actual &&
-	echo ".gitignore:2:!lib.a	lib.a" >expect &&
+	echo whitespace/untracked >expect &&
+	git ls-files -o -X ignore whitespace >actual 2>err &&
+	test_cmp expect actual &&
+	test_must_be_empty err
+'
+
+test_expect_success 'info/exclude trumps core.excludesfile' '
+	echo >>global-excludes usually-ignored &&
+	echo >>.git/info/exclude "!usually-ignored" &&
+	>usually-ignored &&
+	echo "?? usually-ignored" >expect &&
+
+	git status --porcelain usually-ignored >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'rooted pattern only matches top-level' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	/TODO
-	EOF
-	mkdir -p sub &&
-	grit check-ignore TODO >actual &&
-	echo TODO >expect &&
+test_expect_success SYMLINKS 'set up ignore file for symlink tests' '
+	echo "*" >ignore &&
+	rm -f .gitignore .git/info/exclude
+'
+
+test_expect_success SYMLINKS 'symlinks respected in core.excludesFile' '
+	test_when_finished "rm symlink" &&
+	ln -s ignore symlink &&
+	test_config core.excludesFile "$(pwd)/symlink" &&
+	echo file >expect &&
+	git check-ignore file >actual 2>err &&
 	test_cmp expect actual &&
-	test_must_fail grit check-ignore sub/TODO &&
-	rm -rf sub
+	test_must_be_empty err
 '
 
-test_expect_success 'directory-only pattern with trailing slash' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	build/
-	EOF
-	mkdir -p build &&
-	touch build/output &&
-	grit check-ignore build >actual &&
-	echo build >expect &&
+test_expect_success SYMLINKS 'symlinks respected in info/exclude' '
+	test_when_finished "rm .git/info/exclude" &&
+	ln -s ../../ignore .git/info/exclude &&
+	echo file >expect &&
+	git check-ignore file >actual 2>err &&
 	test_cmp expect actual &&
-	grit check-ignore build/output >actual2 &&
-	echo build/output >expect2 &&
-	test_cmp expect2 actual2 &&
-	rm -rf build
+	test_must_be_empty err
 '
 
-test_expect_success 'directory-only pattern does not match file' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	output/
-	EOF
-	touch output &&
-	test_must_fail grit check-ignore output &&
-	rm -f output
+test_expect_success SYMLINKS 'symlinks not respected in-tree' '
+	test_when_finished "rm -rf subdir .gitignore err actual" &&
+	ln -s ignore .gitignore &&
+	mkdir subdir &&
+	ln -s ignore subdir/.gitignore &&
+	test_must_fail git check-ignore subdir/file >actual 2>err &&
+	test_must_be_empty actual &&
+	test_grep "unable to access.*gitignore" err
 '
 
-test_expect_success 'wildcard *.txt in subdirectory matches' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	doc/*.txt
-	EOF
-	mkdir -p doc &&
-	grit check-ignore doc/notes.txt >actual &&
-	echo doc/notes.txt >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore doc/README &&
-	rm -rf doc
-'
-
-test_expect_success '** matches any directory depth' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	**/build
-	EOF
-	mkdir -p src/build deep/nested/build &&
-	grit check-ignore src/build deep/nested/build >actual &&
-	cat >expect <<-\EOF &&
-	src/build
-	deep/nested/build
-	EOF
-	test_cmp expect actual &&
-	rm -rf src deep
-'
-
-test_expect_success '**/ matches intermediate directories' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	**/foo/bar
-	EOF
-	mkdir -p a/foo b/c/foo &&
-	touch a/foo/bar b/c/foo/bar &&
-	grit check-ignore a/foo/bar b/c/foo/bar >actual &&
-	cat >expect <<-\EOF &&
-	a/foo/bar
-	b/c/foo/bar
-	EOF
-	test_cmp expect actual &&
-	rm -rf a b
-'
-
-test_expect_success 'patterns match case-sensitively' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.LOG
-	EOF
-	grit check-ignore test.LOG >actual &&
-	echo test.LOG >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore test.log
-'
-
-test_expect_success 'comment lines are ignored' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	# This is a comment
-	*.log
-	# Another comment
-	EOF
-	grit check-ignore test.log >actual &&
-	echo test.log >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'blank lines are ignored' '
-	cd repo &&
-	printf "*.log\n\n*.tmp\n" >.gitignore &&
-	grit check-ignore test.log test.tmp >actual &&
-	cat >expect <<-\EOF &&
-	test.log
-	test.tmp
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_success '--no-index shows tracked file as ignored' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.t
-	EOF
-	grit check-ignore --no-index a/a.t >actual &&
-	echo a/a.t >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'tracked file not ignored without --no-index, ignored with' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	ignored-*
-	EOF
-	# ignored-but-in-index is tracked (via update-index in setup)
-	test_must_fail grit check-ignore ignored-but-in-index &&
-	grit check-ignore --no-index ignored-but-in-index >actual &&
-	echo ignored-but-in-index >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'nested .gitignore overrides parent' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.txt
-	EOF
-	mkdir -p sub &&
-	cat >sub/.gitignore <<-\EOF &&
-	!keep.txt
-	EOF
-	grit check-ignore sub/other.txt >actual &&
-	echo sub/other.txt >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore sub/keep.txt &&
-	rm -rf sub/.gitignore
-'
-
-test_expect_success 'nested .gitignore adds new patterns' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.log
-	EOF
-	mkdir -p sub &&
-	cat >sub/.gitignore <<-\EOF &&
-	*.tmp
-	EOF
-	grit check-ignore sub/test.log sub/test.tmp >actual &&
-	cat >expect <<-\EOF &&
-	sub/test.log
-	sub/test.tmp
-	EOF
-	test_cmp expect actual &&
-	rm -rf sub/.gitignore
-'
-
-test_expect_success '--stdin with -z NUL-delimited output' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.o
-	*.a
-	EOF
-	printf "file.o\nfile.a\nfile.c\n" | grit check-ignore --stdin >actual &&
-	cat >expect <<-\EOF &&
-	file.o
-	file.a
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_success '--stdin -z produces NUL-terminated records' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.o
-	EOF
-	printf "file.o\0file.c\0" | grit check-ignore --stdin -z >actual &&
-	printf "file.o\0" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'multiple patterns in sequence last-match wins' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.txt
-	!important.txt
-	important.txt
-	EOF
-	grit check-ignore important.txt >actual &&
-	echo important.txt >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'pattern with leading slash is rooted' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	/build
-	EOF
-	mkdir -p src/build &&
-	grit check-ignore build >actual &&
-	echo build >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore src/build &&
-	rm -rf src/build
-'
-
-test_expect_success 'question mark matches single character' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	file?.txt
-	EOF
-	grit check-ignore file1.txt fileA.txt >actual &&
-	cat >expect <<-\EOF &&
-	file1.txt
-	fileA.txt
-	EOF
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore file12.txt
-'
-
-test_expect_success 'trailing spaces in pattern are stripped' '
-	cd repo &&
-	printf "*.bak   \n" >.gitignore &&
-	grit check-ignore test.bak >actual &&
-	echo test.bak >expect &&
-	test_cmp expect actual
-'
-
-# ---------------------------------------------------------------------------
-# Negation patterns (!pattern)
-# ---------------------------------------------------------------------------
-
-test_expect_success 'negation pattern un-ignores a file' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.log
-	!important.log
-	EOF
-	grit check-ignore debug.log >actual &&
-	echo debug.log >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore important.log
-'
-
-test_expect_success 'negation after double-star pattern' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	**/*.o
-	!src/keep.o
-	EOF
-	grit check-ignore lib/foo.o >actual &&
-	echo lib/foo.o >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore src/keep.o
-'
-
-test_expect_success 'negation does not un-ignore if later pattern re-ignores' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.tmp
-	!keep.tmp
-	*.tmp
-	EOF
-	grit check-ignore keep.tmp >actual &&
-	echo keep.tmp >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'negation re-includes file from glob (not directory ignore)' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	vendor/*.dat
-	!vendor/keep.dat
-	EOF
-	grit check-ignore vendor/junk.dat >actual &&
-	echo vendor/junk.dat >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore vendor/keep.dat
-'
-
-test_expect_success 'negation only applies to matching base' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.dat
-	!special.dat
-	EOF
-	grit check-ignore random.dat >actual &&
-	echo random.dat >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore special.dat
-'
-
-# ---------------------------------------------------------------------------
-# Directory-only trailing slash patterns
-# ---------------------------------------------------------------------------
-
-test_expect_success 'trailing slash pattern matches files inside directory' '
-	cd repo &&
-	printf "logs/\n" >.gitignore &&
-	grit check-ignore logs/app.log >actual &&
-	echo logs/app.log >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'trailing slash pattern matches file inside directory' '
-	cd repo &&
-	printf "logs/\n" >.gitignore &&
-	grit check-ignore logs/debug.log >actual &&
-	echo logs/debug.log >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'trailing slash does not match regular file by same name' '
-	cd repo &&
-	printf "notadir/\n" >.gitignore &&
-	test_must_fail grit check-ignore notadir
-'
-
-test_expect_success 'directory pattern without trailing slash matches both' '
-	cd repo &&
-	printf "build\n" >.gitignore &&
-	grit check-ignore build >actual &&
-	echo build >expect &&
-	test_cmp expect actual &&
-	grit check-ignore build/output.o >actual2 &&
-	echo build/output.o >expect2 &&
-	test_cmp expect2 actual2
-'
-
-# ---------------------------------------------------------------------------
-# Anchored patterns (/pattern)
-# ---------------------------------------------------------------------------
-
-test_expect_success 'anchored pattern matches only at top level' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	/TODO
-	EOF
-	grit check-ignore TODO >actual &&
-	echo TODO >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore src/TODO
-'
-
-test_expect_success 'anchored directory pattern with slash' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	/dist/
-	EOF
-	grit check-ignore dist/bundle.js >actual &&
-	echo dist/bundle.js >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore src/dist/bundle.js
-'
-
-test_expect_success 'non-anchored pattern matches in any directory' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	TODO
-	EOF
-	grit check-ignore TODO >actual &&
-	echo TODO >expect &&
-	test_cmp expect actual &&
-	grit check-ignore src/TODO >actual2 &&
-	echo src/TODO >expect2 &&
-	test_cmp expect2 actual2
-'
-
-# ---------------------------------------------------------------------------
-# core.excludesFile
-# ---------------------------------------------------------------------------
-
-test_expect_success 'core.excludesFile ignores globally' '
-	cd repo &&
-	echo "" >.gitignore &&
-	echo "*.global-junk" >../global-excludes &&
-	git config core.excludesFile ../global-excludes &&
-	grit check-ignore test.global-junk >actual &&
-	echo test.global-junk >expect &&
-	test_cmp expect actual &&
-	git config --unset core.excludesFile
-'
-
-test_expect_success 'core.excludesFile does not override local .gitignore' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	!special.global-junk
-	EOF
-	echo "*.global-junk" >../global-excludes &&
-	git config core.excludesFile ../global-excludes &&
-	test_must_fail grit check-ignore special.global-junk &&
-	git config --unset core.excludesFile
-'
-
-test_expect_success 'core.excludesFile with absolute path' '
-	cd repo &&
-	echo "" >.gitignore &&
-	echo "*.abs-ignore" >"$TRASH_DIRECTORY/abs-excludes" &&
-	git config core.excludesFile "$TRASH_DIRECTORY/abs-excludes" &&
-	grit check-ignore foo.abs-ignore >actual &&
-	echo foo.abs-ignore >expect &&
-	test_cmp expect actual &&
-	git config --unset core.excludesFile
-'
-
-# ---------------------------------------------------------------------------
-# info/exclude
-# ---------------------------------------------------------------------------
-
-test_expect_success 'info/exclude ignores files' '
-	cd repo &&
-	echo "" >.gitignore &&
-	mkdir -p .git/info &&
-	echo "*.info-excl" >.git/info/exclude &&
-	grit check-ignore test.info-excl >actual &&
-	echo test.info-excl >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'info/exclude has lower precedence than .gitignore' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	!keep.info-excl
-	EOF
-	mkdir -p .git/info &&
-	echo "*.info-excl" >.git/info/exclude &&
-	test_must_fail grit check-ignore keep.info-excl
-'
-
-test_expect_success 'info/exclude works in subdirectory' '
-	cd repo &&
-	echo "" >.gitignore &&
-	mkdir -p .git/info &&
-	echo "*.secret" >.git/info/exclude &&
-	grit check-ignore sub/deep/file.secret >actual &&
-	echo sub/deep/file.secret >expect &&
-	test_cmp expect actual
-'
-
-# ---------------------------------------------------------------------------
-# Bracket expressions [abc]
-# ---------------------------------------------------------------------------
-
-test_expect_success 'double-star with filename pattern in subdirectory' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	**/secret.key
-	EOF
-	grit check-ignore deep/nested/secret.key >actual &&
-	echo deep/nested/secret.key >expect &&
-	test_cmp expect actual &&
-	grit check-ignore sub/secret.key >actual2 &&
-	echo sub/secret.key >expect2 &&
-	test_cmp expect2 actual2
-'
-
-test_expect_success 'pattern with middle slash is path-anchored' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	doc/frotz/
-	EOF
-	grit check-ignore doc/frotz/file >actual &&
-	echo doc/frotz/file >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore stuff/doc/frotz/file
-'
-
-test_expect_success 'multiple negations last one wins' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.bak
-	!*.bak
-	EOF
-	test_must_fail grit check-ignore test.bak
-'
-
-test_expect_success 'negation of double-star pattern' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	**/*.pyc
-	!important.pyc
-	EOF
-	grit check-ignore lib/test.pyc >actual &&
-	echo lib/test.pyc >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit check-ignore important.pyc
-'
-
-test_expect_success 'star does not match slash in path' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.txt
-	EOF
-	grit check-ignore readme.txt >actual &&
-	echo readme.txt >expect &&
-	test_cmp expect actual &&
-	grit check-ignore sub/readme.txt >actual2 &&
-	echo sub/readme.txt >expect2 &&
-	test_cmp expect2 actual2
-'
-
-test_expect_success 'verbose output shows source file and line number' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.xyz
-	EOF
-	grit check-ignore -v test.xyz >actual &&
-	grep "\.gitignore:1" actual &&
-	grep "\*.xyz" actual &&
-	grep "test.xyz" actual
-'
-
-test_expect_success 'verbose non-matching shows path for non-ignored files' '
-	cd repo &&
-	cat >.gitignore <<-\EOF &&
-	*.xyz
-	EOF
-	grit check-ignore -v -n unmatched.abc >actual || true &&
-	grep "unmatched.abc" actual
+test_expect_success EXPENSIVE 'large exclude file ignored in tree' '
+	test_when_finished "rm .gitignore" &&
+	find . -name .gitignore -exec rm "{}" ";" &&
+	dd if=/dev/zero of=.gitignore bs=101M count=1 &&
+	git ls-files -o --exclude-standard 2>err &&
+	echo "warning: ignoring excessively large pattern file: .gitignore" >expect &&
+	test_cmp expect err
 '
 
 test_done

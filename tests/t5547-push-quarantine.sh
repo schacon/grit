@@ -1,17 +1,10 @@
 #!/bin/sh
-# Ported from git/t/t5547-push-quarantine.sh
-# Tests quarantine of objects during push
 
 test_description='check quarantine of objects during push'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup and create picky dest repo' '
-	git init -q &&
+test_expect_success 'create picky dest repo' '
 	git init --bare dest.git &&
 	test_hook --setup -C dest.git pre-receive <<-\EOF
 	while read old new ref; do
@@ -23,20 +16,18 @@ test_expect_success 'setup and create picky dest repo' '
 
 test_expect_success 'accepted objects work' '
 	test_commit ok &&
-	git push ./dest.git HEAD &&
+	git push dest.git HEAD &&
 	commit=$(git rev-parse HEAD) &&
 	git --git-dir=dest.git cat-file commit $commit
 '
 
-# grit pre-receive hook support: the push should fail when hook rejects
 test_expect_success 'rejected objects are not installed' '
 	test_commit reject &&
 	commit=$(git rev-parse HEAD) &&
-	test_must_fail git push ./dest.git HEAD &&
+	test_must_fail git push dest.git reject &&
 	test_must_fail git --git-dir=dest.git cat-file commit $commit
 '
 
-# No quarantine files since grit doesn't use quarantine
 test_expect_success 'rejected objects are removed' '
 	echo "incoming-*" >expect &&
 	(cd dest.git/objects && echo incoming-*) >actual &&
@@ -44,11 +35,23 @@ test_expect_success 'rejected objects are removed' '
 '
 
 test_expect_success 'push to repo path with path separator (colon)' '
-	dd if=/dev/urandom bs=4096 count=1 2>/dev/null >file.bin &&
+	# The interesting failure case here is when the
+	# receiving end cannot access its original object directory,
+	# so make it likely for us to generate a delta by having
+	# a non-trivial file with multiple versions.
+
+	test-tool genrandom foo 4096 >file.bin &&
 	git add file.bin &&
 	git commit -m bin &&
-	pathsep=":" &&
+
+	if test_have_prereq MINGW
+	then
+		pathsep=";"
+	else
+		pathsep=":"
+	fi &&
 	git clone --bare . "xxx${pathsep}yyy.git" &&
+
 	echo change >>file.bin &&
 	git commit -am change &&
 	# Note that we have to use the full path here, or it gets confused
@@ -56,7 +59,6 @@ test_expect_success 'push to repo path with path separator (colon)' '
 	git push "$(pwd)/xxx${pathsep}yyy.git" HEAD
 '
 
-# grit may not support quarantine + hook ref updates
 test_expect_success 'updating a ref from quarantine is forbidden' '
 	git init --bare update.git &&
 	test_hook -C update.git pre-receive <<-\EOF &&
@@ -64,7 +66,7 @@ test_expect_success 'updating a ref from quarantine is forbidden' '
 	git update-ref refs/heads/unrelated $new
 	exit 1
 	EOF
-	test_must_fail git push ./update.git HEAD &&
+	test_must_fail git push update.git HEAD &&
 	git -C update.git fsck
 '
 

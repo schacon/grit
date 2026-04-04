@@ -1,70 +1,85 @@
 #!/bin/sh
 
-test_description='git apply with cached and worktree modes'
+test_description='git apply of i-t-a file'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success setup '
-	git init repo && cd repo &&
-	test_write_lines 1 2 3 4 5 >file &&
-	git add file &&
+	test_write_lines 1 2 3 4 5 >blueprint &&
+
+	cat blueprint >committed-file &&
+	git add committed-file &&
 	git commit -m "commit" &&
-	git tag base
+
+	cat blueprint >test-file &&
+	git add -N test-file &&
+	git diff >creation-patch &&
+	grep "new file mode 100644" creation-patch &&
+
+	rm -f test-file &&
+	git diff >deletion-patch &&
+	grep "deleted file mode 100644" deletion-patch &&
+
+	git rm -f test-file &&
+	test_write_lines 6 >>committed-file &&
+	cat blueprint >test-file &&
+	git add -N test-file &&
+	git diff >complex-patch &&
+	git restore committed-file
 '
 
-test_expect_success 'apply creation patch to worktree' '
-	cd repo &&
-	cat >creation.patch <<-\EOF &&
-	diff --git a/newfile b/newfile
-	new file mode 100644
-	--- /dev/null
-	+++ b/newfile
-	@@ -0,0 +1,5 @@
-	+1
-	+2
-	+3
-	+4
-	+5
-	EOF
-	rm -f newfile &&
-	git apply creation.patch &&
-	test_write_lines 1 2 3 4 5 >expect &&
-	test_cmp expect newfile
+test_expect_success 'apply creation patch to ita path (--cached)' '
+	git rm -f test-file &&
+	cat blueprint >test-file &&
+	git add -N test-file &&
+
+	git apply --cached creation-patch &&
+	git cat-file blob :test-file >actual &&
+	test_cmp blueprint actual
 '
 
-test_expect_success 'apply deletion patch to worktree' '
-	cd repo &&
-	cat >deletion.patch <<-\EOF &&
-	diff --git a/newfile b/newfile
-	deleted file mode 100644
-	--- a/newfile
-	+++ /dev/null
-	@@ -1,5 +0,0 @@
-	-1
-	-2
-	-3
-	-4
-	-5
-	EOF
-	git apply deletion.patch &&
-	test_path_is_missing newfile
+test_expect_success 'apply creation patch to ita path (--index)' '
+	git rm -f test-file &&
+	cat blueprint >test-file &&
+	git add -N test-file &&
+	rm -f test-file &&
+
+	test_must_fail git apply --index creation-patch
 '
 
-test_expect_success 'apply --cached creation patch' '
-	cd repo &&
-	cat >cached-create.patch <<-\EOF &&
-	diff --git a/cached-file b/cached-file
-	new file mode 100644
-	--- /dev/null
-	+++ b/cached-file
-	@@ -0,0 +1 @@
-	+cached content
-	EOF
-	git apply --cached cached-create.patch &&
-	git ls-files --stage cached-file >output &&
-	test_grep "cached-file" output &&
-	git reset HEAD cached-file
+test_expect_success 'apply deletion patch to ita path (--cached)' '
+	git rm -f test-file &&
+	cat blueprint >test-file &&
+	git add -N test-file &&
+
+	git apply --cached deletion-patch &&
+	test_must_fail git ls-files --stage --error-unmatch test-file
+'
+
+test_expect_success 'apply deletion patch to ita path (--index)' '
+	cat blueprint >test-file &&
+	git add -N test-file &&
+
+	test_must_fail git apply --index deletion-patch &&
+	git ls-files --stage --error-unmatch test-file
+'
+
+test_expect_success 'apply creation patch to existing index with -N' '
+	git rm -f test-file &&
+	cat blueprint >index-file &&
+	git add index-file &&
+	git apply -N creation-patch &&
+
+	git ls-files --stage --error-unmatch index-file &&
+	git ls-files --stage --error-unmatch test-file
+'
+
+test_expect_success 'apply complex patch with -N' '
+	git rm -f test-file index-file &&
+	git apply -N complex-patch &&
+
+	git ls-files --stage --error-unmatch test-file &&
+	git diff | grep "a/committed-file"
 '
 
 test_done

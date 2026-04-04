@@ -1,89 +1,76 @@
 #!/bin/sh
-# Ported from upstream t1514-rev-parse-push.sh
-# Tests <branch>@{push} syntax.
-# grit supports @{push} once remote-tracking refs are fetched.
 
 test_description='test <branch>@{push} syntax'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+
+resolve () {
+	echo "$2" >expect &&
+	git rev-parse --symbolic-full-name "$1" >actual &&
+	test_cmp expect actual
+}
 
 test_expect_success 'setup' '
 	git init --bare parent.git &&
 	git init --bare other.git &&
-	git init repo &&
-	(
-		cd repo &&
-		git config user.name "Test" &&
-		git config user.email "test@test.com" &&
-		git remote add origin "$TRASH_DIRECTORY/parent.git" &&
-		git remote add other "$TRASH_DIRECTORY/other.git" &&
-		echo content >file &&
-		git add file &&
-		test_tick &&
-		git commit -m base &&
-		git push origin main &&
-		git fetch origin &&
-		git branch --set-upstream-to=origin/main main &&
-		git checkout -b topic &&
-		git push origin topic &&
-		git push other topic &&
-		git fetch origin &&
-		git fetch other &&
-		git branch --set-upstream-to=origin/topic topic
-	)
+	git remote add origin parent.git &&
+	git remote add other other.git &&
+	test_commit base &&
+	git push origin HEAD &&
+	git branch --set-upstream-to=origin/main main &&
+	git branch --track topic origin/main &&
+	git push origin topic &&
+	git push other topic
 '
 
-test_expect_success 'push creates remote refs' '
-	(
-		cd parent.git &&
-		git rev-parse refs/heads/main &&
-		git rev-parse refs/heads/topic
-	)
+test_expect_success '@{push} with default=nothing' '
+	test_config push.default nothing &&
+	test_must_fail git rev-parse main@{push} &&
+	test_must_fail git rev-parse main@{PUSH} &&
+	test_must_fail git rev-parse main@{PuSH}
 '
 
-test_expect_success 'upstream tracking is configured' '
-	(
-		cd repo &&
-		test "$(git config branch.main.remote)" = "origin" &&
-		test "$(git config branch.main.merge)" = "refs/heads/main"
-	)
+test_expect_success '@{push} with default=simple' '
+	test_config push.default simple &&
+	resolve main@{push} refs/remotes/origin/main &&
+	resolve main@{PUSH} refs/remotes/origin/main &&
+	resolve main@{pUSh} refs/remotes/origin/main
 '
 
-test_expect_success '@{push} resolves with default=simple on main' '
-	(
-		cd repo &&
-		git checkout main &&
-		git config push.default simple &&
-		git rev-parse main@{push} >actual &&
-		git rev-parse origin/main >expect &&
-		test_cmp expect actual
-	)
+test_expect_success 'triangular @{push} fails with default=simple' '
+	test_config push.default simple &&
+	test_must_fail git rev-parse topic@{push}
 '
 
-test_expect_success '@{push} with default=current on topic' '
-	(
-		cd repo &&
-		git checkout topic &&
-		git config push.default current &&
-		git rev-parse topic@{push} >actual &&
-		git rev-parse origin/topic >expect &&
-		test_cmp expect actual
-	)
+test_expect_success '@{push} with default=current' '
+	test_config push.default current &&
+	resolve topic@{push} refs/remotes/origin/topic
+'
+
+test_expect_success '@{push} with default=matching' '
+	test_config push.default matching &&
+	resolve topic@{push} refs/remotes/origin/topic
 '
 
 test_expect_success '@{push} with pushremote defined' '
-	(
-		cd repo &&
-		git checkout topic &&
-		git config push.default current &&
-		git config branch.topic.pushremote other &&
-		git rev-parse topic@{push} >actual &&
-		git rev-parse other/topic >expect &&
-		test_cmp expect actual
-	)
+	test_config push.default current &&
+	test_config branch.topic.pushremote other &&
+	resolve topic@{push} refs/remotes/other/topic
+'
+
+test_expect_success '@{push} with push refspecs' '
+	test_config push.default nothing &&
+	test_config remote.origin.push refs/heads/*:refs/heads/magic/* &&
+	git push &&
+	resolve topic@{push} refs/remotes/origin/magic/topic
+'
+
+test_expect_success 'resolving @{push} fails with a detached HEAD' '
+	git checkout HEAD^0 &&
+	test_when_finished "git checkout -" &&
+	test_must_fail git rev-parse @{push}
 '
 
 test_done

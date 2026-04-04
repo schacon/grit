@@ -4,63 +4,68 @@ test_description='git diagnose'
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init &&
-	git commit --allow-empty -m "initial commit"
+test_expect_success UNZIP 'creates diagnostics zip archive' '
+	test_when_finished rm -rf report &&
+
+	git diagnose -o report -s test >out &&
+	grep "Available space" out &&
+
+	zip_path=report/git-diagnostics-test.zip &&
+	test_path_is_file "$zip_path" &&
+
+	# Check zipped archive content
+	"$GIT_UNZIP" -p "$zip_path" diagnostics.log >out &&
+	test_file_not_empty out &&
+
+	"$GIT_UNZIP" -p "$zip_path" packs-local.txt >out &&
+	grep ".git/objects" out &&
+
+	"$GIT_UNZIP" -p "$zip_path" objects-local.txt >out &&
+	grep "^Total: [0-9][0-9]*" out &&
+
+	# Should not include .git directory contents by default
+	! "$GIT_UNZIP" -l "$zip_path" | grep ".git/"
 '
 
-test_expect_success 'creates diagnostics report' '
-	git diagnose &&
-	ls git-diagnostics-*.txt >report_list &&
-	test_line_count = 1 report_list &&
-	test_file_not_empty "$(cat report_list)"
+test_expect_success UNZIP 'counts loose objects' '
+	test_commit A &&
+
+	# After committing, should have non-zero loose objects
+	git diagnose -o test-count -s 1 >out &&
+	zip_path=test-count/git-diagnostics-1.zip &&
+	"$GIT_UNZIP" -p "$zip_path" objects-local.txt >out &&
+	grep "^Total: [1-9][0-9]* loose objects" out
 '
 
-test_expect_success 'report contains version info' '
-	report="$(ls git-diagnostics-*.txt | head -1)" &&
-	grep "grit diagnose" "$report" &&
-	grep "git version" "$report"
+test_expect_success UNZIP '--mode=stats excludes .git dir contents' '
+	test_when_finished rm -rf report &&
+
+	git diagnose -o report -s test --mode=stats >out &&
+
+	# Includes pack quantity/size info
+	zip_path=report/git-diagnostics-test.zip &&
+	"$GIT_UNZIP" -p "$zip_path" packs-local.txt >out &&
+	grep ".git/objects" out &&
+
+	# Does not include .git directory contents
+	! "$GIT_UNZIP" -l "$zip_path" | grep ".git/"
 '
 
-test_expect_success 'report contains repository info' '
-	report="$(ls git-diagnostics-*.txt | head -1)" &&
-	grep "\[Repository\]" "$report" &&
-	grep "git_dir:" "$report"
-'
+test_expect_success UNZIP '--mode=all includes .git dir contents' '
+	test_when_finished rm -rf report &&
 
-test_expect_success 'report contains HEAD info' '
-	report="$(ls git-diagnostics-*.txt | head -1)" &&
-	grep "\[HEAD\]" "$report"
-'
+	git diagnose -o report -s test --mode=all >out &&
 
-test_expect_success 'report contains packs info' '
-	report="$(ls git-diagnostics-*.txt | head -1)" &&
-	grep "\[Packs\]" "$report"
-'
+	# Includes pack quantity/size info
+	zip_path=report/git-diagnostics-test.zip &&
+	"$GIT_UNZIP" -p "$zip_path" packs-local.txt >out &&
+	grep ".git/objects" out &&
 
-test_expect_success 'report contains loose objects info' '
-	report="$(ls git-diagnostics-*.txt | head -1)" &&
-	grep "\[Loose Objects\]" "$report"
-'
+	# Includes .git directory contents
+	"$GIT_UNZIP" -l "$zip_path" | grep ".git/" &&
 
-test_expect_success 'report contains config info' '
-	report="$(ls git-diagnostics-*.txt | head -1)" &&
-	grep "\[Config\]" "$report"
-'
-
-test_expect_success 'custom output path' '
-	test_when_finished rm -f custom-diag.txt &&
-	git diagnose -o custom-diag.txt &&
-	test_path_is_file custom-diag.txt &&
-	test_file_not_empty custom-diag.txt
-'
-
-test_expect_success 'diagnose after adding content' '
-	echo "hello" >file.txt &&
-	git add file.txt &&
-	git commit -m "add file" &&
-	git diagnose -o after-content-report.txt &&
-	grep "entries:" after-content-report.txt
+	"$GIT_UNZIP" -p "$zip_path" .git/HEAD >out &&
+	test_file_not_empty out
 '
 
 test_done

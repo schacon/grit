@@ -1,17 +1,10 @@
 #!/bin/sh
-# Ported from upstream git t8008-blame-formats.sh
-# blame output in various formats on a simple case
 
 test_description='blame output in various formats on a simple case'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup' '
-	git init blame-fmt &&
-	cd blame-fmt &&
-	git config user.name "A U Thor" &&
-	git config user.email "author@example.com" &&
 	echo a >file &&
 	git add file &&
 	test_tick &&
@@ -20,53 +13,98 @@ test_expect_success 'setup' '
 	echo c >>file &&
 	echo d >>file &&
 	test_tick &&
-	git commit -a -m two
+	git commit -a -m two &&
+	ID1=$(git rev-parse HEAD^) &&
+	shortID1="^$(git rev-parse HEAD^ |cut -c 1-17)" &&
+	ID2=$(git rev-parse HEAD) &&
+	shortID2="$(git rev-parse HEAD |cut -c 1-18)"
 '
 
+cat >expect <<EOF
+$shortID1 (A U Thor 2005-04-07 15:13:13 -0700 1) a
+$shortID2 (A U Thor 2005-04-07 15:14:13 -0700 2) b
+$shortID2 (A U Thor 2005-04-07 15:14:13 -0700 3) c
+$shortID2 (A U Thor 2005-04-07 15:14:13 -0700 4) d
+EOF
 test_expect_success 'normal blame output' '
-	cd blame-fmt &&
-	git blame file >actual &&
-	test $(wc -l <actual) -eq 4
+	git blame --abbrev=17 file >actual &&
+	test_cmp expect actual
 '
 
+COMMIT1="author A U Thor
+author-mail <author@example.com>
+author-time 1112911993
+author-tz -0700
+committer C O Mitter
+committer-mail <committer@example.com>
+committer-time 1112911993
+committer-tz -0700
+summary one
+boundary
+filename file"
+COMMIT2="author A U Thor
+author-mail <author@example.com>
+author-time 1112912053
+author-tz -0700
+committer C O Mitter
+committer-mail <committer@example.com>
+committer-time 1112912053
+committer-tz -0700
+summary two
+previous $ID1 file
+filename file"
+
+cat >expect <<EOF
+$ID1 1 1 1
+$COMMIT1
+	a
+$ID2 2 2 3
+$COMMIT2
+	b
+$ID2 3 3
+	c
+$ID2 4 4
+	d
+EOF
 test_expect_success 'blame --porcelain output' '
-	cd blame-fmt &&
 	git blame --porcelain file >actual &&
-	grep "^author A U Thor" actual &&
-	grep "^summary one" actual &&
-	grep "^summary two" actual &&
-	grep "^filename file" actual
+	test_cmp expect actual
 '
 
+cat >expect <<EOF
+$ID1 1 1 1
+$COMMIT1
+	a
+$ID2 2 2 3
+$COMMIT2
+	b
+$ID2 3 3
+$COMMIT2
+	c
+$ID2 4 4
+$COMMIT2
+	d
+EOF
 test_expect_success 'blame --line-porcelain output' '
-	cd blame-fmt &&
 	git blame --line-porcelain file >actual &&
-	# line-porcelain repeats headers for every line
-	test $(grep -c "^author " actual) -eq 4
-'
-
-test_expect_success 'blame --porcelain has correct fields' '
-	cd blame-fmt &&
-	git blame --porcelain file >actual &&
-	grep "^author-mail <author@example.com>" actual &&
-	grep "^author-time " actual &&
-	grep "^author-tz " actual &&
-	grep "^committer " actual &&
-	grep "^committer-mail " actual &&
-	grep "^committer-time " actual &&
-	grep "^committer-tz " actual
+	test_cmp expect actual
 '
 
 test_expect_success '--porcelain detects first non-blank line as subject' '
-	cd blame-fmt &&
-	TREE=$(git write-tree) &&
-	commit=$(printf "%s\n%s\n%s\n\n\n  \noneline\n\nbody\n" \
-		"tree $TREE" \
-		"author A <a@b.c> 123456789 +0000" \
-		"committer C <c@d.e> 123456789 +0000" |
-	git hash-object -w -t commit --stdin) &&
-	git blame --porcelain $commit -- file >output &&
-	grep "^summary " output
+	(
+		GIT_INDEX_FILE=.git/tmp-index &&
+		export GIT_INDEX_FILE &&
+		echo "This is it" >single-file &&
+		git add single-file &&
+		tree=$(git write-tree) &&
+		commit=$(printf "%s\n%s\n%s\n\n\n  \noneline\n\nbody\n" \
+			"tree $tree" \
+			"author A <a@b.c> 123456789 +0000" \
+			"committer C <c@d.e> 123456789 +0000" |
+		git hash-object -w -t commit --stdin) &&
+		git blame --porcelain $commit -- single-file >output &&
+		grep "^summary oneline$" output
+	)
 '
 
 test_done

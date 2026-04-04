@@ -1,33 +1,38 @@
 #!/bin/sh
-# Ported from git/t/t5812-proto-disable-http.sh
-# Tests for protocol disabling with HTTP transport
 
 test_description='test disabling of git-over-http in clone/fetch'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY/lib-proto-disable.sh"
+. "$TEST_DIRECTORY/lib-httpd.sh"
+start_httpd
 
-test_expect_success 'clone denied with protocol.http.allow=never' '
-	test_must_fail git -c protocol.http.allow=never clone http://localhost/repo clone-http 2>err &&
-	grep -i "not allowed" err
+test_expect_success 'create git-accessible repo' '
+	bare="$HTTPD_DOCUMENT_ROOT_PATH/repo.git" &&
+	test_commit one &&
+	git --bare init "$bare" &&
+	git push "$bare" HEAD &&
+	git -C "$bare" config http.receivepack true
 '
 
-test_expect_success 'clone denied with protocol.https.allow=never' '
-	test_must_fail git -c protocol.https.allow=never clone https://localhost/repo clone-https 2>err &&
-	grep -i "not allowed" err
+test_proto "smart http" http "$HTTPD_URL/smart/repo.git"
+
+test_expect_success 'http(s) transport respects GIT_ALLOW_PROTOCOL' '
+	test_must_fail env GIT_ALLOW_PROTOCOL=http:https \
+			   GIT_SMART_HTTP=0 \
+		git clone "$HTTPD_URL/ftp-redir/repo.git" 2>stderr &&
+	test_grep -E "(ftp.*disabled|your curl version is too old)" stderr
 '
 
-test_expect_success 'http transport respects GIT_ALLOW_PROTOCOL' '
-	GIT_ALLOW_PROTOCOL=file test_must_fail git clone http://localhost/repo clone-env 2>err &&
-	grep -i "not allowed" err
+test_expect_success 'curl limits redirects' '
+	test_must_fail git clone "$HTTPD_URL/loop-redir/smart/repo.git"
 '
 
-test_expect_success 'https transport respects GIT_ALLOW_PROTOCOL' '
-	GIT_ALLOW_PROTOCOL=file test_must_fail git clone https://localhost/repo clone-env2 2>err &&
-	grep -i "not allowed" err
+test_expect_success 'http can be limited to from-user' '
+	git -c protocol.http.allow=user \
+		clone "$HTTPD_URL/smart/repo.git" plain.git &&
+	test_must_fail git -c protocol.http.allow=user \
+		clone "$HTTPD_URL/smart-redir-perm/repo.git" redir.git
 '
 
 test_done

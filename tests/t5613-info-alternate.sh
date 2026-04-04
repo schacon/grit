@@ -1,107 +1,140 @@
 #!/bin/sh
-# Ported subset from git/t/t5613-info-alternate.sh.
+#
+# Copyright (C) 2006 Martin Waitz <tali@admingilde.org>
+#
 
-test_description='count-objects -v reports transitive alternates'
+test_description='test transitive info/alternate entries'
 
 . ./test-lib.sh
 
-test_expect_success 'setup alternate chain A <- B <- C' '
-	git init --bare A &&
-	git init --bare B &&
-	git init --bare C &&
-	echo "$(pwd)/A/objects" >B/objects/info/alternates &&
-	echo "$(pwd)/B/objects" >C/objects/info/alternates
+test_expect_success 'preparing first repository' '
+	test_create_repo A && (
+		cd A &&
+		echo "Hello World" > file1 &&
+		git add file1 &&
+		git commit -m "Initial commit" file1 &&
+		git repack -a -d &&
+		git prune
+	)
 '
 
-test_expect_success 'count-objects shows transitive alternates' '
+test_expect_success 'preparing second repository' '
+	git clone -l -s A B && (
+		cd B &&
+		echo "foo bar" > file2 &&
+		git add file2 &&
+		git commit -m "next commit" file2 &&
+		git repack -a -d -l &&
+		git prune
+	)
+'
+
+test_expect_success 'preparing third repository' '
+	git clone -l -s B C && (
+		cd C &&
+		echo "Goodbye, cruel world" > file3 &&
+		git add file3 &&
+		git commit -m "one more" file3 &&
+		git repack -a -d -l &&
+		git prune
+	)
+'
+
+test_expect_success 'count-objects shows the alternates' '
 	cat >expect <<-EOF &&
-	alternate: $(pwd)/B/objects
-	alternate: $(pwd)/A/objects
+	alternate: $(pwd)/B/.git/objects
+	alternate: $(pwd)/A/.git/objects
 	EOF
 	git -C C count-objects -v >actual &&
-	grep "^alternate:" actual >actual.alternates &&
+	grep ^alternate: actual >actual.alternates &&
 	test_cmp expect actual.alternates
 '
 
-test_expect_success 'loop in alternates does not hang' '
-	echo "$(pwd)/B/objects" >>A/objects/info/alternates &&
-	cat >expect <<-EOF &&
-	alternate: $(pwd)/B/objects
-	alternate: $(pwd)/A/objects
-	EOF
-	git -C C count-objects -v >actual &&
-	grep "^alternate:" actual >actual.alternates &&
-	test_cmp expect actual.alternates
+# Note: These tests depend on the hard-coded value of 5 as the maximum depth
+# we will follow recursion. We start the depth at 0 and count links, not
+# repositories. This means that in a chain like:
+#
+#   A --> B --> C --> D --> E --> F --> G --> H
+#      0     1     2     3     4     5     6
+#
+# we are OK at "G", but break at "H", even though "H" is actually the 8th
+# repository, not the 6th, which you might expect. Counting the links allows
+# N+1 repositories, and counting from 0 to 5 inclusive allows 6 links.
+#
+# Note also that we must use "--bare -l" to make the link to H. The "-l"
+# ensures we do not do a connectivity check, and the "--bare" makes sure
+# we do not try to checkout the result (which needs objects), either of
+# which would cause the clone to fail.
+test_expect_success 'creating too deep nesting' '
+	git clone -l -s C D &&
+	git clone -l -s D E &&
+	git clone -l -s E F &&
+	git clone -l -s F G &&
+	git clone --bare -l -s G H
 '
 
-test_expect_success 'deep alternate chain is traversed fully' '
-	git init --bare D &&
-	echo "$(pwd)/C/objects" >D/objects/info/alternates &&
-	git init --bare E &&
-	echo "$(pwd)/D/objects" >E/objects/info/alternates &&
-	git init --bare F &&
-	echo "$(pwd)/E/objects" >F/objects/info/alternates &&
-	cat >expect <<-EOF &&
-	alternate: $(pwd)/E/objects
-	alternate: $(pwd)/D/objects
-	alternate: $(pwd)/C/objects
-	alternate: $(pwd)/B/objects
-	alternate: $(pwd)/A/objects
-	EOF
-	git -C F count-objects -v >actual &&
-	grep "^alternate:" actual >actual.alternates &&
-	test_cmp expect actual.alternates
+test_expect_success 'validity of seventh repository' '
+	git -C G fsck
 '
 
-test_expect_success 'relative duplicate alternates are eliminated' '
+test_expect_success 'invalidity of eighth repository' '
+	test_must_fail git -C H fsck
+'
+
+test_expect_success 'breaking of loops' '
+	echo "$(pwd)"/B/.git/objects >>A/.git/objects/info/alternates &&
+	git -C C fsck
+'
+
+test_expect_success 'that info/alternates is necessary' '
+	rm -f C/.git/objects/info/alternates &&
+	test_must_fail git -C C fsck
+'
+
+test_expect_success 'that relative alternate is possible for current dir' '
+	echo "../../../B/.git/objects" >C/.git/objects/info/alternates &&
+	git fsck
+'
+
+test_expect_success 'that relative alternate is recursive' '
+	git -C D fsck
+'
+
+# we can reach "A" from our new repo both directly, and via "C".
+# The deep/subdir is there to make sure we are not doing a stupid
+# pure-text comparison of the alternate names.
+test_expect_success 'relative duplicates are eliminated' '
 	mkdir -p deep/subdir &&
 	git init --bare deep/subdir/duplicate.git &&
 	cat >deep/subdir/duplicate.git/objects/info/alternates <<-\EOF &&
-	../../../../C/objects
-	../../../../A/objects
+	../../../../C/.git/objects
+	../../../../A/.git/objects
 	EOF
 	cat >expect <<-EOF &&
-	alternate: $(pwd)/C/objects
-	alternate: $(pwd)/B/objects
-	alternate: $(pwd)/A/objects
+	alternate: $(pwd)/C/.git/objects
+	alternate: $(pwd)/B/.git/objects
+	alternate: $(pwd)/A/.git/objects
 	EOF
 	git -C deep/subdir/duplicate.git count-objects -v >actual &&
-	grep "^alternate:" actual >actual.alternates &&
+	grep ^alternate: actual >actual.alternates &&
 	test_cmp expect actual.alternates
 '
 
-test_expect_success 'self-referencing alternate does not hang count-objects' '
-	echo "$(pwd)/C/objects" >>C/objects/info/alternates &&
-	git -C C count-objects -v >actual &&
-	grep "^alternate:" actual >actual.alternates &&
-	# Should not hang even with self-reference
-	test -s actual.alternates
-'
-
-test_expect_success 'alternate chain with four levels' '
-	git init --bare D &&
-	echo "$(pwd)/C/objects" >D/objects/info/alternates &&
-	cat >expect <<-EOF &&
-	alternate: $(pwd)/C/objects
-	alternate: $(pwd)/B/objects
-	alternate: $(pwd)/A/objects
+test_expect_success CASE_INSENSITIVE_FS 'dup finding can be case-insensitive' '
+	git init --bare insensitive.git &&
+	# the previous entry for "A" will have used uppercase
+	cat >insensitive.git/objects/info/alternates <<-\EOF &&
+	../../C/.git/objects
+	../../a/.git/objects
 	EOF
-	git -C D count-objects -v >actual &&
-	grep "^alternate:" actual >actual.alternates &&
+	cat >expect <<-EOF &&
+	alternate: $(pwd)/C/.git/objects
+	alternate: $(pwd)/B/.git/objects
+	alternate: $(pwd)/A/.git/objects
+	EOF
+	git -C insensitive.git count-objects -v >actual &&
+	grep ^alternate: actual >actual.alternates &&
 	test_cmp expect actual.alternates
-'
-
-test_expect_success 'empty alternates file is handled gracefully' '
-	git init --bare empty-alt &&
-	: >empty-alt/objects/info/alternates &&
-	git -C empty-alt count-objects -v >actual &&
-	! grep "^alternate:" actual
-'
-
-test_expect_success 'nonexistent alternate path does not crash count-objects' '
-	git init --bare bad-alt &&
-	echo "/nonexistent/path/objects" >bad-alt/objects/info/alternates &&
-	git -C bad-alt count-objects -v >actual 2>&1
 '
 
 test_done

@@ -1,60 +1,110 @@
 #!/bin/sh
-# Ported from git/t/t3425-rebase-topology-merges.sh
-# Tests for rebase with different topology scenarios
 
-test_description='git rebase topology tests'
+test_description='rebase topology tests with merges'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-rebase.sh
 
-test_expect_success 'setup linear topology' '
-	git init &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com" &&
-	test_commit A &&
-	test_commit B &&
-	test_commit C &&
-	git checkout -b linear-topic A &&
-	test_commit D &&
-	test_commit E
+test_revision_subjects () {
+	expected="$1"
+	shift
+	set -- $(git log --format=%s --no-walk=unsorted "$@")
+	test "$expected" = "$*"
+}
+
+# a---b-----------c
+#      \           \
+#       d-------e   \
+#        \       \   \
+#         n---o---w---v
+#              \
+#               z
+test_expect_success 'setup of non-linear-history' '
+	test_commit a &&
+	test_commit b &&
+	test_commit c &&
+	git checkout b &&
+	test_commit d &&
+	test_commit e &&
+
+	git checkout c &&
+	test_commit g &&
+	revert h g &&
+	git checkout d &&
+	cherry_pick gp g &&
+	test_commit i &&
+	git checkout b &&
+	test_commit f &&
+
+	git checkout d &&
+	test_commit n &&
+	test_commit o &&
+	test_merge w e &&
+	test_merge v c &&
+	git checkout o &&
+	test_commit z
 '
 
-test_expect_success 'rebase linear topic onto main' '
-	git checkout linear-topic &&
-	git rebase main &&
-	git log --format=%s -n4 >actual &&
-	test_write_lines E D C B >expect &&
-	test_cmp expect actual
-'
+test_run_rebase () {
+	result=$1
+	shift
+	test_expect_$result "rebase $* after merge from upstream" "
+		reset_rebase &&
+		git rebase $* e w &&
+		test_cmp_rev e HEAD~2 &&
+		test_linear_range 'n o' e..
+	"
+}
+test_run_rebase success --apply
+test_run_rebase success -m
+test_run_rebase success -i
 
-test_expect_success 'setup diverged topology' '
-	git checkout main &&
-	git checkout -b diverged A &&
-	test_commit F &&
-	git checkout main &&
-	test_commit G
-'
+test_run_rebase () {
+	result=$1
+	shift
+	expected=$1
+	shift
+	test_expect_$result "rebase $* of non-linear history is linearized in place" "
+		reset_rebase &&
+		git rebase $* d w &&
+		test_cmp_rev d HEAD~3 &&
+		test_linear_range "\'"$expected"\'" d..
+	"
+}
+test_run_rebase success 'n o e' --apply
+test_run_rebase success 'n o e' -m
+test_run_rebase success 'n o e' -i
 
-test_expect_success 'rebase diverged onto main' '
-	git checkout diverged &&
-	git rebase main &&
-	git log --format=%s -n1 >actual &&
-	echo F >expect &&
-	test_cmp expect actual &&
-	git merge-base --is-ancestor main HEAD
-'
+test_run_rebase () {
+	result=$1
+	shift
+	expected=$1
+	shift
+	test_expect_$result "rebase $* of non-linear history is linearized upstream" "
+		reset_rebase &&
+		git rebase $* c w &&
+		test_cmp_rev c HEAD~4 &&
+		test_linear_range "\'"$expected"\'" c..
+	"
+}
+test_run_rebase success 'd n o e' --apply
+test_run_rebase success 'd n o e' -m
+test_run_rebase success 'd n o e' -i
 
-test_expect_success 'rebase --onto with three-arg form' '
-	git checkout -b onto-test A &&
-	test_commit H &&
-	test_commit I &&
-	git rebase --onto B A &&
-	git log --format=%s -n2 >actual &&
-	test_write_lines I H >expect &&
-	test_cmp expect actual
-'
+test_run_rebase () {
+	result=$1
+	shift
+	expected=$1
+	shift
+	test_expect_$result "rebase $* of non-linear history with merges after upstream merge is linearized" "
+		reset_rebase &&
+		git rebase $* c v &&
+		test_cmp_rev c HEAD~4 &&
+		test_linear_range "\'"$expected"\'" c..
+	"
+}
+test_run_rebase success 'd n o e' --apply
+test_run_rebase success 'd n o e' -m
+test_run_rebase success 'd n o e' -i
 
 test_done

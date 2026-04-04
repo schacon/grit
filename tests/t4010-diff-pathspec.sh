@@ -1,272 +1,153 @@
 #!/bin/sh
-test_description='grit diff pathspec matching'
+#
+# Copyright (c) 2005 Junio C Hamano
+#
+
+test_description='Pathspec restrictions
+
+Prepare:
+        file0
+        path1/file1
+'
 
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-diff.sh ;# test-lib chdir's into trash
 
-test_expect_success 'setup' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com" &&
-	echo "aaa" >alpha.txt &&
-	echo "bbb" >beta.rs &&
-	mkdir sub &&
-	echo "ccc" >sub/deep.txt &&
-	echo "ddd" >sub/extra.rs &&
-	git add . &&
-	git commit -m "initial" &&
-	echo "AAA" >alpha.txt &&
-	echo "BBB" >beta.rs &&
-	echo "CCC" >sub/deep.txt &&
-	echo "DDD" >sub/extra.rs
+test_expect_success \
+    setup \
+    'echo frotz >file0 &&
+     mkdir path1 &&
+     echo rezrov >path1/file1 &&
+     before0=$(git hash-object file0) &&
+     before1=$(git hash-object path1/file1) &&
+     git update-index --add file0 path1/file1 &&
+     tree=$(git write-tree) &&
+     echo "$tree" &&
+     echo nitfol >file0 &&
+     echo yomin >path1/file1 &&
+     after0=$(git hash-object file0) &&
+     after1=$(git hash-object path1/file1) &&
+     git update-index file0 path1/file1'
+
+cat >expected <<\EOF
+EOF
+test_expect_success \
+    'limit to path should show nothing' \
+    'git diff-index --cached $tree -- path >current &&
+     compare_diff_raw current expected'
+
+cat >expected <<EOF
+:100644 100644 $before1 $after1 M	path1/file1
+EOF
+test_expect_success \
+    'limit to path1 should show path1/file1' \
+    'git diff-index --cached $tree -- path1 >current &&
+     compare_diff_raw current expected'
+
+cat >expected <<EOF
+:100644 100644 $before1 $after1 M	path1/file1
+EOF
+test_expect_success \
+    'limit to path1/ should show path1/file1' \
+    'git diff-index --cached $tree -- path1/ >current &&
+     compare_diff_raw current expected'
+
+cat >expected <<EOF
+:100644 100644 $before1 $after1 M	path1/file1
+EOF
+test_expect_success \
+    '"*file1" should show path1/file1' \
+    'git diff-index --cached $tree -- "*file1" >current &&
+     compare_diff_raw current expected'
+
+cat >expected <<EOF
+:100644 100644 $before0 $after0 M	file0
+EOF
+test_expect_success \
+    'limit to file0 should show file0' \
+    'git diff-index --cached $tree -- file0 >current &&
+     compare_diff_raw current expected'
+
+cat >expected <<\EOF
+EOF
+test_expect_success \
+    'limit to file0/ should emit nothing.' \
+    'git diff-index --cached $tree -- file0/ >current &&
+     compare_diff_raw current expected'
+
+test_expect_success 'diff-tree pathspec' '
+	tree2=$(git write-tree) &&
+	echo "$tree2" &&
+	git diff-tree -r --name-only $tree $tree2 -- pa path1/a >current &&
+	test_must_be_empty current
 '
 
-# --- diff HEAD -- <path> (working tree vs HEAD) ---
-
-test_expect_success 'diff HEAD -- single file shows only that file' '
-	cd repo &&
-	git diff HEAD -- alpha.txt >out &&
-	grep "alpha\.txt" out &&
-	! grep "beta\.rs" out &&
-	! grep "sub/" out
+test_expect_success 'diff-tree with wildcard shows dir also matches' '
+	git diff-tree --name-only $EMPTY_TREE $tree -- "f*" >result &&
+	echo file0 >expected &&
+	test_cmp expected result
 '
 
-test_expect_success 'diff HEAD -- subdirectory restricts to subdir' '
-	cd repo &&
-	git diff HEAD -- sub/ >out &&
-	grep "sub/deep\.txt" out &&
-	grep "sub/extra\.rs" out &&
-	! grep "alpha\.txt" out
+test_expect_success 'diff-tree -r with wildcard' '
+	git diff-tree -r --name-only $EMPTY_TREE $tree -- "*file1" >result &&
+	echo path1/file1 >expected &&
+	test_cmp expected result
 '
 
-test_expect_success 'diff HEAD -- multiple paths' '
-	cd repo &&
-	git diff HEAD -- alpha.txt beta.rs >out &&
-	grep "alpha\.txt" out &&
-	grep "beta\.rs" out &&
-	! grep "sub/" out
+test_expect_success 'diff-tree with wildcard shows dir also matches' '
+	git diff-tree --name-only $tree $tree2 -- "path1/f*" >result &&
+	echo path1 >expected &&
+	test_cmp expected result
 '
 
-test_expect_success 'diff HEAD -- nonexistent path gives empty output' '
-	cd repo &&
-	git diff HEAD -- nonexistent.txt >out &&
-	test_must_be_empty out
+test_expect_success 'diff-tree -r with wildcard from beginning' '
+	git diff-tree -r --name-only $tree $tree2 -- "path1/*file1" >result &&
+	echo path1/file1 >expected &&
+	test_cmp expected result
 '
 
-# --- diff --name-only / --name-status with pathspec ---
-
-test_expect_success 'diff --name-only HEAD -- restricts to path' '
-	cd repo &&
-	git diff --name-only HEAD -- alpha.txt >out &&
-	grep "alpha\.txt" out &&
-	! grep "beta" out
+test_expect_success 'diff-tree -r with wildcard' '
+	git diff-tree -r --name-only $tree $tree2 -- "path1/f*" >result &&
+	echo path1/file1 >expected &&
+	test_cmp expected result
 '
 
-test_expect_success 'diff --name-status HEAD -- restricts to path' '
-	cd repo &&
-	git diff --name-status HEAD -- sub/ >out &&
-	grep "sub/deep\.txt" out &&
-	! grep "alpha" out
+test_expect_success 'setup submodules' '
+	test_tick &&
+	git init submod &&
+	( cd submod && test_commit first ) &&
+	git add submod &&
+	git commit -m first &&
+	( cd submod && test_commit second ) &&
+	git add submod &&
+	git commit -m second
 '
 
-test_expect_success 'diff --stat HEAD -- restricts to path' '
-	cd repo &&
-	git diff --stat HEAD -- alpha.txt >out &&
-	grep "alpha" out &&
-	! grep "beta" out
+test_expect_success 'diff-tree ignores trailing slash on submodule path' '
+	git diff --name-only HEAD^ HEAD submod >expect &&
+	git diff --name-only HEAD^ HEAD submod/ >actual &&
+	test_cmp expect actual &&
+	git diff --name-only HEAD^ HEAD -- submod/whatever >actual &&
+	test_must_be_empty actual
 '
 
-test_expect_success 'diff --numstat HEAD -- restricts to path' '
-	cd repo &&
-	git diff --numstat HEAD -- alpha.txt >out &&
-	grep "alpha" out &&
-	! grep "beta" out
+test_expect_success 'diff multiple wildcard pathspecs' '
+	mkdir path2 &&
+	echo rezrov >path2/file1 &&
+	git update-index --add path2/file1 &&
+	tree3=$(git write-tree) &&
+	git diff --name-only $tree $tree3 -- "path2*1" "path1*1" >actual &&
+	cat <<-\EOF >expect &&
+	path1/file1
+	path2/file1
+	EOF
+	test_cmp expect actual
 '
 
-# --- diff-tree with pathspec ---
-
-test_expect_success 'setup commits for diff-tree pathspec' '
-	cd repo &&
-	git add . &&
-	git commit -m "modified" &&
-	printf "%s\n" "$(git rev-parse HEAD~1)" >../c1 &&
-	printf "%s\n" "$(git rev-parse HEAD)" >../c2
-'
-
-test_expect_success 'diff-tree -- single file restricts output' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff-tree -r "$c1" "$c2" -- alpha.txt >out &&
-	grep "alpha\.txt" out &&
-	test_line_count = 1 out
-'
-
-test_expect_success 'diff-tree -- subdirectory' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff-tree -r "$c1" "$c2" -- sub/ >out &&
-	grep "sub/deep\.txt" out &&
-	grep "sub/extra\.rs" out &&
-	! grep "alpha" out
-'
-
-test_expect_success 'diff-tree -- nonexistent path gives empty' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff-tree -r "$c1" "$c2" -- no-such-file >out &&
-	test_must_be_empty out
-'
-
-test_expect_success 'diff-tree --name-only with pathspec' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff-tree -r --name-only "$c1" "$c2" -- sub/ >out &&
-	grep "sub/deep\.txt" out &&
-	grep "sub/extra\.rs" out &&
-	! grep "alpha" out
-'
-
-test_expect_success 'diff-tree --name-status with pathspec' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff-tree -r --name-status "$c1" "$c2" -- alpha.txt >out &&
-	grep "alpha\.txt" out &&
-	test_line_count = 1 out
-'
-
-# --- diff --cached with pathspec (needs explicit HEAD) ---
-
-test_expect_success 'setup for cached pathspec' '
-	cd repo &&
-	echo "new-alpha" >alpha.txt &&
-	echo "new-beta" >beta.rs &&
-	git add alpha.txt beta.rs
-'
-
-test_expect_success 'diff --cached HEAD -- single file' '
-	cd repo &&
-	git diff --cached HEAD -- alpha.txt >out &&
-	grep "alpha\.txt" out &&
-	! grep "beta" out
-'
-
-test_expect_success 'diff --cached HEAD -- different file' '
-	cd repo &&
-	git diff --cached HEAD -- beta.rs >out &&
-	grep "beta\.rs" out &&
-	! grep "alpha" out
-'
-
-# --- diff between commits with pathspec ---
-
-test_expect_success 'diff between commits -- single file' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff "$c1" "$c2" -- alpha.txt >out &&
-	grep "alpha\.txt" out &&
-	! grep "beta" out
-'
-
-test_expect_success 'diff between commits -- subdirectory' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff "$c1" "$c2" -- sub/ >out &&
-	grep "sub/deep\.txt" out &&
-	grep "sub/extra\.rs" out &&
-	! grep "alpha" out
-'
-
-test_expect_success 'diff between commits -- nonexistent path' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff "$c1" "$c2" -- no-such >out &&
-	test_must_be_empty out
-'
-
-test_expect_success 'diff --stat between commits -- single file' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff --stat "$c1" "$c2" -- alpha.txt >out &&
-	grep "alpha" out &&
-	! grep "beta" out
-'
-
-test_expect_success 'diff --numstat between commits -- single file' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff --numstat "$c1" "$c2" -- alpha.txt >out &&
-	grep "alpha" out &&
-	test_line_count = 1 out
-'
-
-test_expect_success 'diff --name-only between commits -- subdirectory' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff --name-only "$c1" "$c2" -- sub/ >out &&
-	grep "sub/" out &&
-	! grep "alpha" out
-'
-
-test_expect_success 'diff --name-status between commits -- single file' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff --name-status "$c1" "$c2" -- beta.rs >out &&
-	grep "beta\.rs" out &&
-	test_line_count = 1 out
-'
-
-test_expect_success 'diff --exit-code between commits -- unchanged file' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	git diff --exit-code "$c1" "$c2" -- no-such
-'
-
-test_expect_success 'diff --quiet between commits -- changed file' '
-	cd repo &&
-	c1=$(cat ../c1) && c2=$(cat ../c2) &&
-	test_must_fail git diff --quiet "$c1" "$c2" -- alpha.txt
-'
-
-# --- pathspec with multiple paths ---
-
-test_expect_success 'diff HEAD -- two files shows both' '
-	cd repo &&
-	echo "pp" >alpha.txt &&
-	echo "qq" >beta.rs &&
-	git diff HEAD -- alpha.txt beta.rs >out &&
-	grep "alpha\.txt" out &&
-	grep "beta\.rs" out &&
-	git checkout -- alpha.txt beta.rs
-'
-
-test_expect_success 'diff --name-only HEAD -- two files' '
-	cd repo &&
-	echo "rr" >alpha.txt &&
-	echo "ss" >beta.rs &&
-	git diff --name-only HEAD -- alpha.txt beta.rs >out &&
-	test_line_count = 2 out &&
-	git checkout -- alpha.txt beta.rs
-'
-
-test_expect_success 'diff HEAD -- path excludes unmentioned file' '
-	cd repo &&
-	echo "tt" >alpha.txt &&
-	echo "uu" >sub/deep.txt &&
-	git diff --name-only HEAD -- alpha.txt >out &&
-	grep "alpha\.txt" out &&
-	! grep "sub/" out &&
-	git checkout -- alpha.txt sub/deep.txt
-'
-
-# --- diff --cached with pathspec (no explicit HEAD) ---
-
-test_expect_success 'diff --cached HEAD -- restricts pathspec' '
-	cd repo &&
-	git diff --cached HEAD -- alpha.txt >out &&
-	grep "alpha\.txt" out &&
-	! grep "beta" out &&
-	git reset HEAD -- alpha.txt beta.rs &&
-	git checkout -- alpha.txt beta.rs
+test_expect_success 'diff-cache ignores trailing slash on submodule path' '
+	git diff --name-only HEAD^ submod >expect &&
+	git diff --name-only HEAD^ submod/ >actual &&
+	test_cmp expect actual
 '
 
 test_done

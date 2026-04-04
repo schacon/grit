@@ -3,97 +3,127 @@
 # Copyright (c) 2006 Eric Wong
 #
 
-test_description='git apply should not get confused with type changes.'
+test_description='git apply should not get confused with type changes.
 
-cd "$(dirname "$0")" || exit 1
+'
+
 . ./test-lib.sh
 
 test_expect_success 'setup repository and commits' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
-
-	echo "hello world" >foo &&
-	echo "hi planet" >bar &&
-	git add foo bar &&
+	echo "hello world" > foo &&
+	echo "hi planet" > bar &&
+	git update-index --add foo bar &&
 	git commit -m initial &&
-	git branch initial
-'
+	git branch initial &&
+	rm -f foo &&
+	test_ln_s_add bar foo &&
+	git commit -m "foo symlinked to bar" &&
+	git branch foo-symlinked-to-bar &&
+	git rm -f foo &&
+	echo "how far is the sun?" > foo &&
+	git update-index --add foo &&
+	git commit -m "foo back to file" &&
+	git branch foo-back-to-file &&
+	printf "\0" > foo &&
+	git update-index foo &&
+	git commit -m "foo becomes binary" &&
+	git branch foo-becomes-binary &&
+	rm -f foo &&
+	git update-index --remove foo &&
+	mkdir foo &&
+	echo "if only I knew" > foo/baz &&
+	git update-index --add foo/baz &&
+	git commit -m "foo becomes a directory" &&
+	git branch "foo-becomes-a-directory" &&
+	echo "hello world" > foo/baz &&
+	git update-index foo/baz &&
+	git commit -m "foo/baz is the original foo" &&
+	git branch foo-baz-renamed-from-foo
+	'
 
-test_expect_success 'apply modification patch' '
-	echo "hello world" >foo &&
-	echo "modified content" >foo.new &&
-	cat >mod-patch <<-\EOF &&
-	diff --git a/foo b/foo
-	--- a/foo
-	+++ b/foo
-	@@ -1 +1 @@
-	-hello world
-	+modified content
-	EOF
-	git apply mod-patch &&
-	echo "modified content" >expect &&
-	test_cmp expect foo
-'
+test_expect_success 'file renamed from foo to foo/baz' '
+	git checkout -f initial &&
+	git diff-tree -M -p HEAD foo-baz-renamed-from-foo > patch &&
+	git apply --index < patch
+	'
+test_debug 'cat patch'
 
-test_expect_success 'apply deletion patch' '
-	echo "hello world" >foo &&
-	cat >del-patch <<-\EOF &&
-	diff --git a/foo b/foo
-	deleted file mode 100644
-	--- a/foo
-	+++ /dev/null
-	@@ -1 +0,0 @@
-	-hello world
-	EOF
-	git apply del-patch &&
-	test_path_is_missing foo
-'
 
-test_expect_success 'apply creation patch' '
-	test_path_is_missing newfile &&
-	cat >create-patch <<-\EOF &&
-	diff --git a/newfile b/newfile
-	new file mode 100644
-	--- /dev/null
-	+++ b/newfile
-	@@ -0,0 +1 @@
-	+brand new content
-	EOF
-	git apply create-patch &&
-	echo "brand new content" >expect &&
-	test_cmp expect newfile
-'
+test_expect_success 'file renamed from foo/baz to foo' '
+	git checkout -f foo-baz-renamed-from-foo &&
+	git diff-tree -M -p HEAD initial > patch &&
+	git apply --index < patch
+	'
+test_debug 'cat patch'
 
-test_expect_success 'apply --reverse of creation removes file' '
-	echo "brand new content" >newfile &&
-	git apply -R create-patch &&
-	test_path_is_missing newfile
-'
 
-test_expect_success 'apply multi-hunk patch' '
-	echo "hello world" >foo &&
-	test_write_lines 1 2 3 4 5 6 7 8 9 10 >multi &&
-	cat >multi-patch <<-\EOF &&
-	diff --git a/multi b/multi
-	--- a/multi
-	+++ b/multi
-	@@ -1,4 +1,4 @@
-	 1
-	-2
-	+TWO
-	 3
-	 4
-	@@ -7,4 +7,4 @@
-	 7
-	 8
-	-9
-	+NINE
-	 10
-	EOF
-	git apply multi-patch &&
-	grep TWO multi &&
-	grep NINE multi
-'
+test_expect_success 'directory becomes file' '
+	git checkout -f foo-becomes-a-directory &&
+	git diff-tree -p HEAD initial > patch &&
+	git apply --index < patch
+	'
+test_debug 'cat patch'
+
+
+test_expect_success 'file becomes directory' '
+	git checkout -f initial &&
+	git diff-tree -p HEAD foo-becomes-a-directory > patch &&
+	git apply --index < patch
+	'
+test_debug 'cat patch'
+
+
+test_expect_success 'file becomes symlink' '
+	git checkout -f initial &&
+	git diff-tree -p HEAD foo-symlinked-to-bar > patch &&
+	git apply --index < patch
+	'
+test_debug 'cat patch'
+
+
+test_expect_success 'symlink becomes file' '
+	git checkout -f foo-symlinked-to-bar &&
+	git diff-tree -p HEAD foo-back-to-file > patch &&
+	git apply --index < patch
+	'
+test_debug 'cat patch'
+
+test_expect_success 'symlink becomes file, in reverse' '
+	git checkout -f foo-symlinked-to-bar &&
+	git diff-tree -p HEAD foo-back-to-file > patch &&
+	git checkout foo-back-to-file &&
+	git apply -R --index < patch
+	'
+
+test_expect_success 'binary file becomes symlink' '
+	git checkout -f foo-becomes-binary &&
+	git diff-tree -p --binary HEAD foo-symlinked-to-bar > patch &&
+	git apply --index < patch
+	'
+test_debug 'cat patch'
+
+test_expect_success 'symlink becomes binary file' '
+	git checkout -f foo-symlinked-to-bar &&
+	git diff-tree -p --binary HEAD foo-becomes-binary > patch &&
+	git apply --index < patch
+	'
+test_debug 'cat patch'
+
+
+test_expect_success 'symlink becomes directory' '
+	git checkout -f foo-symlinked-to-bar &&
+	git diff-tree -p HEAD foo-becomes-a-directory > patch &&
+	git apply --index < patch
+	'
+test_debug 'cat patch'
+
+
+test_expect_success 'directory becomes symlink' '
+	git checkout -f foo-becomes-a-directory &&
+	git diff-tree -p HEAD foo-symlinked-to-bar > patch &&
+	git apply --index < patch
+	'
+test_debug 'cat patch'
+
 
 test_done

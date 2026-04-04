@@ -1,212 +1,145 @@
 #!/bin/sh
-# Ported from git/t/t2107-update-index-basic.sh (harness-compatible subset).
 
-test_description='grit update-index basic'
+test_description='basic update-index tests
 
-cd "$(dirname "$0")" || exit 1
+Tests for command-line parsing and basic operation.
+'
+
 . ./test-lib.sh
 
-ZERO_OID=0000000000000000000000000000000000000000
-
-test_expect_success 'setup repository' '
-	git init repo &&
-	cd repo
-'
-
-test_expect_success 'update-index --add tracks a new file' '
-	cd repo &&
-	echo one >one &&
-	oid=$(git hash-object -w one) &&
-	git update-index --add one &&
-	echo "100644 $oid 0	one" >expect &&
-	git ls-files --stage one >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--cacheinfo mode,oid,path adds entry' '
-	cd repo &&
-	echo cache >cache-src &&
-	oid=$(git hash-object -w cache-src) &&
-	git update-index --cacheinfo "100644,$oid,cache-only" &&
-	echo "100644 $oid 0	cache-only" >expect &&
-	git ls-files --stage cache-only >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--force-remove removes tracked path from index' '
-	cd repo &&
-	git update-index --force-remove one &&
-	: >expect &&
-	git ls-files one >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--index-info can add and delete an entry' '
-	cd repo &&
-	echo info >info-src &&
-	oid=$(git hash-object -w info-src) &&
-	printf "100644 %s\tfrom-index-info\n" "$oid" >stdin &&
-	git update-index --index-info <stdin &&
-	echo "100644 $oid 0	from-index-info" >expect &&
-	git ls-files --stage from-index-info >actual &&
-	test_cmp expect actual &&
-	printf "0 %s\tfrom-index-info\n" "$ZERO_OID" >stdin &&
-	git update-index --index-info <stdin &&
-	: >expect &&
-	git ls-files from-index-info >actual &&
-	test_cmp expect actual
-'
-
 test_expect_success 'update-index --nonsense fails' '
-	cd repo &&
 	test_must_fail git update-index --nonsense 2>msg &&
 	test -s msg
 '
 
 test_expect_success 'update-index --nonsense dumps usage' '
-	cd repo &&
-	test_expect_code 2 git update-index --nonsense 2>err &&
-	grep -i "[Uu]sage" err
+	test_expect_code 129 git update-index --nonsense 2>err &&
+	test_grep "[Uu]sage: git update-index" err
+'
+
+test_expect_success 'update-index -h with corrupt index' '
+	mkdir broken &&
+	(
+		cd broken &&
+		git init &&
+		>.git/index &&
+		test_expect_code 129 git update-index -h >usage 2>&1
+	) &&
+	test_grep "[Uu]sage: git update-index" broken/usage
 '
 
 test_expect_success '--cacheinfo complains of missing arguments' '
-	cd repo &&
-	test_must_fail git update-index --cacheinfo 2>err &&
-	test -s err
+	test_must_fail git update-index --cacheinfo
 '
 
-test_expect_success '--cacheinfo mode,sha1,path new syntax' '
-	cd repo &&
-	echo content >newfile &&
-	sha=$(git hash-object -w --stdin <newfile) &&
-	git update-index --add --cacheinfo "100644,$sha,elif" &&
-	echo "100644 $sha 0	elif" >expect &&
-	git ls-files --stage elif >actual &&
+test_expect_success '--cacheinfo does not accept blob null sha1' '
+	echo content >file &&
+	git add file &&
+	git rev-parse :file >expect &&
+	test_must_fail git update-index --verbose --cacheinfo 100644 $ZERO_OID file >out &&
+	git rev-parse :file >actual &&
+	test_cmp expect actual &&
+
+	cat >expect <<-\EOF &&
+	add '\''file'\''
+	EOF
+	test_cmp expect out
+'
+
+test_expect_success '--cacheinfo does not accept gitlink null sha1' '
+	git init submodule &&
+	(cd submodule && test_commit foo) &&
+	git add submodule &&
+	git rev-parse :submodule >expect &&
+	test_must_fail git update-index --cacheinfo 160000 $ZERO_OID submodule &&
+	git rev-parse :submodule >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success '--add multiple files at once' '
-	cd repo &&
-	echo fa >file_a &&
-	echo fb >file_b &&
-	git hash-object -w file_a >/dev/null &&
-	git hash-object -w file_b >/dev/null &&
-	git update-index --add file_a file_b &&
-	git ls-files --stage file_a >actual_a &&
-	test -s actual_a &&
-	git ls-files --stage file_b >actual_b &&
-	test -s actual_b
+test_expect_success '--cacheinfo mode,sha1,path (new syntax)' '
+	echo content >file &&
+	git hash-object -w --stdin <file >expect &&
+
+	git update-index --add --cacheinfo 100644 "$(cat expect)" file &&
+	git rev-parse :file >actual &&
+	test_cmp expect actual &&
+
+	git update-index --add --verbose --cacheinfo "100644,$(cat expect),elif" >out &&
+	git rev-parse :elif >actual &&
+	test_cmp expect actual &&
+
+	cat >expect <<-\EOF &&
+	add '\''elif'\''
+	EOF
+	test_cmp expect out
 '
 
-test_expect_success '--remove deletes tracked path from index' '
+test_expect_success '.lock files cleaned up' '
+	mkdir cleanup &&
+	(
+	cd cleanup &&
+	mkdir worktree &&
+	git init repo &&
 	cd repo &&
-	git ls-files --stage file_a >before &&
-	test -s before &&
-	git update-index --remove file_a &&
-	git ls-files file_a >after &&
-	test_must_fail test -s after
+	git config core.worktree ../../worktree &&
+	# --refresh triggers late setup_work_tree,
+	# the_index.cache_changed is zero, rollback_lock_file fails
+	git update-index --refresh --verbose >out &&
+	test_must_be_empty out &&
+	test_path_is_missing .git/index.lock
+	)
 '
 
-test_expect_success '--info-only adds entry without writing object' '
-	cd repo &&
-	echo infodata >info-only-file &&
-	oid=$(git hash-object info-only-file) &&
-	git update-index --add --info-only --cacheinfo "100644,$oid,info-only-entry" &&
-	git ls-files --stage info-only-entry >actual &&
-	grep "$oid" actual
+test_expect_success '--chmod=+x and chmod=-x in the same argument list' '
+	>A &&
+	>B &&
+	git add A B &&
+	git update-index --verbose --chmod=+x A --chmod=-x B >out &&
+	cat >expect <<-\EOF &&
+	add '\''A'\''
+	chmod +x '\''A'\''
+	add '\''B'\''
+	chmod -x '\''B'\''
+	EOF
+	test_cmp expect out &&
+
+	cat >expect <<-EOF &&
+	100755 $EMPTY_BLOB 0	A
+	100644 $EMPTY_BLOB 0	B
+	EOF
+	git ls-files --stage A B >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success '--refresh updates stat info' '
-	cd repo &&
-	echo refresh >refresh-file &&
-	git update-index --add refresh-file &&
-	touch refresh-file &&
-	git update-index --refresh &&
-	git ls-files --stage refresh-file >actual &&
-	test -s actual
-'
+test_expect_success '--index-version' '
+	git commit --allow-empty -m snap &&
+	git reset --hard &&
+	git rm -f -r --cached . &&
 
-test_expect_success '--really-refresh forces stat refresh' '
-	cd repo &&
-	git update-index --really-refresh &&
-	git ls-files --stage refresh-file >actual &&
-	test -s actual
-'
+	# The default index version is 2 --- update this test
+	# when you change it in the code
+	git update-index --show-index-version >actual &&
+	echo 2 >expect &&
+	test_cmp expect actual &&
 
-test_expect_success '--assume-unchanged marks file (no ls-files -v to verify)' '
-	cd repo &&
-	git update-index --assume-unchanged refresh-file &&
-	git ls-files --stage refresh-file >actual &&
-	test -s actual
-'
+	# The next test wants us to be using version 2
+	git update-index --index-version 2 &&
 
-test_expect_success '--no-assume-unchanged clears flag' '
-	cd repo &&
-	git update-index --no-assume-unchanged refresh-file &&
-	git ls-files --stage refresh-file >actual &&
-	test -s actual
-'
+	git update-index --index-version 4 --verbose >actual &&
+	echo "index-version: was 2, set to 4" >expect &&
+	test_cmp expect actual &&
 
-test_expect_success '--skip-worktree marks file' '
-	cd repo &&
-	git update-index --skip-worktree refresh-file &&
-	git ls-files --stage refresh-file >actual &&
-	test -s actual
-'
+	git update-index --index-version 4 --verbose >actual &&
+	echo "index-version: was 4, set to 4" >expect &&
+	test_cmp expect actual &&
 
-test_expect_success '--no-skip-worktree clears flag' '
-	cd repo &&
-	git update-index --no-skip-worktree refresh-file &&
-	git ls-files --stage refresh-file >actual &&
-	test -s actual
-'
+	git update-index --index-version 2 --verbose >actual &&
+	echo "index-version: was 4, set to 2" >expect &&
+	test_cmp expect actual &&
 
-test_expect_success '--cacheinfo with executable mode' '
-	cd repo &&
-	echo execdata >exec-file &&
-	oid=$(git hash-object -w exec-file) &&
-	git update-index --cacheinfo "100755,$oid,exec-entry" &&
-	git ls-files --stage exec-entry >actual &&
-	grep "^100755" actual
-'
-
-test_expect_success '--cacheinfo with symlink mode' '
-	cd repo &&
-	echo target >link-data &&
-	oid=$(git hash-object -w link-data) &&
-	git update-index --cacheinfo "120000,$oid,link-entry" &&
-	git ls-files --stage link-entry >actual &&
-	grep "^120000" actual
-'
-
-test_expect_success '--force-remove on nonexistent file is silent' '
-	cd repo &&
-	git update-index --force-remove nonexistent 2>err &&
-	test_must_fail test -s err
-'
-
-test_expect_success '--add with modified file updates index' '
-	cd repo &&
-	echo original >mod-file &&
-	git update-index --add mod-file &&
-	oid1=$(git ls-files --stage mod-file | cut -d" " -f2) &&
-	echo modified >mod-file &&
-	git hash-object -w mod-file >/dev/null &&
-	git update-index --add mod-file &&
-	oid2=$(git ls-files --stage mod-file | cut -d" " -f2) &&
-	test "$oid1" != "$oid2"
-'
-
-test_expect_success '--ignore-missing does not error on missing files' '
-	cd repo &&
-	git update-index --add --ignore-missing does-not-exist 2>err || true &&
-	test_must_fail git ls-files --error-unmatch does-not-exist 2>/dev/null
-'
-
-test_expect_success 'update-index --help shows usage' '
-	cd repo &&
-	git update-index --help >out 2>&1 &&
-	grep -i "usage" out
+	# non-verbose should be silent
+	git update-index --index-version 4 >actual &&
+	test_must_be_empty actual
 '
 
 test_done

@@ -1,21 +1,8 @@
 #!/bin/sh
-#
-# Upstream: t9304-fast-import-marks.sh
-# Ported from git/t/t9304-fast-import-marks.sh for grit.
-#
 
 test_description='test exotic situations with marks'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
-
-# Initialize a repo in the trash directory
-git init --quiet
-
-# test_config_global - set global config
-test_config_global () {
-	git config --global "$@"
-}
 
 test_expect_success 'setup dump of basic history' '
 	test_commit one &&
@@ -74,6 +61,9 @@ test_expect_success 'paths adjusted for relative subdir' '
 		--export-marks=exported-marks \
 		--export-pack-edges=exported-edges \
 		<dump &&
+	# we do not bother checking resulting repo; we just care that nothing
+	# complained about failing to open files for reading, and that files
+	# for writing were created in the expected spot
 	test_path_is_file deep-dst/subdir/exported-marks &&
 	test_path_is_file deep-dst/subdir/exported-edges
 '

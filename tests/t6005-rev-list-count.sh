@@ -1,210 +1,65 @@
 #!/bin/sh
-# Ported subset from git/t/t6005-rev-list-count.sh.
 
-test_description='git rev-list --max-count and --skip'
+test_description='git rev-list --max-count and --skip test'
 
 . ./test-lib.sh
 
-GIT_COMMITTER_EMAIL=git@comm.iter.xz
-GIT_COMMITTER_NAME='C O Mmiter'
-GIT_AUTHOR_NAME='A U Thor'
-GIT_AUTHOR_EMAIL=git@au.thor.xz
-export GIT_COMMITTER_EMAIL GIT_COMMITTER_NAME GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
-
-M=1130000000
-Z=+0000
-export M Z
-
-doit () {
-	OFFSET=$1 &&
-	NAME=$2 &&
-	shift 2 &&
-	PARENTS= &&
-	for P
-	do
-		PARENTS="$PARENTS -p $P"
-	done &&
-	GIT_COMMITTER_DATE="$(($M + $OFFSET)) $Z" &&
-	GIT_AUTHOR_DATE="$GIT_COMMITTER_DATE" &&
-	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE &&
-	commit=$(echo "$NAME" | git commit-tree "$(git write-tree)" $PARENTS) &&
-	echo "$commit"
-}
-
-test_expect_success 'setup linear history' '
-	grit init repo &&
-	cd repo &&
-	c1=$(doit 1 one) &&
-	c2=$(doit 2 two "$c1") &&
-	c3=$(doit 3 three "$c2") &&
-	c4=$(doit 4 four "$c3") &&
-	c5=$(doit 5 five "$c4") &&
-	git update-ref refs/heads/master "$c5"
+test_expect_success 'setup' '
+    for n in 1 2 3 4 5 ; do
+	echo $n > a &&
+	git add a &&
+	git commit -m "$n" || return 1
+    done
 '
 
-test_expect_success 'no options: plain count' '
-	cd repo &&
-	lines=$(git rev-list refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "5"
+test_expect_success 'no options' '
+	test_stdout_line_count = 5 git rev-list HEAD
 '
 
-test_expect_success '--max-count limits output' '
-	cd repo &&
-	lines=$(git rev-list --max-count=0 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "0" &&
-	lines=$(git rev-list --max-count=3 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "3" &&
-	lines=$(git rev-list --max-count=5 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "5" &&
-	lines=$(git rev-list --max-count=10 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "5" &&
-	lines=$(git rev-list --max-count=-1 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "5"
-'
+test_expect_success '--max-count' '
+	test_must_fail git rev-list --max-count=1q HEAD 2>error &&
+	grep "not an integer" error &&
 
-test_expect_success '--max-count rejects non-integer' '
-	cd repo &&
-	test_must_fail git rev-list --max-count=bogus refs/heads/master
+	test_stdout_line_count = 0 git rev-list HEAD --max-count=0 &&
+	test_stdout_line_count = 3 git rev-list HEAD --max-count=3 &&
+	test_stdout_line_count = 5 git rev-list HEAD --max-count=5 &&
+	test_stdout_line_count = 5 git rev-list HEAD --max-count=10 &&
+	test_stdout_line_count = 5 git rev-list HEAD --max-count=-1
 '
 
 test_expect_success '--max-count all forms' '
-	cd repo &&
-	lines=$(git rev-list --max-count=1 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "1" &&
-	lines=$(git rev-list -1 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "1" &&
-	lines=$(git rev-list -n 1 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "1" &&
-	lines=$(git rev-list -n -1 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "5"
-'
+	test_must_fail git rev-list -1q HEAD 2>error &&
+	grep "not an integer" error &&
+	test_must_fail git rev-list --1 HEAD &&
+	test_must_fail git rev-list -n 1q HEAD 2>error &&
+	grep "not an integer" error &&
 
-test_expect_success '-n rejects non-integer' '
-	cd repo &&
-	test_must_fail git rev-list -n bogus refs/heads/master
+	test_stdout_line_count = 1 git rev-list HEAD --max-count=1 &&
+	test_stdout_line_count = 1 git rev-list HEAD -1 &&
+	test_stdout_line_count = 1 git rev-list HEAD -n1 &&
+	test_stdout_line_count = 1 git rev-list HEAD -n 1 &&
+	test_stdout_line_count = 5 git rev-list HEAD -n -1
 '
 
 test_expect_success '--skip' '
-	cd repo &&
-	lines=$(git rev-list --skip=0 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "5" &&
-	lines=$(git rev-list --skip=3 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "2" &&
-	lines=$(git rev-list --skip=5 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "0" &&
-	lines=$(git rev-list --skip=10 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "0"
-'
+	test_must_fail git rev-list --skip 1q HEAD 2>error &&
+	grep "not an integer" error &&
 
-test_expect_success '--skip rejects non-integer' '
-	cd repo &&
-	test_must_fail git rev-list --skip=bogus refs/heads/master
+	test_stdout_line_count = 5 git rev-list HEAD --skip=0 &&
+	test_stdout_line_count = 2 git rev-list HEAD --skip=3 &&
+	test_stdout_line_count = 0 git rev-list HEAD --skip=5 &&
+	test_stdout_line_count = 0 git rev-list HEAD --skip=10
 '
 
 test_expect_success '--skip --max-count' '
-	cd repo &&
-	lines=$(git rev-list --skip=0 --max-count=0 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "0" &&
-	lines=$(git rev-list --skip=0 --max-count=10 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "5" &&
-	lines=$(git rev-list --skip=3 --max-count=0 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "0" &&
-	lines=$(git rev-list --skip=3 --max-count=1 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "1" &&
-	lines=$(git rev-list --skip=3 --max-count=2 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "2" &&
-	lines=$(git rev-list --skip=3 --max-count=10 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "2" &&
-	lines=$(git rev-list --skip=5 --max-count=10 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "0" &&
-	lines=$(git rev-list --skip=10 --max-count=10 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "0"
-'
-
-test_expect_success '--count matches listed commits' '
-	cd repo &&
-	count=$(git rev-list --count --skip=1 --max-count=2 refs/heads/master) &&
-	lines=$(git rev-list --skip=1 --max-count=2 refs/heads/master | wc -l | tr -d " ") &&
-	test "$count" = "$lines"
-'
-
-test_expect_success '--count with --max-count' '
-	cd repo &&
-	count=$(git rev-list --count --max-count=3 refs/heads/master) &&
-	test "$count" = "3" &&
-	count=$(git rev-list --count --max-count=0 refs/heads/master) &&
-	test "$count" = "0" &&
-	count=$(git rev-list --count --max-count=10 refs/heads/master) &&
-	test "$count" = "5"
-'
-
-# --- New tests ---
-
-test_expect_success '--count total' '
-	cd repo &&
-	count=$(git rev-list --count refs/heads/master) &&
-	test "$count" = "5"
-'
-
-test_expect_success '--count with --skip' '
-	cd repo &&
-	count=$(git rev-list --count --skip=2 refs/heads/master) &&
-	test "$count" = "3" &&
-	count=$(git rev-list --count --skip=5 refs/heads/master) &&
-	test "$count" = "0" &&
-	count=$(git rev-list --count --skip=10 refs/heads/master) &&
-	test "$count" = "0"
-'
-
-test_expect_success '-1 shorthand limits to one' '
-	cd repo &&
-	lines=$(git rev-list -1 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "1"
-'
-
-test_expect_success '-2 shorthand limits to two' '
-	cd repo &&
-	lines=$(git rev-list -2 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "2"
-'
-
-test_expect_success '-n2 (no space) limits to two' '
-	cd repo &&
-	lines=$(git rev-list -n2 refs/heads/master | wc -l | tr -d " ") &&
-	test "$lines" = "2"
-'
-
-test_expect_success '--skip with --reverse' '
-	cd repo &&
-	git rev-list refs/heads/master >full &&
-	git rev-list --reverse --skip=2 refs/heads/master >actual &&
-	# reversed skip=2 should give 3 lines
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$lines" = "3"
-'
-
-test_expect_success '--max-count with --reverse' '
-	cd repo &&
-	git rev-list --reverse --max-count=2 refs/heads/master >actual &&
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$lines" = "2"
-'
-
-test_expect_success '--count --skip --max-count combined' '
-	cd repo &&
-	count=$(git rev-list --count --skip=1 --max-count=3 refs/heads/master) &&
-	test "$count" = "3" &&
-	count=$(git rev-list --count --skip=4 --max-count=3 refs/heads/master) &&
-	test "$count" = "1" &&
-	count=$(git rev-list --count --skip=5 --max-count=3 refs/heads/master) &&
-	test "$count" = "0"
-'
-
-test_expect_success '--count with --first-parent (linear = same)' '
-	cd repo &&
-	count_all=$(git rev-list --count refs/heads/master) &&
-	count_fp=$(git rev-list --count --first-parent refs/heads/master) &&
-	test "$count_all" = "$count_fp"
+	test_stdout_line_count = 0 git rev-list HEAD --skip=0 --max-count=0 &&
+	test_stdout_line_count = 5 git rev-list HEAD --skip=0 --max-count=10 &&
+	test_stdout_line_count = 0 git rev-list HEAD --skip=3 --max-count=0 &&
+	test_stdout_line_count = 1 git rev-list HEAD --skip=3 --max-count=1 &&
+	test_stdout_line_count = 2 git rev-list HEAD --skip=3 --max-count=2 &&
+	test_stdout_line_count = 2 git rev-list HEAD --skip=3 --max-count=10 &&
+	test_stdout_line_count = 0 git rev-list HEAD --skip=5 --max-count=10 &&
+	test_stdout_line_count = 0 git rev-list HEAD --skip=10 --max-count=10
 '
 
 test_done

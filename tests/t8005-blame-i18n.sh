@@ -1,49 +1,103 @@
 #!/bin/sh
-# Ported from upstream git t8005-blame-i18n.sh
 
-test_description='git blame encoding'
+test_description='git blame encoding conversion'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init blame-i18n &&
-	cd blame-i18n &&
-	git config user.name "Test" &&
-	git config user.email "test@test.com" &&
-	echo "UTF-8 LINE" >file &&
+if ! test_have_prereq ICONV
+then
+	skip_all='skipping blame i18n tests; iconv not available'
+	test_done
+fi
+
+. "$TEST_DIRECTORY"/t8005/utf8.txt
+. "$TEST_DIRECTORY"/t8005/euc-japan.txt
+. "$TEST_DIRECTORY"/t8005/sjis.txt
+
+test_expect_success 'setup the repository' '
+	# Create the file
+	echo "UTF-8 LINE" > file &&
 	git add file &&
-	test_tick &&
-	git commit -m "Initial UTF-8 commit" &&
-	echo "Second LINE" >>file &&
+	git commit --author "$UTF8_NAME <utf8@localhost>" -m "$UTF8_MSG" &&
+
+	echo "EUC-JAPAN LINE" >> file &&
 	git add file &&
-	test_tick &&
-	git commit -m "Second commit"
+	git config i18n.commitencoding eucJP &&
+	git commit --author "$EUC_JAPAN_NAME <euc-japan@localhost>" -m "$EUC_JAPAN_MSG" &&
+
+	echo "SJIS LINE" >> file &&
+	git add file &&
+	git config i18n.commitencoding SJIS &&
+	git commit --author "$SJIS_NAME <sjis@localhost>" -m "$SJIS_MSG"
 '
 
-test_expect_success 'blame shows author names' '
-	cd blame-i18n &&
-	git blame file >actual &&
-	test $(wc -l <actual) -eq 2
+cat >expected <<EOF
+author $SJIS_NAME
+summary $SJIS_MSG
+author $SJIS_NAME
+summary $SJIS_MSG
+author $SJIS_NAME
+summary $SJIS_MSG
+EOF
+
+filter_author_summary () {
+	sed -n -e '/^author /p' -e '/^summary /p' "$@"
+}
+
+test_expect_success !MINGW \
+	'blame respects i18n.commitencoding' '
+	git blame --incremental file >output &&
+	filter_author_summary output >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'blame --porcelain shows encoding fields' '
-	cd blame-i18n &&
-	git blame --porcelain file >actual &&
-	grep "^author " actual &&
-	grep "^summary " actual
+cat >expected <<EOF
+author $EUC_JAPAN_NAME
+summary $EUC_JAPAN_MSG
+author $EUC_JAPAN_NAME
+summary $EUC_JAPAN_MSG
+author $EUC_JAPAN_NAME
+summary $EUC_JAPAN_MSG
+EOF
+
+test_expect_success !MINGW \
+	'blame respects i18n.logoutputencoding' '
+	git config i18n.logoutputencoding eucJP &&
+	git blame --incremental file >output &&
+	filter_author_summary output >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'blame --line-porcelain works' '
-	cd blame-i18n &&
-	git blame --line-porcelain file >actual &&
-	test $(grep -c "^author " actual) -eq 2
+cat >expected <<EOF
+author $UTF8_NAME
+summary $UTF8_MSG
+author $UTF8_NAME
+summary $UTF8_MSG
+author $UTF8_NAME
+summary $UTF8_MSG
+EOF
+
+test_expect_success !MINGW \
+	'blame respects --encoding=UTF-8' '
+	git blame --incremental --encoding=UTF-8 file >output &&
+	filter_author_summary output >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'blame on single line' '
-	cd blame-i18n &&
-	git blame -L 1,1 file >actual &&
-	test $(wc -l <actual) -eq 1
+cat >expected <<EOF
+author $SJIS_NAME
+summary $SJIS_MSG
+author $EUC_JAPAN_NAME
+summary $EUC_JAPAN_MSG
+author $UTF8_NAME
+summary $UTF8_MSG
+EOF
+
+test_expect_success !MINGW \
+	'blame respects --encoding=none' '
+	git blame --incremental --encoding=none file >output &&
+	filter_author_summary output >actual &&
+	test_cmp expected actual
 '
 
 test_done

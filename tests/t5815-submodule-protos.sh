@@ -1,33 +1,44 @@
 #!/bin/sh
-# Ported from git/t/t5815-submodule-protos.sh
-# Tests for protocol restrictions with submodules
 
-test_description='protocol restrictions with submodules'
+test_description='test protocol filtering with submodules'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-proto-disable.sh
 
-test_expect_success 'clone with submodule respects protocol.file.allow' '
-	test_create_repo sub &&
-	(cd sub && test_commit one) &&
-	test_create_repo super &&
-	(
-		cd super &&
-		git submodule add ../sub sub &&
-		git commit -m "add submodule"
-	) &&
-	test_must_fail git -c protocol.file.allow=never \
-		clone --recurse-submodules super clone-denied 2>err &&
-	grep -i "not allowed" err
+setup_ext_wrapper
+setup_ssh_wrapper
+
+test_expect_success 'setup repository with submodules' '
+	mkdir remote &&
+	git init remote/repo.git &&
+	(cd remote/repo.git && test_commit one) &&
+	# submodule-add should probably trust what we feed it on the cmdline,
+	# but its implementation is overly conservative.
+	GIT_ALLOW_PROTOCOL=ssh git submodule add remote:repo.git ssh-module &&
+	GIT_ALLOW_PROTOCOL=ext git submodule add "ext::fake-remote %S repo.git" ext-module &&
+	git commit -m "add submodules"
 '
 
-test_expect_success 'fetch with submodule respects protocol.file.allow' '
-	git clone super clone-for-fetch &&
-	test_must_fail git -C clone-for-fetch -c protocol.file.allow=never fetch 2>err &&
-	grep -i "not allowed" err
+test_expect_success 'clone with recurse-submodules fails' '
+	test_must_fail git clone --recurse-submodules . dst
+'
+
+test_expect_success 'setup individual updates' '
+	rm -rf dst &&
+	git clone . dst &&
+	git -C dst submodule init
+'
+
+test_expect_success 'update of ssh allowed' '
+	git -C dst submodule update ssh-module
+'
+
+test_expect_success 'update of ext not allowed' '
+	test_must_fail git -C dst submodule update ext-module
+'
+
+test_expect_success 'user can filter protocols with GIT_ALLOW_PROTOCOL' '
+	GIT_ALLOW_PROTOCOL=ext git -C dst submodule update ext-module
 '
 
 test_done

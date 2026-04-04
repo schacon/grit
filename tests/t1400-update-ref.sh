@@ -1,3700 +1,2458 @@
 #!/bin/sh
-# Ported from git/t/t1400-update-ref.sh (harness-compatible subset).
+#
+# Copyright (c) 2006 Shawn Pearce
+#
 
-test_description='grit update-ref basics'
+test_description='Test git update-ref and basic ref logging'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-A=1111111111111111111111111111111111111111
-B=2222222222222222222222222222222222222222
-C=3333333333333333333333333333333333333333
-D=4444444444444444444444444444444444444444
-E=5555555555555555555555555555555555555555
-F=6666666666666666666666666666666666666666
-Z=0000000000000000000000000000000000000000
+Z=$ZERO_OID
 
-m=refs/heads/master
+m=refs/heads/main
+outside=refs/foo
+bare=bare-repo
 
-head_ref_path() {
-	sed -n 's/^ref: //p' .git/HEAD
+create_test_commits ()
+{
+	prfx="$1"
+	for name in A B C D E F
+	do
+		test_tick &&
+		T=$(git write-tree) &&
+		sha1=$(echo $name | git commit-tree $T) &&
+		eval $prfx$name=$sha1
+	done
 }
 
-test_expect_success 'setup repository' '
-	grit init repo &&
-	cd repo
+test_expect_success setup '
+	git checkout --orphan main &&
+	create_test_commits "" &&
+	mkdir $bare &&
+	cd $bare &&
+	git init --bare -b main &&
+	create_test_commits "bare" &&
+	cd -
 '
-
-# === Basic ref create / update / delete ===
 
 test_expect_success "create $m" '
-	cd repo &&
-	grit update-ref $m "$A" &&
-	echo "$A" >expect &&
-	cat .git/refs/heads/master >actual &&
-	test_cmp expect actual
+	git update-ref $m $A &&
+	test $A = $(git show-ref -s --verify $m)
 '
-
 test_expect_success "create $m with oldvalue verification" '
-	cd repo &&
-	grit update-ref $m "$B" "$A" &&
-	echo "$B" >expect &&
-	cat .git/refs/heads/master >actual &&
-	test_cmp expect actual
+	git update-ref $m $B $A &&
+	test $B = $(git show-ref -s --verify $m)
 '
-
 test_expect_success "fail to delete $m with stale ref" '
-	cd repo &&
-	test_must_fail grit update-ref -d $m "$A" &&
-	echo "$B" >expect &&
-	cat .git/refs/heads/master >actual &&
-	test_cmp expect actual
+	test_must_fail git update-ref -d $m $A &&
+	test $B = "$(git show-ref -s --verify $m)"
 '
-
 test_expect_success "delete $m" '
-	cd repo &&
-	grit update-ref -d $m "$B" &&
-	test_path_is_missing .git/refs/heads/master
+	test_when_finished "git update-ref -d $m" &&
+	git update-ref -d $m $B &&
+	test_must_fail git show-ref --verify -q $m
 '
 
 test_expect_success "delete $m without oldvalue verification" '
-	cd repo &&
-	grit update-ref $m "$A" &&
-	echo "$A" >expect &&
-	cat .git/refs/heads/master >actual &&
-	test_cmp expect actual &&
-	grit update-ref -d $m &&
-	test_path_is_missing .git/refs/heads/master
+	test_when_finished "git update-ref -d $m" &&
+	git update-ref $m $A &&
+	test $A = $(git show-ref -s --verify $m) &&
+	git update-ref -d $m &&
+	test_must_fail git show-ref --verify -q $m
 '
 
-# === HEAD dereferences to current branch ===
+test_expect_success "fail to create $n due to file/directory conflict" '
+	test_when_finished "git update-ref -d refs/heads/gu" &&
+	git update-ref refs/heads/gu $A &&
+	test_must_fail git update-ref refs/heads/gu/fixes $A
+'
 
 test_expect_success "create $m (by HEAD)" '
-	cd repo &&
-	grit update-ref HEAD "$A" &&
-	head_ref=$(head_ref_path) &&
-	echo "$A" >expect &&
-	cat ".git/$head_ref" >actual &&
-	test_cmp expect actual
+	git update-ref HEAD $A &&
+	test $A = $(git show-ref -s --verify $m)
 '
-
 test_expect_success "create $m (by HEAD) with oldvalue verification" '
-	cd repo &&
-	grit update-ref HEAD "$B" "$A" &&
-	head_ref=$(head_ref_path) &&
-	echo "$B" >expect &&
-	cat ".git/$head_ref" >actual &&
-	test_cmp expect actual
+	git update-ref HEAD $B $A &&
+	test $B = $(git show-ref -s --verify $m)
 '
-
 test_expect_success "fail to delete $m (by HEAD) with stale ref" '
-	cd repo &&
-	test_must_fail grit update-ref -d HEAD "$A" &&
-	echo "$B" >expect &&
-	cat .git/refs/heads/master >actual &&
-	test_cmp expect actual
+	test_must_fail git update-ref -d HEAD $A &&
+	test $B = $(git show-ref -s --verify $m)
 '
-
 test_expect_success "delete $m (by HEAD)" '
-	cd repo &&
-	grit update-ref -d HEAD "$B" &&
-	test_path_is_missing .git/refs/heads/master
+	test_when_finished "git update-ref -d $m" &&
+	git update-ref -d HEAD $B &&
+	test_must_fail git show-ref --verify -q $m
 '
 
-# === File/directory conflicts ===
-
-test_expect_success "fail to create ref due to file/directory conflict" '
-	cd repo &&
-	grit update-ref refs/heads/gu "$A" &&
-	test_must_fail grit update-ref refs/heads/gu/fixes "$A" &&
-	echo "$A" >expect &&
-	cat .git/refs/heads/gu >actual &&
-	test_cmp expect actual
+test_expect_success "deleting current branch adds message to HEAD's log" '
+	test_when_finished "git update-ref -d $m" &&
+	git update-ref $m $A &&
+	git symbolic-ref HEAD $m &&
+	git update-ref -m delete-$m -d $m &&
+	test_must_fail git show-ref --verify -q $m &&
+	test-tool ref-store main for-each-reflog-ent HEAD >actual &&
+	grep "delete-$m$" actual
 '
 
-test_expect_success "fail to create parent when deeper ref exists" '
-	cd repo &&
-	grit update-ref refs/heads/deep/child "$A" &&
-	test_must_fail grit update-ref refs/heads/deep "$B" &&
-	echo "$A" >expect &&
-	cat .git/refs/heads/deep/child >actual &&
-	test_cmp expect actual
+test_expect_success "deleting by HEAD adds message to HEAD's log" '
+	test_when_finished "git update-ref -d $m" &&
+	git update-ref $m $A &&
+	git symbolic-ref HEAD $m &&
+	git update-ref -m delete-by-head -d HEAD &&
+	test_must_fail git show-ref --verify -q $m &&
+	test-tool ref-store main for-each-reflog-ent HEAD >actual &&
+	grep "delete-by-head$" actual
 '
 
-# === Wrong old-value with HEAD ===
-
-test_expect_success "(not) create HEAD with old sha1" '
-	cd repo &&
-	test_must_fail grit update-ref HEAD "$A" "$B"
+test_expect_success 'update-ref does not create reflogs by default' '
+	test_when_finished "git update-ref -d $outside" &&
+	git update-ref $outside $A &&
+	git rev-parse $A >expect &&
+	git rev-parse $outside >actual &&
+	test_cmp expect actual &&
+	test_must_fail git reflog exists $outside
 '
 
-test_expect_success "create HEAD" '
-	cd repo &&
-	grit update-ref HEAD "$A"
+test_expect_success 'update-ref creates reflogs with --create-reflog' '
+	test_when_finished "git update-ref -d $outside" &&
+	git update-ref --create-reflog $outside $A &&
+	git rev-parse $A >expect &&
+	git rev-parse $outside >actual &&
+	test_cmp expect actual &&
+	git reflog exists $outside
 '
 
-test_expect_success "(not) change HEAD with wrong SHA1" '
-	cd repo &&
-	test_must_fail grit update-ref HEAD "$B" "$Z"
+test_expect_success 'creates no reflog in bare repository' '
+	git -C $bare update-ref $m $bareA &&
+	git -C $bare rev-parse $bareA >expect &&
+	git -C $bare rev-parse $m >actual &&
+	test_cmp expect actual &&
+	test_must_fail git -C $bare reflog exists $m
 '
 
+test_expect_success 'core.logAllRefUpdates=true creates reflog in bare repository' '
+	test_when_finished "git -C $bare config --unset core.logAllRefUpdates && \
+		test-tool ref-store main delete-reflog $m" &&
+	git -C $bare config core.logAllRefUpdates true &&
+	git -C $bare update-ref $m $bareB &&
+	git -C $bare rev-parse $bareB >expect &&
+	git -C $bare rev-parse $m >actual &&
+	test_cmp expect actual &&
+	git -C $bare reflog exists $m
+'
+
+test_expect_success 'core.logAllRefUpdates=true does not create reflog by default' '
+	test_config core.logAllRefUpdates true &&
+	test_when_finished "git update-ref -d $outside" &&
+	git update-ref $outside $A &&
+	git rev-parse $A >expect &&
+	git rev-parse $outside >actual &&
+	test_cmp expect actual &&
+	test_must_fail git reflog exists $outside
+'
+
+test_expect_success 'core.logAllRefUpdates=always creates reflog by default' '
+	test_config core.logAllRefUpdates always &&
+	test_when_finished "git update-ref -d $outside" &&
+	git update-ref $outside $A &&
+	git rev-parse $A >expect &&
+	git rev-parse $outside >actual &&
+	test_cmp expect actual &&
+	git reflog exists $outside
+'
+
+test_expect_success 'core.logAllRefUpdates=always creates reflog for ORIG_HEAD' '
+	test_config core.logAllRefUpdates always &&
+	git update-ref ORIG_HEAD $A &&
+	git reflog exists ORIG_HEAD
+'
+
+test_expect_success '--no-create-reflog overrides core.logAllRefUpdates=always' '
+	test_config core.logAllRefUpdates true &&
+	test_when_finished "git update-ref -d $outside" &&
+	git update-ref --no-create-reflog $outside $A &&
+	git rev-parse $A >expect &&
+	git rev-parse $outside >actual &&
+	test_cmp expect actual &&
+	test_must_fail git reflog exists $outside
+'
+
+test_expect_success "create $m (by HEAD)" '
+	git update-ref HEAD $A &&
+	test $A = $(git show-ref -s --verify $m)
+'
+test_expect_success 'pack refs' '
+	git pack-refs --all
+'
+test_expect_success "move $m (by HEAD)" '
+	git update-ref HEAD $B $A &&
+	test $B = $(git show-ref -s --verify $m)
+'
+test_expect_success "delete $m (by HEAD) should remove both packed and loose $m" '
+	test_when_finished "git update-ref -d $m" &&
+	git update-ref -d HEAD $B &&
+	! grep "$m" .git/packed-refs &&
+	test_must_fail git show-ref --verify -q $m
+'
+
+test_expect_success 'delete symref without dereference' '
+	test_when_finished "git update-ref -d $m" &&
+	echo foo >foo.c &&
+	git add foo.c &&
+	git commit -m foo &&
+	git symbolic-ref SYMREF $m &&
+	git update-ref --no-deref -d SYMREF &&
+	git show-ref --verify -q $m &&
+	test_must_fail git show-ref --verify -q SYMREF &&
+	test_must_fail git symbolic-ref SYMREF
+'
+
+test_expect_success 'delete symref without dereference when the referred ref is packed' '
+	test_when_finished "git update-ref -d $m" &&
+	echo foo >foo.c &&
+	git add foo.c &&
+	git commit -m foo &&
+	git symbolic-ref SYMREF $m &&
+	git pack-refs --all &&
+	git update-ref --no-deref -d SYMREF &&
+	git show-ref --verify -q $m &&
+	test_must_fail git show-ref --verify -q SYMREF &&
+	test_must_fail git symbolic-ref SYMREF
+'
+
+test_expect_success 'update-ref -d is not confused by self-reference' '
+	test_when_finished "test-tool ref-store main delete-refs REF_NO_DEREF refs/heads/self" &&
+	git symbolic-ref refs/heads/self refs/heads/self &&
+	git symbolic-ref --no-recurse refs/heads/self &&
+	test_must_fail git update-ref -d refs/heads/self &&
+	git symbolic-ref --no-recurse refs/heads/self
+'
+
+test_expect_success 'update-ref --no-deref -d can delete self-reference' '
+	test_when_finished "test-tool ref-store main delete-refs REF_NO_DEREF refs/heads/self" &&
+	git symbolic-ref refs/heads/self refs/heads/self &&
+	git symbolic-ref --no-recurse refs/heads/self &&
+	git update-ref --no-deref -d refs/heads/self &&
+	test_must_fail git show-ref --verify -q refs/heads/self
+'
+
+test_expect_success REFFILES 'update-ref --no-deref -d can delete reference to bad ref' '
+	>.git/refs/heads/bad &&
+	test_when_finished "rm -f .git/refs/heads/bad" &&
+	git symbolic-ref refs/heads/ref-to-bad refs/heads/bad &&
+	test_when_finished "git update-ref -d refs/heads/ref-to-bad" &&
+	git symbolic-ref --no-recurse refs/heads/ref-to-bad &&
+	git update-ref --no-deref -d refs/heads/ref-to-bad &&
+	test_must_fail git show-ref --verify -q refs/heads/ref-to-bad
+'
+
+test_expect_success '(not) create HEAD with old sha1' '
+	test_must_fail git update-ref HEAD $A $B
+'
+test_expect_success "(not) prior created .git/$m" '
+	test_when_finished "git update-ref -d $m" &&
+	test_must_fail git show-ref --verify -q $m
+'
+
+test_expect_success 'create HEAD' '
+	git update-ref HEAD $A
+'
+test_expect_success '(not) change HEAD with wrong SHA1' '
+	test_must_fail git update-ref HEAD $B $Z
+'
 test_expect_success "(not) changed .git/$m" '
-	cd repo &&
-	test "$A" = "$(cat .git/refs/heads/master)"
+	test_when_finished "git update-ref -d $m" &&
+	! test $B = $(git show-ref -s --verify $m)
 '
 
-# === --stdin basics ===
-
-test_expect_success '--stdin accepts empty input' '
-	cd repo &&
-	: >stdin &&
-	grit update-ref --stdin <stdin &&
-	head_ref=$(head_ref_path) &&
-	echo "$A" >expect &&
-	cat ".git/$head_ref" >actual &&
-	test_cmp expect actual
+test_expect_success "clean up reflog" '
+	test-tool ref-store main delete-reflog $m
 '
 
-test_expect_success '--stdin create works' '
-	cd repo &&
-	echo "create refs/heads/topic $B" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$B" >expect &&
-	cat .git/refs/heads/topic >actual &&
-	test_cmp expect actual
+test_expect_success "create $m (logged by touch)" '
+	test_config core.logAllRefUpdates false &&
+	GIT_COMMITTER_DATE="2005-05-26 23:30" \
+	git update-ref --create-reflog HEAD $A -m "Initial Creation" &&
+	test $A = $(git show-ref -s --verify $m)
+'
+test_expect_success "update $m (logged by touch)" '
+	test_config core.logAllRefUpdates false &&
+	GIT_COMMITTER_DATE="2005-05-26 23:31" \
+	git update-ref HEAD $B $A -m "Switch" &&
+	test $B = $(git show-ref -s --verify $m)
+'
+test_expect_success "set $m (logged by touch)" '
+	test_config core.logAllRefUpdates false &&
+	GIT_COMMITTER_DATE="2005-05-26 23:41" \
+	git update-ref HEAD $A &&
+	test $A = $(git show-ref -s --verify $m)
 '
 
-test_expect_success '--stdin update with zero old-value creates ref' '
-	cd repo &&
-	echo "update refs/heads/newref $A $Z" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$A" >expect &&
-	cat .git/refs/heads/newref >actual &&
-	test_cmp expect actual
+cat >expect <<EOF
+$Z $A $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150200 +0000	Initial Creation
+$A $B $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150260 +0000	Switch
+$B $A $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150860 +0000
+EOF
+test_expect_success "verifying $m's log (logged by touch)" '
+	test_when_finished "git update-ref -d $m && git reflog expire --expire=all --all && rm -rf actual expect" &&
+	test-tool ref-store main for-each-reflog-ent $m >actual &&
+	test_cmp actual expect
 '
 
-test_expect_success '--stdin fails on unknown command' '
-	cd repo &&
-	echo "unknown refs/heads/a" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	grep "unknown" err
+test_expect_success "create $m (logged by config)" '
+	test_config core.logAllRefUpdates true &&
+	GIT_COMMITTER_DATE="2005-05-26 23:32" \
+	git update-ref HEAD $A -m "Initial Creation" &&
+	test $A = $(git show-ref -s --verify $m)
+'
+test_expect_success "update $m (logged by config)" '
+	test_config core.logAllRefUpdates true &&
+	GIT_COMMITTER_DATE="2005-05-26 23:33" \
+	git update-ref HEAD $B $A -m "Switch" &&
+	test $B = $(git show-ref -s --verify $m)
+'
+test_expect_success "set $m (logged by config)" '
+	test_config core.logAllRefUpdates true &&
+	GIT_COMMITTER_DATE="2005-05-26 23:43" \
+	git update-ref HEAD $A &&
+	test $A = $(git show-ref -s --verify $m)
 '
 
-test_expect_success '--stdin fails on unbalanced quotes' '
-	cd repo &&
-	echo "create refs/heads/a \"master" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err
+cat >expect <<EOF
+$Z $A $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150320 +0000	Initial Creation
+$A $B $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150380 +0000	Switch
+$B $A $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150980 +0000
+EOF
+test_expect_success "verifying $m's log (logged by config)" '
+	test_when_finished "git update-ref -d $m && git reflog expire --expire=all --all && rm -rf actual expect" &&
+	test-tool ref-store main for-each-reflog-ent $m >actual &&
+	test_cmp actual expect
 '
 
-test_expect_success '--stdin fails create with no ref' '
-	cd repo &&
-	echo "create " >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err
-'
+test_expect_success 'set up for querying the reflog' '
+	git update-ref -d $m &&
+	test-tool ref-store main delete-reflog $m &&
 
-test_expect_success '--stdin fails create with no new value' '
-	cd repo &&
-	echo "create refs/heads/a" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err
-'
+	GIT_COMMITTER_DATE="1117150320 -0500" git update-ref $m $C &&
+	GIT_COMMITTER_DATE="1117150350 -0500" git update-ref $m $A &&
+	GIT_COMMITTER_DATE="1117150380 -0500" git update-ref $m $B &&
+	GIT_COMMITTER_DATE="1117150680 -0500" git update-ref $m $F &&
+	GIT_COMMITTER_DATE="1117150980 -0500" git update-ref $m $E &&
+	git update-ref $m $D &&
+	# Delete the last reflog entry so that the tip of m and the reflog for
+	# it disagree.
+	git reflog delete $m@{0} &&
 
-test_expect_success '--stdin fails update with no ref' '
-	cd repo &&
-	echo "update " >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err
-'
-
-test_expect_success '--stdin fails update with no new value' '
-	cd repo &&
-	echo "update refs/heads/a" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err
-'
-
-test_expect_success '--stdin fails delete with no ref' '
-	cd repo &&
-	echo "delete " >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err
-'
-
-test_expect_success '--stdin fails with duplicate refs' '
-	cd repo &&
-	cat >stdin <<-EOF &&
-	create refs/heads/dup1 $A
-	create refs/heads/dup2 $A
-	create refs/heads/dup1 $A
+	cat >expect <<-EOF &&
+	$Z $C $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150320 -0500
+	$C $A $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150350 -0500
+	$A $B $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150380 -0500
+	$B $F $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150680 -0500
+	$F $E $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150980 -0500
 	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err
+	test-tool ref-store main for-each-reflog-ent $m >actual &&
+	test_cmp expect actual
+'
+
+ed="Thu, 26 May 2005 18:32:00 -0500"
+gd="Thu, 26 May 2005 18:33:00 -0500"
+ld="Thu, 26 May 2005 18:43:00 -0500"
+test_expect_success 'Query "main@{May 25 2005}" (before history)' '
+	test_when_finished "rm -f o e" &&
+	git rev-parse --verify "main@{May 25 2005}" >o 2>e &&
+	echo "$C" >expect &&
+	test_cmp expect o &&
+	echo "warning: log for '\''main'\'' only goes back to $ed" >expect &&
+	test_cmp expect e
+'
+test_expect_success 'Query main@{2005-05-25} (before history)' '
+	test_when_finished "rm -f o e" &&
+	git rev-parse --verify main@{2005-05-25} >o 2>e &&
+	echo "$C" >expect &&
+	test_cmp expect o &&
+	echo "warning: log for '\''main'\'' only goes back to $ed" >expect &&
+	test_cmp expect e
+'
+test_expect_success 'Query "main@{May 26 2005 23:31:59}" (1 second before history)' '
+	test_when_finished "rm -f o e" &&
+	git rev-parse --verify "main@{May 26 2005 23:31:59}" >o 2>e &&
+	echo "$C" >expect &&
+	test_cmp expect o &&
+	echo "warning: log for '\''main'\'' only goes back to $ed" >expect &&
+	test_cmp expect e
+'
+test_expect_success 'Query "main@{May 26 2005 23:32:00}" (exactly history start)' '
+	test_when_finished "rm -f o e" &&
+	git rev-parse --verify "main@{May 26 2005 23:32:00}" >o 2>e &&
+	echo "$C" >expect &&
+	test_cmp expect o &&
+	test_must_be_empty e
+'
+test_expect_success 'Query "main@{May 26 2005 23:32:30}" (first non-creation change)' '
+	test_when_finished "rm -f o e" &&
+	git rev-parse --verify "main@{May 26 2005 23:32:30}" >o 2>e &&
+	echo "$A" >expect &&
+	test_cmp expect o &&
+	test_must_be_empty e
+'
+test_expect_success 'Query "main@{2005-05-26 23:33:01}" (middle of history with gap)' '
+	test_when_finished "rm -f o e" &&
+	git rev-parse --verify "main@{2005-05-26 23:33:01}" >o 2>e &&
+	echo "$B" >expect &&
+	test_cmp expect o
+'
+test_expect_success 'Query "main@{2005-05-26 23:38:00}" (middle of history)' '
+	test_when_finished "rm -f o e" &&
+	git rev-parse --verify "main@{2005-05-26 23:38:00}" >o 2>e &&
+	echo "$F" >expect &&
+	test_cmp expect o &&
+	test_must_be_empty e
+'
+test_expect_success 'Query "main@{2005-05-26 23:43:00}" (exact end of history)' '
+	test_when_finished "rm -f o e" &&
+	git rev-parse --verify "main@{2005-05-26 23:43:00}" >o 2>e &&
+	echo "$E" >expect &&
+	test_cmp expect o &&
+	test_must_be_empty e
+'
+test_expect_success 'Query "main@{2005-05-28}" (past end of history)' '
+	test_when_finished "rm -f o e" &&
+	git rev-parse --verify "main@{2005-05-28}" >o 2>e &&
+	echo "$D" >expect &&
+	test_cmp expect o &&
+	test_grep -F "warning: log for ref $m unexpectedly ended on $ld" e
+'
+
+rm -f expect
+git update-ref -d $m
+
+test_expect_success 'query reflog with gap' '
+	test_when_finished "git update-ref -d $m" &&
+
+	GIT_COMMITTER_DATE="1117150320 -0500" git update-ref $m $A &&
+	GIT_COMMITTER_DATE="1117150380 -0500" git update-ref $m $B &&
+	GIT_COMMITTER_DATE="1117150480 -0500" git update-ref $m $C &&
+	GIT_COMMITTER_DATE="1117150580 -0500" git update-ref $m $D &&
+	GIT_COMMITTER_DATE="1117150680 -0500" git update-ref $m $F &&
+	git reflog delete $m@{2} &&
+
+	git rev-parse --verify "main@{2005-05-26 23:33:01}" >actual 2>stderr &&
+	echo "$B" >expect &&
+	test_cmp expect actual &&
+	test_grep -F "warning: log for ref $m has gap after $gd" stderr
+'
+
+test_expect_success 'creating initial files' '
+	test_when_finished rm -f M &&
+	echo TEST >F &&
+	git add F &&
+	GIT_AUTHOR_DATE="2005-05-26 23:30" \
+	GIT_COMMITTER_DATE="2005-05-26 23:30" git commit -m add -a &&
+	h_TEST=$(git rev-parse --verify HEAD) &&
+	echo The other day this did not work. >M &&
+	echo And then Bob told me how to fix it. >>M &&
+	echo OTHER >F &&
+	GIT_AUTHOR_DATE="2005-05-26 23:41" \
+	GIT_COMMITTER_DATE="2005-05-26 23:41" git commit -F M -a &&
+	h_OTHER=$(git rev-parse --verify HEAD) &&
+	GIT_AUTHOR_DATE="2005-05-26 23:44" \
+	GIT_COMMITTER_DATE="2005-05-26 23:44" git commit --amend &&
+	h_FIXED=$(git rev-parse --verify HEAD) &&
+	echo Merged initial commit and a later commit. >M &&
+	echo $h_TEST >.git/MERGE_HEAD &&
+	GIT_AUTHOR_DATE="2005-05-26 23:45" \
+	GIT_COMMITTER_DATE="2005-05-26 23:45" git commit -F M &&
+	h_MERGED=$(git rev-parse --verify HEAD)
+'
+
+cat >expect <<EOF
+$Z $h_TEST $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150200 +0000	commit (initial): add
+$h_TEST $h_OTHER $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117150860 +0000	commit: The other day this did not work.
+$h_OTHER $h_FIXED $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117151040 +0000	commit (amend): The other day this did not work.
+$h_FIXED $h_MERGED $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> 1117151100 +0000	commit (merge): Merged initial commit and a later commit.
+EOF
+test_expect_success 'git commit logged updates' '
+	test-tool ref-store main for-each-reflog-ent $m >actual &&
+	test_cmp expect actual
+'
+unset h_TEST h_OTHER h_FIXED h_MERGED
+
+test_expect_success 'git cat-file blob main:F (expect OTHER)' '
+	test OTHER = $(git cat-file blob main:F)
+'
+test_expect_success 'git cat-file blob main@{2005-05-26 23:30}:F (expect TEST)' '
+	test TEST = $(git cat-file blob "main@{2005-05-26 23:30}:F")
+'
+test_expect_success 'git cat-file blob main@{2005-05-26 23:42}:F (expect OTHER)' '
+	test OTHER = $(git cat-file blob "main@{2005-05-26 23:42}:F")
+'
+
+# Test adding and deleting pseudorefs
+
+test_expect_success 'given old value for missing pseudoref, do not create' '
+	test_must_fail git update-ref PSEUDOREF $A $B 2>err &&
+	test_must_fail git rev-parse PSEUDOREF &&
+	test_grep "unable to resolve reference" err
+'
+
+test_expect_success 'create pseudoref' '
+	git update-ref PSEUDOREF $A &&
+	test $A = $(git show-ref -s --verify PSEUDOREF)
+'
+
+test_expect_success 'overwrite pseudoref with no old value given' '
+	git update-ref PSEUDOREF $B &&
+	test $B = $(git show-ref -s --verify PSEUDOREF)
+'
+
+test_expect_success 'overwrite pseudoref with correct old value' '
+	git update-ref PSEUDOREF $C $B &&
+	test $C = $(git show-ref -s --verify PSEUDOREF)
+'
+
+test_expect_success 'do not overwrite pseudoref with wrong old value' '
+	test_must_fail git update-ref PSEUDOREF $D $E 2>err &&
+	test $C = $(git show-ref -s --verify PSEUDOREF) &&
+	test_grep "cannot lock ref.*expected" err
+'
+
+test_expect_success 'delete pseudoref' '
+	git update-ref -d PSEUDOREF &&
+	test_must_fail git show-ref -s --verify PSEUDOREF
+'
+
+test_expect_success 'do not delete pseudoref with wrong old value' '
+	git update-ref PSEUDOREF $A &&
+	test_must_fail git update-ref -d PSEUDOREF $B 2>err &&
+	test $A = $(git show-ref -s --verify PSEUDOREF) &&
+	test_grep "cannot lock ref.*expected" err
+'
+
+test_expect_success 'delete pseudoref with correct old value' '
+	git update-ref -d PSEUDOREF $A &&
+	test_must_fail git show-ref -s --verify PSEUDOREF
+'
+
+test_expect_success 'create pseudoref with old OID zero' '
+	git update-ref PSEUDOREF $A $Z &&
+	test $A = $(git show-ref -s --verify PSEUDOREF)
+'
+
+test_expect_success 'do not overwrite pseudoref with old OID zero' '
+	test_when_finished git update-ref -d PSEUDOREF &&
+	test_must_fail git update-ref PSEUDOREF $B $Z 2>err &&
+	test $A = $(git show-ref -s --verify PSEUDOREF) &&
+	test_grep "already exists" err
+'
+
+# Test --stdin
+
+a=refs/heads/a
+b=refs/heads/b
+c=refs/heads/c
+E='""'
+F='%s\0'
+pws='path with space'
+
+test_expect_success 'stdin test setup' '
+	echo "$pws" >"$pws" &&
+	git add -- "$pws" &&
+	git commit -m "$pws"
+'
+
+test_expect_success '-z fails without --stdin' '
+	test_must_fail git update-ref -z $m $m $m 2>err &&
+	test_grep "usage: git update-ref" err
+'
+
+test_expect_success 'stdin works with no input' '
+	>stdin &&
+	git update-ref --stdin <stdin &&
+	git rev-parse --verify -q $m
+'
+
+test_expect_success 'stdin fails on empty line' '
+	echo "" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: empty command in input" err
+'
+
+test_expect_success 'stdin fails on only whitespace' '
+	echo " " >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: whitespace before command:  " err
+'
+
+test_expect_success 'stdin fails on leading whitespace' '
+	echo " create $a $m" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: whitespace before command:  create $a $m" err
+'
+
+test_expect_success 'stdin fails on unknown command' '
+	echo "unknown $a" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: unknown command: unknown $a" err
+'
+
+test_expect_success 'stdin fails on unbalanced quotes' '
+	echo "create $a \"main" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: badly quoted argument: \\\"main" err
+'
+
+test_expect_success 'stdin fails on invalid escape' '
+	echo "create $a \"ma\zn\"" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: badly quoted argument: \\\"ma\\\\zn\\\"" err
+'
+
+test_expect_success 'stdin fails on junk after quoted argument' '
+	echo "create \"$a\"main" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: unexpected character after quoted argument: \\\"$a\\\"main" err
+'
+
+test_expect_success 'stdin fails create with no ref' '
+	echo "create " >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: create: missing <ref>" err
+'
+
+test_expect_success 'stdin fails create with no new value' '
+	echo "create $a" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: create $a: missing <new-oid>" err
+'
+
+test_expect_success 'stdin fails create with too many arguments' '
+	echo "create $a $m $m" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: create $a: extra input:  $m" err
+'
+
+test_expect_success 'stdin fails update with no ref' '
+	echo "update " >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: update: missing <ref>" err
+'
+
+test_expect_success 'stdin fails update with no new value' '
+	echo "update $a" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: update $a: missing <new-oid>" err
+'
+
+test_expect_success 'stdin fails update with too many arguments' '
+	echo "update $a $m $m $m" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: update $a: extra input:  $m" err
+'
+
+test_expect_success 'stdin fails delete with no ref' '
+	echo "delete " >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: delete: missing <ref>" err
+'
+
+test_expect_success 'stdin fails delete with too many arguments' '
+	echo "delete $a $m $m" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: delete $a: extra input:  $m" err
+'
+
+test_expect_success 'stdin fails verify with too many arguments' '
+	echo "verify $a $m $m" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: verify $a: extra input:  $m" err
+'
+
+test_expect_success 'stdin fails option with unknown name' '
+	echo "option unknown" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: option unknown: unknown" err
+'
+
+test_expect_success 'stdin fails with duplicate refs' '
+	cat >stdin <<-EOF &&
+	create $a $m
+	create $b $m
+	create $a $m
+	EOF
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	test_grep "fatal: multiple updates for ref '"'"'$a'"'"' not allowed" err
 '
 
 test_expect_success 'stdin create ref works' '
-	cd repo &&
-	grit update-ref -d refs/heads/a 2>/dev/null || true &&
-	echo "create refs/heads/a $A" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$A" >expect &&
-	grit rev-parse refs/heads/a >actual &&
+	echo "create $a $m" >stdin &&
+	git update-ref --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin does not create reflogs by default' '
+	test_when_finished "git update-ref -d $outside" &&
+	echo "create $outside $m" >stdin &&
+	git update-ref --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $outside >actual &&
+	test_cmp expect actual &&
+	test_must_fail git reflog exists $outside
+'
+
+test_expect_success 'stdin creates reflogs with --create-reflog' '
+	test_when_finished "git update-ref -d $outside" &&
+	echo "create $outside $m" >stdin &&
+	git update-ref --create-reflog --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $outside >actual &&
+	test_cmp expect actual &&
+	git reflog exists $outside
+'
+
+test_expect_success 'stdin succeeds with quoted argument' '
+	git update-ref -d $a &&
+	echo "create $a \"$m\"" >stdin &&
+	git update-ref --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin succeeds with escaped character' '
+	git update-ref -d $a &&
+	echo "create $a \"ma\\151n\"" >stdin &&
+	git update-ref --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'stdin update ref creates with zero old value' '
-	cd repo &&
-	grit update-ref -d refs/heads/b 2>/dev/null || true &&
-	echo "update refs/heads/b $B $Z" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$B" >expect &&
-	grit rev-parse refs/heads/b >actual &&
+	echo "update $b $m $Z" >stdin &&
+	git update-ref --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual &&
+	git update-ref -d $b
+'
+
+test_expect_success 'stdin update ref creates with empty old value' '
+	echo "update $b $m $E" >stdin &&
+	git update-ref --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $b >actual &&
 	test_cmp expect actual
+'
+
+test_expect_success 'stdin create ref works with path with space to blob' '
+	echo "create refs/blobs/pws \"$m:$pws\"" >stdin &&
+	git update-ref --stdin <stdin &&
+	git rev-parse "$m:$pws" >expect &&
+	git rev-parse refs/blobs/pws >actual &&
+	test_cmp expect actual &&
+	git update-ref -d refs/blobs/pws
+'
+
+test_expect_success 'stdin update ref fails with wrong old value' '
+	echo "update $c $m $m~1" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: cannot lock ref '"'"'$c'"'"'" err &&
+	test_must_fail git rev-parse --verify -q $c
 '
 
 test_expect_success 'stdin update ref fails with bad old value' '
-	cd repo &&
-	echo "update refs/heads/c $A does-not-exist" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	grep "does-not-exist" err
+	echo "update $c $m does-not-exist" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: update $c: invalid <old-oid>: does-not-exist" err &&
+	test_must_fail git rev-parse --verify -q $c
 '
 
 test_expect_success 'stdin create ref fails with bad new value' '
-	cd repo &&
-	echo "create refs/heads/c does-not-exist" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	grep "does-not-exist" err
-'
-
-test_expect_success 'stdin delete ref fails with wrong old value' '
-	cd repo &&
-	echo "delete refs/heads/a $B" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$A" >expect &&
-	grit rev-parse refs/heads/a >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin delete ref works with right old value' '
-	cd repo &&
-	grit update-ref refs/heads/delme $C &&
-	echo "delete refs/heads/delme $C" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/delme
-'
-
-# === stdin verify ===
-
-test_expect_success 'stdin verify succeeds for correct value' '
-	cd repo &&
-	echo "verify refs/heads/a $A" >stdin &&
-	grit update-ref --stdin <stdin
-'
-
-test_expect_success 'stdin verify succeeds for missing reference' '
-	cd repo &&
-	echo "verify refs/heads/missing $Z" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/missing
-'
-
-test_expect_success 'stdin verify fails for wrong value' '
-	cd repo &&
-	echo "verify refs/heads/a $B" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin
-'
-
-test_expect_success 'stdin verify fails for mistaken null value' '
-	cd repo &&
-	echo "verify refs/heads/a $Z" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin
-'
-
-# === stdin update/create/verify combination ===
-
-test_expect_success 'stdin update/create combination works' '
-	cd repo &&
-	grit update-ref -d refs/heads/c 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	update refs/heads/a $A
-	create refs/heads/c $C
-	EOF
-	grit update-ref --stdin <stdin &&
-	echo "$A" >expect &&
-	grit rev-parse refs/heads/a >actual &&
-	test_cmp expect actual &&
-	echo "$C" >expect &&
-	grit rev-parse refs/heads/c >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin update refs works with identity updates' '
-	cd repo &&
-	cat >stdin <<-EOF &&
-	update refs/heads/a $A $A
-	update refs/heads/b $B $B
-	EOF
-	grit update-ref --stdin <stdin &&
-	echo "$A" >expect &&
-	grit rev-parse refs/heads/a >actual &&
-	test_cmp expect actual &&
-	echo "$B" >expect &&
-	grit rev-parse refs/heads/b >actual &&
-	test_cmp expect actual
-'
-
-# === Pseudoref tests (with real objects) ===
-
-test_expect_success 'setup real repo for pseudoref tests' '
-	grit init real-repo &&
-	cd real-repo &&
-	echo test >file.txt &&
-	grit add file.txt &&
-	GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="test@test" \
-	GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="test@test" \
-	grit commit -m "initial" &&
-	echo change >file.txt &&
-	grit add file.txt &&
-	GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="test@test" \
-	GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="test@test" \
-	grit commit -m "second"
-'
-
-test_expect_success 'given old value for missing pseudoref, do not create' '
-	cd real-repo &&
-	SHA_A=$(grit rev-parse HEAD) &&
-	SHA_B=$(grit rev-parse HEAD~1) &&
-	test_must_fail grit update-ref PSEUDOREF "$SHA_A" "$SHA_B" 2>err &&
-	test_must_fail grit rev-parse PSEUDOREF 2>/dev/null
-'
-
-test_expect_success 'create pseudoref' '
-	cd real-repo &&
-	SHA_A=$(grit rev-parse HEAD) &&
-	grit update-ref PSEUDOREF "$SHA_A" &&
-	test "$SHA_A" = "$(grit rev-parse PSEUDOREF)"
-'
-
-test_expect_success 'overwrite pseudoref with no old value given' '
-	cd real-repo &&
-	SHA_B=$(grit rev-parse HEAD~1) &&
-	grit update-ref PSEUDOREF "$SHA_B" &&
-	test "$SHA_B" = "$(grit rev-parse PSEUDOREF)"
-'
-
-test_expect_success 'overwrite pseudoref with correct old value' '
-	cd real-repo &&
-	SHA_A=$(grit rev-parse HEAD) &&
-	SHA_B=$(grit rev-parse HEAD~1) &&
-	grit update-ref PSEUDOREF "$SHA_A" "$SHA_B" &&
-	test "$SHA_A" = "$(grit rev-parse PSEUDOREF)"
-'
-
-test_expect_success 'do not overwrite pseudoref with wrong old value' '
-	cd real-repo &&
-	SHA_A=$(grit rev-parse HEAD) &&
-	SHA_B=$(grit rev-parse HEAD~1) &&
-	test_must_fail grit update-ref PSEUDOREF "$SHA_B" "$SHA_B" 2>err &&
-	test "$SHA_A" = "$(grit rev-parse PSEUDOREF)"
-'
-
-test_expect_success 'delete pseudoref' '
-	cd real-repo &&
-	grit update-ref -d PSEUDOREF &&
-	test_must_fail grit rev-parse PSEUDOREF 2>/dev/null
-'
-
-test_expect_success 'do not delete pseudoref with wrong old value' '
-	cd real-repo &&
-	SHA_A=$(grit rev-parse HEAD) &&
-	SHA_B=$(grit rev-parse HEAD~1) &&
-	grit update-ref PSEUDOREF "$SHA_A" &&
-	test_must_fail grit update-ref -d PSEUDOREF "$SHA_B" 2>err &&
-	test "$SHA_A" = "$(grit rev-parse PSEUDOREF)"
-'
-
-test_expect_success 'delete pseudoref with correct old value' '
-	cd real-repo &&
-	SHA_A=$(grit rev-parse HEAD) &&
-	grit update-ref -d PSEUDOREF "$SHA_A" &&
-	test_must_fail grit rev-parse PSEUDOREF 2>/dev/null
-'
-
-test_expect_success 'create pseudoref with old OID zero' '
-	cd real-repo &&
-	SHA_A=$(grit rev-parse HEAD) &&
-	grit update-ref PSEUDOREF "$SHA_A" "$Z" &&
-	test "$SHA_A" = "$(grit rev-parse PSEUDOREF)"
-'
-
-test_expect_success 'do not overwrite pseudoref with old OID zero' '
-	cd real-repo &&
-	SHA_A=$(grit rev-parse HEAD) &&
-	SHA_B=$(grit rev-parse HEAD~1) &&
-	test_must_fail grit update-ref PSEUDOREF "$SHA_B" "$Z" 2>err &&
-	test "$SHA_A" = "$(grit rev-parse PSEUDOREF)" &&
-	grit update-ref -d PSEUDOREF
-'
-
-# === stdin with real objects ===
-
-test_expect_success 'stdin test setup' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	echo "$m_sha" >expect
-'
-
-test_expect_success 'stdin works with no input' '
-	cd real-repo &&
-	>stdin &&
-	grit update-ref --stdin <stdin &&
-	grit rev-parse --verify -q refs/heads/master
-'
-
-test_expect_success 'stdin create ref works (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/stdintest 2>/dev/null || true &&
-	echo "create refs/heads/stdintest refs/heads/master" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/stdintest >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin update ref creates with zero old value (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/uptest 2>/dev/null || true &&
-	echo "update refs/heads/uptest refs/heads/master $Z" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/uptest >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin update ref fails with wrong old value (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/failtest "$m_sha" &&
-	echo "update refs/heads/failtest $Z $Z" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err
-'
-
-test_expect_success 'stdin delete ref works with right old value (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/deltest "$m_sha" &&
-	echo "delete refs/heads/deltest $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/deltest
-'
-
-test_expect_success 'stdin verify succeeds for correct value (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	echo "verify refs/heads/master $m_sha" >stdin &&
-	grit update-ref --stdin <stdin
-'
-
-test_expect_success 'stdin verify succeeds for missing reference (real objects)' '
-	cd real-repo &&
-	echo "verify refs/heads/nosuchref $Z" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/nosuchref
-'
-
-test_expect_success 'stdin verify fails for wrong value (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	echo "verify refs/heads/master $parent_sha" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin
-'
-
-test_expect_success 'stdin verify fails for mistaken null value (real objects)' '
-	cd real-repo &&
-	echo "verify refs/heads/master $Z" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin
-'
-
-# === Transaction tests ===
-
-test_expect_success 'transaction start/create/commit reports status' '
-	cd repo &&
-	cat >stdin <<-\EOF &&
-	start
-	create refs/heads/txref 3333333333333333333333333333333333333333
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	cat >expect <<-\EOF &&
-	start: ok
-	commit: ok
-	EOF
-	test_cmp expect actual &&
-	echo 3333333333333333333333333333333333333333 >expect &&
-	cat .git/refs/heads/txref >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'transaction handles empty commit with missing prepare' '
-	cd repo &&
-	cat >stdin <<-\EOF &&
-	start
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'transaction handles empty abort' '
-	cd real-repo &&
-	cat >stdin <<-\EOF &&
-	start
-	abort
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'transaction handles sole abort' '
-	cd real-repo &&
-	cat >stdin <<-\EOF &&
-	abort
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success 'transaction can handle commit (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/txcommit 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/txcommit $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/txcommit >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'transaction can handle abort (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/txabort 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/txabort $m_sha
-	abort
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/txabort
-'
-
-test_expect_success 'transaction aborts by default' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/txdefault 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/txdefault $m_sha
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/txdefault
-'
-
-test_expect_success 'transaction can commit multiple times' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref -d refs/heads/branch-1 2>/dev/null || true &&
-	grit update-ref -d refs/heads/branch-2 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/branch-1 $parent_sha
-	commit
-	start
-	create refs/heads/branch-2 $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit start commit >expect &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/branch-1 >actual &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/branch-2 >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'transaction can create and delete' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/create-and-delete 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/create-and-delete $m_sha
-	commit
-	start
-	delete refs/heads/create-and-delete $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit start commit >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/create-and-delete
-'
-
-test_expect_success 'transaction can commit after abort' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/abort-then-commit 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/abort-then-commit $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/abort-then-commit >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'transaction cannot restart ongoing transaction' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/restart 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/restart $m_sha
-	start
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/restart
-'
-
-# === More stdin error handling tests ===
-
-test_expect_success 'stdin fails option with unknown name' '
-	cd repo &&
-	echo "option unknown" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err
+	echo "create $c does-not-exist" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: create $c: invalid <new-oid>: does-not-exist" err &&
+	test_must_fail git rev-parse --verify -q $c
 '
 
 test_expect_success 'stdin create ref fails with zero new value' '
-	cd repo &&
-	echo "create refs/heads/zeronew " >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err
+	echo "create $c " >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: create $c: zero <new-oid>" err &&
+	test_must_fail git rev-parse --verify -q $c
+'
+
+test_expect_success 'stdin update ref works with right old value' '
+	echo "update $b $m~1 $m" >stdin &&
+	git update-ref --stdin <stdin &&
+	git rev-parse $m~1 >expect &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin delete ref fails with wrong old value' '
+	echo "delete $a $m~1" >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: cannot lock ref '"'"'$a'"'"'" err &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual
 '
 
 test_expect_success 'stdin delete ref fails with zero old value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/delzero "$m_sha" &&
-	echo "delete refs/heads/delzero " >stdin &&
-	grit update-ref --stdin <stdin 2>err &&
-	test_must_fail grit rev-parse --verify -q refs/heads/delzero
+	echo "delete $a " >stdin &&
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: delete $a: zero <old-oid>" err &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual
 '
 
-# === Real-repo for-each-ref based tests ===
-
-test_expect_success 'for-each-ref with prefix filter' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/test/one "$m_sha" &&
-	grit update-ref refs/test/two "$m_sha" &&
-	grit for-each-ref refs/test/ >actual &&
-	grep refs/test/one actual &&
-	grep refs/test/two actual
-'
-
-# === Multiple refs in a single stdin transaction ===
-
-test_expect_success 'stdin creates multiple refs in one transaction' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref -d refs/heads/multi1 2>/dev/null || true &&
-	grit update-ref -d refs/heads/multi2 2>/dev/null || true &&
-	grit update-ref -d refs/heads/multi3 2>/dev/null || true &&
+test_expect_success 'stdin update symref works option no-deref' '
+	git symbolic-ref TESTSYMREF $b &&
 	cat >stdin <<-EOF &&
-	start
-	create refs/heads/multi1 $m_sha
-	create refs/heads/multi2 $parent_sha
-	create refs/heads/multi3 $m_sha
-	commit
+	option no-deref
+	update TESTSYMREF $a $b
 	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
+	git update-ref --stdin <stdin &&
+	git rev-parse TESTSYMREF >expect &&
+	git rev-parse $a >actual &&
 	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/multi1 >actual &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/multi2 >actual &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/multi3 >actual &&
+	git rev-parse $m~1 >expect &&
+	git rev-parse $b >actual &&
 	test_cmp expect actual
 '
 
-# === HEAD-related tests with real objects ===
-
-test_expect_success 'updating HEAD with real commits' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref HEAD "$parent_sha" "$m_sha" &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse HEAD >actual &&
-	test_cmp expect actual &&
-	grit update-ref HEAD "$m_sha" "$parent_sha"
-'
-
-test_expect_success 'show-ref -s --verify works' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	echo "$m_sha" >expect &&
-	grit show-ref -s --verify refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'show-ref --verify -q fails on missing ref' '
-	cd real-repo &&
-	test_must_fail grit show-ref --verify -q refs/heads/nonexistent
-'
-
-# === Symbolic-ref related ===
-
-test_expect_success 'symbolic-ref read and write' '
-	cd real-repo &&
-	grit symbolic-ref HEAD >actual &&
-	echo refs/heads/master >expect &&
-	test_cmp expect actual
-'
-
-# === Multiple deletes ===
-
-test_expect_success 'stdin can delete multiple refs' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/del1 "$m_sha" &&
-	grit update-ref refs/heads/del2 "$m_sha" &&
+test_expect_success 'stdin delete symref works option no-deref' '
+	git symbolic-ref TESTSYMREF $b &&
 	cat >stdin <<-EOF &&
-	delete refs/heads/del1 $m_sha
-	delete refs/heads/del2 $m_sha
+	option no-deref
+	delete TESTSYMREF $b
 	EOF
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/del1 &&
-	test_must_fail grit rev-parse --verify -q refs/heads/del2
-'
-
-# === Ref in deep hierarchy ===
-
-test_expect_success 'create deeply nested ref' '
-	cd repo &&
-	grit update-ref refs/heads/nested/deep/ref "$A" &&
-	echo "$A" >expect &&
-	cat .git/refs/heads/nested/deep/ref >actual &&
+	git update-ref --stdin <stdin &&
+	test_must_fail git rev-parse --verify -q TESTSYMREF &&
+	git rev-parse $m~1 >expect &&
+	git rev-parse $b >actual &&
 	test_cmp expect actual
 '
-
-test_expect_success 'update deeply nested ref' '
-	cd repo &&
-	grit update-ref refs/heads/nested/deep/ref "$B" "$A" &&
-	echo "$B" >expect &&
-	cat .git/refs/heads/nested/deep/ref >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'delete deeply nested ref' '
-	cd repo &&
-	grit update-ref -d refs/heads/nested/deep/ref "$B" &&
-	test_path_is_missing .git/refs/heads/nested/deep/ref
-'
-
-# === Tags namespace ===
-
-test_expect_success 'create ref in tags namespace' '
-	cd repo &&
-	grit update-ref refs/tags/v1.0 "$A" &&
-	echo "$A" >expect &&
-	cat .git/refs/tags/v1.0 >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'delete ref in tags namespace' '
-	cd repo &&
-	grit update-ref -d refs/tags/v1.0 "$A" &&
-	test_path_is_missing .git/refs/tags/v1.0
-'
-
-# === Custom namespace ===
-
-test_expect_success 'create ref in custom namespace' '
-	cd repo &&
-	grit update-ref refs/custom/test "$C" &&
-	echo "$C" >expect &&
-	cat .git/refs/custom/test >actual &&
-	test_cmp expect actual
-'
-
-# === Verify combination test ===
-
-test_expect_success 'stdin update + verify in same batch' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/verifyme "$m_sha" &&
-	cat >stdin <<-EOF &&
-	verify refs/heads/verifyme $m_sha
-	update refs/heads/verifyme $m_sha $m_sha
-	EOF
-	grit update-ref --stdin <stdin
-'
-
-test_expect_success 'stdin verify blocks if wrong, atomicity preserved' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/atomictest "$m_sha" &&
-	cat >stdin <<-EOF &&
-	verify refs/heads/atomictest $parent_sha
-	update refs/heads/atomictest $parent_sha $m_sha
-	EOF
-	test_must_fail grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/atomictest >actual &&
-	test_cmp expect actual
-'
-
-# === delete symref without dereference ===
-
-test_expect_success 'delete symref without dereference' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit symbolic-ref SYMREF refs/heads/master &&
-	grit update-ref --no-deref -d SYMREF &&
-	grit show-ref --verify -q refs/heads/master &&
-	test_must_fail grit show-ref --verify -q SYMREF &&
-	test_must_fail grit symbolic-ref SYMREF
-'
-
-test_expect_success 'delete symref without dereference preserves underlying ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit symbolic-ref SYMREF2 refs/heads/master &&
-	grit update-ref --no-deref -d SYMREF2 &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual &&
-	test_must_fail grit show-ref --verify -q SYMREF2
-'
-
-# === update-ref --no-deref -d can delete self-reference ===
-
-test_expect_success 'update-ref --no-deref -d can delete self-reference' '
-	cd real-repo &&
-	grit symbolic-ref refs/heads/self refs/heads/self &&
-	grit update-ref --no-deref -d refs/heads/self &&
-	test_must_fail grit show-ref --verify -q refs/heads/self
-'
-
-# === --no-deref with stdin flag ===
 
 test_expect_success 'stdin update symref works flag --no-deref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit symbolic-ref TESTSYMREFONE refs/heads/master &&
-	grit symbolic-ref TESTSYMREFTWO refs/heads/master &&
+	git symbolic-ref TESTSYMREFONE $b &&
+	git symbolic-ref TESTSYMREFTWO $b &&
 	cat >stdin <<-EOF &&
-	update TESTSYMREFONE $parent_sha $m_sha
-	update TESTSYMREFTWO $parent_sha $m_sha
+	update TESTSYMREFONE $a $b
+	update TESTSYMREFTWO $a $b
 	EOF
-	grit update-ref --no-deref --stdin <stdin &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse TESTSYMREFONE >actual &&
+	git update-ref --no-deref --stdin <stdin &&
+	git rev-parse TESTSYMREFONE TESTSYMREFTWO >expect &&
+	git rev-parse $a $a >actual &&
 	test_cmp expect actual &&
-	grit rev-parse TESTSYMREFTWO >actual &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
+	git rev-parse $m~1 >expect &&
+	git rev-parse $b >actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'stdin delete symref works flag --no-deref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit symbolic-ref TESTSYMDEL1 refs/heads/master &&
-	grit symbolic-ref TESTSYMDEL2 refs/heads/master &&
+	git symbolic-ref TESTSYMREFONE $b &&
+	git symbolic-ref TESTSYMREFTWO $b &&
 	cat >stdin <<-EOF &&
-	delete TESTSYMDEL1 $m_sha
-	delete TESTSYMDEL2 $m_sha
+	delete TESTSYMREFONE $b
+	delete TESTSYMREFTWO $b
 	EOF
-	grit update-ref --no-deref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q TESTSYMDEL1 &&
-	test_must_fail grit rev-parse --verify -q TESTSYMDEL2 &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
+	git update-ref --no-deref --stdin <stdin &&
+	test_must_fail git rev-parse --verify -q TESTSYMREFONE &&
+	test_must_fail git rev-parse --verify -q TESTSYMREFTWO &&
+	git rev-parse $m~1 >expect &&
+	git rev-parse $b >actual &&
 	test_cmp expect actual
 '
 
-# === stdin update ref works with right old value (real objects) ===
-
-test_expect_success 'stdin update ref works with right old value (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/rightold "$parent_sha" &&
-	echo "update refs/heads/rightold $m_sha $parent_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/rightold >actual &&
-	test_cmp expect actual
+test_expect_success 'stdin delete ref works with right old value' '
+	echo "delete $b $m~1" >stdin &&
+	git update-ref --stdin <stdin &&
+	test_must_fail git rev-parse --verify -q $b
 '
 
-test_expect_success 'stdin delete ref fails with wrong old value (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/wrongdel "$m_sha" &&
-	echo "delete refs/heads/wrongdel $parent_sha" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/wrongdel >actual &&
-	test_cmp expect actual
-'
-
-# === stdin update refs fails with wrong old value (atomicity) ===
-
-test_expect_success 'stdin update refs fails with wrong old value (real objects, atomicity)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/atom-a "$m_sha" &&
-	grit update-ref refs/heads/atom-b "$m_sha" &&
-	grit update-ref refs/heads/atom-c "$m_sha" &&
+test_expect_success 'stdin update/create/verify combination works' '
 	cat >stdin <<-EOF &&
-	update refs/heads/atom-a $m_sha $m_sha
-	update refs/heads/atom-b $m_sha $m_sha
-	update refs/heads/atom-c $parent_sha $parent_sha
+	update $a $m
+	create $b $m
+	verify $c
 	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/atom-a >actual &&
+	git update-ref --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
 	test_cmp expect actual &&
-	grit rev-parse refs/heads/atom-b >actual &&
+	git rev-parse $b >actual &&
 	test_cmp expect actual &&
-	grit rev-parse refs/heads/atom-c >actual &&
+	test_must_fail git rev-parse --verify -q $c
+'
+
+test_expect_success 'stdin verify succeeds for correct value' '
+	test-tool ref-store main for-each-reflog-ent $m >before &&
+	git rev-parse $m >expect &&
+	echo "verify $m $m" >stdin &&
+	git update-ref --stdin <stdin &&
+	git rev-parse $m >actual &&
+	test_cmp expect actual &&
+	test-tool ref-store main for-each-reflog-ent $m >after &&
+	test_cmp before after
+'
+
+test_expect_success 'stdin verify succeeds for missing reference' '
+	test-tool ref-store main for-each-reflog-ent $m >before &&
+	echo "verify refs/heads/missing $Z" >stdin &&
+	git update-ref --stdin <stdin &&
+	test_must_fail git rev-parse --verify -q refs/heads/missing &&
+	test-tool ref-store main for-each-reflog-ent $m >after &&
+	test_cmp before after
+'
+
+test_expect_success 'stdin verify treats no value as missing' '
+	echo "verify refs/heads/missing" >stdin &&
+	git update-ref --stdin <stdin &&
+	test_must_fail git rev-parse --verify -q refs/heads/missing
+'
+
+test_expect_success 'stdin verify fails for wrong value' '
+	git rev-parse $m >expect &&
+	echo "verify $m $m~1" >stdin &&
+	test_must_fail git update-ref --stdin <stdin &&
+	git rev-parse $m >actual &&
 	test_cmp expect actual
 '
 
-# === stdin update/create/verify combination (real objects) ===
+test_expect_success 'stdin verify fails for mistaken null value' '
+	git rev-parse $m >expect &&
+	echo "verify $m $Z" >stdin &&
+	test_must_fail git update-ref --stdin <stdin &&
+	git rev-parse $m >actual &&
+	test_cmp expect actual
+'
 
-test_expect_success 'stdin update/create/verify combination works (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/combo-b 2>/dev/null || true &&
-	grit update-ref refs/heads/combo-a "$m_sha" &&
+test_expect_success 'stdin verify fails for mistaken empty value' '
+	M=$(git rev-parse $m) &&
+	test_when_finished "git update-ref $m $M" &&
+	git rev-parse $m >expect &&
+	echo "verify $m" >stdin &&
+	test_must_fail git update-ref --stdin <stdin &&
+	git rev-parse $m >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin update refs works with identity updates' '
 	cat >stdin <<-EOF &&
-	update refs/heads/combo-a $m_sha
-	create refs/heads/combo-b $parent_sha
+	update $a $m $m
+	update $b $m $m
+	update $c $Z $E
 	EOF
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/combo-a >actual &&
+	git update-ref --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
 	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/combo-b >actual &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual &&
+	test_must_fail git rev-parse --verify -q $c
+'
+
+test_expect_success 'stdin update refs fails with wrong old value' '
+	git update-ref $c $m &&
+	cat >stdin <<-EOF &&
+	update $a $m $m
+	update $b $m $m
+	update $c  ''
+	EOF
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	grep "fatal: cannot lock ref '"'"'$c'"'"'" err &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual &&
+	git rev-parse $c >actual &&
 	test_cmp expect actual
 '
 
-# === stdin transaction with verify + delete + create ===
+test_expect_success 'stdin delete refs works with packed and loose refs' '
+	git pack-refs --all &&
+	git update-ref $c $m~1 &&
+	cat >stdin <<-EOF &&
+	delete $a $m
+	update $b $Z $m
+	update $c $E $m~1
+	EOF
+	git update-ref --stdin <stdin &&
+	test_must_fail git rev-parse --verify -q $a &&
+	test_must_fail git rev-parse --verify -q $b &&
+	test_must_fail git rev-parse --verify -q $c
+'
 
-test_expect_success 'stdin transaction with verify + delete + create' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/txverify "$m_sha" &&
-	grit update-ref -d refs/heads/txnew 2>/dev/null || true &&
+test_expect_success 'stdin -z works on empty input' '
+	>stdin &&
+	git update-ref -z --stdin <stdin &&
+	git rev-parse --verify -q $m
+'
+
+test_expect_success 'stdin -z fails on empty line' '
+	echo "" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: whitespace before command: " err
+'
+
+test_expect_success 'stdin -z fails on empty command' '
+	printf $F "" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: empty command in input" err
+'
+
+test_expect_success 'stdin -z fails on only whitespace' '
+	printf $F " " >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: whitespace before command:  " err
+'
+
+test_expect_success 'stdin -z fails on leading whitespace' '
+	printf $F " create $a" "$m" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: whitespace before command:  create $a" err
+'
+
+test_expect_success 'stdin -z fails on unknown command' '
+	printf $F "unknown $a" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: unknown command: unknown $a" err
+'
+
+test_expect_success 'stdin -z fails create with no ref' '
+	printf $F "create " >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: create: missing <ref>" err
+'
+
+test_expect_success 'stdin -z fails create with no new value' '
+	printf $F "create $a" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: create $a: unexpected end of input when reading <new-oid>" err
+'
+
+test_expect_success 'stdin -z fails create with too many arguments' '
+	printf $F "create $a" "$m" "$m" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: unknown command: $m" err
+'
+
+test_expect_success 'stdin -z fails update with no ref' '
+	printf $F "update " >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: update: missing <ref>" err
+'
+
+test_expect_success 'stdin -z fails update with too few args' '
+	printf $F "update $a" "$m" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: update $a: unexpected end of input when reading <old-oid>" err
+'
+
+test_expect_success 'stdin -z emits warning with empty new value' '
+	git update-ref $a $m &&
+	printf $F "update $a" "" "" >stdin &&
+	git update-ref -z --stdin <stdin 2>err &&
+	grep "warning: update $a: missing <new-oid>, treating as zero" err &&
+	test_must_fail git rev-parse --verify -q $a
+'
+
+test_expect_success 'stdin -z fails update with no new value' '
+	printf $F "update $a" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: update $a: unexpected end of input when reading <new-oid>" err
+'
+
+test_expect_success 'stdin -z fails update with no old value' '
+	printf $F "update $a" "$m" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: update $a: unexpected end of input when reading <old-oid>" err
+'
+
+test_expect_success 'stdin -z fails update with too many arguments' '
+	printf $F "update $a" "$m" "$m" "$m" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: unknown command: $m" err
+'
+
+test_expect_success 'stdin -z fails delete with no ref' '
+	printf $F "delete " >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: delete: missing <ref>" err
+'
+
+test_expect_success 'stdin -z fails delete with no old value' '
+	printf $F "delete $a" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: delete $a: unexpected end of input when reading <old-oid>" err
+'
+
+test_expect_success 'stdin -z fails delete with too many arguments' '
+	printf $F "delete $a" "$m" "$m" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: unknown command: $m" err
+'
+
+test_expect_success 'stdin -z fails verify with too many arguments' '
+	printf $F "verify $a" "$m" "$m" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: unknown command: $m" err
+'
+
+test_expect_success 'stdin -z fails verify with no old value' '
+	printf $F "verify $a" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: verify $a: unexpected end of input when reading <old-oid>" err
+'
+
+test_expect_success 'stdin -z fails option with unknown name' '
+	printf $F "option unknown" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: option unknown: unknown" err
+'
+
+test_expect_success 'stdin -z fails with duplicate refs' '
+	printf $F "create $a" "$m" "create $b" "$m" "create $a" "$m" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	test_grep "fatal: multiple updates for ref '"'"'$a'"'"' not allowed" err
+'
+
+test_expect_success 'stdin -z create ref works' '
+	printf $F "create $a" "$m" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z update ref creates with zero old value' '
+	printf $F "update $b" "$m" "$Z" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual &&
+	git update-ref -d $b
+'
+
+test_expect_success 'stdin -z update ref creates with empty old value' '
+	printf $F "update $b" "$m" "" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z create ref works with path with space to blob' '
+	printf $F "create refs/blobs/pws" "$m:$pws" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	git rev-parse "$m:$pws" >expect &&
+	git rev-parse refs/blobs/pws >actual &&
+	test_cmp expect actual &&
+	git update-ref -d refs/blobs/pws
+'
+
+test_expect_success 'stdin -z update ref fails with wrong old value' '
+	printf $F "update $c" "$m" "$m~1" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: cannot lock ref '"'"'$c'"'"'" err &&
+	test_must_fail git rev-parse --verify -q $c
+'
+
+test_expect_success 'stdin -z update ref fails with bad old value' '
+	printf $F "update $c" "$m" "does-not-exist" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: update $c: invalid <old-oid>: does-not-exist" err &&
+	test_must_fail git rev-parse --verify -q $c
+'
+
+test_expect_success 'stdin -z create ref fails when ref exists' '
+	git update-ref $c $m &&
+	git rev-parse "$c" >expect &&
+	printf $F "create $c" "$m~1" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: cannot lock ref '"'"'$c'"'"'" err &&
+	git rev-parse "$c" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z create ref fails with bad new value' '
+	git update-ref -d "$c" &&
+	printf $F "create $c" "does-not-exist" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: create $c: invalid <new-oid>: does-not-exist" err &&
+	test_must_fail git rev-parse --verify -q $c
+'
+
+test_expect_success 'stdin -z create ref fails with empty new value' '
+	printf $F "create $c" "" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: create $c: missing <new-oid>" err &&
+	test_must_fail git rev-parse --verify -q $c
+'
+
+test_expect_success 'stdin -z update ref works with right old value' '
+	printf $F "update $b" "$m~1" "$m" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	git rev-parse $m~1 >expect &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z delete ref fails with wrong old value' '
+	printf $F "delete $a" "$m~1" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: cannot lock ref '"'"'$a'"'"'" err &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z delete ref fails with zero old value' '
+	printf $F "delete $a" "$Z" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: delete $a: zero <old-oid>" err &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z update symref works option no-deref' '
+	git symbolic-ref TESTSYMREF $b &&
+	printf $F "option no-deref" "update TESTSYMREF" "$a" "$b" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	git rev-parse TESTSYMREF >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual &&
+	git rev-parse $m~1 >expect &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z delete symref works option no-deref' '
+	git symbolic-ref TESTSYMREF $b &&
+	printf $F "option no-deref" "delete TESTSYMREF" "$b" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	test_must_fail git rev-parse --verify -q TESTSYMREF &&
+	git rev-parse $m~1 >expect &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z delete ref works with right old value' '
+	printf $F "delete $b" "$m~1" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	test_must_fail git rev-parse --verify -q $b
+'
+
+test_expect_success 'stdin -z update/create/verify combination works' '
+	printf $F "update $a" "$m" "" "create $b" "$m" "verify $c" "" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual &&
+	test_must_fail git rev-parse --verify -q $c
+'
+
+test_expect_success 'stdin -z verify succeeds for correct value' '
+	git rev-parse $m >expect &&
+	printf $F "verify $m" "$m" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	git rev-parse $m >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z verify succeeds for missing reference' '
+	printf $F "verify refs/heads/missing" "$Z" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	test_must_fail git rev-parse --verify -q refs/heads/missing
+'
+
+test_expect_success 'stdin -z verify treats no value as missing' '
+	printf $F "verify refs/heads/missing" "" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	test_must_fail git rev-parse --verify -q refs/heads/missing
+'
+
+test_expect_success 'stdin -z verify fails for wrong value' '
+	git rev-parse $m >expect &&
+	printf $F "verify $m" "$m~1" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin &&
+	git rev-parse $m >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z verify fails for mistaken null value' '
+	git rev-parse $m >expect &&
+	printf $F "verify $m" "$Z" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin &&
+	git rev-parse $m >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z verify fails for mistaken empty value' '
+	M=$(git rev-parse $m) &&
+	test_when_finished "git update-ref $m $M" &&
+	git rev-parse $m >expect &&
+	printf $F "verify $m" "" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin &&
+	git rev-parse $m >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z update refs works with identity updates' '
+	printf $F "update $a" "$m" "$m" "update $b" "$m" "$m" "update $c" "$Z" "" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual &&
+	test_must_fail git rev-parse --verify -q $c
+'
+
+test_expect_success 'stdin -z update refs fails with wrong old value' '
+	git update-ref $c $m &&
+	printf $F "update $a" "$m" "$m" "update $b" "$m" "$m" "update $c" "$m" "$Z" >stdin &&
+	test_must_fail git update-ref -z --stdin <stdin 2>err &&
+	grep "fatal: cannot lock ref '"'"'$c'"'"'" err &&
+	git rev-parse $m >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual &&
+	git rev-parse $b >actual &&
+	test_cmp expect actual &&
+	git rev-parse $c >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'stdin -z delete refs works with packed and loose refs' '
+	git pack-refs --all &&
+	git update-ref $c $m~1 &&
+	printf $F "delete $a" "$m" "update $b" "$Z" "$m" "update $c" "" "$m~1" >stdin &&
+	git update-ref -z --stdin <stdin &&
+	test_must_fail git rev-parse --verify -q $a &&
+	test_must_fail git rev-parse --verify -q $b &&
+	test_must_fail git rev-parse --verify -q $c
+'
+
+test_expect_success 'fails with duplicate HEAD update' '
+	git branch target1 $A &&
+	git checkout target1 &&
+	cat >stdin <<-EOF &&
+	update refs/heads/target1 $C
+	option no-deref
+	update HEAD $B
+	EOF
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	test_grep "fatal: multiple updates for '\''HEAD'\'' (including one via its referent .refs/heads/target1.) are not allowed" err &&
+	echo "refs/heads/target1" >expect &&
+	git symbolic-ref HEAD >actual &&
+	test_cmp expect actual &&
+	echo "$A" >expect &&
+	git rev-parse refs/heads/target1 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'fails with duplicate ref update via symref' '
+	test_when_finished "git symbolic-ref -d refs/heads/symref2" &&
+	git branch target2 $A &&
+	git symbolic-ref refs/heads/symref2 refs/heads/target2 &&
+	cat >stdin <<-EOF &&
+	update refs/heads/target2 $C
+	update refs/heads/symref2 $B
+	EOF
+	test_must_fail git update-ref --stdin <stdin 2>err &&
+	test_grep "fatal: multiple updates for '\''refs/heads/target2'\'' (including one via symref .refs/heads/symref2.) are not allowed" err &&
+	echo "refs/heads/target2" >expect &&
+	git symbolic-ref refs/heads/symref2 >actual &&
+	test_cmp expect actual &&
+	echo "$A" >expect &&
+	git rev-parse refs/heads/target2 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success ULIMIT_FILE_DESCRIPTORS 'large transaction creating branches does not burst open file limit' '
+(
+	test_seq -f "create refs/heads/%d HEAD" 33 |
+	run_with_limited_open_files git update-ref --stdin &&
+	git rev-parse --verify -q refs/heads/33
+)
+'
+
+test_expect_success ULIMIT_FILE_DESCRIPTORS 'large transaction deleting branches does not burst open file limit' '
+(
+	test_seq -f "delete refs/heads/%d HEAD" 33 |
+	run_with_limited_open_files git update-ref --stdin &&
+	test_must_fail git rev-parse --verify -q refs/heads/33
+)
+'
+
+test_expect_success 'handle per-worktree refs in refs/bisect' '
+	git commit --allow-empty -m "initial commit" &&
+	git worktree add -b branch worktree &&
+	(
+		cd worktree &&
+		git commit --allow-empty -m "test commit"  &&
+		git for-each-ref >for-each-ref.out &&
+		! grep refs/bisect for-each-ref.out &&
+		git update-ref refs/bisect/something HEAD &&
+		git rev-parse refs/bisect/something >../worktree-head &&
+		git for-each-ref | grep refs/bisect/something
+	) &&
+	git show-ref >actual &&
+	! grep 'refs/bisect' actual &&
+	test_must_fail git rev-parse refs/bisect/something &&
+	git update-ref refs/bisect/something HEAD &&
+	git rev-parse refs/bisect/something >main-head &&
+	! test_cmp main-head worktree-head
+'
+
+test_expect_success 'transaction handles empty commit' '
 	cat >stdin <<-EOF &&
 	start
-	verify refs/heads/txverify $m_sha
-	delete refs/heads/txverify $m_sha
-	create refs/heads/txnew $parent_sha
+	prepare
 	commit
 	EOF
-	grit update-ref --stdin <stdin >actual &&
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start prepare commit >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'transaction handles empty commit with missing prepare' '
+	cat >stdin <<-EOF &&
+	start
+	commit
+	EOF
+	git update-ref --stdin <stdin >actual &&
 	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/txverify &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/txnew >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'stdin transaction verify fails rolls back all changes' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/txrollback "$m_sha" &&
-	grit update-ref -d refs/heads/txnewref 2>/dev/null || true &&
+test_expect_success 'transaction handles sole commit' '
 	cat >stdin <<-EOF &&
-	start
-	verify refs/heads/txrollback $parent_sha
-	create refs/heads/txnewref $m_sha
 	commit
 	EOF
-	test_must_fail grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/txrollback >actual &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/txnewref
-'
-
-# === transaction create + update sequential commits ===
-
-test_expect_success 'transaction create then update in sequential commits' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/seqref 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/seqref $parent_sha
-	commit
-	start
-	update refs/heads/seqref $m_sha $parent_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit start commit >expect &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/seqref >actual &&
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" commit >expect &&
 	test_cmp expect actual
 '
 
-# === transaction create + delete sequential commits ===
-
-test_expect_success 'transaction create then delete in sequential commits' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/cdseq 2>/dev/null || true &&
+test_expect_success 'transaction handles empty abort' '
 	cat >stdin <<-EOF &&
 	start
-	create refs/heads/cdseq $m_sha
-	commit
-	start
-	delete refs/heads/cdseq $m_sha
-	commit
+	prepare
+	abort
 	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit start commit >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/cdseq
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start prepare abort >expect &&
+	test_cmp expect actual
 '
 
-# === sole commit fails (no transaction started) ===
-
-test_expect_success 'sole commit fails without start' '
-	cd real-repo &&
-	cat >stdin <<-\EOF &&
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	grep "no transaction started" err
-'
-
-# === transaction exits on multiple aborts ===
-
-test_expect_success 'transaction handles double abort' '
-	cd real-repo &&
-	cat >stdin <<-\EOF &&
+test_expect_success 'transaction exits on multiple aborts' '
+	cat >stdin <<-EOF &&
 	abort
 	abort
 	EOF
-	grit update-ref --stdin <stdin >actual &&
-	test_must_be_empty actual
-'
-
-# === transaction cannot restart ongoing transaction ===
-
-test_expect_success 'transaction cannot restart ongoing (additional test)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/restartref 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/restartref $m_sha
-	start
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/restartref
-'
-
-# === update with create on zero old value (real objects) ===
-
-test_expect_success 'stdin create ref with zero old value fails if ref exists' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/exists "$m_sha" &&
-	echo "update refs/heads/exists $m_sha $Z" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/exists >actual &&
-	test_cmp expect actual
-'
-
-# === stdin multiple creates in batch (no transaction) ===
-
-test_expect_success 'stdin multiple creates in non-transactional batch' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/batch1 2>/dev/null || true &&
-	grit update-ref -d refs/heads/batch2 2>/dev/null || true &&
-	grit update-ref -d refs/heads/batch3 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	create refs/heads/batch1 $m_sha
-	create refs/heads/batch2 $parent_sha
-	create refs/heads/batch3 $m_sha
-	EOF
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/batch1 >actual &&
+	test_must_fail git update-ref --stdin <stdin >actual 2>err &&
+	printf "%s: ok\n" abort >expect &&
 	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/batch2 >actual &&
+	grep "fatal: transaction is closed" err
+'
+
+test_expect_success 'transaction exits on start after prepare' '
+	cat >stdin <<-EOF &&
+	prepare
+	start
+	EOF
+	test_must_fail git update-ref --stdin <stdin 2>err >actual &&
+	printf "%s: ok\n" prepare >expect &&
 	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/batch3 >actual &&
-	test_cmp expect actual
+	grep "fatal: prepared transactions can only be closed" err
 '
 
-# === stdin multiple deletes in non-transactional batch ===
-
-test_expect_success 'stdin multiple deletes in non-transactional batch' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/mdel1 "$m_sha" &&
-	grit update-ref refs/heads/mdel2 "$m_sha" &&
-	grit update-ref refs/heads/mdel3 "$m_sha" &&
-	cat >stdin <<-EOF &&
-	delete refs/heads/mdel1 $m_sha
-	delete refs/heads/mdel2 $m_sha
-	delete refs/heads/mdel3 $m_sha
-	EOF
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/mdel1 &&
-	test_must_fail grit rev-parse --verify -q refs/heads/mdel2 &&
-	test_must_fail grit rev-parse --verify -q refs/heads/mdel3
-'
-
-# === stdin update with empty old value creates ref ===
-
-test_expect_success 'stdin update ref creates with empty old value (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/emptyold 2>/dev/null || true &&
-	echo "update refs/heads/emptyold $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/emptyold >actual &&
-	test_cmp expect actual
-'
-
-# === stdin delete without old value ===
-
-test_expect_success 'stdin delete ref works without old value (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/delnoold "$m_sha" &&
-	echo "delete refs/heads/delnoold" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/delnoold
-'
-
-# === stdin verify in transaction ===
-
-test_expect_success 'stdin transaction verify succeeds for correct value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
+test_expect_success 'transaction handles empty abort with missing prepare' '
 	cat >stdin <<-EOF &&
 	start
-	verify refs/heads/master $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin transaction verify succeeds for missing ref' '
-	cd real-repo &&
-	cat >stdin <<-EOF &&
-	start
-	verify refs/heads/nonexistent-verify $Z
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/nonexistent-verify
-'
-
-test_expect_success 'stdin transaction verify fails for wrong value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	cat >stdin <<-EOF &&
-	start
-	verify refs/heads/master $parent_sha
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin
-'
-
-test_expect_success 'stdin transaction verify fails for mistaken null' '
-	cd real-repo &&
-	cat >stdin <<-EOF &&
-	start
-	verify refs/heads/master $Z
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin
-'
-
-# === transaction with mixed update/delete/verify/create ===
-
-test_expect_success 'transaction with mixed operations' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/mix-update "$parent_sha" &&
-	grit update-ref refs/heads/mix-delete "$m_sha" &&
-	grit update-ref -d refs/heads/mix-create 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	verify refs/heads/master $m_sha
-	update refs/heads/mix-update $m_sha $parent_sha
-	delete refs/heads/mix-delete $m_sha
-	create refs/heads/mix-create $parent_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/mix-update >actual &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/mix-delete &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/mix-create >actual &&
-	test_cmp expect actual
-'
-
-# === transaction fails on wrong old value ===
-
-test_expect_success 'transaction fails when old value wrong' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/txfailold "$m_sha" &&
-	cat >stdin <<-EOF &&
-	start
-	update refs/heads/txfailold $parent_sha $parent_sha
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/txfailold >actual &&
-	test_cmp expect actual
-'
-
-# === stdin create in deeply nested paths ===
-
-test_expect_success 'stdin create deeply nested ref (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/very/deep/nested/ref 2>/dev/null || true &&
-	echo "create refs/heads/very/deep/nested/ref $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/very/deep/nested/ref >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin delete deeply nested ref (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	echo "delete refs/heads/very/deep/nested/ref $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/very/deep/nested/ref
-'
-
-# === refs in different namespaces ===
-
-test_expect_success 'stdin create refs in tags namespace (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/tags/stdin-tag 2>/dev/null || true &&
-	echo "create refs/tags/stdin-tag $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/tags/stdin-tag >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin create refs in custom namespace (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/custom/stdin-ref 2>/dev/null || true &&
-	echo "create refs/custom/stdin-ref $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/custom/stdin-ref >actual &&
-	test_cmp expect actual
-'
-
-# === stdin create with symbolic ref target ===
-
-test_expect_success 'stdin create ref resolving symbolic ref target' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/symresolve 2>/dev/null || true &&
-	echo "create refs/heads/symresolve refs/heads/master" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/symresolve >actual &&
-	test_cmp expect actual
-'
-
-# === HEAD updates with real objects ===
-
-test_expect_success 'updating HEAD updates underlying branch (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref HEAD "$parent_sha" "$m_sha" &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse HEAD >actual &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual &&
-	grit update-ref HEAD "$m_sha" "$parent_sha"
-'
-
-# === Transaction abort does not create ref ===
-
-test_expect_success 'transaction abort does not create any refs' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/abortref1 2>/dev/null || true &&
-	grit update-ref -d refs/heads/abortref2 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/abortref1 $m_sha
-	create refs/heads/abortref2 $m_sha
 	abort
 	EOF
-	grit update-ref --stdin <stdin >actual &&
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start abort >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'transaction handles sole abort' '
+	cat >stdin <<-EOF &&
+	abort
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" abort >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'transaction can handle commit' '
+	cat >stdin <<-EOF &&
+	start
+	create $a HEAD
+	commit
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start commit >expect &&
+	test_cmp expect actual &&
+	git rev-parse HEAD >expect &&
+	git rev-parse $a >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'transaction can handle abort' '
+	cat >stdin <<-EOF &&
+	start
+	create $b HEAD
+	abort
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start abort >expect &&
+	test_cmp expect actual &&
+	test_must_fail git show-ref --verify -q $b
+'
+
+test_expect_success 'transaction aborts by default' '
+	cat >stdin <<-EOF &&
+	start
+	create $b HEAD
+	EOF
+	git update-ref --stdin <stdin >actual &&
 	printf "%s: ok\n" start >expect &&
 	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/abortref1 &&
-	test_must_fail grit rev-parse --verify -q refs/heads/abortref2
+	test_must_fail git show-ref --verify -q $b
 '
 
-# === stdin verify blocks entire batch ===
-
-test_expect_success 'stdin verify failure blocks entire batch' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/blocked "$parent_sha" &&
-	grit update-ref -d refs/heads/shouldnt-exist 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	verify refs/heads/master $parent_sha
-	update refs/heads/blocked $m_sha $parent_sha
-	create refs/heads/shouldnt-exist $m_sha
-	EOF
-	test_must_fail grit update-ref --stdin <stdin &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/blocked >actual &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/shouldnt-exist
-'
-
-# === stdin with duplicate refs fails ===
-
-test_expect_success 'stdin fails with duplicate refs (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	cat >stdin <<-EOF &&
-	create refs/heads/duptest1 $m_sha
-	create refs/heads/duptest2 $m_sha
-	create refs/heads/duptest1 $m_sha
-	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err
-'
-
-# === stdin create ref fails when ref already exists ===
-
-test_expect_success 'stdin create ref fails when ref already exists' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/existcreate "$m_sha" &&
-	echo "create refs/heads/existcreate $m_sha" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err
-'
-
-# === stdin update non-existent ref without old value creates it ===
-
-test_expect_success 'stdin update non-existent ref without old value creates it' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/update-creates 2>/dev/null || true &&
-	echo "update refs/heads/update-creates $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/update-creates >actual &&
-	test_cmp expect actual
-'
-
-# === CLI tests (non-stdin) ===
-
-test_expect_success 'update-ref with wrong old value fails (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/clitestref "$m_sha" &&
-	test_must_fail grit update-ref refs/heads/clitestref "$parent_sha" "$parent_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/clitestref >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'delete ref with right old value works (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/clidelref "$m_sha" &&
-	grit update-ref -d refs/heads/clidelref "$m_sha" &&
-	test_must_fail grit rev-parse --verify -q refs/heads/clidelref
-'
-
-test_expect_success 'delete ref with wrong old value fails (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/clibaddel "$m_sha" &&
-	test_must_fail grit update-ref -d refs/heads/clibaddel "$parent_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/clibaddel >actual &&
-	test_cmp expect actual
-'
-
-# === update-ref -d without old value ===
-
-test_expect_success 'delete ref without old value succeeds (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/clinoold "$m_sha" &&
-	grit update-ref -d refs/heads/clinoold &&
-	test_must_fail grit rev-parse --verify -q refs/heads/clinoold
-'
-
-# === create ref with old value zero ===
-
-test_expect_success 'create ref with old value zero succeeds' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/clizerold 2>/dev/null || true &&
-	grit update-ref refs/heads/clizerold "$m_sha" "$Z" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/clizerold >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'create ref with old value zero fails if ref exists' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/clizerf "$m_sha" &&
-	test_must_fail grit update-ref refs/heads/clizerf "$parent_sha" "$Z" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/clizerf >actual &&
-	test_cmp expect actual
-'
-
-# === multiple transaction commit cycles ===
-
-test_expect_success 'transaction three commit cycles' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/cycle1 2>/dev/null || true &&
-	grit update-ref -d refs/heads/cycle2 2>/dev/null || true &&
-	grit update-ref -d refs/heads/cycle3 2>/dev/null || true &&
+test_expect_success 'transaction with prepare aborts by default' '
 	cat >stdin <<-EOF &&
 	start
-	create refs/heads/cycle1 $parent_sha
+	create $b HEAD
+	prepare
+	EOF
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start prepare >expect &&
+	test_cmp expect actual &&
+	test_must_fail git show-ref --verify -q $b
+'
+
+test_expect_success 'transaction can commit multiple times' '
+	cat >stdin <<-EOF &&
+	start
+	create refs/heads/branch-1 $A
 	commit
 	start
-	create refs/heads/cycle2 $m_sha
-	commit
-	start
-	create refs/heads/cycle3 $parent_sha
+	create refs/heads/branch-2 $B
 	commit
 	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit start commit start commit >expect &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/cycle1 >actual &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/cycle2 >actual &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/cycle3 >actual &&
-	test_cmp expect actual
-'
-
-# === transaction update + verify mixed ===
-
-test_expect_success 'transaction update + verify in same commit' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/tvmix "$m_sha" &&
-	cat >stdin <<-EOF &&
-	start
-	verify refs/heads/tvmix $m_sha
-	update refs/heads/tvmix $m_sha $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual
-'
-
-# === stdin identity update (same old and new value) ===
-
-test_expect_success 'stdin identity update does not change ref (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	echo "update refs/heads/master $m_sha $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-# === update-ref with file/directory conflict (real objects) ===
-
-test_expect_success 'file/directory conflict detected (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/conflict-parent "$m_sha" &&
-	test_must_fail grit update-ref refs/heads/conflict-parent/child "$m_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/conflict-parent >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'file/directory conflict reverse (real objects)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/conflict-deep/child "$m_sha" &&
-	test_must_fail grit update-ref refs/heads/conflict-deep "$m_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/conflict-deep/child >actual &&
-	test_cmp expect actual
-'
-
-# === stdin with symbolic ref names as new values ===
-
-test_expect_success 'stdin update resolves ref name as new value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/resolveme "$parent_sha" &&
-	echo "update refs/heads/resolveme refs/heads/master $parent_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/resolveme >actual &&
-	test_cmp expect actual
-'
-
-# === show-ref tests ===
-
-test_expect_success 'show-ref --verify works with multiple refs' '
-	cd real-repo &&
-	grit show-ref --verify refs/heads/master >actual &&
-	grep refs/heads/master actual
-'
-
-test_expect_success 'show-ref --verify -q succeeds silently' '
-	cd real-repo &&
-	grit show-ref --verify -q refs/heads/master >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success 'show-ref --verify -q fails silently on missing' '
-	cd real-repo &&
-	test_must_fail grit show-ref --verify -q refs/heads/doesnotexist 2>err
-'
-
-# === for-each-ref with newly created refs ===
-
-test_expect_success 'for-each-ref sees stdin-created refs' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/feach/one 2>/dev/null || true &&
-	grit update-ref -d refs/feach/two 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	create refs/feach/one $m_sha
-	create refs/feach/two $m_sha
-	EOF
-	grit update-ref --stdin <stdin &&
-	grit for-each-ref refs/feach/ >actual &&
-	grep refs/feach/one actual &&
-	grep refs/feach/two actual
-'
-
-# === CLI update-ref creates ref in various namespaces ===
-
-test_expect_success 'update-ref creates ref in notes namespace' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/notes/commits "$m_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/notes/commits >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'update-ref creates ref in remotes namespace' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/remotes/origin/master "$m_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/remotes/origin/master >actual &&
-	test_cmp expect actual
-'
-
-# === stdin error handling: create with too many arguments ===
-
-# Note: grit currently accepts extra arguments to create/update/delete silently.
-# These tests verify the behavior that IS implemented.
-
-# === stdin create ref fails when ref already exists (with explicit new value) ===
-
-test_expect_success 'stdin create ref fails when ref exists (different new value)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/exist-test "$m_sha" &&
-	echo "create refs/heads/exist-test $parent_sha" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/exist-test >actual &&
-	test_cmp expect actual
-'
-
-# === stdin update ref works with ref expressions (e.g. master~1) ===
-
-test_expect_success 'stdin update ref works with SHA values' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/sha-update-test "$m_sha" &&
-	echo "update refs/heads/sha-update-test $parent_sha $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/sha-update-test >actual &&
-	test_cmp expect actual
-'
-
-# === stdin delete ref works with right old value (using expression) ===
-
-test_expect_success 'stdin delete ref works with right old value (expression)' '
-	cd real-repo &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/del-expr "$parent_sha" &&
-	echo "delete refs/heads/del-expr $parent_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/del-expr
-'
-
-# === stdin update refs fails with wrong old value (atomicity) ===
-
-test_expect_success 'stdin update refs fails with wrong old value preserving all refs' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/atomic-a "$m_sha" &&
-	grit update-ref refs/heads/atomic-b "$m_sha" &&
-	grit update-ref refs/heads/atomic-c "$m_sha" &&
-	cat >stdin <<-EOF &&
-	update refs/heads/atomic-a $m_sha $m_sha
-	update refs/heads/atomic-b $m_sha $m_sha
-	update refs/heads/atomic-c $parent_sha $parent_sha
-	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/atomic-a >actual &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/atomic-b >actual &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/atomic-c >actual &&
-	test_cmp expect actual
-'
-
-# === Transaction: sole commit fails ===
-
-test_expect_success 'transaction sole commit fails without start' '
-	cd real-repo &&
-	cat >stdin <<-\EOF &&
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	grep "no transaction started" err
-'
-
-# === Transaction: sole abort ===
-
-test_expect_success 'transaction sole abort succeeds' '
-	cd real-repo &&
-	cat >stdin <<-\EOF &&
-	abort
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	test_must_be_empty actual
-'
-
-# === Transaction: commit after abort in sequence ===
-
-test_expect_success 'transaction abort does not create refs' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/abort-only 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/abort-only $m_sha
-	abort
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/abort-only
-'
-
-test_expect_success 'transaction abort with multiple refs does not persist' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref -d refs/heads/abort-multi-a 2>/dev/null || true &&
-	grit update-ref -d refs/heads/abort-multi-b 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/abort-multi-a $m_sha
-	create refs/heads/abort-multi-b $parent_sha
-	abort
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/abort-multi-a &&
-	test_must_fail grit rev-parse --verify -q refs/heads/abort-multi-b
-'
-
-# === Transaction: cannot restart ongoing transaction ===
-
-test_expect_success 'transaction restart during active fails (with create)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/no-restart 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/no-restart $m_sha
-	start
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/no-restart
-'
-
-# === stdin --no-deref: update overwriting symref target ===
-
-test_expect_success 'stdin --no-deref update symref overwrites with value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit symbolic-ref refs/heads/no-deref-sym refs/heads/master &&
-	echo "update refs/heads/no-deref-sym $parent_sha $m_sha" >stdin &&
-	grit update-ref --no-deref --stdin <stdin &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/no-deref-sym >actual &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-# === stdin --no-deref: delete symref preserves target ===
-
-test_expect_success 'stdin --no-deref delete symref preserves target ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit symbolic-ref refs/heads/noderef-del refs/heads/master &&
-	echo "delete refs/heads/noderef-del $m_sha" >stdin &&
-	grit update-ref --no-deref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/noderef-del &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-# === stdin update ref creates with empty old value (no old-value arg) ===
-
-test_expect_success 'stdin update ref with empty old value creates ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/empty-old-create 2>/dev/null || true &&
-	echo "update refs/heads/empty-old-create $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/empty-old-create >actual &&
-	test_cmp expect actual
-'
-
-# === Dangling symref: update without old value overwrites ===
-
-test_expect_success 'dangling symref overwritten by update without old oid' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit symbolic-ref refs/heads/dangle-update refs/heads/does-not-exist &&
-	echo "update refs/heads/dangle-update $m_sha" >stdin &&
-	grit update-ref --no-deref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/dangle-update >actual &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/does-not-exist
-'
-
-# === Transaction: create + update + delete + verify in single commit ===
-
-test_expect_success 'transaction with all four operation types' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/tx-all-update "$parent_sha" &&
-	grit update-ref refs/heads/tx-all-delete "$m_sha" &&
-	grit update-ref -d refs/heads/tx-all-create 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	verify refs/heads/master $m_sha
-	create refs/heads/tx-all-create $m_sha
-	update refs/heads/tx-all-update $m_sha $parent_sha
-	delete refs/heads/tx-all-delete $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/tx-all-create >actual &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/tx-all-update >actual &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/tx-all-delete
-'
-
-# === Transaction: update with wrong old value rolls back everything ===
-
-test_expect_success 'transaction with wrong old value fails' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/tx-rb-b "$parent_sha" &&
-	cat >stdin <<-EOF &&
-	start
-	update refs/heads/tx-rb-b $m_sha $m_sha
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/tx-rb-b >actual &&
-	test_cmp expect actual
-'
-
-# === Transaction: verify + create, verify fails ===
-
-test_expect_success 'transaction verify failure prevents create' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/tx-verify-create 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	verify refs/heads/master $parent_sha
-	create refs/heads/tx-verify-create $m_sha
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/tx-verify-create
-'
-
-# === Transaction: multiple creates in single commit ===
-
-test_expect_success 'transaction creates many refs in single commit' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/tx-multi-a 2>/dev/null || true &&
-	grit update-ref -d refs/heads/tx-multi-b 2>/dev/null || true &&
-	grit update-ref -d refs/heads/tx-multi-c 2>/dev/null || true &&
-	grit update-ref -d refs/heads/tx-multi-d 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/tx-multi-a $m_sha
-	create refs/heads/tx-multi-b $parent_sha
-	create refs/heads/tx-multi-c $m_sha
-	create refs/heads/tx-multi-d $parent_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/tx-multi-a >actual &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/tx-multi-b >actual &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/tx-multi-c >actual &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/tx-multi-d >actual &&
-	test_cmp expect actual
-'
-
-# === Transaction: multiple deletes in single commit ===
-
-test_expect_success 'transaction deletes many refs in single commit' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/tx-mdel-a "$m_sha" &&
-	grit update-ref refs/heads/tx-mdel-b "$m_sha" &&
-	grit update-ref refs/heads/tx-mdel-c "$m_sha" &&
-	cat >stdin <<-EOF &&
-	start
-	delete refs/heads/tx-mdel-a $m_sha
-	delete refs/heads/tx-mdel-b $m_sha
-	delete refs/heads/tx-mdel-c $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/tx-mdel-a &&
-	test_must_fail grit rev-parse --verify -q refs/heads/tx-mdel-b &&
-	test_must_fail grit rev-parse --verify -q refs/heads/tx-mdel-c
-'
-
-# === Transaction: abort then commit different ref ===
-
-test_expect_success 'transaction abort with update does not modify ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/abort-upd "$m_sha" &&
-	cat >stdin <<-EOF &&
-	start
-	update refs/heads/abort-upd $parent_sha $m_sha
-	abort
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/abort-upd >actual &&
-	test_cmp expect actual
-'
-
-# === Transaction: update same ref across multiple commits ===
-
-test_expect_success 'transaction updates same ref across multiple commits' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref -d refs/heads/evolving 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/evolving $parent_sha
-	commit
-	start
-	update refs/heads/evolving $m_sha $parent_sha
-	commit
-	start
-	delete refs/heads/evolving $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit start commit start commit >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/evolving
-'
-
-# === stdin: verify in non-transactional batch ===
-
-test_expect_success 'stdin verify succeeds in non-transactional batch' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/verify-batch-create 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	verify refs/heads/master $m_sha
-	create refs/heads/verify-batch-create $m_sha
-	EOF
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/verify-batch-create >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin verify failure blocks create in non-transactional batch' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/verify-batch-fail 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	verify refs/heads/master $parent_sha
-	create refs/heads/verify-batch-fail $m_sha
-	EOF
-	test_must_fail grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/verify-batch-fail
-'
-
-# === stdin: create in various namespace hierarchies ===
-
-test_expect_success 'stdin create ref in stash namespace' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/stash 2>/dev/null || true &&
-	echo "create refs/stash $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/stash >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin create ref in notes namespace' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/notes/test 2>/dev/null || true &&
-	echo "create refs/notes/test $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/notes/test >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin create ref in remotes namespace' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/remotes/origin/develop 2>/dev/null || true &&
-	echo "create refs/remotes/origin/develop $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/remotes/origin/develop >actual &&
-	test_cmp expect actual
-'
-
-# === CLI: --no-deref -d deletes symref directly ===
-
-test_expect_success 'update-ref --no-deref -d deletes symref not target' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit symbolic-ref refs/heads/cli-noderef-sym refs/heads/master &&
-	grit update-ref --no-deref -d refs/heads/cli-noderef-sym &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual &&
-	test_must_fail grit show-ref --verify -q refs/heads/cli-noderef-sym
-'
-
-# === CLI: create ref with zero old value prevents overwrite ===
-
-test_expect_success 'update-ref with zero old value creates new ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	Z=0000000000000000000000000000000000000000 &&
-	grit update-ref -d refs/heads/zero-create 2>/dev/null || true &&
-	grit update-ref refs/heads/zero-create "$m_sha" "$Z" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/zero-create >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'update-ref with zero old value fails if ref exists' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	Z=0000000000000000000000000000000000000000 &&
-	grit update-ref refs/heads/zero-exists "$m_sha" &&
-	test_must_fail grit update-ref refs/heads/zero-exists "$parent_sha" "$Z" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/zero-exists >actual &&
-	test_cmp expect actual
-'
-
-# === CLI: HEAD dereference through symref to branch ===
-
-test_expect_success 'update HEAD dereferences to underlying branch' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit symbolic-ref HEAD refs/heads/master &&
-	grit update-ref HEAD "$parent_sha" "$m_sha" &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse HEAD >actual &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual &&
-	grit update-ref HEAD "$m_sha" "$parent_sha"
-'
-
-# === CLI: delete through HEAD ===
-
-test_expect_success 'delete through HEAD removes underlying branch' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/head-del-branch "$m_sha" &&
-	grit symbolic-ref HEAD refs/heads/head-del-branch &&
-	grit update-ref -d HEAD "$m_sha" &&
-	test_must_fail grit rev-parse --verify -q refs/heads/head-del-branch &&
-	grit symbolic-ref HEAD refs/heads/master
-'
-
-# === Self-referencing symref: --no-deref -d can delete ===
-
-test_expect_success '--no-deref -d deletes self-referencing symref' '
-	cd real-repo &&
-	grit symbolic-ref refs/heads/selfref refs/heads/selfref &&
-	grit update-ref --no-deref -d refs/heads/selfref &&
-	test_must_fail grit show-ref --verify -q refs/heads/selfref
-'
-
-# === stdin: mixed namespaces in single batch ===
-
-test_expect_success 'stdin batch with refs in different namespaces' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/ns-head 2>/dev/null || true &&
-	grit update-ref -d refs/tags/ns-tag 2>/dev/null || true &&
-	grit update-ref -d refs/custom/ns-custom 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	create refs/heads/ns-head $m_sha
-	create refs/tags/ns-tag $parent_sha
-	create refs/custom/ns-custom $m_sha
-	EOF
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/ns-head >actual &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/tags/ns-tag >actual &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/custom/ns-custom >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: transaction batch with refs in different namespaces ===
-
-test_expect_success 'stdin transaction with refs in different namespaces' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/txns-head 2>/dev/null || true &&
-	grit update-ref -d refs/tags/txns-tag 2>/dev/null || true &&
-	grit update-ref -d refs/remotes/origin/txns-remote 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/txns-head $m_sha
-	create refs/tags/txns-tag $parent_sha
-	create refs/remotes/origin/txns-remote $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/txns-head >actual &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/tags/txns-tag >actual &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/remotes/origin/txns-remote >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: create ref with HEAD as new value ===
-
-test_expect_success 'stdin create ref resolving HEAD' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/head-resolve 2>/dev/null || true &&
-	echo "create refs/heads/head-resolve HEAD" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/head-resolve >actual &&
-	test_cmp expect actual
-'
-
-# === File/directory conflict via stdin ===
-
-test_expect_success 'stdin create fails due to file/directory conflict' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/conflict-dir "$m_sha" &&
-	echo "create refs/heads/conflict-dir/child $m_sha" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/conflict-dir >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin create fails due to directory/file conflict' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/conflict-file/child "$m_sha" &&
-	echo "create refs/heads/conflict-file $m_sha" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/conflict-file/child >actual &&
-	test_cmp expect actual
-'
-
-# === Transaction: file/directory conflict detected ===
-
-test_expect_success 'transaction fails on file/directory conflict' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/txconflict "$m_sha" &&
-	grit update-ref -d refs/heads/txconflict-new 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/txconflict/child $m_sha
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/txconflict >actual &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/txconflict/child
-'
-
-# === stdin: delete ref without old value ===
-
-test_expect_success 'stdin delete without old value succeeds' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/del-noold-test "$m_sha" &&
-	echo "delete refs/heads/del-noold-test" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/del-noold-test
-'
-
-# === stdin: update/create/verify combination (upstream-style) ===
-
-test_expect_success 'stdin update/create/verify combination (upstream pattern)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/combo-up-a "$m_sha" &&
-	grit update-ref -d refs/heads/combo-up-b 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	update refs/heads/combo-up-a $m_sha
-	create refs/heads/combo-up-b $parent_sha
-	verify refs/heads/master $m_sha
-	EOF
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/combo-up-a >actual &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/combo-up-b >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: verify treats zero OID as "must not exist" ===
-
-test_expect_success 'stdin verify zero OID means ref must not exist' '
-	cd real-repo &&
-	Z=0000000000000000000000000000000000000000 &&
-	grit update-ref -d refs/heads/verify-zero-test 2>/dev/null || true &&
-	echo "verify refs/heads/verify-zero-test $Z" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/verify-zero-test
-'
-
-test_expect_success 'stdin verify zero OID fails when ref exists' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	Z=0000000000000000000000000000000000000000 &&
-	echo "verify refs/heads/master $Z" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin
-'
-
-# === CLI: create and immediately update ===
-
-test_expect_success 'CLI create and immediately update with old value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/cli-imm-test 2>/dev/null || true &&
-	grit update-ref refs/heads/cli-imm-test "$parent_sha" &&
-	grit update-ref refs/heads/cli-imm-test "$m_sha" "$parent_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/cli-imm-test >actual &&
-	test_cmp expect actual
-'
-
-# === CLI: fail to update with wrong old value ===
-
-test_expect_success 'CLI update fails with wrong old value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/cli-wrong-old "$m_sha" &&
-	test_must_fail grit update-ref refs/heads/cli-wrong-old "$parent_sha" "$parent_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/cli-wrong-old >actual &&
-	test_cmp expect actual
-'
-
-# === CLI: delete fails with wrong old value ===
-
-test_expect_success 'CLI delete fails with wrong old value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/cli-wrong-del "$m_sha" &&
-	test_must_fail grit update-ref -d refs/heads/cli-wrong-del "$parent_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/cli-wrong-del >actual &&
-	test_cmp expect actual
-'
-
-# === CLI: delete without old value ===
-
-test_expect_success 'CLI delete without old value succeeds' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/cli-del-noold "$m_sha" &&
-	grit update-ref -d refs/heads/cli-del-noold &&
-	test_must_fail grit rev-parse --verify -q refs/heads/cli-del-noold
-'
-
-# === stdin: update identity (no-op) in transaction ===
-
-test_expect_success 'stdin transaction identity update is no-op' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	cat >stdin <<-EOF &&
-	start
-	update refs/heads/master $m_sha $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: batch with many updates ===
-
-test_expect_success 'stdin batch updates many refs at once' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/batch-upd-a "$parent_sha" &&
-	grit update-ref refs/heads/batch-upd-b "$parent_sha" &&
-	grit update-ref refs/heads/batch-upd-c "$parent_sha" &&
-	grit update-ref refs/heads/batch-upd-d "$parent_sha" &&
-	cat >stdin <<-EOF &&
-	update refs/heads/batch-upd-a $m_sha $parent_sha
-	update refs/heads/batch-upd-b $m_sha $parent_sha
-	update refs/heads/batch-upd-c $m_sha $parent_sha
-	update refs/heads/batch-upd-d $m_sha $parent_sha
-	EOF
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/batch-upd-a >actual &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/batch-upd-b >actual &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/batch-upd-c >actual &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/batch-upd-d >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: batch with many deletes ===
-
-test_expect_success 'stdin batch deletes many refs at once' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/batch-del-a "$m_sha" &&
-	grit update-ref refs/heads/batch-del-b "$m_sha" &&
-	grit update-ref refs/heads/batch-del-c "$m_sha" &&
-	grit update-ref refs/heads/batch-del-d "$m_sha" &&
-	cat >stdin <<-EOF &&
-	delete refs/heads/batch-del-a $m_sha
-	delete refs/heads/batch-del-b $m_sha
-	delete refs/heads/batch-del-c $m_sha
-	delete refs/heads/batch-del-d $m_sha
-	EOF
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/batch-del-a &&
-	test_must_fail grit rev-parse --verify -q refs/heads/batch-del-b &&
-	test_must_fail grit rev-parse --verify -q refs/heads/batch-del-c &&
-	test_must_fail grit rev-parse --verify -q refs/heads/batch-del-d
-'
-
-# === stdin: create deeply nested in transaction ===
-
-test_expect_success 'transaction creates deeply nested ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/tx/very/deep/nested 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/tx/very/deep/nested $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/tx/very/deep/nested >actual &&
-	test_cmp expect actual
-'
-
-# === CLI: update with message flag ===
-
-test_expect_success 'update-ref -m sets message (does not error)' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -m "test message" refs/heads/msg-ref "$m_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/msg-ref >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: verify in batch prevents subsequent operations ===
-
-test_expect_success 'stdin verify failure prevents all subsequent ops in batch' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/after-verify-a 2>/dev/null || true &&
-	grit update-ref -d refs/heads/after-verify-b 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	verify refs/heads/master $parent_sha
-	create refs/heads/after-verify-a $m_sha
-	create refs/heads/after-verify-b $m_sha
-	EOF
-	test_must_fail grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/after-verify-a &&
-	test_must_fail grit rev-parse --verify -q refs/heads/after-verify-b
-'
-
-# === stdin: create and verify missing ref combination ===
-
-test_expect_success 'stdin create + verify missing ref in batch' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	Z=0000000000000000000000000000000000000000 &&
-	grit update-ref -d refs/heads/cv-new 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	verify refs/heads/cv-nonexist $Z
-	create refs/heads/cv-new $m_sha
-	EOF
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/cv-new >actual &&
-	test_cmp expect actual
-'
-
-# === CLI: update-ref to same value (identity) ===
-
-test_expect_success 'CLI identity update ref to same value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/heads/identity-test "$m_sha" &&
-	grit update-ref refs/heads/identity-test "$m_sha" "$m_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/identity-test >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: duplicate refs in transaction fails ===
-
-test_expect_success 'stdin transaction fails with duplicate refs' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/txdup1 $m_sha
-	create refs/heads/txdup2 $m_sha
-	create refs/heads/txdup1 $m_sha
-	commit
-	EOF
-	test_must_fail grit update-ref --stdin <stdin 2>err
-'
-
-# === stdin: update non-existent ref with zero old value creates it ===
-
-test_expect_success 'stdin update with zero old value creates new ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	Z=0000000000000000000000000000000000000000 &&
-	grit update-ref -d refs/heads/zero-old-new 2>/dev/null || true &&
-	echo "update refs/heads/zero-old-new $m_sha $Z" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/zero-old-new >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin update with zero old value fails for existing ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	Z=0000000000000000000000000000000000000000 &&
-	grit update-ref refs/heads/zero-old-exist "$m_sha" &&
-	echo "update refs/heads/zero-old-exist $parent_sha $Z" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin 2>err &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/zero-old-exist >actual &&
-	test_cmp expect actual
-'
-
-# === symref interactions: --no-deref in transaction ===
-
-test_expect_success 'transaction --no-deref update replaces symref with regular ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit symbolic-ref refs/heads/tx-sym refs/heads/master &&
-	cat >stdin <<-EOF &&
-	start
-	update refs/heads/tx-sym $parent_sha $m_sha
-	commit
-	EOF
-	grit update-ref --no-deref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/tx-sym >actual &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'transaction --no-deref delete removes symref not target' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit symbolic-ref refs/heads/tx-sym-del refs/heads/master &&
-	cat >stdin <<-EOF &&
-	start
-	delete refs/heads/tx-sym-del $m_sha
-	commit
-	EOF
-	grit update-ref --no-deref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/heads/tx-sym-del &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-# === Multiple transaction cycles with verify ===
-
-test_expect_success 'transaction multiple cycles with verify between' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/heads/mc-ref 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/mc-ref $parent_sha
-	commit
-	start
-	verify refs/heads/mc-ref $parent_sha
-	update refs/heads/mc-ref $m_sha $parent_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
+	git update-ref --stdin <stdin >actual &&
 	printf "%s: ok\n" start commit start commit >expect &&
 	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/mc-ref >actual &&
+	echo "$A" >expect &&
+	git rev-parse refs/heads/branch-1 >actual &&
+	test_cmp expect actual &&
+	echo "$B" >expect &&
+	git rev-parse refs/heads/branch-2 >actual &&
 	test_cmp expect actual
 '
 
-# === for-each-ref sees transaction-created refs ===
-
-test_expect_success 'for-each-ref sees refs created in transaction' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/txvis/one 2>/dev/null || true &&
-	grit update-ref -d refs/txvis/two 2>/dev/null || true &&
+test_expect_success 'transaction can create and delete' '
 	cat >stdin <<-EOF &&
 	start
-	create refs/txvis/one $m_sha
-	create refs/txvis/two $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	grit for-each-ref refs/txvis/ >feach &&
-	grep refs/txvis/one feach &&
-	grep refs/txvis/two feach
-'
-
-# === show-ref: listing and verification ===
-
-test_expect_success 'show-ref lists refs including prefix-matching ones' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/showtest/alpha "$m_sha" &&
-	grit update-ref refs/showtest/beta "$m_sha" &&
-	grit show-ref >actual &&
-	grep refs/showtest/alpha actual &&
-	grep refs/showtest/beta actual
-'
-
-test_expect_success 'show-ref --verify works' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	echo "$m_sha refs/heads/master" >expect &&
-	grit show-ref --verify refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'show-ref --verify -q succeeds silently' '
-	cd real-repo &&
-	grit show-ref --verify -q refs/heads/master >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success 'show-ref --verify fails for missing ref' '
-	cd real-repo &&
-	test_must_fail grit show-ref --verify -q refs/heads/this-does-not-exist
-'
-
-# === CLI: create ref and verify via show-ref -s ===
-
-test_expect_success 'show-ref -s gives just the SHA' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	echo "$m_sha" >expect &&
-	grit show-ref -s --verify refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-# === Multiple symbolic refs pointing to same target ===
-
-test_expect_success 'multiple symbolic refs to same target' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit symbolic-ref refs/heads/sym-a refs/heads/master &&
-	grit symbolic-ref refs/heads/sym-b refs/heads/master &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/sym-a >actual &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/sym-b >actual &&
-	test_cmp expect actual &&
-	echo refs/heads/master >expect &&
-	grit symbolic-ref refs/heads/sym-a >actual &&
-	test_cmp expect actual &&
-	grit symbolic-ref refs/heads/sym-b >actual &&
-	test_cmp expect actual
-'
-
-# === symbolic-ref read after delete-and-recreate ===
-
-test_expect_success 'symbolic-ref survives target delete and recreate' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/sym-target "$m_sha" &&
-	grit symbolic-ref refs/heads/sym-survivor refs/heads/sym-target &&
-	grit update-ref -d refs/heads/sym-target "$m_sha" &&
-	test_must_fail grit rev-parse refs/heads/sym-survivor 2>/dev/null &&
-	grit update-ref refs/heads/sym-target "$parent_sha" &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/sym-survivor >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: deeply nested with transaction ===
-
-test_expect_success 'transaction handles deeply nested ref hierarchy' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/deep/a/b/c/d 2>/dev/null || true &&
-	grit update-ref -d refs/deep/a/b/c/e 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/deep/a/b/c/d $m_sha
-	create refs/deep/a/b/c/e $parent_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/deep/a/b/c/d >actual &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/deep/a/b/c/e >actual &&
-	test_cmp expect actual
-'
-
-# === --no-deref with multiple symrefs in batch ===
-
-test_expect_success '--no-deref updates multiple symrefs independently' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit symbolic-ref refs/heads/multi-sym-a refs/heads/master &&
-	grit symbolic-ref refs/heads/multi-sym-b refs/heads/master &&
-	cat >stdin <<-EOF &&
-	update refs/heads/multi-sym-a $parent_sha $m_sha
-	update refs/heads/multi-sym-b $parent_sha $m_sha
-	EOF
-	grit update-ref --no-deref --stdin <stdin &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/multi-sym-a >actual &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/multi-sym-b >actual &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-# === --no-deref delete multiple symrefs in batch ===
-
-test_expect_success '--no-deref deletes multiple symrefs in batch' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit symbolic-ref refs/heads/multi-del-a refs/heads/master &&
-	grit symbolic-ref refs/heads/multi-del-b refs/heads/master &&
-	cat >stdin <<-EOF &&
-	delete refs/heads/multi-del-a $m_sha
-	delete refs/heads/multi-del-b $m_sha
-	EOF
-	grit update-ref --no-deref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify -q refs/heads/multi-del-a &&
-	test_must_fail grit rev-parse --verify -q refs/heads/multi-del-b &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-# === for-each-ref: new tags visible after stdin create ===
-
-test_expect_success 'for-each-ref sees stdin-created tags' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/tags/fer-tag1 2>/dev/null || true &&
-	grit update-ref -d refs/tags/fer-tag2 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	create refs/tags/fer-tag1 $m_sha
-	create refs/tags/fer-tag2 $m_sha
-	EOF
-	grit update-ref --stdin <stdin &&
-	grit for-each-ref refs/tags/ >actual &&
-	grep refs/tags/fer-tag1 actual &&
-	grep refs/tags/fer-tag2 actual
-'
-
-# === Transaction: create in tags namespace ===
-
-test_expect_success 'transaction creates tags' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref -d refs/tags/tx-tag-a 2>/dev/null || true &&
-	grit update-ref -d refs/tags/tx-tag-b 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/tags/tx-tag-a $m_sha
-	create refs/tags/tx-tag-b $parent_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/tags/tx-tag-a >actual &&
-	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/tags/tx-tag-b >actual &&
-	test_cmp expect actual
-'
-
-# === Transaction: delete tag ===
-
-test_expect_success 'transaction deletes tag' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref refs/tags/tx-del-tag "$m_sha" &&
-	cat >stdin <<-EOF &&
-	start
-	delete refs/tags/tx-del-tag $m_sha
-	commit
-	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse --verify -q refs/tags/tx-del-tag
-'
-
-# === CLI: create ref with HEAD expression ===
-
-test_expect_success 'CLI create ref using HEAD as value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/cli-head-val 2>/dev/null || true &&
-	grit update-ref refs/heads/cli-head-val HEAD &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/cli-head-val >actual &&
-	test_cmp expect actual
-'
-
-# === CLI: create ref with ref expression ===
-
-test_expect_success 'CLI create ref using another ref name as value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/heads/cli-ref-val 2>/dev/null || true &&
-	grit update-ref refs/heads/cli-ref-val refs/heads/master &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/cli-ref-val >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: rapid create-delete cycles ===
-
-test_expect_success 'rapid create-delete-recreate across transactions' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref -d refs/heads/rapid 2>/dev/null || true &&
-	cat >stdin <<-EOF &&
-	start
-	create refs/heads/rapid $m_sha
+	create refs/heads/create-and-delete $A
 	commit
 	start
-	delete refs/heads/rapid $m_sha
-	commit
-	start
-	create refs/heads/rapid $parent_sha
+	delete refs/heads/create-and-delete $A
 	commit
 	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit start commit start commit >expect &&
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start commit start commit >expect &&
 	test_cmp expect actual &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/rapid >actual &&
-	test_cmp expect actual
+	test_must_fail git show-ref --verify refs/heads/create-and-delete
 '
 
-# === stdin: verify correct value does not modify ref ===
-
-test_expect_success 'stdin verify does not modify ref value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	echo "verify refs/heads/master $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: create with HEAD~1 expression ===
-
-test_expect_success 'stdin create ref using HEAD expression' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/head-expr 2>/dev/null || true &&
-	echo "create refs/heads/head-expr HEAD" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/head-expr >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: create symref via symbolic-ref then update via stdin ===
-
-test_expect_success 'stdin update through symref (default deref) modifies target' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/deref-target "$m_sha" &&
-	grit symbolic-ref refs/heads/deref-sym refs/heads/deref-target &&
-	echo "update refs/heads/deref-sym $parent_sha $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/deref-target >actual &&
-	test_cmp expect actual &&
-	echo refs/heads/deref-target >expect &&
-	grit symbolic-ref refs/heads/deref-sym >actual &&
-	test_cmp expect actual
-'
-
-# === Pseudoref: stdin operations ===
-
-test_expect_success 'stdin create pseudoref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d PSEUDO_STDIN 2>/dev/null || true &&
-	echo "create PSEUDO_STDIN $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse PSEUDO_STDIN >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin update pseudoref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	echo "update PSEUDO_STDIN $parent_sha $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse PSEUDO_STDIN >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin delete pseudoref' '
-	cd real-repo &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	echo "delete PSEUDO_STDIN $parent_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse PSEUDO_STDIN 2>/dev/null
-'
-
-# === stdin: verify pseudoref ===
-
-test_expect_success 'stdin verify pseudoref succeeds' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref PSEUDO_VERIFY "$m_sha" &&
-	echo "verify PSEUDO_VERIFY $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	grit update-ref -d PSEUDO_VERIFY
-'
-
-test_expect_success 'stdin verify pseudoref fails with wrong value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref PSEUDO_VERIFY2 "$m_sha" &&
-	echo "verify PSEUDO_VERIFY2 $parent_sha" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin &&
-	grit update-ref -d PSEUDO_VERIFY2
-'
-
-# === Transaction: pseudoref operations ===
-
-test_expect_success 'transaction create pseudoref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d PSEUDO_TX 2>/dev/null || true &&
+test_expect_success 'transaction can commit after abort' '
 	cat >stdin <<-EOF &&
 	start
-	create PSEUDO_TX $m_sha
+	create refs/heads/abort $A
+	abort
+	start
+	create refs/heads/abort $A
 	commit
 	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
-	test_cmp expect actual &&
-	echo "$m_sha" >expect &&
-	grit rev-parse PSEUDO_TX >actual &&
-	test_cmp expect actual &&
-	grit update-ref -d PSEUDO_TX
+	git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start abort start commit >expect &&
+	echo "$A" >expect &&
+	git rev-parse refs/heads/abort >actual &&
+	test_cmp expect actual
 '
 
-# === stdin: empty transaction (start + commit, no operations) ===
-
-test_expect_success 'empty transaction with start and commit succeeds' '
-	cd real-repo &&
-	cat >stdin <<-\EOF &&
+test_expect_success 'transaction cannot restart ongoing transaction' '
+	cat >stdin <<-EOF &&
+	start
+	create refs/heads/restart $A
 	start
 	commit
 	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start commit >expect &&
+	test_must_fail git update-ref --stdin <stdin >actual &&
+	printf "%s: ok\n" start >expect &&
+	test_cmp expect actual &&
+	test_must_fail git show-ref --verify refs/heads/restart
+'
+
+test_expect_success PIPE 'transaction flushes status updates' '
+	mkfifo in out &&
+	(git update-ref --stdin <in >out &) &&
+
+	exec 9>in &&
+	exec 8<out &&
+	test_when_finished "exec 9>&-" &&
+	test_when_finished "exec 8<&-" &&
+
+	echo "start" >&9 &&
+	echo "start: ok" >expected &&
+	read line <&8 &&
+	echo "$line" >actual &&
+	test_cmp expected actual &&
+
+	echo "create refs/heads/flush $A" >&9 &&
+
+	echo prepare >&9 &&
+	echo "prepare: ok" >expected &&
+	read line <&8 &&
+	echo "$line" >actual &&
+	test_cmp expected actual &&
+
+	# This must now fail given that we have locked the ref.
+	test_must_fail git update-ref refs/heads/flush $B 2>stderr &&
+	grep "fatal: update_ref failed for ref ${SQ}refs/heads/flush${SQ}: cannot lock ref" stderr &&
+
+	echo commit >&9 &&
+	echo "commit: ok" >expected &&
+	read line <&8 &&
+	echo "$line" >actual &&
+	test_cmp expected actual
+'
+
+format_command () {
+	if test "$1" = "-z"
+	then
+		shift
+		printf "$F" "$@"
+	else
+		echo "$@"
+	fi
+}
+
+for type in "" "-z"
+do
+
+	test_expect_success "stdin $type symref-verify fails without --no-deref" '
+		git symbolic-ref refs/heads/symref $a &&
+		format_command $type "symref-verify refs/heads/symref" "$a" >stdin &&
+		test_must_fail git update-ref --stdin $type <stdin 2>err &&
+		grep "fatal: symref-verify: cannot operate with deref mode" err
+	'
+
+	test_expect_success "stdin $type symref-verify fails with too many arguments" '
+		format_command $type "symref-verify refs/heads/symref" "$a" "$a" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin 2>err  &&
+		if test "$type" = "-z"
+		then
+			grep "fatal: unknown command: $a" err
+		else
+			grep "fatal: symref-verify refs/heads/symref: extra input:  $a" err
+		fi
+	'
+
+	test_expect_success "stdin $type symref-verify succeeds for correct value" '
+		git symbolic-ref refs/heads/symref >expect &&
+		test-tool ref-store main for-each-reflog-ent refs/heads/symref >before &&
+		format_command $type "symref-verify refs/heads/symref" "$a" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual &&
+		test-tool ref-store main for-each-reflog-ent refs/heads/symref >after &&
+		test_cmp before after
+	'
+
+	test_expect_success "stdin $type symref-verify fails with no value" '
+		git symbolic-ref refs/heads/symref >expect &&
+		format_command $type "symref-verify refs/heads/symref" "" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin
+	'
+
+	test_expect_success "stdin $type symref-verify succeeds for dangling reference" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref2" &&
+		test_must_fail git symbolic-ref refs/heads/nonexistent &&
+		git symbolic-ref refs/heads/symref2 refs/heads/nonexistent &&
+		format_command $type "symref-verify refs/heads/symref2" "refs/heads/nonexistent" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin
+	'
+
+	test_expect_success "stdin $type symref-verify fails for missing reference" '
+		test-tool ref-store main for-each-reflog-ent refs/heads/symref >before &&
+		format_command $type "symref-verify refs/heads/missing" "refs/heads/unknown" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin 2>err &&
+		grep "fatal: cannot lock ref ${SQ}refs/heads/missing${SQ}: unable to resolve reference ${SQ}refs/heads/missing${SQ}" err &&
+		test_must_fail git rev-parse --verify -q refs/heads/missing &&
+		test-tool ref-store main for-each-reflog-ent refs/heads/symref >after &&
+		test_cmp before after
+	'
+
+	test_expect_success "stdin $type symref-verify fails for wrong value" '
+		git symbolic-ref refs/heads/symref >expect &&
+		format_command $type "symref-verify refs/heads/symref" "$b" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-verify fails for mistaken null value" '
+		git symbolic-ref refs/heads/symref >expect &&
+		format_command $type "symref-verify refs/heads/symref" "$Z" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-delete fails without --no-deref" '
+		git symbolic-ref refs/heads/symref $a &&
+		format_command $type "symref-delete refs/heads/symref" "$a" >stdin &&
+		test_must_fail git update-ref --stdin $type <stdin 2>err &&
+		grep "fatal: symref-delete: cannot operate with deref mode" err
+	'
+
+	test_expect_success "stdin $type symref-delete fails with no ref" '
+		format_command $type "symref-delete " >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin 2>err &&
+		grep "fatal: symref-delete: missing <ref>" err
+	'
+
+	test_expect_success "stdin $type symref-delete fails deleting regular ref" '
+		test_when_finished "git update-ref -d refs/heads/regularref" &&
+		git update-ref refs/heads/regularref $a &&
+		format_command $type "symref-delete refs/heads/regularref" "$a" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin 2>err &&
+		grep "fatal: cannot lock ref ${SQ}refs/heads/regularref${SQ}: expected symref with target ${SQ}$a${SQ}: but is a regular ref" err
+	'
+
+	test_expect_success "stdin $type symref-delete fails with too many arguments" '
+		format_command $type "symref-delete refs/heads/symref" "$a" "$a" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin 2>err &&
+		if test "$type" = "-z"
+		then
+			grep "fatal: unknown command: $a" err
+		else
+			grep "fatal: symref-delete refs/heads/symref: extra input:  $a" err
+		fi
+	'
+
+	test_expect_success "stdin $type symref-delete fails with wrong old value" '
+		format_command $type "symref-delete refs/heads/symref" "$m" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin 2>err &&
+		grep "fatal: verifying symref target: ${SQ}refs/heads/symref${SQ}: is at $a but expected refs/heads/main" err &&
+		git symbolic-ref refs/heads/symref >expect &&
+		echo $a >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-delete works with right old value" '
+		format_command $type "symref-delete refs/heads/symref" "$a" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		test_must_fail git rev-parse --verify -q refs/heads/symref
+	'
+
+	test_expect_success "stdin $type symref-delete works with empty old value" '
+		git symbolic-ref refs/heads/symref $a >stdin &&
+		format_command $type "symref-delete refs/heads/symref" "" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		test_must_fail git rev-parse --verify -q $b
+	'
+
+	test_expect_success "stdin $type symref-delete succeeds for dangling reference" '
+		test_must_fail git symbolic-ref refs/heads/nonexistent &&
+		git symbolic-ref refs/heads/symref2 refs/heads/nonexistent &&
+		format_command $type "symref-delete refs/heads/symref2" "refs/heads/nonexistent" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		test_must_fail git symbolic-ref -d refs/heads/symref2
+	'
+
+	test_expect_success "stdin $type symref-delete deletes regular ref without target" '
+		git update-ref refs/heads/regularref $a &&
+		format_command $type "symref-delete refs/heads/regularref" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin
+	'
+
+	test_expect_success "stdin $type symref-create fails with too many arguments" '
+		format_command $type "symref-create refs/heads/symref" "$a" "$a" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin 2>err &&
+		if test "$type" = "-z"
+		then
+			grep "fatal: unknown command: $a" err
+		else
+			grep "fatal: symref-create refs/heads/symref: extra input:  $a" err
+		fi
+	'
+
+	test_expect_success "stdin $type symref-create fails with no target" '
+		format_command $type "symref-create refs/heads/symref" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin
+	'
+
+	test_expect_success "stdin $type symref-create fails with empty target" '
+		format_command $type "symref-create refs/heads/symref" "" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin
+	'
+
+	test_expect_success "stdin $type symref-create works" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		format_command $type "symref-create refs/heads/symref" "$a" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		git symbolic-ref refs/heads/symref >expect &&
+		echo $a >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-create works with --no-deref" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		format_command $type "symref-create refs/heads/symref" "$a" &&
+		git update-ref --stdin $type <stdin 2>err
+	'
+
+	test_expect_success "stdin $type create dangling symref ref works" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		format_command $type "symref-create refs/heads/symref" "refs/heads/unknown" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		git symbolic-ref refs/heads/symref >expect &&
+		echo refs/heads/unknown >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-create does not create reflogs by default" '
+		test_when_finished "git symbolic-ref -d refs/symref" &&
+		format_command $type "symref-create refs/symref" "$a" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		git symbolic-ref refs/symref >expect &&
+		echo $a >actual &&
+		test_cmp expect actual &&
+		test_must_fail git reflog exists refs/symref
+	'
+
+	test_expect_success "stdin $type symref-create reflogs with --create-reflog" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		format_command $type "symref-create refs/heads/symref" "$a" >stdin &&
+		git update-ref --create-reflog --stdin $type --no-deref <stdin &&
+		git symbolic-ref refs/heads/symref >expect &&
+		echo $a >actual &&
+		test_cmp expect actual &&
+		git reflog exists refs/heads/symref
+	'
+
+	test_expect_success "stdin $type symref-update fails with too many arguments" '
+		format_command $type "symref-update refs/heads/symref" "$a" "ref" "$a" "$a" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin 2>err &&
+		if test "$type" = "-z"
+		then
+			grep "fatal: unknown command: $a" err
+		else
+			grep "fatal: symref-update refs/heads/symref: extra input:  $a" err
+		fi
+	'
+
+	test_expect_success "stdin $type symref-update fails with wrong old value argument" '
+		format_command $type "symref-update refs/heads/symref" "$a" "foo" "$a" "$a" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin 2>err &&
+		grep "fatal: symref-update refs/heads/symref: invalid arg ${SQ}foo${SQ} for old value" err
+	'
+
+	test_expect_success "stdin $type symref-update creates with zero old value" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		format_command $type "symref-update refs/heads/symref" "$a" "oid" "$Z" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		echo $a >expect &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update creates with no old value" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		format_command $type "symref-update refs/heads/symref" "$a" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		echo $a >expect &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update creates dangling" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		test_must_fail git rev-parse refs/heads/nonexistent &&
+		format_command $type "symref-update refs/heads/symref" "refs/heads/nonexistent" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		echo refs/heads/nonexistent >expect &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update fails with wrong old value" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		git symbolic-ref refs/heads/symref $a &&
+		format_command $type "symref-update refs/heads/symref" "$m" "ref" "$b" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin 2>err &&
+		grep "fatal: verifying symref target: ${SQ}refs/heads/symref${SQ}: is at $a but expected $b" err &&
+		test_must_fail git rev-parse --verify -q $c
+	'
+
+	test_expect_success "stdin $type symref-update updates dangling ref" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		test_must_fail git rev-parse refs/heads/nonexistent &&
+		git symbolic-ref refs/heads/symref refs/heads/nonexistent &&
+		format_command $type "symref-update refs/heads/symref" "$a" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		echo $a >expect &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update updates dangling ref with old value" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		test_must_fail git rev-parse refs/heads/nonexistent &&
+		git symbolic-ref refs/heads/symref refs/heads/nonexistent &&
+		format_command $type "symref-update refs/heads/symref" "$a" "ref" "refs/heads/nonexistent" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		echo $a >expect &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update fails update dangling ref with wrong old value" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		test_must_fail git rev-parse refs/heads/nonexistent &&
+		git symbolic-ref refs/heads/symref refs/heads/nonexistent &&
+		format_command $type "symref-update refs/heads/symref" "$a" "ref" "refs/heads/wrongref" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin &&
+		echo refs/heads/nonexistent >expect &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update works with right old value" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		git symbolic-ref refs/heads/symref $a &&
+		format_command $type "symref-update refs/heads/symref" "$m" "ref" "$a" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		echo $m >expect &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update works with no old value" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		git symbolic-ref refs/heads/symref $a &&
+		format_command $type "symref-update refs/heads/symref" "$m" >stdin &&
+		git update-ref --stdin $type --no-deref <stdin &&
+		echo $m >expect &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update fails with empty old ref-target" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		git symbolic-ref refs/heads/symref $a &&
+		format_command $type "symref-update refs/heads/symref" "$m" "ref" "" >stdin &&
+		test_must_fail git update-ref --stdin $type --no-deref <stdin &&
+		echo $a >expect &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update creates (with deref)" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		format_command $type "symref-update refs/heads/symref" "$a" >stdin &&
+		git update-ref --stdin $type <stdin &&
+		echo $a >expect &&
+		git symbolic-ref --no-recurse refs/heads/symref >actual &&
+		test_cmp expect actual &&
+		test-tool ref-store main for-each-reflog-ent refs/heads/symref >actual &&
+		grep "$Z $(git rev-parse $a)" actual
+	'
+
+	test_expect_success "stdin $type symref-update regular ref to symref with correct old-oid" '
+		test_when_finished "git symbolic-ref -d --no-recurse refs/heads/regularref" &&
+		git update-ref --no-deref refs/heads/regularref $a &&
+		format_command $type "symref-update refs/heads/regularref" "$a" "oid" "$(git rev-parse $a)" >stdin &&
+		git update-ref --stdin $type <stdin &&
+		echo $a >expect &&
+		git symbolic-ref --no-recurse refs/heads/regularref >actual &&
+		test_cmp expect actual &&
+		test-tool ref-store main for-each-reflog-ent refs/heads/regularref >actual &&
+		grep "$(git rev-parse $a) $(git rev-parse $a)" actual
+	'
+
+	test_expect_success "stdin $type symref-update regular ref to symref fails with wrong old-oid" '
+		test_when_finished "git update-ref -d refs/heads/regularref" &&
+		git update-ref --no-deref refs/heads/regularref $a &&
+		format_command $type "symref-update refs/heads/regularref" "$a" "oid" "$(git rev-parse refs/heads/target2)" >stdin &&
+		test_must_fail git update-ref --stdin $type <stdin 2>err &&
+		grep "fatal: cannot lock ref ${SQ}refs/heads/regularref${SQ}: is at $(git rev-parse $a) but expected $(git rev-parse refs/heads/target2)" err &&
+		echo $(git rev-parse $a) >expect &&
+		git rev-parse refs/heads/regularref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update regular ref to symref fails with invalid old-oid" '
+		test_when_finished "git update-ref -d refs/heads/regularref" &&
+		git update-ref --no-deref refs/heads/regularref $a &&
+		format_command $type "symref-update refs/heads/regularref" "$a" "oid" "not-a-ref-oid" >stdin &&
+		test_must_fail git update-ref --stdin $type <stdin 2>err &&
+		grep "fatal: symref-update refs/heads/regularref: invalid oid: not-a-ref-oid" err &&
+		echo $(git rev-parse $a) >expect &&
+		git rev-parse refs/heads/regularref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update existing symref with zero old-oid" '
+		test_when_finished "git symbolic-ref -d --no-recurse refs/heads/symref" &&
+		git symbolic-ref refs/heads/symref refs/heads/target2 &&
+		format_command $type "symref-update refs/heads/symref" "$a" "oid" "$Z" >stdin &&
+		test_must_fail git update-ref --stdin $type <stdin 2>err &&
+		grep "fatal: cannot lock ref ${SQ}refs/heads/symref${SQ}: reference already exists" err &&
+		echo refs/heads/target2 >expect &&
+		git symbolic-ref refs/heads/symref >actual &&
+		test_cmp expect actual
+	'
+
+	test_expect_success "stdin $type symref-update regular ref to symref (with deref)" '
+		test_when_finished "git symbolic-ref -d refs/heads/symref" &&
+		test_when_finished "git update-ref -d --no-deref refs/heads/symref2" &&
+		git update-ref refs/heads/symref2 $a &&
+		git symbolic-ref --no-recurse refs/heads/symref refs/heads/symref2 &&
+		format_command $type "symref-update refs/heads/symref" "$a" >stdin &&
+		git update-ref $type --stdin <stdin &&
+		echo $a >expect &&
+		git symbolic-ref --no-recurse refs/heads/symref2 >actual &&
+		test_cmp expect actual &&
+		echo refs/heads/symref2 >expect &&
+		git symbolic-ref --no-recurse refs/heads/symref >actual &&
+		test_cmp expect actual &&
+		test-tool ref-store main for-each-reflog-ent refs/heads/symref >actual &&
+		grep "$(git rev-parse $a) $(git rev-parse $a)" actual
+	'
+
+	test_expect_success "stdin $type symref-update regular ref to symref" '
+		test_when_finished "git symbolic-ref -d --no-recurse refs/heads/regularref" &&
+		git update-ref --no-deref refs/heads/regularref $a &&
+		format_command $type "symref-update refs/heads/regularref" "$a" >stdin &&
+		git update-ref $type --stdin <stdin &&
+		echo $a >expect &&
+		git symbolic-ref --no-recurse refs/heads/regularref >actual &&
+		test_cmp expect actual &&
+		test-tool ref-store main for-each-reflog-ent refs/heads/regularref >actual &&
+		grep "$(git rev-parse $a) $(git rev-parse $a)" actual
+	'
+
+	test_expect_success "stdin $type batch-updates" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit commit &&
+			head=$(git rev-parse HEAD) &&
+
+			format_command $type "update refs/heads/ref1" "$head" "$Z" >stdin &&
+			format_command $type "update refs/heads/ref2" "$head" "$Z" >>stdin &&
+			git update-ref $type --stdin --batch-updates <stdin &&
+			echo $head >expect &&
+			git rev-parse refs/heads/ref1 >actual &&
+			test_cmp expect actual &&
+			git rev-parse refs/heads/ref2 >actual &&
+			test_cmp expect actual
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates with invalid new_oid" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit one &&
+			old_head=$(git rev-parse HEAD) &&
+			test_commit two &&
+			head=$(git rev-parse HEAD) &&
+			git update-ref refs/heads/ref1 $head &&
+			git update-ref refs/heads/ref2 $head &&
+
+			format_command $type "update refs/heads/ref1" "$old_head" "$head" >stdin &&
+			format_command $type "update refs/heads/ref2" "$(test_oid 001)" "$head" >>stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout 2>err &&
+			echo $old_head >expect &&
+			git rev-parse refs/heads/ref1 >actual &&
+			test_cmp expect actual &&
+			echo $head >expect &&
+			git rev-parse refs/heads/ref2 >actual &&
+			test_cmp expect actual &&
+			test_grep "rejected refs/heads/ref2 $(test_oid 001) $head invalid new value provided" stdout &&
+			test_grep "trying to write ref ${SQ}refs/heads/ref2${SQ} with nonexistent object" err
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates with non-commit new_oid" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit one &&
+			old_head=$(git rev-parse HEAD) &&
+			test_commit two &&
+			head=$(git rev-parse HEAD) &&
+			head_tree=$(git rev-parse HEAD^{tree}) &&
+			git update-ref refs/heads/ref1 $head &&
+			git update-ref refs/heads/ref2 $head &&
+
+			format_command $type "update refs/heads/ref1" "$old_head" "$head" >stdin &&
+			format_command $type "update refs/heads/ref2" "$head_tree" "$head" >>stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout 2>err &&
+			echo $old_head >expect &&
+			git rev-parse refs/heads/ref1 >actual &&
+			test_cmp expect actual &&
+			echo $head >expect &&
+			git rev-parse refs/heads/ref2 >actual &&
+			test_cmp expect actual &&
+			test_grep "rejected refs/heads/ref2 $head_tree $head invalid new value provided" stdout &&
+			test_grep "trying to write non-commit object $head_tree to branch ${SQ}refs/heads/ref2${SQ}" err
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates with non-existent ref" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit one &&
+			old_head=$(git rev-parse HEAD) &&
+			test_commit two &&
+			head=$(git rev-parse HEAD) &&
+			git update-ref refs/heads/ref1 $head &&
+
+			format_command $type "update refs/heads/ref1" "$old_head" "$head" >stdin &&
+			format_command $type "update refs/heads/ref2" "$old_head" "$head" >>stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout 2>err &&
+			echo $old_head >expect &&
+			git rev-parse refs/heads/ref1 >actual &&
+			test_cmp expect actual &&
+			test_must_fail git rev-parse refs/heads/ref2 &&
+			test_grep "rejected refs/heads/ref2 $old_head $head reference does not exist" stdout &&
+			test_grep "cannot lock ref ${SQ}refs/heads/ref2${SQ}: unable to resolve reference ${SQ}refs/heads/ref2${SQ}" err
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates with dangling symref" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit one &&
+			old_head=$(git rev-parse HEAD) &&
+			test_commit two &&
+			head=$(git rev-parse HEAD) &&
+			git update-ref refs/heads/ref1 $head &&
+			git symbolic-ref refs/heads/ref2 refs/heads/nonexistent &&
+
+			format_command $type "update refs/heads/ref1" "$old_head" "$head" >stdin &&
+			format_command $type "update refs/heads/ref2" "$old_head" "$head" >>stdin &&
+			git update-ref $type --no-deref --stdin --batch-updates <stdin >stdout 2>err &&
+			echo $old_head >expect &&
+			git rev-parse refs/heads/ref1 >actual &&
+			test_cmp expect actual &&
+			echo $head >expect &&
+			test_must_fail git rev-parse refs/heads/ref2 &&
+			test_grep "rejected refs/heads/ref2 $old_head $head reference does not exist" stdout &&
+			test_grep "cannot lock ref ${SQ}refs/heads/ref2${SQ}: reference is missing but expected $head" err
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates with regular ref as symref" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit one &&
+			old_head=$(git rev-parse HEAD) &&
+			test_commit two &&
+			head=$(git rev-parse HEAD) &&
+			git update-ref refs/heads/ref1 $head &&
+			git update-ref refs/heads/ref2 $head &&
+
+			format_command $type "update refs/heads/ref1" "$old_head" "$head" >stdin &&
+			format_command $type "symref-update refs/heads/ref2" "$old_head" "ref" "refs/heads/nonexistent" >>stdin &&
+			git update-ref $type --no-deref --stdin --batch-updates <stdin >stdout 2>err &&
+			echo $old_head >expect &&
+			git rev-parse refs/heads/ref1 >actual &&
+			test_cmp expect actual &&
+			echo $head >expect &&
+			echo $head >expect &&
+			git rev-parse refs/heads/ref2 >actual &&
+			test_cmp expect actual &&
+			test_grep "rejected refs/heads/ref2 $ZERO_OID $ZERO_OID expected symref but found regular ref" stdout &&
+			test_grep "cannot lock ref ${SQ}refs/heads/ref2${SQ}: expected symref with target ${SQ}refs/heads/nonexistent${SQ}: but is a regular ref" err
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates with invalid old_oid" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit one &&
+			old_head=$(git rev-parse HEAD) &&
+			test_commit two &&
+			head=$(git rev-parse HEAD) &&
+			git update-ref refs/heads/ref1 $head &&
+			git update-ref refs/heads/ref2 $head &&
+
+			format_command $type "update refs/heads/ref1" "$old_head" "$head" >stdin &&
+			format_command $type "update refs/heads/ref2" "$old_head" "$Z" >>stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout 2>err &&
+			echo $old_head >expect &&
+			git rev-parse refs/heads/ref1 >actual &&
+			test_cmp expect actual &&
+			echo $head >expect &&
+			git rev-parse refs/heads/ref2 >actual &&
+			test_cmp expect actual &&
+			test_grep "rejected refs/heads/ref2 $old_head $ZERO_OID reference already exists" stdout &&
+			test_grep "cannot lock ref ${SQ}refs/heads/ref2${SQ}: reference already exists" err
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates with incorrect old oid" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit one &&
+			old_head=$(git rev-parse HEAD) &&
+			test_commit two &&
+			head=$(git rev-parse HEAD) &&
+			git update-ref refs/heads/ref1 $head &&
+			git update-ref refs/heads/ref2 $head &&
+
+			format_command $type "update refs/heads/ref1" "$old_head" "$head" >stdin &&
+			format_command $type "update refs/heads/ref2" "$head" "$old_head" >>stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout 2>err &&
+			echo $old_head >expect &&
+			git rev-parse refs/heads/ref1 >actual &&
+			test_cmp expect actual &&
+			echo $head >expect &&
+			git rev-parse refs/heads/ref2 >actual &&
+			test_cmp expect actual &&
+			test_grep "rejected refs/heads/ref2 $head $old_head incorrect old value provided" stdout &&
+			test_grep "cannot lock ref ${SQ}refs/heads/ref2${SQ}: is at $head but expected $old_head" err
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates refname conflict" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit one &&
+			old_head=$(git rev-parse HEAD) &&
+			test_commit two &&
+			head=$(git rev-parse HEAD) &&
+			git update-ref refs/heads/ref/foo $head &&
+
+			format_command $type "update refs/heads/ref/foo" "$old_head" "$head" >stdin &&
+			format_command $type "update refs/heads/ref" "$old_head" "$ZERO_OID" >>stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout 2>err &&
+			echo $old_head >expect &&
+			git rev-parse refs/heads/ref/foo >actual &&
+			test_cmp expect actual &&
+			test_grep "rejected refs/heads/ref $old_head $ZERO_OID refname conflict" stdout &&
+			test_grep "${SQ}refs/heads/ref/foo${SQ} exists; cannot create ${SQ}refs/heads/ref${SQ}" err
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates refname conflict new ref" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit one &&
+			old_head=$(git rev-parse HEAD) &&
+			test_commit two &&
+			head=$(git rev-parse HEAD) &&
+			git update-ref refs/heads/ref/foo $head &&
+
+			format_command $type "update refs/heads/foo" "$old_head" "$ZERO_OID" >stdin &&
+			format_command $type "update refs/heads/ref" "$old_head" "$ZERO_OID" >>stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout 2>err &&
+			echo $old_head >expect &&
+			git rev-parse refs/heads/foo >actual &&
+			test_cmp expect actual &&
+			test_grep "rejected refs/heads/ref $old_head $ZERO_OID refname conflict" stdout &&
+			test_grep "${SQ}refs/heads/ref/foo${SQ} exists; cannot create ${SQ}refs/heads/ref${SQ}" err
+		)
+	'
+
+	test_expect_success CASE_INSENSITIVE_FS,REFFILES "stdin $type batch-updates existing reference" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit one &&
+			old_head=$(git rev-parse HEAD) &&
+			test_commit two &&
+			head=$(git rev-parse HEAD) &&
+
+			{
+				format_command $type "create refs/heads/foo" "$head" &&
+				format_command $type "create refs/heads/ref" "$old_head" &&
+				format_command $type "create refs/heads/Foo" "$old_head"
+			} >stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout 2>err &&
+
+			echo $head >expect &&
+			git rev-parse refs/heads/foo >actual &&
+			echo $old_head >expect &&
+			git rev-parse refs/heads/ref >actual &&
+			test_cmp expect actual &&
+			test_grep "rejected refs/heads/Foo $old_head $ZERO_OID reference conflict due to case-insensitive filesystem" stdout &&
+			test_grep -e "cannot lock ref ${SQ}refs/heads/Foo${SQ}: Unable to create" -e "Foo.lock" err
+		)
+	'
+
+	test_expect_success CASE_INSENSITIVE_FS "stdin $type batch-updates existing reference" '
+		git init --ref-format=reftable repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit one &&
+			old_head=$(git rev-parse HEAD) &&
+			test_commit two &&
+			head=$(git rev-parse HEAD) &&
+
+			{
+				format_command $type "create refs/heads/foo" "$head" &&
+				format_command $type "create refs/heads/ref" "$old_head" &&
+				format_command $type "create refs/heads/Foo" "$old_head"
+			} >stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout &&
+
+			echo $head >expect &&
+			git rev-parse refs/heads/foo >actual &&
+			echo $old_head >expect &&
+			git rev-parse refs/heads/ref >actual &&
+			test_cmp expect actual &&
+			git rev-parse refs/heads/Foo >actual &&
+			test_cmp expect actual
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates delete incorrect symbolic ref" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit c1 &&
+			head=$(git rev-parse HEAD) &&
+			git symbolic-ref refs/heads/symbolic refs/heads/non-existent &&
+
+			format_command $type "delete refs/heads/symbolic" "$head" >stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout 2>err &&
+			test_grep "rejected refs/heads/non-existent $ZERO_OID $head reference does not exist" stdout &&
+			test_grep "cannot lock ref ${SQ}refs/heads/symbolic${SQ}: unable to resolve reference ${SQ}refs/heads/non-existent${SQ}" err
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates delete with incorrect old_oid" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit c1 &&
+			git branch new-branch &&
+			test_commit c2 &&
+			head=$(git rev-parse HEAD) &&
+
+			format_command $type "delete refs/heads/new-branch" "$head" >stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout 2>err &&
+			test_grep "rejected refs/heads/new-branch $ZERO_OID $head incorrect old value provided" stdout &&
+			test_grep "cannot lock ref ${SQ}refs/heads/new-branch${SQ}: is at $(git rev-parse new-branch) but expected $head" err
+		)
+	'
+
+	test_expect_success "stdin $type batch-updates delete non-existent ref" '
+		git init repo &&
+		test_when_finished "rm -fr repo" &&
+		(
+			cd repo &&
+			test_commit commit &&
+			head=$(git rev-parse HEAD) &&
+
+			format_command $type "delete refs/heads/non-existent" "$head" >stdin &&
+			git update-ref $type --stdin --batch-updates <stdin >stdout 2>err &&
+			test_grep "rejected refs/heads/non-existent $ZERO_OID $head reference does not exist" stdout &&
+			test_grep "cannot lock ref ${SQ}refs/heads/non-existent${SQ}: unable to resolve reference ${SQ}refs/heads/non-existent${SQ}" err
+		)
+	'
+done
+
+test_expect_success 'update-ref should also create reflog for HEAD' '
+	test_commit to-rewind &&
+	git rev-parse HEAD >expect &&
+	head=$(git symbolic-ref HEAD) &&
+	git update-ref --create-reflog "$head" HEAD~ &&
+	git rev-parse HEAD@{1} >actual &&
 	test_cmp expect actual
 '
 
-# === stdin: empty transaction (start + abort, no operations) ===
-
-test_expect_success 'empty transaction with start and abort succeeds' '
-	cd real-repo &&
-	cat >stdin <<-\EOF &&
-	start
+test_expect_success REFFILES 'empty directories are pruned when aborting a transaction' '
+	test_path_is_missing .git/refs/heads/nested &&
+	git update-ref --stdin <<-EOF &&
+	create refs/heads/nested/something HEAD
+	prepare
 	abort
 	EOF
-	grit update-ref --stdin <stdin >actual &&
-	printf "%s: ok\n" start >expect &&
-	test_cmp expect actual
-'
-
-# === CLI: update-ref -m with create and update ===
-
-test_expect_success 'update-ref -m with update' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	parent_sha=$(grit rev-parse refs/heads/master~1) &&
-	grit update-ref refs/heads/msg-upd "$parent_sha" &&
-	grit update-ref -m "updating ref" refs/heads/msg-upd "$m_sha" "$parent_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/msg-upd >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: create in bisect namespace ===
-
-test_expect_success 'stdin create ref in bisect namespace' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse refs/heads/master) &&
-	grit update-ref -d refs/bisect/good 2>/dev/null || true &&
-	echo "create refs/bisect/good $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/bisect/good >actual &&
-	test_cmp expect actual
-'
-
-# === stdin: update ref with HEAD expression as old-value ===
-
-test_expect_success 'stdin update with SHA as old-value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/sha-old-test "$m_sha" &&
-	echo "update refs/heads/sha-old-test $parent_sha $m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/sha-old-test >actual &&
-	test_cmp expect actual
-'
-
-# === stdin batch transactions: multiple operations ===
-
-test_expect_success 'stdin batch: create multiple refs in one transaction' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/batch-a 2>/dev/null || true &&
-	grit update-ref -d refs/heads/batch-b 2>/dev/null || true &&
-	grit update-ref -d refs/heads/batch-c 2>/dev/null || true &&
-	printf "start\ncreate refs/heads/batch-a %s\ncreate refs/heads/batch-b %s\ncreate refs/heads/batch-c %s\ncommit\n" "$m_sha" "$m_sha" "$m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/batch-a >actual &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/batch-b >actual &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/batch-c >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin batch: update and delete in one transaction' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	printf "start\nupdate refs/heads/batch-a %s %s\ndelete refs/heads/batch-c %s\ncommit\n" "$parent_sha" "$m_sha" "$m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/batch-a >actual &&
-	test_cmp expect actual &&
-	test_must_fail grit rev-parse refs/heads/batch-c
-'
-
-test_expect_success 'stdin batch: create and verify in one transaction' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/batch-cv 2>/dev/null || true &&
-	printf "start\ncreate refs/heads/batch-cv %s\nverify refs/heads/batch-b %s\ncommit\n" "$m_sha" "$m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/batch-cv >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin batch: abort rolls back all changes' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/abort-test 2>/dev/null || true &&
-	printf "start\ncreate refs/heads/abort-test %s\nabort\n" "$m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse refs/heads/abort-test
-'
-
-# === verify command ===
-
-test_expect_success 'stdin verify succeeds with correct value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/verify-ok "$m_sha" &&
-	printf "verify refs/heads/verify-ok %s\n" "$m_sha" >stdin &&
-	grit update-ref --stdin <stdin
-'
-
-test_expect_success 'stdin verify fails with wrong value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/verify-bad "$m_sha" &&
-	printf "verify refs/heads/verify-bad %s\n" "$parent_sha" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin
-'
-
-test_expect_success 'stdin verify nonexistent ref fails' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/verify-gone 2>/dev/null || true &&
-	printf "verify refs/heads/verify-gone %s\n" "$m_sha" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin
-'
-
-test_expect_success 'stdin verify with zero OID succeeds for missing ref' '
-	cd real-repo &&
-	grit update-ref -d refs/heads/verify-zero 2>/dev/null || true &&
-	printf "verify refs/heads/verify-zero %s\n" "0000000000000000000000000000000000000000" >stdin &&
-	grit update-ref --stdin <stdin
-'
-
-test_expect_success 'stdin verify with zero OID fails for existing ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/verify-zero-exist "$m_sha" &&
-	printf "verify refs/heads/verify-zero-exist %s\n" "0000000000000000000000000000000000000000" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin
-'
-
-# === option no-deref ===
-
-test_expect_success '--no-deref with stdin update on symref updates symref itself' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/noderef-target "$parent_sha" &&
-	grit symbolic-ref refs/heads/noderef-sym refs/heads/noderef-target &&
-	printf "start\nupdate refs/heads/noderef-sym %s\ncommit\n" "$m_sha" >stdin &&
-	grit update-ref --no-deref --stdin <stdin &&
-	grit rev-parse refs/heads/noderef-sym >actual &&
-	echo "$m_sha" >expect &&
-	test_cmp expect actual &&
-	grit rev-parse refs/heads/noderef-target >actual &&
-	echo "$parent_sha" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success '--no-deref with stdin delete on symref removes symref not target' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/noderef-del-tgt "$m_sha" &&
-	grit symbolic-ref refs/heads/noderef-del-sym refs/heads/noderef-del-tgt &&
-	printf "start\ndelete refs/heads/noderef-del-sym\ncommit\n" >stdin &&
-	grit update-ref --no-deref --stdin <stdin &&
-	test_must_fail grit symbolic-ref refs/heads/noderef-del-sym &&
-	grit rev-parse refs/heads/noderef-del-tgt
-'
-
-test_expect_success '--no-deref CLI update on regular ref works normally' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref --no-deref refs/heads/noderef-regular "$m_sha" &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/noderef-regular >actual &&
-	test_cmp expect actual
-'
-
-# === create with zero OID error ===
-
-test_expect_success 'stdin create with zero OID succeeds but creates null ref' '
-	cd real-repo &&
-	grit update-ref -d refs/heads/zero-create 2>/dev/null || true &&
-	printf "create refs/heads/zero-create %s\n" "0000000000000000000000000000000000000000" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse --verify refs/heads/zero-create 2>/dev/null ||
-	true
-'
-
-# === stdin -z NUL-terminated input ===
-
-test_expect_success 'stdin -z create ref with NUL separators' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref -d refs/heads/nul-create 2>/dev/null || true &&
-	printf "start\0create refs/heads/nul-create %s\0commit\0" "$m_sha" >stdin &&
-	grit update-ref --stdin -z <stdin &&
-	echo "$m_sha" >expect &&
-	grit rev-parse refs/heads/nul-create >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin -z delete ref with NUL separators' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/nul-del "$m_sha" &&
-	printf "start\0delete refs/heads/nul-del %s\0commit\0" "$m_sha" >stdin &&
-	grit update-ref --stdin -z <stdin &&
-	test_must_fail grit rev-parse refs/heads/nul-del
-'
-
-test_expect_success 'stdin -z update ref with NUL separators' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/nul-upd "$m_sha" &&
-	printf "start\0update refs/heads/nul-upd %s %s\0commit\0" "$parent_sha" "$m_sha" >stdin &&
-	grit update-ref --stdin -z <stdin &&
-	echo "$parent_sha" >expect &&
-	grit rev-parse refs/heads/nul-upd >actual &&
-	test_cmp expect actual
-'
-
-# === delete with wrong old value ===
-
-test_expect_success 'stdin delete with wrong old value fails' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/del-wrong "$m_sha" &&
-	printf "start\ndelete refs/heads/del-wrong %s\ncommit\n" "$parent_sha" >stdin &&
-	test_must_fail grit update-ref --stdin <stdin &&
-	grit rev-parse refs/heads/del-wrong
-'
-
-test_expect_success 'stdin delete without old value succeeds unconditionally' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/del-noold "$m_sha" &&
-	printf "start\ndelete refs/heads/del-noold\ncommit\n" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse refs/heads/del-noold
-'
-
-test_expect_success 'stdin -z verify with NUL separators' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/nul-verify "$m_sha" &&
-	printf "verify refs/heads/nul-verify %s\0" "$m_sha" >stdin &&
-	grit update-ref --stdin -z <stdin
-'
-
-# === additional deepening tests ===
-
-test_expect_success 'update-ref creates new ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/new-create-ref "$m_sha" &&
-	grit rev-parse refs/heads/new-create-ref >actual &&
-	echo "$m_sha" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'update-ref updates existing ref to new value' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/upd-existing "$parent_sha" &&
-	grit update-ref refs/heads/upd-existing "$m_sha" &&
-	grit rev-parse refs/heads/upd-existing >actual &&
-	echo "$m_sha" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'update-ref with old value verifies before updating' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/verify-old "$parent_sha" &&
-	grit update-ref refs/heads/verify-old "$m_sha" "$parent_sha" &&
-	grit rev-parse refs/heads/verify-old >actual &&
-	echo "$m_sha" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'update-ref with wrong old value fails' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/wrong-old "$m_sha" &&
-	test_must_fail grit update-ref refs/heads/wrong-old "$parent_sha" "$parent_sha" 2>/dev/null
-'
-
-test_expect_success 'update-ref -d deletes ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/to-delete "$m_sha" &&
-	grit update-ref -d refs/heads/to-delete &&
-	test_must_fail grit rev-parse refs/heads/to-delete 2>/dev/null
-'
-
-test_expect_success 'update-ref -d with old value verifies' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/del-verify "$m_sha" &&
-	grit update-ref -d refs/heads/del-verify "$m_sha" &&
-	test_must_fail grit rev-parse refs/heads/del-verify 2>/dev/null
-'
-
-test_expect_success 'update-ref -d with wrong old value fails' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/del-wrong-old "$m_sha" &&
-	test_must_fail grit update-ref -d refs/heads/del-wrong-old "$parent_sha" 2>/dev/null &&
-	grit rev-parse refs/heads/del-wrong-old
-'
-
-test_expect_success 'update-ref can set refs/tags namespace' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/tags/test-tag-ref "$m_sha" &&
-	grit rev-parse refs/tags/test-tag-ref >actual &&
-	echo "$m_sha" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'update-ref --no-deref updates symref target directly' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/noderef-tgt "$parent_sha" &&
-	grit symbolic-ref refs/heads/noderef-sym refs/heads/noderef-tgt &&
-	grit update-ref --no-deref refs/heads/noderef-sym "$m_sha" &&
-	grit rev-parse refs/heads/noderef-sym >actual &&
-	echo "$m_sha" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'update-ref on refs/custom namespace works' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/custom/test-ns "$m_sha" &&
-	grit rev-parse refs/custom/test-ns >actual &&
-	echo "$m_sha" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin create in transaction creates ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	printf "start\ncreate refs/heads/stdin-create %s\ncommit\n" "$m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	grit rev-parse refs/heads/stdin-create >actual &&
-	echo "$m_sha" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'stdin multiple updates in one transaction' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	parent_sha=$(grit rev-parse HEAD~1) &&
-	printf "start\ncreate refs/heads/multi-a %s\ncreate refs/heads/multi-b %s\ncommit\n" "$m_sha" "$parent_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	grit rev-parse refs/heads/multi-a >actual_a &&
-	grit rev-parse refs/heads/multi-b >actual_b &&
-	echo "$m_sha" >expect_a &&
-	echo "$parent_sha" >expect_b &&
-	test_cmp expect_a actual_a &&
-	test_cmp expect_b actual_b
-'
-
-test_expect_success 'stdin delete in transaction removes ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/stdin-del-tx "$m_sha" &&
-	printf "start\ndelete refs/heads/stdin-del-tx\ncommit\n" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test_must_fail grit rev-parse refs/heads/stdin-del-tx 2>/dev/null
-'
-
-test_expect_success 'show-ref lists created ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/show-ref-test "$m_sha" &&
-	grit show-ref >actual &&
-	grep "refs/heads/show-ref-test" actual
-'
-
-test_expect_success 'for-each-ref shows ref after update-ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/each-ref-test "$m_sha" &&
-	grit for-each-ref refs/heads/each-ref-test >actual &&
-	grep "each-ref-test" actual
-'
-
-test_expect_success 'update-ref can create a tag ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/tags/test-tag-ur "$m_sha" &&
-	test "$(grit rev-parse refs/tags/test-tag-ur)" = "$m_sha"
-'
-
-test_expect_success 'update-ref can overwrite existing ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/overwrite-test "$m_sha" &&
-	p_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/overwrite-test "$p_sha" &&
-	test "$(grit rev-parse refs/heads/overwrite-test)" = "$p_sha"
-'
-
-test_expect_success 'update-ref delete removes ref' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/del-test-ur "$m_sha" &&
-	grit update-ref -d refs/heads/del-test-ur &&
-	test_must_fail grit rev-parse refs/heads/del-test-ur 2>/dev/null
-'
-
-test_expect_success 'update-ref with old-value check succeeds when matching' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	p_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/oldval-test "$m_sha" &&
-	grit update-ref refs/heads/oldval-test "$p_sha" "$m_sha" &&
-	test "$(grit rev-parse refs/heads/oldval-test)" = "$p_sha"
-'
-
-test_expect_success 'update-ref with wrong old-value fails' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/wrongval-test "$m_sha" &&
-	test_must_fail grit update-ref refs/heads/wrongval-test "$m_sha" 0000000000000000000000000000000000000001 2>/dev/null
-'
-
-test_expect_success 'update-ref --no-deref updates symref directly' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	p_sha=$(grit rev-parse HEAD~1) &&
-	grit update-ref refs/heads/noderef-target "$m_sha" &&
-	grit symbolic-ref refs/heads/noderef-sym refs/heads/noderef-target &&
-	grit update-ref --no-deref refs/heads/noderef-sym "$p_sha" &&
-	test "$(grit rev-parse refs/heads/noderef-sym)" = "$p_sha"
-'
-
-test_expect_success 'update-ref creates ref in refs/custom namespace' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/custom/test "$m_sha" &&
-	test "$(grit rev-parse refs/custom/test)" = "$m_sha"
-'
-
-test_expect_success 'update-ref with empty sha fails' '
-	cd real-repo &&
-	test_must_fail grit update-ref refs/heads/empty-sha "" 2>/dev/null
-'
-
-test_expect_success 'update-ref stdin create in transaction' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	printf "start\ncreate refs/heads/stdin-create-tx %s\ncommit\n" "$m_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test "$(grit rev-parse refs/heads/stdin-create-tx)" = "$m_sha"
-'
-
-test_expect_success 'update-ref stdin update in transaction' '
-	cd real-repo &&
-	old_sha=$(grit rev-parse refs/heads/stdin-create-tx) &&
-	p_sha=$(grit rev-parse HEAD~1) &&
-	printf "start\nupdate refs/heads/stdin-create-tx %s %s\ncommit\n" "$p_sha" "$old_sha" >stdin &&
-	grit update-ref --stdin <stdin &&
-	test "$(grit rev-parse refs/heads/stdin-create-tx)" = "$p_sha"
-'
-
-test_expect_success 'update-ref -d with old-value check succeeds' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/del-oldval "$m_sha" &&
-	grit update-ref -d refs/heads/del-oldval "$m_sha" &&
-	test_must_fail grit rev-parse refs/heads/del-oldval 2>/dev/null
-'
-
-test_expect_success 'update-ref -d with wrong old-value fails' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/del-wrongval "$m_sha" &&
-	test_must_fail grit update-ref -d refs/heads/del-wrongval 0000000000000000000000000000000000000001 2>/dev/null &&
-	test "$(grit rev-parse refs/heads/del-wrongval)" = "$m_sha"
-'
-
-test_expect_success 'update-ref on deeply nested ref path' '
-	cd real-repo &&
-	m_sha=$(grit rev-parse HEAD) &&
-	grit update-ref refs/heads/deep/nested/ref "$m_sha" &&
-	test "$(grit rev-parse refs/heads/deep/nested/ref)" = "$m_sha"
-'
-
-test_expect_success 'show-ref lists multiple created refs' '
-	cd real-repo &&
-	grit show-ref >actual &&
-	grep "refs/heads/overwrite-test" actual &&
-	grep "refs/tags/test-tag-ur" actual &&
-	grep "refs/custom/test" actual
-'
-
-test_expect_success 'update-ref refuses invalid sha' '
-	cd real-repo &&
-	test_must_fail grit update-ref refs/heads/bad-sha "not-a-sha" 2>/dev/null
-'
-
-# ---------------------------------------------------------------------------
-# Deepening tests (w32-deepen)
-# ---------------------------------------------------------------------------
-
-test_expect_success 'deepen setup: fresh repo for update-ref tests' '
-	git init deepen-uref-repo &&
-	cd deepen-uref-repo &&
-	git config user.name "T" &&
-	git config user.email "t@t" &&
-	echo init >f.txt &&
-	git add f.txt &&
-	git commit -m "initial"
-'
-
-test_expect_success 'update-ref creates new ref' '
-	cd deepen-uref-repo &&
-	H=$(git rev-parse HEAD) &&
-	grit update-ref refs/heads/deepen-new $H &&
-	grit rev-parse refs/heads/deepen-new >output &&
-	test "$(cat output)" = "$H"
-'
-
-test_expect_success 'update-ref creates ref in custom namespace' '
-	cd deepen-uref-repo &&
-	H=$(git rev-parse HEAD) &&
-	grit update-ref refs/custom/deepen-ns $H &&
-	grit rev-parse refs/custom/deepen-ns >output &&
-	test "$(cat output)" = "$H"
-'
-
-test_expect_success 'update-ref creates tag ref' '
-	cd deepen-uref-repo &&
-	H=$(git rev-parse HEAD) &&
-	grit update-ref refs/tags/deepen-tag-ref $H &&
-	grit rev-parse refs/tags/deepen-tag-ref >output &&
-	test "$(cat output)" = "$H"
-'
-
-test_expect_success 'update-ref overwrites existing ref' '
-	cd deepen-uref-repo &&
-	echo second >>f.txt &&
-	git add f.txt &&
-	git commit -m "second" &&
-	H2=$(git rev-parse HEAD) &&
-	grit update-ref refs/heads/deepen-new $H2 &&
-	grit rev-parse refs/heads/deepen-new >output &&
-	test "$(cat output)" = "$H2"
-'
-
-test_expect_success 'update-ref -d deletes a ref' '
-	cd deepen-uref-repo &&
-	H=$(git rev-parse HEAD) &&
-	grit update-ref refs/heads/deepen-to-delete $H &&
-	grit update-ref -d refs/heads/deepen-to-delete &&
-	test_must_fail grit rev-parse refs/heads/deepen-to-delete 2>/dev/null
-'
-
-test_expect_success 'show-ref lists the created ref' '
-	cd deepen-uref-repo &&
-	grit show-ref >output &&
-	grep "refs/heads/deepen-new" output
-'
-
-test_expect_success 'show-ref lists tag ref' '
-	cd deepen-uref-repo &&
-	grit show-ref >output &&
-	grep "refs/tags/deepen-tag-ref" output
-'
-
-test_expect_success 'symbolic-ref reads HEAD' '
-	cd deepen-uref-repo &&
-	grit symbolic-ref HEAD >output &&
-	grep "refs/heads/" output
-'
-
-test_expect_success 'symbolic-ref sets HEAD to new branch' '
-	cd deepen-uref-repo &&
-	grit symbolic-ref HEAD refs/heads/deepen-new &&
-	grit symbolic-ref HEAD >output &&
-	test "$(cat output)" = "refs/heads/deepen-new" &&
-	grit symbolic-ref HEAD refs/heads/master
-'
-
-test_expect_success 'update-ref with old-value check succeeds when matching' '
-	cd deepen-uref-repo &&
-	H=$(grit rev-parse refs/heads/deepen-new) &&
-	echo third >>f.txt &&
-	git add f.txt &&
-	git commit -m "third" &&
-	H2=$(git rev-parse HEAD) &&
-	grit update-ref refs/heads/deepen-new $H2 $H &&
-	grit rev-parse refs/heads/deepen-new >output &&
-	test "$(cat output)" = "$H2"
-'
-
-test_expect_success 'update-ref with wrong old-value fails' '
-	cd deepen-uref-repo &&
-	H=$(git rev-parse HEAD) &&
-	test_must_fail grit update-ref refs/heads/deepen-new $H 0000000000000000000000000000000000000001 2>/dev/null
-'
-
-test_expect_success 'update-ref refuses empty refname' '
-	cd deepen-uref-repo &&
-	H=$(git rev-parse HEAD) &&
-	test_must_fail grit update-ref "" $H 2>/dev/null
-'
-
-test_expect_success 'show-ref --heads only shows heads' '
-	cd deepen-uref-repo &&
-	grit show-ref --heads >output &&
-	! grep "refs/tags/" output &&
-	grep "refs/heads/" output
-'
-
-test_expect_success 'show-ref --tags only shows tags' '
-	cd deepen-uref-repo &&
-	grit show-ref --tags >output &&
-	! grep "refs/heads/" output &&
-	grep "refs/tags/" output
+	test_path_is_missing .git/refs/heads/nested
+'
+
+test_expect_success REFFILES 'empty directories are pruned when not committing' '
+	test_path_is_missing .git/refs/heads/nested &&
+	git update-ref --stdin <<-EOF &&
+	create refs/heads/nested/something HEAD
+	prepare
+	EOF
+	test_path_is_missing .git/refs/heads/nested
+'
+
+test_expect_success 'dangling symref not overwritten by creation' '
+	test_when_finished "git update-ref -d refs/heads/dangling" &&
+	git symbolic-ref refs/heads/dangling refs/heads/does-not-exist &&
+	test_must_fail git update-ref --no-deref --stdin 2>err <<-\EOF &&
+	create refs/heads/dangling HEAD
+	EOF
+	test_grep "cannot lock.*dangling symref already exists" err &&
+	test_must_fail git rev-parse --verify refs/heads/dangling &&
+	test_must_fail git rev-parse --verify refs/heads/does-not-exist
+'
+
+test_expect_success 'dangling symref overwritten without old oid' '
+	test_when_finished "git update-ref -d refs/heads/dangling" &&
+	git symbolic-ref refs/heads/dangling refs/heads/does-not-exist &&
+	git update-ref --no-deref --stdin <<-\EOF &&
+	update refs/heads/dangling HEAD
+	EOF
+	git rev-parse --verify refs/heads/dangling &&
+	test_must_fail git rev-parse --verify refs/heads/does-not-exist
 '
 
 test_done

@@ -5673,44 +5673,44 @@ t3506-cherry-pick-ff::cherry-pick-with-ff-a-merge-2	t3506-cherry-pick-ff	cherry 
 t3506-cherry-pick-ff::cherry-pick-a-merge-relative-to-nonexistent-parent-with-ff-should-fail	t3506-cherry-pick-ff	cherry pick a merge relative to nonexistent parent with --ff should fail	cherry-pick	pass
 t3506-cherry-pick-ff::cherry-pick-a-root-commit-with-ff	t3506-cherry-pick-ff	cherry pick a root commit with --ff	cherry-pick	pass
 t3506-cherry-pick-ff::cherry-pick-ff-on-unborn-branch	t3506-cherry-pick-ff	cherry-pick --ff on unborn branch	cherry-pick	pass
-t3507-cherry-pick-conflict::failed-cherry-pick-does-not-advance-head	t3507-cherry-pick-conflict	failed cherry-pick does not advance HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::advice-from-failed-cherry-pick	t3507-cherry-pick-conflict	advice from failed cherry-pick	cherry-pick	partial
-t3507-cherry-pick-conflict::advice-from-failed-cherry-pick-no-commit	t3507-cherry-pick-conflict	advice from failed cherry-pick --no-commit	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-cherry-pick-sets-cherry-pick-head	t3507-cherry-pick-conflict	failed cherry-pick sets CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::successful-cherry-pick-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	successful cherry-pick does not set CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::cherry-pick-no-commit-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick --no-commit does not set CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::cherry-pick-w-dirty-tree-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick w/dirty tree does not set CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::git-cherry-pick-help-suppresses-cherry-pick-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP suppresses CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::git-reset-clears-cherry-pick-head	t3507-cherry-pick-conflict	git reset clears CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	failed commit does not clear CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::cancelled-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	cancelled commit does not clear CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::successful-commit-clears-cherry-pick-head	t3507-cherry-pick-conflict	successful commit clears CHERRY_PICK_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::partial-commit-of-cherry-pick-fails	t3507-cherry-pick-conflict	partial commit of cherry-pick fails	cherry-pick	partial
-t3507-cherry-pick-conflict::commit-amend-of-cherry-pick-fails	t3507-cherry-pick-conflict	commit --amend of cherry-pick fails	cherry-pick	partial
-t3507-cherry-pick-conflict::successful-final-commit-clears-cherry-pick-state	t3507-cherry-pick-conflict	successful final commit clears cherry-pick state	cherry-pick	partial
-t3507-cherry-pick-conflict::reset-after-final-pick-clears-cherry-pick-state	t3507-cherry-pick-conflict	reset after final pick clears cherry-pick state	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-cherry-pick-produces-dirty-index	t3507-cherry-pick-conflict	failed cherry-pick produces dirty index	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-cherry-pick-registers-participants-in-index	t3507-cherry-pick-conflict	failed cherry-pick registers participants in index	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-cherry-pick-describes-conflict-in-work-tree	t3507-cherry-pick-conflict	failed cherry-pick describes conflict in work tree	cherry-pick	partial
-t3507-cherry-pick-conflict::diff3-m-style	t3507-cherry-pick-conflict	diff3 -m style	cherry-pick	partial
-t3507-cherry-pick-conflict::revert-also-handles-conflicts-sanely	t3507-cherry-pick-conflict	revert also handles conflicts sanely	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-revert-sets-revert-head	t3507-cherry-pick-conflict	failed revert sets REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::successful-revert-does-not-set-revert-head	t3507-cherry-pick-conflict	successful revert does not set REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::revert-no-commit-sets-revert-head	t3507-cherry-pick-conflict	revert --no-commit sets REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::revert-w-dirty-tree-does-not-set-revert-head	t3507-cherry-pick-conflict	revert w/dirty tree does not set REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::git-cherry-pick-help-does-not-suppress-revert-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP does not suppress REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::git-reset-clears-revert-head	t3507-cherry-pick-conflict	git reset clears REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-commit-does-not-clear-revert-head	t3507-cherry-pick-conflict	failed commit does not clear REVERT_HEAD	cherry-pick	partial
-t3507-cherry-pick-conflict::successful-final-commit-clears-revert-state	t3507-cherry-pick-conflict	successful final commit clears revert state	cherry-pick	partial
-t3507-cherry-pick-conflict::reset-after-final-pick-clears-revert-state	t3507-cherry-pick-conflict	reset after final pick clears revert state	cherry-pick	partial
-t3507-cherry-pick-conflict::revert-conflict-diff3-m-style	t3507-cherry-pick-conflict	revert conflict, diff3 -m style	cherry-pick	partial
-t3507-cherry-pick-conflict::failed-cherry-pick-does-not-forget-s	t3507-cherry-pick-conflict	failed cherry-pick does not forget -s	cherry-pick	partial
-t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-does-not-add-duplicated-s	t3507-cherry-pick-conflict	commit after failed cherry-pick does not add duplicated -s	cherry-pick	partial
-t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-adds-s-at-the-right-place	t3507-cherry-pick-conflict	commit after failed cherry-pick adds -s at the right place	cherry-pick	partial
-t3507-cherry-pick-conflict::commit-amend-s-places-the-sign-off-at-the-right-place	t3507-cherry-pick-conflict	commit --amend -s places the sign-off at the right place	cherry-pick	partial
-t3507-cherry-pick-conflict::cherry-pick-preserves-sparse-checkout	t3507-cherry-pick-conflict	cherry-pick preserves sparse-checkout	cherry-pick	partial
-t3507-cherry-pick-conflict::cherry-pick-continue-remembers-keep-redundant-commits	t3507-cherry-pick-conflict	cherry-pick --continue remembers --keep-redundant-commits	cherry-pick	partial
-t3507-cherry-pick-conflict::cherry-pick-continue-remembers-allow-empty-and-allow-empty-message	t3507-cherry-pick-conflict	cherry-pick --continue remembers --allow-empty and --allow-empty-message	cherry-pick	partial
+t3507-cherry-pick-conflict::failed-cherry-pick-does-not-advance-head	t3507-cherry-pick-conflict	failed cherry-pick does not advance HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::advice-from-failed-cherry-pick	t3507-cherry-pick-conflict	advice from failed cherry-pick	cherry-pick	pass
+t3507-cherry-pick-conflict::advice-from-failed-cherry-pick-no-commit	t3507-cherry-pick-conflict	advice from failed cherry-pick --no-commit	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-cherry-pick-sets-cherry-pick-head	t3507-cherry-pick-conflict	failed cherry-pick sets CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::successful-cherry-pick-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	successful cherry-pick does not set CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::cherry-pick-no-commit-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick --no-commit does not set CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::cherry-pick-w-dirty-tree-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick w/dirty tree does not set CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::git-cherry-pick-help-suppresses-cherry-pick-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP suppresses CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::git-reset-clears-cherry-pick-head	t3507-cherry-pick-conflict	git reset clears CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	failed commit does not clear CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::cancelled-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	cancelled commit does not clear CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::successful-commit-clears-cherry-pick-head	t3507-cherry-pick-conflict	successful commit clears CHERRY_PICK_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::partial-commit-of-cherry-pick-fails	t3507-cherry-pick-conflict	partial commit of cherry-pick fails	cherry-pick	pass
+t3507-cherry-pick-conflict::commit-amend-of-cherry-pick-fails	t3507-cherry-pick-conflict	commit --amend of cherry-pick fails	cherry-pick	pass
+t3507-cherry-pick-conflict::successful-final-commit-clears-cherry-pick-state	t3507-cherry-pick-conflict	successful final commit clears cherry-pick state	cherry-pick	pass
+t3507-cherry-pick-conflict::reset-after-final-pick-clears-cherry-pick-state	t3507-cherry-pick-conflict	reset after final pick clears cherry-pick state	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-cherry-pick-produces-dirty-index	t3507-cherry-pick-conflict	failed cherry-pick produces dirty index	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-cherry-pick-registers-participants-in-index	t3507-cherry-pick-conflict	failed cherry-pick registers participants in index	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-cherry-pick-describes-conflict-in-work-tree	t3507-cherry-pick-conflict	failed cherry-pick describes conflict in work tree	cherry-pick	pass
+t3507-cherry-pick-conflict::diff3-m-style	t3507-cherry-pick-conflict	diff3 -m style	cherry-pick	pass
+t3507-cherry-pick-conflict::revert-also-handles-conflicts-sanely	t3507-cherry-pick-conflict	revert also handles conflicts sanely	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-revert-sets-revert-head	t3507-cherry-pick-conflict	failed revert sets REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::successful-revert-does-not-set-revert-head	t3507-cherry-pick-conflict	successful revert does not set REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::revert-no-commit-sets-revert-head	t3507-cherry-pick-conflict	revert --no-commit sets REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::revert-w-dirty-tree-does-not-set-revert-head	t3507-cherry-pick-conflict	revert w/dirty tree does not set REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::git-cherry-pick-help-does-not-suppress-revert-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP does not suppress REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::git-reset-clears-revert-head	t3507-cherry-pick-conflict	git reset clears REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-commit-does-not-clear-revert-head	t3507-cherry-pick-conflict	failed commit does not clear REVERT_HEAD	cherry-pick	pass
+t3507-cherry-pick-conflict::successful-final-commit-clears-revert-state	t3507-cherry-pick-conflict	successful final commit clears revert state	cherry-pick	pass
+t3507-cherry-pick-conflict::reset-after-final-pick-clears-revert-state	t3507-cherry-pick-conflict	reset after final pick clears revert state	cherry-pick	pass
+t3507-cherry-pick-conflict::revert-conflict-diff3-m-style	t3507-cherry-pick-conflict	revert conflict, diff3 -m style	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-cherry-pick-does-not-forget-s	t3507-cherry-pick-conflict	failed cherry-pick does not forget -s	cherry-pick	pass
+t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-does-not-add-duplicated-s	t3507-cherry-pick-conflict	commit after failed cherry-pick does not add duplicated -s	cherry-pick	pass
+t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-adds-s-at-the-right-place	t3507-cherry-pick-conflict	commit after failed cherry-pick adds -s at the right place	cherry-pick	pass
+t3507-cherry-pick-conflict::commit-amend-s-places-the-sign-off-at-the-right-place	t3507-cherry-pick-conflict	commit --amend -s places the sign-off at the right place	cherry-pick	pass
+t3507-cherry-pick-conflict::cherry-pick-preserves-sparse-checkout	t3507-cherry-pick-conflict	cherry-pick preserves sparse-checkout	cherry-pick	pass
+t3507-cherry-pick-conflict::cherry-pick-continue-remembers-keep-redundant-commits	t3507-cherry-pick-conflict	cherry-pick --continue remembers --keep-redundant-commits	cherry-pick	pass
+t3507-cherry-pick-conflict::cherry-pick-continue-remembers-allow-empty-and-allow-empty-message	t3507-cherry-pick-conflict	cherry-pick --continue remembers --allow-empty and --allow-empty-message	cherry-pick	pass
 t3508-cherry-pick-many-commits::cherry-pick-first-fourth-works	t3508-cherry-pick-many-commits	cherry-pick first..fourth works	cherry-pick	pass
 t3508-cherry-pick-many-commits::cherry-pick-three-one-two-works	t3508-cherry-pick-many-commits	cherry-pick three one two works	cherry-pick	pass
 t3508-cherry-pick-many-commits::cherry-pick-three-one-two-fails	t3508-cherry-pick-many-commits	cherry-pick three one two: fails	cherry-pick	pass
@@ -9709,17 +9709,17 @@ t5408-send-pack-stdin::cmdline-refs-with-multiple-duplicates	t5408-send-pack-std
 t5408-send-pack-stdin::stdin-refs-come-after-cmdline	t5408-send-pack-stdin	--stdin refs come after cmdline	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-cmdline	t5408-send-pack-stdin	refspecs and --mirror do not mix (cmdline)	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-stdin	t5408-send-pack-stdin	refspecs and --mirror do not mix (stdin)	send-pack	pass
-t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	partial
-t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	partial
-t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	partial
-t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	partial
-t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	partial
-t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	partial
-t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	partial
-t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	partial
-t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	partial
-t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	partial
-t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	partial
+t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	pass
+t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	pass
+t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	pass
+t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	pass
+t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	pass
+t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	pass
+t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	pass
+t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	pass
+t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	pass
+t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	pass
+t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	pass
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	pass
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	pass
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	pass
@@ -9817,8 +9817,8 @@ t5500-fetch-pack::fetch-pack-diag-url-p-h-r-3	t5500-fetch-pack	fetch-pack --diag
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-4	t5500-fetch-pack	fetch-pack --diag-url $p://$h/~$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-h-r	t5500-fetch-pack	fetch-pack --diag-url ./$h:$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-5	t5500-fetch-pack	fetch-pack --diag-url ./$p:$h/~$r	fetch-pack	pass
-t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	partial
-t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	partial
+t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	pass
+t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	pass
 t5502-quickfetch::clone-without-alternate	t5502-quickfetch	clone without alternate	count-objects	pass
 t5502-quickfetch::further-commits-in-the-original	t5502-quickfetch	further commits in the original	commit	pass
 t5502-quickfetch::copy-commit-and-tree-but-not-blob-by-hand	t5502-quickfetch	copy commit and tree but not blob by hand	count-objects	pass
@@ -10766,63 +10766,63 @@ t5548-push-porcelain::git-push-porcelain-dry-run-atomic-force-protocol	t5548-pus
 t5549-fetch-push-http::push-without-negotiation-for-comparing-object-counts-with-the-next-test	t5549-fetch-push-http	push without negotiation (for comparing object counts with the next test)	fetch	not_ported
 t5549-fetch-push-http::push-with-negotiation	t5549-fetch-push-http	push with negotiation	fetch	not_ported
 t5549-fetch-push-http::push-with-negotiation-proceeds-anyway-even-if-negotiation-fails	t5549-fetch-push-http	push with negotiation proceeds anyway even if negotiation fails	fetch	not_ported
-t5550-http-fetch-dumb::setup-repository	t5550-http-fetch-dumb	setup repository	fetch	partial
-t5550-http-fetch-dumb::packfile-without-repository-does-not-crash	t5550-http-fetch-dumb	packfile without repository does not crash	fetch	partial
-t5550-http-fetch-dumb::create-http-accessible-bare-repository-with-loose-objects	t5550-http-fetch-dumb	create http-accessible bare repository with loose objects	fetch	partial
-t5550-http-fetch-dumb::clone-http-repository	t5550-http-fetch-dumb	clone http repository	fetch	partial
-t5550-http-fetch-dumb::list-refs-from-outside-any-repository	t5550-http-fetch-dumb	list refs from outside any repository	fetch	partial
-t5550-http-fetch-dumb::list-detached-head-from-outside-any-repository	t5550-http-fetch-dumb	list detached HEAD from outside any repository	fetch	partial
-t5550-http-fetch-dumb::create-password-protected-repository	t5550-http-fetch-dumb	create password-protected repository	fetch	partial
-t5550-http-fetch-dumb::create-empty-remote-repository	t5550-http-fetch-dumb	create empty remote repository	fetch	partial
-t5550-http-fetch-dumb::empty-dumb-http-repository-falls-back-to-sha1	t5550-http-fetch-dumb	empty dumb HTTP repository falls back to SHA1	fetch	partial
-t5550-http-fetch-dumb::cloning-password-protected-repository-can-fail	t5550-http-fetch-dumb	cloning password-protected repository can fail	fetch	partial
-t5550-http-fetch-dumb::using-credentials-from-netrc-to-clone-successfully	t5550-http-fetch-dumb	using credentials from netrc to clone successfully	fetch	partial
-t5550-http-fetch-dumb::netrc-unauthorized-credentials-prompt-after-401	t5550-http-fetch-dumb	netrc unauthorized credentials (prompt after 401)	fetch	partial
-t5550-http-fetch-dumb::netrc-authorized-but-forbidden-credentials-fail-on-403	t5550-http-fetch-dumb	netrc authorized but forbidden credentials (fail on 403)	fetch	partial
-t5550-http-fetch-dumb::http-auth-can-use-user-pass-in-url	t5550-http-fetch-dumb	http auth can use user/pass in URL	fetch	partial
-t5550-http-fetch-dumb::http-auth-can-use-just-user-in-url	t5550-http-fetch-dumb	http auth can use just user in URL	fetch	partial
-t5550-http-fetch-dumb::http-auth-can-request-both-user-and-pass	t5550-http-fetch-dumb	http auth can request both user and pass	fetch	partial
-t5550-http-fetch-dumb::http-auth-respects-credential-helper-config	t5550-http-fetch-dumb	http auth respects credential helper config	fetch	partial
-t5550-http-fetch-dumb::http-auth-can-get-username-from-config	t5550-http-fetch-dumb	http auth can get username from config	fetch	partial
-t5550-http-fetch-dumb::configured-username-does-not-override-url	t5550-http-fetch-dumb	configured username does not override URL	fetch	partial
-t5550-http-fetch-dumb::set-up-repo-with-http-submodules	t5550-http-fetch-dumb	set up repo with http submodules	fetch	partial
-t5550-http-fetch-dumb::cmdline-credential-config-passes-to-submodule-via-clone	t5550-http-fetch-dumb	cmdline credential config passes to submodule via clone	fetch	partial
-t5550-http-fetch-dumb::cmdline-credential-config-passes-submodule-via-fetch	t5550-http-fetch-dumb	cmdline credential config passes submodule via fetch	fetch	partial
-t5550-http-fetch-dumb::cmdline-credential-config-passes-submodule-update	t5550-http-fetch-dumb	cmdline credential config passes submodule update	fetch	partial
-t5550-http-fetch-dumb::fetch-changes-via-http	t5550-http-fetch-dumb	fetch changes via http	fetch	partial
-t5550-http-fetch-dumb::fetch-changes-via-manual-http-fetch	t5550-http-fetch-dumb	fetch changes via manual http-fetch	fetch	partial
-t5550-http-fetch-dumb::manual-http-fetch-without-a-works-just-as-well	t5550-http-fetch-dumb	manual http-fetch without -a works just as well	fetch	partial
-t5550-http-fetch-dumb::http-remote-detects-correct-head	t5550-http-fetch-dumb	http remote detects correct HEAD	fetch	partial
-t5550-http-fetch-dumb::fetch-packed-objects	t5550-http-fetch-dumb	fetch packed objects	fetch	partial
-t5550-http-fetch-dumb::http-fetch-packfile	t5550-http-fetch-dumb	http-fetch --packfile	fetch	partial
-t5550-http-fetch-dumb::fetch-notices-corrupt-pack	t5550-http-fetch-dumb	fetch notices corrupt pack	fetch	partial
-t5550-http-fetch-dumb::http-fetch-packfile-with-corrupt-pack	t5550-http-fetch-dumb	http-fetch --packfile with corrupt pack	fetch	partial
-t5550-http-fetch-dumb::fetch-notices-corrupt-idx	t5550-http-fetch-dumb	fetch notices corrupt idx	fetch	partial
-t5550-http-fetch-dumb::fetch-can-handle-previously-fetched-idx-files	t5550-http-fetch-dumb	fetch can handle previously-fetched .idx files	fetch	partial
-t5550-http-fetch-dumb::did-not-use-upload-pack-service	t5550-http-fetch-dumb	did not use upload-pack service	fetch	partial
-t5550-http-fetch-dumb::git-client-shows-text-plain-errors	t5550-http-fetch-dumb	git client shows text/plain errors	fetch	partial
-t5550-http-fetch-dumb::git-client-does-not-show-html-errors	t5550-http-fetch-dumb	git client does not show html errors	fetch	partial
-t5550-http-fetch-dumb::git-client-shows-text-plain-with-a-charset	t5550-http-fetch-dumb	git client shows text/plain with a charset	fetch	partial
-t5550-http-fetch-dumb::http-error-messages-are-reencoded	t5550-http-fetch-dumb	http error messages are reencoded	fetch	partial
-t5550-http-fetch-dumb::reencoding-is-robust-to-whitespace-oddities	t5550-http-fetch-dumb	reencoding is robust to whitespace oddities	fetch	partial
-t5550-http-fetch-dumb::git-client-sends-accept-language-based-on-language	t5550-http-fetch-dumb	git client sends Accept-Language based on LANGUAGE	fetch	partial
-t5550-http-fetch-dumb::git-client-sends-accept-language-correctly-with-unordinary-language	t5550-http-fetch-dumb	git client sends Accept-Language correctly with unordinary LANGUAGE	fetch	partial
-t5550-http-fetch-dumb::git-client-sends-accept-language-with-many-preferred-languages	t5550-http-fetch-dumb	git client sends Accept-Language with many preferred languages	fetch	partial
-t5550-http-fetch-dumb::git-client-send-an-empty-accept-language	t5550-http-fetch-dumb	git client send an empty Accept-Language	fetch	partial
-t5550-http-fetch-dumb::remote-http-complains-cleanly-about-malformed-urls	t5550-http-fetch-dumb	remote-http complains cleanly about malformed urls	fetch	partial
-t5550-http-fetch-dumb::remote-http-complains-cleanly-about-empty-scheme	t5550-http-fetch-dumb	remote-http complains cleanly about empty scheme	fetch	partial
-t5550-http-fetch-dumb::redirects-can-be-forbidden-allowed	t5550-http-fetch-dumb	redirects can be forbidden/allowed	fetch	partial
-t5550-http-fetch-dumb::redirects-are-reported-to-stderr	t5550-http-fetch-dumb	redirects are reported to stderr	fetch	partial
-t5550-http-fetch-dumb::non-initial-redirects-can-be-forbidden	t5550-http-fetch-dumb	non-initial redirects can be forbidden	fetch	partial
-t5550-http-fetch-dumb::http-followredirects-defaults-to-initial	t5550-http-fetch-dumb	http.followRedirects defaults to "initial"	fetch	partial
-t5550-http-fetch-dumb::set-up-evil-alternates-scheme	t5550-http-fetch-dumb	set up evil alternates scheme	fetch	partial
-t5550-http-fetch-dumb::http-alternates-is-a-non-initial-redirect	t5550-http-fetch-dumb	http-alternates is a non-initial redirect	fetch	partial
-t5550-http-fetch-dumb::http-alternates-cannot-point-at-funny-protocols	t5550-http-fetch-dumb	http-alternates cannot point at funny protocols	fetch	partial
-t5550-http-fetch-dumb::http-alternates-triggers-not-from-user-protocol-check	t5550-http-fetch-dumb	http-alternates triggers not-from-user protocol check	fetch	partial
-t5550-http-fetch-dumb::can-redirect-through-non-info-refs-service-git-upload-pack-url	t5550-http-fetch-dumb	can redirect through non-"info/refs?service=git-upload-pack" URL	fetch	partial
-t5550-http-fetch-dumb::print-http-error-when-any-intermediate-redirect-throws-error	t5550-http-fetch-dumb	print HTTP error when any intermediate redirect throws error	fetch	partial
-t5550-http-fetch-dumb::fetching-via-http-alternates-works	t5550-http-fetch-dumb	fetching via http alternates works	fetch	partial
-t5550-http-fetch-dumb::dumb-http-can-fetch-index-v1	t5550-http-fetch-dumb	dumb http can fetch index v1	fetch	partial
+t5550-http-fetch-dumb::setup-repository	t5550-http-fetch-dumb	setup repository	fetch	pass
+t5550-http-fetch-dumb::packfile-without-repository-does-not-crash	t5550-http-fetch-dumb	packfile without repository does not crash	fetch	pass
+t5550-http-fetch-dumb::create-http-accessible-bare-repository-with-loose-objects	t5550-http-fetch-dumb	create http-accessible bare repository with loose objects	fetch	pass
+t5550-http-fetch-dumb::clone-http-repository	t5550-http-fetch-dumb	clone http repository	fetch	pass
+t5550-http-fetch-dumb::list-refs-from-outside-any-repository	t5550-http-fetch-dumb	list refs from outside any repository	fetch	pass
+t5550-http-fetch-dumb::list-detached-head-from-outside-any-repository	t5550-http-fetch-dumb	list detached HEAD from outside any repository	fetch	pass
+t5550-http-fetch-dumb::create-password-protected-repository	t5550-http-fetch-dumb	create password-protected repository	fetch	pass
+t5550-http-fetch-dumb::create-empty-remote-repository	t5550-http-fetch-dumb	create empty remote repository	fetch	pass
+t5550-http-fetch-dumb::empty-dumb-http-repository-falls-back-to-sha1	t5550-http-fetch-dumb	empty dumb HTTP repository falls back to SHA1	fetch	pass
+t5550-http-fetch-dumb::cloning-password-protected-repository-can-fail	t5550-http-fetch-dumb	cloning password-protected repository can fail	fetch	pass
+t5550-http-fetch-dumb::using-credentials-from-netrc-to-clone-successfully	t5550-http-fetch-dumb	using credentials from netrc to clone successfully	fetch	pass
+t5550-http-fetch-dumb::netrc-unauthorized-credentials-prompt-after-401	t5550-http-fetch-dumb	netrc unauthorized credentials (prompt after 401)	fetch	pass
+t5550-http-fetch-dumb::netrc-authorized-but-forbidden-credentials-fail-on-403	t5550-http-fetch-dumb	netrc authorized but forbidden credentials (fail on 403)	fetch	pass
+t5550-http-fetch-dumb::http-auth-can-use-user-pass-in-url	t5550-http-fetch-dumb	http auth can use user/pass in URL	fetch	pass
+t5550-http-fetch-dumb::http-auth-can-use-just-user-in-url	t5550-http-fetch-dumb	http auth can use just user in URL	fetch	pass
+t5550-http-fetch-dumb::http-auth-can-request-both-user-and-pass	t5550-http-fetch-dumb	http auth can request both user and pass	fetch	pass
+t5550-http-fetch-dumb::http-auth-respects-credential-helper-config	t5550-http-fetch-dumb	http auth respects credential helper config	fetch	pass
+t5550-http-fetch-dumb::http-auth-can-get-username-from-config	t5550-http-fetch-dumb	http auth can get username from config	fetch	pass
+t5550-http-fetch-dumb::configured-username-does-not-override-url	t5550-http-fetch-dumb	configured username does not override URL	fetch	pass
+t5550-http-fetch-dumb::set-up-repo-with-http-submodules	t5550-http-fetch-dumb	set up repo with http submodules	fetch	pass
+t5550-http-fetch-dumb::cmdline-credential-config-passes-to-submodule-via-clone	t5550-http-fetch-dumb	cmdline credential config passes to submodule via clone	fetch	pass
+t5550-http-fetch-dumb::cmdline-credential-config-passes-submodule-via-fetch	t5550-http-fetch-dumb	cmdline credential config passes submodule via fetch	fetch	pass
+t5550-http-fetch-dumb::cmdline-credential-config-passes-submodule-update	t5550-http-fetch-dumb	cmdline credential config passes submodule update	fetch	pass
+t5550-http-fetch-dumb::fetch-changes-via-http	t5550-http-fetch-dumb	fetch changes via http	fetch	pass
+t5550-http-fetch-dumb::fetch-changes-via-manual-http-fetch	t5550-http-fetch-dumb	fetch changes via manual http-fetch	fetch	pass
+t5550-http-fetch-dumb::manual-http-fetch-without-a-works-just-as-well	t5550-http-fetch-dumb	manual http-fetch without -a works just as well	fetch	pass
+t5550-http-fetch-dumb::http-remote-detects-correct-head	t5550-http-fetch-dumb	http remote detects correct HEAD	fetch	pass
+t5550-http-fetch-dumb::fetch-packed-objects	t5550-http-fetch-dumb	fetch packed objects	fetch	pass
+t5550-http-fetch-dumb::http-fetch-packfile	t5550-http-fetch-dumb	http-fetch --packfile	fetch	pass
+t5550-http-fetch-dumb::fetch-notices-corrupt-pack	t5550-http-fetch-dumb	fetch notices corrupt pack	fetch	pass
+t5550-http-fetch-dumb::http-fetch-packfile-with-corrupt-pack	t5550-http-fetch-dumb	http-fetch --packfile with corrupt pack	fetch	pass
+t5550-http-fetch-dumb::fetch-notices-corrupt-idx	t5550-http-fetch-dumb	fetch notices corrupt idx	fetch	pass
+t5550-http-fetch-dumb::fetch-can-handle-previously-fetched-idx-files	t5550-http-fetch-dumb	fetch can handle previously-fetched .idx files	fetch	pass
+t5550-http-fetch-dumb::did-not-use-upload-pack-service	t5550-http-fetch-dumb	did not use upload-pack service	fetch	pass
+t5550-http-fetch-dumb::git-client-shows-text-plain-errors	t5550-http-fetch-dumb	git client shows text/plain errors	fetch	pass
+t5550-http-fetch-dumb::git-client-does-not-show-html-errors	t5550-http-fetch-dumb	git client does not show html errors	fetch	pass
+t5550-http-fetch-dumb::git-client-shows-text-plain-with-a-charset	t5550-http-fetch-dumb	git client shows text/plain with a charset	fetch	pass
+t5550-http-fetch-dumb::http-error-messages-are-reencoded	t5550-http-fetch-dumb	http error messages are reencoded	fetch	pass
+t5550-http-fetch-dumb::reencoding-is-robust-to-whitespace-oddities	t5550-http-fetch-dumb	reencoding is robust to whitespace oddities	fetch	pass
+t5550-http-fetch-dumb::git-client-sends-accept-language-based-on-language	t5550-http-fetch-dumb	git client sends Accept-Language based on LANGUAGE	fetch	pass
+t5550-http-fetch-dumb::git-client-sends-accept-language-correctly-with-unordinary-language	t5550-http-fetch-dumb	git client sends Accept-Language correctly with unordinary LANGUAGE	fetch	pass
+t5550-http-fetch-dumb::git-client-sends-accept-language-with-many-preferred-languages	t5550-http-fetch-dumb	git client sends Accept-Language with many preferred languages	fetch	pass
+t5550-http-fetch-dumb::git-client-send-an-empty-accept-language	t5550-http-fetch-dumb	git client send an empty Accept-Language	fetch	pass
+t5550-http-fetch-dumb::remote-http-complains-cleanly-about-malformed-urls	t5550-http-fetch-dumb	remote-http complains cleanly about malformed urls	fetch	pass
+t5550-http-fetch-dumb::remote-http-complains-cleanly-about-empty-scheme	t5550-http-fetch-dumb	remote-http complains cleanly about empty scheme	fetch	pass
+t5550-http-fetch-dumb::redirects-can-be-forbidden-allowed	t5550-http-fetch-dumb	redirects can be forbidden/allowed	fetch	pass
+t5550-http-fetch-dumb::redirects-are-reported-to-stderr	t5550-http-fetch-dumb	redirects are reported to stderr	fetch	pass
+t5550-http-fetch-dumb::non-initial-redirects-can-be-forbidden	t5550-http-fetch-dumb	non-initial redirects can be forbidden	fetch	pass
+t5550-http-fetch-dumb::http-followredirects-defaults-to-initial	t5550-http-fetch-dumb	http.followRedirects defaults to "initial"	fetch	pass
+t5550-http-fetch-dumb::set-up-evil-alternates-scheme	t5550-http-fetch-dumb	set up evil alternates scheme	fetch	pass
+t5550-http-fetch-dumb::http-alternates-is-a-non-initial-redirect	t5550-http-fetch-dumb	http-alternates is a non-initial redirect	fetch	pass
+t5550-http-fetch-dumb::http-alternates-cannot-point-at-funny-protocols	t5550-http-fetch-dumb	http-alternates cannot point at funny protocols	fetch	pass
+t5550-http-fetch-dumb::http-alternates-triggers-not-from-user-protocol-check	t5550-http-fetch-dumb	http-alternates triggers not-from-user protocol check	fetch	pass
+t5550-http-fetch-dumb::can-redirect-through-non-info-refs-service-git-upload-pack-url	t5550-http-fetch-dumb	can redirect through non-"info/refs?service=git-upload-pack" URL	fetch	pass
+t5550-http-fetch-dumb::print-http-error-when-any-intermediate-redirect-throws-error	t5550-http-fetch-dumb	print HTTP error when any intermediate redirect throws error	fetch	pass
+t5550-http-fetch-dumb::fetching-via-http-alternates-works	t5550-http-fetch-dumb	fetching via http alternates works	fetch	pass
+t5550-http-fetch-dumb::dumb-http-can-fetch-index-v1	t5550-http-fetch-dumb	dumb http can fetch index v1	fetch	pass
 t5551-http-fetch-smart::setup-repository	t5551-http-fetch-smart	setup repository	fetch	not_ported
 t5551-http-fetch-smart::create-http-accessible-bare-repository	t5551-http-fetch-smart	create http-accessible bare repository	fetch	not_ported
 t5551-http-fetch-smart::clone-http-repository	t5551-http-fetch-smart	clone http repository	fetch	not_ported
@@ -10953,7 +10953,7 @@ t5558-clone-bundle-uri::bundles-are-downloaded-once-during-fetch-all	t5558-clone
 t5558-clone-bundle-uri::bundles-with-space-in-uri-are-rejected	t5558-clone-bundle-uri	bundles with space in URI are rejected	clone	not_ported
 t5558-clone-bundle-uri::bundles-with-newline-in-uri-are-rejected	t5558-clone-bundle-uri	bundles with newline in URI are rejected	clone	not_ported
 t5558-clone-bundle-uri::bundles-with-newline-in-target-path-are-rejected	t5558-clone-bundle-uri	bundles with newline in target path are rejected	clone	not_ported
-t5560-http-backend-noserver::http-backend-blocks-bad-path-info	t5560-http-backend-noserver	http-backend blocks bad PATH_INFO	http-backend	partial
+t5560-http-backend-noserver::http-backend-blocks-bad-path-info	t5560-http-backend-noserver	http-backend blocks bad PATH_INFO	http-backend	pass
 t5561-http-backend::server-request-log-matches-test-results	t5561-http-backend	server request log matches test results	http-backend	not_ported
 t5562-http-backend-content-length::setup	t5562-http-backend-content-length	setup	http-backend	not_ported
 t5562-http-backend-content-length::setup-compression-related	t5562-http-backend-content-length	setup, compression related	http-backend	not_ported

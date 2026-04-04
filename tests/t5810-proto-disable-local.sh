@@ -1,43 +1,38 @@
 #!/bin/sh
-# Ported from git/t/t5810-proto-disable-local.sh
-# Tests for protocol.file.allow configuration
-#
-# Requires protocol.*.allow support. Stubbed.
 
-test_description='protocol disabling for local transport'
+test_description='test disabling of local paths in clone/fetch'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY/lib-proto-disable.sh"
 
-test_expect_success 'setup' '
-	test_create_repo remote &&
-	(cd remote && test_commit one)
+test_expect_success 'setup repository to clone' '
+	test_commit one
 '
 
-test_expect_success 'clone denied with protocol.file.allow=never' '
-	test_must_fail git -c protocol.file.allow=never clone remote clone-denied 2>err &&
-	grep -i "not allowed" err
+test_proto "file://" file "file://$PWD"
+test_proto "path" file .
+
+test_expect_success 'setup repo with dash' '
+	git init --bare repo.git &&
+	git push repo.git HEAD &&
+	mv repo.git "$PWD/-repo.git"
 '
 
-test_expect_success 'fetch denied with protocol.file.allow=never' '
-	git clone remote clone-for-fetch &&
-	test_must_fail git -C clone-for-fetch -c protocol.file.allow=never fetch 2>err &&
-	grep -i "not allowed" err
+# This will fail even without our rejection because upload-pack will
+# complain about the bogus option. So let's make sure that GIT_TRACE
+# doesn't show us even running upload-pack.
+#
+# We must also be sure to use "fetch" and not "clone" here, as the latter
+# actually canonicalizes our input into an absolute path (which is fine
+# to allow).
+test_expect_success 'repo names starting with dash are rejected' '
+	rm -f trace.out &&
+	test_must_fail env GIT_TRACE="$PWD/trace.out" git fetch -- -repo.git &&
+	! grep upload-pack trace.out
 '
 
-test_expect_success 'push denied with protocol.file.allow=never' '
-	git clone remote clone-for-push &&
-	(cd clone-for-push && test_commit two) &&
-	test_must_fail git -C clone-for-push -c protocol.file.allow=never push 2>err &&
-	grep -i "not allowed" err
-'
-
-test_expect_success 'clone denied with GIT_ALLOW_PROTOCOL excluding file' '
-	GIT_ALLOW_PROTOCOL=https test_must_fail git clone remote clone-denied-env 2>err &&
-	grep -i "not allowed" err
+test_expect_success 'full paths still work' '
+	git fetch "$PWD/-repo.git"
 '
 
 test_done

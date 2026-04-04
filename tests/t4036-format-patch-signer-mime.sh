@@ -2,25 +2,49 @@
 
 test_description='format-patch -s should force MIME encoding as needed'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success setup '
-	git init repo &&
-	cd repo &&
+
 	>F &&
 	git add F &&
 	git commit -m initial &&
 	echo new line >F &&
-	git add F &&
+
 	test_tick &&
-	git commit -m "This adds some lines to F"
+	git commit -m "This adds some lines to F" F
+
 '
 
 test_expect_success 'format normally' '
-	cd repo &&
-	git format-patch --stdout HEAD~1 >output &&
+
+	git format-patch --stdout -1 >output &&
 	! grep Content-Type output
+
+'
+
+test_expect_success 'format with signoff without funny signer name' '
+
+	git format-patch -s --stdout -1 >output &&
+	! grep Content-Type output
+
+'
+
+test_expect_success 'format with non ASCII signer name' '
+
+	GIT_COMMITTER_NAME="はまの ふにおう" \
+	git format-patch -s --stdout -1 >output &&
+	grep Content-Type output
+
+'
+
+test_expect_success 'attach and signoff do not duplicate mime headers' '
+
+	GIT_COMMITTER_NAME="はまの ふにおう" \
+	git format-patch -s --stdout -1 --attach >output &&
+	test $(grep -ci ^MIME-Version: output) = 1
+
 '
 
 test_done
+

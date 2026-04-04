@@ -1,56 +1,96 @@
 #!/bin/sh
 
-test_description='git am basic operation tests'
+test_description='git am handling submodules'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-submodule-update.sh
 
-test_expect_success 'setup' '
-	git init repo && cd repo &&
-	echo one >file &&
-	git add file &&
-	git commit -m "one" &&
-	git tag one &&
+am () {
+	git format-patch --stdout --ignore-submodules=dirty "..$1" >patch &&
+	may_only_be_test_must_fail "$2" &&
+	$2 git am patch
+}
 
-	echo two >file &&
-	git commit -a -m "two" &&
-	git format-patch -1 --stdout >two.patch &&
+test_submodule_switch_func "am"
 
-	echo three >file &&
-	git commit -a -m "three" &&
-	git format-patch -1 --stdout >three.patch
+am_3way () {
+	git format-patch --stdout --ignore-submodules=dirty "..$1" >patch &&
+	may_only_be_test_must_fail "$2" &&
+	$2 git am --3way patch
+}
+
+test_submodule_switch_func "am_3way"
+
+test_expect_success 'setup diff.submodule' '
+	test_commit one &&
+	INITIAL=$(git rev-parse HEAD) &&
+
+	git init submodule &&
+	(
+		cd submodule &&
+		test_commit two &&
+		git rev-parse HEAD >../initial-submodule
+	) &&
+	git submodule add ./submodule &&
+	git commit -m first &&
+
+	(
+		cd submodule &&
+		test_commit three &&
+		git rev-parse HEAD >../first-submodule
+	) &&
+	git add submodule &&
+	git commit -m second &&
+	SECOND=$(git rev-parse HEAD) &&
+
+	(
+		cd submodule &&
+		git mv two.t four.t &&
+		git commit -m "second submodule" &&
+		git rev-parse HEAD >../second-submodule
+	) &&
+	test_commit four &&
+	git add submodule &&
+	git commit --amend --no-edit &&
+	THIRD=$(git rev-parse HEAD) &&
+	git submodule update --init
 '
 
-test_expect_success 'am applies single patch' '
-	cd repo &&
-	git reset --hard one &&
-	git am two.patch &&
-	echo two >expect &&
-	test_cmp expect file
+run_test() {
+	START_COMMIT=$1 &&
+	EXPECT=$2 &&
+	# Abort any merges in progress: the previous
+	# test may have failed, and we should clean up.
+	test_might_fail git am --abort &&
+	git reset --hard $START_COMMIT &&
+	rm -f *.patch &&
+	git format-patch -1 &&
+	git reset --hard $START_COMMIT^ &&
+	git submodule update &&
+	git am *.patch &&
+	git submodule update &&
+	git -C submodule rev-parse HEAD >actual &&
+	test_cmp $EXPECT actual
+}
+
+test_expect_success 'diff.submodule unset' '
+	test_unconfig diff.submodule &&
+	run_test $SECOND first-submodule
 '
 
-test_expect_success 'am applies patch and preserves commit message' '
-	cd repo &&
-	git log -n 1 --format=%s >actual &&
-	echo "two" >expect &&
-	test_cmp expect actual
+test_expect_success 'diff.submodule unset with extra file' '
+	test_unconfig diff.submodule &&
+	run_test $THIRD second-submodule
 '
 
-test_expect_success 'am applies sequential patches' '
-	cd repo &&
-	git reset --hard one &&
-	git am two.patch &&
-	git am three.patch &&
-	echo three >expect &&
-	test_cmp expect file
+test_expect_success 'diff.submodule=log' '
+	test_config diff.submodule log &&
+	run_test $SECOND first-submodule
 '
 
-test_expect_success 'am --dry-run does not modify anything' '
-	cd repo &&
-	git reset --hard one &&
-	git am --dry-run two.patch &&
-	echo one >expect &&
-	test_cmp expect file
+test_expect_success 'diff.submodule=log with extra file' '
+	test_config diff.submodule log &&
+	run_test $THIRD second-submodule
 '
 
 test_done

@@ -1,197 +1,103 @@
 #!/bin/sh
-# Tests for 'grit read-tree' with directory/file conflicts.
-# Ported from git/t/t1012-read-tree-df.sh
-#
-# NOTE: grit's read-tree -m -u has issues replacing directories with
-# files in the working tree (ENOTDIR). Those tests use test_expect_success.
 
-test_description='grit read-tree directory/file conflicts'
+test_description='read-tree D/F conflict corner cases'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-read-tree.sh
 
-test_expect_success 'setup: base tree with file' '
-	git init repo &&
-	cd repo &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo "base" >path &&
-	git add path &&
-	git commit -m "file at path" &&
-	git tag file-at-path &&
-	git rev-parse file-at-path^{tree} >../tree_file
+maketree () {
+	(
+		rm -f .git/index .git/index.lock &&
+		git clean -d -f -f -q -x &&
+		name="$1" &&
+		shift &&
+		for it
+		do
+			path=$(expr "$it" : '\([^:]*\)') &&
+			mkdir -p $(dirname "$path") &&
+			echo "$it" >"$path" &&
+			git update-index --add "$path" || exit
+		done &&
+		git tag "$name" $(git write-tree)
+	)
+}
+
+settree () {
+	rm -f .git/index .git/index.lock &&
+	git clean -d -f -f -q -x &&
+	git read-tree "$1" &&
+	git checkout-index -f -q -u -a &&
+	git update-index --refresh
+}
+
+checkindex () {
+	git ls-files -s |
+	sed "s|^[0-7][0-7]* $OID_REGEX \([0-3]\)	|\1 |" >current &&
+	cat >expect &&
+	test_cmp expect current
+}
+
+test_expect_success setup '
+	maketree O-000 a/b-2/c/d a/b/c/d a/x &&
+	maketree A-000 a/b-2/c/d a/b/c/d a/x &&
+	maketree A-001 a/b-2/c/d a/b/c/d a/b/c/e a/x &&
+	maketree B-000 a/b-2/c/d a/b     a/x &&
+
+	maketree O-010 t-0     t/1  t/2 t=3 &&
+	maketree A-010 t-0 t            t=3 &&
+	maketree B-010         t/1:     t=3: &&
+
+	maketree O-020 ds/dma/ioat.c ds/dma/ioat_dca.c &&
+	maketree A-020 ds/dma/ioat/Makefile ds/dma/ioat/registers.h &&
+	:
 '
 
-test_expect_success 'setup: tree with directory where file was' '
-	cd repo &&
-	git rm path &&
-	mkdir path &&
-	echo "inside" >path/subfile &&
-	git add path/subfile &&
-	git commit -m "dir at path" &&
-	git tag dir-at-path &&
-	git rev-parse dir-at-path^{tree} >../tree_dir
+test_expect_success '3-way (1)' '
+	settree A-000 &&
+	read_tree_u_must_succeed -m -u O-000 A-000 B-000 &&
+	checkindex <<-EOF
+	3 a/b
+	0 a/b-2/c/d
+	1 a/b/c/d
+	2 a/b/c/d
+	0 a/x
+	EOF
 '
 
-test_expect_success 'read-tree switches from file to dir in index' '
-	cd repo &&
-	T_FILE=$(cat ../tree_file) &&
-	T_DIR=$(cat ../tree_dir) &&
-	rm -f .git/index &&
-	git read-tree "$T_FILE" &&
-	git read-tree -m -u "$T_FILE" "$T_DIR" &&
-	git ls-files >actual &&
-	grep "path/subfile" actual &&
-	! grep "^path$" actual
+test_expect_success '3-way (2)' '
+	settree A-001 &&
+	read_tree_u_must_succeed -m -u O-000 A-001 B-000 &&
+	checkindex <<-EOF
+	3 a/b
+	0 a/b-2/c/d
+	1 a/b/c/d
+	2 a/b/c/d
+	2 a/b/c/e
+	0 a/x
+	EOF
 '
 
-test_expect_success 'working tree updated: dir replaces file' '
-	cd repo &&
-	T_FILE=$(cat ../tree_file) &&
-	T_DIR=$(cat ../tree_dir) &&
-	rm -f .git/index &&
-	git read-tree "$T_FILE" &&
-	git checkout-index -f -a &&
-	test -f path &&
-	git read-tree -m -u "$T_FILE" "$T_DIR" &&
-	test -d path &&
-	test -f path/subfile
+test_expect_success '3-way (3)' '
+	settree A-010 &&
+	read_tree_u_must_succeed -m -u O-010 A-010 B-010 &&
+	checkindex <<-EOF
+	2 t
+	1 t-0
+	2 t-0
+	1 t/1
+	3 t/1
+	1 t/2
+	0 t=3
+	EOF
 '
 
-test_expect_success 'read-tree switches from dir to file in index' '
-	cd repo &&
-	T_FILE=$(cat ../tree_file) &&
-	T_DIR=$(cat ../tree_dir) &&
-	rm -f .git/index &&
-	git read-tree "$T_DIR" &&
-	git read-tree -m -u "$T_DIR" "$T_FILE" &&
-	git ls-files >actual &&
-	grep "^path$" actual &&
-	! grep "path/subfile" actual
-'
-
-test_expect_success 'working tree updated: file replaces dir (ENOTDIR)' '
-	cd repo &&
-	T_FILE=$(cat ../tree_file) &&
-	T_DIR=$(cat ../tree_dir) &&
-	rm -rf path &&
-	rm -f .git/index &&
-	git read-tree "$T_DIR" &&
-	git checkout-index -f -a &&
-	test -d path &&
-	git read-tree -m -u "$T_DIR" "$T_FILE" &&
-	test -f path &&
-	! test -d path
-'
-
-test_expect_success 'setup: deeper nesting via index manipulation' '
-	cd repo &&
-	rm -rf path &&
-	rm -f .git/index &&
-	mkdir -p path/deep/nested &&
-	echo "deep" >path/deep/nested/file &&
-	git add path/deep/nested/file &&
-	git commit -m "deeply nested dir at path" &&
-	git tag deep-dir &&
-	git rev-parse deep-dir^{tree} >../tree_deep
-'
-
-test_expect_success 'read-tree from file to deeply nested dir' '
-	cd repo &&
-	T_FILE=$(cat ../tree_file) &&
-	T_DEEP=$(cat ../tree_deep) &&
-	rm -rf path &&
-	rm -f .git/index &&
-	git read-tree "$T_FILE" &&
-	git checkout-index -f -a &&
-	git read-tree -m -u "$T_FILE" "$T_DEEP" &&
-	git ls-files >actual &&
-	grep "path/deep/nested/file" actual
-'
-
-test_expect_success 'read-tree from deeply nested dir to file (index)' '
-	cd repo &&
-	T_FILE=$(cat ../tree_file) &&
-	T_DEEP=$(cat ../tree_deep) &&
-	rm -rf path &&
-	rm -f .git/index &&
-	git read-tree "$T_DEEP" &&
-	git read-tree -m "$T_DEEP" "$T_FILE" &&
-	git ls-files >actual &&
-	grep "^path$" actual &&
-	! grep "path/" actual
-'
-
-test_expect_success 'setup: two files, one becomes dir' '
-	cd repo &&
-	rm -rf path become-dir keep &&
-	rm -f .git/index &&
-	echo "keep" >keep &&
-	echo "change" >become-dir &&
-	git add keep become-dir &&
-	git commit -m "two files" &&
-	git tag two-files &&
-	git rev-parse two-files^{tree} >../tree_two &&
-	git rm become-dir &&
-	mkdir become-dir &&
-	echo "sub" >become-dir/sub &&
-	git add become-dir/sub &&
-	git commit -m "one became dir" &&
-	git tag one-dir &&
-	git rev-parse one-dir^{tree} >../tree_onedir
-'
-
-test_expect_success 'df conflict: unchanged file preserved during switch' '
-	cd repo &&
-	T_TWO=$(cat ../tree_two) &&
-	T_ONEDIR=$(cat ../tree_onedir) &&
-	rm -rf become-dir &&
-	rm -f .git/index &&
-	git read-tree "$T_TWO" &&
-	git checkout-index -f -a &&
-	git read-tree -m -u "$T_TWO" "$T_ONEDIR" &&
-	git ls-files >actual &&
-	grep "keep" actual &&
-	grep "become-dir/sub" actual &&
-	test -f keep
-'
-
-test_expect_success 'df conflict: switch back dir->file (ENOTDIR)' '
-	cd repo &&
-	T_TWO=$(cat ../tree_two) &&
-	T_ONEDIR=$(cat ../tree_onedir) &&
-	rm -rf become-dir &&
-	rm -f .git/index &&
-	git read-tree "$T_ONEDIR" &&
-	git checkout-index -f -a &&
-	git read-tree -m -u "$T_ONEDIR" "$T_TWO" &&
-	git ls-files >actual &&
-	grep "keep" actual &&
-	grep "^become-dir$" actual &&
-	! grep "become-dir/" actual
-'
-
-test_expect_success '3-way merge with df conflict in index' '
-	cd repo &&
-	T_TWO=$(cat ../tree_two) &&
-	T_ONEDIR=$(cat ../tree_onedir) &&
-	rm -rf become-dir &&
-	rm -f .git/index &&
-	git read-tree -m "$T_TWO" "$T_TWO" "$T_ONEDIR" &&
-	git ls-files -s >actual &&
-	grep "become-dir" actual
-'
-
-test_expect_success '3-way merge: base=file, ours=file, theirs=dir' '
-	cd repo &&
-	T_TWO=$(cat ../tree_two) &&
-	T_ONEDIR=$(cat ../tree_onedir) &&
-	rm -rf become-dir &&
-	rm -f .git/index &&
-	git read-tree -m "$T_TWO" "$T_TWO" "$T_ONEDIR" &&
-	git ls-files -s >actual &&
-	grep "become-dir" actual &&
-	grep "keep" actual
+test_expect_success '2-way (1)' '
+	settree O-020 &&
+	read_tree_u_must_succeed -m -u O-020 A-020 &&
+	checkindex <<-EOF
+	0 ds/dma/ioat/Makefile
+	0 ds/dma/ioat/registers.h
+	EOF
 '
 
 test_done

@@ -1,16 +1,17 @@
 #!/bin/sh
-#
-# Upstream: t5732-protocol-v2-bundle-uri-http.sh
-# Requires HTTP transport/bundle-uri — ported as test_expect_success stubs.
-#
 
-test_description='Test bundle-uri with protocol v2 and 'http://' transport'
+test_description="Test bundle-uri with protocol v2 and 'http://' transport"
+
+TEST_NO_CREATE_REPO=1
 
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-skip_all='HTTP transport/bundle-uri not available in grit'
+# Test protocol v2 with 'http://' transport
+#
+BUNDLE_URI_PROTOCOL=http
+. "$TEST_DIRECTORY"/lib-bundle-uri-protocol.sh
+
 test_done

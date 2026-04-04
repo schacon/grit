@@ -2,13 +2,8 @@
 
 test_description='apply same filename'
 
-. ./test-lib.sh
 
-test_expect_success 'setup: init repo' '
-	git init -q &&
-	git config user.name "Test" &&
-	git config user.email "test@example.com"
-'
+. ./test-lib.sh
 
 modify () {
 	sed -e "$1" < "$2" > "$2".x &&
@@ -21,7 +16,6 @@ test_expect_success setup '
 	git add same_fn other_fn &&
 	git commit -m initial
 '
-
 test_expect_success 'apply same filename with independent changes' '
 	modify "s/^d/z/" same_fn &&
 	git diff > patch0 &&
@@ -36,7 +30,10 @@ test_expect_success 'apply same filename with independent changes' '
 
 test_expect_success 'apply same filename with overlapping changes' '
 	git reset --hard &&
+
+	# Store same_fn so that we can check apply -R in next test
 	cp same_fn same_fn1 &&
+
 	modify "s/^d/z/" same_fn &&
 	git diff > patch0 &&
 	git add same_fn &&
@@ -48,7 +45,53 @@ test_expect_success 'apply same filename with overlapping changes' '
 	test_cmp same_fn same_fn2
 '
 
-# Skipped: grit apply -R doesn't handle overlapping multi-patch reverse correctly
-# test_expect_success 'apply same filename with overlapping changes, in reverse'
+test_expect_success 'apply same filename with overlapping changes, in reverse' '
+	git apply -R patch0 &&
+	test_cmp same_fn same_fn1
+'
+
+test_expect_success 'apply same new filename after rename' '
+	git reset --hard &&
+	git mv same_fn new_fn &&
+	modify "s/^d/z/" new_fn &&
+	git add new_fn &&
+	git diff -M --cached > patch1 &&
+	modify "s/^e/y/" new_fn &&
+	git diff >> patch1 &&
+	cp new_fn new_fn2 &&
+	git reset --hard &&
+	git apply --index patch1 &&
+	test_cmp new_fn new_fn2
+'
+
+test_expect_success 'apply same old filename after rename -- should fail.' '
+	git reset --hard &&
+	git mv same_fn new_fn &&
+	modify "s/^d/z/" new_fn &&
+	git add new_fn &&
+	git diff -M --cached > patch1 &&
+	git mv new_fn same_fn &&
+	modify "s/^e/y/" same_fn &&
+	git diff >> patch1 &&
+	git reset --hard &&
+	test_must_fail git apply patch1
+'
+
+test_expect_success 'apply A->B (rename), C->A (rename), A->A -- should pass.' '
+	git reset --hard &&
+	git mv same_fn new_fn &&
+	modify "s/^d/z/" new_fn &&
+	git add new_fn &&
+	git diff -M --cached > patch1 &&
+	git commit -m "a rename" &&
+	git mv other_fn same_fn &&
+	modify "s/^e/y/" same_fn &&
+	git add same_fn &&
+	git diff -M --cached >> patch1 &&
+	modify "s/^g/x/" same_fn &&
+	git diff >> patch1 &&
+	git reset --hard HEAD^ &&
+	git apply patch1
+'
 
 test_done

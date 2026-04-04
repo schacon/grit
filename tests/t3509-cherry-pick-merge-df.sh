@@ -1,67 +1,104 @@
 #!/bin/sh
-# Ported from git/t/t3509-cherry-pick-merge-df.sh
-# Test cherry-pick with directory/file scenarios
 
-test_description='Test cherry-pick with directory/file scenarios'
-
+test_description='Test cherry-pick with directory/file conflicts'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com" &&
+test_expect_success 'Initialize repository' '
 	mkdir a &&
 	>a/f &&
 	git add a &&
-	git commit -m a &&
-	git tag initial
+	git commit -m a
 '
 
-test_expect_success 'cherry-pick commit that adds a file' '
-	git checkout -b add-file initial &&
+test_expect_success 'Setup rename across paths each below D/F conflicts' '
+	mkdir b &&
+	test_ln_s_add ../a b/a &&
+	git commit -m b &&
+
+	git checkout -b branch &&
+	rm b/a &&
+	git mv a b/a &&
+	test_ln_s_add b/a a &&
+	git commit -m swap &&
+
+	>f1 &&
+	git add f1 &&
+	git commit -m f1
+'
+
+test_expect_success 'Cherry-pick succeeds with rename across D/F conflicts' '
+	git reset --hard &&
+	git checkout main^0 &&
+	git cherry-pick branch
+'
+
+test_expect_success 'Setup rename with file on one side matching directory name on other' '
+	git checkout --orphan nick-testcase &&
+	git rm -rf . &&
+
+	>empty &&
+	git add empty &&
+	git commit -m "Empty file" &&
+
+	git checkout -b simple &&
+	mv empty file &&
+	mkdir empty &&
+	mv file empty &&
+	git add empty/file &&
+	git commit -m "Empty file under empty dir" &&
+
 	echo content >newfile &&
 	git add newfile &&
-	git commit -m "add newfile" &&
-	git tag add-file-tag &&
-
-	git checkout main &&
-	git cherry-pick add-file-tag &&
-	test_path_is_file newfile &&
-	test "$(cat newfile)" = "content"
+	git commit -m "New file"
 '
 
-test_expect_success 'cherry-pick commit that modifies a file' '
-	git checkout -b modify-file initial &&
-	echo modified >a/f &&
-	git add a/f &&
-	git commit -m "modify a/f" &&
-	git tag modify-tag &&
-
-	git checkout main &&
-	git reset --hard initial &&
-	git cherry-pick modify-tag &&
-	test "$(cat a/f)" = "modified"
+test_expect_success 'Cherry-pick succeeds with was_a_dir/file -> was_a_dir (resolve)' '
+	git reset --hard &&
+	git checkout -q nick-testcase^0 &&
+	git cherry-pick --strategy=resolve simple
 '
 
-test_expect_success 'cherry-pick commit that removes a file' '
-	git checkout main &&
-	git reset --hard initial &&
-	echo extra >extra &&
-	git add extra &&
-	git commit -m "add extra" &&
+test_expect_success 'Cherry-pick succeeds with was_a_dir/file -> was_a_dir (recursive)' '
+	git reset --hard &&
+	git checkout -q nick-testcase^0 &&
+	git cherry-pick --strategy=recursive simple
+'
 
-	git checkout -b remove-file HEAD &&
-	git rm extra &&
-	git commit -m "remove extra" &&
-	git tag remove-tag &&
+test_expect_success 'Setup rename with file on one side matching different dirname on other' '
+	git reset --hard &&
+	git checkout --orphan mergeme &&
+	git rm -rf . &&
 
-	git checkout main &&
-	git cherry-pick remove-tag &&
-	test_path_is_missing extra
+	mkdir sub &&
+	mkdir othersub &&
+	echo content > sub/file &&
+	echo foo > othersub/whatever &&
+	git add -A &&
+	git commit -m "Common commit" &&
+
+	git rm -rf othersub &&
+	git mv sub/file othersub &&
+	git commit -m "Commit to merge" &&
+
+	git checkout -b newhead mergeme~1 &&
+	>independent-change &&
+	git add independent-change &&
+	git commit -m "Completely unrelated change"
+'
+
+test_expect_success 'Cherry-pick with rename to different D/F conflict succeeds (resolve)' '
+	git reset --hard &&
+	git checkout -q newhead^0 &&
+	git cherry-pick --strategy=resolve mergeme
+'
+
+test_expect_success 'Cherry-pick with rename to different D/F conflict succeeds (recursive)' '
+	git reset --hard &&
+	git checkout -q newhead^0 &&
+	git cherry-pick --strategy=recursive mergeme
 '
 
 test_done

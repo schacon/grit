@@ -1,34 +1,25 @@
 #!/bin/sh
+#
+# Copyright (c) 2014 Ephrim Khong
+#
 
-test_description='repack with alternate objects'
+test_description='repack involving cyclic alternate'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-REAL_GIT=/usr/bin/git
-
-test_expect_success 'setup base repo' '
-	$REAL_GIT init repack-alt-base &&
-	cd repack-alt-base &&
-	$REAL_GIT config user.name "Test" &&
-	$REAL_GIT config user.email "test@test.com" &&
-	echo content >file &&
-	$REAL_GIT add file &&
-	$REAL_GIT commit -m "base"
+test_expect_success setup '
+	GIT_OBJECT_DIRECTORY=.git//../.git/objects &&
+	export GIT_OBJECT_DIRECTORY &&
+	touch a &&
+	git add a &&
+	git commit -m 1 &&
+	git repack -adl &&
+	echo "$(pwd)"/.git/objects/../objects >.git/objects/info/alternates
 '
 
-test_expect_success 'clone and verify with grit' '
-	$REAL_GIT clone repack-alt-base repack-alt-clone &&
-	cd repack-alt-clone &&
-	git cat-file -t HEAD >output &&
-	echo commit >expect &&
-	test_cmp expect output
-'
-
-test_expect_success 'grit reads cloned repo log' '
-	cd repack-alt-clone &&
-	git log --oneline >output &&
-	test -s output
+test_expect_success 're-packing repository with itself as alternate' '
+	git repack -adl &&
+	git fsck
 '
 
 test_done

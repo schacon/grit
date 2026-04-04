@@ -1,255 +1,372 @@
 #!/bin/sh
-# Ported subset from git/t/t5304-prune.sh focused on count-objects output.
+#
+# Copyright (c) 2008 Johannes E. Schindelin
+#
 
-test_description='count-objects loose count and verbose garbage accounting'
+test_description='prune'
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-REAL_GIT=${REAL_GIT:-/usr/bin/git}
+day=$((60*60*24))
+week=$(($day*7))
 
-# ---------------------------------------------------------------------------
-# count-objects basics
-# ---------------------------------------------------------------------------
-
-test_expect_success 'count-objects loose count changes with hash-object -w' '
-	grit init repo &&
-	cd repo &&
+add_blob() {
 	before=$(git count-objects | sed "s/ .*//") &&
 	BLOB=$(echo aleph_0 | git hash-object -w --stdin) &&
-	BLOB_FILE=.git/objects/$(echo "$BLOB" | sed "s/^../&\//") &&
-	after=$(git count-objects | sed "s/ .*//") &&
-	test $((before + 1)) = "$after" &&
-	test_path_is_file "$BLOB_FILE"
+	BLOB_FILE=.git/objects/$(echo $BLOB | sed "s/^../&\//") &&
+	test $((1 + $before)) = $(git count-objects | sed "s/ .*//") &&
+	test_path_is_file $BLOB_FILE &&
+	test-tool chmtime =+0 $BLOB_FILE
+}
+
+test_expect_success setup '
+	>file &&
+	git add file &&
+	test_tick &&
+	git commit -m initial &&
+	git gc
 '
 
-test_expect_success 'count-objects -v reports garbage files' '
-	cd repo &&
-	mkdir -p .git/objects/pack &&
+test_expect_success 'bare repo prune is quiet without $GIT_DIR/objects/pack' '
+	git clone -q --shared --template= --bare . bare.git &&
+	rmdir bare.git/objects/pack &&
+	git --git-dir=bare.git prune --no-progress 2>prune.err &&
+	test_must_be_empty prune.err &&
+	rm -r bare.git prune.err
+'
+
+test_expect_success 'prune stale packs' '
+	orig_pack=$(echo .git/objects/pack/*.pack) &&
+	>.git/objects/tmp_1.pack &&
+	>.git/objects/tmp_2.pack &&
+	test-tool chmtime =-86501 .git/objects/tmp_1.pack &&
+	git prune --expire 1.day &&
+	test_path_is_file $orig_pack &&
+	test_path_is_file .git/objects/tmp_2.pack &&
+	test_path_is_missing .git/objects/tmp_1.pack
+'
+
+test_expect_success 'prune --expire' '
+	add_blob &&
+	git prune --expire=1.hour.ago &&
+	test $((1 + $before)) = $(git count-objects | sed "s/ .*//") &&
+	test_path_is_file $BLOB_FILE &&
+	test-tool chmtime =-86500 $BLOB_FILE &&
+	git prune --expire 1.day &&
+	test $before = $(git count-objects | sed "s/ .*//") &&
+	test_path_is_missing $BLOB_FILE
+'
+
+test_expect_success 'gc: implicit prune --expire' '
+	add_blob &&
+	test-tool chmtime =-$((2*$week-30)) $BLOB_FILE &&
+	git gc --no-cruft &&
+	test $((1 + $before)) = $(git count-objects | sed "s/ .*//") &&
+	test_path_is_file $BLOB_FILE &&
+	test-tool chmtime =-$((2*$week+1)) $BLOB_FILE &&
+	git gc --no-cruft &&
+	test $before = $(git count-objects | sed "s/ .*//") &&
+	test_path_is_missing $BLOB_FILE
+'
+
+test_expect_success 'gc: refuse to start with invalid gc.pruneExpire' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	>repo/.git/config &&
+	git -C repo config gc.pruneExpire invalid &&
+	cat >expect <<-\EOF &&
+	error: Invalid gc.pruneexpire: '\''invalid'\''
+	fatal: bad config variable '\''gc.pruneexpire'\'' in file '\''.git/config'\'' at line 2
+	EOF
+	test_must_fail git -C repo gc 2>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'gc: start with ok gc.pruneExpire' '
+	git config gc.pruneExpire 2.days.ago &&
+	git gc --no-cruft
+'
+
+test_expect_success 'prune: prune nonsense parameters' '
+	test_must_fail git prune garbage &&
+	test_must_fail git prune --- &&
+	test_must_fail git prune --no-such-option
+'
+
+test_expect_success 'prune: prune unreachable heads' '
+	git config core.logAllRefUpdates false &&
+	>file2 &&
+	git add file2 &&
+	git commit -m temporary &&
+	tmp_head=$(git rev-list -1 HEAD) &&
+	git reset HEAD^ &&
+	git reflog expire --all &&
+	git prune &&
+	test_must_fail git reset $tmp_head --
+'
+
+test_expect_success 'prune: do not prune detached HEAD with no reflog' '
+	git checkout --detach --quiet &&
+	git commit --allow-empty -m "detached commit" &&
+	git reflog expire --all &&
+	git prune -n >prune_actual &&
+	test_must_be_empty prune_actual
+'
+
+test_expect_success 'prune: prune former HEAD after checking out branch' '
+	head_oid=$(git rev-parse HEAD) &&
+	git checkout --quiet main &&
+	git reflog expire --all &&
+	git prune -v >prune_actual &&
+	grep "$head_oid" prune_actual
+'
+
+test_expect_success 'prune: do not prune heads listed as an argument' '
+	>file2 &&
+	git add file2 &&
+	git commit -m temporary &&
+	tmp_head=$(git rev-list -1 HEAD) &&
+	git reset HEAD^ &&
+	git prune -- $tmp_head &&
+	git reset $tmp_head --
+'
+
+test_expect_success 'gc --no-prune' '
+	add_blob &&
+	test-tool chmtime =-$((5001*$day)) $BLOB_FILE &&
+	git config gc.pruneExpire 2.days.ago &&
+	git gc --no-prune --no-cruft &&
+	test 1 = $(git count-objects | sed "s/ .*//") &&
+	test_path_is_file $BLOB_FILE
+'
+
+test_expect_success 'gc respects gc.pruneExpire' '
+	git config gc.pruneExpire 5002.days.ago &&
+	git gc --no-cruft &&
+	test_path_is_file $BLOB_FILE &&
+	git config gc.pruneExpire 5000.days.ago &&
+	git gc --no-cruft &&
+	test_path_is_missing $BLOB_FILE
+'
+
+test_expect_success 'gc --prune=<date>' '
+	add_blob &&
+	test-tool chmtime =-$((5001*$day)) $BLOB_FILE &&
+	git gc --prune=5002.days.ago --no-cruft &&
+	test_path_is_file $BLOB_FILE &&
+	git gc --prune=5000.days.ago --no-cruft &&
+	test_path_is_missing $BLOB_FILE
+'
+
+test_expect_success 'gc --prune=never' '
+	add_blob &&
+	git gc --prune=never --no-cruft &&
+	test_path_is_file $BLOB_FILE &&
+	git gc --prune=now --no-cruft &&
+	test_path_is_missing $BLOB_FILE
+'
+
+test_expect_success 'gc respects gc.pruneExpire=never' '
+	git config gc.pruneExpire never &&
+	add_blob &&
+	git gc --no-cruft &&
+	test_path_is_file $BLOB_FILE &&
+	git config gc.pruneExpire now &&
+	git gc --no-cruft &&
+	test_path_is_missing $BLOB_FILE
+'
+
+test_expect_success 'prune --expire=never' '
+	add_blob &&
+	git prune --expire=never &&
+	test_path_is_file $BLOB_FILE &&
+	git prune &&
+	test_path_is_missing $BLOB_FILE
+'
+
+test_expect_success 'gc: prune old objects after local clone' '
+	add_blob &&
+	test-tool chmtime =-$((2*$week+1)) $BLOB_FILE &&
+	git clone --no-hardlinks . aclone &&
+	(
+		cd aclone &&
+		test 1 = $(git count-objects | sed "s/ .*//") &&
+		test_path_is_file $BLOB_FILE &&
+		git gc --prune --no-cruft &&
+		test 0 = $(git count-objects | sed "s/ .*//") &&
+		test_path_is_missing $BLOB_FILE
+	)
+'
+
+test_expect_success 'garbage report in count-objects -v' '
+	test_when_finished "rm -f .git/objects/pack/fake*" &&
+	test_when_finished "rm -f .git/objects/pack/foo*" &&
+	>.git/objects/pack/foo &&
+	>.git/objects/pack/foo.bar &&
+	>.git/objects/pack/foo.keep &&
+	>.git/objects/pack/foo.pack &&
 	>.git/objects/pack/fake.bar &&
-	git count-objects -v >actual &&
-	grep "^garbage: 1\$" actual
-'
-
-# ---------------------------------------------------------------------------
-# count-objects with zero loose objects
-# ---------------------------------------------------------------------------
-
-test_expect_success 'count-objects with zero loose objects' '
-	rm -rf repo_co0 &&
-	grit init repo_co0 &&
-	cd repo_co0 &&
-	test "$(git count-objects)" = "0 objects, 0 kilobytes"
-'
-
-test_expect_success 'count-objects shows increasing count' '
-	rm -rf repo_co1 &&
-	grit init repo_co1 &&
-	cd repo_co1 &&
-	before=$(git count-objects | sed "s/ .*//") &&
-	echo blob1 | git hash-object -w --stdin >/dev/null &&
-	after1=$(git count-objects | sed "s/ .*//") &&
-	test $((before + 1)) = "$after1" &&
-	echo blob2 | git hash-object -w --stdin >/dev/null &&
-	after2=$(git count-objects | sed "s/ .*//") &&
-	test $((before + 2)) = "$after2"
-'
-
-test_expect_success 'count-objects -v shows verbose output' '
-	cd repo_co1 &&
-	git count-objects -v >out &&
-	grep "^count:" out &&
-	grep "^size:" out &&
-	grep "^in-pack:" out &&
-	grep "^packs:" out
-'
-
-test_expect_success 'count-objects -v reports multiple garbage files' '
-	rm -rf repo_co_garb &&
-	grit init repo_co_garb &&
-	cd repo_co_garb &&
-	mkdir -p .git/objects/pack &&
-	>.git/objects/pack/fake1.bar &&
-	>.git/objects/pack/fake2.baz &&
-	git count-objects -v >actual &&
-	grep "^garbage: 2\$" actual &&
-	rm .git/objects/pack/fake1.bar .git/objects/pack/fake2.baz
-'
-
-test_expect_success 'count-objects -v size-pack updates after repack' '
-	rm -rf repo_cosp &&
-	grit init repo_cosp &&
-	cd repo_cosp &&
-	echo content | git hash-object -w --stdin >/dev/null &&
-	git count-objects -v >before_repack &&
-	grep "^size-pack: 0" before_repack &&
-	echo content2 >f.txt &&
-	git add f.txt &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	git commit -m init &&
-	git repack -a -d &&
-	git count-objects -v >after_repack &&
-	grep "^size-pack:" after_repack | grep -v "size-pack: 0"
-'
-
-test_expect_success 'count-objects returns 0 after full repack -a -d' '
-	rm -rf repo_coall &&
-	grit init repo_coall &&
-	cd repo_coall &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo content >f.txt &&
-	git add f.txt &&
-	git commit -m init &&
-	git repack -a -d &&
-	test "$(git count-objects)" = "0 objects, 0 kilobytes"
-'
-
-test_expect_success 'count-objects -v in-pack count matches verify-pack' '
-	cd repo_coall &&
-	git count-objects -v >co_out &&
-	in_pack=$(grep "^in-pack:" co_out | sed "s/^in-pack: //") &&
-	idx=$(echo .git/objects/pack/*.idx) &&
-	git verify-pack -v "$idx" >vp_out &&
-	obj_count=$(grep -c -E "^[0-9a-f]{40}" vp_out) &&
-	test "$in_pack" = "$obj_count"
-'
-
-# ---------------------------------------------------------------------------
-# Additional count-objects tests ported from t5304
-# ---------------------------------------------------------------------------
-
-test_expect_success 'count-objects -v with no garbage shows garbage: 0' '
-	rm -rf repo_co_ng &&
-	grit init repo_co_ng &&
-	cd repo_co_ng &&
-	git count-objects -v >out &&
-	grep "^garbage: 0\$" out
-'
-
-test_expect_success 'count-objects -v packs count' '
-	rm -rf repo_co_pc &&
-	grit init repo_co_pc &&
-	cd repo_co_pc &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	git count-objects -v >out &&
-	grep "^packs: 0\$" out &&
-	echo content >f.txt &&
-	git add f.txt &&
-	git commit -m init &&
-	git repack -a -d &&
-	git count-objects -v >out2 &&
-	grep "^packs: 1\$" out2
-'
-
-test_expect_success 'count-objects -v size shows non-zero for loose objects' '
-	rm -rf repo_co_sz &&
-	grit init repo_co_sz &&
-	cd repo_co_sz &&
-	echo "hello world of loose objects" | git hash-object -w --stdin >/dev/null &&
-	git count-objects -v >out &&
-	size=$(grep "^size:" out | sed "s/^size: //") &&
-	test "$size" -ge 0
-'
-
-test_expect_success 'count-objects loose count after hash-object and prune-packed' '
-	rm -rf repo_co_pp &&
-	grit init repo_co_pp &&
-	cd repo_co_pp &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo one >f.txt &&
-	git add f.txt &&
-	git commit -m init &&
-	loose_before=$(git count-objects | sed "s/ .*//") &&
-	test "$loose_before" -gt 0 &&
-	git repack -a &&
-	grit prune-packed &&
-	test "$(git count-objects | sed "s/ .*//")" = "0"
-'
-
-test_expect_success 'count-objects tracks multiple hash-object writes' '
-	rm -rf repo_co_multi &&
-	grit init repo_co_multi &&
-	cd repo_co_multi &&
-	test "$(git count-objects | sed "s/ .*//")" = "0" &&
-	echo a | git hash-object -w --stdin >/dev/null &&
-	test "$(git count-objects | sed "s/ .*//")" = "1" &&
-	echo b | git hash-object -w --stdin >/dev/null &&
-	test "$(git count-objects | sed "s/ .*//")" = "2" &&
-	echo c | git hash-object -w --stdin >/dev/null &&
-	test "$(git count-objects | sed "s/ .*//")" = "3"
-'
-
-test_expect_success 'count-objects does not double-count packed objects' '
-	rm -rf repo_co_dc &&
-	grit init repo_co_dc &&
-	cd repo_co_dc &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo one >f.txt &&
-	git add f.txt &&
-	git commit -m init &&
-	git repack -a -d &&
-	test "$(git count-objects | sed "s/ .*//")" = "0"
-'
-
-test_expect_success 'count-objects with two pack files' '
-	rm -rf repo_co_2p &&
-	grit init repo_co_2p &&
-	cd repo_co_2p &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo first >f1.txt &&
-	git add f1.txt &&
-	git commit -m first &&
-	git repack &&
-	echo second >f2.txt &&
-	git add f2.txt &&
-	git commit -m second &&
-	git repack &&
-	grit prune-packed &&
-	git count-objects -v >out &&
-	packs=$(grep "^packs:" out | sed "s/^packs: //") &&
-	test "$packs" -ge 2 &&
-	in_pack=$(grep "^in-pack:" out | sed "s/^in-pack: //") &&
-	test "$in_pack" -ge 3
-'
-
-test_expect_success 'count-objects -v garbage with fake .keep file only' '
-	rm -rf repo_co_keep &&
-	grit init repo_co_keep &&
-	cd repo_co_keep &&
-	mkdir -p .git/objects/pack &&
+	>.git/objects/pack/fake.keep &&
+	>.git/objects/pack/fake.pack &&
+	>.git/objects/pack/fake.idx &&
 	>.git/objects/pack/fake2.keep &&
+	>.git/objects/pack/fake3.idx &&
 	git count-objects -v 2>stderr &&
-	test -s stderr || true
+	grep "index file .git/objects/pack/fake.idx is too small" stderr &&
+	grep "^warning:" stderr | sort >actual &&
+	cat >expected <<\EOF &&
+warning: garbage found: .git/objects/pack/fake.bar
+warning: garbage found: .git/objects/pack/foo
+warning: garbage found: .git/objects/pack/foo.bar
+warning: no corresponding .idx or .pack: .git/objects/pack/fake2.keep
+warning: no corresponding .idx: .git/objects/pack/foo.keep
+warning: no corresponding .idx: .git/objects/pack/foo.pack
+warning: no corresponding .pack: .git/objects/pack/fake3.idx
+EOF
+	test_cmp expected actual
 '
 
-test_expect_success 'count-objects -v size-garbage accounts for garbage size' '
-	rm -rf repo_co_sg &&
-	grit init repo_co_sg &&
-	cd repo_co_sg &&
-	mkdir -p .git/objects/pack &&
-	dd if=/dev/zero of=.git/objects/pack/fake.bar bs=1024 count=1 2>/dev/null &&
-	git count-objects -v >out &&
-	grep "^size-garbage:" out
+test_expect_success 'clean pack garbage with gc' '
+	test_when_finished "rm -f .git/objects/pack/fake*" &&
+	test_when_finished "rm -f .git/objects/pack/foo*" &&
+	>.git/objects/pack/foo.keep &&
+	>.git/objects/pack/foo.pack &&
+	>.git/objects/pack/fake.idx &&
+	>.git/objects/pack/fake2.keep &&
+	>.git/objects/pack/fake2.idx &&
+	>.git/objects/pack/fake3.keep &&
+	git gc --no-cruft &&
+	git count-objects -v 2>stderr &&
+	grep "^warning:" stderr | sort >actual &&
+	cat >expected <<\EOF &&
+warning: no corresponding .idx or .pack: .git/objects/pack/fake3.keep
+warning: no corresponding .idx: .git/objects/pack/foo.keep
+warning: no corresponding .idx: .git/objects/pack/foo.pack
+EOF
+	test_cmp expected actual
 '
 
-test_expect_success 'count-objects -v after gc matches expectations' '
-	rm -rf repo_co_gc &&
-	grit init repo_co_gc &&
-	cd repo_co_gc &&
-	git config user.email "test@example.com" &&
-	git config user.name "Test User" &&
-	echo content >f.txt &&
-	git add f.txt &&
-	git commit -m init &&
-	git gc &&
-	git count-objects -v >out &&
-	grep "^count: 0\$" out &&
-	grep "^packs: 1\$" out
+test_expect_success 'prune .git/shallow' '
+	oid=$(echo hi|git commit-tree HEAD^{tree}) &&
+	echo $oid >.git/shallow &&
+	git prune --dry-run >out &&
+	grep $oid .git/shallow &&
+	grep $oid out &&
+	git prune &&
+	test_path_is_missing .git/shallow
+'
+
+test_expect_success 'prune .git/shallow when there are no loose objects' '
+	oid=$(echo hi|git commit-tree HEAD^{tree}) &&
+	echo $oid >.git/shallow &&
+	git update-ref refs/heads/shallow-tip $oid &&
+	git repack -ad &&
+	# verify assumption that all loose objects are gone
+	git count-objects | grep ^0 &&
+	git prune &&
+	echo $oid >expect &&
+	test_cmp expect .git/shallow
+'
+
+test_expect_success 'prune: handle alternate object database' '
+	test_create_repo A &&
+	git -C A commit --allow-empty -m "initial commit" &&
+	git clone --shared A B &&
+	git -C B commit --allow-empty -m "next commit" &&
+	git -C B prune
+'
+
+test_expect_success 'prune: handle index in multiple worktrees' '
+	git worktree add second-worktree &&
+	echo "new blob for second-worktree" >second-worktree/blob &&
+	git -C second-worktree add blob &&
+	git prune --expire=now &&
+	git -C second-worktree show :blob >actual &&
+	test_cmp second-worktree/blob actual
+'
+
+test_expect_success 'prune: handle HEAD in multiple worktrees' '
+	git worktree add --detach third-worktree &&
+	echo "new blob for third-worktree" >third-worktree/blob &&
+	git -C third-worktree add blob &&
+	git -C third-worktree commit -m "third" &&
+	rm .git/worktrees/third-worktree/index &&
+	test_must_fail git -C third-worktree show :blob &&
+	git prune --expire=now &&
+	git -C third-worktree show HEAD:blob >actual &&
+	test_cmp third-worktree/blob actual
+'
+
+test_expect_success 'prune: handle HEAD reflog in multiple worktrees' '
+	git config core.logAllRefUpdates true &&
+	echo "lost blob for third-worktree" >expected &&
+	(
+		cd third-worktree &&
+		cat ../expected >blob &&
+		git add blob &&
+		git commit -m "second commit in third" &&
+		git clean -f && # Remove untracked left behind by deleting index
+		git reset --hard HEAD^
+	) &&
+	git prune --expire=now &&
+	oid=`git hash-object expected` &&
+	git -C third-worktree show "$oid" >actual &&
+	test_cmp expected actual
+'
+
+test_expect_success 'prune: handle expire option correctly' '
+	test_must_fail git prune --expire 2>error &&
+	test_grep "requires a value" error &&
+
+	test_must_fail git prune --expire=nyah 2>error &&
+	test_grep "malformed expiration" error &&
+
+	git prune --no-expire
+'
+
+test_expect_success 'trivial prune with bitmaps enabled' '
+	git repack -adb &&
+	blob=$(echo bitmap-unreachable-blob | git hash-object -w --stdin) &&
+	git prune --expire=now &&
+	git cat-file -e HEAD &&
+	test_must_fail git cat-file -e $blob
+'
+
+test_expect_success 'old reachable-from-recent retained with bitmaps' '
+	git repack -adb &&
+	to_drop=$(echo bitmap-from-recent-1 | git hash-object -w --stdin) &&
+	test-tool chmtime -86400 .git/objects/$(test_oid_to_path $to_drop) &&
+	to_save=$(echo bitmap-from-recent-2 | git hash-object -w --stdin) &&
+	test-tool chmtime -86400 .git/objects/$(test_oid_to_path $to_save) &&
+	tree=$(printf "100644 blob $to_save\tfile\n" | git mktree) &&
+	test-tool chmtime -86400 .git/objects/$(test_oid_to_path $tree) &&
+	commit=$(echo foo | git commit-tree $tree) &&
+	git prune --expire=12.hours.ago &&
+	git cat-file -e $commit &&
+	git cat-file -e $tree &&
+	git cat-file -e $to_save &&
+	test_must_fail git cat-file -e $to_drop
+'
+
+test_expect_success 'gc.recentObjectsHook' '
+	add_blob &&
+	test-tool chmtime =-86500 $BLOB_FILE &&
+
+	write_script precious-objects <<-EOF &&
+	echo $BLOB
+	EOF
+	test_config gc.recentObjectsHook ./precious-objects &&
+
+	git prune --expire=now &&
+
+	git cat-file -p $BLOB
+'
+
+test_expect_success 'prune does not crash with -h' '
+	test_expect_code 129 git prune -h >usage &&
+	test_grep "[Uu]sage: git prune " usage
 '
 
 test_done

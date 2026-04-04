@@ -1,8 +1,11 @@
 #!/bin/sh
 
-test_description='verify sort functions (requires test-tool)'
+test_description='verify sort functions'
 
 . ./test-lib.sh
 
-skip_all='skipping test-tool tests; test-tool not available in grit'
+test_expect_success 'DEFINE_LIST_SORT_DEBUG' '
+	test-tool mergesort test
+'
+
 test_done

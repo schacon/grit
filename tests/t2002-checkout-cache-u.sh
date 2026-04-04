@@ -1,39 +1,33 @@
 #!/bin/sh
-# Ported subset from git/t/t2002-checkout-cache-u.sh
+#
+# Copyright (c) 2005 Junio C Hamano
+#
 
-test_description='grit checkout-index -u'
+test_description='git checkout-index -u test.
 
-cd "$(dirname "$0")" || exit 1
+With -u flag, git checkout-index internally runs the equivalent of
+git update-index --refresh on the checked out entry.'
+
 . ./test-lib.sh
 
-test_expect_success 'setup index and tree' '
-	grit init repo &&
-	cd repo &&
-	echo frotz >path0 &&
-	grit update-index --add path0 &&
-	grit write-tree >tree_oid
-'
+test_expect_success \
+'preparation' '
+echo frotz >path0 &&
+git update-index --add path0 &&
+t=$(git write-tree)'
 
-test_expect_success 'without -u checkout-index does not rewrite index stat data' '
-	cd repo &&
-	rm -f path0 &&
-	t=$(cat tree_oid) &&
-	grit read-tree "$t" &&
-	before=$(cksum .git/index) &&
-	grit checkout-index -f -a &&
-	after=$(cksum .git/index) &&
-	test "x$before" = "x$after"
-'
+test_expect_success \
+'without -u, git checkout-index smudges stat information.' '
+rm -f path0 &&
+git read-tree $t &&
+git checkout-index -f -a &&
+test_must_fail git diff-files --exit-code'
 
-test_expect_success 'with -u checkout-index rewrites index stat data' '
-	cd repo &&
-	rm -f path0 &&
-	t=$(cat tree_oid) &&
-	grit read-tree "$t" &&
-	before=$(cksum .git/index) &&
-	grit checkout-index -u -f -a &&
-	after=$(cksum .git/index) &&
-	test "x$before" != "x$after"
-'
+test_expect_success \
+'with -u, git checkout-index picks up stat information from new files.' '
+rm -f path0 &&
+git read-tree $t &&
+git checkout-index -u -f -a &&
+git diff-files --exit-code'
 
 test_done

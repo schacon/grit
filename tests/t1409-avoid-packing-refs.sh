@@ -4,7 +4,15 @@ test_description='avoid rewriting packed-refs unnecessarily'
 
 . ./test-lib.sh
 
-# Add an identifying mark to the packed-refs file header line.
+if test_have_prereq !REFFILES
+then
+  skip_all='skipping files-backend specific pack-refs tests'
+  test_done
+fi
+
+# Add an identifying mark to the packed-refs file header line. This
+# shouldn't upset readers, and it should be omitted if the file is
+# ever rewritten.
 mark_packed_refs () {
 	sed -e "s/^\(#.*\)/\1 t1409 /" .git/packed-refs >.git/packed-refs.new &&
 	mv .git/packed-refs.new .git/packed-refs
@@ -16,19 +24,15 @@ check_packed_refs_marked () {
 }
 
 test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test" &&
-	git config user.email "t@t" &&
 	git commit --allow-empty -m "Commit A" &&
-	git rev-parse HEAD >A_oid &&
+	A=$(git rev-parse HEAD) &&
 	git commit --allow-empty -m "Commit B" &&
-	git rev-parse HEAD >B_oid &&
+	B=$(git rev-parse HEAD) &&
 	git commit --allow-empty -m "Commit C" &&
-	git rev-parse HEAD >C_oid
+	C=$(git rev-parse HEAD)
 '
 
 test_expect_success 'do not create packed-refs file gratuitously' '
-	A=$(cat A_oid) && B=$(cat B_oid) && C=$(cat C_oid) &&
 	test_path_is_missing .git/packed-refs &&
 	git update-ref refs/heads/foo $A &&
 	test_path_is_missing .git/packed-refs &&
@@ -54,7 +58,6 @@ test_expect_success 'check that marking the packed-refs file works' '
 '
 
 test_expect_success 'leave packed-refs untouched on update of packed' '
-	A=$(cat A_oid) && B=$(cat B_oid) &&
 	git update-ref refs/heads/packed-update $A &&
 	git pack-refs --all &&
 	mark_packed_refs &&
@@ -63,7 +66,6 @@ test_expect_success 'leave packed-refs untouched on update of packed' '
 '
 
 test_expect_success 'leave packed-refs untouched on checked update of packed' '
-	A=$(cat A_oid) && B=$(cat B_oid) &&
 	git update-ref refs/heads/packed-checked-update $A &&
 	git pack-refs --all &&
 	mark_packed_refs &&
@@ -72,7 +74,6 @@ test_expect_success 'leave packed-refs untouched on checked update of packed' '
 '
 
 test_expect_success 'leave packed-refs untouched on verify of packed' '
-	A=$(cat A_oid) &&
 	git update-ref refs/heads/packed-verify $A &&
 	git pack-refs --all &&
 	mark_packed_refs &&
@@ -81,7 +82,6 @@ test_expect_success 'leave packed-refs untouched on verify of packed' '
 '
 
 test_expect_success 'touch packed-refs on delete of packed' '
-	A=$(cat A_oid) &&
 	git update-ref refs/heads/packed-delete $A &&
 	git pack-refs --all &&
 	mark_packed_refs &&
@@ -90,7 +90,6 @@ test_expect_success 'touch packed-refs on delete of packed' '
 '
 
 test_expect_success 'leave packed-refs untouched on update of loose' '
-	A=$(cat A_oid) && B=$(cat B_oid) &&
 	git pack-refs --all &&
 	git update-ref refs/heads/loose-update $A &&
 	mark_packed_refs &&
@@ -99,7 +98,6 @@ test_expect_success 'leave packed-refs untouched on update of loose' '
 '
 
 test_expect_success 'leave packed-refs untouched on checked update of loose' '
-	A=$(cat A_oid) && B=$(cat B_oid) &&
 	git pack-refs --all &&
 	git update-ref refs/heads/loose-checked-update $A &&
 	mark_packed_refs &&
@@ -108,7 +106,6 @@ test_expect_success 'leave packed-refs untouched on checked update of loose' '
 '
 
 test_expect_success 'leave packed-refs untouched on verify of loose' '
-	A=$(cat A_oid) &&
 	git pack-refs --all &&
 	git update-ref refs/heads/loose-verify $A &&
 	mark_packed_refs &&
@@ -117,7 +114,6 @@ test_expect_success 'leave packed-refs untouched on verify of loose' '
 '
 
 test_expect_success 'leave packed-refs untouched on delete of loose' '
-	A=$(cat A_oid) &&
 	git pack-refs --all &&
 	git update-ref refs/heads/loose-delete $A &&
 	mark_packed_refs &&

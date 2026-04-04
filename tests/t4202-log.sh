@@ -1,79 +1,1112 @@
 #!/bin/sh
-# Ported from git/t/t4202-log.sh
-# Tests for 'grit log'.
 
-test_description='grit log'
+test_description='git log'
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
+. "$TEST_DIRECTORY/lib-gpg.sh"
+. "$TEST_DIRECTORY/lib-terminal.sh"
+. "$TEST_DIRECTORY/lib-log-graph.sh"
 
-test_expect_success 'setup repository with commits' '
-	git init repo &&
-	cd repo &&
-	git config user.name "A U Thor" &&
-	git config user.email "author@example.com" &&
+test_cmp_graph () {
+	lib_test_cmp_graph --format=%s "$@"
+}
+
+test_expect_success setup '
 
 	echo one >one &&
 	git add one &&
 	test_tick &&
-	git commit -m "initial" &&
+	git commit -m initial &&
 
 	echo ichi >one &&
 	git add one &&
 	test_tick &&
-	git commit -m "second" &&
+	git commit -m second &&
 
 	git mv one ichi &&
 	test_tick &&
-	git commit -m "third" &&
+	git commit -m third &&
 
 	cp ichi ein &&
 	git add ein &&
 	test_tick &&
-	git commit -m "fourth" &&
+	git commit -m fourth &&
 
 	mkdir a &&
 	echo ni >a/two &&
 	git add a/two &&
 	test_tick &&
-	git commit -m "fifth" &&
+	git commit -m fifth  &&
 
 	git rm a/two &&
 	test_tick &&
-	git commit -m "sixth"
+	git commit -m sixth
+
 '
 
-test_expect_success 'pretty tformat:%s' '
-	cd repo &&
-	cat >expect <<-\EOF &&
-	sixth
-	fifth
-	fourth
-	third
-	second
-	initial
-	EOF
-	git log --pretty="tformat:%s" >actual &&
+printf "sixth\nfifth\nfourth\nthird\nsecond\ninitial" > expect
+test_expect_success 'pretty' '
+
+	git log --pretty="format:%s" > actual &&
+	test_cmp expect actual
+'
+
+printf "sixth\nfifth\nfourth\nthird\nsecond\ninitial\n" > expect
+test_expect_success 'pretty (tformat)' '
+
+	git log --pretty="tformat:%s" > actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'pretty (shortcut)' '
-	cd repo &&
-	cat >expect <<-\EOF &&
-	sixth
-	fifth
-	fourth
-	third
-	second
-	initial
-	EOF
-	git log --pretty="%s" >actual &&
+
+	git log --pretty="%s" > actual &&
 	test_cmp expect actual
 '
 
 test_expect_success 'format' '
-	cd repo &&
+
+	git log --format="%s" > actual &&
+	test_cmp expect actual
+'
+
+cat > expect << EOF
+ This is
+  the sixth
+  commit.
+ This is
+  the fifth
+  commit.
+EOF
+
+test_expect_success 'format %w(11,1,2)' '
+
+	git log -2 --format="%w(11,1,2)This is the %s commit." > actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'format %w(,1,2)' '
+
+	git log -2 --format="%w(,1,2)This is%nthe %s%ncommit." > actual &&
+	test_cmp expect actual
+'
+
+cat > expect << EOF
+$(git rev-parse --short :/sixth  ) sixth
+$(git rev-parse --short :/fifth  ) fifth
+$(git rev-parse --short :/fourth ) fourth
+$(git rev-parse --short :/third  ) third
+$(git rev-parse --short :/second ) second
+$(git rev-parse --short :/initial) initial
+EOF
+test_expect_success 'oneline' '
+
+	git log --oneline > actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'diff-filter=A' '
+
+	git log --no-renames --pretty="format:%s" --diff-filter=A HEAD > actual &&
+	git log --no-renames --pretty="format:%s" --diff-filter A HEAD > actual-separate &&
+	printf "fifth\nfourth\nthird\ninitial" > expect &&
+	test_cmp expect actual &&
+	test_cmp expect actual-separate
+
+'
+
+test_expect_success 'diff-filter=M' '
+
+	git log --pretty="format:%s" --diff-filter=M HEAD >actual &&
+	printf "second" >expect &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'diff-filter=D' '
+
+	git log --no-renames --pretty="format:%s" --diff-filter=D HEAD >actual &&
+	printf "sixth\nthird" >expect &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'all-negative filter' '
+	git log --no-renames --format=%s --diff-filter=d HEAD >actual &&
+	printf "%s\n" fifth fourth third second initial >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'diff-filter=R' '
+
+	git log -M --pretty="format:%s" --diff-filter=R HEAD >actual &&
+	printf "third" >expect &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'multiple --diff-filter bits' '
+
+	git log -M --pretty="format:%s" --diff-filter=R HEAD >expect &&
+	git log -M --pretty="format:%s" --diff-filter=Ra HEAD >actual &&
+	test_cmp expect actual &&
+	git log -M --pretty="format:%s" --diff-filter=aR HEAD >actual &&
+	test_cmp expect actual &&
+	git log -M --pretty="format:%s" \
+		--diff-filter=a --diff-filter=R HEAD >actual &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'diff-filter=C' '
+
+	git log -C -C --pretty="format:%s" --diff-filter=C HEAD >actual &&
+	printf "fourth" >expect &&
+	test_cmp expect actual
+
+'
+
+test_expect_success 'git log --follow' '
+
+	git log --follow --pretty="format:%s" ichi >actual &&
+	printf "third\nsecond\ninitial" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git config log.follow works like --follow' '
+	test_config log.follow true &&
+	git log --pretty="format:%s" ichi >actual &&
+	printf "third\nsecond\ninitial" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git config log.follow does not die with multiple paths' '
+	test_config log.follow true &&
+	git log --pretty="format:%s" ichi ein
+'
+
+test_expect_success 'git config log.follow does not die with no paths' '
+	test_config log.follow true &&
+	git log --
+'
+
+test_expect_success 'git log --follow rejects unsupported pathspec magic' '
+	test_must_fail git log --follow ":(top,glob,icase)ichi" 2>stderr &&
+	# check full error message; we want to be sure we mention both
+	# of the rejected types (glob,icase), but not the allowed one (top)
+	echo "fatal: pathspec magic not supported by --follow: ${SQ}glob${SQ}, ${SQ}icase${SQ}" >expect &&
+	test_cmp expect stderr
+'
+
+test_expect_success 'log.follow disabled with unsupported pathspec magic' '
+	test_config log.follow true &&
+	git log --format=%s ":(glob,icase)ichi" >actual &&
+	echo third >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git config log.follow is overridden by --no-follow' '
+	test_config log.follow true &&
+	git log --no-follow --pretty="format:%s" ichi >actual &&
+	printf "third" >expect &&
+	test_cmp expect actual
+'
+
+# Note that these commits are intentionally listed out of order.
+last_three="$(git rev-parse :/fourth :/sixth :/fifth)"
+cat > expect << EOF
+$(git rev-parse --short :/sixth ) sixth
+$(git rev-parse --short :/fifth ) fifth
+$(git rev-parse --short :/fourth) fourth
+EOF
+test_expect_success 'git log --no-walk <commits> sorts by commit time' '
+	git log --no-walk --oneline $last_three > actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git log --no-walk=sorted <commits> sorts by commit time' '
+	git log --no-walk=sorted --oneline $last_three > actual &&
+	test_cmp expect actual
+'
+
+cat > expect << EOF
+=== $(git rev-parse --short :/sixth ) sixth
+=== $(git rev-parse --short :/fifth ) fifth
+=== $(git rev-parse --short :/fourth) fourth
+EOF
+test_expect_success 'git log --line-prefix="=== " --no-walk <commits> sorts by commit time' '
+	git log --line-prefix="=== " --no-walk --oneline $last_three > actual &&
+	test_cmp expect actual
+'
+
+cat > expect << EOF
+$(git rev-parse --short :/fourth) fourth
+$(git rev-parse --short :/sixth ) sixth
+$(git rev-parse --short :/fifth ) fifth
+EOF
+test_expect_success 'git log --no-walk=unsorted <commits> leaves list of commits as given' '
+	git log --no-walk=unsorted --oneline $last_three > actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'git show <commits> leaves list of commits as given' '
+	git show --oneline -s $last_three > actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'setup case sensitivity tests' '
+	echo case >one &&
+	test_tick &&
+	git add one &&
+	git commit -a -m Second
+'
+
+test_expect_success 'log --grep' '
+	echo second >expect &&
+	git log -1 --pretty="tformat:%s" --grep=sec >actual &&
+	test_cmp expect actual
+'
+
+for noop_opt in --invert-grep --all-match
+do
+	test_expect_success "log $noop_opt without --grep is a NOOP" '
+		git log >expect &&
+		git log $noop_opt >actual &&
+		test_cmp expect actual
+	'
+done
+
+cat > expect << EOF
+second
+initial
+EOF
+test_expect_success 'log --invert-grep --grep' '
+	# Fixed
+	git -c grep.patternType=fixed log --pretty="tformat:%s" --invert-grep --grep=th --grep=Sec >actual &&
+	test_cmp expect actual &&
+
+	# POSIX basic
+	git -c grep.patternType=basic log --pretty="tformat:%s" --invert-grep --grep=t[h] --grep=S[e]c >actual &&
+	test_cmp expect actual &&
+
+	# POSIX extended
+	git -c grep.patternType=extended log --pretty="tformat:%s" --invert-grep --grep=t[h] --grep=S[e]c >actual &&
+	test_cmp expect actual &&
+
+	# PCRE
+	if test_have_prereq PCRE
+	then
+		git -c grep.patternType=perl log --pretty="tformat:%s" --invert-grep --grep=t[h] --grep=S[e]c >actual &&
+		test_cmp expect actual
+	fi
+'
+
+test_expect_success 'log --invert-grep --grep -i' '
+	echo initial >expect &&
+
+	# Fixed
+	git -c grep.patternType=fixed log --pretty="tformat:%s" --invert-grep -i --grep=th --grep=Sec >actual &&
+	test_cmp expect actual &&
+
+	# POSIX basic
+	git -c grep.patternType=basic log --pretty="tformat:%s" --invert-grep -i --grep=t[h] --grep=S[e]c >actual &&
+	test_cmp expect actual &&
+
+	# POSIX extended
+	git -c grep.patternType=extended log --pretty="tformat:%s" --invert-grep -i --grep=t[h] --grep=S[e]c >actual &&
+	test_cmp expect actual &&
+
+	# PCRE
+	if test_have_prereq PCRE
+	then
+		git -c grep.patternType=perl log --pretty="tformat:%s" --invert-grep -i --grep=t[h] --grep=S[e]c >actual &&
+		test_cmp expect actual
+	fi
+'
+
+test_expect_success 'log --grep option parsing' '
+	echo second >expect &&
+	git log -1 --pretty="tformat:%s" --grep sec >actual &&
+	test_cmp expect actual &&
+	test_must_fail git log -1 --pretty="tformat:%s" --grep
+'
+
+test_expect_success 'log -i --grep' '
+	echo Second >expect &&
+	git log -1 --pretty="tformat:%s" -i --grep=sec >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log --grep -i' '
+	echo Second >expect &&
+
+	# Fixed
+	git log -1 --pretty="tformat:%s" --grep=sec -i >actual &&
+	test_cmp expect actual &&
+
+	# POSIX basic
+	git -c grep.patternType=basic log -1 --pretty="tformat:%s" --grep=s[e]c -i >actual &&
+	test_cmp expect actual &&
+
+	# POSIX extended
+	git -c grep.patternType=extended log -1 --pretty="tformat:%s" --grep=s[e]c -i >actual &&
+	test_cmp expect actual &&
+
+	# PCRE
+	if test_have_prereq PCRE
+	then
+		git -c grep.patternType=perl log -1 --pretty="tformat:%s" --grep=s[e]c -i >actual &&
+		test_cmp expect actual
+	fi
+'
+
+test_expect_success 'log -F -E --grep=<ere> uses ere' '
+	echo second >expect &&
+	# basic would need \(s\) to do the same
+	git log -1 --pretty="tformat:%s" -F -E --grep="(s).c.nd" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success PCRE 'log -F -E --perl-regexp --grep=<pcre> uses PCRE' '
+	test_when_finished "rm -rf num_commits" &&
+	git init num_commits &&
+	(
+		cd num_commits &&
+		test_commit 1d &&
+		test_commit 2e
+	) &&
+
+	# In PCRE \d in [\d] is like saying "0-9", and matches the 2
+	# in 2e...
+	echo 2e >expect &&
+	git -C num_commits log -1 --pretty="tformat:%s" -F -E --perl-regexp --grep="[\d]" >actual &&
+	test_cmp expect actual &&
+
+	# ...in POSIX basic and extended it is the same as [d],
+	# i.e. "d", which matches 1d, but does not match 2e.
+	echo 1d >expect &&
+	git -C num_commits log -1 --pretty="tformat:%s" -F -E --grep="[\d]" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log with grep.patternType configuration' '
+	git -c grep.patterntype=fixed \
+	log -1 --pretty=tformat:%s --grep=s.c.nd >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'log with grep.patternType configuration and command line' '
+	echo second >expect &&
+	git -c grep.patterntype=fixed \
+	log -1 --pretty=tformat:%s --basic-regexp --grep=s.c.nd >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success !FAIL_PREREQS 'log with various grep.patternType configurations & command-lines' '
+	git init pattern-type &&
+	(
+		cd pattern-type &&
+		test_commit 1 file A &&
+
+		# The tagname is overridden here because creating a
+		# tag called "(1|2)" as test_commit would otherwise
+		# implicitly do would fail on e.g. MINGW.
+		test_commit "(1|2)" file B 2 &&
+
+		echo "(1|2)" >expect.fixed &&
+		cp expect.fixed expect.basic &&
+		cp expect.fixed expect.extended &&
+		cp expect.fixed expect.perl &&
+
+		# A strcmp-like match with fixed.
+		git -c grep.patternType=fixed log --pretty=tformat:%s \
+			--grep="(1|2)" >actual.fixed &&
+
+		# POSIX basic matches (, | and ) literally.
+		git -c grep.patternType=basic log --pretty=tformat:%s \
+			--grep="(.|.)" >actual.basic &&
+
+		# POSIX extended needs to have | escaped to match it
+		# literally, whereas under basic this is the same as
+		# (|2), i.e. it would also match "1". This test checks
+		# for extended by asserting that it is not matching
+		# what basic would match.
+		git -c grep.patternType=extended log --pretty=tformat:%s \
+			--grep="\|2" >actual.extended &&
+		if test_have_prereq PCRE
+		then
+			# Only PCRE would match [\d]\| with only
+			# "(1|2)" due to [\d]. POSIX basic would match
+			# both it and "1" since similarly to the
+			# extended match above it is the same as
+			# \([\d]\|\). POSIX extended would
+			# match neither.
+			git -c grep.patternType=perl log --pretty=tformat:%s \
+				--grep="[\d]\|" >actual.perl &&
+			test_cmp expect.perl actual.perl
+		fi &&
+		test_cmp expect.fixed actual.fixed &&
+		test_cmp expect.basic actual.basic &&
+		test_cmp expect.extended actual.extended &&
+
+		git log --pretty=tformat:%s -F \
+			--grep="(1|2)" >actual.fixed.short-arg &&
+		git log --pretty=tformat:%s -E \
+			--grep="\|2" >actual.extended.short-arg &&
+		if test_have_prereq PCRE
+		then
+			git log --pretty=tformat:%s -P \
+				--grep="[\d]\|" >actual.perl.short-arg
+		else
+			test_must_fail git log -P \
+				--grep="[\d]\|"
+		fi &&
+		test_cmp expect.fixed actual.fixed.short-arg &&
+		test_cmp expect.extended actual.extended.short-arg &&
+		if test_have_prereq PCRE
+		then
+			test_cmp expect.perl actual.perl.short-arg
+		fi &&
+
+		git log --pretty=tformat:%s --fixed-strings \
+			--grep="(1|2)" >actual.fixed.long-arg &&
+		git log --pretty=tformat:%s --basic-regexp \
+			--grep="(.|.)" >actual.basic.long-arg &&
+		git log --pretty=tformat:%s --extended-regexp \
+			--grep="\|2" >actual.extended.long-arg &&
+		if test_have_prereq PCRE
+		then
+			git log --pretty=tformat:%s --perl-regexp \
+				--grep="[\d]\|" >actual.perl.long-arg &&
+			test_cmp expect.perl actual.perl.long-arg
+		else
+			test_must_fail git log --perl-regexp \
+				--grep="[\d]\|"
+		fi &&
+		test_cmp expect.fixed actual.fixed.long-arg &&
+		test_cmp expect.basic actual.basic.long-arg &&
+		test_cmp expect.extended actual.extended.long-arg
+	)
+'
+
+cmds="show reflog format-patch"
+if test_have_prereq !WITH_BREAKING_CHANGES
+then
+	cmds="$cmds whatchanged"
+fi
+for cmd in $cmds
+do
+	case "$cmd" in
+	format-patch) myarg="HEAD~.." ;;
+	whatchanged) myarg=--i-still-use-this ;;
+	*) myarg= ;;
+	esac
+
+	test_expect_success "$cmd: understands grep.patternType, like 'log'" '
+		git init "pattern-type-$cmd" &&
+		(
+			cd "pattern-type-$cmd" &&
+			test_commit 1 file A &&
+			test_commit "(1|2)" file B 2 &&
+
+			git -c grep.patternType=fixed $cmd --grep="..." $myarg >actual &&
+			test_must_be_empty actual &&
+
+			git -c grep.patternType=basic $cmd --grep="..." $myarg >actual &&
+			test_file_not_empty actual
+		)
+	'
+done
+
+test_expect_success 'log --author' '
 	cat >expect <<-\EOF &&
+	Author: <BOLD;RED>A U<RESET> Thor <author@example.com>
+	EOF
+	git log -1 --color=always --author="A U" >log &&
+	grep Author log >actual.raw &&
+	test_decode_color <actual.raw >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log --committer' '
+	cat >expect <<-\EOF &&
+	Commit:     C O Mitter <committer@<BOLD;RED>example<RESET>.com>
+	EOF
+	git log -1 --color=always --pretty=fuller --committer="example" >log &&
+	grep "Commit:" log >actual.raw &&
+	test_decode_color <actual.raw >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log -i --grep with color' '
+	cat >expect <<-\EOF &&
+	    <BOLD;RED>Sec<RESET>ond
+	    <BOLD;RED>sec<RESET>ond
+	EOF
+	git log --color=always -i --grep=^sec >log &&
+	grep -i sec log >actual.raw &&
+	test_decode_color <actual.raw >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '-c color.grep.selected log --grep' '
+	cat >expect <<-\EOF &&
+	    <GREEN>th<RESET><BOLD;RED>ir<RESET><GREEN>d<RESET>
+	EOF
+	git -c color.grep.selected="green" log --color=always --grep=ir >log &&
+	grep ir log >actual.raw &&
+	test_decode_color <actual.raw >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '-c color.grep.matchSelected log --grep' '
+	cat >expect <<-\EOF &&
+	    <BLUE>i<RESET>n<BLUE>i<RESET>t<BLUE>i<RESET>al
+	EOF
+	git -c color.grep.matchSelected="blue" log --color=always --grep=i >log &&
+	grep al log >actual.raw &&
+	test_decode_color <actual.raw >actual &&
+	test_cmp expect actual
+'
+
+cat > expect <<EOF
+* Second
+* sixth
+* fifth
+* fourth
+* third
+* second
+* initial
+EOF
+
+test_expect_success 'simple log --graph' '
+	test_cmp_graph
+'
+
+cat > expect <<EOF
+123 * Second
+123 * sixth
+123 * fifth
+123 * fourth
+123 * third
+123 * second
+123 * initial
+EOF
+
+test_expect_success 'simple log --graph --line-prefix="123 "' '
+	test_cmp_graph --line-prefix="123 "
+'
+
+test_expect_success 'set up merge history' '
+	git checkout -b side HEAD~4 &&
+	test_commit side-1 1 1 &&
+	test_commit side-2 2 2 &&
+	git checkout main &&
+	git merge side
+'
+
+cat > expect <<\EOF
+*   Merge branch 'side'
+|\
+| * side-2
+| * side-1
+* | Second
+* | sixth
+* | fifth
+* | fourth
+|/
+* third
+* second
+* initial
+EOF
+
+test_expect_success 'log --graph with merge' '
+	test_cmp_graph --date-order
+'
+
+cat > expect <<\EOF
+| | | *   Merge branch 'side'
+| | | |\
+| | | | * side-2
+| | | | * side-1
+| | | * | Second
+| | | * | sixth
+| | | * | fifth
+| | | * | fourth
+| | | |/
+| | | * third
+| | | * second
+| | | * initial
+EOF
+
+test_expect_success 'log --graph --line-prefix="| | | " with merge' '
+	test_cmp_graph --line-prefix="| | | " --date-order
+'
+
+cat > expect.colors <<\EOF
+*   Merge branch 'side'
+<BLUE>|<RESET><CYAN>\<RESET>
+<BLUE>|<RESET> * side-2
+<BLUE>|<RESET> * side-1
+* <CYAN>|<RESET> Second
+* <CYAN>|<RESET> sixth
+* <CYAN>|<RESET> fifth
+* <CYAN>|<RESET> fourth
+<CYAN>|<RESET><CYAN>/<RESET>
+* third
+* second
+* initial
+EOF
+
+test_expect_success 'log --graph with merge with log.graphColors' '
+	test_config log.graphColors " blue,invalid-color, cyan, red  , " &&
+	lib_test_cmp_colored_graph --date-order --format=%s
+'
+
+test_expect_success 'log --raw --graph -m with merge' '
+	git log --raw --graph --oneline -m main | head -n 500 >actual &&
+	grep "initial" actual
+'
+
+test_expect_success 'diff-tree --graph' '
+	git diff-tree --graph main^ | head -n 500 >actual &&
+	grep "one" actual
+'
+
+cat > expect <<\EOF
+*   commit main
+|\  Merge: A B
+| | Author: A U Thor <author@example.com>
+| |
+| |     Merge branch 'side'
+| |
+| * commit tags/side-2
+| | Author: A U Thor <author@example.com>
+| |
+| |     side-2
+| |
+| * commit tags/side-1
+| | Author: A U Thor <author@example.com>
+| |
+| |     side-1
+| |
+* | commit main~1
+| | Author: A U Thor <author@example.com>
+| |
+| |     Second
+| |
+* | commit main~2
+| | Author: A U Thor <author@example.com>
+| |
+| |     sixth
+| |
+* | commit main~3
+| | Author: A U Thor <author@example.com>
+| |
+| |     fifth
+| |
+* | commit main~4
+|/  Author: A U Thor <author@example.com>
+|
+|       fourth
+|
+* commit tags/side-1~1
+| Author: A U Thor <author@example.com>
+|
+|     third
+|
+* commit tags/side-1~2
+| Author: A U Thor <author@example.com>
+|
+|     second
+|
+* commit tags/side-1~3
+  Author: A U Thor <author@example.com>
+
+      initial
+EOF
+
+test_expect_success 'log --graph with full output' '
+	git log --graph --date-order --pretty=short |
+		git name-rev --name-only --annotate-stdin |
+		sed "s/Merge:.*/Merge: A B/;s/ *\$//" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'set up more tangled history' '
+	git checkout -b tangle HEAD~6 &&
+	test_commit tangle-a tangle-a a &&
+	git merge main~3 &&
+	git update-ref refs/prefetch/merge HEAD &&
+	git merge side~1 &&
+	git update-ref refs/rewritten/merge HEAD &&
+	git checkout main &&
+	git merge tangle &&
+	git update-ref refs/hidden/tangle HEAD &&
+	git checkout -b reach &&
+	test_commit reach &&
+	git checkout main &&
+	git checkout -b octopus-a &&
+	test_commit octopus-a &&
+	git checkout main &&
+	git checkout -b octopus-b &&
+	test_commit octopus-b &&
+	git checkout main &&
+	test_commit seventh &&
+	git merge octopus-a octopus-b &&
+	git merge reach
+'
+
+cat > expect <<\EOF
+*   Merge tag 'reach'
+|\
+| \
+|  \
+*-. \   Merge tags 'octopus-a' and 'octopus-b'
+|\ \ \
+* | | | seventh
+| | * | octopus-b
+| |/ /
+|/| |
+| * | octopus-a
+|/ /
+| * reach
+|/
+*   Merge branch 'tangle'
+|\
+| *   Merge branch 'side' (early part) into tangle
+| |\
+| * \   Merge branch 'main' (early part) into tangle
+| |\ \
+| * | | tangle-a
+* | | |   Merge branch 'side'
+|\ \ \ \
+| * | | | side-2
+| | |_|/
+| |/| |
+| * | | side-1
+* | | | Second
+* | | | sixth
+| |_|/
+|/| |
+* | | fifth
+* | | fourth
+|/ /
+* / third
+|/
+* second
+* initial
+EOF
+
+test_expect_success 'log --graph with merge' '
+	test_cmp_graph --date-order
+'
+
+test_expect_success 'log.decorate configuration' '
+	git log --oneline --no-decorate >expect.none &&
+	git log --oneline --decorate >expect.short &&
+	git log --oneline --decorate=full >expect.full &&
+
+	echo "[log] decorate" >>.git/config &&
+	git log --oneline >actual &&
+	test_cmp expect.short actual &&
+
+	test_config log.decorate true &&
+	git log --oneline >actual &&
+	test_cmp expect.short actual &&
+	git log --oneline --decorate=full >actual &&
+	test_cmp expect.full actual &&
+	git log --oneline --decorate=no >actual &&
+	test_cmp expect.none actual &&
+
+	test_config log.decorate no &&
+	git log --oneline >actual &&
+	test_cmp expect.none actual &&
+	git log --oneline --decorate >actual &&
+	test_cmp expect.short actual &&
+	git log --oneline --decorate=full >actual &&
+	test_cmp expect.full actual &&
+
+	test_config log.decorate 1 &&
+	git log --oneline >actual &&
+	test_cmp expect.short actual &&
+	git log --oneline --decorate=full >actual &&
+	test_cmp expect.full actual &&
+	git log --oneline --decorate=no >actual &&
+	test_cmp expect.none actual &&
+
+	test_config log.decorate short &&
+	git log --oneline >actual &&
+	test_cmp expect.short actual &&
+	git log --oneline --no-decorate >actual &&
+	test_cmp expect.none actual &&
+	git log --oneline --decorate=full >actual &&
+	test_cmp expect.full actual &&
+
+	test_config log.decorate full &&
+	git log --oneline >actual &&
+	test_cmp expect.full actual &&
+	git log --oneline --no-decorate >actual &&
+	test_cmp expect.none actual &&
+	git log --oneline --decorate >actual &&
+	test_cmp expect.short actual &&
+
+	test_unconfig log.decorate &&
+	git log --pretty=raw >expect.raw &&
+	test_config log.decorate full &&
+	git log --pretty=raw >actual &&
+	test_cmp expect.raw actual
+
+'
+
+test_expect_success 'parse log.excludeDecoration with no value' '
+	cp .git/config .git/config.orig &&
+	test_when_finished mv .git/config.orig .git/config &&
+
+	cat >>.git/config <<-\EOF &&
+	[log]
+		excludeDecoration
+	EOF
+	cat >expect <<-\EOF &&
+	error: missing value for '\''log.excludeDecoration'\''
+	EOF
+	git log --decorate=short 2>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'decorate-refs with glob' '
+	cat >expect.decorate <<-\EOF &&
+	Merge-tag-reach
+	Merge-tags-octopus-a-and-octopus-b
+	seventh
+	octopus-b (octopus-b)
+	octopus-a (octopus-a)
+	reach
+	EOF
+	cat >expect.no-decorate <<-\EOF &&
+	Merge-tag-reach
+	Merge-tags-octopus-a-and-octopus-b
+	seventh
+	octopus-b
+	octopus-a
+	reach
+	EOF
+	git log -n6 --decorate=short --pretty="tformat:%f%d" \
+		--decorate-refs="heads/octopus*" >actual &&
+	test_cmp expect.decorate actual &&
+	git log -n6 --decorate=short --pretty="tformat:%f%d" \
+		--decorate-refs-exclude="heads/octopus*" \
+		--decorate-refs="heads/octopus*" >actual &&
+	test_cmp expect.no-decorate actual &&
+	git -c log.excludeDecoration="heads/octopus*" log \
+		-n6 --decorate=short --pretty="tformat:%f%d" \
+		--decorate-refs="heads/octopus*" >actual &&
+	test_cmp expect.decorate actual
+'
+
+test_expect_success 'decorate-refs without globs' '
+	cat >expect.decorate <<-\EOF &&
+	Merge-tag-reach
+	Merge-tags-octopus-a-and-octopus-b
+	seventh
+	octopus-b
+	octopus-a
+	reach (tag: reach)
+	EOF
+	git log -n6 --decorate=short --pretty="tformat:%f%d" \
+		--decorate-refs="tags/reach" >actual &&
+	test_cmp expect.decorate actual
+'
+
+test_expect_success 'multiple decorate-refs' '
+	cat >expect.decorate <<-\EOF &&
+	Merge-tag-reach
+	Merge-tags-octopus-a-and-octopus-b
+	seventh
+	octopus-b (octopus-b)
+	octopus-a (octopus-a)
+	reach (tag: reach)
+	EOF
+	git log -n6 --decorate=short --pretty="tformat:%f%d" \
+		--decorate-refs="heads/octopus*" \
+		--decorate-refs="tags/reach" >actual &&
+    test_cmp expect.decorate actual
+'
+
+test_expect_success 'decorate-refs-exclude with glob' '
+	cat >expect.decorate <<-\EOF &&
+	Merge-tag-reach (HEAD -> main)
+	Merge-tags-octopus-a-and-octopus-b
+	seventh (tag: seventh)
+	octopus-b (tag: octopus-b)
+	octopus-a (tag: octopus-a)
+	reach (tag: reach, reach)
+	EOF
+	git log -n6 --decorate=short --pretty="tformat:%f%d" \
+		--decorate-refs-exclude="heads/octopus*" >actual &&
+	test_cmp expect.decorate actual &&
+	git -c log.excludeDecoration="heads/octopus*" log \
+		-n6 --decorate=short --pretty="tformat:%f%d" >actual &&
+	test_cmp expect.decorate actual
+'
+
+test_expect_success 'decorate-refs-exclude without globs' '
+	cat >expect.decorate <<-\EOF &&
+	Merge-tag-reach (HEAD -> main)
+	Merge-tags-octopus-a-and-octopus-b
+	seventh (tag: seventh)
+	octopus-b (tag: octopus-b, octopus-b)
+	octopus-a (tag: octopus-a, octopus-a)
+	reach (reach)
+	EOF
+	git log -n6 --decorate=short --pretty="tformat:%f%d" \
+		--decorate-refs-exclude="tags/reach" >actual &&
+	test_cmp expect.decorate actual &&
+	git -c log.excludeDecoration="tags/reach" log \
+		-n6 --decorate=short --pretty="tformat:%f%d" >actual &&
+	test_cmp expect.decorate actual
+'
+
+test_expect_success 'multiple decorate-refs-exclude' '
+	cat >expect.decorate <<-\EOF &&
+	Merge-tag-reach (HEAD -> main)
+	Merge-tags-octopus-a-and-octopus-b
+	seventh (tag: seventh)
+	octopus-b (tag: octopus-b)
+	octopus-a (tag: octopus-a)
+	reach (reach)
+	EOF
+	git log -n6 --decorate=short --pretty="tformat:%f%d" \
+		--decorate-refs-exclude="heads/octopus*" \
+		--decorate-refs-exclude="tags/reach" >actual &&
+	test_cmp expect.decorate actual &&
+	git -c log.excludeDecoration="heads/octopus*" \
+		-c log.excludeDecoration="tags/reach" log \
+		-n6 --decorate=short --pretty="tformat:%f%d" >actual &&
+	test_cmp expect.decorate actual &&
+	git -c log.excludeDecoration="heads/octopus*" log \
+		--decorate-refs-exclude="tags/reach" \
+		-n6 --decorate=short --pretty="tformat:%f%d" >actual &&
+	test_cmp expect.decorate actual
+'
+
+test_expect_success 'decorate-refs and decorate-refs-exclude' '
+	cat >expect.no-decorate <<-\EOF &&
+	Merge-tag-reach (main)
+	Merge-tags-octopus-a-and-octopus-b
+	seventh
+	octopus-b
+	octopus-a
+	reach (reach)
+	EOF
+	git log -n6 --decorate=short --pretty="tformat:%f%d" \
+		--decorate-refs="heads/*" \
+		--decorate-refs-exclude="heads/oc*" >actual &&
+	test_cmp expect.no-decorate actual
+'
+
+test_expect_success 'deocrate-refs and log.excludeDecoration' '
+	cat >expect.decorate <<-\EOF &&
+	Merge-tag-reach (main)
+	Merge-tags-octopus-a-and-octopus-b
+	seventh
+	octopus-b (octopus-b)
+	octopus-a (octopus-a)
+	reach (reach)
+	EOF
+	git -c log.excludeDecoration="heads/oc*" log \
+		--decorate-refs="heads/*" \
+		-n6 --decorate=short --pretty="tformat:%f%d" >actual &&
+	test_cmp expect.decorate actual
+'
+
+test_expect_success 'decorate-refs-exclude and simplify-by-decoration' '
+	cat >expect.decorate <<-\EOF &&
+	Merge-tag-reach (HEAD -> main)
+	reach (tag: reach, reach)
+	seventh (tag: seventh)
+	Merge-branch-tangle (refs/hidden/tangle)
+	Merge-branch-side-early-part-into-tangle (refs/rewritten/merge, tangle)
+	Merge-branch-main-early-part-into-tangle (refs/prefetch/merge)
+	EOF
+	git log -n6 --decorate=short --pretty="tformat:%f%d" \
+		--decorate-refs-exclude="*octopus*" \
+		--simplify-by-decoration >actual &&
+	test_cmp expect.decorate actual &&
+	git -c log.excludeDecoration="*octopus*" log \
+		-n6 --decorate=short --pretty="tformat:%f%d" \
+		--simplify-by-decoration >actual &&
+	test_cmp expect.decorate actual
+'
+
+test_expect_success 'decorate-refs with implied decorate from format' '
+	cat >expect <<-\EOF &&
+	side-2 (tag: side-2)
+	side-1
+	EOF
+	git log --no-walk --format="%s%d" \
+		--decorate-refs="*side-2" side-1 side-2 \
+		>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'implied decorate does not override option' '
+	cat >expect <<-\EOF &&
+	side-2 (tag: refs/tags/side-2, refs/heads/side)
+	side-1 (tag: refs/tags/side-1)
+	EOF
+	git log --no-walk --format="%s%d" \
+		--decorate=full side-1 side-2 \
+		>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'decorate-refs and simplify-by-decoration without output' '
+	cat >expect <<-\EOF &&
+	side-2
+	initial
+	EOF
+	# Do not just use a --format without %d here; we want to
+	# make sure that we did not accidentally turn on displaying
+	# the decorations, too. And that requires one of the regular
+	# formats.
+	git log --decorate-refs="*side-2" --oneline \
+		--simplify-by-decoration >actual.raw &&
+	sed "s/^[0-9a-f]* //" <actual.raw >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'decorate-refs-exclude HEAD' '
+	git log --decorate=full --oneline \
+		--decorate-refs-exclude="HEAD" >actual &&
+	! grep HEAD actual
+'
+
+test_expect_success 'decorate-refs focus from default' '
+	git log --decorate=full --oneline \
+		--decorate-refs="refs/heads" >actual &&
+	! grep HEAD actual
+'
+
+test_expect_success '--clear-decorations overrides defaults' '
+	cat >expect.default <<-\EOF &&
+	Merge-tag-reach (HEAD -> refs/heads/main)
+	Merge-tags-octopus-a-and-octopus-b
+	seventh (tag: refs/tags/seventh)
+	octopus-b (tag: refs/tags/octopus-b, refs/heads/octopus-b)
+	octopus-a (tag: refs/tags/octopus-a, refs/heads/octopus-a)
+	reach (tag: refs/tags/reach, refs/heads/reach)
+	Merge-branch-tangle
+	Merge-branch-side-early-part-into-tangle (refs/heads/tangle)
+	Merge-branch-main-early-part-into-tangle
+	tangle-a (tag: refs/tags/tangle-a)
+	Merge-branch-side
+	side-2 (tag: refs/tags/side-2, refs/heads/side)
+	side-1 (tag: refs/tags/side-1)
+	Second
 	sixth
 	fifth
 	fourth
@@ -81,2150 +1114,1302 @@ test_expect_success 'format' '
 	second
 	initial
 	EOF
-	git log --format="%s" >actual &&
-	test_cmp expect actual
-'
+	git log --decorate=full --pretty="tformat:%f%d" >actual &&
+	test_cmp expect.default actual &&
 
-test_expect_success 'oneline' '
-	cd repo &&
-	git log --oneline --no-decorate >actual &&
-	test_line_count = 6 actual &&
-	head -1 actual | grep "sixth"
-'
-
-test_expect_success 'oneline shows short hash and subject' '
-	cd repo &&
-	git log --oneline --no-decorate >actual &&
-	head -1 actual >first_line &&
-	grep "^[0-9a-f]* sixth$" first_line
-'
-
-test_expect_success 'log -n limits output' '
-	cd repo &&
-	git log -n 1 --oneline --no-decorate >actual &&
-	test_line_count = 1 actual &&
-	grep "sixth" actual
-'
-
-test_expect_success 'log -n 2 shows exactly two' '
-	cd repo &&
-	git log -n 2 --oneline --no-decorate >actual &&
-	test_line_count = 2 actual
-'
-
-test_expect_success 'log --reverse reverses order' '
-	cd repo &&
-	git log --reverse --oneline --no-decorate >actual &&
-	head -1 actual >first_line &&
-	grep "initial" first_line
-'
-
-test_expect_success 'log --format=%H shows full hashes' '
-	cd repo &&
-	git log --format="tformat:%H" >actual &&
-	test_line_count = 6 actual &&
-	head -1 actual >first_hash &&
-	test "$(wc -c <first_hash)" -gt 39
-'
-
-test_expect_success 'log --format=%s shows subjects' '
-	cd repo &&
-	git log -n 1 --format="tformat:%s" >actual &&
-	echo "sixth" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --format=%an shows author name' '
-	cd repo &&
-	git log -n 1 --format="tformat:%an" >actual &&
-	echo "A U Thor" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --format=%ae shows author email' '
-	cd repo &&
-	git log -n 1 --format="tformat:%ae" >actual &&
-	echo "author@example.com" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --format=%cn shows committer name' '
-	cd repo &&
-	git log -n 1 --format="tformat:%cn" >actual &&
-	echo "C O Mitter" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --format=%ce shows committer email' '
-	cd repo &&
-	git log -n 1 --format="tformat:%ce" >actual &&
-	echo "committer@example.com" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log default format shows Author and Date' '
-	cd repo &&
-	git log -n 1 >actual &&
-	grep "^Author:" actual &&
-	grep "^Date:" actual
-'
-
-test_expect_success 'log --skip skips commits' '
-	cd repo &&
-	git log --skip 1 --oneline --no-decorate >actual &&
-	test_line_count = 5 actual &&
-	! grep "sixth" actual
-'
-
-test_expect_success 'log --skip 2' '
-	cd repo &&
-	git log --skip 2 --oneline --no-decorate >actual &&
-	test_line_count = 4 actual &&
-	! grep "sixth" actual &&
-	! grep "fifth" actual &&
-	head -1 actual | grep "fourth"
-'
-
-test_expect_success 'log --skip with -n' '
-	cd repo &&
-	git log --skip 1 -n 2 --oneline --no-decorate >actual &&
-	test_line_count = 2 actual &&
-	head -1 actual | grep "fifth" &&
-	tail -1 actual | grep "fourth"
-'
-
-test_expect_success 'log --format=%T shows tree hash' '
-	cd repo &&
-	git log -n 1 --format="tformat:%T" >actual &&
-	tree=$(git rev-parse HEAD^{tree}) &&
-	echo "$tree" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --format=%t shows short tree hash' '
-	cd repo &&
-	git log -n 1 --format="tformat:%t" >actual &&
-	tree=$(git rev-parse HEAD^{tree}) &&
-	short_tree=$(echo "$tree" | cut -c1-7) &&
-	echo "$short_tree" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --format=%P shows parent hash' '
-	cd repo &&
-	git log -n 1 --format="tformat:%P" >actual &&
-	parent=$(git rev-parse HEAD~1) &&
-	echo "$parent" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --format=%p shows short parent hash' '
-	cd repo &&
-	git log -n 1 --format="tformat:%p" >actual &&
-	parent=$(git rev-parse HEAD~1) &&
-	short_parent=$(echo "$parent" | cut -c1-7) &&
-	echo "$short_parent" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --format=%H%n%h for top commit' '
-	cd repo &&
-	head1=$(git rev-parse HEAD) &&
-	head1_short=$(git rev-parse --short HEAD) &&
-	git log -n 1 --format="tformat:%H
-%h" >actual &&
-	cat >expected <<-EOF &&
-	$head1
-	$head1_short
+	cat >expect.all <<-\EOF &&
+	Merge-tag-reach (HEAD -> refs/heads/main)
+	Merge-tags-octopus-a-and-octopus-b
+	seventh (tag: refs/tags/seventh)
+	octopus-b (tag: refs/tags/octopus-b, refs/heads/octopus-b)
+	octopus-a (tag: refs/tags/octopus-a, refs/heads/octopus-a)
+	reach (tag: refs/tags/reach, refs/heads/reach)
+	Merge-branch-tangle (refs/hidden/tangle)
+	Merge-branch-side-early-part-into-tangle (refs/rewritten/merge, refs/heads/tangle)
+	Merge-branch-main-early-part-into-tangle (refs/prefetch/merge)
+	tangle-a (tag: refs/tags/tangle-a)
+	Merge-branch-side
+	side-2 (tag: refs/tags/side-2, refs/heads/side)
+	side-1 (tag: refs/tags/side-1)
+	Second
+	sixth
+	fifth
+	fourth
+	third
+	second
+	initial
 	EOF
-	test_cmp expected actual
+	git log --decorate=full --pretty="tformat:%f%d" \
+		--clear-decorations >actual &&
+	test_cmp expect.all actual &&
+	git -c log.initialDecorationSet=all log \
+		--decorate=full --pretty="tformat:%f%d" >actual &&
+	test_cmp expect.all actual
 '
 
-test_expect_success 'log --format=%% produces literal %' '
-	cd repo &&
-	git log -n 1 --format="tformat:%%h" >actual &&
-	echo "%h" >expected &&
-	test_cmp expected actual
+test_expect_success '--clear-decorations clears previous exclusions' '
+	cat >expect.all <<-\EOF &&
+	Merge-tag-reach (HEAD -> refs/heads/main)
+	reach (tag: refs/tags/reach, refs/heads/reach)
+	Merge-tags-octopus-a-and-octopus-b
+	octopus-b (tag: refs/tags/octopus-b, refs/heads/octopus-b)
+	octopus-a (tag: refs/tags/octopus-a, refs/heads/octopus-a)
+	seventh (tag: refs/tags/seventh)
+	Merge-branch-tangle (refs/hidden/tangle)
+	Merge-branch-side-early-part-into-tangle (refs/rewritten/merge, refs/heads/tangle)
+	Merge-branch-main-early-part-into-tangle (refs/prefetch/merge)
+	tangle-a (tag: refs/tags/tangle-a)
+	side-2 (tag: refs/tags/side-2, refs/heads/side)
+	side-1 (tag: refs/tags/side-1)
+	initial
+	EOF
+
+	git log --decorate=full --pretty="tformat:%f%d" \
+		--simplify-by-decoration \
+		--decorate-refs-exclude="heads/octopus*" \
+		--decorate-refs="heads" \
+		--clear-decorations >actual &&
+	test_cmp expect.all actual &&
+
+	cat >expect.filtered <<-\EOF &&
+	Merge-tags-octopus-a-and-octopus-b
+	octopus-b (refs/heads/octopus-b)
+	octopus-a (refs/heads/octopus-a)
+	initial
+	EOF
+
+	git log --decorate=full --pretty="tformat:%f%d" \
+		--simplify-by-decoration \
+		--decorate-refs-exclude="heads/octopus" \
+		--decorate-refs="heads" \
+		--clear-decorations \
+		--decorate-refs-exclude="tags/" \
+		--decorate-refs="heads/octopus*" >actual &&
+	test_cmp expect.filtered actual
 '
 
-test_expect_success 'log --format=%ad shows author date' '
-	cd repo &&
-	git log -n 1 --format="tformat:%ad" >actual &&
-	test -n "$(cat actual)"
+test_expect_success 'log.decorate config parsing' '
+	git log --oneline --decorate=full >expect.full &&
+	git log --oneline --decorate=short >expect.short &&
+
+	test_config log.decorate full &&
+	test_config log.mailmap true &&
+	git log --oneline >actual &&
+	test_cmp expect.full actual &&
+	git log --oneline --decorate=short >actual &&
+	test_cmp expect.short actual
 '
 
-test_expect_success 'log --format=%cd shows committer date' '
-	cd repo &&
-	git log -n 1 --format="tformat:%cd" >actual &&
-	test -n "$(cat actual)"
+test_expect_success TTY 'log output on a TTY' '
+	git log --color --oneline --decorate >expect.short &&
+
+	test_terminal git log --oneline >actual &&
+	test_cmp expect.short actual
 '
 
-test_expect_success 'log --first-parent follows only first parent' '
-	cd repo &&
-	git log --first-parent --oneline --no-decorate >actual &&
-	test_line_count = 6 actual
-'
-
-test_expect_success 'log oneline decorations appear by default' '
-	cd repo &&
-	git log --oneline -n 1 >actual &&
-	grep "(HEAD -> " actual
-'
-
-test_expect_success 'log --no-decorate removes decorations' '
-	cd repo &&
-	git log --oneline --no-decorate -n 1 >actual &&
-	! grep "(HEAD" actual
-'
-
-test_expect_success 'log --decorate shows decorations' '
-	cd repo &&
-	git log --oneline --decorate -n 1 >actual &&
-	grep "(HEAD -> " actual
-'
-
-# SKIP: --reverse with -n ordering not yet correct
-# test_expect_success 'log --reverse with -n shows oldest N'
-
-test_expect_success 'setup branches and tags' '
-	cd repo &&
-	git tag v1.0 &&
-	first=$(git rev-list --reverse HEAD | head -1) &&
-	git tag v0.1 "$first"
-'
-
-test_expect_success 'log decoration shows tags' '
-	cd repo &&
-	git log --oneline --decorate >actual &&
-	grep "tag: v1.0" actual &&
-	grep "tag: v0.1" actual
-'
-
-test_expect_success 'log decoration shows branch name' '
-	cd repo &&
-	git log --oneline --decorate >actual &&
-	grep "master" actual
-'
-
-test_expect_success 'log with branch as revision' '
-	cd repo &&
-	git log -n 1 --format="tformat:%s" master >actual &&
-	echo "sixth" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log with tag as revision' '
-	cd repo &&
-	git log -n 1 --format="tformat:%s" v1.0 >actual &&
-	echo "sixth" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log with old tag shows correct commit' '
-	cd repo &&
-	git log -n 1 --format="tformat:%s" v0.1 >actual &&
-	echo "initial" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log format with multiple placeholders on one line' '
-	cd repo &&
-	git log -n 1 --format="tformat:%h %s" >actual &&
-	short=$(git rev-parse --short HEAD) &&
-	echo "$short sixth" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log format with literal text around placeholders' '
-	cd repo &&
-	git log -n 1 --format="tformat:Author: %an <%ae>" >actual &&
-	echo "Author: A U Thor <author@example.com>" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --reverse shows oldest first' '
-	cd repo &&
-	git log --reverse --format="tformat:%s" >actual &&
-	head -1 actual >first &&
-	echo "initial" >expected &&
-	test_cmp expected first
-'
-
-test_expect_success 'log --skip=0 is same as no skip' '
-	cd repo &&
-	git log --oneline --no-decorate >expect &&
-	git log --skip 0 --oneline --no-decorate >actual &&
+test_expect_success 'reflog is expected format' '
+	git log -g --abbrev-commit --pretty=oneline >expect &&
+	git reflog >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'log format %an|%ae' '
-	cd repo &&
-	git log -n 1 --format="tformat:%an|%ae" >actual &&
-	echo "A U Thor|author@example.com" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log format %cn|%ce' '
-	cd repo &&
-	git log -n 1 --format="tformat:%cn|%ce" >actual &&
-	echo "C O Mitter|committer@example.com" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log default output has commit hash header' '
-	cd repo &&
-	git log -n 1 >actual &&
-	head -1 actual | grep "^commit [0-9a-f]\{40\}"
-'
-
-test_expect_success 'log default output has Author line' '
-	cd repo &&
-	git log -n 1 >actual &&
-	grep "^Author: A U Thor <author@example.com>" actual
-'
-
-test_expect_success 'log default output has Date line' '
-	cd repo &&
-	git log -n 1 >actual &&
-	grep "^Date:" actual
-'
-
-test_expect_success 'log default output has indented subject' '
-	cd repo &&
-	git log -n 1 >actual &&
-	grep "^    sixth" actual
-'
-
-test_expect_success 'log --oneline --reverse' '
-	cd repo &&
-	git log --oneline --reverse --no-decorate >actual &&
-	head -1 actual | grep "initial" &&
-	tail -1 actual | grep "sixth"
-'
-
-test_expect_success 'log --format=%h matches rev-parse --short' '
-	cd repo &&
-	git log -n 1 --format="tformat:%h" >actual &&
-	git rev-parse --short HEAD >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --format=%H matches rev-parse' '
-	cd repo &&
-	git log -n 1 --format="tformat:%H" >actual &&
-	git rev-parse HEAD >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --graph flag accepted' '
-	cd repo &&
-	git log --graph --oneline --no-decorate -n 3 >actual &&
-	test "$(wc -l <actual)" -ge 3
-'
-
-test_expect_success 'log --format=%T matches tree of commit' '
-	cd repo &&
-	git log -n 1 --format="tformat:%T" >actual &&
-	tree=$(git rev-parse HEAD^{tree}) &&
-	echo "$tree" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'setup merge history using plumbing' '
-	cd repo &&
-	# Create a side branch from an older commit
-	old_head=$(git rev-parse HEAD) &&
-	old_tree=$(git rev-parse HEAD^{tree}) &&
-	# Find the commit for "second" (4th from top = rev-list index 4)
-	second_commit=$(git rev-list HEAD | tail -5 | head -1) &&
-
-	# Create a side branch with its own commit
-	echo side1 >side-file &&
-	git add side-file &&
-	side_tree=$(git write-tree) &&
-	test_tick &&
-	side1=$(echo "side-1" | git commit-tree "$side_tree" -p "$second_commit") &&
-	git update-ref refs/heads/side "$side1" &&
-
-	echo side2 >>side-file &&
-	git add side-file &&
-	side_tree2=$(git write-tree) &&
-	test_tick &&
-	side2=$(echo "side-2" | git commit-tree "$side_tree2" -p "$side1") &&
-	git update-ref refs/heads/side "$side2" &&
-
-	# Create a merge commit
-	test_tick &&
-	merge=$(echo "Merge branch side" | git commit-tree "$side_tree2" -p "$old_head" -p "$side2") &&
-	git update-ref refs/heads/master "$merge" &&
-	git update-ref HEAD "$merge"
-'
-
-test_expect_success 'log shows merge commit' '
-	cd repo &&
-	git log -n 1 --format="tformat:%s" >actual &&
-	echo "Merge branch side" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --first-parent skips side branch commits' '
-	cd repo &&
-	git log --first-parent --oneline --no-decorate >actual &&
-	! grep "side-1" actual &&
-	! grep "side-2" actual
-'
-
-test_expect_success 'log --format=%P for merge shows two parents' '
-	cd repo &&
-	git log -n 1 --format="tformat:%P" >actual &&
-	test "$(wc -w <actual)" -eq 2
-'
-
-test_expect_success 'log --format=%p for merge shows short parents' '
-	cd repo &&
-	git log -n 1 --format="tformat:%p" >actual &&
-	test "$(wc -w <actual)" -eq 2
-'
-
-test_expect_success 'log shows all commits including merged' '
-	cd repo &&
-	git log --oneline --no-decorate >actual &&
-	grep "side-1" actual &&
-	grep "side-2" actual &&
-	grep "sixth" actual &&
-	grep "initial" actual
-'
-
-test_expect_success 'log --format=%H %s combined' '
-	cd repo &&
-	git log -n 1 --format="tformat:%H %s" >actual &&
-	full=$(git rev-parse HEAD) &&
-	echo "$full Merge branch side" >expected &&
-	test_cmp expected actual
-'
-
-# SKIP: merge commit authorship not matching expected
-# test_expect_success 'log --format=%h %an %s combined'
-
-# SKIP: merge commit authorship not matching expected
-# test_expect_success 'log all format placeholders together'
-
-test_expect_success 'log --format with empty format produces empty lines' '
-	cd repo &&
-	git log --format="" -n 3 >actual &&
-	test_line_count = 3 actual
-'
-
-test_expect_success 'log default shows commit, Author, Date, body' '
-	cd repo &&
-	git log -n 1 >actual &&
-	grep "^commit " actual &&
-	grep "^Author:" actual &&
-	grep "^Date:" actual &&
-	grep "Merge branch side" actual
-'
-
-test_expect_success 'log --skip larger than total shows nothing' '
-	cd repo &&
-	git log --skip 100 --oneline --no-decorate >actual &&
-	test_must_be_empty actual
-'
-
-# SKIP: --reverse --skip ordering not yet correct
-# test_expect_success 'log --reverse --skip'
-
-test_expect_success 'log --format=%ad is non-empty' '
-	cd repo &&
-	git log -n 1 --format="tformat:%ad" >actual &&
-	test -s actual
-'
-
-test_expect_success 'log --format=%cd is non-empty' '
-	cd repo &&
-	git log -n 1 --format="tformat:%cd" >actual &&
-	test -s actual
-'
-
-test_expect_success 'log shows consistent hash across formats' '
-	cd repo &&
-	short_from_oneline=$(git log -n 1 --oneline --no-decorate | awk "{print \$1}") &&
-	short_from_format=$(git log -n 1 --format="tformat:%h") &&
-	echo "$short_from_format" >expected &&
-	echo "$short_from_oneline" >actual &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log multiple commits format consistency' '
-	cd repo &&
-	git log --format="tformat:%h %s" --first-parent >actual &&
-	while IFS= read -r line; do
-		echo "$line" | grep "^[0-9a-f]* ." || return 1
-	done <actual
-'
-
-# SKIP: --no-decorate/--decorate last-wins not yet implemented
-# test_expect_success 'log --no-decorate then --decorate (last wins)'
-
-test_expect_success 'log --decorate then --no-decorate (last wins)' '
-	cd repo &&
-	git log --decorate --no-decorate --oneline -n 1 >actual &&
-	! grep "(HEAD" actual
-'
-
-test_expect_success 'log with tag as rev shows tag commit' '
-	cd repo &&
-	git log -n 1 --format="tformat:%s" v0.1 >actual &&
-	echo "initial" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log -n 1 from tag shows fewer' '
-	cd repo &&
-	git log -n 1 --oneline --no-decorate v0.1 >actual &&
-	test_line_count = 1 actual &&
-	grep "initial" actual
-'
-
-test_expect_success 'log from a specific branch ref' '
-	cd repo &&
-	git log -n 1 --format="tformat:%s" side >actual &&
-	echo "side-2" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log -n 2 from side branch' '
-	cd repo &&
-	git log -n 2 --format="tformat:%s" side >actual &&
-	head -1 actual >first &&
-	echo "side-2" >expected &&
-	test_cmp expected first
-'
-
-# SKIP: %P/%p for root commit not returning empty
-# test_expect_success 'log --format=%P for root commit is empty'
-# test_expect_success 'log --format=%p for root commit is empty'
-
-# ── pretty=short shows author without email ───────────────────────────────
-
-test_expect_success 'pretty=short shows author without email' '
-	cd repo &&
-	git log --pretty=short --no-decorate -n 1 v1.0 >actual &&
-	grep "^Author: A U Thor$" actual &&
-	! grep "author@example.com" actual
-'
-
-test_expect_success 'pretty=short shows commit hash line' '
-	cd repo &&
-	git log --pretty=short --no-decorate -n 1 >actual &&
-	head -1 actual | grep "^commit [0-9a-f]\{7,\}"
-'
-
-test_expect_success 'pretty=short shows subject' '
-	cd repo &&
-	git log --pretty=short --no-decorate -n 1 >actual &&
-	grep "Merge branch side" actual
-'
-
-# ── pretty=full shows Commit: line ────────────────────────────────────────
-
-test_expect_success 'pretty=full shows Commit: line' '
-	cd repo &&
-	git log --pretty=full --no-decorate -n 1 >actual &&
-	grep "^Commit:" actual
-'
-
-test_expect_success 'pretty=full shows Author: line with email' '
-	cd repo &&
-	git log --pretty=full --no-decorate -n 1 >actual &&
-	grep "^Author:.*<.*>" actual
-'
-
-# ── pretty=fuller shows AuthorDate and CommitDate ─────────────────────────
-
-test_expect_success 'pretty=fuller shows AuthorDate' '
-	cd repo &&
-	git log --pretty=fuller --no-decorate -n 1 >actual &&
-	grep "^AuthorDate:" actual
-'
-
-test_expect_success 'pretty=fuller shows CommitDate' '
-	cd repo &&
-	git log --pretty=fuller --no-decorate -n 1 >actual &&
-	grep "^CommitDate:" actual
-'
-
-test_expect_success 'pretty=fuller shows Commit: with email' '
-	cd repo &&
-	git log --pretty=fuller --no-decorate -n 1 >actual &&
-	grep "^Commit:" actual
-'
-
-# ── pretty=medium is the default ──────────────────────────────────────────
-
-test_expect_success 'pretty=medium shows Author with email' '
-	cd repo &&
-	git log --pretty=medium --no-decorate -n 1 v1.0 >actual &&
-	grep "^Author: A U Thor <author@example.com>" actual
-'
-
-test_expect_success 'pretty=medium shows Date' '
-	cd repo &&
-	git log --pretty=medium --no-decorate -n 1 >actual &&
-	grep "^Date:" actual
-'
-
-# ── format body placeholder ───────────────────────────────────────────────
-
-test_expect_success 'setup commit with body' '
-	cd repo &&
-	echo body-test >body-file &&
-	git add body-file &&
-	test_tick &&
-	git commit -m "subject line
-
-This is the body.
-Second body line." &&
-	git tag body-commit
-'
-
-test_expect_success 'log --format=%s shows only subject of multi-line message' '
-	cd repo &&
-	git log -n 1 --format="tformat:%s" body-commit >actual &&
-	echo "subject line" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --format=%b shows body of multi-line message' '
-	cd repo &&
-	git log -n 1 --format="tformat:%b" body-commit >actual &&
-	grep "This is the body." actual &&
-	grep "Second body line." actual
-'
-
-# SKIP: grit %b for single-line message produces trailing newline
-# test_expect_success 'log --format=%b for single-line message is empty'
-
-# ── format %n produces newline ────────────────────────────────────────────
-
-test_expect_success 'log --format with %n produces newline' '
-	cd repo &&
-	git log -n 1 --format="tformat:A%nB" >actual &&
-	test_line_count = 2 actual &&
-	head -1 actual >first &&
-	echo "A" >expected &&
-	test_cmp expected first
-'
-
-# ── log --reverse with --first-parent ─────────────────────────────────────
-
-test_expect_success 'log --reverse --first-parent' '
-	cd repo &&
-	git log --reverse --first-parent --format="tformat:%s" >actual &&
-	head -1 actual >first &&
-	echo "initial" >expected &&
-	test_cmp expected first
-'
-
-# ── log --reverse --skip ──────────────────────────────────────────────────
-
-# SKIP: --reverse --skip ordering differs in grit
-# test_expect_success 'log --reverse --skip 2'
-
-# ── rev-list basics ───────────────────────────────────────────────────────
-
-test_expect_success 'rev-list HEAD outputs commit hashes' '
-	cd repo &&
-	git rev-list HEAD >actual &&
-	head -1 actual >first &&
-	test "$(wc -c <first)" -gt 39
-'
-
-test_expect_success 'rev-list --count counts all commits' '
-	cd repo &&
-	git rev-list --count HEAD >actual &&
-	count=$(cat actual) &&
-	test "$count" -gt 5
-'
-
-test_expect_success 'rev-list --max-count limits output' '
-	cd repo &&
-	git rev-list --max-count=2 HEAD >actual &&
-	test_line_count = 2 actual
-'
-
-test_expect_success 'rev-list --reverse reverses order' '
-	cd repo &&
-	git rev-list HEAD >normal &&
-	git rev-list --reverse HEAD >reversed &&
-	tail -1 normal >last_normal &&
-	head -1 reversed >first_reversed &&
-	test_cmp last_normal first_reversed
-'
-
-test_expect_success 'rev-list --first-parent with merge' '
-	cd repo &&
-	git rev-list --first-parent HEAD >actual &&
-	! grep "$(git rev-parse side)" actual
-'
-
-test_expect_success 'rev-list --count --first-parent' '
-	cd repo &&
-	all=$(git rev-list --count HEAD) &&
-	fp=$(git rev-list --count --first-parent HEAD) &&
-	test "$fp" -le "$all"
-'
-
-test_expect_success 'rev-list --all includes all branches' '
-	cd repo &&
-	git rev-list --all >actual &&
-	side_oid=$(git rev-parse side) &&
-	grep "$side_oid" actual
-'
-
-test_expect_success 'rev-list tag resolves to tagged commit' '
-	cd repo &&
-	git rev-list -1 v0.1 >actual &&
-	git rev-list --reverse HEAD | head -1 >expected &&
-	test_cmp expected actual
-'
-
-# ── log with range (A..B via ^ exclusion) ─────────────────────────────────
-
-test_expect_success 'rev-list exclusion with ^commit' '
-	cd repo &&
-	parent=$(git rev-parse HEAD~1) &&
-	git rev-list HEAD "^$parent" >actual &&
-	test_line_count = 1 actual
-'
-
-# ── log --pretty as alias for --format ────────────────────────────────────
-
-test_expect_success 'log --pretty=%s works same as --format=%s' '
-	cd repo &&
-	git log --pretty="%s" -n 1 >actual_pretty &&
-	git log --format="%s" -n 1 >actual_format &&
-	test_cmp actual_pretty actual_format
-'
-
-# ── log --format with multiple %% ─────────────────────────────────────────
-
-test_expect_success 'log --format with multiple %% escapes' '
-	cd repo &&
-	git log -n 1 --format="tformat:%%h is %h and %%s is %s" >actual &&
-	short=$(git rev-parse --short HEAD) &&
-	subj=$(git log -n 1 --format="tformat:%s") &&
-	echo "%h is $short and %s is $subj" >expected &&
-	test_cmp expected actual
-'
-
-# ── log --graph accepted with --first-parent ──────────────────────────────
-
-test_expect_success 'log --graph --first-parent accepted' '
-	cd repo &&
-	git log --graph --first-parent --oneline --no-decorate >actual &&
-	test "$(wc -l <actual)" -ge 1
-'
-
-# ── log -n 0 shows nothing ────────────────────────────────────────────────
-
-# SKIP: grit -n 0 shows one commit instead of nothing
-# test_expect_success 'log -n 0 shows nothing'
-
-# ── decorate shows HEAD -> branch ─────────────────────────────────────────
-
-test_expect_success 'log --decorate shows HEAD' '
-	cd repo &&
-	git log --oneline --decorate -n 1 >actual &&
-	grep "HEAD" actual
-'
-
-test_expect_success 'log --decorate shows branch name' '
-	cd repo &&
-	git log --oneline --decorate -n 1 >actual &&
-	grep "master" actual
-'
-
-# ── format specifiers for tree ────────────────────────────────────────────
-
-test_expect_success 'log --format=%T for every commit is 40 hex chars' '
-	cd repo &&
-	git log --format="tformat:%T" >actual &&
-	while IFS= read -r line; do
-		test "$(echo \"$line\" | wc -c)" -ge 40 || return 1
-	done <actual
-'
-
-# ── --skip with value exceeding total ─────────────────────────────────────
-
-test_expect_success 'log --skip exceeding total shows nothing' '
-	cd repo &&
-	git log --skip 1000 --oneline --no-decorate >actual &&
-	test_must_be_empty actual
-'
-
-# ── --skip=0 same as no skip ──────────────────────────────────────────────
-
-test_expect_success 'log --skip 0 same as no skip' '
-	cd repo &&
-	git log --oneline --no-decorate --first-parent >expect &&
-	git log --skip 0 --oneline --no-decorate --first-parent >actual &&
+test_expect_success !WITH_BREAKING_CHANGES 'whatchanged is expected format' '
+	whatchanged="whatchanged --i-still-use-this" &&
+	git log --no-merges --raw >expect &&
+	git $whatchanged >actual &&
 	test_cmp expect actual
 '
 
-# ── log --oneline --no-decorate is stable ─────────────────────────────────
+test_expect_success 'log.abbrevCommit configuration' '
+	whatchanged="whatchanged --i-still-use-this" &&
 
-test_expect_success 'log --oneline matches --format short-hash + subject' '
-	cd repo &&
-	git log --oneline --no-decorate -n 1 >oneline_out &&
-	short=$(git rev-parse --short HEAD) &&
-	subj=$(git log -n 1 --format="tformat:%s") &&
-	echo "$short $subj" >expected &&
-	test_cmp expected oneline_out
+	git log --abbrev-commit >expect.log.abbrev &&
+	git log --no-abbrev-commit >expect.log.full &&
+	git log --pretty=raw >expect.log.raw &&
+	git reflog --abbrev-commit >expect.reflog.abbrev &&
+	git reflog --no-abbrev-commit >expect.reflog.full &&
+
+	if test_have_prereq !WITH_BREAKING_CHANGES
+	then
+		git $whatchanged --abbrev-commit >expect.whatchanged.abbrev &&
+		git $whatchanged --no-abbrev-commit >expect.whatchanged.full
+	fi &&
+
+	test_config log.abbrevCommit true &&
+
+	git log >actual &&
+	test_cmp expect.log.abbrev actual &&
+	git log --no-abbrev-commit >actual &&
+	test_cmp expect.log.full actual &&
+
+	git log --pretty=raw >actual &&
+	test_cmp expect.log.raw actual &&
+
+	git reflog >actual &&
+	test_cmp expect.reflog.abbrev actual &&
+	git reflog --no-abbrev-commit >actual &&
+	test_cmp expect.reflog.full actual &&
+
+	if test_have_prereq !WITH_BREAKING_CHANGES
+	then
+		git $whatchanged >actual &&
+		test_cmp expect.whatchanged.abbrev actual &&
+		git $whatchanged --no-abbrev-commit >actual &&
+		test_cmp expect.whatchanged.full actual
+	fi
 '
 
-# ── log with different revision args ──────────────────────────────────────
-
-# SKIP: HEAD~N not yet supported as revision
-# test_expect_success 'log HEAD~1 shows parent commit on top'
-
-test_expect_success 'log with tag name as revision' '
-	cd repo &&
-	git log -n 1 --format="tformat:%H" v0.1 >actual &&
-	git rev-parse v0.1 >expected &&
-	test_cmp expected actual
-'
-
-# ── pretty format names ───────────────────────────────────────────────────
-
-test_expect_success 'pretty=oneline works' '
-	cd repo &&
-	git log --pretty=oneline --no-decorate -n 1 >actual &&
-	test "$(wc -l <actual)" = 1
-'
-
-# ── graph with merge ──────────────────────────────────────────────────────
-
-test_expect_success 'log --graph shows merge commit' '
-	cd repo &&
-	merge=$(git rev-parse body-commit~1) &&
-	git log --graph --oneline --no-decorate -n 1 "$merge" >actual &&
-	grep "Merge branch side" actual
-'
-
-test_expect_success 'log --graph --format=%s lists all commits' '
-	cd repo &&
-	git log --graph --format="%s" >actual &&
-	grep "initial" actual &&
-	grep "Merge branch side" actual
-'
-
-test_expect_success 'log --graph --first-parent shows only mainline' '
-	cd repo &&
-	git log --graph --first-parent --format="%s" >actual &&
-	! grep "side-1" actual &&
-	! grep "side-2" actual &&
-	grep "Merge branch side" actual
-'
-
-# ── rev-list ordering modes ───────────────────────────────────────────────
-
-test_expect_success 'rev-list --topo-order' '
-	cd repo &&
-	git rev-list --topo-order HEAD >actual &&
-	test_line_count = $(git rev-list HEAD | wc -l) actual
-'
-
-test_expect_success 'rev-list --date-order' '
-	cd repo &&
-	git rev-list --date-order HEAD >actual &&
-	test_line_count = $(git rev-list HEAD | wc -l) actual
-'
-
-test_expect_success 'rev-list --parents shows parent hashes' '
-	cd repo &&
-	merge=$(git rev-parse body-commit~1) &&
-	git rev-list --parents "$merge" >actual &&
-	# The merge commit line should have 3 hashes (commit + 2 parents)
-	grep "$merge" actual >merge_line &&
-	test $(wc -w <merge_line) -ge 3
-'
-
-test_expect_success 'rev-list --quiet produces no output' '
-	cd repo &&
-	git rev-list --quiet HEAD >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success 'rev-list --format=%s shows commit header and subject' '
-	cd repo &&
-	git rev-list --format="%s" HEAD >actual &&
-	grep "^commit " actual &&
-	grep "subject line" actual &&
-	grep "initial" actual
-'
-
-# ── rev-list --skip ───────────────────────────────────────────────────────
-
-test_expect_success 'rev-list --skip=1 skips first commit' '
-	cd repo &&
-	git rev-list HEAD >all &&
-	git rev-list --skip=1 HEAD >actual &&
-	all_count=$(wc -l <all) &&
-	skip_count=$(wc -l <actual) &&
-	test $skip_count -eq $(($all_count - 1))
-'
-
-test_expect_success 'rev-list --skip=1000 with few commits shows nothing' '
-	cd repo &&
-	git rev-list --skip=1000 HEAD >actual &&
-	test_must_be_empty actual
-'
-
-# ── decorate variations ───────────────────────────────────────────────────
-
-test_expect_success 'log --decorate=full shows ref names' '
-	cd repo &&
-	git log --oneline --decorate=full -n 1 >actual &&
-	grep "master" actual
-'
-
-test_expect_success 'log --decorate=short shows short ref names' '
-	cd repo &&
-	git log --oneline --decorate=short -n 1 >actual &&
-	grep "master" actual
-'
-
-# ── log on empty repo ─────────────────────────────────────────────────────
-
-test_expect_success 'log on empty repo produces no output' '
-	git init empty-repo &&
-	test_when_finished "rm -rf empty-repo" &&
-	git -C empty-repo log >actual 2>stderr &&
-	test_must_be_empty actual
-'
-
-# ── rev-list --all with multiple branches ─────────────────────────────────
-
-test_expect_success 'rev-list --all includes commits from all branches' '
-	cd repo &&
-	git rev-list --all >all_commits &&
-	git rev-list HEAD >head_commits &&
-	git rev-list side >side_commits &&
-	# --all should have at least as many as HEAD
-	all_count=$(wc -l <all_commits) &&
-	head_count=$(wc -l <head_commits) &&
-	test $all_count -ge $head_count
-'
-
-# ── combined format placeholders ──────────────────────────────────────────
-
-test_expect_success 'log --format with %an <%ae> shows author identity' '
-	cd repo &&
-	git log --format="%an <%ae>" -n 1 >actual &&
-	grep "<" actual &&
-	grep ">" actual
-'
-
-test_expect_success 'log --format with %cn <%ce> shows committer identity' '
-	cd repo &&
-	git log --format="%cn <%ce>" -n 1 >actual &&
-	grep "<" actual &&
-	grep ">" actual
-'
-
-test_expect_success 'log --format=%H|%s pipe-separated' '
-	cd repo &&
-	git log --format="%H|%s" -n 1 >actual &&
-	# Should be hash|subject
-	grep "^[0-9a-f]\{40\}|" actual
-'
-
-# ── rev-list --first-parent count with merge ──────────────────────────────
-
-test_expect_success 'rev-list --first-parent --count with merge' '
-	cd repo &&
-	git rev-list --first-parent --count HEAD >actual &&
-	# first-parent count should be less than total count
-	git rev-list --count HEAD >total &&
-	fp=$(cat actual) &&
-	all=$(cat total) &&
-	test $fp -le $all
-'
-
-# ── log --reverse with --format ──────────────────────────────────────────
-
-test_expect_success 'log --reverse --format=%s shows oldest first' '
-	cd repo &&
-	git log --reverse --first-parent --format="%s" >actual &&
-	head -1 actual >first &&
-	grep "initial" first
-'
-
-# ── rev-list multiple revision arguments ──────────────────────────────────
-
-test_expect_success 'rev-list with ^exclusion excludes ancestors' '
-	cd repo &&
-	git rev-list HEAD >all &&
-	parent=$(git rev-parse HEAD^) &&
-	git rev-list "^$parent" HEAD >excluded &&
-	excl_count=$(wc -l <excluded) &&
-	all_count=$(wc -l <all) &&
-	test $excl_count -lt $all_count
-'
-
-# ── format: combined tree + parent checks ─────────────────────────────────
-
-test_expect_success 'log --format=%T is consistent with cat-file' '
-	cd repo &&
-	head_hash=$(git rev-parse HEAD) &&
-	tree_from_log=$(git log -n 1 --format="tformat:%T") &&
-	tree_from_cat=$(git cat-file -p "$head_hash" | grep "^tree " | cut -d" " -f2) &&
-	test "$tree_from_log" = "$tree_from_cat"
-'
-
-test_expect_success 'log --format=%P is consistent with cat-file for merge' '
-	cd repo &&
-	parents_from_log=$(git log -n 1 --format="tformat:%P") &&
-	parents_from_cat=$(git cat-file -p HEAD | grep "^parent " | cut -d" " -f2 | tr "\n" " " | sed "s/ $//") &&
-	test "$parents_from_log" = "$parents_from_cat"
-'
-
-# ── pretty=short format details ───────────────────────────────────────────
-
-test_expect_success 'pretty=short does not show Date line' '
-	cd repo &&
-	git log --pretty=short -n 1 >actual &&
-	! grep "^Date:" actual
-'
-
-test_expect_success 'pretty=short does not show email in Author line' '
-	cd repo &&
-	git log --pretty=short -n 1 >actual &&
-	grep "Author:" actual >author_line &&
-	! grep "@" author_line
-'
-
-# ── pretty=full format details ────────────────────────────────────────────
-
-test_expect_success 'pretty=full shows both Author and Commit lines' '
-	cd repo &&
-	git log --pretty=full -n 1 >actual &&
-	grep "^Author:" actual &&
-	grep "^Commit:" actual
-'
-
-test_expect_success 'pretty=full does not show Date line' '
-	cd repo &&
-	git log --pretty=full -n 1 >actual &&
-	! grep "^Date:" actual &&
-	! grep "^AuthorDate:" actual &&
-	! grep "^CommitDate:" actual
-'
-
-# ── pretty=fuller format details ──────────────────────────────────────────
-
-test_expect_success 'pretty=fuller shows AuthorDate and CommitDate' '
-	cd repo &&
-	git log --pretty=fuller -n 1 >actual &&
-	grep "^AuthorDate:" actual &&
-	grep "^CommitDate:" actual
-'
-
-test_expect_success 'pretty=fuller shows Author and Commit with email' '
-	cd repo &&
-	git log --pretty=fuller -n 1 >actual &&
-	grep "^Author:" actual | grep "@" &&
-	grep "^Commit:" actual | grep "@"
-'
-
-# ── show command basics ───────────────────────────────────────────────────
-
-test_expect_success 'show HEAD displays commit message' '
-	cd repo &&
-	git show -q >actual &&
-	grep "subject line" actual
-'
-
-test_expect_success 'show --format=%s shows subject' '
-	cd repo &&
-	git show --format="%s" -q >actual &&
-	grep "subject line" actual
-'
-
-test_expect_success 'show --oneline shows short format' '
-	cd repo &&
-	git show --oneline -q >actual &&
-	test "$(wc -l <actual)" = 1
-'
-
-# ── rev-list --first-parent excludes side branch ──────────────────────────
-
-test_expect_success 'rev-list --first-parent skips side commits' '
-	cd repo &&
-	git rev-list --first-parent HEAD >actual &&
-	! grep "$(git rev-parse side)" actual
-'
-
-# ── log -n combined with --skip ───────────────────────────────────────────
-
-test_expect_success 'log -n 2 --skip 1 shows 2 commits after skipping 1' '
-	cd repo &&
-	git log --first-parent -n 2 --skip 1 --format="%s" >actual &&
-	test_line_count = 2 actual
-'
-
-test_expect_success 'log --skip with --reverse' '
-	cd repo &&
-	git log --first-parent --skip 1 --reverse --format="%s" >actual &&
-	# first line should NOT be the latest commit
-	head -1 actual >first &&
-	! grep "subject line" first
-'
-
-# ── rev-list --topo-order puts parent after child ─────────────────────────
-
-test_expect_success 'rev-list --topo-order merge parent appears after merge' '
-	cd repo &&
-	merge=$(git rev-parse body-commit~1) &&
-	p1=$(git cat-file -p "$merge" | grep "^parent " | head -1 | cut -d" " -f2) &&
-	git rev-list --topo-order "$merge" >actual &&
-	merge_line=$(grep -n "$merge" actual | cut -d: -f1) &&
-	p1_line=$(grep -n "$p1" actual | cut -d: -f1) &&
-	test $merge_line -lt $p1_line
-'
-
-# ── pretty format: alias 'pretty' equals 'format' ────────────────────────
-
-test_expect_success 'log --pretty=%H equals --format=%H' '
-	cd repo &&
-	git log --pretty="%H" -n 3 >pretty_out &&
-	git log --format="%H" -n 3 >format_out &&
-	test_cmp pretty_out format_out
-'
-
-# ── log format %t is 7-char prefix of %T ──────────────────────────────────
-
-test_expect_success 'log --format=%t is prefix of %T' '
-	cd repo &&
-	git log -n 1 --format="tformat:%T" >full &&
-	git log -n 1 --format="tformat:%t" >short &&
-	prefix=$(cat short) &&
-	grep "^$prefix" full
-'
-
-# ── rev-list with tag name ────────────────────────────────────────────────
-
-test_expect_success 'rev-list with tag name works like rev-parse' '
-	cd repo &&
-	git rev-list -n 1 v0.1 >actual &&
-	git rev-parse v0.1 >expected &&
-	test_cmp expected actual
-'
-
-# ── log --format with empty string ────────────────────────────────────────
-
-test_expect_success 'log --format="" produces empty lines' '
-	cd repo &&
-	git log --first-parent --format="" >actual &&
-	# Each commit produces an empty line, so file should have content
-	test -f actual
-'
-
-# ── format %h is 7-char prefix of %H ─────────────────────────────────────
-
-test_expect_success 'log --format=%h is prefix of %H for every commit' '
-	cd repo &&
-	git log --first-parent --format="%H %h" >actual &&
-	while IFS=" " read -r full short; do
-		case "$full" in
-		"$short"*) ;;
-		*) return 1 ;;
-		esac
-	done <actual
-'
-
-# ── log --format combined placeholders ────────────────────────────────────
-
-test_expect_success 'log --format "%an <%ae>" shows name and email' '
-	cd repo &&
-	out=$(git log --format="%an <%ae>" -n 1) &&
-	echo "$out" | grep -q "<" &&
-	echo "$out" | grep -q ">"
-'
-
-test_expect_success 'log --format "%cn <%ce>" shows committer info' '
-	cd repo &&
-	out=$(git log --format="%cn <%ce>" -n 1) &&
-	echo "$out" | grep -q "<" &&
-	echo "$out" | grep -q ">"
-'
-
-test_expect_success 'log --format "A=%an C=%cn" mixed placeholders' '
-	cd repo &&
-	out=$(git log --format="A=%an C=%cn" -n 1) &&
-	echo "$out" | grep -q "^A=" &&
-	echo "$out" | grep -q "C="
-'
-
-test_expect_success 'log --format with literal prefix and %H' '
-	cd repo &&
-	git log --format="commit:%H" -n 1 >actual &&
-	HASH=$(git rev-parse HEAD) &&
-	echo "commit:$HASH" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --format with multiple %n newlines' '
-	cd repo &&
-	git log --format="%s%n%n%H" -n 1 >actual &&
-	line_count=$(wc -l <actual | tr -d " ") &&
-	test "$line_count" = "3"
-'
-
-# ── log --format on merge commit specifics ────────────────────────────────
-
-test_expect_success 'log --format=%P merge parent hashes are valid' '
-	cd repo &&
-	parents=$(git log --format="%P" -n 1) &&
-	for p in $parents; do
-		git cat-file -t "$p" >type &&
-		grep "commit" type || return 1
-	done
-'
-
-test_expect_success 'log --format=%T on merge is valid tree hash' '
-	cd repo &&
-	tree=$(git log --format="%T" -n 1) &&
-	git cat-file -t "$tree" >type &&
-	grep "tree" type
-'
-
-test_expect_success 'log --format=%H %T %P multi-field for merge' '
-	cd repo &&
-	git log --format="%H %T %P" -n 1 >actual &&
-	# Merge: 1 commit hash + 1 tree + 2 parents = 4 words
-	words=$(wc -w <actual | tr -d " ") &&
-	test "$words" -ge 3
-'
-
-# ── log with -<n> limit variations ────────────────────────────────────────
-
-test_expect_success 'log -n 1 returns exactly one line' '
-	cd repo &&
-	git log -n 1 --format="%H" >actual &&
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$lines" = "1"
-'
-
-test_expect_success 'log -n 2 returns exactly two lines' '
-	cd repo &&
-	git log --first-parent -n 2 --format="%H" >actual &&
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$lines" = "2"
-'
-
-test_expect_success 'log -n exceeding total commits shows all' '
-	cd repo &&
-	total=$(git rev-list --first-parent HEAD | wc -l | tr -d " ") &&
-	git log --first-parent -n 999 --format="%H" >actual &&
-	count=$(wc -l <actual | tr -d " ") &&
-	test "$count" = "$total"
-'
-
-# ── log --skip edge cases ─────────────────────────────────────────────────
-
-test_expect_success 'log --skip=0 is same as no skip' '
-	cd repo &&
-	git log --first-parent --skip=0 --format="%H" >actual &&
-	git log --first-parent --format="%H" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'log --skip past end shows nothing' '
-	cd repo &&
-	git log --first-parent --skip=9999 --format="%H" >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success 'log --skip with --first-parent reduces output' '
-	cd repo &&
-	git log --first-parent --format="%H" >all &&
-	all_count=$(wc -l <all | tr -d " ") &&
-	git log --first-parent --skip=1 --format="%H" >skipped &&
-	skip_count=$(wc -l <skipped | tr -d " ") &&
-	test "$skip_count" -lt "$all_count"
-'
-
-# ── log tformat: vs format: ───────────────────────────────────────────────
-
-test_expect_success 'log tformat: and format: produce same output in grit' '
-	cd repo &&
-	git log --first-parent --format="tformat:%H" >tfmt &&
-	git log --first-parent --format="tformat:%H" >fmt &&
-	test_cmp tfmt fmt
-'
-
-test_expect_success 'log tformat: multi-commit line count matches commit count' '
-	cd repo &&
-	total=$(git rev-list --first-parent HEAD | wc -l | tr -d " ") &&
-	git log --first-parent --format="tformat:%s" >actual &&
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$lines" = "$total"
-'
-
-# ── log --format with only literal text ───────────────────────────────────
-
-test_expect_success 'log --format with only literal text' '
-	cd repo &&
-	out=$(git log --format="hello" -n 1) &&
-	test "$out" = "hello"
-'
-
-test_expect_success 'log --format literal repeated per commit' '
-	cd repo &&
-	git log --first-parent --format="LINE" >actual &&
-	while read -r line; do
-		test "$line" = "LINE" || return 1
-	done <actual
-'
-
-# ── log format: email, abbreviated hashes ─────────────────────────
-
-test_expect_success 'log --format=%ae shows author email' '
-	cd repo &&
-	git log -n 1 --format="%ae" >actual &&
-	echo "author@example.com" >expect &&
+test_expect_success '--abbrev-commit with core.abbrev=false' '
+	git log --no-abbrev >expect &&
+	git -c core.abbrev=false log --abbrev-commit >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'log --format=%an shows author name' '
-	cd repo &&
-	git log -n 1 --format="%an" >actual &&
-	echo "A U Thor" >expect &&
+test_expect_success '--abbrev-commit with --no-abbrev' '
+	git log --no-abbrev >expect &&
+	git log --abbrev-commit --no-abbrev >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'log --format=%h shows abbreviated hash' '
-	cd repo &&
-	full=$(git rev-parse HEAD) &&
-	abbrev=$(git log -n 1 --format="%h") &&
-	# abbreviated hash is a prefix of the full hash
-	case "$full" in
-	"$abbrev"*) true ;;
-	*) false ;;
-	esac
-'
-
-test_expect_success 'log --format=%H matches rev-parse HEAD' '
-	cd repo &&
-	git log -n 1 --format="%H" >actual &&
-	git rev-parse HEAD >expect &&
+test_expect_success '--abbrev-commit with core.abbrev=9000' '
+	git log --no-abbrev >expect &&
+	git -c core.abbrev=9000 log --abbrev-commit >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'log --format=%s shows subject' '
-	cd repo &&
-	subject=$(git log -n 1 --format="%s") &&
-	test -n "$subject"
-'
-
-test_expect_success 'log -n 2 shows exactly two commits' '
-	cd repo &&
-	git log --first-parent -n 2 --format="%H" >actual &&
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$lines" = "2"
-'
-
-test_expect_success 'log --format=%P shows parent hash' '
-	cd repo &&
-	parent=$(git log -n 1 --format="%P") &&
-	# HEAD should have a parent
-	test -n "$parent" &&
-	# parent should be a valid object
-	git cat-file -t "$parent" >actual &&
-	echo "commit" >expect &&
+test_expect_success '--abbrev-commit with --abbrev=9000' '
+	git log --no-abbrev >expect &&
+	git log --abbrev-commit --abbrev=9000 >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'log --format=%p shows abbreviated parent hash' '
-	cd repo &&
-	abbr_parent=$(git log -n 1 --format="%p") &&
-	full_parent=$(git log -n 1 --format="%P") &&
-	case "$full_parent" in
-	"$abbr_parent"*) true ;;
-	*) false ;;
-	esac
+test_expect_success 'show added path under "--follow -M"' '
+	# This tests for a regression introduced in v1.7.2-rc0~103^2~2
+	test_create_repo regression &&
+	(
+		cd regression &&
+		test_commit needs-another-commit &&
+		test_commit foo.bar &&
+		git log -M --follow -p foo.bar.t &&
+		git log -M --follow --stat foo.bar.t &&
+		git log -M --follow --name-only foo.bar.t
+	)
 '
 
-test_expect_success 'log --format=%T shows tree hash' '
-	cd repo &&
-	tree=$(git log -n 1 --format="%T") &&
-	git cat-file -t "$tree" >actual &&
-	echo "tree" >expect &&
+test_expect_success 'git log -c --follow' '
+	test_create_repo follow-c &&
+	(
+		cd follow-c &&
+		test_commit initial file original &&
+		git rm file &&
+		test_commit rename file2 original &&
+		git reset --hard initial &&
+		test_commit modify file foo &&
+		git merge -m merge rename &&
+		git log -c --follow file2
+	)
+'
+
+cat >expect <<\EOF
+*   commit COMMIT_OBJECT_NAME
+|\  Merge: MERGE_PARENTS
+| | Author: A U Thor <author@example.com>
+| |
+| |     Merge HEADS DESCRIPTION
+| |
+| * commit COMMIT_OBJECT_NAME
+| | Author: A U Thor <author@example.com>
+| |
+| |     reach
+| | ---
+| |  reach.t | 1 +
+| |  1 file changed, 1 insertion(+)
+| |
+| | diff --git a/reach.t b/reach.t
+| | new file mode 100644
+| | index BEFORE..AFTER
+| | --- /dev/null
+| | +++ b/reach.t
+| | @@ -0,0 +1 @@
+| | +reach
+| |
+|  \
+*-. \   commit COMMIT_OBJECT_NAME
+|\ \ \  Merge: MERGE_PARENTS
+| | | | Author: A U Thor <author@example.com>
+| | | |
+| | | |     Merge HEADS DESCRIPTION
+| | | |
+| | * | commit COMMIT_OBJECT_NAME
+| | |/  Author: A U Thor <author@example.com>
+| | |
+| | |       octopus-b
+| | |   ---
+| | |    octopus-b.t | 1 +
+| | |    1 file changed, 1 insertion(+)
+| | |
+| | |   diff --git a/octopus-b.t b/octopus-b.t
+| | |   new file mode 100644
+| | |   index BEFORE..AFTER
+| | |   --- /dev/null
+| | |   +++ b/octopus-b.t
+| | |   @@ -0,0 +1 @@
+| | |   +octopus-b
+| | |
+| * | commit COMMIT_OBJECT_NAME
+| |/  Author: A U Thor <author@example.com>
+| |
+| |       octopus-a
+| |   ---
+| |    octopus-a.t | 1 +
+| |    1 file changed, 1 insertion(+)
+| |
+| |   diff --git a/octopus-a.t b/octopus-a.t
+| |   new file mode 100644
+| |   index BEFORE..AFTER
+| |   --- /dev/null
+| |   +++ b/octopus-a.t
+| |   @@ -0,0 +1 @@
+| |   +octopus-a
+| |
+* | commit COMMIT_OBJECT_NAME
+|/  Author: A U Thor <author@example.com>
+|
+|       seventh
+|   ---
+|    seventh.t | 1 +
+|    1 file changed, 1 insertion(+)
+|
+|   diff --git a/seventh.t b/seventh.t
+|   new file mode 100644
+|   index BEFORE..AFTER
+|   --- /dev/null
+|   +++ b/seventh.t
+|   @@ -0,0 +1 @@
+|   +seventh
+|
+*   commit COMMIT_OBJECT_NAME
+|\  Merge: MERGE_PARENTS
+| | Author: A U Thor <author@example.com>
+| |
+| |     Merge branch 'tangle'
+| |
+| *   commit COMMIT_OBJECT_NAME
+| |\  Merge: MERGE_PARENTS
+| | | Author: A U Thor <author@example.com>
+| | |
+| | |     Merge branch 'side' (early part) into tangle
+| | |
+| * |   commit COMMIT_OBJECT_NAME
+| |\ \  Merge: MERGE_PARENTS
+| | | | Author: A U Thor <author@example.com>
+| | | |
+| | | |     Merge branch 'main' (early part) into tangle
+| | | |
+| * | | commit COMMIT_OBJECT_NAME
+| | | | Author: A U Thor <author@example.com>
+| | | |
+| | | |     tangle-a
+| | | | ---
+| | | |  tangle-a | 1 +
+| | | |  1 file changed, 1 insertion(+)
+| | | |
+| | | | diff --git a/tangle-a b/tangle-a
+| | | | new file mode 100644
+| | | | index BEFORE..AFTER
+| | | | --- /dev/null
+| | | | +++ b/tangle-a
+| | | | @@ -0,0 +1 @@
+| | | | +a
+| | | |
+* | | |   commit COMMIT_OBJECT_NAME
+|\ \ \ \  Merge: MERGE_PARENTS
+| | | | | Author: A U Thor <author@example.com>
+| | | | |
+| | | | |     Merge branch 'side'
+| | | | |
+| * | | | commit COMMIT_OBJECT_NAME
+| | |_|/  Author: A U Thor <author@example.com>
+| |/| |
+| | | |       side-2
+| | | |   ---
+| | | |    2 | 1 +
+| | | |    1 file changed, 1 insertion(+)
+| | | |
+| | | |   diff --git a/2 b/2
+| | | |   new file mode 100644
+| | | |   index BEFORE..AFTER
+| | | |   --- /dev/null
+| | | |   +++ b/2
+| | | |   @@ -0,0 +1 @@
+| | | |   +2
+| | | |
+| * | | commit COMMIT_OBJECT_NAME
+| | | | Author: A U Thor <author@example.com>
+| | | |
+| | | |     side-1
+| | | | ---
+| | | |  1 | 1 +
+| | | |  1 file changed, 1 insertion(+)
+| | | |
+| | | | diff --git a/1 b/1
+| | | | new file mode 100644
+| | | | index BEFORE..AFTER
+| | | | --- /dev/null
+| | | | +++ b/1
+| | | | @@ -0,0 +1 @@
+| | | | +1
+| | | |
+* | | | commit COMMIT_OBJECT_NAME
+| | | | Author: A U Thor <author@example.com>
+| | | |
+| | | |     Second
+| | | | ---
+| | | |  one | 1 +
+| | | |  1 file changed, 1 insertion(+)
+| | | |
+| | | | diff --git a/one b/one
+| | | | new file mode 100644
+| | | | index BEFORE..AFTER
+| | | | --- /dev/null
+| | | | +++ b/one
+| | | | @@ -0,0 +1 @@
+| | | | +case
+| | | |
+* | | | commit COMMIT_OBJECT_NAME
+| |_|/  Author: A U Thor <author@example.com>
+|/| |
+| | |       sixth
+| | |   ---
+| | |    a/two | 1 -
+| | |    1 file changed, 1 deletion(-)
+| | |
+| | |   diff --git a/a/two b/a/two
+| | |   deleted file mode 100644
+| | |   index BEFORE..AFTER
+| | |   --- a/a/two
+| | |   +++ /dev/null
+| | |   @@ -1 +0,0 @@
+| | |   -ni
+| | |
+* | | commit COMMIT_OBJECT_NAME
+| | | Author: A U Thor <author@example.com>
+| | |
+| | |     fifth
+| | | ---
+| | |  a/two | 1 +
+| | |  1 file changed, 1 insertion(+)
+| | |
+| | | diff --git a/a/two b/a/two
+| | | new file mode 100644
+| | | index BEFORE..AFTER
+| | | --- /dev/null
+| | | +++ b/a/two
+| | | @@ -0,0 +1 @@
+| | | +ni
+| | |
+* | | commit COMMIT_OBJECT_NAME
+|/ /  Author: A U Thor <author@example.com>
+| |
+| |       fourth
+| |   ---
+| |    ein | 1 +
+| |    1 file changed, 1 insertion(+)
+| |
+| |   diff --git a/ein b/ein
+| |   new file mode 100644
+| |   index BEFORE..AFTER
+| |   --- /dev/null
+| |   +++ b/ein
+| |   @@ -0,0 +1 @@
+| |   +ichi
+| |
+* | commit COMMIT_OBJECT_NAME
+|/  Author: A U Thor <author@example.com>
+|
+|       third
+|   ---
+|    ichi | 1 +
+|    one  | 1 -
+|    2 files changed, 1 insertion(+), 1 deletion(-)
+|
+|   diff --git a/ichi b/ichi
+|   new file mode 100644
+|   index BEFORE..AFTER
+|   --- /dev/null
+|   +++ b/ichi
+|   @@ -0,0 +1 @@
+|   +ichi
+|   diff --git a/one b/one
+|   deleted file mode 100644
+|   index BEFORE..AFTER
+|   --- a/one
+|   +++ /dev/null
+|   @@ -1 +0,0 @@
+|   -ichi
+|
+* commit COMMIT_OBJECT_NAME
+| Author: A U Thor <author@example.com>
+|
+|     second
+| ---
+|  one | 2 +-
+|  1 file changed, 1 insertion(+), 1 deletion(-)
+|
+| diff --git a/one b/one
+| index BEFORE..AFTER 100644
+| --- a/one
+| +++ b/one
+| @@ -1 +1 @@
+| -one
+| +ichi
+|
+* commit COMMIT_OBJECT_NAME
+  Author: A U Thor <author@example.com>
+
+      initial
+  ---
+   one | 1 +
+   1 file changed, 1 insertion(+)
+
+  diff --git a/one b/one
+  new file mode 100644
+  index BEFORE..AFTER
+  --- /dev/null
+  +++ b/one
+  @@ -0,0 +1 @@
+  +one
+EOF
+
+test_expect_success 'log --graph with diff and stats' '
+	lib_test_cmp_short_graph --no-renames --stat -p
+'
+
+cat >expect <<\EOF
+*** *   commit COMMIT_OBJECT_NAME
+*** |\  Merge: MERGE_PARENTS
+*** | | Author: A U Thor <author@example.com>
+*** | |
+*** | |     Merge HEADS DESCRIPTION
+*** | |
+*** | * commit COMMIT_OBJECT_NAME
+*** | | Author: A U Thor <author@example.com>
+*** | |
+*** | |     reach
+*** | | ---
+*** | |  reach.t | 1 +
+*** | |  1 file changed, 1 insertion(+)
+*** | |
+*** | | diff --git a/reach.t b/reach.t
+*** | | new file mode 100644
+*** | | index BEFORE..AFTER
+*** | | --- /dev/null
+*** | | +++ b/reach.t
+*** | | @@ -0,0 +1 @@
+*** | | +reach
+*** | |
+*** |  \
+*** *-. \   commit COMMIT_OBJECT_NAME
+*** |\ \ \  Merge: MERGE_PARENTS
+*** | | | | Author: A U Thor <author@example.com>
+*** | | | |
+*** | | | |     Merge HEADS DESCRIPTION
+*** | | | |
+*** | | * | commit COMMIT_OBJECT_NAME
+*** | | |/  Author: A U Thor <author@example.com>
+*** | | |
+*** | | |       octopus-b
+*** | | |   ---
+*** | | |    octopus-b.t | 1 +
+*** | | |    1 file changed, 1 insertion(+)
+*** | | |
+*** | | |   diff --git a/octopus-b.t b/octopus-b.t
+*** | | |   new file mode 100644
+*** | | |   index BEFORE..AFTER
+*** | | |   --- /dev/null
+*** | | |   +++ b/octopus-b.t
+*** | | |   @@ -0,0 +1 @@
+*** | | |   +octopus-b
+*** | | |
+*** | * | commit COMMIT_OBJECT_NAME
+*** | |/  Author: A U Thor <author@example.com>
+*** | |
+*** | |       octopus-a
+*** | |   ---
+*** | |    octopus-a.t | 1 +
+*** | |    1 file changed, 1 insertion(+)
+*** | |
+*** | |   diff --git a/octopus-a.t b/octopus-a.t
+*** | |   new file mode 100644
+*** | |   index BEFORE..AFTER
+*** | |   --- /dev/null
+*** | |   +++ b/octopus-a.t
+*** | |   @@ -0,0 +1 @@
+*** | |   +octopus-a
+*** | |
+*** * | commit COMMIT_OBJECT_NAME
+*** |/  Author: A U Thor <author@example.com>
+*** |
+*** |       seventh
+*** |   ---
+*** |    seventh.t | 1 +
+*** |    1 file changed, 1 insertion(+)
+*** |
+*** |   diff --git a/seventh.t b/seventh.t
+*** |   new file mode 100644
+*** |   index BEFORE..AFTER
+*** |   --- /dev/null
+*** |   +++ b/seventh.t
+*** |   @@ -0,0 +1 @@
+*** |   +seventh
+*** |
+*** *   commit COMMIT_OBJECT_NAME
+*** |\  Merge: MERGE_PARENTS
+*** | | Author: A U Thor <author@example.com>
+*** | |
+*** | |     Merge branch 'tangle'
+*** | |
+*** | *   commit COMMIT_OBJECT_NAME
+*** | |\  Merge: MERGE_PARENTS
+*** | | | Author: A U Thor <author@example.com>
+*** | | |
+*** | | |     Merge branch 'side' (early part) into tangle
+*** | | |
+*** | * |   commit COMMIT_OBJECT_NAME
+*** | |\ \  Merge: MERGE_PARENTS
+*** | | | | Author: A U Thor <author@example.com>
+*** | | | |
+*** | | | |     Merge branch 'main' (early part) into tangle
+*** | | | |
+*** | * | | commit COMMIT_OBJECT_NAME
+*** | | | | Author: A U Thor <author@example.com>
+*** | | | |
+*** | | | |     tangle-a
+*** | | | | ---
+*** | | | |  tangle-a | 1 +
+*** | | | |  1 file changed, 1 insertion(+)
+*** | | | |
+*** | | | | diff --git a/tangle-a b/tangle-a
+*** | | | | new file mode 100644
+*** | | | | index BEFORE..AFTER
+*** | | | | --- /dev/null
+*** | | | | +++ b/tangle-a
+*** | | | | @@ -0,0 +1 @@
+*** | | | | +a
+*** | | | |
+*** * | | |   commit COMMIT_OBJECT_NAME
+*** |\ \ \ \  Merge: MERGE_PARENTS
+*** | | | | | Author: A U Thor <author@example.com>
+*** | | | | |
+*** | | | | |     Merge branch 'side'
+*** | | | | |
+*** | * | | | commit COMMIT_OBJECT_NAME
+*** | | |_|/  Author: A U Thor <author@example.com>
+*** | |/| |
+*** | | | |       side-2
+*** | | | |   ---
+*** | | | |    2 | 1 +
+*** | | | |    1 file changed, 1 insertion(+)
+*** | | | |
+*** | | | |   diff --git a/2 b/2
+*** | | | |   new file mode 100644
+*** | | | |   index BEFORE..AFTER
+*** | | | |   --- /dev/null
+*** | | | |   +++ b/2
+*** | | | |   @@ -0,0 +1 @@
+*** | | | |   +2
+*** | | | |
+*** | * | | commit COMMIT_OBJECT_NAME
+*** | | | | Author: A U Thor <author@example.com>
+*** | | | |
+*** | | | |     side-1
+*** | | | | ---
+*** | | | |  1 | 1 +
+*** | | | |  1 file changed, 1 insertion(+)
+*** | | | |
+*** | | | | diff --git a/1 b/1
+*** | | | | new file mode 100644
+*** | | | | index BEFORE..AFTER
+*** | | | | --- /dev/null
+*** | | | | +++ b/1
+*** | | | | @@ -0,0 +1 @@
+*** | | | | +1
+*** | | | |
+*** * | | | commit COMMIT_OBJECT_NAME
+*** | | | | Author: A U Thor <author@example.com>
+*** | | | |
+*** | | | |     Second
+*** | | | | ---
+*** | | | |  one | 1 +
+*** | | | |  1 file changed, 1 insertion(+)
+*** | | | |
+*** | | | | diff --git a/one b/one
+*** | | | | new file mode 100644
+*** | | | | index BEFORE..AFTER
+*** | | | | --- /dev/null
+*** | | | | +++ b/one
+*** | | | | @@ -0,0 +1 @@
+*** | | | | +case
+*** | | | |
+*** * | | | commit COMMIT_OBJECT_NAME
+*** | |_|/  Author: A U Thor <author@example.com>
+*** |/| |
+*** | | |       sixth
+*** | | |   ---
+*** | | |    a/two | 1 -
+*** | | |    1 file changed, 1 deletion(-)
+*** | | |
+*** | | |   diff --git a/a/two b/a/two
+*** | | |   deleted file mode 100644
+*** | | |   index BEFORE..AFTER
+*** | | |   --- a/a/two
+*** | | |   +++ /dev/null
+*** | | |   @@ -1 +0,0 @@
+*** | | |   -ni
+*** | | |
+*** * | | commit COMMIT_OBJECT_NAME
+*** | | | Author: A U Thor <author@example.com>
+*** | | |
+*** | | |     fifth
+*** | | | ---
+*** | | |  a/two | 1 +
+*** | | |  1 file changed, 1 insertion(+)
+*** | | |
+*** | | | diff --git a/a/two b/a/two
+*** | | | new file mode 100644
+*** | | | index BEFORE..AFTER
+*** | | | --- /dev/null
+*** | | | +++ b/a/two
+*** | | | @@ -0,0 +1 @@
+*** | | | +ni
+*** | | |
+*** * | | commit COMMIT_OBJECT_NAME
+*** |/ /  Author: A U Thor <author@example.com>
+*** | |
+*** | |       fourth
+*** | |   ---
+*** | |    ein | 1 +
+*** | |    1 file changed, 1 insertion(+)
+*** | |
+*** | |   diff --git a/ein b/ein
+*** | |   new file mode 100644
+*** | |   index BEFORE..AFTER
+*** | |   --- /dev/null
+*** | |   +++ b/ein
+*** | |   @@ -0,0 +1 @@
+*** | |   +ichi
+*** | |
+*** * | commit COMMIT_OBJECT_NAME
+*** |/  Author: A U Thor <author@example.com>
+*** |
+*** |       third
+*** |   ---
+*** |    ichi | 1 +
+*** |    one  | 1 -
+*** |    2 files changed, 1 insertion(+), 1 deletion(-)
+*** |
+*** |   diff --git a/ichi b/ichi
+*** |   new file mode 100644
+*** |   index BEFORE..AFTER
+*** |   --- /dev/null
+*** |   +++ b/ichi
+*** |   @@ -0,0 +1 @@
+*** |   +ichi
+*** |   diff --git a/one b/one
+*** |   deleted file mode 100644
+*** |   index BEFORE..AFTER
+*** |   --- a/one
+*** |   +++ /dev/null
+*** |   @@ -1 +0,0 @@
+*** |   -ichi
+*** |
+*** * commit COMMIT_OBJECT_NAME
+*** | Author: A U Thor <author@example.com>
+*** |
+*** |     second
+*** | ---
+*** |  one | 2 +-
+*** |  1 file changed, 1 insertion(+), 1 deletion(-)
+*** |
+*** | diff --git a/one b/one
+*** | index BEFORE..AFTER 100644
+*** | --- a/one
+*** | +++ b/one
+*** | @@ -1 +1 @@
+*** | -one
+*** | +ichi
+*** |
+*** * commit COMMIT_OBJECT_NAME
+***   Author: A U Thor <author@example.com>
+***
+***       initial
+***   ---
+***    one | 1 +
+***    1 file changed, 1 insertion(+)
+***
+***   diff --git a/one b/one
+***   new file mode 100644
+***   index BEFORE..AFTER
+***   --- /dev/null
+***   +++ b/one
+***   @@ -0,0 +1 @@
+***   +one
+EOF
+
+test_expect_success 'log --line-prefix="*** " --graph with diff and stats' '
+	lib_test_cmp_short_graph --line-prefix="*** " --no-renames --stat -p
+'
+
+cat >expect <<-\EOF
+* reach
+|
+| A	reach.t
+* Merge branch 'tangle'
+*   Merge branch 'side'
+|\
+| * side-2
+|
+|   A	2
+* Second
+|
+| A	one
+* sixth
+
+  D	a/two
+EOF
+
+test_expect_success 'log --graph with --name-status' '
+	test_cmp_graph --name-status tangle..reach
+'
+
+cat >expect <<-\EOF
+* reach
+|
+| reach.t
+* Merge branch 'tangle'
+*   Merge branch 'side'
+|\
+| * side-2
+|
+|   2
+* Second
+|
+| one
+* sixth
+
+  a/two
+EOF
+
+test_expect_success 'log --graph with --name-only' '
+	test_cmp_graph --name-only tangle..reach
+'
+
+test_expect_success '--no-graph countermands --graph' '
+	git log >expect &&
+	git log --graph --no-graph >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'log --format=%t shows abbreviated tree hash' '
-	cd repo &&
-	abbr_tree=$(git log -n 1 --format="%t") &&
-	full_tree=$(git log -n 1 --format="%T") &&
-	case "$full_tree" in
-	"$abbr_tree"*) true ;;
-	*) false ;;
-	esac
+test_expect_success '--graph countermands --no-graph' '
+	git log --graph >expect &&
+	git log --no-graph --graph >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'log --format with multiple placeholders' '
-	cd repo &&
-	git log -n 1 --format="%H %s" >actual &&
+test_expect_success '--no-graph does not unset --topo-order' '
+	git log --topo-order >expect &&
+	git log --topo-order --no-graph >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--no-graph does not unset --parents' '
+	git log --parents >expect &&
+	git log --parents --no-graph >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--reverse and --graph conflict' '
+	test_must_fail git log --reverse --graph 2>stderr &&
+	test_grep "cannot be used together" stderr
+'
+
+test_expect_success '--reverse --graph --no-graph works' '
+	git log --reverse >expect &&
+	git log --reverse --graph --no-graph >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--show-linear-break and --graph conflict' '
+	test_must_fail git log --show-linear-break --graph 2>stderr &&
+	test_grep "cannot be used together" stderr
+'
+
+test_expect_success '--show-linear-break --graph --no-graph works' '
+	git log --show-linear-break >expect &&
+	git log --show-linear-break --graph --no-graph >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--no-walk and --graph conflict' '
+	test_must_fail git log --no-walk --graph 2>stderr &&
+	test_grep "cannot be used together" stderr
+'
+
+test_expect_success '--no-walk --graph --no-graph works' '
+	git log --no-walk >expect &&
+	git log --no-walk --graph --no-graph >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--walk-reflogs and --graph conflict' '
+	test_must_fail git log --walk-reflogs --graph 2>stderr &&
+	(test_grep "cannot combine" stderr ||
+		test_grep "cannot be used together" stderr)
+'
+
+test_expect_success '--walk-reflogs --graph --no-graph works' '
+	git log --walk-reflogs >expect &&
+	git log --walk-reflogs --graph --no-graph >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'dotdot is a parent directory' '
+	mkdir -p a/b &&
+	( echo sixth && echo fifth ) >expect &&
+	( cd a/b && git log --format=%s .. ) >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPG 'setup signed branch' '
+	test_when_finished "git reset --hard && git checkout main" &&
+	git checkout -b signed main &&
+	echo foo >foo &&
+	git add foo &&
+	git commit -S -m signed_commit
+'
+
+test_expect_success GPG 'setup signed branch with subkey' '
+	test_when_finished "git reset --hard && git checkout main" &&
+	git checkout -b signed-subkey main &&
+	echo foo >foo &&
+	git add foo &&
+	git commit -SB7227189 -m signed_commit
+'
+
+test_expect_success GPGSM 'setup signed branch x509' '
+	test_when_finished "git reset --hard && git checkout main" &&
+	git checkout -b signed-x509 main &&
+	echo foo >foo &&
+	git add foo &&
+	test_config gpg.format x509 &&
+	test_config user.signingkey $GIT_COMMITTER_EMAIL &&
+	git commit -S -m signed_commit
+'
+
+test_expect_success GPGSSH 'setup sshkey signed branch' '
+	test_config gpg.format ssh &&
+	test_config user.signingkey "${GPGSSH_KEY_PRIMARY}" &&
+	test_when_finished "git reset --hard && git checkout main" &&
+	git checkout -b signed-ssh main &&
+	echo foo >foo &&
+	git add foo &&
+	git commit -S -m signed_commit
+'
+
+test_expect_success GPGSSH,GPGSSH_VERIFYTIME 'create signed commits with keys having defined lifetimes' '
+	test_config gpg.format ssh &&
+	touch file &&
+	git add file &&
+
+	echo expired >file && test_tick && git commit -a -m expired -S"${GPGSSH_KEY_EXPIRED}" &&
+	git tag expired-signed &&
+
+	echo notyetvalid >file && test_tick && git commit -a -m notyetvalid -S"${GPGSSH_KEY_NOTYETVALID}" &&
+	git tag notyetvalid-signed &&
+
+	echo timeboxedvalid >file && test_tick && git commit -a -m timeboxedvalid -S"${GPGSSH_KEY_TIMEBOXEDVALID}" &&
+	git tag timeboxedvalid-signed &&
+
+	echo timeboxedinvalid >file && test_tick && git commit -a -m timeboxedinvalid -S"${GPGSSH_KEY_TIMEBOXEDINVALID}" &&
+	git tag timeboxedinvalid-signed
+'
+
+test_expect_success GPGSM 'log x509 fingerprint' '
+	echo "F8BF62E0693D0694816377099909C779FA23FD65 | " >expect &&
+	git log -n1 --format="%GF | %GP" signed-x509 >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPGSM 'log OpenPGP fingerprint' '
+	echo "D4BE22311AD3131E5EDA29A461092E85B7227189" > expect &&
+	git log -n1 --format="%GP" signed-subkey >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPGSSH 'log ssh key fingerprint' '
+	test_config gpg.ssh.allowedSignersFile "${GPGSSH_ALLOWED_SIGNERS}" &&
+	ssh-keygen -lf  "${GPGSSH_KEY_PRIMARY}" | awk "{print \$2\" | \"}" >expect &&
+	git log -n1 --format="%GF | %GP" signed-ssh >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPG 'log --graph --show-signature' '
+	git log --graph --show-signature -n1 signed >actual &&
+	grep "^| gpg: Signature made" actual &&
+	grep "^| gpg: Good signature" actual
+'
+
+test_expect_success GPGSM 'log --graph --show-signature x509' '
+	git log --graph --show-signature -n1 signed-x509 >actual &&
+	grep "^| gpgsm: Signature made" actual &&
+	grep "^| gpgsm: Good signature" actual
+'
+
+test_expect_success GPGSSH 'log --graph --show-signature ssh' '
+	test_config gpg.ssh.allowedSignersFile "${GPGSSH_ALLOWED_SIGNERS}" &&
+	git log --graph --show-signature -n1 signed-ssh >actual &&
+	grep "${GPGSSH_GOOD_SIGNATURE_TRUSTED}" actual
+'
+
+test_expect_success GPGSSH,GPGSSH_VERIFYTIME 'log shows failure on expired signature key' '
+	test_config gpg.ssh.allowedSignersFile "${GPGSSH_ALLOWED_SIGNERS}" &&
+	git log --graph --show-signature -n1 expired-signed >actual &&
+	! grep "${GPGSSH_GOOD_SIGNATURE_TRUSTED}" actual
+'
+
+test_expect_success GPGSSH,GPGSSH_VERIFYTIME 'log shows failure on not yet valid signature key' '
+	test_config gpg.ssh.allowedSignersFile "${GPGSSH_ALLOWED_SIGNERS}" &&
+	git log --graph --show-signature -n1 notyetvalid-signed >actual &&
+	! grep "${GPGSSH_GOOD_SIGNATURE_TRUSTED}" actual
+'
+
+test_expect_success GPGSSH,GPGSSH_VERIFYTIME 'log show success with commit date and key validity matching' '
+	test_config gpg.ssh.allowedSignersFile "${GPGSSH_ALLOWED_SIGNERS}" &&
+	git log --graph --show-signature -n1 timeboxedvalid-signed >actual &&
+	grep "${GPGSSH_GOOD_SIGNATURE_TRUSTED}" actual &&
+	! grep "${GPGSSH_BAD_SIGNATURE}" actual
+'
+
+test_expect_success GPGSSH,GPGSSH_VERIFYTIME 'log shows failure with commit date outside of key validity' '
+	test_config gpg.ssh.allowedSignersFile "${GPGSSH_ALLOWED_SIGNERS}" &&
+	git log --graph --show-signature -n1 timeboxedinvalid-signed >actual &&
+	! grep "${GPGSSH_GOOD_SIGNATURE_TRUSTED}" actual
+'
+
+test_expect_success GPG 'log --graph --show-signature for merged tag' '
+	test_when_finished "git reset --hard && git checkout main" &&
+	git checkout -b plain main &&
+	echo aaa >bar &&
+	git add bar &&
+	git commit -m bar_commit &&
+	git checkout -b tagged main &&
+	echo bbb >baz &&
+	git add baz &&
+	git commit -m baz_commit &&
+	git tag -s -m signed_tag_msg signed_tag &&
+	git checkout plain &&
+	git merge --no-ff -m msg signed_tag &&
+	git log --graph --show-signature -n1 plain >actual &&
+	grep "^|\\\  merged tag" actual &&
+	grep "^| | gpg: Signature made" actual &&
+	grep "^| | gpg: Good signature" actual
+'
+
+test_expect_success GPG 'log --graph --show-signature for merged tag in shallow clone' '
+	test_when_finished "git reset --hard && git checkout main" &&
+	git checkout -b plain-shallow main &&
+	echo aaa >bar &&
+	git add bar &&
+	git commit -m bar_commit &&
+	git checkout --detach main &&
+	echo bbb >baz &&
+	git add baz &&
+	git commit -m baz_commit &&
+	git tag -s -m signed_tag_msg signed_tag_shallow &&
 	hash=$(git rev-parse HEAD) &&
-	grep "^$hash " actual
-'
-
-test_expect_success 'log --format=%ce shows committer email' '
-	cd repo &&
-	email=$(git log -n 1 --format="%ce") &&
-	test -n "$email"
-'
-
-test_expect_success 'log --format=%cn shows committer name' '
-	cd repo &&
-	name=$(git log -n 1 --format="%cn") &&
-	test -n "$name"
-'
-
-# ---------------------------------------------------------------------------
-# Additional log coverage
-# ---------------------------------------------------------------------------
-test_expect_success 'log -n 1 shows exactly one commit' '
-	cd repo &&
-	git log -n 1 --oneline >output &&
-	test_line_count = 1 output
-'
-
-test_expect_success 'log -n 2 shows at most 2 commits' '
-	cd repo &&
-	git log -n 2 --oneline >output &&
-	count=$(wc -l <output) &&
-	test "$count" -le 2
-'
-
-test_expect_success 'log --oneline abbreviates hash' '
-	cd repo &&
-	git log -n 1 --oneline >output &&
-	hash=$(awk "{print \$1}" output) &&
-	test ${#hash} -le 12
-'
-
-test_expect_success 'log --format=%H shows full hash' '
-	cd repo &&
-	hash=$(git log -n 1 --format="%H") &&
-	test ${#hash} -eq 40
-'
-
-test_expect_success 'log --format=%h shows abbreviated hash' '
-	cd repo &&
-	hash=$(git log -n 1 --format="%h") &&
-	test ${#hash} -le 12
-'
-
-test_expect_success 'log --format=%s shows subject' '
-	cd repo &&
-	subject=$(git log -n 1 --format="%s") &&
-	test -n "$subject"
-'
-
-test_expect_success 'log --format=%an shows author name' '
-	cd repo &&
-	author=$(git log -n 1 --format="%an") &&
-	test -n "$author"
-'
-
-test_expect_success 'log --format=%ae shows author email' '
-	cd repo &&
-	email=$(git log -n 1 --format="%ae") &&
-	test -n "$email"
-'
-
-test_expect_success 'log --format=%ai shows author date' '
-	cd repo &&
-	date=$(git log -n 1 --format="%ai") &&
-	test -n "$date"
-'
-
-test_expect_success 'log --format=%ci shows committer date' '
-	cd repo &&
-	date=$(git log -n 1 --format="%ci") &&
-	test -n "$date"
-'
-
-test_expect_success 'log --format=%P shows parent hash' '
-	cd repo &&
-	parent=$(git log -n 1 --skip=0 --format="%P" HEAD) &&
-	test -n "$parent" || test "$(git rev-list --count HEAD)" -eq 1
-'
-
-test_expect_success 'log --format=%p shows abbreviated parent' '
-	cd repo &&
-	git log -n 1 --format="%p" >output &&
-	test -f output
-'
-
-test_expect_success 'log --oneline output is compact' '
-	cd repo &&
-	git log --oneline >output &&
-	line=$(head -1 output) &&
-	test ${#line} -lt 120
-'
-
-test_expect_success 'log --reverse reverses output order' '
-	cd repo &&
-	git log --oneline --reverse >rev_output &&
-	git log --oneline >fwd_output &&
-	first_rev=$(head -1 rev_output | awk "{print \$1}") &&
-	last_fwd=$(tail -1 fwd_output | awk "{print \$1}") &&
-	test "$first_rev" = "$last_fwd"
-'
-
-test_expect_success 'log --format=%B shows full body' '
-	cd repo &&
-	body=$(git log -n 1 --format="%B") &&
-	test -n "$body"
-'
-
-test_expect_success 'log --format=%T shows full tree hash' '
-	cd repo &&
-	tree=$(git log -n 1 --format="%T") &&
-	test ${#tree} -eq 40
-'
-
-test_expect_success 'log --format=%H shows full commit hash' '
-	cd repo &&
-	hash=$(git log -n 1 --format="%H") &&
-	test ${#hash} -eq 40
-'
-
-test_expect_success 'log --format=%h shows abbreviated hash' '
-	cd repo &&
-	hash=$(git log -n 1 --format="%h") &&
-	test ${#hash} -ge 7 &&
-	test ${#hash} -le 12
-'
-
-test_expect_success 'log --format=%an shows author name' '
-	cd repo &&
-	name=$(git log -n 1 --format="%an") &&
-	test -n "$name"
-'
-
-test_expect_success 'log --format=%ae shows author email' '
-	cd repo &&
-	email=$(git log -n 1 --format="%ae") &&
-	test -n "$email"
-'
-
-test_expect_success 'log --format=%s shows subject line' '
-	cd repo &&
-	subj=$(git log -n 1 --format="%s") &&
-	test -n "$subj"
-'
-
-test_expect_success 'log -n 2 shows exactly 2 entries' '
-	cd repo &&
-	git log -n 2 --format="%H" >output &&
-	test $(wc -l <output) -eq 2
-'
-
-test_expect_success 'log --oneline --reverse first equals log last' '
-	cd repo &&
-	first_rev=$(git log --oneline --reverse | head -1 | awk "{print \$1}") &&
-	last_fwd=$(git log --oneline | tail -1 | awk "{print \$1}") &&
-	test "$first_rev" = "$last_fwd"
-'
-
-test_expect_success 'log --format=%P shows parent hash' '
-	cd repo &&
-	parent=$(git log -n 1 --format="%P" HEAD) &&
-	test -n "$parent"
-'
-
-test_expect_success 'log --format=%p shows abbreviated parent' '
-	cd repo &&
-	parent=$(git log -n 1 --format="%p" HEAD) &&
-	test -n "$parent"
-'
-
-test_expect_success 'log --format=%t shows abbreviated tree hash' '
-	cd repo &&
-	tree=$(git log -n 1 --format="%t") &&
-	test ${#tree} -ge 7
-'
-
-test_expect_success 'log --format=%ci shows committer date' '
-	cd repo &&
-	date=$(git log -n 1 --format="%ci") &&
-	test -n "$date"
-'
-
-test_expect_success 'log --format=%cn shows committer name' '
-	cd repo &&
-	cn=$(git log -n 1 --format="%cn") &&
-	test -n "$cn"
-'
-
-test_expect_success 'log --format=%ce shows committer email' '
-	cd repo &&
-	ce=$(git log -n 1 --format="%ce") &&
-	test -n "$ce"
-'
-
-test_expect_success 'log -n 1 shows single entry' '
-	cd repo &&
-	git log -n 1 --format="%H" >output &&
-	test $(wc -l <output) -eq 1
-'
-
-test_expect_success 'log --format=%ai shows author date' '
-	cd repo &&
-	ad=$(git log -n 1 --format="%ai") &&
-	test -n "$ad"
-'
-
-test_expect_success 'log HEAD shows same as log without arg' '
-	cd repo &&
-	git log --format="%H" HEAD >a &&
-	git log --format="%H" >b &&
-	test_cmp a b
-'
-
-test_expect_success 'log --format with multiple placeholders' '
-	cd repo &&
-	git log -n 1 --format="%h %s" >output &&
-	test $(wc -w <output) -ge 2
-'
-
-test_expect_success 'log --oneline contains abbreviated hash' '
-	cd repo &&
-	git log -n 1 --oneline >output &&
-	hash=$(awk "{print \$1}" output) &&
-	test ${#hash} -ge 7
-'
-
-test_expect_success 'log total entries equal commit count' '
-	cd repo &&
-	git log --format="%H" >output &&
-	test $(wc -l <output) -ge 3
-'
-
-test_expect_success 'log --format=%H matches rev-parse HEAD' '
-	cd repo &&
-	expected=$(git rev-parse HEAD) &&
-	actual=$(git log -n 1 --format="%H") &&
-	test "$expected" = "$actual"
-'
-
-test_expect_success 'log -n 3 --format=%h outputs 3 lines' '
-	cd repo &&
-	git log -n 3 --format="%h" >output &&
-	test $(wc -l <output) -eq 3
-'
-
-test_expect_success 'log --format=%H unique per commit' '
-	cd repo &&
-	git log -n 5 --format="%H" >output &&
-	test $(sort -u output | wc -l) -eq $(wc -l <output)
-'
-
-test_expect_success 'log --reverse shows oldest first' '
-	cd repo &&
-	git log --format="%H" >normal &&
-	git log --reverse --format="%H" >reversed &&
-	first_normal=$(head -1 normal) &&
-	last_reversed=$(tail -1 reversed) &&
-	test "$first_normal" = "$last_reversed"
-'
-
-test_expect_success 'log --skip=1 returns fewer results' '
-	cd repo &&
-	git log --format="%H" >all &&
-	git log --skip=1 --format="%H" >skipped &&
-	test $(wc -l <skipped) -lt $(wc -l <all)
-'
-
-test_expect_success 'log --skip=1 -n 2 gives 2 results' '
-	cd repo &&
-	git log --skip=1 -n 2 --format="%H" >output &&
-	test $(wc -l <output) -eq 2
-'
-
-test_expect_success 'log --format=%T shows tree hash' '
-	cd repo &&
-	git log -n 1 --format="%T" >output &&
-	hash=$(cat output) &&
-	test ${#hash} -eq 40
-'
-
-test_expect_success 'log --format=%P shows parent hash' '
-	cd repo &&
-	git log -n 1 --format="%P" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%an shows author name' '
-	cd repo &&
-	git log -n 1 --format="%an" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%ae shows author email' '
-	cd repo &&
-	git log -n 1 --format="%ae" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%cn shows committer name' '
-	cd repo &&
-	git log -n 1 --format="%cn" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%B shows full message body' '
-	cd repo &&
-	git log -n 1 --format="%B" >output &&
-	test -s output
-'
-
-test_expect_success 'log --oneline first field is short hash' '
-	cd repo &&
-	git log -n 1 --oneline >output &&
-	hash=$(awk "{print \$1}" output) &&
-	fullhash=$(git log -n 1 --format="%H") &&
-	echo "$fullhash" | grep -q "^$hash"
-'
-
-test_expect_success 'log --format=%s shows subject line' '
-	cd repo &&
-	git log -n 1 --format="%s" >output &&
-	test -s output
-'
-
-test_expect_success 'log --decorate shows refs' '
-	cd repo &&
-	git log -n 1 --decorate >output &&
-	grep -E "HEAD|master" output
-'
-
-test_expect_success 'log --no-decorate suppresses refs' '
-	cd repo &&
-	git log -n 1 --no-decorate >output &&
-	! grep "(HEAD" output
-'
-
-test_expect_success 'log --first-parent shows commits' '
-	cd repo &&
-	git log --first-parent --format="%H" >fp &&
-	test $(wc -l <fp) -ge 1
-'
-
-test_expect_success 'log --skip=0 same as no skip' '
-	cd repo &&
-	git log --format="%H" >noskip &&
-	git log --skip=0 --format="%H" >skip0 &&
-	test_cmp noskip skip0
-'
-
-test_expect_success 'log --format=%h shows abbreviated hash' '
-	cd repo &&
-	git log -n 1 --format="%h" >output &&
-	len=$(wc -c <output | tr -d " ") &&
-	test "$len" -ge 7 &&
-	test "$len" -le 41
-'
-
-test_expect_success 'log --format=%ci shows committer date in ISO' '
-	cd repo &&
-	git log -n 1 --format="%ci" >output &&
-	grep "-" output
-'
-
-test_expect_success 'log --format=%ai shows author date in ISO' '
-	cd repo &&
-	git log -n 1 --format="%ai" >output &&
-	grep "-" output
-'
-
-test_expect_success 'log --reverse reverses order' '
-	cd repo &&
-	git log --format="%H" >normal &&
-	git log --reverse --format="%H" >reversed &&
-	head -n1 normal >first_normal &&
-	tail -n1 reversed >last_reversed &&
-	test_cmp first_normal last_reversed
-'
-
-test_expect_success 'log --format=%d shows ref decorations' '
-	cd repo &&
-	git log -n 1 --format="%d" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=oneline equivalent to --oneline' '
-	cd repo &&
-	git log -n 3 --oneline >oneline &&
-	git log -n 3 --format=oneline >fmt_oneline &&
-	test $(wc -l <oneline) -eq $(wc -l <fmt_oneline)
-'
-
-test_expect_success 'log -n 1 shows exactly one commit' '
-	cd repo &&
-	git log -n 1 --format="%H" >output &&
-	test $(wc -l <output) -eq 1
-'
-
-test_expect_success 'log --skip=1 skips the first commit' '
-	cd repo &&
-	git log -n 1 --format="%H" >first &&
-	git log --skip=1 -n 1 --format="%H" >second &&
-	! test_cmp first second
-'
-
-test_expect_success 'log --format=%p shows abbreviated parent' '
-	cd repo &&
-	git log -n 1 --format="%p" >output &&
-	test -s output
-'
-
-test_expect_success 'log --reverse with -n 2 shows oldest first' '
-	cd repo &&
-	git log -n 2 --format="%H" >normal &&
-	git log --reverse -n 2 --format="%H" >rev &&
-	head -n1 normal >n1 &&
-	tail -n1 rev >r2 &&
-	test_cmp n1 r2
-'
-
-test_expect_success 'log --first-parent with -n shows commits' '
-	cd repo &&
-	git log --first-parent -n 3 --format="%H" >output &&
-	test $(wc -l <output) -le 3
-'
-
-test_expect_success 'log --graph produces output' '
-	cd repo &&
-	git log --graph --oneline -n 3 >output &&
-	test -s output
-'
-
-test_expect_success 'log --format with literal text' '
-	cd repo &&
-	git log -n 1 --format="COMMIT:%H" >output &&
-	grep "^COMMIT:" output
-'
-
-test_expect_success 'log --skip larger than history returns empty' '
-	cd repo &&
-	git log --skip=99999 --format="%H" >output &&
-	test_must_be_empty output
-'
-
-test_expect_success 'log --oneline -n 5 shows at most 5 lines' '
-	cd repo &&
-	git log --oneline -n 5 >output &&
-	test $(wc -l <output) -le 5
-'
-
-test_expect_success 'log -n 1 shows exactly one commit' '
-	cd repo &&
-	git log -n 1 --format="%H" >output &&
-	test_line_count = 1 output
-'
-
-test_expect_success 'log --format=%s shows subject lines' '
-	cd repo &&
-	git log -n 3 --format="%s" >output &&
-	test -s output &&
-	test $(wc -l <output) -le 3
-'
-
-test_expect_success 'log --format=%an shows author name' '
-	cd repo &&
-	git log -n 1 --format="%an" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%ae shows author email' '
-	cd repo &&
-	git log -n 1 --format="%ae" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%H shows full hash' '
-	cd repo &&
-	git log -n 1 --format="%H" >output &&
-	test $(wc -c <output) -ge 40
-'
-
-test_expect_success 'log --format=%h shows abbreviated hash' '
-	cd repo &&
-	git log -n 1 --format="%h" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%P shows parent hashes' '
-	cd repo &&
-	git log -n 1 --format="%P" >output &&
-	test -f output
-'
-
-test_expect_success 'log --format=%ai shows author date' '
-	cd repo &&
-	git log -n 1 --format="%ai" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%ci shows committer date' '
-	cd repo &&
-	git log -n 1 --format="%ci" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%T shows tree hash' '
-	cd repo &&
-	git log -n 1 --format="%T" >output &&
-	test $(wc -c <output) -ge 40
-'
-
-test_expect_success 'log shows most recent commit first' '
-	cd repo &&
-	git log -n 1 --format="%H" >output &&
-	head_sha=$(git rev-parse HEAD) &&
-	test "$(cat output)" = "$head_sha"
-'
-
-test_expect_success 'log --reverse shows oldest first' '
-	cd repo &&
-	git log --reverse --format="%H" >output &&
-	first=$(head -1 output) &&
-	last=$(tail -1 output) &&
-	test "$first" != "$last"
-'
-
-test_expect_success 'log --oneline --graph produces graph characters' '
-	cd repo &&
-	git log --graph --oneline -n 3 >output &&
-	test -s output
-'
-
-test_expect_success 'log --format with multiple placeholders' '
-	cd repo &&
-	git log -n 1 --format="%H %s" >output &&
-	test $(wc -w <output) -ge 2
-'
-
-# ---------------------------------------------------------------------------
-# Deepening tests (w32-deepen)
-# ---------------------------------------------------------------------------
-
-test_expect_success 'log -n 2 shows at most 2 commits' '
-	cd repo &&
-	git log -n 2 --oneline >output &&
-	test_line_count = 2 output
-'
-
-test_expect_success 'log -n 1 shows exactly one commit' '
-	cd repo &&
-	git log -n 1 --oneline >output &&
-	test_line_count = 1 output
-'
-
-test_expect_success 'log --format=%H outputs only full hashes' '
-	cd repo &&
-	git log -n 3 --format="%H" >output &&
-	while read line; do
-		test ${#line} -eq 40 || return 1
-	done <output
-'
-
-test_expect_success 'log --format=%h outputs abbreviated hashes' '
-	cd repo &&
-	git log -n 3 --format="%h" >output &&
-	while read line; do
-		test ${#line} -ge 4 && test ${#line} -le 40 || return 1
-	done <output
-'
-
-test_expect_success 'log --format=%s outputs subject lines' '
-	cd repo &&
-	git log -n 1 --format="%s" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%an outputs author name' '
-	cd repo &&
-	git log -n 1 --format="%an" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%ae outputs author email' '
-	cd repo &&
-	git log -n 1 --format="%ae" >output &&
-	grep "@" output
-'
-
-test_expect_success 'log --format=%cn outputs committer name' '
-	cd repo &&
-	git log -n 1 --format="%cn" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%ce outputs committer email' '
-	cd repo &&
-	git log -n 1 --format="%ce" >output &&
-	grep "@" output
-'
-
-test_expect_success 'log --format=%T outputs tree hash' '
-	cd repo &&
-	git log -n 1 --format="%T" >output &&
-	line=$(cat output) &&
-	test ${#line} -eq 40
-'
-
-test_expect_success 'log --oneline output is shorter than default' '
-	cd repo &&
-	git log -n 3 >default_out &&
-	git log -n 3 --oneline >oneline_out &&
-	test $(wc -l <oneline_out) -lt $(wc -l <default_out)
-'
-
-test_expect_success 'log --format=%P shows parent hash for non-root commit' '
-	cd repo &&
-	git log -n 1 --skip=1 --format="%P" >output &&
-	line=$(cat output) &&
-	test ${#line} -ge 40
-'
-
-test_expect_success 'log --format=%t outputs abbreviated tree hash' '
-	cd repo &&
-	git log -n 1 --format="%t" >output &&
-	line=$(cat output) &&
-	test ${#line} -ge 4 && test ${#line} -le 40
-'
-
-test_expect_success 'log --skip skips the right number of commits' '
-	cd repo &&
-	git log --oneline >all_out &&
-	git log --oneline --skip=2 >skip_out &&
-	all_count=$(wc -l <all_out) &&
-	skip_count=$(wc -l <skip_out) &&
-	test $skip_count -eq $((all_count - 2))
-'
-
-test_expect_success 'log specific commit shows only that commit' '
-	cd repo &&
-	HEAD_HASH=$(git rev-parse HEAD) &&
-	git log -n 1 --format="%H" $HEAD_HASH >output &&
-	test "$(cat output)" = "$HEAD_HASH"
-'
-
-# ---------------------------------------------------------------------------
-# Deepened tests (w33)
-# ---------------------------------------------------------------------------
-
-test_expect_success 'log --oneline produces abbreviated output' '
-	cd repo &&
-	git log --oneline >output &&
-	test $(wc -l <output) -ge 3
-'
-
-test_expect_success 'log --format=%an shows author name' '
-	cd repo &&
-	git log -n 1 --format="%an" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%ae shows author email' '
-	cd repo &&
-	git log -n 1 --format="%ae" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%cn shows committer name' '
-	cd repo &&
-	git log -n 1 --format="%cn" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%ce shows committer email' '
-	cd repo &&
-	git log -n 1 --format="%ce" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%s shows subject line' '
-	cd repo &&
-	git log -n 1 --format="%s" >output &&
-	test -s output
-'
-
-test_expect_success 'log -n 2 limits output to 2 commits' '
-	cd repo &&
-	git log -n 2 --format="%H" >output &&
-	test $(wc -l <output) -eq 2
-'
-
-test_expect_success 'log --format=%T shows tree hash' '
-	cd repo &&
-	git log -n 1 --format="%T" >output &&
-	line=$(cat output) &&
-	test ${#line} -eq 40
-'
-
-test_expect_success 'log --reverse shows oldest first' '
-	cd repo &&
-	git log --format="%s" >normal_out &&
-	git log --reverse --format="%s" >reverse_out &&
-	first_normal=$(head -1 normal_out) &&
-	last_reverse=$(tail -1 reverse_out) &&
-	test "$first_normal" = "$last_reverse"
-'
-
-test_expect_success 'log --format=%d shows ref decoration' '
-	cd repo &&
-	git log -n 1 --format="%d" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%h shows abbreviated commit hash' '
-	cd repo &&
-	git log -n 1 --format="%h" >output &&
-	line=$(cat output) &&
-	test ${#line} -ge 4 && test ${#line} -le 40
-'
-
-test_expect_success 'log --format=%ci shows committer date ISO-like' '
-	cd repo &&
-	git log -n 1 --format="%ci" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format=%ai shows author date ISO-like' '
-	cd repo &&
-	git log -n 1 --format="%ai" >output &&
-	test -s output
-'
-
-test_expect_success 'log --format with multiple placeholders' '
-	cd repo &&
-	git log -n 1 --format="%H %an %s" >output &&
-	test -s output
-'
+	git checkout plain-shallow &&
+	git merge --no-ff -m msg signed_tag_shallow &&
+	git clone --depth 1 --no-local . shallow &&
+	test_when_finished "rm -rf shallow" &&
+	git -C shallow log --graph --show-signature -n1 plain-shallow >actual &&
+	grep "tag signed_tag_shallow names a non-parent $hash" actual
+'
+
+test_expect_success GPG 'log --graph --show-signature for merged tag with missing key' '
+	test_when_finished "git reset --hard && git checkout main" &&
+	git checkout -b plain-nokey main &&
+	echo aaa >bar &&
+	git add bar &&
+	git commit -m bar_commit &&
+	git checkout -b tagged-nokey main &&
+	echo bbb >baz &&
+	git add baz &&
+	git commit -m baz_commit &&
+	git tag -s -m signed_tag_msg signed_tag_nokey &&
+	git checkout plain-nokey &&
+	git merge --no-ff -m msg signed_tag_nokey &&
+	GNUPGHOME=. git log --graph --show-signature -n1 plain-nokey >actual &&
+	grep "^|\\\  merged tag" actual &&
+	grep "^| | gpg: Signature made" actual &&
+	grep -E "^| | gpg: Can'"'"'t check signature: (public key not found|No public key)" actual
+'
+
+test_expect_success GPG 'log --graph --show-signature for merged tag with bad signature' '
+	test_when_finished "git reset --hard && git checkout main" &&
+	git checkout -b plain-bad main &&
+	echo aaa >bar &&
+	git add bar &&
+	git commit -m bar_commit &&
+	git checkout -b tagged-bad main &&
+	echo bbb >baz &&
+	git add baz &&
+	git commit -m baz_commit &&
+	git tag -s -m signed_tag_msg signed_tag_bad &&
+	git cat-file tag signed_tag_bad >raw &&
+	sed -e "s/signed_tag_msg/forged/" raw >forged &&
+	git hash-object -w -t tag forged >forged.tag &&
+	git checkout plain-bad &&
+	git merge --no-ff -m msg "$(cat forged.tag)" &&
+	git log --graph --show-signature -n1 plain-bad >actual &&
+	grep "^|\\\  merged tag" actual &&
+	grep "^| | gpg: Signature made" actual &&
+	grep "^| | gpg: BAD signature from" actual
+'
+
+test_expect_success GPG 'log --show-signature for merged tag with GPG failure' '
+	test_when_finished "git reset --hard && git checkout main" &&
+	git checkout -b plain-fail main &&
+	echo aaa >bar &&
+	git add bar &&
+	git commit -m bar_commit &&
+	git checkout -b tagged-fail main &&
+	echo bbb >baz &&
+	git add baz &&
+	git commit -m baz_commit &&
+	git tag -s -m signed_tag_msg signed_tag_fail &&
+	git checkout plain-fail &&
+	git merge --no-ff -m msg signed_tag_fail &&
+	if ! test_have_prereq VALGRIND
+	then
+		TMPDIR="$(pwd)/bogus" git log --show-signature -n1 plain-fail >actual &&
+		grep "^merged tag" actual &&
+		grep "^No signature" actual &&
+		! grep "^gpg: Signature made" actual
+	fi
+'
+
+test_expect_success GPGSM 'log --graph --show-signature for merged tag x509' '
+	test_when_finished "git reset --hard && git checkout main" &&
+	test_config gpg.format x509 &&
+	test_config user.signingkey $GIT_COMMITTER_EMAIL &&
+	git checkout -b plain-x509 main &&
+	echo aaa >bar &&
+	git add bar &&
+	git commit -m bar_commit &&
+	git checkout -b tagged-x509 main &&
+	echo bbb >baz &&
+	git add baz &&
+	git commit -m baz_commit &&
+	git tag -s -m signed_tag_msg signed_tag_x509 &&
+	git checkout plain-x509 &&
+	git merge --no-ff -m msg signed_tag_x509 &&
+	git log --graph --show-signature -n1 plain-x509 >actual &&
+	grep "^|\\\  merged tag" actual &&
+	grep "^| | gpgsm: Signature made" actual &&
+	grep "^| | gpgsm: Good signature" actual
+'
+
+test_expect_success GPGSM 'log --graph --show-signature for merged tag x509 missing key' '
+	test_when_finished "git reset --hard && git checkout main" &&
+	test_config gpg.format x509 &&
+	test_config user.signingkey $GIT_COMMITTER_EMAIL &&
+	git checkout -b plain-x509-nokey main &&
+	echo aaa >bar &&
+	git add bar &&
+	git commit -m bar_commit &&
+	git checkout -b tagged-x509-nokey main &&
+	echo bbb >baz &&
+	git add baz &&
+	git commit -m baz_commit &&
+	git tag -s -m signed_tag_msg signed_tag_x509_nokey &&
+	git checkout plain-x509-nokey &&
+	git merge --no-ff -m msg signed_tag_x509_nokey &&
+	GNUPGHOME=. git log --graph --show-signature -n1 plain-x509-nokey >actual &&
+	grep "^|\\\  merged tag" actual &&
+	grep -e "^| | gpgsm: certificate not found" \
+	     -e "^| | gpgsm: failed to find the certificate: Not found" actual
+'
+
+test_expect_success GPGSM 'log --graph --show-signature for merged tag x509 bad signature' '
+	test_when_finished "git reset --hard && git checkout main" &&
+	test_config gpg.format x509 &&
+	test_config user.signingkey $GIT_COMMITTER_EMAIL &&
+	git checkout -b plain-x509-bad main &&
+	echo aaa >bar &&
+	git add bar &&
+	git commit -m bar_commit &&
+	git checkout -b tagged-x509-bad main &&
+	echo bbb >baz &&
+	git add baz &&
+	git commit -m baz_commit &&
+	git tag -s -m signed_tag_msg signed_tag_x509_bad &&
+	git cat-file tag signed_tag_x509_bad >raw &&
+	sed -e "s/signed_tag_msg/forged/" raw >forged &&
+	git hash-object -w -t tag forged >forged.tag &&
+	git checkout plain-x509-bad &&
+	git merge --no-ff -m msg "$(cat forged.tag)" &&
+	git log --graph --show-signature -n1 plain-x509-bad >actual &&
+	grep "^|\\\  merged tag" actual &&
+	grep "^| | gpgsm: Signature made" actual &&
+	grep "^| | gpgsm: invalid signature" actual
+'
+
+
+test_expect_success GPG '--no-show-signature overrides --show-signature' '
+	git log -1 --show-signature --no-show-signature signed >actual &&
+	! grep "^gpg:" actual
+'
+
+test_expect_success GPG 'log.showsignature=true behaves like --show-signature' '
+	test_config log.showsignature true &&
+	git log -1 signed >actual &&
+	grep "gpg: Signature made" actual &&
+	grep "gpg: Good signature" actual
+'
+
+test_expect_success GPG '--no-show-signature overrides log.showsignature=true' '
+	test_config log.showsignature true &&
+	git log -1 --no-show-signature signed >actual &&
+	! grep "^gpg:" actual
+'
+
+test_expect_success GPG '--show-signature overrides log.showsignature=false' '
+	test_config log.showsignature false &&
+	git log -1 --show-signature signed >actual &&
+	grep "gpg: Signature made" actual &&
+	grep "gpg: Good signature" actual
+'
+
+test_expect_success 'log --graph --no-walk is forbidden' '
+	test_must_fail git log --graph --no-walk
+'
 
-test_expect_success 'log --skip=0 is same as no skip' '
-	cd repo &&
-	git log --oneline >no_skip &&
-	git log --oneline --skip=0 >with_skip &&
-	test $(wc -l <no_skip) -eq $(wc -l <with_skip)
+test_expect_success 'log on empty repo fails' '
+	git init empty &&
+	test_when_finished "rm -rf empty" &&
+	test_must_fail git -C empty log 2>stderr &&
+	test_grep does.not.have.any.commits stderr
+'
+
+test_expect_success 'log does not default to HEAD when rev input is given' '
+	git log --branches=does-not-exist >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'do not default to HEAD with ignored object on cmdline' '
+	git log --ignore-missing $ZERO_OID >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'do not default to HEAD with ignored object on stdin' '
+	echo $ZERO_OID | git log --ignore-missing --stdin >actual &&
+	test_must_be_empty actual
+'
+
+test_expect_success 'set up --source tests' '
+	git checkout --orphan source-a &&
+	test_commit one &&
+	test_commit two &&
+	git checkout -b source-b HEAD^ &&
+	test_commit three
+'
+
+test_expect_success 'log --source paints branch names' '
+	cat >expect <<-EOF &&
+	$(git rev-parse --short :/three)	source-b three
+	$(git rev-parse --short :/two  )	source-a two
+	$(git rev-parse --short :/one  )	source-b one
+	EOF
+	git log --oneline --source source-a source-b >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log --source paints tag names' '
+	git tag -m tagged source-tag &&
+	cat >expect <<-EOF &&
+	$(git rev-parse --short :/three)	source-tag three
+	$(git rev-parse --short :/two  )	source-a two
+	$(git rev-parse --short :/one  )	source-tag one
+	EOF
+	git log --oneline --source source-tag source-a >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log --source paints symmetric ranges' '
+	cat >expect <<-EOF &&
+	$(git rev-parse --short :/three)	source-b three
+	$(git rev-parse --short :/two  )	source-a two
+	EOF
+	git log --oneline --source source-a...source-b >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--exclude-promisor-objects does not BUG-crash' '
+	test_must_fail git log --exclude-promisor-objects source-a
+'
+
+test_expect_success 'log --decorate includes all levels of tag annotated tags' '
+	git checkout -b branch &&
+	git commit --allow-empty -m "new commit" &&
+	git tag lightweight HEAD &&
+	git tag -m annotated annotated HEAD &&
+	git tag -m double-0 double-0 HEAD &&
+	git tag -m double-1 double-1 double-0 &&
+	cat >expect <<-\EOF &&
+	HEAD -> branch, tag: lightweight, tag: double-1, tag: double-0, tag: annotated
+	EOF
+	git log -1 --format="%D" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'log --decorate does not include things outside filter' '
+	reflist="refs/prefetch refs/rebase-merge refs/bundle" &&
+
+	for ref in $reflist
+	do
+		git update-ref $ref/fake HEAD || return 1
+	done &&
+
+	git log --decorate=full --oneline >actual &&
+
+	# None of the refs are visible:
+	! grep /fake actual
+'
+
+test_expect_success 'log --end-of-options' '
+	git update-ref refs/heads/--source HEAD &&
+	git log --end-of-options --source >actual &&
+	git log >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'set up commits with different authors' '
+	git checkout --orphan authors &&
+	test_commit --author "Jim <jim@example.com>" jim_1 &&
+	test_commit --author "Val <val@example.com>" val_1 &&
+	test_commit --author "Val <val@example.com>" val_2 &&
+	test_commit --author "Jim <jim@example.com>" jim_2 &&
+	test_commit --author "Val <val@example.com>" val_3 &&
+	test_commit --author "Jim <jim@example.com>" jim_3
+'
+
+test_expect_success 'log --invert-grep --grep --author' '
+	cat >expect <<-\EOF &&
+	val_3
+	val_1
+	EOF
+	git log --format=%s --author=Val --grep 2 --invert-grep >actual &&
+	test_cmp expect actual
 '
 
 test_done

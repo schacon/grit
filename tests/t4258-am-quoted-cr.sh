@@ -1,43 +1,37 @@
 #!/bin/sh
 
-test_description='test am with various patch formats'
+test_description='test am --quoted-cr=<action>'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
+DATA="$TEST_DIRECTORY/t4258"
+
 test_expect_success 'setup' '
-	git init repo && cd repo &&
 	test_write_lines one two three >text &&
-	git add text &&
-	git commit -m one &&
-	git tag one &&
-
+	test_commit one text &&
 	test_write_lines one owt three >text &&
-	git commit -a -m two &&
-	git tag two &&
-	git format-patch -1 --stdout >two.patch
+	test_commit two text
 '
 
-test_expect_success 'am applies patch changing middle line' '
-	cd repo &&
+test_expect_success 'am warn if quoted-cr is found' '
 	git reset --hard one &&
-	git am two.patch &&
-	test_write_lines one owt three >expect &&
-	test_cmp expect text
+	test_must_fail git am "$DATA/mbox" 2>err &&
+	grep "quoted CRLF detected" err
 '
 
-test_expect_success 'am preserves commit info' '
-	cd repo &&
-	git log -n 1 --format=%s >actual &&
-	echo "two" >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'am works after reset and reapply' '
-	cd repo &&
+test_expect_success 'am --quoted-cr=strip' '
+	test_might_fail git am --abort &&
 	git reset --hard one &&
-	git am two.patch &&
-	git diff --exit-code two
+	git am --quoted-cr=strip "$DATA/mbox" &&
+	git diff --exit-code HEAD two
+'
+
+test_expect_success 'am with config mailinfo.quotedCr=strip' '
+	test_might_fail git am --abort &&
+	git reset --hard one &&
+	test_config mailinfo.quotedCr strip &&
+	git am "$DATA/mbox" &&
+	git diff --exit-code HEAD two
 '
 
 test_done

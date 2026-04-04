@@ -1,6 +1,6 @@
 #!/bin/sh
 
-test_description='three-way file merge: merge-file'
+test_description='RCS merge replacement: merge-file'
 
 . ./test-lib.sh
 
@@ -55,7 +55,67 @@ test_expect_success 'setup' '
 	deduxit me super semitas jusitiae,
 	EOF
 
-	printf "propter nomen suum." >>new4.txt
+	printf "propter nomen suum." >>new4.txt &&
+
+	cat >base.c <<-\EOF &&
+	int f(int x, int y)
+	{
+		if (x == 0)
+		{
+			return y;
+		}
+		return x;
+	}
+
+	int g(size_t u)
+	{
+		while (u < 30)
+		{
+			u++;
+		}
+		return u;
+	}
+	EOF
+
+	cat >ours.c <<-\EOF &&
+	int g(size_t u)
+	{
+		while (u < 30)
+		{
+			u++;
+		}
+		return u;
+	}
+
+	int h(int x, int y, int z)
+	{
+		if (z == 0)
+		{
+			return x;
+		}
+		return y;
+	}
+	EOF
+
+	cat >theirs.c <<-\EOF
+	int f(int x, int y)
+	{
+		if (x == 0)
+		{
+			return y;
+		}
+		return x;
+	}
+
+	int g(size_t u)
+	{
+		while (u > 34)
+		{
+			u--;
+		}
+		return u;
+	}
+	EOF
 '
 
 test_expect_success 'merge with no changes' '
@@ -64,13 +124,32 @@ test_expect_success 'merge with no changes' '
 	test_cmp test.txt orig.txt
 '
 
+test_expect_success 'merge with no changes with --object-id' '
+	git add orig.txt &&
+	git merge-file -p --object-id :orig.txt :orig.txt :orig.txt >actual &&
+	test_cmp actual orig.txt
+'
+
 test_expect_success "merge without conflict" '
 	cp new1.txt test.txt &&
 	git merge-file test.txt orig.txt new2.txt
 '
 
+test_expect_success 'merge without conflict with --object-id' '
+	git add orig.txt new2.txt &&
+	git merge-file --object-id :orig.txt :orig.txt :new2.txt >actual &&
+	git rev-parse :new2.txt >expected &&
+	test_cmp actual expected
+'
+
+test_expect_success 'can accept object ID with --object-id' '
+	git merge-file --object-id $(test_oid empty_blob) $(test_oid empty_blob) :new2.txt >actual &&
+	git rev-parse :new2.txt >expected &&
+	test_cmp actual expected
+'
+
 test_expect_success 'works in subdirectory' '
-	mkdir -p dir &&
+	mkdir dir &&
 	cp new1.txt dir/a.txt &&
 	cp orig.txt dir/o.txt &&
 	cp new2.txt dir/b.txt &&
@@ -81,6 +160,15 @@ test_expect_success 'works in subdirectory' '
 test_expect_success "merge without conflict (--quiet)" '
 	cp new1.txt test.txt &&
 	git merge-file --quiet test.txt orig.txt new2.txt
+'
+
+test_expect_failure "merge without conflict (missing LF at EOF)" '
+	cp new1.txt test2.txt &&
+	git merge-file test2.txt orig.txt new4.txt
+'
+
+test_expect_failure "merge result added missing LF" '
+	test_cmp test.txt test2.txt
 '
 
 test_expect_success "merge without conflict (missing LF at EOF, away from change in the other file)" '
@@ -126,6 +214,31 @@ test_expect_success "expected conflict markers" '
 	EOF
 
 	test_cmp expect.txt test.txt
+'
+
+test_expect_success "merge with conflicts with --object-id" '
+	git add backup.txt orig.txt new3.txt &&
+	test_must_fail git merge-file -p --object-id :backup.txt :orig.txt :new3.txt >actual &&
+	sed -e "s/<< test.txt/<< :backup.txt/" \
+	    -e "s/>> new3.txt/>> :new3.txt/" \
+	    expect.txt >expect &&
+	test_cmp expect actual &&
+	test_must_fail git merge-file --object-id :backup.txt :orig.txt :new3.txt >oid &&
+	git cat-file blob "$(cat oid)" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success "merge with conflicts with --object-id with labels" '
+	git add backup.txt orig.txt new3.txt &&
+	test_must_fail git merge-file -p --object-id \
+		-L test.txt -L orig.txt -L new3.txt \
+		:backup.txt :orig.txt :new3.txt >actual &&
+	test_cmp expect.txt actual &&
+	test_must_fail git merge-file --object-id \
+		-L test.txt -L orig.txt -L new3.txt \
+		:backup.txt :orig.txt :new3.txt >oid &&
+	git cat-file blob "$(cat oid)" >actual &&
+	test_cmp expect.txt actual
 '
 
 test_expect_success "merge conflicting with --ours" '
@@ -190,6 +303,7 @@ test_expect_success "merge conflicting with --union" '
 
 test_expect_success "merge with conflicts, using -L" '
 	cp backup.txt test.txt &&
+
 	test_must_fail git merge-file -L 1 -L 2 test.txt orig.txt new3.txt
 '
 
@@ -240,19 +354,37 @@ test_expect_success "expected conflict markers" '
 '
 
 test_expect_success 'binary files cannot be merged' '
-	printf "\000binary" >binary.bin &&
 	test_must_fail git merge-file -p \
-		orig.txt binary.bin new1.txt 2>merge.err &&
+		orig.txt "$TEST_DIRECTORY"/test-binary-1.png new1.txt 2> merge.err &&
 	grep "Cannot merge binary files" merge.err
 '
 
-test_expect_success '"diff3 -m" style output (1)' '
+test_expect_success 'binary files cannot be merged with --object-id' '
+	cp "$TEST_DIRECTORY"/test-binary-1.png . &&
+	git add orig.txt new1.txt test-binary-1.png &&
+	test_must_fail git merge-file --object-id \
+		:orig.txt :test-binary-1.png :new1.txt 2> merge.err &&
+	grep "Cannot merge binary files" merge.err
+'
+
+test_expect_success 'MERGE_ZEALOUS simplifies non-conflicts' '
 	sed -e "s/deerit.\$/deerit;/" -e "s/me;\$/me./" <new5.txt >new6.txt &&
 	sed -e "s/deerit.\$/deerit,/" -e "s/me;\$/me,/" <new5.txt >new7.txt &&
 
+	test_must_fail git merge-file -p new6.txt new5.txt new7.txt > output &&
+	test 1 = $(grep ======= <output | wc -l)
+'
+
+test_expect_success 'ZEALOUS_ALNUM' '
 	sed -e "s/deerit./&%%%%/" -e "s/locavit,/locavit;/" <new6.txt | tr % "\012" >new8.txt &&
 	sed -e "s/deerit./&%%%%/" -e "s/locavit,/locavit --/" <new7.txt | tr % "\012" >new9.txt &&
 
+	test_must_fail git merge-file -p \
+		new8.txt new5.txt new9.txt >merge.out &&
+	test 1 = $(grep ======= <merge.out | wc -l)
+'
+
+test_expect_success '"diff3 -m" style output (1)' '
 	cat >expect <<-\EOF &&
 	Dominus regit me,
 	<<<<<<< new8.txt
@@ -289,12 +421,50 @@ test_expect_success '"diff3 -m" style output (1)' '
 	test_cmp expect actual
 '
 
-test_expect_success 'marker size' '
-	sed -e "s/deerit.\$/deerit;/" -e "s/me;\$/me./" <new5.txt >new6.txt &&
-	sed -e "s/deerit.\$/deerit,/" -e "s/me;\$/me,/" <new5.txt >new7.txt &&
-	sed -e "s/deerit./&%%%%/" -e "s/locavit,/locavit;/" <new6.txt | tr % "\012" >new8.txt &&
-	sed -e "s/deerit./&%%%%/" -e "s/locavit,/locavit --/" <new7.txt | tr % "\012" >new9.txt &&
+test_expect_success '"diff3 -m" style output (2)' '
+	git config merge.conflictstyle diff3 &&
+	test_must_fail git merge-file -p \
+		new8.txt new5.txt new9.txt >actual &&
+	test_cmp expect actual
+'
 
+test_expect_success 'merge.conflictStyle honored outside repo' '
+	test_config_global merge.conflictStyle diff3 &&
+	cat >nongit-base <<-\EOF &&
+	line1
+	original
+	line3
+	EOF
+	cat >nongit-ours <<-\EOF &&
+	line1
+	ours
+	line3
+	EOF
+	cat >nongit-theirs <<-\EOF &&
+	line1
+	theirs
+	line3
+	EOF
+	cat >expect <<-\EOF &&
+	line1
+	<<<<<<< ours
+	ours
+	||||||| base
+	original
+	=======
+	theirs
+	>>>>>>> theirs
+	line3
+	EOF
+	test_must_fail nongit git merge-file -p \
+		-L ours -L base -L theirs \
+		"$PWD/nongit-ours" \
+		"$PWD/nongit-base" \
+		"$PWD/nongit-theirs" >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'marker size' '
 	cat >expect <<-\EOF &&
 	Dominus regit me,
 	<<<<<<<<<< new8.txt
@@ -326,7 +496,7 @@ test_expect_success 'marker size' '
 	virga tua et baculus tuus ipsa me consolata sunt.
 	EOF
 
-	test_must_fail git merge-file -p --marker-size=10 --diff3 \
+	test_must_fail git merge-file -p --marker-size=10 \
 		new8.txt new5.txt new9.txt >actual &&
 	test_cmp expect actual
 '
@@ -342,131 +512,6 @@ test_expect_success 'conflict at EOF without LF resolved by --ours' '
 '
 
 test_expect_success 'conflict at EOF without LF resolved by --theirs' '
-	printf "line1\nline2\nline3" >nolf-orig.txt &&
-	printf "line1\nline2\nline3x" >nolf-diff1.txt &&
-	printf "line1\nline2\nline3y" >nolf-diff2.txt &&
-	git merge-file -p --theirs nolf-diff1.txt nolf-orig.txt nolf-diff2.txt >output.txt &&
-	printf "line1\nline2\nline3y" >expect.txt &&
-	test_cmp expect.txt output.txt
-'
-
-test_expect_success 'conflict at EOF without LF resolved by --union' '
-	printf "line1\nline2\nline3" >nolf-orig.txt &&
-	printf "line1\nline2\nline3x" >nolf-diff1.txt &&
-	printf "line1\nline2\nline3y" >nolf-diff2.txt &&
-	git merge-file -p --union nolf-diff1.txt nolf-orig.txt nolf-diff2.txt >output.txt &&
-	printf "line1\nline2\nline3x\nline3y" >expect.txt &&
-	test_cmp expect.txt output.txt
-'
-
-# ---- more merge-file tests ----
-
-test_expect_success 'merge-file -p sends to stdout, does not modify input' '
-	cp new1.txt input.txt &&
-	md5before=$(md5sum input.txt | cut -d" " -f1) &&
-	git merge-file -p input.txt orig.txt new2.txt >stdout.txt &&
-	md5after=$(md5sum input.txt | cut -d" " -f1) &&
-	test "$md5before" = "$md5after"
-'
-
-test_expect_success 'merge with all three labels via -L' '
-	cp backup.txt test.txt &&
-	test_must_fail git merge-file -L ours -L base -L theirs test.txt orig.txt new3.txt &&
-	grep "<<<<<<< ours" test.txt &&
-	grep ">>>>>>> theirs" test.txt
-'
-
-test_expect_success 'merge with only two -L labels' '
-	cp backup.txt test.txt &&
-	test_must_fail git merge-file -L mine -L ancestor test.txt orig.txt new3.txt &&
-	grep "<<<<<<< mine" test.txt &&
-	grep ">>>>>>> new3.txt" test.txt
-'
-
-test_expect_success 'merge-file --quiet suppresses conflict warnings' '
-	cp backup.txt test.txt &&
-	test_must_fail git merge-file --quiet test.txt orig.txt new3.txt 2>stderr &&
-	test_must_be_empty stderr
-'
-
-test_expect_success 'merge with identical our and their produces clean result' '
-	cp new1.txt ident1.txt &&
-	cp new1.txt ident2.txt &&
-	git merge-file -p ident1.txt orig.txt ident2.txt >out &&
-	test_cmp new1.txt out
-'
-
-test_expect_success 'merge-file with --diff3 shows base marker' '
-	printf "A\nB\nC\n" >d3base.txt &&
-	printf "A\nX\nC\n" >d3ours.txt &&
-	printf "A\nY\nC\n" >d3theirs.txt &&
-	test_must_fail git merge-file --diff3 -p d3ours.txt d3base.txt d3theirs.txt >d3out &&
-	grep "|||||||" d3out
-'
-
-test_expect_success 'merge-file exit code is number of conflicts' '
-	cp backup.txt test.txt &&
-	test_expect_code 1 git merge-file test.txt orig.txt new3.txt
-'
-
-test_expect_success 'merge-file clean merge returns 0' '
-	cp new1.txt clean1.txt &&
-	git merge-file clean1.txt orig.txt new2.txt &&
-	test $? -eq 0
-'
-
-test_expect_success 'merge-file --zdiff3 is accepted' '
-	printf "A\nB\nC\n" >zd3base.txt &&
-	printf "A\nX\nC\n" >zd3ours.txt &&
-	printf "A\nY\nC\n" >zd3theirs.txt &&
-	test_must_fail git merge-file --zdiff3 -p zd3ours.txt zd3base.txt zd3theirs.txt >zd3out &&
-	grep "<<<<<<< zd3ours.txt" zd3out
-'
-
-test_expect_success 'merge-file -p with no conflict does not modify file' '
-	cp orig.txt nomod.txt &&
-	git merge-file -p nomod.txt orig.txt orig.txt >out2 &&
-	test_cmp orig.txt nomod.txt
-'
-
-test_expect_success 'merge-file with all three -L labels in --diff3' '
-	printf "A\nB\nC\n" >lb.txt &&
-	printf "A\nX\nC\n" >lo.txt &&
-	printf "A\nY\nC\n" >lt.txt &&
-	test_must_fail git merge-file --diff3 -p \
-		-L OURS -L BASE -L THEIRS lo.txt lb.txt lt.txt >lout &&
-	grep "<<<<<<< OURS" lout &&
-	grep "||||||| BASE" lout &&
-	grep ">>>>>>> THEIRS" lout
-'
-
-test_expect_success 'merge-file only-add on both sides (no conflict)' '
-	printf "line1\nline2\n" >add_base.txt &&
-	printf "line1\nline2\nline3\n" >add_ours.txt &&
-	printf "line1\nline2\n" >add_theirs.txt &&
-	git merge-file -p add_ours.txt add_base.txt add_theirs.txt >add_out &&
-	grep "line3" add_out
-'
-
-test_expect_success 'merge-file works in subdirectory' '
-	mkdir -p subdir &&
-	cp new1.txt subdir/a.txt &&
-	cp orig.txt subdir/o.txt &&
-	cp new2.txt subdir/b.txt &&
-	( cd subdir && git merge-file a.txt o.txt b.txt ) &&
-	test_path_is_missing a.txt
-'
-
-test_expect_success 'conflict at EOF without LF resolved by --ours' '
-	printf "line1\nline2\nline3" >nolf-orig.txt &&
-	printf "line1\nline2\nline3x" >nolf-diff1.txt &&
-	printf "line1\nline2\nline3y" >nolf-diff2.txt &&
-	git merge-file -p --ours nolf-diff1.txt nolf-orig.txt nolf-diff2.txt >output.txt &&
-	printf "line1\nline2\nline3x" >expect.txt &&
-	test_cmp expect.txt output.txt
-'
-
-test_expect_success 'conflict at EOF without LF resolved by --theirs' '
 	git merge-file -p --theirs nolf-diff1.txt nolf-orig.txt nolf-diff2.txt >output.txt &&
 	printf "line1\nline2\nline3y" >expect.txt &&
 	test_cmp expect.txt output.txt
@@ -478,22 +523,94 @@ test_expect_success 'conflict at EOF without LF resolved by --union' '
 	test_cmp expect.txt output.txt
 '
 
-test_expect_success 'merge-file with --marker-size changes marker width' '
-	printf "A\nB\nC\n" >ms_base.txt &&
-	printf "A\nX\nC\n" >ms_ours.txt &&
-	printf "A\nY\nC\n" >ms_theirs.txt &&
-	test_must_fail git merge-file -p --marker-size=10 ms_ours.txt ms_base.txt ms_theirs.txt >ms_out &&
-	grep "^<<<<<<<<<<" ms_out &&
-	grep "^>>>>>>>>>>" ms_out
+test_expect_success 'conflict sections match existing line endings' '
+	printf "1\\r\\n2\\r\\n3" >crlf-orig.txt &&
+	printf "1\\r\\n2\\r\\n4" >crlf-diff1.txt &&
+	printf "1\\r\\n2\\r\\n5" >crlf-diff2.txt &&
+	test_must_fail git -c core.eol=crlf merge-file -p \
+		crlf-diff1.txt crlf-orig.txt crlf-diff2.txt >crlf.txt &&
+	test $(tr "\015" Q <crlf.txt | grep "^[<=>].*Q$" | wc -l) = 3 &&
+	test $(tr "\015" Q <crlf.txt | grep "[345]Q$" | wc -l) = 3 &&
+	test_must_fail git -c core.eol=crlf merge-file -p \
+		nolf-diff1.txt nolf-orig.txt nolf-diff2.txt >nolf.txt &&
+	test $(tr "\015" Q <nolf.txt | grep "^[<=>].*Q$" | wc -l) = 0
 '
 
-test_expect_success 'merge with identical our and their produces clean result' '
-	printf "line1\nline2\nline3\n" >mfid_base.txt &&
-	printf "line1\nX\nline3\n" >mfid_ours.txt &&
-	cp mfid_ours.txt mfid_theirs.txt &&
-	git merge-file -p mfid_ours.txt mfid_base.txt mfid_theirs.txt >mfid_out &&
-	printf "line1\nX\nline3\n" >mfid_expect &&
-	test_cmp mfid_expect mfid_out
+test_expect_success '--object-id fails without repository' '
+	empty="$(test_oid empty_blob)" &&
+	nongit test_must_fail git merge-file --object-id $empty $empty $empty 2>err &&
+	grep "not a git repository" err
+'
+
+test_expect_success 'run in a linked worktree with --object-id' '
+	empty="$(test_oid empty_blob)" &&
+	git worktree add work &&
+	git -C work merge-file --object-id $empty $empty $empty >actual &&
+	git worktree remove work &&
+	git merge-file --object-id $empty $empty $empty >expected &&
+	test_cmp actual expected
+'
+
+test_expect_success 'merging C files with "myers" diff algorithm creates some spurious conflicts' '
+	cat >expect.c <<-\EOF &&
+	int g(size_t u)
+	{
+		while (u < 30)
+		{
+			u++;
+		}
+		return u;
+	}
+
+	int h(int x, int y, int z)
+	{
+	<<<<<<< ours.c
+		if (z == 0)
+	||||||| base.c
+		while (u < 30)
+	=======
+		while (u > 34)
+	>>>>>>> theirs.c
+		{
+	<<<<<<< ours.c
+			return x;
+	||||||| base.c
+			u++;
+	=======
+			u--;
+	>>>>>>> theirs.c
+		}
+		return y;
+	}
+	EOF
+
+	test_must_fail git merge-file -p --diff3 --diff-algorithm myers ours.c base.c theirs.c >myers_output.c &&
+	test_cmp expect.c myers_output.c
+'
+
+test_expect_success 'merging C files with "histogram" diff algorithm avoids some spurious conflicts' '
+	cat >expect.c <<-\EOF &&
+	int g(size_t u)
+	{
+		while (u > 34)
+		{
+			u--;
+		}
+		return u;
+	}
+
+	int h(int x, int y, int z)
+	{
+		if (z == 0)
+		{
+			return x;
+		}
+		return y;
+	}
+	EOF
+
+	git merge-file -p --diff3 --diff-algorithm histogram ours.c base.c theirs.c >histogram_output.c &&
+	test_cmp expect.c histogram_output.c
 '
 
 test_done

@@ -1,13 +1,25 @@
 #!/bin/sh
 #
-# Upstream: t9153-git-svn-rewrite-uuid.sh
-# Requires Subversion — ported as test_expect_failure stubs.
+# Copyright (c) 2010 Jay Soffian
 #
 
 test_description='git svn --rewrite-uuid test'
 
-cd "$(dirname "$0")" || exit 1
-. ./test-lib.sh
+. ./lib-git-svn.sh
 
-skip_all='Subversion not available in grit'
+uuid=6cc8ada4-5932-4b4a-8242-3534ed8a3232
+
+test_expect_success 'load svn repo' "
+	svnadmin load -q '$rawsvnrepo' < '$TEST_DIRECTORY/t9153/svn.dump' &&
+	git svn init --minimize-url --rewrite-uuid='$uuid' '$svnrepo' &&
+	git svn fetch
+	"
+
+test_expect_success 'verify uuid' "
+	git cat-file commit refs/remotes/git-svn~0 >actual &&
+	grep '^git-svn-id: .*@2 $uuid$' actual &&
+	git cat-file commit refs/remotes/git-svn~1 >actual &&
+	grep '^git-svn-id: .*@1 $uuid$' actual
+	"
+
 test_done

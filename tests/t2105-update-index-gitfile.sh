@@ -1,43 +1,38 @@
 #!/bin/sh
+#
+# Copyright (c) 2010 Brad King
+#
 
-test_description='git update-index for various file types'
+test_description='git update-index for gitlink to .git file.
+'
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com"
+test_expect_success 'submodule with absolute .git file' '
+	mkdir sub1 &&
+	(cd sub1 &&
+	 git init &&
+	 REAL="$(pwd)/.real" &&
+	 mv .git "$REAL" &&
+	 echo "gitdir: $REAL" >.git &&
+	 test_commit first)
 '
 
-test_expect_success 'update-index --add adds regular file' '
-	echo hello >file1 &&
-	git update-index --add file1 &&
-	git ls-files --stage file1 >out &&
-	grep "100644" out &&
-	grep "file1" out
+test_expect_success 'add gitlink to absolute .git file' '
+	git update-index --add -- sub1
 '
 
-test_expect_success 'update-index --add adds multiple files' '
-	echo a >file2 &&
-	echo b >file3 &&
-	git update-index --add file2 file3 &&
-	git ls-files --stage >out &&
-	grep "file2" out &&
-	grep "file3" out
+test_expect_success 'submodule with relative .git file' '
+	mkdir sub2 &&
+	(cd sub2 &&
+	 git init &&
+	 mv .git .real &&
+	 echo "gitdir: .real" >.git &&
+	 test_commit first)
 '
 
-test_expect_success 'update-index --remove removes entry' '
-	rm file3 &&
-	git update-index --remove file3 &&
-	git ls-files --stage >out &&
-	! grep "file3" out
-'
-
-test_expect_success 'update-index --force-remove removes entry' '
-	git update-index --force-remove file2 &&
-	git ls-files --stage >out &&
-	! grep "file2" out
+test_expect_success 'add gitlink to relative .git file' '
+	git update-index --add -- sub2
 '
 
 test_done

@@ -1,41 +1,81 @@
 #!/bin/sh
 #
-# Ported from git/t/t7420-submodule-set-url.sh
-# Tests for 'git submodule set-url'
-# Note: grit does not implement 'submodule set-url' yet
+# Copyright (c) 2019 Denton Liu
 #
 
-test_description='Test submodule set-url subcommand'
+test_description='Test submodules set-url subcommand
 
-cd "$(dirname "$0")" || exit 1
+This test verifies that the set-url subcommand of git-submodule is working
+as expected.
+'
+
+TEST_NO_CREATE_REPO=1
 . ./test-lib.sh
 
-REAL_GIT="/usr/bin/git"
-
 test_expect_success 'setup' '
-	"$REAL_GIT" config --global protocol.file.allow always &&
-	"$REAL_GIT" init sub &&
+	git config --global protocol.file.allow always
+'
+
+test_expect_success 'submodule config cache setup' '
+	mkdir submodule &&
 	(
-		cd sub &&
-		"$REAL_GIT" config user.email "test@example.com" &&
-		"$REAL_GIT" config user.name "Test User" &&
-		echo sub >file &&
-		"$REAL_GIT" add file &&
-		"$REAL_GIT" commit -m "sub initial"
+		cd submodule &&
+		git init &&
+		echo a >file &&
+		git add file &&
+		git commit -ma
 	) &&
-	"$REAL_GIT" init super &&
+	mkdir namedsubmodule &&
+	(
+		cd namedsubmodule &&
+		git init &&
+		echo 1 >file &&
+		git add file &&
+		git commit -m1
+	) &&
+	mkdir super &&
 	(
 		cd super &&
-		"$REAL_GIT" config user.email "test@example.com" &&
-		"$REAL_GIT" config user.name "Test User" &&
-		"$REAL_GIT" submodule add "$TRASH_DIRECTORY/sub" sub &&
-		"$REAL_GIT" commit -m "add submodule"
+		git init &&
+		git submodule add ../submodule &&
+		git submodule add --name thename ../namedsubmodule thepath &&
+		git commit -m "add submodules"
 	)
 '
 
-test_expect_success 'submodule set-url' '
-	cd super &&
-	git submodule set-url sub /some/new/url
+test_expect_success 'test submodule set-url' '
+	# add commits and move the submodules (change the urls)
+	(
+		cd submodule &&
+		echo b >>file &&
+		git add file &&
+		git commit -mb
+	) &&
+	mv submodule newsubmodule &&
+
+	(
+		cd namedsubmodule &&
+		echo 2 >>file &&
+		git add file &&
+		git commit -m2
+	) &&
+	mv namedsubmodule newnamedsubmodule &&
+
+	git -C newsubmodule show >expect &&
+	git -C newnamedsubmodule show >>expect &&
+	(
+		cd super &&
+		test_must_fail git submodule update --remote &&
+		git submodule set-url submodule ../newsubmodule &&
+		test_cmp_config ../newsubmodule -f .gitmodules submodule.submodule.url &&
+		git submodule set-url thepath ../newnamedsubmodule &&
+		test_cmp_config ../newnamedsubmodule -f .gitmodules submodule.thename.url &&
+		test_cmp_config "" -f .gitmodules --default "" submodule.thepath.url &&
+		git submodule update --remote
+	) &&
+	git -C super/submodule show >actual &&
+	git -C super/thepath show >>actual &&
+	test_cmp expect actual
 '
 
 test_done

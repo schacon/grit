@@ -1,545 +1,399 @@
 #!/bin/sh
-# Ported from git/t/t1305-config-include.sh (partially)
-# Tests for config include directive parsing and --includes/--no-includes flags.
-# Note: grit parses include directives as config entries but does not yet
-# fully resolve/expand them. These tests cover what currently works.
 
-test_description='grit config include directives'
-
-cd "$(dirname "$0")" || exit 1
+test_description='test config file include directives'
 . ./test-lib.sh
 
-# ── include directive shows up in config list ─────────────────────────────
+# Force setup_explicit_git_dir() to run until the end. This is needed
+# by some tests to make sure real_path() is called on $GIT_DIR. The
+# caller needs to make sure git commands are run from a subdirectory
+# though or real_path() will not be called.
+force_setup_explicit_git_dir() {
+    GIT_DIR="$(pwd)/.git"
+    GIT_WORK_TREE="$(pwd)"
+    export GIT_DIR GIT_WORK_TREE
+}
 
-test_expect_success 'include.path appears in config list' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = other.cfg
-	[user]
-		name = Main
+test_expect_success 'include file by absolute path' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path = \"$(pwd)/one\"" >.gitconfig &&
+	echo 1 >expect &&
+	git config test.one >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'include file by relative path' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path = one" >.gitconfig &&
+	echo 1 >expect &&
+	git config test.one >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'chained relative paths' '
+	mkdir subdir &&
+	echo "[test]three = 3" >subdir/three &&
+	echo "[include]path = three" >subdir/two &&
+	echo "[include]path = subdir/two" >.gitconfig &&
+	echo 3 >expect &&
+	git config test.three >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'include paths get tilde-expansion' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path = ~/one" >.gitconfig &&
+	echo 1 >expect &&
+	git config test.one >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'include options can still be examined' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path = one" >.gitconfig &&
+	echo one >expect &&
+	git config include.path >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'listing includes option and expansion' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path = one" >.gitconfig &&
+	cat >expect <<-\EOF &&
+	include.path=one
+	test.one=1
 	EOF
-	git config --file cfg -l >actual &&
-	grep "include.path=other.cfg" actual
+	git config --list >actual.full &&
+	grep -v -e ^core -e ^extensions actual.full >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'include.path with absolute path' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = /some/absolute/path.cfg
-	[core]
-		x = 1
+test_expect_success 'single file lookup does not expand includes by default' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path = one" >.gitconfig &&
+	test_must_fail git config -f .gitconfig test.one &&
+	test_must_fail git config --global test.one &&
+	echo 1 >expect &&
+	git config --includes -f .gitconfig test.one >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'single file list does not expand includes by default' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path = one" >.gitconfig &&
+	echo "include.path=one" >expect &&
+	git config -f .gitconfig --list >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'writing config file does not expand includes' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path = one" >.gitconfig &&
+	git config test.two 2 &&
+	echo 2 >expect &&
+	git config --no-includes test.two >actual &&
+	test_cmp expect actual &&
+	test_must_fail git config --no-includes test.one
+'
+
+test_expect_success 'config modification does not affect includes' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path = one" >.gitconfig &&
+	git config test.one 2 &&
+	echo 1 >expect &&
+	git config -f one test.one >actual &&
+	test_cmp expect actual &&
+	cat >expect <<-\EOF &&
+	1
+	2
 	EOF
-	git config --file cfg -l >actual &&
-	grep "include.path=/some/absolute/path.cfg" actual
+	git config --get-all test.one >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'include.path with relative path' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = ../relative/path.cfg
-	[core]
-		x = 1
+test_expect_success 'missing include files are ignored' '
+	cat >.gitconfig <<-\EOF &&
+	[include]path = non-existent
+	[test]value = yes
 	EOF
-	git config --file cfg -l >actual &&
-	grep "include.path=../relative/path.cfg" actual
+	echo yes >expect &&
+	git config test.value >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'include.path with tilde expansion path' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = ~/config-file.cfg
-	[core]
-		x = 1
+test_expect_success 'absolute includes from command line work' '
+	echo "[test]one = 1" >one &&
+	echo 1 >expect &&
+	git -c include.path="$(pwd)/one" config test.one >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'relative includes from command line fail' '
+	echo "[test]one = 1" >one &&
+	test_must_fail git -c include.path=one config test.one
+'
+
+test_expect_success 'absolute includes from blobs work' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path=$(pwd)/one" >blob &&
+	blob=$(git hash-object -w blob) &&
+	echo 1 >expect &&
+	git config --blob=$blob test.one >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'relative includes from blobs fail' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path=one" >blob &&
+	blob=$(git hash-object -w blob) &&
+	test_must_fail git config --blob=$blob test.one
+'
+
+test_expect_success 'absolute includes from stdin work' '
+	echo "[test]one = 1" >one &&
+	echo 1 >expect &&
+	echo "[include]path=\"$(pwd)/one\"" |
+	git config --file - test.one >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'relative includes from stdin line fail' '
+	echo "[test]one = 1" >one &&
+	echo "[include]path=one" |
+	test_must_fail git config --file - test.one
+'
+
+test_expect_success 'conditional include, both unanchored' '
+	git init foo &&
+	(
+		cd foo &&
+		echo "[includeIf \"gitdir:foo/\"]path=bar" >>.git/config &&
+		echo "[test]one=1" >.git/bar &&
+		echo 1 >expect &&
+		git config test.one >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'conditional include, $HOME expansion' '
+	(
+		cd foo &&
+		echo "[includeIf \"gitdir:~/foo/\"]path=bar2" >>.git/config &&
+		echo "[test]two=2" >.git/bar2 &&
+		echo 2 >expect &&
+		git config test.two >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'conditional include, full pattern' '
+	(
+		cd foo &&
+		echo "[includeIf \"gitdir:**/foo/**\"]path=bar3" >>.git/config &&
+		echo "[test]three=3" >.git/bar3 &&
+		echo 3 >expect &&
+		git config test.three >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'conditional include, relative path' '
+	echo "[includeIf \"gitdir:./foo/.git\"]path=bar4" >>.gitconfig &&
+	echo "[test]four=4" >bar4 &&
+	(
+		cd foo &&
+		echo 4 >expect &&
+		git config test.four >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'conditional include, both unanchored, icase' '
+	(
+		cd foo &&
+		echo "[includeIf \"gitdir/i:FOO/\"]path=bar5" >>.git/config &&
+		echo "[test]five=5" >.git/bar5 &&
+		echo 5 >expect &&
+		git config test.five >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'conditional include, early config reading' '
+	(
+		cd foo &&
+		echo "[includeIf \"gitdir:foo/\"]path=bar6" >>.git/config &&
+		echo "[test]six=6" >.git/bar6 &&
+		echo 6 >expect &&
+		test-tool config read_early_config test.six >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'conditional include with /**/' '
+	REPO=foo/bar/repo &&
+	git init $REPO &&
+	cat >>$REPO/.git/config <<-\EOF &&
+	[includeIf "gitdir:**/foo/**/bar/**"]
+	path=bar7
 	EOF
-	git config --file cfg -l >actual &&
-	grep "include.path=~/config-file.cfg" actual
+	echo "[test]seven=7" >$REPO/.git/bar7 &&
+	echo 7 >expect &&
+	git -C $REPO config test.seven >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'multiple include directives in one file' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = first.cfg
-	[include]
-		path = second.cfg
-	[user]
-		name = Test
-	EOF
-	git config --file cfg -l >actual &&
-	grep "include.path=first.cfg" actual &&
-	grep "include.path=second.cfg" actual
+test_expect_success SYMLINKS 'conditional include, set up symlinked $HOME' '
+	mkdir real-home &&
+	ln -s real-home home &&
+	(
+		HOME="$TRASH_DIRECTORY/home" &&
+		export HOME &&
+		cd "$HOME" &&
+
+		git init foo &&
+		cd foo &&
+		mkdir sub
+	)
 '
 
-# ── includeIf directive parsing ───────────────────────────────────────────
+test_expect_success SYMLINKS 'conditional include, $HOME expansion with symlinks' '
+	(
+		HOME="$TRASH_DIRECTORY/home" &&
+		export HOME &&
+		cd "$HOME"/foo &&
 
-test_expect_success 'includeIf gitdir appears in config list' '
-	cat >cfg <<-EOF &&
-	[includeIf "gitdir:/path/to/repo/"]
-		path = conditional.cfg
-	[user]
-		name = Test
-	EOF
-	git config --file cfg -l >actual &&
-	grep "includeif.gitdir:/path/to/repo/.path=conditional.cfg" actual
+		echo "[includeIf \"gitdir:~/foo/\"]path=bar2" >>.git/config &&
+		echo "[test]two=2" >.git/bar2 &&
+		echo 2 >expect &&
+		force_setup_explicit_git_dir &&
+		git -C sub config test.two >actual &&
+		test_cmp expect actual
+	)
 '
 
-test_expect_success 'includeIf gitdir with glob pattern' '
-	cat >cfg <<-EOF &&
-	[includeIf "gitdir:~/projects/*/"]
-		path = projects.cfg
-	[user]
-		name = Test
-	EOF
-	git config --file cfg -l >actual &&
-	grep "includeif.gitdir:~/projects/\\*/.path=projects.cfg" actual
+test_expect_success SYMLINKS 'conditional include, relative path with symlinks' '
+	echo "[includeIf \"gitdir:./foo/.git\"]path=bar4" >home/.gitconfig &&
+	echo "[test]four=4" >home/bar4 &&
+	(
+		HOME="$TRASH_DIRECTORY/home" &&
+		export HOME &&
+		cd "$HOME"/foo &&
+
+		echo 4 >expect &&
+		force_setup_explicit_git_dir &&
+		git -C sub config test.four >actual &&
+		test_cmp expect actual
+	)
 '
 
-test_expect_success 'includeIf onbranch' '
-	cat >cfg <<-EOF &&
-	[includeIf "onbranch:main"]
-		path = main-branch.cfg
-	[user]
-		name = Test
-	EOF
-	git config --file cfg -l >actual &&
-	grep "includeif.onbranch:main.path=main-branch.cfg" actual
+test_expect_success SYMLINKS,!MINGW 'conditional include, gitdir matching symlink' '
+	ln -s foo bar &&
+	(
+		cd bar &&
+		echo "[includeIf \"gitdir:bar/\"]path=bar7" >>.git/config &&
+		echo "[test]seven=7" >.git/bar7 &&
+		echo 7 >expect &&
+		git config test.seven >actual &&
+		test_cmp expect actual
+	)
 '
 
-# ── --no-includes flag ────────────────────────────────────────────────────
-
-test_expect_success '--no-includes still shows include directives as entries' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = other.cfg
-	[user]
-		name = NoInc
-	EOF
-	git config --file cfg --no-includes -l >actual &&
-	grep "include.path=other.cfg" actual &&
-	grep "user.name=NoInc" actual
+test_expect_success SYMLINKS,!MINGW 'conditional include, gitdir matching symlink, icase' '
+	(
+		cd bar &&
+		echo "[includeIf \"gitdir/i:BAR/\"]path=bar8" >>.git/config &&
+		echo "[test]eight=8" >.git/bar8 &&
+		echo 8 >expect &&
+		git config test.eight >actual &&
+		test_cmp expect actual
+	)
 '
 
-test_expect_success '--includes flag accepted without error' '
-	cat >cfg <<-EOF &&
-	[user]
-		name = Test
-	EOF
-	git config --file cfg --includes -l >actual &&
-	grep "user.name=Test" actual
+test_expect_success 'conditional include, onbranch' '
+	echo "[includeIf \"onbranch:foo-branch\"]path=bar9" >>.git/config &&
+	echo "[test]nine=9" >.git/bar9 &&
+	git checkout -b main &&
+	test_must_fail git config test.nine &&
+	git checkout -b foo-branch &&
+	echo 9 >expect &&
+	git config test.nine >actual &&
+	test_cmp expect actual
 '
 
-# ── get values from files with include directives ─────────────────────────
+test_expect_success 'conditional include, onbranch, wildcard' '
+	echo "[includeIf \"onbranch:?oo-*/**\"]path=bar10" >>.git/config &&
+	echo "[test]ten=10" >.git/bar10 &&
+	git checkout -b not-foo-branch/a &&
+	test_must_fail git config test.ten &&
 
-test_expect_success 'get value in same file as include directive' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = nonexistent.cfg
-	[user]
-		name = Local
-	EOF
-	git config --file cfg --get user.name >actual &&
-	echo "Local" >expected &&
-	test_cmp expected actual
+	echo 10 >expect &&
+	git checkout -b foo-branch/a/b/c &&
+	git config test.ten >actual &&
+	test_cmp expect actual &&
+
+	git checkout -b moo-bar/a &&
+	git config test.ten >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'get include.path itself' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = some-file.cfg
-	[user]
-		name = Test
-	EOF
-	git config --file cfg --get include.path >actual &&
-	echo "some-file.cfg" >expected &&
-	test_cmp expected actual
+test_expect_success 'conditional include, onbranch, implicit /** for /' '
+	echo "[includeIf \"onbranch:foo-dir/\"]path=bar11" >>.git/config &&
+	echo "[test]eleven=11" >.git/bar11 &&
+	git checkout -b not-foo-dir/a &&
+	test_must_fail git config test.eleven &&
+
+	echo 11 >expect &&
+	git checkout -b foo-dir/a/b/c &&
+	git config test.eleven >actual &&
+	test_cmp expect actual
 '
 
-# ── config set with include directives already present ────────────────────
-
-test_expect_success 'set value preserves existing include directives' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = other.cfg
-	[user]
-		name = Original
-	EOF
-	git config --file cfg user.email "test@test.com" &&
-	git config --file cfg -l >actual &&
-	grep "include.path=other.cfg" actual &&
-	grep "user.name=Original" actual &&
-	grep "user.email=test@test.com" actual
+test_expect_success 'include cycles are detected' '
+	git init --bare cycle &&
+	git -C cycle config include.path cycle &&
+	git config -f cycle/cycle include.path config &&
+	test_must_fail git -C cycle config --get-all test.value 2>stderr &&
+	grep "exceeded maximum include depth" stderr
 '
 
-test_expect_success 'set value in file with multiple includes' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = a.cfg
-	[include]
-		path = b.cfg
-	[core]
-		x = 1
-	EOF
-	git config --file cfg core.y "2" &&
-	git config --file cfg -l >actual &&
-	grep "include.path=a.cfg" actual &&
-	grep "include.path=b.cfg" actual &&
-	grep "core.x=1" actual &&
-	grep "core.y=2" actual
+test_expect_success 'onbranch with unborn branch' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		git config set includeIf.onbranch:"*".path config.inc &&
+		git config set -f .git/config.inc foo.bar baz &&
+		git config get foo.bar
+	)
 '
 
-# ── show-origin with include files ────────────────────────────────────────
-
-test_expect_success '--show-origin shows file path for entries' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = inc.cfg
-	[user]
-		name = ShowOrigin
-	EOF
-	git config --file cfg -l --show-origin >actual &&
-	grep "file:cfg" actual
+test_expect_success 'onbranch with detached HEAD' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		git config set "includeIf.onbranch:*.path" config.inc &&
+		git config set -f .git/config.inc foo.bar baz &&
+		test_commit initial &&
+		git switch --detach HEAD &&
+		test_must_fail git config get foo.bar
+	)
 '
 
-# ── config in repo with include in .git/config ────────────────────────────
-
-test_expect_success 'include directive in .git/config is listed' '
-	git init inc-repo &&
-	cd inc-repo &&
-	cat >>.git/config <<-EOF &&
-	[include]
-		path = ../inc-extra.cfg
-	EOF
-	cat >../inc-extra.cfg <<-EOF &&
-	[extra]
-		val = hello
-	EOF
-	git config -l >actual &&
-	grep "include.path=../inc-extra.cfg" actual
+test_expect_success 'onbranch without repository' '
+	test_when_finished "rm -f .gitconfig config.inc" &&
+	git config set -f .gitconfig "includeIf.onbranch:**.path" config.inc &&
+	git config set -f config.inc foo.bar baz &&
+	git config get foo.bar &&
+	test_must_fail nongit git config get foo.bar
 '
 
-test_expect_success 'values in main config still readable with include present' '
-	cd inc-repo &&
-	git config user.name "IncUser" &&
-	git config --get user.name >actual &&
-	echo "IncUser" >expected &&
-	test_cmp expected actual
-'
-
-# ── remove-section with include ───────────────────────────────────────────
-
-test_expect_success 'remove-section does not break include directives' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = keep.cfg
-	[removeme]
-		key = val
-	[user]
-		name = Keep
-	EOF
-	git config --file cfg --remove-section removeme &&
-	git config --file cfg -l >actual &&
-	grep "include.path=keep.cfg" actual &&
-	grep "user.name=Keep" actual &&
-	test_must_fail git config --file cfg --get removeme.key
-'
-
-# ── rename-section with include ───────────────────────────────────────────
-
-test_expect_success 'rename-section does not break include directives' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = keep.cfg
-	[oldsec]
-		key = val
-	[user]
-		name = Keep
-	EOF
-	git config --file cfg --rename-section oldsec newsec &&
-	git config --file cfg -l >actual &&
-	grep "include.path=keep.cfg" actual &&
-	grep "newsec.key=val" actual &&
-	grep "user.name=Keep" actual
-'
-
-# ── edge cases ────────────────────────────────────────────────────────────
-
-test_expect_success 'empty include path' '
-	cat >cfg <<-EOF &&
-	[include]
-		path =
-	[user]
-		name = Empty
-	EOF
-	git config --file cfg --get user.name >actual &&
-	echo "Empty" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'config with only include directive' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = only-include.cfg
-	EOF
-	git config --file cfg -l >actual &&
-	grep "include.path=only-include.cfg" actual
-'
-
-test_expect_success 'include directive with show-scope' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = other.cfg
-	[user]
-		name = Scoped
-	EOF
-	git config --file cfg -l --show-scope >actual &&
-	grep "command" actual || grep "local" actual || true
-'
-
-# ── include with special characters in path ───────────────────────────────
-
-test_expect_success 'include.path with spaces in path' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = my config/extra.cfg
-	[core]
-		x = 1
-	EOF
-	git config --file cfg -l >actual &&
-	grep "include.path=my config/extra.cfg" actual
-'
-
-test_expect_success 'include.path with dots in path' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = config.d/local.conf
-	[core]
-		x = 1
-	EOF
-	git config --file cfg -l >actual &&
-	grep "include.path=config.d/local.conf" actual
-'
-
-# ── multiple includeIf conditions ────────────────────────────────────────
-
-test_expect_success 'multiple includeIf directives in one file' '
-	cat >cfg <<-EOF &&
-	[includeIf "gitdir:/work/"]
-		path = work.cfg
-	[includeIf "gitdir:/personal/"]
-		path = personal.cfg
-	[user]
-		name = Test
-	EOF
-	git config --file cfg -l >actual &&
-	grep "includeif.gitdir:/work/.path=work.cfg" actual &&
-	grep "includeif.gitdir:/personal/.path=personal.cfg" actual
-'
-
-# ── includeIf hasconfig ───────────────────────────────────────────────────
-
-test_expect_success 'includeIf hasconfig:remote.*.url shows in list' '
-	cat >cfg <<-EOF &&
-	[includeIf "hasconfig:remote.*.url:https://github.com/**"]
-		path = github.cfg
-	[user]
-		name = Test
-	EOF
-	git config --file cfg -l >actual &&
-	grep "github.cfg" actual
-'
-
-# ── config file with include + set preserves all ─────────────────────────
-
-test_expect_success 'setting new section preserves includes and existing sections' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = a.cfg
-	[user]
-		name = Original
-	[core]
-		autocrlf = false
-	EOF
-	git config --file cfg color.ui "auto" &&
-	git config --file cfg -l >actual &&
-	grep "include.path=a.cfg" actual &&
-	grep "user.name=Original" actual &&
-	grep "core.autocrlf=false" actual &&
-	grep "color.ui=auto" actual
-'
-
-# ── get specific includeIf key ───────────────────────────────────────────
-
-test_expect_success 'get includeIf path value' '
-	cat >cfg <<-EOF &&
-	[includeIf "gitdir:/work/"]
-		path = work-settings.cfg
-	EOF
-	git config --file cfg --get "includeIf.gitdir:/work/.path" >actual &&
-	echo "work-settings.cfg" >expected &&
-	test_cmp expected actual
-'
-
-# ── include in repo config does not break basic operations ─────────────────
-
-test_expect_success 'status works with include directive in config' '
-	git init inc-status-repo &&
-	cd inc-status-repo &&
-	cat >>.git/config <<-EOF &&
-	[include]
-		path = nonexistent.cfg
-	EOF
-	git config user.name Test &&
-	git config user.email t@t &&
-	git status >actual 2>&1 &&
-	grep "On branch" actual
-'
-
-test_expect_success 'commit works with include directive in config' '
-	cd inc-status-repo &&
-	echo x >file &&
-	git add file &&
-	git commit -m "with include" 2>/dev/null &&
-	git log --format="%s" -n 1 >actual &&
-	echo "with include" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'branch works with include directive in config' '
-	cd inc-status-repo &&
-	git branch >actual &&
-	grep "master" actual
-'
-
-# ── include with multiple sections between ─────────────────────────────────
-
-test_expect_success 'config with include between other sections' '
-	cat >cfg <<-EOF &&
-	[core]
-		autocrlf = false
-	[include]
-		path = middle.cfg
-	[user]
-		name = Test
-	EOF
-	git config --file cfg -l >actual &&
-	grep "core.autocrlf=false" actual &&
-	grep "include.path=middle.cfg" actual &&
-	grep "user.name=Test" actual
-'
-
-test_expect_success 'unset key in file with include works' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = keep.cfg
-	[temp]
-		key = val
-	EOF
-	git config --file cfg --unset temp.key &&
-	git config --file cfg -l >actual &&
-	grep "include.path=keep.cfg" actual &&
-	test_must_fail git config --file cfg --get temp.key
-'
-
-# ── include at end of file ─────────────────────────────────────────────────
-
-test_expect_success 'include at end of file is parsed' '
-	cat >cfg <<-EOF &&
-	[user]
-		name = First
-	[include]
-		path = last.cfg
-	EOF
-	git config --file cfg -l >actual &&
-	grep "user.name=First" actual &&
-	grep "include.path=last.cfg" actual
-'
-
-test_expect_success 'include at start of file is parsed' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = first.cfg
-	[user]
-		name = After
-	EOF
-	git config --file cfg -l >actual &&
-	grep "include.path=first.cfg" actual &&
-	grep "user.name=After" actual
-'
-
-# ── multiple includes in one file ──────────────────────────────────────────
-
-test_expect_success 'multiple include directives in one file' '
-	cat >cfg <<-EOF &&
-	[include]
-		path = a.cfg
-	[include]
-		path = b.cfg
-	EOF
-	git config --file cfg -l >actual &&
-	grep "include.path=a.cfg" actual &&
-	grep "include.path=b.cfg" actual
-'
-
-test_expect_success 'config --file with empty section' '
-	cat >cfg <<-EOF &&
-	[empty]
-	[user]
-		name = HasValue
-	EOF
-	git config --file cfg -l >actual &&
-	grep "user.name=HasValue" actual
-'
-
-test_expect_success 'config --file get returns specific key' '
-	cat >cfg <<-EOF &&
-	[core]
-		bare = false
-	[user]
-		email = test@test.com
-	EOF
-	git config --file cfg --get user.email >actual &&
-	echo "test@test.com" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'config --file with boolean values' '
-	cat >cfg <<-EOF &&
-	[core]
-		bare = true
-		logallrefupdates = false
-	EOF
-	git config --file cfg --get core.bare >actual &&
-	echo "true" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'config --file with numeric value' '
-	cat >cfg <<-EOF &&
-	[pack]
-		windowMemory = 100m
-	EOF
-	git config --file cfg --get pack.windowMemory >actual &&
-	echo "100m" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'config --file with spaces in value' '
-	cat >cfg <<-EOF &&
-	[user]
-		name = John Doe
-	EOF
-	git config --file cfg --get user.name >actual &&
-	echo "John Doe" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'config --file with quoted value' '
-	cat >cfg <<-EOF &&
-	[alias]
-		st = "status -s"
-	EOF
-	git config --file cfg --get alias.st >actual &&
-	echo "status -s" >expected &&
-	test_cmp expected actual
+test_expect_success 'onbranch without repository but explicit nonexistent Git directory' '
+	test_when_finished "rm -f .gitconfig config.inc" &&
+	git config set -f .gitconfig "includeIf.onbranch:**.path" config.inc &&
+	git config set -f config.inc foo.bar baz &&
+	git config get foo.bar &&
+	test_must_fail nongit git --git-dir=nonexistent config get foo.bar
 '
 
 test_done

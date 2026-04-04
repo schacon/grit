@@ -1,79 +1,68 @@
 #!/bin/sh
-# Test ambiguous ref resolution during checkout (branch vs tag vs file)
 
-test_description='grit checkout ambiguous ref resolution'
+test_description='checkout and pathspecs/refspecs ambiguities'
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-test_expect_success 'setup repo with branch, tag, and file of same name' '
-	grit init repo &&
-	cd repo &&
-	git config user.name "Test" &&
-	git config user.email "test@test.com" &&
-	echo "initial content" >file.txt &&
-	grit add file.txt &&
-	grit commit -m "initial" &&
-	grit branch ambiguous &&
-	grit tag ambiguous-tag
+test_expect_success 'setup' '
+	echo hello >world &&
+	echo hello >all &&
+	git add all world &&
+	git commit -m initial &&
+	git branch world
 '
 
-test_expect_success 'checkout prefers branch over tag when both exist' '
-	cd repo &&
-	grit checkout master &&
-	grit tag ambiguous &&
-	grit checkout ambiguous 2>stderr &&
-	grit symbolic-ref HEAD >actual &&
-	echo refs/heads/ambiguous >expect &&
-	test_cmp expect actual
+test_expect_success 'reference must be a tree' '
+	test_must_fail git checkout $(git hash-object ./all) --
 '
 
-test_expect_success 'checkout warns about ambiguous refname' '
-	cd repo &&
-	grit checkout master &&
-	grit checkout ambiguous 2>stderr &&
-	grep -i "ambiguous" stderr
+test_expect_success 'branch switching' '
+	test "refs/heads/main" = "$(git symbolic-ref HEAD)" &&
+	git checkout world -- &&
+	test "refs/heads/world" = "$(git symbolic-ref HEAD)"
 '
 
-test_expect_success 'checkout tag detaches HEAD' '
-	cd repo &&
-	grit checkout master &&
-	grit checkout ambiguous-tag 2>stderr &&
-	test_must_fail grit symbolic-ref HEAD 2>/dev/null &&
-	grep -i "detached" stderr
+test_expect_success 'checkout world from the index' '
+	echo bye > world &&
+	git checkout -- world &&
+	git diff --exit-code --quiet
 '
 
-test_expect_success 'checkout -- restores file from index' '
-	cd repo &&
-	grit checkout master &&
-	echo "modified" >file.txt &&
-	grit checkout -- file.txt &&
-	echo "initial content" >expect &&
-	test_cmp expect file.txt
+test_expect_success 'non ambiguous call' '
+	git checkout all
 '
 
-test_expect_success 'checkout branch when file of same name exists' '
-	cd repo &&
-	grit checkout master &&
-	echo "data" >ambiguous &&
-	grit add ambiguous &&
-	grit commit -m "add file named ambiguous" &&
-	grit checkout ambiguous 2>stderr &&
-	grit symbolic-ref HEAD >actual &&
-	echo refs/heads/ambiguous >expect &&
-	test_cmp expect actual
+test_expect_success 'allow the most common case' '
+	git checkout world &&
+	test "refs/heads/world" = "$(git symbolic-ref HEAD)"
 '
 
-test_expect_success 'checkout -- disambiguates to file path' '
-	cd repo &&
-	grit checkout master &&
-	echo "original" >somefile &&
-	grit add somefile &&
-	grit commit -m "add somefile" &&
-	echo "changed" >somefile &&
-	grit checkout -- somefile &&
-	echo "original" >expect &&
-	test_cmp expect somefile
+test_expect_success 'check ambiguity' '
+	test_must_fail git checkout world all
+'
+
+test_expect_success 'check ambiguity in subdir' '
+	mkdir sub &&
+	# not ambiguous because sub/world does not exist
+	git -C sub checkout world ../all &&
+	echo hello >sub/world &&
+	# ambiguous because sub/world does exist
+	test_must_fail git -C sub checkout world ../all
+'
+
+test_expect_success 'disambiguate checking out from a tree-ish' '
+	echo bye > world &&
+	git checkout world -- world &&
+	git diff --exit-code --quiet
+'
+
+test_expect_success 'accurate error message with more than one ref' '
+	test_must_fail git checkout HEAD main -- 2>actual &&
+	test_grep 2 actual &&
+	test_grep "one reference expected, 2 given" actual
 '
 
 test_done

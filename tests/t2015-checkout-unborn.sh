@@ -1,74 +1,64 @@
 #!/bin/sh
-# Test checkout behavior on unborn branch (empty repo)
 
-test_description='grit checkout on unborn branch'
+test_description='checkout from unborn branch'
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup empty repo' '
-	grit init empty &&
-	cd empty &&
-	git config user.name "Test" &&
-	git config user.email "test@test.com"
+test_expect_success 'setup' '
+	mkdir parent &&
+	(
+		cd parent &&
+		git init &&
+		echo content >file &&
+		git add file &&
+		git commit -m base
+	) &&
+	git fetch parent main:origin
 '
 
-test_expect_success 'HEAD points to master on unborn branch' '
-	cd empty &&
-	grit symbolic-ref HEAD >actual &&
-	echo refs/heads/master >expect &&
+test_expect_success 'checkout from unborn preserves untracked files' '
+	echo precious >expect &&
+	echo precious >file &&
+	test_must_fail git checkout -b new origin &&
+	test_cmp expect file
+'
+
+test_expect_success 'checkout from unborn preserves index contents' '
+	echo precious >expect &&
+	echo precious >file &&
+	git add file &&
+	test_must_fail git checkout -b new origin &&
+	test_cmp expect file &&
+	git show :file >file &&
+	test_cmp expect file
+'
+
+test_expect_success 'checkout from unborn merges identical index contents' '
+	echo content >file &&
+	git add file &&
+	git checkout -b new origin
+'
+
+test_expect_success 'checking out another branch from unborn state' '
+	git checkout --orphan newroot &&
+	git checkout -b anothername &&
+	test_must_fail git show-ref --verify refs/heads/newroot &&
+	git symbolic-ref HEAD >actual &&
+	echo refs/heads/anothername >expect &&
 	test_cmp expect actual
 '
 
-test_expect_success 'status works on unborn branch' '
-	cd empty &&
-	grit status >output 2>&1 &&
-	grep -i "no commits yet" output
-'
-
-test_expect_success 'checkout -b switches unborn branch name' '
-	cd empty &&
-	grit checkout -b newbranch &&
-	grit symbolic-ref HEAD >actual &&
-	echo refs/heads/newbranch >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'branch list is empty on unborn branch' '
-	cd empty &&
-	grit branch >output 2>&1 &&
-	test_must_be_empty output
-'
-
-test_expect_success 'checkout -b works multiple times on unborn' '
-	cd empty &&
-	grit checkout -b another &&
-	grit symbolic-ref HEAD >actual &&
-	echo refs/heads/another >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'first commit on renamed unborn branch works' '
-	cd empty &&
-	echo "content" >file.txt &&
-	grit add file.txt &&
-	grit commit -m "first commit" &&
-	grit rev-parse HEAD >actual &&
-	test -s actual
-'
-
-test_expect_success 'branch now appears in list after first commit' '
-	cd empty &&
-	grit branch >output &&
-	grep "another" output
-'
-
-test_expect_success 'checkout -b from existing commit works' '
-	cd empty &&
-	grit checkout -b frombranch &&
-	grit symbolic-ref HEAD >actual &&
-	echo refs/heads/frombranch >expect &&
-	test_cmp expect actual
+test_expect_success 'checking out in a newly created repo' '
+	test_create_repo empty &&
+	(
+		cd empty &&
+		git symbolic-ref HEAD >expect &&
+		test_must_fail git checkout &&
+		git symbolic-ref HEAD >actual &&
+		test_cmp expect actual
+	)
 '
 
 test_done

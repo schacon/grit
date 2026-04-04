@@ -1,506 +1,588 @@
 #!/bin/sh
-# Ported from git/t/t7500-commit-template-squash-signoff.sh
-# Tests for commit -F, -m, --allow-empty-message, and related features.
-# (Editor-dependent and fixup/squash/template tests are not ported since grit
-#  does not implement those features.)
+#
+# Copyright (c) 2007 Steven Grimm
+#
 
-test_description='grit commit -F, -m, and message handling'
+test_description='git commit
 
-cd "$(dirname "$0")" || exit 1
+Tests for template, signoff, squash and -F functions.'
+
 . ./test-lib.sh
 
-test_expect_success 'setup repo' '
-	git init repo &&
-	cd repo &&
-	git config user.name "C O Mitter" &&
-	git config user.email "committer@example.com"
-'
+. "$TEST_DIRECTORY"/lib-rebase.sh
 
+commit_msg_is () {
+	expect=commit_msg_is.expect
+	actual=commit_msg_is.actual
+
+	printf "%s" "$(git log --pretty=format:%s%b -1)" >"$actual" &&
+	printf "%s" "$1" >"$expect" &&
+	test_cmp "$expect" "$actual"
+}
+
+# A sanity check to see if commit is working at all.
 test_expect_success 'a basic commit in an empty tree should succeed' '
-	cd repo &&
-	echo content >foo &&
+	echo content > foo &&
 	git add foo &&
-	git commit -m "initial commit" 2>/dev/null
+	git commit -m "initial commit"
 '
 
-test_expect_success 'commit message from file in subdirectory (1)' '
-	cd repo &&
-	mkdir -p subdir &&
+test_expect_success 'nonexistent template file should return error' '
+	echo changes >> foo &&
+	git add foo &&
+	(
+		GIT_EDITOR="echo hello >" &&
+		export GIT_EDITOR &&
+		test_must_fail git commit --template "$(pwd)"/notexist
+	)
+'
+
+test_expect_success 'nonexistent optional template file on command line' '
+	echo changes >> foo &&
+	git add foo &&
+	(
+		GIT_EDITOR="echo hello >\"\$1\"" &&
+		export GIT_EDITOR &&
+		git commit --template ":(optional)$(pwd)/notexist"
+	)
+'
+
+test_expect_success 'nonexistent template file in config should return error' '
+	test_config commit.template "$(pwd)"/notexist &&
+	(
+		GIT_EDITOR="echo hello >" &&
+		export GIT_EDITOR &&
+		test_must_fail git commit --allow-empty
+	)
+'
+
+test_expect_success 'nonexistent optional template file in config' '
+	test_config commit.template ":(optional)$(pwd)"/notexist &&
+	GIT_EDITOR="echo hello >" git commit --allow-empty &&
+	git cat-file commit HEAD | sed -e "1,/^$/d" >actual &&
+	echo hello >expect &&
+	test_cmp expect actual
+'
+
+# From now on we'll use a template file that exists.
+TEMPLATE="$(pwd)"/template
+
+test_expect_success 'unedited template should not commit' '
+	echo "template line" >"$TEMPLATE" &&
+	test_must_fail git commit --allow-empty --template "$TEMPLATE"
+'
+
+test_expect_success 'unedited template with comments should not commit' '
+	echo "# comment in template" >>"$TEMPLATE" &&
+	test_must_fail git commit --allow-empty --template "$TEMPLATE"
+'
+
+test_expect_success 'a Signed-off-by line by itself should not commit' '
+	(
+		test_set_editor "$TEST_DIRECTORY"/t7500/add-signed-off &&
+		test_must_fail git commit --allow-empty --template "$TEMPLATE"
+	)
+'
+
+test_expect_success 'adding comments to a template should not commit' '
+	(
+		test_set_editor "$TEST_DIRECTORY"/t7500/add-comments &&
+		test_must_fail git commit --allow-empty --template "$TEMPLATE"
+	)
+'
+
+test_expect_success 'adding real content to a template should commit' '
+	(
+		test_set_editor "$TEST_DIRECTORY"/t7500/add-content &&
+		git commit --allow-empty --template "$TEMPLATE"
+	) &&
+	commit_msg_is "template linecommit message"
+'
+
+test_expect_success 'existent template marked optional should commit' '
+	echo "existent template" >"$TEMPLATE" &&
+	(
+		test_set_editor "$TEST_DIRECTORY"/t7500/add-content &&
+		git commit --allow-empty --template ":(optional)$TEMPLATE"
+	) &&
+	commit_msg_is "existent templatecommit message"
+'
+
+test_expect_success '-t option should be short for --template' '
+	echo "short template" > "$TEMPLATE" &&
+	echo "new content" >> foo &&
+	git add foo &&
+	(
+		test_set_editor "$TEST_DIRECTORY"/t7500/add-content &&
+		git commit -t "$TEMPLATE"
+	) &&
+	commit_msg_is "short templatecommit message"
+'
+
+test_expect_success 'config-specified template should commit' '
+	echo "new template" > "$TEMPLATE" &&
+	test_config commit.template "$TEMPLATE" &&
+	echo "more content" >> foo &&
+	git add foo &&
+	(
+		test_set_editor "$TEST_DIRECTORY"/t7500/add-content &&
+		git commit
+	) &&
+	commit_msg_is "new templatecommit message"
+'
+
+test_expect_success 'explicit commit message should override template' '
+	echo "still more content" >> foo &&
+	git add foo &&
+	GIT_EDITOR="$TEST_DIRECTORY"/t7500/add-content git commit --template "$TEMPLATE" \
+		-m "command line msg" &&
+	commit_msg_is "command line msg"
+'
+
+test_expect_success 'commit message from file should override template' '
+	echo "content galore" >> foo &&
+	git add foo &&
+	echo "standard input msg" |
+	(
+		test_set_editor "$TEST_DIRECTORY"/t7500/add-content &&
+		git commit --template "$TEMPLATE" --file -
+	) &&
+	commit_msg_is "standard input msg"
+'
+
+cat >"$TEMPLATE" <<\EOF
+
+
+### template
+
+EOF
+test_expect_success 'commit message from template with whitespace issue' '
+	echo "content galore" >>foo &&
+	git add foo &&
+	GIT_EDITOR=\""$TEST_DIRECTORY"\"/t7500/add-whitespaced-content \
+	git commit --template "$TEMPLATE" &&
+	commit_msg_is "commit message"
+'
+
+test_expect_success 'using alternate GIT_INDEX_FILE (1)' '
+
+	cp .git/index saved-index &&
+	(
+		echo some new content >file &&
+	        GIT_INDEX_FILE=.git/another_index &&
+		export GIT_INDEX_FILE &&
+		git add file &&
+		git commit -m "commit using another index" &&
+		git diff-index --exit-code HEAD &&
+		git diff-files --exit-code
+	) &&
+	cmp .git/index saved-index >/dev/null
+
+'
+
+test_expect_success 'using alternate GIT_INDEX_FILE (2)' '
+
+	cp .git/index saved-index &&
+	(
+		rm -f .git/no-such-index &&
+		GIT_INDEX_FILE=.git/no-such-index &&
+		export GIT_INDEX_FILE &&
+		git commit -m "commit using nonexistent index" &&
+		test -z "$(git ls-files)" &&
+		test -z "$(git ls-tree HEAD)"
+
+	) &&
+	cmp .git/index saved-index >/dev/null
+'
+
+cat > expect << EOF
+zort
+
+Signed-off-by: C O Mitter <committer@example.com>
+EOF
+
+test_expect_success '--signoff' '
+	echo "yet another content *narf*" >> foo &&
+	echo "zort" | git commit -s -F - foo &&
+	git cat-file commit HEAD | sed "1,/^\$/d" > output &&
+	test_cmp expect output
+'
+
+test_expect_success 'commit message from file (1)' '
+	mkdir subdir &&
 	echo "Log in top directory" >log &&
 	echo "Log in sub directory" >subdir/log &&
-	cd subdir &&
-	git commit --allow-empty -F log 2>/dev/null &&
-	cd .. &&
-	git cat-file commit HEAD >actual &&
-	grep "Log in sub directory" actual
+	(
+		cd subdir &&
+		git commit --allow-empty -F log
+	) &&
+	commit_msg_is "Log in sub directory"
 '
 
-test_expect_success 'commit message from file in subdirectory (2)' '
-	cd repo &&
+test_expect_success 'commit message from file (2)' '
 	rm -f log &&
-	echo "Log in sub directory again" >subdir/log &&
-	cd subdir &&
-	git commit --allow-empty -F log 2>/dev/null &&
-	cd .. &&
-	git cat-file commit HEAD >actual &&
-	grep "Log in sub directory again" actual
+	echo "Log in sub directory" >subdir/log &&
+	(
+		cd subdir &&
+		git commit --allow-empty -F log
+	) &&
+	commit_msg_is "Log in sub directory"
 '
 
 test_expect_success 'commit message from stdin' '
-	cd repo &&
-	echo "Log with foo word" | git commit --allow-empty -F - 2>/dev/null &&
-	git cat-file commit HEAD >actual &&
-	grep "Log with foo word" actual
+	(
+		cd subdir &&
+		echo "Log with foo word" | git commit --allow-empty -F -
+	) &&
+	commit_msg_is "Log with foo word"
 '
 
-test_expect_success 'commit -m with simple message' '
-	cd repo &&
-	echo "new stuff" >>foo &&
-	git add foo &&
-	git commit -m "simple message" 2>/dev/null &&
-	git cat-file commit HEAD >actual &&
-	grep "simple message" actual
+test_expect_success 'commit -F overrides -t' '
+	(
+		cd subdir &&
+		echo "-F log" > f.log &&
+		echo "-t template" > t.template &&
+		git commit --allow-empty -F f.log -t t.template
+	) &&
+	commit_msg_is "-F log"
 '
 
-test_expect_success 'commit -F reads message from file' '
-	cd repo &&
-	echo "file message" >msgfile &&
-	echo "fc" >>foo &&
-	git add foo &&
-	git commit -F msgfile 2>/dev/null &&
-	git cat-file commit HEAD >actual &&
-	grep "file message" actual
-'
-
-test_expect_success 'commit -F - reads from stdin' '
-	cd repo &&
-	echo "from stdin" | git commit --allow-empty -F - 2>/dev/null &&
-	git cat-file commit HEAD >actual &&
-	grep "from stdin" actual
-'
-
-test_expect_success 'Commit with empty message fails without --allow-empty-message' '
-	cd repo &&
+test_expect_success 'Commit without message is allowed with --allow-empty-message' '
 	echo "more content" >>foo &&
 	git add foo &&
-	test_must_fail git commit -m "" 2>/dev/null
+	>empty &&
+	git commit --allow-empty-message <empty &&
+	commit_msg_is "" &&
+	git tag empty-message-commit
 '
 
-test_expect_success 'Commit with --allow-empty-message and empty -m succeeds' '
-	cd repo &&
-	echo "even more" >>foo &&
+test_expect_success 'Commit without message is no-no without --allow-empty-message' '
+	echo "more content" >>foo &&
 	git add foo &&
-	git commit --allow-empty-message -m "" 2>/dev/null &&
-	git cat-file -t HEAD >actual &&
-	echo "commit" >expected &&
+	>empty &&
+	test_must_fail git commit <empty
+'
+
+test_expect_success 'Commit a message with --allow-empty-message' '
+	echo "even more content" >>foo &&
+	git add foo &&
+	git commit --allow-empty-message -m"hello there" &&
+	commit_msg_is "hello there"
+'
+
+test_expect_success 'commit -C empty respects --allow-empty-message' '
+	echo more >>foo &&
+	git add foo &&
+	test_must_fail git commit -C empty-message-commit &&
+	git commit -C empty-message-commit --allow-empty-message &&
+	commit_msg_is ""
+'
+
+commit_for_rebase_autosquash_setup () {
+	echo "first content line" >>foo &&
+	git add foo &&
+	cat >log <<EOF &&
+target message subject line
+
+target message body line 1
+target message body line 2
+EOF
+	git commit -F log &&
+	echo "second content line" >>foo &&
+	git add foo &&
+	git commit -m "intermediate commit" &&
+	echo "third content line" >>foo &&
+	git add foo
+}
+
+test_expect_success 'commit --fixup provides correct one-line commit message' '
+	commit_for_rebase_autosquash_setup &&
+	EDITOR="echo ignored >>" git commit --fixup HEAD~1 &&
+	commit_msg_is "fixup! target message subject line"
+'
+
+test_expect_success 'commit --fixup -m"something" -m"extra"' '
+	commit_for_rebase_autosquash_setup &&
+	git commit --fixup HEAD~1 -m"something" -m"extra" &&
+	commit_msg_is "fixup! target message subject linesomething
+
+extra"
+'
+test_expect_success 'commit --fixup --edit' '
+	commit_for_rebase_autosquash_setup &&
+	EDITOR="printf \"something\nextra\" >>" git commit --fixup HEAD~1 --edit &&
+	commit_msg_is "fixup! target message subject linesomething
+extra"
+'
+
+get_commit_msg () {
+	rev="$1" &&
+	git log -1 --pretty=format:"%B" "$rev"
+}
+
+test_expect_success 'commit --fixup=amend: creates amend! commit' '
+	commit_for_rebase_autosquash_setup &&
+	cat >expected <<-EOF &&
+	amend! $(git log -1 --format=%s HEAD~)
+
+	$(get_commit_msg HEAD~)
+
+	edited
+	EOF
+	(
+		set_fake_editor &&
+		FAKE_COMMIT_AMEND="edited" \
+			git commit --fixup=amend:HEAD~
+	) &&
+	get_commit_msg HEAD >actual &&
 	test_cmp expected actual
 '
 
-test_expect_success 'Commit a non-empty message with --allow-empty-message' '
-	cd repo &&
-	echo "yet more" >>foo &&
-	git add foo &&
-	git commit --allow-empty-message -m "hello there" 2>/dev/null &&
-	git cat-file commit HEAD >actual &&
-	grep "hello there" actual
+test_expect_success '--fixup=amend: --only ignores staged changes' '
+	commit_for_rebase_autosquash_setup &&
+	cat >expected <<-EOF &&
+	amend! $(git log -1 --format=%s HEAD~)
+
+	$(get_commit_msg HEAD~)
+
+	edited
+	EOF
+	(
+		set_fake_editor &&
+		FAKE_COMMIT_AMEND="edited" \
+			git commit --fixup=amend:HEAD~ --only
+	) &&
+	get_commit_msg HEAD >actual &&
+	test_cmp expected actual &&
+	test_cmp_rev HEAD@{1}^{tree} HEAD^{tree} &&
+	test_cmp_rev HEAD@{1} HEAD^ &&
+	test_expect_code 1 git diff --cached --exit-code &&
+	git cat-file blob :foo >actual &&
+	test_cmp foo actual
 '
 
-test_expect_success 'multiple -m produces multi-paragraph message' '
-	cd repo &&
-	echo "multi" >>foo &&
-	git add foo &&
-	git commit -m "one" -m "two" -m "three" 2>/dev/null &&
-	git cat-file commit HEAD >commit &&
-	sed -e "1,/^$/d" commit >actual &&
-	{
-		echo one &&
-		echo &&
-		echo two &&
-		echo &&
-		echo three
-	} >expected &&
+test_expect_success '--fixup=reword: ignores staged changes' '
+	commit_for_rebase_autosquash_setup &&
+	cat >expected <<-EOF &&
+	amend! $(git log -1 --format=%s HEAD~)
+
+	$(get_commit_msg HEAD~)
+
+	edited
+	EOF
+	(
+		set_fake_editor &&
+		FAKE_COMMIT_AMEND="edited" \
+			git commit --fixup=reword:HEAD~
+	) &&
+	get_commit_msg HEAD >actual &&
+	test_cmp expected actual &&
+	test_cmp_rev HEAD@{1}^{tree} HEAD^{tree} &&
+	test_cmp_rev HEAD@{1} HEAD^ &&
+	test_expect_code 1 git diff --cached --exit-code &&
+	git cat-file blob :foo >actual &&
+	test_cmp foo actual
+'
+
+test_expect_success '--fixup=reword: error out with -m option' '
+	commit_for_rebase_autosquash_setup &&
+	echo "fatal: options '\''-m'\'' and '\''--fixup:reword'\'' cannot be used together" >expect &&
+	test_must_fail git commit --fixup=reword:HEAD~ -m "reword commit message" 2>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--fixup=amend: error out with -m option' '
+	commit_for_rebase_autosquash_setup &&
+	echo "fatal: options '\''-m'\'' and '\''--fixup:amend'\'' cannot be used together" >expect &&
+	test_must_fail git commit --fixup=amend:HEAD~ -m "amend commit message" 2>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'consecutive amend! commits remove amend! line from commit msg body' '
+	commit_for_rebase_autosquash_setup &&
+	cat >expected <<-EOF &&
+	amend! amend! $(git log -1 --format=%s HEAD~)
+
+	$(get_commit_msg HEAD~)
+
+	edited 1
+
+	edited 2
+	EOF
+	echo "reword new commit message" >actual &&
+	(
+		set_fake_editor &&
+		FAKE_COMMIT_AMEND="edited 1" \
+			git commit --fixup=reword:HEAD~ &&
+		FAKE_COMMIT_AMEND="edited 2" \
+			git commit --fixup=reword:HEAD
+	) &&
+	get_commit_msg HEAD >actual &&
 	test_cmp expected actual
 '
 
-test_expect_success 'commit -F with multi-line file' '
-	cd repo &&
-	printf "line 1\n\nline 3\n" >multiline-msg &&
-	echo "multiline" >>foo &&
-	git add foo &&
-	git commit -F multiline-msg 2>/dev/null &&
-	git cat-file commit HEAD >commit &&
-	sed -e "1,/^$/d" commit >actual &&
-	printf "line 1\n\nline 3\n" >expected &&
+test_expect_success 'deny to create amend! commit if its commit msg body is empty' '
+	commit_for_rebase_autosquash_setup &&
+	echo "Aborting commit due to empty commit message body." >expected &&
+	(
+		set_fake_editor &&
+		test_must_fail env FAKE_COMMIT_MESSAGE="amend! target message subject line" \
+			git commit --fixup=amend:HEAD~ 2>actual
+	) &&
 	test_cmp expected actual
 '
 
-test_expect_success 'commit --allow-empty with no changes' '
-	cd repo &&
-	git commit --allow-empty -m "empty commit" 2>/dev/null &&
-	git cat-file commit HEAD >actual &&
-	grep "empty commit" actual
-'
-
-test_expect_success 'commit --allow-empty keeps same tree' '
-	cd repo &&
-	TREE_BEFORE=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
-	git commit --allow-empty -m "still empty" 2>/dev/null &&
-	TREE_AFTER=$(git cat-file -p HEAD | sed -n "s/^tree //p") &&
-	test "$TREE_BEFORE" = "$TREE_AFTER"
-'
-
-test_expect_success 'commit -a stages and commits modified tracked files' '
-	cd repo &&
-	echo "auto-staged content" >>foo &&
-	git commit -a -m "auto staged" 2>/dev/null &&
-	git cat-file commit HEAD >actual &&
-	grep "auto staged" actual
-'
-
-test_expect_success 'commit -a does not commit untracked files' '
-	cd repo &&
-	echo "untracked" >bar &&
-	echo "tracked change" >>foo &&
-	git commit -a -m "tracked only" 2>/dev/null &&
-	git status -s >status_out &&
-	grep "^?? bar" status_out
-'
-
-test_expect_success 'commit --author overrides identity' '
-	cd repo &&
-	echo "author" >>foo &&
-	git add foo &&
-	git commit --author="Custom Author <custom@example.com>" -m "custom author" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	grep "author Custom Author <custom@example.com>" actual
-'
-
-test_expect_success 'commit --date overrides author date' '
-	cd repo &&
-	echo "date" >>foo &&
-	git add foo &&
-	git commit --date="1234567890 +0000" -m "custom date" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	grep "^author.*1234567890 +0000" actual
-'
-
-test_expect_success 'GIT_AUTHOR_DATE overrides config date' '
-	cd repo &&
-	echo "adate" >>foo &&
-	git add foo &&
-	GIT_AUTHOR_DATE="1111111111 +0000" git commit -m "env date" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	grep "^author.*1111111111 +0000" actual
-'
-
-test_expect_success 'GIT_COMMITTER_DATE overrides committer date' '
-	cd repo &&
-	echo "cdate" >>foo &&
-	git add foo &&
-	GIT_COMMITTER_DATE="1222222222 +0000" git commit -m "cdate env" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	grep "^committer.*1222222222 +0000" actual
-'
-
-test_expect_success 'commit --amend changes message' '
-	cd repo &&
-	echo "amend me" >>foo &&
-	git add foo &&
-	git commit -m "before amend" 2>/dev/null &&
-	git commit --amend -m "after amend" 2>/dev/null &&
-	git cat-file commit HEAD >actual &&
-	grep "after amend" actual &&
-	! grep "before amend" actual
-'
-
-test_expect_success 'commit --amend preserves parent' '
-	cd repo &&
-	PARENT_BEFORE=$(git cat-file -p HEAD | sed -n "s/^parent //p" | head -1) &&
-	git commit --amend -m "amend again" 2>/dev/null &&
-	PARENT_AFTER=$(git cat-file -p HEAD | sed -n "s/^parent //p" | head -1) &&
-	test "$PARENT_BEFORE" = "$PARENT_AFTER"
-'
-
-test_expect_success 'commit --amend --author changes author' '
-	cd repo &&
-	echo "new-auth" >>foo &&
-	git add foo &&
-	git commit -m "orig author" 2>/dev/null &&
-	git commit --amend --author="New Author <new@example.com>" -m "new author" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	grep "New Author <new@example.com>" actual
-'
-
-test_expect_success 'commit --amend --date changes date' '
-	cd repo &&
-	git commit --amend --date="1300000000 +0000" -m "new date" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	grep "^author.*1300000000 +0000" actual
-'
-
-test_expect_success 'commit --amend --allow-empty-message with empty message' '
-	cd repo &&
-	echo "aem" >>foo &&
-	git add foo &&
-	git commit -m "will empty" 2>/dev/null &&
-	git commit --amend --allow-empty-message -m "" 2>/dev/null &&
-	git cat-file commit HEAD >commit &&
-	sed -e "1,/^$/d" commit >body &&
-	! grep -q "[^ ]" body
-'
-
-test_expect_success 'nothing to commit fails' '
-	cd repo &&
-	git reset --hard HEAD 2>/dev/null &&
-	test_must_fail git commit -m "nothing" 2>/dev/null
-'
-
-test_expect_success 'commit -q suppresses output' '
-	cd repo &&
-	echo "quiet" >>foo &&
-	git add foo &&
-	git commit -q -m "quiet" 2>stderr &&
-	test ! -s stderr
-'
-
-test_expect_success 'root commit output mentions root-commit' '
-	git init fresh-repo &&
-	cd fresh-repo &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo x >x.txt &&
-	git add x.txt &&
-	git commit -m "first" 2>stderr &&
-	grep "root-commit" stderr
-'
-
-test_expect_success 'second commit does not mention root-commit' '
-	cd fresh-repo &&
-	echo y >>x.txt &&
-	git add x.txt &&
-	git commit -m "second" 2>stderr &&
-	! grep "root-commit" stderr
-'
-
-test_expect_success 'commit shows branch name in output' '
-	cd fresh-repo &&
-	echo z >>x.txt &&
-	git add x.txt &&
-	git commit -m "third" 2>stderr &&
-	grep "master" stderr
-'
-
-test_expect_success 'GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL override config' '
-	cd repo &&
-	echo "envauth" >>foo &&
-	git add foo &&
-	GIT_AUTHOR_NAME="Env Author" GIT_AUTHOR_EMAIL="env@author.com" \
-		git commit -m "env author" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	grep "Env Author <env@author.com>" actual
-'
-
-test_expect_success 'GIT_COMMITTER_NAME and GIT_COMMITTER_EMAIL override config' '
-	cd repo &&
-	echo "envcmtr" >>foo &&
-	git add foo &&
-	GIT_COMMITTER_NAME="Env Committer" GIT_COMMITTER_EMAIL="env@committer.com" \
-		git commit -m "env committer" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	grep "^committer Env Committer <env@committer.com>" actual
-'
-
-test_expect_success 'commit on detached HEAD works' '
-	cd repo &&
-	git checkout HEAD^0 2>/dev/null &&
-	echo "detached" >>foo &&
-	git add foo &&
-	git commit -m "detached commit" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	grep "detached commit" actual &&
-	git checkout master 2>/dev/null
-'
-
-test_expect_success 'amend root commit keeps no parent' '
-	git init root-amend-repo &&
-	cd root-amend-repo &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-	echo root >root.txt &&
-	git add root.txt &&
-	git commit -m "root" 2>/dev/null &&
-	git commit --amend -m "amended root" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	! grep "^parent " actual
-'
-
-test_expect_success 'commit tree is a valid tree object' '
-	cd repo &&
-	echo "tree-check" >>foo &&
-	git add foo &&
-	git commit -m "verify tree" 2>/dev/null &&
-	TREE=$(git cat-file -p HEAD | head -1 | sed -n "s/^tree //p") &&
-	git cat-file -t "$TREE" >actual &&
-	echo "tree" >expected &&
+test_expect_success 'amend! commit allows empty commit msg body with --allow-empty-message' '
+	commit_for_rebase_autosquash_setup &&
+	cat >expected <<-EOF &&
+	amend! $(git log -1 --format=%s HEAD~)
+	EOF
+	(
+		set_fake_editor &&
+		FAKE_COMMIT_MESSAGE="amend! target message subject line" \
+			git commit --fixup=amend:HEAD~ --allow-empty-message &&
+		get_commit_msg HEAD >actual
+	) &&
 	test_cmp expected actual
 '
 
-test_expect_success 'commit -F from /dev/null with --allow-empty-message' '
-	cd repo &&
-	echo "devnull" >>foo &&
+test_fixup_reword_opt () {
+	test_expect_success "--fixup=reword: incompatible with $1" "
+		echo 'fatal: reword option of '\''--fixup'\'' and' \
+			''\''--patch/--interactive/--all/--include/--only'\' \
+			'cannot be used together' >expect &&
+		test_must_fail git commit --fixup=reword:HEAD~ $1 2>actual &&
+		test_cmp expect actual
+	"
+}
+
+for opt in --all --include --only --interactive --patch
+do
+	test_fixup_reword_opt $opt
+done
+
+test_expect_success '--fixup=reword: give error with pathsec' '
+	commit_for_rebase_autosquash_setup &&
+	echo "fatal: reword option of '\''--fixup'\'' and path '\''foo'\'' cannot be used together" >expect &&
+	test_must_fail git commit --fixup=reword:HEAD~ -- foo 2>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '--fixup=reword: -F give error message' '
+	echo "fatal: options '\''-F'\'' and '\''--fixup'\'' cannot be used together" >expect &&
+	test_must_fail git commit --fixup=reword:HEAD~ -F msg  2>actual &&
+	test_cmp expect actual
+'
+
+test_expect_success 'commit --squash works with -F' '
+	commit_for_rebase_autosquash_setup &&
+	echo "log message from file" >msgfile &&
+	git commit --squash HEAD~1 -F msgfile  &&
+	commit_msg_is "squash! target message subject linelog message from file"
+'
+
+test_expect_success 'commit --squash works with -m' '
+	commit_for_rebase_autosquash_setup &&
+	git commit --squash HEAD~1 -m "foo bar\nbaz" &&
+	commit_msg_is "squash! target message subject linefoo bar\nbaz"
+'
+
+test_expect_success 'commit --squash works with -C' '
+	commit_for_rebase_autosquash_setup &&
+	git commit --squash HEAD~1 -C HEAD &&
+	commit_msg_is "squash! target message subject lineintermediate commit"
+'
+
+test_expect_success 'commit --squash works with -c' '
+	commit_for_rebase_autosquash_setup &&
+	test_set_editor "$TEST_DIRECTORY"/t7500/edit-content &&
+	git commit --squash HEAD~1 -c HEAD &&
+	commit_msg_is "squash! target message subject lineedited commit"
+'
+
+test_expect_success 'commit --squash works with -C for same commit' '
+	commit_for_rebase_autosquash_setup &&
+	git commit --squash HEAD -C HEAD &&
+	commit_msg_is "squash! intermediate commit"
+'
+
+test_expect_success 'commit --squash works with -c for same commit' '
+	commit_for_rebase_autosquash_setup &&
+	test_set_editor "$TEST_DIRECTORY"/t7500/edit-content &&
+	git commit --squash HEAD -c HEAD &&
+	commit_msg_is "squash! edited commit"
+'
+
+test_expect_success 'commit --squash works with editor' '
+	commit_for_rebase_autosquash_setup &&
+	test_set_editor "$TEST_DIRECTORY"/t7500/add-content &&
+	git commit --squash HEAD~1 &&
+	commit_msg_is "squash! target message subject linecommit message"
+'
+
+test_expect_success 'invalid message options when using --fixup' '
+	echo changes >>foo &&
+	echo "message" >log &&
 	git add foo &&
-	git commit --allow-empty-message -F /dev/null 2>/dev/null &&
-	git cat-file -t HEAD >actual &&
-	echo "commit" >expected &&
-	test_cmp expected actual
+	test_must_fail git commit --fixup HEAD~1 --squash HEAD~2 &&
+	test_must_fail git commit --fixup HEAD~1 -C HEAD~2 &&
+	test_must_fail git commit --fixup HEAD~1 -c HEAD~2 &&
+	test_must_fail git commit --fixup HEAD~1 -F log
 '
 
-# ---- Wave 8: more tests ported from upstream t7500 ----
+cat >expected-template <<EOF
 
-test_expect_success 'commit message from non-existing file fails' '
-	cd repo &&
-	echo "nofile" >>foo &&
-	git add foo &&
-	test_must_fail git commit -F /nonexistent/path 2>/dev/null
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored.
+#
+# Author:    A U Thor <author@example.com>
+#
+# On branch commit-template-check
+# Changes to be committed:
+#	new file:   commit-template-check
+#
+# Untracked files not listed
+EOF
+
+test_expect_success 'new line found before status message in commit template' '
+	git checkout -b commit-template-check &&
+	git reset --hard HEAD &&
+	touch commit-template-check &&
+	git add commit-template-check &&
+	GIT_EDITOR="cat >editor-input" git commit --untracked-files=no --allow-empty-message &&
+	test_cmp expected-template editor-input
 '
 
-test_expect_success 'commit -F with absolute path' '
-	cd repo &&
-	echo "abspath" >>foo &&
-	git add foo &&
-	echo "absolute path message" >"$TRASH_DIRECTORY/abs-msg.txt" &&
-	git commit -F "$TRASH_DIRECTORY/abs-msg.txt" 2>/dev/null &&
-	git cat-file commit HEAD >actual &&
-	grep "absolute path message" actual
+test_expect_success 'setup empty commit with unstaged rename and copy' '
+	test_create_repo unstaged_rename_and_copy &&
+	(
+		cd unstaged_rename_and_copy &&
+
+		echo content >orig &&
+		git add orig &&
+		test_commit orig &&
+
+		cp orig new_copy &&
+		mv orig new_rename &&
+		git add -N new_copy new_rename
+	)
 '
 
-test_expect_success 'commit -F with relative path from subdirectory' '
-	cd repo &&
-	mkdir -p deep/nested &&
-	echo "relative msg" >deep/nested/msg.txt &&
-	echo "relsub" >>foo &&
-	git add foo &&
-	cd deep/nested &&
-	git commit -F msg.txt 2>/dev/null &&
-	cd ../.. &&
-	git cat-file commit HEAD >actual &&
-	grep "relative msg" actual
+test_expect_success 'check commit with unstaged rename and copy' '
+	(
+		cd unstaged_rename_and_copy &&
+
+		test_must_fail git -c diff.renames=copy commit
+	)
 '
 
-test_expect_success 'commit -F with empty file fails' '
-	cd repo &&
-	echo "emptyf" >>foo &&
-	git add foo &&
-	>empty-file &&
-	test_must_fail git commit -F empty-file 2>/dev/null
-'
-
-test_expect_success 'commit -F with whitespace-only file fails' '
-	cd repo &&
-	printf "   \n   \n" >ws-only.txt &&
-	test_must_fail git commit -F ws-only.txt 2>/dev/null
-'
-
-test_expect_success 'commit -m with empty string fails' '
-	cd repo &&
-	echo "empty-m" >>foo &&
-	git add foo &&
-	test_must_fail git commit -m "" 2>/dev/null
-'
-
-test_expect_success 'commit -m with whitespace-only string fails' '
-	cd repo &&
-	test_must_fail git commit -m "   " 2>/dev/null
-'
-
-test_expect_success 'commit --allow-empty-message -F from empty file' '
-	cd repo &&
-	echo "aem-f" >>foo &&
-	git add foo &&
-	>aem-empty &&
-	git commit --allow-empty-message -F aem-empty 2>/dev/null &&
-	git cat-file -t HEAD >actual &&
-	echo "commit" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'commit -F preserves multi-paragraph message' '
-	cd repo &&
-	echo "mpara" >>foo &&
-	git add foo &&
-	printf "paragraph one\n\nparagraph two\n" >multi-para.txt &&
-	git commit -F multi-para.txt 2>/dev/null &&
-	git cat-file commit HEAD >commit &&
-	sed -e "1,/^$/d" commit >actual &&
-	printf "paragraph one\n\nparagraph two\n" >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'commit -m with newlines in message' '
-	cd repo &&
-	echo "nlmsg" >>foo &&
-	git add foo &&
-	git commit -m "first line" -m "second line" 2>/dev/null &&
-	git cat-file commit HEAD >commit &&
-	sed -e "1,/^$/d" commit >actual &&
-	grep "first line" actual &&
-	grep "second line" actual
-'
-
-test_expect_success 'commit --date with epoch format' '
-	cd repo &&
-	echo "epoch" >>foo &&
-	git add foo &&
-	git commit --date="1234567890 +0000" -m "epoch date" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	grep "^author.*1234567890 +0000" actual
-'
-
-test_expect_success 'commit --author with name and email' '
-	cd repo &&
-	echo "authne" >>foo &&
-	git add foo &&
-	git commit --author="Special Author <special@example.com>" -m "special" 2>/dev/null &&
-	git cat-file -p HEAD >actual &&
-	grep "author Special Author <special@example.com>" actual
-'
-
-test_expect_success 'commit --amend does not create new parent' '
-	cd repo &&
-	echo "nopar" >>foo &&
-	git add foo &&
-	git commit -m "before" 2>/dev/null &&
-	PARENT_BEFORE=$(git cat-file -p HEAD | sed -n "s/^parent //p" | head -1) &&
-	git commit --amend -m "after" 2>/dev/null &&
-	PARENT_AFTER=$(git cat-file -p HEAD | sed -n "s/^parent //p" | head -1) &&
-	test "$PARENT_BEFORE" = "$PARENT_AFTER"
-'
-
-test_expect_success 'commit --amend changes hash' '
-	cd repo &&
-	echo "chash" >>foo &&
-	git add foo &&
-	git commit -m "original" 2>/dev/null &&
-	OLD=$(git rev-parse HEAD) &&
-	git commit --amend -m "changed" 2>/dev/null &&
-	NEW=$(git rev-parse HEAD) &&
-	test "$OLD" != "$NEW"
-'
-
-test_expect_success 'commit -a stages tracked file modifications' '
-	cd repo &&
-	echo "ca-mod" >>foo &&
-	git commit -a -m "auto staged mod" 2>/dev/null &&
-	git diff-tree --name-status HEAD^ HEAD >actual &&
-	grep "^M.*foo" actual
-'
-
-test_expect_success 'commit --allow-empty creates commit with same tree as parent' '
-	cd repo &&
-	PARENT_TREE=$(git cat-file -p HEAD | head -1 | sed "s/^tree //") &&
-	git commit --allow-empty -m "same tree empty" 2>/dev/null &&
-	CHILD_TREE=$(git cat-file -p HEAD | head -1 | sed "s/^tree //") &&
-	test "$PARENT_TREE" = "$CHILD_TREE"
+test_expect_success 'commit without staging files fails and displays hints' '
+	echo "initial" >file &&
+	git add file &&
+	git commit -m initial &&
+	echo "changes" >>file &&
+	test_must_fail git commit -m update >actual &&
+	test_grep "no changes added to commit (use \"git add\" and/or \"git commit -a\")" actual
 '
 
 test_done

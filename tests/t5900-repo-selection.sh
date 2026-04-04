@@ -1,30 +1,19 @@
 #!/bin/sh
-# Ported from git/t/t5900-repo-selection.sh
-# Tests for selecting remote repo in ambiguous cases
 
 test_description='selecting remote repo in ambiguous cases'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-reset_repos () {
+reset() {
 	rm -rf foo foo.git fetch clone
 }
 
-make_tree () {
+make_tree() {
 	git init "$1" &&
-	(cd "$1" &&
-	 echo "$1" >file &&
-	 git add file &&
-	 test_tick &&
-	 git commit -m "$1"
-	)
+	(cd "$1" && test_commit "$1")
 }
 
-make_bare () {
+make_bare() {
 	git init --bare "$1" &&
 	(cd "$1" &&
 	 tree=$(git hash-object -w -t tree /dev/null) &&
@@ -33,45 +22,80 @@ make_bare () {
 	)
 }
 
+get() {
+	git init --bare fetch &&
+	(cd fetch && git fetch "../$1") &&
+	git clone "$1" clone
+}
+
+check() {
+	echo "$1" >expect &&
+	(cd fetch && git log -1 --format=%s FETCH_HEAD) >actual.fetch &&
+	(cd clone && git log -1 --format=%s HEAD) >actual.clone &&
+	test_cmp expect actual.fetch &&
+	test_cmp expect actual.clone
+}
+
 test_expect_success 'find .git dir in worktree' '
-	reset_repos &&
+	reset &&
 	make_tree foo &&
-	git clone foo clone &&
-	(cd clone && git log -1 --format=%s HEAD) >actual &&
-	echo foo >expect &&
-	test_cmp expect actual
+	get foo &&
+	check foo
 '
 
 test_expect_success 'automagically add .git suffix' '
-	reset_repos &&
+	reset &&
 	make_bare foo.git &&
-	git clone foo clone &&
-	test -d clone/.git
+	get foo &&
+	check foo.git
 '
 
 test_expect_success 'automagically add .git suffix to worktree' '
-	reset_repos &&
+	reset &&
 	make_tree foo.git &&
-	git clone foo clone &&
-	test -d clone/.git
+	get foo &&
+	check foo.git
 '
 
 test_expect_success 'prefer worktree foo over bare foo.git' '
-	reset_repos &&
+	reset &&
 	make_tree foo &&
 	make_bare foo.git &&
-	git clone foo clone &&
-	(cd clone && git log -1 --format=%s HEAD) >actual &&
-	echo foo >expect &&
-	test_cmp expect actual
+	get foo &&
+	check foo
+'
+
+test_expect_success 'prefer bare foo over bare foo.git' '
+	reset &&
+	make_bare foo &&
+	make_bare foo.git &&
+	get foo &&
+	check foo
+'
+
+test_expect_success 'disambiguate with full foo.git' '
+	reset &&
+	make_bare foo &&
+	make_bare foo.git &&
+	get foo.git &&
+	check foo.git
 '
 
 test_expect_success 'we are not fooled by non-git foo directory' '
-	reset_repos &&
+	reset &&
 	make_bare foo.git &&
 	mkdir foo &&
-	git clone foo clone &&
-	test -d clone/.git
+	get foo &&
+	check foo.git
+'
+
+test_expect_success 'prefer inner .git over outer bare' '
+	reset &&
+	make_tree foo &&
+	make_bare foo.git &&
+	mv foo/.git foo.git &&
+	get foo.git &&
+	check foo
 '
 
 test_done

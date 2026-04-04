@@ -1,48 +1,53 @@
 #!/bin/sh
 
-test_description='am conflict resolution tests'
+test_description='am --interactive tests'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init repo && cd repo &&
-	echo base >file &&
-	git add file &&
-	git commit -m base &&
-	git tag base &&
+test_expect_success 'set up patches to apply' '
+	test_commit unrelated &&
+	test_commit no-conflict &&
+	test_commit conflict-patch file patch &&
+	git format-patch --stdout -2 >mbox &&
 
-	echo no-conflict >file &&
-	git commit -a -m "no-conflict" &&
-	git format-patch -1 --stdout >clean.patch &&
-
-	git reset --hard base &&
-	echo conflict-change >file &&
-	git commit -a -m "conflict-main" &&
-	git tag conflict-main
+	git reset --hard unrelated &&
+	test_commit conflict-main file main base
 '
 
-test_expect_success 'am applies clean patch' '
-	cd repo &&
+# Sanity check our setup.
+test_expect_success 'applying all patches generates conflict' '
+	test_must_fail git am mbox &&
+	echo resolved >file &&
+	git add -u &&
+	git am --resolved
+'
+
+test_expect_success 'interactive am can apply a single patch' '
 	git reset --hard base &&
-	git am clean.patch &&
+	# apply the first, but not the second
+	test_write_lines y n | git am -i mbox &&
+
 	echo no-conflict >expect &&
-	test_cmp expect file
+	git log -1 --format=%s >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'am conflicts on incompatible base' '
-	cd repo &&
-	git reset --hard conflict-main &&
-	test_must_fail git am clean.patch &&
-	test_path_is_dir .git/rebase-apply
-'
+test_expect_success 'interactive am can resolve conflict' '
+	git reset --hard base &&
+	# apply both; the second one will conflict
+	test_write_lines y y | test_must_fail git am -i mbox &&
+	echo resolved >file &&
+	git add -u &&
+	# interactive "--resolved" will ask us if we want to apply the result
+	echo y | git am -i --resolved &&
 
-test_expect_success 'am --abort after conflict' '
-	cd repo &&
-	git am --abort &&
-	test_path_is_missing .git/rebase-apply &&
-	echo conflict-change >expect &&
-	test_cmp expect file
+	echo conflict-patch >expect &&
+	git log -1 --format=%s >actual &&
+	test_cmp expect actual &&
+
+	echo resolved >expect &&
+	git cat-file blob HEAD:file >actual &&
+	test_cmp expect actual
 '
 
 test_done

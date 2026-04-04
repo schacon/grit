@@ -1,200 +1,220 @@
 #!/bin/sh
-# Tests for add -u / --update: stage modifications and deletions of tracked files
-# without adding new untracked files.
 
-test_description='add -u (update tracked files)'
+test_description='git add -u
 
-cd "$(dirname "$0")" || exit 1
+This test creates a working tree state with three files:
+
+  top (previously committed, modified)
+  dir/sub (previously committed, modified)
+  dir/other (untracked)
+
+and issues a git add -u with path limiting on "dir" to add
+only the updates to dir/sub.
+
+Also tested are "git add -u" without limiting, and "git add -u"
+without contents changes, and other conditions'
+
 . ./test-lib.sh
 
-# ── Setup ──────────────────────────────────────────────────────────────
+test_expect_success setup '
+	echo initial >check &&
+	echo initial >top &&
+	echo initial >foo &&
+	mkdir dir1 dir2 &&
+	echo initial >dir1/sub1 &&
+	echo initial >dir1/sub2 &&
+	echo initial >dir2/sub3 &&
+	git add check dir1 dir2 top foo &&
+	test_tick &&
+	git commit -m initial &&
 
-test_expect_success 'setup repo with tracked files' '
-	grit init repo &&
-	cd repo &&
-	git config user.email "t@t.com" &&
-	git config user.name "T" &&
-	echo "aaa" >tracked1.txt &&
-	echo "bbb" >tracked2.txt &&
-	echo "ccc" >tracked3.txt &&
-	mkdir sub &&
-	echo "ddd" >sub/tracked4.txt &&
-	grit add . &&
-	grit commit -m "initial"
+	echo changed >check &&
+	echo changed >top &&
+	echo changed >dir2/sub3 &&
+	rm -f dir1/sub1 &&
+	echo other >dir2/other
 '
 
-# ── Basic: add -u stages modifications ────────────────────────────────
-
-test_expect_success 'modify tracked file and run add -u' '
-	cd repo &&
-	echo "modified" >tracked1.txt &&
-	grit add -u &&
-	grit diff --cached --name-only >actual &&
-	grep "tracked1.txt" actual
+test_expect_success update '
+	git add -u dir1 dir2
 '
 
-test_expect_success 'add -u does not stage untracked files' '
-	cd repo &&
-	echo "new" >untracked.txt &&
-	grit add -u &&
-	grit ls-files >indexed &&
-	! grep "untracked.txt" indexed
+test_expect_success 'update noticed a removal' '
+	git ls-files dir1/sub1 >out &&
+	test_must_be_empty out
 '
 
-test_expect_success 'untracked file still shows in status' '
-	cd repo &&
-	grit status >out &&
-	grep "untracked.txt" out
+test_expect_success 'update touched correct path' '
+	git diff-files --name-status dir2/sub3 >out &&
+	test_must_be_empty out
 '
 
-# ── add -u stages deletions ───────────────────────────────────────────
+test_expect_success 'update did not touch other tracked files' '
+	echo "M	check" >expect &&
+	git diff-files --name-status check >actual &&
+	test_cmp expect actual &&
 
-test_expect_success 'delete tracked file and run add -u' '
-	cd repo &&
-	rm tracked2.txt &&
-	grit add -u &&
-	grit diff --cached --name-status >actual &&
-	grep "^D" actual &&
-	grep "tracked2.txt" actual
+	echo "M	top" >expect &&
+	git diff-files --name-status top >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'deleted file removed from index after add -u' '
-	cd repo &&
-	grit ls-files >indexed &&
-	! grep "tracked2.txt" indexed
+test_expect_success 'update did not touch untracked files' '
+	git ls-files dir2/other >out &&
+	test_must_be_empty out
 '
 
-# ── Commit and verify state ───────────────────────────────────────────
-
-test_expect_success 'commit after add -u' '
-	cd repo &&
-	rm -f untracked.txt &&
-	grit commit -m "update and delete" &&
-	grit diff --cached >cached &&
-	test_line_count = 0 cached
+test_expect_success 'error out when passing untracked path' '
+	git reset --hard &&
+	echo content >>baz &&
+	echo content >>top &&
+	test_must_fail git add -u baz top 2>err &&
+	test_grep -e "error: pathspec .baz. did not match any file(s) known to git" err &&
+	git diff --cached --name-only >actual &&
+	test_must_be_empty actual
 '
 
-# ── add -u with no changes is a no-op ─────────────────────────────────
+test_expect_success 'cache tree has not been corrupted' '
 
-test_expect_success 'add -u with no tracked-file changes is a no-op' '
-	cd repo &&
-	grit add -u &&
-	grit diff --cached >cached_out &&
-	test_line_count = 0 cached_out
+	git ls-files -s |
+	sed -e "s/ 0	/	/" >expect &&
+	git ls-tree -r $(git write-tree) |
+	sed -e "s/ blob / /" >current &&
+	test_cmp expect current
+
 '
 
-# ── add -u stages changes in subdirectories ───────────────────────────
-
-test_expect_success 'modify file in subdirectory' '
-	cd repo &&
-	echo "modified-sub" >sub/tracked4.txt &&
-	grit add -u &&
-	grit diff --cached --name-only >actual &&
-	grep "sub/tracked4.txt" actual
+test_expect_success 'update from a subdirectory' '
+	(
+		cd dir1 &&
+		echo more >sub2 &&
+		git add -u sub2
+	)
 '
 
-test_expect_success 'commit subdir change' '
-	cd repo &&
-	grit commit -m "update subdir"
+test_expect_success 'change gets noticed' '
+	git diff-files --name-status dir1 >out &&
+	test_must_be_empty out
 '
 
-# ── add -u with multiple modifications ────────────────────────────────
-
-test_expect_success 'multiple modifications staged by add -u' '
-	cd repo &&
-	echo "mod1" >tracked1.txt &&
-	echo "mod3" >tracked3.txt &&
-	echo "mod4" >sub/tracked4.txt &&
-	grit add -u &&
-	grit diff --cached --name-only >actual &&
-	grep "tracked1.txt" actual &&
-	grep "tracked3.txt" actual &&
-	grep "sub/tracked4.txt" actual
+test_expect_success 'non-qualified update in subdir updates from the root' '
+	(
+		cd dir1 &&
+		echo even more >>sub2 &&
+		git --literal-pathspecs add -u &&
+		echo even more >>sub2 &&
+		git add -u
+	) &&
+	git diff-files --name-only >actual &&
+	test_must_be_empty actual
 '
 
-test_expect_success 'commit multiple changes' '
-	cd repo &&
-	grit commit -m "multi update"
+test_expect_success 'replace a file with a symlink' '
+
+	rm foo &&
+	test_ln_s_add top foo
+
 '
 
-# ── add -u with mixed modifications and deletions ─────────────────────
+test_expect_success 'add everything changed' '
 
-test_expect_success 'mix of modification and deletion' '
-	cd repo &&
-	echo "changed again" >tracked1.txt &&
-	rm sub/tracked4.txt &&
-	echo "brand new" >another-new.txt &&
-	grit add -u &&
-	grit diff --cached --name-status >actual &&
-	grep "M.*tracked1.txt" actual &&
-	grep "D.*sub/tracked4.txt" actual
+	git add -u &&
+	git diff-files >out &&
+	test_must_be_empty out
+
 '
 
-test_expect_success 'new file not staged by add -u' '
-	cd repo &&
-	grit ls-files >indexed &&
-	! grep "another-new.txt" indexed
+test_expect_success 'touch and then add -u' '
+
+	touch check &&
+	git add -u &&
+	git diff-files >out &&
+	test_must_be_empty out
+
 '
 
-test_expect_success 'commit mixed changes' '
-	cd repo &&
-	rm -f another-new.txt &&
-	grit commit -m "mix changes"
+test_expect_success 'touch and then add explicitly' '
+
+	touch check &&
+	git add check &&
+	git diff-files >out &&
+	test_must_be_empty out
+
 '
 
-# ── add --update is the long form of -u ───────────────────────────────
+test_expect_success 'add -n -u should not add but just report' '
 
-test_expect_success 'add --update works same as -u' '
-	cd repo &&
-	echo "long-form" >tracked1.txt &&
-	grit add --update &&
-	grit diff --cached --name-only >actual &&
-	grep "tracked1.txt" actual
+	(
+		echo "add '\''check'\''" &&
+		echo "remove '\''top'\''"
+	) >expect &&
+	before=$(git ls-files -s check top) &&
+	git count-objects -v >objects_before &&
+	echo changed >>check &&
+	rm -f top &&
+	git add -n -u >actual &&
+	after=$(git ls-files -s check top) &&
+	git count-objects -v >objects_after &&
+
+	test "$before" = "$after" &&
+	test_cmp objects_before objects_after &&
+	test_cmp expect actual
+
 '
 
-test_expect_success 'commit long form' '
-	cd repo &&
-	grit commit -m "long form update"
+test_expect_success 'add -u resolves unmerged paths' '
+	git reset --hard &&
+	one=$(echo 1 | git hash-object -w --stdin) &&
+	two=$(echo 2 | git hash-object -w --stdin) &&
+	three=$(echo 3 | git hash-object -w --stdin) &&
+	{
+		for path in path1 path2
+		do
+			echo "100644 $one 1	$path" &&
+			echo "100644 $two 2	$path" &&
+			echo "100644 $three 3	$path" || return 1
+		done &&
+		echo "100644 $one 1	path3" &&
+		echo "100644 $one 1	path4" &&
+		echo "100644 $one 3	path5" &&
+		echo "100644 $one 3	path6"
+	} |
+	git update-index --index-info &&
+	echo 3 >path1 &&
+	echo 2 >path3 &&
+	echo 2 >path5 &&
+
+	# Fail to explicitly resolve removed paths with "git add"
+	test_must_fail git add --no-all path4 &&
+	test_must_fail git add --no-all path6 &&
+
+	# "add -u" should notice removals no matter what stages
+	# the index entries are in.
+	git add -u &&
+	git ls-files -s path1 path2 path3 path4 path5 path6 >actual &&
+	{
+		echo "100644 $three 0	path1" &&
+		echo "100644 $two 0	path3" &&
+		echo "100644 $two 0	path5"
+	} >expect &&
+	test_cmp expect actual
 '
 
-# ── add -u --dry-run shows what would be added ────────────────────────
-
-test_expect_success 'add -u --dry-run shows changes without staging' '
-	cd repo &&
-	echo "dry-run-change" >tracked1.txt &&
-	grit add -u --dry-run >out 2>&1 &&
-	grep "tracked1.txt" out
+test_expect_success '"add -u non-existent" should fail' '
+	test_must_fail git add -u non-existent &&
+	git ls-files >actual &&
+	! grep "non-existent" actual
 '
 
-test_expect_success 'after dry-run, file is not actually staged' '
-	cd repo &&
-	grit diff --cached >cached &&
-	test_line_count = 0 cached
-'
-
-# ── add -u -v shows verbose output ────────────────────────────────────
-
-test_expect_success 'add -u -v stages and may show verbose info' '
-	cd repo &&
-	grit add -u -v >out 2>&1 &&
-	grit diff --cached --name-only >actual &&
-	grep "tracked1.txt" actual
-'
-
-test_expect_success 'commit verbose update' '
-	cd repo &&
-	grit commit -m "verbose update"
-'
-
-# ── Verify final state ────────────────────────────────────────────────
-
-test_expect_success 'final repo has expected tracked files' '
-	cd repo &&
-	grit ls-files >indexed &&
-	grep "tracked1.txt" indexed &&
-	grep "tracked3.txt" indexed &&
-	! grep "tracked2.txt" indexed &&
-	! grep "tracked4.txt" indexed
+test_expect_success '"commit -a" implies "add -u" if index becomes empty' '
+	git rm -rf \* &&
+	git commit -m clean-slate &&
+	test_commit file1 &&
+	rm file1.t &&
+	test_tick &&
+	git commit -a -m remove &&
+	git ls-tree HEAD: >out &&
+	test_must_be_empty out
 '
 
 test_done

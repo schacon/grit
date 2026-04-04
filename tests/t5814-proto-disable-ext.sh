@@ -1,23 +1,19 @@
 #!/bin/sh
-# Ported from git/t/t5814-proto-disable-ext.sh
-# Tests for protocol.ext.allow configuration
 
-test_description='protocol disabling for ext:: transport'
+test_description='test disabling of remote-helper paths in clone/fetch'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY/lib-proto-disable.sh"
 
-test_expect_success 'clone denied with protocol.ext.allow=never' '
-	test_must_fail git -c protocol.ext.allow=never clone "ext::git %s /repo" clone-denied 2>err &&
-	grep -i "not allowed" err
+setup_ext_wrapper
+
+test_expect_success 'setup repository to clone' '
+	test_commit one &&
+	mkdir remote &&
+	git init --bare remote/repo.git &&
+	git push remote/repo.git HEAD
 '
 
-test_expect_success 'clone denied with GIT_ALLOW_PROTOCOL excluding ext' '
-	GIT_ALLOW_PROTOCOL=file test_must_fail git clone "ext::git %s /repo" clone-denied-env 2>err &&
-	grep -i "not allowed" err
-'
+test_proto "remote-helper" ext "ext::fake-remote %S repo.git"
 
 test_done

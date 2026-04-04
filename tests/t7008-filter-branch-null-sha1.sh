@@ -1,56 +1,56 @@
 #!/bin/sh
-# Adapted from git/t/t7008-filter-branch-null-sha1.sh
-# Tests basic repo operations that filter-branch tests rely on
 
-test_description='operations tested by filter-branch null sha1 test'
+test_description='filter-branch removal of trees with null sha1'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup: base commits' '
-	git init fb-null &&
-	cd fb-null &&
-	git config user.name "Test" &&
-	git config user.email "t@t.com" &&
-
-	echo one >one.t &&
-	git add one.t &&
-	git commit -m "one" &&
-	git tag one &&
-
-	echo two >two.t &&
-	git add two.t &&
-	git commit -m "two" &&
-	git tag two &&
-
-	echo three >three.t &&
-	git add three.t &&
-	git commit -m "three" &&
-	git tag three
+	test_commit one &&
+	test_commit two &&
+	test_commit three
 '
 
-test_expect_success 'ls-tree works' '
-	cd fb-null &&
-	git ls-tree HEAD >output &&
-	test_grep "one.t" output &&
-	test_grep "two.t" output &&
-	test_grep "three.t" output
+test_expect_success 'setup: a commit with a bogus null sha1 in the tree' '
+	{
+		git ls-tree HEAD &&
+		printf "160000 commit $ZERO_OID\\tbroken\\n"
+	} >broken-tree &&
+	echo "add broken entry" >msg &&
+
+	tree=$(git mktree <broken-tree) &&
+	test_tick &&
+	commit=$(git commit-tree $tree -p HEAD <msg) &&
+	git update-ref HEAD "$commit"
 '
 
-test_expect_success 'mktree works' '
-	cd fb-null &&
-	git ls-tree HEAD >tree-listing &&
-	tree=$(git mktree <tree-listing) &&
-	test -n "$tree"
+# we have to make one more commit on top removing the broken
+# entry, since otherwise our index does not match HEAD (and filter-branch will
+# complain). We could make the index match HEAD, but doing so would involve
+# writing a null sha1 into the index.
+test_expect_success 'setup: bring HEAD and index in sync' '
+	test_tick &&
+	git commit -a -m "back to normal"
 '
 
-test_expect_success 'commit-tree works' '
-	cd fb-null &&
-	tree=$(git rev-parse HEAD^{tree}) &&
-	commit=$(echo "test message" | git commit-tree "$tree") &&
-	test -n "$commit" &&
-	git cat-file -t "$commit" >type &&
-	test_grep "commit" type
+test_expect_success 'noop filter-branch complains' '
+	test_must_fail git filter-branch \
+		--force --prune-empty \
+		--index-filter "true"
+'
+
+test_expect_success 'filter commands are still checked' '
+	test_must_fail git filter-branch \
+		--force --prune-empty \
+		--index-filter "git rm --cached --ignore-unmatch three.t"
+'
+
+test_expect_success 'removing the broken entry works' '
+	echo three >expect &&
+	git filter-branch \
+		--force --prune-empty \
+		--index-filter "git rm --cached --ignore-unmatch broken" &&
+	git log -1 --format=%s >actual &&
+	test_cmp expect actual
 '
 
 test_done

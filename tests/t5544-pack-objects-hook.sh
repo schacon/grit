@@ -1,45 +1,78 @@
 #!/bin/sh
-# Ported from git/t/t5544-pack-objects-hook.sh
-# Tests custom script in place of pack-objects
-# Grit does not support uploadpack.packObjectsHook
 
 test_description='test custom script in place of pack-objects'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
+test_expect_success 'create some history to fetch' '
 	test_commit one &&
 	test_commit two
 '
 
-# grit does not support uploadpack.packObjectsHook
-test_expect_failure 'hook runs via global config' '
-	write_script .git/hook <<-\EOF &&
+test_expect_success 'create debugging hook script' '
+	write_script .git/hook <<-\EOF
 		echo >&2 "hook running"
 		echo "$*" >hook.args
 		cat >hook.stdin
 		"$@" <hook.stdin >hook.stdout
 		cat hook.stdout
 	EOF
-	git -c uploadpack.packObjectsHook=.git/hook clone --no-local . dst.git 2>stderr &&
+'
+
+clear_hook_results () {
+	rm -rf .git/hook.* dst.git
+}
+
+test_expect_success 'hook runs via global config' '
+	clear_hook_results &&
+	test_config_global uploadpack.packObjectsHook ./hook &&
+	git clone --no-local . dst.git 2>stderr &&
 	grep "hook running" stderr
 '
 
-test_expect_success 'basic clone works without hook' '
-	git clone --no-local . basic-clone &&
-	git -C basic-clone rev-parse HEAD >actual &&
-	git rev-parse HEAD >expect &&
-	test_cmp expect actual
+test_expect_success 'hook outputs are sane' '
+	# check that we recorded a usable pack
+	git index-pack --stdin <.git/hook.stdout &&
+
+	# check that we recorded args and stdin. We do not check
+	# the full argument list or the exact pack contents, as it would make
+	# the test brittle. So just sanity check that we could replay
+	# the packing procedure.
+	grep "^git" .git/hook.args &&
+	$(cat .git/hook.args) <.git/hook.stdin >replay
 '
 
-test_expect_success 'clone preserves commits' '
-	git -C basic-clone log --oneline >actual &&
-	test_line_count = 2 actual
+test_expect_success 'hook runs from -c config' '
+	clear_hook_results &&
+	git clone --no-local \
+	  -u "git -c uploadpack.packObjectsHook=./hook upload-pack" \
+	  . dst.git 2>stderr &&
+	grep "hook running" stderr
+'
+
+test_expect_success 'hook does not run from repo config' '
+	clear_hook_results &&
+	test_config uploadpack.packObjectsHook "./hook" &&
+	git clone --no-local . dst.git 2>stderr &&
+	! grep "hook running" stderr &&
+	test_path_is_missing .git/hook.args &&
+	test_path_is_missing .git/hook.stdin &&
+	test_path_is_missing .git/hook.stdout &&
+
+	# check that global config is used instead
+	test_config_global uploadpack.packObjectsHook ./hook &&
+	git clone --no-local . dst2.git 2>stderr &&
+	grep "hook running" stderr
+'
+
+test_expect_success 'hook works with partial clone' '
+	clear_hook_results &&
+	test_config_global uploadpack.packObjectsHook ./hook &&
+	test_config_global uploadpack.allowFilter true &&
+	git clone --bare --no-local --filter=blob:none . dst.git &&
+	git -C dst.git rev-list --objects --missing=allow-any --no-object-names --all >objects &&
+	git -C dst.git cat-file --batch-check="%(objecttype)" <objects >types &&
+	! grep blob types
 '
 
 test_done

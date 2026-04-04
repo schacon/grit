@@ -7,49 +7,75 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
+test_expect_success setup '
 
-	echo first >file1 &&
+	echo first > file1 &&
 	git add file1 &&
 	test_tick &&
 	git commit -m "first" &&
-	git tag first &&
 
-	echo second >file2 &&
+	git symbolic-ref HEAD refs/heads/second &&
+	rm .git/index file1 &&
+	echo second > file2 &&
 	git add file2 &&
 	test_tick &&
 	git commit -m "second" &&
-	git tag second
+
+	git symbolic-ref HEAD refs/heads/third &&
+	rm .git/index file2 &&
+	echo third > file3 &&
+	git add file3 &&
+	test_tick &&
+	git commit -m "third"
+
 '
 
-test_expect_success 'cherry-pick a non-root commit' '
-	git checkout first &&
-	git cherry-pick second &&
-	test_path_is_file file2
+test_expect_success 'cherry-pick a root commit' '
+
+	git checkout second^0 &&
+	git cherry-pick main &&
+	echo first >expect &&
+	test_cmp expect file1
+
 '
 
-test_expect_success 'revert a non-root commit' '
-	git revert HEAD &&
-	test_path_is_missing file2
+test_expect_success 'revert a root commit' '
+
+	git revert main &&
+	test_path_is_missing file1
+
 '
 
-test_expect_success 'cherry-pick with -x appends note' '
-	git checkout first &&
-	git cherry-pick -x second &&
-	git log --format=%B --max-count=1 >msg &&
-	grep "cherry picked from commit" msg
+test_expect_success 'cherry-pick a root commit with an external strategy' '
+
+	git cherry-pick --strategy=resolve main &&
+	echo first >expect &&
+	test_cmp expect file1
+
 '
 
-test_expect_success 'cherry-pick with --no-commit stages but does not commit' '
-	git checkout first &&
-	git cherry-pick --no-commit second &&
-	test_path_is_file file2 &&
-	git diff --cached --name-only >staged &&
-	grep file2 staged &&
-	git reset --hard
+test_expect_success 'revert a root commit with an external strategy' '
+
+	git revert --strategy=resolve main &&
+	test_path_is_missing file1
+
+'
+
+test_expect_success 'cherry-pick two root commits' '
+
+	echo first >expect.file1 &&
+	echo second >expect.file2 &&
+	echo third >expect.file3 &&
+
+	git checkout second^0 &&
+	git cherry-pick main third &&
+
+	test_cmp expect.file1 file1 &&
+	test_cmp expect.file2 file2 &&
+	test_cmp expect.file3 file3 &&
+	git rev-parse --verify HEAD^^ &&
+	test_must_fail git rev-parse --verify HEAD^^^
+
 '
 
 test_done

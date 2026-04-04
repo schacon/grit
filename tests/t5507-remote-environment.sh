@@ -1,34 +1,35 @@
 #!/bin/sh
-# Ported from git/t/t5507-remote-environment.sh
-# Simplified: basic remote push tests
 
-test_description='check push to remote repository'
+test_description='check environment showed to remote side of transports'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'set up push situation' '
-	git init -q &&
-	echo one >one.t &&
-	git add one.t &&
-	git commit -m one &&
-	git tag one &&
-	git init remote &&
-	(cd remote && git config receive.denyCurrentBranch warn)
+test_expect_success 'set up "remote" push situation' '
+	test_commit one &&
+	git config push.default current &&
+	git init remote
 '
 
-test_expect_success 'push to local remote' '
-	git clone . clone &&
-	(
-		cd clone &&
-		echo two >two.t &&
-		git add two.t &&
-		git commit -m two &&
-		git push origin main
-	)
+test_expect_success 'set up fake ssh' '
+	GIT_SSH_COMMAND="f() {
+		cd \"\$TRASH_DIRECTORY\" &&
+		eval \"\$2\"
+	}; f" &&
+	export GIT_SSH_COMMAND &&
+	export TRASH_DIRECTORY
+'
+
+# due to receive.denyCurrentBranch=true
+test_expect_success 'confirm default push fails' '
+	test_must_fail git push remote
+'
+
+test_expect_success 'config does not travel over same-machine push' '
+	test_must_fail git -c receive.denyCurrentBranch=false push remote
+'
+
+test_expect_success 'config does not travel over ssh push' '
+	test_must_fail git -c receive.denyCurrentBranch=false push host:remote
 '
 
 test_done

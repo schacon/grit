@@ -1,16 +1,21 @@
 #!/bin/sh
 
-test_description='setup: validation of .git file/directory types'
+test_description='setup: validation of .git file/directory types
+
+Verify that setup_git_directory() correctly handles:
+1. Valid .git directories (including symlinks to them).
+2. Invalid .git files (FIFOs, sockets) by erroring out.
+3. Invalid .git files (garbage) by erroring out.
+'
 
 . ./test-lib.sh
 
 test_expect_success 'setup: create parent git repository' '
 	git init parent &&
-	(cd parent && git config user.name "Test" && git config user.email "t@t" && test_commit root-commit)
+	test_commit -C parent "root-commit"
 '
 
-test_expect_success 'setup: .git as a symlink to a directory is valid' '
-	test_have_prereq SYMLINKS || return 0 &&
+test_expect_success SYMLINKS 'setup: .git as a symlink to a directory is valid' '
 	test_when_finished "rm -rf parent/link-to-dir" &&
 	mkdir -p parent/link-to-dir &&
 	(
@@ -23,14 +28,26 @@ test_expect_success 'setup: .git as a symlink to a directory is valid' '
 	)
 '
 
-test_expect_success 'setup: .git as a FIFO (named pipe) is rejected' '
-	test_have_prereq PIPE || return 0 &&
+test_expect_success PIPE 'setup: .git as a FIFO (named pipe) is rejected' '
 	test_when_finished "rm -rf parent/fifo-trap" &&
 	mkdir -p parent/fifo-trap &&
 	(
 		cd parent/fifo-trap &&
 		mkfifo .git &&
-		test_must_fail git rev-parse --git-dir 2>stderr
+		test_must_fail git rev-parse --git-dir 2>stderr &&
+		grep "not a regular file" stderr
+	)
+'
+
+test_expect_success SYMLINKS,PIPE 'setup: .git as a symlink to a FIFO is rejected' '
+	test_when_finished "rm -rf parent/symlink-fifo-trap" &&
+	mkdir -p parent/symlink-fifo-trap &&
+	(
+		cd parent/symlink-fifo-trap &&
+		mkfifo target-fifo &&
+		ln -s target-fifo .git &&
+		test_must_fail git rev-parse --git-dir 2>stderr &&
+		grep "not a regular file" stderr
 	)
 '
 
@@ -40,7 +57,8 @@ test_expect_success 'setup: .git with garbage content is rejected' '
 	(
 		cd parent/garbage-trap &&
 		echo "garbage" >.git &&
-		test_must_fail git rev-parse --git-dir 2>stderr
+		test_must_fail git rev-parse --git-dir 2>stderr &&
+		grep "invalid gitfile format" stderr
 	)
 '
 

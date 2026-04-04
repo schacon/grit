@@ -4,21 +4,18 @@ test_description='Test the core.hooksPath configuration variable'
 
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com"
-'
-
-test_expect_success 'Check that various forms of specifying core.hooksPath work' '
+test_expect_success 'set up a pre-commit hook in core.hooksPath' '
 	>actual &&
 	mkdir -p .git/custom-hooks &&
 	write_script .git/custom-hooks/pre-commit <<-\EOF &&
 	echo CUSTOM >>actual
 	EOF
-	test_hook --setup pre-commit <<-\EOF &&
+	test_hook --setup pre-commit <<-\EOF
 	echo NORMAL >>actual
 	EOF
+'
+
+test_expect_success 'Check that various forms of specifying core.hooksPath work' '
 	test_commit no_custom_hook &&
 	git config core.hooksPath .git/custom-hooks &&
 	test_commit have_custom_hook &&
@@ -44,16 +41,11 @@ test_expect_success 'git rev-parse --git-path hooks' '
 	test .git/custom-hooks/abc = "$(cat actual)"
 '
 
-test_expect_success 'core.hooksPath can be set and read' '
-	git config core.hooksPath /custom/hooks &&
-	val=$(git config core.hooksPath) &&
-	test "$val" = "/custom/hooks"
-'
-
-test_expect_success 'core.hooksPath can be relative' '
-	git config core.hooksPath .git/custom-hooks &&
-	val=$(git config core.hooksPath) &&
-	test "$val" = ".git/custom-hooks"
+test_expect_success 'core.hooksPath=/dev/null' '
+	git clone -c core.hooksPath=/dev/null . no-templates &&
+	value="$(git -C no-templates config --local core.hooksPath)" &&
+	# The Bash used by Git for Windows rewrites `/dev/null` to `nul`
+	{ test /dev/null = "$value" || test nul = "$value"; }
 '
 
 test_done

@@ -1,311 +1,190 @@
 #!/bin/sh
-# Ported subset from git/t/t4017-diff-retval.sh for diff-index return values.
 
-test_description='diff-index exit status and quiet mode'
+test_description='Return value of diffs'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-make_commit () {
-	msg=$1
-	parent=${2-}
-	tree=$(git write-tree) || return 1
-	if test -n "$parent"
-	then
-		commit=$(printf '%s\n' "$msg" | git commit-tree "$tree" -p "$parent") || return 1
-	else
-		commit=$(printf '%s\n' "$msg" | git commit-tree "$tree") || return 1
-	fi
-	git update-ref HEAD "$commit" || return 1
-	printf '%s\n' "$commit"
-}
-
-test_expect_success 'setup two commits with index at second commit' '
-	git init repo &&
-	cd repo &&
-	printf "one\n" >a &&
-	git update-index --add a &&
-	c1=$(make_commit first) &&
-	printf "two\n" >a &&
-	printf "side\n" >b &&
-	git update-index a &&
-	git update-index --add b &&
-	c2=$(make_commit second "$c1") &&
-	test -n "$c1" &&
-	test -n "$c2" &&
-	printf "%s\n" "$c1" >c1 &&
-	printf "%s\n" "$c2" >c2
+test_expect_success 'setup' '
+	echo "1 " >a &&
+	git add . &&
+	git commit -m zeroth &&
+	echo 1 >a &&
+	git add . &&
+	git commit -m first &&
+	echo 2 >b &&
+	git add . &&
+	git commit -a -m second
 '
 
-test_expect_success 'diff-index --cached --exit-code succeeds when identical' '
-	cd repo &&
-	c2=$(cat c2) &&
-	git diff-index --cached --exit-code "$c2"
+test_expect_success 'git diff --quiet -w  HEAD^^ HEAD^' '
+	git diff --quiet -w HEAD^^ HEAD^
 '
 
-test_expect_success 'diff-index --cached --exit-code fails when different' '
-	cd repo &&
-	c1=$(cat c1) &&
-	test_must_fail git diff-index --cached --exit-code "$c1"
+test_expect_success 'git diff --quiet HEAD^^ HEAD^' '
+	test_must_fail git diff --quiet HEAD^^ HEAD^
 '
 
-test_expect_success 'diff-index --quiet returns non-zero and no output' '
-	cd repo &&
-	c1=$(cat c1) &&
-	test_must_fail git diff-index --quiet --cached "$c1" >quiet.out 2>/dev/null &&
-	test ! -s quiet.out
+test_expect_success 'git diff --quiet -w  HEAD^ HEAD' '
+	test_must_fail git diff --quiet -w HEAD^ HEAD
 '
 
-test_expect_success 'pathspec limits exit-code checks' '
-	cd repo &&
-	c1=$(cat c1) &&
-	test_must_fail git diff-index --cached --exit-code "$c1" -- b &&
-	git diff-index --cached --exit-code "$c1" -- does-not-exist
+test_expect_success 'git diff-tree HEAD^ HEAD' '
+	test_expect_code 1 git diff-tree --exit-code HEAD^ HEAD
 '
-
-# ---------------------------------------------------------------------------
-# Additional tests from git/t/t4017-diff-retval.sh
-# ---------------------------------------------------------------------------
-
-test_expect_success 'diff-files --exit-code succeeds when worktree matches index' '
-	cd repo &&
+test_expect_success 'git diff-tree HEAD^ HEAD -- a' '
+	git diff-tree --exit-code HEAD^ HEAD -- a
+'
+test_expect_success 'git diff-tree HEAD^ HEAD -- b' '
+	test_expect_code 1 git diff-tree --exit-code HEAD^ HEAD -- b
+'
+test_expect_success 'echo HEAD | git diff-tree --stdin' '
+	echo $(git rev-parse HEAD) | test_expect_code 1 git diff-tree --exit-code --stdin
+'
+test_expect_success 'git diff-tree HEAD HEAD' '
+	git diff-tree --exit-code HEAD HEAD
+'
+test_expect_success 'git diff-files' '
 	git diff-files --exit-code
 '
-
-test_expect_success 'diff-files --exit-code fails when worktree differs' '
-	cd repo &&
-	echo 3 >>a &&
-	test_must_fail git diff-files --exit-code
+test_expect_success 'git diff-index --cached HEAD' '
+	git diff-index --exit-code --cached HEAD
 '
-
-test_expect_success 'diff --quiet returns 0 when HEAD matches worktree' '
-	cd repo &&
-	git update-index a &&
-	c3=$(make_commit third "$(cat c2)") &&
-	printf "%s\n" "$c3" >c3 &&
-	git diff --quiet
+test_expect_success 'git diff-index --cached HEAD^' '
+	test_expect_code 1 git diff-index --exit-code --cached HEAD^
 '
-
-test_expect_success 'diff --quiet returns 1 for HEAD^ HEAD with changes' '
-	cd repo &&
-	c2=$(cat c2) &&
-	c3=$(cat c3) &&
-	test_must_fail git diff --quiet "$c2" "$c3"
-'
-
-test_expect_success 'diff --exit-code returns 0 for identical commits' '
-	cd repo &&
-	c3=$(cat c3) &&
-	git diff --exit-code "$c3" "$c3"
-'
-
-test_expect_success 'diff --exit-code returns 1 for different commits' '
-	cd repo &&
-	c1=$(cat c1) &&
-	c2=$(cat c2) &&
-	test_must_fail git diff --exit-code "$c1" "$c2"
-'
-
-test_expect_success 'diff --quiet suppresses output even with differences' '
-	cd repo &&
-	c1=$(cat c1) &&
-	c2=$(cat c2) &&
-	git diff --quiet "$c1" "$c2" >out 2>&1 || true &&
-	test_must_be_empty out
-'
-
-test_expect_success 'diff --exit-code with pathspec: no match means 0' '
-	cd repo &&
-	c1=$(cat c1) &&
-	c2=$(cat c2) &&
-	git diff --exit-code "$c1" "$c2" -- nonexistent
-'
-
-test_expect_success 'diff --exit-code with pathspec: match means 1' '
-	cd repo &&
-	c1=$(cat c1) &&
-	c2=$(cat c2) &&
-	test_must_fail git diff --exit-code "$c1" "$c2" -- a
-'
-
-test_expect_success 'diff-index --cached --exit-code after adding more files' '
-	cd repo &&
+test_expect_success 'git diff-index --cached HEAD^' '
+	echo text >>b &&
 	echo 3 >c &&
-	git update-index --add c &&
-	c4=$(make_commit fourth "$(cat c3)") &&
-	printf "%s\n" "$c4" >c4 &&
-	c3=$(cat c3) &&
-	test_must_fail git diff-index --exit-code --cached "$c3"
+	git add . &&
+	test_expect_code 1 git diff-index --exit-code --cached HEAD^
+'
+test_expect_success 'git diff-tree -Stext HEAD^ HEAD -- b' '
+	git commit -m "text in b" &&
+	test_expect_code 1 git diff-tree -p --exit-code -Stext HEAD^ HEAD -- b
+'
+test_expect_success 'git diff-tree -Snot-found HEAD^ HEAD -- b' '
+	git diff-tree -p --exit-code -Snot-found HEAD^ HEAD -- b
+'
+test_expect_success 'git diff-files' '
+	echo 3 >>c &&
+	test_expect_code 1 git diff-files --exit-code
+'
+test_expect_success 'git diff-index --cached HEAD' '
+	git update-index c &&
+	test_expect_code 1 git diff-index --exit-code --cached HEAD
 '
 
-# ---------------------------------------------------------------------------
-# Additional diff-files format and clean-state tests
-# ---------------------------------------------------------------------------
+test_expect_success '--check --exit-code returns 0 for no difference' '
 
-test_expect_success 'diff-files shows no output when clean' '
-	cd repo &&
-	git diff-files >out &&
-	test_must_be_empty out
+	git diff --check --exit-code
+
 '
 
-test_expect_success 'diff-files --name-only is empty when clean' '
-	cd repo &&
-	git diff-files --name-only >out &&
-	test_must_be_empty out
+test_expect_success '--check --exit-code returns 1 for a clean difference' '
+
+	echo "good" > a &&
+	test_expect_code 1 git diff --check --exit-code
+
 '
 
-test_expect_success 'diff-files --name-status shows M for modified file' '
-	cd repo &&
-	echo extra >>a &&
-	git diff-files --name-status >out &&
-	grep "^M.*a" out
+test_expect_success '--check --exit-code returns 3 for a dirty difference' '
+
+	echo "bad   " >> a &&
+	test_expect_code 3 git diff --check --exit-code
+
 '
 
-test_expect_success 'diff --name-only same commit shows no output' '
-	cd repo &&
-	c4=$(cat c4) &&
-	git diff --name-only "$c4" "$c4" >out &&
-	test_must_be_empty out
+test_expect_success '--check with --no-pager returns 2 for dirty difference' '
+
+	test_expect_code 2 git --no-pager diff --check
+
 '
 
-# ---------------------------------------------------------------------------
-# Additional return value tests
-# ---------------------------------------------------------------------------
+test_expect_success 'check should test not just the last line' '
+	echo "" >>a &&
+	test_expect_code 2 git --no-pager diff --check
 
-test_expect_success 'diff --quiet same commit returns 0' '
-	cd repo &&
-	c4=$(cat c4) &&
-	git diff --quiet "$c4" "$c4"
 '
 
-test_expect_success 'diff --numstat same commit shows no output' '
-	cd repo &&
-	c4=$(cat c4) &&
-	git diff --numstat "$c4" "$c4" >out &&
-	test_must_be_empty out
+test_expect_success 'check detects leftover conflict markers' '
+	git reset --hard &&
+	git checkout HEAD^ &&
+	echo binary >>b &&
+	git commit -m "side" b &&
+	test_must_fail git merge main &&
+	git add b &&
+	test_expect_code 2 git --no-pager diff --cached --check >test.out &&
+	test 3 = $(grep "conflict marker" test.out | wc -l) &&
+	git reset --hard
 '
 
-test_expect_success 'diff-files --quiet returns 0 when clean' '
-	cd repo &&
-	git update-index a &&
-	git diff-files --quiet
+test_expect_success 'check honors conflict marker length' '
+	git reset --hard &&
+	echo ">>>>>>> boo" >>b &&
+	echo "======" >>a &&
+	git diff --check a &&
+	test_expect_code 2 git diff --check b &&
+	git reset --hard &&
+	echo ">>>>>>>> boo" >>b &&
+	echo "========" >>a &&
+	git diff --check &&
+	echo "b conflict-marker-size=8" >.gitattributes &&
+	test_expect_code 2 git diff --check b &&
+	git diff --check a &&
+	git reset --hard
 '
 
-test_expect_success 'diff-files --name-only is empty when clean' '
-	cd repo &&
-	git diff-files --name-only >out &&
-	test_must_be_empty out
+test_expect_success 'option errors are not confused by --exit-code' '
+	test_must_fail git diff --exit-code --nonsense 2>err &&
+	grep '^usage:' err
 '
 
-test_expect_success 'setup clean state for retval tests' '
-	cd repo &&
-	git update-index a b c &&
-	c5=$(make_commit fifth "$(cat c4)") &&
-	printf "%s\n" "$c5" >c5
+for option in --exit-code --quiet
+do
+	test_expect_success "git diff $option returns 1 for changed binary file" "
+		test_when_finished 'rm -f .gitattributes' &&
+		git reset --hard &&
+		echo a binary >.gitattributes &&
+		echo 2 >>a &&
+		test_expect_code 1 git diff $option
+	"
+
+	test_expect_success "git diff $option returns 1 for copied file" "
+		git reset --hard &&
+		cp a copy &&
+		git add copy &&
+		test_expect_code 1 git diff $option --cached --find-copies-harder
+	"
+
+	test_expect_success "git diff $option returns 1 for renamed file" "
+		git reset --hard &&
+		git mv a renamed &&
+		test_expect_code 1 git diff $option --cached
+	"
+done
+
+test_expect_success 'setup dirty subrepo' '
+	git reset --hard &&
+	test_create_repo subrepo &&
+	test_commit -C subrepo subrepo-file &&
+	test_tick &&
+	git add subrepo &&
+	git commit -m subrepo &&
+	test_commit -C subrepo another-subrepo-file
 '
 
-test_expect_success 'diff --exit-code returns 0 for identical index vs HEAD' '
-	cd repo &&
-	c5=$(cat c5) &&
-	git diff --exit-code --cached "$c5"
-'
-
-test_expect_success 'diff-index --quiet --cached returns 0 when same' '
-	cd repo &&
-	c5=$(cat c5) &&
-	git diff-index --quiet --cached "$c5"
-'
-
-test_expect_success 'diff --stat same commit is empty' '
-	cd repo &&
-	c5=$(cat c5) &&
-	git diff --stat "$c5" "$c5" >out &&
-	test_must_be_empty out
-'
-
-test_expect_success 'diff-files --exit-code succeeds after re-staging' '
-	cd repo &&
-	git diff-files --exit-code
-'
-
-test_expect_success 'diff --quiet between parent and child returns 1' '
-	cd repo &&
-	c3=$(cat c3) && c4=$(cat c4) &&
-	test_must_fail git diff --quiet "$c3" "$c4"
-'
-
-test_expect_success 'diff --exit-code between parent and child returns 1' '
-	cd repo &&
-	c3=$(cat c3) && c4=$(cat c4) &&
-	test_must_fail git diff --exit-code "$c3" "$c4"
-'
-
-# ---------------------------------------------------------------------------
-# Additional retval edge cases
-# ---------------------------------------------------------------------------
-
-test_expect_success 'setup repo2 for more retval tests' '
-	git init repo2 &&
-	cd repo2 &&
-	git config user.name "Test User" &&
-	git config user.email "test@test.com" &&
-	echo alpha >x &&
-	echo beta >y &&
-	git add x y &&
-	git commit -m "initial" &&
-	echo gamma >x &&
-	git add x &&
-	git commit -m "modify x"
-'
-
-test_expect_success 'diff --exit-code HEAD^ HEAD -- x returns 1' '
-	cd repo2 &&
-	test_must_fail git diff --exit-code HEAD^ HEAD -- x
-'
-
-test_expect_success 'diff --exit-code HEAD^ HEAD -- y returns 0' '
-	cd repo2 &&
-	git diff --exit-code HEAD^ HEAD -- y
-'
-
-test_expect_success 'diff --quiet HEAD^ HEAD -- x returns 1' '
-	cd repo2 &&
-	test_must_fail git diff --quiet HEAD^ HEAD -- x
-'
-
-test_expect_success 'diff --quiet HEAD^ HEAD -- y returns 0' '
-	cd repo2 &&
-	git diff --quiet HEAD^ HEAD -- y
-'
-
-test_expect_success 'diff-index --cached --exit-code HEAD with staged new file' '
-	cd repo2 &&
-	echo newcontent >z &&
-	git add z &&
-	test_must_fail git diff-index --cached --exit-code HEAD
-'
-
-test_expect_success 'diff-index --quiet --cached HEAD with staged changes' '
-	cd repo2 &&
-	test_must_fail git diff-index --quiet --cached HEAD >out 2>/dev/null &&
-	test ! -s out
-'
-
-test_expect_success 'diff-files --exit-code with dirty worktree' '
-	cd repo2 &&
-	echo dirty >>x &&
-	test_must_fail git diff-files --exit-code
-'
-
-test_expect_success 'diff-files --quiet with dirty worktree' '
-	cd repo2 &&
-	test_must_fail git diff-files --quiet >out 2>/dev/null &&
-	test ! -s out
-'
-
-test_expect_success 'diff-files --exit-code after restoring' '
-	cd repo2 &&
-	git checkout -- x &&
-	git diff-files --exit-code
-'
+for option in --exit-code --quiet
+do
+	for submodule_format in diff log short
+	do
+		opts="$option --submodule=$submodule_format" &&
+		test_expect_success "git diff $opts returns 1 for dirty subrepo" "
+			test_expect_code 1 git diff $opts
+		"
+	done
+done
 
 test_done

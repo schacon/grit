@@ -5,7 +5,6 @@ test_description='CRLF renormalization'
 . ./test-lib.sh
 
 test_expect_success setup '
-	git init &&
 	git config core.autocrlf false &&
 	printf "LINEONE\nLINETWO\nLINETHREE\n" >LF.txt &&
 	printf "LINEONE\r\nLINETWO\r\nLINETHREE\r\n" >CRLF.txt &&
@@ -22,7 +21,7 @@ test_expect_success 'renormalize CRLF in repo' '
 	i/lf w/lf attr/text=auto LF.txt
 	i/lf w/mixed attr/text=auto CRLF_mix_LF.txt
 	EOF
-	git ls-files --eol -- "*.txt" >tmp &&
+	git ls-files --eol >tmp &&
 	sed -e "s/	/ /g" -e "s/  */ /g" tmp |
 	sort >actual &&
 	test_cmp expect actual

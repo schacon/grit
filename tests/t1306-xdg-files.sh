@@ -1,208 +1,195 @@
 #!/bin/sh
 #
-# Tests for XDG config paths: ~/.config/git/config, ignore, attributes.
-# Verifies grit respects the XDG Base Directory Specification.
+# Copyright (c) 2012 Valentin Duperray, Lucien Kong, Franck Jonas,
+#		     Thomas Nguy, Khoi Nguyen
+#		     Grenoble INP Ensimag
 #
-# Note: test-lib.sh sets HOME=$TRASH_DIRECTORY, so $HOME/.config/git/
-# is where XDG files land by default.
 
-test_description='grit XDG config file support'
+test_description='Compatibility with $XDG_CONFIG_HOME/git/ files'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# ---------------------------------------------------------------------------
-# XDG config (~/.config/git/config)
-# ---------------------------------------------------------------------------
-test_expect_success 'setup: create XDG config dir and repo' '
-	mkdir -p "$HOME/.config/git" &&
-	rm -f "$HOME/.gitconfig" &&
-	grit init xdg-repo
+test_expect_success 'read config: xdg file exists and ~/.gitconfig doesn'\''t' '
+	mkdir -p .config/git &&
+	echo "[alias]" >.config/git/config &&
+	echo "	myalias = !echo in_config" >>.config/git/config &&
+	echo in_config >expected &&
+	git myalias >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'XDG config is read when no ~/.gitconfig exists' '
-	rm -f "$HOME/.gitconfig" &&
-	printf "[user]\n\txdguser = XDG Test User\n" >"$HOME/.config/git/config" &&
-	cd xdg-repo &&
-	result=$(git config --get user.xdguser) &&
-	test "$result" = "XDG Test User"
+
+test_expect_success 'read config: xdg file exists and ~/.gitconfig exists' '
+	>.gitconfig &&
+	echo "[alias]" >.gitconfig &&
+	echo "	myalias = !echo in_gitconfig" >>.gitconfig &&
+	echo in_gitconfig >expected &&
+	git myalias >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'XDG config values appear in config list' '
-	rm -f "$HOME/.gitconfig" &&
-	cd xdg-repo &&
-	git config --list >out &&
-	grep "user.xdguser=XDG Test User" out
+
+test_expect_success 'read with --get: xdg file exists and ~/.gitconfig doesn'\''t' '
+	rm .gitconfig &&
+	echo "[user]" >.config/git/config &&
+	echo "	name = read_config" >>.config/git/config &&
+	echo read_config >expected &&
+	git config --get user.name >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'XDG config is overridden by ~/.gitconfig' '
-	printf "[user]\n\txdguser = Gitconfig User\n" >"$HOME/.gitconfig" &&
-	cd xdg-repo &&
-	result=$(git config --get user.xdguser) &&
-	test "$result" = "Gitconfig User"
+test_expect_success '"$XDG_CONFIG_HOME overrides $HOME/.config/git' '
+	mkdir -p "$HOME"/xdg/git &&
+	echo "[user]name = in_xdg" >"$HOME"/xdg/git/config &&
+	echo in_xdg >expected &&
+	XDG_CONFIG_HOME="$HOME"/xdg git config --get-all user.name >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'local config overrides both XDG and ~/.gitconfig' '
-	rm -f "$HOME/.gitconfig" &&
-	cd xdg-repo &&
-	git config user.xdguser "Local User" &&
-	result=$(git config --get user.xdguser) &&
-	test "$result" = "Local User" &&
-	git config --unset user.xdguser
+test_expect_success 'read with --get: xdg file exists and ~/.gitconfig exists' '
+	>.gitconfig &&
+	echo "[user]" >.gitconfig &&
+	echo "	name = read_gitconfig" >>.gitconfig &&
+	echo read_gitconfig >expected &&
+	git config --get user.name >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'XDG config with --global writes to ~/.gitconfig' '
-	rm -f "$HOME/.gitconfig" &&
-	cd xdg-repo &&
-	git config --global xdgtest.written "from-global-flag" &&
-	test -f "$HOME/.gitconfig" &&
-	grep "from-global-flag" "$HOME/.gitconfig"
+
+test_expect_success 'read with --list: xdg file exists and ~/.gitconfig doesn'\''t' '
+	rm .gitconfig &&
+	echo user.name=read_config >expected &&
+	git config --global --list >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'XDG_CONFIG_HOME overrides default XDG path' '
-	rm -f "$HOME/.gitconfig" &&
-	CUSTOM_XDG="$TRASH_DIRECTORY/custom-xdg" &&
-	mkdir -p "$CUSTOM_XDG/git" &&
-	printf "[user]\n\txdguser = Custom XDG\n" >"$CUSTOM_XDG/git/config" &&
-	cd xdg-repo &&
-	result=$(XDG_CONFIG_HOME="$CUSTOM_XDG" git config --get user.xdguser) &&
-	test "$result" = "Custom XDG"
+
+test_expect_success 'read with --list: xdg file exists and ~/.gitconfig exists' '
+	>.gitconfig &&
+	echo "[user]" >.gitconfig &&
+	echo "	name = read_gitconfig" >>.gitconfig &&
+	echo user.name=read_gitconfig >expected &&
+	git config --global --list >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'XDG config supports multiple sections' '
-	rm -f "$HOME/.gitconfig" &&
-	cat >"$HOME/.config/git/config" <<-\EOF &&
-	[core]
-		xdgcore = true
-	[alias]
-		xdgalias = status
-	[color]
-		ui = auto
-	EOF
-	cd xdg-repo &&
-	git config --get core.xdgcore >out &&
-	test "$(cat out)" = "true" &&
-	git config --get alias.xdgalias >out2 &&
-	test "$(cat out2)" = "status"
+
+test_expect_success 'Setup' '
+	git init git &&
+	cd git &&
+	echo foo >to_be_excluded
 '
 
-test_expect_success 'XDG config with boolean type' '
-	rm -f "$HOME/.gitconfig" &&
-	printf "[core]\n\txdgbool = yes\n" >"$HOME/.config/git/config" &&
-	cd xdg-repo &&
-	result=$(git config --bool --get core.xdgbool) &&
-	test "$result" = "true"
+
+test_expect_success 'Exclusion of a file in the XDG ignore file' '
+	mkdir -p "$HOME"/.config/git/ &&
+	echo to_be_excluded >"$HOME"/.config/git/ignore &&
+	test_must_fail git add to_be_excluded
 '
 
-test_expect_success 'XDG config with integer type' '
-	rm -f "$HOME/.gitconfig" &&
-	printf "[core]\n\txdgint = 42\n" >"$HOME/.config/git/config" &&
-	cd xdg-repo &&
-	result=$(git config --int --get core.xdgint) &&
-	test "$result" = "42"
+test_expect_success '$XDG_CONFIG_HOME overrides $HOME/.config/git/ignore' '
+	mkdir -p "$HOME"/xdg/git &&
+	echo content >excluded_by_xdg_only &&
+	echo excluded_by_xdg_only >"$HOME"/xdg/git/ignore &&
+	test_when_finished "git read-tree --empty" &&
+	(XDG_CONFIG_HOME="$HOME/xdg" &&
+	 export XDG_CONFIG_HOME &&
+	 git add to_be_excluded &&
+	 test_must_fail git add excluded_by_xdg_only
+	)
 '
 
-# ---------------------------------------------------------------------------
-# XDG ignore (~/.config/git/ignore) — via core.excludesFile
-# Uses check-ignore to verify patterns are loaded (grit status does not
-# yet read excludesFile, but check-ignore does).
-# ---------------------------------------------------------------------------
-test_expect_success 'setup excludesFile via XDG config' '
-	rm -f "$HOME/.gitconfig" &&
-	printf "*.xdg-ignored\n" >"$HOME/.config/git/ignore" &&
-	cd xdg-repo &&
-	git config core.excludesFile "$HOME/.config/git/ignore"
+test_expect_success 'Exclusion in both XDG and local ignore files' '
+	echo to_be_excluded >.gitignore &&
+	test_must_fail git add to_be_excluded
 '
 
-test_expect_success 'check-ignore reports excludesFile patterns' '
-	cd xdg-repo &&
-	echo "data" >test.xdg-ignored &&
-	git check-ignore test.xdg-ignored >out &&
-	grep "test.xdg-ignored" out &&
-	rm -f test.xdg-ignored
+
+test_expect_success 'Exclusion in a non-XDG global ignore file' '
+	rm .gitignore &&
+	echo >"$HOME"/.config/git/ignore &&
+	echo to_be_excluded >"$HOME"/my_gitignore &&
+	git config core.excludesfile "$HOME"/my_gitignore &&
+	test_must_fail git add to_be_excluded
 '
 
-test_expect_success 'check-ignore -v shows excludesFile source' '
-	cd xdg-repo &&
-	echo "data" >test.xdg-ignored &&
-	git check-ignore -v test.xdg-ignored >out &&
-	grep "ignore" out &&
-	grep "test.xdg-ignored" out &&
-	rm -f test.xdg-ignored
+test_expect_success 'Checking XDG ignore file when HOME is unset' '
+	(sane_unset HOME &&
+	 git config --unset core.excludesfile &&
+	 git ls-files --exclude-standard --ignored --others >actual) &&
+	test_must_be_empty actual
 '
 
-test_expect_success 'excludesFile negation pattern works' '
-	printf "*.log\n!important.log\n" >"$HOME/.config/git/ignore" &&
-	cd xdg-repo &&
-	echo "data" >debug.log &&
-	echo "data" >important.log &&
-	git check-ignore debug.log >out &&
-	grep "debug.log" out &&
-	test_must_fail git check-ignore important.log &&
-	rm -f debug.log important.log
+test_expect_success 'Checking attributes in the XDG attributes file' '
+	echo foo >f &&
+	git check-attr -a f >actual &&
+	test_line_count -eq 0 actual &&
+	echo "f attr_f" >"$HOME"/.config/git/attributes &&
+	echo "f: attr_f: set" >expected &&
+	git check-attr -a f >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'excludesFile directory pattern works' '
-	printf "build/\n" >"$HOME/.config/git/ignore" &&
-	cd xdg-repo &&
-	mkdir -p build &&
-	echo "artifact" >build/output.o &&
-	git check-ignore build/output.o >out &&
-	grep "build/output.o" out &&
-	rm -rf build
+test_expect_success 'Checking XDG attributes when HOME is unset' '
+	(sane_unset HOME &&
+	 git check-attr -a f >actual) &&
+	test_must_be_empty actual
 '
 
-test_expect_success 'excludesFile coexists with .gitignore' '
-	printf "*.excl-global\n" >"$HOME/.config/git/ignore" &&
-	cd xdg-repo &&
-	echo "*.excl-local" >.gitignore &&
-	echo "stuff" >a.excl-local &&
-	echo "stuff" >b.excl-global &&
-	git check-ignore a.excl-local >out1 &&
-	grep "a.excl-local" out1 &&
-	git check-ignore b.excl-global >out2 &&
-	grep "b.excl-global" out2 &&
-	rm -f a.excl-local b.excl-global .gitignore
+test_expect_success '$XDG_CONFIG_HOME overrides $HOME/.config/git/attributes' '
+	mkdir -p "$HOME"/xdg/git &&
+	echo "f attr_f=xdg" >"$HOME"/xdg/git/attributes &&
+	echo "f: attr_f: xdg" >expected &&
+	XDG_CONFIG_HOME="$HOME/xdg" git check-attr -a f >actual &&
+	test_cmp expected actual
 '
 
-# ---------------------------------------------------------------------------
-# XDG attributes (~/.config/git/attributes)
-# ---------------------------------------------------------------------------
-test_expect_success 'XDG attributes file does not crash grit' '
-	printf "*.bin binary\n" >"$HOME/.config/git/attributes" &&
-	cd xdg-repo &&
-	echo "binary data" >test.bin &&
-	git add test.bin 2>err &&
-	git status >out 2>&1 &&
-	git reset HEAD -- test.bin 2>/dev/null || true &&
-	rm -f test.bin
+test_expect_success 'Checking attributes in both XDG and local attributes files' '
+	echo "f -attr_f" >.gitattributes &&
+	echo "f: attr_f: unset" >expected &&
+	git check-attr -a f >actual &&
+	test_cmp expected actual
 '
 
-# ---------------------------------------------------------------------------
-# Edge cases
-# ---------------------------------------------------------------------------
-test_expect_success 'missing XDG dir is not an error' '
-	EMPTY_HOME="$TRASH_DIRECTORY/empty-home" &&
-	mkdir -p "$EMPTY_HOME" &&
-	cd xdg-repo &&
-	HOME="$EMPTY_HOME" git config --get nonexistent.key >out 2>&1 || true
+
+test_expect_success 'Checking attributes in a non-XDG global attributes file' '
+	rm -f .gitattributes &&
+	echo "f attr_f=test" >"$HOME"/my_gitattributes &&
+	git config core.attributesfile "$HOME"/my_gitattributes &&
+	echo "f: attr_f: test" >expected &&
+	git check-attr -a f >actual &&
+	test_cmp expected actual
 '
 
-test_expect_success 'XDG config with show-origin in list mode' '
-	rm -f "$HOME/.gitconfig" &&
-	printf "[user]\n\txdguser = Origin Test\n" >"$HOME/.config/git/config" &&
-	cd xdg-repo &&
-	git config --show-origin --list >out 2>&1 &&
-	grep "xdguser" out &&
-	grep "config" out
+
+test_expect_success 'write: xdg file exists and ~/.gitconfig doesn'\''t' '
+	mkdir -p "$HOME"/.config/git &&
+	>"$HOME"/.config/git/config &&
+	rm -f "$HOME"/.gitconfig &&
+	git config --global user.name "write_config" &&
+	echo "[user]" >expected &&
+	echo "	name = write_config" >>expected &&
+	test_cmp expected "$HOME"/.config/git/config
 '
 
-test_expect_success 'XDG config with show-scope in list mode' '
-	rm -f "$HOME/.gitconfig" &&
-	printf "[user]\n\txdguser = Scope Test\n" >"$HOME/.config/git/config" &&
-	cd xdg-repo &&
-	git config --show-scope --list >out 2>&1 &&
-	grep "xdguser" out
+
+test_expect_success 'write: xdg file exists and ~/.gitconfig exists' '
+	>"$HOME"/.gitconfig &&
+	git config --global user.name "write_gitconfig" &&
+	echo "[user]" >expected &&
+	echo "	name = write_gitconfig" >>expected &&
+	test_cmp expected "$HOME"/.gitconfig
 '
+
+
+test_expect_success 'write: ~/.config/git/ exists and config file doesn'\''t' '
+	rm -f "$HOME"/.gitconfig &&
+	rm -f "$HOME"/.config/git/config &&
+	git config --global user.name "write_gitconfig" &&
+	echo "[user]" >expected &&
+	echo "	name = write_gitconfig" >>expected &&
+	test_cmp expected "$HOME"/.gitconfig
+'
+
 
 test_done

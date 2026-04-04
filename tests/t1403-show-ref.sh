@@ -1,38 +1,22 @@
 #!/bin/sh
-# Ported from git/t/t1403-show-ref.sh (harness-compatible subset).
 
 test_description='show-ref'
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- setup (mirrors upstream but uses master as default branch) ---
-
-test_expect_success 'setup' '
-	grit init repo &&
-	cd repo &&
-	git config user.email "test@test.com" &&
-	git config user.name "Test User" &&
-	tree=$(git write-tree) &&
-	commit_A=$(echo A | git commit-tree "$tree") &&
-	grit update-ref refs/heads/master "$commit_A" &&
-	grit tag -a -m "tag A" A "$commit_A" &&
-	git symbolic-ref HEAD refs/heads/side &&
-	commit_B=$(echo B | git commit-tree "$tree" -p "$commit_A") &&
-	grit update-ref refs/heads/side "$commit_B" &&
-	grit tag -a -m "tag B" B "$commit_B" &&
-	git symbolic-ref HEAD refs/heads/master &&
-	commit_C=$(echo C | git commit-tree "$tree" -p "$commit_A") &&
-	grit update-ref refs/heads/master "$commit_C" &&
-	grit tag C "$commit_C" &&
-	git branch B "$commit_A"
+test_expect_success setup '
+	test_commit --annotate A &&
+	git checkout -b side &&
+	test_commit --annotate B &&
+	git checkout main &&
+	test_commit C &&
+	git branch B A^0
 '
 
-# --- show-ref (pattern matching) ---
-
 test_expect_success 'show-ref' '
-	cd repo &&
-	echo "$(git rev-parse refs/tags/A) refs/tags/A" >expect &&
+	echo $(git rev-parse refs/tags/A) refs/tags/A >expect &&
 
 	git show-ref A >actual &&
 	test_cmp expect actual &&
@@ -47,10 +31,7 @@ test_expect_success 'show-ref' '
 	test_must_be_empty actual
 '
 
-# --- show-ref -q ---
-
 test_expect_success 'show-ref -q' '
-	cd repo &&
 	git show-ref -q A >actual &&
 	test_must_be_empty actual &&
 
@@ -64,11 +45,8 @@ test_expect_success 'show-ref -q' '
 	test_must_be_empty actual
 '
 
-# --- show-ref --verify ---
-
 test_expect_success 'show-ref --verify' '
-	cd repo &&
-	echo "$(git rev-parse refs/tags/A) refs/tags/A" >expect &&
+	echo $(git rev-parse refs/tags/A) refs/tags/A >expect &&
 
 	git show-ref --verify refs/tags/A >actual &&
 	test_cmp expect actual &&
@@ -83,10 +61,7 @@ test_expect_success 'show-ref --verify' '
 	test_must_be_empty actual
 '
 
-# --- show-ref --verify -q ---
-
 test_expect_success 'show-ref --verify -q' '
-	cd repo &&
 	git show-ref --verify -q refs/tags/A >actual &&
 	test_must_be_empty actual &&
 
@@ -100,14 +75,11 @@ test_expect_success 'show-ref --verify -q' '
 	test_must_be_empty actual
 '
 
-# --- show-ref -d (dereference annotated tags) ---
-
 test_expect_success 'show-ref -d' '
-	cd repo &&
 	{
-		echo "$(git rev-parse refs/tags/A) refs/tags/A" &&
-		echo "$(git rev-parse "refs/tags/A^{}") refs/tags/A^{}" &&
-		echo "$(git rev-parse refs/tags/C) refs/tags/C"
+		echo $(git rev-parse refs/tags/A) refs/tags/A &&
+		echo $(git rev-parse refs/tags/A^0) "refs/tags/A^{}" &&
+		echo $(git rev-parse refs/tags/C) refs/tags/C
 	} >expect &&
 	git show-ref -d A C >actual &&
 	test_cmp expect actual &&
@@ -121,23 +93,23 @@ test_expect_success 'show-ref -d' '
 	git show-ref --verify -d refs/tags/A refs/tags/C >actual &&
 	test_cmp expect actual &&
 
-	echo "$(git rev-parse refs/heads/master) refs/heads/master" >expect &&
-	git show-ref -d master >actual &&
+	echo $(git rev-parse refs/heads/main) refs/heads/main >expect &&
+	git show-ref -d main >actual &&
 	test_cmp expect actual &&
 
-	git show-ref -d heads/master >actual &&
+	git show-ref -d heads/main >actual &&
 	test_cmp expect actual &&
 
-	git show-ref -d refs/heads/master >actual &&
+	git show-ref -d refs/heads/main >actual &&
 	test_cmp expect actual &&
 
-	git show-ref -d --verify refs/heads/master >actual &&
+	git show-ref -d --verify refs/heads/main >actual &&
 	test_cmp expect actual &&
 
-	test_must_fail git show-ref -d --verify master >actual &&
+	test_must_fail git show-ref -d --verify main >actual &&
 	test_must_be_empty actual &&
 
-	test_must_fail git show-ref -d --verify heads/master >actual &&
+	test_must_fail git show-ref -d --verify heads/main >actual &&
 	test_must_be_empty actual &&
 
 	test_must_fail git show-ref --verify -d A C >actual &&
@@ -145,62 +117,63 @@ test_expect_success 'show-ref -d' '
 
 	test_must_fail git show-ref --verify -d tags/A tags/C >actual &&
 	test_must_be_empty actual
+
 '
 
-# --- show-ref --branches ---
-
-test_expect_success 'show-ref --branches' '
-	cd repo &&
-	for branch in B master side
+test_expect_success 'show-ref --branches, --tags, --head, pattern' '
+	for branch in B main side
 	do
-		echo "$(git rev-parse refs/heads/$branch) refs/heads/$branch" || return 1
-	done >expect &&
+		echo $(git rev-parse refs/heads/$branch) refs/heads/$branch || return 1
+	done >expect.branches &&
 	git show-ref --branches >actual &&
-	test_cmp expect actual
-'
+	test_cmp expect.branches actual &&
 
-# --- show-ref --tags ---
-
-test_expect_success 'show-ref --tags' '
-	cd repo &&
 	for tag in A B C
 	do
-		echo "$(git rev-parse refs/tags/$tag) refs/tags/$tag" || return 1
-	done >expect &&
+		echo $(git rev-parse refs/tags/$tag) refs/tags/$tag || return 1
+	done >expect.tags &&
 	git show-ref --tags >actual &&
-	test_cmp expect actual
-'
+	test_cmp expect.tags actual &&
 
-# --- show-ref --head with pattern ---
+	cat expect.branches expect.tags >expect &&
+	git show-ref --branches --tags >actual &&
+	test_cmp expect actual &&
 
-test_expect_success 'show-ref --head with pattern' '
-	cd repo &&
 	{
-		echo "$(git rev-parse refs/heads/B) refs/heads/B" &&
-		echo "$(git rev-parse refs/tags/B) refs/tags/B"
+		echo $(git rev-parse HEAD) HEAD &&
+		cat expect.branches expect.tags
+	} >expect &&
+	git show-ref --branches --tags --head >actual &&
+	test_cmp expect actual &&
+
+	{
+		echo $(git rev-parse HEAD) HEAD &&
+		echo $(git rev-parse refs/heads/B) refs/heads/B &&
+		echo $(git rev-parse refs/tags/B) refs/tags/B
 	} >expect &&
 	git show-ref --head B >actual &&
-	test_cmp expect actual
-'
+	test_cmp expect actual &&
 
-# --- show-ref --head -d with pattern ---
-
-test_expect_success 'show-ref --head -d with pattern' '
-	cd repo &&
 	{
-		echo "$(git rev-parse refs/heads/B) refs/heads/B" &&
-		echo "$(git rev-parse refs/tags/B) refs/tags/B" &&
-		echo "$(git rev-parse "refs/tags/B^{}") refs/tags/B^{}"
+		echo $(git rev-parse HEAD) HEAD &&
+		echo $(git rev-parse refs/heads/B) refs/heads/B &&
+		echo $(git rev-parse refs/tags/B) refs/tags/B &&
+		echo $(git rev-parse refs/tags/B^0) "refs/tags/B^{}"
 	} >expect &&
 	git show-ref --head -d B >actual &&
 	test_cmp expect actual
 '
 
-# --- show-ref --verify HEAD ---
+test_expect_success 'show-ref --heads is deprecated and hidden' '
+	test_expect_code 129 git show-ref -h >short-help &&
+	test_grep ! -e --heads short-help &&
+	git show-ref --heads >actual 2>warning &&
+	test_grep ! deprecated warning &&
+	test_cmp expect.branches actual
+'
 
 test_expect_success 'show-ref --verify HEAD' '
-	cd repo &&
-	echo "$(git rev-parse HEAD) HEAD" >expect &&
+	echo $(git rev-parse HEAD) HEAD >expect &&
 	git show-ref --verify HEAD >actual &&
 	test_cmp expect actual &&
 
@@ -208,216 +181,51 @@ test_expect_success 'show-ref --verify HEAD' '
 	test_must_be_empty actual
 '
 
-# --- show-ref --verify pseudorefs ---
-
 test_expect_success 'show-ref --verify pseudorefs' '
-	cd repo &&
-	oid=$(git rev-parse HEAD) &&
-	git update-ref CHERRY_PICK_HEAD "$oid" &&
+	git update-ref CHERRY_PICK_HEAD HEAD $ZERO_OID &&
+	test_when_finished "git update-ref -d CHERRY_PICK_HEAD" &&
 	git show-ref -s --verify HEAD >actual &&
 	git show-ref -s --verify CHERRY_PICK_HEAD >expect &&
 	test_cmp actual expect
 '
 
-# --- show-ref --verify with dangling ref ---
-
 test_expect_success 'show-ref --verify with dangling ref' '
-	cd repo &&
-	grit init dangling &&
-	cd dangling &&
-	git config user.email "test@test.com" &&
-	git config user.name "Test User" &&
-	tree=$(git write-tree) &&
-	commit=$(echo dangling | git commit-tree "$tree") &&
-	grit update-ref refs/heads/master "$commit" &&
-	grit tag dangling "$commit" &&
-	sha=$(git rev-parse refs/tags/dangling) &&
-	file=$(echo "$sha" | sed "s#..#.git/objects/&/#") &&
-	test_path_is_file "$file" &&
-	rm -f "$file" &&
-	test_must_fail git show-ref --verify refs/tags/dangling
-'
+	sha1_file() {
+		echo "$*" | sed "s#..#.git/objects/&/#"
+	} &&
 
-# --- show-ref sub-modes are mutually exclusive ---
+	remove_object() {
+		file=$(sha1_file "$*") &&
+		test_path_is_file "$file" &&
+		rm -f "$file"
+	} &&
+
+	test_when_finished "rm -rf dangling" &&
+	(
+		git init dangling &&
+		cd dangling &&
+		test_commit dangling &&
+		sha=$(git rev-parse refs/tags/dangling) &&
+		remove_object $sha &&
+		test_must_fail git show-ref --verify refs/tags/dangling
+	)
+'
 
 test_expect_success 'show-ref sub-modes are mutually exclusive' '
-	cd repo &&
+	test_must_fail git show-ref --verify --exclude-existing 2>err &&
+	grep "verify" err &&
+	grep "exclude-existing" err &&
+	grep "cannot be used together" err &&
+
 	test_must_fail git show-ref --verify --exists 2>err &&
+	grep "verify" err &&
+	grep "exists" err &&
+	grep "cannot be used together" err &&
+
+	test_must_fail git show-ref --exclude-existing --exists 2>err &&
+	grep "exclude-existing" err &&
+	grep "exists" err &&
 	grep "cannot be used together" err
-'
-
-# --- show-ref --hash (various forms) ---
-
-test_expect_success 'show-ref --hash only prints oid' '
-	cd repo &&
-	git show-ref --hash refs/heads/master >actual &&
-	test_path_is_file actual &&
-	test_must_fail grep "refs/" actual
-'
-
-test_expect_success 'show-ref --hash with exact ref prints only oid' '
-	cd repo &&
-	oid=$(git rev-parse refs/heads/master) &&
-	echo "$oid" >expect &&
-	git show-ref --hash refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'show-ref --verify --hash prints only oid' '
-	cd repo &&
-	oid=$(git rev-parse refs/heads/master) &&
-	echo "$oid" >expect &&
-	git show-ref --verify --hash refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-# --- show-ref multiple patterns ---
-
-test_expect_success 'show-ref multiple patterns' '
-	cd repo &&
-	{
-		echo "$(git rev-parse refs/heads/master) refs/heads/master" &&
-		echo "$(git rev-parse refs/tags/A) refs/tags/A"
-	} >expect &&
-	git show-ref master A >actual &&
-	test_cmp expect actual
-'
-
-# --- show-ref --head without pattern shows HEAD first ---
-
-test_expect_success 'show-ref --head without pattern shows HEAD first' '
-	cd repo &&
-	git show-ref --head >actual &&
-	head -1 actual >first &&
-	grep "^.* HEAD$" first
-'
-
-# --- show-ref -d with non-tag (commit) ref does NOT add ^{} ---
-
-test_expect_success 'show-ref -d with non-tag commit ref' '
-	cd repo &&
-	echo "$(git rev-parse refs/heads/master) refs/heads/master" >expect &&
-	git show-ref -d master >actual &&
-	test_cmp expect actual
-'
-
-# --- show-ref -d peels annotated tags ---
-
-test_expect_success 'show-ref -d peels annotated tags' '
-	cd repo &&
-	tag_oid=$(git rev-parse refs/tags/A) &&
-	peeled_oid=$(git rev-parse "refs/tags/A^{}") &&
-	{
-		echo "$tag_oid refs/tags/A" &&
-		echo "$peeled_oid refs/tags/A^{}"
-	} >expect &&
-	git show-ref -d refs/tags/A >actual &&
-	test_cmp expect actual
-'
-
-# --- show-ref -d does not peel lightweight tags ---
-
-test_expect_success 'show-ref -d does not peel lightweight tags' '
-	cd repo &&
-	echo "$(git rev-parse refs/tags/C) refs/tags/C" >expect &&
-	git show-ref -d refs/tags/C >actual &&
-	test_cmp expect actual
-'
-
-# --- show-ref -d --verify with multiple full refs ---
-
-test_expect_success 'show-ref -d --verify with multiple full refs' '
-	cd repo &&
-	{
-		echo "$(git rev-parse refs/tags/A) refs/tags/A" &&
-		echo "$(git rev-parse "refs/tags/A^{}") refs/tags/A^{}" &&
-		echo "$(git rev-parse refs/tags/C) refs/tags/C"
-	} >expect &&
-	git show-ref --verify -d refs/tags/A refs/tags/C >actual &&
-	test_cmp expect actual
-'
-
-# --- show-ref --branches excludes tags ---
-
-test_expect_success 'show-ref --branches excludes tags' '
-	cd repo &&
-	git show-ref --branches >actual &&
-	test_must_fail grep "refs/tags/" actual
-'
-
-# --- show-ref --tags excludes branches ---
-
-test_expect_success 'show-ref --tags excludes branches' '
-	cd repo &&
-	git show-ref --tags >actual &&
-	test_must_fail grep "refs/heads/" actual
-'
-
-# --- show-ref --head with --verify ---
-
-test_expect_success 'show-ref --verify HEAD with -q' '
-	cd repo &&
-	git show-ref --verify -q HEAD >actual &&
-	test_must_be_empty actual
-'
-
-# --- show-ref with no matching pattern returns non-zero ---
-
-test_expect_success 'show-ref returns non-zero for no match' '
-	cd repo &&
-	test_must_fail git show-ref does-not-exist-anywhere >actual &&
-	test_must_be_empty actual
-'
-
-# --- show-ref -q pattern match suppresses output ---
-
-test_expect_success 'show-ref -q pattern match suppresses output' '
-	cd repo &&
-	git show-ref -q master >actual &&
-	test_must_be_empty actual &&
-	git show-ref -q refs/heads/master >actual &&
-	test_must_be_empty actual
-'
-
-# --- show-ref -q missing ref fails with empty output ---
-
-test_expect_success 'show-ref -q missing ref fails with empty output' '
-	cd repo &&
-	test_must_fail git show-ref -q does-not-exist >actual &&
-	test_must_be_empty actual
-'
-
-# --- show-ref --verify fails for non-full-path with empty output ---
-
-test_expect_success 'show-ref --verify fails for non-full-path with empty output' '
-	cd repo &&
-	test_must_fail git show-ref --verify master >actual &&
-	test_must_be_empty actual
-'
-
-# --- show-ref -d with multiple patterns (annotated + lightweight) ---
-
-test_expect_success 'show-ref -d with annotated and lightweight tags' '
-	cd repo &&
-	{
-		echo "$(git rev-parse refs/tags/A) refs/tags/A" &&
-		echo "$(git rev-parse "refs/tags/A^{}") refs/tags/A^{}" &&
-		echo "$(git rev-parse refs/tags/C) refs/tags/C"
-	} >expect &&
-	git show-ref -d A C >actual &&
-	test_cmp expect actual
-'
-
-# --- show-ref --exists ---
-
-test_expect_success 'show-ref --exists with existing ref' '
-	cd repo &&
-	git show-ref --exists refs/heads/master
-'
-
-test_expect_success 'show-ref --exists with missing ref' '
-	cd repo &&
-	test_must_fail git show-ref --exists refs/heads/does-not-exist
 '
 
 test_done

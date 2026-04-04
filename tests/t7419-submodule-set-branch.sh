@@ -1,41 +1,130 @@
 #!/bin/sh
 #
-# Ported from git/t/t7419-submodule-set-branch.sh
-# Tests for 'git submodule set-branch'
-# Note: grit does not implement 'submodule set-branch' yet
+# Copyright (c) 2019 Denton Liu
 #
 
-test_description='Test submodule set-branch'
+test_description='Test submodules set-branch subcommand
 
-cd "$(dirname "$0")" || exit 1
+This test verifies that the set-branch subcommand of git-submodule is working
+as expected.
+'
+
+TEST_NO_CREATE_REPO=1
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-REAL_GIT="/usr/bin/git"
-
 test_expect_success 'setup' '
-	"$REAL_GIT" config --global protocol.file.allow always &&
-	"$REAL_GIT" init sub &&
-	(
-		cd sub &&
-		"$REAL_GIT" config user.email "test@example.com" &&
-		"$REAL_GIT" config user.name "Test User" &&
-		echo sub >file &&
-		"$REAL_GIT" add file &&
-		"$REAL_GIT" commit -m "sub initial"
+	git config --global protocol.file.allow always
+'
+
+test_expect_success 'submodule config cache setup' '
+	mkdir submodule &&
+	(cd submodule &&
+		git init &&
+		echo a >a &&
+		git add . &&
+		git commit -ma &&
+		git checkout -b topic &&
+		echo b >a &&
+		git add . &&
+		git commit -mb &&
+		git checkout main
 	) &&
-	"$REAL_GIT" init super &&
-	(
-		cd super &&
-		"$REAL_GIT" config user.email "test@example.com" &&
-		"$REAL_GIT" config user.name "Test User" &&
-		"$REAL_GIT" submodule add "$TRASH_DIRECTORY/sub" sub &&
-		"$REAL_GIT" commit -m "add submodule"
+	mkdir super &&
+	(cd super &&
+		git init &&
+		git submodule add ../submodule &&
+		git submodule add --name thename ../submodule thepath &&
+		git commit -m "add submodules"
 	)
 '
 
-test_expect_success 'submodule set-branch' '
-	cd super &&
-	git submodule set-branch --branch main sub
+test_expect_success 'ensure submodule branch is unset' '
+	(cd super &&
+		test_cmp_config "" -f .gitmodules --default "" submodule.submodule.branch
+	)
+'
+
+test_expect_success 'test submodule set-branch --branch' '
+	(cd super &&
+		git submodule set-branch --branch topic submodule &&
+		test_cmp_config topic -f .gitmodules submodule.submodule.branch &&
+		git submodule update --remote &&
+		cat <<-\EOF >expect &&
+		b
+		EOF
+		git -C submodule show -s --pretty=%s >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'test submodule set-branch --default' '
+	(cd super &&
+		git submodule set-branch --default submodule &&
+		test_cmp_config "" -f .gitmodules --default "" submodule.submodule.branch &&
+		git submodule update --remote &&
+		cat <<-\EOF >expect &&
+		a
+		EOF
+		git -C submodule show -s --pretty=%s >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'test submodule set-branch -b' '
+	(cd super &&
+		git submodule set-branch -b topic submodule &&
+		test_cmp_config topic -f .gitmodules submodule.submodule.branch &&
+		git submodule update --remote &&
+		cat <<-\EOF >expect &&
+		b
+		EOF
+		git -C submodule show -s --pretty=%s >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'test submodule set-branch -d' '
+	(cd super &&
+		git submodule set-branch -d submodule &&
+		test_cmp_config "" -f .gitmodules --default "" submodule.submodule.branch &&
+		git submodule update --remote &&
+		cat <<-\EOF >expect &&
+		a
+		EOF
+		git -C submodule show -s --pretty=%s >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'test submodule set-branch --branch with named submodule' '
+	(cd super &&
+		git submodule set-branch --branch topic thepath &&
+		test_cmp_config topic -f .gitmodules submodule.thename.branch &&
+		test_cmp_config "" -f .gitmodules --default "" submodule.thepath.branch &&
+		git submodule update --remote &&
+		cat <<-\EOF >expect &&
+		b
+		EOF
+		git -C thepath show -s --pretty=%s >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'test submodule set-branch --default with named submodule' '
+	(cd super &&
+		git submodule set-branch --default thepath &&
+		test_cmp_config "" -f .gitmodules --default "" submodule.thename.branch &&
+		git submodule update --remote &&
+		cat <<-\EOF >expect &&
+		a
+		EOF
+		git -C thepath show -s --pretty=%s >actual &&
+		test_cmp expect actual
+	)
 '
 
 test_done

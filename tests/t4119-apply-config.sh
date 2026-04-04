@@ -3,86 +3,178 @@
 # Copyright (c) 2007 Junio C Hamano
 #
 
-test_description='git apply and configuration'
+test_description='git apply --whitespace=strip and configuration file.
 
-cd "$(dirname "$0")" || exit 1
+'
+
+
 . ./test-lib.sh
 
-test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
-
-	echo A >file1 &&
-	git add file1 &&
-	git commit -q -m initial
+test_expect_success setup '
+	mkdir sub &&
+	echo A >sub/file1 &&
+	cp sub/file1 saved &&
+	git add sub/file1 &&
+	echo "B " >sub/file1 &&
+	git diff >patch.file
 '
 
-test_expect_success 'create and apply basic patch' '
-	echo A >file1 &&
-	cat >patch.file <<-\EOF &&
-	diff --git a/file1 b/file1
-	--- a/file1
-	+++ b/file1
-	@@ -1 +1 @@
-	-A
-	+B
-	EOF
+# Also handcraft GNU diff output; note this has trailing whitespace.
+tr '_' ' ' >gpatch.file <<\EOF &&
+--- file1	2007-02-21 01:04:24.000000000 -0800
++++ file1+	2007-02-21 01:07:44.000000000 -0800
+@@ -1 +1 @@
+-A
++B_
+EOF
+
+sed -e 's|file1|sub/&|' gpatch.file >gpatch-sub.file &&
+sed -e '
+	/^--- /s|file1|a/sub/&|
+	/^+++ /s|file1|b/sub/&|
+' gpatch.file >gpatch-ab-sub.file &&
+
+check_result () {
+	if grep " " "$1"
+	then
+		echo "Eh?"
+		false
+	elif grep B "$1"
+	then
+		echo Happy
+	else
+		echo "Huh?"
+		false
+	fi
+}
+
+test_expect_success 'apply --whitespace=strip' '
+
+	rm -f sub/file1 &&
+	cp saved sub/file1 &&
+	git update-index --refresh &&
+
+	git apply --whitespace=strip patch.file &&
+	check_result sub/file1
+'
+
+test_expect_success 'apply --whitespace=strip from config' '
+
+	rm -f sub/file1 &&
+	cp saved sub/file1 &&
+	git update-index --refresh &&
+
+	git config apply.whitespace strip &&
 	git apply patch.file &&
-	grep B file1
+	check_result sub/file1
 '
 
-test_expect_success 'apply --check works' '
-	echo A >file1 &&
-	git apply --check patch.file
+D=$(pwd)
+
+test_expect_success 'apply --whitespace=strip in subdir' '
+
+	cd "$D" &&
+	git config --unset-all apply.whitespace &&
+	rm -f sub/file1 &&
+	cp saved sub/file1 &&
+	git update-index --refresh &&
+
+	cd sub &&
+	git apply --whitespace=strip ../patch.file &&
+	check_result file1
 '
 
-test_expect_success 'apply --stat shows statistics' '
-	git apply --stat patch.file >stat_output &&
-	grep "file1" stat_output
+test_expect_success 'apply --whitespace=strip from config in subdir' '
+
+	cd "$D" &&
+	git config apply.whitespace strip &&
+	rm -f sub/file1 &&
+	cp saved sub/file1 &&
+	git update-index --refresh &&
+
+	cd sub &&
+	git apply ../patch.file &&
+	check_result file1
 '
 
-test_expect_success 'apply --numstat shows machine-readable stats' '
-	git apply --numstat patch.file >numstat_output &&
-	grep "file1" numstat_output
+test_expect_success 'same in subdir but with traditional patch input' '
+
+	cd "$D" &&
+	git config apply.whitespace strip &&
+	rm -f sub/file1 &&
+	cp saved sub/file1 &&
+	git update-index --refresh &&
+
+	cd sub &&
+	git apply ../gpatch.file &&
+	check_result file1
 '
 
-test_expect_success 'apply with -p1 option (default)' '
-	echo A >file1 &&
-	git apply -p1 patch.file &&
-	grep B file1
+test_expect_success 'same but with traditional patch input of depth 1' '
+
+	cd "$D" &&
+	git config apply.whitespace strip &&
+	rm -f sub/file1 &&
+	cp saved sub/file1 &&
+	git update-index --refresh &&
+
+	cd sub &&
+	git apply ../gpatch-sub.file &&
+	check_result file1
 '
 
-test_expect_success 'apply --summary on extended header' '
-	cat >mode-patch <<-\EOF &&
-	diff --git a/file1 b/file1
-	old mode 100644
-	new mode 100755
+test_expect_success 'same but with traditional patch input of depth 2' '
+
+	cd "$D" &&
+	git config apply.whitespace strip &&
+	rm -f sub/file1 &&
+	cp saved sub/file1 &&
+	git update-index --refresh &&
+
+	cd sub &&
+	git apply ../gpatch-ab-sub.file &&
+	check_result file1
+'
+
+test_expect_success 'same but with traditional patch input of depth 1' '
+
+	cd "$D" &&
+	git config apply.whitespace strip &&
+	rm -f sub/file1 &&
+	cp saved sub/file1 &&
+	git update-index --refresh &&
+
+	git apply -p0 gpatch-sub.file &&
+	check_result sub/file1
+'
+
+test_expect_success 'same but with traditional patch input of depth 2' '
+
+	cd "$D" &&
+	git config apply.whitespace strip &&
+	rm -f sub/file1 &&
+	cp saved sub/file1 &&
+	git update-index --refresh &&
+
+	git apply gpatch-ab-sub.file &&
+	check_result sub/file1
+'
+
+test_expect_success 'in subdir with traditional patch input' '
+	cd "$D" &&
+	git config apply.whitespace strip &&
+	cat >.gitattributes <<-EOF &&
+	/* whitespace=blank-at-eol
+	sub/* whitespace=-blank-at-eol
 	EOF
-	git apply --summary mode-patch >summary &&
-	grep "mode change" summary
-'
+	rm -f sub/file1 &&
+	cp saved sub/file1 &&
+	git update-index --refresh &&
 
-test_expect_success 'apply --reverse undoes a change' '
-	echo B >file1 &&
-	git apply -R patch.file &&
-	grep A file1
-'
-
-test_expect_success 'apply multiple patches sequentially' '
-	echo A >file1 &&
-	git apply patch.file &&
-	grep B file1 &&
-	cat >patch2.file <<-\EOF &&
-	diff --git a/file1 b/file1
-	--- a/file1
-	+++ b/file1
-	@@ -1 +1 @@
-	-B
-	+C
-	EOF
-	git apply patch2.file &&
-	grep C file1
+	cd sub &&
+	git apply ../gpatch.file &&
+	echo "B " >expect &&
+	test_cmp expect file1
 '
 
 test_done

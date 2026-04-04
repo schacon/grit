@@ -5,7 +5,6 @@ test_description=clone
 . ./test-lib.sh
 
 test_expect_success setup '
-	git init &&
 	echo "#!/bin/sh" > not_ssh &&
 	echo "echo \"\$*\" > not_ssh_output" >> not_ssh &&
 	echo "exit 1" >> not_ssh &&

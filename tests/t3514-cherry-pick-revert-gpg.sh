@@ -1,72 +1,86 @@
 #!/bin/sh
+#
+# Copyright (c) 2020 Doan Tran Cong Danh
+#
 
-test_description='test cherry-pick and revert with signoff'
+test_description='test {cherry-pick,revert} --[no-]gpg-sign'
 
 . ./test-lib.sh
+. "$TEST_DIRECTORY/lib-gpg.sh"
+
+if ! test_have_prereq GPG
+then
+	skip_all='skip all test {cherry-pick,revert} --[no-]gpg-sign, gpg not available'
+	test_done
+fi
+
+test_gpg_sign () {
+	local must_fail= will=will fake_editor=
+	if test "x$1" = "x!"
+	then
+		must_fail=test_must_fail
+		will="won't"
+		shift
+	fi
+	conf=$1
+	cmd=$2
+	cmit=$3
+	shift 3
+	test_expect_success "$cmd $* $cmit with commit.gpgsign=$conf $will sign commit" "
+		git reset --hard tip &&
+		git config commit.gpgsign $conf &&
+		git $cmd $* $cmit &&
+		git rev-list tip.. >rev-list &&
+		$must_fail git verify-commit \$(cat rev-list)
+	"
+}
 
 test_expect_success 'setup' '
-	git init -q &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com" &&
-
-	echo one >file &&
-	git add file &&
-	test_tick &&
-	git commit -m one &&
-	git tag one &&
-
-	echo two >file &&
-	git add file &&
-	test_tick &&
-	git commit -m two &&
-	git tag two &&
-
-	echo three >file &&
-	git add file &&
-	test_tick &&
-	git commit -m three &&
-	git tag three &&
-
-	echo tip >file &&
-	git add file &&
-	test_tick &&
-	git commit -m tip &&
-	git tag tip
+	test_commit one &&
+	git switch -c side &&
+	test_commit side1 &&
+	test_commit side2 &&
+	git switch - &&
+	test_commit two &&
+	test_commit three &&
+	test_commit tip
 '
 
-test_expect_success 'cherry-pick with --signoff adds Signed-off-by' '
-	git checkout one &&
-	echo new-content >newfile &&
-	git add newfile &&
-	test_tick &&
-	git commit -m "new file" &&
-	git tag new-file &&
+test_gpg_sign ! false cherry-pick   side
+test_gpg_sign ! false cherry-pick ..side
+test_gpg_sign   true  cherry-pick   side
+test_gpg_sign   true  cherry-pick ..side
+test_gpg_sign ! true  cherry-pick   side --no-gpg-sign
+test_gpg_sign ! true  cherry-pick ..side --no-gpg-sign
+test_gpg_sign ! true  cherry-pick   side --gpg-sign --no-gpg-sign
+test_gpg_sign ! true  cherry-pick ..side --gpg-sign --no-gpg-sign
+test_gpg_sign   false cherry-pick   side --no-gpg-sign --gpg-sign
+test_gpg_sign   false cherry-pick ..side --no-gpg-sign --gpg-sign
+test_gpg_sign   true  cherry-pick   side --edit
+test_gpg_sign   true  cherry-pick ..side --edit
+test_gpg_sign ! true  cherry-pick   side --edit --no-gpg-sign
+test_gpg_sign ! true  cherry-pick ..side --edit --no-gpg-sign
+test_gpg_sign ! true  cherry-pick   side --edit --gpg-sign --no-gpg-sign
+test_gpg_sign ! true  cherry-pick ..side --edit --gpg-sign --no-gpg-sign
+test_gpg_sign   false cherry-pick   side --edit --no-gpg-sign --gpg-sign
+test_gpg_sign   false cherry-pick ..side --edit --no-gpg-sign --gpg-sign
 
-	git checkout tip &&
-	git cherry-pick --signoff new-file &&
-	git log --format=%B --max-count=1 >msg &&
-	grep "Signed-off-by:" msg
-'
-
-test_expect_success 'cherry-pick without --signoff has no trailer' '
-	git checkout tip &&
-	git cherry-pick new-file &&
-	git log --format=%B --max-count=1 >msg &&
-	! grep "Signed-off-by:" msg
-'
-
-test_expect_success 'revert creates correct commit message' '
-	git checkout tip &&
-	git revert tip &&
-	git log --format=%s --max-count=1 >msg &&
-	grep "Revert" msg
-'
-
-test_expect_success 'cherry-pick -x adds cherry-picked-from' '
-	git checkout one &&
-	git cherry-pick -x two &&
-	git log --format=%B --max-count=1 >msg &&
-	grep "cherry picked from commit" msg
-'
+test_gpg_sign ! false revert HEAD  --edit
+test_gpg_sign ! false revert two.. --edit
+test_gpg_sign   true  revert HEAD  --edit
+test_gpg_sign   true  revert two.. --edit
+test_gpg_sign ! true  revert HEAD  --edit --no-gpg-sign
+test_gpg_sign ! true  revert two.. --edit --no-gpg-sign
+test_gpg_sign ! true  revert HEAD  --edit --gpg-sign --no-gpg-sign
+test_gpg_sign ! true  revert two.. --edit --gpg-sign --no-gpg-sign
+test_gpg_sign   false revert HEAD  --edit --no-gpg-sign --gpg-sign
+test_gpg_sign   false revert two.. --edit --no-gpg-sign --gpg-sign
+test_gpg_sign   true  revert HEAD  --no-edit
+test_gpg_sign   true  revert two.. --no-edit
+test_gpg_sign ! true  revert HEAD  --no-edit --no-gpg-sign
+test_gpg_sign ! true  revert two.. --no-edit --no-gpg-sign
+test_gpg_sign ! true  revert HEAD  --no-edit --gpg-sign --no-gpg-sign
+test_gpg_sign ! true  revert two.. --no-edit --gpg-sign --no-gpg-sign
+test_gpg_sign   false revert HEAD  --no-edit --no-gpg-sign --gpg-sign
 
 test_done

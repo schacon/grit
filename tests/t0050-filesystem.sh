@@ -1,335 +1,140 @@
 #!/bin/sh
-#
-# t0050-filesystem.sh — filesystem edge cases: case sensitivity, unicode,
-# special characters, long filenames, symlinks, empty directories
-#
 
-test_description='filesystem edge cases'
+test_description='Various filesystem issues'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-# ── setup ────────────────────────────────────────────────────────────────────
+auml=$(printf '\303\244')
+aumlcdiar=$(printf '\141\314\210')
 
-test_expect_success 'setup: init repo' '
-	git init fs-repo &&
-	cd fs-repo &&
-	git config user.name "Test" &&
-	git config user.email "test@test.com"
+if test_have_prereq UTF8_NFD_TO_NFC
+then
+	test_unicode=test_expect_failure
+else
+	test_unicode=test_expect_success
+fi
+
+test_expect_success CASE_INSENSITIVE_FS "detection of case insensitive filesystem during repo init" '
+	test $(git config --bool core.ignorecase) = true
 '
 
-# ── case sensitivity (Linux is case-sensitive) ───────────────────────────────
-
-test_expect_success 'case-different filenames are tracked separately' '
-	cd fs-repo &&
-	echo "lower" >readme.txt &&
-	echo "upper" >README.txt &&
-	git add readme.txt README.txt &&
-	git status >status-out &&
-	grep "readme.txt" status-out &&
-	grep "README.txt" status-out
+test_expect_success !CASE_INSENSITIVE_FS "detection of case insensitive filesystem during repo init" '
+	{
+		test_must_fail git config --bool core.ignorecase >/dev/null ||
+			test $(git config --bool core.ignorecase) = false
+	}
 '
 
-test_expect_success 'case-different files commit independently' '
-	cd fs-repo &&
-	git commit -m "case files" &&
-	git ls-files >ls-out &&
-	grep "^readme.txt$" ls-out &&
-	grep "^README.txt$" ls-out
+test_expect_success SYMLINKS "detection of filesystem w/o symlink support during repo init" '
+	{
+		test_must_fail git config --bool core.symlinks ||
+		test "$(git config --bool core.symlinks)" = true
+	}
 '
 
-test_expect_success 'case-different files have different content' '
-	cd fs-repo &&
-	git show HEAD:readme.txt >actual-lower &&
-	git show HEAD:README.txt >actual-upper &&
-	echo "lower" >expect-lower &&
-	echo "upper" >expect-upper &&
-	test_cmp expect-lower actual-lower &&
-	test_cmp expect-upper actual-upper
+test_expect_success !SYMLINKS "detection of filesystem w/o symlink support during repo init" '
+	v=$(git config --bool core.symlinks) &&
+	test "$v" = false
 '
 
-# ── unicode filenames ────────────────────────────────────────────────────────
-
-test_expect_success 'unicode filename can be added and committed' '
-	cd fs-repo &&
-	printf "café content\n" >"café.txt" &&
-	git add "café.txt" &&
-	git commit -m "unicode filename" &&
-	git ls-files >ls-out &&
-	grep "café.txt" ls-out
+test_expect_success "setup case tests" '
+	git config core.ignorecase true &&
+	touch camelcase &&
+	git add camelcase &&
+	git commit -m "initial" &&
+	git tag initial &&
+	git checkout -b topic &&
+	git mv camelcase tmp &&
+	git mv tmp CamelCase &&
+	git commit -m "rename" &&
+	git checkout -f main
 '
 
-test_expect_success 'unicode filename content is retrievable' '
-	cd fs-repo &&
-	git show "HEAD:café.txt" >actual &&
-	printf "café content\n" >expect &&
-	test_cmp expect actual
+test_expect_success 'rename (case change)' '
+	git mv camelcase CamelCase &&
+	git commit -m "rename"
 '
 
-test_expect_success 'multiple unicode filenames' '
-	cd fs-repo &&
-	echo "umlaut" >"über.txt" &&
-	echo "cjk" >"日本語.txt" &&
-	echo "emoji" >"🎉.txt" &&
-	git add "über.txt" "日本語.txt" "🎉.txt" &&
-	git commit -m "various unicode names" &&
-	git ls-files >ls-out &&
-	grep "über.txt" ls-out &&
-	grep "日本語.txt" ls-out &&
-	grep "🎉.txt" ls-out
+test_expect_success 'merge (case change)' '
+	rm -f CamelCase &&
+	rm -f camelcase &&
+	git reset --hard initial &&
+	git merge topic
 '
 
-# ── filenames with spaces and special characters ─────────────────────────────
-
-test_expect_success 'filename with spaces' '
-	cd fs-repo &&
-	echo "spaced" >"file with spaces.txt" &&
-	git add "file with spaces.txt" &&
-	git commit -m "spaces in name" &&
-	git ls-files >ls-out &&
-	grep "file with spaces.txt" ls-out
+test_expect_success CASE_INSENSITIVE_FS 'add directory (with different case)' '
+	git reset --hard initial &&
+	mkdir -p dir1/dir2 &&
+	echo >dir1/dir2/a &&
+	echo >dir1/dir2/b &&
+	git add dir1/dir2/a &&
+	git add dir1/DIR2/b &&
+	git ls-files >actual &&
+	cat >expected <<-\EOF &&
+		camelcase
+		dir1/dir2/a
+		dir1/dir2/b
+	EOF
+	test_cmp expected actual
 '
 
-test_expect_success 'filename with dashes and underscores' '
-	cd fs-repo &&
-	echo "dashed" >"file-with-dashes.txt" &&
-	echo "under" >"file_underscores.txt" &&
-	git add "file-with-dashes.txt" "file_underscores.txt" &&
-	git commit -m "dashes and underscores" &&
-	git ls-files >ls-out &&
-	grep "file-with-dashes.txt" ls-out &&
-	grep "file_underscores.txt" ls-out
+test_expect_failure CASE_INSENSITIVE_FS 'add (with different case)' '
+	git reset --hard initial &&
+	rm camelcase &&
+	echo 1 >CamelCase &&
+	git add CamelCase &&
+	git ls-files >tmp &&
+	camel=$(grep -i camelcase tmp) &&
+	test $(echo "$camel" | wc -l) = 1 &&
+	test "z$(git cat-file blob :$camel)" = z1
 '
 
-test_expect_success 'filename starting with dot' '
-	cd fs-repo &&
-	echo "hidden" >".hidden-file" &&
-	git add ".hidden-file" &&
-	git commit -m "dotfile" &&
-	git ls-files >ls-out &&
-	grep "^\.hidden-file$" ls-out
+test_expect_success "setup unicode normalization tests" '
+	test_create_repo unicode &&
+	cd unicode &&
+	git config core.precomposeunicode false &&
+	touch "$aumlcdiar" &&
+	git add "$aumlcdiar" &&
+	git commit -m initial &&
+	git tag initial &&
+	git checkout -b topic &&
+	git mv $aumlcdiar tmp &&
+	git mv tmp "$auml" &&
+	git commit -m rename &&
+	git checkout -f main
 '
 
-test_expect_success 'filename with multiple dots' '
-	cd fs-repo &&
-	echo "multi" >"file.test.backup.txt" &&
-	git add "file.test.backup.txt" &&
-	git commit -m "multi dot" &&
-	git show HEAD:"file.test.backup.txt" >actual &&
-	echo "multi" >expect &&
-	test_cmp expect actual
+$test_unicode 'rename (silent unicode normalization)' '
+	git mv "$aumlcdiar" "$auml" &&
+	git commit -m rename
 '
 
-# ── long filenames ───────────────────────────────────────────────────────────
-
-test_expect_success 'long filename (200 chars) can be tracked' '
-	cd fs-repo &&
-	longname=$(python3 -c "print(\"a\" * 200)") &&
-	echo "long" >"$longname" &&
-	git add "$longname" &&
-	git commit -m "long filename" &&
-	git ls-files >ls-out &&
-	grep "aaaaaaaaa" ls-out
+$test_unicode 'merge (silent unicode normalization)' '
+	git reset --hard initial &&
+	git merge topic
 '
 
-# ── deeply nested paths ─────────────────────────────────────────────────────
+test_expect_success CASE_INSENSITIVE_FS 'checkout with no pathspec and a case insensitive fs' '
+	git init repo &&
+	(
+		cd repo &&
 
-test_expect_success 'deeply nested directory path' '
-	cd fs-repo &&
-	mkdir -p a/b/c/d/e/f/g &&
-	echo "deep" >a/b/c/d/e/f/g/file.txt &&
-	git add a/b/c/d/e/f/g/file.txt &&
-	git commit -m "deep nesting" &&
-	git show HEAD:a/b/c/d/e/f/g/file.txt >actual &&
-	echo "deep" >expect &&
-	test_cmp expect actual
-'
+		>Gitweb &&
+		git add Gitweb &&
+		git commit -m "add Gitweb" &&
 
-# ── symlinks ─────────────────────────────────────────────────────────────────
+		git checkout --orphan todo &&
+		git reset --hard &&
+		mkdir -p gitweb/subdir &&
+		>gitweb/subdir/file &&
+		git add gitweb &&
+		git commit -m "add gitweb/subdir/file" &&
 
-test_expect_success 'symlink can be added' '
-	cd fs-repo &&
-	echo "target content" >target-file &&
-	ln -s target-file link-file &&
-	git add target-file link-file &&
-	git commit -m "add symlink" &&
-	git ls-files >ls-out &&
-	grep "link-file" ls-out &&
-	grep "target-file" ls-out
-'
-
-test_expect_success 'symlink target is stored correctly' '
-	cd fs-repo &&
-	git cat-file -p HEAD >commit-tree &&
-	tree_hash=$(head -1 commit-tree | awk "{print \$2}") &&
-	git ls-tree HEAD -- link-file >tree-entry &&
-	grep "120000" tree-entry
-'
-
-# ── empty directories ────────────────────────────────────────────────────────
-
-test_expect_success 'empty directory is not tracked in index' '
-	cd fs-repo &&
-	mkdir -p empty-dir &&
-	git add empty-dir 2>/dev/null;
-	git ls-files >ls-out &&
-	! grep "empty-dir" ls-out
-'
-
-# ── binary files ─────────────────────────────────────────────────────────────
-
-test_expect_success 'binary file (null bytes) can be committed' '
-	cd fs-repo &&
-	printf "\x00\x01\x02\xff" >binary.dat &&
-	git add binary.dat &&
-	git commit -m "binary file" &&
-	git ls-files >ls-out &&
-	grep "binary.dat" ls-out
-'
-
-test_expect_success 'binary file round-trips through checkout' '
-	cd fs-repo &&
-	git show HEAD:binary.dat >retrieved.dat &&
-	cmp binary.dat retrieved.dat
-'
-
-# ── files in root vs subdirectory with same name ─────────────────────────────
-
-test_expect_success 'same filename in root and subdir are independent' '
-	cd fs-repo &&
-	echo "root version" >shared-name.txt &&
-	mkdir -p sub &&
-	echo "sub version" >sub/shared-name.txt &&
-	git add shared-name.txt sub/shared-name.txt &&
-	git commit -m "same name different paths" &&
-	git show HEAD:shared-name.txt >actual-root &&
-	git show HEAD:sub/shared-name.txt >actual-sub &&
-	echo "root version" >expect-root &&
-	echo "sub version" >expect-sub &&
-	test_cmp expect-root actual-root &&
-	test_cmp expect-sub actual-sub
-'
-
-# ── executable bit ───────────────────────────────────────────────────────────
-
-test_expect_success 'executable permission is tracked' '
-	cd fs-repo &&
-	echo "#!/bin/sh" >script.sh &&
-	chmod +x script.sh &&
-	git add script.sh &&
-	git commit -m "executable script" &&
-	git ls-tree HEAD -- script.sh >tree-out &&
-	grep "100755" tree-out
-'
-
-test_expect_success 'non-executable file has 100644 mode' '
-	cd fs-repo &&
-	git ls-tree HEAD -- shared-name.txt >tree-out &&
-	grep "100644" tree-out
-'
-
-# ── file with tab in content ───────────────────────────────────────────────
-
-test_expect_success 'file with tab characters in content' '
-	cd fs-repo &&
-	printf "col1\tcol2\tcol3\n" >tabfile.txt &&
-	git add tabfile.txt &&
-	git commit -m "tab content" &&
-	git show HEAD:tabfile.txt >actual &&
-	grep "col1" actual
-'
-
-# ── empty file ───────────────────────────────────────────────────────────
-
-test_expect_success 'empty file can be tracked' '
-	cd fs-repo &&
-	>empty_file.txt &&
-	git add empty_file.txt &&
-	git commit -m "empty file" &&
-	git ls-files >ls-out &&
-	grep "empty_file.txt" ls-out
-'
-
-test_expect_success 'empty file blob is the empty blob' '
-	cd fs-repo &&
-	git show HEAD:empty_file.txt >actual &&
-	test_must_be_empty actual
-'
-
-# ── file replacement ─────────────────────────────────────────────────────
-
-test_expect_success 'file content replacement is tracked' '
-	cd fs-repo &&
-	echo "original" >replace_me.txt &&
-	git add replace_me.txt &&
-	git commit -m "original content" &&
-	echo "replaced" >replace_me.txt &&
-	git add replace_me.txt &&
-	git commit -m "replaced content" &&
-	git show HEAD:replace_me.txt >actual &&
-	echo "replaced" >expect &&
-	test_cmp expect actual
-'
-
-# ── large number of files ─────────────────────────────────────────────────
-
-test_expect_success 'many files in one commit' '
-	cd fs-repo &&
-	i=0 &&
-	while test $i -lt 50
-	do
-		echo "content $i" >"many_${i}.txt"
-		i=$(($i + 1))
-	done &&
-	git add many_*.txt &&
-	git commit -m "50 files" &&
-	git ls-files >ls-out &&
-	grep -c "many_" ls-out >count &&
-	test $(cat count) -eq 50
-'
-
-# ── file with only newlines ────────────────────────────────────────────────
-
-test_expect_success 'file with only newlines tracked correctly' '
-	cd fs-repo &&
-	printf "\n\n\n" >newlines.txt &&
-	git add newlines.txt &&
-	git commit -m "newlines only" &&
-	git show HEAD:newlines.txt >actual &&
-	test -s actual
-'
-
-# ── file with very long line ───────────────────────────────────────────────
-
-test_expect_success 'file with very long line' '
-	cd fs-repo &&
-	python3 -c "print(\"x\" * 10000)" >longline.txt &&
-	git add longline.txt &&
-	git commit -m "long line" &&
-	git show HEAD:longline.txt >actual &&
-	test -s actual
-'
-
-# ── adding same file twice is idempotent ─────────────────────────────────
-
-test_expect_success 'adding same file twice is idempotent' '
-	cd fs-repo &&
-	echo "idempotent" >idem.txt &&
-	git add idem.txt &&
-	git add idem.txt &&
-	git commit -m "idem" &&
-	git ls-files >ls-out &&
-	count=$(grep -c "idem.txt" ls-out) &&
-	test "$count" -eq 1
-'
-
-# ── file with leading dash ─────────────────────────────────────────────────
-
-test_expect_success 'file with leading dash can be committed' '
-	cd fs-repo &&
-	echo "dashed" >"./-dashed-file.txt" &&
-	git add -- "-dashed-file.txt" &&
-	git commit -m "dashed file" &&
-	git ls-files >ls-out &&
-	grep "dashed-file" ls-out
+		git checkout main
+	)
 '
 
 test_done

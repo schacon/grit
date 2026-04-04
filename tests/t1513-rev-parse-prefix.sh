@@ -1,197 +1,99 @@
 #!/bin/sh
-# Ported subset from git/t/t1513-rev-parse-prefix.sh.
 
-test_description='grit rev-parse --prefix subset'
+test_description='Tests for rev-parse --prefix'
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-test_expect_success 'setup repository state' '
-	grit init repo &&
-	cd repo &&
-	echo "ref: refs/heads/main" >.git/HEAD &&
+test_expect_success 'setup' '
 	mkdir -p sub1/sub2 &&
 	echo top >top &&
 	echo file1 >sub1/file1 &&
 	echo file2 >sub1/sub2/file2 &&
-	grit hash-object -w top >/dev/null &&
-	grit hash-object -w sub1/file1 >/dev/null &&
-	grit hash-object -w sub1/sub2/file2 >/dev/null &&
-	grit update-index --add top sub1/file1 sub1/sub2/file2 &&
-	tree=$(grit write-tree) &&
-	commit=$(printf "one\n" | grit commit-tree "$tree") &&
-	grit update-ref refs/heads/main "$commit"
+	git add top sub1/file1 sub1/sub2/file2 &&
+	git commit -m commit
 '
 
 test_expect_success 'empty prefix -- file' '
-	cd repo &&
-	grit rev-parse --prefix "" -- top sub1/file1 >actual &&
-	cat >expect <<-\EOF &&
+	git rev-parse --prefix "" -- top sub1/file1 >actual &&
+	cat <<-\EOF >expected &&
 	--
 	top
 	sub1/file1
 	EOF
-	test_cmp expect actual
+	test_cmp expected actual
 '
 
 test_expect_success 'valid prefix -- file' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ -- file1 sub2/file2 >actual &&
-	cat >expect <<-\EOF &&
+	git rev-parse --prefix sub1/ -- file1 sub2/file2 >actual &&
+	cat <<-\EOF >expected &&
 	--
 	sub1/file1
 	sub1/sub2/file2
 	EOF
-	test_cmp expect actual
+	test_cmp expected actual
 '
 
-test_expect_success 'valid prefix -- ../file keeps lexical parent' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ -- ../top sub2/file2 >actual &&
-	cat >expect <<-\EOF &&
+test_expect_success 'valid prefix -- ../file' '
+	git rev-parse --prefix sub1/ -- ../top sub2/file2 >actual &&
+	cat <<-\EOF >expected &&
 	--
 	sub1/../top
 	sub1/sub2/file2
 	EOF
-	test_cmp expect actual
+	test_cmp expected actual
 '
 
 test_expect_success 'empty prefix HEAD:./path' '
-	cd repo &&
-	grit rev-parse --prefix "" HEAD:./top >actual &&
-	grit rev-parse HEAD:top >expected &&
+	git rev-parse --prefix "" HEAD:./top >actual &&
+	git rev-parse HEAD:top >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'valid prefix HEAD:./path' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ HEAD:./file1 >actual &&
-	grit rev-parse HEAD:sub1/file1 >expected &&
+	git rev-parse --prefix sub1/ HEAD:./file1 >actual &&
+	git rev-parse HEAD:sub1/file1 >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'valid prefix HEAD:../path' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ HEAD:../top >actual &&
-	grit rev-parse HEAD:top >expected &&
+	git rev-parse --prefix sub1/ HEAD:../top >actual &&
+	git rev-parse HEAD:top >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'prefix ignored with HEAD:top' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ HEAD:top >actual &&
-	grit rev-parse HEAD:top >expected &&
+	git rev-parse --prefix sub1/ HEAD:top >actual &&
+	git rev-parse HEAD:top >expected &&
 	test_cmp expected actual
 '
 
 test_expect_success 'disambiguate path with valid prefix' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ file1 >actual &&
-	echo sub1/file1 >expect &&
-	test_cmp expect actual
+	git rev-parse --prefix sub1/ file1 >actual &&
+	cat <<-\EOF >expected &&
+	sub1/file1
+	EOF
+	test_cmp expected actual
 '
 
 test_expect_success 'file and refs with prefix' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ main file1 >actual &&
-	cat >expected <<-EOF &&
-	$(grit rev-parse main)
+	git rev-parse --prefix sub1/ main file1 >actual &&
+	cat <<-EOF >expected &&
+	$(git rev-parse main)
 	sub1/file1
 	EOF
 	test_cmp expected actual
 '
 
-test_expect_success 'two-level prefix with -- file' '
-	cd repo &&
-	grit rev-parse --prefix sub1/sub2/ -- file2 >actual &&
-	cat >expect <<-\EOF &&
+test_expect_success 'two-levels deep' '
+	git rev-parse --prefix sub1/sub2/ -- file2 >actual &&
+	cat <<-\EOF >expected &&
 	--
 	sub1/sub2/file2
 	EOF
-	test_cmp expect actual
-'
-
-# --- Additional prefix tests ---
-
-test_expect_success 'prefix with multiple files' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ -- file1 sub2/file2 >actual &&
-	cat >expect <<-\EOF &&
-	--
-	sub1/file1
-	sub1/sub2/file2
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_success 'empty prefix passes paths through unchanged' '
-	cd repo &&
-	grit rev-parse --prefix "" -- top >actual &&
-	cat >expect <<-\EOF &&
-	--
-	top
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_success 'prefix with rev and -- and file' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ main -- file1 >actual &&
-	cat >expected <<-EOF &&
-	$(grit rev-parse main)
-	--
-	sub1/file1
-	EOF
 	test_cmp expected actual
-'
-
-test_expect_success 'prefix with HEAD:./file resolves correctly' '
-	cd repo &&
-	grit rev-parse --prefix sub1/sub2/ HEAD:./file2 >actual &&
-	grit rev-parse HEAD:sub1/sub2/file2 >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'prefix with HEAD:../file resolves parent' '
-	cd repo &&
-	grit rev-parse --prefix sub1/sub2/ HEAD:../file1 >actual &&
-	grit rev-parse HEAD:sub1/file1 >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'prefix does not affect absolute rev' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ HEAD >actual &&
-	grit rev-parse HEAD >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'prefix with only rev (no --)' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ main >actual &&
-	grit rev-parse main >expected &&
-	test_cmp expected actual
-'
-
-test_expect_success 'prefix with only -- and multiple paths' '
-	cd repo &&
-	grit rev-parse --prefix sub1/ -- file1 sub2/file2 >actual &&
-	cat >expect <<-\EOF &&
-	--
-	sub1/file1
-	sub1/sub2/file2
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_success 'prefix with trailing slash consistency' '
-	cd repo &&
-	grit rev-parse --prefix "sub1/" -- file1 >actual &&
-	cat >expect <<-\EOF &&
-	--
-	sub1/file1
-	EOF
-	test_cmp expect actual
 '
 
 test_done

@@ -1,13 +1,35 @@
 #!/bin/sh
 #
-# Upstream: t9123-git-svn-rebuild-with-rewriteroot.sh
-# Requires Subversion — ported as test_expect_failure stubs.
+# Copyright (c) 2008 Jan Krüger
 #
 
 test_description='git svn respects rewriteRoot during rebuild'
 
-cd "$(dirname "$0")" || exit 1
-. ./test-lib.sh
+. ./lib-git-svn.sh
 
-skip_all='Subversion not available in grit'
+test_expect_success 'setup svn repository' '
+	test_when_finished "rm -rf import" &&
+	mkdir import &&
+	(
+		cd import &&
+		touch foo &&
+		svn_cmd import -m "import for git svn" . "$svnrepo" >/dev/null
+	)
+	'
+
+test_expect_success 'init, fetch and checkout repository' '
+	git svn init --rewrite-root=http://invalid.invalid/ "$svnrepo" &&
+	git svn fetch &&
+	git checkout -b mybranch remotes/git-svn
+	'
+
+test_expect_success 'remove rev_map' '
+	rm "$GIT_SVN_DIR"/.rev_map.*
+	'
+
+test_expect_success 'rebuild rev_map' '
+	git svn rebase >/dev/null
+	'
+
 test_done
+

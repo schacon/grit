@@ -1,22 +1,16 @@
 #!/bin/sh
-# Ported from git/t/t5532-fetch-proxy.sh
-# Tests fetching via git:// using core.gitproxy
-# Grit does not support the git:// protocol or core.gitproxy
 
 test_description='fetching via git:// using core.gitproxy'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# The upstream test requires Perl and the git:// protocol with core.gitproxy.
-# Grit only supports local and file:// transports, so these tests are all
-# expected to fail.
+if ! test_have_prereq PERL_TEST_HELPERS
+then
+	skip_all='skipping fetch proxy tests; Perl not available'
+	test_done
+fi
 
 test_expect_success 'setup remote repo' '
-	git init -q &&
 	git init remote &&
 	(cd remote &&
 	 echo content >file &&
@@ -25,17 +19,37 @@ test_expect_success 'setup remote repo' '
 	)
 '
 
-# grit does not support git:// protocol
-test_expect_failure 'fetch through proxy works' '
+test_expect_success 'setup proxy script' '
+	write_script proxy-get-cmd "$PERL_PATH" <<-\EOF &&
+	read(STDIN, $buf, 4);
+	my $n = hex($buf) - 4;
+	read(STDIN, $buf, $n);
+	my ($cmd, $other) = split /\0/, $buf;
+	# drop absolute-path on repo name
+	$cmd =~ s{ /}{ };
+	print $cmd;
+	EOF
+
+	write_script proxy <<-\EOF
+	echo >&2 "proxying for $*"
+	cmd=$(./proxy-get-cmd)
+	echo >&2 "Running $cmd"
+	exec $cmd
+	EOF
+'
+
+test_expect_success 'setup local repo' '
 	git remote add fake git://example.com/remote &&
-	git config core.gitproxy ./proxy &&
+	git config core.gitproxy ./proxy
+'
+
+test_expect_success 'fetch through proxy works' '
 	git fetch fake &&
 	echo one >expect &&
 	git log -1 --format=%s FETCH_HEAD >actual &&
 	test_cmp expect actual
 '
 
-# grit rejects git:// URLs outright (no proxy needed)
 test_expect_success 'funny hostnames are rejected before running proxy' '
 	test_must_fail git fetch git://-remote/repo.git 2>stderr &&
 	! grep "proxying for" stderr

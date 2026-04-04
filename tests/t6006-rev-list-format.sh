@@ -1,685 +1,642 @@
 #!/bin/sh
-# Ported subset from git/t/t6006-rev-list-format.sh.
 
-test_description='git rev-list format output'
+# Copyright (c) 2009 Jens Lehmann
+# Copyright (c) 2011 Alexey Shumkin (+ non-UTF-8 commit encoding tests)
+
+test_description='git rev-list --pretty=format test'
+
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-terminal.sh
 
-GIT_COMMITTER_EMAIL=git@comm.iter.xz
-GIT_COMMITTER_NAME='C O Mmiter'
-GIT_AUTHOR_NAME='A U Thor'
-GIT_AUTHOR_EMAIL=git@au.thor.xz
-export GIT_COMMITTER_EMAIL GIT_COMMITTER_NAME GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
+test_tick
 
-M=1130000000
-Z=+0000
-export M Z
+if test_have_prereq ICONV
+then
+	# Tested non-UTF-8 encoding
+	test_encoding="ISO8859-1"
 
-doit () {
-	OFFSET=$1 &&
-	NAME=$2 &&
-	shift 2 &&
-	PARENTS= &&
-	for P
+	# String "added" in German
+	# (translated with Google Translate),
+	# encoded in UTF-8, used as a commit log message below.
+	added_utf8_part=$(printf "\303\274")
+	added_utf8_part_iso88591=$(echo "$added_utf8_part" | iconv -f utf-8 -t $test_encoding)
+	added=$(printf "added (hinzugef${added_utf8_part}gt) foo")
+	added_iso88591=$(echo "$added" | iconv -f utf-8 -t $test_encoding)
+	# same but "changed"
+	changed_utf8_part=$(printf "\303\244")
+	changed_utf8_part_iso88591=$(echo "$changed_utf8_part" | iconv -f utf-8 -t $test_encoding)
+	changed=$(printf "changed (ge${changed_utf8_part}ndert) foo")
+	changed_iso88591=$(echo "$changed" | iconv -f utf-8 -t $test_encoding)
+else
+	# Tested non-UTF-8 encoding
+	test_encoding="UTF-8"
+
+	# String "added" in German
+	# (translated with Google Translate),
+	# encoded in UTF-8, used as a commit log message below.
+	added_utf8_part="u"
+	added_utf8_part_iso88591="u"
+	added=$(printf "added (hinzugef${added_utf8_part}gt) foo")
+	added_iso88591="$added"
+	# same but "changed"
+	changed_utf8_part="a"
+	changed_utf8_part_iso88591="a"
+	changed=$(printf "changed (ge${changed_utf8_part}ndert) foo")
+	changed_iso88591="$changed"
+fi
+
+# Count of char to truncate
+# Number is chosen so, that non-ACSII characters
+# (see $added_utf8_part and $changed_utf8_part)
+# fall into truncated parts of appropriate words both from left and right
+truncate_count=20
+
+test_expect_success 'setup' '
+	: >foo &&
+	git add foo &&
+	git config i18n.commitEncoding $test_encoding &&
+	echo "$added_iso88591" | git commit -F - &&
+	head1=$(git rev-parse --verify HEAD) &&
+	head1_short=$(git rev-parse --verify --short $head1) &&
+	head1_short4=$(git rev-parse --verify --short=4 $head1) &&
+	tree1=$(git rev-parse --verify HEAD:) &&
+	tree1_short=$(git rev-parse --verify --short $tree1) &&
+	echo "$changed" > foo &&
+	echo "$changed_iso88591" | git commit -a -F - &&
+	head2=$(git rev-parse --verify HEAD) &&
+	head2_short=$(git rev-parse --verify --short $head2) &&
+	head2_short4=$(git rev-parse --verify --short=4 $head2) &&
+	tree2=$(git rev-parse --verify HEAD:) &&
+	tree2_short=$(git rev-parse --verify --short $tree2) &&
+	git config --unset i18n.commitEncoding
+'
+
+# usage: test_format [argument...] name format_string [success|failure] [prereq] <expected_output
+test_format () {
+	local args=
+	while true
 	do
-		PARENTS="$PARENTS -p $P"
-	done &&
-	GIT_COMMITTER_DATE="$(($M + $OFFSET)) $Z" &&
-	GIT_AUTHOR_DATE="$GIT_COMMITTER_DATE" &&
-	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE &&
-	commit=$(echo "$NAME" | git commit-tree "$(git write-tree)" $PARENTS) &&
-	echo "$commit"
+		case "$1" in
+		--*)
+			args="$args $1"
+			shift;;
+		*)
+			break;;
+		esac
+	done
+	cat >expect.$1
+	test_expect_${3:-success} $4 "format $1" "
+		git rev-list $args --pretty=format:'$2' main >output.$1 &&
+		test_cmp expect.$1 output.$1
+	"
 }
 
-test_expect_success 'setup repository with two commits' '
-	grit init repo &&
-	cd repo &&
-	head1=$(doit 1 "added foo") &&
-	head2=$(doit 2 "changed foo" "$head1") &&
-	git update-ref refs/heads/master "$head2" &&
-	echo "$head1" >head1 &&
-	echo "$head2" >head2
-'
+# usage: test_pretty [argument...] name format_name [failure] <expected_output
+test_pretty () {
+	local args=
+	while true
+	do
+		case "$1" in
+		--*)
+			args="$args $1"
+			shift;;
+		*)
+			break;;
+		esac
+	done
+	cat >expect.$1
+	test_expect_${3:-success} "pretty $1 (without --no-commit-header)" "
+		git rev-list $args --pretty='$2' main >output.$1 &&
+		test_cmp expect.$1 output.$1
+	"
+	test_expect_${3:-success} "pretty $1 (with --no-commit-header)" "
+		git rev-list $args --no-commit-header --pretty='$2' main >output.$1 &&
+		test_cmp expect.$1 output.$1
+	"
+}
 
-test_expect_success '--format=%s includes commit headers' '
-	cd repo &&
-	head1=$(cat head1) &&
-	head2=$(cat head2) &&
+# Feed to --format to provide predictable colored sequences.
+BASIC_COLOR='%Credfoo%Creset'
+COLOR='%C(red)foo%C(reset)'
+AUTO_COLOR='%C(auto,red)foo%C(auto,reset)'
+ALWAYS_COLOR='%C(always,red)foo%C(always,reset)'
+has_color () {
+	test_decode_color <"$1" >decoded &&
+	echo "<RED>foo<RESET>" >expect &&
+	test_cmp expect decoded
+}
+
+has_no_color () {
+	echo foo >expect &&
+	test_cmp expect "$1"
+}
+
+test_format percent %%h <<EOF
+commit $head2
+%h
+commit $head1
+%h
+EOF
+
+test_format hash %H%n%h <<EOF
+commit $head2
+$head2
+$head2_short
+commit $head1
+$head1
+$head1_short
+EOF
+
+test_format --no-commit-header hash-no-header %H%n%h <<EOF
+$head2
+$head2_short
+$head1
+$head1_short
+EOF
+
+test_format --abbrev-commit --abbrev=0 --no-commit-header hash-no-header-abbrev %H%n%h <<EOF
+$head2
+$head2_short4
+$head1
+$head1_short4
+EOF
+
+test_format tree %T%n%t <<EOF
+commit $head2
+$tree2
+$tree2_short
+commit $head1
+$tree1
+$tree1_short
+EOF
+
+test_format parents %P%n%p <<EOF
+commit $head2
+$head1
+$head1_short
+commit $head1
+
+
+EOF
+
+# we don't test relative here
+test_format author %an%n%ae%n%al%n%ad%n%aD%n%at <<EOF
+commit $head2
+$GIT_AUTHOR_NAME
+$GIT_AUTHOR_EMAIL
+$TEST_AUTHOR_LOCALNAME
+Thu Apr 7 15:13:13 2005 -0700
+Thu, 7 Apr 2005 15:13:13 -0700
+1112911993
+commit $head1
+$GIT_AUTHOR_NAME
+$GIT_AUTHOR_EMAIL
+$TEST_AUTHOR_LOCALNAME
+Thu Apr 7 15:13:13 2005 -0700
+Thu, 7 Apr 2005 15:13:13 -0700
+1112911993
+EOF
+
+test_format committer %cn%n%ce%n%cl%n%cd%n%cD%n%ct <<EOF
+commit $head2
+$GIT_COMMITTER_NAME
+$GIT_COMMITTER_EMAIL
+$TEST_COMMITTER_LOCALNAME
+Thu Apr 7 15:13:13 2005 -0700
+Thu, 7 Apr 2005 15:13:13 -0700
+1112911993
+commit $head1
+$GIT_COMMITTER_NAME
+$GIT_COMMITTER_EMAIL
+$TEST_COMMITTER_LOCALNAME
+Thu Apr 7 15:13:13 2005 -0700
+Thu, 7 Apr 2005 15:13:13 -0700
+1112911993
+EOF
+
+test_format encoding %e success ICONV <<EOF
+commit $head2
+$test_encoding
+commit $head1
+$test_encoding
+EOF
+
+test_format subject %s <<EOF
+commit $head2
+$changed
+commit $head1
+$added
+EOF
+
+test_format subject-truncated "%<($truncate_count,trunc)%s" <<EOF
+commit $head2
+changed (ge${changed_utf8_part}ndert)..
+commit $head1
+added (hinzugef${added_utf8_part}gt..
+EOF
+
+test_format body %b <<EOF
+commit $head2
+commit $head1
+EOF
+
+test_format raw-body %B <<EOF
+commit $head2
+$changed
+
+commit $head1
+$added
+
+EOF
+
+test_format --no-commit-header raw-body-no-header %B <<EOF
+$changed
+
+$added
+
+EOF
+
+test_pretty oneline oneline <<EOF
+$head2 $changed
+$head1 $added
+EOF
+
+test_pretty short short <<EOF
+commit $head2
+Author: $GIT_AUTHOR_NAME <$GIT_AUTHOR_EMAIL>
+
+    $changed
+
+commit $head1
+Author: $GIT_AUTHOR_NAME <$GIT_AUTHOR_EMAIL>
+
+    $added
+
+EOF
+
+test_expect_success 'basic colors' '
 	cat >expect <<-EOF &&
 	commit $head2
-	changed foo
+	<RED>foo<GREEN>bar<BLUE>baz<RESET>xyzzy
+	EOF
+	format="%Credfoo%Cgreenbar%Cbluebaz%Cresetxyzzy" &&
+	git rev-list --color --format="$format" -1 main >actual.raw &&
+	test_decode_color <actual.raw >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success '%S is not a placeholder for rev-list yet' '
+	git rev-list --format="%S" -1 main | grep "%S"
+'
+
+test_expect_success 'advanced colors' '
+	cat >expect <<-EOF &&
+	commit $head2
+	<BOLD;RED;BYELLOW>foo<RESET>
+	EOF
+	format="%C(red yellow bold)foo%C(reset)" &&
+	git rev-list --color --format="$format" -1 main >actual.raw &&
+	test_decode_color <actual.raw >actual &&
+	test_cmp expect actual
+'
+
+for spec in \
+	"%Cred:$BASIC_COLOR" \
+	"%C(...):$COLOR" \
+	"%C(auto,...):$AUTO_COLOR"
+do
+	desc=${spec%%:*}
+	color=${spec#*:}
+	test_expect_success "$desc does not enable color by default" '
+		git log --format=$color -1 >actual &&
+		has_no_color actual
+	'
+
+	test_expect_success "$desc enables colors for color.diff" '
+		git -c color.diff=always log --format=$color -1 >actual &&
+		has_color actual
+	'
+
+	test_expect_success "$desc enables colors for color.ui" '
+		git -c color.ui=always log --format=$color -1 >actual &&
+		has_color actual
+	'
+
+	test_expect_success "$desc respects --color" '
+		git log --format=$color -1 --color >actual &&
+		has_color actual
+	'
+
+	test_expect_success "$desc respects --no-color" '
+		git -c color.ui=always log --format=$color -1 --no-color >actual &&
+		has_no_color actual
+	'
+
+	test_expect_success TTY "$desc respects --color=auto (stdout is tty)" '
+		test_terminal git log --format=$color -1 --color=auto >actual &&
+		has_color actual
+	'
+
+	test_expect_success "$desc respects --color=auto (stdout not tty)" '
+		(
+			TERM=vt100 && export TERM &&
+			git log --format=$color -1 --color=auto >actual &&
+			has_no_color actual
+		)
+	'
+done
+
+test_expect_success '%C(always,...) enables color even without tty' '
+	git log --format=$ALWAYS_COLOR -1 >actual &&
+	has_color actual
+'
+
+test_expect_success '%C(auto) respects --color' '
+	git log --color --format="%C(auto)%H" -1 >actual.raw &&
+	test_decode_color <actual.raw >actual &&
+	echo "<YELLOW>$(git rev-parse HEAD)<RESET>" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success '%C(auto) respects --no-color' '
+	git log --no-color --format="%C(auto)%H" -1 >actual &&
+	git rev-parse HEAD >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'rev-list %C(auto,...) respects --color' '
+	git rev-list --color --format="%C(auto,green)foo%C(auto,reset)" \
+		-1 HEAD >actual.raw &&
+	test_decode_color <actual.raw >actual &&
+	cat >expect <<-EOF &&
+	commit $(git rev-parse HEAD)
+	<GREEN>foo<RESET>
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'setup complex body' '
+	message=$(cat <<-EOF
+	Test printing of complex bodies
+
+	This commit message is much longer than the others,
+	and it will be encoded in $test_encoding. We should therefore
+	include an ISO8859 character: ¡bueno!
+	EOF
+	) &&
+
+	if test_have_prereq ICONV
+	then
+		echo "$message" | iconv -f utf-8 -t $test_encoding >commit-msg
+	else
+		echo "$message" >commit-msg
+	fi &&
+
+	git config i18n.commitencoding $test_encoding &&
+	echo change2 >foo && git commit -a -F commit-msg &&
+	head3=$(git rev-parse --verify HEAD) &&
+	head3_short=$(git rev-parse --short $head3)
+'
+
+test_format complex-encoding %e success ICONV <<EOF
+commit $head3
+$test_encoding
+commit $head2
+$test_encoding
+commit $head1
+$test_encoding
+EOF
+
+test_format complex-subject %s <<EOF
+commit $head3
+Test printing of complex bodies
+commit $head2
+$changed_iso88591
+commit $head1
+$added_iso88591
+EOF
+
+test_format complex-subject-trunc "%<($truncate_count,trunc)%s" <<EOF
+commit $head3
+Test printing of c..
+commit $head2
+changed (ge${changed_utf8_part_iso88591}ndert)..
+commit $head1
+added (hinzugef${added_utf8_part_iso88591}gt..
+EOF
+
+test_format complex-subject-mtrunc "%<($truncate_count,mtrunc)%s" <<EOF
+commit $head3
+Test prin..ex bodies
+commit $head2
+changed (..dert) foo
+commit $head1
+added (hi..f${added_utf8_part_iso88591}gt) foo
+EOF
+
+test_format complex-subject-ltrunc "%<($truncate_count,ltrunc)%s" <<EOF
+commit $head3
+.. of complex bodies
+commit $head2
+..ged (ge${changed_utf8_part_iso88591}ndert) foo
+commit $head1
+.. (hinzugef${added_utf8_part_iso88591}gt) foo
+EOF
+
+test_expect_success 'setup expected messages (for test %b)' '
+	cat <<-EOF >expected.utf-8 &&
+	commit $head3
+	This commit message is much longer than the others,
+	and it will be encoded in $test_encoding. We should therefore
+	include an ISO8859 character: ¡bueno!
+
+	commit $head2
 	commit $head1
-	added foo
 	EOF
-	git rev-list --format=%s refs/heads/master >actual &&
+	if test_have_prereq ICONV
+	then
+		iconv -f utf-8 -t $test_encoding expected.utf-8 >expected.ISO8859-1
+	else
+		cp expected.utf-8 expected.ISO8859-1
+	fi
+'
+
+test_format complex-body %b <expected.ISO8859-1
+
+# Git uses i18n.commitEncoding if no i18n.logOutputEncoding set
+# so unset i18n.commitEncoding to test encoding conversion
+git config --unset i18n.commitEncoding
+
+test_format complex-subject-commitencoding-unset %s <<EOF
+commit $head3
+Test printing of complex bodies
+commit $head2
+$changed
+commit $head1
+$added
+EOF
+
+test_format complex-subject-commitencoding-unset-trunc "%<($truncate_count,trunc)%s" <<EOF
+commit $head3
+Test printing of c..
+commit $head2
+changed (ge${changed_utf8_part}ndert)..
+commit $head1
+added (hinzugef${added_utf8_part}gt..
+EOF
+
+test_format complex-subject-commitencoding-unset-mtrunc "%<($truncate_count,mtrunc)%s" <<EOF
+commit $head3
+Test prin..ex bodies
+commit $head2
+changed (..dert) foo
+commit $head1
+added (hi..f${added_utf8_part}gt) foo
+EOF
+
+test_format complex-subject-commitencoding-unset-ltrunc "%<($truncate_count,ltrunc)%s" <<EOF
+commit $head3
+.. of complex bodies
+commit $head2
+..ged (ge${changed_utf8_part}ndert) foo
+commit $head1
+.. (hinzugef${added_utf8_part}gt) foo
+EOF
+
+test_format complex-body-commitencoding-unset %b <expected.utf-8
+
+test_expect_success '%x00 shows NUL' '
+	echo  >expect commit $head3 &&
+	echo >>expect fooQbar &&
+	git rev-list -1 --format=foo%x00bar HEAD >actual.nul &&
+	nul_to_q <actual.nul >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success '--format supports %H and %h' '
-	cd repo &&
-	head2=$(cat head2) &&
-	short2=$(git rev-parse --short=4 "$head2") &&
-	cat >expect <<-EOF &&
-	commit $head2
-	$head2 $short2
-	EOF
-	git rev-list --abbrev=4 --max-count=1 --format="%H %h" refs/heads/master >actual &&
+test_expect_success '%ad respects --date=' '
+	echo 2005-04-07 >expect.ad-short &&
+	git log -1 --date=short --pretty=tformat:%ad >output.ad-short main &&
+	test_cmp expect.ad-short output.ad-short
+'
+
+test_expect_success 'empty email' '
+	test_tick &&
+	C=$(GIT_AUTHOR_EMAIL= git commit-tree HEAD^{tree} </dev/null) &&
+	A=$(git show --pretty=format:%an,%ae,%ad%n -s $C) &&
+	test "$A" = "$GIT_AUTHOR_NAME,,Thu Apr 7 15:14:13 2005 -0700"
+'
+
+test_expect_success 'del LF before empty (1)' '
+	git show -s --pretty=format:"%s%n%-b%nThanks%n" HEAD^^ >actual &&
+	test_line_count = 2 actual
+'
+
+test_expect_success 'del LF before empty (2)' '
+	git show -s --pretty=format:"%s%n%-b%nThanks%n" HEAD >actual &&
+	test_line_count = 6 actual &&
+	grep "^$" actual
+'
+
+test_expect_success 'add LF before non-empty (1)' '
+	git show -s --pretty=format:"%s%+b%nThanks%n" HEAD^^ >actual &&
+	test_line_count = 2 actual
+'
+
+test_expect_success 'add LF before non-empty (2)' '
+	git show -s --pretty=format:"%s%+b%nThanks%n" HEAD >actual &&
+	test_line_count = 6 actual &&
+	grep "^$" actual
+'
+
+test_expect_success 'add SP before non-empty (1)' '
+	git show -s --pretty=format:"%s% bThanks" HEAD^^ >actual &&
+	test $(wc -w <actual) = 3
+'
+
+test_expect_success 'add SP before non-empty (2)' '
+	git show -s --pretty=format:"%s% sThanks" HEAD^^ >actual &&
+	test $(wc -w <actual) = 6
+'
+
+test_expect_success '--abbrev' '
+	echo SHORT SHORT SHORT >expect2 &&
+	echo LONG LONG LONG >expect3 &&
+	git log -1 --format="%h %h %h" HEAD >actual1 &&
+	git log -1 --abbrev=5 --format="%h %h %h" HEAD >actual2 &&
+	git log -1 --abbrev=5 --format="%H %H %H" HEAD >actual3 &&
+	sed -e "s/$OID_REGEX/LONG/g" -e "s/$_x05/SHORT/g" <actual2 >fuzzy2 &&
+	sed -e "s/$OID_REGEX/LONG/g" -e "s/$_x05/SHORT/g" <actual3 >fuzzy3 &&
+	test_cmp expect2 fuzzy2 &&
+	test_cmp expect3 fuzzy3 &&
+	! test_cmp actual1 actual2
+'
+
+test_expect_success '%H is not affected by --abbrev-commit' '
+	expected=$(($(test_oid hexsz) + 1)) &&
+	git log -1 --format=%H --abbrev-commit --abbrev=20 HEAD >actual &&
+	len=$(wc -c <actual) &&
+	test $len = $expected
+'
+
+test_expect_success '%h is not affected by --abbrev-commit' '
+	git log -1 --format=%h --abbrev-commit --abbrev=20 HEAD >actual &&
+	len=$(wc -c <actual) &&
+	test $len = 21
+'
+
+test_expect_success '"%h %gD: %gs" is same as git-reflog' '
+	git reflog >expect &&
+	git log -g --format="%h %gD: %gs" >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success '--quiet suppresses output' '
-	cd repo &&
-	git rev-list --quiet refs/heads/master >actual &&
-	test_path_is_file actual &&
-	lines=$(wc -c <actual | tr -d " ") &&
-	test "$lines" = "0"
-'
-
-test_expect_success 'percent literal %%' '
-	cd repo &&
-	head2=$(cat head2) &&
-	cat >expect <<-EOF &&
-	commit $head2
-	%h
-	EOF
-	git rev-list --max-count=1 --format="%%h" refs/heads/master >actual &&
+test_expect_success '"%h %gD: %gs" is same as git-reflog (with date)' '
+	git reflog --date=raw >expect &&
+	git log -g --format="%h %gD: %gs" --date=raw >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success '--format %H alone' '
-	cd repo &&
-	head1=$(cat head1) &&
-	head2=$(cat head2) &&
-	cat >expect <<-EOF &&
-	commit $head2
-	$head2
-	commit $head1
-	$head1
-	EOF
-	git rev-list --format=%H refs/heads/master >actual &&
+test_expect_success '"%h %gD: %gs" is same as git-reflog (with --abbrev)' '
+	git reflog --abbrev=13 --date=raw >expect &&
+	git log -g --abbrev=13 --format="%h %gD: %gs" --date=raw >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success '--format %h with default abbreviation' '
-	cd repo &&
-	head2=$(cat head2) &&
-	short2=$(git rev-parse --short "$head2") &&
-	git rev-list --max-count=1 --format="%h" refs/heads/master >actual &&
-	# Extract the formatted line (second line)
-	sed -n 2p actual >hash_line &&
-	echo "$short2" >expect &&
-	test_cmp expect hash_line
+test_expect_success '%gd shortens ref name' '
+	echo "main@{0}" >expect.gd-short &&
+	git log -g -1 --format=%gd refs/heads/main >actual.gd-short &&
+	test_cmp expect.gd-short actual.gd-short
 '
 
-test_expect_success '--format with multiple specifiers' '
-	cd repo &&
-	head2=$(cat head2) &&
-	short2=$(git rev-parse --short=4 "$head2") &&
-	cat >expect <<-EOF &&
-	commit $head2
-	hash=$head2 short=$short2 subject=changed foo
-	EOF
-	git rev-list --abbrev=4 --max-count=1 --format="hash=%H short=%h subject=%s" refs/heads/master >actual &&
+test_expect_success 'reflog identity' '
+	echo "$GIT_COMMITTER_NAME:$GIT_COMMITTER_EMAIL" >expect &&
+	git log -g -1 --format="%gn:%ge" >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success '--format with literal text only' '
-	cd repo &&
-	head2=$(cat head2) &&
-	head1=$(cat head1) &&
-	cat >expect <<-EOF &&
-	commit $head2
-	hello world
-	commit $head1
-	hello world
-	EOF
-	git rev-list --format="hello world" refs/heads/master >actual &&
+test_expect_success 'oneline with empty message' '
+	git commit --allow-empty --cleanup=verbatim -m "$LF" &&
+	git commit --allow-empty --allow-empty-message &&
+	git rev-list --oneline HEAD >test.txt &&
+	test_line_count = 5 test.txt &&
+	git rev-list --oneline --graph HEAD >testg.txt &&
+	test_line_count = 5 testg.txt
+'
+
+test_expect_success 'single-character name is parsed correctly' '
+	git commit --author="a <a@example.com>" --allow-empty -m foo &&
+	echo "a <a@example.com>" >expect &&
+	git log -1 --format="%an <%ae>" >actual &&
 	test_cmp expect actual
 '
 
-test_expect_success 'setup third commit' '
-	cd repo &&
-	head2=$(cat head2) &&
-	head3=$(doit 3 "third commit" "$head2") &&
-	git update-ref refs/heads/master "$head3" &&
-	echo "$head3" >head3
-'
-
-test_expect_success '--format %s with three commits' '
-	cd repo &&
-	head1=$(cat head1) &&
-	head2=$(cat head2) &&
-	head3=$(cat head3) &&
-	cat >expect <<-EOF &&
-	commit $head3
-	third commit
-	commit $head2
-	changed foo
-	commit $head1
-	added foo
-	EOF
-	git rev-list --format=%s refs/heads/master >actual &&
+test_expect_success 'unused %G placeholders are passed through' '
+	echo "%GX %G" >expect &&
+	git log -1 --format="%GX %G" >actual &&
 	test_cmp expect actual
-'
-
-test_expect_success '--max-count=1 with --format shows only one' '
-	cd repo &&
-	head3=$(cat head3) &&
-	cat >expect <<-EOF &&
-	commit $head3
-	third commit
-	EOF
-	git rev-list --max-count=1 --format=%s refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format with empty string' '
-	cd repo &&
-	head3=$(cat head3) &&
-	head2=$(cat head2) &&
-	head1=$(cat head1) &&
-	cat >expect <<-EOF &&
-	commit $head3
-
-	commit $head2
-
-	commit $head1
-
-	EOF
-	git rev-list --format="" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-# --- New tests: more format specifiers ---
-
-test_expect_success '--format %s shows subject line' '
-	cd repo &&
-	git rev-list --max-count=1 --format="%s" refs/heads/master >actual &&
-	grep -q "third commit" actual
-'
-
-test_expect_success '--format %H shows full hash' '
-	cd repo &&
-	head3=$(cat head3) &&
-	git rev-list --max-count=1 --format="%H" refs/heads/master >actual &&
-	grep -q "$head3" actual
-'
-
-test_expect_success '--format %h shows abbreviated hash' '
-	cd repo &&
-	head3=$(cat head3) &&
-	short3=$(echo "$head3" | cut -c1-7) &&
-	git rev-list --abbrev=7 --max-count=1 --format="%h" refs/heads/master >actual &&
-	grep -q "$short3" actual
-'
-
-test_expect_success '--format %h default abbreviation' '
-	cd repo &&
-	git rev-list --max-count=1 --format="%h" refs/heads/master >actual &&
-	# second line is the abbreviated hash
-	hash=$(sed -n 2p actual) &&
-	len=$(echo "$hash" | tr -d "\n" | wc -c) &&
-	test "$len" -ge 4 &&
-	test "$len" -le 40
-'
-
-test_expect_success '--format %%H literal percent-H' '
-	cd repo &&
-	head3=$(cat head3) &&
-	cat >expect <<-EOF &&
-	commit $head3
-	%H
-	EOF
-	git rev-list --max-count=1 --format="%%H" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format %%%% double literal percent' '
-	cd repo &&
-	head3=$(cat head3) &&
-	cat >expect <<-EOF &&
-	commit $head3
-	%%
-	EOF
-	git rev-list --max-count=1 --format="%%%%" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format %s with single commit' '
-	cd repo &&
-	head3=$(cat head3) &&
-	cat >expect <<-EOF &&
-	commit $head3
-	third commit
-	EOF
-	git rev-list --max-count=1 --format="%s" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format with mixed text and %s' '
-	cd repo &&
-	head3=$(cat head3) &&
-	cat >expect <<-EOF &&
-	commit $head3
-	Subject: third commit
-	EOF
-	git rev-list --max-count=1 --format="Subject: %s" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format %H %s on same line' '
-	cd repo &&
-	head3=$(cat head3) &&
-	cat >expect <<-EOF &&
-	commit $head3
-	$head3 third commit
-	EOF
-	git rev-list --max-count=1 --format="%H %s" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format %H with multiple commits' '
-	cd repo &&
-	head1=$(cat head1) &&
-	head2=$(cat head2) &&
-	head3=$(cat head3) &&
-	git rev-list --format="%H" refs/heads/master >actual &&
-	grep -q "$head1" actual &&
-	grep -q "$head2" actual &&
-	grep -q "$head3" actual
-'
-
-test_expect_success '--format %s with --skip=1' '
-	cd repo &&
-	head1=$(cat head1) &&
-	head2=$(cat head2) &&
-	cat >expect <<-EOF &&
-	commit $head2
-	changed foo
-	commit $head1
-	added foo
-	EOF
-	git rev-list --skip=1 --format="%s" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format %H with --reverse' '
-	cd repo &&
-	head1=$(cat head1) &&
-	head2=$(cat head2) &&
-	head3=$(cat head3) &&
-	cat >expect <<-EOF &&
-	commit $head1
-	$head1
-	commit $head2
-	$head2
-	commit $head3
-	$head3
-	EOF
-	git rev-list --reverse --format="%H" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format with newline via multiple lines' '
-	cd repo &&
-	head3=$(cat head3) &&
-	cat >expect <<-EOF &&
-	commit $head3
-	line1 line2
-	EOF
-	git rev-list --max-count=1 --format="line1 line2" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format %H same as plain rev-list for each commit' '
-	cd repo &&
-	git rev-list refs/heads/master >plain &&
-	git rev-list --format="%H" refs/heads/master | grep -v "^commit " >formatted &&
-	test_cmp plain formatted
-'
-
-test_expect_success '--format %h matches --short output' '
-	cd repo &&
-	head3=$(cat head3) &&
-	short=$(git rev-parse --short "$head3") &&
-	git rev-list --max-count=1 --format="%h" refs/heads/master >actual &&
-	grep -q "$short" actual
-'
-
-test_expect_success '--quiet suppresses all output' '
-	cd repo &&
-	git rev-list --quiet refs/heads/master >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success '--format %s subjects match commit messages' '
-	cd repo &&
-	git rev-list --format="%s" refs/heads/master >actual &&
-	grep -q "added foo" actual &&
-	grep -q "changed foo" actual &&
-	grep -q "third commit" actual
-'
-
-test_expect_success '--format with only literal text shows same text for each' '
-	cd repo &&
-	git rev-list --format="FIXED" refs/heads/master >actual &&
-	count=$(grep -c "FIXED" actual) &&
-	test "$count" = "3"
-'
-
-test_expect_success '--abbrev=4 with %h gives 4-char hash' '
-	cd repo &&
-	git rev-list --abbrev=4 --max-count=1 --format="%h" refs/heads/master >actual &&
-	hash=$(sed -n 2p actual) &&
-	len=$(echo "$hash" | tr -d "\n" | wc -c) &&
-	test "$len" = "4"
-'
-
-test_expect_success '--abbrev=40 with %h gives full hash' '
-	cd repo &&
-	head3=$(cat head3) &&
-	git rev-list --abbrev=40 --max-count=1 --format="%h" refs/heads/master >actual &&
-	grep -q "$head3" actual
-'
-
-test_expect_success '--format %H %h %s combined' '
-	cd repo &&
-	head3=$(cat head3) &&
-	short3=$(git rev-parse --short=4 "$head3") &&
-	cat >expect <<-EOF &&
-	commit $head3
-	$head3 $short3 third commit
-	EOF
-	git rev-list --abbrev=4 --max-count=1 --format="%H %h %s" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success 'setup fourth and fifth commits' '
-	cd repo &&
-	head3=$(cat head3) &&
-	head4=$(doit 4 "fourth commit" "$head3") &&
-	head5=$(doit 5 "fifth commit" "$head4") &&
-	git update-ref refs/heads/master "$head5" &&
-	echo "$head4" >head4 &&
-	echo "$head5" >head5
-'
-
-test_expect_success '--format %s with 5 commits' '
-	cd repo &&
-	git rev-list --format="%s" refs/heads/master >actual &&
-	grep -c "^commit " actual >count_file &&
-	count=$(cat count_file) &&
-	test "$count" = "5"
-'
-
-test_expect_success '--max-count=2 --format shows 2 entries' '
-	cd repo &&
-	git rev-list --max-count=2 --format="%s" refs/heads/master >actual &&
-	count=$(grep -c "^commit " actual) &&
-	test "$count" = "2"
-'
-
-test_expect_success '--skip=3 --format shows 2 entries' '
-	cd repo &&
-	git rev-list --skip=3 --format="%s" refs/heads/master >actual &&
-	count=$(grep -c "^commit " actual) &&
-	test "$count" = "2"
-'
-
-test_expect_success '--format %s --reverse first is oldest' '
-	cd repo &&
-	git rev-list --reverse --format="%s" refs/heads/master >actual &&
-	sed -n 2p actual >first_subject &&
-	echo "added foo" >expect &&
-	test_cmp expect first_subject
-'
-
-test_expect_success '--format %s --reverse last is newest' '
-	cd repo &&
-	git rev-list --reverse --format="%s" refs/heads/master >actual &&
-	tail -1 actual >last_subject &&
-	echo "fifth commit" >expect &&
-	test_cmp expect last_subject
-'
-
-test_expect_success '--format %H with --count prints count not format' '
-	cd repo &&
-	git rev-list --count refs/heads/master >actual &&
-	echo 5 >expect &&
-	test_cmp expect actual
-'
-
-test_expect_success 'commit header line present for each commit' '
-	cd repo &&
-	git rev-list --format="%s" refs/heads/master >actual &&
-	head1=$(cat head1) &&
-	head2=$(cat head2) &&
-	head3=$(cat head3) &&
-	head4=$(cat head4) &&
-	head5=$(cat head5) &&
-	grep -q "^commit $head1" actual &&
-	grep -q "^commit $head2" actual &&
-	grep -q "^commit $head3" actual &&
-	grep -q "^commit $head4" actual &&
-	grep -q "^commit $head5" actual
-'
-
-test_expect_success '--format %H identical to hash in commit header' '
-	cd repo &&
-	head5=$(cat head5) &&
-	git rev-list --max-count=1 --format="%H" refs/heads/master >actual &&
-	# First line: "commit <hash>", second line: "<hash>"
-	hdr_hash=$(head -1 actual | sed "s/^commit //") &&
-	fmt_hash=$(sed -n 2p actual) &&
-	test "$hdr_hash" = "$fmt_hash" &&
-	test "$hdr_hash" = "$head5"
-'
-
-test_expect_success '--format with %s and literal prefix/suffix' '
-	cd repo &&
-	head5=$(cat head5) &&
-	cat >expect <<-EOF &&
-	commit $head5
-	[fifth commit]
-	EOF
-	git rev-list --max-count=1 --format="[%s]" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format %% at start and end' '
-	cd repo &&
-	head5=$(cat head5) &&
-	cat >expect <<-EOF &&
-	commit $head5
-	%fifth commit%
-	EOF
-	git rev-list --max-count=1 --format="%%%s%%" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format %H repeated' '
-	cd repo &&
-	head5=$(cat head5) &&
-	cat >expect <<-EOF &&
-	commit $head5
-	$head5=$head5
-	EOF
-	git rev-list --max-count=1 --format="%H=%H" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format with no specifiers is literal' '
-	cd repo &&
-	head5=$(cat head5) &&
-	cat >expect <<-EOF &&
-	commit $head5
-	no-specifiers-here
-	EOF
-	git rev-list --max-count=1 --format="no-specifiers-here" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format produces correct line count' '
-	cd repo &&
-	git rev-list --format="%H" refs/heads/master >actual &&
-	# 5 commits * 2 lines each (commit header + format line) = 10
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$lines" = "10"
-'
-
-test_expect_success '--format empty string produces 10 lines (5 commits)' '
-	cd repo &&
-	git rev-list --format="" refs/heads/master >actual &&
-	lines=$(wc -l <actual | tr -d " ") &&
-	test "$lines" = "10"
-'
-
-test_expect_success '--format %h with --abbrev=10' '
-	cd repo &&
-	git rev-list --abbrev=10 --max-count=1 --format="%h" refs/heads/master >actual &&
-	hash=$(sed -n 2p actual) &&
-	len=$(echo "$hash" | tr -d "\n" | wc -c) &&
-	test "$len" = "10"
-'
-
-test_expect_success '--format %s does not include trailing newline in subject' '
-	cd repo &&
-	git rev-list --max-count=1 --format="%s" refs/heads/master >actual &&
-	subject=$(sed -n 2p actual) &&
-	test "$subject" = "fifth commit"
-'
-
-test_expect_success 'setup merge commit for parent tests' '
-	cd repo &&
-	head5=$(cat head5) &&
-	side=$(doit 6 "side branch" "$(cat head3)") &&
-	merge=$(doit 7 "merge commit" "$head5" "$side") &&
-	git update-ref refs/heads/master "$merge" &&
-	echo "$side" >side &&
-	echo "$merge" >merge
-'
-
-test_expect_success '--format %H on merge commit' '
-	cd repo &&
-	merge=$(cat merge) &&
-	cat >expect <<-EOF &&
-	commit $merge
-	$merge
-	EOF
-	git rev-list --max-count=1 --format="%H" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format %s on merge commit' '
-	cd repo &&
-	merge=$(cat merge) &&
-	cat >expect <<-EOF &&
-	commit $merge
-	merge commit
-	EOF
-	git rev-list --max-count=1 --format="%s" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--first-parent --format %s skips side' '
-	cd repo &&
-	git rev-list --first-parent --format="%s" refs/heads/master >actual &&
-	! grep -q "side branch" actual
-'
-
-test_expect_success '--format %H --first-parent' '
-	cd repo &&
-	side=$(cat side) &&
-	git rev-list --first-parent --format="%H" refs/heads/master >actual &&
-	! grep -q "$side" actual
-'
-
-test_expect_success '--topo-order --format %s' '
-	cd repo &&
-	git rev-list --topo-order --format="%s" refs/heads/master >actual &&
-	# merge should appear before its parents
-	merge_line=$(grep -n "merge commit" actual | head -1 | cut -d: -f1) &&
-	added_line=$(grep -n "added foo" actual | head -1 | cut -d: -f1) &&
-	test "$merge_line" -lt "$added_line"
-'
-
-test_expect_success '--format %H count after merge (7 commits)' '
-	cd repo &&
-	git rev-list --format="%H" refs/heads/master >actual &&
-	count=$(grep -c "^commit " actual) &&
-	test "$count" = "7"
-'
-
-test_expect_success '--format %h all abbreviated hashes are unique' '
-	cd repo &&
-	git rev-list --format="%h" refs/heads/master | grep -v "^commit " >hashes &&
-	sort hashes >sorted &&
-	uniq sorted >unique &&
-	test_cmp sorted unique
-'
-
-test_expect_success '--format %H all full hashes are unique' '
-	cd repo &&
-	git rev-list --format="%H" refs/heads/master | grep -v "^commit " >hashes &&
-	sort hashes >sorted &&
-	uniq sorted >unique &&
-	test_cmp sorted unique
-'
-
-test_expect_success '--format %s --max-count=3 gives 3 subjects' '
-	cd repo &&
-	git rev-list --max-count=3 --format="%s" refs/heads/master >actual &&
-	count=$(grep -c "^commit " actual) &&
-	test "$count" = "3"
-'
-
-test_expect_success '--quiet with --format still quiet' '
-	cd repo &&
-	git rev-list --quiet refs/heads/master >actual &&
-	test_must_be_empty actual
-'
-
-test_expect_success '--format single %' '
-	cd repo &&
-	merge=$(cat merge) &&
-	cat >expect <<-EOF &&
-	commit $merge
-	%
-	EOF
-	git rev-list --max-count=1 --format="%%" refs/heads/master >actual &&
-	test_cmp expect actual
-'
-
-test_expect_success '--format %H with range' '
-	cd repo &&
-	head3=$(cat head3) &&
-	git rev-list --format="%H" "$head3"..refs/heads/master >actual &&
-	! grep -q "$head3" actual &&
-	count=$(grep -c "^commit " actual) &&
-	test "$count" -ge 1
-'
-
-test_expect_success '--format %s with range excludes ancestor' '
-	cd repo &&
-	head3=$(cat head3) &&
-	git rev-list --format="%s" "$head3"..refs/heads/master >actual &&
-	! grep -q "third commit" actual
-'
-
-test_expect_success '--format %h --reverse first hash is oldest' '
-	cd repo &&
-	head1=$(cat head1) &&
-	short1=$(git rev-parse --short "$head1") &&
-	git rev-list --reverse --format="%h" refs/heads/master >actual &&
-	second_line=$(sed -n 2p actual) &&
-	test "$second_line" = "$short1"
-'
-
-test_expect_success '--format %H --skip=5 with 7 commits gives 2' '
-	cd repo &&
-	git rev-list --skip=5 --format="%H" refs/heads/master >actual &&
-	count=$(grep -c "^commit " actual) &&
-	test "$count" = "2"
 '
 
 test_done

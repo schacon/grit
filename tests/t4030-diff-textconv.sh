@@ -1,259 +1,171 @@
 #!/bin/sh
-# Tests for diff handling of binary files and special content.
-# Upstream git t4030 covers textconv filters.
-# grit doesn't implement textconv yet, so we test binary diff behavior,
-# diff with no-newline-at-eof, empty files, and mode changes.
 
-test_description='diff binary and special content handling'
+test_description='diff.*.textconv tests'
 
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup binary diff repo' '
-	git init diffbin &&
-	cd diffbin &&
-	git config user.name "Test User" &&
-	git config user.email "test@example.com"
+find_diff() {
+	sed '1,/^index /d' | sed '/^-- $/,$d'
+}
+
+cat >expect.binary <<'EOF'
+Binary files a/file and b/file differ
+EOF
+
+cat >expect.text <<'EOF'
+--- a/file
++++ b/file
+@@ -1 +1,2 @@
+ 0
++1
+EOF
+
+test_expect_success 'setup binary file with history' '
+	write_script hexdump <<-\EOF &&
+	tr "\000\001" "01" <"$1"
+	EOF
+	test_commit --printf one file "\\0\\n" &&
+	test_commit --printf --append two file "\\01\\n"
 '
 
-test_expect_success 'diff --cached with text file works normally' '
-	cd diffbin &&
-	echo "hello world" >text.txt &&
-	git add text.txt &&
-	test_tick &&
-	git commit -m "add text" &&
-	echo "goodbye world" >text.txt &&
-	git add text.txt &&
-	git diff --cached >actual &&
-	grep "^-hello world" actual &&
-	grep "^+goodbye world" actual
+test_expect_success 'file is considered binary by porcelain' '
+	git diff HEAD^ HEAD >diff &&
+	find_diff <diff >actual &&
+	test_cmp expect.binary actual
 '
 
-test_expect_success 'diff --cached with no-newline-at-eof' '
-	cd diffbin &&
-	test_tick &&
-	git commit -m "update text" &&
-	printf "no newline" >noeol.txt &&
-	git add noeol.txt &&
-	git diff --cached >actual &&
-	grep "no newline" actual
+test_expect_success 'file is considered binary by plumbing' '
+	git diff-tree -p HEAD^ HEAD >diff &&
+	find_diff <diff >actual &&
+	test_cmp expect.binary actual
 '
 
-test_expect_success 'diff between commits with no-newline-at-eof' '
-	cd diffbin &&
-	test_tick &&
-	git commit -m "add noeol" &&
-	printf "changed no newline" >noeol.txt &&
-	git add noeol.txt &&
-	test_tick &&
-	git commit -m "change noeol" &&
-	parent=$(git rev-parse HEAD~1) &&
-	head=$(git rev-parse HEAD) &&
-	git diff $parent $head >actual &&
-	grep "No newline at end of file" actual ||
-	grep "no newline" actual
+test_expect_success 'setup textconv filters' '
+	echo file diff=foo >.gitattributes &&
+	git config diff.foo.textconv "\"$(pwd)\""/hexdump &&
+	git config diff.fail.textconv false
 '
 
-test_expect_success 'diff --stat with file having no newline' '
-	cd diffbin &&
-	parent=$(git rev-parse HEAD~1) &&
-	head=$(git rev-parse HEAD) &&
-	git diff --stat $parent $head >actual &&
-	grep "noeol.txt" actual
+test_expect_success 'diff produces text' '
+	git diff HEAD^ HEAD >diff &&
+	find_diff <diff >actual &&
+	test_cmp expect.text actual
 '
 
-test_expect_success 'diff with empty file creation' '
-	cd diffbin &&
-	: >empty.txt &&
-	git add empty.txt &&
-	git diff --cached >actual &&
-	grep "^diff --git" actual &&
-	grep "empty.txt" actual
+test_expect_success 'show commit produces text' '
+	git show HEAD >diff &&
+	find_diff <diff >actual &&
+	test_cmp expect.text actual
 '
 
-test_expect_success 'diff with content added to empty file' '
-	cd diffbin &&
-	test_tick &&
-	git commit -m "add empty" &&
-	echo "now has content" >empty.txt &&
-	git add empty.txt &&
-	git diff --cached >actual &&
-	grep "^+now has content" actual
+test_expect_success 'diff-tree produces binary' '
+	git diff-tree -p HEAD^ HEAD >diff &&
+	find_diff <diff >actual &&
+	test_cmp expect.binary actual
 '
 
-test_expect_success 'diff with file emptied' '
-	cd diffbin &&
-	test_tick &&
-	git commit -m "fill empty" &&
-	: >empty.txt &&
-	git add empty.txt &&
-	git diff --cached >actual &&
-	grep "^-now has content" actual
+test_expect_success 'log produces text' '
+	git log -1 -p >log &&
+	find_diff <log >actual &&
+	test_cmp expect.text actual
 '
 
-test_expect_success 'diff --numstat with multiple changed files' '
-	cd diffbin &&
-	test_tick &&
-	git commit -m "empty again" &&
-	echo "new1" >a.txt &&
-	echo "new2" >b.txt &&
-	git add a.txt b.txt &&
-	test_tick &&
-	git commit -m "add a and b" &&
-	echo "changed1" >a.txt &&
-	echo "changed2" >b.txt &&
-	git add a.txt b.txt &&
-	test_tick &&
-	git commit -m "change both" &&
-	parent=$(git rev-parse HEAD~1) &&
-	head=$(git rev-parse HEAD) &&
-	git diff --numstat $parent $head >actual &&
-	test_line_count = 2 actual
+test_expect_success 'format-patch produces binary' '
+	git format-patch --no-binary --stdout HEAD^ >patch &&
+	find_diff <patch >actual &&
+	test_cmp expect.binary actual
 '
 
-test_expect_success 'diff --name-only with addition and modification' '
-	cd diffbin &&
-	echo "extra" >c.txt &&
-	echo "more" >>a.txt &&
-	git add a.txt c.txt &&
-	test_tick &&
-	git commit -m "modify a add c" &&
-	parent=$(git rev-parse HEAD~1) &&
-	head=$(git rev-parse HEAD) &&
-	git diff --name-only $parent $head >actual &&
-	grep "a.txt" actual &&
-	grep "c.txt" actual
+test_expect_success 'status -v produces text' '
+	git reset --soft HEAD^ &&
+	git status -v >diff &&
+	find_diff <diff >actual &&
+	test_cmp expect.text actual &&
+	git reset --soft HEAD@{1}
 '
 
-test_expect_success 'diff with file containing special characters' '
-	cd diffbin &&
-	printf "tab\there\n" >special.txt &&
-	git add special.txt &&
-	test_tick &&
-	git commit -m "add special" &&
-	printf "tab\tchanged\n" >special.txt &&
-	git add special.txt &&
-	git diff --cached >actual &&
-	grep "here" actual &&
-	grep "changed" actual
+test_expect_success 'show blob produces binary' '
+	git show HEAD:file >actual &&
+	printf "\\0\\n\\01\\n" >expect &&
+	test_cmp expect actual
 '
 
-test_expect_success 'diff with file containing only whitespace' '
-	cd diffbin &&
-	test_tick &&
-	git commit -m "update special" &&
-	printf "   \n" >ws.txt &&
-	git add ws.txt &&
-	test_tick &&
-	git commit -m "add whitespace file" &&
-	printf "  \n" >ws.txt &&
-	git add ws.txt &&
-	git diff --cached >actual &&
-	grep "^@@" actual
+test_expect_success 'show --textconv blob produces text' '
+	git show --textconv HEAD:file >actual &&
+	printf "0\\n1\\n" >expect &&
+	test_cmp expect actual
 '
 
-test_expect_success 'diff --stat shows correct insertion/deletion counts' '
-	cd diffbin &&
-	test_tick &&
-	git commit -m "ws change" &&
-	echo "line1" >count.txt &&
-	echo "line2" >>count.txt &&
-	echo "line3" >>count.txt &&
-	git add count.txt &&
-	test_tick &&
-	git commit -m "add count" &&
-	echo "LINE1" >count.txt &&
-	echo "line2" >>count.txt &&
-	echo "LINE3" >>count.txt &&
-	git add count.txt &&
-	test_tick &&
-	git commit -m "modify count" &&
-	parent=$(git rev-parse HEAD~1) &&
-	head=$(git rev-parse HEAD) &&
-	git diff --numstat $parent $head >actual &&
-	# 2 insertions, 2 deletions (lines 1 and 3 changed)
-	grep "^2	2	count.txt" actual
+test_expect_success 'show --no-textconv blob produces binary' '
+	git show --no-textconv HEAD:file >actual &&
+	printf "\\0\\n\\01\\n" >expect &&
+	test_cmp expect actual
 '
 
-test_expect_success 'diff with long lines' '
-	cd diffbin &&
-	python3 -c "print(\"A\" * 1000)" >longline.txt &&
-	git add longline.txt &&
-	test_tick &&
-	git commit -m "add longline" &&
-	python3 -c "print(\"B\" * 1000)" >longline.txt &&
-	git add longline.txt &&
-	git diff --cached >actual &&
-	grep "^-AAAA" actual &&
-	grep "^+BBBB" actual
+test_expect_success 'grep-diff (-G) operates on textconv data (add)' '
+	echo one >expect &&
+	git log --root --format=%s -G0 >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'diff-tree between two commits' '
-	cd diffbin &&
-	test_tick &&
-	git commit -m "update longline" &&
-	c1=$(git rev-parse HEAD~1) &&
-	c2=$(git rev-parse HEAD) &&
-	git diff-tree $c1 $c2 >actual &&
-	grep "longline.txt" actual
+test_expect_success 'grep-diff (-G) operates on textconv data (modification)' '
+	echo two >expect &&
+	git log --root --format=%s -G1 >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'diff-tree -p shows patch' '
-	cd diffbin &&
-	c1=$(git rev-parse HEAD~1) &&
-	c2=$(git rev-parse HEAD) &&
-	git diff-tree -p $c1 $c2 >actual &&
-	grep "^@@" actual
+test_expect_success 'pickaxe (-S) operates on textconv data (add)' '
+	echo one >expect &&
+	git log --root --format=%s -S0 >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'diff with multiple lines added' '
-	cd diffbin &&
-	seq 1 10 >seq.txt &&
-	git add seq.txt &&
-	test_tick &&
-	git commit -m "add seq" &&
-	seq 1 20 >seq.txt &&
-	git add seq.txt &&
-	git diff --cached >actual &&
-	grep "^+11" actual
+test_expect_success 'pickaxe (-S) operates on textconv data (modification)' '
+	echo two >expect &&
+	git log --root --format=%s -S1 >actual &&
+	test_cmp expect actual
 '
 
-test_expect_success 'diff with multiple lines removed' '
-	cd diffbin &&
-	test_tick &&
-	git commit -m "expand seq" &&
-	seq 1 5 >seq.txt &&
-	git add seq.txt &&
-	git diff --cached >actual &&
-	grep "^-6" actual &&
-	grep "^-20" actual
-'
+cat >expect.stat <<'EOF'
+ file | Bin 2 -> 4 bytes
+ 1 file changed, 0 insertions(+), 0 deletions(-)
+EOF
+test_expect_success 'diffstat does not run textconv' '
+	echo file diff=fail >.gitattributes &&
+	git diff --stat HEAD^ HEAD >actual &&
+	test_cmp expect.stat actual &&
 
-test_expect_success 'diff --name-status shows A for added files' '
-	cd diffbin &&
-	test_tick &&
-	git commit -m "shrink seq" &&
-	echo "brand new" >new_add.txt &&
-	git add new_add.txt &&
-	test_tick &&
-	git commit -m "add new_add" &&
-	parent=$(git rev-parse HEAD~1) &&
-	head=$(git rev-parse HEAD) &&
-	git diff --name-status $parent $head >actual &&
-	grep "^A" actual &&
-	grep "new_add.txt" actual
+	head -n1 <expect.stat >expect.line1 &&
+	head -n1 <actual >actual.line1 &&
+	test_cmp expect.line1 actual.line1
 '
+# restore working setup
+echo file diff=foo >.gitattributes
 
-test_expect_success 'diff --name-status shows D for deleted files' '
-	cd diffbin &&
-	git rm new_add.txt &&
-	test_tick &&
-	git commit -m "rm new_add" &&
-	parent=$(git rev-parse HEAD~1) &&
-	head=$(git rev-parse HEAD) &&
-	git diff --name-status $parent $head >actual &&
-	grep "^D" actual &&
-	grep "new_add.txt" actual
+symlink=$(git rev-parse --short $(printf frotz | git hash-object --stdin))
+cat >expect.typechange <<EOF
+--- a/file
++++ /dev/null
+@@ -1,2 +0,0 @@
+-0
+-1
+diff --git a/file b/file
+new file mode 120000
+index 0000000..$symlink
+--- /dev/null
++++ b/file
+@@ -0,0 +1 @@
++frotz
+\ No newline at end of file
+EOF
+
+test_expect_success 'textconv does not act on symlinks' '
+	rm -f file &&
+	test_ln_s_add frotz file &&
+	git commit -m typechange &&
+	git show >diff &&
+	find_diff <diff >actual &&
+	test_cmp expect.typechange actual
 '
 
 test_done

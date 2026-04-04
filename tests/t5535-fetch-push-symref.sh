@@ -1,17 +1,10 @@
 #!/bin/sh
-# Ported from git/t/t5535-fetch-push-symref.sh
-# Tests avoiding conflicting update through symref aliasing
 
 test_description='avoiding conflicting update through symref aliasing'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 test_expect_success 'setup' '
-	git init -q &&
 	test_commit one &&
 	git clone . src &&
 	git clone src dst1 &&
@@ -20,7 +13,6 @@ test_expect_success 'setup' '
 	( cd src && git pull )
 '
 
-# grit does not yet support glob refspecs (refs/remotes/*:refs/remotes/*)
 test_expect_success 'push' '
 	(
 		cd src &&
@@ -34,7 +26,6 @@ test_expect_success 'push' '
 	test_cmp expect actual
 '
 
-# grit does not yet support glob refspecs (refs/remotes/*:refs/remotes/*)
 test_expect_success 'fetch' '
 	(
 		cd dst2 &&
