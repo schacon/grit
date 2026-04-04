@@ -7,9 +7,9 @@
   </defs>
   <rect width="480" height="180" rx="10" fill="url(#bg)" stroke="#30363d" stroke-width="1"/>
   <text x="24" y="40" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="18" font-weight="700" fill="#c9d1d9">Grit — Git in Rust</text>
-  <text x="24" y="72" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#8b949e">11,403 / 18,092 upstream tests passing</text>
+  <text x="24" y="72" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#8b949e">11,376 / 18,092 upstream tests passing</text>
   <rect x="24" y="92" width="432" height="16" rx="8" fill="#30363d"/>
   <rect x="24" y="92" width="272" height="16" rx="8" fill="#3fb950"/>
-  <text x="24" y="138" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="24" font-weight="700" fill="#3fb950">63.0%</text>
+  <text x="24" y="138" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="24" font-weight="700" fill="#3fb950">62.9%</text>
   <text x="104" y="138" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#8b949e">of git test suite</text>
 </svg>
