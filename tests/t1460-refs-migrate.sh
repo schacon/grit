@@ -8,7 +8,7 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# grit refs migrate supports migration between files and reftable backends.
+# grit refs migrate supports files<->reftable migration.
 
 test_expect_success 'setup' '
 	git init repo &&

@@ -15,7 +15,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::objects::ObjectId;
@@ -70,31 +70,79 @@ pub fn resolve_ref(git_dir: &Path, refname: &str) -> Result<ObjectId> {
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_resolve_ref(git_dir, refname);
     }
-    resolve_ref_depth(git_dir, refname, 0)
+    let common = common_dir(git_dir);
+    resolve_ref_depth(git_dir, common.as_deref(), refname, 0)
+}
+
+/// Determine the common git directory for worktree-aware ref resolution.
+///
+/// If `<git_dir>/commondir` exists, its contents point to the shared
+/// git directory. Returns `None` when git_dir is already the common dir.
+fn common_dir(git_dir: &Path) -> Option<PathBuf> {
+    let commondir_file = git_dir.join("commondir");
+    let raw = fs::read_to_string(commondir_file).ok()?;
+    let rel = raw.trim();
+    let path = if Path::new(rel).is_absolute() {
+        PathBuf::from(rel)
+    } else {
+        git_dir.join(rel)
+    };
+    path.canonicalize().ok()
 }
 
 /// Internal recursive resolver with cycle detection.
-fn resolve_ref_depth(git_dir: &Path, refname: &str, depth: usize) -> Result<ObjectId> {
+///
+/// When operating inside a worktree, `common` points to the shared git
+/// directory where most refs live.  The worktree-specific `git_dir` is
+/// checked first for HEAD and per-worktree refs.
+fn resolve_ref_depth(
+    git_dir: &Path,
+    common: Option<&Path>,
+    refname: &str,
+    depth: usize,
+) -> Result<ObjectId> {
     if depth > 10 {
         return Err(Error::InvalidRef(format!(
             "ref symlink too deep: {refname}"
         )));
     }
 
-    // First try as a loose ref file
+    // First try as a loose ref file in git_dir
     let path = git_dir.join(refname);
     match read_ref_file(&path) {
         Ok(Ref::Direct(oid)) => return Ok(oid),
         Ok(Ref::Symbolic(target)) => {
-            return resolve_ref_depth(git_dir, &target, depth + 1);
+            return resolve_ref_depth(git_dir, common, &target, depth + 1);
         }
         Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
 
-    // Fall back to packed-refs
-    if let Some(oid) = lookup_packed_ref(git_dir, refname)? {
+    // For worktrees, try the common dir for shared refs
+    if let Some(cdir) = common {
+        if cdir != git_dir {
+            let cpath = cdir.join(refname);
+            match read_ref_file(&cpath) {
+                Ok(Ref::Direct(oid)) => return Ok(oid),
+                Ok(Ref::Symbolic(target)) => {
+                    return resolve_ref_depth(git_dir, common, &target, depth + 1);
+                }
+                Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    // Fall back to packed-refs (in common dir if available)
+    let packed_dir = common.unwrap_or(git_dir);
+    if let Some(oid) = lookup_packed_ref(packed_dir, refname)? {
         return Ok(oid);
+    }
+    // Also check git_dir packed-refs if different from common
+    if common.is_some() && common != Some(git_dir) {
+        if let Some(oid) = lookup_packed_ref(git_dir, refname)? {
+            return Ok(oid);
+        }
     }
 
     Err(Error::InvalidRef(format!("ref not found: {refname}")))
@@ -323,9 +371,21 @@ pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_list_refs(git_dir, prefix);
     }
-    let base = git_dir.join(prefix);
     let mut results = Vec::new();
+    let base = git_dir.join(prefix);
     collect_refs(&base, prefix, git_dir, &mut results)?;
+
+    // For worktrees, also collect refs from the common dir
+    if let Some(cdir) = common_dir(git_dir) {
+        if cdir != git_dir {
+            let cbase = cdir.join(prefix);
+            collect_refs(&cbase, prefix, &cdir, &mut results)?;
+            // Deduplicate: worktree-local refs take priority
+            results.sort_by(|a, b| a.0.cmp(&b.0));
+            results.dedup_by(|b, a| a.0 == b.0);
+        }
+    }
+
     results.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(results)
 }

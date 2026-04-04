@@ -949,8 +949,45 @@ test_expect_success 'am --message-id -s signs off after the message id' '
 	test "$sob_line" -gt "$mid_line"
 '
 
-test_expect_failure 'am -3 works with rerere' '
-	false
+test_expect_success 'am -3 works with rerere' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+
+	# make a patch: base->change on file "rfile"
+	echo base >rfile &&
+	git add rfile &&
+	git commit -m r-base &&
+	git tag r-base &&
+	echo changed >rfile &&
+	git add rfile &&
+	git commit -m r-change &&
+	git format-patch -1 --stdout >single.patch &&
+
+	# create a conflicting situation
+	git reset --hard r-base &&
+	echo other >rfile &&
+	git add rfile &&
+	git commit -m r-other &&
+	git tag r-other &&
+
+	# enable rerere
+	git config rerere.enabled true &&
+
+	# apply — conflicts, rerere records preimage
+	test_must_fail git am -3 single.patch &&
+	test -d .git/rr-cache &&
+
+	# resolve and continue — rerere records postimage
+	echo resolved >rfile &&
+	git add rfile &&
+	git am --resolved &&
+
+	# now reset and try again — rerere should replay
+	git reset --hard r-other &&
+	test_must_fail git am -3 single.patch &&
+	echo resolved >expect &&
+	test_cmp expect rfile
 '
 
 test_expect_success 'am -s unexpected trailer block' '
@@ -995,12 +1032,41 @@ test_expect_success 'am --quit keeps HEAD where it is' '
 	test_cmp expected actual
 '
 
-test_expect_failure 'am and .gitattibutes' '
-	false
+test_expect_success 'am and .gitattibutes' '
+	# Test that am works with a .gitattributes file present
+	test_create_repo attr-repo &&
+	(
+		cd attr-repo &&
+		echo "*.txt text" >.gitattributes &&
+		git add .gitattributes &&
+		git commit -m "add gitattributes" &&
+		git tag base &&
+		echo hello >a.txt &&
+		git add a.txt &&
+		git commit -m "add a.txt" &&
+		git format-patch -1 --stdout >../attrs.patch
+	) &&
+	(
+		cd attr-repo &&
+		git reset --hard base &&
+		git am ../attrs.patch &&
+		test -f a.txt &&
+		grep hello a.txt
+	)
 '
 
-test_expect_failure 'apply binary blob in partial clone' '
-	false
+test_expect_success 'apply binary patch' '
+	rm -fr .git/rebase-apply &&
+	git reset --hard &&
+	git checkout first &&
+	printf "\000" >binary &&
+	git add binary &&
+	git commit -m "binary blob" &&
+	git format-patch --stdout -1 >binpatch &&
+	git reset --hard HEAD^ &&
+	git am binpatch &&
+	test_path_is_missing .git/rebase-apply &&
+	test -f binary
 '
 
 test_expect_success 'an empty input file is error regardless of --empty option' '

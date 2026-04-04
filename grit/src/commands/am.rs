@@ -34,7 +34,7 @@ pub struct Args {
     pub mbox: Vec<String>,
 
     /// Continue applying patches after resolving a conflict.
-    #[arg(long = "continue")]
+    #[arg(long = "continue", alias = "resolved")]
     pub r#continue: bool,
 
     /// Abort the current am session.
@@ -418,6 +418,8 @@ fn apply_remaining(repo: &Repository, opts: &AmOptions) -> Result<()> {
             }
             Err(e) => {
                 let subject = patch.message.lines().next().unwrap_or("");
+                // Invoke rerere to record preimage or replay resolution
+                let _ = crate::commands::rerere::auto_rerere_worktree(repo);
                 eprintln!(
                     "error: patch failed: {}\n\
                      Applying: {}\n\
@@ -1199,6 +1201,9 @@ fn do_continue(quiet: bool) -> Result<()> {
     // Load saved options
     let mut opts = load_am_options(&state_dir);
     opts.quiet = quiet;
+
+    // Record rerere postimage before committing
+    let _ = crate::commands::rerere::record_postimage(&repo);
 
     create_am_commit(&repo, &index, &patched, &opts)?;
 
