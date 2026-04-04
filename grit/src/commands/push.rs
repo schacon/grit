@@ -574,6 +574,16 @@ fn push_to_url(
             .context("copying objects to remote")?;
     }
 
+    // For --atomic, check if the remote advertises atomic support
+    if args.atomic {
+        let remote_config = ConfigSet::load(Some(&remote_repo.git_dir), false)?;
+        if let Some(val) = remote_config.get("receive.advertiseatomic") {
+            if val == "0" || val == "false" {
+                bail!("the receiving end does not support --atomic push");
+            }
+        }
+    }
+
     // For --atomic, verify all refs can be updated before writing any.
     // In local transport we do this by checking that nothing changed between
     // our initial read and now.
@@ -623,6 +633,31 @@ fn push_to_url(
                 colorize_remote_output(&output_str, color_remote);
             }
             if let HookResult::Failed(_code) = hook_result {
+                if args.atomic {
+                    // Atomic: rollback all applied updates and fail immediately
+                    for (prev_update, prev_old) in &applied_updates {
+                        if let Some(old_oid) = prev_old {
+                            let _ = refs::write_ref(
+                                &remote_repo.git_dir,
+                                &prev_update.remote_ref,
+                                old_oid,
+                            );
+                        } else {
+                            let _ = refs::delete_ref(
+                                &remote_repo.git_dir,
+                                &prev_update.remote_ref,
+                            );
+                        }
+                    }
+                    eprintln!(
+                        " ! [remote rejected] {} -> {} (hook declined)",
+                        update.local_ref.as_deref()
+                            .and_then(|r| r.strip_prefix("refs/heads/"))
+                            .unwrap_or(update.local_ref.as_deref().unwrap_or("(delete)")),
+                        update.remote_ref.strip_prefix("refs/heads/").unwrap_or(&update.remote_ref),
+                    );
+                    bail!("failed to push some refs to '{url}'");
+                }
                 rejected.push((update, "hook declined".to_string()));
                 continue;
             }
