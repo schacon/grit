@@ -591,33 +591,39 @@ fn run_add(args: &AddArgs) -> Result<()> {
 
     let sub_path = work_tree.join(&path);
 
-    if sub_path.exists() {
-        bail!("'{}' already exists", path);
-    }
-
     let git_bin = std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string());
 
-    // Clone the submodule.
-    let modules_dir = repo.git_dir.join("modules").join(&path);
-    // Only create the parent directory; git clone --separate-git-dir
-    // will create the modules_dir itself.
-    if let Some(parent) = modules_dir.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    if sub_path.exists() {
+        // If the path already exists and is a valid git repo, treat it like
+        // "Adding existing repo" (same as C git).
+        let is_repo = sub_path.join(".git").exists();
+        if !is_repo {
+            bail!("'{}' already exists and is not a git repository", path);
+        }
+        eprintln!("Adding existing repo at '{}' to the index", path);
+    } else {
+        // Clone the submodule.
+        let modules_dir = repo.git_dir.join("modules").join(&path);
+        // Only create the parent directory; git clone --separate-git-dir
+        // will create the modules_dir itself.
+        if let Some(parent) = modules_dir.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
-    let status = Command::new(&git_bin)
-        .arg("clone")
-        .arg("--separate-git-dir")
-        .arg(&modules_dir)
-        .arg(&args.url)
-        .arg(&sub_path)
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_DIR")
-        .status()
-        .context("failed to clone submodule")?;
+        let status = Command::new(&git_bin)
+            .arg("clone")
+            .arg("--separate-git-dir")
+            .arg(&modules_dir)
+            .arg(&args.url)
+            .arg(&sub_path)
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_DIR")
+            .status()
+            .context("failed to clone submodule")?;
 
-    if !status.success() {
-        bail!("failed to clone submodule from '{}'", args.url);
+        if !status.success() {
+            bail!("failed to clone submodule from '{}'", args.url);
+        }
     }
 
     // Derive the submodule name (same as path for simplicity).
