@@ -2795,7 +2795,7 @@ test_expect_success PERL 'send-email' '
 	test_completion "git send-email ma" "main "
 '
 
-test_expect_failure 'complete files' '
+test_expect_success 'complete files' '
 	git init tmp && cd tmp &&
 	test_when_finished "cd .. && rm -rf tmp" &&
 
