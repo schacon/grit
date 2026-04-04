@@ -78,6 +78,22 @@ pub struct Args {
     #[arg(long = "cacheinfo", value_name = "mode,object,path")]
     pub cacheinfo: Vec<String>,
 
+    /// Set the execute bit on tracked files (+x or -x).
+    #[arg(long = "chmod", value_name = "MODE")]
+    pub chmod: Option<String>,
+
+    /// Replace the entire index (used with --index-info).
+    #[arg(long = "replace")]
+    pub replace: bool,
+
+    /// Do not complain about unmerged entries.
+    #[arg(long = "unmerged")]
+    pub unmerged: bool,
+
+    /// Verbose mode.
+    #[arg(short = 'v', long = "verbose")]
+    pub verbose: bool,
+
     /// Files to add/remove from the index.
     pub files: Vec<PathBuf>,
 }
@@ -164,21 +180,24 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
 
-        // --remove: remove the path from the index.  When --add is also
-        // given and the file exists as a regular file/symlink (not a
-        // directory), fall through to the add logic instead.  A directory
-        // at the path means the original file was replaced, so remove.
+        // --remove: if the file doesn't exist on disk (or is a directory
+        // that replaced it), remove the entry from the index.  If the file
+        // *does* exist on disk, fall through to the normal update/add logic
+        // so the index entry gets refreshed.
         if args.remove {
-            let file_exists = match std::fs::symlink_metadata(&abs_path) { Ok(m) => !m.is_dir(), Err(_) => false, };
-            if !args.add || !file_exists {
+            let file_exists = match std::fs::symlink_metadata(&abs_path) {
+                Ok(m) => !m.is_dir(),
+                Err(_) => false,
+            };
+            if !file_exists {
                 if !index.remove(&rel_bytes) && !args.ignore_missing {
-                    let file_missing = !abs_path.exists();
-                    if file_missing {
-                        bail!("'{}' is not in the index", input_path.display());
-                    }
+                    // Entry wasn't in the index — only error if the file is
+                    // truly gone (not just a directory replacement).
+                    bail!("'{}' is not in the index", input_path.display());
                 }
                 continue;
             }
+            // File exists on disk — fall through to update it in the index.
         }
 
         if args.assume_unchanged {
@@ -205,6 +224,21 @@ pub fn run(args: Args) -> Result<()> {
         if args.no_skip_worktree {
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.set_skip_worktree(false);
+            }
+            continue;
+        }
+
+        // --chmod=+x or --chmod=-x: change the mode of an existing entry.
+        if let Some(ref chmod_val) = args.chmod {
+            let new_mode = match chmod_val.as_str() {
+                "+x" => 0o100755u32,
+                "-x" => 0o100644u32,
+                other => bail!("--chmod param '{}' must be either +x or -x", other),
+            };
+            if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                e.mode = new_mode;
+            } else {
+                bail!("'{}' is not in the index", input_path.display());
             }
             continue;
         }

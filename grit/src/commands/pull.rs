@@ -37,6 +37,18 @@ pub struct Args {
     /// Suppress output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
+
+    /// Merge strategy to use.
+    #[arg(short = 's', long = "strategy")]
+    pub strategy: Option<String>,
+
+    /// Strategy option.
+    #[arg(short = 'X', long = "strategy-option")]
+    pub strategy_option: Vec<String>,
+
+    /// Disable rebase (use merge, the default).
+    #[arg(long = "no-rebase")]
+    pub no_rebase: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -133,8 +145,8 @@ pub fn run(args: Args) -> Result<()> {
             squash: false,
             abort: false,
             continue_merge: false,
-            strategy: None,
-            strategy_option: Vec::new(),
+            strategy: args.strategy.clone(),
+            strategy_option: args.strategy_option.clone(),
             quiet: args.quiet,
             no_edit: true,
             edit: false,

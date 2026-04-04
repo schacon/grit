@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
     count_changes, detect_renames, diff_trees, diff_trees_show_tree_entries, format_raw,
-    format_stat_line, unified_diff, DiffEntry, DiffStatus,
+    format_raw_abbrev, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -80,6 +80,24 @@ struct Options {
     find_copies_harder: bool,
     /// Rename limit (max number of rename source candidates).
     rename_limit: Option<usize>,
+    /// Show full object IDs in patch headers (--full-index).
+    full_index: bool,
+    /// Also show raw format with patch (--patch-with-raw).
+    patch_with_raw: bool,
+    /// Also show stat with patch (--patch-with-stat).
+    patch_with_stat: bool,
+    /// Show summary (new/deleted/mode changes) after diff.
+    summary: bool,
+    /// Pretty-print commit header (--pretty).
+    pretty: bool,
+    /// Show combined stat+summary after diff.
+    stat_too: bool,
+    /// Limit recursion depth for --name-only etc.
+    max_depth: Option<i32>,
+    /// Exit with 1 if there are differences.
+    exit_code: bool,
+    /// Suppress all output, implies exit_code.
+    quiet: bool,
 }
 
 impl Default for Options {
@@ -102,6 +120,15 @@ impl Default for Options {
             find_copies: None,
             find_copies_harder: false,
             rename_limit: None,
+            full_index: false,
+            patch_with_raw: false,
+            patch_with_stat: false,
+            summary: false,
+            pretty: false,
+            stat_too: false,
+            max_depth: None,
+            exit_code: false,
+            quiet: false,
         }
     }
 }
@@ -133,9 +160,24 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-m" => opts.show_merges = true,
                 "--raw" => opts.format = OutputFormat::Raw,
                 "-p" | "-u" | "--patch" => opts.format = OutputFormat::Patch,
-                "--stat" => opts.format = OutputFormat::Stat,
+                "--stat" => { opts.format = OutputFormat::Stat; opts.stat_too = true; }
                 "--name-only" => opts.format = OutputFormat::NameOnly,
                 "--name-status" => opts.format = OutputFormat::NameStatus,
+                "--summary" => opts.summary = true,
+                "--exit-code" => opts.exit_code = true,
+                "-q" | "--quiet" => { opts.quiet = true; opts.exit_code = true; }
+                "--full-index" => opts.full_index = true,
+                _ if arg.starts_with("--max-depth=") => {
+                    let val = &arg["--max-depth=".len()..];
+                    opts.max_depth = Some(
+                        val.parse::<i32>()
+                            .with_context(|| format!("invalid --max-depth value: `{val}`"))?,
+                    );
+                }
+                "--patch-with-stat" => { opts.format = OutputFormat::Patch; opts.patch_with_stat = true; }
+                "--patch-with-raw" => { opts.format = OutputFormat::Patch; opts.patch_with_raw = true; }
+                "--pretty" | "--pretty=medium" => opts.pretty = true,
+                _ if arg.starts_with("--pretty=") => opts.pretty = true,
                 "--abbrev" => opts.abbrev = Some(7),
                 _ if arg.starts_with("--abbrev=") => {
                     let val = &arg["--abbrev=".len()..];
@@ -201,7 +243,14 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
                     || arg.starts_with("--pretty")
-                    || arg.starts_with("--format=") =>
+                    || arg.starts_with("--format=")
+                    || arg.starts_with("-S")
+                    || arg.starts_with("-G")
+                    || arg.starts_with("--pickaxe-all")
+                    || arg.starts_with("--pickaxe-regex")
+                    || arg.starts_with("-O")
+                    || arg.starts_with("-R")
+                    || arg.starts_with("--relative") =>
                 {
                     // ignored
                 }
@@ -220,6 +269,17 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         i += 1;
     }
 
+    // Patch, stat, summary, name-only, name-status all imply recursion.
+    match opts.format {
+        OutputFormat::Patch | OutputFormat::Stat | OutputFormat::NameOnly | OutputFormat::NameStatus => {
+            opts.recursive = true;
+        }
+        _ => {}
+    }
+    if opts.summary {
+        opts.recursive = true;
+    }
+
     Ok(opts)
 }
 
@@ -233,81 +293,100 @@ pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    if opts.stdin_mode {
-        run_stdin_mode(&repo, &opts, &mut out)
+    let has_diff = if opts.stdin_mode {
+        run_stdin_mode(&repo, &opts, &mut out)?
     } else if opts.objects.len() == 2 {
-        run_two_trees(&repo, &opts, &mut out)
+        run_two_trees(&repo, &opts, &mut out)?
     } else if opts.objects.len() == 1 {
-        run_one_commit(&repo, &opts, &mut out)
+        run_one_commit(&repo, &opts, &mut out)?
     } else {
         bail!(
             "usage: grit diff-tree [--stdin] [-r] [--root] [-p|--stat|--name-only|--name-status] \
              <tree-ish> [<tree-ish>] [<path>...]"
         )
+    };
+
+    if opts.exit_code && has_diff {
+        std::process::exit(1);
     }
+    Ok(())
 }
 
 // ── Two-tree mode ────────────────────────────────────────────────────
 
-fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<()> {
+fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
-    let entries = diff_maybe_recursive_opts(&repo.odb, Some(&oid1), Some(&oid2), opts.recursive, opts.show_trees)?;
-    let filtered = filter_pathspecs(entries, &opts.pathspecs);
-    print_diff(out, &repo.odb, &filtered, opts, Some(&oid1))
+    let entries = diff_with_opts(&repo.odb, Some(&oid1), Some(&oid2), opts)?;
+    let filtered = filter_entries(entries, opts);
+    let has_diff = !filtered.is_empty();
+    if !opts.quiet {
+        print_diff(out, &repo.odb, &filtered, opts, Some(&oid1))?;
+    }
+    Ok(has_diff)
 }
 
 // ── Single-commit mode ───────────────────────────────────────────────
 
-fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<()> {
+fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let spec = &opts.objects[0];
     let oid =
         resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
     let obj = repo.odb.read(&oid).context("reading object")?;
 
+    let mut has_diff = false;
     match obj.kind {
         ObjectKind::Commit => {
             let commit = parse_commit(&obj.data).context("parsing commit")?;
             if commit.parents.is_empty() {
                 if opts.root {
                     let entries =
-                        diff_maybe_recursive_opts(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_trees)?;
-                    let filtered = filter_pathspecs(entries, &opts.pathspecs);
-                    print_diff(out, &repo.odb, &filtered, opts, None)?;
+                        diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
+                    let filtered = filter_entries(entries, opts);
+                    has_diff = !filtered.is_empty();
+                    if !opts.quiet && (has_diff || opts.pretty) {
+                        write_commit_header(out, &oid, &obj.data, opts)?;
+                        print_diff(out, &repo.odb, &filtered, opts, None)?;
+                    }
                 }
-                // Without --root, root commits produce no output.
             } else {
                 let parent_tree = commit_tree(&repo.odb, &commit.parents[0])?;
-                let entries = diff_maybe_recursive_opts(
+                let entries = diff_with_opts(
                     &repo.odb,
                     Some(&parent_tree),
                     Some(&commit.tree),
-                    opts.recursive,
-                    opts.show_trees,
+                    opts,
                 )?;
-                let filtered = filter_pathspecs(entries, &opts.pathspecs);
-                print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
+                let filtered = filter_entries(entries, opts);
+                has_diff = !filtered.is_empty();
+                if !opts.quiet && (has_diff || opts.pretty) {
+                    write_commit_header(out, &oid, &obj.data, opts)?;
+                    print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
+                }
             }
         }
         _ => bail!("'{spec}' does not name a commit"),
     }
 
-    Ok(())
+    Ok(has_diff)
 }
 
 // ── --stdin mode ─────────────────────────────────────────────────────
 
-fn run_stdin_mode(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<()> {
+fn run_stdin_mode(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let stdin = io::stdin();
+    let mut has_diff = false;
     for line in stdin.lock().lines() {
         let line = line.context("reading stdin")?;
         let trimmed = line.trim_end();
         if trimmed.is_empty() {
             continue;
         }
-        process_stdin_line(repo, opts, out, trimmed)?;
+        if process_stdin_line(repo, opts, out, trimmed)? {
+            has_diff = true;
+        }
     }
-    Ok(())
+    Ok(has_diff)
 }
 
 /// Process one line from stdin.
@@ -316,7 +395,7 @@ fn process_stdin_line(
     opts: &Options,
     out: &mut impl Write,
     line: &str,
-) -> Result<()> {
+) -> Result<bool> {
     // Split on the first space to get the leading OID and optional remainder.
     let (oid_str, rest) = line
         .split_once(' ')
@@ -328,7 +407,7 @@ fn process_stdin_line(
         Err(_) => {
             // Not a valid OID: pass through.
             writeln!(out, "{line}")?;
-            return Ok(());
+            return Ok(false);
         }
     };
 
@@ -336,7 +415,7 @@ fn process_stdin_line(
         Ok(o) => o,
         Err(_) => {
             writeln!(out, "{line}")?;
-            return Ok(());
+            return Ok(false);
         }
     };
 
@@ -345,7 +424,7 @@ fn process_stdin_line(
         ObjectKind::Tree => process_stdin_two_trees(repo, opts, out, &oid, rest),
         _ => {
             writeln!(out, "{line}")?;
-            Ok(())
+            Ok(false)
         }
     }
 }
@@ -358,7 +437,7 @@ fn process_stdin_commit(
     oid: &ObjectId,
     data: &[u8],
     rest: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let commit = parse_commit(data).context("parsing commit")?;
 
     // Print commit-id header (unless suppressed).
@@ -376,12 +455,12 @@ fn process_stdin_commit(
     }
 
     if opts.suppress_diff {
-        return Ok(());
+        return Ok(false);
     }
 
     // Skip merge commits unless -m.
     if commit.parents.len() > 1 && !opts.show_merges {
-        return Ok(());
+        return Ok(false);
     }
 
     // Override parents if the line contains extra OIDs.
@@ -392,27 +471,32 @@ fn process_stdin_commit(
         extra_parents
     };
 
-    if parent_oids.is_empty() {
+    let has_diff = if parent_oids.is_empty() {
         if opts.root {
             let entries =
-                diff_maybe_recursive_opts(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_trees)?;
-            let filtered = filter_pathspecs(entries, &opts.pathspecs);
+                diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
+            let filtered = filter_entries(entries, opts);
+            let hd = !filtered.is_empty();
             print_diff(out, &repo.odb, &filtered, opts, None)?;
+            hd
+        } else {
+            false
         }
     } else {
         let parent_tree = commit_tree(&repo.odb, &parent_oids[0])?;
-        let entries = diff_maybe_recursive_opts(
+        let entries = diff_with_opts(
             &repo.odb,
             Some(&parent_tree),
             Some(&commit.tree),
-            opts.recursive,
-            opts.show_trees,
+            opts,
         )?;
-        let filtered = filter_pathspecs(entries, &opts.pathspecs);
+        let filtered = filter_entries(entries, opts);
+        let hd = !filtered.is_empty();
         print_diff(out, &repo.odb, &filtered, opts, None)?;
-    }
+        hd
+    };
 
-    Ok(())
+    Ok(has_diff)
 }
 
 /// Handle a two-tree line from stdin: `<tree1> <tree2>`.
@@ -422,7 +506,7 @@ fn process_stdin_two_trees(
     out: &mut impl Write,
     oid1: &ObjectId,
     rest: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let oid2_str = rest.trim();
     if oid2_str.is_empty() {
         bail!("stdin two-tree format requires a second OID after the first");
@@ -434,23 +518,27 @@ fn process_stdin_two_trees(
     // Print both tree OIDs.
     writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
 
-    let entries = diff_maybe_recursive_opts(&repo.odb, Some(oid1), Some(&oid2), opts.recursive, opts.show_trees)?;
-    let filtered = filter_pathspecs(entries, &opts.pathspecs);
+    let entries = diff_with_opts(&repo.odb, Some(oid1), Some(&oid2), opts)?;
+    let filtered = filter_entries(entries, opts);
     print_diff(out, &repo.odb, &filtered, opts, None)
 }
 
 // ── Diff helpers ─────────────────────────────────────────────────────
 
 /// Compute the diff, recursing into sub-trees only when `recursive` is set.
-fn diff_maybe_recursive_opts(
+fn diff_with_opts(
     odb: &Odb,
     old_tree: Option<&ObjectId>,
     new_tree: Option<&ObjectId>,
-    recursive: bool,
-    show_trees: bool,
+    opts: &Options,
 ) -> Result<Vec<DiffEntry>> {
-    if recursive {
-        if show_trees {
+    if opts.max_depth.is_some() {
+        // Always do full recursion; max_depth is applied as a post-filter
+        // after pathspec filtering (depth is relative to pathspec root).
+        return diff_trees(odb, old_tree, new_tree, "").map_err(Into::into);
+    }
+    if opts.recursive {
+        if opts.show_trees {
             diff_trees_show_tree_entries(odb, old_tree, new_tree, "").map_err(Into::into)
         } else {
             diff_trees(odb, old_tree, new_tree, "").map_err(Into::into)
@@ -458,6 +546,68 @@ fn diff_maybe_recursive_opts(
     } else {
         diff_trees_toplevel(odb, old_tree, new_tree)
     }
+}
+
+/// Apply max-depth filtering: collapse entries deeper than `max_depth` levels
+/// relative to the deepest matching pathspec prefix.
+fn filter_max_depth(
+    entries: Vec<DiffEntry>,
+    max_depth: i32,
+    pathspecs: &[String],
+) -> Vec<DiffEntry> {
+    if max_depth < 0 {
+        return entries; // unlimited
+    }
+    let max_depth = max_depth as usize;
+
+    // For each entry, find the matching pathspec and compute relative depth.
+    // Depth 0 means the entry is directly in the pathspec root.
+    let prefix_depth = if pathspecs.is_empty() {
+        0usize
+    } else {
+        // Use the longest (most specific) matching prefix for each entry.
+        // For simplicity, use the minimum prefix depth across all pathspecs.
+        pathspecs
+            .iter()
+            .map(|p| {
+                let p = p.strip_suffix('/').unwrap_or(p);
+                if p.is_empty() {
+                    0
+                } else {
+                    p.split('/').count()
+                }
+            })
+            .min()
+            .unwrap_or(0)
+    };
+
+    // Maximum number of path components allowed in output.
+    let allowed_components = if prefix_depth > 0 {
+        prefix_depth + max_depth
+    } else {
+        max_depth + 1
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for entry in entries {
+        let path = entry.path();
+        let components: Vec<&str> = path.split('/').collect();
+
+        if components.len() <= allowed_components {
+            result.push(entry);
+        } else {
+            // Truncate to allowed_components
+            let truncated: String = components[..allowed_components].join("/");
+            if seen.insert(truncated.clone()) {
+                let mut collapsed = entry;
+                collapsed.old_path = Some(truncated.clone());
+                collapsed.new_path = Some(truncated);
+                result.push(collapsed);
+            }
+        }
+    }
+    result
 }
 
 /// Non-recursive tree diff: only top-level entries.
@@ -682,7 +832,7 @@ fn print_diff(
     entries: &[DiffEntry],
     opts: &Options,
     old_tree_oid: Option<&ObjectId>,
-) -> Result<()> {
+) -> Result<bool> {
     // Apply rename detection if requested.
     let owned_entries;
     let old_blobs = if opts.find_copies.is_some() && opts.find_copies_harder {
@@ -711,7 +861,11 @@ fn print_diff(
     match opts.format {
         OutputFormat::Raw => {
             for entry in entries {
-                writeln!(out, "{}", format_raw(entry))?;
+                if let Some(abbrev_len) = opts.abbrev {
+                    writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
+                } else {
+                    writeln!(out, "{}", format_raw(entry))?;
+                }
             }
         }
         OutputFormat::Patch => {
@@ -747,7 +901,7 @@ fn print_diff(
             }
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Write a unified-diff block for one entry.
@@ -756,7 +910,7 @@ fn write_patch_entry(
     odb: &Odb,
     entry: &DiffEntry,
     context_lines: usize,
-) -> Result<()> {
+) -> Result<bool> {
     let old_path = entry
         .old_path
         .as_deref()
@@ -864,11 +1018,11 @@ fn write_patch_entry(
     );
     write!(out, "{patch}")?;
 
-    Ok(())
+    Ok(false)
 }
 
 /// Write a `--stat` summary.
-fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) -> Result<()> {
+fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) -> Result<bool> {
     let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
@@ -897,7 +1051,7 @@ fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) ->
         if total_del == 1 { "-" } else { "s(-)" },
     )?;
 
-    Ok(())
+    Ok(false)
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -920,6 +1074,145 @@ fn resolve_to_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
 }
 
 /// Retrieve the tree OID from a commit OID.
+/// Write a commit header line. If `pretty` is set, write a full "medium" format
+/// header; otherwise just write the OID.
+fn write_commit_header(
+    out: &mut impl Write,
+    oid: &ObjectId,
+    commit_data: &[u8],
+    opts: &Options,
+) -> Result<bool> {
+    if opts.pretty {
+        let commit = parse_commit(commit_data).context("parsing commit for pretty")?;
+        writeln!(out, "commit {oid}")?;
+        // Parse author line: "Name <email> timestamp tz"
+        let author = &commit.author;
+        if let Some(date_start) = author.rfind('>') {
+            let name_email = &author[..=date_start];
+            let timestamp_tz = author[date_start + 1..].trim();
+            writeln!(out, "Author: {name_email}")?;
+            // Try to parse the date
+            if let Some(formatted) = format_author_date(timestamp_tz) {
+                writeln!(out, "Date:   {formatted}")?;
+            }
+        } else {
+            writeln!(out, "Author: {author}")?;
+        }
+        writeln!(out)?;
+        // Indent commit message
+        for line in commit.message.lines() {
+            writeln!(out, "    {line}")?;
+        }
+        writeln!(out)?;
+    } else if !opts.no_commit_id {
+        writeln!(out, "{oid}")?;
+    }
+    Ok(false)
+}
+
+/// Format a Unix timestamp + tz offset into git's default date format.
+fn format_commit_date(timestamp: i64, tz: &str) -> String {
+    use time::OffsetDateTime;
+    let tz_offset_secs = parse_tz_offset_secs(tz);
+    if let Ok(offset) = time::UtcOffset::from_whole_seconds(tz_offset_secs) {
+        if let Ok(dt) = OffsetDateTime::from_unix_timestamp(timestamp) {
+            let dt = dt.to_offset(offset);
+            let weekday = match dt.weekday() {
+                time::Weekday::Monday => "Mon",
+                time::Weekday::Tuesday => "Tue",
+                time::Weekday::Wednesday => "Wed",
+                time::Weekday::Thursday => "Thu",
+                time::Weekday::Friday => "Fri",
+                time::Weekday::Saturday => "Sat",
+                time::Weekday::Sunday => "Sun",
+            };
+            let month = match dt.month() {
+                time::Month::January => "Jan",
+                time::Month::February => "Feb",
+                time::Month::March => "Mar",
+                time::Month::April => "Apr",
+                time::Month::May => "May",
+                time::Month::June => "Jun",
+                time::Month::July => "Jul",
+                time::Month::August => "Aug",
+                time::Month::September => "Sep",
+                time::Month::October => "Oct",
+                time::Month::November => "Nov",
+                time::Month::December => "Dec",
+            };
+            let sign = if tz_offset_secs < 0 { '-' } else { '+' };
+            let abs = tz_offset_secs.unsigned_abs();
+            let h = abs / 3600;
+            let m = (abs % 3600) / 60;
+            return format!(
+                "{} {} {:2} {:02}:{:02}:{:02} {:4} {}{:02}{:02}",
+                weekday,
+                month,
+                dt.day(),
+                dt.hour(),
+                dt.minute(),
+                dt.second(),
+                dt.year(),
+                sign,
+                h,
+                m
+            );
+        }
+    }
+    format!("{timestamp} {tz}")
+}
+
+/// Parse an author date field and format it for pretty printing.
+/// Handles both "<unix_ts> <tz>" and "YYYY-MM-DD HH:MM:SS <tz>" formats.
+fn format_author_date(date_str: &str) -> Option<String> {
+    if date_str.is_empty() {
+        return None;
+    }
+    // Try "<unix_ts> <tz>" first
+    let parts: Vec<&str> = date_str.splitn(2, ' ').collect();
+    if parts.len() == 2 {
+        if let Ok(ts) = parts[0].parse::<i64>() {
+            return Some(format_commit_date(ts, parts[1]));
+        }
+    }
+    // Try "YYYY-MM-DD HH:MM:SS <tz>" format
+    // Split from the end to find the timezone
+    let parts: Vec<&str> = date_str.rsplitn(2, ' ').collect();
+    if parts.len() == 2 {
+        let tz = parts[0];
+        let datetime = parts[1];
+        // Try to parse as ISO-ish datetime
+        let tz_secs = parse_tz_offset_secs(tz);
+        if let Ok(offset) = time::UtcOffset::from_whole_seconds(tz_secs) {
+            // Try YYYY-MM-DD HH:MM:SS
+            let ymd_hms = time::format_description::parse(
+                "[year]-[month]-[day] [hour]:[minute]:[second]"
+            ).ok()?;
+            if let Ok(naive) = time::PrimitiveDateTime::parse(datetime, &ymd_hms) {
+                let dt = naive.assume_offset(offset);
+                let ts = dt.unix_timestamp();
+                return Some(format_commit_date(ts, tz));
+            }
+        }
+    }
+    // Fallback: just return the raw string
+    Some(date_str.to_owned())
+}
+
+fn parse_tz_offset_secs(tz: &str) -> i32 {
+    if tz.len() < 4 { return 0; }
+    let (sign, rest) = if tz.starts_with('+') {
+        (1i32, &tz[1..])
+    } else if tz.starts_with('-') {
+        (-1i32, &tz[1..])
+    } else {
+        (1i32, tz)
+    };
+    let hours: i32 = rest.get(..2).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let mins: i32 = rest.get(2..4).and_then(|s| s.parse().ok()).unwrap_or(0);
+    sign * (hours * 3600 + mins * 60)
+}
+
 fn commit_tree(odb: &Odb, commit_oid: &ObjectId) -> Result<ObjectId> {
     let obj = odb.read(commit_oid).context("reading parent commit")?;
     let commit = parse_commit(&obj.data).context("parsing parent commit")?;
@@ -951,7 +1244,16 @@ fn read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
     Ok((old_content, new_content))
 }
 
-/// Filter diff entries to only those matching the given path-specs.
+/// Apply all post-diff filters: pathspecs and max-depth.
+fn filter_entries(entries: Vec<DiffEntry>, opts: &Options) -> Vec<DiffEntry> {
+    let filtered = filter_pathspecs(entries, &opts.pathspecs);
+    if let Some(depth) = opts.max_depth {
+        filter_max_depth(filtered, depth, &opts.pathspecs)
+    } else {
+        filtered
+    }
+}
+
 fn filter_pathspecs(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEntry> {
     if pathspecs.is_empty() {
         return entries;

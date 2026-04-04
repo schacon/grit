@@ -41,7 +41,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let changes = collect_changes(&repo, &index, &work_tree, &options)?;
 
-    if !options.quiet {
+    if !options.quiet && !options.suppress_diff {
         match options.format {
             OutputFormat::Raw => {
                 for change in &changes {
@@ -112,6 +112,8 @@ struct Options {
     abbrev: Option<usize>,
     /// Chosen output format.
     format: OutputFormat,
+    /// Suppress diff output (-s / --no-patch).
+    suppress_diff: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -138,6 +140,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut exit_code = false;
     let mut abbrev: Option<usize> = None;
     let mut format = OutputFormat::Raw;
+    let mut suppress_diff = false;
     let mut end_of_options = false;
 
     let mut idx = 0usize;
@@ -150,14 +153,17 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         }
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
-                "--raw" => format = OutputFormat::Raw,
-                "-p" | "--patch" | "-u" => format = OutputFormat::Patch,
-                "--stat" => format = OutputFormat::Stat,
-                "--numstat" => format = OutputFormat::NumStat,
-                "--name-only" => format = OutputFormat::NameOnly,
-                "--name-status" => format = OutputFormat::NameStatus,
+                "--raw" => { format = OutputFormat::Raw; suppress_diff = false; }
+                "-p" | "--patch" | "-u" => { format = OutputFormat::Patch; suppress_diff = false; }
+                "--stat" => { format = OutputFormat::Stat; suppress_diff = false; }
+                "--numstat" => { format = OutputFormat::NumStat; suppress_diff = false; }
+                "--name-only" => { format = OutputFormat::NameOnly; suppress_diff = false; }
+                "--name-status" => { format = OutputFormat::NameStatus; suppress_diff = false; }
                 "--exit-code" => exit_code = true,
                 "-q" | "--quiet" => quiet = true,
+                "-s" | "--no-patch" => suppress_diff = true,
+                "--patch-with-raw" => { format = OutputFormat::Patch; suppress_diff = false; } // TODO: also show raw
+                "--patch-with-stat" => { format = OutputFormat::Patch; suppress_diff = false; } // TODO: also show stat
                 "-0" => stage = 0,
                 "-1" => stage = 1,
                 "-2" => stage = 2,
@@ -170,6 +176,12 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         .with_context(|| format!("invalid --abbrev value: `{value}`"))?;
                     abbrev = Some(parsed);
                 }
+                // Silently accept diff options we don't fully implement yet
+                "-w" | "--ignore-all-space" | "-b" | "--ignore-space-change"
+                | "--ignore-space-at-eol" | "--ignore-blank-lines"
+                | "--diff-filter" | "--full-index" | "--no-ext-diff" => {}
+                _ if arg.starts_with("--diff-filter=") || arg.starts_with("-G")
+                    || arg.starts_with("-S") || arg.starts_with("-O") => {}
                 _ => bail!("unsupported option: {arg}"),
             }
             idx += 1;
@@ -186,6 +198,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         exit_code,
         abbrev,
         format,
+        suppress_diff,
     })
 }
 
@@ -348,8 +361,20 @@ fn read_worktree_info_fast(
     let _ = repo;
 
     // Fast path: if stat info matches the index, file is unchanged.
+    // But also check if the index mode differs from the worktree mode
+    // (e.g., after git update-index --chmod=+x).
     if meta.file_type().is_file() && stat_matches(index_entry, &meta) {
-        return Ok(WorktreeStatus::Unchanged);
+        let wt_mode = if meta.permissions().mode() & 0o111 != 0 {
+            MODE_EXECUTABLE
+        } else {
+            MODE_REGULAR
+        };
+        let idx_mode = canonicalize_mode(index_entry.mode);
+        if wt_mode == idx_mode {
+            return Ok(WorktreeStatus::Unchanged);
+        }
+        // Mode differs — report as modified with same OID.
+        return Ok(WorktreeStatus::Modified(wt_mode, index_entry.oid));
     }
 
     if meta.file_type().is_symlink() {
@@ -437,17 +462,27 @@ fn print_patch(change: &Change, repo: &Repository, work_tree: &Path) -> Result<(
         format!("b/{path}")
     };
 
-    println!(
-        "diff --git a/{path} b/{path}\n--- {old_label}\n+++ {new_label}{}",
-        if old_content == new_content {
-            String::new()
-        } else {
-            let patch = unified_diff(&old_content, &new_content, path, path, 3);
-            // unified_diff already includes the --- / +++ lines; strip them.
-            let body: String = patch.lines().skip(2).map(|l| format!("\n{l}")).collect();
-            body
-        }
-    );
+    // Build mode header lines
+    let mut header = format!("diff --git a/{path} b/{path}");
+    if change.status == 'D' {
+        header.push_str(&format!("\ndeleted file mode {:06o}", change.old_mode));
+    } else if change.status == 'A' {
+        header.push_str(&format!("\nnew file mode {:06o}", change.new_mode));
+    } else if change.old_mode != change.new_mode {
+        header.push_str(&format!("\nold mode {:06o}\nnew mode {:06o}", change.old_mode, change.new_mode));
+    }
+
+    if old_content == new_content && change.old_mode != change.new_mode {
+        // Mode-only change, no content diff needed
+        println!("{header}");
+    } else if old_content != new_content {
+        let patch = unified_diff(&old_content, &new_content, path, path, 3);
+        // unified_diff already includes the --- / +++ lines; strip them.
+        let body: String = patch.lines().skip(2).map(|l| format!("\n{l}")).collect();
+        println!("{header}\n--- {old_label}\n+++ {new_label}{body}");
+    } else {
+        println!("{header}\n--- {old_label}\n+++ {new_label}");
+    }
     Ok(())
 }
 
@@ -467,29 +502,26 @@ fn print_stat(changes: &[Change], repo: &Repository, work_tree: &Path) -> Result
         println!("{}", format_stat_line(&change.path, ins, del, max_len));
     }
     let files = changes.len();
-    println!(
-        " {} file{} changed{}{}",
+    let mut summary = format!(
+        " {} file{} changed",
         files,
         if files == 1 { "" } else { "s" },
-        if total_ins > 0 {
-            format!(
-                ", {} insertion{}(+)",
-                total_ins,
-                if total_ins == 1 { "" } else { "s" }
-            )
-        } else {
-            String::new()
-        },
-        if total_del > 0 {
-            format!(
-                ", {} deletion{}(-)",
-                total_del,
-                if total_del == 1 { "" } else { "s" }
-            )
-        } else {
-            String::new()
-        },
     );
+    if total_ins > 0 || (total_ins == 0 && total_del == 0) {
+        summary.push_str(&format!(
+            ", {} insertion{}(+)",
+            total_ins,
+            if total_ins == 1 { "" } else { "s" }
+        ));
+    }
+    if total_del > 0 || (total_ins == 0 && total_del == 0) {
+        summary.push_str(&format!(
+            ", {} deletion{}(-)",
+            total_del,
+            if total_del == 1 { "" } else { "s" }
+        ));
+    }
+    println!("{summary}");
     Ok(())
 }
 

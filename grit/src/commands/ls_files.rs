@@ -165,7 +165,7 @@ pub fn run(args: Args) -> Result<()> {
         if args.unmerged && entry.stage() == 0 {
             continue;
         }
-        if show_cached && !args.unmerged && entry.stage() != 0 {
+        if show_cached && !args.unmerged && !args.stage && entry.stage() != 0 {
             continue;
         }
 

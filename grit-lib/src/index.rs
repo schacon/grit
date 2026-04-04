@@ -203,7 +203,7 @@ impl Index {
                 .try_into()
                 .map_err(|_| Error::IndexError("cannot read version".to_owned()))?,
         );
-        if version != 2 && version != 3 {
+        if version != 2 && version != 3 && version != 4 {
             return Err(Error::IndexError(format!(
                 "unsupported index version {version}"
             )));
@@ -217,8 +217,10 @@ impl Index {
         let mut pos = 12usize;
         let mut entries = Vec::with_capacity(count as usize);
 
+        let mut prev_path: Vec<u8> = Vec::new();
         for _ in 0..count {
-            let (entry, consumed) = parse_entry(&body[pos..], version)?;
+            let (entry, consumed) = parse_entry(&body[pos..], version, &prev_path)?;
+            prev_path = entry.path.clone();
             entries.push(entry);
             pos += consumed;
         }
@@ -251,13 +253,20 @@ impl Index {
 
     /// Serialise the index body (without trailing checksum) into `out`.
     fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
+        // Always write v2 or v3 (we don't implement v4 serialization)
+        let write_version = if self.version == 4 {
+            // Check if any entry needs v3 (extended flags)
+            if self.entries.iter().any(|e| e.flags_extended.is_some()) { 3 } else { 2 }
+        } else {
+            self.version
+        };
         // Header
         out.extend_from_slice(b"DIRC");
-        out.extend_from_slice(&self.version.to_be_bytes());
+        out.extend_from_slice(&write_version.to_be_bytes());
         out.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
 
         for entry in &self.entries {
-            serialize_entry(entry, self.version, out);
+            serialize_entry(entry, write_version, out);
         }
         Ok(())
     }
@@ -314,7 +323,7 @@ impl Index {
 }
 
 /// Parse a single index entry from `data`, returning `(entry, bytes_consumed)`.
-fn parse_entry(data: &[u8], version: u32) -> Result<(IndexEntry, usize)> {
+fn parse_entry(data: &[u8], version: u32, prev_path: &[u8]) -> Result<(IndexEntry, usize)> {
     if data.len() < 62 {
         return Err(Error::IndexError("entry too short".to_owned()));
     }
@@ -366,20 +375,35 @@ fn parse_entry(data: &[u8], version: u32) -> Result<(IndexEntry, usize)> {
         None
     };
 
-    // Path: null-terminated
-    let nul = data[pos..]
-        .iter()
-        .position(|&b| b == 0)
-        .ok_or_else(|| Error::IndexError("entry path missing NUL terminator".to_owned()))?;
-    let path = data[pos..pos + nul].to_vec();
-    pos += nul + 1;
-
-    // Pad to 8-byte boundary (from start of entry)
-    let entry_start = 0usize;
-    let entry_len = pos - entry_start;
-    let padded = (entry_len + 7) & !7;
-    let padding = padded.saturating_sub(entry_len);
-    pos += padding;
+    let path;
+    if version == 4 {
+        // V4: prefix-compressed path
+        let (strip_len, varint_bytes) = read_varint(&data[pos..]);
+        pos += varint_bytes;
+        let nul = data[pos..]
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| Error::IndexError("v4 entry path missing NUL".to_owned()))?;
+        let suffix = &data[pos..pos + nul];
+        pos += nul + 1;
+        let keep = prev_path.len().saturating_sub(strip_len);
+        let mut full_path = prev_path[..keep].to_vec();
+        full_path.extend_from_slice(suffix);
+        path = full_path;
+    } else {
+        // V2/V3: NUL-terminated full path + padding
+        let nul = data[pos..]
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| Error::IndexError("entry path missing NUL terminator".to_owned()))?;
+        path = data[pos..pos + nul].to_vec();
+        pos += nul + 1;
+        let entry_start = 0usize;
+        let entry_len = pos - entry_start;
+        let padded = (entry_len + 7) & !7;
+        let padding = padded.saturating_sub(entry_len);
+        pos += padding;
+    }
 
     Ok((
         IndexEntry {
@@ -403,6 +427,31 @@ fn parse_entry(data: &[u8], version: u32) -> Result<(IndexEntry, usize)> {
 }
 
 /// Serialise a single index entry into `out`.
+/// Read a variable-length integer (git's index v4 varint encoding).
+/// Returns (value, bytes_consumed).
+fn read_varint(data: &[u8]) -> (usize, usize) {
+    let mut value: usize = 0;
+    let mut shift = 0usize;
+    let mut pos = 0;
+    loop {
+        if pos >= data.len() {
+            break;
+        }
+        let byte = data[pos] as usize;
+        pos += 1;
+        value |= (byte & 0x7F) << shift;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        shift += 7;
+        // Prevent infinite loops on malformed data
+        if shift > 28 {
+            break;
+        }
+    }
+    (value, pos)
+}
+
 fn serialize_entry(entry: &IndexEntry, version: u32, out: &mut Vec<u8>) {
     let start = out.len();
 

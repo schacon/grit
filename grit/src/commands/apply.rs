@@ -61,6 +61,22 @@ pub struct Args {
     #[arg(long = "directory", value_name = "DIR")]
     pub directory: Option<String>,
 
+    /// Recount hunk line counts (for corrupted patches).
+    #[arg(long = "recount")]
+    pub recount: bool,
+
+    /// Apply with unidiff-zero context.
+    #[arg(long = "unidiff-zero")]
+    pub unidiff_zero: bool,
+
+    /// Allow binary patches.
+    #[arg(long = "allow-binary-replacement")]
+    pub allow_binary_replacement: bool,
+
+    /// Verbose output.
+    #[arg(short = 'v', long = "verbose")]
+    pub verbose: bool,
+
     /// Patch file(s). Reads from stdin if none given.
     #[arg(value_name = "PATCH")]
     pub patches: Vec<PathBuf>,
@@ -111,6 +127,12 @@ struct FilePatch {
     is_deleted: bool,
     /// Whether this is a rename.
     is_rename: bool,
+    /// Whether this is a copy.
+    is_copy: bool,
+    /// Similarity index (e.g., 90 for 90%).
+    similarity_index: Option<u32>,
+    /// Dissimilarity index for rewrites.
+    dissimilarity_index: Option<u32>,
     /// Hunks to apply.
     hunks: Vec<Hunk>,
 }
@@ -155,6 +177,9 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 is_new: false,
                 is_deleted: false,
                 is_rename: false,
+                is_copy: false,
+                similarity_index: None,
+                dissimilarity_index: None,
                 hunks: Vec::new(),
             };
 
@@ -189,8 +214,18 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 } else if let Some(val) = line.strip_prefix("rename to ") {
                     fp.is_rename = true;
                     fp.new_path = Some(val.to_string());
+                } else if let Some(val) = line.strip_prefix("copy from ") {
+                    fp.is_copy = true;
+                    fp.old_path = Some(val.to_string());
+                } else if let Some(val) = line.strip_prefix("copy to ") {
+                    fp.is_copy = true;
+                    fp.new_path = Some(val.to_string());
+                } else if let Some(val) = line.strip_prefix("similarity index ") {
+                    fp.similarity_index = val.trim_end_matches('%').parse().ok();
+                } else if let Some(val) = line.strip_prefix("dissimilarity index ") {
+                    fp.dissimilarity_index = val.trim_end_matches('%').parse().ok();
                 }
-                // skip index, similarity, etc.
+                // skip other extended headers (index, etc.)
                 i += 1;
             }
 
@@ -224,6 +259,9 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 is_new: false,
                 is_deleted: false,
                 is_rename: false,
+                is_copy: false,
+                similarity_index: None,
+                dissimilarity_index: None,
                 hunks: Vec::new(),
             };
 
@@ -370,6 +408,58 @@ fn strip_components(path: &str, n: usize) -> String {
 }
 
 /// Apply -p and --directory transforms to a path.
+/// Create compact rename path: "dir/{old => new}" or "old => new".
+fn compact_rename_path(old: &str, new: &str) -> String {
+    // Find common prefix
+    let old_parts: Vec<&str> = old.split('/').collect();
+    let new_parts: Vec<&str> = new.split('/').collect();
+    let mut prefix_len = 0;
+    for (a, b) in old_parts.iter().zip(new_parts.iter()) {
+        if a == b {
+            prefix_len += 1;
+        } else {
+            break;
+        }
+    }
+    // Find common suffix
+    let mut suffix_len = 0;
+    let old_rev: Vec<&str> = old_parts.iter().rev().cloned().collect();
+    let new_rev: Vec<&str> = new_parts.iter().rev().cloned().collect();
+    for (a, b) in old_rev.iter().zip(new_rev.iter()) {
+        if a == b && prefix_len + suffix_len < old_parts.len().min(new_parts.len()) {
+            suffix_len += 1;
+        } else {
+            break;
+        }
+    }
+
+    let prefix: String = old_parts[..prefix_len].join("/");
+    let suffix: String = old_parts[old_parts.len() - suffix_len..].join("/");
+    let old_mid: String = old_parts[prefix_len..old_parts.len() - suffix_len].join("/");
+    let new_mid: String = new_parts[prefix_len..new_parts.len() - suffix_len].join("/");
+
+    // If no common prefix or suffix, just use "old => new" without braces
+    if prefix.is_empty() && suffix.is_empty() {
+        return format!("{old_mid} => {new_mid}");
+    }
+
+    let mut result = String::new();
+    if !prefix.is_empty() {
+        result.push_str(&prefix);
+        result.push('/');
+    }
+    result.push('{');
+    result.push_str(&old_mid);
+    result.push_str(" => ");
+    result.push_str(&new_mid);
+    result.push('}');
+    if !suffix.is_empty() {
+        result.push('/');
+        result.push_str(&suffix);
+    }
+    result
+}
+
 fn adjust_path(path: &str, strip: usize, directory: Option<&str>) -> String {
     if path == "/dev/null" {
         return path.to_string();
@@ -557,7 +647,7 @@ fn show_stat(patches: &[FilePatch], strip: usize, directory: Option<&str>) {
         let bar = make_stat_bar(*add, *del, 40);
         let _ = writeln!(
             out,
-            " {path:<width$} | {total:>5} {bar}",
+            " {path:<width$} | {total:>4} {bar}",
             width = max_path_len
         );
     }
@@ -601,13 +691,19 @@ fn show_summary(patches: &[FilePatch], strip: usize, directory: Option<&str>) {
         } else if fp.is_deleted {
             let mode = fp.old_mode.as_deref().unwrap_or("100644");
             let _ = writeln!(out, " delete mode {mode} {path}");
-        } else if fp.is_rename {
+        } else if fp.is_rename || fp.is_copy {
             let old = fp
                 .old_path
                 .as_deref()
                 .map(|p| adjust_path(p, strip, directory))
                 .unwrap_or_else(|| "(unknown)".to_string());
-            let _ = writeln!(out, " rename {old} => {path}");
+            let kind = if fp.is_copy { "copy" } else { "rename" };
+            let pct = fp.similarity_index.unwrap_or(100);
+            let compact = compact_rename_path(&old, &path);
+            let _ = writeln!(out, " {kind} {compact} ({pct}%)");
+        } else if fp.dissimilarity_index.is_some() {
+            let pct = fp.dissimilarity_index.unwrap();
+            let _ = writeln!(out, " rewrite {path} ({pct}%)");
         } else if fp.old_mode.is_some() && fp.new_mode.is_some() && fp.old_mode != fp.new_mode {
             let _ = writeln!(
                 out,
@@ -692,16 +788,17 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Info-only modes
+    let info_only = args.stat || args.numstat || args.summary;
     if args.stat {
         show_stat(&patches, args.strip, args.directory.as_deref());
-        return Ok(());
     }
     if args.numstat {
         show_numstat(&patches, args.strip, args.directory.as_deref());
-        return Ok(());
     }
     if args.summary {
         show_summary(&patches, args.strip, args.directory.as_deref());
+    }
+    if info_only {
         return Ok(());
     }
 

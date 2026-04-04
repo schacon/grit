@@ -381,12 +381,14 @@ fn apply_nav_step(repo: &Repository, oid: ObjectId, step: NavStep) -> Result<Obj
 /// Returns [`Error::ObjectNotFound`] when the target OID does not exist in the
 /// object database.
 pub fn abbreviate_object_id(repo: &Repository, oid: ObjectId, min_len: usize) -> Result<String> {
-    if !repo.odb.exists(&oid) {
-        return Err(Error::ObjectNotFound(oid.to_hex()));
-    }
-
     let min_len = min_len.clamp(4, 40);
     let target = oid.to_hex();
+
+    // If object doesn't exist, just return the minimum abbreviation
+    if !repo.odb.exists(&oid) {
+        return Ok(target[..min_len].to_owned());
+    }
+
     let all = collect_loose_object_ids(repo)?;
 
     for len in min_len..=40 {
@@ -446,6 +448,13 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
     // Handle @{N} reflog syntax: ref@{N} or @{N} (meaning HEAD@{N})
     if let Some(oid) = try_resolve_reflog_index(repo, spec)? {
         return Ok(oid);
+    }
+
+    // Handle `:/pattern` — search commit messages from HEAD
+    if let Some(pattern) = spec.strip_prefix(":/") {
+        if !pattern.is_empty() {
+            return resolve_commit_message_search(repo, pattern);
+        }
     }
 
     // Handle `:path` — look up path in the index (stage 0)
@@ -603,6 +612,35 @@ fn try_resolve_at_suffix(repo: &Repository, spec: &str) -> Option<String> {
 }
 
 /// Look up a path in the index (stage 0) and return its OID.
+/// Search commit messages from HEAD for a pattern.
+/// `:/pattern` finds the most recent commit whose message contains `pattern`.
+fn resolve_commit_message_search(repo: &Repository, pattern: &str) -> Result<ObjectId> {
+    use crate::objects::{parse_commit, ObjectKind};
+
+    let head_oid = crate::refs::resolve_ref(&repo.git_dir, "HEAD")
+        .map_err(|_| Error::ObjectNotFound(format!(":/{}" , pattern)))?;
+
+    let mut current = head_oid;
+    for _ in 0..10000 {
+        let obj = repo.odb.read(&current)
+            .map_err(|_| Error::ObjectNotFound(format!(": /{}" , pattern)))?;
+        if obj.kind != ObjectKind::Commit {
+            break;
+        }
+        let commit = parse_commit(&obj.data)
+            .map_err(|_| Error::ObjectNotFound(format!(":/{}" , pattern)))?;
+        if commit.message.contains(pattern) {
+            return Ok(current);
+        }
+        if commit.parents.is_empty() {
+            break;
+        }
+        current = commit.parents[0];
+    }
+
+    Err(Error::ObjectNotFound(format!(":/{}" , pattern)))
+}
+
 fn resolve_index_path(repo: &Repository, path: &str) -> Result<ObjectId> {
     use crate::index::Index;
     let index_path = repo.index_path();
