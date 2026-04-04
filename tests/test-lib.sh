@@ -51,6 +51,10 @@ TEST_DIRECTORY="$(cd "$(dirname "$0")" && pwd)"
 # Derive from the test script name (e.g., t4050-diff.sh -> trash.t4050-diff)
 _test_basename="$(basename "$0" .sh)"
 TRASH_DIRECTORY="${TRASH_DIRECTORY:-$TEST_DIRECTORY/trash.$_test_basename}"
+# BIN_DIRECTORY lives *outside* the working tree so that `git clean -x`
+# (used in pristine_detach and similar helpers) cannot remove the wrapper
+# scripts.  Using a sibling directory keeps things self-contained.
+BIN_DIRECTORY="${TEST_DIRECTORY}/bin.${_test_basename}"
 TEST_RESULTS_DIR="${TEST_DIRECTORY}/test-results"
 
 # Counters
@@ -81,29 +85,29 @@ setup_trash () {
 		fi
 	fi
 	mkdir -p "$TRASH_DIRECTORY"
-	mkdir -p "$TRASH_DIRECTORY/.bin"
+	# BIN_DIRECTORY is outside the working tree so git clean -x cannot remove it
+	mkdir -p "$BIN_DIRECTORY"
 	# Write a 'git' wrapper script that calls grit
-	cat >"$TRASH_DIRECTORY/.bin/git" <<EOF
+	cat >"$BIN_DIRECTORY/git" <<EOF
 #!/bin/sh
 exec "$GUST_BIN" "\$@"
 EOF
-	chmod +x "$TRASH_DIRECTORY/.bin/git"
+	chmod +x "$BIN_DIRECTORY/git"
 	# Also write a 'grit' wrapper
-	cat >"$TRASH_DIRECTORY/.bin/grit" <<EOF
+	cat >"$BIN_DIRECTORY/grit" <<EOF
 #!/bin/sh
 exec "$GUST_BIN" "\$@"
 EOF
-	chmod +x "$TRASH_DIRECTORY/.bin/grit"
+	chmod +x "$BIN_DIRECTORY/grit"
 	# Write a 'scalar' wrapper
-	cat >"$TRASH_DIRECTORY/.bin/scalar" <<EOF
+	cat >"$BIN_DIRECTORY/scalar" <<EOF
 #!/bin/sh
 exec "$GUST_BIN" scalar "\$@"
 EOF
-	chmod +x "$TRASH_DIRECTORY/.bin/scalar"
-	# Note: .bin/ protection is handled via .git/info/exclude in grit init
-	# Prepend .bin to PATH so every subshell sees 'git' → grit
+	chmod +x "$BIN_DIRECTORY/scalar"
+	# Prepend BIN_DIRECTORY to PATH so every subshell sees 'git' → grit
 PATH="$TEST_DIRECTORY:$PATH"
-	export PATH="$TRASH_DIRECTORY/.bin:$PATH"
+	export PATH="$BIN_DIRECTORY:$PATH"
 	# cd into trash so each test starts with a clean cwd
 	cd "$TRASH_DIRECTORY" || exit 1
 
@@ -114,9 +118,7 @@ PATH="$TEST_DIRECTORY:$PATH"
 			echo "warning: could not git init trash directory" >&2
 		"$GUST_BIN" config user.name "Test User" 2>/dev/null
 		"$GUST_BIN" config user.email "test@example.com" 2>/dev/null
-		# Exclude .bin/ wrapper directory from status/clean output
-		mkdir -p .git/info 2>/dev/null
-		echo '/.bin/' >>.git/info/exclude 2>/dev/null
+
 	fi
 }
 
@@ -1056,6 +1058,8 @@ remove_cr () {
 }
 
 test_done () {
+	# Clean up the bin directory that lives outside the working tree
+	rm -rf "$BIN_DIRECTORY" 2>/dev/null
 	printf '\n'
 	echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"
 	if test $test_fail -gt 0

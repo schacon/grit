@@ -572,7 +572,7 @@ test_expect_success 'unstash must re-create the file' '
 	test bar = "$(cat file)"
 '
 
-test_expect_failure 'stash directory to file' '
+test_expect_success 'stash directory to file' '
 	git reset --hard &&
 	mkdir dir &&
 	echo foo >dir/file &&
@@ -588,7 +588,7 @@ test_expect_failure 'stash directory to file' '
 	git reset --soft HEAD^
 '
 
-test_expect_failure 'stash file to directory' '
+test_expect_success 'stash file to directory' '
 	git reset --hard &&
 	rm file &&
 	mkdir file &&
