@@ -284,7 +284,7 @@ test_expect_success '__git_find_repo_path - "git -C" while .git directory in cwd
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_find_repo_path - "git -C" while cwd is a .git directory' '
+test_expect_success '__git_find_repo_path - "git -C" while cwd is a .git directory' '
 	echo "$ROOT/otherrepo/.git" >expected &&
 	(
 		cd .git &&
@@ -295,7 +295,7 @@ test_expect_failure '__git_find_repo_path - "git -C" while cwd is a .git directo
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_find_repo_path - "git -C" while .git directory in parent' '
+test_expect_success '__git_find_repo_path - "git -C" while .git directory in parent' '
 	echo "$ROOT/otherrepo/.git" >expected &&
 	(
 		cd subdir &&
@@ -2721,7 +2721,7 @@ test_expect_success 'checkout completes pseudo refs case insensitively with GIT_
 	)
 '
 
-test_expect_failure 'git -C <path> checkout uses the right repo' '
+test_expect_success 'git -C <path> checkout uses the right repo' '
 	test_completion "git -C subdir -C subsubdir -C .. -C ../otherrepo checkout b" <<-\EOF
 	branch-in-other Z
 	EOF
@@ -2761,7 +2761,7 @@ test_expect_success 'complete tree filename with metacharacters' '
 	EOF
 '
 
-test_expect_failure 'symbolic-ref completes builtin options' '
+test_expect_success 'symbolic-ref completes builtin options' '
 	test_completion "git symbolic-ref --d" <<-\EOF
 	--delete Z
 	EOF
@@ -3160,7 +3160,7 @@ test_expect_failure 'sourcing the completion script clears cached merge strategi
 	)
 '
 
-test_expect_failure 'sourcing the completion script clears cached --options' '
+test_expect_success 'sourcing the completion script clears cached --options' '
 	(
 		__gitcomp_builtin checkout &&
 		test -n "$__gitcomp_builtin_checkout" &&
@@ -3172,7 +3172,7 @@ test_expect_failure 'sourcing the completion script clears cached --options' '
 	)
 '
 
-test_expect_failure 'option aliases are not shown by default' '
+test_expect_success 'option aliases are not shown by default' '
 	test_completion "git clone --recurs" "--recurse-submodules "
 '
 

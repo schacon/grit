@@ -6,7 +6,7 @@
 //! subcommand's clap `Args` struct is parsed.
 
 use anyhow::{bail, Result};
-use clap::{Args, FromArgMatches, Parser};
+use clap::{Args, Command, FromArgMatches, Parser};
 use std::path::PathBuf;
 
 mod commands;
@@ -191,11 +191,15 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
     while i < items.len() {
         let arg = &items[i];
 
-        // -C <dir>
+        // -C <dir> — cumulative: each -C is relative to the previous one
         if arg == "-C" {
             i += 1;
             if i < items.len() {
-                opts.change_dir = Some(PathBuf::from(&items[i]));
+                let new_dir = PathBuf::from(&items[i]);
+                opts.change_dir = Some(match opts.change_dir.take() {
+                    Some(prev) => prev.join(&new_dir),
+                    None => new_dir,
+                });
             }
             i += 1;
             continue;
@@ -338,7 +342,105 @@ fn run() -> Result<()> {
 
     apply_globals(&opts)?;
 
+    // Handle --git-completion-helper / --git-completion-helper-all
+    if rest.iter().any(|a| a == "--git-completion-helper" || a == "--git-completion-helper-all") {
+        let show_all = rest.iter().any(|a| a == "--git-completion-helper-all");
+        return print_completion_helper(&subcmd, show_all);
+    }
+
     dispatch(&subcmd, &rest, &opts)
+}
+
+/// Print --git-completion-helper output for a subcommand.
+///
+/// This mimics git's `--git-completion-helper` by listing all long options
+/// (and their `--no-` negations) for the given subcommand.
+fn print_completion_helper(subcmd: &str, _show_all: bool) -> Result<()> {
+    fn extract_options<T: Args>() -> Vec<String> {
+        let cmd = Command::new("grit")
+            .flatten_help(false);
+        let cmd = T::augment_args(cmd);
+        let mut opts = Vec::new();
+        for arg in cmd.get_arguments() {
+            if arg.get_id() == "help" || arg.get_id() == "version" {
+                continue;
+            }
+            // Skip positional arguments
+            if arg.get_long().is_none() && arg.get_short().is_none() {
+                continue;
+            }
+            if let Some(long) = arg.get_long() {
+                opts.push(format!("--{long}"));
+                // Add --no- variant unless it already starts with no-
+                if !long.starts_with("no-") {
+                    opts.push(format!("--no-{long}"));
+                }
+            }
+        }
+        opts.push("--".to_string());
+        opts
+    }
+
+    let options = match subcmd {
+        "add" => extract_options::<commands::add::Args>(),
+        "am" => extract_options::<commands::am::Args>(),
+        "apply" => extract_options::<commands::apply::Args>(),
+        "bisect" => extract_options::<commands::bisect::Args>(),
+        "blame" => extract_options::<commands::blame::Args>(),
+        "branch" => extract_options::<commands::branch::Args>(),
+        "cat-file" => extract_options::<commands::cat_file::Args>(),
+        "check-ignore" => extract_options::<commands::check_ignore::Args>(),
+        "checkout" => extract_options::<commands::checkout::Args>(),
+        "cherry-pick" => extract_options::<commands::cherry_pick::Args>(),
+        "clean" => extract_options::<commands::clean::Args>(),
+        "clone" => extract_options::<commands::clone::Args>(),
+        "commit" => extract_options::<commands::commit::Args>(),
+        "config" => extract_options::<commands::config::Args>(),
+        "describe" => extract_options::<commands::describe::Args>(),
+        "diff" => extract_options::<commands::diff::Args>(),
+        "fetch" => extract_options::<commands::fetch::Args>(),
+        "for-each-ref" => extract_options::<commands::for_each_ref::Args>(),
+        "format-patch" => extract_options::<commands::format_patch::Args>(),
+        "fsck" => extract_options::<commands::fsck::Args>(),
+        "gc" => extract_options::<commands::gc::Args>(),
+        "grep" => extract_options::<commands::grep::Args>(),
+        "init" => extract_options::<commands::init::Args>(),
+        "log" => extract_options::<commands::log::Args>(),
+        "ls-files" => extract_options::<commands::ls_files::Args>(),
+        "ls-remote" => extract_options::<commands::ls_remote::Args>(),
+        "ls-tree" => extract_options::<commands::ls_tree::Args>(),
+        "merge" => extract_options::<commands::merge::Args>(),
+        "merge-base" => extract_options::<commands::merge_base::Args>(),
+        "mv" => extract_options::<commands::mv::Args>(),
+        "notes" => extract_options::<commands::notes::Args>(),
+        "pull" => extract_options::<commands::pull::Args>(),
+        "push" => extract_options::<commands::push::Args>(),
+        "rebase" => extract_options::<commands::rebase::Args>(),
+        "reflog" => extract_options::<commands::reflog::Args>(),
+        "remote" => extract_options::<commands::remote::Args>(),
+        "reset" => extract_options::<commands::reset::Args>(),
+        "restore" => extract_options::<commands::restore::Args>(),
+        "rev-list" => extract_options::<commands::rev_list::Args>(),
+        "rev-parse" => extract_options::<commands::rev_parse::Args>(),
+        "revert" => extract_options::<commands::revert::Args>(),
+        "rm" => extract_options::<commands::rm::Args>(),
+        "show" => extract_options::<commands::show::Args>(),
+        "show-ref" => extract_options::<commands::show_ref::Args>(),
+        "sparse-checkout" => extract_options::<commands::sparse_checkout::Args>(),
+        "stash" => extract_options::<commands::stash::Args>(),
+        "status" => extract_options::<commands::status::Args>(),
+        "submodule" => extract_options::<commands::submodule::Args>(),
+        "switch" => extract_options::<commands::switch::Args>(),
+        "symbolic-ref" => extract_options::<commands::symbolic_ref::Args>(),
+        "tag" => extract_options::<commands::tag::Args>(),
+        "update-index" => extract_options::<commands::update_index::Args>(),
+        "update-ref" => extract_options::<commands::update_ref::Args>(),
+        "worktree" => extract_options::<commands::worktree::Args>(),
+        _ => Vec::new(),
+    };
+
+    println!("{}", options.join(" "));
+    Ok(())
 }
 
 /// Preprocess diff arguments: expand `-U<N>` to `--unified=<N>` so that
