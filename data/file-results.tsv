@@ -15,7 +15,7 @@ t0007-git-var	yes	30	30	0	ok
 t0008-ignores	yes	109	109	0	ok
 t0009-git-dir-validation	yes	5	5	0	ok
 t0010-racy-git	yes	11	11	0	ok
-t0012-help	yes	25	22	3	ok
+t0012-help	yes	25	25	0	ok
 t0013-sha1dc	yes	2	2	0	ok
 t0014-alias	yes	4	4	0	ok
 t0017-env-helper	yes	1	1	0	ok
@@ -36,7 +36,7 @@ t0031-lockfile-pid	yes	2	2	0	ok
 t0033-safe-directory	yes	4	4	0	ok
 t0034-root-safe-directory	yes	1	1	0	ok
 t0035-safe-bare-repository	yes	4	4	0	ok
-t0040-parse-options	yes	32	29	3	ok
+t0040-parse-options	yes	32	32	0	ok
 t0041-usage	yes	9	9	0	ok
 t0050-filesystem	yes	30	30	0	ok
 t0051-windows-named-pipe	yes	2	2	0	ok
@@ -177,11 +177,11 @@ t2003-checkout-cache-mkdir	yes	7	7	0	ok
 t2004-checkout-cache-temp	yes	7	7	0	ok
 t2005-checkout-index-symlinks	yes	3	3	0	ok
 t2006-checkout-index-basic	yes	4	4	0	ok
-t2007-checkout-symlink	yes	4	2	2	ok
+t2007-checkout-symlink	yes	4	4	0	ok
 t2008-checkout-subdir	yes	22	22	0	ok
 t2009-checkout-statinfo	yes	25	25	0	ok
 t2010-checkout-ambiguous	yes	7	7	0	ok
-t2011-checkout-invalid-head	yes	24	21	3	ok
+t2011-checkout-invalid-head	yes	24	24	0	ok
 t2012-checkout-last	yes	25	25	0	ok
 t2013-checkout-submodule	yes	3	3	0	ok
 t2014-checkout-switch	yes	24	24	0	ok
@@ -231,9 +231,9 @@ t2406-worktree-repair	yes	6	6	0	ok
 t2407-worktree-heads	yes	4	4	0	ok
 t2500-untracked-overwriting	yes	3	3	0	ok
 t2501-cwd-empty	yes	3	3	0	ok
-t3000-ls-files-others	yes	5	3	2	ok
+t3000-ls-files-others	yes	5	5	0	ok
 t3001-ls-files-others-exclude	yes	5	5	0	ok
-t3002-ls-files-dashpath	yes	7	5	2	ok
+t3002-ls-files-dashpath	yes	7	7	0	ok
 t3003-ls-files-exclude	yes	24	24	0	ok
 t3004-ls-files-basic	yes	7	7	0	ok
 t3005-ls-files-relative	yes	24	24	0	ok
@@ -242,7 +242,7 @@ t3007-ls-files-recurse-submodules	yes	4	4	0	ok
 t3008-ls-files-lazy-init-name-hash	yes	5	5	0	ok
 t3009-ls-files-others-nonsubmodule	yes	5	5	0	ok
 t3010-ls-files-killed-modified	yes	4	4	0	ok
-t3011-common-prefixes-and-directory-traversal	yes	5	4	1	ok
+t3011-common-prefixes-and-directory-traversal	yes	5	5	0	ok
 t3012-ls-files-dedup	yes	30	30	0	ok
 t3013-ls-files-format	yes	31	31	0	ok
 t3020-ls-files-error-unmatch	yes	28	28	0	ok

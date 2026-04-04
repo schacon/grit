@@ -388,28 +388,28 @@ t0009-git-dir-validation::setup-git-with-garbage-content-is-rejected	t0009-git-d
 t0009-git-dir-validation::setup-git-as-an-empty-directory-is-ignored	t0009-git-dir-validation	setup: .git as an empty directory is ignored	rev-parse	pass
 t0010-racy-git::racy-git-trial-trial-part-a	t0010-racy-git	Racy git trial #$trial part A	diff-files	pass
 t0010-racy-git::racy-git-trial-trial-part-b	t0010-racy-git	Racy git trial #$trial part B	diff-files	pass
-t0012-help::basic-help-commands	t0012-help	basic help commands	help	partial
-t0012-help::invalid-usage	t0012-help	invalid usage	help	partial
-t0012-help::git-help	t0012-help	git help	help	partial
-t0012-help::git-help-g	t0012-help	git help -g	help	partial
-t0012-help::git-help-fails-for-non-existing-html-pages	t0012-help	git help fails for non-existing html pages	help	partial
-t0012-help::git-help-succeeds-without-git-html	t0012-help	git help succeeds without git.html	help	partial
-t0012-help::git-help-user-interfaces	t0012-help	git help --user-interfaces	help	partial
-t0012-help::git-help-c	t0012-help	git help -c	help	partial
-t0012-help::git-help-config-for-completion	t0012-help	git help --config-for-completion	help	partial
-t0012-help::git-help-config-sections-for-completion	t0012-help	git help --config-sections-for-completion	help	partial
-t0012-help::generate-builtin-list	t0012-help	generate builtin list	help	partial
-t0012-help::setup	t0012-help	setup	help	partial
-t0012-help::invalid-usage-of-opt-with-i-m-w	t0012-help	invalid usage of '$opt' with [-i|-m|-w]	help	partial
-t0012-help::invalid-usage-of-opt-with-no-external-commands	t0012-help	invalid usage of '$opt' with --no-external-commands	help	partial
-t0012-help::invalid-usage-of-opt-with-no-aliases	t0012-help	invalid usage of '$opt' with --no-aliases	help	partial
-t0012-help::works-for-commands-and-guides-by-default	t0012-help	works for commands and guides by default	help	partial
-t0012-help::exclude-guides-does-not-work-for-guides	t0012-help	--exclude-guides does not work for guides	help	partial
-t0012-help::help-does-not-work-for-guides	t0012-help	--help does not work for guides	help	partial
-t0012-help::cmd-section-spacing	t0012-help	'$cmd' section spacing	help	partial
-t0012-help::git-help-a-section-spacing	t0012-help	'git help -a' section spacing	help	partial
-t0012-help::git-help-g-section-spacing	t0012-help	'git help -g' section spacing	help	partial
-t0012-help::builtin-can-handle-h	t0012-help	$builtin can handle -h	help	partial
+t0012-help::basic-help-commands	t0012-help	basic help commands	help	pass
+t0012-help::invalid-usage	t0012-help	invalid usage	help	pass
+t0012-help::git-help	t0012-help	git help	help	pass
+t0012-help::git-help-g	t0012-help	git help -g	help	pass
+t0012-help::git-help-fails-for-non-existing-html-pages	t0012-help	git help fails for non-existing html pages	help	pass
+t0012-help::git-help-succeeds-without-git-html	t0012-help	git help succeeds without git.html	help	pass
+t0012-help::git-help-user-interfaces	t0012-help	git help --user-interfaces	help	pass
+t0012-help::git-help-c	t0012-help	git help -c	help	pass
+t0012-help::git-help-config-for-completion	t0012-help	git help --config-for-completion	help	pass
+t0012-help::git-help-config-sections-for-completion	t0012-help	git help --config-sections-for-completion	help	pass
+t0012-help::generate-builtin-list	t0012-help	generate builtin list	help	pass
+t0012-help::setup	t0012-help	setup	help	pass
+t0012-help::invalid-usage-of-opt-with-i-m-w	t0012-help	invalid usage of '$opt' with [-i|-m|-w]	help	pass
+t0012-help::invalid-usage-of-opt-with-no-external-commands	t0012-help	invalid usage of '$opt' with --no-external-commands	help	pass
+t0012-help::invalid-usage-of-opt-with-no-aliases	t0012-help	invalid usage of '$opt' with --no-aliases	help	pass
+t0012-help::works-for-commands-and-guides-by-default	t0012-help	works for commands and guides by default	help	pass
+t0012-help::exclude-guides-does-not-work-for-guides	t0012-help	--exclude-guides does not work for guides	help	pass
+t0012-help::help-does-not-work-for-guides	t0012-help	--help does not work for guides	help	pass
+t0012-help::cmd-section-spacing	t0012-help	'$cmd' section spacing	help	pass
+t0012-help::git-help-a-section-spacing	t0012-help	'git help -a' section spacing	help	pass
+t0012-help::git-help-g-section-spacing	t0012-help	'git help -g' section spacing	help	pass
+t0012-help::builtin-can-handle-h	t0012-help	$builtin can handle -h	help	pass
 t0013-sha1dc::test-sha1-detects-shattered-pdf	t0013-sha1dc	test-sha1 detects shattered pdf		pass
 t0014-alias::nested-aliases-internal-execution	t0014-alias	nested aliases - internal execution	config	pass
 t0014-alias::nested-aliases-mixed-execution	t0014-alias	nested aliases - mixed execution	config	pass
@@ -671,99 +671,99 @@ t0035-safe-bare-repository::no-trace-when-bare-repository-is-git	t0035-safe-bare
 t0035-safe-bare-repository::no-trace-when-bare-repository-is-a-subdir-of-git	t0035-safe-bare-repository	no trace when "bare repository" is a subdir of .git		pass
 t0035-safe-bare-repository::no-trace-in-git-dir-of-secondary-worktree	t0035-safe-bare-repository	no trace in $GIT_DIR of secondary worktree		pass
 t0035-safe-bare-repository::no-trace-in-git-dir-of-a-submodule	t0035-safe-bare-repository	no trace in $GIT_DIR of a submodule		pass
-t0040-parse-options::test-help	t0040-parse-options	test help		partial
-t0040-parse-options::opt-bool-1	t0040-parse-options	OPT_BOOL() #1		partial
-t0040-parse-options::opt-bool-2	t0040-parse-options	OPT_BOOL() #2		partial
-t0040-parse-options::opt-bool-3	t0040-parse-options	OPT_BOOL() #3		partial
-t0040-parse-options::opt-bool-4	t0040-parse-options	OPT_BOOL() #4		partial
-t0040-parse-options::opt-bool-5	t0040-parse-options	OPT_BOOL() #5		partial
-t0040-parse-options::opt-bool-is-idempotent-1	t0040-parse-options	OPT_BOOL() is idempotent #1		partial
-t0040-parse-options::opt-bool-is-idempotent-2	t0040-parse-options	OPT_BOOL() is idempotent #2		partial
-t0040-parse-options::opt-bool-negation-1	t0040-parse-options	OPT_BOOL() negation #1		partial
-t0040-parse-options::opt-bool-negation-2	t0040-parse-options	OPT_BOOL() negation #2		partial
-t0040-parse-options::opt-bool-no-negation-1	t0040-parse-options	OPT_BOOL() no negation #1		partial
-t0040-parse-options::opt-bool-no-negation-2	t0040-parse-options	OPT_BOOL() no negation #2		partial
-t0040-parse-options::opt-bool-positivation	t0040-parse-options	OPT_BOOL() positivation		partial
-t0040-parse-options::opt-integer-negative	t0040-parse-options	OPT_INTEGER() negative		partial
-t0040-parse-options::opt-integer-kilo	t0040-parse-options	OPT_INTEGER() kilo		partial
-t0040-parse-options::opt-integer-negative-kilo	t0040-parse-options	OPT_INTEGER() negative kilo		partial
-t0040-parse-options::opt-unsigned-simple	t0040-parse-options	OPT_UNSIGNED() simple		partial
-t0040-parse-options::opt-unsigned-kilo	t0040-parse-options	OPT_UNSIGNED() kilo		partial
-t0040-parse-options::opt-unsigned-mega	t0040-parse-options	OPT_UNSIGNED() mega		partial
-t0040-parse-options::opt-unsigned-giga	t0040-parse-options	OPT_UNSIGNED() giga		partial
-t0040-parse-options::opt-unsigned-3giga	t0040-parse-options	OPT_UNSIGNED() 3giga		partial
-t0040-parse-options::short-options	t0040-parse-options	short options		partial
-t0040-parse-options::long-options	t0040-parse-options	long options		partial
-t0040-parse-options::abbreviate-to-something-longer-than-sha1-length	t0040-parse-options	abbreviate to something longer than SHA1 length		partial
-t0040-parse-options::missing-required-value	t0040-parse-options	missing required value		partial
-t0040-parse-options::superfluous-value-provided-boolean	t0040-parse-options	superfluous value provided: boolean		partial
-t0040-parse-options::superfluous-value-provided-boolean-abbreviated	t0040-parse-options	superfluous value provided: boolean, abbreviated		partial
-t0040-parse-options::superfluous-value-provided-cmdmode	t0040-parse-options	superfluous value provided: cmdmode		partial
-t0040-parse-options::intermingled-arguments	t0040-parse-options	intermingled arguments		partial
-t0040-parse-options::unambiguously-abbreviated-option	t0040-parse-options	unambiguously abbreviated option		partial
-t0040-parse-options::unambiguously-abbreviated-option-with	t0040-parse-options	unambiguously abbreviated option with "="		partial
-t0040-parse-options::ambiguously-abbreviated-option	t0040-parse-options	ambiguously abbreviated option		partial
-t0040-parse-options::non-ambiguous-option-after-two-options-it-abbreviates	t0040-parse-options	non ambiguous option (after two options it abbreviates)		partial
-t0040-parse-options::alias-options-do-not-contribute-to-abbreviation	t0040-parse-options	Alias options do not contribute to abbreviation		partial
-t0040-parse-options::detect-possible-typos	t0040-parse-options	detect possible typos		partial
-t0040-parse-options::detect-possible-typos-2	t0040-parse-options	detect possible typos		partial
-t0040-parse-options::opt-callback-and-opt-bit-work	t0040-parse-options	OPT_CALLBACK() and OPT_BIT() work		partial
-t0040-parse-options::opt-callback-and-callback-errors-work	t0040-parse-options	OPT_CALLBACK() and callback errors work		partial
-t0040-parse-options::opt-bit-and-opt-set-int-work	t0040-parse-options	OPT_BIT() and OPT_SET_INT() work		partial
-t0040-parse-options::opt-negbit-and-opt-set-int-work	t0040-parse-options	OPT_NEGBIT() and OPT_SET_INT() work		partial
-t0040-parse-options::opt-bit-works	t0040-parse-options	OPT_BIT() works		partial
-t0040-parse-options::opt-negbit-works	t0040-parse-options	OPT_NEGBIT() works		partial
-t0040-parse-options::opt-cmdmode-works	t0040-parse-options	OPT_CMDMODE() works		partial
-t0040-parse-options::opt-cmdmode-detects-incompatibility-1	t0040-parse-options	OPT_CMDMODE() detects incompatibility (1)		partial
-t0040-parse-options::opt-cmdmode-detects-incompatibility-2	t0040-parse-options	OPT_CMDMODE() detects incompatibility (2)		partial
-t0040-parse-options::opt-cmdmode-detects-incompatibility-3	t0040-parse-options	OPT_CMDMODE() detects incompatibility (3)		partial
-t0040-parse-options::opt-cmdmode-detects-incompatibility-4	t0040-parse-options	OPT_CMDMODE() detects incompatibility (4)		partial
-t0040-parse-options::opt-countup-with-parse-opt-nodash-works	t0040-parse-options	OPT_COUNTUP() with PARSE_OPT_NODASH works		partial
-t0040-parse-options::opt-number-callback-works	t0040-parse-options	OPT_NUMBER_CALLBACK() works		partial
-t0040-parse-options::negation-of-opt-noneg-flags-is-not-ambiguous	t0040-parse-options	negation of OPT_NONEG flags is not ambiguous		partial
-t0040-parse-options::list-keeps-list-of-strings	t0040-parse-options	--list keeps list of strings		partial
-t0040-parse-options::no-list-resets-list	t0040-parse-options	--no-list resets list		partial
-t0040-parse-options::multiple-quiet-levels	t0040-parse-options	multiple quiet levels		partial
-t0040-parse-options::multiple-verbose-levels	t0040-parse-options	multiple verbose levels		partial
-t0040-parse-options::no-quiet-sets-quiet-to-0	t0040-parse-options	--no-quiet sets --quiet to 0		partial
-t0040-parse-options::no-quiet-resets-multiple-q-to-0	t0040-parse-options	--no-quiet resets multiple -q to 0		partial
-t0040-parse-options::no-verbose-sets-verbose-to-0	t0040-parse-options	--no-verbose sets verbose to 0		partial
-t0040-parse-options::no-verbose-resets-multiple-verbose-to-0	t0040-parse-options	--no-verbose resets multiple verbose to 0		partial
-t0040-parse-options::git-test-disallow-abbreviated-options-works	t0040-parse-options	GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS works		partial
-t0040-parse-options::end-of-options-treats-remainder-as-args	t0040-parse-options	--end-of-options treats remainder as args		partial
-t0040-parse-options::keep-dashdash-works	t0040-parse-options	KEEP_DASHDASH works		partial
-t0040-parse-options::keep-argv0-works	t0040-parse-options	KEEP_ARGV0 works		partial
-t0040-parse-options::stop-at-non-option-works	t0040-parse-options	STOP_AT_NON_OPTION works		partial
-t0040-parse-options::keep-unknown-opt-works	t0040-parse-options	KEEP_UNKNOWN_OPT works		partial
-t0040-parse-options::no-internal-help-works-for-h	t0040-parse-options	NO_INTERNAL_HELP works for -h		partial
-t0040-parse-options::keep-unknown-opt-no-internal-help-works	t0040-parse-options	KEEP_UNKNOWN_OPT | NO_INTERNAL_HELP works		partial
-t0040-parse-options::subcommand-no-subcommand-shows-error-and-usage	t0040-parse-options	subcommand - no subcommand shows error and usage		partial
-t0040-parse-options::subcommand-subcommand-after-shows-error-and-usage	t0040-parse-options	subcommand - subcommand after -- shows error and usage		partial
-t0040-parse-options::subcommand-subcommand-after-end-of-options-shows-error-and-usage	t0040-parse-options	subcommand - subcommand after --end-of-options shows error and usage		partial
-t0040-parse-options::subcommand-unknown-subcommand-shows-error-and-usage	t0040-parse-options	subcommand - unknown subcommand shows error and usage		partial
-t0040-parse-options::subcommand-subcommands-cannot-be-abbreviated	t0040-parse-options	subcommand - subcommands cannot be abbreviated		partial
-t0040-parse-options::subcommand-no-negated-subcommands	t0040-parse-options	subcommand - no negated subcommands		partial
-t0040-parse-options::subcommand-simple	t0040-parse-options	subcommand - simple		partial
-t0040-parse-options::subcommand-stop-parsing-at-the-first-subcommand	t0040-parse-options	subcommand - stop parsing at the first subcommand		partial
-t0040-parse-options::subcommand-keep-argv0	t0040-parse-options	subcommand - KEEP_ARGV0		partial
-t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given		partial
-t0040-parse-options::subcommand-subcommand-optional-given-subcommand	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + given subcommand		partial
-t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given-unknown-dashless-args	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given + unknown dashless args		partial
-t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given-unknown-option	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given + unknown option		partial
-t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-subcommand-not-given-unknown-opt	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + subcommand not given + unknown option		partial
-t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-subcommand-ignored-after-unknown	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + subcommand ignored after unknown option		partial
-t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-command-and-subcommand-options-c	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + command and subcommand options cannot be mixed		partial
-t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-keep-argv0	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT | KEEP_ARGV0		partial
-t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-keep-dashdash	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT | KEEP_DASHDASH		partial
-t0040-parse-options::subcommand-completion-helper	t0040-parse-options	subcommand - completion helper		partial
-t0040-parse-options::subcommands-are-incompatible-with-stop-at-non-option	t0040-parse-options	subcommands are incompatible with STOP_AT_NON_OPTION		partial
-t0040-parse-options::subcommands-are-incompatible-with-keep-unknown-opt-unless-in-combination-with-su	t0040-parse-options	subcommands are incompatible with KEEP_UNKNOWN_OPT unless in combination with SUBCOMMAND_OPTIONAL		partial
-t0040-parse-options::subcommands-are-incompatible-with-keep-dashdash-unless-in-combination-with-subco	t0040-parse-options	subcommands are incompatible with KEEP_DASHDASH unless in combination with SUBCOMMAND_OPTIONAL		partial
-t0040-parse-options::negative-unsigned	t0040-parse-options	negative unsigned		partial
-t0040-parse-options::unsigned-with-units-but-no-numbers	t0040-parse-options	unsigned with units but no numbers		partial
-t0040-parse-options::i16-limits-range	t0040-parse-options	i16 limits range		partial
-t0040-parse-options::u16-limits-range	t0040-parse-options	u16 limits range		partial
-t0040-parse-options::no-internal-help-works-for-help-opt	t0040-parse-options	NO_INTERNAL_HELP works for --$help_opt		partial
+t0040-parse-options::test-help	t0040-parse-options	test help		pass
+t0040-parse-options::opt-bool-1	t0040-parse-options	OPT_BOOL() #1		pass
+t0040-parse-options::opt-bool-2	t0040-parse-options	OPT_BOOL() #2		pass
+t0040-parse-options::opt-bool-3	t0040-parse-options	OPT_BOOL() #3		pass
+t0040-parse-options::opt-bool-4	t0040-parse-options	OPT_BOOL() #4		pass
+t0040-parse-options::opt-bool-5	t0040-parse-options	OPT_BOOL() #5		pass
+t0040-parse-options::opt-bool-is-idempotent-1	t0040-parse-options	OPT_BOOL() is idempotent #1		pass
+t0040-parse-options::opt-bool-is-idempotent-2	t0040-parse-options	OPT_BOOL() is idempotent #2		pass
+t0040-parse-options::opt-bool-negation-1	t0040-parse-options	OPT_BOOL() negation #1		pass
+t0040-parse-options::opt-bool-negation-2	t0040-parse-options	OPT_BOOL() negation #2		pass
+t0040-parse-options::opt-bool-no-negation-1	t0040-parse-options	OPT_BOOL() no negation #1		pass
+t0040-parse-options::opt-bool-no-negation-2	t0040-parse-options	OPT_BOOL() no negation #2		pass
+t0040-parse-options::opt-bool-positivation	t0040-parse-options	OPT_BOOL() positivation		pass
+t0040-parse-options::opt-integer-negative	t0040-parse-options	OPT_INTEGER() negative		pass
+t0040-parse-options::opt-integer-kilo	t0040-parse-options	OPT_INTEGER() kilo		pass
+t0040-parse-options::opt-integer-negative-kilo	t0040-parse-options	OPT_INTEGER() negative kilo		pass
+t0040-parse-options::opt-unsigned-simple	t0040-parse-options	OPT_UNSIGNED() simple		pass
+t0040-parse-options::opt-unsigned-kilo	t0040-parse-options	OPT_UNSIGNED() kilo		pass
+t0040-parse-options::opt-unsigned-mega	t0040-parse-options	OPT_UNSIGNED() mega		pass
+t0040-parse-options::opt-unsigned-giga	t0040-parse-options	OPT_UNSIGNED() giga		pass
+t0040-parse-options::opt-unsigned-3giga	t0040-parse-options	OPT_UNSIGNED() 3giga		pass
+t0040-parse-options::short-options	t0040-parse-options	short options		pass
+t0040-parse-options::long-options	t0040-parse-options	long options		pass
+t0040-parse-options::abbreviate-to-something-longer-than-sha1-length	t0040-parse-options	abbreviate to something longer than SHA1 length		pass
+t0040-parse-options::missing-required-value	t0040-parse-options	missing required value		pass
+t0040-parse-options::superfluous-value-provided-boolean	t0040-parse-options	superfluous value provided: boolean		pass
+t0040-parse-options::superfluous-value-provided-boolean-abbreviated	t0040-parse-options	superfluous value provided: boolean, abbreviated		pass
+t0040-parse-options::superfluous-value-provided-cmdmode	t0040-parse-options	superfluous value provided: cmdmode		pass
+t0040-parse-options::intermingled-arguments	t0040-parse-options	intermingled arguments		pass
+t0040-parse-options::unambiguously-abbreviated-option	t0040-parse-options	unambiguously abbreviated option		pass
+t0040-parse-options::unambiguously-abbreviated-option-with	t0040-parse-options	unambiguously abbreviated option with "="		pass
+t0040-parse-options::ambiguously-abbreviated-option	t0040-parse-options	ambiguously abbreviated option		pass
+t0040-parse-options::non-ambiguous-option-after-two-options-it-abbreviates	t0040-parse-options	non ambiguous option (after two options it abbreviates)		pass
+t0040-parse-options::alias-options-do-not-contribute-to-abbreviation	t0040-parse-options	Alias options do not contribute to abbreviation		pass
+t0040-parse-options::detect-possible-typos	t0040-parse-options	detect possible typos		pass
+t0040-parse-options::detect-possible-typos-2	t0040-parse-options	detect possible typos		pass
+t0040-parse-options::opt-callback-and-opt-bit-work	t0040-parse-options	OPT_CALLBACK() and OPT_BIT() work		pass
+t0040-parse-options::opt-callback-and-callback-errors-work	t0040-parse-options	OPT_CALLBACK() and callback errors work		pass
+t0040-parse-options::opt-bit-and-opt-set-int-work	t0040-parse-options	OPT_BIT() and OPT_SET_INT() work		pass
+t0040-parse-options::opt-negbit-and-opt-set-int-work	t0040-parse-options	OPT_NEGBIT() and OPT_SET_INT() work		pass
+t0040-parse-options::opt-bit-works	t0040-parse-options	OPT_BIT() works		pass
+t0040-parse-options::opt-negbit-works	t0040-parse-options	OPT_NEGBIT() works		pass
+t0040-parse-options::opt-cmdmode-works	t0040-parse-options	OPT_CMDMODE() works		pass
+t0040-parse-options::opt-cmdmode-detects-incompatibility-1	t0040-parse-options	OPT_CMDMODE() detects incompatibility (1)		pass
+t0040-parse-options::opt-cmdmode-detects-incompatibility-2	t0040-parse-options	OPT_CMDMODE() detects incompatibility (2)		pass
+t0040-parse-options::opt-cmdmode-detects-incompatibility-3	t0040-parse-options	OPT_CMDMODE() detects incompatibility (3)		pass
+t0040-parse-options::opt-cmdmode-detects-incompatibility-4	t0040-parse-options	OPT_CMDMODE() detects incompatibility (4)		pass
+t0040-parse-options::opt-countup-with-parse-opt-nodash-works	t0040-parse-options	OPT_COUNTUP() with PARSE_OPT_NODASH works		pass
+t0040-parse-options::opt-number-callback-works	t0040-parse-options	OPT_NUMBER_CALLBACK() works		pass
+t0040-parse-options::negation-of-opt-noneg-flags-is-not-ambiguous	t0040-parse-options	negation of OPT_NONEG flags is not ambiguous		pass
+t0040-parse-options::list-keeps-list-of-strings	t0040-parse-options	--list keeps list of strings		pass
+t0040-parse-options::no-list-resets-list	t0040-parse-options	--no-list resets list		pass
+t0040-parse-options::multiple-quiet-levels	t0040-parse-options	multiple quiet levels		pass
+t0040-parse-options::multiple-verbose-levels	t0040-parse-options	multiple verbose levels		pass
+t0040-parse-options::no-quiet-sets-quiet-to-0	t0040-parse-options	--no-quiet sets --quiet to 0		pass
+t0040-parse-options::no-quiet-resets-multiple-q-to-0	t0040-parse-options	--no-quiet resets multiple -q to 0		pass
+t0040-parse-options::no-verbose-sets-verbose-to-0	t0040-parse-options	--no-verbose sets verbose to 0		pass
+t0040-parse-options::no-verbose-resets-multiple-verbose-to-0	t0040-parse-options	--no-verbose resets multiple verbose to 0		pass
+t0040-parse-options::git-test-disallow-abbreviated-options-works	t0040-parse-options	GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS works		pass
+t0040-parse-options::end-of-options-treats-remainder-as-args	t0040-parse-options	--end-of-options treats remainder as args		pass
+t0040-parse-options::keep-dashdash-works	t0040-parse-options	KEEP_DASHDASH works		pass
+t0040-parse-options::keep-argv0-works	t0040-parse-options	KEEP_ARGV0 works		pass
+t0040-parse-options::stop-at-non-option-works	t0040-parse-options	STOP_AT_NON_OPTION works		pass
+t0040-parse-options::keep-unknown-opt-works	t0040-parse-options	KEEP_UNKNOWN_OPT works		pass
+t0040-parse-options::no-internal-help-works-for-h	t0040-parse-options	NO_INTERNAL_HELP works for -h		pass
+t0040-parse-options::keep-unknown-opt-no-internal-help-works	t0040-parse-options	KEEP_UNKNOWN_OPT | NO_INTERNAL_HELP works		pass
+t0040-parse-options::subcommand-no-subcommand-shows-error-and-usage	t0040-parse-options	subcommand - no subcommand shows error and usage		pass
+t0040-parse-options::subcommand-subcommand-after-shows-error-and-usage	t0040-parse-options	subcommand - subcommand after -- shows error and usage		pass
+t0040-parse-options::subcommand-subcommand-after-end-of-options-shows-error-and-usage	t0040-parse-options	subcommand - subcommand after --end-of-options shows error and usage		pass
+t0040-parse-options::subcommand-unknown-subcommand-shows-error-and-usage	t0040-parse-options	subcommand - unknown subcommand shows error and usage		pass
+t0040-parse-options::subcommand-subcommands-cannot-be-abbreviated	t0040-parse-options	subcommand - subcommands cannot be abbreviated		pass
+t0040-parse-options::subcommand-no-negated-subcommands	t0040-parse-options	subcommand - no negated subcommands		pass
+t0040-parse-options::subcommand-simple	t0040-parse-options	subcommand - simple		pass
+t0040-parse-options::subcommand-stop-parsing-at-the-first-subcommand	t0040-parse-options	subcommand - stop parsing at the first subcommand		pass
+t0040-parse-options::subcommand-keep-argv0	t0040-parse-options	subcommand - KEEP_ARGV0		pass
+t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given		pass
+t0040-parse-options::subcommand-subcommand-optional-given-subcommand	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + given subcommand		pass
+t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given-unknown-dashless-args	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given + unknown dashless args		pass
+t0040-parse-options::subcommand-subcommand-optional-subcommand-not-given-unknown-option	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL + subcommand not given + unknown option		pass
+t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-subcommand-not-given-unknown-opt	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + subcommand not given + unknown option		pass
+t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-subcommand-ignored-after-unknown	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + subcommand ignored after unknown option		pass
+t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-command-and-subcommand-options-c	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT + command and subcommand options cannot be mixed		pass
+t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-keep-argv0	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT | KEEP_ARGV0		pass
+t0040-parse-options::subcommand-subcommand-optional-keep-unknown-opt-keep-dashdash	t0040-parse-options	subcommand - SUBCOMMAND_OPTIONAL | KEEP_UNKNOWN_OPT | KEEP_DASHDASH		pass
+t0040-parse-options::subcommand-completion-helper	t0040-parse-options	subcommand - completion helper		pass
+t0040-parse-options::subcommands-are-incompatible-with-stop-at-non-option	t0040-parse-options	subcommands are incompatible with STOP_AT_NON_OPTION		pass
+t0040-parse-options::subcommands-are-incompatible-with-keep-unknown-opt-unless-in-combination-with-su	t0040-parse-options	subcommands are incompatible with KEEP_UNKNOWN_OPT unless in combination with SUBCOMMAND_OPTIONAL		pass
+t0040-parse-options::subcommands-are-incompatible-with-keep-dashdash-unless-in-combination-with-subco	t0040-parse-options	subcommands are incompatible with KEEP_DASHDASH unless in combination with SUBCOMMAND_OPTIONAL		pass
+t0040-parse-options::negative-unsigned	t0040-parse-options	negative unsigned		pass
+t0040-parse-options::unsigned-with-units-but-no-numbers	t0040-parse-options	unsigned with units but no numbers		pass
+t0040-parse-options::i16-limits-range	t0040-parse-options	i16 limits range		pass
+t0040-parse-options::u16-limits-range	t0040-parse-options	u16 limits range		pass
+t0040-parse-options::no-internal-help-works-for-help-opt	t0040-parse-options	NO_INTERNAL_HELP works for --$help_opt		pass
 t0041-usage::setup	t0041-usage	setup 		pass
 t0041-usage::tag-contains-existent-tag	t0041-usage	tag --contains <existent_tag>	tag	pass
 t0041-usage::tag-contains-inexistent-tag	t0041-usage	tag --contains <inexistent_tag>	tag	pass
@@ -3459,9 +3459,9 @@ t2006-checkout-index-basic::checkout-index-reports-errors-cmdline	t2006-checkout
 t2006-checkout-index-basic::checkout-index-reports-errors-stdin	t2006-checkout-index-basic	checkout-index reports errors (stdin)	checkout-index	pass
 t2006-checkout-index-basic::checkout-index-temp-correctly-reports-error-on-missing-blobs	t2006-checkout-index-basic	checkout-index --temp correctly reports error on missing blobs	checkout-index	pass
 t2006-checkout-index-basic::checkout-index-temp-correctly-reports-error-for-submodules	t2006-checkout-index-basic	checkout-index --temp correctly reports error for submodules	checkout-index	pass
-t2007-checkout-symlink::switch-from-symlink-to-dir	t2007-checkout-symlink	switch from symlink to dir	checkout	partial
-t2007-checkout-symlink::remove-temporary-directories-switch-to-main	t2007-checkout-symlink	Remove temporary directories & switch to main	checkout	partial
-t2007-checkout-symlink::switch-from-dir-to-symlink	t2007-checkout-symlink	switch from dir to symlink	checkout	partial
+t2007-checkout-symlink::switch-from-symlink-to-dir	t2007-checkout-symlink	switch from symlink to dir	checkout	pass
+t2007-checkout-symlink::remove-temporary-directories-switch-to-main	t2007-checkout-symlink	Remove temporary directories & switch to main	checkout	pass
+t2007-checkout-symlink::switch-from-dir-to-symlink	t2007-checkout-symlink	switch from dir to symlink	checkout	pass
 t2008-checkout-subdir::remove-and-restore-with-relative-path	t2008-checkout-subdir	remove and restore with relative path	checkout	pass
 t2008-checkout-subdir::checkout-with-empty-prefix	t2008-checkout-subdir	checkout with empty prefix	checkout	pass
 t2008-checkout-subdir::checkout-with-simple-prefix	t2008-checkout-subdir	checkout with simple prefix	checkout	pass
@@ -3483,16 +3483,16 @@ t2010-checkout-ambiguous::check-ambiguity	t2010-checkout-ambiguous	check ambigui
 t2010-checkout-ambiguous::check-ambiguity-in-subdir	t2010-checkout-ambiguous	check ambiguity in subdir	checkout	pass
 t2010-checkout-ambiguous::disambiguate-checking-out-from-a-tree-ish	t2010-checkout-ambiguous	disambiguate checking out from a tree-ish	checkout	pass
 t2010-checkout-ambiguous::accurate-error-message-with-more-than-one-ref	t2010-checkout-ambiguous	accurate error message with more than one ref	checkout	pass
-t2011-checkout-invalid-head::setup	t2011-checkout-invalid-head	setup	checkout	partial
-t2011-checkout-invalid-head::checkout-should-not-start-branch-from-a-tree	t2011-checkout-invalid-head	checkout should not start branch from a tree	checkout	partial
-t2011-checkout-invalid-head::checkout-main-from-invalid-head	t2011-checkout-invalid-head	checkout main from invalid HEAD	checkout	partial
-t2011-checkout-invalid-head::checkout-notices-failure-to-lock-head	t2011-checkout-invalid-head	checkout notices failure to lock HEAD	checkout	partial
-t2011-checkout-invalid-head::create-ref-directory-file-conflict-scenario	t2011-checkout-invalid-head	create ref directory/file conflict scenario	checkout	partial
-t2011-checkout-invalid-head::checkout-away-from-d-f-head-unpacked-to-branch	t2011-checkout-invalid-head	checkout away from d/f HEAD (unpacked, to branch)	checkout	partial
-t2011-checkout-invalid-head::checkout-away-from-d-f-head-unpacked-to-detached	t2011-checkout-invalid-head	checkout away from d/f HEAD (unpacked, to detached)	checkout	partial
-t2011-checkout-invalid-head::pack-refs	t2011-checkout-invalid-head	pack refs	checkout	partial
-t2011-checkout-invalid-head::checkout-away-from-d-f-head-packed-to-branch	t2011-checkout-invalid-head	checkout away from d/f HEAD (packed, to branch)	checkout	partial
-t2011-checkout-invalid-head::checkout-away-from-d-f-head-packed-to-detached	t2011-checkout-invalid-head	checkout away from d/f HEAD (packed, to detached)	checkout	partial
+t2011-checkout-invalid-head::setup	t2011-checkout-invalid-head	setup	checkout	pass
+t2011-checkout-invalid-head::checkout-should-not-start-branch-from-a-tree	t2011-checkout-invalid-head	checkout should not start branch from a tree	checkout	pass
+t2011-checkout-invalid-head::checkout-main-from-invalid-head	t2011-checkout-invalid-head	checkout main from invalid HEAD	checkout	pass
+t2011-checkout-invalid-head::checkout-notices-failure-to-lock-head	t2011-checkout-invalid-head	checkout notices failure to lock HEAD	checkout	pass
+t2011-checkout-invalid-head::create-ref-directory-file-conflict-scenario	t2011-checkout-invalid-head	create ref directory/file conflict scenario	checkout	pass
+t2011-checkout-invalid-head::checkout-away-from-d-f-head-unpacked-to-branch	t2011-checkout-invalid-head	checkout away from d/f HEAD (unpacked, to branch)	checkout	pass
+t2011-checkout-invalid-head::checkout-away-from-d-f-head-unpacked-to-detached	t2011-checkout-invalid-head	checkout away from d/f HEAD (unpacked, to detached)	checkout	pass
+t2011-checkout-invalid-head::pack-refs	t2011-checkout-invalid-head	pack refs	checkout	pass
+t2011-checkout-invalid-head::checkout-away-from-d-f-head-packed-to-branch	t2011-checkout-invalid-head	checkout away from d/f HEAD (packed, to branch)	checkout	pass
+t2011-checkout-invalid-head::checkout-away-from-d-f-head-packed-to-detached	t2011-checkout-invalid-head	checkout away from d/f HEAD (packed, to detached)	checkout	pass
 t2012-checkout-last::setup	t2012-checkout-last	setup	checkout	pass
 t2012-checkout-last::checkout-does-not-work-initially	t2012-checkout-last	"checkout -" does not work initially	checkout	pass
 t2012-checkout-last::first-branch-switch	t2012-checkout-last	first branch switch	checkout	pass
@@ -4129,21 +4129,21 @@ t2501-cwd-empty::git-version-continues-working-from-a-deleted-dir	t2501-cwd-empt
 t2501-cwd-empty::rm-r-with-c-leaves-submodule-if-cwd-inside	t2501-cwd-empty	rm -r with -C leaves submodule if cwd inside	rm	pass
 t2501-cwd-empty::rm-r-leaves-submodule-if-cwd-inside	t2501-cwd-empty	rm -r leaves submodule if cwd inside		pass
 t2501-cwd-empty::rm-rf-removes-submodule-even-if-cwd-inside	t2501-cwd-empty	rm -rf removes submodule even if cwd inside		pass
-t3000-ls-files-others::setup	t3000-ls-files-others	setup 	ls-files	partial
-t3000-ls-files-others::setup-expected-output	t3000-ls-files-others	setup: expected output	ls-files	partial
-t3000-ls-files-others::ls-files-others	t3000-ls-files-others	ls-files --others	ls-files	partial
-t3000-ls-files-others::ls-files-others-directory	t3000-ls-files-others	ls-files --others --directory	ls-files	partial
-t3000-ls-files-others::no-empty-directory-hides-empty-directory	t3000-ls-files-others	--no-empty-directory hides empty directory	ls-files	partial
-t3000-ls-files-others::ls-files-others-handles-non-submodule-git	t3000-ls-files-others	ls-files --others handles non-submodule .git	ls-files	partial
-t3000-ls-files-others::setup-nested-pathspec-search	t3000-ls-files-others	setup nested pathspec search	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-single-deep-dir-pathspec	t3000-ls-files-others	ls-files -o --directory with single deep dir pathspec	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-multiple-dir-pathspecs	t3000-ls-files-others	ls-files -o --directory with multiple dir pathspecs	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-mix-dir-file-pathspecs	t3000-ls-files-others	ls-files -o --directory with mix dir/file pathspecs	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match	t3000-ls-files-others	ls-files -o --directory with glob filetype match	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-mix-of-tracked-states	t3000-ls-files-others	ls-files -o --directory with mix of tracked states	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match-only	t3000-ls-files-others	ls-files -o --directory with glob filetype match only	ls-files	partial
-t3000-ls-files-others::ls-files-o-directory-to-get-immediate-paths-under-one-dir-only	t3000-ls-files-others	ls-files -o --directory to get immediate paths under one dir only	ls-files	partial
-t3000-ls-files-others::ls-files-o-avoids-listing-untracked-non-matching-gitdir	t3000-ls-files-others	ls-files -o avoids listing untracked non-matching gitdir	ls-files	partial
+t3000-ls-files-others::setup	t3000-ls-files-others	setup 	ls-files	pass
+t3000-ls-files-others::setup-expected-output	t3000-ls-files-others	setup: expected output	ls-files	pass
+t3000-ls-files-others::ls-files-others	t3000-ls-files-others	ls-files --others	ls-files	pass
+t3000-ls-files-others::ls-files-others-directory	t3000-ls-files-others	ls-files --others --directory	ls-files	pass
+t3000-ls-files-others::no-empty-directory-hides-empty-directory	t3000-ls-files-others	--no-empty-directory hides empty directory	ls-files	pass
+t3000-ls-files-others::ls-files-others-handles-non-submodule-git	t3000-ls-files-others	ls-files --others handles non-submodule .git	ls-files	pass
+t3000-ls-files-others::setup-nested-pathspec-search	t3000-ls-files-others	setup nested pathspec search	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-single-deep-dir-pathspec	t3000-ls-files-others	ls-files -o --directory with single deep dir pathspec	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-multiple-dir-pathspecs	t3000-ls-files-others	ls-files -o --directory with multiple dir pathspecs	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-mix-dir-file-pathspecs	t3000-ls-files-others	ls-files -o --directory with mix dir/file pathspecs	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match	t3000-ls-files-others	ls-files -o --directory with glob filetype match	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-mix-of-tracked-states	t3000-ls-files-others	ls-files -o --directory with mix of tracked states	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match-only	t3000-ls-files-others	ls-files -o --directory with glob filetype match only	ls-files	pass
+t3000-ls-files-others::ls-files-o-directory-to-get-immediate-paths-under-one-dir-only	t3000-ls-files-others	ls-files -o --directory to get immediate paths under one dir only	ls-files	pass
+t3000-ls-files-others::ls-files-o-avoids-listing-untracked-non-matching-gitdir	t3000-ls-files-others	ls-files -o avoids listing untracked non-matching gitdir	ls-files	pass
 t3001-ls-files-others-exclude::git-ls-files-others-with-various-exclude-options	t3001-ls-files-others-exclude	git ls-files --others with various exclude options.	ls-files	pass
 t3001-ls-files-others-exclude::git-ls-files-others-with-r-n-line-endings	t3001-ls-files-others-exclude	git ls-files --others with \r\n line endings.	ls-files	pass
 t3001-ls-files-others-exclude::setup-skip-worktree-gitignore	t3001-ls-files-others-exclude	setup skip-worktree gitignore	ls-files	pass
@@ -4171,12 +4171,12 @@ t3001-ls-files-others-exclude::pattern-matches-prefix-completely	t3001-ls-files-
 t3001-ls-files-others-exclude::ls-files-with-patterns	t3001-ls-files-others-exclude	ls-files with "**" patterns	ls-files	pass
 t3001-ls-files-others-exclude::ls-files-with-patterns-and-directory	t3001-ls-files-others-exclude	ls-files with "**" patterns and --directory	ls-files	pass
 t3001-ls-files-others-exclude::ls-files-with-patterns-and-no-slashes	t3001-ls-files-others-exclude	ls-files with "**" patterns and no slashes	ls-files	pass
-t3002-ls-files-dashpath::setup	t3002-ls-files-dashpath	setup	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-without-path-restriction	t3002-ls-files-dashpath	git ls-files without path restriction.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction	t3002-ls-files-dashpath	git ls-files with path restriction.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with	t3002-ls-files-dashpath	git ls-files with path restriction with --.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with-2	t3002-ls-files-dashpath	git ls-files with path restriction with -- --.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-no-path-restriction	t3002-ls-files-dashpath	git ls-files with no path restriction.	ls-files	partial
+t3002-ls-files-dashpath::setup	t3002-ls-files-dashpath	setup	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-without-path-restriction	t3002-ls-files-dashpath	git ls-files without path restriction.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction	t3002-ls-files-dashpath	git ls-files with path restriction.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with	t3002-ls-files-dashpath	git ls-files with path restriction with --.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with-2	t3002-ls-files-dashpath	git ls-files with path restriction with -- --.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-no-path-restriction	t3002-ls-files-dashpath	git ls-files with no path restriction.	ls-files	pass
 t3003-ls-files-exclude::create-repo-with-file	t3003-ls-files-exclude	create repo with file	ls-files	pass
 t3003-ls-files-exclude::add-file-to-gitignore	t3003-ls-files-exclude	add file to gitignore	ls-files	pass
 t3003-ls-files-exclude::ls-files-i-c-lists-only-tracked-but-ignored-files	t3003-ls-files-exclude	ls-files -i -c lists only tracked-but-ignored files	ls-files	pass
@@ -4222,26 +4222,26 @@ t3010-ls-files-killed-modified::git-ls-files-k-output-w-o-icase	t3010-ls-files-k
 t3010-ls-files-killed-modified::git-ls-files-k-output-w-icase	t3010-ls-files-killed-modified	git ls-files -k output (w/ icase)	ls-files	pass
 t3010-ls-files-killed-modified::git-ls-files-m-to-show-modified-files	t3010-ls-files-killed-modified	git ls-files -m to show modified files.	ls-files	pass
 t3010-ls-files-killed-modified::validate-git-ls-files-m-output	t3010-ls-files-killed-modified	validate git ls-files -m output.	ls-files	pass
-t3011-common-prefixes-and-directory-traversal::setup	t3011-common-prefixes-and-directory-traversal	setup	init	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-shows-the-right-entries	t3011-common-prefixes-and-directory-traversal	git ls-files -o shows the right entries	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-exclude-standard-shows-the-right-entries	t3011-common-prefixes-and-directory-traversal	git ls-files -o --exclude-standard shows the right entries	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-dir-recurses	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_dir recurses	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-dir-recurses-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_dir/ recurses	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-dir-does-not-recurse	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_dir does not recurse	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-dir-does-not-recurse-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_dir/ does not recurse	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-repo-does-not-recurse	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_repo does not recurse	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-repo-does-not-recurse-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_repo/ does not recurse	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-dir-untracked-repo-recurses-into-untracked-dir-only	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_dir untracked_repo recurses into untracked_dir only	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-dir-untracked-repo-recurses-into-untracked-dir-only-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_dir/ untracked_repo/ recurses into untracked_dir only	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-dir-untracked-repo-does-not-recurse	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_dir untracked_repo does not recurse	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-dir-untracked-repo-does-not-recurse-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_dir/ untracked_repo/ does not recurse	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-git-shows-nothing	t3011-common-prefixes-and-directory-traversal	git ls-files -o .git shows nothing	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-git-shows-nothing-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o .git/ shows nothing	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-recurses-appropriately	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_* recurses appropriately	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-does-not-recurse	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_* does not recurse	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-does-not-recurse-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_*/ does not recurse	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-ls-files-o-consistent-between-one-or-two-dirs	t3011-common-prefixes-and-directory-traversal	git ls-files -o consistent between one or two dirs	ls-files	partial
-t3011-common-prefixes-and-directory-traversal::git-status-ignored-shows-same-files-under-dir-with-or-without-pathspec	t3011-common-prefixes-and-directory-traversal	git status --ignored shows same files under dir with or without pathspec	status	partial
+t3011-common-prefixes-and-directory-traversal::setup	t3011-common-prefixes-and-directory-traversal	setup	init	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-shows-the-right-entries	t3011-common-prefixes-and-directory-traversal	git ls-files -o shows the right entries	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-exclude-standard-shows-the-right-entries	t3011-common-prefixes-and-directory-traversal	git ls-files -o --exclude-standard shows the right entries	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-dir-recurses	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_dir recurses	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-dir-recurses-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_dir/ recurses	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-dir-does-not-recurse	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_dir does not recurse	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-dir-does-not-recurse-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_dir/ does not recurse	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-repo-does-not-recurse	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_repo does not recurse	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-repo-does-not-recurse-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_repo/ does not recurse	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-dir-untracked-repo-recurses-into-untracked-dir-only	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_dir untracked_repo recurses into untracked_dir only	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-dir-untracked-repo-recurses-into-untracked-dir-only-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_dir/ untracked_repo/ recurses into untracked_dir only	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-dir-untracked-repo-does-not-recurse	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_dir untracked_repo does not recurse	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-dir-untracked-repo-does-not-recurse-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_dir/ untracked_repo/ does not recurse	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-git-shows-nothing	t3011-common-prefixes-and-directory-traversal	git ls-files -o .git shows nothing	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-git-shows-nothing-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o .git/ shows nothing	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-untracked-recurses-appropriately	t3011-common-prefixes-and-directory-traversal	git ls-files -o untracked_* recurses appropriately	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-does-not-recurse	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_* does not recurse	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-directory-untracked-does-not-recurse-2	t3011-common-prefixes-and-directory-traversal	git ls-files -o --directory untracked_*/ does not recurse	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-ls-files-o-consistent-between-one-or-two-dirs	t3011-common-prefixes-and-directory-traversal	git ls-files -o consistent between one or two dirs	ls-files	pass
+t3011-common-prefixes-and-directory-traversal::git-status-ignored-shows-same-files-under-dir-with-or-without-pathspec	t3011-common-prefixes-and-directory-traversal	git status --ignored shows same files under dir with or without pathspec	status	pass
 t3012-ls-files-dedup::setup	t3012-ls-files-dedup	setup	ls-files	pass
 t3012-ls-files-dedup::git-ls-files-deduplicate-to-show-unique-unmerged-path	t3012-ls-files-dedup	git ls-files --deduplicate to show unique unmerged path	ls-files	pass
 t3012-ls-files-dedup::git-ls-files-d-m-deduplicate-with-different-display-options	t3012-ls-files-dedup	git ls-files -d -m --deduplicate with different display options	ls-files	pass
