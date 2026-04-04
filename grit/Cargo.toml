@@ -11,6 +11,10 @@ repository = "https://github.com/schacon/grit"
 name = "grit"
 path = "src/main.rs"
 
+[[bin]]
+name = "test-httpd"
+path = "src/bin/test_httpd.rs"
+
 [lints]
 workspace = true
 
