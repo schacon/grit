@@ -183,10 +183,14 @@ fn resolve_upstream_ref(repo: &Repository, branch: &str) -> Option<String> {
     let config_content = fs::read_to_string(&config_path).ok()?;
     let (remote, merge) = parse_branch_tracking(&config_content, &branch_name)?;
     
-    // Convert merge ref to remote tracking ref
-    // e.g., refs/heads/main with remote "origin" -> refs/remotes/origin/main
-    let merge_branch = merge.strip_prefix("refs/heads/")?;
-    Some(format!("refs/remotes/{remote}/{merge_branch}"))
+    // For local tracking (remote = "."), use the merge ref directly.
+    // For remote tracking, convert to refs/remotes/<remote>/<branch>.
+    if remote == "." {
+        Some(merge.clone())
+    } else {
+        let merge_branch = merge.strip_prefix("refs/heads/")?;
+        Some(format!("refs/remotes/{remote}/{merge_branch}"))
+    }
 }
 
 /// Resolve `@{push}` for a given branch.

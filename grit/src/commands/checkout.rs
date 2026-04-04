@@ -196,9 +196,19 @@ pub fn run(args: Args) -> Result<()> {
         if !paths.is_empty() || args.rest.len() > 1 {
             bail!("too many arguments for -b");
         }
+        // Capture the current HEAD branch before checkout (for tracking setup)
+        let pre_head_branch = if target.is_none() && args.track {
+            match resolve_head(&repo.git_dir) {
+                Ok(HeadState::Branch { short_name, .. }) => Some(short_name),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let effective_target = target.as_deref().or(pre_head_branch.as_deref());
         let result = create_and_switch_branch(&repo, new_branch_name, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
-            maybe_setup_tracking(&repo, new_branch_name, target.as_deref(), args.track)?;
+            maybe_setup_tracking(&repo, new_branch_name, effective_target, args.track)?;
         }
         return result;
     }
