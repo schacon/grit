@@ -147,6 +147,10 @@ def generate_html(commands, total_upstream, upstream_passing, upstream_partial,
                 cls = "cmd-cell complete"
                 tooltip = f"{cmd['name']}: all {cmd['total_tests']} associated tests passing"
                 badge = f'<span class="cmd-pct">{cmd["passing"]}/{cmd["total_tests"]}</span>'
+            elif cmd['passing'] == 0:
+                cls = "cmd-cell zero-pass"
+                tooltip = f"{cmd['name']}: 0/{cmd['total_tests']} associated tests passing"
+                badge = f'<span class="cmd-pct">0/{cmd["total_tests"]}</span>'
             else:
                 cls = "cmd-cell partial"
                 tooltip = f"{cmd['name']}: {cmd['passing']}/{cmd['total_tests']} associated tests passing ({cmd['pct']}%)"
@@ -411,6 +415,11 @@ a.cmd-cell {{
   background: #161b22;
   border-color: #30363d;
   color: #e6edf3;
+}}
+.cmd-cell.zero-pass {{
+  background: #161b22;
+  border-color: #21262d;
+  color: #484f58;
 }}
 
 /* ── Footer ── */

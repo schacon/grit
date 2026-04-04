@@ -1,56 +1,30 @@
 #!/usr/bin/env python3
 """Generate docs/progress.svg — a dynamic badge showing upstream test pass rate.
 
-Reads results from /tmp/grit-upstream-results/ (populated by run-upstream-tests.sh).
-Falls back to scanning existing docs/index.html for last known values.
+Reads from data/command-status.tsv (same source as docs/index.html) so the
+badge, dashboard, and per-command bars all report the same numbers.
 """
 import os
-import re
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-RESULTS_DIR = "/tmp/grit-upstream-results"
+DATA = os.path.join(REPO_ROOT, "data")
 OUTPUT = os.path.join(REPO_ROOT, "docs", "progress.svg")
 
 
-def get_counts_from_results():
-    """Read TAP output from upstream test results."""
-    if not os.path.isdir(RESULTS_DIR):
-        return None, None
-    total_pass = 0
-    total_fail = 0
-    for f in os.listdir(RESULTS_DIR):
-        if not f.endswith(".out"):
-            continue
-        path = os.path.join(RESULTS_DIR, f)
-        try:
-            with open(path, errors="replace") as fh:
-                content = fh.read()
-            total_pass += len(re.findall(r"^ok [0-9]", content, re.MULTILINE))
-            total_fail += len(re.findall(r"^not ok [0-9]", content, re.MULTILINE))
-        except Exception:
-            pass
-    total = total_pass + total_fail
-    if total == 0:
-        return None, None
-    return total_pass, total
-
-
-def get_counts_from_html():
-    """Read passing and total test counts from docs/index.html."""
-    index = os.path.join(REPO_ROOT, "docs", "index.html")
-    if not os.path.isfile(index):
-        return 0, 1
-    try:
-        with open(index) as f:
-            content = f.read()
-        numbers = re.findall(r'<div class="number">(\d[\d,]*)</div>', content)
-        if len(numbers) >= 2:
-            pass_count = int(numbers[0].replace(",", ""))
-            total_count = int(numbers[1].replace(",", ""))
-            return pass_count, total_count
-    except Exception:
-        pass
-    return 0, 1
+def get_counts():
+    """Sum passing and total tests from command-status.tsv."""
+    path = os.path.join(DATA, "command-status.tsv")
+    total = 0
+    passing = 0
+    with open(path) as f:
+        f.readline()  # header
+        for line in f:
+            parts = line.strip().split('\t')
+            if len(parts) < 5:
+                continue
+            total += int(parts[3])
+            passing += int(parts[4])
+    return passing, total
 
 
 def generate_svg(pass_count, total_count):
@@ -76,13 +50,7 @@ def generate_svg(pass_count, total_count):
 
 
 def main():
-    # Read raw passing/total counts — the goal is 18k passing, so show the raw ratio
-    pass_count, total_count = get_counts_from_html()
-    if pass_count == 0:
-        p, t = get_counts_from_results()
-        if p is not None:
-            pass_count, total_count = p, t
-
+    pass_count, total_count = get_counts()
     svg = generate_svg(pass_count, total_count)
     with open(OUTPUT, "w") as f:
         f.write(svg)
