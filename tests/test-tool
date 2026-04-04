@@ -63,7 +63,76 @@ case "$1" in
     esac ;;
   pkt-line)
     shift
-    exec git pkt-line "$@" ;;
+    case "$1" in
+      unpack)
+        # Decode pkt-line stream: 4 hex digits length, then data
+        # Mimics C printf("%s\n", line) which stops at NUL byte
+        perl -e '
+          use strict;
+          use warnings;
+          binmode STDIN;
+          binmode STDOUT;
+          while (1) {
+            my $n = read(STDIN, my $hex, 4);
+            last if !$n || $n < 4;
+            my $len = hex($hex);
+            if ($len == 0) {
+              print "0000\n";
+              next;
+            }
+            if ($len == 1) {
+              print "0001\n";
+              next;
+            }
+            if ($len == 2) {
+              print "0002\n";
+              next;
+            }
+            $len -= 4;
+            last if $len <= 0;
+            my $buf;
+            read(STDIN, $buf, $len) or last;
+            # Chomp trailing newline (like PACKET_READ_CHOMP_NEWLINE)
+            $buf =~ s/\n$//;
+            # C printf "%s" stops at NUL — strip everything after first NUL
+            $buf =~ s/\0.*//s;
+            print "$buf\n";
+          }
+        ' ;;
+      pack)
+        shift
+        if [ $# -gt 0 ]; then
+          for line in "$@"; do
+            case "$line" in
+              0000|0000$'\n') printf '0000' ;;
+              0001|0001$'\n') printf '0001' ;;
+              *) printf '%04x%s\n' $((4 + ${#line} + 1)) "$line" ;;
+            esac
+          done
+        else
+          while IFS= read -r line; do
+            case "$line" in
+              0000) printf '0000' ;;
+              0001) printf '0001' ;;
+              *) printf '%04x%s\n' $((4 + ${#line} + 1)) "$line" ;;
+            esac
+          done
+        fi ;;
+      pack-raw-stdin)
+        perl -e '
+          use strict;
+          use warnings;
+          binmode STDIN;
+          binmode STDOUT;
+          local $/;
+          my $data = <STDIN>;
+          my $len = length($data) + 4;
+          printf "%04x%s", $len, $data;
+        ' ;;
+      *)
+        echo "test-tool pkt-line: unknown subcommand '$1'" >&2
+        exit 1 ;;
+    esac ;;
   serve-v2)
     shift
     exec git serve-v2 "$@" ;;

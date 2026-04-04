@@ -299,6 +299,8 @@ test_oid () {
 	oid_version) echo "1" ;;
 	rawsz) echo "20" ;;
 	hexsz) echo "40" ;;
+	algo) echo "sha1" ;;
+	zero) echo "$ZERO_OID" ;;
 	*) echo "unknown-oid" ;;
 	esac
 }
@@ -438,6 +440,10 @@ test_have_prereq () {
 	MINGW)     return 1 ;;  # Not on Windows
 	CYGWIN)    return 1 ;;  # Not on Cygwin
 	PERL)      command -v perl >/dev/null 2>&1 && return 0 ; return 1 ;;
+	PERL_TEST_HELPERS) command -v perl >/dev/null 2>&1 && return 0 ; return 1 ;;
+	GZIP)      command -v gzip >/dev/null 2>&1 && return 0 ; return 1 ;;
+	FAKENC)    perl -MIO::Socket::INET -e 'exit 0' 2>/dev/null && return 0 ; return 1 ;;
+	CGIPASSAUTH) return 1 ;; # Not supported by test-httpd
 	*)
 		# Check dynamic prereqs set by test_set_prereq
 		local _var="_prereq_${_p}"
@@ -454,6 +460,44 @@ test_set_prereq () {
 # TAR for tests that need it
 TAR=${TAR:-tar}
 export TAR
+
+PERL_PATH=${PERL_PATH:-$(command -v perl 2>/dev/null || echo /usr/bin/perl)}
+export PERL_PATH
+
+# test_set_port VAR — assign a random port (or use existing value)
+test_set_port () {
+	local _varname="$1"
+	eval "local _existing=\${${_varname}:-}"
+	if test -z "$_existing"
+	then
+		# Pick a random port in the ephemeral range
+		eval "${_varname}=$((10000 + (RANDOM % 50000)))"
+	fi
+}
+
+# test_skip_or_die VAR MSG — skip test or die based on env var
+test_skip_or_die () {
+	if test_bool_env "$1" false
+	then
+		error "$2"
+	fi
+	skip_all="$2"
+	test_done
+}
+
+# test_env — run command with additional env vars
+# Usage: test_env VAR=VALUE ... command args
+test_env () {
+	env "$@"
+}
+
+# test_lazy_prereq NAME SCRIPT — define a prereq checked lazily
+test_lazy_prereq () {
+	if eval "$2" >/dev/null 2>&1
+	then
+		test_set_prereq "$1"
+	fi
+}
 
 # write_script FILE [INTERPRETER] — write a script from stdin
 write_script () {
@@ -807,6 +851,38 @@ test_line_count () {
 		echo >&2 "test_line_count: expected $count lines ($op), got $actual in '$file'"
 		return 1
 	fi
+}
+
+# Read up to "$1" bytes (or to EOF) from stdin and write them to stdout.
+test_copy_bytes () {
+	dd ibs=1 count="$1" 2>/dev/null
+}
+
+# Pkt-line helpers
+packetize () {
+	if test $# -gt 0
+	then
+		packet="$*"
+		printf '%04x%s' "$((4 + ${#packet}))" "$packet"
+	else
+		test-tool pkt-line pack
+	fi
+}
+
+packetize_raw () {
+	test-tool pkt-line pack-raw-stdin
+}
+
+depacketize () {
+	test-tool pkt-line unpack
+}
+
+# Build option stub — return reasonable defaults
+build_option () {
+	case "$1" in
+	sizeof-size_t) echo 8 ;;
+	*) echo "" ;;
+	esac
 }
 
 test_done () {
