@@ -107,6 +107,12 @@ pub fn run(args: Args) -> Result<()> {
         bail!("--revision and --mirror are mutually exclusive");
     }
 
+    // Detect ext:: transport
+    if args.repository.starts_with("ext::") {
+        crate::protocol::check_protocol_allowed("ext", None)?;
+        bail!("ext:: transport is not yet supported");
+    }
+
     // Detect SSH URL: host:/path (colon after hostname, no preceding //)
     if is_ssh_url(&args.repository) {
         crate::protocol::check_protocol_allowed("ssh", None)?;
