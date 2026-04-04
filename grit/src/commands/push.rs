@@ -599,15 +599,72 @@ fn push_to_url(
         }
     }
 
+    // Check receive.advertisePushOptions on the remote
+    if !args.push_option.is_empty() {
+        let remote_config = ConfigSet::load(Some(&remote_repo.git_dir), false)?;
+        if let Some(val) = remote_config.get("receive.advertisepushoptions") {
+            if val == "false" || val == "0" {
+                bail!("the receiving end does not support push options");
+            }
+        }
+    }
+
+    // Build push option env vars for hooks
+    let push_option_env: Vec<(String, String)> = if !args.push_option.is_empty() {
+        let mut env = vec![
+            ("GIT_PUSH_OPTION_COUNT".to_owned(), args.push_option.len().to_string()),
+        ];
+        for (i, opt) in args.push_option.iter().enumerate() {
+            env.push((format!("GIT_PUSH_OPTION_{i}"), opt.clone()));
+        }
+        env
+    } else {
+        Vec::new()
+    };
+    let push_option_env_refs: Vec<(&str, &str)> = push_option_env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
     // Apply ref updates, running remote-side hooks first
     if !args.quiet && !args.porcelain {
         println!("To {url}");
     }
 
+    // Build stdin for pre-receive / post-receive hooks
+    let zero_oid_str = "0".repeat(40);
+    let hook_stdin = {
+        let mut lines = String::new();
+        for update in &updates {
+            let old_hex = update.old_oid.map(|o| o.to_hex()).unwrap_or_else(|| zero_oid_str.clone());
+            let new_hex = update.new_oid.map(|o| o.to_hex()).unwrap_or_else(|| zero_oid_str.clone());
+            lines.push_str(&format!("{old_hex} {new_hex} {}\n", update.remote_ref));
+        }
+        lines
+    };
+
+    // Run pre-receive hook on the remote
+    if !args.dry_run {
+        let (hook_result, hook_output) = grit_lib::hooks::run_hook_in_git_dir(
+            &remote_repo,
+            "pre-receive",
+            &[],
+            Some(hook_stdin.as_bytes()),
+            &push_option_env_refs,
+        );
+        if !hook_output.is_empty() {
+            let output_str = String::from_utf8_lossy(&hook_output);
+            let color_remote = resolve_color_remote(&repo, &args);
+            colorize_remote_output(&output_str, color_remote);
+        }
+        if let HookResult::Failed(_code) = hook_result {
+            bail!("pre-receive hook declined the push");
+        }
+    }
+
     // Track results for atomic rollback on failure
     let mut applied_updates: Vec<(&RefUpdate, Option<ObjectId>)> = Vec::new();
     let mut rejected: Vec<(&RefUpdate, String)> = Vec::new();
-    let zero_oid_str = "0".repeat(40);
 
     for update in &updates {
         // Run the remote's `update` hook: update <refname> <old-oid> <new-oid>
@@ -726,6 +783,22 @@ fn push_to_url(
             );
         }
         bail!("failed to push some refs to '{url}'");
+    }
+
+    // Run post-receive hook on the remote (after successful ref updates)
+    if !args.dry_run && !applied_updates.is_empty() {
+        let (_, hook_output) = grit_lib::hooks::run_hook_in_git_dir(
+            &remote_repo,
+            "post-receive",
+            &[],
+            Some(hook_stdin.as_bytes()),
+            &push_option_env_refs,
+        );
+        if !hook_output.is_empty() {
+            let output_str = String::from_utf8_lossy(&hook_output);
+            let color_remote = resolve_color_remote(&repo, &args);
+            colorize_remote_output(&output_str, color_remote);
+        }
     }
 
     // Set upstream tracking if requested

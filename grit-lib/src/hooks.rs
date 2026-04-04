@@ -124,6 +124,143 @@ pub fn run_hook(
 }
 
 /// Like `run_hook` but captures stdout and returns it alongside the result.
+/// Run a hook with extra env vars, setting cwd to GIT_DIR (for receive-side hooks).
+pub fn run_hook_in_git_dir(
+    repo: &Repository,
+    hook_name: &str,
+    args: &[&str],
+    stdin_data: Option<&[u8]>,
+    env_vars: &[(&str, &str)],
+) -> (HookResult, Vec<u8>) {
+    let hooks_dir = resolve_hooks_dir(repo);
+    let hook_path = hooks_dir.join(hook_name);
+
+    if !hook_path.exists() {
+        return (HookResult::NotFound, Vec::new());
+    }
+
+    let meta = match fs::metadata(&hook_path) {
+        Ok(m) => m,
+        Err(_) => return (HookResult::NotFound, Vec::new()),
+    };
+    if meta.permissions().mode() & 0o111 == 0 {
+        return (HookResult::NotFound, Vec::new());
+    }
+
+    let mut cmd = Command::new(&hook_path);
+    cmd.args(args)
+        .current_dir(&repo.git_dir)  // receive-side hooks run from GIT_DIR
+        .env("GIT_DIR", &repo.git_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    for (key, val) in env_vars {
+        cmd.env(key, val);
+    }
+
+    if stdin_data.is_some() {
+        cmd.stdin(std::process::Stdio::piped());
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return (HookResult::Failed(1), Vec::new()),
+    };
+
+    if let Some(data) = stdin_data {
+        if let Some(ref mut stdin) = child.stdin {
+            use std::io::Write;
+            let _ = stdin.write_all(data);
+        }
+        drop(child.stdin.take());
+    }
+
+    match child.wait_with_output() {
+        Ok(output) => {
+            let mut combined = output.stdout;
+            combined.extend_from_slice(&output.stderr);
+            let result = if output.status.success() {
+                HookResult::Success
+            } else {
+                HookResult::Failed(output.status.code().unwrap_or(1))
+            };
+            (result, combined)
+        }
+        Err(_) => (HookResult::Failed(1), Vec::new()),
+    }
+}
+
+/// Like `run_hook` but with extra environment variables and captures output.
+pub fn run_hook_with_env(
+    repo: &Repository,
+    hook_name: &str,
+    args: &[&str],
+    stdin_data: Option<&[u8]>,
+    env_vars: &[(&str, &str)],
+) -> (HookResult, Vec<u8>) {
+    let hooks_dir = resolve_hooks_dir(repo);
+    let hook_path = hooks_dir.join(hook_name);
+
+    if !hook_path.exists() {
+        return (HookResult::NotFound, Vec::new());
+    }
+
+    let meta = match fs::metadata(&hook_path) {
+        Ok(m) => m,
+        Err(_) => return (HookResult::NotFound, Vec::new()),
+    };
+    if meta.permissions().mode() & 0o111 == 0 {
+        return (HookResult::NotFound, Vec::new());
+    }
+
+    let work_dir = repo
+        .work_tree
+        .as_deref()
+        .unwrap_or(&repo.git_dir);
+
+    let mut cmd = Command::new(&hook_path);
+    cmd.args(args)
+        .current_dir(work_dir)
+        .env("GIT_DIR", &repo.git_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    for (key, val) in env_vars {
+        cmd.env(key, val);
+    }
+
+    if stdin_data.is_some() {
+        cmd.stdin(std::process::Stdio::piped());
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return (HookResult::Failed(1), Vec::new()),
+    };
+
+    if let Some(data) = stdin_data {
+        if let Some(ref mut stdin) = child.stdin {
+            use std::io::Write;
+            let _ = stdin.write_all(data);
+        }
+        drop(child.stdin.take());
+    }
+
+    match child.wait_with_output() {
+        Ok(output) => {
+            let mut combined = output.stdout;
+            combined.extend_from_slice(&output.stderr);
+            let result = if output.status.success() {
+                HookResult::Success
+            } else {
+                HookResult::Failed(output.status.code().unwrap_or(1))
+            };
+            (result, combined)
+        }
+        Err(_) => (HookResult::Failed(1), Vec::new()),
+    }
+}
+
 pub fn run_hook_capture(
     repo: &Repository,
     hook_name: &str,

@@ -66,7 +66,7 @@ test_expect_success 'setup' '
 '
 
 # grit does not pass GIT_PUSH_OPTION_* to hooks
-test_expect_failure 'one push option works for a single branch' '
+test_expect_success 'one push option works for a single branch' '
 	mk_repo_pair &&
 	git -C upstream config receive.advertisePushOptions true &&
 	(
@@ -83,7 +83,7 @@ test_expect_failure 'one push option works for a single branch' '
 '
 
 # grit does not support receive.advertisePushOptions=false rejection
-test_expect_failure 'push option denied by remote' '
+test_expect_success 'push option denied by remote' '
 	mk_repo_pair &&
 	git -C upstream config receive.advertisePushOptions false &&
 	(
@@ -97,7 +97,7 @@ test_expect_failure 'push option denied by remote' '
 '
 
 # grit does not pass GIT_PUSH_OPTION_* to hooks
-test_expect_failure 'two push options work' '
+test_expect_success 'two push options work' '
 	mk_repo_pair &&
 	git -C upstream config receive.advertisePushOptions true &&
 	(
