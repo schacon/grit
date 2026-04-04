@@ -1,15 +1,17 @@
 #!/bin/sh
 # Ported from git/t/t9126-git-svn-follow-deleted-readded-directory.sh
-# git svn fetch repository with deleted and readded directory
+# All tests require Subversion and are marked test_expect_failure.
 
 test_description='git svn fetch repository with deleted and readded directory'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+test_expect_failure 'load repository (requires SVN)' '
+	false
+'
 
-test_expect_failure 'git-svn (requires Subversion) — not yet ported' '
+test_expect_failure 'fetch repository (requires SVN)' '
 	false
 '
 
