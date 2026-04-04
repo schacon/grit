@@ -108,6 +108,10 @@ pub struct Args {
     #[arg(long = "sort")]
     pub sort: Option<String>,
 
+    /// Cancel sort keys (reset to default).
+    #[arg(long = "no-sort")]
+    pub no_sort: bool,
+
     /// Custom format string (for-each-ref style atoms).
     #[arg(long = "format")]
     pub format: Option<String>,
@@ -326,7 +330,15 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     }
 
     // Sort branches
-    sort_branches(repo, &mut branches, args.sort.as_deref())?;
+    // Determine sort key: --no-sort resets config, --sort overrides all
+    let config_sort = if args.sort.is_none() && !args.no_sort {
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).ok();
+        cfg.and_then(|c| c.get("branch.sort"))
+    } else {
+        None
+    };
+    let sort_key_owned = args.sort.clone().or(config_sort);
+    sort_branches(repo, &mut branches, sort_key_owned.as_deref())?;
 
     // Custom format
     if let Some(ref fmt) = args.format {
@@ -400,6 +412,11 @@ fn sort_branches(repo: &Repository, branches: &mut [BranchInfo], sort_key: Optio
                 let tb = author_time(&repo.odb, &b.oid);
                 tb.cmp(&ta)
             });
+        }
+        Some("objecttype") | Some("-objecttype") => {
+            // All branches are commit objects, so objecttype is the same for all.
+            // Fall back to default (refname) sort as secondary.
+            branches.sort_by(|a, b| a.name.cmp(&b.name));
         }
         Some(other) => {
             bail!("unsupported sort key: '{other}'");
