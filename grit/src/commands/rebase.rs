@@ -247,6 +247,19 @@ fn do_rebase(args: Args) -> Result<()> {
     // Collect commits to replay: walk from HEAD back, stopping when we hit upstream_oid
     let commits = collect_commits_to_replay(&repo, head_oid, upstream_oid)?;
 
+    // Fast-forward detection: if the first commit to replay is already a child
+    // of onto, then replaying would produce identical commits → noop.
+    if !args.no_ff && !commits.is_empty() {
+        let first = &commits[0];
+        let obj = repo.odb.read(first).context("reading first commit")?;
+        let cd = parse_commit(&obj.data)?;
+        if cd.parents.iter().any(|p| *p == onto_oid) {
+            // The commits are already on top of onto — noop
+            eprintln!("Current branch is up to date.");
+            return Ok(());
+        }
+    }
+
     if commits.is_empty() {
         if !args.no_ff {
             eprintln!("Current branch is up to date.");
