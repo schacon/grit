@@ -2775,7 +2775,7 @@ test_expect_success 'symbolic-ref completes short ref names' '
 	EOF
 '
 
-test_expect_failure 'symbolic-ref completes full ref names' '
+test_expect_success 'symbolic-ref completes full ref names' '
 	test_completion "git symbolic-ref foo refs/" <<-\EOF
 	refs/heads/main Z
 	refs/heads/mybranch Z
