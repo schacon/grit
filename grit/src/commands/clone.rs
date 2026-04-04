@@ -117,6 +117,18 @@ pub fn run(args: Args) -> Result<()> {
         return run_ssh_clone(args);
     }
 
+    // Detect git:// protocol
+    if args.repository.starts_with("git://") {
+        crate::protocol::check_protocol_allowed("git", None)?;
+        bail!("git:// protocol transport is not yet supported");
+    }
+
+    // Detect http(s):// protocol
+    if args.repository.starts_with("http://") || args.repository.starts_with("https://") {
+        let proto = if args.repository.starts_with("https://") { "https" } else { "http" };
+        crate::protocol::check_protocol_allowed(proto, None)?;
+    }
+
     // Detect bundle file
     if is_bundle_file(&args.repository) {
         return run_bundle_clone(args);
