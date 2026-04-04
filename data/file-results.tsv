@@ -226,9 +226,9 @@ t2406-worktree-repair	yes	6	6	0	ok
 t2407-worktree-heads	yes	4	4	0	ok
 t2500-untracked-overwriting	yes	3	3	0	ok
 t2501-cwd-empty	yes	3	3	0	ok
-t3000-ls-files-others	yes	5	5	0	ok
+t3000-ls-files-others	yes	5	3	2	ok
 t3001-ls-files-others-exclude	yes	5	5	0	ok
-t3002-ls-files-dashpath	yes	7	7	0	ok
+t3002-ls-files-dashpath	yes	7	5	2	ok
 t3003-ls-files-exclude	yes	24	24	0	ok
 t3004-ls-files-basic	yes	7	7	0	ok
 t3005-ls-files-relative	yes	24	24	0	ok
@@ -492,7 +492,7 @@ t4257-am-interactive	yes	4	4	0	ok
 t4258-am-quoted-cr	yes	4	4	0	ok
 t4300-merge-tree	yes	27	27	0	ok
 t4301-merge-tree-write-tree	yes	4	4	0	ok
-t5000-tar-tree	yes	9	8	1	ok
+t5000-tar-tree	yes	9	9	0	ok
 t5001-archive-attr	yes	6	6	0	ok
 t5002-archive-attr-pattern	yes	5	5	0	ok
 t5003-archive-zip	yes	6	6	0	ok
@@ -642,9 +642,9 @@ t5618-alternate-refs	yes	3	3	0	ok
 t5619-clone-local-ambiguous-transport	yes	3	3	0	ok
 t5620-backfill	yes	3	3	0	ok
 t5621-clone-revision	yes	6	6	0	ok
-t5700-protocol-v1	yes	3	3	0	ok
+t5700-protocol-v1	yes	4	4	0	ok
 t5701-git-serve	yes	3	3	0	ok
-t5702-protocol-v2	yes	4	4	0	ok
+t5702-protocol-v2	yes	5	5	0	ok
 t5703-upload-pack-ref-in-want	yes	2	2	0	ok
 t5704-protocol-violations	yes	2	2	0	ok
 t5705-session-id-in-capabilities	yes	2	2	0	ok
@@ -875,7 +875,7 @@ t8013-blame-ignore-revs	yes	4	4	0	ok
 t8014-blame-ignore-fuzzy	yes	4	4	0	ok
 t8015-blame-diff-algorithm	yes	3	3	0	ok
 t8020-last-modified	yes	3	3	0	ok
-t9001-send-email	yes	15	15	0	ok
+t9001-send-email	yes	15	6	9	ok
 t9002-column	yes	13	8	5	ok
 t9003-help-autocorrect	yes	6	4	2	ok
 t9100-git-svn-basic	yes	15	15	0	ok
@@ -948,7 +948,7 @@ t9167-git-svn-cmd-branch-subproject	yes	3	3	0	ok
 t9168-git-svn-partially-globbed-names	yes	12	12	0	ok
 t9169-git-svn-dcommit-crlf	yes	1	1	0	ok
 t9200-git-cvsexportcommit	yes	15	15	0	ok
-t9210-scalar	yes	22	22	0	ok
+t9210-scalar	yes	19	3	16	ok
 t9211-scalar-clone	yes	14	14	0	ok
 t9300-fast-import	yes	204	204	0	ok
 t9301-fast-import-notes	yes	17	17	0	ok

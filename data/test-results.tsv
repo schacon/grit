@@ -4129,21 +4129,21 @@ t2501-cwd-empty::git-version-continues-working-from-a-deleted-dir	t2501-cwd-empt
 t2501-cwd-empty::rm-r-with-c-leaves-submodule-if-cwd-inside	t2501-cwd-empty	rm -r with -C leaves submodule if cwd inside	init	pass
 t2501-cwd-empty::rm-r-leaves-submodule-if-cwd-inside	t2501-cwd-empty	rm -r leaves submodule if cwd inside	init	pass
 t2501-cwd-empty::rm-rf-removes-submodule-even-if-cwd-inside	t2501-cwd-empty	rm -rf removes submodule even if cwd inside	init	pass
-t3000-ls-files-others::setup	t3000-ls-files-others	setup	ls-files	pass
-t3000-ls-files-others::setup-expected-output	t3000-ls-files-others	setup: expected output	ls-files	pass
-t3000-ls-files-others::ls-files-others	t3000-ls-files-others	ls-files --others	ls-files	pass
-t3000-ls-files-others::ls-files-others-directory	t3000-ls-files-others	ls-files --others --directory	ls-files	pass
-t3000-ls-files-others::no-empty-directory-hides-empty-directory	t3000-ls-files-others	--no-empty-directory hides empty directory	ls-files	pass
-t3000-ls-files-others::ls-files-others-handles-non-submodule-git	t3000-ls-files-others	ls-files --others handles non-submodule .git	ls-files	pass
-t3000-ls-files-others::setup-nested-pathspec-search	t3000-ls-files-others	setup nested pathspec search	ls-files	pass
-t3000-ls-files-others::ls-files-o-directory-with-single-deep-dir-pathspec	t3000-ls-files-others	ls-files -o --directory with single deep dir pathspec	ls-files	pass
-t3000-ls-files-others::ls-files-o-directory-with-multiple-dir-pathspecs	t3000-ls-files-others	ls-files -o --directory with multiple dir pathspecs	ls-files	pass
-t3000-ls-files-others::ls-files-o-directory-with-mix-dir-file-pathspecs	t3000-ls-files-others	ls-files -o --directory with mix dir/file pathspecs	ls-files	pass
-t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match	t3000-ls-files-others	ls-files -o --directory with glob filetype match	ls-files	pass
-t3000-ls-files-others::ls-files-o-directory-with-mix-of-tracked-states	t3000-ls-files-others	ls-files -o --directory with mix of tracked states	ls-files	pass
-t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match-only	t3000-ls-files-others	ls-files -o --directory with glob filetype match only	ls-files	pass
-t3000-ls-files-others::ls-files-o-directory-to-get-immediate-paths-under-one-dir-only	t3000-ls-files-others	ls-files -o --directory to get immediate paths under one dir only	ls-files	pass
-t3000-ls-files-others::ls-files-o-avoids-listing-untracked-non-matching-gitdir	t3000-ls-files-others	ls-files -o avoids listing untracked non-matching gitdir	ls-files	pass
+t3000-ls-files-others::setup	t3000-ls-files-others	setup	ls-files	partial
+t3000-ls-files-others::setup-expected-output	t3000-ls-files-others	setup: expected output	ls-files	partial
+t3000-ls-files-others::ls-files-others	t3000-ls-files-others	ls-files --others	ls-files	partial
+t3000-ls-files-others::ls-files-others-directory	t3000-ls-files-others	ls-files --others --directory	ls-files	partial
+t3000-ls-files-others::no-empty-directory-hides-empty-directory	t3000-ls-files-others	--no-empty-directory hides empty directory	ls-files	partial
+t3000-ls-files-others::ls-files-others-handles-non-submodule-git	t3000-ls-files-others	ls-files --others handles non-submodule .git	ls-files	partial
+t3000-ls-files-others::setup-nested-pathspec-search	t3000-ls-files-others	setup nested pathspec search	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-with-single-deep-dir-pathspec	t3000-ls-files-others	ls-files -o --directory with single deep dir pathspec	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-with-multiple-dir-pathspecs	t3000-ls-files-others	ls-files -o --directory with multiple dir pathspecs	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-with-mix-dir-file-pathspecs	t3000-ls-files-others	ls-files -o --directory with mix dir/file pathspecs	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match	t3000-ls-files-others	ls-files -o --directory with glob filetype match	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-with-mix-of-tracked-states	t3000-ls-files-others	ls-files -o --directory with mix of tracked states	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-with-glob-filetype-match-only	t3000-ls-files-others	ls-files -o --directory with glob filetype match only	ls-files	partial
+t3000-ls-files-others::ls-files-o-directory-to-get-immediate-paths-under-one-dir-only	t3000-ls-files-others	ls-files -o --directory to get immediate paths under one dir only	ls-files	partial
+t3000-ls-files-others::ls-files-o-avoids-listing-untracked-non-matching-gitdir	t3000-ls-files-others	ls-files -o avoids listing untracked non-matching gitdir	ls-files	partial
 t3001-ls-files-others-exclude::git-ls-files-others-with-various-exclude-options	t3001-ls-files-others-exclude	git ls-files --others with various exclude options.	ls-files	pass
 t3001-ls-files-others-exclude::git-ls-files-others-with-r-n-line-endings	t3001-ls-files-others-exclude	git ls-files --others with \r\n line endings.	ls-files	pass
 t3001-ls-files-others-exclude::setup-skip-worktree-gitignore	t3001-ls-files-others-exclude	setup skip-worktree gitignore	ls-files	pass
@@ -4171,12 +4171,12 @@ t3001-ls-files-others-exclude::pattern-matches-prefix-completely	t3001-ls-files-
 t3001-ls-files-others-exclude::ls-files-with-patterns	t3001-ls-files-others-exclude	ls-files with "**" patterns	ls-files	pass
 t3001-ls-files-others-exclude::ls-files-with-patterns-and-directory	t3001-ls-files-others-exclude	ls-files with "**" patterns and --directory	ls-files	pass
 t3001-ls-files-others-exclude::ls-files-with-patterns-and-no-slashes	t3001-ls-files-others-exclude	ls-files with "**" patterns and no slashes	ls-files	pass
-t3002-ls-files-dashpath::setup	t3002-ls-files-dashpath	setup	ls-files	pass
-t3002-ls-files-dashpath::git-ls-files-without-path-restriction	t3002-ls-files-dashpath	git ls-files without path restriction.	ls-files	pass
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction	t3002-ls-files-dashpath	git ls-files with path restriction.	ls-files	pass
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with	t3002-ls-files-dashpath	git ls-files with path restriction with --.	ls-files	pass
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with-2	t3002-ls-files-dashpath	git ls-files with path restriction with -- --.	ls-files	pass
-t3002-ls-files-dashpath::git-ls-files-with-no-path-restriction	t3002-ls-files-dashpath	git ls-files with no path restriction.	ls-files	pass
+t3002-ls-files-dashpath::setup	t3002-ls-files-dashpath	setup	ls-files	partial
+t3002-ls-files-dashpath::git-ls-files-without-path-restriction	t3002-ls-files-dashpath	git ls-files without path restriction.	ls-files	partial
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction	t3002-ls-files-dashpath	git ls-files with path restriction.	ls-files	partial
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with	t3002-ls-files-dashpath	git ls-files with path restriction with --.	ls-files	partial
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with-2	t3002-ls-files-dashpath	git ls-files with path restriction with -- --.	ls-files	partial
+t3002-ls-files-dashpath::git-ls-files-with-no-path-restriction	t3002-ls-files-dashpath	git ls-files with no path restriction.	ls-files	partial
 t3003-ls-files-exclude::create-repo-with-file	t3003-ls-files-exclude	create repo with file	ls-files	pass
 t3003-ls-files-exclude::add-file-to-gitignore	t3003-ls-files-exclude	add file to gitignore	ls-files	pass
 t3003-ls-files-exclude::ls-files-i-c-lists-only-tracked-but-ignored-files	t3003-ls-files-exclude	ls-files -i -c lists only tracked-but-ignored files	ls-files	pass
@@ -8790,63 +8790,63 @@ t4301-merge-tree-write-tree::error-out-on-missing-tree-objects	t4301-merge-tree-
 t4301-merge-tree-write-tree::error-out-on-missing-blob-objects	t4301-merge-tree-write-tree	error out on missing blob objects	merge-tree	pass
 t4301-merge-tree-write-tree::error-out-on-missing-commits-as-well	t4301-merge-tree-write-tree	error out on missing commits as well	merge-tree	pass
 t4301-merge-tree-write-tree::usage-trivial-merge-is-incompatible-with-opt	t4301-merge-tree-write-tree	usage: --trivial-merge is incompatible with $opt	merge-tree	pass
-t5000-tar-tree::extract-tar-archive	t5000-tar-tree	extract tar archive	archive	partial
-t5000-tar-tree::interpret-pax-headers	t5000-tar-tree	interpret pax headers	archive	partial
-t5000-tar-tree::validate-filenames	t5000-tar-tree	validate filenames	archive	partial
-t5000-tar-tree::validate-file-contents	t5000-tar-tree	validate file contents	archive	partial
-t5000-tar-tree::setup	t5000-tar-tree	setup	archive	partial
-t5000-tar-tree::list-notices-extra-parameters	t5000-tar-tree	--list notices extra parameters	archive	partial
-t5000-tar-tree::end-of-options-is-correctly-eaten	t5000-tar-tree	end-of-options is correctly eaten	archive	partial
-t5000-tar-tree::populate-workdir	t5000-tar-tree	populate workdir	archive	partial
-t5000-tar-tree::add-files-to-repository	t5000-tar-tree	add files to repository	archive	partial
-t5000-tar-tree::setup-export-subst	t5000-tar-tree	setup export-subst	archive	partial
-t5000-tar-tree::create-bare-clone	t5000-tar-tree	create bare clone	archive	partial
-t5000-tar-tree::remove-ignored-file	t5000-tar-tree	remove ignored file	archive	partial
-t5000-tar-tree::git-archive	t5000-tar-tree	git archive	archive	partial
-t5000-tar-tree::git-archive-mtime	t5000-tar-tree	git archive --mtime	archive	partial
-t5000-tar-tree::git-archive-prefix-prefix	t5000-tar-tree	git archive --prefix=prefix/	archive	partial
-t5000-tar-tree::git-archive-prefix-olde	t5000-tar-tree	git-archive --prefix=olde-	archive	partial
-t5000-tar-tree::git-archive-add-file	t5000-tar-tree	git archive --add-file	archive	partial
-t5000-tar-tree::git-archive-add-file-twice	t5000-tar-tree	git archive --add-file twice	archive	partial
-t5000-tar-tree::git-archive-on-large-files	t5000-tar-tree	git archive on large files	archive	partial
-t5000-tar-tree::git-archive-in-a-bare-repo	t5000-tar-tree	git archive in a bare repo	archive	partial
-t5000-tar-tree::git-archive-vs-the-same-in-a-bare-repo	t5000-tar-tree	git archive vs. the same in a bare repo	archive	partial
-t5000-tar-tree::git-archive-with-output	t5000-tar-tree	git archive with --output	archive	partial
-t5000-tar-tree::git-archive-remote	t5000-tar-tree	git archive --remote	archive	partial
-t5000-tar-tree::git-archive-remote-with-configured-remote	t5000-tar-tree	git archive --remote with configured remote	archive	partial
-t5000-tar-tree::git-get-tar-commit-id	t5000-tar-tree	git get-tar-commit-id	archive	partial
-t5000-tar-tree::git-archive-with-output-override-inferred-format	t5000-tar-tree	git archive with --output, override inferred format	archive	partial
-t5000-tar-tree::git-archive-with-output-and-remote-creates-tgz	t5000-tar-tree	git archive with --output and --remote creates .tgz	archive	partial
-t5000-tar-tree::git-archive-list-outside-of-a-git-repo	t5000-tar-tree	git archive --list outside of a git repo	archive	partial
-t5000-tar-tree::git-archive-remote-outside-of-a-git-repo	t5000-tar-tree	git archive --remote outside of a git repo	archive	partial
-t5000-tar-tree::clients-cannot-access-unreachable-commits	t5000-tar-tree	clients cannot access unreachable commits	archive	partial
-t5000-tar-tree::upload-archive-can-allow-unreachable-commits	t5000-tar-tree	upload-archive can allow unreachable commits	archive	partial
-t5000-tar-tree::setup-tar-filters	t5000-tar-tree	setup tar filters	archive	partial
-t5000-tar-tree::archive-list-mentions-user-filter	t5000-tar-tree	archive --list mentions user filter	archive	partial
-t5000-tar-tree::archive-list-shows-only-enabled-remote-filters	t5000-tar-tree	archive --list shows only enabled remote filters	archive	partial
-t5000-tar-tree::invoke-tar-filter-by-format	t5000-tar-tree	invoke tar filter by format	archive	partial
-t5000-tar-tree::invoke-tar-filter-by-extension	t5000-tar-tree	invoke tar filter by extension	archive	partial
-t5000-tar-tree::default-output-format-remains-tar	t5000-tar-tree	default output format remains tar	archive	partial
-t5000-tar-tree::extension-matching-requires-dot	t5000-tar-tree	extension matching requires dot	archive	partial
-t5000-tar-tree::only-enabled-filters-are-available-remotely	t5000-tar-tree	only enabled filters are available remotely	archive	partial
-t5000-tar-tree::invalid-filter-is-reported-only-once	t5000-tar-tree	invalid filter is reported only once	archive	partial
-t5000-tar-tree::git-archive-format-tgz	t5000-tar-tree	git archive --format=tgz	archive	partial
-t5000-tar-tree::git-archive-format-tar-gz	t5000-tar-tree	git archive --format=tar.gz	archive	partial
-t5000-tar-tree::infer-tgz-from-tgz-filename	t5000-tar-tree	infer tgz from .tgz filename	archive	partial
-t5000-tar-tree::infer-tgz-from-tar-gz-filename	t5000-tar-tree	infer tgz from .tar.gz filename	archive	partial
-t5000-tar-tree::extract-tgz-file	t5000-tar-tree	extract tgz file	archive	partial
-t5000-tar-tree::remote-tar-gz-is-allowed-by-default	t5000-tar-tree	remote tar.gz is allowed by default	archive	partial
-t5000-tar-tree::remote-tar-gz-can-be-disabled	t5000-tar-tree	remote tar.gz can be disabled	archive	partial
-t5000-tar-tree::git-archive-format-tgz-external-gzip	t5000-tar-tree	git archive --format=tgz (external gzip)	archive	partial
-t5000-tar-tree::git-archive-format-tar-gz-external-gzip	t5000-tar-tree	git archive --format=tar.gz (external gzip)	archive	partial
-t5000-tar-tree::extract-tgz-file-external-gzip	t5000-tar-tree	extract tgz file (external gzip)	archive	partial
-t5000-tar-tree::archive-and-glob	t5000-tar-tree	archive and :(glob)	archive	partial
-t5000-tar-tree::catch-non-matching-pathspec	t5000-tar-tree	catch non-matching pathspec	archive	partial
-t5000-tar-tree::reject-paths-outside-the-current-directory	t5000-tar-tree	reject paths outside the current directory	archive	partial
-t5000-tar-tree::allow-pathspecs-that-resolve-to-the-current-directory	t5000-tar-tree	allow pathspecs that resolve to the current directory	archive	partial
-t5000-tar-tree::attr-pathspec-in-bare-repo	t5000-tar-tree	attr pathspec in bare repo	archive	partial
-t5000-tar-tree::validate-extra-file-path-in-archive	t5000-tar-tree	validate extra file $path_in_archive	archive	partial
-t5000-tar-tree::validate-mtime-of-path-in-archive	t5000-tar-tree	validate mtime of $path_in_archive	archive	partial
+t5000-tar-tree::extract-tar-archive	t5000-tar-tree	extract tar archive	archive	pass
+t5000-tar-tree::interpret-pax-headers	t5000-tar-tree	interpret pax headers	archive	pass
+t5000-tar-tree::validate-filenames	t5000-tar-tree	validate filenames	archive	pass
+t5000-tar-tree::validate-file-contents	t5000-tar-tree	validate file contents	archive	pass
+t5000-tar-tree::setup	t5000-tar-tree	setup	archive	pass
+t5000-tar-tree::list-notices-extra-parameters	t5000-tar-tree	--list notices extra parameters	archive	pass
+t5000-tar-tree::end-of-options-is-correctly-eaten	t5000-tar-tree	end-of-options is correctly eaten	archive	pass
+t5000-tar-tree::populate-workdir	t5000-tar-tree	populate workdir	archive	pass
+t5000-tar-tree::add-files-to-repository	t5000-tar-tree	add files to repository	archive	pass
+t5000-tar-tree::setup-export-subst	t5000-tar-tree	setup export-subst	archive	pass
+t5000-tar-tree::create-bare-clone	t5000-tar-tree	create bare clone	archive	pass
+t5000-tar-tree::remove-ignored-file	t5000-tar-tree	remove ignored file	archive	pass
+t5000-tar-tree::git-archive	t5000-tar-tree	git archive	archive	pass
+t5000-tar-tree::git-archive-mtime	t5000-tar-tree	git archive --mtime	archive	pass
+t5000-tar-tree::git-archive-prefix-prefix	t5000-tar-tree	git archive --prefix=prefix/	archive	pass
+t5000-tar-tree::git-archive-prefix-olde	t5000-tar-tree	git-archive --prefix=olde-	archive	pass
+t5000-tar-tree::git-archive-add-file	t5000-tar-tree	git archive --add-file	archive	pass
+t5000-tar-tree::git-archive-add-file-twice	t5000-tar-tree	git archive --add-file twice	archive	pass
+t5000-tar-tree::git-archive-on-large-files	t5000-tar-tree	git archive on large files	archive	pass
+t5000-tar-tree::git-archive-in-a-bare-repo	t5000-tar-tree	git archive in a bare repo	archive	pass
+t5000-tar-tree::git-archive-vs-the-same-in-a-bare-repo	t5000-tar-tree	git archive vs. the same in a bare repo	archive	pass
+t5000-tar-tree::git-archive-with-output	t5000-tar-tree	git archive with --output	archive	pass
+t5000-tar-tree::git-archive-remote	t5000-tar-tree	git archive --remote	archive	pass
+t5000-tar-tree::git-archive-remote-with-configured-remote	t5000-tar-tree	git archive --remote with configured remote	archive	pass
+t5000-tar-tree::git-get-tar-commit-id	t5000-tar-tree	git get-tar-commit-id	archive	pass
+t5000-tar-tree::git-archive-with-output-override-inferred-format	t5000-tar-tree	git archive with --output, override inferred format	archive	pass
+t5000-tar-tree::git-archive-with-output-and-remote-creates-tgz	t5000-tar-tree	git archive with --output and --remote creates .tgz	archive	pass
+t5000-tar-tree::git-archive-list-outside-of-a-git-repo	t5000-tar-tree	git archive --list outside of a git repo	archive	pass
+t5000-tar-tree::git-archive-remote-outside-of-a-git-repo	t5000-tar-tree	git archive --remote outside of a git repo	archive	pass
+t5000-tar-tree::clients-cannot-access-unreachable-commits	t5000-tar-tree	clients cannot access unreachable commits	archive	pass
+t5000-tar-tree::upload-archive-can-allow-unreachable-commits	t5000-tar-tree	upload-archive can allow unreachable commits	archive	pass
+t5000-tar-tree::setup-tar-filters	t5000-tar-tree	setup tar filters	archive	pass
+t5000-tar-tree::archive-list-mentions-user-filter	t5000-tar-tree	archive --list mentions user filter	archive	pass
+t5000-tar-tree::archive-list-shows-only-enabled-remote-filters	t5000-tar-tree	archive --list shows only enabled remote filters	archive	pass
+t5000-tar-tree::invoke-tar-filter-by-format	t5000-tar-tree	invoke tar filter by format	archive	pass
+t5000-tar-tree::invoke-tar-filter-by-extension	t5000-tar-tree	invoke tar filter by extension	archive	pass
+t5000-tar-tree::default-output-format-remains-tar	t5000-tar-tree	default output format remains tar	archive	pass
+t5000-tar-tree::extension-matching-requires-dot	t5000-tar-tree	extension matching requires dot	archive	pass
+t5000-tar-tree::only-enabled-filters-are-available-remotely	t5000-tar-tree	only enabled filters are available remotely	archive	pass
+t5000-tar-tree::invalid-filter-is-reported-only-once	t5000-tar-tree	invalid filter is reported only once	archive	pass
+t5000-tar-tree::git-archive-format-tgz	t5000-tar-tree	git archive --format=tgz	archive	pass
+t5000-tar-tree::git-archive-format-tar-gz	t5000-tar-tree	git archive --format=tar.gz	archive	pass
+t5000-tar-tree::infer-tgz-from-tgz-filename	t5000-tar-tree	infer tgz from .tgz filename	archive	pass
+t5000-tar-tree::infer-tgz-from-tar-gz-filename	t5000-tar-tree	infer tgz from .tar.gz filename	archive	pass
+t5000-tar-tree::extract-tgz-file	t5000-tar-tree	extract tgz file	archive	pass
+t5000-tar-tree::remote-tar-gz-is-allowed-by-default	t5000-tar-tree	remote tar.gz is allowed by default	archive	pass
+t5000-tar-tree::remote-tar-gz-can-be-disabled	t5000-tar-tree	remote tar.gz can be disabled	archive	pass
+t5000-tar-tree::git-archive-format-tgz-external-gzip	t5000-tar-tree	git archive --format=tgz (external gzip)	archive	pass
+t5000-tar-tree::git-archive-format-tar-gz-external-gzip	t5000-tar-tree	git archive --format=tar.gz (external gzip)	archive	pass
+t5000-tar-tree::extract-tgz-file-external-gzip	t5000-tar-tree	extract tgz file (external gzip)	archive	pass
+t5000-tar-tree::archive-and-glob	t5000-tar-tree	archive and :(glob)	archive	pass
+t5000-tar-tree::catch-non-matching-pathspec	t5000-tar-tree	catch non-matching pathspec	archive	pass
+t5000-tar-tree::reject-paths-outside-the-current-directory	t5000-tar-tree	reject paths outside the current directory	archive	pass
+t5000-tar-tree::allow-pathspecs-that-resolve-to-the-current-directory	t5000-tar-tree	allow pathspecs that resolve to the current directory	archive	pass
+t5000-tar-tree::attr-pathspec-in-bare-repo	t5000-tar-tree	attr pathspec in bare repo	archive	pass
+t5000-tar-tree::validate-extra-file-path-in-archive	t5000-tar-tree	validate extra file $path_in_archive	archive	pass
+t5000-tar-tree::validate-mtime-of-path-in-archive	t5000-tar-tree	validate mtime of $path_in_archive	archive	pass
 t5001-archive-attr::setup	t5001-archive-attr	setup	archive	pass
 t5001-archive-attr::git-archive	t5001-archive-attr	git archive	archive	pass
 t5001-archive-attr::git-archive-with-pathspec	t5001-archive-attr	git archive with pathspec	archive	pass
@@ -16313,7 +16313,7 @@ t8020-last-modified::last-modified-merge-undoes-changes	t8020-last-modified	last
 t8020-last-modified::cannot-run-last-modified-on-two-commits	t8020-last-modified	cannot run last-modified on two commits	status	pass
 t8020-last-modified::last-modified-complains-about-unknown-arguments	t8020-last-modified	last-modified complains about unknown arguments	status	pass
 t8020-last-modified::last-modified-expects-commit-ish	t8020-last-modified	last-modified expects commit-ish	status	pass
-t9001-send-email::dump-aliases-must-be-used-alone	t9001-send-email	--dump-aliases must be used alone	send-email	pass
+t9001-send-email::dump-aliases-must-be-used-alone	t9001-send-email	--dump-aliases must be used alone	send-email	partial
 t9002-column::setup	t9002-column	setup	column	partial
 t9002-column::never	t9002-column	never	column	partial
 t9002-column::always	t9002-column	always	column	partial
@@ -16816,28 +16816,28 @@ t9200-git-cvsexportcommit::check-files-before-directories	t9200-git-cvsexportcom
 t9200-git-cvsexportcommit::re-commit-a-removed-filename-which-remains-in-cvs-attic	t9200-git-cvsexportcommit	re-commit a removed filename which remains in CVS attic	add	pass
 t9200-git-cvsexportcommit::commit-a-file-with-leading-spaces-in-the-name	t9200-git-cvsexportcommit	commit a file with leading spaces in the name	add	pass
 t9200-git-cvsexportcommit::use-the-same-checkout-for-git-and-cvs	t9200-git-cvsexportcommit	use the same checkout for Git and CVS	add	pass
-t9210-scalar::scalar-shows-a-usage	t9210-scalar	scalar shows a usage	scalar	pass
-t9210-scalar::scalar-invoked-on-enlistment-root	t9210-scalar	scalar invoked on enlistment root	scalar	pass
-t9210-scalar::scalar-invoked-on-enlistment-src-repo	t9210-scalar	scalar invoked on enlistment src repo	scalar	pass
-t9210-scalar::scalar-invoked-when-enlistment-root-and-repo-are-the-same	t9210-scalar	scalar invoked when enlistment root and repo are the same	scalar	pass
-t9210-scalar::scalar-repo-search-respects-git-ceiling-directories	t9210-scalar	scalar repo search respects GIT_CEILING_DIRECTORIES	scalar	pass
-t9210-scalar::scalar-enlistments-need-a-worktree	t9210-scalar	scalar enlistments need a worktree	scalar	pass
-t9210-scalar::scalar-register-starts-fsmon-daemon	t9210-scalar	scalar register starts fsmon daemon	scalar	pass
-t9210-scalar::scalar-register-warns-when-background-maintenance-fails	t9210-scalar	scalar register warns when background maintenance fails	scalar	pass
-t9210-scalar::scalar-unregister	t9210-scalar	scalar unregister	scalar	pass
-t9210-scalar::scalar-register-no-maintenance	t9210-scalar	scalar register --no-maintenance	scalar	pass
-t9210-scalar::set-up-repository-to-clone	t9210-scalar	set up repository to clone	scalar	pass
-t9210-scalar::scalar-clone	t9210-scalar	scalar clone	scalar	pass
-t9210-scalar::scalar-clone-no-opts	t9210-scalar	scalar clone --no-... opts	scalar	pass
-t9210-scalar::scalar-reconfigure	t9210-scalar	scalar reconfigure	scalar	pass
-t9210-scalar::scalar-reconfigure-all-with-includeif-onbranch	t9210-scalar	scalar reconfigure --all with includeIf.onbranch	scalar	pass
-t9210-scalar::scalar-reconfigure-all-with-detached-heads	t9210-scalar	scalar reconfigure --all with detached HEADs	scalar	pass
-t9210-scalar::reconfigure-a-removes-stale-config-entries	t9210-scalar	`reconfigure -a` removes stale config entries	scalar	pass
-t9210-scalar::scalar-delete-without-enlistment-shows-a-usage	t9210-scalar	scalar delete without enlistment shows a usage	scalar	pass
-t9210-scalar::scalar-delete-with-enlistment	t9210-scalar	scalar delete with enlistment	scalar	pass
-t9210-scalar::scalar-supports-c-c	t9210-scalar	scalar supports -c/-C	scalar	pass
-t9210-scalar::scalar-dir-errors-out-when-dir-is-missing	t9210-scalar	`scalar [...] <dir>` errors out when dir is missing	scalar	pass
-t9210-scalar::scalar-diagnose	t9210-scalar	scalar diagnose	scalar	pass
+t9210-scalar::scalar-shows-a-usage	t9210-scalar	scalar shows a usage	scalar	partial
+t9210-scalar::scalar-invoked-on-enlistment-root	t9210-scalar	scalar invoked on enlistment root	scalar	partial
+t9210-scalar::scalar-invoked-on-enlistment-src-repo	t9210-scalar	scalar invoked on enlistment src repo	scalar	partial
+t9210-scalar::scalar-invoked-when-enlistment-root-and-repo-are-the-same	t9210-scalar	scalar invoked when enlistment root and repo are the same	scalar	partial
+t9210-scalar::scalar-repo-search-respects-git-ceiling-directories	t9210-scalar	scalar repo search respects GIT_CEILING_DIRECTORIES	scalar	partial
+t9210-scalar::scalar-enlistments-need-a-worktree	t9210-scalar	scalar enlistments need a worktree	scalar	partial
+t9210-scalar::scalar-register-starts-fsmon-daemon	t9210-scalar	scalar register starts fsmon daemon	scalar	partial
+t9210-scalar::scalar-register-warns-when-background-maintenance-fails	t9210-scalar	scalar register warns when background maintenance fails	scalar	partial
+t9210-scalar::scalar-unregister	t9210-scalar	scalar unregister	scalar	partial
+t9210-scalar::scalar-register-no-maintenance	t9210-scalar	scalar register --no-maintenance	scalar	partial
+t9210-scalar::set-up-repository-to-clone	t9210-scalar	set up repository to clone	scalar	partial
+t9210-scalar::scalar-clone	t9210-scalar	scalar clone	scalar	partial
+t9210-scalar::scalar-clone-no-opts	t9210-scalar	scalar clone --no-... opts	scalar	partial
+t9210-scalar::scalar-reconfigure	t9210-scalar	scalar reconfigure	scalar	partial
+t9210-scalar::scalar-reconfigure-all-with-includeif-onbranch	t9210-scalar	scalar reconfigure --all with includeIf.onbranch	scalar	partial
+t9210-scalar::scalar-reconfigure-all-with-detached-heads	t9210-scalar	scalar reconfigure --all with detached HEADs	scalar	partial
+t9210-scalar::reconfigure-a-removes-stale-config-entries	t9210-scalar	`reconfigure -a` removes stale config entries	scalar	partial
+t9210-scalar::scalar-delete-without-enlistment-shows-a-usage	t9210-scalar	scalar delete without enlistment shows a usage	scalar	partial
+t9210-scalar::scalar-delete-with-enlistment	t9210-scalar	scalar delete with enlistment	scalar	partial
+t9210-scalar::scalar-supports-c-c	t9210-scalar	scalar supports -c/-C	scalar	partial
+t9210-scalar::scalar-dir-errors-out-when-dir-is-missing	t9210-scalar	`scalar [...] <dir>` errors out when dir is missing	scalar	partial
+t9210-scalar::scalar-diagnose	t9210-scalar	scalar diagnose	scalar	partial
 t9211-scalar-clone::set-up-repository-to-clone	t9211-scalar-clone	set up repository to clone	scalar	pass
 t9211-scalar-clone::creates-content-in-enlistment-root	t9211-scalar-clone	creates content in enlistment root	scalar	pass
 t9211-scalar-clone::with-spaces	t9211-scalar-clone	with spaces	scalar	pass

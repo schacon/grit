@@ -1,7 +1,7 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
 add	Main Porcelain	yes	541	541	0	100.0
 am	Main Porcelain	yes	160	160	0	100.0
-archive	Main Porcelain	yes	114	108	0	94.4
+archive	Main Porcelain	yes	114	114	0	100.0
 bisect	Main Porcelain	yes	96	96	0	100.0
 branch	Main Porcelain	yes	351	351	0	100.0
 checkout	Main Porcelain	yes	436	436	0	100.0
@@ -65,8 +65,8 @@ repack	Ancillary Porcelain	yes	106	106	0	100.0
 replace	Ancillary Porcelain	yes	37	37	0	100.0
 request-pull	Ancillary Porcelain	no	10	10	0	100.0
 rerere	Ancillary Porcelain	yes	35	35	0	100.0
-scalar	Ancillary Porcelain	no	36	36	0	100.0
-send-email	Ancillary Porcelain	no	1	1	0	100.0
+scalar	Ancillary Porcelain	yes	36	17	0	48.5
+send-email	Ancillary Porcelain	yes	1	0	0	40.0
 show-branch	Ancillary Porcelain	yes	22	22	0	100.0
 sparse-checkout	Ancillary Porcelain	yes	184	184	0	100.0
 svn	Ancillary Porcelain	no	467	467	0	100.0
@@ -102,7 +102,7 @@ hook	Plumbing	yes	41	41	0	100.0
 http-backend	Plumbing	yes	18	18	0	100.0
 index-pack	Plumbing	yes	42	42	0	100.0
 interpret-trailers	Plumbing	yes	98	98	0	100.0
-ls-files	Plumbing	yes	251	251	0	100.0
+ls-files	Plumbing	yes	251	243	0	96.9
 ls-remote	Plumbing	yes	39	39	0	100.0
 ls-tree	Plumbing	yes	36	36	0	100.0
 mailinfo	Plumbing	yes	23	23	0	100.0
