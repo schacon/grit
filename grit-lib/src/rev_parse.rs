@@ -612,34 +612,6 @@ fn try_resolve_at_suffix(repo: &Repository, spec: &str) -> Option<String> {
 }
 
 /// Look up a path in the index (stage 0) and return its OID.
-/// Search commit messages from HEAD for a pattern.
-/// `:/pattern` finds the most recent commit whose message contains `pattern`.
-fn resolve_commit_message_search(repo: &Repository, pattern: &str) -> Result<ObjectId> {
-    use crate::objects::{parse_commit, ObjectKind};
-
-    let head_oid = crate::refs::resolve_ref(&repo.git_dir, "HEAD")
-        .map_err(|_| Error::ObjectNotFound(format!(":/{}" , pattern)))?;
-
-    let mut current = head_oid;
-    for _ in 0..10000 {
-        let obj = repo.odb.read(&current)
-            .map_err(|_| Error::ObjectNotFound(format!(": /{}" , pattern)))?;
-        if obj.kind != ObjectKind::Commit {
-            break;
-        }
-        let commit = parse_commit(&obj.data)
-            .map_err(|_| Error::ObjectNotFound(format!(":/{}" , pattern)))?;
-        if commit.message.contains(pattern) {
-            return Ok(current);
-        }
-        if commit.parents.is_empty() {
-            break;
-        }
-        current = commit.parents[0];
-    }
-
-    Err(Error::ObjectNotFound(format!(":/{}" , pattern)))
-}
 
 fn resolve_index_path(repo: &Repository, path: &str) -> Result<ObjectId> {
     use crate::index::Index;
