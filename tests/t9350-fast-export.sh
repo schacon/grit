@@ -117,7 +117,7 @@ test_expect_success 'fast-export --reference-excluded-parents main~2..main' '
 	test $(git rev-parse --verify main) = $(git -C new rev-parse --verify refs/heads/rewrite)
 '
 
-test_expect_failure 'fast-export --show-original-ids' '
+test_expect_success 'fast-export --show-original-ids' '
 
 	git fast-export --show-original-ids main >output &&
 	grep ^original-oid output| sed -e s/^original-oid.// | sort >actual &&

@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::{Error, Result};
-use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use crate::refs;
 use crate::repo::Repository;
 use crate::rev_parse::resolve_revision;
@@ -512,22 +512,49 @@ fn resolve_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
     let mut out = Vec::with_capacity(specs.len());
     for spec in specs {
         let oid = resolve_revision(repo, spec)?;
-        ensure_commit(repo, oid)?;
-        out.push(oid);
+        let commit_oid = peel_to_commit(repo, oid)?;
+        out.push(commit_oid);
     }
     Ok(out)
 }
 
-fn all_ref_tips(repo: &Repository) -> Result<Vec<ObjectId>> {
-    let mut out = Vec::new();
-    if let Ok(head) = refs::resolve_ref(&repo.git_dir, "HEAD") {
-        out.push(head);
+/// Peel an object (possibly a tag) to the underlying commit.
+fn peel_to_commit(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
+    loop {
+        let object = repo.odb.read(&oid)?;
+        match object.kind {
+            ObjectKind::Commit => return Ok(oid),
+            ObjectKind::Tag => {
+                let tag = parse_tag(&object.data)?;
+                oid = tag.object;
+            }
+            other => {
+                return Err(Error::CorruptObject(format!(
+                    "object {oid} is a {other:?}, not a commit"
+                )));
+            }
+        }
     }
-    out.extend(
+}
+
+fn all_ref_tips(repo: &Repository) -> Result<Vec<ObjectId>> {
+    let mut raw = Vec::new();
+    if let Ok(head) = refs::resolve_ref(&repo.git_dir, "HEAD") {
+        raw.push(head);
+    }
+    raw.extend(
         refs::list_refs(&repo.git_dir, "refs/")?
             .into_iter()
             .map(|(_, oid)| oid),
     );
+    // Peel tags to commits; skip non-commit objects (e.g. tags of blobs/trees)
+    let mut out = Vec::new();
+    for oid in raw {
+        match peel_to_commit(repo, oid) {
+            Ok(commit_oid) => out.push(commit_oid),
+            Err(_) => {} // skip non-commit refs
+        }
+    }
     out.sort();
     out.dedup();
     Ok(out)
@@ -702,15 +729,6 @@ fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::Commi
     parse_commit(&object.data)
 }
 
-fn ensure_commit(repo: &Repository, oid: ObjectId) -> Result<()> {
-    let object = repo.odb.read(&oid)?;
-    if object.kind != ObjectKind::Commit {
-        return Err(Error::CorruptObject(format!(
-            "object {oid} is not a commit"
-        )));
-    }
-    Ok(())
-}
 
 fn parse_signature_time(sig: &str) -> i64 {
     let mut parts = sig.split_whitespace().collect::<Vec<_>>();
