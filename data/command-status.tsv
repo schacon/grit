@@ -1,7 +1,7 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
-add	Main Porcelain	yes	813	666	145	81.9
+add	Main Porcelain	yes	813	666	145	82.0
 am	Main Porcelain	yes	162	162	0	100.0
-archive	Main Porcelain	yes	102	101	1	99.0
+archive	Main Porcelain	yes	102	97	1	94.7
 bisect	Main Porcelain	yes	107	96	11	89.7
 branch	Main Porcelain	yes	399	382	17	95.7
 checkout	Main Porcelain	yes	567	467	99	82.4
@@ -21,7 +21,7 @@ merge	Main Porcelain	yes	658	648	10	98.5
 mv	Main Porcelain	yes	77	77	0	100.0
 notes	Main Porcelain	yes	308	308	0	100.0
 pull	Main Porcelain	yes	142	111	31	78.2
-push	Main Porcelain	yes	211	86	120	40.8
+push	Main Porcelain	yes	211	91	120	43.1
 range-diff	Main Porcelain	yes	47	47	0	100.0
 rebase	Main Porcelain	yes	561	560	1	99.8
 reset	Main Porcelain	yes	152	123	29	80.9
@@ -88,7 +88,7 @@ fetch-pack	Plumbing	yes	92	92	0	100.0
 fmt-merge-msg	Plumbing	yes	37	37	0	100.0
 for-each-ref	Plumbing	yes	90	88	2	97.8
 for-each-repo	Plumbing	yes	5	5	0	100.0
-get-tar-commit-id	Plumbing	yes	1	1	0	100.0
+get-tar-commit-id	Plumbing	yes	1	1	0	88.9
 hash-object	Plumbing	yes	56	53	3	94.6
 hook	Plumbing	yes	41	41	0	100.0
 http-backend	Plumbing	yes	18	0	18	0.0

@@ -497,7 +497,7 @@ t4257-am-interactive	yes	4	4	0	ok
 t4258-am-quoted-cr	yes	4	4	0	ok
 t4300-merge-tree	yes	27	27	0	ok
 t4301-merge-tree-write-tree	yes	4	4	0	ok
-t5000-tar-tree	yes	9	9	0	ok
+t5000-tar-tree	yes	9	8	1	ok
 t5001-archive-attr	yes	6	6	0	ok
 t5002-archive-attr-pattern	yes	5	5	0	ok
 t5003-archive-zip	yes	6	6	0	ok
@@ -551,7 +551,7 @@ t5405-send-pack-rewind	yes	3	3	0	ok
 t5406-remote-rejects	yes	3	3	0	ok
 t5407-post-rewrite-hook	yes	3	3	0	ok
 t5408-send-pack-stdin	yes	2	2	0	ok
-t5409-colorize-remote-messages	yes	2	1	1	ok
+t5409-colorize-remote-messages	yes	2	2	0	ok
 t5410-receive-pack	no	0	0	0	not_ported
 t5411-proc-receive-hook	no	0	0	0	not_ported
 t5500-fetch-pack	yes	5	5	0	ok
