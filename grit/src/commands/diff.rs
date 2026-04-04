@@ -1733,21 +1733,25 @@ fn write_shortstat(
 }
 
 /// Append insertions/deletions counts to a summary string.
-/// When both are zero, still show `0 insertions(+), 0 deletions(-)`.
+/// Git only shows insertions/deletions when they are non-zero,
+/// except when both are zero (e.g. mode-only changes).
 fn append_stat_counts(summary: &mut String, total_ins: usize, total_del: usize) {
-    if total_ins > 0 || (total_ins == 0 && total_del == 0) {
+    if total_ins > 0 {
         summary.push_str(&format!(
             ", {} insertion{}(+)",
             total_ins,
             if total_ins == 1 { "" } else { "s" }
         ));
     }
-    if total_del > 0 || (total_ins == 0 && total_del == 0) {
+    if total_del > 0 {
         summary.push_str(&format!(
             ", {} deletion{}(-)",
             total_del,
             if total_del == 1 { "" } else { "s" }
         ));
+    }
+    if total_ins == 0 && total_del == 0 {
+        summary.push_str(", 0 insertions(+), 0 deletions(-)");
     }
 }
 

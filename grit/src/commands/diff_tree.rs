@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
     count_changes, detect_renames, diff_trees, diff_trees_show_tree_entries, format_raw,
-    format_raw_abbrev, format_stat_line, unified_diff, DiffEntry, DiffStatus,
+    format_raw_abbrev, unified_diff, DiffEntry, DiffStatus,
 };
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -88,8 +88,8 @@ struct Options {
     patch_with_stat: bool,
     /// Show summary (new/deleted/mode changes) after diff.
     summary: bool,
-    /// Pretty-print commit header (--pretty).
-    pretty: bool,
+    /// Pretty-print commit header (--pretty). None = off, Some("oneline"), Some("medium"), etc.
+    pretty: Option<String>,
     /// Show combined stat+summary after diff.
     stat_too: bool,
     /// Limit recursion depth for --name-only etc.
@@ -124,7 +124,7 @@ impl Default for Options {
             patch_with_raw: false,
             patch_with_stat: false,
             summary: false,
-            pretty: false,
+            pretty: None,
             stat_too: false,
             max_depth: None,
             exit_code: false,
@@ -176,8 +176,11 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 "--patch-with-stat" => { opts.format = OutputFormat::Patch; opts.patch_with_stat = true; }
                 "--patch-with-raw" => { opts.format = OutputFormat::Patch; opts.patch_with_raw = true; }
-                "--pretty" | "--pretty=medium" => opts.pretty = true,
-                _ if arg.starts_with("--pretty=") => opts.pretty = true,
+                "--pretty" | "--pretty=medium" => opts.pretty = Some("medium".to_string()),
+                _ if arg.starts_with("--pretty=") => {
+                    let val = &arg["--pretty=".len()..];
+                    opts.pretty = Some(val.to_string());
+                }
                 "--abbrev" => opts.abbrev = Some(7),
                 _ if arg.starts_with("--abbrev=") => {
                     let val = &arg["--abbrev=".len()..];
@@ -242,7 +245,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 | "--cc" => {}
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
-                    || arg.starts_with("--pretty")
                     || arg.starts_with("--format=")
                     || arg.starts_with("-S")
                     || arg.starts_with("-G")
@@ -344,7 +346,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                         diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
                     let filtered = filter_entries(entries, opts);
                     has_diff = !filtered.is_empty();
-                    if !opts.quiet && (has_diff || opts.pretty) {
+                    if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
                         print_diff(out, &repo.odb, &filtered, opts, None)?;
                     }
@@ -359,7 +361,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 )?;
                 let filtered = filter_entries(entries, opts);
                 has_diff = !filtered.is_empty();
-                if !opts.quiet && (has_diff || opts.pretty) {
+                if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
                     print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
                 }
@@ -675,7 +677,11 @@ fn diff_trees_toplevel(
                     std::cmp::Ordering::Equal => {
                         if o.oid != n.oid || o.mode != n.mode {
                             let path = o_name.into_owned();
-                            let status = if o.mode != n.mode && o.oid == n.oid {
+                            // A mode-only change (e.g. chmod) is Modified, not TypeChanged.
+                            // TypeChanged is only for actual type changes (blob ↔ symlink etc.)
+                            let old_type = o.mode & 0o170000;
+                            let new_type = n.mode & 0o170000;
+                            let status = if old_type != new_type {
                                 DiffStatus::TypeChanged
                             } else {
                                 DiffStatus::Modified
@@ -860,21 +866,46 @@ fn print_diff(
 
     match opts.format {
         OutputFormat::Raw => {
-            for entry in entries {
-                if let Some(abbrev_len) = opts.abbrev {
-                    writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
-                } else {
-                    writeln!(out, "{}", format_raw(entry))?;
+            // When --pretty is set, raw output is suppressed - only show summary/stat if requested.
+            if opts.pretty.is_none() {
+                for entry in entries {
+                    if let Some(abbrev_len) = opts.abbrev {
+                        writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
+                    } else {
+                        writeln!(out, "{}", format_raw(entry))?;
+                    }
                 }
+            }
+            if opts.summary {
+                write_summary(out, entries)?;
             }
         }
         OutputFormat::Patch => {
+            // --patch-with-stat: show stat before patch
+            if opts.patch_with_stat {
+                print_stat_summary(out, odb, entries)?;
+                writeln!(out)?;
+            }
+            // --patch-with-raw: show raw before patch
+            if opts.patch_with_raw {
+                for entry in entries {
+                    if let Some(abbrev_len) = opts.abbrev {
+                        writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
+                    } else {
+                        writeln!(out, "{}", format_raw(entry))?;
+                    }
+                }
+                writeln!(out)?;
+            }
             for entry in entries {
-                write_patch_entry(out, odb, entry, opts.context_lines)?;
+                write_patch_entry(out, odb, entry, opts.context_lines, opts.abbrev, opts.full_index)?;
             }
         }
         OutputFormat::Stat => {
             print_stat_summary(out, odb, entries)?;
+            if opts.summary {
+                write_summary(out, entries)?;
+            }
         }
         OutputFormat::NameOnly => {
             for entry in entries {
@@ -904,12 +935,58 @@ fn print_diff(
     Ok(false)
 }
 
+/// Abbreviate an OID hex string to the given length.
+fn abbrev_oid(hex: &str, abbrev: Option<usize>, full_index: bool) -> &str {
+    if full_index {
+        hex
+    } else {
+        let len = abbrev.unwrap_or(7).min(hex.len());
+        &hex[..len]
+    }
+}
+
+/// Write human-readable `--summary` lines (create mode, delete mode, mode change, etc.)
+fn write_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
+    for entry in entries {
+        match entry.status {
+            DiffStatus::Added => {
+                writeln!(out, " create mode {} {}", entry.new_mode, entry.path())?;
+            }
+            DiffStatus::Deleted => {
+                writeln!(out, " delete mode {} {}", entry.old_mode, entry.path())?;
+            }
+            DiffStatus::Modified if entry.old_mode != entry.new_mode => {
+                writeln!(out, " mode change {} => {} {}", entry.old_mode, entry.new_mode, entry.path())?;
+            }
+            DiffStatus::TypeChanged => {
+                writeln!(out, " mode change {} => {} {}", entry.old_mode, entry.new_mode, entry.path())?;
+            }
+            DiffStatus::Renamed => {
+                let sim = entry.score.unwrap_or(100);
+                writeln!(out, " rename {} => {} ({sim}%)",
+                    entry.old_path.as_deref().unwrap_or(""),
+                    entry.new_path.as_deref().unwrap_or(""))?;
+            }
+            DiffStatus::Copied => {
+                let sim = entry.score.unwrap_or(100);
+                writeln!(out, " copy {} => {} ({sim}%)",
+                    entry.old_path.as_deref().unwrap_or(""),
+                    entry.new_path.as_deref().unwrap_or(""))?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Write a unified-diff block for one entry.
 fn write_patch_entry(
     out: &mut impl Write,
     odb: &Odb,
     entry: &DiffEntry,
     context_lines: usize,
+    abbrev: Option<usize>,
+    full_index: bool,
 ) -> Result<bool> {
     let old_path = entry
         .old_path
@@ -920,26 +997,21 @@ fn write_patch_entry(
         .as_deref()
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
 
+    let old_hex = entry.old_oid.to_hex();
+    let new_hex = entry.new_oid.to_hex();
+    let old_abbrev = abbrev_oid(&old_hex, abbrev, full_index);
+    let new_abbrev = abbrev_oid(&new_hex, abbrev, full_index);
+
     writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
 
     match entry.status {
         DiffStatus::Added => {
             writeln!(out, "new file mode {}", entry.new_mode)?;
-            writeln!(
-                out,
-                "index {}..{}",
-                &entry.old_oid.to_hex()[..7],
-                &entry.new_oid.to_hex()[..7]
-            )?;
+            writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
         }
         DiffStatus::Deleted => {
             writeln!(out, "deleted file mode {}", entry.old_mode)?;
-            writeln!(
-                out,
-                "index {}..{}",
-                &entry.old_oid.to_hex()[..7],
-                &entry.new_oid.to_hex()[..7]
-            )?;
+            writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
         }
         DiffStatus::Modified => {
             if entry.old_mode != entry.new_mode {
@@ -947,20 +1019,9 @@ fn write_patch_entry(
                 writeln!(out, "new mode {}", entry.new_mode)?;
             }
             if entry.old_mode == entry.new_mode {
-                writeln!(
-                    out,
-                    "index {}..{} {}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7],
-                    entry.old_mode
-                )?;
+                writeln!(out, "index {old_abbrev}..{new_abbrev} {}", entry.old_mode)?;
             } else {
-                writeln!(
-                    out,
-                    "index {}..{}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7]
-                )?;
+                writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
             }
         }
         DiffStatus::Renamed => {
@@ -969,12 +1030,7 @@ fn write_patch_entry(
             writeln!(out, "rename from {old_path}")?;
             writeln!(out, "rename to {new_path}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(
-                    out,
-                    "index {}..{}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7]
-                )?;
+                writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
             }
         }
         DiffStatus::Copied => {
@@ -983,12 +1039,7 @@ fn write_patch_entry(
             writeln!(out, "copy from {old_path}")?;
             writeln!(out, "copy to {new_path}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(
-                    out,
-                    "index {}..{}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7]
-                )?;
+                writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
             }
         }
         DiffStatus::TypeChanged => {
@@ -1023,33 +1074,58 @@ fn write_patch_entry(
 
 /// Write a `--stat` summary.
 fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) -> Result<bool> {
+    use grit_lib::diff::format_stat_line_width;
+
     let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
 
+    // First pass: compute all stats
+    let mut file_stats: Vec<(&str, usize, usize)> = Vec::new();
     for entry in entries {
         let (old_content, new_content) = read_blob_pair(odb, entry)?;
         let (ins, del) = count_changes(&old_content, &new_content);
         total_ins += ins;
         total_del += del;
+        file_stats.push((entry.path(), ins, del));
+    }
+
+    // Compute count width based on max total change
+    let max_count = file_stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
+    let count_width = format!("{}", max_count).len();
+
+    for (path, ins, del) in &file_stats {
         writeln!(
             out,
             "{}",
-            format_stat_line(entry.path(), ins, del, max_path_len)
+            format_stat_line_width(path, *ins, *del, max_path_len, count_width)
         )?;
     }
 
     let n = entries.len();
-    writeln!(
-        out,
-        " {} file{} changed, {} insertion{}, {} deletion{}",
+    let mut summary = format!(
+        " {} file{} changed",
         n,
         if n == 1 { "" } else { "s" },
-        total_ins,
-        if total_ins == 1 { "+" } else { "s(+)" },
-        total_del,
-        if total_del == 1 { "-" } else { "s(-)" },
-    )?;
+    );
+    if total_ins > 0 {
+        summary.push_str(&format!(
+            ", {} insertion{}(+)",
+            total_ins,
+            if total_ins == 1 { "" } else { "s" }
+        ));
+    }
+    if total_del > 0 {
+        summary.push_str(&format!(
+            ", {} deletion{}(-)",
+            total_del,
+            if total_del == 1 { "" } else { "s" }
+        ));
+    }
+    if total_ins == 0 && total_del == 0 {
+        summary.push_str(", 0 insertions(+), 0 deletions(-)");
+    }
+    writeln!(out, "{summary}")?;
 
     Ok(false)
 }
@@ -1082,8 +1158,13 @@ fn write_commit_header(
     commit_data: &[u8],
     opts: &Options,
 ) -> Result<bool> {
-    if opts.pretty {
+    if let Some(ref pretty_fmt) = opts.pretty {
         let commit = parse_commit(commit_data).context("parsing commit for pretty")?;
+        if pretty_fmt == "oneline" {
+            let first_line = commit.message.lines().next().unwrap_or("");
+            writeln!(out, "{oid} {first_line}")?;
+            return Ok(false);
+        }
         writeln!(out, "commit {oid}")?;
         // Parse author line: "Name <email> timestamp tz"
         let author = &commit.author;
