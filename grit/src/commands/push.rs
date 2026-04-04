@@ -551,6 +551,18 @@ pub fn run(args: Args) -> Result<()> {
             .context("copying objects to remote")?;
     }
 
+    // Check remote's receive.advertiseatomic config
+    if args.atomic {
+        let remote_config = ConfigSet::load(Some(&remote_repo.git_dir), true)?;
+        let advertise = remote_config
+            .get("receive.advertiseatomic")
+            .map(|v| v != "0" && v != "false")
+            .unwrap_or(true);
+        if !advertise {
+            bail!("the receiving end does not support --atomic push");
+        }
+    }
+
     // For --atomic, verify all refs can be updated before writing any.
     // In local transport we do this by checking that nothing changed between
     // our initial read and now.
