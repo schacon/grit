@@ -1,18 +1,19 @@
 #!/bin/sh
 
-test_description='Gettext Shell fallbacks'
+test_description='Gettext Shell fallbacks (grit passthrough)'
 
 . ./test-lib.sh
 
-# Gettext fallback tests require lib-gettext.sh
-# which is not applicable to grit.
+# In grit, gettext fallback is the passthrough itself.
 
 test_expect_success 'setup' '
 	git init
 '
 
-test_expect_failure 'gettext fallback tests (requires gettext infrastructure)' '
-	test -n "$GIT_INTERNAL_GETTEXT_SH_SCHEME"
+test_expect_success 'gettext fallback passes through untranslated text' '
+	echo "This is a test message" >expect &&
+	git sh-i18n "This is a test message" >actual &&
+	test_cmp expect actual
 '
 
 test_done
