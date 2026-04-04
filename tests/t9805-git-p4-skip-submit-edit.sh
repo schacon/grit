@@ -1,15 +1,41 @@
 #!/bin/sh
-# Ported from git/t/t9805-git-p4-skip-submit-edit.sh
-# git p4 skipSubmitEdit config variables
+#
+# Upstream: t9805-git-p4-skip-submit-edit.sh
+# Requires Perforce — ported as test_expect_failure stubs.
+#
 
 test_description='git p4 skipSubmitEdit config variables'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+# --- Perforce not available in grit ---
 
-test_expect_failure 'git-p4 (requires Perforce) — not yet ported' '
+test_expect_failure 'start p4d' '
+	false
+'
+
+test_expect_failure 'init depot' '
+	false
+'
+
+test_expect_failure 'no config, unedited, say yes' '
+	false
+'
+
+test_expect_failure 'no config, unedited, say no' '
+	false
+'
+
+test_expect_failure 'skipSubmitEdit' '
+	false
+'
+
+test_expect_failure 'skipSubmitEditCheck' '
+	false
+'
+
+test_expect_failure 'no config, edited' '
 	false
 '
 
