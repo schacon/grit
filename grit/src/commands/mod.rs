@@ -112,6 +112,7 @@ pub mod mailsplit;
 pub mod merge_index;
 pub mod commit_graph;
 pub mod send_pack;
+pub mod serve_v2;
 pub mod fetch_pack;
 pub mod receive_pack;
 pub mod upload_pack;

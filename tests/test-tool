@@ -61,6 +61,12 @@ case "$1" in
       normalize_path_copy) echo "$2" ;;
       *) echo "$@" ;;
     esac ;;
+  pkt-line)
+    shift
+    exec git pkt-line "$@" ;;
+  serve-v2)
+    shift
+    exec git serve-v2 "$@" ;;
   *)
     echo "test-tool: unknown subcommand '$1'" >&2
     exit 1 ;;
