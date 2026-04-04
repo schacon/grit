@@ -595,13 +595,18 @@ test_expect_success () {
 		fi
 	fi
 
-	# Run in a subshell so each test starts clean
+	# Run in a subshell so each test starts clean.
+	# Source any previously-exported variables so they persist across tests.
+	local _exports_file="$TRASH_DIRECTORY/.test-exports"
 	(
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1
+		test -f "$_exports_file" && . "$_exports_file"
 		eval "$commands"
 	)
 	local result=$?
+	# Re-source exports in the parent so later tests inherit them.
+	test -f "$_exports_file" && . "$_exports_file"
 
 	# Sync test_tick state from file back to parent shell
 	if test -f "$_TICK_FILE"
@@ -680,12 +685,15 @@ test_expect_failure () {
 		fi
 	fi
 
+	local _exports_file="$TRASH_DIRECTORY/.test-exports"
 	(
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1
+		test -f "$_exports_file" && . "$_exports_file"
 		eval "$commands"
 	)
 	local result=$?
+	test -f "$_exports_file" && . "$_exports_file"
 
 	# Sync test_tick state from file back to parent shell
 	if test -f "$_TICK_FILE"
@@ -710,6 +718,25 @@ test_expect_failure () {
   FAIL(expected) $test_count: $description"
 		printf '%snot ok %d - %s%s\n' "$RED" "$test_count" "$description" "$RESET" >&2
 	fi
+}
+
+# Persist shell variables across test subshells.  Writes name=value pairs
+# to a file that later subshells source on startup.  Usage:
+#   test_export newf oldf f5id
+test_export () {
+	local _ef="$TRASH_DIRECTORY/.test-exports"
+	for _var in "$@"; do
+		local _val
+		eval "_val=\"\$$_var\""
+		# Remove any previous definition of this variable.
+		if test -f "$_ef"; then
+			sed -i "/^${_var}=/d" "$_ef"
+		fi
+		# Quote the value with single quotes (escape existing ones).
+		local _escaped
+		_escaped=$(printf '%s' "$_val" | sed "s/'/'\\\\''/g")
+		printf "%s='%s'\n" "$_var" "$_escaped" >>"$_ef"
+	done
 }
 
 test_when_finished () {
