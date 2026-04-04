@@ -30,11 +30,13 @@ test_expect_success 'setup: create repo with structure' '
 # Section 2: --pathspec-from-file (skip if unsupported)
 ###########################################################################
 
-test_expect_success 'add --pathspec-from-file is not supported' '
+test_expect_success 'add --pathspec-from-file stages listed paths' '
 	cd add-repo &&
 	echo "src/main.c" >pathspec.txt &&
 	echo "modified-main" >src/main.c &&
-	test_must_fail grit add --pathspec-from-file=pathspec.txt
+	grit add --pathspec-from-file=pathspec.txt &&
+	grit diff --cached --name-only >staged &&
+	grep src/main.c staged
 '
 
 ###########################################################################
