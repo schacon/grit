@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::rev_parse::{
     abbreviate_object_id, discover_optional, is_inside_git_dir, is_inside_work_tree,
-    resolve_revision, show_prefix, symbolic_full_name, to_relative_path,
+    resolve_revision, show_prefix, symbolic_full_name, abbreviate_ref_name, to_relative_path,
 };
 use std::env;
 
@@ -24,33 +24,53 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let cwd = env::current_dir().context("failed to read current directory")?;
+
+    // Global modifier flags (these modify behavior but don't produce output themselves)
     let mut verify = false;
     let mut quiet = false;
     let mut sq_quote = false;
     let mut short_len: Option<usize> = None;
-    let mut show_is_inside_work_tree = false;
-    let mut show_is_inside_git_dir = false;
-    let mut show_is_bare = false;
-    let mut show_toplevel = false;
-    let mut show_prefix_flag = false;
-    let mut show_cdup = false;
-    let mut show_git_dir = false;
-    let mut show_absolute_git_dir = false;
     let mut show_symbolic_full_name = false;
-    let mut show_ref_format = false;
+    let mut abbrev_ref = false;
     let mut prefix: Option<String> = None;
     let mut default_rev: Option<String> = None;
-    let mut revisions = Vec::new();
-    let mut forced_paths = Vec::new();
-    let mut saw_path_separator = false;
-    let mut end_of_options = false;
 
+    // Collect ordered actions for sequential output
+    #[derive(Debug)]
+    enum Action {
+        ShowIsInsideWorkTree,
+        ShowIsInsideGitDir,
+        ShowIsBare,
+        ShowToplevel,
+        ShowPrefix,
+        ShowCdup,
+        ShowGitDir,
+        ShowAbsoluteGitDir,
+        ShowRefFormat,
+        GitPath(String),
+        Branches(Option<String>),
+        Tags(Option<String>),
+        Remotes(Option<String>),
+        Glob(String),
+        LocalEnvVars,
+        ResolveGitDir(String),
+        Revision(String),
+        ForcedPath(String),
+        PathSeparator,
+    }
+
+    let mut actions: Vec<Action> = Vec::new();
+    let mut end_of_options = false;
+    let mut saw_path_separator = false;
+
+    // First pass: parse all arguments and build ordered action list
     let mut i = 0usize;
     while i < args.args.len() {
         let arg = &args.args[i];
         if !end_of_options && arg == "--" {
             end_of_options = true;
             saw_path_separator = true;
+            actions.push(Action::PathSeparator);
             i += 1;
             continue;
         }
@@ -60,53 +80,32 @@ pub fn run(args: Args) -> Result<()> {
             } else if arg == "--quiet" || arg == "-q" {
                 quiet = true;
             } else if arg == "--is-inside-work-tree" {
-                show_is_inside_work_tree = true;
+                actions.push(Action::ShowIsInsideWorkTree);
             } else if arg == "--is-inside-git-dir" {
-                show_is_inside_git_dir = true;
+                actions.push(Action::ShowIsInsideGitDir);
             } else if arg == "--is-bare-repository" {
-                show_is_bare = true;
+                actions.push(Action::ShowIsBare);
             } else if arg == "--show-toplevel" {
-                show_toplevel = true;
+                actions.push(Action::ShowToplevel);
             } else if arg == "--show-prefix" {
-                show_prefix_flag = true;
+                actions.push(Action::ShowPrefix);
             } else if arg == "--show-cdup" {
-                show_cdup = true;
+                actions.push(Action::ShowCdup);
             } else if arg == "--symbolic-full-name" {
                 show_symbolic_full_name = true;
+            } else if arg == "--abbrev-ref" {
+                abbrev_ref = true;
             } else if arg == "--git-dir" {
-                show_git_dir = true;
+                actions.push(Action::ShowGitDir);
             } else if arg == "--absolute-git-dir" {
-                show_absolute_git_dir = true;
+                actions.push(Action::ShowAbsoluteGitDir);
             } else if arg == "--git-path" {
-                // --git-path <path> outputs the resolved path relative to GIT_DIR
                 i += 1;
                 let path_arg = args
                     .args
                     .get(i)
                     .ok_or_else(|| anyhow::anyhow!("--git-path requires an argument"))?;
-                if let Some(current) = discover_optional(None)? {
-                    // If the path starts with "hooks/", respect core.hooksPath
-                    let resolved = if path_arg == "hooks" || path_arg.starts_with("hooks/") {
-                        let config = grit_lib::config::ConfigSet::load(Some(&current.git_dir), true)?;
-                        if let Some(hooks_path) = config.get("core.hooksPath") {
-                            let hooks_dir = std::path::Path::new(&hooks_path);
-                            if path_arg == "hooks" {
-                                hooks_dir.to_path_buf()
-                            } else {
-                                // Strip "hooks/" prefix and append remainder
-                                let remainder = &path_arg["hooks/".len()..];
-                                hooks_dir.join(remainder)
-                            }
-                        } else {
-                            current.git_dir.join(path_arg)
-                        }
-                    } else {
-                        current.git_dir.join(path_arg)
-                    };
-                    println!("{}", resolved.display());
-                } else {
-                    bail!("not a git repository");
-                }
+                actions.push(Action::GitPath(path_arg.clone()));
             } else if arg == "--prefix" {
                 i += 1;
                 let value = args
@@ -117,10 +116,8 @@ pub fn run(args: Args) -> Result<()> {
             } else if let Some(value) = arg.strip_prefix("--prefix=") {
                 prefix = Some(value.to_owned());
             } else if let Some(value) = arg.strip_prefix("--short=") {
-                verify = true;
                 short_len = Some(parse_short_len(value)?);
             } else if arg == "--short" {
-                verify = true;
                 short_len = Some(7);
             } else if arg == "--default" {
                 i += 1;
@@ -134,85 +131,285 @@ pub fn run(args: Args) -> Result<()> {
             } else if arg == "--end-of-options" {
                 end_of_options = true;
             } else if arg == "--branches" {
-                if let Some(current) = discover_optional(None)? {
-                    let matching = grit_lib::refs::list_refs(&current.git_dir, "refs/heads/")
-                        .context("failed to list branch refs")?;
-                    for (_, oid) in matching {
-                        println!("{oid}");
-                    }
-                }
+                actions.push(Action::Branches(None));
             } else if let Some(pattern) = arg.strip_prefix("--branches=") {
-                if let Some(current) = discover_optional(None)? {
-                    let full = format!("refs/heads/{pattern}");
-                    let matching = grit_lib::refs::list_refs_glob(&current.git_dir, &full)
-                        .context("failed to list branch refs")?;
-                    for (_, oid) in matching {
-                        println!("{oid}");
-                    }
-                }
+                actions.push(Action::Branches(Some(pattern.to_owned())));
             } else if arg == "--tags" {
-                if let Some(current) = discover_optional(None)? {
-                    let matching = grit_lib::refs::list_refs(&current.git_dir, "refs/tags/")
-                        .context("failed to list tag refs")?;
-                    for (_, oid) in matching {
-                        println!("{oid}");
-                    }
-                }
+                actions.push(Action::Tags(None));
             } else if let Some(pattern) = arg.strip_prefix("--tags=") {
-                if let Some(current) = discover_optional(None)? {
-                    let full = format!("refs/tags/{pattern}");
-                    let matching = grit_lib::refs::list_refs_glob(&current.git_dir, &full)
-                        .context("failed to list tag refs")?;
+                actions.push(Action::Tags(Some(pattern.to_owned())));
+            } else if let Some(pattern) = arg.strip_prefix("--glob=") {
+                actions.push(Action::Glob(normalize_glob_pattern(pattern)));
+            } else if arg == "--glob" {
+                i += 1;
+                if let Some(pattern) = args.args.get(i) {
+                    actions.push(Action::Glob(normalize_glob_pattern(pattern)));
+                }
+            } else if arg == "--remotes" {
+                actions.push(Action::Remotes(None));
+            } else if let Some(pattern) = arg.strip_prefix("--remotes=") {
+                actions.push(Action::Remotes(Some(pattern.to_owned())));
+            } else if arg == "--show-ref-format" {
+                actions.push(Action::ShowRefFormat);
+            } else if arg == "--sq-quote" {
+                sq_quote = true;
+            } else if arg == "--local-env-vars" {
+                actions.push(Action::LocalEnvVars);
+            } else if arg == "--resolve-git-dir" {
+                i += 1;
+                let path_arg = args
+                    .args
+                    .get(i)
+                    .ok_or_else(|| anyhow::anyhow!("--resolve-git-dir requires an argument"))?;
+                actions.push(Action::ResolveGitDir(path_arg.clone()));
+            } else {
+                bail!("unsupported option: {arg}");
+            }
+            i += 1;
+            continue;
+        }
+        if saw_path_separator {
+            actions.push(Action::ForcedPath(arg.clone()));
+        } else {
+            actions.push(Action::Revision(arg.clone()));
+        }
+        i += 1;
+    }
+
+    // --sq-quote: shell-quote all non-flag args and exit
+    if sq_quote {
+        let mut out = String::new();
+        for action in &actions {
+            if let Action::Revision(rev) = action {
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(&sq_quote_str(rev));
+            }
+        }
+        println!("{out}");
+        return Ok(());
+    }
+
+    // --verify mode: exactly one revision, output its OID
+    if verify {
+        let revisions: Vec<&str> = actions
+            .iter()
+            .filter_map(|a| match a {
+                Action::Revision(r) => Some(r.as_str()),
+                _ => None,
+            })
+            .collect();
+        let mut rev_list = revisions;
+        if rev_list.is_empty() {
+            if let Some(default_name) = default_rev.as_deref() {
+                rev_list = vec![default_name];
+            }
+        }
+        if rev_list.len() != 1 {
+            return fail_verify(quiet);
+        }
+        let repo = discover_optional(None)?;
+        let Some(current) = repo.as_ref() else {
+            return fail_verify(quiet);
+        };
+        let oid = match resolve_revision(current, rev_list[0]) {
+            Ok(oid) => oid,
+            Err(_) => return fail_verify(quiet),
+        };
+        if let Some(len) = short_len {
+            println!("{}", abbreviate_object_id(current, oid, len)?);
+        } else {
+            println!("{oid}");
+        }
+        return Ok(());
+    }
+
+    // Check if we have any actions at all
+    let has_output_actions = actions.iter().any(|a| !matches!(a, Action::PathSeparator));
+    if !has_output_actions {
+        return Ok(());
+    }
+
+    let repo = discover_optional(None)?;
+
+    // Process actions in order
+    let mut saw_path_sep_output = false;
+    for action in &actions {
+        match action {
+            Action::ShowIsInsideWorkTree => {
+                let inside = repo
+                    .as_ref()
+                    .map(|current| is_inside_work_tree(current, &cwd))
+                    .unwrap_or(false);
+                println!("{}", if inside { "true" } else { "false" });
+            }
+            Action::ShowIsInsideGitDir => {
+                let inside = repo
+                    .as_ref()
+                    .map(|current| is_inside_git_dir(current, &cwd))
+                    .unwrap_or(false);
+                println!("{}", if inside { "true" } else { "false" });
+            }
+            Action::ShowIsBare => {
+                let bare = repo
+                    .as_ref()
+                    .map(|current| current.is_bare())
+                    .unwrap_or(false);
+                println!("{}", if bare { "true" } else { "false" });
+            }
+            Action::ShowToplevel => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                let Some(work_tree) = &current.work_tree else {
+                    bail!("this operation must be run in a work tree");
+                };
+                println!("{}", work_tree.display());
+            }
+            Action::ShowPrefix => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                println!("{}", show_prefix(current, &cwd));
+            }
+            Action::ShowCdup => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                let pfx = show_prefix(current, &cwd);
+                if pfx.is_empty() {
+                    println!();
+                } else {
+                    let depth = pfx.trim_end_matches('/').matches('/').count() + 1;
+                    let cdup: String = "../".repeat(depth);
+                    println!("{cdup}");
+                }
+            }
+            Action::ShowGitDir => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                if cwd == current.git_dir.as_path() {
+                    println!(".");
+                } else if current.git_dir.parent() == Some(cwd.as_ref()) {
+                    println!("{}", to_relative_path(&current.git_dir, &cwd));
+                } else {
+                    println!("{}", current.git_dir.display());
+                }
+            }
+            Action::ShowAbsoluteGitDir => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                println!("{}", current.git_dir.display());
+            }
+            Action::ShowRefFormat => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                let config_path = current.git_dir.join("config");
+                let format = if let Ok(content) = std::fs::read_to_string(&config_path) {
+                    let mut in_ext = false;
+                    let mut found = String::from("files");
+                    for line in content.lines() {
+                        let t = line.trim();
+                        if t.starts_with('[') {
+                            in_ext = t.eq_ignore_ascii_case("[extensions]");
+                            continue;
+                        }
+                        if in_ext {
+                            if let Some((k, v)) = t.split_once('=') {
+                                if k.trim().eq_ignore_ascii_case("refstorage") {
+                                    found = v.trim().to_lowercase();
+                                }
+                            }
+                        }
+                    }
+                    found
+                } else {
+                    "files".to_string()
+                };
+                println!("{format}");
+            }
+            Action::GitPath(path_arg) => {
+                if let Some(current) = repo.as_ref() {
+                    let resolved = if path_arg == "hooks" || path_arg.starts_with("hooks/") {
+                        let config = grit_lib::config::ConfigSet::load(Some(&current.git_dir), true)?;
+                        if let Some(hooks_path) = config.get("core.hooksPath") {
+                            let hooks_dir = std::path::Path::new(&hooks_path);
+                            if path_arg == "hooks" {
+                                hooks_dir.to_path_buf()
+                            } else {
+                                let remainder = &path_arg["hooks/".len()..];
+                                hooks_dir.join(remainder)
+                            }
+                        } else {
+                            current.git_dir.join(path_arg)
+                        }
+                    } else {
+                        current.git_dir.join(path_arg)
+                    };
+                    println!("{}", resolved.display());
+                } else {
+                    bail!("not a git repository");
+                }
+            }
+            Action::Branches(pattern) => {
+                if let Some(current) = repo.as_ref() {
+                    let matching = if let Some(pat) = pattern {
+                        let full = format!("refs/heads/{pat}");
+                        grit_lib::refs::list_refs_glob(&current.git_dir, &full)
+                            .context("failed to list branch refs")?
+                    } else {
+                        grit_lib::refs::list_refs(&current.git_dir, "refs/heads/")
+                            .context("failed to list branch refs")?
+                    };
                     for (_, oid) in matching {
                         println!("{oid}");
                     }
                 }
-            } else if let Some(pattern) = arg.strip_prefix("--glob=") {
-                if let Some(current) = discover_optional(None)? {
-                    let full = normalize_glob_pattern(pattern);
-                    let matching = grit_lib::refs::list_refs_glob(&current.git_dir, &full)
+            }
+            Action::Tags(pattern) => {
+                if let Some(current) = repo.as_ref() {
+                    let matching = if let Some(pat) = pattern {
+                        let full = format!("refs/tags/{pat}");
+                        grit_lib::refs::list_refs_glob(&current.git_dir, &full)
+                            .context("failed to list tag refs")?
+                    } else {
+                        grit_lib::refs::list_refs(&current.git_dir, "refs/tags/")
+                            .context("failed to list tag refs")?
+                    };
+                    for (_, oid) in matching {
+                        println!("{oid}");
+                    }
+                }
+            }
+            Action::Remotes(pattern) => {
+                if let Some(current) = repo.as_ref() {
+                    let matching = if let Some(pat) = pattern {
+                        let full = format!("refs/remotes/{pat}");
+                        grit_lib::refs::list_refs_glob(&current.git_dir, &full)
+                            .context("failed to list remote refs")?
+                    } else {
+                        grit_lib::refs::list_refs(&current.git_dir, "refs/remotes/")
+                            .context("failed to list remote refs")?
+                    };
+                    for (_, oid) in matching {
+                        println!("{oid}");
+                    }
+                }
+            }
+            Action::Glob(full) => {
+                if let Some(current) = repo.as_ref() {
+                    let matching = grit_lib::refs::list_refs_glob(&current.git_dir, full)
                         .context("failed to list refs")?;
                     for (_, oid) in matching {
                         println!("{oid}");
                     }
                 }
-            } else if arg == "--glob" {
-                // Detached option: next arg is the pattern.
-                i += 1;
-                if let Some(pattern) = args.args.get(i) {
-                    if let Some(current) = discover_optional(None)? {
-                        let full = normalize_glob_pattern(pattern);
-                        let matching = grit_lib::refs::list_refs_glob(&current.git_dir, &full)
-                            .context("failed to list refs")?;
-                        for (_, oid) in matching {
-                            println!("{oid}");
-                        }
-                    }
-                }
-            } else if arg == "--remotes" {
-                if let Some(current) = discover_optional(None)? {
-                    let matching = grit_lib::refs::list_refs(&current.git_dir, "refs/remotes/")
-                        .context("failed to list remote refs")?;
-                    for (_, oid) in matching {
-                        println!("{oid}");
-                    }
-                }
-            } else if let Some(pattern) = arg.strip_prefix("--remotes=") {
-                if let Some(current) = discover_optional(None)? {
-                    let full = format!("refs/remotes/{pattern}");
-                    let matching = grit_lib::refs::list_refs_glob(&current.git_dir, &full)
-                        .context("failed to list remote refs")?;
-                    for (_, oid) in matching {
-                        println!("{oid}");
-                    }
-                }
-            } else if arg == "--show-ref-format" {
-                show_ref_format = true;
-            } else if arg == "--sq-quote" {
-                sq_quote = true;
-            } else if arg == "--local-env-vars" {
-                // Output the list of GIT_* environment variables that are local
-                // to the repository (same list as real Git).
+            }
+            Action::LocalEnvVars => {
                 for var in &[
                     "GIT_DIR",
                     "GIT_WORK_TREE",
@@ -225,19 +422,13 @@ pub fn run(args: Args) -> Result<()> {
                     println!("{var}");
                 }
                 return Ok(());
-            } else if arg == "--resolve-git-dir" {
-                i += 1;
-                let path_arg = args
-                    .args
-                    .get(i)
-                    .ok_or_else(|| anyhow::anyhow!("--resolve-git-dir requires an argument"))?;
+            }
+            Action::ResolveGitDir(path_arg) => {
                 let p = std::path::Path::new(path_arg);
                 if p.is_dir() && p.join("HEAD").exists() {
-                    // It's already a git directory
                     let resolved = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
                     println!("{}", resolved.display());
                 } else if p.is_file() {
-                    // It's a gitfile — read and resolve
                     let content = std::fs::read_to_string(p)
                         .with_context(|| format!("cannot read '{}'", p.display()))?;
                     for line in content.lines() {
@@ -258,208 +449,67 @@ pub fn run(args: Args) -> Result<()> {
                     bail!("not a valid directory: {path_arg}");
                 }
                 return Ok(());
-            } else {
-                bail!("unsupported option: {arg}");
             }
-            i += 1;
-            continue;
-        }
-        if saw_path_separator {
-            forced_paths.push(arg.clone());
-        } else {
-            revisions.push(arg.clone());
-        }
-        i += 1;
-    }
+            Action::Revision(rev) => {
+                let Some(current) = repo.as_ref() else {
+                    if quiet {
+                        std::process::exit(1);
+                    }
+                    bail!("not a git repository (or any of the parent directories)");
+                };
 
-    // --sq-quote: shell-quote all remaining args and exit
-    if sq_quote {
-        let mut out = String::new();
-        for rev in &revisions {
-            if !out.is_empty() {
-                out.push(' ');
-            }
-            out.push_str(&sq_quote_str(rev));
-        }
-        println!("{out}");
-        return Ok(());
-    }
-
-    let repo = discover_optional(None)?;
-    if show_is_inside_work_tree {
-        let inside = repo
-            .as_ref()
-            .map(|current| is_inside_work_tree(current, &cwd))
-            .unwrap_or(false);
-        println!("{}", if inside { "true" } else { "false" });
-    }
-    if show_is_inside_git_dir {
-        let inside = repo
-            .as_ref()
-            .map(|current| is_inside_git_dir(current, &cwd))
-            .unwrap_or(false);
-        println!("{}", if inside { "true" } else { "false" });
-    }
-    if show_is_bare {
-        let bare = repo
-            .as_ref()
-            .map(|current| current.is_bare())
-            .unwrap_or(false);
-        println!("{}", if bare { "true" } else { "false" });
-    }
-
-    if show_toplevel {
-        let Some(current) = repo.as_ref() else {
-            bail!("not a git repository (or any of the parent directories)");
-        };
-        let Some(work_tree) = &current.work_tree else {
-            bail!("this operation must be run in a work tree");
-        };
-        println!("{}", work_tree.display());
-    }
-    if show_prefix_flag {
-        let Some(current) = repo.as_ref() else {
-            bail!("not a git repository (or any of the parent directories)");
-        };
-        println!("{}", show_prefix(current, &cwd));
-    }
-    if show_cdup {
-        let Some(current) = repo.as_ref() else {
-            bail!("not a git repository (or any of the parent directories)");
-        };
-        let prefix = show_prefix(current, &cwd);
-        if prefix.is_empty() {
-            println!();
-        } else {
-            // Count the number of path components and emit that many "../"
-            let depth = prefix.trim_end_matches('/').matches('/').count() + 1;
-            let cdup: String = "../".repeat(depth);
-            println!("{cdup}");
-        }
-    }
-    if show_git_dir {
-        let Some(current) = repo.as_ref() else {
-            bail!("not a git repository (or any of the parent directories)");
-        };
-        // Match git behavior:
-        // - output "." when cwd IS the git dir
-        // - output ".git" (relative) when in the toplevel of the work tree
-        // - output absolute path otherwise
-        if cwd == current.git_dir.as_path() {
-            println!(".");
-        } else if current.git_dir.parent() == Some(cwd.as_ref()) {
-            // cwd is the worktree toplevel, output relative
-            println!("{}", to_relative_path(&current.git_dir, &cwd));
-        } else {
-            // subdirectory or external git dir: output absolute
-            println!("{}", current.git_dir.display());
-        }
-    }
-    if show_absolute_git_dir {
-        let Some(current) = repo.as_ref() else {
-            bail!("not a git repository (or any of the parent directories)");
-        };
-        println!("{}", current.git_dir.display());
-    }
-    if show_ref_format {
-        let Some(current) = repo.as_ref() else {
-            bail!("not a git repository (or any of the parent directories)");
-        };
-        let config_path = current.git_dir.join("config");
-        let format = if let Ok(content) = std::fs::read_to_string(&config_path) {
-            let mut in_ext = false;
-            let mut found = String::from("files");
-            for line in content.lines() {
-                let t = line.trim();
-                if t.starts_with('[') {
-                    in_ext = t.eq_ignore_ascii_case("[extensions]");
-                    continue;
+                if abbrev_ref {
+                    // --abbrev-ref: resolve to symbolic name and abbreviate
+                    if let Some(full) = symbolic_full_name(current, rev) {
+                        println!("{}", abbreviate_ref_name(&full));
+                        continue;
+                    }
+                    // Fall through to try resolving as OID and printing as-is
                 }
-                if in_ext {
-                    if let Some((k, v)) = t.split_once('=') {
-                        if k.trim().eq_ignore_ascii_case("refstorage") {
-                            found = v.trim().to_lowercase();
+
+                if show_symbolic_full_name {
+                    if let Some(full) = symbolic_full_name(current, rev) {
+                        println!("{full}");
+                        continue;
+                    }
+                }
+
+                let rewritten = rewrite_tree_path_spec(rev, prefix.as_deref());
+                match resolve_revision(current, &rewritten) {
+                    Ok(oid) => {
+                        if let Some(len) = short_len {
+                            println!("{}", abbreviate_object_id(current, oid, len)?);
+                        } else {
+                            println!("{oid}");
+                        }
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("ambiguous") {
+                            return Err(anyhow::anyhow!("{msg}"));
+                        }
+                        if let Some(path_prefix) = prefix.as_deref() {
+                            println!("{}", apply_prefix_for_forced_path(path_prefix, rev));
+                        } else {
+                            return Err(anyhow::anyhow!("bad revision '{rev}'"));
                         }
                     }
                 }
             }
-            found
-        } else {
-            "files".to_string()
-        };
-        println!("{format}");
-    }
-
-    if !verify && revisions.is_empty() && forced_paths.is_empty() {
-        return Ok(());
-    }
-
-    let Some(current) = repo.as_ref() else {
-        if quiet && verify {
-            std::process::exit(1);
-        }
-        bail!("not a git repository (or any of the parent directories)");
-    };
-
-    if verify {
-        if revisions.is_empty() {
-            if let Some(default_name) = default_rev.as_deref() {
-                revisions.push(default_name.to_owned());
+            Action::PathSeparator => {
+                saw_path_sep_output = true;
             }
-        }
-        if revisions.len() != 1 {
-            return fail_verify(quiet);
-        }
-        let oid = match resolve_revision(current, &revisions[0]) {
-            Ok(oid) => oid,
-            Err(_) => return fail_verify(quiet),
-        };
-        if let Some(len) = short_len {
-            println!("{}", abbreviate_object_id(current, oid, len)?);
-        } else {
-            println!("{oid}");
-        }
-        return Ok(());
-    }
-
-    for rev in revisions {
-        if show_symbolic_full_name {
-            if let Some(full) = symbolic_full_name(current, &rev) {
-                println!("{full}");
-                continue;
-            }
-            // If symbolic resolution fails, fall through to OID resolution
-        }
-        let rewritten = rewrite_tree_path_spec(&rev, prefix.as_deref());
-        match resolve_revision(current, &rewritten) {
-            Ok(oid) => {
-                println!("{oid}");
-                continue;
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("ambiguous") {
-                    return Err(anyhow::anyhow!("{msg}"));
+            Action::ForcedPath(path) => {
+                if !saw_path_sep_output {
+                    println!("--");
+                    saw_path_sep_output = true;
+                }
+                if let Some(path_prefix) = prefix.as_deref() {
+                    println!("{}", apply_prefix_for_forced_path(path_prefix, path));
+                } else {
+                    println!("{path}");
                 }
             }
-        }
-        if let Some(path_prefix) = prefix.as_deref() {
-            println!("{}", apply_prefix_for_forced_path(path_prefix, &rev));
-            continue;
-        }
-        return Err(anyhow::anyhow!("bad revision '{rev}'"));
-    }
-
-    if saw_path_separator && !forced_paths.is_empty() {
-        println!("--");
-    }
-    if let Some(path_prefix) = prefix.as_deref() {
-        for path in forced_paths {
-            println!("{}", apply_prefix_for_forced_path(path_prefix, &path));
-        }
-    } else {
-        for path in forced_paths {
-            println!("{path}");
         }
     }
     Ok(())

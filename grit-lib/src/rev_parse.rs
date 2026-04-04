@@ -702,7 +702,7 @@ fn find_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>>
 
 fn collect_loose_object_ids(repo: &Repository) -> Result<Vec<String>> {
     let mut ids = Vec::new();
-    let objects_dir = repo.git_dir.join("objects");
+    let objects_dir = repo.odb.objects_dir();
     let read = match fs::read_dir(&objects_dir) {
         Ok(read) => read,
         Err(err) => return Err(Error::Io(err)),
