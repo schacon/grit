@@ -5673,44 +5673,44 @@ t3506-cherry-pick-ff::cherry-pick-with-ff-a-merge-2	t3506-cherry-pick-ff	cherry 
 t3506-cherry-pick-ff::cherry-pick-a-merge-relative-to-nonexistent-parent-with-ff-should-fail	t3506-cherry-pick-ff	cherry pick a merge relative to nonexistent parent with --ff should fail	cherry-pick	pass
 t3506-cherry-pick-ff::cherry-pick-a-root-commit-with-ff	t3506-cherry-pick-ff	cherry pick a root commit with --ff	cherry-pick	pass
 t3506-cherry-pick-ff::cherry-pick-ff-on-unborn-branch	t3506-cherry-pick-ff	cherry-pick --ff on unborn branch	cherry-pick	pass
-t3507-cherry-pick-conflict::failed-cherry-pick-does-not-advance-head	t3507-cherry-pick-conflict	failed cherry-pick does not advance HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::advice-from-failed-cherry-pick	t3507-cherry-pick-conflict	advice from failed cherry-pick	cherry-pick	pass
-t3507-cherry-pick-conflict::advice-from-failed-cherry-pick-no-commit	t3507-cherry-pick-conflict	advice from failed cherry-pick --no-commit	cherry-pick	pass
-t3507-cherry-pick-conflict::failed-cherry-pick-sets-cherry-pick-head	t3507-cherry-pick-conflict	failed cherry-pick sets CHERRY_PICK_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::successful-cherry-pick-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	successful cherry-pick does not set CHERRY_PICK_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::cherry-pick-no-commit-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick --no-commit does not set CHERRY_PICK_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::cherry-pick-w-dirty-tree-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick w/dirty tree does not set CHERRY_PICK_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::git-cherry-pick-help-suppresses-cherry-pick-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP suppresses CHERRY_PICK_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::git-reset-clears-cherry-pick-head	t3507-cherry-pick-conflict	git reset clears CHERRY_PICK_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::failed-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	failed commit does not clear CHERRY_PICK_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::cancelled-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	cancelled commit does not clear CHERRY_PICK_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::successful-commit-clears-cherry-pick-head	t3507-cherry-pick-conflict	successful commit clears CHERRY_PICK_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::partial-commit-of-cherry-pick-fails	t3507-cherry-pick-conflict	partial commit of cherry-pick fails	cherry-pick	pass
-t3507-cherry-pick-conflict::commit-amend-of-cherry-pick-fails	t3507-cherry-pick-conflict	commit --amend of cherry-pick fails	cherry-pick	pass
-t3507-cherry-pick-conflict::successful-final-commit-clears-cherry-pick-state	t3507-cherry-pick-conflict	successful final commit clears cherry-pick state	cherry-pick	pass
-t3507-cherry-pick-conflict::reset-after-final-pick-clears-cherry-pick-state	t3507-cherry-pick-conflict	reset after final pick clears cherry-pick state	cherry-pick	pass
-t3507-cherry-pick-conflict::failed-cherry-pick-produces-dirty-index	t3507-cherry-pick-conflict	failed cherry-pick produces dirty index	cherry-pick	pass
-t3507-cherry-pick-conflict::failed-cherry-pick-registers-participants-in-index	t3507-cherry-pick-conflict	failed cherry-pick registers participants in index	cherry-pick	pass
-t3507-cherry-pick-conflict::failed-cherry-pick-describes-conflict-in-work-tree	t3507-cherry-pick-conflict	failed cherry-pick describes conflict in work tree	cherry-pick	pass
-t3507-cherry-pick-conflict::diff3-m-style	t3507-cherry-pick-conflict	diff3 -m style	cherry-pick	pass
-t3507-cherry-pick-conflict::revert-also-handles-conflicts-sanely	t3507-cherry-pick-conflict	revert also handles conflicts sanely	cherry-pick	pass
-t3507-cherry-pick-conflict::failed-revert-sets-revert-head	t3507-cherry-pick-conflict	failed revert sets REVERT_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::successful-revert-does-not-set-revert-head	t3507-cherry-pick-conflict	successful revert does not set REVERT_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::revert-no-commit-sets-revert-head	t3507-cherry-pick-conflict	revert --no-commit sets REVERT_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::revert-w-dirty-tree-does-not-set-revert-head	t3507-cherry-pick-conflict	revert w/dirty tree does not set REVERT_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::git-cherry-pick-help-does-not-suppress-revert-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP does not suppress REVERT_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::git-reset-clears-revert-head	t3507-cherry-pick-conflict	git reset clears REVERT_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::failed-commit-does-not-clear-revert-head	t3507-cherry-pick-conflict	failed commit does not clear REVERT_HEAD	cherry-pick	pass
-t3507-cherry-pick-conflict::successful-final-commit-clears-revert-state	t3507-cherry-pick-conflict	successful final commit clears revert state	cherry-pick	pass
-t3507-cherry-pick-conflict::reset-after-final-pick-clears-revert-state	t3507-cherry-pick-conflict	reset after final pick clears revert state	cherry-pick	pass
-t3507-cherry-pick-conflict::revert-conflict-diff3-m-style	t3507-cherry-pick-conflict	revert conflict, diff3 -m style	cherry-pick	pass
-t3507-cherry-pick-conflict::failed-cherry-pick-does-not-forget-s	t3507-cherry-pick-conflict	failed cherry-pick does not forget -s	cherry-pick	pass
-t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-does-not-add-duplicated-s	t3507-cherry-pick-conflict	commit after failed cherry-pick does not add duplicated -s	cherry-pick	pass
-t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-adds-s-at-the-right-place	t3507-cherry-pick-conflict	commit after failed cherry-pick adds -s at the right place	cherry-pick	pass
-t3507-cherry-pick-conflict::commit-amend-s-places-the-sign-off-at-the-right-place	t3507-cherry-pick-conflict	commit --amend -s places the sign-off at the right place	cherry-pick	pass
-t3507-cherry-pick-conflict::cherry-pick-preserves-sparse-checkout	t3507-cherry-pick-conflict	cherry-pick preserves sparse-checkout	cherry-pick	pass
-t3507-cherry-pick-conflict::cherry-pick-continue-remembers-keep-redundant-commits	t3507-cherry-pick-conflict	cherry-pick --continue remembers --keep-redundant-commits	cherry-pick	pass
-t3507-cherry-pick-conflict::cherry-pick-continue-remembers-allow-empty-and-allow-empty-message	t3507-cherry-pick-conflict	cherry-pick --continue remembers --allow-empty and --allow-empty-message	cherry-pick	pass
+t3507-cherry-pick-conflict::failed-cherry-pick-does-not-advance-head	t3507-cherry-pick-conflict	failed cherry-pick does not advance HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::advice-from-failed-cherry-pick	t3507-cherry-pick-conflict	advice from failed cherry-pick	cherry-pick	partial
+t3507-cherry-pick-conflict::advice-from-failed-cherry-pick-no-commit	t3507-cherry-pick-conflict	advice from failed cherry-pick --no-commit	cherry-pick	partial
+t3507-cherry-pick-conflict::failed-cherry-pick-sets-cherry-pick-head	t3507-cherry-pick-conflict	failed cherry-pick sets CHERRY_PICK_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::successful-cherry-pick-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	successful cherry-pick does not set CHERRY_PICK_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::cherry-pick-no-commit-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick --no-commit does not set CHERRY_PICK_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::cherry-pick-w-dirty-tree-does-not-set-cherry-pick-head	t3507-cherry-pick-conflict	cherry-pick w/dirty tree does not set CHERRY_PICK_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::git-cherry-pick-help-suppresses-cherry-pick-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP suppresses CHERRY_PICK_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::git-reset-clears-cherry-pick-head	t3507-cherry-pick-conflict	git reset clears CHERRY_PICK_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::failed-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	failed commit does not clear CHERRY_PICK_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::cancelled-commit-does-not-clear-cherry-pick-head	t3507-cherry-pick-conflict	cancelled commit does not clear CHERRY_PICK_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::successful-commit-clears-cherry-pick-head	t3507-cherry-pick-conflict	successful commit clears CHERRY_PICK_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::partial-commit-of-cherry-pick-fails	t3507-cherry-pick-conflict	partial commit of cherry-pick fails	cherry-pick	partial
+t3507-cherry-pick-conflict::commit-amend-of-cherry-pick-fails	t3507-cherry-pick-conflict	commit --amend of cherry-pick fails	cherry-pick	partial
+t3507-cherry-pick-conflict::successful-final-commit-clears-cherry-pick-state	t3507-cherry-pick-conflict	successful final commit clears cherry-pick state	cherry-pick	partial
+t3507-cherry-pick-conflict::reset-after-final-pick-clears-cherry-pick-state	t3507-cherry-pick-conflict	reset after final pick clears cherry-pick state	cherry-pick	partial
+t3507-cherry-pick-conflict::failed-cherry-pick-produces-dirty-index	t3507-cherry-pick-conflict	failed cherry-pick produces dirty index	cherry-pick	partial
+t3507-cherry-pick-conflict::failed-cherry-pick-registers-participants-in-index	t3507-cherry-pick-conflict	failed cherry-pick registers participants in index	cherry-pick	partial
+t3507-cherry-pick-conflict::failed-cherry-pick-describes-conflict-in-work-tree	t3507-cherry-pick-conflict	failed cherry-pick describes conflict in work tree	cherry-pick	partial
+t3507-cherry-pick-conflict::diff3-m-style	t3507-cherry-pick-conflict	diff3 -m style	cherry-pick	partial
+t3507-cherry-pick-conflict::revert-also-handles-conflicts-sanely	t3507-cherry-pick-conflict	revert also handles conflicts sanely	cherry-pick	partial
+t3507-cherry-pick-conflict::failed-revert-sets-revert-head	t3507-cherry-pick-conflict	failed revert sets REVERT_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::successful-revert-does-not-set-revert-head	t3507-cherry-pick-conflict	successful revert does not set REVERT_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::revert-no-commit-sets-revert-head	t3507-cherry-pick-conflict	revert --no-commit sets REVERT_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::revert-w-dirty-tree-does-not-set-revert-head	t3507-cherry-pick-conflict	revert w/dirty tree does not set REVERT_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::git-cherry-pick-help-does-not-suppress-revert-head	t3507-cherry-pick-conflict	GIT_CHERRY_PICK_HELP does not suppress REVERT_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::git-reset-clears-revert-head	t3507-cherry-pick-conflict	git reset clears REVERT_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::failed-commit-does-not-clear-revert-head	t3507-cherry-pick-conflict	failed commit does not clear REVERT_HEAD	cherry-pick	partial
+t3507-cherry-pick-conflict::successful-final-commit-clears-revert-state	t3507-cherry-pick-conflict	successful final commit clears revert state	cherry-pick	partial
+t3507-cherry-pick-conflict::reset-after-final-pick-clears-revert-state	t3507-cherry-pick-conflict	reset after final pick clears revert state	cherry-pick	partial
+t3507-cherry-pick-conflict::revert-conflict-diff3-m-style	t3507-cherry-pick-conflict	revert conflict, diff3 -m style	cherry-pick	partial
+t3507-cherry-pick-conflict::failed-cherry-pick-does-not-forget-s	t3507-cherry-pick-conflict	failed cherry-pick does not forget -s	cherry-pick	partial
+t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-does-not-add-duplicated-s	t3507-cherry-pick-conflict	commit after failed cherry-pick does not add duplicated -s	cherry-pick	partial
+t3507-cherry-pick-conflict::commit-after-failed-cherry-pick-adds-s-at-the-right-place	t3507-cherry-pick-conflict	commit after failed cherry-pick adds -s at the right place	cherry-pick	partial
+t3507-cherry-pick-conflict::commit-amend-s-places-the-sign-off-at-the-right-place	t3507-cherry-pick-conflict	commit --amend -s places the sign-off at the right place	cherry-pick	partial
+t3507-cherry-pick-conflict::cherry-pick-preserves-sparse-checkout	t3507-cherry-pick-conflict	cherry-pick preserves sparse-checkout	cherry-pick	partial
+t3507-cherry-pick-conflict::cherry-pick-continue-remembers-keep-redundant-commits	t3507-cherry-pick-conflict	cherry-pick --continue remembers --keep-redundant-commits	cherry-pick	partial
+t3507-cherry-pick-conflict::cherry-pick-continue-remembers-allow-empty-and-allow-empty-message	t3507-cherry-pick-conflict	cherry-pick --continue remembers --allow-empty and --allow-empty-message	cherry-pick	partial
 t3508-cherry-pick-many-commits::cherry-pick-first-fourth-works	t3508-cherry-pick-many-commits	cherry-pick first..fourth works	cherry-pick	pass
 t3508-cherry-pick-many-commits::cherry-pick-three-one-two-works	t3508-cherry-pick-many-commits	cherry-pick three one two works	cherry-pick	pass
 t3508-cherry-pick-many-commits::cherry-pick-three-one-two-fails	t3508-cherry-pick-many-commits	cherry-pick three one two: fails	cherry-pick	pass
@@ -9709,22 +9709,22 @@ t5408-send-pack-stdin::cmdline-refs-with-multiple-duplicates	t5408-send-pack-std
 t5408-send-pack-stdin::stdin-refs-come-after-cmdline	t5408-send-pack-stdin	--stdin refs come after cmdline	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-cmdline	t5408-send-pack-stdin	refspecs and --mirror do not mix (cmdline)	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-stdin	t5408-send-pack-stdin	refspecs and --mirror do not mix (stdin)	send-pack	pass
-t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	pass
-t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	pass
-t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	pass
-t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	pass
-t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	pass
-t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	pass
-t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	pass
-t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	pass
-t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	pass
-t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	pass
-t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	pass
+t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	partial
+t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	partial
+t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	partial
+t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	partial
+t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	partial
+t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	partial
+t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	partial
+t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	partial
+t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	partial
+t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	partial
+t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	partial
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	pass
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	pass
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	pass
-t5411-proc-receive-hook::setup-upstream-and-workbench	t5411-proc-receive-hook	setup upstream and workbench	config	pass
-t5411-proc-receive-hook::setup-for-http-protocol	t5411-proc-receive-hook	setup for HTTP protocol	config	pass
+t5411-proc-receive-hook::setup-upstream-and-workbench	t5411-proc-receive-hook	setup upstream and workbench	config	partial
+t5411-proc-receive-hook::setup-for-http-protocol	t5411-proc-receive-hook	setup for HTTP protocol	config	partial
 t5500-fetch-pack::setup	t5500-fetch-pack	setup	fetch-pack	pass
 t5500-fetch-pack::post-1st-pull-setup	t5500-fetch-pack	post 1st pull setup	fetch-pack	pass
 t5500-fetch-pack::single-branch-clone	t5500-fetch-pack	single branch clone	fetch-pack	pass
@@ -9817,8 +9817,8 @@ t5500-fetch-pack::fetch-pack-diag-url-p-h-r-3	t5500-fetch-pack	fetch-pack --diag
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-4	t5500-fetch-pack	fetch-pack --diag-url $p://$h/~$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-h-r	t5500-fetch-pack	fetch-pack --diag-url ./$h:$r	fetch-pack	pass
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-5	t5500-fetch-pack	fetch-pack --diag-url ./$p:$h/~$r	fetch-pack	pass
-t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	pass
-t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	pass
+t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	partial
+t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	partial
 t5502-quickfetch::clone-without-alternate	t5502-quickfetch	clone without alternate	count-objects	pass
 t5502-quickfetch::further-commits-in-the-original	t5502-quickfetch	further commits in the original	commit	pass
 t5502-quickfetch::copy-commit-and-tree-but-not-blob-by-hand	t5502-quickfetch	copy commit and tree but not blob by hand	count-objects	pass
@@ -10766,63 +10766,63 @@ t5548-push-porcelain::git-push-porcelain-dry-run-atomic-force-protocol	t5548-pus
 t5549-fetch-push-http::push-without-negotiation-for-comparing-object-counts-with-the-next-test	t5549-fetch-push-http	push without negotiation (for comparing object counts with the next test)	fetch	not_ported
 t5549-fetch-push-http::push-with-negotiation	t5549-fetch-push-http	push with negotiation	fetch	not_ported
 t5549-fetch-push-http::push-with-negotiation-proceeds-anyway-even-if-negotiation-fails	t5549-fetch-push-http	push with negotiation proceeds anyway even if negotiation fails	fetch	not_ported
-t5550-http-fetch-dumb::setup-repository	t5550-http-fetch-dumb	setup repository	fetch	not_ported
-t5550-http-fetch-dumb::packfile-without-repository-does-not-crash	t5550-http-fetch-dumb	packfile without repository does not crash	fetch	not_ported
-t5550-http-fetch-dumb::create-http-accessible-bare-repository-with-loose-objects	t5550-http-fetch-dumb	create http-accessible bare repository with loose objects	fetch	not_ported
-t5550-http-fetch-dumb::clone-http-repository	t5550-http-fetch-dumb	clone http repository	fetch	not_ported
-t5550-http-fetch-dumb::list-refs-from-outside-any-repository	t5550-http-fetch-dumb	list refs from outside any repository	fetch	not_ported
-t5550-http-fetch-dumb::list-detached-head-from-outside-any-repository	t5550-http-fetch-dumb	list detached HEAD from outside any repository	fetch	not_ported
-t5550-http-fetch-dumb::create-password-protected-repository	t5550-http-fetch-dumb	create password-protected repository	fetch	not_ported
-t5550-http-fetch-dumb::create-empty-remote-repository	t5550-http-fetch-dumb	create empty remote repository	fetch	not_ported
-t5550-http-fetch-dumb::empty-dumb-http-repository-falls-back-to-sha1	t5550-http-fetch-dumb	empty dumb HTTP repository falls back to SHA1	fetch	not_ported
-t5550-http-fetch-dumb::cloning-password-protected-repository-can-fail	t5550-http-fetch-dumb	cloning password-protected repository can fail	fetch	not_ported
-t5550-http-fetch-dumb::using-credentials-from-netrc-to-clone-successfully	t5550-http-fetch-dumb	using credentials from netrc to clone successfully	fetch	not_ported
-t5550-http-fetch-dumb::netrc-unauthorized-credentials-prompt-after-401	t5550-http-fetch-dumb	netrc unauthorized credentials (prompt after 401)	fetch	not_ported
-t5550-http-fetch-dumb::netrc-authorized-but-forbidden-credentials-fail-on-403	t5550-http-fetch-dumb	netrc authorized but forbidden credentials (fail on 403)	fetch	not_ported
-t5550-http-fetch-dumb::http-auth-can-use-user-pass-in-url	t5550-http-fetch-dumb	http auth can use user/pass in URL	fetch	not_ported
-t5550-http-fetch-dumb::http-auth-can-use-just-user-in-url	t5550-http-fetch-dumb	http auth can use just user in URL	fetch	not_ported
-t5550-http-fetch-dumb::http-auth-can-request-both-user-and-pass	t5550-http-fetch-dumb	http auth can request both user and pass	fetch	not_ported
-t5550-http-fetch-dumb::http-auth-respects-credential-helper-config	t5550-http-fetch-dumb	http auth respects credential helper config	fetch	not_ported
-t5550-http-fetch-dumb::http-auth-can-get-username-from-config	t5550-http-fetch-dumb	http auth can get username from config	fetch	not_ported
-t5550-http-fetch-dumb::configured-username-does-not-override-url	t5550-http-fetch-dumb	configured username does not override URL	fetch	not_ported
-t5550-http-fetch-dumb::set-up-repo-with-http-submodules	t5550-http-fetch-dumb	set up repo with http submodules	fetch	not_ported
-t5550-http-fetch-dumb::cmdline-credential-config-passes-to-submodule-via-clone	t5550-http-fetch-dumb	cmdline credential config passes to submodule via clone	fetch	not_ported
-t5550-http-fetch-dumb::cmdline-credential-config-passes-submodule-via-fetch	t5550-http-fetch-dumb	cmdline credential config passes submodule via fetch	fetch	not_ported
-t5550-http-fetch-dumb::cmdline-credential-config-passes-submodule-update	t5550-http-fetch-dumb	cmdline credential config passes submodule update	fetch	not_ported
-t5550-http-fetch-dumb::fetch-changes-via-http	t5550-http-fetch-dumb	fetch changes via http	fetch	not_ported
-t5550-http-fetch-dumb::fetch-changes-via-manual-http-fetch	t5550-http-fetch-dumb	fetch changes via manual http-fetch	fetch	not_ported
-t5550-http-fetch-dumb::manual-http-fetch-without-a-works-just-as-well	t5550-http-fetch-dumb	manual http-fetch without -a works just as well	fetch	not_ported
-t5550-http-fetch-dumb::http-remote-detects-correct-head	t5550-http-fetch-dumb	http remote detects correct HEAD	fetch	not_ported
-t5550-http-fetch-dumb::fetch-packed-objects	t5550-http-fetch-dumb	fetch packed objects	fetch	not_ported
-t5550-http-fetch-dumb::http-fetch-packfile	t5550-http-fetch-dumb	http-fetch --packfile	fetch	not_ported
-t5550-http-fetch-dumb::fetch-notices-corrupt-pack	t5550-http-fetch-dumb	fetch notices corrupt pack	fetch	not_ported
-t5550-http-fetch-dumb::http-fetch-packfile-with-corrupt-pack	t5550-http-fetch-dumb	http-fetch --packfile with corrupt pack	fetch	not_ported
-t5550-http-fetch-dumb::fetch-notices-corrupt-idx	t5550-http-fetch-dumb	fetch notices corrupt idx	fetch	not_ported
-t5550-http-fetch-dumb::fetch-can-handle-previously-fetched-idx-files	t5550-http-fetch-dumb	fetch can handle previously-fetched .idx files	fetch	not_ported
-t5550-http-fetch-dumb::did-not-use-upload-pack-service	t5550-http-fetch-dumb	did not use upload-pack service	fetch	not_ported
-t5550-http-fetch-dumb::git-client-shows-text-plain-errors	t5550-http-fetch-dumb	git client shows text/plain errors	fetch	not_ported
-t5550-http-fetch-dumb::git-client-does-not-show-html-errors	t5550-http-fetch-dumb	git client does not show html errors	fetch	not_ported
-t5550-http-fetch-dumb::git-client-shows-text-plain-with-a-charset	t5550-http-fetch-dumb	git client shows text/plain with a charset	fetch	not_ported
-t5550-http-fetch-dumb::http-error-messages-are-reencoded	t5550-http-fetch-dumb	http error messages are reencoded	fetch	not_ported
-t5550-http-fetch-dumb::reencoding-is-robust-to-whitespace-oddities	t5550-http-fetch-dumb	reencoding is robust to whitespace oddities	fetch	not_ported
-t5550-http-fetch-dumb::git-client-sends-accept-language-based-on-language	t5550-http-fetch-dumb	git client sends Accept-Language based on LANGUAGE	fetch	not_ported
-t5550-http-fetch-dumb::git-client-sends-accept-language-correctly-with-unordinary-language	t5550-http-fetch-dumb	git client sends Accept-Language correctly with unordinary LANGUAGE	fetch	not_ported
-t5550-http-fetch-dumb::git-client-sends-accept-language-with-many-preferred-languages	t5550-http-fetch-dumb	git client sends Accept-Language with many preferred languages	fetch	not_ported
-t5550-http-fetch-dumb::git-client-send-an-empty-accept-language	t5550-http-fetch-dumb	git client send an empty Accept-Language	fetch	not_ported
-t5550-http-fetch-dumb::remote-http-complains-cleanly-about-malformed-urls	t5550-http-fetch-dumb	remote-http complains cleanly about malformed urls	fetch	not_ported
-t5550-http-fetch-dumb::remote-http-complains-cleanly-about-empty-scheme	t5550-http-fetch-dumb	remote-http complains cleanly about empty scheme	fetch	not_ported
-t5550-http-fetch-dumb::redirects-can-be-forbidden-allowed	t5550-http-fetch-dumb	redirects can be forbidden/allowed	fetch	not_ported
-t5550-http-fetch-dumb::redirects-are-reported-to-stderr	t5550-http-fetch-dumb	redirects are reported to stderr	fetch	not_ported
-t5550-http-fetch-dumb::non-initial-redirects-can-be-forbidden	t5550-http-fetch-dumb	non-initial redirects can be forbidden	fetch	not_ported
-t5550-http-fetch-dumb::http-followredirects-defaults-to-initial	t5550-http-fetch-dumb	http.followRedirects defaults to "initial"	fetch	not_ported
-t5550-http-fetch-dumb::set-up-evil-alternates-scheme	t5550-http-fetch-dumb	set up evil alternates scheme	fetch	not_ported
-t5550-http-fetch-dumb::http-alternates-is-a-non-initial-redirect	t5550-http-fetch-dumb	http-alternates is a non-initial redirect	fetch	not_ported
-t5550-http-fetch-dumb::http-alternates-cannot-point-at-funny-protocols	t5550-http-fetch-dumb	http-alternates cannot point at funny protocols	fetch	not_ported
-t5550-http-fetch-dumb::http-alternates-triggers-not-from-user-protocol-check	t5550-http-fetch-dumb	http-alternates triggers not-from-user protocol check	fetch	not_ported
-t5550-http-fetch-dumb::can-redirect-through-non-info-refs-service-git-upload-pack-url	t5550-http-fetch-dumb	can redirect through non-"info/refs?service=git-upload-pack" URL	fetch	not_ported
-t5550-http-fetch-dumb::print-http-error-when-any-intermediate-redirect-throws-error	t5550-http-fetch-dumb	print HTTP error when any intermediate redirect throws error	fetch	not_ported
-t5550-http-fetch-dumb::fetching-via-http-alternates-works	t5550-http-fetch-dumb	fetching via http alternates works	fetch	not_ported
-t5550-http-fetch-dumb::dumb-http-can-fetch-index-v1	t5550-http-fetch-dumb	dumb http can fetch index v1	fetch	not_ported
+t5550-http-fetch-dumb::setup-repository	t5550-http-fetch-dumb	setup repository	fetch	partial
+t5550-http-fetch-dumb::packfile-without-repository-does-not-crash	t5550-http-fetch-dumb	packfile without repository does not crash	fetch	partial
+t5550-http-fetch-dumb::create-http-accessible-bare-repository-with-loose-objects	t5550-http-fetch-dumb	create http-accessible bare repository with loose objects	fetch	partial
+t5550-http-fetch-dumb::clone-http-repository	t5550-http-fetch-dumb	clone http repository	fetch	partial
+t5550-http-fetch-dumb::list-refs-from-outside-any-repository	t5550-http-fetch-dumb	list refs from outside any repository	fetch	partial
+t5550-http-fetch-dumb::list-detached-head-from-outside-any-repository	t5550-http-fetch-dumb	list detached HEAD from outside any repository	fetch	partial
+t5550-http-fetch-dumb::create-password-protected-repository	t5550-http-fetch-dumb	create password-protected repository	fetch	partial
+t5550-http-fetch-dumb::create-empty-remote-repository	t5550-http-fetch-dumb	create empty remote repository	fetch	partial
+t5550-http-fetch-dumb::empty-dumb-http-repository-falls-back-to-sha1	t5550-http-fetch-dumb	empty dumb HTTP repository falls back to SHA1	fetch	partial
+t5550-http-fetch-dumb::cloning-password-protected-repository-can-fail	t5550-http-fetch-dumb	cloning password-protected repository can fail	fetch	partial
+t5550-http-fetch-dumb::using-credentials-from-netrc-to-clone-successfully	t5550-http-fetch-dumb	using credentials from netrc to clone successfully	fetch	partial
+t5550-http-fetch-dumb::netrc-unauthorized-credentials-prompt-after-401	t5550-http-fetch-dumb	netrc unauthorized credentials (prompt after 401)	fetch	partial
+t5550-http-fetch-dumb::netrc-authorized-but-forbidden-credentials-fail-on-403	t5550-http-fetch-dumb	netrc authorized but forbidden credentials (fail on 403)	fetch	partial
+t5550-http-fetch-dumb::http-auth-can-use-user-pass-in-url	t5550-http-fetch-dumb	http auth can use user/pass in URL	fetch	partial
+t5550-http-fetch-dumb::http-auth-can-use-just-user-in-url	t5550-http-fetch-dumb	http auth can use just user in URL	fetch	partial
+t5550-http-fetch-dumb::http-auth-can-request-both-user-and-pass	t5550-http-fetch-dumb	http auth can request both user and pass	fetch	partial
+t5550-http-fetch-dumb::http-auth-respects-credential-helper-config	t5550-http-fetch-dumb	http auth respects credential helper config	fetch	partial
+t5550-http-fetch-dumb::http-auth-can-get-username-from-config	t5550-http-fetch-dumb	http auth can get username from config	fetch	partial
+t5550-http-fetch-dumb::configured-username-does-not-override-url	t5550-http-fetch-dumb	configured username does not override URL	fetch	partial
+t5550-http-fetch-dumb::set-up-repo-with-http-submodules	t5550-http-fetch-dumb	set up repo with http submodules	fetch	partial
+t5550-http-fetch-dumb::cmdline-credential-config-passes-to-submodule-via-clone	t5550-http-fetch-dumb	cmdline credential config passes to submodule via clone	fetch	partial
+t5550-http-fetch-dumb::cmdline-credential-config-passes-submodule-via-fetch	t5550-http-fetch-dumb	cmdline credential config passes submodule via fetch	fetch	partial
+t5550-http-fetch-dumb::cmdline-credential-config-passes-submodule-update	t5550-http-fetch-dumb	cmdline credential config passes submodule update	fetch	partial
+t5550-http-fetch-dumb::fetch-changes-via-http	t5550-http-fetch-dumb	fetch changes via http	fetch	partial
+t5550-http-fetch-dumb::fetch-changes-via-manual-http-fetch	t5550-http-fetch-dumb	fetch changes via manual http-fetch	fetch	partial
+t5550-http-fetch-dumb::manual-http-fetch-without-a-works-just-as-well	t5550-http-fetch-dumb	manual http-fetch without -a works just as well	fetch	partial
+t5550-http-fetch-dumb::http-remote-detects-correct-head	t5550-http-fetch-dumb	http remote detects correct HEAD	fetch	partial
+t5550-http-fetch-dumb::fetch-packed-objects	t5550-http-fetch-dumb	fetch packed objects	fetch	partial
+t5550-http-fetch-dumb::http-fetch-packfile	t5550-http-fetch-dumb	http-fetch --packfile	fetch	partial
+t5550-http-fetch-dumb::fetch-notices-corrupt-pack	t5550-http-fetch-dumb	fetch notices corrupt pack	fetch	partial
+t5550-http-fetch-dumb::http-fetch-packfile-with-corrupt-pack	t5550-http-fetch-dumb	http-fetch --packfile with corrupt pack	fetch	partial
+t5550-http-fetch-dumb::fetch-notices-corrupt-idx	t5550-http-fetch-dumb	fetch notices corrupt idx	fetch	partial
+t5550-http-fetch-dumb::fetch-can-handle-previously-fetched-idx-files	t5550-http-fetch-dumb	fetch can handle previously-fetched .idx files	fetch	partial
+t5550-http-fetch-dumb::did-not-use-upload-pack-service	t5550-http-fetch-dumb	did not use upload-pack service	fetch	partial
+t5550-http-fetch-dumb::git-client-shows-text-plain-errors	t5550-http-fetch-dumb	git client shows text/plain errors	fetch	partial
+t5550-http-fetch-dumb::git-client-does-not-show-html-errors	t5550-http-fetch-dumb	git client does not show html errors	fetch	partial
+t5550-http-fetch-dumb::git-client-shows-text-plain-with-a-charset	t5550-http-fetch-dumb	git client shows text/plain with a charset	fetch	partial
+t5550-http-fetch-dumb::http-error-messages-are-reencoded	t5550-http-fetch-dumb	http error messages are reencoded	fetch	partial
+t5550-http-fetch-dumb::reencoding-is-robust-to-whitespace-oddities	t5550-http-fetch-dumb	reencoding is robust to whitespace oddities	fetch	partial
+t5550-http-fetch-dumb::git-client-sends-accept-language-based-on-language	t5550-http-fetch-dumb	git client sends Accept-Language based on LANGUAGE	fetch	partial
+t5550-http-fetch-dumb::git-client-sends-accept-language-correctly-with-unordinary-language	t5550-http-fetch-dumb	git client sends Accept-Language correctly with unordinary LANGUAGE	fetch	partial
+t5550-http-fetch-dumb::git-client-sends-accept-language-with-many-preferred-languages	t5550-http-fetch-dumb	git client sends Accept-Language with many preferred languages	fetch	partial
+t5550-http-fetch-dumb::git-client-send-an-empty-accept-language	t5550-http-fetch-dumb	git client send an empty Accept-Language	fetch	partial
+t5550-http-fetch-dumb::remote-http-complains-cleanly-about-malformed-urls	t5550-http-fetch-dumb	remote-http complains cleanly about malformed urls	fetch	partial
+t5550-http-fetch-dumb::remote-http-complains-cleanly-about-empty-scheme	t5550-http-fetch-dumb	remote-http complains cleanly about empty scheme	fetch	partial
+t5550-http-fetch-dumb::redirects-can-be-forbidden-allowed	t5550-http-fetch-dumb	redirects can be forbidden/allowed	fetch	partial
+t5550-http-fetch-dumb::redirects-are-reported-to-stderr	t5550-http-fetch-dumb	redirects are reported to stderr	fetch	partial
+t5550-http-fetch-dumb::non-initial-redirects-can-be-forbidden	t5550-http-fetch-dumb	non-initial redirects can be forbidden	fetch	partial
+t5550-http-fetch-dumb::http-followredirects-defaults-to-initial	t5550-http-fetch-dumb	http.followRedirects defaults to "initial"	fetch	partial
+t5550-http-fetch-dumb::set-up-evil-alternates-scheme	t5550-http-fetch-dumb	set up evil alternates scheme	fetch	partial
+t5550-http-fetch-dumb::http-alternates-is-a-non-initial-redirect	t5550-http-fetch-dumb	http-alternates is a non-initial redirect	fetch	partial
+t5550-http-fetch-dumb::http-alternates-cannot-point-at-funny-protocols	t5550-http-fetch-dumb	http-alternates cannot point at funny protocols	fetch	partial
+t5550-http-fetch-dumb::http-alternates-triggers-not-from-user-protocol-check	t5550-http-fetch-dumb	http-alternates triggers not-from-user protocol check	fetch	partial
+t5550-http-fetch-dumb::can-redirect-through-non-info-refs-service-git-upload-pack-url	t5550-http-fetch-dumb	can redirect through non-"info/refs?service=git-upload-pack" URL	fetch	partial
+t5550-http-fetch-dumb::print-http-error-when-any-intermediate-redirect-throws-error	t5550-http-fetch-dumb	print HTTP error when any intermediate redirect throws error	fetch	partial
+t5550-http-fetch-dumb::fetching-via-http-alternates-works	t5550-http-fetch-dumb	fetching via http alternates works	fetch	partial
+t5550-http-fetch-dumb::dumb-http-can-fetch-index-v1	t5550-http-fetch-dumb	dumb http can fetch index v1	fetch	partial
 t5551-http-fetch-smart::setup-repository	t5551-http-fetch-smart	setup repository	fetch	not_ported
 t5551-http-fetch-smart::create-http-accessible-bare-repository	t5551-http-fetch-smart	create http-accessible bare repository	fetch	not_ported
 t5551-http-fetch-smart::clone-http-repository	t5551-http-fetch-smart	clone http repository	fetch	not_ported
@@ -10953,7 +10953,7 @@ t5558-clone-bundle-uri::bundles-are-downloaded-once-during-fetch-all	t5558-clone
 t5558-clone-bundle-uri::bundles-with-space-in-uri-are-rejected	t5558-clone-bundle-uri	bundles with space in URI are rejected	clone	not_ported
 t5558-clone-bundle-uri::bundles-with-newline-in-uri-are-rejected	t5558-clone-bundle-uri	bundles with newline in URI are rejected	clone	not_ported
 t5558-clone-bundle-uri::bundles-with-newline-in-target-path-are-rejected	t5558-clone-bundle-uri	bundles with newline in target path are rejected	clone	not_ported
-t5560-http-backend-noserver::http-backend-blocks-bad-path-info	t5560-http-backend-noserver	http-backend blocks bad PATH_INFO	http-backend	not_ported
+t5560-http-backend-noserver::http-backend-blocks-bad-path-info	t5560-http-backend-noserver	http-backend blocks bad PATH_INFO	http-backend	partial
 t5561-http-backend::server-request-log-matches-test-results	t5561-http-backend	server request log matches test results	http-backend	not_ported
 t5562-http-backend-content-length::setup	t5562-http-backend-content-length	setup	http-backend	not_ported
 t5562-http-backend-content-length::setup-compression-related	t5562-http-backend-content-length	setup, compression related	http-backend	not_ported
@@ -11627,91 +11627,91 @@ t5703-upload-pack-ref-in-want::server-is-initially-ahead-ref-in-want	t5703-uploa
 t5703-upload-pack-ref-in-want::server-is-initially-behind-no-ref-in-want	t5703-upload-pack-ref-in-want	server is initially behind - no ref in want	upload-pack	pass
 t5703-upload-pack-ref-in-want::server-is-initially-behind-ref-in-want	t5703-upload-pack-ref-in-want	server is initially behind - ref in want	upload-pack	pass
 t5703-upload-pack-ref-in-want::server-loses-a-ref-ref-in-want	t5703-upload-pack-ref-in-want	server loses a ref - ref in want	upload-pack	pass
-t5704-protocol-violations::extra-delim-packet-in-v2-ls-refs-args	t5704-protocol-violations	extra delim packet in v2 ls-refs args	upload-pack	pass
-t5704-protocol-violations::extra-delim-packet-in-v2-fetch-args	t5704-protocol-violations	extra delim packet in v2 fetch args	upload-pack	pass
-t5704-protocol-violations::bogus-symref-in-v0-capabilities	t5704-protocol-violations	bogus symref in v0 capabilities	ls-remote	pass
-t5705-session-id-in-capabilities::setup-repos-for-session-id-capability-tests	t5705-session-id-in-capabilities	setup repos for session ID capability tests	clone	pass
-t5705-session-id-in-capabilities::enable-sid-advertisement	t5705-session-id-in-capabilities	enable SID advertisement	config	pass
-t5705-session-id-in-capabilities::session-ids-not-advertised-by-default-fetch-v-proto	t5705-session-id-in-capabilities	session IDs not advertised by default (fetch v${PROTO})	fetch	pass
-t5705-session-id-in-capabilities::session-ids-not-advertised-by-default-push-v-proto	t5705-session-id-in-capabilities	session IDs not advertised by default (push v${PROTO})	pull	pass
-t5705-session-id-in-capabilities::session-ids-advertised-fetch-v-proto	t5705-session-id-in-capabilities	session IDs advertised (fetch v${PROTO})	fetch	pass
-t5705-session-id-in-capabilities::session-ids-advertised-push-v-proto	t5705-session-id-in-capabilities	session IDs advertised (push v${PROTO})	pull	pass
-t5705-session-id-in-capabilities::client-server-log-negotiated-version-v-proto	t5705-session-id-in-capabilities	client & server log negotiated version (v${PROTO})	fetch	pass
-t5710-promisor-remote-capability::setup-create-template-repository	t5710-promisor-remote-capability	setup: create "template" repository	add	pass
-t5710-promisor-remote-capability::setup-create-bare-server-repository	t5710-promisor-remote-capability	setup: create bare "server" repository	clone	pass
-t5710-promisor-remote-capability::setup-for-testing-promisor-remote-advertisement	t5710-promisor-remote-capability	setup for testing promisor remote advertisement	config	pass
-t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-true	t5710-promisor-remote-capability	clone with promisor.advertise set to 'true'	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-false	t5710-promisor-remote-capability	clone with promisor.advertise set to 'false'	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-none	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'None'	clone	pass
-t5710-promisor-remote-capability::init-fetch-with-promisor-advertise-set-to-true	t5710-promisor-remote-capability	init + fetch with promisor.advertise set to 'true'	config	pass
-t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-knownname	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'KnownName'	clone	pass
-t5710-promisor-remote-capability::clone-with-knownname-and-different-remote-names	t5710-promisor-remote-capability	clone with 'KnownName' and different remote names	clone	pass
-t5710-promisor-remote-capability::clone-with-knownname-and-missing-url-in-the-config	t5710-promisor-remote-capability	clone with 'KnownName' and missing URL in the config	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-knownurl	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'KnownUrl'	clone	pass
-t5710-promisor-remote-capability::clone-with-knownurl-and-different-remote-urls	t5710-promisor-remote-capability	clone with 'KnownUrl' and different remote urls	clone	pass
-t5710-promisor-remote-capability::clone-with-knownurl-and-url-not-configured-on-the-server	t5710-promisor-remote-capability	clone with 'KnownUrl' and url not configured on the server	clone	pass
-t5710-promisor-remote-capability::clone-with-knownurl-and-empty-url-so-not-advertised	t5710-promisor-remote-capability	clone with 'KnownUrl' and empty url, so not advertised	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-sendfields	t5710-promisor-remote-capability	clone with promisor.sendFields	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-checkfields	t5710-promisor-remote-capability	clone with promisor.checkFields	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-storefields-partialclonefilter	t5710-promisor-remote-capability	clone with promisor.storeFields=partialCloneFilter	clone	pass
-t5710-promisor-remote-capability::clone-and-fetch-with-filter-auto	t5710-promisor-remote-capability	clone and fetch with --filter=auto	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-true-but-don-t-delete-the-client	t5710-promisor-remote-capability	clone with promisor.advertise set to 'true' but don't delete the client	clone	pass
-t5710-promisor-remote-capability::setup-for-subsequent-fetches	t5710-promisor-remote-capability	setup for subsequent fetches	add	pass
-t5710-promisor-remote-capability::subsequent-fetch-from-a-client-when-promisor-advertise-is-true	t5710-promisor-remote-capability	subsequent fetch from a client when promisor.advertise is true	config	pass
-t5710-promisor-remote-capability::subsequent-fetch-from-a-client-when-promisor-advertise-is-false	t5710-promisor-remote-capability	subsequent fetch from a client when promisor.advertise is false	config	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-just-uris	t5750-bundle-uri-parse	bundle_uri_parse_line() just URIs	bundle	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-relative-uris	t5750-bundle-uri-parse	bundle_uri_parse_line(): relative URIs	bundle	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-relative-uris-and-parent-paths	t5750-bundle-uri-parse	bundle_uri_parse_line(): relative URIs and parent paths	bundle	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-empty-key-or-value	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: empty key or value	bundle	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-empty-lines	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: empty lines	bundle	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-duplicate-lines	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: duplicate lines	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-just-uris	t5750-bundle-uri-parse	parse config format: just URIs	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-relative-uris	t5750-bundle-uri-parse	parse config format: relative URIs	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-edge-cases-empty-key-or-value	t5750-bundle-uri-parse	parse config format edge cases: empty key or value	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-creationtoken-heuristic	t5750-bundle-uri-parse	parse config format: creationToken heuristic	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-edge-cases-creationtoken-heuristic	t5750-bundle-uri-parse	parse config format edge cases: creationToken heuristic	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-bundle-with-missing-uri	t5750-bundle-uri-parse	parse config format: bundle with missing uri	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-bundle-with-url-instead-of-uri	t5750-bundle-uri-parse	parse config format: bundle with url instead of uri	bundle	pass
-t5801-remote-helpers::setup-repository	t5801-remote-helpers	setup repository	remote	pass
-t5801-remote-helpers::cloning-from-local-repo	t5801-remote-helpers	cloning from local repo	remote	pass
-t5801-remote-helpers::clone-with-remote-vcs-config	t5801-remote-helpers	clone with remote.*.vcs config	remote	pass
-t5801-remote-helpers::fetch-with-configured-remote-vcs	t5801-remote-helpers	fetch with configured remote.*.vcs	remote	pass
-t5801-remote-helpers::vcs-remote-with-no-url	t5801-remote-helpers	vcs remote with no url	remote	pass
-t5801-remote-helpers::create-new-commit-on-remote	t5801-remote-helpers	create new commit on remote	remote	pass
-t5801-remote-helpers::pulling-from-local-repo	t5801-remote-helpers	pulling from local repo	remote	pass
-t5801-remote-helpers::pushing-to-local-repo	t5801-remote-helpers	pushing to local repo	remote	pass
-t5801-remote-helpers::fetch-new-branch	t5801-remote-helpers	fetch new branch	remote	pass
-t5801-remote-helpers::fetch-multiple-branches	t5801-remote-helpers	fetch multiple branches	remote	pass
-t5801-remote-helpers::push-when-remote-has-extra-refs	t5801-remote-helpers	push when remote has extra refs	remote	pass
-t5801-remote-helpers::push-new-branch-by-name	t5801-remote-helpers	push new branch by name	remote	pass
-t5801-remote-helpers::push-new-branch-with-old-new-refspec	t5801-remote-helpers	push new branch with old:new refspec	remote	pass
-t5801-remote-helpers::push-new-branch-with-head-new-refspec	t5801-remote-helpers	push new branch with HEAD:new refspec	remote	pass
-t5801-remote-helpers::push-delete-branch	t5801-remote-helpers	push delete branch	remote	pass
-t5801-remote-helpers::forced-push	t5801-remote-helpers	forced push	remote	pass
-t5801-remote-helpers::cloning-without-refspec	t5801-remote-helpers	cloning without refspec	remote	pass
-t5801-remote-helpers::pulling-without-refspecs	t5801-remote-helpers	pulling without refspecs	remote	pass
-t5801-remote-helpers::pushing-without-refspecs	t5801-remote-helpers	pushing without refspecs	remote	pass
-t5801-remote-helpers::pulling-without-marks	t5801-remote-helpers	pulling without marks	remote	pass
-t5801-remote-helpers::push-all-with-existing-object	t5801-remote-helpers	push all with existing object	remote	pass
-t5801-remote-helpers::push-ref-with-existing-object	t5801-remote-helpers	push ref with existing object	remote	pass
-t5801-remote-helpers::push-signed-tag	t5801-remote-helpers	push signed tag	remote	pass
-t5801-remote-helpers::push-signed-tag-with-signed-tags-capability	t5801-remote-helpers	push signed tag with signed-tags capability	remote	pass
-t5801-remote-helpers::push-update-refs	t5801-remote-helpers	push update refs	remote	pass
-t5801-remote-helpers::push-update-refs-disabled-by-no-private-update	t5801-remote-helpers	push update refs disabled by no-private-update	remote	pass
-t5801-remote-helpers::push-update-refs-failure	t5801-remote-helpers	push update refs failure	remote	pass
-t5801-remote-helpers::proper-failure-checks-for-fetching	t5801-remote-helpers	proper failure checks for fetching	remote	pass
-t5801-remote-helpers::proper-failure-checks-for-pushing	t5801-remote-helpers	proper failure checks for pushing	remote	pass
-t5801-remote-helpers::push-messages	t5801-remote-helpers	push messages	remote	pass
-t5801-remote-helpers::fetch-head	t5801-remote-helpers	fetch HEAD	remote	pass
-t5801-remote-helpers::fetch-url	t5801-remote-helpers	fetch url	remote	pass
-t5801-remote-helpers::fetch-tag	t5801-remote-helpers	fetch tag	remote	pass
-t5801-remote-helpers::totally-broken-helper-reports-failure-message	t5801-remote-helpers	totally broken helper reports failure message	remote	pass
-t5802-connect-helper::update-following-tag	t5802-connect-helper	update following tag	commit	pass
-t5802-connect-helper::update-backfilled-tag	t5802-connect-helper	update backfilled tag	commit	pass
-t5802-connect-helper::update-backfilled-tag-without-primary-transfer	t5802-connect-helper	update backfilled tag without primary transfer	for-each-ref	pass
-t5802-connect-helper::set-up-fake-git-daemon	t5802-connect-helper	set up fake git-daemon	daemon	pass
-t5802-connect-helper::ext-command-can-connect-to-git-daemon-no-vhost	t5802-connect-helper	ext command can connect to git daemon (no vhost)	clone	pass
-t5802-connect-helper::ext-command-can-connect-to-git-daemon-vhost	t5802-connect-helper	ext command can connect to git daemon (vhost)	clone	pass
+t5704-protocol-violations::extra-delim-packet-in-v2-ls-refs-args	t5704-protocol-violations	extra delim packet in v2 ls-refs args	upload-pack	partial
+t5704-protocol-violations::extra-delim-packet-in-v2-fetch-args	t5704-protocol-violations	extra delim packet in v2 fetch args	upload-pack	partial
+t5704-protocol-violations::bogus-symref-in-v0-capabilities	t5704-protocol-violations	bogus symref in v0 capabilities	ls-remote	partial
+t5705-session-id-in-capabilities::setup-repos-for-session-id-capability-tests	t5705-session-id-in-capabilities	setup repos for session ID capability tests	clone	partial
+t5705-session-id-in-capabilities::enable-sid-advertisement	t5705-session-id-in-capabilities	enable SID advertisement	config	partial
+t5705-session-id-in-capabilities::session-ids-not-advertised-by-default-fetch-v-proto	t5705-session-id-in-capabilities	session IDs not advertised by default (fetch v${PROTO})	fetch	partial
+t5705-session-id-in-capabilities::session-ids-not-advertised-by-default-push-v-proto	t5705-session-id-in-capabilities	session IDs not advertised by default (push v${PROTO})	pull	partial
+t5705-session-id-in-capabilities::session-ids-advertised-fetch-v-proto	t5705-session-id-in-capabilities	session IDs advertised (fetch v${PROTO})	fetch	partial
+t5705-session-id-in-capabilities::session-ids-advertised-push-v-proto	t5705-session-id-in-capabilities	session IDs advertised (push v${PROTO})	pull	partial
+t5705-session-id-in-capabilities::client-server-log-negotiated-version-v-proto	t5705-session-id-in-capabilities	client & server log negotiated version (v${PROTO})	fetch	partial
+t5710-promisor-remote-capability::setup-create-template-repository	t5710-promisor-remote-capability	setup: create "template" repository	add	partial
+t5710-promisor-remote-capability::setup-create-bare-server-repository	t5710-promisor-remote-capability	setup: create bare "server" repository	clone	partial
+t5710-promisor-remote-capability::setup-for-testing-promisor-remote-advertisement	t5710-promisor-remote-capability	setup for testing promisor remote advertisement	config	partial
+t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-true	t5710-promisor-remote-capability	clone with promisor.advertise set to 'true'	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-false	t5710-promisor-remote-capability	clone with promisor.advertise set to 'false'	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-none	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'None'	clone	partial
+t5710-promisor-remote-capability::init-fetch-with-promisor-advertise-set-to-true	t5710-promisor-remote-capability	init + fetch with promisor.advertise set to 'true'	config	partial
+t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-knownname	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'KnownName'	clone	partial
+t5710-promisor-remote-capability::clone-with-knownname-and-different-remote-names	t5710-promisor-remote-capability	clone with 'KnownName' and different remote names	clone	partial
+t5710-promisor-remote-capability::clone-with-knownname-and-missing-url-in-the-config	t5710-promisor-remote-capability	clone with 'KnownName' and missing URL in the config	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-knownurl	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'KnownUrl'	clone	partial
+t5710-promisor-remote-capability::clone-with-knownurl-and-different-remote-urls	t5710-promisor-remote-capability	clone with 'KnownUrl' and different remote urls	clone	partial
+t5710-promisor-remote-capability::clone-with-knownurl-and-url-not-configured-on-the-server	t5710-promisor-remote-capability	clone with 'KnownUrl' and url not configured on the server	clone	partial
+t5710-promisor-remote-capability::clone-with-knownurl-and-empty-url-so-not-advertised	t5710-promisor-remote-capability	clone with 'KnownUrl' and empty url, so not advertised	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-sendfields	t5710-promisor-remote-capability	clone with promisor.sendFields	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-checkfields	t5710-promisor-remote-capability	clone with promisor.checkFields	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-storefields-partialclonefilter	t5710-promisor-remote-capability	clone with promisor.storeFields=partialCloneFilter	clone	partial
+t5710-promisor-remote-capability::clone-and-fetch-with-filter-auto	t5710-promisor-remote-capability	clone and fetch with --filter=auto	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-true-but-don-t-delete-the-client	t5710-promisor-remote-capability	clone with promisor.advertise set to 'true' but don't delete the client	clone	partial
+t5710-promisor-remote-capability::setup-for-subsequent-fetches	t5710-promisor-remote-capability	setup for subsequent fetches	add	partial
+t5710-promisor-remote-capability::subsequent-fetch-from-a-client-when-promisor-advertise-is-true	t5710-promisor-remote-capability	subsequent fetch from a client when promisor.advertise is true	config	partial
+t5710-promisor-remote-capability::subsequent-fetch-from-a-client-when-promisor-advertise-is-false	t5710-promisor-remote-capability	subsequent fetch from a client when promisor.advertise is false	config	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-just-uris	t5750-bundle-uri-parse	bundle_uri_parse_line() just URIs	bundle	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-relative-uris	t5750-bundle-uri-parse	bundle_uri_parse_line(): relative URIs	bundle	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-relative-uris-and-parent-paths	t5750-bundle-uri-parse	bundle_uri_parse_line(): relative URIs and parent paths	bundle	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-empty-key-or-value	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: empty key or value	bundle	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-empty-lines	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: empty lines	bundle	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-duplicate-lines	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: duplicate lines	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-just-uris	t5750-bundle-uri-parse	parse config format: just URIs	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-relative-uris	t5750-bundle-uri-parse	parse config format: relative URIs	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-edge-cases-empty-key-or-value	t5750-bundle-uri-parse	parse config format edge cases: empty key or value	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-creationtoken-heuristic	t5750-bundle-uri-parse	parse config format: creationToken heuristic	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-edge-cases-creationtoken-heuristic	t5750-bundle-uri-parse	parse config format edge cases: creationToken heuristic	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-bundle-with-missing-uri	t5750-bundle-uri-parse	parse config format: bundle with missing uri	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-bundle-with-url-instead-of-uri	t5750-bundle-uri-parse	parse config format: bundle with url instead of uri	bundle	partial
+t5801-remote-helpers::setup-repository	t5801-remote-helpers	setup repository	remote	not_ported
+t5801-remote-helpers::cloning-from-local-repo	t5801-remote-helpers	cloning from local repo	remote	not_ported
+t5801-remote-helpers::clone-with-remote-vcs-config	t5801-remote-helpers	clone with remote.*.vcs config	remote	not_ported
+t5801-remote-helpers::fetch-with-configured-remote-vcs	t5801-remote-helpers	fetch with configured remote.*.vcs	remote	not_ported
+t5801-remote-helpers::vcs-remote-with-no-url	t5801-remote-helpers	vcs remote with no url	remote	not_ported
+t5801-remote-helpers::create-new-commit-on-remote	t5801-remote-helpers	create new commit on remote	remote	not_ported
+t5801-remote-helpers::pulling-from-local-repo	t5801-remote-helpers	pulling from local repo	remote	not_ported
+t5801-remote-helpers::pushing-to-local-repo	t5801-remote-helpers	pushing to local repo	remote	not_ported
+t5801-remote-helpers::fetch-new-branch	t5801-remote-helpers	fetch new branch	remote	not_ported
+t5801-remote-helpers::fetch-multiple-branches	t5801-remote-helpers	fetch multiple branches	remote	not_ported
+t5801-remote-helpers::push-when-remote-has-extra-refs	t5801-remote-helpers	push when remote has extra refs	remote	not_ported
+t5801-remote-helpers::push-new-branch-by-name	t5801-remote-helpers	push new branch by name	remote	not_ported
+t5801-remote-helpers::push-new-branch-with-old-new-refspec	t5801-remote-helpers	push new branch with old:new refspec	remote	not_ported
+t5801-remote-helpers::push-new-branch-with-head-new-refspec	t5801-remote-helpers	push new branch with HEAD:new refspec	remote	not_ported
+t5801-remote-helpers::push-delete-branch	t5801-remote-helpers	push delete branch	remote	not_ported
+t5801-remote-helpers::forced-push	t5801-remote-helpers	forced push	remote	not_ported
+t5801-remote-helpers::cloning-without-refspec	t5801-remote-helpers	cloning without refspec	remote	not_ported
+t5801-remote-helpers::pulling-without-refspecs	t5801-remote-helpers	pulling without refspecs	remote	not_ported
+t5801-remote-helpers::pushing-without-refspecs	t5801-remote-helpers	pushing without refspecs	remote	not_ported
+t5801-remote-helpers::pulling-without-marks	t5801-remote-helpers	pulling without marks	remote	not_ported
+t5801-remote-helpers::push-all-with-existing-object	t5801-remote-helpers	push all with existing object	remote	not_ported
+t5801-remote-helpers::push-ref-with-existing-object	t5801-remote-helpers	push ref with existing object	remote	not_ported
+t5801-remote-helpers::push-signed-tag	t5801-remote-helpers	push signed tag	remote	not_ported
+t5801-remote-helpers::push-signed-tag-with-signed-tags-capability	t5801-remote-helpers	push signed tag with signed-tags capability	remote	not_ported
+t5801-remote-helpers::push-update-refs	t5801-remote-helpers	push update refs	remote	not_ported
+t5801-remote-helpers::push-update-refs-disabled-by-no-private-update	t5801-remote-helpers	push update refs disabled by no-private-update	remote	not_ported
+t5801-remote-helpers::push-update-refs-failure	t5801-remote-helpers	push update refs failure	remote	not_ported
+t5801-remote-helpers::proper-failure-checks-for-fetching	t5801-remote-helpers	proper failure checks for fetching	remote	not_ported
+t5801-remote-helpers::proper-failure-checks-for-pushing	t5801-remote-helpers	proper failure checks for pushing	remote	not_ported
+t5801-remote-helpers::push-messages	t5801-remote-helpers	push messages	remote	not_ported
+t5801-remote-helpers::fetch-head	t5801-remote-helpers	fetch HEAD	remote	not_ported
+t5801-remote-helpers::fetch-url	t5801-remote-helpers	fetch url	remote	not_ported
+t5801-remote-helpers::fetch-tag	t5801-remote-helpers	fetch tag	remote	not_ported
+t5801-remote-helpers::totally-broken-helper-reports-failure-message	t5801-remote-helpers	totally broken helper reports failure message	remote	not_ported
+t5802-connect-helper::update-following-tag	t5802-connect-helper	update following tag	commit	partial
+t5802-connect-helper::update-backfilled-tag	t5802-connect-helper	update backfilled tag	commit	partial
+t5802-connect-helper::update-backfilled-tag-without-primary-transfer	t5802-connect-helper	update backfilled tag without primary transfer	for-each-ref	partial
+t5802-connect-helper::set-up-fake-git-daemon	t5802-connect-helper	set up fake git-daemon	daemon	partial
+t5802-connect-helper::ext-command-can-connect-to-git-daemon-no-vhost	t5802-connect-helper	ext command can connect to git daemon (no vhost)	clone	partial
+t5802-connect-helper::ext-command-can-connect-to-git-daemon-vhost	t5802-connect-helper	ext command can connect to git daemon (vhost)	clone	partial
 t5810-proto-disable-local::setup-repository-to-clone	t5810-proto-disable-local	setup repository to clone	fetch	pass
 t5810-proto-disable-local::setup-repo-with-dash	t5810-proto-disable-local	setup repo with dash	fetch	pass
 t5810-proto-disable-local::repo-names-starting-with-dash-are-rejected	t5810-proto-disable-local	repo names starting with dash are rejected	fetch	pass
@@ -17056,23 +17056,23 @@ t9300-fast-import::s-change-with-what-must-fail	t9300-fast-import	S: $change wit
 t9300-fast-import::t-ls-root-root-tree	t9300-fast-import	T: ls root ($root) tree	fast-import	not_ported
 t9300-fast-import::u-filedelete-root-root-succeeds	t9300-fast-import	U: filedelete root ($root) succeeds	fast-import	not_ported
 t9300-fast-import::u-validate-root-root-delete-result	t9300-fast-import	U: validate root ($root) delete result	fast-import	not_ported
-t9301-fast-import-notes::set-up-main-branch	t9301-fast-import-notes	set up main branch	fast-import	pass
-t9301-fast-import-notes::add-notes-with-simple-m-command	t9301-fast-import-notes	add notes with simple M command	fast-import	pass
-t9301-fast-import-notes::add-notes-with-simple-n-command	t9301-fast-import-notes	add notes with simple N command	fast-import	pass
-t9301-fast-import-notes::update-existing-notes-with-n-command	t9301-fast-import-notes	update existing notes with N command	fast-import	pass
-t9301-fast-import-notes::add-concatenation-notes-with-m-command	t9301-fast-import-notes	add concatenation notes with M command	fast-import	pass
-t9301-fast-import-notes::verify-that-deleteall-also-removes-notes	t9301-fast-import-notes	verify that deleteall also removes notes	fast-import	pass
-t9301-fast-import-notes::verify-that-later-n-commands-override-earlier-m-commands	t9301-fast-import-notes	verify that later N commands override earlier M commands	fast-import	pass
-t9301-fast-import-notes::add-lots-of-commits-and-notes	t9301-fast-import-notes	add lots of commits and notes	fast-import	pass
-t9301-fast-import-notes::verify-that-lots-of-notes-trigger-a-fanout-scheme	t9301-fast-import-notes	verify that lots of notes trigger a fanout scheme	fast-import	pass
-t9301-fast-import-notes::verify-that-importing-a-notes-tree-respects-the-fanout-scheme	t9301-fast-import-notes	verify that importing a notes tree respects the fanout scheme	fast-import	pass
-t9301-fast-import-notes::verify-that-non-notes-are-untouched-by-a-fanout-change	t9301-fast-import-notes	verify that non-notes are untouched by a fanout change	fast-import	pass
-t9301-fast-import-notes::change-a-few-existing-notes	t9301-fast-import-notes	change a few existing notes	fast-import	pass
-t9301-fast-import-notes::verify-that-changing-notes-respect-existing-fanout	t9301-fast-import-notes	verify that changing notes respect existing fanout	fast-import	pass
-t9301-fast-import-notes::remove-lots-of-notes	t9301-fast-import-notes	remove lots of notes	fast-import	pass
-t9301-fast-import-notes::verify-that-removing-notes-trigger-fanout-consolidation	t9301-fast-import-notes	verify that removing notes trigger fanout consolidation	fast-import	pass
-t9301-fast-import-notes::verify-that-non-notes-are-untouched-by-a-fanout-change-2	t9301-fast-import-notes	verify that non-notes are untouched by a fanout change	fast-import	pass
-t9301-fast-import-notes::add-notes-to-num-commits-commits-in-each-of-num-notes-refs-refs	t9301-fast-import-notes	add notes to $num_commits commits in each of $num_notes_refs refs	fast-import	pass
+t9301-fast-import-notes::set-up-main-branch	t9301-fast-import-notes	set up main branch	fast-import	partial
+t9301-fast-import-notes::add-notes-with-simple-m-command	t9301-fast-import-notes	add notes with simple M command	fast-import	partial
+t9301-fast-import-notes::add-notes-with-simple-n-command	t9301-fast-import-notes	add notes with simple N command	fast-import	partial
+t9301-fast-import-notes::update-existing-notes-with-n-command	t9301-fast-import-notes	update existing notes with N command	fast-import	partial
+t9301-fast-import-notes::add-concatenation-notes-with-m-command	t9301-fast-import-notes	add concatenation notes with M command	fast-import	partial
+t9301-fast-import-notes::verify-that-deleteall-also-removes-notes	t9301-fast-import-notes	verify that deleteall also removes notes	fast-import	partial
+t9301-fast-import-notes::verify-that-later-n-commands-override-earlier-m-commands	t9301-fast-import-notes	verify that later N commands override earlier M commands	fast-import	partial
+t9301-fast-import-notes::add-lots-of-commits-and-notes	t9301-fast-import-notes	add lots of commits and notes	fast-import	partial
+t9301-fast-import-notes::verify-that-lots-of-notes-trigger-a-fanout-scheme	t9301-fast-import-notes	verify that lots of notes trigger a fanout scheme	fast-import	partial
+t9301-fast-import-notes::verify-that-importing-a-notes-tree-respects-the-fanout-scheme	t9301-fast-import-notes	verify that importing a notes tree respects the fanout scheme	fast-import	partial
+t9301-fast-import-notes::verify-that-non-notes-are-untouched-by-a-fanout-change	t9301-fast-import-notes	verify that non-notes are untouched by a fanout change	fast-import	partial
+t9301-fast-import-notes::change-a-few-existing-notes	t9301-fast-import-notes	change a few existing notes	fast-import	partial
+t9301-fast-import-notes::verify-that-changing-notes-respect-existing-fanout	t9301-fast-import-notes	verify that changing notes respect existing fanout	fast-import	partial
+t9301-fast-import-notes::remove-lots-of-notes	t9301-fast-import-notes	remove lots of notes	fast-import	partial
+t9301-fast-import-notes::verify-that-removing-notes-trigger-fanout-consolidation	t9301-fast-import-notes	verify that removing notes trigger fanout consolidation	fast-import	partial
+t9301-fast-import-notes::verify-that-non-notes-are-untouched-by-a-fanout-change-2	t9301-fast-import-notes	verify that non-notes are untouched by a fanout change	fast-import	partial
+t9301-fast-import-notes::add-notes-to-num-commits-commits-in-each-of-num-notes-refs-refs	t9301-fast-import-notes	add notes to $num_commits commits in each of $num_notes_refs refs	fast-import	partial
 t9302-fast-import-unpack-limit::create-loose-objects-on-import	t9302-fast-import-unpack-limit	create loose objects on import	fast-import	pass
 t9302-fast-import-unpack-limit::bigger-packs-are-preserved	t9302-fast-import-unpack-limit	bigger packs are preserved	fast-import	pass
 t9302-fast-import-unpack-limit::lookups-after-checkpoint-works	t9302-fast-import-unpack-limit	lookups after checkpoint works	fast-import	pass
@@ -17184,23 +17184,23 @@ t9350-fast-export::fast-export-first-parent-outputs-all-revisions-output-by-revi
 t9350-fast-export::fast-export-handles-end-of-options	t9350-fast-export	fast-export handles --end-of-options	fast-export	pass
 t9350-fast-export::setup-a-commit-with-dual-signatures-on-its-sha-1-and-sha-256-formats	t9350-fast-export	setup a commit with dual signatures on its SHA-1 and SHA-256 formats	fast-export	pass
 t9350-fast-export::export-and-import-of-doubly-signed-commit	t9350-fast-export	export and import of doubly signed commit	fast-export	pass
-t9351-fast-export-anonymize::setup-simple-repo	t9351-fast-export-anonymize	setup simple repo	fast-export	pass
-t9351-fast-export-anonymize::export-anonymized-stream	t9351-fast-export-anonymize	export anonymized stream	fast-export	pass
-t9351-fast-export-anonymize::stream-omits-path-names	t9351-fast-export-anonymize	stream omits path names	fast-export	pass
-t9351-fast-export-anonymize::stream-contains-user-specified-names	t9351-fast-export-anonymize	stream contains user-specified names	fast-export	pass
-t9351-fast-export-anonymize::stream-omits-gitlink-oids	t9351-fast-export-anonymize	stream omits gitlink oids	fast-export	pass
-t9351-fast-export-anonymize::stream-retains-other-as-refname	t9351-fast-export-anonymize	stream retains other as refname	fast-export	pass
-t9351-fast-export-anonymize::stream-omits-other-refnames	t9351-fast-export-anonymize	stream omits other refnames	fast-export	pass
-t9351-fast-export-anonymize::stream-omits-identities	t9351-fast-export-anonymize	stream omits identities	fast-export	pass
-t9351-fast-export-anonymize::stream-omits-tag-message	t9351-fast-export-anonymize	stream omits tag message	fast-export	pass
-t9351-fast-export-anonymize::import-stream-to-new-repository	t9351-fast-export-anonymize	import stream to new repository	fast-export	pass
-t9351-fast-export-anonymize::result-has-two-branches	t9351-fast-export-anonymize	result has two branches	fast-export	pass
-t9351-fast-export-anonymize::repo-has-original-shape-and-timestamps	t9351-fast-export-anonymize	repo has original shape and timestamps	fast-export	pass
-t9351-fast-export-anonymize::root-tree-has-original-shape	t9351-fast-export-anonymize	root tree has original shape	fast-export	pass
-t9351-fast-export-anonymize::paths-in-subdir-ended-up-in-one-tree	t9351-fast-export-anonymize	paths in subdir ended up in one tree	fast-export	pass
-t9351-fast-export-anonymize::identical-gitlinks-got-identical-oid	t9351-fast-export-anonymize	identical gitlinks got identical oid	fast-export	pass
-t9351-fast-export-anonymize::all-tags-point-to-branch-tip	t9351-fast-export-anonymize	all tags point to branch tip	fast-export	pass
-t9351-fast-export-anonymize::idents-are-shared	t9351-fast-export-anonymize	idents are shared	fast-export	pass
+t9351-fast-export-anonymize::setup-simple-repo	t9351-fast-export-anonymize	setup simple repo	fast-export	partial
+t9351-fast-export-anonymize::export-anonymized-stream	t9351-fast-export-anonymize	export anonymized stream	fast-export	partial
+t9351-fast-export-anonymize::stream-omits-path-names	t9351-fast-export-anonymize	stream omits path names	fast-export	partial
+t9351-fast-export-anonymize::stream-contains-user-specified-names	t9351-fast-export-anonymize	stream contains user-specified names	fast-export	partial
+t9351-fast-export-anonymize::stream-omits-gitlink-oids	t9351-fast-export-anonymize	stream omits gitlink oids	fast-export	partial
+t9351-fast-export-anonymize::stream-retains-other-as-refname	t9351-fast-export-anonymize	stream retains other as refname	fast-export	partial
+t9351-fast-export-anonymize::stream-omits-other-refnames	t9351-fast-export-anonymize	stream omits other refnames	fast-export	partial
+t9351-fast-export-anonymize::stream-omits-identities	t9351-fast-export-anonymize	stream omits identities	fast-export	partial
+t9351-fast-export-anonymize::stream-omits-tag-message	t9351-fast-export-anonymize	stream omits tag message	fast-export	partial
+t9351-fast-export-anonymize::import-stream-to-new-repository	t9351-fast-export-anonymize	import stream to new repository	fast-export	partial
+t9351-fast-export-anonymize::result-has-two-branches	t9351-fast-export-anonymize	result has two branches	fast-export	partial
+t9351-fast-export-anonymize::repo-has-original-shape-and-timestamps	t9351-fast-export-anonymize	repo has original shape and timestamps	fast-export	partial
+t9351-fast-export-anonymize::root-tree-has-original-shape	t9351-fast-export-anonymize	root tree has original shape	fast-export	partial
+t9351-fast-export-anonymize::paths-in-subdir-ended-up-in-one-tree	t9351-fast-export-anonymize	paths in subdir ended up in one tree	fast-export	partial
+t9351-fast-export-anonymize::identical-gitlinks-got-identical-oid	t9351-fast-export-anonymize	identical gitlinks got identical oid	fast-export	partial
+t9351-fast-export-anonymize::all-tags-point-to-branch-tip	t9351-fast-export-anonymize	all tags point to branch tip	fast-export	partial
+t9351-fast-export-anonymize::idents-are-shared	t9351-fast-export-anonymize	idents are shared	fast-export	partial
 t9400-git-cvsserver-server::setup	t9400-git-cvsserver-server	setup	cvsserver	not_ported
 t9400-git-cvsserver-server::basic-checkout	t9400-git-cvsserver-server	basic checkout	cvsserver	not_ported
 t9400-git-cvsserver-server::pserver-authentication	t9400-git-cvsserver-server	pserver authentication	cvsserver	not_ported
@@ -17300,19 +17300,19 @@ t9402-git-cvsserver-refs::check-cvswork3-diff	t9402-git-cvsserver-refs	check [cv
 t9402-git-cvsserver-refs::merge-early-cvswork3-b3-with-b1	t9402-git-cvsserver-refs	merge early [cvswork3] b3 with b1	cvsserver	not_ported
 t9402-git-cvsserver-refs::cvs-up-dirty-cvswork3	t9402-git-cvsserver-refs	cvs up dirty [cvswork3]	cvsserver	not_ported
 t9402-git-cvsserver-refs::cvs-commit-cvswork3	t9402-git-cvsserver-refs	cvs commit [cvswork3]	cvsserver	not_ported
-t9500-gitweb-standalone-no-errors::setup-typechange-commits	t9500-gitweb-standalone-no-errors	setup typechange commits	gitweb	pass
-t9500-gitweb-standalone-no-errors::setup-incomplete-lines	t9500-gitweb-standalone-no-errors	setup incomplete lines	gitweb	pass
-t9500-gitweb-standalone-no-errors::commitdiff-1-addition-of-incomplete-line	t9500-gitweb-standalone-no-errors	commitdiff(1): addition of incomplete line	gitweb	pass
-t9500-gitweb-standalone-no-errors::commitdiff-1-incomplete-line-as-context-line	t9500-gitweb-standalone-no-errors	commitdiff(1): incomplete line as context line	gitweb	pass
-t9500-gitweb-standalone-no-errors::commitdiff-1-change-incomplete-line	t9500-gitweb-standalone-no-errors	commitdiff(1): change incomplete line	gitweb	pass
-t9500-gitweb-standalone-no-errors::commitdiff-1-removal-of-incomplete-line	t9500-gitweb-standalone-no-errors	commitdiff(1): removal of incomplete line	gitweb	pass
-t9500-gitweb-standalone-no-errors::side-by-side-addition-of-incomplete-line	t9500-gitweb-standalone-no-errors	side-by-side: addition of incomplete line	gitweb	pass
-t9500-gitweb-standalone-no-errors::side-by-side-incomplete-line-as-context-line	t9500-gitweb-standalone-no-errors	side-by-side: incomplete line as context line	gitweb	pass
-t9500-gitweb-standalone-no-errors::side-by-side-changed-incomplete-line	t9500-gitweb-standalone-no-errors	side-by-side: changed incomplete line	gitweb	pass
-t9500-gitweb-standalone-no-errors::side-by-side-removal-of-incomplete-line	t9500-gitweb-standalone-no-errors	side-by-side: removal of incomplete line	gitweb	pass
-t9500-gitweb-standalone-no-errors::side-by-side-merge-commit	t9500-gitweb-standalone-no-errors	side-by-side: merge commit	gitweb	pass
-t9500-gitweb-standalone-no-errors::setup	t9500-gitweb-standalone-no-errors	setup	gitweb	pass
-t9500-gitweb-standalone-no-errors::cat-gitweb-config-perl-eof-our-highlight-bin-highlight-feature-highlight-overrid	t9500-gitweb-standalone-no-errors	cat >>gitweb_config.perl <<-\EOF  our $highlight_bin = "highlight";  $feature{"highlight"}{"override"} = 1;  EOF	gitweb	pass
+t9500-gitweb-standalone-no-errors::setup-typechange-commits	t9500-gitweb-standalone-no-errors	setup typechange commits	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::setup-incomplete-lines	t9500-gitweb-standalone-no-errors	setup incomplete lines	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::commitdiff-1-addition-of-incomplete-line	t9500-gitweb-standalone-no-errors	commitdiff(1): addition of incomplete line	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::commitdiff-1-incomplete-line-as-context-line	t9500-gitweb-standalone-no-errors	commitdiff(1): incomplete line as context line	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::commitdiff-1-change-incomplete-line	t9500-gitweb-standalone-no-errors	commitdiff(1): change incomplete line	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::commitdiff-1-removal-of-incomplete-line	t9500-gitweb-standalone-no-errors	commitdiff(1): removal of incomplete line	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::side-by-side-addition-of-incomplete-line	t9500-gitweb-standalone-no-errors	side-by-side: addition of incomplete line	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::side-by-side-incomplete-line-as-context-line	t9500-gitweb-standalone-no-errors	side-by-side: incomplete line as context line	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::side-by-side-changed-incomplete-line	t9500-gitweb-standalone-no-errors	side-by-side: changed incomplete line	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::side-by-side-removal-of-incomplete-line	t9500-gitweb-standalone-no-errors	side-by-side: removal of incomplete line	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::side-by-side-merge-commit	t9500-gitweb-standalone-no-errors	side-by-side: merge commit	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::setup	t9500-gitweb-standalone-no-errors	setup	gitweb	not_ported
+t9500-gitweb-standalone-no-errors::cat-gitweb-config-perl-eof-our-highlight-bin-highlight-feature-highlight-overrid	t9500-gitweb-standalone-no-errors	cat >>gitweb_config.perl <<-\EOF  our $highlight_bin = "highlight";  $feature{"highlight"}{"override"} = 1;  EOF	gitweb	not_ported
 t9501-gitweb-standalone-http-status::setup	t9501-gitweb-standalone-http-status	setup	gitweb	not_ported
 t9501-gitweb-standalone-http-status::snapshots-good-tree-ish-id	t9501-gitweb-standalone-http-status	snapshots: good tree-ish id	gitweb	not_ported
 t9501-gitweb-standalone-http-status::snapshots-bad-tree-ish-id	t9501-gitweb-standalone-http-status	snapshots: bad tree-ish id	gitweb	not_ported
@@ -17775,324 +17775,324 @@ t9850-shell::shell-forbids-other-commands	t9850-shell	shell forbids other comman
 t9850-shell::shell-forbids-interactive-use-by-default	t9850-shell	shell forbids interactive use by default	help	not_ported
 t9850-shell::shell-allows-interactive-command	t9850-shell	shell allows interactive command	help	not_ported
 t9850-shell::shell-complains-of-overlong-commands	t9850-shell	shell complains of overlong commands	help	not_ported
-t9902-completion::setup-for-git-find-repo-path-gitdir-tests	t9902-completion	setup for __git_find_repo_path/__gitdir tests	help	pass
-t9902-completion::git-find-repo-path-from-command-line-through-git-dir	t9902-completion	__git_find_repo_path - from command line (through $__git_dir)	help	pass
-t9902-completion::git-find-repo-path-git-directory-in-cwd	t9902-completion	__git_find_repo_path - .git directory in cwd	help	pass
-t9902-completion::git-find-repo-path-git-directory-in-parent	t9902-completion	__git_find_repo_path - .git directory in parent	help	pass
-t9902-completion::git-find-repo-path-cwd-is-a-git-directory	t9902-completion	__git_find_repo_path - cwd is a .git directory	help	pass
-t9902-completion::git-find-repo-path-parent-is-a-git-directory	t9902-completion	__git_find_repo_path - parent is a .git directory	help	pass
-t9902-completion::git-find-repo-path-git-dir-set-while-git-directory-in-cwd	t9902-completion	__git_find_repo_path - $GIT_DIR set while .git directory in cwd	help	pass
-t9902-completion::git-find-repo-path-git-dir-set-while-git-directory-in-parent	t9902-completion	__git_find_repo_path - $GIT_DIR set while .git directory in parent	help	pass
-t9902-completion::git-find-repo-path-from-command-line-while-git-c	t9902-completion	__git_find_repo_path - from command line while "git -C"	help	pass
-t9902-completion::git-find-repo-path-relative-dir-from-command-line-and-git-c	t9902-completion	__git_find_repo_path - relative dir from command line and "git -C"	help	pass
-t9902-completion::git-find-repo-path-git-dir-set-while-git-c	t9902-completion	__git_find_repo_path - $GIT_DIR set while "git -C"	help	pass
-t9902-completion::git-find-repo-path-relative-dir-in-git-dir-and-git-c	t9902-completion	__git_find_repo_path - relative dir in $GIT_DIR and "git -C"	help	pass
-t9902-completion::git-find-repo-path-git-c-while-git-directory-in-cwd	t9902-completion	__git_find_repo_path - "git -C" while .git directory in cwd	help	pass
-t9902-completion::git-find-repo-path-git-c-while-cwd-is-a-git-directory	t9902-completion	__git_find_repo_path - "git -C" while cwd is a .git directory	help	pass
-t9902-completion::git-find-repo-path-git-c-while-git-directory-in-parent	t9902-completion	__git_find_repo_path - "git -C" while .git directory in parent	help	pass
-t9902-completion::git-find-repo-path-non-existing-path-in-git-c	t9902-completion	__git_find_repo_path - non-existing path in "git -C"	help	pass
-t9902-completion::git-find-repo-path-non-existing-path-in-git-dir	t9902-completion	__git_find_repo_path - non-existing path in $__git_dir	help	pass
-t9902-completion::git-find-repo-path-non-existing-git-dir	t9902-completion	__git_find_repo_path - non-existing $GIT_DIR	help	pass
-t9902-completion::git-find-repo-path-gitfile-in-cwd	t9902-completion	__git_find_repo_path - gitfile in cwd	help	pass
-t9902-completion::git-find-repo-path-gitfile-in-parent	t9902-completion	__git_find_repo_path - gitfile in parent	help	pass
-t9902-completion::git-find-repo-path-resulting-path-avoids-symlinks	t9902-completion	__git_find_repo_path - resulting path avoids symlinks	help	pass
-t9902-completion::git-find-repo-path-not-a-git-repository	t9902-completion	__git_find_repo_path - not a git repository	help	pass
-t9902-completion::gitdir-finds-repo	t9902-completion	__gitdir - finds repo	help	pass
-t9902-completion::gitdir-returns-error-when-cannot-find-repo	t9902-completion	__gitdir - returns error when cannot find repo	help	pass
-t9902-completion::gitdir-repo-as-argument	t9902-completion	__gitdir - repo as argument	help	pass
-t9902-completion::gitdir-remote-as-argument	t9902-completion	__gitdir - remote as argument	help	pass
-t9902-completion::git-dequote-plain-unquoted-word	t9902-completion	__git_dequote - plain unquoted word	help	pass
-t9902-completion::git-dequote-backslash-escaped	t9902-completion	__git_dequote - backslash escaped	help	pass
-t9902-completion::git-dequote-single-quoted	t9902-completion	__git_dequote - single quoted	help	pass
-t9902-completion::git-dequote-double-quoted	t9902-completion	__git_dequote - double quoted	help	pass
-t9902-completion::git-dequote-open-single-quote	t9902-completion	__git_dequote - open single quote	help	pass
-t9902-completion::git-dequote-open-double-quote	t9902-completion	__git_dequote - open double quote	help	pass
-t9902-completion::git-count-path-components-no-slashes	t9902-completion	__git_count_path_components - no slashes	help	pass
-t9902-completion::git-count-path-components-relative	t9902-completion	__git_count_path_components - relative	help	pass
-t9902-completion::git-count-path-components-absolute	t9902-completion	__git_count_path_components - absolute	help	pass
-t9902-completion::git-count-path-components-trailing-slash	t9902-completion	__git_count_path_components - trailing slash	help	pass
-t9902-completion::gitcomp-direct-puts-everything-into-compreply-as-is	t9902-completion	__gitcomp_direct - puts everything into COMPREPLY as-is	help	pass
-t9902-completion::gitcomp-trailing-space-options	t9902-completion	__gitcomp - trailing space - options	help	pass
-t9902-completion::gitcomp-trailing-space-config-keys	t9902-completion	__gitcomp - trailing space - config keys	help	pass
-t9902-completion::gitcomp-option-parameter	t9902-completion	__gitcomp - option parameter	help	pass
-t9902-completion::gitcomp-prefix	t9902-completion	__gitcomp - prefix	help	pass
-t9902-completion::gitcomp-suffix	t9902-completion	__gitcomp - suffix	help	pass
-t9902-completion::gitcomp-ignore-optional-negative-options	t9902-completion	__gitcomp - ignore optional negative options	help	pass
-t9902-completion::gitcomp-ignore-narrow-optional-negative-options	t9902-completion	__gitcomp - ignore/narrow optional negative options	help	pass
-t9902-completion::gitcomp-ignore-narrow-optional-negative-options-2	t9902-completion	__gitcomp - ignore/narrow optional negative options	help	pass
-t9902-completion::gitcomp-expand-all-negative-options	t9902-completion	__gitcomp - expand all negative options	help	pass
-t9902-completion::gitcomp-expand-narrow-all-negative-options	t9902-completion	__gitcomp - expand/narrow all negative options	help	pass
-t9902-completion::gitcomp-equal-skip	t9902-completion	__gitcomp - equal skip	help	pass
-t9902-completion::gitcomp-doesnt-fail-because-of-invalid-variable-name	t9902-completion	__gitcomp - doesnt fail because of invalid variable name	help	pass
-t9902-completion::gitcomp-nl-trailing-space	t9902-completion	__gitcomp_nl - trailing space	help	pass
-t9902-completion::gitcomp-nl-prefix	t9902-completion	__gitcomp_nl - prefix	help	pass
-t9902-completion::gitcomp-nl-suffix	t9902-completion	__gitcomp_nl - suffix	help	pass
-t9902-completion::gitcomp-nl-no-suffix	t9902-completion	__gitcomp_nl - no suffix	help	pass
-t9902-completion::gitcomp-nl-doesnt-fail-because-of-invalid-variable-name	t9902-completion	__gitcomp_nl - doesnt fail because of invalid variable name	help	pass
-t9902-completion::git-remotes-list-remotes-from-git-dir-remotes-and-from-config-file	t9902-completion	__git_remotes - list remotes from $GIT_DIR/remotes and from config file	help	pass
-t9902-completion::git-is-configured-remote	t9902-completion	__git_is_configured_remote	help	pass
-t9902-completion::setup-for-ref-completion	t9902-completion	setup for ref completion	help	pass
-t9902-completion::git-refs-simple	t9902-completion	__git_refs - simple	help	pass
-t9902-completion::git-refs-full-refs	t9902-completion	__git_refs - full refs	help	pass
-t9902-completion::git-refs-repo-given-on-the-command-line	t9902-completion	__git_refs - repo given on the command line	help	pass
-t9902-completion::git-refs-remote-on-local-file-system	t9902-completion	__git_refs - remote on local file system	help	pass
-t9902-completion::git-refs-remote-on-local-file-system-full-refs	t9902-completion	__git_refs - remote on local file system - full refs	help	pass
-t9902-completion::git-refs-configured-remote	t9902-completion	__git_refs - configured remote	help	pass
-t9902-completion::git-refs-configured-remote-with-slash	t9902-completion	__git_refs - configured remote - with slash	help	pass
-t9902-completion::git-refs-configured-remote-full-refs	t9902-completion	__git_refs - configured remote - full refs	help	pass
-t9902-completion::git-refs-configured-remote-repo-given-on-the-command-line	t9902-completion	__git_refs - configured remote - repo given on the command line	help	pass
-t9902-completion::git-refs-configured-remote-full-refs-repo-given-on-the-command-line	t9902-completion	__git_refs - configured remote - full refs - repo given on the command line	help	pass
-t9902-completion::git-refs-configured-remote-remote-name-matches-a-directory	t9902-completion	__git_refs - configured remote - remote name matches a directory	help	pass
-t9902-completion::git-refs-url-remote	t9902-completion	__git_refs - URL remote	help	pass
-t9902-completion::git-refs-url-remote-full-refs	t9902-completion	__git_refs - URL remote - full refs	help	pass
-t9902-completion::git-refs-non-existing-remote	t9902-completion	__git_refs - non-existing remote	help	pass
-t9902-completion::git-refs-non-existing-remote-full-refs	t9902-completion	__git_refs - non-existing remote - full refs	help	pass
-t9902-completion::git-refs-non-existing-url-remote	t9902-completion	__git_refs - non-existing URL remote	help	pass
-t9902-completion::git-refs-non-existing-url-remote-full-refs	t9902-completion	__git_refs - non-existing URL remote - full refs	help	pass
-t9902-completion::git-refs-not-in-a-git-repository	t9902-completion	__git_refs - not in a git repository	help	pass
-t9902-completion::git-refs-unique-remote-branches-for-git-checkout-dwimery	t9902-completion	__git_refs - unique remote branches for git checkout DWIMery	help	pass
-t9902-completion::git-refs-after-opt	t9902-completion	__git_refs - after --opt=	help	pass
-t9902-completion::git-refs-after-opt-full-refs	t9902-completion	__git_refs - after --opt= - full refs	help	pass
-t9902-completion::git-refs-excluding-refs	t9902-completion	__git refs - excluding refs	help	pass
-t9902-completion::git-refs-excluding-full-refs	t9902-completion	__git refs - excluding full refs	help	pass
-t9902-completion::setup-for-filtering-matching-refs	t9902-completion	setup for filtering matching refs	help	pass
-t9902-completion::git-refs-do-not-filter-refs-unless-told-so	t9902-completion	__git_refs - do not filter refs unless told so	help	pass
-t9902-completion::git-refs-only-matching-refs	t9902-completion	__git_refs - only matching refs	help	pass
-t9902-completion::git-refs-only-matching-refs-full-refs	t9902-completion	__git_refs - only matching refs - full refs	help	pass
-t9902-completion::git-refs-only-matching-refs-remote-on-local-file-system	t9902-completion	__git_refs - only matching refs - remote on local file system	help	pass
-t9902-completion::git-refs-only-matching-refs-configured-remote	t9902-completion	__git_refs - only matching refs - configured remote	help	pass
-t9902-completion::git-refs-only-matching-refs-remote-full-refs	t9902-completion	__git_refs - only matching refs - remote - full refs	help	pass
-t9902-completion::git-refs-only-matching-refs-checkout-dwimery	t9902-completion	__git_refs - only matching refs - checkout DWIMery	help	pass
-t9902-completion::teardown-after-filtering-matching-refs	t9902-completion	teardown after filtering matching refs	help	pass
-t9902-completion::git-refs-for-each-ref-format-specifiers-in-prefix	t9902-completion	__git_refs - for-each-ref format specifiers in prefix	help	pass
-t9902-completion::git-complete-refs-simple	t9902-completion	__git_complete_refs - simple	help	pass
-t9902-completion::git-complete-refs-matching	t9902-completion	__git_complete_refs - matching	help	pass
-t9902-completion::git-complete-refs-remote	t9902-completion	__git_complete_refs - remote	help	pass
-t9902-completion::git-complete-refs-remote-with-slash	t9902-completion	__git_complete_refs - remote - with slash	help	pass
-t9902-completion::git-complete-refs-track	t9902-completion	__git_complete_refs - track	help	pass
-t9902-completion::git-complete-refs-current-word	t9902-completion	__git_complete_refs - current word	help	pass
-t9902-completion::git-complete-refs-prefix	t9902-completion	__git_complete_refs - prefix	help	pass
-t9902-completion::git-complete-refs-suffix	t9902-completion	__git_complete_refs - suffix	help	pass
-t9902-completion::git-complete-fetch-refspecs-simple	t9902-completion	__git_complete_fetch_refspecs - simple	help	pass
-t9902-completion::git-complete-fetch-refspecs-with-slash	t9902-completion	__git_complete_fetch_refspecs - with slash	help	pass
-t9902-completion::git-complete-fetch-refspecs-matching	t9902-completion	__git_complete_fetch_refspecs - matching	help	pass
-t9902-completion::git-complete-fetch-refspecs-prefix	t9902-completion	__git_complete_fetch_refspecs - prefix	help	pass
-t9902-completion::git-complete-fetch-refspecs-fully-qualified	t9902-completion	__git_complete_fetch_refspecs - fully qualified	help	pass
-t9902-completion::git-complete-fetch-refspecs-fully-qualified-prefix	t9902-completion	__git_complete_fetch_refspecs - fully qualified & prefix	help	pass
-t9902-completion::git-complete-worktree-paths	t9902-completion	__git_complete_worktree_paths	help	pass
-t9902-completion::git-complete-worktree-paths-not-a-git-repository	t9902-completion	__git_complete_worktree_paths - not a git repository	help	pass
-t9902-completion::git-complete-worktree-paths-with-c	t9902-completion	__git_complete_worktree_paths with -C	help	pass
-t9902-completion::git-switch-with-no-options-complete-local-branches-and-unique-remote-branch-name	t9902-completion	git switch - with no options, complete local branches and unique remote branch names for DWIM logic	help	pass
-t9902-completion::git-bisect-when-not-bisecting-complete-only-replay-and-start-subcommands	t9902-completion	git bisect - when not bisecting, complete only replay and start subcommands	help	pass
-t9902-completion::git-bisect-complete-options-to-start-subcommand	t9902-completion	git bisect - complete options to start subcommand	help	pass
-t9902-completion::setup-for-git-bisect-tests-requiring-a-repo	t9902-completion	setup for git-bisect tests requiring a repo	help	pass
-t9902-completion::git-bisect-start-subcommand-arguments-before-double-dash-are-completed-as-revs	t9902-completion	git bisect - start subcommand arguments before double-dash are completed as revs	help	pass
-t9902-completion::git-bisect-start-subcommand-arguments-after-double-dash-are-not-completed	t9902-completion	git bisect - start subcommand arguments after double-dash are not completed	help	pass
-t9902-completion::setup-for-git-bisect-tests-requiring-ongoing-bisection	t9902-completion	setup for git-bisect tests requiring ongoing bisection	help	pass
-t9902-completion::git-bisect-when-bisecting-all-subcommands-are-candidates	t9902-completion	git-bisect - when bisecting all subcommands are candidates	help	pass
-t9902-completion::git-bisect-options-to-terms-subcommand-are-candidates	t9902-completion	git-bisect - options to terms subcommand are candidates	help	pass
-t9902-completion::git-bisect-git-log-options-to-visualize-subcommand-are-candidates	t9902-completion	git-bisect - git-log options to visualize subcommand are candidates	help	pass
-t9902-completion::git-bisect-view-subcommand-is-not-a-candidate	t9902-completion	git-bisect - view subcommand is not a candidate	help	pass
-t9902-completion::git-bisect-existing-view-subcommand-is-recognized-and-enables-completion-of-git	t9902-completion	git-bisect - existing view subcommand is recognized and enables completion of git-log options	help	pass
-t9902-completion::git-checkout-completes-refs-and-unique-remote-branches-for-dwim	t9902-completion	git checkout - completes refs and unique remote branches for DWIM	help	pass
-t9902-completion::git-switch-with-no-guess-complete-only-local-branches	t9902-completion	git switch - with --no-guess, complete only local branches	help	pass
-t9902-completion::git-switch-with-git-completion-checkout-no-guess-1-complete-only-local-branches	t9902-completion	git switch - with GIT_COMPLETION_CHECKOUT_NO_GUESS=1, complete only local branches	help	pass
-t9902-completion::git-switch-guess-overrides-git-completion-checkout-no-guess-1-complete-local-bra	t9902-completion	git switch - --guess overrides GIT_COMPLETION_CHECKOUT_NO_GUESS=1, complete local branches and unique remote names for DWIM logic	help	pass
-t9902-completion::git-switch-a-later-guess-overrides-previous-no-guess-complete-local-and-remote-u	t9902-completion	git switch - a later --guess overrides previous --no-guess, complete local and remote unique branches for DWIM	help	pass
-t9902-completion::git-switch-a-later-no-guess-overrides-previous-guess-complete-only-local-branche	t9902-completion	git switch - a later --no-guess overrides previous --guess, complete only local branches	help	pass
-t9902-completion::git-checkout-with-git-completion-no-guess-1-only-completes-refs	t9902-completion	git checkout - with GIT_COMPLETION_NO_GUESS=1 only completes refs	help	pass
-t9902-completion::git-checkout-guess-overrides-git-completion-no-guess-1-complete-refs-and-unique	t9902-completion	git checkout - --guess overrides GIT_COMPLETION_NO_GUESS=1, complete refs and unique remote branches for DWIM	help	pass
-t9902-completion::git-checkout-with-no-guess-only-completes-refs	t9902-completion	git checkout - with --no-guess, only completes refs	help	pass
-t9902-completion::git-checkout-a-later-guess-overrides-previous-no-guess-complete-refs-and-unique	t9902-completion	git checkout - a later --guess overrides previous --no-guess, complete refs and unique remote branches for DWIM	help	pass
-t9902-completion::git-checkout-a-later-no-guess-overrides-previous-guess-complete-only-refs	t9902-completion	git checkout - a later --no-guess overrides previous --guess, complete only refs	help	pass
-t9902-completion::git-checkout-with-checkout-guess-false-only-completes-refs	t9902-completion	git checkout - with checkout.guess = false, only completes refs	help	pass
-t9902-completion::git-checkout-with-checkout-guess-true-completes-refs-and-unique-remote-branches	t9902-completion	git checkout - with checkout.guess = true, completes refs and unique remote branches for DWIM	help	pass
-t9902-completion::git-checkout-a-later-guess-overrides-previous-checkout-guess-false-complete-refs	t9902-completion	git checkout - a later --guess overrides previous checkout.guess = false, complete refs and unique remote branches for DWIM	help	pass
-t9902-completion::git-checkout-a-later-no-guess-overrides-previous-checkout-guess-true-complete-on	t9902-completion	git checkout - a later --no-guess overrides previous checkout.guess = true, complete only refs	help	pass
-t9902-completion::git-switch-with-detach-complete-all-references	t9902-completion	git switch - with --detach, complete all references	help	pass
-t9902-completion::git-checkout-with-detach-complete-only-references	t9902-completion	git checkout - with --detach, complete only references	help	pass
-t9902-completion::setup-sparse-checkout-tests	t9902-completion	setup sparse-checkout tests	help	pass
-t9902-completion::sparse-checkout-completes-subcommands	t9902-completion	sparse-checkout completes subcommands	help	pass
-t9902-completion::cone-mode-sparse-checkout-completes-directory-names	t9902-completion	cone mode sparse-checkout completes directory names	help	pass
-t9902-completion::cone-mode-sparse-checkout-completes-directory-names-with-spaces-and-accents	t9902-completion	cone mode sparse-checkout completes directory names with spaces and accents	help	pass
-t9902-completion::cone-mode-sparse-checkout-completes-directory-names-with-tabs	t9902-completion	cone mode sparse-checkout completes directory names with tabs	help	pass
-t9902-completion::cone-mode-sparse-checkout-completes-directory-names-with-backslashes	t9902-completion	cone mode sparse-checkout completes directory names with backslashes	help	pass
-t9902-completion::non-cone-mode-sparse-checkout-gives-rooted-paths	t9902-completion	non-cone mode sparse-checkout gives rooted paths	help	pass
-t9902-completion::git-sparse-checkout-set-cone-completes-directory-names	t9902-completion	git sparse-checkout set --cone completes directory names	help	pass
-t9902-completion::git-switch-with-d-complete-all-references	t9902-completion	git switch - with -d, complete all references	help	pass
-t9902-completion::git-checkout-with-d-complete-only-references	t9902-completion	git checkout - with -d, complete only references	help	pass
-t9902-completion::git-switch-with-track-complete-only-remote-branches	t9902-completion	git switch - with --track, complete only remote branches	help	pass
-t9902-completion::git-checkout-with-track-complete-only-remote-branches	t9902-completion	git checkout - with --track, complete only remote branches	help	pass
-t9902-completion::git-switch-with-no-track-complete-only-local-branch-names	t9902-completion	git switch - with --no-track, complete only local branch names	help	pass
-t9902-completion::git-checkout-with-no-track-complete-only-local-references	t9902-completion	git checkout - with --no-track, complete only local references	help	pass
-t9902-completion::git-switch-with-c-complete-all-references	t9902-completion	git switch - with -c, complete all references	help	pass
-t9902-completion::git-switch-with-c-complete-all-references-2	t9902-completion	git switch - with -C, complete all references	help	pass
-t9902-completion::git-switch-with-c-and-track-complete-all-references	t9902-completion	git switch - with -c and --track, complete all references	help	pass
-t9902-completion::git-switch-with-c-and-track-complete-all-references-2	t9902-completion	git switch - with -C and --track, complete all references	help	pass
-t9902-completion::git-switch-with-c-and-no-track-complete-all-references	t9902-completion	git switch - with -c and --no-track, complete all references	help	pass
-t9902-completion::git-switch-with-c-and-no-track-complete-all-references-2	t9902-completion	git switch - with -C and --no-track, complete all references	help	pass
-t9902-completion::git-checkout-with-b-complete-all-references	t9902-completion	git checkout - with -b, complete all references	help	pass
-t9902-completion::git-checkout-with-b-complete-all-references-2	t9902-completion	git checkout - with -B, complete all references	help	pass
-t9902-completion::git-checkout-with-b-and-track-complete-all-references	t9902-completion	git checkout - with -b and --track, complete all references	help	pass
-t9902-completion::git-checkout-with-b-and-track-complete-all-references-2	t9902-completion	git checkout - with -B and --track, complete all references	help	pass
-t9902-completion::git-checkout-with-b-and-no-track-complete-all-references	t9902-completion	git checkout - with -b and --no-track, complete all references	help	pass
-t9902-completion::git-checkout-with-b-and-no-track-complete-all-references-2	t9902-completion	git checkout - with -B and --no-track, complete all references	help	pass
-t9902-completion::git-switch-for-c-complete-local-branches-and-unique-remote-branches	t9902-completion	git switch - for -c, complete local branches and unique remote branches	help	pass
-t9902-completion::git-switch-for-c-complete-local-branches-and-unique-remote-branches-2	t9902-completion	git switch - for -C, complete local branches and unique remote branches	help	pass
-t9902-completion::git-switch-for-c-with-no-guess-complete-local-branches-only	t9902-completion	git switch - for -c with --no-guess, complete local branches only	help	pass
-t9902-completion::git-switch-for-c-with-no-guess-complete-local-branches-only-2	t9902-completion	git switch - for -C with --no-guess, complete local branches only	help	pass
-t9902-completion::git-switch-for-c-with-no-track-complete-local-branches-only	t9902-completion	git switch - for -c with --no-track, complete local branches only	help	pass
-t9902-completion::git-switch-for-c-with-no-track-complete-local-branches-only-2	t9902-completion	git switch - for -C with --no-track, complete local branches only	help	pass
-t9902-completion::git-checkout-for-b-complete-local-branches-and-unique-remote-branches	t9902-completion	git checkout - for -b, complete local branches and unique remote branches	help	pass
-t9902-completion::git-checkout-for-b-complete-local-branches-and-unique-remote-branches-2	t9902-completion	git checkout - for -B, complete local branches and unique remote branches	help	pass
-t9902-completion::git-checkout-for-b-with-no-guess-complete-local-branches-only	t9902-completion	git checkout - for -b with --no-guess, complete local branches only	help	pass
-t9902-completion::git-checkout-for-b-with-no-guess-complete-local-branches-only-2	t9902-completion	git checkout - for -B with --no-guess, complete local branches only	help	pass
-t9902-completion::git-checkout-for-b-with-no-track-complete-local-branches-only	t9902-completion	git checkout - for -b with --no-track, complete local branches only	help	pass
-t9902-completion::git-checkout-for-b-with-no-track-complete-local-branches-only-2	t9902-completion	git checkout - for -B with --no-track, complete local branches only	help	pass
-t9902-completion::git-switch-with-orphan-completes-local-branch-names-and-unique-remote-branch-nam	t9902-completion	git switch - with --orphan completes local branch names and unique remote branch names	help	pass
-t9902-completion::git-switch-orphan-with-branch-already-provided-completes-nothing-else	t9902-completion	git switch - --orphan with branch already provided completes nothing else	help	pass
-t9902-completion::git-checkout-with-orphan-completes-local-branch-names-and-unique-remote-branch-n	t9902-completion	git checkout - with --orphan completes local branch names and unique remote branch names	help	pass
-t9902-completion::git-checkout-orphan-with-branch-already-provided-completes-local-refs-for-a-star	t9902-completion	git checkout - --orphan with branch already provided completes local refs for a start-point	help	pass
-t9902-completion::git-restore-completes-modified-files	t9902-completion	git restore completes modified files	help	pass
-t9902-completion::teardown-after-ref-completion	t9902-completion	teardown after ref completion	help	pass
-t9902-completion::setup-for-path-completion-tests	t9902-completion	setup for path completion tests	help	pass
-t9902-completion::git-complete-index-file-simple	t9902-completion	__git_complete_index_file - simple	help	pass
-t9902-completion::git-complete-index-file-utf-8-in-ls-files-output	t9902-completion	__git_complete_index_file - UTF-8 in ls-files output	help	pass
-t9902-completion::teardown-after-path-completion-tests	t9902-completion	teardown after path completion tests	help	pass
-t9902-completion::git-find-on-cmdline-single-match	t9902-completion	__git_find_on_cmdline - single match	help	pass
-t9902-completion::git-find-on-cmdline-multiple-matches	t9902-completion	__git_find_on_cmdline - multiple matches	help	pass
-t9902-completion::git-find-on-cmdline-no-match	t9902-completion	__git_find_on_cmdline - no match	help	pass
-t9902-completion::git-find-on-cmdline-single-match-with-index	t9902-completion	__git_find_on_cmdline - single match with index	help	pass
-t9902-completion::git-find-on-cmdline-multiple-matches-with-index	t9902-completion	__git_find_on_cmdline - multiple matches with index	help	pass
-t9902-completion::git-find-on-cmdline-no-match-with-index	t9902-completion	__git_find_on_cmdline - no match with index	help	pass
-t9902-completion::git-find-on-cmdline-ignores-matches-before-command-with-index	t9902-completion	__git_find_on_cmdline - ignores matches before command with index	help	pass
-t9902-completion::git-get-config-variables	t9902-completion	__git_get_config_variables	help	pass
-t9902-completion::git-pretty-aliases	t9902-completion	__git_pretty_aliases	help	pass
-t9902-completion::basic	t9902-completion	basic	help	pass
-t9902-completion::double-dash-git-itself	t9902-completion	double dash "git" itself	help	pass
-t9902-completion::double-dash-git-checkout	t9902-completion	double dash "git checkout"	help	pass
-t9902-completion::general-options	t9902-completion	general options	help	pass
-t9902-completion::general-options-plus-command	t9902-completion	general options plus command	help	pass
-t9902-completion::git-help-completion	t9902-completion	git --help completion	help	pass
-t9902-completion::completion-commands-removes-multiple-commands	t9902-completion	completion.commands removes multiple commands	help	pass
-t9902-completion::setup-for-integration-tests	t9902-completion	setup for integration tests	help	pass
-t9902-completion::checkout-completes-ref-names	t9902-completion	checkout completes ref names	help	pass
-t9902-completion::checkout-does-not-match-ref-names-of-a-different-case	t9902-completion	checkout does not match ref names of a different case	help	pass
-t9902-completion::checkout-matches-case-insensitively-with-git-completion-ignore-case	t9902-completion	checkout matches case insensitively with GIT_COMPLETION_IGNORE_CASE	help	pass
-t9902-completion::checkout-completes-pseudo-refs	t9902-completion	checkout completes pseudo refs	help	pass
-t9902-completion::checkout-completes-pseudo-refs-case-insensitively-with-git-completion-ignore-cas	t9902-completion	checkout completes pseudo refs case insensitively with GIT_COMPLETION_IGNORE_CASE	help	pass
-t9902-completion::git-c-path-checkout-uses-the-right-repo	t9902-completion	git -C <path> checkout uses the right repo	help	pass
-t9902-completion::show-completes-all-refs	t9902-completion	show completes all refs	help	pass
-t9902-completion::ref-completes-paths	t9902-completion	<ref>: completes paths	help	pass
-t9902-completion::complete-tree-filename-with-spaces	t9902-completion	complete tree filename with spaces	help	pass
-t9902-completion::complete-tree-filename-with-metacharacters	t9902-completion	complete tree filename with metacharacters	help	pass
-t9902-completion::symbolic-ref-completes-builtin-options	t9902-completion	symbolic-ref completes builtin options	help	pass
-t9902-completion::symbolic-ref-completes-short-ref-names	t9902-completion	symbolic-ref completes short ref names	help	pass
-t9902-completion::symbolic-ref-completes-full-ref-names	t9902-completion	symbolic-ref completes full ref names	help	pass
-t9902-completion::send-email	t9902-completion	send-email	help	pass
-t9902-completion::complete-files	t9902-completion	complete files	help	pass
-t9902-completion::completion-uses-cmd-completion-for-alias-f-var-val-git-cmd	t9902-completion	completion uses <cmd> completion for alias: !f () { VAR=val git <cmd> ... }	help	pass
-t9902-completion::completion-used-cmd-completion-for-alias-f-git-cmd	t9902-completion	completion used <cmd> completion for alias: !f() { : git <cmd> ; ... }	help	pass
-t9902-completion::completion-used-cmd-completion-for-alias-f-cmd	t9902-completion	completion used <cmd> completion for alias: !f() { : <cmd> ; ... }	help	pass
-t9902-completion::completion-used-cmd-completion-for-alias-f-cmd-2	t9902-completion	completion used <cmd> completion for alias: !f() { : <cmd>; ... }	help	pass
-t9902-completion::completion-without-explicit-git-xxx-function	t9902-completion	completion without explicit _git_xxx function	help	pass
-t9902-completion::setup-other-remote-for-remote-reference-completion	t9902-completion	setup other remote for remote reference completion	help	pass
-t9902-completion::git-config-subcommand	t9902-completion	git config subcommand	help	pass
-t9902-completion::git-config-subcommand-options	t9902-completion	git config subcommand options	help	pass
-t9902-completion::git-config-get	t9902-completion	git config get	help	pass
-t9902-completion::git-config-set-section	t9902-completion	git config set - section	help	pass
-t9902-completion::git-config-set-section-include-includeif	t9902-completion	git config set - section include, includeIf	help	pass
-t9902-completion::git-config-set-variable-name	t9902-completion	git config set - variable name	help	pass
-t9902-completion::git-config-set-variable-name-include	t9902-completion	git config set - variable name include	help	pass
-t9902-completion::setup-for-git-config-submodule-tests	t9902-completion	setup for git config submodule tests	help	pass
-t9902-completion::git-config-set-variable-name-submodule-and-git-compute-first-level-config-vars-f	t9902-completion	git config set - variable name - submodule and __git_compute_first_level_config_vars_for_section	help	pass
-t9902-completion::git-config-set-variable-name-git-compute-second-level-config-vars-for-section	t9902-completion	git config set - variable name - __git_compute_second_level_config_vars_for_section	help	pass
-t9902-completion::git-config-set-value	t9902-completion	git config set - value	help	pass
-t9902-completion::git-c-section	t9902-completion	git -c - section	help	pass
-t9902-completion::git-c-variable-name	t9902-completion	git -c - variable name	help	pass
-t9902-completion::git-c-value	t9902-completion	git -c - value	help	pass
-t9902-completion::git-clone-config-section	t9902-completion	git clone --config= - section	help	pass
-t9902-completion::git-clone-config-variable-name	t9902-completion	git clone --config= - variable name	help	pass
-t9902-completion::git-clone-config-value	t9902-completion	git clone --config= - value	help	pass
-t9902-completion::git-reflog-show	t9902-completion	git reflog show	help	pass
-t9902-completion::options-with-value	t9902-completion	options with value	help	pass
-t9902-completion::sourcing-the-completion-script-clears-cached-commands	t9902-completion	sourcing the completion script clears cached commands	help	pass
-t9902-completion::sourcing-the-completion-script-clears-cached-merge-strategies	t9902-completion	sourcing the completion script clears cached merge strategies	help	pass
-t9902-completion::sourcing-the-completion-script-clears-cached-options	t9902-completion	sourcing the completion script clears cached --options	help	pass
-t9902-completion::option-aliases-are-not-shown-by-default	t9902-completion	option aliases are not shown by default	help	pass
-t9902-completion::option-aliases-are-shown-with-git-completion-show-all	t9902-completion	option aliases are shown with GIT_COMPLETION_SHOW_ALL	help	pass
-t9902-completion::plumbing-commands-are-excluded-without-git-completion-show-all-commands	t9902-completion	plumbing commands are excluded without GIT_COMPLETION_SHOW_ALL_COMMANDS	help	pass
-t9902-completion::all-commands-are-shown-with-git-completion-show-all-commands-also-main-non-built	t9902-completion	all commands are shown with GIT_COMPLETION_SHOW_ALL_COMMANDS (also main non-builtin)	help	pass
-t9902-completion::git-complete	t9902-completion	__git_complete	help	pass
-t9902-completion::git-pseudoref-exists	t9902-completion	__git_pseudoref_exists	help	pass
-t9902-completion::simple-alias	t9902-completion	simple alias	help	pass
-t9902-completion::recursive-alias	t9902-completion	recursive alias	help	pass
-t9902-completion::completion-uses-cmd-completion-for-alias-sh-c-git-cmd	t9902-completion	completion uses <cmd> completion for alias: !sh -c 'git <cmd> ...'	help	pass
-t9902-completion::git-complete-remote-or-refspec-push-flag-other	t9902-completion	__git_complete_remote_or_refspec - push $flag other	help	pass
-t9903-bash-prompt::setup-for-prompt-tests	t9903-bash-prompt	setup for prompt tests	status	pass
-t9903-bash-prompt::prompt-branch-name	t9903-bash-prompt	prompt - branch name	status	pass
-t9903-bash-prompt::prompt-branch-name-symlink-symref	t9903-bash-prompt	prompt - branch name - symlink symref	status	pass
-t9903-bash-prompt::prompt-unborn-branch	t9903-bash-prompt	prompt - unborn branch	status	pass
-t9903-bash-prompt::prompt-with-newline-in-path	t9903-bash-prompt	prompt - with newline in path	status	pass
-t9903-bash-prompt::prompt-detached-head	t9903-bash-prompt	prompt - detached head	status	pass
-t9903-bash-prompt::prompt-describe-detached-head-contains	t9903-bash-prompt	prompt - describe detached head - contains	status	pass
-t9903-bash-prompt::prompt-describe-detached-head-branch	t9903-bash-prompt	prompt - describe detached head - branch	status	pass
-t9903-bash-prompt::prompt-describe-detached-head-describe	t9903-bash-prompt	prompt - describe detached head - describe	status	pass
-t9903-bash-prompt::prompt-describe-detached-head-default	t9903-bash-prompt	prompt - describe detached head - default	status	pass
-t9903-bash-prompt::prompt-inside-git-directory	t9903-bash-prompt	prompt - inside .git directory	status	pass
-t9903-bash-prompt::prompt-deep-inside-git-directory	t9903-bash-prompt	prompt - deep inside .git directory	status	pass
-t9903-bash-prompt::prompt-inside-bare-repository	t9903-bash-prompt	prompt - inside bare repository	status	pass
-t9903-bash-prompt::prompt-interactive-rebase	t9903-bash-prompt	prompt - interactive rebase	status	pass
-t9903-bash-prompt::prompt-rebase-merge	t9903-bash-prompt	prompt - rebase merge	status	pass
-t9903-bash-prompt::prompt-rebase-am	t9903-bash-prompt	prompt - rebase am	status	pass
-t9903-bash-prompt::prompt-merge	t9903-bash-prompt	prompt - merge	status	pass
-t9903-bash-prompt::prompt-cherry-pick	t9903-bash-prompt	prompt - cherry-pick	status	pass
-t9903-bash-prompt::prompt-revert	t9903-bash-prompt	prompt - revert	status	pass
-t9903-bash-prompt::prompt-bisect	t9903-bash-prompt	prompt - bisect	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-clean	t9903-bash-prompt	prompt - dirty status indicator - clean	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-dirty-worktree	t9903-bash-prompt	prompt - dirty status indicator - dirty worktree	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-dirty-index	t9903-bash-prompt	prompt - dirty status indicator - dirty index	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-dirty-index-and-worktree	t9903-bash-prompt	prompt - dirty status indicator - dirty index and worktree	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-orphan-branch-clean	t9903-bash-prompt	prompt - dirty status indicator - orphan branch - clean	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-orphan-branch-dirty-index	t9903-bash-prompt	prompt - dirty status indicator - orphan branch - dirty index	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-orphan-branch-dirty-index-and-worktree	t9903-bash-prompt	prompt - dirty status indicator - orphan branch - dirty index and worktree	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-shell-variable-unset-with-config-disabled	t9903-bash-prompt	prompt - dirty status indicator - shell variable unset with config disabled	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-shell-variable-unset-with-config-enabled	t9903-bash-prompt	prompt - dirty status indicator - shell variable unset with config enabled	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-shell-variable-set-with-config-disabled	t9903-bash-prompt	prompt - dirty status indicator - shell variable set with config disabled	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-shell-variable-set-with-config-enabled	t9903-bash-prompt	prompt - dirty status indicator - shell variable set with config enabled	status	pass
-t9903-bash-prompt::prompt-dirty-status-indicator-not-shown-inside-git-directory	t9903-bash-prompt	prompt - dirty status indicator - not shown inside .git directory	status	pass
-t9903-bash-prompt::prompt-stash-status-indicator-no-stash	t9903-bash-prompt	prompt - stash status indicator - no stash	status	pass
-t9903-bash-prompt::prompt-stash-status-indicator-stash	t9903-bash-prompt	prompt - stash status indicator - stash	status	pass
-t9903-bash-prompt::prompt-stash-status-indicator-not-shown-inside-git-directory	t9903-bash-prompt	prompt - stash status indicator - not shown inside .git directory	status	pass
-t9903-bash-prompt::prompt-untracked-files-status-indicator-no-untracked-files	t9903-bash-prompt	prompt - untracked files status indicator - no untracked files	status	pass
-t9903-bash-prompt::prompt-untracked-files-status-indicator-untracked-files	t9903-bash-prompt	prompt - untracked files status indicator - untracked files	status	pass
-t9903-bash-prompt::prompt-untracked-files-status-indicator-empty-untracked-dir	t9903-bash-prompt	prompt - untracked files status indicator - empty untracked dir	status	pass
-t9903-bash-prompt::prompt-untracked-files-status-indicator-non-empty-untracked-dir	t9903-bash-prompt	prompt - untracked files status indicator - non-empty untracked dir	status	pass
-t9903-bash-prompt::prompt-untracked-files-status-indicator-untracked-files-outside-cwd	t9903-bash-prompt	prompt - untracked files status indicator - untracked files outside cwd	status	pass
-t9903-bash-prompt::prompt-untracked-files-status-indicator-shell-variable-unset-with-config-disable	t9903-bash-prompt	prompt - untracked files status indicator - shell variable unset with config disabled	status	pass
-t9903-bash-prompt::prompt-untracked-files-status-indicator-shell-variable-unset-with-config-enabled	t9903-bash-prompt	prompt - untracked files status indicator - shell variable unset with config enabled	status	pass
-t9903-bash-prompt::prompt-untracked-files-status-indicator-shell-variable-set-with-config-disabled	t9903-bash-prompt	prompt - untracked files status indicator - shell variable set with config disabled	status	pass
-t9903-bash-prompt::prompt-untracked-files-status-indicator-shell-variable-set-with-config-enabled	t9903-bash-prompt	prompt - untracked files status indicator - shell variable set with config enabled	status	pass
-t9903-bash-prompt::prompt-untracked-files-status-indicator-not-shown-inside-git-directory	t9903-bash-prompt	prompt - untracked files status indicator - not shown inside .git directory	status	pass
-t9903-bash-prompt::prompt-format-string-starting-with-dash	t9903-bash-prompt	prompt - format string starting with dash	status	pass
-t9903-bash-prompt::prompt-pc-mode	t9903-bash-prompt	prompt - pc mode	status	pass
-t9903-bash-prompt::prompt-bash-color-pc-mode-branch-name	t9903-bash-prompt	prompt - bash color pc mode - branch name	status	pass
-t9903-bash-prompt::prompt-bash-color-pc-mode-detached-head	t9903-bash-prompt	prompt - bash color pc mode - detached head	status	pass
-t9903-bash-prompt::prompt-bash-color-pc-mode-dirty-status-indicator-dirty-worktree	t9903-bash-prompt	prompt - bash color pc mode - dirty status indicator - dirty worktree	status	pass
-t9903-bash-prompt::prompt-bash-color-pc-mode-dirty-status-indicator-dirty-index	t9903-bash-prompt	prompt - bash color pc mode - dirty status indicator - dirty index	status	pass
-t9903-bash-prompt::prompt-bash-color-pc-mode-dirty-status-indicator-dirty-index-and-worktree	t9903-bash-prompt	prompt - bash color pc mode - dirty status indicator - dirty index and worktree	status	pass
-t9903-bash-prompt::prompt-bash-color-pc-mode-dirty-status-indicator-before-root-commit	t9903-bash-prompt	prompt - bash color pc mode - dirty status indicator - before root commit	status	pass
-t9903-bash-prompt::prompt-bash-color-pc-mode-inside-git-directory	t9903-bash-prompt	prompt - bash color pc mode - inside .git directory	status	pass
-t9903-bash-prompt::prompt-bash-color-pc-mode-stash-status-indicator	t9903-bash-prompt	prompt - bash color pc mode - stash status indicator	status	pass
-t9903-bash-prompt::prompt-bash-color-pc-mode-untracked-files-status-indicator	t9903-bash-prompt	prompt - bash color pc mode - untracked files status indicator	status	pass
-t9903-bash-prompt::prompt-zsh-color-pc-mode	t9903-bash-prompt	prompt - zsh color pc mode	status	pass
-t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-unset-config-disabled	t9903-bash-prompt	prompt - hide if pwd ignored - env var unset, config disabled	status	pass
-t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-unset-config-disabled-pc-mode	t9903-bash-prompt	prompt - hide if pwd ignored - env var unset, config disabled, pc mode	status	pass
-t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-unset-config-unset	t9903-bash-prompt	prompt - hide if pwd ignored - env var unset, config unset	status	pass
-t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-unset-config-unset-pc-mode	t9903-bash-prompt	prompt - hide if pwd ignored - env var unset, config unset, pc mode	status	pass
-t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-set-config-disabled	t9903-bash-prompt	prompt - hide if pwd ignored - env var set, config disabled	status	pass
-t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-set-config-disabled-pc-mode	t9903-bash-prompt	prompt - hide if pwd ignored - env var set, config disabled, pc mode	status	pass
-t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-set-config-unset	t9903-bash-prompt	prompt - hide if pwd ignored - env var set, config unset	status	pass
-t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-set-config-unset-pc-mode	t9903-bash-prompt	prompt - hide if pwd ignored - env var set, config unset, pc mode	status	pass
-t9903-bash-prompt::prompt-hide-if-pwd-ignored-inside-gitdir	t9903-bash-prompt	prompt - hide if pwd ignored - inside gitdir	status	pass
-t9903-bash-prompt::prompt-conflict-indicator	t9903-bash-prompt	prompt - conflict indicator	status	pass
+t9902-completion::setup-for-git-find-repo-path-gitdir-tests	t9902-completion	setup for __git_find_repo_path/__gitdir tests	help	partial
+t9902-completion::git-find-repo-path-from-command-line-through-git-dir	t9902-completion	__git_find_repo_path - from command line (through $__git_dir)	help	partial
+t9902-completion::git-find-repo-path-git-directory-in-cwd	t9902-completion	__git_find_repo_path - .git directory in cwd	help	partial
+t9902-completion::git-find-repo-path-git-directory-in-parent	t9902-completion	__git_find_repo_path - .git directory in parent	help	partial
+t9902-completion::git-find-repo-path-cwd-is-a-git-directory	t9902-completion	__git_find_repo_path - cwd is a .git directory	help	partial
+t9902-completion::git-find-repo-path-parent-is-a-git-directory	t9902-completion	__git_find_repo_path - parent is a .git directory	help	partial
+t9902-completion::git-find-repo-path-git-dir-set-while-git-directory-in-cwd	t9902-completion	__git_find_repo_path - $GIT_DIR set while .git directory in cwd	help	partial
+t9902-completion::git-find-repo-path-git-dir-set-while-git-directory-in-parent	t9902-completion	__git_find_repo_path - $GIT_DIR set while .git directory in parent	help	partial
+t9902-completion::git-find-repo-path-from-command-line-while-git-c	t9902-completion	__git_find_repo_path - from command line while "git -C"	help	partial
+t9902-completion::git-find-repo-path-relative-dir-from-command-line-and-git-c	t9902-completion	__git_find_repo_path - relative dir from command line and "git -C"	help	partial
+t9902-completion::git-find-repo-path-git-dir-set-while-git-c	t9902-completion	__git_find_repo_path - $GIT_DIR set while "git -C"	help	partial
+t9902-completion::git-find-repo-path-relative-dir-in-git-dir-and-git-c	t9902-completion	__git_find_repo_path - relative dir in $GIT_DIR and "git -C"	help	partial
+t9902-completion::git-find-repo-path-git-c-while-git-directory-in-cwd	t9902-completion	__git_find_repo_path - "git -C" while .git directory in cwd	help	partial
+t9902-completion::git-find-repo-path-git-c-while-cwd-is-a-git-directory	t9902-completion	__git_find_repo_path - "git -C" while cwd is a .git directory	help	partial
+t9902-completion::git-find-repo-path-git-c-while-git-directory-in-parent	t9902-completion	__git_find_repo_path - "git -C" while .git directory in parent	help	partial
+t9902-completion::git-find-repo-path-non-existing-path-in-git-c	t9902-completion	__git_find_repo_path - non-existing path in "git -C"	help	partial
+t9902-completion::git-find-repo-path-non-existing-path-in-git-dir	t9902-completion	__git_find_repo_path - non-existing path in $__git_dir	help	partial
+t9902-completion::git-find-repo-path-non-existing-git-dir	t9902-completion	__git_find_repo_path - non-existing $GIT_DIR	help	partial
+t9902-completion::git-find-repo-path-gitfile-in-cwd	t9902-completion	__git_find_repo_path - gitfile in cwd	help	partial
+t9902-completion::git-find-repo-path-gitfile-in-parent	t9902-completion	__git_find_repo_path - gitfile in parent	help	partial
+t9902-completion::git-find-repo-path-resulting-path-avoids-symlinks	t9902-completion	__git_find_repo_path - resulting path avoids symlinks	help	partial
+t9902-completion::git-find-repo-path-not-a-git-repository	t9902-completion	__git_find_repo_path - not a git repository	help	partial
+t9902-completion::gitdir-finds-repo	t9902-completion	__gitdir - finds repo	help	partial
+t9902-completion::gitdir-returns-error-when-cannot-find-repo	t9902-completion	__gitdir - returns error when cannot find repo	help	partial
+t9902-completion::gitdir-repo-as-argument	t9902-completion	__gitdir - repo as argument	help	partial
+t9902-completion::gitdir-remote-as-argument	t9902-completion	__gitdir - remote as argument	help	partial
+t9902-completion::git-dequote-plain-unquoted-word	t9902-completion	__git_dequote - plain unquoted word	help	partial
+t9902-completion::git-dequote-backslash-escaped	t9902-completion	__git_dequote - backslash escaped	help	partial
+t9902-completion::git-dequote-single-quoted	t9902-completion	__git_dequote - single quoted	help	partial
+t9902-completion::git-dequote-double-quoted	t9902-completion	__git_dequote - double quoted	help	partial
+t9902-completion::git-dequote-open-single-quote	t9902-completion	__git_dequote - open single quote	help	partial
+t9902-completion::git-dequote-open-double-quote	t9902-completion	__git_dequote - open double quote	help	partial
+t9902-completion::git-count-path-components-no-slashes	t9902-completion	__git_count_path_components - no slashes	help	partial
+t9902-completion::git-count-path-components-relative	t9902-completion	__git_count_path_components - relative	help	partial
+t9902-completion::git-count-path-components-absolute	t9902-completion	__git_count_path_components - absolute	help	partial
+t9902-completion::git-count-path-components-trailing-slash	t9902-completion	__git_count_path_components - trailing slash	help	partial
+t9902-completion::gitcomp-direct-puts-everything-into-compreply-as-is	t9902-completion	__gitcomp_direct - puts everything into COMPREPLY as-is	help	partial
+t9902-completion::gitcomp-trailing-space-options	t9902-completion	__gitcomp - trailing space - options	help	partial
+t9902-completion::gitcomp-trailing-space-config-keys	t9902-completion	__gitcomp - trailing space - config keys	help	partial
+t9902-completion::gitcomp-option-parameter	t9902-completion	__gitcomp - option parameter	help	partial
+t9902-completion::gitcomp-prefix	t9902-completion	__gitcomp - prefix	help	partial
+t9902-completion::gitcomp-suffix	t9902-completion	__gitcomp - suffix	help	partial
+t9902-completion::gitcomp-ignore-optional-negative-options	t9902-completion	__gitcomp - ignore optional negative options	help	partial
+t9902-completion::gitcomp-ignore-narrow-optional-negative-options	t9902-completion	__gitcomp - ignore/narrow optional negative options	help	partial
+t9902-completion::gitcomp-ignore-narrow-optional-negative-options-2	t9902-completion	__gitcomp - ignore/narrow optional negative options	help	partial
+t9902-completion::gitcomp-expand-all-negative-options	t9902-completion	__gitcomp - expand all negative options	help	partial
+t9902-completion::gitcomp-expand-narrow-all-negative-options	t9902-completion	__gitcomp - expand/narrow all negative options	help	partial
+t9902-completion::gitcomp-equal-skip	t9902-completion	__gitcomp - equal skip	help	partial
+t9902-completion::gitcomp-doesnt-fail-because-of-invalid-variable-name	t9902-completion	__gitcomp - doesnt fail because of invalid variable name	help	partial
+t9902-completion::gitcomp-nl-trailing-space	t9902-completion	__gitcomp_nl - trailing space	help	partial
+t9902-completion::gitcomp-nl-prefix	t9902-completion	__gitcomp_nl - prefix	help	partial
+t9902-completion::gitcomp-nl-suffix	t9902-completion	__gitcomp_nl - suffix	help	partial
+t9902-completion::gitcomp-nl-no-suffix	t9902-completion	__gitcomp_nl - no suffix	help	partial
+t9902-completion::gitcomp-nl-doesnt-fail-because-of-invalid-variable-name	t9902-completion	__gitcomp_nl - doesnt fail because of invalid variable name	help	partial
+t9902-completion::git-remotes-list-remotes-from-git-dir-remotes-and-from-config-file	t9902-completion	__git_remotes - list remotes from $GIT_DIR/remotes and from config file	help	partial
+t9902-completion::git-is-configured-remote	t9902-completion	__git_is_configured_remote	help	partial
+t9902-completion::setup-for-ref-completion	t9902-completion	setup for ref completion	help	partial
+t9902-completion::git-refs-simple	t9902-completion	__git_refs - simple	help	partial
+t9902-completion::git-refs-full-refs	t9902-completion	__git_refs - full refs	help	partial
+t9902-completion::git-refs-repo-given-on-the-command-line	t9902-completion	__git_refs - repo given on the command line	help	partial
+t9902-completion::git-refs-remote-on-local-file-system	t9902-completion	__git_refs - remote on local file system	help	partial
+t9902-completion::git-refs-remote-on-local-file-system-full-refs	t9902-completion	__git_refs - remote on local file system - full refs	help	partial
+t9902-completion::git-refs-configured-remote	t9902-completion	__git_refs - configured remote	help	partial
+t9902-completion::git-refs-configured-remote-with-slash	t9902-completion	__git_refs - configured remote - with slash	help	partial
+t9902-completion::git-refs-configured-remote-full-refs	t9902-completion	__git_refs - configured remote - full refs	help	partial
+t9902-completion::git-refs-configured-remote-repo-given-on-the-command-line	t9902-completion	__git_refs - configured remote - repo given on the command line	help	partial
+t9902-completion::git-refs-configured-remote-full-refs-repo-given-on-the-command-line	t9902-completion	__git_refs - configured remote - full refs - repo given on the command line	help	partial
+t9902-completion::git-refs-configured-remote-remote-name-matches-a-directory	t9902-completion	__git_refs - configured remote - remote name matches a directory	help	partial
+t9902-completion::git-refs-url-remote	t9902-completion	__git_refs - URL remote	help	partial
+t9902-completion::git-refs-url-remote-full-refs	t9902-completion	__git_refs - URL remote - full refs	help	partial
+t9902-completion::git-refs-non-existing-remote	t9902-completion	__git_refs - non-existing remote	help	partial
+t9902-completion::git-refs-non-existing-remote-full-refs	t9902-completion	__git_refs - non-existing remote - full refs	help	partial
+t9902-completion::git-refs-non-existing-url-remote	t9902-completion	__git_refs - non-existing URL remote	help	partial
+t9902-completion::git-refs-non-existing-url-remote-full-refs	t9902-completion	__git_refs - non-existing URL remote - full refs	help	partial
+t9902-completion::git-refs-not-in-a-git-repository	t9902-completion	__git_refs - not in a git repository	help	partial
+t9902-completion::git-refs-unique-remote-branches-for-git-checkout-dwimery	t9902-completion	__git_refs - unique remote branches for git checkout DWIMery	help	partial
+t9902-completion::git-refs-after-opt	t9902-completion	__git_refs - after --opt=	help	partial
+t9902-completion::git-refs-after-opt-full-refs	t9902-completion	__git_refs - after --opt= - full refs	help	partial
+t9902-completion::git-refs-excluding-refs	t9902-completion	__git refs - excluding refs	help	partial
+t9902-completion::git-refs-excluding-full-refs	t9902-completion	__git refs - excluding full refs	help	partial
+t9902-completion::setup-for-filtering-matching-refs	t9902-completion	setup for filtering matching refs	help	partial
+t9902-completion::git-refs-do-not-filter-refs-unless-told-so	t9902-completion	__git_refs - do not filter refs unless told so	help	partial
+t9902-completion::git-refs-only-matching-refs	t9902-completion	__git_refs - only matching refs	help	partial
+t9902-completion::git-refs-only-matching-refs-full-refs	t9902-completion	__git_refs - only matching refs - full refs	help	partial
+t9902-completion::git-refs-only-matching-refs-remote-on-local-file-system	t9902-completion	__git_refs - only matching refs - remote on local file system	help	partial
+t9902-completion::git-refs-only-matching-refs-configured-remote	t9902-completion	__git_refs - only matching refs - configured remote	help	partial
+t9902-completion::git-refs-only-matching-refs-remote-full-refs	t9902-completion	__git_refs - only matching refs - remote - full refs	help	partial
+t9902-completion::git-refs-only-matching-refs-checkout-dwimery	t9902-completion	__git_refs - only matching refs - checkout DWIMery	help	partial
+t9902-completion::teardown-after-filtering-matching-refs	t9902-completion	teardown after filtering matching refs	help	partial
+t9902-completion::git-refs-for-each-ref-format-specifiers-in-prefix	t9902-completion	__git_refs - for-each-ref format specifiers in prefix	help	partial
+t9902-completion::git-complete-refs-simple	t9902-completion	__git_complete_refs - simple	help	partial
+t9902-completion::git-complete-refs-matching	t9902-completion	__git_complete_refs - matching	help	partial
+t9902-completion::git-complete-refs-remote	t9902-completion	__git_complete_refs - remote	help	partial
+t9902-completion::git-complete-refs-remote-with-slash	t9902-completion	__git_complete_refs - remote - with slash	help	partial
+t9902-completion::git-complete-refs-track	t9902-completion	__git_complete_refs - track	help	partial
+t9902-completion::git-complete-refs-current-word	t9902-completion	__git_complete_refs - current word	help	partial
+t9902-completion::git-complete-refs-prefix	t9902-completion	__git_complete_refs - prefix	help	partial
+t9902-completion::git-complete-refs-suffix	t9902-completion	__git_complete_refs - suffix	help	partial
+t9902-completion::git-complete-fetch-refspecs-simple	t9902-completion	__git_complete_fetch_refspecs - simple	help	partial
+t9902-completion::git-complete-fetch-refspecs-with-slash	t9902-completion	__git_complete_fetch_refspecs - with slash	help	partial
+t9902-completion::git-complete-fetch-refspecs-matching	t9902-completion	__git_complete_fetch_refspecs - matching	help	partial
+t9902-completion::git-complete-fetch-refspecs-prefix	t9902-completion	__git_complete_fetch_refspecs - prefix	help	partial
+t9902-completion::git-complete-fetch-refspecs-fully-qualified	t9902-completion	__git_complete_fetch_refspecs - fully qualified	help	partial
+t9902-completion::git-complete-fetch-refspecs-fully-qualified-prefix	t9902-completion	__git_complete_fetch_refspecs - fully qualified & prefix	help	partial
+t9902-completion::git-complete-worktree-paths	t9902-completion	__git_complete_worktree_paths	help	partial
+t9902-completion::git-complete-worktree-paths-not-a-git-repository	t9902-completion	__git_complete_worktree_paths - not a git repository	help	partial
+t9902-completion::git-complete-worktree-paths-with-c	t9902-completion	__git_complete_worktree_paths with -C	help	partial
+t9902-completion::git-switch-with-no-options-complete-local-branches-and-unique-remote-branch-name	t9902-completion	git switch - with no options, complete local branches and unique remote branch names for DWIM logic	help	partial
+t9902-completion::git-bisect-when-not-bisecting-complete-only-replay-and-start-subcommands	t9902-completion	git bisect - when not bisecting, complete only replay and start subcommands	help	partial
+t9902-completion::git-bisect-complete-options-to-start-subcommand	t9902-completion	git bisect - complete options to start subcommand	help	partial
+t9902-completion::setup-for-git-bisect-tests-requiring-a-repo	t9902-completion	setup for git-bisect tests requiring a repo	help	partial
+t9902-completion::git-bisect-start-subcommand-arguments-before-double-dash-are-completed-as-revs	t9902-completion	git bisect - start subcommand arguments before double-dash are completed as revs	help	partial
+t9902-completion::git-bisect-start-subcommand-arguments-after-double-dash-are-not-completed	t9902-completion	git bisect - start subcommand arguments after double-dash are not completed	help	partial
+t9902-completion::setup-for-git-bisect-tests-requiring-ongoing-bisection	t9902-completion	setup for git-bisect tests requiring ongoing bisection	help	partial
+t9902-completion::git-bisect-when-bisecting-all-subcommands-are-candidates	t9902-completion	git-bisect - when bisecting all subcommands are candidates	help	partial
+t9902-completion::git-bisect-options-to-terms-subcommand-are-candidates	t9902-completion	git-bisect - options to terms subcommand are candidates	help	partial
+t9902-completion::git-bisect-git-log-options-to-visualize-subcommand-are-candidates	t9902-completion	git-bisect - git-log options to visualize subcommand are candidates	help	partial
+t9902-completion::git-bisect-view-subcommand-is-not-a-candidate	t9902-completion	git-bisect - view subcommand is not a candidate	help	partial
+t9902-completion::git-bisect-existing-view-subcommand-is-recognized-and-enables-completion-of-git	t9902-completion	git-bisect - existing view subcommand is recognized and enables completion of git-log options	help	partial
+t9902-completion::git-checkout-completes-refs-and-unique-remote-branches-for-dwim	t9902-completion	git checkout - completes refs and unique remote branches for DWIM	help	partial
+t9902-completion::git-switch-with-no-guess-complete-only-local-branches	t9902-completion	git switch - with --no-guess, complete only local branches	help	partial
+t9902-completion::git-switch-with-git-completion-checkout-no-guess-1-complete-only-local-branches	t9902-completion	git switch - with GIT_COMPLETION_CHECKOUT_NO_GUESS=1, complete only local branches	help	partial
+t9902-completion::git-switch-guess-overrides-git-completion-checkout-no-guess-1-complete-local-bra	t9902-completion	git switch - --guess overrides GIT_COMPLETION_CHECKOUT_NO_GUESS=1, complete local branches and unique remote names for DWIM logic	help	partial
+t9902-completion::git-switch-a-later-guess-overrides-previous-no-guess-complete-local-and-remote-u	t9902-completion	git switch - a later --guess overrides previous --no-guess, complete local and remote unique branches for DWIM	help	partial
+t9902-completion::git-switch-a-later-no-guess-overrides-previous-guess-complete-only-local-branche	t9902-completion	git switch - a later --no-guess overrides previous --guess, complete only local branches	help	partial
+t9902-completion::git-checkout-with-git-completion-no-guess-1-only-completes-refs	t9902-completion	git checkout - with GIT_COMPLETION_NO_GUESS=1 only completes refs	help	partial
+t9902-completion::git-checkout-guess-overrides-git-completion-no-guess-1-complete-refs-and-unique	t9902-completion	git checkout - --guess overrides GIT_COMPLETION_NO_GUESS=1, complete refs and unique remote branches for DWIM	help	partial
+t9902-completion::git-checkout-with-no-guess-only-completes-refs	t9902-completion	git checkout - with --no-guess, only completes refs	help	partial
+t9902-completion::git-checkout-a-later-guess-overrides-previous-no-guess-complete-refs-and-unique	t9902-completion	git checkout - a later --guess overrides previous --no-guess, complete refs and unique remote branches for DWIM	help	partial
+t9902-completion::git-checkout-a-later-no-guess-overrides-previous-guess-complete-only-refs	t9902-completion	git checkout - a later --no-guess overrides previous --guess, complete only refs	help	partial
+t9902-completion::git-checkout-with-checkout-guess-false-only-completes-refs	t9902-completion	git checkout - with checkout.guess = false, only completes refs	help	partial
+t9902-completion::git-checkout-with-checkout-guess-true-completes-refs-and-unique-remote-branches	t9902-completion	git checkout - with checkout.guess = true, completes refs and unique remote branches for DWIM	help	partial
+t9902-completion::git-checkout-a-later-guess-overrides-previous-checkout-guess-false-complete-refs	t9902-completion	git checkout - a later --guess overrides previous checkout.guess = false, complete refs and unique remote branches for DWIM	help	partial
+t9902-completion::git-checkout-a-later-no-guess-overrides-previous-checkout-guess-true-complete-on	t9902-completion	git checkout - a later --no-guess overrides previous checkout.guess = true, complete only refs	help	partial
+t9902-completion::git-switch-with-detach-complete-all-references	t9902-completion	git switch - with --detach, complete all references	help	partial
+t9902-completion::git-checkout-with-detach-complete-only-references	t9902-completion	git checkout - with --detach, complete only references	help	partial
+t9902-completion::setup-sparse-checkout-tests	t9902-completion	setup sparse-checkout tests	help	partial
+t9902-completion::sparse-checkout-completes-subcommands	t9902-completion	sparse-checkout completes subcommands	help	partial
+t9902-completion::cone-mode-sparse-checkout-completes-directory-names	t9902-completion	cone mode sparse-checkout completes directory names	help	partial
+t9902-completion::cone-mode-sparse-checkout-completes-directory-names-with-spaces-and-accents	t9902-completion	cone mode sparse-checkout completes directory names with spaces and accents	help	partial
+t9902-completion::cone-mode-sparse-checkout-completes-directory-names-with-tabs	t9902-completion	cone mode sparse-checkout completes directory names with tabs	help	partial
+t9902-completion::cone-mode-sparse-checkout-completes-directory-names-with-backslashes	t9902-completion	cone mode sparse-checkout completes directory names with backslashes	help	partial
+t9902-completion::non-cone-mode-sparse-checkout-gives-rooted-paths	t9902-completion	non-cone mode sparse-checkout gives rooted paths	help	partial
+t9902-completion::git-sparse-checkout-set-cone-completes-directory-names	t9902-completion	git sparse-checkout set --cone completes directory names	help	partial
+t9902-completion::git-switch-with-d-complete-all-references	t9902-completion	git switch - with -d, complete all references	help	partial
+t9902-completion::git-checkout-with-d-complete-only-references	t9902-completion	git checkout - with -d, complete only references	help	partial
+t9902-completion::git-switch-with-track-complete-only-remote-branches	t9902-completion	git switch - with --track, complete only remote branches	help	partial
+t9902-completion::git-checkout-with-track-complete-only-remote-branches	t9902-completion	git checkout - with --track, complete only remote branches	help	partial
+t9902-completion::git-switch-with-no-track-complete-only-local-branch-names	t9902-completion	git switch - with --no-track, complete only local branch names	help	partial
+t9902-completion::git-checkout-with-no-track-complete-only-local-references	t9902-completion	git checkout - with --no-track, complete only local references	help	partial
+t9902-completion::git-switch-with-c-complete-all-references	t9902-completion	git switch - with -c, complete all references	help	partial
+t9902-completion::git-switch-with-c-complete-all-references-2	t9902-completion	git switch - with -C, complete all references	help	partial
+t9902-completion::git-switch-with-c-and-track-complete-all-references	t9902-completion	git switch - with -c and --track, complete all references	help	partial
+t9902-completion::git-switch-with-c-and-track-complete-all-references-2	t9902-completion	git switch - with -C and --track, complete all references	help	partial
+t9902-completion::git-switch-with-c-and-no-track-complete-all-references	t9902-completion	git switch - with -c and --no-track, complete all references	help	partial
+t9902-completion::git-switch-with-c-and-no-track-complete-all-references-2	t9902-completion	git switch - with -C and --no-track, complete all references	help	partial
+t9902-completion::git-checkout-with-b-complete-all-references	t9902-completion	git checkout - with -b, complete all references	help	partial
+t9902-completion::git-checkout-with-b-complete-all-references-2	t9902-completion	git checkout - with -B, complete all references	help	partial
+t9902-completion::git-checkout-with-b-and-track-complete-all-references	t9902-completion	git checkout - with -b and --track, complete all references	help	partial
+t9902-completion::git-checkout-with-b-and-track-complete-all-references-2	t9902-completion	git checkout - with -B and --track, complete all references	help	partial
+t9902-completion::git-checkout-with-b-and-no-track-complete-all-references	t9902-completion	git checkout - with -b and --no-track, complete all references	help	partial
+t9902-completion::git-checkout-with-b-and-no-track-complete-all-references-2	t9902-completion	git checkout - with -B and --no-track, complete all references	help	partial
+t9902-completion::git-switch-for-c-complete-local-branches-and-unique-remote-branches	t9902-completion	git switch - for -c, complete local branches and unique remote branches	help	partial
+t9902-completion::git-switch-for-c-complete-local-branches-and-unique-remote-branches-2	t9902-completion	git switch - for -C, complete local branches and unique remote branches	help	partial
+t9902-completion::git-switch-for-c-with-no-guess-complete-local-branches-only	t9902-completion	git switch - for -c with --no-guess, complete local branches only	help	partial
+t9902-completion::git-switch-for-c-with-no-guess-complete-local-branches-only-2	t9902-completion	git switch - for -C with --no-guess, complete local branches only	help	partial
+t9902-completion::git-switch-for-c-with-no-track-complete-local-branches-only	t9902-completion	git switch - for -c with --no-track, complete local branches only	help	partial
+t9902-completion::git-switch-for-c-with-no-track-complete-local-branches-only-2	t9902-completion	git switch - for -C with --no-track, complete local branches only	help	partial
+t9902-completion::git-checkout-for-b-complete-local-branches-and-unique-remote-branches	t9902-completion	git checkout - for -b, complete local branches and unique remote branches	help	partial
+t9902-completion::git-checkout-for-b-complete-local-branches-and-unique-remote-branches-2	t9902-completion	git checkout - for -B, complete local branches and unique remote branches	help	partial
+t9902-completion::git-checkout-for-b-with-no-guess-complete-local-branches-only	t9902-completion	git checkout - for -b with --no-guess, complete local branches only	help	partial
+t9902-completion::git-checkout-for-b-with-no-guess-complete-local-branches-only-2	t9902-completion	git checkout - for -B with --no-guess, complete local branches only	help	partial
+t9902-completion::git-checkout-for-b-with-no-track-complete-local-branches-only	t9902-completion	git checkout - for -b with --no-track, complete local branches only	help	partial
+t9902-completion::git-checkout-for-b-with-no-track-complete-local-branches-only-2	t9902-completion	git checkout - for -B with --no-track, complete local branches only	help	partial
+t9902-completion::git-switch-with-orphan-completes-local-branch-names-and-unique-remote-branch-nam	t9902-completion	git switch - with --orphan completes local branch names and unique remote branch names	help	partial
+t9902-completion::git-switch-orphan-with-branch-already-provided-completes-nothing-else	t9902-completion	git switch - --orphan with branch already provided completes nothing else	help	partial
+t9902-completion::git-checkout-with-orphan-completes-local-branch-names-and-unique-remote-branch-n	t9902-completion	git checkout - with --orphan completes local branch names and unique remote branch names	help	partial
+t9902-completion::git-checkout-orphan-with-branch-already-provided-completes-local-refs-for-a-star	t9902-completion	git checkout - --orphan with branch already provided completes local refs for a start-point	help	partial
+t9902-completion::git-restore-completes-modified-files	t9902-completion	git restore completes modified files	help	partial
+t9902-completion::teardown-after-ref-completion	t9902-completion	teardown after ref completion	help	partial
+t9902-completion::setup-for-path-completion-tests	t9902-completion	setup for path completion tests	help	partial
+t9902-completion::git-complete-index-file-simple	t9902-completion	__git_complete_index_file - simple	help	partial
+t9902-completion::git-complete-index-file-utf-8-in-ls-files-output	t9902-completion	__git_complete_index_file - UTF-8 in ls-files output	help	partial
+t9902-completion::teardown-after-path-completion-tests	t9902-completion	teardown after path completion tests	help	partial
+t9902-completion::git-find-on-cmdline-single-match	t9902-completion	__git_find_on_cmdline - single match	help	partial
+t9902-completion::git-find-on-cmdline-multiple-matches	t9902-completion	__git_find_on_cmdline - multiple matches	help	partial
+t9902-completion::git-find-on-cmdline-no-match	t9902-completion	__git_find_on_cmdline - no match	help	partial
+t9902-completion::git-find-on-cmdline-single-match-with-index	t9902-completion	__git_find_on_cmdline - single match with index	help	partial
+t9902-completion::git-find-on-cmdline-multiple-matches-with-index	t9902-completion	__git_find_on_cmdline - multiple matches with index	help	partial
+t9902-completion::git-find-on-cmdline-no-match-with-index	t9902-completion	__git_find_on_cmdline - no match with index	help	partial
+t9902-completion::git-find-on-cmdline-ignores-matches-before-command-with-index	t9902-completion	__git_find_on_cmdline - ignores matches before command with index	help	partial
+t9902-completion::git-get-config-variables	t9902-completion	__git_get_config_variables	help	partial
+t9902-completion::git-pretty-aliases	t9902-completion	__git_pretty_aliases	help	partial
+t9902-completion::basic	t9902-completion	basic	help	partial
+t9902-completion::double-dash-git-itself	t9902-completion	double dash "git" itself	help	partial
+t9902-completion::double-dash-git-checkout	t9902-completion	double dash "git checkout"	help	partial
+t9902-completion::general-options	t9902-completion	general options	help	partial
+t9902-completion::general-options-plus-command	t9902-completion	general options plus command	help	partial
+t9902-completion::git-help-completion	t9902-completion	git --help completion	help	partial
+t9902-completion::completion-commands-removes-multiple-commands	t9902-completion	completion.commands removes multiple commands	help	partial
+t9902-completion::setup-for-integration-tests	t9902-completion	setup for integration tests	help	partial
+t9902-completion::checkout-completes-ref-names	t9902-completion	checkout completes ref names	help	partial
+t9902-completion::checkout-does-not-match-ref-names-of-a-different-case	t9902-completion	checkout does not match ref names of a different case	help	partial
+t9902-completion::checkout-matches-case-insensitively-with-git-completion-ignore-case	t9902-completion	checkout matches case insensitively with GIT_COMPLETION_IGNORE_CASE	help	partial
+t9902-completion::checkout-completes-pseudo-refs	t9902-completion	checkout completes pseudo refs	help	partial
+t9902-completion::checkout-completes-pseudo-refs-case-insensitively-with-git-completion-ignore-cas	t9902-completion	checkout completes pseudo refs case insensitively with GIT_COMPLETION_IGNORE_CASE	help	partial
+t9902-completion::git-c-path-checkout-uses-the-right-repo	t9902-completion	git -C <path> checkout uses the right repo	help	partial
+t9902-completion::show-completes-all-refs	t9902-completion	show completes all refs	help	partial
+t9902-completion::ref-completes-paths	t9902-completion	<ref>: completes paths	help	partial
+t9902-completion::complete-tree-filename-with-spaces	t9902-completion	complete tree filename with spaces	help	partial
+t9902-completion::complete-tree-filename-with-metacharacters	t9902-completion	complete tree filename with metacharacters	help	partial
+t9902-completion::symbolic-ref-completes-builtin-options	t9902-completion	symbolic-ref completes builtin options	help	partial
+t9902-completion::symbolic-ref-completes-short-ref-names	t9902-completion	symbolic-ref completes short ref names	help	partial
+t9902-completion::symbolic-ref-completes-full-ref-names	t9902-completion	symbolic-ref completes full ref names	help	partial
+t9902-completion::send-email	t9902-completion	send-email	help	partial
+t9902-completion::complete-files	t9902-completion	complete files	help	partial
+t9902-completion::completion-uses-cmd-completion-for-alias-f-var-val-git-cmd	t9902-completion	completion uses <cmd> completion for alias: !f () { VAR=val git <cmd> ... }	help	partial
+t9902-completion::completion-used-cmd-completion-for-alias-f-git-cmd	t9902-completion	completion used <cmd> completion for alias: !f() { : git <cmd> ; ... }	help	partial
+t9902-completion::completion-used-cmd-completion-for-alias-f-cmd	t9902-completion	completion used <cmd> completion for alias: !f() { : <cmd> ; ... }	help	partial
+t9902-completion::completion-used-cmd-completion-for-alias-f-cmd-2	t9902-completion	completion used <cmd> completion for alias: !f() { : <cmd>; ... }	help	partial
+t9902-completion::completion-without-explicit-git-xxx-function	t9902-completion	completion without explicit _git_xxx function	help	partial
+t9902-completion::setup-other-remote-for-remote-reference-completion	t9902-completion	setup other remote for remote reference completion	help	partial
+t9902-completion::git-config-subcommand	t9902-completion	git config subcommand	help	partial
+t9902-completion::git-config-subcommand-options	t9902-completion	git config subcommand options	help	partial
+t9902-completion::git-config-get	t9902-completion	git config get	help	partial
+t9902-completion::git-config-set-section	t9902-completion	git config set - section	help	partial
+t9902-completion::git-config-set-section-include-includeif	t9902-completion	git config set - section include, includeIf	help	partial
+t9902-completion::git-config-set-variable-name	t9902-completion	git config set - variable name	help	partial
+t9902-completion::git-config-set-variable-name-include	t9902-completion	git config set - variable name include	help	partial
+t9902-completion::setup-for-git-config-submodule-tests	t9902-completion	setup for git config submodule tests	help	partial
+t9902-completion::git-config-set-variable-name-submodule-and-git-compute-first-level-config-vars-f	t9902-completion	git config set - variable name - submodule and __git_compute_first_level_config_vars_for_section	help	partial
+t9902-completion::git-config-set-variable-name-git-compute-second-level-config-vars-for-section	t9902-completion	git config set - variable name - __git_compute_second_level_config_vars_for_section	help	partial
+t9902-completion::git-config-set-value	t9902-completion	git config set - value	help	partial
+t9902-completion::git-c-section	t9902-completion	git -c - section	help	partial
+t9902-completion::git-c-variable-name	t9902-completion	git -c - variable name	help	partial
+t9902-completion::git-c-value	t9902-completion	git -c - value	help	partial
+t9902-completion::git-clone-config-section	t9902-completion	git clone --config= - section	help	partial
+t9902-completion::git-clone-config-variable-name	t9902-completion	git clone --config= - variable name	help	partial
+t9902-completion::git-clone-config-value	t9902-completion	git clone --config= - value	help	partial
+t9902-completion::git-reflog-show	t9902-completion	git reflog show	help	partial
+t9902-completion::options-with-value	t9902-completion	options with value	help	partial
+t9902-completion::sourcing-the-completion-script-clears-cached-commands	t9902-completion	sourcing the completion script clears cached commands	help	partial
+t9902-completion::sourcing-the-completion-script-clears-cached-merge-strategies	t9902-completion	sourcing the completion script clears cached merge strategies	help	partial
+t9902-completion::sourcing-the-completion-script-clears-cached-options	t9902-completion	sourcing the completion script clears cached --options	help	partial
+t9902-completion::option-aliases-are-not-shown-by-default	t9902-completion	option aliases are not shown by default	help	partial
+t9902-completion::option-aliases-are-shown-with-git-completion-show-all	t9902-completion	option aliases are shown with GIT_COMPLETION_SHOW_ALL	help	partial
+t9902-completion::plumbing-commands-are-excluded-without-git-completion-show-all-commands	t9902-completion	plumbing commands are excluded without GIT_COMPLETION_SHOW_ALL_COMMANDS	help	partial
+t9902-completion::all-commands-are-shown-with-git-completion-show-all-commands-also-main-non-built	t9902-completion	all commands are shown with GIT_COMPLETION_SHOW_ALL_COMMANDS (also main non-builtin)	help	partial
+t9902-completion::git-complete	t9902-completion	__git_complete	help	partial
+t9902-completion::git-pseudoref-exists	t9902-completion	__git_pseudoref_exists	help	partial
+t9902-completion::simple-alias	t9902-completion	simple alias	help	partial
+t9902-completion::recursive-alias	t9902-completion	recursive alias	help	partial
+t9902-completion::completion-uses-cmd-completion-for-alias-sh-c-git-cmd	t9902-completion	completion uses <cmd> completion for alias: !sh -c 'git <cmd> ...'	help	partial
+t9902-completion::git-complete-remote-or-refspec-push-flag-other	t9902-completion	__git_complete_remote_or_refspec - push $flag other	help	partial
+t9903-bash-prompt::setup-for-prompt-tests	t9903-bash-prompt	setup for prompt tests	status	partial
+t9903-bash-prompt::prompt-branch-name	t9903-bash-prompt	prompt - branch name	status	partial
+t9903-bash-prompt::prompt-branch-name-symlink-symref	t9903-bash-prompt	prompt - branch name - symlink symref	status	partial
+t9903-bash-prompt::prompt-unborn-branch	t9903-bash-prompt	prompt - unborn branch	status	partial
+t9903-bash-prompt::prompt-with-newline-in-path	t9903-bash-prompt	prompt - with newline in path	status	partial
+t9903-bash-prompt::prompt-detached-head	t9903-bash-prompt	prompt - detached head	status	partial
+t9903-bash-prompt::prompt-describe-detached-head-contains	t9903-bash-prompt	prompt - describe detached head - contains	status	partial
+t9903-bash-prompt::prompt-describe-detached-head-branch	t9903-bash-prompt	prompt - describe detached head - branch	status	partial
+t9903-bash-prompt::prompt-describe-detached-head-describe	t9903-bash-prompt	prompt - describe detached head - describe	status	partial
+t9903-bash-prompt::prompt-describe-detached-head-default	t9903-bash-prompt	prompt - describe detached head - default	status	partial
+t9903-bash-prompt::prompt-inside-git-directory	t9903-bash-prompt	prompt - inside .git directory	status	partial
+t9903-bash-prompt::prompt-deep-inside-git-directory	t9903-bash-prompt	prompt - deep inside .git directory	status	partial
+t9903-bash-prompt::prompt-inside-bare-repository	t9903-bash-prompt	prompt - inside bare repository	status	partial
+t9903-bash-prompt::prompt-interactive-rebase	t9903-bash-prompt	prompt - interactive rebase	status	partial
+t9903-bash-prompt::prompt-rebase-merge	t9903-bash-prompt	prompt - rebase merge	status	partial
+t9903-bash-prompt::prompt-rebase-am	t9903-bash-prompt	prompt - rebase am	status	partial
+t9903-bash-prompt::prompt-merge	t9903-bash-prompt	prompt - merge	status	partial
+t9903-bash-prompt::prompt-cherry-pick	t9903-bash-prompt	prompt - cherry-pick	status	partial
+t9903-bash-prompt::prompt-revert	t9903-bash-prompt	prompt - revert	status	partial
+t9903-bash-prompt::prompt-bisect	t9903-bash-prompt	prompt - bisect	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-clean	t9903-bash-prompt	prompt - dirty status indicator - clean	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-dirty-worktree	t9903-bash-prompt	prompt - dirty status indicator - dirty worktree	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-dirty-index	t9903-bash-prompt	prompt - dirty status indicator - dirty index	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-dirty-index-and-worktree	t9903-bash-prompt	prompt - dirty status indicator - dirty index and worktree	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-orphan-branch-clean	t9903-bash-prompt	prompt - dirty status indicator - orphan branch - clean	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-orphan-branch-dirty-index	t9903-bash-prompt	prompt - dirty status indicator - orphan branch - dirty index	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-orphan-branch-dirty-index-and-worktree	t9903-bash-prompt	prompt - dirty status indicator - orphan branch - dirty index and worktree	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-shell-variable-unset-with-config-disabled	t9903-bash-prompt	prompt - dirty status indicator - shell variable unset with config disabled	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-shell-variable-unset-with-config-enabled	t9903-bash-prompt	prompt - dirty status indicator - shell variable unset with config enabled	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-shell-variable-set-with-config-disabled	t9903-bash-prompt	prompt - dirty status indicator - shell variable set with config disabled	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-shell-variable-set-with-config-enabled	t9903-bash-prompt	prompt - dirty status indicator - shell variable set with config enabled	status	partial
+t9903-bash-prompt::prompt-dirty-status-indicator-not-shown-inside-git-directory	t9903-bash-prompt	prompt - dirty status indicator - not shown inside .git directory	status	partial
+t9903-bash-prompt::prompt-stash-status-indicator-no-stash	t9903-bash-prompt	prompt - stash status indicator - no stash	status	partial
+t9903-bash-prompt::prompt-stash-status-indicator-stash	t9903-bash-prompt	prompt - stash status indicator - stash	status	partial
+t9903-bash-prompt::prompt-stash-status-indicator-not-shown-inside-git-directory	t9903-bash-prompt	prompt - stash status indicator - not shown inside .git directory	status	partial
+t9903-bash-prompt::prompt-untracked-files-status-indicator-no-untracked-files	t9903-bash-prompt	prompt - untracked files status indicator - no untracked files	status	partial
+t9903-bash-prompt::prompt-untracked-files-status-indicator-untracked-files	t9903-bash-prompt	prompt - untracked files status indicator - untracked files	status	partial
+t9903-bash-prompt::prompt-untracked-files-status-indicator-empty-untracked-dir	t9903-bash-prompt	prompt - untracked files status indicator - empty untracked dir	status	partial
+t9903-bash-prompt::prompt-untracked-files-status-indicator-non-empty-untracked-dir	t9903-bash-prompt	prompt - untracked files status indicator - non-empty untracked dir	status	partial
+t9903-bash-prompt::prompt-untracked-files-status-indicator-untracked-files-outside-cwd	t9903-bash-prompt	prompt - untracked files status indicator - untracked files outside cwd	status	partial
+t9903-bash-prompt::prompt-untracked-files-status-indicator-shell-variable-unset-with-config-disable	t9903-bash-prompt	prompt - untracked files status indicator - shell variable unset with config disabled	status	partial
+t9903-bash-prompt::prompt-untracked-files-status-indicator-shell-variable-unset-with-config-enabled	t9903-bash-prompt	prompt - untracked files status indicator - shell variable unset with config enabled	status	partial
+t9903-bash-prompt::prompt-untracked-files-status-indicator-shell-variable-set-with-config-disabled	t9903-bash-prompt	prompt - untracked files status indicator - shell variable set with config disabled	status	partial
+t9903-bash-prompt::prompt-untracked-files-status-indicator-shell-variable-set-with-config-enabled	t9903-bash-prompt	prompt - untracked files status indicator - shell variable set with config enabled	status	partial
+t9903-bash-prompt::prompt-untracked-files-status-indicator-not-shown-inside-git-directory	t9903-bash-prompt	prompt - untracked files status indicator - not shown inside .git directory	status	partial
+t9903-bash-prompt::prompt-format-string-starting-with-dash	t9903-bash-prompt	prompt - format string starting with dash	status	partial
+t9903-bash-prompt::prompt-pc-mode	t9903-bash-prompt	prompt - pc mode	status	partial
+t9903-bash-prompt::prompt-bash-color-pc-mode-branch-name	t9903-bash-prompt	prompt - bash color pc mode - branch name	status	partial
+t9903-bash-prompt::prompt-bash-color-pc-mode-detached-head	t9903-bash-prompt	prompt - bash color pc mode - detached head	status	partial
+t9903-bash-prompt::prompt-bash-color-pc-mode-dirty-status-indicator-dirty-worktree	t9903-bash-prompt	prompt - bash color pc mode - dirty status indicator - dirty worktree	status	partial
+t9903-bash-prompt::prompt-bash-color-pc-mode-dirty-status-indicator-dirty-index	t9903-bash-prompt	prompt - bash color pc mode - dirty status indicator - dirty index	status	partial
+t9903-bash-prompt::prompt-bash-color-pc-mode-dirty-status-indicator-dirty-index-and-worktree	t9903-bash-prompt	prompt - bash color pc mode - dirty status indicator - dirty index and worktree	status	partial
+t9903-bash-prompt::prompt-bash-color-pc-mode-dirty-status-indicator-before-root-commit	t9903-bash-prompt	prompt - bash color pc mode - dirty status indicator - before root commit	status	partial
+t9903-bash-prompt::prompt-bash-color-pc-mode-inside-git-directory	t9903-bash-prompt	prompt - bash color pc mode - inside .git directory	status	partial
+t9903-bash-prompt::prompt-bash-color-pc-mode-stash-status-indicator	t9903-bash-prompt	prompt - bash color pc mode - stash status indicator	status	partial
+t9903-bash-prompt::prompt-bash-color-pc-mode-untracked-files-status-indicator	t9903-bash-prompt	prompt - bash color pc mode - untracked files status indicator	status	partial
+t9903-bash-prompt::prompt-zsh-color-pc-mode	t9903-bash-prompt	prompt - zsh color pc mode	status	partial
+t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-unset-config-disabled	t9903-bash-prompt	prompt - hide if pwd ignored - env var unset, config disabled	status	partial
+t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-unset-config-disabled-pc-mode	t9903-bash-prompt	prompt - hide if pwd ignored - env var unset, config disabled, pc mode	status	partial
+t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-unset-config-unset	t9903-bash-prompt	prompt - hide if pwd ignored - env var unset, config unset	status	partial
+t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-unset-config-unset-pc-mode	t9903-bash-prompt	prompt - hide if pwd ignored - env var unset, config unset, pc mode	status	partial
+t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-set-config-disabled	t9903-bash-prompt	prompt - hide if pwd ignored - env var set, config disabled	status	partial
+t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-set-config-disabled-pc-mode	t9903-bash-prompt	prompt - hide if pwd ignored - env var set, config disabled, pc mode	status	partial
+t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-set-config-unset	t9903-bash-prompt	prompt - hide if pwd ignored - env var set, config unset	status	partial
+t9903-bash-prompt::prompt-hide-if-pwd-ignored-env-var-set-config-unset-pc-mode	t9903-bash-prompt	prompt - hide if pwd ignored - env var set, config unset, pc mode	status	partial
+t9903-bash-prompt::prompt-hide-if-pwd-ignored-inside-gitdir	t9903-bash-prompt	prompt - hide if pwd ignored - inside gitdir	status	partial
+t9903-bash-prompt::prompt-conflict-indicator	t9903-bash-prompt	prompt - conflict indicator	status	partial
