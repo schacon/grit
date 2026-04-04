@@ -22,16 +22,24 @@ use std::path::Path;
 #[command(about = "Show the working tree status")]
 pub struct Args {
     /// Give output in short format.
-    #[arg(short = 's', long = "short")]
+    #[arg(short = 's', long = "short", overrides_with = "no_short")]
     pub short: bool,
+
+    /// Disable short format (override status.short=true).
+    #[arg(long = "no-short", overrides_with = "short")]
+    pub no_short: bool,
 
     /// Give output in the porcelain format (v1 or v2).
     #[arg(long = "porcelain", value_name = "VERSION", num_args = 0..=1, default_missing_value = "v1")]
     pub porcelain: Option<String>,
 
     /// Show the branch name.
-    #[arg(short = 'b', long = "branch")]
+    #[arg(short = 'b', long = "branch", overrides_with = "no_branch")]
     pub branch: bool,
+
+    /// Don't show branch name.
+    #[arg(long = "no-branch", overrides_with = "branch")]
+    pub no_branch: bool,
 
     /// Show untracked files.
     #[arg(short = 'u', long = "untracked-files", default_value = "normal")]
@@ -131,15 +139,29 @@ pub fn run(mut args: Args) -> Result<()> {
             args.untracked = val;
         }
     }
-    if let Some(val) = config.get("status.short") {
-        if !args.short && (val == "true" || val == "yes" || val == "on" || val == "1") {
-            args.short = true;
+    // status.short config: only apply if user didn't pass --short or --no-short
+    if !args.no_short {
+        if let Some(val) = config.get("status.short") {
+            if !args.short && (val == "true" || val == "yes" || val == "on" || val == "1") {
+                args.short = true;
+            }
         }
     }
-    if let Some(val) = config.get("status.branch") {
-        if !args.branch && (val == "true" || val == "yes" || val == "on" || val == "1") {
-            args.branch = true;
+    // --no-short overrides both config and -s
+    if args.no_short {
+        args.short = false;
+    }
+    // status.branch config: only apply if user didn't pass --branch or --no-branch
+    if !args.no_branch {
+        if let Some(val) = config.get("status.branch") {
+            if !args.branch && (val == "true" || val == "yes" || val == "on" || val == "1") {
+                args.branch = true;
+            }
         }
+    }
+    // --no-branch overrides both config and -b
+    if args.no_branch {
+        args.branch = false;
     }
 
     // Normalize untracked-files values: "false"/"0" → "no", "true"/"1" → "normal"
