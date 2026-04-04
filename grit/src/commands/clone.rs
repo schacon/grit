@@ -104,6 +104,11 @@ pub fn run(args: Args) -> Result<()> {
         return run_ssh_clone(args);
     }
 
+    // Detect bundle file
+    if is_bundle_file(&args.repository) {
+        return run_bundle_clone(args);
+    }
+
     // Strip file:// prefix if present
     let repo_path_str = if let Some(stripped) = args.repository.strip_prefix("file://") {
         stripped.to_string()
@@ -1062,6 +1067,160 @@ fn add_tree_to_index(
                 path: path.as_bytes().to_vec(),
             });
         }
+    }
+
+    Ok(())
+}
+
+/// Check if a path looks like a git bundle file.
+fn is_bundle_file(path: &str) -> bool {
+    let p = Path::new(path);
+    if let Ok(mut f) = fs::File::open(p) {
+        let mut buf = [0u8; 20];
+        if let Ok(n) = std::io::Read::read(&mut f, &mut buf) {
+            return buf[..n].starts_with(b"# v2 git bundle");
+        }
+    }
+    false
+}
+
+/// Clone from a bundle file.
+fn run_bundle_clone(args: Args) -> Result<()> {
+    let bundle_path = PathBuf::from(&args.repository);
+    let data = fs::read(&bundle_path)
+        .with_context(|| format!("cannot read bundle '{}'", args.repository))?;
+
+    // Parse bundle header
+    let header_line = b"# v2 git bundle\n";
+    if !data.starts_with(header_line) {
+        bail!("not a v2 git bundle");
+    }
+    let mut pos = header_line.len();
+    let mut refs: Vec<(String, grit_lib::objects::ObjectId)> = Vec::new();
+    loop {
+        let eol = data[pos..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|i| pos + i)
+            .ok_or_else(|| anyhow::anyhow!("truncated bundle header"))?;
+        let line = &data[pos..eol];
+        if line.is_empty() {
+            pos = eol + 1;
+            break;
+        }
+        let line_str = std::str::from_utf8(line)?;
+        if line_str.starts_with('-') {
+            pos = eol + 1;
+            continue;
+        }
+        if let Some((hex, refname)) = line_str.split_once(' ') {
+            let oid = grit_lib::objects::ObjectId::from_hex(hex)
+                .map_err(|e| anyhow::anyhow!("bad oid in bundle: {e}"))?;
+            refs.push((refname.to_string(), oid));
+        }
+        pos = eol + 1;
+    }
+
+    // Determine target directory
+    let target_name = args.directory.unwrap_or_else(|| {
+        let base = bundle_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        base
+    });
+    let target_path = PathBuf::from(&target_name);
+    if target_path.exists() {
+        bail!("destination path '{}' already exists", target_path.display());
+    }
+
+    if !args.quiet {
+        eprintln!("Cloning into '{}'...", target_name);
+    }
+
+    // Figure out default branch from refs
+    let head_branch = refs.iter()
+        .find(|(r, _)| r == "HEAD")
+        .and_then(|(_, head_oid)| {
+            refs.iter()
+                .find(|(r, oid)| r.starts_with("refs/heads/") && oid == head_oid)
+                .map(|(r, _)| r.strip_prefix("refs/heads/").unwrap_or(r).to_string())
+        })
+        .or_else(|| {
+            // If no HEAD, pick the first (or only) branch ref
+            let branches: Vec<_> = refs.iter()
+                .filter(|(r, _)| r.starts_with("refs/heads/"))
+                .collect();
+            if branches.len() == 1 {
+                Some(branches[0].0.strip_prefix("refs/heads/").unwrap_or(&branches[0].0).to_string())
+            } else {
+                // Prefer main, then master, then first
+                branches.iter()
+                    .find(|(r, _)| r.ends_with("/main"))
+                    .or_else(|| branches.iter().find(|(r, _)| r.ends_with("/master")))
+                    .or(branches.first())
+                    .map(|(r, _)| r.strip_prefix("refs/heads/").unwrap_or(r).to_string())
+            }
+        })
+        .unwrap_or_else(|| "master".to_string());
+
+    // Initialize target repo
+    fs::create_dir_all(&target_path)?;
+    let dest = init_repository(&target_path, args.bare, &head_branch, None)
+        .with_context(|| format!("failed to initialize '{}'", target_path.display()))?;
+
+    // Unbundle pack data
+    let pack_data = &data[pos..];
+    if pack_data.len() >= 12 + 20 {
+        let opts = grit_lib::unpack_objects::UnpackOptions {
+            dry_run: false,
+            quiet: true,
+        };
+        grit_lib::unpack_objects::unpack_objects(&mut &pack_data[..], &dest.odb, &opts)
+            .map_err(|e| anyhow::anyhow!("unbundle failed: {e}"))?;
+    }
+
+    // Write refs as remote tracking refs under origin/
+    for (refname, oid) in &refs {
+        if refname == "HEAD" {
+            continue;
+        }
+        // Write as remote tracking ref
+        if let Some(branch) = refname.strip_prefix("refs/heads/") {
+            let remote_ref_path = dest.git_dir.join("refs/remotes/origin").join(branch);
+            if let Some(parent) = remote_ref_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&remote_ref_path, format!("{}\n", oid.to_hex()))?;
+        }
+        // Also write tags directly
+        if refname.starts_with("refs/tags/") {
+            let ref_path = dest.git_dir.join(refname);
+            if let Some(parent) = ref_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&ref_path, format!("{}\n", oid.to_hex()))?;
+        }
+    }
+
+    // Set HEAD to point to the default branch
+    if let Some((_, oid)) = refs.iter().find(|(r, _)| r == &format!("refs/heads/{}", head_branch)) {
+        let branch_ref_path = dest.git_dir.join("refs/heads").join(&head_branch);
+        if let Some(parent) = branch_ref_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&branch_ref_path, format!("{}\n", oid.to_hex()))?;
+    }
+
+    // Set up origin remote config
+    let bundle_abs = fs::canonicalize(&bundle_path).unwrap_or(bundle_path);
+    let refspec = format!("+refs/heads/*:refs/remotes/origin/*");
+    setup_origin_remote(&dest.git_dir, &bundle_abs, "origin", &refspec)?;
+
+    // Checkout if not bare
+    if !args.bare {
+        checkout_head(&dest)?;
     }
 
     Ok(())

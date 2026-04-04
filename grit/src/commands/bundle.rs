@@ -150,7 +150,22 @@ fn collect_refs_for_bundle(
             }
             let oid = resolve_ref(repo, arg)
                 .with_context(|| format!("cannot resolve '{arg}'"))?;
-            refs.insert(arg.clone(), oid);
+            // Use full ref name if the short name maps to a known ref
+            let full_name = if arg.starts_with("refs/") || arg == "HEAD" {
+                arg.clone()
+            } else {
+                // Try refs/heads/<arg>, refs/tags/<arg>
+                let heads = repo.git_dir.join("refs/heads").join(arg);
+                let tags = repo.git_dir.join("refs/tags").join(arg);
+                if heads.exists() {
+                    format!("refs/heads/{arg}")
+                } else if tags.exists() {
+                    format!("refs/tags/{arg}")
+                } else {
+                    arg.clone()
+                }
+            };
+            refs.insert(full_name, oid);
         }
     }
 
