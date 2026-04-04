@@ -5,7 +5,7 @@
 **16,705 / 16,705 upstream test cases ported (100%)**
 
 - 888 / 888 upstream test files ported
-- 16,222 additional grit-specific tests
+- 16,498 additional grit-specific tests
 - 99.9% pass rate across all ported tests
 
 ### Coverage by Area

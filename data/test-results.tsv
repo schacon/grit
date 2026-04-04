@@ -531,8 +531,8 @@ t0023-crlf-am::setup	t0023-crlf-am	setup	add	pass
 t0023-crlf-am::am	t0023-crlf-am	am	am	pass
 t0024-crlf-archive::tar-archive	t0024-crlf-archive	tar archive	archive	pass
 t0024-crlf-archive::zip-archive	t0024-crlf-archive	zip archive	archive	pass
-t0025-crlf-renormalize::renormalize-crlf-in-repo	t0025-crlf-renormalize	renormalize CRLF in repo	add	partial
-t0025-crlf-renormalize::ignore-errors-not-mistaken-for-renormalize	t0025-crlf-renormalize	ignore-errors not mistaken for renormalize	add	partial
+t0025-crlf-renormalize::renormalize-crlf-in-repo	t0025-crlf-renormalize	renormalize CRLF in repo	add	pass
+t0025-crlf-renormalize::ignore-errors-not-mistaken-for-renormalize	t0025-crlf-renormalize	ignore-errors not mistaken for renormalize	add	pass
 t0026-eol-config::eol-lf-puts-lfs-in-normalized-file	t0026-eol-config	eol=lf puts LFs in normalized file	config	pass
 t0026-eol-config::eol-crlf-puts-crlfs-in-normalized-file	t0026-eol-config	eol=crlf puts CRLFs in normalized file	config	pass
 t0026-eol-config::autocrlf-true-overrides-eol-lf	t0026-eol-config	autocrlf=true overrides eol=lf	config	pass
@@ -4281,16 +4281,16 @@ t3060-ls-files-with-tree::no-duplicates-in-with-tree-output	t3060-ls-files-with-
 t3060-ls-files-with-tree::setup-output-in-a-conflict	t3060-ls-files-with-tree	setup: output in a conflict	ls-files	partial
 t3060-ls-files-with-tree::output-in-a-conflict	t3060-ls-files-with-tree	output in a conflict	ls-files	partial
 t3060-ls-files-with-tree::output-with-removed-git-index	t3060-ls-files-with-tree	output with removed .git/index	ls-files	partial
-t3070-wildmatch::cleanup-after-previous-file-test	t3070-wildmatch	cleanup after previous file test	ls-files	partial
-t3070-wildmatch::matching-does-not-exhibit-exponential-behavior	t3070-wildmatch	matching does not exhibit exponential behavior	ls-files	partial
-t3070-wildmatch::match-function-match-text-pattern	t3070-wildmatch	$match_function: match '$text' '$pattern'	ls-files	partial
-t3070-wildmatch::match-function-no-match-text-pattern	t3070-wildmatch	$match_function: no match '$text' '$pattern'	ls-files	partial
-t3070-wildmatch::panic-test-framework-error-unknown-matches-value-match-expect	t3070-wildmatch	PANIC: Test framework error. Unknown matches value $match_expect	ls-files	partial
-t3070-wildmatch::match-function-via-ls-files-match-dies-on-pattern-text	t3070-wildmatch	$match_function (via ls-files): match dies on '$pattern' '$text'	ls-files	partial
-t3070-wildmatch::match-function-via-ls-files-match-pattern-text	t3070-wildmatch	$match_function (via ls-files): match '$pattern' '$text'	ls-files	partial
-t3070-wildmatch::match-function-via-ls-files-no-match-pattern-text	t3070-wildmatch	$match_function (via ls-files): no match '$pattern' '$text'	ls-files	partial
-t3070-wildmatch::panic-test-framework-error-unknown-matches-value-match-expect-2	t3070-wildmatch	PANIC: Test framework error. Unknown matches value $match_expect	ls-files	partial
-t3070-wildmatch::setup-match-file-test-for-text	t3070-wildmatch	setup match file test for $text	ls-files	partial
+t3070-wildmatch::cleanup-after-previous-file-test	t3070-wildmatch	cleanup after previous file test	ls-files	pass
+t3070-wildmatch::matching-does-not-exhibit-exponential-behavior	t3070-wildmatch	matching does not exhibit exponential behavior	ls-files	pass
+t3070-wildmatch::match-function-match-text-pattern	t3070-wildmatch	$match_function: match '$text' '$pattern'	ls-files	pass
+t3070-wildmatch::match-function-no-match-text-pattern	t3070-wildmatch	$match_function: no match '$text' '$pattern'	ls-files	pass
+t3070-wildmatch::panic-test-framework-error-unknown-matches-value-match-expect	t3070-wildmatch	PANIC: Test framework error. Unknown matches value $match_expect	ls-files	pass
+t3070-wildmatch::match-function-via-ls-files-match-dies-on-pattern-text	t3070-wildmatch	$match_function (via ls-files): match dies on '$pattern' '$text'	ls-files	pass
+t3070-wildmatch::match-function-via-ls-files-match-pattern-text	t3070-wildmatch	$match_function (via ls-files): match '$pattern' '$text'	ls-files	pass
+t3070-wildmatch::match-function-via-ls-files-no-match-pattern-text	t3070-wildmatch	$match_function (via ls-files): no match '$pattern' '$text'	ls-files	pass
+t3070-wildmatch::panic-test-framework-error-unknown-matches-value-match-expect-2	t3070-wildmatch	PANIC: Test framework error. Unknown matches value $match_expect	ls-files	pass
+t3070-wildmatch::setup-match-file-test-for-text	t3070-wildmatch	setup match file test for $text	ls-files	pass
 t3101-ls-tree-dirname::setup	t3101-ls-tree-dirname	setup	ls-tree	partial
 t3101-ls-tree-dirname::ls-tree-plain	t3101-ls-tree-dirname	ls-tree plain	ls-tree	partial
 t3101-ls-tree-dirname::ls-tree-recursive	t3101-ls-tree-dirname	ls-tree recursive	ls-tree	partial
@@ -15598,11 +15598,11 @@ t7606-merge-custom::setup	t7606-merge-custom	setup	merge	partial
 t7606-merge-custom::merge-c2-with-a-custom-strategy	t7606-merge-custom	merge c2 with a custom strategy	merge	partial
 t7606-merge-custom::trivial-merge-with-custom-strategy	t7606-merge-custom	trivial merge with custom strategy	merge	partial
 t7607-merge-state::ensure-we-restore-original-state-if-no-merge-strategy-handles-it	t7607-merge-state	Ensure we restore original state if no merge strategy handles it	merge	partial
-t7608-merge-messages::merge-local-branch	t7608-merge-messages	merge local branch	merge	partial
-t7608-merge-messages::merge-octopus-branches	t7608-merge-messages	merge octopus branches	merge	partial
-t7608-merge-messages::merge-tag	t7608-merge-messages	merge tag	merge	partial
-t7608-merge-messages::ambiguous-tag	t7608-merge-messages	ambiguous tag	merge	partial
-t7608-merge-messages::remote-tracking-branch	t7608-merge-messages	remote-tracking branch	merge	partial
+t7608-merge-messages::merge-local-branch	t7608-merge-messages	merge local branch	merge	pass
+t7608-merge-messages::merge-octopus-branches	t7608-merge-messages	merge octopus branches	merge	pass
+t7608-merge-messages::merge-tag	t7608-merge-messages	merge tag	merge	pass
+t7608-merge-messages::ambiguous-tag	t7608-merge-messages	ambiguous tag	merge	pass
+t7608-merge-messages::remote-tracking-branch	t7608-merge-messages	remote-tracking branch	merge	pass
 t7609-mergetool--lib::mergetool-tool-vimdiff-creates-the-expected-layout	t7609-mergetool--lib	mergetool --tool=vimdiff creates the expected layout	mergetool	not_ported
 t7610-mergetool::setup	t7610-mergetool	setup	mergetool	not_ported
 t7610-mergetool::custom-mergetool	t7610-mergetool	custom mergetool	mergetool	not_ported
@@ -15670,10 +15670,10 @@ t7612-merge-verify-signatures::merge-commit-with-bad-signature-without-verificat
 t7612-merge-verify-signatures::merge-commit-with-bad-signature-with-merge-verifysignatures-false	t7612-merge-verify-signatures	merge commit with bad signature with merge.verifySignatures=false	merge	pass
 t7612-merge-verify-signatures::merge-commit-with-bad-signature-with-merge-verifysignatures-true-and-no-verify-s	t7612-merge-verify-signatures	merge commit with bad signature with merge.verifySignatures=true and --no-verify-signatures	merge	pass
 t7612-merge-verify-signatures::merge-unsigned-commit-into-unborn-branch	t7612-merge-verify-signatures	merge unsigned commit into unborn branch	merge	pass
-t7614-merge-signoff::setup	t7614-merge-signoff	setup	merge	partial
-t7614-merge-signoff::git-merge-signoff-adds-a-sign-off-line	t7614-merge-signoff	git merge --signoff adds a sign-off line	merge	partial
-t7614-merge-signoff::git-merge-does-not-add-a-sign-off-line	t7614-merge-signoff	git merge does not add a sign-off line	merge	partial
-t7614-merge-signoff::git-merge-no-signoff-flag-cancels-signoff-flag	t7614-merge-signoff	git merge --no-signoff flag cancels --signoff flag	merge	partial
+t7614-merge-signoff::setup	t7614-merge-signoff	setup	merge	pass
+t7614-merge-signoff::git-merge-signoff-adds-a-sign-off-line	t7614-merge-signoff	git merge --signoff adds a sign-off line	merge	pass
+t7614-merge-signoff::git-merge-does-not-add-a-sign-off-line	t7614-merge-signoff	git merge does not add a sign-off line	merge	pass
+t7614-merge-signoff::git-merge-no-signoff-flag-cancels-signoff-flag	t7614-merge-signoff	git merge --no-signoff flag cancels --signoff flag	merge	pass
 t7615-diff-algo-with-mergy-operations::setup	t7615-diff-algo-with-mergy-operations	setup	diff	partial
 t7615-diff-algo-with-mergy-operations::merge-c2-to-c1-with-recursive-merge-strategy-fails-with-the-current-default-myer	t7615-diff-algo-with-mergy-operations	merge c2 to c1 with recursive merge strategy fails with the current default myers diff algorithm	diff	partial
 t7615-diff-algo-with-mergy-operations::merge-c2-to-c1-with-recursive-merge-strategy-succeeds-with-xdiff-algorithm-histo	t7615-diff-algo-with-mergy-operations	merge c2 to c1 with recursive merge strategy succeeds with -Xdiff-algorithm=histogram	diff	partial
