@@ -361,6 +361,17 @@ pub fn run(args: Args) -> Result<()> {
             filtered_untracked
         };
 
+        // If --no-empty-directory removed entries, re-evaluate pathspec matching
+        // based on what actually gets output.
+        if args.no_empty_directory && !pathspec_filter.is_empty() && !output_paths.is_empty() {
+            // At least one path survived filtering, so pathspecs are matched.
+        } else if args.no_empty_directory && !pathspec_filter.is_empty() && output_paths.is_empty() {
+            // All entries were empty dirs that got filtered. Reset matched.
+            for m in matched.iter_mut() {
+                *m = false;
+            }
+        }
+
         for display in &output_paths {
             let name = String::from_utf8_lossy(display);
             if args.show_tag {
