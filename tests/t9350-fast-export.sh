@@ -116,7 +116,7 @@ test_expect_success 'fast-export --reference-excluded-parents main~2..main' '
 	test $(git rev-parse --verify main) = $(git -C new rev-parse --verify refs/heads/rewrite)
 '
 
-test_expect_failure 'fast-export --show-original-ids' '
+test_expect_success 'fast-export --show-original-ids' '
 
 	git fast-export --show-original-ids main >output &&
 	grep ^original-oid output| sed -e s/^original-oid.// | sort >actual &&
@@ -169,7 +169,7 @@ test_expect_success 'aborting on iso-8859-7' '
 	test_must_fail git fast-export --reencode=abort wer^..wer >iso-8859-7.fi
 '
 
-test_expect_failure 'preserving iso-8859-7' '
+test_expect_success 'preserving iso-8859-7' '
 
 	test_when_finished "git reset --hard HEAD~1" &&
 	test_config i18n.commitencoding iso-8859-7 &&
@@ -192,7 +192,7 @@ test_expect_failure 'preserving iso-8859-7' '
 	grep ^encoding actual
 '
 
-test_expect_failure 'encoding preserved if reencoding fails' '
+test_expect_success 'encoding preserved if reencoding fails' '
 
 	test_when_finished "git reset --hard HEAD~1" &&
 	test_config i18n.commitencoding iso-8859-7 &&
@@ -267,7 +267,7 @@ test_expect_success 'signed-tags=verbatim' '
 
 '
 
-test_expect_failure 'signed-tags=warn-verbatim' '
+test_expect_success 'signed-tags=warn-verbatim' '
 
 	git fast-export --signed-tags=warn-verbatim sign-your-name >output 2>err &&
 	grep PGP output &&
@@ -456,7 +456,7 @@ test_expect_failure GPGSSH 'round-trip SSH signed commit' '
 
 '
 
-test_expect_failure 'setup submodule' '
+test_expect_success 'setup submodule' '
 
 	test_config_global protocol.file.allow always &&
 	git checkout -f main &&
@@ -483,7 +483,7 @@ test_expect_failure 'setup submodule' '
 
 '
 
-test_expect_failure 'submodule fast-export | fast-import' '
+test_expect_success 'submodule fast-export | fast-import' '
 
 	test_config_global protocol.file.allow always &&
 	SUBENT1=$(git ls-tree main^ sub) &&
@@ -674,7 +674,7 @@ M 100644 :2 there
 
 EOF
 
-test_expect_failure 'no exact-ref revisions included' '
+test_expect_success 'no exact-ref revisions included' '
 	(
 		cd limit-by-paths &&
 		git fast-export main~2..main~1 > output &&
@@ -748,8 +748,8 @@ test_expect_success 'tree_tag'        '
 # tags resolve to a tree).  They exist just to make sure we do not
 # abort but instead just warn.
 test_expect_success 'tree_tag-obj'    'git fast-export tree_tag-obj'
-test_expect_failure 'tag-obj_tag'     'git fast-export tag-obj_tag'
-test_expect_failure 'tag-obj_tag-obj' 'git fast-export tag-obj_tag-obj'
+test_expect_success 'tag-obj_tag'     'git fast-export tag-obj_tag'
+test_expect_success 'tag-obj_tag-obj' 'git fast-export tag-obj_tag-obj'
 
 test_expect_success 'handling tags of blobs' '
 	git tag -a -m "Tag of a blob" blobtag $(git rev-parse main:file) &&
@@ -982,7 +982,7 @@ test_expect_success 'fast-export --first-parent outputs all revisions output by 
 	)
 '
 
-test_expect_failure 'fast-export handles --end-of-options' '
+test_expect_success 'fast-export handles --end-of-options' '
 	git update-ref refs/heads/nodash HEAD &&
 	git update-ref refs/heads/--dashes HEAD &&
 	git fast-export --end-of-options nodash >expect &&
