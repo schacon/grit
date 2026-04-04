@@ -934,6 +934,21 @@ test_remote_https_urls() {
 		    -e 's/"\]}//g'
 }
 
+# Convert Q to tab, Z to space.
+qz_to_tab_space () {
+	tr QZ '\011\040'
+}
+
+# Append CR to each line.
+append_cr () {
+	sed -e 's/$/Q/' | tr Q '\015'
+}
+
+# Remove CR from each line.
+remove_cr () {
+	tr -d '\015'
+}
+
 test_done () {
 	printf '\n'
 	echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"

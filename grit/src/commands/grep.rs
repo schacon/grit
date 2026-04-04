@@ -18,6 +18,10 @@ pub struct Args {
     #[arg(short = 'n', long = "line-number")]
     pub line_number: bool,
 
+    /// Suppress line numbers (overrides -n).
+    #[arg(long = "no-line-number", hide = true)]
+    pub no_line_number: bool,
+
     /// Show count of matching lines per file.
     #[arg(short = 'c', long = "count")]
     pub count: bool,
@@ -70,9 +74,9 @@ pub struct Args {
     #[arg(long = "or")]
     pub or: bool,
 
-    /// Negate the next pattern.
-    #[arg(long = "not")]
-    pub not: bool,
+    /// Negate the next pattern (can appear multiple times).
+    #[arg(long = "not", action = clap::ArgAction::Count)]
+    pub not: u8,
 
     /// Require all patterns to match (line-level AND).
     #[arg(long = "all-match")]
@@ -131,6 +135,9 @@ impl Args {
     }
     fn has_context(&self) -> bool {
         self.before_ctx() > 0 || self.after_ctx() > 0
+    }
+    fn show_line_number(&self) -> bool {
+        self.line_number && !self.no_line_number
     }
 }
 
@@ -522,7 +529,7 @@ fn grep_content(
                     let col = m.start() + 1;
                     let mut prefix_str = fmt_name(&display_name, color);
                     prefix_str.push_str(&sep_char(':', color));
-                    if args.line_number {
+                    if args.show_line_number() {
                         prefix_str.push_str(&fmt_num(idx + 1, color));
                         prefix_str.push_str(&sep_char(':', color));
                     }
@@ -572,7 +579,7 @@ fn grep_content(
                 let separator = if is_match_line { ':' } else { '-' };
                 let mut prefix_str = fmt_name(&display_name, color);
                 prefix_str.push_str(&sep_char(separator, color));
-                if args.line_number {
+                if args.show_line_number() {
                     prefix_str.push_str(&fmt_num(i + 1, color));
                     prefix_str.push_str(&sep_char(separator, color));
                 }
@@ -599,7 +606,7 @@ fn grep_content(
             let line = lines[idx];
             let mut prefix_str = fmt_name(&display_name, color);
             prefix_str.push_str(&sep_char(':', color));
-            if args.line_number {
+            if args.show_line_number() {
                 prefix_str.push_str(&fmt_num(idx + 1, color));
                 prefix_str.push_str(&sep_char(':', color));
             }
