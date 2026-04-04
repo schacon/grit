@@ -279,6 +279,26 @@ pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
         }
     }
 
+    // Handle <rev>:<path> — resolve a tree entry.
+    // Must come after :/ handling. Look for a single colon that isn't doubled,
+    // and isn't part of ^{ or :/. The colon separates the revision from the path.
+    if let Some(colon_idx) = spec.find(':') {
+        // Exclude :/ (commit search) and :N:path (stage number)
+        let before = &spec[..colon_idx];
+        let after = &spec[colon_idx + 1..];
+        if !before.is_empty() && !spec.starts_with(":/") {
+            // <rev>:<path> — resolve rev to tree, then navigate path
+            let rev_oid = resolve_revision(repo, before)?;
+            let tree_oid = peel_to_tree(repo, rev_oid)?;
+            if after.is_empty() {
+                // <rev>: means the tree itself
+                return Ok(tree_oid);
+            }
+            // Navigate into the tree by path
+            return resolve_tree_path(repo, &tree_oid, after);
+        }
+    }
+
     let (base_with_nav, peel) = parse_peel_suffix(spec);
     let (base, nav_steps) = parse_nav_steps(base_with_nav);
     let mut oid = resolve_base(repo, base)?;
@@ -286,6 +306,46 @@ pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
         oid = apply_nav_step(repo, oid, step)?;
     }
     apply_peel(repo, oid, peel)
+}
+
+/// Peel an object to a tree (commit → tree, tree → tree).
+fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
+    let obj = repo.odb.read(&oid)?;
+    match obj.kind {
+        crate::objects::ObjectKind::Tree => Ok(oid),
+        crate::objects::ObjectKind::Commit => {
+            let commit = crate::objects::parse_commit(&obj.data)?;
+            Ok(commit.tree)
+        }
+        crate::objects::ObjectKind::Tag => {
+            let tag = crate::objects::parse_tag(&obj.data)?;
+            peel_to_tree(repo, tag.object)
+        }
+        _ => Err(Error::ObjectNotFound(format!("cannot peel {} to tree", oid))),
+    }
+}
+
+/// Navigate a tree to find an object at a given path.
+fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
+    let obj = repo.odb.read(tree_oid)?;
+    let entries = crate::objects::parse_tree(&obj.data)?;
+    let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
+    if components.is_empty() {
+        return Ok(*tree_oid);
+    }
+    let first = components[0];
+    let rest: Vec<&str> = components[1..].to_vec();
+    for entry in entries {
+        let name = String::from_utf8_lossy(&entry.name);
+        if name == first {
+            if rest.is_empty() {
+                return Ok(entry.oid);
+            } else {
+                return resolve_tree_path(repo, &entry.oid, &rest.join("/"));
+            }
+        }
+    }
+    Err(Error::ObjectNotFound(format!("path '{}' not found in tree {}", path, tree_oid)))
 }
 
 /// A single parent/ancestor navigation step.

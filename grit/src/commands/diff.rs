@@ -312,6 +312,10 @@ pub struct Args {
     #[arg(long = "no-textconv")]
     pub no_textconv: bool,
 
+    /// Check for whitespace errors in the diff.
+    #[arg(long = "check")]
+    pub check: bool,
+
     /// Commits or paths. Use `--` to separate revisions from paths.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
@@ -404,6 +408,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
                 "--no-ext-diff" => { args.no_ext_diff = true; }
                 "--no-textconv" => { args.no_textconv = true; }
+                "--check" => { args.check = true; }
                 s if s.starts_with("--ignore-submodules") => {
                     args.ignore_submodules = Some("all".to_owned());
                 }
@@ -712,6 +717,15 @@ pub fn run(mut args: Args) -> Result<()> {
                 stat_enabled = true;
             }
         }
+    }
+
+    // --check: check for whitespace errors
+    if args.check {
+        let has_errors = check_whitespace_errors(&mut out, &entries, &repo.odb, wt_for_content)?;
+        if has_errors {
+            std::process::exit(2);
+        }
+        return Ok(());
     }
 
     if !args.quiet {
@@ -1733,21 +1747,25 @@ fn write_shortstat(
 }
 
 /// Append insertions/deletions counts to a summary string.
-/// When both are zero, still show `0 insertions(+), 0 deletions(-)`.
+/// Git only shows insertions/deletions when they are non-zero,
+/// except when both are zero (e.g. mode-only changes).
 fn append_stat_counts(summary: &mut String, total_ins: usize, total_del: usize) {
-    if total_ins > 0 || (total_ins == 0 && total_del == 0) {
+    if total_ins > 0 {
         summary.push_str(&format!(
             ", {} insertion{}(+)",
             total_ins,
             if total_ins == 1 { "" } else { "s" }
         ));
     }
-    if total_del > 0 || (total_ins == 0 && total_del == 0) {
+    if total_del > 0 {
         summary.push_str(&format!(
             ", {} deletion{}(-)",
             total_del,
             if total_del == 1 { "" } else { "s" }
         ));
+    }
+    if total_ins == 0 && total_del == 0 {
+        summary.push_str(", 0 insertions(+), 0 deletions(-)");
     }
 }
 
@@ -1833,13 +1851,24 @@ fn format_stat_line_git(
     // Pad path to max_path_len display columns (not bytes)
     let path_display_width = UnicodeWidthStr::width(path);
     let padding = max_path_len.saturating_sub(path_display_width);
-    format!(
-        " {}{} | {:>cw$} {plus}{minus}",
-        path,
-        " ".repeat(padding),
-        total,
-        cw = count_width,
-    )
+    let bar = format!("{plus}{minus}");
+    if bar.is_empty() {
+        format!(
+            " {}{} | {:>cw$}",
+            path,
+            " ".repeat(padding),
+            total,
+            cw = count_width,
+        )
+    } else {
+        format!(
+            " {}{} | {:>cw$} {bar}",
+            path,
+            " ".repeat(padding),
+            total,
+            cw = count_width,
+        )
+    }
 }
 
 /// Write a stat summary for each entry, followed by a totals line.
@@ -2072,4 +2101,73 @@ fn write_name_status(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> 
         }
     }
     Ok(())
+}
+
+/// Check for whitespace errors in added/modified lines.
+/// Returns true if any errors were found.
+fn check_whitespace_errors(
+    out: &mut impl Write,
+    entries: &[DiffEntry],
+    odb: &Odb,
+    work_tree: Option<&Path>,
+) -> Result<bool> {
+    use grit_lib::diff::zero_oid;
+    let mut has_errors = false;
+
+    for entry in entries {
+        if entry.status == DiffStatus::Deleted {
+            continue;
+        }
+        let path = entry.path();
+
+        // Read old and new content
+        let old_content = if entry.old_oid == zero_oid() {
+            String::new()
+        } else {
+            read_content(odb, &entry.old_oid, work_tree, entry.old_path.as_deref().unwrap_or(path))
+        };
+        let new_content = if entry.new_oid == zero_oid() {
+            String::new()
+        } else {
+            read_content(odb, &entry.new_oid, work_tree, path)
+        };
+
+        // Compute diff and check added lines for whitespace errors
+        use similar::{ChangeTag, TextDiff};
+        let diff = TextDiff::from_lines(&old_content, &new_content);
+        let mut line_no = 0u64;
+        for change in diff.iter_all_changes() {
+            match change.tag() {
+                ChangeTag::Insert => {
+                    line_no += 1;
+                    let line = change.value();
+                    // Check for trailing whitespace
+                    let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
+                    if trimmed != trimmed.trim_end() {
+                        writeln!(out, "{}:{}: trailing whitespace.", path, line_no)?;
+                        write!(out, "+{}", line)?;
+                        if !line.ends_with('\n') {
+                            writeln!(out)?;
+                        }
+                        has_errors = true;
+                    }
+                    // Check for space before tab in indent
+                    let indent: &str = &trimmed[..trimmed.len() - trimmed.trim_start().len()];
+                    if indent.contains(" \t") {
+                        writeln!(out, "{}:{}: space before tab in indent.", path, line_no)?;
+                        write!(out, "+{}", line)?;
+                        if !line.ends_with('\n') {
+                            writeln!(out)?;
+                        }
+                        has_errors = true;
+                    }
+                }
+                ChangeTag::Equal => {
+                    line_no += 1;
+                }
+                ChangeTag::Delete => {}
+            }
+        }
+    }
+    Ok(has_errors)
 }

@@ -18,9 +18,9 @@ use std::io::{self, Write};
 #[derive(Debug, ClapArgs)]
 #[command(about = "Show various types of objects (commits, trees, blobs, tags)")]
 pub struct Args {
-    /// Object to show (commit, tree, blob, or tag). Defaults to HEAD.
+    /// Object(s) to show (commit, tree, blob, or tag). Defaults to HEAD.
     #[arg()]
-    pub object: Option<String>,
+    pub objects: Vec<String>,
 
     /// Show only one line per commit (short hash + subject).
     #[arg(long = "oneline")]
@@ -71,27 +71,38 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    let spec = args.object.as_deref().unwrap_or("HEAD");
-    let oid = resolve_revision(&repo, spec)
-        .with_context(|| format!("unknown revision or path: '{spec}'"))?;
-
-    let obj = repo.odb.read(&oid).context("reading object")?;
+    let specs: Vec<&str> = if args.objects.is_empty() {
+        vec!["HEAD"]
+    } else {
+        // Split on -- to separate objects from pathspecs
+        args.objects.iter().map(|s| s.as_str()).collect()
+    };
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    match obj.kind {
-        ObjectKind::Commit => {
-            show_commit(&mut out, &repo.odb, &oid, &obj.data, &args)?;
+    for spec in &specs {
+        if *spec == "--" {
+            break;
         }
-        ObjectKind::Tag => {
-            show_tag(&mut out, &repo.odb, &obj.data, &args)?;
-        }
-        ObjectKind::Tree => {
-            show_tree(&mut out, &obj.data)?;
-        }
-        ObjectKind::Blob => {
-            out.write_all(&obj.data)?;
+        let oid = resolve_revision(&repo, spec)
+            .with_context(|| format!("unknown revision or path: '{spec}'"))?;
+
+        let obj = repo.odb.read(&oid).context("reading object")?;
+
+        match obj.kind {
+            ObjectKind::Commit => {
+                show_commit(&mut out, &repo.odb, &oid, &obj.data, &args)?;
+            }
+            ObjectKind::Tag => {
+                show_tag(&mut out, &repo.odb, &obj.data, &args)?;
+            }
+            ObjectKind::Tree => {
+                show_tree(&mut out, &obj.data)?;
+            }
+            ObjectKind::Blob => {
+                out.write_all(&obj.data)?;
+            }
         }
     }
 
@@ -791,26 +802,63 @@ fn format_date_relative(ident: &str) -> String {
     ident.to_owned()
 }
 
+/// Parse a timezone offset string like "+0200" or "-0500" into seconds.
+fn parse_tz_offset(offset: &str) -> i64 {
+    let bytes = offset.as_bytes();
+    if bytes.len() < 5 {
+        return 0;
+    }
+    let sign = if bytes[0] == b'-' { -1i64 } else { 1i64 };
+    let hours: i64 = offset[1..3].parse().unwrap_or(0);
+    let minutes: i64 = offset[3..5].parse().unwrap_or(0);
+    sign * (hours * 3600 + minutes * 60)
+}
+
 /// Format the date portion of a Git ident string for human display.
+/// Default Git date format: "Thu Apr  7 15:13:13 2005 -0700"
 fn format_date(ident: &str) -> String {
     let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
-    if parts.len() >= 2 {
-        let ts_str = parts[1];
-        let offset = parts[0];
-        if let Ok(ts) = ts_str.parse::<i64>() {
-            let dt = time::OffsetDateTime::from_unix_timestamp(ts)
-                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-            let format = time::format_description::parse(
-                "[weekday repr:short] [month repr:short] [day] [hour]:[minute]:[second] [year]",
-            );
-            if let Ok(fmt) = format {
-                if let Ok(formatted) = dt.format(&fmt) {
-                    return format!("{formatted} {offset}");
-                }
-            }
-        }
-        format!("{ts_str} {offset}")
-    } else {
-        ident.to_owned()
+    if parts.len() < 2 {
+        return ident.to_owned();
     }
+    let ts_str = parts[1];
+    let offset_str = parts[0];
+    let ts = match ts_str.parse::<i64>() {
+        Ok(v) => v,
+        Err(_) => return format!("{ts_str} {offset_str}"),
+    };
+
+    let tz_offset_secs = parse_tz_offset(offset_str);
+    let adjusted = ts + tz_offset_secs;
+    let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    let weekday = match dt.weekday() {
+        time::Weekday::Monday => "Mon",
+        time::Weekday::Tuesday => "Tue",
+        time::Weekday::Wednesday => "Wed",
+        time::Weekday::Thursday => "Thu",
+        time::Weekday::Friday => "Fri",
+        time::Weekday::Saturday => "Sat",
+        time::Weekday::Sunday => "Sun",
+    };
+    let month = match dt.month() {
+        time::Month::January => "Jan",
+        time::Month::February => "Feb",
+        time::Month::March => "Mar",
+        time::Month::April => "Apr",
+        time::Month::May => "May",
+        time::Month::June => "Jun",
+        time::Month::July => "Jul",
+        time::Month::August => "Aug",
+        time::Month::September => "Sep",
+        time::Month::October => "Oct",
+        time::Month::November => "Nov",
+        time::Month::December => "Dec",
+    };
+    format!(
+        "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
+        weekday, month, dt.day(),
+        dt.hour(), dt.minute(), dt.second(),
+        dt.year(), offset_str
+    )
 }

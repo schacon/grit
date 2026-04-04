@@ -120,6 +120,69 @@ pub struct Args {
     /// Limit number of patches (e.g., -1 for only the last commit).
     #[arg(short = '1', hide = true)]
     pub last_one: bool,
+    /// Use the From: header to attribute patches (accepted, partial impl).
+    #[arg(long = "from", default_missing_value = "", num_args = 0..=1, require_equals = true)]
+    pub from: Option<String>,
+
+    /// Suppress signature.
+    #[arg(long = "no-signature")]
+    pub no_signature: bool,
+
+    /// Append notes.
+    #[arg(long = "notes", default_missing_value = "", num_args = 0..=1, require_equals = true)]
+    pub notes: Option<String>,
+
+    /// Suppress notes.
+    #[arg(long = "no-notes")]
+    pub no_notes: bool,
+
+    /// Ignore if upstream already has the patch.
+    #[arg(long = "ignore-if-in-upstream")]
+    pub ignore_if_in_upstream: bool,
+
+    /// Reroll count / version prefix (e.g. -v2).
+    #[arg(short = 'v', long = "reroll-count", value_name = "N")]
+    pub reroll_count: Option<String>,
+
+    /// Include interdiff against a previous version.
+    #[arg(long = "interdiff", value_name = "REV")]
+    pub interdiff: Option<String>,
+
+    /// Include range-diff against a previous version.
+    #[arg(long = "range-diff", value_name = "REV")]
+    pub range_diff: Option<String>,
+
+    /// Show patch (accepted for compat, default behavior).
+    #[arg(short = 'p', long = "patch")]
+    pub patch: bool,
+
+    /// Max filename length for patches.
+    #[arg(long = "filename-max-length", value_name = "N")]
+    pub filename_max_length: Option<usize>,
+
+    /// Creation factor for range-diff.
+    #[arg(long = "creation-factor", value_name = "N")]
+    pub creation_factor: Option<usize>,
+
+    /// Output file (instead of per-patch files).
+    #[arg(long = "output", value_name = "FILE")]
+    pub output: Option<PathBuf>,
+
+    /// Suppress Cc: headers.
+    #[arg(long = "no-cc")]
+    pub no_cc: bool,
+
+    /// Suppress To: headers.
+    #[arg(long = "no-to")]
+    pub no_to: bool,
+
+    /// Progress display (accepted for compat, no-op).
+    #[arg(long = "progress")]
+    pub progress: bool,
+
+    /// Quiet mode.
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
 }
 
 /// Extra headers/options computed from args, passed into formatting functions.
@@ -288,7 +351,7 @@ pub fn run(args: Args) -> Result<()> {
             let filename = format!(
                 "{:04}-{}.patch",
                 patch_num,
-                sanitize_subject(subject_line)
+                sanitize_subject_with_limit(subject_line, args.filename_max_length)
             );
             let path = out_dir.join(&filename);
             std::fs::write(&path, &patch)
@@ -998,6 +1061,16 @@ fn parse_tz_offset(s: &str) -> Option<time::UtcOffset> {
 }
 
 /// Sanitize a subject line for use as a filename.
+fn sanitize_subject_with_limit(subject: &str, max_len: Option<usize>) -> String {
+    let limit = max_len.unwrap_or(64);
+    let sanitized = sanitize_subject(subject);
+    if sanitized.len() > limit {
+        sanitized[..limit].trim_end_matches('-').to_owned()
+    } else {
+        sanitized
+    }
+}
+
 fn sanitize_subject(subject: &str) -> String {
     subject
         .chars()

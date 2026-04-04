@@ -45,6 +45,10 @@ pub struct Args {
     #[arg(long = "first-parent")]
     pub first_parent: bool,
 
+    /// Show root commits with diffs against an empty tree.
+    #[arg(long = "root")]
+    pub root: bool,
+
     /// Show a graph of the commit history.
     #[arg(long = "graph")]
     pub graph: bool,
@@ -58,8 +62,8 @@ pub struct Args {
     pub no_decorate: bool,
 
     /// Do not walk the commit graph — show given commits only.
-    #[arg(long = "no-walk")]
-    pub no_walk: bool,
+    #[arg(long = "no-walk", default_missing_value = "sorted", num_args = 0..=1, require_equals = true)]
+    pub no_walk: Option<String>,
 
     /// Show which ref led to each commit (with --all).
     #[arg(long = "source")]
@@ -149,9 +153,105 @@ pub struct Args {
     #[arg(long = "abbrev", value_name = "N", default_missing_value = "7", num_args = 0..=1, require_equals = true)]
     pub abbrev: Option<String>,
 
+    /// Use NUL as record terminator.
+    #[arg(short = 'z')]
+    pub null_terminator: bool,
+
     /// Suppress diff output for submodules.
     #[arg(long = "no-ext-diff")]
     pub no_ext_diff: bool,
+
+    /// Show stat with patch.
+    #[arg(long = "patch-with-stat")]
+    pub patch_with_stat: bool,
+
+    /// Disable rename detection.
+    #[arg(long = "no-renames")]
+    pub no_renames: bool,
+
+    /// Detect renames.
+    #[arg(short = 'M', long = "find-renames", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
+    pub find_renames: Option<String>,
+
+    /// Detect copies.
+    #[arg(short = 'C', long = "find-copies", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
+    pub find_copies: Option<String>,
+
+    /// Control merge commit diff display.
+    #[arg(long = "diff-merges", default_missing_value = "on")]
+    pub diff_merges: Option<String>,
+
+    /// Suppress diff output for merge commits.
+    #[arg(long = "no-diff-merges")]
+    pub no_diff_merges: bool,
+
+    /// Abbreviate commit hashes in output.
+    #[arg(long = "abbrev-commit")]
+    pub abbrev_commit: bool,
+
+    /// Color output.
+    #[arg(long = "color", default_missing_value = "always", num_args = 0..=1, require_equals = true)]
+    pub color: Option<String>,
+
+    /// Disable color.
+    #[arg(long = "no-color")]
+    pub no_color: bool,
+
+    /// Filter decoration refs.
+    #[arg(long = "decorate-refs", value_name = "PATTERN")]
+    pub decorate_refs: Vec<String>,
+
+    /// Exclude decoration refs.
+    #[arg(long = "decorate-refs-exclude", value_name = "PATTERN")]
+    pub decorate_refs_exclude: Vec<String>,
+
+    /// Show line prefix.
+    #[arg(long = "line-prefix", value_name = "PREFIX")]
+    pub line_prefix: Option<String>,
+
+    /// Disable graph output.
+    #[arg(long = "no-graph")]
+    pub no_graph: bool,
+
+    /// Show GPG signature.
+    #[arg(long = "show-signature")]
+    pub show_signature: bool,
+
+    /// Disable abbreviation.
+    #[arg(long = "no-abbrev")]
+    pub no_abbrev: bool,
+
+    /// Grep log messages.
+    #[arg(long = "grep", value_name = "PATTERN")]
+    pub grep_patterns: Vec<String>,
+
+    /// Invert grep match.
+    #[arg(long = "invert-grep")]
+    pub invert_grep: bool,
+
+    /// Case insensitive grep.
+    #[arg(short = 'i', long = "regexp-ignore-case")]
+    pub regexp_ignore_case: bool,
+
+    /// Date ordering.
+    #[arg(long = "date-order")]
+    pub date_order: bool,
+
+    /// Topo ordering.
+    #[arg(long = "topo-order")]
+    pub topo_order: bool,
+
+    /// Ignore missing refs.
+    #[arg(long = "ignore-missing")]
+    pub ignore_missing: bool,
+
+    /// Clear all decorations.
+    #[arg(long = "clear-decorations")]
+    pub clear_decorations: bool,
+
+    /// Show shortstat.
+    #[arg(long = "shortstat")]
+    pub shortstat: bool,
 
     /// Pathspecs (after --).
     #[arg(last = true)]
@@ -159,8 +259,16 @@ pub struct Args {
 }
 
 /// Run the `log` command.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Resolve pretty format aliases from config
+    if let Some(ref fmt) = args.format {
+        let resolved = resolve_pretty_alias_with_config(fmt, &repo);
+        if resolved != *fmt {
+            args.format = Some(resolved);
+        }
+    }
 
     // Handle -g / --walk-reflogs mode
     if args.walk_reflogs {
@@ -168,7 +276,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Handle --no-walk: show given commits without walking parents
-    if args.no_walk {
+    if args.no_walk.is_some() {
         return run_no_walk(&repo, &args);
     }
 
@@ -245,7 +353,8 @@ pub fn run(args: Args) -> Result<()> {
     // Collect ref decorations — manually determine last-wins for
     // --decorate / --no-decorate so that flag order is respected.
     let (show_decorations, decorate_full) = {
-        let mut show = true; // default: decorations on
+        // Default: decorations off (git only decorates for terminal/auto)
+        let mut show = false;
         let mut full = false;
         for arg in std::env::args() {
             if arg == "--no-decorate" {
@@ -260,8 +369,10 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
         }
-        // If user explicitly passed --no-decorate and nothing else, respect it
-        if args.no_decorate && args.decorate.is_none() {
+        if args.decorate.is_some() {
+            show = true;
+        }
+        if args.no_decorate {
             show = false;
         }
         (show, full)
@@ -882,6 +993,13 @@ fn format_commit(
         Some("short") => {
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
+            if info.parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
+                    let h = p.to_hex();
+                    h[..abbrev_len.min(h.len())].to_string()
+                }).collect();
+                writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
+            }
             let author_name = extract_name(&info.author);
             writeln!(out, "Author: {author_name}")?;
             writeln!(out)?;
@@ -893,6 +1011,13 @@ fn format_commit(
         Some("medium") | None => {
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
+            if info.parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
+                    let h = p.to_hex();
+                    h[..abbrev_len.min(h.len())].to_string()
+                }).collect();
+                writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
+            }
             writeln!(out, "Author: {}", format_ident_display(&info.author))?;
             writeln!(out, "Date:   {}", format_date_with_mode(&info.author, date_format))?;
             writeln!(out)?;
@@ -904,6 +1029,13 @@ fn format_commit(
         Some("full") => {
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
+            if info.parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
+                    let h = p.to_hex();
+                    h[..abbrev_len.min(h.len())].to_string()
+                }).collect();
+                writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
+            }
             writeln!(out, "Author: {}", format_ident_display(&info.author))?;
             writeln!(out, "Commit: {}", format_ident_display(&info.committer))?;
             writeln!(out)?;
@@ -915,6 +1047,13 @@ fn format_commit(
         Some("fuller") => {
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
+            if info.parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
+                    let h = p.to_hex();
+                    h[..abbrev_len.min(h.len())].to_string()
+                }).collect();
+                writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
+            }
             writeln!(out, "Author:     {}", format_ident_display(&info.author))?;
             writeln!(out, "AuthorDate: {}", format_date_with_mode(&info.author, date_format))?;
             writeln!(out, "Commit:     {}", format_ident_display(&info.committer))?;
@@ -2009,4 +2148,50 @@ fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
         }
     }
     set
+}
+
+/// Resolve a pretty format alias by looking up `pretty.<name>` in git config.
+/// Returns the resolved format string, or the input unchanged.
+fn resolve_pretty_alias_with_config(fmt: &str, repo: &Repository) -> String {
+    // Known built-in formats — no resolution needed
+    match fmt {
+        "oneline" | "short" | "medium" | "full" | "fuller" | "reference" | "email" | "raw" | "mboxrd" => {
+            return fmt.to_string();
+        }
+        _ => {}
+    }
+
+    // Already a format: or tformat: string
+    if fmt.starts_with("format:") || fmt.starts_with("tformat:") {
+        return fmt.to_string();
+    }
+
+    // Try to resolve from config, with loop detection
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let mut visited = std::collections::HashSet::new();
+    let mut current = fmt.to_string();
+
+    loop {
+        if visited.contains(&current) {
+            return current;
+        }
+        visited.insert(current.clone());
+
+        let key = format!("pretty.{}", current);
+        if let Some(value) = config.get(&key) {
+            match value.as_str() {
+                "oneline" | "short" | "medium" | "full" | "fuller" | "reference" | "email" | "raw" | "mboxrd" => {
+                    return value;
+                }
+                v if v.starts_with("format:") || v.starts_with("tformat:") => {
+                    return value;
+                }
+                _ => {
+                    current = value;
+                }
+            }
+        } else {
+            return current;
+        }
+    }
 }

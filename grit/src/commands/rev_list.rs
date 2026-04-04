@@ -26,6 +26,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut read_stdin = false;
     let mut end_of_options = false;
     let mut path_mode = false;
+    let mut no_commit_header = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -97,6 +98,16 @@ pub fn run(args: Args) -> Result<()> {
                 _ if arg.starts_with("--format=") => {
                     let value = arg.trim_start_matches("--format=").to_owned();
                     options.output_mode = OutputMode::Format(value);
+                }
+                _ if arg.starts_with("--pretty=") => {
+                    let value = arg.trim_start_matches("--pretty=").to_owned();
+                    // --pretty=format:xxx is the same as --format=format:xxx
+                    // --pretty=oneline etc are named formats
+                    options.output_mode = OutputMode::Format(value);
+                }
+                "--pretty" => {
+                    // --pretty without a value defaults to medium
+                    options.output_mode = OutputMode::Format("medium".to_owned());
                 }
                 _ if arg.starts_with("--abbrev=") => {
                     let value = arg.trim_start_matches("--abbrev=");
@@ -226,6 +237,12 @@ pub fn run(args: Args) -> Result<()> {
                     options.ancestry_path_bottoms.push(oid);
                 }
                 "--filter-print-omitted" => options.filter_print_omitted = true,
+                "--no-commit-header" => no_commit_header = true,
+                "--commit-header" => no_commit_header = false,
+                "--color" | "--no-color" => { /* silently accept */ }
+                _ if arg.starts_with("--color=") => { /* silently accept */ }
+                "--abbrev-commit" | "--no-abbrev-commit" => { /* silently accept */ }
+                "--abbrev" => abbrev_len = 7,
                 _ if arg.starts_with("--filter=") => {
                     let spec = arg.trim_start_matches("--filter=");
                     let filter = ObjectFilter::parse(spec)
@@ -335,7 +352,9 @@ pub fn run(args: Args) -> Result<()> {
         }
         match &options.output_mode {
             OutputMode::Format(_) => {
-                println!("commit {prefix}{oid}");
+                if !no_commit_header {
+                    println!("commit {prefix}{oid}");
+                }
                 let rendered = render_commit(&repo, *oid, &options.output_mode, abbrev_len)?;
                 println!("{rendered}");
             }

@@ -1431,15 +1431,48 @@ fn resolve_ident(config: &ConfigSet, kind: &str, now: OffsetDateTime) -> Result<
         .or_else(|| config.get("user.email"))
         .unwrap_or_default();
 
-    let timestamp = std::env::var(date_var).unwrap_or_else(|_| {
-        let epoch = now.unix_timestamp();
-        let offset = now.offset();
-        let hours = offset.whole_hours();
-        let minutes = offset.minutes_past_hour().unsigned_abs();
-        format!("{epoch} {hours:+03}{minutes:02}")
-    });
+    let timestamp = std::env::var(date_var)
+        .map(|d| parse_date_to_git_ts(&d).unwrap_or(d))
+        .unwrap_or_else(|_| {
+            let epoch = now.unix_timestamp();
+            let offset = now.offset();
+            let hours = offset.whole_hours();
+            let minutes = offset.minutes_past_hour().unsigned_abs();
+            format!("{epoch} {hours:+03}{minutes:02}")
+        });
 
     Ok(format!("{name} <{email}> {timestamp}"))
+}
+
+/// Parse date string to git timestamp format (epoch + offset).
+fn parse_date_to_git_ts(date_str: &str) -> Option<String> {
+    let trimmed = date_str.trim();
+    let parts: Vec<&str> = trimmed.rsplitn(2, ' ').collect();
+    if parts.len() == 2 {
+        let maybe_epoch = parts[1];
+        if maybe_epoch.chars().all(|c| c.is_ascii_digit()) {
+            return None; // already in epoch format
+        }
+        let tz = parts[0];
+        let datetime = parts[1];
+        let tz_bytes = tz.as_bytes();
+        if tz_bytes.len() >= 5 {
+            let sign: i64 = if tz_bytes[0] == b'-' { -1 } else { 1 };
+            let h: i64 = tz[1..3].parse().unwrap_or(0);
+            let m: i64 = tz[3..5].parse().unwrap_or(0);
+            let tz_secs = sign * (h * 3600 + m * 60);
+            if let Ok(offset) = time::UtcOffset::from_whole_seconds(tz_secs as i32) {
+                let fmt = time::format_description::parse(
+                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                ).ok()?;
+                if let Ok(naive) = time::PrimitiveDateTime::parse(datetime, &fmt) {
+                    let dt = naive.assume_offset(offset);
+                    return Some(format!("{} {}", dt.unix_timestamp(), tz));
+                }
+            }
+        }
+    }
+    None
 }
 
 fn ensure_trailing_newline(s: &str) -> String {

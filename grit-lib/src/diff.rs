@@ -238,9 +238,13 @@ fn diff_tree_entries_opts(
                                 emit_deleted_opts(odb, o, prefix, show_trees, result)?;
                                 emit_added_opts(odb, n, prefix, show_trees, result)?;
                             } else {
-                                // Both blobs — modified
+                                // Both blobs — modified.
+                                // A mode-only change (e.g. chmod) is Modified.
+                                // TypeChanged is only for actual type changes (blob ↔ symlink).
+                                let old_type = o.mode & 0o170000;
+                                let new_type = n.mode & 0o170000;
                                 result.push(DiffEntry {
-                                    status: if o.mode != n.mode && o.oid == n.oid {
+                                    status: if old_type != new_type {
                                         DiffStatus::TypeChanged
                                     } else {
                                         DiffStatus::Modified
@@ -1642,17 +1646,34 @@ pub fn format_stat_line(
     deletions: usize,
     max_path_len: usize,
 ) -> String {
+    format_stat_line_width(path, insertions, deletions, max_path_len, 0)
+}
+
+pub fn format_stat_line_width(
+    path: &str,
+    insertions: usize,
+    deletions: usize,
+    max_path_len: usize,
+    count_width: usize,
+) -> String {
     let total = insertions + deletions;
     let plus = "+".repeat(insertions.min(50));
     let minus = "-".repeat(deletions.min(50));
-    format!(
-        " {:<width$} | {:>4} {}{}",
-        path,
-        total,
-        plus,
-        minus,
-        width = max_path_len
-    )
+    let cw = if count_width > 0 { count_width } else { format!("{}", total).len() };
+    let bar = format!("{}{}", plus, minus);
+    if bar.is_empty() {
+        format!(
+            " {:<width$} | {:>cw$}",
+            path, total,
+            width = max_path_len, cw = cw
+        )
+    } else {
+        format!(
+            " {:<width$} | {:>cw$} {}",
+            path, total, bar,
+            width = max_path_len, cw = cw
+        )
+    }
 }
 
 /// Count insertions and deletions between two strings.
