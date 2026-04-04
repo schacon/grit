@@ -269,7 +269,7 @@ test_expect_success 'signed-tags=verbatim' '
 
 '
 
-test_expect_failure 'signed-tags=warn-verbatim' '
+test_expect_success 'signed-tags=warn-verbatim' '
 
 	git fast-export --signed-tags=warn-verbatim sign-your-name >output 2>err &&
 	grep PGP output &&
